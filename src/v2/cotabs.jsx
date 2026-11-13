@@ -677,8 +677,8 @@ export function ValueMore({ load, s, store, setStoreData, pad, onBack, backLabel
             <CardHead icon="tag" tone="value" title={V.ratios} />
             <div style={{ marginTop: SPACE(2) }}>{rows.map((x, i) => <RatioRow key={x.label} {...x} first={i === 0} />)}</div>
             {!usOf(s) && valueBasis(co) && <Src>{valueBasis(co)}</Src>}
-            {/* 공시 단위 고침 (corp.json unitFix): the receipts above use a quarterly report read in the right unit; the line waits for
-                Jack's wording (co.unitFix null until then) */}
+            {/* 공시 단위 고침 (corp.json unitFix): the receipts above use a quarterly report read in the right unit; Jack's approved
+                line (co.unitFix, 2026-11-13), here on 가치 자세히 only */}
             {!usOf(s) && co && Array.isArray(co.unitFix) && co.unitFix.length > 0 && C.co.unitFix && <Note data-ui-v2="unit-fix">{C.co.unitFix}</Note>}
             <EpsFixNote s={s} show={epsFixFor(s) && rows.some((x) => x.label === "PER")} />
             {p0 && <PbrZeroNote s={s} />}

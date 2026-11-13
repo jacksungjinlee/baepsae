@@ -416,30 +416,40 @@ def test_the_home_hero_says_the_unit_line_once_under_the_tiles():
     assert '<UnitChkLine show={st.rules.some((x) => x.id === "warn" && x.state === "unknown" && x.unit)}' in src
 
 
-# ── 공시 단위 고침 (리뷰 #116 R5): 고쳐 읽은 회사에 한 줄 — 문구는 Jack 승인 대기 (co.unitFix null) ──
-FIX_PROPOSAL = "공시에 단위가 잘못 적혀 있어서 바로잡아 계산했어요."
+# ── 공시 단위 고침 (리뷰 #116 R5): 고쳐 읽은 회사에 한 줄 — Jack 승인 2026-11-13 (Q13): 가치 자세히에만 ──
+FIX_LINE = "공시에 단위가 잘못 적혀 있어서 바로잡아 계산했어요."
 
 
-def test_the_unit_fix_line_is_parked_and_shows_only_for_a_repaired_company_once_worded():
+def test_the_unit_fix_line_is_jacks_and_shows_only_on_value_more_for_a_repaired_company():
     got = run("""
       FX.setEpsBasis(CORP);
       const fixT = '005930';
-      const coFix = { ...LOAD.coByT.get(fixT), unitFix: [{ rep: '2026.2Q', bs: 1000, is: 1000, cf: 1000 }] };
-      const load = { ...LOAD, coByT: new Map([...LOAD.coByT, [fixT, coFix]]) };
+      const FIXED = [{ rep: '2026.2Q', bs: 1000, is: 1000, cf: 1000 }];
+      const coFix = { ...LOAD.coByT.get(fixT), unitFix: FIXED };
+      const withCo = (t, co) => ({ ...LOAD, coByT: new Map([...LOAD.coByT, [t, co]]) });
+      const load = withCo(fixT, coFix);
       const tab = (T, L, code) => renderToStaticMarkup(h(T, { load: L, s: L.byT.get(code), store: STORE, setStoreData() {}, onMore() {}, pad: 0,
         onBack() {}, backLabel: '' }));
       const ui = (x) => (x.match(/data-ui-v2="unit-fix"/g) || []).length;
-      out = { parked: C2.co.unitFix, now: ui(tab(CT.ValueMore, load, fixT)) };
-      C2.co.unitFix = PROPOSAL;
+      const n = (x) => [ui(x), count(x, FIX_LINE)];
       const on = tab(CT.ValueMore, load, fixT);
-      out.on = [ui(on), count(on, PROPOSAL)];
-      out.plain = ui(tab(CT.ValueMore, LOAD, fixT));                                            // unitFix 없는 회사
-      out.empty = ui(tab(CT.ValueMore, { ...LOAD, coByT: new Map([...LOAD.coByT, [fixT, { ...coFix, unitFix: [] }]]) }, fixT));
-      out.held = ui(tab(CT.ValueMore, LOAD, UNIT_T));                                           // 숫자를 비운 회사: 영수증 카드가 없어요
-      out.tabs = [CT.ValueTab, CT.EarnTab, CT.DivTab].map((T) => ui(tab(T, load, fixT)));      // 가치 자세히 한 곳에만
-      C2.co.unitFix = null;""", UNIT_T=UNIT_T, PROPOSAL=FIX_PROPOSAL)
-    assert got["parked"] is None and got["now"] == 0                             # 승인 전: 줄 없음
-    assert got["on"] == [1, 1]
-    assert got["plain"] == 0 and got["empty"] == 0 and got["held"] == 0 and got["tabs"] == [0, 0, 0]
+      out = { words: C2.co.unitFix, on: n(on), inRatios: on.includes('data-ui-v2="co-ratios"') && on.indexOf('data-ui-v2="co-ratios"') < on.indexOf('data-ui-v2="unit-fix"'),
+        plain: n(tab(CT.ValueMore, LOAD, fixT)),                                                    // unitFix 없는 회사
+        empty: n(tab(CT.ValueMore, withCo(fixT, { ...coFix, unitFix: [] }), fixT)),
+        held: n(tab(CT.ValueMore, withCo(UNIT_T, { ...LOAD.coByT.get(UNIT_T), unitFix: FIXED }), UNIT_T)),   // 숫자를 비운 회사: 영수증 카드가 없어요
+        us: n(tab(CT.ValueMore, withCo('AAPL', { ...(LOAD.coByT.get('AAPL') || { t: 'AAPL' }), unitFix: FIXED }), 'AAPL')),   // 미국 종목에는 없어요
+        tabs: [CT.ValueTab, CT.EarnTab, CT.DivTab, CT.EarnMore].map((T) => n(tab(T, load, fixT))) };   // 가치 자세히 한 곳에만
+      const keep = C2.co.unitFix;
+      C2.co.unitFix = null; out.noWords = n(tab(CT.ValueMore, load, fixT)); C2.co.unitFix = keep;""", UNIT_T=UNIT_T, FIX_LINE=FIX_LINE)
+    assert got["words"] == FIX_LINE                                              # Jack 이 승인한 글자 그대로
+    assert got["on"] == [1, 1] and got["inRatios"]                              # 고쳐 읽은 회사의 가치 자세히: 영수증 카드 안에 한 번
+    assert got["plain"] == [0, 0] and got["empty"] == [0, 0] and got["held"] == [0, 0] and got["us"] == [0, 0], got
+    assert got["tabs"] == [[0, 0]] * 4, got                                      # 가치 · 실적 · 배당 탭과 실적 자세히에는 없어요
+    assert got["noWords"] == [0, 0]                                              # 글이 없으면 빈 줄도 없어요
+    appr = open(os.path.join(ROOT, "docs", "tasks", "v18.3-approved-in-chat.md"), encoding="utf-8").read()
+    assert f"| `co.unitFix` | {FIX_LINE} | Jack, 2026-11-13" in appr
     pend = open(os.path.join(ROOT, "docs", "tasks", "v18.3-new-strings-pending.md"), encoding="utf-8").read()
-    assert f"| `co.unitFix` | {FIX_PROPOSAL} |" in pend
+    assert "co.unitFix" not in pend                                              # 승인 대기 목록에서 빠졌어요
+    for f in ("app.html", "app-preview.html"):                                   # 다시 만든 페이지에 그 글이 있어요
+        with open(os.path.join(ROOT, f), encoding="utf-8") as fh:
+            assert FIX_LINE in fh.read(), f
