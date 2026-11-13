@@ -28,8 +28,10 @@
 // band edges a little (round-1 review B3). Jack, 2026-11-13: every save of a target set also writes each holding's plan
 // weight next to it (planW, withPlanW below). The band rule measures every holding's whole planned shares (plannedQty ×
 // planPx: the whole-share allowance stays, final review S2) against the total of those stored weights, which a save never
-// changes (rules.planWeights), so an untouched holding's band does not move. An earlier app's tab ignores planW and keeps
-// reading plannedQty as before. A holding added with
+// changes (rules.planWeights), so an untouched holding's band does not move. A held holding whose target the save changed
+// also gets planV (verification S-b): the value that makes it read exactly as a brand-new plan with the same targets,
+// prices and amount would read it. An earlier app's tab ignores planW and planV and keeps reading plannedQty as before.
+// A holding added with
 // 담기 gets planPx = today's official close and a plannedQty from its target, the rule book and reasons the build step gives
 // a stock picked by name (꼭 담을 종목: kind "pinned", deckcalc.rulesFor with this portfolio's points), setAt today.
 // Currency (round-1 Z1): a holding is in dollars when its data row is (pf.usdOf: ccy "USD") or it has a USD purchase, never
@@ -39,8 +41,9 @@
 import { BANDS, num, hasGroup } from "./engine.js";
 import { usdOf, marketKey } from "./pf.js";
 import { rulesFor } from "./deckcalc.js";
-import { withoutHolding, deckProblem, problemText, versionFor, recordId, CHANGES_MAX, planWLimit, planWOk } from "./store.js";
+import { withoutHolding, deckProblem, problemText, versionFor, recordId, CHANGES_MAX, planWLimit, planWOk, PLANW_MAX_X } from "./store.js";
 import { heldUnits, UNIT, VIEW_SPLITS, splitsOf, splitFactor } from "./held.js";
+import { planWeights, bandRuleOf, heldQty } from "./rules.js";
 
 export const MIN_PCT = 1;                        // a holding stays at 1% or more (빼기 is how a holding leaves)
 export const REASONS = ["thesis", "rule", "better", "other"];
@@ -358,24 +361,35 @@ export const bandRule = (target) => ({ id: "band", kind: "band", check: "checked
 // (final review S3: a copy in which only some holdings carry one must not have the others' recomputed, or an untouched band
 // moves). A holding without one gets the plan's own value: plannedQty × planPx, a dollar holding at the plan's rate (the
 // same product, with the same test for dollars, as rules.planWeights). One that has neither is unknown.
-// -> { map: Map t -> number, had (how many were stored), filled: [t] (worked out now), unknown: [{ t, why }] }
+// Verification N2: stored weights that are numbers but add up to next to nothing against the plan's own values (all 1e-9;
+// the band rule does not use them either) are not kept: every one is worked out again (tiny: true, said by withPlanW).
+// -> { map: Map t -> number, had (how many were stored), filled: [t] (worked out now), unknown: [{ t, why }],
+//      refused: [t] (a planW was there and is not used), tiny }
 const okW = (x) => typeof x === "number" && Number.isFinite(x) && x >= 0;
 export function planBase(deck) {
   const hs = ((deck && deck.holdings) || []).filter((h) => h && typeof h.t === "string");
   const fx = num(deck && deck.planFx), limit = planWLimit(deck);
-  const map = new Map(), filled = [], unknown = [];
-  let had = 0;
-  for (const h of hs) {
-    if (planWOk(h.planW, limit)) { map.set(h.t, h.planW); had++; continue; }
+  const valueOf = (h) => {
     const q = h.plannedQty, px = num(h.planPx), usd = usdHolding(deck, h, null);
     const why = !Number.isInteger(q) || q < 0 ? "has no planned share count" : !(px > 0) ? "has no plan price"
       : usd && !(fx > 0) ? "is in dollars and the plan has no exchange rate" : null;
     const v = why ? null : q * px * (usd ? fx : 1);
-    if (why || !planWOk(v, limit)) { unknown.push({ t: h.t, why: why || "has a plan value that is not a usable number" }); continue; }
-    map.set(h.t, v);
+    return why || !planWOk(v, limit) ? { why: why || "has a plan value that is not a usable number" } : { v };
+  };
+  const stored = hs.filter((h) => planWOk(h.planW, limit));
+  const w = stored.reduce((a, h) => a + h.planW, 0), p = stored.reduce((a, h) => a + (valueOf(h).v || 0), 0);
+  const tiny = stored.length > 0 && p > 0 && !(p / w <= PLANW_MAX_X);
+  const map = new Map(), filled = [], unknown = [], refused = [];
+  let had = 0;
+  for (const h of hs) {
+    if (!tiny && planWOk(h.planW, limit)) { map.set(h.t, h.planW); had++; continue; }
+    if (h.planW != null) refused.push(h.t);
+    const x = valueOf(h);
+    if (x.why) { unknown.push({ t: h.t, why: x.why }); continue; }
+    map.set(h.t, x.v);
     filled.push(h.t);
   }
-  return { map, had, filled, unknown };
+  return { map, had, filled, unknown, refused, tiny };
 }
 // `total` shared out in proportion to the weights ws (all 0 or more, not all 0): whole numbers by the largest remainder when
 // total is a whole number (a plan in won: every sum then stays exact), else floats with the last one taking the exact rest.
@@ -408,13 +422,23 @@ function shareTotal(total, ws) {
 // - a portfolio where only some holdings had a planW (a mixed copy): the stored ones are kept, the missing ones are worked
 //   out from the plan, and one that cannot be is left without (unless the save changed it: then it takes its share).
 export function withPlanW(before, holdings, changed) {
+  const out = planWOf(before, holdings, changed);
+  return out.some((h) => h && h.planW != null) ? withPlanV(before, out, changed) : out;
+}
+const noPlan = (h) => { if (!h || (h.planW == null && h.planV == null)) return h; const { planW: _w, planV: _v, ...rest } = h; return rest; };
+function planWOf(before, holdings, changed) {
   const id = before && before.id;
   const strip = (why) => {
     console.warn(`[v2] ${id}: plan weights (planW) not stored (${why}); the weight bands keep reading the planned share counts, `
       + "so a stock whose target was not changed can see its band edges move a little");
-    return holdings.map((h) => { if (!h || h.planW == null) return h; const { planW: _w, ...rest } = h; return rest; });
+    return holdings.map(noPlan);
   };
   const b = planBase(before);
+  // verification N2: a save over stored weights none of which can be used (or that add up to next to nothing) says so
+  if (!b.had && b.refused.length) {
+    console.warn(`[v2] ${id}: stored plan weights (planW) not kept for ${b.refused.join(", ")} (`
+      + (b.tiny ? "their total is far too small for the plan's own values" : "not a usable number") + "); worked out again from the planned share counts");
+  }
   if (!b.had && b.unknown.length) return strip(`${b.unknown[0].t} ${b.unknown[0].why}`);
   if (b.had && (b.filled.length || b.unknown.length)) {
     console.warn(`[v2] ${id}: plan weights (planW) were stored for ${b.had} of ${b.had + b.filled.length + b.unknown.length} stocks; the stored ones are kept as they are`
@@ -437,9 +461,32 @@ export function withPlanW(before, holdings, changed) {
     if (!h) return h;
     if (keeps(h)) return { ...h, planW: base.get(h.t) };
     if (got.has(h.t)) return { ...h, planW: got.get(h.t) };
-    if (h.planW == null) return h;                       // not changed and its weight is not known: left without one
-    const { planW: _w, ...rest } = h;                   // (a planW that cannot be used is not written back)
-    return rest;
+    return noPlan(h);       // not changed and its weight is not known: left without one (an unusable planW is not written back)
+  });
+}
+// Verification S-b: a held holding whose target the save changed reads exactly as a brand-new plan with the same targets,
+// prices and amount reads it (the plan read from the planned share counts, as before planW: plannedQty × planPx over the
+// held stocks' sum). The band rule divides by the stored weights' total over the held stocks (which keeps every untouched
+// band still), so the holding stores planV = that brand-new weight × that total: it reads that weight now, and keeps
+// reading it at later saves that do not change it (requirement (a)). A changed holding that is not held, or has no band,
+// gets none; an untouched one keeps its own. When the brand-new plan gives no weights at all (a dollar holding without the
+// plan's rate), its reading is the target itself (no allowance), as there.
+function withPlanV(before, holdings, changed) {
+  const after = { ...before, holdings };
+  const held = heldQty(after);
+  const hs = [];
+  for (const h of holdings) if (h && held.has(h.t) && bandRuleOf(h) && !hs.some((x) => x.t === h.t)) hs.push(h);
+  const limit = planWLimit(after);
+  const S = hs.reduce((a, h) => a + (planWOk(h.planW, limit) ? h.planW : NaN), 0);
+  const targets = new Map(hs.map((h) => [h.t, num(bandRuleOf(h).target)]));
+  const k = [...targets.values()].reduce((a, b) => a + b, 0);
+  const fresh = S > 0 && k > 0 ? planWeights({ ...after, holdings: holdings.map(noPlan) }, targets) : null;
+  const want = (t) => (fresh ? fresh.get(t) : targets.get(t) / k) * S;
+  return holdings.map((h) => {
+    if (!h || !changed.has(h.t)) return h;
+    const { planV: _v, ...rest } = h;
+    const v = hs.includes(h) && S > 0 && k > 0 ? want(h.t) : null;
+    return v != null && planWOk(v, limit) ? { ...rest, planV: v } : rest;
   });
 }
 // A holding with a new target: its band rule regenerated (in place, or added when it had none), its plannedQty recomputed.

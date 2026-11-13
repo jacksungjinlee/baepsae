@@ -922,8 +922,10 @@ def test_untouched_bands_fuzz_first_save_and_later_saves():
       held targets was a clean number (the old lines keep that float sum as it was; when its last bit was off, 1e-12 at most);
     - a plan with a dollar stock (its values are not whole numbers): 1e-12 at most.
     The plan's total never changes, and every stored weight is a number.
-    Final review S2: a changed holding's plan weight is its own whole planned shares at its plan price over that total (b), and
-    the allowance never gives 일부 팔아요 or 먼저 사요 that the plain band (no allowance) would not give (c).
+    Verification S-b (was final review S2 (b): its own whole planned shares over the stored total): a changed held holding
+    reads exactly as a brand-new plan with the same targets, prices and amount (the same portfolio read without planW): the
+    same status, plan weight (1e-15) and edges (1e-12). The allowance never gives 일부 팔아요 or 먼저 사요 that the plain band
+    (no allowance) would not give (c).
     Final review N1: 200 more portfolios with targets that are not whole % (weights like 3/7), moved by a random fraction:
     no status changes and no edge moves by more than 1e-11 (the 12-decimal sum can shift such an edge by about 1e-12)."""
     got = run(PLANW + """let seed = 20261113; const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
@@ -932,7 +934,7 @@ def test_untouched_bands_fuzz_first_save_and_later_saves():
         oddCases: 0, oddCompared: 0, oddMax: 0, bad: [] };
       const clean = (k) => Math.round(k * 1e12) / 1e12 === k;
       // the plain band: the same portfolio with no whole-share allowance at all (every plan weight = its target)
-      const plain = (d) => ({ ...d, holdings: d.holdings.map(({ plannedQty, ...h }) => ({ ...h, planW: h.target })) });
+      const plain = (d) => ({ ...d, holdings: d.holdings.map(({ plannedQty, planV, ...h }) => ({ ...h, planW: h.target })) });
       const mk = (odd = false) => {
         const n = ri(3, 8); let left = 100; let w = [];
         for (let i = 0; i < n - 1; i++) { const v = ri(5, Math.max(5, Math.min(40, left - 5 * (n - 1 - i)))); w.push(v); left -= v; }
@@ -996,14 +998,15 @@ def test_untouched_bands_fuzz_first_save_and_later_saves():
             else if (clean(b0[t].scale)) { stats.firstWonClean++; if (!same) stats.bad.push(['first save not identical', c, t, diff]); }
             else stats.firstWonOff++;
           }
-          // S2 (b): a changed holding's plan weight = its whole planned shares at its plan price over the stored total of the held
-          // stocks; (c): against the plain band its status only ever eases (never a new 일부 팔아요 or 먼저 사요)
-          const heldW = after.holdings.filter((h) => b1[h.t]).reduce((a, h) => a + h.planW, 0), p1 = bandsOf(Ru.evaluateDeck(plain(after), ctx));
+          // S-b: a changed holding reads as a brand-new plan (the same portfolio without planW, read from plannedQty);
+          // (c): against the plain band its status only ever eases (never a new 일부 팔아요 or 먼저 사요)
+          const fresh = bandsOf(Ru.evaluateDeck(noW(after), ctx)), p1 = bandsOf(Ru.evaluateDeck(plain(after), ctx));
           for (const h of after.holdings) {
             if (!b1[h.t]) continue;
             if (touched.has(h.t)) { stats.changed++;
-              const want = (h.plannedQty * h.planPx * (h.cls === 'us' ? 1300 : 1)) / heldW;
-              if (Math.abs(b1[h.t].planW - want) > 1e-15) stats.bad.push(['changed plan weight', c, round, h.t, b1[h.t].planW, want]); }
+              const f = fresh[h.t], x = b1[h.t];
+              if (!f || f.status !== x.status || Math.abs(x.planW - f.planW) > 1e-15 || x.bands.some((v, i) => Math.abs(v - f.bands[i]) > 1e-12))
+                stats.bad.push(['changed vs a brand-new plan', c, round, h.t, f && f.status, x.status, f && f.planW, x.planW]); }
             const a = b1[h.t].status, z = p1[h.t].status;
             if ((a === 'trim' && z !== 'trim') || (a === 'low' && z !== 'low') || (a === 'high' && z === 'none')) stats.bad.push(['allowance tightened', c, round, h.t, z, a]);
             if (a !== z) stats.eased++;
@@ -1168,7 +1171,7 @@ FINAL = PLANW + """// the reviewer's portfolio: a 500만원 plan, five stocks at
       const envS = (specs) => ({ load: { status: 'ok', data: { fx: 1400, stocks: [] }, coByT: new Map(), byT: new Map(specs.map((x) => [x.t, stock(x.t, x.px)])) }, today: T, ts: env.ts });
       const pct = (v) => Math.round(v * 10000) / 100;
       const rowOf = (d, specs, t) => { const b = bandsOf(Ru.evaluateDeck(d, ctxS(specs)))[t]; return [b.status, pct(b.now), b.bands.map(pct), pct(b.gap)]; };
-      const plain = (d) => ({ ...d, holdings: d.holdings.map(({ plannedQty, ...h }) => ({ ...h, planW: h.target })) });
+      const plain = (d) => ({ ...d, holdings: d.holdings.map(({ plannedQty, planV, ...h }) => ({ ...h, planW: h.target })) });
 """
 
 
@@ -1177,8 +1180,10 @@ def test_a_changed_holding_keeps_the_whole_share_allowance():
     what the plan really buys. Three rows, and A reads 할 일 없음 in all three (it is one share: the user could never clear a
     더 안 사요):
     - the fresh plan: A's 더 안 사요 edge is 32.27% (25% + the 7.27 points its one share is above its 20%);
-    - after A 20 → 19 and B 20 → 21: 32.02% (23.75% + 150만 ÷ 550만 − 19%). The three untouched stocks read exactly as before;
-    - after E is taken out (기록 없이 빼기, and the same through 팔고 빼기; the four left go to 25%): 33.52% against A's 33.33%.
+    - after A 20 → 19 and B 20 → 21: 31.78% (23.75% + 150만 ÷ 555만 − 19%: a brand-new plan with these targets buys 555만,
+      verification S-b; it was 32.02% over the stored 550만). The three untouched stocks read exactly as before;
+    - after E is taken out (기록 없이 빼기, and the same through 팔고 빼기; the four left go to 25%): 34.55% (150만 ÷ 530만, the
+      brand-new plan) against A's 33.33% (it was 33.52%).
     Without the allowance (the plain band) the two saves read A as 더 안 사요. The allowance never tightens anything."""
     got = run(FINAL + """const d0 = mkD(SP, 500), en = envS(SP);
       const cut = E.applyEdit({ v: 2, decks: [d0] }, 'd1', steps([['000010', 19], ['000020', 21]]), en).data.decks[0];
@@ -1194,9 +1199,9 @@ def test_a_changed_holding_keeps_the_whole_share_allowance():
         plain: [rowOf(plain(d0), SP, '000010')[0], rowOf(plain(cut), SP, '000010'), rowOf(plain(rm), SP, '000010')], warns };""")
     assert got["warns"] == [] and got["plan"] == [1500000, 1000000, 1000000, 1000000, 1000000]
     assert got["fresh"] == ["none", 27.27, [15, 32.27, 35.27], 7.27]
-    assert got["cut"] == ["none", 27.27, [14.25, 32.02, 34.87], 8.27]                          # 1주 그대로 (150만 ÷ 550만), 목표 19%
-    assert got["cutB"] == ["none", 18.18, [13.84, 26.25, 29.4], -1.91]                         # B: 21주 = 105만 ÷ 550만 = 19.09% (목표 21% 아래로 1.91)
-    assert got["rm"] == ["none", 33.33, [18.75, 33.52, 37.27], 2.27]
+    assert got["cut"] == ["none", 27.27, [14.25, 31.78, 34.63], 8.03]                          # 1주 그대로: 새 계획처럼 150만 ÷ 555만, 목표 19%
+    assert got["cutB"] == ["none", 18.18, [13.67, 26.25, 29.4], -2.08]                         # B: 21주 = 105만 ÷ 555만 = 18.92% (목표 21% 아래로 2.08)
+    assert got["rm"] == ["none", 33.33, [18.75, 34.55, 38.3], 3.3]                             # 새 계획처럼 150만 ÷ 530만
     assert got["sold"] == [True, got["rm"]]                                                    # 팔고 빼기도 같은 선
     assert got["all"] == [["none"] * 5, ["none"] * 5, ["none"] * 4, ["none"] * 4]              # 세 줄 모두, 모든 종목 할 일 없음
     assert got["untouched"] is True                                                            # 안 바꾼 셋은 마지막 자리까지 그대로
@@ -1211,8 +1216,8 @@ def test_a_changed_holding_reads_as_a_brand_new_plan_with_the_same_targets_price
     """Final review S2 (b). The same plan with B at 400,000원 a share: 20% and 21% both buy 3 shares and A stays at 1, so a
     brand-new plan with the new targets (19 / 21 / 20 / 20 / 20), the same prices and the same amount adds up to the same
     total (570만원). The edited portfolio then reads A and B digit for digit as that brand-new plan does (same shares held).
-    When a new plannedQty changes what the planned values add up to, the edited portfolio keeps measuring against the total
-    it had (that is what keeps the untouched bands still), so it reads as a brand-new plan with that total would."""
+    When a new plannedQty changes what the planned values add up to, the changed stocks still read as the brand-new plan
+    does (verification S-b, planV) and the untouched ones keep measuring against the total they had."""
     got = run(FINAL + """const sp = SP.map((x) => (x.t === '000020' ? { ...x, px: 400000 } : x));
       const d0 = mkD(sp, 500);
       const cut = E.applyEdit({ v: 2, decks: [d0] }, 'd1', steps([['000010', 19], ['000020', 21]]), envS(sp)).data.decks[0];
@@ -1259,7 +1264,8 @@ def test_a_mixed_copy_keeps_the_plan_weights_it_has():
 
 
 def test_a_planw_that_cannot_be_used_counts_as_missing_and_sets_nothing_aside():
-    """Final review N2. planW must be a number that adds up: finite, 0 or more, and at most 1,000 × the plan's total. 1e308,
+    """Final review N2. planW must be a number that adds up: finite, 0 or more, and at most twice the plan's total (verification
+    N2; it was 1,000 ×). 1e308,
     NaN, a string, a negative number, an object and a number above the ceiling all count as missing: the store still reads
     (nothing is set aside), the band rule falls back to plannedQty and says so once, 종목 바꾸기 works the weight out again at
     the next save and says so, and no sum ever becomes Infinity or NaN. 0 is a real weight (final review N3): a portfolio
@@ -1297,7 +1303,7 @@ def test_a_planw_that_cannot_be_used_counts_as_missing_and_sets_nothing_aside():
           tinySaid.length, tinySaid[0] || ''], inf: [infSave.ok, ws(infSave.data.decks[0]), infSaid.length, infSaid[0] || ''], res, limit, want3: d1.holdings[3].plannedQty * d1.holdings[3].planPx, w0: d1.holdings[0].planW,
         zero: [z.stored === true, warns.length - w2, Math.abs(z.get('000040') - (d1.holdings[3].plannedQty * d1.holdings[3].planPx) / (d1.holdings.reduce((a, h) => a + h.planW, 0) - d1.holdings[3].planW)) < 1e-15,
           S.planWOk(0, limit), E.planBase(zero).had] };""")
-    assert got["limit"] == 1000 * 1000 * 10000                                                # 계획 금액 1,000만원의 1,000배
+    assert got["limit"] == 2 * 1000 * 10000                                                   # 계획 금액 1,000만원의 두 배 (검증 N2, 전에는 1,000배)
     for name, x in got["res"].items():
         assert x["valid"] is True and x["validAfter"] is True, name                             # 따로 두지 않아요
         assert x["fallback"] is True and x["stored"] is False and x["finite"] is True, name     # plannedQty 로 읽어요 (예전 줄 그대로), 숫자는 모두 유한
@@ -1331,3 +1337,91 @@ def test_the_us_date_line_follows_the_records_currency():
         form = f.read().split("function RecordForm", 1)[1].split("function SaleResult", 1)[0]
     assert 'const usd = recordCcy(deck, t, s) === "USD";' in form
     assert form.count("{usd && <p data-ui-v2=\"rec-us-date\"") == 1 and "C.rec.usDateHint" in form
+
+
+# ---------------- verification (2026-11-13): S-b a changed holding reads as a brand-new plan (planV) · N2 ----------------
+def test_a_changed_holding_reads_as_a_brand_new_plan_both_ways():
+    """Verification S-b (the verifier's case). A 300만원 plan: A 390,000원 a share at 30% (2 shares), B 1,500,000원 at 20% (the
+    plan buys 0: one share is more than its 60만원; the user bought 1 anyway), C 10,000원 at 50% (150 shares). One save: A 30 →
+    25, B 20 → 25 (B's plannedQty becomes 1). Every changed stock then reads exactly as a brand-new plan with the same targets,
+    prices and amount reads it (the same portfolio without planW), today and with B's price doubled or tripled: at twice the
+    price B reads 일부 팔아요 as the brand-new plan does (the rule as built before read 할 일 없음, a hidden warning). C, which the
+    save did not touch, reads exactly as before the save. A second save (A 25 → 20, C 50 → 55) leaves B as it was, digit for
+    digit (its planV stays)."""
+    got = run(FINAL + """const sp = [{ t: '000010', w: 0.30, px: 390000 }, { t: '000020', w: 0.20, px: 1500000, q: 1 }, { t: '000030', w: 0.50, px: 10000 }];
+      const d0 = { ...mkD(sp, 300), settings: { points: { value: 3 }, maxPct: 60, amountMan: 300 } };
+      const cx = (k) => ({ state: { ok: true }, byT: new Map(sp.map((x) => [x.t, stock(x.t, x.t === '000020' ? x.px * k : x.px)])), coByT: new Map(), fx: 1400, pxDate: T });
+      const s1 = E.applyEdit({ v: 2, decks: [d0] }, 'd1', steps([['000010', 25], ['000020', 25]]), envS(sp)).data, d1 = s1.decks[0];
+      const s2 = E.applyEdit(s1, 'd1', steps([['000010', 20], ['000030', 55]]), { ...envS(sp), ts: env.ts + 1000 }).data, d2 = s2.decks[0];
+      const at = (k) => { const e = bandsOf(Ru.evaluateDeck(d1, cx(k))), f = bandsOf(Ru.evaluateDeck(noW(d1), cx(k))), b = bandsOf(Ru.evaluateDeck(d0, cx(k)));
+        return { st: Object.values(e).map((x) => x.status), fresh: Object.values(f).map((x) => x.status),
+          changed: ['000010', '000020'].map((t) => e[t].status === f[t].status && Math.abs(e[t].planW - f[t].planW) < 1e-15 && e[t].bands.every((v, i) => Math.abs(v - f[t].bands[i]) < 1e-12)),
+          c: JSON.stringify(e['000030']) === JSON.stringify(b['000030']), bAfter: JSON.stringify(bandsOf(Ru.evaluateDeck(d2, cx(k)))['000020']) === JSON.stringify(e['000020']) }; };
+      out = { q: d1.holdings.map((h) => h.plannedQty), v: d1.holdings.map((h) => h.planV ?? null), v2: d2.holdings.map((h) => h.planV ?? null), x1: at(1), x2: at(2), x3: at(3), warns };""")
+    assert got["warns"] == [] and got["q"] == [2, 1, 150]
+    assert got["v"][0] is not None and got["v"][1] is not None and got["v"][2] is None          # 바꾼 둘만 planV
+    assert got["v2"][1] == got["v"][1]                                                          # 두 번째 저장이 건드리지 않은 B 는 그대로
+    for k in ("x1", "x2", "x3"):
+        x = got[k]
+        assert x["changed"] == [True, True] and x["c"] is True and x["bAfter"] is True, (k, x)   # 바꾼 둘은 새 계획과 같고, 안 바꾼 C 는 저장 전과 같아요
+    assert got["x2"]["st"][1] == "trim" and got["x2"]["fresh"][1] == "trim"                     # B 가격 두 배: 새 계획처럼 일부 팔아요
+
+
+def test_planv_survives_export_import_merges_and_an_earlier_apps_write():
+    """planV (verification S-b) travels with the target set like planW: 기록 내보내기 → 불러오기 keeps it; when two copies meet,
+    the later target set wins whole with its planV (never one copy's targets with the other's planV); v19.6a and main
+    (fixtures) read a store with it, set nothing aside and keep it when they write."""
+    got = run(PLANW + """const b0 = { v: 1, decks: [deck7()] };
+      const a = E.applyEdit(b0, 'd7', steps([['000010', 15], ['000020', 25]]), env).data;
+      const b = E.applyEdit(b0, 'd7', steps([['000030', 10], ['000040', 20]]), { ...env, ts: env.ts + 60000 }).data;
+      const vs = (x) => x.decks[0].holdings.map((h) => h.planV ?? null);
+      const back = S.mergeStores({ v: 1, decks: [] }, S.parseImport(S.exportText(a), T), env.ts + 5, [], T);
+      const olds = {};
+      for (const [name, O] of [['Old6', Old6], ['OldM', OldM]]) {
+        mem.clear(); S.writeStore(a, K, T);
+        const o = O.readStore(K, T);
+        const wrote = O.writeStore({ ...o.data, notes: { '000010': { text: '메모', at: T } } }, K, T);
+        const r = S.readStore(K, T);
+        olds[name] = { locked: o.locked, problems: o.problems, wrote, v: vs(r.data), backLocked: r.locked };
+      }
+      out = { a: vs(a), b: vs(b), back: vs(back), merged: [vs(S.mergeTabs(a, b, T)), vs(S.mergeTabs(b, a, T))], olds,
+        bands: JSON.stringify(bandsOf(Ru.evaluateDeck(back.decks[0], ctx7))) === JSON.stringify(bandsOf(Ru.evaluateDeck(a.decks[0], ctx7))) };""")
+    a, b = got["a"], got["b"]
+    assert a[0] is not None and a[1] is not None and a[2:] == [None] * 5 and b[2] is not None and b[3] is not None
+    assert got["back"] == a and got["bands"] is True
+    assert got["merged"] == [b, b]                                                              # 나중 묶음이 통째로 (planV 도 같이)
+    for name, o in got["olds"].items():
+        assert o["locked"] is False and o["problems"] == [] and o["wrote"] is True and o["v"] == a and o["backLocked"] is False, (name, o)
+
+
+def test_one_stored_weight_cannot_put_a_band_edge_below_0_and_bad_weights_are_worked_out_again():
+    """Verification N2. (1) A stored planW is unusable above twice the plan's total (it was 1,000 ×). One at that limit on a
+    plan bought in full leaves every edge at 0 or more; in a plan only partly bought, where one at the limit would put a held
+    stock's 먼저 사요 edge below 0, the stored weights are not used (the bands read plannedQty, said once). (2) Weights that are
+    numbers but add up to next to nothing (all 1e-9) are not written back by the next save: every one is worked out again
+    from the plan, with a console line. (3) A save over weights none of which can be used (all strings) says so too."""
+    got = run(PLANW + """const s1 = E.applyEdit({ v: 1, decks: [deck7()] }, 'd7', steps([['000010', 15], ['000020', 25]]), env).data, d1 = s1.decks[0];
+      const lim = S.planWLimit(d1), plan = d1.holdings.map((h) => h.plannedQty * h.planPx);
+      const setW = (d, i, v) => ({ ...d, holdings: d.holdings.map((h, j) => (j === i ? { ...h, planW: v } : h)) });
+      const lows = (d, cx) => { const w0 = warns.length; const e = Ru.evaluateDeck(d, cx);
+        return { low: Math.min(...e.holdings.map((x) => x.rules.find((r) => r.id === 'band').bands[0])), stored: !!Ru.planWeights(d, new Map(e.holdings.map((x) => [x.t, x.planTarget]))).stored, said: warns.slice(w0) }; };
+      // partly bought: only the first two stocks held
+      const part = { ...d1, id: 'part', purchases: d1.purchases.filter((p) => ['000010', '000020'].includes(p.t)) };
+      const tiny = { ...d1, id: 'tiny', holdings: d1.holdings.map((h) => ({ ...h, planW: 1e-9 })) };
+      const w1 = warns.length, rt = E.applyEdit({ v: 1, decks: [tiny] }, 'tiny', steps([['000050', 5], ['000060', 15]]), { ...env, ts: env.ts + 1000 }), saidT = warns.slice(w1);
+      const text = { ...d1, id: 'text', holdings: d1.holdings.map((h) => ({ ...h, planW: String(h.planW) })) };
+      const w2 = warns.length, rx = E.applyEdit({ v: 1, decks: [text] }, 'text', steps([['000050', 5], ['000060', 15]]), { ...env, ts: env.ts + 2000 }), saidX = warns.slice(w2);
+      out = { lim, full: lows(setW(d1, 3, lim), ctx7), part: lows(setW(part, 1, lim), ctx7), partOk: lows(part, ctx7), over: S.planWOk(lim * 1.0001, lim), at: S.planWOk(lim, lim),
+        tiny: [rt.ok, ws(rt.data.decks[0]), saidT], text: [rx.ok, ws(rx.data.decks[0]), saidX], plan };""")
+    assert got["lim"] == 2 * 1000 * 10000 and got["at"] is True and got["over"] is False        # 계획 금액 1,000만원의 두 배까지
+    assert got["full"]["stored"] is True and got["full"]["low"] >= 0                             # 다 산 계획: 한계의 값이어도 선은 0 이상
+    assert got["partOk"]["stored"] is True and got["partOk"]["low"] >= 0
+    assert got["part"]["stored"] is False and got["part"]["low"] >= 0                            # 일부만 산 계획: 0 아래로 갈 값은 쓰지 않아요
+    assert len(got["part"]["said"]) == 1 and "below a quarter of its target" in got["part"]["said"][0]
+    tiny = got["tiny"]
+    assert tiny[0] is True and min(tiny[1]) > 1000                                               # 아주 작은 값은 다시 쓰지 않아요 (계획 금액으로 다시)
+    assert sum(tiny[1]) == sum(got["plan"])
+    assert any("not kept" in m and "far too small" in m for m in tiny[2]), tiny[2]
+    text = got["text"]
+    assert text[0] is True and all(isinstance(x, int) for x in text[1]) and sum(text[1]) == sum(got["plan"])
+    assert any("not kept" in m and "not a usable number" in m for m in text[2]), text[2]

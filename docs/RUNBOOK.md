@@ -665,10 +665,20 @@ again, and rounding the changed stocks' counts could move an untouched band by u
 
 **The whole-share allowance stays (final review S2).** A stock's band is still widened by the gap between its whole
 planned shares and its target: `plannedQty × planPx` over the stored total, minus the target. So a stock whose single share
-is large against the plan (1 share = 27% in a plan that gives it 20%) reads 할 일 없음 after its target is changed too, as
-a brand-new plan with the same targets, prices and total would. When a new `plannedQty` changes what the planned values
-add up to (550만 → 555만), the edited portfolio keeps the total it had (550만): its edges then sit a fraction of a point
-from a from-scratch plan's (32.02% against 31.78% in the review's example). The allowance only ever widens a band.
+is large against the plan (1 share = 27% in a plan that gives it 20%) reads 할 일 없음 after its target is changed too.
+The allowance only ever widens a band.
+
+**A changed stock reads as a brand-new plan (verification S-b, `planV`).** Measuring a changed stock's whole planned shares
+against the stored total was not enough: a new `plannedQty` changes what the planned values add up to (550만 → 555만), and
+on 800 random portfolios × 3 saves, 223 of 4,801 changed held stocks read differently from a brand-new plan with the same
+targets, prices and amount — 142 calmer (a hidden warning: 더 안 사요 at 72% where a new plan says 45.9%, 할 일 없음 where it
+says 일부 팔아요) and 81 stricter (45 extra 먼저 사요, 14 extra 일부 팔아요), with edges up to 19 points off (55 with one held
+stock). So each save also stores, on every held stock whose target it changed, `planV`: the weight that brand-new plan gives
+it (read from the planned share counts, as before planW) times the stored weights' total over the held stocks. The band
+rule reads `planV` over that total, so the stock reads exactly as the brand-new plan does at that save (the same 800 × 3
+again, and 7 more seeds: 0 differ, 0 calmer, 0 new 일부 팔아요 or 먼저 사요; edges within 2.2e-16), and a later save that
+does not change it leaves it where it is. Stocks the save did not change keep their own reading (no `planV`, or the one
+they had), so their bands still do not move.
 
 - **A tab of an earlier app** (opened before this version) ignores `planW` and keeps reading `plannedQty`, which is still
   saved as a whole number. In that tab an untouched band can show slightly different edges, as before. Nothing is set
@@ -676,8 +686,12 @@ from a from-scratch plan's (32.02% against 31.78% in the review's example). The 
 - **A portfolio never saved by 종목 바꾸기** has no `planW` and is read exactly as before.
 - **`planW` is read only when every held stock has a usable one.** If only some do (two copies met through an earlier
   app, a hand-made file), the bands read `plannedQty` and the console says so. A value that cannot be used (not a number,
-  negative, or more than 1,000 × the plan's total) counts as missing, never as a reason to set the portfolio aside. The
-  next save keeps every stored `planW` that exists and works out only the missing ones, with a console line.
+  negative, or more than twice the plan's total; the same for `planV`) counts as missing, never as a reason to set the
+  portfolio aside. The next save keeps every stored `planW` that exists and works out only the missing ones, with a
+  console line. Stored weights are not used either when they add up to next to nothing against the plan's own values, or
+  when one is so large that a stock with planned shares would read below a quarter of its target (its 먼저 사요 edge below
+  0); the console says which. A save over weights none of which can be used, or that add up to next to nothing, works
+  every one out again from the plan and says so.
 - **The first save of a portfolio whose plan cannot be read** (a holding without a plan price, a dollar holding without
   the plan's exchange rate) stores no `planW` and the console says why; its bands behave as before this change.
 - **Targets are read over the stocks actually held.** When one changed stock is held and the other was never bought, the

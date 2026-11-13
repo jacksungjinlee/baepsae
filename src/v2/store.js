@@ -696,35 +696,40 @@ const entryKey = (e) => canon({ t: e.t, imported: e.imported || null, purchases:
 
 // v19.7a: a holding's stored plan weight (planW) when it can be used (final review N2). It is on the scale of the plan's
 // own values (won), and it must be a number that adds up: finite, 0 or more (0 is a real weight: a stock that takes no
-// share of the total), and at most PLANW_MAX_X times the plan's total (a 1e308 would turn the sum into Infinity). The plan's
-// total: settings.amountMan, else the planned values added up (plannedQty × planPx, a US holding at the plan's rate); when
-// neither is known, a flat ceiling. Anything else counts as missing, never as a reason to set the portfolio aside: the
-// band rule and 종목 바꾸기 fall back and say so in the console (rules.planWeights, edit.planBase).
+// share of the total), and at most PLANW_TOTAL_X times the plan's total (verification N2: a save never writes one above
+// twice its target's share of the amount, so twice the whole amount is never a real weight; a larger one would shrink
+// every other band). The plan's total: settings.amountMan, else the planned values added up (plannedQty × planPx, a US
+// holding at the plan's rate); when neither is known, a flat ceiling. The same test holds for planV (edit.withPlanV).
+// Anything else counts as missing, never as a reason to set the portfolio aside: the band rule and 종목 바꾸기 fall back
+// and say so in the console (rules.planWeights, edit.planBase). PLANW_MAX_X: how far the read plan weights may go above
+// 1 (a stored total next to nothing against the plan's own values, rules.planWeights and edit.planBase).
 export const PLANW_MAX_X = 1000;
+export const PLANW_TOTAL_X = 2;
 export function planWLimit(deck) {
   const m = deck && plainObj(deck.settings) ? deck.settings.amountMan : null;
-  if (isNum(m) && m > 0) return PLANW_MAX_X * m * 10000;
+  if (isNum(m) && m > 0) return PLANW_TOTAL_X * m * 10000;
   const fx = deck && isNum(deck.planFx) && deck.planFx > 0 ? deck.planFx : 1;
   let v = 0;
   for (const h of (deck && Array.isArray(deck.holdings) ? deck.holdings : [])) {
     if (plainObj(h) && Number.isInteger(h.plannedQty) && h.plannedQty > 0 && isNum(h.planPx) && h.planPx > 0) v += h.plannedQty * h.planPx * (h.cls === "us" ? fx : 1);
   }
-  return v > 0 ? PLANW_MAX_X * v : 1e15;
+  return v > 0 ? PLANW_TOTAL_X * v : 1e15;
 }
 export const planWOk = (x, limit) => typeof x === "number" && Number.isFinite(x) && x >= 0 && x <= limit;
 
 // A holding with the target set of another copy's same holding o: its target, plannedQty, plan weight (planW, v19.7a: Jack
-// 2026-11-13) and band rule (o's; none when o has none). Every other field stays this copy's.
+// 2026-11-13), plan value (planV, verification S-b) and band rule (o's; none when o has none). Every other field stays this copy's.
 function withTargetSet(h, o) {
-  const { target: _t, plannedQty: _q, planW: _w, ...rest } = h;
+  const { target: _t, plannedQty: _q, planW: _w, planV: _v, ...rest } = h;
   const band = Array.isArray(o.rules) ? o.rules.find((r) => plainObj(r) && r.id === "band") : null;
   const rules = Array.isArray(h.rules) ? h.rules.filter((r) => !(plainObj(r) && r.id === "band")) : [];
   return { ...rest, ...(o.target != null ? { target: o.target } : {}), ...(o.plannedQty != null ? { plannedQty: o.plannedQty } : {}),
-    ...(o.planW != null ? { planW: o.planW } : {}), ...(Array.isArray(h.rules) || band ? { rules: band ? [...rules, band] : rules } : {}) };
+    ...(o.planW != null ? { planW: o.planW } : {}), ...(o.planV != null ? { planV: o.planV } : {}),
+    ...(Array.isArray(h.rules) || band ? { rules: band ? [...rules, band] : rules } : {}) };
 }
 const targetSet = (d) => canon({ m: plainObj(d.settings) ? d.settings.maxPct ?? null : null,
   h: (d.holdings || []).filter(plainObj).map((h) => [h.t, h.target ?? null, h.plannedQty ?? null, (Array.isArray(h.rules) ? h.rules : []).find((r) => plainObj(r) && r.id === "band") || null,
-    h.planW ?? null]) });
+    h.planW ?? null, h.planV ?? null]) });
 
 // One portfolio both copies hold, both changed: the current copy leads (its name, settings, kind; its limits unless the
 // other copy's were saved later, laterOf: 내 규칙 정하기 is an edit like a 메모) and every
