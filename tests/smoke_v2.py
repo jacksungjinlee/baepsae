@@ -11640,7 +11640,7 @@ def fin_warn_files(files):
 
 def scene_fin_warn_partial(R, files, width):
     """Jack, 2026-11-14: 재무 경고가 확인이 덜 돌았다고 사라지거나 다 본 것처럼 읽히면 안 돼요.
-    - 하나도 못 돈 한국 회사(채비 · 삼성전자우 · 두산밥캣): 카드가 있고 '재무 경고 · 확인하지 못했어요' (승인된 두 말), '없어요' · ✓ 없음.
+    - 하나도 못 돈 한국 회사(채비 · 삼성전자우 · 두산밥캣): 카드가 있고 '재무 경고' + '필요한 자료가 없어서 확인하지 못했어요.', '없어요' · ✓ 없음.
     - 걸린 경고 + 이자보상배율만 이자 줄이 없어 못 돌림(지노믹트리): 목록 줄과 시트 목록 밑에 PR #68 의 승인된 이유 줄.
     - 걸린 경고 + 다른 확인이 못 돎(엘앤에프): 경고 둘 그대로 (그 확인의 줄은 아직 승인된 말이 없어요).
     - 기아(자본잠식 못 돌림): '재무 경고 신호는 없어요'라고 하지 않고 자본잠식 ✓ 없음.
@@ -11670,7 +11670,7 @@ def scene_fin_warn_partial(R, files, width):
             co_hash(page, f"#stocks/{code}")
             card = page.locator('[data-ui-v2="co-warn-unchecked"]')
             card.wait_for(state="visible")
-            assert [x.strip() for x in card.inner_text().split("\n") if x.strip()] == [head, unknown, CO["warn"]["noData"]], (code, card.inner_text())
+            assert [x.strip() for x in card.inner_text().split("\n") if x.strip()] == [head, CO["warn"]["noData"]], (code, card.inner_text())
             assert page.locator('[data-ui-v2="co-warn"]').count() == 0 and page.locator('[data-ui-v2="co-warn-chip"]').count() == 0, code
             assert not any(x in (CO["warn"]["none"], CO["warn"]["nonePartial"]) for x in summary_lines()), code    # '없어요'라고 하지 않아요
             assert card.bounding_box()["y"] > page.locator('[data-ui-v2="co-tiles"]').bounding_box()["y"]     # 한눈에 칸들 밑, 늘 그 자리
@@ -11680,7 +11680,7 @@ def scene_fin_warn_partial(R, files, width):
             no_hscroll(page, width)
             no_mascot(page)
             R.collect(page)
-    R.check(page, S, "재무 경고를 하나도 확인하지 못한 회사 (채비 · 삼성전자우 · 두산밥캣): 카드가 있고 '재무 경고 · 확인하지 못했어요' · '없어요' · ✓ 없음", no_check)
+    R.check(page, S, "재무 경고를 하나도 확인하지 못한 회사 (채비 · 삼성전자우 · 두산밥캣): 카드가 있고 '재무 경고' + '필요한 자료가 없어서 …' · '없어요' · ✓ 없음", no_check)
 
     def interest_line():
         co_hash(page, "#stocks/228760")
@@ -11767,7 +11767,7 @@ def fin_lines_files(files):
 def scene_fin_warn_lines(R, files, width):
     """Jack 이 2026-11-14 에 승인한 세 줄 (390 · 1280):
     - '4가지 중 {k}가지는 필요한 자료가 없어서 확인하지 못했어요.': 엘앤에프 경고 줄과 목록 밑 · 기아 '확인한 …' 밑. 지노믹트리는 PR #68 줄만.
-    - '필요한 자료가 없어서 확인하지 못했어요.': 채비의 '재무 경고 · 확인하지 못했어요' 밑 · 기아만 가진 포트폴리오의 '재무 경고 0개' 칸 밑 (홈도).
+    - '필요한 자료가 없어서 확인하지 못했어요.': 채비의 '재무 경고' 밑 · 기아만 가진 포트폴리오의 '재무 경고 0개 · 확인하지 못했어요' 칸 밑 (홈도).
     - '공시된 재무제표가 아직 없어서 계산할 수 없어요.': 채비 · 본시스템즈의 한눈에 칸 위 · 실적 · 가치 탭 (채비는 배당 탭도).
     - 종목 바꾸기 → 이름으로 찾기 → 담기 시트도 같은 규칙 (엘앤에프 · 기아 · 채비 · 지노믹트리).
     12px 이상 · 가로 스크롤 없음 · 뱁이 없음."""
@@ -11844,7 +11844,7 @@ def scene_fin_warn_lines(R, files, width):
         page.locator('[data-ui-v2="co-warn-unchecked"]').wait_for(state="visible")
         assert page.locator('[data-ui-v2="no-stmt"]').count() == 0
         tidy("본시스템즈 · 삼성전자우")
-    R.check(page, S, "'필요한 자료가 없어서 …' 카드 밑 · '공시된 재무제표가 아직 없어서 …' 칸들 위와 실적 · 가치 (배당) 탭에 한 번씩 · 우선주에는 없음", no_data_and_no_stmt)
+    R.check(page, S, "'필요한 자료가 없어서 …' 카드 제목 밑 · '공시된 재무제표가 아직 없어서 …' 칸들 위와 실적 · 가치 (배당) 탭에 한 번씩 · 우선주에는 없음", no_data_and_no_stmt)
 
     def tiles():
         page.evaluate("() => { location.hash = '#portfolio'; }")
@@ -11869,7 +11869,7 @@ def scene_fin_warn_lines(R, files, width):
         page.locator('[data-ui-v2="edit-list"]').wait_for(state="visible")
         for code, kind, line, why, wtext in (("066970", "flags", fillp(W_["count"], n=2), "count", count1),
                                             ("000270", "some", W_["nonePartial"], "count", count1),
-                                            ("0011T0", "unchecked", f"{C['rank']['warn']} · {C['pfr']['unknown']}", "noData", W_["noData"]),
+                                            ("0011T0", "unchecked", C["rank"]["warn"], "noData", W_["noData"]),
                                             ("228760", "flags", fillp(W_["count"], n=1), "noIcr", W_["noneSubNoIcr"])):
             page.locator('[data-ui-v2="edit-by-name"]').click()
             fs = page.locator('[data-ui-v2="find-sheet"]')
@@ -11885,7 +11885,7 @@ def scene_fin_warn_lines(R, files, width):
             tidy(f"담기 {code}")
             page.keyboard.press("Escape")
             sh.wait_for(state="detached")
-    R.check(page, S, "종목 바꾸기 → 담기 시트: 엘앤에프 경고 2개 + '4가지 중 1가지는 …' · 기아 '확인한 …' + 그 줄 · 채비 '재무 경고 · 확인하지 못했어요' + 이유 · 지노믹트리 PR #68 줄", add_sheet)
+    R.check(page, S, "종목 바꾸기 → 담기 시트: 엘앤에프 경고 2개 + '4가지 중 1가지는 …' · 기아 '확인한 …' + 그 줄 · 채비 '재무 경고' + 이유 · 지노믹트리 PR #68 줄", add_sheet)
     ctx.close()
     srv.shutdown()
 

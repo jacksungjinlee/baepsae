@@ -3,7 +3,7 @@
 
 - "4가지 중 {k}가지는 필요한 자료가 없어서 확인하지 못했어요." (co.warn.uncheckedN): 걸린 경고 줄과 목록 밑 (엘앤에프: 자본잠식 못 돌림),
   '확인한 재무 경고 신호는 없어요' 밑 (기아). 이자보상배율 하나만 이자 줄이 없어 못 돌았으면 PR #68 줄만 (지노믹트리: 둘 다는 아니에요).
-- "필요한 자료가 없어서 확인하지 못했어요." (co.warn.noData): '재무 경고 · 확인하지 못했어요' 카드 밑 (채비 · 우선주), 가진 종목
+- "필요한 자료가 없어서 확인하지 못했어요." (co.warn.noData): '재무 경고' 카드의 제목 밑 (채비 · 우선주; 자리 표시였던 pfr.unknown 대신), 가진 종목
   '재무 경고 0개 · 확인하지 못했어요' 칸 밑 (확인이 덜 돈 한국 회사; 미국 종목만이면 없음).
 - "공시된 재무제표가 아직 없어서 계산할 수 없어요." (co.noStmt): 재무제표 숫자가 하나도 없는 회사 (채비 · 본시스템즈)의 요약 한눈에 칸
   위에 한 번, 실적 · 가치 · 배당 탭에 한 번씩. 우선주 · 원화가 아닌 재무제표 · 다른 회사에는 없어요.
@@ -151,7 +151,7 @@ def test_company_page_lines():
     assert kia["lines"][0] == "확인한 재무 경고 신호는 없어요" and one in kia["lines"] and kia["count"] == 1   # 기아: '확인한 …' 밑
     assert gene["noIcr"] == 1 and gene["count"] == 0 and NO_ICR in gene["lines"]                    # 지노믹트리: PR #68 줄만
     for t in ("chabi", "bon", "pref"):                      # 하나도 못 돌았어요: 카드 밑에 Jack 의 이유 줄 (우선주도)
-        assert got[t]["lines"] == ["재무 경고", "확인하지 못했어요", NO_DATA] and got[t]["noData"] == 1, (t, got[t])
+        assert got[t]["lines"] == ["재무 경고", NO_DATA] and got[t]["noData"] == 1, (t, got[t])
     assert got["sam"]["count"] == 0 and got["sam"]["noData"] == 0 and NO_DATA not in got["sam"]["lines"]
 
 

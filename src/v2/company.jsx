@@ -351,18 +351,17 @@ function Warnings({ load, s, wide }) {
   const off = s.cls === "kr" && icrOffShown(load.coByT.get(s.t) || null);
   if (!w.flags.length) {
     // 2026-11-14 (Jack): no check could run (corp.json flRan []: no statements yet (KONEX, new listings), 우선주, statements
-    // not in won (the currency line above the tiles says why)). Its own state, never '…없어요': "재무 경고 · 확인하지 못했어요"
-    // with the approved words of the 재무 경고 chip (rank.warn) and of a rule that could not be checked (pfr.unknown), and under
-    // them Jack's reason line (co.warn.noData). Not for funds (no statements to check) or a file without flRan (nothing known).
-    if (warnKind(s, w) === "unchecked" && all(C.rank.warn, C.pfr.unknown)) {
+    // not in won (the currency line above the tiles says why)). Its own state, never '…없어요': the 재무 경고 chip's word
+    // (rank.warn) as the heading and Jack's line under it, "필요한 자료가 없어서 확인하지 못했어요." (co.warn.noData; it replaced this
+    // PR's placeholder pfr.unknown). Not for funds (no statements to check) or a file without flRan (nothing known).
+    if (warnKind(s, w) === "unchecked" && all(C.rank.warn, W.noData)) {
       return (
         <Card data-ui-v2="co-warn-unchecked" style={{ display: "flex", gap: SPACE(3), alignItems: "center", padding: SPACE(4) }}>
           <IconChip name="info" size={32} tone="risk" />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{C.rank.warn}</div>
-            <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2 })}>{C.pfr.unknown}</div>
             {/* Jack, 2026-11-14: the reason, under it (우선주 too) */}
-            {W.noData && <div data-ui-v2="co-warn-nodata" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2 })}>{W.noData}</div>}
+            <div data-ui-v2="co-warn-nodata" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2 })}>{W.noData}</div>
           </div>
         </Card>
       );

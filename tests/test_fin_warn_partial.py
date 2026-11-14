@@ -5,7 +5,7 @@ checked and count the unchecked ones, using the closest approved line until the 
 - warn.js warnings(): 돌지 않은 확인의 목록(unchecked) · 하나도 돌지 않음(noneRan, corp.json flRan []) · 이자보상배율만 이자 줄이 없어
   못 돌림(icrIe, 경고가 있어도).
 - 2.0 회사 페이지 요약: 하나도 돌지 않은 한국 회사(재무제표가 아직 없는 회사 · 우선주 · 원화가 아닌 재무제표)는 카드가 사라지지 않고
-  "재무 경고 · 확인하지 못했어요" (승인된 두 말: rank.warn · pfr.unknown). '…없어요'라고 하지 않아요. 펀드 · flRan 이 없는 예전 파일은 그대로.
+  "재무 경고" + Jack 의 줄 "필요한 자료가 없어서 확인하지 못했어요." (2026-11-14; 그 전의 자리 표시 pfr.unknown 대신). '…없어요'라고 하지 않아요. 펀드 · flRan 이 없는 예전 파일은 그대로.
 - 걸린 경고가 있고 이자보상배율만 이자 줄이 없어 못 돌았으면, 목록이 네 가지를 다 본 것처럼 읽히지 않게 승인된 PR #68 줄을 그 밑에.
 - 걸린 경고는 어느 경우에도 숨지 않아요 · 가진 종목 '재무 경고 0개' 칸은 돌아간 확인에서 걸린 경고를 세고, 덜 돌아간 회사가 있으면 ✓ 가 아니에요.
 회사 기록은 2026-11-14 발행(11월 13일 종가)의 실제 값이에요. 화면은 react-dom/server 로 실제 컴포넌트를 그려서 봐요. 브라우저
@@ -154,7 +154,7 @@ def test_a_company_where_no_check_could_run_keeps_the_card_and_never_says_none()
       const load = mkLoad(FILES);
       const one = (t) => { const html = page(load, t), part = warnPart(html);
         return { kind: kind(part), lines: lines(part), chips: (part.match(/co-warn-chip/g) || []).length, px: px(part), all: lines(html) }; };
-      out = { words: [C2.rank.warn, C2.pfr.unknown], chabi: one('0011T0'), pref: one('005935'), usd: one('241560'), fund: one('088980') };
+      out = { words: [C2.rank.warn, C2.co.warn.noData], chabi: one('0011T0'), pref: one('005935'), usd: one('241560'), fund: one('088980') };
       const cur = C2.co.stmtCur.replace('{currency}', 'USD');
       out.usdCur = out.usd.all.filter((x) => x === cur).length;
       for (const k of ['chabi', 'pref', 'usd', 'fund']) delete out[k].all;
@@ -164,10 +164,10 @@ def test_a_company_where_no_check_could_run_keeps_the_card_and_never_says_none()
       const f3 = JSON.parse(JSON.stringify(FILES)); delete f3['corp.json'].companies.find((c) => c.t === '0011T0').flRan;
       out.unit = kind(warnPart(page(mkLoad(f2), '0011T0')));
       out.oldFile = kind(warnPart(page(mkLoad(f3), '0011T0')));""", FILES=fixture_files())
-    assert got["words"] == [HEAD, UNKNOWN]                                   # 승인된 두 말 (rank.warn · pfr.unknown) 그대로
+    assert got["words"] == [HEAD, NO_DATA]                                   # 승인된 두 말 (rank.warn · co.warn.noData) 그대로
     for k in ("chabi", "pref", "usd"):
         g = got[k]
-        assert g["kind"] == "co-warn-unchecked" and g["lines"] == [HEAD, UNKNOWN, NO_DATA], (k, g)   # + Jack 의 이유 줄 (2026-11-14)
+        assert g["kind"] == "co-warn-unchecked" and g["lines"] == [HEAD, NO_DATA], (k, g)   # 제목 + Jack 의 이유 줄 (2026-11-14)
         assert g["chips"] == 0 and all(NONE not in x for x in g["lines"]), (k, g)          # ✓ 도 '없어요'도 없어요
         assert g["px"] and min(g["px"]) >= 12, (k, g["px"])
     assert got["usdCur"] == 1                                               # 달러 재무제표: 이유 줄은 한눈에 칸 위에 한 번 그대로
