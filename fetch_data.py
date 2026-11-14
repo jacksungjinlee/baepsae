@@ -6738,6 +6738,7 @@ def us_info_due(entry, today):
 # PBR 은 1.35 (리뷰 2026-11-14): √2 보다 좁아야 맞는 회사(1.35 배 안)의 2 배 ADR 실수가 언제나 밖으로 나가요 (2 ÷ 1.35 = 1.48). 맞는 회사의 가장 큰
 # 차이는 BHP 1.24 배였어요.
 US_FOREIGN_BAND = {"per": 1.10, "pbr": 1.35, "dy": 1.10}
+US_FOREIGN_CUR_WHY = "재무제표 통화를 모름"   # us_foreign_cuts 의 이유 머리말 — 통화를 확인하지 못해 비운 칸 (data.json fgnCut "currency")
 US_FOREIGN_DIV_DAYS = 350     # 지난 1년 배당: 365일이면 해마다 같은 때 주는 배당이 며칠 당겨질 때 다섯 번 세요 (셸 2025-11-14 · 2026-11-13)
 
 
@@ -6787,7 +6788,7 @@ def us_foreign_cuts(rec, info, div12, days=US_FOREIGN_DIV_DAYS):
     순이익(그 통화)을 나눈 값끼리 맞춰 봐도 통화가 섞인 PBR 을 걸러 내지 못해요 (UL · SAN · TD · RY · ENB · BCE 의 PBR 이 '맞음'으로 남았어요)."""
     i, out = info or {}, {}
     if us_fin_currency(i) != US_QUOTE_CUR:
-        why = f"재무제표 통화를 모름 (야후 financialCurrency {i.get('financialCurrency')!r} — 달러로 확인되지 않음)"
+        why = f"{US_FOREIGN_CUR_WHY} (야후 financialCurrency {i.get('financialCurrency')!r} — 달러로 확인되지 않음)"
         return {k: why for k in ("per", "pbr", "dy") if rec.get(k) is not None}
     mc, ni = _fin(i.get("marketCap")), _fin(i.get("netIncomeToCommon"))
     pe_c = mc / ni if mc and mc > 0 and ni and ni > 0 else None
@@ -6824,10 +6825,13 @@ def us_foreign_cuts(rec, info, div12, days=US_FOREIGN_DIV_DAYS):
 def us_foreign_check(out, cache, data, us_px_date, no_info=frozenset(), foreign=US_FOREIGN):
     """fetch_us 의 외국 회사 검사: US_FOREIGN 이고 재무제표 통화가 달러가 아닌 표시(fcur)가 없는 종목마다 us_foreign_cuts 로 맞지 않는 칸을 비우고
     (pbr 을 비우면 가치 점수 vz 도 매겨지지 않아요) 크게 남겨요. 상세 정보를 붙이지 못한 종목(no_info)은 비울 칸이 없지만 확인한 것으로 세요.
-    반환 data.json usForeign = {"checked": [티커], "cut": [[티커, 칸, 이유]]} — 관문이 비운 칸이 비었는지, 외국 회사가 빠짐없이 확인됐는지 봐요."""
+    반환 data.json usForeign = {"checked": [티커], "cut": [[티커, 칸, 이유]]} — 관문이 비운 칸이 비었는지, 외국 회사가 빠짐없이 확인됐는지 봐요.
+    비운 종목에는 rec["fgnCut"] = {칸: "mismatch" | "currency"} (Jack, 2026-11-14: 앱이 그 칸 '–' 밑에 '자료의 숫자가 회사 전체 재무제표와 맞지
+    않아서 비워 두었어요.' 를 붙여요 · currency = 재무제표 통화를 확인하지 못함)."""
     checked, cut = [], []
     for rec in out:
         t = rec["t"]
+        rec.pop("fgnCut", None)
         if t not in foreign or rec.get("fcur"):
             continue
         checked.append(t)
@@ -6838,10 +6842,12 @@ def us_foreign_check(out, cache, data, us_px_date, no_info=frozenset(), foreign=
         for f, why in sorted(cuts.items()):
             rec.pop(f, None)
             cut.append([t, f, why])
+        if cuts:
+            rec["fgnCut"] = {f: ("currency" if why.startswith(US_FOREIGN_CUR_WHY) else "mismatch") for f, why in sorted(cuts.items())}
     names = {"per": "PER", "pbr": "PBR", "dy": "배당수익률"}
     by_f = {f: [t for t, g, _ in cut if g == f] for f in names}
     n_fc = sum(1 for r in out if r["t"] in foreign and r.get("fcur"))
-    unk = sorted({t for t, _f, w in cut if w.startswith("재무제표 통화를 모름")})
+    unk = sorted({t for t, _f, w in cut if w.startswith(US_FOREIGN_CUR_WHY)})
     if unk:
         log(f"  !! 미국 상장 외국 회사 중 재무제표 통화가 달러로 확인되지 않아 PER · PBR · 배당수익률을 모두 비운 곳 {len(unk)}곳: {', '.join(unk)}")
     log(f"{'  !! ' if cut else '· '}미국 상장 외국 회사의 주당 숫자 (회사 합계 · 실제 배당과 맞춤): 확인 {len(checked)}곳 · 재무제표 통화가 달러가 "
@@ -7085,6 +7091,8 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
                for f in ("per", "pbr", "dy") if r.get(f) is not None]
         for t, f, _w in cut:
             next(r for r in out if r["t"] == t).pop(f, None)
+        for r in out:
+            r.pop("fgnCut", None)      # 이유 줄은 맞춰 본 칸에만 (멈춘 날은 '–' 만)
         ufor = {"checked": sorted(r["t"] for r in out if r["t"] in US_FOREIGN and not r.get("fcur")), "cut": cut}
         log(f"  !! 미국 상장 외국 회사 검사가 멈췄어요 ({type(e).__name__}: {str(e)[:120]}) → {len(cut)}칸을 비웠어요: "
             + ", ".join(f"{t} {f}" for t, f, _w in cut))
@@ -7856,6 +7864,8 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                        "checked = 확인한 티커 · cut = 비운 칸 [티커, 칸(per · pbr · dy), 이유] — PER 은 시가총액 ÷ 순이익, PBR 은 그 값 × ROE, "
                        "배당수익률은 지난 350일 실제 배당 ÷ 종가와 맞지 않으면 빈 칸이에요 (pbr 이 비면 vz 도 없음)"),
          "usExtraMissing": "손으로 더한 미국 종목(EXTRA_US) 중 오늘 목록에 없는 티커 → 빠진 이유",
+         "fgnCut": ("미국 상장 외국 회사의 종목 칸: 회사 합계와 맞지 않아 비운 칸 {per · pbr · dy: mismatch 맞지 않음 · currency 재무제표 통화를 "
+                    "확인하지 못함} (usForeign.cut 과 같은 칸 · 앱이 그 칸 '–' 밑에 이유 줄을 붙여요 · 검사가 멈춘 날의 칸은 없어요)"),
          "splits": ("2016-01-01 부터(splitsFrom)의 주식 분할 [종목 코드, 날짜, 배율] · 미국만 (야후 · 날짜는 미국 현지 날짜, 새 주식 수로 거래가 "
                     "시작된 날) · 배율 = 옛 1주가 새로 몇 주인지 (4:1 분할 4 · 1:10 병합 0.1) · 한 번 실은 분할은 빼지 않아요 (종목이 목록에서 빠져도) · "
                     "야후가 분할 칸에 적은 분사 조정(1253:1000 같은 배율)은 넣지 않고, 야후가 틀리게 적는 진짜 사건은 고정 표로 넣어요 (splitsInfo.fixed) · "

@@ -229,6 +229,7 @@ def test_unknown_currency_company_through_the_check_is_blanked_and_logged(monkey
     got = F.us_foreign_check(out, {"UL": {"info": ul}}, None, dt.date(2026, 11, 13))
     assert got["checked"] == ["UL"] and sorted(x[1] for x in got["cut"]) == ["dy", "pbr", "per"]
     assert not any(k in out[0] for k in ("per", "pbr", "dy"))
+    assert out[0]["fgnCut"] == {"dy": "currency", "pbr": "currency", "per": "currency"}   # 앱: Jack 의 이유 줄 (통화 줄은 통화 이름이 있어야 해요)
     assert any(x.startswith("  !! 미국 상장 외국 회사 중 재무제표 통화가 달러로 확인되지 않아") and x.endswith("1곳: UL") for x in lines), lines
 
 
@@ -316,6 +317,11 @@ def test_the_check_pops_cut_fields_and_skips_non_dollar_and_unknown_companies():
     by = {r["t"]: r for r in out}
     assert "per" not in by["BP"] and "pbr" not in by["BP"] and by["BP"]["dy"] == 4.55
     assert (by["SHEL"]["per"], by["SHEL"]["pbr"], by["SHEL"]["dy"]) == (8.6, 1.43, 3.15) and by["ADC"]["pbr"] == 1.43
+    assert by["BP"]["fgnCut"] == {"pbr": "mismatch", "per": "mismatch"}                          # 앱이 그 칸 밑에 이유 줄을 붙여요
+    assert not any("fgnCut" in by[t] for t in ("SHEL", "BTI", "AZN", "ADC"))
+    stale = [dict(rec_of("SHEL", 99.08, SHEL), fgnCut={"pbr": "mismatch"})]                       # 맞는 회사에 남은 예전 표시는 지워요
+    F.us_foreign_check(stale, {"SHEL": {"info": SHEL}}, data, dt.date(2026, 11, 13))
+    assert "fgnCut" not in stale[0] and stale[0]["pbr"] == 1.43
     json.dumps(got, allow_nan=False, ensure_ascii=False)
 
 
@@ -411,7 +417,7 @@ def test_a_crashed_foreign_check_blanks_every_checkable_number_loudly(tmp_path, 
     us, meta, lines = _fetch(tmp_path, monkeypatch)
     by = {r["t"]: r for r in us}
     for t in ("SHEL", "BP"):
-        assert not any(k in by[t] for k in ("per", "pbr", "dy")), by[t]
+        assert not any(k in by[t] for k in ("per", "pbr", "dy", "fgnCut")), by[t]                  # 멈춘 날은 '–' 만 (이유 줄 없음)
     assert by["AAPL"]["pbr"] == 1.43 and by["BTI"]["fcur"] == "GBP"
     assert meta["usForeign"]["checked"] == ["BP", "SHEL"]
     assert sorted(x[:2] for x in meta["usForeign"]["cut"]) == [[t, f] for t in ("BP", "SHEL") for f in ("dy", "pbr", "per")]
@@ -472,7 +478,7 @@ def test_gate_extra_without_the_record():
 
 def foreign_us():
     return [{"t": "SHEL", "cls": "us", "price": 99.08, "per": 8.6, "pbr": 1.43, "dy": 3.15, "vz": 70},
-            {"t": "BP", "cls": "us", "price": 45.7, "dy": 4.55},
+            {"t": "BP", "cls": "us", "price": 45.7, "dy": 4.55, "fgnCut": {"pbr": "mismatch", "per": "mismatch"}},
             {"t": "BTI", "cls": "us", "price": 61.89, "fcur": "GBP"},
             {"t": "AAPL", "cls": "us", "price": 270.0, "per": 36.0, "pbr": 50.0}]
 
@@ -495,6 +501,13 @@ def test_gate_foreign_good_record_passes():
     (lambda us, rec: rec["cut"].append(["BP", "roe", "x"]), "모양 1"),
     (lambda us, rec: rec["cut"].append(["BP", "dy", ""]), "모양 1"),
     (lambda us, rec: rec.update(checked="BP"), "모양 1: checked 모양"),
+    (lambda us, rec: us[1].pop("fgnCut"), "이유 표시(fgnCut) 없음 2: BP.pbr, BP.per"),            # 앱이 '자료가 없어요' 를 보일 뻔
+    (lambda us, rec: us[1]["fgnCut"].pop("per"), "이유 표시(fgnCut) 없음 1: BP.per"),
+    (lambda us, rec: us[1]["fgnCut"].update(dy="mismatch"), "남은 칸 1: BP.dy"),                    # 표시한 칸에 숫자가 남음
+    (lambda us, rec: us[1].update(fgnCut={"pbr": "odd"}), "모양 1"),
+    (lambda us, rec: us[1].update(fgnCut=["pbr"]), "모양 1"),
+    (lambda us, rec: us[0].update(fgnCut={"vz": "mismatch"}), "모양 1"),
+    (lambda us, rec: us[3].update(fgnCut={"pbr": "mismatch"}, pbr=None), "모양 1: AAPL.fgnCut (외국 회사 목록 밖이거나 fcur)"),
 ])
 def test_gate_foreign_fails(change, expect):
     us, rec = foreign_us(), json.loads(json.dumps(GOOD))
@@ -503,6 +516,15 @@ def test_gate_foreign_fails(change, expect):
     V.check_us_foreign(rep, {"usForeign": rec}, us, "publish")
     r = row(rep, FOREIGN)
     assert r[3] == "FAIL" and expect in r[1], r
+
+
+def test_gate_foreign_accepts_a_stopped_check_without_marks():
+    """검사가 멈춘 날 (fetch_us 의 예외 길): 비운 칸에 이유 줄 표시가 없어도 통과 — '–' 만 나가요."""
+    us = [{"t": "SHEL", "cls": "us", "price": 99.08}, {"t": "BP", "cls": "us", "price": 45.7}]
+    rec = {"checked": ["BP", "SHEL"], "cut": [[t, f, "검사가 멈춤 (RuntimeError)"] for t in ("BP", "SHEL") for f in ("per", "pbr")]}
+    rep = V.Report()
+    V.check_us_foreign(rep, {"usForeign": rec}, us, "publish")
+    assert row(rep, FOREIGN)[3] == "PASS", rep.table()
 
 
 def test_gate_foreign_without_the_record():

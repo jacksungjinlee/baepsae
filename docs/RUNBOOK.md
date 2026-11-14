@@ -448,21 +448,29 @@ gap for a correct PBR on 2026-11-14 was BHP's 1.24×, ROE uses average equity), 
 paid in the last 350 days (Yahoo's dividend records, per ADR, in dollars) ÷ today's close (within 10%). Anything that
 does not match, or cannot be compared (no net income, no ROE, no dividend records, or Yahoo did not confirm that the
 statements are in dollars: then all three are blanked), is blanked and listed in
-`data.json` `usForeign.cut` with the numbers; the run log prints one line per blank. On 2026-11-14 (local run): BP PER
+`data.json` `usForeign.cut` with the numbers, and the stock carries `fgnCut` (`{per | pbr | dy: "mismatch" | "currency"}`);
+the run log prints one line per blank. On 2026-11-14 (local run): BP PER
 and PBR (Yahoo PBR 7.62 is the ADR price over one ordinary share's book value; an ADR is 6 shares), HSBC PBR (7.07) and
 yield (Yahoo's 2.23% leaves out the larger fourth dividend; paid in the last year: 4.18%), Diageo PBR (93.64), AB InBev
 PBR (no ROE) and yield, BHP yield (Yahoo annualises the last half-year dividend: 4.98% vs 4.33% paid), AstraZeneca and
 TotalEnergies yield (Yahoo's dividend records miss a payment, so the check cannot confirm a correct 1.74% / 4.38%; they
 come back when Yahoo's records are complete). Shell, Novartis and Rio Tinto show all three. The row fails if a blanked
-number is back (pbr also blanks the 가치 score `vz`) or if a foreign company's numbers were published unchecked. The app
-shows "–" for these blanks without a reason line (no approved line yet). TSM, ASML, BABA, NVO, SHOP and the ADRs that come
-in through Nasdaq's list are not in `US_FOREIGN`: #114 keeps a company's numbers when its currency is unknown, while this
-check blanks what it cannot compare, so widening it is Jack's decision.
+number is back (pbr also blanks the 가치 score `vz`), if a foreign company's numbers were published unchecked, or if a
+blanked number has no `fgnCut` mark on its stock (the app would say "자료가 없어요" instead of the reason). 2.0 shows each
+blanked number as "–" under its label with Jack's line "자료의 숫자가 회사 전체 재무제표와 맞지 않아서 비워 두었어요." (Jack,
+2026-11-14) right under it, in the same places as the currency line (#114): the 가치 and 배당 tiles of 요약, 내 기준과 맞는 정도
+(card and sheet), the 가치 tab, 가치 자세히 and the 배당 tab. A number blanked because the statement currency was not
+confirmed gets the same line (the currency line needs a currency name). On a day the check itself stopped (run log "!! 미국
+상장 외국 회사 검사가 멈췄어요"), every checkable number of these companies is blanked with no mark and no line ("–" only).
+The old app shows "–" for these, as for the currency case. TSM, ASML, BABA, NVO, SHOP and the ADRs that come in through
+Nasdaq's list are not in `US_FOREIGN`: #114 keeps a company's numbers when its currency is unknown, while this check blanks
+what it cannot compare; widening it is a separate PR (Jack, 2026-11-14: later).
 
-Open item from 2026-11-14: BHP and Rio Tinto have no 업종 group (Yahoo's "Other Industrial Metals & Mining" is not in
-`data/industry_us.csv`). Unilever's Yahoo "split" of 2025-12-09 (×0.888) is a real 8-for-9 share consolidation (shares and
-ADSs, the ADS stays one share) on the day of the Magnum Ice Cream demerger, which Yahoo merged with the demerger adjustment;
-it is in `SPLIT_OVERRIDES` as 8:9 with its sources (Unilever RNS 2025-12-08, the shareholder circular, IRS Form 8937).
+BHP and Rio Tinto have no 업종 group (Yahoo's "Other Industrial Metals & Mining" is not in `data/industry_us.csv`; Jack,
+2026-11-14: keep it that way). EPD, ET and BNS stay out (Jack, 2026-11-14). Unilever's Yahoo "split" of 2025-12-09 (×0.888)
+is a real 8-for-9 share consolidation (shares and ADSs, the ADS stays one share) on the day of the Magnum Ice Cream
+demerger, which Yahoo merged with the demerger adjustment; it is in `SPLIT_OVERRIDES` as 8:9 with its sources (Unilever
+RNS 2025-12-08, the shareholder circular, IRS Form 8937).
 
 ## Roll back
 
