@@ -17,7 +17,7 @@ import React from "react";
 import { COLOR, SIZE, WEIGHT } from "../ui/tokens.js";
 import { C, fill, mdText, todayKst } from "./format.js";
 import { Note, tx } from "./ui.jsx";
-import { EPS_FIX_DATE, fixNotesHidden, epsNoticeShown, stmtCurFor, epsLineKind, unitHeldFor, pxBadFor } from "./fix.js";
+import { EPS_FIX_DATE, fixNotesHidden, epsNoticeShown, stmtCurFor, epsLineKind, unitHeldFor, pxBadFullFor, pxBadPartFor, pxBadHidesFor } from "./fix.js";
 import { fcurOf, fcurText, pbrZeroOf } from "./fcur.js";
 
 // The line with its date ("11월 10일"), or null when a word or the date is missing (never a line with an empty slot).
@@ -58,14 +58,22 @@ export function UnitChkNote({ s, co, show = true, style }) {
 }
 
 // 과거 주가 기록 오류 (Jack, 2026-11-14): "과거 주가 기록 일부에 오류가 있어서 52주 범위와 출렁임·위험 숫자는 비워 두었어요." once per
-// screen where a Korean stock's price-history numbers blanked by the pipeline would be (fix.js pxBadFor: data.json or corp.json pxBad;
-// never for US stocks): the company page header, in the 52주 bar's place, on every tab. The same quiet note (ui.jsx Note, 13 px).
-// Shown on the example page too: it is about the data, not a fix.
-// -> the line for this stock, or null (not marked, a US stock, or the words not there).
-export const pxBadText = (s, co) => (pxBadFor(s, co) && C.co.pxBad ? C.co.pxBad : null);
+// screen for a Korean stock whose 52주 range was blanked too (fix.js pxBadFullFor: a bad day within the last 252 bars, data.json or
+// corp.json pxBad · pxBadF; never for US stocks): the company page header, in the 52주 bar's place, on every tab. The same quiet note
+// (ui.jsx Note, 13 px). Shown on the example page too: it is about the data, not a fix.
+// -> the line for this stock, or null (not marked, only some numbers blanked, a US stock, or the words not there).
+export const pxBadText = (s, co) => (pxBadFullFor(s, co) && C.co.pxBad ? C.co.pxBad : null);
 export function PxBadNote({ s, co, style }) {
   const text = pxBadText(s, co);
   return text ? <Note data-ui-v2="px-bad" style={style}>{text}</Note> : null;
+}
+// 2026-11-14 evening (Jack): a stock whose bad day is over 252 bars back keeps its 52주 range; each blanked number says
+// "과거 주가 기록 일부에 오류가 있어서 이 숫자는 비워 두었어요." in its own place (fix.js pxBadPartFor). field: the data.json field that
+// number is (e.g. "beta", "r36", "lz"); the line shows only when that field was blanked. -> the line, or null.
+export const pxBadOneText = (s, co, field) => (pxBadPartFor(s, co) && pxBadHidesFor(s, co, field) && C.co.pxBadOne ? C.co.pxBadOne : null);
+export function PxBadOneNote({ s, co, field, show = true, style }) {
+  const text = show ? pxBadOneText(s, co, field) : null;
+  return text ? <Note data-ui-v2="px-bad-one" style={style}>{text}</Note> : null;
 }
 
 // The unit-check line inside a rule tile (phrasing content): the reason 재무 경고 0개 could not be checked for a holding the

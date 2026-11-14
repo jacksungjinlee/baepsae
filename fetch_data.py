@@ -70,7 +70,7 @@ from validate_data import (FX_LO, FX_HI, FX_HIST_FROM, FX_HIST_FIRST_BY, FX_HIST
 # 2026-11-14: 국내 시계열의 공식 종가 고정 기준과 하루 가격 제한폭도 관문 파일에 있어요 (관문은 파이프라인의 점검 결과 krSeries 를 봐요)
 from validate_data import PIN_PX_TOL, PIN_SHR_TOL, PIN_REF_TOL, KR_DAY_LIMIT, KONEX_DAY_LIMIT, KR_JUMP_WHY
 # 2026-11-14 (Jack, Q2 (a)): 그 움직임이 있는 종목에서 비우는 칸 목록도 관문 파일에 있어요 (관문이 같은 목록으로 비었는지 봐요)
-from validate_data import PX_BAD_DATA, PX_BAD_MUST_FAIL
+from validate_data import PX_BAD_DATA, PX_BAD_MUST_FAIL, PX_BAD_WIN, PX_BAD_WIN_BARS, PX_BAD_ALWAYS
 
 # ────────────────────────────────────────────────────────────
 # 설정
@@ -3629,9 +3629,10 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None, pref_caps=Non
         # DCF 자동 채움 가능 여부: 당기 순이익 존재 + 시총(→주식수 역산) 존재
         row["dcfReady"] = bool(ni[0] is not None and (s.get("shr") or s.get("cap")))
         if s.get("pxBad"):
-            # 2026-11-14 (Jack, Q2 (a)): 과거 주가 기록 오류 (mark_px_bad) — 위에서 옮겨 실은 시계열 칸은 이미 빈 칸이에요. 표시를 그대로 달아요
-            # (예전 뱁새 기업분석이 corp.json 만 읽어요 · 관문이 두 파일이 같은지 봐요)
+            # 2026-11-14 (Jack, Q2 (a)): 과거 주가 기록 오류 (mark_px_bad) — 위에서 옮겨 실은 시계열 칸 중 비운 칸(pxBadF)은 이미 빈 칸이에요. 표시와
+            # 비운 칸 목록을 그대로 달아요 (예전 뱁새 기업분석이 corp.json 만 읽어요 · 관문이 두 파일이 같은지 봐요)
             row["pxBad"] = s["pxBad"]
+            row["pxBadF"] = list(s.get("pxBadF") or [])
         if s.get("unitChk"):
             # (2026-11-13) 공시 단위 확인에 걸린 회사 (unit_guard): 재무제표로 만든 금액·배수·영수증·재무 경고를 모두 비워요. 배당(별도 배당 표)은 남겨요
             row.update(rev=[None, None, None], op=[None, None, None], ni=[None, None, None], eq=None, dcfReady=False,
@@ -3935,6 +3936,7 @@ def fetch_korea(start, today, rf, prev=None):
 
     out, pin, dropped = [], collections.Counter(), collections.Counter()
     pin_kept, kept_names, pin_bad, jumps = collections.Counter(), {}, [], []    # 2026-11-14: 고치지 않은 봉 · 자기 점검 · 제한폭 넘는 움직임
+    win_cut = {}                # 2026-11-14 저녁: 움직임이 있는 종목의 창마다 첫 봉 날짜 (mark_px_bad 가 그 창에 움직임이 드는지 봐요)
     naver_bad = []                                                              # 2026-11-14 (리뷰 S2): 네이버 시계열의 같은 날짜 · 잘못된 값
     lock = threading.Lock()
     prev_hl = {x["t"]: (_fin(x.get("hi")), _fin(x.get("lo"))) for x in (prev or {}).get("stocks", []) if x.get("cls") == "kr"}
@@ -4018,8 +4020,12 @@ def fetch_korea(start, today, rf, prev=None):
                 return None
             jm = kr_jumps(px, raw, kr_day_limit(row.get("Market")))
             if jm:
+                # 2026-11-14 저녁 (Jack): 칸마다 계산 창의 첫 봉 — hi · lo = px.tail(252) · mom = px[-252] · r3 = px[-64] · r1 = px[-22] (아래 계산 그대로).
+                # 봉이 모자라면 시계열 전체 (첫 봉). 그 밖의 칸은 시계열 전체예요 (PX_BAD_ALWAYS).
+                cut = {w: (px.index[-n] if len(px) >= n else px.index[0]).date().isoformat() for w, n in PX_BAD_WIN_BARS.items()}
                 with lock:
                     jumps.append((code, str(row["Name"]), jm))
+                    win_cut[code] = cut
             ret = px.pct_change().dropna()
             ret.name = "r"
             b, a, bse, bn = beta_fit(ret, bench, rf)
@@ -4107,7 +4113,7 @@ def fetch_korea(start, today, rf, prev=None):
     log_naver_clean(naver_bad)
     krs = kr_series_check(pin, pin_kept, kept_names, pin_bad, jumps, {r["t"] for r in out}, len(off_by_day),
                           ref=ref_sum)
-    mark_px_bad(out, krs)                    # 2026-11-14 (Jack, Q2 (a)): 그 움직임이 있는 종목은 시계열로 만든 숫자를 모두 비워요 (점수 · corp.json 보다 먼저)
+    mark_px_bad(out, krs, win_cut)           # 2026-11-14 (Jack): 그 움직임이 계산 창에 든 숫자를 비워요 (점수 · corp.json 보다 먼저)
     meta = {"pxDate": px_date.isoformat() if px_date else None,
             "ksDate": ks_date.isoformat() if ks_date else None, "listSrc": list_src, "_index": kospi, "_prod": prod_map,
             "_prefShares": pref_shares, "_prefCaps": pref_caps, "krSeries": krs}
@@ -4201,37 +4207,54 @@ def kr_series_check(pin, kept, kept_names, bad, jumps, published, days, ref=None
 # 추세 · 저변동 점수)을 모두 지우고 pxBad = 가장 최근 움직임 날짜를 달아요. 점수(add_percentiles)는 빈 칸을 빼고 매겨서 다른 종목의 추세 · 저변동
 # 순위도 이 종목 없이 나와요. corp.json(build_corp)은 같은 칸을 이 종목에서 옮겨 싣고 pxBad 를 그대로 달아요. 앱은 그 자리에 Jack 의 줄
 # "과거 주가 기록 일부에 오류가 있어서 52주 범위와 출렁임·위험 숫자는 비워 두었어요." 를 보여요. 시계열을 고치는 일은 다음 PR 이에요.
-def mark_px_bad(stocks, krs):
-    """krSeries.jump 에 있는 국내 종목의 시계열 숫자를 비우고 pxBad 를 달아요 · krs["hidden"] = 비운 종목 코드 (관문이 jump · 표시와 맞춰 봐요).
-    stocks: fetch_korea 의 국내 종목 목록 (그 자리에서 고쳐요) · krs: kr_series_check 결과 (그 자리에서 hidden 을 더해요).
-    jump 에 있는데 목록에 없는 코드는 비울 숫자가 없어요 (크게 남겨요). 반환: {"hidden": [코드…], "fields": {칸: 비운 종목 수}, "missing": [코드…]}."""
-    last = {}
+def mark_px_bad(stocks, krs, cuts=None):
+    """krSeries.jump 에 있는 국내 종목의 시계열 숫자를 비우고 pxBad · pxBadF 를 달아요 · krs["hidden"] = 표시한 종목 코드 (관문이 jump · 표시와 맞춰 봐요).
+    2026-11-14 저녁 (Jack: "hide only the numbers whose calculation window includes the bad day"): 시계열 전체 칸(PX_BAD_ALWAYS)은 늘 비우고, 창이
+    짧은 칸(PX_BAD_WIN: 252봉 hi · lo · mom · mz · 64봉 r3 · 22봉 r1)은 그 창의 첫 봉(cuts[코드][창], fetch_korea 가 px 에서 읽은 날짜) 이후에
+    움직임 날짜가 하나라도 있을 때만 비워요. cuts 에 그 종목이 없으면 (있으면 안 돼요) 모두 비우고 크게 남겨요.
+    pxBad = 가장 최근 움직임 날짜 · pxBadF = 비운 칸 목록 (PX_BAD_DATA 순서). stocks: fetch_korea 의 국내 종목 목록 · krs: kr_series_check 결과
+    (그 자리에서 고쳐요). jump 에 있는데 목록에 없는 코드는 비울 숫자가 없어요 (크게 남겨요).
+    반환: {"hidden": [코드…], "fields": {칸: 비운 종목 수}, "missing": [코드…], "f": {코드: [비운 칸…]}, "noCut": [코드…]}."""
+    dates = collections.defaultdict(list)
     for j in (krs or {}).get("jump") or []:
-        c, d = str(j[0]), str(j[1])[:10]
-        last[c] = max(last.get(c, ""), d)
+        dates[str(j[0])].append(str(j[1])[:10])
     by = {s["t"]: s for s in stocks if s.get("cls") == "kr"}
-    fields, hidden = collections.Counter(), []
+    fields, hidden, fmap, no_cut = collections.Counter(), [], {}, []
     for s in by.values():
         s.pop("pxBad", None)                 # 표시는 오늘 실행의 jump 로만 (어제 것이 남지 않게)
-    for c in sorted(last):
+        s.pop("pxBadF", None)
+    for c in sorted(dates):
         s = by.get(c)
         if s is None:
             continue
-        for k in PX_BAD_DATA:
+        cut = (cuts or {}).get(c)
+        if not cut:
+            no_cut.append(c)
+        hide = set(PX_BAD_ALWAYS)
+        for w, ks in PX_BAD_WIN.items():
+            if not cut or not cut.get(w) or any(d >= cut[w] for d in dates[c]):
+                hide |= set(ks)
+        f = [k for k in PX_BAD_DATA if k in hide]
+        for k in f:
             if s.pop(k, None) is not None:
                 fields[k] += 1
-        s["pxBad"] = last[c]
+        s["pxBad"] = max(dates[c])
+        s["pxBadF"] = f
+        fmap[c] = f
         hidden.append(c)
-    missing = sorted(set(last) - set(hidden))
+    missing = sorted(set(dates) - set(hidden))
     if isinstance(krs, dict):
         krs["hidden"] = hidden
-    names = [f"{c} {by[c].get('nk', '')} ({last[c]})" for c in hidden]
-    log(f"{'  !! ' if hidden or missing else '· '}과거 주가 기록 오류(하루 가격 제한폭 넘는 움직임)로 52주 · 출렁임 · 위험 숫자를 비운 국내 종목: "
-        f"{len(hidden)}" + (f" — {', '.join(names[:JUMP_LOG_SHOW])}" + (f" 외 {len(names) - JUMP_LOG_SHOW}종목" if len(names) > JUMP_LOG_SHOW else "")
+    full = [c for c in hidden if "hi" in fmap[c]]
+    names = [f"{c} {by[c].get('nk', '')} ({by[c]['pxBad']}{'' if c in full else ' · 52주는 보여요'})" for c in hidden]
+    log(f"{'  !! ' if hidden or missing else '· '}과거 주가 기록 오류(하루 가격 제한폭 넘는 움직임)로 숫자를 비운 국내 종목: "
+        f"{len(hidden)}" + (f" (52주까지 {len(full)} · 52주는 보임 {len(hidden) - len(full)}) — {', '.join(names[:JUMP_LOG_SHOW])}"
+                            + (f" 외 {len(names) - JUMP_LOG_SHOW}종목" if len(names) > JUMP_LOG_SHOW else "")
                             + f" · 비운 칸: {' · '.join(f'{k} {fields[k]}' for k in PX_BAD_DATA if fields[k])}"
-                            + " (추세 · 저변동 점수와 순위에서 빠져요 · 앱은 그 자리에 Jack 의 줄을 보여요)" if hidden else "")
-        + (f" · 목록에 없는 종목 {len(missing)}: {', '.join(missing[:JUMP_LOG_SHOW])} (비울 숫자가 없어요 — krSeries 뒤에 종목이 빠졌어요)" if missing else ""))
-    return {"hidden": hidden, "fields": dict(fields), "missing": missing}
+                            + " (계산 창에 그 움직임이 든 칸만 · 점수와 순위는 그 칸 없이 · 앱은 그 자리에 Jack 의 줄을 보여요)" if hidden else "")
+        + (f" · 목록에 없는 종목 {len(missing)}: {', '.join(missing[:JUMP_LOG_SHOW])} (비울 숫자가 없어요 — krSeries 뒤에 종목이 빠졌어요)" if missing else "")
+        + (f" · 창을 모르는 종목 {len(no_cut)}: {', '.join(no_cut[:JUMP_LOG_SHOW])} (모두 비웠어요)" if no_cut else ""))
+    return {"hidden": hidden, "fields": dict(fields), "missing": missing, "f": fmap, "noCut": no_cut}
 
 
 def trend_rank_missing(kr_stocks, must=None):
@@ -7673,8 +7696,11 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                       "설명되지 않는 봉 — 이유 " + " · ".join(f"{k} {v}" for k, v in KR_JUMP_WHY.items())
                       + " · hidden [종목코드…] 그 움직임이 있어서 시계열로 만든 숫자를 비운 종목 (2026-11-14 · jump 의 발행 종목과 같아요 · 종목의 pxBad)"),
          "pxBad": ("한국 · 과거 주가 기록 오류 (2026-11-14): 시계열에 가격 제한폭으로 설명되지 않는 하루 움직임이 있는 종목(krSeries.jump)의 가장 "
-                   "최근 움직임 날짜 (YYYY-MM-DD). 이 종목은 " + " · ".join(PX_BAD_DATA) + " 가 빈 칸이에요 (52주 · 변동성 · 베타 · 수익률 · 낙폭 · "
-                   "샤프 · 추세 · 저변동 점수 — 점수와 순위는 이 종목 없이 매겨요). corp.json 의 그 회사도 같은 pxBad 에 같은 칸이 빈 칸이에요"),
+                   "최근 움직임 날짜 (YYYY-MM-DD). 비운 칸은 pxBadF"),
+         "pxBadF": ("한국 · pxBad 종목에서 비운 칸 목록 (2026-11-14 · Jack: 계산 창에 그 움직임이 든 칸만): 시계열 전체 칸 "
+                    + " · ".join(PX_BAD_ALWAYS) + " 은 늘 · " + " · ".join(f"{'·'.join(ks)} ({PX_BAD_WIN_BARS[w]}봉)" for w, ks in PX_BAD_WIN.items())
+                    + " 은 그 창의 봉에 움직임 날짜가 있을 때만. 비운 칸은 빈 칸이고 점수와 순위는 그 칸 없이 매겨요 (hi 가 들어 있으면 52주까지 비운 종목). "
+                    "corp.json 의 그 회사도 같은 pxBad · pxBadF 에 같은 칸이 빈 칸이에요"),
          "unitFix": ("corp.json · 단위를 잘못 적은 분기 보고서를 나눠 쓴 회사: [{rep 보고서 (예 2026.2Q), bs · is · cf 그 표를 나눈 배수 "
                      "(1000 · 1000000, 나누지 않은 표는 칸 없음)}] — 표마다 그 보고서의 지난해 칸이 사업보고서 · 지난해 같은 분기 보고서 값의 정확히 "
                      "k 배이고, 나눈 뒤 기본주당이익 또는 자본금 ÷ 액면가가 오늘 주식 수와 맞을 때만 · 공시 단위 확인에 걸린 회사(unitChk)에는 없어요"),

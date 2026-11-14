@@ -279,7 +279,7 @@ export function mergeStocks(base, live) {
       const partial = L.price == null || (!bad && (L.beta == null || L.vol == null));
       const v = (k) => (L[k] != null ? L[k] : null);
       out.push({ ...b, price: L.price != null ? L.price : b.price, beta: bad ? null : L.beta != null ? L.beta : b.beta,
-        vol: bad ? null : L.vol != null ? L.vol : b.vol, ...(bad ? { noRisk: true, pxBad: L.pxBad } : {}), per: v("per"), pbr: v("pbr"), dy: v("dy"), al: v("al"),
+        vol: bad ? null : L.vol != null ? L.vol : b.vol, ...(bad ? { noRisk: true, pxBad: L.pxBad, pxBadF: L.pxBadF } : {}), per: v("per"), pbr: v("pbr"), dy: v("dy"), al: v("al"),
         sh: L.sh, mdd: L.mdd, hit: L.hit, mom: L.mom, cap: L.cap, val: L.val,
         pz: L.pz, vz: L.vz, mz: L.mz, qz: L.qz,
         x: { ...(b.x || {}), roe: v("roe"), debt: v("debt"), opm: v("opm"), g3: v("g3"), frn: v("frn"),
@@ -303,7 +303,7 @@ export function mergeStocks(base, live) {
         per: keep(L.per), pbr: keep(L.pbr), dy: keep(L.dy), al: keep(L.al),
         cap: keep(L.cap), val: keep(L.val), sh: L.sh, mdd: L.mdd, hit: L.hit, mom: L.mom,
         pz: L.pz, vz: L.vz, mz: L.mz, qz: L.qz, live: !L.est, auto: true,
-        ...(pxBad(L) ? { pxBad: L.pxBad } : {}),   // 2026-11-14: 과거 주가 기록 오류 — 펼친 종목의 52주 막대 자리에 그 줄 (detail.jsx StockRow)
+        ...(pxBad(L) ? { pxBad: L.pxBad, pxBadF: L.pxBadF } : {}),   // 2026-11-14: 과거 주가 기록 오류 — 펼친 종목의 52주 막대 자리에 그 줄 (detail.jsx StockRow)
         ...(L.pxd != null ? { pxd: L.pxd } : {}),   // v19.1c: 위와 같아요
         x: { dk: L.dk, de: L.de, roe: L.roe, debt: L.debt, opm: L.opm, g3: L.g3, frn: L.frn,
              mcap: L.cap, lo: L.lo, hi: L.hi, g3Q: L.cls === "us", g3Kr: L.cls === "kr" } });

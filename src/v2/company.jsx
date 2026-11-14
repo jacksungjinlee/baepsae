@@ -41,8 +41,8 @@ import { CO_TABS } from "./routes.js";
 import { isCompany } from "./stocklist.js";
 import { todayD1 } from "./engine.js";
 import { EarnTab, ValueTab, DivTab, DiscTab, ValueMore, EarnMore } from "./cotabs.jsx";
-import { icrOffShown, stmtNotWonFor, unitHeldFor, unitRowsBlank, pxBadFor } from "./fix.js";
-import { IcrOffNote, IcrOffLine, StmtCurNote, FcurNote, PbrZeroNote, UnitChkNote, PxBadNote } from "./fixnote.jsx";
+import { icrOffShown, stmtNotWonFor, unitHeldFor, unitRowsBlank, pxBadFor, pxBadFullFor, pxBadRowsBlank } from "./fix.js";
+import { IcrOffNote, IcrOffLine, StmtCurNote, FcurNote, PbrZeroNote, UnitChkNote, PxBadNote, PxBadOneNote, pxBadOneText } from "./fixnote.jsx";
 import { fcurRowsBlank, fcurBlank, fcurDyBlank, pbrZeroOf, pbrZeroRowsBlank } from "./fcur.js";
 import { RecordButton, RecordFlow, companyFlow } from "./records.jsx";
 import { decksFor } from "./records.js";
@@ -115,8 +115,10 @@ export function tileViews(load, s) {
   if (pxBadFor(s, co) && T().label.risk) {
     // 과거 주가 기록 오류 (data.json pxBad, Jack 2026-11-14): the beta and its band were blanked (a broken price history), so the
     // tile is held at "–" under its label, with no picture, number or date; never 자료가 없어요, which is not why. The reason is the
-    // header's line (PxBadNote, in the 52주 bar's place), once on the page.
-    out.push({ topic: "risk", label: T().label.risk, phrase: "–", number: null, rule: "pxbad", data: {}, basis: null, art: null });
+    // header's line (PxBadNote, in the 52주 bar's place), once on the page. 2026-11-14 evening (Jack): when the 52주 range shows (a bad day
+    // over 252 bars back), the short line sits in the tile instead, in the number's place (note).
+    out.push({ topic: "risk", label: T().label.risk, phrase: "–", number: null, rule: "pxbad", data: {}, basis: null, art: null,
+      note: pxBadOneText(s, co, "beta") });
   } else {
     // v19.1b data: the beta band as the number ("코스피 1% → 평균 0.9~1.1%"); no band -> na. Older files: the phrase only
     // (no betaSE in the data), never a bare beta.
@@ -159,6 +161,7 @@ function Tile({ v, onOpen }) {
       <div data-ui-v2="tile-phrase" style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(3), lineHeight: 1.35 })}>{v.phrase}</div>
       <TileArt art={v.art} />
       {v.number && <div data-ui-v2="tile-number" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{v.number}</div>}
+      {v.note && <div data-ui-v2="px-bad-one" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1), wordBreak: "keep-all" })}>{v.note}</div>}
       {v.basis && <div data-ui-v2="tile-basis" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: 2 })}>{v.basis}</div>}
     </>
   );
@@ -276,7 +279,7 @@ function Header({ load, s }) {
           the price date in the header, so the won line never reads as that day's rate */}
       {won && fxDateLine(load, s) && <div data-ui-v2="co-fx" data-fx-date={load.data.fxDate} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{fxDateLine(load, s)}</div>}
       {/* 과거 주가 기록 오류 (data.json pxBad, Jack 2026-11-14): no 52주 bar; Jack's line in its place, once on the page (every tab) */}
-      {pxBadFor(s, load.coByT.get(s.t) || null) ? <PxBadNote s={s} co={load.coByT.get(s.t) || null} style={{ marginTop: SPACE(3) }} /> : <RangeBar s={s} />}
+      {pxBadFullFor(s, load.coByT.get(s.t) || null) ? <PxBadNote s={s} co={load.coByT.get(s.t) || null} style={{ marginTop: SPACE(3) }} /> : <RangeBar s={s} />}
     </section>
   );
 }
@@ -488,6 +491,8 @@ function Fit({ load, s, store, wide }) {
       {fcurRowsBlank(s, mine.ids.map((id) => m.get(id))) && <FcurNote s={s} />}
       {pbrZeroRowsBlank(s, mine.ids.map((id) => m.get(id))) && <PbrZeroNote s={s} />}
       {unitRowsBlank(s, co, mine.ids.map((id) => m.get(id))) && <UnitChkNote s={s} co={co} />}
+      {/* 2026-11-14 evening (Jack): a 낮은 변동성 · 추세 row blank because of an old bad day (the 52주 range shows): the short line, once */}
+      {pxBadRowsBlank(s, co, mine.ids.map((id) => m.get(id))) && <PxBadOneNote s={s} co={co} field={["lz", "mz"].find((k) => pxBadOneText(s, co, k))} />}
       {(note || where(mk, "market")) && <Note>{[note, where(mk, "market")].filter(Boolean).map((x, i) => <span key={i}>{i ? " " : ""}{x}</span>)}</Note>}
       {F.all && F.sheet && (
         <div style={{ marginTop: SPACE(3) }}>
@@ -501,6 +506,7 @@ function Fit({ load, s, store, wide }) {
           {fcurRowsBlank(s, cur.rows) && <FcurNote s={s} />}
           {pbrZeroRowsBlank(s, cur.rows) && <PbrZeroNote s={s} />}
           {unitRowsBlank(s, co, cur.rows) && <UnitChkNote s={s} co={co} />}
+          {pxBadRowsBlank(s, co, cur.rows) && <PxBadOneNote s={s} co={co} field={["lz", "mz"].find((k) => pxBadOneText(s, co, k))} />}
           {where(cur, cur === ind ? "ind" : "market") && <Note>{where(cur, cur === ind ? "ind" : "market")}</Note>}
           {lineDate(load, s) && <DateLine date={lineDate(load, s)} fresh={load.fresh} />}
         </div>

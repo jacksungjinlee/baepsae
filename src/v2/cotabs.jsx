@@ -43,9 +43,9 @@ import { signedPct, eokText } from "./deckcalc.js";
 import { withAssume, assumeOf } from "./store.js";
 import { OLD_LINKS, dartFilingUrl } from "./routes.js";
 import { usOf, priceMd, priceDate, lineDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText, riskBandText, riskBandNote } from "./cofmt.js";
-import { epsFixFor, epsBasisCardGone, stmtNotWonFor, unitHeldFor, pxBadFor } from "./fix.js";
+import { epsFixFor, epsBasisCardGone, stmtNotWonFor, unitHeldFor, pxBadFor, pxBadFullFor, pxBadPartFor } from "./fix.js";
 import { epsPeriod, bpsPeriod } from "../repair.js";
-import { EpsFixNote, StmtCurNote, FcurNote, PbrZeroNote, UnitChkNote, unitChkText } from "./fixnote.jsx";
+import { EpsFixNote, StmtCurNote, FcurNote, PbrZeroNote, UnitChkNote, unitChkText, PxBadOneNote } from "./fixnote.jsx";
 import { fcurBlank, fcurDyBlank, pbrZeroOf } from "./fcur.js";
 import { CoinFlow, PayoutRing } from "./coart.jsx";
 
@@ -117,6 +117,16 @@ function Bars({ rows, fmt, aria, latest = COLOR.ink, earlier = COLOR.border }) {
 function Decomp({ co, s }) {
   const D = C.co.decomp;
   if (!D.title) return null;
+  // 2026-11-14 evening (Jack): its 3-year price change (r36) was blanked for a bad day in the series while the 52주 range shows: the
+  // card keeps its title and says so in place of the numbers (a stock whose 52주 range is blanked too has no card: the header says why)
+  if (pxBadPartFor(s, co)) {
+    return (
+      <Card data-ui-v2="co-decomp" data-head="pxbad">
+        <CardHead icon="chart-bar" tone="earn" title={D.title} />
+        <PxBadOneNote s={s} co={co} field="r36" />
+      </Card>
+    );
+  }
   const d = decompose(co);
   const head = d.head ? D.head[d.head] : null;
   // multipliers, as the old card: 3년 주가 = 이익 × 눈높이 (a true equation), each with its inputs (then → now)
@@ -247,7 +257,7 @@ export function EarnTab({ load, s, onMore }) {
       </Card>
       {!cur && <GrowthVs load={load} s={s} co={co} />}
       {/* 과거 주가 기록 오류 (data.json pxBad, Jack 2026-11-14): its 3-year price change was blanked, so no 주가 분해 (the header says why) */}
-      {!cur && !pxBadFor(s, co) && <Decomp co={co} s={s} />}
+      {!cur && !pxBadFullFor(s, co) && <Decomp co={co} s={s} />}
       {!cur && rows && E.moreTitle && <MoreLink id="co-earn-more" label={E.more} onClick={onMore} />}
     </div>
   );
@@ -527,6 +537,13 @@ export function ValueTab({ load, s, store, onMore }) {
       )}
       {!usOf(s) && <Dcf load={load} s={s} co={co} a={a} onTry={onMore} />}
       {/* 과거 주가 기록 오류 (pxBad): the beta was blanked; no 출렁임 card even if a beta came through (the header says why) */}
+      {/* 2026-11-14 evening (Jack): the 52주 range shows, so the blanked beta says so where the 출렁임 card would be, under its label */}
+      {pxBadPartFor(s, co) && C.co.tiles.label.risk && C.co.pxBadOne && (
+        <Card data-ui-v2="co-risk" data-rule="pxbad">
+          <CardHead icon="umbrella" tone="risk" title={C.co.tiles.label.risk} />
+          <PxBadOneNote s={s} co={co} field="beta" />
+        </Card>
+      )}
       {risk.rule !== "na" && C.co.risk[risk.rule] && !pxBadFor(s, co) && (
         <Card data-ui-v2="co-risk" data-rule={risk.rule} data-beta={risk.beta} data-lo={risk.band ? risk.band.lo : ""} data-hi={risk.band ? risk.band.hi : ""}>
           <CardHead icon="umbrella" tone="risk" title={C.co.risk[risk.rule]} />

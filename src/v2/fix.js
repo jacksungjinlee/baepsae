@@ -3,7 +3,7 @@
 // whole app reads that one way: load.js resolveLoad calls setEpsBasis(corp) once per load (the way engine.setDataShape
 // works), so a screen that only has a held stock (daily.jsx) knows it too. Until a file is loaded the line is on (a fix is
 // never assumed). Pure; no Korean (src/copy/v2.js C.fix).
-import { EPS_FIX_DATE, epsBasisLive, epsInFixed, epsTotalNci, epsTotalSide, isForeignIssuer, icrOff, warnEpsFixLate, epsNoticeOn, stmtCurOf, stmtNotWon, warnStmtCur, unitHeld, pxBad } from "../repair.js";
+import { EPS_FIX_DATE, epsBasisLive, epsInFixed, epsTotalNci, epsTotalSide, isForeignIssuer, icrOff, warnEpsFixLate, epsNoticeOn, stmtCurOf, stmtNotWon, warnStmtCur, unitHeld, pxBad, pxBadFull, pxBadHides } from "../repair.js";
 import { kstDate } from "../data.js";
 
 export { EPS_FIX_DATE, icrOff };
@@ -66,6 +66,17 @@ export const unitRowsBlank = (s, co, rows) => unitHeldFor(s, co) && (rows || [])
 // where the 52주 bar would be) and which parts with no numbers are left out or held at "–" (the 출렁임 tile and card, 주가는
 // 무엇으로 움직였나). s: the data.json row · co: its corp.json row (either may be missing). US stocks and funds: never.
 export const pxBadFor = (s, co) => !!s && s.cls === "kr" && (pxBad(s) || pxBad(co));
+// 2026-11-14 evening (Jack): which numbers were blanked (data.json pxBadF, else corp.json's): only those whose calculation window holds
+// the bad day. Full = the 52주 range too (the full line in the header); otherwise each blanked number gets the short line in its place.
+const pxRow = (s, co) => (pxBad(s) ? s : co);
+export const pxBadFullFor = (s, co) => pxBadFor(s, co) && pxBadFull(pxRow(s, co));
+export const pxBadPartFor = (s, co) => pxBadFor(s, co) && !pxBadFull(pxRow(s, co));
+export const pxBadHidesFor = (s, co, k) => pxBadFor(s, co) && pxBadHides(pxRow(s, co), k);
+// 내 기준과 맞는 정도: a 낮은 변동성 (lz) or 추세 (mz) row left blank by the mark, on a stock whose 52주 range shows (the short line under the
+// rows). rows: company.cardRanks(...).rows.
+export const PX_CARD_FIELD = { lowVol: "lz", trend: "mz" };
+export const pxBadRowsBlank = (s, co, rows) => pxBadPartFor(s, co)
+  && (rows || []).some((r) => r && r.blank && PX_CARD_FIELD[r.id] && pxBadHidesFor(s, co, PX_CARD_FIELD[r.id]));
 
 // The week's notice on 홈 and 포트폴리오 (repair.js epsNoticeOn): read from the load on screen (its corp.json), never on the
 // example page. load: the load state · todayIso: today in KST.

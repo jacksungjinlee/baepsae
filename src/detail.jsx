@@ -18,7 +18,7 @@ import { loadJson, freshness, mergeStocks, mdOf, loadCorpOnce, krGrowthBasis, st
 import { SHOW_VERDICTS, SHOW_SCORE, SHOW_ER } from "./flags.js";
 import { ABOUT_URL } from "./links.js";
 // 2026-11-08 (Jack): 한국 PER · ROE 가 보이는 칸마다 한 줄 — DART 다시 읽기 전까지 (src/repair.js, src/fixnote.jsx)
-import { EpsFixLineLoaded, PxBadLine } from "./fixnote.jsx";
+import { EpsFixLineLoaded, PxBadLine, PxBadOneLine } from "./fixnote.jsx";
 
 // 오늘 날짜 (YYYY-MM-DD) — 한국 날짜예요. 2026-11-12 (Jack): 예전에는 new Date().toISOString() 의 UTC 날짜를 써서, 한국 시간 00:00~09:00 에는
 // 공유 카드 · 점검 기록 · 주문 메모와 내보낸 파일 · 저장 목록에 어제 날짜가 찍혔어요. CLAUDE.md: 날짜는 모두 한국 시간.
@@ -2268,7 +2268,9 @@ function StockRow({ s, lang, t, mode, settings, loaded, onAdd, open, onToggle, p
             ))}
           </div>}
           {/* 과거 주가 기록 오류 (data.json pxBad, Jack 2026-11-14): 52주 · β · σ · 수익률이 비어요 — 52주 막대 자리에 그 줄 (한국어 화면만) */}
-          {s.pxBad ? <PxBadLine c={s} lang={lang} style={{ marginTop: 9 }} /> : x.lo != null && (
+          {/* 2026-11-14 저녁 (Jack): 52주는 보이면, 비운 β · σ · 3y α · 샤프 · 최대낙폭 칸 밑에 '이 숫자는 비워 두었어요' (한국어 화면만) */}
+          {s.pxBad && mode !== "simple" && <PxBadOneLine c={s} field="beta" lang={lang} style={{ marginTop: 9 }} />}
+          {s.pxBad && x.lo == null ? <PxBadLine c={s} lang={lang} style={{ marginTop: 9 }} /> : x.lo != null && (
             <div style={{ marginTop: 9 }}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: C.faint, marginBottom: 3 }}>
                 <span>{t("w52")}: {fmtPx(x.lo, s)}</span><span>{fmtPx(x.hi, s)}</span>

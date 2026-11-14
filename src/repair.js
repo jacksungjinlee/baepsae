@@ -227,3 +227,19 @@ export function unitHeld(row) {
 export function pxBad(row) {
   return !!row && typeof row === "object" && typeof row.pxBad === "string" && row.pxBad.length > 0;
 }
+// 2026-11-14 evening (Jack: "hide only the numbers whose calculation window includes the bad day"): the pipeline blanks only the
+// fields whose window holds the bad day and lists them in pxBadF (validate_data.py PX_BAD_WIN: the whole-series fields always; hi ·
+// lo · mom · mz when the day is in the last 252 bars; r3 in the last 64; r1 in the last 22). The same list as validate_data.py
+// PX_BAD_DATA (tests/test_px_bad_app.py checks). A mark without a readable list counts as everything blanked (never assume a
+// number is good).
+export const PX_BAD_ALL = ["hi", "lo", "vol", "beta", "betaSE", "betaN", "al", "r1", "r3", "r36", "mom", "sh", "mdd", "hit", "mz", "lz"];
+export function pxBadFields(row) {
+  if (!pxBad(row)) return [];
+  const f = row.pxBadF;
+  return Array.isArray(f) && f.every((k) => typeof k === "string") ? f : PX_BAD_ALL;
+}
+export const pxBadHides = (row, k) => pxBadFields(row).includes(k);
+// The full line ("…52주 범위와 출렁임·위험 숫자는 비워 두었어요.") where the 52주 range is blanked too: the whole-series numbers (출렁임,
+// 베타, 낙폭, 3년 수익률) always are, so then every number of Jack's list on the company screens is blank. Otherwise (a bad day over
+// 252 bars back) each blanked number gets the short line ("…이 숫자는 비워 두었어요.") in its own place.
+export const pxBadFull = (row) => pxBadHides(row, "hi");
