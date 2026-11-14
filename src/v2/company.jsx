@@ -26,7 +26,7 @@ import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.
 import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, CardPic, SIDE_W, tx, tap, useMode, useLayout } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { findCompany, groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, warnings, cardRanks, myCards, holdingsOf, RANK_CARDS,
-  splitGuardCount, SPLIT_GUARD, divCheckCount, warnChips, warnKind, uncheckedCount } from "./company.js";
+  splitGuardCount, SPLIT_GUARD, divCheckCount, warnChips, warnKind, uncheckedCount, divShareHidden } from "./company.js";
 import { EarnBars, ValueScale, Coins, Waves } from "./coart.jsx";
 import { pfRows, isImported, limitsOf } from "./pf.js";
 import { limitPct } from "./pfview.jsx";
@@ -114,6 +114,13 @@ export function tileViews(load, s) {
     const number = r.yieldPct != null ? `${C.pick.receipt.yield} ${yieldText(r.yieldPct)}` : null;
     add("div", T().label.div, r, phrase, number, { dps3: r.d3 || null, dps: r.dps ?? null, y: r.yieldPct, dpsok: r.dpsOk ? "1" : "" },
       divArt(r.rule));
+    // v19.1i (Jack's line, 2026-11-08): a Korean payer whose yield is hidden because the share-count change could not be matched to
+    // filings (dvWhy nc-*) says why, in the number's place (company.js divShareHidden); other hidden yields stay as they were.
+    const last = out[out.length - 1];
+    if (last && last.topic === "div" && !number && !usOf(s) && divShareHidden(s, co) && C.co.div.shareHidden) {
+      last.note = C.co.div.shareHidden;
+      last.noteUi = "div-share-hidden";
+    }
   }
   if (pxBadFor(s, co) && T().label.risk) {
     // 과거 주가 기록 오류 (data.json pxBad, Jack 2026-11-14): the beta and its band were blanked (a broken price history), so the
@@ -164,7 +171,7 @@ function Tile({ v, onOpen }) {
       <div data-ui-v2="tile-phrase" style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(3), lineHeight: 1.35 })}>{v.phrase}</div>
       <TileArt art={v.art} />
       {v.number && <div data-ui-v2="tile-number" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{v.number}</div>}
-      {v.note && <div data-ui-v2="px-bad-one" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1), wordBreak: "keep-all" })}>{v.note}</div>}
+      {v.note && <div data-ui-v2={v.noteUi || "px-bad-one"} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1), wordBreak: "keep-all" })}>{v.note}</div>}
       {v.basis && <div data-ui-v2="tile-basis" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: 2 })}>{v.basis}</div>}
     </>
   );

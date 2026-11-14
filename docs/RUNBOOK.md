@@ -461,6 +461,37 @@ Standing daily warnings until the repair PR: "국내 시계열 하루 가격 제
 beta 채움" and "국내 vol 채움" at 96.8% (floor 95%, warning under 97%; 2,395 of 2,473: volatility and beta are whole-series,
 so every marked stock blanks them). 45 more marked stocks are still a pass; the 46th would fail both rows.
 
+## Korean dividend proof (배당 기준 증명, since #PR — Jack 2026-11-14, item 5)
+
+A Korean payer whose dividend could not be put on today's share basis (`divSt` nc · nd) used to show "배당을 줘요" with no
+yield. The daily run now tries to prove that basis (`fetch_data.py` `DivWhy.prove`, after the `dvWhy` check, before the
+yield and the 배당 rank): the factor is the product of the 액면분할 · 주식병합 · 무상증자 filings after the report year
+(the same DART decision lookups and cache entry as `dvWhy`, only whole split ratios such as 2, 5, 0.5), and it must agree with
+the share counts, either **today** (the dividend total ÷ today's listed shares = the dividend per share ÷ the factor, ±3%) or
+**yearEnd** (the shares that got the dividend = that year-end's outstanding shares in 주식의 총수 현황 ±3%, and today's
+listed shares between those × the factor and the year-end issued shares plus the new shares rights issues or bonds filed
+since, × the factor, +3%). A spin-off or stock dividend decision in between blocks it. An earlier year's bar comes back
+only when the shares that got each year's dividend differ by the filings' factor (±15%). A restored stock carries
+`dvProof` (data.json); one whose share-count change could not be matched gets `dvWhy` nc-mismatch / nc-unexplained and
+Jack's line on the 2.0 배당 tile and tab; one whose own dividend table disagrees with its share counts (an interim dividend
+left out of the per-share row, a unit slip, no total) stays as before with no line. On the 2026-11-14 publish: 36 of the 72
+hidden yields come back (27 of them with their bars too), 14 stocks carry the line, 22 have a dividend table that disagrees;
+27 of the 86 yields without bars get their bars back.
+
+- **DART calls:** about 4 per stock the first time (the filings lists, decisions, the year-end share report, rights and
+  bond counts when needed), at most 150 companies a run (`PROVE_PER_RUN`, separate from `dvWhy`'s own 150); about 160
+  stocks on 2026-11-14, so the first run does most of them (about 600 calls) and the next run the rest, then 0–10 a day.
+  Not a full-DART run; a full-DART run adds about 640 calls to its estimate (logged as a separate line).
+- **FAIL "배당 기준 증명 기록 (divCheck.proof)"**: the counts in `divCheck.proof` differ from the stocks' `dvProof`, a named
+  stock does not exist or carries a proof, or a stock listed as hidden has no nc `dvWhy` (no line). It is our own
+  bookkeeping: look at the run's "배당 기준 증명" log lines. A publish without `divCheck.proof` after one that had it fails too.
+- **FAIL "되살린 배당수익률 = 배당 총액 ÷ 시가총액 (dvProof)"**: a restored yield does not agree with the dividend total ÷
+  market cap within what the recorded year-end treasury shares and filed new shares explain, a proof's numbers differ from
+  corp.json `cash3` or today's share count, or an earlier bar's factor does not match the two years' dividend totals. That
+  is a wrong conversion; never loosen the row. The detail list under the table names each stock and the failing number.
+- **WARN "배당 기준 증명 경고 (숨김 · 배당 표 어긋남 · 조회 실패)"**: names the stocks still hidden. A failed lookup (DART
+  down, a filing that could not be read, the 150-company limit) changes nothing and is tried again on the next run.
+
 ## US stocks added by hand (EXTRA_US)
 
 The US list is the S&P 500 (FinanceDataReader's list), Nasdaq's first 400 and `EXTRA_US` in `fetch_data.py`. On
