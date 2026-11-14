@@ -433,16 +433,21 @@ has 10% of the sale proceeds withheld, and several Korean brokers restricted buy
 
 **Gate row "손으로 더한 미국 종목 (EXTRA_US): 목록에 있거나 빠진 이유".** Every `EXTRA_US` stock must be in the day's
 data, or named in `data.json` `usExtraMissing` with the reason the run left it out (Yahoo gave no prices, less than 60
-days of prices, a broken bar, a preferred share, a Korean company's US listing). A named stock warns, with its reason; a
-stock missing with no reason fails the publish (a pipeline bug: the run always writes a reason). The site checks (deploy,
-watchdog) only warn, so code that adds a stock can go live before the next publish brings it in.
+days of prices, a broken bar, a preferred share, a Korean company's US listing; if the run cannot tell, the reason says so
+and asks for a check). A named stock warns, with its reason. The publish fails only when a missing stock has no reason in
+the record at all: the run writes one for every stock it leaves out, so this catches a pipeline list that no longer matches
+the gate's own list (`US_EXTRA_SET`) or a broken record. A file without the record warns on a publish and is skipped by the
+site checks (deploy, watchdog), which also only warn on a missing reason, so code that adds a stock can go live before
+the next publish brings it in.
 
 **Gate row "미국 상장 외국 회사: 회사 합계와 맞춘 PER·PBR·배당수익률만".** For the foreign companies in `US_FOREIGN` that
 report in dollars (no `fcur`; the others are blanked by the currency rule, #114), the run compares Yahoo's per-share
 numbers with company totals (`us_foreign_cuts`): PER with market cap ÷ net income to common (within 10%), PBR with
-(market cap ÷ net income) × ROE (within 1.5×, ROE uses average equity), and the dividend yield with the dividends actually
+(market cap ÷ net income) × ROE (within 1.35×: narrower than √2, so a 2× ADR mistake never stays inside it; the largest
+gap for a correct PBR on 2026-11-14 was BHP's 1.24×, ROE uses average equity), and the dividend yield with the dividends actually
 paid in the last 350 days (Yahoo's dividend records, per ADR, in dollars) ÷ today's close (within 10%). Anything that
-does not match, or cannot be compared (no net income, no ROE, no dividend records), is blanked and listed in
+does not match, or cannot be compared (no net income, no ROE, no dividend records, or Yahoo did not confirm that the
+statements are in dollars: then all three are blanked), is blanked and listed in
 `data.json` `usForeign.cut` with the numbers; the run log prints one line per blank. On 2026-11-14 (local run): BP PER
 and PBR (Yahoo PBR 7.62 is the ADR price over one ordinary share's book value; an ADR is 6 shares), HSBC PBR (7.07) and
 yield (Yahoo's 2.23% leaves out the larger fourth dividend; paid in the last year: 4.18%), Diageo PBR (93.64), AB InBev
@@ -454,9 +459,10 @@ shows "–" for these blanks without a reason line (no approved line yet). TSM, 
 in through Nasdaq's list are not in `US_FOREIGN`: #114 keeps a company's numbers when its currency is unknown, while this
 check blanks what it cannot compare, so widening it is Jack's decision.
 
-Open items from 2026-11-14: BHP and Rio Tinto have no 업종 group (Yahoo's "Other Industrial Metals & Mining" is not in
-`data/industry_us.csv`); Unilever's Yahoo "split" of 2025-12-09 (×0.888, the Magnum Ice Cream demerger) is left out like
-other spin-off adjustments, but if Unilever also consolidated its shares that day it needs an override row with a source.
+Open item from 2026-11-14: BHP and Rio Tinto have no 업종 group (Yahoo's "Other Industrial Metals & Mining" is not in
+`data/industry_us.csv`). Unilever's Yahoo "split" of 2025-12-09 (×0.888) is a real 8-for-9 share consolidation (shares and
+ADSs, the ADS stays one share) on the day of the Magnum Ice Cream demerger, which Yahoo merged with the demerger adjustment;
+it is in `SPLIT_OVERRIDES` as 8:9 with its sources (Unilever RNS 2025-12-08, the shareholder circular, IRS Form 8937).
 
 ## Roll back
 
@@ -619,7 +625,8 @@ other spin-off adjustments, but if Unilever also consolidated its shares that da
   - Yahoo also writes spin-offs as "splits" with ratios like 1253:1000 (GE, GE Vernova); those are not share-count
     changes, so only clean ratios are kept (the reduced fraction has a side of 20 or less: 10:1, 1:15, 3:2, 21:20).
     Real events Yahoo writes wrongly or leaves out are in `SPLIT_OVERRIDES` in `fetch_data.py`, each with its source:
-    RYAAY 2024-09-30 ×2.5 (ADS ratio change, not a spin-off); HLT 2017-01-04 and DD 2019-06-03 1:3 (reverse splits on a
+    RYAAY 2024-09-30 ×2.5 (ADS ratio change, not a spin-off); UL 2025-12-09 8:9 (a share consolidation on the Magnum Ice
+    Cream demerger day; Yahoo writes ×0.888); HLT 2017-01-04 and DD 2019-06-03 1:3 (reverse splits on a
     spin-off day); WTW 2016-01-05 (2.649 → 1) and TRI 2018-11-27 (×0.9079) and 2023-06-23 (×0.963957) share
     consolidations; HON 2026-06-29 1:2 (a reverse split on the Honeywell Aerospace spin-off day, Honeywell 8-K
     2026-06-05; Yahoo writes 1907:2000); CBSH's 5% stock dividends Yahoo misses (2016, 2017, 2019, 2022, 2023). FERG's 2018

@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.join(ROOT, "tests"))
 import fetch_data as F  # noqa: E402
 import validate_data as V  # noqa: E402
 from fixture_data import good_pair, clone  # noqa: E402
+import test_v196a_fxhist_splits as T196  # noqa: E402  (분할 관문 시험의 데이터 · 관문 실행 도우미를 그대로 써요)
 
 EXTRA = "손으로 더한 미국 종목 (EXTRA_US): 목록에 있거나 빠진 이유"
 FOREIGN = "미국 상장 외국 회사: 회사 합계와 맞춘 PER·PBR·배당수익률만"
@@ -32,11 +33,11 @@ ADDED = ["BTI", "ADC", "NNN", "MAIN", "WPC", "STAG", "EPR", "OHI", "ENB", "BCE",
          "AZN", "HSBC", "SAP", "NVS", "RIO", "BHP", "TTE", "DEO", "BUD", "SAN", "GSK"]
 
 # 2026-11-14 야후 info (필요한 칸만 · 값 그대로)
-SHEL = {"shortName": "Shell PLC", "quoteType": "EQUITY", "financialCurrency": "USD", "currency": "USD", "sector": "Energy",
+SHEL = {"shortName": "Shell PLC", "longName": "Shell plc", "quoteType": "EQUITY", "financialCurrency": "USD", "currency": "USD", "sector": "Energy",
         "industry": "Oil & Gas Integrated", "marketCap": 280164270080, "netIncomeToCommon": 32707000320, "trailingPE": 8.600695,
         "priceToBook": 1.4303864, "returnOnEquity": 0.17432, "dividendYield": 3.15, "averageVolume": 6141538,
         "longBusinessSummary": "Shell plc operates as an energy and petrochemical company."}
-BP = {"shortName": "BP p.l.c.", "quoteType": "EQUITY", "financialCurrency": "USD", "currency": "USD", "sector": "Energy",
+BP = {"shortName": "BP p.l.c.", "longName": "BP p.l.c.", "quoteType": "EQUITY", "financialCurrency": "USD", "currency": "USD", "sector": "Energy",
       "industry": "Oil & Gas Integrated", "marketCap": 117707300864, "netIncomeToCommon": 8961000448, "trailingPE": 22.292685,
       "priceToBook": 7.6223836, "returnOnEquity": 0.13424, "dividendYield": 4.55, "averageVolume": 9148653,
       "longBusinessSummary": "BP p.l.c. provides carbon products and services."}
@@ -44,7 +45,8 @@ HSBC = {"shortName": "HSBC Holdings, plc.", "financialCurrency": "USD", "marketC
         "trailingPE": 11.715033, "priceToBook": 7.0720067, "returnOnEquity": 0.14219, "dividendYield": 2.23}
 BUD = {"shortName": "Anheuser-Busch Inbev SA Sponsor", "financialCurrency": "USD", "marketCap": 167001817088,
        "netIncomeToCommon": 9868999680, "trailingPE": 17.237804, "priceToBook": 10.708592, "returnOnEquity": None, "dividendYield": 1.59}
-BTI = {"shortName": "British American Tobacco  Indus", "quoteType": "EQUITY", "financialCurrency": "GBP", "currency": "USD",
+BTI = {"shortName": "British American Tobacco  Indus", "longName": "British American Tobacco p.l.c.",
+       "quoteType": "EQUITY", "financialCurrency": "GBP", "currency": "USD",
        "sector": "Consumer Defensive", "industry": "Tobacco", "marketCap": 132940275712, "netIncomeToCommon": 6349000192,
        "trailingPE": 15.86923, "priceToBook": 10.759727, "returnOnEquity": 0.13424, "dividendYield": 5.4, "dividendRate": 3.34,
        "trailingAnnualDividendRate": 2.45, "averageVolume": 4989773, "longBusinessSummary": "British American Tobacco p.l.c. provides tobacco."}
@@ -71,6 +73,8 @@ def test_the_added_list_and_its_decisions():
     assert V.US_ADDED_SET == set(ADDED) and V.US_EXTRA_SET == set(F.EXTRA_US) and V.US_FOREIGN_SET == set(F.US_FOREIGN)
     assert set(ADDED) <= V.US_COMPANY_SET and not set(ADDED) & V.US_ETF_SET
     assert "netIncomeToCommon" in F.US_INFO_KEYS and F.US_INFO_SCHEMA == 3                # 칸만 더하고 모양 표시는 그대로 (770곳을 다시 받지 않게)
+    assert F.US_ADDED_LONG_NAME == set(ADDED)
+    assert F.US_FOREIGN_BAND == {"per": 1.10, "pbr": 1.35, "dy": 1.10} and F.US_FOREIGN_BAND["pbr"] < 2 ** 0.5   # 2배 ADR 실수가 숨지 못해요
 
 
 def test_no_added_ticker_looks_like_a_preferred_or_depositary_share():
@@ -91,6 +95,10 @@ def test_the_added_seed_covers_every_added_stock():
     assert not set(F.SPLIT_OVERRIDES) & set(rows)
     for spin in (("BHP", "2022-06-02"), ("GSK", "2022-07-22"), ("NVS", "2019-04-09"), ("WPC", "2023-11-02"), ("UL", "2025-12-09")):
         assert spin not in rows                                                         # 야후 분사 조정 (깨끗하지 않은 배율)
+    # 유니레버 2025-12-09 는 진짜 8:9 주식 병합 (Magnum 분리와 같은 날 · 야후는 둘을 합쳐 ×0.888 — 깨끗하지 않아 다운로드에서 빠져요): 고정 표에
+    r, note = F.SPLIT_OVERRIDES[("UL", "2025-12-09")]
+    assert r == 8 / 9 and F.split_is_clean(r) and V.simple_ratio(r) and "RNS" in note and "8937" in note
+    assert not F.split_is_clean(0.888)
     first = F.load_split_seed()
     both = F.add_more_seeds(first)
     assert len(both[0]) == len(first[0]) + 4 and both[1] == first[1] | set(ADDED) and both[2] == min(first[2], end)
@@ -109,6 +117,34 @@ def test_the_first_run_reads_no_split_history_for_the_added_stocks(monkeypatch):
     assert f["splitsInfo"]["gap"] == []
     have = {(t, d): r for t, d, r in f["splits"]}
     assert have[("SONY", "2024-10-09")] == 5.0 and have[("AZN", "2026-02-02")] == 0.5 and have[("BTI", "2017-02-14")] == 2.0
+
+
+def test_unilever_consolidation_is_published_without_a_gate_warning(monkeypatch):
+    """UL 이 목록에 든 날: 고정 표의 8:9 줄이 splits 에 들어가고 (야후 ×0.888 은 깨끗하지 않아 오늘 다운로드에서 빠져요), 관문 두 줄은 UL 때문에
+    경고하지 않아요 (고정 표와 같은 배율의 새 줄은 검토한 줄이에요)."""
+    T196.Log(monkeypatch)
+    cur, prev, final = T196.pair()
+    cur["data"]["stocks"].append(dict(next(s for s in cur["data"]["stocks"] if s["t"] == "MSFT"), t="UL"))
+    us = [s["t"] for s in cur["data"]["stocks"] if s.get("cls") == "us" and not s.get("fund")]
+    seed = ({(t, d): r for t, d, r in V.MUST_SPLITS if (t, d) not in F.SPLIT_OVERRIDES}, set(us), dt.date(2026, 10, 30))
+    recent = sorted(x for x in prev["data"]["splits"] if x[1] >= T196.START.isoformat() and (x[0], x[1]) not in F.SPLIT_OVERRIDES)
+    f = F.splits_fields(prev["data"], us, recent, [], T196.START, T196.TODAY, seed=seed)     # 야후 오늘 다운로드 = 어제 줄 그대로 (UL ×0.888 은 빠짐)
+    assert ["UL", "2025-12-09", 8 / 9] in f["splits"]
+    assert ["UL", "2025-12-09", 8 / 9, F.SPLIT_OVERRIDES[("UL", "2025-12-09")][1]] in f["splitsInfo"]["fixed"]
+    cur["data"].update(f)
+    rep = T196.check(cur, prev, final)
+    spl, spc = T196.row(rep, T196.SPL), T196.row(rep, T196.SPC)
+    assert spl[3] == "PASS" and "최근 QQQ 2026-10-15 ×2 · UL 2025-12-09 ×0.888889" in spl[1] and not rep.failed, rep.table()
+    assert spc[3] == "PASS" and spc[1] == "그대로 (어제 13건 → 오늘 14건 · 새 1건)", spc        # 고정 표의 줄이라 '새 줄 정수 아닌 배율' 경고 없음
+    assert not any("UL" in x for _t, items in rep.details for x in items if "분할" in _t)
+
+
+def test_the_daily_log_says_when_an_unclean_yahoo_ratio_has_an_override(monkeypatch):
+    lines = []
+    monkeypatch.setattr(F, "log", lines.append)
+    F.log_us_splits([], {"noCol": [], "spin": ["UL 2025-12-09 ×0.888", "WPC 2023-11-02 ×1.021"], "future": [], "bad": []}, 2,
+                    dt.date(2026, 11, 14))
+    assert lines[-1].endswith("UL 2025-12-09 ×0.888 (고정 표: 1:1.125 병합), WPC 2023-11-02 ×1.021")
 
 
 def test_a_broken_added_seed_is_left_out_loudly(tmp_path, monkeypatch):
@@ -166,6 +202,49 @@ def test_nothing_to_compare_means_blank():
     assert F.us_foreign_cuts({"price": 50.0}, SHEL, None) == {}                               # 비울 칸이 없어요
 
 
+def test_unconfirmed_statement_currency_blanks_all_three():
+    """리뷰 S1: 야후 첫 응답에 financialCurrency 가 없으면 fcur 가 붙지 않아 이 검사가 돌아요. 통화가 섞인 숫자끼리는 맞을 수 있어서 (UL · TD …)
+    달러로 확인되지 않은 회사의 PER · PBR · 배당수익률은 모두 비워요."""
+    for fc in (None, "GBP", "XXX", float("nan")):
+        info = dict(SHEL)
+        if fc is None:
+            info.pop("financialCurrency")
+        else:
+            info["financialCurrency"] = fc
+        cuts = F.us_foreign_cuts({"price": 99.08, "per": 8.6, "pbr": 1.43, "dy": 3.15}, info, 3.088)
+        assert set(cuts) == {"per", "pbr", "dy"} and all(w.startswith("재무제표 통화를 모름") for w in cuts.values()), fc
+    assert F.us_foreign_cuts({"price": 99.08, "per": 8.6, "pbr": 1.43, "dy": 3.15}, dict(SHEL, financialCurrency="usd"), 3.088) == {}
+    assert F.us_foreign_cuts({"price": 99.08, "pbr": 1.43}, {k: v for k, v in SHEL.items() if k != "financialCurrency"}, None) == \
+        {"pbr": "재무제표 통화를 모름 (야후 financialCurrency None — 달러로 확인되지 않음)"}
+
+
+def test_unknown_currency_company_through_the_check_is_blanked_and_logged(monkeypatch):
+    """UL 의 첫 응답에 통화가 없던 날 (2026-11-14 야후 값: 유로 재무제표 · 달러 시가총액이라 PBR 7.84 가 '맞음'으로 보여요)."""
+    lines = []
+    monkeypatch.setattr(F, "log", lines.append)
+    ul = {"shortName": "Unilever PLC", "longName": "Unilever PLC", "marketCap": 142574436352, "netIncomeToCommon": 5598000128,
+          "trailingPE": 13.375758, "priceToBook": 7.836206, "returnOnEquity": 0.31869, "dividendYield": 3.15}
+    out = [rec_of("UL", 66.21, ul)]
+    assert "fcur" not in out[0] and out[0]["pbr"] == 7.84
+    got = F.us_foreign_check(out, {"UL": {"info": ul}}, None, dt.date(2026, 11, 13))
+    assert got["checked"] == ["UL"] and sorted(x[1] for x in got["cut"]) == ["dy", "pbr", "per"]
+    assert not any(k in out[0] for k in ("per", "pbr", "dy"))
+    assert any(x.startswith("  !! 미국 상장 외국 회사 중 재무제표 통화가 달러로 확인되지 않아") and x.endswith("1곳: UL") for x in lines), lines
+
+
+def test_the_bands_catch_moderate_misses():
+    """리뷰 S2: 허용 폭을 넓히면 이 시험이 잡아요 — PBR 2배 (ADR 하나 = 원주 2주를 1주로 셈) · PER 1.2배."""
+    r = {"price": 99.08, "pbr": 2.86}
+    assert set(F.us_foreign_cuts(r, dict(SHEL, priceToBook=2.86), None)) == {"pbr"}            # 2.86 ↔ 1.49 (1.92배)
+    assert set(F.us_foreign_cuts(r, dict(SHEL, priceToBook=1.49 * 1.4), None)) == {"pbr"}      # 1.40배: 1.35 밖
+    assert F.us_foreign_cuts(r, dict(SHEL, priceToBook=1.49 * 1.3), None) == {}                # 1.30배: 1.35 안
+    pe_c = SHEL["marketCap"] / SHEL["netIncomeToCommon"]
+    assert set(F.us_foreign_cuts({"per": 10.3}, dict(SHEL, trailingPE=pe_c * 1.2), None)) == {"per"}    # 1.20배
+    assert F.us_foreign_cuts({"per": 9.3}, dict(SHEL, trailingPE=pe_c * 1.08), None) == {}            # 1.08배
+    assert set(F.us_foreign_cuts({"price": 100.0, "dy": 3.5}, SHEL, 3.0)) == {"dy"}                    # 3.5% ↔ 3.0% (1.17배)
+    assert F.us_foreign_cuts({"price": 100.0, "dy": 3.2}, SHEL, 3.0) == {}                              # 1.07배
+
+
 def test_a_non_dollar_adr_is_blanked_by_the_currency_rule_first():
     """BTI (재무제표 파운드 · ADR 1주): #114 의 fcur 가 PER · PBR · 배당수익률을 비워요. 그래서 외국 회사 검사는 이 회사를 보지 않아요.
     2026-11-14 손으로 확인: 야후 5.40% (ADR 하나당 분기 0.835달러 × 4 ÷ 61.89) — 실제 지난 4번 3.254달러 = 5.26% 와 맞지만, Jack 의 규칙대로 비워요."""
@@ -176,6 +255,38 @@ def test_a_non_dollar_adr_is_blanked_by_the_currency_rule_first():
     rec_ = F.us_foreign_check(out, {"BTI": {"info": BTI}, "SHEL": {"info": SHEL}}, None, dt.date(2026, 11, 13))
     assert rec_["checked"] == ["SHEL"]
     assert rec_["cut"] == [["SHEL", "dy", "배당 기록(야후 다운로드의 Dividends 칸) · 가격을 읽지 못함"]]    # 다운로드가 없으면 배당은 비어요
+
+
+def test_added_stocks_use_the_long_name_and_older_stocks_keep_theirs():
+    """리뷰 N3: 더한 28곳은 야후 긴 이름 (짧은 이름은 31자에서 잘리고 꼬리가 붙어요). 예전부터 있던 종목은 그대로 짧은 이름."""
+    cases = {"BTI": ("British American Tobacco  Indus", "British American Tobacco p.l.c."),
+             "BUD": ("Anheuser-Busch Inbev SA Sponsor", "Anheuser-Busch InBev SA/NV"),
+             "SAN": ("Banco Santander, S.A. Sponsored", "Banco Santander, S.A."), "SAP": ("SAP  SE", "SAP SE"),
+             "TD": ("Toronto Dominion Bank (The)", "The Toronto-Dominion Bank")}
+    for t, (short, long_) in cases.items():
+        r = {"t": t, "price": 10.0}
+        F.apply_us_info(r, {"shortName": short, "longName": long_}, 10.0, 1333.8)
+        assert r["nk"] == r["ne"] == long_, t
+        r = {"t": t, "price": 10.0}
+        F.apply_us_info(r, {"shortName": short}, 10.0, 1333.8)            # 긴 이름이 없으면 짧은 이름
+        assert r["nk"] == short
+    r = {"t": "TSM", "price": 10.0}
+    F.apply_us_info(r, {"shortName": "Taiwan Semiconductor Manufactur", "longName": "Taiwan Semiconductor Manufacturing Company Limited"},
+                    10.0, 1333.8)
+    assert r["nk"] == "Taiwan Semiconductor Manufactur"                   # 예전 종목은 바꾸지 않아요
+    r = {"t": "UL", "price": 10.0}
+    F.apply_us_info(r, {"longName": "  Unilever   PLC "}, 10.0, 1333.8)
+    assert r["nk"] == "Unilever PLC"
+
+
+def test_a_hand_decided_company_is_never_flipped_to_etf():
+    """리뷰 N4: 야후 종류가 하루 ETF 로 틀려도 사람이 회사 주식으로 정한 종목(US_NOT_ETF)은 그대로 — 관문의 ETF 여부 줄이 모두의 발행을 막지 않게."""
+    out = [{"t": "BTI", "etf": False}, {"t": "SHOP", "etf": False}, {"t": "NEWETF", "etf": False}]
+    cache = {t: {"info": {"quoteType": "ETF"}} for t in ("BTI", "SHOP", "NEWETF")}
+    skipped = []
+    assert F.etf_from_quote_type(out, cache, skipped=skipped) == ["NEWETF"]
+    assert [r["etf"] for r in out] == [False, False, True] and skipped == ["BTI(ETF)", "SHOP(ETF)"]
+    assert F.etf_from_quote_type([{"t": "SHOP", "etf": False}], {"SHOP": {"info": {"quoteType": "MUTUALFUND"}}}) == []
 
 
 def test_trailing_dividends_window():
@@ -240,7 +351,8 @@ def _fake_yf(series, divs, infos, calls):
     return types.SimpleNamespace(download=download, Ticker=Ticker)
 
 
-def test_fetch_us_checks_foreign_numbers_and_names_missing_extras(tmp_path, monkeypatch):
+def _fetch(tmp_path, monkeypatch):
+    """아래 시험의 가짜 야후로 fetch_us 를 한 번 (BTI 파운드 · SHEL · BP 달러 · AAPL · NNN 30일 · TD 시세 없음) → (us, meta, 로그)."""
     today = dt.date(2026, 11, 14)
     days = pd.bdate_range(today - dt.timedelta(days=500), dt.date(2026, 11, 13))
 
@@ -249,13 +361,13 @@ def test_fetch_us_checks_foreign_numbers_and_names_missing_extras(tmp_path, monk
         s = pd.Series(np.exp(np.cumsum(rnd.normal(0, 0.01, len(days)))), index=days)
         return s * last / float(s.iloc[-1])                          # 마지막 종가를 2026-11-13 값으로
     series = {"_spx": walk(1, 6700.0), "SHEL": walk(2, 99.08), "BP": walk(3, 45.70), "BTI": walk(4, 61.89), "AAPL": walk(5, 270.0),
-              "NNN": walk(6, 41.18).tail(30)}
+              "NNN": walk(6, 41.18).tail(30), "STAG": pd.Series(np.nan, index=days)}      # STAG: 야후가 빈 칸만 줌 (리뷰 N6)
     divs = {"SHEL": [("2025-11-14", 0.716), ("2026-02-20", 0.744), ("2026-05-22", 0.7812), ("2026-08-14", 0.7812), ("2026-11-13", 0.7812)],
             "BP": [("2026-02-20", 0.499), ("2026-05-15", 0.499), ("2026-08-14", 0.52), ("2026-11-13", 0.52)]}
     aapl = dict(SHEL, shortName="Apple Inc.", industry="Consumer Electronics", sector="Technology")
     infos = {"SHEL": SHEL, "BP": BP, "BTI": BTI, "AAPL": aapl, "NNN": SHEL}
     calls = []
-    syms = ["AAPL", "BP", "BTI", "NNN", "SHEL", "TD"]                # TD: 야후가 시세를 주지 않아요
+    syms = ["AAPL", "BP", "BTI", "NNN", "SHEL", "STAG", "TD"]        # TD: 야후가 그 종목을 아예 주지 않아요
     monkeypatch.setitem(sys.modules, "yfinance", _fake_yf(series, divs, infos, calls))
     monkeypatch.setattr(F, "us_tickers", lambda names: list(syms))
     monkeypatch.setattr(F, "us_last_complete_day", lambda now=None: dt.date(2026, 11, 13))
@@ -264,8 +376,15 @@ def test_fetch_us_checks_foreign_numbers_and_names_missing_extras(tmp_path, monk
     lines = []
     monkeypatch.setattr(F, "log", lines.append)
     us, *_rest, meta = F.fetch_us(today - dt.timedelta(days=500), today, 0.03)
+    meta.pop("_index")
+    return us, meta, lines
+
+
+def test_fetch_us_checks_foreign_numbers_and_names_missing_extras(tmp_path, monkeypatch):
+    us, meta, lines = _fetch(tmp_path, monkeypatch)
     by = {r["t"]: r for r in us}
     assert sorted(by) == ["AAPL", "BP", "BTI", "SHEL"]
+    assert (by["SHEL"]["nk"], by["BP"]["nk"], by["BTI"]["nk"]) == ("Shell plc", "BP p.l.c.", "British American Tobacco p.l.c.")
     assert (by["SHEL"]["per"], by["SHEL"]["pbr"], by["SHEL"]["dy"]) == (8.6, 1.43, 3.15)
     assert "per" not in by["BP"] and "pbr" not in by["BP"] and by["BP"]["dy"] == 4.55
     assert by["BTI"]["fcur"] == "GBP" and not any(k in by["BTI"] for k in ("per", "pbr", "dy"))
@@ -273,14 +392,34 @@ def test_fetch_us_checks_foreign_numbers_and_names_missing_extras(tmp_path, monk
     assert meta["usForeign"]["checked"] == ["BP", "SHEL"] and [x[:2] for x in meta["usForeign"]["cut"]] == [["BP", "pbr"], ["BP", "per"]]
     miss = meta["usExtraMissing"]
     assert miss["NNN"] == "가격 이력 30일 (60일 미만이라 넣지 않아요)" and miss["TD"].startswith("시세를 받지 못함")
+    assert miss["STAG"] == "야후가 가격을 하나도 주지 않음 (다운로드에 이 종목의 종가가 없어요)"
     assert miss["SPY"] == "미국 요청 목록에 없음 (티커 모양)" and "BTI" not in miss and "SHEL" not in miss
     assert set(miss) == set(F.EXTRA_US) - {"BP", "BTI", "SHEL"}
     assert any(x.startswith("  !! 미국 상장 외국 회사의 주당 숫자") and "PER 비움 1곳 (BP)" in x and "PBR 비움 1곳 (BP)" in x for x in lines), lines
     assert any("BP PBR: 주가 ÷ 주당 장부가 7.62" in x for x in lines)
     assert any(x.startswith("  !! 손으로 더한 미국 종목(EXTRA_US 67개) 중 오늘 목록에 없는 종목") for x in lines)
-    meta.pop("_index")
     json.dumps(meta, allow_nan=False, ensure_ascii=False)
     json.dumps(us, allow_nan=False, ensure_ascii=False)
+
+
+def test_a_crashed_foreign_check_blanks_every_checkable_number_loudly(tmp_path, monkeypatch):
+    """리뷰 S2(c): 외국 회사 검사가 멈추면 맞춰 보지 못한 숫자를 내보내지 않아요 — 외국 회사(fcur 없음)의 PER · PBR · 배당수익률을 모두 비우고
+    이유 '검사가 멈춤' 과 함께 크게 남겨요. 관문은 그 기록으로 통과해요 (비운 칸이 비어 있고 빠짐없이 확인됨)."""
+    def boom(*a, **k):
+        raise RuntimeError("시험")
+    monkeypatch.setattr(F, "us_foreign_check", boom)
+    us, meta, lines = _fetch(tmp_path, monkeypatch)
+    by = {r["t"]: r for r in us}
+    for t in ("SHEL", "BP"):
+        assert not any(k in by[t] for k in ("per", "pbr", "dy")), by[t]
+    assert by["AAPL"]["pbr"] == 1.43 and by["BTI"]["fcur"] == "GBP"
+    assert meta["usForeign"]["checked"] == ["BP", "SHEL"]
+    assert sorted(x[:2] for x in meta["usForeign"]["cut"]) == [[t, f] for t in ("BP", "SHEL") for f in ("dy", "pbr", "per")]
+    assert all(x[2] == "검사가 멈춤 (RuntimeError)" for x in meta["usForeign"]["cut"])
+    assert any(x.startswith("  !! 미국 상장 외국 회사 검사가 멈췄어요 (RuntimeError: 시험) → 6칸을 비웠어요") for x in lines), lines
+    rep = V.Report()
+    V.check_us_foreign(rep, {"usForeign": meta["usForeign"]}, us, "publish")
+    assert row(rep, FOREIGN)[3] == "PASS" and row(rep, FOREIGN)[1].startswith("확인 2곳 · 비운 칸 PER 2 · PBR 2 · 배당 2"), rep.table()
 
 
 # ── 관문 ─────────────────────────────────────────────────

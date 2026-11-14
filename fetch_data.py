@@ -122,6 +122,9 @@ assert len(EXTRA_US) == len(set(EXTRA_US)), "EXTRA_US 에 같은 티커가 두 �
 US_FOREIGN = frozenset({"BTI", "ENB", "BCE", "TD", "RY", "SHEL", "BP", "UL", "TM", "SONY", "AZN", "HSBC", "SAP", "NVS", "RIO", "BHP",
                         "TTE", "DEO", "BUD", "SAN", "GSK"})
 assert US_FOREIGN <= US_NOT_ETF, "외국 회사 목록(US_FOREIGN)은 EXTRA_US 의 회사 주식이어야 해요"
+# 2026-11-14 (리뷰): 더한 28곳의 이름은 야후 긴 이름(longName)으로 — 짧은 이름은 31자에서 잘리고 'Sponsored' 같은 꼬리가 붙어요 ('British American
+# Tobacco  Indus'). 예전부터 있던 종목의 이름은 그대로예요 (짧은 이름).
+US_ADDED_LONG_NAME = frozenset(EXTRA_US_ADDED)
 # 한국 목록 파일에 섞여 있는 상장 펀드(투자회사). 업종 '신탁업 및 집합투자업'에는 벤처캐피털·신탁회사 같은
 # 진짜 회사도 섞여 있어서(2026-11-01 확인: DSC인베스트먼트, 한국토지신탁 등) 업종이 아니라 종목마다 정해요.
 KR_LISTED_FUNDS = {"088980": "맥쿼리인프라", "415640": "KB발해인프라", "094800": "맵스리얼티"}
@@ -6428,12 +6431,18 @@ def us_d1(px, us_px_date):
     return round((last / prev - 1) * 100, 2)
 
 
-def etf_from_quote_type(out, cache):
-    """ETF 목록에 없는데 야후가 ETF·펀드라고 하면 ETF 로 둬요 (순위에 섞이지 않게). 반환: 바꾼 종목들. (순수 함수)"""
+def etf_from_quote_type(out, cache, keep=US_NOT_ETF, skipped=None):
+    """ETF 목록에 없는데 야후가 ETF·펀드라고 하면 ETF 로 둬요 (순위에 섞이지 않게). 반환: 바꾼 종목들. (순수 함수)
+    2026-11-14 (리뷰): 사람이 회사 주식으로 정한 종목(keep = US_NOT_ETF)은 바꾸지 않아요 — 야후 종류가 하루 틀리면 관문의 'ETF 여부' 줄이 실패해
+    모두의 발행이 멈춰요. 그런 종목은 skipped(목록)에 담아 fetch_us 가 크게 남겨요."""
     odd = []
     for rec in out:
         qt = ((cache.get(rec["t"]) or {}).get("info") or {}).get("quoteType")
         if qt in ("ETF", "MUTUALFUND") and not rec.get("etf"):
+            if rec["t"] in keep:
+                if skipped is not None:
+                    skipped.append(f"{rec['t']}({qt})")
+                continue
             rec["etf"] = True
             odd.append(rec["t"])
     return odd
@@ -6572,6 +6581,8 @@ def apply_us_info(rec, info, px_then, fx, today=None):
     PBR 과 매출이 없는 회사의 영업이익률 0 은 빈 칸이에요 (us_info_cuts, #114 리뷰). 그 PBR 은 rec["pbrZero"] = True 로 표시해요 (Jack,
     2026-11-13: 앱이 '자료상 PBR이 0에 가깝게 나와서 …' 줄을 붙여요 · fcur 회사는 통화 줄이 이미 말해서 표시하지 않아요)."""
     nm = info.get("shortName") or info.get("longName")
+    if rec.get("t") in US_ADDED_LONG_NAME and info.get("longName"):
+        nm = " ".join(str(info["longName"]).split())   # 2026-11-14: 더한 28곳은 긴 이름 (짧은 이름은 31자에서 잘려요: 'SAP  SE' · 'Anheuser-Busch Inbev SA Sponsor')
     if not nm:
         return False
     fc = us_fin_currency(info)
@@ -6724,7 +6735,9 @@ def us_info_due(entry, today):
 # 2026-11-14 야후 값으로 정했어요 (달러로 보고하는 10곳): 맞는 회사의 PER 은 1.00~1.02 배 · PBR 은 1.04~1.24 배 (ROE 가 평균 자본이라 더 흔들려요)
 # · 배당은 1.00~1.03 배였고, 틀린 값은 PER 1.70 배 (BP) · PBR 4.3~19 배 (BP · HSBC · 디아지오) · 배당 1.88 배 (HSBC: 야후 '앞으로 1년' 값이 큰
 # 넷째 배당을 빼요)였어요. ADR 배율 실수는 2 배 이상이에요. 배당은 야후 기록이 한 번 빠지면(AZN · TTE) 맞지 않아 비어요 — 틀린 숫자보다 빈 칸.
-US_FOREIGN_BAND = {"per": 1.10, "pbr": 1.5, "dy": 1.10}
+# PBR 은 1.35 (리뷰 2026-11-14): √2 보다 좁아야 맞는 회사(1.35 배 안)의 2 배 ADR 실수가 언제나 밖으로 나가요 (2 ÷ 1.35 = 1.48). 맞는 회사의 가장 큰
+# 차이는 BHP 1.24 배였어요.
+US_FOREIGN_BAND = {"per": 1.10, "pbr": 1.35, "dy": 1.10}
 US_FOREIGN_DIV_DAYS = 350     # 지난 1년 배당: 365일이면 해마다 같은 때 주는 배당이 며칠 당겨질 때 다섯 번 세요 (셸 2025-11-14 · 2026-11-13)
 
 
@@ -6769,8 +6782,13 @@ def us_foreign_cuts(rec, info, div12, days=US_FOREIGN_DIV_DAYS):
       · pbr: 야후 priceToBook (주가 ÷ 주당 장부가) ↔ (시가총액 ÷ 순이익) × ROE(returnOnEquity) ≈ 시가총액 ÷ 자본 — US_FOREIGN_BAND["pbr"] 배 안
       · dy: 그날 배당수익률 ↔ 지난 days 일 실제 배당(div12, 야후 다운로드의 배당 기록 · ADR 하나당 달러) ÷ 오늘 종가 — US_FOREIGN_BAND["dy"]
         배 안. 0% 는 그 기간 배당 기록도 0 일 때만. 배당 기록 칸을 읽지 못했으면(div12 None) 맞춰 볼 수 없어요.
-    시가총액 · 순이익(0 이하 포함) · ROE · 배당 기록처럼 맞춰 볼 값이 없으면 그 칸도 비워요 — 틀릴 수 있는 숫자보다 빈 칸 (Jack 2026-11-13)."""
+    시가총액 · 순이익(0 이하 포함) · ROE · 배당 기록처럼 맞춰 볼 값이 없으면 그 칸도 비워요 — 틀릴 수 있는 숫자보다 빈 칸 (Jack 2026-11-13).
+    재무제표 통화가 달러라고 확인되지 않으면(야후 financialCurrency 가 없음 · 달러가 아님) 세 칸을 모두 비워요 (리뷰 2026-11-14): 시가총액(달러)과
+    순이익(그 통화)을 나눈 값끼리 맞춰 봐도 통화가 섞인 PBR 을 걸러 내지 못해요 (UL · SAN · TD · RY · ENB · BCE 의 PBR 이 '맞음'으로 남았어요)."""
     i, out = info or {}, {}
+    if us_fin_currency(i) != US_QUOTE_CUR:
+        why = f"재무제표 통화를 모름 (야후 financialCurrency {i.get('financialCurrency')!r} — 달러로 확인되지 않음)"
+        return {k: why for k in ("per", "pbr", "dy") if rec.get(k) is not None}
     mc, ni = _fin(i.get("marketCap")), _fin(i.get("netIncomeToCommon"))
     pe_c = mc / ni if mc and mc > 0 and ni and ni > 0 else None
     if rec.get("per") is not None:
@@ -6823,6 +6841,9 @@ def us_foreign_check(out, cache, data, us_px_date, no_info=frozenset(), foreign=
     names = {"per": "PER", "pbr": "PBR", "dy": "배당수익률"}
     by_f = {f: [t for t, g, _ in cut if g == f] for f in names}
     n_fc = sum(1 for r in out if r["t"] in foreign and r.get("fcur"))
+    unk = sorted({t for t, _f, w in cut if w.startswith("재무제표 통화를 모름")})
+    if unk:
+        log(f"  !! 미국 상장 외국 회사 중 재무제표 통화가 달러로 확인되지 않아 PER · PBR · 배당수익률을 모두 비운 곳 {len(unk)}곳: {', '.join(unk)}")
     log(f"{'  !! ' if cut else '· '}미국 상장 외국 회사의 주당 숫자 (회사 합계 · 실제 배당과 맞춤): 확인 {len(checked)}곳 · 재무제표 통화가 달러가 "
         f"아니라 이미 비운 곳 {n_fc}곳 · " + " · ".join(f"{names[f]} 비움 {len(ts)}곳" + (f" ({', '.join(ts)})" if ts else "")
                                                 for f, ts in by_f.items()))
@@ -6927,7 +6948,8 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
         try:
             px = cut_at(_yf_close(data, sym), us_px_date)
             if len(px) < 60:
-                extra_why[sym] = f"가격 이력 {len(px)}일 (60일 미만이라 넣지 않아요)"
+                extra_why[sym] = (f"가격 이력 {len(px)}일 (60일 미만이라 넣지 않아요)" if len(px)
+                                  else "야후가 가격을 하나도 주지 않음 (다운로드에 이 종목의 종가가 없어요)")
                 continue
             ret = px.pct_change().dropna()
             ret.name = "r"
@@ -7043,7 +7065,11 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
         + (f" · 못 받음 {len(failed):,}곳 → 보관본 {fallback:,}곳(최대 {oldest}일 전) · 없음 {len(missing):,}곳"
            + (f" ({', '.join(missing[:8])}…)" if missing else "") if failed or missing else ""))
     log(f"· 미국 완료: {len(out):,}개")
-    odd = etf_from_quote_type(out, cache)
+    kept_co = []
+    odd = etf_from_quote_type(out, cache, skipped=kept_co)
+    if kept_co:
+        log(f"  !! 사람이 회사 주식으로 정한 종목(US_NOT_ETF)인데 야후 종류가 ETF·펀드예요 {len(kept_co)}개 → 회사 주식 그대로 둬요 (야후를 확인): "
+            + ", ".join(kept_co))
     if odd:
         log(f"  !! 목록엔 회사로 돼 있는데 야후가 ETF·펀드라고 하는 종목 {len(odd)}개 → ETF 로 표시: {', '.join(odd[:10])}")
     infos = {r["t"]: {**((cache.get(r["t"]) or {}).get("info") or {}), "listName": list_names.get(r["t"])} for r in out}
@@ -7106,6 +7132,9 @@ SPLIT_OVERRIDES = {
     ("DD", "2019-06-03"): (1 / 3, "1:3 주식병합 (2019-06-01 Corteva 분사 직후 효력, 06-03 부터 거래 · DuPont SEC 10-Q 2019) — 야후는 분사 조정과 합쳐 189:400"),
     ("HON", "2026-06-29"): (0.5, "1:2 주식병합 (2026-06-29 00:02 뉴욕 효력, 그날부터 새 기준 거래 · Honeywell 8-K 2026-06-05 · 같은 날 Honeywell "
                                  "Aerospace(HONA) 분사) — 야후는 분사 조정과 합쳐 1907:2000"),
+    ("UL", "2025-12-09"): (8 / 9, "8:9 주식 병합 (보통주 · ADS 모두, ADS 1개 = 보통주 1주 그대로 · Magnum Ice Cream Company 분리와 함께 · Unilever RNS "
+                               "'Update on share consolidation' 2025-12-08 · 주주 안내서 unilever.com demerger-of-tmicc-and-share-consolidation · "
+                               "IRS 8937: 720주 → 640주) — 야후는 분리 조정과 합쳐 ×0.888"),
     ("WTW", "2016-01-05"): (1 / 2.649, "Willis 주식 2.6490주 → 1주 병합 (2016-01-04 Towers Watson 합병 직후 · WTW SEC 10-K 2016) — 야후 151:400"),
     ("TRI", "2018-11-27"): (0.9079, "자본 환급(주당 4.45달러)과 함께 한 주식 병합 1주 → 0.9079주 (2018-11-27 부터 새 기준 거래 · Thomson Reuters 발표 2018-11-26) — 야후에 없음"),
     ("TRI", "2023-06-23"): (0.963957, "자본 환급과 함께 한 주식 병합 1주 → 0.963957주 (2023-06-23 효력 · Thomson Reuters 발표 2023-06-22) — 야후 963:1000"),
@@ -7213,8 +7242,12 @@ def log_us_splits(splits, info, n_us, today, what="미국 주식 분할(splits, 
         log(f"  !! 분할 칸을 읽지 못한 종목 {len(nc):,}개 — 이 종목들은 지난 발행본 · 시드의 줄만 써요 (관문이 경고해요): "
             f"{', '.join(nc[:10])}{'…' if len(nc) > 10 else ''}")
     if info.get("spin"):
+        def mark(x):     # 2026-11-14: 같은 날의 진짜 사건이 고정 표에 있으면 그렇다고 (UL 2025-12-09 ×0.888 → 고정 표 8:9 병합)
+            t, d = x.split(" ")[:2]
+            fx = SPLIT_OVERRIDES.get((t, d))
+            return x + (f" (고정 표: {'뺌' if fx[0] is None else split_ratio_text(fx[0])})" if fx else "")
         log(f"  !! 야후가 분할 칸에 적은 깨끗하지 않은 배율 {len(info['spin'])}건은 넣지 않았어요 (분사 조정 — 주식 수가 바뀐 게 아니에요 · "
-            f"진짜 사건은 SPLIT_OVERRIDES 로 넣어요): {', '.join(info['spin'][:20])}{'…' if len(info['spin']) > 20 else ''}")
+            f"진짜 사건은 SPLIT_OVERRIDES 로 넣어요): {', '.join(mark(x) for x in info['spin'][:20])}{'…' if len(info['spin']) > 20 else ''}")
     if info.get("future"):
         log(f"  !! 오늘({today}) 뒤 날짜의 분할 {len(info['future'])}건은 넣지 않았어요: {', '.join(info['future'][:10])}")
     if info.get("bad"):
