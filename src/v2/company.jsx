@@ -348,6 +348,21 @@ function Warnings({ load, s, wide }) {
   // (no '없어요' head: the existing rule allows "확인한 …" only for flWhy.icr "ie"). Goes by itself when flWhy.icr changes.
   const off = s.cls === "kr" && icrOffShown(load.coByT.get(s.t) || null);
   if (!w.flags.length) {
+    // 2026-11-14 (Jack): no check could run (corp.json flRan []: no statements yet (KONEX, new listings), 우선주, statements
+    // not in won (the currency line above the tiles says why)). Its own state, never '…없어요': "재무 경고 · 확인하지 못했어요"
+    // with the approved words of the 재무 경고 chip (rank.warn) and of a rule that could not be checked (pfr.unknown), until
+    // the design chat sends a reason line. Not for funds (no statements to check) or a file without flRan (nothing known).
+    if (w.noneRan && s.etf !== true && !s.fund && all(C.rank.warn, C.pfr.unknown)) {
+      return (
+        <Card data-ui-v2="co-warn-unchecked" style={{ display: "flex", gap: SPACE(3), alignItems: "center", padding: SPACE(4) }}>
+          <IconChip name="info" size={32} tone="risk" />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{C.rank.warn}</div>
+            <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2 })}>{C.pfr.unknown}</div>
+          </div>
+        </Card>
+      );
+    }
     if (!w.allRan && !w.partial && off && C.fix.icr) {
       // The line alone, no chips: v19.3e shows chips only when every check ran ("확인이 덜 돌면 카드도 칩도 없음"), and
       // 이자보상배율 did not run.
@@ -384,6 +399,10 @@ function Warnings({ load, s, wide }) {
   if (!W.count || texts.some((x) => !x)) return <span data-ui-v2="co-warn" data-pending="1" hidden />;
   // Jack, PR #68 (2026-11-07): under the 이자보상배율 warning, say when it used the cash-flow statement's interest paid
   const cfNote = (code) => code === "icr" && w.icrCf && W.icrCfNote ? W.icrCfNote : null;
+  // 2026-11-14 (Jack): the count must not read as all four checks when one did not run. When 이자보상배율 alone could not run
+  // for want of an interest line (warn.js icrIe: flWhy.icr "ie", the other three ran), the approved PR #68 line says which and
+  // why, under the first warning and under the list. Any other unchecked check has no approved line yet: nothing is added.
+  const noIcr = w.icrIe && W.noneSubNoIcr ? W.noneSubNoIcr : null;
   return (
     <>
       <button type="button" data-ui-v2="co-warn" data-n={w.flags.length} onClick={() => setOpen(true)} aria-haspopup="dialog"
@@ -394,6 +413,7 @@ function Warnings({ load, s, wide }) {
           <span style={tx(SIZE.sm, WEIGHT.heavy, COLOR.watch, { display: "block" })}>{fill(W.count, { n: w.flags.length })}</span>
           <span style={tx(SIZE.xs, WEIGHT.semi, COLOR.ink, { display: "block" })}>{texts[0]}</span>
           {cfNote(w.flags[0].code) && <span data-ui-v2="co-warn-cf" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2 })}>{cfNote(w.flags[0].code)}</span>}
+          {noIcr && <span data-ui-v2="co-warn-noicr" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2 })}>{noIcr}</span>}
           <IcrOffLine show={off} />
         </span>
         <Icon name="chevronRight" size={18} tone="on" />
@@ -411,6 +431,7 @@ function Warnings({ load, s, wide }) {
             </div>
           ))}
           <IcrOffNote show={off} />
+          {noIcr && <p data-ui-v2="co-warn-noicr" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(2) })}>{noIcr}</p>}
           {warnSource(w) && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(2) })}>{warnSource(w)}</p>}
         </div>
       </BottomSheet>
