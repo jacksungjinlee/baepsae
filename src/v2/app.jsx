@@ -28,6 +28,10 @@ import { firstVisitGuide } from "./guide.jsx";
 import { Import, newImporter } from "./import.jsx";
 import { Limits } from "./limits.jsx";
 import { Returns } from "./returns.jsx";
+import { Editor } from "./editor.jsx";
+import { emptyDraft, pending as editPending } from "./edit.js";
+import { BottomSheet, Button } from "../ui/components.jsx";
+import { isImported } from "./pf.js";
 import { dataSplits, withDataSplits, storedNotInData, withStoredSplits, outSplits, withoutOutSplits } from "./lots.js";
 import { UNIT } from "./held.js";
 import { companySub, CO_MORE } from "./routes.js";
@@ -68,6 +72,9 @@ export function App({ source }) {
     preview: !!source.preview }));
   const [builder, setBuilder] = useState(newBuilder);
   const [importer, setImporter] = useState(newImporter);   // v19.3d 가진 종목 넣기 (#portfolio/import): kept while the user moves around
+  // v19.7a 종목 바꾸기 (#portfolio/edit/<id>): the edits waiting for 바꾼 내용 저장, { deckId, draft } (edit.js). Kept while the user
+  // moves to another tab and back (as 포트폴리오 만들기 and 가진 종목 넣기 keep theirs); dropped by 나가기 and by a save.
+  const [editor, setEditor] = useState(null);
   const [why, setWhy] = useState(null);                  // 왜 움직였나: { deckId, t } opened from 홈 (Part E)
   const [disc, setDisc] = useState(() => ({ status: source.loadDisc ? "idle" : "none" }));   // v19.1a 공시 tab (disc.json)
   // 2026-11-08 (Jack): the later publish held under a draft (hold.js publishGate onHold), or null: the draft's screen says
@@ -332,11 +339,15 @@ export function App({ source }) {
   const openWhy = useCallback((deckId, t) => { setWhy({ deckId, t }); router.go("home", "why"); }, [router.go]);
   // v19.1a: any company tapped anywhere in 2.0 opens its company page (#stocks/<code>, one history entry).
   const openStock = useCallback((t) => router.go("stocks", companySub(t)), [router.go]);
+  // Jack 2026-11-13 (J4): the "다 판 종목이에요. …" line opens 종목 바꾸기 of that portfolio with that stock's 빼기 sheet open.
+  // editRm: { deckId, t } until that editor has opened it (an address reached while other edits wait still asks first).
+  const [editRm, setEditRm] = useState(null);
   const coNav = useMemo(() => ({
     back: () => (loc.ctab === "value-more" || loc.ctab === "earn-more" ? router.back("stocks", companySub(loc.code, loc.ctab.replace("-more", ""))) : router.back("stocks")),
     setTab: (ctab) => router.replaceRoute("stocks", companySub(loc.code, ctab)),
     more: (ctab) => router.go("stocks", companySub(loc.code, ctab)),
     onWhy: openWhy,
+    removeFrom: (deckId, t) => { setEditRm({ deckId, t }); router.go("portfolio", "edit/" + deckId); },
   }), [loc.code, loc.ctab, router.back, router.replaceRoute, router.go, openWhy]);
   // 기록했어요 -> 홈: the finished build is replaced by 홈, and the next 포트폴리오 만들기 starts fresh.
   const doneToHome = useCallback(() => { setBuilder(newBuilder()); router.replaceRoute("home"); }, [router.replaceRoute]);
@@ -502,6 +513,34 @@ export function App({ source }) {
   }, [store.data, load, splitList]);
   // v19.6a: 내 수익 of a portfolio that exists (else 포트폴리오)
   const returnsDeck = tab === "portfolio" && loc.returns ? view.data.decks.find((d) => d.id === loc.returns) || null : null;
+  // v19.7a: 종목 바꾸기 of a portfolio made with 포트폴리오 만들기 that exists (else 포트폴리오)
+  const editDeck = tab === "portfolio" && loc.edit ? view.data.decks.find((d) => d.id === loc.edit && !isImported(d)) || null : null;
+  const editId = editDeck ? editDeck.id : null;
+  const editDraft = editor && editor.deckId === editId ? editor.draft : emptyDraft();
+  const setEditDraft = useCallback((f) => setEditor((e) => {
+    const cur = e && e.deckId === editId ? e.draft : emptyDraft();
+    return { deckId: editId, draft: typeof f === "function" ? f(cur) : f };
+  }), [editId]);
+  // round-1 nit: opening another portfolio's 종목 바꾸기 while one portfolio's edits wait asks first (they would be dropped)
+  const [askDrop, setAskDrop] = useState(null);
+  const waitingFor = (id) => {
+    const w = editor && editor.deckId !== id ? view.data.decks.find((d) => d.id === editor.deckId && !isImported(d)) || null : null;
+    return w && editPending(w, editor.draft) ? w : null;
+  };
+  const openEdit = useCallback((id, rmT = null) => {
+    setEditRm(rmT ? { deckId: id, t: rmT } : null);
+    if (waitingFor(id)) { setAskDrop(id); return; }
+    router.go("portfolio", "edit/" + id);
+  }, [router.go, editor, view]);
+  // round-2 B-4: the same question when another portfolio's 종목 바꾸기 is reached by its address or the browser's back button.
+  // The waiting editor stays on screen (held below), its address comes back, and the sheet asks; nothing is dropped unasked.
+  const heldEdit = editId ? waitingFor(editId) : null;
+  useEffect(() => {
+    if (!heldEdit) return;
+    setAskDrop(editId);
+    router.replaceRoute("portfolio", "edit/" + heldEdit.id);
+  }, [heldEdit, editId]);
+  const leaveEdit = useCallback(() => { setEditor(null); router.back("portfolio"); }, [router.back]);
   const pad = wide ? SPACE(10) : TAB_H + 32;
   const screen = (() => {
     const store = view;
@@ -516,9 +555,18 @@ export function App({ source }) {
     if (inWhy) return <Why load={load} store={store} setStoreData={setStoreData} pad={pad} target={why} onBack={() => router.back("home")} />;
     if (rulesDeck) return <Limits key={rulesDeck.id} deck={rulesDeck} store={store} setStoreData={setStoreData} pad={pad} onBack={() => router.back("portfolio")} />;
     if (returnsDeck) return <Returns key={returnsDeck.id} deck={returnsDeck} load={load} store={store} pad={pad} onBack={() => router.back("portfolio")} />;
+    if (heldEdit) {
+      // another portfolio's address while this one's edits wait: this one stays (the effect above puts its address back and asks)
+      return <Editor key={heldEdit.id} deck={heldEdit} load={load} store={store} setStoreData={setStoreData} draft={editor.draft} setDraft={() => {}} pad={pad}
+        onLeave={leaveEdit} onSaved={leaveEdit} />;
+    }
+    if (editDeck) {
+      return <Editor key={editDeck.id} deck={editDeck} load={load} store={store} setStoreData={setStoreData} draft={editDraft} setDraft={setEditDraft} pad={pad}
+        onLeave={leaveEdit} onSaved={leaveEdit} startRemove={editRm && editRm.deckId === editDeck.id ? editRm.t : null} onStarted={() => setEditRm(null)} />;
+    }
     if (tab === "portfolio") {
       return <Portfolio load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onImport={openImport}
-        onRules={(id) => router.go("portfolio", "rules/" + id)} onReturns={(id) => router.go("portfolio", "returns/" + id)} />;
+        onRules={(id) => router.go("portfolio", "rules/" + id)} onReturns={(id) => router.go("portfolio", "returns/" + id)} onEdit={openEdit} />;
     }
     if (tab === "stocks" && loc.code && !loc.about) {
       return <Company load={load} store={store} setStoreData={setStoreData} pad={pad} code={loc.code} ctab={loc.ctab} disc={discView} nav={coNav} />;
@@ -552,6 +600,17 @@ export function App({ source }) {
                 <HeldContext.Provider value={heldHere}>
                   <ErrorBoundary key={screenKey} name={tab} pad={ownBar ? undefined : pad}>{screen}</ErrorBoundary>
                 </HeldContext.Provider>
+                {askDrop && (
+                  <BottomSheet open title={C.edit.leave} onClose={() => setAskDrop(null)} closeLabel={C.app.close} shift={wide ? SIDE_W : 0}>
+                    <div data-ui-v2="edit-drop" style={{ display: "flex", gap: SPACE(2), marginTop: SPACE(2) }}>
+                      <Button onClick={() => { setAskDrop(null); setEditRm(null); }} style={{ flex: 1 }}>{C.app.close}</Button>
+                      {/* the leave sheet's discard button and label (round-2 B-4): 나가기 (Jack, 2026-11-13). No approved line names
+                          the other portfolio yet. */}
+                      <Button kind="secondary" onClick={() => { const id = askDrop; setAskDrop(null); setEditor(null); router.go("portfolio", "edit/" + id); }}
+                        style={{ flex: 1 }}>{C.edit.leaveGo}</Button>
+                    </div>
+                  </BottomSheet>
+                )}
                 {!wide && <MenuSheet open={loc.menu && !loc.about} load={load} onClose={router.closeMenu} onAbout={router.openAbout} onHome={goHome} onGuide={replayGuide}
                   tabH={ownBar ? 0 : TAB_H} theme={theme} />}
                 {!wide && !ownBar && <TabBar value={tab} onChange={go} />}

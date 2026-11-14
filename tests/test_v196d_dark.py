@@ -45,8 +45,10 @@ def esbuild(*args):
 def node_value(entry, expr):
     code = esbuild(entry, "--bundle", "--format=iife", "--global-name=M", "--loader:.js=jsx", "--jsx=automatic",
                    "--external:react", "--external:react/jsx-runtime", "--charset=utf8", "--platform=node")
-    r = subprocess.run(["node", "-e", code + f"\nprocess.stdout.write(JSON.stringify({expr}));"], cwd=ROOT, capture_output=True,
-                       text=True, encoding="utf-8")
+    # The script goes to node on stdin ("node -"), not as one "-e" argument: Linux caps one argument at 131,072 bytes and
+    # src/copy/v2.js's bundle passed that with v19.7a (Jack's yes, 2026-11-14). Same script, same checks.
+    r = subprocess.run(["node", "-"], input=code + f"\nprocess.stdout.write(JSON.stringify({expr}));", cwd=ROOT,
+                       capture_output=True, text=True, encoding="utf-8")
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
 

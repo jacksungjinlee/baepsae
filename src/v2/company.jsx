@@ -532,7 +532,8 @@ export function holdLine(h, single) {
   return C.co.hold.weight ? fill(C.co.hold.weight, { name: shownName(name), pct: `${v}%` }) : shownName(name);
 }
 // action (v19.6a): the 기록 button, under the rows.
-function Holdings({ held, single, action = null }) {
+// onRemove (Jack 2026-11-13, J4): (deckId, t) opens 종목 바꾸기 of that portfolio with the stock's 빼기 sheet (the sold-out line)
+function Holdings({ held, single, action = null, onRemove = null }) {
   if (!held.length) return action ? <Card data-ui-v2="co-held" data-empty="1" style={{ padding: `${SPACE(3)}px ${SPACE(4)}px` }}>{action}</Card> : null;
   return (
     <Card data-ui-v2="co-held" style={{ padding: `${SPACE(2)}px ${SPACE(4)}px` }}>
@@ -569,7 +570,11 @@ function Holdings({ held, single, action = null }) {
             )}
             {/* Jack, 2026-11-13: this portfolio sold the stock out and kept it in the plan (0 shares, rules.SOLD_OUT_BANDS) */}
             {!imported && x.qty === 0 && C.daily.soldOutKept && (
-              <p data-ui-v2="sold-out-kept" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1), paddingLeft: 36 + SPACE(3), wordBreak: "keep-all" })}>{C.daily.soldOutKept}</p>
+              <p data-ui-v2="sold-out-kept" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1), paddingLeft: 36 + SPACE(3), wordBreak: "keep-all" })}>
+                {onRemove ? <button type="button" data-ui-v2="sold-out-remove" onClick={() => onRemove(deckId, x.t)}
+                  style={{ ...tap, border: "none", background: "none", padding: 0, textAlign: "left", minHeight: TOUCH, color: "inherit", font: "inherit",
+                    textDecoration: "underline", textUnderlineOffset: 3 }}>{C.daily.soldOutKept}</button> : C.daily.soldOutKept}
+              </p>
             )}
           </div>
         );
@@ -743,7 +748,8 @@ function CompanyPage({ load, s, store, setStoreData, pad, ctab, disc, nav, held,
             <Warnings load={load} s={s} wide={wide} />
             <Fit load={load} s={s} store={store} wide={wide} />
             <Holdings held={heldAll} single={store.data.decks.length === 1}
-              action={canRecord ? <div data-ui-v2="co-record"><RecordButton name={s.nk} onClick={() => setFlow(companyFlow(store.data, s.t, s.nk))} /></div> : null} />
+              action={canRecord ? <div data-ui-v2="co-record"><RecordButton name={s.nk} onClick={() => setFlow(companyFlow(store.data, s.t, s.nk))} /></div> : null}
+              onRemove={nav.removeFrom && store.writable && !store.locked ? nav.removeFrom : null} />
             <Memo s={s} store={store} setStoreData={setStoreData} held={held} />
           </div>
         )}

@@ -191,9 +191,10 @@ def test_the_two_evening_lines_are_approved_recorded_and_shown_only_where_they_b
     # only for a built portfolio's 0-share row; never on 홈
     pf = read("src/v2/portfolio.jsx")
     block = pf.split("(de.soldOut || []).map(", 1)[1].split("de.rebased", 1)[0]
-    assert pf.count("C.daily.soldOutKept}") == 1 and "C.daily.soldOutKept}" in block
+    # v19.7a (J4): the line is a link where 종목 바꾸기 opens, the same text otherwise: two spellings of one line, both in the block
+    assert pf.count("C.daily.soldOutKept}") == 2 and block.count("C.daily.soldOutKept}") == 2
     co = read("src/v2/company.jsx")
-    assert co.count("C.daily.soldOutKept}") == 1 and "{!imported && x.qty === 0 && C.daily.soldOutKept && (" in co
+    assert co.count("C.daily.soldOutKept}") == 2 and "{!imported && x.qty === 0 && C.daily.soldOutKept && (" in co
     for f in ("home2.jsx", "today.jsx", "home.js", "pfview.jsx"):
         assert "soldOutKept" not in read("src/v2/" + f), f
     # the rate line: the record forms and 매수 계획's 샀어요, only for the "notYet" refusal, through one mapping (records.rateRefusal)

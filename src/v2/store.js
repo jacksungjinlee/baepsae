@@ -33,6 +33,14 @@
 //            stores a split (from data.json splits) together with a record of that stock, so the store's own check (no sale
 //            below 0 shares) reads the records exactly as the screens do and a sale of the new share count is never refused.
 //            One per stock and date.
+//   changes  [{ id?, at, kind, t?, nk?, reason? }] the change log of 종목 바꾸기 (v19.7a, Part A): at the date (KST), kind "add"
+//            · "remove" · "targets" (a later version's kind is kept, not shown), t / nk the stock, reason the 빼기 chip (thesis
+//            · rule · better · other), id a random id (two tabs' entries of the same day stay two). The app keeps the newest
+//            CHANGES_MAX when it writes; a longer list (a later version's) is read as it is, never set aside. Not a
+//            version-2-only part (the earlier apps keep a portfolio's fields they do not know). A history entry (above) may
+//            carry reason too (v19.7a, Part B: the same chip; out is the spec's removedAt, the day it was taken out).
+//   targetsTs when 종목 바꾸기 last set the target set (v19.7a round-1 S1; ms): every holding's target, plannedQty and band
+//            rule, and settings.maxPct, as one edit. Two copies keep the later set whole (unionDeck), like limitsTs.
 //   limitsTs when 내 규칙 정하기 last saved them (v19.3d2; ms, with or without a limits part: a 저장 at the defaults leaves
 //            none), so two copies and a records file keep the later limits. Beside limits, not in it: v19.3d (#83) reads
 //            limits strictly and passes portfolio keys it does not know, so a revert still reads every portfolio.
@@ -242,6 +250,7 @@ function historyProblem(hs, today, splits = null, createdAt = null) {
     if (!pastDate(h.out, today)) return bad("history", i, h.t, "date taken out must be a real date, not after today");
     if (h.cls != null && !isStr(h.cls, 10)) return bad("history", i, h.t, "market is not valid");
     if (h.ts != null && !okTs(h.ts)) return bad("history", i, h.t, "time taken out (ts) is not valid");
+    if (h.reason != null && !isStr(h.reason, 20)) return bad("history", i, h.t, "reason is not a short name");   // v19.7a
     for (const k of ["purchases", "sales", "divs"]) if (h[k] != null && !Array.isArray(h[k])) return bad("history", i, h.t, k + " is not a list");
     if (h.imported != null && !plainObj(h.imported)) return bad("history", i, h.t, "imported is not one row");
     const recs = { purchases: h.purchases || [], sales: h.sales || [], divs: h.divs || [], imported: h.imported ? [h.imported] : [], splits, createdAt };
@@ -276,6 +285,22 @@ function splitsProblem(l, today) {
     }
     if (seen.has(s.t + "|" + s.date)) return bad("splits", i, s.t, "the same split twice");
     seen.add(s.t + "|" + s.date);
+  }
+  return null;
+}
+
+// v19.7a: the change log (see the top of this file). A kind or reason this version does not know is a short name, kept and
+// not shown (so a later version's entry never sets a portfolio aside).
+export const CHANGES_MAX = 200;
+function changesProblem(l, today) {
+  if (!Array.isArray(l)) return bad("changes", null, null, "not a list");
+  for (let i = 0; i < l.length; i++) {
+    const c = l[i];
+    if (!plainObj(c) || !pastDate(c.at, today) || !isStr(c.kind, 20)) return bad("changes", i, c && c.t, "not a change (date not after today, kind)");
+    if ((c.t != null && !okStockCode(c.t)) || (c.nk != null && !isStr(c.nk, 120)) || (c.reason != null && !isStr(c.reason, 20))
+      || (c.id != null && !(typeof c.id === "string" && ID_RX.test(c.id)))) {
+      return bad("changes", i, c.t, "stock code, name, reason or id is not valid");
+    }
   }
   return null;
 }
@@ -324,6 +349,8 @@ export function deckProblem(x, today) {
     }
   }
   if (x.limitsTs != null && !okTs(x.limitsTs)) return bad("limitsTs", null, null, "not a time");
+  if (x.changes != null) { const p = changesProblem(x.changes, today); if (p) return p; }
+  if (x.targetsTs != null && !okTs(x.targetsTs)) return bad("targetsTs", null, null, "not a time");
   if (x.confirms != null) {
     if (!Array.isArray(x.confirms)) return bad("confirms", null, null, "not a list");
     for (let i = 0; i < x.confirms.length; i++) {
@@ -483,7 +510,8 @@ export function withConfirm(data, deckId, item, answer, today, ts = null) {
 // away (내 수익 keeps its realized gains and dividends); with none, the old behaviour stays.
 // With today's date the portfolio also keeps a removal mark { t, at, ts } (removed), so another tab's older copy that
 // still holds the stock does not bring it back when the two are merged.
-export function withoutHolding(data, deckId, t, today = null, ts = null) {
+// v19.7a: reason (빼기's chip: thesis · rule · better · other) goes on the history entry it makes.
+export function withoutHolding(data, deckId, t, today = null, ts = null, reason = null) {
   const deck = data && Array.isArray(data.decks) ? data.decks.find((d) => d && d.id === deckId) : null;
   if (!deck || typeof t !== "string" || !deck.holdings.some((h) => h && h.t === t)) return null;
   const of = (list) => (Array.isArray(list) ? list.filter((r) => r && r.t === t) : []);
@@ -503,7 +531,7 @@ export function withoutHolding(data, deckId, t, today = null, ts = null) {
     const imp = of(deck.imported)[0];
     const out = isDate(today) ? today : [...sales, ...divs].reduce((a, r) => (r.date > a ? r.date : a), "0000-00-00");
     next.history = [...(Array.isArray(deck.history) ? deck.history : []), { t, nk: h.nk, out, ...(isDate(today) ? { ts: okTs(ts) ? ts : Date.now() } : {}), ...(h.cls ? { cls: h.cls } : {}),
-      ...(imp ? { imported: imp } : {}), purchases: of(deck.purchases), sales, divs }];
+      ...(imp ? { imported: imp } : {}), purchases: of(deck.purchases), sales, divs, ...(isStr(reason, 20) ? { reason } : {}) }];
   }
   return { ...data, decks: data.decks.map((d) => (d.id === deckId ? next : d)) };
 }
@@ -666,6 +694,43 @@ const inEntry = (e, r) => ["purchases", "sales", "divs"].some((k) => (e[k] || []
 // A history entry by its records (the day it was taken out aside: two tabs may take the same stock out on two days).
 const entryKey = (e) => canon({ t: e.t, imported: e.imported || null, purchases: e.purchases || [], sales: e.sales || [], divs: e.divs || [] });
 
+// v19.7a: a holding's stored plan weight (planW) when it can be used (final review N2). It is on the scale of the plan's
+// own values (won), and it must be a number that adds up: finite, 0 or more (0 is a real weight: a stock that takes no
+// share of the total), and at most PLANW_TOTAL_X times the plan's total (verification N2: a save never writes one above
+// twice its target's share of the amount, so twice the whole amount is never a real weight; a larger one would shrink
+// every other band). The plan's total: settings.amountMan, else the planned values added up (plannedQty × planPx, a US
+// holding at the plan's rate); when neither is known, a flat ceiling. The same test holds for planV (edit.withPlanV).
+// Anything else counts as missing, never as a reason to set the portfolio aside: the band rule and 종목 바꾸기 fall back
+// and say so in the console (rules.planWeights, edit.planBase). PLANW_MAX_X: how far the read plan weights may go above
+// 1 (a stored total next to nothing against the plan's own values, rules.planWeights and edit.planBase).
+export const PLANW_MAX_X = 1000;
+export const PLANW_TOTAL_X = 2;
+export function planWLimit(deck) {
+  const m = deck && plainObj(deck.settings) ? deck.settings.amountMan : null;
+  if (isNum(m) && m > 0) return PLANW_TOTAL_X * m * 10000;
+  const fx = deck && isNum(deck.planFx) && deck.planFx > 0 ? deck.planFx : 1;
+  let v = 0;
+  for (const h of (deck && Array.isArray(deck.holdings) ? deck.holdings : [])) {
+    if (plainObj(h) && Number.isInteger(h.plannedQty) && h.plannedQty > 0 && isNum(h.planPx) && h.planPx > 0) v += h.plannedQty * h.planPx * (h.cls === "us" ? fx : 1);
+  }
+  return v > 0 ? PLANW_TOTAL_X * v : 1e15;
+}
+export const planWOk = (x, limit) => typeof x === "number" && Number.isFinite(x) && x >= 0 && x <= limit;
+
+// A holding with the target set of another copy's same holding o: its target, plannedQty, plan weight (planW, v19.7a: Jack
+// 2026-11-13), plan value (planV, verification S-b) and band rule (o's; none when o has none). Every other field stays this copy's.
+function withTargetSet(h, o) {
+  const { target: _t, plannedQty: _q, planW: _w, planV: _v, ...rest } = h;
+  const band = Array.isArray(o.rules) ? o.rules.find((r) => plainObj(r) && r.id === "band") : null;
+  const rules = Array.isArray(h.rules) ? h.rules.filter((r) => !(plainObj(r) && r.id === "band")) : [];
+  return { ...rest, ...(o.target != null ? { target: o.target } : {}), ...(o.plannedQty != null ? { plannedQty: o.plannedQty } : {}),
+    ...(o.planW != null ? { planW: o.planW } : {}), ...(o.planV != null ? { planV: o.planV } : {}),
+    ...(Array.isArray(h.rules) || band ? { rules: band ? [...rules, band] : rules } : {}) };
+}
+const targetSet = (d) => canon({ m: plainObj(d.settings) ? d.settings.maxPct ?? null : null,
+  h: (d.holdings || []).filter(plainObj).map((h) => [h.t, h.target ?? null, h.plannedQty ?? null, (Array.isArray(h.rules) ? h.rules : []).find((r) => plainObj(r) && r.id === "band") || null,
+    h.planW ?? null, h.planV ?? null]) });
+
 // One portfolio both copies hold, both changed: the current copy leads (its name, settings, kind; its limits unless the
 // other copy's were saved later, laterOf: 내 규칙 정하기 is an edit like a 메모) and every
 // record either one holds is kept: holdings and imported rows by stock (the current one wins), purchases, sales,
@@ -691,6 +756,28 @@ function unionDeck(cur, other) {
     out.imported = [...ci, ...oi.filter((r) => r.t != null && !ci.some((y) => y.t === r.t)), ...named.slice(ci.filter((r) => r.t == null).length)];
   }
   for (const k of ["sales", "divs", "history"]) { const u = unionRecords(cur[k], other[k], where); if (u) out[k] = u; }
+  // v19.7a round-1 S1: the target set (each holding's target, plannedQty and band rule, and settings.maxPct) is one edit:
+  // the copy whose set was saved later (targetsTs; a time more than a day ahead counts as none) gives it whole, for every
+  // holding it has; a copy without a time is older than one with. Holdings added or taken out follow their own rules above
+  // and below (removal marks, history). When only one copy changed targets, the sum is that edit's. When BOTH changed
+  // targets and also added or took out different stocks, the later set covers only the holdings it has, so the targets can
+  // add up to more or less than 100% (round-2 B-1, a known limit, RUNBOOK): no record is lost, the 합쳤어요 line shows,
+  // 종목 바꾸기 opens at that 합계 with 합계를 100%로 맞추기, and the daily check reads each target over the held ones' sum
+  // (rules.js ref = target / targetSum), so the sum alone flags nothing. Never renormalised here.
+  const tc = believable(cur.targetsTs) ? cur.targetsTs : null, to = believable(other.targetsTs) ? other.targetsTs : null;
+  if (to != null && !(tc != null && tc >= to)) {
+    const oh = new Map((other.holdings || []).filter(plainObj).map((h) => [h.t, h]));
+    out.holdings = out.holdings.map((h) => { const o = plainObj(h) ? oh.get(h.t) : null; return o ? withTargetSet(h, o) : h; });
+    const om = plainObj(other.settings) ? other.settings.maxPct : undefined;
+    if (om != null) out.settings = { ...(plainObj(out.settings) ? out.settings : {}), maxPct: om };
+    out.targetsTs = to;
+  }
+  // v19.7a change log: every entry either copy holds (as a multiset), oldest first, the newest CHANGES_MAX kept
+  if (Array.isArray(cur.changes) || Array.isArray(other.changes)) {
+    const all = (unionRecords(cur.changes, other.changes, where) || []).map((c, i) => [c, i])
+      .sort((a, b) => (plainObj(a[0]) && plainObj(b[0]) && a[0].at !== b[0].at ? (a[0].at < b[0].at ? -1 : 1) : a[1] - b[1])).map(([c]) => c);
+    out.changes = all.slice(Math.max(0, all.length - CHANGES_MAX));
+  }
   // v19.6a splits: one per stock and date, the current copy's wins (both came from the same data.json, so they agree)
   if (Array.isArray(cur.splits) || Array.isArray(other.splits)) {
     const cs = Array.isArray(cur.splits) ? cur.splits : [];
@@ -823,6 +910,8 @@ function droppedFrom(copy, res) {
     if ((d.history || []).some((e) => !hist.some((y) => entryKey(y) === entryKey(e)))) return true;
     if ((d.confirms || []).some((c) => !(r.confirms || []).some((y) => sameConfirm(y, c) && y.answer === c.answer))) return true;
     if (limitsEdit(d) && limitValues(d.limits) !== limitValues(r.limits)) return true;
+    // its target set lost to another (round-1 S1): said like any edit that lost
+    if (believable(d.targetsTs) && d.holdings.some((h) => { const x = r.holdings.find((y) => y.t === h.t); return x && x.target !== h.target; })) return true;
   }
   // a note the copy had deleted is back in the result (its deletion lost to a later edit)
   for (const t of Object.keys((plainObj(copy.gone) && perStock(copy.gone, "notes")) || {})) {
@@ -1371,6 +1460,12 @@ export function mergeStores(cur, inc, ts = Date.now(), known = [], today = null)
         : keepLater(fileLim, ownLim.filter((e) => limitValues(e.limits) === limitValues(x.limits)).map((e) => e.ts)))
       : ownLim.reduce((a, e) => laterLimits(a, e), null);
     const { confirms: _c, ...rest } = x;
+    // v19.7a round-1 S1: the file's target set comes in now where this device's copies hold another one (so a copy with an
+    // older set merged later never takes it back); the same set keeps the later of the times
+    const tsOwn = mine.map((d) => d.targetsTs).filter((v) => believable(v));
+    const setNow = mine.some((d) => targetSet(d) !== targetSet(x));
+    const tts = setNow && okTs(ts) ? Math.max(ts, tsOwn.length ? Math.max(...tsOwn) + 1 : 0) : okTs(x.targetsTs) || tsOwn.length ? Math.max(okTs(x.targetsTs) ? x.targetsTs : 0, ...tsOwn) : null;
+    if (tts) rest.targetsTs = tts;
     return withLimitsEdit({ ...rest, holdings, ...(confirms.length || Array.isArray(x.confirms) ? { confirms } : {}),
       ...(marks.size ? { removed: [...marks.values()] } : {}) }, lim);
   };
