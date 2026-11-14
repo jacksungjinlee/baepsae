@@ -28,6 +28,10 @@ export const noStatements = (c) => !!c && (c.rev || [])[0] == null && (c.ni || [
 // 04 의 그 줄 (Jack Q3, 2026-11-14: '적자 구간 …' 대신 예전 앱의 '재무제표 데이터가 아직 없어요'): 해외 기업은 02 와 같은 외화 줄,
 // 그 밖은 02 줄의 첫 문장
 export const noStatementsText = (c) => (isForeignIssuer(c.t) ? "외화로 작성된 재무제표라 아직 보여 드리지 않아요." : "재무제표 데이터가 아직 없어요.");
+// 우선주 (KRX: 보통주 코드는 0 으로 끝나요 — 2.0 engine.isPreferred 와 같아요). DART 가 보통주 코드만 올려서 파이프라인은 우선주의
+// 재무제표를 찾지 않아요 (사업보고서를 '못 찾은' 게 아니에요). say-why NEW-9 (2026-11-14, Jack 의 답을 기다려요): 02 의 괄호 속 이유
+// '(파이프라인이 사업보고서를 못 찾은 종목이에요)'는 우선주에게 틀린 말이라, 우선주는 첫 문장만
+const isPrefCode = (code) => typeof code === "string" && code.length === 6 && !code.endsWith("0");
 
 // ---------------- 공용 아톰 ----------------
 const Card = ({ children, style = {} }) => (
@@ -1265,7 +1269,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
             else return null;
             return <Verdict>{v}</Verdict>;
           })()}
-          {c.rev[0] == null && c.ni[0] == null ? <Sub style={{ marginTop: 8 }}>{isForeignIssuer(c.t) ? "외화로 작성된 재무제표라 아직 보여 드리지 않아요." : "재무제표 데이터가 아직 없어요. (파이프라인이 사업보고서를 못 찾은 종목이에요)"}</Sub> : (
+          {c.rev[0] == null && c.ni[0] == null ? <Sub style={{ marginTop: 8 }}>{isForeignIssuer(c.t) || isPrefCode(c.t) ? noStatementsText(c) : "재무제표 데이터가 아직 없어요. (파이프라인이 사업보고서를 못 찾은 종목이에요)"}</Sub> : (
             <>
               <div style={{ display: "flex", justifyContent: "space-around", marginTop: 12, gap: 6 }}>
                 <Spark3 label="매출" arr={c.rev} />

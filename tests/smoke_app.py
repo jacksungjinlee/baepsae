@@ -3004,6 +3004,7 @@ def scene_old_app_lines(R, files):
         see(page, "주가는 무엇으로 움직였나")
         body = page.locator("body").inner_text()
         assert "바뀔 수 있어요" not in body and page.locator('[data-fix="eps"]').count() == 0, "EPS 가 없는 회사에 날짜가 지난 고치는 중 줄"
+        assert "파이프라인이 사업보고서를 못 찾은" not in body, "우선주에 틀린 이유 (02, say-why NEW-9)"
         # 04: 적자가 아니라 숫자가 없어요 → 02 와 같은 줄 (Jack Q3)
         assert "적자 구간이 있어서" not in body, "재무제표가 없는 우선주에 '적자 구간' 줄"
         d = page.locator('[data-decomp="no-statements"]')

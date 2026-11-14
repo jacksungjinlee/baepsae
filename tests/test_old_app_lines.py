@@ -113,6 +113,19 @@ def test_no_dated_eps_line_where_there_is_no_eps():
     assert got["sam"] == 4                                   # 다시 읽기 전 파일의 EPS 가 있는 회사: 예전 그대로 네 칸 (tests/test_fix_notes.py)
 
 
+# ── 02 3개년 실적 흐름: 우선주에게 틀린 이유를 빼요 (say-why NEW-9 · 2026-11-14, Jack 의 답을 기다리는 커밋) ──
+def test_preferred_shares_lose_the_untrue_reason_in_02():
+    got = run("""
+      const L = (t) => lines(page(live(CORP), t));
+      out = { pref: L('005935'), kr: L('496320'), foreign: L('950250'), sam: L('005930') };""", CORP=corp_with_real_rows())
+    pref, kr, foreign = got["pref"], got["kr"], got["foreign"]
+    assert NO_DATA in pref and not any("파이프라인이 사업보고서를 못 찾은" in x for x in pref), [x for x in pref if "재무제표" in x]
+    assert pref.index("3개년 실적 흐름") < pref.index(NO_DATA)
+    assert NO_DATA_OLD in kr                                 # 우선주가 아닌 회사(본시스템즈): 예전 그대로
+    assert FOREIGN in foreign and not any("파이프라인이" in x for x in foreign)   # 해외 기업(테라뷰): 예전 그대로
+    assert not any(x.startswith("재무제표 데이터가 아직 없어요") for x in got["sam"])
+
+
 # ── 04 주가는 무엇으로 움직였나: '적자 구간이 있어서 …'는 정말 적자일 때만 (Jack Q3 · say-why NEW-8) ──
 def test_the_loss_line_only_for_a_real_loss_and_the_data_line_when_there_are_no_statements():
     """재무제표 숫자가 하나도 없으면 02 와 같은 줄 ('재무제표 데이터가 아직 없어요.' · 해외 기업은 '외화로 …'), 나누기를 막는 게 정말 적자면
