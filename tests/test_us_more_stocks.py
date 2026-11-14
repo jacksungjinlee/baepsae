@@ -410,7 +410,7 @@ def test_fetch_us_checks_foreign_numbers_and_names_missing_extras(tmp_path, monk
 
 def test_a_crashed_foreign_check_blanks_every_checkable_number_loudly(tmp_path, monkeypatch):
     """리뷰 S2(c): 외국 회사 검사가 멈추면 맞춰 보지 못한 숫자를 내보내지 않아요 — 외국 회사(fcur 없음)의 PER · PBR · 배당수익률을 모두 비우고
-    이유 '검사가 멈춤' 과 함께 크게 남겨요. 관문은 그 기록으로 통과해요 (비운 칸이 비어 있고 빠짐없이 확인됨)."""
+    이유 '검사가 멈춤' 과 함께 크게 남겨요. 관문은 그 기록을 받되 경고해요 (리뷰 S1: 그 칸엔 이유 줄이 없어 앱이 '자료가 없어요')."""
     def boom(*a, **k):
         raise RuntimeError("시험")
     monkeypatch.setattr(F, "us_foreign_check", boom)
@@ -422,10 +422,52 @@ def test_a_crashed_foreign_check_blanks_every_checkable_number_loudly(tmp_path, 
     assert meta["usForeign"]["checked"] == ["BP", "SHEL"]
     assert sorted(x[:2] for x in meta["usForeign"]["cut"]) == [[t, f] for t in ("BP", "SHEL") for f in ("dy", "pbr", "per")]
     assert all(x[2] == "검사가 멈춤 (RuntimeError)" for x in meta["usForeign"]["cut"])
-    assert any(x.startswith("  !! 미국 상장 외국 회사 검사가 멈췄어요 (RuntimeError: 시험) → 6칸을 비웠어요") for x in lines), lines
+    assert any(x.startswith("  !! 미국 상장 외국 회사 검사가 멈췄어요 (RuntimeError: 시험) → 끝까지 본 0곳의 비운 칸 0칸은 그대로 · 나머지 6칸을")
+               for x in lines), lines
     rep = V.Report()
     V.check_us_foreign(rep, {"usForeign": meta["usForeign"]}, us, "publish")
-    assert row(rep, FOREIGN)[3] == "PASS" and row(rep, FOREIGN)[1].startswith("확인 2곳 · 비운 칸 PER 2 · PBR 2 · 배당 2"), rep.table()
+    r = row(rep, FOREIGN)
+    assert r[3] == "WARN" and r[1].startswith("확인 2곳 · 비운 칸 PER 2 · PBR 2 · 배당 2"), rep.table()
+    assert "검사가 멈춰 맞춰 보지 않고 비운 회사 2곳: BP, SHEL" in r[1]
+
+
+def test_a_crash_mid_loop_keeps_what_was_already_checked(tmp_path, monkeypatch):
+    """리뷰 N1: BP 를 끝까지 본 뒤 SHEL 에서 멈추면 — BP 의 비운 칸 · cut 줄 · 표시(fgnCut)는 그대로, SHEL 의 세 칸만 '검사가 멈춤' 으로 비워요."""
+    real = F.us_foreign_cuts
+
+    def cuts(rec, info, div12, **kw):
+        if rec["t"] == "SHEL":
+            raise ValueError("시험: 중간에 멈춤")
+        return real(rec, info, div12, **kw)
+    monkeypatch.setattr(F, "us_foreign_cuts", cuts)
+    us, meta, lines = _fetch(tmp_path, monkeypatch)
+    by = {r["t"]: r for r in us}
+    assert by["BP"]["fgnCut"] == {"pbr": "mismatch", "per": "mismatch"} and by["BP"]["dy"] == 4.55
+    assert not any(k in by["SHEL"] for k in ("per", "pbr", "dy", "fgnCut")), by["SHEL"]
+    cut = meta["usForeign"]["cut"]
+    assert [x[:2] for x in cut] == [["BP", "pbr"], ["BP", "per"], ["SHEL", "per"], ["SHEL", "pbr"], ["SHEL", "dy"]], cut
+    assert cut[0][2].startswith("주가 ÷ 주당 장부가") and all(x[2] == "검사가 멈춤 (ValueError)" for x in cut[2:])
+    assert meta["usForeign"]["checked"] == ["BP", "SHEL"]
+    assert any("끝까지 본 1곳의 비운 칸 2칸은 그대로 · 나머지 3칸을 맞춰 보지 않고 비웠어요 (이유 줄 없음): SHEL per, SHEL pbr, SHEL dy" in x
+               for x in lines), lines
+    rep = V.Report()
+    V.check_us_foreign(rep, {"usForeign": meta["usForeign"]}, us, "publish")
+    r = row(rep, FOREIGN)
+    assert r[3] == "WARN" and "검사가 멈춰 맞춰 보지 않고 비운 회사 1곳: SHEL" in r[1], rep.table()
+
+
+def test_the_crash_path_clears_a_stale_mark(tmp_path, monkeypatch):
+    """리뷰 N1 (살아남은 변이): 멈춘 검사가 남긴 표시는 지워요 — 끝까지 보지 못한 종목엔 이유 줄 표시가 없어야 해요."""
+    def boom(out, *a, done=None, **k):
+        next(r for r in out if r["t"] == "SHEL")["fgnCut"] = {"pbr": "mismatch"}
+        raise RuntimeError("시험")
+    monkeypatch.setattr(F, "us_foreign_check", boom)
+    us, meta, _lines = _fetch(tmp_path, monkeypatch)
+    by = {r["t"]: r for r in us}
+    assert "fgnCut" not in by["SHEL"] and not any(k in by["SHEL"] for k in ("per", "pbr", "dy"))
+    rep = V.Report()
+    V.check_us_foreign(rep, {"usForeign": meta["usForeign"]}, us, "publish")
+    assert row(rep, FOREIGN)[3] == "WARN", rep.table()
 
 
 # ── 관문 ─────────────────────────────────────────────────
@@ -508,6 +550,8 @@ def test_gate_foreign_good_record_passes():
     (lambda us, rec: us[1].update(fgnCut=["pbr"]), "모양 1"),
     (lambda us, rec: us[0].update(fgnCut={"vz": "mismatch"}), "모양 1"),
     (lambda us, rec: us[3].update(fgnCut={"pbr": "mismatch"}, pbr=None), "모양 1: AAPL.fgnCut (외국 회사 목록 밖이거나 fcur)"),
+    (lambda us, rec: rec["cut"].pop(1), "cut 줄 없는 표시 1: BP.per"),                              # 리뷰 N3: 표시만 있고 줄이 없음
+    (lambda us, rec: us[0].update(fgnCut={"dy": "mismatch"}, dy=None), "cut 줄 없는 표시 1: SHEL.dy"),
 ])
 def test_gate_foreign_fails(change, expect):
     us, rec = foreign_us(), json.loads(json.dumps(GOOD))
@@ -519,22 +563,32 @@ def test_gate_foreign_fails(change, expect):
 
 
 def test_gate_foreign_accepts_a_stopped_check_without_marks():
-    """검사가 멈춘 날 (fetch_us 의 예외 길): 비운 칸에 이유 줄 표시가 없어도 통과 — '–' 만 나가요."""
+    """검사가 멈춘 날 (fetch_us 의 예외 길): 비운 칸에 이유 줄 표시가 없어도 실패하지 않지만 경고해요 (리뷰 S1 — 그날 앱은 그 회사의 요약 칸 ·
+    배당 머리에 '자료가 없어요' 를 보여요 · 발행은 막지 않아요)."""
     us = [{"t": "SHEL", "cls": "us", "price": 99.08}, {"t": "BP", "cls": "us", "price": 45.7}]
     rec = {"checked": ["BP", "SHEL"], "cut": [[t, f, "검사가 멈춤 (RuntimeError)"] for t in ("BP", "SHEL") for f in ("per", "pbr")]}
     rep = V.Report()
     V.check_us_foreign(rep, {"usForeign": rec}, us, "publish")
-    assert row(rep, FOREIGN)[3] == "PASS", rep.table()
+    r = row(rep, FOREIGN)
+    assert r[3] == "WARN" and "검사가 멈춰 맞춰 보지 않고 비운 회사 2곳: BP, SHEL (이유 줄 없음 · 앱은 '자료가 없어요')" in r[1], rep.table()
+    rep = V.Report()
+    V.check_us_foreign(rep, {"usForeign": GOOD}, foreign_us(), "publish")                    # 보통 날은 경고 없음
+    assert row(rep, FOREIGN)[3] == "PASS"
 
 
 def test_gate_foreign_without_the_record():
     rep = V.Report()                                                 # 이 칸 전 발행본: 외국 회사 숫자가 없으면 (어제 파일) 통과
     V.check_us_foreign(rep, {}, [s for s in foreign_us() if s["t"] in ("BTI", "AAPL")], "live")
     assert row(rep, FOREIGN)[3] == "PASS"
+    plain = [{k: v for k, v in s.items() if k != "fgnCut"} for s in foreign_us()]
     for mode, st in (("publish", "FAIL"), ("live", "WARN")):
         rep = V.Report()
-        V.check_us_foreign(rep, {}, foreign_us(), mode)
+        V.check_us_foreign(rep, {}, plain, mode)
         assert row(rep, FOREIGN)[3] == st and "맞춰 보지 않은 숫자 2곳: BP, SHEL" in row(rep, FOREIGN)[1]
+    for mode in ("publish", "live"):                                 # 리뷰 N3: 기록 없이 표시만 있으면 어느 쪽이든 실패
+        rep = V.Report()
+        V.check_us_foreign(rep, {}, foreign_us(), mode)
+        assert row(rep, FOREIGN)[3] == "FAIL" and "기록 없음 (data.json usForeign) 인데 fgnCut 표시가 있는 종목 1곳: BP" in row(rep, FOREIGN)[1]
 
 
 def test_good_fixture_still_passes_with_both_rows():

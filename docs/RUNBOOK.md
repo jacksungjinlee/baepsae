@@ -455,14 +455,19 @@ yield (Yahoo's 2.23% leaves out the larger fourth dividend; paid in the last yea
 PBR (no ROE) and yield, BHP yield (Yahoo annualises the last half-year dividend: 4.98% vs 4.33% paid), AstraZeneca and
 TotalEnergies yield (Yahoo's dividend records miss a payment, so the check cannot confirm a correct 1.74% / 4.38%; they
 come back when Yahoo's records are complete). Shell, Novartis and Rio Tinto show all three. The row fails if a blanked
-number is back (pbr also blanks the 가치 score `vz`), if a foreign company's numbers were published unchecked, or if a
-blanked number has no `fgnCut` mark on its stock (the app would say "자료가 없어요" instead of the reason). 2.0 shows each
+number is back (pbr also blanks the 가치 score `vz`), if a foreign company's numbers were published unchecked, if a
+blanked number has no `fgnCut` mark on its stock (the app would say "자료가 없어요" instead of the reason), if a mark has
+no matching `usForeign.cut` row, or if a file carries marks without the `usForeign` record. 2.0 shows each
 blanked number as "–" under its label with Jack's line "자료의 숫자가 회사 전체 재무제표와 맞지 않아서 비워 두었어요." (Jack,
 2026-11-14) right under it, in the same places as the currency line (#114): the 가치 and 배당 tiles of 요약, 내 기준과 맞는 정도
 (card and sheet), the 가치 tab, 가치 자세히 and the 배당 tab. A number blanked because the statement currency was not
-confirmed gets the same line (the currency line needs a currency name). On a day the check itself stopped (run log "!! 미국
-상장 외국 회사 검사가 멈췄어요"), every checkable number of these companies is blanked with no mark and no line ("–" only).
-The old app shows "–" for these, as for the currency case. TSM, ASML, BABA, NVO, SHOP and the ADRs that come in through
+confirmed gets the same line (the currency line needs a currency name). **On a day the check itself stops** (run log "!! 미국
+상장 외국 회사 검사가 멈췄어요"), the companies it had already finished keep their blanks and their line; every remaining
+foreign company that reports in dollars (Shell, Novartis, Rio Tinto, BP, HSBC, AstraZeneca, BHP, TotalEnergies, Diageo,
+AB InBev) has PER, PBR and 배당수익률 blanked without a mark, so users see no reason line: the 요약 가치 and 배당 tiles and the
+배당 tab's heading say "자료가 없어요", and the 가치 tab shows an empty card with only the date. The gate row warns that day
+(naming the companies; it never holds the publish). The next run checks again. Whether that day needs its own line is
+Jack's call (asked 2026-11-14). The old app shows "–" for these, as for the currency case. TSM, ASML, BABA, NVO, SHOP and the ADRs that come in through
 Nasdaq's list are not in `US_FOREIGN`: #114 keeps a company's numbers when its currency is unknown, while this check blanks
 what it cannot compare; widening it is a separate PR (Jack, 2026-11-14: later).
 

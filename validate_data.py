@@ -137,7 +137,7 @@ US_FOREIGN_SET = {"BTI", "ENB", "BCE", "TD", "RY", "SHEL", "BP", "UL", "TM", "SO
                   "DEO", "BUD", "SAN", "GSK"}                                                     # = fetch_data.US_FOREIGN (더한 외국 회사)
 US_FOREIGN_KEYS = ("per", "pbr", "dy")
 US_FGN_WHY = ("mismatch", "currency")      # data.json fgnCut 의 값 (Jack 2026-11-14: 앱이 그 칸 '–' 밑에 이유 줄을 붙여요)
-US_FGN_STOPPED = "검사가 멈춤"              # usForeign.cut 의 이유 머리말: 파이프라인 검사가 멈춰 모두 비운 칸 (이유 줄 없음)
+US_FGN_STOPPED = "검사가 멈춤"              # usForeign.cut 의 이유 머리말: 파이프라인 검사가 멈춰 비운 칸 (이유 줄 없음 · 그날은 경고) — fetch_data.US_FOREIGN_STOP_WHY
 KR_FUND_SET = {"088980", "415640", "094800"}              # 상장 인프라·부동산 펀드 (투자회사)
 KR_COMPANY_SET = {"241520", "034830", "123890"}           # 같은 업종이지만 회사 (벤처캐피털·신탁회사)
 # v17.5.1 PR 2: 업종 그룹 (ind · indName)
@@ -1749,14 +1749,20 @@ def check_us_foreign(rep, data, us, mode):
     배당수익률은 파이프라인이 회사 합계 · 실제 배당과 맞춰 본 뒤에만 나가요 (data.json usForeign = {checked, cut [[티커, 칸, 이유]]}). 실패: ① 그런
     종목에 세 칸 중 하나라도 있는데 checked 에 없음 (맞춰 보지 않은 숫자) ② cut 에 적힌 칸이 남아 있음 (pbr 이면 가치 점수 vz 도) ③ 기록 모양이 틀림.
     ④ (2026-11-14, Jack 의 이유 줄) 종목의 fgnCut 이 틀린 모양이거나 그 칸이 남아 있음, 또는 cut 줄(검사가 멈춘 날 빼고)의 칸이 그 종목의 fgnCut 에
-    없음 (앱이 이유 줄 대신 '자료가 없어요' 를 보여요). 기록이 없는 파일(이 칸 전 발행본): 맞춰 볼 숫자가 없으면 통과 · 있으면 발행 때 실패, 사이트
-    점검(live) 때 경고."""
+    없음 (앱이 이유 줄 대신 '자료가 없어요' 를 보여요), 또는 fgnCut 의 칸에 맞는 cut 줄이 없음 (리뷰 N3). 기록이 없는 파일(이 칸 전 발행본): 종목에
+    fgnCut 이 있으면 실패 (기록 없이 표시만) · 맞춰 볼 숫자가 없으면 통과 · 있으면 발행 때 실패, 사이트 점검(live) 때 경고.
+    경고 (리뷰 S1, 발행은 막지 않아요): 검사가 멈춘 날 (cut 줄의 이유가 '검사가 멈춤 …') — 그 칸은 이유 줄 없이 비어 앱의 요약 칸 · 배당 머리가
+    '자료가 없어요' 예요."""
     name = "미국 상장 외국 회사: 회사 합계와 맞춘 PER·PBR·배당수익률만"
     th = "fcur 없는 외국 회사는 usForeign.checked 에 · cut 의 칸은 빈 칸 (pbr 이면 vz 도) · 그 칸마다 종목의 fgnCut"
     by = {s.get("t"): s for s in us}
     want = sorted(t for t, s in by.items() if t in US_FOREIGN_SET and not s.get("fcur") and any(s.get(k) is not None for k in US_FOREIGN_KEYS))
     rec = data.get("usForeign")
+    marked = sorted(str(s.get("t")) for s in us if "fgnCut" in s)
     if not isinstance(rec, dict):
+        if marked:
+            rep.add(name, False, f"기록 없음 (data.json usForeign) 인데 fgnCut 표시가 있는 종목 {len(marked)}곳: {_tickers(marked)}", th)
+            return
         if not want:
             rep.add(name, True, "기록 없음 (data.json usForeign) · 맞춰 볼 외국 회사 숫자 없음", th)
         else:
@@ -1780,6 +1786,7 @@ def check_us_foreign(rep, data, us, mode):
         if s is not None:
             left += [f"{x[0]}.{k}" for k in ((x[1], "vz") if x[1] == "pbr" else (x[1],)) if s.get(k) is not None]
     unchecked = [t for t in want if t not in set(checked)]
+    cutset, nocut = {(x[0], x[1]) for x in rows}, []
     # 2026-11-14 (Jack 의 이유 줄): 종목마다 fgnCut = {칸: mismatch | currency}. 적힌 칸은 비어 있어야 하고 (pbr 이면 vz 도), usForeign.cut 의
     # 줄(검사가 멈춘 날 빼고)마다 그 종목에 fgnCut 이 있어야 해요 — 없으면 앱이 이유 줄 대신 '자료가 없어요' 를 보여요.
     for s in us:
@@ -1792,15 +1799,20 @@ def check_us_foreign(rep, data, us, mode):
         if t not in US_FOREIGN_SET or s.get("fcur"):
             bad.append(f"{t}.fgnCut (외국 회사 목록 밖이거나 fcur)")
         left += [f"{t}.{k}" for f in g for k in ((f, "vz") if f == "pbr" else (f,)) if s.get(k) is not None]
+        nocut += [f"{t}.{f}" for f in g if (t, f) not in cutset]
     left = list(dict.fromkeys(left))
     nomark = [f"{x[0]}.{x[1]}" for x in rows if not x[2].startswith(US_FGN_STOPPED) and x[0] in by
               and not (isinstance(by[x[0]].get("fgnCut"), dict) and x[1] in by[x[0]]["fgnCut"])]
     probs = ([f"맞춰 보지 않은 숫자 {len(unchecked)}곳: {_tickers(unchecked)}"] if unchecked else []) \
         + ([f"이유 표시(fgnCut) 없음 {len(nomark)}: {', '.join(nomark[:6])}"] if nomark else []) \
+        + ([f"cut 줄 없는 표시 {len(nocut)}: {', '.join(nocut[:6])}"] if nocut else []) \
         + ([f"남은 칸 {len(left)}: {', '.join(left[:6])}"] if left else []) + ([f"모양 {len(bad)}: {', '.join(bad[:3])}"] if bad else [])
     names = sorted({x[0] for x in rows})
+    stopped = sorted({x[0] for x in rows if x[2].startswith(US_FGN_STOPPED)})
     rep.add(name, not probs, f"확인 {len(checked)}곳 · 비운 칸 PER {n_by['per']} · PBR {n_by['pbr']} · 배당 {n_by['dy']}"
-            + (f" ({_tickers(names)})" if names else "") + "".join(f" · {p}" for p in probs), th)
+            + (f" ({_tickers(names)})" if names else "") + "".join(f" · {p}" for p in probs)
+            + (f" · 검사가 멈춰 맞춰 보지 않고 비운 회사 {len(stopped)}곳: {_tickers(stopped)} (이유 줄 없음 · 앱은 '자료가 없어요')" if stopped else ""),
+            th, warn=bool(stopped))
     if rows:
         rep.detail("미국 상장 외국 회사: 회사 합계 · 실제 배당과 맞지 않아 비운 칸 (usForeign.cut)", [f"{t} {f}: {w}" for t, f, w in rows])
 

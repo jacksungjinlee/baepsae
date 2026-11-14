@@ -6739,6 +6739,7 @@ def us_info_due(entry, today):
 # 차이는 BHP 1.24 배였어요.
 US_FOREIGN_BAND = {"per": 1.10, "pbr": 1.35, "dy": 1.10}
 US_FOREIGN_CUR_WHY = "재무제표 통화를 모름"   # us_foreign_cuts 의 이유 머리말 — 통화를 확인하지 못해 비운 칸 (data.json fgnCut "currency")
+US_FOREIGN_STOP_WHY = "검사가 멈춤"           # 검사가 멈춰 맞춰 보지 못하고 비운 칸의 이유 머리말 (관문 validate_data.US_FGN_STOPPED 와 같은 글자)
 US_FOREIGN_DIV_DAYS = 350     # 지난 1년 배당: 365일이면 해마다 같은 때 주는 배당이 며칠 당겨질 때 다섯 번 세요 (셸 2025-11-14 · 2026-11-13)
 
 
@@ -6822,28 +6823,35 @@ def us_foreign_cuts(rec, info, div12, days=US_FOREIGN_DIV_DAYS):
     return out
 
 
-def us_foreign_check(out, cache, data, us_px_date, no_info=frozenset(), foreign=US_FOREIGN):
+def us_foreign_check(out, cache, data, us_px_date, no_info=frozenset(), foreign=US_FOREIGN, done=None):
     """fetch_us 의 외국 회사 검사: US_FOREIGN 이고 재무제표 통화가 달러가 아닌 표시(fcur)가 없는 종목마다 us_foreign_cuts 로 맞지 않는 칸을 비우고
     (pbr 을 비우면 가치 점수 vz 도 매겨지지 않아요) 크게 남겨요. 상세 정보를 붙이지 못한 종목(no_info)은 비울 칸이 없지만 확인한 것으로 세요.
     반환 data.json usForeign = {"checked": [티커], "cut": [[티커, 칸, 이유]]} — 관문이 비운 칸이 비었는지, 외국 회사가 빠짐없이 확인됐는지 봐요.
     비운 종목에는 rec["fgnCut"] = {칸: "mismatch" | "currency"} (Jack, 2026-11-14: 앱이 그 칸 '–' 밑에 '자료의 숫자가 회사 전체 재무제표와 맞지
-    않아서 비워 두었어요.' 를 붙여요 · currency = 재무제표 통화를 확인하지 못함)."""
-    checked, cut = [], []
+    않아서 비워 두었어요.' 를 붙여요 · currency = 재무제표 통화를 확인하지 못함).
+    done(dict, 리뷰 N1): 끝까지 본 종목(seen) · 확인한 종목(checked) · 비운 칸(cut)을 가면서 담아요 — 중간에 멈추면 fetch_us 가 이것으로 이미 본 종목의
+    줄과 표시를 지키고 나머지만 비워요 (us_foreign_stopped)."""
+    done = {} if done is None else done
+    checked, cut, seen = done.setdefault("checked", []), done.setdefault("cut", []), done.setdefault("seen", set())
     for rec in out:
         t = rec["t"]
         rec.pop("fgnCut", None)
         if t not in foreign or rec.get("fcur"):
+            seen.add(t)
             continue
-        checked.append(t)
         e = cache.get(t) or {}
         if t in no_info or not e:
+            checked.append(t)
+            seen.add(t)
             continue
         cuts = us_foreign_cuts(rec, e.get("info"), us_div_12m(_div_col(data, t), us_px_date))
+        if cuts:            # 표시 먼저, 그다음 비우기 (어느 칸도 표시 없이 비지 않게)
+            rec["fgnCut"] = {f: ("currency" if why.startswith(US_FOREIGN_CUR_WHY) else "mismatch") for f, why in sorted(cuts.items())}
         for f, why in sorted(cuts.items()):
             rec.pop(f, None)
             cut.append([t, f, why])
-        if cuts:
-            rec["fgnCut"] = {f: ("currency" if why.startswith(US_FOREIGN_CUR_WHY) else "mismatch") for f, why in sorted(cuts.items())}
+        checked.append(t)
+        seen.add(t)
     names = {"per": "PER", "pbr": "PBR", "dy": "배당수익률"}
     by_f = {f: [t for t, g, _ in cut if g == f] for f in names}
     n_fc = sum(1 for r in out if r["t"] in foreign and r.get("fcur"))
@@ -6856,6 +6864,29 @@ def us_foreign_check(out, cache, data, us_px_date, no_info=frozenset(), foreign=
     for t, f, why in cut:
         log(f"     {t} {names[f]}: {why}")
     return {"checked": sorted(checked), "cut": cut}
+
+
+def us_foreign_stopped(out, done, err, foreign=US_FOREIGN):
+    """us_foreign_check 가 멈췄을 때 (리뷰 N1): 끝까지 본 종목(done["seen"])의 비운 칸 · 표시(fgnCut)는 그대로 두고, 아직 보지 못한 외국 회사
+    (fcur 없음)의 PER · PBR · 배당수익률을 모두 비워요 — 맞춰 보지 못한 숫자는 내보내지 않아요. 그 칸에는 이유 줄 표시가 없어요 (앱은 '–' ·
+    요약 칸과 배당 머리는 '자료가 없어요' — Jack 에게 묻는 중 · 관문은 경고). 남아 있던 예전 표시도 지워요. -> data.json usForeign"""
+    seen = set(done.get("seen") or ())
+    cut = [list(x) for x in done.get("cut") or []]
+    kept = len(cut)
+    why = f"{US_FOREIGN_STOP_WHY} ({type(err).__name__})"
+    for r in out:
+        if r["t"] not in foreign or r.get("fcur") or r["t"] in seen:
+            continue
+        r.pop("fgnCut", None)
+        for f in ("per", "pbr", "dy"):
+            if r.get(f) is not None:
+                r.pop(f, None)
+                cut.append([r["t"], f, why])
+    checked = sorted(r["t"] for r in out if r["t"] in foreign and not r.get("fcur"))
+    log(f"  !! 미국 상장 외국 회사 검사가 멈췄어요 ({type(err).__name__}: {str(err)[:120]}) → 끝까지 본 {len(seen & set(checked))}곳의 비운 칸 "
+        f"{kept}칸은 그대로 · 나머지 {len(cut) - kept}칸을 맞춰 보지 않고 비웠어요 (이유 줄 없음): "
+        + (", ".join(f"{t} {f}" for t, f, _w in cut[kept:]) or "없음"))
+    return {"checked": checked, "cut": cut}
 
 
 def us_extra_missing(extra, kept, why):
@@ -7084,18 +7115,11 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None):
     fsum = us_fcur_summary(out, infos, no_info)                        # Jack, 2026-11-12: 재무제표 통화가 달러가 아닌 회사 (빈 칸은 apply_us_info)
     log_us_fcur(fsum)
     # 2026-11-14: 미국 상장 외국 회사의 PER · PBR · 배당수익률이 회사 합계 · 실제 배당과 맞지 않으면 비워요 (ADR 배율 · 통화 · 야후 '앞으로 1년' 배당)
+    fdone = {}
     try:
-        ufor = us_foreign_check(out, cache, data, us_px_date, no_info)
-    except Exception as e:      # 검사가 멈추면 외국 회사의 세 칸을 모두 비워요 (맞춰 보지 못한 숫자는 내보내지 않아요) — 크게 남기고 관문이 봐요
-        cut = [[r["t"], f, f"검사가 멈춤 ({type(e).__name__})"] for r in out if r["t"] in US_FOREIGN and not r.get("fcur")
-               for f in ("per", "pbr", "dy") if r.get(f) is not None]
-        for t, f, _w in cut:
-            next(r for r in out if r["t"] == t).pop(f, None)
-        for r in out:
-            r.pop("fgnCut", None)      # 이유 줄은 맞춰 본 칸에만 (멈춘 날은 '–' 만)
-        ufor = {"checked": sorted(r["t"] for r in out if r["t"] in US_FOREIGN and not r.get("fcur")), "cut": cut}
-        log(f"  !! 미국 상장 외국 회사 검사가 멈췄어요 ({type(e).__name__}: {str(e)[:120]}) → {len(cut)}칸을 비웠어요: "
-            + ", ".join(f"{t} {f}" for t, f, _w in cut))
+        ufor = us_foreign_check(out, cache, data, us_px_date, no_info, done=fdone)
+    except Exception as e:      # 검사가 멈추면: 이미 본 종목은 그대로, 나머지 외국 회사의 세 칸은 비워요 — 크게 남기고 관문이 경고해요
+        ufor = us_foreign_stopped(out, fdone, e)
     # 2026-11-14: EXTRA_US 중 오늘 목록에 없는 종목과 이유 (data.json usExtraMissing · 관문이 이름과 이유를 남겨요)
     for t in left_out.get("preferred") or []:
         extra_why[t] = "우선주 · 예탁증서로 보고 뺌 (usLeftOut.preferred)"
