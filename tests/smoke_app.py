@@ -2978,6 +2978,56 @@ def scene_stmt_cur(R, files):
     ctx.close(); srv.shutdown()
 
 
+# ── 2026-11-14 (Jack Q3 · say-why NEW-8 · NEW-9): 예전 뱁새 기업분석의 맞지 않는 줄 (tests/test_old_app_lines.py) ──
+OLD_NO_DATA = "재무제표 데이터가 아직 없어요."
+
+
+def no_statements(c):
+    return (c.get("rev") or [None])[0] is None and (c.get("ni") or [None])[0] is None
+
+
+def scene_old_app_lines(R, files):
+    """우선주(재무제표가 없어요): 기업분석의 'PER과 EPS는 … 11월 10일에 바뀔 수 있어요.' 줄은 어디에도 없어요 (바뀔 EPS 가 없어요).
+    첫 화면 성적표 한국어 · 영어도 그 줄이 없어요."""
+    S = "예전줄"
+    f = json.loads(json.dumps(files, allow_nan=True))
+    pref = next((c for c in listed_companies(f) if not str(c["t"]).endswith("0") and len(str(c["t"])) == 6 and no_statements(c)), None)
+    if not pref:
+        return none_today(R, S, "재무제표가 없는 우선주가")
+    T = pref["t"]
+    srv, ctx, page, base = R.open(build_site(f))
+
+    def corp_page():
+        page.goto("about:blank")
+        page.goto(base + f"/baepsae.html?dev=1&from=app#corp={T}", wait_until="domcontentloaded")
+        see(page, "3개년 실적 흐름")
+        see(page, "주가는 무엇으로 움직였나")
+        body = page.locator("body").inner_text()
+        assert "바뀔 수 있어요" not in body and page.locator('[data-fix="eps"]').count() == 0, "EPS 가 없는 회사에 날짜가 지난 고치는 중 줄"
+    R.check(page, S, f"기업분석 {T} (우선주): 'PER과 EPS는 … 바뀔 수 있어요' 줄 없음", corp_page)
+
+    def gate_card(lang):
+        def run():
+            page.goto("about:blank")
+            page.goto(base + "/baepsae.html?dev=1&from=app", wait_until="domcontentloaded")
+            if lang == "en":
+                page.get_by_role("button", name="EN", exact=True).first.click()
+                box = page.get_by_placeholder("Search a KRX stock — name or 6-digit code")
+            else:
+                box = page.get_by_placeholder("궁금한 종목이 있나요? — 이름 또는 코드")
+            box.fill(T)
+            page.locator("button", has_text=T).first.wait_for(state="visible", timeout=WAIT)
+            page.locator("button", has_text=T).first.click()
+            see(page, "A summary of facts" if lang == "en" else "사실의 요약일 뿐")
+            assert page.locator('[data-fix="eps"]').count() == 0, lang
+            body = page.locator("body").inner_text()
+            assert ("may change on" not in body) if lang == "en" else ("바뀔 수 있어요" not in body), lang
+        return run
+    R.check(page, S, f"첫 화면 성적표 {T} (한국어): 고치는 중 줄 없음", gate_card("ko"))
+    R.check(page, S, f"첫 화면 성적표 {T} (영어): 'may change on …' 줄 없음", gate_card("en"))
+    ctx.close(); srv.shutdown()
+
+
 def scene_kst_dates(R, files):
     """2026-11-12 (Jack: 예전 뱁새 날짜 고치기 PR 에 yes): 예전 뱁새가 적는 오늘 날짜 네 곳 — 점검 기록(③ '지금 상태 기록'), 저장 목록의
     'updated', 공유 카드('{날짜} · 뱁새에서 만듦'), 내보내기(파일 이름 · JSON 의 date · 주문 메모 첫 줄) — 는 한국 날짜예요.
@@ -3085,7 +3135,8 @@ def scene_list(R, fresh, full):
             ("늦음", lambda: scene_stale_recheck(R, fresh)), ("늦음", lambda: scene_corp_stale_after(R, fresh)),
             ("고치는중", lambda: scene_fix_notes(R, fresh)), ("고치는중", lambda: scene_fix_notes(R, fresh, live=True)),   # 2026-11-08
             ("다시읽음", lambda: scene_stmt_cur(R, fresh)),                                                                 # 2026-11-08 stmtCur
-            ("날짜", lambda: scene_kst_dates(R, fresh))]                                                                    # 2026-11-12 한국 날짜
+            ("날짜", lambda: scene_kst_dates(R, fresh)),                                                                    # 2026-11-12 한국 날짜
+            ("예전줄", lambda: scene_old_app_lines(R, fresh))]                                                              # 2026-11-14 Jack Q3
 
 
 def parse_part(text):
@@ -3111,7 +3162,7 @@ def main():
                     "고정 데이터 tests/fixtures/snapshot 을 그 발행일에 멈춘 시계로 — CI 는 이쪽이에요")
     ap.add_argument("--shots", default=None, help="실패 시 스크린샷을 저장할 폴더")
     ap.add_argument("--part", default=None, help="N/M: 장면을 순서대로 M 몫으로 나눈 것 중 N 번째만 (CI 가 여러 기계로 나눠 돌려요)")
-    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커·2.0링크·바로가기·파일·자동·저장본·미국날짜·늦음·고치는중·다시읽음·날짜)")
+    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커·2.0링크·바로가기·파일·자동·저장본·미국날짜·늦음·고치는중·다시읽음·날짜·예전줄)")
     args = ap.parse_args()
     if args.part is not None:
         parse_part(args.part)                                   # 잘못 적으면 브라우저를 열기 전에 멈춰요

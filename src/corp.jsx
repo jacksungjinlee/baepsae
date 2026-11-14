@@ -1027,7 +1027,8 @@ function DecompCard({ c, setExplain, corp }) {
       <H num="04" main="주가는 무엇으로 움직였나" sub="지난 3년 주가 = 이익 변화 × 눈높이 변화" onWhy={() => setExplain("decomp")} />
       {verdict && <Verdict>{verdict}</Verdict>}
       {body}
-      <EpsFixLine corp={corp} cos={[c]} show={!!corp} force={basisBad} />
+      {/* PER · EPS 줄은 이 칸이 EPS 를 말할 때만 (Jack Q3, 2026-11-14): EPS 가 없는 회사(우선주 · 재무제표 없음)에는 바뀔 EPS 가 없어요 */}
+      <EpsFixLine corp={corp} cos={[c]} show={!!corp && c.eps != null} force={basisBad} />
     </Card>
   );
 }
