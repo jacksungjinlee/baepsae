@@ -7,6 +7,21 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ## 0. Current state and next steps (updated 2026-11-14 KST — read this first)
 
+**Jack, 2026-11-14 (later evening): answers and approved lines.**
+- Q1–Q5 yes: #fin-warn's three PR #68 test edits; the Unilever row in `test_override_table_pins`; the
+  `test_reread_lines` edit for the 40 KONEX/new listings (old app → "재무제표 데이터가 아직 없어요."); BHP/RIO without an
+  업종 group and EPD/ET/BNS left out; widening the US foreign check (TSM, ASML, BABA, NVO, SHOP) comes right after the
+  dividend-yield bug.
+- Approved lines: US numbers blanked because they don't match company totals "자료의 숫자가 회사 전체 재무제표와 맞지
+  않아서 비워 두었어요."; 재무 경고, some checks couldn't run "4가지 중 {k}가지는 필요한 자료가 없어서 확인하지 못했어요.";
+  재무 경고, none could run "필요한 자료가 없어서 확인하지 못했어요."; companies with no statements yet (2.0) "공시된
+  재무제표가 아직 없어서 계산할 수 없어요." (the old app keeps "재무제표 데이터가 아직 없어요.").
+- Broken price history: a must-have stock with a broken day warns; two or more must-haves, or many stocks newly
+  breaking in one run, block the publish. Hide only the numbers whose calculation window includes the bad day; where
+  only some are hidden, each uses "과거 주가 기록 일부에 오류가 있어서 이 숫자는 비워 두었어요."; the full line stays
+  where all are hidden.
+- The 57 old-app 주가 분해 cards stay hidden (the old app is being retired).
+
 **Jack, 2026-11-14 (evening) — supersedes the budget rules below:**
 - **Model:** Opus 5.5 Extra high for the main session and every helper, reviews included. No Fable until Jack says so
   (he is saving it for a full-app audit later).
