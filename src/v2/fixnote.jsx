@@ -17,7 +17,7 @@ import React from "react";
 import { COLOR, SIZE, WEIGHT } from "../ui/tokens.js";
 import { C, fill, mdText, todayKst } from "./format.js";
 import { Note, tx } from "./ui.jsx";
-import { EPS_FIX_DATE, fixNotesHidden, epsNoticeShown, stmtCurFor, epsLineKind, unitHeldFor, pxBadFullFor, pxBadPartFor, pxBadHidesFor } from "./fix.js";
+import { EPS_FIX_DATE, fixNotesHidden, epsNoticeShown, stmtCurFor, epsLineKind, unitHeldFor, noStmtFor, pxBadFullFor, pxBadPartFor, pxBadHidesFor } from "./fix.js";
 import { fcurOf, fcurText, pbrZeroOf, fgnCutOf } from "./fcur.js";
 
 // The line with its date ("11월 10일"), or null when a word or the date is missing (never a line with an empty slot).
@@ -108,6 +108,20 @@ export function stmtCurText(s, co) {
   if (unitHeldFor(s, co)) return null;
   const cur = stmtCurFor(s, co);
   return cur && C.co.stmtCur ? fill(C.co.stmtCur, { currency: cur }) : null;
+}
+
+// No statements at all (fix.js noStmtFor, Jack 2026-11-14): "공시된 재무제표가 아직 없어서 계산할 수 없어요." once where the
+// company's 실적 · 가치 · 배당 numbers would be. s: the data.json row · co: its corp.json row.
+export function NoStmtNote({ s, co, show = true, style }) {
+  const text = show && noStmtFor(s, co) && C.co.noStmt ? C.co.noStmt : null;
+  return text ? <Note data-ui-v2="no-stmt" style={style}>{text}</Note> : null;
+}
+
+// The reason inside a rule tile (phrasing content) when a held Korean company's checks could not run for lack of input (pf.js
+// rule "warn" noData · Jack 2026-11-14: his approved co.warn.noData line).
+export function NoDataLine({ show = true, style }) {
+  const text = show && C.co.warn && C.co.warn.noData ? C.co.warn.noData : null;
+  return text ? <span data-ui-v2="warn-nodata" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2, ...style })}>{text}</span> : null;
 }
 
 // s: the data.json row · co: its corp.json row. data-cur: the code shown (tests).

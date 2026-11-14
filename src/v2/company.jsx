@@ -26,7 +26,7 @@ import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.
 import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, CardPic, SIDE_W, tx, tap, useMode, useLayout } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { findCompany, groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, warnings, cardRanks, myCards, holdingsOf, RANK_CARDS,
-  splitGuardCount, SPLIT_GUARD, divCheckCount, warnChips } from "./company.js";
+  splitGuardCount, SPLIT_GUARD, divCheckCount, warnChips, warnKind, uncheckedCount } from "./company.js";
 import { EarnBars, ValueScale, Coins, Waves } from "./coart.jsx";
 import { pfRows, isImported, limitsOf } from "./pf.js";
 import { limitPct } from "./pfview.jsx";
@@ -42,7 +42,7 @@ import { isCompany } from "./stocklist.js";
 import { todayD1 } from "./engine.js";
 import { EarnTab, ValueTab, DivTab, DiscTab, ValueMore, EarnMore } from "./cotabs.jsx";
 import { icrOffShown, stmtNotWonFor, unitHeldFor, unitRowsBlank, pxBadFor, pxBadFullFor, pxBadRowsBlank } from "./fix.js";
-import { IcrOffNote, IcrOffLine, StmtCurNote, FcurNote, PbrZeroNote, FgnCutNote, UnitChkNote, PxBadNote, PxBadOneNote, pxBadOneText } from "./fixnote.jsx";
+import { IcrOffNote, IcrOffLine, StmtCurNote, FcurNote, PbrZeroNote, FgnCutNote, UnitChkNote, NoStmtNote, PxBadNote, PxBadOneNote, pxBadOneText } from "./fixnote.jsx";
 import { fcurRowsBlank, fcurBlank, fcurDyBlank, pbrZeroOf, pbrZeroRowsBlank, fgnBlank, fgnRowsBlank } from "./fcur.js";
 import { RecordButton, RecordFlow, companyFlow } from "./records.jsx";
 import { decksFor } from "./records.js";
@@ -226,6 +226,8 @@ function Tiles({ load, s, onTab, tabsOn }) {
       <UnitChkNote s={s} co={load.coByT.get(s.t) || null} style={{ margin: `0 ${SPACE(1)}px ${SPACE(2)}px` }} />
       {/* statements not in won (corp.json stmtCur): the 실적 · 가치 tiles have no numbers; the reason once, before them */}
       <StmtCurNote s={s} co={load.coByT.get(s.t) || null} style={{ margin: `0 ${SPACE(1)}px ${SPACE(2)}px` }} />
+      {/* no statements at all (fix.js noStmtFor, Jack 2026-11-14): why 실적 · 가치 · 배당 say 자료가 없어요, once before them */}
+      <NoStmtNote s={s} co={load.coByT.get(s.t) || null} style={{ margin: `0 ${SPACE(1)}px ${SPACE(2)}px` }} />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: SPACE(3) }}>
         {views.map((v) => <Tile key={v.topic} v={v} onOpen={tabsOn ? () => onTab(tabOf[v.topic]) : undefined} />)}
       </div>
@@ -365,6 +367,22 @@ function Warnings({ load, s, wide }) {
   // (no '없어요' head: the existing rule allows "확인한 …" only for flWhy.icr "ie"). Goes by itself when flWhy.icr changes.
   const off = s.cls === "kr" && icrOffShown(load.coByT.get(s.t) || null);
   if (!w.flags.length) {
+    // 2026-11-14 (Jack): no check could run (corp.json flRan []: no statements yet (KONEX, new listings), 우선주, statements
+    // not in won (the currency line above the tiles says why)). Its own state, never '…없어요': the 재무 경고 chip's word
+    // (rank.warn) as the heading and Jack's line under it, "필요한 자료가 없어서 확인하지 못했어요." (co.warn.noData; it replaced this
+    // PR's placeholder pfr.unknown). Not for funds (no statements to check) or a file without flRan (nothing known).
+    if (warnKind(s, w) === "unchecked" && all(C.rank.warn, W.noData)) {
+      return (
+        <Card data-ui-v2="co-warn-unchecked" style={{ display: "flex", gap: SPACE(3), alignItems: "center", padding: SPACE(4) }}>
+          <IconChip name="info" size={32} tone="risk" />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{C.rank.warn}</div>
+            {/* Jack, 2026-11-14: the reason, under it (우선주 too) */}
+            <div data-ui-v2="co-warn-nodata" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2 })}>{W.noData}</div>
+          </div>
+        </Card>
+      );
+    }
     if (!w.allRan && !w.partial && off && C.fix.icr) {
       // The line alone, no chips: v19.3e shows chips only when every check ran ("확인이 덜 돌면 카드도 칩도 없음"), and
       // 이자보상배율 did not run.
@@ -375,21 +393,28 @@ function Warnings({ load, s, wide }) {
         </Card>
       );
     }
-    if (!w.allRan && !w.partial) return null;  // no flag, but not every check is known to have run: nothing is claimed
+    // Jack, 2026-11-14: some checks ran and found nothing while the rest had no input (기아: 자본잠식). The closest approved
+    // line, "확인한 재무 경고 신호는 없어요", with the ✓ chips of the checks that ran and Jack's count line for the others
+    // (co.warn.uncheckedN). Never the plain "…없어요" (that needs every check).
+    const some = warnKind(s, w) === "some";            // some ran with nothing found, at least one ✓ chip to show (company.js)
+    if (!w.allRan && !w.partial && !some) return null;  // no flag, no check known to have run or no ✓ to show: nothing is claimed
     // partial (Jack, PR #68 B7): 이자보상배율 alone could not be checked, for want of an interest line -> "확인한 …" + why
-    const head = w.partial ? W.nonePartial : W.none;
-    const subText = w.partial ? W.noneSubNoIcr : (w.sub === "fin" && W.noneSubFin) || (w.sub === "holding" && W.noneSubHolding) || W.noneSub;
-    if (!all(head, subText)) return <span data-ui-v2="co-warn" data-pending="1" hidden />;
+    const head = w.partial || some ? W.nonePartial : W.none;
+    const subText = some ? null : w.partial ? W.noneSubNoIcr : (w.sub === "fin" && W.noneSubFin) || (w.sub === "holding" && W.noneSubHolding) || W.noneSub;
+    if (!head || (!some && !subText)) return <span data-ui-v2="co-warn" data-pending="1" hidden />;
     // v19.3e (Part I): one chip per check that ran and passed (company.warnChips: flRan, no flag); a check that did not run
     // or does not apply (flNa) gets none, never a ✓.
     const chips = warnChips(w).filter((c) => W.chips && W.chips[c]);
+    const cnt = uncheckedCount(w, off) && W.uncheckedN ? fill(W.uncheckedN, { k: uncheckedCount(w, off) }) : null;
     return (
-      <Card data-ui-v2="co-warn" data-n="0" data-partial={w.partial ? "1" : undefined} style={{ padding: SPACE(4) }}>
+      <Card data-ui-v2="co-warn" data-n="0" data-partial={w.partial ? "1" : some ? "some" : undefined} style={{ padding: SPACE(4) }}>
         <div style={{ display: "flex", gap: SPACE(3), alignItems: "flex-start" }}>
           <IconChip name="shield-check" size={32} tone="risk" />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{head}</div>
-            <div data-ui-v2="co-warn-sub" data-sub={w.partial ? "noIcr" : w.sub || ""} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2 })}>{subText}</div>
+            {subText && <div data-ui-v2="co-warn-sub" data-sub={w.partial ? "noIcr" : w.sub || ""} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2 })}>{subText}</div>}
+            {/* Jack, 2026-11-14: how many checks could not run, under "확인한 …" (its own line, not PR #68's sub-line) */}
+            {some && cnt && <div data-ui-v2="co-warn-count" data-k={uncheckedCount(w, off)} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2 })}>{cnt}</div>}
             {warnSource(w) && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{warnSource(w)}</div>}
           </div>
         </div>
@@ -401,6 +426,13 @@ function Warnings({ load, s, wide }) {
   if (!W.count || texts.some((x) => !x)) return <span data-ui-v2="co-warn" data-pending="1" hidden />;
   // Jack, PR #68 (2026-11-07): under the 이자보상배율 warning, say when it used the cash-flow statement's interest paid
   const cfNote = (code) => code === "icr" && w.icrCf && W.icrCfNote ? W.icrCfNote : null;
+  // 2026-11-14 (Jack): the count must not read as all four checks when one did not run. When 이자보상배율 alone could not run
+  // for want of an interest line (warn.js icrIe: flWhy.icr "ie", the other three ran), the approved PR #68 line says which and
+  // why, under the first warning and under the list.
+  const noIcr = w.icrIe && W.noneSubNoIcr ? W.noneSubNoIcr : null;
+  // Jack, 2026-11-14: any other check that could not run -> "4가지 중 {k}가지는 필요한 자료가 없어서 확인하지 못했어요." in the same
+  // two places (never both lines: company.js uncheckedCount is 0 where noIcr goes or the off line explains it)
+  const cnt = uncheckedCount(w, off) && W.uncheckedN ? fill(W.uncheckedN, { k: uncheckedCount(w, off) }) : null;
   return (
     <>
       <button type="button" data-ui-v2="co-warn" data-n={w.flags.length} onClick={() => setOpen(true)} aria-haspopup="dialog"
@@ -411,6 +443,8 @@ function Warnings({ load, s, wide }) {
           <span style={tx(SIZE.sm, WEIGHT.heavy, COLOR.watch, { display: "block" })}>{fill(W.count, { n: w.flags.length })}</span>
           <span style={tx(SIZE.xs, WEIGHT.semi, COLOR.ink, { display: "block" })}>{texts[0]}</span>
           {cfNote(w.flags[0].code) && <span data-ui-v2="co-warn-cf" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2 })}>{cfNote(w.flags[0].code)}</span>}
+          {noIcr && <span data-ui-v2="co-warn-noicr" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2 })}>{noIcr}</span>}
+          {cnt && <span data-ui-v2="co-warn-count" data-k={uncheckedCount(w, off)} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2 })}>{cnt}</span>}
           <IcrOffLine show={off} />
         </span>
         <Icon name="chevronRight" size={18} tone="on" />
@@ -428,6 +462,8 @@ function Warnings({ load, s, wide }) {
             </div>
           ))}
           <IcrOffNote show={off} />
+          {noIcr && <p data-ui-v2="co-warn-noicr" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(2) })}>{noIcr}</p>}
+          {cnt && <p data-ui-v2="co-warn-count" data-k={uncheckedCount(w, off)} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(2) })}>{cnt}</p>}
           {warnSource(w) && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(2) })}>{warnSource(w)}</p>}
         </div>
       </BottomSheet>
