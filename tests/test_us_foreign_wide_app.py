@@ -85,3 +85,23 @@ def test_blanked_numbers_leave_the_lists():
     assert not {"NBIS", "CRDO"} & set(got["value"]) and {"TRI", "SHOP"} <= set(got["value"]), got        # 비운 PBR 은 가치 순위 밖
     assert "TRI" not in got["div"] and "TRI" not in got["mineDiv"], got                                     # 비운 배당수익률은 배당 순위 밖
     assert not {"NBIS", "CRDO"} & set(got["mineValue"]) and {"TRI", "SHOP"} <= set(got["mineValue"]), got   # 가치 점수(vz)도 없어요
+
+
+def test_the_line_follows_the_kind_the_switch_wrote():
+    """리뷰 S1: 맞춰 볼 값이 없어 비운 칸(nocompare)도 지금은 승인된 줄 그대로 (#126). 스위치가 own 이면 파이프라인이 nocompare-own 을 적고, 앱은 그
+    칸에만 디자인 채팅의 줄(co.fgnNoCmp)을 붙여요 — 그 줄이 없으면 아무 줄도 붙이지 않아요 (사실이 아닌 줄을 붙이지 않게)."""
+    got = run("""
+      const html = (s, fields) => renderToStaticMarkup(h(FN.FgnCutNote, { s, fields }));
+      const alks = { t: 'ALKS', cls: 'us', dy: 0, fgnCut: { pbr: 'nocompare' } };
+      const own = { t: 'ALKS', cls: 'us', dy: 0, fgnCut: { pbr: 'nocompare-own' } };
+      const bsp = { t: 'BSP', cls: 'us', dy: 0, fgnCut: { per: 'mismatch', pbr: 'nocompare-own' } };
+      const before = { alks: html(alks), own: html(own), bsp: html(bsp), ownOf: FC.fgnOwnOf(bsp), blank: FC.fgnCutOf(own), has: 'fgnNoCmp' in C2.co };
+      C2.co.fgnNoCmp = '시험 줄';
+      out = { before, after: { own: html(own), bsp: html(bsp), bspPer: html(bsp, ['per']) } };""")
+    b, a = got["before"], got["after"]
+    assert LINE in b["alks"] and 'data-fields="pbr"' in b["alks"]                      # nocompare: 승인된 줄 (지금 그대로)
+    assert b["has"] is False and b["own"] == "" and b["blank"] == ["pbr"]                # own 줄이 copy 에 없으면 줄 없음 (칸은 '–')
+    assert b["ownOf"] == ["pbr"] and LINE in b["bsp"] and 'data-fields="per"' in b["bsp"] and "pbr" not in b["bsp"].split("data-fields=")[1][:8]
+    assert "시험 줄" in a["own"] and 'data-kind="own"' in a["own"] and LINE not in a["own"]
+    assert LINE in a["bsp"] and "시험 줄" in a["bsp"] and a["bsp"].count('data-ui-v2="fgn-cut"') == 2   # 종류가 다른 두 칸: 두 줄
+    assert LINE in a["bspPer"] and "시험 줄" not in a["bspPer"]

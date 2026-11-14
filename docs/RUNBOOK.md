@@ -603,8 +603,38 @@ AON, CB, EG, JCI, LYB, TEL, TT: Yahoo's dividend records miss a payment) plus AP
 ("S&P 500 회사라 외국 회사로 보지 않은 미국 밖 본사 N곳"). A company outside the S&P 500 whose country Yahoo did not give is not
 counted as foreign (as #114 does for an unknown currency): the log names it, `usForeign.unknown` records it, the gate row
 warns, and the next run asks Yahoo again. The run also re-reads, once, any cached entry of a company outside the S&P 500 that
-has no country yet (about 270 on the first run after #PR; the S&P 500 companies are not re-read). If the S&P 500 list could not
-be read, nothing is excluded that day (the US list is short then, and the "미국 종목 수" row catches it).
+has no country yet (about 270 on the first run after #PR; the S&P 500 companies are not re-read).
+
+**When the S&P 500 list can't be trusted.** The run trusts the S&P 500 list only when it overlaps today's priced US list by at
+least 400 tickers (`US_SP500_MIN` in `validate_data.py`; 500 of 503 on 2026-11-14). If FinanceDataReader fails, or renames the
+symbol column so names come back instead of tickers, the overlap drops and the run does **not** apply the country rule that day:
+it checks only the 21, the non-dollar companies and the companies in yesterday's published `usForeign.set` (basis `prev`), and
+logs "!! S&P 500 목록을 쓸 수 없어요 …". `usForeign.sp500` records `{n, inList, ok}`; the gate row warns that day (never holds the
+publish) and fails only if the record contradicts itself (ok with an overlap under 400, basis `country`/`adr` on a day the list
+was not trusted, `prev` on a day it was). Nothing to fix by hand: the next run reads the list again. If it repeats for days, look at
+the FinanceDataReader S&P 500 listing (its columns). The same fallback (21 · non-dollar · yesterday's set, basis `error`) is used
+if the rule itself crashes ("!! 미국 상장 외국 회사를 찾다가 멈췄어요"); it never widens to every company outside the S&P 500.
+
+**Kinds of blank, and Jack's open question (the one switch).** Each blanked number carries its kind in `fgnCut` and in
+`usForeign.kind`: `mismatch` (compared, and Yahoo's number disagreed), `currency` (statements not confirmed in dollars, #126), or
+`nocompare` (nothing to compare it with: net income missing or at most 0, no ROE, the download had no dividend column, no price —
+Yahoo's number may well be right). On 2026-11-14 the `nocompare` blanks are six PBRs: Alkermes 4.24, IREN 1.45, Roivant 7.12 and
+INNIO 32.31 (they look right), Bending Spoons 19.62 (looks wrong: two share classes) and AB InBev 10.71 (unknown). Jack is asked
+whether the line should also show there. One switch decides, `US_FGN_NOCMP` in `validate_data.py` (the pipeline, the gate and the
+app follow it):
+- `"line"` (now, = #126): blank, kind `nocompare`, the approved line "자료의 숫자가 회사 전체 재무제표와 맞지 않아서 비워 두었어요.";
+- `"keep"`: don't blank — Yahoo's number shows, no mark; `usForeign.kept` lists those numbers;
+- `"own"`: blank, kind `nocompare-own`, and the app shows the design chat's line `co.fgnNoCmp` for those numbers only (add that
+  line to `src/copy/v2.js` in the same PR; a test refuses `"own"` without it).
+`currency` blanks are not part of the switch: a foreign company whose statement currency Yahoo did not confirm keeps all three
+blank (a mixed-currency PBR is the TSMC 78.88 case). The gate fails a mark whose kind does not match its reason (e.g. `mismatch`
+on a number that was never compared), a `usForeign.kind` that differs from the marks, `kept` rows under another switch, or (when
+publishing) a file written under a different switch than the gate's; the site check (`--live`) reads each file under its own
+switch.
+
+**Rolling back #PR** is a revert PR **plus a data run**: the gate before #PR does not know the `nocompare` kind or marks on
+companies outside the 21, so the reverted code's deploy check and site check fail on today's published file until a data run with
+the reverted pipeline republishes it (Actions → 시세 데이터 갱신 → Run workflow, following the DART rule).
 
 On 2026-11-14 (local run on real Yahoo data): 78 foreign companies — 38 with non-dollar statements (unchanged), 40 by
 headquarters country (the 21's ten dollar reporters plus 30 more). Of the 30, 12 lose numbers: PER for BSP, GRAB, ICLR, NBIS, TRI
@@ -614,12 +644,13 @@ ROE), and the yield for TIGO and TRI (special dividends in the last year). SHOP,
 other 11 keep their numbers. Some of the 30 file US-style 10-K reports although headquartered abroad (e.g. ALKS, JAZZ, CRDO, ROIV,
 LOGI, MELI); the rule cannot tell them from foreign filers without a filing-type source, so they are checked too (their correct
 numbers stay; ALKS, CRDO, IREN and ROIV lose their PBR). The record `data.json` `usForeign.set` lists every foreign company with
-`[country, statement currency, basis]` (basis `fcur`, `country`, `adr`, `floor`, or `error` when the run stopped while looking at
-that stock: then it is checked). The gate row now also fails if a company in `set` (no `fcur`) has numbers that were not checked,
+`[country, statement currency, basis]` (basis `fcur`, `country`, `adr`, `floor`, `prev` (yesterday's set, on a day the S&P 500
+list was not trusted), or `error` when the run stopped while looking at that stock or the whole rule: then it is checked). The gate row now also fails if a company in `set` (no `fcur`) has numbers that were not checked,
 if a mark sits on a stock outside `set` and the 21, if `set` has a bad shape or a basis that contradicts the record (`fcur`
 without a currency on the stock, `country` with no country or the US, `floor` outside the 21), or if a listed company of the 21
 or with `fcur` is missing from `set`: all of these are our own bookkeeping, never the market. It warns (never holds the publish)
-for `unknown`, for basis `error`, and if TSM, ASML, BABA, NVO or SHOP is listed but not in `set`. A file without `set` (before
+for `unknown`, for basis `error`, for a day the S&P 500 list was not trusted, and if TSM, ASML, BABA, NVO or SHOP is listed but not
+in `set`. A file without `set` (before
 #PR) is read as before: the 21 only.
 
 BHP and Rio Tinto have no 업종 group (Yahoo's "Other Industrial Metals & Mining" is not in `data/industry_us.csv`; Jack,

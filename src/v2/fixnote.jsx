@@ -18,7 +18,7 @@ import { COLOR, SIZE, WEIGHT } from "../ui/tokens.js";
 import { C, fill, mdText, todayKst } from "./format.js";
 import { Note, tx } from "./ui.jsx";
 import { EPS_FIX_DATE, fixNotesHidden, epsNoticeShown, stmtCurFor, epsLineKind, unitHeldFor, noStmtFor, pxBadFullFor, pxBadPartFor, pxBadHidesFor } from "./fix.js";
-import { fcurOf, fcurText, pbrZeroOf, fgnCutOf } from "./fcur.js";
+import { fcurOf, fcurText, pbrZeroOf, fgnCutOf, fgnOwnOf } from "./fcur.js";
 
 // The line with its date ("11월 10일"), or null when a word or the date is missing (never a line with an empty slot).
 export function epsFixText() {
@@ -149,7 +149,13 @@ export function PbrZeroNote({ s, style }) {
 // company's PER, PBR or 배당수익률 "–" when the pipeline blanked it for not matching the company's totals (data.json fgnCut,
 // src/v2/fcur.js fgnCutOf). fields: the blanked numbers this section would show (default all three); the line only when one of
 // them is blanked this way. data-fields: the ones it covers (tests).
+// A number blanked because there was nothing to compare it with takes the design chat's own line only when the pipeline's switch
+// says so (kind "nocompare-own", copy co.fgnNoCmp); every other kind keeps the approved line above (fcur.js FGN_OWN).
 export function FgnCutNote({ s, fields, style }) {
-  const cut = fgnCutOf(s).filter((k) => !fields || fields.includes(k));
-  return cut.length && C.co.fgnCut ? <Note data-ui-v2="fgn-cut" data-fields={cut.join(",")} style={style}>{C.co.fgnCut}</Note> : null;
+  const own = fgnOwnOf(s, fields);
+  const cut = fgnCutOf(s).filter((k) => (!fields || fields.includes(k)) && !own.includes(k));
+  const main = cut.length && C.co.fgnCut ? <Note data-ui-v2="fgn-cut" data-fields={cut.join(",")} style={style}>{C.co.fgnCut}</Note> : null;
+  if (!own.length) return main;
+  const ownLine = C.co.fgnNoCmp ? <Note data-ui-v2="fgn-cut" data-kind="own" data-fields={own.join(",")} style={style}>{C.co.fgnNoCmp}</Note> : null;
+  return <>{main}{ownLine}</>;
 }

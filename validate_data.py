@@ -174,7 +174,21 @@ US_FGN_WHY = ("mismatch", "currency")      # data.json fgnCut 의 값 (Jack 2026
 US_FGN_STOPPED = "검사가 멈춤"              # usForeign.cut 의 이유 머리말: 파이프라인 검사가 멈춰 비운 칸 (이유 줄 없음 · 그날은 경고) — fetch_data.US_FOREIGN_STOP_WHY
 # 2026-11-14 (Jack, Q5 — 더하기만): 파이프라인은 외국 회사를 규칙으로 찾아 usForeign.set = {티커: [본사 나라, 재무제표 통화, 근거]} 로 적어요
 # (fetch_data.us_foreign_set). 이 줄은 위 21곳에 그 회사들을 더해 같은 규칙(맞춰 본 숫자만 · 비운 칸 · 표시)으로 봐요. 근거 글자는 fetch_data.US_FGN_BASIS 와 같아요.
-US_FGN_BASIS = ("fcur", "country", "adr", "floor", "error")
+US_FGN_BASIS = ("fcur", "country", "adr", "floor", "prev", "error")   # prev: S&P 500 목록을 쓸 수 없던 날 어제 발행한 set 에서 이어 온 회사
+US_SP500_MIN = 400       # S&P 500 목록이 오늘 미국 목록과 이만큼 안 겹치면 그 목록을 믿지 않아요 (본사 나라 규칙을 쓰지 않는 날 · 경고)
+# 2026-11-14 (리뷰 S1): 비운 칸의 종류. mismatch = 맞춰 봤는데 달라요 · currency = 재무제표가 달러인지 확인되지 않음 (#126) · nocompare = 맞춰 볼
+# 값이 없어요 (순이익 없음 · 0 이하 · ROE 없음 · 배당 기록이나 가격을 읽지 못함 — 야후 숫자가 맞을 수도 있어요). 아래 사유 글은 fetch_data
+# us_foreign_cuts 가 쓰는 글 그대로예요 (관문이 이 글로 종류를 맞춰 봐요).
+US_FGN_NOCMP_WHY = {"per": "맞춰 볼 시가총액 · 보통주 몫 순이익(netIncomeToCommon)이 없거나 순이익이 0 이하",
+                    "pbr": "맞춰 볼 시가총액 ÷ 순이익 · ROE 가 없거나 0 이하",
+                    "dy": "배당 기록(야후 다운로드의 Dividends 칸) · 가격을 읽지 못함"}
+US_FGN_CUR_WHY = "재무제표 통화를 모름"     # currency 사유의 머리말 (fetch_data.US_FOREIGN_CUR_WHY)
+# 스위치 하나 (Jack 에게 묻는 중, 2026-11-14: 맞춰 볼 값이 없을 때도 그 줄을 보일지). 파이프라인 · 관문 · 앱이 모두 이 값을 따라요:
+#   "line" (지금) = 비우고 종목 표시 nocompare → 앱이 승인된 줄 co.fgnCut 을 붙여요 (#126 그대로)
+#   "keep"        = 비우지 않아요 (야후 숫자가 그대로 보여요 · 표시 없음 · usForeign.kept 에 적어요)
+#   "own"         = 비우고 종목 표시 nocompare-own → 앱이 디자인 채팅의 새 줄 co.fgnNoCmp 를 붙여요 (그 줄이 copy 에 있어야 해요 — 시험이 봐요)
+US_FGN_NOCMP = "line"
+US_FGN_NOCMP_KIND = {"line": "nocompare", "keep": None, "own": "nocompare-own"}
 US_FGN_HOME = {"united states", "united states of america", "usa", "us", "puerto rico"}   # 근거 country 인데 이 나라면 기록이 틀린 것 (fetch_data.US_HOME)
 US_FGN_NAMED = {"TSM", "ASML", "BABA", "NVO", "SHOP"}    # Jack 이 이름으로 넓힌 회사: 목록에 있는데 set 에 없으면 경고 (규칙이 못 찾은 날)
 KR_FUND_SET = {"088980", "415640", "094800"}              # 상장 인프라·부동산 펀드 (투자회사)
@@ -1824,8 +1838,12 @@ def check_us_foreign(rep, data, us, mode):
           "set 은 규칙의 근거와 맞아야 함")
     by = {s.get("t"): s for s in us}
     rec = data.get("usForeign")
+    mode_strict = mode != "live"     # 발행: 파일의 스위치가 관문의 스위치와 같아야 해요 · 사이트 점검: 그 파일이 만들어진 때의 스위치를 그대로 봐요
     has_set = isinstance(rec, dict) and "set" in rec            # 이 칸이 있으면 (null 이어도) 넓힌 기록이에요 — 모양까지 봐요
     fset = rec.get("set") if has_set else None
+    # 리뷰 S1: 칸의 종류. 기록에 nocmp(스위치)가 있으면 그 스위치의 nocompare 종류도 표시로 받아요 (없는 기록 = 예전 두 가지만)
+    nmode = rec.get("nocmp") if isinstance(rec, dict) and "nocmp" in rec else None
+    kinds_ok = set(US_FGN_WHY) | ({US_FGN_NOCMP_KIND[nmode]} - {None} if nmode in US_FGN_NOCMP_KIND else set())
     foreign = set(US_FOREIGN_SET) | (set(fset) if isinstance(fset, dict) else set())
     want = sorted(t for t, s in by.items() if t in foreign and not s.get("fcur") and any(s.get(k) is not None for k in US_FOREIGN_KEYS))
     marked = sorted(str(s.get("t")) for s in us if "fgnCut" in s)
@@ -1863,7 +1881,7 @@ def check_us_foreign(rep, data, us, mode):
         if "fgnCut" not in s:
             continue
         g, t = s.get("fgnCut"), s.get("t")
-        if not (isinstance(g, dict) and g and all(k in US_FOREIGN_KEYS and v in US_FGN_WHY for k, v in g.items())):
+        if not (isinstance(g, dict) and g and all(k in US_FOREIGN_KEYS and v in kinds_ok for k, v in g.items())):
             bad.append(f"{t}.fgnCut {json.dumps(g, ensure_ascii=False)[:30]}")
             continue
         if t not in foreign or s.get("fcur"):
@@ -1911,6 +1929,64 @@ def check_us_foreign(rep, data, us, mode):
         if named:
             notes.append(f"외국 회사로 보지 않은 {'·'.join(sorted(US_FGN_NAMED))} 중 {len(named)}곳: {_tickers(named)}")
         fwarn = bool(err or unk or named)
+        # 리뷰 S1: 스위치 · 종류 · 비우지 않은 칸 (kept) — 모두 우리 기록이 맞는지예요
+        kbad = []
+        if nmode not in US_FGN_NOCMP_KIND:
+            kbad.append(f"nocmp {nmode!r}")
+        elif nmode != US_FGN_NOCMP and mode_strict:
+            kbad.append(f"nocmp {nmode} (관문 스위치 {US_FGN_NOCMP})")
+        nk = US_FGN_NOCMP_KIND.get(nmode)
+        for x in rows:
+            if x[2].startswith(US_FGN_STOPPED):
+                continue
+            want_k = ("currency" if x[2].startswith(US_FGN_CUR_WHY) else
+                      (nk or "비우면 안 됨 (keep)") if x[2] == US_FGN_NOCMP_WHY.get(x[1]) else "mismatch")
+            got_k = (by.get(x[0]) or {}).get("fgnCut", {}).get(x[1]) if isinstance((by.get(x[0]) or {}).get("fgnCut"), dict) else None
+            if got_k is not None and got_k != want_k:
+                kbad.append(f"종류 {x[0]}.{x[1]} {got_k} ≠ {want_k}")
+        kmap = rec.get("kind")
+        marks = {str(s.get("t")): s["fgnCut"] for s in us if isinstance(s.get("fgnCut"), dict)}
+        if not (isinstance(kmap, dict) and all(isinstance(v, dict) for v in kmap.values())):
+            kbad.append("kind 모양")
+        elif kmap != marks:
+            diff = sorted(set(kmap) ^ set(marks) | {t for t in set(kmap) & set(marks) if kmap[t] != marks[t]})
+            kbad.append(f"kind ≠ 종목 표시 {len(diff)}: {', '.join(diff[:4])}")
+        kept_ = rec.get("kept", [])
+        if not isinstance(kept_, list):
+            kbad.append("kept 모양")
+            kept_ = []
+        for x in kept_:
+            if not (isinstance(x, list) and len(x) == 3 and isinstance(x[0], str) and x[1] in US_FOREIGN_KEYS
+                    and x[2] == US_FGN_NOCMP_WHY.get(x[1])):
+                kbad.append(f"kept 줄 {json.dumps(x, ensure_ascii=False)[:30]}")
+            elif nmode != "keep":
+                kbad.append(f"kept {x[0]}.{x[1]} (스위치 {nmode})")
+            elif x[1] in (marks.get(x[0]) or {}):
+                kbad.append(f"kept {x[0]}.{x[1]} 인데 표시가 있음")
+        nc = sorted(f"{t}.{f}" for t, g in marks.items() for f, k in g.items() if str(k).startswith("nocompare"))
+        if nc:
+            notes.append(f"맞춰 볼 값이 없어 비운 칸 {len(nc)} (스위치 {nmode}): {', '.join(nc[:8])}" + (f" 외 {len(nc) - 8}" if len(nc) > 8 else ""))
+        if kept_ and nmode == "keep":
+            notes.append(f"맞춰 볼 값이 없어 비우지 않은 칸 {len(kept_)} (스위치 keep)")
+        # 리뷰 S2: S&P 500 목록 — 믿었는지와 그 근거가 맞는지 · 못 믿은 날은 본사 나라 · 이름 근거가 없어야 해요 (경고)
+        sp = rec.get("sp500")
+        if not (isinstance(sp, dict) and (sp.get("n") is None or (isinstance(sp.get("n"), int) and not isinstance(sp.get("n"), bool)))
+                and isinstance(sp.get("inList"), int) and not isinstance(sp.get("inList"), bool) and isinstance(sp.get("ok"), bool)):
+            kbad.append(f"sp500 모양 {json.dumps(sp, ensure_ascii=False)[:40]}")
+        else:
+            okw = sp["n"] is not None and sp["inList"] >= US_SP500_MIN
+            if sp["ok"] != okw:
+                kbad.append(f"sp500 ok {sp['ok']} (겹침 {sp['inList']} · 기준 {US_SP500_MIN})")
+            bases = {v[2] for v in fset.values() if isinstance(v, list) and len(v) == 3}
+            if not sp["ok"]:
+                fwarn = True
+                notes.append(f"S&P 500 목록을 쓸 수 없던 날 (목록 {sp['n'] if sp['n'] is not None else '없음'} · 겹침 {sp['inList']}): 본사 나라 규칙 없이 "
+                             f"21곳 · 재무제표 통화 · 어제 목록만 맞춰 봄")
+                if bases & {"country", "adr"}:
+                    kbad.append("sp500 을 못 믿은 날인데 근거 country · adr")
+            elif "prev" in bases:
+                kbad.append("sp500 을 믿은 날인데 근거 prev")
+        bad += kbad
     nomark = [f"{x[0]}.{x[1]}" for x in rows if not x[2].startswith(US_FGN_STOPPED) and x[0] in by
               and not (isinstance(by[x[0]].get("fgnCut"), dict) and x[1] in by[x[0]]["fgnCut"])]
     probs = ([f"맞춰 보지 않은 숫자 {len(unchecked)}곳: {_tickers(unchecked)}"] if unchecked else []) \

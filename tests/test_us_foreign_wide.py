@@ -115,9 +115,9 @@ def test_s_and_p_companies_headquartered_abroad_are_not_foreign():
         us.append(rec(t, 100.0, infos[t]))
     fs = F.us_foreign_set(us, infos, SP)
     assert fs["set"] == {} and fs["home"] == HOME and fs["unknown"] == []
-    # S&P 500 목록을 읽지 못한 날: 뺄 수 없어 외국 회사로 보고 맞춰 봐요 (그날은 미국 목록도 작아 관문의 종목 수 줄이 잡아요)
+    # S&P 500 목록을 쓸 수 없는 날 (리뷰 S2): 본사 나라 규칙을 쓰지 않아요 — 21곳 · fcur · 어제 목록만이라 이 회사들은 그대로예요
     fs = F.us_foreign_set(us, infos, None)
-    assert set(fs["set"]) == set(HOME) and fs["home"] == {}
+    assert fs["set"] == {} and fs["home"] == {} and fs["unknown"] == []
 
 
 def test_us_puerto_rico_etfs_funds_and_unknown_countries():
@@ -207,7 +207,7 @@ def test_non_dollar_companies_keep_exactly_the_currency_rule():
     fs = F.us_foreign_set(out, {t: e["info"] for t, e in cache.items()}, SP)
     assert fs["set"] == {"BTI": ["United Kingdom" if "country" in BTI else None, "GBP", "fcur"], "TSM": ["Taiwan", "TWD", "fcur"]}
     got = F.us_foreign_check(out, cache, None, dt.date(2026, 11, 13), foreign=frozenset(fs["set"]))
-    assert got == {"checked": [], "cut": []}
+    assert (got["checked"], got["cut"], got["kind"], got["kept"]) == ([], [], {}, [])
     for r in out:
         assert r["fcur"] in ("TWD", "GBP") and "fgnCut" not in r and not any(k in r for k in ("per", "pbr", "dy"))   # 통화 줄 하나만
 
@@ -238,7 +238,7 @@ def _fake_yf(series, divs, infos, calls):
     return types.SimpleNamespace(download=download, Ticker=Ticker)
 
 
-def _fetch(tmp_path, monkeypatch, sp=SP, infos=None, pre=None, boom=None):
+def _fetch(tmp_path, monkeypatch, sp=SP, infos=None, pre=None, boom=None, sp_min=2, prev=None):
     """가짜 야후로 fetch_us 한 번: AAPL · LIN(S&P 500 · 영국 본사) · SHOP · NBIS · TRI · TSM(대만 달러) · BP(21곳) → (us, meta, 로그, calls)."""
     today = dt.date(2026, 11, 14)
     days = pd.bdate_range(today - dt.timedelta(days=500), dt.date(2026, 11, 13))
@@ -265,13 +265,15 @@ def _fetch(tmp_path, monkeypatch, sp=SP, infos=None, pre=None, boom=None):
     monkeypatch.setattr(F.time, "sleep", lambda s: None)
     path = str(tmp_path / "us-info.json.gz")
     monkeypatch.setattr(F, "US_INFO_PATH", path)
+    monkeypatch.setattr(F, "US_SP500_MIN", sp_min)          # 가짜 목록은 7종목이라 겹침 기준을 작게 (실제 400)
+    monkeypatch.setattr(V, "US_SP500_MIN", sp_min)
     if pre is not None:
         F.save_us_info(pre, path)
     if boom:
         monkeypatch.setattr(F, boom, lambda *a, **k: (_ for _ in ()).throw(RuntimeError("시험")))
     lines = []
     monkeypatch.setattr(F, "log", lines.append)
-    us, *_rest, meta = F.fetch_us(today - dt.timedelta(days=500), today, 0.03)
+    us, *_rest, meta = F.fetch_us(today - dt.timedelta(days=500), today, 0.03, prev_fgn=prev)
     meta.pop("_index")
     return us, meta, lines, calls
 
@@ -346,16 +348,19 @@ def test_a_crashed_check_blanks_the_wider_set_loudly(tmp_path, monkeypatch):
     assert r[3] == "WARN" and "검사가 멈춰 맞춰 보지 않고 비운 회사 4곳: BP, NBIS, SHOP, TRI" in r[1], r
 
 
-def test_a_crashed_rule_checks_every_company_outside_the_s_and_p(tmp_path, monkeypatch):
-    us, meta, lines, _calls = _fetch(tmp_path, monkeypatch, boom="us_foreign_set")
+def test_a_crashed_rule_falls_back_to_the_21_fcur_and_yesterday(tmp_path, monkeypatch):
+    """리뷰 N1: 판별 전체가 멈추면 21곳 · fcur · 어제 발행한 set 만 — S&P 500 밖 회사 모두로 넓히지 않아요 (맞는 숫자를 비우지 않게)."""
+    prev = {"SHOP": ["Canada", "USD", "country"], "GONE": ["Japan", "USD", "country"]}
+    us, meta, lines, _calls = _fetch(tmp_path, monkeypatch, boom="us_foreign_set", prev=prev)
     by = {r["t"]: r for r in us}
     uf = meta["usForeign"]
-    assert set(uf["set"]) == {"SHOP", "NBIS", "TRI", "TSM", "BP"} and all(v[2] == "error" for v in uf["set"].values())
-    assert uf["checked"] == ["BP", "NBIS", "SHOP", "TRI"] and by["NBIS"]["fgnCut"] == {"pbr": "mismatch", "per": "mismatch"}
-    assert by["LIN"]["dy"] == 1.22 and by["AAPL"]["pbr"] == 46.19                 # S&P 500 회사는 그대로
-    assert any(x.startswith("  !! 미국 상장 외국 회사를 찾다가 멈췄어요 (RuntimeError: 시험)") for x in lines), lines
+    assert set(uf["set"]) == {"SHOP", "TSM", "BP"} and all(v[2] == "error" for v in uf["set"].values())
+    assert uf["checked"] == ["BP", "SHOP"] and "fgnCut" not in by["SHOP"] and by["SHOP"]["pbr"] == 14.84
+    assert by["NBIS"]["per"] == 90.5 and "fgnCut" not in by["NBIS"] and by["TRI"]["dy"] == 2.4    # 어제 목록에 없던 회사는 그대로
+    assert by["LIN"]["dy"] == 1.22 and by["AAPL"]["pbr"] == 46.19
+    assert any(x.startswith("  !! 미국 상장 외국 회사를 찾다가 멈췄어요 (RuntimeError: 시험) → 손으로 정한 21곳") for x in lines), lines
     r = gate(meta, us)
-    assert r[3] == "WARN" and "외국 회사인지 보다가 멈춰 맞춰 본 곳 5: BP, NBIS, SHOP, TRI, TSM" in r[1], r
+    assert r[3] == "WARN" and "외국 회사인지 보다가 멈춰 맞춰 본 곳 3: BP, SHOP, TSM" in r[1], r
 
 
 # ── 관문 (실패해야 하는 경우) ─────────────────────────────────
@@ -374,7 +379,9 @@ WIDE = {"checked": ["BP", "NBIS", "SHEL", "SHOP"],
         "cut": [["BP", "pbr", "… (4.32배)"], ["BP", "per", "… (1.70배)"], ["NBIS", "pbr", "… (1.44배)"], ["NBIS", "per", "… (3.01배)"]],
         "set": {"BP": ["United Kingdom", "USD", "country"], "BTI": ["United Kingdom", "GBP", "fcur"], "NBIS": ["Netherlands", "USD", "country"],
                 "SHEL": ["United Kingdom", "USD", "country"], "SHOP": ["Canada", "USD", "country"], "TSM": ["Taiwan", "TWD", "fcur"]},
-        "unknown": []}
+        "unknown": [], "nocmp": "line", "kept": [],
+        "kind": {"BP": {"pbr": "mismatch", "per": "mismatch"}, "NBIS": {"pbr": "mismatch", "per": "mismatch"}},
+        "sp500": {"n": 503, "inList": 500, "ok": True}}
 
 
 def run_gate(us, rec_, mode="publish"):
@@ -452,3 +459,185 @@ def test_pipeline_and_gate_spell_the_rule_the_same():
     assert F.US_FGN_BASIS == V.US_FGN_BASIS and set(F.US_HOME) == V.US_FGN_HOME
     assert V.US_FGN_NAMED == {"TSM", "ASML", "BABA", "NVO", "SHOP"} <= set(F.EXTRA_US)
     assert V.US_FOREIGN_SET == set(F.US_FOREIGN) and len(F.US_FOREIGN) == 21                # 바닥 21곳은 그대로
+
+
+# ── 리뷰 1차: 비운 칸의 종류 (S1 · N3) ─────────────────────────
+ALKS = yi("Ireland", "USD", "Alkermes plc", marketCap=6.9e9, netIncomeToCommon=4.4e8, trailingPE=None, priceToBook=4.16,
+          returnOnEquity=None, dividendYield=0.0)          # ROE 가 없어요 → PBR 은 맞춰 볼 수 없음 (야후 4.16 은 맞아 보여요)
+
+
+def _div_data(tickers, idx_end="2026-11-13"):
+    idx = pd.bdate_range("2025-10-01", idx_end)
+    return pd.DataFrame({(t, "Dividends"): pd.Series(0.0, index=idx) for t in tickers})
+
+
+def test_each_blank_records_its_kind():
+    out = [rec("ALKS", 41.0, ALKS), rec("NBIS", 115.88, NBIS), rec("SHOP", 147.09, SHOP)]
+    cache = {"ALKS": {"info": ALKS}, "NBIS": {"info": NBIS}, "SHOP": {"info": SHOP}}
+    got = F.us_foreign_check(out, cache, _div_data(["ALKS", "NBIS"]), dt.date(2026, 11, 13), foreign=frozenset({"ALKS", "NBIS", "SHOP"}))
+    by = {r["t"]: r for r in out}
+    assert by["ALKS"]["fgnCut"] == {"pbr": "nocompare"} and "pbr" not in by["ALKS"]                # 맞춰 볼 값이 없음 (지금은 비우고 같은 줄)
+    assert by["NBIS"]["fgnCut"] == {"pbr": "mismatch", "per": "mismatch"}                           # 맞춰 봤는데 달라요
+    # N3: SHOP 은 다운로드에 배당 칸이 없어요 → 0.00% 도 맞춰 볼 수 없음 (nocompare · 맞지 않음이 아니에요)
+    assert by["SHOP"]["fgnCut"] == {"dy": "nocompare"} and "dy" not in by["SHOP"] and by["SHOP"]["pbr"] == 14.84
+    assert got["kind"] == {"ALKS": {"pbr": "nocompare"}, "NBIS": {"pbr": "mismatch", "per": "mismatch"}, "SHOP": {"dy": "nocompare"}}
+    assert got["nocmp"] == "line" and got["kept"] == []
+    assert [x for x in got["cut"] if x[0] == "SHOP"] == [["SHOP", "dy", "배당 기록(야후 다운로드의 Dividends 칸) · 가격을 읽지 못함"]]
+    assert F.us_fgn_kind("pbr", F.US_FGN_NOCMP_WHY["pbr"], "line") == "nocompare"
+    assert F.us_fgn_kind("pbr", "재무제표 통화를 모름 (야후 financialCurrency None — 달러로 확인되지 않음)", "keep") == "currency"
+    assert F.us_fgn_kind("dy", F.US_FGN_NOCMP_WHY["pbr"], "line") == "mismatch"                     # 다른 칸의 사유 글이면 맞춰 본 것
+    assert F.us_fgn_kind("per", "주가 ÷ 주당순이익 22.29 ↔ 시가총액 ÷ 순이익 13.14 (1.70배)", "own") == "mismatch"
+    json.dumps(got, allow_nan=False, ensure_ascii=False)
+
+
+def test_the_switch_keep_leaves_nothing_to_compare_numbers_and_own_marks_them_apart():
+    for mode, alks, kind in (("keep", 4.16, {"NBIS": {"pbr": "mismatch", "per": "mismatch"}}),
+                             ("own", None, {"ALKS": {"pbr": "nocompare-own"}, "NBIS": {"pbr": "mismatch", "per": "mismatch"}})):
+        out = [rec("ALKS", 41.0, ALKS), rec("NBIS", 115.88, NBIS)]
+        cache = {"ALKS": {"info": ALKS}, "NBIS": {"info": NBIS}}
+        got = F.us_foreign_check(out, cache, _div_data(["ALKS", "NBIS"]), dt.date(2026, 11, 13), foreign=frozenset({"ALKS", "NBIS"}), nocmp=mode)
+        by = {r["t"]: r for r in out}
+        assert by["ALKS"].get("pbr") == alks and got["kind"] == kind and got["nocmp"] == mode, (mode, got)
+        assert "per" not in by["NBIS"] and "pbr" not in by["NBIS"]                                    # 맞지 않는 숫자는 어느 쪽이든 비워요
+        assert got["kept"] == ([["ALKS", "pbr", F.US_FGN_NOCMP_WHY["pbr"]]] if mode == "keep" else [])
+        assert ("fgnCut" in by["ALKS"]) is (mode == "own")
+
+
+def test_one_switch_for_pipeline_gate_and_app():
+    assert F.US_FGN_NOCMP is V.US_FGN_NOCMP and V.US_FGN_NOCMP in V.US_FGN_NOCMP_KIND           # 파이프라인은 관문 파일의 값을 그대로 읽어요
+    assert F.US_FGN_NOCMP_WHY is V.US_FGN_NOCMP_WHY and F.US_FOREIGN_CUR_WHY == V.US_FGN_CUR_WHY
+    assert V.US_FGN_NOCMP_KIND == {"line": "nocompare", "keep": None, "own": "nocompare-own"}
+    assert V.US_FGN_WHY == ("mismatch", "currency")                                                 # #126 의 두 가지는 그대로
+    copy = open(os.path.join(ROOT, "src", "copy", "v2.js"), encoding="utf-8").read()
+    if V.US_FGN_NOCMP == "own":                                                                     # own 은 디자인 채팅의 줄이 있어야 해요
+        assert "fgnNoCmp:" in copy and "fgnNoCmp: null" not in copy
+
+
+# ── 리뷰 1차: S&P 500 목록 (S2 · N4) ───────────────────────────
+class _FDR:
+    def __init__(self, sp=None, nasdaq=None, fail=()):
+        self.sp, self.nasdaq, self.fail = sp, nasdaq, set(fail)
+
+    def StockListing(self, name):
+        if name in self.fail:
+            raise RuntimeError("목록 실패 (시험)")
+        return self.sp if name == "S&P500" else self.nasdaq
+
+
+def test_us_tickers_captures_the_s_and_p_list(monkeypatch):
+    sp = pd.DataFrame({"Symbol": ["AAPL", "BRK.B", "LIN", " MDT "], "Name": ["Apple", "Berkshire B", "Linde", "Medtronic"]})
+    nq = pd.DataFrame({"Symbol": ["SHOP", "ARM"], "Name": ["Shopify", "Arm Holdings plc - American Depositary Shares"]})
+    lines = []
+    monkeypatch.setattr(F, "log", lines.append)
+    monkeypatch.setitem(sys.modules, "FinanceDataReader", _FDR(sp, nq))
+    names = F.UsListNames()
+    syms = F.us_tickers(names)
+    assert names.sp500 == frozenset({"AAPL", "BRK-B", "LIN", "MDT"})                    # BRK.B → BRK-B (오늘 목록과 같은 모양)
+    assert {"AAPL", "BRK-B", "LIN", "MDT", "SHOP", "ARM"} <= set(syms) and names["ARM"].endswith("American Depositary Shares")
+    names = F.UsListNames()
+    monkeypatch.setitem(sys.modules, "FinanceDataReader", _FDR(sp, nq, fail={"S&P500"}))
+    F.us_tickers(names)
+    assert names.sp500 is None and any("S&P500 목록 실패" in x for x in lines)               # 읽지 못하면 None (믿지 않아요)
+    plain = {}
+    monkeypatch.setitem(sys.modules, "FinanceDataReader", _FDR(sp, nq))
+    F.us_tickers(plain)                                                                  # dict 를 넘기면 예전 그대로 (이름만)
+    assert plain["LIN"] == "Linde" and not hasattr(plain, "sp500")
+
+
+def test_an_unusable_s_and_p_list_turns_the_country_rule_off(tmp_path, monkeypatch):
+    """리뷰 S2: 목록이 없거나 오늘 목록과 US_SP500_MIN 곳 아래로 겹치면 (칸 이름이 바뀌어 티커 대신 이름이 들어온 날) 본사 나라 규칙을 쓰지
+    않아요 — 21곳 · fcur · 어제 발행한 set 만. 그날은 크게 남기고 관문이 경고해요."""
+    prev = {"SHOP": ["Canada", "USD", "country"], "NBIS": ["Netherlands", "USD", "country"]}
+    for sp, sp_min in ((frozenset({"Apple Inc.", "Linde plc"}), 2), (SP, 3), (None, 2)):     # 이름이 들어온 목록 · 겹침 2 < 3 · 목록 없음
+        us, meta, lines, _calls = _fetch(tmp_path, monkeypatch, sp=sp, sp_min=sp_min, prev=prev)
+        by = {r["t"]: r for r in us}
+        uf = meta["usForeign"]
+        assert uf["sp500"]["ok"] is False and uf["sp500"]["inList"] < sp_min, uf["sp500"]
+        assert uf["set"] == {"BP": ["United Kingdom", "USD", "floor"], "NBIS": ["Netherlands", "USD", "prev"],
+                             "SHOP": ["Canada", "USD", "prev"], "TSM": ["Taiwan", "TWD", "fcur"]}, uf["set"]
+        assert by["TRI"]["dy"] == 2.4 and "fgnCut" not in by["TRI"]                     # 어제 목록에 없던 회사는 그날 그대로
+        assert by["LIN"]["dy"] == 1.22 and "fgnCut" not in by["LIN"]                     # S&P 500 회사의 맞는 수익률을 비우지 않아요
+        assert by["NBIS"]["fgnCut"] == {"pbr": "mismatch", "per": "mismatch"}
+        assert any(x.startswith("  !! S&P 500 목록을 쓸 수 없어요") for x in lines), lines
+        r = gate(meta, us)
+        assert r[3] == "WARN" and "S&P 500 목록을 쓸 수 없던 날" in r[1], r
+    us, meta, _l, _c = _fetch(tmp_path, monkeypatch, sp=SP, sp_min=2)
+    assert meta["usForeign"]["sp500"] == {"n": 15, "inList": 2, "ok": True} and gate(meta, us)[3] == "PASS"
+
+
+def test_a_cut_short_yahoo_name_still_says_depositary():
+    """리뷰 N4: 야후 짧은 이름은 31자에서 잘려요 — 나라가 빠진 날에도 'American D…' 로 끝나면 예탁증서예요."""
+    bz = yi(None, "USD", "KANZHUN LIMITED - American D")
+    out = [rec("BZQ", 20.0, bz), rec("AMD2", 20.0, yi(None, "USD", "American Dynamics Corp"))]
+    fs = F.us_foreign_set(out, {"BZQ": bz, "AMD2": yi(None, "USD", "American Dynamics Corp")}, SP)
+    assert fs["set"] == {"BZQ": [None, "USD", "adr"]} and fs["unknown"] == ["AMD2"]
+    for n in ("KANZHUN LIMITED - American D", "X Holdings - American Depos", "Y plc ADS", "Z ADRs"):
+        assert F.US_ADR_NAME.search(n), n
+    for n in ("American Dynamics", "American Dream Co", "Leadership Inc", "Adrian Steel"):
+        assert not F.US_ADR_NAME.search(n), n
+
+
+# ── 리뷰 1차: 관문 (종류 · 스위치 · S&P 500 기록) ───────────────────
+def nocmp_us():
+    us = wide_us() + [{"t": "ALKS", "cls": "us", "price": 41.0, "dy": 0.0, "fgnCut": {"pbr": "nocompare"}}]
+    return us
+
+
+def nocmp_rec():
+    r = json.loads(json.dumps(WIDE))
+    r["checked"].append("ALKS")
+    r["cut"].append(["ALKS", "pbr", V.US_FGN_NOCMP_WHY["pbr"]])
+    r["set"]["ALKS"] = ["Ireland", "USD", "country"]
+    r["kind"]["ALKS"] = {"pbr": "nocompare"}
+    return r
+
+
+def test_gate_accepts_nothing_to_compare_blanks_and_names_them():
+    r = run_gate(nocmp_us(), nocmp_rec())
+    assert r[3] == "PASS" and "맞춰 볼 값이 없어 비운 칸 1 (스위치 line): ALKS.pbr" in r[1], r
+
+
+@pytest.mark.parametrize("change, expect", [
+    (lambda us, rec: us[-1].update(fgnCut={"pbr": "mismatch"}), "종류 ALKS.pbr mismatch ≠ nocompare"),        # 맞춰 보지 않았는데 '맞지 않음'
+    (lambda us, rec: us[5].update(fgnCut={"pbr": "nocompare", "per": "mismatch"}), "종류 NBIS.pbr nocompare ≠ mismatch"),
+    (lambda us, rec: us[-1].update(fgnCut={"pbr": "nocompare-own"}), "모양"),                                  # 스위치 line 에는 없는 종류
+    (lambda us, rec: rec["kind"].pop("ALKS"), "kind ≠ 종목 표시 1: ALKS"),
+    (lambda us, rec: rec.update(kind=[]), "kind 모양"),
+    (lambda us, rec: rec.update(nocmp="maybe"), "nocmp 'maybe'"),
+    (lambda us, rec: rec.update(nocmp="keep"), "nocmp keep (관문 스위치 line)"),                                # 발행: 관문의 스위치를 따라야 해요
+    (lambda us, rec: rec.update(kept=[["ALKS", "pbr", V.US_FGN_NOCMP_WHY["pbr"]]]), "kept ALKS.pbr (스위치 line)"),
+    (lambda us, rec: rec.update(kept=[["ALKS", "pbr", "x"]]), "kept 줄"),
+    (lambda us, rec: rec.update(kept="ALKS"), "kept 모양"),
+    (lambda us, rec: rec.update(sp500={"n": 503, "inList": 500}), "sp500 모양"),
+    (lambda us, rec: rec.pop("sp500"), "sp500 모양"),
+    (lambda us, rec: rec.update(sp500={"n": 503, "inList": 120, "ok": True}), "sp500 ok True (겹침 120"),
+    (lambda us, rec: rec.update(sp500={"n": None, "inList": 0, "ok": False}), "sp500 을 못 믿은 날인데 근거 country · adr"),
+    (lambda us, rec: rec["set"].update(SHOP=["Canada", "USD", "prev"]), "sp500 을 믿은 날인데 근거 prev"),
+])
+def test_gate_kind_switch_and_list_fail(change, expect):
+    us, rec_ = nocmp_us(), nocmp_rec()
+    change(us, rec_)
+    r = run_gate(us, rec_)
+    assert r[3] == "FAIL" and expect in r[1], r
+
+
+def test_gate_follows_the_switch(monkeypatch):
+    """스위치를 바꾸면 (Jack 의 답) 관문도 같은 값을 봐요: keep 이면 비우지 않은 칸은 kept 에, 표시는 없어요. 사이트 점검은 어제 파일의 스위치를 그대로 봐요."""
+    keep = nocmp_rec()
+    keep.update(nocmp="keep", kept=[["ALKS", "pbr", V.US_FGN_NOCMP_WHY["pbr"]]])
+    keep["cut"] = [x for x in keep["cut"] if x[0] != "ALKS"]
+    keep["kind"].pop("ALKS")
+    us = [s for s in wide_us()] + [{"t": "ALKS", "cls": "us", "price": 41.0, "pbr": 4.16, "dy": 0.0}]
+    assert run_gate(us, keep)[3] == "FAIL"                                       # 관문 스위치는 line
+    assert run_gate(us, keep, mode="live")[3] == "PASS"                           # 사이트 점검: 그 파일의 스위치
+    monkeypatch.setattr(V, "US_FGN_NOCMP", "keep")
+    r = run_gate(us, keep)
+    assert r[3] == "PASS" and "맞춰 볼 값이 없어 비우지 않은 칸 1 (스위치 keep)" in r[1], r
+    us[-1]["fgnCut"] = {"pbr": "nocompare"}
+    assert run_gate(us, keep)[3] == "FAIL"                                       # keep 인데 표시가 남음
+    monkeypatch.setattr(V, "US_FGN_NOCMP", "own")
+    own = nocmp_rec()
+    own["nocmp"], own["kind"]["ALKS"] = "own", {"pbr": "nocompare-own"}
+    usn = nocmp_us()
+    usn[-1]["fgnCut"] = {"pbr": "nocompare-own"}
+    assert run_gate(usn, own)[3] == "PASS"
