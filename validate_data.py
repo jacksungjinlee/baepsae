@@ -937,6 +937,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v191h(rep, data, kr, by, comps, pdata, today)
     check_v191c(rep, cur, us, mode, today)
     check_v191f(rep, data, corp, kr, by, comps, pdata)
+    check_eps_line_left(rep, corp, comps)   # 2026-11-14 (Jack Q3 · 리뷰 S4): 다시 읽은 뒤에도 날짜가 지난 '고치는 중' 줄이 남을 회사 (경고)
     check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=(prev or {}).get("macro") if rel else None)
     check_unit(rep, data, kr, by, comps, pdata)
     check_kr_series(rep, data, kr, pdata)  # 2026-11-14 (Jack: "52주 숫자부터"): 다른 기준의 공식 종가 고정 (실패) · 제한폭 넘는 움직임 (경고)
@@ -2554,6 +2555,34 @@ def unit_fix_problems(c):
     if not c.get("bq"):
         bad.append(f"{t} unitFix 인데 bq 없음")
     return bad
+
+
+EPS_LINE_LEFT = "다시 읽은 뒤 '고치는 중' 줄이 남을 국내 회사 (경고만)"
+
+
+def check_eps_line_left(rep, corp, comps):
+    """2026-11-14 (Jack Q3 · 리뷰 S4, 새 줄 · 더 엄격하게만): 다시 읽은 뒤(corp.json epsBasis "owners") 두 앱의 'PER과 EPS는 계산 방법을
+    고치는 중이라 11월 10일에 바뀔 수 있어요.' 줄은 어디에도 없어야 해요 (날짜가 지났어요). 앱(src/repair.js epsFixNeeded)은 그 회사의
+    epsIn.b 가 o · s (고쳐짐) 이거나 t (총 순이익) · 해외 기업이면 줄을 빼요. 그래서 PER · EPS · ROE 가 보이는 국내 회사(원화 재무제표 ·
+    단위 확인 아님)에 그런 epsIn 이 없으면 사용자는 지난 날짜의 줄을 봐요. EPS 가 있는데 영수증이 없으면 'EPS·BPS 영수증 모양' 줄이 이미
+    실패해요 — 이 줄은 ROE 만 있는 회사까지 이름을 대요. 경고만: 날짜가 지난 안내 한 줄 때문에 발행 전체를 멈추면(어제 데이터) 더 나빠요."""
+    if (corp or {}).get("epsBasis") != "owners":
+        rep.skip(EPS_LINE_LEFT, "corp.json epsBasis 가 owners 가 아니에요 (다시 읽기 전 발행본 — 'EPS 기준 표시' 줄이 말해요)")
+        return
+    left = []
+    for c in comps:
+        t = c.get("t")
+        if is_foreign(t) or c.get("stmtCur") or c.get("unitChk"):
+            continue
+        if all(num(c.get(k)) is None for k in ("eps", "per", "roe")):
+            continue
+        e = c.get("epsIn")
+        if not (isinstance(e, dict) and e.get("b") in EPS_B):
+            left.append(f"{t} {c.get('nk', '')}")
+    rep.add(EPS_LINE_LEFT, True, f"{len(left)}곳" + (f": {', '.join(left[:4])}" if left else ""),
+            "0 (있으면 경고 · 앱이 날짜가 지난 '… 11월 10일에 바뀔 수 있어요' 줄을 보여요: 그 회사의 epsIn 을 확인)", warn=bool(left))
+    if left:
+        rep.detail(EPS_LINE_LEFT, left)
 
 
 def check_unit_fix(rep, kr, by, comps):

@@ -345,6 +345,16 @@ report (for example 진코스텍's 2026 반기보고서), a year later (2027.2Q 
 year's same quarter", nothing divides it, and the unit check blanks the company again until the next quarter is the latest;
 the gate's "공시 단위 확인 회사 바뀜" warning names it when that happens.
 
+## A dated being-fixed line left after the re-read (gate warning "다시 읽은 뒤 '고치는 중' 줄이 남을 국내 회사")
+
+Until the DART re-read, both apps showed "PER과 EPS는 계산 방법을 고치는 중이라 11월 10일에 바뀔 수 있어요." wherever a Korean PER, EPS or
+ROE appeared. Since the re-read (corp.json `epsBasis` "owners") the apps drop it for every company whose `epsIn.b` is o, s or t
+(`src/repair.js` `epsFixNeeded`), and the old app's 04 card shows it only with an EPS (Jack Q3, 2026-11-14). A company with a PER,
+EPS or ROE but no valid `epsIn` (not a foreign issuer, not statements in another currency, not the unit check) would show that
+line again with a past date. The gate warns by name (`check_eps_line_left`; 0 on 11-14). An EPS without a receipt already fails
+"EPS·BPS 영수증 모양"; this row also names a company with only a ROE. It only warns, because one outdated note should not hold
+back a whole publish. What to do: look at that company's `epsIn` in the run log and fix the pipeline's reading of it.
+
 ## Korean price series gate rows (국내 시계열 점검)
 
 Each Korean stock's price series comes from Naver (FinanceDataReader), which is an adjusted series: after a split,
