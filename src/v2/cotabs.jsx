@@ -37,7 +37,7 @@ import { StatusChip, Segmented, Amount, Button } from "../ui/components.jsx";
 import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, tx, tap, useMode } from "./ui.jsx";
 import { groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, growthVsInd, annualRows, yoy, decompose, pbrStrip, indMedian,
-  roePbrMap, impliedGrowth, receipt, discFor, discDate, perMillionView, perMillionKr, payout, DCF, round, pastNiGrowth, dcfVs } from "./company.js";
+  roePbrMap, impliedGrowth, receipt, discFor, discDate, perMillionView, perMillionKr, payout, DCF, round, pastNiGrowth, dcfVs, divShareHidden } from "./company.js";
 import { growthBasis, num, exactData } from "./engine.js";
 import { signedPct, eokText } from "./deckcalc.js";
 import { withAssume, assumeOf } from "./store.js";
@@ -806,6 +806,8 @@ export function DivTab({ load, s }) {
         {head && <H>{head}</H>}
         {/* 자료가 없어요 for a company with no statements at all (fix.js noStmtFor, Jack 2026-11-14): why, under it */}
         <NoStmtNote s={s} co={co} show={!us && r.rule === "na"} />
+        {/* v19.1i (Jack's line, 2026-11-08): the yield is hidden because the share-count change could not be matched to filings */}
+        {!us && r.rule === "pays" && divShareHidden(s, co) && Dv.shareHidden && <Note data-ui-v2="co-div-share-hidden">{Dv.shareHidden}</Note>}
         {showDps && Dv.dps && (
           <div data-ui-v2="co-dps" style={{ display: "flex", alignItems: "baseline", gap: SPACE(2), flexWrap: "wrap", marginTop: SPACE(3) }}>
             <span style={tx(SIZE.h1, WEIGHT.heavy, COLOR.ink)}><Amount text={fill(C.app.won, { n: nf(r.dps) })} /></span>
