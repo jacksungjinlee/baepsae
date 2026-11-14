@@ -100,6 +100,7 @@ def test_the_line_follows_the_kind_the_switch_wrote():
       const alks = { t: 'ALKS', cls: 'us', dy: 0, fgnCut: { pbr: 'nocompare' } };
       const own = { t: 'ALKS', cls: 'us', dy: 0, fgnCut: { pbr: 'nocompare-own' } };
       const bsp = { t: 'BSP', cls: 'us', dy: 0, fgnCut: { per: 'mismatch', pbr: 'nocompare-own' } };
+      delete C2.co.fgnNoCmp;                       // copy 에 그 줄이 있든 없든 (스위치 own 이 되면 생겨요) 두 경우를 다 봐요
       const before = { alks: html(alks), own: html(own), bsp: html(bsp), ownOf: FC.fgnOwnOf(bsp), blank: FC.fgnCutOf(own), has: 'fgnNoCmp' in C2.co };
       C2.co.fgnNoCmp = '시험 줄';
       out = { before, after: { own: html(own), bsp: html(bsp), bspPer: html(bsp, ['per']) } };""")
@@ -128,6 +129,7 @@ def test_own_without_the_copy_line_is_a_plain_dash():
       const load = { status: 'ok', data: { stocks: STOCKS2, usPxDate: '2026-11-13', pxDate: '2026-11-14', fx: 1333.8 }, coByT: new Map(),
                      byT: new Map(STOCKS2.map((x) => [x.t, x])) };
       const s = STOCKS2.find((x) => x.t === 'ALKS');
+      delete C2.co.fgnNoCmp;                       // 디자인 채팅의 줄이 아직 없는 때 (copy 에 이미 있어도 그때를 흉내 내요)
       const tiles = CO.orderTiles(CO.tileViews(load, s)).map((x) => [x.topic, x.rule, x.phrase, x.number]);
       const note = renderToStaticMarkup(h(FN.FgnCutNote, { s }));
       out = { tiles, note, has: 'fgnNoCmp' in C2.co };""",
