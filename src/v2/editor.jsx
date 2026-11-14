@@ -19,6 +19,8 @@ import { evaluateDeck, todayCtx } from "./rules.js";
 import { objectParticle } from "./track.js";
 import { searchStocks } from "./stocklist.js";
 import { warnings } from "./warn.js";
+import { icrOffShown } from "./fix.js";
+import { warnKind, uncheckedCount } from "./company.js";
 import { activeCards } from "./engine.js";
 import { criteriaPct } from "./fitpct.js";
 import { RecordFlow } from "./records.jsx";
@@ -460,7 +462,17 @@ function AddSheet({ deck, draft, s, load, cap, shift, onClose, onAdd }) {
   const ind = s.cls === "us" && indName ? fill(C.pick.usInd, { ind: indName }) : indName;
   const w = s.cls === "kr" ? warnings(s, load.coByT.get(s.t) || null) : null;
   const W = C.co.warn;
-  const warnLine = !w ? null : w.flags.length ? fill(W.count, { n: w.flags.length }) : w.partial ? W.nonePartial : w.allRan ? W.none : null;
+  // The company page's rule (company.js warnKind, Jack 2026-11-14): a count when a check fired, "…없어요" only when every check
+  // ran, "확인한 …" when only some did (PR #68's case and the new "some" case), "재무 경고 · 확인하지 못했어요" when none could
+  // run. A short line here: no ✓ chips in this sheet (as for "없어요"); under the row the company page's reason lines (Jack,
+  // 2026-11-14): the 이자보상배율 one (warn.js icrIe), "4가지 중 {k}가지는 …" for the other checks that could not run, and
+  // "필요한 자료가 없어서 확인하지 못했어요." when none could.
+  const kind = warnKind(s, w);
+  const warnLine = kind === "flags" ? fill(W.count, { n: w.flags.length }) : kind === "partial" || kind === "some" ? W.nonePartial : kind === "none" ? W.none : null;
+  const unchecked = kind === "unchecked" && !!C.rank.warn && !!C.pfr.unknown;
+  const noIcr = w && w.icrIe && W.noneSubNoIcr ? W.noneSubNoIcr : null;
+  const k = (kind === "flags" || kind === "some") ? uncheckedCount(w, icrOffShown(load.coByT.get(s.t) || null)) : 0;
+  const why = noIcr || (k && W.uncheckedN ? fill(W.uncheckedN, { k }) : null) || (unchecked && W.noData ? W.noData : null);
   const step = (dir) => setPct((p) => { const x = Math.min(p, hi) + dir; return x < E.MIN_PCT || x > hi ? p : x; });
   const p = Math.min(pct, hi);
   const [capHit, setCapHit] = useState(false);
@@ -480,8 +492,10 @@ function AddSheet({ deck, draft, s, load, cap, shift, onClose, onAdd }) {
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: SPACE(2), marginTop: SPACE(3) }}>
           {scored && <span data-ui-v2="add-fit" data-fit={fit}><StatusChip tone="neutral">{`${C.rpt.mine} ${fill(C.build.s1.topPct, { pct: fit })}`}</StatusChip></span>}
           {!scored && <span data-ui-v2="add-manual"><StatusChip tone="neutral">{C.pick.manual}</StatusChip></span>}
-          {warnLine && <span data-ui-v2="add-warn" data-n={w.flags.length} style={tx(SIZE.xs, WEIGHT.bold, w.flags.length ? COLOR.watch : COLOR.text2)}>{warnLine}</span>}
+          {warnLine && <span data-ui-v2="add-warn" data-n={w.flags.length} data-kind={kind} style={tx(SIZE.xs, WEIGHT.bold, w.flags.length ? COLOR.watch : COLOR.text2)}>{warnLine}</span>}
+          {unchecked && <span data-ui-v2="add-warn" data-kind="unchecked" style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2)}>{C.rank.warn} · {C.pfr.unknown}</span>}
         </div>
+        {why && <p data-ui-v2="add-warn-why" data-why={noIcr ? "noIcr" : k ? "count" : "noData"} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{why}</p>}
         {!scored && <p data-ui-v2="add-manual-note" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{C.pick.manualNote}</p>}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: SPACE(2), marginTop: SPACE(4), flexWrap: "wrap" }}>
           <span style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{C.edit.targets}</span>

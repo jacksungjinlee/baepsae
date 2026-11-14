@@ -42,6 +42,7 @@ WARN_KEYS = ("fl", "flRan", "flNa", "flWhy", "flSrc", "stmtCur", "unitChk", "bq"
 HEAD, UNKNOWN = "재무 경고", "확인하지 못했어요"
 NO_ICR = "이자보상배율은 재무제표에서 이자 비용을 찾지 못해 확인하지 못했어요. 유동비율, 3년 연속 순손실, 자본잠식은 최근 공시로 확인했어요."
 NONE, NONE_PARTIAL = "재무 경고 신호는 없어요", "확인한 재무 경고 신호는 없어요"
+NO_DATA = "필요한 자료가 없어서 확인하지 못했어요."                       # Jack, 2026-11-14 (co.warn.noData)
 _TMP = {}
 
 
@@ -166,7 +167,7 @@ def test_a_company_where_no_check_could_run_keeps_the_card_and_never_says_none()
     assert got["words"] == [HEAD, UNKNOWN]                                   # 승인된 두 말 (rank.warn · pfr.unknown) 그대로
     for k in ("chabi", "pref", "usd"):
         g = got[k]
-        assert g["kind"] == "co-warn-unchecked" and g["lines"] == [HEAD, UNKNOWN], (k, g)
+        assert g["kind"] == "co-warn-unchecked" and g["lines"] == [HEAD, UNKNOWN, NO_DATA], (k, g)   # + Jack 의 이유 줄 (2026-11-14)
         assert g["chips"] == 0 and all(NONE not in x for x in g["lines"]), (k, g)          # ✓ 도 '없어요'도 없어요
         assert g["px"] and min(g["px"]) >= 12, (k, g["px"])
     assert got["usdCur"] == 1                                               # 달러 재무제표: 이유 줄은 한눈에 칸 위에 한 번 그대로

@@ -42,7 +42,7 @@ import { OLD_LINKS, dartFilingUrl } from "./routes.js";
 import { usOf, priceMd, priceDate, lineDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText, riskBandText, riskBandNote } from "./cofmt.js";
 import { epsFixFor, epsBasisCardGone, stmtNotWonFor, unitHeldFor } from "./fix.js";
 import { epsPeriod, bpsPeriod } from "../repair.js";
-import { EpsFixNote, StmtCurNote, FcurNote, PbrZeroNote, UnitChkNote, unitChkText } from "./fixnote.jsx";
+import { EpsFixNote, StmtCurNote, FcurNote, PbrZeroNote, UnitChkNote, unitChkText, NoStmtNote } from "./fixnote.jsx";
 import { fcurBlank, fcurDyBlank, pbrZeroOf } from "./fcur.js";
 import { CoinFlow, PayoutRing } from "./coart.jsx";
 
@@ -231,6 +231,8 @@ export function EarnTab({ load, s, onMore }) {
         {/* statements not in won (corp.json stmtCur): no amounts; the reason where they would be */}
         <StmtCurNote s={s} co={co} style={{ marginTop: 0 }} />
         <UnitChkNote s={s} co={co} style={{ marginTop: 0 }} />
+        {/* no statements at all (fix.js noStmtFor, Jack 2026-11-14): why there are no amounts, where they would be */}
+        <NoStmtNote s={s} co={co} style={{ marginTop: 0 }} />
         {okSeries && (
           <>
             <div data-ui-v2="co-earn-big" data-metric={m} style={{ display: "flex", alignItems: "baseline", gap: SPACE(2), flexWrap: "wrap", marginTop: SPACE(3) }}>
@@ -488,6 +490,7 @@ export function ValueTab({ load, s, store, onMore }) {
         {/* statements not in won (corp.json stmtCur): no PBR · PER; the reason where they would be */}
         <StmtCurNote s={s} co={co} style={head ? undefined : { marginTop: 0 }} />
         <UnitChkNote s={s} co={co} style={head ? undefined : { marginTop: 0 }} />
+        <NoStmtNote s={s} co={co} style={head ? undefined : { marginTop: 0 }} />
         {!compare && r.rule !== "na" && r.rule !== "few" && <Strip s={s} group={group} />}
         {!compare && !cur && !fc && (
           <Stats>
@@ -755,6 +758,8 @@ export function DivTab({ load, s }) {
     <div data-ui-v2="co-div" data-cls={s.cls} data-rule={r.rule}>
       {(head || (showDps && Dv.dps) || us) && <Card data-ui-v2="co-div-head">
         {head && <H>{head}</H>}
+        {/* 자료가 없어요 for a company with no statements at all (fix.js noStmtFor, Jack 2026-11-14): why, under it */}
+        <NoStmtNote s={s} co={co} show={!us && r.rule === "na"} />
         {showDps && Dv.dps && (
           <div data-ui-v2="co-dps" style={{ display: "flex", alignItems: "baseline", gap: SPACE(2), flexWrap: "wrap", marginTop: SPACE(3) }}>
             <span style={tx(SIZE.h1, WEIGHT.heavy, COLOR.ink)}><Amount text={fill(C.app.won, { n: nf(r.dps) })} /></span>

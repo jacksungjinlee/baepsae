@@ -73,3 +73,14 @@ export function stmtCurFor(s, co) {
   warnStmtCur(co, "v2");
   return stmtCurOf(co);
 }
+
+// A Korean company with no statement numbers at all (Jack, 2026-11-14; say-why rows 15–17): its corp.json row has every
+// 매출 · 영업이익 · 순이익 year blank (KONEX, new listings: no 사업보고서 read yet). Not 우선주 (DART lists only the common share;
+// they get their own line in the 우선주 task), not foreign issuers (9xxxxx: statements in another currency), not statements not
+// in won or the unit check (their own lines), not funds. Decides where "공시된 재무제표가 아직 없어서 계산할 수 없어요." goes.
+const allBlank = (a) => !Array.isArray(a) || a.every((v) => v == null);
+export function noStmtFor(s, co) {
+  if (!s || s.cls !== "kr" || !co || s.etf === true || s.fund || typeof s.t !== "string" || !s.t.endsWith("0") || isForeignIssuer(s.t)) return false;
+  if (stmtNotWon(co) || unitHeld(co) || unitHeld(s)) return false;
+  return allBlank(co.rev) && allBlank(co.op) && allBlank(co.ni);
+}
