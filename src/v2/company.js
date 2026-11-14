@@ -216,15 +216,16 @@ function divKrExact(s, co) {
   return { rule: "steady", ...base };
 }
 
-// Exact data (v19.1i, Jack's line of 2026-11-08): a Korean payer whose yield is hidden because the share-count change could not
-// be matched to filings and share counts (data.json dvWhy.st nc-mismatch · nc-unexplained, else corp.json's copy). true only
-// while no yield is shown (krDivState y null): the line co.div.shareHidden goes in the 배당 tile's number place and under the 배당
-// tab's 배당을 줘요. A payer hidden for another reason (the report's own figures disagree, a failed lookup) gets no line.
+// Exact data (v19.1i, Jack's line of 2026-11-08): a Korean payer whose yield is hidden because its share count changed and no
+// filing explains how (data.json dvWhy.st nc-unexplained, else corp.json's copy) — only where the line is true (review 2026-11-15):
+// never for nc-mismatch, where a filing does give a ratio. true only while no yield is shown (krDivState y null): the line
+// co.div.shareHidden goes in the 배당 tile's number place and under the 배당 tab's 배당을 줘요. A payer hidden for another reason
+// (a ratio that is not a whole split ratio, a spin-off, a rights issue, the report's own figures disagree, a failed lookup) gets no line.
 export function divShareHidden(s, co = null) {
   if (!exactData() || !s || s.cls !== "kr") return false;
   const w = s && s.dvWhy && typeof s.dvWhy === "object" ? s.dvWhy : co && co.dvWhy && typeof co.dvWhy === "object" ? co.dvWhy : null;
   const st = krDivState(s, co);
-  return !!(w && typeof w.st === "string" && w.st.startsWith("nc-") && st && !st.zero && st.y == null);
+  return !!(w && w.st === "nc-unexplained" && st && !st.zero && st.y == null);
 }
 
 // US until v19.2: data.json has no US dividend per share, only Yahoo's yield. Missing is not "no dividend".

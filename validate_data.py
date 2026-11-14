@@ -289,7 +289,10 @@ DVWHY_LOOKBACK_DAYS = 183   # filed 의 유상증자 결정은 사업보고서 �
 PROVE_TOL = 0.03         # 배당 받은 주식 수 · 오늘 주식 수 맞춤의 여유 (± 3%)
 PROVE_DRIFT = 0.15       # 앞 해: 두 해의 배당 받은 주식 수 비가 그 사이 사건의 곱 ± 15% (fetch_data.DRIFT_TOL — 자기주식 매입·소각)
 PROVE_HOW = ("today", "yearEnd")
-PROVE_KEYS = ("today", "yearEnd", "years", "hid", "data", "fail")
+PROVE_KEYS = ("today", "yearEnd", "years", "line", "ratio", "basis", "rights", "uncounted", "data", "fail")
+PROVE_HID = PROVE_KEYS[3:]   # 되살리지 않은 이유 (이름 목록 · line 은 Jack 의 줄이 붙는 종목: dvWhy nc-unexplained)
+PROVE_HID_KO = {"line": "주식 수가 바뀌었는데 공시 없음 (Jack 의 줄)", "ratio": "깨끗하지 않은 공시 배율", "basis": "회사분할 · 주식배당",
+                "rights": "주주배정 유상증자 (권리락)", "uncounted": "수를 읽지 않는 공시", "data": "배당 표가 어긋남", "fail": "조회 실패"}
 PROVE_EPS = 0.002        # 반올림 여유 (dps3a 원 둘째 자리 · 총액 원 단위)
 # v19.6a (새 줄만 · 늦추는 줄 없음 · docs/tasks/v19.6-records-alerts-dark.md Part I.1 · A.6): macro.json fxHist (원/달러 일별 환율 2016~)
 # 와 data.json splits (2016 년부터의 미국 주식 분할). 앱(v19.6a)은 새 미국 기록에 그 날짜의 환율을 저장하고(fxHist), 분할 전 기록을 새 주식
@@ -3183,8 +3186,9 @@ def check_v191h(rep, data, kr, by, comps, pdata, today):
             f"있으면 경고 (발행은 막지 않아요) · 이유 확인 {why.get('ok')}", warn=bool(named))
 
 
-def _prove_cover(fx, fy, px):
-    """dvProof.fx 가 덮을 수 있는 새 보통주 수 (유상증자는 주식 수, 사채는 ÷ 0.7) → (수, 문제 또는 None)."""
+def _prove_cover(fx, fy, px, ev=()):
+    """dvProof.fx 가 덮을 수 있는 새 보통주 수 (유상증자는 주식 수, 사채는 ÷ 0.7) — 결정마다 그 공시일 뒤(그리고 그해 말 뒤)의 분할 · 병합 ·
+    무상증자(ev: dvWhy 사건)만큼 늘려서, 오늘 주식 수로 → (수, 문제 또는 None)."""
     lo_r = dt.date(fy, 12, 31) - dt.timedelta(days=DVWHY_LOOKBACK_DAYS)
     cover = 0.0
     for x in fx:
@@ -3194,7 +3198,9 @@ def _prove_cover(fx, fy, px):
         d = _real_day(x["d"])
         if d > px or (x["k"] == "rights" and d <= lo_r) or d < dt.date(fy - 2, 1, 1):
             return None, f"fx 날짜 {x['d']} 가 기간 밖"
-        cover += x["n"] if x["k"] == "rights" else x["n"] / DVWHY_CB_FLOOR
+        cut = max(d, dt.date(fy, 12, 31))
+        scale = math.prod(e["r"] for e in ev if isinstance(e, dict) and _isnum(e.get("r")) and (_real_day(e.get("d")) or cut) > cut)
+        cover += (x["n"] if x["k"] == "rights" else x["n"] / DVWHY_CB_FLOOR) * scale
     return cover, None
 
 
@@ -3204,8 +3210,9 @@ def dvproof_problems(s, c, px):
     cmo · cmi · cv (· cv > 0 이면 fx) · 우선주 몫 pf · pd 는 함께.
     올해: n = (c₀ − pf × pd) ÷ 주당 배당 · f = dpsF[0].
       today    n × f ÷ shr = 1 ± 3% — 배당 총액 ÷ 시가총액 = 되살린 수익률 ± 3%.
-      yearEnd  n ÷ cmo = 1 ± 3% · shr ≥ cmo × f × 0.97 · shr ≤ (cmi + cv) × f × 1.03 · cv = fx 가 덮는 수 — 배당 총액 ÷ 시가총액 ÷ 되살린
-               수익률(= n × f ÷ shr)이 그 사이 (자기주식과 공시된 새 주식만큼만 낮을 수 있어요).
+      yearEnd  n ÷ cmo = 1 ± 3% · shr ≥ cmo × f × 0.97 · shr ≤ (cmi × f + cv) × 1.03 · cv = fx 가 덮는 수 (결정마다 그 뒤 사건만큼 늘린,
+               오늘 주식 수) — 배당 총액 ÷ 시가총액 ÷ 되살린 수익률(= n × f ÷ shr)이 그 사이 (자기주식과 공시된 새 주식만큼만 낮을 수 있어요).
+               이 시가총액 줄은 위 주식 수 부등식을 수익률 꼴로 다시 쓴 것이에요 (따로 하는 재확인은 n ÷ cmo 와 총액 c 의 대조).
     앞 해 i: dpsF[i] 가 있고 g = dpsF[i] ÷ dpsF[0] · (c₀ ÷ 주당 배당₀) ÷ (cᵢ ÷ 주당 배당ᵢ) = g ± 15% · g ≠ 1 이면 그 비가 1 ± 15% 가 아니에요.
     corp.json cash3 가 있으면 c 와 같아야 해요 (억원 둘째 자리)."""
     p = s.get("dvProof")
@@ -3257,18 +3264,19 @@ def dvproof_problems(s, c, px):
             if not _posint(cmo) or not _posint(cmi) or cmi < cmo or not isinstance(cv, int) or isinstance(cv, bool) or cv < 0:
                 return f"cmo {cmo} · cmi {cmi} · cv {cv}"
             got = 0.0
+            ev = ((s.get("dvWhy") or {}).get("ev") or []) if isinstance(s.get("dvWhy"), dict) else []
             if cv > 0:
-                got, why = _prove_cover(p.get("fx") if isinstance(p.get("fx"), list) and p.get("fx") else [None], s.get("fy"), px)
+                got, why = _prove_cover(p.get("fx") if isinstance(p.get("fx"), list) and p.get("fx") else [None], s.get("fy"), px, ev)
                 if why:
                     return why
                 if abs(got - cv) > 1.5:
                     return f"cv {cv:,} ≠ fx 가 덮는 수 {got:,.0f}"
             if abs(n / cmo - 1) > PROVE_TOL + PROVE_EPS:
                 return f"배당 받은 주식 수 {n:,.0f} ÷ 그해 말 유통 주식 수 {cmo:,} = {n / cmo:.3f}"
-            if shr < cmo * f * (1 - PROVE_TOL) - 1 or shr > (cmi + cv) * f * (1 + PROVE_TOL) + 1:
-                return f"오늘 주식 수 {shr:,.0f} 가 그해 말 {cmo:,} ~ {cmi + cv:,} × {f:g} 밖"
+            if shr < cmo * f * (1 - PROVE_TOL) - 1 or shr > (cmi * f + cv) * (1 + PROVE_TOL) + 1:
+                return f"오늘 주식 수 {shr:,.0f} 가 {cmo * f:,.0f} ~ {cmi * f + cv:,.0f} 밖 (그해 말 유통 · 발행 × {f:g} + 새 주식)"
             # 배당 총액 ÷ 시가총액 ÷ 되살린 수익률 = n × f ÷ 오늘 주식 수: 자기주식(그해 말 발행 − 유통)과 공시된 새 주식(cv)만큼만 1 보다 낮아요
-            lo, hi = n / ((cmi + cv) * (1 + PROVE_TOL)), n / (cmo * (1 - PROVE_TOL))
+            lo, hi = n * f / ((cmi * f + cv) * (1 + PROVE_TOL)), n / (cmo * (1 - PROVE_TOL))
             if not lo - PROVE_EPS <= rho <= hi + PROVE_EPS:
                 return f"배당 총액 ÷ 시가총액 ÷ 되살린 수익률 {rho:.3f} 가 {lo:.3f} ~ {hi:.3f} 밖 (자기주식 · 새 주식으로 설명되지 않아요)"
     for i in yrs:
@@ -3313,17 +3321,23 @@ def check_v191i(rep, data, kr, by, comps, pdata):
     for k, v in (("today", y0n.get("today", 0)), ("yearEnd", y0n.get("yearEnd", 0)), ("years", yrsn)):
         if pf.get(k) != v:
             bad.append(f"{k} {pf.get(k)}≠{v}")
-    for k in ("hid", "data", "fail"):
+    seen = collections.Counter()
+    for k in PROVE_HID:
         lst = pf.get(k + "T")
         if not isinstance(lst, list) or not all(isinstance(t, str) for t in lst) or len(set(lst)) != len(lst) \
                 or len(lst) != pf.get(k) or any(t not in kr_t for t in lst):
             bad.append(f"{k}T")
-        elif any("dvProof" in by[t] for t in lst):
-            bad.append(f"{k}T 인데 dvProof 가 있어요")
-        elif k == "hid" and any(not str((by[t].get("dvWhy") or {}).get("st")).startswith("nc-") for t in lst):
-            bad.append("hidT 인데 dvWhy nc-* 가 없어요 (숨긴 이유 줄)")
+            continue
+        seen.update(lst)
+        if any("dvProof" in by[t] or (k != "fail" and num(by[t].get("dyt")) is not None) for t in lst):
+            bad.append(f"{k}T 인데 dvProof 나 배당수익률이 있어요")       # 조회 실패는 앞 해만 못 한 종목일 수 있어요 (올해 수익률은 있어요)
+        elif k == "line" and any((by[t].get("dvWhy") or {}).get("st") != "nc-unexplained" for t in lst):
+            bad.append("lineT 인데 dvWhy nc-unexplained 가 없어요 (Jack 의 줄)")
+    if any(v > 1 for v in seen.values()):
+        bad.append("한 종목이 이유 목록 둘 이상에")
     rep.add(name, not bad, "맞음" if not bad else " · ".join(bad[:4]),
-            "v1 · today·yearEnd·years = dvProof 종목 · hidT·dataT·failT = 그 수의 dvProof 없는 종목 (hidT 는 dvWhy nc-*)")
+            "v1 · today·yearEnd·years = dvProof 종목 · 되살리지 않은 이유(" + "·".join(PROVE_HID) + ")마다 그 수의 이름 · "
+            "그 종목은 dvProof 없음 · 조회 실패 말고는 배당수익률도 없음 · line 은 dvWhy nc-unexplained")
 
     # 2. 근거를 발행된 숫자로 다시: 되살린 수익률 = 배당 총액 ÷ 시가총액 (자기주식 · 공시된 새 주식만큼만 달라요) · 앞 해 배율
     probs = []
@@ -3341,12 +3355,11 @@ def check_v191i(rep, data, kr, by, comps, pdata):
     # 3. 경고만: 숨긴 종목(공시로 맞추지 못함) · 배당 표가 어긋난 종목 · 조회 실패 — 이름과 함께 (발행은 막지 않아요)
     def nm(t):
         return f"{t} {(by.get(t) or {}).get('nk') or ''}".strip()
-    groups = [(g, [t for t in pf.get(k + "T") or [] if isinstance(t, str) and t in kr_t])
-              for g, k in (("공시로 맞추지 못해 숨김", "hid"), ("배당 표가 어긋남", "data"), ("조회 실패", "fail"))]
+    groups = [(PROVE_HID_KO[k], [t for t in pf.get(k + "T") or [] if isinstance(t, str) and t in kr_t]) for k in PROVE_HID]
     named = [(g, ts) for g, ts in groups if ts]
     for g, ts in named:
         rep.detail(f"배당 기준 증명 {g}", [nm(t) for t in ts])
-    rep.add("배당 기준 증명 경고 (숨김 · 배당 표 어긋남 · 조회 실패)", True,
+    rep.add("배당 기준 증명 경고 (되살리지 않은 이유 · 조회 실패)", True,
             "없음" if not named else " · ".join(f"{g} {len(ts)}: {', '.join(nm(t) for t in ts[:4])}{'…' if len(ts) > 4 else ''}"
                                                for g, ts in named),
             f"있으면 경고 (발행은 막지 않아요) · 되살림 {len(has)}", warn=bool(named))

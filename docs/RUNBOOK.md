@@ -469,28 +469,46 @@ yield and the 배당 rank): the factor is the product of the 액면분할 · 주
 (the same DART decision lookups and cache entry as `dvWhy`, only whole split ratios such as 2, 5, 0.5), and it must agree with
 the share counts, either **today** (the dividend total ÷ today's listed shares = the dividend per share ÷ the factor, ±3%) or
 **yearEnd** (the shares that got the dividend = that year-end's outstanding shares in 주식의 총수 현황 ±3%, and today's
-listed shares between those × the factor and the year-end issued shares plus the new shares rights issues or bonds filed
-since, × the factor, +3%). A spin-off or stock dividend decision in between blocks it. An earlier year's bar comes back
-only when the shares that got each year's dividend differ by the filings' factor (±15%). A restored stock carries
-`dvProof` (data.json); one whose share-count change could not be matched gets `dvWhy` nc-mismatch / nc-unexplained and
-Jack's line on the 2.0 배당 tile and tab; one whose own dividend table disagrees with its share counts (an interim dividend
-left out of the per-share row, a unit slip, no total) stays as before with no line. On the 2026-11-14 publish: 36 of the 72
-hidden yields come back (27 of them with their bars too), 14 stocks carry the line, 22 have a dividend table that disagrees;
-27 of the 86 yields without bars get their bars back.
+listed shares between those × the factor and the year-end issued shares × the factor plus the new shares that filed
+제3자배정 · 일반공모 rights issues and bonds explain, each scaled only by the share events after its own date, +3%).
+An earlier year's bar comes back only when the shares that got each year's dividend differ by the filings' factor (±15%).
+
+It does **not** restore (the stock stays exactly as before, with its reason in `divCheck.proof` and the run log):
+- `ratio` — a filed bonus ratio that is not a whole split ratio (대한제강 ×1.66, 알테오젠 ×1.3 …): the gate accepts only whole
+  ratios; accepting an exact filed ratio is Jack's decision;
+- `basis` — a spin-off or stock-dividend decision in between;
+- `rights` — the new shares come from a 주주배정 rights issue (주주배정후 실권주 일반공모 too) of more than 10%: KRX lowers the
+  price on the 권리락 day, so today's price is on the new basis while the filed dividend is on the old one (also for an earlier
+  bar when such an issue falls between the two years). Dividing by the 권리락 factor is a later PR;
+- `uncounted` — a filing explains the change but its share count is not read (주식교환, 합병, 감자, 주식소각);
+- `data` — the stock's own dividend table disagrees with its share counts (an interim dividend left out of the per-share row,
+  a unit slip, no total, no 주식의 총수 현황);
+- `fail` — a lookup failed (DART, the per-run limit, an unreadable filing, the share report not received): nothing changes and
+  the next run tries again.
+
+Only `line` gets Jack's line "주식 수가 바뀐 비율을 공시로 확인하지 못해 배당수익률은 보여 드리지 않아요." on the 2.0 배당 tile and
+tab: the share count changed and no filing at all explains it (`dvWhy` nc-unexplained; the app shows the line for
+nc-unexplained only, never for nc-mismatch, where a filing gives a ratio). A restored stock carries `dvProof` (data.json).
+On the 2026-11-14 publish: 29 of the 72 hidden yields come back (21 with their bars), 23 of the 86 yields without bars get their
+bars back; still hidden: ratio 7, basis 4, rights 7, uncounted 2, data 22, a 32.5% yield 1; line 0.
 
 - **DART calls:** about 4 per stock the first time (the filings lists, decisions, the year-end share report, rights and
   bond counts when needed), at most 150 companies a run (`PROVE_PER_RUN`, separate from `dvWhy`'s own 150); about 160
   stocks on 2026-11-14, so the first run does most of them (about 600 calls) and the next run the rest, then 0–10 a day.
-  Not a full-DART run; a full-DART run adds about 640 calls to its estimate (logged as a separate line).
+  A cached lookup is fetched again when today's listed shares have moved more than 3% since it was fetched (a new decision may
+  be missing). The run log line "배당 기준 증명 조회" gives companies fetched, read from cache and stopped by the limit, and the
+  stage's own DART call count. Not a full-DART run; a full-DART run adds about 640 calls to its estimate (logged separately).
 - **FAIL "배당 기준 증명 기록 (divCheck.proof)"**: the counts in `divCheck.proof` differ from the stocks' `dvProof`, a named
-  stock does not exist or carries a proof, or a stock listed as hidden has no nc `dvWhy` (no line). It is our own
-  bookkeeping: look at the run's "배당 기준 증명" log lines. A publish without `divCheck.proof` after one that had it fails too.
+  stock does not exist, carries a proof, shows a yield (except `fail`, which can be an earlier year only), is in two lists,
+  or is listed under `line` without `dvWhy` nc-unexplained. It is our own bookkeeping: look at the run's "배당 기준 증명" log
+  lines. A publish without `divCheck.proof` after one that had it fails too.
 - **FAIL "되살린 배당수익률 = 배당 총액 ÷ 시가총액 (dvProof)"**: a restored yield does not agree with the dividend total ÷
   market cap within what the recorded year-end treasury shares and filed new shares explain, a proof's numbers differ from
-  corp.json `cash3` or today's share count, or an earlier bar's factor does not match the two years' dividend totals. That
-  is a wrong conversion; never loosen the row. The detail list under the table names each stock and the failing number.
-- **WARN "배당 기준 증명 경고 (숨김 · 배당 표 어긋남 · 조회 실패)"**: names the stocks still hidden. A failed lookup (DART
-  down, a filing that could not be read, the 150-company limit) changes nothing and is tried again on the next run.
+  corp.json `cash3` or today's share count, or an earlier bar's factor does not match the two years' dividend totals. For
+  yearEnd the market-cap form restates the share-count inequality; the independent parts are the dividend total against the
+  year-end outstanding shares and against corp.json. That is a wrong conversion; never loosen the row. The detail list under
+  the table names each stock and the failing number.
+- **WARN "배당 기준 증명 경고 (되살리지 않은 이유 · 조회 실패)"**: names the stocks not restored, by reason.
 
 ## US stocks added by hand (EXTRA_US)
 
