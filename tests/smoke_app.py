@@ -41,6 +41,8 @@
               첫 화면 그대로(언어 · 세금도), 저장된 글은 그대로(자동 저장으로 덮지 않음), console 에 저장본 id 와 진짜 이유 ·
               종목만 있는 저장본은 앞 포트폴리오의 것 없이 기본값으로 열림 · 멀쩡한 저장본은 그대로 열림
   다시읽음    (2026-11-08) 원화가 아닌 재무제표(stmtCur) 회사: 기업분석에 통화 줄 한 번 · 금액 칸은 비움 · 9… 외국 기업도 같음
+  주가기록    (2026-11-14) 과거 주가 기록 오류 종목(pxBad): 기업분석의 베타 줄 자리 · 기업 비교 표 밑 · 종목 고르기의 펼친 줄(52주 막대 자리)에
+              '과거 주가 기록 일부에 오류가 있어서 52주 범위와 출렁임·위험 숫자는 비워 두었어요.' 한 번 · 52주 위치 · 주가 분해 · 3개월 % 없음 · 영어 화면은 줄 없이
   날짜        (2026-11-12) 예전 뱁새가 적는 오늘 날짜는 한국 날짜: 저장 목록 · 점검 기록 · 공유 카드(줄 · PNG 이름) · 내보내기(JSON · CSV
               파일 이름 · JSON date · 주문 메모 첫 줄). 고정 데이터의 시계는 한국 07:00 (UTC 로는 전날)이라 UTC 날짜면 실패해요
 모든 장면에서 페이지 오류(pageerror) 0건. 인터넷 요청(글꼴·통계)은 막고 localhost 만 허용해요.
@@ -2978,6 +2980,100 @@ def scene_stmt_cur(R, files):
     ctx.close(); srv.shutdown()
 
 
+# 2026-11-14 (Jack, Q2 (a)): 과거 주가 기록 오류 종목 (data.json · corp.json pxBad — fetch_data.py mark_px_bad)
+PX_BAD_LINE = "과거 주가 기록 일부에 오류가 있어서 52주 범위와 출렁임·위험 숫자는 비워 두었어요."
+# validate_data.PX_BAD_DATA · PX_BAD_CORP 와 같은 칸 (smoke 는 관문 파일을 읽지 않아요 — tests/test_px_bad.py 가 그 목록을 지켜요)
+PX_BAD_DATA = ("hi", "lo", "vol", "beta", "betaSE", "betaN", "al", "r1", "r3", "r36", "mom", "sh", "mdd", "hit", "mz", "lz")
+PX_BAD_CORP = ("hi", "lo", "vol", "beta", "r1", "r3", "r36", "sh", "mdd", "mz", "lz")
+with open(os.path.join(ROOT, "src", "detail.jsx"), encoding="utf-8") as _f:          # 예전 뱁새의 내장 종목 (내장 값으로 메우는 길과 섞지 않게)
+    BASE_CODES = set(re.findall(r'^  \{ t:"([^"]+)"', _f.read(), flags=re.M))
+
+
+def px_bad_target(f):
+    """오늘 데이터가 표시한 회사(pxBad · 실제 발행)가 있으면 그 회사. 없으면(고정 데이터 · 이 PR 전 발행) 시계열 숫자가 다 있는 한국 회사 하나
+    (내장 종목 · 필수 종목 빼고, 시가총액 순)를 파이프라인처럼 비워요. -> (코드, 데이터가 표시했는지)."""
+    by = {s.get("t"): s for s in f["data.json"]["stocks"]}
+    corp = [c for c in f["corp.json"]["companies"] if (by.get(c.get("t")) or {}).get("cls") == "kr"]
+    marked = [c for c in corp if isinstance(c.get("pxBad"), str) and c["pxBad"]]
+    if marked:
+        return marked[0]["t"], True
+    num = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)   # noqa: E731
+    cands = [c for c in sorted(corp, key=lambda c: -(c.get("cap") or 0)) if c["t"] not in BASE_CODES and c["t"][-1] == "0"
+             and all(num(c.get(k)) for k in ("beta", "vol", "lo", "hi", "r36")) and all(num(by[c["t"]].get(k)) for k in ("beta", "vol", "lo", "hi"))
+             and sum(1 for x in corp if x.get("s") == c.get("s")) >= 3]
+    c = cands[0]
+    s = by[c["t"]]
+    for k in PX_BAD_DATA:
+        s.pop(k, None)
+    s["pxBad"] = "2026-05-08"
+    c.update({k: None for k in PX_BAD_CORP}, pxBad="2026-05-08")
+    return c["t"], False
+
+
+def scene_px_bad(R, files):
+    """과거 주가 기록 오류 (Jack, 2026-11-14): 표시된 회사 — 기업분석의 베타 · 연 변동성 줄 자리(회사 이름 밑)에 그 줄 한 번 (12px 이상), 52주 주가
+    위치 · 주가 분해(3년 주가 %) · 3개월 % 없음, '적자 구간이 있어서…' 같은 틀린 이유 없음 · 기업 비교 표 밑에 한 번 · 포트폴리오 종목 고르기에서
+    펼친 줄의 52주 막대 자리에 한 번 (한국어 화면만, 영어 화면은 줄 없이). 삼성전자는 그대로."""
+    S = "주가기록"
+    f = json.loads(json.dumps(files, allow_nan=True))
+    T, real = px_bad_target(f)
+    if real:
+        R.notes.append(f"주가기록: 오늘 데이터가 표시한 회사 {T} 로 봤어요 (pxBad)")
+    hold = [{"t": "005930", "mw": 300}]
+    slots = [("spx", "주가 기록 시험", {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": hold})]
+    srv, ctx, page, base = R.open(build_site(f), local=slot_local(slots))
+
+    def shown():
+        return page.evaluate("""() => [...document.querySelectorAll('[data-fix="px-bad"]')].filter((e) => e.getBoundingClientRect().height > 0)
+          .map((e) => [e.innerText.trim(), parseFloat(getComputedStyle(e).fontSize)])""")
+
+    def corp_page():
+        page.goto("about:blank")
+        page.goto(base + f"/baepsae.html?dev=1&from=app#corp={T}", wait_until="domcontentloaded")
+        see(page, "밸류에이션 멀티플 · 업종 사분위 대비")
+        got = shown()
+        assert len(got) == 1 and got[0][0] == PX_BAD_LINE and got[0][1] >= 12, got
+        body = page.locator("body").inner_text()
+        for gone in ("연 변동성", "52주 주가 위치", "주가는 무엇으로 움직였나", "적자 구간이 있어서", "52주 범위("):
+            assert gone not in body, gone
+        assert not re.search(r"3개월\s*[+−-]?\d", body), "3개월 % 가 남아 있어요"
+        name = next(c["nk"] for c in f["corp.json"]["companies"] if c["t"] == T)
+        assert body.index(name) < body.index(PX_BAD_LINE) < body.index("투자지표"), "그 줄이 회사 이름과 투자지표 사이에 있지 않아요"
+        page.get_by_text("같은 업종과 비교", exact=True).first.click()
+        see(page, "지표별 나란히 보기")
+        got = shown()
+        assert len(got) == 1 and got[0][0] == PX_BAD_LINE and got[0][1] >= 12, got
+        page.goto("about:blank")
+        page.goto(base + "/baepsae.html?dev=1&from=app#corp=005930", wait_until="domcontentloaded")
+        see(page, "밸류에이션 멀티플 · 업종 사분위 대비")
+        see(page, "연 변동성")
+        see(page, "52주 주가 위치")
+        assert shown() == []
+    R.check(page, S, f"기업분석 {T}: 베타 줄 자리에 그 줄 한 번 · 52주 위치 · 주가 분해 · 3개월 % 없음 · 기업 비교 밑에 한 번 · 005930 은 그대로", corp_page)
+
+    def stock_row():
+        page.goto("about:blank")
+        page.goto(base + "/baepsae.html?dev=1", wait_until="domcontentloaded")
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        page.get_by_text("주가 기록 시험", exact=False).first.click()
+        see(page, "보통 해 ±")
+        box = page.get_by_placeholder("종목명·코드 검색")
+        box.fill("005930")
+        page.get_by_text("005930", exact=True).first.click()
+        see(page, "52주 범위:")                                                 # 다른 종목: 52주 막대 그대로 ('52주 범위: ₩…')
+        assert shown() == []
+        box.fill(T)
+        page.get_by_text(T, exact=True).first.click()
+        got = shown()
+        assert len(got) == 1 and got[0][0] == PX_BAD_LINE and got[0][1] >= 12, got
+        assert "52주 범위:" not in page.locator("body").inner_text(), "52주 막대가 남아 있어요"     # (그 줄 안의 '52주 범위와' 는 빼고)
+        page.get_by_role("button", name="EN", exact=True).first.click()
+        see(page, "Sharpe 3y")
+        assert shown() == [] and "52w range" not in page.locator("body").inner_text(), shown()   # 영어 화면: 승인된 영어 글이 없어 줄 없이
+    R.check(page, S, f"종목 고르기 {T}: 펼친 줄의 52주 막대 자리에 그 줄 한 번 (영어 화면은 줄 없이) · 005930 은 52주 막대 그대로", stock_row)
+    ctx.close(); srv.shutdown()
+
+
 def scene_kst_dates(R, files):
     """2026-11-12 (Jack: 예전 뱁새 날짜 고치기 PR 에 yes): 예전 뱁새가 적는 오늘 날짜 네 곳 — 점검 기록(③ '지금 상태 기록'), 저장 목록의
     'updated', 공유 카드('{날짜} · 뱁새에서 만듦'), 내보내기(파일 이름 · JSON 의 date · 주문 메모 첫 줄) — 는 한국 날짜예요.
@@ -3085,7 +3181,8 @@ def scene_list(R, fresh, full):
             ("늦음", lambda: scene_stale_recheck(R, fresh)), ("늦음", lambda: scene_corp_stale_after(R, fresh)),
             ("고치는중", lambda: scene_fix_notes(R, fresh)), ("고치는중", lambda: scene_fix_notes(R, fresh, live=True)),   # 2026-11-08
             ("다시읽음", lambda: scene_stmt_cur(R, fresh)),                                                                 # 2026-11-08 stmtCur
-            ("날짜", lambda: scene_kst_dates(R, fresh))]                                                                    # 2026-11-12 한국 날짜
+            ("날짜", lambda: scene_kst_dates(R, fresh)),                                                                    # 2026-11-12 한국 날짜
+            ("주가기록", lambda: scene_px_bad(R, fresh))]                                                                  # 2026-11-14 과거 주가 기록 오류
 
 
 def parse_part(text):
@@ -3111,7 +3208,7 @@ def main():
                     "고정 데이터 tests/fixtures/snapshot 을 그 발행일에 멈춘 시계로 — CI 는 이쪽이에요")
     ap.add_argument("--shots", default=None, help="실패 시 스크린샷을 저장할 폴더")
     ap.add_argument("--part", default=None, help="N/M: 장면을 순서대로 M 몫으로 나눈 것 중 N 번째만 (CI 가 여러 기계로 나눠 돌려요)")
-    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커·2.0링크·바로가기·파일·자동·저장본·미국날짜·늦음·고치는중·다시읽음·날짜)")
+    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커·2.0링크·바로가기·파일·자동·저장본·미국날짜·늦음·고치는중·다시읽음·날짜·주가기록)")
     args = ap.parse_args()
     if args.part is not None:
         parse_part(args.part)                                   # 잘못 적으면 브라우저를 열기 전에 멈춰요

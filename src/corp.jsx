@@ -10,8 +10,8 @@ import { Bird, store, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, T_
 import { loadJson, krGrowthBasis, krGrowthDcfLine, krRevDcfText, krRevDcfNote, loadDataPublishFor, corpStaleArgs } from "./data.js";
 // 2026-11-08 (Jack): PER · EPS (와 같은 순이익으로 계산한 ROE · 배당성향 · 주가 분해 · DCF) 칸마다 한 줄, 이자보상배율이 꺼진 회사의
 // 재무 신호 밑에 한 줄 — DART 다시 읽기 전까지 (src/repair.js, src/fixnote.jsx)
-import { EpsFixLine, IcrOffLine, StmtCurLine, UnitChkLine, epsLineKind } from "./fixnote.jsx";
-import { epsBase, epsPeriod, stmtNotWon, stmtCurOf, unitHeld } from "./repair.js";
+import { EpsFixLine, IcrOffLine, StmtCurLine, UnitChkLine, PxBadLine, epsLineKind } from "./fixnote.jsx";
+import { epsBase, epsPeriod, stmtNotWon, stmtCurOf, unitHeld, pxBad } from "./repair.js";
 
 const KEY_DCF = "baepsae_v12_dcf";
 
@@ -1151,7 +1151,9 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
               <span style={{ fontSize: 10.5, fontWeight: 800, color: "#fff", background: SEC(c.s).color, borderRadius: 999, padding: "3px 9px" }}>{SEC(c.s).ko}</span>
               <span style={{ fontSize: 10.5, color: C.faint }}>{c.t}</span>
             </div>
-            {volTxt && <Sub style={{ marginTop: 5 }}>{volTxt} (β {c.beta} · 연 변동성 {pc(c.vol, 0)})</Sub>}
+            {/* 과거 주가 기록 오류 (corp.json pxBad, Jack 2026-11-14): 베타 · 변동성 · 52주 · 수익률이 비어요 — 베타 줄 자리에 그 줄 한 번 */}
+            {pxBad(c) ? <PxBadLine c={c} style={{ marginTop: 5 }} />
+              : volTxt && <Sub style={{ marginTop: 5 }}>{volTxt} (β {c.beta} · 연 변동성 {pc(c.vol, 0)})</Sub>}
             {heldInfo && heldInfo.length > 0 && (
               <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 7 }}>
                 {heldInfo.map((h, i) => (
@@ -1335,7 +1337,8 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
         </button>
       )}
       {guideOpen && <GuideReader id={c.s} onClose={() => setGuideOpen(false)} />}
-      {!cur && <DecompCard c={c} setExplain={setExplain} corp={data} />}
+      {/* 과거 주가 기록 오류 (pxBad): 3년 주가 변화가 비어요 — '적자 구간이 있어서…' 같은 맞지 않는 이유 대신 칸이 없어요 (이유는 머리의 줄) */}
+      {!cur && !pxBad(c) && <DecompCard c={c} setExplain={setExplain} corp={data} />}
       <DcfCard c={c} sharesM={sharesM} setExplain={setExplain} corp={data} />
 
       <div style={{ fontSize: 10.5, color: C.faint, textAlign: "center", lineHeight: 1.7, padding: "6px 0 20px" }}>
@@ -1500,6 +1503,8 @@ export function CompareView({ data, baseT, onOpen, onBack, setExplain }) {
         {cols.some((c) => stmtCurOf(c) && !unitHeld(c)) && <StmtCurLine c={cols.find((c) => stmtCurOf(c) && !unitHeld(c))} />}
         {/* 2026-11-13 (Jack): once, when a compared company's numbers were blanked by the unit check (corp.json unitChk) */}
         {cols.some(unitHeld) && <UnitChkLine c={cols.find(unitHeld)} />}
+        {/* 2026-11-14 (Jack): once, when a compared company's price-history numbers were blanked (corp.json pxBad): its 베타 reads — */}
+        {cols.some(pxBad) && <PxBadLine c={cols.find(pxBad)} />}
       </Card>
     </div>
   );

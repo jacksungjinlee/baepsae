@@ -17,7 +17,7 @@ import React from "react";
 import { COLOR, SIZE, WEIGHT } from "../ui/tokens.js";
 import { C, fill, mdText, todayKst } from "./format.js";
 import { Note, tx } from "./ui.jsx";
-import { EPS_FIX_DATE, fixNotesHidden, epsNoticeShown, stmtCurFor, epsLineKind, unitHeldFor } from "./fix.js";
+import { EPS_FIX_DATE, fixNotesHidden, epsNoticeShown, stmtCurFor, epsLineKind, unitHeldFor, pxBadFor } from "./fix.js";
 import { fcurOf, fcurText, pbrZeroOf } from "./fcur.js";
 
 // The line with its date ("11월 10일"), or null when a word or the date is missing (never a line with an empty slot).
@@ -55,6 +55,17 @@ export const unitChkText = (s, co) => (unitHeldFor(s, co) && C.co.unitChk ? C.co
 export function UnitChkNote({ s, co, show = true, style }) {
   const text = show ? unitChkText(s, co) : null;
   return text ? <Note data-ui-v2="unit-chk" style={style}>{text}</Note> : null;
+}
+
+// 과거 주가 기록 오류 (Jack, 2026-11-14): "과거 주가 기록 일부에 오류가 있어서 52주 범위와 출렁임·위험 숫자는 비워 두었어요." once per
+// screen where a Korean stock's price-history numbers blanked by the pipeline would be (fix.js pxBadFor: data.json or corp.json pxBad;
+// never for US stocks): the company page header, in the 52주 bar's place, on every tab. The same quiet note (ui.jsx Note, 13 px).
+// Shown on the example page too: it is about the data, not a fix.
+// -> the line for this stock, or null (not marked, a US stock, or the words not there).
+export const pxBadText = (s, co) => (pxBadFor(s, co) && C.co.pxBad ? C.co.pxBad : null);
+export function PxBadNote({ s, co, style }) {
+  const text = pxBadText(s, co);
+  return text ? <Note data-ui-v2="px-bad" style={style}>{text}</Note> : null;
 }
 
 // The unit-check line inside a rule tile (phrasing content): the reason 재무 경고 0개 could not be checked for a holding the

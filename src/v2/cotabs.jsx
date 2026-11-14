@@ -27,6 +27,9 @@
 // 공시 단위 확인 (Jack, 2026-11-13): a Korean company whose statements were read in the wrong unit (data.json · corp.json unitChk)
 //   has every statement number blanked; the same places say "공시 자료의 단위를 확인하고 있어서 이 숫자를 잠시 비워 두었어요."
 //   once (fixnote.jsx UnitChkNote), and the 배당 tab once where 배당성향 would be (its profit is blanked; the dividend stays).
+// 과거 주가 기록 오류 (Jack, 2026-11-14): a Korean stock whose price-history numbers were blanked (data.json · corp.json pxBad: 52주,
+//   베타, 변동성, 수익률 …) has no 주가는 무엇으로 움직였나 on 실적 and no 출렁임 card on 가치. The page header says why, once, in the
+//   52주 bar's place (company.jsx, fixnote.jsx PxBadNote), on every tab; the 자세히 screens show none of these numbers.
 import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, HOLDING_SHADES, CHART } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
@@ -40,7 +43,7 @@ import { signedPct, eokText } from "./deckcalc.js";
 import { withAssume, assumeOf } from "./store.js";
 import { OLD_LINKS, dartFilingUrl } from "./routes.js";
 import { usOf, priceMd, priceDate, lineDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText, riskBandText, riskBandNote } from "./cofmt.js";
-import { epsFixFor, epsBasisCardGone, stmtNotWonFor, unitHeldFor } from "./fix.js";
+import { epsFixFor, epsBasisCardGone, stmtNotWonFor, unitHeldFor, pxBadFor } from "./fix.js";
 import { epsPeriod, bpsPeriod } from "../repair.js";
 import { EpsFixNote, StmtCurNote, FcurNote, PbrZeroNote, UnitChkNote, unitChkText } from "./fixnote.jsx";
 import { fcurBlank, fcurDyBlank, pbrZeroOf } from "./fcur.js";
@@ -243,7 +246,8 @@ export function EarnTab({ load, s, onMore }) {
         {!cur && <Src>{yearText(co && co.fy)}</Src>}
       </Card>
       {!cur && <GrowthVs load={load} s={s} co={co} />}
-      {!cur && <Decomp co={co} s={s} />}
+      {/* 과거 주가 기록 오류 (data.json pxBad, Jack 2026-11-14): its 3-year price change was blanked, so no 주가 분해 (the header says why) */}
+      {!cur && !pxBadFor(s, co) && <Decomp co={co} s={s} />}
       {!cur && rows && E.moreTitle && <MoreLink id="co-earn-more" label={E.more} onClick={onMore} />}
     </div>
   );
@@ -522,7 +526,8 @@ export function ValueTab({ load, s, store, onMore }) {
         </Card>
       )}
       {!usOf(s) && <Dcf load={load} s={s} co={co} a={a} onTry={onMore} />}
-      {risk.rule !== "na" && C.co.risk[risk.rule] && (
+      {/* 과거 주가 기록 오류 (pxBad): the beta was blanked; no 출렁임 card even if a beta came through (the header says why) */}
+      {risk.rule !== "na" && C.co.risk[risk.rule] && !pxBadFor(s, co) && (
         <Card data-ui-v2="co-risk" data-rule={risk.rule} data-beta={risk.beta} data-lo={risk.band ? risk.band.lo : ""} data-hi={risk.band ? risk.band.hi : ""}>
           <CardHead icon="umbrella" tone="risk" title={C.co.risk[risk.rule]} />
           {bandLine && <p data-ui-v2="co-risk-band" style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink, { marginTop: SPACE(2) })}>{bandLine}</p>}
