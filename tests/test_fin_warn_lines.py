@@ -5,8 +5,9 @@
   '확인한 재무 경고 신호는 없어요' 밑 (기아). 이자보상배율 하나만 이자 줄이 없어 못 돌았으면 PR #68 줄만 (지노믹트리: 둘 다는 아니에요).
 - "필요한 자료가 없어서 확인하지 못했어요." (co.warn.noData): '재무 경고' 카드의 제목 밑 (채비 · 우선주; 자리 표시였던 pfr.unknown 대신), 가진 종목
   '재무 경고 0개 · 확인하지 못했어요' 칸 밑 (확인이 덜 돈 한국 회사; 미국 종목만이면 없음).
-- "공시된 재무제표가 아직 없어서 계산할 수 없어요." (co.noStmt): 재무제표 숫자가 하나도 없는 회사 (채비 · 본시스템즈)의 요약 한눈에 칸
-  위에 한 번, 실적 · 가치 · 배당 탭에 한 번씩. 우선주 · 원화가 아닌 재무제표 · 다른 회사에는 없어요.
+- "공시된 재무제표가 아직 없어서 계산할 수 없어요." (co.noStmt): 사업보고서가 아직 하나도 없는 회사 (채비: 새로 상장, fy 없음)의 요약
+  한눈에 칸 위에 한 번, 실적 · 가치 · 배당 탭에 한 번씩. 사업보고서를 냈지만 DART 에 XBRL 이 없는 KONEX 회사(본시스템즈, fy 2024)에는
+  틀린 말이라 없어요 (마지막 리뷰, 2026-11-14) · 우선주 · 원화가 아닌 재무제표 · 다른 회사에도 없어요.
 - 리뷰 (nit): 확인 하나(이자보상배율)만 돌았고 낸 이자가 없는 회사(int0)는 칩이 하나도 없어서 '확인한 …' 카드를 보이지 않아요.
 회사 줄은 2026-11-14 발행의 실제 값 (tests/test_fin_warn_partial.py REAL · tests/fixtures/fin_warn_real_rows.json). 브라우저 화면은
 tests/smoke_v2.py 장면 '재무 경고 일부' · '재무 경고 줄'이 봐요.
@@ -70,8 +71,9 @@ def files():
         for k in WARN_KEYS:
             coby[t].pop(k, None)
         coby[t].update(rec)
-    # 채비: 실제 발행처럼 재무제표 숫자가 없어요
+    # 채비: 실제 발행처럼 재무제표 숫자도 사업보고서 연도(fy)도 없어요 (새로 상장)
     coby["0011T0"].update(rev=[None] * 3, op=[None] * 3, ni=[None] * 3, eq=None)
+    next(x for x in out["data.json"]["stocks"] if x["t"] == "0011T0")["fy"] = None
     with open(os.path.join(ROOT, "tests", "fixtures", "fin_warn_real_rows.json"), encoding="utf-8") as f:
         real = json.load(f)
     out["data.json"]["stocks"] += real["stocks"]
@@ -161,14 +163,14 @@ def test_no_statements_line_once_per_place():
       const tabs = (t) => Object.fromEntries([['summary', null], ['earn', 'earn'], ['value', 'value'], ['div', 'div']].map(([k, ct]) => {
         const html = page(load, t, ct); return [k, { n: count(html, NO), marked: marked(html, 'no-stmt'), na: (/data-ui-v2="co-div" data-cls="kr" data-rule="na"/.test(html)) }]; }));
       out = { bon: tabs('496320'), chabi: tabs('0011T0'), pref: tabs('005935'), usd: tabs('241560'), sam: tabs('005930'), aapl: tabs('AAPL'),
-        tilesFirst: (() => { const html = page(load, '496320'); return html.indexOf('data-ui-v2="no-stmt"') < html.indexOf('data-ui-v2="co-tile"'); })() };""",
+        tilesFirst: (() => { const html = page(load, '0011T0'); return html.indexOf('data-ui-v2="no-stmt"') < html.indexOf('data-ui-v2="co-tile"'); })() };""",
               FILES=files(), NO=NO_STMT)
-    for t in ("bon", "chabi"):                             # 본시스템즈 · 채비: 요약 · 실적 · 가치에 한 번씩, 배당 탭은 '자료가 없어요'일 때 그 밑에
-        assert all(got[t][k]["n"] == 1 and got[t][k]["marked"] == 1 for k in ("summary", "earn", "value")), (t, got[t])
-        assert got[t]["div"]["n"] == (1 if got[t]["div"]["na"] else 0), (t, got[t]["div"])
-    assert got["chabi"]["div"]["na"] and got["chabi"]["div"]["n"] == 1
-    for t in ("pref", "usd", "sam", "aapl"):                # 우선주 · 원화가 아닌 재무제표 · 다른 회사 · 미국: 없어요
-        assert all(got[t][k]["n"] == 0 for k in got[t]), (t, got[t])
+    # 채비 (새로 상장, 사업보고서 없음): 요약 · 실적 · 가치 · 배당(자료가 없어요 밑)에 한 번씩
+    assert all(got["chabi"][k]["n"] == 1 and got["chabi"][k]["marked"] == 1 for k in ("summary", "earn", "value", "div")), got["chabi"]
+    assert got["chabi"]["div"]["na"]
+    # 본시스템즈 (KONEX, 2024년 사업보고서는 냈어요 · DART 에 XBRL 없음) · 우선주 · 원화가 아닌 재무제표 · 다른 회사 · 미국: 없어요
+    for t in ("bon", "pref", "usd", "sam", "aapl"):
+        assert all(got[t][k]["n"] == 0 and got[t][k]["marked"] == 0 for k in got[t] if k != "tilesFirst"), (t, got[t])
     assert got["tilesFirst"]                               # 한눈에 칸들 위
 
 
@@ -192,3 +194,32 @@ def test_holdings_tile_says_no_data_only_for_korean_holdings_with_missing_checks
     assert got["usd"]["noData"] is False and NO_DATA not in got["usd"]["tile"]          # 원화가 아닌 재무제표: 통화 줄이 말해요
     assert got["lnfKia"]["state"] == "broken" and NO_DATA not in got["lnfKia"]["tile"]  # 걸린 경고가 있으면 확인하지 못했어요가 아니에요
     assert got["sam"]["state"] == "ok"
+
+
+def test_the_add_sheet_row_follows_the_same_rules():
+    """종목 바꾸기 → 담기 시트의 재무 경고 줄 (editor.jsx addWarnView): 줄과 그 밑 이유 줄. 지노믹트리는 PR #68 의 이자보상배율 줄만 (마지막
+    리뷰: 이 줄을 빼는 변이를 잡아요), 엘앤에프 · 기아는 '4가지 중 1가지는 …', 채비는 '재무 경고' + Jack 의 이유 줄, 삼성전자는 이유 줄 없음."""
+    tmp = bundle_dir()
+    with open(os.path.join(tmp, "entry_ed.js"), "w", encoding="utf-8") as f:
+        f.write(f"export * as ED from {json.dumps(os.path.join(ROOT, 'src/v2/editor.jsx'))};\nexport * as CP from {json.dumps(os.path.join(ROOT, 'src/copy/v2.js'))};\n")
+    exe = os.path.join(ROOT, "node_modules", ".bin", "esbuild")
+    r = subprocess.run([exe, os.path.join(tmp, "entry_ed.js"), "--bundle", "--format=esm", "--platform=node", "--jsx=automatic", "--loader:.js=jsx",
+                        "--charset=utf8", "--external:react", "--external:react-dom", f"--outfile={tmp}/ed.mjs", "--log-level=error"], cwd=ROOT, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    code = ("import * as B from './ed.mjs'; console.warn = () => {}; console.info = () => {};\n"
+            f"const REAL = {json.dumps(REAL, ensure_ascii=False)};\n"
+            "const v = (t) => { const x = B.ED.addWarnView({ t, cls: 'kr' }, REAL[t]); return [x.kind, x.warnLine, x.unchecked, x.why, x.whyKind]; };\n"
+            "console.log(JSON.stringify({ gene: v('228760'), lnf: v('066970'), kia: v('000270'), chabi: v('0011T0'), sam: v('005930'),"
+            " us: B.ED.addWarnView({ t: 'AAPL', cls: 'us' }, null).why }));")
+    path = os.path.join(tmp, "ed_run.mjs")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(code)
+    r = subprocess.run([NODE, path], cwd=tmp, capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr[-2000:]
+    got = json.loads(r.stdout.strip().splitlines()[-1])
+    one = COUNT.replace("{k}", "1")
+    assert got["gene"] == ["flags", "재무 경고 신호 1개", False, NO_ICR, "noIcr"]          # PR #68 줄만 (둘 다는 아니에요)
+    assert got["lnf"] == ["flags", "재무 경고 신호 2개", False, one, "count"]
+    assert got["kia"] == ["some", "확인한 재무 경고 신호는 없어요", False, one, "count"]
+    assert got["chabi"] == ["unchecked", None, True, NO_DATA, "noData"]                    # 줄 제목 '재무 경고' + Jack 의 이유 줄
+    assert got["sam"] == ["none", "재무 경고 신호는 없어요", False, None, None] and got["us"] is None

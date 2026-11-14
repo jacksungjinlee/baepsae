@@ -11757,6 +11757,7 @@ def fin_lines_files(files):
     """fin_warn_files 에 채비의 빈 재무제표(실제 발행처럼)와 본시스템즈(재무제표 없음, 2026-11-14 발행의 실제 줄)를 더해요."""
     f = fin_warn_files(files)
     next(c for c in f["corp.json"]["companies"] if c["t"] == "0011T0").update(rev=[None] * 3, op=[None] * 3, ni=[None] * 3, eq=None)
+    next(x for x in f["data.json"]["stocks"] if x["t"] == "0011T0")["fy"] = None          # 실제처럼: 새로 상장, 사업보고서 연도 없음
     with open(os.path.join(ROOT, "tests", "fixtures", "fin_warn_real_rows.json"), encoding="utf-8") as fh:
         real = json.load(fh)
     f["data.json"]["stocks"] += real["stocks"]
@@ -11768,7 +11769,8 @@ def scene_fin_warn_lines(R, files, width):
     """Jack 이 2026-11-14 에 승인한 세 줄 (390 · 1280):
     - '4가지 중 {k}가지는 필요한 자료가 없어서 확인하지 못했어요.': 엘앤에프 경고 줄과 목록 밑 · 기아 '확인한 …' 밑. 지노믹트리는 PR #68 줄만.
     - '필요한 자료가 없어서 확인하지 못했어요.': 채비의 '재무 경고' 밑 · 기아만 가진 포트폴리오의 '재무 경고 0개 · 확인하지 못했어요' 칸 밑 (홈도).
-    - '공시된 재무제표가 아직 없어서 계산할 수 없어요.': 채비 · 본시스템즈의 한눈에 칸 위 · 실적 · 가치 탭 (채비는 배당 탭도).
+    - '공시된 재무제표가 아직 없어서 계산할 수 없어요.': 채비(새로 상장, 사업보고서 없음)의 한눈에 칸 위 · 실적 · 가치 · 배당 탭. 본시스템즈(KONEX,
+      2024년 사업보고서를 냈어요)에는 없어요.
     - 종목 바꾸기 → 이름으로 찾기 → 담기 시트도 같은 규칙 (엘앤에프 · 기아 · 채비 · 지노믹트리).
     12px 이상 · 가로 스크롤 없음 · 뱁이 없음."""
     S = f"재무 경고 줄 {width}"
@@ -11830,21 +11832,21 @@ def scene_fin_warn_lines(R, files, width):
         assert note.count() == 1 and note.inner_text() == CO["noStmt"]
         assert note.bounding_box()["y"] < page.locator('[data-ui-v2="co-tile"]').first.bounding_box()["y"]   # 칸들 위
         tidy("채비 요약")
-        for code, ctabs in (("0011T0", ("earn", "value", "div")), ("496320", ("earn", "value"))):
+        for code, ctabs, want in (("0011T0", ("earn", "value", "div"), [CO["noStmt"]]), ("496320", ("earn", "value", "div"), [])):
             for ctab in ctabs:
                 co_hash(page, f"#stocks/{code}/{ctab}")
                 page.locator(f'[data-ui-v2="co-{ctab}"]').first.wait_for(state="visible")
                 got = page.locator('[data-ui-v2="no-stmt"]').evaluate_all("(els) => els.map((e) => e.innerText.trim())")
-                assert got == [CO["noStmt"]], (code, ctab, got)                  # 한 번
+                assert got == want, (code, ctab, got)                            # 채비: 한 번 · 본시스템즈(KONEX, 2024년 사업보고서): 없어요
                 tidy(f"{code} {ctab}")
-        co_hash(page, "#stocks/496320")                                          # 본시스템즈 요약: 칸들 위 한 번 · 카드 밑에 이유 줄
+        co_hash(page, "#stocks/496320")                                          # 본시스템즈 요약: 그 줄 없음 · 카드 밑에 이유 줄
         page.locator('[data-ui-v2="co-warn-unchecked"]').wait_for(state="visible")
-        assert page.locator('[data-ui-v2="no-stmt"]').count() == 1 and page.locator('[data-ui-v2="co-warn-nodata"]').inner_text() == W_["noData"]
+        assert page.locator('[data-ui-v2="no-stmt"]').count() == 0 and page.locator('[data-ui-v2="co-warn-nodata"]').inner_text() == W_["noData"]
         co_hash(page, "#stocks/005935")                                          # 우선주: 그 줄이 아니에요 (자기 줄은 우선주 작업에서)
         page.locator('[data-ui-v2="co-warn-unchecked"]').wait_for(state="visible")
         assert page.locator('[data-ui-v2="no-stmt"]').count() == 0
         tidy("본시스템즈 · 삼성전자우")
-    R.check(page, S, "'필요한 자료가 없어서 …' 카드 제목 밑 · '공시된 재무제표가 아직 없어서 …' 칸들 위와 실적 · 가치 (배당) 탭에 한 번씩 · 우선주에는 없음", no_data_and_no_stmt)
+    R.check(page, S, "'필요한 자료가 없어서 …' 카드 제목 밑 · '공시된 재무제표가 아직 없어서 …' 채비의 칸들 위와 실적 · 가치 · 배당 탭에 한 번씩 · 본시스템즈(KONEX) · 우선주에는 없음", no_data_and_no_stmt)
 
     def tiles():
         page.evaluate("() => { location.hash = '#portfolio'; }")
