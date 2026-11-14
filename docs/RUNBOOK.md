@@ -441,7 +441,7 @@ year after its last bad day. Repairing the history is a later PR. Gate rows:
   only a warning, unless the previous publish had it or a stock carries a mark. The site keeps yesterday's data until then.
 - **FAIL "새로 생긴 과거 주가 기록 오류 종목 수 (10종목 이상이면 실패)"** (`PX_BAD_NEW_FAIL`, Jack 2026-11-14: "block the publish
   … when many stocks newly break in one run"): stocks in today's `krSeries.jump` that were not in the previous publish's. The
-  2026-11-14 list's 21 moves fall on 19 dates over three years, at most 2 stocks on one day (2026-05-08, two 에이프로젠 group
+  2026-11-14 list's 21 moves fall on 20 dates over three years, at most 2 stocks on one day (2026-05-08, two 에이프로젠 group
   stocks after one 감자), so a daily run names 0–2 new stocks. 10 or more means Naver's adjusted series or our pinning broke
   for many stocks at once (2026-11-13's pinning bug hit 18 at once): read the run log's jump line and the newly named stocks
   in the summary before anything else. Without a previous publish (live checks) it is not compared.

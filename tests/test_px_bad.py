@@ -456,7 +456,7 @@ def test_new_breaks_count_stocks_not_moves_and_need_the_previous_publish():
 
 
 def test_new_break_threshold_is_far_above_the_history():
-    """근거 (PR 본문 · validate_data 설명): 2026-11-14 의 21개 움직임 (18종목) 은 지난 3년의 19개 날짜, 한 날에 많아야 2종목."""
+    """근거 (PR 본문 · validate_data 설명): 2026-11-14 의 21개 움직임 (18종목) 은 지난 3년의 20개 날짜, 한 날에 많아야 2종목."""
     import collections
     per_day = collections.Counter()
     jump = [["001465", "2024-04-17"], ["003060", "2026-05-08"], ["007460", "2026-05-08"], ["007610", "2026-04-29"], ["009310", "2026-05-11"],
@@ -468,7 +468,7 @@ def test_new_break_threshold_is_far_above_the_history():
     for c, d in jump:
         first[c] = min(first.get(c, d), d)                                         # 그 종목이 처음 이름에 오른 날
     per_day.update(first.values())
-    assert len(jump) == 21 and len(first) == 18 and len(per_day) == 17 and max(per_day.values()) == 2
+    assert len(jump) == 21 and len({d for _, d in jump}) == 20 and len(first) == 18 and len(per_day) == 17 and max(per_day.values()) == 2
     assert V.PX_BAD_NEW_FAIL >= 5 * max(per_day.values())
 
 
