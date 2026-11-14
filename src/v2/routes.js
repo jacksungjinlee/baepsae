@@ -55,6 +55,10 @@ export function parseHash(hash) {
   if (tab === "portfolio" && parts.length === 3 && parts[1] === "rules" && DECK_ID_RX.test(parts[2])) {
     return { tab: "portfolio", sub: "rules/" + parts[2], about: false, known: true, rules: parts[2] };
   }
+  // v19.6a: 내 수익 of one portfolio, #portfolio/returns/<deck id>
+  if (tab === "portfolio" && parts.length === 3 && parts[1] === "returns" && DECK_ID_RX.test(parts[2])) {
+    return { tab: "portfolio", sub: "returns/" + parts[2], about: false, known: true, returns: parts[2] };
+  }
   if (tab === "stocks" && (parts.length === 2 || parts.length === 3)) {
     let code = null;
     try { code = decodeURIComponent(parts[1]); } catch (e) { code = null; }

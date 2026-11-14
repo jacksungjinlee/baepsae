@@ -22,11 +22,22 @@ const BAND = ["low", "high", "trim"];
 // The two comparison boxes wait for the approved name of the first one (deck.vsMine).
 export function DeckSummary({ deck, de, m, load }) {
   const idx = load.macro && load.macro.idxHist ? load.macro.idxHist.KOSPI : null;
-  const k = useMemo(() => (m.cost != null && idx ? indexSince(withoutAbsent(deck, de), idx, load.data.pxDate) : { ok: false, why: idx ? "cost" : "noIndex" }),
-    [deck, de, idx, load, m.cost]);
+  // v19.6a [Q4]: with sales, 내 포트폴리오 = (value now + sale money) / all money put in − 1 (lots.kospiMirror), the same money
+  // KOSPI is measured on; with no sale it equals the return above. Each held stock's value is the daily check's own.
+  const k = useMemo(() => (m.cost != null && idx ? indexSince(withoutAbsent(deck, de), idx, load.data.pxDate, (t) => (m.per[t] ? m.per[t].value : null))
+    : { ok: false, why: idx ? "cost" : "noIndex" }), [deck, de, idx, load, m.cost, m.per]);
+  const hasDivs = (deck.divs || []).length > 0 || (deck.history || []).some((e) => e && (e.divs || []).length > 0);
+  const hasSales = (deck.sales || []).length > 0 || (deck.history || []).some((e) => e && (e.sales || []).length > 0);
+  // the two boxes only on the same basis (round-1 review): without 내 포트폴리오 on the KOSPI basis (a held stock's value
+  // unknown, k.mine null) neither box shows; the return above (원금 basis) is never put beside 코스피.
+  const both = k.ok && k.mine != null;
+  // the note under them (Jack, 2026-11-13): after a sale deck.vsSold ("판 금액까지 넣어서 비교했어요. 배당은 넣지 않았어요."),
+  // with dividends only deck.vsNoDiv ("배당은 빼고 비교했어요.")
+  const vsNote = both && hasSales ? C.deck.vsSold : both && hasDivs ? C.deck.vsNoDiv : null;
   useEffect(() => {
     if (m.noFx.length) warnOnce(`[v2] ${deck.id}: US purchases without an exchange rate (${m.noFx.join(", ")}): money put in and return left out`);
     if (m.cost != null && !k.ok) warnOnce(`[v2] ${deck.id}: KOSPI comparison left out (${k.why})`);
+    if (k.ok && k.mine == null) warnOnce(`[v2] ${deck.id}: KOSPI comparison left out (a held stock's value is unknown, so the portfolio side has no number on the same basis)`);
   });
   return (
     <div data-ui-v2="deck-summary" style={{ marginTop: SPACE(3) }}>
@@ -37,17 +48,18 @@ export function DeckSummary({ deck, de, m, load }) {
         </div>
       )}
       {m.noFx.length > 0 && C.deck.noFx && <Note data-ui-v2="deck-no-fx">{C.deck.noFx}</Note>}
-      {k.ok && !C.deck.vsMine && <span data-ui-v2="vs-kospi" data-pending="1" hidden />}
-      {k.ok && C.deck.vsMine && (
+      {both && !C.deck.vsMine && <span data-ui-v2="vs-kospi" data-pending="1" hidden />}
+      {both && C.deck.vsMine && (
         <div data-ui-v2="vs-kospi" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: SPACE(2), marginTop: SPACE(3) }}>
           <div data-ui-v2="vs-mine" style={{ background: COLOR.page, borderRadius: 12, padding: `${SPACE(2)}px ${SPACE(3)}px`, ...tx(SIZE.sm, WEIGHT.heavy, COLOR.ink) }}>
-            {fill(C.deck.vsMine, { pct: signedPct(m.ret * 100) })}
+            {fill(C.deck.vsMine, { pct: signedPct(k.mine * 100) })}
           </div>
           <div data-ui-v2="vs-index" style={{ background: COLOR.page, borderRadius: 12, padding: `${SPACE(2)}px ${SPACE(3)}px`, ...tx(SIZE.sm, WEIGHT.heavy, COLOR.text2) }}>
             {fill(C.deck.vsKospi, { pct: signedPct(k.ret * 100) })}
           </div>
         </div>
       )}
+      {C.deck.vsMine && vsNote && <Note data-ui-v2="vs-note" data-why={hasSales ? "sold" : "divs"}>{vsNote}</Note>}
     </div>
   );
 }

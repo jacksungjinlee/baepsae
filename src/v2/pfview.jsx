@@ -19,6 +19,8 @@ import { MissingNote } from "./tracking.jsx";
 import { avgOf, CHIP_GROUP } from "./pf.js";
 import { signedPct } from "./deckcalc.js";
 import { IcrOffLine, StmtCurLine, UnitChkLine } from "./fixnote.jsx";
+import { heldUnits } from "./held.js";
+import { RecordButton } from "./records.jsx";
 
 const pct = (w) => Math.round(w * 100);
 // v19.3e: a share shown against its limit. Whole %, but with one decimal (two if needed) whenever the whole number would
@@ -132,11 +134,16 @@ function WeightBar({ w, shade }) {
 // One portfolio made with 가진 종목 넣기 (홈 · 포트폴리오). st: pfState (or { ok: false } on stale or failed data, then
 // no number), m: deckMoney (value and, when every holding has a 평균 단가, 원금 · 수익).
 // onRules: opens 내 규칙 정하기 (포트폴리오 only).
-export function ImportedDeck({ deck, st, m, openStock, byT, onRemove, onMore, onRules, home = false }) {
+// onRecord (v19.6a, 포트폴리오 only): (t, name) opens that stock's record sheet; a holding sold down to 0 and kept (남겨 두기)
+// is listed after the held ones with "0주", so its 기록 (a later dividend, a new purchase) stays reachable. footer: under the list.
+export function ImportedDeck({ deck, st, m, openStock, byT, onRemove, onMore, onRules, onRecord = null, footer = null, home = false }) {
   const rows = st && st.ok ? st.view.rows : null;
   const shades = rows ? holdingShades(rows.map((r) => r.w)) : [];
   const n = rows ? rows.length : (deck.imported || []).length;
   const items = m && m.ok ? [{ label: C.today.value, value: wonText(m.value) }] : [];
+  // v19.6a: holdings sold down to 0 and kept (their records add up to 0 shares, held.js)
+  const units = onRecord ? heldUnits(deck) : null;
+  const soldOut = onRecord ? (deck.holdings || []).filter((h) => h && units.has(h.t) && !(units.get(h.t) > 0)) : [];
   return (
     <Card data-ui-v2={home ? "deck-strip" : undefined} data-deck-id={deck.id} data-kind="imported">
       <div style={{ display: "flex", alignItems: "center", gap: SPACE(2) }}>
@@ -169,14 +176,26 @@ export function ImportedDeck({ deck, st, m, openStock, byT, onRemove, onMore, on
             <ListRow title={r.nk} sub={sub} value={r.w != null ? `${pct(r.w)}%` : null} change={!r.absent && r.s ? (r.s.d1 ?? null) : null} onClick={open}
               lead={r.t ? <CoMark t={r.t} name={r.nk} size={SPACE(9)} /> : null} />
             {r.w != null && <WeightBar w={r.w} shade={shades[i] || HOLDING_SHADES[HOLDING_SHADES.length - 1]} />}
-            {r.absent && onRemove && (
-              <div data-ui-v2="missing-remove" style={{ padding: `${SPACE(1)}px 0 ${SPACE(2)}px` }}>
-                <Button kind="secondary" onClick={() => onRemove(r.t)} style={{ width: "auto", padding: `0 ${SPACE(4)}px` }}>{C.missing.remove}</Button>
+            {((r.absent && onRemove) || (onRecord && r.t)) && (
+              <div data-ui-v2="row-actions" style={{ display: "flex", gap: SPACE(2), flexWrap: "wrap", padding: `${SPACE(1)}px 0 ${SPACE(2)}px` }}>
+                {onRecord && r.t && <RecordButton name={r.nk} onClick={() => onRecord(r.t, r.nk)} />}
+                {r.absent && onRemove && (
+                  <div data-ui-v2="missing-remove">
+                    <Button kind="secondary" onClick={() => onRemove(r.t)} style={{ width: "auto", padding: `0 ${SPACE(4)}px` }}>{C.missing.remove}</Button>
+                  </div>
+                )}
               </div>
             )}
           </div>
         );
       })}
+      {onRecord && soldOut.map((h) => (
+        <div key={h.t} data-pf-holding={h.t} data-sold-out={h.t}>
+          <ListRow title={h.nk} sub={fill(C.plan.shares, { n: 0 })} lead={<CoMark t={h.t} name={h.nk} size={SPACE(9)} />} />
+          <div data-ui-v2="row-actions" style={{ padding: `${SPACE(1)}px 0 ${SPACE(2)}px` }}><RecordButton name={h.nk} onClick={() => onRecord(h.t, h.nk)} /></div>
+        </div>
+      ))}
+      {footer}
     </Card>
   );
 }

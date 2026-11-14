@@ -99,13 +99,17 @@ def test_gain_without_a_dollar_average_says_nothing_about_todays_rate():
 
 
 def test_built_portfolio_gain_uses_the_saved_rate_and_a_sale_waits_for_lots():
+    """v19.6a (Jack's yes needed: the expectation changed with the lot maths): after a sale, 산 가격보다 counts the remaining
+    cost of the open lots (moving average). Before v19.6a the sale case had no line (None)."""
     got = run("""const rows = [['000010', '가나전자', 0.5, 10, 8000], ['AAA', 'Alpha Inc.', 0.5, 1, 90]];
       const [b] = blockOf(builtDeck(rows), STOCKS);
       const [s] = blockOf(builtDeck(rows, { sales: [{ t: '000010', qty: 1, price: 9000, date: '2026-10-20', ccy: 'KRW' }] }), STOCKS);
       out = { g: b.money.gain, day: b.money.day, sale: s.money.gain };""", STOCKS=STOCKS)
     assert got["g"]["n"] == 2 and got["g"]["cost"] == 10 * 8000 + 90 * 1100 and got["g"]["usdToday"] is False   # 산 날 환율
     assert got["day"] is None                                                # 미국 종목이 있으면 '오늘' 없음
-    assert got["sale"] is None                                               # 판 기록: v19.6a 전까지 원금 · 수익 없음
+    # 판 기록 (v19.6a; before: None): 10주 중 1주를 팔면 원금은 9주 × 8,000원 + 미국 1주 × $90 × 1,100원
+    assert got["sale"]["n"] == 2 and got["sale"]["cost"] == 9 * 8000 + 90 * 1100 and got["sale"]["value"] == 9 * 10000 + 100 * 1000
+    assert got["sale"]["gain"] == got["sale"]["value"] - got["sale"]["cost"]
 
 
 def test_today_change_amount_and_percent():

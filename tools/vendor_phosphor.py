@@ -47,6 +47,8 @@ ICONS = [
     "arrow-square-out",
     # v19.3c 처음 안내(직접 해 보기) 1/3: 눌러 볼 + 를 가리키는 손
     "hand-pointing",
+    # v19.6a 내 수익 (보드 Returns2): 판 종목 · 미국 종목 수익, 어디서 왔나 · 기록 내려받기
+    "receipt", "currency-dollar", "download-simple",
 ]
 
 PATH = re.compile(r'<path d="([^"]+)"( opacity="0\.2")?/>')

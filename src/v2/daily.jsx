@@ -109,7 +109,8 @@ export function StatusLines({ x, names, onConfirm }) {
   if (!views.length && !x.divDrops.length) return null;
   return (
     <div data-ui-v2="status-lines" style={{ padding: `${SPACE(1)}px 0 ${SPACE(2)}px` }}>
-      <DividendAnswers x={x} onConfirm={onConfirm} />
+      {/* a holding sold out and kept (0 shares, Jack 2026-11-14): its broken rule shows, never "규칙대로면 팔 때예요" */}
+      <DividendAnswers x={x} onConfirm={onConfirm} sellSaid={x.qty === 0} />
       {views.map(([r, v], i) => <Line key={i} code={r.code} level={r.level} {...v} first={i === 0 && !x.divDrops.length} />)}
       {/* 2026-11-08 (Jack): a Korean ROE is from the same net income as PER/EPS (fixnote.jsx) */}
       <EpsFixNote s={x} show={epsFixFor(x) && views.some(([r]) => r.code === "roeUnder")} />

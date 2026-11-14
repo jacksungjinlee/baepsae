@@ -5,7 +5,12 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-13 17:29 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-14 KST — read this first)
+
+**2026-11-14:** #119 (v19.6a: 기록 — 샀어요 · 팔았어요 · 배당 받았어요, 내 수익, sold-out stocks kept in the plan read
+"own", never blank) merges. #122 (v19.7a: 종목 바꾸기) is next; it waits for Jack's yes on one test edit
+(`tests/test_v196d_dark.py`: pass the script to node on stdin; the bundle is over Linux's 131,072-byte argument limit).
+
 
 **Standing instruction (Jack, 2026-11-13): speed up what users can see.** Safety work stays as careful as it is; it
 just stops blocking screen work.

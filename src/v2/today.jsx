@@ -150,7 +150,9 @@ export function Hero({ load, ev, held, decks, onConfirm, onWhy, quiet = true }) 
     return <LoadFail />;                                  // failed, refused, or a publication time that cannot be read
   }
   if (!held.length) return null;                         // nothing held, nothing checked: no verdict at all
-  const all = held.flatMap((de) => de.holdings.map((x) => ({ x, deckId: de.id })));
+  // v19.6a: a holding sold out and kept (0 shares) is not on 홈 (track.todayCounts): only its 포트폴리오 row and company page
+  // show its 먼저 사요
+  const all = held.flatMap((de) => de.holdings.filter((x) => x.qty !== 0).map((x) => ({ x, deckId: de.id })));
   const todo = all.filter(({ x }) => isTodo(x)).sort((a, b) => (a.x.status === "broken" ? 0 : 1) - (b.x.status === "broken" ? 0 : 1));
   const seen = new Set();
   const bigs = all.filter(({ x }) => x.bigMove && !seen.has(x.t) && seen.add(x.t));
@@ -296,7 +298,7 @@ export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null
   const { ev, ctx } = useDaily(load, store);
   const onConfirm = confirmer(store, setStoreData);
   const ok = load.status === "ok";
-  const held = ev.ok ? ev.decks.filter((d) => d.ok && d.holdings.length) : [];
+  const held = ev.ok ? ev.decks.filter((d) => d.ok && d.holdings.some((x) => x.qty !== 0)) : [];
   // v19.3d (v19.3 F.1): portfolios made with 가진 종목 넣기 have no per-stock rules: their own strip shows the four
   // portfolio rules (pf.js), never 확인 필요 for every stock, and they take no part in the verdict above.
   const imported = ev.ok ? decks.filter(isImported) : [];

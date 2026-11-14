@@ -29,7 +29,7 @@ import { pfRows, isImported, limitsOf } from "./pf.js";
 import { limitPct } from "./pfview.jsx";
 import { signedPct, eokText } from "./deckcalc.js";
 import { useDaily } from "./today.jsx";
-import { statusChips, HoldingRules } from "./daily.jsx";
+import { statusChips, HoldingRules, StatusLines } from "./daily.jsx";
 import { peerGroup, keptCount } from "./track.js";
 import { BIG_MOVE } from "./rules.js";
 import { shownName } from "./legacy.js";
@@ -41,6 +41,8 @@ import { EarnTab, ValueTab, DivTab, DiscTab, ValueMore, EarnMore } from "./cotab
 import { icrOffShown, stmtNotWonFor, unitHeldFor, unitRowsBlank } from "./fix.js";
 import { IcrOffNote, IcrOffLine, StmtCurNote, FcurNote, PbrZeroNote, UnitChkNote } from "./fixnote.jsx";
 import { fcurRowsBlank, fcurBlank, fcurDyBlank, pbrZeroOf, pbrZeroRowsBlank } from "./fcur.js";
+import { RecordButton, RecordFlow, companyFlow } from "./records.jsx";
+import { decksFor } from "./records.js";
 import { usOf, priceMd, priceDate, lineDate, closeLine, wonOfUsd, wonLineUsd, fxDateLine, US_HEAD2, timesText, pctText, yieldText, usGrowthText, riskBandText } from "./cofmt.js";
 
 const T = () => C.co.tiles;
@@ -529,12 +531,14 @@ export function holdLine(h, single) {
   if (single && C.co.hold.mine) return fill(C.co.hold.mine, { x: v });
   return C.co.hold.weight ? fill(C.co.hold.weight, { name: shownName(name), pct: `${v}%` }) : shownName(name);
 }
-function Holdings({ held, single }) {
-  if (!held.length) return null;
+// action (v19.6a): the 기록 button, under the rows.
+function Holdings({ held, single, action = null }) {
+  if (!held.length) return action ? <Card data-ui-v2="co-held" data-empty="1" style={{ padding: `${SPACE(3)}px ${SPACE(4)}px` }}>{action}</Card> : null;
   return (
     <Card data-ui-v2="co-held" style={{ padding: `${SPACE(2)}px ${SPACE(4)}px` }}>
       {held.map(({ deckId, name, x, imported }) => {
-        const k = imported ? 0 : keptCount(x, { roe: !!C.plan.rules.roeLimit, op: !!C.plan.rules.opLimit });
+        // a 0-share kept holding (v19.6a): no "규칙 n개가 모두 지켜지고 있어요" (its rules are not read for it; review N5)
+        const k = imported || x.qty === 0 ? 0 : keptCount(x, { roe: !!C.plan.rules.roeLimit, op: !!C.plan.rules.opLimit });
         const chips = imported ? null : statusChips(x);
         const line = holdLine(held.find((h) => h.deckId === deckId), single);
         return (
@@ -557,9 +561,20 @@ function Holdings({ held, single }) {
                 {chips || <span style={tx(SIZE.xs, WEIGHT.semi, COLOR.ok)}>{fill(C.why.keptTitle, { n: k })}</span>}
               </div>
             )}
+            {/* Jack, 2026-11-14: a sold-out kept holding that fails any of its rules shows them (the held stock's wording), never blank */}
+            {!imported && x.qty === 0 && x.soldOutFails && (
+              <div data-ui-v2="sold-out-fails" style={{ paddingLeft: 36 + SPACE(3) }}>
+                <StatusLines x={x} names={new Map(((held.find((h) => h.deckId === deckId) || {}).deck || { holdings: [] }).holdings.map((y) => [y.t, y.nk]))} />
+              </div>
+            )}
+            {/* Jack, 2026-11-13: this portfolio sold the stock out and kept it in the plan (0 shares, rules.SOLD_OUT_BANDS) */}
+            {!imported && x.qty === 0 && C.daily.soldOutKept && (
+              <p data-ui-v2="sold-out-kept" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1), paddingLeft: 36 + SPACE(3), wordBreak: "keep-all" })}>{C.daily.soldOutKept}</p>
+            )}
           </div>
         );
       })}
+      {action && <div style={{ padding: `${SPACE(1)}px 0 ${SPACE(2)}px` }}>{action}</div>}
     </Card>
   );
 }
@@ -688,6 +703,10 @@ export function Company({ load, store, setStoreData, pad, code, ctab, disc, nav 
 
 function CompanyPage({ load, s, store, setStoreData, pad, ctab, disc, nav, held, heldAll, preview, wide, backLabel }) {
   const discShown = !usOf(s) && !preview && disc && disc.status !== "none";
+  // v19.6a: 기록 when a portfolio has the stock (held, sold out, planned, or taken out: then 배당 받았어요 only); two or more
+  // portfolios ask which one first (records.jsx)
+  const [flow, setFlow] = useState(null);
+  const canRecord = store.writable && !store.locked && decksFor(store.data, s.t).length > 0;
   const labels = tabLabels(s, discShown);
   // A tab opens from its address even while its name waits for Jack (no tab bar then, so nothing links to it); 공시 only
   // where it exists (Korea, live page).
@@ -708,6 +727,7 @@ function CompanyPage({ load, s, store, setStoreData, pad, ctab, disc, nav, held,
     } catch (e) { /* ignore */ }
   }, [tab]);
   return (
+    <>
     <Page pad={pad}>
       <AppBar onBack={nav.back} backLabel={backLabel} />
       <div data-ui-v2="company" data-t={s.t} data-cls={s.cls} data-tab={tab || "summary"}>
@@ -722,7 +742,8 @@ function CompanyPage({ load, s, store, setStoreData, pad, ctab, disc, nav, held,
             <Tiles load={load} s={s} onTab={setTab} tabsOn={!!labels} />
             <Warnings load={load} s={s} wide={wide} />
             <Fit load={load} s={s} store={store} wide={wide} />
-            <Holdings held={heldAll} single={store.data.decks.length === 1} />
+            <Holdings held={heldAll} single={store.data.decks.length === 1}
+              action={canRecord ? <div data-ui-v2="co-record"><RecordButton name={s.nk} onClick={() => setFlow(companyFlow(store.data, s.t, s.nk))} /></div> : null} />
             <Memo s={s} store={store} setStoreData={setStoreData} held={held} />
           </div>
         )}
@@ -734,5 +755,8 @@ function CompanyPage({ load, s, store, setStoreData, pad, ctab, disc, nav, held,
       </div>
       <Footer />
     </Page>
+    {/* outside Page: its wrapper changes at the PC width, and a half-typed record must survive that */}
+    <RecordFlow flow={flow} setFlow={setFlow} load={load} store={store} setStoreData={setStoreData} />
+    </>
   );
 }
