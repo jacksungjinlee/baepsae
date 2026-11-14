@@ -7,9 +7,30 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ## 0. Current state and next steps (updated 2026-11-14 KST — read this first)
 
-**2026-11-14:** #119 (v19.6a: 기록 — 샀어요 · 팔았어요 · 배당 받았어요, 내 수익, sold-out stocks kept in the plan read
-"own", never blank) merged (bf33f12). #122 (v19.7a: 종목 바꾸기) is next; it waits for Jack's yes on one test edit
-(`tests/test_v196d_dark.py`: pass the script to node on stdin; the bundle is over Linux's 131,072-byte argument limit).
+**Jack, 2026-11-14 (evening) — supersedes the budget rules below:**
+- **Model:** Opus 5.5 Extra high for the main session and every helper, reviews included. No Fable until Jack says so
+  (he is saving it for a full-app audit later).
+- **Budget mode is over.** Build continuously until Jack says stop (he stops new work at 90% weekly usage). Limits: at
+  most three PRs being built at once and at most four helpers running at any moment; no polling; two updates a day
+  (morning and evening) with all questions in them. Every CLAUDE.md merge rule stays.
+- **Answers:** Q1 yes (#122's `tests/test_v196d_dark.py` edit). Q2 (a), this week: for the 18 Korean stocks whose
+  price history is broken (#125's WARN row), hide every number built on it: the 52-week range, 출렁임, 위험, beta,
+  1-year and other period returns, and the % labels on their charts; take them out of the 추세 list on 홈 and any
+  출렁임-based list or rule. Line (approved): "과거 주가 기록 일부에 오류가 있어서 52주 범위와 출렁임·위험 숫자는 비워
+  두었어요." Repairing the history is a later PR. Q3 yes: 예전 뱁새's false "적자 구간이 있어서…" line → the existing
+  "재무제표 데이터가 아직 없어요"; the "11월 10일" notice: if it is the approved 7-day EPS/ROE notice, keep it until
+  11-17 wherever it is true and remove it only where it is wrong (e.g. 우선주 pages); if it is something else, remove it.
+- **Order:** (1) merge #122; (2) the Q2 hide, plus the 재무 경고 bug (when one check has no data, show the warnings
+  that were checked and count the unchecked ones, using the closest approved line until the design chat sends
+  wording) — first, because users now see no warning where there may be one; (3) missing US stocks; (4) the 우선주 /
+  trading-halt / no-trade lines; (5) the dividend-yield bug (72 payers with no yield after a share-count change: fix
+  the calculation); (6) v19.7b; (7) v19.6f (in review before Dec 1); (8) then v19.6c, v19.6b, v19.6e, v19.6g. Data
+  work and screen work run side by side. Keep watching Monday's and Tuesday's publishes for the Q3 reports (#118's
+  FAIL-20 row). After Wednesday 22:00 the design chat sends the batch of reason lines and the dark-mode fixes: have
+  the six dark-mode screenshots (dark and light side by side) ready.
+
+**2026-11-14:** #119 (v19.6a) merged (bf33f12); #125 (52-week fix) merged (9b6b5c9) and published 14:57; #122
+(v19.7a: 종목 바꾸기) merges with Jack's yes on the `tests/test_v196d_dark.py` edit (the script goes to node on stdin).
 
 **Jack, 2026-11-14:**
 - "Yes, fix the wrong 52-week numbers first." #125 (Korean price series never pinned on an old share basis: 에쎈테크,
