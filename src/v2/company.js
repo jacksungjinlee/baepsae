@@ -216,6 +216,18 @@ function divKrExact(s, co) {
   return { rule: "steady", ...base };
 }
 
+// Exact data (v19.1i, Jack's line of 2026-11-08): a Korean payer whose yield is hidden because its share count changed and no
+// filing at all explains how — only where the line is true (reviews 2026-11-15). The pipeline's proof stage decides that in one
+// place and marks the stock dvLine = 1 (data.json; it also carries dvWhy nc-unexplained, and the gate checks both agree). A
+// stock hidden for any other reason, including #98's nc-unexplained on a spin-off, stock dividend, merger, exchange or
+// cancellation case, has no dvLine and gets no line. true only while no yield is shown (krDivState y null): the line
+// co.div.shareHidden goes in the 배당 tile's number place and under the 배당 tab's 배당을 줘요.
+export function divShareHidden(s, co = null) {
+  if (!exactData() || !s || s.cls !== "kr" || s.dvLine !== 1) return false;
+  const st = krDivState(s, co);
+  return !!(st && !st.zero && st.y == null);
+}
+
 // US until v19.2: data.json has no US dividend per share, only Yahoo's yield. Missing is not "no dividend".
 export function divUs(s) {
   const dy = okDy(s);

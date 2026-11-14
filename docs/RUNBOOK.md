@@ -502,6 +502,66 @@ would show (company page header, 홈 and 포트폴리오 가진 종목 rows, the
   row contradicted itself (`odd`), or a must-have looked like no trade (`must`). The publish goes ahead with those stocks
   unmarked. If it repeats, look at that day's listing file (FinanceData cache) before anything else; the run log has the same
   case as a "!!" line.
+## Korean dividend proof (배당 기준 증명, since #PR — Jack 2026-11-14, item 5)
+
+A Korean payer whose dividend could not be put on today's share basis (`divSt` nc · nd) used to show "배당을 줘요" with no
+yield. The daily run now tries to prove that basis (`fetch_data.py` `DivWhy.prove`, after the `dvWhy` check, before the
+yield and the 배당 rank): the factor is the product of the 액면분할 · 주식병합 · 무상증자 filings after the report year
+(the same DART decision lookups and cache entry as `dvWhy`, only whole split ratios such as 2, 5, 0.5), and it must agree with
+the share counts, either **today** (the dividend total ÷ today's listed shares = the dividend per share ÷ the factor, ±3%) or
+**yearEnd** (the shares that got the dividend = that year-end's outstanding shares in 주식의 총수 현황 ±3%, and today's
+listed shares between those × the factor and the year-end issued shares × the factor plus the new shares that filed
+제3자배정 · 일반공모 rights issues and bonds explain, each scaled only by the share events after its own date, +3%).
+An earlier year's bar comes back only when the shares that got each year's dividend differ by the filings' factor (±15%).
+
+It does **not** restore (the stock stays exactly as before, with its reason in `divCheck.proof` and the run log):
+- `ratio` — a filed bonus ratio that is not a whole split ratio (대한제강 ×1.66, 알테오젠 ×1.3 …): the gate accepts only whole
+  ratios; accepting an exact filed ratio is Jack's decision;
+- `basis` — a spin-off or stock-dividend decision in between;
+- `rights` — a 주주배정 rights issue (주주배정후 실권주 일반공모 too, and any issue whose method is not stated) of more than 10%
+  was decided from half a year before the report year-end to the price date: KRX lowers the price on the 권리락 day, so today's
+  price is on the new basis while the filed dividend is on the old one. This is checked on every restore path (today and
+  yearEnd, whether or not new shares were needed to explain the count) and for an earlier bar when such an issue falls between
+  the two years. A rights decision whose method or size could not be read is a lookup failure (`fail`), never restored.
+  Dividing by the 권리락 factor is a later PR;
+- `uncounted` — a filing explains the change but its share count is not read (주식교환, 합병, 감자, 주식소각);
+- `data` — the stock's own dividend table disagrees with its share counts (an interim dividend left out of the per-share row,
+  a unit slip, no total, no 주식의 총수 현황);
+- `fail` — a lookup failed (DART, the per-run limit, an unreadable filing, the share report not received): nothing changes and
+  the next run tries again.
+
+Only `line` gets Jack's line "주식 수가 바뀐 비율을 공시로 확인하지 못해 배당수익률은 보여 드리지 않아요." on the 2.0 배당 tile and
+tab: the proof found the share count changed and no filing at all in between (no rights issue, bond, cancellation, exchange,
+spin-off or stock dividend). That one place sets both `dvWhy` nc-unexplained and `dvLine: 1` (data.json); the app shows the
+line only where `dvLine` is 1, so a `dvWhy` nc-unexplained from the older #98 check alone (which looks only at rights issues and
+bonds, e.g. after a spin-off) never shows it, and the stock stays exactly as before. A restored stock carries `dvProof`
+(data.json), including the share events (`ev`) its factor came from.
+On the 2026-11-14 publish: 29 of the 72 hidden yields come back (21 with their bars), 23 of the 86 yields without bars get their
+bars back; still hidden: ratio 7, basis 4, rights 7, uncounted 2, data 22, a 32.5% yield 1; line 0.
+
+- **DART calls:** about 4 per stock the first time (the filings lists, decisions, the year-end share report, rights and
+  bond counts when needed), at most 150 companies a run (`PROVE_PER_RUN`, separate from `dvWhy`'s own 150); about 160
+  stocks on 2026-11-14, so the first run does most of them (about 600 calls) and the next run the rest, then 0–10 a day.
+  A cached lookup is fetched again when today's listed shares have moved more than 3% since it was fetched (a new decision may
+  be missing), also when the `dvWhy` check used it earlier in the same run; an entry fetched without a share count is not
+  fetched again for that reason. The run log line "배당 기준 증명 조회" gives companies fetched, read from cache and stopped by the limit, and the
+  stage's own DART call count. Not a full-DART run; a full-DART run adds about 640 calls to its estimate (logged separately).
+- **FAIL "배당 기준 증명 기록 (divCheck.proof)"**: the counts in `divCheck.proof` differ from the stocks' `dvProof`, a named
+  stock does not exist, carries a proof, shows a yield (except `fail`, which can be an earlier year only), is in two lists,
+  or is listed under `line` without `dvWhy` nc-unexplained; or `dvLine` is on a stock not listed under `line` (or missing
+  from one that is). It is our own bookkeeping: look at the run's "배당 기준 증명" log lines. A publish without
+  `divCheck.proof` after one that had it fails too, and so does a `dvProof` or `dvLine` without it.
+- **FAIL "되살린 배당수익률 = 배당 총액 ÷ 시가총액 (dvProof)"**: a restored yield does not agree with the dividend total ÷
+  market cap within what the recorded year-end treasury shares and filed new shares explain, a proof's numbers differ from
+  corp.json `cash3` or today's share count, its events (`ev`) do not multiply to the factor or fall outside the report
+  year-end to the price date, the published per-share dividend is not the filed one ÷ the factor (to the 전), or an earlier
+  bar's factor does not match the two years' dividend totals. New shares are scaled by the proof's own events, not by
+  `dvWhy` (which is absent when the events multiply to 1). The ratio is the pipeline's exact one (dividend total × factor ÷
+  today's shares), not one recomputed from the rounded per-share dividend. For
+  yearEnd the market-cap form restates the share-count inequality; the independent parts are the dividend total against the
+  year-end outstanding shares and against corp.json. That is a wrong conversion; never loosen the row. The detail list under
+  the table names each stock and the failing number.
+- **WARN "배당 기준 증명 경고 (되살리지 않은 이유 · 조회 실패)"**: names the stocks not restored, by reason.
 
 ## US stocks added by hand (EXTRA_US)
 
