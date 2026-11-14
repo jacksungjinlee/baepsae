@@ -29,7 +29,7 @@ import { pfRows, isImported, limitsOf } from "./pf.js";
 import { limitPct } from "./pfview.jsx";
 import { signedPct, eokText } from "./deckcalc.js";
 import { useDaily } from "./today.jsx";
-import { statusChips, HoldingRules } from "./daily.jsx";
+import { statusChips, HoldingRules, StatusLines } from "./daily.jsx";
 import { peerGroup, keptCount } from "./track.js";
 import { BIG_MOVE } from "./rules.js";
 import { shownName } from "./legacy.js";
@@ -559,6 +559,12 @@ function Holdings({ held, single, action = null }) {
             {(chips || k > 0) && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: SPACE(1), marginTop: SPACE(1), paddingLeft: 36 + SPACE(3) }}>
                 {chips || <span style={tx(SIZE.xs, WEIGHT.semi, COLOR.ok)}>{fill(C.why.keptTitle, { n: k })}</span>}
+              </div>
+            )}
+            {/* Jack, 2026-11-14: a sold-out kept holding that fails any of its rules shows them (the held stock's wording), never blank */}
+            {!imported && x.qty === 0 && x.soldOutFails && (
+              <div data-ui-v2="sold-out-fails" style={{ paddingLeft: 36 + SPACE(3) }}>
+                <StatusLines x={x} names={new Map(((held.find((h) => h.deckId === deckId) || {}).deck || { holdings: [] }).holdings.map((y) => [y.t, y.nk]))} />
               </div>
             )}
             {/* Jack, 2026-11-13: this portfolio sold the stock out and kept it in the plan (0 shares, rules.SOLD_OUT_BANDS) */}

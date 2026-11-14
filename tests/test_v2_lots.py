@@ -521,9 +521,10 @@ def test_a_sold_out_holding_after_a_confirmed_cut_is_never_bought_back():
     """Verification B1, then the coordinator (2026-11-13): never tell the user to buy back a stock that fails its own rules.
     Three stocks at a third each; the third is sold out and kept after a dividend cut the user confirmed. Before: under "own"
     and "spec" it read 규칙 깨짐 (홈's band said "…이 매도 조건에 걸렸어요 / 규칙대로면 팔 때예요" for 0 shares) and 추가로 넣을 돈
-    300만원 bought nothing. Now a 0-share holding's other rules are read only to see whether one is broken: this one is, so
-    it reads 할 일 없음 with nothing shown (no rule, no reason, no target, soldOutFails), nothing is for 오늘 확인할 일, its
-    준비 중 rule is not counted, and 추가로 넣을 돈 buys exactly what "off" buys (150주 + 150주). "spec" reads it the same way
+    300만원 bought nothing. Now a 0-share holding's other rules are read only to see whether one fails: this one does, so
+    there is no 먼저 사요 and no target, no status of its own (no action chip; Jack 2026-11-14: never blank, so its failing
+    rule is its one rule row and reason, the confirmed cut, with soldOutFails), nothing is for 오늘 확인할 일, its 준비 중 rule
+    is not counted, and 추가로 넣을 돈 buys exactly what "off" buys (150주 + 150주). "spec" reads it the same way
     (its held stocks read 일부 팔아요 there, so nothing is bought). The same portfolio without the cut: it reads 먼저 사요 on its
     band and 300만원 buys it back (300주)."""
     got = run(SOLD3 + CUT3 + """const look = (d) => { const o = {};
@@ -543,7 +544,8 @@ def test_a_sold_out_holding_after_a_confirmed_cut_is_never_bought_back():
     assert own["st"] == [["000010", 333, "none"], ["000020", 333, "none"], ["000030", 0, "none"]]           # 규칙 깨짐도 먼저 사요도 아니에요
     assert spec["st"] == [["000010", 333, "trim"], ["000020", 333, "trim"], ["000030", 0, "none"]]
     for x in (spec, own):
-        assert x["zero"] == [{"rules": [], "reasons": [], "drops": [], "noNew": False, "target": None, "broken": True}]   # 아무 규칙도 보이지 않아요
+        assert x["zero"] == [{"rules": ["divCut"], "reasons": ["divCut"], "drops": [{"t": "000030", "rule": "divCut", "fy": 2025, "a": 1000, "b": 800, "answer": "cut"}],
+                              "noNew": True, "target": None, "broken": True}]                      # 어긋난 규칙 하나만 보여요 (Jack 11-14)
         assert x["todo"] == 0 and x["todoTs"] == []                                                       # 홈 띠의 '매도 조건에 걸렸어요' 는 없어요
         assert x["nc"] == off["nc"] == 2 and x["ncIds"] == ["audit"]                                       # 0주 종목의 준비 중 규칙은 세지 않아요
     assert own["add"] == off["add"] and own["msg"] is None and own["allNone"] is True                    # 다시 사지 않아요: "off" 와 똑같이 150주 + 150주
@@ -632,7 +634,10 @@ def test_sold_out_switch_fuzz_own_reads_only_its_band_and_never_buys_nothing_whe
           return lv.some((l) => ['broken', 'check', 'watch'].includes(l)); };
         const broken = eo.holdings.filter((y) => y.qty === 0 && fails(y.t)).map((y) => y.t);
         st.brokenSold += broken.length;
-        for (const t of broken) { const y = eo.holdings.find((z) => z.t === t); if (y.status !== 'none' || y.soldOutFails !== true) st.brokenLow++; }
+        for (const t of broken) { const y = eo.holdings.find((z) => z.t === t);
+          // Jack 11-14: never blank: its failing rules are its rows and reasons, no status, no target, no new money
+          if (y.status !== 'none' || y.soldOutFails !== true || y.target != null || !y.noNewMoney || !y.reasons.length
+            || !y.reasons.every((r) => ['broken', 'check', 'watch'].includes(r.level)) || y.rules.length !== new Set(y.reasons.map((r) => r.rule)).size) st.brokenLow++; }
         for (const y of eo.holdings) if (y.qty === 0 && !broken.includes(y.t) && y.soldOutFails !== false) st.brokenLow++;
         for (const x of ef.holdings) { const y = eo.holdings.find((z) => z.t === x.t); if (!y || JSON.stringify(x) !== JSON.stringify(y)) st.heldDiff++; }
         if (eo.notChecked !== ef.notChecked) st.ncDiff++;
@@ -682,7 +687,8 @@ FAIL3 = """const DEBT = { id: 'debtCeiling', kind: 'keep', check: 'checked', sin
         const stocks = d.holdings.map((h) => kr(h.t, 10000, { fy: 2025, debt: 100, roe: 10, dps3: [1000, 1000, 1000], ...(h.t === '000030' ? more : {}) }));
         return Object.fromEntries(['off', 'own'].map((m) => { const ctx = { ...ctxOf(stocks), soldOutBands: m, ...ctxMore }; const e = R.evaluateDeck(d, ctx);
           const z = e.holdings.find((x) => x.qty === 0);
-          return [m, { st: e.holdings.map((x) => [x.t, x.status]), fails: z ? z.soldOutFails : null, zeroRules: z ? z.rules.length : null, todo: e.todo,
+          return [m, { st: e.holdings.map((x) => [x.t, x.status]), fails: z ? z.soldOutFails : null, zeroRules: z ? z.rules.map((r) => r.id) : null,
+            zeroReasons: z ? z.reasons.map((r) => r.code + ':' + r.level) : null, chips: z ? z.status : null, todo: e.todo,
             add: T.addMoney(e, 3000000).buys.map((b) => [b.t, b.shares]) }]; })); };
 """
 
@@ -693,14 +699,19 @@ def test_a_sold_out_holding_failing_any_of_its_rules_is_never_bought_back():
     today (확인 필요) or an unanswered dividend drop with the Korean trend switch on (확인 필요): each reads 할 일 없음 with
     nothing shown, nothing goes to 오늘 확인할 일, and 300만원 buys 150주 + 150주 of the two held, as "off". With every rule
     passing it reads 먼저 사요 and is bought back (300주). With the trend switch off a Korean dividend drop is not read at all
-    (준비 중), for a held stock as for this one, so it does not stop the buy-back either: the same levels as for a held stock."""
+    (준비 중), for a held stock as for this one, so it does not stop the buy-back either: the same levels as for a held stock.
+    Jack, 2026-11-14: never blank: the failing rule is its rule row and reason (the wording a held stock gets), with no status
+    of its own (no action chip)."""
     got = run(SOLD3 + FAIL3 + """out = { debt: fail3(DEBT, { debt: 300 }), roe: fail3(ROE, { roe: 2 }), noDebt: fail3(DEBT, { debt: null }),
         divOn: fail3(DIV, { dps3: [800, 1000, 1000] }, { krDivTrend: true }), divOff: fail3(DIV, { dps3: [800, 1000, 1000] }, { krDivTrend: false }),
         ok: fail3(DEBT, { debt: 150 }) };""")
     held = [["000010", 150], ["000020", 150]]
+    rows = {"debt": (["debtCeiling"], ["debtOver:watch"]), "roe": (["roeFloor"], ["roeUnder:watch"]), "noDebt": (["debtCeiling"], ["missing:check"]),
+            "divOn": (["divCut"], ["divDrop:check"])}
     for k in ("debt", "roe", "noDebt", "divOn"):
         own, off = got[k]["own"], got[k]["off"]
-        assert own["st"] == [["000010", "none"], ["000020", "none"], ["000030", "none"]] and own["fails"] is True and own["zeroRules"] == 0, (k, own)
+        assert own["st"] == [["000010", "none"], ["000020", "none"], ["000030", "none"]] and own["fails"] is True, (k, own)
+        assert (own["zeroRules"], own["zeroReasons"]) == rows[k], (k, own)                      # 어긋난 규칙 줄만 (Jack 11-14), 상태 칩은 없어요
         assert own["todo"] == 0 and own["add"] == off["add"] == held, (k, own, off)                    # 다시 사지 않아요: "off" 와 똑같이
     for k in ("ok", "divOff"):
         own = got[k]["own"]
@@ -720,3 +731,25 @@ def test_two_sold_out_stocks_one_failing_its_rules_the_plan_goals_leave_it_out()
     assert got["st"] == [["000010", 250, "none", 0.5], ["000020", 250, "none", 0.5], ["000030", 0, "low", 0.25], ["000040", 0, "none", None]], got["st"]
     assert got["zeroOwn"] == ["000030", "000040"]
     assert got["add"] == [["000030", 242], ["000010", 17], ["000020", 17]], got["add"]      # 목표의 합에 D 는 없어요 (있으면 C 125주뿐)
+
+
+
+def test_a_sold_out_stock_not_bought_back_shows_the_rules_it_fails():
+    """Jack, 2026-11-14: a sold-out stock that is not suggested for buy-back still shows which of its rules it fails (never
+    blank). The confirmed cut, 부채비율 over its ceiling and a missing 부채비율 each give the sold-out third stock exactly that
+    rule as its rule row and its reason, in the wording a held stock gets for it (the screens show them with the "다 판
+    종목이에요. …" line), no status of its own (no action chip), nothing for 홈 (todayCounts) and no new money: 300만원 buys
+    150주 + 150주 as "off". A passing sold-out stock is unchanged: 먼저 사요 on its band, 300주 bought back."""
+    got = run(SOLD3 + FAIL3 + CUT3 + """const look = (d, stocks) => { const ctx = { ...ctxOf(stocks), soldOutBands: 'own' }, e = R.evaluateDeck(d, ctx), z = e.holdings.find((x) => x.qty === 0);
+        return { st: z.status, rules: z.rules.map((r) => r.id + ':' + r.result), reasons: z.reasons.map((r) => r.code + ':' + r.level), noNew: z.noNewMoney,
+          todo: T.todayCounts([e]).todoTs.size, allNone: T.todayCounts([e]).allNone, add: T.addMoney(e, 3000000).buys.map((b) => [b.t, b.shares]) }; };
+      const base = (more) => ['000010', '000020', '000030'].map((t) => kr(t, 10000, { fy: 2025, debt: 100, roe: 10, dps3: [1000, 1000, 1000], ...(t === '000030' ? more : {}) }));
+      const withRule = (rule) => { const d0 = mk([1 / 3, 1 / 3, 1 / 3], '000030'); return { ...d0, holdings: d0.holdings.map((h) => (h.t === '000030' ? { ...h, rules: [rule, ...h.rules] } : h)) }; };
+      out = { cut: look(cut3(), base({})), debt: look(withRule(DEBT), base({ debt: 300 })), missing: look(withRule(DEBT), base({ debt: null })), fine: look(withRule(DEBT), base({ debt: 150 })) };""")
+    want = {"cut": (["divCut:broken"], ["divCut:broken"]), "debt": (["debtCeiling:fail"], ["debtOver:watch"]), "missing": (["debtCeiling:missing"], ["missing:check"])}
+    for k, (rules, reasons) in want.items():
+        x = got[k]
+        assert x["st"] == "none" and x["rules"] == rules and x["reasons"] == reasons and x["noNew"] is True, (k, x)
+        assert x["todo"] == 0 and x["allNone"] is True and x["add"] == [["000010", 150], ["000020", 150]], (k, x)
+    fine = got["fine"]
+    assert fine["st"] == "low" and fine["rules"] == ["band:band"] and fine["reasons"] == ["band:low"] and fine["add"] == [["000030", 300]], fine

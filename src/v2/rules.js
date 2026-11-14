@@ -371,21 +371,24 @@ export function evaluateHolding(h, deck, ctx, weights, qty) {
   // not shown or counted (not 준비 중 either: they are not in "아직 자동으로 확인하지 못하는 규칙"). Those rules are read for one
   // thing only: the app never tells the user to buy back a stock that fails any of its own rules. When one of them reads
   // 규칙 깨짐, 지켜봐요 or 확인 필요 (the levels that stop new money for a held stock, NO_NEW_MONEY: a dividend cut, 부채비율 over
-  // its ceiling, a figure missing today, a drop not answered yet), the band is not read either: 할 일 없음, no 먼저 사요, no
-  // target (추가로 넣을 돈 skips it and buys what "off" buys); soldOutFails says so.
+  // its ceiling, a figure missing today, a drop not answered yet), the band is not read either: no 먼저 사요, no target
+  // (추가로 넣을 돈 skips it and buys what "off" buys); soldOutFails says so. Jack, 2026-11-14: it must never look blank, so the
+  // rules it fails are its rule rows and reasons (the wording a held stock gets for them), with no status of its own
+  // ("none": no action chip, nothing on 홈, no 규칙대로면 팔 때예요 for 0 shares).
   const zero = qty === 0;
   const full = Array.isArray(h.rules) ? h.rules : [];
-  const soldOutFails = zero && reasonsOf(full.filter((r) => !(r && r.id === "band")).map((r) => evalRule(r, h, s, co, deck, weights, trend)))
-    .some((x) => NO_NEW_MONEY.includes(x.level));
-  const book = zero ? (soldOutFails ? [] : [bandRuleOf(h)].filter(Boolean)) : full;
-  const rules = book.map((r) => evalRule(r, h, s, co, deck, weights, trend));
   // 공시 단위 확인: a Korean stock whose statement numbers the pipeline blanked (data.json or corp.json unitChk)
   const unit = !!s && s.cls === "kr" && (unitHeld(s) || unitHeld(co));
+  const fails = (x) => reasonsOf([x]).some((y) => NO_NEW_MONEY.includes(y.level));
+  const failing = zero ? full.filter((r) => !(r && r.id === "band")).map((r) => evalRule(r, h, s, co, deck, weights, trend)).filter(fails) : [];
+  const soldOutFails = failing.length > 0;
+  const book = zero ? (soldOutFails ? [] : [bandRuleOf(h)].filter(Boolean)) : full;
+  const rules = soldOutFails ? failing : book.map((r) => evalRule(r, h, s, co, deck, weights, trend));
   const reasons = reasonsOf(rules, unit);
   // No rule that could be checked at all (an empty or malformed book, only possible in a hand-made file): nothing was
   // checked, so never 할 일 없음.
   if (!soldOutFails && !rules.some((x) => x.check === "checked")) reasons.unshift({ level: "check", code: "noRules" });
-  const status = reasons.length ? reasons[0].level : "none";
+  const status = soldOutFails ? "none" : reasons.length ? reasons[0].level : "none";
   const d1 = todayD1(s);
   const pxd = ownCloseDate(s, ctx.usPxDate);
   const band = rules.find((x) => x.id === "band" && x.check === "checked");
@@ -404,7 +407,7 @@ export function evaluateHolding(h, deck, ctx, weights, qty) {
     absent: !s,                                                   // not in today's data at all (v19.0c: the row stays)
     // a note only: never changes the status. Never on a 0-share holding (verification nit: not in 홈's 큰 움직임)
     d1, pxd, bigMove: qty !== 0 && d1 != null && Math.abs(d1) >= BIG_MOVE,
-    noNewMoney: NO_NEW_MONEY.includes(status),
+    noNewMoney: soldOutFails || NO_NEW_MONEY.includes(status),
   };
 }
 
