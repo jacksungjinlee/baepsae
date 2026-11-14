@@ -35,9 +35,10 @@ const splitWhy = (t) => { const m = /^(.*?)\s*(\([^)]*\))$/.exec(String(t || "")
 const downLabel = (name) => fill(C.edit.down, { name });
 const upLabel = (name) => fill(C.edit.up, { name });
 
-// The 규칙 깨짐 line of a holding whose sell condition fired today: the words the 포트폴리오 screen uses for that rule.
+// The 규칙 깨짐 line of a holding whose sell condition fired today: the words the 포트폴리오 screen uses for that rule. A sold-out
+// kept holding failing a rule at that level gets the same line, box and pre-picked reason as a held stock (E.brokenReason).
 function brokenPieces(x) {
-  const r = x && x.status === "broken" ? (x.reasons || []).find((y) => y.level === "broken") : null;
+  const r = E.brokenReason(x);
   if (!r) return null;
   if (r.code === "divCut") return [C.plan.rules.divCut, fill(C.plan.rules.dpsChange, { a: won(r.a), b: won(r.b) })];
   return [];

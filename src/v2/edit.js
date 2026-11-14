@@ -52,6 +52,10 @@ export { CHANGES_MAX };                           // the change log keeps the ne
 const SUM_TOL = 5e-4;                            // a sum within 0.0005%-points of 100 is 100 (the plan's float targets)
 const TGT_TOL = 1e-9;                            // a target this close to the stored one did not change
 
+// The 규칙 깨짐 reason the edit screen shows for a holding (its line, the 빼기 sheet's box and its pre-picked 규칙이 깨졌어요): a
+// held stock whose status is 규칙 깨짐, or a sold-out kept one (0 shares) failing a rule at that level. The sold-out one has no
+// status of its own (soldOutFails: its reasons are the rules it fails), so reading the status alone missed it (final review S1).
+export const brokenReason = (x) => (x && (x.status === "broken" || x.soldOutFails) ? (x.reasons || []).find((y) => y && y.level === "broken") || null : null);
 export const emptyDraft = () => ({ over: {}, adds: [], removed: [], maxPct: null, last: null, touched: false });
 const isInt = (x) => Number.isInteger(x);
 const whole = (x) => Math.abs(x - Math.round(x)) < TGT_TOL;

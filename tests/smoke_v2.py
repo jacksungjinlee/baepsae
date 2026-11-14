@@ -10470,6 +10470,22 @@ def scene_v196a_sold_out(R, files, width=390):
         R.collect(page)
         page.keyboard.press("Escape")
         rs.wait_for(state="detached")
+        # 리뷰 S1: 배당 삭감을 확인한 다 판 종목 (d6 의 051910) 은 가진 종목처럼 규칙 깨짐 줄 · 빼기 시트의 상자 · '규칙이 깨졌어요' 미리 고름
+        page.evaluate("() => { location.hash = '#portfolio'; }")
+        at(page, "portfolio")
+        page.locator('[data-deck-id="d6"] [data-sold-out="051910"] [data-ui-v2="sold-out-remove"]').click()
+        at(page, "portfolio/edit/d6")
+        cut = " · ".join([C["daily"]["broken"], C["plan"]["rules"]["divCut"], fillp(C["plan"]["rules"]["dpsChange"], a="1,000", b="800")])
+        r6 = page.locator('[data-ui-v2="rm-sheet"][data-t="051910"]')
+        r6.wait_for(state="visible")
+        assert r6.get_attribute("data-held") == "0" and r6.locator('[data-ui-v2="edit-broken"]').inner_text() == cut, r6.inner_text()
+        assert r6.locator('[aria-checked="true"]').count() == 1 and r6.locator('[aria-checked="true"]').get_attribute("data-reason") == "rule"
+        R.collect(page)
+        page.keyboard.press("Escape")
+        r6.wait_for(state="detached")
+        assert page.locator('[data-edit-row="051910"] [data-ui-v2="edit-broken"]').inner_text() == cut          # 편집 화면의 그 종목 줄에도
+        assert page.locator('[data-edit-row="000270"] [data-ui-v2="edit-broken"]').count() == 0                 # 지켜봐요 (부채비율) 는 규칙 깨짐이 아니에요
+        assert page.locator('[data-edit-row="068270"] [data-ui-v2="edit-broken"]').count() == 0
         # … and from 포트폴리오, then 빼기 and 바꾼 내용 저장: no 0주 row and no line any more
         page.evaluate("() => { location.hash = '#portfolio'; }")
         at(page, "portfolio")
@@ -10487,9 +10503,9 @@ def scene_v196a_sold_out(R, files, width=390):
         page.locator('[data-deck-id="d3"] [data-holding="005930"]').wait_for(state="visible")
         d3 = page.locator('[data-deck-id="d3"]')
         assert page.locator('[data-sold-out="105560"]').count() == 0 and d3.locator('[data-ui-v2="sold-out-kept"]').count() == 0
-        assert KEPT not in d3.inner_text() and page.locator('[data-ui-v2="sold-out-kept"]').count() == 4   # d5 · d6 의 다 판 종목 줄만 남아요
+        assert KEPT not in d3.inner_text() and page.locator('[data-ui-v2="sold-out-kept"]').count() == 6   # d5 · d6 · d7 의 다 판 종목 줄만 남아요
         R.collect(page)
-    R.check(page, S, "세 종목 중 하나를 다 팔고 남겨 두면: 남은 둘은 할 일 없음 그대로 · 다 판 종목만 먼저 사요 · 추가로 넣을 돈 300만원은 그 종목만 · 홈은 할 일 없음 · '다 판 종목이에요. …' 는 다 판 종목 줄 밑에만 한 번 (포트폴리오 · 회사 페이지) · 그 줄을 누르면 종목 바꾸기의 그 종목 빼기 (v19.7a) → 빼고 저장하면 0주 줄도 그 줄도 없어요", three)
+    R.check(page, S, "세 종목 중 하나를 다 팔고 남겨 두면: 남은 둘은 할 일 없음 그대로 · 다 판 종목만 먼저 사요 · 추가로 넣을 돈 300만원은 그 종목만 · 홈은 할 일 없음 · '다 판 종목이에요. …' 는 다 판 종목 줄 밑에만 한 번 (포트폴리오 · 회사 페이지) · 그 줄을 누르면 종목 바꾸기의 그 종목 빼기 (v19.7a; 배당 삭감을 확인한 다 판 종목은 규칙 깨짐 상자와 '규칙이 깨졌어요') → 빼고 저장하면 0주 줄도 그 줄도 없어요", three)
     ctx.close()
     srv.shutdown()
 

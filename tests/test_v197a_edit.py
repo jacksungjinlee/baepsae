@@ -1504,3 +1504,28 @@ def test_an_unusable_planv_is_left_out_and_said_once():
     for k, x in got["res"].items():
         assert x["stored"] is True and x["mine"] is True and x["others"] is True, (k, x)        # 그 종목만 계획 수량으로, 나머지는 그대로
         assert x["said"] == 1 and "planV" in x["what"] and "000010" in x["what"], (k, x)
+
+
+def test_a_sold_out_stock_failing_a_rule_gets_the_same_broken_line_and_reason_as_a_held_one():
+    """Final review S1: a sold-out kept stock (0 shares) after a dividend cut the user confirmed has no status of its own
+    (soldOutFails, its reasons are the rules it fails), and the edit screen read the status only: its row had no 규칙 깨짐 line,
+    its 빼기 sheet no box and no pre-picked 규칙이 깨졌어요. E.brokenReason gives it the same reason as a held stock with the
+    same cut. A sold-out stock failing only at 지켜봐요 (부채비율 over its ceiling) or failing nothing, and a held stock with
+    nothing broken, get none."""
+    got = run("""const DIV = { id: 'divCut', kind: 'sell', check: 'checked', since: 2023 };
+      const DEBT = { id: 'debtCeiling', kind: 'keep', check: 'checked', since: 2024, limit: 200 };
+      const cut = { t: '000040', rule: 'divCut', fy: 2025, a: 1000, b: 800, answer: 'cut', at: '2026-10-19' };
+      const sale = { id: 's1aaaaaa', t: '000040', qty: 25, price: 100000, date: '2026-10-20', ccy: 'KRW' };
+      const withRule = (rule, extra) => { const d = deck4(extra); return { ...d, holdings: d.holdings.map((h) => (h.t === '000040' ? { ...h, rules: [rule, ...h.rules] } : h)) }; };
+      const read = (d, more = {}) => { const ctx = ctxOf(); ctx.byT.set('000040', stock('000040', 100000, { fy: 2025, debt: 100, ...more }));
+        const e = Ru.evaluateDeck(d, ctx); const x = e.holdings.find((y) => y.t === '000040'); const r = E.brokenReason(x);
+        return { row: x ? [x.qty, x.status, !!x.soldOutFails] : null, r: r ? [r.code, r.level, r.a, r.b] : null, other: E.brokenReason(e.holdings.find((y) => y.t === '000010')) }; };
+      out = { held: read(withRule(DIV, { confirms: [cut] })), sold: read(withRule(DIV, { confirms: [cut], sales: [sale] })),
+        watch: read(withRule(DEBT, { sales: [sale] }), { debt: 300 }), fine: read(withRule(DEBT, { sales: [sale] }), { debt: 150 }),
+        none: [E.brokenReason(null), E.brokenReason({ status: 'none', reasons: [] }), E.brokenReason({ status: 'none', soldOutFails: true, reasons: [{ code: 'missing', level: 'check' }] })] };""")
+    assert got["held"]["row"] == [25, "broken", False] and got["held"]["r"] == ["divCut", "broken", 1000, 800], got["held"]
+    assert got["sold"]["row"] == [0, "none", True] and got["sold"]["r"] == got["held"]["r"], got["sold"]
+    assert got["watch"]["row"] == [0, "none", True] and got["watch"]["r"] is None, got["watch"]
+    assert got["fine"]["row"][:2] == [0, "low"] and got["fine"]["row"][2] is False and got["fine"]["r"] is None, got["fine"]
+    assert all(g["other"] is None for g in (got["held"], got["sold"], got["watch"], got["fine"]))
+    assert got["none"] == [None, None, None]
