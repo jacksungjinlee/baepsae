@@ -111,3 +111,28 @@ def test_no_dated_eps_line_where_there_is_no_eps():
     for t in ("000660", "066970"):                           # 다시 읽은 회사(epsIn "o"): 예전처럼 없어요
         assert got[t]["live"] == 0 and got[t]["ko"] == 0 and got[t]["en"] == 0, (t, got[t])
     assert got["sam"] == 4                                   # 다시 읽기 전 파일의 EPS 가 있는 회사: 예전 그대로 네 칸 (tests/test_fix_notes.py)
+
+
+# ── 04 주가는 무엇으로 움직였나: '적자 구간이 있어서 …'는 정말 적자일 때만 (Jack Q3 · say-why NEW-8) ──
+def test_the_loss_line_only_for_a_real_loss_and_the_data_line_when_there_are_no_statements():
+    """재무제표 숫자가 하나도 없으면 02 와 같은 줄 ('재무제표 데이터가 아직 없어요.' · 해외 기업은 '외화로 …'), 나누기를 막는 게 정말 적자면
+    (지금 EPS ≤ 0 · 3년 전 순이익 ≤ 0) 예전 '적자' 줄 그대로, 숫자는 있는데 3년 주가나 한 해가 없어 나누지 못하면 틀린 '적자' 줄 대신
+    칸이 없어요 (Jack, 2026-11-14: 숨긴 채로)."""
+    got = run("""
+      const L = (t) => lines(page(live(CORP), t));
+      const gap = (t) => OLD.decompGap(CORP.companies.find((x) => x.t === t));
+      const block = (t) => { const ls = L(t), i = ls.indexOf('주가는 무엇으로 움직였나');
+        return i < 0 ? null : ls.slice(i, i + 8); };                   // 제목 · ? · 부제 · 본문 …
+      out = {};
+      for (const t of ['005935', '950250', '496320', '066970', '000660', '064400', '489790', '005930']) out[t] = { gap: gap(t), block: block(t) };
+      out.prefPage = L('005935');""", CORP=corp_with_real_rows())
+    loss = "적자 구간이 있어서 이익과 눈높이로 나누기 어려워요."
+    for t in ("005935", "496320"):                           # 삼성전자우 · 본시스템즈 (재무제표 없음)
+        assert got[t]["gap"] == "noStatements" and got[t]["block"][3] == NO_DATA, (t, got[t])
+    assert not any("적자 구간" in x for x in got["prefPage"])
+    assert got["950250"]["gap"] == "noStatements" and got["950250"]["block"][3] == FOREIGN, got["950250"]        # 테라뷰 (해외 기업)
+    for t in ("066970", "000660"):                           # 엘앤에프 (지금 적자) · SK하이닉스 (3년 전 적자): 나누기를 막는 건 정말 적자
+        assert got[t]["gap"] == "loss" and got[t]["block"][3].startswith(loss), (t, got[t])
+    for t in ("064400", "489790"):                           # LG씨엔에스 (3년 주가 없음) · 한화비전 (3년 전 해가 빔): 적자가 아니라 칸이 없어요
+        assert got[t]["gap"] is None and got[t]["block"] is None, (t, got[t])
+    assert got["005930"]["block"] is not None and "이익(EPS) 변화" in got["005930"]["block"]   # 나눌 수 있는 회사는 그대로 (숫자 칸)

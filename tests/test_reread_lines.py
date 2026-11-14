@@ -361,8 +361,10 @@ def test_stmt_cur_old_company_page_hides_untrue_captions_and_empty_sections():
     roe = next(c for c in corp["companies"] if c["t"] == STMT_T)["roe"]
     assert roe is not None and f"주주 돈 100원으로 연 {roe}원" in cur                       # 숫자가 있는 칸의 글은 그대로
     assert "업종 내 위치" in cur and "가정으로 계산하는 가치" in cur
-    # stmtCur 가 없으면 예전 그대로 (같은 빈 숫자라도): 이 시험이 무엇을 숨기는지 보여 줘요
-    assert all(u in nocur for u in untrue) and any("적자 구간이 있어서" in l for l in nocur), [u for u in untrue if u not in nocur]
+    # stmtCur 가 없으면 예전 그대로 (같은 빈 숫자라도): 이 시험이 무엇을 숨기는지 보여 줘요. 주가는 무엇으로 움직였나는 Jack 의 Q3
+    # (2026-11-14) 부터 재무제표 숫자가 없으면 '적자 구간이 있어서 …' 대신 '재무제표 데이터가 아직 없어요.' (적자가 아니라 숫자가 없어서예요)
+    assert all(u in nocur for u in untrue) and "재무제표 데이터가 아직 없어요." in nocur, [u for u in untrue if u not in nocur]
+    assert not any("적자 구간이 있어서" in l for l in nocur)
     assert "밸류에이션 멀티플 · 업종 사분위 대비 · 직전 사업보고서" in nocur and line not in nocur
     assert "금융업은 미적용 지표예요" in bank and bank.count(line) == 1                       # 참인 설명은 남아요
     assert got["roeNull"].count("데이터가 없어요") == 0 and got["roeNullNoCur"].count("데이터가 없어요") == 2   # ROE 칸이 비어도 (PBR · ROE)

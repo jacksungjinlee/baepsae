@@ -23,6 +23,11 @@ const pc = (v, d = 1) => v == null ? "—" : v.toFixed(d) + "%";
 const clamp = (v, a, b) => Math.min(Math.max(v, a), b);
 // KRX 해외 기업 (900xxx·950xxx): DART 재무제표가 외화라 파이프라인이 금액을 비워요 (fetch_data.py is_foreign_issuer 와 같아요)
 const isForeignIssuer = (code) => typeof code === "string" && code.length === 6 && code[0] === "9";
+// 재무제표 숫자가 하나도 없는 회사 (02 3개년 실적 흐름이 '재무제표 데이터가 아직 없어요 …'라고 하는 바로 그 조건)
+export const noStatements = (c) => !!c && (c.rev || [])[0] == null && (c.ni || [])[0] == null;
+// 04 의 그 줄 (Jack Q3, 2026-11-14: '적자 구간 …' 대신 예전 앱의 '재무제표 데이터가 아직 없어요'): 해외 기업은 02 와 같은 외화 줄,
+// 그 밖은 02 줄의 첫 문장
+export const noStatementsText = (c) => (isForeignIssuer(c.t) ? "외화로 작성된 재무제표라 아직 보여 드리지 않아요." : "재무제표 데이터가 아직 없어요.");
 
 // ---------------- 공용 아톰 ----------------
 const Card = ({ children, style = {} }) => (
@@ -963,10 +968,24 @@ export function decomposeReturn(c) {
   return { eF, mF, priceRatio, epsThen };
 }
 
+// 주가는 무엇으로 움직였나를 나누지 못한 까닭 (decomposeReturn 이 null 일 때, 2026-11-14 Jack Q3 · say-why NEW-8):
+//   "noStatements" 재무제표 숫자가 하나도 없어요 (우선주 · KONEX · 새로 상장 · 해외 기업): 02 와 같은 줄 ('적자 구간'이 아니에요)
+//   "loss"         나누기를 막는 게 정말 적자예요: 지금 EPS ≤ 0 이거나, EPS 와 같은 기준의 3년 전 순이익 ≤ 0 → '적자 구간이 있어서 …'
+//   null           그 밖 (3년 주가가 없음 · 한 해가 빔 · 주식 수 없음): 틀린 '적자' 줄 대신 칸을 보이지 않아요 (Jack, 2026-11-14:
+//                  예전 앱은 은퇴할 앱이라 숨긴 채로 둬요 · stmtCur 회사의 02 · 04 를 숨긴 것과 같은 방식, Jack 2026-11-08)
+export function decompGap(c) {
+  if (noStatements(c)) return "noStatements";
+  const base = epsBase(c, 2);
+  const niThen = base && !base.bad ? base.ni : null;
+  return (typeof c.eps === "number" && c.eps <= 0) || (typeof niThen === "number" && niThen <= 0) ? "loss" : null;
+}
+
 function DecompCard({ c, setExplain, corp }) {
   const d0 = decomposeReturn(c);
   const basisBad = !!d0 && d0.why === "basis";     // 두 끝을 같은 기준에 세울 수 없어요: 숫자도 '적자 구간' 문장도 없이 PER · EPS 줄만
   const d = basisBad ? null : d0;
+  const gap = d || basisBad ? null : decompGap(c);
+  if (!d && !basisBad && !gap) return null;        // 맞는 말이 없으면 틀린 '적자' 줄 대신 칸이 없어요 (Jack Q3, 2026-11-14)
   // 다시 읽은 뒤(Jack, 2026-11-08): 숫자를 뺀 칸에 보일 줄이 없으면(소수주주가 없는 총 순이익 회사) 제목만 남은 칸 대신 칸이 없어요
   if (basisBad && !epsLineKind({ corp, cos: [c], force: true })) return null;
   const fx = (v) => (v >= 100 ? v.toFixed(0) : v.toFixed(2)) + "배";
@@ -1010,9 +1029,15 @@ function DecompCard({ c, setExplain, corp }) {
         </div>
       </>
     );
-  } else if (!basisBad) {
+  } else if (gap === "noStatements") {
     body = (
-      <div style={{ fontSize: 12, color: C.sub, marginTop: 12, lineHeight: 1.7, wordBreak: "keep-all", overflowWrap: "break-word" }}>
+      <div data-decomp="no-statements" style={{ fontSize: 12, color: C.sub, marginTop: 12, lineHeight: 1.7, wordBreak: "keep-all", overflowWrap: "break-word" }}>
+        {noStatementsText(c)}
+      </div>
+    );
+  } else if (gap === "loss") {
+    body = (
+      <div data-decomp="loss" style={{ fontSize: 12, color: C.sub, marginTop: 12, lineHeight: 1.7, wordBreak: "keep-all", overflowWrap: "break-word" }}>
         적자 구간이 있어서 이익과 눈높이로 나누기 어려워요.
         {/* 보이는 숫자가 0 이면 '+0% 올랐어요' 대신 '거의 변하지 않았어요', 움직이지 않았으니 뒤 문장(움직인 가격은…)은 빼요 (Jack, 2026-11-05).
             r36 은 소수 한 자리 그대로 보여요 (0 · −0 이면 0) */}

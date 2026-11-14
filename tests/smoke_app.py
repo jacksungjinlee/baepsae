@@ -3004,7 +3004,11 @@ def scene_old_app_lines(R, files):
         see(page, "주가는 무엇으로 움직였나")
         body = page.locator("body").inner_text()
         assert "바뀔 수 있어요" not in body and page.locator('[data-fix="eps"]').count() == 0, "EPS 가 없는 회사에 날짜가 지난 고치는 중 줄"
-    R.check(page, S, f"기업분석 {T} (우선주): 'PER과 EPS는 … 바뀔 수 있어요' 줄 없음", corp_page)
+        # 04: 적자가 아니라 숫자가 없어요 → 02 와 같은 줄 (Jack Q3)
+        assert "적자 구간이 있어서" not in body, "재무제표가 없는 우선주에 '적자 구간' 줄"
+        d = page.locator('[data-decomp="no-statements"]')
+        assert d.count() == 1 and d.inner_text().strip() == OLD_NO_DATA and float(d.evaluate("(e) => parseFloat(getComputedStyle(e).fontSize)")) >= 12
+    R.check(page, S, f"기업분석 {T} (우선주): 04 '재무제표 데이터가 아직 없어요.' · '적자 구간' · 'PER과 EPS는 … 바뀔 수 있어요' 줄 없음", corp_page)
 
     def gate_card(lang):
         def run():
