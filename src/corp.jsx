@@ -966,7 +966,7 @@ export function decomposeReturn(c) {
 function DecompCard({ c, setExplain, corp }) {
   // 2026-11-14 저녁 (Jack): 3년 주가 변화(r36)를 과거 주가 기록 오류로 비웠고 52주는 보이는 회사 (52주까지 비운 회사는 칸이 없어요: 머리의 줄이
   // 말해요). 칸을 어떻게 그릴지는 예전 그대로 다른 입력으로 정하고 (r36 자리에 아무 값 · 적자 · 기준이 다름 · 자료 없음은 예전처럼), 숫자가 나왔을
-  // 자리에만 '주가 (3년) —' 와 그 줄을 넣어요 (리뷰 #126 2차)
+  // 자리에만 '주가 (3년) —' 와 그 줄을 넣어요 (pxBad 리뷰 2차)
   const px = pxBad(c);
   if (px) {
     const p0 = decomposeReturn({ ...c, r36: 0 });
@@ -1169,7 +1169,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
             </div>
             {/* 과거 주가 기록 오류 (corp.json pxBad, Jack 2026-11-14): 베타 · 변동성 · 52주 · 수익률이 비어요 — 베타 줄 자리에 그 줄 한 번 */}
             {/* 2026-11-14 저녁 (Jack): 52주까지 비웠으면 그 줄, 52주는 보이면 베타 자리에 '이 숫자는 비워 두었어요' */}
-            {/* 52주는 보이면 비운 두 숫자를 그 이름과 '—' 로 보이고 바로 밑에 짧은 줄 (리뷰 #126 2차: 줄이 가리킬 숫자가 보이게) */}
+            {/* 52주는 보이면 비운 두 숫자를 그 이름과 '—' 로 보이고 바로 밑에 짧은 줄 (pxBad 리뷰 2차: 줄이 가리킬 숫자가 보이게) */}
             {pxBad(c) ? (pxBadFull(c) ? <PxBadLine c={c} style={{ marginTop: 5 }} />
               : <><div data-px="beta" style={{ fontSize: 12, color: C.sub, lineHeight: 1.6, marginTop: 5 }}>β — · 연 변동성 —</div><PxBadOneLine c={c} field="beta" style={{ marginTop: 2 }} /></>)
               : volTxt && <Sub style={{ marginTop: 5 }}>{volTxt} (β {c.beta} · 연 변동성 {pc(c.vol, 0)})</Sub>}

@@ -18,7 +18,7 @@ import { COLOR, SIZE, WEIGHT } from "../ui/tokens.js";
 import { C, fill, mdText, todayKst } from "./format.js";
 import { Note, tx } from "./ui.jsx";
 import { EPS_FIX_DATE, fixNotesHidden, epsNoticeShown, stmtCurFor, epsLineKind, unitHeldFor, pxBadFullFor, pxBadPartFor, pxBadHidesFor } from "./fix.js";
-import { fcurOf, fcurText, pbrZeroOf } from "./fcur.js";
+import { fcurOf, fcurText, pbrZeroOf, fgnCutOf } from "./fcur.js";
 
 // The line with its date ("11월 10일"), or null when a word or the date is missing (never a line with an empty slot).
 export function epsFixText() {
@@ -129,4 +129,13 @@ export function FcurNote({ s, style }) {
 // pipeline blanked a PBR that rounds to 0.00 (data.json pbrZero, src/v2/fcur.js pbrZeroOf).
 export function PbrZeroNote({ s, style }) {
   return pbrZeroOf(s) && C.co.pbrZero ? <Note data-ui-v2="pbr-zero" style={style}>{C.co.pbrZero}</Note> : null;
+}
+
+// FgnCutNote (Jack, 2026-11-14): "자료의 숫자가 회사 전체 재무제표와 맞지 않아서 비워 두었어요." right under a US-listed foreign
+// company's PER, PBR or 배당수익률 "–" when the pipeline blanked it for not matching the company's totals (data.json fgnCut,
+// src/v2/fcur.js fgnCutOf). fields: the blanked numbers this section would show (default all three); the line only when one of
+// them is blanked this way. data-fields: the ones it covers (tests).
+export function FgnCutNote({ s, fields, style }) {
+  const cut = fgnCutOf(s).filter((k) => !fields || fields.includes(k));
+  return cut.length && C.co.fgnCut ? <Note data-ui-v2="fgn-cut" data-fields={cut.join(",")} style={style}>{C.co.fgnCut}</Note> : null;
 }

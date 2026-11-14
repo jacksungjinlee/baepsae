@@ -9703,12 +9703,12 @@ def scene_px_bad(R, files, width):
                 assert tile.get_attribute("data-rule") == "pxbad" and tile.locator('[data-ui-v2="tile-phrase"]').inner_text() == "–"
                 assert C["co"]["tiles"]["na"] not in page.locator('[data-ui-v2="co-tiles"]').inner_text()
             dash = {"earn": '[data-ui-v2="co-decomp-px"]', "value": '[data-ui-v2="co-risk-px"]'}.get(ctab)
-            if dash:                                                                # 짧은 줄 바로 위에 보이는 '–' (리뷰 #126 2차)
+            if dash:                                                                # 짧은 줄 바로 위에 보이는 '–' (pxBad 리뷰 2차)
                 d, one = page.locator(dash), page.locator(inside + ' [data-ui-v2="px-bad-one"]')
                 assert d.count() == 1 and d.inner_text().strip().endswith("–"), (t, ctab, d.inner_text() if d.count() else None)
                 assert d.bounding_box()["y"] + d.bounding_box()["height"] <= one.bounding_box()["y"] + 1, (t, ctab)
             tidy(f"과거 주가 기록 {t} {ctab or 'summary'}")
-            if not ctab:                                                            # 내 기준 시트: 낮은 변동성 '–' · 그 밑에 짧은 줄 한 번 (리뷰 #126 2차)
+            if not ctab:                                                            # 내 기준 시트: 낮은 변동성 '–' · 그 밑에 짧은 줄 한 번 (pxBad 리뷰 2차)
                 fit = page.locator('[data-ui-v2="co-fit"]')
                 fit.get_by_role("button", name=C["co"]["fit"]["all"]).click()        # 기준 카드 8개 모두 보기
                 sheet = page.locator('[data-ui-v2="co-fit-sheet"]')
@@ -10225,6 +10225,151 @@ def scene_us_fcur(R, files, width, named):
             page.screenshot(path=os.path.join(R.shots, f"pbr0-summary-{width}.png"))
     if named:
         R.check(page, S, f"{PBR0_T} PBR 0.00 (pbrZero): 가치 칸 · 내 기준 · 가치 탭 · 자세히에 'PBR –' 와 그 밑 줄 한 번씩 · PER · 날짜 그대로", pbr_zero)
+    ctx.close()
+    srv.shutdown()
+
+
+# ── Jack, 2026-11-14: 미국 상장 외국 회사의 숫자가 회사 전체 재무제표와 맞지 않아 비운 칸 (data.json fgnCut · fcur.js · fixnote.jsx FgnCutNote) ──
+# 시험 데이터의 CVX · COP · BAC 를 본떠 SHEL(아무것도 비우지 않음) · BP(PER · PBR 비움) · HSBC(PBR · 배당수익률 비움)를 더해요 (파이프라인과 같은 모양).
+FGN_ADD = {"SHEL": ("CVX", "Shell plc", None), "BP": ("COP", "BP p.l.c.", {"per": "mismatch", "pbr": "mismatch"}),
+           "HSBC": ("BAC", "HSBC Holdings plc", {"pbr": "mismatch", "dy": "mismatch"})}
+
+
+def fgn_files(files):
+    f = clone(files)
+    st = f["data.json"]["stocks"]
+    assert not {s["t"] for s in st} & set(FGN_ADD), "시험 데이터에 이미 그 티커가 있어요"
+    for t, (src, name, cut) in FGN_ADD.items():
+        s = dict(next(x for x in st if x["t"] == src), t=t, nk=name, ne=name)
+        assert s["cls"] == "us" and s.get("per") and s.get("pbr") and s.get("dy"), s
+        if cut:
+            for k in list(cut) + (["vz"] if "pbr" in cut else []):
+                s.pop(k, None)
+            s["fgnCut"] = dict(cut)
+        st.append(s)
+    return f
+
+
+def scene_us_fgn(R, files, width):
+    """미국 상장 외국 회사 (Jack, 2026-11-14: '자료의 숫자가 회사 전체 재무제표와 맞지 않아서 비워 두었어요.'). 통화 줄(#114)과 같은 자리:
+      BP (PER · PBR 비움) — 요약의 가치 칸 'PBR –' (규칙 fgn, 맨 뒤) 와 그 밑 줄 한 번 · 배당 칸은 평소대로 · 내 기준의 가치 줄 '–' 와 줄 한 번 ·
+        가치 탭 PBR · PER '–' 와 줄 한 번, 날짜 줄 없음 · 가치 자세히 PBR · PER '–' 와 줄 · 배당 탭은 평소대로 (줄 없음).
+      HSBC (PBR · 배당수익률 비움) — 가치 · 배당 칸 '–' (맨 뒤) 와 그 밑 줄 한 번 · 내 기준 줄 · 가치 탭 PBR '–' · PER 그대로 · 날짜 줄 그대로 ·
+        배당 탭 배당수익률 '–' 와 줄, '자료가 없어요' · 100만원어치 없음.
+      SHEL (비우지 않음) — 줄도 '–' 칸도 없어요. 모두 12px 이상 · 가로 스크롤 없음 · 뱁이 없음 · '자료가 없어요' 가 비운 칸에 없어요."""
+    S = f"미국 외국 회사 숫자 맞춤 {width}"
+    yld = C["pick"]["receipt"]["yield"]
+    wide = width >= 1024
+    site = build_site(fgn_files(files))
+    srv, ctx, page, base = R.open(site, width, path="/app.html?dev=1#home", device=pc_device(width) if wide else None)
+    wait_ready(page)
+    lines = lambda sel="": page.locator(f'{sel} [data-ui-v2="fgn-cut"]'.strip())   # noqa: E731
+
+    def common(where):
+        for i in range(lines().count()):
+            assert lines().nth(i).inner_text().strip() == CO["fgnCut"], lines().nth(i).inner_text()
+            assert lines().nth(i).evaluate("(e) => parseFloat(getComputedStyle(e).fontSize)") >= 12
+        floor_ok(page, where)
+        no_hscroll(page, width)
+        no_mascot(page)
+        R.collect(page)
+
+    def below(a, b):
+        ba, bb = a.bounding_box(), b.bounding_box()
+        return ba["y"] + ba["height"] - 1 <= bb["y"] <= ba["y"] + ba["height"] + 40
+
+    def summary(t, held, fields):
+        co_hash(page, f"#stocks/{t}")
+        tiles = page.locator('[data-ui-v2="co-tiles"]')
+        tiles.wait_for(state="visible")
+        order = tiles.locator('[data-ui-v2="co-tile"]').evaluate_all("(els) => els.map((e) => [e.dataset.topic, e.dataset.rule])")
+        assert [o for o in order if o[1] == "fgn"] == [[x, "fgn"] for x in held] and order[-len(held):] == [[x, "fgn"] for x in held], order
+        for topic in held:
+            tt = tiles.locator(f'[data-ui-v2="co-tile"][data-topic="{topic}"]')
+            assert tt.locator('[data-ui-v2="tile-phrase"]').inner_text().strip() == "–"
+            assert tt.locator('[data-ui-v2="tile-number"]').inner_text().strip() == ("PBR –" if topic == "value" else f"{yld} –")
+            assert CO["tiles"]["na"] not in tt.inner_text()
+        note = tiles.locator('[data-ui-v2="fgn-cut"]')
+        assert note.count() == 1 and note.get_attribute("data-fields") == fields, note.count()
+        assert below(tiles.locator(f'[data-ui-v2="co-tile"][data-topic="{held[-1]}"]'), note)
+        fit = page.locator('[data-ui-v2="co-fit"]')
+        fit.wait_for(state="visible")
+        rows = {r.get_attribute("data-card"): r.get_attribute("data-side") for r in fit.locator('[data-ui-v2="rank-row"]').all()}
+        assert all(rows.get(c) == "blank" for c in held), rows
+        assert fit.locator('[data-ui-v2="fgn-cut"]').count() == 1 and lines().count() == 2
+        assert page.locator('[data-ui-v2="fcur"], [data-ui-v2="pbr-zero"]').count() == 0
+        common(f"{t} 요약")
+        if R.shots:
+            tiles.scroll_into_view_if_needed()
+            page.screenshot(path=os.path.join(R.shots, f"fgn-{t}-summary-{width}.png"))
+
+    def bp():
+        summary("BP", ["value"], "pbr")
+        co_hash(page, "#stocks/BP/value")
+        val = page.locator('[data-ui-v2="co-value"]')
+        val.wait_for(state="visible")
+        for sel in ("co-pbr", "co-per"):
+            loc = val.locator(f'[data-ui-v2="{sel}"]')
+            assert loc.count() == 1 and loc.get_attribute("data-blank") == "fgn" and loc.inner_text().split("\n")[-1].strip() == "–", loc.inner_text()
+        assert lines('[data-ui-v2="co-value"]').count() == 1 and lines().count() == 1
+        assert lines().get_attribute("data-fields") == "per,pbr" and below(val.locator('[data-ui-v2="co-per"]'), lines())
+        assert val.locator('[data-ui-v2="date-line"]').count() == 0                  # 보이는 숫자가 없어요
+        assert page.locator('[data-ui-v2="co-compare"]').count() == 0
+        common("BP 가치 탭")
+        co_hash(page, "#stocks/BP/value-more")
+        ratios = page.locator('[data-ui-v2="co-ratios"]')
+        ratios.wait_for(state="visible")
+        got = ratios.locator('[data-ui-v2="co-ratio"]').evaluate_all("(els) => els.map((e) => e.innerText.split('\\n').map((x) => x.trim()).filter(Boolean))")
+        assert [g[0] for g in got] == ["PBR", "PER"] and all("–" in g for g in got), got
+        assert lines('[data-ui-v2="co-ratios"]').count() == 1 and ratios.locator('[data-ui-v2="date-line"]').count() == 0
+        common("BP 가치 자세히")
+        co_hash(page, "#stocks/BP/div")
+        div = page.locator('[data-ui-v2="co-div"]')
+        div.wait_for(state="visible")
+        y = div.locator('[data-ui-v2="co-yield"]')
+        assert y.count() == 1 and y.get_attribute("data-blank") is None and "–" not in y.inner_text(), y.inner_text()
+        assert lines().count() == 0
+        common("BP 배당 탭")
+        if R.shots:
+            co_hash(page, "#stocks/BP/value")
+            page.wait_for_timeout(200)
+            page.screenshot(path=os.path.join(R.shots, f"fgn-BP-value-{width}.png"))
+    R.check(page, S, "BP (PER · PBR 비움): 가치 칸 'PBR –' · 내 기준 · 가치 탭 · 자세히에 '–' 와 그 밑 줄 한 번씩 · 날짜 줄 없음 · 배당은 그대로", bp)
+
+    def hsbc():
+        summary("HSBC", ["value", "div"], "pbr,dy")
+        co_hash(page, "#stocks/HSBC/value")
+        val = page.locator('[data-ui-v2="co-value"]')
+        val.wait_for(state="visible")
+        pb, pe = val.locator('[data-ui-v2="co-pbr"]'), val.locator('[data-ui-v2="co-per"]')
+        assert pb.get_attribute("data-blank") == "fgn" and pb.inner_text().split("\n")[-1].strip() == "–"
+        assert pe.count() == 1 and pe.get_attribute("data-blank") is None and "–" not in pe.inner_text()   # PER 은 그대로
+        assert lines('[data-ui-v2="co-value"]').count() == 1 and lines().get_attribute("data-fields") == "pbr"
+        assert val.locator('[data-ui-v2="date-line"]').count() >= 1                  # PER 의 날짜는 그대로
+        common("HSBC 가치 탭")
+        co_hash(page, "#stocks/HSBC/div")
+        div = page.locator('[data-ui-v2="co-div"]')
+        div.wait_for(state="visible")
+        y = div.locator('[data-ui-v2="co-yield"]')
+        assert y.count() == 1 and y.get_attribute("data-blank") == "fgn" and y.inner_text().split("\n")[-1].strip() == "–", y.inner_text()
+        assert page.locator('[data-ui-v2="co-million"]').count() == 0 and CO["tiles"]["na"] not in div.inner_text(), div.inner_text()
+        assert lines('[data-ui-v2="co-div-stats"]').count() == 1 and lines().count() == 1 and below(y, lines())
+        common("HSBC 배당 탭")
+        if R.shots:
+            page.screenshot(path=os.path.join(R.shots, f"fgn-HSBC-div-{width}.png"))
+    R.check(page, S, "HSBC (PBR · 배당수익률 비움): 가치 · 배당 칸 '–' 와 그 밑 줄 한 번 · 가치 탭 PBR '–' · PER 그대로 · 배당 탭 '–' 와 줄", hsbc)
+
+    def shel():
+        for ctab in (None, "value", "value-more", "div"):
+            co_hash(page, "#stocks/SHEL" + (f"/{ctab}" if ctab else ""))
+            page.locator('[data-ui-v2="co-summary"], [data-ui-v2="co-value"], [data-ui-v2="co-value-more"], [data-ui-v2="co-div"]').first.wait_for(state="visible")
+            page.wait_for_timeout(150)
+            assert lines().count() == 0 and page.locator('[data-blank="fgn"], [data-rule="fgn"]').count() == 0, ctab
+        co_hash(page, "#stocks/SHEL/value")
+        page.locator('[data-ui-v2="co-value"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="co-pbr"]').count() == 1 and "–" not in page.locator('[data-ui-v2="co-pbr"]').inner_text()
+        common("SHEL")
+    R.check(page, S, "SHEL (비우지 않음): 줄도 '–' 칸도 없어요", shel)
     ctx.close()
     srv.shutdown()
 
@@ -11860,6 +12005,7 @@ def main():
                    lambda: scene_rank_pc(R, files),                                                        # v19.5b 종목 순위: PC 오른쪽 칸 7줄
                    lambda: scene_us_fcur(R, files, 390, False), lambda: scene_us_fcur(R, files, 390, True),      # 2026-11-12 미국 재무제표 통화
                    lambda: scene_us_fcur(R, files, 1280, True),
+                   lambda: scene_us_fgn(R, files, 390), lambda: scene_us_fgn(R, files, 1280),           # 2026-11-14 외국 회사 숫자 맞춤
                    lambda: scene_dark(R, files, 390), lambda: scene_dark(R, files, 1280),                 # v19.6d 어두운 화면
                    lambda: scene_v196a(R, files, 390), lambda: scene_v196a(R, files, 320),
                    lambda: scene_v196a(R, files, 1280),                                                     # v19.6a 팔았어요 · 배당 받았어요 · 내 수익

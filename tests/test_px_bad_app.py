@@ -213,12 +213,12 @@ def test_company_page_old_bad_day_keeps_the_52_week_range_and_says_it_per_number
         order: [e.indexOf('data-ui-v2="co-decomp-px"') < e.indexOf(ONE), v.indexOf('data-ui-v2="co-risk-px"') < v.indexOf(ONE)] };""", CALM_T=CALM_T)
     assert [(t["n"], t["k"], t["range"]) for t in got["tabs"]] == [(0, 1, True), (0, 1, True), (0, 1, True), (0, 0, True)], got["tabs"]
     assert got["tile"] and got["decomp"] and not got["decompNums"] and got["risk"] and got["riskTitle"] and not got["band"]
-    assert got["dashes"] == [True, True] and got["order"] == [True, True]          # 짧은 줄 바로 위에 '3년 주가 –' · '–' (리뷰 #126 2차)
+    assert got["dashes"] == [True, True] and got["order"] == [True, True]          # 짧은 줄 바로 위에 '3년 주가 –' · '–' (pxBad 리뷰 2차)
     assert not any(t["na"] for t in got["tabs"])                                  # '자료가 없어요' 가 아니에요
 
 
 def test_decomposition_card_keeps_its_previous_rules_for_a_stock_that_keeps_its_52_week_range():
-    """리뷰 #126 2차: 52주는 보이는 종목의 주가 분해는 예전처럼 다른 입력으로 정하고 (적자 → 그 문장 · 재무 자료 없음 → 자료가 없어요), 숫자가 나왔을
+    """pxBad 리뷰 2차: 52주는 보이는 종목의 주가 분해는 예전처럼 다른 입력으로 정하고 (적자 → 그 문장 · 재무 자료 없음 → 자료가 없어요), 숫자가 나왔을
     자리에만 짧은 줄. 3년 주가가 비었다는 이유만으로 늘 나오지 않아요."""
     got = run("""
       const withCo = (patch) => mk(DATA, { ...CORP, companies: CORP.companies.map((c) => (c.t === CALM_T ? { ...c, ...patch } : c)) });

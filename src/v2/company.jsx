@@ -42,8 +42,8 @@ import { isCompany } from "./stocklist.js";
 import { todayD1 } from "./engine.js";
 import { EarnTab, ValueTab, DivTab, DiscTab, ValueMore, EarnMore } from "./cotabs.jsx";
 import { icrOffShown, stmtNotWonFor, unitHeldFor, unitRowsBlank, pxBadFor, pxBadFullFor, pxBadRowsBlank } from "./fix.js";
-import { IcrOffNote, IcrOffLine, StmtCurNote, FcurNote, PbrZeroNote, UnitChkNote, PxBadNote, PxBadOneNote, pxBadOneText } from "./fixnote.jsx";
-import { fcurRowsBlank, fcurBlank, fcurDyBlank, pbrZeroOf, pbrZeroRowsBlank } from "./fcur.js";
+import { IcrOffNote, IcrOffLine, StmtCurNote, FcurNote, PbrZeroNote, FgnCutNote, UnitChkNote, PxBadNote, PxBadOneNote, pxBadOneText } from "./fixnote.jsx";
+import { fcurRowsBlank, fcurBlank, fcurDyBlank, pbrZeroOf, pbrZeroRowsBlank, fgnBlank, fgnRowsBlank } from "./fcur.js";
 import { RecordButton, RecordFlow, companyFlow } from "./records.jsx";
 import { decksFor } from "./records.js";
 import { usOf, priceMd, priceDate, lineDate, closeLine, wonOfUsd, wonLineUsd, fxDateLine, US_HEAD2, timesText, pctText, yieldText, usGrowthText, riskBandText } from "./cofmt.js";
@@ -95,9 +95,11 @@ export function tileViews(load, s) {
   // US statements not in dollars (data.json fcur, #114 review): the 가치 and 배당 tiles stay, as "–" with their number's label
   // ("PBR –", "배당수익률 –") and no picture, date or verdict; Tiles puts them last and the reason line right under them.
   // A PBR that rounds to 0.00 (data.json pbrZero, Jack 2026-11-13): the 가치 tile the same way, rule "pbr0" and its own line.
+  // A foreign company's PBR or yield that did not match its own totals (data.json fgnCut, Jack 2026-11-14): rule "fgn", its line.
   const blankTile = (topic, label, rule = "fcur") => out.push({ topic, label: T().label[topic], phrase: "–", number: `${label} –`, rule, data: {}, basis: null, art: null });
   if (fcurBlank(s) && T().label.value) blankTile("value", "PBR");
   else if (pbrZeroOf(s) && T().label.value) blankTile("value", "PBR", "pbr0");
+  else if (fgnBlank(s, "pbr") && T().label.value) blankTile("value", "PBR", "fgn");
   else {
     const r = valueTile(s, group);
     const number = r.med != null && T().pbr ? fill(T().pbr, { x: nf(r.pbr, 2), y: nf(r.med, 2) }) : r.pbr != null ? `PBR ${timesText(r.pbr, 2)}` : null;
@@ -105,6 +107,7 @@ export function tileViews(load, s) {
       r.med != null ? { kind: "scale", pbr: r.pbr, med: r.med, ends: !!(number && T().pbr && number === fill(T().pbr, { x: nf(r.pbr, 2), y: nf(r.med, 2) })) } : null);
   }
   if (fcurDyBlank(s) && T().label.div && C.pick.receipt.yield) blankTile("div", C.pick.receipt.yield);
+  else if (fgnBlank(s, "dy") && T().label.div && C.pick.receipt.yield) blankTile("div", C.pick.receipt.yield, "fgn");
   else {
     const r = usOf(s) ? divUs(s) : divKr(s, co);
     const phrase = r.rule === "na" ? na : r.rule === "streak" ? fill(T().div.streak, { n: r.n }) : T().div[r.rule];
@@ -204,9 +207,9 @@ const AMOUNT_TILES = ["earn", "value"];
 // US statements not in dollars (data.json fcur, #114 review): the 가치 and 배당 tiles show "–" with their label (tileViews
 // rule "fcur"); they go last (실적 · 출렁임, then 가치 · 배당), so the reason line sits right under them, once. Keyed on the
 // data: the same tiles while the currency's name waits for Jack, only without the line.
-// The tiles in screen order: tiles held at "–" (rule fcur · pbr0) after the others, each group in its own order. (pure; tests)
+// The tiles in screen order: tiles held at "–" (rule fcur · pbr0 · fgn) after the others, each group in its own order. (pure; tests)
 export function orderTiles(views) {
-  const held = (x) => x.rule === "fcur" || x.rule === "pbr0";
+  const held = (x) => x.rule === "fcur" || x.rule === "pbr0" || x.rule === "fgn";
   return [...views.filter((x) => !held(x)), ...views.filter(held)];
 }
 function Tiles({ load, s, onTab, tabsOn }) {
@@ -230,6 +233,8 @@ function Tiles({ load, s, onTab, tabsOn }) {
       {views.some((v) => v.rule === "fcur") && <FcurNote s={s} style={{ margin: `${SPACE(2)}px ${SPACE(1)}px 0` }} />}
       {/* a PBR that rounds to 0.00 (data.json pbrZero): its own line, right under the 가치 tile showing – */}
       {views.some((v) => v.rule === "pbr0") && <PbrZeroNote s={s} style={{ margin: `${SPACE(2)}px ${SPACE(1)}px 0` }} />}
+      {/* a foreign company's PBR or yield that did not match its own totals (data.json fgnCut): the line once, under those tiles */}
+      {views.some((v) => v.rule === "fgn") && <FgnCutNote s={s} fields={["pbr", "dy"]} style={{ margin: `${SPACE(2)}px ${SPACE(1)}px 0` }} />}
       {src && <div data-ui-v2="co-tiles-source" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(2), padding: `0 ${SPACE(1)}px` })}>{src}</div>}
     </section>
   );
@@ -490,6 +495,7 @@ function Fit({ load, s, store, wide }) {
       {/* a 가치 or 배당 row with no rank because its number was not computed (data.json fcur): the reason once, under the rows */}
       {fcurRowsBlank(s, mine.ids.map((id) => m.get(id))) && <FcurNote s={s} />}
       {pbrZeroRowsBlank(s, mine.ids.map((id) => m.get(id))) && <PbrZeroNote s={s} />}
+      {fgnRowsBlank(s, mine.ids.map((id) => m.get(id))) && <FgnCutNote s={s} fields={["pbr", "dy"]} />}
       {unitRowsBlank(s, co, mine.ids.map((id) => m.get(id))) && <UnitChkNote s={s} co={co} />}
       {/* 2026-11-14 evening (Jack): a 낮은 변동성 · 추세 row blank because of an old bad day (the 52주 range shows): the short line, once */}
       {pxBadRowsBlank(s, co, mine.ids.map((id) => m.get(id))) && <PxBadOneNote s={s} co={co} field={["lz", "mz"].find((k) => pxBadOneText(s, co, k))} />}
@@ -505,6 +511,7 @@ function Fit({ load, s, store, wide }) {
           <div style={{ marginTop: SPACE(2) }}>{RANK_CARDS.map((id) => <RankRow key={id} id={id} r={cm.get(id)} mine={mine.picked && mine.ids.includes(id)} basis />)}</div>
           {fcurRowsBlank(s, cur.rows) && <FcurNote s={s} />}
           {pbrZeroRowsBlank(s, cur.rows) && <PbrZeroNote s={s} />}
+          {fgnRowsBlank(s, cur.rows) && <FgnCutNote s={s} fields={["pbr", "dy"]} />}
           {unitRowsBlank(s, co, cur.rows) && <UnitChkNote s={s} co={co} />}
           {pxBadRowsBlank(s, co, cur.rows) && <PxBadOneNote s={s} co={co} field={["lz", "mz"].find((k) => pxBadOneText(s, co, k))} />}
           {where(cur, cur === ind ? "ind" : "market") && <Note>{where(cur, cur === ind ? "ind" : "market")}</Note>}

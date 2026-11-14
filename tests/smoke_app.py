@@ -3089,7 +3089,7 @@ def scene_px_bad(R, files):
             assert kept in body, kept
         assert re.search(r"3개월\s*[+−-]?\d", body), "3개월 % 가 없어요"
         assert not re.search(r"연 변동성 [0-9]", body), "연 변동성 숫자가 남아 있어요"
-        # 리뷰 #126 2차: 짧은 줄이 가리키는 숫자가 보이게 — 바로 위에 'β — · 연 변동성 —' · '주가 (3년) —'
+        # pxBad 리뷰 2차: 짧은 줄이 가리키는 숫자가 보이게 — 바로 위에 'β — · 연 변동성 —' · '주가 (3년) —'
         ok = above('[data-px="beta"]', 0)
         assert ok[0] and ok[1] == "β — · 연 변동성 —", ok
         if dec:
@@ -3109,7 +3109,7 @@ def scene_px_bad(R, files):
         got = shown("px-bad-one")
         assert shown() == [] or FULL in [c["t"] for c in f["corp.json"]["companies"] if c.get("s") == next(x for x in f["corp.json"]["companies"] if x["t"] == PART).get("s")], shown()
         assert len(got) >= 1 and all(x[0] == PX_BAD_ONE and x[1] >= 12 for x in got), got
-        # 리뷰 #126 2차: 그 줄은 표 밑이 아니라 그 회사 칸의 '베타' 줄 바로 밑 (휴대폰: 회사 칸마다 · 넓은 화면: 베타 줄 밑 그 회사 열)
+        # pxBad 리뷰 2차: 그 줄은 표 밑이 아니라 그 회사 칸의 '베타' 줄 바로 밑 (휴대폰: 회사 칸마다 · 넓은 화면: 베타 줄 밑 그 회사 열)
         att = page.evaluate("""() => [...document.querySelectorAll('[data-fix="px-bad-one"]')].filter((e) => e.getBoundingClientRect().height > 0)
           .map((e) => { const p = e.previousElementSibling, card = e.closest('div[style*="border-radius: 10px"]');
             return [p ? p.innerText.replace(/\\s+/g, ' ').trim() : null, card ? card.innerText.split('\\n')[0].trim() : null]; })""")
@@ -3142,7 +3142,7 @@ def scene_px_bad(R, files):
         got = shown("px-bad-one")
         assert len(got) == 1 and got[0][0] == PX_BAD_ONE and got[0][1] >= 12 and shown() == [], got
         see(page, "52주 범위:")                                                 # 52주 막대 그대로
-        # 리뷰 #126 2차: 짧은 줄은 비운 칸만 모은 줄 바로 밑 — 그 줄의 칸은 모두 '–' 이고 외국인 같은 다른 빈 칸은 섞이지 않아요
+        # pxBad 리뷰 2차: 짧은 줄은 비운 칸만 모은 줄 바로 밑 — 그 줄의 칸은 모두 '–' 이고 외국인 같은 다른 빈 칸은 섞이지 않아요
         grid = page.locator('[data-px="tiles"]')
         assert grid.count() == 1
         ok = above('[data-px="tiles"]', 0)
@@ -3164,7 +3164,7 @@ def scene_px_bad(R, files):
         page.get_by_text(FULL, exact=True).first.click()
         see(page, "Sharpe 3y")
         assert shown() == [] and shown("px-bad-one") == [], (shown(), shown("px-bad-one"))
-        assert "52w range" not in page.locator("body").inner_text(), "영어 화면에 52주 막대가 남아 있어요"   # 리뷰 #126 2차: 되살린 확인
+        assert "52w range" not in page.locator("body").inner_text(), "영어 화면에 52주 막대가 남아 있어요"   # pxBad 리뷰 2차: 되살린 확인
     R.check(page, S, f"종목 고르기: {FULL} 은 52주 막대 자리에 그 줄 · {PART} 는 52주 막대 그대로 + 비운 칸만 모은 줄 바로 밑에 짧은 줄 · 영어 화면은"
             " 줄 없이 (52주까지 비운 종목은 막대도 없이) · 005930 그대로", stock_row)
     ctx.close(); srv.shutdown()

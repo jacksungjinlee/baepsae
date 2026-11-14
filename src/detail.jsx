@@ -2263,7 +2263,7 @@ function StockRow({ s, lang, t, mode, settings, loaded, onAdd, open, onToggle, p
               ...(SHOW_ER ? [[t("shCapm"), settings && typeof s.beta === "number" && typeof s.vol === "number" ? (s.beta * clsMrp(clsOf(s), settings) * 100 / Math.max(s.vol, 1)).toFixed(2) : "–", "beta"]] : []),
               [t("mddL2"), typeof s.mdd === "number" ? s.mdd.toFixed(0) + "%" : "–", "mdd"],
               [t("momL"), typeof s.mom === "number" ? (s.mom > 0 ? "+" : "") + s.mom.toFixed(0) + "%" : "–", "mom"]];
-            // 2026-11-14 저녁 (Jack): 52주는 보이는 종목 (한국어 화면)은 과거 주가 기록 오류로 비운 칸을 따로 한 줄에 모으고 바로 밑에 짧은 줄 (리뷰 #126 2차:
+            // 2026-11-14 저녁 (Jack): 52주는 보이는 종목 (한국어 화면)은 과거 주가 기록 오류로 비운 칸을 따로 한 줄에 모으고 바로 밑에 짧은 줄 (pxBad 리뷰 2차:
             // 줄이 가리키는 '–' 가 그 칸들뿐이게 — 외국인 같은 다른 빈 칸과 섞이지 않게)
             const part = !!s.pxBad && !pxBadFull(s) && lang !== "en";
             const gone = (k) => part && !!k && pxBadHides(s, k);

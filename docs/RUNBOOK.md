@@ -461,6 +461,76 @@ Standing daily warnings until the repair PR: "국내 시계열 하루 가격 제
 beta 채움" and "국내 vol 채움" at 96.8% (floor 95%, warning under 97%; 2,395 of 2,473: volatility and beta are whole-series,
 so every marked stock blanks them). 45 more marked stocks are still a pass; the 46th would fail both rows.
 
+## US stocks added by hand (EXTRA_US)
+
+The US list is the S&P 500 (FinanceDataReader's list), Nasdaq's first 400 and `EXTRA_US` in `fetch_data.py`. On
+2026-11-14 28 companies were added (Jack, 11-13 "Missing US stocks"; `EXTRA_US_ADDED`): BTI, ADC, NNN (Jack's names); MAIN,
+WPC, STAG, EPR, OHI, ENB, BCE, TD, RY (widely held dividend stocks outside both lists); SHEL, BP, UL, TM, SONY, AZN, HSBC,
+SAP, NVS, RIO, BHP, TTE, DEO, BUD, SAN, GSK (foreign companies listed in New York). SEIBro's ranking of Korean investors'
+US holdings could not be read here (its page fills the table through the site's own internal calls; its open API needs a
+key and was not reachable), so the list follows Jack's fallback. Left out on purpose: BNS (Yahoo's short name is "Bank Nova
+Scotia Halifax Pfd 3", which the preferred-share rule drops), EPD and ET (publicly traded partnerships: a non-US seller
+has 10% of the sale proceeds withheld, and several Korean brokers restricted buying them in 2023).
+
+**To add a US stock** (one small PR):
+1. `EXTRA_US_ADDED` (or `EXTRA_US`), and `US_NOT_ETF` or `US_ETFS` (the run refuses to start if a ticker has no ETF decision).
+2. A foreign company (ADR or foreign ordinary share): also `US_FOREIGN`.
+3. The gate's own copies in `validate_data.py`: `US_ADDED_SET` (or `US_ETF_SET`) and `US_FOREIGN_SET`. The tests check that
+   the two files agree.
+4. Its splits since 2016: read Yahoo's split column once (yfinance `download(..., start="2016-01-01", actions=True)`), keep
+   only clean ratios, check each against the company's own announcement, and add the rows and the ticker to
+   `data/us_splits_seed_more.csv` and its codes file (never to the first seed). Otherwise the daily run reads the history
+   itself, 20 stocks a run, and warns (`gap`) until it is done. The gate warns once ("새 줄 정수 아닌 배율") for a seed row
+   whose ratio is not a whole number or its inverse (GSK 4:5 on the first publish after 2026-11-14).
+5. Check Yahoo's names (`shortName`, `longName`) against the preferred-share rule (`us_preferred_reason`), and its
+   industry against `data/industry_us.csv` (an industry not in the table means no 업종 group; the run log names it).
+
+**Gate row "손으로 더한 미국 종목 (EXTRA_US): 목록에 있거나 빠진 이유".** Every `EXTRA_US` stock must be in the day's
+data, or named in `data.json` `usExtraMissing` with the reason the run left it out (Yahoo gave no prices, less than 60
+days of prices, a broken bar, a preferred share, a Korean company's US listing; if the run cannot tell, the reason says so
+and asks for a check). A named stock warns, with its reason. The publish fails only when a missing stock has no reason in
+the record at all: the run writes one for every stock it leaves out, so this catches a pipeline list that no longer matches
+the gate's own list (`US_EXTRA_SET`) or a broken record. A file without the record warns on a publish and is skipped by the
+site checks (deploy, watchdog), which also only warn on a missing reason, so code that adds a stock can go live before
+the next publish brings it in.
+
+**Gate row "미국 상장 외국 회사: 회사 합계와 맞춘 PER·PBR·배당수익률만".** For the foreign companies in `US_FOREIGN` that
+report in dollars (no `fcur`; the others are blanked by the currency rule, #114), the run compares Yahoo's per-share
+numbers with company totals (`us_foreign_cuts`): PER with market cap ÷ net income to common (within 10%), PBR with
+(market cap ÷ net income) × ROE (within 1.35×: narrower than √2, so a 2× ADR mistake never stays inside it; the largest
+gap for a correct PBR on 2026-11-14 was BHP's 1.24×, ROE uses average equity), and the dividend yield with the dividends actually
+paid in the last 350 days (Yahoo's dividend records, per ADR, in dollars) ÷ today's close (within 10%). Anything that
+does not match, or cannot be compared (no net income, no ROE, no dividend records, or Yahoo did not confirm that the
+statements are in dollars: then all three are blanked), is blanked and listed in
+`data.json` `usForeign.cut` with the numbers, and the stock carries `fgnCut` (`{per | pbr | dy: "mismatch" | "currency"}`);
+the run log prints one line per blank. On 2026-11-14 (local run): BP PER
+and PBR (Yahoo PBR 7.62 is the ADR price over one ordinary share's book value; an ADR is 6 shares), HSBC PBR (7.07) and
+yield (Yahoo's 2.23% leaves out the larger fourth dividend; paid in the last year: 4.18%), Diageo PBR (93.64), AB InBev
+PBR (no ROE) and yield, BHP yield (Yahoo annualises the last half-year dividend: 4.98% vs 4.33% paid), AstraZeneca and
+TotalEnergies yield (Yahoo's dividend records miss a payment, so the check cannot confirm a correct 1.74% / 4.38%; they
+come back when Yahoo's records are complete). Shell, Novartis and Rio Tinto show all three. The row fails if a blanked
+number is back (pbr also blanks the 가치 score `vz`), if a foreign company's numbers were published unchecked, if a
+blanked number has no `fgnCut` mark on its stock (the app would say "자료가 없어요" instead of the reason), if a mark has
+no matching `usForeign.cut` row, or if a file carries marks without the `usForeign` record. 2.0 shows each
+blanked number as "–" under its label with Jack's line "자료의 숫자가 회사 전체 재무제표와 맞지 않아서 비워 두었어요." (Jack,
+2026-11-14) right under it, in the same places as the currency line (#114): the 가치 and 배당 tiles of 요약, 내 기준과 맞는 정도
+(card and sheet), the 가치 tab, 가치 자세히 and the 배당 tab. A number blanked because the statement currency was not
+confirmed gets the same line (the currency line needs a currency name). **On a day the check itself stops** (run log "!! 미국
+상장 외국 회사 검사가 멈췄어요"), the companies it had already finished keep their blanks and their line; every remaining
+foreign company that reports in dollars (Shell, Novartis, Rio Tinto, BP, HSBC, AstraZeneca, BHP, TotalEnergies, Diageo,
+AB InBev) has PER, PBR and 배당수익률 blanked without a mark, so users see no reason line: the 요약 가치 and 배당 tiles and the
+배당 tab's heading say "자료가 없어요", and the 가치 tab shows an empty card with only the date. The gate row warns that day
+(naming the companies; it never holds the publish). The next run checks again. Whether that day needs its own line is
+Jack's call (asked 2026-11-14). The old app shows "–" for these, as for the currency case. TSM, ASML, BABA, NVO, SHOP and the ADRs that come in through
+Nasdaq's list are not in `US_FOREIGN`: #114 keeps a company's numbers when its currency is unknown, while this check blanks
+what it cannot compare; widening it is a separate PR (Jack, 2026-11-14: later).
+
+BHP and Rio Tinto have no 업종 group (Yahoo's "Other Industrial Metals & Mining" is not in `data/industry_us.csv`; Jack,
+2026-11-14: keep it that way). EPD, ET and BNS stay out (Jack, 2026-11-14). Unilever's Yahoo "split" of 2025-12-09 (×0.888)
+is a real 8-for-9 share consolidation (shares and ADSs, the ADS stays one share) on the day of the Magnum Ice Cream
+demerger, which Yahoo merged with the demerger adjustment; it is in `SPLIT_OVERRIDES` as 8:9 with its sources (Unilever
+RNS 2025-12-08, the shareholder circular, IRS Form 8937).
+
 ## Roll back
 
 - **A bad code release** (the app looks broken after a merge): Claude opens the merged pull request, presses
@@ -596,7 +666,9 @@ so every marked stock blanks them). 45 more marked stocks are still a pass; the 
     It is "Yahoo plus fixes", not guaranteed complete: a small stock dividend Yahoo leaves out is only there if someone
     added it to the override table. Where the rows come from, every run:
     - the committed seed `data/us_splits_seed.csv` (129 Yahoo splits 2016-01-01 → 2026-11-12, read once on 2026-11-13 and
-      reviewed) with `data/us_splits_seed_codes.txt` (the 773 stocks it covers);
+      reviewed) with `data/us_splits_seed_codes.txt` (the 773 stocks it covers), plus `data/us_splits_seed_more.csv` with
+      `data/us_splits_seed_more_codes.txt` (the 28 stocks added by hand on 2026-11-14, read 2016-01-01 → 2026-11-13: AZN,
+      BTI, GSK and SONY have a split; see "US stocks added by hand");
     - yesterday's file (every row is carried forward, also for stocks that left the list);
     - what Yahoo shows in the day's regular price download (about three years back, no extra calls);
     - for a stock in neither the seed nor yesterday's file, its history since 2016 (one call per stock, at most 20 stocks
@@ -620,7 +692,8 @@ so every marked stock blanks them). 45 more marked stocks are still a pass; the 
   - Yahoo also writes spin-offs as "splits" with ratios like 1253:1000 (GE, GE Vernova); those are not share-count
     changes, so only clean ratios are kept (the reduced fraction has a side of 20 or less: 10:1, 1:15, 3:2, 21:20).
     Real events Yahoo writes wrongly or leaves out are in `SPLIT_OVERRIDES` in `fetch_data.py`, each with its source:
-    RYAAY 2024-09-30 ×2.5 (ADS ratio change, not a spin-off); HLT 2017-01-04 and DD 2019-06-03 1:3 (reverse splits on a
+    RYAAY 2024-09-30 ×2.5 (ADS ratio change, not a spin-off); UL 2025-12-09 8:9 (a share consolidation on the Magnum Ice
+    Cream demerger day; Yahoo writes ×0.888); HLT 2017-01-04 and DD 2019-06-03 1:3 (reverse splits on a
     spin-off day); WTW 2016-01-05 (2.649 → 1) and TRI 2018-11-27 (×0.9079) and 2023-06-23 (×0.963957) share
     consolidations; HON 2026-06-29 1:2 (a reverse split on the Honeywell Aerospace spin-off day, Honeywell 8-K
     2026-06-05; Yahoo writes 1907:2000); CBSH's 5% stock dividends Yahoo misses (2016, 2017, 2019, 2022, 2023). FERG's 2018

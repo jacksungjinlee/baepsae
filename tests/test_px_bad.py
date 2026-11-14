@@ -83,7 +83,7 @@ def test_the_blank_list_is_every_number_the_series_makes_and_nothing_else():
     for k in ("price", "cap", "d1", "val", "val20", "pbr", "roe", "pz", "vz", "qz", "dz", "dyt", "dps", "dy"):
         assert k not in V.PX_BAD_DATA, k
     # corp.json: build_corp 가 data.json 에서 옮겨 싣는 시계열 칸 = PX_BAD_CORP — 두 길 모두 (행을 만들 때 s.get · CORP_DIV_KEYS 로 옮기는 칸,
-    # 리뷰 #126 S1: betaSE · betaN 은 뒤의 길로만 가요)
+    # pxBad 리뷰 S1: betaSE · betaN 은 뒤의 길로만 가요)
     bsrc = inspect.getsource(F.build_corp)
     copied = {k for k in V.PX_BAD_DATA if f'"{k}": s.get("{k}")' in bsrc} | (set(V.PX_BAD_DATA) & set(F.CORP_DIV_KEYS))
     assert {"betaSE", "betaN"} <= set(F.CORP_DIV_KEYS)
@@ -404,7 +404,7 @@ def test_gate_fails_when_a_named_stock_still_shows_a_number_or_the_marks_disagre
     assert MUST_NAME not in failed_names(rep)
 
 
-# 리뷰 #126 2차 (자잘한 것): 관문의 달력 경계는 '이 일수 안' (age <= n) — 경계 날은 안쪽, 하루 더 오래되면 바깥쪽. 그리고 짧은 창을 비웠으면 긴 창도.
+# pxBad 리뷰 2차 (자잘한 것): 관문의 달력 경계는 '이 일수 안' (age <= n) — 경계 날은 안쪽, 하루 더 오래되면 바깥쪽. 그리고 짧은 창을 비웠으면 긴 창도.
 WIN = {w: [k for k in V.PX_BAD_DATA if k in ks] for w, ks in V.PX_BAD_WIN.items()}
 LONGER = {"y": [], "q": ["y"], "m": ["q", "y"]}
 PX_DAY = "2026-11-13"
@@ -569,7 +569,7 @@ def test_two_marked_must_haves_fail_even_if_one_bad_day_is_old():
 
 
 def test_two_must_haves_with_only_old_bad_days_keep_their_52_week_range_and_the_other_two_rows_block():
-    """리뷰 #126 2차 (RUNBOOK 바로잡기): 두 필수 종목 모두 움직임이 252봉보다 오래되면 52주는 그대로라 '52주 (야후)' 줄은 통과하고 (견줄 52주가 있어요),
+    """pxBad 리뷰 2차 (RUNBOOK 바로잡기): 두 필수 종목 모두 움직임이 252봉보다 오래되면 52주는 그대로라 '52주 (야후)' 줄은 통과하고 (견줄 52주가 있어요),
     mz·lz 줄 (저변동 점수) 과 새 칸 줄 (베타 표준오차) 이 막아요."""
     cur, prev, final, hilo = must_check([["005930", "2024-01-02", 60.0, "spike"], ["005380", "2024-03-04", -45.0, "other"]])
     rep = check(cur, prev, final, hilo=hilo)
