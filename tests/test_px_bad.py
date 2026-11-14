@@ -67,10 +67,15 @@ def test_the_blank_list_is_every_number_the_series_makes_and_nothing_else():
     assert F.PX_BAD_DATA is V.PX_BAD_DATA                                          # 파이프라인과 관문이 같은 목록 (관문 파일 한곳)
     for k in ("price", "cap", "d1", "val", "val20", "pbr", "roe", "pz", "vz", "qz", "dz", "dyt", "dps", "dy"):
         assert k not in V.PX_BAD_DATA, k
-    # corp.json: build_corp 가 data.json 에서 옮겨 싣는 시계열 칸 = PX_BAD_CORP
+    # corp.json: build_corp 가 data.json 에서 옮겨 싣는 시계열 칸 = PX_BAD_CORP — 두 길 모두 (행을 만들 때 s.get · CORP_DIV_KEYS 로 옮기는 칸,
+    # 리뷰 #126 S1: betaSE · betaN 은 뒤의 길로만 가요)
     bsrc = inspect.getsource(F.build_corp)
-    copied = {k for k in V.PX_BAD_DATA if f'"{k}": s.get("{k}")' in bsrc}
+    copied = {k for k in V.PX_BAD_DATA if f'"{k}": s.get("{k}")' in bsrc} | (set(V.PX_BAD_DATA) & set(F.CORP_DIV_KEYS))
+    assert {"betaSE", "betaN"} <= set(F.CORP_DIV_KEYS)
     assert copied == set(V.PX_BAD_CORP), copied
+    # 실제로 돌려 봐도: 표시 없는 종목의 시계열 칸 중 corp.json 에 실리는 것 = PX_BAD_CORP (어느 길로 가든)
+    row = F.build_corp([kr("005930", "삼성전자")], {}, "2026-11-14")["companies"][0]
+    assert {k for k in V.PX_BAD_DATA if row.get(k) is not None} == set(V.PX_BAD_CORP), row
 
 
 # ── 2. 표시 · 비움 ───────────────────────────────────────────
@@ -332,16 +337,67 @@ def test_gate_fails_when_a_must_have_stock_leaves_the_trend_or_low_volatility_ra
     assert row(check(cur, prev, final), MUST_NAME)[1] == f"빠짐: {t} {s['nk']} mz — mz 없음 (mom 있음)"
 
 
-def test_gate_must_have_marked_stock_fails_with_the_reason():
-    """필수 종목이 그 목록에 들면 (삼성전자): 숫자는 비우고, 관문은 발행을 막아요 — 이유를 적어서 (52주 야후 비교 · 필수 종목 새 칸 줄도 막아요)."""
+def must_hilo(files):
+    """'야후'의 52주 범위와 d1 (비우기 전 값으로 — 필수 종목의 52주를 비우면 그 줄이 무엇을 하는지 보려고)."""
+    by = {x["t"]: x for x in files["data"]["stocks"]}
+    return {t: {"hi": by[t]["hi"], "lo": by[t]["lo"], "d1": by[t].get("d1", 0.0)} for t in V.MUST if t in by}
+
+
+def test_gate_one_marked_must_have_only_warns_in_the_new_row():
+    """리뷰 #126 (Jack 2026-11-13: 출처의 작은 문제가 모두의 발행을 막지 않게 · 11-05 배당 순위와 같은 틀): 맞게 표시한 필수 종목 하나는 이 줄에서
+    경고 (이름 · 이유). 다만 지금은 예전 두 줄('필수 종목 52주 최고·최저 (야후)' · '필수 종목 새 칸')이 그대로 막아요 — 그 예외는 Jack 의 답을
+    기다려요 (이 시험은 그 두 줄을 바꾸지 않았다는 것도 지켜요)."""
+    cur, prev, final = good_pair()
+    hilo = must_hilo(cur)
     cur, prev, final = marked_pair(jump=JUMP + [["005930", "2026-01-02", 60.0, "spike"]])
-    rep = check(cur, prev, final, hilo=None)                                       # 시험의 '야후' 는 우리 값을 그대로 쓰는데 52주가 비었어요
+    rep = check(cur, prev, final, hilo=hilo)
     r = row(rep, MUST_NAME)
-    assert r[3] == "FAIL" and "005930 삼성전자 mz·lz — 과거 주가 기록 오류 (pxBad 2026-01-02)" in r[1], r
+    assert r[3] == "WARN" and r[1] == ("과거 주가 기록 오류로 뺀 필수 종목 1: 005930 삼성전자 mz·lz — 과거 주가 기록 오류 (pxBad 2026-01-02)"
+                                       " (52주 · 새 칸 줄은 아직 막아요)"), r
     assert row(rep, NAME)[3] == "PASS"                                             # 비우기 자체는 맞게 됐어요
+    # 예전 줄은 그대로 막아요: 52주 (야후) — '필수 종목 새 칸' 줄은 divCheck 가 있는 실제 발행에서만 돌아요 (베타 표준오차가 빈 칸이라 그 줄도 막아요)
+    assert failed_names(rep) == {"필수 종목 52주 최고·최저 (야후)"}, failed_names(rep)
+    assert "005930 없음" in row(rep, "필수 종목 52주 최고·최저 (야후)")[1]
+
+
+def test_gate_two_marked_must_haves_fail():
+    cur, prev, final = marked_pair(jump=JUMP + [["005930", "2026-01-02", 60.0, "spike"], ["005380", "2025-12-01", -45.0, "other"]])
+    r = row(check(cur, prev, final, hilo=None), MUST_NAME)
+    assert r[3] == "FAIL" and r[1].startswith("과거 주가 기록 오류로 뺀 필수 종목 2: 005930 삼성전자 mz·lz") and "005380 현대차 mz·lz" in r[1], r
+
+
+@pytest.mark.parametrize("how", ["corp mark missing", "left beta", "corp left betaSE", "not hidden", "other date"])
+def test_gate_a_must_have_whose_mark_is_wrong_fails(how):
+    """표시가 맞지 않는 필수 종목 (hidden 에 없음 · 숫자가 남음 · corp.json 이 다름 · 날짜가 다름): 이 줄도 실패 (경고가 아니에요)."""
+    cur, prev, final = marked_pair(jump=JUMP + [["005930", "2026-01-02", 60.0, "spike"]])
+    sam = next(x for x in cur["data"]["stocks"] if x["t"] == "005930")
+    co = next(x for x in cur["corp"]["companies"] if x["t"] == "005930")
+    if how == "corp mark missing":
+        del co["pxBad"]
+    elif how == "left beta":
+        sam["beta"] = 1.2
+    elif how == "corp left betaSE":
+        co["betaSE"] = 0.02
+    elif how == "not hidden":
+        cur["data"]["krSeries"]["hidden"].remove("005930")
+    else:
+        sam["pxBad"] = co["pxBad"] = "2025-12-31"
+    rep = check(cur, prev, final, hilo=None)
+    r = row(rep, MUST_NAME)
+    assert r[3] == "FAIL" and r[1].startswith("빠짐: 005930 삼성전자 mz·lz — pxBad ") and "표시가 맞지 않아요" in r[1], (how, r)
+    assert NAME in failed_names(rep)
+
+
+def test_gate_must_have_without_a_mark_fails_and_names_a_missing_stock():
+    cur, prev, final = good_pair()
+    s = next(x for x in cur["data"]["stocks"] if x["t"] == "005930")
+    del s["mz"], s["lz"]
+    r = row(check(cur, prev, final), MUST_NAME)
+    assert r[3] == "FAIL" and r[1] == "빠짐: 005930 삼성전자 mz·lz — 1년 수익률(mom) 없음 · lz 없음 (vol 있음)", r
     cur, prev, final = good_pair()
     cur["data"]["stocks"] = [s for s in cur["data"]["stocks"] if s["t"] != "035420"]
     assert "035420 데이터에 없음" in row(check(cur, prev, final), MUST_NAME)[1]
+    assert V.PX_BAD_MUST_FAIL == 2
 
 
 def test_gate_and_pipeline_agree_on_todays_named_stocks_from_the_real_fixture():

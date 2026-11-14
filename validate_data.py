@@ -117,8 +117,12 @@ KR_JUMP_WHY = {"pin": "우리 고정이 만든 움직임", "halt": "거래정지
 # corp.json: build_corp 가 data.json 에서 옮겨 싣는 같은 칸. 그 종목에는 pxBad (가장 최근 움직임 날짜)를 달고, krSeries.hidden 에 코드를 적어요.
 # 앱은 그 자리에 Jack 의 줄 "과거 주가 기록 일부에 오류가 있어서 52주 범위와 출렁임·위험 숫자는 비워 두었어요." (시계열을 고치는 일은 다음 PR).
 PX_BAD_DATA = ("hi", "lo", "vol", "beta", "betaSE", "betaN", "al", "r1", "r3", "r36", "mom", "sh", "mdd", "hit", "mz", "lz")
-PX_BAD_CORP = ("hi", "lo", "vol", "beta", "r1", "r3", "r36", "sh", "mdd", "mz", "lz")
+# (리뷰 #126 S1: build_corp 는 betaSE · betaN 을 CORP_DIV_KEYS 로도 옮겨요 — 두 길 모두)
+PX_BAD_CORP = ("hi", "lo", "vol", "beta", "betaSE", "betaN", "r1", "r3", "r36", "sh", "mdd", "mz", "lz")
 PX_BAD_SHOW = 10         # 값 칸에 적는 문제 · 종목 수 (나머지는 수만 · 전체는 요약 목록에)
+# '필수 종목 추세 · 저변동 순위' 줄 (리뷰 #126, Jack 2026-11-13 "a minor source glitch must never hold back everyone's data" · 11-05 배당 순위와 같은
+# 틀): 표시가 맞는(px_bad_valid) 필수 종목은 경고(이름과 함께), 이만큼이면 실패. 표시 없이 점수가 빠지면 늘 실패.
+PX_BAD_MUST_FAIL = 2
 US_D1_COVER = 98.0       # 미국 d1 채움 (%) — 아래면 실패 (Jack, 2026-11-07). 11-02 부터 매일 99.9~100%
 US_D1_SHOW = 10          # 표의 값 칸에 적는 빠진 종목 수 — 전부는 로그와 실행 요약에 따로 적어요
 VAL20_COVER = 95         # 국내 val20 채움 (%)
@@ -2587,6 +2591,16 @@ def px_bad_problems(stocks, comps, ks):
     return out
 
 
+def px_bad_valid(t, s, c, ks):
+    """t 종목의 과거 주가 기록 오류 표시가 맞는지 (리뷰 #126): krSeries.hidden 에 있고, 그 종목 하나만 놓고 본 px_bad_problems 가 비어요 (jump 의
+    가장 최근 날짜 · 남은 칸 없음 · corp.json 의 표시와 칸도 같음). s: data.json 종목 · c: corp.json 회사 (없으면 None) · ks: krSeries."""
+    hid = ks.get("hidden") if isinstance(ks, dict) else None
+    if not (isinstance(hid, list) and t in hid and isinstance(s, dict) and "pxBad" in s):
+        return False
+    jm = [j for j in (ks.get("jump") if isinstance(ks.get("jump"), list) else []) if isinstance(j, list) and j and j[0] == t]
+    return not px_bad_problems([s], [c] if isinstance(c, dict) else [], {**ks, "hidden": [t], "jump": jm})
+
+
 def check_px_bad(rep, data, comps, pdata):
     """과거 주가 기록 오류 종목의 숫자 비움 (2026-11-14 · Jack, Q2 (a) · 새 줄만, 늦추는 줄 없음). 하루 움직임이 가격 제한폭으로 설명되지 않는
     종목(krSeries.jump)의 52주 · 변동성 · 베타 · 수익률 · 낙폭 · 샤프 · 추세 · 저변동 점수가 비었는지 (px_bad_problems) — 실패.
@@ -2623,8 +2637,9 @@ def check_px_bad(rep, data, comps, pdata):
         if names:
             rep.detail("과거 주가 기록 오류로 52주 · 출렁임 · 위험 숫자를 비운 국내 종목 (가장 최근 움직임 날짜)", names)
     allby = {s.get("t"): s for s in data.get("stocks", [])}
+    cby = {c.get("t"): c for c in comps}
     src = {"mz": ("mom", "1년 수익률(mom) 없음"), "lz": ("vol", "변동성(vol) 없음")}
-    miss = []
+    miss, held = [], []                 # held: 표시가 맞는 필수 종목 (과거 주가 기록 오류로 점수를 비움 · 경고) · miss: 그 밖에 빠진 것 (실패)
     for t in MUST:
         s = allby.get(t)
         if s is None:
@@ -2633,12 +2648,19 @@ def check_px_bad(rep, data, comps, pdata):
         if s.get("cls") != "kr":
             continue
         gone = [k for k in ("mz", "lz") if num(s.get(k)) is None]
-        if gone:
-            why = (f"과거 주가 기록 오류 (pxBad {s.get('pxBad')})" if "pxBad" in s else
-                   " · ".join(src[k][1] if num(s.get(src[k][0])) is None else f"{k} 없음 ({src[k][0]} 있음)" for k in gone))
-            miss.append(f"{t} {s.get('nk', '')} {'·'.join(gone)} — {why}")
-    rep.add("필수 종목 추세 · 저변동 순위 (mz · lz)", not miss, "모두 있음" if not miss else "빠짐: " + " · ".join(miss[:4]),
-            f"{','.join(MUST)} (국내 · 빠지면 실패 — 빈 칸일 수 있는 값으로 순위를 매기니 꼭 있어야 할 종목을 확인해요)")
+        if not gone:
+            continue
+        if "pxBad" in s and px_bad_valid(t, s, cby.get(t), ks):
+            held.append(f"{t} {s.get('nk', '')} {'·'.join(gone)} — 과거 주가 기록 오류 (pxBad {s.get('pxBad')})")
+            continue
+        why = (f"pxBad {s.get('pxBad')!r} 인데 표시가 맞지 않아요" if "pxBad" in s else
+               " · ".join(src[k][1] if num(s.get(src[k][0])) is None else f"{k} 없음 ({src[k][0]} 있음)" for k in gone))
+        miss.append(f"{t} {s.get('nk', '')} {'·'.join(gone)} — {why}")
+    value = " · ".join(([f"빠짐: {' · '.join(miss[:4])}"] if miss else [])
+                       + ([f"과거 주가 기록 오류로 뺀 필수 종목 {len(held)}: {' · '.join(held[:4])} (52주 · 새 칸 줄은 아직 막아요)"] if held else []))
+    rep.add("필수 종목 추세 · 저변동 순위 (mz · lz)", not miss and len(held) < PX_BAD_MUST_FAIL, value or "모두 있음",
+            f"{','.join(MUST)} (국내 · 표시 없이 빠지면 실패 · 과거 주가 기록 오류로 맞게 표시한 종목은 경고, {PX_BAD_MUST_FAIL}곳 이상이면 실패 — "
+            "빈 칸일 수 있는 값으로 순위를 매기니 꼭 있어야 할 종목을 확인해요)", warn=bool(held))
 
 
 def unit_fix_problems(c):

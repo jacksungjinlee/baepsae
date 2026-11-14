@@ -70,7 +70,7 @@ from validate_data import (FX_LO, FX_HI, FX_HIST_FROM, FX_HIST_FIRST_BY, FX_HIST
 # 2026-11-14: 국내 시계열의 공식 종가 고정 기준과 하루 가격 제한폭도 관문 파일에 있어요 (관문은 파이프라인의 점검 결과 krSeries 를 봐요)
 from validate_data import PIN_PX_TOL, PIN_SHR_TOL, PIN_REF_TOL, KR_DAY_LIMIT, KONEX_DAY_LIMIT, KR_JUMP_WHY
 # 2026-11-14 (Jack, Q2 (a)): 그 움직임이 있는 종목에서 비우는 칸 목록도 관문 파일에 있어요 (관문이 같은 목록으로 비었는지 봐요)
-from validate_data import PX_BAD_DATA
+from validate_data import PX_BAD_DATA, PX_BAD_MUST_FAIL
 
 # ────────────────────────────────────────────────────────────
 # 설정
@@ -7886,11 +7886,16 @@ def main():
     add_percentiles(us)
     # 2026-11-14 (Jack, Q2 (a)): 추세(mz) · 저변동(lz) 점수는 과거 주가 기록 오류로 비운 종목(pxBad) 없이 매겨요 (mom · vol 이 빈 칸이라 빠져요).
     # 빈 칸일 수 있는 값으로 순위를 매기니 필수 종목이 들어 있는지 크게 남겨요 — 빠지면 관문의 '필수 종목 추세 · 저변동 순위' 줄이 실패해요
+    # 리뷰 #126 (Jack 2026-11-13: 출처의 작은 문제가 모두의 발행을 막지 않게): 과거 주가 기록 오류로 맞게 표시한 필수 종목은 관문의 이 줄이 경고만
+    # (PX_BAD_MUST_FAIL 곳 이상이면 실패) · 표시 없이 빠지면 실패. 필수 종목 52주 · 새 칸 줄은 그대로 막아요 (그 예외는 Jack 의 답을 기다려요)
     miss_tr = trend_rank_missing(kr)
+    marked_tr = [t for t, why in miss_tr if "과거 주가 기록 오류" in why]
     log(f"{'  !! ' if miss_tr else '· '}추세(mz) {sum(1 for s in kr if _fin(s.get('mz')) is not None):,} · 저변동(lz) "
         f"{sum(1 for s in kr if _fin(s.get('lz')) is not None):,}종목 (과거 주가 기록 오류로 뺀 "
         f"{sum(1 for s in kr if s.get('pxBad')):,}종목 없이) · 필수 종목 "
-        + ("모두 있음" if not miss_tr else "빠짐: " + ", ".join(f"{t}({why})" for t, why in miss_tr) + " — 관문에서 실패해 발행하지 않아요"))
+        + ("모두 있음" if not miss_tr else "빠짐: " + ", ".join(f"{t}({why})" for t, why in miss_tr)
+           + (" — 관문에서 실패해 발행하지 않아요" if len(marked_tr) < len(miss_tr) or len(marked_tr) >= PX_BAD_MUST_FAIL
+              else " — 관문의 이 줄은 경고해요 (필수 종목 52주 · 새 칸 줄은 아직 발행을 막아요)")))
     roe_moves(kr, roe_before)             # v19.1f (리뷰): 로그만 — 퀄리티 점수(qz) · 2.0 ROE 하한이 얼마나 움직였는지
     # v19.1b: 배당 순위(dz)는 확인한 배당으로만 매겨요. 필수 종목은 꼭 들어 있어야 해요 (CLAUDE.md: 빈 칸일 수 있는 값으로
     # 고르거나 줄 세우면 꼭 있어야 할 종목이 들어 있는지 확인). 빠지면 여기서 이유와 함께 크게 남겨요. 관문의 '필수 종목 배당 순위'
