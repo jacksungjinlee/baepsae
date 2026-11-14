@@ -39,10 +39,11 @@ import { shownName } from "./legacy.js";
 import { withNote, noteOf, NOTE_MAX } from "./store.js";
 import { CO_TABS } from "./routes.js";
 import { isCompany } from "./stocklist.js";
-import { todayD1 } from "./engine.js";
+import { todayD1, isPreferred } from "./engine.js";
 import { EarnTab, ValueTab, DivTab, DiscTab, ValueMore, EarnMore } from "./cotabs.jsx";
 import { icrOffShown, stmtNotWonFor, unitHeldFor, unitRowsBlank, pxBadFor, pxBadFullFor, pxBadRowsBlank } from "./fix.js";
-import { IcrOffNote, IcrOffLine, StmtCurNote, FcurNote, PbrZeroNote, FgnCutNote, UnitChkNote, NoStmtNote, PxBadNote, PxBadOneNote, pxBadOneText } from "./fixnote.jsx";
+import { IcrOffNote, IcrOffLine, StmtCurNote, FcurNote, PbrZeroNote, FgnCutNote, UnitChkNote, NoStmtNote, PxBadNote, PxBadOneNote, pxBadOneText,
+  DayNote, PrefNote, PrefFitNote } from "./fixnote.jsx";
 import { fcurRowsBlank, fcurBlank, fcurDyBlank, pbrZeroOf, pbrZeroRowsBlank, fgnBlank, fgnRowsBlank } from "./fcur.js";
 import { RecordButton, RecordFlow, companyFlow } from "./records.jsx";
 import { decksFor } from "./records.js";
@@ -281,12 +282,17 @@ function Header({ load, s }) {
         {d1 != null && <span data-ui-v2="co-change" style={tx(SIZE.sm, WEIGHT.heavy, d1 < 0 ? COLOR.down : d1 > 0 ? COLOR.upOnPage : COLOR.text2)}>{signedPct(d1)}</span>}
         {closeLine(load, s) && <span data-ui-v2="co-date" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{closeLine(load, s)}</span>}
       </div>
+      {/* 2026-11-14 (Jack, design chat 2026-11-08): no change today, said where it would be — no trade on the price date, or a d1
+          left blank for another reason (fixnote.jsx DayNote); right under the price, never as 0.0% */}
+      <DayNote s={s} md={priceMd(load, s)} style={{ marginTop: SPACE(1) }} />
       {won && <div data-ui-v2="co-won" style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginTop: 2 })}>{(US_HEAD2 && wonLineUsd(load, s.price)) || won}</div>}
       {/* The rate's own date (cofmt.fxDateLine): always without US_HEAD2; with it, whenever the rate is from another day than
           the price date in the header, so the won line never reads as that day's rate */}
       {won && fxDateLine(load, s) && <div data-ui-v2="co-fx" data-fx-date={load.data.fxDate} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{fxDateLine(load, s)}</div>}
       {/* 과거 주가 기록 오류 (data.json pxBad, Jack 2026-11-14): no 52주 bar; Jack's line in its place, once on the page (every tab) */}
       {pxBadFullFor(s, load.coByT.get(s.t) || null) ? <PxBadNote s={s} co={load.coByT.get(s.t) || null} style={{ marginTop: SPACE(3) }} /> : <RangeBar s={s} />}
+      {/* say-why 22 (Jack, design chat 2026-11-08): a 우선주 page has no company numbers of its own; one line under the header, every tab */}
+      <PrefNote s={s} style={{ marginTop: SPACE(3) }} />
     </section>
   );
 }
@@ -521,6 +527,7 @@ function Fit({ load, s, store, wide }) {
   const cur = scope === "ind" && indOk ? ind : mk;
   const cm = byId(cur);
   const co = load.coByT.get(s.t) || null;           // 공시 단위 확인 (unitChk): the line under rows left blank by it
+  const pref = isPreferred(s);                       // 우선주: never ranked (engine.universe), every row "–"
   return (
     <Card data-ui-v2="co-fit">
       <div style={{ display: "flex", alignItems: "center", gap: SPACE(2) }}>
@@ -528,13 +535,16 @@ function Fit({ load, s, store, wide }) {
         <h3 style={tx(SIZE.body, WEIGHT.heavy, COLOR.ink)}>{F.title}</h3>
       </div>
       <div style={{ marginTop: SPACE(2) }}>{mine.ids.map((id) => <RankRow key={id} id={id} r={m.get(id)} />)}</div>
+      {/* say-why 23 (Jack, design chat 2026-11-08): a 우선주 is never ranked (engine.universe), so every row reads "–": that is the
+          reason, once under the rows; the other rows' reasons (a broken price history, BYC우) are not why here and are left out */}
+      {pref && <PrefFitNote s={s} />}
       {/* a 가치 or 배당 row with no rank because its number was not computed (data.json fcur): the reason once, under the rows */}
       {fcurRowsBlank(s, mine.ids.map((id) => m.get(id))) && <FcurNote s={s} />}
       {pbrZeroRowsBlank(s, mine.ids.map((id) => m.get(id))) && <PbrZeroNote s={s} />}
       {fgnRowsBlank(s, mine.ids.map((id) => m.get(id))) && <FgnCutNote s={s} fields={["pbr", "dy"]} />}
-      {unitRowsBlank(s, co, mine.ids.map((id) => m.get(id))) && <UnitChkNote s={s} co={co} />}
+      {!pref && unitRowsBlank(s, co, mine.ids.map((id) => m.get(id))) && <UnitChkNote s={s} co={co} />}
       {/* 2026-11-14 evening (Jack): a 낮은 변동성 · 추세 row blank because of an old bad day (the 52주 range shows): the short line, once */}
-      {pxBadRowsBlank(s, co, mine.ids.map((id) => m.get(id))) && <PxBadOneNote s={s} co={co} field={["lz", "mz"].find((k) => pxBadOneText(s, co, k))} />}
+      {!pref && pxBadRowsBlank(s, co, mine.ids.map((id) => m.get(id))) && <PxBadOneNote s={s} co={co} field={["lz", "mz"].find((k) => pxBadOneText(s, co, k))} />}
       {(note || where(mk, "market")) && <Note>{[note, where(mk, "market")].filter(Boolean).map((x, i) => <span key={i}>{i ? " " : ""}{x}</span>)}</Note>}
       {F.all && F.sheet && (
         <div style={{ marginTop: SPACE(3) }}>
@@ -545,11 +555,12 @@ function Fit({ load, s, store, wide }) {
         <div data-ui-v2="co-fit-sheet" data-scope={cur === ind ? "ind" : "market"}>
           {indOk && <Segmented label={F.sheet} value={scope} onChange={setScope} options={[{ value: "market", label: F.market }, { value: "ind", label: F.ind }]} />}
           <div style={{ marginTop: SPACE(2) }}>{RANK_CARDS.map((id) => <RankRow key={id} id={id} r={cm.get(id)} mine={mine.picked && mine.ids.includes(id)} basis />)}</div>
+          {pref && <PrefFitNote s={s} />}
           {fcurRowsBlank(s, cur.rows) && <FcurNote s={s} />}
           {pbrZeroRowsBlank(s, cur.rows) && <PbrZeroNote s={s} />}
           {fgnRowsBlank(s, cur.rows) && <FgnCutNote s={s} fields={["pbr", "dy"]} />}
-          {unitRowsBlank(s, co, cur.rows) && <UnitChkNote s={s} co={co} />}
-          {pxBadRowsBlank(s, co, cur.rows) && <PxBadOneNote s={s} co={co} field={["lz", "mz"].find((k) => pxBadOneText(s, co, k))} />}
+          {!pref && unitRowsBlank(s, co, cur.rows) && <UnitChkNote s={s} co={co} />}
+          {!pref && pxBadRowsBlank(s, co, cur.rows) && <PxBadOneNote s={s} co={co} field={["lz", "mz"].find((k) => pxBadOneText(s, co, k))} />}
           {where(cur, cur === ind ? "ind" : "market") && <Note>{where(cur, cur === ind ? "ind" : "market")}</Note>}
           {lineDate(load, s) && <DateLine date={lineDate(load, s)} fresh={load.fresh} />}
         </div>

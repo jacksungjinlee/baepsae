@@ -39,7 +39,7 @@ import { MarketTiles } from "./market.jsx";
 import { RankCard } from "./rank.jsx";
 import { IosHint } from "./hint.jsx";
 import { Welcome } from "./guide.jsx";
-import { evaluateAll, todayCtx } from "./rules.js";
+import { evaluateAll, todayCtx, movesKnown } from "./rules.js";
 import { withConfirm } from "./store.js";
 import { reasonView, statusChips, DividendAnswers, Line } from "./daily.jsx";
 import { signedPct } from "./deckcalc.js";
@@ -179,7 +179,7 @@ export function Hero({ load, ev, held, decks, onConfirm, onWhy, quiet = true }) 
     );
   }
   const { allNone } = todayCounts(held);
-  const allD1 = all.every(({ x }) => x.d1 != null);
+  const allD1 = movesKnown(all.map(({ x }) => x));    // 2026-11-14: a halted stock counts at its reference price's change (rules.js)
   return (
     <div style={{ marginTop: SPACE(4) }} data-ui-v2="today-hero" data-state="calm">
       <HeroBand tone="calm" eyebrow={allNone && quiet ? C.today.calmEyebrow : undefined} title={C.today.calmTitle}
@@ -228,7 +228,8 @@ function ImportedStrip({ deck, de, ctx, load, go }) {
   const { openStock } = useNav();
   const st = useMemo(() => pfState(deck, ctx, load.status === "ok" ? load.data.stocks : []), [deck, ctx, load]);
   const m = de && de.ok ? deckMoney(deck, de, ctx) : { ok: false };
-  return <ImportedDeck deck={deck} st={st} m={m} openStock={openStock} byT={ctx.byT} onMore={() => go("portfolio")} home />;
+  return <ImportedDeck deck={deck} st={st} m={m} openStock={openStock} byT={ctx.byT} onMore={() => go("portfolio")} home
+    pxDate={load.status === "ok" ? load.data.pxDate : null} />;
 }
 
 // 홈's first visit (no saved portfolio): the descriptor, 포트폴리오 만들기 and 종목 순위 (v19.5b: with its numbers, so no 뱁이

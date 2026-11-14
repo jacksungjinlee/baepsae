@@ -206,7 +206,9 @@ export function deckDayChange(de) {
   if (!live.length) return null;
   let now = 0, prev = 0;
   for (const x of live) {
-    const d1 = num(x.d1);
+    // 2026-11-14: the value's change today (rules.js dv: d1, or a stock with no trade at its reference price's change, ntD1);
+    // a holding made without dv (older callers) reads d1 as before
+    const d1 = num("dv" in x ? x.dv : x.d1);
     const v = num(x.value);                           // null >= 0 is true in JavaScript: test the value itself
     if (d1 == null || x.cls === "us" || v == null || v < 0 || d1 <= -100) return null;
     now += x.value;

@@ -35,6 +35,9 @@
               3종목 · 후보 · 매수 계획 · 홈 · 포트폴리오 · 추가로 넣을 돈 · 종목) · 샀어요 미국 줄 밑 '미국 {날짜} 종가' · 다른 날의 % 없음 ·
               늦음 시각(staleAfter): 지나면 n ≤ 1 '갱신이 늦어지고 있어요'(홈 띠는 today.staleLate), 2일째부터 '{n}일째 …', 전이면 조용 ·
               홈 '오늘 확인할 일'의 그 종목 안내 · 열어 둔 화면도 시계가 staleAfter 를 지나면(타이머 · 다시 보일 때) 새로 고침 없이 경고
+  우선주·거래 (Jack, 2026-11-14, design chat 2026-11-08 의 문구) 거래 없는 종목(noTrade)과 ±30% 밖으로 빈 종목(d1Why): 회사 페이지 머리의 가격
+              밑 · 홈 · 포트폴리오 가진 종목 · 종목 탭 줄에 '{md} 거래 없음 (거래정지일 수 있어요)' · '오늘 등락률은 받지 못했어요.' (0.0% 없음 · 거래 없는
+              종목의 포트폴리오 '오늘'은 그대로) · 우선주 페이지 머리 밑 '우선주라 …' (모든 탭) · 내 기준과 맞는 정도 밑 '우선주는 순위를 …' (390 · 1280)
   주가 기록   (Jack, 2026-11-14) 과거 주가 기록에 오류가 있는 한국 종목(pxBad · pxBadF): 52주까지 비운 종목은 회사 페이지 머리의 52주 막대 자리에
               '과거 주가 기록 일부에 오류가 있어서 52주 범위와 출렁임·위험 숫자는 비워 두었어요.' 한 번 (모든 탭) · 출렁임 칸 '–' · 출렁임 카드 ·
               주가 분해 없음 · 52주는 보이는 종목은 비운 숫자마다 '… 이 숫자는 비워 두었어요.' · 홈 종목 순위에서 비운 숫자의 목록만 빠짐 ·
@@ -9750,6 +9753,168 @@ def scene_px_bad(R, files, width):
     srv.shutdown()
 
 
+# ── 2026-11-14 (Jack: design chat 2026-11-08 의 승인 문구 — say-why 22 · 23 · 42 · dart-gaps §9): 우선주 · 거래 없음 · 오늘 등락률 ──
+NT_T, MISS_T, PREF_T = "024060", "396270", "005935"     # 흥구석유 (거래 없음으로) · 넥스트칩 (±30% 밖으로) · 삼성전자우
+PREF_LINE = C["co"]["pref"]
+PREF_FIT = C["co"]["fit"]["pref"]
+NT_LINE = C["co"]["noTrade"]
+MISS_LINE = C["co"]["d1Missing"]
+
+
+def pref_notrade_files(files):
+    """파이프라인이 다는 대로 (fetch_data.kr_d1_split): 흥구석유는 기준일 거래 없음 (d1 빈 칸 · noTrade · d1Why · ntD1 0), 넥스트칩은 ±30% 밖 (d1 빈 칸 ·
+    d1Why range), 발행 요약 d1Blank."""
+    f = clone(files)
+    for s in f["data.json"]["stocks"]:
+        if s["t"] == NT_T:
+            s.pop("d1", None)
+            s.update(noTrade=True, d1Why="noTrade", ntD1=0.0)
+        elif s["t"] == MISS_T:
+            s.pop("d1", None)
+            s["d1Why"] = "range"
+    kr = [s for s in f["data.json"]["stocks"] if s.get("cls") == "kr" and not s.get("fund")]
+    f["data.json"]["d1Blank"] = {"noTrade": 1, "range": 1, "new": 0, "prev": 0, "seen": True, "odd": [], "must": []}
+    assert sum(1 for s in kr if s.get("d1") is None) == 2
+    return f
+
+
+def scene_pref_notrade(R, files, width):
+    """우선주 · 거래 없음 · 오늘 등락률 (Jack 2026-11-14, design chat 2026-11-08 의 문구 그대로).
+    - 거래 없는 종목(흥구석유): 회사 페이지 머리의 가격 바로 밑 "{md} 거래 없음 (거래정지일 수 있어요)" (모든 탭 · 0.0% 없음 · '{md} 종가' 그대로) ·
+      홈 가진 종목 줄 · 포트폴리오 가진 종목 줄 · 종목 탭의 내 포트폴리오 종목 줄 (등락 칸은 비고 그 줄). 그 포트폴리오의 '오늘'은 그대로 있어요.
+    - ±30% 밖으로 빈 종목(넥스트칩): 같은 자리에 "오늘 등락률은 받지 못했어요.".
+    - 우선주(삼성전자우): 머리 밑 "우선주라 회사 숫자는 보통주 페이지에서 볼 수 있어요." (요약 · 실적 · 가치 · 배당) · 내 기준과 맞는 정도의 줄들 밑
+      "우선주는 순위를 매기지 않아요." (카드와 시트에 한 번씩).
+    - 삼성전자: 그 줄들이 없어요. 12px 이상 · 가로 스크롤 없음 · 뱁이 없음 (회사 화면)."""
+    S = f"우선주 · 거래 없음 {width}"
+    wide = width >= 1024
+    site = pref_notrade_files(files)
+    md = "10월 30일"
+    assert site["data.json"]["pxDate"] == "2026-10-30"
+    nt_text = NT_LINE.replace("{md}", md)
+    nk = {s["t"]: s["nk"] for s in site["data.json"]["stocks"]}
+
+    def deck(did, ts):
+        return {"id": did, "name": f"가진 종목 {did}", "createdAt": "2026-10-30", "kind": "imported", "settings": {"points": {"lowVol": 2, "value": 2}, "strict": "normal"},
+                "holdings": [{"t": t, "nk": nk[t], "cls": "kr"} for t in ts], "purchases": [],
+                "imported": [{"t": t, "nk": nk[t], "ccy": "KRW", "qty": 10} for t in ts]}
+    decks = [deck("dnt", ["005930", NT_T]), deck("dmiss", [PREF_T, MISS_T])]
+    init = ("(() => { try { if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', "
+            + json.dumps(json.dumps({"v": 2, "decks": decks}, ensure_ascii=False)) + "); } catch (e) {} })();")
+    srv, ctx, page, base = R.open(build_site(site), width, init=init, path="/app.html?dev=1#home", device=pc_device(width) if wide else None)
+
+    def notes(sel=""):
+        loc = page.locator((sel + " " if sel else "") + '[data-ui-v2="day-note"]')
+        return [(loc.nth(i).get_attribute("data-t"), loc.nth(i).get_attribute("data-kind"), loc.nth(i).inner_text().strip()) for i in range(loc.count())]
+
+    def tidy(where, company=False):
+        for x in page.locator('[data-ui-v2="day-note"], [data-ui-v2="co-pref"], [data-ui-v2="co-fit-pref"]').evaluate_all(
+                "(els) => els.map((e) => parseFloat(getComputedStyle(e).fontSize))"):
+            assert x >= 12, (where, x)
+        floor_ok(page, where)
+        no_hscroll(page, width)
+        if company:
+            no_mascot(page)
+        R.collect(page)
+
+    def home():
+        wait_ready(page)
+        at(page, "home")
+        page.locator('[data-ui-v2="home-held"]').first.wait_for(state="visible")
+        assert notes() == [(NT_T, "noTrade", nt_text), (MISS_T, "missing", MISS_LINE)], notes()       # 그 두 종목의 줄 안에 한 번씩
+        for t in (NT_T, MISS_T):
+            row = page.locator(f'[data-home-holding="{t}"]')
+            assert row.locator('[data-ui-v2="day-note"]').count() == 1, t
+            assert row.locator('[data-ui-v2="home-change"]').inner_text().strip() == "", t             # 0.0% 없음
+        for t in ("005930", PREF_T):
+            assert page.locator(f'[data-home-holding="{t}"] [data-ui-v2="day-note"]').count() == 0, t
+            assert re.search(r"[+−]?\d+\.\d%", page.locator(f'[data-home-holding="{t}"] [data-ui-v2="home-change"]').inner_text()), t
+        # 거래 없는 종목이 있어도 그 포트폴리오의 '오늘'은 그대로 (기준가 변화 0) · ±30% 밖으로 빈 종목이 있는 포트폴리오는 예전처럼 '오늘' 없음
+        assert page.locator('[data-ui-v2="home-money"][data-deck-id="dnt"] [data-ui-v2="home-day"]').count() == 1
+        assert page.locator('[data-ui-v2="home-money"][data-deck-id="dmiss"] [data-ui-v2="home-day"]').count() == 0
+        tidy("홈")
+    R.check(page, S, "홈 가진 종목: 흥구석유 '10월 30일 거래 없음 (거래정지일 수 있어요)' · 넥스트칩 '오늘 등락률은 받지 못했어요.' · 0.0% 없음 · '오늘' 그대로", home)
+
+    def portfolio():
+        page.evaluate("() => { location.hash = '#portfolio'; }")
+        at(page, "portfolio")
+        page.locator('[data-pf-holding]').first.wait_for(state="visible")
+        assert notes() == [(NT_T, "noTrade", nt_text), (MISS_T, "missing", MISS_LINE)], notes()
+        for t in (NT_T, MISS_T):
+            assert page.locator(f'[data-pf-holding="{t}"] [data-ui-v2="day-note"]').count() == 1, t
+            assert not re.search(r"\d+\.\d%$", page.locator(f'[data-pf-holding="{t}"] [data-ui="list-row"] [data-ui-part="side"]').inner_text().strip()), t
+        tidy("포트폴리오")
+    R.check(page, S, "포트폴리오 가진 종목: 두 종목의 줄 밑에 한 번씩 · 등락 칸 비어요", portfolio)
+
+    def stocks():
+        page.evaluate("() => { location.hash = '#stocks'; }")
+        at(page, "stocks")
+        page.locator('[data-ui-v2="my-stocks"]').wait_for(state="visible")
+        got = notes('[data-ui-v2="my-stocks"]')
+        assert sorted(got) == sorted([(NT_T, "noTrade", nt_text), (MISS_T, "missing", MISS_LINE)]), got
+        for t in (NT_T, MISS_T):
+            assert not re.search(r"[+−]\d+\.\d%", page.locator(f'[data-ui-v2="my-stocks"] [data-ui-v2="stock-row"][data-t="{t}"]').inner_text()), t
+        assert page.locator('[data-ui-v2="my-stocks"] [data-ui-v2="stock-row"][data-t="005930"] [data-ui-v2="day-note"]').count() == 0
+        tidy("종목")
+    R.check(page, S, "종목 탭 내 포트폴리오 종목: 이름 밑에 그 줄 · 등락 없음", stocks)
+
+    def go(t, ctab):
+        co_hash(page, f"#stocks/{t}" + (f"/{ctab}" if ctab else ""))
+        page.wait_for_function("([t, tab]) => { const e = document.querySelector('[data-ui-v2=\"company\"]'); return !!e && e.dataset.t === t && e.dataset.tab === tab; }",
+                               arg=[t, ctab or "summary"])
+
+    def companies():
+        for t, kind, text in ((NT_T, "noTrade", nt_text), (MISS_T, "missing", MISS_LINE)):
+            for ctab in (None, "earn", "value", "div"):
+                go(t, ctab)
+                assert notes() == [(t, kind, text)], (t, ctab, notes())                                 # 머리에 한 번 (모든 탭)
+                assert page.locator('[data-ui-v2="co-head"] [data-ui-v2="day-note"]').count() == 1
+                assert page.locator('[data-ui-v2="co-change"]').count() == 0, (t, ctab)               # 0.0% 없음
+                assert page.locator('[data-ui-v2="co-date"]').inner_text() == f"{md} 종가"             # 가격 옆 날짜는 그대로
+                price, note = page.locator('[data-ui-v2="co-price"]').bounding_box(), page.locator('[data-ui-v2="day-note"]').bounding_box()
+                assert price["y"] + price["height"] <= note["y"] + 1, (t, ctab)                          # 가격 바로 밑
+                assert page.locator('[data-ui-v2="co-pref"]').count() == 0
+                tidy(f"{nk[t]} {ctab or 'summary'}", company=True)
+        for ctab in (None, "earn", "value"):
+            go("005930", ctab)
+            assert notes() == [] and page.locator('[data-ui-v2="co-pref"], [data-ui-v2="co-fit-pref"]').count() == 0
+            assert page.locator('[data-ui-v2="co-change"]').count() == 1
+            R.collect(page)
+    R.check(page, S, "회사 페이지: 흥구석유 · 넥스트칩 머리의 가격 밑에 그 줄 (요약 · 실적 · 가치 · 배당) · co-change 없음 · 삼성전자는 그대로", companies)
+
+    def pref():
+        for ctab in (None, "earn", "value", "div"):
+            go(PREF_T, ctab)
+            line = page.locator('[data-ui-v2="co-pref"]')
+            assert line.count() == 1 and line.inner_text().strip() == PREF_LINE, (ctab, line.count())
+            assert page.locator('[data-ui-v2="co-head"] [data-ui-v2="co-pref"]').count() == 1              # 머리 밑
+            assert notes() == []                                                                          # 우선주는 오늘 등락이 있어요
+            fit = page.locator('[data-ui-v2="co-fit"] [data-ui-v2="co-fit-pref"]')
+            assert fit.count() == (1 if not ctab else 0), (ctab, fit.count())
+            if not ctab:
+                assert fit.inner_text().strip() == PREF_FIT
+                rows = page.locator('[data-ui-v2="co-fit"] [data-ui-v2="rank-row"]')
+                assert rows.count() >= 2 and all(rows.nth(i).get_attribute("data-side") in ("blank", "na") for i in range(rows.count()))
+                last = max(rows.nth(i).bounding_box()["y"] for i in range(rows.count()))
+                assert fit.bounding_box()["y"] > last                                                      # 줄들 밑
+                page.locator('[data-ui-v2="co-fit"]').get_by_role("button", name=C["co"]["fit"]["all"]).click()
+                sheet = page.locator('[data-ui-v2="co-fit-sheet"]')
+                sheet.wait_for(state="visible")
+                one = sheet.locator('[data-ui-v2="co-fit-pref"]')
+                assert one.count() == 1 and one.inner_text().strip() == PREF_FIT
+                srows = sheet.locator('[data-ui-v2="rank-row"]')
+                assert one.bounding_box()["y"] > max(srows.nth(i).bounding_box()["y"] for i in range(srows.count()))
+                tidy("삼성전자우 기준 카드 시트", company=True)
+                if R.shots:
+                    page.screenshot(path=os.path.join(R.shots, f"pref-fit-sheet-{width}.png"))
+                page.keyboard.press("Escape")
+                sheet.wait_for(state="detached")
+            tidy(f"삼성전자우 {ctab or 'summary'}", company=True)
+    R.check(page, S, "삼성전자우: 머리 밑 '우선주라 …' (요약 · 실적 · 가치 · 배당) · 내 기준과 맞는 정도 밑 '우선주는 순위를 매기지 않아요.' (카드 · 시트)", pref)
+    ctx.close()
+    srv.shutdown()
+
+
 # ── 2026-11-08 (Jack): DART 다시 읽기가 끝난 뒤 (src/repair.js 3 · 4, src/v2/fixnote.jsx EpsOwnersNote · StmtCurNote) ──
 OWNERS_LINE = C["fix"]["owners"].replace("{date}", f"{int(_FIXD[0][1])}월 {int(_FIXD[0][2])}일")
 STMT_T = "241560"              # 두산밥캣: 재무제표를 달러로 공시해요 → 다시 읽은 발행에서 금액이 비고 stmtCur "USD"
@@ -12283,6 +12448,7 @@ def main():
                    lambda: scene_fix_notes(R, files, 390, live=True), lambda: scene_fix_notes(R, files, 1280, live=True),
                    lambda: scene_unit_chk(R, files, 390), lambda: scene_unit_chk(R, files, 1280),             # 2026-11-13 공시 단위 확인
                    lambda: scene_px_bad(R, files, 390), lambda: scene_px_bad(R, files, 1280),                 # 2026-11-14 과거 주가 기록 오류
+                   lambda: scene_pref_notrade(R, files, 390), lambda: scene_pref_notrade(R, files, 1280),     # 2026-11-14 우선주 · 거래 없음 · 오늘 등락률
                    lambda: scene_fin_warn_partial(R, files, 390), lambda: scene_fin_warn_partial(R, files, 1280),   # 2026-11-14 재무 경고 일부
                    lambda: scene_fin_warn_lines(R, files, 390), lambda: scene_fin_warn_lines(R, files, 1280),       # 2026-11-14 Jack 의 세 줄
                    lambda: scene_reread_lines(R, files, 390), lambda: scene_reread_lines(R, files, 1280),     # 다시 읽은 뒤: 한 주 안내 · stmtCur

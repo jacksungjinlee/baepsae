@@ -43,6 +43,20 @@ export const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : nul
 // about another day, so it is never read (no change shown, no 큰 움직임, no peer dot). Keyed off pxd being there, never
 // off the market (379800 is cls "us" with a KRX price). Every d1 reader in 2.0 goes through this.
 export const todayD1 = (s) => (s && s.pxd == null ? num(s.d1) : null);
+// 2026-11-14 (Jack, design chat 2026-11-08 · dart-gaps §9): a Korean listing that did not trade on the price date (data.json noTrade:
+// that day's KRX listing row has volume 0, open 0 and trading value 0; a halt, or a KONEX day without trades). Its d1 is blank, never
+// 0.00%, and the screens say "{md} 거래 없음 (거래정지일 수 있어요)" where its change would be (fixnote.jsx DayNote).
+export const noTradeOf = (s) => !!s && s.cls === "kr" && s.noTrade === true && s.pxd == null;
+// A Korean stock whose d1 is blank for another reason (data.json d1Why range · new · prev: beyond ±30%, no row the day before, no
+// usable file the day before; files before 2026-11-14 carry no reason): "오늘 등락률은 받지 못했어요." in the same places. Never a US
+// stock (a blank d1 there comes with pxd, the stock's own close date, which its own line names).
+export const d1MissingOf = (s) => !!s && s.cls === "kr" && s.pxd == null && num(s.d1) == null && s.noTrade !== true;
+// The change a holding's value made today, for a portfolio's 오늘 only: d1, or for a stock with no trade its reference price's change
+// (data.json ntD1: the official close moved without a trade, 0 for a halt; never shown as a change). null: unknown.
+export const valueD1 = (s) => {
+  const d = todayD1(s);
+  return d != null ? d : noTradeOf(s) ? num(s.ntD1) : null;
+};
 export const hasGroup = (s) => typeof s.ind === "string" && s.ind.length > 0 && !NOT_GROUPS.includes(s.ind);
 export const isFin = (s) => hasGroup(s) && FINANCIAL_INDS.includes(s.ind);
 export const isPreferred = (s) => s.cls === "kr" && typeof s.t === "string" && !s.t.endsWith("0");  // KRX: common shares end in 0
