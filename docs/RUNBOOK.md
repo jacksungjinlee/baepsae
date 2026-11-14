@@ -535,9 +535,10 @@ has 10% of the sale proceeds withheld, and several Korean brokers restricted buy
 
 **To add a US stock** (one small PR):
 1. `EXTRA_US_ADDED` (or `EXTRA_US`), and `US_NOT_ETF` or `US_ETFS` (the run refuses to start if a ticker has no ETF decision).
-2. A foreign company (ADR or foreign ordinary share): also `US_FOREIGN`.
-3. The gate's own copies in `validate_data.py`: `US_ADDED_SET` (or `US_ETF_SET`) and `US_FOREIGN_SET`. The tests check that
-   the two files agree.
+2. A foreign company (ADR or foreign ordinary share): nothing to add since #PR — the daily rule finds it (statement currency,
+   or headquarters outside the US for a company outside the S&P 500; see "Which companies count as foreign" below). Check its
+   Yahoo `country` once. `US_FOREIGN` stays the 21 of #126 (a floor, and pinned by a test).
+3. The gate's own copy in `validate_data.py`: `US_ADDED_SET` (or `US_ETF_SET`). The tests check that the two files agree.
 4. Its splits since 2016: read Yahoo's split column once (yfinance `download(..., start="2016-01-01", actions=True)`), keep
    only clean ratios, check each against the company's own announcement, and add the rows and the ticker to
    `data/us_splits_seed_more.csv` and its codes file (never to the first seed). Otherwise the daily run reads the history
@@ -555,7 +556,7 @@ the gate's own list (`US_EXTRA_SET`) or a broken record. A file without the reco
 site checks (deploy, watchdog), which also only warn on a missing reason, so code that adds a stock can go live before
 the next publish brings it in.
 
-**Gate row "미국 상장 외국 회사: 회사 합계와 맞춘 PER·PBR·배당수익률만".** For the foreign companies in `US_FOREIGN` that
+**Gate row "미국 상장 외국 회사: 회사 합계와 맞춘 PER·PBR·배당수익률만".** For the foreign companies in the US list that
 report in dollars (no `fcur`; the others are blanked by the currency rule, #114), the run compares Yahoo's per-share
 numbers with company totals (`us_foreign_cuts`): PER with market cap ÷ net income to common (within 10%), PBR with
 (market cap ÷ net income) × ROE (within 1.35×: narrower than √2, so a 2× ADR mistake never stays inside it; the largest
@@ -578,13 +579,48 @@ blanked number as "–" under its label with Jack's line "자료의 숫자가 �
 (card and sheet), the 가치 tab, 가치 자세히 and the 배당 tab. A number blanked because the statement currency was not
 confirmed gets the same line (the currency line needs a currency name). **On a day the check itself stops** (run log "!! 미국
 상장 외국 회사 검사가 멈췄어요"), the companies it had already finished keep their blanks and their line; every remaining
-foreign company that reports in dollars (Shell, Novartis, Rio Tinto, BP, HSBC, AstraZeneca, BHP, TotalEnergies, Diageo,
-AB InBev) has PER, PBR and 배당수익률 blanked without a mark, so users see no reason line: the 요약 가치 and 배당 tiles and the
+foreign company that reports in dollars (since #PR the whole `usForeign.set` without `fcur`: 40 on 2026-11-14)
+has PER, PBR and 배당수익률 blanked without a mark, so users see no reason line: the 요약 가치 and 배당 tiles and the
 배당 tab's heading say "자료가 없어요", and the 가치 tab shows an empty card with only the date. The gate row warns that day
 (naming the companies; it never holds the publish). The next run checks again. Whether that day needs its own line is
-Jack's call (asked 2026-11-14). The old app shows "–" for these, as for the currency case. TSM, ASML, BABA, NVO, SHOP and the ADRs that come in through
-Nasdaq's list are not in `US_FOREIGN`: #114 keeps a company's numbers when its currency is unknown, while this check blanks
-what it cannot compare; widening it is a separate PR (Jack, 2026-11-14: later).
+Jack's call (asked 2026-11-14). The old app shows "–" for these, as for the currency case.
+
+**Which companies count as foreign (since #PR; Jack, 2026-11-14 Q5: "widen it").** The run finds them by a rule every day
+(`us_foreign_set` in `fetch_data.py`, never a hand list), among company shares (not ETFs or funds):
+1. statements not in dollars (`fcur`, #114): their PER, PBR and yield are already blank with the currency line; this check skips
+   them, so they keep exactly #114's line and never get a second one;
+2. outside the S&P 500, with Yahoo's headquarters country (`country`, a new field in the US info cache) not the United States
+   (Puerto Rico counts as the US), or a name that says depositary shares (ADR, ADS, American Depositary);
+3. the 21 of #126 (`US_FOREIGN`) stay in as a floor: the rule finds all of them on its own, and the run log names any that only
+   the floor caught ("규칙이 찾지 못해 손으로 정한 목록(US_FOREIGN)으로 넣은 곳" — Yahoo left out the country).
+
+S&P 500 companies are never foreign here, wherever their headquarters: S&P admits only US companies (they file 10-K reports
+with dollar statements, and the shares that trade are their ordinary shares, not depositary receipts), so Yahoo's per-share
+numbers for LIN, MDT, ACN, ETN, JCI, STX, CB, TEL, AON, WTW, ACGL, EG and the rest are on the same share as the price. Checked
+against Yahoo on 2026-11-14 (23 such companies): PER within 1.00–1.09× of market cap ÷ net income (APTV 1.59×), PBR within
+1.00–1.11× (STX 2.04×: tiny equity); putting them through this check would have blanked 10 correct yields (ACN, ALLE, AMCR,
+AON, CB, EG, JCI, LYB, TEL, TT: Yahoo's dividend records miss a payment) plus APTV's PER and STX's PBR. The run log lists them
+("S&P 500 회사라 외국 회사로 보지 않은 미국 밖 본사 N곳"). A company outside the S&P 500 whose country Yahoo did not give is not
+counted as foreign (as #114 does for an unknown currency): the log names it, `usForeign.unknown` records it, the gate row
+warns, and the next run asks Yahoo again. The run also re-reads, once, any cached entry of a company outside the S&P 500 that
+has no country yet (about 270 on the first run after #PR; the S&P 500 companies are not re-read). If the S&P 500 list could not
+be read, nothing is excluded that day (the US list is short then, and the "미국 종목 수" row catches it).
+
+On 2026-11-14 (local run on real Yahoo data): 78 foreign companies — 38 with non-dollar statements (unchanged), 40 by
+headquarters country (the 21's ten dollar reporters plus 30 more). Of the 30, 12 lose numbers: PER for BSP, GRAB, ICLR, NBIS, TRI
+and WSE (Yahoo's EPS does not match the company's net income: e.g. NBIS 90.5 vs 272.6), PBR for CRDO and NBIS (outside 1.35×:
+fast-growing equity, so ROE on average equity runs ahead) and for ALKS, BSP, INIO, IREN and ROIV (nothing to compare: loss or no
+ROE), and the yield for TIGO and TRI (special dividends in the last year). SHOP, ARM, ARGX, CHKP, GMAB, LOGI, MELI and the
+other 11 keep their numbers. Some of the 30 file US-style 10-K reports although headquartered abroad (e.g. ALKS, JAZZ, CRDO, ROIV,
+LOGI, MELI); the rule cannot tell them from foreign filers without a filing-type source, so they are checked too (their correct
+numbers stay; ALKS, CRDO, IREN and ROIV lose their PBR). The record `data.json` `usForeign.set` lists every foreign company with
+`[country, statement currency, basis]` (basis `fcur`, `country`, `adr`, `floor`, or `error` when the run stopped while looking at
+that stock: then it is checked). The gate row now also fails if a company in `set` (no `fcur`) has numbers that were not checked,
+if a mark sits on a stock outside `set` and the 21, if `set` has a bad shape or a basis that contradicts the record (`fcur`
+without a currency on the stock, `country` with no country or the US, `floor` outside the 21), or if a listed company of the 21
+or with `fcur` is missing from `set`: all of these are our own bookkeeping, never the market. It warns (never holds the publish)
+for `unknown`, for basis `error`, and if TSM, ASML, BABA, NVO or SHOP is listed but not in `set`. A file without `set` (before
+#PR) is read as before: the 21 only.
 
 BHP and Rio Tinto have no 업종 group (Yahoo's "Other Industrial Metals & Mining" is not in `data/industry_us.csv`; Jack,
 2026-11-14: keep it that way). EPD, ET and BNS stay out (Jack, 2026-11-14). Unilever's Yahoo "split" of 2025-12-09 (×0.888)

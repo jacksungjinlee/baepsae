@@ -172,6 +172,11 @@ US_FOREIGN_SET = {"BTI", "ENB", "BCE", "TD", "RY", "SHEL", "BP", "UL", "TM", "SO
 US_FOREIGN_KEYS = ("per", "pbr", "dy")
 US_FGN_WHY = ("mismatch", "currency")      # data.json fgnCut 의 값 (Jack 2026-11-14: 앱이 그 칸 '–' 밑에 이유 줄을 붙여요)
 US_FGN_STOPPED = "검사가 멈춤"              # usForeign.cut 의 이유 머리말: 파이프라인 검사가 멈춰 비운 칸 (이유 줄 없음 · 그날은 경고) — fetch_data.US_FOREIGN_STOP_WHY
+# 2026-11-14 (Jack, Q5 — 더하기만): 파이프라인은 외국 회사를 규칙으로 찾아 usForeign.set = {티커: [본사 나라, 재무제표 통화, 근거]} 로 적어요
+# (fetch_data.us_foreign_set). 이 줄은 위 21곳에 그 회사들을 더해 같은 규칙(맞춰 본 숫자만 · 비운 칸 · 표시)으로 봐요. 근거 글자는 fetch_data.US_FGN_BASIS 와 같아요.
+US_FGN_BASIS = ("fcur", "country", "adr", "floor", "error")
+US_FGN_HOME = {"united states", "united states of america", "usa", "us", "puerto rico"}   # 근거 country 인데 이 나라면 기록이 틀린 것 (fetch_data.US_HOME)
+US_FGN_NAMED = {"TSM", "ASML", "BABA", "NVO", "SHOP"}    # Jack 이 이름으로 넓힌 회사: 목록에 있는데 set 에 없으면 경고 (규칙이 못 찾은 날)
 KR_FUND_SET = {"088980", "415640", "094800"}              # 상장 인프라·부동산 펀드 (투자회사)
 KR_COMPANY_SET = {"241520", "034830", "123890"}           # 같은 업종이지만 회사 (벤처캐피털·신탁회사)
 # v17.5.1 PR 2: 업종 그룹 (ind · indName)
@@ -1808,12 +1813,21 @@ def check_us_foreign(rep, data, us, mode):
     없음 (앱이 이유 줄 대신 '자료가 없어요' 를 보여요), 또는 fgnCut 의 칸에 맞는 cut 줄이 없음 (리뷰 N3). 기록이 없는 파일(이 칸 전 발행본): 종목에
     fgnCut 이 있으면 실패 (기록 없이 표시만) · 맞춰 볼 숫자가 없으면 통과 · 있으면 발행 때 실패, 사이트 점검(live) 때 경고.
     경고 (리뷰 S1, 발행은 막지 않아요): 검사가 멈춘 날 (cut 줄의 이유가 '검사가 멈춤 …') — 그 칸은 이유 줄 없이 비어 앱의 요약 칸 · 배당 머리가
-    '자료가 없어요' 예요."""
+    '자료가 없어요' 예요.
+    2026-11-14 (Jack, Q5 · 더하기만): 기록에 set(규칙으로 찾은 외국 회사)이 있으면 위 규칙을 US_FOREIGN_SET ∪ set 의 회사 모두에 적용해요 — set 의
+    회사(fcur 없음)에 숫자가 있는데 checked 에 없으면 실패 (우리 기록이 어긋난 것 · 시장 탓일 수 없어요), 표시(fgnCut)는 그 회사들에만. 더 보는 것
+    (실패): set 모양 · 근거 글자(US_FGN_BASIS) · 근거가 기록과 어긋남 (fcur 인데 종목에 fcur 없음 · country 인데 나라가 없거나 미국 · floor 인데 21곳
+    밖) · 목록에 있는 21곳이나 fcur 회사가 set 에 없음. 경고만: unknown(나라를 몰라 보지 않은 회사) · 근거 error · 목록에 있는 US_FGN_NAMED 가
+    set 에 없음. set 이 없는 기록(이 칸 전 발행본)은 예전 그대로 21곳만 봐요."""
     name = "미국 상장 외국 회사: 회사 합계와 맞춘 PER·PBR·배당수익률만"
-    th = "fcur 없는 외국 회사는 usForeign.checked 에 · cut 의 칸은 빈 칸 (pbr 이면 vz 도) · 그 칸마다 종목의 fgnCut"
+    th = ("fcur 없는 외국 회사(21곳 + usForeign.set)는 usForeign.checked 에 · cut 의 칸은 빈 칸 (pbr 이면 vz 도) · 그 칸마다 종목의 fgnCut · "
+          "set 은 규칙의 근거와 맞아야 함")
     by = {s.get("t"): s for s in us}
-    want = sorted(t for t, s in by.items() if t in US_FOREIGN_SET and not s.get("fcur") and any(s.get(k) is not None for k in US_FOREIGN_KEYS))
     rec = data.get("usForeign")
+    has_set = isinstance(rec, dict) and "set" in rec            # 이 칸이 있으면 (null 이어도) 넓힌 기록이에요 — 모양까지 봐요
+    fset = rec.get("set") if has_set else None
+    foreign = set(US_FOREIGN_SET) | (set(fset) if isinstance(fset, dict) else set())
+    want = sorted(t for t, s in by.items() if t in foreign and not s.get("fcur") and any(s.get(k) is not None for k in US_FOREIGN_KEYS))
     marked = sorted(str(s.get("t")) for s in us if "fgnCut" in s)
     if not isinstance(rec, dict):
         if marked:
@@ -1852,11 +1866,51 @@ def check_us_foreign(rep, data, us, mode):
         if not (isinstance(g, dict) and g and all(k in US_FOREIGN_KEYS and v in US_FGN_WHY for k, v in g.items())):
             bad.append(f"{t}.fgnCut {json.dumps(g, ensure_ascii=False)[:30]}")
             continue
-        if t not in US_FOREIGN_SET or s.get("fcur"):
+        if t not in foreign or s.get("fcur"):
             bad.append(f"{t}.fgnCut (외국 회사 목록 밖이거나 fcur)")
         left += [f"{t}.{k}" for f in g for k in ((f, "vz") if f == "pbr" else (f,)) if s.get(k) is not None]
         nocut += [f"{t}.{f}" for f in g if (t, f) not in cutset]
     left = list(dict.fromkeys(left))
+    # 2026-11-14 (Q5): 규칙으로 찾은 외국 회사 (set) — 모양 · 근거가 기록과 맞는지 · 빠진 회사 (실패), 나라 모름 · 멈춤 · 이름으로 넓힌 회사 (경고)
+    notes, fwarn = [], False
+    if has_set:
+        sbad, miss = [], []
+        if not isinstance(fset, dict):
+            sbad.append("set 모양")
+            fset = {}
+        for t, v in fset.items():
+            if not (isinstance(t, str) and isinstance(v, list) and len(v) == 3 and v[2] in US_FGN_BASIS
+                    and all(x is None or (isinstance(x, str) and x.strip()) for x in v[:2])):
+                sbad.append(f"set {t} {json.dumps(v, ensure_ascii=False)[:30]}")
+                continue
+            s = by.get(t)
+            if v[2] == "fcur" and s is not None and not s.get("fcur"):
+                sbad.append(f"set {t} (근거 fcur 인데 종목에 fcur 없음)")
+            if v[2] == "country" and not (v[0] and v[0].strip().lower() not in US_FGN_HOME):
+                sbad.append(f"set {t} (근거 country 인데 나라 {v[0]!r})")
+            if v[2] == "floor" and t not in US_FOREIGN_SET:
+                sbad.append(f"set {t} (근거 floor 인데 21곳 밖)")
+        listed = {t for t, s in by.items() if s.get("etf") is not True and not s.get("fund")}
+        miss = sorted(t for t in listed if t not in fset and (t in US_FOREIGN_SET or by[t].get("fcur")))
+        if miss:
+            sbad.append(f"set 에 없는 21곳 · fcur 회사 {len(miss)}: {', '.join(miss[:6])}")
+        bad += sbad
+        unk = rec.get("unknown", [])
+        if not (isinstance(unk, list) and all(isinstance(t, str) for t in unk)):
+            bad.append("unknown 모양")
+            unk = []
+        by_b = collections.Counter(v[2] for v in fset.values() if isinstance(v, list) and len(v) == 3)
+        notes.append(f"외국 회사 {len(fset)}곳 (재무제표 통화가 달러가 아님 {by_b['fcur']} · 본사 미국 밖 {by_b['country']} · 예탁증서 이름 "
+                     f"{by_b['adr']} · 손으로 정한 곳 {by_b['floor']})")
+        err = sorted(t for t, v in fset.items() if isinstance(v, list) and len(v) == 3 and v[2] == "error")
+        named = sorted(t for t in US_FGN_NAMED if t in listed and t not in fset)
+        if err:
+            notes.append(f"외국 회사인지 보다가 멈춰 맞춰 본 곳 {len(err)}: {_tickers(err)}")
+        if unk:
+            notes.append(f"나라를 몰라 외국 회사로 보지 않은 S&P 500 밖 회사 {len(unk)}곳: {_tickers(unk)}")
+        if named:
+            notes.append(f"외국 회사로 보지 않은 {'·'.join(sorted(US_FGN_NAMED))} 중 {len(named)}곳: {_tickers(named)}")
+        fwarn = bool(err or unk or named)
     nomark = [f"{x[0]}.{x[1]}" for x in rows if not x[2].startswith(US_FGN_STOPPED) and x[0] in by
               and not (isinstance(by[x[0]].get("fgnCut"), dict) and x[1] in by[x[0]]["fgnCut"])]
     probs = ([f"맞춰 보지 않은 숫자 {len(unchecked)}곳: {_tickers(unchecked)}"] if unchecked else []) \
@@ -1867,8 +1921,9 @@ def check_us_foreign(rep, data, us, mode):
     stopped = sorted({x[0] for x in rows if x[2].startswith(US_FGN_STOPPED)})
     rep.add(name, not probs, f"확인 {len(checked)}곳 · 비운 칸 PER {n_by['per']} · PBR {n_by['pbr']} · 배당 {n_by['dy']}"
             + (f" ({_tickers(names)})" if names else "") + "".join(f" · {p}" for p in probs)
-            + (f" · 검사가 멈춰 맞춰 보지 않고 비운 회사 {len(stopped)}곳: {_tickers(stopped)} (이유 줄 없음 · 앱은 '자료가 없어요')" if stopped else ""),
-            th, warn=bool(stopped))
+            + (f" · 검사가 멈춰 맞춰 보지 않고 비운 회사 {len(stopped)}곳: {_tickers(stopped)} (이유 줄 없음 · 앱은 '자료가 없어요')" if stopped else "")
+            + "".join(f" · {n}" for n in notes),
+            th, warn=bool(stopped) or fwarn)
     if rows:
         rep.detail("미국 상장 외국 회사: 회사 합계 · 실제 배당과 맞지 않아 비운 칸 (usForeign.cut)", [f"{t} {f}: {w}" for t, f, w in rows])
 
