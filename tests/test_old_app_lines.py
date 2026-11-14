@@ -149,3 +149,18 @@ def test_the_loss_line_only_for_a_real_loss_and_the_data_line_when_there_are_no_
     for t in ("064400", "489790"):                           # LG씨엔에스 (3년 주가 없음) · 한화비전 (3년 전 해가 빔): 적자가 아니라 칸이 없어요
         assert got[t]["gap"] is None and got[t]["block"] is None, (t, got[t])
     assert got["005930"]["block"] is not None and "이익(EPS) 변화" in got["005930"]["block"]   # 나눌 수 있는 회사는 그대로 (숫자 칸)
+
+
+# ── 04 '이익 없이 움직인 가격은 …': 3년의 두 끝이 모두 적자일 때만 (2026-11-14, Jack 의 답을 기다리는 커밋) ──
+def test_the_no_profit_sentence_only_when_both_ends_are_losses():
+    """엘앤에프 (지금도 3년 전도 적자): 세 문장 그대로. SK하이닉스 (3년 전 적자 → 지금 흑자): '이익 없이 움직인 가격은 …' 없이 두 문장
+    (한 끝이 이익이라 그 말은 틀려요)."""
+    got = run("""
+      const line = (t) => lines(page(live(CORP), t)).filter((l) => l.startsWith('적자 구간이 있어서'));
+      const C1 = (t) => CORP.companies.find((x) => x.t === t);
+      out = { lnf: line('066970'), hynix: line('000660'), both: [OLD.lossBothEnds(C1('066970')), OLD.lossBothEnds(C1('000660')), OLD.lossBothEnds(C1('005930'))] };""",
+              CORP=corp_with_real_rows())
+    tail = "이익 없이 움직인 가격은 기대와 수급이 만든 거예요."
+    assert got["both"] == [True, False, False]
+    assert len(got["lnf"]) == 1 and got["lnf"][0].endswith(tail), got["lnf"]
+    assert len(got["hynix"]) == 1 and tail not in got["hynix"][0] and got["hynix"][0].endswith("올랐어요."), got["hynix"]

@@ -181,7 +181,8 @@ def test_three_month_line_after_a_fall_reads_jacks_sentence_on_both_screens(bund
 def test_a_price_change_shown_as_zero_reads_barely_changed(bundle):
     """기업분석 '주가는 무엇으로 움직였나'에서 적자 구간이 있어 나누지 못할 때의 3년 주가 문장. r36 은 소수 한 자리 그대로 보여요.
     0 (−0 도)이면 '지난 3년 주가는 거의 변하지 않았어요.' 하나만: 움직이지 않았으니 뒤 문장('이익 없이 움직인 가격은…')은 빼요
-    (Jack, 2026-11-05). 0 이 아니면 예전 그대로 (+x% 올랐어요 · x% 내렸어요) 뒤 문장과 함께."""
+    (Jack, 2026-11-05). 0 이 아니면 예전 그대로 (+x% 올랐어요 · x% 내렸어요). 뒤 문장은 3년의 두 끝이 모두 적자일 때만 (2026-11-14, Jack 의 답을
+    기다리는 커밋): 이 회사는 3년 전 적자 · 지금 흑자라 뒤 문장이 없어요 (두 끝 모두 적자인 회사는 tests/test_old_app_lines.py)."""
     sam = samsung()
     loss = [sam["ni"][0], sam["ni"][1], -100.0]                                 # 3년 전 적자: 이익과 눈높이로 나누지 못해요
     got = run(bundle, """
@@ -198,12 +199,13 @@ def test_a_price_change_shown_as_zero_reads_barely_changed(bundle):
     same = lead + "지난 3년 주가는 거의 변하지 않았어요."                      # 뒤 문장 없이
     assert got["zero"]["line"] == [same] and got["negZero"]["line"] == [same], got
     assert got["zero"]["tails"] == 0 and got["negZero"]["tails"] == 0, got        # 화면 어디에도 뒤 문장이 없어요
-    assert got["up"]["line"] == [lead + "지난 3년 주가는 +12.3% 올랐어요." + tail], got
-    assert got["down"]["line"] == [lead + "지난 3년 주가는 7% 내렸어요." + tail], got
-    assert got["tiny"]["line"] == [lead + "지난 3년 주가는 +0.1% 올랐어요." + tail], got     # 보이는 숫자가 0 이 아니면 그대로
-    assert got["tinyDown"]["line"] == [lead + "지난 3년 주가는 0.1% 내렸어요." + tail], got
-    for k in ("up", "down", "tiny", "tinyDown"):                                 # 0 이 아니면 뒤 문장이 한 번 그대로 남아요
-        assert got[k]["tails"] == 1, (k, got[k])
+    assert got["up"]["line"] == [lead + "지난 3년 주가는 +12.3% 올랐어요."], got
+    assert got["down"]["line"] == [lead + "지난 3년 주가는 7% 내렸어요."], got
+    assert got["tiny"]["line"] == [lead + "지난 3년 주가는 +0.1% 올랐어요."], got     # 보이는 숫자가 0 이 아니면 그대로
+    assert got["tinyDown"]["line"] == [lead + "지난 3년 주가는 0.1% 내렸어요."], got
+    for k in ("up", "down", "tiny", "tinyDown"):                                 # 지금은 흑자: '이익 없이 …'는 틀린 말이라 없어요
+        assert got[k]["tails"] == 0, (k, got[k])
+    assert tail.strip() == "이익 없이 움직인 가격은 기대와 수급이 만든 거예요."
     no_dash(same)
     for bad in ("+0%", " 0% "):
         assert bad not in same, bad

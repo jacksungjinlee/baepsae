@@ -984,6 +984,14 @@ export function decompGap(c) {
   return (typeof c.eps === "number" && c.eps <= 0) || (typeof niThen === "number" && niThen <= 0) ? "loss" : null;
 }
 
+// '이익 없이 움직인 가격은 기대와 수급이 만든 거예요.'가 맞는 회사 (2026-11-14, Jack 의 답을 기다려요): 3년의 두 끝이 모두 적자 — 지금
+// EPS ≤ 0 이고 EPS 와 같은 기준의 3년 전 순이익 ≤ 0. 한 끝이라도 이익이었으면(적자 → 흑자 · 흑자 → 적자) 그 문장은 틀려요. 모르면 말하지 않아요.
+export function lossBothEnds(c) {
+  const base = epsBase(c, 2);
+  const niThen = base && !base.bad ? base.ni : null;
+  return typeof c.eps === "number" && c.eps <= 0 && typeof niThen === "number" && niThen <= 0;
+}
+
 function DecompCard({ c, setExplain, corp }) {
   const d0 = decomposeReturn(c);
   const basisBad = !!d0 && d0.why === "basis";     // 두 끝을 같은 기준에 세울 수 없어요: 숫자도 '적자 구간' 문장도 없이 PER · EPS 줄만
@@ -1047,7 +1055,7 @@ function DecompCard({ c, setExplain, corp }) {
             r36 은 소수 한 자리 그대로 보여요 (0 · −0 이면 0) */}
         {c.r36 != null && (c.r36 === 0
           ? <> 지난 3년 주가는 거의 변하지 않았어요.</>
-          : <> 지난 3년 주가는 {c.r36 >= 0 ? "+" + c.r36 : Math.abs(c.r36)}% {c.r36 >= 0 ? "올랐어요" : "내렸어요"}. 이익 없이 움직인 가격은 기대와 수급이 만든 거예요.</>)}
+          : <> 지난 3년 주가는 {c.r36 >= 0 ? "+" + c.r36 : Math.abs(c.r36)}% {c.r36 >= 0 ? "올랐어요" : "내렸어요"}.{lossBothEnds(c) && " 이익 없이 움직인 가격은 기대와 수급이 만든 거예요."}</>)}
       </div>
     );
   }
