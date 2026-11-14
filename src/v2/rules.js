@@ -366,15 +366,14 @@ export function evaluateHolding(h, deck, ctx, weights, qty) {
   const co = ctx.coByT.get(h.t) || null;
   // ctx.krDivTrend: set only by tests, to check both states of the switch; todayCtx leaves it out (the switch applies)
   const trend = typeof ctx.krDivTrend === "boolean" ? ctx.krDivTrend : KR_DIV_TREND;
-  // v19.6a (verification B1): a holding sold out and kept, read with 0 shares ("spec" · "own"), is read on its weight band
-  // only: it can be 먼저 사요 or 할 일 없음, never 규칙 깨짐, 지켜봐요 or 확인 필요 for shares nobody holds, and its other rules are
-  // not shown or counted (not 준비 중 either: they are not in "아직 자동으로 확인하지 못하는 규칙"). Those rules are read for one
-  // thing only: the app never tells the user to buy back a stock that fails any of its own rules. When one of them reads
-  // 규칙 깨짐, 지켜봐요 or 확인 필요 (the levels that stop new money for a held stock, NO_NEW_MONEY: a dividend cut, 부채비율 over
-  // its ceiling, a figure missing today, a drop not answered yet), the band is not read either: no 먼저 사요, no target
-  // (추가로 넣을 돈 skips it and buys what "off" buys); soldOutFails says so. Jack, 2026-11-14: it must never look blank, so the
-  // rules it fails are its rule rows and reasons (the wording a held stock gets for them), with no status of its own
-  // ("none": no action chip, nothing on 홈, no 규칙대로면 팔 때예요 for 0 shares).
+  // v19.6a (verification B1, Jack 2026-11-14): a holding sold out and kept, read with 0 shares ("spec" · "own"). Its other
+  // rules are read; passing rules are not shown (nor counted as 준비 중); failing ones show, without a status or action.
+  // - None of them fails (규칙 깨짐, 지켜봐요, 확인 필요: NO_NEW_MONEY, what stops new money for a held stock): it is read on its
+  //   weight band, 먼저 사요 or 할 일 없음.
+  // - One fails (a dividend cut, 부채비율 over its ceiling, a figure missing today, a drop not answered yet): the band is not
+  //   read, so no 먼저 사요 and no target (추가로 넣을 돈 skips it and buys what "off" buys); its rule rows and reasons are the
+  //   failing rules in the wording a held stock gets for them (it must never look blank), and its status is "none": no
+  //   action chip, nothing on 홈, no 규칙대로면 팔 때예요 for 0 shares. soldOutFails says so.
   const zero = qty === 0;
   const full = Array.isArray(h.rules) ? h.rules : [];
   // 공시 단위 확인: a Korean stock whose statement numbers the pipeline blanked (data.json or corp.json unitChk)
@@ -471,6 +470,11 @@ export function evaluateDeck(deck, ctx) {
   const weights = weightsOf(banded, targets);
   const zeroOwn = mode === "own" ? zeros : [];
   const zeroWeights = zeroOwn.length ? candWeights : null;
+  // Jack, 2026-11-14 (never blank), final review S2: a sold-out kept holding that is not read with 0 shares here (its weights
+  // cannot be read today, or it has no price or no band) is still shown when it fails any of its own rules: its failing rule
+  // rows, no status, no target, no new money, nothing on 홈 (evaluateHolding with 0 shares and no weights). One that fails
+  // nothing reads as under "off" (no row).
+  const failOnly = mode === "off" ? [] : soldOut.filter((t) => !zeros.includes(t));
   const bandPlanned = new Set((deck.holdings || []).filter((h) => h && bandRuleOf(h) && (mode === "spec" ? banded.has(h.t) || !soldOut.includes(h.t) : !soldOut.includes(h.t))).map((h) => h.t)).size;
   const holdings = [], unheld = [];
   const seen = new Set();
@@ -479,6 +483,7 @@ export function evaluateDeck(deck, ctx) {
     seen.add(h.t);
     if (banded.has(h.t)) holdings.push(evaluateHolding(h, deck, ctx, weights, banded.get(h.t)));
     else if (zeroOwn.includes(h.t)) holdings.push(evaluateHolding(h, deck, ctx, zeroWeights, 0));
+    else if (failOnly.includes(h.t)) { const x = evaluateHolding(h, deck, ctx, { ok: false, missing: [] }, 0); if (x.soldOutFails) holdings.push(x); }
     else if (!soldOut.includes(h.t)) unheld.push(h.t);
   }
   const counts = zeroCounts();

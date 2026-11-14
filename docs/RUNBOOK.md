@@ -620,18 +620,20 @@ One switch with three values decides how the weight bands read such a holding. I
 - `"off"` (live before v19.6a): the holding has no status; the others are read over what is held.
 - `"spec"` (spec A.1 to the letter): it counts as 0 shares for everyone's bands. In a small or concentrated portfolio the
   other holdings then read above their bands (three equal stocks: both others 일부 팔아요).
-- `"own"`: it is read on its own weight band only, over the whole plan (먼저 사요 or 할 일 없음; its other rules are not
-  shown, so never 규칙 깨짐 or 확인 필요 for 0 shares), and 추가로 넣을 돈 buys it back first by the plan's own targets; when
+- `"own"`: its other rules are read; passing rules are not shown, failing ones show, without a status or action (never
+  규칙 깨짐 or 확인 필요 as a status for 0 shares). When none fails, it is read on its own weight band over the whole plan
+  (먼저 사요 or 할 일 없음), and 추가로 넣을 돈 buys it back first by the plan's own targets; when
   those goals cannot buy it back, the money goes where `"off"` puts it (when `"off"` buys nothing either, the plan's result
   stands). The app never tells the user to buy back a stock that fails any of its own rules: when one of its other rules
   reads 규칙 깨짐, 지켜봐요 or 확인 필요 (what stops new money for a held stock: a dividend cut the user confirmed, 부채비율
   over its ceiling, a figure missing today, a drop not answered yet), it gets no 먼저 사요 and no action chip, and 추가로
   넣을 돈 skips it and buys what `"off"` buys. It never looks blank (Jack, 2026-11-14): on 포트폴리오 and on its company page
   it shows the rules it fails, in the rows a held stock gets for them (never "규칙대로면 팔 때예요" for 0 shares), with the
-  "다 판 종목이에요. …" line. Nothing about it shows on 홈. Every other holding reads exactly as under `"off"`.
-  With nothing held at all, the holdings read as under `"off"`. 홈 lists only the stocks held, so it keeps "오늘은 할 일이
-  없어요"; under the sold-out row on 포트폴리오 and on its company page, once: "다 판 종목이에요. 다시 살 계획이 없으면
-  계획에서 빼 주세요." (Jack, 2026-11-13).
+  "다 판 종목이에요. …" line. Nothing about it shows on 홈. This holds when its 0-share weight cannot be read today too
+  (nothing else held, a held stock without a price, no price or band of its own): a failing one still shows its failing
+  rules; a passing one then reads as under `"off"`. Every other holding reads exactly as under `"off"`. 홈 lists only
+  the stocks held, so it keeps "오늘은 할 일이 없어요"; under the sold-out row on 포트폴리오 and on its company page, once:
+  "다 판 종목이에요. 다시 살 계획이 없으면 계획에서 빼 주세요." (Jack, 2026-11-13).
 
 ## Known limits: 기록 and the phone clock
 

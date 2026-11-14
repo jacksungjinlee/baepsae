@@ -236,3 +236,12 @@ def test_the_company_page_says_no_all_kept_line_for_a_0_share_holding():
     page (its rules are not read for it); the "다 판 종목이에요. …" line stands alone. (smoke_v2 scene_v196a_sold_out: 035720.)"""
     co = read("src/v2/company.jsx")
     assert "const k = imported || x.qty === 0 ? 0 : keptCount(" in co
+
+
+def test_home_counts_only_shares_held():
+    """Final review N3: 홈 counts a portfolio, a US holding (the US close-date line) and its verdict band only for shares held;
+    a sold-out kept holding (0 shares) is never one of them (tests/test_v2_lots.py checks heldDecks behaviourally)."""
+    h2, hm = read("src/v2/home2.jsx"), read("src/v2/home.js")
+    assert 'b.de.holdings.some((x) => x.cls === "us" && x.qty !== 0)' in h2
+    assert "ev.decks.filter((d) => d.ok && !d.imported && d.holdings.some((x) => x.qty !== 0))" in h2
+    assert "de.holdings.some((x) => x.qty !== 0)) out.push({ deck: d, de });" in hm

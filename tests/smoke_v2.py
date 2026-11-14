@@ -10309,7 +10309,9 @@ def scene_v196a_sold_out(R, files, width=390):
     on its band) gets the line on its company page and no "규칙 n개가 모두 지켜지고 있어요" (review N5). A fourth portfolio's
     three sold-out stocks fail one of their own rules each (a confirmed dividend cut, 부채비율 over its ceiling, no 부채비율
     today): no 먼저 사요 and no action chip, but each shows the rule it fails in a held stock's wording and the line, on
-    포트폴리오 and on its company page (Jack, 2026-11-14: never blank), nothing on 홈, and 추가로 넣을 돈 buys the held one only."""
+    포트폴리오 and on its company page (Jack, 2026-11-14: never blank), nothing on 홈, and 추가로 넣을 돈 buys the held one only.
+    A fifth portfolio has every stock sold out and kept (its 0-share weights cannot be read; final review S2): the one with a
+    confirmed cut still shows its 배당 삭감 line and the line on 포트폴리오 and on its company page; the portfolio is not on 홈."""
     S = f"v19.6a 다 판 종목 {width}"
     data = v196a_files(files, splits=False)
     for x in data["data.json"]["stocks"]:
@@ -10344,8 +10346,16 @@ def scene_v196a_sold_out(R, files, width=390):
                             for i, (t, q) in enumerate([("068270", 13), ("051910", 2), ("000270", 2), ("006400", 2)])],
               "sales": [{"id": f"s{i}bbbbbb", "t": t, "qty": 2, "price": by[t]["price"], "date": "2026-10-20", "ccy": "KRW"} for i, (t, _) in enumerate(fails)],
               "confirms": [{"t": "051910", "rule": "divCut", "fy": 2025, "a": 1000, "b": 800, "answer": "cut", "at": "2026-10-19"}]}
+    # a fifth: everything sold out and kept (final review S2): 003550 passes its rules, 017670 had a dividend cut confirmed
+    fifth = {"id": "d7", "name": "배당 생활비 포트폴리오", "createdAt": "2026-10-01",
+             "holdings": [{"t": "003550", "nk": by["003550"]["nk"], "target": 0.5, "plannedQty": 50, "planPx": by["003550"]["price"], "rules": band(0.5)},
+                          {"t": "017670", "nk": by["017670"]["nk"], "target": 0.5, "plannedQty": 60, "planPx": by["017670"]["price"],
+                           "rules": [{"id": "divCut", "kind": "sell", "check": "checked", "since": 2023}] + band(0.5)}],
+             "purchases": [{"id": f"p{i}cccccc", "t": t, "date": "2026-10-01", "qty": q, "price": by[t]["price"], "ccy": "KRW"} for i, (t, q) in enumerate([("003550", 50), ("017670", 60)])],
+             "sales": [{"id": f"s{i}cccccc", "t": t, "qty": q, "price": by[t]["price"], "date": "2026-10-20", "ccy": "KRW"} for i, (t, q) in enumerate([("003550", 50), ("017670", 60)])],
+             "confirms": [{"t": "017670", "rule": "divCut", "fy": 2025, "a": 1000, "b": 800, "answer": "cut", "at": "2026-10-19"}]}
     seed = ("(() => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');"
-            f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps({'v': 2, 'decks': [deck, other, third, fourth], 'guideSeen': pxd}, ensure_ascii=False))}); }})();")
+            f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps({'v': 2, 'decks': [deck, other, third, fourth, fifth], 'guideSeen': pxd}, ensure_ascii=False))}); }})();")
     srv, ctx, page, base = R.open(build_site(data), width, init=seed, path="/app.html?dev=1#portfolio", device=pc_device(width) if width >= 1024 else None)
     KEPT = C["daily"]["soldOutKept"]
 
@@ -10365,7 +10375,14 @@ def scene_v196a_sold_out(R, files, width=390):
         d5 = page.locator('[data-deck-id="d5"]')
         assert d5.locator('[data-sold-out="035720"] [data-ui-v2="sold-out-kept"]').count() == 1 and d5.locator('[data-ui-v2="sold-out-kept"]').count() == 1
         assert d5.locator('[data-sold-out="035720"] [data-holding]').get_attribute("data-status") == "none"     # 계획 몫이 없던 종목: 할 일 없음
-        assert page.locator('[data-ui-v2="sold-out-kept"]').count() == 5, page.locator('[data-ui-v2="sold-out-kept"]').count()   # d3 · d5 · d6(셋) 의 다 판 종목에만
+        assert page.locator('[data-ui-v2="sold-out-kept"]').count() == 7, page.locator('[data-ui-v2="sold-out-kept"]').count()   # d3 · d5 · d6(셋) · d7(둘) 의 다 판 종목에만
+        # 리뷰 S2: 모두 다 팔아 0주 비중을 읽을 수 없어도, 규칙에 어긋난 종목은 그 줄을 보여요 (지킨 종목은 "off" 처럼 줄 없이)
+        d7 = page.locator('[data-deck-id="d7"]')
+        r7 = d7.locator('[data-sold-out="017670"]')
+        assert r7.locator('[data-ui-v2="status-line"][data-code="divCut"]').count() == 1 and r7.locator('[data-ui-v2="sold-out-kept"]').count() == 1, r7.inner_text()
+        assert r7.locator('[data-ui-v2="status-chips"]').count() == 0 and C["daily"]["sellNow"] not in d7.inner_text(), d7.inner_text()
+        p7 = d7.locator('[data-sold-out="003550"]')
+        assert p7.locator('[data-ui-v2="status-line"]').count() == 0 and p7.locator('[data-ui-v2="sold-out-kept"]').count() == 1, p7.inner_text()
         # Jack 11-14: 자기 규칙에 어긋난 다 판 종목은 먼저 사요 · 칩 없이, 어긋난 규칙 줄과 그 문장
         d6 = page.locator('[data-deck-id="d6"]')
         for t, code in (("051910", "divCut"), ("000270", "debtOver"), ("006400", "missing")):
@@ -10403,6 +10420,7 @@ def scene_v196a_sold_out(R, files, width=390):
         assert h.get_attribute("data-state") == "calm", h.get_attribute("data-state")
         assert page.locator('[data-home-holding="105560"]').count() == 0
         assert page.locator('[data-ui-v2="home-block"][data-deck-id="d3"] [data-home-holding]').count() == 2
+        assert page.locator('[data-ui-v2="home-block"][data-deck-id="d7"]').count() == 0                # 다 판 종목만 있는 포트폴리오는 홈에 없어요
         assert page.locator('[data-ui-v2="sold-out-kept"]').count() == 0 and KEPT not in page.locator("body").inner_text()   # 홈에는 없어요
         txt = h.inner_text()
         assert C["daily"]["sellNow"] not in txt and "매도 조건에 걸렸어요" not in txt and C["today"]["calmTitle"].split("\n")[0] in txt, txt
@@ -10417,6 +10435,13 @@ def scene_v196a_sold_out(R, files, width=390):
         row5 = page.locator('[data-ui-v2="co-held-row"][data-deck-id="d5"]')
         row5.wait_for(state="visible")
         assert row5.locator('[data-ui-v2="sold-out-kept"]').count() == 1 and kept_all not in row5.inner_text(), row5.inner_text()   # N5
+        R.collect(page)
+        page.evaluate("() => { location.hash = '#stocks/017670'; }")
+        at(page, "stocks/017670")
+        row7 = page.locator('[data-ui-v2="co-held-row"][data-deck-id="d7"]')
+        row7.wait_for(state="visible")
+        assert row7.locator('[data-ui-v2="sold-out-fails"] [data-ui-v2="status-line"][data-code="divCut"]').count() == 1, row7.inner_text()
+        assert row7.locator('[data-ui-v2="sold-out-kept"]').count() == 1 and row7.locator('[data-ui-v2="status-chips"]').count() == 0, row7.inner_text()
         R.collect(page)
         page.evaluate("() => { location.hash = '#stocks/000270'; }")
         at(page, "stocks/000270")

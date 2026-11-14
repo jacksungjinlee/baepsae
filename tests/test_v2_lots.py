@@ -753,3 +753,25 @@ def test_a_sold_out_stock_not_bought_back_shows_the_rules_it_fails():
         assert x["todo"] == 0 and x["allNone"] is True and x["add"] == [["000010", 150], ["000020", 150]], (k, x)
     fine = got["fine"]
     assert fine["st"] == "low" and fine["rules"] == ["band:band"] and fine["reasons"] == ["band:low"] and fine["add"] == [["000030", 300]], fine
+
+
+def test_a_rule_failing_sold_out_stock_shows_its_rules_when_its_weights_cannot_be_read():
+    """Final review S2 (Jack, 2026-11-14: never blank). When a sold-out kept holding cannot be read with 0 shares today (a:
+    every holding sold out and kept; b: a held stock has no price), one that fails its own rules (a confirmed dividend cut)
+    still shows its failing rule as its rule row and reason, with no status, no target and no new money, and nothing on 홈
+    (the portfolio is not among 홈's blocks when nothing is held). One that fails nothing still reads as under "off" (no row)."""
+    got = run(SOLD3 + CUT3 + """const d0 = cut3();
+      const all = { ...d0, sales: [...d0.sales, sell('000010', 333, 10000, '2026-10-11'), sell('000020', 333, 10000, '2026-10-11')] };
+      const peek = (d, prices) => { const stocks = d.holdings.map((h) => kr(h.t, prices[h.t] ?? 10000)), ctx = ctxOf(stocks);
+        const ev = R.evaluateAll([d], ctx), e = ev.decks[0], z = e.holdings.find((x) => x.qty === 0) || null;
+        return { rows: e.holdings.map((x) => [x.t, x.qty, x.status]), zeroOwn: e.zeroOwn || [], zero: z && { rules: z.rules.map((r) => r.id + ':' + r.result),
+          reasons: z.reasons.map((r) => r.code + ':' + r.level), fails: z.soldOutFails, target: z.target, noNew: z.noNewMoney },
+          todo: T.todayCounts([e]).todoTs.size, home: Hm.heldDecks([d], ev).length, add: T.addMoney(e, 3000000).ok }; };
+      out = { a: peek(all, {}), b: peek(d0, { '000010': 0 }), aFine: peek({ ...all, confirms: [] }, {}), bFine: peek({ ...d0, confirms: [] }, { '000010': 0 }) };""")
+    cut = {"rules": ["divCut:broken"], "reasons": ["divCut:broken"], "fails": True, "target": None, "noNew": True}
+    a, b = got["a"], got["b"]
+    assert a["rows"] == [["000030", 0, "none"]] and a["zeroOwn"] == [] and a["zero"] == cut, a          # 다 팔아도 배당 삭감 줄은 보여요
+    assert a["todo"] == 0 and a["home"] == 0 and a["add"] is False, a                                   # 홈에는 아무것도 없어요
+    assert b["rows"][2] == ["000030", 0, "none"] and b["zeroOwn"] == [] and b["zero"] == cut, b
+    assert b["todo"] == 2 and b["add"] is False, b                                                      # 가격 없는 종목: 늘 하던 대로 (확인 필요는 가진 두 종목만)
+    assert got["aFine"]["rows"] == [] and got["bFine"]["zero"] is None                                  # 어긋난 규칙이 없으면 "off" 처럼 (줄 없음)

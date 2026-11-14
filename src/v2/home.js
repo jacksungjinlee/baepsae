@@ -111,7 +111,8 @@ export function heldDecks(decks, ev) {
   for (const d of decks || []) {
     const de = ev.decks.find((x) => x.id === d.id);
     if (!de || !de.ok) continue;
-    if (isImported(d) ? heldQty(d).size > 0 || (d.imported || []).some((r) => r && r.t == null && num(r.amountWon) > 0) : de.holdings.length > 0) out.push({ deck: d, de });
+    // a built portfolio: only shares held count (a sold-out kept holding, 0 shares, is not on 홈)
+    if (isImported(d) ? heldQty(d).size > 0 || (d.imported || []).some((r) => r && r.t == null && num(r.amountWon) > 0) : de.holdings.some((x) => x.qty !== 0)) out.push({ deck: d, de });
   }
   return out;
 }
