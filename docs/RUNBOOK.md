@@ -473,12 +473,16 @@ and trading value 0 (11-11 to 11-13: 135 to 141 such rows a day; on the 11-14 pu
 - every other blank Korean `d1` carries its reason in `d1Why`: `range` beyond ±30% (a new listing, a split, a re-listing after a
   halt), `new` (no official close in the previous day's file), `prev` (no usable previous-day file: then every stock);
 - data.json `d1Blank` holds the published counts per reason, `seen` (whether no-trade could be told at all) and the source
-  oddities: `odd` (volume and open 0 but a trading value: the row contradicts itself, not marked) and `must` (a gate must-have
-  stock that looked like no trade: not marked, its `d1` is computed as before, so one bad row cannot fail "필수 종목 d1").
-  When the file has no Volume/Open columns (`unseen: cols`) or more than 25% of its rows look like no trade (`unseen: many`,
-  a broken file), nobody is marked and every stock shows its `d1` as before (0.00% for the halted ones).
-- Limit-up and limit-down moves (exactly ±30%) keep their `d1`. Before 2026-11-14 the ±30% test ran on the unrounded value, and
-  4,030 ÷ 3,100 − 1 came out as 30.000000000000004%, so 디와이에이's limit-up on 11-13 was blanked.
+  oddities: `odd` (volume and open 0 but a trading value that is not 0, or blank: the row contradicts itself, not marked) and
+  `must` (a gate must-have stock that looked like no trade: not marked, its `d1` is computed as before, so one bad row cannot
+  fail "필수 종목 d1"). Nobody is marked, and every stock shows its `d1` as before (0.00% for the halted ones), when the file
+  has no Volume/Open columns (`unseen: cols`), when fewer than 90% of its rows have a number in both (`unseen: blank`: the
+  columns changed to blanks; on 11-11 to 11-13 every row had both), or when more than 10% of its rows look like no trade
+  (`unseen: many`, a broken file; normal days are 4.7–4.9%). All of this is decided in one pure function,
+  `fetch_data.kr_no_trade_plan`.
+- Limit-up and limit-down moves (exactly ±30%) keep their `d1`. Before 2026-11-14, 4,030 ÷ 3,100 − 1 came out as
+  30.000000000000004%, so the limit-ups of 베셀 and 모아라이프플러스 (11-12) and 디와이에이 (11-13) were blanked. The test now
+  allows only that floating-point tail (`D1_LIMIT_EPS`, 1e-9): 30.004% is still blank.
 
 The run log says "· 거래 없는 종목 (기준일 … 거래량 0 · 시가 0 · 거래대금 0): N종목 → d1 빈 칸 · noTrade (…): names" and
 "· 국내 d1 빈 칸 이유 (목록 파일): 거래 없음 … · ±30% 밖 … · 직전 거래일 행 없음 … · 직전 거래일 파일을 쓸 수 없음 …", loud ("!!")
@@ -493,9 +497,11 @@ would show (company page header, 홈 and 포트폴리오 가진 종목 rows, the
   `odd`/`must` that is marked. It never fires on the listing file itself (Jack 2026-11-13: one source glitch must not hold
   everyone's data): fix the code in a PR. A file without `d1Blank` (before 2026-11-14) is only a warning, unless the previous
   publish had it or a stock carries a mark.
-- **WARN "국내 거래 없는 종목: 목록 파일의 칸 (경고만)"**: no-trade could not be told today (`unseen`: cols · many), or a row
-  contradicted itself (`odd`), or a must-have looked like no trade (`must`). The publish goes ahead with those stocks unmarked.
-  If it repeats, look at that day's listing file (FinanceData cache) before anything else.
+- **WARN "국내 거래 없는 종목: 목록 파일의 칸 (경고만)"**: no-trade could not be told today (`unseen`: cols · blank · many), or
+  it could but no published stock was marked (normal days have 135–141 such rows: the columns may have changed meaning), or a
+  row contradicted itself (`odd`), or a must-have looked like no trade (`must`). The publish goes ahead with those stocks
+  unmarked. If it repeats, look at that day's listing file (FinanceData cache) before anything else; the run log has the same
+  case as a "!!" line.
 
 ## US stocks added by hand (EXTRA_US)
 

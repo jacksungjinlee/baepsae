@@ -138,7 +138,8 @@ function WeightBar({ w, shade }) {
 // onRules: opens 내 규칙 정하기 (포트폴리오 only).
 // onRecord (v19.6a, 포트폴리오 only): (t, name) opens that stock's record sheet; a holding sold down to 0 and kept (남겨 두기)
 // is listed after the held ones with "0주", so its 기록 (a later dividend, a new purchase) stays reachable. footer: under the list.
-export function ImportedDeck({ deck, st, m, openStock, byT, onRemove, onMore, onRules, onRecord = null, footer = null, home = false }) {
+// pxDate (2026-11-14): the data's Korean price date, the no-trade line's date when the check carries none (st.pxDate first).
+export function ImportedDeck({ deck, st, m, openStock, byT, onRemove, onMore, onRules, onRecord = null, footer = null, home = false, pxDate = null }) {
   const rows = st && st.ok ? st.view.rows : null;
   const shades = rows ? holdingShades(rows.map((r) => r.w)) : [];
   const n = rows ? rows.length : (deck.imported || []).length;
@@ -179,7 +180,7 @@ export function ImportedDeck({ deck, st, m, openStock, byT, onRemove, onMore, on
               lead={r.t ? <CoMark t={r.t} name={r.nk} size={SPACE(9)} /> : null} />
             {r.w != null && <WeightBar w={r.w} shade={shades[i] || HOLDING_SHADES[HOLDING_SHADES.length - 1]} />}
             {/* 2026-11-14 (Jack, design chat 2026-11-08): no change today, said under the row (its change stays empty, never 0.0%) */}
-            {!r.absent && r.s && <DayNote s={r.s} md={st && st.pxDate ? mdText(st.pxDate) : null} style={{ marginTop: SPACE(1) }} />}
+            {!r.absent && r.s && <DayNote s={r.s} md={mdText((st && st.pxDate) || pxDate)} style={{ marginTop: SPACE(1) }} />}
             {((r.absent && onRemove) || (onRecord && r.t)) && (
               <div data-ui-v2="row-actions" style={{ display: "flex", gap: SPACE(2), flexWrap: "wrap", padding: `${SPACE(1)}px 0 ${SPACE(2)}px` }}>
                 {onRecord && r.t && <RecordButton name={r.nk} onClick={() => onRecord(r.t, r.nk)} />}

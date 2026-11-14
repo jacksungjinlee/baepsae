@@ -57,6 +57,11 @@ import { heldQty as heldOf, heldUnits } from "./held.js";
 import { unitHeld } from "../repair.js";
 
 export const BIG_MOVE = 5;                                       // |d1| >= 5% -> 크게 움직인 종목 (never a status)
+// 홈's calm line "크게 움직인 종목은 없어요" (today.jsx Hero) speaks for every held stock, so each one's move today must be known and
+// under BIG_MOVE: its change (d1), or for a stock that did not trade its reference price's change (dv, data.json ntD1: 0 for a halt).
+// 2026-11-14 (review S3): a halted holding keeps the line, as when its no-trade day read 0.0%; a stock with neither (a US stock at an
+// earlier close, a blank d1 for another reason) leaves the line out, as before. xs: the daily check's held stocks.
+export const movesKnown = (xs) => (xs || []).every((x) => x.d1 != null || (num(x.dv) != null && Math.abs(x.dv) < BIG_MOVE));
 export const STATUS_ORDER = ["broken", "check", "watch", "trim", "high", "low", "none"];
 const LEVEL = Object.fromEntries(STATUS_ORDER.map((s, i) => [s, i]));
 const EPS = 1e-9;                                                // a weight exactly on an edge is inside the band

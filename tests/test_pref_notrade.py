@@ -12,6 +12,7 @@
 점검의 "우선주·ETF처럼 …" (스위치 꺼짐: 기존 시험 한 줄을 바꿔야 해서 Jack 의 답을 기다려요). 거래 없는 종목도 포트폴리오의 '오늘'은 그대로예요.
 """
 import collections
+import copy
 import datetime as dt
 import json
 import os
@@ -74,6 +75,46 @@ def test_d1_split_gives_every_blank_its_reason():
     assert F.kr_d1_split(cur, [], True, {}, set())[1]["000020"] == "prev"
 
 
+def plan_listing(n_rows, no_trade=(), blank=0, extra=()):
+    """n_rows 행의 목록 파일: no_trade 코드는 거래량 · 시가 · 거래대금 0, blank 행은 거래량 · 시가가 빈 값, extra 는 (코드, 시가, 거래량, 거래대금) 행."""
+    rows = []
+    for i in range(n_rows):
+        c = f"{100000 + i * 10:06d}"
+        rows.append((c, f"가{i}", 1000, 10, 1e7, 1000, 100))
+    rows += [(c, c, 0, 0, 0, 1000, 100) for c in no_trade]
+    rows += [(c, c, o, v, a, 1000, 100) for c, o, v, a in extra]
+    df = listing(rows)
+    if blank:
+        df.loc[df.index[:blank], ["Volume", "Open"]] = float("nan")
+    return df
+
+
+def test_no_trade_plan_guards_each_case():
+    """리뷰 S1 · S2: 파이프라인이 쓰는 판단 (fetch_data.kr_no_trade_plan) — 표시할 종목 · 까닭 · 어긋난 행 · 필수 종목."""
+    # 보통 날: 표시 · 까닭 없음
+    nt, unseen, odd, must = F.kr_no_trade_plan(plan_listing(2800, ["001570", "011810"]))
+    assert (nt, unseen, odd, must) == ({"001570", "011810"}, None, set(), [])
+    # 필수 종목 행이 거래 없음으로 나와도 표시하지 않고 따로 알려요 (다른 종목은 그대로 표시)
+    nt, unseen, odd, must = F.kr_no_trade_plan(plan_listing(2800, ["001570", "005930", "012450"]))
+    assert nt == {"001570"} and unseen is None and must == ["005930", "012450"]
+    assert set(V.MUST) <= set(F.GATE_MUST)
+    # 파일 대부분이 거래 없음 (0 으로 찬 잘못): 아무도 표시하지 않아요
+    nt, unseen, odd, must = F.kr_no_trade_plan(plan_listing(100, [f"{200000 + i * 10:06d}" for i in range(2000)]))
+    assert (nt, unseen, must) == (set(), "many", [])
+    # 거래량 · 시가 칸은 있는데 빈 값으로 바뀜: 아무도 표시하지 않고 'blank' (그대로면 '가림 · 0' 으로 조용히 지나가요)
+    nt, unseen, odd, must = F.kr_no_trade_plan(plan_listing(2800, ["001570"], blank=2801))
+    assert (nt, unseen) == (set(), "blank")
+    nt, unseen, odd, must = F.kr_no_trade_plan(plan_listing(2800, ["001570"], blank=400))            # 86% 만 숫자
+    assert (nt, unseen) == (set(), "blank")
+    nt, unseen, odd, must = F.kr_no_trade_plan(plan_listing(2800, ["001570"], blank=200))            # 93% 숫자: 믿어요
+    assert (nt, unseen) == ({"001570"}, None)
+    # 칸이 없음
+    assert F.kr_no_trade_plan(plan_listing(10, ["001570"]).drop(columns=["Open"])) == (set(), "cols", set(), [])
+    # 어긋난 행: 거래대금이 있거나 빈 값 — 표시하지 않고 따로
+    nt, unseen, odd, must = F.kr_no_trade_plan(plan_listing(2800, ["001570"], extra=[("999990", 0, 0, 5e6), ("888880", 0, 0, float("nan"))]))
+    assert nt == {"001570"} and odd == {"999990", "888880"}
+
+
 def test_limit_up_and_limit_down_keep_their_d1():
     # 11-13 디와이에이: 3,100 → 4,030 (상한가, 정확히 +30%) 인데 (4030 / 3100 − 1) × 100 = 30.000000000000004 라 빈 칸이 됐어요
     assert (4030 / 3100 - 1) * 100 > 30
@@ -86,10 +127,27 @@ def test_limit_up_and_limit_down_keep_their_d1():
     assert all(abs(v) <= V.D1_MAX_KR for v in d1.values())                                # 관문의 국내 d1 범위 줄과 같은 값
 
 
+def test_the_three_real_limit_moves_and_a_hair_over():
+    """리뷰: 반올림한 값이 아니라 반올림 전 값을 30 + 1e-9 와 비교해요. 11-12 · 11-13 의 진짜 상한가 셋 (목록 파일의 시가총액 · 상장주식수 그대로)은 남고
+    30.004% 는 빈 칸이에요 (두 자리로 반올림하면 30.0 이라 예전 고침에서는 남았어요)."""
+    cur = pd.DataFrame([["177350", "베셀", 9281236536, 9915851], ["142760", "모아라이프플러스", 2548214955, 21779615],
+                        ["002880", "디와이에이", 37699839970, 9354799], ["000090", "살짝 넘음", 130004 * 10, 10], ["000100", "하한가", 70000 * 10, 10]],
+                       columns=["Code", "Name", "Marcap", "Stocks"])
+    prev = pd.DataFrame([["177350", "베셀", 7139412720, 9915851], ["142760", "모아라이프플러스", 1960165350, 21779615],
+                         ["002880", "디와이에이", 28999876900, 9354799], ["000090", "살짝 넘음", 100000 * 10, 10], ["000100", "하한가", 100000 * 10, 10]],
+                        columns=["Code", "Name", "Marcap", "Stocks"])
+    assert [F.kr_official_close(r) for _, r in cur.iterrows()][:3] == [936.0, 117.0, 4030.0]
+    d1, _, cnt = F.kr_d1_val20(cur, [(D12, prev)], prev_final=True)
+    assert d1 == {"177350": 30.0, "142760": 30.0, "002880": 30.0, "000100": -30.0}, d1
+    assert cnt["d1 범위 밖 → 빈 칸"] == 1 and F.D1_LIMIT_EPS == 1e-9                       # 30.004% 는 빈 칸
+
+
 def test_too_many_no_trade_rows_mark_nobody():
-    assert F.no_trade_unseen({str(i) for i in range(66)}, 2474) is None                  # 11-13: 66 / 2,474 (발행) · 135 / 2,877 (파일)
-    assert F.no_trade_unseen({str(i) for i in range(700)}, 2474) == "many"
-    assert F.NO_TRADE_MAX_SHARE * 2877 > 135 * 4                                         # 오늘의 네 배보다 넉넉해요
+    assert F.NO_TRADE_MAX_SHARE == 0.10 and F.NO_TRADE_MIN_READ == 0.90                  # 리뷰: 0.25 → 0.10 (보통 날 4.7 ~ 4.9%)
+    assert F.no_trade_unseen({str(i) for i in range(141)}, 2877) is None                 # 11-11 ~ 11-13 의 가장 많은 날 (141 / 2,877행)
+    assert F.no_trade_unseen({str(i) for i in range(287)}, 2877) is None                 # 9.98%: 아직 믿어요
+    assert F.no_trade_unseen({str(i) for i in range(288)}, 2877) == "many"               # 10% 를 넘으면 아무도 표시하지 않아요
+    assert F.no_trade_unseen({str(i) for i in range(66)}, 2474) is None
 
 
 def test_d1_blank_counts_only_published_korean_listings():
@@ -118,7 +176,8 @@ def test_pipeline_writes_the_marks_and_documents_them():
     assert '"noTrade": True if code in no_trade and code in d1_why else None' in src
     assert '"d1Why": d1_why.get(code), "ntD1": nt_map.get(code)' in src
     assert '"d1Blank": d1_blank_final(stocks, kmeta.get("d1Blank"))' in src and '"krSeries": krs, "d1Blank": d1_blank}' in src
-    assert "no_trade -= set(nt_must)" in src                                           # 필수 종목은 표시하지 않아요
+    assert "no_trade, nt_unseen, nt_odd, nt_must = kr_no_trade_plan(listing) if px_date is not None else" in src   # 판단은 순수 함수 한 곳에서
+    assert "거래대금이 있는 행" not in src                                                # 리뷰: 빈 거래대금도 '어긋난 행' 이에요
     for k in ("noTrade", "d1Why", "ntD1", "d1Blank"):
         assert k in F.UNITS, k
     assert "noTrade" in F.UNITS["d1"] and "d1Why" in F.UNITS["d1"]
@@ -195,6 +254,22 @@ def test_gate_fails_on_our_own_inconsistency(why, fn):
     assert rows[NAME][0] == "FAIL", (why, rows[NAME])
 
 
+def test_gate_warns_when_marks_vanish_or_the_columns_go_blank():
+    """리뷰 S2: 가릴 수 있었는데 거래 없는 종목이 0 이면 경고 (보통 날 135 ~ 141행) · 칸이 빈 값이라 가리지 않은 날('blank')도 경고 · 실패는 아니에요."""
+    zero = bad(lambda x: [s.pop(k, None) for s in x["stocks"] if s.get("noTrade") for k in ("noTrade", "d1Why", "ntD1")])
+    zero["stocks"] = [dict(s, d1=0.0) if s["t"] in ("001570", "000050") else s for s in zero["stocks"]]
+    zero["d1Blank"].update(noTrade=0)
+    rows, _ = gate(zero)
+    assert rows[NAME][0] == "PASS" and rows[WNAME][0] == "WARN" and "거래 없는 종목이 0" in rows[WNAME][1], rows
+    blank = copy.deepcopy(zero)
+    blank["d1Blank"].update(seen=False, unseen="blank")
+    rows, _ = gate(blank)
+    assert rows[NAME][0] == "PASS" and rows[WNAME][0] == "WARN" and "빈 값" in rows[WNAME][1], rows
+    odd = bad(lambda x: x["d1Blank"].update(odd=["005930"]))
+    rows, _ = gate(odd)
+    assert "거래대금이 0 이 아닌 (값이 있거나 빈) 행" in rows[WNAME][1] and "거래대금이 있는 행" not in rows[WNAME][1]
+
+
 def test_gate_only_warns_on_source_problems_and_the_old_format():
     d = good()
     for s in d["stocks"]:
@@ -248,7 +323,7 @@ def test_real_listing_files_of_2026_11_13():
 # ── 앱 (Node) ──
 MODS = {"E": "src/v2/engine.js", "FN": "src/v2/fixnote.jsx", "CO": "src/v2/company.jsx", "CP": "src/copy/v2.js", "Hm": "src/v2/home.js",
         "R": "src/v2/rules.js", "T": "src/v2/track.js", "P": "src/v2/pf.js", "RP": "src/v2/report.jsx", "ST": "src/v2/stocks.jsx",
-        "PV": "src/v2/pfview.jsx"}
+        "PV": "src/v2/pfview.jsx", "TD": "src/v2/today.jsx"}
 _B = {}
 NT_T, MISS_T, PREF_T = "024060", "396270", "005935"     # 시험 데이터: 흥구석유 (거래 없음으로) · 넥스트칩 (±30% 밖으로) · 삼성전자우
 
@@ -294,7 +369,7 @@ def bundle():
 def run(bundle, body, **data):
     decl = "".join(f"const {k} = {json.dumps(v, ensure_ascii=False)};\n" for k, v in data.items())
     code = ("import * as B from './b.mjs'; import { renderToStaticMarkup } from 'react-dom/server'; import { createElement as h } from 'react';\n"
-            "import fs from 'fs';\nconst { E, FN, CO, CP, Hm, R, T, P, RP, ST, PV } = B; const C2 = CP.C;\n"
+            "import fs from 'fs';\nconst { E, FN, CO, CP, Hm, R, T, P, RP, ST, PV, TD } = B; const C2 = CP.C;\n"
             "const warns = []; console.warn = (m) => warns.push(String(m)); console.info = () => {};\n"
             "const ent = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '\"').replace(/&#x27;/g, \"'\").replace(/&amp;/g, '&');\n"
             "const text = (html) => ent(html.replace(/<!--.*?-->/g, '').replace(/<[^>]+>/g, '\\n'));\n"
@@ -450,3 +525,48 @@ def test_stock_rows_say_why_under_the_name(bundle):
         sam: marks(row('005930'), 'day-note'), ntChange: /[+−-]\\d+\\.\\d%/.test(text(row(NT_T))), plain: marks(renderToStaticMarkup(h(ST.StockRow, { s: LOAD.byT.get(NT_T), t: NT_T, cls: 'kr', md: '10월 30일', plain: true })), 'day-note') };""",
               NT_T=NT_T, MISS_T=MISS_T)
     assert got == {"nt": True, "miss": True, "sam": 0, "ntChange": False, "plain": 0}
+
+
+def test_portfolio_rows_keep_the_no_trade_line_without_the_checks_date(bundle):
+    """리뷰: 포트폴리오의 가진 종목 줄은 점검(pfState)에 날짜가 없어도 데이터의 기준일로 그 줄을 보여요 (날짜가 없으면 줄이 사라졌어요)."""
+    got = run(bundle, """
+      const ctx = { state: { ok: true }, byT: LOAD.byT, coByT: LOAD.coByT, fx: 1400, pxDate: DATA.pxDate };
+      const nk = (t) => LOAD.byT.get(t).nk;
+      const deck = { id: 'd', name: 'p', kind: 'imported', settings: { points: { value: 3 }, strict: 'normal' },
+        holdings: ['005930', NT_T].map((t) => ({ t, nk: nk(t), cls: 'kr' })), purchases: [], imported: ['005930', NT_T].map((t) => ({ t, nk: nk(t), ccy: 'KRW', qty: 10 })) };
+      const st = P.pfState(deck, ctx, DATA.stocks);
+      const draw = (st2, pxDate) => text(renderToStaticMarkup(h(PV.ImportedDeck, { deck, st: st2, m: { ok: false }, byT: LOAD.byT, pxDate })));
+      out = { withSt: draw(st, null), noStDate: draw({ ...st, pxDate: null }, DATA.pxDate), none: draw({ ...st, pxDate: null }, null), stDate: st.pxDate };""",
+              NT_T=NT_T)
+    line = "10월 30일 거래 없음 (거래정지일 수 있어요)"
+    assert got["stDate"] == "2026-10-30"
+    assert line in got["withSt"] and line in got["noStDate"]                    # 점검의 날짜 · 없으면 데이터의 기준일
+    assert "거래 없음" not in got["none"]                                       # 날짜를 모르면 빈 날짜로 보이지 않아요 (그런 화면은 없어요)
+
+
+def test_home_calm_line_keeps_a_halted_holding(bundle):
+    """리뷰 S3: 홈의 할 일 없음 띠 '크게 움직인 종목은 없어요' — 거래 없는 종목은 기준가 변화(0)로 알아요 (예전 0.0% 일 때와 같아요). 다른 이유로
+    등락률이 빈 종목 · 거래 없이 5% 넘게 움직인 종목(코넥스)이 있으면 그 줄은 없어요 (모르는 것을 말하지 않아요)."""
+    got = run(bundle, """
+      const one = (t, patch = {}) => {
+        const d = JSON.parse(JSON.stringify(DATA)); Object.assign(d.stocks.find((x) => x.t === t), patch);
+        const load = { ...LOAD, data: d, byT: new Map(d.stocks.map((x) => [x.t, x])) };
+        const ctx = { state: { ok: true }, byT: load.byT, coByT: LOAD.coByT, fx: 1400, pxDate: d.pxDate, usPxDate: d.usPxDate };
+        const px = load.byT.get(t).price;
+        const deck = { id: 'db', name: 'b', createdAt: '2026-10-01', planFx: 1400,
+          holdings: [{ t, nk: load.byT.get(t).nk, cls: 'kr', target: 1, plannedQty: 10,
+            rules: [{ id: 'band', kind: 'band', check: 'checked', target: 1, bands: [0.75, 1.25, 1.4] }] }],
+          purchases: [{ t, date: '2026-10-01', qty: 10, price: px, ccy: 'KRW' }] };
+        const ev = R.evaluateAll([deck], ctx);
+        const held = ev.decks.filter((x) => x.ok && !x.imported && x.holdings.some((y) => y.qty !== 0));
+        const html = renderToStaticMarkup(h(TD.Hero, { load, ev, held, decks: [deck], onConfirm() {}, onWhy() {} }));
+        return { calm: /data-state="calm"/.test(html), line: text(html).includes(C2.today.noBigMove), x: held[0].holdings.map((y) => [y.d1, y.dv]) };
+      };
+      out = { halt: one(NT_T), konexMove: one(NT_T, { ntD1: 6.2 }), sam: one('005930', { d1: 0.5 }), miss: one(MISS_T),
+        known: [R.movesKnown([{ d1: 1 }, { d1: null, dv: 0 }]), R.movesKnown([{ d1: null, dv: 5 }]), R.movesKnown([{ d1: null, dv: null }]),
+          R.movesKnown([{ d1: null }]), R.movesKnown([{ d1: 7, dv: 7 }])] };""", NT_T=NT_T, MISS_T=MISS_T)
+    assert got["halt"] == {"calm": True, "line": True, "x": [[None, 0]]}, got["halt"]       # 거래 없음 (기준가 그대로): 줄이 있어요
+    assert got["sam"]["calm"] and got["sam"]["line"]                                        # 보통 종목: 그대로
+    assert got["konexMove"]["calm"] and not got["konexMove"]["line"]                        # 거래 없이 6.2% 움직임: 말하지 않아요
+    assert got["miss"]["calm"] and not got["miss"]["line"] and got["miss"]["x"] == [[None, None]]   # 다른 이유로 빈 등락률: 예전처럼 없음
+    assert got["known"] == [True, False, False, False, True]

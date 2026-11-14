@@ -517,6 +517,7 @@ def pick_final_listing(today, fetch_csv, commit_kst, lookback=LISTING_LOOKBACK_D
 
 D1_MAX_KR = KR_DAY_LIMIT  # 한국 하루 가격 제한폭이 ±30% 라 그보다 크면 신규 상장·분할·거래 재개 → 빈 칸 (개수는 로그)
 #                            (2026-11-14: 관문 파일의 KR_DAY_LIMIT = D1_MAX_KR 30.0 을 읽어요 — 세 곳이 따로 바뀌지 않게)
+D1_LIMIT_EPS = 1e-9      # ±30% 를 볼 때 부동소수점 끝자리만큼 (정확히 ±30% 인 상한가 · 하한가를 남겨요 · 2026-11-14)
 VAL20_DAYS = 20           # 평균 거래대금 기간 (거래일)
 VAL20_MIN_DAYS = 10       # 이보다 적은 날만 있으면 (신규 상장 등) 비워 둬요
 
@@ -802,13 +803,13 @@ def kr_d1_val20(cur_df, sessions, prev_final, max_abs=D1_MAX_KR, min_days=VAL20_
             if not p:
                 cnt["d1 전일 없음"] += 1
                 continue
-            v = round((c / p - 1) * 100, 2)
-            # 2026-11-14: 반올림한 값으로 봐요. 상한가 · 하한가는 정확히 ±30% 인데 (4,030 ÷ 3,100 − 1) × 100 = 30.000000000000004 처럼
-            # 부동소수점 끝자리가 붙어 빈 칸이 됐어요 (11-13 디와이에이 상한가). 화면과 관문(국내 d1 범위)이 보는 값도 반올림한 값이에요
-            if abs(v) > max_abs:
+            v = (c / p - 1) * 100
+            # 2026-11-14: 상한가 · 하한가는 정확히 ±30% 인데 (4,030 ÷ 3,100 − 1) × 100 = 30.000000000000004 처럼 부동소수점 끝자리가 붙어
+            # 빈 칸이 됐어요 (11-12 베셀 · 모아라이프플러스, 11-13 디와이에이 상한가). 그 끝자리(D1_LIMIT_EPS)만 넘겨요 — 30.004% 는 여전히 빈 칸
+            if abs(v) > max_abs + D1_LIMIT_EPS:
                 cnt["d1 범위 밖 → 빈 칸"] += 1
                 continue
-            d1[code] = v
+            d1[code] = round(v, 2)
     amounts = collections.defaultdict(list)
     for df in [cur_df] + [x[1] for x in sessions]:
         a = pd.to_numeric(df["Amount"], errors="coerce") if "Amount" in df.columns else None
@@ -834,7 +835,8 @@ def kr_d1_val20(cur_df, sessions, prev_final, max_abs=D1_MAX_KR, min_days=VAL20_
 D1_WHY_KO = {"noTrade": "거래 없음", "range": f"±{D1_MAX_KR:g}% 밖", "new": "직전 거래일 행 없음", "prev": "직전 거래일 파일을 쓸 수 없음"}
 
 
-NO_TRADE_MAX_SHARE = 0.25   # 목록 파일 행 중 거래 없는 행이 이보다 많으면 그 칸을 믿지 않아요 (11-11 ~ 11-13: 4.7 ~ 4.9%) — 한 파일의 잘못이 모두를 '거래 없음'으로 보이게 하지 않게
+NO_TRADE_MAX_SHARE = 0.10   # 목록 파일 행 중 거래 없는 행이 이보다 많으면 그 칸을 믿지 않아요 (11-11 ~ 11-13: 4.7 ~ 4.9% · 135 ~ 141 / 2,877행) — 한 파일의 잘못이 모두를 '거래 없음'으로 보이게 하지 않게
+NO_TRADE_MIN_READ = 0.90    # 거래량 · 시가가 둘 다 숫자인 행이 이보다 적으면 그 칸을 믿지 않아요 (11-11 ~ 11-13: 모든 행이 숫자) — 칸이 빈 값으로 바뀌면 아무도 표시하지 않고 크게 남겨요
 
 
 def no_trade_unseen(no_trade, n_rows, max_share=NO_TRADE_MAX_SHARE):
@@ -845,10 +847,38 @@ def no_trade_unseen(no_trade, n_rows, max_share=NO_TRADE_MAX_SHARE):
     return None
 
 
+def kr_no_trade_read(df):
+    """거래량 · 시가가 둘 다 숫자(유한한 값)인 행 수 (2026-11-14 · 순수 함수). 칸이 없으면 0."""
+    if df is None or "Volume" not in df.columns or "Open" not in df.columns:
+        return 0
+    return sum(1 for v, o in zip(df["Volume"], df["Open"]) if _fin(v) is not None and _fin(o) is not None)
+
+
+def kr_no_trade_plan(df, must=GATE_MUST, max_share=NO_TRADE_MAX_SHARE, min_read=NO_TRADE_MIN_READ):
+    """기준일 목록 파일에서 거래 없음으로 표시할 종목과 표시하지 않는 까닭 (2026-11-14 · 리뷰 S1 · S2 · 순수 함수).
+    반환: (표시할 코드 set, unseen, odd set, must 목록).
+    - unseen: None 이면 가렸어요. 아니면 아무도 표시하지 않아요 (예전처럼 0.00% · 관문이 경고해요):
+      'cols' 목록 파일에 거래량(Volume) · 시가(Open) 칸이 없음 (형식이 바뀜 · 지난 data.json 으로 만든 목록) ·
+      'blank' 칸은 있는데 둘 다 숫자인 행이 min_read 보다 적음 (칸이 빈 값으로 바뀜 — 그대로 두면 아무도 표시되지 않은 채 '가림'으로 보여요) ·
+      'many' 거래 없는 행이 max_share 를 넘음 (파일 전체가 0 으로 찬 잘못).
+    - odd: 거래량 · 시가는 0 인데 거래대금이 0 이 아닌 (값이 있거나 빈) 행 — 그 행이 스스로 어긋나요. 표시하지 않아요 (kr_no_trade).
+    - must: 거래가 없다고 나온 관문의 필수 종목 — 표시하지 않아요 (그 행의 잘못이면 필수 종목 d1 이 비어 모두의 발행이 막혀요). 표시할 set 에서 빠져요."""
+    nt, cols, odd = kr_no_trade(df)
+    if not cols:
+        return set(), "cols", set(), []
+    n = len(df)
+    if n and kr_no_trade_read(df) < min_read * n:
+        return set(), "blank", odd, []
+    if no_trade_unseen(nt, n, max_share):
+        return set(), "many", odd, []
+    m = sorted(set(must) & nt)
+    return nt - set(m), None, odd, m
+
+
 def d1_blank_counts(rows, seen=True, unseen=None, odd=(), must=()):
     """발행하는 국내 종목(목록 파일에서 온 cls kr · 펀드 아님)의 빈 d1 이유별 수 (2026-11-14 · 순수 함수) — data.json d1Blank.
-    seen: 거래 없는 종목을 가릴 수 있었는지 · unseen: 못 했으면 까닭 ('cols' 목록 파일에 거래량 · 시가 칸이 없음 · 'many' — no_trade_unseen)
-    · odd: 거래량 · 시가는 0 인데 거래대금이 있는 발행 종목 (출처의 행이 스스로 어긋나요 · 표시하지 않았어요) · must: 거래가 없다고 나온 필수 종목
+    seen: 거래 없는 종목을 가릴 수 있었는지 · unseen: 못 했으면 까닭 ('cols' · 'blank' · 'many' — kr_no_trade_plan)
+    · odd: 거래량 · 시가는 0 인데 거래대금이 0 이 아닌 (값이 있거나 빈) 발행 종목 (출처의 행이 스스로 어긋나요 · 표시하지 않았어요) · must: 거래가 없다고 나온 필수 종목
     (관문의 필수 종목 7개 · 표시하지 않았어요 — 그 행의 잘못이면 필수 종목 d1 이 비어 모두의 발행이 막혀요. 관문이 경고해요)."""
     out = {k: 0 for k in D1_WHY}
     codes = set()
@@ -876,7 +906,7 @@ def d1_blank_final(stocks, meta):
 def kr_no_trade(df):
     """기준일 목록 파일에서 거래가 없던 종목 (2026-11-14 · 순수 함수): 거래량(Volume) 0 이고 시가(Open) 0 인 행 — 거래대금(Amount) 칸이 있으면
     그것도 0 일 때만 (11-11 ~ 11-13 의 거래 없는 행 415개는 모두 0 이에요). 값이 비었거나 숫자가 아니면 거래가 없다고 하지 않아요 (모르는 것).
-    반환: (코드 set, 열이 있는지, 어긋난 코드 set — 거래량 · 시가는 0 인데 거래대금이 0 보다 큰 행: 출처의 한 행이 스스로 어긋나요. 표시하지
+    반환: (코드 set, 열이 있는지, 어긋난 코드 set — 거래량 · 시가는 0 인데 거래대금이 0 이 아닌 (값이 있거나 빈) 행: 출처의 한 행이 스스로 어긋나요. 표시하지
     않고 크게 남겨요 · 한 종목의 출처 문제가 그 종목을 거래 없음으로 보이게 하지 않게).
     열이 없으면 (출처의 형식이 바뀜 · 지난 data.json 으로 만든 목록) 빈 set 과 False — 누구도 거래 없음으로 표시하지 않아요 (예전처럼 0.00%)."""
     if df is None or "Code" not in df.columns or "Volume" not in df.columns or "Open" not in df.columns:
@@ -4005,28 +4035,28 @@ def fetch_korea(start, today, rf, prev=None):
             + (f" (직전 {sessions[0][0]})" if sessions else "") + f" · d1 {len(d1_map):,} · val20 {len(v20_map):,}"
             + (f" · {dict(dcnt)}" if dcnt else ""))
     # 2026-11-14 (Jack, design chat 2026-11-08): 기준일에 거래가 없던 종목은 d1 빈 칸 + noTrade · 다른 빈 d1 은 이유(d1Why)를 달아요
-    no_trade, nt_cols, nt_odd = kr_no_trade(listing) if px_date is not None else (set(), False, set())
-    nt_unseen = "cols" if not nt_cols else no_trade_unseen(no_trade, len(listing))
+    # 표시할 종목 · 표시하지 않는 까닭은 kr_no_trade_plan 한 곳에서 (리뷰 S1: 순수 함수로 시험해요)
+    no_trade, nt_unseen, nt_odd, nt_must = kr_no_trade_plan(listing) if px_date is not None else (set(), "cols", set(), [])
     names_of = dict(zip(listing["Code"].astype(str).str.strip(), listing["Name"].astype(str)))
     if nt_unseen:
         why_ko = {"cols": "목록 파일에 거래량(Volume) · 시가(Open) 칸이 없어요",
-                  "many": f"거래 없는 행이 {len(no_trade):,} / {len(listing):,} 로 {NO_TRADE_MAX_SHARE:.0%} 를 넘어요 (파일의 잘못)"}[nt_unseen]
+                  "blank": f"거래량 · 시가가 둘 다 숫자인 행이 {kr_no_trade_read(listing):,} / {len(listing):,} 뿐이에요 (칸이 빈 값으로 바뀌었어요)",
+                  "many": f"거래 없는 행이 {NO_TRADE_MAX_SHARE:.0%} 를 넘어요 (파일의 잘못)"}[nt_unseen]
         log(f"  !! 거래 없는 종목을 가리지 않았어요 — {why_ko}. 거래가 없던 종목도 d1 0.00% 로 나가요 (관문이 경고해요)")
-        no_trade = set()
-    nt_must = sorted(set(GATE_MUST) & no_trade)          # 관문의 필수 종목은 거래 없음으로 표시하지 않아요 (그 행의 잘못이면 모두의 발행이 막혀요)
     if nt_must:
         must_names = ", ".join(f"{c} {names_of.get(c, '')}" for c in nt_must)
         log(f"  !! 필수 종목 {must_names} 이 거래 없음(거래량 0 · 시가 0)으로 나와요 — "
             "그 행의 잘못일 수 있어 표시하지 않았어요 (d1 은 공식 종가로 계산 · 관문이 경고해요)")
-        no_trade -= set(nt_must)
     d1_map, d1_why, nt_map, why_n = kr_d1_split(listing, sessions, ok_prev, d1_map, no_trade)
     if not nt_unseen:
         nt_names = sorted(f"{c} {names_of.get(c, '')}" for c in no_trade if c in d1_why)
-        log(f"· 거래 없는 종목 (기준일 {px_date} 거래량 0 · 시가 0 · 거래대금 0): {why_n['noTrade']:,}종목 → d1 빈 칸 · noTrade"
+        zero = not why_n["noTrade"]          # 리뷰 S2: 가릴 수 있었는데 한 종목도 없으면 칸의 뜻이 바뀌었을 수 있어요 (보통 날 목록 파일 135 ~ 141행)
+        log(f"{'  !! ' if zero else '· '}거래 없는 종목 (기준일 {px_date} 거래량 0 · 시가 0 · 거래대금 0): {why_n['noTrade']:,}종목 → d1 빈 칸 · noTrade"
             f" (기준가 변화 ntD1 {len(nt_map):,}종목 · 0 이 아닌 것 {sum(1 for v in nt_map.values() if v):,})"
-            + (f": {', '.join(nt_names[:12])}{' …' if len(nt_names) > 12 else ''}" if nt_names else ""))
+            + (f": {', '.join(nt_names[:12])}{' …' if len(nt_names) > 12 else ''}" if nt_names else "")
+            + (" — 보통 날에는 목록 파일에 135 ~ 141행이 있어요. 목록 파일의 거래량 · 시가 칸을 확인해요 (관문이 경고해요)" if zero else ""))
     if nt_odd:
-        log(f"  !! 거래량 · 시가는 0 인데 거래대금이 있는 행 {len(nt_odd)}개 (출처의 행이 스스로 어긋나요 · 거래 없음으로 표시하지 않았어요): "
+        log(f"  !! 거래량 · 시가는 0 인데 거래대금이 0 이 아닌 (값이 있거나 빈) 행 {len(nt_odd)}개 (출처의 행이 스스로 어긋나요 · 거래 없음으로 표시하지 않았어요): "
             + ", ".join(sorted(f"{c} {names_of.get(c, '')}" for c in nt_odd)[:12]))
     out_range = sorted(f"{c} {names_of.get(c, '')}" for c, w in d1_why.items() if w == "range")
     log(f"{'  !! ' if why_n['prev'] else '· '}국내 d1 빈 칸 이유 (목록 파일): 거래 없음 {why_n['noTrade']:,} · ±{D1_MAX_KR:g}% 밖 {why_n['range']:,}"
@@ -8064,7 +8094,8 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
          "ntD1": ("% · noTrade 종목의 기준가(공식 종가) 변화 (d1 을 계산했다면 나왔을 값 · ±30% 밖이거나 직전 파일이 없으면 칸 없음) — 거래가 없어 "
                   "등락률로 보이지 않고, 포트폴리오 평가 금액의 오늘 변화에만 써요 (코넥스는 거래 없이 값이 바뀔 수 있어요)"),
          "d1Blank": ("발행하는 한국 종목(목록 파일에서 온 cls kr)의 빈 d1 이유별 수 {noTrade · range · new · prev} (종목의 d1Why 와 같아요) · "
-                     "cols false = 목록 파일에 거래량 · 시가 칸이 없어 거래 없는 종목을 가리지 못함"),
+                     "seen false = 거래 없는 종목을 가리지 않음, unseen 까닭: cols 목록 파일에 거래량 · 시가 칸이 없음 · blank 그 칸이 대부분 빈 값 · many 거래 없는 행이 "
+                     "10% 를 넘음 · odd 거래량 · 시가는 0 인데 거래대금이 0 이 아닌 (값이 있거나 빈) 행 · must 거래가 없다고 나온 관문의 필수 종목 (둘 다 표시하지 않음)"),
          "dps": "원 (한국 · 0 = 배당 없음, 빈 칸 = 모름)",
          "fy": "op·debt·roe·opm·g3·dps·dps3 가 나온 사업보고서 연도 (bq 는 TTM 분기)",
          "dps3a": "원 (한국 · dps3 를 오늘 상장 주식 수 기준으로 맞춘 값 [당기, 전기, 전전기] · 빈 칸 = 그해 기준을 확인하지 못함)",

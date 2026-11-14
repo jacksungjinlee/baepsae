@@ -259,5 +259,5 @@ function ImportedCard({ deck, ev, ctx, load, openStock, onRemove, onRules, onRec
   const st = useMemo(() => pfState(deck, ctx, load.status === "ok" ? load.data.stocks : []), [deck, ctx, load]);
   const m = de && de.ok ? deckMoney(deck, de, ctx) : { ok: false };
   return <ImportedDeck deck={deck} st={st} m={m} openStock={openStock} byT={ctx.byT} onRemove={onRemove} onRules={onRules} onRecord={onRecord}
-    footer={onReturns ? <ReturnsLink onClick={onReturns} /> : null} />;
+    footer={onReturns ? <ReturnsLink onClick={onReturns} /> : null} pxDate={load.status === "ok" ? load.data.pxDate : null} />;
 }
