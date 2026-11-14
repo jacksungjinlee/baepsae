@@ -114,8 +114,9 @@ export function tileViews(load, s) {
     const number = r.yieldPct != null ? `${C.pick.receipt.yield} ${yieldText(r.yieldPct)}` : null;
     add("div", T().label.div, r, phrase, number, { dps3: r.d3 || null, dps: r.dps ?? null, y: r.yieldPct, dpsok: r.dpsOk ? "1" : "" },
       divArt(r.rule));
-    // v19.1i (Jack's line, 2026-11-08): a Korean payer whose yield is hidden because the share-count change could not be matched to
-    // filings (dvWhy nc-*) says why, in the number's place (company.js divShareHidden); other hidden yields stay as they were.
+    // v19.1i (Jack's line, 2026-11-08): a Korean payer whose yield is hidden because its share count changed and no filing at all
+    // explains it (the pipeline marks it dvLine = 1) says why, in the number's place (company.js divShareHidden); other hidden
+    // yields stay as they were.
     const last = out[out.length - 1];
     if (last && last.topic === "div" && !number && !usOf(s) && divShareHidden(s, co) && C.co.div.shareHidden) {
       last.note = C.co.div.shareHidden;

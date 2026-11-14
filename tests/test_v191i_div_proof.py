@@ -373,6 +373,143 @@ def test_the_proof_stage_has_its_own_log_line():
     assert any("주주배정 유상증자(권리락) 1" in x for x in lines)
 
 
+def _check_then(st, hide):
+    """맞춤 이유(check)가 그 종목을 st 로 숨긴 것처럼 (앞 해 때문에 · #98) — 리뷰 2026-11-15 2차의 재현."""
+    orig = F.DivWhy.check
+
+    def check(self, s, r):
+        r = orig(self, s, r)
+        if s["t"] == "049430":
+            r = F.dvwhy_apply(r, s.get("dps3"), {"fac": {}, "dem": {}, "hide": hide})
+            s["dvWhy"] = {"v": 1, "st": st}
+            self.t[st].append(s["t"])
+        return r
+    return check
+
+
+def test_the_line_is_decided_in_one_place_even_after_a_mismatch(monkeypatch):
+    """리뷰 2차 B (차단): 맞춤 이유가 nc-mismatch 로 숨겼는데 올해 바뀐 주식 수를 설명하는 공시가 하나도 없으면 — lineT 와 dvWhy nc-unexplained ·
+    dvLine 이 늘 함께예요 (예전 코드는 lineT 에 넣고 nc-mismatch 를 남겨 관문이 매일 실패했어요)."""
+    monkeypatch.setattr(F.DivWhy, "check", _check_then("nc-mismatch", "nc"))
+    by, counts, why, _ = run("049430", edit={"049430": lambda lk: lk.update(cx=[])})
+    s = by["049430"]
+    assert counts["proof"]["lineT"] == ["049430"] and s["dvWhy"] == {"v": 1, "st": "nc-unexplained"} and s["dvLine"] == 1
+    assert counts["why"]["nc-unexplained"] == 1 and counts["why"]["nc-mismatch"] == 0 and "dyt" not in s
+
+
+def test_a_check_unexplained_on_a_spin_off_gets_no_line(monkeypatch):
+    """리뷰 2차 C: 맞춤 이유(#98)는 유상증자 · 사채만 보고 nc-unexplained 라고 해요. 증명이 회사분할을 찾으면 그대로 두되 줄은 없어요 (dvLine 없음)."""
+    monkeypatch.setattr(F.DivWhy, "check", _check_then("nc-unexplained", "nd"))
+    spin = {"k": "spin", "d": "2026-05-01", "rc": "20260501000999"}
+    by, counts, why, _ = run("049430", edit={"049430": lambda lk: lk.update(cx=[], oth=list(lk.get("oth") or []) + [spin])})
+    s = by["049430"]
+    assert counts["proof"]["basisT"] == ["049430"] and counts["proof"]["lineT"] == []
+    assert s["dvWhy"] == {"v": 1, "st": "nc-unexplained"} and "dvLine" not in s and "dyt" not in s and "dvProof" not in s
+
+
+def _with_rights(lk, rc, d, n, terms, fx=True):
+    lk["oth"] = list(lk.get("oth") or []) + [{"k": "rights", "d": d, "rc": rc}]
+    if fx:
+        lk["fx"] = list(lk.get("fx") or []) + [{"k": "rights", "d": d, "n": n, "rc": rc}]
+    lk["fxT"] = {**(lk.get("fxT") or {}), **terms}
+    lk["fxBad"] = list(lk.get("fxBad") or [])
+
+
+def test_the_rights_rule_covers_every_restore_path():
+    """리뷰 2차 A · A2: 덮는 수가 필요 없는 길(자기주식 소각과 겹친 주주배정)도, 방식을 읽지 못한 결정이 사채에 덮이는 길도 되살리지 않아요."""
+    rc = "20260302000111"
+    shr0 = CASES["069080"]["s"]["shr"]
+    new = 4_500_000
+
+    def a(lk):
+        _with_rights(lk, rc, "2026-03-02", new, {rc: {"m": "sh", "q": round(new / shr0, 6)}})
+        lk["shr"] = shr0 + new
+    CASES_A = copy.deepcopy(CASES["069080"])
+    try:
+        CASES["069080"]["s"]["shr"] = shr0 + new
+        by, counts, why, _ = run("069080", edit={"069080": a})
+        assert counts["proof"]["rightsT"] == ["069080"] and "dyt" not in by["069080"] and "dvProof" not in by["069080"]
+
+        def a2(lk):
+            _with_rights(lk, rc, "2026-03-02", 0, {}, fx=False)                      # 목록에는 있는데 API 가 방식 · 주식 수를 주지 않음
+            lk["oth"].append({"k": "cb", "d": "2026-02-01", "rc": "20260201000222"})
+            lk["fx"] = [{"k": "cb", "d": "2026-02-01", "n": 1_400_000, "rc": "20260201000222"}]
+            lk["fxT"], lk["fxBad"] = {}, [{"rc": "", "why": "목록에는 유상증자 결정이 있는데 piicDecsn.json 가 주지 않음"}]
+            lk["shr"] = 36_500_000
+        CASES["069080"]["s"]["shr"] = 36_500_000
+        by, counts, why, _ = run("069080", edit={"069080": a2})
+        assert counts["proof"]["failT"] == ["069080"] and counts["proof"]["rights"] == 0 and "dyt" not in by["069080"]
+        assert any("방식 · 크기를 읽지 못함" in x for x in why.summary())
+    finally:
+        CASES["069080"] = CASES_A
+
+
+def test_an_unknown_rights_method_blocks_end_to_end():
+    """대동금속의 제3자배정 결정을 방식을 모르는 것으로 바꾸면 (ic_mthn 이 비었거나 낯선 글) 되살리지 않아요 (rights)."""
+    rc = CASES["020400"]["look"]["fx"][0]["rc"]
+    by, counts, why, _ = run("020400", edit={"020400": lambda lk: lk["fxT"][rc].update(m="?")})
+    assert counts["proof"]["rightsT"] == ["020400"] and by["020400"]["dvWhy"] == {"v": 1, "st": "nc-mismatch"}
+    assert as_on_main(by["020400"], "020400") and any("방식을 모르는 유상증자" in x for x in why.summary())
+
+
+def test_new_shares_are_scaled_by_the_proofs_own_events_when_they_multiply_to_one():
+    """리뷰 2차: 올해 사건의 곱이 1 (병합 ×0.5 뒤 분할 ×2) 이면 dvWhy 가 없어요 — 관문도 dvProof 에 적은 사건으로 새 주식 수를 다시 세요."""
+    ev = [{"k": "merge", "d": "2026-03-01", "r": 0.5, "rc": "20260201000301", "src": "doc"},
+          {"k": "split", "d": "2026-06-01", "r": 2.0, "rc": "20260501000302", "src": "doc"}]
+    by, counts, why, _ = run("403550", edit={"403550": lambda lk: lk.update(ev=list(lk.get("ev") or []) + ev)})
+    s = by["403550"]                                                                                   # 쏘카: 제3자배정 (5월 18일) 은 분할 앞
+    assert s["dpsF"][0] == 1.0 and "dvWhy" not in s and s["dvProof"]["cv"] == 5_098_040 * 2
+    assert [e["k"] for e in s["dvProof"]["ev"]] == ["merge", "split"]
+    c = {"t": "403550", "cash3": [round(x / 1e8, 2) if x is not None else None for x in CASES["403550"]["bas"]["cash3"]]}
+    assert V.dvproof_problems(s, c, PX) is None
+    s["dvProof"]["cv"] = 5_098_040                                                                     # 사건을 모르고 센 수 — 관문이 잡아요
+    assert "fx 가 덮는" in V.dvproof_problems(s, c, PX)
+
+
+def test_the_gate_uses_the_pipelines_ratio_not_the_rounded_dps3a():
+    """리뷰 2차 (새 실패 줄은 우리 기록이 어긋날 때만): 배율 뒤 0.67원 같은 아주 작은 배당은 dps3a 반올림만으로 1 ± 3% 경계를 넘을 수
+    있어요. 관문은 파이프라인이 정한 n × f ÷ 오늘 주식 수로 보고, dps3a 는 주당 배당 ÷ 배율 (원 둘째 자리) 그대로인지 따로 봐요."""
+    shr, f = 30_000_000, 3.0
+    n = 0.9701 * shr / f                                    # 파이프라인: n × f ÷ shr = 0.9701 (받아요)
+    assert F.prove_today(n, f, shr)
+    s = {"t": "123450", "fy": 2025, "price": 1000.0, "shr": shr, "dps3": [2.0, 0.0, 0.0], "dpsF": [f, None, None],
+         "dps3a": [round(2.0 / f, 2), 0.0, 0.0],
+         "dvProof": {"v": 1, "y0": "today", "yrs": [], "c": [int(round(n * 2.0)), None, None], "shr": shr,
+                     "ev": [{"k": "split", "d": "2026-03-02", "r": f, "rc": "20260202000123"}]}}
+    assert V.dvproof_problems(s, {}, PX) is None             # 반올림한 0.67 로 셈하면 0.965 라 예전엔 실패였어요
+    s["dps3a"][0] = 0.68
+    assert "dps3a[0]" in V.dvproof_problems(s, {}, PX)
+
+
+def test_a_stock_through_check_refetches_when_its_shares_moved():
+    """리뷰 2차 SF3: 맞춤 이유(check)를 거친 종목(대동금속)이 쓰는 같은 항목도, 받은 뒤 상장 주식 수가 3% 넘게 달라졌으면 증명 전에 다시 받아요."""
+    moved = int(CASES["020400"]["s"]["shr"] * 0.95)
+    by, counts, why, cl = run("020400", edit={"020400": lambda lk: lk.update(shr=moved)})
+    assert "list.json" in cl.calls and counts["proof"]["failT"] == ["020400"] and why.n["pRefetch"] == 1
+    assert by["020400"]["dvWhy"] == {"v": 1, "st": "nc-mismatch"} and "dyt" not in by["020400"]
+
+
+def test_refetch_is_counted_only_when_it_happens_and_no_shares_means_no_daily_refetch():
+    cl = Client(["298040"], old=True)
+    cl.seed("298040", [F._fin(x) for x in basis_of("298040")["dpsF"]])
+    w = F.DivWhy(cl, PX)
+    w.prove_left = 0
+    s = stock_of("298040")
+    counts, _ = F.apply_div_basis([s], {}, {}, why=w)
+    assert w.n["pRefetch"] == 0 and w.n["pLimit"] == 1 and counts["proof"]["failT"] == ["298040"]
+    assert not F.prove_shr_moved(None, 100) and not F.prove_shr_moved(100, None) and F.prove_shr_moved(100, 104)
+    by, counts, why, cl = run("298040", edit={"298040": lambda lk: lk.pop("shr")})        # 받을 때 주식 수를 몰랐던 항목
+    assert "list.json" not in cl.calls and by["298040"]["dvProof"]["y0"] == "today" and why.n["pRefetch"] == 0
+
+
+def test_old_proof_fields_never_survive_a_stock_the_stage_skips():
+    """어제 줄을 그대로 받은 종목이 이번엔 건너뛰어져도 (우선주 · 배당 표 없음) 지난 dvProof · dvLine 이 남지 않아요 — 관문은 기록 없는 칸에 실패해요."""
+    a = {"t": "005935", "cls": "kr", "dvProof": {"v": 1}, "dvLine": 1}
+    b = {"t": "123450", "cls": "kr", "dvProof": {"v": 1}, "dvLine": 1}
+    F.apply_div_basis([a, b], {}, {}, why=None)
+    assert not any(k in x for x in (a, b) for k in ("dvProof", "dvLine", "dvWhy"))
+
+
 def test_switch_off_keeps_the_old_behaviour():
     by, counts, why, _ = run("298040", "020400", prove=False)
     assert "dyt" not in by["298040"] and by["020400"]["dvWhy"] == {"v": 1, "st": "nc-mismatch"} and "proof" not in counts
@@ -416,8 +553,11 @@ def test_the_gate_scales_new_shares_by_the_events_after_their_own_date():
 
 
 @pytest.mark.parametrize("t,change,part", [
-    ("298040", lambda s, c: s.update(dpsF=[2.0, 1.0, 1.0], dps3a=[3750.0, 5000.0, 2500.0]), "배당 총액 ÷ 시가총액"),     # 틀린 배율 (총액이 잡아요)
-    ("001230", lambda s, c: s.update(dpsF=[4.0, 5.0, 5.0], dps3a=[25.0, 100.0, 120.0]), "배당 총액 ÷ 시가총액"),
+    ("298040", lambda s, c: s.update(dpsF=[2.0, 1.0, 1.0], dps3a=[3750.0, 5000.0, 2500.0]), "사건(ev)이 없어요"),       # 사건 없는 배율
+    ("001230", lambda s, c: s.update(dpsF=[4.0, 5.0, 5.0], dps3a=[25.0, 100.0, 120.0]), "ev 의 곱"),                 # 사건과 다른 배율
+    ("001230", lambda s, c: (s.update(dpsF=[4.0, 5.0, 5.0], dps3a=[25.0, 100.0, 120.0]), s["dvProof"]["ev"][0].update(r=4.0)),
+     "배당 총액 ÷ 시가총액"),                                                                     # 사건까지 틀려도 총액이 잡아요
+    ("001230", lambda s, c: s["dvProof"]["ev"][0].update(d="2025-06-01"), "ev 날짜"),
     ("298040", lambda s, c: c.update(cash3=[700.0, 465.59, 232.79]), "corp.json cash3"),
     ("298040", lambda s, c: s.update(shr=s["shr"] + 1000), "오늘 상장 주식 수"),
     ("069080", lambda s, c: s["dvProof"].update(cmo=27_000_000), "그해 말 유통 주식 수"),
@@ -527,11 +667,40 @@ def test_a_line_name_needs_jacks_line_and_a_wrong_conversion_fails(pair):
     assert ROWS[1] in {r[0] for r in rep.failed}
 
 
+@pytest.mark.parametrize("case", ["mark_without_line", "line_without_mark", "mark_on_yield"])
+def test_jacks_line_mark_must_match_the_line_list(pair, case):
+    """dvLine (앱이 줄을 보여 주는 표시) 은 lineT 의 종목에만, 그 종목엔 꼭 · dvWhy nc-unexplained · 수익률 없음."""
+    cur, prev, s = pair
+    kr = [x for x in cur["data"]["stocks"] if x.get("cls") == "kr" and not x.get("fund") and x.get("divSt") == "nd"]
+    a = kr[0]
+    a["dvWhy"] = {"v": 1, "st": "nc-unexplained"}
+    a["dpsF"] = [None] * 3
+    a["dps3a"] = [None if (d or 0) > 0 else d for d in a["dps3"]]
+    mirror(cur, a)
+    proof = cur["data"]["divCheck"]["proof"]
+    recount(cur)
+    recount_why(cur)
+    cur["data"]["divCheck"]["proof"] = proof
+    if case == "mark_without_line":
+        a["dvLine"] = 1
+    elif case == "line_without_mark":
+        proof.update(line=1, lineT=[a["t"]])
+    else:
+        y = next(x for x in cur["data"]["stocks"] if x.get("cls") == "kr" and x.get("dyt") and x is not s)
+        y["dvLine"] = 1
+    rep = check(cur, prev)
+    assert ROWS[0] in {r[0] for r in rep.failed}, rep.table()
+    if case == "line_without_mark":
+        a["dvLine"] = 1
+        assert not check(cur, prev).failed
+
+
 def test_hidden_and_failed_names_warn_and_never_fail(pair):
     cur, prev, s = pair
     kr = [x for x in cur["data"]["stocks"] if x.get("cls") == "kr" and not x.get("fund") and x.get("divSt") == "nd"]
     a = kr[0]
     a["dvWhy"] = {"v": 1, "st": "nc-unexplained"}
+    a["dvLine"] = 1
     a["dpsF"] = [None] * 3
     a["dps3a"] = [None if (d or 0) > 0 else d for d in a["dps3"]]
     mirror(cur, a)
