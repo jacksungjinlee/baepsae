@@ -326,6 +326,37 @@ export function warnChips(w) {
   return CHIP_ORDER.filter((c) => w.ran.includes(c) && !fired.has(c) && !(c === "icr" && w.int0));
 }
 
+// ---------------- 재무 경고: which state a screen shows (Jack, 2026-11-14) ----------------
+// One rule for the company page (company.jsx Warnings) and 종목 바꾸기's 담기 sheet (editor.jsx AddSheet). w: warn.warnings(s, co).
+//   "flags"     a check fired: "재무 경고 신호 {n}개" (never hidden, whatever else ran)
+//   "none"      every check ran or does not apply: "재무 경고 신호는 없어요"
+//   "partial"   PR #68: 이자보상배율 alone did not run for want of an interest line: "확인한 …" + that reason
+//   "some"      some checks ran and found nothing, the others had no input: "확인한 …" with the ✓ chips of the checks that ran —
+//               only when there is at least one chip to show (review nit: e.g. only 이자보상배율 ran and the company paid no
+//               interest (int0) would leave the headline with nothing under it)
+//   "unchecked" no check could run (corp.json flRan []): "재무 경고 · 확인하지 못했어요"; not for funds (nothing to check)
+//   null        nothing can be said (no corp row, a file without flRan, a fund, or "some" with no chip)
+// The company page checks the unit-check line and the 이자보상배율-off line (flWhy.icr "off") before using this.
+// How many of the four checks could not run, for "4가지 중 {k}가지는 필요한 자료가 없어서 확인하지 못했어요." (Jack, 2026-11-14), or 0
+// when that line does not go: no check could run ("unchecked": its own card and line), PR #68's 이자보상배율 line already explains
+// the one missing check (warn.js icrIe), or the only missing check is 이자보상배율 switched off (off: flWhy.icr "off", the
+// fix.icr line says why). w: warn.warnings(s, co).
+export function uncheckedCount(w, off = false) {
+  const u = w && Array.isArray(w.unchecked) ? w.unchecked : [];
+  if (!u.length || w.noneRan || w.icrIe) return 0;
+  if (off && u.every((c) => c === "icr")) return 0;
+  return u.length;
+}
+
+export function warnKind(s, w) {
+  if (!w) return null;
+  if (w.flags && w.flags.length) return "flags";
+  if (w.allRan) return "none";
+  if (w.partial) return "partial";
+  if (w.noneRan) return s && (s.etf === true || s.fund) ? null : "unchecked";
+  return Array.isArray(w.ran) && w.ran.length > 0 && warnChips(w).length > 0 ? "some" : null;
+}
+
 // ---------------- 내 기준과 맞는 정도 (the 8 live criteria cards) ----------------
 export const RANK_CARDS = CARDS.filter((c) => !c.pending).map((c) => c.id);
 // The cards the user picked: the latest saved portfolio's cards with points (CARDS order); none -> the first two.

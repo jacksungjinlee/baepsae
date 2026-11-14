@@ -472,7 +472,10 @@ out.head = C.co.warn.nonePartial; out.sub = C.co.warn.noneSubNoIcr;""", ROWS=row
     assert got["head"] == "확인한 재무 경고 신호는 없어요"
     assert got["sub"] == "이자보상배율은 재무제표에서 이자 비용을 찾지 못해 확인하지 못했어요. 유동비율, 3년 연속 순손실, 자본잠식은 최근 공시로 확인했어요."
     src = open(os.path.join(ROOT, "src", "v2", "company.jsx"), encoding="utf-8").read()
-    assert "if (!w.flags.length) {" in src and "if (!w.allRan && !w.partial) return null;" in src
+    # Jack, 2026-11-14: a company where some checks ran and found nothing gets '확인한 …' alone (no 이유 줄); only when no
+    # check is known to have run is nothing claimed
+    assert "if (!w.flags.length) {" in src and "if (!w.allRan && !w.partial && !some) return null;" in src
+    assert "const subText = some ? null : w.partial ? W.noneSubNoIcr :" in src
     # 영업손실은 숫자 없이 · 현금흐름표의 이자 지급액이면 그 경고 밑에 안내 (Jack, PR #68 · 2026-11-07)
     cf = run("""out = [K.warnings({ t: 'X', cls: 'kr' }, { fy: 2025, fl: { icr: 0.65 }, flRan: ['cr', 'icr', 'l3', 'imp'], flSrc: { icr: 'cf' } }).icrCf,
   K.warnings({ t: 'X', cls: 'kr' }, { fy: 2025, fl: { icr: 0.65 }, flRan: ['cr', 'icr', 'l3', 'imp'], flSrc: { icr: 'is' } }).icrCf,
@@ -484,7 +487,7 @@ out.head = C.co.warn.nonePartial; out.sub = C.co.warn.noneSubNoIcr;""", ROWS=row
     assert cf == [True, False, False, False, False, False,                     # 영업손실(숫자 없음)엔 계산 안내도 없어요 · off 는 말 없음
                   "영업손실이 나서 영업이익으로 이자를 내지 못해요.", "현금흐름표의 이자 지급액으로 계산했어요."]
     assert 'f.x < 0 || Object.is(f.x, -0) ? W.icrLoss || null' in src
-    assert src.index("if (!w.flags.length) {") < src.index("const head = w.partial ? W.nonePartial : W.none;")
+    assert src.index("if (!w.flags.length) {") < src.index("const head = w.partial || some ? W.nonePartial : W.none;")
 
 
 # ── 분할 · 무상증자로 다시 계산한 주당 배당 (Jack, PR #68 B3) ──
