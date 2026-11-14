@@ -117,17 +117,22 @@ function Bars({ rows, fmt, aria, latest = COLOR.ink, earlier = COLOR.border }) {
 function Decomp({ co, s }) {
   const D = C.co.decomp;
   if (!D.title) return null;
-  // 2026-11-14 evening (Jack): its 3-year price change (r36) was blanked for a bad day in the series while the 52주 range shows: the
-  // card keeps its title and says so in place of the numbers (a stock whose 52주 range is blanked too has no card: the header says why)
-  if (pxBadPartFor(s, co)) {
+  // 2026-11-14 evening (Jack): its 3-year price change (r36) was blanked for a bad day in the series while the 52주 range shows (a stock
+  // whose 52주 range is blanked too has no card: the header says why). The card is decided as before from the other inputs (r36 stands
+  // in: a loss, two bases or missing statements read as before); only where the numbers would be, "3년 주가 –" and the short line
+  // (review #126 round 2: the line points at a visible "–").
+  const pxPart = pxBadPartFor(s, co);
+  const d = decompose(pxPart ? { ...co, r36: 0 } : co);
+  if (pxPart && d.head) {
+    if (!D.price) return null;                 // never the numbers made with the stand-in r36
     return (
       <Card data-ui-v2="co-decomp" data-head="pxbad">
         <CardHead icon="chart-bar" tone="earn" title={D.title} />
-        <PxBadOneNote s={s} co={co} field="r36" />
+        <p data-ui-v2="co-decomp-px" style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink, { marginTop: SPACE(3) })}>{`${D.price} –`}</p>
+        <PxBadOneNote s={s} co={co} field="r36" style={{ marginTop: SPACE(1) }} />
       </Card>
     );
   }
-  const d = decompose(co);
   const head = d.head ? D.head[d.head] : null;
   // multipliers, as the old card: 3년 주가 = 이익 × 눈높이 (a true equation), each with its inputs (then → now)
   const box = (label, v, from, to, dark) => (
@@ -541,7 +546,8 @@ export function ValueTab({ load, s, store, onMore }) {
       {pxBadPartFor(s, co) && C.co.tiles.label.risk && C.co.pxBadOne && (
         <Card data-ui-v2="co-risk" data-rule="pxbad">
           <CardHead icon="umbrella" tone="risk" title={C.co.tiles.label.risk} />
-          <PxBadOneNote s={s} co={co} field="beta" />
+          <p data-ui-v2="co-risk-px" style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(2) })}>–</p>
+          <PxBadOneNote s={s} co={co} field="beta" style={{ marginTop: SPACE(1) }} />
         </Card>
       )}
       {risk.rule !== "na" && C.co.risk[risk.rule] && !pxBadFor(s, co) && (

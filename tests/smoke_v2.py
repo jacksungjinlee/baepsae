@@ -9702,8 +9702,33 @@ def scene_px_bad(R, files, width):
                 tile = page.locator('[data-ui-v2="co-tile"][data-topic="risk"]')
                 assert tile.get_attribute("data-rule") == "pxbad" and tile.locator('[data-ui-v2="tile-phrase"]').inner_text() == "–"
                 assert C["co"]["tiles"]["na"] not in page.locator('[data-ui-v2="co-tiles"]').inner_text()
+            dash = {"earn": '[data-ui-v2="co-decomp-px"]', "value": '[data-ui-v2="co-risk-px"]'}.get(ctab)
+            if dash:                                                                # 짧은 줄 바로 위에 보이는 '–' (리뷰 #126 2차)
+                d, one = page.locator(dash), page.locator(inside + ' [data-ui-v2="px-bad-one"]')
+                assert d.count() == 1 and d.inner_text().strip().endswith("–"), (t, ctab, d.inner_text() if d.count() else None)
+                assert d.bounding_box()["y"] + d.bounding_box()["height"] <= one.bounding_box()["y"] + 1, (t, ctab)
             tidy(f"과거 주가 기록 {t} {ctab or 'summary'}")
-    R.check(page, S, f"52주는 보이는 종목 ({PXBAD_PART}): 52주 막대 그대로 · 비운 숫자마다 짧은 줄 (출렁임 칸 · 주가 분해 · 출렁임 카드) · 배당 탭에는 없음", part)
+            if not ctab:                                                            # 내 기준 시트: 낮은 변동성 '–' · 그 밑에 짧은 줄 한 번 (리뷰 #126 2차)
+                fit = page.locator('[data-ui-v2="co-fit"]')
+                fit.get_by_role("button", name=C["co"]["fit"]["all"]).click()        # 기준 카드 8개 모두 보기
+                sheet = page.locator('[data-ui-v2="co-fit-sheet"]')
+                sheet.wait_for(state="visible")
+                rows = {r.get_attribute("data-card"): r for r in sheet.locator('[data-ui-v2="rank-row"]').all()}
+                low = rows["lowVol"]
+                assert low.get_attribute("data-side") == "blank" and low.inner_text().strip().endswith("–"), low.inner_text()
+                assert rows["trend"].get_attribute("data-side") in ("top", "bottom"), rows["trend"].get_attribute("data-side")   # 추세는 그대로
+                one = sheet.locator('[data-ui-v2="px-bad-one"]')
+                assert one.count() == 1 and one.inner_text().strip() == PXBAD_ONE, [one.nth(i).inner_text() for i in range(one.count())]
+                assert sheet.locator('[data-ui-v2="px-bad"]').count() == 0
+                last = max(r.bounding_box()["y"] for r in rows.values())
+                assert one.bounding_box()["y"] > last, (one.bounding_box(), last)  # 줄들 밑
+                tidy(f"과거 주가 기록 {t} 기준 카드 시트")
+                if R.shots:
+                    page.screenshot(path=os.path.join(R.shots, f"pxbad-fit-sheet-{width}.png"))
+                page.keyboard.press("Escape")
+                sheet.wait_for(state="detached")
+    R.check(page, S, f"52주는 보이는 종목 ({PXBAD_PART}): 52주 막대 그대로 · 비운 숫자마다 '–' 와 짧은 줄 (출렁임 칸 · 주가 분해 · 출렁임 카드 ·"
+            " 기준 카드 시트의 낮은 변동성) · 배당 탭에는 없음", part)
 
     def others():
         for code in ("005930", "005380", "AAPL"):

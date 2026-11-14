@@ -451,8 +451,10 @@ year after its last bad day. Repairing the history is a later PR. Gate rows:
   - "필수 종목 52주 최고·최저 (야후)" and "필수 종목 새 칸" (existing; changed with Jack's yes, 2026-11-14): a 52주 range or beta
     error blanked by a correct mark (in `krSeries.hidden`, consistent per `px_bad_problems`) is passed as a warning naming the
     stock.
-  - One correctly marked must-have: the three rows warn. Two or more: all three fail. A blank without a correct mark fails as
-    before. On 2026-11-14 none of the 296 Korean stocks worth 1조원 or more had an unexplained move (the largest named stock
+  - One correctly marked must-have: each row that has something blanked for it warns (the 52주 row only when its bad day is
+    inside the last 252 bars; a must-have with only old bad days keeps its 52주 range, so that row just passes). Two or more:
+    every such row fails. So if both must-haves have only old bad days, "52주 (야후)" passes and the mz·lz and 새 칸 rows block
+    the publish (저변동 and beta are whole-series numbers, always blanked). A blank without a correct mark fails as before. On 2026-11-14 none of the 296 Korean stocks worth 1조원 or more had an unexplained move (the largest named stock
     was worth 0.39조원). If it happens, look at its Naver chart and the KRX listing for that date first; never loosen a row.
 
 Standing daily warnings until the repair PR: "국내 시계열 하루 가격 제한폭 넘는 움직임 (경고만)" (the 18 names), and "국내

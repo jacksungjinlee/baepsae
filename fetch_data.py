@@ -4191,7 +4191,7 @@ def kr_series_check(pin, kept, kept_names, bad, jumps, published, days, ref=None
     log(f"{'  !! ' if jm else '· '}한국 시계열 하루 ±{KR_DAY_LIMIT:g}% (코넥스 ±{KONEX_DAY_LIMIT:g}%) 넘는 움직임 (넥스트레이드 차이 {PIN_PX_TOL:.0%} 빼고): "
         f"{len(jm)}종목" + (f" · {', '.join(f'{KR_JUMP_WHY[w]} {n}' for w, n in sorted(by_why.items()))} — "
                             + ", ".join(names[:JUMP_LOG_SHOW]) + (f" 외 {len(names) - JUMP_LOG_SHOW}종목" if len(names) > JUMP_LOG_SHOW else "")
-                            + " (이 종목의 52주 · 변동성 · 베타 · 낙폭 · 수익률은 다음 줄에서 비워요 · mark_px_bad · 관문이 경고해요)" if jm else ""))
+                            + " (이 종목의 숫자 중 계산 창에 그 움직임이 든 것은 다음 줄에서 비워요 · mark_px_bad · 관문이 경고해요)" if jm else ""))
     return {"v": 1, "days": int(days), "pinned": int(pin.get("recent_fixed", 0)), "pinStocks": int(pin.get("recent_stocks", 0)),
             "kept": {k: int(kept.get(k, 0)) for k in ("basis", "far", "shr")}, "keptStocks": len(kept_names),
             "bad": int(nbad), "badStocks": sorted(c for c, _, _ in bad),
@@ -4202,11 +4202,14 @@ def kr_series_check(pin, kept, kept_names, bad, jumps, published, days, ref=None
 # 2026-11-14 (Jack, Q2 (a) "this week"): "For those 18 stocks, hide every number built on the broken price history: the 52-week range,
 # 출렁임, 위험, beta, 1-year and other period returns, and the % labels on their charts. Take them out of the 추세 list on 홈 and any
 # 출렁임-based list or rule." 그 종목 = 오늘 실행의 krSeries.jump 에 있는 종목 (하루 움직임이 가격 제한폭 + 넥스트레이드 차이로 설명되지 않아요 —
-# 대개 네이버가 고치지 않은 감자 · 거래정지 뒤 재개 · 하루만 튄 봉. 날마다 바뀔 수 있어서 코드를 적어 두지 않아요). 시계열로 만든 칸(관문 파일의
-# PX_BAD_DATA: 52주 최고 · 최저 · 변동성 · 베타 · 표준오차 · 쓴 날 수 · 알파 · 1 · 3개월 · 3년 · 1년 수익률 · 샤프 · 최대 낙폭 · 상승 월 비율 ·
-# 추세 · 저변동 점수)을 모두 지우고 pxBad = 가장 최근 움직임 날짜를 달아요. 점수(add_percentiles)는 빈 칸을 빼고 매겨서 다른 종목의 추세 · 저변동
-# 순위도 이 종목 없이 나와요. corp.json(build_corp)은 같은 칸을 이 종목에서 옮겨 싣고 pxBad 를 그대로 달아요. 앱은 그 자리에 Jack 의 줄
-# "과거 주가 기록 일부에 오류가 있어서 52주 범위와 출렁임·위험 숫자는 비워 두었어요." 를 보여요. 시계열을 고치는 일은 다음 PR 이에요.
+# 대개 네이버가 고치지 않은 감자 · 거래정지 뒤 재개 · 하루만 튄 봉. 날마다 바뀔 수 있어서 코드를 적어 두지 않아요). 저녁 (Jack: "hide only the
+# numbers whose calculation window includes the bad day"): 시계열로 만든 칸(관문 파일의 PX_BAD_DATA) 중 계산 창에 그 움직임 날짜가 든 칸만 지워요 —
+# 시계열 전체 칸(PX_BAD_ALWAYS: 변동성 · 베타 · 표준오차 · 쓴 날 수 · 알파 · 3년 수익률 · 샤프 · 최대 낙폭 · 상승 월 비율 · 저변동 점수)은 늘,
+# 52주 최고 · 최저 · 1년 수익률 · 추세 점수는 마지막 252봉에, 3개월은 64봉에, 1개월은 22봉에 들 때만 (PX_BAD_WIN). pxBad = 가장 최근 움직임 날짜 ·
+# pxBadF = 지운 칸. 점수(add_percentiles)는 빈 칸을 빼고 매겨서 다른 종목의 순위도 그 칸 없이 나와요. corp.json(build_corp)은 같은 칸을 이
+# 종목에서 옮겨 싣고 pxBad · pxBadF 를 그대로 달아요. 앱은 52주까지 지운 종목에 Jack 의 줄 "과거 주가 기록 일부에 오류가 있어서 52주 범위와
+# 출렁임·위험 숫자는 비워 두었어요." 를, 52주는 보이는 종목에는 지운 숫자마다 "과거 주가 기록 일부에 오류가 있어서 이 숫자는 비워 두었어요." 를
+# 보여요. 시계열을 고치는 일은 다음 PR 이에요.
 def mark_px_bad(stocks, krs, cuts=None):
     """krSeries.jump 에 있는 국내 종목의 시계열 숫자를 비우고 pxBad · pxBadF 를 달아요 · krs["hidden"] = 표시한 종목 코드 (관문이 jump · 표시와 맞춰 봐요).
     2026-11-14 저녁 (Jack: "hide only the numbers whose calculation window includes the bad day"): 시계열 전체 칸(PX_BAD_ALWAYS)은 늘 비우고, 창이
@@ -7912,8 +7915,8 @@ def main():
     add_percentiles(us)
     # 2026-11-14 (Jack, Q2 (a)): 추세(mz) · 저변동(lz) 점수는 과거 주가 기록 오류로 비운 종목(pxBad) 없이 매겨요 (mom · vol 이 빈 칸이라 빠져요).
     # 빈 칸일 수 있는 값으로 순위를 매기니 필수 종목이 들어 있는지 크게 남겨요 — 빠지면 관문의 '필수 종목 추세 · 저변동 순위' 줄이 실패해요
-    # 리뷰 #126 (Jack 2026-11-13: 출처의 작은 문제가 모두의 발행을 막지 않게): 과거 주가 기록 오류로 맞게 표시한 필수 종목은 관문의 이 줄이 경고만
-    # (PX_BAD_MUST_FAIL 곳 이상이면 실패) · 표시 없이 빠지면 실패. 필수 종목 52주 · 새 칸 줄은 그대로 막아요 (그 예외는 Jack 의 답을 기다려요)
+    # Jack 2026-11-14 저녁 ("warn when one is affected; block the publish when two or more must-haves are affected"): 과거 주가 기록 오류로 맞게
+    # 표시한 필수 종목이 하나면 관문의 필수 종목 세 줄(이 줄 · 52주 (야후) · 새 칸)은 경고만, PX_BAD_MUST_FAIL 곳 이상이면 실패 · 표시 없이 빠지면 실패
     miss_tr = trend_rank_missing(kr)
     marked_tr = [t for t, why in miss_tr if "과거 주가 기록 오류" in why]
     log(f"{'  !! ' if miss_tr else '· '}추세(mz) {sum(1 for s in kr if _fin(s.get('mz')) is not None):,} · 저변동(lz) "
@@ -7921,7 +7924,7 @@ def main():
         f"{sum(1 for s in kr if s.get('pxBad')):,}종목 없이) · 필수 종목 "
         + ("모두 있음" if not miss_tr else "빠짐: " + ", ".join(f"{t}({why})" for t, why in miss_tr)
            + (" — 관문에서 실패해 발행하지 않아요" if len(marked_tr) < len(miss_tr) or len(marked_tr) >= PX_BAD_MUST_FAIL
-              else " — 관문의 이 줄은 경고해요 (필수 종목 52주 · 새 칸 줄은 아직 발행을 막아요)")))
+              else " — 관문의 필수 종목 줄들은 경고만 해요 (둘 이상이면 실패)")))
     roe_moves(kr, roe_before)             # v19.1f (리뷰): 로그만 — 퀄리티 점수(qz) · 2.0 ROE 하한이 얼마나 움직였는지
     # v19.1b: 배당 순위(dz)는 확인한 배당으로만 매겨요. 필수 종목은 꼭 들어 있어야 해요 (CLAUDE.md: 빈 칸일 수 있는 값으로
     # 고르거나 줄 세우면 꼭 있어야 할 종목이 들어 있는지 확인). 빠지면 여기서 이유와 함께 크게 남겨요. 관문의 '필수 종목 배당 순위'

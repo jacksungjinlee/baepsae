@@ -3069,25 +3069,57 @@ def scene_px_bad(R, files):
         assert shown() == [] and shown("px-bad-one") == []
     R.check(page, S, f"기업분석 {FULL} (52주까지): 베타 줄 자리에 그 줄 한 번 · 52주 위치 · 주가 분해 없음 · 기업 비교 밑에 한 번 · 005930 은 그대로", corp_full)
 
+    def above(sel, one_i):
+        """sel 의 보이는 칸이 i 번째 보이는 짧은 줄 바로 위 (사이에 다른 것 없이 · 20px 안)에 있는지."""
+        return page.evaluate("""([sel, i]) => { const vis = (e) => e.getBoundingClientRect().height > 0;
+          const d = [...document.querySelectorAll(sel)].filter(vis)[0], l = [...document.querySelectorAll('[data-fix="px-bad-one"]')].filter(vis)[i];
+          if (!d || !l) return [false, !!d, !!l];
+          const a = d.getBoundingClientRect(), b = l.getBoundingClientRect();
+          return [d.nextElementSibling === l && a.bottom <= b.top + 1 && b.top - a.bottom < 20, d.innerText.trim(), Math.round(b.top - a.bottom)]; }""", [sel, one_i])
+
     def corp_part():
         body = corp(PART)
         assert shown() == [], shown()
         got = shown("px-bad-one")
-        assert [x[0] for x in got] == [PX_BAD_ONE, PX_BAD_ONE] and all(x[1] >= 12 for x in got), got        # 베타 줄 자리 · 주가 분해 안
+        dec = page.locator('[data-px="r36"]').count() == 1                      # 주가 분해가 숫자를 보였을 회사 (적자 · 기준이 다름 · 자료 없음은 예전처럼)
+        assert dec or real, "만든 시험 회사의 주가 분해가 숫자 칸이 아니에요"
+        want = [PX_BAD_ONE, PX_BAD_ONE] if dec else [PX_BAD_ONE]
+        assert [x[0] for x in got] == want and all(x[1] >= 12 for x in got), got        # 베타 줄 자리 · 주가 분해 안
         for kept in ("52주 주가 위치", "주가는 무엇으로 움직였나", "52주 범위("):
             assert kept in body, kept
         assert re.search(r"3개월\s*[+−-]?\d", body), "3개월 % 가 없어요"
-        for gone in ("연 변동성", "적자 구간이 있어서", "이익(EPS) 변화"):
-            assert gone not in body, gone
+        assert not re.search(r"연 변동성 [0-9]", body), "연 변동성 숫자가 남아 있어요"
+        # 리뷰 #126 2차: 짧은 줄이 가리키는 숫자가 보이게 — 바로 위에 'β — · 연 변동성 —' · '주가 (3년) —'
+        ok = above('[data-px="beta"]', 0)
+        assert ok[0] and ok[1] == "β — · 연 변동성 —", ok
+        if dec:
+            ok = above('[data-px="r36"]', 1)
+            assert ok[0] and ok[1] == "주가 (3년) —", ok
+            for gone in ("적자 구간이 있어서", "이익(EPS) 변화"):
+                assert gone not in body, gone
         at = body.index(name(PART))
         assert at < body.index(PX_BAD_ONE, at) < body.index("투자지표"), "짧은 줄이 회사 이름과 투자지표 사이에 있지 않아요"
-        assert body.index("주가는 무엇으로 움직였나") < body.rindex(PX_BAD_ONE)
+        if dec:
+            assert body.index("주가는 무엇으로 움직였나") < body.rindex(PX_BAD_ONE)
+        if R.shots:
+            page.locator('[data-px="beta"]').first.scroll_into_view_if_needed()
+            page.screenshot(path=os.path.join(R.shots, "pxbad-corp-part.png"))
         page.get_by_text("같은 업종과 비교", exact=True).first.click()
         see(page, "지표별 나란히 보기")
         got = shown("px-bad-one")
-        if FULL not in [c["t"] for c in f["corp.json"]["companies"] if c.get("s") == next(x for x in f["corp.json"]["companies"] if x["t"] == PART).get("s")][:3]:
-            assert len(got) == 1 and got[0][0] == PX_BAD_ONE, got
-    R.check(page, S, f"기업분석 {PART} (52주는 보임): 52주 위치 · 3개월 % · 주가 분해 제목 그대로 · 베타 줄 자리와 주가 분해 안에 짧은 줄 · 비교 표 밑에 한 번", corp_part)
+        assert shown() == [] or FULL in [c["t"] for c in f["corp.json"]["companies"] if c.get("s") == next(x for x in f["corp.json"]["companies"] if x["t"] == PART).get("s")], shown()
+        assert len(got) >= 1 and all(x[0] == PX_BAD_ONE and x[1] >= 12 for x in got), got
+        # 리뷰 #126 2차: 그 줄은 표 밑이 아니라 그 회사 칸의 '베타' 줄 바로 밑 (휴대폰: 회사 칸마다 · 넓은 화면: 베타 줄 밑 그 회사 열)
+        att = page.evaluate("""() => [...document.querySelectorAll('[data-fix="px-bad-one"]')].filter((e) => e.getBoundingClientRect().height > 0)
+          .map((e) => { const p = e.previousElementSibling, card = e.closest('div[style*="border-radius: 10px"]');
+            return [p ? p.innerText.replace(/\\s+/g, ' ').trim() : null, card ? card.innerText.split('\\n')[0].trim() : null]; })""")
+        assert all(a[0] and a[0].startswith("베타 (시장 대비 출렁임)") and a[0].endswith("—") for a in att), att
+        assert att[0][1] and att[0][1].startswith(name(PART)), att                    # 첫 칸 (기준 회사) 안
+        if R.shots:
+            page.locator('[data-fix="px-bad-one"]').first.scroll_into_view_if_needed()
+            page.screenshot(path=os.path.join(R.shots, "pxbad-compare-part.png"))
+    R.check(page, S, f"기업분석 {PART} (52주는 보임): 52주 위치 · 3개월 % 그대로 · 'β — · 연 변동성 —' 와 '주가 (3년) —' 바로 밑에 짧은 줄 ·"
+            " 비교에서는 그 회사 칸의 베타 줄 바로 밑", corp_part)
 
     def stock_row():
         page.goto("about:blank")
@@ -3099,7 +3131,7 @@ def scene_px_bad(R, files):
         box.fill("005930")
         page.get_by_text("005930", exact=True).first.click()
         see(page, "52주 범위:")                                                 # 다른 종목: 52주 막대 그대로 ('52주 범위: ₩…')
-        assert shown() == [] and shown("px-bad-one") == []
+        assert shown() == [] and shown("px-bad-one") == [] and page.locator('[data-px="tiles"]').count() == 0
         box.fill(FULL)
         page.get_by_text(FULL, exact=True).first.click()
         got = shown()
@@ -3110,10 +3142,31 @@ def scene_px_bad(R, files):
         got = shown("px-bad-one")
         assert len(got) == 1 and got[0][0] == PX_BAD_ONE and got[0][1] >= 12 and shown() == [], got
         see(page, "52주 범위:")                                                 # 52주 막대 그대로
+        # 리뷰 #126 2차: 짧은 줄은 비운 칸만 모은 줄 바로 밑 — 그 줄의 칸은 모두 '–' 이고 외국인 같은 다른 빈 칸은 섞이지 않아요
+        grid = page.locator('[data-px="tiles"]')
+        assert grid.count() == 1
+        ok = above('[data-px="tiles"]', 0)
+        assert ok[0], ok
+        cells = grid.evaluate("(g) => [...g.children].map((e) => [e.children[0].innerText.trim(), e.children[1].innerText.trim()])")
+        assert cells and all(v == "–" for _, v in cells), cells
+        names = [k for k, _ in cells]
+        assert not any(k.startswith("외국인") for k in names) and {"3y α", "샤프(3y)", "최대낙폭"} <= set(names), names
+        if R.shots:
+            grid.scroll_into_view_if_needed()
+            page.screenshot(path=os.path.join(R.shots, "pxbad-stock-row-part.png"))
         page.get_by_role("button", name="EN", exact=True).first.click()
         see(page, "Sharpe 3y")
         assert shown() == [] and shown("px-bad-one") == [], (shown(), shown("px-bad-one"))   # 영어 화면: 승인된 영어 글이 없어 줄 없이
-    R.check(page, S, f"종목 고르기: {FULL} 은 52주 막대 자리에 그 줄 · {PART} 는 52주 막대 그대로 + 칸 밑에 짧은 줄 · 영어 화면은 줄 없이 · 005930 그대로", stock_row)
+        assert page.locator('[data-px="tiles"]').count() == 0                   # 영어 화면: 칸은 예전처럼 한 줄에 ('–')
+        see(page, "52w range:")                                                 # 52주는 보이는 종목: 막대 그대로
+        box = page.get_by_placeholder("Search name/ticker")
+        box.fill(FULL)
+        page.get_by_text(FULL, exact=True).first.click()
+        see(page, "Sharpe 3y")
+        assert shown() == [] and shown("px-bad-one") == [], (shown(), shown("px-bad-one"))
+        assert "52w range" not in page.locator("body").inner_text(), "영어 화면에 52주 막대가 남아 있어요"   # 리뷰 #126 2차: 되살린 확인
+    R.check(page, S, f"종목 고르기: {FULL} 은 52주 막대 자리에 그 줄 · {PART} 는 52주 막대 그대로 + 비운 칸만 모은 줄 바로 밑에 짧은 줄 · 영어 화면은"
+            " 줄 없이 (52주까지 비운 종목은 막대도 없이) · 005930 그대로", stock_row)
     ctx.close(); srv.shutdown()
 
 

@@ -208,10 +208,28 @@ def test_company_page_old_bad_day_keeps_the_52_week_range_and_says_it_per_number
       const inside = (html, id) => { const i = html.indexOf('data-ui-v2="' + id + '"'); return i >= 0 && html.indexOf(ONE, i) > i; };
       out = { tabs: one(LOAD, CALM_T), tile: inside(x, 'co-tiles'), decomp: /data-ui-v2="co-decomp" data-head="pxbad"/.test(e) && inside(e, 'co-decomp'),
         decompNums: has(e, 'co-decomp-eq'), risk: /data-ui-v2="co-risk" data-rule="pxbad"/.test(v) && inside(v, 'co-risk'),
-        riskTitle: text(v).includes(C2.co.tiles.label.risk), band: has(v, 'co-risk-band') };""", CALM_T=CALM_T)
+        riskTitle: text(v).includes(C2.co.tiles.label.risk), band: has(v, 'co-risk-band'),
+        dashes: [text(e).includes(C2.co.decomp.price + ' –'), has(v, 'co-risk-px') && /data-ui-v2="co-risk-px"[^>]*>–</.test(v)],
+        order: [e.indexOf('data-ui-v2="co-decomp-px"') < e.indexOf(ONE), v.indexOf('data-ui-v2="co-risk-px"') < v.indexOf(ONE)] };""", CALM_T=CALM_T)
     assert [(t["n"], t["k"], t["range"]) for t in got["tabs"]] == [(0, 1, True), (0, 1, True), (0, 1, True), (0, 0, True)], got["tabs"]
     assert got["tile"] and got["decomp"] and not got["decompNums"] and got["risk"] and got["riskTitle"] and not got["band"]
+    assert got["dashes"] == [True, True] and got["order"] == [True, True]          # 짧은 줄 바로 위에 '3년 주가 –' · '–' (리뷰 #126 2차)
     assert not any(t["na"] for t in got["tabs"])                                  # '자료가 없어요' 가 아니에요
+
+
+def test_decomposition_card_keeps_its_previous_rules_for_a_stock_that_keeps_its_52_week_range():
+    """리뷰 #126 2차: 52주는 보이는 종목의 주가 분해는 예전처럼 다른 입력으로 정하고 (적자 → 그 문장 · 재무 자료 없음 → 자료가 없어요), 숫자가 나왔을
+    자리에만 짧은 줄. 3년 주가가 비었다는 이유만으로 늘 나오지 않아요."""
+    got = run("""
+      const withCo = (patch) => mk(DATA, { ...CORP, companies: CORP.companies.map((c) => (c.t === CALM_T ? { ...c, ...patch } : c)) });
+      const earn = (load) => renderToStaticMarkup(h(CT.EarnTab, { load, s: load.byT.get(CALM_T), onMore() {} }));
+      const head = (x) => { const m = /data-ui-v2="co-decomp" data-head="([^"]+)"/.exec(x); return m ? m[1] : null; };
+      const a = earn(LOAD), b = earn(withCo({ eps: -120 })), c = earn(withCo({ eps: null }));
+      out = { a: [head(a), count(a, ONE)], loss: [head(b), count(b, ONE), text(b).includes(C2.co.decomp.none || '@@')],
+        miss: [head(c), count(c, ONE), text(c).includes(C2.co.tiles.na)] };""", CALM_T=CALM_T)
+    assert got["a"] == ["pxbad", 1]
+    assert got["loss"][:2] == ["loss", 0] and got["loss"][2]                       # 적자: 예전 문장 (숫자가 없는 칸)
+    assert got["miss"][:2] == ["missing", 0] and got["miss"][2]                    # 재무 자료 없음: 예전처럼 자료가 없어요
 
 
 def test_the_risk_tile_is_held_at_a_dash_and_carries_the_short_line_only_when_the_52_week_range_shows():
@@ -277,7 +295,8 @@ def test_my_criteria_scores_and_plans_leave_them_out_never_as_zero():
 OLDVIEW = """
   const view = (corp, t) => renderToStaticMarkup(h(OLD.CompanyView, { data: corp, t, heldInfo: null, onBack() {}, onOpen() {}, onCompare() {}, setExplain() {} }));
   const cmp = (corp, t) => renderToStaticMarkup(h(OLD.CompareView, { data: corp, baseT: t, onOpen() {}, onBack() {}, setExplain() {} }));
-  const look = (v) => ({ n: count(v, LINE), k: count(v, ONE), beta: /연 변동성/.test(text(v)), w52: text(v).includes('52주 주가 위치'),
+  const look = (v) => ({ n: count(v, LINE), k: count(v, ONE), beta: /연 변동성 [0-9]/.test(text(v)), dash: text(v).includes('β — · 연 변동성 —'),
+    d3: text(v).includes('주가 (3년) —'), w52: text(v).includes('52주 주가 위치'),
     decomp: text(v).includes('주가는 무엇으로 움직였나'), decompNums: text(v).includes('이익(EPS) 변화'), loss: text(v).includes('적자 구간이 있어서'),
     m3: /3개월\\s*[+−-]?\\d/.test(text(v)), mom: /모멘텀\\n/.test(text(v)), lowv: /저변동\\n/.test(text(v)) });
 """
@@ -287,23 +306,30 @@ def test_old_app_company_view_full_line_or_a_line_per_blanked_number():
     got = run(OLDVIEW + """
       out = { bad: look(view(CORP, BAD_T)), mid: look(view(CORP, MID_T)), calm: look(view(CORP, CALM_T)), was: look(view(OCORP, CALM_T)), sam: look(view(CORP, '005930')) };
       const x = view(CORP, CALM_T);
-      out.at = [x.indexOf(ONE), x.indexOf('투자지표')];""", BAD_T=BAD_T, MID_T=MID_T, CALM_T=CALM_T)
-    assert got["bad"] == {"n": 1, "k": 0, "beta": False, "w52": False, "decomp": False, "decompNums": False, "loss": False, "m3": False, "mom": False,
-                          "lowv": False}, got["bad"]
+      out.at = [x.indexOf(ONE), x.indexOf('투자지표')]; out.dashAt = [x.indexOf('β — · 연 변동성 —')];
+      out.d3At = x.indexOf('주가 (3년) —'); out.at2 = x.lastIndexOf(ONE);""", BAD_T=BAD_T, MID_T=MID_T, CALM_T=CALM_T)
+    assert got["bad"] == {"n": 1, "k": 0, "beta": False, "dash": False, "d3": False, "w52": False, "decomp": False, "decompNums": False, "loss": False,
+                          "m3": False, "mom": False, "lowv": False}, got["bad"]
     assert got["mid"]["n"] == 1 and got["mid"]["k"] == 0 and got["mid"]["m3"] and not got["mid"]["w52"]   # 3개월은 그대로 (64봉 밖)
     calm = got["calm"]                                                              # 52주 위치 · 3개월 · 모멘텀 그대로 · 베타 줄과 주가 분해 자리에 짧은 줄
-    assert calm == {"n": 0, "k": 2, "beta": False, "w52": True, "decomp": True, "decompNums": False, "loss": False, "m3": True, "mom": True,
-                    "lowv": False}, calm
+    assert calm == {"n": 0, "k": 2, "beta": False, "dash": True, "d3": True, "w52": True, "decomp": True, "decompNums": False, "loss": False, "m3": True,
+                    "mom": True, "lowv": False}, calm                              # 짧은 줄 바로 위에 그 숫자의 이름과 '—'
     assert 0 < got["at"][0] < got["at"][1]
+    assert got["dashAt"][0] < got["at"][0] and got["d3At"] < got["at2"]
     assert got["was"]["beta"] and got["was"]["decompNums"] and got["was"]["lowv"] and got["was"]["n"] == got["was"]["k"] == 0
     assert got["sam"]["n"] == got["sam"]["k"] == 0 and got["sam"]["beta"] and got["sam"]["w52"]
 
 
 def test_old_app_compare_table_says_it_once():
     got = run(OLDVIEW + """
-      out = { bad: [count(cmp(CORP, BAD_T), LINE), count(cmp(CORP, BAD_T), ONE)], calm: [count(cmp(CORP, CALM_T), LINE), count(cmp(CORP, CALM_T), ONE)],
-        sam: [count(cmp(CORP, '005930'), LINE), count(cmp(CORP, '005930'), ONE)] };""", BAD_T=BAD_T, CALM_T=CALM_T)
-    assert got["bad"] == [1, 0] and got["calm"] == [0, 1] and got["sam"] == [0, 0]
+      const c = cmp(CORP, CALM_T);
+      out = { bad: [count(cmp(CORP, BAD_T), LINE), count(cmp(CORP, BAD_T), ONE)], calm: [count(c, LINE), count(c, ONE)],
+        sam: [count(cmp(CORP, '005930'), LINE), count(cmp(CORP, '005930'), ONE)],
+        row: /<tr data-px="beta">/.test(c), afterBeta: c.indexOf('<tr data-px="beta">') > c.lastIndexOf('베타 (시장 대비 출렁임)'),
+        mob: c.indexOf(ONE) > c.indexOf('베타 (시장 대비 출렁임)') && c.indexOf(ONE) < c.indexOf('deskOnly') };""", BAD_T=BAD_T, CALM_T=CALM_T)
+    # 휴대폰 칸(그 회사 칸의 베타 줄 바로 밑)과 넓은 화면 표(베타 줄 바로 밑 줄) 에 한 번씩 — 화면에는 둘 중 하나만 보여요 (smoke 가 봐요)
+    assert got["bad"] == [1, 0] and got["calm"] == [0, 2] and got["sam"] == [0, 0]
+    assert got["row"] and got["afterBeta"] and got["mob"]
 
 
 def test_old_app_market_map_leaves_out_only_a_blanked_3_month_return():

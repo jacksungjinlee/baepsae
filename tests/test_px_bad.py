@@ -14,6 +14,7 @@ when many stocks newly break in one run … 2. Old bad days: hide only the numbe
 - 관문: '과거 주가 기록 오류 종목의 숫자 비움 (pxBad)' · '새로 생긴 과거 주가 기록 오류 종목 수' · '필수 종목 추세 · 저변동 순위 (mz · lz)'
   (새 줄) · '필수 종목 52주 최고·최저 (야후)' · '필수 종목 새 칸' (예전 줄: 표시가 맞는 필수 종목 하나만 경고로 넘겨요 — Jack 2026-11-14)."""
 import copy
+import datetime
 import inspect
 import json
 import math
@@ -403,6 +404,46 @@ def test_gate_fails_when_a_named_stock_still_shows_a_number_or_the_marks_disagre
     assert MUST_NAME not in failed_names(rep)
 
 
+# 리뷰 #126 2차 (자잘한 것): 관문의 달력 경계는 '이 일수 안' (age <= n) — 경계 날은 안쪽, 하루 더 오래되면 바깥쪽. 그리고 짧은 창을 비웠으면 긴 창도.
+WIN = {w: [k for k in V.PX_BAD_DATA if k in ks] for w, ks in V.PX_BAD_WIN.items()}
+LONGER = {"y": [], "q": ["y"], "m": ["q", "y"]}
+PX_DAY = "2026-11-13"
+
+
+def ago(n):
+    return (V.day(PX_DAY) - datetime.timedelta(days=n)).isoformat()
+
+
+def test_the_calendar_bounds_are_the_ones_agreed_and_never_longer_than_the_window_can_be():
+    """340 · 85 · 28 일: 251 · 63 · 21 봉 앞은 거래일이 한 주에 많아야 5일이라 351 · 88 · 29 일보다 가까울 수 없어요 — 경계가 그보다 짧으면
+    그 안의 움직임은 늘 창 안이에요 (관문이 맞는 발행을 막지 않아요)."""
+    assert V.PX_BAD_WIN_IN == {"y": 340, "q": 85, "m": 28}
+    for w, n in V.PX_BAD_WIN_IN.items():
+        assert n <= (V.PX_BAD_WIN_BARS[w] - 1) * 7 // 5, (w, n)
+
+
+@pytest.mark.parametrize("w", ["y", "q", "m"])
+def test_the_calendar_bound_day_is_inside_and_the_next_day_is_outside(w):
+    n = V.PX_BAD_WIN_IN[w]
+    f = OLD + [k for x in LONGER[w] for k in WIN[x]]                             # 긴 창은 비웠고 이 창(w)은 보여요
+    px = V.day(PX_DAY)
+    at, past = V.px_bad_fields_problems("200110", f, ago(n), px), V.px_bad_fields_problems("200110", f, ago(n + 1), px)
+    assert at == [f"200110 움직임 {ago(n)} 가 기준일에서 {n}일 — {w} 창 칸을 비워야 해요"], at          # age == n: 안쪽 (<=)
+    assert past == [], past                                                                            # age == n + 1: 바깥쪽
+    assert V.px_bad_fields_problems("200110", f + WIN[w], ago(n), px) == []                          # 그 창도 비우면 맞아요
+
+
+@pytest.mark.parametrize("on,ok", [
+    ([], True), (["y"], True), (["y", "q"], True), (["y", "q", "m"], True),
+    (["q"], False), (["m"], False), (["q", "m"], False), (["y", "m"], False)])
+def test_a_short_window_is_never_hidden_without_the_longer_one(on, ok):
+    """1개월을 비웠으면 3개월도, 3개월을 비웠으면 1년도 (짧은 창 안의 날은 긴 창 안에도 있어요). 오래된 움직임(400일)이라 달력 점검은 끼어들지 않아요."""
+    f = OLD + [k for w in on for k in WIN[w]]
+    got = V.px_bad_fields_problems("200110", f, ago(400), V.day(PX_DAY))
+    short = "200110 pxBadF 의 짧은 창만 비웠어요 (1개월 ⇒ 3개월 ⇒ 1년)"
+    assert (got == []) if ok else (got == [short]), (on, got)
+
+
 def test_gate_value_names_the_problem():
     cur, prev, final = marked_pair()
     next(s for s in cur["data"]["stocks"] if s["t"] == "200100")["hi"] = 6760.0
@@ -525,6 +566,17 @@ def test_two_marked_must_haves_fail_even_if_one_bad_day_is_old():
     cur, prev, final, hilo = must_check([["005930", "2026-01-02", 60.0, "spike"], ["005380", "2024-01-02", -45.0, "other"]])
     rep = check(cur, prev, final, hilo=hilo)
     assert {MUST_NAME, HILO_NAME, NEWF_NAME} <= failed_names(rep), failed_names(rep)
+
+
+def test_two_must_haves_with_only_old_bad_days_keep_their_52_week_range_and_the_other_two_rows_block():
+    """리뷰 #126 2차 (RUNBOOK 바로잡기): 두 필수 종목 모두 움직임이 252봉보다 오래되면 52주는 그대로라 '52주 (야후)' 줄은 통과하고 (견줄 52주가 있어요),
+    mz·lz 줄 (저변동 점수) 과 새 칸 줄 (베타 표준오차) 이 막아요."""
+    cur, prev, final, hilo = must_check([["005930", "2024-01-02", 60.0, "spike"], ["005380", "2024-03-04", -45.0, "other"]])
+    rep = check(cur, prev, final, hilo=hilo)
+    by = {x["t"]: x for x in cur["data"]["stocks"]}
+    assert by["005930"]["pxBadF"] == OLD and by["005380"]["pxBadF"] == OLD
+    assert row(rep, HILO_NAME)[3] == "PASS", row(rep, HILO_NAME)
+    assert {MUST_NAME, NEWF_NAME} <= failed_names(rep), failed_names(rep)
 
 
 @pytest.mark.parametrize("how", ["corp mark missing", "left beta", "corp left betaSE", "not hidden", "other date"])
