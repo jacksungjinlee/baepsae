@@ -78,7 +78,7 @@ from validate_data import PIN_PX_TOL, PIN_SHR_TOL, PIN_REF_TOL, KR_DAY_LIMIT, KO
 # 2026-11-14 (Jack, Q2 (a)): 그 움직임이 있는 종목에서 비우는 칸 목록도 관문 파일에 있어요 (관문이 같은 목록으로 비었는지 봐요)
 from validate_data import PX_BAD_DATA, PX_BAD_MUST_FAIL, PX_BAD_WIN, PX_BAD_WIN_BARS, PX_BAD_ALWAYS
 # 2026-11-14 (Q5 리뷰 S1 · S2): 외국 회사 검사의 '맞춰 볼 값이 없음' 스위치와 그 사유 글, S&P 500 목록을 믿을 최소 겹침도 관문 파일에 있어요
-from validate_data import US_FGN_NOCMP, US_FGN_NOCMP_KIND, US_FGN_NOCMP_WHY, US_SP500_MIN
+from validate_data import US_FGN_NOCMP, US_FGN_NOCMP_KIND, US_FGN_NOCMP_WHY, US_FGN_NOREC_WHY, US_FGN_NOREC, US_SP500_MIN, US_SP500_MAX
 
 # ────────────────────────────────────────────────────────────
 # 설정
@@ -143,7 +143,9 @@ assert US_FOREIGN <= US_NOT_ETF, "외국 회사 목록(US_FOREIGN)은 EXTRA_US �
 # 야후가 나라를 주지 않은 S&P 500 밖 회사는 외국 회사로 보지 않고 크게 남겨요 (#114 의 '통화 모름'과 같은 뜻 · 관문 경고 · 다음 실행이 다시 물어요).
 US_HOME = frozenset({"united states", "united states of america", "usa", "us", "puerto rico"})   # 푸에르토리코: 미국 영토 · 10-K · 달러 (BPOP)
 # 야후 짧은 이름은 31자에서 잘려요 ('KANZHUN LIMITED - American D'): 끝에서 잘린 'American Depositary' 의 앞부분도 예탁증서 이름으로 봐요 (리뷰 N4)
-US_ADR_NAME = re.compile(r"american deposit|american d(?:e(?:p(?:o(?:s(?:i(?:t(?:a(?:r(?:y)?)?)?)?)?)?)?)?)?\s*$|\bADRs?\b|\bADSs?\b", re.I)
+# 더 짧게 잘린 ' - Americ' 도 (리뷰 2차 N4) — ' - ' 뒤에서만이라 'Bank of America' 같은 이름은 아니에요.
+US_ADR_NAME = re.compile(r"american deposit|american d(?:e(?:p(?:o(?:s(?:i(?:t(?:a(?:r(?:y)?)?)?)?)?)?)?)?)?\s*$"
+                         r"|\s-\s+am(?:e(?:r(?:i(?:c(?:a(?:n)?)?)?)?)?)?\s*$|\bADRs?\b|\bADSs?\b", re.I)
 # 2026-11-14 (리뷰): 더한 28곳의 이름은 야후 긴 이름(longName)으로 — 짧은 이름은 31자에서 잘리고 'Sponsored' 같은 꼬리가 붙어요 ('British American
 # Tobacco  Indus'). 예전부터 있던 종목의 이름은 그대로예요 (짧은 이름).
 US_ADDED_LONG_NAME = frozenset(EXTRA_US_ADDED)
@@ -7436,7 +7438,9 @@ def us_foreign_cuts(rec, info, div12, days=US_FOREIGN_DIV_DAYS):
     if rec.get("per") is not None:
         pe = _fin(i.get("trailingPE"))
         r = _fold(pe, pe_c)
-        if r is None:
+        if pe and pe > 0 and ni is not None and ni <= 0:   # 리뷰 2차 S1: 순이익이 0 이하인데 야후 PER 은 양수 — 부호가 어긋나요 (맞지 않음)
+            out["per"] = f"주가 ÷ 주당순이익 {pe:.2f} 인데 보통주 몫 순이익 {ni:,.0f} (0 이하) — 부호가 맞지 않음"
+        elif r is None:
             out["per"] = US_FGN_NOCMP_WHY["per"]          # 맞춰 볼 값이 없음 (nocompare)
         elif r > US_FOREIGN_BAND["per"]:
             out["per"] = f"주가 ÷ 주당순이익 {pe:.2f} ↔ 시가총액 ÷ 순이익 {pe_c:.2f} ({r:.2f}배)"
@@ -7452,7 +7456,7 @@ def us_foreign_cuts(rec, info, div12, days=US_FOREIGN_DIV_DAYS):
     if dy is not None:
         px = _fin(rec.get("price"))
         if div12 is None or not (px and px > 0):
-            out["dy"] = US_FGN_NOCMP_WHY["dy"]            # 맞춰 볼 값이 없음 (nocompare · 0% 도 — 리뷰 N3)
+            out["dy"] = US_FGN_NOREC_WHY                  # 배당 기록 · 가격을 읽지 못함 (norecord · 0% 도 · 스위치와 상관없이 늘 비워요)
         else:
             tdy = 100.0 * div12 / px
             r = _fold(dy, tdy)
@@ -7578,12 +7582,14 @@ def log_us_foreign_set(fs, sp500, floor=US_FOREIGN):
 
 
 def us_fgn_kind(f, why, mode=None):
-    """비운 칸 하나의 종류 (리뷰 S1 · data.json fgnCut 의 값): currency = 재무제표가 달러인지 확인되지 않음 · 맞춰 볼 값이 없으면 스위치
-    (validate_data.US_FGN_NOCMP) 가 정한 종류 (line → nocompare · own → nocompare-own · keep → None = 비우지 않아요) · 나머지는 mismatch
-    (맞춰 봤는데 달라요). (순수 함수)"""
+    """비운 칸 하나의 종류 (리뷰 S1 · data.json fgnCut 의 값): currency = 재무제표가 달러인지 확인되지 않음 · norecord = 배당 기록이나 가격을
+    읽지 못한 배당수익률 (스위치와 상관없이 늘 비워요) · PER · PBR 을 회사 자기 숫자로 맞춰 볼 수 없으면 스위치(validate_data.US_FGN_NOCMP)가
+    정한 종류 (line → nocompare · own → nocompare-own · keep → None = 비우지 않아요) · 나머지는 mismatch (맞춰 봤는데 달라요 · 부호가 어긋남). (순수 함수)"""
     mode = US_FGN_NOCMP if mode is None else mode
     if why.startswith(US_FOREIGN_CUR_WHY):
         return "currency"
+    if f == "dy" and why == US_FGN_NOREC_WHY:
+        return US_FGN_NOREC                        # 리뷰 2차 S1: 우리 쪽 자료가 빠진 날 — 스위치와 상관없이 비워요 (Jack 11-13)
     if why == US_FGN_NOCMP_WHY.get(f):
         return US_FGN_NOCMP_KIND[mode]
     return "mismatch"
@@ -7598,7 +7604,8 @@ def us_foreign_check(out, cache, data, us_px_date, no_info=frozenset(), foreign=
     않아서 비워 두었어요.' 를 붙여요 · currency = 재무제표 통화를 확인하지 못함).
     done(dict, 리뷰 N1): 끝까지 본 종목(seen) · 확인한 종목(checked) · 비운 칸(cut)을 가면서 담아요 — 중간에 멈추면 fetch_us 가 이것으로 이미 본 종목의
     줄과 표시를 지키고 나머지만 비워요 (us_foreign_stopped).
-    2026-11-14 (리뷰 S1): 칸마다 종류(us_fgn_kind)를 표시에 적어요 — mismatch · currency · nocompare(맞춰 볼 값이 없음). nocompare 칸은 스위치
+    2026-11-14 (리뷰 S1): 칸마다 종류(us_fgn_kind)를 표시에 적어요 — mismatch · currency · norecord(배당 기록 · 가격을 읽지 못함 · 늘 비워요) ·
+    nocompare(회사 자기 숫자로 PER · PBR 을 맞춰 볼 수 없음). nocompare 칸은 스위치
     nocmp (기본 validate_data.US_FGN_NOCMP) 를 따라요: line · own 은 비우고 표시, keep 은 비우지 않고 반환의 kept 에 적어요.
     반환에 kind = {티커: {칸: 종류}} (표시와 같아요) · kept · nocmp 도 담아요."""
     nocmp = US_FGN_NOCMP if nocmp is None else nocmp
@@ -7641,6 +7648,10 @@ def us_foreign_check(out, cache, data, us_px_date, no_info=frozenset(), foreign=
                                                 for f, ts in by_f.items()))
     for t, f, why in cut:
         log(f"     {t} {names[f]}: {why} [{kind.get(t, {}).get(f, '?')}]")
+    nr = sorted(t for t, g in kind.items() if g.get("dy") == US_FGN_NOREC)
+    if nr:
+        log(f"  !! 배당 기록(다운로드의 Dividends 칸) · 가격을 읽지 못해 비운 배당수익률 {len(nr)}곳 (norecord · 우리 쪽 자료가 빠졌어요 — 관문 경고): "
+            + ", ".join(nr))
     nc = sorted(f"{t} {names[f]}" for t, g in kind.items() for f, k in g.items() if k.startswith("nocompare"))
     log(f"{'  !! ' if nc else '· '}그중 맞춰 볼 값이 없어 비운 칸 (nocompare · 스위치 {nocmp}: 야후 숫자가 맞을 수도 있어요 — Jack 에게 묻는 중) "
         f"{len(nc)}칸" + (f": {', '.join(nc)}" if nc else ""))
@@ -7843,12 +7854,12 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None):
     # 2026-11-14 (리뷰 S2): S&P 500 목록은 오늘 가격을 받은 종목과 US_SP500_MIN 곳 넘게 겹칠 때만 믿어요 (목록 칸 이름이 바뀌어 티커 대신 다른
     # 글이 들어오거나 목록이 빈 날 · S&P 500 회사를 가려내지 못하면 미국 밖에 본사를 둔 미국 회사의 맞는 배당수익률이 비어요)
     sp_in = len(sp500 & {r["t"] for r in out}) if sp500 is not None else 0
-    sp_ok = sp500 is not None and sp_in >= US_SP500_MIN
+    sp_ok = sp500 is not None and sp_in >= US_SP500_MIN and len(sp500) <= US_SP500_MAX   # 리뷰 2차 N3: 너무 큰 목록도 믿지 않아요
     sp_use = sp500 if sp_ok else None
     sp_rec = {"n": len(sp500) if sp500 is not None else None, "inList": sp_in, "ok": sp_ok}
     if not sp_ok:
         log(f"  !! S&P 500 목록을 쓸 수 없어요 (" + ("읽지 못함" if sp500 is None else f"목록 {len(sp500):,}곳 · 오늘 미국 목록과 겹침 {sp_in:,}곳")
-            + f" — {US_SP500_MIN}곳 아래) → 오늘은 본사 나라 규칙을 쓰지 않고 손으로 정한 21곳 · 재무제표 통화가 달러가 아닌 회사 · 어제 발행한 "
+            + f" — 겹침 {US_SP500_MIN}곳 이상 · 목록 {US_SP500_MAX}곳 이하여야 해요) → 오늘은 본사 나라 규칙을 쓰지 않고 손으로 정한 21곳 · 재무제표 통화가 달러가 아닌 회사 · 어제 발행한 "
             f"외국 회사 목록({len(prev_fgn) if isinstance(prev_fgn, dict) else 0}곳)만 맞춰 봐요 (관문 경고)")
     else:
         log(f"· S&P 500 목록 {len(sp500):,}곳 · 오늘 미국 목록과 겹침 {sp_in:,}곳 (외국 회사 판별에 써요)")
@@ -8731,7 +8742,8 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                        "크기, inList 오늘 미국 목록과 겹침, ok 믿었는지 (400곳 아래면 본사 나라 규칙을 쓰지 않은 날)}"),
          "usExtraMissing": "손으로 더한 미국 종목(EXTRA_US) 중 오늘 목록에 없는 티커 → 빠진 이유",
          "fgnCut": ("미국 상장 외국 회사의 종목 칸: 회사 합계와 맞지 않아 비운 칸 {per · pbr · dy: mismatch 맞춰 봤는데 맞지 않음 · currency 재무제표 "
-                    "통화를 확인하지 못함 · nocompare 맞춰 볼 값이 없음 (순이익 · ROE · 배당 기록 · 가격) · nocompare-own 같은 뜻, 스위치 own 일 때} "
+                    "통화를 확인하지 못함 · norecord 배당 기록 · 가격을 읽지 못한 배당수익률 · nocompare 회사 숫자로 PER · PBR 을 맞춰 볼 수 없음 (적자 · ROE 없음) · "
+                    "nocompare-own 같은 뜻, 스위치 own 일 때} "
                     "(usForeign.cut 과 같은 칸 · 앱이 그 칸 '–' 밑에 이유 줄을 붙여요 · 검사가 멈춘 날의 칸은 없어요)"),
          "splits": ("2016-01-01 부터(splitsFrom)의 주식 분할 [종목 코드, 날짜, 배율] · 미국만 (야후 · 날짜는 미국 현지 날짜, 새 주식 수로 거래가 "
                     "시작된 날) · 배율 = 옛 1주가 새로 몇 주인지 (4:1 분할 4 · 1:10 병합 0.1) · 한 번 실은 분할은 빼지 않아요 (종목이 목록에서 빠져도) · "

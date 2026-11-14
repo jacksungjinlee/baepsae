@@ -9,6 +9,8 @@ import shutil
 import subprocess
 import tempfile
 
+import sys
+
 import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -16,6 +18,9 @@ NODE = shutil.which("node")
 pytestmark = pytest.mark.skipif(NODE is None, reason="node 가 없어요")
 MODS = {"FC": "src/v2/fcur.js", "CP": "src/copy/v2.js", "FN": "src/v2/fixnote.jsx", "CO": "src/v2/company.jsx", "RK": "src/v2/ranks.js"}
 LINE = "자료의 숫자가 회사 전체 재무제표와 맞지 않아서 비워 두었어요."
+sys.path.insert(0, ROOT)
+import validate_data as V  # noqa: E402
+CONFIGURED = V.US_FGN_NOCMP          # 스위치의 진짜 값 (이 파일을 읽을 때)
 _B = {}
 
 
@@ -105,3 +110,29 @@ def test_the_line_follows_the_kind_the_switch_wrote():
     assert "시험 줄" in a["own"] and 'data-kind="own"' in a["own"] and LINE not in a["own"]
     assert LINE in a["bsp"] and "시험 줄" in a["bsp"] and a["bsp"].count('data-ui-v2="fgn-cut"') == 2   # 종류가 다른 두 칸: 두 줄
     assert LINE in a["bspPer"] and "시험 줄" not in a["bspPer"]
+
+
+def test_switch_own_needs_the_design_chat_line_in_the_copy():
+    """리뷰 2차 N2: 스위치가 "own" 이면 앱이 그 칸에 붙일 copy 의 줄 C.co.fgnNoCmp 가 빈 글자가 아닌 글이어야 해요 (node 로 copy 를 읽어요).
+    지금 값이 "own" 이 아니면 줄이 없어도 돼요 (copy 에 그 이름이 아직 없어요)."""
+    got = run("out = { v: C2.co.fgnNoCmp === undefined ? '__undefined__' : C2.co.fgnNoCmp };")
+    if CONFIGURED == "own":
+        assert isinstance(got["v"], str) and got["v"].strip() and got["v"] != "__undefined__", got
+    else:
+        assert CONFIGURED in ("line", "keep")
+
+
+def test_own_without_the_copy_line_is_a_plain_dash():
+    """리뷰 2차 S3: 디자인 채팅의 줄이 오기 전에 스위치를 own 으로 두면 (Jack 의 (c) 사이 기간) 그 칸은 '–' 만 — 줄도 '자료가 없어요' 도 없어요."""
+    got = run("""
+      const load = { status: 'ok', data: { stocks: STOCKS2, usPxDate: '2026-11-13', pxDate: '2026-11-14', fx: 1333.8 }, coByT: new Map(),
+                     byT: new Map(STOCKS2.map((x) => [x.t, x])) };
+      const s = STOCKS2.find((x) => x.t === 'ALKS');
+      const tiles = CO.orderTiles(CO.tileViews(load, s)).map((x) => [x.topic, x.rule, x.phrase, x.number]);
+      const note = renderToStaticMarkup(h(FN.FgnCutNote, { s }));
+      out = { tiles, note, has: 'fgnNoCmp' in C2.co };""",
+        STOCKS2=[us("ALKS", dy=0.0, fgnCut={"pbr": "nocompare-own"})] + [us(f"U{i}", pbr=1.0 + i, dy=1.0, vz=50) for i in range(8)])
+    assert got["has"] is False and got["note"] == ""
+    value = [t for t in got["tiles"] if t[0] == "value"]
+    assert value == [["value", "fgn", "–", "PBR –"]], got["tiles"]
+    assert not any("자료가 없어요" in str(t) for t in got["tiles"])

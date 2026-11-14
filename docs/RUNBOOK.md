@@ -590,7 +590,9 @@ Jack's call (asked 2026-11-14). The old app shows "–" for these, as for the cu
 1. statements not in dollars (`fcur`, #114): their PER, PBR and yield are already blank with the currency line; this check skips
    them, so they keep exactly #114's line and never get a second one;
 2. outside the S&P 500, with Yahoo's headquarters country (`country`, a new field in the US info cache) not the United States
-   (Puerto Rico counts as the US), or a name that says depositary shares (ADR, ADS, American Depositary);
+   (Puerto Rico counts as the US), or a name that says depositary shares (ADR, ADS, American Depositary — also when Yahoo's
+   31-character short name cuts it to "- American D…" or "- Americ…"; a cut shorter than "- Am" is not recognised, which matters
+   only when Yahoo also leaves out the country);
 3. the 21 of #126 (`US_FOREIGN`) stay in as a floor: the rule finds all of them on its own, and the run log names any that only
    the floor caught ("규칙이 찾지 못해 손으로 정한 목록(US_FOREIGN)으로 넣은 곳" — Yahoo left out the country).
 
@@ -606,31 +608,43 @@ warns, and the next run asks Yahoo again. The run also re-reads, once, any cache
 has no country yet (about 270 on the first run after #PR; the S&P 500 companies are not re-read).
 
 **When the S&P 500 list can't be trusted.** The run trusts the S&P 500 list only when it overlaps today's priced US list by at
-least 400 tickers (`US_SP500_MIN` in `validate_data.py`; 500 of 503 on 2026-11-14). If FinanceDataReader fails, or renames the
+least 400 tickers and has at most 550 (`US_SP500_MIN`, `US_SP500_MAX` in `validate_data.py`; 503 listed, 500 in our list on
+2026-11-14). If FinanceDataReader fails, or renames the
 symbol column so names come back instead of tickers, the overlap drops and the run does **not** apply the country rule that day:
 it checks only the 21, the non-dollar companies and the companies in yesterday's published `usForeign.set` (basis `prev`), and
 logs "!! S&P 500 목록을 쓸 수 없어요 …". `usForeign.sp500` records `{n, inList, ok}`; the gate row warns that day (never holds the
-publish) and fails only if the record contradicts itself (ok with an overlap under 400, basis `country`/`adr` on a day the list
+publish) and fails only if the record contradicts itself (ok with an overlap under 400 or a list over 550, basis `country`/`adr` on a day the list
 was not trusted, `prev` on a day it was). Nothing to fix by hand: the next run reads the list again. If it repeats for days, look at
 the FinanceDataReader S&P 500 listing (its columns). The same fallback (21 · non-dollar · yesterday's set, basis `error`) is used
 if the rule itself crashes ("!! 미국 상장 외국 회사를 찾다가 멈췄어요"); it never widens to every company outside the S&P 500.
 
 **Kinds of blank, and Jack's open question (the one switch).** Each blanked number carries its kind in `fgnCut` and in
-`usForeign.kind`: `mismatch` (compared, and Yahoo's number disagreed), `currency` (statements not confirmed in dollars, #126), or
-`nocompare` (nothing to compare it with: net income missing or at most 0, no ROE, the download had no dividend column, no price —
-Yahoo's number may well be right). On 2026-11-14 the `nocompare` blanks are six PBRs: Alkermes 4.24, IREN 1.45, Roivant 7.12 and
-INNIO 32.31 (they look right), Bending Spoons 19.62 (looks wrong: two share classes) and AB InBev 10.71 (unknown). Jack is asked
-whether the line should also show there. One switch decides, `US_FGN_NOCMP` in `validate_data.py` (the pipeline, the gate and the
-app follow it):
+`usForeign.kind`:
+- `mismatch`: compared, and Yahoo's number disagreed (also a PER that Yahoo shows positive while net income is 0 or below);
+- `currency`: statements not confirmed in dollars (#126) — all three blank, whatever the switch (a mixed-currency PBR is the
+  TSMC 78.88 case);
+- `norecord`: a yield whose dividend record or price the run could not read — blank whatever the switch. This is our own data
+  missing, not the company: the gate row **warns** with the count and names ("배당 기록 · 가격을 읽지 못해 비운 배당수익률 N곳"). One or
+  two names: nothing to do. Many (a whole day's download without its Dividends column blanks about 40 yields): look at the run log
+  around the price download and tell Jack if it repeats;
+- `nocompare`: a PER or PBR the company's own figures cannot check (a loss, or Yahoo gives no ROE) — Yahoo's number may well be
+  right. On 2026-11-14 these are six PBRs: Alkermes 4.24, IREN 1.45, Roivant 7.12 and INNIO 32.31 (they look right), Bending Spoons
+  19.62 (looks wrong: two share classes) and AB InBev 10.71 (unknown).
+
+Jack's 11-13 rule blanks a number when there is nothing to compare it with; Jack is asked only what line goes under the
+`nocompare` blanks. The switch is `US_FGN_NOCMP` in `validate_data.py`; the pipeline and the gate follow it, and the app follows
+the kind the pipeline wrote into the data:
 - `"line"` (now, = #126): blank, kind `nocompare`, the approved line "자료의 숫자가 회사 전체 재무제표와 맞지 않아서 비워 두었어요.";
-- `"keep"`: don't blank — Yahoo's number shows, no mark; `usForeign.kept` lists those numbers;
-- `"own"`: blank, kind `nocompare-own`, and the app shows the design chat's line `co.fgnNoCmp` for those numbers only (add that
-  line to `src/copy/v2.js` in the same PR; a test refuses `"own"` without it).
-`currency` blanks are not part of the switch: a foreign company whose statement currency Yahoo did not confirm keeps all three
-blank (a mixed-currency PBR is the TSMC 78.88 case). The gate fails a mark whose kind does not match its reason (e.g. `mismatch`
-on a number that was never compared), a `usForeign.kind` that differs from the marks, `kept` rows under another switch, or (when
-publishing) a file written under a different switch than the gate's; the site check (`--live`) reads each file under its own
-switch.
+- `"own"`: blank, kind `nocompare-own`; the app shows the design chat's line `co.fgnNoCmp` for those numbers only, and a plain "–"
+  (no line, never "자료가 없어요") while that copy key does not exist. A test asks for the copy key whenever the switch is `"own"`. After
+  any own → line flip, keep the copy key until a `"line"` run has published: until then the live file still carries `nocompare-own`;
+- `"keep"`: don't blank — Yahoo's number shows, no mark; `usForeign.kept` lists those numbers. This loosens Jack's 11-13 rule for
+  PER and PBR.
+Changing the switch is a safety-rule change: its own PR, with Jack's yes. The gate fails a mark whose kind does not match its reason
+(e.g. `mismatch` on a number that was never compared, or a yield without a dividend record marked anything but `norecord`), a
+`usForeign.kind` that differs from the marks, `kept` rows under another switch or for a yield, a `nocmp` that isn't one of the three
+values, or (when publishing) a file written under a different switch than the gate's; the site check (`--live`) reads each file
+under its own switch.
 
 **Rolling back #PR** is a revert PR **plus a data run**: the gate before #PR does not know the `nocompare` kind or marks on
 companies outside the 21, so the reverted code's deploy check and site check fail on today's published file until a data run with

@@ -176,17 +176,24 @@ US_FGN_STOPPED = "검사가 멈춤"              # usForeign.cut 의 이유 머�
 # (fetch_data.us_foreign_set). 이 줄은 위 21곳에 그 회사들을 더해 같은 규칙(맞춰 본 숫자만 · 비운 칸 · 표시)으로 봐요. 근거 글자는 fetch_data.US_FGN_BASIS 와 같아요.
 US_FGN_BASIS = ("fcur", "country", "adr", "floor", "prev", "error")   # prev: S&P 500 목록을 쓸 수 없던 날 어제 발행한 set 에서 이어 온 회사
 US_SP500_MIN = 400       # S&P 500 목록이 오늘 미국 목록과 이만큼 안 겹치면 그 목록을 믿지 않아요 (본사 나라 규칙을 쓰지 않는 날 · 경고)
-# 2026-11-14 (리뷰 S1): 비운 칸의 종류. mismatch = 맞춰 봤는데 달라요 · currency = 재무제표가 달러인지 확인되지 않음 (#126) · nocompare = 맞춰 볼
-# 값이 없어요 (순이익 없음 · 0 이하 · ROE 없음 · 배당 기록이나 가격을 읽지 못함 — 야후 숫자가 맞을 수도 있어요). 아래 사유 글은 fetch_data
-# us_foreign_cuts 가 쓰는 글 그대로예요 (관문이 이 글로 종류를 맞춰 봐요).
+US_SP500_MAX = 550       # … 목록이 이보다 크면 (S&P 500 이 아닌 다른 목록이 온 날) 그것도 믿지 않아요 (리뷰 2차 N3)
+# 2026-11-14 (리뷰 S1): 비운 칸의 종류. mismatch = 맞춰 봤는데 달라요 (순이익이 0 이하인데 야후 PER 이 양수인 것처럼 부호가 어긋난 것도) ·
+# currency = 재무제표가 달러인지 확인되지 않음 (#126) · norecord = 배당 기록이나 가격을 읽지 못해 배당수익률을 맞춰 보지 못함 (파이프라인 쪽 자료가
+# 빠진 날 · 리뷰 2차 S1) · nocompare = 회사 자기 숫자로 PER · PBR 을 맞춰 볼 수 없어요 (적자 · ROE 없음 — 야후 숫자가 맞을 수도 있어요).
+# 아래 사유 글은 fetch_data us_foreign_cuts 가 쓰는 글 그대로예요 (관문이 이 글로 종류를 맞춰 봐요).
 US_FGN_NOCMP_WHY = {"per": "맞춰 볼 시가총액 · 보통주 몫 순이익(netIncomeToCommon)이 없거나 순이익이 0 이하",
-                    "pbr": "맞춰 볼 시가총액 ÷ 순이익 · ROE 가 없거나 0 이하",
-                    "dy": "배당 기록(야후 다운로드의 Dividends 칸) · 가격을 읽지 못함"}
+                    "pbr": "맞춰 볼 시가총액 ÷ 순이익 · ROE 가 없거나 0 이하"}
+US_FGN_NOREC_WHY = "배당 기록(야후 다운로드의 Dividends 칸) · 가격을 읽지 못함"   # 배당수익률만 · 종류 norecord
+US_FGN_NOREC = "norecord"
 US_FGN_CUR_WHY = "재무제표 통화를 모름"     # currency 사유의 머리말 (fetch_data.US_FOREIGN_CUR_WHY)
-# 스위치 하나 (Jack 에게 묻는 중, 2026-11-14: 맞춰 볼 값이 없을 때도 그 줄을 보일지). 파이프라인 · 관문 · 앱이 모두 이 값을 따라요:
+# 스위치 하나 (Jack 에게 묻는 중, 2026-11-14: 회사 자기 숫자로 맞춰 볼 수 없는 PER · PBR 밑에 그 줄을 보일지). Jack 의 11-13 규칙 '맞춰 볼 값이 없으면
+# 그 칸도 비워요 — 틀릴 수 있는 숫자보다 빈 칸' 은 "line" 이 지켜요: 이 값을 바꾸는 것은 안전 규칙 변경이에요 (Jack 의 '예' 와 따로 PR).
+# 파이프라인과 관문이 이 값을 따르고, 앱은 파이프라인이 종목에 적은 종류(fgnCut)를 따라요:
 #   "line" (지금) = 비우고 종목 표시 nocompare → 앱이 승인된 줄 co.fgnCut 을 붙여요 (#126 그대로)
-#   "keep"        = 비우지 않아요 (야후 숫자가 그대로 보여요 · 표시 없음 · usForeign.kept 에 적어요)
-#   "own"         = 비우고 종목 표시 nocompare-own → 앱이 디자인 채팅의 새 줄 co.fgnNoCmp 를 붙여요 (그 줄이 copy 에 있어야 해요 — 시험이 봐요)
+#   "keep"        = 비우지 않아요 (야후 숫자가 그대로 보여요 · 표시 없음 · usForeign.kept 에 적어요) — 11-13 규칙을 PER · PBR 에서 풀어요
+#   "own"         = 비우고 종목 표시 nocompare-own → 앱이 디자인 채팅의 새 줄 co.fgnNoCmp 를 붙여요 (그 줄이 copy 에 없으면 줄 없이 '–' 만 ·
+#                   시험이 copy 의 줄을 요구해요). own → line 으로 되돌린 뒤에도 line 실행이 한 번 발행될 때까지 그 copy 줄은 두세요 (어제 파일의 표시)
+# norecord · currency 는 이 스위치와 상관없이 늘 비워요.
 US_FGN_NOCMP = "line"
 US_FGN_NOCMP_KIND = {"line": "nocompare", "keep": None, "own": "nocompare-own"}
 US_FGN_HOME = {"united states", "united states of america", "usa", "us", "puerto rico"}   # 근거 country 인데 이 나라면 기록이 틀린 것 (fetch_data.US_HOME)
@@ -1843,7 +1850,8 @@ def check_us_foreign(rep, data, us, mode):
     fset = rec.get("set") if has_set else None
     # 리뷰 S1: 칸의 종류. 기록에 nocmp(스위치)가 있으면 그 스위치의 nocompare 종류도 표시로 받아요 (없는 기록 = 예전 두 가지만)
     nmode = rec.get("nocmp") if isinstance(rec, dict) and "nocmp" in rec else None
-    kinds_ok = set(US_FGN_WHY) | ({US_FGN_NOCMP_KIND[nmode]} - {None} if nmode in US_FGN_NOCMP_KIND else set())
+    nmode_ok = isinstance(nmode, str) and nmode in US_FGN_NOCMP_KIND    # 리뷰 2차 N1: 목록 · dict 가 와도 멈추지 않고 실패 줄로
+    kinds_ok = set(US_FGN_WHY) | ({US_FGN_NOCMP_KIND[nmode], US_FGN_NOREC} - {None} if nmode_ok else set())
     foreign = set(US_FOREIGN_SET) | (set(fset) if isinstance(fset, dict) else set())
     want = sorted(t for t, s in by.items() if t in foreign and not s.get("fcur") and any(s.get(k) is not None for k in US_FOREIGN_KEYS))
     marked = sorted(str(s.get("t")) for s in us if "fgnCut" in s)
@@ -1931,15 +1939,16 @@ def check_us_foreign(rep, data, us, mode):
         fwarn = bool(err or unk or named)
         # 리뷰 S1: 스위치 · 종류 · 비우지 않은 칸 (kept) — 모두 우리 기록이 맞는지예요
         kbad = []
-        if nmode not in US_FGN_NOCMP_KIND:
-            kbad.append(f"nocmp {nmode!r}")
+        if not nmode_ok:
+            kbad.append(f"nocmp {json.dumps(nmode, ensure_ascii=False)[:30]}")
         elif nmode != US_FGN_NOCMP and mode_strict:
             kbad.append(f"nocmp {nmode} (관문 스위치 {US_FGN_NOCMP})")
-        nk = US_FGN_NOCMP_KIND.get(nmode)
+        nk = US_FGN_NOCMP_KIND.get(nmode) if nmode_ok else None
         for x in rows:
             if x[2].startswith(US_FGN_STOPPED):
                 continue
             want_k = ("currency" if x[2].startswith(US_FGN_CUR_WHY) else
+                      US_FGN_NOREC if x[1] == "dy" and x[2] == US_FGN_NOREC_WHY else
                       (nk or "비우면 안 됨 (keep)") if x[2] == US_FGN_NOCMP_WHY.get(x[1]) else "mismatch")
             got_k = (by.get(x[0]) or {}).get("fgnCut", {}).get(x[1]) if isinstance((by.get(x[0]) or {}).get("fgnCut"), dict) else None
             if got_k is not None and got_k != want_k:
@@ -1974,9 +1983,9 @@ def check_us_foreign(rep, data, us, mode):
                 and isinstance(sp.get("inList"), int) and not isinstance(sp.get("inList"), bool) and isinstance(sp.get("ok"), bool)):
             kbad.append(f"sp500 모양 {json.dumps(sp, ensure_ascii=False)[:40]}")
         else:
-            okw = sp["n"] is not None and sp["inList"] >= US_SP500_MIN
+            okw = sp["n"] is not None and sp["inList"] >= US_SP500_MIN and sp["n"] <= US_SP500_MAX
             if sp["ok"] != okw:
-                kbad.append(f"sp500 ok {sp['ok']} (겹침 {sp['inList']} · 기준 {US_SP500_MIN})")
+                kbad.append(f"sp500 ok {sp['ok']} (목록 {sp['n']} · 겹침 {sp['inList']} · 기준 겹침 {US_SP500_MIN} 이상 · 목록 {US_SP500_MAX} 이하)")
             bases = {v[2] for v in fset.values() if isinstance(v, list) and len(v) == 3}
             if not sp["ok"]:
                 fwarn = True
@@ -1987,6 +1996,11 @@ def check_us_foreign(rep, data, us, mode):
             elif "prev" in bases:
                 kbad.append("sp500 을 믿은 날인데 근거 prev")
         bad += kbad
+    # 리뷰 2차 S1: 배당 기록 · 가격을 읽지 못해 비운 배당수익률 — 우리 쪽 자료가 빠진 날이에요 (하루 통째로 빠지면 40곳쯤): 늘 경고 (이 칸 전 기록도)
+    norec = sorted({x[0] for x in rows if x[1] == "dy" and x[2] == US_FGN_NOREC_WHY})
+    if norec:
+        notes.append(f"배당 기록 · 가격을 읽지 못해 비운 배당수익률 {len(norec)}곳: {_tickers(norec)} (다운로드의 배당 칸 확인)")
+        fwarn = True
     nomark = [f"{x[0]}.{x[1]}" for x in rows if not x[2].startswith(US_FGN_STOPPED) and x[0] in by
               and not (isinstance(by[x[0]].get("fgnCut"), dict) and x[1] in by[x[0]]["fgnCut"])]
     probs = ([f"맞춰 보지 않은 숫자 {len(unchecked)}곳: {_tickers(unchecked)}"] if unchecked else []) \
