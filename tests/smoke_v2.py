@@ -10487,7 +10487,7 @@ def scene_v196a_sold_out(R, files, width=390):
         page.locator('[data-deck-id="d3"] [data-holding="005930"]').wait_for(state="visible")
         d3 = page.locator('[data-deck-id="d3"]')
         assert page.locator('[data-sold-out="105560"]').count() == 0 and d3.locator('[data-ui-v2="sold-out-kept"]').count() == 0
-        assert KEPT not in d3.inner_text() and page.locator('[data-ui-v2="sold-out-kept"]').count() == 1   # d5 의 다 판 종목 줄만 남아요
+        assert KEPT not in d3.inner_text() and page.locator('[data-ui-v2="sold-out-kept"]').count() == 4   # d5 · d6 의 다 판 종목 줄만 남아요
         R.collect(page)
     R.check(page, S, "세 종목 중 하나를 다 팔고 남겨 두면: 남은 둘은 할 일 없음 그대로 · 다 판 종목만 먼저 사요 · 추가로 넣을 돈 300만원은 그 종목만 · 홈은 할 일 없음 · '다 판 종목이에요. …' 는 다 판 종목 줄 밑에만 한 번 (포트폴리오 · 회사 페이지) · 그 줄을 누르면 종목 바꾸기의 그 종목 빼기 (v19.7a) → 빼고 저장하면 0주 줄도 그 줄도 없어요", three)
     ctx.close()
