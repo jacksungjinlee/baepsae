@@ -38,8 +38,10 @@ export function warnings(s, co) {
   const allRan = !!ran && ran.length + na.length === WARN_CHECKS.length;
   // Jack, PR #68 B7 (2026-11-07): when every check ran except 이자보상배율, and the pipeline says that is because the
   // statements have no interest-expense line (corp.json flWhy.icr "ie"), the card says which three it checked ("확인한 …
-  // 없어요"). Any other reason (no operating profit "op", a negative figure "neg", switched off "off" while the pipeline's
-  // ICR_OFF holds the check back, or no reason written) claims nothing.
+  // 없어요" + the reason line). Any other reason (no operating profit "op", a negative figure "neg", switched off "off" while
+  // the pipeline's ICR_OFF holds the check back, or no reason written) gets no reason line: since 2026-11-14 (Jack) the
+  // company page shows "확인한 …" alone for any check that ran with nothing found while another had no input (except "off",
+  // which keeps its own line).
   const why = co.flWhy && typeof co.flWhy === "object" ? co.flWhy.icr : null;
   // icrIe: exactly that situation, whether or not a warning fired. Jack, 2026-11-14: a warning list must not read as all
   // four checks when 이자보상배율 did not run, so the company page puts the same approved reason under the list (company.jsx).

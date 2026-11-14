@@ -373,21 +373,25 @@ function Warnings({ load, s, wide }) {
         </Card>
       );
     }
-    if (!w.allRan && !w.partial) return null;  // no flag, but not every check is known to have run: nothing is claimed
+    // Jack, 2026-11-14: some checks ran and found nothing while the rest had no input (기아: 자본잠식). The closest approved
+    // line, "확인한 재무 경고 신호는 없어요", with the ✓ chips of the checks that ran; no sub-line until the design chat sends one
+    // for the checks that could not run. Never the plain "…없어요" (that needs every check).
+    const some = !w.allRan && !w.partial && Array.isArray(w.ran) && w.ran.length > 0;
+    if (!w.allRan && !w.partial && !some) return null;  // no flag, and no check is known to have run: nothing is claimed
     // partial (Jack, PR #68 B7): 이자보상배율 alone could not be checked, for want of an interest line -> "확인한 …" + why
-    const head = w.partial ? W.nonePartial : W.none;
-    const subText = w.partial ? W.noneSubNoIcr : (w.sub === "fin" && W.noneSubFin) || (w.sub === "holding" && W.noneSubHolding) || W.noneSub;
-    if (!all(head, subText)) return <span data-ui-v2="co-warn" data-pending="1" hidden />;
+    const head = w.partial || some ? W.nonePartial : W.none;
+    const subText = some ? null : w.partial ? W.noneSubNoIcr : (w.sub === "fin" && W.noneSubFin) || (w.sub === "holding" && W.noneSubHolding) || W.noneSub;
+    if (!head || (!some && !subText)) return <span data-ui-v2="co-warn" data-pending="1" hidden />;
     // v19.3e (Part I): one chip per check that ran and passed (company.warnChips: flRan, no flag); a check that did not run
     // or does not apply (flNa) gets none, never a ✓.
     const chips = warnChips(w).filter((c) => W.chips && W.chips[c]);
     return (
-      <Card data-ui-v2="co-warn" data-n="0" data-partial={w.partial ? "1" : undefined} style={{ padding: SPACE(4) }}>
+      <Card data-ui-v2="co-warn" data-n="0" data-partial={w.partial ? "1" : some ? "some" : undefined} style={{ padding: SPACE(4) }}>
         <div style={{ display: "flex", gap: SPACE(3), alignItems: "flex-start" }}>
           <IconChip name="shield-check" size={32} tone="risk" />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{head}</div>
-            <div data-ui-v2="co-warn-sub" data-sub={w.partial ? "noIcr" : w.sub || ""} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2 })}>{subText}</div>
+            {subText && <div data-ui-v2="co-warn-sub" data-sub={w.partial ? "noIcr" : w.sub || ""} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2 })}>{subText}</div>}
             {warnSource(w) && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{warnSource(w)}</div>}
           </div>
         </div>

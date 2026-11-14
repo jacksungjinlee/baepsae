@@ -198,6 +198,7 @@ def test_fired_warnings_show_and_say_when_the_interest_check_could_not_run():
         assert all(x not in (NONE, NONE_PARTIAL) for x in got[k]["lines"]), k
     kia = got["kia"]                                                        # 기아: 자본잠식을 못 돌렸어요 → 다 확인한 것처럼 말하지 않아요
     assert NONE not in kia["lines"] and "imp" not in kia["chips"]           # 자본잠식에 ✓ 없음
+    assert kia["kind"] == "co-warn" and kia["n"] == "0" and kia["lines"][0] == NONE_PARTIAL and kia["chips"] == ["l3", "cr", "icr"]   # Jack, 11-14
     assert got["sam"]["kind"] == "co-warn" and got["sam"]["n"] == "0" and NONE in got["sam"]["lines"] and got["sam"]["noIcr"] == 0   # 다 돈 회사는 그대로
 
 

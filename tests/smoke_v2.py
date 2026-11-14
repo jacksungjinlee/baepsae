@@ -5140,7 +5140,7 @@ def v191b_files(files, se=None, beta=None):
     s10 = by[V191B_SPLIT10]
     s10.update(dps=28000.0, dps3=[28000.0, 26000.0, 25500.0], dps3a=[2800.0, 2600.0, 2550.0], dpsF=[10.0, 10.0, 10.0], divSt="adj",
                dyt=round(2800.0 / s10["price"] * 100, 2))
-    coby[V191B_CUT]["flRan"] = ["cr", "l3", "imp"]                           # 이자보상배율 확인이 안 돌았어요: '없어요'라고 하지 않아요
+    coby[V191B_CUT]["flRan"] = ["cr", "l3", "imp"]                           # 이자보상배율 확인이 안 돌았어요: '확인한 …'만 (Jack, 2026-11-14)
     return f
 
 
@@ -5210,14 +5210,17 @@ def scene_v191b(R, files, width):
         assert abs(float(page.locator('[data-ui-v2="co-yield"]').get_attribute("data-y")) - s["dyt"]) < 1e-9
         no_hscroll(page, width)
         R.collect(page)
-        # 진짜 삭감은 그대로 삭감 · 베타 양 끝이 같아요: 한 숫자 · 재무 경고 확인 하나가 안 돌았어요: '없어요' 없음
+        # 진짜 삭감은 그대로 삭감 · 베타 양 끝이 같아요: 한 숫자 · 재무 경고 확인 하나가 안 돌았어요: 다 본 것처럼 '…없어요'라고 하지 않고
+        # '확인한 재무 경고 신호는 없어요' (Jack, 2026-11-14: 승인된 가장 가까운 줄) · 밑 줄 없음
         open_co(V191B_CUT)
         assert tile(V191B_CUT, "div")[:2] == ("cut", T["div"]["cut"])
         b = by[V191B_CUT]["beta"]
         x = f"{round(b * 10) / 10:.1f}"
         rule, phrase, num = tile(V191B_CUT, "risk")
         assert num == fillp(T["riskOne"]["kr"], x=x), num
-        assert page.locator('[data-ui-v2="co-warn"][data-n="0"]').count() == 0
+        card = page.locator('[data-ui-v2="co-warn"][data-n="0"]')
+        assert card.get_attribute("data-partial") == "some" and card.inner_text().split("\n")[0] == CO["warn"]["nonePartial"], card.inner_text()
+        assert card.locator('[data-ui-v2="co-warn-sub"]').count() == 0
         co_open_tab(page, V191B_CUT, "value", "kr")
         rk = page.locator('[data-ui-v2="co-risk"]')
         assert rk.locator('[data-ui-v2="co-risk-band"]').inner_text() == fillp(CO["risk"]["one"]["kr"], x=x)
@@ -5257,10 +5260,12 @@ def scene_v191b(R, files, width):
         sub = page.locator('[data-ui-v2="co-warn-sub"]')
         assert sub.get_attribute("data-sub") == "noIcr" and sub.inner_text() == CO["warn"]["noneSubNoIcr"], sub.inner_text()
         no_hscroll(page, width)
-        # 이유가 영업이익 없음이면 그 줄은 틀린 말이라 아무것도 말하지 않아요
+        # 이유가 영업이익 없음이면 그 밑 줄(이자 비용을 찾지 못해)은 틀린 말이라 없어요: '확인한 …'만 (Jack, 2026-11-14)
         open_co(V191B_OPMISS)
         tile(V191B_OPMISS, "div")                                           # 회사 자료가 다 그려질 때까지
-        assert page.locator('[data-ui-v2="co-warn"][data-n="0"]').count() == 0
+        card = page.locator('[data-ui-v2="co-warn"][data-n="0"]')
+        assert card.get_attribute("data-partial") == "some" and CO["warn"]["noneSubNoIcr"] not in card.inner_text(), card.inner_text()
+        assert card.locator('[data-ui-v2="co-warn-sub"]').count() == 0
         # 이자보상배율을 현금흐름표의 이자 지급액으로 계산: 경고 밑에 그 안내 (버튼과 목록 모두) · 영업손실: 숫자 없이 (Jack, PR #68)
         open_co(V191B_ICRCF)
         btn = page.locator('[data-ui-v2="co-warn"][data-n="1"]')
@@ -8904,15 +8909,14 @@ def scene_v193e_company(R, files, width):
     R.check(page, S, "배당 칸 동전: 늘렸어요만 올라가는 더미 · 비슷하게 준 해는 같은 높이 셋 · 해마다 비교하지 않은 지급(미국 · 작년 기록 없음)은 더미 하나 · 줄였어요는 그림 없음", div_coins)
 
     def chips_only_when_ran():
-        for code, want in ((V191B_ND, ["l3", "imp"]), (V191B_PART, ["l3", "cr", "imp"]), (V191B_CUT, None), (V191B_OPMISS, None)):
+        for code, want in ((V191B_ND, ["l3", "imp"]), (V191B_PART, ["l3", "cr", "imp"]), (V191B_CUT, ["l3", "cr", "imp"]), (V191B_OPMISS, ["l3", "cr", "imp"])):
             open_co(code)
             page.locator('[data-ui-v2="co-tile"]').first.wait_for(state="visible")
             got = page.locator('[data-ui-v2="co-warn-chip"]').evaluate_all("els => els.map(e => e.dataset.check)")
-            assert got == (want or []), (code, got)                          # 해당 없음 · 못 돌린 확인: 칩 없음 (✓ 없음)
-            if want is None:
-                assert page.locator('[data-ui-v2="co-warn"][data-n="0"]').count() == 0
+            assert got == want, (code, got)                                  # 해당 없음 · 못 돌린 확인: 칩 없음 (✓ 없음)
+            assert "icr" not in got                                          # 넷 다 이자보상배율을 돌리지 않았어요
         R.collect(page)
-    R.check(page, S, "재무 경고 칩: 금융회사는 둘(해당 없음 빼고) · 이자보상배율 못 돌림은 셋 · 확인이 덜 돌면 카드도 칩도 없음", chips_only_when_ran)
+    R.check(page, S, "재무 경고 칩: 금융회사는 둘(해당 없음 빼고) · 이자보상배율 못 돌림은 셋 · 돌아간 확인에만 칩 (못 돌아간 확인엔 ✓ 없음, Jack 2026-11-14)", chips_only_when_ran)
 
     def value_fix():
         for code in ("005930", "000660", "005380"):
@@ -11715,6 +11719,10 @@ def scene_fin_warn_partial(R, files, width):
         page.locator('[data-ui-v2="co-tile"]').first.wait_for(state="visible")
         assert CO["warn"]["none"] not in summary_lines()                                     # 네 가지를 다 본 것처럼 말하지 않아요
         assert page.locator('[data-ui-v2="co-warn-chip"][data-check="imp"]').count() == 0     # 돌지 않은 확인에 ✓ 없음
+        card = page.locator('[data-ui-v2="co-warn"][data-n="0"][data-partial="some"]')        # Jack, 11-14: 확인한 것만 말해요
+        assert card.inner_text().split("\n")[0] == CO["warn"]["nonePartial"], card.inner_text()
+        assert card.locator('[data-ui-v2="co-warn-chip"]').evaluate_all("(els) => els.map((e) => e.dataset.check)") == ["l3", "cr", "icr"]
+        floor_ok(page, "재무 경고 확인한 것만 (기아)")
         no_hscroll(page, width)
         R.collect(page)
     R.check(page, S, "엘앤에프: 경고 둘 그대로 (덜 돌아간 확인이 있어도) · 기아: '재무 경고 신호는 없어요'라고 하지 않고 자본잠식 ✓ 없음", others)
