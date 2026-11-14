@@ -92,6 +92,7 @@ def test_rule_values_are_the_safety_rule():
     assert (F.PIN_PX_TOL, F.PIN_SHR_TOL, F.PIN_REF_TOL, F.KR_DAY_LIMIT, F.KONEX_DAY_LIMIT) == (
         V.PIN_PX_TOL, V.PIN_SHR_TOL, V.PIN_REF_TOL, V.KR_DAY_LIMIT, V.KONEX_DAY_LIMIT)
     assert V.KR_JUMP_WHY.keys() == {"pin", "halt", "spike", "other"} and F.KR_JUMP_WHY is V.KR_JUMP_WHY
+    assert V.KR_DAY_LIMIT == V.D1_MAX_KR == F.D1_MAX_KR == 30.0              # 리뷰: 같은 제한폭이 세 곳에서 따로 바뀌지 않게
     assert F.kr_day_limit("KONEX") == 15.0 and F.kr_day_limit("KOSDAQ GLOBAL") == 30.0 and F.kr_day_limit(None) == 30.0
 
 
@@ -134,6 +135,40 @@ def test_ref_links_unknown_when_a_link_cannot_be_checked():
     by_day, _ = F.kr_ref_links(fr, TRADE, {code})
     assert by_day[T("2026-11-12")][code] == "ok" and by_day[T("2026-11-10")][code] == "unknown"
     assert F.kr_ref_links([], TRADE, {code}) == ({}, [])
+
+
+@pytest.mark.parametrize("code, listed", [("0013Y0", "2026-10-22"), ("493410", "2026-11-12")])
+def test_ref_links_new_listing_is_its_own_quiet_state(code, listed, capsys):
+    """리뷰 S1: 이 기간에 새로 상장한 종목 (엠에스바이오 10-22 · 넥스아이 11-12, 실제 목록 파일)은 상장 앞 파일에 행이 없어요. 'unknown'(크게 남김)이
+    아니라 'new' — 상장 앞 날은 공식 종가가 없어 고칠 봉도 없고, 상장 뒤 날은 기준가 연결대로 ('ok'). 로그는 보통 줄 · krSeries.ref.newStocks 로 세요."""
+    by_day, events = F.kr_ref_links(frames(code), TRADE, {code})
+    assert events == []
+    for d in FX["sessions"]:
+        assert by_day[T(d)][code] == ("ok" if d >= listed else "new"), d
+    got = F.log_ref_links(by_day, events, {code: "새 종목"}, len(FX["sessions"]))
+    assert got == {"breakStocks": 0, "unknownStocks": 0, "newStocks": 1}
+    line = capsys.readouterr().out.strip()
+    assert line.startswith("· KRX 기준가 연결") and "새로 상장한 종목 1 (" + code + " 새 종목" in line and "!!" not in line
+    px, n, kept, bad, jumps = pipeline(code)                          # 상장 뒤 날은 보통처럼 공식 종가로 · 어긋남 0
+    assert bad == [] and not kept
+    raw0, close, shr_now, mkt, off, shr, ref = real(code)
+    assert all(float(px.loc[ts]) == m[code] for ts, m in off.items() if m.get(code) and ts in px.index)
+    assert F.pin_why_not(591.0, 2955.0, 47_500_000, 9_500_000, "new") == "basis"     # 'new' 는 확인 못 한 날처럼 (주식 수 · 값 둘 다)
+    assert F.pin_why_not(100.0, 130.0, 1_000, 1_000, "new") == "far"
+
+
+def test_ref_log_is_loud_only_for_unknown_or_too_many_changes(capsys):
+    """기준가를 확인 못 한 종목이 있거나 기준가가 새로 정해진 종목이 REF_EVENTS_LOUD 보다 많으면 크게 (종목 수로 세요 · 한 종목에 여러 번이어도 하나)."""
+    d1, d2 = T("2026-11-11"), T("2026-11-12")
+    assert F.log_ref_links({d1: {"A": "unknown", "B": "ok"}, d2: {"A": "ok", "B": "ok"}}, [], {}, 2)["unknownStocks"] == 1
+    assert capsys.readouterr().out.startswith("  !! KRX 기준가 연결")
+    many = [(f"{i:06d}", dt.date(2026, 11, 12), 100.0, 200.0) for i in range(F.REF_EVENTS_LOUD)] * 3   # 100종목 · 300건 → 크지 않음
+    got = F.log_ref_links({d1: {}}, many, {}, 2)
+    out = capsys.readouterr().out
+    assert got["breakStocks"] == F.REF_EVENTS_LOUD and out.startswith("· ") and f"{F.REF_EVENTS_LOUD} (300건)" in out
+    F.log_ref_links({d1: {}}, many + [("999999", dt.date(2026, 11, 12), 100.0, 200.0)], {}, 2)
+    assert capsys.readouterr().out.startswith("  !! ")
+    assert F.log_ref_links({}, [], {}, 0) == {"breakStocks": 0, "unknownStocks": 0, "newStocks": 0}
 
 
 def test_ref_links_break_beats_unknown():
@@ -337,7 +372,7 @@ def series_check(bad=(), jumps=(), published=("043340", "011810", "107640")):
     kept = collections.Counter({"basis": 157, "far": 8})
     names = {"043340": ("에쎈테크", {"basis": 14})}
     return F.kr_series_check(pin, kept, names, list(bad), list(jumps), set(published), 19,
-                             ref={"breakStocks": 18, "unknownStocks": 0})
+                             ref={"breakStocks": 18, "unknownStocks": 0, "newStocks": 14})
 
 
 def test_series_check_shape_is_what_the_gate_reads():
@@ -346,7 +381,7 @@ def test_series_check_shape_is_what_the_gate_reads():
     assert V.kr_series_problems(ks, PXD) == []
     assert ks["bad"] == 0 and ks["badStocks"] == [] and ks["jump"] == [["107640", "2024-06-24", -38.2, "spike"]]   # 발행하는 종목만
     assert ks["kept"] == {"basis": 157, "far": 8, "shr": 0} and ks["pinned"] == 39613 and ks["days"] == 19
-    assert ks["ref"] == {"breakStocks": 18, "unknownStocks": 0}
+    assert ks["ref"] == {"breakStocks": 18, "unknownStocks": 0, "newStocks": 14}
     json.dumps(ks, allow_nan=False)
     ks = series_check(bad=[("043340", "에쎈테크", [(T("2026-11-05"), "basis"), (T("2026-11-04"), "basis")])])
     assert ks["bad"] == 2 and ks["badStocks"] == ["043340"] and V.kr_series_problems(ks) == []
@@ -357,6 +392,9 @@ def test_fetch_korea_uses_the_checked_pin_for_every_number():
     (52주 · 변동성 · 베타 · 알파 · 낙폭 · 수익률 · 모멘텀은 모두 그 뒤의 px 하나로 계산해요)"""
     src = inspect.getsource(F.fetch_korea)
     i_ref = src.index('kr_ref_links([(px_date, listing)] + sessions, ks_all.index, set(listing["Code"]))')
+    i_clean = src.index("px, glitch = naver_clean(px)")
+    assert i_ref < i_clean < src.index("raw = cut_at(px, px_date)") < src.index("px, how = pin_close(px, px_date, close)")
+    assert src.index("log_naver_clean(naver_bad)") < src.index("krs = kr_series_check(")
     i_pin = src.index("pin_recent(px, off_by_day, code, shr_by_day, shr_now.get(code), kept=kc, ref_by_day=ref_by_day)")
     i_audit = src.index("pin_audit(raw, px, px_date, off_by_day, shr_by_day, shr_now.get(code), code, ref_by_day=ref_by_day)")
     i_jump = src.index('kr_jumps(px, raw, kr_day_limit(row.get("Market")))')
@@ -376,7 +414,7 @@ JNAME = "국내 시계열 하루 가격 제한폭 넘는 움직임 (경고만)"
 
 def with_series(files, **kw):
     ks = {"v": 1, "days": 19, "pinned": 39613, "pinStocks": 2318, "kept": {"basis": 157, "far": 8, "shr": 0}, "keptStocks": 23,
-          "bad": 0, "badStocks": [], "ref": {"breakStocks": 18, "unknownStocks": 0}, "jump": []}
+          "bad": 0, "badStocks": [], "ref": {"breakStocks": 18, "unknownStocks": 0, "newStocks": 14}, "jump": []}
     ks.update(kw)
     files["data"]["krSeries"] = ks
     return files
@@ -392,7 +430,8 @@ def test_gate_good_series_passes_both_rows():
     rep = check(cur, prev, final)
     assert not rep.failed, rep.table()
     assert row(rep, NAME)[3] == "PASS" and row(rep, JNAME)[3] == "PASS"
-    assert row(rep, NAME)[1].startswith("걸린 봉 0 · 최근 19거래일 고친 봉 39613 (2318종목) · 기준가가 바뀐 종목 18 · 확인 못 한 종목 0")
+    assert row(rep, NAME)[1].startswith("걸린 봉 0 · 최근 19거래일 고친 봉 39613 (2318종목) · 기준가가 바뀐 종목 18 · 확인 못 한 종목 0 · "
+                                        "새로 상장 14")
 
 
 def test_gate_fails_when_a_pin_was_written_on_another_basis():
@@ -409,7 +448,8 @@ def test_gate_fails_when_a_pin_was_written_on_another_basis():
     {"v": 2}, {"bad": True}, {"bad": -1}, {"bad": 1.0}, {"pinned": None}, {"kept": {"basis": 1, "far": 2}},
     {"kept": {"basis": 1, "far": 2, "shr": -1}}, {"badStocks": "005930"}, {"bad": 0, "badStocks": ["005930"]},
     {"bad": 2, "badStocks": []}, {"bad": 1, "badStocks": ["005930", "000660"]}, {"ref": None}, {"ref": {"breakStocks": 1}},
-    {"ref": {"breakStocks": 1, "unknownStocks": "0"}}, {"jump": "없음"},
+    {"ref": {"breakStocks": 1, "unknownStocks": 0}}, {"ref": {"breakStocks": 1, "unknownStocks": "0", "newStocks": 0}},
+    {"ref": {"breakStocks": 1, "unknownStocks": 0, "newStocks": -2}}, {"jump": "없음"},
     {"jump": [["005930", "2026-10-30", 50.0, "naver"]]}, {"jump": [["005930", "2026-10-31", 50.0, "other"]]},
     {"jump": [["005930", "어제", 50.0, "other"]]}, {"jump": [["005930", "2026-10-29", "큼", "other"]]}, {"jump": [["005930", "2026-10-29", 50.0]]},
 ])
@@ -450,3 +490,66 @@ def test_gate_live_mode_reads_the_record_without_the_previous_publish():
     cur, prev, final = good_pair()
     with_series(cur)
     assert not check(cur, None, final, mode="live").failed
+
+
+# ── 7. 네이버 시계열의 같은 날짜 · 잘못된 값 (리뷰 S2) ─────────────
+def test_naver_clean_rules():
+    d = list(pd.bdate_range("2026-01-02", periods=6))
+    same = pd.Series([1.0, 2, 3, 4, 5, 6, 3.0], index=pd.DatetimeIndex(d + [d[2]]))
+    got, probs = F.naver_clean(same)                                 # 같은 값으로 두 번 → 하나만, 문제 아님
+    assert list(got.index) == d and list(got) == [1, 2, 3, 4, 5, 6] and probs == []
+    diff = pd.Series([1.0, 2, 3, 4, 5, 6, 3.5], index=pd.DatetimeIndex(d + [d[2]]))
+    got, probs = F.naver_clean(diff)                                 # 다른 값으로 두 번 → 그 날짜를 빼요 (둘 다 믿지 않아요)
+    assert list(got.index) == d[:2] + d[3:] and probs == [(d[2], "dup", [3.0, 3.5])]
+    odd = pd.Series([1.0, float("inf"), 0.0, -1.0, 5.0, float("nan")], index=pd.DatetimeIndex(d))
+    got, probs = F.naver_clean(odd)
+    assert list(got) == [1.0, 5.0] and [(t, w) for t, w, _ in probs] == [(d[1], "bad"), (d[2], "bad"), (d[3], "bad"), (d[5], "bad")]
+    back = pd.Series([4.0, 5.0, 6.0, 1.0, 2.0, 3.0], index=pd.DatetimeIndex(d[3:] + d[:3]))
+    got, probs = F.naver_clean(back)                                 # 순서가 뒤섞여도 날짜 순으로
+    assert list(got) == [1, 2, 3, 4, 5, 6] and probs == []
+    clean = pd.Series([1.0, 2.0], index=pd.DatetimeIndex(d[:2]))
+    got, probs = F.naver_clean(clean)
+    assert got.equals(clean) and probs == []
+
+
+def run_one(raw0, pxd, close, off, shr, shr_now, ref, code="X"):
+    """fetch_korea.one() 의 순서 (naver_clean → pin_close → pin_recent → pin_audit → kr_jumps)."""
+    px, glitch = F.naver_clean(raw0)
+    raw = F.cut_at(px, pxd)
+    px, _ = F.pin_close(px, pxd, close)
+    px, n = F.pin_recent(px, off, code, shr, shr_now, kept=collections.Counter(), ref_by_day=ref)
+    return px, glitch, F.pin_audit(raw, px, pxd, off, shr, shr_now, code, ref_by_day=ref), F.kr_jumps(px, raw, 30.0)
+
+
+@pytest.mark.parametrize("dup_day", [9, 77, 78])
+def test_naver_duplicate_date_never_fails_the_gate(dup_day, capsys):
+    """리뷰 S2 재현: 80 봉 중 한 날짜가 1,500 과 1,009 로 두 번 (오래된 봉 · 고치는 날 · 기준일 바로 앞). 예전에는 자기 점검이 notOfficial 로 잡아
+    관문이 모두의 발행을 막거나 (Jack 2026-11-13 규칙과 어긋남) 움직임 검사에서 TypeError 로 종목이 빠졌어요. 이제 그 날짜를 빼고 계산하고,
+    크게 이름과 함께 남기고, 자기 점검 0 · 관문 통과."""
+    d = list(pd.bdate_range("2026-01-02", periods=80))
+    vals = [1000.0 + i for i in range(80)]
+    raw0 = pd.Series(vals[:dup_day + 1] + [1500.0] + vals[dup_day + 1:], index=pd.DatetimeIndex(d[:dup_day + 1] + [d[dup_day]] + d[dup_day + 1:]))
+    pxd = d[-1].date()
+    off = {d[-3]: {"X": 1077.0}, d[-2]: {"X": 1078.0}}
+    shr = {d[-3]: {"X": 1000}, d[-2]: {"X": 1000}}
+    ref = {d[-3]: {"X": "ok"}, d[-2]: {"X": "ok"}}
+    px, glitch, bad, jumps = run_one(raw0, pxd, 1079.0, off, shr, 1000, ref)
+    assert glitch == [(d[dup_day], "dup", [vals[dup_day], 1500.0])] and bad == [] and jumps == []
+    assert d[dup_day] not in px.index and not px.index.has_duplicates and len(px) == 79 and float(px.iloc[-1]) == 1079.0
+    F.log_naver_clean([("X", "가상", glitch)])
+    out = capsys.readouterr().out
+    assert out.startswith("  !! 네이버 시계열 같은 날짜 두 번 (다른 값): 1종목") and "X 가상 (" in out
+    ks = F.kr_series_check(collections.Counter({"recent_fixed": 2, "recent_stocks": 1}), collections.Counter(), {}, [], [], {"X"}, 2,
+                           ref={"breakStocks": 0, "unknownStocks": 0, "newStocks": 0})
+    cur, prev, final = good_pair()
+    cur["data"]["krSeries"] = ks
+    with_series(prev)
+    rep = check(cur, prev, final)
+    assert not rep.failed and row(rep, NAME)[3] == "PASS", rep.table()
+
+
+def test_naver_clean_quiet_line_when_nothing_found(capsys):
+    F.log_naver_clean([])
+    assert capsys.readouterr().out.startswith("· 네이버 시계열 점검: 같은 날짜 두 번 · 0 이하 · 무한대 값 0종목")
+    F.log_naver_clean([("Y", "나", [(T("2026-01-05"), "bad", [float("inf")])])])
+    assert capsys.readouterr().out.startswith("  !! 네이버 시계열 0 이하 · 무한대 값: 1종목")

@@ -103,12 +103,12 @@ D1_MAX_KR = 30.0         # 한국 하루 가격 제한폭 — 넘는 값은 파�
 #     (시간외 큰 움직임이 있던 날도 공식 종가로).
 #   - 확인할 수 없으면 (파일 · 칸이 빠짐 · 사이에 빠진 거래일): 상장주식수가 오늘과 PIN_SHR_TOL 안이고 공식 종가가 네이버 봉과 PIN_PX_TOL 안일
 #     때만 고쳐요. 무상증자는 권리락 날 값이 바뀌고 새 주식은 몇 주 뒤에 상장돼 그사이 주식 수가 같아서 (코나아이) 값도 봐요.
-# 2026-11-13 (19거래일 · 2,474종목): 기준가가 바뀐 종목 18 (병합 · 감자 13 · 무상 · 유상증자 권리락 5) · 확인 못 한 연결 0 · 넥스트레이드
+# 2026-11-13 (19거래일 · 2,474종목): 기준가가 바뀐 종목 18 (병합 · 감자 13 · 무상 · 유상증자 권리락 5) · 새로 상장 14 · 확인 못 한 연결 0 · 넥스트레이드
 # 차이는 같은 기준 날의 99% 가 3.9% 안 · 가장 큰 시간외 하루 21.9%.
 PIN_PX_TOL = 0.05        # 공식 종가 ↔ 네이버 봉 차이 상한 (비율) — 기준가로 확인하지 못한 날은 넘으면 고치지 않아요
 PIN_SHR_TOL = 0.02       # 그날 상장주식수 ↔ 오늘 상장주식수 차이 상한 (비율) — 기준가로 확인하지 못한 날은 넘으면 고치지 않아요
 PIN_REF_TOL = 0.30       # 기준가로 같은 기준임을 확인한 날 (주식 수도 같을 때): 공식 종가 ↔ 네이버 봉 차이 상한 — 시간외 큰 움직임까지
-KR_DAY_LIMIT = 30.0      # 한국 하루 가격 제한폭 (%) — 코스피 · 코스닥
+KR_DAY_LIMIT = D1_MAX_KR  # 한국 하루 가격 제한폭 (%) — 코스피 · 코스닥 (d1 줄과 같은 값 · 따로 바뀌지 않게)
 KONEX_DAY_LIMIT = 15.0   # 코넥스 하루 가격 제한폭 (%)
 KR_JUMP_WHY = {"pin": "우리 고정이 만든 움직임", "halt": "거래정지 뒤 재개", "spike": "하루만 튄 봉", "other": "그 밖"}
 US_D1_COVER = 98.0       # 미국 d1 채움 (%) — 아래면 실패 (Jack, 2026-11-07). 11-02 부터 매일 99.9~100%
@@ -2458,7 +2458,7 @@ def kr_series_problems(ks, px=None):
     if not isinstance(kept, dict) or set(kept) != {"basis", "far", "shr"} or not all(_nonneg_int(v) for v in kept.values()):
         out.append(f"kept {kept!r}"[:60])
     ref = ks.get("ref")
-    if not isinstance(ref, dict) or set(ref) != {"breakStocks", "unknownStocks"} or not all(_nonneg_int(v) for v in ref.values()):
+    if not isinstance(ref, dict) or set(ref) != {"breakStocks", "unknownStocks", "newStocks"} or not all(_nonneg_int(v) for v in ref.values()):
         out.append(f"ref {ref!r}"[:60])
     bs = ks.get("badStocks")
     if not isinstance(bs, list) or not all(isinstance(c, str) and c for c in bs):
@@ -2484,7 +2484,9 @@ def check_kr_series(rep, data, kr, pdata):
     krSeries 에 점검 결과를 실어요 (fetch_data.kr_series_check).
     실패: krSeries.bad (자기 점검 — 네이버 봉과 달라진 봉 중 허락된 고정이 아닌 수: 그날 공식 종가가 아니거나, 그날과 오늘 사이에 KRX 기준가가
     바뀌었거나, 확인 못 한 날인데 주식 수 · 값 차이가 기준 밖) 가 0 이 아니거나 모양이 틀리면. 바깥 출처의 잘못(네이버 · 목록 파일)으로는 생기지
-    않고 (고치는 날이 줄 뿐) 우리 코드가 봉을 잘못 바꿨을 때만 생겨요 (Jack 2026-11-13: 한 종목의 출처 문제가 모두의 발행을 막으면 안 돼요).
+    않고 (고치는 날이 줄 뿐 · 네이버의 같은 날짜 두 번 · 잘못된 값은 점검 전에 빼요) 우리 코드가 봉을 잘못 바꿨을 때만 생겨요 (Jack 2026-11-13: 한
+    종목의 출처 문제가 모두의 발행을 막으면 안 돼요). 다만 우리 잘못이 모두 여기 걸리지는 않아요: 점검이 파이프라인의 규칙 · 기준가 연결을 다시 써서,
+    나중 단계가 봉을 바꾸거나 고정이 규칙과 어긋나면 잡지만 기준가 연결 자체의 잘못은 시험(tests/test_kr_pin_basis.py)이 지켜요.
     krSeries 가 없으면 직전 발행본에 있었을 때만 실패 (그 전 형식은 경고).
     경고: 하루 움직임이 가격 제한폭 + 넥스트레이드 차이로 설명되지 않는 종목 (krSeries.jump) — 그 종목의 숫자에 그 움직임이 들어가요
     (대개 네이버가 고치지 않은 감자 · 거래정지 뒤 재개 · 하루만 튄 봉). pdata: 직전 발행본 data.json (발행 모드에서만, 아니면 None)."""
@@ -2513,7 +2515,8 @@ def check_kr_series(rep, data, kr, pdata):
     rep.add(name, not probs and bad == 0,
             f"걸린 봉 {bad!r}" + (f" ({', '.join(nm(c) for c in bs[:KR_SERIES_SHOW])})" if bs else "")
             + f" · 최근 {ks.get('days')}거래일 고친 봉 {ks.get('pinned')!r} ({ks.get('pinStocks')!r}종목) · 기준가가 바뀐 종목 "
-            f"{ref.get('breakStocks')!r} · 확인 못 한 종목 {ref.get('unknownStocks')!r} · 그대로 둔 봉 다른 기준 {kept.get('basis')!r} · "
+            f"{ref.get('breakStocks')!r} · 확인 못 한 종목 {ref.get('unknownStocks')!r} · 새로 상장 {ref.get('newStocks')!r} · 그대로 둔 봉 "
+            f"다른 기준 {kept.get('basis')!r} · "
             f"값이 멂 {kept.get('far')!r} · 주식 수 모름 {kept.get('shr')!r} ({ks.get('keptStocks')!r}종목)"
             + (f" · 모양: {', '.join(probs[:3])}" if probs else ""), rule)
     if bs:

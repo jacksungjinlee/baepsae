@@ -362,24 +362,36 @@ capital reduction, ex-rights day or a re-listing after a halt KRX sets a new one
 - no reference-price change happened between that day and today, and the official close is within 5% of Naver's bar
   (`PIN_PX_TOL`), or within 30% (`PIN_REF_TOL`, a big after-hours day) when the share count is within 2% of today's
   (`PIN_SHR_TOL`); or
-- the reference price cannot be checked for that stretch (a row or the Changes column missing, or a trading day without a
-  final listing file in between): only when the share count is within 2% of today's **and** the close within 5% of
-  Naver's. The share count alone is not enough: with a bonus issue the price changes on the ex-date and the new shares
-  list weeks later (코나아이, 11-13).
+- the reference price cannot be checked for that stretch (a row missing where the files around it have one, the Changes
+  value missing, or a trading day without a final listing file in between): only when the share count is within 2% of
+  today's **and** the close within 5% of Naver's. The share count alone is not enough: with a bonus issue the price
+  changes on the ex-date and the new shares list weeks later (코나아이, 11-13).
+
+A stock listed during the 19 sessions has no row in the files before its listing; those links are counted as "new
+listing", not "unchecked" (there is no official close to copy before the listing anyway, and the same both-checks rule
+applies). Before any of this, each Naver series is cleaned (`naver_clean`): a date that appears twice with different
+values is left out (neither value is trusted), a date twice with the same value is kept once, and a zero, negative or
+infinite value is left out. The run log says so loudly with the stock, date and values ("!! 네이버 시계열 같은 날짜 두
+번"); on 2026-11-13 there were none in 2,474 series.
 
 On 2026-11-13 the reference prices showed 18 stocks with a new basis in the 19 sessions (13 consolidations or capital
-reductions, 5 ex-rights days) and none unchecked; the rule kept 165 of 39,778 bars as Naver's (157 before a basis change,
-8 more than 5% apart on a day the share count had changed by more than 2%). After the replacement, `pin_audit` re-checks
-the finished series against Naver's own: every bar that differs must be that day's official close and allowed by the rule.
-data.json `krSeries` carries the counts (`ref.breakStocks`, `ref.unknownStocks`, `kept`, `bad`) and the moves below. The run
-log has one line per step ("KRX 기준가 연결", "고치지 않고 네이버 봉 그대로 둔 봉", "공식 종가 고정 자기 점검", "한국 시계열 하루 ±30%").
-"KRX 기준가 연결" is loud when more than 100 stocks show a new reference price (the Changes column may have changed
-meaning: fewer bars get replaced, none wrongly) or when any stock could not be checked. Two gate rows read `krSeries`:
+reductions, 5 ex-rights days), 14 new listings and none unchecked. The rule kept 165 of 39,778 bars as Naver's, in 23
+stocks: 157 bars before a basis change in the 18 stocks, and 8 bars in 5 stocks more than 5% apart on a day the share
+count had changed by more than 2%. After the replacement, `pin_audit` re-checks the finished series against Naver's own:
+every bar that differs must be that day's official close and allowed by the rule. data.json `krSeries` carries the counts
+(`ref.breakStocks`, `ref.unknownStocks`, `ref.newStocks`, `kept`, `bad`) and the moves below. The run log has one line per
+step ("네이버 시계열 점검", "KRX 기준가 연결", "고치지 않고 네이버 봉 그대로 둔 봉", "공식 종가 고정 자기 점검", "한국 시계열 하루
+±30%"). "KRX 기준가 연결" is loud when more than 100 stocks show a new reference price (the Changes column may have changed
+meaning: fewer bars get replaced, none wrongly) or when any stock could not be checked; new listings alone don't make it loud.
+Two gate rows read `krSeries`:
 
 - **FAIL "국내 시계열 공식 종가 고정 자기 점검 (krSeries.bad)"**: a bar differs from Naver's series without being an allowed
-  replacement, or `krSeries` is malformed, or it is missing while the previous publish had it. No outside source can cause
-  this (a Naver or listing-file problem only means fewer bars are replaced); it means our code changed a bar it should not
-  have, for example a new step that writes official closes into older days. The run log's line "!! 공식 종가 고정 자기 점검"
+  replacement, or `krSeries` is malformed, or it is missing while the previous publish had it. It only fires on an error in
+  our own code: an outside source problem (Naver, a listing file) only means fewer bars are replaced, and a duplicate or
+  broken Naver date is cleaned before the check. But not every error of ours fires it: the check reuses the pipeline's own
+  rule and reference-price chain, so it catches a later step that changes bars (for example a new step that writes
+  official closes into older days) or a drift between the pinning and the rule, while a bug in the chain itself is guarded
+  by the tests (`tests/test_kr_pin_basis.py`, real 11-13 files). The run log's line "!! 공식 종가 고정 자기 점검"
   names the stocks, dates and reasons (`basis` a different basis · `far` too far from Naver's bar · `shr` share count
   unknown · `notOfficial` not that day's official close · `added` · `dropped`). Fix the code (a PR, with tests); never widen
   the 2%, 5% or 30% without Jack (a safety rule). The site keeps yesterday's data until then.

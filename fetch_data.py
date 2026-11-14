@@ -487,7 +487,8 @@ def pick_final_listing(today, fetch_csv, commit_kst, lookback=LISTING_LOOKBACK_D
     return None, None, f"최근 {lookback}일 안에 최종본이 없어요", notes
 
 
-D1_MAX_KR = 30.0          # 한국 하루 가격 제한폭이 ±30% 라 그보다 크면 신규 상장·분할·거래 재개 → 빈 칸 (개수는 로그)
+D1_MAX_KR = KR_DAY_LIMIT  # 한국 하루 가격 제한폭이 ±30% 라 그보다 크면 신규 상장·분할·거래 재개 → 빈 칸 (개수는 로그)
+#                            (2026-11-14: 관문 파일의 KR_DAY_LIMIT = D1_MAX_KR 30.0 을 읽어요 — 세 곳이 따로 바뀌지 않게)
 VAL20_DAYS = 20           # 평균 거래대금 기간 (거래일)
 VAL20_MIN_DAYS = 10       # 이보다 적은 날만 있으면 (신규 상장 등) 비워 둬요
 
@@ -546,8 +547,8 @@ def prev_session_ok(sessions, prev_final, want_prev):
     return bool(sessions) and bool(prev_final) and want_prev is not None and sessions[0][0] == want_prev
 
 
-REF_LINK = ("ok", "unknown", "break")   # KRX 기준가 연결 상태 — 뒤로 갈수록 나빠요 (모을 때 가장 나쁜 것)
-REF_EVENTS_LOUD = 100   # 19거래일 사이 기준가가 새로 정해진 종목이 이보다 많으면 크게 남겨요 (2026-11-13: 18종목)
+REF_LINK = ("ok", "new", "unknown", "break")   # KRX 기준가 연결 상태 — 뒤로 갈수록 나빠요 (모을 때 가장 나쁜 것)
+REF_EVENTS_LOUD = 100   # 19거래일 사이 기준가가 새로 정해진 종목이 이보다 많으면 크게 남겨요 (2026-11-13: 18종목 · 한 종목에 여러 번이어도 한 종목)
 JUMP_LOG_SHOW = 12      # 로그 한 줄에 이름을 적는 종목 수 (나머지는 수만)
 
 
@@ -557,7 +558,8 @@ def kr_ref_links(files, trade_days=(), codes=None):
     거래일이 빠져 있으면 그 연결은 확인 못 함. codes: 볼 종목 (None 이면 오늘 파일의 모든 종목).
     연결 하나 = 이웃한 두 파일 (앞 P → 뒤 E): E 의 기준가 (Close − Changes · 목록 파일의 Close 와 Changes 는 같은 가격 기준이에요) 가 P 의 공식 종가와
     1원 안으로 같으면 'ok' (그 사이에 기준이 바뀌지 않았어요), 다르면 'break' (분할 · 병합 · 감자 · 권리락 · 거래정지 뒤 재평가 — KRX 가 기준가를
-    새로 정한 날), 값 · 행이 없거나 사이에 빠진 거래일이 있으면 'unknown'.
+    새로 정한 날), P 와 그보다 앞 파일 모두에 행이 없으면 'new' (그 뒤에 새로 상장 — 그 앞 날은 공식 종가가 없어 고칠 봉도 없어요 · 리뷰 S1),
+    그 밖에 값 · 행이 없거나 (앞 파일에는 있는데 빠짐) 사이에 빠진 거래일이 있으면 'unknown'. pin_why_not 은 'new' 를 'unknown' 처럼 다뤄요.
     반환: (by_day, events) — by_day {pd.Timestamp(D): {코드: 상태}} (D = 맨 앞을 뺀 각 파일의 날짜 · 상태 = D 다음 파일부터 오늘 파일까지 연결 중
     가장 나쁜 것), events [(코드, E 날짜, 앞 파일의 공식 종가, E 의 기준가)] (break 만)."""
     def mp(df):
@@ -572,13 +574,19 @@ def kr_ref_links(files, trade_days=(), codes=None):
     maps = [(d, mp(df)) for d, df in files]
     if codes is None:
         codes = set(maps[0][1]) if maps else set()
+    oldest = {}                                       # 종목 → 행이 있는 가장 앞(오래된) 파일의 자리
+    for i, (_, m) in enumerate(maps):
+        for c in m:
+            oldest[c] = i
     acc, by_day, events = {c: "ok" for c in codes}, {}, []
     for i in range(1, len(maps)):
         (de, me), (dp, mprev) = maps[i - 1], maps[i]
         gap = any(dp < t < de for t in days)
         for c in codes:
             a, b = me.get(c), mprev.get(c)
-            if gap or not a or not b or a[1] is None or not b[0]:
+            if b is None and i > oldest.get(c, -1):
+                st = "new"
+            elif gap or not a or not b or a[1] is None or not b[0]:
                 st = "unknown"
             elif abs(a[1] - b[0]) > 1:
                 st = "break"
@@ -599,7 +607,7 @@ def pin_why_not(off, bar, shr_day, shr_now, link="unknown", px_tol=PIN_PX_TOL, s
                 (에쎈테크 5:1 병합: 그날 591원 · 네이버 수정주가 2,955원). 절대 고치지 않아요.
     'ok'      → 같은 기준이 확인됐어요: 차이가 px_tol 안이면, 또는 상장주식수가 오늘과 shr_tol 안이고 차이가 ref_tol 안이면 고쳐요 (시간외 큰
                 움직임 날도 공식 종가로) · 아니면 'far'.
-    'unknown' → 확인 못 함: 상장주식수가 오늘과 shr_tol 안이고 (모르면 'shr', 다르면 'basis') 차이가 px_tol 안일 때만 (아니면 'far' — 무상증자는
+    'unknown' · 'new' → 확인 못 함: 상장주식수가 오늘과 shr_tol 안이고 (모르면 'shr', 다르면 'basis') 차이가 px_tol 안일 때만 (아니면 'far' — 무상증자는
                 권리락 뒤 새 주식이 상장되기 전까지 주식 수가 같아요: 코나아이 1.5배). 둘 다 아니면 네이버 봉 그대로 (고쳐서 틀리는 것보다 안전해요)."""
     if link == "break":
         return "basis"
@@ -3710,6 +3718,29 @@ def kr_official_close(row):
     return float(round(mc / sh))
 
 
+def naver_clean(px):
+    """네이버 일봉을 날짜마다 한 봉 · 날짜 순 · 0 보다 큰 유한한 값만으로 (2026-11-14 · 리뷰 S2 · 순수 함수). 반환: (시계열, 문제 [(날짜, 이유, 값들)]).
+    같은 날짜가 같은 값으로 두 번이면 하나만 남기고 문제로 세지 않아요. 다른 값으로 두 번 이상이면 그 날짜를 통째로 빼요 ('dup' — 어느 값이
+    맞는지 알 수 없어 둘 다 믿지 않아요. 한 봉만 빠지면 숫자는 거의 같고, 종목을 빼면 필수 종목일 때 모두의 발행이 막혀요). 0 이하이거나 무한대인
+    값도 빼요 ('bad'). 2026-11-13 의 2,474종목 · 약 187만 봉에는 셋 다 0 이었어요. 이렇게 해서 자기 점검(pin_audit)과 움직임 검사(kr_jumps)는
+    늘 날짜가 하나뿐인 시계열만 봐요 — 출처의 잘못이 관문 실패(우리 코드의 잘못)로 보이지 않게."""
+    probs = []
+    if px is None or not len(px):
+        return px, probs
+    vals = pd.to_numeric(px, errors="coerce").astype(float)
+    good = vals.notna() & np.isfinite(vals.values) & (vals > 0)
+    for ts, v in vals[~good].items():
+        probs.append((ts, "bad", [float(v)] if pd.notna(v) else []))
+    vals = vals[good]
+    if vals.index.has_duplicates:
+        g = vals.groupby(level=0)
+        nuniq = g.nunique()
+        for ts in nuniq[nuniq > 1].index:
+            probs.append((ts, "dup", [float(x) for x in vals.loc[[ts]].values]))
+        vals = g.first()[nuniq == 1]
+    return vals.sort_index(), sorted(probs, key=lambda p: p[0])
+
+
 def cut_at(px, last_date):
     """last_date 보다 뒤(장중·다음 날) 값을 버려요."""
     return px[px.index <= pd.Timestamp(last_date)]
@@ -3855,15 +3886,7 @@ def fetch_korea(start, today, rf, prev=None):
     shr_by_day = {pd.Timestamp(d): _shares_map(df) for d, df in sessions}
     shr_now = _shares_map(listing)
     ref_by_day, ref_events = kr_ref_links([(px_date, listing)] + sessions, ks_all.index, set(listing["Code"])) if px_date else ({}, [])
-    ref_unknown = sorted(c for c, st in (ref_by_day[min(ref_by_day)] if ref_by_day else {}).items() if st == "unknown")
-    nm_of = dict(zip(listing["Code"], listing["Name"].astype(str)))
-    ev_txt = [f"{c} {nm_of.get(c, '')} {d:%m-%d} {p:,.0f}→{r:,.0f}" for c, d, p, r in sorted(ref_events, key=lambda e: (e[1], e[0]))]
-    log(f"{'  !! ' if ref_unknown or len(ref_events) > REF_EVENTS_LOUD else '· '}KRX 기준가 연결 (목록 파일의 Close − Changes = 앞 파일의 공식 종가): "
-        f"최근 {len(sessions)}거래일 사이 기준가가 새로 정해진 종목 {len({e[0] for e in ref_events}):,}"
-        + (f" ({', '.join(ev_txt[:JUMP_LOG_SHOW])}{' 외 ' + str(len(ev_txt) - JUMP_LOG_SHOW) + '건' if len(ev_txt) > JUMP_LOG_SHOW else ''})" if ev_txt else "")
-        + f" · 확인 못 한 종목 {len(ref_unknown):,}" + (f" (예: {', '.join(ref_unknown[:5])} — 그 종목은 주식 수와 값 차이로만 고쳐요)" if ref_unknown else "")
-        + (f" — 평소(2026-11-13: 18종목)보다 많아요. 목록 파일의 Changes 칸이 바뀌었을 수 있어요 (고치는 날이 줄 뿐 틀린 값은 들어가지 않아요)"
-           if len(ref_events) > REF_EVENTS_LOUD else ""))
+    ref_sum = log_ref_links(ref_by_day, ref_events, dict(zip(listing["Code"], listing["Name"].astype(str))), len(sessions))
     ks_date = kospi.index[-1].date() if len(kospi) else None
     if px_date is not None and ks_date != px_date:
         log(f"  !! KOSPI 마지막 날짜 {ks_date} ≠ 기준일 {px_date} (검증에서 실패 처리돼요)")
@@ -3906,6 +3929,7 @@ def fetch_korea(start, today, rf, prev=None):
 
     out, pin, dropped = [], collections.Counter(), collections.Counter()
     pin_kept, kept_names, pin_bad, jumps = collections.Counter(), {}, [], []    # 2026-11-14: 고치지 않은 봉 · 자기 점검 · 제한폭 넘는 움직임
+    naver_bad = []                                                              # 2026-11-14 (리뷰 S2): 네이버 시계열의 같은 날짜 · 잘못된 값
     lock = threading.Lock()
     prev_hl = {x["t"]: (_fin(x.get("hi")), _fin(x.get("lo"))) for x in (prev or {}).get("stocks", []) if x.get("cls") == "kr"}
     prod_map = {}               # 주요제품 (업종 그룹 나누기용, 파일에는 dk 로만 나가요)
@@ -3960,6 +3984,10 @@ def fetch_korea(start, today, rf, prev=None):
                     raise
             if px is None:
                 return None
+            px, glitch = naver_clean(px)           # 리뷰 S2: 같은 날짜 두 번 · 0 이하 · 무한대 (출처의 잘못 — 크게 남겨요)
+            if glitch:
+                with lock:
+                    naver_bad.append((code, str(row["Name"]), glitch))
             if close is not None:
                 raw = cut_at(px, px_date)          # 네이버 원래 시계열 (자기 점검 · 움직임 이유에 써요)
                 px, how = pin_close(px, px_date, close)
@@ -4070,19 +4098,63 @@ def fetch_korea(start, today, rf, prev=None):
             + (" (네이버 시계열이 기준일보다 늦은 종목이 많아요)" if loud else ""))
         log(f"· 최근 {len(off_by_day)}거래일 네이버 일봉을 공식 종가로 고침: {pin['recent_fixed']:,}개 봉 · {pin['recent_stocks']:,}종목"
             " (넥스트레이드 체결가가 섞인 날)")
+    log_naver_clean(naver_bad)
     krs = kr_series_check(pin, pin_kept, kept_names, pin_bad, jumps, {r["t"] for r in out}, len(off_by_day),
-                          ref={"breakStocks": len({e[0] for e in ref_events}), "unknownStocks": len(ref_unknown)})
+                          ref=ref_sum)
     meta = {"pxDate": px_date.isoformat() if px_date else None,
             "ksDate": ks_date.isoformat() if ks_date else None, "listSrc": list_src, "_index": kospi, "_prod": prod_map,
             "_prefShares": pref_shares, "_prefCaps": pref_caps, "krSeries": krs}
     return out, bench, mkt, meta
 
 
+def log_ref_links(by_day, events, names, days):
+    """kr_ref_links 결과를 한 줄로 남기고 data.json krSeries.ref 를 돌려줘요 (2026-11-14). 크게(!!) 남기는 때: 기준가를 확인 못 한 종목이 있거나
+    (앞 파일에는 있는 행 · Changes 값이 빠짐 · 사이에 빠진 거래일), 기준가가 새로 정해진 종목이 REF_EVENTS_LOUD 보다 많을 때. 이 기간에 새로 상장한
+    종목('new' — 상장 앞 날은 공식 종가가 없어 고칠 봉도 없어요)은 세기만 하고 크게 남기지 않아요 (리뷰 S1: 매일 몇 종목은 새로 상장해요).
+    names: {코드: 이름} · days: 거래일 파일 수. 반환: {breakStocks, unknownStocks, newStocks} (종목 수 — 한 종목에 사건이 여러 번이어도 하나)."""
+    oldest = by_day[min(by_day)] if by_day else {}
+    unknown = sorted(c for c, st in oldest.items() if st == "unknown")
+    new = sorted(c for c, st in oldest.items() if st == "new")
+    brk = sorted({e[0] for e in events})
+    ev_txt = [f"{c} {names.get(c, '')} {d:%m-%d} {p:,.0f}→{r:,.0f}" for c, d, p, r in sorted(events, key=lambda e: (e[1], e[0]))]
+    new_txt = [f"{c} {names.get(c, '')}".strip() for c in new]
+    many = len(brk) > REF_EVENTS_LOUD
+    log(f"{'  !! ' if unknown or many else '· '}KRX 기준가 연결 (목록 파일의 Close − Changes = 앞 파일의 공식 종가): "
+        f"최근 {days}거래일 사이 기준가가 새로 정해진 종목 {len(brk):,} ({len(events):,}건)"
+        + (f" ({', '.join(ev_txt[:JUMP_LOG_SHOW])}{' 외 ' + str(len(ev_txt) - JUMP_LOG_SHOW) + '건' if len(ev_txt) > JUMP_LOG_SHOW else ''})" if ev_txt else "")
+        + f" · 이 기간에 새로 상장한 종목 {len(new):,}"
+        + (f" ({', '.join(new_txt[:5])}{' 외 ' + str(len(new_txt) - 5) + '종목' if len(new_txt) > 5 else ''} — 상장 앞 날은 고칠 봉이 없어요)"
+           if new_txt else "")
+        + f" · 확인 못 한 종목 {len(unknown):,}" + (f" (예: {', '.join(unknown[:5])} — 그 종목은 주식 수와 값 차이로만 고쳐요)" if unknown else "")
+        + (f" — 평소(2026-11-13: 18종목)보다 많아요. 목록 파일의 Changes 칸이 바뀌었을 수 있어요 (고치는 날이 줄 뿐 틀린 값은 들어가지 않아요)"
+           if many else ""))
+    return {"breakStocks": len(brk), "unknownStocks": len(unknown), "newStocks": len(new)}
+
+
+def log_naver_clean(naver_bad):
+    """naver_clean 이 고친 종목을 크게, 이름 · 날짜 · 값과 함께 (없으면 보통 줄). naver_bad: [(코드, 이름, [(날짜, 이유, 값들)])]."""
+    if not naver_bad:
+        log("· 네이버 시계열 점검: 같은 날짜 두 번 · 0 이하 · 무한대 값 0종목")
+        return
+    dup = sorted((c, nm, [p for p in g if p[1] == "dup"]) for c, nm, g in naver_bad if any(p[1] == "dup" for p in g))
+    bad = sorted((c, nm, [p for p in g if p[1] == "bad"]) for c, nm, g in naver_bad if any(p[1] == "bad" for p in g))
+
+    def txt(items):
+        return ", ".join(f"{c} {nm} ({' · '.join(f'{t:%Y-%m-%d} ' + ' / '.join(f'{v:,.0f}' for v in vs) for t, _, vs in g[:2])}"
+                         f"{' …' if len(g) > 2 else ''})" for c, nm, g in items[:JUMP_LOG_SHOW]) + (
+            f" 외 {len(items) - JUMP_LOG_SHOW}종목" if len(items) > JUMP_LOG_SHOW else "")
+    if dup:
+        log(f"  !! 네이버 시계열 같은 날짜 두 번 (다른 값): {len(dup)}종목 — 그 날짜를 빼고 계산해요 (어느 값이 맞는지 몰라요): {txt(dup)}")
+    if bad:
+        log(f"  !! 네이버 시계열 0 이하 · 무한대 값: {len(bad)}종목 — 그 봉을 빼고 계산해요: {txt(bad)}")
+
+
 def kr_series_check(pin, kept, kept_names, bad, jumps, published, days, ref=None):
     """2026-11-14: 국내 시계열 점검을 크게 남기고 data.json krSeries 를 만들어요 (관문이 읽어요).
     pin: 고정 집계 · kept: 고치지 않은 봉 Counter (basis · far · shr) · kept_names: {코드: (이름, 이유별 수)} · bad: [(코드, 이름, [(날짜, 이유)])]
     (pin_audit) · jumps: [(코드, 이름, [(날짜, %, 이유)])] (kr_jumps) · published: 발행하는 종목 코드 (움직임은 이 종목만 실어요) · days: 고정한 거래일 수.
-    ref: {breakStocks 기준가가 새로 정해진 종목 수 · unknownStocks 기준가 연결을 확인 못 한 종목 수} (kr_ref_links).
+    ref: {breakStocks 기준가가 새로 정해진 종목 수 · unknownStocks 기준가 연결을 확인 못 한 종목 수 · newStocks 그 기간에 새로 상장한 종목 수}
+    (kr_ref_links).
     krSeries: v 1 · days · pinned 고친 봉 · pinStocks · kept {basis · far · shr} 고치지 않은 봉 · keptStocks · bad 자기 점검에 걸린 봉 (0 이어야 해요) ·
     badStocks [코드…] · ref · jump [[코드, 날짜, %, 이유]…] 가격 제한폭 + 넥스트레이드 차이로 설명되지 않는 하루 움직임 (KR_JUMP_WHY)."""
     nbad = sum(len(b) for _, _, b in bad)
@@ -4110,7 +4182,7 @@ def kr_series_check(pin, kept, kept_names, bad, jumps, published, days, ref=None
     return {"v": 1, "days": int(days), "pinned": int(pin.get("recent_fixed", 0)), "pinStocks": int(pin.get("recent_stocks", 0)),
             "kept": {k: int(kept.get(k, 0)) for k in ("basis", "far", "shr")}, "keptStocks": len(kept_names),
             "bad": int(nbad), "badStocks": sorted(c for c, _, _ in bad),
-            "ref": {k: int((ref or {}).get(k, 0)) for k in ("breakStocks", "unknownStocks")},
+            "ref": {k: int((ref or {}).get(k, 0)) for k in ("breakStocks", "unknownStocks", "newStocks")},
             "jump": [[c, t.date().isoformat(), float(p), w] for c, _, j in jm for t, p, w in j]}
 
 
@@ -7532,7 +7604,7 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                       "pinStocks — 그날과 오늘 사이에 KRX 기준가(목록 파일의 Close − Changes)가 바뀌지 않았을 때만 (값 차이 "
                       f"{PIN_PX_TOL:.0%} 안, 또는 상장주식수가 오늘과 {PIN_SHR_TOL:.0%} 안이고 {PIN_REF_TOL:.0%} 안) · 기준가를 확인 못 한 날은 "
                       f"상장주식수가 {PIN_SHR_TOL:.0%} 안이고 값 차이 {PIN_PX_TOL:.0%} 안일 때만 · ref {{breakStocks 기준가가 새로 정해진 종목 "
-                      "(분할 · 병합 · 감자 · 권리락) · unknownStocks 기준가를 확인 못 한 종목} · 고치지 않은 봉 kept (basis 다른 기준 · far 값이 멂 · "
+                      "(분할 · 병합 · 감자 · 권리락) · unknownStocks 기준가를 확인 못 한 종목 · newStocks 그 기간에 새로 상장한 종목} · 고치지 않은 봉 kept (basis 다른 기준 · far 값이 멂 · "
                       "shr 주식 수 모름) · keptStocks · bad 자기 점검에 걸린 봉 (0 이어야 해요 · 관문 실패) · badStocks · jump [[종목코드, 날짜, %, "
                       f"이유]] 하루 움직임이 가격 제한폭(코스피 · 코스닥 {KR_DAY_LIMIT:g}% · 코넥스 {KONEX_DAY_LIMIT:g}%)과 넥스트레이드 차이로 "
                       "설명되지 않는 봉 — 이유 " + " · ".join(f"{k} {v}" for k, v in KR_JUMP_WHY.items())
