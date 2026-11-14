@@ -1,0 +1,14 @@
+# 미국 주식 분할 시드 — 나중에 더한 종목 (2026-11-14 · fetch_data.EXTRA_US_ADDED 28곳). us_splits_seed.csv 와 같은 규칙이에요: 야후 분할 칸
+# (yfinance download actions=True)을 2026-11-14 에 2016-01-01 ~ 2026-11-13 로 받아 사람이 확인한 깨끗한 배율만 (fetch_data.split_is_clean).
+# 확인 (야후 + 회사 사건): AZN 2026-02-02 1:2 = 예탁증서(ADS 1개 = 보통주 0.5주) 2개가 뉴욕에 직접 상장한 보통주 1주로 (SEC: 8-A12B 2026-01-22 ·
+# ADS 상장폐지 Form 25 2026-01-30) · BTI 2017-02-14 2:1 = ADS 비율 변경 (1 ADS = 보통주 2주 → 1주) · GSK 2022-07-19 4:5 = Haleon 분리 뒤 주식 병합
+# · SONY 2024-10-09 5:1 = 소니 주식 5분할 (ADS 1개 = 1주 그대로 · SEC F-6EF 2024-09-13).
+# 넣지 않은 것 (깨끗하지 않은 배율 = 분사 조정 · 주식 수가 바뀐 게 아니에요): BHP 2022-06-02 ×1.121 (Woodside 석유 사업 분리) · GSK 2022-07-22
+# ×1.226 (Haleon 분리) · NVS 2019-04-09 ×1.116 (Alcon 분리) · WPC 2023-11-02 ×1.021 (Net Lease Office Properties 분리). UL 2025-12-09 ×0.888 은
+# 진짜 8:9 주식 병합(The Magnum Ice Cream Company 분리와 같은 날)을 야후가 분리 조정과 합쳐 적은 것이라 fetch_data.SPLIT_OVERRIDES 에 근거와 함께 있어요.
+# 종목 목록과 끝 날짜: us_splits_seed_more_codes.txt · yahoo = 야후 배율의 분수 꼴 (확인용)
+code,date,ratio,yahoo
+AZN,2026-02-02,0.5,1:2
+BTI,2017-02-14,2.0,2:1
+GSK,2022-07-19,0.8,4:5
+SONY,2024-10-09,5.0,5:1

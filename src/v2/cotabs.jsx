@@ -42,8 +42,8 @@ import { OLD_LINKS, dartFilingUrl } from "./routes.js";
 import { usOf, priceMd, priceDate, lineDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText, riskBandText, riskBandNote } from "./cofmt.js";
 import { epsFixFor, epsBasisCardGone, stmtNotWonFor, unitHeldFor } from "./fix.js";
 import { epsPeriod, bpsPeriod } from "../repair.js";
-import { EpsFixNote, StmtCurNote, FcurNote, PbrZeroNote, UnitChkNote, unitChkText } from "./fixnote.jsx";
-import { fcurBlank, fcurDyBlank, pbrZeroOf } from "./fcur.js";
+import { EpsFixNote, StmtCurNote, FcurNote, PbrZeroNote, FgnCutNote, UnitChkNote, unitChkText } from "./fixnote.jsx";
+import { fcurBlank, fcurDyBlank, pbrZeroOf, fgnBlank } from "./fcur.js";
 import { CoinFlow, PayoutRing } from "./coart.jsx";
 
 const all = (...xs) => xs.every((x) => x != null && x !== "");
@@ -468,6 +468,10 @@ export function ValueTab({ load, s, store, onMore }) {
   const fc = fcurBlank(s);
   // a PBR that rounds to 0.00 (data.json pbrZero, Jack 2026-11-13): PBR – with its line under it; PER as usual (and its date)
   const p0 = pbrZeroOf(s);
+  // a foreign company's PBR · PER that did not match its own totals (data.json fgnCut, Jack 2026-11-14): each "–" under its label,
+  // the line once under them; no date line when neither number is left
+  const gP = fgnBlank(s, "pbr"), gE = fgnBlank(s, "per");
+  const gAll = (gP || gE) && (gP || r.pbr == null) && (gE || per == null) && !p0;
   const perMed = useMemo(() => indMedian(group, (x) => num(x.per)), [group]);
   const head = r.rule === "na" ? null : V.head[r.rule];
   const sub = V.sub[r.rule] || null;
@@ -493,10 +497,15 @@ export function ValueTab({ load, s, store, onMore }) {
           <Stats>
             {r.pbr != null && <Stat data-ui-v2="co-pbr" label="PBR" value={timesText(r.pbr, 2)} sub={pbrSub} />}
             {p0 && <Stat data-ui-v2="co-pbr" data-blank="pbr0" label="PBR" value="–" />}
+            {gP && <Stat data-ui-v2="co-pbr" data-blank="fgn" label="PBR" value="–" />}
             {per != null && <Stat data-ui-v2="co-per" label="PER" value={timesText(per, 1)} sub={perSub} />}
+            {gE && <Stat data-ui-v2="co-per" data-blank="fgn" label="PER" value="–" />}
           </Stats>
         )}
         {!compare && p0 && <PbrZeroNote s={s} />}
+        {/* with an industry to compare, PER sits in the compare card; when it was blanked, its "–" stays here */}
+        {compare && gE && <Stats><Stat data-ui-v2="co-per" data-blank="fgn" label="PER" value="–" /></Stats>}
+        {(gP || gE) && !cur && <FgnCutNote s={s} fields={["pbr", "per"]} />}
         {/* US statements not in dollars (data.json fcur): PBR · PER keep their labels with –, the reason right under them */}
         {fc && (
           <>
@@ -509,7 +518,7 @@ export function ValueTab({ load, s, store, onMore }) {
         )}
         {!usOf(s) && !cur && valueBasis(co) && <Src data-ui-v2="co-value-basis">{valueBasis(co)}</Src>}
         <EpsFixNote s={s} show={epsFixFor(s) && per != null && !compare} />
-        {!cur && !fc && <DateLine date={lineDate(load, s)} fresh={load.fresh} />}
+        {!cur && !fc && !gAll && <DateLine date={lineDate(load, s)} fresh={load.fresh} />}
       </Card>
       {compare && (
         <Card data-ui-v2="co-compare" data-n={compareN(st.co, per != null ? perCo(perMed) : null)}>
@@ -655,12 +664,17 @@ export function ValueMore({ load, s, store, setStoreData, pad, onBack, backLabel
   // US statements not in dollars (data.json fcur): PBR · PER keep their rows with –, the reason under them, no date line
   const fc = fcurBlank(s);
   const p0 = pbrZeroOf(s);                    // PBR that rounds to 0.00 (data.json pbrZero): PBR row –, the line under the rows
+  // a foreign company's PBR · PER that did not match its own totals (data.json fgnCut): their rows –, the line under the rows
+  const gP = fgnBlank(s, "pbr"), gE = fgnBlank(s, "per");
+  const gAll = (gP || gE) && (gP || r.pbr == null) && (gE || per == null) && !p0;
   const rows = fc ? [V.mean.pbr ? { label: "PBR", mean: V.mean.pbr, value: "–" } : null, V.mean.per ? { label: "PER", mean: V.mean.per, value: "–" } : null].filter(Boolean) : [
     p0 && V.mean.pbr ? { label: "PBR", mean: V.mean.pbr, value: "–" } : null,
+    gP && V.mean.pbr ? { label: "PBR", mean: V.mean.pbr, value: "–" } : null,
     r.pbr != null && V.mean.pbr ? { label: "PBR", mean: V.mean.pbr, value: timesText(r.pbr, 2), med: r.med != null && V.med ? fill(V.med, { x: nf(r.med, 2) }) : null,
       calc: pbrR && V.calcPbr ? fill(V.calcPbr, { p: won(pbrR.price), b: won(pbrR.per), x: nf(pbrR.value, 2) }) : null } : null,
     per != null && V.mean.per ? { label: "PER", mean: V.mean.per, value: timesText(per, 1), med: med(perMed),
       calc: perR && V.calcPer ? fill(V.calcPer, { p: won(perR.price), e: won(perR.per), x: nf(perR.value, 1) }) : null } : null,
+    gE && V.mean.per ? { label: "PER", mean: V.mean.per, value: "–" } : null,
     kr && co && num(co.evE) != null && V.mean.evE ? { label: "EV/EBITDA", mean: V.mean.evE, value: timesText(co.evE, 1), med: med(evMed) } : null,
     kr && co && num(co.pcf) != null && all(V.mean.pcf, V.pcf) ? { label: V.pcf, mean: V.mean.pcf, value: timesText(co.pcf, 1), med: med(pcfMed) } : null,
   ].filter(Boolean);
@@ -682,7 +696,8 @@ export function ValueMore({ load, s, store, setStoreData, pad, onBack, backLabel
             {!usOf(s) && co && Array.isArray(co.unitFix) && co.unitFix.length > 0 && C.co.unitFix && <Note data-ui-v2="unit-fix">{C.co.unitFix}</Note>}
             <EpsFixNote s={s} show={epsFixFor(s) && rows.some((x) => x.label === "PER")} />
             {p0 && <PbrZeroNote s={s} />}
-            {fc ? <FcurNote s={s} /> : <DateLine date={lineDate(load, s)} fresh={load.fresh} />}
+            {(gP || gE) && <FgnCutNote s={s} fields={["pbr", "per"]} />}
+            {fc ? <FcurNote s={s} /> : gAll ? null : <DateLine date={lineDate(load, s)} fresh={load.fresh} />}
           </Card>
         )}
         <Scatter s={s} group={group} />
@@ -721,9 +736,12 @@ export function DivTab({ load, s }) {
   // US statements not in dollars (data.json fcur): the yield was not computed — 배당수익률 – with the reason under it, never
   // 자료가 없어요 (keyed on the data, src/v2/fcur.js)
   const fc = us && fcurDyBlank(s);
+  // a foreign company's yield that did not match the dividends it paid (data.json fgnCut, Jack 2026-11-14): 배당수익률 – with
+  // its own line under it, never 자료가 없어요
+  const fg = us && !fc && fgnBlank(s, "dy");
   // na (the per-share figures disagree with the report's yield, or are missing): the tile's own phrase, never an empty card
   // KR payer (trend off): the tile's own phrase 배당을 줘요 (Jack, 2026-11-05); US keeps 배당을 주는 회사예요
-  const head = fc ? null : r.rule === "na" ? C.co.tiles.na : r.rule === "noPrev" ? C.co.tiles.div.noPrev
+  const head = fc || fg ? null : r.rule === "na" ? C.co.tiles.na : r.rule === "noPrev" ? C.co.tiles.div.noPrev
     : r.rule === "streak" ? (Dv.head.streak ? fill(Dv.head.streak, { n: r.n }) : null)
     : r.rule === "pays" ? (us ? Dv.head.pays : C.co.tiles.div.pays) : Dv.head[r.rule];
   const md = priceMd(load, s);
@@ -799,16 +817,18 @@ export function DivTab({ load, s }) {
       {!us && r.rule !== "none" && r.rule !== "na" && unitChkText(s, co) && (
         <Card data-ui-v2="co-payout-unit"><UnitChkNote s={s} co={co} style={{ marginTop: 0 }} /></Card>
       )}
-      {(r.yieldPct != null || fc || (!ring && po && po.pct != null && all(Dv.payout, Dv.payoutSub))) && <Card data-ui-v2="co-div-stats">
+      {(r.yieldPct != null || fc || fg || (!ring && po && po.pct != null && all(Dv.payout, Dv.payoutSub))) && <Card data-ui-v2="co-div-stats">
         <Stats>
           {r.yieldPct != null && <Stat data-ui-v2="co-yield" data-y={r.yieldPct} label={C.pick.receipt.yield} value={yieldText(r.yieldPct)}
             sub={us ? Dv.yieldSubUs : fy ? fill(Dv.basisKr, { fy }) : null} />}
           {fc && <Stat data-ui-v2="co-yield" data-blank="fcur" label={C.pick.receipt.yield} value="–" />}
+          {fg && <Stat data-ui-v2="co-yield" data-blank="fgn" label={C.pick.receipt.yield} value="–" />}
           {!ring && po && po.pct != null && all(Dv.payout, Dv.payoutSub) && <Stat data-ui-v2="co-payout" data-pct={po.pct} label={Dv.payout} value={pctText(po.pct)} sub={Dv.payoutSub} />}
         </Stats>
         {/* US statements not in dollars (data.json fcur): the reason right under 배당수익률 – */}
         {fc && <FcurNote s={s} />}
-        {us && !fc && <Src>{C.why.srcPriceUs && md ? fill(C.why.srcPriceUs, { md }) : null}</Src>}
+        {fg && <FgnCutNote s={s} fields={["dy"]} />}
+        {us && !fc && !fg && <Src>{C.why.srcPriceUs && md ? fill(C.why.srcPriceUs, { md }) : null}</Src>}
         {/* 배당성향 = 현금배당금총액 ÷ net income (company.js payout): the line while the company's EPS is not fixed, and also
             when the payout still uses total profit after the re-read (basis "total") */}
         <EpsFixNote s={s} show={!ring && epsFixFor(s) && !!po && po.pct != null && all(Dv.payout, Dv.payoutSub)} />
