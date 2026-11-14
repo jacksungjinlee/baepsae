@@ -35,6 +35,10 @@
               3종목 · 후보 · 매수 계획 · 홈 · 포트폴리오 · 추가로 넣을 돈 · 종목) · 샀어요 미국 줄 밑 '미국 {날짜} 종가' · 다른 날의 % 없음 ·
               늦음 시각(staleAfter): 지나면 n ≤ 1 '갱신이 늦어지고 있어요'(홈 띠는 today.staleLate), 2일째부터 '{n}일째 …', 전이면 조용 ·
               홈 '오늘 확인할 일'의 그 종목 안내 · 열어 둔 화면도 시계가 staleAfter 를 지나면(타이머 · 다시 보일 때) 새로 고침 없이 경고
+  주가 기록   (Jack, 2026-11-14) 과거 주가 기록에 오류가 있는 한국 종목(pxBad · pxBadF): 52주까지 비운 종목은 회사 페이지 머리의 52주 막대 자리에
+              '과거 주가 기록 일부에 오류가 있어서 52주 범위와 출렁임·위험 숫자는 비워 두었어요.' 한 번 (모든 탭) · 출렁임 칸 '–' · 출렁임 카드 ·
+              주가 분해 없음 · 52주는 보이는 종목은 비운 숫자마다 '… 이 숫자는 비워 두었어요.' · 홈 종목 순위에서 비운 숫자의 목록만 빠짐 ·
+              다른 종목은 그대로 (390 · 1280)
   공시 단위   (Jack, 2026-11-13) 단위를 잘못 적은 재무제표로 숫자를 비운 한국 회사(unitChk): '공시 자료의 단위를 확인하고 있어서 이 숫자를
               잠시 비워 두었어요.' 영역마다 한 번 (요약의 한눈에 칸 위 · 재무 경고 자리 · 내 기준 · 실적 · 가치 · 두 자세히 · 배당성향 자리),
               실적 · 가치 칸과 숫자 없는 카드는 없음, 출렁임 · 배당은 그대로 · 다른 회사에는 없음
@@ -9577,6 +9581,175 @@ def scene_unit_chk(R, files, width, shots=None):
     srv.shutdown()
 
 
+# ── 2026-11-14 (Jack): 과거 주가 기록 오류 종목 (data.json · corp.json pxBad · pxBadF — fetch_data.py mark_px_bad) ──
+PXBAD_LINE = C["co"]["pxBad"]
+PXBAD_ONE = C["co"]["pxBadOne"]
+# validate_data.PX_BAD_DATA 와 그 창 (smoke 는 관문 파일을 읽지 않아요 — tests/test_px_bad.py 가 그 목록을 지켜요)
+PXBAD_DATA = ("hi", "lo", "vol", "beta", "betaSE", "betaN", "al", "r1", "r3", "r36", "mom", "sh", "mdd", "hit", "mz", "lz")
+PXBAD_CORP = ("hi", "lo", "vol", "beta", "betaSE", "betaN", "r1", "r3", "r36", "sh", "mdd", "mz", "lz")
+PXBAD_OLD = ["vol", "beta", "betaSE", "betaN", "al", "r36", "sh", "mdd", "hit", "lz"]          # 252봉보다 오래된 움직임: 시계열 전체 칸만
+PXBAD_Y = [k for k in PXBAD_DATA if k in PXBAD_OLD or k in ("hi", "lo", "mom", "mz")]          # 252봉 안 · 64봉 밖: 52주까지
+PXBAD = {"043260": ("2026-05-08", PXBAD_Y),       # 성호전자 (시험 데이터의 추세 1위): 52주까지 → 머리의 그 줄
+         "030000": ("2024-01-19", PXBAD_OLD)}     # 제일기획 (낮은 변동성 위쪽): 52주는 보여요 → 비운 숫자마다 짧은 줄
+PXBAD_FULL, PXBAD_PART = "043260", "030000"
+
+
+def px_bad_files(files):
+    """파이프라인이 하는 대로 두 종목의 숫자 중 계산 창에 그 날이 든 칸만 비우고 pxBad · pxBadF (data.json · corp.json). 다른 칸은 그대로."""
+    f = clone(files)
+    for t, (d, fl) in PXBAD.items():
+        s = next(x for x in f["data.json"]["stocks"] if x["t"] == t)
+        assert isnum(s.get("mom")) and isnum(s.get("vol")) and isnum(s.get("lo")), t
+        for k in fl:
+            s.pop(k, None)
+        s["pxBad"], s["pxBadF"] = d, list(fl)
+        c = next(x for x in f["corp.json"]["companies"] if x["t"] == t)
+        c.update({k: None for k in PXBAD_CORP if k in fl}, pxBad=d, pxBadF=list(fl))
+    return f
+
+
+def scene_px_bad(R, files, width):
+    """과거 주가 기록 오류 (Jack, 2026-11-14 · 저녁: 계산 창에 그 날이 든 숫자만). 52주까지 비운 종목(성호전자): 머리의 52주 막대 자리에 "과거 주가 기록
+    일부에 오류가 있어서 52주 범위와 출렁임·위험 숫자는 비워 두었어요." 한 번 (요약 · 실적 · 가치 · 배당 모두) · 52주 막대 없음 · 출렁임 칸 '–' (숫자 ·
+    그림 · 짧은 줄 · 자료가 없어요 없음) · 출렁임 카드 · 주가 분해 없음. 52주는 보이는 종목(제일기획): 52주 막대 그대로 · 그 줄 없음 · 비운 숫자마다
+    "과거 주가 기록 일부에 오류가 있어서 이 숫자는 비워 두었어요." (요약의 출렁임 칸 안 · 실적의 주가 분해 · 가치의 출렁임 카드 · 배당 탭에는 없음).
+    다른 종목(삼성전자 · 현대차 · AAPL)은 그대로. 홈 종목 순위: 추세에서는 52주까지 비운 종목만, 낮은 변동성에서는 둘 다 빠지고 나머지는 파이썬으로
+    센 순서 그대로. 12px 이상 · 가로 스크롤 없음 · 뱁이 없음."""
+    S = f"과거 주가 기록 {width}"
+    wide = width >= 1024
+    site = px_bad_files(files)
+    stocks = site["data.json"]["stocks"]
+    coby = {c["t"]: c for c in site["corp.json"]["companies"]}
+    srv, ctx, page, base = R.open(build_site(site), width, init=rank_store([RANK_DECK]), path="/app.html?dev=1#home",
+                                  device=pc_device(width) if wide else None)
+
+    def lines(sel='[data-ui-v2="px-bad"]'):
+        loc = page.locator(sel)
+        return [loc.nth(i).inner_text().strip() for i in range(loc.count())]
+
+    def ones():
+        return lines('[data-ui-v2="px-bad-one"]')
+
+    def lists():
+        """홈 종목 순위: 추세에서는 1년 수익률을 비운 종목만, 낮은 변동성에서는 둘 다 빠지고, 나머지는 파이썬으로 센 순서 그대로 (rank_check_list)."""
+        wait_ready(page)
+        page.locator('[data-ui-v2="rank"]').first.wait_for(state="visible")
+        rank_market(page, "kr")
+        for crit, gone in (("trend", {PXBAD_FULL}), ("lowVol", set(PXBAD))):
+            rank_chip(page, "crit", crit)
+            rank_check_list(page, stocks, coby, "kr", "crit", crit)
+            rows = rank_ts(page)
+            assert not gone & set(rows), (crit, rows)
+            before = rank_expect(files["data.json"]["stocks"], "kr", "crit", crit, {c["t"]: c for c in files["corp.json"]["companies"]})[:10]
+            assert gone & set(before), (crit, before)                               # 시험이 뜻이 있어요: 비우기 전에는 목록에 있었어요
+            R.collect(page)
+        rank_chip(page, "cap")
+        assert lines() == [] and ones() == []                                       # 홈에는 그 줄이 없어요 (숫자가 없는 게 아니라 빠진 거예요)
+        no_hscroll(page, width)
+    R.check(page, S, "홈 종목 순위: 추세에서는 52주까지 비운 종목만, 낮은 변동성에서는 둘 다 빠지고 나머지 순서는 그대로", lists)
+
+    def go(t, ctab):
+        co_hash(page, f"#stocks/{t}" + (f"/{ctab}" if ctab else ""))
+        page.wait_for_function("([t, tab]) => { const e = document.querySelector('[data-ui-v2=\"company\"]');"
+                               " return !!e && e.dataset.t === t && e.dataset.tab === tab; }", arg=[t, ctab or "summary"])
+        page.locator('[data-ui-v2="co-summary"], [data-ui-v2="co-earn"], [data-ui-v2="co-value"], [data-ui-v2="co-div"]').first.wait_for(state="visible")
+
+    def tidy(where):
+        for x in page.locator('[data-ui-v2="px-bad"], [data-ui-v2="px-bad-one"]').evaluate_all("(els) => els.map((e) => parseFloat(getComputedStyle(e).fontSize))"):
+            assert x >= 12, (where, x)
+        floor_ok(page, where)
+        no_hscroll(page, width)
+        no_mascot(page)
+        R.collect(page)
+
+    def full():
+        t = PXBAD_FULL
+        for ctab in (None, "earn", "value", "div"):
+            go(t, ctab)
+            assert lines() == [PXBAD_LINE] and ones() == [], (t, ctab, lines(), ones())   # 화면마다 한 번 · 짧은 줄 없음
+            assert page.locator('[data-ui-v2="co-head"] [data-ui-v2="px-bad"]').count() == 1, (t, ctab)
+            assert page.locator('[data-ui-v2="co-price"]').bounding_box()["y"] < page.locator('[data-ui-v2="px-bad"]').bounding_box()["y"]
+            assert page.locator('[data-ui-v2="co-range"], [data-ui-v2="co-decomp"], [data-ui-v2="co-risk"]').count() == 0, (t, ctab)
+            if not ctab:
+                tile = page.locator('[data-ui-v2="co-tile"][data-topic="risk"]')
+                assert tile.get_attribute("data-rule") == "pxbad" and tile.locator('[data-ui-v2="tile-phrase"]').inner_text() == "–"
+                assert tile.locator('[data-ui-v2="tile-number"], [data-ui-v2="tile-basis"], [data-ui-v2="tile-art"], [data-ui-v2="px-bad-one"]').count() == 0
+                assert C["co"]["tiles"]["na"] not in page.locator('[data-ui-v2="co-tiles"]').inner_text()
+                for card in ("lowVol", "trend"):
+                    r = page.locator(f'[data-ui-v2="co-fit"] [data-ui-v2="rank-row"][data-card="{card}"]')
+                    if r.count():
+                        assert r.get_attribute("data-side") == "blank", (card, r.get_attribute("data-side"))
+            tidy(f"과거 주가 기록 {t} {ctab or 'summary'}")
+        for ctab in ("value-more", "earn-more"):                                   # 자세히: 그 숫자가 없는 화면 — 줄도 없어요
+            co_hash(page, f"#stocks/{t}/{ctab}")
+            page.locator(f'[data-ui-v2="co-{ctab}"]').wait_for(state="visible")
+            assert lines() == [] and ones() == [], (t, ctab)
+            R.collect(page)
+    R.check(page, S, f"52주까지 비운 종목 ({PXBAD_FULL}): 머리에 그 줄 한 번 (요약 · 실적 · 가치 · 배당) · 52주 막대 · 출렁임 숫자 · 주가 분해 없음 · 출렁임 칸 '–'", full)
+
+    def part():
+        t = PXBAD_PART
+        want = {None: '[data-ui-v2="co-tile"][data-topic="risk"]', "earn": '[data-ui-v2="co-decomp"][data-head="pxbad"]',
+                "value": '[data-ui-v2="co-risk"][data-rule="pxbad"]', "div": None}
+        for ctab, inside in want.items():
+            go(t, ctab)
+            assert lines() == [], (t, ctab, lines())                                # 그 줄 없음 (52주가 보여요)
+            assert page.locator('[data-ui-v2="co-range"]').count() == 1, (t, ctab)   # 52주 막대 그대로
+            if inside:
+                assert ones() == [PXBAD_ONE], (t, ctab, ones())                     # 비운 숫자 자리에 한 번
+                assert page.locator(inside + ' [data-ui-v2="px-bad-one"]').count() == 1, (t, ctab)
+            else:
+                assert ones() == [], (t, ctab, ones())
+            assert page.locator('[data-ui-v2="co-decomp-eq"], [data-ui-v2="co-risk-band"]').count() == 0
+            assert page.locator('[data-ui-v2="co-tile"][data-topic="risk"] [data-ui-v2="tile-number"]').count() == 0
+            if not ctab:
+                tile = page.locator('[data-ui-v2="co-tile"][data-topic="risk"]')
+                assert tile.get_attribute("data-rule") == "pxbad" and tile.locator('[data-ui-v2="tile-phrase"]').inner_text() == "–"
+                assert C["co"]["tiles"]["na"] not in page.locator('[data-ui-v2="co-tiles"]').inner_text()
+            dash = {"earn": '[data-ui-v2="co-decomp-px"]', "value": '[data-ui-v2="co-risk-px"]'}.get(ctab)
+            if dash:                                                                # 짧은 줄 바로 위에 보이는 '–' (pxBad 리뷰 2차)
+                d, one = page.locator(dash), page.locator(inside + ' [data-ui-v2="px-bad-one"]')
+                assert d.count() == 1 and d.inner_text().strip().endswith("–"), (t, ctab, d.inner_text() if d.count() else None)
+                assert d.bounding_box()["y"] + d.bounding_box()["height"] <= one.bounding_box()["y"] + 1, (t, ctab)
+            tidy(f"과거 주가 기록 {t} {ctab or 'summary'}")
+            if not ctab:                                                            # 내 기준 시트: 낮은 변동성 '–' · 그 밑에 짧은 줄 한 번 (pxBad 리뷰 2차)
+                fit = page.locator('[data-ui-v2="co-fit"]')
+                fit.get_by_role("button", name=C["co"]["fit"]["all"]).click()        # 기준 카드 8개 모두 보기
+                sheet = page.locator('[data-ui-v2="co-fit-sheet"]')
+                sheet.wait_for(state="visible")
+                rows = {r.get_attribute("data-card"): r for r in sheet.locator('[data-ui-v2="rank-row"]').all()}
+                low = rows["lowVol"]
+                assert low.get_attribute("data-side") == "blank" and low.inner_text().strip().endswith("–"), low.inner_text()
+                assert rows["trend"].get_attribute("data-side") in ("top", "bottom"), rows["trend"].get_attribute("data-side")   # 추세는 그대로
+                one = sheet.locator('[data-ui-v2="px-bad-one"]')
+                assert one.count() == 1 and one.inner_text().strip() == PXBAD_ONE, [one.nth(i).inner_text() for i in range(one.count())]
+                assert sheet.locator('[data-ui-v2="px-bad"]').count() == 0
+                last = max(r.bounding_box()["y"] for r in rows.values())
+                assert one.bounding_box()["y"] > last, (one.bounding_box(), last)  # 줄들 밑
+                tidy(f"과거 주가 기록 {t} 기준 카드 시트")
+                if R.shots:
+                    page.screenshot(path=os.path.join(R.shots, f"pxbad-fit-sheet-{width}.png"))
+                page.keyboard.press("Escape")
+                sheet.wait_for(state="detached")
+    R.check(page, S, f"52주는 보이는 종목 ({PXBAD_PART}): 52주 막대 그대로 · 비운 숫자마다 '–' 와 짧은 줄 (출렁임 칸 · 주가 분해 · 출렁임 카드 ·"
+            " 기준 카드 시트의 낮은 변동성) · 배당 탭에는 없음", part)
+
+    def others():
+        for code in ("005930", "005380", "AAPL"):
+            for ctab in (None, "earn", "value"):
+                go(code, ctab)
+                assert lines() == [] and ones() == [], (code, ctab)
+                assert page.locator('[data-ui-v2="co-range"]').count() == 1, (code, ctab)
+                if not ctab:
+                    assert page.locator('[data-ui-v2="co-tile"][data-topic="risk"]').get_attribute("data-rule") != "pxbad"
+                if ctab == "value" and code != "AAPL":
+                    assert page.locator('[data-ui-v2="co-risk"]').count() == 1 and page.locator('[data-ui-v2="co-risk"][data-rule="pxbad"]').count() == 0, code
+        R.collect(page)
+    R.check(page, S, "다른 종목 (삼성전자 · 현대차 · AAPL): 줄 없음 · 52주 막대 · 출렁임 그대로", others)
+    ctx.close()
+    srv.shutdown()
+
+
 # ── 2026-11-08 (Jack): DART 다시 읽기가 끝난 뒤 (src/repair.js 3 · 4, src/v2/fixnote.jsx EpsOwnersNote · StmtCurNote) ──
 OWNERS_LINE = C["fix"]["owners"].replace("{date}", f"{int(_FIXD[0][1])}월 {int(_FIXD[0][2])}일")
 STMT_T = "241560"              # 두산밥캣: 재무제표를 달러로 공시해요 → 다시 읽은 발행에서 금액이 비고 stmtCur "USD"
@@ -12109,6 +12282,7 @@ def main():
                    lambda: scene_fix_notes(R, files, 390), lambda: scene_fix_notes(R, files, 1280),             # 2026-11-08 고치는 중 안내
                    lambda: scene_fix_notes(R, files, 390, live=True), lambda: scene_fix_notes(R, files, 1280, live=True),
                    lambda: scene_unit_chk(R, files, 390), lambda: scene_unit_chk(R, files, 1280),             # 2026-11-13 공시 단위 확인
+                   lambda: scene_px_bad(R, files, 390), lambda: scene_px_bad(R, files, 1280),                 # 2026-11-14 과거 주가 기록 오류
                    lambda: scene_fin_warn_partial(R, files, 390), lambda: scene_fin_warn_partial(R, files, 1280),   # 2026-11-14 재무 경고 일부
                    lambda: scene_fin_warn_lines(R, files, 390), lambda: scene_fin_warn_lines(R, files, 1280),       # 2026-11-14 Jack 의 세 줄
                    lambda: scene_reread_lines(R, files, 390), lambda: scene_reread_lines(R, files, 1280),     # 다시 읽은 뒤: 한 주 안내 · stmtCur

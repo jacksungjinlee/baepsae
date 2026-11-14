@@ -18,7 +18,8 @@ import { loadJson, freshness, mergeStocks, mdOf, loadCorpOnce, krGrowthBasis, st
 import { SHOW_VERDICTS, SHOW_SCORE, SHOW_ER } from "./flags.js";
 import { ABOUT_URL } from "./links.js";
 // 2026-11-08 (Jack): 한국 PER · ROE 가 보이는 칸마다 한 줄 — DART 다시 읽기 전까지 (src/repair.js, src/fixnote.jsx)
-import { EpsFixLineLoaded } from "./fixnote.jsx";
+import { EpsFixLineLoaded, PxBadLine, PxBadOneLine } from "./fixnote.jsx";
+import { pxBadFull, pxBadHides } from "./repair.js";   // 2026-11-14 저녁: 52주는 보이는 종목의 비운 칸
 
 // 오늘 날짜 (YYYY-MM-DD) — 한국 날짜예요. 2026-11-12 (Jack): 예전에는 new Date().toISOString() 의 UTC 날짜를 써서, 한국 시간 00:00~09:00 에는
 // 공유 카드 · 점검 기록 · 주문 메모와 내보낸 파일 · 저장 목록에 어제 날짜가 찍혔어요. CLAUDE.md: 날짜는 모두 한국 시간.
@@ -2254,20 +2255,39 @@ function StockRow({ s, lang, t, mode, settings, loaded, onAdd, open, onToggle, p
       {open && (
         <div style={{ paddingBottom: 14, animation: "fadeIn .2s ease" }}>
           {x.dk && <div style={{ fontSize: 12.5, color: C.sub, lineHeight: 1.65, background: C.bg, borderRadius: 13, padding: 11 }}>{lang === "ko" ? x.dk : x.de || x.dk}</div>}
-          {mode !== "simple" && <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginTop: 9 }}>
-            {[[t("mcap"), (x.mcap != null ? x.mcap + (lang === "ko" ? "조" : "T") : "–")], [t("roe"), pct(x.roe, 1)], [t("opm"), pct(x.opm, 0)], growthCell(x, t, g3Basis), [t("debt"), pct(x.debt, 0)], [t("frn"), pct(x.frn, 0)], ["PER / PBR", num(s.per, 0) + " / " + num(s.pbr, 1)], [lang === "ko" ? "배당" : "Div", pct(s.dy, 1)], ["3y α", s.al != null ? (s.al > 0 ? "+" : "") + s.al + "%p" : "–"],
-              [t("shPast"), typeof s.sh === "number" ? s.sh.toFixed(2) : "–"],
+          {mode !== "simple" && (() => {
+            // 칸: [이름, 값, 과거 주가 기록 오류로 비울 수 있는 칸 (data.json)] · 기준을 모르는 매출성장(growthCell → null)은 그리는 자리에서 빠져요
+            const tiles = [[t("mcap"), (x.mcap != null ? x.mcap + (lang === "ko" ? "조" : "T") : "–")], [t("roe"), pct(x.roe, 1)], [t("opm"), pct(x.opm, 0)], growthCell(x, t, g3Basis), [t("debt"), pct(x.debt, 0)], [t("frn"), pct(x.frn, 0)], ["PER / PBR", num(s.per, 0) + " / " + num(s.pbr, 1)], [lang === "ko" ? "배당" : "Div", pct(s.dy, 1)], ["3y α", s.al != null ? (s.al > 0 ? "+" : "") + s.al + "%p" : "–", "al"],
+              [t("shPast"), typeof s.sh === "number" ? s.sh.toFixed(2) : "–", "sh"],
               // '이론 샤프' = β × 시장 위험 프리미엄 ÷ σ: 베타를 수익률로 바꾼 숫자라 SHOW_ER 를 켤 때만 (B안, v18.5 · Jack 2026-11-03)
-              ...(SHOW_ER ? [[t("shCapm"), settings && typeof s.beta === "number" && typeof s.vol === "number" ? (s.beta * clsMrp(clsOf(s), settings) * 100 / Math.max(s.vol, 1)).toFixed(2) : "–"]] : []),
-              [t("mddL2"), typeof s.mdd === "number" ? s.mdd.toFixed(0) + "%" : "–"],
-              [t("momL"), typeof s.mom === "number" ? (s.mom > 0 ? "+" : "") + s.mom.toFixed(0) + "%" : "–"]].filter(Boolean).map(([k, v]) => (
-              <div key={k} style={{ background: C.bg, borderRadius: 10, padding: "8px 5px", textAlign: "center" }}>
-                <div style={{ fontSize: 9.5, color: C.faint }}>{k}</div>
-                <div style={{ fontSize: 12, fontWeight: 800, color: C.ink, marginTop: 1 }}>{v}</div>
+              ...(SHOW_ER ? [[t("shCapm"), settings && typeof s.beta === "number" && typeof s.vol === "number" ? (s.beta * clsMrp(clsOf(s), settings) * 100 / Math.max(s.vol, 1)).toFixed(2) : "–", "beta"]] : []),
+              [t("mddL2"), typeof s.mdd === "number" ? s.mdd.toFixed(0) + "%" : "–", "mdd"],
+              [t("momL"), typeof s.mom === "number" ? (s.mom > 0 ? "+" : "") + s.mom.toFixed(0) + "%" : "–", "mom"]];
+            // 2026-11-14 저녁 (Jack): 52주는 보이는 종목 (한국어 화면)은 과거 주가 기록 오류로 비운 칸을 따로 한 줄에 모으고 바로 밑에 짧은 줄 (pxBad 리뷰 2차:
+            // 줄이 가리키는 '–' 가 그 칸들뿐이게 — 외국인 같은 다른 빈 칸과 섞이지 않게)
+            const part = !!s.pxBad && !pxBadFull(s) && lang !== "en";
+            const gone = (k) => part && !!k && pxBadHides(s, k);
+            const grid = (rows, px) => (
+              <div data-px={px ? "tiles" : undefined} style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginTop: 9 }}>
+                {rows.filter(Boolean).map(([k, v]) => (
+                  <div key={k} style={{ background: C.bg, borderRadius: 10, padding: "8px 5px", textAlign: "center" }}>
+                    <div style={{ fontSize: 9.5, color: C.faint }}>{k}</div>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: C.ink, marginTop: 1 }}>{v}</div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>}
-          {x.lo != null && (
+            );
+            const kept = tiles.filter((y) => !y || !gone(y[2])), hid = tiles.filter((y) => y && gone(y[2]));
+            return (
+              <>
+                {grid(kept, false)}
+                {hid.length > 0 && grid(hid, true)}
+                {hid.length > 0 && <PxBadOneLine c={s} field={hid[0][2]} lang={lang} style={{ marginTop: 6 }} />}
+              </>
+            );
+          })()}
+          {/* 과거 주가 기록 오류 (data.json pxBad, Jack 2026-11-14): 52주까지 비웠으면 52주 막대 자리에 그 줄 (한국어 화면만) */}
+          {s.pxBad && x.lo == null ? <PxBadLine c={s} lang={lang} style={{ marginTop: 9 }} /> : x.lo != null && (
             <div style={{ marginTop: 9 }}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: C.faint, marginBottom: 3 }}>
                 <span>{t("w52")}: {fmtPx(x.lo, s)}</span><span>{fmtPx(x.hi, s)}</span>

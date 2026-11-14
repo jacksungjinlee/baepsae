@@ -10,8 +10,8 @@ import { Bird, store, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, T_
 import { loadJson, krGrowthBasis, krGrowthDcfLine, krRevDcfText, krRevDcfNote, loadDataPublishFor, corpStaleArgs } from "./data.js";
 // 2026-11-08 (Jack): PER · EPS (와 같은 순이익으로 계산한 ROE · 배당성향 · 주가 분해 · DCF) 칸마다 한 줄, 이자보상배율이 꺼진 회사의
 // 재무 신호 밑에 한 줄 — DART 다시 읽기 전까지 (src/repair.js, src/fixnote.jsx)
-import { EpsFixLine, IcrOffLine, StmtCurLine, UnitChkLine, epsLineKind } from "./fixnote.jsx";
-import { epsBase, epsPeriod, stmtNotWon, stmtCurOf, unitHeld } from "./repair.js";
+import { EpsFixLine, IcrOffLine, StmtCurLine, UnitChkLine, PxBadLine, PxBadOneLine, epsLineKind } from "./fixnote.jsx";
+import { epsBase, epsPeriod, stmtNotWon, stmtCurOf, unitHeld, pxBad, pxBadFull } from "./repair.js";
 
 const KEY_DCF = "baepsae_v12_dcf";
 
@@ -964,7 +964,23 @@ export function decomposeReturn(c) {
 }
 
 function DecompCard({ c, setExplain, corp }) {
-  const d0 = decomposeReturn(c);
+  // 2026-11-14 저녁 (Jack): 3년 주가 변화(r36)를 과거 주가 기록 오류로 비웠고 52주는 보이는 회사 (52주까지 비운 회사는 칸이 없어요: 머리의 줄이
+  // 말해요). 칸을 어떻게 그릴지는 예전 그대로 다른 입력으로 정하고 (r36 자리에 아무 값 · 적자 · 기준이 다름 · 자료 없음은 예전처럼), 숫자가 나왔을
+  // 자리에만 '주가 (3년) —' 와 그 줄을 넣어요 (pxBad 리뷰 2차)
+  const px = pxBad(c);
+  if (px) {
+    const p0 = decomposeReturn({ ...c, r36: 0 });
+    if (p0 && p0.why !== "basis") {
+      return (
+        <Card>
+          <H num="04" main="주가는 무엇으로 움직였나" sub="지난 3년 주가 = 이익 변화 × 눈높이 변화" onWhy={() => setExplain("decomp")} />
+          <div data-px="r36" style={{ fontSize: 12, color: C.sub, marginTop: 12 }}>주가 (3년) —</div>
+          <PxBadOneLine c={c} field="r36" style={{ marginTop: 4 }} />
+        </Card>
+      );
+    }
+  }
+  const d0 = decomposeReturn(px ? { ...c, r36: 0 } : c);
   const basisBad = !!d0 && d0.why === "basis";     // 두 끝을 같은 기준에 세울 수 없어요: 숫자도 '적자 구간' 문장도 없이 PER · EPS 줄만
   const d = basisBad ? null : d0;
   // 다시 읽은 뒤(Jack, 2026-11-08): 숫자를 뺀 칸에 보일 줄이 없으면(소수주주가 없는 총 순이익 회사) 제목만 남은 칸 대신 칸이 없어요
@@ -1151,7 +1167,12 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
               <span style={{ fontSize: 10.5, fontWeight: 800, color: "#fff", background: SEC(c.s).color, borderRadius: 999, padding: "3px 9px" }}>{SEC(c.s).ko}</span>
               <span style={{ fontSize: 10.5, color: C.faint }}>{c.t}</span>
             </div>
-            {volTxt && <Sub style={{ marginTop: 5 }}>{volTxt} (β {c.beta} · 연 변동성 {pc(c.vol, 0)})</Sub>}
+            {/* 과거 주가 기록 오류 (corp.json pxBad, Jack 2026-11-14): 베타 · 변동성 · 52주 · 수익률이 비어요 — 베타 줄 자리에 그 줄 한 번 */}
+            {/* 2026-11-14 저녁 (Jack): 52주까지 비웠으면 그 줄, 52주는 보이면 베타 자리에 '이 숫자는 비워 두었어요' */}
+            {/* 52주는 보이면 비운 두 숫자를 그 이름과 '—' 로 보이고 바로 밑에 짧은 줄 (pxBad 리뷰 2차: 줄이 가리킬 숫자가 보이게) */}
+            {pxBad(c) ? (pxBadFull(c) ? <PxBadLine c={c} style={{ marginTop: 5 }} />
+              : <><div data-px="beta" style={{ fontSize: 12, color: C.sub, lineHeight: 1.6, marginTop: 5 }}>β — · 연 변동성 —</div><PxBadOneLine c={c} field="beta" style={{ marginTop: 2 }} /></>)
+              : volTxt && <Sub style={{ marginTop: 5 }}>{volTxt} (β {c.beta} · 연 변동성 {pc(c.vol, 0)})</Sub>}
             {heldInfo && heldInfo.length > 0 && (
               <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 7 }}>
                 {heldInfo.map((h, i) => (
@@ -1335,7 +1356,8 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
         </button>
       )}
       {guideOpen && <GuideReader id={c.s} onClose={() => setGuideOpen(false)} />}
-      {!cur && <DecompCard c={c} setExplain={setExplain} corp={data} />}
+      {/* 과거 주가 기록 오류 (pxBad): 3년 주가 변화가 비어요 — '적자 구간이 있어서…' 같은 맞지 않는 이유 대신 칸이 없어요 (이유는 머리의 줄) */}
+      {!cur && !pxBadFull(c) && <DecompCard c={c} setExplain={setExplain} corp={data} />}
       <DcfCard c={c} sharesM={sharesM} setExplain={setExplain} corp={data} />
 
       <div style={{ fontSize: 10.5, color: C.faint, textAlign: "center", lineHeight: 1.7, padding: "6px 0 20px" }}>
@@ -1462,6 +1484,8 @@ export function CompareView({ data, baseT, onOpen, onBack, setExplain }) {
                     <span style={{ fontWeight: 800, color: C.ink, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{fn(c)}{med && <span style={{ marginLeft: 7, fontWeight: 400, color: C.faint }}>중간 {med}</span>}</span>
                   </div>
                 ))}
+                {/* 2026-11-14 저녁 (Jack): 52주는 보이는 회사의 '베타' 가 과거 주가 기록 오류로 비었으면, 그 회사 칸의 맨 끝 줄(베타) 바로 밑에 짧은 줄 */}
+                <PxBadOneLine c={c} field="beta" style={{ marginTop: 6 }} />
               </div>
             </div>
           ))}
@@ -1489,6 +1513,16 @@ export function CompareView({ data, baseT, onOpen, onBack, setExplain }) {
                   <td style={{ padding: "8px 10px", fontSize: 11.5, color: C.faint, textAlign: "center", borderBottom: "1px solid " + C.line, fontVariantNumeric: "tabular-nums" }}>{med || "—"}</td>
                 </tr>
               ))}
+              {/* 2026-11-14 저녁 (Jack): 52주는 보이는 회사의 '베타' 가 과거 주가 기록 오류로 비었으면, 베타 줄 바로 밑에 그 회사 칸에만 짧은 줄 */}
+              {cols.some((c) => pxBad(c) && !pxBadFull(c)) && (
+                <tr data-px="beta">
+                  <td style={{ padding: "4px 10px" }} />
+                  {cols.map((c, i) => (
+                    <td key={c.t} style={{ padding: "4px 10px", verticalAlign: "top", background: i === 0 ? C.apricotSoft : "transparent" }}><PxBadOneLine c={c} field="beta" style={{ marginTop: 0 }} /></td>
+                  ))}
+                  <td />
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -1500,6 +1534,8 @@ export function CompareView({ data, baseT, onOpen, onBack, setExplain }) {
         {cols.some((c) => stmtCurOf(c) && !unitHeld(c)) && <StmtCurLine c={cols.find((c) => stmtCurOf(c) && !unitHeld(c))} />}
         {/* 2026-11-13 (Jack): once, when a compared company's numbers were blanked by the unit check (corp.json unitChk) */}
         {cols.some(unitHeld) && <UnitChkLine c={cols.find(unitHeld)} />}
+        {/* 2026-11-14 (Jack): once, when a compared company's price-history numbers were blanked (corp.json pxBad): its 베타 reads — */}
+        {cols.some(pxBadFull) && <PxBadLine c={cols.find(pxBadFull)} />}
       </Card>
     </div>
   );

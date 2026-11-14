@@ -404,8 +404,62 @@ Two gate rows read `krSeries`:
   에이프로젠 +1,446% on 2026-05-08), `하루만 튄 봉` (one bad Naver bar that comes straight back, e.g. 티이엠씨 2023-12-28)
   or `그 밖`. On 2026-11-14 it named 18 stocks, all Naver's own; it is expected to warn every day until those days leave the
   three-year window or Naver corrects them. A newly named stock: compare Naver's chart with the KRX listing (상장주식수,
-  기준가 = Close − Changes) for that date. The numbers are not blanked automatically; blanking them needs a reason line on
-  the company page, which needs Jack's yes. 본시스템즈 (KONEX, 17,500 → 1,176,000원 since its 2025-09 listing, in +15% steps on rare trades) is real and not named.
+  기준가 = Close − Changes) for that date. Since 2026-11-14 every named stock's numbers are blanked (next paragraph).
+  본시스템즈 (KONEX, 17,500 → 1,176,000원 since its 2025-09 listing, in +15% steps on rare trades) is real and not named.
+
+**Stocks with a broken price history (2026-11-14, Jack: "Q2: (a), this week"; evening: "hide only the numbers whose
+calculation window includes the bad day").** Whatever stocks the day's run names in `krSeries.jump` (18 on 2026-11-14:
+에이프로젠, BYC우, 아센디오, 폰드그룹 …; the list changes day to day, nothing is hard-coded) are marked by `fetch_data.py`
+`mark_px_bad`, right after the series check. For each, it blanks the numbers whose calculation window contains one of its
+move dates, reading each window from the calculation itself (`validate_data.PX_BAD_WIN`):
+- the whole series (about three years plus 40 days, `YEARS = 3`), always, because the moves are found in that series: 변동성,
+  베타 with its 표준오차 and day count, 알파, 3년 수익률, 샤프, 최대 낙폭, 상승 월 비율 and the 저변동 (lz) score;
+- the last 252 bars (`px.tail(252)`, `px.iloc[-252]`): 52주 최고 · 최저, 1년 수익률 (mom) and the 추세 (mz) score;
+- the last 64 bars: 3개월 수익률 (r3); the last 22 bars: 1개월 수익률 (r1).
+
+The stock carries `pxBad` (the date of its latest such move) and `pxBadF` (the blanked fields), in data.json and corp.json;
+`krSeries.hidden` lists the codes. Scores and lists are made without the blanked numbers only: a stock with only old bad days
+keeps its 52주 range, short returns and 추세 score (it stays in 홈's 추세 list) but leaves 낮은 변동성, the 2022 estimate and the
+yearly swing. On 2026-11-14, 9 of the 18 have their 52주 range blanked (a move in the last 252 bars: 003060, 007460, 007610,
+009310, 012170, 210120, 250030, 331660, 472850) and 9 keep it (only older moves: 001465, 012210, 107640, 110790, 121890, 227420,
+229500, 311060, 425040). Lines: where the 52주 range is blanked, "과거 주가 기록 일부에 오류가 있어서 52주 범위와 출렁임·위험
+숫자는 비워 두었어요." once per screen (2.0 company page header; 예전 뱁새 기업분석, 기업 비교, 종목 고르기); otherwise "과거 주가
+기록 일부에 오류가 있어서 이 숫자는 비워 두었어요." in each blanked number's place. The run log says "!! 과거 주가 기록 오류(…)로
+숫자를 비운 국내 종목: N (52주까지 a · 52주는 보임 b) — …" with the fields blanked, and "추세(mz) · 저변동(lz) … 필수 종목 …".
+
+How long a mark lasts: while a bad bar is inside the series window (not 252 days). It clears by itself, and the numbers come
+back, when Naver fixes the bar or the bar ages out: 110790 크리스에프앤씨 (2023-10-20) around 11-28 and 121890 에스디시스템
+(2023-10-23) around 12-01, which takes the count from 18 to 16. A stock moves from "52주까지" to "52주는 보임" by itself about a
+year after its last bad day. Repairing the history is a later PR. Gate rows:
+
+- **FAIL "과거 주가 기록 오류 종목의 숫자 비움 (pxBad)"**: a published stock named in `krSeries.jump` still has one of its
+  `pxBadF` numbers (data.json or corp.json), or its 52주 range is missing although not in `pxBadF`; or `pxBadF` breaks the window
+  rules (the whole-series fields missing, part of a window, a short window without the longer one, or a move within 340 calendar
+  days of `pxDate` with the 52주 window not blanked: 252 bars can't be shorter than 351 days; 85 days for 3개월, 28 for 1개월); or
+  the lists disagree (`jump` codes, `krSeries.hidden`, the marks), a mark is not the latest move date, or corp.json differs. It
+  only fires on an error in our code: fix the code in a PR. A file without `krSeries.hidden` (the format before 2026-11-14) is
+  only a warning, unless the previous publish had it or a stock carries a mark. The site keeps yesterday's data until then.
+- **FAIL "새로 생긴 과거 주가 기록 오류 종목 수 (10종목 이상이면 실패)"** (`PX_BAD_NEW_FAIL`, Jack 2026-11-14: "block the publish
+  … when many stocks newly break in one run"): stocks in today's `krSeries.jump` that were not in the previous publish's. The
+  2026-11-14 list's 21 moves fall on 20 dates over three years, at most 2 stocks on one day (2026-05-08, two 에이프로젠 group
+  stocks after one 감자), so a daily run names 0–2 new stocks. 10 or more means Naver's adjusted series or our pinning broke
+  for many stocks at once (2026-11-13's pinning bug hit 18 at once): read the run log's jump line and the newly named stocks
+  in the summary before anything else. Without a previous publish (live checks) it is not compared.
+- **The three must-have rows** (005930, 000660, 005380, 015760, 105560, 035420, 012450; Jack 2026-11-14: "warn when one is
+  affected; block the publish when two or more must-haves are affected"):
+  - "필수 종목 추세 · 저변동 순위 (mz · lz)" (new): a score missing without a correct mark fails, with the reason.
+  - "필수 종목 52주 최고·최저 (야후)" and "필수 종목 새 칸" (existing; changed with Jack's yes, 2026-11-14): a 52주 range or beta
+    error blanked by a correct mark (in `krSeries.hidden`, consistent per `px_bad_problems`) is passed as a warning naming the
+    stock.
+  - One correctly marked must-have: each row that has something blanked for it warns (the 52주 row only when its bad day is
+    inside the last 252 bars; a must-have with only old bad days keeps its 52주 range, so that row just passes). Two or more:
+    every such row fails. So if both must-haves have only old bad days, "52주 (야후)" passes and the mz·lz and 새 칸 rows block
+    the publish (저변동 and beta are whole-series numbers, always blanked). A blank without a correct mark fails as before. On 2026-11-14 none of the 296 Korean stocks worth 1조원 or more had an unexplained move (the largest named stock
+    was worth 0.39조원). If it happens, look at its Naver chart and the KRX listing for that date first; never loosen a row.
+
+Standing daily warnings until the repair PR: "국내 시계열 하루 가격 제한폭 넘는 움직임 (경고만)" (the 18 names), and "국내
+beta 채움" and "국내 vol 채움" at 96.8% (floor 95%, warning under 97%; 2,395 of 2,473: volatility and beta are whole-series,
+so every marked stock blanks them). 45 more marked stocks are still a pass; the 46th would fail both rows.
 
 ## US stocks added by hand (EXTRA_US)
 

@@ -213,3 +213,33 @@ export function warnStmtCur(co, where) {
 export function unitHeld(row) {
   return !!row && typeof row === "object" && Array.isArray(row.unitChk) && row.unitChk.length > 0;
 }
+
+// ================= 6. 과거 주가 기록 오류 (Jack, 2026-11-14) =================
+// Some Korean stocks' daily price history (Naver's adjusted series) still has a one-day move the daily limit cannot explain
+// (±30%; KONEX ±15%): usually a capital reduction Naver did not rescale, a re-listing after a halt, or one bad bar (data.json
+// krSeries.jump, e.g. 에이프로젠 +1,446% on 2026-05-08). Every number built on that history would be wrong, so the pipeline
+// (fetch_data.py mark_px_bad) blanks them for each stock it names that day (52주 최고 · 최저, 변동성, 베타 with its band,
+// 알파, 1 · 3개월 · 3년 · 1년 수익률, 샤프, 최대 낙폭, 상승 월 비율, and the 추세 · 저변동 scores; the ranks are made without the
+// stock) and marks it with pxBad, the date of its latest such move (data.json and corp.json). Where those numbers would be,
+// both apps say "과거 주가 기록 일부에 오류가 있어서 52주 범위와 출렁임·위험 숫자는 비워 두었어요." once per screen (2.0:
+// src/copy/v2.js co.pxBad; the old app: src/fixnote.jsx FIX_PX_BAD). Repairing the history is a later PR: the mark then goes
+// by itself. row: a data.json stock or a corp.json company. A mark that is not a non-empty string is no mark (the gate fails it).
+export function pxBad(row) {
+  return !!row && typeof row === "object" && typeof row.pxBad === "string" && row.pxBad.length > 0;
+}
+// 2026-11-14 evening (Jack: "hide only the numbers whose calculation window includes the bad day"): the pipeline blanks only the
+// fields whose window holds the bad day and lists them in pxBadF (validate_data.py PX_BAD_WIN: the whole-series fields always; hi ·
+// lo · mom · mz when the day is in the last 252 bars; r3 in the last 64; r1 in the last 22). The same list as validate_data.py
+// PX_BAD_DATA (tests/test_px_bad_app.py checks). A mark without a readable list counts as everything blanked (never assume a
+// number is good).
+export const PX_BAD_ALL = ["hi", "lo", "vol", "beta", "betaSE", "betaN", "al", "r1", "r3", "r36", "mom", "sh", "mdd", "hit", "mz", "lz"];
+export function pxBadFields(row) {
+  if (!pxBad(row)) return [];
+  const f = row.pxBadF;
+  return Array.isArray(f) && f.every((k) => typeof k === "string") ? f : PX_BAD_ALL;
+}
+export const pxBadHides = (row, k) => pxBadFields(row).includes(k);
+// The full line ("…52주 범위와 출렁임·위험 숫자는 비워 두었어요.") where the 52주 range is blanked too: the whole-series numbers (출렁임,
+// 베타, 낙폭, 3년 수익률) always are, so then every number of Jack's list on the company screens is blank. Otherwise (a bad day over
+// 252 bars back) each blanked number gets the short line ("…이 숫자는 비워 두었어요.") in its own place.
+export const pxBadFull = (row) => pxBadHides(row, "hi");
