@@ -866,6 +866,13 @@ def d1_blank_counts(rows, seen=True, unseen=None, odd=(), must=()):
     return out
 
 
+def d1_blank_final(stocks, meta):
+    """발행 직전의 data.json d1Blank (2026-11-14 · 순수 함수): 이유별 수는 발행하는 종목에서 다시 세고, 가릴 수 있었는지 · 어긋난 행 · 필수 종목은
+    국내 시세 단계의 것(meta = fetch_korea 의 d1Blank)을 그대로. meta 가 없으면 가리지 못한 것으로 ('cols')."""
+    m = meta if isinstance(meta, dict) else {}
+    return d1_blank_counts(stocks, bool(m.get("seen")), m.get("unseen"), m.get("odd") or (), m.get("must") or ())
+
+
 def kr_no_trade(df):
     """기준일 목록 파일에서 거래가 없던 종목 (2026-11-14 · 순수 함수): 거래량(Volume) 0 이고 시가(Open) 0 인 행 — 거래대금(Amount) 칸이 있으면
     그것도 0 일 때만 (11-11 ~ 11-13 의 거래 없는 행 415개는 모두 0 이에요). 값이 비었거나 숫자가 아니면 거래가 없다고 하지 않아요 (모르는 것).
@@ -8368,7 +8375,9 @@ def main():
         "epsBasis": eps_basis,               # v19.1f: EPS·PER 은 지배주주 몫 — 앱의 '계산 방법을 고치는 중' 줄이 이걸 보면 사라져요
         "unitChkCover": unit_cover,          # (2026-11-13) 공시 단위 확인이 몇 곳을 어떤 방법으로 봤는지 (관문 줄이 보여 줘요)
         "krSeries": kmeta.get("krSeries"),   # (2026-11-14) 국내 시계열 공식 종가 고정 · 자기 점검 · 제한폭 넘는 움직임 (관문 줄이 봐요)
-        "d1Blank": kmeta.get("d1Blank"),     # (2026-11-14) 발행하는 국내 종목의 빈 d1 이유 수 · 거래 없음을 가릴 수 있었는지 (관문 줄이 봐요)
+        # (2026-11-14) 발행하는 국내 종목의 빈 d1 이유 수 (발행하는 종목 목록에서 다시 세요 — 그 사이에 빠진 종목이 있어도 종목과 같아요) ·
+        # 거래 없음을 가릴 수 있었는지 · 어긋난 행 · 표시하지 않은 필수 종목 (관문 줄이 봐요)
+        "d1Blank": d1_blank_final(stocks, kmeta.get("d1Blank")),
         "stocks": stocks,
     }
     payload.update(sp_fields)                # v19.6a (A.6): splits · splitsFrom · splitsAsOf · splitsSrc · splitsInfo (UNITS["splits"]) 또는 없음

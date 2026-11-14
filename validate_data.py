@@ -2817,7 +2817,7 @@ def kr_no_trade_problems(data):
     stocks = data.get("stocks") or []
     listed = [s for s in stocks if s.get("cls") == "kr" and not s.get("fund")]
     for s in stocks:
-        t, d1 = s.get("t"), num(s.get("d1"))
+        t = s.get("t")
         mine = s.get("cls") == "kr" and not s.get("fund")
         nt, why = s.get("noTrade"), s.get("d1Why")
         if "noTrade" in s and nt is not True:
@@ -2825,7 +2825,7 @@ def kr_no_trade_problems(data):
         if any(k in s for k in ("noTrade", "d1Why", "ntD1")) and not mine:
             out.append(f"{t} 목록 파일의 국내 종목이 아닌데 noTrade · d1Why · ntD1")
         if nt is True:
-            if d1 is not None or s.get("d1") is not None:
+            if s.get("d1") is not None:
                 out.append(f"{t} 거래 없음인데 d1 {s.get('d1')}")
             if why != "noTrade":
                 out.append(f"{t} 거래 없음인데 d1Why {why!r}")

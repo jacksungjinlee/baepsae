@@ -12,11 +12,9 @@
 점검의 "우선주·ETF처럼 …" (스위치 꺼짐: 기존 시험 한 줄을 바꿔야 해서 Jack 의 답을 기다려요). 거래 없는 종목도 포트폴리오의 '오늘'은 그대로예요.
 """
 import collections
-import copy
 import datetime as dt
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -102,11 +100,24 @@ def test_d1_blank_counts_only_published_korean_listings():
     assert F.d1_blank_counts([], False, "cols") == {"noTrade": 0, "range": 0, "new": 0, "prev": 0, "seen": False, "unseen": "cols", "odd": [], "must": []}
 
 
+def test_published_summary_is_recounted_from_the_published_stocks():
+    meta = {"noTrade": 2, "range": 0, "new": 0, "prev": 0, "seen": True, "odd": ["001570", "999990"], "must": []}
+    stocks = [{"t": "001570", "cls": "kr", "noTrade": True, "d1Why": "noTrade"}, {"t": "000020", "cls": "kr", "d1": 1.0},
+              {"t": "069500", "cls": "kr", "fund": True, "d1": 0.3}]                       # 한 종목은 그 뒤에 빠졌어요 (999990)
+    got = F.d1_blank_final(stocks, meta)
+    assert got == {"noTrade": 1, "range": 0, "new": 0, "prev": 0, "seen": True, "odd": ["001570"], "must": []}
+    assert F.d1_blank_final(stocks, None)["seen"] is False and F.d1_blank_final(stocks, None)["unseen"] == "cols"
+    d = {"stocks": stocks, "d1Blank": got}
+    assert V.kr_no_trade_problems(d) == ["001570 표시하지 않았다는(d1Blank.odd · must) 종목에 noTrade 가 있어요"]   # 표시한 종목을 어긋남으로 적으면 실패
+    d["d1Blank"]["odd"] = []
+    assert V.kr_no_trade_problems(d) == []
+
+
 def test_pipeline_writes_the_marks_and_documents_them():
     src = open(os.path.join(ROOT, "fetch_data.py"), encoding="utf-8").read()
     assert '"noTrade": True if code in no_trade and code in d1_why else None' in src
     assert '"d1Why": d1_why.get(code), "ntD1": nt_map.get(code)' in src
-    assert '"d1Blank": kmeta.get("d1Blank")' in src and '"krSeries": krs, "d1Blank": d1_blank}' in src
+    assert '"d1Blank": d1_blank_final(stocks, kmeta.get("d1Blank"))' in src and '"krSeries": krs, "d1Blank": d1_blank}' in src
     assert "no_trade -= set(nt_must)" in src                                           # 필수 종목은 표시하지 않아요
     for k in ("noTrade", "d1Why", "ntD1", "d1Blank"):
         assert k in F.UNITS, k
