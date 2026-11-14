@@ -8,8 +8,24 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 ## 0. Current state and next steps (updated 2026-11-14 KST — read this first)
 
 **2026-11-14:** #119 (v19.6a: 기록 — 샀어요 · 팔았어요 · 배당 받았어요, 내 수익, sold-out stocks kept in the plan read
-"own", never blank) merges. #122 (v19.7a: 종목 바꾸기) is next; it waits for Jack's yes on one test edit
+"own", never blank) merged (bf33f12). #122 (v19.7a: 종목 바꾸기) is next; it waits for Jack's yes on one test edit
 (`tests/test_v196d_dark.py`: pass the script to node on stdin; the bundle is over Linux's 131,072-byte argument limit).
+
+**Jack, 2026-11-14:**
+- "Yes, fix the wrong 52-week numbers first." #125 (Korean price series never pinned on an old share basis: 에쎈테크,
+  인지디스플레, STX and 15 more) goes ahead of the missing US stocks. Queue after it: #122 (v19.7a) →
+  missing US stocks → the 우선주 / suspended / no-trade lines → v19.7b → v19.6f.
+- The 우선주, suspended-stock and no-trade lines were approved in the design chat: use the lines in `docs/design-chat/`
+  on branch `docs/say-why-audit` (2026-11-08-say-why-audit.md, 2026-11-08-dart-gaps.md §9) exactly; propose new
+  wording only for cases they don't cover. Build them right after the missing US stocks.
+- A sold-out stock still in the plan that isn't suggested for buy-back shows which of its rules it fails, plus "다 판
+  종목이에요. 다시 살 계획이 없으면 계획에서 빼 주세요." It must never look blank (built in #119).
+- The next update lists every number from the say-why audit that is still hidden or adjusted without a reason line
+  (screen, number, why); the design chat writes all the missing lines in one batch after Wednesday 11-18.
+- Open, waiting for Jack: (1) the 18 Korean stocks whose Naver history still has a move beyond the ±30% limit (#125's
+  WARN row; e.g. 에이프로젠 after an unrescaled 감자) keep artefact numbers until he approves a reason line to blank
+  them; (2) #122 needs his yes to change `tests/test_v196d_dark.py` to pass its script on stdin (the bundle passed to
+  `node -e` is over Linux's 131,072-byte argument limit; nothing loosened).
 
 
 **Standing instruction (Jack, 2026-11-13): speed up what users can see.** Safety work stays as careful as it is; it

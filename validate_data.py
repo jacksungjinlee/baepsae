@@ -92,6 +92,25 @@ KR_DEPTS = ("우량기업부", "중견기업부", "벤처기업부", "기술성�
 PROD_SAME_MAX = 5.0      # '주요제품'이 업종 이름과 똑같은 국내 설명 비율 상한 (%) — 열이 밀린 사고는 100%였어요
 D1_COVER = 95            # 국내 d1 채움 (%)
 D1_MAX_KR = 30.0         # 한국 하루 가격 제한폭 — 넘는 값은 파이프라인이 빈 칸으로 둬요
+# 국내 시계열의 공식 종가 고정 (2026-11-14 · Jack: "52주 숫자부터" · 새 줄만, 늦추는 줄 없음). 네이버 일봉은 수정주가예요 (분할 · 병합 ·
+# 감자 · 무상증자 · 유상증자가 있으면 그 앞 봉을 모두 새 기준으로 고쳐 둬요). 그런데 최근 거래일들을 그날 목록 파일의 공식 종가(그날 기준)로
+# 덮어서, 기준이 바뀐 날 앞 봉에 옛 기준 값이 들어갔어요 — 에쎈테크 · 인지디스플레(5:1 병합: 591 · 726원), STX(감자 뒤 기준가 3,530 → 18,360),
+# 엘앤씨바이오(1:1 무상증자) · 코나아이(무상증자, 새 주식 상장 전) 들 18종목의 52주 최저 · 최고 · 낙폭 · 변동성 · 베타가 틀렸어요.
+# 파이프라인(fetch_data.pin_why_not)은 이제 KRX 기준가로 그날과 오늘이 같은 기준인지 봐요: 목록 파일마다 기준가 = Close − Changes 가 바로 앞
+# 파일의 공식 종가와 같으면 그 사이에 기준이 바뀌지 않은 거예요 (분할 · 병합 · 감자 · 권리락 날에는 KRX 가 기준가를 새로 정해요).
+#   - 그날과 오늘 사이에 기준가가 바뀐 날이 있으면: 고치지 않아요 (네이버 봉 그대로).
+#   - 모두 이어지면: 공식 종가가 네이버 봉과 PIN_PX_TOL 안이거나, 상장주식수가 오늘과 PIN_SHR_TOL 안이고 PIN_REF_TOL 안이면 고쳐요
+#     (시간외 큰 움직임이 있던 날도 공식 종가로).
+#   - 확인할 수 없으면 (파일 · 칸이 빠짐 · 사이에 빠진 거래일): 상장주식수가 오늘과 PIN_SHR_TOL 안이고 공식 종가가 네이버 봉과 PIN_PX_TOL 안일
+#     때만 고쳐요. 무상증자는 권리락 날 값이 바뀌고 새 주식은 몇 주 뒤에 상장돼 그사이 주식 수가 같아서 (코나아이) 값도 봐요.
+# 2026-11-13 (19거래일 · 2,474종목): 기준가가 바뀐 종목 18 (병합 · 감자 13 · 무상 · 유상증자 권리락 5) · 새로 상장 14 · 확인 못 한 연결 0 · 넥스트레이드
+# 차이는 같은 기준 날의 99% 가 3.9% 안 · 가장 큰 시간외 하루 21.9%.
+PIN_PX_TOL = 0.05        # 공식 종가 ↔ 네이버 봉 차이 상한 (비율) — 기준가로 확인하지 못한 날은 넘으면 고치지 않아요
+PIN_SHR_TOL = 0.02       # 그날 상장주식수 ↔ 오늘 상장주식수 차이 상한 (비율) — 기준가로 확인하지 못한 날은 넘으면 고치지 않아요
+PIN_REF_TOL = 0.30       # 기준가로 같은 기준임을 확인한 날 (주식 수도 같을 때): 공식 종가 ↔ 네이버 봉 차이 상한 — 시간외 큰 움직임까지
+KR_DAY_LIMIT = D1_MAX_KR  # 한국 하루 가격 제한폭 (%) — 코스피 · 코스닥 (d1 줄과 같은 값 · 따로 바뀌지 않게)
+KONEX_DAY_LIMIT = 15.0   # 코넥스 하루 가격 제한폭 (%)
+KR_JUMP_WHY = {"pin": "우리 고정이 만든 움직임", "halt": "거래정지 뒤 재개", "spike": "하루만 튄 봉", "other": "그 밖"}
 US_D1_COVER = 98.0       # 미국 d1 채움 (%) — 아래면 실패 (Jack, 2026-11-07). 11-02 부터 매일 99.9~100%
 US_D1_SHOW = 10          # 표의 값 칸에 적는 빠진 종목 수 — 전부는 로그와 실행 요약에 따로 적어요
 VAL20_COVER = 95         # 국내 val20 채움 (%)
@@ -920,6 +939,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v191f(rep, data, corp, kr, by, comps, pdata)
     check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=(prev or {}).get("macro") if rel else None)
     check_unit(rep, data, kr, by, comps, pdata)
+    check_kr_series(rep, data, kr, pdata)  # 2026-11-14 (Jack: "52주 숫자부터"): 다른 기준의 공식 종가 고정 (실패) · 제한폭 넘는 움직임 (경고)
 
     # 경고만
     rep.add("공시 목록 조회", True, "성공" if disc.get("listOk") else "실패", "실패면 경고", warn=not disc.get("listOk"))
@@ -2416,6 +2436,102 @@ def check_unit_moved(rep, hit, pdata):
         rep.detail("공시 단위 확인에 새로 걸린 회사 (숫자를 새로 비웠어요)", new)
     if gone:
         rep.detail("공시 단위 확인이 풀린 회사 (직전 발행본에는 걸려 있었어요)", gone)
+
+
+KR_SERIES_SHOW = 10      # 값 칸에 적는 종목 수 (나머지는 수만 · 전체는 요약 목록에)
+
+
+def _nonneg_int(x):
+    return isinstance(x, int) and not isinstance(x, bool) and x >= 0
+
+
+def kr_series_problems(ks, px=None):
+    """data.json krSeries 의 모양 문제 목록 (빈 목록 = 정상). 파이프라인(fetch_data.kr_series_check)이 쓰는 모양과 따로 적어요.
+    px: pxDate (움직임 날짜는 그날이나 그 전이어야 해요)."""
+    out = []
+    if ks.get("v") != 1:
+        out.append(f"v {ks.get('v')!r}")
+    for k in ("days", "pinned", "pinStocks", "keptStocks", "bad"):
+        if not _nonneg_int(ks.get(k)):
+            out.append(f"{k} {ks.get(k)!r}")
+    kept = ks.get("kept")
+    if not isinstance(kept, dict) or set(kept) != {"basis", "far", "shr"} or not all(_nonneg_int(v) for v in kept.values()):
+        out.append(f"kept {kept!r}"[:60])
+    ref = ks.get("ref")
+    if not isinstance(ref, dict) or set(ref) != {"breakStocks", "unknownStocks", "newStocks"} or not all(_nonneg_int(v) for v in ref.values()):
+        out.append(f"ref {ref!r}"[:60])
+    bs = ks.get("badStocks")
+    if not isinstance(bs, list) or not all(isinstance(c, str) and c for c in bs):
+        out.append("badStocks 목록 아님")
+    elif _nonneg_int(ks.get("bad")) and (len(bs) > ks["bad"] or (ks["bad"] > 0) != bool(bs)):
+        out.append(f"badStocks {len(bs)}종목 ↔ bad {ks['bad']}")
+    jm = ks.get("jump")
+    if not isinstance(jm, list):
+        out.append("jump 목록 아님")
+    else:
+        for j in jm:
+            ok = (isinstance(j, list) and len(j) == 4 and isinstance(j[0], str) and j[0] and is_day(j[1])
+                  and num(j[2]) is not None and j[3] in KR_JUMP_WHY and (px is None or day(j[1]) <= px))
+            if not ok:
+                out.append(f"jump {str(j)[:40]}")
+                break
+    return out
+
+
+def check_kr_series(rep, data, kr, pdata):
+    """국내 시계열 점검 (2026-11-14 · Jack: "52주 숫자부터" · 새 줄만, 늦추는 줄 없음). 네이버 수정주가에 다른 기준의 공식 종가를 넣어
+    에쎈테크 · 인지디스플레 · STX 들의 52주 최저 · 낙폭 · 변동성 · 베타가 틀렸어요 (PIN_PX_TOL 위 설명). 관문은 파일만 보니 파이프라인이
+    krSeries 에 점검 결과를 실어요 (fetch_data.kr_series_check).
+    실패: krSeries.bad (자기 점검 — 네이버 봉과 달라진 봉 중 허락된 고정이 아닌 수: 그날 공식 종가가 아니거나, 그날과 오늘 사이에 KRX 기준가가
+    바뀌었거나, 확인 못 한 날인데 주식 수 · 값 차이가 기준 밖) 가 0 이 아니거나 모양이 틀리면. 바깥 출처의 잘못(네이버 · 목록 파일)으로는 생기지
+    않고 (고치는 날이 줄 뿐 · 네이버의 같은 날짜 두 번 · 잘못된 값은 점검 전에 빼요) 우리 코드가 봉을 잘못 바꿨을 때만 생겨요 (Jack 2026-11-13: 한
+    종목의 출처 문제가 모두의 발행을 막으면 안 돼요). 다만 우리 잘못이 모두 여기 걸리지는 않아요: 점검이 파이프라인의 규칙 · 기준가 연결을 다시 써서,
+    나중 단계가 봉을 바꾸거나 고정이 규칙과 어긋나면 잡지만 기준가 연결 자체의 잘못은 시험(tests/test_kr_pin_basis.py)이 지켜요.
+    krSeries 가 없으면 직전 발행본에 있었을 때만 실패 (그 전 형식은 경고).
+    경고: 하루 움직임이 가격 제한폭 + 넥스트레이드 차이로 설명되지 않는 종목 (krSeries.jump) — 그 종목의 숫자에 그 움직임이 들어가요
+    (대개 네이버가 고치지 않은 감자 · 거래정지 뒤 재개 · 하루만 튄 봉). pdata: 직전 발행본 data.json (발행 모드에서만, 아니면 None)."""
+    name = "국내 시계열 공식 종가 고정 자기 점검 (krSeries.bad)"
+    jname = "국내 시계열 하루 가격 제한폭 넘는 움직임 (경고만)"
+    rule = (f"0 (네이버 수정주가와 달라진 봉은 모두 그날 공식 종가 · 그 뒤 KRX 기준가가 바뀌지 않음 · 기준가를 확인 못 한 날은 상장주식수가 "
+            f"오늘과 {PIN_SHR_TOL:.0%} 안 · 네이버 봉과 {PIN_PX_TOL:.0%} 안)")
+    jrule = (f"0 (있으면 경고 · 하루 ±{KR_DAY_LIMIT:g}% · 코넥스 ±{KONEX_DAY_LIMIT:g}% 와 넥스트레이드 차이 {PIN_PX_TOL:.0%} 로 설명되지 않는 움직임 — "
+             "그 종목의 52주 · 변동성 · 베타 · 낙폭에 들어가요)")
+    ks = data.get("krSeries")
+    had = isinstance((pdata or {}).get("krSeries"), dict)
+    if not isinstance(ks, dict):
+        rep.add(name, not had, "없음 — 직전 발행본에는 있었어요 (점검이 돌지 않았어요)" if had else "없음 (2026-11-14 전 형식 · 직전 발행본에도 없어요)",
+                "있어야 함 (그 전 형식만 경고)", warn=not had)
+        rep.add(jname, True, "krSeries 없음 (확인 못 함)", jrule, warn=True)
+        return
+    probs = kr_series_problems(ks, day(data.get("pxDate")))
+    bad = ks.get("bad")
+    kept = ks.get("kept") if isinstance(ks.get("kept"), dict) else {}
+    ref = ks.get("ref") if isinstance(ks.get("ref"), dict) else {}
+    bs = ks.get("badStocks") if isinstance(ks.get("badStocks"), list) else []
+    by = {s.get("t"): s for s in kr}
+
+    def nm(c):
+        return f"{c} {(by.get(c) or {}).get('nk', '')}".strip()
+    rep.add(name, not probs and bad == 0,
+            f"걸린 봉 {bad!r}" + (f" ({', '.join(nm(c) for c in bs[:KR_SERIES_SHOW])})" if bs else "")
+            + f" · 최근 {ks.get('days')}거래일 고친 봉 {ks.get('pinned')!r} ({ks.get('pinStocks')!r}종목) · 기준가가 바뀐 종목 "
+            f"{ref.get('breakStocks')!r} · 확인 못 한 종목 {ref.get('unknownStocks')!r} · 새로 상장 {ref.get('newStocks')!r} · 그대로 둔 봉 "
+            f"다른 기준 {kept.get('basis')!r} · "
+            f"값이 멂 {kept.get('far')!r} · 주식 수 모름 {kept.get('shr')!r} ({ks.get('keptStocks')!r}종목)"
+            + (f" · 모양: {', '.join(probs[:3])}" if probs else ""), rule)
+    if bs:
+        rep.detail("공식 종가 고정 자기 점검에 걸린 국내 종목 (우리 코드가 봉을 잘못 바꿨어요)", [nm(c) for c in bs])
+    jm = ks.get("jump") if isinstance(ks.get("jump"), list) else []
+    per = {}
+    for j in jm:
+        if isinstance(j, list) and len(j) == 4:
+            pct = f"{num(j[2]):+.1f}%" if num(j[2]) is not None else str(j[2])[:10]
+            per.setdefault(str(j[0]), []).append(f"{j[1]} {pct} {KR_JUMP_WHY.get(j[3], j[3])}")
+    items = [f"{nm(c)} ({' · '.join(v)})" for c, v in sorted(per.items())]
+    rep.add(jname, True, f"{len(items)}종목" + (": " + ", ".join(items[:KR_SERIES_SHOW]) + (f" 외 {len(items) - KR_SERIES_SHOW}종목"
+                                                 if len(items) > KR_SERIES_SHOW else "") if items else ""), jrule, warn=bool(items))
+    if items:
+        rep.detail("하루 가격 제한폭으로 설명되지 않는 움직임이 시계열에 있는 국내 종목 (날짜 · 움직임 · 이유)", items)
 
 
 def unit_fix_problems(c):

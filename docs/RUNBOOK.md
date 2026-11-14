@@ -345,6 +345,68 @@ report (for example 진코스텍's 2026 반기보고서), a year later (2027.2Q 
 year's same quarter", nothing divides it, and the unit check blanks the company again until the next quarter is the latest;
 the gate's "공시 단위 확인 회사 바뀜" warning names it when that happens.
 
+## Korean price series gate rows (국내 시계열 점검)
+
+Each Korean stock's price series comes from Naver (FinanceDataReader), which is an adjusted series: after a split,
+consolidation (병합), capital reduction (감자) or bonus/rights issue (권리락), Naver rescales every earlier bar to the new
+basis. The pipeline then replaces the last ~19 sessions' bars with that day's official close (listing file 시가총액 ÷
+상장주식수), because Naver's bar is the last trade including Nextrade after-hours. Until 2026-11-14 it did so on every
+day, also on days before such an event, where the official close is on the old basis: 에쎈테크 and 인지디스플레 (5:1
+consolidation) showed a 52-week low of 591 and 726원, STX (capital reduction during a halt, reference price 3,530 →
+18,360) 3,530원, and 15 other stocks (CMG제약, 엘앤씨바이오, 코나아이 …) had the same kind of wrong low, high, drawdown,
+volatility and beta.
+
+Now (`fetch_data.py` `kr_ref_links` and `pin_why_not`) the pipeline first reads KRX's reference price (기준가) from each
+listing file: Close − Changes. On an ordinary day it equals the previous file's official close; on a split, consolidation,
+capital reduction, ex-rights day or a re-listing after a halt KRX sets a new one. A day's bar is replaced only when:
+- no reference-price change happened between that day and today, and the official close is within 5% of Naver's bar
+  (`PIN_PX_TOL`), or within 30% (`PIN_REF_TOL`, a big after-hours day) when the share count is within 2% of today's
+  (`PIN_SHR_TOL`); or
+- the reference price cannot be checked for that stretch (a row missing where the files around it have one, the Changes
+  value missing, or a trading day without a final listing file in between): only when the share count is within 2% of
+  today's **and** the close within 5% of Naver's. The share count alone is not enough: with a bonus issue the price
+  changes on the ex-date and the new shares list weeks later (코나아이, 11-13).
+
+A stock listed during the 19 sessions has no row in the files before its listing; those links are counted as "new
+listing", not "unchecked" (there is no official close to copy before the listing anyway, and the same both-checks rule
+applies). Before any of this, each Naver series is cleaned (`naver_clean`): a date that appears twice with different
+values is left out (neither value is trusted), a date twice with the same value is kept once, and a zero, negative or
+infinite value is left out. The run log says so loudly with the stock, date and values ("!! 네이버 시계열 같은 날짜 두
+번"); on 2026-11-13 there were none in 2,474 series.
+
+On 2026-11-13 the reference prices showed 18 stocks with a new basis in the 19 sessions (13 consolidations or capital
+reductions, 5 ex-rights days), 14 new listings and none unchecked. The rule kept 165 of 39,778 bars as Naver's, in 23
+stocks: 157 bars before a basis change in the 18 stocks, and 8 bars in 5 stocks more than 5% apart on a day the share
+count had changed by more than 2%. After the replacement, `pin_audit` re-checks the finished series against Naver's own:
+every bar that differs must be that day's official close and allowed by the rule. data.json `krSeries` carries the counts
+(`ref.breakStocks`, `ref.unknownStocks`, `ref.newStocks`, `kept`, `bad`) and the moves below. The run log has one line per
+step ("네이버 시계열 점검", "KRX 기준가 연결", "고치지 않고 네이버 봉 그대로 둔 봉", "공식 종가 고정 자기 점검", "한국 시계열 하루
+±30%"). "KRX 기준가 연결" is loud when more than 100 stocks show a new reference price (the Changes column may have changed
+meaning: fewer bars get replaced, none wrongly) or when any stock could not be checked; new listings alone don't make it loud.
+Two gate rows read `krSeries`:
+
+- **FAIL "국내 시계열 공식 종가 고정 자기 점검 (krSeries.bad)"**: a bar differs from Naver's series without being an allowed
+  replacement, or `krSeries` is malformed, or it is missing while the previous publish had it. It only fires on an error in
+  our own code: an outside source problem (Naver, a listing file) only means fewer bars are replaced, and a duplicate or
+  broken Naver date is cleaned before the check. But not every error of ours fires it: the check reuses the pipeline's own
+  rule and reference-price chain, so it catches a later step that changes bars (for example a new step that writes
+  official closes into older days) or a drift between the pinning and the rule, while a bug in the chain itself is guarded
+  by the tests (`tests/test_kr_pin_basis.py`, real 11-13 files). The run log's line "!! 공식 종가 고정 자기 점검"
+  names the stocks, dates and reasons (`basis` a different basis · `far` too far from Naver's bar · `shr` share count
+  unknown · `notOfficial` not that day's official close · `added` · `dropped`). Fix the code (a PR, with tests); never widen
+  the 2%, 5% or 30% without Jack (a safety rule). The site keeps yesterday's data until then.
+- **WARN "국내 시계열 하루 가격 제한폭 넘는 움직임 (경고만)"**: a stock's series (the three years the numbers use) has a day
+  that moves more than the daily limit (±30%; KONEX ±15%), beyond what one Nextrade bar can add (5%: +36.8% / −33.3%).
+  Its 52-week range, volatility, beta, drawdown or returns include that move. The row names each stock with the date, the
+  move and a cause: `우리 고정이 만든 움직임` (Naver's own series has no such move there, so a replaced bar made it: usually
+  an official close next to a big after-hours Naver bar just outside the 19 sessions, which is fine; if the stock is also
+  named by the FAIL row, fix the code), `거래정지 뒤 재개` (after 3 or more unchanged bars or a gap: usually a 감자 Naver did not rescale, e.g.
+  에이프로젠 +1,446% on 2026-05-08), `하루만 튄 봉` (one bad Naver bar that comes straight back, e.g. 티이엠씨 2023-12-28)
+  or `그 밖`. On 2026-11-14 it named 18 stocks, all Naver's own; it is expected to warn every day until those days leave the
+  three-year window or Naver corrects them. A newly named stock: compare Naver's chart with the KRX listing (상장주식수,
+  기준가 = Close − Changes) for that date. The numbers are not blanked automatically; blanking them needs a reason line on
+  the company page, which needs Jack's yes. 본시스템즈 (KONEX, 17,500 → 1,176,000원 since its 2025-09 listing, in +15% steps on rare trades) is real and not named.
+
 ## Roll back
 
 - **A bad code release** (the app looks broken after a merge): Claude opens the merged pull request, presses
