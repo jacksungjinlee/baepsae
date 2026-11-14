@@ -69,6 +69,8 @@ from validate_data import (FX_LO, FX_HI, FX_HIST_FROM, FX_HIST_FIRST_BY, FX_HIST
                            FX_HIST_JUMP, FX_HIST_REL, SPLITS_FROM, SPLIT_R, SPLIT_SIMPLE_MAX, SPLIT_CLEAN_TOL, MUST_SPLITS)
 # 2026-11-14: 국내 시계열의 공식 종가 고정 기준과 하루 가격 제한폭도 관문 파일에 있어요 (관문은 파이프라인의 점검 결과 krSeries 를 봐요)
 from validate_data import PIN_PX_TOL, PIN_SHR_TOL, PIN_REF_TOL, KR_DAY_LIMIT, KONEX_DAY_LIMIT, KR_JUMP_WHY
+# 2026-11-14: 빈 d1 의 이유 목록도 관문 파일에 있어요 (관문이 같은 목록으로 noTrade · d1Why 를 봐요)
+from validate_data import D1_WHY, MUST as GATE_MUST
 # 2026-11-14 (Jack, Q2 (a)): 그 움직임이 있는 종목에서 비우는 칸 목록도 관문 파일에 있어요 (관문이 같은 목록으로 비었는지 봐요)
 from validate_data import PX_BAD_DATA, PX_BAD_MUST_FAIL, PX_BAD_WIN, PX_BAD_WIN_BARS, PX_BAD_ALWAYS
 
@@ -800,11 +802,13 @@ def kr_d1_val20(cur_df, sessions, prev_final, max_abs=D1_MAX_KR, min_days=VAL20_
             if not p:
                 cnt["d1 전일 없음"] += 1
                 continue
-            v = (c / p - 1) * 100
+            v = round((c / p - 1) * 100, 2)
+            # 2026-11-14: 반올림한 값으로 봐요. 상한가 · 하한가는 정확히 ±30% 인데 (4,030 ÷ 3,100 − 1) × 100 = 30.000000000000004 처럼
+            # 부동소수점 끝자리가 붙어 빈 칸이 됐어요 (11-13 디와이에이 상한가). 화면과 관문(국내 d1 범위)이 보는 값도 반올림한 값이에요
             if abs(v) > max_abs:
                 cnt["d1 범위 밖 → 빈 칸"] += 1
                 continue
-            d1[code] = round(v, 2)
+            d1[code] = v
     amounts = collections.defaultdict(list)
     for df in [cur_df] + [x[1] for x in sessions]:
         a = pd.to_numeric(df["Amount"], errors="coerce") if "Amount" in df.columns else None
@@ -821,6 +825,90 @@ def kr_d1_val20(cur_df, sessions, prev_final, max_abs=D1_MAX_KR, min_days=VAL20_
         else:
             cnt["val20 날짜 부족 → 빈 칸"] += 1
     return d1, val20, cnt
+
+
+# 2026-11-14 (Jack, design chat 2026-11-08 · dart-gaps §9): 기준일에 거래가 없던 종목 (거래정지 · 코넥스의 거래 없는 날)은 d1 이 0.00% 가
+# 아니라 빈 칸이고 noTrade 표시를 달아요. 앱은 그 자리에 "{md} 거래 없음 (거래정지일 수 있어요)". 다른 이유로 빈 d1 은 d1Why 로 이유를 남겨요
+# (앱: "오늘 등락률은 받지 못했어요."). 목록 파일에는 거래정지 표시가 없어요 — 거래 없는 날은 거래량 0 · 시가 0 이에요.
+# D1_WHY (관문 파일 validate_data.py 에 있어요): 거래 없음 · ±30% 밖 · 직전 거래일 행 없음 · 직전 거래일 파일을 쓸 수 없음 (그날 모든 종목)
+D1_WHY_KO = {"noTrade": "거래 없음", "range": f"±{D1_MAX_KR:g}% 밖", "new": "직전 거래일 행 없음", "prev": "직전 거래일 파일을 쓸 수 없음"}
+
+
+NO_TRADE_MAX_SHARE = 0.25   # 목록 파일 행 중 거래 없는 행이 이보다 많으면 그 칸을 믿지 않아요 (11-11 ~ 11-13: 4.7 ~ 4.9%) — 한 파일의 잘못이 모두를 '거래 없음'으로 보이게 하지 않게
+
+
+def no_trade_unseen(no_trade, n_rows, max_share=NO_TRADE_MAX_SHARE):
+    """거래 없음 칸을 믿지 않는 까닭 (2026-11-14 · 순수 함수) — None 이면 믿어요. 'many': 행의 max_share 넘게 거래가 없어요 (파일 전체가 0 으로
+    찬 잘못). 믿지 않으면 누구도 거래 없음으로 표시하지 않아요 (예전처럼 0.00% · 관문이 경고해요)."""
+    if n_rows and len(no_trade) > max_share * n_rows:
+        return "many"
+    return None
+
+
+def d1_blank_counts(rows, seen=True, unseen=None, odd=(), must=()):
+    """발행하는 국내 종목(목록 파일에서 온 cls kr · 펀드 아님)의 빈 d1 이유별 수 (2026-11-14 · 순수 함수) — data.json d1Blank.
+    seen: 거래 없는 종목을 가릴 수 있었는지 · unseen: 못 했으면 까닭 ('cols' 목록 파일에 거래량 · 시가 칸이 없음 · 'many' — no_trade_unseen)
+    · odd: 거래량 · 시가는 0 인데 거래대금이 있는 발행 종목 (출처의 행이 스스로 어긋나요 · 표시하지 않았어요) · must: 거래가 없다고 나온 필수 종목
+    (관문의 필수 종목 7개 · 표시하지 않았어요 — 그 행의 잘못이면 필수 종목 d1 이 비어 모두의 발행이 막혀요. 관문이 경고해요)."""
+    out = {k: 0 for k in D1_WHY}
+    codes = set()
+    for r in rows:
+        w = r.get("d1Why")
+        if r.get("cls") == "kr":
+            codes.add(r.get("t"))
+            if w in out:
+                out[w] += 1
+    out["seen"] = bool(seen)
+    if not seen:
+        out["unseen"] = unseen or "cols"
+    out["odd"] = sorted(c for c in odd if c in codes)
+    out["must"] = sorted(c for c in must if c in codes)
+    return out
+
+
+def kr_no_trade(df):
+    """기준일 목록 파일에서 거래가 없던 종목 (2026-11-14 · 순수 함수): 거래량(Volume) 0 이고 시가(Open) 0 인 행 — 거래대금(Amount) 칸이 있으면
+    그것도 0 일 때만 (11-11 ~ 11-13 의 거래 없는 행 415개는 모두 0 이에요). 값이 비었거나 숫자가 아니면 거래가 없다고 하지 않아요 (모르는 것).
+    반환: (코드 set, 열이 있는지, 어긋난 코드 set — 거래량 · 시가는 0 인데 거래대금이 0 보다 큰 행: 출처의 한 행이 스스로 어긋나요. 표시하지
+    않고 크게 남겨요 · 한 종목의 출처 문제가 그 종목을 거래 없음으로 보이게 하지 않게).
+    열이 없으면 (출처의 형식이 바뀜 · 지난 data.json 으로 만든 목록) 빈 set 과 False — 누구도 거래 없음으로 표시하지 않아요 (예전처럼 0.00%)."""
+    if df is None or "Code" not in df.columns or "Volume" not in df.columns or "Open" not in df.columns:
+        return set(), False, set()
+    amt = df["Amount"] if "Amount" in df.columns else [0] * len(df)
+    out, odd = set(), set()
+    for c, v, o, a in zip(df["Code"].astype(str).str.strip(), df["Volume"], df["Open"], amt):
+        if _fin(v) == 0 and _fin(o) == 0:
+            if _fin(a) == 0:
+                out.add(c)
+            else:
+                odd.add(c)
+    return out, True, odd
+
+
+def kr_d1_split(cur_df, sessions, ok_prev, d1, no_trade):
+    """d1 을 거래 없는 종목과 나머지로 나누고 빈 d1 의 이유를 달아요 (2026-11-14 · 순수 함수). kr_d1_val20 의 d1 을 그대로 받아요.
+    cur_df: 기준일 목록 · sessions · ok_prev: kr_d1_val20 에 준 것 · no_trade: kr_no_trade 의 코드.
+    반환: (d1 {코드: %} — 거래 없는 종목은 빠져요, why {코드: D1_WHY 중 하나} — 빈 d1 마다, nt {코드: %} — 거래 없는 종목의 기준가 변화
+    (kr_d1_val20 이 낸 값 · 거래가 없어 등락률로 보이지 않고 포트폴리오 평가 금액의 오늘 변화에만 써요 · 코넥스는 거래 없이도 값이 바뀔 수
+    있어요), Counter {이유: 수})."""
+    cur = _official_map(cur_df)
+    prev = _official_map(sessions[0][1]) if sessions and ok_prev else {}
+    out, why, nt = {}, {}, {}
+    for code in cur:
+        v = d1.get(code)
+        if code in no_trade:
+            why[code] = "noTrade"
+            if v is not None:
+                nt[code] = v
+        elif v is not None:
+            out[code] = v
+        elif not (sessions and ok_prev):
+            why[code] = "prev"
+        elif not prev.get(code):
+            why[code] = "new"
+        else:
+            why[code] = "range"
+    return out, why, nt, collections.Counter(why.values())
 
 
 def _txt(x):
@@ -3896,7 +3984,7 @@ def fetch_korea(start, today, rf, prev=None):
 
     # v17.5.1: d1 (전 거래일 공식 종가 대비) · val20 (20거래일 평균 거래대금) — 그 전 날짜들의 최종 목록 파일에서.
     # 직전 파일이 KOSPI 의 직전 거래일과 다르면(그날 파일이 없거나 미완성이라 건너뛴 것) d1 은 이틀치 변화라 비워요.
-    d1_map, v20_map, sessions = {}, {}, []
+    d1_map, v20_map, sessions, ok_prev = {}, {}, [], False
     if px_date is not None:
         sessions, snotes, prev_final = kr_recent_sessions(px_date, _fetch_listing_csv, _listing_commit_kst)
         for n in snotes:
@@ -3909,6 +3997,34 @@ def fetch_korea(start, today, rf, prev=None):
         log(f"{'  !! ' if not ok_prev else '· '}d1·val20: 앞선 거래일 파일 {len(sessions)}개"
             + (f" (직전 {sessions[0][0]})" if sessions else "") + f" · d1 {len(d1_map):,} · val20 {len(v20_map):,}"
             + (f" · {dict(dcnt)}" if dcnt else ""))
+    # 2026-11-14 (Jack, design chat 2026-11-08): 기준일에 거래가 없던 종목은 d1 빈 칸 + noTrade · 다른 빈 d1 은 이유(d1Why)를 달아요
+    no_trade, nt_cols, nt_odd = kr_no_trade(listing) if px_date is not None else (set(), False, set())
+    nt_unseen = "cols" if not nt_cols else no_trade_unseen(no_trade, len(listing))
+    names_of = dict(zip(listing["Code"].astype(str).str.strip(), listing["Name"].astype(str)))
+    if nt_unseen:
+        why_ko = {"cols": "목록 파일에 거래량(Volume) · 시가(Open) 칸이 없어요",
+                  "many": f"거래 없는 행이 {len(no_trade):,} / {len(listing):,} 로 {NO_TRADE_MAX_SHARE:.0%} 를 넘어요 (파일의 잘못)"}[nt_unseen]
+        log(f"  !! 거래 없는 종목을 가리지 않았어요 — {why_ko}. 거래가 없던 종목도 d1 0.00% 로 나가요 (관문이 경고해요)")
+        no_trade = set()
+    nt_must = sorted(set(GATE_MUST) & no_trade)          # 관문의 필수 종목은 거래 없음으로 표시하지 않아요 (그 행의 잘못이면 모두의 발행이 막혀요)
+    if nt_must:
+        must_names = ", ".join(f"{c} {names_of.get(c, '')}" for c in nt_must)
+        log(f"  !! 필수 종목 {must_names} 이 거래 없음(거래량 0 · 시가 0)으로 나와요 — "
+            "그 행의 잘못일 수 있어 표시하지 않았어요 (d1 은 공식 종가로 계산 · 관문이 경고해요)")
+        no_trade -= set(nt_must)
+    d1_map, d1_why, nt_map, why_n = kr_d1_split(listing, sessions, ok_prev, d1_map, no_trade)
+    if not nt_unseen:
+        nt_names = sorted(f"{c} {names_of.get(c, '')}" for c in no_trade if c in d1_why)
+        log(f"· 거래 없는 종목 (기준일 {px_date} 거래량 0 · 시가 0 · 거래대금 0): {why_n['noTrade']:,}종목 → d1 빈 칸 · noTrade"
+            f" (기준가 변화 ntD1 {len(nt_map):,}종목 · 0 이 아닌 것 {sum(1 for v in nt_map.values() if v):,})"
+            + (f": {', '.join(nt_names[:12])}{' …' if len(nt_names) > 12 else ''}" if nt_names else ""))
+    if nt_odd:
+        log(f"  !! 거래량 · 시가는 0 인데 거래대금이 있는 행 {len(nt_odd)}개 (출처의 행이 스스로 어긋나요 · 거래 없음으로 표시하지 않았어요): "
+            + ", ".join(sorted(f"{c} {names_of.get(c, '')}" for c in nt_odd)[:12]))
+    out_range = sorted(f"{c} {names_of.get(c, '')}" for c, w in d1_why.items() if w == "range")
+    log(f"{'  !! ' if why_n['prev'] else '· '}국내 d1 빈 칸 이유 (목록 파일): 거래 없음 {why_n['noTrade']:,} · ±{D1_MAX_KR:g}% 밖 {why_n['range']:,}"
+        f" · 직전 거래일 행 없음 {why_n['new']:,} · 직전 거래일 파일을 쓸 수 없음 {why_n['prev']:,}"
+        + (f" (±{D1_MAX_KR:g}% 밖: {', '.join(out_range[:12])})" if out_range else ""))
     # 네이버 일봉은 넥스트레이드까지 합친 '마지막 체결가'라 공식 종가와 다른 날이 있어요 (리뷰: 300일 중 30일쯤, 최대 4%).
     # 목록 파일을 받은 최근 거래일들은 공식 종가로 고쳐요. 그보다 오래된 날은 v18.0 Part B 에서 공식 종가 이력으로 바꿔요.
     off_by_day = {pd.Timestamp(d): _official_map(df) for d, df in sessions}
@@ -4080,6 +4196,9 @@ def fetch_korea(start, today, rf, prev=None):
                 "val": round(amt / 1e8, 1) if amt is not None else None,
                 "lo": float(px.tail(252).min()), "hi": float(px.tail(252).max()),
                 "d1": d1_map.get(code), "val20": v20_map.get(code),
+                # 2026-11-14: 기준일에 거래가 없던 종목 (d1 빈 칸) · 빈 d1 의 이유 · 거래 없는 날의 기준가 변화 (포트폴리오 평가 금액에만)
+                "noTrade": True if code in no_trade and code in d1_why else None,
+                "d1Why": d1_why.get(code), "ntD1": nt_map.get(code),
                 "etf": code in KR_LISTED_FUNDS,       # 목록 파일에 섞인 상장 펀드 (인프라 펀드 등)
             }
             hilo_note(code, px, rec)
@@ -4138,9 +4257,13 @@ def fetch_korea(start, today, rf, prev=None):
     krs = kr_series_check(pin, pin_kept, kept_names, pin_bad, jumps, {r["t"] for r in out}, len(off_by_day),
                           ref=ref_sum)
     mark_px_bad(out, krs, win_cut)           # 2026-11-14 (Jack): 그 움직임이 계산 창에 든 숫자를 비워요 (점수 · corp.json 보다 먼저)
+    # 2026-11-14: 발행하는 종목의 빈 d1 이유 수 (data.json d1Blank · 관문이 종목마다의 noTrade · d1Why 와 맞춰 봐요) · cols: 거래 없음을 가릴 수 있었는지
+    d1_blank = d1_blank_counts(out, not nt_unseen, nt_unseen, nt_odd, nt_must)
+    log(f"{'  !! ' if d1_blank['prev'] or nt_unseen else '· '}발행하는 국내 종목의 d1 빈 칸: "
+        + " · ".join(f"{D1_WHY_KO[k]} {d1_blank[k]:,}" for k in D1_WHY) + (f" · 거래 없음은 가리지 않음 ({nt_unseen})" if nt_unseen else ""))
     meta = {"pxDate": px_date.isoformat() if px_date else None,
             "ksDate": ks_date.isoformat() if ks_date else None, "listSrc": list_src, "_index": kospi, "_prod": prod_map,
-            "_prefShares": pref_shares, "_prefCaps": pref_caps, "krSeries": krs}
+            "_prefShares": pref_shares, "_prefCaps": pref_caps, "krSeries": krs, "d1Blank": d1_blank}
     return out, bench, mkt, meta
 
 
@@ -7924,7 +8047,17 @@ def read_prev_data(path=OUT):
 UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환산)",
          "val": "억원 (거래대금 · 한국은 기준일 하루, 미국은 야후 3개월 평균 거래량 × 가격)",
          "val20": "억원 (한국만 · 최근 20거래일 평균 거래대금, 10일 미만이면 빈 칸)",
-         "d1": "% (전 거래일 공식 종가 대비 · 미국은 자기 기준일, 야후 수정 종가라 배당락일엔 배당 포함 · 한국 ±30% 넘거나 직전 거래일 파일이 없으면 빈 칸)",
+         "d1": ("% (전 거래일 공식 종가 대비 · 미국은 자기 기준일, 야후 수정 종가라 배당락일엔 배당 포함 · 한국 ±30% 넘거나 직전 거래일 파일이 없으면 빈 칸 · "
+                "한국 기준일에 거래가 없던 종목도 빈 칸 (noTrade) · 한국의 빈 칸은 이유가 d1Why)"),
+         "noTrade": ("true = 한국 · 기준일(pxDate) 목록 파일의 행이 거래량 0 · 시가 0 · 거래대금 0 (거래정지이거나 코넥스의 거래 없는 날 · 목록 파일에 "
+                     "거래정지 표시는 없어요) · d1 은 빈 칸이고 d1Why noTrade · 거래가 있던 종목에는 칸이 없어요"),
+         "d1Why": ("한국 · d1 이 빈 까닭 (d1 이 있으면 칸 없음): noTrade 기준일에 거래가 없음 · range 전 거래일 대비 ±30% 밖 (신규 상장 · 분할 · 재개) · "
+                   "new 직전 거래일 목록 파일에 그 종목의 공식 종가가 없음 · prev 직전 거래일 파일이 없거나 최종본이 아니거나 KOSPI 의 직전 거래일이 아님 "
+                   "(그날 모든 종목)"),
+         "ntD1": ("% · noTrade 종목의 기준가(공식 종가) 변화 (d1 을 계산했다면 나왔을 값 · ±30% 밖이거나 직전 파일이 없으면 칸 없음) — 거래가 없어 "
+                  "등락률로 보이지 않고, 포트폴리오 평가 금액의 오늘 변화에만 써요 (코넥스는 거래 없이 값이 바뀔 수 있어요)"),
+         "d1Blank": ("발행하는 한국 종목(목록 파일에서 온 cls kr)의 빈 d1 이유별 수 {noTrade · range · new · prev} (종목의 d1Why 와 같아요) · "
+                     "cols false = 목록 파일에 거래량 · 시가 칸이 없어 거래 없는 종목을 가리지 못함"),
          "dps": "원 (한국 · 0 = 배당 없음, 빈 칸 = 모름)",
          "fy": "op·debt·roe·opm·g3·dps·dps3 가 나온 사업보고서 연도 (bq 는 TTM 분기)",
          "dps3a": "원 (한국 · dps3 를 오늘 상장 주식 수 기준으로 맞춘 값 [당기, 전기, 전전기] · 빈 칸 = 그해 기준을 확인하지 못함)",
@@ -8235,6 +8368,7 @@ def main():
         "epsBasis": eps_basis,               # v19.1f: EPS·PER 은 지배주주 몫 — 앱의 '계산 방법을 고치는 중' 줄이 이걸 보면 사라져요
         "unitChkCover": unit_cover,          # (2026-11-13) 공시 단위 확인이 몇 곳을 어떤 방법으로 봤는지 (관문 줄이 보여 줘요)
         "krSeries": kmeta.get("krSeries"),   # (2026-11-14) 국내 시계열 공식 종가 고정 · 자기 점검 · 제한폭 넘는 움직임 (관문 줄이 봐요)
+        "d1Blank": kmeta.get("d1Blank"),     # (2026-11-14) 발행하는 국내 종목의 빈 d1 이유 수 · 거래 없음을 가릴 수 있었는지 (관문 줄이 봐요)
         "stocks": stocks,
     }
     payload.update(sp_fields)                # v19.6a (A.6): splits · splitsFrom · splitsAsOf · splitsSrc · splitsInfo (UNITS["splits"]) 또는 없음

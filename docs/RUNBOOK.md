@@ -461,6 +461,42 @@ Standing daily warnings until the repair PR: "국내 시계열 하루 가격 제
 beta 채움" and "국내 vol 채움" at 96.8% (floor 95%, warning under 97%; 2,395 of 2,473: volatility and beta are whole-series,
 so every marked stock blanks them). 45 more marked stocks are still a pass; the 46th would fail both rows.
 
+## Korean stocks with no trade or no change today (국내 거래 없는 종목 · 빈 d1)
+
+The KRX listing file has no halt flag. A stock that did not trade on the price date (`pxDate`) has a row with volume 0, open 0
+and trading value 0 (11-11 to 11-13: 135 to 141 such rows a day; on the 11-14 publish 66 published stocks, e.g. 금양, STX,
+삼부토건, and 6 KONEX names). Until 2026-11-14 their `d1` was 0.00%, as if the price had simply not moved. Now (`fetch_data.py`
+`kr_no_trade` · `kr_d1_split`, Jack 2026-11-14 with the design chat's lines of 2026-11-08):
+- such a stock gets `noTrade: true`, its `d1` is blank and `d1Why` is `noTrade`; the reference price's change that day (0 for a
+  halt; a KONEX price can move without a trade) goes to `ntD1`, which the app uses only for a portfolio's 오늘 amount, so holding
+  a halted stock never takes that amount away;
+- every other blank Korean `d1` carries its reason in `d1Why`: `range` beyond ±30% (a new listing, a split, a re-listing after a
+  halt), `new` (no official close in the previous day's file), `prev` (no usable previous-day file: then every stock);
+- data.json `d1Blank` holds the published counts per reason, `seen` (whether no-trade could be told at all) and the source
+  oddities: `odd` (volume and open 0 but a trading value: the row contradicts itself, not marked) and `must` (a gate must-have
+  stock that looked like no trade: not marked, its `d1` is computed as before, so one bad row cannot fail "필수 종목 d1").
+  When the file has no Volume/Open columns (`unseen: cols`) or more than 25% of its rows look like no trade (`unseen: many`,
+  a broken file), nobody is marked and every stock shows its `d1` as before (0.00% for the halted ones).
+- Limit-up and limit-down moves (exactly ±30%) keep their `d1`. Before 2026-11-14 the ±30% test ran on the unrounded value, and
+  4,030 ÷ 3,100 − 1 came out as 30.000000000000004%, so 디와이에이's limit-up on 11-13 was blanked.
+
+The run log says "· 거래 없는 종목 (기준일 … 거래량 0 · 시가 0 · 거래대금 0): N종목 → d1 빈 칸 · noTrade (…): names" and
+"· 국내 d1 빈 칸 이유 (목록 파일): 거래 없음 … · ±30% 밖 … · 직전 거래일 행 없음 … · 직전 거래일 파일을 쓸 수 없음 …", loud ("!!")
+for missing columns, a broken file, a must-have that looked like no trade, a contradicting row, or a missing previous-day file.
+In the app: "{md} 거래 없음 (거래정지일 수 있어요)" for `noTrade`, "오늘 등락률은 받지 못했어요." for another blank, where the change
+would show (company page header, 홈 and 포트폴리오 가진 종목 rows, the 종목 tab's lists; not 종목 순위 yet). Gate rows:
+
+- **FAIL "국내 거래 없는 종목 · 빈 d1 이유 (noTrade · d1Why)"**: only our own values disagree (`validate_data.kr_no_trade_problems`):
+  a `noTrade` stock with a `d1` number, a trading value or another `d1Why`; `d1Why` with a `d1` number or an unknown reason; a
+  blank `d1` of a listing stock (cls kr, not a fund) without `d1Why`; `ntD1` on a stock that traded, not a number or beyond ±30%;
+  a mark on a US stock or a fund; `d1Blank` counts that differ from the stocks, `seen` false with marks, or a stock listed in
+  `odd`/`must` that is marked. It never fires on the listing file itself (Jack 2026-11-13: one source glitch must not hold
+  everyone's data): fix the code in a PR. A file without `d1Blank` (before 2026-11-14) is only a warning, unless the previous
+  publish had it or a stock carries a mark.
+- **WARN "국내 거래 없는 종목: 목록 파일의 칸 (경고만)"**: no-trade could not be told today (`unseen`: cols · many), or a row
+  contradicted itself (`odd`), or a must-have looked like no trade (`must`). The publish goes ahead with those stocks unmarked.
+  If it repeats, look at that day's listing file (FinanceData cache) before anything else.
+
 ## US stocks added by hand (EXTRA_US)
 
 The US list is the S&P 500 (FinanceDataReader's list), Nasdaq's first 400 and `EXTRA_US` in `fetch_data.py`. On

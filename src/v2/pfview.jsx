@@ -18,7 +18,7 @@ import { subjectParticle } from "./track.js";
 import { MissingNote } from "./tracking.jsx";
 import { avgOf, CHIP_GROUP } from "./pf.js";
 import { signedPct } from "./deckcalc.js";
-import { IcrOffLine, StmtCurLine, UnitChkLine, NoDataLine } from "./fixnote.jsx";
+import { IcrOffLine, StmtCurLine, UnitChkLine, NoDataLine, DayNote } from "./fixnote.jsx";
 import { heldUnits } from "./held.js";
 import { RecordButton } from "./records.jsx";
 
@@ -178,6 +178,8 @@ export function ImportedDeck({ deck, st, m, openStock, byT, onRemove, onMore, on
             <ListRow title={r.nk} sub={sub} value={r.w != null ? `${pct(r.w)}%` : null} change={!r.absent && r.s ? (r.s.d1 ?? null) : null} onClick={open}
               lead={r.t ? <CoMark t={r.t} name={r.nk} size={SPACE(9)} /> : null} />
             {r.w != null && <WeightBar w={r.w} shade={shades[i] || HOLDING_SHADES[HOLDING_SHADES.length - 1]} />}
+            {/* 2026-11-14 (Jack, design chat 2026-11-08): no change today, said under the row (its change stays empty, never 0.0%) */}
+            {!r.absent && r.s && <DayNote s={r.s} md={st && st.pxDate ? mdText(st.pxDate) : null} style={{ marginTop: SPACE(1) }} />}
             {((r.absent && onRemove) || (onRecord && r.t)) && (
               <div data-ui-v2="row-actions" style={{ display: "flex", gap: SPACE(2), flexWrap: "wrap", padding: `${SPACE(1)}px 0 ${SPACE(2)}px` }}>
                 {onRecord && r.t && <RecordButton name={r.nk} onClick={() => onRecord(r.t, r.nk)} />}

@@ -19,6 +19,7 @@ import { C, fill, mdText, todayKst } from "./format.js";
 import { Note, tx } from "./ui.jsx";
 import { EPS_FIX_DATE, fixNotesHidden, epsNoticeShown, stmtCurFor, epsLineKind, unitHeldFor, noStmtFor, pxBadFullFor, pxBadPartFor, pxBadHidesFor } from "./fix.js";
 import { fcurOf, fcurText, pbrZeroOf, fgnCutOf } from "./fcur.js";
+import { isPreferred, noTradeOf, d1MissingOf } from "./engine.js";
 
 // The line with its date ("11월 10일"), or null when a word or the date is missing (never a line with an empty slot).
 export function epsFixText() {
@@ -152,4 +153,39 @@ export function PbrZeroNote({ s, style }) {
 export function FgnCutNote({ s, fields, style }) {
   const cut = fgnCutOf(s).filter((k) => !fields || fields.includes(k));
   return cut.length && C.co.fgnCut ? <Note data-ui-v2="fgn-cut" data-fields={cut.join(",")} style={style}>{C.co.fgnCut}</Note> : null;
+}
+
+// ---------------- 2026-11-14 (Jack: design chat 2026-11-08 lines, relayed 2026-11-14) ----------------
+// DayNote: where a Korean stock's change today would show, when it has none. A stock that did not trade on the price date
+// (engine.noTradeOf, data.json noTrade): "{md} 거래 없음 (거래정지일 수 있어요)" with the price date (md: "11월 13일"); another blank
+// d1 (engine.d1MissingOf: ±30%, no row or no usable file the day before): "오늘 등락률은 받지 못했어요." (say-why 42). Neither for a
+// stock with a change, a US stock (its own close-date line says why) or a stock missing from today's data. 13 px, the quiet grey of
+// the screen's notes, never price red or blue. Places: the company page header (under the price), 홈 가진 종목 rows, 포트폴리오's
+// 가진 종목 rows, the 종목 tab's lists (under the name). Shown on the example page too: it is about the data.
+// -> { kind: "noTrade" | "missing", text } or null.
+export function dayNoteOf(s, md) {
+  if (noTradeOf(s)) return md && C.co.noTrade ? { kind: "noTrade", text: fill(C.co.noTrade, { md }) } : null;
+  if (d1MissingOf(s)) return C.co.d1Missing ? { kind: "missing", text: C.co.d1Missing } : null;
+  return null;
+}
+// s: the data.json row · md: its price date as shown ("11월 13일") · block: a line of its own (div) or phrasing content (span).
+export function DayNote({ s, md, block = true, style }) {
+  const n = dayNoteOf(s, md);
+  if (!n) return null;
+  const Tag = block ? "div" : "span";
+  return <Tag data-ui-v2="day-note" data-kind={n.kind} data-t={s.t} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", wordBreak: "keep-all", ...style })}>{n.text}</Tag>;
+}
+
+// PrefNote (say-why 22): "우선주라 회사 숫자는 보통주 페이지에서 볼 수 있어요." once under the header of a Korean preferred share's company
+// page (engine.isPreferred: a KRX code not ending in 0, the rule 2.0 already uses for 우선주), on every tab.
+export const prefText = (s) => (!!s && isPreferred(s) && C.co.pref ? C.co.pref : null);
+export function PrefNote({ s, style }) {
+  const text = prefText(s);
+  return text ? <Note data-ui-v2="co-pref" style={style}>{text}</Note> : null;
+}
+// The 내 기준과 맞는 정도 card and sheet of a preferred share (say-why 23): "우선주는 순위를 매기지 않아요." under the rows.
+export const prefFitText = (s) => (!!s && isPreferred(s) && C.co.fit && C.co.fit.pref ? C.co.fit.pref : null);
+export function PrefFitNote({ s, style }) {
+  const text = prefFitText(s);
+  return text ? <Note data-ui-v2="co-fit-pref" style={style}>{text}</Note> : null;
 }

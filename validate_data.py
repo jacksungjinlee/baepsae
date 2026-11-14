@@ -109,6 +109,11 @@ PIN_PX_TOL = 0.05        # 공식 종가 ↔ 네이버 봉 차이 상한 (비율
 PIN_SHR_TOL = 0.02       # 그날 상장주식수 ↔ 오늘 상장주식수 차이 상한 (비율) — 기준가로 확인하지 못한 날은 넘으면 고치지 않아요
 PIN_REF_TOL = 0.30       # 기준가로 같은 기준임을 확인한 날 (주식 수도 같을 때): 공식 종가 ↔ 네이버 봉 차이 상한 — 시간외 큰 움직임까지
 KR_DAY_LIMIT = D1_MAX_KR  # 한국 하루 가격 제한폭 (%) — 코스피 · 코스닥 (d1 줄과 같은 값 · 따로 바뀌지 않게)
+# 2026-11-14 (Jack, design chat 2026-11-08 · dart-gaps §9 · 새 줄만, 늦추는 줄 없음): 기준일에 거래가 없던 한국 종목 (목록 파일의 거래량 0 · 시가 0 ·
+# 거래대금 0)은 d1 이 0.00% 가 아니라 빈 칸이고 noTrade 표시를 달아요. 다른 이유로 빈 d1 은 d1Why 에 이유 (fetch_data.kr_no_trade · kr_d1_split):
+# noTrade 거래 없음 · range ±30% 밖 · new 직전 거래일 행 없음 · prev 직전 거래일 파일을 쓸 수 없음 (그날 모든 종목). 파이프라인이 이 목록을 읽어요.
+D1_WHY = ("noTrade", "range", "new", "prev")
+NO_TRADE_SHOW = 12       # 값 칸에 적는 종목 수 (나머지는 수만 · 전체는 요약 목록에)
 KONEX_DAY_LIMIT = 15.0   # 코넥스 하루 가격 제한폭 (%)
 KR_JUMP_WHY = {"pin": "우리 고정이 만든 움직임", "halt": "거래정지 뒤 재개", "spike": "하루만 튄 봉", "other": "그 밖"}
 # 2026-11-14 (Jack, Q2 (a) "this week" · 새 줄만, 늦추는 줄 없음): 하루 움직임이 가격 제한폭으로 설명되지 않는 종목(krSeries.jump)은 그 시계열로
@@ -989,6 +994,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_unit(rep, data, kr, by, comps, pdata)
     check_kr_series(rep, data, kr, pdata)  # 2026-11-14 (Jack: "52주 숫자부터"): 다른 기준의 공식 종가 고정 (실패) · 제한폭 넘는 움직임 (경고)
     check_px_bad(rep, data, comps, pdata)  # 2026-11-14 (Jack, Q2 (a)): 그 움직임이 있는 종목은 52주 · 출렁임 · 위험 숫자를 비워요 (실패) · 필수 종목 추세 · 저변동 순위 (실패)
+    check_kr_no_trade(rep, data, pdata)    # 2026-11-14 (Jack, design chat 2026-11-08): 거래 없는 종목은 d1 빈 칸 + noTrade · 빈 d1 은 이유 (실패: 우리 값끼리 어긋날 때만)
 
     # 경고만
     rep.add("공시 목록 조회", True, "성공" if disc.get("listOk") else "실패", "실패면 경고", warn=not disc.get("listOk"))
@@ -2801,6 +2807,116 @@ def px_bad_must(data, comps):
         if isinstance(s, dict) and s.get("cls") == "kr" and "pxBad" in s and px_bad_valid(t, s, cby.get(t), ks, px):
             out[t] = set(s.get("pxBadF") or [])
     return out
+
+
+def kr_no_trade_problems(data):
+    """거래 없는 종목 표시(noTrade) · 빈 d1 의 이유(d1Why) · 거래 없는 날의 기준가 변화(ntD1) · 요약(d1Blank)이 서로 맞지 않는 곳 (빈 목록 = 정상).
+    우리 파이프라인이 쓴 값끼리만 봐요 — 출처(목록 파일)를 다시 보지 않으니 출처의 잘못으로는 생기지 않아요 (Jack 2026-11-13: 한 종목의 출처 문제가
+    모두의 발행을 막으면 안 돼요). 목록 파일에서 온 국내 종목 = cls kr · 펀드(fund) 아님 (펀드는 다른 길로 와요)."""
+    out = []
+    stocks = data.get("stocks") or []
+    listed = [s for s in stocks if s.get("cls") == "kr" and not s.get("fund")]
+    for s in stocks:
+        t, d1 = s.get("t"), num(s.get("d1"))
+        mine = s.get("cls") == "kr" and not s.get("fund")
+        nt, why = s.get("noTrade"), s.get("d1Why")
+        if "noTrade" in s and nt is not True:
+            out.append(f"{t} noTrade 가 true 가 아니에요 ({str(nt)[:10]})")
+        if any(k in s for k in ("noTrade", "d1Why", "ntD1")) and not mine:
+            out.append(f"{t} 목록 파일의 국내 종목이 아닌데 noTrade · d1Why · ntD1")
+        if nt is True:
+            if d1 is not None or s.get("d1") is not None:
+                out.append(f"{t} 거래 없음인데 d1 {s.get('d1')}")
+            if why != "noTrade":
+                out.append(f"{t} 거래 없음인데 d1Why {why!r}")
+            if (num(s.get("val")) or 0) > 0:
+                out.append(f"{t} 거래 없음인데 거래대금 {s.get('val')}억원")
+        if why == "noTrade" and nt is not True:
+            out.append(f"{t} d1Why noTrade 인데 noTrade 표시가 없어요")
+        if "d1Why" in s and why not in D1_WHY:
+            out.append(f"{t} d1Why 를 모르는 값 {str(why)[:12]!r}")
+        if "d1Why" in s and s.get("d1") is not None:
+            out.append(f"{t} d1 {s.get('d1')} 이 있는데 d1Why {why!r}")
+        if "ntD1" in s:
+            raw = s.get("ntD1")
+            v = num(raw) if isinstance(raw, (int, float)) else None           # JSON 숫자만 (글자 "0" 은 숫자가 아니에요)
+            if nt is not True:
+                out.append(f"{t} 거래 없음이 아닌데 ntD1")
+            if v is None or abs(v) > KR_DAY_LIMIT:
+                out.append(f"{t} ntD1 {str(s.get('ntD1'))[:12]} (±{KR_DAY_LIMIT:g}% 안의 숫자여야 해요)")
+    for s in listed:
+        if s.get("d1") is None and "d1Why" not in s:
+            out.append(f"{s.get('t')} d1 이 빈 칸인데 이유(d1Why)가 없어요")
+    db = data.get("d1Blank")
+    cnt = collections.Counter(s.get("d1Why") for s in listed if "d1Why" in s)
+    for k in D1_WHY:
+        if db.get(k) != cnt.get(k, 0):
+            out.append(f"d1Blank.{k} {db.get(k)!r} ≠ 종목 {cnt.get(k, 0)}")
+    if not isinstance(db.get("seen"), bool):
+        out.append(f"d1Blank.seen 모양이 잘못됨 ({str(db.get('seen'))[:10]})")
+    elif not db["seen"]:
+        if cnt.get("noTrade"):
+            out.append("d1Blank.seen false (거래 없음을 가리지 않았어요) 인데 noTrade 표시가 있어요")
+        if db.get("unseen") not in ("cols", "many"):
+            out.append(f"d1Blank.unseen 모양이 잘못됨 ({str(db.get('unseen'))[:10]})")
+    codes = {s.get("t") for s in listed}
+    for k in ("odd", "must"):
+        v = db.get(k)
+        if not isinstance(v, list) or any(c not in codes for c in v):
+            out.append(f"d1Blank.{k} 모양이 잘못됨 ({str(v)[:30]})")
+    by = {s.get("t"): s for s in listed}
+    for c in (db.get("odd") if isinstance(db.get("odd"), list) else []) + (db.get("must") if isinstance(db.get("must"), list) else []):
+        if (by.get(c) or {}).get("noTrade") is True:
+            out.append(f"{c} 표시하지 않았다는(d1Blank.odd · must) 종목에 noTrade 가 있어요")
+    return out
+
+
+def check_kr_no_trade(rep, data, pdata):
+    """기준일에 거래가 없던 한국 종목 (2026-11-14 · Jack, design chat 2026-11-08 · dart-gaps §9 "거래량 0 종목 = noTrade 표시 · d1 빈 칸" · 새 줄만,
+    늦추는 줄 없음). 거래가 없던 날을 0.00% 로 보이지 않게 파이프라인(fetch_data.kr_no_trade · kr_d1_split)이 d1 을 비우고 noTrade 를 달아요.
+    실패: 우리 값끼리 어긋날 때만 (kr_no_trade_problems — 거래 없음인데 d1 숫자 · 이유 없는 빈 d1 · 요약 d1Blank 이 종목과 다름 …). d1Blank 이 없으면
+    직전 발행본에 있었거나 종목에 표시가 있을 때만 실패 (그 전 형식은 경고 — 머지 뒤 첫 발행 전까지의 사이트 --live 와 시험 데이터).
+    경고 (출처 쪽 · 발행은 막지 않아요, Jack 2026-11-13): 거래 없음을 가리지 못한 날 (목록 파일에 칸이 없음 · 거래 없는 행이 너무 많음 — 그날은
+    예전처럼 0.00%) · 거래량 · 시가는 0 인데 거래대금이 있는 행 (odd) · 거래가 없다고 나온 필수 종목 (must — 표시하지 않고 d1 은 공식 종가로).
+    pdata: 직전 발행본 data.json (발행 모드에서만, 아니면 None)."""
+    name = "국내 거래 없는 종목 · 빈 d1 이유 (noTrade · d1Why)"
+    wname = "국내 거래 없는 종목: 목록 파일의 칸 (경고만)"
+    rule = (f"0 (거래 없는 종목은 d1 빈 칸 · d1Why noTrade · 거래대금 0 · ntD1 은 그 종목만 ±{KR_DAY_LIMIT:g}% 안 · 목록 파일 종목의 빈 d1 은 "
+            "모두 d1Why · d1Blank 수 = 종목 · 그 전 형식만 경고)")
+    wrule = "거래 없음을 가림 · 어긋난 행 0 · 거래 없다고 나온 필수 종목 0 (있으면 경고 · 그 종목은 표시하지 않아요)"
+    stocks = data.get("stocks") or []
+    db = data.get("d1Blank")
+    marks = [s.get("t") for s in stocks if any(k in s for k in ("noTrade", "d1Why", "ntD1"))]
+    if not isinstance(db, dict):
+        had = isinstance((pdata or {}).get("d1Blank"), dict)
+        why = ("직전 발행본에는 있었어요 (거래 없음 단계가 돌지 않았어요)" if had else
+               f"표시 {len(marks)}곳이 있는데 요약이 없어요" if marks else
+               "2026-11-14 전 형식 · 직전 발행본에도 없어요 — 거래가 없던 종목도 d1 0.00% 로 나가요")
+        rep.add(name, not had and not marks, f"d1Blank 없음 ({why})", rule, warn=not had and not marks)
+        rep.add(wname, True, "d1Blank 없음 (확인 못 함)", wrule, warn=True)
+        return
+    probs = kr_no_trade_problems(data)
+    nts = [s for s in stocks if s.get("noTrade") is True]
+    rep.add(name, not probs,
+            f"거래 없음 {db.get('noTrade')!r} · ±{KR_DAY_LIMIT:g}% 밖 {db.get('range')!r} · 직전 거래일 행 없음 {db.get('new')!r} · 직전 거래일 파일 없음 "
+            f"{db.get('prev')!r}" + (f" · 문제 {len(probs)}: {', '.join(probs[:3])}" if probs else ""), rule)
+    if probs:
+        rep.detail("거래 없는 종목 · 빈 d1 이유가 어긋난 곳 (우리 코드의 잘못)", probs)
+    if nts:
+        rep.detail("기준일에 거래가 없던 국내 종목 (d1 빈 칸 · 앱: '{md} 거래 없음 (거래정지일 수 있어요)')",
+                   [f"{s.get('t')} {s.get('nk', '')}" + (f" (기준가 {num(s.get('ntD1')):+.2f}%)" if num(s.get("ntD1")) else "") for s in nts])
+    odd = db.get("odd") if isinstance(db.get("odd"), list) else []
+    must = db.get("must") if isinstance(db.get("must"), list) else []
+    by = {s.get("t"): s.get("nk", "") for s in stocks}
+    parts = []
+    if db.get("seen") is False:
+        parts.append({"cols": "목록 파일에 거래량 · 시가 칸이 없어", "many": "거래 없는 행이 너무 많아 (파일의 잘못)"}.get(db.get("unseen"), "까닭 모름 ·")
+                     + " 거래 없음을 가리지 않았어요 — 거래가 없던 종목도 d1 0.00%")
+    if odd:
+        parts.append(f"거래량 · 시가는 0 인데 거래대금이 있는 행 {len(odd)}: " + ", ".join(f"{c} {by.get(c, '')}" for c in odd[:NO_TRADE_SHOW]))
+    if must:
+        parts.append(f"거래가 없다고 나온 필수 종목 {len(must)} (표시하지 않음 · d1 은 공식 종가로): " + ", ".join(f"{c} {by.get(c, '')}" for c in must))
+    rep.add(wname, True, " · ".join(parts) if parts else f"가림 · 거래 없는 종목 {len(nts)}", wrule, warn=bool(parts))
 
 
 def check_px_bad(rep, data, comps, pdata):

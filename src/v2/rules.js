@@ -50,7 +50,7 @@
 //   and the backstop: data.js freshness) or failed data computes no status at all: the output says
 //   why. A rule this version cannot read is treated as not checked (준비 중), never as passed; a rule book with no rule
 //   that could be checked at all is 확인 필요, never 할 일 없음.
-import { num, isFin, priceWon, fyOf, fellTwice, KR_DIV_TREND, exactData, krDivHistory, todayD1 } from "./engine.js";
+import { num, isFin, priceWon, fyOf, fellTwice, KR_DIV_TREND, exactData, krDivHistory, todayD1, valueD1 } from "./engine.js";
 import { STALE_DAYS, daysSince, ownCloseDate, backstopFirst } from "../data.js";
 import { sameConfirm, planWLimit, planWOk, PLANW_MAX_X } from "./store.js";
 import { heldQty as heldOf, heldUnits } from "./held.js";
@@ -420,7 +420,9 @@ function reasonsOf(results, unit = false) {
 export const SOLD_OUT_BANDS = "own";
 const SOLD_OUT_MODES = ["off", "spec", "own"];
 
-// One held stock. -> { t, nk, cls, kind, qty, status, reasons, rules, w, target, value, px, d1, pxd, bigMove, noNewMoney }
+// One held stock. -> { t, nk, cls, kind, qty, status, reasons, rules, w, target, value, px, d1, dv, pxd, bigMove, noNewMoney }
+//   dv (2026-11-14): the change of its value today, for the portfolio's 오늘 only (engine.valueD1: d1, or for a stock that did
+//   not trade its reference price's change, data.json ntD1; d1 itself stays blank for it, never shown as a change)
 //   px (v19.6a): today's won price of one share (for 추가로 넣을 돈 when 0 shares are held: SOLD_OUT_BANDS "spec" · "own")
 //   pxd (v19.1c): the stock's own price date when it is priced at an earlier close than the US date (data.json pxd), else
 //   null; its d1 is then null (engine.todayD1), so it is never a 큰 움직임 and the screens name it in their notes.
@@ -468,7 +470,7 @@ export function evaluateHolding(h, deck, ctx, weights, qty) {
     px: weights.px && weights.px.has(h.t) ? weights.px.get(h.t) : null,
     absent: !s,                                                   // not in today's data at all (v19.0c: the row stays)
     // a note only: never changes the status. Never on a 0-share holding (verification nit: not in 홈's 큰 움직임)
-    d1, pxd, bigMove: qty !== 0 && d1 != null && Math.abs(d1) >= BIG_MOVE,
+    d1, dv: valueD1(s), pxd, bigMove: qty !== 0 && d1 != null && Math.abs(d1) >= BIG_MOVE,
     noNewMoney: soldOutFails || NO_NEW_MONEY.includes(status),
   };
 }
