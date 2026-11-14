@@ -8,7 +8,8 @@
 // a number whose input is missing is left out (ok: false), never filled in.
 import { num, hasGroup, universe, priceWon, todayD1 } from "./engine.js";
 import { NO_NEW_MONEY } from "./rules.js";
-import { pfRows, avgOf } from "./pf.js";
+import { pfRows } from "./pf.js";
+import { ledger, recordSets, kospiMirror } from "./lots.js";
 
 export const GROUP_MIN = 5;           // 같은 업종 점 띠: a real industry group with at least 5 members in the same market
 export const TOGETHER_SHARE = 0.8;    // "같은 업종이 다 같이 빠졌어요": the stock fell and at least 80% of its group fell
@@ -26,34 +27,27 @@ const warnOnce = (msg) => { if (!warned.has(msg)) { warned.add(msg); console.war
 export function purchaseWon(p, planFx) {
   if (!p || !(Number.isInteger(p.qty) && p.qty > 0) || !(num(p.price) > 0)) return null;
   if (p.ccy === "KRW") return p.qty * p.price;
-  if (p.ccy === "USD") { const fx = num(p.fx) > 0 ? p.fx : num(planFx) > 0 ? planFx : null; return fx ? p.qty * p.price * fx : null; }
+  // v19.6a: a purchase marked noFx (saved on purpose without a rate, before 2016) never takes planFx (another day's rate)
+  if (p.ccy === "USD") { const fx = num(p.fx) > 0 ? p.fx : p.noFx !== true && num(planFx) > 0 ? planFx : null; return fx ? p.qty * p.price * fx : null; }
   return null;
 }
 
 // Value, money put in and return of one deck.
 //   deck: the stored deck · de: evaluateDeck(deck, ctx) for it · ctx: todayCtx (the same prices and rate).
 // -> { ok: false, why } | { ok: true, value, cost, gain, ret, start, per: { t: { qty, value, cost, ret } }, noFx: [t], absent }
-//   cost / gain / ret are null when any held purchase has no won cost (noFx names them). value is today's value of
-//   every held share at today's official close (US at today's rate). Any held stock without a price today: no value.
+//   v19.6a (A.4): cost (원금) is the REMAINING won cost of the open lots (lots.js: moving average, a sale takes the same
+//   fraction of every lot's cost), so 포트폴리오 and 내 수익 agree; gain and ret are the unrealized part. With no sale it is
+//   the money put in, as before. cost / gain / ret are null when any held lot has no won cost (noFx names them). value is
+//   today's value of every held share at today's official close (US at today's rate). Any held stock without a price
+//   today: no value.
 //   v19.0c: a held stock missing from today's data altogether is left out of every total (value, cost, return) and
-//   listed in absent ([{ t, nk, cls, cost }], cost = its money put in, null without a won cost); the screens say so
-//   with the "빼고 계산했어요" line. Every other stock must still have a price.
+//   listed in absent ([{ t, nk, cls, cost }], cost = its remaining money put in, null without a won cost); the screens
+//   say so with the "빼고 계산했어요" line. Every other stock must still have a price.
 export function deckMoney(deck, de, ctx) {
   if (!de || !de.ok || !ctx) return { ok: false, why: "day" };
   if (de.imported) return importedMoney(deck, ctx);
-  const m = builtMoney(deck, de, ctx);
-  // v19.3d: a built portfolio with a sale (or an imported row) holds fewer or other shares than its purchases paid for;
-  // until v19.6a's lot maths, 원금 and the return are unknown (shown as nothing, never a wrong number).
-  if (!lotsPending(deck)) return m;
-  const ns = Array.isArray(deck.sales) ? deck.sales.length : 0, ni = Array.isArray(deck.imported) ? deck.imported.length : 0;
-  warnOnce(`[v2] ${deck.id}: ${ns} sale(s) and ${ni} imported row(s) on a built portfolio: money put in, return and the KOSPI comparison left out until the lot maths (v19.6a)`);
-  const absent = m.absent ? { absent: m.absent.map((a) => ({ ...a, cost: null })) } : {};
-  if (!m.ok) return { ...m, ...absent };
-  const per = Object.fromEntries(Object.entries(m.per).map(([t, r]) => [t, { ...r, cost: null, ret: null }]));
-  return { ...m, ...absent, cost: null, gain: null, ret: null, per, lots: true };
+  return builtMoney(deck, de, ctx);
 }
-// Records the purchases-only maths cannot price yet (v19.6a): a sale, or an imported row on a built portfolio.
-export const lotsPending = (deck) => !!deck && ((Array.isArray(deck.sales) && deck.sales.length > 0) || (Array.isArray(deck.imported) && deck.imported.length > 0));
 
 function builtMoney(deck, de, ctx) {
   const gone = new Set(de.absent || []);
@@ -61,24 +55,29 @@ function builtMoney(deck, de, ctx) {
   // the missing stocks are named even when the totals cannot be made (never silent)
   const noPrice = () => ({ ok: false, why: "price", ...(gone.size ? { absent: absentOf() } : {}) });
   if (!de.weights || !(de.weights.ok || de.weights.paused)) return noPrice();
-  const held = new Set(de.holdings.filter((x) => !gone.has(x.t)).map((x) => x.t));
+  // a sold-out holding the band rules read with 0 shares (rules.SOLD_OUT_BANDS "spec" · "own") holds no money: not in the totals
+  const zero = new Set(de.holdings.filter((x) => x.qty === 0).map((x) => x.t));
+  const held = new Set(de.holdings.filter((x) => !gone.has(x.t) && !zero.has(x.t)).map((x) => x.t));
   const per = {};
   let value = 0;
   for (const x of de.holdings) {
-    if (gone.has(x.t)) continue;
+    if (gone.has(x.t) || zero.has(x.t)) continue;
     const s = ctx.byT.get(x.t);
     const px = s ? priceWon(s, ctx.fx) : null;
     if (!(px > 0) || !(x.qty > 0)) return noPrice();
-    per[x.t] = { qty: x.qty, value: x.qty * px, cost: 0, ret: null };
+    per[x.t] = { qty: x.qty, value: x.qty * px, cost: null, ret: null };
     value += x.qty * px;
   }
   const noFx = [];
   let start = null;
+  for (const t of held) {
+    const L = ledger(deck, t);
+    const c = openCost(L, ctx.fx);
+    if (c == null) { if (!noFx.includes(t)) noFx.push(t); continue; }
+    per[t].cost = c;
+  }
   for (const p of (deck && deck.purchases) || []) {
     if (!p || !(p.qty > 0) || !held.has(p.t)) continue;
-    const c = purchaseWon(p, deck.planFx);
-    if (c == null) { if (!noFx.includes(p.t)) noFx.push(p.t); per[p.t].cost = null; continue; }
-    if (per[p.t].cost != null) per[p.t].cost += c;
     if (typeof p.date === "string" && DATE.test(p.date) && (start == null || p.date < start)) start = p.date;
   }
   for (const t of Object.keys(per)) {
@@ -91,13 +90,25 @@ function builtMoney(deck, de, ctx) {
   if (!held.size) return { ok: false, why: "absent", absent };   // every held stock is missing from today's data: no totals
   return { ok: true, value, cost: ok ? cost : null, gain: ok ? value - cost : null, ret: ok ? value / cost - 1 : null, start, per, noFx, absent };
 }
+// The remaining won cost of a stock's open lots (lots.js), dollar-only lots at today's rate; null when any is unknown.
+function openCost(L, fx) {
+  let c = 0;
+  for (const l of L.lots) {
+    if (l.own == null) return null;
+    if (l.usdOnly) { if (!(num(fx) > 0)) return null; c += l.own * fx; continue; }
+    if (l.won == null) return null;
+    c += l.won;
+  }
+  return c;
+}
 
 // v19.3d (v19.3 F.1): a portfolio made with 가진 종목 넣기, read explicitly: value = every held share (held.js: imported +
 // 샀어요 − 팔았어요) at today's close (US at today's rate), plus a stock added by name only at its typed amount (frozen:
 // it carries its own date, and the screens never show it as live). Money put in only when every holding has a 평균 단가
-// (avgOf: the imported row's, or the 샀어요 records', which count as one): never a guess. A US 평균 단가 has no rate of its
-// own, so it is converted at today's rate (usdToday: v19.3 Part H's line says so). A stock missing from today's data is
-// left out of every total and listed (absent), as for a built portfolio.
+// (v19.6a: its open lots' remaining cost, lots.js; an imported row's typed 평균 단가 and the 샀어요 records): never a guess.
+// A US 평균 단가 typed on an imported row has no rate of its own, so it is converted at today's rate (usdToday: v19.3
+// Part H's line says so); a 샀어요 record keeps its own rate. A stock missing from today's data is left out of every total
+// and listed (absent), as for a built portfolio.
 function importedMoney(deck, ctx) {
   const v = pfRows(deck, ctx);
   const absent = v.rows.filter((r) => r.absent).map((r) => ({ t: r.t, nk: r.nk, cls: r.cls, cost: null }));
@@ -108,9 +119,9 @@ function importedMoney(deck, ctx) {
   let value = 0, cost = 0, usdToday = false;
   for (const r of live) {
     value += r.value;
-    const a = r.t ? avgOf(deck, r.t) : null;
-    const c = a && r.qty > 0 ? r.qty * a.avg * (a.ccy === "USD" ? (num(ctx.fx) > 0 ? ctx.fx : NaN) : 1) : null;
-    if (a && a.ccy === "USD") usdToday = true;
+    const L = r.t ? ledger(deck, r.t) : null;
+    const c = L && r.qty > 0 ? openCost(L, ctx.fx) : null;
+    if (L && L.lots.some((l) => l.usdOnly)) usdToday = true;
     if (!(c > 0)) { noAvg.push(r.key); cost = null; }
     else if (cost != null) cost += c;
     if (r.t) per[r.t] = { qty: r.qty, value: r.value, cost: c > 0 ? c : null, ret: c > 0 ? r.value / c - 1 : null };
@@ -120,24 +131,20 @@ function importedMoney(deck, ctx) {
     noFx: [], noAvg, usdToday, frozen: live.filter((r) => r.frozen).map((r) => ({ nk: r.nk, date: r.date })), absent };
 }
 
-// The money put in for one held stock (won), or null when any of its purchases has no won cost.
+// The remaining money put in for one held stock (won: lots.js), or null when any of its lots has no won cost.
 export function heldCost(deck, t) {
-  let c = 0, n = 0;
-  for (const p of (deck && deck.purchases) || []) {
-    if (!p || p.t !== t || !(p.qty > 0)) continue;
-    const w = purchaseWon(p, deck.planFx);
-    if (w == null) return null;
-    c += w;
-    n++;
-  }
-  return n ? c : null;
+  const L = ledger(deck, t);
+  if (!L.lots.length) return null;
+  return openCost(L, null);
 }
 
 // The deck without the held stocks missing from today's data (for the KOSPI comparison over the same money).
 export function withoutAbsent(deck, de) {
   const gone = new Set((de && de.absent) || []);
   if (!gone.size || !deck) return deck;
-  return { ...deck, purchases: (deck.purchases || []).filter((p) => !(p && gone.has(p.t))) };
+  const not = (r) => !(r && gone.has(r.t));
+  return { ...deck, purchases: (deck.purchases || []).filter(not), ...(Array.isArray(deck.sales) ? { sales: deck.sales.filter(not) } : {}),
+    ...(Array.isArray(deck.divs) ? { divs: deck.divs.filter(not) } : {}), holdings: (deck.holdings || []).filter(not) };
 }
 
 // ---------------- KOSPI over the same dates ----------------
@@ -167,26 +174,23 @@ export function validRows(idx) {
   return rows;
 }
 
-export function indexSince(deck, idx, pxDate) {
-  if (lotsPending(deck)) return { ok: false, why: "lots" };   // v19.3d: sales need v19.6a's lot maths (the same money in KOSPI)
+// v19.6a (A.5 [Q4]): with sales. Each lot's money buys KOSPI at the last close before its purchase date; a sale sells the
+// same fraction of that stock's KOSPI units at the last close before the sale date (lots.kospiMirror). Mine = (value now
+// + sale money) / money put in − 1; KOSPI = (units still held x today's close + money from units sold) / the same money − 1.
+// Dividends stay out of both sides. A stock taken out (history) counts with what was sold before it left.
+//   valueOf(t): today's won value of t's held shares (evaluateDeck's own value; null = unknown). Without it (a deck with no
+//   sale), each held stock's value is not needed only when there is nothing held: callers pass it.
+// -> { ok: true, ret (KOSPI), mine, start, end } | { ok: false, why }
+export function indexSince(deck, idx, pxDate, valueOf = null) {
   const rows = validRows(idx);
   if (!rows) return { ok: false, why: "noIndex" };
   const end = rows[rows.length - 1];
   if (!pxDate || end[0] !== pxDate || idx.asOf !== pxDate) return { ok: false, why: "end" };
-  let w = 0, grown = 0, start = null;
-  for (const p of (deck && deck.purchases) || []) {
-    if (!p || !(p.qty > 0)) continue;
-    const c = purchaseWon(p, deck.planFx);
-    if (c == null) return { ok: false, why: "cost" };
-    if (typeof p.date !== "string" || !DATE.test(p.date)) return { ok: false, why: "date" };
-    const s = closeBefore(rows, p.date);
-    if (!s) return { ok: false, why: "start" };               // bought before the 3 years of history
-    w += c;
-    grown += c * (end[1] / s[1]);
-    if (start == null || p.date < start) start = p.date;
-  }
-  if (!(w > 0)) return { ok: false, why: "cost" };
-  return { ok: true, ret: grown / w - 1, start, end: end[0] };
+  const sets = recordSets(deck).filter((x) => x.history || (deck.holdings || []).some((h) => h && h.t === x.t)
+    || ["purchases", "sales"].some((k) => (deck[k] || []).some((r) => r && r.t === x.t)));
+  const k = kospiMirror(sets, rows, end, valueOf || (() => null), closeBefore);
+  if (!k.ok) return k;
+  return { ok: true, ret: k.kospi, mine: k.mine, start: k.start, end: k.end };
 }
 
 // ---------------- today's move of the whole deck ----------------
@@ -196,10 +200,12 @@ export function indexSince(deck, idx, pxDate) {
 export function deckDayChange(de) {
   if (!de || !de.ok || !de.weights || !(de.weights.ok || de.weights.paused) || !de.holdings.length) return null;
   const gone = new Set(de.absent || []);           // v19.0c: missing from today's data, left out like every other total
-  if (gone.size >= de.holdings.length) return null;
+  // v19.6a (verification nit): a holding sold out and kept (0 shares, rules.SOLD_OUT_BANDS "spec" · "own") holds no money:
+  // left out, so its d1 (none, or a US stock's) never blanks the portfolio's 오늘
+  const live = de.holdings.filter((x) => !gone.has(x.t) && x.qty !== 0);
+  if (!live.length) return null;
   let now = 0, prev = 0;
-  for (const x of de.holdings) {
-    if (gone.has(x.t)) continue;
+  for (const x of live) {
     const d1 = num(x.d1);
     const v = num(x.value);                           // null >= 0 is true in JavaScript: test the value itself
     if (d1 == null || x.cls === "us" || v == null || v < 0 || d1 <= -100) return null;
@@ -228,22 +234,45 @@ export function deckDayChange(de) {
 // -> { ok, buys: [{ t, nk, shares, cost }], spent, left, eligible, skipped, unheld, cheapest }
 //   cheapest: the lowest share price among the eligible names (the screen says "금액을 늘려 보세요" only when even that
 //   one share costs more than the amount; when the edges stop every buy, more money would not help).
+// A sold-out kept holding read on its own (rules.SOLD_OUT_BANDS "own", de.zeroOwn): its target is a share of the whole plan
+// while the held stocks' targets are shares of what is held, so together they add up to more than 1. New money then first
+// follows the plan itself: every goal is the plan's own target (planTarget) over the stocks listed here, so the sold-out
+// stock is bought back first and a held stock already above its plan share gets nothing more. Who may be bought and the
+// edges stay the ones the screen shows. v19.6a (verification B1): those goals are used only when they buy a sold-out
+// holding back. When they do not (it cannot be bought: skipped, or one share is more than the money or its gap), the money
+// goes exactly where "off" puts it (the held stocks alone, at their own targets), so a sold-out holding never leaves the
+// held stocks with less than "off" gives them, and never makes it buy nothing where "off" buys something. Without such a
+// holding the goals are the targets, as before.
 export function addMoney(de, amountWon) {
   if (!de || !de.ok || !de.weights || !de.weights.ok) return { ok: false };
   const A = Math.floor(num(amountWon) || 0);
+  const zero = de.zeroOwn || [];
+  if (!zero.length) return fillMoney(de, A, false);
+  const plan = fillMoney(de, A, true);
+  if (plan.buys.some((b) => zero.includes(b.t))) return plan;
+  const off = fillMoney(de, A, false);
+  return off.buys.length ? off : plan;
+}
+
+// plan: the plan's goals with the sold-out holdings (above); else the targets over the held stocks only (0-share rows left out).
+function fillMoney(de, A, plan) {
   const skipped = [];
   const rows = [];
+  const list = plan ? de.holdings : de.holdings.filter((x) => !(de.zeroOwn || []).includes(x.t));
   let total = 0;
-  for (const x of de.holdings) if (num(x.target) > 0) total += num(x.value) || 0;   // the value the targets share
-  for (const x of de.holdings) {
+  for (const x of list) if (num(x.target) > 0) total += num(x.value) || 0;   // the value the targets share
+  const planSum = plan ? list.reduce((a, x) => a + (num(x.target) > 0 && num(x.planTarget) > 0 ? x.planTarget : 0), 0) : 0;
+  const goalOf = (x, target) => (planSum > 0 && num(x.planTarget) > 0 ? x.planTarget / planSum : target);
+  for (const x of list) {
     const target = num(x.target), value = num(x.value), w = num(x.w);
-    const px = x.qty > 0 && value > 0 ? value / x.qty : null;
+    // a sold-out holding read with 0 shares (rules.SOLD_OUT_BANDS "spec" · "own") is bought back at today's price
+    const px = x.qty > 0 && value > 0 ? value / x.qty : x.qty === 0 && num(x.px) > 0 ? x.px : null;
     const hi = highEdge(x, target);
     if (NO_NEW_MONEY.includes(x.status)) { skipped.push({ t: x.t, why: x.status }); continue; }
     if (!(target > 0) || hi == null) { skipped.push({ t: x.t, why: "target" }); continue; }
     if (!(px > 0) || w == null) { skipped.push({ t: x.t, why: "price" }); continue; }
     if (w > hi + EPS) { skipped.push({ t: x.t, why: "high" }); continue; }
-    rows.push({ t: x.t, nk: x.nk, px, value, target, hi, shares: 0 });
+    rows.push({ t: x.t, nk: x.nk, px, value, target: goalOf(x, target), hi, shares: 0 });
   }
   const out = { ok: true, buys: [], spent: 0, left: Math.max(0, A), eligible: rows.map((r) => r.t), skipped, unheld: de.unheld || [],
     cheapest: rows.length ? Math.min(...rows.map((r) => r.px)) : null };
@@ -300,8 +329,10 @@ export const plainEdges = (de) => ((de && de.holdings) || []).every((x) => {
 // held: the evaluated decks with holdings. Counts are of distinct stocks (a stock held in two decks is one stock).
 // -> { todoTs: Set, rest, restCalm, allNone }   restCalm: every other stock is 할 일 없음 ("나머지 n종목은 이상 없어요")
 //    allNone: every holding is 할 일 없음 (the eyebrow "오늘은 할 일이 없어요", REDESIGN 2.1 steps 1-3 all clear)
+// v19.6a (verification nit): a holding sold out and kept (0 shares) is left out. 홈 lists only the stocks held, so a
+// sold-out holding's 먼저 사요 (shown on 포트폴리오 and the company page) never takes away "오늘은 할 일이 없어요" there.
 export function todayCounts(held) {
-  const all = (held || []).flatMap((de) => de.holdings || []);
+  const all = (held || []).flatMap((de) => de.holdings || []).filter((x) => x.qty !== 0);
   const todoTs = new Set(all.filter((x) => x.status === "broken" || x.status === "check").map((x) => x.t));
   const rest = new Set(all.map((x) => x.t).filter((t) => !todoTs.has(t))).size;
   return { todoTs, rest, restCalm: rest > 0 && all.every((x) => todoTs.has(x.t) || x.status === "none"),

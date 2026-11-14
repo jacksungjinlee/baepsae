@@ -550,18 +550,32 @@ def test_two_fast_clock_times_never_beat_a_believable_save_in_one_merge():
 
 def test_a_sold_out_holding_does_not_make_the_targets_look_rebased():
     """v19.3d2 (Jack): a holding sold down to 0 is listed in soldOut (the screens say "다 팔고 목표 비중만 남아 있어요.") and
-    never makes the rebased note ("계획한 {n}종목 중 {m}종목만 샀어요") appear; a planned stock never bought still does."""
+    never makes the rebased note ("계획한 {n}종목 중 {m}종목만 샀어요") appear; a planned stock never bought still does.
+    v19.6a (final review S1): rules.SOLD_OUT_BANDS has three values. The v19.3d2 state is "off" and is checked as before,
+    word for word. "own" (the default) reads the stock left exactly as "off" does (1 planned, 1 held, "ok") and adds the
+    sold-out holding with 0 shares on its own band (먼저 사요). "spec" (A.1 to the letter) counts it for everyone's bands
+    (2 planned, 2 held; the stock left reads above its own). Never "rebased" in any of them."""
     got = run("""const band = (t) => [{ id: 'band', kind: 'band', check: 'checked', target: t, bands: [0.75 * t, 1.25 * t, 1.4 * t] }];
       const ctx = { ...ctxOf(STOCKS), state: { ok: true }, byT: new Map(STOCKS.map((s) => [s.t, s])) };
       const deck = { id: 'db', name: 'b', holdings: [{ t: '000010', nk: 'a', target: 0.4, rules: band(0.4) }, { t: '000040', nk: 'b', target: 0.4, rules: band(0.4) },
         { t: '000050', nk: 'c', target: 0.2, rules: band(0.2) }],
         purchases: [{ t: '000010', qty: 10, price: 10000, date: '2026-10-01', ccy: 'KRW' }, { t: '000040', qty: 10, price: 10000, date: '2026-10-01', ccy: 'KRW' }] };
       const sold = { ...deck, sales: [{ t: '000040', qty: 10, price: 9000, date: '2026-11-01', ccy: 'KRW' }] };
-      const e1 = R.evaluateDeck(deck, ctx), e2 = R.evaluateDeck({ ...sold, holdings: sold.holdings.slice(0, 2) }, ctx);
+      const two = { ...sold, holdings: sold.holdings.slice(0, 2) };
+      const e1 = R.evaluateDeck(deck, ctx), e2 = R.evaluateDeck(two, { ...ctx, soldOutBands: 'off' });
+      const own = R.evaluateDeck(two, ctx), on = R.evaluateDeck(two, { ...ctx, soldOutBands: 'spec' });
+      const five = (e) => [e.rebased, e.unheld, e.soldOut, e.bandPlanned, e.bandHeld], hs = (e) => e.holdings.map((x) => [x.t, x.qty, x.status]);
       out = { neverBought: [e1.rebased, e1.unheld, e1.soldOut], soldOut: [e2.rebased, e2.unheld, e2.soldOut, e2.bandPlanned, e2.bandHeld],
-        band: e2.holdings[0].rules.find((r) => r.id === 'band').result };""")
+        band: e2.holdings[0].rules.find((r) => r.id === 'band').result, offHs: hs(e2),
+        own: five(own), ownHs: hs(own), ownBand: own.holdings[0].rules.find((r) => r.id === 'band').result, on: five(on), onHs: hs(on), def: R.SOLD_OUT_BANDS };""")
     assert got["neverBought"] == [True, ["000050"], []]
-    assert got["soldOut"] == [False, [], ["000040"], 1, 1] and got["band"] == "ok"
+    assert got["soldOut"] == [False, [], ["000040"], 1, 1] and got["band"] == "ok"           # "off" (v19.3d2): 그대로
+    assert got["offHs"] == [["000010", 10, "none"]]
+    # 기본 "own": 남은 종목은 "off" 와 같고 (1 · 1 · ok), 다 판 종목은 0주로 제 선에서 먼저 사요. '계획한 n종목 중' 안내는 나오지 않아요
+    assert got["def"] == "own" and got["own"] == [False, [], ["000040"], 1, 1] and got["ownBand"] == "ok"
+    assert got["ownHs"] == [["000010", 10, "none"], ["000040", 0, "low"]]
+    # "spec" (스펙 A.1 그대로): 모두의 선을 계획 전체로 봐요 (2 · 2). 남은 종목이 제 목표 위로 읽혀요
+    assert got["on"] == [False, [], ["000040"], 2, 2] and got["onHs"] == [["000010", 10, "high"], ["000040", 0, "low"]]
 
 
 def test_the_limits_address():

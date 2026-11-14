@@ -20,6 +20,7 @@ import {
 } from "./engine.js";
 import { R2022 } from "./y2022.js";
 import { heldQty, byAmount, importedUnits } from "./held.js";
+import { ledger } from "./lots.js";
 import { dayState } from "./rules.js";
 import { warnings } from "./warn.js";
 import { icrOffShown, stmtCurFor, unitHeldFor } from "./fix.js";
@@ -69,23 +70,15 @@ export const limitsOf = (deck) => ({ stock: num(deck && deck.limits && deck.limi
 export const activeOf = (points) => CARDS.filter((c) => !c.pending && (num(points && points[c.id]) || 0) > 0);
 
 // ---------------- 평균 단가 ----------------
-// The holding's average cost in its own currency: the imported row's 평균 단가 and the 샀어요 records, weighted by their
-// quantities (sales do not change an average cost). null when any part of the holding has no price (an imported row
-// without 평균 단가): never a guess.
+// The holding's average cost in its own currency (v19.6a: the moving average of lots.js, the 평균 단가 most Korean brokerage
+// apps show): the imported row's 평균 단가 and the 샀어요 records are lots; a sale takes the same fraction of each lot's
+// quantity and cost, so a sale alone never changes it, and a purchase after a sale averages with what is left. Read at
+// today's share basis (splits, held.js). null when any open lot has no price (an imported row without 평균 단가) or nothing
+// is held: never a guess.
 export function avgOf(deck, t) {
-  let q = 0, c = 0, ccy = null;
-  for (const r of (deck && deck.imported) || []) {
-    if (!r || r.t !== t) continue;
-    const qty = r.qty != null ? num(r.qty) : (num(r.amountWon) > 0 && num(r.close) > 0 ? r.amountWon / (r.close * (r.ccy === "USD" ? num(r.fx) || NaN : 1)) : null);
-    if (!(num(r.avg) > 0) || !(qty > 0)) return null;
-    q += qty; c += qty * r.avg; ccy = r.ccy;
-  }
-  for (const p of (deck && deck.purchases) || []) {
-    if (!p || p.t !== t || !(p.qty > 0) || !(num(p.price) > 0)) continue;
-    if (ccy && p.ccy !== ccy) return null;
-    q += p.qty; c += p.qty * p.price; ccy = p.ccy;
-  }
-  return q > 0 && ccy ? { avg: c / q, ccy } : null;
+  if (!deck) return null;
+  const L = ledger(deck, t);
+  return L.avgOwn != null && L.avgOwn > 0 && L.ccy ? { avg: L.avgOwn, ccy: L.ccy } : null;
 }
 
 // ---------------- values and weights ----------------

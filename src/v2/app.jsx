@@ -27,6 +27,9 @@ import { Company, logSplitGuard } from "./company.jsx";
 import { firstVisitGuide } from "./guide.jsx";
 import { Import, newImporter } from "./import.jsx";
 import { Limits } from "./limits.jsx";
+import { Returns } from "./returns.jsx";
+import { dataSplits, withDataSplits, storedNotInData, withStoredSplits, outSplits, withoutOutSplits } from "./lots.js";
+import { UNIT } from "./held.js";
 import { companySub, CO_MORE } from "./routes.js";
 import { holdsKorean } from "./home.js";
 import { TAB_H, SIDE_W, ModeContext, NavContext, LayoutContext, HeldContext, useWide, Page, AppBar, LoadFail, Footer } from "./ui.jsx";
@@ -431,8 +434,77 @@ export function App({ source }) {
   // entering 내 규칙 정하기: a refusal left from another screen does not show there (only a refused 저장 of this screen)
   const rulesId = rulesDeck ? rulesDeck.id : null;
   useEffect(() => { if (rulesId) setStore((s) => (s.refused ? { ...s, refused: false } : s)); }, [rulesId]);
+  // v19.6a (A.6): data.json's stock splits, put on an in-memory copy of each portfolio that has records of a split stock
+  // (held.js VIEW_SPLITS: never written), so every screen reads its records at today's share basis. A record saved for
+  // that stock stores the split with it (records.js withRecord), so the stored records read back the same.
+  const splitList = useMemo(() => {
+    if (load.status !== "ok") return [];
+    const r = dataSplits(load.data);
+    if (r.bad) console.warn(`[v2] data.json splits: ${r.bad} entr${r.bad === 1 ? "y" : "ies"} not read (not [code, date, ratio]); left out`);
+    if (r.out) console.warn(`[v2] data.json splits: ${r.out} entr${r.out === 1 ? "y" : "ies"} named by an "out" row of splitsInfo.fixed; not applied`);
+    return r.list;
+  }, [load]);
+  // "portfolio id|code" of each stock whose share count a split correction changed during this visit (the "out" effect below):
+  // that stock's record sheet says so (rec.splitFixed). Not stored: the line is for the visit the count changed in.
+  const [splitFixed, setSplitFixed] = useState(() => new Set());
+  const view = useMemo(() => {
+    const data = withDataSplits(store.data, splitList, todayKst());
+    return data === store.data && !splitFixed.size ? store : { ...store, data, splitFixed };
+  }, [store, splitList, splitFixed]);
+  // a split the records keep (store.js splits) that today's data.json does not list: said loudly, once each (it stays in use:
+  // the records were saved with it). data.json lists every split since 2016 and keeps a published one for good, so this is a
+  // split the pipeline took out ("out" rows: the effect below removes it where the records allow) or one from an older file.
+  const splitsSaid = useRef(new Set());
+  useEffect(() => {
+    if (load.status !== "ok") return;
+    for (const x of storedNotInData(store.data, splitList)) {
+      const k = `${x.id}|${x.t}|${x.date}|${x.r}`;
+      if (splitsSaid.current.has(k)) continue;
+      splitsSaid.current.add(k);
+      console.warn(`[v2] ${x.id}: the stored split of ${x.t} on ${x.date} (x${x.r}) is not in today's data.json splits; the records still read with it`);
+    }
+  }, [store.data, splitList, load.status]);
+  // round-2 review: a data.json split that a saved record already lies before is stored with the records at once (not only
+  // with the next record), so a buy-and-hold portfolio keeps it even after data.json stops listing it. Nothing a user sees
+  // changes (the screens already read the records with it); only when the records can be written, and said once.
+  useEffect(() => {
+    if (load.status !== "ok" || !store.writable || store.locked) return;
+    const r = withStoredSplits(view.data);
+    if (!r.added.length) return;
+    console.info("[v2] stock splits stored with the records they apply to: " + r.added.map((x) => `${x.id} ${x.t} ${x.date} x${x.r}`).join(", "));
+    setStoreData(r.data);
+  }, [view, load.status]);
+  // #117: an "out" row of data.json splitsInfo.fixed (ratio null) says a split was wrong. Each stored split it names is taken
+  // out when the records read back without it, moved to data.json's corrected date (same stock and ratio) when they read
+  // back with that, and otherwise kept, said loudly once (lots.withoutOutSplits: never a record lost or refused). A share
+  // count that changes is said in the console and, for the rest of this visit, above that stock's records (rec.splitFixed,
+  // Jack 2026-11-13). Only when the records can be written.
+  const outSaid = useRef(new Set());
+  useEffect(() => {
+    if (load.status !== "ok" || !store.writable || store.locked) return;
+    const r = withoutOutSplits(store.data, outSplits(load.data), todayKst(), splitList);
+    for (const x of r.kept) {
+      const k = `${x.id}|${x.t}|${x.date}`;
+      if (outSaid.current.has(k)) continue;
+      outSaid.current.add(k);
+      console.warn(`[v2] ${x.id}: the stored split of ${x.t} on ${x.date} (x${x.r}) is marked out by data.json splitsInfo.fixed, but the records need it (${x.why}); it is kept`
+        + (x.also ? `; data.json also lists ${x.t} x${x.r} on ${x.also.join(", ")}, which these records may then count twice` : ""));
+    }
+    if (!r.removed.length && !r.moved.length) return;
+    const count = (h) => (h && h.before !== h.after ? `, ${h.t} shares ${h.before / UNIT} -> ${h.after / UNIT}` : "");
+    if (r.removed.length) console.warn("[v2] stored stock splits taken out (data.json splitsInfo.fixed marks them wrong): "
+      + r.removed.map((x) => `${x.id} ${x.t} ${x.date} x${x.r}${count(x.held)}`).join("; "));
+    if (r.moved.length) console.warn("[v2] stored stock splits moved to data.json's corrected date: "
+      + r.moved.map((x) => `${x.id} ${x.t} ${x.date} -> ${x.to} x${x.r}${count(x.held)}`).join("; "));
+    const fixed = [...r.removed, ...r.moved].filter((x) => x.held && x.held.before !== x.held.after).map((x) => `${x.id}|${x.t}`);
+    if (fixed.length) setSplitFixed((old) => new Set([...old, ...fixed]));
+    setStoreData(r.data);
+  }, [store.data, load, splitList]);
+  // v19.6a: 내 수익 of a portfolio that exists (else 포트폴리오)
+  const returnsDeck = tab === "portfolio" && loc.returns ? view.data.decks.find((d) => d.id === loc.returns) || null : null;
   const pad = wide ? SPACE(10) : TAB_H + 32;
   const screen = (() => {
+    const store = view;
     if (inBuild) {
       return <Build load={load} builder={builder} setBuilder={setBuilder} onExit={() => router.back("portfolio")} goToday={doneToHome} goPortfolio={doneToPortfolio}
         store={store} setStoreData={setStoreData} coach={builder.step === 1 && builder.stage === "steps" ? coach : null} onImport={openImport} />;
@@ -443,9 +515,10 @@ export function App({ source }) {
     }
     if (inWhy) return <Why load={load} store={store} setStoreData={setStoreData} pad={pad} target={why} onBack={() => router.back("home")} />;
     if (rulesDeck) return <Limits key={rulesDeck.id} deck={rulesDeck} store={store} setStoreData={setStoreData} pad={pad} onBack={() => router.back("portfolio")} />;
+    if (returnsDeck) return <Returns key={returnsDeck.id} deck={returnsDeck} load={load} store={store} pad={pad} onBack={() => router.back("portfolio")} />;
     if (tab === "portfolio") {
       return <Portfolio load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onImport={openImport}
-        onRules={(id) => router.go("portfolio", "rules/" + id)} />;
+        onRules={(id) => router.go("portfolio", "rules/" + id)} onReturns={(id) => router.go("portfolio", "returns/" + id)} />;
     }
     if (tab === "stocks" && loc.code && !loc.about) {
       return <Company load={load} store={store} setStoreData={setStoreData} pad={pad} code={loc.code} ctab={loc.ctab} disc={discView} nav={coNav} />;

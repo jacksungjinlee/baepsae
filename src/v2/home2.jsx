@@ -322,11 +322,12 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
   const rankInMain = wide && !roomy;
   const rankCard = ok && <RankCard key="rank" load={load} store={store} go={go} />;
   const blocks = useMemo(() => (ev.ok ? homeBlocks(decks, ev, ctx, ok ? load.data.stocks : []).map((b) => ({ ...b, byT: ctx.byT })) : []), [decks, ev, ctx, load, ok]);
-  const us = ev.ok && (blocks.some((b) => b.de && b.de.holdings.some((x) => x.cls === "us")) || decks.some((d) => usHeld(d, load)));
+  // a US stock held today (a sold-out kept one, 0 shares, does not count: final review N3)
+  const us = ev.ok && (blocks.some((b) => b.de && b.de.holdings.some((x) => x.cls === "us" && x.qty !== 0)) || decks.some((d) => usHeld(d, load)));
   const usDate = ok && us && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
   // The verdict band of the portfolios made with 포트폴리오 만들기 (their per-stock rules and bands), exactly as before; also
   // the stale band and the load-failure message.
-  const held = ev.ok ? ev.decks.filter((d) => d.ok && !d.imported && d.holdings.length) : [];
+  const held = ev.ok ? ev.decks.filter((d) => d.ok && !d.imported && d.holdings.some((x) => x.qty !== 0)) : [];
   const kr = useMemo(() => holdsKorean(decks, ctx && ctx.byT), [decks, ctx]);
   const look = lookOf(blocks, held, disc, kr);
   const many = blocks.length > 1;
