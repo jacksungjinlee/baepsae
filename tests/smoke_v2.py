@@ -12992,7 +12992,10 @@ def scene_v197b(R, files, width):
         page.locator('[data-ui-v2="cmp-picker"] [data-pick="114260"]').click()
         page.wait_for_function("() => document.querySelector('[data-ui-v2=\"cmp\"]').dataset.hold === '114260'")
         assert page.locator('[data-ui-v2="cmp-after"]').get_attribute("data-path") == "draft"
-        assert float(page.locator('[data-ui-v2="cmp-swap-x"]').get_attribute("data-x")) == 10                 # the cap, not the 15%
+        assert float(page.locator('[data-ui-v2="cmp-after"]').get_attribute("data-x")) == 10                  # the cap, not the 15%
+        # round-2 review SF1: no "…목표 비중(10%)을 이어받아요." (the holding's target is 15%); the approved cap line says why instead
+        assert page.locator('[data-ui-v2="cmp-swap-x"]').count() == 0 and page.locator('[data-ui-v2="cmp-swap-note"]').count() == 0
+        assert page.locator('[data-ui-v2="cmp-cap"]').inner_text() == fillp(C["edit"]["max"], x=10)
         bar = lambda sel: sorted(page.locator(f'{sel} [data-ui-v2="edit-ind-part"]').evaluate_all("(xs) => xs.map((x) => [x.dataset.ind, Number(x.dataset.pct)])"))
         shown = bar('[data-ui-v2="cmp-after"]')
         check_page("비교 · 최대 비중 위의 안전자산", "compare-cushion")
@@ -13080,12 +13083,12 @@ def scene_v197b_look(R, files, width, dark=False):
         compare(kr, "000660")
         assert cell("vol", "hold") == ("–", C["co"]["pxBadOne"]) and cell("beta", "hold") == ("–", C["co"]["pxBadOne"])
         lo, hi = (page.locator('[data-cmp-row="beta"] [data-side="cand"]').get_attribute(f"data-{k}") for k in ("lo", "hi"))
-        if lo:
-            f = lambda v: f"{float(v):.1f}".replace("-", "−")
-            one = page.locator('[data-cmp-row="beta"] [data-side="cand"]').get_attribute("data-one") == "1"
-            want = fillp(C["co"]["tiles"]["riskOne"]["kr"], x=f(lo)) if one else fillp(C["co"]["tiles"]["riskBand"]["kr"], lo=f(lo), hi=f(hi))
-            assert cell("beta", "cand")[0] == want, (cell("beta", "cand"), want)                          # the approved tile text, whole (P1 waits)
-            assert page.locator('[data-ui-v2="cmp-beta-note"]').inner_text() in (C["co"]["risk"]["bandNote"], C["co"]["risk"]["oneNote"])
+        assert lo, "the Korean candidate has no β band: the fixture changed, so this check would not run"
+        f = lambda v: f"{float(v):.1f}".replace("-", "−")
+        one = page.locator('[data-cmp-row="beta"] [data-side="cand"]').get_attribute("data-one") == "1"
+        want = fillp(C["co"]["tiles"]["riskOne"]["kr"], x=f(lo)) if one else fillp(C["co"]["tiles"]["riskBand"]["kr"], lo=f(lo), hi=f(hi))
+        assert cell("beta", "cand")[0] == want, (cell("beta", "cand"), want)                          # the approved tile text, whole (P1 waits)
+        assert page.locator('[data-ui-v2="cmp-beta-note"]').inner_text() in (C["co"]["risk"]["bandNote"], C["co"]["risk"]["oneNote"])
         assert page.locator('[data-ui-v2="cmp-verdict"]').count() == 0 or page.locator('[data-ui-v2="cmp-verdict"]').get_attribute("data-tint") == "neutral"
         check_page("비교 · 과거 주가 기록 오류", "compare-pxbad")
         # 외국 회사 숫자 (가진 종목): PBR · 배당수익률 – 와 그 줄, 배당이 비어 내 기준도 – (0 이 아니에요)
@@ -13104,13 +13107,13 @@ def scene_v197b_look(R, files, width, dark=False):
         page.locator('[data-ui-v2="cmp-picker"]').wait_for(state="detached")
         check_page("비교 · 우선주", "compare-pref")
         # 미국끼리 (후보 미국 · 가진 종목 AAPL): S&P 500 1% → (P4)
-        if us_c:
-            page.go_back()
-            at(page, "portfolio/edit/dlook/find")
-            page.locator('[data-ui-v2="find-list"]').wait_for(state="visible")
-            compare(us_c, "AAPL")
-            assert page.locator('[data-cmp-row="beta"] th').inner_text() == C["co"]["tiles"]["riskBand"]["us"].split(" → ")[0] + " →"
-            check_page("비교 · 미국끼리", "compare-us")
+        assert us_c, "the finder offers no US stock: the fixture changed, so this check would not run"
+        page.go_back()
+        at(page, "portfolio/edit/dlook/find")
+        page.locator('[data-ui-v2="find-list"]').wait_for(state="visible")
+        compare(us_c, "AAPL")
+        assert page.locator('[data-cmp-row="beta"] th').inner_text() == C["co"]["tiles"]["riskBand"]["us"].split(" → ")[0] + " →"
+        check_page("비교 · 미국끼리", "compare-us")
         assert not R.errors, R.errors[:2]
     R.check(page, S, "찾기 · 비교의 모양 (12px · 가로 스크롤 · 뱁이 없음 · 화면 모드) · 비운 숫자는 – 와 회사 페이지의 줄 · 판정 칸은 무채색", look)
     ctx.close()

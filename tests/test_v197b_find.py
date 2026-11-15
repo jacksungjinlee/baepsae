@@ -415,11 +415,20 @@ def test_a_swap_with_a_sale_that_cannot_reach_100_under_the_cap_is_refused_until
       const no = E.sellAndSwap(after, 'd1', '114260', cand(), { reason: 'better', raise: null, load, today: T, ts: 1 });
       const yes = E.sellAndSwap(after, 'd1', '114260', cand(), { reason: 'better', raise: chk.y, load, today: T, ts: 1 });
       const de = yes.ok ? yes.data.decks[0] : null;
-      out = { chk: { low: chk.low, y: chk.y, pct: chk.pct }, no, ok: yes.ok, max: de && de.settings.maxPct, sum: de && sumT(de),
-        cand: de && de.holdings.find((h) => h.t === '005930').target, top: de && Math.max(...de.holdings.filter((h) => h.kind !== 'cushion').map((h) => h.target)) };""")
-    assert got["chk"] == {"low": True, "y": 12, "pct": 10}             # 7 × 10 + 10 + 15 = 95 < 100: D2 first (100 ÷ 9 → 12)
+      // round-2 review SF2: what 두 종목 비교 shows is the write the sheet's raise makes (the only one 팔고 빼기 can make here)
+      const view = E.swapView(d, E.emptyDraft(), '114260', cand());
+      const r1000 = (x) => Math.round(x * 1000) / 1000;
+      out = { chk: { low: chk.low, y: chk.y, pct: chk.pct, n: chk.n, names: chk.names.length, cand: chk.names.includes('삼성전자') }, no, ok: yes.ok,
+        max: de && de.settings.maxPct, sum: de && sumT(de),
+        cand: de && de.holdings.find((h) => h.t === '005930').target, top: de && Math.max(...de.holdings.filter((h) => h.kind !== 'cushion').map((h) => h.target)),
+        view: { path: view.path, raised: view.raised, cap: view.cap, pct: view.pct, from: view.from },
+        same: de && JSON.stringify(Object.fromEntries(view.rows.map((r) => [r.t, r1000(r.pct)]))) === JSON.stringify(Object.fromEntries(de.holdings.map((h) => [h.t, r1000(h.target * 100)]))) };""")
+    assert {k: got["chk"][k] for k in ("low", "y", "pct")} == {"low": True, "y": 12, "pct": 10}     # 7 × 10 + 10 + 15 = 95 < 100: D2 first (100 ÷ 9 → 12)
     assert got["no"] == {"ok": False, "why": "sum"}                    # never a write that does not add up to 100%
     assert got["ok"] is True and got["max"] == 12 and got["sum"] == 1 and got["cand"] == 0.12 and got["top"] <= 0.12
+    assert got["chk"]["n"] == got["chk"]["names"] == 9 and got["chk"]["cand"] is True    # "종목이 9개뿐이라" beside the same 9 names
+    assert got["view"] == {"path": "sale", "raised": True, "cap": 12, "pct": 12, "from": 15}
+    assert got["same"] is True                                          # the bar and the note show exactly what is written
 
 
 def test_a_swap_never_takes_a_candidate_that_is_stored_even_when_its_removal_waits():
@@ -462,6 +471,26 @@ def test_the_short_beta_form_is_used_only_under_its_own_benchmark():
     assert got["krShort"] == "평균 1.2~1.4%"
     assert got["usUnderKospi"] == got["band"]["us"].replace("{lo}", "0.8").replace("{hi}", "1.0")        # its own benchmark, whole
     assert got["usUnderSp"] == "평균 0.8~1.0%"
+
+
+def test_the_swap_note_never_says_the_candidate_takes_a_target_it_does_not_get():
+    """round-2 review SF1: "…{a}의 목표 비중({x}%)을 이어받아요." only when the candidate takes the holding's whole target; capped, the
+    capped line (P5) waits for Jack and nothing stands in for it, the approved cap line says why where it is true (not while the cap is
+    a raise still to be tapped); the sale sentence only on the sale path."""
+    got = run("""
+      const N = (sv) => Cm.swapNoteParts(sv, '솔담정밀', '한화');
+      const plain = N({ path: 'sale', pct: 20, from: 20, cap: 20, raised: false });
+      const capped = N({ path: 'draft', pct: 10, from: 15, cap: 10, raised: false });
+      const raised = N({ path: 'sale', pct: 12, from: 15, cap: 12, raised: true });
+      C.cmp.p.swapNoteCap = '바꾸면 {b}이 {a}의 목표 비중 {y}% 중 {x}%만 이어받아요.';
+      C.cmp.p.swapNoteCapGa = '바꾸면 {b}가 {a}의 목표 비중 {y}% 중 {x}%만 이어받아요.';
+      const p5 = N({ path: 'draft', pct: 10, from: 15, cap: 10, raised: false });
+      out = { plain, capped, raised, p5, none: N(null), max: C.edit.max, note: C.cmp.swapNote, sale: C.cmp.swapSale };""")
+    assert got["plain"] == {"first": "바꾸면 한화가 솔담정밀의 목표 비중(20%)을 이어받아요.", "cap": None, "sale": got["sale"], "capped": False}
+    assert got["capped"] == {"first": None, "cap": got["max"].replace("{x}", "10"), "sale": None, "capped": True}
+    assert got["raised"] == {"first": None, "cap": None, "sale": got["sale"], "capped": True}
+    assert got["p5"]["first"] == "바꾸면 한화가 솔담정밀의 목표 비중 15% 중 10%만 이어받아요."      # once Jack approves P5 (한화: 가)
+    assert got["none"] == {"first": None, "cap": None, "sale": None, "capped": False}
 
 
 def test_points_are_saved_to_the_portfolio_and_nothing_else_changes():

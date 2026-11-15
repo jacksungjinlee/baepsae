@@ -142,6 +142,20 @@ export function verdictText(kind, b) {
 }
 export const swapLabel = (a) => fill(subjectParticle(a) === "i" ? C.cmp.swap : C.cmp.swapWa, { a });
 export const swapNoteText = (a, b, x) => fill(subjectParticle(b) === "i" ? C.cmp.swapNote : C.cmp.swapNoteGa, { a, b, x });
+// The note under the buttons and the cap line, from the swap's view (edit.swapView; pure, tests). Nothing untrue (round-2 review SF1):
+// "…{a}의 목표 비중({x}%)을 이어받아요." only when the candidate takes the holding's whole target. When the cap cuts it (a 채권·금 holding
+// saved above the cap), that sentence would misstate the holding's target: the capped line waits for Jack (cmp.p.swapNoteCap, P5) and
+// shows only once approved; meanwhile the approved "이 포트폴리오는 한 종목 최대 비중이 {x}%라서 더 올릴 수 없어요." says why, where it is
+// true (not while the cap shown is a raise still to be tapped). The second sentence only with shares to sell.
+// -> { first: string | null, cap: string | null, sale: string | null, capped }
+export function swapNoteParts(sv, a, b) {
+  if (!sv || sv.pct == null) return { first: null, cap: null, sale: null, capped: false };
+  const capped = sv.from != null && sv.pct < sv.from - 1e-9;
+  const P5 = subjectParticle(b) === "i" ? C.cmp.p.swapNoteCap : C.cmp.p.swapNoteCapGa;
+  const first = !capped ? swapNoteText(a, b, pctText(sv.pct)) : P5 ? fill(P5, { a, b, x: pctText(sv.pct), y: pctText(sv.from) }) : null;
+  const cap = capped && !sv.raised && sv.cap != null && C.edit.max ? fill(C.edit.max, { x: sv.cap }) : null;
+  return { first, cap, sale: sv.path === "sale" ? C.cmp.swapSale : null, capped };
+}
 
 // "어떤 종목과 비교할까요?": the holdings, one to pick (a radio group in a sheet).
 function Picker({ rows, value, deck, load, names, shift, onPick, onClose }) {
@@ -225,7 +239,7 @@ export function Compare({ deck, draft, load, pad, candT, holdT, setHoldT, xOf, o
   const before = E.indBar(sv ? sv.before : E.editRows(deck, draft), load.byT, names);
   const after = sv ? E.indBar(sv.rows, load.byT, names) : before;
   const ch = sv ? F.afterChange(before, after) : null;
-  const shares = !!sv && sv.path === "sale";
+  const note = swapNoteParts(sv, h.nk, cand.nk);
   const head = (s, nk, t, label) => (
     <th scope="col" style={{ textAlign: "left", verticalAlign: "bottom", padding: `0 0 ${SPACE(2)}px ${SPACE(2)}px`, fontWeight: "normal" }}>
       <div style={{ display: "flex" }}><CoMark s={s || undefined} t={t} name={nk} size={SPACE(8)} /></div>
@@ -279,13 +293,14 @@ export function Compare({ deck, draft, load, pad, candT, holdT, setHoldT, xOf, o
             </table>
             {betaNote && <Note data-ui-v2="cmp-beta-note">{betaNote}</Note>}
           </Card>
-          <Card data-ui-v2="cmp-after" data-path={sv ? sv.path : ""} style={{ padding: `${SPACE(3) + 2}px ${SPACE(4)}px` }}>
+          <Card data-ui-v2="cmp-after" data-path={sv ? sv.path : ""} data-x={sv && sv.pct != null ? sv.pct : ""} data-capped={note.capped ? "1" : undefined} style={{ padding: `${SPACE(3) + 2}px ${SPACE(4)}px` }}>
             <h3 style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { marginBottom: SPACE(2) })}>{C.cmp.after}</h3>
             <IndBar parts={after} />
             {ch && (
               <p data-ui-v2="cmp-after-line" data-ind={ch.key} style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginTop: SPACE(2), wordBreak: "keep-all" })}>
                 {fill(C.cmp.afterLine, { group: ch.name, a: pctText(ch.a), b: pctText(ch.b), n: ch.n, m: ch.m })}</p>
             )}
+            {note.cap && <Note data-ui-v2="cmp-cap">{note.cap}</Note>}
           </Card>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: SPACE(2), marginTop: SPACE(4) }}>
             <Button kind="secondary" onClick={() => onAdd(cand)} style={{ padding: `0 ${SPACE(2)}px`, fontSize: SIZE.sm, wordBreak: "keep-all" }}>
@@ -293,10 +308,12 @@ export function Compare({ deck, draft, load, pad, candT, holdT, setHoldT, xOf, o
             <Button onClick={() => onSwap(h.t, cand)} style={{ padding: `0 ${SPACE(2)}px`, fontSize: SIZE.sm, wordBreak: "keep-all" }}>
               <span data-ui-v2="cmp-swap">{swapLabel(h.nk)}</span></Button>
           </div>
-          <p data-ui-v2="cmp-swap-note" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { margin: `${SPACE(2)}px ${SPACE(1)}px 0`, lineHeight: 1.5, wordBreak: "keep-all" })}>
-            {sv && sv.pct != null && <span data-ui-v2="cmp-swap-x" data-x={sv.pct}>{swapNoteText(h.nk, cand.nk, pctText(sv.pct))}</span>}
-            {shares && <span>{" "}{C.cmp.swapSale}</span>}
-          </p>
+          {(note.first || note.sale) && (
+            <p data-ui-v2="cmp-swap-note" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { margin: `${SPACE(2)}px ${SPACE(1)}px 0`, lineHeight: 1.5, wordBreak: "keep-all" })}>
+              {note.first && <span data-ui-v2="cmp-swap-x" data-x={sv.pct}>{note.first}</span>}
+              {note.sale && <span>{note.first ? " " : ""}{note.sale}</span>}
+            </p>
+          )}
           {dates.length > 0 && (
             <p data-ui-v2="cmp-date" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { margin: `${SPACE(2)}px ${SPACE(1)}px 0` })}>
               {dates.map((d, i) => <span key={i}>{i ? " · " : ""}{d}</span>)}

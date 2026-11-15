@@ -735,23 +735,31 @@ export function swapCheck(deck, draft, t, add) {
   const sw = swapStored(deck, t, add, cap);
   const rows = sw ? sw.rows : [];
   const d2 = sw && sw.capped ? d2Of(rows, cap) : { low: false, y: null };
-  return { rows, pct: sw ? sw.pct : 0, cap, up, low: d2.low, y: d2.y, n: rows.length, names: rows.filter((r) => r.h).map((r) => r.nk || r.t) };
+  // n and names count the same stocks: the ones after the swap, the candidate too (round-2 review: "종목이 9개뿐이라" beside 8 names)
+  return { rows, pct: sw ? sw.pct : 0, cap, up, low: d2.low, y: d2.y, n: rows.length, names: rows.map((r) => r.nk || r.t) };
 }
 // What the compare screen shows for "{holding}과/와 바꾸기" — the 업종 bar after it and the target in its note — from the very write
-// the swap will make (review B1/S5): with shares held, 팔고 빼기's (swapStored at swapCheck's cap); without, the draft's (swapDraft).
+// the swap will make (review B1/S5): with shares held, 팔고 빼기's (swapStored at swapCheck's cap; when that cap cannot reach 100%,
+// the only write 팔고 빼기 can make is after the sheet's raise to y, so the view is at y: round-2 review SF2); without, the draft's
+// (swapDraft). -> { path, rows, before, pct (the candidate's), from (the holding's own target on that path), cap (the cap that write
+// uses), raised (the cap is the raise still to be tapped) } or null
 // -> { path: "sale" | "draft", rows (the edited list after it), before (the list it starts from), pct (the candidate's) } or null
 export function swapView(deck, draft, t, add) {
   // a candidate already in the portfolio (stored, or waiting to be added) is no swap: both writes refuse it
   if (!add || ((deck && deck.holdings) || []).some((h) => h && h.t === add.t) || editRows(deck, draft).some((r) => r.t === add.t)) return null;
   if (heldShares(deck, t) > 0) {
-    const sw = swapStored(deck, t, add, swapCheck(deck, draft, t, add).cap);
-    return sw ? { path: "sale", rows: sw.rows, before: editRows(deck, emptyDraft()), pct: sw.pct } : null;
+    const chk = swapCheck(deck, draft, t, add);
+    const raised = chk.low && chk.y != null;
+    const cap = raised ? chk.y : chk.cap;
+    const sw = swapStored(deck, t, add, cap);
+    return sw ? { path: "sale", rows: sw.rows, before: editRows(deck, emptyDraft()), pct: sw.pct, from: sw.old, cap, raised } : null;
   }
   const d = swapDraft(deck, draft, t, "better", add);
   if (d === draft) return null;
   const rows = editRows(deck, d);
   const c = rows.find((r) => r.t === add.t);
-  return { path: "draft", rows, before: editRows(deck, draft), pct: c ? c.pct : null };
+  const h = editRows(deck, draft).find((r) => r.t === t);
+  return { path: "draft", rows, before: editRows(deck, draft), pct: c ? c.pct : null, from: h ? h.pct : null, cap: capOf(deck, draft), raised: false };
 }
 // 팔고 빼기 as a swap [B4]: the store after the sale (records.withRecord), then the holding taken out with its reason and the
 // candidate added with the target swapStored gives it (newHolding: the build step's rules, planPx today's close, setAt today), the
