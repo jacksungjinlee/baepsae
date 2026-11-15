@@ -7010,7 +7010,8 @@ US_SYM_YAHOO = re.compile(r"[A-Z]{1,5}(?:-[A-Z]{1,2})?")     # 야후 모양 (�
 def us_symbol(raw, src="", name=None):
     """미국 목록 출처의 티커 하나 → (야후 티커 또는 None, 메모). (순수 함수)
     · 바꾸지 않았으면 메모 None · 바꿨으면 바꾼 까닭 · 바꾸지 못했으면 (None, 까닭) — 부르는 쪽이 크게 남기고 기록해요 (조용히 버리지 않아요).
-    src: 'S&P500' 일 때만 점이 지워진 꼴 표(US_CLASS_JOINED)를 써요 · name: 목록에 적힌 회사 이름 (있으면 그 표의 글자와 맞아야 해요)."""
+    src: 'S&P500' 일 때만 점이 지워진 꼴 표(US_CLASS_JOINED)를 써요 · name: 목록에 적힌 회사 이름 (점이 지워진 꼴은 이 이름이 있어야 하고 표의
+    글자가 들어 있어야 바꿔요 — 이름이 비면 바꾸지 않아요)."""
     if not isinstance(raw, str):
         return None, "티커 칸이 비었거나 글자가 아님"
     s = raw.strip().upper()
@@ -7028,7 +7029,9 @@ def us_symbol(raw, src="", name=None):
     if j is None:
         return s, None
     y, key = j
-    if isinstance(name, str) and name.strip() and key not in re.sub(r"[^a-z]", "", name.lower()):
+    if not (isinstance(name, str) and name.strip()):    # 리뷰 1: 이름 칸이 비면 맞춰 볼 근거가 없어요 — 바꾸지 않고 크게 남겨요 (열린 채로 두지 않아요)
+        return None, f"점이 지워진 주식 종류 표({s} → {y})의 회사인지 S&P 목록에 회사 이름이 없어 맞춰 보지 못함"
+    if key not in re.sub(r"[^a-z]", "", name.lower()):
         return None, f"점이 지워진 주식 종류 표({s} → {y})의 회사가 아님: 목록 이름 '{name.strip()[:40]}'"
     return y, f"점이 지워진 S&P 500 표기 '{s}' → {y}"
 
@@ -7940,24 +7943,27 @@ def us_extra_missing(extra, kept, why):
 
 
 US_NO_PX_WHY = "야후가 가격을 하나도 주지 않음 (다운로드에 이 종목의 종가가 없어요)"   # fetch_us 가 적는 이유 (usListSym.noPx 가 이 글로 골라요)
-US_NO_PX_ERR = "시세를 받지 못함"                                                   # … 다운로드에 이 종목 칸조차 없어 멈춘 경우의 머리말
+US_NO_PX_ERR = "시세를 받지 못함"     # … 그 종목을 처리하다 오류로 멈춘 경우의 머리말 (usListSym.spErr · 가격이 없다는 뜻이 아니에요 · 리뷰 5)
 
 
 def us_list_sym(symrec, sp500, sp_ok, asked, kept, why, added=US_CLASS_ADDED):
     """data.json usListSym (2026-11-15 · 주식 종류 티커). (순수 함수)
     symrec: us_tickers 가 남긴 {"mapped", "unmapped"} (None = 이 실행에 기록이 없음) · sp500: S&P 500 목록의 티커 (야후 모양 · 못 읽었으면 None) ·
     sp_ok: 그 목록을 믿었는지 (fetch_us · #133) · asked: 야후에 요청한 티커 · kept: 오늘 발행 목록의 티커 · why: 요청한 티커 → 빠진 이유.
-    → {"read": 기록이 있었는지, "mapped", "unmapped", "spGone": S&P 500 목록 종목 중 오늘 없는 티커 → 이유 (믿지 못한 날 None),
+    → {"read": 기록이 있었는지, "mapped", "unmapped", "spTickers": S&P 500 목록의 티커 (야후 모양 · 못 읽었으면 None — 관문이 점이 지워진 꼴이
+       S&P 500 목록에서 바뀌지 않고 실렸는지 봐요), "spGone": S&P 500 목록 종목 중 오늘 없는 티커 → 이유 (믿지 못한 날 None),
        "noPx": 그중 야후가 가격을 하나도 주지 않은 티커 (점이 지워진 새 주식 종류 티커의 모습 · 믿지 못한 날 None),
+       "spErr": 그중 처리하다 오류로 멈춘 티커 (가격이 없다는 뜻이 아니에요 · 믿지 못한 날 None),
        "missing": 더한 종목(US_CLASS_ADDED) 중 오늘 없는 티커 → 이유 (관문: 이유 없이 빠지면 발행 실패)}"""
     read = isinstance(symrec, dict)
     mapped = [list(x) for x in (symrec or {}).get("mapped") or []] if read else []
     unmapped = [list(x) for x in (symrec or {}).get("unmapped") or []] if read else []
     unsure = "발행 목록에 없음 (빠진 까닭을 파이프라인이 적지 못했어요 — 확인 필요)"
-    sp_gone = no_px = None
+    sp_gone = no_px = sp_err = None
     if sp_ok and sp500 is not None:
         sp_gone = {t: (why.get(t) or unsure) if t in asked else "미국 요청 목록에 없음 (확인 필요)" for t in sorted(sp500) if t not in kept}
-        no_px = [t for t, w in sp_gone.items() if w == US_NO_PX_WHY or w.startswith(US_NO_PX_ERR)]
+        no_px = [t for t, w in sp_gone.items() if w == US_NO_PX_WHY]
+        sp_err = [t for t, w in sp_gone.items() if w.startswith(US_NO_PX_ERR)]
     missing = {}
     for t in added:
         if t in kept:
@@ -7973,7 +7979,8 @@ def us_list_sym(symrec, sp500, sp_ok, asked, kept, why, added=US_CLASS_ADDED):
             missing[t] = "S&P 500 목록을 읽지 못해 요청하지 않음"
         else:
             missing[t] = "오늘 S&P 500 목록에 없음 (지수에서 빠졌는지 확인)"
-    return {"read": read, "mapped": mapped, "unmapped": unmapped, "spGone": sp_gone, "noPx": no_px, "missing": missing}
+    return {"read": read, "mapped": mapped, "unmapped": unmapped, "spTickers": sorted(sp500) if sp500 is not None else None,
+            "spGone": sp_gone, "noPx": no_px, "spErr": sp_err, "missing": missing}
 
 
 def log_us_list_sym(u):
@@ -7989,6 +7996,9 @@ def log_us_list_sym(u):
     if u["noPx"]:
         log(f"  !! S&P 500 목록 종목인데 야후가 가격을 하나도 주지 않은 티커 {len(u['noPx'])}개: {', '.join(u['noPx'])} — 점이 지워진 주식 종류 "
             "티커일 수 있어요 (위키백과 표의 점 꼴 · 야후 대시 꼴의 회사 이름을 확인하고 fetch_data.US_CLASS_JOINED 에 · RUNBOOK · 관문 경고)")
+    if u.get("spErr"):
+        log(f"  !! S&P 500 목록 종목인데 처리하다 오류로 멈춘 티커 {len(u['spErr'])}개: "
+            + " · ".join(f"{t} ({(u['spGone'] or {}).get(t)})" for t in u["spErr"][:20]) + " (관문 경고)")
     m = u["missing"]
     log(f"{'  !! ' if m else '· '}주식 종류 티커를 바꿔 들어온 미국 종목({', '.join(US_CLASS_ADDED)}) 중 오늘 목록에 없는 종목: {len(m)}개"
         + (": " + " · ".join(f"{t} ({w})" for t, w in sorted(m.items())) if m else ""))
@@ -9054,7 +9064,8 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
          "usListSym": ("미국 목록 출처의 티커를 야후 모양으로 바꾼 기록 (2026-11-15): mapped = [출처, 출처 티커, 야후 티커] (S&P 500 목록의 BRKB → "
                        "BRK-B · BFB → BF-B: FinanceDataReader 가 위키백과의 점을 지워요 · 점 · 빗금 · 띄어쓰기 꼴 → 대시) · unmapped = [출처, 출처 "
                        "티커, 이유] 바꾸지 못해 요청하지 않은 티커 · spGone = S&P 500 목록 종목 중 오늘 목록에 없는 티커 → 이유 (목록을 믿지 못한 "
-                       "날은 빈 값) · noPx = 그중 야후가 가격을 하나도 주지 않은 티커 (점이 지워진 새 주식 종류 티커일 수 있어요) · missing = 이 "
+                       "날은 빈 값) · noPx = 그중 야후가 가격을 하나도 주지 않은 티커 (점이 지워진 새 주식 종류 티커일 수 있어요) · spErr = 그중 "
+                       "처리하다 오류로 멈춘 티커 · spTickers = 그날 S&P 500 목록의 티커 (야후 모양 · 못 읽은 날 빈 값) · missing = 이 "
                        "바꾸기로 들어온 종목(BF-B) 중 오늘 없는 티커 → 빠진 이유 · read = 출처 티커 기록이 있었는지"),
          "fgnCut": ("미국 상장 외국 회사의 종목 칸: 회사 합계와 맞지 않아 비운 칸 {per · pbr · dy: mismatch 맞춰 봤는데 맞지 않음 · currency 재무제표 "
                     "통화를 확인하지 못함 · norecord 배당 기록 · 가격을 읽지 못한 배당수익률 · nocompare 회사 숫자로 PER · PBR 을 맞춰 볼 수 없음 (적자 · ROE 없음) · "
