@@ -12540,6 +12540,454 @@ def scene_fin_warn_lines(R, files, width):
     srv.shutdown()
 
 
+# ── v19.7b 내 기준으로 찾기 (Part D, 보드 PfFind3) · 두 종목 비교 · 바꾸기 (Part E, 보드 PfCompare3) ──
+def v197b_store(pxd):
+    """v19.7a 의 만든 포트폴리오(5종목 20%, 삼성전자 규칙 깨짐, LS 는 산 적 없음)를 '찾기 포트폴리오'로, 같은 종목에 기준 점수가 없는 것 하나."""
+    st = v197a_store(pxd)
+    built = {**st["decks"][0], "id": "dfind", "name": "찾기 포트폴리오"}
+    nopts = {**clone(built), "id": "dnopts", "name": "기준 없는 포트폴리오", "settings": {"points": {}, "strict": "normal", "maxPct": 20, "amountMan": 1000},
+             "purchases": [], "divs": [], "confirms": []}
+    return {"v": 2, "decks": [built, nopts], "guideSeen": pxd}
+
+
+V197B_HELD = ("005930", "005380", "105560", "010120", "AAPL")
+
+
+def v197b_expect_sub(s):
+    """찾기 줄의 둘째 줄: '{업종} · 연 변동성 {x}%' (미국은 '미국 · {업종}', 업종이 없으면 업종 정보 없음, 변동성이 비면 업종만)."""
+    g = s.get("ind")
+    name = s.get("indName") if g and g not in ("etc", "other") else None
+    ind = (fillp(C["pick"]["usInd"], ind=name) if s.get("cls") == "us" else name) if name else C["rpt"]["noInd"]
+    v = s.get("vol")
+    return ind if v is None else fillp(C["find"]["row"], industry=ind, vol=f"{round(v * 10) / 10:,.1f}")
+
+
+def scene_v197b(R, files, width):
+    """v19.7b (390 · 1280): 종목 바꾸기의 '내 기준으로 찾기' 칸 → 찾기: 기준 칸(그림 · 이름 · 점) · 네 칩 · 20줄(순서 · 가진 종목 없음 ·
+    시장마다 상위 x% 순 · 새 업종 = 포트폴리오에 없는 업종) · 줄의 둘째 줄 · 날짜 줄 · 없는 업종 줄 · 변동성 낮은 순 · 배당 주는 종목 →
+    비교: 규칙 깨진 삼성전자가 기본 · 판정 = 두 사실 · 여덟 줄 · 바꾸면 업종 비중 · 버튼과 조사 · 고르기(LS) → 바꾸기(지분 없음: 빼기, 더 잘
+    맞는 종목을 찾았어요 미리 고름) → 종목 바꾸기에 후보 20% (기다림) → 바꾼 내용 저장 · 현대차와 바꾸기(팔고 빼기: 한 번에 저장) · 만 담기 ·
+    + 담기 · 기준 없는 포트폴리오 → 기준 카드 → 저장 → 목록 · 12px · 가로 스크롤 · 44px · 뱁이 없음."""
+    S = f"v19.7b {width}"
+    wide = width >= 1024
+    data = clone(files)
+    pxd, upxd = data["data.json"]["pxDate"], data["data.json"].get("usPxDate")
+    today = now_dt().date().isoformat()
+    by = {x["t"]: x for x in data["data.json"]["stocks"]}
+    coby = {x["t"]: x for x in data["corp.json"]["companies"]}
+    seed = ("(() => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');"
+            f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(v197b_store(pxd), ensure_ascii=False))}); }})();")
+    device = pc_device(width) if wide else None
+    srv, ctx, page, base = R.open(build_site(data), width, init=seed, path="/app.html?dev=1#portfolio/edit/dfind", device=device)
+    F_, CM, E_, RM = C["find"], C["cmp"], C["edit"], C["rm"]
+    stored = lambda: page.evaluate(STORED_JS)
+    deck = lambda i="dfind": [d for d in stored()["decks"] if d["id"] == i][0]
+    groups = {by[t]["ind"] for t in V197B_HELD}
+    rows = lambda: page.locator("[data-find-row]").evaluate_all("(xs) => xs.map((x) => [x.dataset.findRow, Number(x.dataset.rank), x.dataset.pct, x.dataset.newInd || ''])")
+    pcts = lambda: {e: float(v) for e, v in page.locator("[data-edit-row]").evaluate_all("(xs) => xs.map((x) => [x.dataset.editRow, x.dataset.pct])")}
+    real = lambda s: bool(s.get("ind")) and s["ind"] not in ("etc", "other")
+    cell = lambda rid, side, k: page.locator(f'[data-cmp-row="{rid}"] [data-cmp-cell][data-side="{side}"]').get_attribute(f"data-{k}")
+    added = {}
+
+    def check_page(where, name=None):
+        floor_ok(page, where)
+        no_hscroll(page, width)
+        assert page.locator(MASCOT_IN_MAIN).count() == 0, f"{where}: 뱁이가 있어요 (점수 · 비중이 있는 화면)"
+        R.collect(page)
+        if name and R.shots:
+            os.makedirs(R.shots, exist_ok=True)
+            page.screenshot(path=os.path.join(R.shots, f"v197b-{name}-{width}.png"), full_page=page.locator('[data-ui="bottom-sheet"]').count() == 0)
+
+    def taps(sel):
+        sizes = page.locator(sel).evaluate_all("(bs) => bs.map((b) => { const r = b.getBoundingClientRect(); return [r.width, r.height]; })")
+        assert sizes and all(w >= 44 and h >= 44 for w, h in sizes), sizes
+
+    def open_find(chip=None):
+        at(page, "portfolio/edit/dfind")
+        page.locator('[data-ui-v2="edit-by-crit"]').click()
+        at(page, "portfolio/edit/dfind/find")
+        page.locator('[data-ui-v2="find-list"]').wait_for(state="visible")
+        if chip:
+            page.locator(f'[data-ui-v2="find-chip"][data-chip="{chip}"]').click()
+            page.wait_for_function("(c) => document.querySelector('[data-ui-v2=\"find\"]').dataset.chip === c", arg=chip)
+
+    def finder():
+        page.locator('[data-ui-v2="edit-list"]').wait_for(state="visible")
+        tile = page.locator('[data-ui-v2="edit-by-crit"]')
+        assert tile.inner_text().split("\n") == [E_["byCrit"], E_["byCritSub"]], tile.inner_text()
+        assert tile.locator('svg[data-ph="sparkle"]').count() == 1
+        taps('[data-ui-v2="edit-by-crit"], [data-ui-v2="edit-by-name"]')
+        check_page("종목 바꾸기 · 더하기 두 칸", "edit")
+        tile.click()
+        at(page, "portfolio/edit/dfind/find")
+        f = page.locator('[data-ui-v2="find"]')
+        page.locator('[data-ui-v2="find-list"]').wait_for(state="visible")
+        assert f.locator("h2").inner_text() == F_["title"] and F_["sub"] in f.inner_text()
+        assert page.locator('[data-ui-v2="find-points"] p').first.inner_text() == F_["card"]
+        cards = page.locator("[data-find-card]").evaluate_all("(xs) => xs.map((x) => [x.dataset.findCard, x.dataset.points, x.textContent])")
+        assert [c[:2] for c in cards] == [["value", "3"], ["div", "2"]], cards
+        assert [c[2] for c in cards] == [C["build"]["cards"]["value"]["name"], C["build"]["cards"]["div"]["name"]], cards
+        for cid, n in (("value", 3), ("div", 2)):
+            assert page.get_by_role("img", name=fillp(C["build"]["s1"]["slot"], card=C["build"]["cards"][cid]["name"], n=n), exact=True).count() == 1
+        assert page.locator('[data-find-card] [data-ui-v2="pic-chip"]').count() == 2                   # 기준마다 그 기준의 그림
+        assert page.locator('[data-ui-v2="find-chip"]').all_inner_texts() == [F_["chips"][k] for k in ("all", "newInd", "lowVol", "div")]
+        assert page.locator('[data-ui-v2="find-chip"][aria-pressed="true"]').get_attribute("data-chip") == "all"
+        r = rows()
+        assert len(r) == 20 and [x[1] for x in r] == list(range(1, 21)), r
+        assert not {x[0] for x in r} & set(V197B_HELD), r                                            # 가진 종목은 없어요
+        for cls in ("kr", "us"):                                                                       # 한 시장 안에서는 상위 x% 순서
+            ps = [int(x[2]) for x in r if by[x[0]]["cls"] == cls]
+            assert ps == sorted(ps), (cls, ps)
+        for t, _, p, new in r:
+            assert (new == "1") == (real(by[t]) and by[t]["ind"] not in groups), (t, new)
+            row = page.locator(f'[data-find-row="{t}"]')
+            assert row.locator('[data-ui-v2="find-row-sub"]').inner_text() == v197b_expect_sub(by[t]), t
+            assert row.locator('[data-ui-v2="find-pct"]').inner_text() == fillp(C["rank"]["mineX"], x=p)
+            assert row.locator('[data-ui-v2="find-new-ind"]').count() == (1 if new else 0)
+        assert page.locator('[data-ui-v2="find-new-ind"]').first.inner_text() == F_["newInd"]
+        assert page.locator('[data-ui-v2="find-compare"]').first.inner_text() == F_["compare"] and page.locator('[data-ui-v2="find-add"]').first.inner_text() == F_["add"]
+        first = r[0][0]
+        assert page.get_by_role("button", name=fillp(C["build"]["s4"]["addAria"], name=by[first]["nk"]), exact=True).count() == 1
+        taps('[data-ui-v2="find-list"] button')
+        # 날짜 줄: 한국 줄의 종가 날짜와 (모두 한 해의 사업보고서면) 그 해, 미국 줄의 미국 종가 날짜
+        kr = [t for t, *_ in r if by[t]["cls"] == "kr"]
+        years = {by[t].get("fy") if by[t].get("fy") is not None else (coby.get(t) or {}).get("fy") for t in kr}
+        want = ([fillp(C["rank"]["date"], date=mdtext(pxd))] + ([fillp(C["app"]["reportYear"], year=years.pop())] if len(years) == 1 and None not in years else [])) if kr else []
+        if any(by[t]["cls"] == "us" for t, *_ in r):
+            want.append(fillp(C["rank"]["dateUs"], date=mdtext(upxd)))
+        assert page.locator('[data-ui-v2="find-date"]').inner_text() == " · ".join(want), page.locator('[data-ui-v2="find-date"]').inner_text()
+        assert page.locator('[data-ui-v2="find-new-ind-line"]').count() == 0
+        check_page("내 기준으로 찾기 · 전체", "find")
+    R.check(page, S, "내 기준으로 찾기: 기준 칸 · 네 칩 · 20줄 (가진 종목 없음 · 새 업종 · 둘째 줄 · 상위 x%) · 날짜 줄 · 44px", finder)
+
+    def chips():
+        page.locator('[data-ui-v2="find-chip"][data-chip="newInd"]').click()
+        page.wait_for_function("() => document.querySelector('[data-ui-v2=\"find\"]').dataset.chip === 'newInd'")
+        r = rows()
+        assert r and all(x[3] == "1" for x in r) and [x[1] for x in r] == list(range(1, len(r) + 1)), r
+        assert page.locator('[data-ui-v2="find-new-ind-line"]').inner_text() == F_["newIndLine"]
+        check_page("없는 업종", "find-new-ind")
+        page.locator('[data-ui-v2="find-chip"][data-chip="lowVol"]').click()
+        page.wait_for_function("() => document.querySelector('[data-ui-v2=\"find\"]').dataset.chip === 'lowVol'")
+        vols = [by[t]["vol"] for t, *_ in rows()]
+        assert vols and None not in vols and vols == sorted(vols), vols
+        check_page("주가 변동 작은 순", "find-low-vol")
+        page.locator('[data-ui-v2="find-chip"][data-chip="div"]').click()
+        page.wait_for_function("() => document.querySelector('[data-ui-v2=\"find\"]').dataset.chip === 'div'")
+        exact = "divCheck" in data["data.json"]
+        for t, *_ in rows():
+            s = by[t]
+            assert (s["cls"] == "us" and 0 < (s.get("dy") or 0) <= 30) or (s["cls"] == "kr" and exact and 0 < (s.get("dyt") or 0) <= 30), t
+        check_page("배당 주는 종목", "find-div")
+        page.locator('[data-ui-v2="find-chip"][data-chip="all"]').click()
+        page.wait_for_function("() => document.querySelector('[data-ui-v2=\"find\"]').dataset.chip === 'all'")
+    R.check(page, S, "칩: 없는 업종(모두 새 업종 · 그 줄) · 주가 변동 작은 순(변동성 낮은 순) · 배당 주는 종목(확인된 배당만)", chips)
+
+    def compare():
+        t = rows()[0][0]
+        added["c1"] = t
+        page.locator(f'[data-find-row="{t}"] [data-ui-v2="find-compare"]').click()
+        at(page, f"portfolio/edit/dfind/compare/{t}")
+        cm = page.locator('[data-ui-v2="cmp"]')
+        page.locator('[data-ui-v2="cmp-table"]').wait_for(state="visible")
+        assert cm.locator("h2").inner_text() == CM["title"]
+        assert cm.get_attribute("data-hold") == "005930" and cm.get_attribute("data-cand") == t       # 규칙이 깨진 종목이 기본
+        labels = page.locator('[data-cmp-row] th[scope="row"]').all_inner_texts()
+        assert labels == [CM["rows"][k] for k in ("fit", "ind", "vol", "beta", "pbr", "dy", "growth", "warn")], labels
+        heads = page.locator('[data-ui-v2="cmp-table"] thead th').all_inner_texts()
+        assert heads == [f"{by['005930']['nk']}\n{CM['held']}", f"{by[t]['nk']}\n{CM['cand']}"], heads
+        # 판정: 상위 x% 와 연 변동성만, 보이는 값으로 (같거나 비면 그 사실은 빼요)
+        pa, pb = cell("fit", "hold", "pct"), cell("fit", "cand", "pct")
+        va, vb = cell("vol", "hold", "vol"), cell("vol", "cand", "vol")
+        fit = None if not pa or not pb or int(pa) == int(pb) else ("better" if int(pb) < int(pa) else "worse")
+        r1 = lambda v: round(float(v) * 10) / 10
+        vol = None if not va or not vb or r1(va) == r1(vb) else ("smaller" if r1(vb) < r1(va) else "bigger")
+        kind = {("better", "smaller"): "both", ("better", "bigger"): "fitBig", ("worse", "smaller"): "lessSmall", ("worse", "bigger"): "worse",
+                ("better", None): "fit", ("worse", None): "less", (None, "smaller"): "small", (None, "bigger"): "big"}.get((fit, vol))
+        v = page.locator('[data-ui-v2="cmp-verdict"]')
+        if kind is None:
+            assert v.count() == 0
+        else:
+            topic = kind in ("lessSmall", "worse", "less")
+            key = kind if has_final(by[t]["nk"]) else kind + ("Neun" if topic else "Ga")
+            assert v.get_attribute("data-kind") == kind and v.inner_text() == fillp(CM["verdict"][key], b=by[t]["nk"]), (kind, v.inner_text())
+        assert page.locator(f'[data-cmp-row="fit"] [data-side="cand"]').inner_text().startswith(fillp(C["rank"]["mineX"], x=pb))
+        ind_c = page.locator('[data-cmp-row="ind"] [data-side="cand"]').inner_text()
+        assert ind_c.endswith(" · " + F_["newInd"]) == (real(by[t]) and by[t]["ind"] not in groups), ind_c
+        assert page.locator('[data-ui-v2="cmp-pick"]').inner_text().startswith(CM["picker"])
+        assert page.locator('[data-ui-v2="cmp-after"] h3').inner_text() == CM["after"]
+        semi_name = by["005930"]["indName"]
+        line = page.locator('[data-ui-v2="cmp-after-line"]')
+        if real(by[t]) and by[t]["ind"] == "semi":
+            assert line.count() == 0                                                                  # 같은 업종이면 바뀌는 업종이 없어요
+        else:
+            m = 5 if real(by[t]) and by[t]["ind"] not in groups else 4
+            assert line.inner_text() == fillp(CM["afterLine"], group=semi_name, a="20", b="0", n=5, m=m), line.inner_text()
+        assert page.locator('[data-ui-v2="cmp-add"]').inner_text() == fillp(CM["addOnly"], b=by[t]["nk"])
+        assert page.locator('[data-ui-v2="cmp-swap"]').inner_text() == fillp(CM["swapWa"], a=by["005930"]["nk"])     # 삼성전자 → 와
+        note = fillp(CM["swapNote"] if has_final(by[t]["nk"]) else CM["swapNoteGa"], a=by["005930"]["nk"], b=by[t]["nk"], x="20")
+        assert page.locator('[data-ui-v2="cmp-swap-note"]').inner_text() == note + " " + CM["swapSale"]           # 10주 있어요: 판 내용 줄까지
+        assert "수익" not in page.locator('[data-ui-v2="cmp-verdict"], [data-ui-v2="cmp"] p').all_inner_texts().__str__()
+        taps('[data-ui-v2="cmp"] button')
+        check_page("두 종목 비교", "compare")
+        # 고르기: LS ELECTRIC (산 적 없음) → 바꾸기 버튼의 조사 · 판 내용 줄 없음
+        page.locator('[data-ui-v2="cmp-pick-open"]').click()
+        pk = page.locator('[data-ui-v2="cmp-picker"]')
+        pk.wait_for(state="visible")
+        assert page.locator('[data-ui="bottom-sheet"] h3').inner_text() == CM["picker"]
+        assert pk.locator("[data-pick]").evaluate_all("(xs) => xs.map((x) => x.dataset.pick)") == list(V197B_HELD)
+        assert pk.locator('[aria-checked="true"]').get_attribute("data-pick") == "005930"
+        check_page("어떤 종목과 비교할까요?", "compare-pick")
+        pk.locator('[data-pick="010120"]').click()
+        pk.wait_for(state="detached")
+        page.wait_for_function("() => document.querySelector('[data-ui-v2=\"cmp\"]').dataset.hold === '010120'")
+        assert page.locator('[data-ui-v2="cmp-swap"]').inner_text() == fillp(CM["swap"], a=by["010120"]["nk"])          # LS ELECTRIC → 과
+        assert page.locator('[data-ui-v2="cmp-swap-note"]').inner_text() == fillp(CM["swapNote"] if has_final(by[t]["nk"]) else CM["swapNoteGa"],
+                                                                                   a=by["010120"]["nk"], b=by[t]["nk"], x="20")
+    R.check(page, S, "두 종목 비교: 규칙 깨진 종목이 기본 · 판정(두 사실 · 조사) · 여덟 줄 · 바꾸면 업종 비중 · 버튼 · 고르기", compare)
+
+    def swap_planned():
+        t = added["c1"]
+        page.locator('[data-ui-v2="cmp-swap"]').click()
+        sh = page.locator('[data-ui-v2="rm-sheet"][data-t="010120"]')
+        sh.wait_for(state="visible")
+        assert sh.get_attribute("data-swap") == t
+        assert sh.locator('[aria-checked="true"]').get_attribute("data-reason") == "better"         # 더 잘 맞는 종목을 찾았어요 미리 고름
+        assert sh.locator("button:not([data-reason])").all_inner_texts() == [C["rec"]["remove"]]
+        check_page("바꾸기 · 빼기 (지분 없음)", "swap-planned")
+        sh.locator("button", has_text=C["rec"]["remove"]).last.click()
+        at(page, "portfolio/edit/dfind")
+        page.locator('[data-ui-v2="edit-list"]').wait_for(state="visible")
+        p = pcts()
+        assert "010120" not in p and p[t] == 20 and sum(p.values()) == 100, p
+        assert page.locator(f'[data-edit-row="{t}"]').get_attribute("data-added") == "1"
+        assert [h["t"] for h in deck()["holdings"]] == list(V197B_HELD)                                # 저장하기 전에는 그대로
+        check_page("바꾼 뒤 종목 바꾸기", "after-swap")
+        page.locator('[data-ui-v2="edit"] button', has_text=E_["save"]).click()
+        at(page, "portfolio")
+        d = deck()
+        assert [h["t"] for h in d["holdings"]] == ["005930", "005380", "105560", "AAPL", t]
+        c = d["holdings"][-1]
+        assert c["target"] == 0.2 and c["kind"] == "pinned" and c["setAt"] == today and c["planPx"] == by[t]["price"]
+        assert [(x["kind"], x.get("t"), x.get("reason")) for x in d["changes"]] == [("remove", "010120", "better"), ("add", t, None)], d["changes"]
+    R.check(page, S, "바꾸기(지분 없음): 빼기 · 더 잘 맞는 종목 미리 고름 → 종목 바꾸기에 후보 20% (기다림) → 저장: 바꾼 기록 두 줄", swap_planned)
+
+    def swap_sold():
+        page.goto(base + "/app.html?dev=1#portfolio/edit/dfind", wait_until="domcontentloaded")
+        open_find()
+        t = rows()[0][0]
+        assert t != added["c1"]
+        added["c2"] = t
+        page.locator(f'[data-find-row="{t}"] [data-ui-v2="find-compare"]').click()
+        at(page, f"portfolio/edit/dfind/compare/{t}")
+        page.locator('[data-ui-v2="cmp-pick-open"]').click()
+        page.locator('[data-ui-v2="cmp-picker"] [data-pick="005380"]').click()
+        page.wait_for_function("() => document.querySelector('[data-ui-v2=\"cmp\"]').dataset.hold === '005380'")
+        page.locator('[data-ui-v2="cmp-swap"]').click()
+        sh = page.locator('[data-ui-v2="rm-sheet"][data-t="005380"]')
+        sh.wait_for(state="visible")
+        assert sh.locator('[aria-checked="true"]').get_attribute("data-reason") == "better"
+        assert sh.locator("button:not([data-reason])").all_inner_texts() == [RM["sell"], RM["noRecord"]]
+        sh.locator("button", has_text=RM["sell"]).click()
+        form = page.locator('[data-ui-v2="rec-form"][data-kind="sell"]')
+        form.wait_for(state="visible")
+        assert form.locator("input").first.input_value() == "7"
+        form.locator('input[type="date"]').fill("2026-10-20")
+        check_page("바꾸기 · 팔고 빼기", "swap-sell")
+        form.locator("button", has_text=C["plan"]["save"]).click()
+        at(page, "portfolio/edit/dfind")
+        page.locator(f'[data-edit-row="{t}"]').wait_for(state="visible")
+        d = deck()
+        assert [h["t"] for h in d["holdings"]] == ["005930", "105560", "AAPL", added["c1"], t], [h["t"] for h in d["holdings"]]
+        assert abs(sum(h["target"] for h in d["holdings"]) - 1) < 1e-9 and d["holdings"][-1]["target"] == 0.2
+        e = [x for x in d["history"] if x["t"] == "005380"][0]
+        assert e["reason"] == "better" and e["sales"][0]["qty"] == 7 and e["sales"][0]["date"] == "2026-10-20"
+        assert [(x["kind"], x.get("t"), x.get("reason")) for x in d["changes"]][-2:] == [("remove", "005380", "better"), ("add", t, None)]
+        assert page.locator('[data-ui-v2="edit"] button', has_text=E_["save"]).is_enabled()
+        check_page("팔고 바꾼 뒤", "after-swap-sell")
+    R.check(page, S, "바꾸기(팔고 빼기): 판 기록 · 빼기 · 후보 담기를 한 번에 저장 (합계 100%, 바꾼 기록) → 종목 바꾸기", swap_sold)
+
+    def add_only():
+        open_find()
+        t = rows()[0][0]
+        page.locator(f'[data-find-row="{t}"] [data-ui-v2="find-compare"]').click()
+        at(page, f"portfolio/edit/dfind/compare/{t}")
+        page.locator('[data-ui-v2="cmp-add"]').click()
+        sh = page.locator(f'[data-ui-v2="add-sheet"][data-t="{t}"]')
+        sh.wait_for(state="visible")
+        sh.locator("button", has_text=C["build"]["s4"]["add"]).last.click()
+        at(page, "portfolio/edit/dfind")
+        assert page.locator(f'[data-edit-row="{t}"]').get_attribute("data-added") == "1"
+        # 찾기의 + 담기 (다음 후보): 담는 중인 종목은 목록에 없어요
+        open_find()
+        r = [x[0] for x in rows()]
+        assert t not in r
+        page.locator(f'[data-find-row="{r[0]}"] [data-ui-v2="find-add"]').click()
+        page.locator(f'[data-ui-v2="add-sheet"][data-t="{r[0]}"]').wait_for(state="visible")
+        check_page("찾기 → 담기", "find-add")
+        page.locator(f'[data-ui-v2="add-sheet"][data-t="{r[0]}"] button', has_text=C["build"]["s4"]["add"]).last.click()
+        at(page, "portfolio/edit/dfind")
+        assert page.locator(f'[data-edit-row="{r[0]}"]').get_attribute("data-added") == "1"
+    R.check(page, S, "{b}만 담기 → 담기 시트 → 종목 바꾸기 · 찾기의 + 담기 (담는 중인 종목은 목록에서 빠져요)", add_only)
+
+    def no_points():
+        page.locator('[data-ui-v2="edit"] button', has_text=E_["save"]).click()                      # 기다리는 담기를 저장해요 (다른 포트폴리오를 열면 묻기 때문에)
+        at(page, "portfolio")
+        assert len(deck()["holdings"]) == 7 and abs(sum(h["target"] for h in deck()["holdings"]) - 1) < 1e-9
+        page.goto(base + "/app.html?dev=1#portfolio/edit/dnopts/find", wait_until="domcontentloaded")
+        at(page, "portfolio/edit/dnopts/find")
+        np_ = page.locator('[data-ui-v2="find-no-points"]')
+        np_.wait_for(state="visible")
+        assert np_.locator('[data-ui-v2="find-no-points-line"]').inner_text() == F_["noPoints"]
+        btn = np_.locator('button[data-ui="button"]').last
+        assert btn.inner_text() == (F_["p"]["savePoints"] or C["lim"]["save"]) and not btn.is_enabled()
+        assert page.locator('[data-ui-v2="find-list"]').count() == 0
+        check_page("기준 점수가 없는 포트폴리오", "find-no-points")
+        np_.locator('[data-card="value"] [data-ui-v2="card-inc"]').click()
+        np_.locator('[data-card="value"] [data-ui-v2="card-inc"]').click()
+        assert btn.is_enabled()
+        btn.click()
+        page.locator('[data-ui-v2="find-list"]').wait_for(state="visible")
+        assert deck("dnopts")["settings"]["points"] == {"value": 2} and deck("dnopts")["settings"]["maxPct"] == 20
+        assert len(rows()) == 20
+        check_page("기준을 고른 뒤 찾기", "find-points-saved")
+    R.check(page, S, "기준 점수가 없는 포트폴리오: 그 줄 · 기준 카드 · 저장(점수 없으면 꺼짐) → 그 포트폴리오에 저장하고 목록", no_points)
+    ctx.close()
+    srv.shutdown()
+
+    # 멈춘 데이터 · 불러오기 실패 · 빈 칩
+    stale = clone(data)
+    for f in DATA_FILES:
+        stale[f]["publishedAt"] = now_kst(days_ago=6)
+    srv, ctx, page, base = R.open(build_site(stale), width, init=seed, path="/app.html?dev=1#portfolio/edit/dfind/find", device=device)
+
+    def stale_view():
+        page.locator('[data-ui-v2="find-list"]').wait_for(state="visible")
+        dl = page.locator('[data-ui-v2="screen"] [data-ui-v2="date-line"]')                             # (PC 왼쪽 메뉴의 날짜 칸은 따로예요)
+        assert dl.count() == 1 and dl.get_attribute("data-stale") == "1"                               # 멈춘 날짜 줄이 위에
+        assert len(rows()) == 20
+        page.locator('[data-ui-v2="find-compare"]').first.click()
+        page.locator('[data-ui-v2="cmp-table"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="screen"] [data-ui-v2="date-line"]').get_attribute("data-stale") == "1"
+        check_page("멈춘 데이터 · 비교", "compare-stale")
+    R.check(page, S, "멈춘 데이터: 찾기 · 비교는 그대로 쓰고, 위에 멈춘 날짜 줄", stale_view)
+    ctx.close()
+    srv.shutdown()
+    srv, ctx, page, base = R.open(build_site(data, drop=("data.json",)), width, init=seed, path="/app.html?dev=1#portfolio/edit/dfind/find", device=device)
+
+    def failed():
+        lf = page.locator('[data-ui-v2="load-fail"]')
+        lf.wait_for(state="visible")
+        assert lf.get_attribute("data-picture") == "0" and page.locator('[data-ui-v2="find-list"]').count() == 0
+        assert page.locator('[data-ui-v2="screen"] h2').inner_text() == F_["title"]
+        check_page("불러오기 실패 · 찾기", "find-fail")
+    R.check(page, S, "불러오기 실패: 찾기 제목 아래 실패 문구 (뱁이 없음)", failed)
+    ctx.close()
+    srv.shutdown()
+    # 빈 칩: 모든 종목이 가진 업종(반도체)이면 없는 업종이 비어요 · 너무 엄격한 기준이면 전체가 비어요
+    one = clone(data)
+    for s in one["data.json"]["stocks"]:
+        s["ind"], s["indName"], s["g3"] = "semi", by["005930"]["indName"], None          # 성장 숫자가 없는 파일: 성장 기준이면 남는 종목이 없어요
+    st2 = v197b_store(pxd)
+    st2["decks"][1]["settings"] = {"points": {"growth": 3}, "strict": "normal", "maxPct": 20, "amountMan": 1000}
+    seed2 = ("(() => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');"
+             f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(st2, ensure_ascii=False))}); }})();")
+    srv, ctx, page, base = R.open(build_site(one), width, init=seed2, path="/app.html?dev=1#portfolio/edit/dfind/find", device=device)
+
+    def empty():
+        page.locator('[data-ui-v2="find-list"]').wait_for(state="visible")
+        page.locator('[data-ui-v2="find-chip"][data-chip="newInd"]').click()
+        e = page.locator('[data-ui-v2="find-empty"]')
+        e.wait_for(state="visible")
+        assert e.inner_text() == F_["emptyNewInd"] and page.locator('[data-ui-v2="find-new-ind-line"]').count() == 0
+        check_page("없는 업종이 빈 찾기", "find-empty-new")
+        page.goto(base + "/app.html?dev=1#portfolio/edit/dnopts/find", wait_until="domcontentloaded")
+        at(page, "portfolio/edit/dnopts/find")
+        e.wait_for(state="visible")
+        assert e.inner_text() == F_["empty"] and page.locator("[data-find-row]").count() == 0
+        assert page.locator('[data-ui-v2="find-date"]').count() == 0                                   # 줄이 없으면 날짜 줄도 없어요
+        check_page("빈 찾기", "find-empty")
+    R.check(page, S, "빈 칩: 없는 업종 → '지금 포트폴리오에 없는 업종에서는 …' · 아무 종목도 없으면 '이 조건에 맞는 종목이 없어요.'", empty)
+    ctx.close()
+    srv.shutdown()
+
+
+def scene_v197b_look(R, files, width, dark=False):
+    """v19.7b 화면 모양 (320 · 390 · 1280, 밝게 · 어둡게): 확인된 데이터(divCheck · 베타 범위)로 찾기와 비교를 열어 12px · 가로 스크롤 · 뱁이 없음 ·
+    색 토큰(어두운 화면) · 비운 숫자의 줄: 과거 주가 기록 오류(변동성 · 베타) · 외국 회사 숫자(PBR · 배당) · 우선주(내 기준 · PBR) · 미국끼리는
+    S&P 500 1% → · 베타 범위 아래 승인된 안내 줄."""
+    S = f"v19.7b 모양 {width}{' 어두운' if dark else ''}"
+    wide = width >= 1024
+    data = v191b_files(files)
+    by = {x["t"]: x for x in data["data.json"]["stocks"]}
+    us = [s for s in data["data.json"]["stocks"] if s.get("cls") == "us" and s.get("pbr") and s.get("dy") and s["t"] not in V197B_HELD and s["t"] != "MSFT"]
+    fg = us[0]
+    fg.update(pbr=None, dy=None, fgnCut={"pbr": "mismatch", "dy": "mismatch"})
+    px = by["000660"]
+    px.update(vol=None, beta=None, betaSE=None, pxBad="2026-05-08", pxBadF=["vol", "beta", "betaSE", "betaN", "lz"])
+    pxd = data["data.json"]["pxDate"]
+    seed = ("(() => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');"
+            f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(v197b_store(pxd), ensure_ascii=False))}); }})();")
+    screen = pc_device(width) if wide else {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2}
+    srv, ctx, page, base = R.open(build_site(data), width, init=seed, path="/app.html?dev=1#portfolio/edit/dfind/find",
+                                  device={**screen, "color_scheme": "dark" if dark else "light"})
+    CM = C["cmp"]
+    tag = f"{width}{'-dark' if dark else ''}"
+
+    def check_page(where, name):
+        floor_ok(page, where)
+        no_hscroll(page, width)
+        assert page.locator(MASCOT_IN_MAIN).count() == 0, where
+        assert page.evaluate("() => document.documentElement.dataset.theme || ''") in (("dark",) if dark else ("light", "")), dark
+        R.collect(page)
+        if R.shots:
+            os.makedirs(R.shots, exist_ok=True)
+            page.screenshot(path=os.path.join(R.shots, f"v197b-look-{name}-{tag}.png"), full_page=page.locator('[data-ui="bottom-sheet"]').count() == 0)
+
+    def go(code, hold=None):
+        page.goto(base + f"/app.html?dev=1#portfolio/edit/dfind/compare/{code}", wait_until="domcontentloaded")
+        page.locator('[data-ui-v2="cmp-table"]').wait_for(state="visible")
+        if hold:
+            page.locator('[data-ui-v2="cmp-pick-open"]').click()
+            page.locator(f'[data-ui-v2="cmp-picker"] [data-pick="{hold}"]').click()
+            page.wait_for_function("(h) => document.querySelector('[data-ui-v2=\"cmp\"]').dataset.hold === h", arg=hold)
+
+    def cell(rid, side):
+        c = page.locator(f'[data-cmp-row="{rid}"] [data-side="{side}"]')
+        n = c.locator('[data-ui-v2="cmp-note"]')
+        return c.locator("span").first.inner_text(), n.inner_text() if n.count() else None
+
+    def look():
+        page.locator('[data-ui-v2="find-list"]').wait_for(state="visible")
+        check_page("찾기", "find")
+        page.locator('[data-ui-v2="find-chip"][data-chip="newInd"]').click()
+        check_page("찾기 · 없는 업종", "find-new")
+        go("000660")
+        # 과거 주가 기록 오류: 변동성 · 베타는 – 와 회사 페이지의 그 줄 (52주 범위는 그대로라 짧은 줄)
+        assert cell("vol", "cand") == ("–", C["co"]["pxBadOne"]) and cell("beta", "cand") == ("–", C["co"]["pxBadOne"])
+        hb = page.locator('[data-cmp-row="beta"] [data-side="hold"]').get_attribute("data-lo")
+        assert hb != "" and cell("beta", "hold")[0] == fillp(C["co"]["tiles"]["riskBand"]["kr"], lo=f"{float(hb):.1f}".replace("-", "−"),
+                                                             hi=f"{float(page.locator('[data-cmp-row=beta] [data-side=hold]').get_attribute('data-hi')):.1f}".replace("-", "−"))
+        assert page.locator('[data-ui-v2="cmp-beta-note"]').inner_text() in (C["co"]["risk"]["bandNote"], C["co"]["risk"]["oneNote"])
+        check_page("비교 · 과거 주가 기록 오류", "compare-pxbad")
+        # 외국 회사 숫자: PBR · 배당수익률 – 와 그 줄 · 미국끼리(AAPL)는 S&P 500 1% →
+        go(fg["t"], "AAPL")
+        assert cell("pbr", "cand") == ("–", C["co"]["fgnCut"]) and cell("dy", "cand") == ("–", C["co"]["fgnCut"])
+        assert cell("fit", "cand") == ("–", None)                                                   # 배당이 비어 점수를 매길 수 없어요 (0 이 아니에요)
+        assert page.locator('[data-cmp-row="beta"] th').inner_text() == C["co"]["tiles"]["riskBand"]["us"].split(" → ")[0] + " →"
+        check_page("비교 · 외국 회사 숫자 · 미국끼리", "compare-fgn")
+        # 우선주: 내 기준 – 와 '우선주는 순위를 매기지 않아요.'
+        go("005935")
+        assert cell("fit", "cand") == ("–", C["co"]["fit"]["pref"])
+        check_page("비교 · 우선주", "compare-pref")
+        page.locator('[data-ui-v2="cmp-pick-open"]').click()
+        page.locator('[data-ui-v2="cmp-picker"]').wait_for(state="visible")
+        check_page("비교 · 고르기", "compare-pick")
+    R.check(page, S, "찾기 · 비교의 모양 (12px · 가로 스크롤 · 뱁이 없음 · 화면 모드) · 비운 숫자는 – 와 회사 페이지의 줄", look)
+    ctx.close()
+    srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -12637,7 +13085,11 @@ def main():
                    lambda: scene_v196a_sold_out(R, files, 1280),                                            # 같은 장면, PC (Jack 11-13: 다 판 종목 줄)
                    lambda: scene_v196a_split_price(R, files, 390),                                          # v19.6a 리뷰 3차: 분할 사이의 빈 가격
                    lambda: scene_v197a(R, files, 390), lambda: scene_v197a(R, files, 320),
-                   lambda: scene_v197a(R, files, 1280)):                                                    # v19.7a 종목 바꾸기 · 빼기 · 이름으로 찾기
+                   lambda: scene_v197a(R, files, 1280),                                                     # v19.7a 종목 바꾸기 · 빼기 · 이름으로 찾기
+                   lambda: scene_v197b(R, files, 390), lambda: scene_v197b(R, files, 1280),             # v19.7b 내 기준으로 찾기 · 두 종목 비교 · 바꾸기
+                   lambda: scene_v197b_look(R, files, 320), lambda: scene_v197b_look(R, files, 390),
+                   lambda: scene_v197b_look(R, files, 1280), lambda: scene_v197b_look(R, files, 390, dark=True),
+                   lambda: scene_v197b_look(R, files, 1280, dark=True)):                                   # v19.7b 모양 (320 · 390 · 1280, 밝게 · 어둡게)
             try:
                 fn()
             except Exception as e:

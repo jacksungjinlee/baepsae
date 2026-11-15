@@ -244,8 +244,9 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
       <RecordFlow flow={flow} setFlow={setFlow} load={load} store={store} setStoreData={setStoreData} />
     </>
   );
-  // v19.7b: 내 기준으로 찾기 (also for an address of 두 종목 비교 that cannot be shown: no 기준 points, or no stored holding to compare)
-  if (kind === "find" || (kind === "compare" && (!F.hasFindPoints(deck) || !F.compareHoldings(deck, draft).length))) {
+  // v19.7b: 내 기준으로 찾기 (also for an address of 두 종목 비교 that cannot be shown: no 기준 points, no stored holding to compare,
+  // or a candidate already in the portfolio as edited — an address typed by hand)
+  if (kind === "find" || (kind === "compare" && (!F.hasFindPoints(deck) || !F.compareHoldings(deck, draft).length || F.heldCodes(deck, draft).has(view.t)))) {
     return (
       <>
         <Finder deck={deck} draft={draft} load={load} store={store} setStoreData={setStoreData} pad={pad} chip={findChip} setChip={setFindChip}

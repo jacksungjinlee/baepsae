@@ -399,7 +399,14 @@ def test_compare_cells_follow_the_company_pages_blank_rules():
         pref: cells({ ...base, t: '005935', nk: '삼성전자우', pbr: null }),
         usNew: cells(us).ind, kr: cells(base).ind,
         copy: { na: C2.co.tiles.na, pxOne: C2.co.pxBadOne, px: C2.co.pxBad, fgn: C2.co.fgnCut, pbr0: C2.co.pbrZero, pref: C2.co.fit.pref, prefCo: C2.co.pref, newInd: C2.find.newInd },
-        usInd: [us.ind, load.byT.get(us.t).indName] };""" % json.dumps(FIX))
+        usInd: [us.ind, load.byT.get(us.t).indName] };
+      // a file with the split check (exact data): a Korean payer whose yield the pipeline left blank because its share count changed
+      // with no filing to explain it (dvLine 1) says so; one blank for another reason gets no line
+      En.setDataShape({ divCheck: { v: 1 } });
+      out.dv = cells({ ...base, dps: 361, dyt: null, dvLine: 1, dvWhy: 'nc-unexplained' }).dy;
+      out.dvOther = cells({ ...base, dps: 361, dyt: null }).dy;
+      out.dvOk = cells({ ...base, dps: 361, dyt: 0.62, dps3a: [361, 361, 361], divSt: 'same' }).dy;
+      out.shareHidden = C2.co.div.shareHidden;""" % json.dumps(FIX))
     cp = got["copy"]
     p = got["plain"]
     assert p["fit"][0].startswith("상위 ") and p["vol"][0].startswith("연 변동성 ") and p["pbr"][0].endswith("배") and p["dy"][0].endswith("%")
@@ -410,6 +417,7 @@ def test_compare_cells_follow_the_company_pages_blank_rules():
     assert got["pbr0"]["pbr"] == ["–", cp["pbr0"]]
     assert got["pref"]["fit"] == ["–", cp["pref"]] and got["pref"]["pbr"] == [cp["na"], cp["prefCo"]]
     assert got["usNew"][0] == f"미국 · {got['usInd'][1]} · {cp['newInd']}" and not got["kr"][0].endswith(cp["newInd"])   # 반도체 is held: not new
+    assert got["dv"] == ["\u2013", got["shareHidden"]] and got["dvOther"] == ["\u2013", None] and got["dvOk"] == ["0.6%", None], (got["dv"], got["dvOther"], got["dvOk"])
     for k, v in got["plain"].items():
         assert v[0] and "NaN" not in v[0] and "undefined" not in v[0], (k, v)
 

@@ -93,17 +93,22 @@ function Row({ r, sub, onOpen, onCompare, onAdd, canCompare }) {
       <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", columnGap: SPACE(2) + 2, rowGap: SPACE(1) }}>
         <span data-ui-v2="find-no" style={tx(SIZE.xs, WEIGHT.heavy, COLOR.text3, { width: 18, textAlign: "center", flexShrink: 0 })}>{r.rank}</span>
         <CoMark s={r.s} t={r.t} name={r.s.nk} size={SPACE(9)} />
-        <div style={{ flex: "1 1 120px", minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: SPACE(2), minWidth: 0 }}>
-            {onOpen ? (
-              <button type="button" id={nameId} data-ui-v2="find-name" onClick={onOpen}
-                style={{ ...tap, border: "none", background: "none", padding: 0, minHeight: SPACE(6), textAlign: "left", minWidth: 0, overflow: "hidden",
-                  ...tx(SIZE.body - 1, WEIGHT.bold, COLOR.ink, { whiteSpace: "nowrap", textOverflow: "ellipsis" }) }}>{r.s.nk}</button>
-            ) : <span id={nameId} style={tx(SIZE.body - 1, WEIGHT.bold, COLOR.ink, { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 })}>{r.s.nk}</span>}
-            {r.newInd && <span data-ui-v2="find-new-ind" style={{ flexShrink: 0 }}><StatusChip tone="neutral">{C.find.newInd}</StatusChip></span>}
-          </div>
-          <div data-ui-v2="find-row-sub" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2, wordBreak: "keep-all" })}>{sub}</div>
-        </div>
+        {/* the name and its line: one 44 px tap target that opens the company page */}
+        {(() => {
+          const body = (
+            <>
+              <span style={{ display: "flex", alignItems: "center", gap: SPACE(2), minWidth: 0 }}>
+                <span id={nameId} data-ui-v2="find-name" style={tx(SIZE.body - 1, WEIGHT.bold, COLOR.ink, { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 })}>{r.s.nk}</span>
+                {r.newInd && <span data-ui-v2="find-new-ind" style={{ flexShrink: 0 }}><StatusChip tone="neutral">{C.find.newInd}</StatusChip></span>}
+              </span>
+              <span data-ui-v2="find-row-sub" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2, wordBreak: "keep-all" })}>{sub}</span>
+            </>
+          );
+          const box = { flex: "1 1 120px", minWidth: 0, minHeight: TOUCH, display: "flex", flexDirection: "column", justifyContent: "center" };
+          return onOpen
+            ? <button type="button" data-ui-v2="find-open" onClick={onOpen} style={{ ...tap, ...box, border: "none", background: "none", padding: 0, textAlign: "left" }}>{body}</button>
+            : <div style={box}>{body}</div>;
+        })()}
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", flexShrink: 0, marginLeft: "auto" }}>
           <b data-ui-v2="find-pct" style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { paddingRight: SPACE(2) })}>{r.pct != null ? fill(C.rank.mineX, { x: r.pct }) : "–"}</b>
           <span style={{ display: "flex" }}>
@@ -136,6 +141,9 @@ function PickPoints({ deck, load, store, setStoreData }) {
   return (
     <div data-ui-v2="find-no-points">
       <Note data-ui-v2="find-no-points-line" style={tx(SIZE.sm, WEIGHT.semi, COLOR.ink)}>{C.find.noPoints}</Note>
+      {/* records that cannot be written: the editor's own notes (저장 stays off) */}
+      {!store.writable && <Note tone="watch">{C.store.unavailable}</Note>}
+      {store.locked && <Note tone="watch">{C.store.locked}</Note>}
       <StepCards st={st} set={(patch) => setSt((x) => ({ ...x, ...patch }))} ds={ds} load={load} coach={null} />
       <div style={{ marginTop: SPACE(4) }}><Button onClick={save} disabled={!can}>{C.find.p.savePoints || C.lim.save}</Button></div>
       {fail === "storage" && <Note tone="watch" data-ui-v2="store-fail">{C.store.unavailable}</Note>}
