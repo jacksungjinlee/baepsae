@@ -350,6 +350,27 @@ def test_every_other_non_whole_factor_still_fails(exact_pair, change):
     assert s["t"] not in V.exact_bonus_set(cur["data"], [x for x in cur["data"]["stocks"] if x.get("cls") == "kr"], cur["corp"]["companies"])
 
 
+def test_each_guard_names_its_own_reason():
+    """세 조건을 하나씩 어기면 exact_bonus_problem 이 그 조건의 이유를 말해요 (다른 검사가 함께 잡더라도)."""
+    by, _, _, _ = run("084010")
+    s0, c = by["084010"], comp_of("084010")
+    assert V.exact_bonus_problem(s0, c, PX) is None
+
+    def bad(change):
+        s = copy.deepcopy(s0)
+        change(s)
+        return V.exact_bonus_problem(s, c, PX) or ""
+    assert "무상증자(r = 1 + x)가 아니에요" in bad(lambda s: [e.update(k="split") or e.pop("x") for e in s["dvWhy"]["ev"] + s["dvProof"]["ev"]])  # (가)
+    assert "무상증자(r = 1 + x)가 아니에요" in bad(lambda s: [e.update(x=0.66) for e in s["dvWhy"]["ev"] + s["dvProof"]["ev"]])
+    assert "사건의 곱" in bad(lambda s: s.update(dpsF=[1.66166] * 3, dps3a=[round(500 / 1.66166, 2)] * 3))                       # (나)
+    assert "2023년 사건의 곱" in bad(lambda s: s.update(dpsF=[1.661655, 1.661655, 1.66166], dps3a=[300.9, 300.9, round(500 / 1.66166, 2)]))
+    assert "이번 증명이 되살리지 않았어요" in bad(lambda s: s["dvProof"].update(yrs=[1]))                                          # (다)
+    assert "이번 증명이 되살리지 않았어요" in bad(lambda s: s["dvProof"].update(y0=None))
+    assert bad(lambda s: s["dvProof"].update(cmo=12_000_000)).startswith("dvProof:")
+    assert bad(lambda s: s.pop("dvProof")) == "dvProof 없음" and bad(lambda s: s.pop("dvWhy")) == "dvWhy ok (사건) 없음"
+    assert V.exact_bonus_problem({"dpsF": [2.0, 1.0, 1.0]}, {}, PX) == "깨끗한 배율뿐 (필요 없음)"
+
+
 def test_a_guessed_non_whole_factor_fails_exactly_as_before():
     """예외가 맞지 않는 종목은 예전 글 그대로 실패해요 (div_row_problem · _dvwhy_events)."""
     s = {"dps3": [500.0, 500.0, 500.0], "dps3a": [384.62, 384.62, 384.62], "dpsF": [1.3, 1.3, 1.3], "divSt": "adj"}

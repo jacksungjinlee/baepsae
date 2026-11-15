@@ -6339,7 +6339,7 @@ def prove_cover(fx, fy, px, ev):
     for x in used:
         base = x["n"] if x["k"] == "rights" else x["n"] / DVWHY_CB_FLOOR
         cut = max(x["d"], after0)
-        tot += base * math.prod(e["r"] for e in ev or [] if e["d"] > cut)
+        tot += base * prove_prod([e for e in ev or [] if e["d"] > cut])     # v19.1j: 정확한 무상증자는 1 + x 로 (관문과 같은 셈)
     return tot, used
 
 
