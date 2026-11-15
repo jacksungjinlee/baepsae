@@ -17,8 +17,8 @@ import React from "react";
 import { COLOR, SIZE, WEIGHT } from "../ui/tokens.js";
 import { C, fill, mdText, todayKst } from "./format.js";
 import { Note, tx } from "./ui.jsx";
-import { EPS_FIX_DATE, fixNotesHidden, epsNoticeShown, stmtCurFor, epsLineKind, unitHeldFor } from "./fix.js";
-import { fcurOf, fcurText, pbrZeroOf } from "./fcur.js";
+import { EPS_FIX_DATE, fixNotesHidden, epsNoticeShown, stmtCurFor, epsLineKind, unitHeldFor, noStmtFor, pxBadFullFor, pxBadPartFor, pxBadHidesFor } from "./fix.js";
+import { fcurOf, fcurText, pbrZeroOf, fgnCutOf } from "./fcur.js";
 
 // The line with its date ("11월 10일"), or null when a word or the date is missing (never a line with an empty slot).
 export function epsFixText() {
@@ -57,6 +57,25 @@ export function UnitChkNote({ s, co, show = true, style }) {
   return text ? <Note data-ui-v2="unit-chk" style={style}>{text}</Note> : null;
 }
 
+// 과거 주가 기록 오류 (Jack, 2026-11-14): "과거 주가 기록 일부에 오류가 있어서 52주 범위와 출렁임·위험 숫자는 비워 두었어요." once per
+// screen for a Korean stock whose 52주 range was blanked too (fix.js pxBadFullFor: a bad day within the last 252 bars, data.json or
+// corp.json pxBad · pxBadF; never for US stocks): the company page header, in the 52주 bar's place, on every tab. The same quiet note
+// (ui.jsx Note, 13 px). Shown on the example page too: it is about the data, not a fix.
+// -> the line for this stock, or null (not marked, only some numbers blanked, a US stock, or the words not there).
+export const pxBadText = (s, co) => (pxBadFullFor(s, co) && C.co.pxBad ? C.co.pxBad : null);
+export function PxBadNote({ s, co, style }) {
+  const text = pxBadText(s, co);
+  return text ? <Note data-ui-v2="px-bad" style={style}>{text}</Note> : null;
+}
+// 2026-11-14 evening (Jack): a stock whose bad day is over 252 bars back keeps its 52주 range; each blanked number says
+// "과거 주가 기록 일부에 오류가 있어서 이 숫자는 비워 두었어요." in its own place (fix.js pxBadPartFor). field: the data.json field that
+// number is (e.g. "beta", "r36", "lz"); the line shows only when that field was blanked. -> the line, or null.
+export const pxBadOneText = (s, co, field) => (pxBadPartFor(s, co) && pxBadHidesFor(s, co, field) && C.co.pxBadOne ? C.co.pxBadOne : null);
+export function PxBadOneNote({ s, co, field, show = true, style }) {
+  const text = show ? pxBadOneText(s, co, field) : null;
+  return text ? <Note data-ui-v2="px-bad-one" style={style}>{text}</Note> : null;
+}
+
 // The unit-check line inside a rule tile (phrasing content): the reason 재무 경고 0개 could not be checked for a holding the
 // unit check holds (pf.js rule "warn" unit · Jack 2026-11-13 Q14: his approved co.unitChk line, the company page's key).
 export function UnitChkLine({ show = true, style }) {
@@ -91,6 +110,20 @@ export function stmtCurText(s, co) {
   return cur && C.co.stmtCur ? fill(C.co.stmtCur, { currency: cur }) : null;
 }
 
+// No statements at all (fix.js noStmtFor, Jack 2026-11-14): "공시된 재무제표가 아직 없어서 계산할 수 없어요." once where the
+// company's 실적 · 가치 · 배당 numbers would be. s: the data.json row · co: its corp.json row.
+export function NoStmtNote({ s, co, show = true, style }) {
+  const text = show && noStmtFor(s, co) && C.co.noStmt ? C.co.noStmt : null;
+  return text ? <Note data-ui-v2="no-stmt" style={style}>{text}</Note> : null;
+}
+
+// The reason inside a rule tile (phrasing content) when a held Korean company's checks could not run for lack of input (pf.js
+// rule "warn" noData · Jack 2026-11-14: his approved co.warn.noData line).
+export function NoDataLine({ show = true, style }) {
+  const text = show && C.co.warn && C.co.warn.noData ? C.co.warn.noData : null;
+  return text ? <span data-ui-v2="warn-nodata" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2, ...style })}>{text}</span> : null;
+}
+
 // s: the data.json row · co: its corp.json row. data-cur: the code shown (tests).
 export function StmtCurNote({ s, co, style }) {
   const text = stmtCurText(s, co);
@@ -110,4 +143,13 @@ export function FcurNote({ s, style }) {
 // pipeline blanked a PBR that rounds to 0.00 (data.json pbrZero, src/v2/fcur.js pbrZeroOf).
 export function PbrZeroNote({ s, style }) {
   return pbrZeroOf(s) && C.co.pbrZero ? <Note data-ui-v2="pbr-zero" style={style}>{C.co.pbrZero}</Note> : null;
+}
+
+// FgnCutNote (Jack, 2026-11-14): "자료의 숫자가 회사 전체 재무제표와 맞지 않아서 비워 두었어요." right under a US-listed foreign
+// company's PER, PBR or 배당수익률 "–" when the pipeline blanked it for not matching the company's totals (data.json fgnCut,
+// src/v2/fcur.js fgnCutOf). fields: the blanked numbers this section would show (default all three); the line only when one of
+// them is blanked this way. data-fields: the ones it covers (tests).
+export function FgnCutNote({ s, fields, style }) {
+  const cut = fgnCutOf(s).filter((k) => !fields || fields.includes(k));
+  return cut.length && C.co.fgnCut ? <Note data-ui-v2="fgn-cut" data-fields={cut.join(",")} style={style}>{C.co.fgnCut}</Note> : null;
 }

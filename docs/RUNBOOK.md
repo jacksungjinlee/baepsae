@@ -414,8 +414,193 @@ Two gate rows read `krSeries`:
   에이프로젠 +1,446% on 2026-05-08), `하루만 튄 봉` (one bad Naver bar that comes straight back, e.g. 티이엠씨 2023-12-28)
   or `그 밖`. On 2026-11-14 it named 18 stocks, all Naver's own; it is expected to warn every day until those days leave the
   three-year window or Naver corrects them. A newly named stock: compare Naver's chart with the KRX listing (상장주식수,
-  기준가 = Close − Changes) for that date. The numbers are not blanked automatically; blanking them needs a reason line on
-  the company page, which needs Jack's yes. 본시스템즈 (KONEX, 17,500 → 1,176,000원 since its 2025-09 listing, in +15% steps on rare trades) is real and not named.
+  기준가 = Close − Changes) for that date. Since 2026-11-14 every named stock's numbers are blanked (next paragraph).
+  본시스템즈 (KONEX, 17,500 → 1,176,000원 since its 2025-09 listing, in +15% steps on rare trades) is real and not named.
+
+**Stocks with a broken price history (2026-11-14, Jack: "Q2: (a), this week"; evening: "hide only the numbers whose
+calculation window includes the bad day").** Whatever stocks the day's run names in `krSeries.jump` (18 on 2026-11-14:
+에이프로젠, BYC우, 아센디오, 폰드그룹 …; the list changes day to day, nothing is hard-coded) are marked by `fetch_data.py`
+`mark_px_bad`, right after the series check. For each, it blanks the numbers whose calculation window contains one of its
+move dates, reading each window from the calculation itself (`validate_data.PX_BAD_WIN`):
+- the whole series (about three years plus 40 days, `YEARS = 3`), always, because the moves are found in that series: 변동성,
+  베타 with its 표준오차 and day count, 알파, 3년 수익률, 샤프, 최대 낙폭, 상승 월 비율 and the 저변동 (lz) score;
+- the last 252 bars (`px.tail(252)`, `px.iloc[-252]`): 52주 최고 · 최저, 1년 수익률 (mom) and the 추세 (mz) score;
+- the last 64 bars: 3개월 수익률 (r3); the last 22 bars: 1개월 수익률 (r1).
+
+The stock carries `pxBad` (the date of its latest such move) and `pxBadF` (the blanked fields), in data.json and corp.json;
+`krSeries.hidden` lists the codes. Scores and lists are made without the blanked numbers only: a stock with only old bad days
+keeps its 52주 range, short returns and 추세 score (it stays in 홈's 추세 list) but leaves 낮은 변동성, the 2022 estimate and the
+yearly swing. On 2026-11-14, 9 of the 18 have their 52주 range blanked (a move in the last 252 bars: 003060, 007460, 007610,
+009310, 012170, 210120, 250030, 331660, 472850) and 9 keep it (only older moves: 001465, 012210, 107640, 110790, 121890, 227420,
+229500, 311060, 425040). Lines: where the 52주 range is blanked, "과거 주가 기록 일부에 오류가 있어서 52주 범위와 출렁임·위험
+숫자는 비워 두었어요." once per screen (2.0 company page header; 예전 뱁새 기업분석, 기업 비교, 종목 고르기); otherwise "과거 주가
+기록 일부에 오류가 있어서 이 숫자는 비워 두었어요." in each blanked number's place. The run log says "!! 과거 주가 기록 오류(…)로
+숫자를 비운 국내 종목: N (52주까지 a · 52주는 보임 b) — …" with the fields blanked, and "추세(mz) · 저변동(lz) … 필수 종목 …".
+
+How long a mark lasts: while a bad bar is inside the series window (not 252 days). It clears by itself, and the numbers come
+back, when Naver fixes the bar or the bar ages out: 110790 크리스에프앤씨 (2023-10-20) around 11-28 and 121890 에스디시스템
+(2023-10-23) around 12-01, which takes the count from 18 to 16. A stock moves from "52주까지" to "52주는 보임" by itself about a
+year after its last bad day. Repairing the history is a later PR. Gate rows:
+
+- **FAIL "과거 주가 기록 오류 종목의 숫자 비움 (pxBad)"**: a published stock named in `krSeries.jump` still has one of its
+  `pxBadF` numbers (data.json or corp.json), or its 52주 range is missing although not in `pxBadF`; or `pxBadF` breaks the window
+  rules (the whole-series fields missing, part of a window, a short window without the longer one, or a move within 340 calendar
+  days of `pxDate` with the 52주 window not blanked: 252 bars can't be shorter than 351 days; 85 days for 3개월, 28 for 1개월); or
+  the lists disagree (`jump` codes, `krSeries.hidden`, the marks), a mark is not the latest move date, or corp.json differs. It
+  only fires on an error in our code: fix the code in a PR. A file without `krSeries.hidden` (the format before 2026-11-14) is
+  only a warning, unless the previous publish had it or a stock carries a mark. The site keeps yesterday's data until then.
+- **FAIL "새로 생긴 과거 주가 기록 오류 종목 수 (10종목 이상이면 실패)"** (`PX_BAD_NEW_FAIL`, Jack 2026-11-14: "block the publish
+  … when many stocks newly break in one run"): stocks in today's `krSeries.jump` that were not in the previous publish's. The
+  2026-11-14 list's 21 moves fall on 20 dates over three years, at most 2 stocks on one day (2026-05-08, two 에이프로젠 group
+  stocks after one 감자), so a daily run names 0–2 new stocks. 10 or more means Naver's adjusted series or our pinning broke
+  for many stocks at once (2026-11-13's pinning bug hit 18 at once): read the run log's jump line and the newly named stocks
+  in the summary before anything else. Without a previous publish (live checks) it is not compared.
+- **The three must-have rows** (005930, 000660, 005380, 015760, 105560, 035420, 012450; Jack 2026-11-14: "warn when one is
+  affected; block the publish when two or more must-haves are affected"):
+  - "필수 종목 추세 · 저변동 순위 (mz · lz)" (new): a score missing without a correct mark fails, with the reason.
+  - "필수 종목 52주 최고·최저 (야후)" and "필수 종목 새 칸" (existing; changed with Jack's yes, 2026-11-14): a 52주 range or beta
+    error blanked by a correct mark (in `krSeries.hidden`, consistent per `px_bad_problems`) is passed as a warning naming the
+    stock.
+  - One correctly marked must-have: each row that has something blanked for it warns (the 52주 row only when its bad day is
+    inside the last 252 bars; a must-have with only old bad days keeps its 52주 range, so that row just passes). Two or more:
+    every such row fails. So if both must-haves have only old bad days, "52주 (야후)" passes and the mz·lz and 새 칸 rows block
+    the publish (저변동 and beta are whole-series numbers, always blanked). A blank without a correct mark fails as before. On 2026-11-14 none of the 296 Korean stocks worth 1조원 or more had an unexplained move (the largest named stock
+    was worth 0.39조원). If it happens, look at its Naver chart and the KRX listing for that date first; never loosen a row.
+
+Standing daily warnings until the repair PR: "국내 시계열 하루 가격 제한폭 넘는 움직임 (경고만)" (the 18 names), and "국내
+beta 채움" and "국내 vol 채움" at 96.8% (floor 95%, warning under 97%; 2,395 of 2,473: volatility and beta are whole-series,
+so every marked stock blanks them). 45 more marked stocks are still a pass; the 46th would fail both rows.
+
+## Korean dividend proof (배당 기준 증명, since #PR — Jack 2026-11-14, item 5)
+
+A Korean payer whose dividend could not be put on today's share basis (`divSt` nc · nd) used to show "배당을 줘요" with no
+yield. The daily run now tries to prove that basis (`fetch_data.py` `DivWhy.prove`, after the `dvWhy` check, before the
+yield and the 배당 rank): the factor is the product of the 액면분할 · 주식병합 · 무상증자 filings after the report year
+(the same DART decision lookups and cache entry as `dvWhy`, only whole split ratios such as 2, 5, 0.5), and it must agree with
+the share counts, either **today** (the dividend total ÷ today's listed shares = the dividend per share ÷ the factor, ±3%) or
+**yearEnd** (the shares that got the dividend = that year-end's outstanding shares in 주식의 총수 현황 ±3%, and today's
+listed shares between those × the factor and the year-end issued shares × the factor plus the new shares that filed
+제3자배정 · 일반공모 rights issues and bonds explain, each scaled only by the share events after its own date, +3%).
+An earlier year's bar comes back only when the shares that got each year's dividend differ by the filings' factor (±15%).
+
+It does **not** restore (the stock stays exactly as before, with its reason in `divCheck.proof` and the run log):
+- `ratio` — a filed bonus ratio that is not a whole split ratio (대한제강 ×1.66, 알테오젠 ×1.3 …): the gate accepts only whole
+  ratios; accepting an exact filed ratio is Jack's decision;
+- `basis` — a spin-off or stock-dividend decision in between;
+- `rights` — a 주주배정 rights issue (주주배정후 실권주 일반공모 too, and any issue whose method is not stated) of more than 10%
+  was decided from half a year before the report year-end to the price date: KRX lowers the price on the 권리락 day, so today's
+  price is on the new basis while the filed dividend is on the old one. This is checked on every restore path (today and
+  yearEnd, whether or not new shares were needed to explain the count) and for an earlier bar when such an issue falls between
+  the two years. A rights decision whose method or size could not be read is a lookup failure (`fail`), never restored.
+  Dividing by the 권리락 factor is a later PR;
+- `uncounted` — a filing explains the change but its share count is not read (주식교환, 합병, 감자, 주식소각);
+- `data` — the stock's own dividend table disagrees with its share counts (an interim dividend left out of the per-share row,
+  a unit slip, no total, no 주식의 총수 현황);
+- `fail` — a lookup failed (DART, the per-run limit, an unreadable filing, the share report not received): nothing changes and
+  the next run tries again.
+
+Only `line` gets Jack's line "주식 수가 바뀐 비율을 공시로 확인하지 못해 배당수익률은 보여 드리지 않아요." on the 2.0 배당 tile and
+tab: the proof found the share count changed and no filing at all in between (no rights issue, bond, cancellation, exchange,
+spin-off or stock dividend). That one place sets both `dvWhy` nc-unexplained and `dvLine: 1` (data.json); the app shows the
+line only where `dvLine` is 1, so a `dvWhy` nc-unexplained from the older #98 check alone (which looks only at rights issues and
+bonds, e.g. after a spin-off) never shows it, and the stock stays exactly as before. A restored stock carries `dvProof`
+(data.json), including the share events (`ev`) its factor came from.
+On the 2026-11-14 publish: 29 of the 72 hidden yields come back (21 with their bars), 23 of the 86 yields without bars get their
+bars back; still hidden: ratio 7, basis 4, rights 7, uncounted 2, data 22, a 32.5% yield 1; line 0.
+
+- **DART calls:** about 4 per stock the first time (the filings lists, decisions, the year-end share report, rights and
+  bond counts when needed), at most 150 companies a run (`PROVE_PER_RUN`, separate from `dvWhy`'s own 150); about 160
+  stocks on 2026-11-14, so the first run does most of them (about 600 calls) and the next run the rest, then 0–10 a day.
+  A cached lookup is fetched again when today's listed shares have moved more than 3% since it was fetched (a new decision may
+  be missing), also when the `dvWhy` check used it earlier in the same run; an entry fetched without a share count is not
+  fetched again for that reason. The run log line "배당 기준 증명 조회" gives companies fetched, read from cache and stopped by the limit, and the
+  stage's own DART call count. Not a full-DART run; a full-DART run adds about 640 calls to its estimate (logged separately).
+- **FAIL "배당 기준 증명 기록 (divCheck.proof)"**: the counts in `divCheck.proof` differ from the stocks' `dvProof`, a named
+  stock does not exist, carries a proof, shows a yield (except `fail`, which can be an earlier year only), is in two lists,
+  or is listed under `line` without `dvWhy` nc-unexplained; or `dvLine` is on a stock not listed under `line` (or missing
+  from one that is). It is our own bookkeeping: look at the run's "배당 기준 증명" log lines. A publish without
+  `divCheck.proof` after one that had it fails too, and so does a `dvProof` or `dvLine` without it.
+- **FAIL "되살린 배당수익률 = 배당 총액 ÷ 시가총액 (dvProof)"**: a restored yield does not agree with the dividend total ÷
+  market cap within what the recorded year-end treasury shares and filed new shares explain, a proof's numbers differ from
+  corp.json `cash3` or today's share count, its events (`ev`) do not multiply to the factor or fall outside the report
+  year-end to the price date, the published per-share dividend is not the filed one ÷ the factor (to the 전), or an earlier
+  bar's factor does not match the two years' dividend totals. New shares are scaled by the proof's own events, not by
+  `dvWhy` (which is absent when the events multiply to 1). The ratio is the pipeline's exact one (dividend total × factor ÷
+  today's shares), not one recomputed from the rounded per-share dividend. For
+  yearEnd the market-cap form restates the share-count inequality; the independent parts are the dividend total against the
+  year-end outstanding shares and against corp.json. That is a wrong conversion; never loosen the row. The detail list under
+  the table names each stock and the failing number.
+- **WARN "배당 기준 증명 경고 (되살리지 않은 이유 · 조회 실패)"**: names the stocks not restored, by reason.
+
+## US stocks added by hand (EXTRA_US)
+
+The US list is the S&P 500 (FinanceDataReader's list), Nasdaq's first 400 and `EXTRA_US` in `fetch_data.py`. On
+2026-11-14 28 companies were added (Jack, 11-13 "Missing US stocks"; `EXTRA_US_ADDED`): BTI, ADC, NNN (Jack's names); MAIN,
+WPC, STAG, EPR, OHI, ENB, BCE, TD, RY (widely held dividend stocks outside both lists); SHEL, BP, UL, TM, SONY, AZN, HSBC,
+SAP, NVS, RIO, BHP, TTE, DEO, BUD, SAN, GSK (foreign companies listed in New York). SEIBro's ranking of Korean investors'
+US holdings could not be read here (its page fills the table through the site's own internal calls; its open API needs a
+key and was not reachable), so the list follows Jack's fallback. Left out on purpose: BNS (Yahoo's short name is "Bank Nova
+Scotia Halifax Pfd 3", which the preferred-share rule drops), EPD and ET (publicly traded partnerships: a non-US seller
+has 10% of the sale proceeds withheld, and several Korean brokers restricted buying them in 2023).
+
+**To add a US stock** (one small PR):
+1. `EXTRA_US_ADDED` (or `EXTRA_US`), and `US_NOT_ETF` or `US_ETFS` (the run refuses to start if a ticker has no ETF decision).
+2. A foreign company (ADR or foreign ordinary share): also `US_FOREIGN`.
+3. The gate's own copies in `validate_data.py`: `US_ADDED_SET` (or `US_ETF_SET`) and `US_FOREIGN_SET`. The tests check that
+   the two files agree.
+4. Its splits since 2016: read Yahoo's split column once (yfinance `download(..., start="2016-01-01", actions=True)`), keep
+   only clean ratios, check each against the company's own announcement, and add the rows and the ticker to
+   `data/us_splits_seed_more.csv` and its codes file (never to the first seed). Otherwise the daily run reads the history
+   itself, 20 stocks a run, and warns (`gap`) until it is done. The gate warns once ("새 줄 정수 아닌 배율") for a seed row
+   whose ratio is not a whole number or its inverse (GSK 4:5 on the first publish after 2026-11-14).
+5. Check Yahoo's names (`shortName`, `longName`) against the preferred-share rule (`us_preferred_reason`), and its
+   industry against `data/industry_us.csv` (an industry not in the table means no 업종 group; the run log names it).
+
+**Gate row "손으로 더한 미국 종목 (EXTRA_US): 목록에 있거나 빠진 이유".** Every `EXTRA_US` stock must be in the day's
+data, or named in `data.json` `usExtraMissing` with the reason the run left it out (Yahoo gave no prices, less than 60
+days of prices, a broken bar, a preferred share, a Korean company's US listing; if the run cannot tell, the reason says so
+and asks for a check). A named stock warns, with its reason. The publish fails only when a missing stock has no reason in
+the record at all: the run writes one for every stock it leaves out, so this catches a pipeline list that no longer matches
+the gate's own list (`US_EXTRA_SET`) or a broken record. A file without the record warns on a publish and is skipped by the
+site checks (deploy, watchdog), which also only warn on a missing reason, so code that adds a stock can go live before
+the next publish brings it in.
+
+**Gate row "미국 상장 외국 회사: 회사 합계와 맞춘 PER·PBR·배당수익률만".** For the foreign companies in `US_FOREIGN` that
+report in dollars (no `fcur`; the others are blanked by the currency rule, #114), the run compares Yahoo's per-share
+numbers with company totals (`us_foreign_cuts`): PER with market cap ÷ net income to common (within 10%), PBR with
+(market cap ÷ net income) × ROE (within 1.35×: narrower than √2, so a 2× ADR mistake never stays inside it; the largest
+gap for a correct PBR on 2026-11-14 was BHP's 1.24×, ROE uses average equity), and the dividend yield with the dividends actually
+paid in the last 350 days (Yahoo's dividend records, per ADR, in dollars) ÷ today's close (within 10%). Anything that
+does not match, or cannot be compared (no net income, no ROE, no dividend records, or Yahoo did not confirm that the
+statements are in dollars: then all three are blanked), is blanked and listed in
+`data.json` `usForeign.cut` with the numbers, and the stock carries `fgnCut` (`{per | pbr | dy: "mismatch" | "currency"}`);
+the run log prints one line per blank. On 2026-11-14 (local run): BP PER
+and PBR (Yahoo PBR 7.62 is the ADR price over one ordinary share's book value; an ADR is 6 shares), HSBC PBR (7.07) and
+yield (Yahoo's 2.23% leaves out the larger fourth dividend; paid in the last year: 4.18%), Diageo PBR (93.64), AB InBev
+PBR (no ROE) and yield, BHP yield (Yahoo annualises the last half-year dividend: 4.98% vs 4.33% paid), AstraZeneca and
+TotalEnergies yield (Yahoo's dividend records miss a payment, so the check cannot confirm a correct 1.74% / 4.38%; they
+come back when Yahoo's records are complete). Shell, Novartis and Rio Tinto show all three. The row fails if a blanked
+number is back (pbr also blanks the 가치 score `vz`), if a foreign company's numbers were published unchecked, if a
+blanked number has no `fgnCut` mark on its stock (the app would say "자료가 없어요" instead of the reason), if a mark has
+no matching `usForeign.cut` row, or if a file carries marks without the `usForeign` record. 2.0 shows each
+blanked number as "–" under its label with Jack's line "자료의 숫자가 회사 전체 재무제표와 맞지 않아서 비워 두었어요." (Jack,
+2026-11-14) right under it, in the same places as the currency line (#114): the 가치 and 배당 tiles of 요약, 내 기준과 맞는 정도
+(card and sheet), the 가치 tab, 가치 자세히 and the 배당 tab. A number blanked because the statement currency was not
+confirmed gets the same line (the currency line needs a currency name). **On a day the check itself stops** (run log "!! 미국
+상장 외국 회사 검사가 멈췄어요"), the companies it had already finished keep their blanks and their line; every remaining
+foreign company that reports in dollars (Shell, Novartis, Rio Tinto, BP, HSBC, AstraZeneca, BHP, TotalEnergies, Diageo,
+AB InBev) has PER, PBR and 배당수익률 blanked without a mark, so users see no reason line: the 요약 가치 and 배당 tiles and the
+배당 tab's heading say "자료가 없어요", and the 가치 tab shows an empty card with only the date. The gate row warns that day
+(naming the companies; it never holds the publish). The next run checks again. Whether that day needs its own line is
+Jack's call (asked 2026-11-14). The old app shows "–" for these, as for the currency case. TSM, ASML, BABA, NVO, SHOP and the ADRs that come in through
+Nasdaq's list are not in `US_FOREIGN`: #114 keeps a company's numbers when its currency is unknown, while this check blanks
+what it cannot compare; widening it is a separate PR (Jack, 2026-11-14: later).
+
+BHP and Rio Tinto have no 업종 group (Yahoo's "Other Industrial Metals & Mining" is not in `data/industry_us.csv`; Jack,
+2026-11-14: keep it that way). EPD, ET and BNS stay out (Jack, 2026-11-14). Unilever's Yahoo "split" of 2025-12-09 (×0.888)
+is a real 8-for-9 share consolidation (shares and ADSs, the ADS stays one share) on the day of the Magnum Ice Cream
+demerger, which Yahoo merged with the demerger adjustment; it is in `SPLIT_OVERRIDES` as 8:9 with its sources (Unilever
+RNS 2025-12-08, the shareholder circular, IRS Form 8937).
 
 ## Roll back
 
@@ -552,7 +737,9 @@ Two gate rows read `krSeries`:
     It is "Yahoo plus fixes", not guaranteed complete: a small stock dividend Yahoo leaves out is only there if someone
     added it to the override table. Where the rows come from, every run:
     - the committed seed `data/us_splits_seed.csv` (129 Yahoo splits 2016-01-01 → 2026-11-12, read once on 2026-11-13 and
-      reviewed) with `data/us_splits_seed_codes.txt` (the 773 stocks it covers);
+      reviewed) with `data/us_splits_seed_codes.txt` (the 773 stocks it covers), plus `data/us_splits_seed_more.csv` with
+      `data/us_splits_seed_more_codes.txt` (the 28 stocks added by hand on 2026-11-14, read 2016-01-01 → 2026-11-13: AZN,
+      BTI, GSK and SONY have a split; see "US stocks added by hand");
     - yesterday's file (every row is carried forward, also for stocks that left the list);
     - what Yahoo shows in the day's regular price download (about three years back, no extra calls);
     - for a stock in neither the seed nor yesterday's file, its history since 2016 (one call per stock, at most 20 stocks
@@ -576,7 +763,8 @@ Two gate rows read `krSeries`:
   - Yahoo also writes spin-offs as "splits" with ratios like 1253:1000 (GE, GE Vernova); those are not share-count
     changes, so only clean ratios are kept (the reduced fraction has a side of 20 or less: 10:1, 1:15, 3:2, 21:20).
     Real events Yahoo writes wrongly or leaves out are in `SPLIT_OVERRIDES` in `fetch_data.py`, each with its source:
-    RYAAY 2024-09-30 ×2.5 (ADS ratio change, not a spin-off); HLT 2017-01-04 and DD 2019-06-03 1:3 (reverse splits on a
+    RYAAY 2024-09-30 ×2.5 (ADS ratio change, not a spin-off); UL 2025-12-09 8:9 (a share consolidation on the Magnum Ice
+    Cream demerger day; Yahoo writes ×0.888); HLT 2017-01-04 and DD 2019-06-03 1:3 (reverse splits on a
     spin-off day); WTW 2016-01-05 (2.649 → 1) and TRI 2018-11-27 (×0.9079) and 2023-06-23 (×0.963957) share
     consolidations; HON 2026-06-29 1:2 (a reverse split on the Honeywell Aerospace spin-off day, Honeywell 8-K
     2026-06-05; Yahoo writes 1907:2000); CBSH's 5% stock dividends Yahoo misses (2016, 2017, 2019, 2022, 2023). FERG's 2018

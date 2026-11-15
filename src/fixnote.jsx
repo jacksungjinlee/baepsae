@@ -12,11 +12,16 @@
 //               첫 화면 성적표(한국어)에서는 '적자이거나 재무 데이터가 아직 없어요.' 자리에. 그런 회사에는 위의 두 줄이 없어요.
 //   UnitChkLine 공시 단위 확인에 걸린 한국 회사(corp.json unitChk, repair.js unitHeld — Jack 2026-11-13): 재무제표로 만든 숫자가 비어요.
 //               StmtCurLine 과 같은 자리에 한 번 (한국어만 · 영어 글은 승인되지 않아 영어 성적표에는 줄이 없어요). 위의 두 줄도 없어요.
+//   PxBadLine   과거 주가 기록 오류 (data.json · corp.json pxBad, repair.js pxBad — Jack 2026-11-14): 주가 기록으로 만든 숫자(52주 · 베타 ·
+//               변동성 · 수익률 · 낙폭 · 모멘텀 · 저변동 점수)가 비어요. 화면마다 한 번: 기업분석 머리의 베타 줄 자리, 기업 비교 표 밑, 포트폴리오
+//               종목 고르기에서 펼친 종목의 52주 막대 자리 (한국어만 · 영어 글은 승인되지 않아 영어 화면에는 줄이 없어요).
+//               2026-11-14 저녁 (Jack): 52주까지 비운 종목만 (움직임이 252봉 안). 움직임이 그보다 오래된 종목은 52주가 보이고, 비운 숫자마다
+//               그 자리에 PxBadOneLine "과거 주가 기록 일부에 오류가 있어서 이 숫자는 비워 두었어요." (repair.js pxBadFull · pxBadHides).
 // 글자는 12px 이에요 (2.0 의 12px 바닥과 같게).
 import React, { useEffect, useState } from "react";
 import { C } from "./tokens.js";
 import { mdOf, kstDate, loadCorpOnce } from "./data.js";
-import { EPS_FIX_DATE, epsBasisLive, epsFixNeeded, epsInFixed, epsTotalNci, epsTotalNeeded, epsTotalSide, icrOff, warnEpsFixLate, stmtCurOf, stmtNotWon, warnStmtCur, unitHeld } from "./repair.js";
+import { EPS_FIX_DATE, epsBasisLive, epsFixNeeded, epsInFixed, epsTotalNci, epsTotalNeeded, epsTotalSide, icrOff, warnEpsFixLate, stmtCurOf, stmtNotWon, warnStmtCur, unitHeld, pxBad, pxBadFull, pxBadHides } from "./repair.js";
 
 export { icrOff };
 export const FIX_EPS = "PER과 EPS는 계산 방법을 고치는 중이라 {date}에 바뀔 수 있어요.";   // Jack 승인 2026-11-08 (DeepL 확인) — 2.0 fix.eps
@@ -29,6 +34,8 @@ export const FIX_STMT_CUR_EN = "This company files its statements in {currency},
 // 승인되지 않아 영어 화면에는 없어요. 다시 읽은 뒤에는 PER · EPS 줄이 어느 회사에도 없어요 (날짜가 지났어요).
 export const FIX_TOTAL = "이 회사는 지배주주 몫 순이익을 따로 공시하지 않아, PER과 EPS를 회사 전체 순이익으로 계산했어요.";   // Jack 승인 2026-11-08 (전달) — 2.0 fix.total
 export const FIX_UNIT = "공시 자료의 단위를 확인하고 있어서 이 숫자를 잠시 비워 두었어요.";   // Jack 승인 2026-11-13 — 2.0 co.unitChk (한국어만)
+export const FIX_PX_BAD = "과거 주가 기록 일부에 오류가 있어서 52주 범위와 출렁임·위험 숫자는 비워 두었어요.";   // Jack 승인 2026-11-14 — 2.0 co.pxBad (한국어만)
+export const FIX_PX_BAD_ONE = "과거 주가 기록 일부에 오류가 있어서 이 숫자는 비워 두었어요.";   // Jack 승인 2026-11-14 저녁 — 2.0 co.pxBadOne (한국어만)
 // "11월 10일" · 영어 화면 "Nov 10" (data.js mdOf: 예전 뱁새의 월 · 일 표시). 날짜를 못 만들면 null (빈 자리가 있는 줄은 보이지 않아요)
 export function fixEpsText(lang = "ko") {
   const en = lang === "en";
@@ -119,6 +126,16 @@ export function stmtCurLineText(c, lang = "ko") {
 // 공시 단위 확인 (Jack, 2026-11-13): c 는 corp.json 의 그 회사 줄. 기업분석은 한국어 화면이라 lang 이 없어요.
 export function UnitChkLine({ c, style }) {
   return unitHeld(c) ? <div data-fix="unit-chk" style={{ ...LINE, ...style }}>{FIX_UNIT}</div> : null;
+}
+// 과거 주가 기록 오류 (Jack, 2026-11-14): c 는 corp.json 의 그 회사 줄 또는 data.json 의 그 종목 (repair.js pxBad). 한국어 화면에서만 (lang 이
+// "en" 이면 줄 없이 — 영어 글은 승인되지 않았어요).
+export function PxBadLine({ c, style, lang = "ko" }) {
+  return pxBadFull(c) && lang !== "en" ? <div data-fix="px-bad" style={{ ...LINE, ...style }}>{FIX_PX_BAD}</div> : null;
+}
+// 2026-11-14 저녁 (Jack): 52주는 보이고 field(예: "beta" · "r36") 가 비었을 때, 그 숫자 자리에 한 번 (한국어 화면만).
+export function PxBadOneLine({ c, field, style, lang = "ko" }) {
+  return pxBad(c) && !pxBadFull(c) && pxBadHides(c, field) && lang !== "en"
+    ? <div data-fix="px-bad-one" style={{ ...LINE, ...style }}>{FIX_PX_BAD_ONE}</div> : null;
 }
 // 리뷰 #118 N7: 공시 단위 확인에 걸린 회사(unitChk)면 통화 줄 대신 단위 줄(UnitChkLine)만 — 두 줄을 겹쳐 보이지 않아요.
 export function StmtCurLine({ c, style }) {

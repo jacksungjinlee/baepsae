@@ -23,7 +23,7 @@ import { heldQty, byAmount, importedUnits } from "./held.js";
 import { ledger } from "./lots.js";
 import { dayState } from "./rules.js";
 import { warnings } from "./warn.js";
-import { icrOffShown, stmtCurFor, unitHeldFor } from "./fix.js";
+import { icrOffShown, stmtCurFor, unitHeldFor, stmtNotWonFor } from "./fix.js";
 
 export const LIMITS = { stock: 30, ind: 35 };          // Part G defaults (%), editable per portfolio (store.js limits)
 export const LOOSE_TOP = 50;                            // 넉넉하게 has no cut: the grouping and the 내 기준 rule use 50%
@@ -238,20 +238,30 @@ export function pfState(deck, ctx, stocks) {
   // check holds (unitChk): the currency is not why its numbers are blank (review #118 N7/N-b, the same precedence as the
   // company page); another holding's currency still shows. unit (Jack 2026-11-13 Q14): such a holding gets his approved line
   // (fixnote.jsx UnitChkLine), above the currency line.
+  // noData (Jack, 2026-11-14): an unknown Korean company whose checks (some or all) could not run for lack of input (corp.json
+  // flRan lists fewer than the checks that apply) — not one switched off (icrOff), held by the unit check or with statements not
+  // in won (each has its own line): the tile says "필요한 자료가 없어서 확인하지 못했어요." (co.warn.noData). US stocks, funds
+  // and a file without flRan are not this case.
   const flagged = [], unknown = [];
-  let offN = 0, cur = null, unitN = 0;
+  let offN = 0, cur = null, unitN = 0, noDataN = 0;
   for (const r of view.rows) {
     const co = r.t && ctx.coByT ? ctx.coByT.get(r.t) || null : null;
     const w = warnOf(r.s, co);
     if (w === "flag") flagged.push(r.nk);
     else if (w === "unknown") {
       unknown.push(r.nk);
-      if (r.s && r.s.cls === "kr" && icrOffShown(co)) offN += 1;
+      const off = r.s && r.s.cls === "kr" && icrOffShown(co);
+      if (off) offN += 1;
       if (unitHeldFor(r.s, co)) unitN += 1;
       else if (!cur) cur = stmtCurFor(r.s, co);
+      if (!off && !unitHeldFor(r.s, co) && !stmtNotWonFor(r.s, co) && r.s && r.s.etf !== true && !r.s.fund) {
+        const ww = warnings(r.s, co);
+        if (Array.isArray(ww.unchecked) && ww.unchecked.length) noDataN += 1;
+      }
     }
   }
-  rules.push({ id: "warn", state: flagged.length ? "broken" : unknown.length ? "unknown" : "ok", flagged, unknown, icrOff: offN > 0, stmtCur: cur, unit: unitN > 0 });
+  rules.push({ id: "warn", state: flagged.length ? "broken" : unknown.length ? "unknown" : "ok", flagged, unknown, icrOff: offN > 0, stmtCur: cur, unit: unitN > 0,
+    noData: noDataN > 0 });
   const kept = rules.filter((x) => x.state === "ok").length;
   const checked = rules.filter((x) => x.state !== "unknown").length;
   return { ok: true, pxDate: ctx.pxDate || null, view, stats, ind, rules, kept, checked, unchecked: rules.length - checked,

@@ -15,6 +15,9 @@
 // board's coloured edge; the "재무 경고 신호는 없어요" card lists one chip per check that ran and passed (never one for a
 // check that did not run); a rise day reads as one ("…개가 올랐어요"); the holding card says "내 포트폴리오의 {x}%" when one
 // portfolio holds the stock (가진 종목 넣기 portfolios count too); the US header lines wait behind cofmt.js US_HEAD2.
+// 과거 주가 기록 오류 (Jack, 2026-11-14): a Korean stock whose price-history numbers were blanked (data.json · corp.json pxBad) has
+// no 52주 bar: the header carries Jack's line in its place (fixnote.jsx PxBadNote), once on the page, on every tab; the 출렁임 tile
+// reads "–" under its label (never 자료가 없어요); 내 기준's 낮은 변동성 · 추세 rows read "–" (their scores are blank).
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, TOPIC_ART } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
@@ -23,7 +26,7 @@ import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.
 import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, CardPic, SIDE_W, tx, tap, useMode, useLayout } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { findCompany, groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, warnings, cardRanks, myCards, holdingsOf, RANK_CARDS,
-  splitGuardCount, SPLIT_GUARD, divCheckCount, warnChips } from "./company.js";
+  splitGuardCount, SPLIT_GUARD, divCheckCount, warnChips, warnKind, uncheckedCount, divShareHidden } from "./company.js";
 import { EarnBars, ValueScale, Coins, Waves } from "./coart.jsx";
 import { pfRows, isImported, limitsOf } from "./pf.js";
 import { limitPct } from "./pfview.jsx";
@@ -38,9 +41,9 @@ import { CO_TABS } from "./routes.js";
 import { isCompany } from "./stocklist.js";
 import { todayD1 } from "./engine.js";
 import { EarnTab, ValueTab, DivTab, DiscTab, ValueMore, EarnMore } from "./cotabs.jsx";
-import { icrOffShown, stmtNotWonFor, unitHeldFor, unitRowsBlank } from "./fix.js";
-import { IcrOffNote, IcrOffLine, StmtCurNote, FcurNote, PbrZeroNote, UnitChkNote } from "./fixnote.jsx";
-import { fcurRowsBlank, fcurBlank, fcurDyBlank, pbrZeroOf, pbrZeroRowsBlank } from "./fcur.js";
+import { icrOffShown, stmtNotWonFor, unitHeldFor, unitRowsBlank, pxBadFor, pxBadFullFor, pxBadRowsBlank } from "./fix.js";
+import { IcrOffNote, IcrOffLine, StmtCurNote, FcurNote, PbrZeroNote, FgnCutNote, UnitChkNote, NoStmtNote, PxBadNote, PxBadOneNote, pxBadOneText } from "./fixnote.jsx";
+import { fcurRowsBlank, fcurBlank, fcurDyBlank, pbrZeroOf, pbrZeroRowsBlank, fgnBlank, fgnRowsBlank } from "./fcur.js";
 import { RecordButton, RecordFlow, companyFlow } from "./records.jsx";
 import { decksFor } from "./records.js";
 import { usOf, priceMd, priceDate, lineDate, closeLine, wonOfUsd, wonLineUsd, fxDateLine, US_HEAD2, timesText, pctText, yieldText, usGrowthText, riskBandText } from "./cofmt.js";
@@ -92,9 +95,11 @@ export function tileViews(load, s) {
   // US statements not in dollars (data.json fcur, #114 review): the 가치 and 배당 tiles stay, as "–" with their number's label
   // ("PBR –", "배당수익률 –") and no picture, date or verdict; Tiles puts them last and the reason line right under them.
   // A PBR that rounds to 0.00 (data.json pbrZero, Jack 2026-11-13): the 가치 tile the same way, rule "pbr0" and its own line.
+  // A foreign company's PBR or yield that did not match its own totals (data.json fgnCut, Jack 2026-11-14): rule "fgn", its line.
   const blankTile = (topic, label, rule = "fcur") => out.push({ topic, label: T().label[topic], phrase: "–", number: `${label} –`, rule, data: {}, basis: null, art: null });
   if (fcurBlank(s) && T().label.value) blankTile("value", "PBR");
   else if (pbrZeroOf(s) && T().label.value) blankTile("value", "PBR", "pbr0");
+  else if (fgnBlank(s, "pbr") && T().label.value) blankTile("value", "PBR", "fgn");
   else {
     const r = valueTile(s, group);
     const number = r.med != null && T().pbr ? fill(T().pbr, { x: nf(r.pbr, 2), y: nf(r.med, 2) }) : r.pbr != null ? `PBR ${timesText(r.pbr, 2)}` : null;
@@ -102,14 +107,30 @@ export function tileViews(load, s) {
       r.med != null ? { kind: "scale", pbr: r.pbr, med: r.med, ends: !!(number && T().pbr && number === fill(T().pbr, { x: nf(r.pbr, 2), y: nf(r.med, 2) })) } : null);
   }
   if (fcurDyBlank(s) && T().label.div && C.pick.receipt.yield) blankTile("div", C.pick.receipt.yield);
+  else if (fgnBlank(s, "dy") && T().label.div && C.pick.receipt.yield) blankTile("div", C.pick.receipt.yield, "fgn");
   else {
     const r = usOf(s) ? divUs(s) : divKr(s, co);
     const phrase = r.rule === "na" ? na : r.rule === "streak" ? fill(T().div.streak, { n: r.n }) : T().div[r.rule];
     const number = r.yieldPct != null ? `${C.pick.receipt.yield} ${yieldText(r.yieldPct)}` : null;
     add("div", T().label.div, r, phrase, number, { dps3: r.d3 || null, dps: r.dps ?? null, y: r.yieldPct, dpsok: r.dpsOk ? "1" : "" },
       divArt(r.rule));
+    // v19.1i (Jack's line, 2026-11-08): a Korean payer whose yield is hidden because its share count changed and no filing at all
+    // explains it (the pipeline marks it dvLine = 1) says why, in the number's place (company.js divShareHidden); other hidden
+    // yields stay as they were.
+    const last = out[out.length - 1];
+    if (last && last.topic === "div" && !number && !usOf(s) && divShareHidden(s, co) && C.co.div.shareHidden) {
+      last.note = C.co.div.shareHidden;
+      last.noteUi = "div-share-hidden";
+    }
   }
-  {
+  if (pxBadFor(s, co) && T().label.risk) {
+    // 과거 주가 기록 오류 (data.json pxBad, Jack 2026-11-14): the beta and its band were blanked (a broken price history), so the
+    // tile is held at "–" under its label, with no picture, number or date; never 자료가 없어요, which is not why. The reason is the
+    // header's line (PxBadNote, in the 52주 bar's place), once on the page. 2026-11-14 evening (Jack): when the 52주 range shows (a bad day
+    // over 252 bars back), the short line sits in the tile instead, in the number's place (note).
+    out.push({ topic: "risk", label: T().label.risk, phrase: "–", number: null, rule: "pxbad", data: {}, basis: null, art: null,
+      note: pxBadOneText(s, co, "beta") });
+  } else {
     // v19.1b data: the beta band as the number ("코스피 1% → 평균 0.9~1.1%"); no band -> na. Older files: the phrase only
     // (no betaSE in the data), never a bare beta.
     const r = riskTile(s);
@@ -151,6 +172,7 @@ function Tile({ v, onOpen }) {
       <div data-ui-v2="tile-phrase" style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(3), lineHeight: 1.35 })}>{v.phrase}</div>
       <TileArt art={v.art} />
       {v.number && <div data-ui-v2="tile-number" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{v.number}</div>}
+      {v.note && <div data-ui-v2={v.noteUi || "px-bad-one"} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1), wordBreak: "keep-all" })}>{v.note}</div>}
       {v.basis && <div data-ui-v2="tile-basis" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: 2 })}>{v.basis}</div>}
     </>
   );
@@ -193,9 +215,9 @@ const AMOUNT_TILES = ["earn", "value"];
 // US statements not in dollars (data.json fcur, #114 review): the 가치 and 배당 tiles show "–" with their label (tileViews
 // rule "fcur"); they go last (실적 · 출렁임, then 가치 · 배당), so the reason line sits right under them, once. Keyed on the
 // data: the same tiles while the currency's name waits for Jack, only without the line.
-// The tiles in screen order: tiles held at "–" (rule fcur · pbr0) after the others, each group in its own order. (pure; tests)
+// The tiles in screen order: tiles held at "–" (rule fcur · pbr0 · fgn) after the others, each group in its own order. (pure; tests)
 export function orderTiles(views) {
-  const held = (x) => x.rule === "fcur" || x.rule === "pbr0";
+  const held = (x) => x.rule === "fcur" || x.rule === "pbr0" || x.rule === "fgn";
   return [...views.filter((x) => !held(x)), ...views.filter(held)];
 }
 function Tiles({ load, s, onTab, tabsOn }) {
@@ -212,6 +234,8 @@ function Tiles({ load, s, onTab, tabsOn }) {
       <UnitChkNote s={s} co={load.coByT.get(s.t) || null} style={{ margin: `0 ${SPACE(1)}px ${SPACE(2)}px` }} />
       {/* statements not in won (corp.json stmtCur): the 실적 · 가치 tiles have no numbers; the reason once, before them */}
       <StmtCurNote s={s} co={load.coByT.get(s.t) || null} style={{ margin: `0 ${SPACE(1)}px ${SPACE(2)}px` }} />
+      {/* no statements at all (fix.js noStmtFor, Jack 2026-11-14): why 실적 · 가치 · 배당 say 자료가 없어요, once before them */}
+      <NoStmtNote s={s} co={load.coByT.get(s.t) || null} style={{ margin: `0 ${SPACE(1)}px ${SPACE(2)}px` }} />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: SPACE(3) }}>
         {views.map((v) => <Tile key={v.topic} v={v} onOpen={tabsOn ? () => onTab(tabOf[v.topic]) : undefined} />)}
       </div>
@@ -219,6 +243,8 @@ function Tiles({ load, s, onTab, tabsOn }) {
       {views.some((v) => v.rule === "fcur") && <FcurNote s={s} style={{ margin: `${SPACE(2)}px ${SPACE(1)}px 0` }} />}
       {/* a PBR that rounds to 0.00 (data.json pbrZero): its own line, right under the 가치 tile showing – */}
       {views.some((v) => v.rule === "pbr0") && <PbrZeroNote s={s} style={{ margin: `${SPACE(2)}px ${SPACE(1)}px 0` }} />}
+      {/* a foreign company's PBR or yield that did not match its own totals (data.json fgnCut): the line once, under those tiles */}
+      {views.some((v) => v.rule === "fgn") && <FgnCutNote s={s} fields={["pbr", "dy"]} style={{ margin: `${SPACE(2)}px ${SPACE(1)}px 0` }} />}
       {src && <div data-ui-v2="co-tiles-source" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(2), padding: `0 ${SPACE(1)}px` })}>{src}</div>}
     </section>
   );
@@ -267,7 +293,8 @@ function Header({ load, s }) {
       {/* The rate's own date (cofmt.fxDateLine): always without US_HEAD2; with it, whenever the rate is from another day than
           the price date in the header, so the won line never reads as that day's rate */}
       {won && fxDateLine(load, s) && <div data-ui-v2="co-fx" data-fx-date={load.data.fxDate} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3)}>{fxDateLine(load, s)}</div>}
-      <RangeBar s={s} />
+      {/* 과거 주가 기록 오류 (data.json pxBad, Jack 2026-11-14): no 52주 bar; Jack's line in its place, once on the page (every tab) */}
+      {pxBadFullFor(s, load.coByT.get(s.t) || null) ? <PxBadNote s={s} co={load.coByT.get(s.t) || null} style={{ marginTop: SPACE(3) }} /> : <RangeBar s={s} />}
     </section>
   );
 }
@@ -348,6 +375,22 @@ function Warnings({ load, s, wide }) {
   // (no '없어요' head: the existing rule allows "확인한 …" only for flWhy.icr "ie"). Goes by itself when flWhy.icr changes.
   const off = s.cls === "kr" && icrOffShown(load.coByT.get(s.t) || null);
   if (!w.flags.length) {
+    // 2026-11-14 (Jack): no check could run (corp.json flRan []: no statements yet (KONEX, new listings), 우선주, statements
+    // not in won (the currency line above the tiles says why)). Its own state, never '…없어요': the 재무 경고 chip's word
+    // (rank.warn) as the heading and Jack's line under it, "필요한 자료가 없어서 확인하지 못했어요." (co.warn.noData; it replaced this
+    // PR's placeholder pfr.unknown). Not for funds (no statements to check) or a file without flRan (nothing known).
+    if (warnKind(s, w) === "unchecked" && all(C.rank.warn, W.noData)) {
+      return (
+        <Card data-ui-v2="co-warn-unchecked" style={{ display: "flex", gap: SPACE(3), alignItems: "center", padding: SPACE(4) }}>
+          <IconChip name="info" size={32} tone="risk" />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{C.rank.warn}</div>
+            {/* Jack, 2026-11-14: the reason, under it (우선주 too) */}
+            <div data-ui-v2="co-warn-nodata" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2 })}>{W.noData}</div>
+          </div>
+        </Card>
+      );
+    }
     if (!w.allRan && !w.partial && off && C.fix.icr) {
       // The line alone, no chips: v19.3e shows chips only when every check ran ("확인이 덜 돌면 카드도 칩도 없음"), and
       // 이자보상배율 did not run.
@@ -358,21 +401,28 @@ function Warnings({ load, s, wide }) {
         </Card>
       );
     }
-    if (!w.allRan && !w.partial) return null;  // no flag, but not every check is known to have run: nothing is claimed
+    // Jack, 2026-11-14: some checks ran and found nothing while the rest had no input (기아: 자본잠식). The closest approved
+    // line, "확인한 재무 경고 신호는 없어요", with the ✓ chips of the checks that ran and Jack's count line for the others
+    // (co.warn.uncheckedN). Never the plain "…없어요" (that needs every check).
+    const some = warnKind(s, w) === "some";            // some ran with nothing found, at least one ✓ chip to show (company.js)
+    if (!w.allRan && !w.partial && !some) return null;  // no flag, no check known to have run or no ✓ to show: nothing is claimed
     // partial (Jack, PR #68 B7): 이자보상배율 alone could not be checked, for want of an interest line -> "확인한 …" + why
-    const head = w.partial ? W.nonePartial : W.none;
-    const subText = w.partial ? W.noneSubNoIcr : (w.sub === "fin" && W.noneSubFin) || (w.sub === "holding" && W.noneSubHolding) || W.noneSub;
-    if (!all(head, subText)) return <span data-ui-v2="co-warn" data-pending="1" hidden />;
+    const head = w.partial || some ? W.nonePartial : W.none;
+    const subText = some ? null : w.partial ? W.noneSubNoIcr : (w.sub === "fin" && W.noneSubFin) || (w.sub === "holding" && W.noneSubHolding) || W.noneSub;
+    if (!head || (!some && !subText)) return <span data-ui-v2="co-warn" data-pending="1" hidden />;
     // v19.3e (Part I): one chip per check that ran and passed (company.warnChips: flRan, no flag); a check that did not run
     // or does not apply (flNa) gets none, never a ✓.
     const chips = warnChips(w).filter((c) => W.chips && W.chips[c]);
+    const cnt = uncheckedCount(w, off) && W.uncheckedN ? fill(W.uncheckedN, { k: uncheckedCount(w, off) }) : null;
     return (
-      <Card data-ui-v2="co-warn" data-n="0" data-partial={w.partial ? "1" : undefined} style={{ padding: SPACE(4) }}>
+      <Card data-ui-v2="co-warn" data-n="0" data-partial={w.partial ? "1" : some ? "some" : undefined} style={{ padding: SPACE(4) }}>
         <div style={{ display: "flex", gap: SPACE(3), alignItems: "flex-start" }}>
           <IconChip name="shield-check" size={32} tone="risk" />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{head}</div>
-            <div data-ui-v2="co-warn-sub" data-sub={w.partial ? "noIcr" : w.sub || ""} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2 })}>{subText}</div>
+            {subText && <div data-ui-v2="co-warn-sub" data-sub={w.partial ? "noIcr" : w.sub || ""} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2 })}>{subText}</div>}
+            {/* Jack, 2026-11-14: how many checks could not run, under "확인한 …" (its own line, not PR #68's sub-line) */}
+            {some && cnt && <div data-ui-v2="co-warn-count" data-k={uncheckedCount(w, off)} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: 2 })}>{cnt}</div>}
             {warnSource(w) && <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(1) })}>{warnSource(w)}</div>}
           </div>
         </div>
@@ -384,6 +434,13 @@ function Warnings({ load, s, wide }) {
   if (!W.count || texts.some((x) => !x)) return <span data-ui-v2="co-warn" data-pending="1" hidden />;
   // Jack, PR #68 (2026-11-07): under the 이자보상배율 warning, say when it used the cash-flow statement's interest paid
   const cfNote = (code) => code === "icr" && w.icrCf && W.icrCfNote ? W.icrCfNote : null;
+  // 2026-11-14 (Jack): the count must not read as all four checks when one did not run. When 이자보상배율 alone could not run
+  // for want of an interest line (warn.js icrIe: flWhy.icr "ie", the other three ran), the approved PR #68 line says which and
+  // why, under the first warning and under the list.
+  const noIcr = w.icrIe && W.noneSubNoIcr ? W.noneSubNoIcr : null;
+  // Jack, 2026-11-14: any other check that could not run -> "4가지 중 {k}가지는 필요한 자료가 없어서 확인하지 못했어요." in the same
+  // two places (never both lines: company.js uncheckedCount is 0 where noIcr goes or the off line explains it)
+  const cnt = uncheckedCount(w, off) && W.uncheckedN ? fill(W.uncheckedN, { k: uncheckedCount(w, off) }) : null;
   return (
     <>
       <button type="button" data-ui-v2="co-warn" data-n={w.flags.length} onClick={() => setOpen(true)} aria-haspopup="dialog"
@@ -394,6 +451,8 @@ function Warnings({ load, s, wide }) {
           <span style={tx(SIZE.sm, WEIGHT.heavy, COLOR.watch, { display: "block" })}>{fill(W.count, { n: w.flags.length })}</span>
           <span style={tx(SIZE.xs, WEIGHT.semi, COLOR.ink, { display: "block" })}>{texts[0]}</span>
           {cfNote(w.flags[0].code) && <span data-ui-v2="co-warn-cf" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2 })}>{cfNote(w.flags[0].code)}</span>}
+          {noIcr && <span data-ui-v2="co-warn-noicr" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2 })}>{noIcr}</span>}
+          {cnt && <span data-ui-v2="co-warn-count" data-k={uncheckedCount(w, off)} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2 })}>{cnt}</span>}
           <IcrOffLine show={off} />
         </span>
         <Icon name="chevronRight" size={18} tone="on" />
@@ -411,6 +470,8 @@ function Warnings({ load, s, wide }) {
             </div>
           ))}
           <IcrOffNote show={off} />
+          {noIcr && <p data-ui-v2="co-warn-noicr" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(2) })}>{noIcr}</p>}
+          {cnt && <p data-ui-v2="co-warn-count" data-k={uncheckedCount(w, off)} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(2) })}>{cnt}</p>}
           {warnSource(w) && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { marginTop: SPACE(2) })}>{warnSource(w)}</p>}
         </div>
       </BottomSheet>
@@ -478,7 +539,10 @@ function Fit({ load, s, store, wide }) {
       {/* a 가치 or 배당 row with no rank because its number was not computed (data.json fcur): the reason once, under the rows */}
       {fcurRowsBlank(s, mine.ids.map((id) => m.get(id))) && <FcurNote s={s} />}
       {pbrZeroRowsBlank(s, mine.ids.map((id) => m.get(id))) && <PbrZeroNote s={s} />}
+      {fgnRowsBlank(s, mine.ids.map((id) => m.get(id))) && <FgnCutNote s={s} fields={["pbr", "dy"]} />}
       {unitRowsBlank(s, co, mine.ids.map((id) => m.get(id))) && <UnitChkNote s={s} co={co} />}
+      {/* 2026-11-14 evening (Jack): a 낮은 변동성 · 추세 row blank because of an old bad day (the 52주 range shows): the short line, once */}
+      {pxBadRowsBlank(s, co, mine.ids.map((id) => m.get(id))) && <PxBadOneNote s={s} co={co} field={["lz", "mz"].find((k) => pxBadOneText(s, co, k))} />}
       {(note || where(mk, "market")) && <Note>{[note, where(mk, "market")].filter(Boolean).map((x, i) => <span key={i}>{i ? " " : ""}{x}</span>)}</Note>}
       {F.all && F.sheet && (
         <div style={{ marginTop: SPACE(3) }}>
@@ -491,7 +555,9 @@ function Fit({ load, s, store, wide }) {
           <div style={{ marginTop: SPACE(2) }}>{RANK_CARDS.map((id) => <RankRow key={id} id={id} r={cm.get(id)} mine={mine.picked && mine.ids.includes(id)} basis />)}</div>
           {fcurRowsBlank(s, cur.rows) && <FcurNote s={s} />}
           {pbrZeroRowsBlank(s, cur.rows) && <PbrZeroNote s={s} />}
+          {fgnRowsBlank(s, cur.rows) && <FgnCutNote s={s} fields={["pbr", "dy"]} />}
           {unitRowsBlank(s, co, cur.rows) && <UnitChkNote s={s} co={co} />}
+          {pxBadRowsBlank(s, co, cur.rows) && <PxBadOneNote s={s} co={co} field={["lz", "mz"].find((k) => pxBadOneText(s, co, k))} />}
           {where(cur, cur === ind ? "ind" : "market") && <Note>{where(cur, cur === ind ? "ind" : "market")}</Note>}
           {lineDate(load, s) && <DateLine date={lineDate(load, s)} fresh={load.fresh} />}
         </div>

@@ -1,0 +1,138 @@
+{
+ "_note": "재무 경고 · 재무제표 없음 시험용: 2026-11-14 발행(11월 13일 종가)의 실제 줄 그대로 (tests/test_fin_warn_lines.py, Jack 2026-11-14)",
+ "stocks": [
+  {
+   "t": "496320",
+   "nk": "본시스템즈",
+   "ne": "본시스템즈",
+   "cls": "kr",
+   "s": "machine",
+   "price": 1176000.0,
+   "vol": 66.7,
+   "beta": 0.02,
+   "betaSE": 0.0741,
+   "betaN": 287,
+   "cap": 1.195,
+   "val": 0.0,
+   "lo": 21000.0,
+   "hi": 1176000.0,
+   "d1": 0.0,
+   "val20": 0.0,
+   "etf": false,
+   "shr": 1015973,
+   "r1": 0.0,
+   "r3": 15.0,
+   "mdd": 0.0,
+   "hit": 57,
+   "mom": 5500.0,
+   "dk": "특수 목적용 기계 제조업 · 주요제품: 감속기 등 로봇부품 · KONEX 상장 · 시가총액 1.2조원",
+   "dps": 0.0,
+   "dps3": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "dy": 0.0,
+   "fy": 2024,
+   "dps3a": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "dpsF": [
+    null,
+    null,
+    null
+   ],
+   "divSt": "zero",
+   "dyt": 0.0,
+   "ind": "robot",
+   "indName": "로봇",
+   "pz": 11,
+   "mz": 100,
+   "lz": 30,
+   "dz": 25
+  }
+ ],
+ "companies": [
+  {
+   "t": "496320",
+   "nk": "본시스템즈",
+   "s": "machine",
+   "price": 1176000.0,
+   "cap": 1.195,
+   "per": null,
+   "pbr": null,
+   "eps": null,
+   "bps": null,
+   "dy": 0.0,
+   "dps": 0.0,
+   "fy": 2024,
+   "roe": null,
+   "opm": null,
+   "g3": null,
+   "debt": null,
+   "beta": 0.02,
+   "vol": 66.7,
+   "lo": 21000.0,
+   "hi": 1176000.0,
+   "rev": [
+    null,
+    null,
+    null
+   ],
+   "op": [
+    null,
+    null,
+    null
+   ],
+   "ni": [
+    null,
+    null,
+    null
+   ],
+   "eq": null,
+   "shm": 1.02,
+   "r1": 0.0,
+   "r3": 15.0,
+   "r36": null,
+   "dps3": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "pz": 11,
+   "vz": null,
+   "mz": 100,
+   "qz": null,
+   "lz": 30,
+   "sh": null,
+   "mdd": 0.0,
+   "flRan": [],
+   "flWhy": {
+    "icr": "op"
+   },
+   "dps3a": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "dpsF": [
+    null,
+    null,
+    null
+   ],
+   "divSt": "zero",
+   "dyt": 0.0,
+   "dz": 25,
+   "betaSE": 0.0741,
+   "betaN": 287,
+   "cash3": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "dcfReady": false
+  }
+ ]
+}

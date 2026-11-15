@@ -3,7 +3,7 @@
 // whole app reads that one way: load.js resolveLoad calls setEpsBasis(corp) once per load (the way engine.setDataShape
 // works), so a screen that only has a held stock (daily.jsx) knows it too. Until a file is loaded the line is on (a fix is
 // never assumed). Pure; no Korean (src/copy/v2.js C.fix).
-import { EPS_FIX_DATE, epsBasisLive, epsInFixed, epsTotalNci, epsTotalSide, isForeignIssuer, icrOff, warnEpsFixLate, epsNoticeOn, stmtCurOf, stmtNotWon, warnStmtCur, unitHeld } from "../repair.js";
+import { EPS_FIX_DATE, epsBasisLive, epsInFixed, epsTotalNci, epsTotalSide, isForeignIssuer, icrOff, warnEpsFixLate, epsNoticeOn, stmtCurOf, stmtNotWon, warnStmtCur, unitHeld, pxBad, pxBadFull, pxBadHides } from "../repair.js";
 import { kstDate } from "../data.js";
 
 export { EPS_FIX_DATE, icrOff };
@@ -60,6 +60,24 @@ export const UNIT_CARDS = ["value", "profit", "stable", "growth"];
 // A section of 내 기준과 맞는 정도 shows the line when one of its rows is blank because of this. rows: company.cardRanks(...).rows.
 export const unitRowsBlank = (s, co, rows) => unitHeldFor(s, co) && (rows || []).some((r) => r && UNIT_CARDS.includes(r.id) && r.blank);
 
+// 과거 주가 기록 오류 (Jack, 2026-11-14; repair.js pxBad): a Korean stock whose price-history numbers the pipeline blanked
+// (data.json or corp.json pxBad: 52주 최고 · 최저, 변동성, 베타, 수익률, 낙폭 and the 추세 · 저변동 scores). Decides where the line
+// "과거 주가 기록 일부에 오류가 있어서 52주 범위와 출렁임·위험 숫자는 비워 두었어요." goes (once per screen: the company page header,
+// where the 52주 bar would be) and which parts with no numbers are left out or held at "–" (the 출렁임 tile and card, 주가는
+// 무엇으로 움직였나). s: the data.json row · co: its corp.json row (either may be missing). US stocks and funds: never.
+export const pxBadFor = (s, co) => !!s && s.cls === "kr" && (pxBad(s) || pxBad(co));
+// 2026-11-14 evening (Jack): which numbers were blanked (data.json pxBadF, else corp.json's): only those whose calculation window holds
+// the bad day. Full = the 52주 range too (the full line in the header); otherwise each blanked number gets the short line in its place.
+const pxRow = (s, co) => (pxBad(s) ? s : co);
+export const pxBadFullFor = (s, co) => pxBadFor(s, co) && pxBadFull(pxRow(s, co));
+export const pxBadPartFor = (s, co) => pxBadFor(s, co) && !pxBadFull(pxRow(s, co));
+export const pxBadHidesFor = (s, co, k) => pxBadFor(s, co) && pxBadHides(pxRow(s, co), k);
+// 내 기준과 맞는 정도: a 낮은 변동성 (lz) or 추세 (mz) row left blank by the mark, on a stock whose 52주 range shows (the short line under the
+// rows). rows: company.cardRanks(...).rows.
+export const PX_CARD_FIELD = { lowVol: "lz", trend: "mz" };
+export const pxBadRowsBlank = (s, co, rows) => pxBadPartFor(s, co)
+  && (rows || []).some((r) => r && r.blank && PX_CARD_FIELD[r.id] && pxBadHidesFor(s, co, PX_CARD_FIELD[r.id]));
+
 // The week's notice on 홈 and 포트폴리오 (repair.js epsNoticeOn): read from the load on screen (its corp.json), never on the
 // example page. load: the load state · todayIso: today in KST.
 export const epsNoticeShown = (load, todayIso) => !hidden && !!load && load.status === "ok" && !load.preview && epsNoticeOn(load.corp, todayIso);
@@ -72,4 +90,18 @@ export function stmtCurFor(s, co) {
   if (!s || s.cls !== "kr" || !co) return null;
   warnStmtCur(co, "v2");
   return stmtCurOf(co);
+}
+
+// A Korean company with no 사업보고서 at all in our data (Jack, 2026-11-14; say-why rows 15–17): its corp.json row has every
+// 매출 · 영업이익 · 순이익 year blank AND no report year (corp.json fy and data.json fy both missing: new listings). Not a
+// KONEX/K-GAAP filer with a report year (final review 2026-11-14: they did file a 사업보고서, DART just has no XBRL for it, and
+// their tiles say "2024년 사업보고서 기준" — "공시된 재무제표가 아직 없어서" would be untrue there). Not 우선주 (DART lists only the common share;
+// they get their own line in the 우선주 task), not foreign issuers (9xxxxx: statements in another currency), not statements not
+// in won or the unit check (their own lines), not funds. Decides where "공시된 재무제표가 아직 없어서 계산할 수 없어요." goes.
+const allBlank = (a) => !Array.isArray(a) || a.every((v) => v == null);
+export function noStmtFor(s, co) {
+  if (!s || s.cls !== "kr" || !co || s.etf === true || s.fund || typeof s.t !== "string" || !s.t.endsWith("0") || isForeignIssuer(s.t)) return false;
+  if (stmtNotWon(co) || unitHeld(co) || unitHeld(s)) return false;
+  if (co.fy != null || s.fy != null) return false;              // a report year: a 사업보고서 was filed
+  return allBlank(co.rev) && allBlank(co.op) && allBlank(co.ni);
 }

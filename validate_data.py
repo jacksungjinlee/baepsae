@@ -111,6 +111,40 @@ PIN_REF_TOL = 0.30       # 기준가로 같은 기준임을 확인한 날 (주�
 KR_DAY_LIMIT = D1_MAX_KR  # 한국 하루 가격 제한폭 (%) — 코스피 · 코스닥 (d1 줄과 같은 값 · 따로 바뀌지 않게)
 KONEX_DAY_LIMIT = 15.0   # 코넥스 하루 가격 제한폭 (%)
 KR_JUMP_WHY = {"pin": "우리 고정이 만든 움직임", "halt": "거래정지 뒤 재개", "spike": "하루만 튄 봉", "other": "그 밖"}
+# 2026-11-14 (Jack, Q2 (a) "this week" · 새 줄만, 늦추는 줄 없음): 하루 움직임이 가격 제한폭으로 설명되지 않는 종목(krSeries.jump)은 그 시계열로
+# 만든 숫자를 모두 비워요 — 파이프라인(fetch_data.mark_px_bad)이 이 목록을 읽어요. data.json: 52주 최고 · 최저, 변동성, 베타와 그 표준오차 ·
+# 쓴 날 수 · 알파, 1 · 3개월 · 3년 수익률, 1년 수익률(모멘텀), 샤프, 최대 낙폭, 상승 월 비율, 그리고 그 숫자로 매기는 추세(mz) · 저변동(lz) 점수.
+# corp.json: build_corp 가 data.json 에서 옮겨 싣는 같은 칸. 그 종목에는 pxBad (가장 최근 움직임 날짜)를 달고, krSeries.hidden 에 코드를 적어요.
+# 앱은 그 자리에 Jack 의 줄 "과거 주가 기록 일부에 오류가 있어서 52주 범위와 출렁임·위험 숫자는 비워 두었어요." (시계열을 고치는 일은 다음 PR).
+PX_BAD_DATA = ("hi", "lo", "vol", "beta", "betaSE", "betaN", "al", "r1", "r3", "r36", "mom", "sh", "mdd", "hit", "mz", "lz")
+# (pxBad 리뷰 S1: build_corp 는 betaSE · betaN 을 CORP_DIV_KEYS 로도 옮겨요 — 두 길 모두)
+PX_BAD_CORP = ("hi", "lo", "vol", "beta", "betaSE", "betaN", "r1", "r3", "r36", "sh", "mdd", "mz", "lz")
+PX_BAD_SHOW = 10         # 값 칸에 적는 문제 · 종목 수 (나머지는 수만 · 전체는 요약 목록에)
+# 2026-11-14 저녁 (Jack: "Old bad days: hide only the numbers whose calculation window includes the bad day"). 칸마다 계산 창 — fetch_data.fetch_korea ·
+# perf_stats 의 실제 계산 그대로, 봉 수로 (짐작하지 않아요):
+#   'y' 마지막 252봉: hi · lo (px.tail(252)) · mom (px[-1] ÷ px[-252], 252봉 넘을 때) · mz (mom 의 백분위)
+#   'q' 마지막 64봉: r3 (px[-1] ÷ px[-64])
+#   'm' 마지막 22봉: r1 (px[-1] ÷ px[-22])
+#   그 밖은 시계열 전체 (약 3년 + 40일, fetch_data.YEARS): vol · beta · betaSE · betaN · al (일별 수익률 전체) · r36 (px[0]) · sh · mdd · hit (시계열 전체) ·
+#   lz (vol 의 백분위). 움직임은 시계열 전체에서 찾으니 표시된 종목이면 이 칸들은 늘 비어요 (PX_BAD_ALWAYS).
+# 그 창 안에 움직임 날짜(krSeries.jump 의 날짜 — 움직임이 일어난 봉)가 하나라도 있으면 그 창의 칸을 비워요. 비운 칸은 종목의 pxBadF 에 적어요.
+PX_BAD_WIN = {"y": ("hi", "lo", "mom", "mz"), "q": ("r3",), "m": ("r1",)}
+PX_BAD_WIN_BARS = {"y": 252, "q": 64, "m": 22}
+PX_BAD_ALWAYS = tuple(k for k in PX_BAD_DATA if not any(k in v for v in PX_BAD_WIN.values()))
+# 관문의 달력 점검 (파이프라인은 봉으로 정확히 · 관문은 거래일 달력이 없어서): 기준일(pxDate)에서 이 일수 안의 움직임은 그 창 안에 있어요 — 거래일은
+# 한 주에 많아야 5일이라 251봉은 351일 · 63봉은 87일 · 21봉은 29일보다 짧을 수 없어요 (휴장일 · 네이버의 빈 날은 창을 더 길게만 해요). 그래서 이 안의
+# 움직임이면 그 창의 칸은 꼭 비어 있어야 해요. 반대쪽(오래된 움직임이면 보여야 함)은 달력으로 말할 수 없어요 (거래정지로 빈 날이 있으면 252봉이 더
+# 오래 거슬러 가요) — 대신 비우지 않은 52주는 있어야 해요.
+PX_BAD_WIN_IN = {"y": 340, "q": 85, "m": 28}
+# 필수 종목 (Jack, 2026-11-14 저녁: "warn when one is affected; block the publish when two or more must-haves are affected"): 표시가 맞는(px_bad_valid)
+# 필수 종목이 하나면 '필수 종목 추세 · 저변동 순위' · '필수 종목 52주 최고·최저 (야후)' · '필수 종목 새 칸' 줄은 경고 (그 종목의 비운 칸만 넘겨요),
+# 이만큼이면 실패. 표시 없이 빠지면 예전처럼 늘 실패 (11-05 배당 순위와 같은 틀).
+PX_BAD_MUST_FAIL = 2
+# 한 실행에 새로 생긴 움직임 종목 (Jack, 2026-11-14 저녁: "or when many stocks newly break in one run"): 오늘 krSeries.jump 에 있고 직전 발행본의
+# jump 에는 없는 종목이 이만큼이면 실패. 근거: 2026-11-14 의 21개 움직임(18종목)은 지난 3년의 20개 날짜에 있고 한 날에 많아야 2종목
+# (2026-05-08 에이프로젠 · 에이프로젠바이오로직스, 같은 그룹의 감자) — 날마다 실행했다면 새로 생긴 종목은 0~2. 10 은 그 5배예요. 그보다 많으면 출처
+# (네이버 수정주가)나 우리 고정이 한꺼번에 깨졌을 수 있어요 (2026-11-13 의 고정 문제는 18종목을 한꺼번에 틀리게 했어요).
+PX_BAD_NEW_FAIL = 10
 US_D1_COVER = 98.0       # 미국 d1 채움 (%) — 아래면 실패 (Jack, 2026-11-07). 11-02 부터 매일 99.9~100%
 US_D1_SHOW = 10          # 표의 값 칸에 적는 빠진 종목 수 — 전부는 로그와 실행 요약에 따로 적어요
 VAL20_COVER = 95         # 국내 val20 채움 (%)
@@ -126,6 +160,18 @@ US_ETF_SET = {"SPY", "VOO", "QQQ", "SCHD", "VTI", "VT", "IVV", "DIA", "IWM", "SO
               "XLY", "XLP", "XLI", "TLT", "IEF", "SHY", "GLD", "IAU", "SLV", "JEPI", "JEPQ", "VYM", "ARKK", "MTUM", "QUAL",
               "VBR", "IVE", "SPHQ"}
 US_COMPANY_SET = {"BRK-B", "TSM", "ASML", "BABA", "NVO", "SHOP", "AAPL", "MSFT", "NVDA"}
+# 2026-11-14 (Jack, 2026-11-13 "Missing US stocks" · 더하기만): 손으로 더한 미국 회사 28곳 (fetch_data.EXTRA_US_ADDED 와 따로 적어요 · 테스트가 맞춰 봐요).
+# 모두 회사 주식이라 위 줄(ETF 여부)이 etf false 를 봐요. 아래 두 줄이 더 봐요: 손으로 더한 종목(US_EXTRA_SET)은 목록에 있거나 빠진 이유가 있어야 하고
+# (check_us_extra), 미국 상장 외국 회사(US_FOREIGN_SET)의 PER · PBR · 배당수익률은 파이프라인이 회사 합계와 맞춰 본 뒤에만 나가요 (check_us_foreign).
+US_ADDED_SET = {"BTI", "ADC", "NNN", "MAIN", "WPC", "STAG", "EPR", "OHI", "ENB", "BCE", "TD", "RY", "SHEL", "BP", "UL", "TM", "SONY",
+                "AZN", "HSBC", "SAP", "NVS", "RIO", "BHP", "TTE", "DEO", "BUD", "SAN", "GSK"}
+US_COMPANY_SET |= US_ADDED_SET
+US_EXTRA_SET = US_ETF_SET | {"BRK-B", "TSM", "ASML", "BABA", "NVO", "SHOP"} | US_ADDED_SET     # = fetch_data.EXTRA_US
+US_FOREIGN_SET = {"BTI", "ENB", "BCE", "TD", "RY", "SHEL", "BP", "UL", "TM", "SONY", "AZN", "HSBC", "SAP", "NVS", "RIO", "BHP", "TTE",
+                  "DEO", "BUD", "SAN", "GSK"}                                                     # = fetch_data.US_FOREIGN (더한 외국 회사)
+US_FOREIGN_KEYS = ("per", "pbr", "dy")
+US_FGN_WHY = ("mismatch", "currency")      # data.json fgnCut 의 값 (Jack 2026-11-14: 앱이 그 칸 '–' 밑에 이유 줄을 붙여요)
+US_FGN_STOPPED = "검사가 멈춤"              # usForeign.cut 의 이유 머리말: 파이프라인 검사가 멈춰 비운 칸 (이유 줄 없음 · 그날은 경고) — fetch_data.US_FOREIGN_STOP_WHY
 KR_FUND_SET = {"088980", "415640", "094800"}              # 상장 인프라·부동산 펀드 (투자회사)
 KR_COMPANY_SET = {"241520", "034830", "123890"}           # 같은 업종이지만 회사 (벤처캐피털·신탁회사)
 # v17.5.1 PR 2: 업종 그룹 (ind · indName)
@@ -235,6 +281,19 @@ DVWHY_CLEAN_TOL = 1e-4   # 사건 하나의 배율은 깨끗한 분할 배율(SP
 DVWHY_SAME = 0.10        # 10% 이하 변화는 이름 붙이지 않아요 · filed 의 여유 (fetch_data.SHARE_SAME 과 같은 값)
 DVWHY_CB_FLOOR = 0.7     # 전환·행사가액의 하한 (발행 때의 70%) → 사채가 만드는 주식 수는 많아야 1/0.7 배
 DVWHY_LOOKBACK_DAYS = 183   # filed 의 유상증자 결정은 사업보고서 말보다 이만큼 앞부터
+# v19.1i (새 줄만 · 늦추는 줄 없음 · Jack 2026-11-14 item 5): 배당 기준 증명 (data.json 종목의 dvProof · divCheck.proof).
+# 주식 수가 바뀐 뒤 오늘 주식 수 기준을 찾지 못해 숨겼던 배당수익률을 파이프라인이 되살릴 때마다 근거(배당 총액 · 주식 수 · 공시가 덮는 새 주식)를
+# 적어요. 관문은 그 근거를 발행된 숫자로 다시 맞춰 봐요: 되살린 수익률이 배당 총액 ÷ 시가총액과 맞는지 (자기주식 · 공시된 새 주식만큼만
+# 다를 수 있어요). 맞지 않으면 우리 계산이 틀린 것이라 실패. 숨긴 종목 · 배당 표가 어긋난 종목 · 조회 실패는 경고만 (이름을 적어요).
+# divCheck.proof 가 없으면 v19.1i 전 데이터라 경고 한 줄만 — 직전 발행본에 있었는데 빠지면 실패. fetch_data.py 와 일부러 따로 적어요.
+PROVE_TOL = 0.03         # 배당 받은 주식 수 · 오늘 주식 수 맞춤의 여유 (± 3%)
+PROVE_DRIFT = 0.15       # 앞 해: 두 해의 배당 받은 주식 수 비가 그 사이 사건의 곱 ± 15% (fetch_data.DRIFT_TOL — 자기주식 매입·소각)
+PROVE_HOW = ("today", "yearEnd")
+PROVE_KEYS = ("today", "yearEnd", "years", "line", "ratio", "basis", "rights", "uncounted", "data", "fail")
+PROVE_HID = PROVE_KEYS[3:]   # 되살리지 않은 이유 (이름 목록 · line 은 Jack 의 줄이 붙는 종목: dvWhy nc-unexplained)
+PROVE_HID_KO = {"line": "주식 수가 바뀌었는데 공시 없음 (Jack 의 줄)", "ratio": "깨끗하지 않은 공시 배율", "basis": "회사분할 · 주식배당",
+                "rights": "주주배정 유상증자 (권리락)", "uncounted": "수를 읽지 않는 공시", "data": "배당 표가 어긋남", "fail": "조회 실패"}
+PROVE_EPS = 0.002        # 반올림 여유 (dps3a 원 둘째 자리 · 총액 원 단위)
 # v19.6a (새 줄만 · 늦추는 줄 없음 · docs/tasks/v19.6-records-alerts-dark.md Part I.1 · A.6): macro.json fxHist (원/달러 일별 환율 2016~)
 # 와 data.json splits (2016 년부터의 미국 주식 분할). 앱(v19.6a)은 새 미국 기록에 그 날짜의 환율을 저장하고(fxHist), 분할 전 기록을 새 주식
 # 수로 맞춰 읽어요(splits). 둘 다 사용자 기록에 영구히 남는 값이라 모양이 틀리면 실패. fxHist 가 없으면 경고 (앱이 지난 날짜의 미국 기록을
@@ -930,17 +989,21 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v1752(rep, data, kr, us, pdata)
     check_us_fcur(rep, us)                # Jack, 2026-11-12: 재무제표 통화가 달러가 아닌 미국 회사
     check_us_fcur_more(rep, data, us, pdata)   # #114 리뷰: 통화를 모르는 회사 (경고) · 어제 있던 통화가 사라짐
+    check_us_extra(rep, data, us, mode)   # 2026-11-14: 손으로 더한 미국 종목이 있거나 빠진 이유가 있는지
+    check_us_foreign(rep, data, us, mode) # 2026-11-14: 미국 상장 외국 회사의 PER·PBR·배당수익률은 회사 합계와 맞춘 것만
     check_foreign(rep, kr, comps)
     if rel:
         check_stmt_marks(rep, comps, prev)      # 경고가 많은 날에도 알림 10개 안에 들도록 앞쪽에 (외국 기업 줄 바로 다음)
     check_v191b(rep, data, kr, us, by, comps, pdata)
     check_v191h(rep, data, kr, by, comps, pdata, today)
+    check_v191i(rep, data, kr, by, comps, pdata, today)   # Jack 2026-11-14 (item 5): 되살린 배당수익률 = 배당 총액 ÷ 시가총액
     check_v191c(rep, cur, us, mode, today)
     check_v191f(rep, data, corp, kr, by, comps, pdata)
     check_eps_line_left(rep, corp, comps)   # 2026-11-14 (Jack Q3 · 리뷰 S4): 다시 읽은 뒤에도 날짜가 지난 '고치는 중' 줄이 남을 회사 (경고)
     check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=(prev or {}).get("macro") if rel else None)
     check_unit(rep, data, kr, by, comps, pdata)
     check_kr_series(rep, data, kr, pdata)  # 2026-11-14 (Jack: "52주 숫자부터"): 다른 기준의 공식 종가 고정 (실패) · 제한폭 넘는 움직임 (경고)
+    check_px_bad(rep, data, comps, pdata)  # 2026-11-14 (Jack, Q2 (a)): 그 움직임이 있는 종목은 52주 · 출렁임 · 위험 숫자를 비워요 (실패) · 필수 종목 추세 · 저변동 순위 (실패)
 
     # 경고만
     rep.add("공시 목록 조회", True, "성공" if disc.get("listOk") else "실패", "실패면 경고", warn=not disc.get("listOk"))
@@ -1570,11 +1633,17 @@ def check_v1751(rep, cur, kr, us, by, comps, px, today, hilo):
         rep.add("필수 종목 52주 최고·최저 (야후)", True, "야후를 받지 못해 확인 못 함", f"{HILO_TOL}% 안 (못 받으면 경고)", warn=True)
         rep.add("필수 종목 d1 (야후)", True, "야후를 받지 못해 확인 못 함", f"{D1_YAHOO_TOL}%p 안 (못 받으면 경고)", warn=True)
     else:
-        worst, off = 0.0, []
+        worst, off, held = 0.0, [], []
+        # Jack 2026-11-14 저녁: 과거 주가 기록 오류로 52주를 맞게 비운(px_bad_must) 필수 종목이 하나뿐이면 그 종목은 경고로 넘겨요 (이름과 함께).
+        # 둘 이상이면 넘기지 않아요 (예전처럼 '없음' → 실패). 표시 없이 비었으면 예전처럼 실패.
+        pm = px_bad_must(cur.get("data") or {}, comps)
         for t, y in hilo.items():
             s = by.get(t) or {}
             h, lo = num(s.get("hi")), num(s.get("lo"))
             if h is None or lo is None:
+                if t in pm and {"hi", "lo"} <= pm[t] and len(pm) < PX_BAD_MUST_FAIL:
+                    held.append(f"{t} 과거 주가 기록 오류로 비움 (pxBad {s.get('pxBad')})")
+                    continue
                 worst = 999.0
                 off.append(f"{t} 없음")
                 continue
@@ -1583,8 +1652,9 @@ def check_v1751(rep, cur, kr, us, by, comps, px, today, hilo):
             if dmax > HILO_TOL:
                 off.append(f"{t} {h:,.0f}/{lo:,.0f} vs {y['hi']:,.0f}/{y['lo']:,.0f}")
         rep.add("필수 종목 52주 최고·최저 (야후)", worst <= HILO_FAIL,
-                f"{len(hilo)}종목 · 최대 {worst:.2f}%" + (f" · {' · '.join(off)[:70]}" if off else ""),
-                f"{HILO_TOL}% 안 (1–{HILO_FAIL:g}% 경고, 넘으면 실패)", warn=bool(off) or len(hilo) < len(must_kr))
+                f"{len(hilo)}종목 · 최대 {worst:.2f}%" + (f" · {' · '.join(off)[:70]}" if off else "") + (f" · {' · '.join(held)}" if held else ""),
+                f"{HILO_TOL}% 안 (1–{HILO_FAIL:g}% 경고, 넘으면 실패 · 과거 주가 기록 오류로 맞게 비운 필수 종목은 하나만 경고, "
+                f"{PX_BAD_MUST_FAIL}곳 이상이면 실패 — Jack 2026-11-14)", warn=bool(off) or bool(held) or len(hilo) < len(must_kr))
         bad1 = [f"{t} {num((by.get(t) or {}).get('d1'))} vs {y['d1']:.2f}" for t, y in hilo.items()
                 if num((by.get(t) or {}).get("d1")) is None or abs(num(by[t]["d1"]) - y["d1"]) > D1_YAHOO_TOL]
         rep.add("필수 종목 d1 (야후)", not bad1, f"{len(hilo)}종목 맞음" if not bad1 else " · ".join(bad1)[:90],
@@ -1698,6 +1768,110 @@ def check_us_fcur_more(rep, data, us, pdata):
                       ("어제 fcur 가 있었는데 오늘 통화 정보도 숫자도 없는 미국 종목", quiet)):
         if ts:
             rep.detail(title, ts)
+
+
+def check_us_extra(rep, data, us, mode):
+    """2026-11-14 (Jack, 2026-11-13 "Missing US stocks" · 더하기만): 손으로 더한 미국 종목(US_EXTRA_SET = fetch_data.EXTRA_US)은 오늘 목록에 있거나
+    (가격 > 0) data.json usExtraMissing 에 빠진 이유가 있어야 해요 — 조용히 사라지지 않게. 이유가 있으면 경고 (이름 · 이유), 이유 없이 빠지면 실패.
+    사이트 점검(live)은 실패 대신 경고예요: 종목을 더한 코드가 그 종목이 아직 없는 어제 파일 그대로 배포될 때 막지 않게. usExtraMissing 이 없는
+    파일(이 칸 전 발행본)은 발행 때 경고 · 점검 때 건너뛰어요."""
+    name = "손으로 더한 미국 종목 (EXTRA_US): 목록에 있거나 빠진 이유"
+    th = "모두 있어야 함 (빠지면 이유와 함께 경고 · 이유 없이 빠지면 실패)"
+    rec = data.get("usExtraMissing")
+    have = {s.get("t") for s in us if (num(s.get("price")) or 0) > 0}
+    gone = sorted(t for t in US_EXTRA_SET if t not in have)
+    if not isinstance(rec, dict):
+        if mode == "live":
+            rep.skip(name, "기록 없음 (data.json usExtraMissing 이 없는 발행본)")
+        else:
+            rep.add(name, True, f"기록 없음 (data.json usExtraMissing) · 오늘 없는 종목 {len(gone)}" + (f": {_tickers(gone)}" if gone else ""),
+                    th, warn=True)
+        return
+    why = {t: rec.get(t) for t in gone}
+    told = [t for t in gone if isinstance(why[t], str) and why[t].strip()]
+    silent = [t for t in gone if t not in told]
+    odd = sorted(str(t) for t in rec if t not in US_EXTRA_SET)          # 관문 목록에 없는 티커 (두 목록이 어긋남)
+    parts = ([f"이유 없이 빠짐 {len(silent)}: {_tickers(silent)}"] if silent else []) \
+        + ([f"빠짐 {len(told)}: " + " · ".join(f"{t} ({why[t]})" for t in told[:US_FCUR_SHOW])
+            + (f" 외 {len(told) - US_FCUR_SHOW}곳" if len(told) > US_FCUR_SHOW else "")] if told else []) \
+        + ([f"관문 목록에 없는 티커 {len(odd)}: {_tickers(odd)}"] if odd else [])
+    rep.add(name, not silent or mode == "live", f"{len(US_EXTRA_SET) - len(gone)} / {len(US_EXTRA_SET)} 있음" + "".join(f" · {x}" for x in parts),
+            th, warn=bool(gone or odd))
+    if gone:
+        rep.detail("손으로 더한 미국 종목 중 오늘 없는 종목 (usExtraMissing)", [f"{t}: {why[t] if t in told else '이유 없음'}" for t in gone])
+
+
+def check_us_foreign(rep, data, us, mode):
+    """2026-11-14 (더하기만): 미국 상장 외국 회사(US_FOREIGN_SET = fetch_data.US_FOREIGN) 중 재무제표 통화 표시(fcur)가 없는 종목의 PER · PBR ·
+    배당수익률은 파이프라인이 회사 합계 · 실제 배당과 맞춰 본 뒤에만 나가요 (data.json usForeign = {checked, cut [[티커, 칸, 이유]]}). 실패: ① 그런
+    종목에 세 칸 중 하나라도 있는데 checked 에 없음 (맞춰 보지 않은 숫자) ② cut 에 적힌 칸이 남아 있음 (pbr 이면 가치 점수 vz 도) ③ 기록 모양이 틀림.
+    ④ (2026-11-14, Jack 의 이유 줄) 종목의 fgnCut 이 틀린 모양이거나 그 칸이 남아 있음, 또는 cut 줄(검사가 멈춘 날 빼고)의 칸이 그 종목의 fgnCut 에
+    없음 (앱이 이유 줄 대신 '자료가 없어요' 를 보여요), 또는 fgnCut 의 칸에 맞는 cut 줄이 없음 (리뷰 N3). 기록이 없는 파일(이 칸 전 발행본): 종목에
+    fgnCut 이 있으면 실패 (기록 없이 표시만) · 맞춰 볼 숫자가 없으면 통과 · 있으면 발행 때 실패, 사이트 점검(live) 때 경고.
+    경고 (리뷰 S1, 발행은 막지 않아요): 검사가 멈춘 날 (cut 줄의 이유가 '검사가 멈춤 …') — 그 칸은 이유 줄 없이 비어 앱의 요약 칸 · 배당 머리가
+    '자료가 없어요' 예요."""
+    name = "미국 상장 외국 회사: 회사 합계와 맞춘 PER·PBR·배당수익률만"
+    th = "fcur 없는 외국 회사는 usForeign.checked 에 · cut 의 칸은 빈 칸 (pbr 이면 vz 도) · 그 칸마다 종목의 fgnCut"
+    by = {s.get("t"): s for s in us}
+    want = sorted(t for t, s in by.items() if t in US_FOREIGN_SET and not s.get("fcur") and any(s.get(k) is not None for k in US_FOREIGN_KEYS))
+    rec = data.get("usForeign")
+    marked = sorted(str(s.get("t")) for s in us if "fgnCut" in s)
+    if not isinstance(rec, dict):
+        if marked:
+            rep.add(name, False, f"기록 없음 (data.json usForeign) 인데 fgnCut 표시가 있는 종목 {len(marked)}곳: {_tickers(marked)}", th)
+            return
+        if not want:
+            rep.add(name, True, "기록 없음 (data.json usForeign) · 맞춰 볼 외국 회사 숫자 없음", th)
+        else:
+            rep.add(name, mode == "live", f"기록 없음 (data.json usForeign) · 맞춰 보지 않은 숫자 {len(want)}곳: {_tickers(want)}", th, warn=True)
+        return
+    checked, cut, bad, left, n_by = rec.get("checked"), rec.get("cut"), [], [], collections.Counter()
+    if not (isinstance(checked, list) and all(isinstance(t, str) for t in checked)):
+        bad.append("checked 모양")
+        checked = []
+    if not isinstance(cut, list):
+        bad.append("cut 모양")
+        cut = []
+    rows = []
+    for x in cut:
+        if not (isinstance(x, list) and len(x) == 3 and isinstance(x[0], str) and x[1] in US_FOREIGN_KEYS and isinstance(x[2], str) and x[2]):
+            bad.append(f"cut 줄 {json.dumps(x, ensure_ascii=False)[:30]}")
+            continue
+        rows.append(x)
+        n_by[x[1]] += 1
+        s = by.get(x[0])
+        if s is not None:
+            left += [f"{x[0]}.{k}" for k in ((x[1], "vz") if x[1] == "pbr" else (x[1],)) if s.get(k) is not None]
+    unchecked = [t for t in want if t not in set(checked)]
+    cutset, nocut = {(x[0], x[1]) for x in rows}, []
+    # 2026-11-14 (Jack 의 이유 줄): 종목마다 fgnCut = {칸: mismatch | currency}. 적힌 칸은 비어 있어야 하고 (pbr 이면 vz 도), usForeign.cut 의
+    # 줄(검사가 멈춘 날 빼고)마다 그 종목에 fgnCut 이 있어야 해요 — 없으면 앱이 이유 줄 대신 '자료가 없어요' 를 보여요.
+    for s in us:
+        if "fgnCut" not in s:
+            continue
+        g, t = s.get("fgnCut"), s.get("t")
+        if not (isinstance(g, dict) and g and all(k in US_FOREIGN_KEYS and v in US_FGN_WHY for k, v in g.items())):
+            bad.append(f"{t}.fgnCut {json.dumps(g, ensure_ascii=False)[:30]}")
+            continue
+        if t not in US_FOREIGN_SET or s.get("fcur"):
+            bad.append(f"{t}.fgnCut (외국 회사 목록 밖이거나 fcur)")
+        left += [f"{t}.{k}" for f in g for k in ((f, "vz") if f == "pbr" else (f,)) if s.get(k) is not None]
+        nocut += [f"{t}.{f}" for f in g if (t, f) not in cutset]
+    left = list(dict.fromkeys(left))
+    nomark = [f"{x[0]}.{x[1]}" for x in rows if not x[2].startswith(US_FGN_STOPPED) and x[0] in by
+              and not (isinstance(by[x[0]].get("fgnCut"), dict) and x[1] in by[x[0]]["fgnCut"])]
+    probs = ([f"맞춰 보지 않은 숫자 {len(unchecked)}곳: {_tickers(unchecked)}"] if unchecked else []) \
+        + ([f"이유 표시(fgnCut) 없음 {len(nomark)}: {', '.join(nomark[:6])}"] if nomark else []) \
+        + ([f"cut 줄 없는 표시 {len(nocut)}: {', '.join(nocut[:6])}"] if nocut else []) \
+        + ([f"남은 칸 {len(left)}: {', '.join(left[:6])}"] if left else []) + ([f"모양 {len(bad)}: {', '.join(bad[:3])}"] if bad else [])
+    names = sorted({x[0] for x in rows})
+    stopped = sorted({x[0] for x in rows if x[2].startswith(US_FGN_STOPPED)})
+    rep.add(name, not probs, f"확인 {len(checked)}곳 · 비운 칸 PER {n_by['per']} · PBR {n_by['pbr']} · 배당 {n_by['dy']}"
+            + (f" ({_tickers(names)})" if names else "") + "".join(f" · {p}" for p in probs)
+            + (f" · 검사가 멈춰 맞춰 보지 않고 비운 회사 {len(stopped)}곳: {_tickers(stopped)} (이유 줄 없음 · 앱은 '자료가 없어요')" if stopped else ""),
+            th, warn=bool(stopped))
+    if rows:
+        rep.detail("미국 상장 외국 회사: 회사 합계 · 실제 배당과 맞지 않아 비운 칸 (usForeign.cut)", [f"{t} {f}: {w}" for t, f, w in rows])
 
 
 def is_foreign(code):
@@ -1878,18 +2052,24 @@ def check_v191b(rep, data, kr, us, by, comps, pdata):
 
     # 7. 필수 종목의 새 칸 (data.json · corp.json) — 위 DATA_NEW_MUST · CORP_NEW_MUST · CORP_MIRROR · CORP_NEW_MUST_AMT 설명
     cby = {c.get("t"): c for c in comps}
-    miss = []
+    miss, held = [], []
+    pm = px_bad_must(data, comps)
     for t in must_kr:
         s, c = by.get(t) or {}, cby.get(t) or {}
-        miss += [f"{t}.{k}" for k in DATA_NEW_MUST if s.get(k) is None]
+        # Jack 2026-11-14 저녁: 과거 주가 기록 오류로 맞게 비운(px_bad_must) 필수 종목이 하나뿐이면 그 종목의 비운 칸(betaSE · betaN)은 경고로 넘겨요
+        excuse = pm.get(t, set()) if len(pm) < PX_BAD_MUST_FAIL else set()
+        held += [f"{t}.{k}" for k in DATA_NEW_MUST if s.get(k) is None and k in excuse]
+        miss += [f"{t}.{k}" for k in DATA_NEW_MUST if s.get(k) is None and k not in excuse]
         miss += [f"corp {t}.{k}" for k in CORP_NEW_MUST if c.get(k) is None]
         miss += [f"corp {t}.{k}≠data" for k in CORP_MIRROR if c.get(k) != s.get(k)]   # 없으면 둘 다 없어야 해요
         if in_div_rank(s):
             miss += [f"corp {t}.{k}" for k in CORP_NEW_MUST_AMT if c.get(k) is None]
     rep.add("필수 종목 새 칸 (배당 분할 확인·베타 표준오차·재무 경고 검사)", not miss,
-            "모두 있음" if not miss else "없음: " + ",".join(miss[:6]) + ("…" if len(miss) > 6 else ""),
+            ("모두 있음" if not miss else "없음: " + ",".join(miss[:6]) + ("…" if len(miss) > 6 else ""))
+            + (f" · 과거 주가 기록 오류로 비운 칸 (경고): {','.join(held)}" if held else ""),
             "data " + "·".join(DATA_NEW_MUST) + " · corp " + "·".join(CORP_NEW_MUST) + " · corp 배당 칸 = data · "
-            + "·".join(CORP_NEW_MUST_AMT) + " ('필수 종목 배당 순위'에서 빠진 종목은 총액·주당순이익 빼고)")
+            + "·".join(CORP_NEW_MUST_AMT) + " ('필수 종목 배당 순위'에서 빠진 종목은 총액·주당순이익 빼고 · 과거 주가 기록 오류로 맞게 비운 필수 종목 "
+            f"하나의 {'·'.join(DATA_NEW_MUST)} 는 경고, {PX_BAD_MUST_FAIL}곳 이상이면 실패 — Jack 2026-11-14)", warn=bool(held))
 
     # 8. 베타 표준오차: 베타가 있는 종목은 모두 (SE > 0, 250 ≤ n ≤ 800), 회사 주식의 중앙값이 그럴듯한 범위,
     #    흔들리는 베타(SE > 0.5 — 가격 이력이 깨진 종목)는 2% 이하. 종목 하나가 발행 전체를 막지 않게 상한은 비율로 봐요
@@ -2535,6 +2715,201 @@ def check_kr_series(rep, data, kr, pdata):
         rep.detail("하루 가격 제한폭으로 설명되지 않는 움직임이 시계열에 있는 국내 종목 (날짜 · 움직임 · 이유)", items)
 
 
+def px_bad_fields_problems(t, f, d, px):
+    """pxBadF (비운 칸 목록) 의 모양 문제 (빈 목록 = 정상): PX_BAD_DATA 안의 칸 · 두 번 없음 · 시계열 전체 칸(PX_BAD_ALWAYS)은 모두 · 창은 같이 (52주 · 1년
+    수익률 · 추세 점수는 함께) · 짧은 창을 비우면 긴 창도 (1개월 ⇒ 3개월 ⇒ 1년) · 기준일(px)에서 PX_BAD_WIN_IN 일 안의 움직임(d: 가장 최근)이면 그 창도."""
+    if not (isinstance(f, list) and all(isinstance(k, str) for k in f) and len(set(f)) == len(f) and set(f) <= set(PX_BAD_DATA)):
+        return [f"{t} pxBadF 모양이 잘못됨 ({str(f)[:40]})"]
+    out = []
+    fs = set(f)
+    if not set(PX_BAD_ALWAYS) <= fs:
+        out.append(f"{t} pxBadF 에 시계열 전체 칸이 빠짐 ({'·'.join(k for k in PX_BAD_ALWAYS if k not in fs)})")
+    on = {w: set(ks) <= fs for w, ks in PX_BAD_WIN.items()}
+    for w, ks in PX_BAD_WIN.items():
+        if not on[w] and fs & set(ks):
+            out.append(f"{t} pxBadF 의 {w} 창 칸이 일부만 ({'·'.join(k for k in ks if k in fs)})")
+    if (on["m"] and not on["q"]) or (on["q"] and not on["y"]):
+        out.append(f"{t} pxBadF 의 짧은 창만 비웠어요 (1개월 ⇒ 3개월 ⇒ 1년)")
+    if px is not None and isinstance(d, str) and is_day(d):
+        age = (px - day(d)).days
+        for w, n in PX_BAD_WIN_IN.items():
+            if age <= n and not on[w]:
+                out.append(f"{t} 움직임 {d} 가 기준일에서 {age}일 — {w} 창 칸을 비워야 해요")
+    return out
+
+
+def px_bad_problems(stocks, comps, ks, px=None):
+    """과거 주가 기록 오류 종목의 숫자 비움 (2026-11-14) — 문제 목록 (빈 목록 = 정상). 파이프라인(fetch_data.mark_px_bad)과 따로 적어요.
+    stocks: data.json 의 국내 종목 모두 (cls kr · 펀드 포함) · comps: corp.json companies · ks: krSeries (hidden 이 있는 형식).
+    - krSeries.hidden: 코드 목록 (같은 코드 두 번 없음).
+    - 발행한 국내 종목 중 krSeries.jump 에 있는 종목 = hidden = pxBad 를 단 종목 (jump 에만 있고 발행하지 않은 코드는 비울 숫자가 없어요).
+    - pxBad: 그 종목의 가장 최근 움직임 날짜 (YYYY-MM-DD) · pxBadF: 비운 칸 목록 (px_bad_fields_problems · px = pxDate).
+    - 그 종목은 pxBadF 칸이 없어요 (빈 칸) · 비우지 않은 52주(hi · lo)는 있어요 · corp.json 의 그 회사도 같은 pxBad · pxBadF 이고 그 칸(PX_BAD_CORP 중)이
+      비어요 · corp.json 에만 있는 표시도 안 돼요. 2026-11-14 저녁 (Jack): 계산 창에 움직임이 든 칸만 비워요 (PX_BAD_WIN)."""
+    out = []
+    hid = ks.get("hidden")
+    if not isinstance(hid, list) or not all(isinstance(c, str) and c for c in hid) or len(set(hid)) != len(hid):
+        return [f"krSeries.hidden 모양이 잘못됨 ({str(hid)[:40]})"]
+    by = {s.get("t"): s for s in stocks}
+    last = {}
+    for j in ks.get("jump") if isinstance(ks.get("jump"), list) else []:
+        if isinstance(j, list) and len(j) == 4 and isinstance(j[0], str) and is_day(j[1]):
+            last[j[0]] = max(last.get(j[0], ""), str(j[1])[:10])
+    jset = {c for c in last if c in by}
+    hset = set(hid)
+    marked = {t: s for t, s in by.items() if "pxBad" in s}
+    out += [f"{c} 비우지 않음 (krSeries.jump 에 있어요)" for c in sorted(jset - hset)]
+    out += [f"{c} krSeries.jump 에 없는데 비웠어요" for c in sorted(hset - set(last))]
+    out += [f"{c} pxBad 표시 없음" for c in sorted(hset - set(marked))]
+    out += [f"{c} pxBad 인데 krSeries.hidden 에 없음" for c in sorted(set(marked) - hset, key=str)]
+    cby = {c.get("t"): c for c in comps}
+    for t in sorted(marked, key=str):
+        s, d = marked[t], marked[t].get("pxBad")
+        if not (isinstance(d, str) and len(d) == 10 and is_day(d)):
+            out.append(f"{t} pxBad 모양이 잘못됨 ({d!r})")
+        elif t in last and d != last[t]:
+            out.append(f"{t} pxBad {d} ≠ 가장 최근 움직임 {last[t]}")
+        f = s.get("pxBadF")
+        fp = px_bad_fields_problems(t, f, d, px)
+        out += fp
+        hide = set(f) if isinstance(f, list) and not (fp and fp[0].startswith(f"{t} pxBadF 모양")) else set(PX_BAD_DATA)
+        left = [k for k in PX_BAD_DATA if k in hide and s.get(k) is not None]
+        if left:
+            out.append(f"{t} 남은 칸 {'·'.join(left)}")
+        gone = [k for k in ("hi", "lo") if k not in hide and num(s.get(k)) is None]
+        if gone:
+            out.append(f"{t} 비우지 않았는데 없는 칸 {'·'.join(gone)}")
+        c = cby.get(t)
+        if c is not None:
+            if c.get("pxBad") != d or c.get("pxBadF") != f:
+                out.append(f"corp {t} pxBad · pxBadF {c.get('pxBad')!r} {str(c.get('pxBadF'))[:30]} ≠ data.json {d!r}")
+            leftc = [k for k in PX_BAD_CORP if k in hide and c.get(k) is not None]
+            if leftc:
+                out.append(f"corp {t} 남은 칸 {'·'.join(leftc)}")
+            gonec = [k for k in ("hi", "lo") if k not in hide and num(c.get(k)) is None]
+            if gonec:
+                out.append(f"corp {t} 비우지 않았는데 없는 칸 {'·'.join(gonec)}")
+    out += [f"corp {c.get('t')} 에만 pxBad" for c in comps if ("pxBad" in c or "pxBadF" in c) and c.get("t") not in marked]
+    out += [f"{t} pxBadF 만 있어요" for t, s in by.items() if "pxBadF" in s and "pxBad" not in s]
+    return out
+
+
+def px_bad_valid(t, s, c, ks, px=None):
+    """t 종목의 과거 주가 기록 오류 표시가 맞는지 (pxBad 리뷰): krSeries.hidden 에 있고, 그 종목 하나만 놓고 본 px_bad_problems 가 비어요 (jump 의
+    가장 최근 날짜 · 남은 칸 없음 · corp.json 의 표시와 칸도 같음). s: data.json 종목 · c: corp.json 회사 (없으면 None) · ks: krSeries."""
+    hid = ks.get("hidden") if isinstance(ks, dict) else None
+    if not (isinstance(hid, list) and t in hid and isinstance(s, dict) and "pxBad" in s):
+        return False
+    jm = [j for j in (ks.get("jump") if isinstance(ks.get("jump"), list) else []) if isinstance(j, list) and j and j[0] == t]
+    return not px_bad_problems([s], [c] if isinstance(c, dict) else [], {**ks, "hidden": [t], "jump": jm}, px)
+
+
+def px_bad_must(data, comps):
+    """표시가 맞는 필수 종목 → {코드: 비운 칸 set} (pxBad 리뷰 · Jack 2026-11-14 저녁). 필수 종목 세 줄이 같은 답을 써요."""
+    ks = data.get("krSeries") if isinstance(data.get("krSeries"), dict) else None
+    by = {s.get("t"): s for s in data.get("stocks", [])}
+    cby = {c.get("t"): c for c in comps}
+    px = day(data.get("pxDate")) if is_day(data.get("pxDate")) else None
+    out = {}
+    for t in MUST:
+        s = by.get(t)
+        if isinstance(s, dict) and s.get("cls") == "kr" and "pxBad" in s and px_bad_valid(t, s, cby.get(t), ks, px):
+            out[t] = set(s.get("pxBadF") or [])
+    return out
+
+
+def check_px_bad(rep, data, comps, pdata):
+    """과거 주가 기록 오류 종목의 숫자 비움 (2026-11-14 · Jack, Q2 (a) · 새 줄만, 늦추는 줄 없음). 하루 움직임이 가격 제한폭으로 설명되지 않는
+    종목(krSeries.jump)은 계산 창에 그 움직임이 든 칸(pxBadF · PX_BAD_WIN — Jack 2026-11-14 저녁)이 비었는지 (px_bad_problems) — 실패.
+    krSeries.hidden 이 없으면 (2026-11-14 숨김 전 형식): 직전 발행본에 있었거나 pxBad 표시가 있으면 실패 (비우는 단계가 돌지 않았어요),
+    아니면 경고만 (머지 뒤 첫 발행 전까지의 사이트 --live 와 시험 데이터 — 그 종목들의 숫자가 그대로 나가요).
+    새로 생긴 움직임 종목 수 (Jack 2026-11-14 저녁): 직전 발행본의 jump 에 없던 종목이 PX_BAD_NEW_FAIL 이상이면 실패.
+    필수 종목 추세 · 저변동 순위 (mz · lz): 빈 칸일 수 있는 값으로 순위를 매기니 필수 종목이 들어 있는지 (표시가 맞는 필수 종목 하나는 경고 ·
+    PX_BAD_MUST_FAIL 곳 이상이면 실패 · 표시 없이 빠지면 실패). pdata: 직전 발행본 data.json (발행 모드에서만, 아니면 None)."""
+    name = "과거 주가 기록 오류 종목의 숫자 비움 (pxBad)"
+    rule = ("0 (krSeries.jump 의 발행 종목 = krSeries.hidden = pxBad 표시 종목 · 그 종목은 pxBadF 칸 빈 칸 (계산 창에 움직임이 든 칸: 시계열 전체 "
+            + "·".join(PX_BAD_ALWAYS) + " 은 늘 · 252봉 " + "·".join(PX_BAD_WIN["y"]) + " · 64봉 r3 · 22봉 r1 은 그 창에 들 때) · 비우지 않은 52주는 있음 · "
+            "corp.json 도 같은 표시와 칸 · 그 전 형식만 경고)")
+    stocks = [s for s in data.get("stocks", []) if s.get("cls") == "kr"]
+    ks = data.get("krSeries") if isinstance(data.get("krSeries"), dict) else None
+    px = day(data.get("pxDate")) if is_day(data.get("pxDate")) else None
+    marked = [s for s in stocks if "pxBad" in s or "pxBadF" in s] + [c for c in comps if "pxBad" in c or "pxBadF" in c]
+    pks = (pdata or {}).get("krSeries")
+    had = isinstance(pks, dict) and "hidden" in pks
+    if ks is None or "hidden" not in ks:
+        why = ("직전 발행본에는 있었어요 (비우는 단계가 돌지 않았어요)" if had else
+               f"pxBad 표시 {len(marked)}곳이 있는데 목록이 없어요" if marked else
+               "2026-11-14 숨김 전 형식 · 직전 발행본에도 없어요 — krSeries.jump 종목의 숫자가 그대로 나가요")
+        rep.add(name, not had and not marked, ("krSeries 없음" if ks is None else "krSeries.hidden 없음") + f" ({why})", rule,
+                warn=not had and not marked)
+    else:
+        probs = px_bad_problems(stocks, comps, ks, px) + [f"{x.get('t')} 국내 종목이 아닌데 pxBad" for x in data.get("stocks", [])
+                                                            if x.get("cls") != "kr" and ("pxBad" in x or "pxBadF" in x)]
+        hid = ks.get("hidden") if isinstance(ks.get("hidden"), list) else []
+        by = {s.get("t"): s for s in stocks}
+
+        def nm(c):
+            x = by.get(c) or {}
+            full = isinstance(x.get("pxBadF"), list) and "hi" in x["pxBadF"]
+            return f"{c} {x.get('nk', '')} ({x.get('pxBad', '?')} · {'52주까지' if full else '52주는 보여요'})"
+        names = [nm(c) for c in hid]
+        n52 = sum(1 for c in hid if isinstance((by.get(c) or {}).get("pxBadF"), list) and "hi" in by[c]["pxBadF"])
+        rep.add(name, not probs,
+                f"{len(hid)}종목 (52주까지 비움 {n52} · 52주는 보임 {len(hid) - n52}) · 문제 {len(probs)}"
+                + (f" ({', '.join(probs[:3])}{' …' if len(probs) > 3 else ''})" if probs else "")
+                + (f" — {', '.join(names[:PX_BAD_SHOW])}" + (f" 외 {len(names) - PX_BAD_SHOW}종목" if len(names) > PX_BAD_SHOW else "")
+                   if names else ""), rule)
+        if probs:
+            rep.detail("과거 주가 기록 오류 종목의 숫자 비움 — 문제", probs)
+        if names:
+            rep.detail("과거 주가 기록 오류로 숫자를 비운 국내 종목 (가장 최근 움직임 날짜 · 52주를 비웠는지)", names)
+    # 새로 생긴 움직임 종목 수 (Jack 2026-11-14 저녁)
+    nname = f"새로 생긴 과거 주가 기록 오류 종목 수 ({PX_BAD_NEW_FAIL}종목 이상이면 실패)"
+    nrule = (f"{PX_BAD_NEW_FAIL}종목 미만 (오늘 krSeries.jump 에 있고 직전 발행본의 jump 에 없는 종목 · 지난 3년 날마다 0~2 — 그보다 훨씬 많으면 출처나 "
+             "우리 고정이 한꺼번에 깨졌을 수 있어요)")
+    pj = pks.get("jump") if isinstance(pks, dict) else None
+    if not isinstance(pdata, dict):
+        rep.add(nname, True, "직전 발행본 없음 (비교 안 함)", nrule)
+    elif ks is None or not isinstance(pj, list):
+        rep.add(nname, True, "직전 발행본 또는 오늘 파일에 krSeries.jump 없음 (비교 안 함)", nrule)
+    else:
+        def codes(jm):
+            return {j[0] for j in jm if isinstance(j, list) and j and isinstance(j[0], str)}
+        new = sorted(codes(ks.get("jump") if isinstance(ks.get("jump"), list) else []) - codes(pj))
+        allby = {s.get("t"): s for s in data.get("stocks", [])}
+        txt = [f"{c} {(allby.get(c) or {}).get('nk', '')}".strip() for c in new]
+        rep.add(nname, len(new) < PX_BAD_NEW_FAIL, f"새로 {len(new)}종목" + (f": {', '.join(txt[:PX_BAD_SHOW])}"
+                                                                              + (f" 외 {len(txt) - PX_BAD_SHOW}종목" if len(txt) > PX_BAD_SHOW else "")
+                                                                              if txt else ""), nrule)
+        if txt:
+            rep.detail("오늘 새로 생긴 과거 주가 기록 오류 종목 (직전 발행본의 jump 에 없음)", txt)
+    allby = {s.get("t"): s for s in data.get("stocks", [])}
+    pm = px_bad_must(data, comps)
+    src = {"mz": ("mom", "1년 수익률(mom) 없음"), "lz": ("vol", "변동성(vol) 없음")}
+    miss, held = [], []                 # held: 표시가 맞는 필수 종목 (과거 주가 기록 오류로 점수를 비움 · 경고) · miss: 그 밖에 빠진 것 (실패)
+    for t in MUST:
+        s = allby.get(t)
+        if s is None:
+            miss.append(f"{t} 데이터에 없음")
+            continue
+        if s.get("cls") != "kr":
+            continue
+        gone = [k for k in ("mz", "lz") if num(s.get(k)) is None]
+        if not gone:
+            continue
+        if t in pm and set(gone) <= pm[t]:
+            held.append(f"{t} {s.get('nk', '')} {'·'.join(gone)} — 과거 주가 기록 오류 (pxBad {s.get('pxBad')})")
+            continue
+        why = (f"pxBad {s.get('pxBad')!r} 인데 표시가 맞지 않아요" if "pxBad" in s else
+               " · ".join(src[k][1] if num(s.get(src[k][0])) is None else f"{k} 없음 ({src[k][0]} 있음)" for k in gone))
+        miss.append(f"{t} {s.get('nk', '')} {'·'.join(gone)} — {why}")
+    value = " · ".join(([f"빠짐: {' · '.join(miss[:4])}"] if miss else [])
+                       + ([f"과거 주가 기록 오류로 뺀 필수 종목 {len(held)}: {' · '.join(held[:4])}"] if held else []))
+    rep.add("필수 종목 추세 · 저변동 순위 (mz · lz)", not miss and len(pm) < PX_BAD_MUST_FAIL, value or "모두 있음",
+            f"{','.join(MUST)} (국내 · 표시 없이 빠지면 실패 · 과거 주가 기록 오류로 맞게 표시한 필수 종목은 경고, {PX_BAD_MUST_FAIL}곳 이상이면 실패 — "
+            "빈 칸일 수 있는 값으로 순위를 매기니 꼭 있어야 할 종목을 확인해요)", warn=bool(held or pm))
+
+
 def unit_fix_problems(c):
     """corp.json 회사의 unitFix 문제 목록: [{rep: "YYYY.nQ", bs · is · cf 중 하나 이상: 1000 · 1000000}] 꼴 (목록이 아니거나 비었으면 · 숫자 · None
     도 '모양이 잘못됨') · rep 은 bq (TTM 의 최신 분기 — 파이프라인이 고치는 유일한 보고서)와 같아야 · unitChk 와 같이 있으면 안 돼요 (걸린 회사는
@@ -2838,6 +3213,211 @@ def check_v191h(rep, data, kr, by, comps, pdata, today):
             "없음" if not named else " · ".join(f"{g} {len(ts)}: {', '.join(nm(t) for t in ts[:4])}{'…' if len(ts) > 4 else ''}"
                                                for g, ts in named),
             f"있으면 경고 (발행은 막지 않아요) · 이유 확인 {why.get('ok')}", warn=bool(named))
+
+
+def _prove_cover(fx, fy, px, ev=()):
+    """dvProof.fx 가 덮을 수 있는 새 보통주 수 (유상증자는 주식 수, 사채는 ÷ 0.7) — 결정마다 그 공시일 뒤(그리고 그해 말 뒤)의 분할 · 병합 ·
+    무상증자(ev: dvWhy 사건)만큼 늘려서, 오늘 주식 수로 → (수, 문제 또는 None)."""
+    lo_r = dt.date(fy, 12, 31) - dt.timedelta(days=DVWHY_LOOKBACK_DAYS)
+    cover = 0.0
+    for x in fx:
+        if not isinstance(x, dict) or set(x) != {"k", "d", "n", "rc"} or x.get("k") not in DVWHY_FX_KINDS or not _posint(x.get("n")) \
+                or _real_day(x.get("d")) is None or not re.fullmatch(r"\d{14}", str(x.get("rc"))):
+            return None, f"fx 칸 {x}"
+        d = _real_day(x["d"])
+        if d > px or (x["k"] == "rights" and d <= lo_r) or d < dt.date(fy - 2, 1, 1):
+            return None, f"fx 날짜 {x['d']} 가 기간 밖"
+        cut = max(d, dt.date(fy, 12, 31))
+        scale = math.prod(e["r"] for e in ev if isinstance(e, dict) and _isnum(e.get("r")) and (_real_day(e.get("d")) or cut) > cut)
+        cover += (x["n"] if x["k"] == "rights" else x["n"] / DVWHY_CB_FLOOR) * scale
+    return cover, None
+
+
+def dvproof_problems(s, c, px, today=None):
+    """한 종목의 dvProof → 문제 또는 None. (v19.1i — fetch_data.DivWhy.prove 의 규칙을 발행된 숫자로 다시)
+    모양: v 1 · y0 (today · yearEnd · 없음) · yrs (1 · 2) 중 하나는 있어야 · c 배당 총액 3년 (원) · shr = 오늘 상장 주식 수 · yearEnd 는
+    cmo · cmi · cv (· cv > 0 이면 fx) · 우선주 몫 pf · pd 는 함께 · 올해 배율의 사건 ev (있으면: 그해 말 뒤 ~ pxDate · 깨끗한 배율 ·
+    곱 = dpsF[0] ± 0.5%, 없으면 dpsF[0] = 1). 새 주식 수(cv)는 dvWhy 가 아니라 이 ev 로 다시 세요 (리뷰 2026-11-15 2차: 사건의 곱이 1 이라
+    dvWhy 가 없어도 같은 셈).
+    올해: n = (c₀ − pf × pd) ÷ 주당 배당 · f = dpsF[0] · 되살린 해의 dps3a = 주당 배당 ÷ 배율 (원 둘째 자리) — 그래서 되살린 수익률과
+    배당 총액 ÷ 시가총액의 비는 n × f ÷ shr (반올림한 dps3a 로 셈하지 않아요: 작은 배당에서 반올림만으로 경계를 넘지 않게).
+      today    n × f ÷ shr = 1 ± 3% — 배당 총액 ÷ 시가총액 = 되살린 수익률 ± 3%.
+      yearEnd  n ÷ cmo = 1 ± 3% · shr ≥ cmo × f × 0.97 · shr ≤ (cmi × f + cv) × 1.03 · cv = fx 가 덮는 수 (결정마다 그 뒤 사건만큼 늘린,
+               오늘 주식 수) — 배당 총액 ÷ 시가총액 ÷ 되살린 수익률(= n × f ÷ shr)이 그 사이 (자기주식과 공시된 새 주식만큼만 낮을 수 있어요).
+               이 시가총액 줄은 위 주식 수 부등식을 수익률 꼴로 다시 쓴 것이에요 (따로 하는 재확인은 n ÷ cmo 와 총액 c 의 대조).
+    앞 해 i: dpsF[i] 가 있고 g = dpsF[i] ÷ dpsF[0] · (c₀ ÷ 주당 배당₀) ÷ (cᵢ ÷ 주당 배당ᵢ) = g ± 15% · g ≠ 1 이면 그 비가 1 ± 15% 가 아니에요.
+    corp.json cash3 가 있으면 c 와 같아야 해요 (억원 둘째 자리)."""
+    p = s.get("dvProof")
+    base = {"v", "y0", "yrs", "c", "shr"}
+    if not isinstance(p, dict) or p.get("v") != 1 or isinstance(p.get("v"), bool):
+        return "칸 모양 (v)"
+    y0, yrs = p.get("y0"), p.get("yrs")
+    extra = (({"cmo", "cmi", "cv"} | ({"fx"} if (p.get("cv") or 0) > 0 else set())) if y0 == "yearEnd" else set()) \
+        | ({"pf", "pd"} if "pf" in p or "pd" in p else set()) | ({"ev"} if y0 and "ev" in p else set())
+    if set(p) != base | extra:
+        return f"칸 {sorted(p)}"
+    if y0 not in (None,) + PROVE_HOW or not isinstance(yrs, list) or any(i not in (1, 2) or isinstance(i, bool) for i in yrs) \
+            or yrs != sorted(set(yrs)) or (y0 is None and not yrs):
+        return f"y0 {y0} · yrs {yrs}"
+    cc = p.get("c")
+    if not isinstance(cc, list) or len(cc) != 3 or any(x is not None and not _posint(x) for x in cc):
+        return "c (배당 총액 3년)"
+    shr = num(s.get("shr"))
+    if not _posint(p.get("shr")) or shr is None or p["shr"] != round(shr):
+        return f"shr {p.get('shr')} ≠ 오늘 상장 주식 수 {s.get('shr')}"
+    if is_pref(s.get("t")) or is_foreign(s.get("t")):
+        return "우선주 · 해외 기업에 dvProof"
+    d3, f3, a3 = _nums3(s.get("dps3")), _nums3(s.get("dpsF")), _nums3(s.get("dps3a"))
+    if d3 is None or f3 is None or a3 is None or not (d3[0] or 0) > 0 or f3[0] is None or not cc[0]:
+        return "배당 · 배율 칸 (올해 배당 · 배율 · 총액이 있어야 해요)"
+    for i in range(3):
+        cv3 = (c.get("cash3") or [None] * 3)[i] if isinstance(c.get("cash3"), list) and len(c["cash3"]) == 3 else None
+        if cv3 is not None and cc[i] is not None and abs(cv3 * 1e8 - cc[i]) > 0.5e6 + 1:
+            return f"c[{i}] {cc[i]:,} ≠ corp.json cash3 {cv3}억원"
+    pf, pd = p.get("pf"), p.get("pd")
+    if ("pf" in p) and (not _posint(pf) or not _isnum(pd) or not pd > 0 or yrs):
+        return "우선주 몫 (pf 양의 정수 · pd > 0 · 우선주 배당이 있으면 앞 해는 하지 않아요)"
+    n = (cc[0] - (pf * pd if "pf" in p else 0)) / d3[0]
+    f = f3[0]
+    if n <= 0 or not f > 0:
+        return f"배당 받은 주식 수 {n:,.0f} · 배율 {f}"
+    if y0:
+        ev = p.get("ev") or []
+        fy = s.get("fy")
+        if "ev" in p:
+            bad = _dvwhy_events(ev, today or px)
+            if bad:
+                return f"ev {bad}"
+            fyend = dt.date(fy, 12, 31) if isinstance(fy, int) and not isinstance(fy, bool) else None
+            if fyend is None or any(not fyend < _real_day(e["d"]) <= px for e in ev):
+                return f"ev 날짜가 {fy}년 말 뒤 ~ {px} 밖"
+            if abs(math.prod(e["r"] for e in ev) / f - 1) > DVWHY_TOL:
+                return f"ev 의 곱 {math.prod(e['r'] for e in ev):.4g} ≠ 올해 배율 {f:g}"
+        elif abs(f - 1) > 1e-9:
+            return f"올해 배율 {f:g} 인데 사건(ev)이 없어요"
+        # 되살린 1주 배당 = 주당 배당 ÷ 배율 (원 둘째 자리 반올림 그대로) — 그래서 되살린 수익률(dps3a[0] ÷ 종가)과 배당 총액 ÷ 시가총액의 비는
+        # n × f ÷ 오늘 주식 수예요. 반올림한 dps3a 로 비를 셈하면 아주 작은 배당(배율 뒤 2.5원 밑)에서 반올림만으로 경계를 넘을 수 있어
+        # (리뷰 2026-11-15 2차: 새 실패 줄은 우리 기록이 서로 어긋날 때만) 파이프라인이 정한 그 비로 보고, dps3a 는 따로 정확히 봐요.
+        if a3[0] is None or abs(a3[0] - d3[0] / f) > 0.005 + 1e-9:
+            return f"dps3a[0] {a3[0]} ≠ 주당 배당 {d3[0]:g} ÷ 배율 {f:g} (원 둘째 자리)"
+        rho = n * f / shr                      # = 배당 총액 ÷ 시가총액 ÷ (주당 배당 ÷ 배율 ÷ 종가)
+        if y0 == "today":
+            if abs(rho - 1) > PROVE_TOL + PROVE_EPS:
+                return f"배당 총액 ÷ 시가총액 ÷ 되살린 수익률 {rho:.3f} (1 ± {PROVE_TOL:.0%} 이어야 · today)"
+        else:
+            cmo, cmi, cv = p.get("cmo"), p.get("cmi"), p.get("cv")
+            if not _posint(cmo) or not _posint(cmi) or cmi < cmo or not isinstance(cv, int) or isinstance(cv, bool) or cv < 0:
+                return f"cmo {cmo} · cmi {cmi} · cv {cv}"
+            got = 0.0
+            if cv > 0:
+                got, why = _prove_cover(p.get("fx") if isinstance(p.get("fx"), list) and p.get("fx") else [None], s.get("fy"), px, ev)
+                if why:
+                    return why
+                if abs(got - cv) > 1.5:
+                    return f"cv {cv:,} ≠ fx 가 덮는 수 {got:,.0f}"
+            if abs(n / cmo - 1) > PROVE_TOL + PROVE_EPS:
+                return f"배당 받은 주식 수 {n:,.0f} ÷ 그해 말 유통 주식 수 {cmo:,} = {n / cmo:.3f}"
+            if shr < cmo * f * (1 - PROVE_TOL) - 1 or shr > (cmi * f + cv) * (1 + PROVE_TOL) + 1:
+                return f"오늘 주식 수 {shr:,.0f} 가 {cmo * f:,.0f} ~ {cmi * f + cv:,.0f} 밖 (그해 말 유통 · 발행 × {f:g} + 새 주식)"
+            # 배당 총액 ÷ 시가총액 ÷ 되살린 수익률 = n × f ÷ 오늘 주식 수: 자기주식(그해 말 발행 − 유통)과 공시된 새 주식(cv)만큼만 1 보다 낮아요
+            lo, hi = n * f / ((cmi * f + cv) * (1 + PROVE_TOL)), n / (cmo * (1 - PROVE_TOL))
+            if not lo - PROVE_EPS <= rho <= hi + PROVE_EPS:
+                return f"배당 총액 ÷ 시가총액 ÷ 되살린 수익률 {rho:.3f} 가 {lo:.3f} ~ {hi:.3f} 밖 (자기주식 · 새 주식으로 설명되지 않아요)"
+    for i in yrs:
+        if f3[i] is None or not (d3[i] or 0) > 0 or not cc[i]:
+            return f"앞 해 {i} 의 배율 · 배당 · 총액"
+        if a3[i] is None or abs(a3[i] - d3[i] / f3[i]) > 0.005 + 1e-9:
+            return f"앞 해 {i}: dps3a {a3[i]} ≠ 주당 배당 {d3[i]:g} ÷ 배율 {f3[i]:g} (원 둘째 자리)"
+        g = f3[i] / f
+        rr = (cc[0] / d3[0]) / (cc[i] / d3[i])
+        if abs(rr / g - 1) > PROVE_DRIFT + PROVE_EPS or (abs(g - 1) > 1e-6 and abs(rr - 1) <= PROVE_DRIFT):
+            return f"앞 해 {i}: 배당 받은 주식 수의 비 {rr:.3f} 와 배율의 비 {g:g}"
+    return None
+
+
+def check_v191i(rep, data, kr, by, comps, pdata, today=None):
+    """v19.1i 새 줄 (Jack 2026-11-14 item 5): 배당 기준 증명 (dvProof · divCheck.proof)."""
+    dc = data.get("divCheck")
+    if not isinstance(dc, dict):
+        return
+    pf = dc.get("proof")
+    name = "배당 기준 증명 기록 (divCheck.proof)"
+    if not isinstance(pf, dict):
+        had = isinstance(((pdata or {}).get("divCheck") or {}).get("proof"), dict)
+        rep.add(name, not had, "없음 — 직전 발행본에는 있었어요" if had else "없음 (v19.1i 전 형식이라 새 검사를 건너뛰어요)",
+                "있어야 함 (v19.1i 전 데이터만 경고)", warn=not had)
+        stray = [s["t"] for s in kr if "dvProof" in s or "dvLine" in s]
+        if stray:
+            rep.add("되살린 배당수익률 = 배당 총액 ÷ 시가총액 (dvProof)", False, f"기록 없이 dvProof · dvLine {len(stray)} (예: {stray[0]})", "0")
+        return
+    px = day(data.get("pxDate")) if is_day(data.get("pxDate")) else None
+    kr_t = {s.get("t") for s in kr}
+    has = [s for s in kr if "dvProof" in s]
+    cby = {c.get("t"): c for c in comps}
+
+    # 1. 기록: v1 · 결과마다 수 = 종목 · 이름 목록은 실제 종목이고 dvProof 가 없어요 · 숨긴 종목(hidT)은 dvWhy nc-*
+    bad = []
+    if pf.get("v") != 1:
+        bad.append(f"v{pf.get('v')}")
+    for k in PROVE_KEYS:
+        if not isinstance(pf.get(k), int) or isinstance(pf.get(k), bool) or pf[k] < 0:
+            bad.append(f"{k} {pf.get(k)}")
+    y0n = collections.Counter((s.get("dvProof") or {}).get("y0") for s in has if isinstance(s.get("dvProof"), dict))
+    yrsn = sum(1 for s in has if isinstance(s.get("dvProof"), dict) and (s["dvProof"].get("yrs") or []))
+    for k, v in (("today", y0n.get("today", 0)), ("yearEnd", y0n.get("yearEnd", 0)), ("years", yrsn)):
+        if pf.get(k) != v:
+            bad.append(f"{k} {pf.get(k)}≠{v}")
+    seen = collections.Counter()
+    for k in PROVE_HID:
+        lst = pf.get(k + "T")
+        if not isinstance(lst, list) or not all(isinstance(t, str) for t in lst) or len(set(lst)) != len(lst) \
+                or len(lst) != pf.get(k) or any(t not in kr_t for t in lst):
+            bad.append(f"{k}T")
+            continue
+        seen.update(lst)
+        if any("dvProof" in by[t] or (k != "fail" and num(by[t].get("dyt")) is not None) for t in lst):
+            bad.append(f"{k}T 인데 dvProof 나 배당수익률이 있어요")       # 조회 실패는 앞 해만 못 한 종목일 수 있어요 (올해 수익률은 있어요)
+        elif k == "line" and any((by[t].get("dvWhy") or {}).get("st") != "nc-unexplained" for t in lst):
+            bad.append("lineT 인데 dvWhy nc-unexplained 가 없어요 (Jack 의 줄)")
+    if any(v > 1 for v in seen.values()):
+        bad.append("한 종목이 이유 목록 둘 이상에")
+    # Jack 의 줄 (dvLine = 1): 앱이 읽는 표시 — lineT 의 종목에만, 그리고 그 종목엔 꼭 (리뷰 2026-11-15 2차: 줄은 증명이 line 이라고 한 종목에만)
+    marked = {s2["t"] for s2 in kr if "dvLine" in s2}
+    odd = [s2["t"] for s2 in kr if "dvLine" in s2 and (s2["dvLine"] != 1 or isinstance(s2["dvLine"], bool) or is_pref(s2["t"])
+                                                         or num(s2.get("dyt")) is not None or "dvProof" in s2
+                                                         or (s2.get("dvWhy") or {}).get("st") != "nc-unexplained")]
+    lst = pf.get("lineT") if isinstance(pf.get("lineT"), list) else []
+    if odd or marked != set(lst):
+        bad.append(f"Jack 의 줄 표시(dvLine) {len(marked)} · lineT {len(lst)} 가 다르거나 맞지 않는 종목에 있어요"
+                   + (f" (예: {(odd or sorted(marked ^ set(lst)))[0]})" if odd or marked ^ set(lst) else ""))
+    rep.add(name, not bad, "맞음" if not bad else " · ".join(bad[:4]),
+            "v1 · today·yearEnd·years = dvProof 종목 · 되살리지 않은 이유(" + "·".join(PROVE_HID) + ")마다 그 수의 이름 · "
+            "그 종목은 dvProof 없음 · 조회 실패 말고는 배당수익률도 없음 · line 은 dvWhy nc-unexplained · dvLine = lineT")
+
+    # 2. 근거를 발행된 숫자로 다시: 되살린 수익률 = 배당 총액 ÷ 시가총액 (자기주식 · 공시된 새 주식만큼만 달라요) · 앞 해 배율
+    probs = []
+    for s in has:
+        why = dvproof_problems(s, cby.get(s.get("t")) or {}, px, today) if px else "pxDate 없음"
+        if why:
+            probs.append(f"{s['t']} {why}")
+    rep.add("되살린 배당수익률 = 배당 총액 ÷ 시가총액 (dvProof)", not probs,
+            f"되살림 {len(has)} · 어긋남 {len(probs)}" + (f" (예: {probs[0]})" if probs else ""),
+            f"0 (today: 총액 ÷ 시가총액 = 수익률 ± {PROVE_TOL:.0%} · yearEnd: 그해 말 유통 주식 수 ± {PROVE_TOL:.0%} · 오늘 주식 수는 "
+            f"그 수 × 배율 ~ (발행 주식 수 + 공시된 새 주식) × 배율 · 앞 해 ± {PROVE_DRIFT:.0%})")
+    if probs:
+        rep.detail("배당 기준 증명이 어긋난 종목", probs)
+
+    # 3. 경고만: 숨긴 종목(공시로 맞추지 못함) · 배당 표가 어긋난 종목 · 조회 실패 — 이름과 함께 (발행은 막지 않아요)
+    def nm(t):
+        return f"{t} {(by.get(t) or {}).get('nk') or ''}".strip()
+    groups = [(PROVE_HID_KO[k], [t for t in pf.get(k + "T") or [] if isinstance(t, str) and t in kr_t]) for k in PROVE_HID]
+    named = [(g, ts) for g, ts in groups if ts]
+    for g, ts in named:
+        rep.detail(f"배당 기준 증명 {g}", [nm(t) for t in ts])
+    rep.add("배당 기준 증명 경고 (되살리지 않은 이유 · 조회 실패)", True,
+            "없음" if not named else " · ".join(f"{g} {len(ts)}: {', '.join(nm(t) for t in ts[:4])}{'…' if len(ts) > 4 else ''}"
+                                               for g, ts in named),
+            f"있으면 경고 (발행은 막지 않아요) · 되살림 {len(has)}", warn=bool(named))
 
 
 # ── 파일 읽기 ───────────────────────────────────────────────

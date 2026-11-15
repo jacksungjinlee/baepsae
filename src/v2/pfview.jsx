@@ -18,7 +18,7 @@ import { subjectParticle } from "./track.js";
 import { MissingNote } from "./tracking.jsx";
 import { avgOf, CHIP_GROUP } from "./pf.js";
 import { signedPct } from "./deckcalc.js";
-import { IcrOffLine, StmtCurLine, UnitChkLine } from "./fixnote.jsx";
+import { IcrOffLine, StmtCurLine, UnitChkLine, NoDataLine } from "./fixnote.jsx";
 import { heldUnits } from "./held.js";
 import { RecordButton } from "./records.jsx";
 
@@ -93,6 +93,8 @@ export function RuleTile({ r }) {
         <UnitChkLine show={r.id === "warn" && r.state === "unknown" && !!r.unit} />
         {/* 2026-11-08 (Jack): and when a Korean holding files its statements in another currency (pf.js stmtCur) */}
         {r.id === "warn" && r.state === "unknown" && <StmtCurLine cur={r.stmtCur} />}
+        {/* 2026-11-14 (Jack): and when a Korean holding's checks could not run for lack of input (pf.js noData) */}
+        <NoDataLine show={r.id === "warn" && r.state === "unknown" && !!r.noData} />
       </span>
     </div>
   );

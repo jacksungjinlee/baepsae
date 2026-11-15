@@ -3,6 +3,8 @@
 // 실패하면 { ok:false } 를 돌려주고, 화면은 '불러오지 못했어요'를 보여줘요.
 // 빈 결과나 내장 예시 데이터를 실제 시세처럼 보여주지 않기 위해서예요.
 
+import { pxBad } from "./repair.js";   // 2026-11-14: 과거 주가 기록 오류 표시 (mergeStocks)
+
 // JSON 에 NaN·Infinity 가 끼면 브라우저는 파일 전체를 거부해요. 따옴표 밖에 있는 것만 null 로 고쳐요
 // (미국 기업 설명 글에는 'NaN' 같은 낱말이 들어갈 수 있어서 따옴표 안은 건드리지 않아요).
 export function repairJsonText(s) {
@@ -271,10 +273,13 @@ export function mergeStocks(base, live) {
     if (b) {
       // v17.5: 오늘 데이터의 값만 써요. 빈 칸(적자라 PER 없음 등)은 '–'로 두고, 2025 내장 값을 섞지 않아요.
       // 베타·변동성은 계산에 꼭 필요해서 비었으면 내장 값을 쓰되, 그 종목은 '실시간 아님'으로 표시해요.
-      const partial = L.price == null || L.beta == null || L.vol == null;
+      // 2026-11-14 (Jack): 과거 주가 기록 오류로 비운 종목(pxBad · repair.js)은 내장 값도 쓰지 않아요 — 베타·변동성 없음(noRisk: '–', 위험 계산에서 빼요).
+      // 그 종목의 비운 베타·변동성은 내장 값을 쓴 게 아니라서 '실시간 아님'(예시 가격 안내)이 되지 않아요 — 가격은 오늘 것이에요.
+      const bad = pxBad(L);
+      const partial = L.price == null || (!bad && (L.beta == null || L.vol == null));
       const v = (k) => (L[k] != null ? L[k] : null);
-      out.push({ ...b, price: L.price != null ? L.price : b.price, beta: L.beta != null ? L.beta : b.beta,
-        vol: L.vol != null ? L.vol : b.vol, per: v("per"), pbr: v("pbr"), dy: v("dy"), al: v("al"),
+      out.push({ ...b, price: L.price != null ? L.price : b.price, beta: bad ? null : L.beta != null ? L.beta : b.beta,
+        vol: bad ? null : L.vol != null ? L.vol : b.vol, ...(bad ? { noRisk: true, pxBad: L.pxBad, pxBadF: L.pxBadF } : {}), per: v("per"), pbr: v("pbr"), dy: v("dy"), al: v("al"),
         sh: L.sh, mdd: L.mdd, hit: L.hit, mom: L.mom, cap: L.cap, val: L.val,
         pz: L.pz, vz: L.vz, mz: L.mz, qz: L.qz,
         x: { ...(b.x || {}), roe: v("roe"), debt: v("debt"), opm: v("opm"), g3: v("g3"), frn: v("frn"),
@@ -298,6 +303,7 @@ export function mergeStocks(base, live) {
         per: keep(L.per), pbr: keep(L.pbr), dy: keep(L.dy), al: keep(L.al),
         cap: keep(L.cap), val: keep(L.val), sh: L.sh, mdd: L.mdd, hit: L.hit, mom: L.mom,
         pz: L.pz, vz: L.vz, mz: L.mz, qz: L.qz, live: !L.est, auto: true,
+        ...(pxBad(L) ? { pxBad: L.pxBad, pxBadF: L.pxBadF } : {}),   // 2026-11-14: 과거 주가 기록 오류 — 펼친 종목의 52주 막대 자리에 그 줄 (detail.jsx StockRow)
         ...(L.pxd != null ? { pxd: L.pxd } : {}),   // v19.1c: 위와 같아요
         x: { dk: L.dk, de: L.de, roe: L.roe, debt: L.debt, opm: L.opm, g3: L.g3, frn: L.frn,
              mcap: L.cap, lo: L.lo, hi: L.hi, g3Q: L.cls === "us", g3Kr: L.cls === "kr" } });

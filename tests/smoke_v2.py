@@ -35,6 +35,10 @@
               3종목 · 후보 · 매수 계획 · 홈 · 포트폴리오 · 추가로 넣을 돈 · 종목) · 샀어요 미국 줄 밑 '미국 {날짜} 종가' · 다른 날의 % 없음 ·
               늦음 시각(staleAfter): 지나면 n ≤ 1 '갱신이 늦어지고 있어요'(홈 띠는 today.staleLate), 2일째부터 '{n}일째 …', 전이면 조용 ·
               홈 '오늘 확인할 일'의 그 종목 안내 · 열어 둔 화면도 시계가 staleAfter 를 지나면(타이머 · 다시 보일 때) 새로 고침 없이 경고
+  주가 기록   (Jack, 2026-11-14) 과거 주가 기록에 오류가 있는 한국 종목(pxBad · pxBadF): 52주까지 비운 종목은 회사 페이지 머리의 52주 막대 자리에
+              '과거 주가 기록 일부에 오류가 있어서 52주 범위와 출렁임·위험 숫자는 비워 두었어요.' 한 번 (모든 탭) · 출렁임 칸 '–' · 출렁임 카드 ·
+              주가 분해 없음 · 52주는 보이는 종목은 비운 숫자마다 '… 이 숫자는 비워 두었어요.' · 홈 종목 순위에서 비운 숫자의 목록만 빠짐 ·
+              다른 종목은 그대로 (390 · 1280)
   공시 단위   (Jack, 2026-11-13) 단위를 잘못 적은 재무제표로 숫자를 비운 한국 회사(unitChk): '공시 자료의 단위를 확인하고 있어서 이 숫자를
               잠시 비워 두었어요.' 영역마다 한 번 (요약의 한눈에 칸 위 · 재무 경고 자리 · 내 기준 · 실적 · 가치 · 두 자세히 · 배당성향 자리),
               실적 · 가치 칸과 숫자 없는 카드는 없음, 출렁임 · 배당은 그대로 · 다른 회사에는 없음
@@ -5140,7 +5144,7 @@ def v191b_files(files, se=None, beta=None):
     s10 = by[V191B_SPLIT10]
     s10.update(dps=28000.0, dps3=[28000.0, 26000.0, 25500.0], dps3a=[2800.0, 2600.0, 2550.0], dpsF=[10.0, 10.0, 10.0], divSt="adj",
                dyt=round(2800.0 / s10["price"] * 100, 2))
-    coby[V191B_CUT]["flRan"] = ["cr", "l3", "imp"]                           # 이자보상배율 확인이 안 돌았어요: '없어요'라고 하지 않아요
+    coby[V191B_CUT]["flRan"] = ["cr", "l3", "imp"]                           # 이자보상배율 확인이 안 돌았어요: '확인한 …'만 (Jack, 2026-11-14)
     return f
 
 
@@ -5210,14 +5214,17 @@ def scene_v191b(R, files, width):
         assert abs(float(page.locator('[data-ui-v2="co-yield"]').get_attribute("data-y")) - s["dyt"]) < 1e-9
         no_hscroll(page, width)
         R.collect(page)
-        # 진짜 삭감은 그대로 삭감 · 베타 양 끝이 같아요: 한 숫자 · 재무 경고 확인 하나가 안 돌았어요: '없어요' 없음
+        # 진짜 삭감은 그대로 삭감 · 베타 양 끝이 같아요: 한 숫자 · 재무 경고 확인 하나가 안 돌았어요: 다 본 것처럼 '…없어요'라고 하지 않고
+        # '확인한 재무 경고 신호는 없어요' (Jack, 2026-11-14: 승인된 가장 가까운 줄) · PR #68 의 밑 줄(co-warn-sub)은 없어요 (못 돈 확인 수는 Jack 의 줄, co-warn-count)
         open_co(V191B_CUT)
         assert tile(V191B_CUT, "div")[:2] == ("cut", T["div"]["cut"])
         b = by[V191B_CUT]["beta"]
         x = f"{round(b * 10) / 10:.1f}"
         rule, phrase, num = tile(V191B_CUT, "risk")
         assert num == fillp(T["riskOne"]["kr"], x=x), num
-        assert page.locator('[data-ui-v2="co-warn"][data-n="0"]').count() == 0
+        card = page.locator('[data-ui-v2="co-warn"][data-n="0"]')
+        assert card.get_attribute("data-partial") == "some" and card.inner_text().split("\n")[0] == CO["warn"]["nonePartial"], card.inner_text()
+        assert card.locator('[data-ui-v2="co-warn-sub"]').count() == 0
         co_open_tab(page, V191B_CUT, "value", "kr")
         rk = page.locator('[data-ui-v2="co-risk"]')
         assert rk.locator('[data-ui-v2="co-risk-band"]').inner_text() == fillp(CO["risk"]["one"]["kr"], x=x)
@@ -5257,10 +5264,12 @@ def scene_v191b(R, files, width):
         sub = page.locator('[data-ui-v2="co-warn-sub"]')
         assert sub.get_attribute("data-sub") == "noIcr" and sub.inner_text() == CO["warn"]["noneSubNoIcr"], sub.inner_text()
         no_hscroll(page, width)
-        # 이유가 영업이익 없음이면 그 줄은 틀린 말이라 아무것도 말하지 않아요
+        # 이유가 영업이익 없음이면 그 밑 줄(이자 비용을 찾지 못해)은 틀린 말이라 없어요: '확인한 …'만 (Jack, 2026-11-14)
         open_co(V191B_OPMISS)
         tile(V191B_OPMISS, "div")                                           # 회사 자료가 다 그려질 때까지
-        assert page.locator('[data-ui-v2="co-warn"][data-n="0"]').count() == 0
+        card = page.locator('[data-ui-v2="co-warn"][data-n="0"]')
+        assert card.get_attribute("data-partial") == "some" and CO["warn"]["noneSubNoIcr"] not in card.inner_text(), card.inner_text()
+        assert card.locator('[data-ui-v2="co-warn-sub"]').count() == 0
         # 이자보상배율을 현금흐름표의 이자 지급액으로 계산: 경고 밑에 그 안내 (버튼과 목록 모두) · 영업손실: 숫자 없이 (Jack, PR #68)
         open_co(V191B_ICRCF)
         btn = page.locator('[data-ui-v2="co-warn"][data-n="1"]')
@@ -8904,15 +8913,14 @@ def scene_v193e_company(R, files, width):
     R.check(page, S, "배당 칸 동전: 늘렸어요만 올라가는 더미 · 비슷하게 준 해는 같은 높이 셋 · 해마다 비교하지 않은 지급(미국 · 작년 기록 없음)은 더미 하나 · 줄였어요는 그림 없음", div_coins)
 
     def chips_only_when_ran():
-        for code, want in ((V191B_ND, ["l3", "imp"]), (V191B_PART, ["l3", "cr", "imp"]), (V191B_CUT, None), (V191B_OPMISS, None)):
+        for code, want in ((V191B_ND, ["l3", "imp"]), (V191B_PART, ["l3", "cr", "imp"]), (V191B_CUT, ["l3", "cr", "imp"]), (V191B_OPMISS, ["l3", "cr", "imp"])):
             open_co(code)
             page.locator('[data-ui-v2="co-tile"]').first.wait_for(state="visible")
             got = page.locator('[data-ui-v2="co-warn-chip"]').evaluate_all("els => els.map(e => e.dataset.check)")
-            assert got == (want or []), (code, got)                          # 해당 없음 · 못 돌린 확인: 칩 없음 (✓ 없음)
-            if want is None:
-                assert page.locator('[data-ui-v2="co-warn"][data-n="0"]').count() == 0
+            assert got == want, (code, got)                                  # 해당 없음 · 못 돌린 확인: 칩 없음 (✓ 없음)
+            assert "icr" not in got                                          # 넷 다 이자보상배율을 돌리지 않았어요
         R.collect(page)
-    R.check(page, S, "재무 경고 칩: 금융회사는 둘(해당 없음 빼고) · 이자보상배율 못 돌림은 셋 · 확인이 덜 돌면 카드도 칩도 없음", chips_only_when_ran)
+    R.check(page, S, "재무 경고 칩: 금융회사는 둘(해당 없음 빼고) · 이자보상배율 못 돌림은 셋 · 돌아간 확인에만 칩 (못 돌아간 확인엔 ✓ 없음, Jack 2026-11-14)", chips_only_when_ran)
 
     def value_fix():
         for code in ("005930", "000660", "005380"):
@@ -9573,6 +9581,175 @@ def scene_unit_chk(R, files, width, shots=None):
     srv.shutdown()
 
 
+# ── 2026-11-14 (Jack): 과거 주가 기록 오류 종목 (data.json · corp.json pxBad · pxBadF — fetch_data.py mark_px_bad) ──
+PXBAD_LINE = C["co"]["pxBad"]
+PXBAD_ONE = C["co"]["pxBadOne"]
+# validate_data.PX_BAD_DATA 와 그 창 (smoke 는 관문 파일을 읽지 않아요 — tests/test_px_bad.py 가 그 목록을 지켜요)
+PXBAD_DATA = ("hi", "lo", "vol", "beta", "betaSE", "betaN", "al", "r1", "r3", "r36", "mom", "sh", "mdd", "hit", "mz", "lz")
+PXBAD_CORP = ("hi", "lo", "vol", "beta", "betaSE", "betaN", "r1", "r3", "r36", "sh", "mdd", "mz", "lz")
+PXBAD_OLD = ["vol", "beta", "betaSE", "betaN", "al", "r36", "sh", "mdd", "hit", "lz"]          # 252봉보다 오래된 움직임: 시계열 전체 칸만
+PXBAD_Y = [k for k in PXBAD_DATA if k in PXBAD_OLD or k in ("hi", "lo", "mom", "mz")]          # 252봉 안 · 64봉 밖: 52주까지
+PXBAD = {"043260": ("2026-05-08", PXBAD_Y),       # 성호전자 (시험 데이터의 추세 1위): 52주까지 → 머리의 그 줄
+         "030000": ("2024-01-19", PXBAD_OLD)}     # 제일기획 (낮은 변동성 위쪽): 52주는 보여요 → 비운 숫자마다 짧은 줄
+PXBAD_FULL, PXBAD_PART = "043260", "030000"
+
+
+def px_bad_files(files):
+    """파이프라인이 하는 대로 두 종목의 숫자 중 계산 창에 그 날이 든 칸만 비우고 pxBad · pxBadF (data.json · corp.json). 다른 칸은 그대로."""
+    f = clone(files)
+    for t, (d, fl) in PXBAD.items():
+        s = next(x for x in f["data.json"]["stocks"] if x["t"] == t)
+        assert isnum(s.get("mom")) and isnum(s.get("vol")) and isnum(s.get("lo")), t
+        for k in fl:
+            s.pop(k, None)
+        s["pxBad"], s["pxBadF"] = d, list(fl)
+        c = next(x for x in f["corp.json"]["companies"] if x["t"] == t)
+        c.update({k: None for k in PXBAD_CORP if k in fl}, pxBad=d, pxBadF=list(fl))
+    return f
+
+
+def scene_px_bad(R, files, width):
+    """과거 주가 기록 오류 (Jack, 2026-11-14 · 저녁: 계산 창에 그 날이 든 숫자만). 52주까지 비운 종목(성호전자): 머리의 52주 막대 자리에 "과거 주가 기록
+    일부에 오류가 있어서 52주 범위와 출렁임·위험 숫자는 비워 두었어요." 한 번 (요약 · 실적 · 가치 · 배당 모두) · 52주 막대 없음 · 출렁임 칸 '–' (숫자 ·
+    그림 · 짧은 줄 · 자료가 없어요 없음) · 출렁임 카드 · 주가 분해 없음. 52주는 보이는 종목(제일기획): 52주 막대 그대로 · 그 줄 없음 · 비운 숫자마다
+    "과거 주가 기록 일부에 오류가 있어서 이 숫자는 비워 두었어요." (요약의 출렁임 칸 안 · 실적의 주가 분해 · 가치의 출렁임 카드 · 배당 탭에는 없음).
+    다른 종목(삼성전자 · 현대차 · AAPL)은 그대로. 홈 종목 순위: 추세에서는 52주까지 비운 종목만, 낮은 변동성에서는 둘 다 빠지고 나머지는 파이썬으로
+    센 순서 그대로. 12px 이상 · 가로 스크롤 없음 · 뱁이 없음."""
+    S = f"과거 주가 기록 {width}"
+    wide = width >= 1024
+    site = px_bad_files(files)
+    stocks = site["data.json"]["stocks"]
+    coby = {c["t"]: c for c in site["corp.json"]["companies"]}
+    srv, ctx, page, base = R.open(build_site(site), width, init=rank_store([RANK_DECK]), path="/app.html?dev=1#home",
+                                  device=pc_device(width) if wide else None)
+
+    def lines(sel='[data-ui-v2="px-bad"]'):
+        loc = page.locator(sel)
+        return [loc.nth(i).inner_text().strip() for i in range(loc.count())]
+
+    def ones():
+        return lines('[data-ui-v2="px-bad-one"]')
+
+    def lists():
+        """홈 종목 순위: 추세에서는 1년 수익률을 비운 종목만, 낮은 변동성에서는 둘 다 빠지고, 나머지는 파이썬으로 센 순서 그대로 (rank_check_list)."""
+        wait_ready(page)
+        page.locator('[data-ui-v2="rank"]').first.wait_for(state="visible")
+        rank_market(page, "kr")
+        for crit, gone in (("trend", {PXBAD_FULL}), ("lowVol", set(PXBAD))):
+            rank_chip(page, "crit", crit)
+            rank_check_list(page, stocks, coby, "kr", "crit", crit)
+            rows = rank_ts(page)
+            assert not gone & set(rows), (crit, rows)
+            before = rank_expect(files["data.json"]["stocks"], "kr", "crit", crit, {c["t"]: c for c in files["corp.json"]["companies"]})[:10]
+            assert gone & set(before), (crit, before)                               # 시험이 뜻이 있어요: 비우기 전에는 목록에 있었어요
+            R.collect(page)
+        rank_chip(page, "cap")
+        assert lines() == [] and ones() == []                                       # 홈에는 그 줄이 없어요 (숫자가 없는 게 아니라 빠진 거예요)
+        no_hscroll(page, width)
+    R.check(page, S, "홈 종목 순위: 추세에서는 52주까지 비운 종목만, 낮은 변동성에서는 둘 다 빠지고 나머지 순서는 그대로", lists)
+
+    def go(t, ctab):
+        co_hash(page, f"#stocks/{t}" + (f"/{ctab}" if ctab else ""))
+        page.wait_for_function("([t, tab]) => { const e = document.querySelector('[data-ui-v2=\"company\"]');"
+                               " return !!e && e.dataset.t === t && e.dataset.tab === tab; }", arg=[t, ctab or "summary"])
+        page.locator('[data-ui-v2="co-summary"], [data-ui-v2="co-earn"], [data-ui-v2="co-value"], [data-ui-v2="co-div"]').first.wait_for(state="visible")
+
+    def tidy(where):
+        for x in page.locator('[data-ui-v2="px-bad"], [data-ui-v2="px-bad-one"]').evaluate_all("(els) => els.map((e) => parseFloat(getComputedStyle(e).fontSize))"):
+            assert x >= 12, (where, x)
+        floor_ok(page, where)
+        no_hscroll(page, width)
+        no_mascot(page)
+        R.collect(page)
+
+    def full():
+        t = PXBAD_FULL
+        for ctab in (None, "earn", "value", "div"):
+            go(t, ctab)
+            assert lines() == [PXBAD_LINE] and ones() == [], (t, ctab, lines(), ones())   # 화면마다 한 번 · 짧은 줄 없음
+            assert page.locator('[data-ui-v2="co-head"] [data-ui-v2="px-bad"]').count() == 1, (t, ctab)
+            assert page.locator('[data-ui-v2="co-price"]').bounding_box()["y"] < page.locator('[data-ui-v2="px-bad"]').bounding_box()["y"]
+            assert page.locator('[data-ui-v2="co-range"], [data-ui-v2="co-decomp"], [data-ui-v2="co-risk"]').count() == 0, (t, ctab)
+            if not ctab:
+                tile = page.locator('[data-ui-v2="co-tile"][data-topic="risk"]')
+                assert tile.get_attribute("data-rule") == "pxbad" and tile.locator('[data-ui-v2="tile-phrase"]').inner_text() == "–"
+                assert tile.locator('[data-ui-v2="tile-number"], [data-ui-v2="tile-basis"], [data-ui-v2="tile-art"], [data-ui-v2="px-bad-one"]').count() == 0
+                assert C["co"]["tiles"]["na"] not in page.locator('[data-ui-v2="co-tiles"]').inner_text()
+                for card in ("lowVol", "trend"):
+                    r = page.locator(f'[data-ui-v2="co-fit"] [data-ui-v2="rank-row"][data-card="{card}"]')
+                    if r.count():
+                        assert r.get_attribute("data-side") == "blank", (card, r.get_attribute("data-side"))
+            tidy(f"과거 주가 기록 {t} {ctab or 'summary'}")
+        for ctab in ("value-more", "earn-more"):                                   # 자세히: 그 숫자가 없는 화면 — 줄도 없어요
+            co_hash(page, f"#stocks/{t}/{ctab}")
+            page.locator(f'[data-ui-v2="co-{ctab}"]').wait_for(state="visible")
+            assert lines() == [] and ones() == [], (t, ctab)
+            R.collect(page)
+    R.check(page, S, f"52주까지 비운 종목 ({PXBAD_FULL}): 머리에 그 줄 한 번 (요약 · 실적 · 가치 · 배당) · 52주 막대 · 출렁임 숫자 · 주가 분해 없음 · 출렁임 칸 '–'", full)
+
+    def part():
+        t = PXBAD_PART
+        want = {None: '[data-ui-v2="co-tile"][data-topic="risk"]', "earn": '[data-ui-v2="co-decomp"][data-head="pxbad"]',
+                "value": '[data-ui-v2="co-risk"][data-rule="pxbad"]', "div": None}
+        for ctab, inside in want.items():
+            go(t, ctab)
+            assert lines() == [], (t, ctab, lines())                                # 그 줄 없음 (52주가 보여요)
+            assert page.locator('[data-ui-v2="co-range"]').count() == 1, (t, ctab)   # 52주 막대 그대로
+            if inside:
+                assert ones() == [PXBAD_ONE], (t, ctab, ones())                     # 비운 숫자 자리에 한 번
+                assert page.locator(inside + ' [data-ui-v2="px-bad-one"]').count() == 1, (t, ctab)
+            else:
+                assert ones() == [], (t, ctab, ones())
+            assert page.locator('[data-ui-v2="co-decomp-eq"], [data-ui-v2="co-risk-band"]').count() == 0
+            assert page.locator('[data-ui-v2="co-tile"][data-topic="risk"] [data-ui-v2="tile-number"]').count() == 0
+            if not ctab:
+                tile = page.locator('[data-ui-v2="co-tile"][data-topic="risk"]')
+                assert tile.get_attribute("data-rule") == "pxbad" and tile.locator('[data-ui-v2="tile-phrase"]').inner_text() == "–"
+                assert C["co"]["tiles"]["na"] not in page.locator('[data-ui-v2="co-tiles"]').inner_text()
+            dash = {"earn": '[data-ui-v2="co-decomp-px"]', "value": '[data-ui-v2="co-risk-px"]'}.get(ctab)
+            if dash:                                                                # 짧은 줄 바로 위에 보이는 '–' (pxBad 리뷰 2차)
+                d, one = page.locator(dash), page.locator(inside + ' [data-ui-v2="px-bad-one"]')
+                assert d.count() == 1 and d.inner_text().strip().endswith("–"), (t, ctab, d.inner_text() if d.count() else None)
+                assert d.bounding_box()["y"] + d.bounding_box()["height"] <= one.bounding_box()["y"] + 1, (t, ctab)
+            tidy(f"과거 주가 기록 {t} {ctab or 'summary'}")
+            if not ctab:                                                            # 내 기준 시트: 낮은 변동성 '–' · 그 밑에 짧은 줄 한 번 (pxBad 리뷰 2차)
+                fit = page.locator('[data-ui-v2="co-fit"]')
+                fit.get_by_role("button", name=C["co"]["fit"]["all"]).click()        # 기준 카드 8개 모두 보기
+                sheet = page.locator('[data-ui-v2="co-fit-sheet"]')
+                sheet.wait_for(state="visible")
+                rows = {r.get_attribute("data-card"): r for r in sheet.locator('[data-ui-v2="rank-row"]').all()}
+                low = rows["lowVol"]
+                assert low.get_attribute("data-side") == "blank" and low.inner_text().strip().endswith("–"), low.inner_text()
+                assert rows["trend"].get_attribute("data-side") in ("top", "bottom"), rows["trend"].get_attribute("data-side")   # 추세는 그대로
+                one = sheet.locator('[data-ui-v2="px-bad-one"]')
+                assert one.count() == 1 and one.inner_text().strip() == PXBAD_ONE, [one.nth(i).inner_text() for i in range(one.count())]
+                assert sheet.locator('[data-ui-v2="px-bad"]').count() == 0
+                last = max(r.bounding_box()["y"] for r in rows.values())
+                assert one.bounding_box()["y"] > last, (one.bounding_box(), last)  # 줄들 밑
+                tidy(f"과거 주가 기록 {t} 기준 카드 시트")
+                if R.shots:
+                    page.screenshot(path=os.path.join(R.shots, f"pxbad-fit-sheet-{width}.png"))
+                page.keyboard.press("Escape")
+                sheet.wait_for(state="detached")
+    R.check(page, S, f"52주는 보이는 종목 ({PXBAD_PART}): 52주 막대 그대로 · 비운 숫자마다 '–' 와 짧은 줄 (출렁임 칸 · 주가 분해 · 출렁임 카드 ·"
+            " 기준 카드 시트의 낮은 변동성) · 배당 탭에는 없음", part)
+
+    def others():
+        for code in ("005930", "005380", "AAPL"):
+            for ctab in (None, "earn", "value"):
+                go(code, ctab)
+                assert lines() == [] and ones() == [], (code, ctab)
+                assert page.locator('[data-ui-v2="co-range"]').count() == 1, (code, ctab)
+                if not ctab:
+                    assert page.locator('[data-ui-v2="co-tile"][data-topic="risk"]').get_attribute("data-rule") != "pxbad"
+                if ctab == "value" and code != "AAPL":
+                    assert page.locator('[data-ui-v2="co-risk"]').count() == 1 and page.locator('[data-ui-v2="co-risk"][data-rule="pxbad"]').count() == 0, code
+        R.collect(page)
+    R.check(page, S, "다른 종목 (삼성전자 · 현대차 · AAPL): 줄 없음 · 52주 막대 · 출렁임 그대로", others)
+    ctx.close()
+    srv.shutdown()
+
+
 # ── 2026-11-08 (Jack): DART 다시 읽기가 끝난 뒤 (src/repair.js 3 · 4, src/v2/fixnote.jsx EpsOwnersNote · StmtCurNote) ──
 OWNERS_LINE = C["fix"]["owners"].replace("{date}", f"{int(_FIXD[0][1])}월 {int(_FIXD[0][2])}일")
 STMT_T = "241560"              # 두산밥캣: 재무제표를 달러로 공시해요 → 다시 읽은 발행에서 금액이 비고 stmtCur "USD"
@@ -10052,6 +10229,151 @@ def scene_us_fcur(R, files, width, named):
             page.screenshot(path=os.path.join(R.shots, f"pbr0-summary-{width}.png"))
     if named:
         R.check(page, S, f"{PBR0_T} PBR 0.00 (pbrZero): 가치 칸 · 내 기준 · 가치 탭 · 자세히에 'PBR –' 와 그 밑 줄 한 번씩 · PER · 날짜 그대로", pbr_zero)
+    ctx.close()
+    srv.shutdown()
+
+
+# ── Jack, 2026-11-14: 미국 상장 외국 회사의 숫자가 회사 전체 재무제표와 맞지 않아 비운 칸 (data.json fgnCut · fcur.js · fixnote.jsx FgnCutNote) ──
+# 시험 데이터의 CVX · COP · BAC 를 본떠 SHEL(아무것도 비우지 않음) · BP(PER · PBR 비움) · HSBC(PBR · 배당수익률 비움)를 더해요 (파이프라인과 같은 모양).
+FGN_ADD = {"SHEL": ("CVX", "Shell plc", None), "BP": ("COP", "BP p.l.c.", {"per": "mismatch", "pbr": "mismatch"}),
+           "HSBC": ("BAC", "HSBC Holdings plc", {"pbr": "mismatch", "dy": "mismatch"})}
+
+
+def fgn_files(files):
+    f = clone(files)
+    st = f["data.json"]["stocks"]
+    assert not {s["t"] for s in st} & set(FGN_ADD), "시험 데이터에 이미 그 티커가 있어요"
+    for t, (src, name, cut) in FGN_ADD.items():
+        s = dict(next(x for x in st if x["t"] == src), t=t, nk=name, ne=name)
+        assert s["cls"] == "us" and s.get("per") and s.get("pbr") and s.get("dy"), s
+        if cut:
+            for k in list(cut) + (["vz"] if "pbr" in cut else []):
+                s.pop(k, None)
+            s["fgnCut"] = dict(cut)
+        st.append(s)
+    return f
+
+
+def scene_us_fgn(R, files, width):
+    """미국 상장 외국 회사 (Jack, 2026-11-14: '자료의 숫자가 회사 전체 재무제표와 맞지 않아서 비워 두었어요.'). 통화 줄(#114)과 같은 자리:
+      BP (PER · PBR 비움) — 요약의 가치 칸 'PBR –' (규칙 fgn, 맨 뒤) 와 그 밑 줄 한 번 · 배당 칸은 평소대로 · 내 기준의 가치 줄 '–' 와 줄 한 번 ·
+        가치 탭 PBR · PER '–' 와 줄 한 번, 날짜 줄 없음 · 가치 자세히 PBR · PER '–' 와 줄 · 배당 탭은 평소대로 (줄 없음).
+      HSBC (PBR · 배당수익률 비움) — 가치 · 배당 칸 '–' (맨 뒤) 와 그 밑 줄 한 번 · 내 기준 줄 · 가치 탭 PBR '–' · PER 그대로 · 날짜 줄 그대로 ·
+        배당 탭 배당수익률 '–' 와 줄, '자료가 없어요' · 100만원어치 없음.
+      SHEL (비우지 않음) — 줄도 '–' 칸도 없어요. 모두 12px 이상 · 가로 스크롤 없음 · 뱁이 없음 · '자료가 없어요' 가 비운 칸에 없어요."""
+    S = f"미국 외국 회사 숫자 맞춤 {width}"
+    yld = C["pick"]["receipt"]["yield"]
+    wide = width >= 1024
+    site = build_site(fgn_files(files))
+    srv, ctx, page, base = R.open(site, width, path="/app.html?dev=1#home", device=pc_device(width) if wide else None)
+    wait_ready(page)
+    lines = lambda sel="": page.locator(f'{sel} [data-ui-v2="fgn-cut"]'.strip())   # noqa: E731
+
+    def common(where):
+        for i in range(lines().count()):
+            assert lines().nth(i).inner_text().strip() == CO["fgnCut"], lines().nth(i).inner_text()
+            assert lines().nth(i).evaluate("(e) => parseFloat(getComputedStyle(e).fontSize)") >= 12
+        floor_ok(page, where)
+        no_hscroll(page, width)
+        no_mascot(page)
+        R.collect(page)
+
+    def below(a, b):
+        ba, bb = a.bounding_box(), b.bounding_box()
+        return ba["y"] + ba["height"] - 1 <= bb["y"] <= ba["y"] + ba["height"] + 40
+
+    def summary(t, held, fields):
+        co_hash(page, f"#stocks/{t}")
+        tiles = page.locator('[data-ui-v2="co-tiles"]')
+        tiles.wait_for(state="visible")
+        order = tiles.locator('[data-ui-v2="co-tile"]').evaluate_all("(els) => els.map((e) => [e.dataset.topic, e.dataset.rule])")
+        assert [o for o in order if o[1] == "fgn"] == [[x, "fgn"] for x in held] and order[-len(held):] == [[x, "fgn"] for x in held], order
+        for topic in held:
+            tt = tiles.locator(f'[data-ui-v2="co-tile"][data-topic="{topic}"]')
+            assert tt.locator('[data-ui-v2="tile-phrase"]').inner_text().strip() == "–"
+            assert tt.locator('[data-ui-v2="tile-number"]').inner_text().strip() == ("PBR –" if topic == "value" else f"{yld} –")
+            assert CO["tiles"]["na"] not in tt.inner_text()
+        note = tiles.locator('[data-ui-v2="fgn-cut"]')
+        assert note.count() == 1 and note.get_attribute("data-fields") == fields, note.count()
+        assert below(tiles.locator(f'[data-ui-v2="co-tile"][data-topic="{held[-1]}"]'), note)
+        fit = page.locator('[data-ui-v2="co-fit"]')
+        fit.wait_for(state="visible")
+        rows = {r.get_attribute("data-card"): r.get_attribute("data-side") for r in fit.locator('[data-ui-v2="rank-row"]').all()}
+        assert all(rows.get(c) == "blank" for c in held), rows
+        assert fit.locator('[data-ui-v2="fgn-cut"]').count() == 1 and lines().count() == 2
+        assert page.locator('[data-ui-v2="fcur"], [data-ui-v2="pbr-zero"]').count() == 0
+        common(f"{t} 요약")
+        if R.shots:
+            tiles.scroll_into_view_if_needed()
+            page.screenshot(path=os.path.join(R.shots, f"fgn-{t}-summary-{width}.png"))
+
+    def bp():
+        summary("BP", ["value"], "pbr")
+        co_hash(page, "#stocks/BP/value")
+        val = page.locator('[data-ui-v2="co-value"]')
+        val.wait_for(state="visible")
+        for sel in ("co-pbr", "co-per"):
+            loc = val.locator(f'[data-ui-v2="{sel}"]')
+            assert loc.count() == 1 and loc.get_attribute("data-blank") == "fgn" and loc.inner_text().split("\n")[-1].strip() == "–", loc.inner_text()
+        assert lines('[data-ui-v2="co-value"]').count() == 1 and lines().count() == 1
+        assert lines().get_attribute("data-fields") == "per,pbr" and below(val.locator('[data-ui-v2="co-per"]'), lines())
+        assert val.locator('[data-ui-v2="date-line"]').count() == 0                  # 보이는 숫자가 없어요
+        assert page.locator('[data-ui-v2="co-compare"]').count() == 0
+        common("BP 가치 탭")
+        co_hash(page, "#stocks/BP/value-more")
+        ratios = page.locator('[data-ui-v2="co-ratios"]')
+        ratios.wait_for(state="visible")
+        got = ratios.locator('[data-ui-v2="co-ratio"]').evaluate_all("(els) => els.map((e) => e.innerText.split('\\n').map((x) => x.trim()).filter(Boolean))")
+        assert [g[0] for g in got] == ["PBR", "PER"] and all("–" in g for g in got), got
+        assert lines('[data-ui-v2="co-ratios"]').count() == 1 and ratios.locator('[data-ui-v2="date-line"]').count() == 0
+        common("BP 가치 자세히")
+        co_hash(page, "#stocks/BP/div")
+        div = page.locator('[data-ui-v2="co-div"]')
+        div.wait_for(state="visible")
+        y = div.locator('[data-ui-v2="co-yield"]')
+        assert y.count() == 1 and y.get_attribute("data-blank") is None and "–" not in y.inner_text(), y.inner_text()
+        assert lines().count() == 0
+        common("BP 배당 탭")
+        if R.shots:
+            co_hash(page, "#stocks/BP/value")
+            page.wait_for_timeout(200)
+            page.screenshot(path=os.path.join(R.shots, f"fgn-BP-value-{width}.png"))
+    R.check(page, S, "BP (PER · PBR 비움): 가치 칸 'PBR –' · 내 기준 · 가치 탭 · 자세히에 '–' 와 그 밑 줄 한 번씩 · 날짜 줄 없음 · 배당은 그대로", bp)
+
+    def hsbc():
+        summary("HSBC", ["value", "div"], "pbr,dy")
+        co_hash(page, "#stocks/HSBC/value")
+        val = page.locator('[data-ui-v2="co-value"]')
+        val.wait_for(state="visible")
+        pb, pe = val.locator('[data-ui-v2="co-pbr"]'), val.locator('[data-ui-v2="co-per"]')
+        assert pb.get_attribute("data-blank") == "fgn" and pb.inner_text().split("\n")[-1].strip() == "–"
+        assert pe.count() == 1 and pe.get_attribute("data-blank") is None and "–" not in pe.inner_text()   # PER 은 그대로
+        assert lines('[data-ui-v2="co-value"]').count() == 1 and lines().get_attribute("data-fields") == "pbr"
+        assert val.locator('[data-ui-v2="date-line"]').count() >= 1                  # PER 의 날짜는 그대로
+        common("HSBC 가치 탭")
+        co_hash(page, "#stocks/HSBC/div")
+        div = page.locator('[data-ui-v2="co-div"]')
+        div.wait_for(state="visible")
+        y = div.locator('[data-ui-v2="co-yield"]')
+        assert y.count() == 1 and y.get_attribute("data-blank") == "fgn" and y.inner_text().split("\n")[-1].strip() == "–", y.inner_text()
+        assert page.locator('[data-ui-v2="co-million"]').count() == 0 and CO["tiles"]["na"] not in div.inner_text(), div.inner_text()
+        assert lines('[data-ui-v2="co-div-stats"]').count() == 1 and lines().count() == 1 and below(y, lines())
+        common("HSBC 배당 탭")
+        if R.shots:
+            page.screenshot(path=os.path.join(R.shots, f"fgn-HSBC-div-{width}.png"))
+    R.check(page, S, "HSBC (PBR · 배당수익률 비움): 가치 · 배당 칸 '–' 와 그 밑 줄 한 번 · 가치 탭 PBR '–' · PER 그대로 · 배당 탭 '–' 와 줄", hsbc)
+
+    def shel():
+        for ctab in (None, "value", "value-more", "div"):
+            co_hash(page, "#stocks/SHEL" + (f"/{ctab}" if ctab else ""))
+            page.locator('[data-ui-v2="co-summary"], [data-ui-v2="co-value"], [data-ui-v2="co-value-more"], [data-ui-v2="co-div"]').first.wait_for(state="visible")
+            page.wait_for_timeout(150)
+            assert lines().count() == 0 and page.locator('[data-blank="fgn"], [data-rule="fgn"]').count() == 0, ctab
+        co_hash(page, "#stocks/SHEL/value")
+        page.locator('[data-ui-v2="co-value"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="co-pbr"]').count() == 1 and "–" not in page.locator('[data-ui-v2="co-pbr"]').inner_text()
+        common("SHEL")
+    R.check(page, S, "SHEL (비우지 않음): 줄도 '–' 칸도 없어요", shel)
     ctx.close()
     srv.shutdown()
 
@@ -11607,6 +11929,287 @@ def mdtext(iso):
     return fillp(C["app"]["md"], m=m, d=d)
 
 
+# ── 재무 경고: 확인이 일부만 돌았거나 하나도 못 돌았을 때 (Jack, 2026-11-14 · src/v2/warn.js · company.jsx Warnings) ──
+# 2026-11-14 발행(11월 13일 종가)의 실제 재무 경고 칸 (tests/test_fin_warn_partial.py REAL 과 같아요)
+FW_REAL = {
+    "000270": {"flRan": ["cr", "icr", "l3"], "flSrc": {"icr": "cf"}, "bq": "2026.2Q", "fy": 2025},                   # 기아: 자본잠식 못 돌림
+    "066970": {"fl": {"cr": 75.0, "l3": 1}, "flRan": ["cr", "icr", "l3"], "flSrc": {"icr": "cf"}, "bq": "2026.2Q", "fy": 2025},   # 엘앤에프
+    "228760": {"fl": {"l3": 1}, "flRan": ["cr", "l3", "imp"], "flWhy": {"icr": "ie"}, "bq": "2026.2Q", "fy": 2025},  # 지노믹트리
+    "0011T0": {"flRan": [], "flWhy": {"icr": "op"}, "fy": None},                                                    # 채비: 재무제표 없음
+    "005935": {"flRan": [], "flWhy": {"icr": "op"}, "fy": None},                                                    # 삼성전자우
+    "241560": {"flRan": [], "fy": 2025, "stmtCur": "USD"},                                                          # 두산밥캣: 달러 재무제표
+}
+
+
+def fin_warn_files(files):
+    f = clone(files)
+    coby = {c["t"]: c for c in f["corp.json"]["companies"]}
+    for t, rec in FW_REAL.items():
+        for k in ("fl", "flRan", "flNa", "flWhy", "flSrc", "stmtCur", "unitChk", "bq", "fy"):
+            coby[t].pop(k, None)
+        coby[t].update(rec)
+    co = coby["241560"]                                       # 파이프라인처럼 달러 금액은 비워요 (reread_files 와 같아요)
+    co.update(rev=[None, None, None], op=[None, None, None], ni=[None, None, None], eq=None, dcfReady=False, per=None, pbr=None, eps=None, bps=None)
+    for k in ("evE", "evR", "pcf", "cash3", "eps3r", "epsNi3", "epsB", "nio3", "epsIn", "bpsIn", "roeIn", "epsFy", "epsRep"):
+        co.pop(k, None)
+    next(x for x in f["data.json"]["stocks"] if x["t"] == "241560").update(per=None, pbr=None, eps=None, bps=None, vz=None)
+    return f
+
+
+def scene_fin_warn_partial(R, files, width):
+    """Jack, 2026-11-14: 재무 경고가 확인이 덜 돌았다고 사라지거나 다 본 것처럼 읽히면 안 돼요.
+    - 하나도 못 돈 한국 회사(채비 · 삼성전자우 · 두산밥캣): 카드가 있고 '재무 경고' + '필요한 자료가 없어서 확인하지 못했어요.', '없어요' · ✓ 없음.
+    - 걸린 경고 + 이자보상배율만 이자 줄이 없어 못 돌림(지노믹트리): 목록 줄과 시트 목록 밑에 PR #68 의 승인된 이유 줄.
+    - 걸린 경고 + 다른 확인이 못 돎(엘앤에프): 경고 둘 그대로 (그 확인의 줄은 아직 승인된 말이 없어요).
+    - 기아(자본잠식 못 돌림): '재무 경고 신호는 없어요'라고 하지 않고 자본잠식 ✓ 없음.
+    - 가진 종목 '재무 경고 0개' 칸 (포트폴리오 · 홈): 엘앤에프 + 기아 → 걸림(엘앤에프), 기아만 → 확인하지 못했어요 (✓ 아님).
+    12px 이상 · 가로 스크롤 없음 · 뱁이 없음."""
+    S = f"재무 경고 일부 {width}"
+    wide = width >= 1024
+    fx = fin_warn_files(files)
+    by = {s["t"]: s for s in fx["data.json"]["stocks"]}
+
+    def deck(did, ts):
+        return {"id": did, "name": "가진 종목", "createdAt": "2026-10-30", "kind": "imported", "settings": {"points": {"value": 2}, "strict": "normal"},
+                "holdings": [{"t": t, "nk": by[t]["nk"], "cls": "kr"} for t in ts], "purchases": [],
+                "imported": [{"t": t, "nk": by[t]["nk"], "ccy": "KRW", "qty": 10} for t in ts]}
+    store = {"v": 2, "decks": [deck("dfw", ["066970", "000270"]), deck("dfk", ["000270"])]}
+    init = ("(() => { try { if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', "
+            + json.dumps(json.dumps(store, ensure_ascii=False)) + "); } catch (e) {} })();")
+    srv, ctx, page, base = R.open(build_site(fx), width, init=init, device=pc_device(width) if wide else None)
+    page.locator('[data-ui-v2="date-line"], [data-ui-v2="load-fail"]').first.wait_for(state="visible")
+    head, unknown = C["rank"]["warn"], C["pfr"]["unknown"]
+
+    def summary_lines():
+        return [x.strip() for x in page.locator('[data-ui-v2="co-summary"]').inner_text().split("\n") if x.strip()]
+
+    def no_check():
+        for code in ("0011T0", "005935", "241560"):
+            co_hash(page, f"#stocks/{code}")
+            card = page.locator('[data-ui-v2="co-warn-unchecked"]')
+            card.wait_for(state="visible")
+            assert [x.strip() for x in card.inner_text().split("\n") if x.strip()] == [head, CO["warn"]["noData"]], (code, card.inner_text())
+            assert page.locator('[data-ui-v2="co-warn"]').count() == 0 and page.locator('[data-ui-v2="co-warn-chip"]').count() == 0, code
+            assert not any(x in (CO["warn"]["none"], CO["warn"]["nonePartial"]) for x in summary_lines()), code    # '없어요'라고 하지 않아요
+            assert card.bounding_box()["y"] > page.locator('[data-ui-v2="co-tiles"]').bounding_box()["y"]     # 한눈에 칸들 밑, 늘 그 자리
+            if code == "241560":                                                                            # 이유(통화) 줄은 칸들 위에 한 번 그대로
+                assert page.locator('[data-ui-v2="co-summary"] [data-ui-v2="stmt-cur"]').count() == 1
+            floor_ok(page, f"재무 경고 확인 못 함 {code}")
+            no_hscroll(page, width)
+            no_mascot(page)
+            R.collect(page)
+    R.check(page, S, "재무 경고를 하나도 확인하지 못한 회사 (채비 · 삼성전자우 · 두산밥캣): 카드가 있고 '재무 경고' + '필요한 자료가 없어서 …' · '없어요' · ✓ 없음", no_check)
+
+    def interest_line():
+        co_hash(page, "#stocks/228760")
+        btn = page.locator('[data-ui-v2="co-warn"][data-n="1"]')
+        btn.wait_for(state="visible")
+        assert CO["warn"]["l3"] in btn.inner_text(), btn.inner_text()
+        assert btn.locator('[data-ui-v2="co-warn-noicr"]').inner_text() == CO["warn"]["noneSubNoIcr"]
+        floor_ok(page, "재무 경고 줄 (이자보상배율 못 돌림)")
+        btn.click()
+        sheet = page.locator('[data-ui-v2="co-warn-list"]')
+        sheet.wait_for(state="visible")
+        note = sheet.locator('[data-ui-v2="co-warn-noicr"]')
+        assert note.count() == 1 and note.inner_text() == CO["warn"]["noneSubNoIcr"]
+        assert sheet.locator("[data-flag]").count() == 1 and sheet.locator("[data-flag]").last.bounding_box()["y"] < note.bounding_box()["y"]   # 목록 밑
+        floor_ok(page, "재무 경고 목록 (이자보상배율 못 돌림)")
+        no_hscroll(page, width)
+        R.collect(page)
+        page.keyboard.press("Escape")
+        sheet.wait_for(state="hidden")
+    R.check(page, S, "지노믹트리: 걸린 경고(3년 연속 순손실) + 이자보상배율은 이자 줄이 없어 못 돌림 → 줄과 목록 밑에 승인된 이유 줄", interest_line)
+
+    def others():
+        co_hash(page, "#stocks/066970")
+        btn = page.locator('[data-ui-v2="co-warn"][data-n="2"]')
+        btn.wait_for(state="visible")
+        assert btn.locator('[data-ui-v2="co-warn-noicr"]').count() == 0                     # 자본잠식을 못 돌린 이유는 아직 승인된 말이 없어요
+        btn.click()
+        sheet = page.locator('[data-ui-v2="co-warn-list"]')
+        sheet.wait_for(state="visible")
+        assert sheet.locator("[data-flag]").evaluate_all("(els) => els.map((e) => e.dataset.flag)") == ["cr", "l3"]
+        assert sheet.locator('[data-ui-v2="co-warn-noicr"]').count() == 0
+        R.collect(page)
+        page.keyboard.press("Escape")
+        sheet.wait_for(state="hidden")
+        co_hash(page, "#stocks/000270")                                                      # 기아: 자본잠식을 못 돌렸어요
+        page.locator('[data-ui-v2="co-tile"]').first.wait_for(state="visible")
+        assert CO["warn"]["none"] not in summary_lines()                                     # 네 가지를 다 본 것처럼 말하지 않아요
+        assert page.locator('[data-ui-v2="co-warn-chip"][data-check="imp"]').count() == 0     # 돌지 않은 확인에 ✓ 없음
+        card = page.locator('[data-ui-v2="co-warn"][data-n="0"][data-partial="some"]')        # Jack, 11-14: 확인한 것만 말해요
+        assert card.inner_text().split("\n")[0] == CO["warn"]["nonePartial"], card.inner_text()
+        assert card.locator('[data-ui-v2="co-warn-chip"]').evaluate_all("(els) => els.map((e) => e.dataset.check)") == ["l3", "cr", "icr"]
+        floor_ok(page, "재무 경고 확인한 것만 (기아)")
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "엘앤에프: 경고 둘 그대로 (덜 돌아간 확인이 있어도) · 기아: '재무 경고 신호는 없어요'라고 하지 않고 자본잠식 ✓ 없음", others)
+
+    def holdings_tiles():
+        page.evaluate("() => { location.hash = '#portfolio'; }")
+        at(page, "portfolio")
+        both = page.locator('[data-deck-id="dfw"] [data-ui-v2="pf-rule"][data-rule="warn"]')
+        kia = page.locator('[data-deck-id="dfk"] [data-ui-v2="pf-rule"][data-rule="warn"]')
+        both.wait_for(state="visible")
+        assert both.get_attribute("data-state") == "broken" and by["066970"]["nk"] in both.inner_text(), both.inner_text()
+        assert kia.get_attribute("data-state") == "unknown" and kia.locator('[data-ui-v2="pf-rule-unknown"]').inner_text() == unknown
+        floor_ok(page, "가진 종목 재무 경고 칸")
+        no_hscroll(page, width)
+        R.collect(page)
+        page.evaluate("() => { location.hash = '#home'; }")
+        at(page, "home")
+        hb = page.locator('[data-ui-v2="home-rules"][data-deck-id="dfw"] [data-ui-v2="home-rule"][data-rule="warn"]')
+        hk = page.locator('[data-ui-v2="home-rules"][data-deck-id="dfk"] [data-ui-v2="home-rule"][data-rule="warn"]')
+        hb.wait_for(state="visible")
+        assert hb.get_attribute("data-state") == "broken" and hk.get_attribute("data-state") == "unknown"
+        assert hk.locator('[data-ui-v2="home-rule-unknown"]').inner_text() == unknown
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "가진 종목 '재무 경고 0개' (포트폴리오 · 홈): 엘앤에프 + 기아 → 걸림, 기아만 → 확인하지 못했어요 (✓ 아님)", holdings_tiles)
+    ctx.close()
+    srv.shutdown()
+
+
+
+def fin_lines_files(files):
+    """fin_warn_files 에 채비의 빈 재무제표(실제 발행처럼)와 본시스템즈(재무제표 없음, 2026-11-14 발행의 실제 줄)를 더해요."""
+    f = fin_warn_files(files)
+    next(c for c in f["corp.json"]["companies"] if c["t"] == "0011T0").update(rev=[None] * 3, op=[None] * 3, ni=[None] * 3, eq=None)
+    next(x for x in f["data.json"]["stocks"] if x["t"] == "0011T0")["fy"] = None          # 실제처럼: 새로 상장, 사업보고서 연도 없음
+    with open(os.path.join(ROOT, "tests", "fixtures", "fin_warn_real_rows.json"), encoding="utf-8") as fh:
+        real = json.load(fh)
+    f["data.json"]["stocks"] += real["stocks"]
+    f["corp.json"]["companies"] += real["companies"]
+    return f
+
+
+def scene_fin_warn_lines(R, files, width):
+    """Jack 이 2026-11-14 에 승인한 세 줄 (390 · 1280):
+    - '4가지 중 {k}가지는 필요한 자료가 없어서 확인하지 못했어요.': 엘앤에프 경고 줄과 목록 밑 · 기아 '확인한 …' 밑. 지노믹트리는 PR #68 줄만.
+    - '필요한 자료가 없어서 확인하지 못했어요.': 채비의 '재무 경고' 밑 · 기아만 가진 포트폴리오의 '재무 경고 0개 · 확인하지 못했어요' 칸 밑 (홈도).
+    - '공시된 재무제표가 아직 없어서 계산할 수 없어요.': 채비(새로 상장, 사업보고서 없음)의 한눈에 칸 위 · 실적 · 가치 · 배당 탭. 본시스템즈(KONEX,
+      2024년 사업보고서를 냈어요)에는 없어요.
+    - 종목 바꾸기 → 이름으로 찾기 → 담기 시트도 같은 규칙 (엘앤에프 · 기아 · 채비 · 지노믹트리).
+    12px 이상 · 가로 스크롤 없음 · 뱁이 없음."""
+    S = f"재무 경고 줄 {width}"
+    wide = width >= 1024
+    fx = fin_lines_files(files)
+    by = {x["t"]: x for x in fx["data.json"]["stocks"]}
+    added = {by["496320"].get("nk"), by["496320"].get("ne"), by["496320"].get("indName")} - {None}
+    R.names = sorted(set(R.names) | added, key=len, reverse=True)   # 이 장면이 더한 회사(본시스템즈)의 이름 · 업종: 데이터 이름이에요 (문구 파일 밖)
+    W_ = CO["warn"]
+    count1 = W_["uncheckedN"].replace("{k}", "1")
+    pxd = fx["data.json"]["pxDate"]
+    store = v197a_store(pxd)
+    kia = {"id": "dkia", "name": "가진 종목", "createdAt": "2026-10-30", "kind": "imported", "settings": {"points": {"value": 2}, "strict": "normal"},
+           "holdings": [{"t": "000270", "nk": by["000270"]["nk"], "cls": "kr"}], "purchases": [],
+           "imported": [{"t": "000270", "nk": by["000270"]["nk"], "ccy": "KRW", "qty": 10}]}
+    store["decks"].append(kia)
+    seed = ("(() => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');"
+            f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(store, ensure_ascii=False))}); }})();")
+    srv, ctx, page, base = R.open(build_site(fx), width, init=seed, device=pc_device(width) if wide else None)
+    page.locator('[data-ui-v2="date-line"], [data-ui-v2="load-fail"]').first.wait_for(state="visible")
+
+    def tidy(where):
+        floor_ok(page, where)
+        no_hscroll(page, width)
+        no_mascot(page)
+        R.collect(page)
+
+    def count_lines():
+        co_hash(page, "#stocks/066970")                                          # 엘앤에프: 경고 둘 + 자본잠식 못 돌림
+        btn = page.locator('[data-ui-v2="co-warn"][data-n="2"]')
+        btn.wait_for(state="visible")
+        assert btn.locator('[data-ui-v2="co-warn-count"]').inner_text() == count1 and btn.locator('[data-ui-v2="co-warn-noicr"]').count() == 0
+        btn.click()
+        sheet = page.locator('[data-ui-v2="co-warn-list"]')
+        sheet.wait_for(state="visible")
+        line = sheet.locator('[data-ui-v2="co-warn-count"]')
+        assert line.inner_text() == count1 and sheet.locator("[data-flag]").last.bounding_box()["y"] < line.bounding_box()["y"]   # 목록 밑
+        tidy("엘앤에프 목록")
+        page.keyboard.press("Escape")
+        sheet.wait_for(state="hidden")
+        co_hash(page, "#stocks/000270")                                          # 기아: '확인한 …' 밑
+        card = page.locator('[data-ui-v2="co-warn"][data-n="0"][data-partial="some"]')
+        card.wait_for(state="visible")
+        assert card.locator('[data-ui-v2="co-warn-count"]').inner_text() == count1
+        assert card.inner_text().index(CO["warn"]["nonePartial"]) < card.inner_text().index(count1)
+        tidy("기아 재무 경고")
+        co_hash(page, "#stocks/228760")                                          # 지노믹트리: PR #68 줄만, 둘 다는 아니에요
+        btn = page.locator('[data-ui-v2="co-warn"][data-n="1"]')
+        btn.wait_for(state="visible")
+        assert btn.locator('[data-ui-v2="co-warn-noicr"]').count() == 1 and page.locator('[data-ui-v2="co-warn-count"]').count() == 0
+    R.check(page, S, "'4가지 중 1가지는 …': 엘앤에프 경고 줄 · 목록 밑, 기아 '확인한 …' 밑 · 지노믹트리는 PR #68 줄만", count_lines)
+
+    def no_data_and_no_stmt():
+        co_hash(page, "#stocks/0011T0")                                          # 채비
+        card = page.locator('[data-ui-v2="co-warn-unchecked"]')
+        card.wait_for(state="visible")
+        assert card.locator('[data-ui-v2="co-warn-nodata"]').inner_text() == W_["noData"]
+        note = page.locator('[data-ui-v2="co-tiles"] [data-ui-v2="no-stmt"]')
+        assert note.count() == 1 and note.inner_text() == CO["noStmt"]
+        assert note.bounding_box()["y"] < page.locator('[data-ui-v2="co-tile"]').first.bounding_box()["y"]   # 칸들 위
+        tidy("채비 요약")
+        for code, ctabs, want in (("0011T0", ("earn", "value", "div"), [CO["noStmt"]]), ("496320", ("earn", "value", "div"), [])):
+            for ctab in ctabs:
+                co_hash(page, f"#stocks/{code}/{ctab}")
+                page.locator(f'[data-ui-v2="co-{ctab}"]').first.wait_for(state="visible")
+                got = page.locator('[data-ui-v2="no-stmt"]').evaluate_all("(els) => els.map((e) => e.innerText.trim())")
+                assert got == want, (code, ctab, got)                            # 채비: 한 번 · 본시스템즈(KONEX, 2024년 사업보고서): 없어요
+                tidy(f"{code} {ctab}")
+        co_hash(page, "#stocks/496320")                                          # 본시스템즈 요약: 그 줄 없음 · 카드 밑에 이유 줄
+        page.locator('[data-ui-v2="co-warn-unchecked"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="no-stmt"]').count() == 0 and page.locator('[data-ui-v2="co-warn-nodata"]').inner_text() == W_["noData"]
+        co_hash(page, "#stocks/005935")                                          # 우선주: 그 줄이 아니에요 (자기 줄은 우선주 작업에서)
+        page.locator('[data-ui-v2="co-warn-unchecked"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="no-stmt"]').count() == 0
+        tidy("본시스템즈 · 삼성전자우")
+    R.check(page, S, "'필요한 자료가 없어서 …' 카드 제목 밑 · '공시된 재무제표가 아직 없어서 …' 채비의 칸들 위와 실적 · 가치 · 배당 탭에 한 번씩 · 본시스템즈(KONEX) · 우선주에는 없음", no_data_and_no_stmt)
+
+    def tiles():
+        page.evaluate("() => { location.hash = '#portfolio'; }")
+        at(page, "portfolio")
+        tile = page.locator('[data-deck-id="dkia"] [data-ui-v2="pf-rule"][data-rule="warn"]')
+        tile.wait_for(state="visible")
+        assert tile.get_attribute("data-state") == "unknown" and tile.locator('[data-ui-v2="warn-nodata"]').inner_text() == W_["noData"]
+        tidy("포트폴리오 재무 경고 칸")
+        page.evaluate("() => { location.hash = '#home'; }")
+        at(page, "home")
+        hero = page.locator('[data-ui-v2="home-rules"][data-deck-id="dkia"]')
+        hero.wait_for(state="visible")
+        assert hero.locator('[data-ui-v2="warn-nodata"]').inner_text() == W_["noData"]
+        tidy("홈 규칙")
+    R.check(page, S, "기아만 가진 포트폴리오: '재무 경고 0개 · 확인하지 못했어요' 밑에 '필요한 자료가 없어서 …' (포트폴리오 · 홈)", tiles)
+
+    def add_sheet():
+        page.evaluate("() => { location.hash = '#portfolio'; }")
+        at(page, "portfolio")
+        page.locator('[data-deck-id="dbuilt"] [data-ui-v2="edit-open"]').click()
+        at(page, "portfolio/edit/dbuilt")
+        page.locator('[data-ui-v2="edit-list"]').wait_for(state="visible")
+        for code, kind, line, why, wtext in (("066970", "flags", fillp(W_["count"], n=2), "count", count1),
+                                            ("000270", "some", W_["nonePartial"], "count", count1),
+                                            ("0011T0", "unchecked", C["rank"]["warn"], "noData", W_["noData"]),
+                                            ("228760", "flags", fillp(W_["count"], n=1), "noIcr", W_["noneSubNoIcr"])):
+            page.locator('[data-ui-v2="edit-by-name"]').click()
+            fs = page.locator('[data-ui-v2="find-sheet"]')
+            fs.wait_for(state="visible")
+            fs.locator("input").fill(by[code]["nk"])
+            fs.locator(f'[data-find="{code}"]').click()
+            sh = page.locator(f'[data-ui-v2="add-sheet"][data-t="{code}"]')
+            sh.wait_for(state="visible")
+            w = sh.locator('[data-ui-v2="add-warn"]')
+            assert w.get_attribute("data-kind") == kind and w.inner_text().strip() == line, (code, w.get_attribute("data-kind"), w.inner_text())
+            y = sh.locator('[data-ui-v2="add-warn-why"]')
+            assert y.get_attribute("data-why") == why and y.inner_text() == wtext, (code, y.inner_text())
+            tidy(f"담기 {code}")
+            page.keyboard.press("Escape")
+            sh.wait_for(state="detached")
+    R.check(page, S, "종목 바꾸기 → 담기 시트: 엘앤에프 경고 2개 + '4가지 중 1가지는 …' · 기아 '확인한 …' + 그 줄 · 채비 '재무 경고' + 이유 · 지노믹트리 PR #68 줄", add_sheet)
+    ctx.close()
+    srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -11679,6 +12282,9 @@ def main():
                    lambda: scene_fix_notes(R, files, 390), lambda: scene_fix_notes(R, files, 1280),             # 2026-11-08 고치는 중 안내
                    lambda: scene_fix_notes(R, files, 390, live=True), lambda: scene_fix_notes(R, files, 1280, live=True),
                    lambda: scene_unit_chk(R, files, 390), lambda: scene_unit_chk(R, files, 1280),             # 2026-11-13 공시 단위 확인
+                   lambda: scene_px_bad(R, files, 390), lambda: scene_px_bad(R, files, 1280),                 # 2026-11-14 과거 주가 기록 오류
+                   lambda: scene_fin_warn_partial(R, files, 390), lambda: scene_fin_warn_partial(R, files, 1280),   # 2026-11-14 재무 경고 일부
+                   lambda: scene_fin_warn_lines(R, files, 390), lambda: scene_fin_warn_lines(R, files, 1280),       # 2026-11-14 Jack 의 세 줄
                    lambda: scene_reread_lines(R, files, 390), lambda: scene_reread_lines(R, files, 1280),     # 다시 읽은 뒤: 한 주 안내 · stmtCur
                    lambda: scene_stale_refetch(R, files, 390), lambda: scene_stale_refetch(R, files, 1280),    # 2026-11-08 돌아온 화면은 한 번 받아요
                    lambda: scene_refetch_drafts(R, files, 390), lambda: scene_refetch_drafts(R, files, 1280),   # 만들던 것 위에는 기다려요
@@ -11686,6 +12292,7 @@ def main():
                    lambda: scene_rank_pc(R, files),                                                        # v19.5b 종목 순위: PC 오른쪽 칸 7줄
                    lambda: scene_us_fcur(R, files, 390, False), lambda: scene_us_fcur(R, files, 390, True),      # 2026-11-12 미국 재무제표 통화
                    lambda: scene_us_fcur(R, files, 1280, True),
+                   lambda: scene_us_fgn(R, files, 390), lambda: scene_us_fgn(R, files, 1280),           # 2026-11-14 외국 회사 숫자 맞춤
                    lambda: scene_dark(R, files, 390), lambda: scene_dark(R, files, 1280),                 # v19.6d 어두운 화면
                    lambda: scene_v196a(R, files, 390), lambda: scene_v196a(R, files, 320),
                    lambda: scene_v196a(R, files, 1280),                                                     # v19.6a 팔았어요 · 배당 받았어요 · 내 수익

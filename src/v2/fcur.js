@@ -77,3 +77,21 @@ export const fcurRowsBlank = (s, rows) => !!fcurOf(s) && (rows || []).some((r) =
 // places as the currency line; PER and the yield are untouched.
 export const pbrZeroOf = (s) => !!s && s.cls === "us" && s.pbrZero === true && !fcurOf(s) && num(s.pbr) == null;
 export const pbrZeroRowsBlank = (s, rows) => pbrZeroOf(s) && (rows || []).some((r) => r && r.id === "value" && r.blank);
+
+// ---------------- foreign companies' numbers that do not match the company's own totals (Jack, 2026-11-14) ----------------
+// data.json fgnCut (fetch_data.py us_foreign_check): {per | pbr | dy: "mismatch" | "currency"} on a US-listed foreign company
+// (ADR or foreign ordinary share) whose Yahoo PER, PBR or dividend yield did not agree with market cap ÷ net income, that × ROE,
+// or the dividends actually paid (mismatch: BP's PBR 7.62 counts one ADR as one of its 6 ordinary shares), or whose statement
+// currency Yahoo did not confirm (currency). The pipeline blanked those numbers (and the 가치 score with PBR). The screens show
+// each blanked one as "–" under its label with the line "자료의 숫자가 회사 전체 재무제표와 맞지 않아서 비워 두었어요." (copy
+// co.fgnCut, both reasons: the currency line needs a currency name) right under it, the same places as the currency line.
+// Never for a currency stock (its own line says why) and never beside a number: a field still carrying a value is not listed.
+export const FGN_FIELDS = ["per", "pbr", "dy"];
+export function fgnCutOf(s) {
+  if (!s || s.cls !== "us" || fcurOf(s) || !s.fgnCut || typeof s.fgnCut !== "object" || Array.isArray(s.fgnCut)) return [];
+  return FGN_FIELDS.filter((k) => typeof s.fgnCut[k] === "string" && s.fgnCut[k] && num(s[k]) == null);
+}
+export const fgnBlank = (s, k) => fgnCutOf(s).includes(k);
+// A section of 내 기준과 맞는 정도 shows the line when its 가치 row (from PBR) or 배당 row (US: the yield) is blank because of this.
+export const fgnRowsBlank = (s, rows) => (rows || []).some((r) => r && r.blank
+  && ((r.id === "value" && fgnBlank(s, "pbr")) || (r.id === "div" && fgnBlank(s, "dy"))));
