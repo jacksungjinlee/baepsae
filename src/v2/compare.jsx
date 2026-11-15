@@ -31,17 +31,20 @@ import { pxBadText, pxBadOneText, unitChkText, stmtCurText, fcurNoteText, prefTe
 import { fcurBlank, fcurDyBlank, pbrZeroOf, fgnBlank, FGN_LINE_KEYS } from "./fcur.js";
 import { IndBar, pctText, addWarnView } from "./editparts.jsx";
 import { indText, listDate } from "./finder.jsx";
-import { stockState } from "./records.js";
 import * as E from "./edit.js";
 import * as F from "./find.js";
 
 const DASH = "–";                                      // "–": a blank number, as everywhere in 2.0 (never 0)
 const rateText = (g) => (g < 0 ? "−" : "") + p1(Math.abs(g));     // the company page's first-year rate (cotabs.jsx)
 const cell = (text, note = null, data = {}) => ({ text, note, data });
-// The β band in a cell: the short form once Jack approves it (cmp.p), else the company page's approved tile text, whole.
-function betaText(s, r) {
+// The verdict box (review, 2026-11-15): one neutral box for every wording, so "…덜 맞고 … 더 컸어요" never sits on the calm green; true
+// gives the board's green (COLOR.heroCalm) to every wording, if Jack prefers it.
+export const VERDICT_CALM = false;
+// The β band in a cell: the short form once Jack approves it (cmp.p), and only in a cell whose benchmark is the row label's
+// (review S3: under "코스피 1% →" a US stock keeps "S&P 500 1% → 평균 …"); else the company page's approved tile text, whole.
+function betaText(s, r, shortOk = false) {
   const b = r.band;
-  const short = b.one ? C.cmp.p.betaOne : C.cmp.p.beta;
+  const short = !shortOk ? null : b.one ? C.cmp.p.betaOne : C.cmp.p.beta;
   if (short) return b.one ? fill(short, { x: (b.lo < 0 ? "−" : "") + p1(Math.abs(b.lo)) }) : fill(short, { lo: (b.lo < 0 ? "−" : "") + p1(Math.abs(b.lo)), hi: (b.hi < 0 ? "−" : "") + p1(Math.abs(b.hi)) });
   return riskBandText(s, r);
 }
@@ -58,7 +61,8 @@ function epsBasisLine(s) {
 }
 
 // The eight cells of one stock (pure; tests). s: its data.json row (null: not in today's data, every number "–") · co: its corp.json
-// row · ctx: { stocks, points, names, load, groups (the portfolio's industry groups, for 새 업종) | null, row (its edit row) | null }.
+// row · ctx: { stocks, points, names, load, groups (the portfolio's industry groups, for 새 업종) | null, row (its edit row) | null,
+// betaShort (this cell's benchmark is the β row label's: the short β form may be used once approved) }.
 // -> { fit, ind, vol, beta, pbr, dy, growth, warn }: { text, note, data }
 export function compareCells(s, co, ctx) {
   const out = {};
@@ -84,7 +88,7 @@ export function compareCells(s, co, ctx) {
   if (pxBadFor(s, co)) out.beta = cell(DASH, pxBadOneText(s, co, "beta") || pxBadText(s, co), { band: "pxbad" });
   else {
     const r = riskTile(s);
-    out.beta = r.band ? cell(betaText(s, r), null, { lo: r.band.lo, hi: r.band.hi, one: r.band.one ? "1" : "" }) : cell(C.co.tiles.na, null, { band: "" });
+    out.beta = r.band ? cell(betaText(s, r, !!ctx.betaShort), null, { lo: r.band.lo, hi: r.band.hi, one: r.band.one ? "1" : "" }) : cell(C.co.tiles.na, null, { band: "" });
   }
   // PBR: the company page's order of blanks (Tiles: statements not in won or the unit check; then the US lines); else the PBR
   // with two decimals, or 자료가 없어요 for none (and the no-statements line where it explains it)
@@ -198,25 +202,27 @@ export function Compare({ deck, draft, load, pad, candT, holdT, setHoldT, xOf, o
   if (!cand || !h || !points) return page(<Note data-ui-v2="cmp-none">{C.co.notFound}</Note>);
   const hs = load.byT.get(h.t) || null;
   const ctxBase = { stocks: load.data.stocks, points, names, load };
-  const A = compareCells(hs, hs ? load.coByT.get(h.t) || null : null, { ...ctxBase, groups: null, row: h });
-  const B = compareCells(cand, load.coByT.get(cand.t) || null, { ...ctxBase, groups, row: null });
+  // the β row's label: "코스피 1% →"; two US stocks read against S&P 500 (the words before "평균" in the approved US tile text; proposal
+  // P4 until Jack says yes, docs/tasks/v18.3-new-strings-pending.md). A cell may drop its benchmark only when it is the label's.
+  const bothUs = !!hs && usOf(hs) && usOf(cand);
+  const usBeta = (C.co.tiles.riskBand.us || "").split(" \u2192 ")[0];
+  const betaLabel = bothUs && usBeta ? `${usBeta} \u2192` : C.cmp.rows.beta;
+  const sameBench = (s) => !!s && (bothUs || !usOf(s));
+  const A = compareCells(hs, hs ? load.coByT.get(h.t) || null : null, { ...ctxBase, groups: null, row: h, betaShort: sameBench(hs) });
+  const B = compareCells(cand, load.coByT.get(cand.t) || null, { ...ctxBase, groups, row: null, betaShort: sameBench(cand) });
   const vd = F.verdictOf({ pct: A.fit.data.pct === "" ? null : A.fit.data.pct, vol: A.vol.data.vol === "" ? null : A.vol.data.vol },
     { pct: B.fit.data.pct === "" ? null : B.fit.data.pct, vol: B.vol.data.vol === "" ? null : B.vol.data.vol });
   const verdict = verdictText(vd.kind, cand.nk);
-  // the β row's label: "코스피 1% →"; two US stocks read against S&P 500 (the words before "평균" in the approved US tile text)
-  const bothUs = hs && usOf(hs) && usOf(cand);
-  const usBeta = (C.co.tiles.riskBand.us || "").split(" → ")[0];
-  const betaLabel = bothUs && usBeta ? `${usBeta} →` : C.cmp.rows.beta;
   const bandShown = [hs, cand].map((s) => (s && !pxBadFor(s, load.coByT.get(s.t) || null) ? riskTile(s) : null)).filter((r) => r && r.band);
   const betaNote = bandShown.length ? (bandShown.some((r) => !r.band.one) ? C.co.risk.bandNote : riskBandNote(bandShown[0])) : null;
-  // after the swap
+  // after the swap: the bar, its line and the note's target all come from the write the swap will make (edit.swapView, review
+  // B1/S5): with shares, 팔고 빼기's stored target set; without, the draft's
   const add = { t: cand.t, nk: cand.nk, cls: cand.cls === "us" || cand.cls === "kr" ? cand.cls : null, ind: cand.ind || null, kind: "pinned", s: cand };
-  const before = E.indBar(E.editRows(deck, draft), load.byT, names);
-  const after = E.indBar(F.swapRows(deck, draft, h.t, add), load.byT, names);
-  const ch = F.afterChange(before, after);
-  const cap = E.capOf(deck, draft);
-  const x = cap != null && h.pct > cap ? cap : h.pct;
-  const shares = !!stockState(deck, h.t) && stockState(deck, h.t).held > 0;
+  const sv = E.swapView(deck, draft, h.t, add);
+  const before = E.indBar(sv ? sv.before : E.editRows(deck, draft), load.byT, names);
+  const after = sv ? E.indBar(sv.rows, load.byT, names) : before;
+  const ch = sv ? F.afterChange(before, after) : null;
+  const shares = !!sv && sv.path === "sale";
   const head = (s, nk, t, label) => (
     <th scope="col" style={{ textAlign: "left", verticalAlign: "bottom", padding: `0 0 ${SPACE(2)}px ${SPACE(2)}px`, fontWeight: "normal" }}>
       <div style={{ display: "flex" }}><CoMark s={s || undefined} t={t} name={nk} size={SPACE(8)} /></div>
@@ -238,7 +244,7 @@ export function Compare({ deck, draft, load, pad, candT, holdT, setHoldT, xOf, o
       {page(
         <>
           {verdict && (
-            <section data-ui-v2="cmp-verdict" data-kind={vd.kind} style={{ background: COLOR.heroCalm, borderRadius: RADIUS.lg, padding: `${SPACE(3) + 2}px ${SPACE(4)}px`, marginTop: SPACE(3) }}>
+            <section data-ui-v2="cmp-verdict" data-kind={vd.kind} data-tint={VERDICT_CALM ? "calm" : "neutral"} style={{ background: VERDICT_CALM ? COLOR.heroCalm : COLOR.neutralBg, borderRadius: RADIUS.lg, padding: `${SPACE(3) + 2}px ${SPACE(4)}px`, marginTop: SPACE(3) }}>
               <p style={tx(SIZE.body, WEIGHT.heavy, COLOR.ink, { lineHeight: 1.45, wordBreak: "keep-all" })}>{verdict}</p>
             </section>
           )}
@@ -270,7 +276,7 @@ export function Compare({ deck, draft, load, pad, candT, holdT, setHoldT, xOf, o
             </table>
             {betaNote && <Note data-ui-v2="cmp-beta-note">{betaNote}</Note>}
           </Card>
-          <Card data-ui-v2="cmp-after" style={{ padding: `${SPACE(3) + 2}px ${SPACE(4)}px` }}>
+          <Card data-ui-v2="cmp-after" data-path={sv ? sv.path : ""} style={{ padding: `${SPACE(3) + 2}px ${SPACE(4)}px` }}>
             <h3 style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { marginBottom: SPACE(2) })}>{C.cmp.after}</h3>
             <IndBar parts={after} />
             {ch && (
@@ -285,7 +291,7 @@ export function Compare({ deck, draft, load, pad, candT, holdT, setHoldT, xOf, o
               <span data-ui-v2="cmp-swap">{swapLabel(h.nk)}</span></Button>
           </div>
           <p data-ui-v2="cmp-swap-note" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { margin: `${SPACE(2)}px ${SPACE(1)}px 0`, lineHeight: 1.5, wordBreak: "keep-all" })}>
-            <span>{swapNoteText(h.nk, cand.nk, pctText(x))}</span>
+            {sv && sv.pct != null && <span data-ui-v2="cmp-swap-x" data-x={sv.pct}>{swapNoteText(h.nk, cand.nk, pctText(sv.pct))}</span>}
             {shares && <span>{" "}{C.cmp.swapSale}</span>}
           </p>
           {dates.length > 0 && (

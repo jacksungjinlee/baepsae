@@ -12711,6 +12711,7 @@ def scene_v197b(R, files, width):
             topic = kind in ("lessSmall", "worse", "less")
             key = kind if has_final(by[t]["nk"]) else kind + ("Neun" if topic else "Ga")
             assert v.get_attribute("data-kind") == kind and v.inner_text() == fillp(CM["verdict"][key], b=by[t]["nk"]), (kind, v.inner_text())
+            assert v.get_attribute("data-tint") == "neutral"                                           # the same box for every wording
         assert page.locator(f'[data-cmp-row="fit"] [data-side="cand"]').inner_text().startswith(fillp(C["rank"]["mineX"], x=pb))
         ind_c = page.locator('[data-cmp-row="ind"] [data-side="cand"]').inner_text()
         assert ind_c.endswith(" · " + F_["newInd"]) == (real(by[t]) and by[t]["ind"] not in groups), ind_c
@@ -12783,15 +12784,30 @@ def scene_v197b(R, files, width):
         page.locator('[data-ui-v2="cmp-pick-open"]').click()
         page.locator('[data-ui-v2="cmp-picker"] [data-pick="005380"]').click()
         page.wait_for_function("() => document.querySelector('[data-ui-v2=\"cmp\"]').dataset.hold === '005380'")
-        page.locator('[data-ui-v2="cmp-swap"]').click()
-        sh = page.locator('[data-ui-v2="rm-sheet"][data-t="005380"]')
-        sh.wait_for(state="visible")
-        assert sh.locator('[aria-checked="true"]').get_attribute("data-reason") == "better"
-        assert sh.locator("button:not([data-reason])").all_inner_texts() == [RM["sell"], RM["noRecord"]]
-        sh.locator("button", has_text=RM["sell"]).click()
+        assert page.locator('[data-ui-v2="cmp-after"]').get_attribute("data-path") == "sale"
+        assert float(page.locator('[data-ui-v2="cmp-swap-x"]').get_attribute("data-x")) == 20          # 팔고 빼기 writes the stored 20%
         form = page.locator('[data-ui-v2="rec-form"][data-kind="sell"]')
-        form.wait_for(state="visible")
-        assert form.locator("input").first.input_value() == "7"
+
+        def to_sale():
+            page.locator('[data-ui-v2="cmp-swap"]').click()
+            sh = page.locator('[data-ui-v2="rm-sheet"][data-t="005380"]')
+            sh.wait_for(state="visible")
+            assert sh.locator('[aria-checked="true"]').get_attribute("data-reason") == "better"
+            assert sh.locator("button:not([data-reason])").all_inner_texts() == [RM["sell"], RM["noRecord"]]
+            sh.locator("button", has_text=RM["sell"]).click()
+            form.wait_for(state="visible")
+            assert form.locator("input").first.input_value() == "7"
+        to_sale()
+        # review S2: the phone's back button with the sale form open: the form closes, nothing is written, the finder shows
+        before = json.dumps(deck(), sort_keys=True)
+        page.go_back()
+        at(page, "portfolio/edit/dfind/find")
+        form.wait_for(state="detached")
+        assert page.locator('[data-ui="bottom-sheet"]').count() == 0 and json.dumps(deck(), sort_keys=True) == before
+        page.go_forward()
+        at(page, f"portfolio/edit/dfind/compare/{t}")
+        page.wait_for_function("() => document.querySelector('[data-ui-v2=\"cmp\"]').dataset.hold === '005380'")
+        to_sale()
         form.locator('input[type="date"]').fill("2026-10-20")
         check_page("바꾸기 · 팔고 빼기", "swap-sell")
         form.locator("button", has_text=C["plan"]["save"]).click()
@@ -12839,6 +12855,7 @@ def scene_v197b(R, files, width):
         np_ = page.locator('[data-ui-v2="find-no-points"]')
         np_.wait_for(state="visible")
         assert np_.locator('[data-ui-v2="find-no-points-line"]').inner_text() == F_["noPoints"]
+        assert F_["sub"] not in page.locator('[data-ui-v2="find"]').inner_text()                     # it says points were given
         btn = np_.locator('button[data-ui="button"]').last
         assert btn.inner_text() == (F_["p"]["savePoints"] or C["lim"]["save"]) and not btn.is_enabled()
         assert page.locator('[data-ui-v2="find-list"]').count() == 0
@@ -12908,6 +12925,87 @@ def scene_v197b(R, files, width):
         assert page.locator('[data-ui-v2="find-date"]').count() == 0                                   # 줄이 없으면 날짜 줄도 없어요
         check_page("빈 찾기", "find-empty")
     R.check(page, S, "빈 칩: 없는 업종 → '지금 포트폴리오에 없는 업종에서는 …' · 아무 종목도 없으면 '이 조건에 맞는 종목이 없어요.'", empty)
+    ctx.close()
+    srv.shutdown()
+
+    # review S1: the way back to 종목 바꾸기 after a detour to a company page, and after its entry was left and the finder reached later
+    srv, ctx, page, base = R.open(build_site(data), width, init=seed, path="/app.html?dev=1#portfolio", device=device)
+
+    def history_ways():
+        at(page, "portfolio")
+        page.locator('[data-deck-id="dfind"] [data-ui-v2="edit-open"]').click()
+        open_find()
+        t = rows()[0][0]
+        page.locator(f'[data-find-row="{t}"] [data-ui-v2="find-open"]').click()
+        page.wait_for_function("() => (document.querySelector('[data-ui-v2=\"screen\"]') || { dataset: {} }).dataset.route.startsWith('stocks/')")
+        page.go_back()
+        at(page, "portfolio/edit/dfind/find")
+        page.locator(f'[data-find-row="{t}"] [data-ui-v2="find-add"]').click()
+        page.locator(f'[data-ui-v2="add-sheet"][data-t="{t}"] button', has_text=C["build"]["s4"]["add"]).last.click()
+        at(page, "portfolio/edit/dfind")
+        page.locator('[data-ui-v2="edit"] button', has_text=E_["save"]).click()
+        at(page, "portfolio")                                                                         # one step back from 종목 바꾸기
+        assert t in [h["t"] for h in deck()["holdings"]]
+        # 종목 바꾸기 left (its entry is behind us), then 홈 · 종목, then the finder by its address: 담기 comes back to 종목 바꾸기, not 홈
+        page.locator('[data-deck-id="dfind"] [data-ui-v2="edit-open"]').click()
+        at(page, "portfolio/edit/dfind")
+        page.locator('[data-ui-v2="app-bar"] button').first.click()
+        at(page, "portfolio")
+        if wide:
+            side_tab(page, "home")
+            side_tab(page, "stocks")
+        else:
+            tab(page, TABS["home"])
+            at(page, "home")
+            tab(page, TABS["stocks"])
+        page.evaluate("() => { location.hash = '#portfolio/edit/dfind/find'; }")
+        at(page, "portfolio/edit/dfind/find")
+        page.locator('[data-ui-v2="find-list"]').wait_for(state="visible")
+        u = rows()[0][0]
+        page.locator(f'[data-find-row="{u}"] [data-ui-v2="find-add"]').click()
+        page.locator(f'[data-ui-v2="add-sheet"][data-t="{u}"] button', has_text=C["build"]["s4"]["add"]).last.click()
+        at(page, "portfolio/edit/dfind")
+        assert page.locator(f'[data-edit-row="{u}"]').get_attribute("data-added") == "1"
+        # a 두 종목 비교 address the finder would never offer, typed by hand: the finder replaces it (no new history entry, no error)
+        for code in ("005930", "005935", "SCHD", "ZZZZZZ"):
+            page.evaluate("(c) => { location.hash = '#portfolio/edit/dfind/compare/' + c; }", code)
+            n = page.evaluate("() => history.length")
+            at(page, "portfolio/edit/dfind/find")
+            assert page.evaluate("() => history.length") == n and page.locator('[data-ui-v2="cmp"]').count() == 0, code
+        assert not R.errors, R.errors[:2]
+    R.check(page, S, "뒤로 가는 길: 회사 페이지에 다녀와도 담기 → 종목 바꾸기 → 저장 → 포트폴리오 · 나갔다 주소로 온 찾기는 종목 바꾸기로 · 손으로 친 비교 주소는 찾기로 바뀜", history_ways)
+    ctx.close()
+    srv.shutdown()
+
+    # review B1: a holding saved above the cap (v19.7a's dcush: seven at 10% under a 10% cap, two 15% cushions). The candidate gets the
+    # cap, and what 두 종목 비교 shows (the note's target, the 업종 bar) is exactly what the swap leaves on 종목 바꾸기 (D2 then).
+    seed3 = ("(() => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');"
+             f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(v197a_store2(by, pxd), ensure_ascii=False))}); }})();")
+    srv, ctx, page, base = R.open(build_site(data), width, init=seed3, path="/app.html?dev=1#portfolio/edit/dcush/find", device=device)
+
+    def cushion():
+        page.locator('[data-ui-v2="find-list"]').wait_for(state="visible")
+        t = rows()[0][0]
+        page.locator(f'[data-find-row="{t}"] [data-ui-v2="find-compare"]').click()
+        at(page, f"portfolio/edit/dcush/compare/{t}")
+        page.locator('[data-ui-v2="cmp-pick-open"]').click()
+        page.locator('[data-ui-v2="cmp-picker"] [data-pick="114260"]').click()
+        page.wait_for_function("() => document.querySelector('[data-ui-v2=\"cmp\"]').dataset.hold === '114260'")
+        assert page.locator('[data-ui-v2="cmp-after"]').get_attribute("data-path") == "draft"
+        assert float(page.locator('[data-ui-v2="cmp-swap-x"]').get_attribute("data-x")) == 10                 # the cap, not the 15%
+        bar = lambda sel: sorted(page.locator(f'{sel} [data-ui-v2="edit-ind-part"]').evaluate_all("(xs) => xs.map((x) => [x.dataset.ind, Number(x.dataset.pct)])"))
+        shown = bar('[data-ui-v2="cmp-after"]')
+        check_page("비교 · 최대 비중 위의 안전자산", "compare-cushion")
+        page.locator('[data-ui-v2="cmp-swap"]').click()
+        sh = page.locator('[data-ui-v2="rm-sheet"][data-t="114260"]')
+        sh.wait_for(state="visible")
+        sh.locator("button", has_text=C["rec"]["remove"]).last.click()
+        at(page, "portfolio/edit/dcush")
+        page.locator(f'[data-edit-row="{t}"]').wait_for(state="visible")
+        assert float(page.locator(f'[data-edit-row="{t}"]').get_attribute("data-pct")) == 10
+        assert bar('[data-ui-v2="edit-ind"]') == shown, (bar('[data-ui-v2="edit-ind"]'), shown)               # the bar it showed is the one it left
+        assert page.locator('[data-ui-v2="edit-cap-low"]').count() == 1                                        # 95%: D2 asks to raise the cap
+    R.check(page, S, "최대 비중 위의 안전자산과 바꾸기: 후보는 최대 비중(10%) · 비교의 업종 비중 = 바꾼 뒤 종목 바꾸기의 업종 비중 (D2)", cushion)
     ctx.close()
     srv.shutdown()
 

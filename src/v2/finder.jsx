@@ -171,7 +171,8 @@ export function Finder({ deck, draft, load, store, setStoreData, pad, chip, setC
       <AppBar onBack={onBack} backLabel={C.edit.title} />
       {(load.fresh && load.fresh.stale) || held ? <DateLine date={load.data.pxDate} fresh={load.fresh} /> : null}
       <div data-ui-v2="find" data-deck-id={deck.id} data-chip={chip} data-n={rows.length}>
-        <ScreenTitle sub={C.find.sub}>{C.find.title}</ScreenTitle>
+        {/* the sub says points were given: not over the 기준 cards of a portfolio that has none (review) */}
+        <ScreenTitle sub={list ? C.find.sub : null}>{C.find.title}</ScreenTitle>
         {!list ? <PickPoints deck={deck} load={load} store={store} setStoreData={setStoreData} /> : (
           <>
             <PointsCard points={points} />

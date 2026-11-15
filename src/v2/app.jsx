@@ -34,7 +34,7 @@ import { BottomSheet, Button } from "../ui/components.jsx";
 import { isImported } from "./pf.js";
 import { dataSplits, withDataSplits, storedNotInData, withStoredSplits, outSplits, withoutOutSplits } from "./lots.js";
 import { UNIT } from "./held.js";
-import { companySub, CO_MORE, editSub } from "./routes.js";
+import { companySub, CO_MORE, editSub, parseHash } from "./routes.js";
 import { holdsKorean } from "./home.js";
 import { TAB_H, SIDE_W, ModeContext, NavContext, LayoutContext, HeldContext, useWide, Page, AppBar, LoadFail, Footer } from "./ui.jsx";
 import { useRouter, TabBar, MenuSheet, SideMenu, TopBar, useSlashFocus, typingIn, useThemeMode } from "./nav.jsx";
@@ -547,18 +547,29 @@ export function App({ source }) {
   // reloaded), toEdit() replaces the address instead.
   const editBase = useRef(null);
   if (editId && !loc.eview) editBase.current = { id: editId, depth: loc.depth };
-  else if (!editId) editBase.current = null;                // left the editor's screens: a later finder address starts without one
+  // review S1: forgotten only once the history is back at (or before) that entry without being on it — the user left 종목 바꾸기;
+  // a visit forward from the finder (a company page, 소개) keeps it
+  else if (editBase.current && loc.depth <= editBase.current.depth) editBase.current = null;
   const editView = loc.eview === "find" ? { kind: "find" } : loc.eview === "compare" ? { kind: "compare", t: loc.ecode } : { kind: "edit" };
   const editGo = useMemo(() => (editId ? {
     find: () => router.go("portfolio", editSub(editId, "find")),
     compare: (t) => router.go("portfolio", editSub(editId, "compare", t)),
     back: () => router.back("portfolio", loc.eview === "compare" ? editSub(editId, "find") : editSub(editId)),
+    // review S2: the steps come from the live address when this runs (a sheet's callback may run after the back button moved it)
     toEdit: () => {
+      let live = null;
+      try {
+        const st = window.history.state;
+        live = { ...parseHash(window.location.hash), depth: st && Number.isInteger(st.v2) ? st.v2 : null };
+      } catch (e) { live = null; }
+      if (live && live.edit === editId && !live.eview) return;                  // already on 종목 바꾸기
       const b = editBase.current;
-      const n = b && b.id === editId ? loc.depth - b.depth : 0;
+      const d = live && live.depth != null ? live.depth : loc.depth;
+      const n = b && b.id === editId ? d - b.depth : 0;
       if (n > 0) router.back("portfolio", editSub(editId), n);
       else router.replaceRoute("portfolio", editSub(editId));
     },
+    replaceFind: () => router.replaceRoute("portfolio", editSub(editId, "find")),
   } : null), [editId, loc.eview, loc.depth, router.go, router.back, router.replaceRoute]);
   const pad = wide ? SPACE(10) : TAB_H + 32;
   const screen = (() => {

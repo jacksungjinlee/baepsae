@@ -311,13 +311,15 @@ def test_a_swap_waiting_for_save_gives_the_candidate_the_holdings_target():
       const one = deck5(1, 1, 100);
       const dr1 = E.swapDraft(one, E.emptyDraft(), '000010', 'better', cand());
       const s1 = E.applyEdit({ v: 2, decks: [one] }, 'd1', dr1, { load, today: T, ts: 1762900000000 });
-      out = { pcts: rows.map((r) => [r.t, r.pct]), removed: dr.removed, pending: E.pending(d, dr), ok: saved.ok, sum: sumT(de), held: de.holdings.map((h) => h.t),
+      out = { pcts: rows.map((r) => [r.t, r.pct]), removed: dr.removed, pending: E.pending(d, dr), ok: saved.ok,
+        overs: Object.keys(E.swapDraft(d, { ...E.emptyDraft(), over: { '000030': 20 } }, '000030', 'better', cand()).over).sort(), sum: sumT(de), held: de.holdings.map((h) => h.t),
         c: { target: c.target, kind: c.kind, setAt: c.setAt, planPx: c.planPx, plannedQty: c.plannedQty, band: c.rules.find((r) => r.id === 'band').target },
         others: de.holdings.filter((h) => h.t !== '005930').map((h) => h.target), changes: noId(de.changes), history: (de.history || []).map((x) => [x.t, x.reason]),
         valid: S.validStore(saved.data, T), one: s1.ok && s1.data.decks[0].holdings.map((h) => [h.t, h.target]),
         twice: E.swapDraft(d, dr, '000040', 'better', cand()) === dr, notStored: E.swapDraft(d, E.addDraft(d, E.emptyDraft(), cand(), 10), '005930', 'better', cand()) };""")
     assert got["pcts"] == [["000010", 20], ["000020", 20], ["000040", 20], ["000050", 20], ["005930", 20]]
     assert got["removed"] == [{"t": "000030", "reason": "better"}] and got["pending"] is True
+    assert got["overs"] == ["005930"]                                  # the holding's own target goes with it (only the candidate's is set)
     assert got["ok"] is True and got["sum"] == 1 and got["valid"] is True
     assert got["held"] == ["000010", "000020", "000040", "000050", "005930"]
     assert got["c"] == {"target": 0.2, "kind": "pinned", "setAt": "2026-11-12", "planPx": 50000, "plannedQty": 40, "band": 0.2}
@@ -367,6 +369,99 @@ def test_a_holding_saved_above_the_cap_gives_the_candidate_the_cap_and_the_rest_
       out = { cand: rows.find((r) => r.t === '005930').pct, sum: E.sumPct(rows), d2: E.d2Of(rows, 10), chk: { pct: chk.pct, low: chk.low, y: chk.y } };""")
     assert got["cand"] == 10                                          # 15% → the cap (10%)
     assert got["d2"]["low"] is True and got["chk"] == {"pct": 10, "low": True, "y": 12}      # 7 × 10 + 10 + 15 < 100: D2 (100 ÷ 9 → 12)
+
+
+# review B1 · S4 · S5: a holding saved above the cap (a 30% 채권·금 cushion under a 20% cap). The candidate gets the cap; the 10%
+# left goes to the holdings with room (the two at 15%), on both paths, and the compare screen shows exactly that write.
+CUSH = SWAP + r"""
+const cushDeck = (heldA = false) => { const d = deck5(5, 0.2, 20);
+  const w = { '000010': 0.3, '000020': 0.2, '000030': 0.2, '000040': 0.15, '000050': 0.15 };
+  d.holdings = d.holdings.map((h) => ({ ...h, target: w[h.t], kind: h.t === '000010' ? 'cushion' : 'core', rules: [pend('audit'), ...band(w[h.t])] }));
+  d.purchases = heldA ? d.purchases.filter((p) => p.t === '000010') : [];
+  return d; };
+const pcts = (rows) => Object.fromEntries(rows.map((r) => [r.t, Math.round(r.pct * 1000) / 1000]));
+"""
+
+
+def test_a_swap_never_gives_the_candidate_more_than_the_cap_on_either_path_and_the_screen_shows_that_write():
+    got = run(CUSH + """
+      const d = cushDeck(false), dh = cushDeck(true);
+      const dr = E.swapDraft(d, E.emptyDraft(), '000010', 'better', cand());
+      const vDraft = E.swapView(d, E.emptyDraft(), '000010', cand());
+      const vSale = E.swapView(dh, E.emptyDraft(), '000010', cand());
+      const r = E.sellAndSwap(sellAll({ v: 2, decks: [dh] }, '000010', 20), 'd1', '000010', cand(), { reason: 'better', raise: null, load, today: T, ts: 1 });
+      const written = r.ok ? Object.fromEntries(r.data.decks[0].holdings.map((h) => [h.t, Math.round(h.target * 100000) / 1000])) : r;
+      out = { groups: [...F.heldGroups(d, E.emptyDraft(), new Map())], draft: pcts(E.editRows(d, dr)), view: { path: vDraft.path, pct: vDraft.pct, rows: pcts(vDraft.rows) },
+        sale: { path: vSale.path, pct: vSale.pct, rows: pcts(vSale.rows) }, written, sum: r.ok ? sumT(r.data.decks[0]) : null };""")
+    want = {"000020": 20, "000030": 20, "000040": 20, "000050": 20, "005930": 20}
+    assert got["groups"] == ["semi"]                                     # a 채권·금 cushion is no industry (없는 업종 · 새 업종)
+    assert got["draft"] == want                                          # the cap, and the 10% left shared out (100%)
+    assert got["view"] == {"path": "draft", "pct": 20, "rows": want}     # what the screen shows = what waits for 바꾼 내용 저장
+    assert got["sale"] == {"path": "sale", "pct": 20, "rows": want}      # what the screen shows = what 팔고 빼기 writes
+    assert got["written"] == want and got["sum"] == 1
+
+
+def test_a_swap_with_a_sale_that_cannot_reach_100_under_the_cap_is_refused_until_the_raise_which_is_saved():
+    got = run(SWAP + """
+      // v19.7a's dcush shape: seven at 10% under a 10% cap and two 15% cushions; the first cushion is held
+      const ts = ['000010', '000020', '000030', '000040', '000050', '000060', '000070'];
+      const hs = ts.map((t, i) => ({ t, nk: '종목' + i, cls: 'kr', ind: 'semi', kind: 'core', target: 0.1, setAt: '2026-10-01', plannedQty: 10, planPx: 100000, rules: band(0.1) }));
+      const d = { id: 'd1', name: 'c', createdAt: '2026-10-01', planFx: 1300, settings: { points: { value: 3 }, maxPct: 10, amountMan: 1000 },
+        purchases: [{ id: 'p1aaaaaa', t: '114260', qty: 10, price: 100000, date: '2026-10-01', ccy: 'KRW' }],
+        holdings: [...hs, { t: '114260', nk: '채권', cls: 'bond', kind: 'cushion', target: 0.15, plannedQty: 10, planPx: 100000, rules: band(0.15) },
+          { t: '132030', nk: '금', cls: 'metal', kind: 'cushion', target: 0.15, plannedQty: 10, planPx: 100000, rules: band(0.15) }] };
+      const after = sellAll({ v: 2, decks: [d] }, '114260', 10);
+      const chk = E.swapCheck(d, E.emptyDraft(), '114260', cand());
+      const no = E.sellAndSwap(after, 'd1', '114260', cand(), { reason: 'better', raise: null, load, today: T, ts: 1 });
+      const yes = E.sellAndSwap(after, 'd1', '114260', cand(), { reason: 'better', raise: chk.y, load, today: T, ts: 1 });
+      const de = yes.ok ? yes.data.decks[0] : null;
+      out = { chk: { low: chk.low, y: chk.y, pct: chk.pct }, no, ok: yes.ok, max: de && de.settings.maxPct, sum: de && sumT(de),
+        cand: de && de.holdings.find((h) => h.t === '005930').target, top: de && Math.max(...de.holdings.filter((h) => h.kind !== 'cushion').map((h) => h.target)) };""")
+    assert got["chk"] == {"low": True, "y": 12, "pct": 10}             # 7 × 10 + 10 + 15 = 95 < 100: D2 first (100 ÷ 9 → 12)
+    assert got["no"] == {"ok": False, "why": "sum"}                    # never a write that does not add up to 100%
+    assert got["ok"] is True and got["max"] == 12 and got["sum"] == 1 and got["cand"] == 0.12 and got["top"] <= 0.12
+
+
+def test_a_swap_never_takes_a_candidate_that_is_stored_even_when_its_removal_waits():
+    got = run(SWAP + """
+      const d = deck5(5, 0.2);
+      const dr = E.removeDraft(d, E.emptyDraft(), '000040', null);            // 000040 waits to be taken out: not in the edited list
+      const stored = { ...cand(), t: '000040', nk: '종목4' };
+      out = { same: E.swapDraft(d, dr, '000030', 'better', stored) === dr, view: E.swapView(d, dr, '000030', stored) };""")
+    assert got["same"] is True and got["view"] is None
+
+
+def test_a_korean_stock_whose_verified_yield_is_0_is_not_a_payer_on_an_exact_file():
+    """The fixture made exact (a divCheck, dyt on every Korean payer, as v19.1b's files): 배당 주는 종목 keeps only dyt above 0."""
+    got = run("""const L0 = loadDir(%s);
+      const stocks = L0.data.stocks.map((s) => ({ ...s }));
+      const data = { ...L0.data, stocks, divCheck: { v: 1 } };
+      En.setDataShape(data);
+      const load = { ...L0, data, byT: new Map(stocks.map((s) => [s.t, s])) };
+      const deck = deckOf(load, ['005930'], { points: { value: 3 }, strict: 'loose', mix: 'kr' });
+      const kr = F.findList(load, deck, E.emptyDraft()).rows.slice(0, 12).map((r) => r.s);
+      kr.forEach((s, i) => { s.dps = i < 4 ? 0 : 500; s.dyt = i < 4 ? 0 : 2.5; });           // the first four pay nothing (dyt 0)
+      const rows = F.chipRows(F.findList(load, { ...deck, id: 'd2' }, E.emptyDraft()), 'div').map((r) => r.t);
+      out = { zero: kr.slice(0, 4).map((s) => s.t).filter((t) => rows.includes(t)), paying: kr.slice(4).map((s) => s.t).filter((t) => rows.includes(t)).length, exact: En.exactData() };""" % json.dumps(FIX))
+    assert got["exact"] is True and got["zero"] == [] and got["paying"] == 8
+
+
+def test_the_short_beta_form_is_used_only_under_its_own_benchmark():
+    """review S3: once Jack approves "평균 {lo}~{hi}%" (cmp.p.beta), a cell drops its benchmark only when it is the row label's: a US
+    stock under "코스피 1% →" keeps the whole "S&P 500 1% → 평균 …". Until then every cell shows the company page's tile text."""
+    got = run("""const load = loadDir(%s);
+      const names = E.indNames(load.data.stocks);
+      const kr = { ...load.byT.get('005930'), beta: 1.25, betaSE: 0.05 }, us = { ...load.data.stocks.find((s) => s.cls === 'us' && typeof s.beta === 'number'), beta: 0.9, betaSE: 0.05 };
+      En.setDataShape({ divCheck: { v: 1 } });
+      const ctx = { stocks: load.data.stocks, points: { value: 3 }, names, load, groups: null, row: null };
+      const b = (s, short) => Cm.compareCells(s, null, { ...ctx, betaShort: short }).beta.text;
+      const before = [b(kr, true), b(us, false)];
+      C.cmp.p.beta = '평균 {lo}~{hi}%%';
+      out = { before, krShort: b(kr, true), usUnderKospi: b(us, false), usUnderSp: b(us, true), band: C.co.tiles.riskBand };""" % json.dumps(FIX))
+    assert got["before"] == [got["band"]["kr"].replace("{lo}", "1.2").replace("{hi}", "1.4"), got["band"]["us"].replace("{lo}", "0.8").replace("{hi}", "1.0")]
+    assert got["krShort"] == "평균 1.2~1.4%"
+    assert got["usUnderKospi"] == got["band"]["us"].replace("{lo}", "0.8").replace("{hi}", "1.0")        # its own benchmark, whole
+    assert got["usUnderSp"] == "평균 0.8~1.0%"
 
 
 def test_points_are_saved_to_the_portfolio_and_nothing_else_changes():

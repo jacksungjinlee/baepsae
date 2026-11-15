@@ -130,6 +130,27 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
   const [findChip, setFindChip] = useState("all");       // 내 기준으로 찾기's chip (kept when 두 종목 비교 comes back)
   const [pick, setPick] = useState(null);                // 두 종목 비교: { cand, hold } the holding picked for that candidate
   const kind = go && view && (view.kind === "find" || view.kind === "compare") ? view.kind : "edit";
+  // review S2: toEdit runs from a sheet's or the sale form's callback, so it reads the app's latest go (the live address there),
+  // never the one of the render that opened the sheet
+  const goRef = React.useRef(go);
+  goRef.current = go;
+  const leaving = React.useRef(false);                   // a 담기 or a swap is on its way back to 종목 바꾸기
+  if (kind === "edit") leaving.current = false;
+  // review S2: a sheet or the sale form belongs to the screen it was opened on; when the address moves (the phone's back button),
+  // it closes and nothing is written
+  const viewKey = kind + "|" + (view && view.t ? view.t : "");
+  const firstView = React.useRef(true);
+  useEffect(() => {
+    if (firstView.current) { firstView.current = false; return; }
+    setSheet(null);
+    setFlow(null);
+  }, [viewKey]);
+  // a 두 종목 비교 address the finder would never offer (typed by hand: a stock already in the portfolio, an ETF, a bond or gold fund,
+  // a 우선주, another share class of a held company, an unknown code; or no 기준 points, or no stored holding to compare with): the
+  // finder in its place, by replacing the address (not a new history entry)
+  const badCompare = ok && kind === "compare" && !(F.hasFindPoints(deck) && F.compareHoldings(deck, draft).length > 0
+    && (F.findList(load, deck, draft) || { rows: [] }).rows.some((r) => r.t === view.t));
+  useEffect(() => { if (badCompare && !leaving.current && goRef.current && goRef.current.replaceFind) goRef.current.replaceFind(); }, [badCompare]);
   const ctx = useMemo(() => todayCtx(load), [load]);
   const de = useMemo(() => (ctx.state.ok ? evaluateDeck(deck, ctx) : null), [deck, ctx]);
   const xOf = (t) => (de && de.ok ? de.holdings.find((y) => y.t === t) || null : null);
@@ -208,7 +229,7 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
   };
   const removeNow = (t, reason) => { setSheet(null); set((d) => E.removeDraft(deck, E.rebaseDraft(deck, d), t, reason)); };
   // v19.7b: after a 담기 or a swap from 내 기준으로 찾기 or 두 종목 비교, back to 종목 바꾸기 where the change shows
-  const toEdit = () => { if (kind !== "edit" && go) go.toEdit(); };
+  const toEdit = () => { const g = goRef.current; if (g && kind !== "edit") { leaving.current = true; g.toEdit(); } };
   const addNow = (add, pct) => { setSheet(null); setCapHit(null); set((d) => E.addDraft(deck, E.rebaseDraft(deck, d), add, pct)); toEdit(); };
   // "{holding}과/와 바꾸기" [Part E]: 기록 없이 빼기 · 빼기 wait with the candidate's add (edit.swapDraft); 팔고 빼기 saves the sale, the
   // removal and the add in one write (edit.sellAndSwap), then the draft follows the saved portfolio as after 팔고 빼기
@@ -244,9 +265,8 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
       <RecordFlow flow={flow} setFlow={setFlow} load={load} store={store} setStoreData={setStoreData} />
     </>
   );
-  // v19.7b: 내 기준으로 찾기 (also for an address of 두 종목 비교 that cannot be shown: no 기준 points, no stored holding to compare,
-  // or a candidate already in the portfolio as edited — an address typed by hand)
-  if (kind === "find" || (kind === "compare" && (!F.hasFindPoints(deck) || !F.compareHoldings(deck, draft).length || F.heldCodes(deck, draft).has(view.t)))) {
+  // v19.7b: 내 기준으로 찾기 (also for an address of 두 종목 비교 that cannot be shown: badCompare above replaces it)
+  if (kind === "find" || badCompare) {
     return (
       <>
         <Finder deck={deck} draft={draft} load={load} store={store} setStoreData={setStoreData} pad={pad} chip={findChip} setChip={setFindChip}

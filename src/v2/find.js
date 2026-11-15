@@ -162,11 +162,6 @@ export function verdictOf(a, b) {
   else if (vol) kind = vol === "smaller" ? "small" : "big";
   return { fit, vol, kind };
 }
-// The edited list after the swap: the holding's row replaced by the candidate with the holding's target (as the swap keeps n,
-// the sum is unchanged). add: { t, nk, cls, ind, kind, s }. -> rows (edit.editRows shape)
-export function swapRows(deck, draft, holdT, add) {
-  return E.editRows(deck, draft || E.emptyDraft()).map((r) => (r.t === holdT ? { t: add.t, nk: add.nk, h: null, add, pct: r.pct, cls: add.cls || null } : r));
-}
 // "{group} {a}% → {b}% · 업종 {n}개 → {m}개": the industry part that moves most, before and after (real groups only: no 안전자산 part,
 // no part without a group), and how many groups there are. Ties: the part that shrinks (the holding's), then the larger before.
 // -> { key, name, a, b, n, m } or null when no group changes.
