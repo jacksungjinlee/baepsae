@@ -33,8 +33,11 @@ validate_data.py 를 통과해야만 커밋(발행)돼요. 파일은 write_json(
   v19.1i   dvProof(오늘 주식 수 기준을 공시와 주식 수로 증명해 되살린 배당의 근거, data.json 만: y0 올해 증명 today · yearEnd · 없음 ·
            yrs 되살린 앞 해 [1 전기 · 2 전전기] · c 현금배당금총액 3년(원) · shr 오늘 상장 주식 수 · yearEnd 는 cmo · cmi 그해 말 보통주 유통 ·
            발행 주식 수, cv 공시된 새 주식(오늘 주식 수로), fx 그 결정들 · ev 올해 배율의 사건 · 우선주 몫 pf 우선주 유통 주식 수 · pd 우선주
-           주당 배당) · dvLine(1 = 앱이 Jack 의 '주식 수가 바뀐 비율을 공시로 확인하지 못해…' 줄을 보여 줄 종목, data.json 만)
+           주당 배당) · dvLine(앱이 숨긴 배당수익률 자리에 보여 줄 줄, data.json 만: 1 Jack 의 '주식 수가 바뀐 비율을 공시로 확인하지 못해…' ·
+           v19.1j 2 '유상증자로 주가 기준이 바뀌어서…' · 3 '회사가 공시한 배당 자료와 주식 수가 서로 맞지 않아서…')
            · divCheck.proof(결과마다 수 · 되살리지 않은 이유 line · ratio · basis · rights · uncounted · data · fail 마다 종목 이름)
+           · v19.1j divCheck.proofSub(rights · data 로 숨긴 종목마다 그 안의 경우 — rights sh · unk, data div · pref0 · neg · nototal ·
+           prefmix · nopfo · nostk · noshr: 줄은 sh · div 에만)
 
 시장 가정(도구의 기본값으로 자동 반영)
   rf 국고채 10년(ECOS, 출처는 settings.rfSrc) · mktVol/usVol/mtVol · rhoKrUs/rhoKrMt/rhoUsMt …
@@ -6201,6 +6204,68 @@ PROVE_LOOK_V = 1                  # 증명용 조회 항목의 모양 (sd · cx 
 PROVE_SHR_MOVE = 0.03             # 조회 뒤 오늘 상장 주식 수가 이보다 많이 달라지면 공시 목록을 다시 받아요 (그 사이 새 결정이 있을 수 있어요)
 
 
+# v19.1j (Jack, 2026-11-15 — 11-15 아침 답 11 · 12 · 13):
+#   답 12 — 공시가 준 정확한 무상증자 배율은 깨끗한 분할 배율이 아니어도 받아요 (대한제강 ×1.6616554 · TJ미디어 ×1.5 · 알테오젠 ×1.3 …),
+#     세 가지를 모두 지킬 때만 (리뷰의 세 조건): (가) 깨끗하지 않은 배율의 사건은 모두 무상증자 결정 API(fricDecsn · pifricDecsn)에서 읽은
+#     무상증자이고 r = 1 + x (x = 보통주 1주당 신주 수, API 의 값) · (나) 그 사건들의 곱(1 + x 로 셈)이 발행하는 배율(dpsF)과 1e-6 안 ·
+#     (다) 배당 기준 증명(dvProof)이 주식 수로 맞아요 (today · yearEnd 그대로). 파이프라인이 주식 수로 짐작한 배율(div_basis 의 배율)은 예전처럼
+#     깨끗한 배율만이고, 공시 원문(분할 · 병합)이나 감자 결정의 깨끗하지 않은 배율은 예전처럼 그대로 숨겨요 (ratio). 관문도 같은 세 조건을 따로 봐요.
+#   답 11 · 13 — 숨긴 이유마다 앱이 보여 줄 줄을 여기 한 곳에서 정해요 (prove_line → 종목의 dvLine · divCheck.proofSub):
+#     1 line   Jack 의 줄 (2026-11-08) '주식 수가 바뀐 비율을 공시로 확인하지 못해 배당수익률은 보여 드리지 않아요.'
+#     2 rights '유상증자로 주가 기준이 바뀌어서, 배당수익률은 다시 계산하는 동안 비워 두었어요.' — 막은 유상증자 중 주주배정(실권주 일반공모
+#              포함)이라고 읽은 결정이 있고, 그 새 주식이 오늘 상장 주식 수에 들어 있을 때만 (sh: 권리락이 지났다는 증거 — 상장은 납입 뒤예요).
+#              새 주식이 아직 보이지 않으면 (shnew: 권리락 전일 수 있어요) · 방식을 모르는 결정만으로 막았으면 (unk) 줄 없음.
+#     3 data   '회사가 공시한 배당 자료와 주식 수가 서로 맞지 않아서 배당수익률은 비워 두었어요.' — 배당 표의 총액 ÷ 주당 배당이 회사의 그해 말
+#              유통 주식 수(주식의 총수 현황)와도, 오늘 상장 주식 수 ÷ 배율과도 3% 넘게 다를 때만 (div · 2026-11-15 원문 확인: 중간배당이 든 총액 ·
+#              주당 배당 칸의 총액 · 우선주 줄 없는 총액 …). 그 밖은 줄 없음 — 자료가 빠졌거나 우리가 나눠 셀 수 없는 것: nototal 총액 없음 ·
+#              prefmix 주당 배당이 다른 종류주가 섞임 · nopfo 우선주 주식 수를 모름 · pref0 배당 표에 우선주 줄이 있는데 주식의 총수 현황에 우선주 수가
+#              따로 없음 (의결권 있는 우선주는 보통주와 한 줄에 적혀요 — 메디톡스) · neg 총액이 우선주 몫보다 작음 (종류주를 잘못 묶었을 수 있어요) ·
+#              nostk 그해 말 주식의 총수 현황 없음 · noshr 오늘 상장 주식 수 없음.
+PROVE_EXACT_TOL = 1e-6            # 답 12 (나): 정확한 무상증자 배율의 곱(1 + x)과 발행하는 배율(dpsF)의 차이 상한
+PROVE_LINE = {"line": 1, "rights": 2, "data": 3}                         # dvLine 값 (앱이 줄을 고르는 표시)
+PROVE_SUB = {"rights": ("sh", "shnew", "unk"),
+             "data": ("div", "pref0", "neg", "nototal", "prefmix", "nopfo", "nostk", "noshr")}
+PROVE_SUB_LINE = {"rights": ("sh",), "data": ("div",)}   # 줄이 맞는 경우 (말이 그대로 맞을 때만)
+PROVE_DATA_WHY = {"현금배당금총액 없음": "nototal", "주당 배당이 다른 우선주·종류주가 섞여 있어요": "prefmix",
+                  "우선주·종류주 주식 수를 몰라요": "nopfo", "우선주·종류주 배당 줄이 있는데 그해 말 우선주·종류주가 없어요": "pref0",
+                  "우선주 몫을 빼면 0 이하": "neg"}
+PROVE_SUB_KO = {"sh": "주주배정 (새 주식 상장됨)", "shnew": "주주배정 (새 주식이 아직 상장 전)", "unk": "방식을 모르는 결정만", "div": "총액 ÷ 주당 배당이 주식 수와 다름", "pref0": "우선주 배당 줄이 있는데 주식의 총수 현황에 우선주 수가 따로 없음",
+                "neg": "총액이 우선주 몫보다 작음", "nototal": "총액 없음", "prefmix": "주당 배당이 다른 종류주가 섞임", "nopfo": "우선주 주식 수 모름",
+                "nostk": "그해 말 주식의 총수 현황 없음", "noshr": "오늘 상장 주식 수 없음"}
+
+
+def prove_line(reason, sub=None):
+    """숨긴 이유(reason)와 그 안의 경우(sub) → 앱이 보여 줄 줄의 표시(dvLine 1 · 2 · 3) 또는 None (줄 없음). 줄은 그 말이 그대로 맞을 때만:
+    line 은 늘, rights 는 주주배정이라고 읽은 결정이 있을 때(sh), data 는 배당 표가 회사의 주식 수와 실제로 어긋날 때(div). (순수 함수)"""
+    if reason == "line":
+        return PROVE_LINE["line"]
+    return PROVE_LINE[reason] if sub in PROVE_SUB_LINE.get(reason, ()) else None
+
+
+def prove_exact_bonus(e):
+    """답 12 (가): 무상증자 결정 API(fricDecsn · pifricDecsn)에서 읽은 무상증자 사건이고 r = 1 + x 인지 (x 는 API 의 1주당 신주 수). (순수 함수)"""
+    x, r = _fin((e or {}).get("x")), _fin((e or {}).get("r"))
+    return (isinstance(e, dict) and e.get("k") == "bonus" and e.get("src") in ("fric", "pifric")
+            and x is not None and x > 0 and r is not None and abs(r - (1 + x)) <= PROVE_EXACT_TOL)
+
+
+def prove_ev_ok(ev):
+    """사건마다 깨끗한 분할 배율이거나, 답 12 의 정확한 무상증자(prove_exact_bonus)인지. (순수 함수)"""
+    return all(dvwhy_clean(e["r"]) or prove_exact_bonus(e) for e in ev or [])
+
+
+def prove_prod(ev):
+    """사건의 곱 — 정확한 무상증자는 API 의 1 + x 로 (반올림한 r 이 아니라), 다른 사건은 r 로. 사건이 없으면 1. (순수 함수)"""
+    return float(math.prod((1 + e["x"]) if prove_exact_bonus(e) else e["r"] for e in ev or []))
+
+
+def prove_same(prod, f, exact):
+    """사건의 곱 prod 와 배율 f 가 같은지: 정확한 무상증자가 끼면 |prod − f| ≤ 1e-6 (답 12 (나)), 아니면 예전처럼 ± DVWHY_TOL. (순수 함수)"""
+    if not f:
+        return False
+    return abs(prod - f) <= PROVE_EXACT_TOL if exact else abs(prod / f - 1) <= DVWHY_TOL
+
+
 def prove_shr_moved(old, now):
     """조회 뒤 오늘 상장 주식 수가 PROVE_SHR_MOVE(3%) 넘게 달라졌는지. 둘 중 하나라도 모르면 달라지지 않은 것으로 봐요 (주식 수가 없는 종목이
     날마다 다시 받지 않게 · 그런 항목도 90일 재확인은 그대로). (순수 함수)"""
@@ -6234,6 +6299,8 @@ def prove_receiving(cash, d, pds, pfo=None):
     pfo = _fin(pfo)
     if pfo == 0 and paid[0] == d:
         return cash / d, None, None        # 그해 말 우선주·종류주가 없어요 — 보통주와 같은 금액의 줄은 표의 중복 (실리콘투 2025)
+    if pfo == 0:                           # v19.1j: 주식의 총수 현황에 그 밖의 종류가 따로 없어요 (의결권 있는 우선주는 보통주와 한 줄 — 메디톡스)
+        return None, None, "우선주·종류주 배당 줄이 있는데 그해 말 우선주·종류주가 없어요"
     if not pfo or pfo <= 0:
         return None, None, "우선주·종류주 주식 수를 몰라요"
     n = (cash - pfo * paid[0]) / d
@@ -6277,8 +6344,8 @@ def prove_cover(fx, fy, px, ev):
 
 
 def prove_earlier(d3, cash3, pds, f0, look, fy, i, tol=DRIFT_TOL):
-    """앞 해 i (1 전기 · 2 전전기)의 배율 → (f, None) 또는 (None, 이유). 올해 배율 f0 은 확인된 값이에요. (순수 함수)
-    g = 그해 말 뒤 ~ 올해 말 사건의 곱 (깨끗한 배율만) · 막는 결정 없음 · 우선주 배당 없음 · n₀ ÷ nᵢ 가 g ± tol 이고
+    """앞 해 i (1 전기 · 2 전전기)의 배율 → (f, None) 또는 (None, 이유). 올해 배율 f0 은 확인된 값이에요 (반올림 전의 곱). (순수 함수)
+    g = 그해 말 뒤 ~ 올해 말 사건의 곱 (깨끗한 배율 · v19.1j 공시의 정확한 무상증자 1 + x) · 막는 결정 없음 · 우선주 배당 없음 · n₀ ÷ nᵢ 가 g ± tol 이고
     (g ≠ 1 이면) 1 ± tol 이 아니어야 해요 (회사가 그해 배당을 새 기준으로 고쳐 적었는지 알 수 없으면 하지 않아요)."""
     d, c = _three(d3), _three(cash3)
     if any((_fin(x) or 0) > 0 for p in pds or [] for x in (_three(p)[0], _three(p)[i])):
@@ -6286,11 +6353,11 @@ def prove_earlier(d3, cash3, pds, f0, look, fy, i, tol=DRIFT_TOL):
     if not (d[0] and d[0] > 0 and d[i] and d[i] > 0 and c[0] and c[0] > 0 and c[i] and c[i] > 0):
         return None, "div"
     ev, blk = prove_window(look, f"{fy - i}-12-31", f"{fy}-12-31")
-    if any(not dvwhy_clean(e["r"]) for e in ev):
+    if not prove_ev_ok(ev):                            # v19.1j: 깨끗한 배율 · 공시의 정확한 무상증자(답 12)만
         return None, "nonclean"
     if blk:
         return None, "block"
-    g = math.prod(e["r"] for e in ev) if ev else 1.0
+    g = prove_prod(ev)
     rr = (c[0] / d[0]) / (c[i] / d[i])
     if abs(rr / g - 1) > tol:
         return None, "drift"
@@ -6320,6 +6387,7 @@ class DivWhy:
         self.prove_left = PROVE_PER_RUN
         self.seen = {}
         self.pv = {k: [] for k in PROVE_KEYS}
+        self.psub = {k: {} for k in PROVE_SUB}        # v19.1j: rights · data 안의 경우 {코드: sub} (divCheck.proofSub · 줄을 고르는 근거)
         self.pnotes, self.p_ex = [], []
 
     def _fail(self, s, why):
@@ -6550,14 +6618,34 @@ class DivWhy:
     def _rights_bad(self, look, xs):
         """xs (유상증자 결정들: rc · n) 중 권리락으로 주가를 새 기준으로 만든 큰 것 → 그 설명들 (없으면 []).
         주주배정(주주배정후 실권주 일반공모 포함) · 방식을 모름 중 새 보통주가 증자 전의 SHARE_SAME(10%)를 넘거나 그 크기를 모르는 것."""
+        return [d for d, _ in self._rights_block(look, xs)]
+
+    def _rights_block(self, look, xs, shr=None, px=None):
+        """_rights_bad 와 같은 결정들 → [(설명, 경우)] — v19.1j: 경우 sh 주주배정이고 그 새 주식이 오늘 상장 주식 수에 들어 있음 (권리락이 지남) ·
+        shnew 주주배정인데 새 주식이 아직 보이지 않음 · ? 방식을 모름. rights 의 줄은 sh 가 하나라도 있을 때만 (답 11 · 말이 맞을 때만)."""
         terms = {**(look.get("rt") or {}), **(look.get("fxT") or {})}
         out = []
         for x in xs:
             tm = terms.get(x.get("rc")) or {"m": "?", "q": None}
             if tm["m"] in RIGHTS_SH and (tm["q"] is None or tm["q"] > SHARE_SAME):
                 kind = {"sh": "주주배정", "?": "방식을 모르는"}[tm["m"]]
-                out.append(f"{kind} 유상증자({x.get('d')} · " + (f"증자 전의 {tm['q'] * 100:.0f}%" if tm["q"] is not None else "크기 모름") + ")")
+                how = tm["m"] if tm["m"] != "sh" else ("sh" if self._rights_listed(look, x, tm, shr, px) else "shnew")
+                out.append((f"{kind} 유상증자({x.get('d')} · " + (f"증자 전의 {tm['q'] * 100:.0f}%" if tm["q"] is not None else "크기 모름")
+                            + (" · 새 주식이 아직 상장 전" if how == "shnew" else "") + ")", how))
         return out
+
+    @staticmethod
+    def _rights_listed(look, x, tm, shr, px):
+        """v19.1j: 주주배정 결정 x 의 새 주식이 오늘 상장 주식 수에 들어 있는지 — (증자 전 보통주 = 새 주식 ÷ q) + 새 주식을 그 공시일 뒤 ~ px 의
+        분할 · 병합 · 무상증자만큼 늘린 수의 97% 이상이면 들어 있어요 (상장은 납입 뒤라 권리락이 지났다는 증거). 새 주식 수 · 크기 · 날짜를 모르면
+        아니라고 봐요 (줄 없음 쪽)."""
+        q, shr = _fin(tm.get("q")), _fin(shr)
+        n = _fin(x.get("n")) or next((_fin(f.get("n")) for f in look.get("fx") or []
+                                      if f.get("k") == "rights" and f.get("rc") == x.get("rc") and _fin(f.get("n"))), None)
+        if not (q and q > 0 and n and n > 0 and shr and x.get("d") and px):
+            return False
+        ev = [e for e in look.get("ev") or [] if x["d"] < e["d"] <= str(px) and dvwhy_named(e["r"])]
+        return shr >= (n / q + n) * prove_prod(ev) * (1 - PROVE_TOL)
 
     def _prove(self, s, r, bas):
         """prove 의 본문. 결과 (self.pv): today · yearEnd (올해 수익률 되살림) · years (앞 해 막대) · 되살리지 않으면 하나만 —
@@ -6597,8 +6685,8 @@ class DivWhy:
 
         if todo0:
             ev0, blk0 = prove_window(look, f"{fy}-12-31", px)
-            f = math.prod(e["r"] for e in ev0) if ev0 else 1.0
-            nonclean = any(not dvwhy_clean(e["r"]) for e in ev0)
+            f = prove_prod(ev0)                                 # 정확한 무상증자는 API 의 1 + x 로 (v19.1j · 답 12)
+            nonclean = not prove_ev_ok(ev0)                     # 깨끗한 배율도, 공시의 정확한 무상증자(r = 1 + x)도 아닌 사건
             pd0 = [p[0] for p in pds]
             stk, stk_fail = (None, False)
             if any((x or 0) > 0 for x in pd0):
@@ -6609,18 +6697,19 @@ class DivWhy:
             n, pd, why_n = prove_receiving(cash[0], d3[0], pd0, (stk or {}).get("pfo"))
             desc = (f"{fy}년 주당 {d3[0]:,.0f}원 · 배당 받은 주식 {n:,.0f}" if n else f"{fy}년 배당 표 ({why_n})") + \
                    (f" · 사건 {_ev_desc(ev0)}" if ev0 else " · 그 뒤 분할·병합·무상증자 없음") + f" · 오늘 {shr or 0:,.0f}주"
-            how, reason, cover, used, note = None, None, 0.0, [], ""
+            how, reason, sub, cover, used, note = None, None, None, 0.0, [], ""
             if blk0:
                 reason, note = "basis", "그 사이 " + " · ".join({"spin": "회사분할", "stockdiv": "주식배당"}[b] for b in blk0) + " 결정이 있어요"
             elif nonclean:
                 agree = bool(n and shr and prove_today(n, f, shr))
                 price = _fin(s.get("price"))
                 reason = "ratio"
-                note = (f"공시 배율 ×{f:.4g} 가 깨끗한 배율이 아니에요 (관문이 받는 배율이 아니라 Jack 이 정할 때까지 그대로) · 총액 ÷ 오늘 주식 수 "
-                        + ("맞음" if agree else "확인 안 함") + (f" · 그 배율이면 1주 {d3[0] / f:,.0f}원 · {d3[0] / f / price * 100:.2f}%"
-                                                         if price else ""))
+                note = (f"공시 배율 ×{f:.4g} 가 깨끗한 배율도, 무상증자 결정 API 의 정확한 배율(1 + 1주당 신주 수)도 아니에요 (분할 · 병합 원문 · "
+                        "감자) · 총액 ÷ 오늘 주식 수 " + ("맞음" if agree else "확인 안 함")
+                        + (f" · 그 배율이면 1주 {d3[0] / f:,.0f}원 · {d3[0] / f / price * 100:.2f}%" if price else ""))
             elif n is None or not shr:
                 reason = "data"
+                sub = PROVE_DATA_WHY.get(why_n, "nototal") if n is None else "noshr"      # v19.1j: 자료가 빠졌는지 · 어긋나는지
             elif prove_today(n, f, shr):
                 how = "today"
             else:
@@ -6656,10 +6745,12 @@ class DivWhy:
                 if unread:
                     self._pfail(t, tag, "유상증자 결정의 방식 · 크기를 읽지 못함: " + " · ".join(unread[:3]))
                     return r
-                big = self._rights_bad(look, rights)
-                if big:
+                blk_r = self._rights_block(look, rights, shr, px)
+                if blk_r:
                     how, reason = None, "rights"
-                    note = (" · ".join(big) + " — 권리락으로 오늘 주가는 새 기준인데 공시된 1주 배당은 옛 기준이라 그대로 "
+                    ms = {m for _, m in blk_r}                    # v19.1j: 주주배정이고 새 주식이 상장됐을 때만 줄 (답 11 · 말이 맞을 때만)
+                    sub = "sh" if "sh" in ms else "shnew" if "shnew" in ms else "unk"
+                    note = (" · ".join(d for d, _ in blk_r) + " — 권리락으로 오늘 주가는 새 기준인데 공시된 1주 배당은 옛 기준이라 그대로 "
                             "(권리락 배율로 나누는 건 다음 PR)")
             if how:
                 new["dpsF"][0] = round(f, 6)
@@ -6690,28 +6781,38 @@ class DivWhy:
                         reason = "line"
                         note += " — 그 사이 주식 수를 바꾼 공시가 하나도 없어요"
                 elif reason in ("div", "nostk", "data"):
-                    note = {"nostk": "그해 말 주식의 총수 현황이 없어 맞춰 보지 못했어요"}.get(
-                        reason, "배당 표의 총액 ÷ 주당 배당이 주식 수와 달라요 (중간배당 · 단위 · 총액 없음)")
+                    if reason != "data":
+                        sub = reason                                     # 그해 말 표로: div 어긋남 · nostk 표 없음
+                    note = ("그해 말 주식의 총수 현황이 없어 맞춰 보지 못했어요" if sub == "nostk"
+                            else "배당 표의 총액 ÷ 주당 배당이 그해 말 · 오늘 주식 수와 3% 넘게 달라요 (중간배당 · 단위)" if sub == "div"
+                            else f"배당 표: {PROVE_SUB_KO.get(sub, sub)}")
                     reason = "data"
+                # 줄을 정하는 곳은 여기 하나예요 (리뷰 2026-11-15 2차 · v19.1j 답 11 · 13): 이유와 그 안의 경우 → dvLine (prove_line).
                 self.pv[reason].append(t)
+                if reason in PROVE_SUB:
+                    self.psub[reason][t] = sub
+                ln = prove_line(reason, sub)
+                if ln:
+                    s["dvLine"] = ln
                 if reason != "line":
-                    self.pnotes.append(f"그대로 숨김({reason}) {tag}: {desc} — {note} → 줄 없음")
+                    self.pnotes.append(f"그대로 숨김({reason}) {tag}: {desc} — {note} → " + (f"줄 dvLine {ln}" if ln else "줄 없음")
+                                       + (f" ({sub} · {PROVE_SUB_KO[sub]})" if sub else ""))
                     return r
-                # Jack 의 줄을 정하는 곳은 여기 하나예요 (리뷰 2026-11-15 2차): line ⟺ dvWhy nc-unexplained 와 dvLine. 맞춤 이유(check)가
-                # 앞 해 때문에 nc-mismatch 로 숨겼어도 올해 바뀐 주식 수를 설명하는 공시가 하나도 없으면 nc-unexplained 로 바꿔요 (둘 다 숨김).
+                # line ⟺ dvWhy nc-unexplained 와 dvLine 1. 맞춤 이유(check)가 앞 해 때문에 nc-mismatch 로 숨겼어도 올해 바뀐 주식 수를
+                # 설명하는 공시가 하나도 없으면 nc-unexplained 로 바꿔요 (둘 다 숨김).
                 self.pnotes.append(f"설명 못 함 {tag}: {desc} — {note} → 배당수익률을 숨겨요 (Jack 의 줄)")
                 if not (w or "").startswith("nc-"):
                     r = dvwhy_apply(r, s.get("dps3"), {"fac": {}, "dem": {}, "hide": "nd"})
                 s["dvWhy"] = {"v": 1, "st": "nc-unexplained"}
-                s["dvLine"] = 1
                 self._move(t, "nc-unexplained")
                 return r
 
         f0 = new["dpsF"][0]
         if todo and f0 is not None:
             ev_a, blk_a = prove_window(look, f"{fy}-12-31", px)
-            prod_a = math.prod(e["r"] for e in ev_a) if ev_a else 1.0
-            if blk_a or any(not dvwhy_clean(e["r"]) for e in ev_a) or abs(prod_a / f0 - 1) > DVWHY_TOL:
+            prod_a = prove_prod(ev_a)
+            exact_a = any(not dvwhy_clean(e["r"]) for e in ev_a)          # v19.1j: 공시의 정확한 무상증자가 끼면 곱 = 배율 ± 1e-6
+            if blk_a or not prove_ev_ok(ev_a) or not prove_same(prod_a, f0, exact_a):
                 self.n["pYearsSkip"] += 1
                 self.pnotes.append(f"앞 해는 그대로 {tag}: " + (
                     "그 뒤 " + " · ".join({"spin": "회사분할", "stockdiv": "주식배당"}[b] for b in blk_a) + " 결정이 있어요" if blk_a
@@ -6735,7 +6836,7 @@ class DivWhy:
                         self.n["pYear:rights"] += 1
                         self.pnotes.append(f"앞 해 {fy - i} 는 그대로 {tag}: " + " · ".join(big))
                         continue
-                    fi, why_i = prove_earlier(d3, cash, pds, f0, look, fy, i)
+                    fi, why_i = prove_earlier(d3, cash, pds, prod_a if exact_a else f0, look, fy, i)   # 정확한 배율은 반올림 전의 곱으로
                     if fi is None:
                         self.n[f"pYear:{why_i}"] += 1
                         continue
@@ -6753,8 +6854,12 @@ class DivWhy:
         adj_y = [i for i in range(3) if F[i] is not None and F[i] != 1.0]
         if adj_y:
             ev = [e for e in look.get("ev") or [] if f"{fy - max(adj_y)}-12-31" < e["d"] <= px and dvwhy_named(e["r"])]
-            bad = [i for i in adj_y if abs(math.prod(e["r"] for e in ev if e["d"] > f"{fy - i}-12-31") / F[i] - 1) > DVWHY_TOL]
-            if bad or not ev or any(not dvwhy_clean(e["r"]) for e in ev):     # 위 규칙으로는 생길 수 없어요 — 생기면 되살리지 않아요
+            bad = []
+            for i in adj_y:                     # v19.1j 답 12 (나): 정확한 무상증자가 낀 해는 곱 = 배율 ± 1e-6, 아니면 예전처럼 ± 0.5%
+                evi = [e for e in ev if e["d"] > f"{fy - i}-12-31"]
+                if not prove_same(prove_prod(evi), F[i], any(not dvwhy_clean(e["r"]) for e in evi)):
+                    bad.append(i)
+            if bad or not ev or not prove_ev_ok(ev):     # 위 규칙으로는 생길 수 없어요 — 생기면 되살리지 않아요
                 self.pnotes.append(f"되살리지 않음 {tag}: 배율 {F} 를 공시 사건({_ev_desc(ev)})이 설명하지 못해요 — 계산 오류")
                 self.pv["fail"].append(t)
                 return r0
@@ -6811,6 +6916,11 @@ class DivWhy:
             out[k + "T"] = sorted(set(self.pv[k]))
         return out
 
+    def proof_sub(self):
+        """v19.1j: data.json divCheck.proofSub — rights · data 로 숨긴 종목마다 그 안의 경우 (줄을 고른 근거). 관문이 proof 의 이름 목록 ·
+        종목의 dvLine 과 맞춰 봐요 (rights sh → 2 · data div → 3 · 나머지는 줄 없음)."""
+        return {"v": 1, **{k: dict(sorted(self.psub[k].items())) for k in PROVE_SUB}}
+
     def proof_summary(self):
         c = self.proof_counts()
         yrs = {k.split(":", 1)[1]: v for k, v in self.n.items() if k.startswith("pYear:")}
@@ -6827,7 +6937,13 @@ class DivWhy:
                  + (" (다음 실행이 이어받아요)" if lim else "") + f" · 이번 증명 단계의 DART 호출 {self.n['pCalls']:,}회")
         ex = (["· 증명 예: " + " / ".join(self.p_ex[:10]) + (f" … 외 {len(self.p_ex) - 10}곳" if len(self.p_ex) > 10 else "")]
               if self.p_ex else [])
-        return [line, calls] + ex + [f"  !! {x}" for x in self.pnotes]
+        subs = {k: collections.Counter(v.values()) for k, v in self.psub.items()}
+        lines = collections.Counter(prove_line(k, sb) for k, v in self.psub.items() for sb in v.values())
+        lines[1] += c["line"]
+        ln = ("· 숨긴 배당수익률의 줄 (dvLine): Jack 의 줄(1) " + f"{lines[1]:,} · 유상증자 줄(2) {lines[2]:,} · 배당 자료 줄(3) {lines[3]:,} · rights · data 중 줄 없음 "
+              + f"{lines[None]:,} | " + " · ".join(f"{k} " + ", ".join(f"{PROVE_SUB_KO[x]} {v[x]}" for x in PROVE_SUB[k] if v[x])
+                                                  for k, v in subs.items() if v))
+        return [line, calls, ln] + ex + [f"  !! {x}" for x in self.pnotes]
 
 
 def apply_div_basis(kr_stocks, fin_map, pref_shares, why=None):
@@ -6937,6 +7053,7 @@ def apply_div_basis(kr_stocks, fin_map, pref_shares, why=None):
         counts["why"] = why.counts()  # v19.1h: 관문이 종목의 dvWhy 와 맞춰 봐요
         if why.prove_on:
             counts["proof"] = why.proof_counts()   # v19.1i: 관문이 종목의 dvProof 와 맞춰 봐요
+            counts["proofSub"] = why.proof_sub()   # v19.1j: 숨긴 이유 안의 경우 — 관문이 종목의 dvLine 과 맞춰 봐요
     return counts, extra
 
 

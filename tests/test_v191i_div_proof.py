@@ -271,16 +271,14 @@ def test_a_shareholder_rights_issue_between_two_years_keeps_the_older_bar():
     assert lg["dpsF"] == [1.0, 1.0, 1.0] and lg["divSt"] == "same"                                      # 일반공모는 막지 않아요
 
 
-def test_a_bonus_ratio_that_is_not_a_split_ratio_stays_as_it_is_without_a_line():
-    """1.66 · 1.3 같은 무상증자 배율은 공시로 맞지만 관문이 받는 배율이 아니에요 — 공시가 배율을 주니 Jack 의 줄은 맞지 않아요 (그대로 · ratio)."""
+def test_a_bonus_ratio_that_is_not_a_split_ratio_is_restored_from_the_filing():
+    """1.66 · 1.3 같은 무상증자 배율은 공시로 맞아요 — v19.1j (Jack 의 yes 2026-11-15 답 12): 무상증자 결정 API 의 정확한 배율(r = 1 + x)이고
+    주식 수가 확인해 주면 되살려요 (예전 v19.1i 에서는 관문이 받는 배율이 아니라 그대로 · ratio 였어요). Jack 의 줄은 여전히 없어요."""
     by, counts, why, _ = run("084010", "196170")
     dj, alt = by["084010"], by["196170"]
-    assert as_on_main(dj, "084010") and as_on_main(alt, "196170")
-    assert dj["dvWhy"] == {"v": 1, "st": "nc-mismatch"} and "dvWhy" not in alt and "dyt" not in alt   # 대한제강의 dvWhy 는 맞춤 이유(#98) 그대로
-    assert counts["proof"]["ratioT"] == ["084010", "196170"] and counts["why"]["nc-mismatch"] == 1 and counts["why"]["nc-unexplained"] == 0
-    lines = why.summary()
-    assert any("196170" in x and "공시 배율 ×1.3" in x and "0.16%" in x for x in lines)
-    assert any("084010" in x and "그 배율이면 1주 301원" in x for x in lines)
+    assert dj["dpsF"] == [1.661655] * 3 and dj["dyt"] == 3.73 and dj["dvProof"]["y0"] == "yearEnd" and dj["dvWhy"]["st"] == "ok"
+    assert alt["dpsF"][0] == 1.3 and alt["dyt"] == 0.16 and alt["dvProof"]["y0"] == "today" and "dvLine" not in dj and "dvLine" not in alt
+    assert counts["proof"]["ratioT"] == [] and counts["why"]["nc-mismatch"] == 0 and counts["why"]["nc-unexplained"] == 0
 
 
 def test_spin_offs_stock_dividends_and_uncounted_filings_stay_as_they_are_without_a_line():
@@ -531,13 +529,16 @@ def gate_files(*ts):
 def test_the_gate_agrees_with_every_real_proof():
     by, comps, counts = gate_files(*CASES)
     done = sorted(t for t, s in by.items() if "dvProof" in s)
-    assert done == ["001230", "001750", "020400", "032960", "036630", "064400", "064960", "069080", "241560", "257720", "298040",
-                    "403550", "443060"]
-    assert counts["proof"] == {"v": 1, "today": 4, "yearEnd": 6, "years": 8, "line": 0, "ratio": 2, "basis": 2, "rights": 3,
-                               "uncounted": 2, "data": 4, "fail": 1, "lineT": [], "ratioT": ["084010", "196170"],
+    assert done == ["001230", "001750", "020400", "032960", "036630", "064400", "064960", "069080", "084010", "196170", "241560",
+                    "257720", "298040", "403550", "443060"]                                            # v19.1j 답 12: 대한제강 · 알테오젠
+    assert counts["proof"] == {"v": 1, "today": 5, "yearEnd": 7, "years": 9, "line": 0, "ratio": 0, "basis": 2, "rights": 3,
+                               "uncounted": 2, "data": 4, "fail": 1, "lineT": [], "ratioT": [],
                                "basisT": ["000880", "045300"], "rightsT": ["210980", "356860", "432320"], "uncountedT": ["005440", "049430"],
                                "dataT": ["002310", "003380", "086900", "290650"], "failT": ["010130"]}
-    assert all(V.dvproof_problems(by[t], comps[t], PX) is None for t in done), [(t, V.dvproof_problems(by[t], comps[t], PX)) for t in done]
+    ex = {"084010", "196170"}                                                                         # 공시의 정확한 무상증자 배율 (세 조건)
+    assert all(V.exact_bonus_problem(by[t], comps[t], PX) is None for t in ex)
+    assert all(V.dvproof_problems(by[t], comps[t], PX, exact=t in ex) is None for t in done), \
+        [(t, V.dvproof_problems(by[t], comps[t], PX, exact=t in ex)) for t in done]
 
 
 def test_the_gate_scales_new_shares_by_the_events_after_their_own_date():

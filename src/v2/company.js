@@ -223,9 +223,21 @@ function divKrExact(s, co) {
 // cancellation case, has no dvLine and gets no line. true only while no yield is shown (krDivState y null): the line
 // co.div.shareHidden goes in the 배당 tile's number place and under the 배당 tab's 배당을 줘요.
 export function divShareHidden(s, co = null) {
-  if (!exactData() || !s || s.cls !== "kr" || s.dvLine !== 1) return false;
+  return divHiddenLine(s, co) === "shareHidden";
+}
+
+// v19.1j (Jack, 2026-11-15, answers 11 and 13): the reason line for a hidden Korean yield, by the one mark the pipeline's proof stage
+// sets (data.json dvLine, checked by the gate against divCheck.proofSub): 1 -> co.div.shareHidden (Jack's line of 11-08), 2 ->
+// co.div.rightsHidden (a 주주배정 rights issue past its 권리락 put today's price on a new basis), 3 -> co.div.dataHidden (the company's
+// own dividend table disagrees with its share counts). The copy key, or null: no mark, an unknown mark, a yield shown, a zero
+// dividend, a US stock or an older file. One line at most: the mark is a single value.
+const DIV_HIDDEN_LINE = { 1: "shareHidden", 2: "rightsHidden", 3: "dataHidden" };
+export function divHiddenLine(s, co = null) {
+  if (!exactData() || !s || s.cls !== "kr" || typeof s.dvLine !== "number") return null;
+  const key = DIV_HIDDEN_LINE[s.dvLine];
+  if (!key) return null;
   const st = krDivState(s, co);
-  return !!(st && !st.zero && st.y == null);
+  return st && !st.zero && st.y == null ? key : null;
 }
 
 // US until v19.2: data.json has no US dividend per share, only Yahoo's yield. Missing is not "no dividend".

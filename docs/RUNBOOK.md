@@ -522,37 +522,65 @@ every row of 11-11 to 11-13), so a halt and a day nobody traded look the same; i
 A Korean payer whose dividend could not be put on today's share basis (`divSt` nc · nd) used to show "배당을 줘요" with no
 yield. The daily run now tries to prove that basis (`fetch_data.py` `DivWhy.prove`, after the `dvWhy` check, before the
 yield and the 배당 rank): the factor is the product of the 액면분할 · 주식병합 · 무상증자 filings after the report year
-(the same DART decision lookups and cache entry as `dvWhy`, only whole split ratios such as 2, 5, 0.5), and it must agree with
+(the same DART decision lookups and cache entry as `dvWhy`; whole split ratios such as 2, 5, 0.5, and since #PR the exact bonus
+ratio a 무상증자 filing gives, below), and it must agree with
 the share counts, either **today** (the dividend total ÷ today's listed shares = the dividend per share ÷ the factor, ±3%) or
 **yearEnd** (the shares that got the dividend = that year-end's outstanding shares in 주식의 총수 현황 ±3%, and today's
 listed shares between those × the factor and the year-end issued shares × the factor plus the new shares that filed
 제3자배정 · 일반공모 rights issues and bonds explain, each scaled only by the share events after its own date, +3%).
 An earlier year's bar comes back only when the shares that got each year's dividend differ by the filings' factor (±15%).
 
+**Exact bonus ratios (since #PR — Jack's explicit yes, 2026-11-15, answer 12; a loosening of the gate's whole-ratio rule, recorded
+under 안전 규칙 변경).** A 무상증자 ratio that is not a whole split ratio (대한제강 ×1.6616554, TJ미디어 ×1.5, 알테오젠 ×1.3 …) is
+used when all three guards hold: (a) every event whose ratio is not a whole split ratio is a bonus read from the fricDecsn · pifricDecsn
+API with r = 1 + x (x = new shares per common share, the API's own value; the pipeline computes with 1 + x, `prove_exact_bonus` ·
+`prove_prod`); whole events beside it (남성's ×0.1 merge from the filing) are as before; (b) the product of the events equals the
+published `dpsF` to 1e-6 for every such year; (c) the proof's share-count checks pass (today or yearEnd for this year, the ±15% rule
+for an earlier bar). The gate checks the same three guards on the published numbers (`validate_data.py` `exact_bonus_problem`) and
+only then lets that stock's non-whole `dpsF` pass `_factor_ok` and its non-whole events pass `_dvwhy_clean` (in "국내 dps3a = dps3 ÷
+배율", the two "배당 맞춤 이유" rows and "되살린 배당수익률"). Every other non-whole factor fails exactly as before: a factor the
+pipeline guesses from share counts (`div_basis` uses whole ratios only), an event that is not a bonus or has no `x` or r ≠ 1 + x, a
+product off by more than 1e-6, a year this run's proof did not restore, or no `dvProof`. On the 11-14 data 6 of the 7 come back
+(대한제강 3.73%, TJ미디어 5.73%, 폰드그룹 4.09%, 남성 4.18%, 알테오젠 0.16%, 가온전선 0.03%); 대동기어 does not: the rights part of its
+유무상증자 is a 64% 주주배정, so the rights rule below holds it (with the rights line). The earlier bars of 10 more stocks come back by
+the same rule (코리안리, 더블유게임즈, 풍산홀딩스, 헥토파이낸셜, 유비쿼스, 유아이엘, 링네트, 하이텍팜, 네오오토, 제너셈).
+
 It does **not** restore (the stock stays exactly as before, with its reason in `divCheck.proof` and the run log):
-- `ratio` — a filed bonus ratio that is not a whole split ratio (대한제강 ×1.66, 알테오젠 ×1.3 …): the gate accepts only whole
-  ratios; accepting an exact filed ratio is Jack's decision;
+- `ratio` — a filed ratio that is neither a whole split ratio nor an exact API bonus ratio (a split or merge filing with an odd par
+  value ratio, a 감자 ratio); none on 2026-11-14;
 - `basis` — a spin-off or stock-dividend decision in between;
 - `rights` — a 주주배정 rights issue (주주배정후 실권주 일반공모 too, and any issue whose method is not stated) of more than 10%
   was decided from half a year before the report year-end to the price date: KRX lowers the price on the 권리락 day, so today's
   price is on the new basis while the filed dividend is on the old one. This is checked on every restore path (today and
   yearEnd, whether or not new shares were needed to explain the count) and for an earlier bar when such an issue falls between
   the two years. A rights decision whose method or size could not be read is a lookup failure (`fail`), never restored.
-  Dividing by the 권리락 factor is a later PR;
+  Dividing by the 권리락 factor is a later PR. Since #PR (Jack, 2026-11-15, answer 11) the 2.0 app says why — "유상증자로 주가 기준이
+  바뀌어서, 배당수익률은 다시 계산하는 동안 비워 두었어요." (`dvLine` 2) — only where it is literally true: a blocking decision is read as
+  주주배정 and its new shares are already in today's listed count (listing comes after payment, so the 권리락 has passed; `sh`). A
+  주주배정 whose new shares are not listed yet (`shnew`) or a decision whose method is unknown (`unk`) gets no line;
 - `uncounted` — a filing explains the change but its share count is not read (주식교환, 합병, 감자, 주식소각);
-- `data` — the stock's own dividend table disagrees with its share counts (an interim dividend left out of the per-share row,
-  a unit slip, no total, no 주식의 총수 현황);
+- `data` — the stock's dividend table cannot be matched to its share counts. Since #PR (Jack, 2026-11-15, answer 13) the case is
+  recorded (`divCheck.proofSub.data`) and only a real disagreement gets the line "회사가 공시한 배당 자료와 주식 수가 서로 맞지 않아서
+  배당수익률은 비워 두었어요." (`dvLine` 3): `div`, the cash dividend total ÷ the dividend per share is more than 3% off both the
+  company's year-end outstanding common shares (주식의 총수 현황) and today's listed shares ÷ the factor (each of the 15 on 11-14 was read
+  against the raw DART tables on 2026-11-15: interim dividends in the total, the total written in the per-share cell, a total that
+  includes preferred shares the table gives no amount for, a share table in units of 1,000 …). No line where a piece is missing or we
+  cannot split it: `nototal` (no total: 하림지주, 한신기계, HDC, 토니모리, 펌텍코리아), `nostk` (no readable year-end share table:
+  대신밸류리츠), `pref0` (a preferred dividend row while the share table lists no separate preferred count — voting preferred shares
+  are written with the common ones: 메디톡스), `prefmix`, `nopfo`, `neg`, `noshr`;
 - `fail` — a lookup failed (DART, the per-run limit, an unreadable filing, the share report not received): nothing changes and
   the next run tries again.
 
-Only `line` gets Jack's line "주식 수가 바뀐 비율을 공시로 확인하지 못해 배당수익률은 보여 드리지 않아요." on the 2.0 배당 tile and
-tab: the proof found the share count changed and no filing at all in between (no rights issue, bond, cancellation, exchange,
+`line` gets Jack's line "주식 수가 바뀐 비율을 공시로 확인하지 못해 배당수익률은 보여 드리지 않아요." on the 2.0 배당 tile and
+tab (`dvLine` 1; since #PR `rights` and `data` can carry their own lines above, 2 and 3, in the same two places, one line at most): the proof found the share count changed and no filing at all in between (no rights issue, bond, cancellation, exchange,
 spin-off or stock dividend). That one place sets both `dvWhy` nc-unexplained and `dvLine: 1` (data.json); the app shows the
 line only where `dvLine` is 1, so a `dvWhy` nc-unexplained from the older #98 check alone (which looks only at rights issues and
 bonds, e.g. after a spin-off) never shows it, and the stock stays exactly as before. A restored stock carries `dvProof`
 (data.json), including the share events (`ev`) its factor came from.
 On the 2026-11-14 publish: 29 of the 72 hidden yields come back (21 with their bars), 23 of the 86 yields without bars get their
-bars back; still hidden: ratio 7, basis 4, rights 7, uncounted 2, data 22, a 32.5% yield 1; line 0.
+bars back; still hidden: ratio 7, basis 4, rights 7, uncounted 2, data 22, a 32.5% yield 1; line 0. With #PR on the same data: 35
+of the 72 come back (+ the 6 exact bonus ratios), 31 of the 86 get all their bars back (+ 8); still hidden: ratio 0, basis 4, rights 8 (+ 대동기어),
+uncounted 2, data 22, the 32.5% yield 1; lines: 1 → 0 stocks, 2 → 8, 3 → 15, none → 7 of the data cases.
 
 - **DART calls:** about 4 per stock the first time (the filings lists, decisions, the year-end share report, rights and
   bond counts when needed), at most 150 companies a run (`PROVE_PER_RUN`, separate from `dvWhy`'s own 150); about 160
@@ -576,7 +604,13 @@ bars back; still hidden: ratio 7, basis 4, rights 7, uncounted 2, data 22, a 32.
   yearEnd the market-cap form restates the share-count inequality; the independent parts are the dividend total against the
   year-end outstanding shares and against corp.json. That is a wrong conversion; never loosen the row. The detail list under
   the table names each stock and the failing number.
-- **WARN "배당 기준 증명 경고 (되살리지 않은 이유 · 조회 실패)"**: names the stocks not restored, by reason.
+- **WARN "배당 기준 증명 경고 (되살리지 않은 이유 · 조회 실패)"**: names the stocks not restored, by reason (with the `proofSub` case and
+  whether it shows a line, since #PR).
+- **FAIL "숨긴 배당수익률의 줄 (divCheck.proofSub · dvLine 2 · 3)"** (since #PR): `divCheck.proofSub` is not v1 with exactly `rights` and
+  `data`, its stocks differ from the proof's `rightsT` · `dataT`, a case is unknown, or the marks differ: `dvLine` 2 must be on exactly
+  the `rights` stocks with case `sh`, `dvLine` 3 on exactly the `data` stocks with case `div`. Our own bookkeeping only: look at the
+  run's "숨긴 배당수익률의 줄" and "그대로 숨김" log lines. A file without `proofSub` (before #PR) is only a warning unless the previous
+  publish had it; without it a `dvLine` 2 or 3 fails the "배당 기준 증명 기록" row.
 
 ## US stocks added by hand (EXTRA_US)
 

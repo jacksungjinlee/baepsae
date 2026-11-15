@@ -37,7 +37,7 @@ import { StatusChip, Segmented, Amount, Button } from "../ui/components.jsx";
 import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, tx, tap, useMode } from "./ui.jsx";
 import { groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, growthVsInd, annualRows, yoy, decompose, pbrStrip, indMedian,
-  roePbrMap, impliedGrowth, receipt, discFor, discDate, perMillionView, perMillionKr, payout, DCF, round, pastNiGrowth, dcfVs, divShareHidden } from "./company.js";
+  roePbrMap, impliedGrowth, receipt, discFor, discDate, perMillionView, perMillionKr, payout, DCF, round, pastNiGrowth, dcfVs, divHiddenLine } from "./company.js";
 import { growthBasis, num, exactData } from "./engine.js";
 import { signedPct, eokText } from "./deckcalc.js";
 import { withAssume, assumeOf } from "./store.js";
@@ -759,11 +759,13 @@ export function payoutWon(pct) {
   return { x: nf(x, d), y: nf(y, d), rest: y > 0 };            // rest false: "나머지 0원" is not said
 }
 const warnedPayout = new Set();
+const HID_UI = { shareHidden: "co-div-share-hidden", rightsHidden: "co-div-rights-hidden", dataHidden: "co-div-data-hidden" };
 export function DivTab({ load, s }) {
   const Dv = C.co.div;
   const co = load.coByT.get(s.t) || null;
   const us = usOf(s);
   const r = us ? divUs(s) : divKr(s, co);
+  const hidLine = us ? null : divHiddenLine(s, co);         // v19.1j: the hidden-yield reason line's copy key (company.js), or null
   // US statements not in dollars (data.json fcur): the yield was not computed — 배당수익률 – with the reason under it, never
   // 자료가 없어요 (keyed on the data, src/v2/fcur.js)
   const fc = us && fcurDyBlank(s);
@@ -806,8 +808,8 @@ export function DivTab({ load, s }) {
         {head && <H>{head}</H>}
         {/* 자료가 없어요 for a company with no statements at all (fix.js noStmtFor, Jack 2026-11-14): why, under it */}
         <NoStmtNote s={s} co={co} show={!us && r.rule === "na"} />
-        {/* v19.1i (Jack's line, 2026-11-08): the yield is hidden because the share-count change could not be matched to filings */}
-        {!us && r.rule === "pays" && divShareHidden(s, co) && Dv.shareHidden && <Note data-ui-v2="co-div-share-hidden">{Dv.shareHidden}</Note>}
+        {/* v19.1i (Jack's line, 2026-11-08) and v19.1j (Jack, 2026-11-15): why the yield is hidden, by the pipeline's mark (one line at most) */}
+        {!us && r.rule === "pays" && hidLine && Dv[hidLine] && <Note data-ui-v2={HID_UI[hidLine]}>{Dv[hidLine]}</Note>}
         {showDps && Dv.dps && (
           <div data-ui-v2="co-dps" style={{ display: "flex", alignItems: "baseline", gap: SPACE(2), flexWrap: "wrap", marginTop: SPACE(3) }}>
             <span style={tx(SIZE.h1, WEIGHT.heavy, COLOR.ink)}><Amount text={fill(C.app.won, { n: nf(r.dps) })} /></span>
