@@ -3398,6 +3398,10 @@ DISC_CALL_CAP = 1200   # 1회 실행당 상세조회 상한 (백필은 다음 �
 
 
 INSIDER_ROLES = ("임원", "주요주주")
+# v19.6b (리뷰 2026-11-16 · Jack 의 yes/no 를 기다려요): 임원 직위가 없는 주요주주 줄의 직위(pos)에 DART 의 관계 말(10%이상주주 · 사실상지배주주 …)을
+# 그대로 써요 — 2.0 공시 탭 · 예전 뱁새 공시·수급에 보여요 (예전엔 '-' 이라 2.0 은 빈 칸, 예전 앱은 ' · -'). False 면 그 줄의 직위는 빈 칸이에요
+# (2.0 이 지금 '-' 에 하는 것처럼 · role 은 그대로 주요주주). 한 줄로 바꿔요.
+INSIDER_POS_HOLDER_WORDS = True
 
 
 def _ele_txt(v):
@@ -3563,10 +3567,17 @@ def fetch_disclosures(kr_stocks, cmap, end, client):
         log(f"· 내부자 거래 {refreshed:,}건의 비어 있던 시가총액을 오늘 값으로 채움")
     # v19.6b (Part B.1): 직위의 '-' 는 빈 칸 · 역할(role) 임원 | 주요주주 | null. 지난 실행이 넣은 줄도 오늘 다시 받은 회사면 같은 응답에서 고쳐요
     fx = insider_fix_roles(dedup, fresh)
+    if not INSIDER_POS_HOLDER_WORDS:
+        for r in dedup:
+            if r.get("role") == "주요주주":
+                r["pos"] = ""                  # 주요주주 관계 말을 보이지 않아요 (스위치 · 위 주석)
     rc_ = collections.Counter(r.get("role") for r in dedup)
+    words = collections.Counter(r.get("pos") or "(빈 칸)" for r in dedup if r.get("role") == "주요주주")
     log(f"{'  !! ' if fx['unknown'] else '· '}내부자 역할(role): 임원 {rc_['임원']:,} · 주요주주 {rc_['주요주주']:,} · 없음 {rc_[None]:,} "
         f"(오늘 응답으로 고친 지난 줄 {fx['fresh']:,} · 직위 '-' 를 빈 칸으로 {fx['dash']:,}"
-        + (f" · 오늘 다시 받지 못해 역할을 모르는 지난 줄 {fx['unknown']:,} — null 로 둬요" if fx["unknown"] else "") + ")")
+        + (f" · 오늘 다시 받지 못해 역할을 모르는 지난 줄 {fx['unknown']:,} — null 로 둬요" if fx["unknown"] else "") + ")"
+        + f" · 주요주주 줄의 직위 (DART 의 말 그대로{'' if INSIDER_POS_HOLDER_WORDS else ' — 스위치가 꺼져 빈 칸'}): "
+        + (" · ".join(f"{w} {n:,}" for w, n in words.most_common()) or "없음"))
 
     nps, nps_stat = [], collections.Counter()
     for code, it in list(nps_corps.items())[:200]:
@@ -3619,22 +3630,33 @@ def fetch_disclosures(kr_stocks, cmap, end, client):
 #        목록의 rm '정'(뒤에 정정 공시가 있음)만으로는 빼지 않아요 — 뒤가 첨부정정뿐이면 그 공시가 결정의 마지막 판이에요 (육일씨엔에쓰 2026-08-26).
 #        Part B.1 의 '같은 회사 · 종류 · bd 는 한 결정' 규칙은 쓰지 않아요: 이사회 한 번에 여러 회차를 정한 회사가 있어 (서진시스템 2026-08-24
 #        CB 네 건 · 아스트 2024-03-04 CB 7회 · 8회) 그 규칙은 다른 결정을 지워요 (보고 · Jack 의 답을 기다려요).
-# 캐시   DART 캐시 '{접수번호}|issue|v1': 000 결정의 마지막 판 (읽은 칸) · nh 마지막 판이 아님 (뒤에 정정이 있는 옛 판 · 첨부정정) · nf 마지막 판이어야
+# 캐시   DART 캐시 '{접수번호}|issue|v2': 000 결정의 마지막 판 (읽은 칸) · nh 마지막 판이 아님 (뒤에 정정이 있는 옛 판 · 첨부정정) · nf 마지막 판이어야
 #        하는데(rm 이 비었고 첨부정정이 아님) 상세에 없음 → 다음 날(한국 날짜) 다시. 기간 안 공시 중 캐시에 없는 것이 있는 (회사, 종류)만 다시
 #        부르고, 부르면 그 쌍의 기간 안 공시를 모두 다시 적어요 (새 정정이 오면 옛 판이 nh 로 바뀌어요). 결정 공시의 칸은 접수번호마다 바뀌지
 #        않아서 full 실행에서도 캐시를 써요 (업종 코드처럼). 공시가 목록 기간을 벗어나면 지워요. 실행당 ISSUE_PER_RUN 쌍까지 (최근 공시부터).
 # 칸     rc 접수번호 · d 공시일 YYYYMMDD · t 종목코드 · nk 이름 · kind rights | cb | bw · bd 이사회결의일 YYYYMMDD (사채만 — 유상증자 API 에는
 #        이사회결의일 칸이 없어요: null) · how (유상증자만) holders 주주배정 · 주주우선공모 / others 제3자배정 · 일반공모 / null 그 밖 ·
 #        n 새 주식 수 (유상증자: 보통주 + 기타주식) · p % (유상증자: n ÷ 증자 전 발행주식총수 · 사채: 공시의 '전환(행사)에 따라 발행할 주식의
-#        주식총수 대비 비율') · amt 사채 권면(전자등록)총액 원 (해외 발행분은 원화가 아니라 null) · cor 정정 공시([기재정정] · [첨부정정] …)인지.
-#        읽지 못한 칸은 null — 짐작하지 않아요. 상세를 아직 못 읽은 마지막 판 공시(실행당 한도 · nf · 조회 실패)도 줄은 있어요 (숫자 null).
-ISSUE_TAG = "issue|v1"           # 캐시 키 '{접수번호}|issue|v1' — 읽는 방법이 바뀌면 v2 로
+#        주식총수 대비 비율') · amt 사채 권면(전자등록)총액 원 (bd_fta · '-' 이면 null) · cor 정정 공시([기재정정] · [첨부정정] …)인지.
+#        읽지 못한 칸은 null — 짐작하지 않아요. 주식 수 · 금액은 정수만 읽어요 (소수면 null).
+# 철회   (리뷰 2026-11-16) 상세 줄의 숫자 칸이 모두 '-' 인 정정 공시는 철회예요: DART 목록은 철회 표시(rm '철')를 붙이지 않고 '[기재정정]' 으로
+#        모든 칸을 지워요 (더코디 2026-11-05 '납입금미납으로 유상증자철회' · 크라우드웍스 2026-08-21 '대체납입자 선정 불능에 따른 철회' · 쏘닉스 CB
+#        2026-10-29 결정을 2026-11-10 에 지움). 그 줄은 wd: true 와 빈 숫자로 남겨요 (카드가 건너뛰게 · 데이터는 있는 그대로). 원래 결정이 기간
+#        안에 있으면 그 공시는 옛 판(nh)이라 살아 있는 결정 줄이 없어요.
+# 읽는 중 상세를 아직 못 읽은 마지막 판 공시(실행당 한도 · nf · 조회 실패)는 pend: true 와 빈 숫자로 넣어요 (공시가 있다는 것은 보여 줘요). 그 (회사,
+#        종류)의 '정' 표시 공시는 그동안 넣지 않아요 — 새 판이 바꾼 옛 숫자를 지금 것처럼 보이지 않게 (하루 늦게 보일 수 있어요).
+# 실패   DART 가 실행을 멈추는 상태(한도 020 · 키 오류)를 이 단계에서 만나면 지난 발행본의 줄을 두고 issueOk false — 실행은 멈추지 않아요 (아직 어느
+#        화면도 이 칸을 읽지 않아요 · 리뷰 2026-11-16). 지분공시(fetch_disclosures)의 규칙은 그대로예요.
+ISSUE_TAG = "issue|v2"           # 캐시 키 '{접수번호}|issue|v2' — 읽는 방법이 바뀌면 올려요 (v2: 철회 표시 blank · 정수만). 다른 판의 키는 지워요
 ISSUE_KINDS = ("rights", "cb", "bw")
 ISSUE_KO = {"rights": "유상증자", "cb": "CB", "bw": "BW"}
 ISSUE_P_KEY = {"cb": "cvisstk_tisstk_vs", "bw": "nstk_isstk_tisstk_vs"}   # 사채: 공시의 '주식총수 대비 비율(%)'
 ISSUE_PER_RUN = 150              # 한 실행에서 상세를 새로 부르는 (회사, 종류) 수 상한 — 2026-11-15 의 90일치 약 225쌍은 두 실행에 나눠요
 ISSUE_MAX_PAGES = 40             # 목록 100건짜리 쪽 수 상한 (2026-11-15: 2,228건 · 23쪽). 넘으면 목록을 다 읽지 못한 것 (지난 줄을 둬요)
 ISSUE_EST_PAGES = 25             # 호출 수 어림용 목록 쪽 수
+ISSUE_WD_KEYS = {"rights": ("nstk_ostk_cnt", "nstk_estk_cnt", "fv_ps", "bfic_tisstk_ostk", "bfic_tisstk_estk", "fdpp_fclt", "fdpp_bsninh",
+                            "fdpp_op", "fdpp_dtrp", "fdpp_ocsa", "fdpp_etc"),
+                 "cb": ("bd_fta", "bddd", "cvisstk_tisstk_vs"), "bw": ("bd_fta", "bddd", "nstk_isstk_tisstk_vs")}   # 모두 '-' 인 정정 = 철회
 ISSUE_DETAIL_FROM = "20150101"   # 상세 API 의 기간 시작 (최초접수일 · DART 는 2015년부터 줘요): 오래전 결정을 오늘 정정한 공시도 찾게 (아스트 2024년
                                  # CB 네 건을 2026-11-06 에 정정 · 730일로는 못 찾았어요) · 호출 수는 그대로
 
@@ -3702,15 +3724,27 @@ def _issue_pct(x):
     return round(x, 2) if x >= 0.005 else float(f"{x:.2g}")
 
 
+def _issue_whole(x):
+    """주식 수 · 원 금액: 정수인 양수만 (소수면 읽지 못한 것 — int(round()) 가 0 이나 다른 수로 바꾸지 않게). (순수 함수)"""
+    return x if isinstance(x, float) and x > 0 and x == int(x) else None
+
+
+def issue_blank(row, kind):
+    """상세 줄의 숫자 칸(ISSUE_WD_KEYS)이 모두 있고 모두 '-' · 빈 칸인지 — 정정 공시면 철회예요. (순수 함수)"""
+    keys = ISSUE_WD_KEYS[kind]
+    return all(k in row for k in keys) and all(str(row.get(k) if row.get(k) is not None else "").strip() in DASHES | {""} for k in keys)
+
+
 def parse_issue_detail(row, kind):
-    """상세 API 한 줄 → ({bd, how, n, p, amt}, 읽지 못한 칸 [이름]). 읽지 못한 칸은 None. (순수 함수)"""
-    out = {"bd": None, "how": None, "n": None, "p": None, "amt": None}
+    """상세 API 한 줄 → ({bd, how, n, p, amt, blank}, 읽지 못한 칸 [이름]). 읽지 못한 칸은 None. blank = 숫자 칸이 모두 '-'. (순수 함수)"""
+    out = {"bd": None, "how": None, "n": None, "p": None, "amt": None, "blank": issue_blank(row, kind)}
     if kind == "rights":
         new = _issue_sum(_dash_none(row.get("nstk_ostk_cnt")), _dash_none(row.get("nstk_estk_cnt")))
         before = _issue_sum(_dash_none(row.get("bfic_tisstk_ostk")), _dash_none(row.get("bfic_tisstk_estk")))
-        if new is not None and new > 0:
-            out["n"] = int(round(new))
-            if before is not None and before > 0:
+        new, before = _issue_whole(new), _issue_whole(before)
+        if new is not None:
+            out["n"] = int(new)
+            if before is not None:
                 out["p"] = _issue_pct(new / before * 100)
         out["how"] = issue_how(row.get("ic_mthn"))
         return out, [k for k in ("n", "p") if out[k] is None]
@@ -3718,8 +3752,8 @@ def parse_issue_detail(row, kind):
     out["bd"] = bd.replace("-", "") if bd else None
     p = _dash_none(row.get(ISSUE_P_KEY[kind]))
     out["p"] = _issue_pct(p) if isinstance(p, float) and p > 0 else None
-    amt = _dash_none(row.get("bd_fta"))
-    out["amt"] = int(round(amt)) if isinstance(amt, float) and amt > 0 else None
+    amt = _issue_whole(_dash_none(row.get("bd_fta")))
+    out["amt"] = int(amt) if amt is not None else None
     return out, [k for k in ("bd", "p", "amt") if out[k] is None]
 
 
@@ -3743,18 +3777,30 @@ def issue_label(fs, api_rows, kind):
 
 def issue_rows(filings, label, info):
     """기간 안 공시 + 상태 ({접수번호: (상태, 칸)}) → disc.json issue 줄 (공시일 · 접수번호 최신순). (순수 함수)
-    000 은 읽은 칸으로. 상태를 아직 모르거나(실행당 한도 · 조회 실패) nf 인 공시는 마지막 판으로 보이는 것(rm '정' 아님 · 첨부정정 아님)만
-    숫자 null 로 넣어요 (공시가 있다는 것은 보여 줘요). nh 는 넣지 않아요."""
+    000 은 읽은 칸으로 — 숫자 칸이 모두 '-' 인 정정 공시는 철회라 wd: true (숫자 null). 상태를 아직 모르거나(실행당 한도 · 조회 실패) nf 인
+    공시는 마지막 판으로 보이는 것(rm '정' 아님 · 첨부정정 아님)만 pend: true 와 숫자 null 로 넣어요. 그런 공시가 있는 (회사, 종류)의 rm '정'
+    공시는 그동안 넣지 않아요 (새 판에 바뀐 옛 결정일 수 있어 옛 숫자가 지금 것처럼 보이지 않게). nh 는 넣지 않아요."""
+    def plain(f, st):
+        return st not in ("000", "nh") and not f["sup"] and not f["att"]
+    waiting = {(f["corp"], f["kind"]) for f in filings if plain(f, (label.get(f["rc"]) or (None,))[0])}
     rows = []
     for f in filings:
         st, g = (label.get(f["rc"]) or (None, None))[:2]
         if st == "nh" or (st != "000" and (f["sup"] or f["att"])):
             continue
+        if st == "000" and f["sup"] and (f["corp"], f["kind"]) in waiting:
+            continue
         g = g if st == "000" and isinstance(g, dict) else {}
+        wd = st == "000" and bool(g.get("blank")) and bool(f["cor"])
         rt = f["kind"] == "rights"
-        rows.append({"rc": f["rc"], "d": f["d"], "t": f["t"], "nk": (info.get(f["t"]) or {}).get("nk") or f["t"], "kind": f["kind"],
-                     "bd": None if rt else g.get("bd"), "how": g.get("how") if rt else None, "n": g.get("n") if rt else None,
-                     "p": g.get("p"), "amt": None if rt else g.get("amt"), "cor": bool(f["cor"])})
+        row = {"rc": f["rc"], "d": f["d"], "t": f["t"], "nk": (info.get(f["t"]) or {}).get("nk") or f["t"], "kind": f["kind"],
+               "bd": None if rt or wd else g.get("bd"), "how": g.get("how") if rt and not wd else None, "n": g.get("n") if rt and not wd else None,
+               "p": None if wd else g.get("p"), "amt": None if rt or wd else g.get("amt"), "cor": bool(f["cor"])}
+        if wd:
+            row["wd"] = True
+        if st != "000":
+            row["pend"] = True
+        rows.append(row)
     rows.sort(key=lambda r: (r["d"], r["rc"]), reverse=True)
     return rows
 
@@ -3806,12 +3852,7 @@ def fetch_issues(kr_stocks, cmap, end, client):
             break
         page += 1
     if note:
-        keep = _issue_keep_prev(prev, bgn)
-        last = max((r["d"] for r in keep), default=None)
-        log(f"  !! 주요사항 공시 목록(list.json B001)을 받지 못해 지난 발행본의 {len(keep):,}건을 그대로 둬요 "
-            f"(최근 공시 {f'{last[:4]}-{last[4:6]}-{last[6:8]}' if last else '없음'} · issueOk false) — {note}")
-        client.raise_if_fatal()
-        return {"issue": keep, "issueOk": False}
+        return _issue_failed(prev, bgn, f"주요사항 공시 목록(list.json B001)을 받지 못해 — {note}", client)
 
     filings, cnt = issue_filings(items, corp2t, bgn)
     today_iso = client.today.isoformat()
@@ -3867,18 +3908,24 @@ def fetch_issues(kr_stocks, cmap, end, client):
                     n[st] += 1
                     for b in bad:
                         unread[b] += 1
-    # 목록 기간을 벗어난 공시의 캐시는 지워요 (적은 날 ≥ 공시일이라, 적은 날이 기간 앞이면 공시도 기간 밖이에요)
+    # 목록 기간을 벗어난 공시의 캐시는 지워요 (적은 날 ≥ 공시일이라, 적은 날이 기간 앞이면 공시도 기간 밖이에요) · 다른 판(issue|v1 …)의 키도
     bgn_iso = f"{bgn[:4]}-{bgn[4:6]}-{bgn[6:8]}"
     with client.lock:
-        old = [k for k, e in client.entries.items() if k.endswith("|" + ISSUE_TAG) and str((e or {}).get("at") or "") < bgn_iso]
+        old = [k for k, e in client.entries.items() if "|issue|" in k
+               and (not k.endswith("|" + ISSUE_TAG) or str((e or {}).get("at") or "") < bgn_iso)]
         for k in old:
             del client.entries[k]
+    if client.fatal:
+        return _issue_failed(prev, bgn, f"상세를 읽는 중 DART 가 멈췄어요 (상태 {client.fatal[0]}: {client.fatal[1]}) — 오늘 읽은 상세는 캐시에 남아요",
+                             client)
 
     rows = issue_rows(filings, label, info)
     read = {rc for rc, (st, _d) in label.items() if st == "000"}
     by_kind = collections.Counter(r["kind"] for r in rows)
-    no_num = sum(1 for r in rows if r["rc"] not in read)
-    part = sum(1 for r in rows if r["rc"] in read and any(r[k] is None for k in (("n", "p") if r["kind"] == "rights" else ("bd", "p", "amt"))))
+    no_num = sum(1 for r in rows if r.get("pend"))
+    wds = [r for r in rows if r.get("wd")]
+    part = sum(1 for r in rows if r["rc"] in read and not r.get("wd")
+               and any(r[k] is None for k in (("n", "p") if r["kind"] == "rights" else ("bd", "p", "amt"))))
     nf_all = sum(1 for st, _d in label.values() if st == "nf")
     left = sum(len(fs) for _, fs in later)
     log(f"· 주요사항 공시 목록(list.json B001): {len(items):,}건 ({page}쪽) · 오늘 국내 종목의 유상증자 · CB · BW 공시 {len(filings):,}건 "
@@ -3896,11 +3943,20 @@ def fetch_issues(kr_stocks, cmap, end, client):
         + (f" (오늘 읽은 것 중 {' · '.join(f'{k} {v:,}' for k, v in sorted(unread.items()))})" if unread else "")
         + " · 유상증자 방식이 주주배정 · 제3자배정 · 일반공모가 아니거나 모름 "
         + f"{sum(1 for r in rows if r['kind'] == 'rights' and r['rc'] in read and r['how'] is None):,}"
-        + (f" · 상세를 아직 못 읽어 숫자 없이 줄만 {no_num:,}" if no_num else ""))
-    if client.fatal:
-        client.save()                         # 멈추기 전에 오늘 읽은 상세를 남겨요 (다음 실행이 다시 받지 않게)
-    client.raise_if_fatal()
+        + (f" · 상세를 아직 못 읽어 숫자 없이 줄만(pend) {no_num:,}" if no_num else ""))
+    if wds:
+        log(f"  !! 주요사항 공시 철회 (숫자 칸이 모두 '-' 인 정정 공시 · wd: true · 카드가 건너뛰어요) {len(wds):,}건: "
+            + ", ".join(f"{r['nk']} {ISSUE_KO[r['kind']]} {r['d']}" for r in wds[:40]) + (" …" if len(wds) > 40 else ""))
     return {"issue": rows, "issueOk": True}
+
+
+def _issue_failed(prev, bgn, why, client):
+    """목록을 못 받았거나 DART 가 멈춘 날: 지난 발행본의 줄을 기간 안의 것만 자기 날짜 그대로 두고 issueOk false. 실행은 멈추지 않아요."""
+    keep = _issue_keep_prev(prev, bgn)
+    last = max((r["d"] for r in keep), default=None)
+    log(f"  !! {why} — 지난 발행본의 주요사항 공시 {len(keep):,}건을 그대로 둬요 "
+        f"(최근 공시 {f'{last[:4]}-{last[4:6]}-{last[6:8]}' if last else '없음'} · issueOk false · 실행은 계속해요)")
+    return {"issue": keep, "issueOk": False}
 
 
 # ────────────────────────────────────────────────────────────

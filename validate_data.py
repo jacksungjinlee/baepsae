@@ -1589,6 +1589,17 @@ def issue_row_problems(r, base):
         p.append(f"amt {_short(r.get('amt'))}" + (" (사채만)" if rights else ""))
     if not isinstance(r.get("cor"), bool):
         p.append(f"cor {_short(r.get('cor'))}")
+    # 리뷰 2026-11-16: wd (철회 — 숫자 칸이 모두 '-' 인 정정) · pend (상세를 아직 못 읽음) 는 있을 때만, 참/거짓이고 그 줄의 숫자는 비어 있어요
+    for k in ("wd", "pend"):
+        if k in r and not isinstance(r[k], bool):
+            p.append(f"{k} {_short(r[k])}")
+    if r.get("wd") is True and r.get("pend") is True:
+        p.append("wd 와 pend 가 함께 참")
+    for k in ("wd", "pend"):
+        if r.get(k) is True:
+            full = [f for f in ("bd", "how", "n", "p", "amt") if r.get(f) is not None]
+            if full:
+                p.append(f"{k} 인데 {','.join(full)} 이 있어요")
     return p
 
 
@@ -1596,8 +1607,8 @@ def _check_issue(rep, disc, by, base):
     name = "주요사항 공시 (issue · 유상증자 · CB · BW)"
     th = (f"줄마다 {'·'.join(ISSUE_KEYS)} · rc 접수번호 · d YYYYMMDD 가 asOf 까지 {ISSUE_DAYS}일 안 · kind {'|'.join(ISSUE_KINDS)} · bd 빈 칸 "
           f"또는 YYYYMMDD · how 빈 칸 또는 {'|'.join(ISSUE_HOW)} (유상증자만) · n 양의 정수 (유상증자만) · p 양수 · amt 양수 (사채만) · cor 참/거짓 · "
-          f"접수번호 한 번 · issueOk 참/거짓 (실패) — 칸이 없음(v19.6b 전 파일) · issueOk false · 0건 · 오늘 국내 목록 밖 종목 · p > "
-          f"{ISSUE_P_WARN:,.0f}% · 숫자 없는 줄 > {ISSUE_BLANK_WARN:g}% 는 경고")
+          f"접수번호 한 번 · issueOk 참/거짓 · wd · pend 는 있으면 참/거짓이고 그 줄의 숫자는 빈 칸 (실패) — 칸이 없음(v19.6b 전 파일) · "
+          f"issueOk false · 0건 · 오늘 국내 목록 밖 종목 · p > {ISSUE_P_WARN:,.0f}% · 숫자 없는 줄(철회 빼고) > {ISSUE_BLANK_WARN:g}% 는 경고")
     if "issue" not in disc:
         rep.add(name, True, "없음 — v19.6b 전 파일이에요 (DART 를 쓴 실행은 늘 써요)", th, warn=True)
         return
@@ -1630,14 +1641,16 @@ def _check_issue(rep, disc, by, base):
     big = [f"{r['nk']} {r['p']:,.2f}%" for r in good if r.get("p") is not None and r["p"] > ISSUE_P_WARN]
     if big:
         warns.append(f"p 가 {ISSUE_P_WARN:,.0f}% 넘는 줄 {len(big)}개 ({', '.join(big[:3])} — 공시를 확인해요)")
-    blank = sum(1 for r in good if r.get("n") is None and r.get("p") is None and r.get("amt") is None)
-    if good and 100.0 * blank / len(good) > ISSUE_BLANK_WARN:
-        warns.append(f"숫자가 하나도 없는 줄 {blank:,} / {len(good):,} ({100.0 * blank / len(good):.1f}% — 상세를 다 읽지 못했어요 · 앱은 '숫자를 못 "
+    live = [r for r in good if r.get("wd") is not True]               # 철회 줄은 숫자가 없는 게 맞아요
+    blank = sum(1 for r in live if r.get("n") is None and r.get("p") is None and r.get("amt") is None)
+    if live and 100.0 * blank / len(live) > ISSUE_BLANK_WARN:
+        warns.append(f"숫자가 하나도 없는 줄 {blank:,} / {len(live):,} ({100.0 * blank / len(live):.1f}% — 상세를 다 읽지 못했어요 · 앱은 '숫자를 못 "
                      "읽은' 줄)")
     if not rows and flag is True:
         warns.append("0건 — 90일 동안 한 건도 없는 건 드물어요 (발행은 막지 않아요 · 목록 읽기를 확인해요)")
     kinds = collections.Counter(r["kind"] for r in good)
-    val = (" · ".join(f"{ko} {kinds[k]:,}" for k, ko in zip(ISSUE_KINDS, ("유상증자", "CB", "BW"))) + f" (정정 {sum(1 for r in good if r['cor']):,} · 숫자 없는 줄 {blank:,})"
+    val = (" · ".join(f"{ko} {kinds[k]:,}" for k, ko in zip(ISSUE_KINDS, ("유상증자", "CB", "BW"))) + f" (정정 {sum(1 for r in good if r['cor']):,} · 철회 {len(good) - len(live):,} · 읽는 중 "
+           f"{sum(1 for r in good if r.get('pend') is True):,} · 숫자 없는 줄 {blank:,})"
            + (" · " + " · ".join(probs) if probs else "") + (" · " + " · ".join(warns) if warns else ""))
     rep.add(name, not probs, val[:300], th, warn=bool(warns))
 

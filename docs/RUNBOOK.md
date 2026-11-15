@@ -586,24 +586,35 @@ What the daily run writes (`fetch_data.py` `fetch_issues`, `insider_pos_role`, `
   structured lookup (`piicDecsn` · `cvbdIsDecsn` · `bdwtIsDecsn`, asked from 2015 so a correction of an old decision is found).
   DART gives one row per decision, under the filing number of its newest version; an attachment-only correction keeps the
   earlier number. A row is a decision whose filing number is in the 90-day list. Results are cached in the DART cache
-  (`{filing number}|issue|v1`: decision row · older version · missing), also in a full-DART run, and dropped when the filing
-  leaves the window. At most 150 (company, kind) lookups a run (`ISSUE_PER_RUN`), newest first; the rest wait for the next run
-  and their newest filings show with blank numbers meanwhile. A filing the lookup does not return although it should is asked
-  again the next KST day. Rights issues have no board date (`bd` null: DART's lookup has no such field).
+  (`{filing number}|issue|v2`: decision row · older version · missing), also in a full-DART run, and dropped when the filing
+  leaves the window (keys of other versions are dropped too). At most 150 (company, kind) lookups a run (`ISSUE_PER_RUN`),
+  newest first; the rest wait for the next run and their newest filings show as `pend: true` with blank numbers meanwhile
+  (while a pair has such a filing, its filings the list marks "정" are left out, so an outdated number never shows as current).
+  A filing the lookup does not return although it should is asked again the next KST day. Rights issues have no board date
+  (`bd` null: DART's lookup has no such field). Share counts and amounts are read only as whole numbers.
+- **Withdrawals (`wd: true`)**: DART files a withdrawal as a `[기재정정]` whose number fields are all "-" (the list never marks
+  it "철" and the name has no "철회": 더코디 2026-11-05 "납입금미납으로 유상증자철회", 크라우드웍스 2026-08-21, 쏘닉스 CB 2026-11-10).
+  Such a row stays, marked `wd: true` with every number blank, so the cards can skip it; the original filing is an older version
+  and has no row. The run log names them ("!! 주요사항 공시 철회 …").
+- **DART stops in this phase** (daily limit 020, key errors): last run's rows stay with `issueOk` false and the run goes on
+  (no screen reads `issue` yet). The 지분공시 phase before it still stops the run, as before.
 - **insider `role`** — 임원 when the filing names a position or 등기/비등기임원, else 주요주주 when it names a major-holder
   relation, else null. DART's "-" means empty (it used to show as a position). Rows from earlier runs are fixed from the same
-  day's lookup of that company; a row the run could not look up again keeps `role` null.
+  day's lookup of that company; a row the run could not look up again keeps `role` null. A major holder's position is DART's
+  own relation word (10%이상주주, 사실상지배주주); `fetch_data.INSIDER_POS_HOLDER_WORDS = False` blanks it instead (one line, if
+  Jack says no). The run log counts the words ("주요주주 줄의 직위 …").
 - **US `ed` · `xd`** — from the Yahoo details the run already caches (3 days): `ed` only when Yahoo says the earnings date is not
   an estimate and it is one day; `xd` is Yahoo's ex-dividend date (midnight UTC, read as that date). Either can be in the past.
 
 Gate rows (`validate_data.py` `check_v196b`; additions only):
 - **FAIL "주요사항 공시 (issue · 유상증자 · CB · BW)"**: a row has a missing or wrong field (filing number, a date outside
   the 90 days before `asOf`, kind, method or share count on a bond, amount on a rights issue, a non-positive number, a
-  correction mark that is not true/false), a filing number appears twice, or `issueOk` is missing. That is our own bug: look at
+  correction mark that is not true/false, a `wd` or `pend` mark that is not true/false, or a number on a `wd` or `pend` row), a
+  filing number appears twice, or `issueOk` is missing. That is our own bug: look at
   the run's "주요사항" log lines. **WARN** (never blocks): no `issue` section (a file from before #PR, e.g. the live site right
   after the merge), `issueOk` false (the list failed and last run's rows were kept), 0 rows, a row whose stock left today's
   list, a ratio above 3,000 % (check the filing; STX's 1,855.66 % on 2026-10-14 is real), or more than 10 % of rows without any
-  number (lookups not finished: normal on the first run after the merge).
+  number, withdrawals not counted (lookups not finished: normal on the first run after the merge).
 - **FAIL "임원 · 주요주주 역할 (insider role)"**: a `role` that is not 임원, 주요주주 or null. **WARN**: rows without `role` or
   with "-" as the position (files from before #PR).
 - **FAIL "미국 일정 (ed 실적 발표일 · xd 배당락일)"**: a date that is not YYYY-MM-DD, or a date on a stock that is not

@@ -27,7 +27,8 @@ FX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "v196b
 TODAY = dt.date(2026, 11, 15)
 # 종목코드 → DART 기업코드 (공개 고유번호 · 2026-11-15 corpCode.xml)
 CORP = {"191410": "00843900", "079190": "00479705", "067390": "00409681", "178320": "00838005", "336260": "01412725",
-        "338220": "01344202", "180060": "00874937", "224060": "00530413", "179530": "01022902"}
+        "338220": "01344202", "180060": "00874937", "224060": "00530413", "179530": "01022902", "355390": "01514005",
+        "088280": "00561723"}
 EP_KIND = {"piicDecsn.json": "rights", "cvbdIsDecsn.json": "cb", "bdwtIsDecsn.json": "bw"}
 SPEC_KEYS = ["rc", "d", "t", "nk", "kind", "bd", "how", "n", "p", "amt", "cor"]
 
@@ -52,15 +53,25 @@ def api_row(kind, t, rc):
 
 class Dart:
     """가짜 DART: list.json 은 고정 자료 한 쪽, 상세 API 는 회사 · 종류마다 고정 자료. 부른 것을 적어요. client.get 자리에 끼워요."""
-    def __init__(self, client, page=None, details=None, list_fail=False, detail_fail=()):
+    def __init__(self, client, page=None, details=None, list_fail=False, detail_fail=(), fatal_on=None):
         self.client, self.calls = client, []
         self.page = copy.deepcopy(LIST if page is None else page)
         self.details = details or {}
-        self.list_fail, self.detail_fail = list_fail, set(detail_fail)
+        self.list_fail, self.detail_fail, self.fatal_on = list_fail, set(detail_fail), fatal_on
+
+    def fatal(self):
+        """DartClient.get 처럼: 한도 초과(020)면 fatal 을 적고 None (그 뒤 모든 조회도 None)."""
+        self.client.status["020"] += 1
+        self.client.fatal = self.client.fatal or ("020", "요청 제한을 초과하였습니다.")
+        return None
 
     def __call__(self, endpoint, params, timeout=25):
         self.calls.append((endpoint, dict(params)))
+        if self.client.fatal:
+            return None
         if endpoint == "list.json":
+            if self.fatal_on == "list":
+                return self.fatal()
             bgn = (self.client.today - dt.timedelta(days=F.DISC_DAYS - 1)).strftime("%Y%m%d")       # 지분공시와 같은 90일 (11-15 → 08-18)
             assert params["pblntf_ty"] == "B" and params["pblntf_detail_ty"] == "B001" and params["bgn_de"] == bgn
             if self.list_fail:
@@ -72,6 +83,8 @@ class Dart:
         t = next(t for t, c in CORP.items() if c == params["corp_code"])
         if (kind, t) in self.detail_fail:
             return None
+        if self.fatal_on == (kind, t):
+            return self.fatal()
         self.client.status["000"] += 1
         got = self.details.get((kind, t))
         return copy.deepcopy(got) if got is not None else detail(kind, t)
@@ -131,19 +144,19 @@ def test_issue_how_follows_the_spec(text, want):
 def test_parse_issue_detail_on_real_rows():
     # 더코디 제3자배정: 보통주 106,022주 ÷ 증자 전 5,160,722주 = 2.05%
     d, bad = F.parse_issue_detail(api_row("rights", "224060", "20261111000265"), "rights")
-    assert d == {"bd": None, "how": "others", "n": 106022, "p": 2.05, "amt": None} and bad == []
+    assert d == {"bd": None, "how": "others", "n": 106022, "p": 2.05, "amt": None, "blank": False} and bad == []
     # 뷰노 주주배정 (보통주 6,300,000주)
     d, _ = F.parse_issue_detail(api_row("rights", "338220", "20261111000261"), "rights")
     assert d["how"] == "holders" and d["n"] == 6300000 and d["p"] == 44.99
-    # 탑선: 정정 공시의 칸이 모두 '-' (DART 상세 API) → 숫자는 null, 짐작하지 않아요
+    # 탑선: 정정 공시의 숫자 칸이 모두 '-' (DART 상세 API) → 숫자는 null · blank (정정이면 철회 — issue_rows 가 wd 로)
     d, bad = F.parse_issue_detail(api_row("rights", "180060", "20261113000550"), "rights")
-    assert d == {"bd": None, "how": "others", "n": None, "p": None, "amt": None} and bad == ["n", "p"]
+    assert d == {"bd": None, "how": "others", "n": None, "p": None, "amt": None, "blank": True} and bad == ["n", "p"]
     # 애드바이오텍 CB: 이사회결의일 '2026년 10월 29일' · 권면총액 1,000,000,000원 · 주식총수 대비 3.11%
     d, bad = F.parse_issue_detail(api_row("cb", "179530", "20261112000003"), "cb")
-    assert d == {"bd": "20261029", "how": None, "n": None, "p": 3.11, "amt": 1000000000} and bad == []
+    assert d == {"bd": "20261029", "how": None, "n": None, "p": 3.11, "amt": 1000000000, "blank": False} and bad == []
     # 두산퓨얼셀 BW: 이사회결의일 2026-10-13 · 1,000억원 · 2.72%
     d, _ = F.parse_issue_detail(api_row("bw", "336260", "20261111000278"), "bw")
-    assert d == {"bd": "20261013", "how": None, "n": None, "p": 2.72, "amt": 100000000000}
+    assert d == {"bd": "20261013", "how": None, "n": None, "p": 2.72, "amt": 100000000000, "blank": False}
     # 유상증자 API 에는 이사회결의일 칸이 없어요 (bd 는 늘 null — 보고한 멈춤 항목)
     assert "bddd" not in api_row("rights", "224060", "20261111000265")
 
@@ -156,7 +169,7 @@ def test_parse_issue_detail_counts_preferred_shares_and_refuses_text():
     d, bad = F.parse_issue_detail(row, "rights")
     assert d["n"] == 1000000 and d["p"] is None and bad == ["p"]
     d, bad = F.parse_issue_detail({"bddd": "2026-13-45", "bd_fta": "-", "ovis_fta": "50,000,000", "cvisstk_tisstk_vs": "0"}, "cb")
-    assert d["bd"] is None and d["amt"] is None and d["p"] is None and bad == ["bd", "p", "amt"]   # 해외 발행(원화 금액 없음)도 null
+    assert d["bd"] is None and d["amt"] is None and d["p"] is None and bad == ["bd", "p", "amt"]   # 권면총액 '-' → null (다른 칸은 읽지 않아요)
 
 
 def test_a_tiny_issue_keeps_a_positive_ratio():
@@ -173,7 +186,7 @@ def test_a_tiny_issue_keeps_a_positive_ratio():
 
 # 2026-11-15 고정 자료에서 결정의 마지막 판 (상세 API 가 결정마다 주는 접수번호 중 목록 기간 안의 것) — 손으로 확인했어요:
 WANT = {
-    "20261113000550": ("180060", "rights", True),    # 탑선 기재정정 (상세 API 의 칸이 모두 '-')
+    "20261113000550": ("180060", "rights", True),    # 탑선 기재정정 — 숫자 칸이 모두 '-': 철회 (wd)
     "20261112000003": ("179530", "cb", True), "20261112000002": ("179530", "cb", True), "20261112000001": ("179530", "cb", True),
     "20261111000278": ("336260", "bw", True),
     "20261111000265": ("224060", "rights", True), "20261111000245": ("224060", "rights", True),
@@ -185,7 +198,12 @@ WANT = {
     "20261106000297": ("067390", "cb", True), "20261106000290": ("067390", "cb", True),
     "20261106000274": ("067390", "cb", True), "20261106000249": ("067390", "cb", True),
     "20260901000170": ("191410", "rights", True), "20260826000431": ("191410", "rights", False),
+    # 리뷰 2026-11-16 (진짜 응답): 크라우드웍스 — 2025-12-16 결정을 2026-08-21 에 철회 · 다른 두 결정은 살아 있어요
+    "20261002000638": ("355390", "rights", True), "20260910000465": ("355390", "rights", False), "20260821000463": ("355390", "rights", True),
+    # 쏘닉스 CB — 기간 안(2026-10-29)에 정하고 2026-11-10 정정으로 칸을 모두 지웠어요: 철회 줄만 있고 원래 공시는 옛 판
+    "20261110000004": ("088280", "cb", True),
 }
+WD = {"20261113000550", "20261105000548", "20260821000463", "20261110000004"}     # 철회 (숫자 칸이 모두 '-' 인 정정 — 문서의 정정사유로 확인)
 
 
 def test_first_run_gives_one_row_per_decision(env, capsys):
@@ -193,14 +211,16 @@ def test_first_run_gives_one_row_per_decision(env, capsys):
     rows = out["issue"]
     assert out["issueOk"] is True
     assert {r["rc"]: (r["t"], r["kind"], r["cor"]) for r in rows} == {k: (t, k2, cor) for k, (t, k2, cor) in WANT.items()}
-    assert all(list(r) == SPEC_KEYS for r in rows)                                 # 스펙의 칸 그대로, 그 차례로
+    assert all(list(r)[:len(SPEC_KEYS)] == SPEC_KEYS and set(list(r)[len(SPEC_KEYS):]) <= {"wd", "pend"} for r in rows)   # 스펙의 칸 그대로
+    assert {r["rc"] for r in rows if r.get("wd")} == WD and not any(r.get("pend") for r in rows)
     assert [r["d"] for r in rows] == sorted((r["d"] for r in rows), reverse=True)  # 최신순
     assert sorted(d.detail_calls()) == sorted({(k, t) for t, k, _ in WANT.values()} | {("cb", "079190")})   # 쌍마다 한 번
     r = by_rc(rows)
     assert r["20261106000481"]["d"] == "20261109"            # 공시일은 목록의 접수일 (접수번호 앞자리 1106 이 아니에요)
     assert r["20261111000265"]["nk"] == "더코디" and r["20261111000265"]["n"] == 106022 and r["20261111000265"]["bd"] is None
     log = capsys.readouterr().out
-    assert "주요사항 공시: 유상증자 8 · CB 13 · BW 1 (정정 18), 숫자 못 읽음 2" in log    # 탑선 · 더코디 1105 (칸이 모두 '-')
+    assert "주요사항 공시: 유상증자 11 · CB 14 · BW 1 (정정 21), 숫자 못 읽음 0" in log    # 칸이 모두 '-' 인 넷은 철회라 '못 읽음'이 아니에요
+    assert "!! 주요사항 공시 철회 (숫자 칸이 모두 '-' 인 정정 공시 · wd: true · 카드가 건너뛰어요) 4건: 탑선 유상증자 20261113" in log
     assert "목록 밖 회사 1" in log                          # 비상장 회사의 유상증자결정
 
 
@@ -268,7 +288,7 @@ def test_a_latest_filing_missing_from_details_is_retried_the_next_day(env, capsy
     det["list"] = [r for r in det["list"] if r["rcept_no"] != "20261111000278"]
     out, _, c = env(details={("bw", "336260"): det})
     r = by_rc(out["issue"])["20261111000278"]
-    assert (r["bd"], r["p"], r["amt"]) == (None, None, None) and r["kind"] == "bw"      # 공시는 보여요 · 숫자는 null
+    assert (r["bd"], r["p"], r["amt"], r["pend"]) == (None, None, None, True) and r["kind"] == "bw"   # 공시는 보여요 · 숫자는 null · 읽는 중
     assert c.entries["20261111000278|" + F.ISSUE_TAG]["st"] == "nf"
     assert "마지막 판인데 상세에 없음 1건 (다음 날 다시)" in capsys.readouterr().out
     _, d, _ = env(details={("bw", "336260"): det})
@@ -285,11 +305,12 @@ def test_the_per_run_cap_leaves_numbers_blank_and_says_so(env, monkeypatch, caps
     rows = by_rc(out["issue"])
     assert rows["20260824000325"]["amt"] is None and rows["20260824000325"]["cor"] is False   # 아직 못 읽은 결정: 줄은 있어요, 숫자는 null
     assert "20260826000431" not in rows      # 아직 못 읽은 쌍의 '정' 표시 공시는 결정 줄인지 몰라 넣지 않아요 (다음 실행이 읽어요)
-    assert "실행당 한도(2)에 닿아 다음 실행으로 7쌍" in capsys.readouterr().out
+    assert rows["20260824000325"]["pend"] is True and "pend" not in rows["20261112000003"]
+    assert "실행당 한도(2)에 닿아 다음 실행으로 9쌍" in capsys.readouterr().out
     out, d, _ = env()
     assert len(d.detail_calls()) == 2 and len(out["issue"]) < len(WANT)
-    calls = [len(env()[1].detail_calls()) for _ in range(4)]       # 9쌍 = 2 + 2 + 2 + 2 + 1 (실행 다섯 번)
-    assert calls == [2, 2, 1, 0]
+    calls = [len(env()[1].detail_calls()) for _ in range(5)]       # 11쌍 = 2 + 2 + 2 + 2 + 2 + 1 (실행 여섯 번)
+    assert calls == [2, 2, 2, 1, 0]
     out, d, _ = env()
     assert sorted(by_rc(out["issue"])) == sorted(WANT) and d.detail_calls() == []
 
@@ -297,7 +318,7 @@ def test_the_per_run_cap_leaves_numbers_blank_and_says_so(env, monkeypatch, caps
 def test_a_failed_detail_call_is_not_saved(env):
     out, _, c = env(detail_fail={("cb", "067390")})
     r = by_rc(out["issue"])
-    assert all(r[k]["amt"] is None for k in ("20261106000297", "20261106000249")) and out["issueOk"] is True
+    assert all(r[k]["amt"] is None and r[k]["pend"] is True for k in ("20261106000297", "20261106000249")) and out["issueOk"] is True
     assert "20261106000297|" + F.ISSUE_TAG not in c.entries
     out, d, _ = env()
     assert d.detail_calls() == [("cb", "067390")] and by_rc(out["issue"])["20261106000297"]["amt"] == 25000000000
@@ -326,8 +347,9 @@ def test_list_failure_keeps_last_runs_rows(env, monkeypatch, capsys, how):
     out, d, _ = env(prev=PREV, page=page, **kw)
     assert out == {"issue": PREV["issue"][:1], "issueOk": False}
     assert d.detail_calls() == []
-    assert "!! 주요사항 공시 목록(list.json B001)을 받지 못해 지난 발행본의 1건을 그대로 둬요 (최근 공시 2026-11-13 · issueOk false)" \
-        in capsys.readouterr().out
+    log = capsys.readouterr().out
+    assert "!! 주요사항 공시 목록(list.json B001)을 받지 못해 — " in log
+    assert "지난 발행본의 주요사항 공시 1건을 그대로 둬요 (최근 공시 2026-11-13 · issueOk false · 실행은 계속해요)" in log
 
 
 def test_list_failure_without_a_previous_file_gives_an_empty_failed_list(env):
@@ -337,6 +359,122 @@ def test_list_failure_without_a_previous_file_gives_an_empty_failed_list(env):
 def test_a_quiet_window_is_a_valid_empty_list(env):
     out, d, _ = env(prev=PREV, page={"status": "013", "message": "조회된 데이타가 없습니다."})
     assert out == {"issue": [], "issueOk": True} and d.detail_calls() == []
+
+
+# ── 리뷰 2026-11-16: 철회 · 읽는 중 · DART 멈춤 · 정수 ─────────────────────────
+
+def test_withdrawals_are_kept_marked_and_empty(env):
+    """숫자 칸이 모두 '-' 인 정정은 철회예요 (더코디 2026-11-05 정정사유 '납입금미납으로 유상증자철회' · 크라우드웍스 2026-08-21 '대체납입자 선정
+    불능에 따른 철회'). DART 목록은 철회 표시를 붙이지 않아요 (rm '' · 이름에 '철회' 없음) — 그래서 상세 줄로 알아봐요."""
+    for it in LIST["list"]:
+        if it["rcept_no"] in WD:
+            assert it["rm"] == "" and "철회" not in it["report_nm"] and it["report_nm"].startswith("[기재정정]")
+    r = by_rc(env()[0]["issue"])
+    for rc in WD:
+        assert r[rc]["wd"] is True and r[rc]["cor"] is True and "pend" not in r[rc]
+        assert all(r[rc][k] is None for k in ("bd", "how", "n", "p", "amt")), r[rc]
+    assert not [x for x in r.values() if x.get("wd") and not x["cor"]]
+    live = sorted((x["rc"], x["n"]) for x in r.values() if x["t"] == "355390" and not x.get("wd"))
+    assert live == [("20260910000465", 919963), ("20261002000638", 753579)]          # 크라우드웍스의 살아 있는 두 결정
+
+
+def test_a_decision_filed_and_withdrawn_inside_the_window_has_no_live_row(env):
+    """쏘닉스 CB: 2026-10-29 결정 → 2026-11-10 정정으로 칸을 모두 지움. 상세 API 는 철회 줄 하나만 줘요 — 원래 공시는 옛 판이라 줄이 없어요."""
+    r = [x for x in env()[0]["issue"] if x["t"] == "088280"]
+    assert [(x["rc"], x.get("wd")) for x in r] == [("20261110000004", True)]
+    assert any(it["rcept_no"] == "20261029000654" and it["rm"] == "정" for it in LIST["list"])
+
+
+def test_an_all_dash_row_that_is_not_a_correction_is_unread_not_withdrawn():
+    f = {"rc": "20261030000111", "d": "20261030", "corp": "C", "t": "180060", "kind": "rights", "cor": False, "att": False, "sup": False}
+    dash = api_row("rights", "180060", "20261113000550")
+    d, bad = F.parse_issue_detail(dash, "rights")
+    assert d["blank"] is True and bad == ["n", "p"]
+    row = F.issue_rows([f], {f["rc"]: ("000", d)}, {})[0]
+    assert "wd" not in row and row["n"] is None                    # 원래 공시가 모두 '-' 면 못 읽은 것 (철회라고 짐작하지 않아요)
+    part = dict(dash)
+    part["fv_ps"] = "500"                                          # 숫자 칸 하나라도 있으면 철회가 아니에요
+    assert F.parse_issue_detail(part, "rights")[0]["blank"] is False
+    gone = {k: v for k, v in dash.items() if k != "fdpp_etc"}     # 칸이 빠진 줄은 철회로 보지 않아요
+    assert F.parse_issue_detail(gone, "rights")[0]["blank"] is False
+    cb = api_row("cb", "088280", "20261110000004")
+    assert F.issue_blank(cb, "cb") and not F.issue_blank(api_row("cb", "179530", "20261112000003"), "cb")
+
+
+def test_a_new_correction_not_yet_read_hides_the_old_version(env):
+    """새 기재정정이 왔는데 그 쌍을 다시 읽지 못한 날(조회 실패 · 한도): 목록이 '정'으로 바꾼 옛 판(캐시의 000)을 싣지 않아요 — 옛 숫자가 지금 것처럼
+    보이지 않게. 새 공시는 pend 로. 같은 쌍의 다른 결정(rm '')은 그대로예요 (애드바이오텍)."""
+    env()
+    page = copy.deepcopy(LIST)
+    old = next(it for it in page["list"] if it["rcept_no"] == "20261112000003")
+    old["rm"] = "정"
+    page["list"].insert(0, dict(old, rcept_no="20261116000001", rcept_dt="20261116", rm="", report_nm="[기재정정]주요사항보고서(전환사채권발행결정)"))
+    out, _, _ = env(today=dt.date(2026, 11, 16), page=page, detail_fail={("cb", "179530")})
+    r = by_rc(out["issue"])
+    assert "20261112000003" not in r and r["20261116000001"]["pend"] is True and r["20261116000001"]["amt"] is None
+    assert {"20261112000002", "20261112000001"} <= set(r) and "pend" not in r["20261112000002"]
+    det = detail("cb", "179530")                                    # 다음 실행: 상세 API 가 새 판을 줘요
+    next(x for x in det["list"] if x["rcept_no"] == "20261112000003")["rcept_no"] = "20261116000001"
+    out, d, _ = env(today=dt.date(2026, 11, 16), page=page, details={("cb", "179530"): det})
+    r = by_rc(out["issue"])
+    assert d.detail_calls() == [("cb", "179530")] and "20261112000003" not in r and "pend" not in r["20261116000001"]
+    assert r["20261116000001"]["amt"] == 1000000000
+
+
+def test_a_new_correction_beyond_the_cap_also_hides_the_old_version(env, monkeypatch):
+    env()
+    page = copy.deepcopy(LIST)
+    old = next(it for it in page["list"] if it["rcept_no"] == "20261112000003")
+    old["rm"] = "정"
+    page["list"].insert(0, dict(old, rcept_no="20261116000001", rcept_dt="20261116", rm="", report_nm="[기재정정]주요사항보고서(전환사채권발행결정)"))
+    monkeypatch.setattr(F, "ISSUE_PER_RUN", 0)
+    r = by_rc(env(today=dt.date(2026, 11, 16), page=page)[0]["issue"])
+    assert "20261112000003" not in r and r["20261116000001"]["pend"] is True
+
+
+@pytest.mark.parametrize("where", ["list", ("cb", "067390")])
+def test_a_dart_stop_in_this_phase_keeps_last_rows_and_does_not_end_the_run(env, capsys, where):
+    """한도(020) 같은 멈춤 상태: 지난 발행본의 줄 · issueOk false · 크게 남기고 실행은 계속 (예외 없음). 그 전에 읽은 상세는 캐시에 남아요."""
+    out, d, c = env(prev=PREV, fatal_on=where)
+    assert out == {"issue": PREV["issue"][:1], "issueOk": False} and c.fatal[0] == "020"
+    log = capsys.readouterr().out
+    assert "issueOk false · 실행은 계속해요" in log
+    if where != "list":
+        assert "상세를 읽는 중 DART 가 멈췄어요 (상태 020" in log
+        assert any(k.endswith("|" + F.ISSUE_TAG) and e["st"] == "000" for k, e in c.entries.items())
+
+
+def test_fetch_disclosures_policy_on_a_dart_stop_is_unchanged():
+    """지분공시 단계는 예전처럼 멈춰요 (이 PR 은 바꾸지 않아요)."""
+    import inspect
+    assert "client.raise_if_fatal()" in inspect.getsource(F.fetch_disclosures)
+    assert "raise_if_fatal" not in inspect.getsource(F.fetch_issues)
+
+
+@pytest.mark.parametrize("cnt, want", [("1,000.5", None), ("0.4", None), ("100", 100), ("1,000,000", 1000000)])
+def test_share_counts_must_be_whole_numbers(cnt, want):
+    row = {"nstk_ostk_cnt": cnt, "nstk_estk_cnt": "-", "bfic_tisstk_ostk": "1,000,000", "bfic_tisstk_estk": "-", "ic_mthn": "제3자배정증자"}
+    d, bad = F.parse_issue_detail(row, "rights")
+    assert d["n"] == want and (d["p"] is None) == (want is None) and (("n" in bad) == (want is None))
+    row = {"nstk_ostk_cnt": "100", "nstk_estk_cnt": "-", "bfic_tisstk_ostk": "1,000.5", "bfic_tisstk_estk": "-"}
+    assert F.parse_issue_detail(row, "rights")[0]["p"] is None
+    assert F.parse_issue_detail({"bddd": "2026년 10월 29일", "bd_fta": "1,000.5", "cvisstk_tisstk_vs": "1"}, "cb")[0]["amt"] is None
+
+
+def test_old_cache_versions_are_dropped(env, tmp_path):
+    env()
+    c = F.DartClient("k", mode="cache", today=TODAY, path=str(tmp_path / "c.json.gz"))
+    c.entries["20261112000003|issue|v1"] = {"st": "000", "at": "2026-11-15", "d": {"bd": "20261029"}}
+    c.save()
+    _, d, c2 = env()
+    assert "20261112000003|issue|v1" not in c2.entries and d.detail_calls() == []
+
+
+def test_the_window_edge_in_the_pipeline():
+    page = [{"report_nm": "주요사항보고서(유상증자결정)", "rcept_no": f"2026081{x}000001", "rcept_dt": f"2026081{x}", "corp_code": "C", "rm": ""}
+            for x in (7, 8)]
+    fil, _ = F.issue_filings(page, {"C": "005930"}, "20260818")
+    assert [f["d"] for f in fil] == ["20260818"]                   # 첫날은 들어가고 그 전날은 빠져요
 
 
 def test_withdrawn_filings_are_left_out(env):
@@ -548,7 +686,7 @@ def status(cur, name):
 def test_gate_rows_pass_on_good_files():
     got, rep = rows_of(good_files()[0])
     assert [got[n][3] for n in (ISSUE_ROW, ROLE_ROW, US_ROW)] == ["PASS", "PASS", "PASS"], rep.table()
-    assert got[ISSUE_ROW][1].startswith("유상증자 1 · CB 1 · BW 1 (정정 2 · 숫자 없는 줄 0)")
+    assert got[ISSUE_ROW][1].startswith("유상증자 1 · CB 1 · BW 1 (정정 2 · 철회 0 · 읽는 중 0 · 숫자 없는 줄 0)")
     assert got[ROLE_ROW][1] == "임원 1 · 주요주주 1 · 없음 1 / 3줄"
 
 
@@ -736,5 +874,107 @@ def test_real_published_first_run_rows_pass_the_gate(env):
     rep = V.Report()
     V.check_v196b(rep, data, disc, {s["t"]: s for s in data["stocks"]}, TODAY)
     row = {r[0]: r for r in rep.rows}[ISSUE_ROW]
-    assert row[3] == "PASS" and row[1].startswith("유상증자 8 · CB 13 · BW 1 (정정 18 · 숫자 없는 줄 2)"), row
-    assert math.isclose(100.0 * 2 / len(WANT), 9.09, abs_tol=0.01)          # 2 / 22 = 9.1% < 10% (경고 아님)
+    assert row[3] == "PASS" and row[1].startswith("유상증자 11 · CB 14 · BW 1 (정정 21 · 철회 4 · 읽는 중 0 · 숫자 없는 줄 0)"), row
+    assert len(WANT) == 26
+
+
+# ── 리뷰 2026-11-16: 경계 · 뉴욕 시각 · 철회와 읽는 중의 관문 · 주요주주 말 스위치 ─────────────
+
+def _ts(iso):
+    return int(dt.datetime.fromisoformat(iso).timestamp())
+
+
+def test_earnings_dates_use_the_new_york_day_not_utc():
+    """20:30 ET 발표는 UTC 로 다음 날이에요 — ed 는 뉴욕 날짜 (Start · End 비교도 뉴욕 날짜로)."""
+    late = _ts("2027-01-27T01:30:00+00:00")                           # 2027-01-26 20:30 ET
+    assert F.us_event_dates({"isEarningsDateEstimate": False, "earningsTimestampStart": late})[0] == "2027-01-26"
+    start, end = _ts("2027-01-26T23:00:00+00:00"), _ts("2027-01-27T01:00:00+00:00")   # 뉴욕 같은 날 18:00 · 20:00 (UTC 로는 다른 날)
+    assert F.us_event_dates({"isEarningsDateEstimate": False, "earningsTimestampStart": start, "earningsTimestampEnd": end})[0] == "2027-01-26"
+    end2 = _ts("2027-01-27T15:00:00+00:00")                            # 뉴욕 다음 날 → 기간
+    assert F.us_event_dates({"isEarningsDateEstimate": False, "earningsTimestampStart": start, "earningsTimestampEnd": end2})[0] is None
+
+
+@pytest.mark.parametrize("x, want", [(0.005, 0.01), (0.0049, 0.0049), (0.00123, 0.0012), (2.054, 2.05), (1855.6612, 1855.66)])
+def test_issue_percent_rounding_edges(x, want):
+    assert F._issue_pct(x) == want
+
+
+def test_insider_holder_words_switch(monkeypatch, tmp_path):
+    """Jack 이 '아니요'면 한 줄(INSIDER_POS_HOLDER_WORDS = False): 주요주주 줄의 직위는 빈 칸 (role 은 그대로) · 임원 직위는 그대로."""
+    assert F.INSIDER_POS_HOLDER_WORDS is True
+    monkeypatch.setattr(F, "INSIDER_POS_HOLDER_WORDS", False)
+    p = tmp_path / "disc.json"
+    p.write_text(json.dumps({"insider": [], "nps": []}), encoding="utf-8")
+    monkeypatch.setattr(F, "OUT_DISC", str(p))
+    dd = DiscDart()
+    dd.rows = dd.rows + [dict(r, corp_name="이지스밸류플러스리츠", rcept_no="20261114000001", rcept_dt="2026-11-14")
+                         for r in ELE if r["isu_exctv_ofcps"] == "사내이사"][:1]
+    out = F.fetch_disclosures([{"t": "334890", "nk": "x", "cls": "kr", "price": 1.0}], {"334890": "C1"}, dt.date(2026, 11, 15), dd)
+    got = {(x["pos"], x["role"]) for x in out["insider"]}
+    assert ("", "주요주주") in got and ("사내이사", "임원") in got and not any(p_ == "10%이상주주" for p_, _ in got)
+
+
+def _issue_files(rows, us_dates=None):
+    cur = good_files()[0]
+    cur["disc"]["issue"] = rows
+    return cur
+
+
+def _r(i, **kw):
+    base = {"rc": f"2026103000{i:04d}", "d": "20261030", "t": "005930", "nk": "삼성전자", "kind": "rights", "bd": None, "how": "others",
+            "n": 100 + i, "p": 1.0, "amt": None, "cor": False}
+    base.update(kw)
+    return base
+
+
+WD_ROW = dict(bd=None, how=None, n=None, p=None, amt=None, cor=True, wd=True)
+PEND_ROW = dict(bd=None, how=None, n=None, p=None, amt=None, pend=True)
+
+
+@pytest.mark.parametrize("extra", [dict(wd="true"), dict(wd=1), dict(pend=None), dict(pend="yes"),
+                                   dict(WD_ROW, n=5), dict(WD_ROW, how="others"), dict(PEND_ROW, p=1.0), dict(WD_ROW, pend=True)])
+def test_gate_withdrawn_and_pending_marks_have_a_shape(extra):
+    assert status(_issue_files([_r(1, **extra)]), ISSUE_ROW) == "FAIL"
+
+
+def test_gate_withdrawn_rows_do_not_count_as_missing_numbers():
+    rows = [_r(i) for i in range(1, 3)] + [_r(i, **WD_ROW) for i in range(3, 9)]
+    got, _ = rows_of(_issue_files(rows))
+    assert got[ISSUE_ROW][3] == "PASS" and "철회 6" in got[ISSUE_ROW][1], got[ISSUE_ROW]
+    got, _ = rows_of(_issue_files([_r(1), _r(2, **PEND_ROW)]))                   # 읽는 중 1 / 2 = 50% → 경고
+    assert got[ISSUE_ROW][3] == "WARN" and "읽는 중 1" in got[ISSUE_ROW][1]
+
+
+def test_gate_edges():
+    base = dt.date(2026, 10, 31)                                             # good_files 의 asOf
+    first = (base - dt.timedelta(days=89)).strftime("%Y%m%d")                 # 2026-08-03: 90일의 첫날
+    before = (base - dt.timedelta(days=90)).strftime("%Y%m%d")
+    assert status(_issue_files([_r(1, d=first, rc=first + "000001")]), ISSUE_ROW) == "PASS"
+    assert status(_issue_files([_r(1, d=before, rc=before + "000001")]), ISSUE_ROW) == "FAIL"
+    assert status(_issue_files([_r(1, d="20261031", rc="20261031000001")]), ISSUE_ROW) == "PASS"
+    assert status(_issue_files([_r(1, d="20261101", rc="20261031000001")]), ISSUE_ROW) == "FAIL"
+    assert status(_issue_files([_r(1, p=3000.0)]), ISSUE_ROW) == "PASS"
+    assert status(_issue_files([_r(1, p=3000.01)]), ISSUE_ROW) == "WARN"
+    ten = [_r(i) for i in range(1, 10)] + [_r(10, n=None, p=None)]              # 1 / 10 = 10% → 경고 아님
+    assert status(_issue_files(ten), ISSUE_ROW) == "PASS"
+    more = [_r(i) for i in range(1, 18)] + [_r(i, n=None, p=None) for i in (18, 19)]   # 2 / 19 = 10.5% → 경고
+    assert status(_issue_files(more), ISSUE_ROW) == "WARN"
+
+
+def test_gate_us_date_edges():
+    cur = good_files()[0]
+    us = [s for s in cur["data"]["stocks"] if s["cls"] == "us"]
+    us[0]["ed"] = (dt.date(2026, 10, 31) + dt.timedelta(days=400)).isoformat()
+    assert status(cur, US_ROW) == "PASS"
+    us[0]["ed"] = (dt.date(2026, 10, 31) + dt.timedelta(days=401)).isoformat()
+    assert status(cur, US_ROW) == "WARN"
+    cur = good_files()[0]
+    stocks = cur["data"]["stocks"]
+    keep = [s for s in stocks if s["cls"] != "us"] + [dict(s) for s in stocks if s["cls"] == "us"][:100]
+    for s in keep:
+        s.pop("ed", None)
+        s.pop("xd", None)
+    cur["data"]["stocks"] = keep
+    assert status(cur, US_ROW) == "PASS"                                     # 미국 100종목: 하나도 없어도 경고하지 않아요
+    cur["data"]["stocks"] = keep + [{"t": "ZZZ", "cls": "us", "price": 1.0}]
+    assert status(cur, US_ROW) == "WARN"                                     # 101종목부터
