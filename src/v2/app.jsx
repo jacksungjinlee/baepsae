@@ -514,14 +514,15 @@ export function App({ source }) {
     setStoreData(r.data);
   }, [store.data, load, splitList]);
   // v19.6f: 연말에 확인할 숫자 (#portfolio/tax), only while tax.taxOpen holds (Nov 1 to Dec 31 KST of tax.js TAX_YEAR, and a US sale
-  // this year, a US holding or a dividend this year): the same rule as its link on 내 수익. Otherwise 포트폴리오, said once.
+  // this year, a US holding or a dividend this year): the same rule as its link on 내 수익. Otherwise the address itself becomes
+  // #portfolio (in place, as #home/why without its target does), said in the console: a closed address that stayed would open
+  // the screen by itself the moment a record made it true (review B, round 1: under an open record sheet).
   const inTax = tab === "portfolio" && loc.sub === "tax";
   const taxShown = inTax && taxOpen(view.data.decks, todayKst());
-  const taxSaid = useRef(false);
   useEffect(() => {
-    if (!inTax || taxShown || taxSaid.current) return;
-    taxSaid.current = true;
-    console.info(`[v2] tax: #portfolio/tax is closed today (${todayKst()}: outside Nov 1 to Dec 31 of the tax year, or no US sale this year, US holding or dividend this year); the portfolio tab instead`);
+    if (!inTax || taxShown) return;
+    console.info(`[v2] tax: #portfolio/tax is closed today (${todayKst()}: outside Nov 1 to Dec 31 of the tax year, or no US sale this year, US holding or dividend this year it can show); the address becomes #portfolio`);
+    router.replaceRoute("portfolio");
   }, [inTax, taxShown]);
   // v19.6a: 내 수익 of a portfolio that exists (else 포트폴리오)
   const returnsDeck = tab === "portfolio" && loc.returns ? view.data.decks.find((d) => d.id === loc.returns) || null : null;

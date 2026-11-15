@@ -38,25 +38,31 @@ export function TaxLink({ onClick }) {
   );
 }
 
-function Head({ icon, tone, children }) {
+const small = (extra) => tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { lineHeight: 1.5, wordBreak: "keep-all", ...extra });
+// A card's head: the icon chip and the title, and (sub) a small line under the title, such as the card's content date.
+function Head({ icon, tone, sub, children }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: SPACE(2) + 2, marginBottom: SPACE(3) }}>
       <IconChip name={icon} tone={tone} size={36} />
-      <h3 style={tx(SIZE.h3 - 1, WEIGHT.heavy, COLOR.ink, { flex: 1, minWidth: 0, wordBreak: "keep-all" })}>{children}</h3>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <h3 style={tx(SIZE.h3 - 1, WEIGHT.heavy, COLOR.ink, { wordBreak: "keep-all" })}>{children}</h3>
+        {sub}
+      </div>
     </div>
   );
 }
-const small = (extra) => tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { lineHeight: 1.5, wordBreak: "keep-all", ...extra });
 
 // 올해 해외 주식 양도차익: the sum, the bar to 250만원 (not in the loss state), the state line, then the notes.
 function GainCard({ g, win }) {
   const st = taxState(g.gain);
-  let line;
+  // Exactly 250만원: "…보다 0원 적어요." is not something a person says (review B, round 1), so until the 'equal' line is approved
+  // the card shows the amount and the full bar without a state line, said in the console.
+  let line = null;
   if (st.kind === "loss") line = fill(C.tax.loss, { x: exactWon(st.x) });
   else if (st.kind === "above") line = fill(C.tax.above, { x: exactWon(st.x), t: exactWon(st.t) });
-  else if (st.kind === "equal" && C.tax.equal) line = C.tax.equal;
+  else if (st.kind === "equal") line = C.tax.equal || null;
   else line = fill(C.tax.below, { x: exactWon(st.x) });
-  if (st.kind === "equal" && !C.tax.equal) say("the gain is exactly the 2,500,000 won deduction; the 'equal' line (tax.equal) is not approved yet, so the below line says 0 won");
+  if (st.kind === "equal" && !C.tax.equal) say("the gain is exactly the 2,500,000 won deduction and the 'equal' line (tax.equal) is not approved yet: no state line");
   const both = [C.tax.allDecks, win.ria ? C.tax.ria : null].filter(Boolean).join(" ");
   return (
     <Card data-ui-v2="tax-gain" data-state={st.kind} data-g={g.gain} data-x={st.x} data-t={st.t == null ? undefined : st.t} style={{ padding: `${SPACE(4)}px ${SPACE(4) + 2}px` }}>
@@ -73,7 +79,7 @@ function GainCard({ g, win }) {
           </div>
         </div>
       )}
-      <p data-ui-v2="tax-line" style={tx(SIZE.sm - 1, WEIGHT.bold, COLOR.ink, { marginTop: SPACE(2) + 2, wordBreak: "keep-all" })}>{line}</p>
+      {line && <p data-ui-v2="tax-line" style={tx(SIZE.sm - 1, WEIGHT.bold, COLOR.ink, { marginTop: SPACE(2) + 2, wordBreak: "keep-all" })}>{line}</p>}
       <p data-ui-v2="tax-explain" style={small({ marginTop: SPACE(1) })}>{C.tax.explain}</p>
       <p data-ui-v2="tax-all" data-ria={win.ria ? "1" : "0"} style={small({ marginTop: SPACE(1) + 2 })}>{both}</p>
       {win.settle && <p data-ui-v2="tax-settle" style={small({ marginTop: SPACE(1) + 2 })}>{C.tax.settle}</p>}
@@ -86,7 +92,9 @@ function GainCard({ g, win }) {
 }
 
 // 지금 손실 중인 미국 종목: one row per stock (all portfolios), biggest loss first, then the note and the lines naming what was
-// left out. stale: today's data stopped, so the card says so and shows no number.
+// left out. stale: today's data stopped, so the card says so and shows no number. Its content date (CLAUDE.md: each section
+// carries its own; review B, round 1): the approved 내 수익 date line under the title, with the data's US price date (the rows
+// are those closes at the data's rate; a stock priced at an earlier close is named by OwnCloseNote below).
 function LossCard({ ls, stale, load, byT, nameOf }) {
   if (stale) {
     return (
@@ -98,9 +106,11 @@ function LossCard({ ls, stale, load, byT, nameOf }) {
   }
   const stocks = ls.rows.map((r) => byT.get(r.t)).filter(Boolean);
   const absent = ls.absent.map((t) => ({ t, nk: nameOf(t), cls: "us", cost: null }));
+  const d = load.status === "ok" ? load.data.usPxDate || load.data.pxDate : null;
+  const md = mdText(d);
   return (
     <Card data-ui-v2="tax-loss" data-n={ls.rows.length} style={{ padding: `${SPACE(4)}px ${SPACE(4) + 2}px` }}>
-      <Head icon="deck">{C.tax.lossTitle}</Head>
+      <Head icon="deck" sub={md ? <p data-ui-v2="tax-loss-date" style={small()}>{fill(C.ret.date, { date: md })}</p> : null}>{C.tax.lossTitle}</Head>
       {ls.rows.map((r) => {
         const s = byT.get(r.t);
         return (
@@ -150,7 +160,8 @@ export function Tax({ load, store, pad, onBack }) {
   const ok = load.status === "ok";
   const live = ok && ctx.state.ok;
   const g = useMemo(() => (ok && (has.usSale || has.usHeld) ? yearGains(decks) : null), [ok, has, decks]);
-  const dv = useMemo(() => (ok && has.div ? yearDivs(decks) : null), [ok, has, decks]);
+  // computed whenever a dividend is dated this year, so a card left out for a line not approved yet is said in the console
+  const dv = useMemo(() => (ok && has.divAny ? yearDivs(decks) : null), [ok, has, decks]);
   const ls = useMemo(() => {
     if (!live || !has.usHeld) return null;
     const pxOf = (t) => { const s = ctx.byT.get(t); return s && s.price > 0 ? s.price : null; };

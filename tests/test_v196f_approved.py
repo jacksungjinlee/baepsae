@@ -110,14 +110,19 @@ def test_the_screen_reads_every_line_and_each_waiting_one_only_behind_a_check():
     for k in want:                                                   # TaxLink is in tax.jsx too; 내 수익 draws it
         assert re.search(r"\bC\.tax\." + k + r"\b", jsx), k
     assert "<TaxLink onClick={onTax} />" in ret and "taxOpen(store.data.decks, todayKst())" in ret
-    for k in ("C.ret.soldLeftOut", "C.rec.usdOnly", "C.pfr.usdToday", "C.ret.noAvg", "C.missing.line", "C.ret.noPrice", "C.app.tabs.portfolio"):
+    for k in ("C.ret.soldLeftOut", "C.rec.usdOnly", "C.pfr.usdToday", "C.ret.noAvg", "C.missing.line", "C.ret.noPrice", "C.app.tabs.portfolio",
+              "C.ret.date"):
         assert k in jsx, k
-    # a waiting line is read only on a line that checks it first: `C.tax.x && …`, `&& C.tax.x)` or `!C.tax.x`
+    # a waiting line is read only on a line that checks it first: `C.tax.x && …`, `&& C.tax.x)`, `!C.tax.x` or `C.tax.x || null`
     for k in PENDING:
         lines = [l for l in jsx.splitlines() if re.search(r"C\.tax\." + k + r"\b", l)]
         assert lines, k
         for l in lines:
-            assert f"C.tax.{k} &&" in l or f"&& C.tax.{k})" in l or f"!C.tax.{k}" in l, (k, l.strip())
+            assert f"C.tax.{k} &&" in l or f"&& C.tax.{k})" in l or f"!C.tax.{k}" in l or f"C.tax.{k} || null" in l, (k, l.strip())
+    # the link rule (tax.js) counts a US dividend without a rate only once the line naming it exists (review B, round 1)
+    assert "out.div = out.divAny && (out.divNoFx === 0 || !!(C.tax && C.tax.divNoFx));" in read("src/v2/tax.js")
+    # exactly 250만원 before tax.equal is approved: no state line at all (never "…보다 0원 적어요.")
+    assert 'else if (st.kind === "equal") line = C.tax.equal || null;' in jsx and "{line && <p data-ui-v2=\"tax-line\"" in jsx
 
 
 def test_every_fallback_for_a_waiting_line_says_so_in_the_console_with_counts():
@@ -125,10 +130,14 @@ def test_every_fallback_for_a_waiting_line_says_so_in_the_console_with_counts():
     assert 'console.info("[v2] tax: " + m)' in jsx
     for needle in ("dividend card left out: ${dv.noFx}", "!C.tax.divNoFx", "losses card left out: ${ls.noFx.length}", "!C.tax.lossNoFx",
                    "losses card left out: no US stock held at a loss today (${ls.held} held", "!C.tax.lossNone", "!C.tax.equal",
+                   "is not approved yet: no state line",
                    "US sale(s) dated ${TAX_YEAR} left out of the gain"):
         assert needle in jsx, needle
     app = read("src/v2/app.jsx")
     assert "[v2] tax: #portfolio/tax is closed today" in app and "if (taxShown) return <Tax" in app
+    # a closed address becomes #portfolio in place (review B, round 1), so a record made there never opens the screen by itself
+    eff = app.split("const taxShown = inTax && taxOpen(view.data.decks, todayKst());", 1)[1].split("}, [inTax, taxShown]);", 1)[0]
+    assert 'router.replaceRoute("portfolio");' in eff and "if (!inTax || taxShown) return;" in eff
 
 
 @pytest.mark.skipif(NODE is None, reason="node 가 없어요")

@@ -123,16 +123,30 @@ def test_the_link_needs_a_us_sale_this_year_a_us_holding_or_a_dividend_this_year
         usSaleInHistory: [deck('a', { holdings: hold('005930'), purchases: [buy('005930', 1, 70000, '2025-03-04')],
           history: [{ t: 'AAPL', nk: 'AAPL', out: '2026-06-01', cls: 'us', purchases: [buy('AAPL', 1, 200, '2024-05-01', { fx: 1370 })], sales: [sell('AAPL', 1, 230, '2026-05-29', { fx: 1390 })] }] })],
         usDivInHistory: [deck('a', { history: [{ t: 'KO', nk: 'KO', out: '2026-02-01', cls: 'us', divs: [div('KO', 4.25, '2026-04-01', { fx: 1450 })] }] })],
+        // review A: a Korean sale this year is not a US sale; unsold US shares in a history entry are not a US holding
+        krSaleThisYear: [deck('a', { holdings: hold('005930'), purchases: [buy('005930', 3, 70000, '2025-03-04')], sales: [sell('005930', 1, 80000, '2026-06-01')] })],
+        usHistoryUnsold: [deck('a', { holdings: hold('005930'), purchases: [buy('005930', 1, 70000, '2025-03-04')],
+          history: [{ t: 'AAPL', nk: 'AAPL', out: '2026-06-01', cls: 'us', purchases: [buy('AAPL', 3, 200, '2026-02-02', { fx: 1370 })] }] })],
+        // review B: a US dividend without a rate keeps the dividend card out (tax.divNoFx not approved), so it never opens the
+        // link: alone, or next to a Korean dividend of the year (that card would be out too)
+        usDivNoFxOnly: [deck('a', { history: [{ t: 'KO', nk: 'KO', out: '2026-02-01', cls: 'us', divs: [div('KO', 4.25, '2026-04-01')] }] })],
+        krDivAndUsDivNoFx: [deck('a', { holdings: hold('005930'), purchases: [buy('005930', 3, 70000, '2025-03-04')], divs: [div('005930', 1083, '2026-04-20')],
+          history: [{ t: 'KO', nk: 'KO', out: '2026-02-01', cls: 'us', divs: [div('KO', 4.25, '2026-04-01')] }] })],
       };
       out = Object.fromEntries(Object.entries(cases).map(([k, v]) => [k, { r: X.taxRecords(v), open: X.taxOpen(v, '2026-11-15'), closed: X.taxOpen(v, '2026-10-31') }]));""")
     want = {"none": (False, False, False), "krHeldOnly": (False, False, False), "krDivThisYear": (False, False, True),
             "krDivLastYear": (False, False, False), "usHeld": (False, True, False), "usPlannedOnly": (False, False, False),
-            "usSoldLastYear": (False, False, False), "usSaleInHistory": (True, False, False), "usDivInHistory": (False, False, True)}
+            "usSoldLastYear": (False, False, False), "usSaleInHistory": (True, False, False), "usDivInHistory": (False, False, True),
+            "krSaleThisYear": (False, False, False), "usHistoryUnsold": (False, False, False), "usDivNoFxOnly": (False, False, False),
+            "krDivAndUsDivNoFx": (False, False, False)}
     for k, (sale, held, dv) in want.items():
         r = got[k]["r"]
         assert (r["usSale"], r["usHeld"], r["div"]) == (sale, held, dv), (k, r)
         assert got[k]["open"] is (sale or held or dv), k
         assert got[k]["closed"] is False, k                          # 10월 31일에는 아무에게도 없어요
+    assert (got["usDivNoFxOnly"]["r"]["divAny"], got["usDivNoFxOnly"]["r"]["divNoFx"]) == (True, 1)
+    assert (got["krDivAndUsDivNoFx"]["r"]["divAny"], got["krDivAndUsDivNoFx"]["r"]["divNoFx"]) == (True, 1)
+    assert (got["usDivInHistory"]["r"]["divAny"], got["usDivInHistory"]["r"]["divNoFx"]) == (True, 0)
 
 
 # ── 양도차익 ──
@@ -197,8 +211,11 @@ def test_a_split_between_the_buy_and_the_sale_reads_the_sale_at_the_new_count():
 
 def test_the_gain_rounds_half_away_from_zero_to_the_won():
     got = run("""const mk = (id, p, s) => deck(id, { holdings: hold('AAA'), purchases: [buy('AAA', 1, p, '2026-02-02', { fx: 1 })], sales: [sell('AAA', 1, s, '2026-03-02', { fx: 1 })] });
-      out = [X.yearGains([mk('a', 100, 100.5)]).gain, X.yearGains([mk('b', 100.5, 100)]).gain, X.yearGains([mk('c', 100, 100.25)]).gain, X.roundWon(-0.4)];""")
-    assert got == [1, -1, 0, 0]                                       # +0.5 → 1, −0.5 → −1, 0.25 → 0, −0.4 → 0 (−0 아님)
+      const z = X.yearGains([mk('d', 100.4, 100)]).gain;
+      out = [X.yearGains([mk('a', 100, 100.5)]).gain, X.yearGains([mk('b', 100.5, 100)]).gain, X.yearGains([mk('c', 100, 100.25)]).gain, X.roundWon(-0.4),
+        Object.is(X.roundWon(-0.4), -0), Object.is(z, -0), z];""")
+    # +0.5 → 1, −0.5 → −1, 0.25 → 0, −0.4 → 0; never −0 (checked in JS: JSON would write −0 as 0)
+    assert got == [1, -1, 0, 0, False, False, 0]
 
 
 # ── 세 상태 ──
@@ -237,8 +254,25 @@ def test_dividends_turn_back_into_pre_tax_amounts_and_a_us_dividend_without_a_ra
 
 
 def test_round_to_1000_is_half_up_and_never_negative_zero():
-    got = run("""out = [X.round1000(499.99), X.round1000(500), X.round1000(1499), X.round1000(1500), X.round1000(0)];""")
-    assert got == [0, 1000, 1000, 2000, 0]
+    got = run("""out = [X.round1000(499.99), X.round1000(500), X.round1000(1499), X.round1000(1500), X.round1000(0),
+      Object.is(X.round1000(-400), -0), Object.is(X.round1000(0), -0), Object.is(X.taxOf(0), -0)];""")
+    assert got == [0, 1000, 1000, 2000, 0, False, False, False]
+
+
+def test_a_record_whose_date_is_not_a_date_never_counts_for_the_year():
+    """A date must be YYYY-MM-DD to fall in the tax year (the store refuses others; a file edited by hand could carry one)."""
+    got = run("""const bad = (date) => [deck('a', { holdings: hold('005930', 'AAPL'), purchases: [buy('005930', 3, 70000, '2025-03-04'), buy('AAPL', 2, 100, '2025-03-04', { fx: 1300 })],
+        divs: [div('005930', 1083, date)], sales: [sell('AAPL', 1, 120, date, { fx: 1300 })] })];
+      out = ['2026-04', '2026-4-20', '2026-04-20x', '2026-04-20'].map((d) => { const r = X.taxRecords(bad(d)); return [r.divAny, r.usSale, X.yearGains(bad(d)).n, X.yearDivs(bad(d)).n]; });""")
+    assert got == [[False, False, 0, 0]] * 3 + [[True, True, 1, 1]]
+
+
+def test_a_dividend_total_rounds_up_at_the_half():
+    """review A: 84,600 ÷ 0.846 = 100,000 and 423 ÷ 0.846 = 500 → 100,500원 → 101,000원 (half up; a floor would say 100,000)."""
+    got = run("""const a = deck('a', { holdings: hold('005930'), purchases: [buy('005930', 10, 50000, '2025-03-04')],
+        divs: [div('005930', 84600, '2026-04-20'), div('005930', 423, '2026-08-20')] });
+      out = X.yearDivs([a]);""")
+    assert got == {"won": 101000, "exact": 100500, "n": 2, "kr": 2, "us": 0, "noFx": 0}
 
 
 # ── 손실 중인 미국 종목 ──
@@ -267,3 +301,30 @@ def test_no_rate_today_values_nothing_and_says_why():
     got = run("""const d = deck('a', { holdings: hold('AAPL'), purchases: [buy('AAPL', 1, 300, '2026-01-05', { fx: 1300 })] });
       out = X.heldLosses([d], q({ AAPL: 200 }, null));""")
     assert got["rows"] == [] and got["noToday"] == ["AAPL"]
+
+
+def test_losses_round_per_stock_half_away_from_zero_and_a_stock_at_exactly_zero_has_no_row():
+    """review A: each stock's sum rounds to the 원 on its own (XA −9,526.86 → −9,527), half away from zero (XB −0.5 → −1, a
+    row), and a stock at exactly 0원 is not at a loss (XZ: no row)."""
+    got = run("""const d = deck('a', { holdings: hold('XA', 'XZ'), purchases: [buy('XA', 3, 33.33, '2026-01-05', { fx: 1300 }), buy('XZ', 1, 100, '2026-01-05', { fx: 1338 })] });
+      const i = deck('i', { kind: 'imported', settings: { points: {} }, holdings: [{ t: 'XB', nk: 'XB', cls: 'us' }],
+        imported: [{ t: 'XB', nk: 'XB', ccy: 'USD', qty: 0.5, avg: 101 }] });
+      const a = X.heldLosses([d], q({ XA: 30.01, XZ: 100 }, 1338));
+      const b = X.heldLosses([i], q({ XB: 100 }, 1));
+      out = { a: a.rows, b: b.rows, bz: b.usdOnly };""")
+    # XA: 3 × $30.01 × 1,338 = 120,460.14 − 3 × $33.33 × 1,300 = 129,987 → −9,526.86 → −9,527 · XZ: 133,800 − 133,800 = 0
+    assert got["a"] == [{"t": "XA", "gain": -9527, "usdOnly": False}]
+    # XB (dollar-only, today's rate 1): 0.5 × $100 − 0.5 × $101 = −0.5 → −1
+    assert got["b"] == [{"t": "XB", "gain": -1, "usdOnly": True}] and got["bz"] is True
+
+
+def test_a_dollar_only_stock_that_is_not_shown_never_switches_on_the_todays_rate_line():
+    """review A: pfr.usdToday shows only when a shown row counted a dollar-only lot at today's rate. A dollar-only stock at a
+    gain (MSFT) or left out (DIS, missing from today's data) is not a shown row."""
+    got = run("""const i = deck('i', { kind: 'imported', settings: { points: {} }, holdings: [{ t: 'MSFT', nk: 'M', cls: 'us' }, { t: 'DIS', nk: 'D', cls: 'us' }],
+        imported: [{ t: 'MSFT', nk: 'M', ccy: 'USD', qty: 2, avg: 300 }, { t: 'DIS', nk: 'D', ccy: 'USD', qty: 3, avg: 150 }] });
+      const d = deck('d', { holdings: hold('CRM'), purchases: [buy('CRM', 2, 300, '2026-03-03', { fx: 1400 })] });
+      const r = X.heldLosses([i, d], q({ MSFT: 521.91, CRM: 229.17 }, 1338));
+      out = { rows: r.rows, usdOnly: r.usdOnly, absent: r.absent };""")
+    # CRM 2 × 229.17 × 1,338 = 613,258.92 − 840,000 = −226,741.08 → −226,741 (a purchase with its own rate)
+    assert got == {"rows": [{"t": "CRM", "gain": -226741, "usdOnly": False}], "usdOnly": False, "absent": ["DIS"]}
