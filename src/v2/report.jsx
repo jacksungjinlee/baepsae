@@ -22,7 +22,7 @@ import { CARDS, POINTS_TOTAL } from "./engine.js";
 import { CARD_PICS, dotColor } from "./pictures.js";
 import { Slot } from "./build.jsx";
 import { RuleTile, groupName } from "./pfview.jsx";
-import { pfState, range2022, dividendYear, reportDates, dotOf, averages, moveWeight, squarify } from "./pf.js";
+import { pfState, range2022, dividendYear, reportDates, dotOf, averages, moveWeight, squarify, unscoredAllPref } from "./pf.js";
 import { missingPct } from "./deckcalc.js";
 
 const cardName = (id) => C.build.cards[id].name;
@@ -77,6 +77,13 @@ export function Report({ load, deck }) {
 }
 
 // ---------------- 1 ----------------
+// say-why 29 (Jack, design chat 2026-11-08, relayed 2026-11-14): "우선주·ETF처럼 기준 점수가 없는 종목 {n}개({names})는 비중에만 넣었어요." when
+// every holding the 기준 could not score is a 우선주 or an ETF-type listing (pf.unscoredAllPref); with a stock not in the data among
+// them (added by name), the general line as before (rpt.unscored). On since Jack's yes (2026-11-15), with the one existing-test edit
+// it needed: tests/smoke_v2.py scene_v193d (cards_and_report) now expects this line for an import whose only unscored stock is 삼성전자우.
+export const UNSCORED_PREF = true;       // Jack's yes, 2026-11-15 (with that one assertion edit)
+export const unscoredKey = (rows, stocks, on = UNSCORED_PREF) => (on && C.rpt.unscoredPref && unscoredAllPref(rows, stocks) ? "unscoredPref" : "unscored");
+
 function Headline({ st, deck, load }) {
   const d = reportDates(st.view, { pxDate: load.data.pxDate }, load.coByT);
   const parts = C.rpt.dates.split(" · ");
@@ -104,7 +111,8 @@ function Headline({ st, deck, load }) {
         <Group label={C.rpt.less} rows={s.less} icon="circle-dashed" tone="on" bg={COLOR.page} id="less" />
       </div>
       {s.unscored.length > 0 && (
-        <Note data-ui-v2="report-unscored">{fill(C.rpt.unscored, { n: s.unscored.length, names: s.unscored.map((r) => r.nk).join(", ") })}</Note>
+        <Note data-ui-v2="report-unscored" data-key={unscoredKey(s.unscored, load.data.stocks)}>
+          {fill(C.rpt[unscoredKey(s.unscored, load.data.stocks)], { n: s.unscored.length, names: s.unscored.map((r) => r.nk).join(", ") })}</Note>
       )}
       <div data-ui-v2="report-mine" style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { marginTop: SPACE(3) })}>
         {[C.rpt.mine, ...s.cards.map((c) => fill(C.build.s1.slot, { card: cardName(c.id), n: c.pts }))].join(" · ")}

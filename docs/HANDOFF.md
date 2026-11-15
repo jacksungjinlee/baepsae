@@ -5,7 +5,34 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-14 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-15 KST — read this first)
+
+**Jack, 2026-11-15 (morning): answers** to the 11-15 morning update (verbatim where quoted).
+- 1, 3, 4: yes. (#129: merge with the 종목 순위 / 업종별 등락 side effects; switch on row 29
+  "우선주·ETF처럼 기준 점수가 없는 종목 {n}개({names})는 비중에만 넣었어요." with the one smoke_v2 assertion edit;
+  keep #91's row-5 wording.)
+- 2: "yes, but with two labels: "거래정지" for halted stocks and "거래 없음" for stocks with no trades that day;
+  "등락률 없음" for other blanks." (종목 순위 change spot.)
+- 5, 6, 7: yes. (Old app: drop "(파이프라인이 사업보고서를 못 찾은 종목이에요)" on the 60 우선주 pages and the 24 KONEX
+  filers, with the test_reread_lines control edit; third sentence "이익 없이 움직인 가격은 기대와 수급이 만든 거예요."
+  only when both ends are losses, with the test_oldapp_dcf_wording edit.)
+- 8: "use this line now, not a bare "–": "회사 전체 숫자와 비교할 수 없어서 이 숫자는 비워 두었어요.""
+- 9: yes (keep checking the 4 US-style filers based abroad).
+- 10: "yes, but the line on a crash day is "오늘은 이 숫자를 확인하지 못해서 비워 두었어요.", not "자료가 없어요"."
+- 11: "yes, with "유상증자로 주가 기준이 바뀌어서, 배당수익률은 다시 계산하는 동안 비워 두었어요.""
+- 12: "Jack's explicit yes to accepting exact non-whole bonus ratios from the filing when the share counts confirm them,
+  with the reviewer's three guards. Record it under 안전 규칙 변경." (Guards: every event is a fric/pifric bonus with
+  r = 1 + x read from the API; the product equals dpsF to 1e-6; the dvProof checks pass.)
+- 13: "yes, but with a line: "회사가 공시한 배당 자료와 주식 수가 서로 맞지 않아서 배당수익률은 비워 두었어요.""
+- US list: "fix Brown-Forman B, then check every share-class ticker in the S&P 500 and NASDAQ sources (dots, missing
+  separators, A/B classes) and add any others missing for the same reason. List them in the PR."
+- Order: "merge #129, the old-app lines and the wider foreign check; then v19.7b; then v19.6f before Dec 1."
+- **Queue now (2026-11-15; replaces the "Then screens" line of the 11-13 block below):**
+  - Jack's order: #129, the old-app lines (this PR) and the wider foreign check; then v19.7b; then v19.6f before Dec 1;
+    after that, unchanged from the 11-13 queue: v19.6c, v19.6b, v19.6e, v19.6g → v19.4 → v19.6h.
+  - Data work beside the screens (Jack asked for both on 11-15; their place in the order is the coordinator's, data and
+    screen work run side by side per his 11-14 evening order): a dividend follow-up (the rights line, non-whole ratios
+    with the three guards, the data line) and US share-class tickers (Brown-Forman B …).
 
 **Jack, 2026-11-14 (later evening): answers and approved lines.**
 - Q1–Q5 yes: #fin-warn's three PR #68 test edits; the Unilever row in `test_override_table_pins`; the
@@ -197,8 +224,10 @@ just stops blocking screen work.
     details without the currency field, refetches about 777 of them, and can fail #114's currency row when Yahoo
     refuses some. Rerun once (the saved cache is then fresh). Follow-up after Wednesday: carry the currency over from
     the previous publish in that case.
-  - Then screens: #119 v19.6a (after #117 is live) → #122 v19.7a → missing US stocks → v19.7b → v19.6f (in review by
-    Dec 1, merged by Dec 10) → v19.6c, v19.6b, v19.6e, v19.6g → v19.4 → v19.6h.
+  - Then screens (the part up to v19.6f is superseded by the 2026-11-15 queue at the top of § 0; the tail after v19.6f
+    still stands): #119 v19.6a (after #117 is live) → #122
+    v19.7a → missing US stocks → v19.7b → v19.6f (in review by Dec 1, merged by Dec 10) → v19.6c, v19.6b, v19.6e,
+    v19.6g → v19.4 → v19.6h.
   - Small follow-ups, none started: the CLAUDE.md "Choices I made" line; v19.5b's US 성장 line and US minimum sizes;
     dark mode's six spots; PER, PBR and yield back for the 27 non-dollar filers from whole-company totals; Korean
     splits; the daily run split into a read-only job and a publishing job; the item 4 report and the
@@ -244,8 +273,8 @@ retires only once every tool worth keeping lives in 2.0 and old-app portfolios c
 
 **History (2026-11-04 – 11-08), kept for its details.** From here to the end of § 0, anything that says "not
 merged", "waits for", "no PR yet" or "Next" is out of date: what merged is in `docs/CHANGELOG.md`, and the queue is
-the 2026-11-13 block at the top of § 0. Still current reference: the morning-run fallback, the outside timer and the
-scheduled tasks.
+the newest "Queue now" at the top of § 0 (2026-11-15). Still current reference: the morning-run fallback, the outside
+timer and the scheduled tasks.
 
 **v19.1b (data for the app, branch `claude/v19.1b-data`, PR #50, not merged — Jack's top priority 2026-11-05).** Split-safe
 Korean dividends, β error band, `flRan`, DART cache v2. New fields:

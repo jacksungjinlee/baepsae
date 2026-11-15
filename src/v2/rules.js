@@ -50,13 +50,18 @@
 //   and the backstop: data.js freshness) or failed data computes no status at all: the output says
 //   why. A rule this version cannot read is treated as not checked (준비 중), never as passed; a rule book with no rule
 //   that could be checked at all is 확인 필요, never 할 일 없음.
-import { num, isFin, priceWon, fyOf, fellTwice, KR_DIV_TREND, exactData, krDivHistory, todayD1 } from "./engine.js";
+import { num, isFin, priceWon, fyOf, fellTwice, KR_DIV_TREND, exactData, krDivHistory, todayD1, valueD1 } from "./engine.js";
 import { STALE_DAYS, daysSince, ownCloseDate, backstopFirst } from "../data.js";
 import { sameConfirm, planWLimit, planWOk, PLANW_MAX_X } from "./store.js";
 import { heldQty as heldOf, heldUnits } from "./held.js";
 import { unitHeld } from "../repair.js";
 
 export const BIG_MOVE = 5;                                       // |d1| >= 5% -> 크게 움직인 종목 (never a status)
+// 홈's calm line "크게 움직인 종목은 없어요" (today.jsx Hero) speaks for every held stock, so each one's move today must be known and
+// under BIG_MOVE: its change (d1), or for a stock that did not trade its reference price's change (dv, data.json ntD1: 0 for a halt).
+// 2026-11-14 (review S3): a halted holding keeps the line, as when its no-trade day read 0.0%; a stock with neither (a US stock at an
+// earlier close, a blank d1 for another reason) leaves the line out, as before. xs: the daily check's held stocks.
+export const movesKnown = (xs) => (xs || []).every((x) => x.d1 != null || (num(x.dv) != null && Math.abs(x.dv) < BIG_MOVE));
 export const STATUS_ORDER = ["broken", "check", "watch", "trim", "high", "low", "none"];
 const LEVEL = Object.fromEntries(STATUS_ORDER.map((s, i) => [s, i]));
 const EPS = 1e-9;                                                // a weight exactly on an edge is inside the band
@@ -420,7 +425,9 @@ function reasonsOf(results, unit = false) {
 export const SOLD_OUT_BANDS = "own";
 const SOLD_OUT_MODES = ["off", "spec", "own"];
 
-// One held stock. -> { t, nk, cls, kind, qty, status, reasons, rules, w, target, value, px, d1, pxd, bigMove, noNewMoney }
+// One held stock. -> { t, nk, cls, kind, qty, status, reasons, rules, w, target, value, px, d1, dv, pxd, bigMove, noNewMoney }
+//   dv (2026-11-14): the change of its value today, for the portfolio's 오늘 only (engine.valueD1: d1, or for a stock that did
+//   not trade its reference price's change, data.json ntD1; d1 itself stays blank for it, never shown as a change)
 //   px (v19.6a): today's won price of one share (for 추가로 넣을 돈 when 0 shares are held: SOLD_OUT_BANDS "spec" · "own")
 //   pxd (v19.1c): the stock's own price date when it is priced at an earlier close than the US date (data.json pxd), else
 //   null; its d1 is then null (engine.todayD1), so it is never a 큰 움직임 and the screens name it in their notes.
@@ -468,7 +475,7 @@ export function evaluateHolding(h, deck, ctx, weights, qty) {
     px: weights.px && weights.px.has(h.t) ? weights.px.get(h.t) : null,
     absent: !s,                                                   // not in today's data at all (v19.0c: the row stays)
     // a note only: never changes the status. Never on a 0-share holding (verification nit: not in 홈's 큰 움직임)
-    d1, pxd, bigMove: qty !== 0 && d1 != null && Math.abs(d1) >= BIG_MOVE,
+    d1, dv: valueD1(s), pxd, bigMove: qty !== 0 && d1 != null && Math.abs(d1) >= BIG_MOVE,
     noNewMoney: soldOutFails || NO_NEW_MONEY.includes(status),
   };
 }

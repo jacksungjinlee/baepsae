@@ -345,6 +345,16 @@ report (for example 진코스텍's 2026 반기보고서), a year later (2027.2Q 
 year's same quarter", nothing divides it, and the unit check blanks the company again until the next quarter is the latest;
 the gate's "공시 단위 확인 회사 바뀜" warning names it when that happens.
 
+## A dated being-fixed line left after the re-read (gate warning "다시 읽은 뒤 '고치는 중' 줄이 남을 국내 회사")
+
+Until the DART re-read, both apps showed "PER과 EPS는 계산 방법을 고치는 중이라 11월 10일에 바뀔 수 있어요." wherever a Korean PER, EPS or
+ROE appeared. Since the re-read (corp.json `epsBasis` "owners") the apps drop it for every company whose `epsIn.b` is o, s or t
+(`src/repair.js` `epsFixNeeded`), and the old app's 04 card shows it only with an EPS (Jack Q3, 2026-11-14). A company with a PER,
+EPS or ROE but no valid `epsIn` (not a foreign issuer, not statements in another currency, not the unit check) would show that
+line again with a past date. The gate warns by name (`check_eps_line_left`; 0 on 11-14). An EPS without a receipt already fails
+"EPS·BPS 영수증 모양"; this row also names a company with only a ROE. It only warns, because one outdated note should not hold
+back a whole publish. What to do: look at that company's `epsIn` in the run log and fix the pipeline's reading of it.
+
 ## Korean price series gate rows (국내 시계열 점검)
 
 Each Korean stock's price series comes from Naver (FinanceDataReader), which is an adjusted series: after a split,
@@ -461,6 +471,52 @@ Standing daily warnings until the repair PR: "국내 시계열 하루 가격 제
 beta 채움" and "국내 vol 채움" at 96.8% (floor 95%, warning under 97%; 2,395 of 2,473: volatility and beta are whole-series,
 so every marked stock blanks them). 45 more marked stocks are still a pass; the 46th would fail both rows.
 
+## Korean stocks with no trade or no change today (국내 거래 없는 종목 · 빈 d1)
+
+The KRX listing file has no halt flag. A stock that did not trade on the price date (`pxDate`) has a row with volume 0, open 0
+and trading value 0 (11-11 to 11-13: 135 to 141 such rows a day; on the 11-14 publish 66 published stocks, e.g. 금양, STX,
+삼부토건, and 6 KONEX names). Until 2026-11-14 their `d1` was 0.00%, as if the price had simply not moved. Now (`fetch_data.py`
+`kr_no_trade` · `kr_d1_split`, Jack 2026-11-14 with the design chat's lines of 2026-11-08):
+- such a stock gets `noTrade: true`, its `d1` is blank and `d1Why` is `noTrade`; the reference price's change that day (0 for a
+  halt; a KONEX price can move without a trade) goes to `ntD1`, which the app uses only for a portfolio's 오늘 amount, so holding
+  a halted stock never takes that amount away;
+- every other blank Korean `d1` carries its reason in `d1Why`: `range` beyond ±30% (a new listing, a split, a re-listing after a
+  halt), `new` (no official close in the previous day's file), `prev` (no usable previous-day file: then every stock);
+- data.json `d1Blank` holds the published counts per reason, `seen` (whether no-trade could be told at all) and the source
+  oddities: `odd` (volume and open 0 but a trading value that is not 0, or blank: the row contradicts itself, not marked) and
+  `must` (a gate must-have stock that looked like no trade: not marked, its `d1` is computed as before, so one bad row cannot
+  fail "필수 종목 d1"). Nobody is marked, and every stock shows its `d1` as before (0.00% for the halted ones), when the file
+  has no Volume/Open columns (`unseen: cols`), when fewer than 90% of its rows have a number in both (`unseen: blank`: the
+  columns changed to blanks; on 11-11 to 11-13 every row had both), or when more than 10% of its rows look like no trade
+  (`unseen: many`, a broken file; normal days are 4.7–4.9%). All of this is decided in one pure function,
+  `fetch_data.kr_no_trade_plan`.
+- Limit-up and limit-down moves (exactly ±30%) keep their `d1`. Before 2026-11-14, 4,030 ÷ 3,100 − 1 came out as
+  30.000000000000004%, so the limit-ups of 베셀 and 모아라이프플러스 (11-12) and 디와이에이 (11-13) were blanked. The test now
+  allows only that floating-point tail (`D1_LIMIT_EPS`, 1e-9): 30.004% is still blank.
+
+The run log says "· 거래 없는 종목 (기준일 … 거래량 0 · 시가 0 · 거래대금 0): N종목 → d1 빈 칸 · noTrade (…): names" and
+"· 국내 d1 빈 칸 이유 (목록 파일): 거래 없음 … · ±30% 밖 … · 직전 거래일 행 없음 … · 직전 거래일 파일을 쓸 수 없음 …", loud ("!!")
+for missing columns, a broken file, a must-have that looked like no trade, a contradicting row, or a missing previous-day file.
+In the app: "{md} 거래 없음 (거래정지일 수 있어요)" for `noTrade`, "오늘 등락률은 받지 못했어요." for another blank, where the change
+would show (company page header, 홈 and 포트폴리오 가진 종목 rows, the 종목 tab's lists). The 종목 순위 rows have no room for those lines:
+their change spot says "거래 없음" or "등락률 없음" (Jack, 2026-11-15). Jack also approved "거래정지" for halted stocks, but the KRX listing
+file has no halt field (its columns are Code, ISU_CD, Name, Market, Dept, Close, ChangeCode, Changes, ChagesRatio, Open, High, Low,
+Volume, Amount, Marcap, Stocks, MarketId, lateInfoMsgCd: ChangeCode is the price direction, Dept the 소속부, lateInfoMsgCd "ME005" on
+every row of 11-11 to 11-13), so a halt and a day nobody traded look the same; it stays off (`src/v2/fixnote.jsx` HALT_LABEL, and a
+`halt: true` mark no source writes yet) until a halt source is added. Gate rows:
+
+- **FAIL "국내 거래 없는 종목 · 빈 d1 이유 (noTrade · d1Why)"**: only our own values disagree (`validate_data.kr_no_trade_problems`):
+  a `noTrade` stock with a `d1` number, a trading value or another `d1Why`; `d1Why` with a `d1` number or an unknown reason; a
+  blank `d1` of a listing stock (cls kr, not a fund) without `d1Why`; `ntD1` on a stock that traded, not a number or beyond ±30%;
+  a mark on a US stock or a fund; `d1Blank` counts that differ from the stocks, `seen` false with marks, or a stock listed in
+  `odd`/`must` that is marked. It never fires on the listing file itself (Jack 2026-11-13: one source glitch must not hold
+  everyone's data): fix the code in a PR. A file without `d1Blank` (before 2026-11-14) is only a warning, unless the previous
+  publish had it or a stock carries a mark.
+- **WARN "국내 거래 없는 종목: 목록 파일의 칸 (경고만)"**: no-trade could not be told today (`unseen`: cols · blank · many), or
+  it could but no published stock was marked (normal days have 135–141 such rows: the columns may have changed meaning), or a
+  row contradicted itself (`odd`), or a must-have looked like no trade (`must`). The publish goes ahead with those stocks
+  unmarked. If it repeats, look at that day's listing file (FinanceData cache) before anything else; the run log has the same
+  case as a "!!" line.
 ## Korean dividend proof (배당 기준 증명, since #PR — Jack 2026-11-14, item 5)
 
 A Korean payer whose dividend could not be put on today's share basis (`divSt` nc · nd) used to show "배당을 줘요" with no

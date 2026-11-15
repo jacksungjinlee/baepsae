@@ -16,7 +16,7 @@
 //   count in value, weights and the concentration rules, are left out of the 기준 averages, and are named.
 // - Nothing is invented: no 평균 단가 is filled in, no quantity is guessed from a partial name, no number for a missing input.
 import {
-  num, CARDS, NA, universe, cardRaw, percentileScores, strictTop, hasGroup, annualDividend, fyOf, isStockLike,
+  num, CARDS, NA, universe, cardRaw, percentileScores, strictTop, hasGroup, annualDividend, fyOf, isStockLike, isPreferred, usPreferredLike,
 } from "./engine.js";
 import { R2022 } from "./y2022.js";
 import { heldQty, byAmount, importedUnits } from "./held.js";
@@ -160,6 +160,19 @@ export function cardStats(rows, stocks, settings) {
     else if (cards.length) (isFit ? fit : less).push(r);
   }
   return { cards, top, per, avg: averages(rows, per, cards), fit, less, unscored };
+}
+
+// say-why 29 (Jack, design chat 2026-11-08, relayed 2026-11-14): whether every holding the 기준 could not score (cardStats unscored)
+// is a 우선주 or an ETF-type listing: a Korean preferred share (engine.isPreferred, the rule 2.0 uses for 우선주), an ETF or fund
+// (etf · fund), or a US preferred or depositary share by name or ticker (engine.usPreferredLike). A stock not in the data (added by
+// name) or one without a price is neither, so a list holding one keeps the general line (report.jsx unscoredKey).
+export function unscoredAllPref(rows, stocks) {
+  if (!Array.isArray(rows) || !rows.length) return false;
+  const usPref = usPreferredLike(stocks || []);
+  return rows.every((r) => {
+    const s = r && r.s;
+    return !!s && (isPreferred(s) || s.etf === true || !!s.fund || (s.cls === "us" && usPref.has(s.t)));
+  });
 }
 
 // Weighted average 상위 % per chosen 기준 over the rows with a number on it (weights renormalised among them).

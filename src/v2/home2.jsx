@@ -52,7 +52,7 @@ import { MarketGlance, Hero } from "./today.jsx";
 import { RankCard } from "./rank.jsx";
 import { discDate } from "./company.js";
 import { filingRows, filingsChecked, holdsKorean } from "./home.js";
-import { IcrOffLine, EpsOwnersNote, StmtCurLine, UnitChkLine, NoDataLine } from "./fixnote.jsx";
+import { IcrOffLine, EpsOwnersNote, StmtCurLine, UnitChkLine, NoDataLine, DayNote } from "./fixnote.jsx";
 
 const signedWon = (v) => (v > 0 ? "+" : "") + wonText(v);
 const tone = (v) => (v > 0 ? COLOR.up : v < 0 ? COLOR.down : COLOR.text2);
@@ -158,7 +158,8 @@ function MoneyCard({ block, pxDate, load }) {
 }
 
 // ---------------- 가진 종목 ----------------
-function HeldCard({ block, onWhy }) {
+// md: the Korean price date as shown ("11월 13일"), for the no-trade line (fixnote.jsx DayNote).
+function HeldCard({ block, onWhy, md = null }) {
   const { openStock } = useNav();
   const { deck, list } = block;
   const rows = list.rows;
@@ -197,6 +198,8 @@ function HeldCard({ block, onWhy }) {
                 </span>
               )}
               {chips && <span style={{ display: "flex", marginTop: SPACE(1) }}>{chips}</span>}
+              {/* 2026-11-14 (Jack, design chat 2026-11-08): no change today, said in the row (the change cell stays empty, never 0.0%) */}
+              {!r.absent && r.t && block.byT && <DayNote s={block.byT.get(r.t)} md={md} block={false} style={{ marginTop: SPACE(1) }} />}
             </span>
             <span data-ui-v2="home-change" style={tx(SIZE.sm, WEIGHT.heavy, r.d1 == null ? COLOR.text3 : tone(Math.round(r.d1 * 10)), { minWidth: 56, textAlign: "right", flexShrink: 0, whiteSpace: "nowrap" })}>
               {r.d1 != null ? signedPct(r.d1) : ""}</span>
@@ -338,7 +341,7 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
       <div key={b.deck.id} data-ui-v2="home-block" data-deck-id={b.deck.id}>
         {b.st && <RulesHero block={b} many={many} narrow={narrow} />}
         <MoneyCard block={b} pxDate={ok ? load.data.pxDate : null} load={load} />
-        <HeldCard block={b} onWhy={onWhy} />
+        <HeldCard block={b} onWhy={onWhy} md={ok ? mdText(load.data.pxDate) : null} />
       </div>
     )),
     ev.ok && blocks.length > 0 && <Look key="look" blocks={blocks} load={load} look={look} go={go} />,
