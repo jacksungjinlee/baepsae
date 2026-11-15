@@ -28,7 +28,7 @@ import { riskBandText, riskBandNote, timesText, yieldText, usOf } from "./cofmt.
 import { subjectParticle } from "./track.js";
 import { stmtNotWonFor, unitHeldFor, pxBadFor, pxBadHidesFor, noStmtFor, fixNotesHidden, epsLineKind, epsBasisCardGone } from "./fix.js";
 import { pxBadText, pxBadOneText, unitChkText, stmtCurText, fcurNoteText, prefText, prefFitText, epsFixText } from "./fixnote.jsx";
-import { fcurBlank, fcurDyBlank, pbrZeroOf, fgnBlank } from "./fcur.js";
+import { fcurBlank, fcurDyBlank, pbrZeroOf, fgnBlank, FGN_LINE_KEYS } from "./fcur.js";
 import { IndBar, pctText, addWarnView } from "./editparts.jsx";
 import { indText, listDate } from "./finder.jsx";
 import { stockState } from "./records.js";
@@ -44,6 +44,12 @@ function betaText(s, r) {
   const short = b.one ? C.cmp.p.betaOne : C.cmp.p.beta;
   if (short) return b.one ? fill(short, { x: (b.lo < 0 ? "−" : "") + p1(Math.abs(b.lo)) }) : fill(short, { lo: (b.lo < 0 ? "−" : "") + p1(Math.abs(b.lo)), hi: (b.hi < 0 ? "−" : "") + p1(Math.abs(b.hi)) });
   return riskBandText(s, r);
+}
+// The line under a foreign company's number blanked for its kind (fixnote.jsx FgnCutNote, #133: co.fgnCut, co.fgnNoCmp for
+// "nocompare-own", co.fgnStopped for a day the check stopped); null while that kind's copy is missing (a plain "–").
+function fgnLine(s, k) {
+  const hit = FGN_LINE_KEYS.find(([, has]) => has(s.fgnCut[k]));
+  return hit && C.co[hit[0]] ? C.co[hit[0]] : null;
 }
 // The company page's PER/EPS line where its 지금 가격이 가정하는 것 card has no numbers (impliedGrowth "basis"; cotabs Dcf).
 function epsBasisLine(s) {
@@ -85,7 +91,7 @@ export function compareCells(s, co, ctx) {
   if (stmtNotWonFor(s, co) || unitHeldFor(s, co)) out.pbr = cell(DASH, unitChkText(s, co) || stmtCurText(s, co), { blank: "cur" });
   else if (fcurBlank(s)) out.pbr = cell(DASH, fcurNoteText(s), { blank: "fcur" });
   else if (pbrZeroOf(s)) out.pbr = cell(DASH, C.co.pbrZero || null, { blank: "pbr0" });
-  else if (fgnBlank(s, "pbr")) out.pbr = cell(DASH, C.co.fgnCut || null, { blank: "fgn" });
+  else if (fgnBlank(s, "pbr")) out.pbr = cell(DASH, fgnLine(s, "pbr"), { blank: "fgn" });
   else {
     const pbr = num(s.pbr);
     // none: 자료가 없어요, with the company page's reason when it has one (no statements yet; a 우선주: its header line)
@@ -94,7 +100,7 @@ export function compareCells(s, co, ctx) {
   }
   // 배당수익률: verified only (divKr / divUs, the 배당 tile's yield), else "–" with the line the company page gives that blank
   if (fcurDyBlank(s)) out.dy = cell(DASH, fcurNoteText(s), { blank: "fcur" });
-  else if (fgnBlank(s, "dy")) out.dy = cell(DASH, C.co.fgnCut || null, { blank: "fgn" });
+  else if (fgnBlank(s, "dy")) out.dy = cell(DASH, fgnLine(s, "dy"), { blank: "fgn" });
   else {
     const r = usOf(s) ? divUs(s) : divKr(s, co);
     out.dy = r.yieldPct != null ? cell(yieldText(r.yieldPct), null, { y: r.yieldPct })

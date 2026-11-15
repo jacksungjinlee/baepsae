@@ -396,9 +396,10 @@ def test_compare_cells_follow_the_company_pages_blank_rules():
         pxFull: cells({ ...base, vol: null, beta: null, pxBad: '2026-05-08', pxBadF: ['hi', 'lo', 'vol', 'beta', 'betaSE'] }),
         fgn: cells({ ...us, pbr: null, dy: null, fgnCut: { pbr: 'mismatch', dy: 'mismatch' } }),
         pbr0: cells({ ...us, pbr: null, pbrZero: true }),
+        fgnKinds: cells({ ...us, pbr: null, dy: null, fgnCut: { pbr: 'nocompare-own', dy: 'stopped' } }),
         pref: cells({ ...base, t: '005935', nk: '삼성전자우', pbr: null }),
         usNew: cells(us).ind, kr: cells(base).ind,
-        copy: { na: C2.co.tiles.na, pxOne: C2.co.pxBadOne, px: C2.co.pxBad, fgn: C2.co.fgnCut, pbr0: C2.co.pbrZero, pref: C2.co.fit.pref, prefCo: C2.co.pref, newInd: C2.find.newInd },
+        copy: { na: C2.co.tiles.na, pxOne: C2.co.pxBadOne, px: C2.co.pxBad, fgn: C2.co.fgnCut, fgnOwn: C2.co.fgnNoCmp, fgnStop: C2.co.fgnStopped, pbr0: C2.co.pbrZero, pref: C2.co.fit.pref, prefCo: C2.co.pref, newInd: C2.find.newInd },
         usInd: [us.ind, load.byT.get(us.t).indName] };
       // a file with the split check (exact data): a Korean payer whose yield the pipeline left blank because its share count changed
       // with no filing to explain it (dvLine 1) says so; one blank for another reason gets no line
@@ -415,6 +416,7 @@ def test_compare_cells_follow_the_company_pages_blank_rules():
     assert got["pxFull"]["vol"] == ["–", cp["px"]] and got["pxFull"]["beta"] == ["–", cp["px"]]
     assert got["fgn"]["pbr"] == ["–", cp["fgn"]] and got["fgn"]["dy"] == ["–", cp["fgn"]]
     assert got["pbr0"]["pbr"] == ["–", cp["pbr0"]]
+    assert got["fgnKinds"]["pbr"] == ["–", cp["fgnOwn"]] and got["fgnKinds"]["dy"] == ["–", cp["fgnStop"]]     # #133: each kind its own line
     assert got["pref"]["fit"] == ["–", cp["pref"]] and got["pref"]["pbr"] == [cp["na"], cp["prefCo"]]
     assert got["usNew"][0] == f"미국 · {got['usInd'][1]} · {cp['newInd']}" and not got["kr"][0].endswith(cp["newInd"])   # 반도체 is held: not new
     assert got["dv"] == ["\u2013", got["shareHidden"]] and got["dvOther"] == ["\u2013", None] and got["dvOk"] == ["0.6%", None], (got["dv"], got["dvOther"], got["dvOk"])
