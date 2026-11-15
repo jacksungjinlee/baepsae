@@ -578,6 +578,42 @@ bars back; still hidden: ratio 7, basis 4, rights 7, uncounted 2, data 22, a 32.
   the table names each stock and the failing number.
 - **WARN "배당 기준 증명 경고 (되살리지 않은 이유 · 조회 실패)"**: names the stocks not restored, by reason.
 
+## 오늘 볼 것 data (v19.6b, since #PR): disc.json `issue`, insider `role`, US `ed` · `xd`
+
+What the daily run writes (`fetch_data.py` `fetch_issues`, `insider_pos_role`, `us_event_dates`):
+- **`issue`** — 유상증자 · 전환사채 · 신주인수권부사채 decisions of Korean stocks in our list, filed in the last 90 days. The run
+  reads DART's 주요사항보고서 list (about 25 pages), then, for each (company, kind) with a filing it has not seen, DART's
+  structured lookup (`piicDecsn` · `cvbdIsDecsn` · `bdwtIsDecsn`, asked from 2015 so a correction of an old decision is found).
+  DART gives one row per decision, under the filing number of its newest version; an attachment-only correction keeps the
+  earlier number. A row is a decision whose filing number is in the 90-day list. Results are cached in the DART cache
+  (`{filing number}|issue|v1`: decision row · older version · missing), also in a full-DART run, and dropped when the filing
+  leaves the window. At most 150 (company, kind) lookups a run (`ISSUE_PER_RUN`), newest first; the rest wait for the next run
+  and their newest filings show with blank numbers meanwhile. A filing the lookup does not return although it should is asked
+  again the next KST day. Rights issues have no board date (`bd` null: DART's lookup has no such field).
+- **insider `role`** — 임원 when the filing names a position or 등기/비등기임원, else 주요주주 when it names a major-holder
+  relation, else null. DART's "-" means empty (it used to show as a position). Rows from earlier runs are fixed from the same
+  day's lookup of that company; a row the run could not look up again keeps `role` null.
+- **US `ed` · `xd`** — from the Yahoo details the run already caches (3 days): `ed` only when Yahoo says the earnings date is not
+  an estimate and it is one day; `xd` is Yahoo's ex-dividend date (midnight UTC, read as that date). Either can be in the past.
+
+Gate rows (`validate_data.py` `check_v196b`; additions only):
+- **FAIL "주요사항 공시 (issue · 유상증자 · CB · BW)"**: a row has a missing or wrong field (filing number, a date outside
+  the 90 days before `asOf`, kind, method or share count on a bond, amount on a rights issue, a non-positive number, a
+  correction mark that is not true/false), a filing number appears twice, or `issueOk` is missing. That is our own bug: look at
+  the run's "주요사항" log lines. **WARN** (never blocks): no `issue` section (a file from before #PR, e.g. the live site right
+  after the merge), `issueOk` false (the list failed and last run's rows were kept), 0 rows, a row whose stock left today's
+  list, a ratio above 3,000 % (check the filing; STX's 1,855.66 % on 2026-10-14 is real), or more than 10 % of rows without any
+  number (lookups not finished: normal on the first run after the merge).
+- **FAIL "임원 · 주요주주 역할 (insider role)"**: a `role` that is not 임원, 주요주주 or null. **WARN**: rows without `role` or
+  with "-" as the position (files from before #PR).
+- **FAIL "미국 일정 (ed 실적 발표일 · xd 배당락일)"**: a date that is not YYYY-MM-DD, or a date on a stock that is not
+  American. **WARN**: none at all among more than 100 US stocks (a file from before #PR, or Yahoo renamed its fields), or a date
+  more than 400 days ahead.
+
+DART calls: the first run after the merge (no cached lookups) makes about 25 list calls and 150 lookups, the next run the
+remaining ~75; then about 25 list calls plus 10–20 lookups a run. A full-DART run with an empty cache adds up to about 175
+calls (logged separately from the pinned estimate).
+
 ## US stocks added by hand (EXTRA_US)
 
 The US list is the S&P 500 (FinanceDataReader's list), Nasdaq's first 400 and `EXTRA_US` in `fetch_data.py`. On

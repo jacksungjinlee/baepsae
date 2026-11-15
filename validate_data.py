@@ -1039,6 +1039,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_kr_series(rep, data, kr, pdata)  # 2026-11-14 (Jack: "52주 숫자부터"): 다른 기준의 공식 종가 고정 (실패) · 제한폭 넘는 움직임 (경고)
     check_px_bad(rep, data, comps, pdata)  # 2026-11-14 (Jack, Q2 (a)): 그 움직임이 있는 종목은 52주 · 출렁임 · 위험 숫자를 비워요 (실패) · 필수 종목 추세 · 저변동 순위 (실패)
     check_kr_no_trade(rep, data, pdata)    # 2026-11-14 (Jack, design chat 2026-11-08): 거래 없는 종목은 d1 빈 칸 + noTrade · 빈 d1 은 이유 (실패: 우리 값끼리 어긋날 때만)
+    check_v196b(rep, data, disc, by, today)   # v19.6b (Part B.1): 주요사항 공시 · 내부자 역할 · 미국 일정 (모양 · 칸이 없는 예전 파일은 경고만)
 
     # 경고만
     rep.add("공시 목록 조회", True, "성공" if disc.get("listOk") else "실패", "실패면 경고", warn=not disc.get("listOk"))
@@ -1512,6 +1513,214 @@ def check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=None):
         rep.detail("주식 분할 목록 변화 (직전 발행본과)", [f"사라짐 {x}" for x in dropped] + [f"배율 바뀜 {x}" for x in changed]
                    + [f"고정 표가 뺌 {x}" for x in dropped_ok] + [f"고정 표가 고침 {x}" for x in changed_ok]
                    + [f"새 줄 정수 아닌 배율 {x}" for x in odd] + [f"지난 날짜로 새로 {x}" for x in old_new])
+
+
+# ── v19.6b (Part B.1 · 오늘 볼 것 데이터): disc.json issue · insider role · data.json 미국 ed · xd — 새 줄 셋 (v19.6 스펙 'Test changes',
+#    Jack 의 yes). 파이프라인(fetch_data.fetch_issues · insider_pos_role · us_event_dates)과 따로 적어요. 칸이 아예 없는 파일(v19.6b 전 —
+#    머지 직후의 배포 · 감시 --live 가 보는 사이트 파일)은 경고만, 모양이 틀린 값은 실패, 빈 issue 목록은 경고만 (발행을 막지 않아요).
+#    어떤 JSON 값이 와도 검사가 멈추지 않아요 (멈추면 관문이 발행을 막아요): 예상하지 못한 오류는 그 줄의 실패로 적어요 (표는 그대로 나와요).
+ISSUE_KINDS = ("rights", "cb", "bw")
+ISSUE_HOW = ("holders", "others")
+ISSUE_KEYS = ("rc", "d", "t", "nk", "kind", "bd", "how", "n", "p", "amt", "cor")
+ISSUE_DAYS = 90             # fetch_data.DISC_DAYS — 공시일 d 는 disc.json asOf 를 포함한 90일 안
+ISSUE_P_WARN = 3000.0       # % — 새 주식이 증자 전 주식 수의 30배를 넘는 줄은 이름과 함께 경고 (2026-11-15 가장 큰 값: STX 유상증자 1,855.66%)
+ISSUE_BLANK_WARN = 10.0     # % — 숫자가 하나도 없는 줄(n · p · amt 모두 빈 칸)이 이보다 많으면 경고 (상세를 다 읽지 못한 날 · 첫 실행은 약 28%,
+#                             다 읽은 날 2026-11-16 은 13 / 295 = 4.4% — DART 상세 API 가 '-' 만 주는 정정 공시)
+INSIDER_ROLES = ("임원", "주요주주")
+POS_DASHES = ("-", "－", "—", "–", "‐")
+US_DATE_FAR_DAYS = 400      # 실적 발표일 · 배당락일이 발행일보다 이만큼 넘게 뒤면 이름과 함께 경고 (야후 값이 틀렸을 수 있어요)
+US_DATE_MIN_US = 100        # 미국 종목이 이만큼 넘는데 실적 발표일이나 배당락일이 하나도 없으면 경고 (야후 칸 이름이 바뀐 날)
+
+
+def _ymd8(x):
+    """'YYYYMMDD' 로 적힌 진짜 날짜면 date, 아니면 None (어떤 값이 와도 예외 없음 · 아라비아 숫자 0-9 만)."""
+    if not isinstance(x, str) or not re.fullmatch(r"[0-9]{8}", x):
+        return None
+    try:
+        return dt.date(int(x[:4]), int(x[4:6]), int(x[6:8]))
+    except ValueError:
+        return None
+
+
+def _short(x, n=16):
+    """값을 표에 적을 짧은 글 (어떤 값이든)."""
+    try:
+        s = json.dumps(x, ensure_ascii=False)
+    except (TypeError, ValueError):
+        s = repr(x)
+    return s if len(s) <= n else s[:n] + "…"
+
+
+def issue_row_problems(r, base):
+    """disc.json issue 한 줄의 모양 문제 (실패) 목록 — 비면 괜찮아요. base = 목록의 날짜 (disc.json asOf). 어떤 JSON 값이 와도 예외 없이 답해요."""
+    if not isinstance(r, dict):
+        return [f"줄이 객체가 아님 {_short(r)}"]
+    p = []
+    miss = [k for k in ISSUE_KEYS if k not in r]
+    if miss:
+        p.append("칸 없음 " + ",".join(miss))
+    if not _rc_ok(r.get("rc"), base):
+        p.append(f"rc {_short(r.get('rc'))}")
+    d = _ymd8(r.get("d"))
+    if d is None:
+        p.append(f"d {_short(r.get('d'))}")
+    elif d > base or (base - d).days >= ISSUE_DAYS:
+        p.append(f"d {r['d']} 가 {ISSUE_DAYS}일 기간 밖 (asOf {base})")
+    for k in ("t", "nk"):
+        if not (isinstance(r.get(k), str) and r[k].strip()):
+            p.append(f"{k} {_short(r.get(k))}")
+    kind = r.get("kind")
+    if not (isinstance(kind, str) and kind in ISSUE_KINDS):
+        p.append(f"kind {_short(kind)}")
+    rights = kind == "rights"
+    if r.get("bd") is not None and _ymd8(r.get("bd")) is None:
+        p.append(f"bd {_short(r.get('bd'))}")
+    how = r.get("how")
+    if how is not None and not (rights and isinstance(how, str) and how in ISSUE_HOW):
+        p.append(f"how {_short(how)}" + ("" if rights else " (유상증자만)"))
+    n = r.get("n")
+    if n is not None and not (rights and _posint(n)):
+        p.append(f"n {_short(n)}" + ("" if rights else " (유상증자만)"))
+    pv = json_num(r.get("p"))
+    if r.get("p") is not None and (pv is None or pv <= 0):
+        p.append(f"p {_short(r.get('p'))}")
+    amt = json_num(r.get("amt"))
+    if r.get("amt") is not None and (rights or amt is None or amt <= 0):
+        p.append(f"amt {_short(r.get('amt'))}" + (" (사채만)" if rights else ""))
+    if not isinstance(r.get("cor"), bool):
+        p.append(f"cor {_short(r.get('cor'))}")
+    return p
+
+
+def _check_issue(rep, disc, by, base):
+    name = "주요사항 공시 (issue · 유상증자 · CB · BW)"
+    th = (f"줄마다 {'·'.join(ISSUE_KEYS)} · rc 접수번호 · d YYYYMMDD 가 asOf 까지 {ISSUE_DAYS}일 안 · kind {'|'.join(ISSUE_KINDS)} · bd 빈 칸 "
+          f"또는 YYYYMMDD · how 빈 칸 또는 {'|'.join(ISSUE_HOW)} (유상증자만) · n 양의 정수 (유상증자만) · p 양수 · amt 양수 (사채만) · cor 참/거짓 · "
+          f"접수번호 한 번 · issueOk 참/거짓 (실패) — 칸이 없음(v19.6b 전 파일) · issueOk false · 0건 · 오늘 국내 목록 밖 종목 · p > "
+          f"{ISSUE_P_WARN:,.0f}% · 숫자 없는 줄 > {ISSUE_BLANK_WARN:g}% 는 경고")
+    if "issue" not in disc:
+        rep.add(name, True, "없음 — v19.6b 전 파일이에요 (DART 를 쓴 실행은 늘 써요)", th, warn=True)
+        return
+    rows, flag = disc.get("issue"), disc.get("issueOk")
+    probs, warns = [], []
+    if not isinstance(rows, list):
+        probs.append(f"목록이 아님 {_short(rows)}")
+        rows = []
+    if not isinstance(flag, bool):
+        probs.append(f"issueOk {_short(flag)}")
+    elif not flag:
+        warns.append("목록을 받지 못해 지난 발행본의 줄을 그대로 뒀어요 (issueOk false — 앱은 늦음 · 실패 줄)")
+    bad, good = [], []
+    for r in rows:
+        pr = issue_row_problems(r, base)
+        if pr:
+            bad.append(f"{_short(r.get('rc')) if isinstance(r, dict) else '?'} {'; '.join(pr)}")
+        else:
+            good.append(r)
+    if bad:
+        probs.append(f"모양이 틀린 줄 {len(bad):,}개 ({bad[0][:120]})")
+        rep.detail("주요사항 공시 (issue) 모양이 틀린 줄", bad[:50])
+    seen = collections.Counter(r["rc"] for r in good)
+    dup = sorted(rc for rc, c in seen.items() if c > 1)
+    if dup:
+        probs.append(f"같은 접수번호 {len(dup)}개 ({', '.join(dup[:3])})")
+    gone = sorted({r["t"] for r in good if (by.get(r["t"]) or {}).get("cls") != "kr"})
+    if gone:
+        warns.append(f"오늘 국내 목록에 없는 종목 {len(gone)}곳 ({', '.join(gone[:5])})")
+    big = [f"{r['nk']} {r['p']:,.2f}%" for r in good if r.get("p") is not None and r["p"] > ISSUE_P_WARN]
+    if big:
+        warns.append(f"p 가 {ISSUE_P_WARN:,.0f}% 넘는 줄 {len(big)}개 ({', '.join(big[:3])} — 공시를 확인해요)")
+    blank = sum(1 for r in good if r.get("n") is None and r.get("p") is None and r.get("amt") is None)
+    if good and 100.0 * blank / len(good) > ISSUE_BLANK_WARN:
+        warns.append(f"숫자가 하나도 없는 줄 {blank:,} / {len(good):,} ({100.0 * blank / len(good):.1f}% — 상세를 다 읽지 못했어요 · 앱은 '숫자를 못 "
+                     "읽은' 줄)")
+    if not rows and flag is True:
+        warns.append("0건 — 90일 동안 한 건도 없는 건 드물어요 (발행은 막지 않아요 · 목록 읽기를 확인해요)")
+    kinds = collections.Counter(r["kind"] for r in good)
+    val = (" · ".join(f"{ko} {kinds[k]:,}" for k, ko in zip(ISSUE_KINDS, ("유상증자", "CB", "BW"))) + f" (정정 {sum(1 for r in good if r['cor']):,} · 숫자 없는 줄 {blank:,})"
+           + (" · " + " · ".join(probs) if probs else "") + (" · " + " · ".join(warns) if warns else ""))
+    rep.add(name, not probs, val[:300], th, warn=bool(warns))
+
+
+def _check_roles(rep, disc):
+    name = "임원 · 주요주주 역할 (insider role)"
+    th = (f"role 은 {' | '.join(INSIDER_ROLES)} | null (실패) — role 칸이 없는 줄(v19.6b 전) · 직위(pos)가 '-' 인 줄은 경고 "
+          "(DART 의 '-' 는 빈 칸이에요)")
+    ins = disc.get("insider")
+    if not isinstance(ins, list):
+        rep.add(name, False, f"insider 가 목록이 아님 {_short(ins)}", th)
+        return
+    bad, nokey, dash, cnt = [], 0, 0, collections.Counter()
+    for r in ins:
+        if not isinstance(r, dict):
+            bad.append(f"객체가 아닌 줄 {_short(r)}")
+            continue
+        if "role" not in r:
+            nokey += 1
+        elif r["role"] is None or (isinstance(r["role"], str) and r["role"] in INSIDER_ROLES):
+            cnt[r["role"]] += 1
+        else:
+            bad.append(f"{_short(r.get('rc'))} role {_short(r['role'])}")
+        if isinstance(r.get("pos"), str) and r["pos"].strip() in POS_DASHES:
+            dash += 1
+    warns = ([f"role 칸이 없는 줄 {nokey:,} (v19.6b 전 줄)"] if nokey else []) + ([f"직위가 '-' 인 줄 {dash:,}"] if dash else [])
+    if bad:
+        rep.detail("임원 · 주요주주 역할 (insider role) 틀린 줄", bad[:50])
+    rep.add(name, not bad, (f"틀린 줄 {len(bad):,} ({bad[0][:80]}) · " if bad else "")
+            + f"임원 {cnt['임원']:,} · 주요주주 {cnt['주요주주']:,} · 없음 {cnt[None]:,} / {len(ins):,}줄" + (" · " + " · ".join(warns) if warns else ""),
+            th, warn=bool(warns))
+
+
+def _check_us_dates(rep, data, base):
+    name = "미국 일정 (ed 실적 발표일 · xd 배당락일)"
+    th = (f"미국 종목만 · 빈 칸 또는 YYYY-MM-DD 진짜 날짜 (실패) — 둘 다 하나도 없음(v19.6b 전 파일 · 미국 {US_DATE_MIN_US}종목 넘을 때) · "
+          f"발행일보다 {US_DATE_FAR_DAYS}일 넘게 뒤는 경고")
+    stocks = data.get("stocks")
+    stocks = [s for s in stocks if isinstance(s, dict)] if isinstance(stocks, list) else []
+    bad, far, n = [], [], collections.Counter()
+    for s in stocks:
+        for k in ("ed", "xd"):
+            v = s.get(k)
+            if v is None or v == "":
+                continue                       # 빈 칸 (모름)
+            t = s.get("t") if isinstance(s.get("t"), str) else _short(s.get("t"))
+            if s.get("cls") != "us":
+                bad.append(f"{t} {k} {_short(v)} (미국 종목이 아님)")
+                continue
+            d = _iso_day(v)
+            if d is None:
+                bad.append(f"{t} {k} {_short(v)}")
+                continue
+            n[k] += 1
+            if (d - base).days > US_DATE_FAR_DAYS:
+                far.append(f"{t} {k} {v}")
+    us = sum(1 for s in stocks if s.get("cls") == "us")
+    warns = []
+    if us > US_DATE_MIN_US and not (n["ed"] or n["xd"]):
+        warns.append("둘 다 하나도 없음 (v19.6b 전 파일이거나 야후 칸 이름이 바뀌었어요)")
+    else:
+        warns += [f"{'실적 발표일' if k == 'ed' else '배당락일'}이 하나도 없음" for k in ("ed", "xd") if us > US_DATE_MIN_US and not n[k]]
+    if far:
+        warns.append(f"{US_DATE_FAR_DAYS}일 넘게 뒤 {len(far)}개 ({', '.join(far[:3])})")
+    if bad:
+        rep.detail("미국 일정 (ed · xd) 틀린 값", bad[:50])
+    rep.add(name, not bad, (f"틀린 값 {len(bad):,} ({bad[0][:60]}) · " if bad else "")
+            + f"실적 발표일 {n['ed']:,} · 배당락일 {n['xd']:,} / 미국 {us:,}종목" + (" · " + " · ".join(warns) if warns else ""),
+            th, warn=bool(warns))
+
+
+def check_v196b(rep, data, disc, by, today):
+    """v19.6b (Part B.1): 세 줄 — 주요사항 공시 (issue) · 임원 · 주요주주 역할 (insider role) · 미국 일정 (ed · xd)."""
+    disc = disc if isinstance(disc, dict) else {}
+    data = data if isinstance(data, dict) else {}
+    by = by if isinstance(by, dict) else {}
+    for name, fn, args in (("주요사항 공시 (issue · 유상증자 · CB · BW)", _check_issue, (disc, by, _iso_day(disc.get("asOf")) or today)),
+                           ("임원 · 주요주주 역할 (insider role)", _check_roles, (disc,)),
+                           ("미국 일정 (ed 실적 발표일 · xd 배당락일)", _check_us_dates, (data, _iso_day(data.get("asOf")) or today))):
+        try:
+            fn(rep, *args)
+        except Exception as e:             # 검사 코드의 잘못 — 표는 나오고 이 줄은 실패예요 (확인하지 못한 것을 통과라고 하지 않아요)
+            rep.add(name, False, f"검사가 오류로 멈췄어요: {type(e).__name__}: {str(e)[:120]}", "오류 없이 끝나야 함")
 
 
 def check_v1751(rep, cur, kr, us, by, comps, px, today, hilo):
