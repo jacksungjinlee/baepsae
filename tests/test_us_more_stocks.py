@@ -410,14 +410,16 @@ def test_fetch_us_checks_foreign_numbers_and_names_missing_extras(tmp_path, monk
 
 def test_a_crashed_foreign_check_blanks_every_checkable_number_loudly(tmp_path, monkeypatch):
     """리뷰 S2(c): 외국 회사 검사가 멈추면 맞춰 보지 못한 숫자를 내보내지 않아요 — 외국 회사(fcur 없음)의 PER · PBR · 배당수익률을 모두 비우고
-    이유 '검사가 멈춤' 과 함께 크게 남겨요. 관문은 그 기록을 받되 경고해요 (리뷰 S1: 그 칸엔 이유 줄이 없어 앱이 '자료가 없어요')."""
+    이유 '검사가 멈춤' 과 함께 크게 남겨요. 관문은 그 기록을 받되 경고해요 (Jack, 2026-11-15 Q10: 그 칸엔 표시 stopped — 앱이 '오늘은 이 숫자를
+    확인하지 못해서 비워 두었어요.' 를 붙여요, 예전의 '자료가 없어요' 대신)."""
     def boom(*a, **k):
         raise RuntimeError("시험")
     monkeypatch.setattr(F, "us_foreign_check", boom)
     us, meta, lines = _fetch(tmp_path, monkeypatch)
     by = {r["t"]: r for r in us}
     for t in ("SHEL", "BP"):
-        assert not any(k in by[t] for k in ("per", "pbr", "dy", "fgnCut")), by[t]                  # 멈춘 날은 '–' 만 (이유 줄 없음)
+        assert not any(k in by[t] for k in ("per", "pbr", "dy")), by[t]                            # 멈춘 날은 '–' 와 그날의 줄 (Q10)
+        assert by[t]["fgnCut"] == {"per": "stopped", "pbr": "stopped", "dy": "stopped"}, by[t]
     assert by["AAPL"]["pbr"] == 1.43 and by["BTI"]["fcur"] == "GBP"
     assert meta["usForeign"]["checked"] == ["BP", "SHEL"]
     assert sorted(x[:2] for x in meta["usForeign"]["cut"]) == [[t, f] for t in ("BP", "SHEL") for f in ("dy", "pbr", "per")]
@@ -443,12 +445,13 @@ def test_a_crash_mid_loop_keeps_what_was_already_checked(tmp_path, monkeypatch):
     us, meta, lines = _fetch(tmp_path, monkeypatch)
     by = {r["t"]: r for r in us}
     assert by["BP"]["fgnCut"] == {"pbr": "mismatch", "per": "mismatch"} and by["BP"]["dy"] == 4.55
-    assert not any(k in by["SHEL"] for k in ("per", "pbr", "dy", "fgnCut")), by["SHEL"]
+    assert not any(k in by["SHEL"] for k in ("per", "pbr", "dy")), by["SHEL"]
+    assert by["SHEL"]["fgnCut"] == {"per": "stopped", "pbr": "stopped", "dy": "stopped"}, by["SHEL"]   # Q10: 그날의 줄
     cut = meta["usForeign"]["cut"]
     assert [x[:2] for x in cut] == [["BP", "pbr"], ["BP", "per"], ["SHEL", "per"], ["SHEL", "pbr"], ["SHEL", "dy"]], cut
     assert cut[0][2].startswith("주가 ÷ 주당 장부가") and all(x[2] == "검사가 멈춤 (ValueError)" for x in cut[2:])
     assert meta["usForeign"]["checked"] == ["BP", "SHEL"]
-    assert any("끝까지 본 1곳의 비운 칸 2칸은 그대로 · 나머지 3칸을 맞춰 보지 않고 비웠어요 (이유 줄 없음): SHEL per, SHEL pbr, SHEL dy" in x
+    assert any("끝까지 본 1곳의 비운 칸 2칸은 그대로 · 나머지 3칸을 맞춰 보지 않고 비웠어요 (줄: 오늘은 확인하지 못함 · 표시 stopped): SHEL per, SHEL pbr, SHEL dy" in x
                for x in lines), lines
     rep = V.Report()
     V.check_us_foreign(rep, {"usForeign": meta["usForeign"]}, us, "publish")
@@ -457,14 +460,14 @@ def test_a_crash_mid_loop_keeps_what_was_already_checked(tmp_path, monkeypatch):
 
 
 def test_the_crash_path_clears_a_stale_mark(tmp_path, monkeypatch):
-    """리뷰 N1 (살아남은 변이): 멈춘 검사가 남긴 표시는 지워요 — 끝까지 보지 못한 종목엔 이유 줄 표시가 없어야 해요."""
+    """리뷰 N1 (살아남은 변이): 멈춘 검사가 남긴 표시는 지워요 — 끝까지 보지 못한 종목엔 그날의 표시 stopped 만 남아요 (Jack, 2026-11-15 Q10)."""
     def boom(out, *a, done=None, **k):
         next(r for r in out if r["t"] == "SHEL")["fgnCut"] = {"pbr": "mismatch"}
         raise RuntimeError("시험")
     monkeypatch.setattr(F, "us_foreign_check", boom)
     us, meta, _lines = _fetch(tmp_path, monkeypatch)
     by = {r["t"]: r for r in us}
-    assert "fgnCut" not in by["SHEL"] and not any(k in by["SHEL"] for k in ("per", "pbr", "dy"))
+    assert by["SHEL"]["fgnCut"] == {"per": "stopped", "pbr": "stopped", "dy": "stopped"} and not any(k in by["SHEL"] for k in ("per", "pbr", "dy"))
     rep = V.Report()
     V.check_us_foreign(rep, {"usForeign": meta["usForeign"]}, us, "publish")
     assert row(rep, FOREIGN)[3] == "WARN", rep.table()

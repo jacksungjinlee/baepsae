@@ -10600,6 +10600,114 @@ def scene_us_fgn(R, files, width):
     srv.shutdown()
 
 
+# ── Jack, 2026-11-15 (Q8 · Q10): 외국 회사 숫자의 다른 두 줄 — 회사 숫자로 맞춰 볼 수 없어 비운 PER · PBR (fgnCut "nocompare-own", co.fgnNoCmp) ·
+# 검사가 멈춘 날 비운 숫자 (fgnCut "stopped", co.fgnStopped). 시험 데이터의 CVX · COP · BAC · XOM 을 본떠 더해요 (fgn_files 와 같은 방법).
+FGN_LINES_ADD = {"ALKS": ("CVX", "Alkermes plc", {"pbr": "nocompare-own"}, None),
+                 "TTE": ("COP", "TotalEnergies SE", {"per": "stopped", "pbr": "stopped", "dy": "stopped"}, None),
+                 "BSP": ("BAC", "Bending Spoons S.p.A.", {"per": "mismatch", "pbr": "nocompare-own"}, None),
+                 "TSMX": ("CVX", "Taiwan Semiconductor Test Co", {"pbr": "stopped", "dy": "stopped"}, "TWD")}   # 통화 회사: 표시가 있어도 통화 줄 하나만
+
+
+def fgn_lines_files(files):
+    f = clone(files)
+    st = f["data.json"]["stocks"]
+    assert not {s["t"] for s in st} & set(FGN_LINES_ADD), "시험 데이터에 이미 그 티커가 있어요"
+    for t, (src, name, cut, fcur) in FGN_LINES_ADD.items():
+        s = dict(next(x for x in st if x["t"] == src), t=t, nk=name, ne=name)
+        assert s["cls"] == "us" and s.get("per") and s.get("pbr") and s.get("dy"), s
+        for k in list(cut) + (["vz"] if "pbr" in cut else []) + (["per", "pbr", "dy", "vz"] if fcur else []):
+            s.pop(k, None)
+        s["fgnCut"] = dict(cut)
+        if fcur:
+            s["fcur"] = fcur
+        st.append(s)
+    return f
+
+
+def scene_us_fgn_lines(R, files, width, dark=False):
+    """Jack, 2026-11-15: ALKS (PBR 을 회사 숫자로 맞춰 볼 수 없음) — 가치 칸 'PBR –' 밑 · 가치 탭 · 가치 자세히에 '회사 전체 숫자와 비교할 수 없어서 …'
+    한 번씩, '맞지 않아서' 줄은 없어요. TTE (검사가 멈춘 날) — 가치 · 배당 칸 '–' 밑 · 가치 탭 · 배당 탭에 '오늘은 이 숫자를 확인하지 못해서 …',
+    '자료가 없어요' 는 없어요. BSP (PER 맞지 않음 · PBR 맞춰 볼 수 없음) — 가치 탭에 두 줄, 각자 자기 칸 (per · pbr). TSMX (통화 회사) — 통화 줄
+    하나만. 모두 12px 이상 · 가로 스크롤 없음 · 뱁이 없음 · 밝은 화면과 어두운 화면."""
+    S = f"외국 회사 숫자의 두 줄 {width}{' 어두운' if dark else ''}"
+    wide = width >= 1024
+    site = build_site(fgn_lines_files(files))
+    screen = pc_device(width) if wide else {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2}
+    srv, ctx, page, base = R.open(site, width, path="/app.html?dev=1#home", device={**screen, "color_scheme": "dark" if dark else "light"})
+    wait_ready(page)
+    lines = lambda sel="": page.locator(f'{sel} [data-ui-v2="fgn-cut"]'.strip())   # noqa: E731
+    texts = lambda sel="": [x.strip() for x in lines(sel).all_inner_texts()]        # noqa: E731
+
+    def common(where):
+        for i in range(lines().count()):
+            assert lines().nth(i).evaluate("(e) => parseFloat(getComputedStyle(e).fontSize)") >= 12
+            assert lines().nth(i).is_visible()
+        floor_ok(page, where)
+        no_hscroll(page, width)
+        no_mascot(page)
+        R.collect(page)
+
+    def tab(t, ctab, sel):
+        co_hash(page, f"#stocks/{t}" + (f"/{ctab}" if ctab else ""))
+        loc = page.locator(f'[data-ui-v2="{sel}"]')
+        loc.wait_for(state="visible")
+        page.wait_for_timeout(150)
+        return loc
+
+    def alks():
+        tiles = tab("ALKS", None, "co-tiles")
+        assert texts('[data-ui-v2="co-tiles"]') == [CO["fgnNoCmp"]], texts()
+        assert lines('[data-ui-v2="co-tiles"]').get_attribute("data-fields") == "pbr"
+        vt = tiles.locator('[data-ui-v2="co-tile"][data-topic="value"]')
+        assert vt.get_attribute("data-rule") == "fgn" and vt.locator('[data-ui-v2="tile-number"]').inner_text().strip() == "PBR –"
+        assert CO["fgnCut"] not in page.locator("body").inner_text() and CO["tiles"]["na"] not in tiles.inner_text()
+        common("ALKS 요약")
+        tab("ALKS", "value", "co-value")
+        assert texts('[data-ui-v2="co-value"]') == [CO["fgnNoCmp"]], texts()
+        common("ALKS 가치 탭")
+        tab("ALKS", "value-more", "co-ratios")
+        assert texts('[data-ui-v2="co-ratios"]') == [CO["fgnNoCmp"]], texts()
+        common("ALKS 가치 자세히")
+        if R.shots:
+            tab("ALKS", None, "co-tiles").scroll_into_view_if_needed()
+            page.screenshot(path=os.path.join(R.shots, f"fgn-lines-ALKS-{width}{'-dark' if dark else ''}.png"))
+    R.check(page, S, "ALKS: 맞춰 볼 수 없어 비운 PBR 밑에 '회사 전체 숫자와 비교할 수 없어서 …' (요약 · 가치 탭 · 가치 자세히) · '맞지 않아서' 줄 없음", alks)
+
+    def tte():
+        tiles = tab("TTE", None, "co-tiles")
+        assert texts('[data-ui-v2="co-tiles"]') == [CO["fgnStopped"]] and lines('[data-ui-v2="co-tiles"]').get_attribute("data-fields") == "pbr,dy"
+        held = tiles.locator('[data-ui-v2="co-tile"][data-rule="fgn"]').evaluate_all("(els) => els.map((e) => e.dataset.topic)")
+        assert sorted(held) == ["div", "value"], held
+        assert CO["tiles"]["na"] not in tiles.inner_text(), tiles.inner_text()
+        common("TTE 요약 (멈춘 날)")
+        tab("TTE", "value", "co-value")
+        assert texts('[data-ui-v2="co-value"]') == [CO["fgnStopped"]], texts()
+        common("TTE 가치 탭")
+        div = tab("TTE", "div", "co-div")
+        assert texts() == [CO["fgnStopped"]] and CO["tiles"]["na"] not in div.inner_text(), (texts(), div.inner_text())
+        common("TTE 배당 탭")
+        if R.shots:
+            tab("TTE", None, "co-tiles").scroll_into_view_if_needed()
+            page.screenshot(path=os.path.join(R.shots, f"fgn-lines-TTE-{width}{'-dark' if dark else ''}.png"))
+    R.check(page, S, "TTE (검사가 멈춘 날): 가치 · 배당 칸 '–' 와 '오늘은 이 숫자를 확인하지 못해서 …' · 가치 탭 · 배당 탭 · '자료가 없어요' 없음", tte)
+
+    def bsp():
+        tab("BSP", "value", "co-value")
+        assert texts('[data-ui-v2="co-value"]') == [CO["fgnCut"], CO["fgnNoCmp"]], texts()
+        assert [lines().nth(i).get_attribute("data-fields") for i in range(2)] == ["per", "pbr"]
+        common("BSP 가치 탭")
+    R.check(page, S, "BSP: 가치 탭에 두 줄 — PER 은 '맞지 않아서' · PBR 은 '비교할 수 없어서', 각자 자기 칸", bsp)
+
+    def tsmx():
+        for ctab, sel in ((None, "co-tiles"), ("value", "co-value"), ("div", "co-div")):
+            tab("TSMX", ctab, sel)
+            assert lines().count() == 0 and page.locator('[data-ui-v2="fcur"]').count() >= 1, ctab
+        common("TSMX")
+    R.check(page, S, "TSMX (통화 회사): 표시가 있어도 #114 의 통화 줄 하나만 — 외국 회사 줄은 없어요", tsmx)
+    ctx.close()
+    srv.shutdown()
+
+
 # ── v19.6a: 팔았어요 · 배당 받았어요 · 내 수익 · 기록 내려받기 (docs/tasks/v19.6-records-alerts-dark.md Part A, boards Records2 · Returns2) ──
 def v196a_files(files, fx_hist=True, splits=True):
     data = clone(files)
@@ -12519,6 +12627,8 @@ def main():
                    lambda: scene_us_fcur(R, files, 390, False), lambda: scene_us_fcur(R, files, 390, True),      # 2026-11-12 미국 재무제표 통화
                    lambda: scene_us_fcur(R, files, 1280, True),
                    lambda: scene_us_fgn(R, files, 390), lambda: scene_us_fgn(R, files, 1280),           # 2026-11-14 외국 회사 숫자 맞춤
+                   lambda: scene_us_fgn_lines(R, files, 390), lambda: scene_us_fgn_lines(R, files, 1280),
+                   lambda: scene_us_fgn_lines(R, files, 390, True), lambda: scene_us_fgn_lines(R, files, 1280, True),   # 2026-11-15 두 줄 (Q8 · Q10)
                    lambda: scene_dark(R, files, 390), lambda: scene_dark(R, files, 1280),                 # v19.6d 어두운 화면
                    lambda: scene_v196a(R, files, 390), lambda: scene_v196a(R, files, 320),
                    lambda: scene_v196a(R, files, 1280),                                                     # v19.6a 팔았어요 · 배당 받았어요 · 내 수익

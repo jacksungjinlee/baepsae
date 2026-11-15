@@ -18,7 +18,7 @@ import { COLOR, SIZE, WEIGHT } from "../ui/tokens.js";
 import { C, fill, mdText, todayKst } from "./format.js";
 import { Note, tx } from "./ui.jsx";
 import { EPS_FIX_DATE, fixNotesHidden, epsNoticeShown, stmtCurFor, epsLineKind, unitHeldFor, noStmtFor, pxBadFullFor, pxBadPartFor, pxBadHidesFor } from "./fix.js";
-import { fcurOf, fcurText, pbrZeroOf, fgnCutOf } from "./fcur.js";
+import { fcurOf, fcurText, pbrZeroOf, fgnCutOf, FGN_LINE_KEYS } from "./fcur.js";
 import { isPreferred, noTradeOf, d1MissingOf } from "./engine.js";
 
 // The line with its date ("11월 10일"), or null when a word or the date is missing (never a line with an empty slot).
@@ -150,9 +150,17 @@ export function PbrZeroNote({ s, style }) {
 // company's PER, PBR or 배당수익률 "–" when the pipeline blanked it for not matching the company's totals (data.json fgnCut,
 // src/v2/fcur.js fgnCutOf). fields: the blanked numbers this section would show (default all three); the line only when one of
 // them is blanked this way. data-fields: the ones it covers (tests).
+// The line follows each number's kind (fcur.js FGN_LINE_KEYS): "nocompare-own" (nothing to compare it with; the pipeline's switch
+// validate_data.US_FGN_NOCMP is "own") takes co.fgnNoCmp (Jack, 2026-11-15), "stopped" (the check stopped that day) co.fgnStopped
+// (Jack, 2026-11-15), every other kind the approved co.fgnCut. One line per kind present in the section, each only when its copy exists.
 export function FgnCutNote({ s, fields, style }) {
   const cut = fgnCutOf(s).filter((k) => !fields || fields.includes(k));
-  return cut.length && C.co.fgnCut ? <Note data-ui-v2="fgn-cut" data-fields={cut.join(",")} style={style}>{C.co.fgnCut}</Note> : null;
+  if (!cut.length) return null;
+  const notes = FGN_LINE_KEYS.map(([key, has]) => [key, cut.filter((k) => has(s.fgnCut[k]))])
+    .filter(([key, ks]) => ks.length && C.co[key])
+    .map(([key, ks]) => <Note key={key} data-ui-v2="fgn-cut" data-kind={key === "fgnCut" ? undefined : key === "fgnNoCmp" ? "own" : "stopped"}
+      data-fields={ks.join(",")} style={style}>{C.co[key]}</Note>);
+  return notes.length ? <>{notes}</> : null;
 }
 
 // ---------------- 2026-11-14 (Jack: design chat 2026-11-08 lines, relayed 2026-11-14) ----------------
