@@ -768,10 +768,11 @@ ticker, except `QVCGA`.
 | S&P 500 | `NWSA` (Class A) / `NWS` (Class B) | same | yes | none |
 | S&P 500 | `LEN` (Lennar A), `MKC` (McCormick non-voting) | same | yes | none — their other class (`LEN-B`, `MKC-V`) is in neither source |
 | Neither source | `BRK-A`, `BF-A` | same | no | not added: in neither source (not missing for a ticker-form reason) |
+| Hand list (`EXTRA_US`) | `BRK-B` | same | yes | none |
 | Nasdaq, top 400 | `GOOGL` (5), `GOOG` (9), `FWONK` (159, Liberty Formula One C), `FOXA` (164), `FCNCA` (165, First Citizens A), `FOX` (241), `NWSA` (288), `LLYVK` (372, Liberty Live C) | same | yes | none |
 | Nasdaq, top 400 | `GOOGM` (320), `GOOGN` (321): depositary shares of Alphabet preferred; `METAM` (247): Meta mandatory convertible preferred | same | no (preferred rule; METAM also under 60 days) | none: not common-share classes |
 | Nasdaq, below 400 | `NWS` (432) | same | yes, through the S&P 500 list | none |
-| Nasdaq, below 400 | `Z` (437) / `ZG` (905) Zillow; `RUSHA` (524) / `RUSHB` (871) Rush; `BELFB` (653) / `BELFA` (1542) Bel Fuse; `BATRK` (657) / `BATRA` (1295) Liberty Braves; `LLYVA` (674) Liberty Live A; `FWONA` (678) Liberty Formula One A; `CENTA` (745) / `CENT` (1343) Central Garden & Pet; `LBTYA` (785) / `LBTYK` (859) / `LBTYB` (2239) Liberty Global; `LILAK` (888) / `LILA` (1581) Liberty Latin America; `GLIBK` (1047) / `GLIBA` (2514) Liberty Capital; `SENEA` (1086) / `SENEB` (1855) Seneca Foods; `PSNY` (1200) Polestar ADR Class A; `DGICA` (1274) / `DGICB` (2266) Donegal; `KELYA` (1455) / `KELYB` (2611) Kelly Services; `QVCG` (1506) QVC Group; `METC` (1557) / `METCB` (2877) Ramaco; `RDI` (2944) / `RDIB` (3160) Reading International; `UONEK` (3422) / `UONE` (3637) Urban One | same | no | none: below the top-400 cut, not a ticker-form problem |
+| Nasdaq, below 400 | `Z` (437) / `ZG` (905) Zillow; `PAGP` (443) Plains GP Holdings Class A; `RUSHA` (524) / `RUSHB` (871) Rush; `BELFB` (653) / `BELFA` (1542) Bel Fuse; `BATRK` (657) / `BATRA` (1295) Liberty Braves; `LLYVA` (674) Liberty Live A; `FWONA` (678) Liberty Formula One A; `CENTA` (745) / `CENT` (1343) Central Garden & Pet; `LBTYA` (785) / `LBTYK` (859) / `LBTYB` (2239) Liberty Global; `LILAK` (888) / `LILA` (1581) Liberty Latin America; `GLIBK` (1047) / `GLIBA` (2514) Liberty Capital; `SENEA` (1086) / `SENEB` (1855) Seneca Foods; `PSNY` (1200) Polestar ADR Class A; `DGICA` (1274) / `DGICB` (2266) Donegal; `KELYA` (1455) / `KELYB` (2611) Kelly Services; `QVCG` (1506) QVC Group; `METC` (1557) / `METCB` (2877) Ramaco; `RDI` (2944) / `RDIB` (3160) Reading International; `UONEK` (3422) / `UONE` (3637) Urban One | same | no | none: below the top-400 cut, not a ticker-form problem |
 | Nasdaq, below 400 | `QVCGA` (3655) QVC Group Series A | none: Yahoo has no price | no | none: stale entry in Naver's list |
 
 Not counted as share classes (same company, different security): preferreds and depositary preferreds (`STRC`, `SATA`, `CHSCN`,
@@ -781,7 +782,8 @@ Aerospace, a spun-off company).
 Summary, for the 14 share-class tickers the run reads (S&P 500, Nasdaq top 400, `EXTRA_US`): already fine 10 (`GOOGL`, `GOOG`,
 `FOXA`, `FOX`, `NWSA`, `NWS`, `FWONK`, `LLYVK`, `FCNCA`, `BRK-B`); dot deleted 2, both mapped (`BRKB` → `BRK-B`, already in
 through `EXTRA_US`; `BFB` → `BF-B`); added 1 (`BF-B`); unmappable 0; 2 preferred depositary shares left out as before (`GOOGM`,
-`GOOGN`). Before → after on the real sources: the tickers asked for went from 810 to 809 (`BRKB`, `BFB` out; `BF-B` in; `BRK-B`
+`GOOGN`). Below the Nasdaq cut: 36 class tickers (with `NWS`, in through the S&P 500 list, and `QVCGA`, stale), all on Yahoo's
+own tickers. Before → after on the real sources: the tickers asked for went from 810 to 809 (`BRKB`, `BFB` out; `BF-B` in; `BRK-B`
 already there), the S&P 500 set used by #133 now holds `BRK-B` and `BF-B` (overlap with the priced list 500 → 502), and the
 published US list goes from 801 to 802 companies.
 
@@ -812,15 +814,24 @@ this rule added (`BF-B`) that are not in the day's list → reason · `read` whe
   read, not in today's S&P 500 list, its list name blank or not matching, too little price history …). Named: warn. Missing with no
   reason: the publish fails; the site checks (deploy, watchdog) only warn. A file without `usListSym` warns on a publish and is
   skipped by the site checks.
-- "미국 목록 출처 티커 (주식 종류 · 점이 지워진 꼴)" — fails if a joined form (`BRKB`, `BFB`) is a published ticker **and** is in
-  that day's `spTickers` (it came unmapped from the S&P 500 list: the rule broke), if the pipeline mapped a joined form differently
-  from the gate's own copy of the table (`US_CLASS_JOINED_SET`), or if the record has a bad shape. The same letters from another
-  source (a real Nasdaq company that one day gets the ticker `BFB`) are only named, so a real ticker can never block every publish;
-  a file without the record names them with a warning (the source can't be told). Warns when a source ticker could not be mapped
-  (`unmapped`), when an S&P 500 ticker got no price at all (`noPx`: what a new dotted class looks like), when processing an S&P 500
-  ticker stopped on an error (`spErr`), or when the run left no ticker record. The other S&P 500 companies missing from the day's
-  list are only named (`spGone`; e.g. VYLR, Vylor, listed 2026-10-01: 32 days of prices, under the 60 needed; it joins by itself in
-  late December).
+- "미국 목록 출처 티커 (주식 종류 · 점이 지워진 꼴)":
+  - **Warns** when a joined form (`BRKB`, `BFB`) is still in that day's S&P 500 tickers (`spTickers`), published or not: the
+    mapping row was lost or the rule broke. Yahoo has no such ticker, so that form normally drops for lack of a price; the "들어온 종목"
+    row then gives BF-B's reason as "S&P 500 목록에 점이 지워진 꼴 BFB 로 있는데 BF-B 로 바뀌지 않음 (바꾸기 확인 필요)" — a mapping
+    problem, not "S&P dropped Brown-Forman" — and `noPx` names `BFB` too. Fix the table (see the recipe below).
+  - **Fails** only if such a form is also a published ticker. Since Yahoo has no `BFB`/`BRKB`, in practice this catches one case:
+    Yahoo answering the joined form with some other security, which would put the wrong company in the list. The same letters from
+    another source (a real Nasdaq company that one day gets the ticker `BFB`) are only named, so a real ticker can never block every
+    publish; a file without the record names them with a warning (the source can't be told).
+  - **Fails on a publish, warns on the site checks** (deploy, watchdog): a joined form mapped differently from the gate's own copy of
+    the table (`US_CLASS_JOINED_SET`), or a record with a bad shape (including `spGone` without a `spTickers` list, or `spGone` names
+    outside `spTickers`, which would switch the check above off). On the site checks these warn so that a later PR that adds a field
+    is not blocked by the older file that is still live; the publish gate still fails them. (These rows are new in #PR, so this is
+    not a loosening.)
+  - **Warns** when a source ticker could not be mapped (`unmapped`), when an S&P 500 ticker got no price at all (`noPx`: what a new
+    dotted class looks like), when processing an S&P 500 ticker stopped on an error (`spErr`), or when the run left no ticker record.
+  - The other S&P 500 companies missing from the day's list are only named (`spGone`; e.g. VYLR, Vylor, listed 2026-10-01: 32 days
+    of prices, under the 60 needed; it joins by itself in late December).
 
 **When the gate warns "S&P 500 티커인데 야후 가격이 없음 N: XYZA"** (run log "!! S&P 500 목록 종목인데 야후가 가격을 하나도 주지 않은
 티커"): S&P has probably added a share class with a dot. (1) Find the company in Wikipedia's "List of S&P 500 companies" and read
@@ -831,7 +842,8 @@ If both agree, one small PR adds exactly these lines:
 3. only if the stock is new to our list (not already in `EXTRA_US`): `"XYZ-A"` in `fetch_data.py` `US_CLASS_ADDED` and in
    `validate_data.py` `US_CLASS_SET` — that puts it under the "들어온 종목" gate row;
 4. `tests/test_us_share_class.py` `SP_ROWS`: `("XYZA", "<the S&P list name>")`. Nothing else in the tests changes (they build their
-   expectations from the tables; `test_every_table_row_has_a_fixture_row` says what is missing if step 4 is forgotten).
+   expectations from the tables). If step 4 is forgotten, `test_every_table_row_has_a_fixture_row` fails and names the missing row
+   (for a stock added in step 3, a few more tests fail after it for the same reason).
 
 These are added checks, so they need no separate yes (CLAUDE.md, 2026-11-07); list them under 안전 규칙 변경. Its splits since 2016
 are read by the next run. If the ticker is instead a real company Yahoo does not know yet (a new listing), nothing to do. **When it
@@ -840,7 +852,8 @@ warns "S&P 500 티커를 처리하다 오류"**: look at the run log around the 
 fix the source reading or extend `us_symbol`, with a test.
 
 **If S&P drops Brown-Forman from the index**, BF-B leaves the S&P 500 list, so it leaves our US list and the "들어온 종목" row
-warns every day ("오늘 S&P 500 목록에 없음"). Two ways to clear it, and both need Jack's yes first: remove `BF-B` from `US_CLASS_SET`
+warns every day ("오늘 S&P 500 목록에 없음 (지수에서 빠졌는지 확인)"; if instead it says "점이 지워진 꼴 BFB 로 있는데 … 바뀌지 않음",
+Brown-Forman is still in the index and the mapping is what broke). Two ways to clear it, and both need Jack's yes first: remove `BF-B` from `US_CLASS_SET`
 and `US_CLASS_ADDED` (that removes a check), or move it to `EXTRA_US` and the gate's `US_EXTRA_SET` to keep it in the list by hand
 (that changes the pinned list of 67 and its tests). Keep the `US_CLASS_JOINED` line either way: it is harmless when the S&P list no
 longer holds `BFB`.

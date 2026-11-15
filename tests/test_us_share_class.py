@@ -49,7 +49,8 @@ NQ_ROWS = [("GOOGL", "Alphabet Inc. Class A"), ("GOOG", "Alphabet Inc. Class C")
            ("FOXA", "Fox Corporation Class A"), ("FCNCA", "First Citizens BancShares  Inc."), ("FOX", "Fox Corporation Class B"),
            ("NWSA", "News Corporation Class A"), ("LLYVK", "Liberty Live Holdings Inc Series C")]
 # 400 밖 (읽지 않아요 · 야후 꼴 그대로 — 티커 모양 문제가 아니라 400 경계 때문이에요)
-NQ_OUTSIDE = [("NWS", "News Corporation Class B"), ("Z", "Zillow Group  Inc. Class C"), ("RUSHA", "Rush Enterprises  Inc. Class A"),
+NQ_OUTSIDE = [("NWS", "News Corporation Class B"), ("Z", "Zillow Group  Inc. Class C"), ("PAGP", "Plains GP Holdings Limited Partner Interests Units Class A"),
+              ("RUSHA", "Rush Enterprises  Inc. Class A"),
               ("BELFB", "Bel Fuse Inc. Class B"), ("BATRK", "Liberty Media Liberty Braves Ord Shs Series C"),
               ("LLYVA", "Liberty Live Holdings Inc Series A"), ("FWONA", "Liberty Media Formula One Ord Shs Series A"),
               ("CENTA", "Central Garden & Pet Co Class A"), ("LBTYA", "Liberty Global Ltd Class A"), ("LBTYK", "Liberty Global Ltd Class C"),
@@ -77,6 +78,7 @@ BRKB_INFO = {"shortName": "Berkshire Hathaway Inc. New", "longName": "Berkshire 
              "marketCap": 1259712413696, "averageVolume": 4446000, "financialCurrency": "USD", "currency": "USD", "dividendYield": 0.0,
              "country": "United States", "longBusinessSummary": "Berkshire Hathaway Inc. owns subsidiaries in insurance, freight rail and utilities."}
 NO_NAME = "의 회사인지 S&P 목록에 회사 이름이 없어 맞춰 보지 못함"
+LOST = "S&P 500 목록에 점이 지워진 꼴 BFB 로 있는데 BF-B 로 바뀌지 않음 (바꾸기 확인 필요 · RUNBOOK 'US share-class tickers')"
 SHAPE = "티커 모양이 아님 (영문 1~5자, 또는 그 뒤 점 · 빗금 · 띄어쓰기 · 대시와 종류 글자 1~2자)"
 
 
@@ -293,6 +295,9 @@ def test_us_list_sym_reasons():
     assert u["missing"]["BF-B"] == "S&P 500 목록을 읽지 못해 요청하지 않음" and u["spTickers"] is None
     assert F.us_list_sym({"mapped": [], "unmapped": []}, frozenset({"AAPL"}), True, {"AAPL"}, {"AAPL"}, {})["missing"]["BF-B"] == \
         "오늘 S&P 500 목록에 없음 (지수에서 빠졌는지 확인)"
+    # 리뷰 2차 1: 지워진 꼴이 그대로 S&P 목록에 있으면 '지수에서 빠짐'이 아니라 바꾸기 문제라고 적어요 (요청했지만 가격이 없어 빠진 BFB)
+    lost = F.us_list_sym({"mapped": [], "unmapped": []}, frozenset({"AAPL", "BFB"}), True, {"AAPL", "BFB"}, {"AAPL"}, {"BFB": F.US_NO_PX_WHY})
+    assert lost["missing"]["BF-B"] == LOST and lost["noPx"] == ["BFB"]
     for note in ("점이 지워진 주식 종류 표(BFB → BF-B)의 회사가 아님: 목록 이름 'Big Fun Bancorp'", f"점이 지워진 주식 종류 표(BFB → BF-B){NO_NAME}"):
         bad = {"mapped": [], "unmapped": [["S&P500", "BFB", note]]}
         assert F.us_list_sym(bad, frozenset({"AAPL"}), True, {"AAPL"}, {"AAPL"}, {})["missing"]["BF-B"] == \
@@ -467,6 +472,29 @@ def test_an_unknown_joined_class_ticker_is_named_not_dropped_silently(tmp_path, 
     assert "S&P 500 티커를 처리하다 오류 1: XYZB" in rows[ROW2][1]
 
 
+@pytest.mark.parametrize("yahoo_answers", [False, True])
+def test_a_lost_mapping_row_is_named_as_a_mapping_problem(tmp_path, monkeypatch, yahoo_answers):
+    """리뷰 2차 1: 파이프라인 표에서 BFB 줄을 잃으면 S&P 목록의 'BFB' 가 그대로 야후에 가요. 야후는 그 티커를 모르니 보통 가격이 없어 빠지고 —
+    BF-B 의 이유는 '지수에서 빠짐'이 아니라 '지워진 꼴로 있는데 바뀌지 않음', 관문은 BFB 를 이름으로 경고해요. 야후가 그 꼴에 다른 증권으로 답해
+    엉뚱한 회사가 실리면 실패해요."""
+    monkeypatch.delitem(F.US_CLASS_JOINED, "BFB")
+    extra, short = ({"BFB": 12.0}, None) if yahoo_answers else ({"BFB": 1.0}, {"BFB": 0})
+    us, meta, lines, asked_dl = _fetch(tmp_path, monkeypatch, extra_px=extra, short=short)
+    ts = {r["t"] for r in us}
+    u = meta["usListSym"]
+    assert "BFB" in asked_dl and "BF-B" not in ts and "BFB" in u["spTickers"]
+    assert u["missing"] == {"BF-B": LOST}
+    assert any(x.startswith("  !! 주식 종류 티커를 바꿔 들어온 미국 종목(") and LOST in x for x in lines)
+    rows, _rep = gate(meta, us)
+    assert rows[ROW1][3] == "WARN" and f"BF-B ({LOST})" in rows[ROW1][1] and "지수에서 빠졌는지" not in rows[ROW1][1]
+    assert "S&P 500 목록에 점이 지워진 꼴이 바뀌지 않고 그대로 있음 (바꾸기 확인 필요): BFB" in rows[ROW2][1]
+    if yahoo_answers:                                                            # 엉뚱한 증권이 'BFB' 로 실렸어요: 실패 (발행 · 사이트 점검 모두)
+        assert "BFB" in ts and rows[ROW2][3] == "FAIL" and "S&P 500 목록의 점이 지워진 꼴이 바뀌지 않고 목록에 있음: BFB" in rows[ROW2][1]
+        assert gate(meta, us, "live")[0][ROW2][3] == "FAIL"
+    else:                                                                        # 가격 없이 빠졌어요: 경고 (이름 · noPx)
+        assert "BFB" not in ts and u["noPx"] == ["BFB"] and rows[ROW2][3] == "WARN"
+
+
 def test_without_the_s_and_p_list_bf_b_is_named_and_brk_b_stays_through_extra_us(tmp_path, monkeypatch):
     us, meta, lines, _dl = _fetch(tmp_path, monkeypatch, fdr=FakeFDR(fail={"S&P500"}))
     ts = {r["t"] for r in us}
@@ -524,6 +552,8 @@ def rec(**kw):
     r = {"read": True, "mapped": [["S&P500", k, v] for k, v in V.US_CLASS_JOINED_SET.items()], "unmapped": [],
          "spTickers": sorted({"AAPL", "GOOG", "GOOGL"} | set(V.US_CLASS_JOINED_SET.values())), "spGone": {}, "noPx": [], "spErr": [], "missing": {}}
     r.update(kw)
+    if "spTickers" not in kw and isinstance(r["spGone"], dict):                 # 파이프라인처럼: 빠진 S&P 종목은 그날 S&P 목록 안에 있어요
+        r["spTickers"] = sorted(set(r["spTickers"]) | set(r["spGone"]))
     return r
 
 
@@ -533,8 +563,8 @@ def run(data, us, mode="publish"):
     return {r[0]: r for r in rep.rows}, rep
 
 
-TH2 = ("S&P 500 목록의 점이 지워진 꼴이 바뀌지 않고 목록에 실리지 않음 · 바꾼 꼴이 관문 표와 같음 (바꾸지 못한 티커 · 가격 없는 · 오류 난 "
-       "S&P 500 티커는 경고)")
+TH2 = ("S&P 500 목록의 점이 지워진 꼴이 바뀌지 않고 목록에 실리지 않음 · 바꾼 꼴이 관문 표와 같음 · 기록 모양 (사이트 점검에서는 표 · 모양은 경고) "
+       "(바꾸지 않은 지워진 꼴 · 바꾸지 못한 티커 · 가격 없는 · 오류 난 S&P 500 티커는 경고)")
 
 
 def test_gate_all_present_passes():
@@ -592,19 +622,47 @@ def test_gate_does_not_fail_a_same_letters_ticker_from_another_source(mode):
     assert rows[ROW2][3] == "WARN" and rows[ROW2][1].startswith("점이 지워진 꼴과 같은 티커가 목록에 있음 (출처 모름): BFB · 기록 없음")
 
 
-def test_gate_fails_a_mapping_that_differs_from_its_own_table():
-    rows, _ = run({"usListSym": rec(mapped=[["S&P500", "BRKB", "BRK-B"], ["S&P500", "BFB", "BFB-X"]])}, us_rows())
-    assert rows[ROW2][3] == "FAIL" and "관문 표와 다르게 바꿈: BFB → BFB-X (관문 표 BF-B)" in rows[ROW2][1]
+@pytest.mark.parametrize("mode, status", [("publish", "FAIL"), ("live", "WARN")])
+def test_gate_fails_a_mapping_that_differs_from_its_own_table(mode, status):
+    rows, _ = run({"usListSym": rec(mapped=[["S&P500", "BRKB", "BRK-B"], ["S&P500", "BFB", "BFB-X"]])}, us_rows(), mode)
+    assert rows[ROW2][3] == status and "관문 표와 다르게 바꿈: BFB → BFB-X (관문 표 BF-B)" in rows[ROW2][1]
 
 
+@pytest.mark.parametrize("mode", ["publish", "live"])
+def test_gate_warns_when_a_joined_form_is_left_in_the_s_and_p_list(mode):
+    """리뷰 2차 1: 그날 S&P 500 목록 티커(spTickers)에 지워진 꼴(BFB)이 그대로 있으면 — 실리지 않았어도 — 이름과 함께 경고해요 (바꾸기 표의 줄을
+    잃었거나 바꾸기가 고장). 실렸으면 실패 (위 시험)."""
+    rows, _ = run({"usListSym": rec(spTickers=sorted({"AAPL", "BFB", "BRK-B"}), spGone={"BFB": F.US_NO_PX_WHY}, noPx=["BFB"],
+                                    missing={"BF-B": "S&P 500 목록에 점이 지워진 꼴 BFB 로 있는데 BF-B 로 바뀌지 않음"})},
+                  us_rows(drop={"BF-B"}), mode)
+    assert rows[ROW2][3] == "WARN" and "S&P 500 목록에 점이 지워진 꼴이 바뀌지 않고 그대로 있음 (바꾸기 확인 필요): BFB" in rows[ROW2][1]
+    assert rows[ROW1][3] == "WARN" and "BF-B (S&P 500 목록에 점이 지워진 꼴 BFB 로 있는데 BF-B 로 바뀌지 않음)" in rows[ROW1][1]
+
+
+@pytest.mark.parametrize("mode, status", [("publish", "FAIL"), ("live", "WARN")])
 @pytest.mark.parametrize("field, value, what", [
     ("read", "yes", "read 가 참 · 거짓이 아님"), ("mapped", [["S&P500", "BRKB"]], "mapped 모양"), ("unmapped", {"x": 1}, "unmapped 모양"),
     ("missing", [], "missing 모양"), ("spTickers", "BFB", "spTickers 모양"), ("spGone", ["VYLR"], "spGone 모양"), ("noPx", "XYZA", "noPx 모양"),
     ("noPx", ["XYZA"], "noPx 가 spGone 안에 있지 않음"), ("noPx", None, "noPx 가 spGone 안에 있지 않음"), ("spErr", "XYZB", "spErr 모양"),
-    ("spErr", ["XYZB"], "spErr 가 spGone 안에 있지 않음"), ("spErr", None, "spErr 가 spGone 안에 있지 않음")])
-def test_gate_fails_a_broken_record(field, value, what):
-    rows, _ = run({"usListSym": rec(**{field: value})}, us_rows())
-    assert rows[ROW2][3] == "FAIL" and what in rows[ROW2][1], rows[ROW2]
+    ("spErr", ["XYZB"], "spErr 가 spGone 안에 있지 않음"), ("spErr", None, "spErr 가 spGone 안에 있지 않음"),
+    ("spTickers", None, "spGone 이 있는데 spTickers 가 목록이 아님"), ("spTickers", ["AAPL"], "spGone 이 spTickers 안에 있지 않음")])
+def test_gate_fails_a_broken_record_to_publish_and_warns_on_the_site(field, value, what, mode, status):
+    """기록 모양이 틀리면 발행은 실패, 사이트 점검(live)은 경고 (리뷰 2차 3: 칸을 더하는 다음 PR 이 아직 살아 있는 예전 파일 때문에 배포 점검에서 막히지
+    않게 — 이 줄은 이 PR 에서 새로 생겼어요). ('spTickers', ['AAPL']) 은 spGone 이 있을 때만 걸려요 (아래 spGone 을 채워요)."""
+    kw = {field: value}
+    if field == "spTickers" and value is not None:
+        kw["spGone"] = {"VYLR": "가격 이력 32일 (60일 미만이라 넣지 않아요)"}
+    rows, _ = run({"usListSym": rec(**kw)}, us_rows(), mode)
+    assert rows[ROW2][3] == status and what in rows[ROW2][1], rows[ROW2]
+
+
+def test_a_record_without_s_and_p_tickers_cannot_switch_the_unmapped_check_off():
+    """리뷰 2차 2: spGone 이 있는데 spTickers 가 없거나 비면, 'S&P 목록에서 바뀌지 않고 실린 꼴' 검사가 조용히 꺼질 수 있어요 — 기록 모양 실패로 잡아요."""
+    bad = us_rows(extra=[{"t": "BFB", "cls": "us", "price": 9.0}])
+    data = {"usListSym": rec(spGone={"VYLR": "가격 이력 32일 (60일 미만이라 넣지 않아요)"})}
+    del data["usListSym"]["spTickers"]
+    rows, _ = run(data, bad)
+    assert rows[ROW2][3] == "FAIL" and "spGone 이 있는데 spTickers 가 목록이 아님" in rows[ROW2][1]
 
 
 def test_gate_fails_a_ticker_listed_as_both_no_price_and_error():

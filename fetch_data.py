@@ -7946,7 +7946,15 @@ US_NO_PX_WHY = "야후가 가격을 하나도 주지 않음 (다운로드에 이
 US_NO_PX_ERR = "시세를 받지 못함"     # … 그 종목을 처리하다 오류로 멈춘 경우의 머리말 (usListSym.spErr · 가격이 없다는 뜻이 아니에요 · 리뷰 5)
 
 
-def us_list_sym(symrec, sp500, sp_ok, asked, kept, why, added=US_CLASS_ADDED):
+def joined_in(t, sp500):
+    """야후 티커 t 의 점이 지워진 꼴(표 US_CLASS_JOINED 에서 t 로 바뀌는 열쇠, 또는 대시를 뺀 꼴)이 S&P 500 목록 티커(sp500)에 그대로 있으면 그 꼴,
+    아니면 None. (순수 함수)"""
+    keys = {k for k, (y, _key) in US_CLASS_JOINED.items() if y == t} | {t.replace("-", "")}
+    hit = sorted(k for k in keys if k != t and k in (sp500 or ()))
+    return hit[0] if hit else None
+
+
+def us_list_sym(symrec, sp500, sp_ok, asked, kept, why, added=None):
     """data.json usListSym (2026-11-15 · 주식 종류 티커). (순수 함수)
     symrec: us_tickers 가 남긴 {"mapped", "unmapped"} (None = 이 실행에 기록이 없음) · sp500: S&P 500 목록의 티커 (야후 모양 · 못 읽었으면 None) ·
     sp_ok: 그 목록을 믿었는지 (fetch_us · #133) · asked: 야후에 요청한 티커 · kept: 오늘 발행 목록의 티커 · why: 요청한 티커 → 빠진 이유.
@@ -7955,6 +7963,7 @@ def us_list_sym(symrec, sp500, sp_ok, asked, kept, why, added=US_CLASS_ADDED):
        "noPx": 그중 야후가 가격을 하나도 주지 않은 티커 (점이 지워진 새 주식 종류 티커의 모습 · 믿지 못한 날 None),
        "spErr": 그중 처리하다 오류로 멈춘 티커 (가격이 없다는 뜻이 아니에요 · 믿지 못한 날 None),
        "missing": 더한 종목(US_CLASS_ADDED) 중 오늘 없는 티커 → 이유 (관문: 이유 없이 빠지면 발행 실패)}"""
+    added = US_CLASS_ADDED if added is None else added          # 부를 때의 표 (정의할 때 묶지 않아요)
     read = isinstance(symrec, dict)
     mapped = [list(x) for x in (symrec or {}).get("mapped") or []] if read else []
     unmapped = [list(x) for x in (symrec or {}).get("unmapped") or []] if read else []
@@ -7977,6 +7986,11 @@ def us_list_sym(symrec, sp500, sp_ok, asked, kept, why, added=US_CLASS_ADDED):
             missing[t] = "출처 티커 기록이 없음 (미국 목록을 읽은 기록이 없어요 — 확인 필요)"
         elif sp500 is None:
             missing[t] = "S&P 500 목록을 읽지 못해 요청하지 않음"
+        elif joined_in(t, sp500):
+            # 리뷰 2차 1: 지워진 꼴이 그대로 S&P 500 목록에 있어요 (표의 줄을 잃었거나 바꾸기가 고장) — '지수에서 빠짐'이 아니에요.
+            # 표에 줄이 없어도 알아보게 대시를 뺀 꼴(BF-B → BFB)도 봐요 (표의 모든 줄이 그 꼴이에요 · 시험이 지켜요).
+            k = joined_in(t, sp500)
+            missing[t] = f"S&P 500 목록에 점이 지워진 꼴 {k} 로 있는데 {t} 로 바뀌지 않음 (바꾸기 확인 필요 · RUNBOOK 'US share-class tickers')"
         else:
             missing[t] = "오늘 S&P 500 목록에 없음 (지수에서 빠졌는지 확인)"
     return {"read": read, "mapped": mapped, "unmapped": unmapped, "spTickers": sorted(sp500) if sp500 is not None else None,

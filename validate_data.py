@@ -1849,17 +1849,20 @@ def check_us_share_class(rep, data, us, mode):
        data.json usListSym.missing 에 빠진 이유가 있어야 해요 — check_us_extra (#126) 와 같은 규칙: 이유가 있으면 경고, 이유 없이 빠지면 발행
        실패, 사이트 점검(live)은 경고 · 기록이 없는 파일은 발행 때 경고 · 점검 때 건너뜀.
     ② '미국 목록 출처 티커 (주식 종류)': 실패 — 점이 지워진 꼴(BRKB · BFB)이 S&P 500 목록에서 바뀌지 않은 채 발행 목록의 티커로 있음 (그날
-       기록의 spTickers 에 그 꼴이 있음: 바꾸기가 고장 남 · 야후에 없는 티커), 파이프라인이 바꾼 꼴이 이 파일의 표(US_CLASS_JOINED_SET)와 다름, 기록
-       모양이 틀림. 다른 출처(나스닥 등)에서 온 같은 글자의 티커는 다른 회사일 수 있어 이름만 적어요 (리뷰 4: 진짜 회사가 그 티커를 쓰게 되면
-       날마다 발행이 막혀 사이트가 멈추지 않게) · 기록이 없는 파일에서는 출처를 알 수 없어 경고만. 경고 — 바꾸지 못한 출처 티커(unmapped), S&P
+       기록의 spTickers 에 그 꼴이 있음). 야후에는 그 꼴의 티커가 없어서 보통은 가격이 없어 빠지고 (아래 경고), 이 실패는 야후가 그 꼴에 다른 증권으로
+       답해 엉뚱한 회사가 실리는 경우를 잡아요. 파이프라인이 바꾼 꼴이 이 파일의 표(US_CLASS_JOINED_SET)와 다르거나 기록 모양이 틀려도 실패 — 단
+       사이트 점검(live)에서는 경고 (리뷰 2차 3: 칸을 더하는 다음 PR 이 아직 살아 있는 예전 파일 때문에 배포 점검에서 막히지 않게 · 이 줄은 이 PR 에서
+       새로 생겼어요). 다른 출처(나스닥 등)에서 온 같은 글자의 티커는 다른 회사일 수 있어 이름만 적어요 (리뷰 4: 진짜 회사가 그 티커를 쓰게 되면
+       날마다 발행이 막혀 사이트가 멈추지 않게) · 기록이 없는 파일에서는 출처를 알 수 없어 경고만. 경고 — 점이 지워진 꼴이 그날 S&P 500 목록 티커
+       (spTickers)에 그대로 있음 (실리지 않았어도 · 바꾸기 표의 줄을 잃었거나 바꾸기가 고장: 리뷰 2차 1), 바꾸지 못한 출처 티커(unmapped), S&P
        500 목록 종목인데 야후가 가격을 하나도 주지 않은 티커(noPx: 점이 지워진 새 주식 종류 티커의 모습), 처리하다 오류로 멈춘 S&P 500 티커(spErr),
        출처 티커 기록이 없는 실행(read false). S&P 500 목록 종목 중 오늘 없는 다른 종목(spGone: 가격 이력이 60일이 안 된 새 상장 등)은 이름만
        적어요 (경고 아님)."""
     name = f"주식 종류 티커로 들어온 미국 종목 ({', '.join(sorted(US_CLASS_SET))}): 목록에 있거나 빠진 이유"
     th = "모두 있어야 함 (빠지면 이유와 함께 경고 · 이유 없이 빠지면 실패)"
     name2 = "미국 목록 출처 티커 (주식 종류 · 점이 지워진 꼴)"
-    th2 = ("S&P 500 목록의 점이 지워진 꼴이 바뀌지 않고 목록에 실리지 않음 · 바꾼 꼴이 관문 표와 같음 (바꾸지 못한 티커 · 가격 없는 · 오류 난 "
-           "S&P 500 티커는 경고)")
+    th2 = ("S&P 500 목록의 점이 지워진 꼴이 바뀌지 않고 목록에 실리지 않음 · 바꾼 꼴이 관문 표와 같음 · 기록 모양 (사이트 점검에서는 표 · 모양은 경고) "
+           "(바꾸지 않은 지워진 꼴 · 바꾸지 못한 티커 · 가격 없는 · 오류 난 S&P 500 티커는 경고)")
     rec = data.get("usListSym")
     have = {s.get("t") for s in us if (num(s.get("price")) or 0) > 0}
     tickers = {s.get("t") for s in us}
@@ -1921,14 +1924,21 @@ def check_us_share_class(rep, data, us, mode):
     sp_err = sp_err if strs(sp_err) else []
     if no_px and sp_err and set(no_px) & set(sp_err):
         bad.append("noPx 와 spErr 가 겹침")
+    if sp_gone is not None and not strs(rec.get("spTickers")):          # 리뷰 2차 2: spTickers 가 없으면 아래 실패 검사가 조용히 꺼져요
+        bad.append("spGone 이 있는데 spTickers 가 목록이 아님")
+    elif sp_gone and not set(sp_gone) <= set(sp_t or []):
+        bad.append("spGone 이 spTickers 안에 있지 않음")
     sp_set = set(sp_t or [])
     joined_sp = [t for t in joined if t in sp_set]                # S&P 500 목록에서 바뀌지 않고 실린 꼴 (실패)
     joined_other = [t for t in joined if t not in sp_set]         # 다른 출처의 같은 글자 티커 (다른 회사일 수 있어요 · 이름만)
+    joined_left = sorted(k for k in US_CLASS_JOINED_SET if k in sp_set)   # 리뷰 2차 1: 바꾸지 않은 지워진 꼴이 S&P 목록에 (실렸든 아니든 · 경고)
+    soft = mode == "live"                                         # 리뷰 2차 3: 사이트 점검에서는 표 · 모양 문제는 경고 (실린 엉뚱한 회사는 실패 그대로)
     wrong = [f"{a} → {b} (관문 표 {US_CLASS_JOINED_SET[a]})" for _s, a, b in mapped if a in US_CLASS_JOINED_SET and b != US_CLASS_JOINED_SET[a]]
     shown = " · ".join(f"{a} → {b}" for _s, a, b in mapped[:US_FCUR_SHOW]) + (f" 외 {len(mapped) - US_FCUR_SHOW}개" if len(mapped) > US_FCUR_SHOW else "")
     parts = ([f"S&P 500 목록의 점이 지워진 꼴이 바뀌지 않고 목록에 있음: {_tickers(joined_sp)}"] if joined_sp else []) \
         + ([f"관문 표와 다르게 바꿈: {' · '.join(wrong)}"] if wrong else []) \
         + ([f"기록 모양이 틀림: {' · '.join(bad)}"] if bad else []) \
+        + ([f"S&P 500 목록에 점이 지워진 꼴이 바뀌지 않고 그대로 있음 (바꾸기 확인 필요): {_tickers(joined_left)}"] if joined_left else []) \
         + [f"바꿈 {len(mapped)}" + (f" ({shown})" if mapped else "")] \
         + ([f"바꾸지 못함 {len(unmapped)}: " + " · ".join(f"{s0} '{a}' ({w})" for s0, a, w in unmapped[:US_FCUR_SHOW])] if unmapped else []) \
         + ([f"S&P 500 티커인데 야후 가격이 없음 {len(no_px)}: {_tickers(no_px)} (점이 지워진 새 주식 종류 티커일 수 있어요)"] if no_px else []) \
@@ -1938,8 +1948,8 @@ def check_us_share_class(rep, data, us, mode):
         + (["S&P 500 목록을 믿지 못한 날 (빠진 종목을 세지 않음)"] if sp_gone is None else []) \
         + ([f"다른 출처의 같은 글자 티커 (S&P 500 목록 밖 · 다른 회사일 수 있어요): {_tickers(joined_other)}"] if joined_other else []) \
         + (["출처 티커 기록이 없는 실행 (read false)"] if rec.get("read") is False else [])
-    rep.add(name2, not (joined_sp or wrong or bad), " · ".join(parts), th2,
-            warn=bool(unmapped or no_px or sp_err or rec.get("read") is False))
+    rep.add(name2, not (joined_sp or ((wrong or bad) and not soft)), " · ".join(parts), th2,
+            warn=bool(joined_left or unmapped or no_px or sp_err or rec.get("read") is False or wrong or bad))
     if unmapped:
         rep.detail("야후 모양으로 바꾸지 못해 요청하지 않은 미국 목록 티커 (usListSym.unmapped)", [f"{s0} '{a}': {w}" for s0, a, w in unmapped])
     if sp_gone:
