@@ -558,6 +558,9 @@ out = { ok: r.ok, status: r.load.status, pub: r.load.data.publishedAt, calls, sh
 
 # ── hold.js: never under a draft the new data could change (review 2026-11-08, 1) ──
 HOLD = """
+// The gate reads the clock itself (hold.js heldOn: staleNow at Date.now()): pin it to NOW so the fixtures' publishes stay
+// fresh whatever day the suite runs (it failed from 2026-11-15, once NEW_PUB was older than the 4-day rule).
+Date.now = () => at(NOW);
 const fx = (n) => JSON.parse(readFileSync(FIX + '/' + n + '.json', 'utf8'));
 const F = { data: fx('data'), corp: fx('corp'), macro: fx('macro') };
 for (const k of ['data', 'corp', 'macro']) F[k].publishedAt = OLD_PUB;
