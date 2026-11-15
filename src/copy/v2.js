@@ -1145,6 +1145,9 @@ export const C = {
     capRaise: "최대 비중을 {y}%로 올리기",                                                   // D2 (Jack, 2026-11-08)
     byName: "이름으로 찾기",                                        // + 종목 더하기 칸 · 찾기 시트 제목
     byNameSub: "이름이나 코드",
+    // v19.7b (Part D) — chat (2026-11-07: v19.7 Appendix 1 'add ways', Jack 이 스펙을 넘기며 승인)
+    byCrit: "내 기준으로 찾기",                                     // + 종목 더하기 칸 (반짝이 아이콘)
+    byCritSub: "기준 점수로 고른 순서",
     save: "바꾼 내용 저장",
     saveNote: "저장하면 비중 규칙도 새 목표 비중에 맞춰 바뀌어요.",
     leave: "바꾼 내용을 저장하지 않고 나갈까요?",
@@ -1170,6 +1173,71 @@ export const C = {
     noRecord: "기록 없이 빼기",
     note: "판 기록과 배당 기록은 내 수익에 남아요. 기록 없이 포트폴리오에서 빼면, 남은 {qty}주는 내 수익 계산에서 빠져요.",
     last: "종목이 하나뿐이라 뺄 수 없어요.",
+  },
+
+  // v19.7b 내 기준으로 찾기 (Part D, 보드 PfFind3) — chat (2026-11-07: v19.7 Appendix 1, Jack 이 스펙을 넘기며 승인). 줄의 '상위 {x}%' 는
+  // rank.mineX, 날짜 줄은 rank.date · rank.dateUs · app.reportYear · rank.quarter, 기준이 없을 때의 기준 카드는 build.s1 · build.cards 그대로예요.
+  find: {
+    title: "내 기준으로 찾기",
+    sub: "이 포트폴리오에 준 기준 점수로 고른 순서예요. 아직 담지 않은 종목만 보여 드려요.",
+    card: "이 포트폴리오의 기준",                                   // 기준 칸 제목 (그림 칩 · 이름 · 점)
+    noPoints: "이 포트폴리오에는 기준 점수가 없어요. 찾기 전에 기준을 골라 주세요.",
+    chips: { all: "전체", newInd: "없는 업종", lowVol: "주가 변동 작은 순", div: "배당 주는 종목" },
+    row: "{industry} · 연 변동성 {vol}%",                            // 변동성이 비면 ' · ' 앞의 업종만
+    newInd: "새 업종",                                              // 포트폴리오에서 0% 인 업종의 종목 (두 종목 비교의 업종 칸에도)
+    compare: "비교",
+    add: "+ 담기",
+    newIndLine: "지금 포트폴리오에 없는 업종의 종목만 보여 드려요.",     // 없는 업종 칩 밑 날짜 줄 다음
+    empty: "이 조건에 맞는 종목이 없어요.",
+    emptyNewInd: "지금 포트폴리오에 없는 업종에서는 고를 종목이 없어요.",
+    // 제안 (Jack 승인 대기) — docs/tasks/v18.3-new-strings-pending.md § v19.7b. null 인 동안은 lim.save '저장'
+    p: {
+      savePoints: null,   // 제안: "이 기준으로 찾기" — 기준 점수가 없는 포트폴리오: 기준 카드 밑, 고른 점수를 저장하고 목록을 보여 주는 버튼
+    },
+  },
+
+  // v19.7b 두 종목 비교 · 바꾸기 (Part E, 보드 PfCompare3) — chat (2026-11-07: v19.7 Appendix 1). 이/가 · 은/는 · 과/와 는 이름의 마지막
+  // 소리로 골라요 (track.subjectParticle: 받침이 있으면 이 · 은 · 과). 칸의 숫자는 승인된 문구 그대로: 상위 {x}% (rank.mineX) · 연 변동성 {x}%
+  // (rank.num.vol) · {x}배 (pick.receipt.times) · 첫해 {g}% (co.dcf.perYear) · {count}개 (app.count) · 자료가 없어요 (co.tiles.na).
+  cmp: {
+    title: "두 종목 비교",
+    held: "가진 종목",
+    cand: "후보",
+    picker: "어떤 종목과 비교할까요?",
+    verdict: {
+      both: "{b}이 내 기준에 더 잘 맞고, 지난 1년 주가 변동이 더 작았어요.",
+      bothGa: "{b}가 내 기준에 더 잘 맞고, 지난 1년 주가 변동이 더 작았어요.",
+      fitBig: "{b}이 내 기준에 더 잘 맞지만, 지난 1년 주가 변동은 더 컸어요.",
+      fitBigGa: "{b}가 내 기준에 더 잘 맞지만, 지난 1년 주가 변동은 더 컸어요.",
+      lessSmall: "{b}은 내 기준에 덜 맞지만, 지난 1년 주가 변동은 더 작았어요.",
+      lessSmallNeun: "{b}는 내 기준에 덜 맞지만, 지난 1년 주가 변동은 더 작았어요.",
+      worse: "{b}은 내 기준에 덜 맞고, 지난 1년 주가 변동도 더 컸어요.",
+      worseNeun: "{b}는 내 기준에 덜 맞고, 지난 1년 주가 변동도 더 컸어요.",
+      fit: "{b}이 내 기준에 더 잘 맞아요.",
+      fitGa: "{b}가 내 기준에 더 잘 맞아요.",
+      less: "{b}은 내 기준에 덜 맞아요.",
+      lessNeun: "{b}는 내 기준에 덜 맞아요.",
+      small: "지난 1년 주가 변동은 {b}이 더 작았어요.",
+      smallGa: "지난 1년 주가 변동은 {b}가 더 작았어요.",
+      big: "지난 1년 주가 변동은 {b}이 더 컸어요.",
+      bigGa: "지난 1년 주가 변동은 {b}가 더 컸어요.",
+    },
+    rows: { fit: "내 기준", ind: "업종", vol: "주가 변동 (지난 1년)", beta: "코스피 1% →", pbr: "PBR", dy: "배당수익률", growth: "오늘 주가가 가정하는 성장",
+      warn: "재무 경고 신호" },
+    after: "바꾸면 업종 비중",
+    afterLine: "{group} {a}% → {b}% · 업종 {n}개 → {m}개",
+    addOnly: "{b}만 담기",
+    swap: "{a}과 바꾸기",                                            // 받침이 있을 때
+    swapWa: "{a}와 바꾸기",
+    swapNote: "바꾸면 {b}이 {a}의 목표 비중({x}%)을 이어받아요.",
+    swapNoteGa: "바꾸면 {b}가 {a}의 목표 비중({x}%)을 이어받아요.",
+    swapSale: "판 내용은 다음 화면에서 기록해요.",                    // 가진 주식이 있을 때만 (팔고 빼기로 기록해요)
+    // 제안 (Jack 승인 대기) — docs/tasks/v18.3-new-strings-pending.md § v19.7b. null 인 동안은 회사 페이지의 승인된 칸 글
+    // (co.tiles.riskBand · riskOne: "코스피 1% → 평균 {lo}~{hi}%") 을 칸에 그대로 써요
+    p: {
+      beta: null,      // 제안: "평균 {lo}~{hi}%" — 코스피 1% → 줄의 칸 (보드 PfCompare3)
+      betaOne: null,   // 제안: "평균 {x}%" — 같은 줄, 범위의 두 끝이 같을 때
+    },
   },
 
   plan: {

@@ -675,6 +675,87 @@ export function sellCheck(deck, draft, t) {
   const d2 = d2Of(stored, cap);
   return { last: !stored.length || !left, low: d2.low, y: d2.y, n: stored.length, names: stored.map((r) => r.nk || r.t), cap, up };
 }
+// ---------------- 내 기준으로 찾기 without 기준 points (v19.7b Part D) ----------------
+// The 기준 the user chose on the finder (the build step's cards), saved to this portfolio's settings at once: points, and the
+// strictness the cards screen shows with them. Nothing else of the portfolio changes. -> { ok: true, data } | { ok: false, why }
+export function withPoints(data, deckId, points, strict, today) {
+  const deck = findDeck(data, deckId);
+  if (!deck) return { ok: false, why: "gone" };
+  const st = deck.settings && typeof deck.settings === "object" && !Array.isArray(deck.settings) ? deck.settings : {};
+  const next = { ...deck, settings: { ...st, points: { ...points }, ...(typeof strict === "string" ? { strict } : {}) } };
+  if (!check(next, today)) return { ok: false, why: "store" };
+  return { ok: true, data: putDeck(data, next) };
+}
+
+// ---------------- 두 종목 비교 · 바꾸기 (v19.7b Part E) ----------------
+// "{holding}과/와 바꾸기": the holding leaves (Part B's sheet, 더 잘 맞는 종목을 찾았어요 pre-picked) and the candidate takes its
+// target. A swap keeps the number of stocks, so it never opens D2 and the last stock can be swapped. The candidate's target is
+// the holding's, never above the portfolio's 한 종목 최대 비중 ([C2]: a 안전자산 holding saved above the cap gives the candidate the
+// cap, and the rest is shared out to the others as 합계를 100%로 맞추기 does).
+// [B4] What saves when, as for 빼기: 팔고 빼기 records money, so the sale, the removal and the candidate's add are one write at once
+// (sellAndSwap); 기록 없이 빼기 and 빼기 (no shares) wait for 바꾼 내용 저장 like any 빼기 and 담기 (swapDraft).
+// add: { t, nk, cls, ind, kind, s } as 담기 builds it (editor.jsx addOf).
+const swapPct = (pct, cap) => (cap != null && pct > cap + TGT_TOL ? cap : pct);
+// The draft with the swap waiting: the holding taken out with its reason, the candidate added with its target. -> the draft
+// (unchanged when the holding is not a stored row of the edited list or the candidate is already in it).
+export function swapDraft(deck, draft, t, reason, add) {
+  const rows = editRows(deck, draft);
+  const r = rows.find((x) => x.t === t);
+  if (!r || !r.h || !add || rows.some((x) => x.t === add.t) || ((deck && deck.holdings) || []).some((h) => h && h.t === add.t)) return draft;
+  const cap = capOf(deck, draft);
+  const p = swapPct(r.pct, cap);
+  const over = { ...draft.over, [add.t]: p };
+  delete over[t];
+  const next = { ...draft, over, removed: [...(draft.removed || []).filter((x) => x.t !== t), { t, reason: REASONS.includes(reason) ? reason : null }],
+    adds: [...(draft.adds || []).filter((a) => a.t !== add.t), add], last: add.t };
+  if (p >= r.pct - TGT_TOL) return next;
+  return withOver(next, rebalance(editRows(deck, next), add.t, cap), add.t);
+}
+// The stored rows a 팔고 빼기 swap writes (the stored holdings but t, and the candidate with t's stored target), and D2 on them
+// (only a target above the cap can make it: see above). -> { rows, pct (the candidate's), cap, up, low, y, names, n }
+export function swapCheck(deck, draft, t, add) {
+  const up = draft && draft.maxPct != null && draft.maxPct !== capOf(deck) ? draft.maxPct : null;
+  const cap = up != null ? up : capOf(deck);
+  const stored = editRows(deck, emptyDraft());
+  const h = stored.find((r) => r.t === t);
+  const pct = h ? swapPct(h.pct, cap) : 0;
+  const rows = [...stored.filter((r) => r.t !== t), { t: add.t, nk: add.nk, h: null, add, pct, cls: add.cls || null }];
+  const d2 = h && pct < h.pct - TGT_TOL ? d2Of(rows, cap) : { low: false, y: null };
+  return { rows, pct, cap, up, low: d2.low, y: d2.y, n: rows.length, names: rows.filter((r) => r.h).map((r) => r.nk || r.t) };
+}
+// 팔고 빼기 as a swap [B4]: the store after the sale (records.withRecord), then the holding taken out with its reason and the
+// candidate added with its stored target (newHolding: the build step's rules, planPx today's close, setAt today), logged as
+// two lines (뺌, 더함) — one write. opts: { reason, raise (y | null), load, today, ts }. -> { ok: true, data } | { ok: false, why }
+// Refused as sellAndRemove ("partial" · "sum" · "gone" · "store"); never "last" (a swap keeps the number of stocks).
+export function sellAndSwap(afterSale, deckId, t, add, opts) {
+  const { reason, raise = null, load, today, ts } = opts;
+  const no = (why, more = "") => { console.warn(`[v2] ${deckId}: sell and swap ${t} for ${add && add.t} refused (${why})${more}; nothing saved`); return { ok: false, why }; };
+  const before = findDeck(afterSale, deckId);
+  if (!before || !add) return no("gone");
+  const h = before.holdings.find((x) => x && x.t === t);
+  if (!h || before.holdings.some((x) => x && x.t === add.t)) return no("gone");
+  const left = heldUnits(before).get(t) || 0;
+  if (left > 0) return no("partial", `: ${left / UNIT} shares would stay after the sale`);
+  const x = takeOut(afterSale, deckId, t, reason, today, ts);
+  if (!x) return no("gone");
+  let deck = findDeck(x.data, deckId);
+  const cap = raise != null ? raise : capOf(deck);
+  const old = pctOf(h);
+  const p = swapPct(old, cap);
+  const rows = [...editRows(deck, emptyDraft()), { t: add.t, nk: add.nk, h: null, add, pct: p, cls: add.cls || null }];
+  const shared = p < old - TGT_TOL ? rebalance(rows, add.t, cap) : new Map(rows.map((r) => [r.t, r.pct]));
+  if (!sumOk([...shared.values()].reduce((a, v) => a + v, 0))) return no("sum", ": the stocks cannot reach 100% under the cap");
+  const fx = load && load.data ? load.data.fx : null;
+  const others = new Map([...shared].filter(([u]) => u !== add.t));
+  const tg = applyTargets(deck, others, fx, load && load.byT);
+  const cand = newHolding(tg.deck, add, shared.get(add.t) / 100, load, today, ts);
+  deck = { ...tg.deck, holdings: withPlanW(before, [...tg.deck.holdings, cand], new Set([...tg.ts, add.t])) };
+  if (raise != null && raise !== capOf(deck)) deck = { ...deck, settings: { ...(deck.settings || {}), maxPct: raise } };
+  deck = withChanges({ ...deck, targetsTs: ts }, [x.change, { at: today, kind: "add", t: add.t, nk: add.nk }]);
+  if (!check(deck, today)) return { ok: false, why: "store" };
+  return { ok: true, data: putDeck(x.data, deck) };
+}
+
 // The draft after the store changed under it (팔고 빼기 saved): edits of holdings that are gone are dropped; the rest stay.
 export function rebaseDraft(deck, draft) {
   if (!deck) return emptyDraft();

@@ -59,6 +59,17 @@ export function parseHash(hash) {
   if (tab === "portfolio" && parts.length === 3 && parts[1] === "edit" && DECK_ID_RX.test(parts[2])) {
     return { tab: "portfolio", sub: "edit/" + parts[2], about: false, known: true, edit: parts[2] };
   }
+  // v19.7b: its 내 기준으로 찾기 (#portfolio/edit/<deck id>/find) and 두 종목 비교 with one candidate (…/compare/<code>)
+  if (tab === "portfolio" && parts.length === 4 && parts[1] === "edit" && DECK_ID_RX.test(parts[2]) && parts[3] === "find") {
+    return { tab: "portfolio", sub: "edit/" + parts[2] + "/find", about: false, known: true, edit: parts[2], eview: "find" };
+  }
+  if (tab === "portfolio" && parts.length === 5 && parts[1] === "edit" && DECK_ID_RX.test(parts[2]) && parts[3] === "compare") {
+    let code = null;
+    try { code = decodeURIComponent(parts[4]); } catch (e) { code = null; }
+    if (okCode(code)) {
+      return { tab: "portfolio", sub: editSub(parts[2], "compare", code), about: false, known: true, edit: parts[2], eview: "compare", ecode: code };
+    }
+  }
   // v19.6a: 내 수익 of one portfolio, #portfolio/returns/<deck id>
   if (tab === "portfolio" && parts.length === 3 && parts[1] === "returns" && DECK_ID_RX.test(parts[2])) {
     return { tab: "portfolio", sub: "returns/" + parts[2], about: false, known: true, returns: parts[2] };
@@ -76,3 +87,5 @@ export function parseHash(hash) {
 export const hashOf = (tab, sub) => "#" + tab + (sub ? "/" + sub : "");
 // The sub part of a company address (encoded for the hash: US tickers may hold "." or "-", both safe, but stay explicit).
 export const companySub = (code, ctab) => encodeURIComponent(String(code)) + (ctab ? "/" + ctab : "");
+// v19.7b: the sub part of 종목 바꾸기 (view null), its 내 기준으로 찾기 ("find") or 두 종목 비교 with a candidate ("compare", code).
+export const editSub = (id, view = null, code = null) => "edit/" + id + (view === "find" ? "/find" : view === "compare" && code != null ? "/compare/" + encodeURIComponent(String(code)) : "");

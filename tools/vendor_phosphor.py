@@ -49,6 +49,8 @@ ICONS = [
     "hand-pointing",
     # v19.6a 내 수익 (보드 Returns2): 판 종목 · 미국 종목 수익, 어디서 왔나 · 기록 내려받기
     "receipt", "currency-dollar", "download-simple",
+    # v19.7b 종목 바꾸기의 '내 기준으로 찾기' 칸 (보드 PfEdit3 의 반짝이)
+    "sparkle",
 ]
 
 PATH = re.compile(r'<path d="([^"]+)"( opacity="0\.2")?/>')
