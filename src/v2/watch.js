@@ -17,9 +17,13 @@
 // A blank value is never met (the chip says 정보 없음), never a hit, and never clears a hitAt.
 // Met and the hit need fresh data (rules.dayState ok, the same rule as 홈's daily check): on stale or failed data the
 // values still show beside the stale date line (or nothing, with the load-failure message), never a green check.
-// hitAt (store.js): the stock's own price date (KR pxDate, US usPxDate or its pxd) on the first day this device saw the
-// condition met on fresh data. The 오늘 볼 것 row shows while the data shows that same close; a condition that stays met
-// never shows again; fresh data that shows it not met clears the mark (so the next time it is met it shows once more).
+// hitAt (store.js): the stock's price date (KR pxDate, US usPxDate) on the first day this device saw the condition met on
+// fresh data. The 오늘 볼 것 row shows while the data still shows that same close (e.g. from Friday evening's publish through a
+// Monday holiday, with that close's date under it), never again for a condition that stays met; fresh data that shows it not
+// met clears the mark (so the next time it is met it shows once more). v19.6c review S1: a stock priced at an earlier close
+// than its market's (data.json pxd: a US halt) is never judged (its price is not today's: no check, no mark, no row); a value
+// dated before the stored mark (an older publish still inside its freshness window) neither sets nor clears it; and when
+// the records cannot be written (locked, storage full) there is no row at all, since no mark could keep it from repeating.
 import { C, fill, nf } from "./format.js";
 import { num, exactData, dytOf, okDy } from "./engine.js";
 import { dayState } from "./rules.js";
@@ -59,12 +63,14 @@ export const condMet = (k, val, v) => (k === "dyAtLeast" ? val >= v - 1e-9 : val
 export const watchFresh = (load, now) => !!load && load.status === "ok" && dayState(load, now).ok;
 
 // One condition on today's data: { k, v, val, state, date } — state "met" · "not" (fresh data, a number) · "blank" (no
-// number) · "stale" (a number, data not fresh: shown, never judged). date = the stock's price date.
+// number) · "stale" (a number, data not fresh, or the stock priced at an earlier close than its market's: shown, never
+// judged). date = the stock's price date.
+const marketDate = (load, s) => (usOf(s) ? load.data.usPxDate : load.data.pxDate) || null;
 export function condState(load, s, c, fresh) {
   const val = watchValue(s, c.k);
   const date = s && load && load.status === "ok" ? priceDate(load, s) : null;
   if (val == null) return { k: c.k, v: c.v, val: null, state: "blank", date };
-  if (!fresh || !date) return { k: c.k, v: c.v, val, state: "stale", date };
+  if (!fresh || !date || date !== marketDate(load, s)) return { k: c.k, v: c.v, val, state: "stale", date };
   return { k: c.k, v: c.v, val, state: condMet(c.k, val, c.v) ? "met" : "not", date };
 }
 // The conditions of an entry this app reads, in kind order (a later version's kinds are left out).
@@ -82,6 +88,7 @@ export function watchMarks(data, load, now) {
     if (!s) continue;
     for (const c of condsOf(w[t])) {
       const st = condState(load, s, c, true);
+      if (c.hitAt != null && st.date && st.date < c.hitAt) continue;             // an older close than the mark's: no word on it
       if (st.state === "met" && c.hitAt == null) out.set(t + "|" + c.k, st.date);
       else if (st.state === "not" && c.hitAt != null) out.set(t + "|" + c.k, null);
     }
@@ -95,8 +102,9 @@ export function withWatchHits(data, load, now) {
 }
 // 오늘 볼 것's 관심 종목 조건 rows: each condition met on fresh data that this device saw met first on today's close (no mark
 // yet: it is being set now, or a mark of this same date), in list order then kind order. [{ t, s, k, v, val, date }]
-export function watchHits(data, load, now) {
-  if (!watchFresh(load, now)) return [];
+// canMark: the records can be written (writable, not locked); without it no row (the mark could not stop it repeating).
+export function watchHits(data, load, now, canMark = true) {
+  if (!canMark || !watchFresh(load, now)) return [];
   const w = watchOf(data), out = [];
   for (const t of watchOrder(w)) {
     const s = load.byT.get(t);
@@ -126,10 +134,12 @@ export function nowValue(k, val, us) {
   if (k === "dyAtLeast") return yieldText(val);
   return null;
 }
-// "{condition} 조건에 맞아요. 지금 {now}이에요." (이에요 / 예요 by the last syllable of {now}: track.subjectParticle's reading)
+// "{condition} 조건에 맞아요. 지금 {now}이에요." (이에요 / 예요 by the last syllable of {now}: track.subjectParticle's reading).
+// A US price is read "…달러" ("$148.50" = 백사십팔 점 오 달러), so it always takes 예요 (review B1).
 export function hitText(k, v, val, us) {
   const now = nowValue(k, val, us), condition = condText(k, v, us);
-  return fill(subjectParticle(now) === "i" ? C.watch.hit : C.watch.hitYe, { condition, now });
+  const ye = (k === "pxBelow" && us) || subjectParticle(now) !== "i";
+  return fill(ye ? C.watch.hitYe : C.watch.hit, { condition, now });
 }
 
 // The console line for the stocks whose PBR a 가치 guard kept from firing a condition (no silent hiding), once per load.

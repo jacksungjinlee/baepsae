@@ -237,9 +237,12 @@ function ImportedStrip({ deck, de, ctx, load, go }) {
 // 홈's first visit (no saved portfolio): the descriptor, 포트폴리오 만들기 and 종목 순위 (v19.5b: with its numbers, so no 뱁이
 // here; the v19.3c welcome screen before it carries the 뱁이). The date line stays, with the stale warning when there is one.
 // A failed load shows the load-failure message where 종목 순위 would be (no picture: the screen around it is the same).
-// v19.6c (Part C): a 관심 종목 condition met today shows here too, under 오늘 볼 것 (a watch list needs no portfolio).
+// v19.6c (Part C): a 관심 종목 condition met today shows here too, under 오늘 볼 것 (a watch list needs no portfolio), and on
+// 홈 without HOME2 (review B3: app.jsx stores the mark whichever 홈 shows, so the one row must show on both). No row when the
+// records cannot be written (the mark could not stop it repeating, review S1).
 function WatchLook({ load, store, onWatch }) {
-  const hits = useMemo(() => watchHits(store.data, load), [store.data, load]);
+  const canMark = !!(store.writable && !store.locked);
+  const hits = useMemo(() => watchHits(store.data, load, undefined, canMark), [store.data, load, canMark]);
   if (!hits.length || !C.home.look) return null;
   return (
     <section data-ui-v2="home-look" data-watch-only="1" style={{ marginTop: SPACE(5) }}>
@@ -355,6 +358,7 @@ export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null
       {store.unmerged && C.store.locked && <Note tone="watch" data-ui-v2="store-unmerged">{C.store.locked}</Note>}
       {store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}
       <Hero load={load} ev={ev} held={held} decks={decks} onConfirm={onConfirm} onWhy={onWhy} />
+      <WatchLook load={load} store={store} onWatch={onWatch} />
       <Cols main={[
         ...held.map((de) => <DeckStrip key={de.id} de={de} deck={decks.find((d) => d.id === de.id)} ctx={ctx} onWhy={onWhy} go={go} load={load} />),
         ...imported.map((d) => <ImportedStrip key={d.id} deck={d} de={ev.decks.find((x) => x.id === d.id)} ctx={ctx} load={load} go={go} />),

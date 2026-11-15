@@ -12627,8 +12627,8 @@ def scene_v196c(R, files, width, dark=False, deck=False):
         assert got[0][3] == [f"{by['005380']['nk']} · {W_['hitKind']}", fillp(W_["hit"], condition="주가 300,000원 아래", now="282,000원"),
                              fillp(C["why"]["close"], md=md_text)], got[0]
         aapl_now = "$" + f"{by['AAPL']['price']:,.2f}"
-        hit_aapl = W_["hit"] if has_final(aapl_now) else W_["hitYe"]
-        assert got[1][3][:2] == [f"{by['AAPL']['nk']} · {W_['hitKind']}", fillp(hit_aapl, condition="주가 $350.00 아래", now=aapl_now)], got[1]
+        # a US price is read "…달러": always 예요 (review B1)
+        assert got[1][3][:2] == [f"{by['AAPL']['nk']} · {W_['hitKind']}", fillp(W_["hitYe"], condition="주가 $350.00 아래", now=aapl_now)], got[1]
         sec = page.locator('[data-ui-v2="home-look"]')
         assert sec.locator("h3").first.inner_text() == C["home"]["look"]
         if not deck:
@@ -12719,6 +12719,9 @@ def scene_v196c(R, files, width, dark=False, deck=False):
         prev = sh.locator('[data-ui-v2="watch-field"][data-k="pbrBelow"] [data-ui-v2="watch-preview"]')
         assert prev.inner_text().replace("\n", "") == "PBR 0.5배 아래· " + fillp(W_["now"], now="0.42배"), prev.inner_text()
         inp("dyAtLeast").fill("")                                                       # blank: no dividend condition
+        # an empty field shows today's value (review note: something to compare with before typing)
+        now_line = sh.locator('[data-ui-v2="watch-field"][data-k="dyAtLeast"] [data-ui-v2="watch-now"]')
+        assert now_line.inner_text() == fillp(W_["now"], now="2.1%") and sh.locator('[data-ui-v2="watch-now"]').count() == 1
         check_page("조건 시트", "sheet")
         save.click()
         sh.wait_for(state="detached")
@@ -12736,7 +12739,7 @@ def scene_v196c(R, files, width, dark=False, deck=False):
         page.locator('[data-ui-v2="watch-card"][data-t="005930"] [data-ui-v2="watch-open"]').click()
         co_wait(page)
         btn = page.locator('[data-ui-v2="watch-toggle"]')
-        assert btn.inner_text() == W_["removeCo"] and btn.get_attribute("aria-pressed") == "true"
+        assert btn.inner_text() == W_["removeCo"] and btn.get_attribute("aria-pressed") is None      # the label says the state
         check_page("회사 페이지", "company")
         btn.click()
         page.wait_for_function("() => !JSON.parse(localStorage.getItem('baepsae2.v1')).watch['005930']")
@@ -12759,7 +12762,8 @@ def scene_v196c(R, files, width, dark=False, deck=False):
     R.check(page, S, "회사 페이지: 관심 종목에서 빼기 → 추가 (뺀 표시 · 이름) · 30개면 그 줄", company)
 
     def add_and_empty():
-        page.evaluate("() => { const d = JSON.parse(localStorage.getItem('baepsae2.v1')); delete d.watch; localStorage.setItem('baepsae2.v1', JSON.stringify(d)); }")
+        # no list at all (the copy beside the records too: what is there would come back, as from an old tab's write, review B1)
+        page.evaluate("() => { const d = JSON.parse(localStorage.getItem('baepsae2.v1')); delete d.watch; delete d.gone; localStorage.setItem('baepsae2.v1', JSON.stringify(d)); localStorage.removeItem('baepsae2.v1.watch'); localStorage.removeItem('baepsae2.v1.mine'); }")
         page.reload(wait_until="domcontentloaded")
         page.evaluate("(h) => { location.replace(h); }", "#stocks/watch")
         at(page, "stocks/watch")
@@ -12828,6 +12832,33 @@ def scene_v196c_stale(R, files, width=390):
         assert len(w2) == 30 and all(t in w2 for t in WATCH_T) and w2["005380"]["conds"][0]["hitAt"] == "2026-10-29"
         R.collect(page)
     R.check(page, S, "기록 불러오기: 이 기기 것 먼저 · 30개까지 · 못 넣은 수 줄", import_cap)
+    ctx.close()
+    srv.shutdown()
+    # review W18: the same stale day with no portfolio (홈's first-visit screen reads the rows the same way): no row, no mark
+    srv, ctx, page, base = R.open(build_site(data), width, init=v196c_seed({"v": 1, "decks": [], "watch": v196c_watch()}), path="/app.html?dev=1#home")
+
+    def stale_first_visit():
+        page.locator('[data-ui-v2="home-hero"]').wait_for(state="visible")
+        page.wait_for_timeout(300)
+        assert page.locator('[data-ui-v2="home-watch"]').count() == 0 and page.locator('[data-ui-v2="home-look"]').count() == 0
+        assert "hitAt" not in json.dumps(page.evaluate(STORED_JS)["watch"]["AAPL"]), "멈춘 날에 hitAt 이 생겼어요"
+        R.collect(page)
+    R.check(page, S, "멈춘 데이터 · 포트폴리오 없는 홈: 관심 종목 조건 줄 없음 · hitAt 없음", stale_first_visit)
+    ctx.close()
+    srv.shutdown()
+    # review S2: a watch part that cannot be read is kept aside (the records are locked): the screen says so, never "아직 관심 종목이 없어요"
+    bad = {"v": 1, "decks": [], "watch": {str(100000 + i): {"at": "2026-11-01"} for i in range(31)}}
+    srv, ctx, page, base = R.open(build_site(v196c_files(files)), width, init=v196c_seed(bad), path="/app.html?dev=1#stocks/watch")
+
+    def locked():
+        page.locator('[data-ui-v2="store-locked"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="store-locked"]').inner_text() == C["store"]["locked"]
+        assert page.locator('[data-ui-v2="watch-empty"]').count() == 0 and page.locator('[data-ui-v2="watch-card"]').count() == 0
+        assert len(page.evaluate(STORED_JS)["watch"]) == 31                       # kept as stored, untouched
+        R.collect(page)
+        if R.shots:
+            page.screenshot(path=os.path.join(R.shots, f"v196c-locked-{width}.png"), full_page=True)
+    R.check(page, S, "읽지 못한 관심 종목: 따로 보관 문구 · 빈 목록 문구 없음 · 그대로 둠", locked)
     ctx.close()
     srv.shutdown()
     srv, ctx, page, base = R.open(build_site(data, drop=("data.json",)), width, init=v196c_seed({"v": 1, "decks": [], "watch": w}),

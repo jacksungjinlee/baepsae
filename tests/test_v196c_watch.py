@@ -34,12 +34,18 @@ def run(body):
             for name, mod in (("S", "store.js"), ("Wt", "watch.js"), ("Wx", "watch.jsx"), ("En", "engine.js"), ("Rt", "routes.js")):
                 f.write(f"export * as {name} from {json.dumps(os.path.join(ROOT, 'src', 'v2', mod))};\n")
             f.write(f"export * as Old7 from {json.dumps(OLD7)};\n")
+            # a second tab of this app: the same files in another place, so it has its own module state (what it last read or wrote)
+            tab2 = os.path.join(tmp, "tab2")
+            os.makedirs(tab2)
+            for m in ("store.js", "held.js", "dcf.js"):
+                shutil.copy(os.path.join(ROOT, "src", "v2", m), tab2)
+            f.write(f"export * as S2 from {json.dumps(os.path.join(tab2, 'store.js'))};\n")
         exe = os.path.join(ROOT, "node_modules", ".bin", "esbuild")
         r = subprocess.run([exe, entry, "--bundle", "--format=esm", "--platform=node", f"--outfile={tmp}/w.mjs", "--log-level=error",
                             "--loader:.js=jsx", "--jsx=automatic", "--charset=utf8"], cwd=ROOT, capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
         _B["p"] = tmp
-    code = ("import { S, Wt, Wx, En, Rt, Old7 } from './w.mjs';\n" + FAKE + "let out;\n" + body + "\nprocess.stdout.write(JSON.stringify(out));")
+    code = ("import { S, S2, Wt, Wx, En, Rt, Old7 } from './w.mjs';\n" + FAKE + "let out;\n" + body + "\nprocess.stdout.write(JSON.stringify(out));")
     r = subprocess.run([NODE, "--input-type=module", "-e", code], cwd=_B["p"], capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
@@ -141,10 +147,13 @@ def test_a_us_stock_hit_is_dated_by_its_own_close_and_rows_keep_list_then_kind_o
       const data = W({ '000002': { at: '2026-11-01', conds: [{ k: 'dyAtLeast', v: 4 }, { k: 'pbrBelow', v: 0.8 }] },
                        AAA: { at: '2026-11-05', conds: [{ k: 'pxBelow', v: 150 }] }, BBB: { at: '2026-11-03', conds: [{ k: 'pxBelow', v: 150 }] } });
       const l = loadOf([kr('000002', { pbr: 0.7, dyt: 4.2 }), us('AAA'), us('BBB', { pxd: '2026-11-07' })]);
-      out = Wt.watchHits(data, l).map((h) => [h.t, h.k, h.val, h.date]);""")
-    # newest first (AAA added 11-05, BBB 11-03, 000002 11-01); within a stock pxBelow · pbrBelow · dyAtLeast; US dated by usPxDate or pxd
-    assert got == [["AAA", "pxBelow", 148.5, "2026-11-11"], ["BBB", "pxBelow", 148.5, "2026-11-07"],
-                   ["000002", "pbrBelow", 0.7, "2026-11-12"], ["000002", "dyAtLeast", 4.2, "2026-11-12"]]
+      out = { rows: Wt.watchHits(data, l).map((h) => [h.t, h.k, h.val, h.date]), marks: [...Wt.watchMarks(data, l)].map((m) => m[0]),
+              bbb: Wt.condState(l, l.byT.get('BBB'), { k: 'pxBelow', v: 150 }, true).state, locked: Wt.watchHits(data, l, undefined, false) };""")
+    # newest first (AAA added 11-05, 000002 11-01); within a stock pxBelow · pbrBelow · dyAtLeast; a US stock dated by usPxDate.
+    # BBB is priced at an earlier close than its market's (pxd: a halt): not today's price, so never judged: no mark, no row
+    assert got["rows"] == [["AAA", "pxBelow", 148.5, "2026-11-11"], ["000002", "pbrBelow", 0.7, "2026-11-12"], ["000002", "dyAtLeast", 4.2, "2026-11-12"]]
+    assert got["bbb"] == "stale" and sorted(got["marks"]) == ["000002|dyAtLeast", "000002|pbrBelow", "AAA|pxBelow"]
+    assert got["locked"] == []                       # records that cannot be written: no row (its mark could not stop it repeating)
 
 
 def test_words_follow_appendix_1_with_the_right_particle():
@@ -154,8 +163,9 @@ def test_words_follow_appendix_1_with_the_right_particle():
               pbr: h('pbrBelow', 0.8, 0.7, false), dy: h('dyAtLeast', 4, 4.2, false), dy35: Wt.condText('dyAtLeast', 3.5, false),
               pbr1: Wt.condText('pbrBelow', 1, false), now: [Wt.nowValue('pxBelow', 84200, false), Wt.nowValue('pbrBelow', 1.3, false), Wt.nowValue('dyAtLeast', 0.03, false)] };""")
     assert got["px"] == "주가 75,000원 아래 조건에 맞아요. 지금 74,000원이에요."
-    assert got["pxUs"] == "주가 $150.00 아래 조건에 맞아요. 지금 $148.50이에요."             # …50 → 영: 받침
-    assert got["pxUs2"] == "주가 $150.00 아래 조건에 맞아요. 지금 $148.55예요."             # …5 → 오
+    # a US price is read "…달러" (review B1): always 예요, whatever its last digit
+    assert got["pxUs"] == "주가 $150.00 아래 조건에 맞아요. 지금 $148.50예요."
+    assert got["pxUs2"] == "주가 $150.00 아래 조건에 맞아요. 지금 $148.55예요."
     assert got["pbr"] == "PBR 0.8배 아래 조건에 맞아요. 지금 0.70배예요."
     assert got["dy"] == "배당수익률 4% 이상 조건에 맞아요. 지금 4.2%예요."
     assert got["dy35"] == "배당수익률 3.5% 이상" and got["pbr1"] == "PBR 1배 아래"
@@ -181,14 +191,42 @@ def test_the_store_checks_the_watch_part_and_sets_a_bad_one_aside():
         many: ok(many), twice: ok({ '005930': { at: T, conds: [{ k: 'pbrBelow', v: 0.8 }, { k: 'pbrBelow', v: 0.9 }] } }),
         dec: ok({ '005930': { at: T, conds: [{ k: 'pbrBelow', v: 0.85 }] } }), zero: ok({ '005930': { at: T, conds: [{ k: 'pxBelow', v: 0 }] } }),
         future: ok({ '005930': { at: '2026-11-13' } }), hit: ok({ '005930': { at: T, conds: [{ k: 'pxBelow', v: 1, hitAt: 'yesterday' }] } }),
-        code: ok({ 'x y': { at: T } }),
+        code: ok({ 'x y': { at: T } }), badAt: ok({ '005930': { at: '11/12' } }),
       };
-      const r = S.checkStore({ v: 1, decks: [], notes: { '005930': { text: '메모', at: T } }, watch: { '005930': { at: '2026-11-13' } } }, T);
-      out.read = { notes: !!r.data.notes, watch: r.data.watch ?? null, problems: r.problems };""")
+      const r = S.checkStore({ v: 1, decks: [], notes: { '005930': { text: '메모', at: T } }, watch: { '005930': { at: T, conds: [{ k: 'pxBelow', v: 0 }] } } }, T);
+      out.read = { notes: !!r.data.notes, watch: r.data.watch ?? null, problems: r.problems };
+      const gone = (g) => S.checkStore({ v: 1, decks: [], gone: { watch: g } }, T).problems;
+      out.gone = [gone({ '005930': { at: T } }), gone({ '005930': { at: T, ts: 'x' } }), gone({ 'x y': { at: T, ts: 5 } }), gone({ '005930': { at: '11/12', ts: 5 } }),
+                  gone({ '005930': { at: T, ts: 5 } })];""")
     assert got["good"] is None and got["later"] is None
     assert got["many"] == "more than 30 stocks" and "two conditions of one kind" in got["twice"] and "pbrBelow" in got["dec"]
-    assert "pxBelow" in got["zero"] and "not after today" in got["future"] and "hitAt" in got["hit"] and "stock code" in got["code"]
-    assert got["read"] == {"notes": True, "watch": None, "problems": ["watch (the watch list): 005930: the date added must be a real date, not after today"]}
+    assert "pxBelow" in got["zero"] and "hitAt" in got["hit"] and "stock code" in got["code"] and "real date" in got["badAt"]
+    assert got["future"] is None                     # a date after today is a clock that was ahead: read as today, never set aside (below)
+    assert got["read"] == {"notes": True, "watch": None, "problems": ["watch (the watch list): 005930: pxBelow: the number is not valid"]}
+    bad = ["gone (deleted notes or watch-list marks): not valid"]
+    assert got["gone"] == [bad, bad, bad, bad, []]  # a mark needs a code, a date and a time (ms)
+
+
+def test_a_clock_that_was_ahead_never_sets_the_list_aside_and_a_later_real_edit_still_wins():
+    """Review (clock): a date added after today or a time after now (watch entries, gone.watch marks) is read as today / now with
+    a console line; the store stays unlocked; a merge with such a copy keeps a later real edit. The notes' own rule is unchanged."""
+    got = run("""
+      const NOW = Date.now(), AHEAD = NOW + 3 * 86400000, day = new Date(NOW + 9 * 3600 * 1000).toISOString().slice(0, 10);
+      const ahead = { v: 1, decks: [], watch: { '005930': { at: '2099-01-01', ts: AHEAD, conds: [{ k: 'pxBelow', v: 70000 }] } },
+                      gone: { watch: { '000660': { at: '2099-01-01', ts: AHEAD } } } };
+      mem.set(K, JSON.stringify(ahead));
+      const r = S.readStore(K, day);
+      const w = r.data.watch['005930'], g = r.data.gone.watch['000660'];
+      // a real edit made now, in another copy: it wins over the clamped times (the ahead copy would have won before)
+      const real = { v: 1, decks: [], watch: { '005930': { at: day, ts: NOW - 1, conds: [{ k: 'pxBelow', v: 60000 }] }, '000660': { at: day, ts: NOW - 1 } } };
+      const m = S.mergeTabs(ahead, real, day), m2 = S.mergeTabs(real, ahead, day);
+      const notes = S.checkStore({ v: 1, decks: [], notes: { '005930': { text: 'x', at: '2099-01-01' } } }, day);
+      out = { locked: r.locked, problems: r.problems, at: [w.at === day, g.at === day], ts: [w.ts, g.ts].map((x) => x === Date.parse(day + 'T00:00:00+09:00')),
+              said: warns.some((x) => x.includes('read as the start of today')), m: [m.watch['005930'].conds[0].v, !!m.watch['000660']], m2: [m2.watch['005930'].conds[0].v, !!m2.watch['000660']],
+              notes: notes.problems };""")
+    assert got["locked"] is False and got["problems"] == [] and got["at"] == [True, True] and got["ts"] == [True, True] and got["said"] is True
+    assert got["m"] == [60000, True] and got["m2"] == [60000, True]
+    assert got["notes"] == ["notes: not valid"]       # unchanged: a note dated after today is still set aside
 
 
 def test_add_remove_and_conditions_edit_the_store_purely():
@@ -315,6 +353,129 @@ def test_an_old_tab_writing_over_a_newer_watch_list_loses_nothing_on_the_next_st
     assert got["restored"] is True
 
 
+def test_review_s1_no_check_without_todays_dated_price_no_row_on_stale_data_and_no_word_from_an_older_close():
+    """W11: a US stock in a file without a US date (no price date) is never met. W18: stale data gives no 관심 종목 조건 row even
+    for a condition met with no mark yet (the no-portfolio 홈 reads watchHits the same way). S1(c): a value dated before the
+    stored mark neither clears nor sets it."""
+    got = run("""
+      const data = W({ AAA: { at: '2026-11-05', conds: [{ k: 'pxBelow', v: 150 }] }, '000002': { at: '2026-11-01', conds: [{ k: 'pbrBelow', v: 0.8, hitAt: '2026-11-13' }] } });
+      const noUs = loadOf([us('AAA'), kr('000002', { pbr: 0.9 })], { usPxDate: null });
+      const stale = loadOf([us('AAA'), kr('000002', { pbr: 0.7 })], { stale: true });
+      const older = loadOf([us('AAA'), kr('000002', { pbr: 0.9 })], { pxDate: '2026-11-12' });       // fresh, but before the mark's 11-13
+      out = { noDate: Wt.condState(noUs, noUs.byT.get('AAA'), { k: 'pxBelow', v: 150 }, true).state, noDateRows: Wt.watchHits(data, noUs).map((h) => h.t),
+              stale: Wt.watchHits(data, stale), staleMarks: [...Wt.watchMarks(data, stale)], older: [...Wt.watchMarks(data, older)].filter(([k]) => k.startsWith('000002')),
+              olderWrite: Wt.withWatchHits(W({ '000002': data.watch['000002'] }), older) };""")
+    assert got["noDate"] == "stale" and got["noDateRows"] == []
+    assert got["stale"] == [] and got["staleMarks"] == []
+    assert got["older"] == [] and got["olderWrite"] is None
+
+
+def test_review_s11_an_edit_keeps_a_later_versions_conditions():
+    got = run("""
+      const d = W({ '005930': { at: T, ts: 1, conds: [{ k: 'pbrBelow', v: 0.8 }, { k: 'perBelow', v: 9, someday: 1 }] } });
+      out = S.withWatchConds(d, '005930', [{ k: 'pxBelow', v: 70000 }], T, 2).watch['005930'].conds;""")
+    assert got == [{"k": "pxBelow", "v": 70000}, {"k": "perBelow", "v": 9, "someday": 1}]
+
+
+def test_review_s24_s25_import_respects_a_deletion_mark_in_any_copy_and_stamps_after_it():
+    """t3: this device took 005930 out in a copy another tab left (.other.), the records hold no mark; a records file brings it back:
+    it comes in as an edit made now (after that mark), so the next start keeps it. S24: with the import's time before the mark's
+    (a clock set back), the stamp is the mark's time + 1, never the import time alone."""
+    got = run("""
+      S.writeStore({ v: 1, decks: [], notes: { '000001': { text: 'a', at: T } } }, K, T); S.readStore(K, T);
+      mem.set(K + '.other.5', JSON.stringify({ v: 1, decks: [], gone: { watch: { '005930': { at: T, ts: 500 }, '000660': { at: T, ts: 5000 } } } }));
+      const inc = S.parseImport(JSON.stringify({ v: 1, decks: [], watch: { '005930': { at: '2026-11-01' }, '000660': { at: '2026-11-01' } } }), T);
+      const cur = { v: 1, decks: [], notes: { '000001': { text: 'a', at: T } } };
+      const m = S.mergeStores(cur, inc, 1000, S.storedStores(K, T), T);
+      S.writeStore(m, K, T);
+      const r = S.readStore(K, T);
+      out = { stamped: [m.watch['005930'].ts, m.watch['000660'].ts], after: Object.keys(r.data.watch).sort() };""")
+    assert got["stamped"] == [1000, 5001] and got["after"] == ["000660", "005930"]
+
+
+def test_review_s14_s15_s16_s19_merges_pick_the_right_state_and_the_current_copys_stocks_at_the_cap():
+    got = run("""
+      const m = (other, cur) => S.mergeTabs({ v: 1, decks: [], ...other }, { v: 1, decks: [], ...cur }, T);
+      // S14: one copy holds an entry and a mark of the same time: the entry (it was added again in that same moment)
+      const tie = m({ watch: { '005930': { at: T, ts: 5 } }, gone: { watch: { '005930': { at: T, ts: 5 } } } }, {});
+      // S15: an entry at 5 and a later mark at 9 in one copy: the mark
+      const later = m({ watch: { '005930': { at: T, ts: 5 } }, gone: { watch: { '005930': { at: T, ts: 9 } } } }, {});
+      // S16: the same stock edited at the same time in both copies: the current copy's
+      const both = m({ watch: { '005930': { at: T, ts: 5, conds: [{ k: 'pxBelow', v: 2 }] } } }, { watch: { '005930': { at: T, ts: 5, conds: [{ k: 'pxBelow', v: 1 }] } } });
+      // S19: the current copy's 29 (added earlier) and the other copy's 2 newest: 30 = all 29 of the current copy + the newest other
+      const list = (from, n, at) => Object.fromEntries(Array.from({ length: n }, (_, i) => [String(from + i), { at, ts: 1000 + i }]));
+      const cap = m({ watch: list(200000, 2, '2026-11-11') }, { watch: list(100000, 29, '2026-11-01') });
+      out = { tie: [Object.keys(tie.watch || {}), tie.gone ?? null], later: [later.watch ?? null, later.gone], both: both.watch['005930'].conds[0].v,
+              cap: Object.keys(cap.watch).sort() };""")
+    assert got["tie"] == [["005930"], None]
+    assert got["later"] == [None, {"watch": {"005930": {"at": "2026-11-12", "ts": 9}}}]
+    assert got["both"] == 1
+    assert got["cap"] == sorted([str(100000 + i) for i in range(29)] + ["200001"])
+
+
+def test_review_b1_an_old_tab_that_reads_again_never_drops_newer_watch_edits():
+    """B1 path (a): this app writes A; a tab of the app now on main (v19.7a) starts and reads [A]; this app adds B and puts a
+    condition on A, then closes; the old tab starts again (merging this app's last text its own way) and makes an edit. Before
+    the fix B and the condition were gone with no copy and no 합쳤어요. Now they come back from key + ".watch" and the screens say so.
+    Path (b): a copy another tab of this app left aside (.other., holding C) is merged by an old tab's start its own way (its
+    list dropped, the copy moved to .restored.); C comes back too."""
+    got = run("""
+      // (a)
+      S.writeStore(S.withWatchAdd({ v: 1, decks: [] }, '005930', '삼성전자', T, 100), K, T);
+      const old1 = Old7.readStore(K, T);
+      let d = S.readStore(K, T).data;
+      d = S.withWatchAdd(d, '000660', 'SK하이닉스', T, 200); S.writeStore(d, K, T);
+      d = S.withWatchConds(d, '005930', [{ k: 'pbrBelow', v: 0.8 }], T, 300); S.writeStore(d, K, T);
+      S.keepMine(K);
+      Old7.writeStore(Old7.withNote(old1.data, '035720', '메모', T, 400), K, T);
+      const old2 = Old7.readStore(K, T);
+      Old7.writeStore(Old7.withNote(old2.data, '035720', '메모 2', T, 500), K, T);
+      const lostBefore = Object.fromEntries(Object.entries(stored().watch || {}).map(([t, e]) => [t, (e.conds || []).length]));
+      const a = S.readStore(K, T);
+      const aOut = { lostBefore, watch: Object.fromEntries(Object.entries(a.data.watch).map(([t, e]) => [t, (e.conds || []).map((c) => [c.k, c.v])])),
+                     restored: a.restored, note: a.data.notes['035720'].text, again: S.readStore(K, T).restored };
+      // (b)
+      mem.clear();
+      S.writeStore({ v: 1, decks: [] }, K, T); S.readStore(K, T);
+      S2.readStore(K, T);                                                          // a second tab of this app read the same records
+      S.writeStore(S.withWatchAdd(S.readStore(K, T).data, '005930', '삼성전자', T, 100), K, T);
+      S2.writeStore(S2.withWatchAdd({ v: 1, decks: [] }, '051910', 'LG화학', T, 200), K, T);    // its text did not hold 005930: kept aside
+      const aside = [...mem.keys()].filter((k) => k.includes('.other.')).length;
+      const o = Old7.readStore(K, T);                                              // the old tab's start merges that copy its own way
+      Old7.writeStore(Old7.withNote(o.data, '035720', '메모', T, 300), K, T);
+      const oldLeft = Object.keys(stored().watch || {});
+      const b = S.readStore(K, T);
+      out = { a: aOut, b: { aside, oldLeft, watch: Object.keys(b.data.watch).sort(), restored: b.restored } };""")
+    a = got["a"]
+    assert a["lostBefore"] == {"005930": 0}                                   # what the old tab left in the records: no 000660, no condition
+    assert a["watch"] == {"005930": [["pbrBelow", 0.8]], "000660": []} and a["restored"] is True and a["note"] == "메모 2"
+    assert a["again"] is False                                                # said once
+    assert got["b"]["aside"] == 1 and got["b"]["oldLeft"] == ["051910"]       # the old tab's start dropped the copy's 005930
+    assert got["b"]["watch"] == ["005930", "051910"] and got["b"]["restored"] is True
+
+
+def test_review_b1_the_side_key_follows_the_records_and_a_bad_one_is_set_aside():
+    got = run("""
+      // a stock the 30 cap left out of a start's merge does not come back on a later start once there is room
+      const many = Object.fromEntries(Array.from({ length: 30 }, (_, i) => [String(100000 + i), { at: '2026-11-01', ts: 1000 + i }]));
+      S.writeStore({ v: 1, decks: [], watch: many }, K, T); S.readStore(K, T);
+      const side = JSON.parse(mem.get(K + '.watch'));
+      side.watch['200000'] = { at: '2026-11-11', ts: 999999 };                    // a later add the records do not hold (an old tab dropped it)
+      mem.set(K + '.watch', JSON.stringify(side));
+      const r1 = S.readStore(K, T);                                                // brought back, the cap keeps the records' 30: said, and the key follows
+      const followed = Object.keys(JSON.parse(mem.get(K + '.watch')).watch).length;
+      S.writeStore(S.withWatchRemove(r1.data, '100000', T, 2000000), K, T);
+      const r2 = S.readStore(K, T);
+      // a bad key: set aside, not used, the records read
+      mem.set(K + '.watch', '{"v":1,"watch":{"x y":{}}}');
+      const r3 = S.readStore(K, T);
+      out = { r1: [r1.restored, Object.keys(r1.data.watch).length, '200000' in r1.data.watch], followed, r2: ['200000' in r2.data.watch, r2.restored],
+              r3: [r3.locked, r3.restored, mem.has(K + '.watch'), [...mem.values()].some((v) => v === '{"v":1,"watch":{"x y":{}}}')] };""")
+    assert got["r1"] == [True, 30, False] and got["followed"] == 30
+    assert got["r2"] == [False, False]
+    assert got["r3"][0] is False and got["r3"][1] is False and got["r3"][3] is True
+
+
 def test_the_watch_screen_has_its_own_address_under_stocks():
     got = run("""out = ['#stocks/watch', '#stocks/watch/x', '#stocks/WATCH'].map((h) => Rt.parseHash(h));""")
     assert got[0] == {"tab": "stocks", "sub": "watch", "about": False, "known": True}
@@ -367,3 +528,100 @@ def test_on_todays_real_data_every_value_is_a_shown_number_or_blank_and_pipeline
     assert got["n"] > 1000 and not got["bad"] and not got["leak"], (got["bad"][:5], got["leak"][:5])
     k = got["kinds"]
     assert k["pxBelow"]["value"] > 0.95 * got["n"] and k["pbrBelow"]["value"] > 0 and k["dyAtLeast"]["value"] > 0, k
+
+
+def test_review_tabs_a_copy_holding_what_the_records_would_lose_is_kept_and_said():
+    """covers / droppedFrom (S27–S30): when this tab writes over another tab's text, that text is kept aside whenever merging it
+    would leave out one of its stocks (the 30 cap) or tie an entry against its deletion mark, and the next start says 합쳤어요."""
+    got = run("""
+      const list = (from, n, at) => Object.fromEntries(Array.from({ length: n }, (_, i) => [String(from + i), { at, ts: 1000 + i }]));
+      const run1 = (theirs, mine) => {
+        mem.clear();
+        S.writeStore({ v: 1, decks: [] }, K, T);                                    // this tab last wrote an empty list
+        mem.set(K, JSON.stringify(theirs));                                         // another tab wrote since (not through this module)
+        S.writeStore(mine, K, T);
+        const kept = [...mem.keys()].filter((k) => k.includes('.other.')).length;
+        return { kept, restored: S.readStore(K, T).restored };
+      };
+      // the cap: theirs = 29 of mine + one more; mine = 30
+      const capRun = run1({ v: 1, decks: [], watch: { ...list(100000, 29, '2026-11-01'), '200000': { at: '2026-11-11', ts: 5 } } },
+                          { v: 1, decks: [], watch: list(100000, 30, '2026-11-01') });
+      // a tie: theirs took 005930 out at the same moment mine holds it
+      const tieRun = run1({ v: 1, decks: [], gone: { watch: { '005930': { at: T, ts: 500 } } } }, { v: 1, decks: [], watch: { '005930': { at: T, ts: 500 } } });
+      out = { capRun, tieRun };""")
+    assert got["capRun"] == {"kept": 1, "restored": True} and got["tieRun"] == {"kept": 1, "restored": True}
+
+
+def test_review_marks_and_imports_never_carry_a_device_mark_or_a_bad_date():
+    got = run("""
+      const d = W({ '005930': { at: T, conds: [{ k: 'pbrBelow', v: 0.8 }] } });
+      const bad = S.withWatchMarks(d, new Map([['005930|pbrBelow', 'yesterday']]));        // S13: only a date or null is a mark
+      const good = S.withWatchMarks(d, new Map([['005930|pbrBelow', '2026-11-11']]));
+      // S26: a records file read some other way than parseImport still brings no hitAt
+      const m = S.mergeStores({ v: 1, decks: [] }, { decks: [], watch: { AAPL: { at: T, conds: [{ k: 'pxBelow', v: 150, hitAt: '2026-11-11' }] } } }, 1, [], T);
+      out = { bad, good: good.watch['005930'].conds, file: m.watch.AAPL.conds };""")
+    assert got["bad"] is None and got["good"] == [{"k": "pbrBelow", "v": 0.8, "hitAt": "2026-11-11"}]
+    assert got["file"] == [{"k": "pxBelow", "v": 150}]
+
+
+def test_review_b1_a_removal_survives_an_old_tab_writing_its_older_copy():
+    """N10: this app takes 005930 out; a tab of the app now on main, which read the list before, saves a 메모 (its write puts
+    005930 back, without the mark). The next start takes it out again (the mark kept beside the records) and says so."""
+    got = run("""
+      S.writeStore(S.withWatchAdd({ v: 1, decks: [] }, '005930', '삼성전자', T, 100), K, T);
+      const old = Old7.readStore(K, T);
+      const d = S.readStore(K, T).data;
+      S.writeStore(S.withWatchRemove(d, '005930', T, 200), K, T);
+      Old7.writeStore(Old7.withNote(old.data, '035720', '메모', T, 300), K, T);
+      const back = !!(stored().watch || {})['005930'];
+      const r = S.readStore(K, T);
+      out = { back, after: r.data.watch ?? null, gone: r.data.gone.watch, restored: r.restored };""")
+    assert got["back"] is True and got["after"] is None and got["gone"] == {"005930": {"at": "2026-11-12", "ts": 200}} and got["restored"] is True
+
+
+def test_review_b1_random_runs_of_this_app_and_an_old_tab_never_lose_a_watch_edit():
+    """Review A's race (race_old.mjs): random steps of a tab of this app (add · remove · a condition) and a tab of the app now on
+    main (a 메모, a restart that reads the list, close · reopen), 200 runs; the next start of this app holds every last edit of
+    this app (a stock added or changed is there with its conditions, one taken out is not). Before the fix: 11 of 400 lost one."""
+    got = run("""
+      const POOL = ['005930', '000660', '035720', '051910', 'AAPL', 'MSFT', '005380', 'NVDA'];
+      let seed = 7; const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+      const pick = (a) => a[Math.floor(rnd() * a.length)];
+      const condsOf = (e) => JSON.stringify((e && e.conds || []).map((c) => [c.k, c.v]));
+      let fails = 0, first = null;
+      for (let run = 0; run < 200; run++) {
+        mem.clear();
+        const tabs = [S, Old7]; let clock = 1762900000000;
+        S.writeStore({ v: 1, decks: [] }, K, T);
+        const D = [S.readStore(K, T).data, Old7.readStore(K, T).data], open = [true, true], oracle = new Map();
+        const fire = (i, before) => { const now = mem.get(K); if (now !== before && open[1 - i]) tabs[1 - i].keepOwnText(K, now, T); };
+        const steps = 8 + Math.floor(rnd() * 20), log = [];
+        for (let s = 0; s < steps; s++) {
+          const i = rnd() < 0.5 ? 0 : 1, St = tabs[i], r = rnd();
+          if (!open[i]) { const rr = St.readStore(K, T); if (!rr.locked) D[i] = rr.data; open[i] = true; fire(i, null); continue; }
+          if (r > 0.93) { if (open[1 - i]) { St.keepMine(K); open[i] = false; } continue; }
+          const before = mem.get(K);
+          if (r < 0.15) { const rr = St.readStore(K, T); if (!rr.locked) D[i] = rr.data; log.push('t' + i + ' restart'); }
+          else if (i === 1) { const n = Old7.withNote(D[1], pick(POOL), 'm' + clock, T, ++clock); if (n && Old7.writeStore(n, K, T)) D[1] = n; log.push('old note'); }
+          else {
+            const t = pick(POOL), ts = ++clock, w = D[0].watch || {};
+            let n = null, act;
+            if (!w[t]) { n = S.withWatchAdd(D[0], t, 'n' + t, T, ts); act = 'add'; }
+            else if (rnd() < 0.4) { n = S.withWatchRemove(D[0], t, T, ts); act = 'remove'; }
+            else { n = S.withWatchConds(D[0], t, [{ k: 'pxBelow', v: 1 + Math.floor(rnd() * 5) * 1000 }], T, ts); act = 'conds'; }
+            if (!n || !S.writeStore(n, K, T)) continue;
+            D[0] = n; log.push(act + ' ' + t);
+            oracle.set(t, act === 'remove' ? { present: false } : { present: true, conds: condsOf(n.watch[t]) });
+          }
+          fire(i, before);
+        }
+        const got = S.readStore(K, T).data.watch || {}, bad = [];
+        for (const [t, o] of oracle) {
+          if (!o.present && got[t]) bad.push(t + ' back');
+          if (o.present && !got[t]) bad.push(t + ' lost');
+          if (o.present && got[t] && condsOf(got[t]) !== o.conds) bad.push(t + ' conds');
+        }
+        if (bad.length) { fails++; if (!first) first = [run, bad, log]; }
+      }
+      out = { fails, first };""")
+    assert got["fails"] == 0, got["first"]

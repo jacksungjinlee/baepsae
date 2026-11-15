@@ -189,6 +189,11 @@ export function CondSheet({ open, store, setStoreData, onClose }) {
                   <CondChip st={{ k, v, val: now, state: now == null ? "blank" : "stale" }} us={us} />
                 </div>
               )}
+              {/* an empty field: today's value (or 정보 없음), so there is something to compare with before typing */}
+              {v == null && (
+                <p data-ui-v2="watch-now" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>
+                  {now == null ? W().blank : fill(W().now, { now: nowValue(k, now, us) })}</p>
+              )}
               {Number.isNaN(v) && W().form.bad && <Note tone="watch" data-ui-v2="watch-bad">{W().form.bad}</Note>}
             </div>
           );
@@ -227,8 +232,12 @@ export function WatchScreen({ load, store, setStoreData, pad, onBack, onAdd }) {
           <p data-ui-v2="watch-sub" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{W().sub}</p>
           {load.status === "fail" && <LoadFail picture={false} />}
           {!store.writable && <Note tone="watch">{C.store.unavailable}</Note>}
+          {/* records (or this list) that could not be read were kept aside: say so, never "아직 관심 종목이 없어요" (review S2) */}
+          {store.locked && C.store.locked && <Note tone="watch" data-ui-v2="store-locked">{C.store.locked}</Note>}
+          {/* records another tab (or the app before v19.6c) left were merged back: said here too, where the list is (review B1) */}
+          {store.restored && <Note tone="watch" data-ui-v2="store-merged">{C.store.merged}</Note>}
           {store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}
-          {ok && !order.length && <Card data-ui-v2="watch-empty"><p style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink)}>{W().empty}</p></Card>}
+          {ok && !order.length && !store.locked && <Card data-ui-v2="watch-empty"><p style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink)}>{W().empty}</p></Card>}
           {ok && order.map((t) => (
             <WatchCard key={t} t={t} e={w[t]} load={load} fresh={fresh} canEdit={edit}
               onCond={(tt, name, s) => setCond({ t: tt, name, s, us: s ? usOf(s) : !/^\d/.test(tt) })} />
@@ -280,7 +289,7 @@ export function WatchButton({ s, store, setStoreData }) {
   };
   return (
     <div data-ui-v2="watch-co" data-on={on ? "1" : "0"} style={{ marginTop: SPACE(3) }}>
-      <button type="button" data-ui-v2="watch-toggle" aria-pressed={on ? "true" : "false"} onClick={tapIt}
+      <button type="button" data-ui-v2="watch-toggle" onClick={tapIt}
         style={{ ...tap, display: "inline-flex", alignItems: "center", gap: SPACE(2), minHeight: TOUCH, padding: `0 ${SPACE(4)}px`, borderRadius: 999,
           border: `1px solid ${COLOR.border}`, background: on ? COLOR.select : COLOR.surface, ...tx(SIZE.sm, WEIGHT.bold, COLOR.ink) }}>
         <Icon name="bell" size={20} tone={on ? "on" : "off"} />

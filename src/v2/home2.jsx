@@ -340,7 +340,9 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
   // the stale band and the load-failure message.
   const held = ev.ok ? ev.decks.filter((d) => d.ok && !d.imported && d.holdings.some((x) => x.qty !== 0)) : [];
   const kr = useMemo(() => holdsKorean(decks, ctx && ctx.byT), [decks, ctx]);
-  const hits = useMemo(() => (ev.ok ? watchHits(store.data, load) : []), [store.data, load, ev.ok]);
+  // no row when the records cannot be written: its mark could not stop it repeating (review S1)
+  const canMark = !!(store.writable && !store.locked);
+  const hits = useMemo(() => (ev.ok ? watchHits(store.data, load, undefined, canMark) : []), [store.data, load, ev.ok, canMark]);
   const look = lookOf(blocks, held, disc, kr, hits);
   const many = blocks.length > 1;
   const main = [

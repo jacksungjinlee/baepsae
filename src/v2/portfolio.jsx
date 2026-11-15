@@ -103,6 +103,7 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
     else console.warn("[v2] answer not recorded: " + JSON.stringify(item));
   };
   const onImport = async (e) => {
+    setImportCap(0);                                     // a later import's line never sits beside an earlier one's (review B4)
     const f = e.target.files && e.target.files[0];
     e.target.value = "";
     if (!f) return;
