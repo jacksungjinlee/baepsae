@@ -10383,7 +10383,7 @@ def scene_us_fgn(R, files, width):
 FGN_LINES_ADD = {"ALKS": ("CVX", "Alkermes plc", {"pbr": "nocompare-own"}, None),
                  "TTE": ("COP", "TotalEnergies SE", {"per": "stopped", "pbr": "stopped", "dy": "stopped"}, None),
                  "BSP": ("BAC", "Bending Spoons S.p.A.", {"per": "mismatch", "pbr": "nocompare-own"}, None),
-                 "TSMX": ("CVX", "Taiwan Semiconductor (시험)", {"pbr": "stopped", "dy": "stopped"}, "TWD")}   # 통화 회사: 표시가 있어도 통화 줄 하나만
+                 "TSMX": ("CVX", "Taiwan Semiconductor Test Co", {"pbr": "stopped", "dy": "stopped"}, "TWD")}   # 통화 회사: 표시가 있어도 통화 줄 하나만
 
 
 def fgn_lines_files(files):
