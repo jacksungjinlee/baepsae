@@ -7,7 +7,9 @@ import { OLD_APP } from "../links.js";
 export { OLD_APP };
 
 export const TABS = ["home", "portfolio", "stocks", "market"];
-const SUBS = { home: ["why"], portfolio: ["build", "import"] };   // v19.3d: #portfolio/import (가진 종목 넣기)
+// v19.6c: #stocks/watch (관심 종목, board Watch2). A company code is upper case or digits, so "watch" is never one.
+const SUBS = { home: ["why"], portfolio: ["build", "import"], stocks: ["watch"] };   // v19.3d: #portfolio/import (가진 종목 넣기)
+export const WATCH_SUB = "watch";
 // v19.3d2: 내 규칙 정하기 of one portfolio, #portfolio/rules/<deck id> (ids as 2.0 makes them: letters, digits, "_" "-")
 export const DECK_ID_RX = /^[A-Za-z0-9_-]{1,60}$/;
 export const ABOUT_ROUTE = "#about";

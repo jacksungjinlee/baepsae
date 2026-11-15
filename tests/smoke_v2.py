@@ -12540,6 +12540,308 @@ def scene_fin_warn_lines(R, files, width):
     srv.shutdown()
 
 
+# ── v19.6c 관심 종목 (docs/tasks/v19.6-records-alerts-dark.md Part C, board Watch2) ──
+WATCH_T = ["005380", "AAPL", "005930", "ABBV", "105560", "999999"]          # 화면 순서 (더한 날 최근 먼저, 같은 날은 시간 · 코드)
+SELECT_DARK_RGB = "rgb(35, 44, 60)"                                             # tokens.js PALETTE.dark select #232C3C
+
+
+def v196c_files(files, days_ago=0):
+    """관심 종목 장면의 데이터: divCheck 가 있는 파일(한국 배당수익률은 확인한 dyt 만) · 현대차 dyt 2.1 · 삼성전자는 dyt 없음 + dvLine
+    (주식 수가 바뀐 비율을 공시로 확인하지 못한 배당 회사: 회사 페이지의 그 줄) · ABBV 는 PBR 이 회사 전체 숫자와 맞지 않아 비움(fgnCut)."""
+    f = daily_files(files, days_ago=days_ago)
+    d = f["data.json"]
+    d["divCheck"] = {}
+    by = {x["t"]: x for x in d["stocks"]}
+    by["005380"].update(dyt=2.1, fy=2025)
+    by["005930"].update(dyt=None, dvLine=1, dps=1668.0, dps3a=[1668.0, 1446.0, 1444.0], divSt="same", fy=2025)
+    by["ABBV"].update(pbr=None, fgnCut={"pbr": "mismatch"})
+    by["105560"].update(dyt=3.4, fy=2025)
+    return f
+
+
+def v196c_watch(extra=None):
+    w = {
+        "005380": {"at": "2026-11-05", "ts": 1762300000000, "conds": [{"k": "pxBelow", "v": 300000}, {"k": "pbrBelow", "v": 0.4},
+                                                                      {"k": "dyAtLeast", "v": 2, "hitAt": "2026-10-29"}]},
+        "AAPL": {"at": "2026-11-04", "conds": [{"k": "pxBelow", "v": 350}]},
+        "005930": {"at": "2026-11-03", "conds": [{"k": "pxBelow", "v": 200000}, {"k": "dyAtLeast", "v": 1}]},
+        "ABBV": {"at": "2026-11-02", "conds": [{"k": "pbrBelow", "v": 5}]},
+        "105560": {"at": "2026-11-01", "ts": 1},
+        "999999": {"at": "2026-11-01", "conds": [{"k": "pxBelow", "v": 1000}]},
+    }
+    w.update(extra or {})
+    return w
+
+
+def v196c_seed(store):
+    return ("(() => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');"
+            f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(store, ensure_ascii=False))}); }})();")
+
+
+def chips_of(page):
+    return page.locator('[data-ui-v2="watch-card"]').evaluate_all("""(cs) => Object.fromEntries(cs.map((c) => [c.dataset.t,
+      [...c.querySelectorAll('[data-ui-v2="watch-chip"]')].map((x) => [x.dataset.k, x.dataset.state, x.textContent])]))""")
+
+
+def scene_v196c(R, files, width, dark=False, deck=False):
+    """v19.6c 관심 종목 (390 · 320 · 1280 · 어두운 화면): 종목 탭 맨 위 관심 종목 칸(목록이 있을 때만, 5개 · 전체 보기 ›) → 관심 종목 화면
+    (#stocks/watch: 제목 · + 추가 · 날짜 줄 · 설명 줄 · 카드 = 마크 · 이름 · 가격 · 오늘 · 조건 칩 · 종 모양 단추 · 아래 줄) · 맞은 조건은 초록 칩과
+    체크 · 안 맞음은 회색 · 빈 값은 '정보 없음' 과 회사 페이지의 그 이유 줄(배당수익률 · 외국 회사 PBR) · 데이터에 없는 종목도 '정보 없음' ·
+    종 → 조건 시트(승인 전 칸 이름 가격 · PBR · 배당수익률, 넣은 값의 칩, 잘못 넣으면 저장 꺼짐, 저장 → 바뀐 조건만 hitAt 없음) ·
+    홈의 오늘 볼 것: 처음 맞은 조건만 '{name} · 관심 종목 조건' · 맞은 문장 · 종가 날짜, 다시 열어도(같은 종가) 그대로, hitAt 은 그 종목의
+    가격 날짜 · 회사 페이지 관심 종목에서 빼기 / 추가 · 30개면 그 줄 · + 추가는 종목 찾기로 · 12px · 가로 스크롤 없음 · 뱁이 없음.
+    deck: 포트폴리오가 있는 새 홈(Home2)의 오늘 볼 것, 없으면 첫 방문 홈 밑의 오늘 볼 것."""
+    S = f"v19.6c 관심 종목 {width}{' 어두운' if dark else ''}{' 포트폴리오' if deck else ''}"
+    wide = width >= 1024
+    W_ = C["watch"]
+    data = v196c_files(files)
+    d = data["data.json"]
+    pxd, uspx = d["pxDate"], d.get("usPxDate") or d["pxDate"]
+    by = {x["t"]: x for x in d["stocks"]}
+    store = {"v": 1, "decks": [], "watch": v196c_watch()}
+    if deck:
+        store = {"v": 2, "decks": [e_imported(by, pxd, [("000660", 3, None)])], "watch": v196c_watch()}
+    screen = pc_device(width) if wide else {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2}
+    srv, ctx, page, base = R.open(build_site(data), width, init=v196c_seed(store), path="/app.html?dev=1#home",
+                                  device={**screen, "color_scheme": "dark" if dark else "light"})
+    stored = lambda: page.evaluate(STORED_JS)                                                         # noqa: E731
+    md = int(pxd[5:7]), int(pxd[8:10])
+    md_text = fillp(C["app"]["md"], m=str(md[0]), d=str(md[1]))
+
+    def check_page(where, name=None):
+        floor_ok(page, where)
+        no_hscroll(page, width)
+        assert page.locator(MASCOT_IN_MAIN).count() == 0, f"{where}: 뱁이가 있어요 (숫자가 있는 화면)"
+        R.collect(page)
+        if name and R.shots:
+            os.makedirs(R.shots, exist_ok=True)
+            page.screenshot(path=os.path.join(R.shots, f"v196c-{name}-{width}{'-dark' if dark else ''}{'-deck' if deck else ''}.png"),
+                            full_page=page.locator('[data-ui="bottom-sheet"]').count() == 0)
+
+    def home_rows():
+        wait_ready(page)
+        rows = page.locator('[data-ui-v2="home-watch"]')
+        rows.first.wait_for(state="visible")
+        got = rows.evaluate_all("(rs) => rs.map((r) => [r.dataset.t, r.dataset.k, r.dataset.date, r.innerText.split('\\n')])")
+        assert [g[:3] for g in got] == [["005380", "pxBelow", pxd], ["AAPL", "pxBelow", uspx]], got
+        assert got[0][3] == [f"{by['005380']['nk']} · {W_['hitKind']}", fillp(W_["hit"], condition="주가 300,000원 아래", now="282,000원"),
+                             fillp(C["why"]["close"], md=md_text)], got[0]
+        aapl_now = "$" + f"{by['AAPL']['price']:,.2f}"
+        hit_aapl = W_["hit"] if has_final(aapl_now) else W_["hitYe"]
+        assert got[1][3][:2] == [f"{by['AAPL']['nk']} · {W_['hitKind']}", fillp(hit_aapl, condition="주가 $350.00 아래", now=aapl_now)], got[1]
+        sec = page.locator('[data-ui-v2="home-look"]')
+        assert sec.locator("h3").first.inner_text() == C["home"]["look"]
+        if not deck:
+            assert sec.get_attribute("data-watch-only") == "1"
+        # the first day seen met: stored as each stock's own price date; the dividend condition seen before (10-29) has no row
+        page.wait_for_function("(d) => { const w = JSON.parse(localStorage.getItem('baepsae2.v1')).watch; return w['005380'].conds[0].hitAt === d; }", arg=pxd)
+        w = stored()["watch"]
+        assert w["005380"]["conds"] == [{"k": "pxBelow", "v": 300000, "hitAt": pxd}, {"k": "pbrBelow", "v": 0.4}, {"k": "dyAtLeast", "v": 2, "hitAt": "2026-10-29"}], w
+        assert w["AAPL"]["conds"] == [{"k": "pxBelow", "v": 350, "hitAt": uspx}] and "hitAt" not in json.dumps(w["005930"]), w
+        check_page("홈", "home")
+        page.reload(wait_until="domcontentloaded")                                   # the same close: the rows stay, nothing written again
+        wait_ready(page)
+        page.locator('[data-ui-v2="home-watch"]').first.wait_for(state="visible")
+        assert page.locator('[data-ui-v2="home-watch"]').count() == 2
+        assert stored()["watch"] == w
+    R.check(page, S, "홈 · 오늘 볼 것: 처음 맞은 조건만 · 이름 · 관심 종목 조건 · 맞은 문장 · 종가 날짜 · hitAt = 그 종목의 가격 날짜", home_rows)
+
+    def section():
+        if wide:
+            page.locator('[data-ui-v2="side-tab"][data-tab="stocks"]').click()
+        else:
+            tab(page, TABS["stocks"])
+        at(page, "stocks")
+        sec = page.locator('[data-ui-v2="watch-section"]')
+        sec.wait_for(state="visible")
+        assert sec.locator("h3").inner_text() == W_["title"] and sec.locator('[data-ui-v2="watch-all"]').inner_text() == C["rank"]["all"]
+        ts = sec.locator('[data-ui-v2="stock-row"]').evaluate_all("(rs) => rs.map((r) => r.dataset.t)")
+        assert ts == WATCH_T[:5], ts                                                    # 5 rows, in list order (999999 is not in the data)
+        first = page.locator('[data-ui-v2="watch-section"], [data-ui-v2="recent"], [data-ui-v2="my-stocks"], [data-ui-v2="rank"]').first
+        assert first.get_attribute("data-ui-v2") == "watch-section", "관심 종목 칸이 맨 위가 아니에요"
+        check_page("종목", "stocks")
+        sec.locator('[data-ui-v2="watch-all"]').click()
+        at(page, "stocks/watch")
+    R.check(page, S, "종목 탭 맨 위의 관심 종목 칸 (5개, 순서) → 전체 보기 ›", section)
+
+    def screen_():
+        scr = page.locator('[data-ui-v2="watch"]')
+        scr.wait_for(state="visible")
+        assert scr.locator("h2").inner_text() == W_["title"] and page.locator('[data-ui-v2="watch-add"]').inner_text() == W_["add"]
+        assert page.locator('[data-ui-v2="watch-sub"]').inner_text() == W_["sub"] and date_line(page).startswith(fillp(C["app"]["asOf"], md=md_text))
+        assert page.locator('[data-ui-v2="watch-card"]').evaluate_all("(cs) => cs.map((c) => c.dataset.t)") == WATCH_T
+        ch = chips_of(page)
+        now = lambda x: "· " + fillp(W_["now"], now=x)                                  # noqa: E731
+        assert ch["005380"] == [["pxBelow", "met", "주가 300,000원 아래" + now("282,000원")], ["pbrBelow", "not", "PBR 0.4배 아래" + now("0.42배")],
+                                ["dyAtLeast", "met", "배당수익률 2% 이상" + now("2.1%")]], ch["005380"]
+        assert ch["AAPL"] == [["pxBelow", "met", "주가 $350.00 아래" + now("$" + f"{by['AAPL']['price']:,.2f}")]], ch["AAPL"]
+        assert ch["005930"] == [["pxBelow", "not", "주가 200,000원 아래" + now("225,000원")], ["dyAtLeast", "blank", "배당수익률 1% 이상· " + W_["blank"]]], ch["005930"]
+        assert ch["ABBV"] == [["pbrBelow", "blank", "PBR 5배 아래· " + W_["blank"]]] and ch["105560"] == [], ch
+        assert ch["999999"] == [["pxBelow", "blank", "주가 1,000원 아래· " + W_["blank"]]]
+        card = lambda t: page.locator(f'[data-ui-v2="watch-card"][data-t="{t}"]')     # noqa: E731
+        # blank: the company page's own reason, once, under its card; nothing under the others
+        assert card("005930").locator('[data-ui-v2="div-share-hidden"]').inner_text() == C["co"]["div"]["shareHidden"]
+        assert card("ABBV").locator('[data-ui-v2="fgn-cut"]').inner_text() == C["co"]["fgnCut"]
+        assert card("005380").locator('[data-ui="note"], [data-ui-v2="fgn-cut"], [data-ui-v2="div-share-hidden"]').count() == 0
+        assert card("999999").get_attribute("data-missing") == "1" and "999999" in card("999999").inner_text()
+        # met: the green chip with a check (tokens: okBg / ok, light or dark); the others on the select colour, no check
+        met = card("005380").locator('[data-ui-v2="watch-chip"][data-state="met"]').first
+        not_ = card("005380").locator('[data-ui-v2="watch-chip"][data-state="not"]').first
+        mc = met.evaluate("(e) => [getComputedStyle(e).backgroundColor, getComputedStyle(e).color, !!e.querySelector('[data-icon=\"check-circle\"]')]")
+        nc = not_.evaluate("(e) => [getComputedStyle(e).backgroundColor, !!e.querySelector('[data-icon]')]")
+        ok_bg, ok_fg = ("rgb(28, 51, 40)", "rgb(111, 211, 159)") if dark else ("rgb(231, 244, 236)", "rgb(31, 122, 77)")   # tokens okBg / ok
+        assert mc == [ok_bg, ok_fg, True], mc
+        assert rgb_ratio(mc[1], mc[0]) >= 4.5, mc
+        assert nc == [SELECT_DARK_RGB if dark else SELECT_RGB, False], nc
+        assert page.locator('[data-ui-v2="watch-bottom"]').inner_text() == W_["bottom"]
+        assert page.locator('[data-ui-v2="watch-bell"]').count() == len(WATCH_T)
+        bell = card("005380").locator('[data-ui-v2="watch-bell"]')
+        assert bell.get_attribute("aria-label") == f"{by['005380']['nk']} · {W_['hitKind']}"
+        box = bell.bounding_box()
+        assert box["width"] >= 44 and box["height"] >= 44, box
+        check_page("관심 종목", "watch")
+    R.check(page, S, "관심 종목 화면: 순서 · 칩(맞음 초록 · 안 맞음 · 정보 없음) · 빈 값의 이유 줄 · 아래 줄 · 44px", screen_)
+
+    def sheet():
+        page.locator('[data-ui-v2="watch-card"][data-t="005380"] [data-ui-v2="watch-bell"]').click()
+        sh = page.locator('[data-ui-v2="watch-sheet"]')
+        sh.wait_for(state="visible")
+        assert page.locator('[data-ui="bottom-sheet"] h3').inner_text() == f"{by['005380']['nk']} · {W_['hitKind']}"
+        labels = sh.locator('[data-ui-v2="watch-field"] label').evaluate_all("(ls) => ls.map((l) => l.childNodes[0].textContent)")
+        F = W_["form"]
+        assert labels == [F["pxKr"] or C["why"]["srcPrice"], F["pbr"] or "PBR", F["dy"] or C["pick"]["receipt"]["yield"]], labels
+        inp = lambda k: sh.locator(f'[data-ui-v2="watch-field"][data-k="{k}"] input')    # noqa: E731
+        assert [inp(k).input_value() for k in ("pxBelow", "pbrBelow", "dyAtLeast")] == ["300000", "0.4", "2"]
+        inp("pbrBelow").fill("0.55")                                                    # two decimals: not a PBR condition
+        save = sh.get_by_role("button", name=C["lim"]["save"], exact=True)
+        assert not save.is_enabled() and inp("pbrBelow").get_attribute("aria-invalid") == "true"
+        inp("pbrBelow").fill("0.5")
+        prev = sh.locator('[data-ui-v2="watch-field"][data-k="pbrBelow"] [data-ui-v2="watch-preview"]')
+        assert prev.inner_text().replace("\n", "") == "PBR 0.5배 아래· " + fillp(W_["now"], now="0.42배"), prev.inner_text()
+        inp("dyAtLeast").fill("")                                                       # blank: no dividend condition
+        check_page("조건 시트", "sheet")
+        save.click()
+        sh.wait_for(state="detached")
+        w = stored()["watch"]["005380"]
+        # 주가 unchanged: keeps its mark; PBR changed: no mark (it is met now: 0.42 < 0.5, so this device marks it today); 배당 gone
+        page.wait_for_function("() => (JSON.parse(localStorage.getItem('baepsae2.v1')).watch['005380'].conds[1] || {}).hitAt != null")
+        w = stored()["watch"]["005380"]
+        assert w["conds"] == [{"k": "pxBelow", "v": 300000, "hitAt": pxd}, {"k": "pbrBelow", "v": 0.5, "hitAt": pxd}], w
+        assert w["ts"] > 1762300000000 and w["at"] == "2026-11-05"
+        assert chips_of(page)["005380"] == [["pxBelow", "met", "주가 300,000원 아래· " + fillp(W_["now"], now="282,000원")],
+                                            ["pbrBelow", "met", "PBR 0.5배 아래· " + fillp(W_["now"], now="0.42배")]]
+    R.check(page, S, "조건 시트: 승인된 칸 이름 · 넣은 값의 칩 · 잘못 넣으면 저장 꺼짐 · 저장(바뀐 조건만 새로 표시)", sheet)
+
+    def company():
+        page.locator('[data-ui-v2="watch-card"][data-t="005930"] [data-ui-v2="watch-open"]').click()
+        co_wait(page)
+        btn = page.locator('[data-ui-v2="watch-toggle"]')
+        assert btn.inner_text() == W_["removeCo"] and btn.get_attribute("aria-pressed") == "true"
+        check_page("회사 페이지", "company")
+        btn.click()
+        page.wait_for_function("() => !JSON.parse(localStorage.getItem('baepsae2.v1')).watch['005930']")
+        assert btn.inner_text() == W_["addCo"] and stored()["gone"]["watch"]["005930"]["at"] == now_dt().date().isoformat()
+        btn.click()
+        page.wait_for_function("() => !!JSON.parse(localStorage.getItem('baepsae2.v1')).watch['005930']")
+        w = stored()
+        assert w["watch"]["005930"]["nk"] == by["005930"]["nk"] and "conds" not in w["watch"]["005930"] and "gone" not in w, w.get("gone")
+        # the list is full (30): 관심 종목에 추가 says so and adds nothing
+        full = {str(100000 + i): {"at": "2026-11-01"} for i in range(30 - len(stored()["watch"]))}
+        page.evaluate("(f) => { const d = JSON.parse(localStorage.getItem('baepsae2.v1')); d.watch = { ...d.watch, ...f }; localStorage.setItem('baepsae2.v1', JSON.stringify(d)); }", full)
+        page.reload(wait_until="domcontentloaded")
+        co_hash(page, "#stocks/000660")
+        b2 = page.locator('[data-ui-v2="watch-toggle"]')
+        assert b2.inner_text() == W_["addCo"]
+        b2.click()
+        page.locator('[data-ui-v2="watch-cap"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="watch-cap"]').inner_text() == W_["cap"] and "000660" not in stored()["watch"] and len(stored()["watch"]) == 30
+        check_page("회사 페이지 · 30개", "company-full")
+    R.check(page, S, "회사 페이지: 관심 종목에서 빼기 → 추가 (뺀 표시 · 이름) · 30개면 그 줄", company)
+
+    def add_and_empty():
+        page.evaluate("() => { const d = JSON.parse(localStorage.getItem('baepsae2.v1')); delete d.watch; localStorage.setItem('baepsae2.v1', JSON.stringify(d)); }")
+        page.reload(wait_until="domcontentloaded")
+        page.evaluate("(h) => { location.replace(h); }", "#stocks/watch")
+        at(page, "stocks/watch")
+        page.locator('[data-ui-v2="watch-empty"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="watch-empty"]').inner_text() == W_["empty"] and page.locator('[data-ui-v2="watch-bottom"]').count() == 0
+        check_page("관심 종목 · 빈 목록", "empty")
+        page.locator('[data-ui-v2="watch-add"]').click()
+        at(page, "stocks")
+        field = page.locator('[data-ui-v2="top-search"] input, [data-ui-v2="stock-search"] input').first
+        page.wait_for_function("() => { const a = document.activeElement; return !!a && a.tagName === 'INPUT' && a.type === 'search'; }")
+        assert page.locator('[data-ui-v2="watch-section"]').count() == 0 and field.count() == 1
+    R.check(page, S, "빈 목록 · + 추가는 종목 찾기 칸으로 (종목 탭에 관심 종목 칸 없음)", add_and_empty)
+    ctx.close()
+    srv.shutdown()
+
+
+def scene_v196c_stale(R, files, width=390):
+    """v19.6c 멈춘 날 (수락 조건 3: hitAt 은 멈춘 날을 넘겨요) · 불러오기 실패 · 기록 불러오기의 30개: 발행 6일 전 데이터 → 관심 종목 화면은
+    값과 멈춤 날짜 줄만(초록 체크 없음, 상태 stale) · 홈에 관심 종목 조건 줄 없음 · 저장된 hitAt 그대로(안 맞는 값이어도) · data.json 이 없으면
+    불러오기 실패 문구 · 기록 파일의 관심 종목은 이 기기 것 먼저, 30개까지, 못 넣은 수를 말해요."""
+    S = f"v19.6c 멈춘 날 · 실패 · 불러오기 {width}"
+    W_ = C["watch"]
+    data = v196c_files(files, days_ago=6)
+    pxd = data["data.json"]["pxDate"]
+    data["data.json"]["stocks"] = [x if x["t"] != "005380" else {**x, "price": 310000.0} for x in data["data.json"]["stocks"]]   # not met
+    w = v196c_watch()
+    w["005380"]["conds"][0]["hitAt"] = "2026-10-29"
+    by = {x["t"]: x for x in data["data.json"]["stocks"]}
+    # with a portfolio: 포트폴리오's empty state (뱁이) is not on screen when the import line shows its counts (a count of stocks,
+    # which CLAUDE.md allows beside 뱁이, but visualcheck's NOT_NUMBERS knows only the "{n}종목" form)
+    seeded = {"v": 2, "decks": [e_imported(by, pxd, [("000660", 3, None)])], "watch": w}
+    srv, ctx, page, base = R.open(build_site(data), width, init=v196c_seed(seeded), path="/app.html?dev=1#stocks/watch")
+    stored = lambda: page.evaluate(STORED_JS)                                                         # noqa: E731
+
+    def stale():
+        page.locator('[data-ui-v2="watch-card"]').first.wait_for(state="visible")
+        assert page.locator('[data-ui-v2="date-line"]').get_attribute("data-stale") == "1"
+        states = {t: [c[1] for c in v] for t, v in chips_of(page).items()}
+        assert states["005380"] == ["stale", "stale", "stale"] and states["AAPL"] == ["stale"] and states["005930"] == ["stale", "blank"], states
+        assert page.locator('[data-ui-v2="watch-chip"] [data-icon="check-circle"]').count() == 0
+        floor_ok(page, "멈춘 관심 종목")
+        R.collect(page)
+        if R.shots:
+            page.screenshot(path=os.path.join(R.shots, f"v196c-stale-{width}.png"), full_page=True)
+        page.evaluate("(h) => { location.replace(h); }", "#home")
+        at(page, "home")
+        page.locator('[data-ui-v2="date-line"]').first.wait_for(state="visible")
+        assert page.locator('[data-ui-v2="home-watch"]').count() == 0
+        page.wait_for_timeout(300)
+        assert stored()["watch"]["005380"]["conds"][0] == {"k": "pxBelow", "v": 300000, "hitAt": "2026-10-29"}, stored()["watch"]["005380"]
+        assert all("hitAt" not in json.dumps(stored()["watch"][t]) for t in ("AAPL", "005930")), "멈춘 날에 hitAt 이 생겼어요"
+    R.check(page, S, "멈춘 데이터: 값과 멈춤 날짜 줄만 · 초록 없음 · 홈 줄 없음 · hitAt 그대로", stale)
+
+    def import_cap():
+        tab(page, TABS["portfolio"])
+        at(page, "portfolio")
+        many = {str(200000 + i): {"at": "2026-11-0" + str(1 + i % 9)} for i in range(28)}
+        path = os.path.join(tmpdirs.make("baepsae-v2-file-"), "watch.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"v": 1, "decks": [], "watch": many}, fh)
+        page.locator('[data-ui-v2="import-file"]').set_input_files(path)
+        cap = page.locator('[data-ui-v2="import-watch-cap"]')
+        cap.wait_for(state="visible")
+        assert cap.inner_text() == fillp(W_["importCap"], n="4") and cap.get_attribute("data-n") == "4"       # 6 here + 24 of the file's 28 = 30
+        w2 = stored()["watch"]
+        assert len(w2) == 30 and all(t in w2 for t in WATCH_T) and w2["005380"]["conds"][0]["hitAt"] == "2026-10-29"
+        R.collect(page)
+    R.check(page, S, "기록 불러오기: 이 기기 것 먼저 · 30개까지 · 못 넣은 수 줄", import_cap)
+    ctx.close()
+    srv.shutdown()
+    srv, ctx, page, base = R.open(build_site(data, drop=("data.json",)), width, init=v196c_seed({"v": 1, "decks": [], "watch": w}),
+                                  path="/app.html?dev=1#stocks/watch")
+
+    def failed():
+        page.locator('[data-ui-v2="load-fail"]').first.wait_for(state="visible")
+        assert page.locator('[data-ui-v2="watch-card"]').count() == 0 and C["app"]["loadFail"] in page.locator("body").inner_text()
+        R.collect(page)
+    R.check(page, S, "불러오기 실패: 실패 문구만 (카드 없음)", failed)
+    ctx.close()
+    srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -12637,7 +12939,10 @@ def main():
                    lambda: scene_v196a_sold_out(R, files, 1280),                                            # 같은 장면, PC (Jack 11-13: 다 판 종목 줄)
                    lambda: scene_v196a_split_price(R, files, 390),                                          # v19.6a 리뷰 3차: 분할 사이의 빈 가격
                    lambda: scene_v197a(R, files, 390), lambda: scene_v197a(R, files, 320),
-                   lambda: scene_v197a(R, files, 1280)):                                                    # v19.7a 종목 바꾸기 · 빼기 · 이름으로 찾기
+                   lambda: scene_v197a(R, files, 1280),                                                     # v19.7a 종목 바꾸기 · 빼기 · 이름으로 찾기
+                   lambda: scene_v196c(R, files, 390), lambda: scene_v196c(R, files, 320),                  # v19.6c 관심 종목
+                   lambda: scene_v196c(R, files, 1280, deck=True), lambda: scene_v196c(R, files, 390, dark=True, deck=True),
+                   lambda: scene_v196c_stale(R, files)):                                                    # v19.6c 멈춘 날 · 실패 · 불러오기 30개
             try:
                 fn()
             except Exception as e:

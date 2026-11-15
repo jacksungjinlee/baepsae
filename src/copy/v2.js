@@ -1159,6 +1159,43 @@ export const C = {
     saveFail: "바꾼 내용을 저장하지 못했어요. 화면을 다시 열어 확인해 주세요.",   // chat (2026-11-13) — 기록이 다시 읽히지 않아 저장을 거절했을 때 (종목 바꾸기 · 팔고 빼기)
   },
 
+  // v19.6c 관심 종목 (Part C, 보드 Watch2) — chat (2026-11-06: v19.6 Appendix 1 '관심 종목', '오늘 볼 것 · titles · watch hit',
+  // '팔았어요 · 배당 받았어요 · import cap'; Jack 이 스펙을 넘기며 승인). 조건 칩은 "{조건}" + " · 지금 {now}" (또는 " · 정보 없음") 이에요.
+  // 조건 시트의 제목은 Appendix 1 의 오늘 볼 것 제목 "{name} · 관심 종목 조건" 그대로 (이름 + hitKind), 버튼은 lim.save · app.close ·
+  // removeCo, 종목 탭의 '전체 보기 ›' 는 rank.all 이에요.
+  watch: {
+    title: "관심 종목",
+    add: "+ 추가",
+    sub: "가지고 있지 않은 종목도 지켜볼 수 있어요.",
+    c: {
+      pxKr: "주가 {x}원 아래",
+      pxUs: "주가 ${x} 아래",
+      pbr: "PBR {x}배 아래",
+      dy: "배당수익률 {x}% 이상",
+    },
+    now: "지금 {now}",
+    blank: "정보 없음",
+    bottom: "조건에 맞으면 이 화면과 홈에서 알려 드려요.",              // Part H(알림) 전까지
+    addCo: "관심 종목에 추가",                                       // 회사 페이지
+    removeCo: "관심 종목에서 빼기",                                   // 회사 페이지 · 조건 시트
+    cap: "관심 종목은 30개까지 넣을 수 있어요.",
+    empty: "아직 관심 종목이 없어요. 종목 화면에서 추가할 수 있어요.",
+    importCap: "관심 종목은 30개까지라서 {n}개는 넣지 못했어요.",      // 기록 불러오기 (Appendix 1 '팔았어요 · 배당 받았어요 · import cap')
+    hitKind: "관심 종목 조건",                                       // 오늘 볼 것 제목 "{name} · 관심 종목 조건" 의 뒤
+    hit: "{condition} 조건에 맞아요. 지금 {now}이에요.",              // {now} 의 마지막 글자에 받침이 있을 때
+    hitYe: "{condition} 조건에 맞아요. 지금 {now}예요.",              // 그 밖에
+    // 조건 시트의 칸 이름 — Appendix 1 에 없어서 제안했어요 (docs/tasks/v18.3-new-strings-pending.md). 승인 전: 칸 이름은 이미 승인된
+    // '가격'(why.srcPrice) · 'PBR' · '배당수익률'(pick.receipt.yield) 을 쓰고, 넣은 값의 조건 칩이 그 밑에 바로 보여요.
+    form: {
+      pxKr: null,   // 제안 (Jack 승인 대기, v19.6c): "주가 (원)"
+      pxUs: null,   // 제안 (Jack 승인 대기, v19.6c): "주가 (달러)"
+      pbr: null,    // 제안 (Jack 승인 대기, v19.6c): "PBR (배)"
+      dy: null,     // 제안 (Jack 승인 대기, v19.6c): "배당수익률 (%)"
+      hint: null,   // 제안 (Jack 승인 대기, v19.6c): "주가와 PBR은 넣은 값보다 낮아지면, 배당수익률은 넣은 값 이상이 되면 알려 드려요. 비워 두면 그 조건은 쓰지 않아요."
+      bad: null,    // 제안 (Jack 승인 대기, v19.6c): "숫자를 다시 확인해 주세요."
+    },
+  },
+
   // v19.7a 빼기 (Part B, 보드 PfRemove3) — chat (2026-11-07: v19.7 Appendix 1). 머리줄은 rec.head · rec.heldQty, 지분 없는 종목의 버튼은
   // rec.remove '빼기' 예요. 제목의 을/를 은 이름의 마지막 글자로 (track.objectParticle).
   rm: {

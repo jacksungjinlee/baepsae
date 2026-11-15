@@ -45,6 +45,15 @@
 //            none), so two copies and a records file keep the later limits. Beside limits, not in it: v19.3d (#83) reads
 //            limits strictly and passes portfolio keys it does not know, so a revert still reads every portfolio.
 // Held quantity everywhere = imported + purchases − sales (held.js); no sale may take a holding below 0.
+// Top level: watch (v19.6c, 관심 종목, v19.6 Part C): { [code]: { at, ts?, nk?, conds?: [{ k, v, hitAt? }] } }, at most WATCH_MAX (30)
+// stocks: at = the date added (KST), ts = the time of the last edit (ms, so two tabs keep the later one), nk = the name when
+// it was added (shown only while the stock is missing from today's data). conds: at most one per kind, k pxBelow (v > 0,
+// at most 2 decimals: Korea whole won, US dollars) · pbrBelow (v > 0, 1 decimal) · dyAtLeast (v > 0, 1 decimal, %); a later
+// version's kind is kept and not read. hitAt (a date): the stock's price date on the day this device first saw the condition
+// met (watch.js withWatchHits); it stays on this device, never in a records file (exportText) and never synced (Part C [Q7]).
+// Not a version-2 part (every earlier app keeps a top-level part it does not know): a store holding only watch stays v1.
+// gone.watch { [code]: { at, ts } }: a stock taken out of 관심 종목 (so a merge with an older copy does not bring it back);
+// on this device only, like gone.notes.
 // Top level: guideSeen (v19.3c Part E: the first-visit guide was seen, the date) — a flag of this device, so it never
 // travels in a records file; until v19.3d it lived in its own key (key + ".guideSeen"), which is still read once.
 // Two tabs (v19.3d review): so two copies of the records merge without losing the later edit, these optional parts are
@@ -368,7 +377,7 @@ export function problemText(deck, p) {
 }
 
 // ---------------- the whole store ----------------
-const KNOWN_TOP = ["v", "decks", "notes", "assume", "guideSeen", "gone", "wts", "preview", "setAside"];
+const KNOWN_TOP = ["v", "decks", "notes", "assume", "guideSeen", "gone", "wts", "preview", "setAside", "watch"];
 // -> { readable: false, why } when it is not a records store this app can read at all (not an object, an unknown or newer
 // version, no portfolio list); else { readable: true, data, problems: [text] }: data keeps every valid portfolio and part,
 // problems names what was set aside (a bad portfolio, a duplicate id, a bad notes / assume / guideSeen part).
@@ -406,11 +415,17 @@ export function checkStore(d, today) {
     else problems.push("wts (write fingerprint): not valid");
   }
   if (d.gone != null) {
-    if (plainObj(d.gone) && (d.gone.notes == null || validPerStock(d.gone.notes, (g) => okTs(g.ts) && (g.h == null || /^[0-9a-f]{8}$/.test(g.h)), today))) data.gone = d.gone;
-    else problems.push("gone (deleted notes): not valid");
+    if (plainObj(d.gone) && (d.gone.notes == null || validPerStock(d.gone.notes, (g) => okTs(g.ts) && (g.h == null || /^[0-9a-f]{8}$/.test(g.h)), today))
+      && (d.gone.watch == null || validPerStock(d.gone.watch, (g) => okTs(g.ts), today))) data.gone = d.gone;
+    else problems.push("gone (deleted notes or watch-list marks): not valid");
   }
-  // A top-level part this version does not know (a later version's, e.g. v19.6's 관심 종목) is kept as it is, so a write
-  // from this tab never drops it; this app reads nothing from it.
+  // v19.6c 관심 종목 (see the top of this file): checked like notes (a bad part is set aside with its reason, the rest reads).
+  if (d.watch != null) {
+    const p = watchProblem(d.watch, today);
+    if (p) problems.push("watch (the watch list): " + p); else data.watch = d.watch;
+  }
+  // A top-level part this version does not know (a later version's) is kept as it is, so a write from this tab never drops
+  // it; this app reads nothing from it.
   for (const k of Object.keys(d)) if (!KNOWN_TOP.includes(k)) data[k] = d[k];
   return { readable: true, data, problems };
 }
@@ -466,7 +481,192 @@ export function textHash(text) {
 export const noteOf = (data, t) => { const n = perStock(data, "notes"); return n && plainObj(n[t]) ? n[t] : null; };
 export const assumeOf = (data, t) => { const a = perStock(data, "assume"); return a && plainObj(a[t]) && okAssume(a[t]) ? a[t] : null; };
 // What travels in a records file besides the portfolios (the guide flag stays on the device).
-const extras = (d) => ({ ...(perStock(d, "notes") ? { notes: d.notes } : {}), ...(perStock(d, "assume") ? { assume: d.assume } : {}) });
+// v19.6c: 관심 종목 too, without hitAt (this device's mark, Part C [Q7]); deletion marks (gone) stay on the device.
+const extras = (d) => ({ ...(perStock(d, "notes") ? { notes: d.notes } : {}), ...(perStock(d, "assume") ? { assume: d.assume } : {}),
+  ...(plainObj(d && d.watch) ? { watch: watchNoHits(d.watch) } : {}) });
+
+// ---------------- 관심 종목 (v19.6c, v19.6 Part C; the shape is at the top of this file) ----------------
+export const WATCH_MAX = 30;
+export const WATCH_KINDS = ["pxBelow", "pbrBelow", "dyAtLeast"];
+// v has at most d decimals (a typed number, so a float error of 1e-6 is allowed)
+const decimals = (v, d) => Math.abs(v * 10 ** d - Math.round(v * 10 ** d)) < 1e-6;
+// The limit of one kind's number (also what the condition sheet accepts): pxBelow 2 decimals (a Korean price is checked as
+// whole won by the sheet, which knows the market), pbrBelow and dyAtLeast 1 decimal.
+export const WATCH_DEC = { pxBelow: 2, pbrBelow: 1, dyAtLeast: 1 };
+export const WATCH_TOP = { pxBelow: 1e12, pbrBelow: 1000, dyAtLeast: 100 };
+export const okWatchValue = (k, v) => WATCH_KINDS.includes(k) && isNum(v) && v > 0 && v <= WATCH_TOP[k] && decimals(v, WATCH_DEC[k]);
+function condProblem(c) {
+  if (!plainObj(c) || !isStr(c.k, 20)) return "a condition without a kind";
+  if (c.hitAt != null && !isDate(c.hitAt)) return "hitAt is not a date";
+  if (!WATCH_KINDS.includes(c.k)) return null;                 // a later version's kind: kept as it is, not read
+  return okWatchValue(c.k, c.v) ? null : `${c.k}: the number is not valid`;
+}
+// null when the 관심 종목 part is valid, else the first problem (English, for the console).
+export function watchProblem(w, today) {
+  if (!plainObj(w)) return "not an object";
+  const ts = Object.keys(w);
+  if (ts.length > WATCH_MAX) return `more than ${WATCH_MAX} stocks`;
+  for (const t of ts) {
+    const e = w[t];
+    if (!okStockCode(t) || !plainObj(e)) return `${t}: not an entry with a stock code`;
+    if (!pastDate(e.at, today)) return `${t}: the date added must be a real date, not after today`;
+    if (e.ts != null && !okTs(e.ts)) return `${t}: the time (ts) is not valid`;
+    if (e.nk != null && !isStr(e.nk, 120)) return `${t}: the name is not valid`;
+    if (e.conds != null) {
+      if (!Array.isArray(e.conds) || e.conds.length > 10) return `${t}: conditions are not a short list`;
+      const kinds = new Set();
+      for (const c of e.conds) {
+        const p = condProblem(c);
+        if (p) return `${t}: ${p}`;
+        if (kinds.has(c.k)) return `${t}: two conditions of one kind (${c.k})`;
+        kinds.add(c.k);
+      }
+    }
+  }
+  return null;
+}
+export const watchOf = (data) => (data && plainObj(data.watch) ? data.watch : {});
+// The list in screen order: the latest added first (at, then the time of the last edit, then the code). A records file's
+// "own order" (Part C [Q6]) is this order of its entries too: object key order is not kept for Korean codes (a code
+// without a leading zero is read as a number key and comes first).
+export function watchOrder(w) {
+  const m = plainObj(w) ? w : {};
+  return Object.keys(m).sort((a, b) => {
+    const x = m[a] || {}, y = m[b] || {};
+    if (x.at !== y.at) return String(y.at) < String(x.at) ? -1 : 1;
+    const tx = okTs(x.ts) ? x.ts : 0, ty = okTs(y.ts) ? y.ts : 0;
+    if (tx !== ty) return ty - tx;
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+}
+// An entry without this device's hitAt marks (what a records file carries).
+function noHits(e) {
+  if (!plainObj(e) || !Array.isArray(e.conds)) return e;
+  return { ...e, conds: e.conds.map((c) => { if (!plainObj(c) || c.hitAt == null) return c; const { hitAt: _h, ...r } = c; return r; }) };
+}
+export const watchNoHits = (w) => Object.fromEntries(Object.entries(w).map(([t, e]) => [t, noHits(e)]));
+const watchGone = (d) => (d && plainObj(d.gone) && plainObj(d.gone.watch) ? d.gone.watch : {});
+// d with watch (and the gone.watch marks) replaced; an empty part is left out.
+function withWatchParts(d, watch, marks) {
+  const { watch: _w, gone: _g, ...rest } = d || {};
+  const gone = { ...(d && plainObj(d.gone) ? d.gone : {}) };
+  delete gone.watch;
+  if (marks && Object.keys(marks).length) gone.watch = marks;
+  return { ...rest, ...(watch && Object.keys(watch).length ? { watch } : {}), ...(Object.keys(gone).length ? { gone } : {}) };
+}
+
+// 관심 종목에 추가 (the company page). -> the store, or null: a bad code or date, already there, or full (the screen says
+// WATCH_MAX). nk: the name today (shown while the stock is missing from a later day's data). ts: the time (Date.now()).
+export function withWatchAdd(data, t, nk, today, ts = null) {
+  const w = watchOf(data);
+  if (!okStockCode(t) || !isDate(today) || (ts != null && !okTs(ts)) || plainObj(w[t]) || Object.keys(w).length >= WATCH_MAX) return null;
+  const e = { at: today, ...(ts != null ? { ts } : {}), ...(isStr(nk, 120) ? { nk } : {}) };
+  const marks = { ...watchGone(data) };
+  delete marks[t];
+  return withWatchParts(data, { ...w, [t]: e }, marks);
+}
+// 관심 종목에서 빼기. With a time, a deletion mark (gone.watch) keeps another tab's older copy from bringing it back.
+export function withWatchRemove(data, t, today, ts = null) {
+  const w = watchOf(data);
+  if (!plainObj(w[t]) || !isDate(today) || (ts != null && !okTs(ts))) return null;
+  const rest = { ...w };
+  delete rest[t];
+  const marks = { ...watchGone(data), ...(ts != null ? { [t]: { at: today, ts } } : {}) };
+  return withWatchParts(data, rest, marks);
+}
+// The conditions of one stock: conds [{ k, v }] (one per known kind; an empty list removes them all). A condition with the
+// same kind and number as before keeps its hitAt (nothing changed); a new or changed one starts without. A later version's
+// conditions on the entry stay. -> the store, or null when a number is not valid.
+export function withWatchConds(data, t, conds, today, ts = null) {
+  const w = watchOf(data), e = w[t];
+  if (!plainObj(e) || !Array.isArray(conds) || !isDate(today) || (ts != null && !okTs(ts))) return null;
+  const kinds = new Set();
+  for (const c of conds) {
+    if (!plainObj(c) || !okWatchValue(c.k, c.v) || kinds.has(c.k)) return null;
+    kinds.add(c.k);
+  }
+  const old = Array.isArray(e.conds) ? e.conds : [];
+  const known = WATCH_KINDS.map((k) => conds.find((c) => c.k === k)).filter(Boolean).map((c) => {
+    const was = old.find((x) => plainObj(x) && x.k === c.k);
+    return { k: c.k, v: c.v, ...(was && was.v === c.v && isDate(was.hitAt) ? { hitAt: was.hitAt } : {}) };
+  });
+  const later = old.filter((x) => plainObj(x) && !WATCH_KINDS.includes(x.k));
+  const { conds: _c, ts: _t, ...base } = e;
+  const next = { ...base, ...(ts != null ? { ts } : okTs(e.ts) ? { ts: e.ts } : {}), ...(known.length || later.length ? { conds: [...known, ...later] } : {}) };
+  return withWatchParts(data, { ...w, [t]: next }, watchGone(data));
+}
+// hitAt marks set or cleared (watch.js withWatchHits decides which): marks = Map "code|kind" -> date (set) or null (clear).
+// Nothing else changes (no time: the user did not edit anything). -> the store, or null when nothing changed.
+export function withWatchMarks(data, marks) {
+  const w = watchOf(data);
+  let changed = false;
+  const out = {};
+  for (const [t, e] of Object.entries(w)) {
+    if (!plainObj(e) || !Array.isArray(e.conds)) { out[t] = e; continue; }
+    let touched = false;
+    const conds = e.conds.map((c) => {
+      const key = t + "|" + (plainObj(c) ? c.k : "");
+      if (!plainObj(c) || !marks.has(key)) return c;
+      const d = marks.get(key);
+      if (d == null ? c.hitAt == null : c.hitAt === d || !isDate(d)) return c;
+      touched = true;
+      if (d == null) { const { hitAt: _h, ...r } = c; return r; }
+      return { ...c, hitAt: d };
+    });
+    out[t] = touched ? { ...e, conds } : e;
+    changed = changed || touched;
+  }
+  return changed ? { ...data, watch: out } : null;
+}
+
+// Two copies of the list (another tab's, v19.6 A.1 [Q5]): per stock, the later edit wins between an entry and a deletion
+// mark (laterOf: the time, then the date; the current copy on a tie, so its hitAt stays). At most WATCH_MAX: the current
+// copy's stocks first, then the other copy's, each in screen order (Part C [Q6]'s rule for 기록 불러오기); a stock left out
+// makes the screens say 합쳤어요 (droppedFrom). -> { watch, marks }.
+function watchState(d, t) {
+  const e = watchOf(d)[t], g = watchGone(d)[t];
+  const entry = plainObj(e) ? e : null, del = plainObj(g) ? { ...g, gone: true } : null;
+  if (entry && del) {
+    if (okTs(entry.ts)) return entry.ts >= del.ts ? entry : del;
+    return isDate(entry.at) && entry.at > del.at ? entry : del;
+  }
+  return entry || del;
+}
+function unionWatch(cur, other) {
+  const codes = new Set([...Object.keys(watchOf(cur)), ...Object.keys(watchGone(cur)), ...Object.keys(watchOf(other)), ...Object.keys(watchGone(other))]);
+  const won = {}, marks = {};
+  for (const t of codes) {
+    const w = laterOf(watchState(cur, t), watchState(other, t));
+    if (!w) continue;
+    if (w.gone) marks[t] = { at: w.at, ts: w.ts }; else won[t] = w;
+  }
+  const order = [...watchOrder(Object.fromEntries(Object.entries(won).filter(([t]) => plainObj(watchOf(cur)[t])))),
+    ...watchOrder(Object.fromEntries(Object.entries(won).filter(([t]) => !plainObj(watchOf(cur)[t]))))];
+  return { watch: Object.fromEntries(order.slice(0, WATCH_MAX).map((t) => [t, won[t]])), marks };
+}
+// 관심 종목 of a records file taken in (Part C [Q6]): this device's list first, then the file's stocks it does not hold, in the
+// file's order, up to WATCH_MAX; dropped = how many did not fit (the screen says so). The file never brings hitAt. A stock this
+// device had taken out comes back as an edit made now (ts) and loses its deletion mark (the file is the user's latest word).
+// known: the other copies of this device's records (storedStores): a deletion mark in any of them counts.
+export function watchImport(cur, inc, ts = null, known = []) {
+  const mine = watchOf(cur), file = plainObj(inc && inc.watch) ? watchNoHits(inc.watch) : {};
+  const marks = { ...watchGone(cur) };
+  const markOf = (t) => [cur, ...(Array.isArray(known) ? known : [])].map((d) => watchGone(d)[t]).filter((g) => plainObj(g) && okTs(g.ts))
+    .reduce((a, g) => (!a || g.ts > a.ts ? g : a), null);
+  const out = { ...mine };
+  let n = Object.keys(out).length, dropped = 0;
+  for (const t of watchOrder(file)) {
+    if (plainObj(out[t])) continue;
+    if (n >= WATCH_MAX) { dropped++; continue; }
+    const g = markOf(t);
+    out[t] = g && okTs(ts) ? { ...file[t], ts: Math.max(ts, g.ts + 1) } : file[t];
+    delete marks[t];
+    n++;
+  }
+  return { watch: out, marks, dropped };
+}
+// mergeStores marks what it returns with the number of 관심 종목 a records file brought that did not fit (portfolio.jsx).
+export const WATCH_DROPPED = Symbol("watch-list stocks a records file brought that did not fit");
 
 // ---------------- the first-visit guide (v19.3c Part E) ----------------
 // The flag of the old key (key + ".guideSeen" = "1", v19.3c): read once into the store, never written again.
@@ -886,6 +1086,17 @@ export function mergeTabs(other, cur, today) {
   for (const t of new Set([...Object.keys(ca), ...Object.keys(oa)])) assume[t] = laterOf(ca[t], oa[t]);
   delete out.assume;
   if (Object.keys(assume).length) out.assume = assume;
+  // v19.6c 관심 종목: per stock, the later edit (an entry or a deletion mark), at most WATCH_MAX (unionWatch)
+  delete out.watch;
+  if (plainObj(cur.watch) || plainObj(other.watch) || Object.keys(watchGone(cur)).length || Object.keys(watchGone(other)).length) {
+    const u = unionWatch(cur, other);
+    if (Object.keys(u.watch).length) out.watch = u.watch;
+    const g = { ...(plainObj(out.gone) ? out.gone : {}) };
+    delete g.watch;
+    if (Object.keys(u.marks).length) g.watch = u.marks;
+    delete out.gone;
+    if (Object.keys(g).length) out.gone = g;
+  }
   if (guideSeenIn(cur) || guideSeenIn(other)) out.guideSeen = guideSeenIn(cur) ? cur.guideSeen : other.guideSeen;
   delete out.preview;
   delete out.setAside;
@@ -913,6 +1124,14 @@ function droppedFrom(copy, res) {
     // its target set lost to another (round-1 S1): said like any edit that lost
     if (believable(d.targetsTs) && d.holdings.some((h) => { const x = r.holdings.find((y) => y.t === h.t); return x && x.target !== h.target; })) return true;
   }
+  // v19.6c 관심 종목: a stock the copy watched is gone or holds other conditions (a later edit or a removal won, or the 30 cap),
+  // or one it had taken out is back (hitAt and the times are not the user's words: not compared)
+  const cond = (e) => canon((Array.isArray(e.conds) ? e.conds : []).map((c) => (plainObj(c) ? [c.k, c.v] : c)));
+  for (const [t, e] of Object.entries(watchOf(copy))) {
+    const r = watchOf(res)[t];
+    if (!plainObj(r) || cond(r) !== cond(e)) return true;
+  }
+  for (const t of Object.keys(watchGone(copy))) if (plainObj(watchOf(res)[t]) && !plainObj(watchOf(copy)[t])) return true;
   // a note the copy had deleted is back in the result (its deletion lost to a later edit)
   for (const t of Object.keys((plainObj(copy.gone) && perStock(copy.gone, "notes")) || {})) {
     const a = noteState(copy, t), b = noteState(res, t);
@@ -934,6 +1153,19 @@ function covers(y, d, today) {
   for (const t of new Set(noteStocks(d))) {
     const a = noteState(d, t), b = noteState(n, t);
     if (a && b && ((a.gone ? b.gone : !b.gone && b.text === a.text) || surelyLater(b, a))) continue;
+    return false;
+  }
+  // v19.6c 관심 종목: each stock d watches is in n with the same conditions, or replaced there by a surely later edit; each
+  // stock d took out is out in n, or added again surely later
+  const cond = (e) => canon((Array.isArray(e.conds) ? e.conds : []).map((c) => (plainObj(c) ? [c.k, c.v] : c)));
+  for (const [t, a] of Object.entries(watchOf(d))) {
+    const b = watchState(n, t);
+    if (b && ((!b.gone && cond(b) === cond(a)) || surelyLater(b, a))) continue;
+    return false;
+  }
+  for (const [t, g] of Object.entries(watchGone(d))) {
+    const b = watchState(n, t);
+    if (b && (b.gone || surelyLater(b, g))) continue;
     return false;
   }
   const na = perStock(n, "assume") || {};
@@ -1482,17 +1714,23 @@ export function mergeStores(cur, inc, ts = Date.now(), known = [], today = null)
     if (Object.keys(m).length) out[key] = m;
   }
   if (guideSeenIn(cur)) out.guideSeen = cur.guideSeen;
+  // v19.6c 관심 종목 (Part C [Q6]): this device's list first, then the file's, up to WATCH_MAX (watchImport)
+  const wi = watchImport(cur, inc, ts, kn);
+  if (Object.keys(wi.watch).length) out.watch = wi.watch;
   if (cur && plainObj(cur.gone)) {                       // deletion marks stay on this device, minus the notes the file brings
     const gone = { ...cur.gone };
     if (plainObj(gone.notes)) {
       gone.notes = Object.fromEntries(Object.entries(gone.notes).filter(([t]) => !(perStock(inc, "notes") || {})[t]));
       if (!Object.keys(gone.notes).length) delete gone.notes;
     }
+    delete gone.watch;                                  // minus the 관심 종목 the file brings back (watchImport)
+    if (Object.keys(wi.marks).length) gone.watch = wi.marks;
     if (Object.keys(gone).length) out.gone = gone;
   }
   for (const k of Object.keys(cur || {})) if (!KNOWN_TOP.includes(k)) out[k] = cur[k];   // a later version's parts stay
   // the mark is not enumerable: a later edit (made by spreading these records) is an ordinary write again
-  return Object.defineProperty({ v: versionFor(out), ...out }, FROM_FILE, { value: true });
+  const res = Object.defineProperty({ v: versionFor(out), ...out }, FROM_FILE, { value: true });
+  return Object.defineProperty(res, WATCH_DROPPED, { value: wi.dropped });
 }
 
 // aside: setAsideCopies (records this device kept aside: they travel in the file under "setAside", never read back by
