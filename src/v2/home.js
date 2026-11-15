@@ -15,11 +15,12 @@
 //   their own currency, US at today's rate with usdToday set so the screen says so). v19.6a: after a sale the money is the
 //   remaining cost of the open lots (lots.js, moving average), exactly as on 포트폴리오.
 // - 오늘 is the change between the last two official closes of every holding still in today's data (engine.todayD1: a US
-//   stock priced at an earlier close, v19.1c pxd, has no change today). Left out (null) when
+//   stock priced at an earlier close, v19.1c pxd, has no change today; a Korean stock that did not trade today counts at its
+//   reference price's change, data.json ntD1 through engine.valueD1, 0 for a halt: 2026-11-14). Left out (null) when
 //   any of them has no change, a holding is valued by a typed amount only (it does not move), or a US listing is held
 //   (its change is in dollars on another day and yesterday's rate is not in the data): the rule track.deckDayChange
 //   already keeps for built portfolios.
-import { num, todayD1 } from "./engine.js";
+import { num, todayD1, valueD1 } from "./engine.js";
 import { pfRows, pfState, isImported, CHIP_GROUP } from "./pf.js";
 import { deckMoney, deckDayChange } from "./track.js";
 import { heldQty } from "./held.js";
@@ -61,7 +62,9 @@ export function homeMoney(deck, de, ctx) {
   if (isImported(deck)) {
     const v = pfRows(deck, ctx);
     const live = v.rows.filter((r) => !r.absent);
-    day = dayMove(live.map((r) => ({ value: r.value, d1: r.s ? todayD1(r.s) : null, usd: r.usd, frozen: r.frozen })));
+    // 2026-11-14: a stock with no trade today counts at its reference price's change (engine.valueD1, data.json ntD1), so a
+    // halted holding never takes the portfolio's 오늘 away; its own row says why it shows no change (fixnote.jsx DayNote)
+    day = dayMove(live.map((r) => ({ value: r.value, d1: r.s ? valueD1(r.s) : null, usd: r.usd, frozen: r.frozen })));
   } else {
     const pct = deckDayChange(de);
     if (pct != null && Number.isFinite(pct) && pct > -100) day = { pct, amount: m.value - m.value / (1 + pct / 100) };

@@ -179,6 +179,11 @@ export const C = {
     groupLine: "시가총액이 큰 회사부터 보여 드려요.",                   // 그 회사 목록 위 한 줄
     indUp: "많이 오른 업종",                                          // 홈의 업종별 등락: 평균이 오른 업종 다섯 (높은 순)
     indDown: "많이 내린 업종",                                        // 홈의 업종별 등락: 평균이 내린 업종 다섯 (낮은 순)
+    // 오늘 등락률 자리 (Jack, 2026-11-15: "yes, but with two labels" — 그대로). 줄 높이가 정해져 회사 페이지의 긴 줄이 들어가지 않아요
+    // (fixnote.jsx rankDayLabel). halt 는 거래정지 표시가 있는 데이터가 생길 때까지 쓰지 않아요 (fixnote.jsx HALT_LABEL — 목록 파일에 거래정지 칸이 없어요).
+    noTrade: "거래 없음",                                            // chat (Jack, 2026-11-15) — 기준일에 거래가 없던 종목 (data.json noTrade)
+    halt: "거래정지",                                                // chat (Jack, 2026-11-15) — 거래정지 종목 (아직 쓰지 않아요: 표시가 있는 출처가 없어요)
+    d1Missing: "등락률 없음",                                         // chat (Jack, 2026-11-15) — 다른 이유로 빈 오늘 등락률 (d1Why)
     // v19.5b 리뷰 3차 제안 (Jack 승인 대기) — docs/tasks/v18.3-new-strings-pending.md § v19.5b. null 인 동안은 승인된 basis.g3Us 그대로
     p: {
       basisG3Us: null,   // 제안: "전년 동기 대비 분기 매출 증가율 높은 순" — 미국 성장 줄의 {basis} (지금 문구는 괄호가 겹쳐요: "…순서(… (전년 동기 대비))예요.")
@@ -208,6 +213,12 @@ export const C = {
     pxBad: "과거 주가 기록 일부에 오류가 있어서 52주 범위와 출렁임·위험 숫자는 비워 두었어요.",   // chat (Jack, 2026-11-14: 그대로)
     // 2026-11-14 저녁 (Jack): 움직임이 1년 넘게 지난 종목은 계산 창에 그 날이 든 숫자만 비워요 (52주 범위는 보여요). 비운 숫자마다 그 자리에 한 번.
     pxBadOne: "과거 주가 기록 일부에 오류가 있어서 이 숫자는 비워 두었어요.",   // chat (Jack, 2026-11-14: 그대로)
+    // 2026-11-14 (Jack: design chat 2026-11-08 say-why 22 · 42 · dart-gaps §9, relayed 2026-11-14 — 그대로). 우선주 회사 페이지(engine.isPreferred)는
+    // 머리 밑에 한 줄 (모든 탭). 기준일에 거래가 없던 한국 종목(data.json noTrade)과 다른 이유로 오늘 등락률이 빈 한국 종목(d1 빈 칸 · d1Why)은
+    // 오늘 등락률 자리에 한 줄: 회사 페이지 머리 · 홈 가진 종목 · 포트폴리오의 가진 종목 · 종목 목록 (fixnote.jsx DayNote). {md} = 가격 날짜 "11월 13일".
+    pref: "우선주라 회사 숫자는 보통주 페이지에서 볼 수 있어요.",   // chat (design chat 2026-11-08, say-why 22 · D5 — Jack 2026-11-14 전달)
+    noTrade: "{md} 거래 없음 (거래정지일 수 있어요)",              // chat (design chat 2026-11-08, dart-gaps §9 — Jack 2026-11-14 전달)
+    d1Missing: "오늘 등락률은 받지 못했어요.",                     // chat (design chat 2026-11-08, say-why 42 — Jack 2026-11-14 전달)
     fundNote: "ETF·펀드는 회사 페이지가 없어요.",  // chat (2026-11-05: PR #36 「새 문구」 그대로) — 종목 목록에서 펀드를 눌렀을 때
     tabsLabel: "회사 정보", // chat (2026-11-05: PR #36 「새 문구」 그대로) — 회사 페이지 탭 묶음의 이름(읽기 도우미용)
     // DART 다시 읽기 뒤: 재무제표를 원화가 아닌 통화로 공시한 한국 회사(corp.json stmtCur, 예: "USD")는 금액이 비어요. 그 숫자가
@@ -366,6 +377,7 @@ export const C = {
       market: "시장 전체",   // chat (2026-11-05: PR #36 「새 문구」 그대로) — 시트의 고르기
       ind: "업종 안에서",      // chat (2026-11-05: PR #36 「새 문구」 그대로) — 시트의 고르기
       mine: "내 기준",     // chat (2026-11-05: PR #36 「새 문구」 그대로) — 내가 고른 카드 옆 표시
+      pref: "우선주는 순위를 매기지 않아요.",   // chat (design chat 2026-11-08, say-why 23 · D5 — Jack 2026-11-14 전달) — 우선주 페이지의 줄들 밑 (카드와 시트)
     },
     hold: {
       weight: "{name}의 {pct}",   // chat (2026-11-05: PR #36 「새 문구」 그대로) — 가진 종목일 때: 포트폴리오 이름과 지금 비중
@@ -668,6 +680,8 @@ export const C = {
     fit: "잘 맞아요",
     less: "덜 맞아요",
     unscored: "기준 점수를 매길 수 없는 종목 {n}개({names})는 비중에만 넣었어요.",
+    // 2026-11-14 (design chat 2026-11-08, say-why 29 · D5 — Jack 2026-11-14 전달): 점수가 없는 종목이 모두 우선주 · ETF · 펀드일 때 (report.jsx UNSCORED_PREF)
+    unscoredPref: "우선주·ETF처럼 기준 점수가 없는 종목 {n}개({names})는 비중에만 넣었어요.",
     mine: "내 기준",                                               // '내 기준 · {기준} {n}점 · …' 의 첫 조각
     whole: "포트폴리오 전체로 보면",
     avgTop: "평균 상위 {x}%",

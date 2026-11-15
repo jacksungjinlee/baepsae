@@ -24,6 +24,7 @@ import { COLOR, SIZE, WEIGHT, SPACE, TOUCH } from "../ui/tokens.js";
 import { Icon } from "../ui/icons.jsx";
 import { C, fill, nf, p1, mdText } from "./format.js";
 import { LoadFail, OwnCloseNote, tx, tap, useLayout, useMode } from "./ui.jsx";
+import { rankDayLabel } from "./fixnote.jsx";
 import { CoMark } from "./logo.jsx";
 import { useStockTap } from "./stocks.jsx";
 import { ownCloses } from "./stocklist.js";
@@ -274,6 +275,7 @@ function useTight() {
 function StockRow({ i, r, number, copy, onTap, noInd = false, tight = false }) {
   const s = r.s;
   const d1 = todayD1(s);
+  const day = d1 == null ? rankDayLabel(s) : null;
   const sub = s.cls === "us" ? [s.t, noInd ? null : s.indName].filter(Boolean).join(" · ") : noInd ? "" : s.indName || "";
   return (
     <div data-ui-v2="rank-row" data-t={s.t} data-cls={s.cls} data-rank={i + 1} data-v={r.v != null ? r.v : undefined} role={copy ? undefined : "listitem"}>
@@ -298,6 +300,8 @@ function StockRow({ i, r, number, copy, onTap, noInd = false, tight = false }) {
             {number.label ? " " : null}{number.value}
           </span>
           {d1 != null && <span data-ui-v2="rank-change" style={tx(SIZE.xs, WEIGHT.bold, changeColor(d1), { display: "block", whiteSpace: "nowrap", lineHeight: 1.35, marginTop: 1 })}>{signed(d1)}</span>}
+          {/* 2026-11-15 (Jack): no change today, said in the change spot (fixnote.jsx rankDayLabel), never 0.0% or an empty spot */}
+          {d1 == null && day && <span data-ui-v2="rank-change" data-kind={day.kind} style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { display: "block", whiteSpace: "nowrap", lineHeight: 1.35, marginTop: 1 })}>{day.text}</span>}
         </span>
       </button>
     </div>

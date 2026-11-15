@@ -17,13 +17,16 @@ import { signedPct } from "./deckcalc.js";
 import { todayD1 } from "./engine.js";
 import { isCompany, searchStocks, myStocks, ownCloses } from "./stocklist.js";
 import { RankCard } from "./rank.jsx";
+import { DayNote } from "./fixnote.jsx";
 import { readRecent, addRecent, RECENT_KEY, PREVIEW_RECENT_KEY } from "./recent.js";
 
 const changeColor = (v) => (v > 0 ? COLOR.up : v < 0 ? COLOR.down : COLOR.text2);
 
 // One stock: a first-letter badge, the name (US: the ticker under it; Korean: the code, unless plain), today's change.
 // plain: no numbers at all (not used since v19.5b's 홈 shows 종목 순위). onTap / note / expands: from useStockTap (see below).
-export function StockRow({ s, name, t, cls, plain = false, note, onTap, href, expands = false }) {
+// md: the Korean price date as shown ("11월 13일"): a Korean stock with no change today says why under its name (fixnote.jsx DayNote,
+// Jack 2026-11-14: "{md} 거래 없음 (거래정지일 수 있어요)" · "오늘 등락률은 받지 못했어요."), never 0.0%.
+export function StockRow({ s, name, t, cls, plain = false, note, onTap, href, expands = false, md = null }) {
   const nk = name || (s && s.nk) || t;
   const d1 = todayD1(s);                   // v19.1c: no change for a stock priced at an earlier close (the list's note names it)
   const sub = cls === "us" ? t : plain ? null : t;
@@ -34,6 +37,7 @@ export function StockRow({ s, name, t, cls, plain = false, note, onTap, href, ex
       <span style={{ flex: 1, minWidth: 0 }}>
         <span style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })}>{nk}</span>
         {sub && <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { display: "block" })}>{sub}</span>}
+        {!plain && <DayNote s={s} md={md} block={false} />}
       </span>
       {!plain && d1 != null && <span style={tx(SIZE.xs, WEIGHT.bold, changeColor(d1), { flexShrink: 0 })}>{signedPct(d1)}</span>}
     </>
@@ -93,6 +97,7 @@ export function Stocks({ load, store, pad, q: topQ = null, ownQ: shellQ, setOwnQ
   // v19.1c: the shown rows (search results, or recent and my stocks) with a US stock priced at an earlier close (pxd):
   // named under the date line. 종목 순위 carries its own note.
   const own = ok ? ownCloses(load, typing ? results : [...recent, ...mine.map((x) => x.s)]) : [];
+  const krMd = ok ? mdText(load.data.pxDate) : null;     // the no-trade line's date (StockRow)
   return (
     <Page pad={pad}>
       <AppBar />
@@ -112,20 +117,20 @@ export function Stocks({ load, store, pad, q: topQ = null, ownQ: shellQ, setOwnQ
       )}
       {typing && (
         <Card data-ui-v2="search-results">
-          {results.map((s) => <StockRow key={s.t} s={s} t={s.t} cls={s.cls} {...tp.props({ t: s.t, cls: s.cls, s })} />)}
+          {results.map((s) => <StockRow key={s.t} s={s} t={s.t} cls={s.cls} md={krMd} {...tp.props({ t: s.t, cls: s.cls, s })} />)}
           {!results.length && (C.stocks.noResult ? <Note data-ui-v2="no-result">{C.stocks.noResult}</Note> : <span data-ui-v2="no-result" data-pending="1" hidden />)}
         </Card>
       )}
       {!typing && recent.length > 0 && (
         <Card data-ui-v2="recent">
           {C.stocks.recent && <h3 style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{C.stocks.recent}</h3>}
-          {recent.map((s) => <StockRow key={s.t} s={s} t={s.t} cls={s.cls} {...tp.props({ t: s.t, cls: s.cls, s })} />)}
+          {recent.map((s) => <StockRow key={s.t} s={s} t={s.t} cls={s.cls} md={krMd} {...tp.props({ t: s.t, cls: s.cls, s })} />)}
         </Card>
       )}
       {!typing && mine.length > 0 && (
         <Card data-ui-v2="my-stocks">
           <h3 style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink)}>{C.stocks.mine || fill(C.deck.mine, { n: mine.length })}</h3>
-          {mine.map((x) => <StockRow key={x.t} s={x.s} name={x.nk} t={x.t} cls={x.cls} {...tp.props(x)} />)}
+          {mine.map((x) => <StockRow key={x.t} s={x.s} name={x.nk} t={x.t} cls={x.cls} md={krMd} {...tp.props(x)} />)}
         </Card>
       )}
       {!typing && ok && <RankCard load={load} store={store} full tapper={tp} />}
