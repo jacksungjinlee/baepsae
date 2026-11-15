@@ -488,7 +488,12 @@ The run log says "· 거래 없는 종목 (기준일 … 거래량 0 · 시가 0
 "· 국내 d1 빈 칸 이유 (목록 파일): 거래 없음 … · ±30% 밖 … · 직전 거래일 행 없음 … · 직전 거래일 파일을 쓸 수 없음 …", loud ("!!")
 for missing columns, a broken file, a must-have that looked like no trade, a contradicting row, or a missing previous-day file.
 In the app: "{md} 거래 없음 (거래정지일 수 있어요)" for `noTrade`, "오늘 등락률은 받지 못했어요." for another blank, where the change
-would show (company page header, 홈 and 포트폴리오 가진 종목 rows, the 종목 tab's lists; not 종목 순위 yet). Gate rows:
+would show (company page header, 홈 and 포트폴리오 가진 종목 rows, the 종목 tab's lists). The 종목 순위 rows have no room for those lines:
+their change spot says "거래 없음" or "등락률 없음" (Jack, 2026-11-15). Jack also approved "거래정지" for halted stocks, but the KRX listing
+file has no halt field (its columns are Code, ISU_CD, Name, Market, Dept, Close, ChangeCode, Changes, ChagesRatio, Open, High, Low,
+Volume, Amount, Marcap, Stocks, MarketId, lateInfoMsgCd: ChangeCode is the price direction, Dept the 소속부, lateInfoMsgCd "ME005" on
+every row of 11-11 to 11-13), so a halt and a day nobody traded look the same; it stays off (`src/v2/fixnote.jsx` HALT_LABEL, and a
+`halt: true` mark no source writes yet) until a halt source is added. Gate rows:
 
 - **FAIL "국내 거래 없는 종목 · 빈 d1 이유 (noTrade · d1Why)"**: only our own values disagree (`validate_data.kr_no_trade_problems`):
   a `noTrade` stock with a `d1` number, a trading value or another `d1Why`; `d1Why` with a `d1` number or an unknown reason; a

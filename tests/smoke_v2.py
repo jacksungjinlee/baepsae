@@ -37,7 +37,8 @@
               홈 '오늘 확인할 일'의 그 종목 안내 · 열어 둔 화면도 시계가 staleAfter 를 지나면(타이머 · 다시 보일 때) 새로 고침 없이 경고
   우선주·거래 (Jack, 2026-11-14, design chat 2026-11-08 의 문구) 거래 없는 종목(noTrade)과 ±30% 밖으로 빈 종목(d1Why): 회사 페이지 머리의 가격
               밑 · 홈 · 포트폴리오 가진 종목 · 종목 탭 줄에 '{md} 거래 없음 (거래정지일 수 있어요)' · '오늘 등락률은 받지 못했어요.' (0.0% 없음 · 거래 없는
-              종목의 포트폴리오 '오늘'은 그대로) · 우선주 페이지 머리 밑 '우선주라 …' (모든 탭) · 내 기준과 맞는 정도 밑 '우선주는 순위를 …' (390 · 1280)
+              종목의 포트폴리오 '오늘'은 그대로) · 우선주 페이지 머리 밑 '우선주라 …' (모든 탭) · 내 기준과 맞는 정도 밑 '우선주는 순위를 …' (390 · 1280) ·
+              종목 순위의 등락 자리에 '거래 없음' · '등락률 없음' (Jack, 2026-11-15 · 58px 한 줄 · 320 · 390 · 1280 · 어두운 화면)
   주가 기록   (Jack, 2026-11-14) 과거 주가 기록에 오류가 있는 한국 종목(pxBad · pxBadF): 52주까지 비운 종목은 회사 페이지 머리의 52주 막대 자리에
               '과거 주가 기록 일부에 오류가 있어서 52주 범위와 출렁임·위험 숫자는 비워 두었어요.' 한 번 (모든 탭) · 출렁임 칸 '–' · 출렁임 카드 ·
               주가 분해 없음 · 52주는 보이는 종목은 비운 숫자마다 '… 이 숫자는 비워 두었어요.' · 홈 종목 순위에서 비운 숫자의 목록만 빠짐 ·
@@ -7751,7 +7752,7 @@ def scene_v193d(R, files, width):
         fit, less = int(page.locator('[data-ui-v2="report-fit"]').get_attribute("data-n")), int(page.locator('[data-ui-v2="report-less"]').get_attribute("data-n"))
         assert fit + less == 4
         assert page.locator('[data-ui-v2="report-headline"]').inner_text().replace("\n", " ") == fillp(C["rpt"]["head"], a=fit, b=less)
-        assert page.locator('[data-ui-v2="report-unscored"]').inner_text() == fillp(C["rpt"]["unscored"], n=1, names="삼성전자우")
+        assert page.locator('[data-ui-v2="report-unscored"]').inner_text() == fillp(C["rpt"]["unscoredPref"], n=1, names="삼성전자우")   # Jack's yes 2026-11-15 (say-why 29)
         mine = page.locator('[data-ui-v2="report-mine"]').inner_text()
         assert mine.startswith(C["rpt"]["mine"]) and fillp(C["build"]["s1"]["slot"], card=C["build"]["cards"]["value"]["name"], n=2) in mine
         for t in scored:                                                # 빈칸 → '–'(데이터 없음) · 해당 없음 → 글자, 둘 다 빈 점이 아니에요
@@ -9761,20 +9762,28 @@ NT_LINE = C["co"]["noTrade"]
 MISS_LINE = C["co"]["d1Missing"]
 
 
+def pref_rank_ts(files):
+    """종목 순위(한국 · 시가총액)의 3 · 4번째 종목 (파이썬으로 센 목록, 이 장면의 다른 종목은 빼고): 거래 없음 · ±30% 밖으로 바꿔 그 줄을 봐요."""
+    used = {"005930", "005380", PREF_T, NT_T, MISS_T}
+    ts = [t for t in rank_expect(files["data.json"]["stocks"], "kr", "cap")[:10] if t not in used]
+    return ts[2], ts[3]
+
+
 def pref_notrade_files(files):
-    """파이프라인이 다는 대로 (fetch_data.kr_d1_split): 흥구석유는 기준일 거래 없음 (d1 빈 칸 · noTrade · d1Why · ntD1 0), 넥스트칩은 ±30% 밖 (d1 빈 칸 ·
-    d1Why range), 발행 요약 d1Blank."""
+    """파이프라인이 다는 대로 (fetch_data.kr_d1_split): 흥구석유와 종목 순위의 한 종목은 기준일 거래 없음 (d1 빈 칸 · noTrade · d1Why · ntD1 0 · 거래대금
+    0), 넥스트칩과 종목 순위의 다른 한 종목은 ±30% 밖 (d1 빈 칸 · d1Why range), 발행 요약 d1Blank."""
     f = clone(files)
+    rank_nt, rank_miss = pref_rank_ts(files)
     for s in f["data.json"]["stocks"]:
-        if s["t"] == NT_T:
+        if s["t"] in (NT_T, rank_nt):
             s.pop("d1", None)
             s.update(noTrade=True, d1Why="noTrade", ntD1=0.0)
-        elif s["t"] == MISS_T:
+        elif s["t"] in (MISS_T, rank_miss):
             s.pop("d1", None)
             s["d1Why"] = "range"
     kr = [s for s in f["data.json"]["stocks"] if s.get("cls") == "kr" and not s.get("fund")]
-    f["data.json"]["d1Blank"] = {"noTrade": 1, "range": 1, "new": 0, "prev": 0, "seen": True, "odd": [], "must": []}
-    assert sum(1 for s in kr if s.get("d1") is None) == 2
+    f["data.json"]["d1Blank"] = {"noTrade": 2, "range": 2, "new": 0, "prev": 0, "seen": True, "odd": [], "must": []}
+    assert sum(1 for s in kr if s.get("d1") is None) == 4
     return f
 
 
@@ -9911,6 +9920,54 @@ def scene_pref_notrade(R, files, width):
                 sheet.wait_for(state="detached")
             tidy(f"삼성전자우 {ctab or 'summary'}", company=True)
     R.check(page, S, "삼성전자우: 머리 밑 '우선주라 …' (요약 · 실적 · 가치 · 배당) · 내 기준과 맞는 정도 밑 '우선주는 순위를 매기지 않아요.' (카드 · 시트)", pref)
+    ctx.close()
+    srv.shutdown()
+
+
+def scene_pref_rank(R, files, width, dark=False):
+    """종목 순위의 오늘 등락률 자리 (Jack, 2026-11-15: "yes, but with two labels"). 거래 없는 종목 → '거래 없음', 다른 이유로 빈 등락률 → '등락률 없음'
+    (0.0% 도 빈 자리도 아니에요). '거래정지'는 없어요 (목록 파일에 거래정지 칸이 없어 쓰지 않아요: fixnote.jsx HALT_LABEL). 58px 줄 안에 한 줄로 · 이름 칸은
+    320px 에서도 NAME_MIN_320 이상 · 가격 빨강 · 파랑이 아닌 회색 · 12px 이상 · 가로 스크롤 없음 · 밝은 화면과 어두운 화면."""
+    S = f"우선주 · 거래 없음 · 종목 순위 {width}{' 어두운' if dark else ''}"
+    wide = width >= 1024
+    site = pref_notrade_files(files)
+    rank_nt, rank_miss = pref_rank_ts(files)
+    screen = pc_device(width) if wide else {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2}
+    srv, ctx, page, base = R.open(build_site(site), width, path="/app.html?dev=1#stocks", device={**screen, "color_scheme": "dark" if dark else "light"})
+
+    def labels():
+        wait_ready(page)
+        at(page, "stocks")
+        page.locator('[data-ui-v2="rank"]').wait_for(state="visible")
+        rank_chip(page, "cap")
+        rank_market(page, "kr")
+        rows = rank_ts(page)
+        assert rank_nt in rows and rank_miss in rows, rows
+        assert page.evaluate("() => document.documentElement.dataset.theme || ''") in (("dark",) if dark else ("light", "")), dark
+        nums = page.locator(RANK_LIST + ' [data-ui-v2="rank-change"]:not([data-kind])')
+        price = {nums.nth(i).evaluate("(e) => getComputedStyle(e).color") for i in range(nums.count()) if nums.nth(i).inner_text()[:1] in "+−-"}
+        assert price, "등락률이 있는 줄이 없어요"
+        for t, kind, text in ((rank_nt, "noTrade", C["rank"]["noTrade"]), (rank_miss, "missing", C["rank"]["d1Missing"])):
+            row = page.locator(f'{RANK_LIST} [data-ui-v2="rank-row"][data-t="{t}"]')
+            ch = row.locator('[data-ui-v2="rank-change"]')
+            assert ch.count() == 1 and ch.get_attribute("data-kind") == kind and ch.inner_text() == text, (t, ch.count(), ch.inner_text() if ch.count() else None)
+            assert C["rank"]["halt"] not in row.inner_text()                                # 거래정지는 아직 쓰지 않아요
+            assert ch.evaluate("(e) => getComputedStyle(e).color") not in price, t          # 가격 빨강 · 파랑이 아니에요
+            assert ch.evaluate("(e) => parseFloat(getComputedStyle(e).fontSize)") >= 12
+            btn = row.locator("button")
+            rb, cb, nb = btn.bounding_box(), ch.bounding_box(), row.locator('[data-ui-v2="rank-name"]').bounding_box()
+            assert abs(rb["height"] - 58) < 1, rb                                            # 줄 높이 그대로 (rank.jsx ROW_H 58px)
+            assert cb["height"] < 21, cb                                                     # 한 줄 (줄바꿈 없음)
+            assert cb["x"] + cb["width"] <= rb["x"] + rb["width"] + 0.5 and cb["y"] + cb["height"] <= rb["y"] + rb["height"] + 0.5, (cb, rb)
+            assert nb["width"] >= (NAME_MIN_320 if width <= 320 else 140), (t, nb)          # 이름 칸이 눌리지 않아요
+            assert ch.evaluate("(e) => e.scrollWidth <= e.clientWidth + 1"), t               # 넘침 없음
+        assert page.locator(f'{RANK_LIST} [data-ui-v2="rank-change"][data-kind="halt"]').count() == 0
+        floor_ok(page, S)
+        no_hscroll(page, width)
+        R.collect(page)
+        if R.shots:
+            page.locator('[data-ui-v2="rank"]').screenshot(path=os.path.join(R.shots, f"pref-rank-{width}{'-dark' if dark else ''}.png"))
+    R.check(page, S, f"종목 순위 (한국 · 시가총액): {rank_nt} '거래 없음' · {rank_miss} '등락률 없음' · 58px 한 줄 · 회색 · 이름 칸 그대로 · '거래정지' 없음", labels)
     ctx.close()
     srv.shutdown()
 
@@ -12449,6 +12506,9 @@ def main():
                    lambda: scene_unit_chk(R, files, 390), lambda: scene_unit_chk(R, files, 1280),             # 2026-11-13 공시 단위 확인
                    lambda: scene_px_bad(R, files, 390), lambda: scene_px_bad(R, files, 1280),                 # 2026-11-14 과거 주가 기록 오류
                    lambda: scene_pref_notrade(R, files, 390), lambda: scene_pref_notrade(R, files, 1280),     # 2026-11-14 우선주 · 거래 없음 · 오늘 등락률
+                   lambda: scene_pref_rank(R, files, 320), lambda: scene_pref_rank(R, files, 390),             # 2026-11-15 종목 순위의 거래 없음 · 등락률 없음
+                   lambda: scene_pref_rank(R, files, 1280), lambda: scene_pref_rank(R, files, 390, dark=True),
+                   lambda: scene_pref_rank(R, files, 1280, dark=True),
                    lambda: scene_fin_warn_partial(R, files, 390), lambda: scene_fin_warn_partial(R, files, 1280),   # 2026-11-14 재무 경고 일부
                    lambda: scene_fin_warn_lines(R, files, 390), lambda: scene_fin_warn_lines(R, files, 1280),       # 2026-11-14 Jack 의 세 줄
                    lambda: scene_reread_lines(R, files, 390), lambda: scene_reread_lines(R, files, 1280),     # 다시 읽은 뒤: 한 주 안내 · stmtCur

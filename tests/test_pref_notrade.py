@@ -511,11 +511,13 @@ def test_unscored_line_matches_the_case(bundle):
       const cases = { pref: [r(PREF_T)], prefEtf: [r(PREF_T), r(etf.t)], named: [r(PREF_T), { t: null, nk: '비상장 회사', s: null }], none: [],
         common: [r('005930')] };
       out = { all: Object.fromEntries(Object.entries(cases).map(([k, v]) => [k, P.unscoredAllPref(v, DATA.stocks)])),
-        keyOff: RP.unscoredKey(cases.pref, DATA.stocks), keyOn: RP.unscoredKey(cases.pref, DATA.stocks, true), keyOnNamed: RP.unscoredKey(cases.named, DATA.stocks, true),
-        sw: RP.UNSCORED_PREF };""", PREF_T=PREF_T)
+        keyDefault: RP.unscoredKey(cases.pref, DATA.stocks), keyOff: RP.unscoredKey(cases.pref, DATA.stocks, false),
+        keyOn: RP.unscoredKey(cases.pref, DATA.stocks, true), keyOnNamed: RP.unscoredKey(cases.named, DATA.stocks, true),
+        keyEtf: RP.unscoredKey(cases.prefEtf, DATA.stocks), sw: RP.UNSCORED_PREF };""", PREF_T=PREF_T)
     assert got["all"] == {"pref": True, "prefEtf": True, "named": False, "none": False, "common": False}
     assert got["keyOff"] == "unscored" and got["keyOn"] == "unscoredPref" and got["keyOnNamed"] == "unscored"
-    assert got["sw"] is False                                                          # Jack 의 답(기존 시험 한 줄) 전까지 꺼 둬요
+    assert got["sw"] is True                                                           # Jack's yes, 2026-11-15 (기존 시험 한 줄과 함께)
+    assert got["keyDefault"] == got["keyEtf"] == "unscoredPref"                        # 켜진 빌드: 우선주 · ETF 만이면 새 줄
 
 
 def test_stock_rows_say_why_under_the_name(bundle):
@@ -570,3 +572,35 @@ def test_home_calm_line_keeps_a_halted_holding(bundle):
     assert got["konexMove"]["calm"] and not got["konexMove"]["line"]                        # 거래 없이 6.2% 움직임: 말하지 않아요
     assert got["miss"]["calm"] and not got["miss"]["line"] and got["miss"]["x"] == [[None, None]]   # 다른 이유로 빈 등락률: 예전처럼 없음
     assert got["known"] == [True, False, False, False, True]
+
+
+RANK_LABELS = {"noTrade": "거래 없음", "halt": "거래정지", "d1Missing": "등락률 없음"}
+
+
+def test_rank_labels_are_jacks_words_and_halt_stays_off(bundle):
+    """Jack, 2026-11-15 ("yes, but with two labels"): 종목 순위의 등락 자리. 목록 파일에 거래정지 칸이 없어서 (2026-11-15 확인) 거래 없는 종목은 모두
+    '거래 없음' — 거래정지 종목도 거래가 없으니 맞는 말이에요. '거래정지'는 문구 파일에만 있고, 데이터가 halt 표시를 가질 때 스위치를 켜야 보여요."""
+    got = run(bundle, """
+      const s = (o) => ({ t: '000010', cls: 'kr', price: 1, ...o });
+      const L = (x, halt) => FN.rankDayLabel(x, halt);
+      out = { words: [C2.rank.noTrade, C2.rank.halt, C2.rank.d1Missing], sw: FN.HALT_LABEL,
+        nt: L(s({ noTrade: true, d1Why: 'noTrade' })), ntHaltMarkOff: L(s({ noTrade: true, halt: true })), ntHaltOn: L(s({ noTrade: true, halt: true }), true),
+        ntOnNoMark: L(s({ noTrade: true }), true), miss: L(s({ d1Why: 'range' })), ok: L(s({ d1: 1.2 })), us: L({ t: 'AAPL', cls: 'us', pxd: '2026-11-11' }),
+        none: L(undefined) };""")
+    assert got["words"] == [RANK_LABELS["noTrade"], RANK_LABELS["halt"], RANK_LABELS["d1Missing"]]
+    assert got["sw"] is False                                                          # 거래정지 표시가 있는 출처가 아직 없어요
+    assert got["nt"] == {"kind": "noTrade", "text": "거래 없음"} and got["ntHaltMarkOff"] == got["nt"]
+    assert got["ntHaltOn"] == {"kind": "halt", "text": "거래정지"} and got["ntOnNoMark"] == got["nt"]   # 켜도 표시가 있는 종목만
+    assert got["miss"] == {"kind": "missing", "text": "등락률 없음"}
+    assert got["ok"] is None and got["us"] is None and got["none"] is None
+    appr = open(os.path.join(ROOT, "docs", "tasks", "v18.3-approved-in-chat.md"), encoding="utf-8").read()
+    for k, v in RANK_LABELS.items():
+        assert f"| `rank.{k}` | {v} | Jack, 2026-11-15" in appr, k
+    with open(os.path.join(ROOT, "app.html"), encoding="utf-8") as f:
+        html = f.read()
+    for v in RANK_LABELS.values():
+        assert html.count(f'"{v}"') == 1, v                                            # 빌드한 2.0 에 한 번씩
+    src = open(os.path.join(ROOT, "src", "v2", "rank.jsx"), encoding="utf-8").read()
+    assert "rankDayLabel(s)" in src and 'data-kind={day.kind}' in src                   # 종목 순위 줄이 그 판단을 써요
+    data = open(os.path.join(ROOT, "fetch_data.py"), encoding="utf-8").read()
+    assert '"halt":' not in data and "halt=" not in data                               # 파이프라인은 halt 표시를 쓰지 않아요 (출처가 없어요)

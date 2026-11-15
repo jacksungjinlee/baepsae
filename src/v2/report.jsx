@@ -79,10 +79,9 @@ export function Report({ load, deck }) {
 // ---------------- 1 ----------------
 // say-why 29 (Jack, design chat 2026-11-08, relayed 2026-11-14): "우선주·ETF처럼 기준 점수가 없는 종목 {n}개({names})는 비중에만 넣었어요." when
 // every holding the 기준 could not score is a 우선주 or an ETF-type listing (pf.unscoredAllPref); with a stock not in the data among
-// them (added by name), the general line as before (rpt.unscored). The switch stays OFF until Jack says yes to the one edit of an
-// existing test it needs: tests/smoke_v2.py scene_v193d (cards_and_report) expects the general line for an import whose only
-// unscored stock is 삼성전자우. Turning it on = this constant and that assertion, nothing else.
-export const UNSCORED_PREF = false;
+// them (added by name), the general line as before (rpt.unscored). On since Jack's yes (2026-11-15), with the one existing-test edit
+// it needed: tests/smoke_v2.py scene_v193d (cards_and_report) now expects this line for an import whose only unscored stock is 삼성전자우.
+export const UNSCORED_PREF = true;       // Jack's yes, 2026-11-15 (with that one assertion edit)
 export const unscoredKey = (rows, stocks, on = UNSCORED_PREF) => (on && C.rpt.unscoredPref && unscoredAllPref(rows, stocks) ? "unscoredPref" : "unscored");
 
 function Headline({ st, deck, load }) {

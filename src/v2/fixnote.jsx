@@ -176,6 +176,21 @@ export function DayNote({ s, md, block = true, style }) {
   return <Tag data-ui-v2="day-note" data-kind={n.kind} data-t={s.t} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", wordBreak: "keep-all", ...style })}>{n.text}</Tag>;
 }
 
+// The 종목 순위 rows' change spot (Jack, 2026-11-15: "yes, but with two labels"): a fixed 58px row has no room for DayNote's line.
+// No trade on the price date -> "거래 없음"; "거래정지" only for a stock the data marks as halted (halt: true), and only with
+// HALT_LABEL on: the KRX listing file the daily run reads has no halt field (2026-11-15: its columns are a price-direction code,
+// 소속부 and a constant message code; a halt and a day nobody traded look the same), so it stays off and every no-trade stock reads
+// "거래 없음", true for a halted stock too. Another blank d1 -> "등락률 없음". -> { kind: "halt" | "noTrade" | "missing", text } or null.
+export const HALT_LABEL = false;
+export function rankDayLabel(s, halt = HALT_LABEL) {
+  if (noTradeOf(s)) {
+    if (halt && s.halt === true && C.rank.halt) return { kind: "halt", text: C.rank.halt };
+    return C.rank.noTrade ? { kind: "noTrade", text: C.rank.noTrade } : null;
+  }
+  if (d1MissingOf(s)) return C.rank.d1Missing ? { kind: "missing", text: C.rank.d1Missing } : null;
+  return null;
+}
+
 // PrefNote (say-why 22): "우선주라 회사 숫자는 보통주 페이지에서 볼 수 있어요." once under the header of a Korean preferred share's company
 // page (engine.isPreferred: a KRX code not ending in 0, the rule 2.0 already uses for 우선주), on every tab.
 export const prefText = (s) => (!!s && isPreferred(s) && C.co.pref ? C.co.pref : null);
