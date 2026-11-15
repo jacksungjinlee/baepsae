@@ -180,7 +180,7 @@ export const C = {
     indUp: "많이 오른 업종",                                          // 홈의 업종별 등락: 평균이 오른 업종 다섯 (높은 순)
     indDown: "많이 내린 업종",                                        // 홈의 업종별 등락: 평균이 내린 업종 다섯 (낮은 순)
     // 오늘 등락률 자리 (Jack, 2026-11-15: "yes, but with two labels" — 그대로). 줄 높이가 정해져 회사 페이지의 긴 줄이 들어가지 않아요
-    // (fixnote.jsx rankDayLabel). halt 는 거래정지 표시가 있는 데이터가 생길 때까지 쓰지 않아요 (rank.jsx HALT_LABEL — 목록 파일에 거래정지 칸이 없어요).
+    // (fixnote.jsx rankDayLabel). halt 는 거래정지 표시가 있는 데이터가 생길 때까지 쓰지 않아요 (fixnote.jsx HALT_LABEL — 목록 파일에 거래정지 칸이 없어요).
     noTrade: "거래 없음",                                            // chat (Jack, 2026-11-15) — 기준일에 거래가 없던 종목 (data.json noTrade)
     halt: "거래정지",                                                // chat (Jack, 2026-11-15) — 거래정지 종목 (아직 쓰지 않아요: 표시가 있는 출처가 없어요)
     d1Missing: "등락률 없음",                                         // chat (Jack, 2026-11-15) — 다른 이유로 빈 오늘 등락률 (d1Why)

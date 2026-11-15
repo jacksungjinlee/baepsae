@@ -9770,8 +9770,8 @@ def pref_rank_ts(files):
 
 
 def pref_notrade_files(files):
-    """파이프라인이 다는 대로 (fetch_data.kr_d1_split): 흥구석유와 종목 순위의 한 종목은 기준일 거래 없음 (d1 빈 칸 · noTrade · d1Why · ntD1 0 · 거래대금
-    0), 넥스트칩과 종목 순위의 다른 한 종목은 ±30% 밖 (d1 빈 칸 · d1Why range), 발행 요약 d1Blank."""
+    """파이프라인이 다는 대로 (fetch_data.kr_d1_split): 흥구석유와 종목 순위의 한 종목은 기준일 거래 없음 (d1 빈 칸 · noTrade · d1Why · ntD1 0; 화면만 보는 장면이라
+    거래대금 칸은 그대로 둬요 — 실제 파이프라인은 거래대금 0 인 행만 표시해요), 넥스트칩과 종목 순위의 다른 한 종목은 ±30% 밖 (d1 빈 칸 · d1Why range), 발행 요약 d1Blank."""
     f = clone(files)
     rank_nt, rank_miss = pref_rank_ts(files)
     for s in f["data.json"]["stocks"]:
