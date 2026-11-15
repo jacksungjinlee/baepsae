@@ -579,11 +579,11 @@ blanked number as "–" under its label with Jack's line "자료의 숫자가 �
 (card and sheet), the 가치 tab, 가치 자세히 and the 배당 tab. A number blanked because the statement currency was not
 confirmed gets the same line (the currency line needs a currency name). **On a day the check itself stops** (run log "!! 미국
 상장 외국 회사 검사가 멈췄어요"), the companies it had already finished keep their blanks and their line; every remaining
-foreign company that reports in dollars (since #PR the whole `usForeign.set` without `fcur`: 40 on 2026-11-14)
-has PER, PBR and 배당수익률 blanked without a mark, so users see no reason line: the 요약 가치 and 배당 tiles and the
-배당 tab's heading say "자료가 없어요", and the 가치 tab shows an empty card with only the date. The gate row warns that day
-(naming the companies; it never holds the publish). The next run checks again. Whether that day needs its own line is
-Jack's call (asked 2026-11-14). The old app shows "–" for these, as for the currency case.
+foreign company that reports in dollars (since #PR the whole `usForeign.set` without `fcur`: 40 on 2026-11-14, the 21 included)
+has PER, PBR and 배당수익률 blanked unchecked, each marked `stopped`, and 2.0 shows "–" with Jack's line "오늘은 이 숫자를 확인하지
+못해서 비워 두었어요." (`co.fgnStopped`, Jack 2026-11-15) in the same places — no longer "자료가 없어요". The gate row warns that day
+(naming the companies; it never holds the publish). The next run checks again. A file from before #PR has no marks on such a day
+(the gate reads it as before). The old app shows "–" for these, as for the currency case.
 
 **Which companies count as foreign (since #PR; Jack, 2026-11-14 Q5: "widen it").** The run finds them by a rule every day
 (`us_foreign_set` in `fetch_data.py`, never a hand list), among company shares (not ETFs or funds):
@@ -631,13 +631,14 @@ if the rule itself crashes ("!! 미국 상장 외국 회사를 찾다가 멈췄�
   right. On 2026-11-14 these are six PBRs: Alkermes 4.24, IREN 1.45, Roivant 7.12 and INNIO 32.31 (they look right), Bending Spoons
   19.62 (looks wrong: two share classes) and AB InBev 10.71 (unknown).
 
-Jack's 11-13 rule blanks a number when there is nothing to compare it with; Jack is asked only what line goes under the
-`nocompare` blanks. The switch is `US_FGN_NOCMP` in `validate_data.py`; the pipeline and the gate follow it, and the app follows
-the kind the pipeline wrote into the data:
-- `"line"` (now, = #126): blank, kind `nocompare`, the approved line "자료의 숫자가 회사 전체 재무제표와 맞지 않아서 비워 두었어요.";
-- `"own"`: blank, kind `nocompare-own`; the app shows the design chat's line `co.fgnNoCmp` for those numbers only, and a plain "–"
-  (no line, never "자료가 없어요") while that copy key does not exist. A test asks for the copy key whenever the switch is `"own"`. After
-  any own → line flip, keep the copy key until a `"line"` run has published: until then the live file still carries `nocompare-own`;
+Jack's 11-13 rule blanks a number when there is nothing to compare it with, and that stays. Jack chose the line under those
+blanks on 2026-11-15 (Q8): "회사 전체 숫자와 비교할 수 없어서 이 숫자는 비워 두었어요." (`co.fgnNoCmp`). The switch is
+`US_FGN_NOCMP` in `validate_data.py`, now `"own"`; the pipeline and the gate follow it, and the app follows the kind the pipeline
+wrote into the data:
+- `"own"` (now, since #PR, Jack 2026-11-15): blank, kind `nocompare-own`; the app shows `co.fgnNoCmp` for those numbers only (a
+  plain "–" if that copy key were missing — a test asks for it whenever the switch is `"own"`). After any own → line flip, keep the
+  copy key until a `"line"` run has published: until then the live file still carries `nocompare-own`;
+- `"line"` (= #126): blank, kind `nocompare`, the approved line "자료의 숫자가 회사 전체 재무제표와 맞지 않아서 비워 두었어요.";
 - `"keep"`: don't blank — Yahoo's number shows, no mark; `usForeign.kept` lists those numbers. This loosens Jack's 11-13 rule for
   PER and PBR.
 Changing the switch is a safety-rule change: its own PR, with Jack's yes. The gate fails a mark whose kind does not match its reason
@@ -656,7 +657,7 @@ and WSE (Yahoo's EPS does not match the company's net income: e.g. NBIS 90.5 vs 
 fast-growing equity, so ROE on average equity runs ahead) and for ALKS, BSP, INIO, IREN and ROIV (nothing to compare: loss or no
 ROE), and the yield for TIGO and TRI (special dividends in the last year). SHOP, ARM, ARGX, CHKP, GMAB, LOGI, MELI and the
 other 11 keep their numbers. Some of the 30 file US-style 10-K reports although headquartered abroad (e.g. ALKS, JAZZ, CRDO, ROIV,
-LOGI, MELI); the rule cannot tell them from foreign filers without a filing-type source, so they are checked too (their correct
+LOGI, MELI); the rule cannot tell them from foreign filers without a filing-type source, so they are checked too (Jack, 2026-11-15: keep checking them) (their correct
 numbers stay; ALKS, CRDO, IREN and ROIV lose their PBR). The record `data.json` `usForeign.set` lists every foreign company with
 `[country, statement currency, basis]` (basis `fcur`, `country`, `adr`, `floor`, `prev` (yesterday's set, on a day the S&P 500
 list was not trusted), or `error` when the run stopped while looking at that stock or the whole rule: then it is checked). The gate row now also fails if a company in `set` (no `fcur`) has numbers that were not checked,

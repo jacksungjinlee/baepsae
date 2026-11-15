@@ -99,6 +99,11 @@ export const fgnBlank = (s, k) => fgnCutOf(s).includes(k);
 // (a plain "–"; a test asks for the copy whenever the switch is "own"). The app follows the kind in the data, not the switch itself.
 export const FGN_OWN = "nocompare-own";
 export const fgnOwnOf = (s, fields) => fgnCutOf(s).filter((k) => (!fields || fields.includes(k)) && s.fgnCut[k] === FGN_OWN);
+// "stopped" (Jack, 2026-11-15): the pipeline's check stopped that day, so the number was blanked unchecked — co.fgnStopped.
+export const FGN_STOPPED = "stopped";
+// The copy key of the line under each kind; the order is the order the lines stand in when one section has several kinds.
+export const FGN_LINE_KEYS = [["fgnCut", (k) => k !== FGN_OWN && k !== FGN_STOPPED], ["fgnNoCmp", (k) => k === FGN_OWN],
+  ["fgnStopped", (k) => k === FGN_STOPPED]];
 // A section of 내 기준과 맞는 정도 shows the line when its 가치 row (from PBR) or 배당 row (US: the yield) is blank because of this.
 export const fgnRowsBlank = (s, rows) => (rows || []).some((r) => r && r.blank
   && ((r.id === "value" && fgnBlank(s, "pbr")) || (r.id === "div" && fgnBlank(s, "dy"))));

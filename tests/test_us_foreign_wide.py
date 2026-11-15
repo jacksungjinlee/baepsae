@@ -356,13 +356,17 @@ def test_a_crashed_check_blanks_the_wider_set_loudly(tmp_path, monkeypatch):
     us, meta, lines, _calls = _fetch(tmp_path, monkeypatch, boom="us_foreign_check")
     by = {r["t"]: r for r in us}
     for t in ("SHOP", "NBIS", "TRI", "BP"):
-        assert not any(k in by[t] for k in ("per", "pbr", "dy", "fgnCut")), by[t]
+        assert not any(k in by[t] for k in ("per", "pbr", "dy")), by[t]
+        blanked = {f for tt, f, _w in meta["usForeign"]["cut"] if tt == t}
+        assert blanked and by[t]["fgnCut"] == {f: "stopped" for f in blanked}, by[t]                  # Q10: 그날의 줄 (co.fgnStopped)
+        assert meta["usForeign"]["kind"][t] == by[t]["fgnCut"]
     assert by["LIN"]["pbr"] == 6.13 and by["AAPL"]["pbr"] == 46.19 and by["TSM"]["fcur"] == "TWD"
     assert meta["usForeign"]["checked"] == ["BP", "NBIS", "SHOP", "TRI"] and set(meta["usForeign"]["set"]) == {"SHOP", "NBIS", "TRI", "TSM", "BP"}
     assert all(w == "검사가 멈춤 (RuntimeError)" for _t, _f, w in meta["usForeign"]["cut"])
     assert any(x.startswith("  !! 미국 상장 외국 회사 검사가 멈췄어요 (RuntimeError: 시험)") for x in lines), lines
     r = gate(meta, us)
-    assert r[3] == "WARN" and "검사가 멈춰 맞춰 보지 않고 비운 회사 4곳: BP, NBIS, SHOP, TRI" in r[1], r
+    assert r[3] == "WARN" and "검사가 멈춰 맞춰 보지 않고 비운 회사 4곳: BP, NBIS, SHOP, TRI (이유 줄: 오늘은 확인하지 못함" in r[1], r
+    assert "모양" not in r[1], r
 
 
 def test_a_crashed_rule_falls_back_to_the_21_fcur_and_yesterday(tmp_path, monkeypatch):
@@ -724,3 +728,38 @@ def test_gate_warns_on_every_yield_blanked_for_lack_of_a_dividend_record():
     usw[4].update(dy=None, fgnCut={"dy": "norecord"})
     r = run_gate(usw, new)
     assert r[3] == "WARN" and "배당 기록 · 가격을 읽지 못해 비운 배당수익률 1곳: SHOP" in r[1], r
+
+
+# ── Jack, 2026-11-15 (Q10): 검사가 멈춘 날의 표시 stopped ─────────────────
+def crash_rec_us():
+    rec_ = wide_rec()
+    rec_["cut"] = [["BP", "pbr", "… (4.32배)"], ["BP", "per", "… (1.70배)"]] + \
+        [[t, f, "검사가 멈춤 (RuntimeError)"] for t in ("NBIS", "SHEL", "SHOP") for f in ("per", "pbr", "dy")]
+    us = wide_us()
+    for s_ in us:
+        if s_["t"] in ("NBIS", "SHEL", "SHOP"):
+            for f in ("per", "pbr", "dy", "vz"):
+                s_.pop(f, None)
+            s_["fgnCut"] = {"per": "stopped", "pbr": "stopped", "dy": "stopped"}
+    rec_["kind"] = {"BP": {"pbr": "mismatch", "per": "mismatch"}, **{t: {"per": "stopped", "pbr": "stopped", "dy": "stopped"}
+                                                                  for t in ("NBIS", "SHEL", "SHOP")}}
+    return us, rec_
+
+
+def test_gate_accepts_a_crash_day_with_its_marks_and_warns():
+    us, rec_ = crash_rec_us()
+    r = run_gate(us, rec_)
+    assert r[3] == "WARN" and "검사가 멈춰 맞춰 보지 않고 비운 회사 3곳: NBIS, SHEL, SHOP (이유 줄: 오늘은 확인하지 못함" in r[1], r
+
+
+@pytest.mark.parametrize("change, expect", [
+    (lambda us, rec: (us[0].pop("fgnCut"), rec["kind"].pop("SHEL")), "멈춘 날 표시 SHEL.per null ≠ stopped"),     # 멈춘 칸인데 표시가 없음
+    (lambda us, rec: (us[0]["fgnCut"].update(per="mismatch"), rec["kind"]["SHEL"].update(per="mismatch")), '멈춘 날 표시 SHEL.per "mismatch" ≠ stopped'),
+    (lambda us, rec: (us[1]["fgnCut"].update(pbr="stopped"), rec["kind"]["BP"].update(pbr="stopped")), "종류 BP.pbr stopped ≠ mismatch"),
+    (lambda us, rec: rec.pop("nocmp"), "모양"),                                                   # 이 칸 전 모양의 기록엔 stopped 표시가 없어요
+])
+def test_gate_crash_day_marks_fail(change, expect):
+    us, rec_ = crash_rec_us()
+    change(us, rec_)
+    r = run_gate(us, rec_)
+    assert r[3] == "FAIL" and expect in r[1], r

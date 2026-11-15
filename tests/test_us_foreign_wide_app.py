@@ -138,3 +138,52 @@ def test_own_without_the_copy_line_is_a_plain_dash():
     value = [t for t in got["tiles"] if t[0] == "value"]
     assert value == [["value", "fgn", "–", "PBR –"]], got["tiles"]
     assert not any("자료가 없어요" in str(t) for t in got["tiles"])
+
+
+NOCMP_LINE = "회사 전체 숫자와 비교할 수 없어서 이 숫자는 비워 두었어요."      # Jack, 2026-11-15 (Q8)
+STOPPED_LINE = "오늘은 이 숫자를 확인하지 못해서 비워 두었어요."            # Jack, 2026-11-15 (Q10)
+
+
+def test_the_two_new_lines_word_for_word_and_approved():
+    got = run("out = { n: C2.co.fgnNoCmp, s: C2.co.fgnStopped, c: C2.co.fgnCut };")
+    assert got == {"n": NOCMP_LINE, "s": STOPPED_LINE, "c": LINE}
+    appr = open(os.path.join(ROOT, "docs", "tasks", "v18.3-approved-in-chat.md"), encoding="utf-8").read()
+    assert f"| `co.fgnNoCmp` | {NOCMP_LINE} | Jack, 2026-11-15" in appr
+    assert f"| `co.fgnStopped` | {STOPPED_LINE} | Jack, 2026-11-15" in appr
+
+
+def test_each_kind_gets_its_own_line_and_never_beside_the_currency_line():
+    """Q8 · Q10: nocompare-own → co.fgnNoCmp, stopped → co.fgnStopped, 나머지 → co.fgnCut. 한 칸 묶음에 종류가 섞이면 줄마다 자기 칸만
+    (data-fields). 재무제표 통화 회사(fcur)는 #114 의 통화 줄 하나만 — 이 줄은 붙지 않아요."""
+    got = run("""
+      const html = (s, fields) => renderToStaticMarkup(h(FN.FgnCutNote, { s, fields }));
+      const cur = (s) => renderToStaticMarkup(h(FN.FcurNote, { s }));
+      const alks = { t: 'ALKS', cls: 'us', dy: 0, fgnCut: { pbr: 'nocompare-own' } };
+      const crash = { t: 'SHEL', cls: 'us', fgnCut: { per: 'stopped', pbr: 'stopped', dy: 'stopped' } };
+      const bsp = { t: 'BSP', cls: 'us', dy: 0, fgnCut: { per: 'mismatch', pbr: 'nocompare-own' } };
+      const tsm = { t: 'TSM', cls: 'us', fcur: 'TWD', fgnCut: { pbr: 'stopped', per: 'nocompare-own' } };
+      out = { alks: html(alks), crash: html(crash), crashDy: html(crash, ['dy']), bsp: html(bsp), bspPer: html(bsp, ['per']),
+              tsmFgn: html(tsm), tsmCur: cur(tsm), crashCut: FC.fgnCutOf(crash) };""")
+    assert NOCMP_LINE in got["alks"] and LINE not in got["alks"] and 'data-kind="own"' in got["alks"]
+    assert STOPPED_LINE in got["crash"] and LINE not in got["crash"] and 'data-fields="per,pbr,dy"' in got["crash"]
+    assert 'data-kind="stopped"' in got["crash"] and got["crash"].count('data-ui-v2="fgn-cut"') == 1
+    assert STOPPED_LINE in got["crashDy"] and 'data-fields="dy"' in got["crashDy"] and got["crashCut"] == ["per", "pbr", "dy"]
+    assert got["bsp"].index(LINE) < got["bsp"].index(NOCMP_LINE) and got["bsp"].count('data-ui-v2="fgn-cut"') == 2
+    assert LINE in got["bspPer"] and NOCMP_LINE not in got["bspPer"]
+    assert got["tsmFgn"] == "" and "fgn-cut" not in got["tsmCur"]                                  # 통화 회사: 통화 줄만
+
+
+def test_a_crash_day_company_page_says_why_instead_of_no_data():
+    """Q10: 검사가 멈춘 날의 요약 칸 · 배당 머리는 '–' 와 그날의 줄 — '자료가 없어요' 가 아니에요."""
+    got = run("""
+      const load = { status: 'ok', data: { stocks: STOCKS3, usPxDate: '2026-11-13', pxDate: '2026-11-14', fx: 1333.8 }, coByT: new Map(),
+                     byT: new Map(STOCKS3.map((x) => [x.t, x])) };
+      const s = STOCKS3.find((x) => x.t === 'SHEL');
+      out = { tiles: CO.orderTiles(CO.tileViews(load, s)).map((x) => [x.topic, x.rule, x.phrase, x.number]),
+              note: renderToStaticMarkup(h(FN.FgnCutNote, { s, fields: ['pbr', 'dy'] })), na: C2.co.tiles ? C2.co.tiles.na : null };""",
+        STOCKS3=[us("SHEL", fgnCut={"per": "stopped", "pbr": "stopped", "dy": "stopped"})]
+        + [us(f"U{i}", pbr=1.0 + i, dy=1.0, vz=50) for i in range(8)])
+    held = [t for t in got["tiles"] if t[1] == "fgn"]
+    assert sorted(t[0] for t in held) == ["div", "value"] and all(t[2] == "–" for t in held), got["tiles"]
+    assert STOPPED_LINE in got["note"] and 'data-fields="pbr,dy"' in got["note"]
+    assert not any("자료가 없어요" in str(t) for t in got["tiles"])

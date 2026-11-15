@@ -194,8 +194,11 @@ US_FGN_CUR_WHY = "재무제표 통화를 모름"     # currency 사유의 머리
 #   "own"         = 비우고 종목 표시 nocompare-own → 앱이 디자인 채팅의 새 줄 co.fgnNoCmp 를 붙여요 (그 줄이 copy 에 없으면 줄 없이 '–' 만 ·
 #                   시험이 copy 의 줄을 요구해요). own → line 으로 되돌린 뒤에도 line 실행이 한 번 발행될 때까지 그 copy 줄은 두세요 (어제 파일의 표시)
 # norecord · currency 는 이 스위치와 상관없이 늘 비워요.
-US_FGN_NOCMP = "line"
+US_FGN_NOCMP = "own"    # Jack, 2026-11-15 (Q8): "own" — 그 줄 "회사 전체 숫자와 비교할 수 없어서 이 숫자는 비워 두었어요." (co.fgnNoCmp) · 숫자는 그대로 비워요
 US_FGN_NOCMP_KIND = {"line": "nocompare", "keep": None, "own": "nocompare-own"}
+# 검사가 멈춘 날 비운 칸의 종류 (Jack, 2026-11-15 Q10: 그 칸 밑 줄 "오늘은 이 숫자를 확인하지 못해서 비워 두었어요." · co.fgnStopped). 이 칸 전 기록
+# (nocmp 없음)은 예전처럼 표시 없이 비어 있어요 (그날 앱은 '자료가 없어요' 였어요).
+US_FGN_STOPPED_KIND = "stopped"
 US_FGN_HOME = {"united states", "united states of america", "usa", "us", "puerto rico"}   # 근거 country 인데 이 나라면 기록이 틀린 것 (fetch_data.US_HOME)
 US_FGN_NAMED = {"TSM", "ASML", "BABA", "NVO", "SHOP"}    # Jack 이 이름으로 넓힌 회사: 목록에 있는데 set 에 없으면 경고 (규칙이 못 찾은 날)
 KR_FUND_SET = {"088980", "415640", "094800"}              # 상장 인프라·부동산 펀드 (투자회사)
@@ -1851,7 +1854,7 @@ def check_us_foreign(rep, data, us, mode):
     # 리뷰 S1: 칸의 종류. 기록에 nocmp(스위치)가 있으면 그 스위치의 nocompare 종류도 표시로 받아요 (없는 기록 = 예전 두 가지만)
     nmode = rec.get("nocmp") if isinstance(rec, dict) and "nocmp" in rec else None
     nmode_ok = isinstance(nmode, str) and nmode in US_FGN_NOCMP_KIND    # 리뷰 2차 N1: 목록 · dict 가 와도 멈추지 않고 실패 줄로
-    kinds_ok = set(US_FGN_WHY) | ({US_FGN_NOCMP_KIND[nmode], US_FGN_NOREC} - {None} if nmode_ok else set())
+    kinds_ok = set(US_FGN_WHY) | ({US_FGN_NOCMP_KIND[nmode], US_FGN_NOREC, US_FGN_STOPPED_KIND} - {None} if nmode_ok else set())
     foreign = set(US_FOREIGN_SET) | (set(fset) if isinstance(fset, dict) else set())
     want = sorted(t for t, s in by.items() if t in foreign and not s.get("fcur") and any(s.get(k) is not None for k in US_FOREIGN_KEYS))
     marked = sorted(str(s.get("t")) for s in us if "fgnCut" in s)
@@ -1945,7 +1948,10 @@ def check_us_foreign(rep, data, us, mode):
             kbad.append(f"nocmp {nmode} (관문 스위치 {US_FGN_NOCMP})")
         nk = US_FGN_NOCMP_KIND.get(nmode) if nmode_ok else None
         for x in rows:
-            if x[2].startswith(US_FGN_STOPPED):
+            if x[2].startswith(US_FGN_STOPPED):                 # Q10: 멈춘 날 비운 칸에도 표시 stopped (앱이 그날의 줄을 붙여요)
+                g = (by.get(x[0]) or {}).get("fgnCut")
+                if x[0] in by and nmode_ok and not (isinstance(g, dict) and g.get(x[1]) == US_FGN_STOPPED_KIND):
+                    kbad.append(f"멈춘 날 표시 {x[0]}.{x[1]} {json.dumps(g.get(x[1]) if isinstance(g, dict) else None)} ≠ stopped")
                 continue
             want_k = ("currency" if x[2].startswith(US_FGN_CUR_WHY) else
                       US_FGN_NOREC if x[1] == "dy" and x[2] == US_FGN_NOREC_WHY else
@@ -2009,9 +2015,11 @@ def check_us_foreign(rep, data, us, mode):
         + ([f"남은 칸 {len(left)}: {', '.join(left[:6])}"] if left else []) + ([f"모양 {len(bad)}: {', '.join(bad[:3])}"] if bad else [])
     names = sorted({x[0] for x in rows})
     stopped = sorted({x[0] for x in rows if x[2].startswith(US_FGN_STOPPED)})
+    st_marked = bool(stopped) and nmode_ok and all(isinstance((by.get(t) or {}).get("fgnCut"), dict) for t in stopped if t in by)
     rep.add(name, not probs, f"확인 {len(checked)}곳 · 비운 칸 PER {n_by['per']} · PBR {n_by['pbr']} · 배당 {n_by['dy']}"
             + (f" ({_tickers(names)})" if names else "") + "".join(f" · {p}" for p in probs)
-            + (f" · 검사가 멈춰 맞춰 보지 않고 비운 회사 {len(stopped)}곳: {_tickers(stopped)} (이유 줄 없음 · 앱은 '자료가 없어요')" if stopped else "")
+            + (f" · 검사가 멈춰 맞춰 보지 않고 비운 회사 {len(stopped)}곳: {_tickers(stopped)} "
+               + ("(이유 줄: 오늘은 확인하지 못함 · co.fgnStopped)" if st_marked else "(이유 줄 없음 · 앱은 '자료가 없어요')") if stopped else "")
             + "".join(f" · {n}" for n in notes),
             th, warn=bool(stopped) or fwarn)
     if rows:

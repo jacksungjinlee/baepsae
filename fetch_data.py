@@ -7663,25 +7663,29 @@ def us_foreign_check(out, cache, data, us_px_date, no_info=frozenset(), foreign=
 
 def us_foreign_stopped(out, done, err, foreign=US_FOREIGN):
     """us_foreign_check 가 멈췄을 때 (리뷰 N1): 끝까지 본 종목(done["seen"])의 비운 칸 · 표시(fgnCut)는 그대로 두고, 아직 보지 못한 외국 회사
-    (fcur 없음)의 PER · PBR · 배당수익률을 모두 비워요 — 맞춰 보지 못한 숫자는 내보내지 않아요. 그 칸에는 이유 줄 표시가 없어요 (앱은 '–' ·
-    요약 칸과 배당 머리는 '자료가 없어요' — Jack 에게 묻는 중 · 관문은 경고). 남아 있던 예전 표시도 지워요. -> data.json usForeign"""
+    (fcur 없음)의 PER · PBR · 배당수익률을 모두 비워요 — 맞춰 보지 못한 숫자는 내보내지 않아요. 남아 있던 예전 표시는 지우고, 비운 칸마다 표시
+    stopped 를 적어요 (Jack, 2026-11-15 Q10: 앱이 그 칸 밑에 "오늘은 이 숫자를 확인하지 못해서 비워 두었어요." 를 붙여요 — 예전엔 줄 없이
+    '자료가 없어요' 였어요 · 관문은 경고). -> data.json usForeign"""
     seen = set(done.get("seen") or ())
     cut = [list(x) for x in done.get("cut") or []]
     kept_n = len(cut)
     why = f"{US_FOREIGN_STOP_WHY} ({type(err).__name__})"
+    kind = {t: dict(g) for t, g in sorted((done.get("kind") or {}).items()) if t in seen}
     for r in out:
         if r["t"] not in foreign or r.get("fcur") or r["t"] in seen:
             continue
         r.pop("fgnCut", None)
-        for f in ("per", "pbr", "dy"):
-            if r.get(f) is not None:
-                r.pop(f, None)
-                cut.append([r["t"], f, why])
+        blank = [f for f in ("per", "pbr", "dy") if r.get(f) is not None]
+        if blank:     # Jack, 2026-11-15 (Q10): 표시 stopped 먼저 — 앱이 그 칸 밑에 '오늘은 이 숫자를 확인하지 못해서 비워 두었어요.' 를 붙여요
+            r["fgnCut"] = {f: "stopped" for f in blank}
+            kind[r["t"]] = dict(r["fgnCut"])
+        for f in blank:
+            r.pop(f, None)
+            cut.append([r["t"], f, why])
     checked = sorted(r["t"] for r in out if r["t"] in foreign and not r.get("fcur"))
-    kind = {t: dict(g) for t, g in sorted((done.get("kind") or {}).items()) if t in seen}
     kept = [list(x) for x in done.get("kept") or [] if x[0] in seen]
     log(f"  !! 미국 상장 외국 회사 검사가 멈췄어요 ({type(err).__name__}: {str(err)[:120]}) → 끝까지 본 {len(seen & set(checked))}곳의 비운 칸 "
-        f"{kept_n}칸은 그대로 · 나머지 {len(cut) - kept_n}칸을 맞춰 보지 않고 비웠어요 (이유 줄 없음): "
+        f"{kept_n}칸은 그대로 · 나머지 {len(cut) - kept_n}칸을 맞춰 보지 않고 비웠어요 (줄: 오늘은 확인하지 못함 · 표시 stopped): "
         + (", ".join(f"{t} {f}" for t, f, _w in cut[kept_n:]) or "없음"))
     return {"checked": checked, "cut": cut, "kind": kind, "kept": kept, "nocmp": US_FGN_NOCMP}
 
@@ -8743,7 +8747,7 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
          "usExtraMissing": "손으로 더한 미국 종목(EXTRA_US) 중 오늘 목록에 없는 티커 → 빠진 이유",
          "fgnCut": ("미국 상장 외국 회사의 종목 칸: 회사 합계와 맞지 않아 비운 칸 {per · pbr · dy: mismatch 맞춰 봤는데 맞지 않음 · currency 재무제표 "
                     "통화를 확인하지 못함 · norecord 배당 기록 · 가격을 읽지 못한 배당수익률 · nocompare 회사 숫자로 PER · PBR 을 맞춰 볼 수 없음 (적자 · ROE 없음) · "
-                    "nocompare-own 같은 뜻, 스위치 own 일 때} "
+                    "nocompare-own 같은 뜻, 스위치 own 일 때 (지금 · 앱 줄 co.fgnNoCmp) · stopped 검사가 멈춘 날 맞춰 보지 않고 비움 (앱 줄 co.fgnStopped)} "
                     "(usForeign.cut 과 같은 칸 · 앱이 그 칸 '–' 밑에 이유 줄을 붙여요 · 검사가 멈춘 날의 칸은 없어요)"),
          "splits": ("2016-01-01 부터(splitsFrom)의 주식 분할 [종목 코드, 날짜, 배율] · 미국만 (야후 · 날짜는 미국 현지 날짜, 새 주식 수로 거래가 "
                     "시작된 날) · 배율 = 옛 1주가 새로 몇 주인지 (4:1 분할 4 · 1:10 병합 0.1) · 한 번 실은 분할은 빼지 않아요 (종목이 목록에서 빠져도) · "
