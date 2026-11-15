@@ -547,6 +547,7 @@ export function App({ source }) {
   // reloaded), toEdit() replaces the address instead.
   const editBase = useRef(null);
   if (editId && !loc.eview) editBase.current = { id: editId, depth: loc.depth };
+  else if (!editId) editBase.current = null;                // left the editor's screens: a later finder address starts without one
   const editView = loc.eview === "find" ? { kind: "find" } : loc.eview === "compare" ? { kind: "compare", t: loc.ecode } : { kind: "edit" };
   const editGo = useMemo(() => (editId ? {
     find: () => router.go("portfolio", editSub(editId, "find")),
