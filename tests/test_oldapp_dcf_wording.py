@@ -181,8 +181,8 @@ def test_three_month_line_after_a_fall_reads_jacks_sentence_on_both_screens(bund
 def test_a_price_change_shown_as_zero_reads_barely_changed(bundle):
     """기업분석 '주가는 무엇으로 움직였나'에서 적자 구간이 있어 나누지 못할 때의 3년 주가 문장. r36 은 소수 한 자리 그대로 보여요.
     0 (−0 도)이면 '지난 3년 주가는 거의 변하지 않았어요.' 하나만: 움직이지 않았으니 뒤 문장('이익 없이 움직인 가격은…')은 빼요
-    (Jack, 2026-11-05). 0 이 아니면 예전 그대로 (+x% 올랐어요 · x% 내렸어요). 뒤 문장은 3년의 두 끝이 모두 적자일 때만 (2026-11-14, Jack 의 답을
-    기다리는 커밋): 이 회사는 3년 전 적자 · 지금 흑자라 뒤 문장이 없어요 (두 끝 모두 적자인 회사는 tests/test_old_app_lines.py)."""
+    (Jack, 2026-11-05). 0 이 아니면 예전 그대로 (+x% 올랐어요 · x% 내렸어요). 뒤 문장은 3년의 두 끝이 모두 적자일 때만 (2026-11-14, Jack 의
+    yes 2026-11-15): 이 회사는 3년 전 적자 · 지금 흑자라 뒤 문장이 없어요 (두 끝 모두 적자인 회사는 tests/test_old_app_lines.py)."""
     sam = samsung()
     loss = [sam["ni"][0], sam["ni"][1], -100.0]                                 # 3년 전 적자: 이익과 눈높이로 나누지 못해요
     got = run(bundle, """

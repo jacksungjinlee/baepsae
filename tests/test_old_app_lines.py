@@ -113,7 +113,7 @@ def test_no_dated_eps_line_where_there_is_no_eps():
     assert got["sam"] == 4                                   # 다시 읽기 전 파일의 EPS 가 있는 회사: 예전 그대로 네 칸 (tests/test_fix_notes.py)
 
 
-# ── 02 3개년 실적 흐름: 우선주에게 틀린 이유를 빼요 (say-why NEW-9 · 2026-11-14, Jack 의 답을 기다리는 커밋) ──
+# ── 02 3개년 실적 흐름: 우선주에게 틀린 이유를 빼요 (say-why NEW-9 · 2026-11-14, Jack 의 yes 2026-11-15) ──
 def test_preferred_shares_lose_the_untrue_reason_in_02():
     got = run("""
       const L = (t) => lines(page(live(CORP), t));
@@ -121,7 +121,8 @@ def test_preferred_shares_lose_the_untrue_reason_in_02():
     pref, kr, foreign = got["pref"], got["kr"], got["foreign"]
     assert NO_DATA in pref and not any("파이프라인이 사업보고서를 못 찾은" in x for x in pref), [x for x in pref if "재무제표" in x]
     assert pref.index("3개년 실적 흐름") < pref.index(NO_DATA)
-    assert NO_DATA_OLD in kr                                 # 우선주가 아닌 회사(본시스템즈): 예전 그대로
+    # 본시스템즈 (KONEX, 2024년 사업보고서를 냈어요 · DART 에 XBRL 없음): 같은 이유로 괄호를 빼요 (Jack 의 yes, 2026-11-15)
+    assert NO_DATA in kr and not any("파이프라인이 사업보고서를 못 찾은" in x for x in kr), [x for x in kr if "재무제표" in x]
     assert FOREIGN in foreign and not any("파이프라인이" in x for x in foreign)   # 해외 기업(테라뷰): 예전 그대로
     assert not any(x.startswith("재무제표 데이터가 아직 없어요") for x in got["sam"])
 
@@ -151,7 +152,7 @@ def test_the_loss_line_only_for_a_real_loss_and_the_data_line_when_there_are_no_
     assert got["005930"]["block"] is not None and "이익(EPS) 변화" in got["005930"]["block"]   # 나눌 수 있는 회사는 그대로 (숫자 칸)
 
 
-# ── 04 '이익 없이 움직인 가격은 …': 3년의 두 끝이 모두 적자일 때만 (2026-11-14, Jack 의 답을 기다리는 커밋) ──
+# ── 04 '이익 없이 움직인 가격은 …': 3년의 두 끝이 모두 적자일 때만 (2026-11-14, Jack 의 yes 2026-11-15) ──
 def test_the_no_profit_sentence_only_when_both_ends_are_losses():
     """엘앤에프 (지금도 3년 전도 적자): 세 문장 그대로. SK하이닉스 (3년 전 적자 → 지금 흑자): '이익 없이 움직인 가격은 …' 없이 두 문장
     (한 끝이 이익이라 그 말은 틀려요)."""
@@ -164,3 +165,16 @@ def test_the_no_profit_sentence_only_when_both_ends_are_losses():
     assert got["both"] == [True, False, False]
     assert len(got["lnf"]) == 1 and got["lnf"][0].endswith(tail), got["lnf"]
     assert len(got["hynix"]) == 1 and tail not in got["hynix"][0] and got["hynix"][0].endswith("올랐어요."), got["hynix"]
+
+
+# ── 02: KONEX 회사도 (2026-11-14 마지막 리뷰, Jack 의 yes 2026-11-15) ──
+def test_konex_filers_with_a_report_year_lose_the_untrue_reason_and_new_listings_keep_it():
+    """사업보고서 연도가 있는 KONEX 회사(본시스템즈, fy 2024)는 '(파이프라인이 사업보고서를 못 찾은 종목이에요)'가 틀린 말이라 빼고, 연도가
+    없는 회사(새로 상장: 같은 줄에서 fy 만 비운 경우)는 예전 그대로 둬요."""
+    corp = corp_with_real_rows()
+    newco = json.loads(json.dumps(corp))
+    next(c for c in newco["companies"] if c["t"] == "496320")["fy"] = None
+    got = run("""
+      out = { konex: lines(page(live(CORP), '496320')), fresh: lines(page(live(NEWCO), '496320')) };""", CORP=corp, NEWCO=newco)
+    assert NO_DATA in got["konex"] and NO_DATA_OLD not in got["konex"]
+    assert NO_DATA_OLD in got["fresh"]
