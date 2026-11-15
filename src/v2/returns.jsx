@@ -17,6 +17,8 @@ import { signedPct } from "./deckcalc.js";
 import { returnsOf, roundRows, fxSplit, returnsPct } from "./lots.js";
 import { missingNames } from "./tracking.jsx";
 import { recordsCsv, csvName, downloadCsv } from "./csv.js";
+import { TaxLink } from "./tax.jsx";
+import { taxOpen } from "./tax.js";
 
 const warned = new Set();
 const warnOnce = (m) => { if (!warned.has(m)) { warned.add(m); console.warn(m); } };
@@ -112,7 +114,10 @@ function FxCard({ fx, today }) {
   );
 }
 
-export function Returns({ deck, load, store, pad, onBack }) {
+// onTax (v19.6f): opens 연말에 확인할 숫자 (#portfolio/tax). Its link shows above 기록 내려받기 from Nov 1 to Dec 31 (KST) when
+// the user has a US sale this year, a US holding or a dividend this year in any portfolio (tax.taxOpen, the address's rule
+// too), whatever today's data: like the records file, it reads the user's own records.
+export function Returns({ deck, load, store, pad, onBack, onTax }) {
   const ctx = useMemo(() => todayCtx(load), [load]);
   const ok = load.status === "ok";
   const live = ok && ctx.state.ok;
@@ -189,6 +194,7 @@ export function Returns({ deck, load, store, pad, onBack }) {
             {fx && (!fx.empty || fx.leftOut.length > 0) && <FxCard fx={fx} today={q.fx} />}
           </>
         )}
+        {onTax && taxOpen(store.data.decks, todayKst()) && <TaxLink onClick={onTax} />}
         <CsvRow store={store} />
       </div>
       <Footer />
