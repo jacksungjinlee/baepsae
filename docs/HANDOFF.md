@@ -28,10 +28,11 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
   separators, A/B classes) and add any others missing for the same reason. List them in the PR."
 - Order: "merge #129, the old-app lines and the wider foreign check; then v19.7b; then v19.6f before Dec 1."
 - **Queue now (2026-11-15; replaces the "Then screens" line of the 11-13 block below):**
-  - this PR (예전 뱁새 lines, branch `claude/old-app-lines`), #129, then the wider US foreign check;
-  - then a dividend follow-up (the rights line, non-whole ratios with the three guards, the data line);
-  - US share-class tickers (Brown-Forman B …);
-  - then v19.7b, then v19.6f before Dec 1.
+  - Jack's order: #129, the old-app lines (this PR) and the wider foreign check; then v19.7b; then v19.6f before Dec 1;
+    after that, unchanged from the 11-13 queue: v19.6c, v19.6b, v19.6e, v19.6g → v19.4 → v19.6h.
+  - Data work beside the screens (Jack asked for both on 11-15; their place in the order is the coordinator's, data and
+    screen work run side by side per his 11-14 evening order): a dividend follow-up (the rights line, non-whole ratios
+    with the three guards, the data line) and US share-class tickers (Brown-Forman B …).
 
 **Jack, 2026-11-14 (later evening): answers and approved lines.**
 - Q1–Q5 yes: #fin-warn's three PR #68 test edits; the Unilever row in `test_override_table_pins`; the
@@ -223,7 +224,8 @@ just stops blocking screen work.
     details without the currency field, refetches about 777 of them, and can fail #114's currency row when Yahoo
     refuses some. Rerun once (the saved cache is then fresh). Follow-up after Wednesday: carry the currency over from
     the previous publish in that case.
-  - Then screens (superseded: see the 2026-11-15 queue at the top of § 0): #119 v19.6a (after #117 is live) → #122
+  - Then screens (the part up to v19.6f is superseded by the 2026-11-15 queue at the top of § 0; the tail after v19.6f
+    still stands): #119 v19.6a (after #117 is live) → #122
     v19.7a → missing US stocks → v19.7b → v19.6f (in review by Dec 1, merged by Dec 10) → v19.6c, v19.6b, v19.6e,
     v19.6g → v19.4 → v19.6h.
   - Small follow-ups, none started: the CLAUDE.md "Choices I made" line; v19.5b's US 성장 line and US minimum sizes;
