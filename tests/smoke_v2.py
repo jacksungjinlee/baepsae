@@ -13012,8 +13012,8 @@ def scene_v197b(R, files, width):
 
 def scene_v197b_look(R, files, width, dark=False):
     """v19.7b 화면 모양 (320 · 390 · 1280, 밝게 · 어둡게): 확인된 데이터(divCheck · 베타 범위)로 찾기와 비교를 열어 12px · 가로 스크롤 · 뱁이 없음 ·
-    색 토큰(어두운 화면) · 비운 숫자의 줄: 과거 주가 기록 오류(변동성 · 베타) · 외국 회사 숫자(PBR · 배당) · 우선주(내 기준 · PBR) · 미국끼리는
-    S&P 500 1% → · 베타 범위 아래 승인된 안내 줄."""
+    색 토큰(어두운 화면) · 비운 숫자의 줄. 찾기가 내놓는 후보와 비교하는 가진 종목 쪽에서: 과거 주가 기록 오류(변동성 · 베타) · 외국 회사
+    숫자(PBR · 배당) · 우선주(내 기준 · PBR) · 미국끼리는 S&P 500 1% → · 베타 범위 아래 승인된 안내 줄 · 판정 칸은 한 가지 무채색."""
     S = f"v19.7b 모양 {width}{' 어두운' if dark else ''}"
     wide = width >= 1024
     data = v191b_files(files)
@@ -13024,13 +13024,20 @@ def scene_v197b_look(R, files, width, dark=False):
     px = by["000660"]
     px.update(vol=None, beta=None, betaSE=None, pxBad="2026-05-08", pxBadF=["vol", "beta", "betaSE", "betaN", "lz"])
     pxd = data["data.json"]["pxDate"]
+    # the special stocks are holdings (a holding can be anything; the finder offers only stocks its 기준 can score)
+    band = lambda t: [{"id": "band", "kind": "band", "check": "checked", "target": t, "bands": [0.75 * t, 1.25 * t, 1.4 * t]}]
+    hold = lambda t: {"t": t, "nk": by[t]["nk"], "cls": by[t]["cls"], "ind": by[t].get("ind"), "kind": "core", "target": 0.2, "setAt": "2026-10-01",
+                      "plannedQty": 10, "planPx": by[t]["price"], "rules": [{"id": "audit", "kind": "sell", "check": "pending"}, *band(0.2)]}
+    look = {"id": "dlook", "name": "모양 포트폴리오", "createdAt": "2026-10-01", "planFx": 1300,
+            "settings": {"points": {"value": 3, "div": 2}, "strict": "normal", "maxPct": 25, "amountMan": 1000},
+            "holdings": [hold(t) for t in ("005930", "000660", "005935", fg["t"], "AAPL")], "purchases": []}
     seed = ("(() => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');"
-            f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(v197b_store(pxd), ensure_ascii=False))}); }})();")
+            f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps({'v': 2, 'decks': [look], 'guideSeen': pxd}, ensure_ascii=False))}); }})();")
     screen = pc_device(width) if wide else {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2}
-    srv, ctx, page, base = R.open(build_site(data), width, init=seed, path="/app.html?dev=1#portfolio/edit/dfind/find",
+    srv, ctx, page, base = R.open(build_site(data), width, init=seed, path="/app.html?dev=1#portfolio/edit/dlook/find",
                                   device={**screen, "color_scheme": "dark" if dark else "light"})
-    CM = C["cmp"]
     tag = f"{width}{'-dark' if dark else ''}"
+    rows = lambda: page.locator("[data-find-row]").evaluate_all("(xs) => xs.map((x) => x.dataset.findRow)")
 
     def check_page(where, name):
         floor_ok(page, where)
@@ -13042,13 +13049,18 @@ def scene_v197b_look(R, files, width, dark=False):
             os.makedirs(R.shots, exist_ok=True)
             page.screenshot(path=os.path.join(R.shots, f"v197b-look-{name}-{tag}.png"), full_page=page.locator('[data-ui="bottom-sheet"]').count() == 0)
 
-    def go(code, hold=None):
-        page.goto(base + f"/app.html?dev=1#portfolio/edit/dfind/compare/{code}", wait_until="domcontentloaded")
+    def compare(code, hold):
+        page.locator(f'[data-find-row="{code}"] [data-ui-v2="find-compare"]').click()
+        at(page, f"portfolio/edit/dlook/compare/{code}")
         page.locator('[data-ui-v2="cmp-table"]').wait_for(state="visible")
-        if hold:
-            page.locator('[data-ui-v2="cmp-pick-open"]').click()
-            page.locator(f'[data-ui-v2="cmp-picker"] [data-pick="{hold}"]').click()
-            page.wait_for_function("(h) => document.querySelector('[data-ui-v2=\"cmp\"]').dataset.hold === h", arg=hold)
+        page.locator('[data-ui-v2="cmp-pick-open"]').click()
+        page.locator(f'[data-ui-v2="cmp-picker"] [data-pick="{hold}"]').click()
+        page.wait_for_function("(h) => document.querySelector('[data-ui-v2=\"cmp\"]').dataset.hold === h", arg=hold)
+
+    def pick(hold):
+        page.locator('[data-ui-v2="cmp-pick-open"]').click()
+        page.locator(f'[data-ui-v2="cmp-picker"] [data-pick="{hold}"]').click()
+        page.wait_for_function("(h) => document.querySelector('[data-ui-v2=\"cmp\"]').dataset.hold === h", arg=hold)
 
     def cell(rid, side):
         c = page.locator(f'[data-cmp-row="{rid}"] [data-side="{side}"]')
@@ -13058,30 +13070,49 @@ def scene_v197b_look(R, files, width, dark=False):
     def look():
         page.locator('[data-ui-v2="find-list"]').wait_for(state="visible")
         check_page("찾기", "find")
+        r = rows()
+        kr = next(t for t in r if by[t]["cls"] == "kr")
+        us_c = next((t for t in r if by[t]["cls"] == "us"), None)
         page.locator('[data-ui-v2="find-chip"][data-chip="newInd"]').click()
         check_page("찾기 · 없는 업종", "find-new")
-        go("000660")
-        # 과거 주가 기록 오류: 변동성 · 베타는 – 와 회사 페이지의 그 줄 (52주 범위는 그대로라 짧은 줄)
-        assert cell("vol", "cand") == ("–", C["co"]["pxBadOne"]) and cell("beta", "cand") == ("–", C["co"]["pxBadOne"])
-        hb = page.locator('[data-cmp-row="beta"] [data-side="hold"]').get_attribute("data-lo")
-        assert hb != "" and cell("beta", "hold")[0] == fillp(C["co"]["tiles"]["riskBand"]["kr"], lo=f"{float(hb):.1f}".replace("-", "−"),
-                                                             hi=f"{float(page.locator('[data-cmp-row=beta] [data-side=hold]').get_attribute('data-hi')):.1f}".replace("-", "−"))
-        assert page.locator('[data-ui-v2="cmp-beta-note"]').inner_text() in (C["co"]["risk"]["bandNote"], C["co"]["risk"]["oneNote"])
+        page.locator('[data-ui-v2="find-chip"][data-chip="all"]').click()
+        # 과거 주가 기록 오류 (가진 종목 SK하이닉스): 변동성 · 베타는 – 와 회사 페이지의 그 줄 (52주 범위는 그대로라 짧은 줄)
+        compare(kr, "000660")
+        assert cell("vol", "hold") == ("–", C["co"]["pxBadOne"]) and cell("beta", "hold") == ("–", C["co"]["pxBadOne"])
+        lo, hi = (page.locator('[data-cmp-row="beta"] [data-side="cand"]').get_attribute(f"data-{k}") for k in ("lo", "hi"))
+        if lo:
+            f = lambda v: f"{float(v):.1f}".replace("-", "−")
+            one = page.locator('[data-cmp-row="beta"] [data-side="cand"]').get_attribute("data-one") == "1"
+            want = fillp(C["co"]["tiles"]["riskOne"]["kr"], x=f(lo)) if one else fillp(C["co"]["tiles"]["riskBand"]["kr"], lo=f(lo), hi=f(hi))
+            assert cell("beta", "cand")[0] == want, (cell("beta", "cand"), want)                          # the approved tile text, whole (P1 waits)
+            assert page.locator('[data-ui-v2="cmp-beta-note"]').inner_text() in (C["co"]["risk"]["bandNote"], C["co"]["risk"]["oneNote"])
+        assert page.locator('[data-ui-v2="cmp-verdict"]').count() == 0 or page.locator('[data-ui-v2="cmp-verdict"]').get_attribute("data-tint") == "neutral"
         check_page("비교 · 과거 주가 기록 오류", "compare-pxbad")
-        # 외국 회사 숫자: PBR · 배당수익률 – 와 그 줄 · 미국끼리(AAPL)는 S&P 500 1% →
-        go(fg["t"], "AAPL")
-        assert cell("pbr", "cand") == ("–", C["co"]["fgnCut"]) and cell("dy", "cand") == ("–", C["co"]["fgnCut"])
-        assert cell("fit", "cand") == ("–", None)                                                   # 배당이 비어 점수를 매길 수 없어요 (0 이 아니에요)
-        assert page.locator('[data-cmp-row="beta"] th').inner_text() == C["co"]["tiles"]["riskBand"]["us"].split(" → ")[0] + " →"
-        check_page("비교 · 외국 회사 숫자 · 미국끼리", "compare-fgn")
-        # 우선주: 내 기준 – 와 '우선주는 순위를 매기지 않아요.'
-        go("005935")
-        assert cell("fit", "cand") == ("–", C["co"]["fit"]["pref"])
-        check_page("비교 · 우선주", "compare-pref")
+        # 외국 회사 숫자 (가진 종목): PBR · 배당수익률 – 와 그 줄, 배당이 비어 내 기준도 – (0 이 아니에요)
+        pick(fg["t"])
+        assert cell("pbr", "hold") == ("–", C["co"]["fgnCut"]) and cell("dy", "hold") == ("–", C["co"]["fgnCut"])
+        assert cell("fit", "hold") == ("–", None)
+        assert page.locator('[data-cmp-row="beta"] th').inner_text() == C["cmp"]["rows"]["beta"]       # 한국 후보: 코스피 1% →
+        check_page("비교 · 외국 회사 숫자", "compare-fgn")
+        # 우선주 (가진 종목): 내 기준 – 와 '우선주는 순위를 매기지 않아요.'
+        pick("005935")
+        assert cell("fit", "hold") == ("–", C["co"]["fit"]["pref"])
         page.locator('[data-ui-v2="cmp-pick-open"]').click()
         page.locator('[data-ui-v2="cmp-picker"]').wait_for(state="visible")
         check_page("비교 · 고르기", "compare-pick")
-    R.check(page, S, "찾기 · 비교의 모양 (12px · 가로 스크롤 · 뱁이 없음 · 화면 모드) · 비운 숫자는 – 와 회사 페이지의 줄", look)
+        page.keyboard.press("Escape")
+        page.locator('[data-ui-v2="cmp-picker"]').wait_for(state="detached")
+        check_page("비교 · 우선주", "compare-pref")
+        # 미국끼리 (후보 미국 · 가진 종목 AAPL): S&P 500 1% → (P4)
+        if us_c:
+            page.go_back()
+            at(page, "portfolio/edit/dlook/find")
+            page.locator('[data-ui-v2="find-list"]').wait_for(state="visible")
+            compare(us_c, "AAPL")
+            assert page.locator('[data-cmp-row="beta"] th').inner_text() == C["co"]["tiles"]["riskBand"]["us"].split(" → ")[0] + " →"
+            check_page("비교 · 미국끼리", "compare-us")
+        assert not R.errors, R.errors[:2]
+    R.check(page, S, "찾기 · 비교의 모양 (12px · 가로 스크롤 · 뱁이 없음 · 화면 모드) · 비운 숫자는 – 와 회사 페이지의 줄 · 판정 칸은 무채색", look)
     ctx.close()
     srv.shutdown()
 

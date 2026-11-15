@@ -88,7 +88,10 @@ export function compareCells(s, co, ctx) {
   if (pxBadFor(s, co)) out.beta = cell(DASH, pxBadOneText(s, co, "beta") || pxBadText(s, co), { band: "pxbad" });
   else {
     const r = riskTile(s);
-    out.beta = r.band ? cell(betaText(s, r, !!ctx.betaShort), null, { lo: r.band.lo, hi: r.band.hi, one: r.band.one ? "1" : "" }) : cell(C.co.tiles.na, null, { band: "" });
+    // the whole tile text (until P1/P2, or under another benchmark) is long for a narrow column: the small type, as the edge lines
+    const whole = !(ctx.betaShort && (r.band && (r.band.one ? C.cmp.p.betaOne : C.cmp.p.beta)));
+    out.beta = r.band ? cell(betaText(s, r, !!ctx.betaShort), null, { lo: r.band.lo, hi: r.band.hi, one: r.band.one ? "1" : "", ...(whole ? { long: "1" } : {}) })
+      : cell(C.co.tiles.na, null, { band: "" });
   }
   // PBR: the company page's order of blanks (Tiles: statements not in won or the unit check; then the US lines); else the PBR
   // with two decimals, or 자료가 없어요 for none (and the no-statements line where it explains it)
