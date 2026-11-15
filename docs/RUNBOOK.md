@@ -1104,3 +1104,17 @@ holdings, purchases or notes, and the fix is always the same: open 내 규칙 �
 - **A portfolio deleted in a tab of the earlier app.** The earlier app does not know the copy of the limits kept beside
   the records, so that copy stays. If the portfolio is brought back later with 기록 불러오기 from an older file that has
   no limits, its old limits come back too.
+
+## Known limits: 관심 종목 and a tab of the earlier app (v19.6c)
+
+뱁새 2.0 keeps the 관심 종목 list in the saved records and, since v19.6c, also beside them (`baepsae2.v1.watch`), with the
+time of each edit, because a tab of the app from before v19.6c (still open, or after a revert) saves the list as it read it
+and could drop newer edits. The next start of 2.0 brings back what such a tab dropped and says 합쳤어요. Each edit is stamped
+later than every time this phone already holds for that stock, so a clock that was ahead or set back never makes an older
+edit win. The marks behind 홈's 관심 종목 조건 row (shown, cleared) carry their own time too, so the later mark wins and the
+row neither repeats nor goes missing. One rare case remains:
+
+- **Storage full on the copy beside the records only.** The records save, the console says "could not keep the watch list
+  beside the records", and that one edit has no copy beside them until the next save that fits. If a tab of the earlier app
+  saves its older copy in between, that edit can be lost (about 2 in 100 such races in testing). Freeing storage (기록
+  내보내기, then removing old data in the browser) ends it.

@@ -12578,6 +12578,12 @@ def v196c_seed(store):
             f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(store, ensure_ascii=False))}); }})();")
 
 
+def no_hit_ts(conds):
+    """A stock's conditions without hitTs (the time of a mark: this device's clock, checked in tests/test_v196c_watch.py)."""
+    assert all(isinstance(c.get("hitTs", 1), int) and c.get("hitTs", 1) > 0 for c in conds), conds
+    return [{k: v for k, v in c.items() if k != "hitTs"} for c in conds]
+
+
 def chips_of(page):
     return page.locator('[data-ui-v2="watch-card"]').evaluate_all("""(cs) => Object.fromEntries(cs.map((c) => [c.dataset.t,
       [...c.querySelectorAll('[data-ui-v2="watch-chip"]')].map((x) => [x.dataset.k, x.dataset.state, x.textContent])]))""")
@@ -12636,8 +12642,9 @@ def scene_v196c(R, files, width, dark=False, deck=False):
         # the first day seen met: stored as each stock's own price date; the dividend condition seen before (10-29) has no row
         page.wait_for_function("(d) => { const w = JSON.parse(localStorage.getItem('baepsae2.v1')).watch; return w['005380'].conds[0].hitAt === d; }", arg=pxd)
         w = stored()["watch"]
-        assert w["005380"]["conds"] == [{"k": "pxBelow", "v": 300000, "hitAt": pxd}, {"k": "pbrBelow", "v": 0.4}, {"k": "dyAtLeast", "v": 2, "hitAt": "2026-10-29"}], w
-        assert w["AAPL"]["conds"] == [{"k": "pxBelow", "v": 350, "hitAt": uspx}] and "hitAt" not in json.dumps(w["005930"]), w
+        assert no_hit_ts(w["005380"]["conds"]) == [{"k": "pxBelow", "v": 300000, "hitAt": pxd}, {"k": "pbrBelow", "v": 0.4}, {"k": "dyAtLeast", "v": 2, "hitAt": "2026-10-29"}], w
+        assert "hitTs" in w["005380"]["conds"][0] and "hitTs" not in w["005380"]["conds"][2]          # the new mark carries its own time
+        assert no_hit_ts(w["AAPL"]["conds"]) == [{"k": "pxBelow", "v": 350, "hitAt": uspx}] and "hitAt" not in json.dumps(w["005930"]), w
         check_page("홈", "home")
         page.reload(wait_until="domcontentloaded")                                   # the same close: the rows stay, nothing written again
         wait_ready(page)
@@ -12729,7 +12736,7 @@ def scene_v196c(R, files, width, dark=False, deck=False):
         # 주가 unchanged: keeps its mark; PBR changed: no mark (it is met now: 0.42 < 0.5, so this device marks it today); 배당 gone
         page.wait_for_function("() => (JSON.parse(localStorage.getItem('baepsae2.v1')).watch['005380'].conds[1] || {}).hitAt != null")
         w = stored()["watch"]["005380"]
-        assert w["conds"] == [{"k": "pxBelow", "v": 300000, "hitAt": pxd}, {"k": "pbrBelow", "v": 0.5, "hitAt": pxd}], w
+        assert no_hit_ts(w["conds"]) == [{"k": "pxBelow", "v": 300000, "hitAt": pxd}, {"k": "pbrBelow", "v": 0.5, "hitAt": pxd}], w
         assert w["ts"] > 1762300000000 and w["at"] == "2026-11-05"
         assert chips_of(page)["005380"] == [["pxBelow", "met", "주가 300,000원 아래· " + fillp(W_["now"], now="282,000원")],
                                             ["pbrBelow", "met", "PBR 0.5배 아래· " + fillp(W_["now"], now="0.42배")]]

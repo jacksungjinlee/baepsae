@@ -98,7 +98,7 @@ export function watchMarks(data, load, now) {
 // The store with the marks fresh data asks for, or null when nothing changes (app.jsx writes it; idempotent).
 export function withWatchHits(data, load, now) {
   const m = watchMarks(data, load, now);
-  return m.size ? withWatchMarks(data, m) : null;
+  return m.size ? withWatchMarks(data, m, now == null ? Date.now() : now) : null;
 }
 // 오늘 볼 것's 관심 종목 조건 rows: each condition met on fresh data that this device saw met first on today's close (no mark
 // yet: it is being set now, or a mark of this same date), in list order then kind order. [{ t, s, k, v, val, date }]

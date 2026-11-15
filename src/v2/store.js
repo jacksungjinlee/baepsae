@@ -50,12 +50,16 @@
 // it was added (shown only while the stock is missing from today's data). conds: at most one per kind, k pxBelow (v > 0,
 // at most 2 decimals: Korea whole won, US dollars) · pbrBelow (v > 0, 1 decimal) · dyAtLeast (v > 0, 1 decimal, %); a later
 // version's kind is kept and not read. hitAt (a date): the stock's price date on the day this device first saw the condition
-// met (watch.js withWatchHits); it stays on this device, never in a records file (exportText) and never synced (Part C [Q7]).
+// met (watch.js withWatchHits); hitTs: the time that mark was set or cleared (ms; a cleared mark keeps only hitTs), so two
+// copies keep the later mark (round-3 review). Both stay on this device, never in a records file (exportText) and never
+// synced (Part C [Q7]).
 // Not a version-2 part, so a store holding only watch stays v1: every earlier app reads such a store and keeps the part, but
 // only as it read it — its write from an older copy, or its own start merging another tab's copy, puts back an older list
 // (review B1). Every write of this app therefore also keeps the list beside the records (key + ".watch", see "관심 종목 beside
 // the records"), and the next start of this app brings back what such a tab dropped, and says 합쳤어요.
-// Times from a clock that was ahead (a date added after today, a ts after now) are read as today, at its start (tame).
+// Times are stored as made, never rewritten. A date added after today (a clock that was ahead) is not a reason to set the list
+// aside: at only sorts it. Each edit is stamped later than every time this device holds for that stock (watchSaveTime), so
+// the newest edit wins even after a clock that was ahead has been corrected (round-3 review).
 // gone.watch { [code]: { at, ts } }: a stock taken out of 관심 종목 (so a merge with an older copy does not bring it back);
 // on this device only, like gone.notes.
 // Top level: guideSeen (v19.3c Part E: the first-visit guide was seen, the date) — a flag of this device, so it never
@@ -421,14 +425,14 @@ export function checkStore(d, today) {
   if (d.gone != null) {
     if (plainObj(d.gone) && (d.gone.notes == null || validPerStock(d.gone.notes, (g) => okTs(g.ts) && (g.h == null || /^[0-9a-f]{8}$/.test(g.h)), today))
       && (d.gone.watch == null || okWatchMarks(d.gone.watch))) {
-      data.gone = plainObj(d.gone.watch) ? { ...d.gone, watch: tameAll(d.gone.watch, today) } : d.gone;
+      data.gone = d.gone;
     } else problems.push("gone (deleted notes or watch-list marks): not valid");
   }
   // v19.6c 관심 종목 (see the top of this file): checked like notes (a bad part is set aside with its reason, the rest reads).
-  // Its times from a clock that was ahead are read as today / now (tameAll), never a reason to set it aside.
+  // A time after now (a clock that was ahead) is kept as stored and is never a reason to set it aside (round-3 review).
   if (d.watch != null) {
     const p = watchProblem(d.watch, today);
-    if (p) problems.push("watch (the watch list): " + p); else data.watch = tameAll(d.watch, today);
+    if (p) problems.push("watch (the watch list): " + p); else data.watch = d.watch;
   }
   // A top-level part this version does not know (a later version's) is kept as it is, so a write from this tab never drops
   // it; this app reads nothing from it.
@@ -504,34 +508,25 @@ export const okWatchValue = (k, v) => WATCH_KINDS.includes(k) && isNum(v) && v >
 function condProblem(c) {
   if (!plainObj(c) || !isStr(c.k, 20)) return "a condition without a kind";
   if (c.hitAt != null && !isDate(c.hitAt)) return "hitAt is not a date";
+  if (c.hitTs != null && !okTs(c.hitTs)) return "hitTs is not a time";
   if (!WATCH_KINDS.includes(c.k)) return null;                 // a later version's kind: kept as it is, not read
   return okWatchValue(c.k, c.v) ? null : `${c.k}: the number is not valid`;
 }
-// v19.6c review (a phone clock that was ahead, then corrected): a date added after today or a time (ts) after now on a 관심 종목
-// entry or a gone.watch mark is read as today, made at the start of today (KST), with a console line once per value. So the
-// list is never set aside for it, and an edit made today with the right clock still wins a merge against it (watchState
-// reads the same way; "now" itself would beat every real edit made since). The notes' own rule is unchanged.
-const kstDay = (now) => new Date(now + 9 * 3600 * 1000).toISOString().slice(0, 10);
-const tameSaid = new Set();
-function tame(x, today, now = Date.now()) {
-  if (!plainObj(x)) return x;
-  const day = isDate(today) && today <= kstDay(now) ? today : kstDay(now);
-  const lateAt = isDate(x.at) && x.at > day, lateTs = okTs(x.ts) && x.ts > now;
-  if (!lateAt && !lateTs) return x;
-  const k = `${x.at}|${x.ts}`;
-  if (!tameSaid.has(k)) {
-    tameSaid.add(k);
-    console.warn(`[v2] watch list: a time after now (${lateAt ? "date " + x.at : ""}${lateAt && lateTs ? ", " : ""}${lateTs ? "ts " + x.ts : ""}) is read as the start of today (the device clock was ahead)`);
-  }
-  return { ...x, ...(lateAt ? { at: day } : {}), ...(lateTs ? { ts: Date.parse(day + "T00:00:00+09:00") } : {}) };
+// v19.6c round-3 review (like limitsSaveTime for 내 규칙): the time to stamp an edit of stock t with — now, or just after the
+// latest time this device already holds for that stock (its entry or deletion mark in the records, or beside them in
+// key + ".watch") when that is later: a clock that was ahead and has been corrected, or set back. So the newest edit is
+// always the latest, and an older edit of a stale tab never wins over it.
+const watchTimes = (d, t) => [watchOf(d)[t], watchGone(d)[t]].filter(plainObj).map((x) => x.ts).filter(okTs);
+export function watchSaveTime(key, data, t, now = Date.now()) {
+  let x = now;
+  for (const v of watchTimes(data, t)) x = Math.max(x, v + 1);
+  try {
+    const sw = key ? readSideWatch(key) : null;
+    if (sw) for (const v of watchTimes(sideAsStore(sw), t)) x = Math.max(x, v + 1);
+  } catch (e) { /* the records' times are enough */ }
+  return x;
 }
-function tameAll(m, today) {
-  let changed = false;
-  const out = {};
-  for (const [t, v] of Object.entries(m)) { out[t] = tame(v, today); if (out[t] !== v) changed = true; }
-  return changed ? out : m;
-}
-// gone.watch: { [code]: { at, ts } } (a date, a time; times after now are read as now, above)
+// gone.watch: { [code]: { at, ts } } (a date, a time)
 const okWatchMarks = (m) => plainObj(m) && Object.entries(m).every(([t, g]) => okStockCode(t) && plainObj(g) && isDate(g.at) && okTs(g.ts));
 // null when the 관심 종목 part is valid, else the first problem (English, for the console). max: WATCH_MAX (the side key
 // beside the records, which keeps the latest state of every stock this app wrote, takes more).
@@ -575,7 +570,7 @@ export function watchOrder(w) {
 // An entry without this device's hitAt marks (what a records file carries).
 function noHits(e) {
   if (!plainObj(e) || !Array.isArray(e.conds)) return e;
-  return { ...e, conds: e.conds.map((c) => { if (!plainObj(c) || c.hitAt == null) return c; const { hitAt: _h, ...r } = c; return r; }) };
+  return { ...e, conds: e.conds.map((c) => { if (!plainObj(c) || (c.hitAt == null && c.hitTs == null)) return c; const { hitAt: _h, hitTs: _s, ...r } = c; return r; }) };
 }
 export const watchNoHits = (w) => Object.fromEntries(Object.entries(w).map(([t, e]) => [t, noHits(e)]));
 const watchGone = (d) => (d && plainObj(d.gone) && plainObj(d.gone.watch) ? d.gone.watch : {});
@@ -621,7 +616,8 @@ export function withWatchConds(data, t, conds, today, ts = null) {
   const old = Array.isArray(e.conds) ? e.conds : [];
   const known = WATCH_KINDS.map((k) => conds.find((c) => c.k === k)).filter(Boolean).map((c) => {
     const was = old.find((x) => plainObj(x) && x.k === c.k);
-    return { k: c.k, v: c.v, ...(was && was.v === c.v && isDate(was.hitAt) ? { hitAt: was.hitAt } : {}) };
+    const keep = was && was.v === c.v;
+    return { k: c.k, v: c.v, ...(keep && isDate(was.hitAt) ? { hitAt: was.hitAt } : {}), ...(keep && okTs(was.hitTs) ? { hitTs: was.hitTs } : {}) };
   });
   const later = old.filter((x) => plainObj(x) && !WATCH_KINDS.includes(x.k));
   const { conds: _c, ts: _t, ...base } = e;
@@ -629,8 +625,10 @@ export function withWatchConds(data, t, conds, today, ts = null) {
   return withWatchParts(data, { ...w, [t]: next }, watchGone(data));
 }
 // hitAt marks set or cleared (watch.js withWatchHits decides which): marks = Map "code|kind" -> date (set) or null (clear).
-// Nothing else changes (no time: the user did not edit anything). -> the store, or null when nothing changed.
-export function withWatchMarks(data, marks) {
+// The entry's own time does not change (the user did not edit anything); the condition gets hitTs, the time of this mark
+// (now, or just after its earlier mark's time), so a copy holding an older mark never wins over it (round-3 review).
+// -> the store, or null when nothing changed.
+export function withWatchMarks(data, marks, now = Date.now()) {
   const w = watchOf(data);
   let changed = false;
   const out = {};
@@ -643,8 +641,9 @@ export function withWatchMarks(data, marks) {
       const d = marks.get(key);
       if (d == null ? c.hitAt == null : c.hitAt === d || !isDate(d)) return c;
       touched = true;
-      if (d == null) { const { hitAt: _h, ...r } = c; return r; }
-      return { ...c, hitAt: d };
+      const hitTs = Math.max(now, okTs(c.hitTs) ? c.hitTs + 1 : 0);
+      if (d == null) { const { hitAt: _h, ...r } = c; return { ...r, hitTs }; }
+      return { ...c, hitAt: d, hitTs };
     });
     out[t] = touched ? { ...e, conds } : e;
     changed = changed || touched;
@@ -658,20 +657,38 @@ export function withWatchMarks(data, marks) {
 // makes the screens say 합쳤어요 (droppedFrom). -> { watch, marks }.
 function watchState(d, t) {
   const e = watchOf(d)[t], g = watchGone(d)[t];
-  const entry = plainObj(e) ? tame(e) : null, del = plainObj(g) ? { ...tame(g), gone: true } : null;
+  const entry = plainObj(e) ? e : null, del = plainObj(g) ? { ...g, gone: true } : null;
   if (entry && del) {
     if (okTs(entry.ts)) return entry.ts >= del.ts ? entry : del;
     return isDate(entry.at) && entry.at > del.at ? entry : del;
   }
   return entry || del;
 }
+// The winning entry w with, per condition (the same kind and number in the other copy's entry l), the later hitAt mark of the
+// two by hitTs (a mark set or cleared: withWatchMarks). So a copy that never saw today's mark (a tab of the app before v19.6c,
+// a stale tab) neither drops it nor puts back a cleared one (round-3 review); a condition changed since keeps its own.
+function laterHits(w, l) {
+  if (!Array.isArray(w.conds) || !Array.isArray(l.conds)) return w;
+  let changed = false;
+  const conds = w.conds.map((c) => {
+    const x = plainObj(c) && WATCH_KINDS.includes(c.k) ? l.conds.find((y) => plainObj(y) && y.k === c.k && y.v === c.v) : null;
+    if (!x || !(okTs(x.hitTs) && !(okTs(c.hitTs) && c.hitTs >= x.hitTs))) return c;
+    changed = true;
+    const { hitAt: _h, hitTs: _s, ...r } = c;
+    return { ...r, ...(isDate(x.hitAt) ? { hitAt: x.hitAt } : {}), hitTs: x.hitTs };
+  });
+  return changed ? { ...w, conds } : w;
+}
 function unionWatch(cur, other) {
   const codes = new Set([...Object.keys(watchOf(cur)), ...Object.keys(watchGone(cur)), ...Object.keys(watchOf(other)), ...Object.keys(watchGone(other))]);
   const won = {}, marks = {};
   for (const t of codes) {
-    const w = laterOf(watchState(cur, t), watchState(other, t));
+    const c = watchState(cur, t), o = watchState(other, t);
+    const w = laterOf(c, o);
     if (!w) continue;
-    if (w.gone) marks[t] = { at: w.at, ts: w.ts }; else won[t] = w;
+    if (w.gone) { marks[t] = { at: w.at, ts: w.ts }; continue; }
+    const l = w === c ? o : c;
+    won[t] = l && !l.gone ? laterHits(w, l) : w;
   }
   const order = [...watchOrder(Object.fromEntries(Object.entries(won).filter(([t]) => plainObj(watchOf(cur)[t])))),
     ...watchOrder(Object.fromEntries(Object.entries(won).filter(([t]) => !plainObj(watchOf(cur)[t]))))];
@@ -1267,6 +1284,8 @@ function restoreMoved(key, cur, raw, today) {
   // only in it is merged quietly (never "다른 창에서 저장한 내용과 기록을 합쳤어요…").
   const noTs = (d) => {
     const { guideSeen: _g, ...top } = d;
+    // v19.6c: the 관심 종목 hitAt marks are this device's state, not the user's words: a copy that differs only in them is quiet too
+    if (plainObj(top.watch)) top.watch = watchNoHits(top.watch);
     return canon({ ...top, decks: (d.decks || []).map((x) => { if (!plainObj(x)) return x; const { limitsTs: _t, ...r } = x; return r; }) });
   };
   const notice = (changed && noTs(merged) !== noTs(base)) || used.some(([, d]) => droppedFrom(d, merged));
@@ -1517,10 +1536,12 @@ function readSideWatch(key, today) {
   const ok = plainObj(d) && d.v === 1 && (d.watch == null || !watchProblem(d.watch, today, SIDE_WATCH_MAX)) && (d.gone == null || okWatchMarks(d.gone));
   if (!ok) {
     console.warn(`[v2] ${key + WATCH_SUFFIX}: not readable; the text is kept aside and not used`);
-    try { localStorage.setItem(backupKey(key, ".unreadable."), raw); localStorage.removeItem(key + WATCH_SUFFIX); } catch (e) { /* it stays */ }
+    try { localStorage.setItem(backupKey(key, ".unreadable."), raw); localStorage.removeItem(key + WATCH_SUFFIX); } catch (e) {
+      console.warn(`[v2] could not set aside ${key + WATCH_SUFFIX} (${(e && e.message) || e}): it stays where it is, not used`);
+    }
     return null;
   }
-  return { watch: plainObj(d.watch) ? tameAll(d.watch, today) : {}, gone: plainObj(d.gone) ? tameAll(d.gone, today) : {} };
+  return { watch: plainObj(d.watch) ? d.watch : {}, gone: plainObj(d.gone) ? d.gone : {} };
 }
 // the key's states as a store (for mergeTabs and storedStores)
 const sideAsStore = (sw) => ({ v: BASE_VERSION, decks: [], ...(Object.keys(sw.watch).length ? { watch: sw.watch } : {}),
@@ -1537,8 +1558,12 @@ function keepSideWatch(key, data, today) {
     let changed = false;
     for (const t of new Set([...Object.keys(w), ...Object.keys(g)])) {
       const mine = watchState(data, t), have = watchState(here, t);
-      if (!mine || (have && (surelyLater(have, mine) || same(have, mine)))) continue;
-      if (mine.gone) { sw.gone[t] = { at: mine.at, ts: mine.ts }; delete sw.watch[t]; } else { sw.watch[t] = mine; delete sw.gone[t]; }
+      if (!mine) continue;
+      // the later edit (a tie goes to what this tab writes), with the later hitAt marks of the two (laterHits)
+      const win = have && surelyLater(have, mine) ? have : mine, lose = win === mine ? have : mine;
+      const next = !win.gone && lose && !lose.gone ? laterHits(win, lose) : win;
+      if (have && same(have, next)) continue;
+      if (next.gone) { sw.gone[t] = { at: next.at, ts: next.ts }; delete sw.watch[t]; } else { sw.watch[t] = next; delete sw.gone[t]; }
       changed = true;
     }
     if (changed) localStorage.setItem(key + WATCH_SUFFIX, watchSideText(sw.watch, sw.gone));
@@ -1552,7 +1577,10 @@ function sideWatchInto(key, data, today) {
   const sw = readSideWatch(key, today);
   if (!sw || !plainObj(data) || !Array.isArray(data.decks)) return { data: null, visible: false };
   const m = mergeTabs(sideAsStore(sw), data, today);
-  if (!m) { console.warn("[v2] the watch list kept beside the records could not be merged (the result would not read back); the records as read are used"); return { data: null, visible: false }; }
+  if (!m) {
+    console.warn("[v2] the watch list kept beside the records could not be merged (the result would not read back); the records as read are used, and the key is kept as it is");
+    return { data: null, visible: false, failed: true };
+  }
   const capped = (res) => Object.keys(sw.watch).some((t) => !plainObj(watchOf(res)[t]) && !watchGone(res)[t]
     && (() => { const rec = watchState(data, t); return !rec || surelyLater(watchState(sideAsStore(sw), t), rec); })());
   const same_ = canon(watchOf(m)) === canon(watchOf(data)) && canon(watchGone(m)) === canon(watchGone(data));
@@ -1570,7 +1598,9 @@ function sideWatchFollow(key, data, today) {
     if (!Object.keys(w).length && !Object.keys(g).length) { if (cur != null) localStorage.removeItem(key + WATCH_SUFFIX); return; }
     const text = watchSideText(w, g);
     if (cur !== text) localStorage.setItem(key + WATCH_SUFFIX, text);
-  } catch (e) { /* the next write adds them */ }
+  } catch (e) {
+    console.warn("[v2] could not set " + key + WATCH_SUFFIX + " to the records' watch-list states (" + ((e && e.message) || e) + "); it keeps its own, and the next save adds to it");
+  }
 }
 
 // { data, writable, locked, problems, restored, unmerged }: locked = something stored could not be read (all of it, or
@@ -1625,7 +1655,13 @@ export function readStore(key = STORE_KEY, today) {
       if (writable && !out.locked) {
         try {
           const s = sideWatchInto(key, out.data, today);
-          if (s.data && validStore(s.data, today)) {
+          // the key follows the records only when everything in it went into them (never over the only copy of a later state)
+          let follow = !s.failed;
+          if (s.data && !validStore(s.data, today)) {
+            follow = false;
+            console.warn("[v2] watch-list edits kept beside the records would not read back merged; the records as read are used, the key is kept");
+          }
+          if (s.data && follow) {
             if (!writeStore(s.data, key, today)) console.warn("[v2] watch-list edits brought back from " + key + WATCH_SUFFIX + " could not be written: shown for now, back again on the next start");
             out = { ...out, data: { ...s.data, v: versionFor(s.data) }, ...(s.visible ? { restored: true } : {}) };
             console.warn("[v2] watch-list edits saved later than the records held were brought back from " + key + WATCH_SUFFIX);
@@ -1633,7 +1669,7 @@ export function readStore(key = STORE_KEY, today) {
             out = { ...out, restored: true };
             console.warn("[v2] a watch-list stock kept beside the records was left out: the list already holds " + WATCH_MAX);
           }
-          sideWatchFollow(key, out.data, today);
+          if (follow) sideWatchFollow(key, out.data, today);
         } catch (e) { console.warn("[v2] could not read the watch list beside the records (" + ((e && e.message) || e) + "); the records as read are used"); }
       }
     }

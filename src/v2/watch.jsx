@@ -23,7 +23,7 @@ import { DayNote, FcurNote, PbrZeroNote, FgnCutNote, UnitChkNote, StmtCurNote, N
 import { fcurBlank, fcurDyBlank, pbrZeroOf, fgnBlank } from "./fcur.js";
 import { unitHeldFor, stmtNotWonFor, noStmtFor } from "./fix.js";
 import { divShareHidden } from "./company.js";
-import { WATCH_MAX, WATCH_KINDS, WATCH_DEC, okWatchValue, watchOf, watchOrder, withWatchAdd, withWatchRemove, withWatchConds } from "./store.js";
+import { WATCH_MAX, WATCH_KINDS, WATCH_DEC, okWatchValue, watchOf, watchOrder, withWatchAdd, withWatchRemove, withWatchConds, watchSaveTime } from "./store.js";
 import { watchFresh, condState, condsOf, condText, nowValue, hitText, watchValue } from "./watch.js";
 
 const W = () => C.watch;
@@ -154,13 +154,13 @@ export function CondSheet({ open, store, setStoreData, onClose }) {
   const save = () => {
     if (bad) return;
     const conds = WATCH_KINDS.filter((k) => vals[k] != null).map((k) => ({ k, v: vals[k] }));
-    const next = withWatchConds(store.data, t, conds, todayKst(), Date.now());
+    const next = withWatchConds(store.data, t, conds, todayKst(), watchSaveTime(store.key, store.data, t));   // later than any time held for t
     if (!next) { console.warn("[v2] watch-list conditions not saved for " + t); return; }
     setStoreData(next);
     onClose();
   };
   const remove = () => {
-    const next = withWatchRemove(store.data, t, todayKst(), Date.now());
+    const next = withWatchRemove(store.data, t, todayKst(), watchSaveTime(store.key, store.data, t));
     if (next) setStoreData(next);
     onClose();
   };
@@ -278,13 +278,13 @@ export function WatchButton({ s, store, setStoreData }) {
   const on = !!w[s.t];
   const tapIt = () => {
     if (on) {
-      const next = withWatchRemove(store.data, s.t, todayKst(), Date.now());
+      const next = withWatchRemove(store.data, s.t, todayKst(), watchSaveTime(store.key, store.data, s.t));
       if (next) setStoreData(next);
       setFull(false);
       return;
     }
     if (Object.keys(w).length >= WATCH_MAX) { setFull(true); return; }
-    const next = withWatchAdd(store.data, s.t, s.nk, todayKst(), Date.now());
+    const next = withWatchAdd(store.data, s.t, s.nk, todayKst(), watchSaveTime(store.key, store.data, s.t));
     if (next) setStoreData(next); else console.warn("[v2] not added to the watch list: " + s.t);
   };
   return (

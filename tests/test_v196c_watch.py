@@ -207,26 +207,95 @@ def test_the_store_checks_the_watch_part_and_sets_a_bad_one_aside():
     assert got["gone"] == [bad, bad, bad, bad, []]  # a mark needs a code, a date and a time (ms)
 
 
-def test_a_clock_that_was_ahead_never_sets_the_list_aside_and_a_later_real_edit_still_wins():
-    """Review (clock): a date added after today or a time after now (watch entries, gone.watch marks) is read as today / now with
-    a console line; the store stays unlocked; a merge with such a copy keeps a later real edit. The notes' own rule is unchanged."""
+def test_a_clock_that_was_ahead_never_locks_the_store_and_times_are_kept_as_made():
+    """Round 3: a date added after today or a time after now (watch entries, gone.watch marks) is kept as stored (never rewritten)
+    and never sets the list aside; the next edit of that stock is stamped after it (watchSaveTime), so it still wins a merge with
+    the copy that holds the time from the clock that was ahead. The notes' own rule is unchanged."""
     got = run("""
       const NOW = Date.now(), AHEAD = NOW + 3 * 86400000, day = new Date(NOW + 9 * 3600 * 1000).toISOString().slice(0, 10);
       const ahead = { v: 1, decks: [], watch: { '005930': { at: '2099-01-01', ts: AHEAD, conds: [{ k: 'pxBelow', v: 70000 }] } },
                       gone: { watch: { '000660': { at: '2099-01-01', ts: AHEAD } } } };
       mem.set(K, JSON.stringify(ahead));
       const r = S.readStore(K, day);
-      const w = r.data.watch['005930'], g = r.data.gone.watch['000660'];
-      // a real edit made now, in another copy: it wins over the clamped times (the ahead copy would have won before)
-      const real = { v: 1, decks: [], watch: { '005930': { at: day, ts: NOW - 1, conds: [{ k: 'pxBelow', v: 60000 }] }, '000660': { at: day, ts: NOW - 1 } } };
-      const m = S.mergeTabs(ahead, real, day), m2 = S.mergeTabs(real, ahead, day);
+      const ts1 = S.watchSaveTime(K, r.data, '005930'), ts2 = S.watchSaveTime(K, r.data, '000660'), ts3 = S.watchSaveTime(K, r.data, '035720');
+      const edit = S.withWatchConds(r.data, '005930', [{ k: 'pxBelow', v: 60000 }], day, ts1);
+      const back = S.withWatchAdd(edit, '000660', 'SK하이닉스', day, ts2);
+      const m = S.mergeTabs(ahead, back, day), m2 = S.mergeTabs(back, ahead, day);
       const notes = S.checkStore({ v: 1, decks: [], notes: { '005930': { text: 'x', at: '2099-01-01' } } }, day);
-      out = { locked: r.locked, problems: r.problems, at: [w.at === day, g.at === day], ts: [w.ts, g.ts].map((x) => x === Date.parse(day + 'T00:00:00+09:00')),
-              said: warns.some((x) => x.includes('read as the start of today')), m: [m.watch['005930'].conds[0].v, !!m.watch['000660']], m2: [m2.watch['005930'].conds[0].v, !!m2.watch['000660']],
-              notes: notes.problems };""")
-    assert got["locked"] is False and got["problems"] == [] and got["at"] == [True, True] and got["ts"] == [True, True] and got["said"] is True
+      out = { locked: r.locked, problems: r.problems, kept: JSON.stringify(r.data.watch) === JSON.stringify(ahead.watch) && JSON.stringify(r.data.gone) === JSON.stringify(ahead.gone),
+              ts: [ts1 === AHEAD + 1, ts2 === AHEAD + 1, ts3 >= NOW && ts3 < AHEAD],
+              m: [m.watch['005930'].conds[0].v, !!m.watch['000660']], m2: [m2.watch['005930'].conds[0].v, !!m2.watch['000660']], notes: notes.problems };""")
+    assert got["locked"] is False and got["problems"] == [] and got["kept"] is True and got["ts"] == [True, True, True]
     assert got["m"] == [60000, True] and got["m2"] == [60000, True]
     assert got["notes"] == ["notes: not valid"]       # unchanged: a note dated after today is still set aside
+
+
+CLOCK = """
+const realNow = Date.now; let offset = 0; Date.now = () => realNow() + offset;
+const today = () => new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+const Wv = (d) => Object.fromEntries(Object.entries(d.watch || {}).map(([t, e]) => [t, (e.conds || []).map((c) => c.v)]));
+// an edit as the screens make it: stamped by watchSaveTime (now, or after any time this device holds for the stock)
+const conds = (St, d, v) => St.withWatchConds(d, '005930', [{ k: 'pxBelow', v }], today(), St.watchSaveTime(K, d, '005930'));
+"""
+
+
+@pytest.mark.parametrize("ahead_ms", [0, 5 * 60_000, 86_400_000])
+def test_round3_sc3_an_edit_made_while_the_clock_was_ahead_wins_over_an_old_tabs_older_copy(ahead_ms):
+    """sc3: 1,000원 set two hours ago; a tab of the app now on main reads it; this app sets 2,000원 while the clock is ahead (5 min,
+    a day); the clock is corrected; the old tab saves a 메모 from its copy. The next start shows 2,000원 and says 합쳤어요."""
+    got = run(CLOCK + f"""
+      let d = S.withWatchAdd({{ v: 1, decks: [] }}, '005930', 'a', today(), Date.now() - 7200e3);
+      d = S.withWatchConds(d, '005930', [{{ k: 'pxBelow', v: 1000 }}], today(), Date.now() - 7200e3 + 1);
+      S.writeStore(d, K, today()); S.readStore(K, today());
+      const old = Old7.readStore(K, today());
+      offset = {ahead_ms};
+      S.writeStore(conds(S, S.readStore(K, today()).data, 2000), K, today());
+      offset = 0;
+      Old7.writeStore(Old7.withNote(old.data, '000660', 'm', today(), Date.now()), K, today());
+      const r = S.readStore(K, today());
+      out = {{ final: Wv(r.data), restored: r.restored }};""")
+    assert got == {"final": {"005930": [2000]}, "restored": True}
+
+
+@pytest.mark.parametrize("ahead_ms,earlier_ms", [(5 * 60_000, 3_600_000), (86_400_000, 3_600_000), (5 * 60_000, 30 * 3_600_000), (0, 3_600_000)])
+def test_round3_sc2_two_tabs_of_this_app_keep_the_edit_made_while_the_clock_was_ahead(ahead_ms, earlier_ms):
+    """sc2: tab A and tab B read 1,000원; A sets 2,000원 while the clock is ahead; the clock is corrected; B (stale) saves a 메모.
+    The next start shows 2,000원 (not B's older 1,000원)."""
+    got = run(CLOCK + f"""
+      let d = S.withWatchAdd({{ v: 1, decks: [] }}, '005930', 'a', today(), Date.now() - {earlier_ms});
+      d = S.withWatchConds(d, '005930', [{{ k: 'pxBelow', v: 1000 }}], today(), Date.now() - {earlier_ms} + 1);
+      S.writeStore(d, K, today()); S.readStore(K, today());
+      const b = S2.readStore(K, today()).data;
+      offset = {ahead_ms};
+      S.writeStore(conds(S, S.readStore(K, today()).data, 2000), K, today());
+      offset = 0;
+      S2.writeStore(S2.withNote(b, '000660', 'm', today(), Date.now()), K, today());
+      const r = S.readStore(K, today());
+      out = {{ final: Wv(r.data) }};""")
+    assert got == {"final": {"005930": [2000]}}
+
+
+def test_round3_sc_c_a_clock_set_back_after_an_edit_never_lets_an_older_edit_win():
+    """sc.mjs case C: 1,000원 an hour ago; tab B reads it; tab A sets 2,000원; the clock is set back a minute and A reloads and saves
+    a 메모 inside that minute (times are kept as made); B, stale, saves. The next start shows 2,000원. Then an edit made inside the
+    minute is stamped after 2,000원's time, so it is the latest."""
+    got = run(CLOCK + """
+      let d = S.withWatchAdd({ v: 1, decks: [] }, '005930', 'a', today(), Date.now() - 3600e3);
+      d = S.withWatchConds(d, '005930', [{ k: 'pxBelow', v: 1000 }], today(), Date.now() - 3600e3 + 1);
+      S.writeStore(d, K, today()); S.readStore(K, today());
+      const stale = S2.readStore(K, today()).data;
+      const tA = Date.now();
+      S.writeStore(conds(S, S.readStore(K, today()).data, 2000), K, today());
+      offset = -60e3;
+      const rA = S.readStore(K, today());
+      S.writeStore(S.withNote(rA.data, '000660', 'memo', today(), Date.now()), K, today());
+      const kept = JSON.parse(mem.get(K)).watch['005930'].ts;
+      const inside = conds(S, S.readStore(K, today()).data, 3000);
+      offset = 0;
+      S2.writeStore(S2.withNote(stale, '035720', 'memo B', today(), Date.now()), K, today());
+      const rEnd = S.readStore(K, today());
+      out = { kept: kept >= tA, final: Wv(rEnd.data), restored: rEnd.restored, inside: inside.watch['005930'].ts > kept };""")
+    assert got == {"kept": True, "final": {"005930": [2000]}, "restored": True, "inside": True}
 
 
 def test_add_remove_and_conditions_edit_the_store_purely():
@@ -556,11 +625,11 @@ def test_review_marks_and_imports_never_carry_a_device_mark_or_a_bad_date():
     got = run("""
       const d = W({ '005930': { at: T, conds: [{ k: 'pbrBelow', v: 0.8 }] } });
       const bad = S.withWatchMarks(d, new Map([['005930|pbrBelow', 'yesterday']]));        // S13: only a date or null is a mark
-      const good = S.withWatchMarks(d, new Map([['005930|pbrBelow', '2026-11-11']]));
+      const good = S.withWatchMarks(d, new Map([['005930|pbrBelow', '2026-11-11']]), 1234);
       // S26: a records file read some other way than parseImport still brings no hitAt
       const m = S.mergeStores({ v: 1, decks: [] }, { decks: [], watch: { AAPL: { at: T, conds: [{ k: 'pxBelow', v: 150, hitAt: '2026-11-11' }] } } }, 1, [], T);
       out = { bad, good: good.watch['005930'].conds, file: m.watch.AAPL.conds };""")
-    assert got["bad"] is None and got["good"] == [{"k": "pbrBelow", "v": 0.8, "hitAt": "2026-11-11"}]
+    assert got["bad"] is None and got["good"] == [{"k": "pbrBelow", "v": 0.8, "hitAt": "2026-11-11", "hitTs": 1234}]   # the mark's own time
     assert got["file"] == [{"k": "pxBelow", "v": 150}]
 
 
@@ -625,3 +694,85 @@ def test_review_b1_random_runs_of_this_app_and_an_old_tab_never_lose_a_watch_edi
       }
       out = { fails, first };""")
     assert got["fails"] == 0, got["first"]
+
+
+def test_round3_n10_a_removal_holds_even_when_the_old_copy_has_marks_of_its_own():
+    """mut/n10: the old tab's copy already has a gone.watch part (000660 taken out earlier), so its own merge keeps its marks and
+    drops a later removal; this app takes 005930 out, the old tab saves a 메모 from its copy. The next start keeps 005930 out (the
+    mark kept beside the records) and says so."""
+    got = run("""
+      let d = S.withWatchAdd({ v: 1, decks: [] }, '000660', 'Y', T, 100); S.writeStore(d, K, T);
+      d = S.withWatchRemove(S.readStore(K, T).data, '000660', T, 110); S.writeStore(d, K, T);
+      d = S.withWatchAdd(d, '005930', 'X', T, 120); S.writeStore(d, K, T);
+      const old = Old7.readStore(K, T);
+      S.writeStore(S.withWatchRemove(S.readStore(K, T).data, '005930', T, 200), K, T);
+      S.keepMine(K);
+      Old7.writeStore(Old7.withNote(old.data, '035720', 'memo', T, 300), K, T);
+      const back = Object.keys(stored().watch || {});
+      const r = S.readStore(K, T);
+      out = { back, watch: Object.keys(r.data.watch || {}), restored: r.restored };""")
+    assert got == {"back": ["005930"], "watch": [], "restored": True}
+
+
+def test_round3_n11_an_import_in_a_stale_tab_respects_a_removal_kept_only_beside_the_records():
+    """mut/n11b: 005930 was taken out (its mark at 200 now only in key + ".watch": an old tab wrote it back without the mark); a tab
+    of this app open since before 005930 was added imports an older records file holding it (ts 50). It comes in as an edit made
+    now (1000, after the mark), so the next start keeps it."""
+    got = run("""
+      let d = S.withWatchAdd({ v: 1, decks: [] }, '000660', 'Y', T, 100); S.writeStore(d, K, T);
+      d = S.withWatchRemove(S.readStore(K, T).data, '000660', T, 110); S.writeStore(d, K, T);
+      const b = S2.readStore(K, T).data;
+      d = S.withWatchAdd(d, '005930', 'X', T, 120); S.writeStore(d, K, T);
+      const old = Old7.readStore(K, T);
+      d = S.withWatchRemove(d, '005930', T, 200); S.writeStore(d, K, T);
+      S.keepMine(K);
+      Old7.writeStore(Old7.withNote(old.data, '035720', 'memo', T, 300), K, T);
+      const markOnlyBeside = !((stored().gone || {}).watch || {})['005930'] && !!JSON.parse(mem.get(K + '.watch')).gone['005930'];
+      const file = S2.parseImport(JSON.stringify({ v: 1, decks: [], watch: { '005930': { at: '2026-11-01', ts: 50 } } }), T);
+      const m = S2.mergeStores(b, file, 1000, S2.storedStores(K, T), T);
+      S2.writeStore(m, K, T);
+      const r = S.readStore(K, T);
+      out = { markOnlyBeside, ts: m.watch['005930'].ts, after: Object.keys(r.data.watch || {}) };""")
+    assert got == {"markOnlyBeside": True, "ts": 1000, "after": ["005930"]}
+
+
+def test_round3_hit_marks_carry_their_own_time_so_the_later_mark_wins():
+    """hit2: the 홈 row was shown and its mark stored; a tab of the app now on main saves its older copy (no mark): the next start
+    keeps the mark (no second row), quietly. And between two copies of this app, the later mark (set or cleared) wins on its own
+    time, whatever copy leads."""
+    got = run("""
+      let d = S.withWatchConds(S.withWatchAdd({ v: 1, decks: [] }, '005930', 'a', T, 100), '005930', [{ k: 'pbrBelow', v: 1 }], T, 101);
+      S.writeStore(d, K, T); d = S.readStore(K, T).data;
+      const old = Old7.readStore(K, T);
+      d = S.withWatchMarks(d, new Map([['005930|pbrBelow', '2026-11-12']]), 500); S.writeStore(d, K, T);
+      Old7.writeStore(Old7.withNote(old.data, '000660', 'm', T, 300), K, T);
+      const r = S.readStore(K, T);
+      const one = { hit: r.data.watch['005930'].conds[0].hitAt ?? null, restored: r.restored };
+      // two copies: A cleared the mark at 900 (fresh data, not met), B still holds the mark set at 500
+      const e = (c) => ({ v: 1, decks: [], watch: { '005930': { at: T, ts: 101, conds: [c] } } });
+      const A = e({ k: 'pbrBelow', v: 1, hitTs: 900 }), B = e({ k: 'pbrBelow', v: 1, hitAt: '2026-11-12', hitTs: 500 });
+      const c1 = S.mergeTabs(B, A, T).watch['005930'].conds[0], c2 = S.mergeTabs(A, B, T).watch['005930'].conds[0];
+      // a changed condition keeps its own (no mark from the old number)
+      const C = e({ k: 'pbrBelow', v: 2 });
+      const c3 = S.mergeTabs(B, { ...C, watch: { '005930': { ...C.watch['005930'], ts: 102 } } }, T).watch['005930'].conds[0];
+      out = { one, c1, c2, c3 };""")
+    assert got["one"] == {"hit": "2026-11-12", "restored": False}
+    assert got["c1"] == {"k": "pbrBelow", "v": 1, "hitTs": 900} and got["c2"] == {"k": "pbrBelow", "v": 1, "hitTs": 900}
+    assert got["c3"] == {"k": "pbrBelow", "v": 2}
+
+
+def test_round3_the_save_time_also_reads_the_times_kept_beside_the_records():
+    """Tab A sets 2,000원 while the clock is a day ahead (its time is in the records and beside them); the clock is corrected; tab B,
+    still on the older records it read, sets 3,000원: stamped after A's time (read beside the records), so B's newest edit wins."""
+    got = run(CLOCK + """
+      let d = S.withWatchConds(S.withWatchAdd({ v: 1, decks: [] }, '005930', 'a', today(), Date.now() - 3600e3), '005930', [{ k: 'pxBelow', v: 1000 }], today(), Date.now() - 3600e3 + 1);
+      S.writeStore(d, K, today()); S.readStore(K, today());
+      const b = S2.readStore(K, today()).data;
+      offset = 86400e3;
+      S.writeStore(conds(S, S.readStore(K, today()).data, 2000), K, today());
+      offset = 0;
+      const nb = conds(S2, b, 3000);
+      S2.writeStore(nb, K, today());
+      const r = S.readStore(K, today());
+      out = { final: Wv(r.data) };""")
+    assert got == {"final": {"005930": [3000]}}
