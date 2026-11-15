@@ -367,6 +367,8 @@ def test_each_guard_names_its_own_reason():
     assert "이번 증명이 되살리지 않았어요" in bad(lambda s: s["dvProof"].update(yrs=[1]))                                          # (다)
     assert "이번 증명이 되살리지 않았어요" in bad(lambda s: s["dvProof"].update(y0=None))
     assert bad(lambda s: s["dvProof"].update(cmo=12_000_000)).startswith("dvProof:")
+    assert bad(lambda s: s["dvWhy"]["ev"][0].update(rc="123")) == "dvWhy: 접수번호 123"                                   # (다) dvWhy 검사
+    assert bad(lambda s: s["dvWhy"]["ev"][0].update(src="fric")) == "dvWhy: 사건 칸 ['d', 'k', 'r', 'rc', 'src', 'x']"      # 발행 칸 모양
     assert bad(lambda s: s.pop("dvProof")) == "dvProof 없음" and bad(lambda s: s.pop("dvWhy")) == "dvWhy ok (사건) 없음"
     assert V.exact_bonus_problem({"dpsF": [2.0, 1.0, 1.0]}, {}, PX) == "깨끗한 배율뿐 (필요 없음)"
 
