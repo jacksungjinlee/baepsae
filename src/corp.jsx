@@ -23,6 +23,17 @@ const pc = (v, d = 1) => v == null ? "—" : v.toFixed(d) + "%";
 const clamp = (v, a, b) => Math.min(Math.max(v, a), b);
 // KRX 해외 기업 (900xxx·950xxx): DART 재무제표가 외화라 파이프라인이 금액을 비워요 (fetch_data.py is_foreign_issuer 와 같아요)
 const isForeignIssuer = (code) => typeof code === "string" && code.length === 6 && code[0] === "9";
+// 재무제표 숫자가 하나도 없는 회사 (02 3개년 실적 흐름이 '재무제표 데이터가 아직 없어요 …'라고 하는 바로 그 조건)
+export const noStatements = (c) => !!c && (c.rev || [])[0] == null && (c.ni || [])[0] == null;
+// 04 의 그 줄 (Jack Q3, 2026-11-14: '적자 구간 …' 대신 예전 앱의 '재무제표 데이터가 아직 없어요'): 해외 기업은 02 와 같은 외화 줄,
+// 그 밖은 02 줄의 첫 문장
+export const noStatementsText = (c) => (isForeignIssuer(c.t) ? "외화로 작성된 재무제표라 아직 보여 드리지 않아요." : "재무제표 데이터가 아직 없어요.");
+// 우선주 (KRX: 보통주 코드는 0 으로 끝나요 — 2.0 engine.isPreferred 와 같아요). DART 가 보통주 코드만 올려서 파이프라인은 우선주의
+// 재무제표를 찾지 않아요 (사업보고서를 '못 찾은' 게 아니에요). say-why NEW-9 (2026-11-14, Jack 의 yes 2026-11-15): 02 의 괄호 속 이유
+// '(파이프라인이 사업보고서를 못 찾은 종목이에요)'는 우선주에게 틀린 말이라, 우선주는 첫 문장만
+const isPrefCode = (code) => typeof code === "string" && code.length === 6 && !code.endsWith("0");
+// KONEX · K-GAAP 회사 중 사업보고서 연도(fy)가 있는 회사도 같아요 (2026-11-14 마지막 리뷰, Jack 의 yes 2026-11-15): 사업보고서를 냈고
+// DART 에 XBRL 이 없을 뿐이라 '못 찾은' 게 아니에요. 연도가 없는 새로 상장한 회사는 그 괄호를 그대로 둬요.
 
 // ---------------- 공용 아톰 ----------------
 const Card = ({ children, style = {} }) => (
@@ -963,6 +974,26 @@ export function decomposeReturn(c) {
   return { eF, mF, priceRatio, epsThen };
 }
 
+// 주가는 무엇으로 움직였나를 나누지 못한 까닭 (decomposeReturn 이 null 일 때, 2026-11-14 Jack Q3 · say-why NEW-8):
+//   "noStatements" 재무제표 숫자가 하나도 없어요 (우선주 · KONEX · 새로 상장 · 해외 기업): 02 와 같은 줄 ('적자 구간'이 아니에요)
+//   "loss"         나누기를 막는 게 정말 적자예요: 지금 EPS ≤ 0 이거나, EPS 와 같은 기준의 3년 전 순이익 ≤ 0 → '적자 구간이 있어서 …'
+//   null           그 밖 (3년 주가가 없음 · 한 해가 빔 · 주식 수 없음): 틀린 '적자' 줄 대신 칸을 보이지 않아요 (Jack, 2026-11-14:
+//                  예전 앱은 은퇴할 앱이라 숨긴 채로 둬요 · stmtCur 회사의 02 · 04 를 숨긴 것과 같은 방식, Jack 2026-11-08)
+export function decompGap(c) {
+  if (noStatements(c)) return "noStatements";
+  const base = epsBase(c, 2);
+  const niThen = base && !base.bad ? base.ni : null;
+  return (typeof c.eps === "number" && c.eps <= 0) || (typeof niThen === "number" && niThen <= 0) ? "loss" : null;
+}
+
+// '이익 없이 움직인 가격은 기대와 수급이 만든 거예요.'가 맞는 회사 (2026-11-14, Jack 의 yes 2026-11-15): 3년의 두 끝이 모두 적자 — 지금
+// EPS ≤ 0 이고 EPS 와 같은 기준의 3년 전 순이익 ≤ 0. 한 끝이라도 이익이었으면(적자 → 흑자 · 흑자 → 적자) 그 문장은 틀려요. 모르면 말하지 않아요.
+export function lossBothEnds(c) {
+  const base = epsBase(c, 2);
+  const niThen = base && !base.bad ? base.ni : null;
+  return typeof c.eps === "number" && c.eps <= 0 && typeof niThen === "number" && niThen <= 0;
+}
+
 function DecompCard({ c, setExplain, corp }) {
   // 2026-11-14 저녁 (Jack): 3년 주가 변화(r36)를 과거 주가 기록 오류로 비웠고 52주는 보이는 회사 (52주까지 비운 회사는 칸이 없어요: 머리의 줄이
   // 말해요). 칸을 어떻게 그릴지는 예전 그대로 다른 입력으로 정하고 (r36 자리에 아무 값 · 적자 · 기준이 다름 · 자료 없음은 예전처럼), 숫자가 나왔을
@@ -983,6 +1014,8 @@ function DecompCard({ c, setExplain, corp }) {
   const d0 = decomposeReturn(px ? { ...c, r36: 0 } : c);
   const basisBad = !!d0 && d0.why === "basis";     // 두 끝을 같은 기준에 세울 수 없어요: 숫자도 '적자 구간' 문장도 없이 PER · EPS 줄만
   const d = basisBad ? null : d0;
+  const gap = d || basisBad ? null : decompGap(c);
+  if (!d && !basisBad && !gap) return null;        // 맞는 말이 없으면 틀린 '적자' 줄 대신 칸이 없어요 (Jack Q3, 2026-11-14)
   // 다시 읽은 뒤(Jack, 2026-11-08): 숫자를 뺀 칸에 보일 줄이 없으면(소수주주가 없는 총 순이익 회사) 제목만 남은 칸 대신 칸이 없어요
   if (basisBad && !epsLineKind({ corp, cos: [c], force: true })) return null;
   const fx = (v) => (v >= 100 ? v.toFixed(0) : v.toFixed(2)) + "배";
@@ -1026,15 +1059,21 @@ function DecompCard({ c, setExplain, corp }) {
         </div>
       </>
     );
-  } else if (!basisBad) {
+  } else if (gap === "noStatements") {
     body = (
-      <div style={{ fontSize: 12, color: C.sub, marginTop: 12, lineHeight: 1.7, wordBreak: "keep-all", overflowWrap: "break-word" }}>
+      <div data-decomp="no-statements" style={{ fontSize: 12, color: C.sub, marginTop: 12, lineHeight: 1.7, wordBreak: "keep-all", overflowWrap: "break-word" }}>
+        {noStatementsText(c)}
+      </div>
+    );
+  } else if (gap === "loss") {
+    body = (
+      <div data-decomp="loss" style={{ fontSize: 12, color: C.sub, marginTop: 12, lineHeight: 1.7, wordBreak: "keep-all", overflowWrap: "break-word" }}>
         적자 구간이 있어서 이익과 눈높이로 나누기 어려워요.
         {/* 보이는 숫자가 0 이면 '+0% 올랐어요' 대신 '거의 변하지 않았어요', 움직이지 않았으니 뒤 문장(움직인 가격은…)은 빼요 (Jack, 2026-11-05).
             r36 은 소수 한 자리 그대로 보여요 (0 · −0 이면 0) */}
         {c.r36 != null && (c.r36 === 0
           ? <> 지난 3년 주가는 거의 변하지 않았어요.</>
-          : <> 지난 3년 주가는 {c.r36 >= 0 ? "+" + c.r36 : Math.abs(c.r36)}% {c.r36 >= 0 ? "올랐어요" : "내렸어요"}. 이익 없이 움직인 가격은 기대와 수급이 만든 거예요.</>)}
+          : <> 지난 3년 주가는 {c.r36 >= 0 ? "+" + c.r36 : Math.abs(c.r36)}% {c.r36 >= 0 ? "올랐어요" : "내렸어요"}.{lossBothEnds(c) && " 이익 없이 움직인 가격은 기대와 수급이 만든 거예요."}</>)}
       </div>
     );
   }
@@ -1043,7 +1082,8 @@ function DecompCard({ c, setExplain, corp }) {
       <H num="04" main="주가는 무엇으로 움직였나" sub="지난 3년 주가 = 이익 변화 × 눈높이 변화" onWhy={() => setExplain("decomp")} />
       {verdict && <Verdict>{verdict}</Verdict>}
       {body}
-      <EpsFixLine corp={corp} cos={[c]} show={!!corp} force={basisBad} />
+      {/* PER · EPS 줄은 이 칸이 EPS 를 말할 때만 (Jack Q3, 2026-11-14): EPS 가 없는 회사(우선주 · 재무제표 없음)에는 바뀔 EPS 가 없어요 */}
+      <EpsFixLine corp={corp} cos={[c]} show={!!corp && c.eps != null} force={basisBad} />
     </Card>
   );
 }
@@ -1260,7 +1300,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
             else return null;
             return <Verdict>{v}</Verdict>;
           })()}
-          {c.rev[0] == null && c.ni[0] == null ? <Sub style={{ marginTop: 8 }}>{isForeignIssuer(c.t) ? "외화로 작성된 재무제표라 아직 보여 드리지 않아요." : "재무제표 데이터가 아직 없어요. (파이프라인이 사업보고서를 못 찾은 종목이에요)"}</Sub> : (
+          {c.rev[0] == null && c.ni[0] == null ? <Sub style={{ marginTop: 8 }}>{isForeignIssuer(c.t) || isPrefCode(c.t) || c.fy != null ? noStatementsText(c) : "재무제표 데이터가 아직 없어요. (파이프라인이 사업보고서를 못 찾은 종목이에요)"}</Sub> : (
             <>
               <div style={{ display: "flex", justifyContent: "space-around", marginTop: 12, gap: 6 }}>
                 <Spark3 label="매출" arr={c.rev} />
