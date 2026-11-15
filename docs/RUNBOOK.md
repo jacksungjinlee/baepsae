@@ -580,7 +580,8 @@ bars back; still hidden: ratio 7, basis 4, rights 7, uncounted 2, data 22, a 32.
 
 ## US stocks added by hand (EXTRA_US)
 
-The US list is the S&P 500 (FinanceDataReader's list), Nasdaq's first 400 and `EXTRA_US` in `fetch_data.py`. On
+The US list is the S&P 500 (FinanceDataReader's list), Nasdaq's first 400 and `EXTRA_US` in `fetch_data.py`, every ticker in
+Yahoo's form (`us_symbol`; see "US share-class tickers" below). On
 2026-11-14 28 companies were added (Jack, 11-13 "Missing US stocks"; `EXTRA_US_ADDED`): BTI, ADC, NNN (Jack's names); MAIN,
 WPC, STAG, EPR, OHI, ENB, BCE, TD, RY (widely held dividend stocks outside both lists); SHEL, BP, UL, TM, SONY, AZN, HSBC,
 SAP, NVS, RIO, BHP, TTE, DEO, BUD, SAN, GSK (foreign companies listed in New York). SEIBro's ranking of Korean investors'
@@ -729,6 +730,87 @@ BHP and Rio Tinto have no 업종 group (Yahoo's "Other Industrial Metals & Minin
 is a real 8-for-9 share consolidation (shares and ADSs, the ADS stays one share) on the day of the Magnum Ice Cream
 demerger, which Yahoo merged with the demerger adjustment; it is in `SPLIT_OVERRIDES` as 8:9 with its sources (Unilever
 RNS 2025-12-08, the shareholder circular, IRS Form 8937).
+
+## US share-class tickers (주식 종류 티커, since #PR)
+
+Jack, 2026-11-15: "fix Brown-Forman B, then check every share-class ticker in the S&P 500 and NASDAQ sources (dots, missing
+separators, A/B classes) and add any others missing for the same reason."
+
+**What was wrong.** FinanceDataReader reads the S&P 500 list from Wikipedia and deletes the dot from every ticker
+(`Symbol.str.replace('.', '')`): Wikipedia's `BRK.B` and `BF.B` arrive as `BRKB` and `BFB`. Yahoo has no such tickers
+(2026-11-15: quote type NONE, no prices), so the run asked for them, got nothing and dropped them without a word. Brown-Forman B
+was never in the US list; Berkshire B was there only because `EXTRA_US` lists `BRK-B`. The old code's dot-to-dash step never fired
+(the dot was already gone). The Nasdaq list (Naver) uses Nasdaq's own tickers, where the class letter is part of the ticker
+(`GOOGL`, `FWONK`, `LLYVK`): those are Yahoo's tickers too.
+
+**The rule** (`us_symbol` in `fetch_data.py`, the one place a source ticker becomes a Yahoo ticker):
+- a dot, slash, space or dash before a 1–2 letter class (`BRK.B`, `BRK/B`, `BRK B`, `BRK-B`) becomes Yahoo's dash (`BRK-B`), from any source;
+- a ticker with the separator already deleted is never guessed from its last letter (`BFB` could be a real ticker). Only the
+  forms in `US_CLASS_JOINED` are mapped, only from the S&P 500 list, and only when the list's company name matches:
+  `BRKB` → `BRK-B` (Berkshire Hathaway), `BFB` → `BF-B` (Brown–Forman). Evidence, 2026-11-15: Wikipedia's dotted form, the S&P
+  constituent name, Yahoo answering the dashed form with the company's name ("Berkshire Hathaway Inc.", "Brown-Forman
+  Corporation"), and nothing for the joined form;
+- a plain 1–5 letter ticker stays as it is;
+- anything else (a blank cell, non-English letters, a shape that is not a ticker, a joined form whose list name does not match)
+  is not asked for, is logged with "!!" and is named in `data.json` `usListSym.unmapped` with the reason.
+
+**Audit, 2026-11-15** (S&P 500 list: 503 rows; Nasdaq list: the first 400 of 3,985 by market value; `EXTRA_US`: 67):
+
+| Source | Source form | Yahoo form | In the list before | Action |
+|---|---|---|---|---|
+| S&P 500 | `BRKB` (Wikipedia `BRK.B`) | `BRK-B` | yes, through `EXTRA_US` only | mapped by the rule; `EXTRA_US` entry kept (below) |
+| S&P 500 | `BFB` (Wikipedia `BF.B`) | `BF-B` | no | mapped by the rule; **added** |
+| S&P 500 | `GOOGL` / `GOOG`, `FOXA` / `FOX`, `NWSA` / `NWS` | same | yes | none |
+| Nasdaq 400 | `GOOGL`, `GOOG`, `FOXA`, `FOX`, `NWSA`, `FWONK`, `LLYVK`, `FCNCA` | same | yes | none |
+| Nasdaq 400 | `GOOGM`, `GOOGN` (depositary shares of Alphabet preferred) | same | left out as preferred (`usLeftOut.preferred`) | none |
+| Nasdaq, below 400 | `NWS` (431, in through the S&P list), `Z` (436), `ZG`, `FWONA`, `LLYVA`, `BATRA`, `BATRK`, `LBTYA`, `LBTYK`, `LILA`, `LILAK`, `RUSHA`, `RUSHB`, `BELFB`, `CENTA`, `SENEA`, `GLIBK` | same | no (below the top 400; not a ticker-form problem) | none |
+| `EXTRA_US` | `BRK-B` | same | yes | none |
+
+Nothing else was missing for this reason: every other ticker in both sources is already Yahoo's form, and no source ticker was
+unmappable. Before → after on the real sources: the tickers asked for went from 810 to 809 (`BRKB`, `BFB` out; `BF-B` in;
+`BRK-B` already there), the S&P 500 set used by #133 now holds `BRK-B` and `BF-B` (overlap with the priced list 500 → 502), and
+the published US list goes from 801 to 802 companies.
+
+**BRK-B stays in `EXTRA_US`.** The rule now covers it, but `EXTRA_US` is the floor on a day the S&P 500 list cannot be read (then
+`BRK-B` stays and `BF-B` is named as missing), and the list of 67 is pinned by tests and by the gate's `US_EXTRA_SET`; removing it
+would loosen that gate row.
+
+**Both classes of one company.** The pipeline publishes every listing it gets; lists show one row per company in the app
+(`engine.sameCompany`: same Yahoo short name and same total share count, as for GOOG / GOOGL). `BF-A` and `BRK-A` are in neither
+source, so this PR adds no second class.
+
+**Brown-Forman B.** It comes through the normal run: prices, Yahoo info (USD statements, so no `fcur`), an S&P 500 company so never
+foreign (#133), 업종 음식료·담배 (Yahoo "Beverages - Wineries & Distilleries"). Checked against Yahoo on 2026-11-15: close $30.65
+(+2.03%), market cap $14.06bn (18.759조원 at 1,333.8), PER 19.8, PBR 3.54, yield 3.01%. Its splits since 2016 are read by the first
+run (one stock, under the 20-a-run cap): 2016-08-19 2-for-1 and 2018-03-01 5-for-4, both on the company's own announcements
+(investors.brown-forman.com 2016-05-26; the 2018-01-23 announcement and the options adjustment notice for ex-date 2018-03-01). The
+gate warns once on that first publish: "주식 분할 목록 변화 … 새 줄 정수 아닌 배율 1: BF-B 2018-03-01 ×1.25" — expected, nothing to do.
+
+**Gate rows** (`check_us_share_class`, stricter only):
+- "주식 종류 티커로 들어온 미국 종목 (BF-B): 목록에 있거나 빠진 이유" — #126's rule for the stocks this rule added
+  (`US_CLASS_SET` = `fetch_data.US_CLASS_ADDED`): in the day's data, or named in `usListSym.missing` with the reason (S&P 500 list not
+  read, not in today's S&P 500 list, its list name did not match, too little price history …). Named: warn. Missing with no reason:
+  the publish fails; the site checks (deploy, watchdog) only warn. A file without `usListSym` warns on a publish and is skipped by
+  the site checks.
+- "미국 목록 출처 티커 (주식 종류 · 점이 지워진 꼴)" — fails if `BRKB` or `BFB` is a ticker in the published list (Yahoo has no such
+  ticker, so the rule broke), if the pipeline mapped a joined form differently from the gate's own table (`US_CLASS_JOINED_SET`), or
+  if the record has a bad shape. Warns when a source ticker could not be mapped (`unmapped`), when an S&P 500 ticker got no price
+  at all from Yahoo (`noPx`: what a new joined class ticker looks like), or when the run left no ticker record. The other S&P 500
+  companies missing from the day's list are only named (`spGone`; e.g. VYLR, Vylor, listed 2026-10-01: 32 days of prices, under
+  the 60 needed; it joins by itself in late December).
+
+**When the gate warns "S&P 500 티커인데 야후 가격이 없음 N: XYZA"** (or the run log says "!! S&P 500 목록 종목인데 야후가 가격을 하나도
+주지 않은 티커"): S&P has probably added a share class with a dot. (1) Find the company in Wikipedia's "List of S&P 500 companies"
+and read its dotted ticker (`XYZ.A`). (2) Ask Yahoo for the dashed form once (`yf.Ticker("XYZ-A").get_info()`) and check the
+company name. (3) Add `"XYZA": ("XYZ-A", "<a word from the list name, letters only>")` to `US_CLASS_JOINED` in `fetch_data.py` and
+`"XYZA": "XYZ-A"` to `US_CLASS_JOINED_SET` in `validate_data.py`; if the stock is new to our list, also to `US_CLASS_ADDED` and
+`US_CLASS_SET` (the tests check that the two files agree). (4) Its splits since 2016 are read by the next run. If the ticker is
+instead a real company Yahoo does not know yet (a new listing), nothing to do. **When it warns "바꾸지 못함"**: the source sent a
+ticker in a shape the rule does not know; read the reason in the row's details and fix the source reading or extend the rule in
+`us_symbol` with a test.
+
+**Rolling back #PR**: a revert PR. The reverted gate ignores `usListSym`; the next data run drops BF-B again (users who saved it
+see the existing "no longer in today's data" handling). No data run is needed for the site checks.
 
 ## Roll back
 

@@ -6982,34 +6982,110 @@ class UsListNames(dict):
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
         self.sp500 = None
+        self.sym = None     # 2026-11-15: us_tickers 가 채우는 출처 티커 기록 {"mapped": [[출처, 원래 티커, 야후 티커]], "unmapped": [[출처, 원래 티커, 이유]]}
+
+
+# 2026-11-15 (Jack: "fix Brown-Forman B, then check every share-class ticker in the S&P 500 and NASDAQ sources"): 미국 목록 출처의 티커를
+# 야후가 쓰는 모양으로 (us_symbol · 한 곳에서만). 야후는 주식 종류를 대시로 적어요 (BRK-B · BF-B). 출처마다 적는 법이 달라요:
+#   · S&P 500 (FinanceDataReader 가 읽는 위키백과 표): 표에는 점(BRK.B · BF.B)인데 FinanceDataReader 가 점을 지워요 (Symbol.str.replace('.', ''))
+#     → 'BRKB' · 'BFB'. 야후에는 그런 티커가 없어요 (2026-11-15: quoteType NONE · 가격 없음). 그래서 BF-B 는 목록에 한 번도 없었고 BRK-B 는
+#     EXTRA_US 로만 들어왔어요 (예전 코드의 점 → 대시는 점이 이미 지워져 한 번도 쓰이지 않았어요).
+#   · 나스닥 상위 400 (네이버): 나스닥 자기 티커 그대로예요 (GOOGL · GOOG · FOXA · FOX · NWSA · FWONK · LLYVK — 종류 글자가 티커의 일부라 야후와 같아요).
+#   · 점 · 빗금 · 띄어쓰기 · 대시 꼴 (BRK.B · BRK/B · BRK B · BRK-B) 은 어느 출처에서 오든 대시로 바꿔요.
+# 점이 지워진 꼴은 모양만으로는 알 수 없어요 (BFB 가 진짜 다른 티커일 수도 있어요 — 끝 글자를 떼어 짐작하지 않아요). 근거를 확인한 것만 이 표로
+# 바꿔요: {지워진 꼴: (야후 티커, S&P 500 목록 이름에 들어 있어야 할 글자)}. 근거 (2026-11-15): 위키백과 표의 점 꼴 (BRK.B · BF.B) · S&P 500
+# 목록 이름 (Berkshire Hathaway · Brown–Forman) · 야후가 대시 꼴에 그 회사 이름으로 답함 (BRK-B 'Berkshire Hathaway Inc.' · BF-B 'Brown-Forman
+# Corporation') · 지워진 꼴에는 답이 없음. 목록 이름이 맞지 않으면 바꾸지 않고 크게 남겨요 (그 티커를 다른 회사가 쓰게 된 날).
+# 표에 없는 새 주식 종류 티커가 S&P 500 에 들어오면 (예: 'XYZ.A' → 'XYZA') 야후가 가격을 하나도 주지 않아요: 실행 기록(usListSym.noPx)과
+# 관문 경고가 그 이름을 남겨요 → 확인하고 이 표에 한 줄 더해요 (RUNBOOK "US share-class tickers").
+US_CLASS_JOINED = {"BRKB": ("BRK-B", "berkshire"), "BFB": ("BF-B", "brownforman")}
+# 이 바꾸기로 미국 목록에 새로 들어온 종목 (BRK-B 는 EXTRA_US 로 이미 있었어요). 관문이 따로 적어 맞춰 봐요 (validate_data.US_CLASS_SET):
+# 오늘 목록에 있거나 data.json usListSym.missing 에 빠진 이유가 있어야 해요 (#126 의 EXTRA_US 줄과 같은 규칙).
+US_CLASS_ADDED = ("BF-B",)
+US_SYM_PLAIN = re.compile(r"[A-Z]{1,5}")
+US_SYM_CLASS = re.compile(r"([A-Z]{1,5})[./ -]([A-Z]{1,2})")
+US_SYM_YAHOO = re.compile(r"[A-Z]{1,5}(?:-[A-Z]{1,2})?")     # 야후 모양 (이 함수가 내놓는 모든 티커)
+
+
+def us_symbol(raw, src="", name=None):
+    """미국 목록 출처의 티커 하나 → (야후 티커 또는 None, 메모). (순수 함수)
+    · 바꾸지 않았으면 메모 None · 바꿨으면 바꾼 까닭 · 바꾸지 못했으면 (None, 까닭) — 부르는 쪽이 크게 남기고 기록해요 (조용히 버리지 않아요).
+    src: 'S&P500' 일 때만 점이 지워진 꼴 표(US_CLASS_JOINED)를 써요 · name: 목록에 적힌 회사 이름 (있으면 그 표의 글자와 맞아야 해요)."""
+    if not isinstance(raw, str):
+        return None, "티커 칸이 비었거나 글자가 아님"
+    s = raw.strip().upper()
+    if not s:
+        return None, "티커 칸이 비었거나 글자가 아님"
+    if not s.isascii():
+        return None, "티커에 영문이 아닌 글자"
+    m = US_SYM_CLASS.fullmatch(s)
+    if m:
+        y = f"{m.group(1)}-{m.group(2)}"
+        return y, (None if y == s else f"주식 종류 '{s}' → 야후 대시 꼴 {y}")
+    if not US_SYM_PLAIN.fullmatch(s):
+        return None, "티커 모양이 아님 (영문 1~5자, 또는 그 뒤 점 · 빗금 · 띄어쓰기 · 대시와 종류 글자 1~2자)"
+    j = US_CLASS_JOINED.get(s) if src == "S&P500" else None
+    if j is None:
+        return s, None
+    y, key = j
+    if isinstance(name, str) and name.strip() and key not in re.sub(r"[^a-z]", "", name.lower()):
+        return None, f"점이 지워진 주식 종류 표({s} → {y})의 회사가 아님: 목록 이름 '{name.strip()[:40]}'"
+    return y, f"점이 지워진 S&P 500 표기 '{s}' → {y}"
 
 
 def us_tickers(names_out=None):
     """S&P500 + NASDAQ 상위 400 + EXTRA_US. names_out(dict)을 주면 목록에 적힌 이름도 담아요 (티커 → 이름):
     야후의 짧은 이름은 31자에서 잘리고 긴 이름은 'Strategy Inc' 처럼 회사 이름뿐일 때가 있어서, 우선주·예탁증서를 알아보는 데
     목록의 이름("… Depositary Shares Each Representing … Preferred Stock")도 써요 (us_preferred_like).
-    names_out 이 UsListNames 이면 S&P 500 목록의 티커도 담아요 (names_out.sp500 · 목록을 읽지 못하면 None 그대로)."""
+    names_out 이 UsListNames 이면 S&P 500 목록의 티커도 담아요 (names_out.sp500 · 목록을 읽지 못하면 None 그대로).
+    2026-11-15: 모든 출처 티커는 us_symbol 로 야후 모양이 돼요 (S&P 500 의 BRKB → BRK-B · BFB → BF-B). 바꾼 것과 바꾸지 못한 것은 크게 남기고
+    names_out.sym 에 적어요 (UsListNames 일 때 · fetch_us 가 data.json usListSym 으로 실어요)."""
     import FinanceDataReader as fdr
-    tk = set(EXTRA_US)
+    tk, mapped, unmapped = set(), [], []
+
+    def put(raw, src, nm=None):
+        y, note = us_symbol(raw, src, nm)
+        shown = raw.strip().upper() if isinstance(raw, str) else ("" if raw is None else str(raw))
+        if y is None:
+            unmapped.append([src, shown, note])
+            return None
+        if note:
+            mapped.append([src, shown, y])
+        tk.add(y)
+        return y
+
+    for t in EXTRA_US:
+        put(t, "EXTRA_US")
     for name in ("S&P500", "NASDAQ"):
         try:
             df = fdr.StockListing(name)
             col = "Symbol" if "Symbol" in df.columns else df.columns[0]
             if name == "NASDAQ":
                 df = df.head(400)
-            syms = [str(s) for s in df[col].dropna().tolist()]
-            tk.update(syms)
+            nms = df["Name"].tolist() if "Name" in df.columns else [None] * len(df)
+            syms = []
+            for sym, nm in zip(df[col].tolist(), nms):
+                nm = nm.strip() if isinstance(nm, str) and nm.strip() else None
+                y = put(None if isinstance(sym, float) and math.isnan(sym) else sym, name, nm)
+                if y is None:
+                    continue
+                syms.append(y)
+                if names_out is not None and nm:
+                    names_out.setdefault(y, nm)
             if name == "S&P500" and isinstance(names_out, UsListNames) and syms:
-                names_out.sp500 = frozenset(s.replace(".", "-").strip().upper() for s in syms if s.strip())
-            if names_out is not None and "Name" in df.columns:
-                for sym, nm in zip(df[col].tolist(), df["Name"].tolist()):
-                    if isinstance(sym, str) and isinstance(nm, str) and nm.strip():
-                        names_out.setdefault(sym.replace(".", "-").strip().upper(), nm.strip())
+                names_out.sp500 = frozenset(syms)
         except Exception as e:
             log(f"  ({name} 목록 실패: {e})")
+    if mapped:
+        log(f"· 미국 목록 티커를 야후 모양으로 바꿈 {len(mapped)}개: " + " · ".join(f"{s} {a} → {b}" for s, a, b in mapped))
+    if unmapped:
+        log(f"  !! 미국 목록 티커를 야후 모양으로 바꾸지 못해 요청하지 않은 티커 {len(unmapped)}개 (data.json usListSym.unmapped · 관문 경고): "
+            + " · ".join(f"{s} '{a}' ({w})" for s, a, w in unmapped[:20]) + (f" 외 {len(unmapped) - 20}개" if len(unmapped) > 20 else ""))
+    if isinstance(names_out, UsListNames):
+        names_out.sym = {"mapped": mapped, "unmapped": unmapped}
     if names_out is not None:
         log(f"· 미국 목록 이름 {len(names_out):,}개 (우선주·예탁증서 알아보기용)")
-    return sorted({s.replace(".", "-").strip().upper() for s in tk if s and len(s) <= 6 and s.isascii()})
+    return sorted(tk)
 
 
 US_SEC_KO = {"semi": "반도체", "elec": "전자·하드웨어", "battery": "배터리·에너지저장", "auto": "자동차",
@@ -7863,6 +7939,61 @@ def us_extra_missing(extra, kept, why):
     return {t: why.get(t) or "발행 목록에 없음 (빠진 까닭을 파이프라인이 적지 못했어요 — 확인 필요)" for t in extra if t not in kept}
 
 
+US_NO_PX_WHY = "야후가 가격을 하나도 주지 않음 (다운로드에 이 종목의 종가가 없어요)"   # fetch_us 가 적는 이유 (usListSym.noPx 가 이 글로 골라요)
+US_NO_PX_ERR = "시세를 받지 못함"                                                   # … 다운로드에 이 종목 칸조차 없어 멈춘 경우의 머리말
+
+
+def us_list_sym(symrec, sp500, sp_ok, asked, kept, why, added=US_CLASS_ADDED):
+    """data.json usListSym (2026-11-15 · 주식 종류 티커). (순수 함수)
+    symrec: us_tickers 가 남긴 {"mapped", "unmapped"} (None = 이 실행에 기록이 없음) · sp500: S&P 500 목록의 티커 (야후 모양 · 못 읽었으면 None) ·
+    sp_ok: 그 목록을 믿었는지 (fetch_us · #133) · asked: 야후에 요청한 티커 · kept: 오늘 발행 목록의 티커 · why: 요청한 티커 → 빠진 이유.
+    → {"read": 기록이 있었는지, "mapped", "unmapped", "spGone": S&P 500 목록 종목 중 오늘 없는 티커 → 이유 (믿지 못한 날 None),
+       "noPx": 그중 야후가 가격을 하나도 주지 않은 티커 (점이 지워진 새 주식 종류 티커의 모습 · 믿지 못한 날 None),
+       "missing": 더한 종목(US_CLASS_ADDED) 중 오늘 없는 티커 → 이유 (관문: 이유 없이 빠지면 발행 실패)}"""
+    read = isinstance(symrec, dict)
+    mapped = [list(x) for x in (symrec or {}).get("mapped") or []] if read else []
+    unmapped = [list(x) for x in (symrec or {}).get("unmapped") or []] if read else []
+    unsure = "발행 목록에 없음 (빠진 까닭을 파이프라인이 적지 못했어요 — 확인 필요)"
+    sp_gone = no_px = None
+    if sp_ok and sp500 is not None:
+        sp_gone = {t: (why.get(t) or unsure) if t in asked else "미국 요청 목록에 없음 (확인 필요)" for t in sorted(sp500) if t not in kept}
+        no_px = [t for t, w in sp_gone.items() if w == US_NO_PX_WHY or w.startswith(US_NO_PX_ERR)]
+    missing = {}
+    for t in added:
+        if t in kept:
+            continue
+        hit = [w for _s, _a, w in unmapped if isinstance(w, str) and f"→ {t})" in w]
+        if t in asked:
+            missing[t] = why.get(t) or unsure
+        elif hit:
+            missing[t] = f"출처 티커를 야후 모양으로 바꾸지 못해 요청하지 않음 ({hit[0]})"
+        elif not read:
+            missing[t] = "출처 티커 기록이 없음 (미국 목록을 읽은 기록이 없어요 — 확인 필요)"
+        elif sp500 is None:
+            missing[t] = "S&P 500 목록을 읽지 못해 요청하지 않음"
+        else:
+            missing[t] = "오늘 S&P 500 목록에 없음 (지수에서 빠졌는지 확인)"
+    return {"read": read, "mapped": mapped, "unmapped": unmapped, "spGone": sp_gone, "noPx": no_px, "missing": missing}
+
+
+def log_us_list_sym(u):
+    """us_list_sym 결과를 크게 남겨요 (바꾼 티커 · 바꾸지 못한 티커는 us_tickers 가 이미 남겨요)."""
+    if not u["read"]:
+        log("  !! 미국 목록 출처 티커 기록이 없어요 (us_tickers 가 기록을 남기지 않음) → 주식 종류 티커를 확인하지 못했어요 (관문 경고)")
+    g = u["spGone"]
+    if g is None:
+        log("· S&P 500 목록을 믿지 못한 날이라 그 목록 종목 중 오늘 없는 종목은 세지 않았어요")
+    else:
+        log(f"· S&P 500 목록 종목 중 오늘 목록에 없는 종목: {len(g)}개" + (": " + " · ".join(f"{t} ({w})" for t, w in list(g.items())[:30])
+                                                                + (f" 외 {len(g) - 30}개" if len(g) > 30 else "") if g else ""))
+    if u["noPx"]:
+        log(f"  !! S&P 500 목록 종목인데 야후가 가격을 하나도 주지 않은 티커 {len(u['noPx'])}개: {', '.join(u['noPx'])} — 점이 지워진 주식 종류 "
+            "티커일 수 있어요 (위키백과 표의 점 꼴 · 야후 대시 꼴의 회사 이름을 확인하고 fetch_data.US_CLASS_JOINED 에 · RUNBOOK · 관문 경고)")
+    m = u["missing"]
+    log(f"{'  !! ' if m else '· '}주식 종류 티커를 바꿔 들어온 미국 종목({', '.join(US_CLASS_ADDED)}) 중 오늘 목록에 없는 종목: {len(m)}개"
+        + (": " + " · ".join(f"{t} ({w})" for t, w in sorted(m.items())) if m else ""))
+
+
 def us_fcur_summary(us, infos, no_info=frozenset()):
     """미국 종목 중 재무제표 통화가 달러가 아닌 곳(fcur)과 통화를 모르는 회사. (순수 함수)
     us: 발행할 미국 목록 (apply_us_info 를 지난 rec) · infos: 티커 → 야후 info · no_info: 상세 정보를 붙이지 못한 티커 (셀 것이 없어요).
@@ -7928,6 +8059,7 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None):
     list_names = UsListNames()
     syms = us_tickers(list_names)
     sp500 = list_names.sp500 if isinstance(getattr(list_names, "sp500", None), frozenset) else None   # 2026-11-14 Q5: 외국 회사 판별용
+    symrec = getattr(list_names, "sym", None)   # 2026-11-15: 출처 티커를 야후 모양으로 바꾼 기록 (us_tickers · 가짜 us_tickers 면 None)
     log(f"· 미국 {len(syms):,}개 종목…")
     end_x = today + dt.timedelta(days=1)
     last_ok = us_last_complete_day()
@@ -7955,8 +8087,7 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None):
         try:
             px = cut_at(_yf_close(data, sym), us_px_date)
             if len(px) < 60:
-                extra_why[sym] = (f"가격 이력 {len(px)}일 (60일 미만이라 넣지 않아요)" if len(px)
-                                  else "야후가 가격을 하나도 주지 않음 (다운로드에 이 종목의 종가가 없어요)")
+                extra_why[sym] = (f"가격 이력 {len(px)}일 (60일 미만이라 넣지 않아요)" if len(px) else US_NO_PX_WHY)
                 continue
             ret = px.pct_change().dropna()
             ret.name = "r"
@@ -8133,6 +8264,9 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None):
     xmiss = us_extra_missing(EXTRA_US, {r["t"] for r in out}, extra_why)
     log(f"{'  !! ' if xmiss else '· '}손으로 더한 미국 종목(EXTRA_US {len(EXTRA_US)}개) 중 오늘 목록에 없는 종목: {len(xmiss)}개"
         + (": " + " · ".join(f"{t} ({w})" for t, w in sorted(xmiss.items())) if xmiss else ""))
+    # 2026-11-15: 출처 티커를 야후 모양으로 바꾼 기록 · S&P 500 목록 종목 중 오늘 없는 것 · 이 바꾸기로 들어온 종목(US_CLASS_ADDED)이 빠진 이유
+    usym = us_list_sym(symrec, sp500, sp_ok, asked, {r["t"] for r in out}, extra_why)
+    log_us_list_sym(usym)
     n_ok = sum(1 for r in out if r["t"] not in no_info)
     n_d1 = sum(1 for r in out if r.get("d1") is not None)
     log(f"· 미국 d1(전 거래일 대비): {n_d1:,} / {len(out):,} · ETF {sum(1 for r in out if r.get('etf')):,}개")
@@ -8152,6 +8286,7 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None):
             "usInfoPartial": sorted(t for t in sticky if t in {r["t"] for r in out}),   # #114 리뷰 2: 오늘 응답이 일부만 와 예전 설명 칸을 쓴 종목
             "usForeign": ufor,                              # 2026-11-14: 외국 회사 주당 숫자 검사 (확인한 종목 · 비운 칸과 이유)
             "usExtraMissing": xmiss,                        # 2026-11-14: EXTRA_US 중 오늘 없는 종목 → 이유 (관문)
+            "usListSym": usym,                              # 2026-11-15: 출처 티커 → 야후 모양 · 바꾸지 못한 티커 · S&P 500 중 빠진 종목 (관문)
             # v19.6a: None = 분할을 읽다 멈춤 · splitsNoCol = 분할 칸이 없던 종목 (둘 다 main 이 지난 발행본으로 이어요)
             "splits": splits, "splitsNoCol": list(sinfo.get("noCol") or [])}
     return out, bench, fx, fx_last, us_vol_krw, meta
@@ -8916,6 +9051,11 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                        "keep 비우지 않음 · own 비우고 새 줄) · kept = 스위치 keep 이라 비우지 않은 칸 [티커, 칸, 이유] · sp500 = {n S&P 500 목록 "
                        "크기, inList 오늘 미국 목록과 겹침, ok 믿었는지 (400곳 아래면 본사 나라 규칙을 쓰지 않은 날)}"),
          "usExtraMissing": "손으로 더한 미국 종목(EXTRA_US) 중 오늘 목록에 없는 티커 → 빠진 이유",
+         "usListSym": ("미국 목록 출처의 티커를 야후 모양으로 바꾼 기록 (2026-11-15): mapped = [출처, 출처 티커, 야후 티커] (S&P 500 목록의 BRKB → "
+                       "BRK-B · BFB → BF-B: FinanceDataReader 가 위키백과의 점을 지워요 · 점 · 빗금 · 띄어쓰기 꼴 → 대시) · unmapped = [출처, 출처 "
+                       "티커, 이유] 바꾸지 못해 요청하지 않은 티커 · spGone = S&P 500 목록 종목 중 오늘 목록에 없는 티커 → 이유 (목록을 믿지 못한 "
+                       "날은 빈 값) · noPx = 그중 야후가 가격을 하나도 주지 않은 티커 (점이 지워진 새 주식 종류 티커일 수 있어요) · missing = 이 "
+                       "바꾸기로 들어온 종목(BF-B) 중 오늘 없는 티커 → 빠진 이유 · read = 출처 티커 기록이 있었는지"),
          "fgnCut": ("미국 상장 외국 회사의 종목 칸: 회사 합계와 맞지 않아 비운 칸 {per · pbr · dy: mismatch 맞춰 봤는데 맞지 않음 · currency 재무제표 "
                     "통화를 확인하지 못함 · norecord 배당 기록 · 가격을 읽지 못한 배당수익률 · nocompare 회사 숫자로 PER · PBR 을 맞춰 볼 수 없음 (적자 · ROE 없음) · "
                     "nocompare-own 같은 뜻, 스위치 own 일 때 (지금 · 앱 줄 co.fgnNoCmp) · stopped 검사가 멈춘 날 맞춰 보지 않고 비움 (앱 줄 co.fgnStopped)} "
@@ -9166,6 +9306,7 @@ def main():
         "usInfoPartial": umeta["usInfoPartial"],   # #114 리뷰 2: 오늘 야후 응답이 일부만 와 예전 설명 칸을 쓴 미국 종목 (관문이 경고해요)
         "usForeign": umeta["usForeign"],           # 2026-11-14: 미국 상장 외국 회사 주당 숫자 검사 (관문이 비운 칸 · 빠짐없이 확인했는지 봐요)
         "usExtraMissing": umeta["usExtraMissing"], # 2026-11-14: EXTRA_US 중 오늘 없는 종목과 이유 (관문이 이름과 이유를 경고로 · 이유 없으면 실패)
+        "usListSym": umeta["usListSym"],           # 2026-11-15: 주식 종류 티커 (BRKB → BRK-B · BFB → BF-B) · 바꾸지 못한 티커 (관문)
         "divCheck": div_counts,              # v19.1b: 배당 분할 확인 집계 (관문이 종목과 맞춰 봐요 · 이 칸이 있으면 새 검사가 다 돌아요)
         "incCheck": inc_check,               # v19.1f: 손익 줄 집계 (관문이 corp.json 과 맞춰 봐요 · 이 칸이 있으면 손익 줄 검사가 다 돌아요)
         "epsBasis": eps_basis,               # v19.1f: EPS·PER 은 지배주주 몫 — 앱의 '계산 방법을 고치는 중' 줄이 이걸 보면 사라져요
