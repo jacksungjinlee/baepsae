@@ -46,6 +46,7 @@ DART 결과는 .dart-cache/ 에 보관해 실행 사이에 다시 씁니다 (하
 import collections
 import copy
 import csv
+import decimal
 import gzip
 import hashlib
 import io
@@ -77,6 +78,8 @@ from validate_data import (FX_LO, FX_HI, FX_HIST_FROM, FX_HIST_FIRST_BY, FX_HIST
 from validate_data import PIN_PX_TOL, PIN_SHR_TOL, PIN_REF_TOL, KR_DAY_LIMIT, KONEX_DAY_LIMIT, KR_JUMP_WHY
 # 2026-11-14: 빈 d1 의 이유 목록도 관문 파일에 있어요 (관문이 같은 목록으로 noTrade · d1Why 를 봐요)
 from validate_data import D1_WHY, MUST as GATE_MUST
+# 2026-11-19 (Jack 규칙 3): 공식 종가의 두 출처 — 출처 이름 · 야후 접미어 · 1차 출처 표본 (관문 파일에 있어요 · 따로 바뀌지 않게)
+from validate_data import PX_SRC_LISTING, PX_SRC_FB, PX_YAHOO_SUFFIX, PX_CHECK_SAMPLE, px_check_sample
 # 2026-11-14 (Jack, Q2 (a)): 그 움직임이 있는 종목에서 비우는 칸 목록도 관문 파일에 있어요 (관문이 같은 목록으로 비었는지 봐요)
 from validate_data import PX_BAD_DATA, PX_BAD_MUST_FAIL, PX_BAD_WIN, PX_BAD_WIN_BARS, PX_BAD_ALWAYS
 # 2026-11-14 (Q5 리뷰 S1 · S2): 외국 회사 검사의 '맞춰 볼 값이 없음' 스위치와 그 사유 글, S&P 500 목록을 믿을 최소 겹침도 관문 파일에 있어요
@@ -401,26 +404,31 @@ def _fetch_listing_csv(d):
     raise RuntimeError(f"{d} 파일 다운로드 실패: {last}")
 
 
-def _listing_commit_kst(d):
-    """그 날짜 파일의 마지막 커밋 시각(KST). 확인할 수 없으면 None."""
+def _listing_commit_kst(d, sleep=time.sleep):
+    """그 날짜 파일의 마지막 커밋 시각(KST). 세 번 시도해도 확인할 수 없으면 None — 2026-11-19 부터 None 은 '최종본 아님'이에요
+    (load_kr_listing · kr_recent_sessions · 관문 모두). 그날은 2차 출처(다음 × 야후)가 정해요."""
     headers = {"Accept": "application/vnd.github+json"}
     tok = os.environ.get("GITHUB_TOKEN", "").strip()
     if tok:
         headers["Authorization"] = f"Bearer {tok}"
-    try:
-        r = requests.get(LISTING_COMMITS_API, params={"path": LISTING_PATH.format(d=d.isoformat()), "per_page": 1},
-                         headers=headers, timeout=20)
-        if r.status_code != 200:
-            log(f"  !! 커밋 시각 확인 실패: {d} · HTTP {r.status_code} (다음 거래일 파일로 판단해요)")
-            return None
-        js = r.json()
-        if not js:
-            return None
-        ts = js[0]["commit"]["committer"]["date"]
-        return dt.datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(KST)
-    except Exception as e:
-        log(f"  !! 커밋 시각 확인 실패: {d} · {e} (다음 거래일 파일로 판단해요)")
-        return None
+    why = None
+    for attempt in range(3):
+        try:
+            r = requests.get(LISTING_COMMITS_API, params={"path": LISTING_PATH.format(d=d.isoformat()), "per_page": 1},
+                             headers=headers, timeout=20)
+            if r.status_code == 200:
+                js = r.json()
+                if not js:
+                    return None
+                ts = js[0]["commit"]["committer"]["date"]
+                return dt.datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(KST)
+            why = f"HTTP {r.status_code}"
+        except Exception as e:
+            why = f"{type(e).__name__}: {str(e)[:80]}"
+        if attempt < 2:
+            sleep(2 * (attempt + 1))
+    log(f"  !! 커밋 시각 확인 실패: {d} · {why} (세 번 시도) → 그날 파일은 최종본으로 보지 않아요 (2차 출처가 정해요)")
+    return None
 
 
 def load_krx_special_sessions(path=None):
@@ -493,7 +501,7 @@ def _hm_ko(t):
     return f"{t.hour}시" + (f" {t.minute}분" if t.minute else "")
 
 
-def pick_final_listing(today, fetch_csv, commit_kst, lookback=LISTING_LOOKBACK_DAYS, special=None):
+def pick_final_listing(today, fetch_csv, commit_kst, lookback=LISTING_LOOKBACK_DAYS, special=None, unknown_final=True):
     """오늘(KST) 이전의 가장 최근 최종본을 고릅니다. (순수 함수 — 받아오는 방법은 인자로)
     special: KRX 특별 거래시간 표 (None 이면 data/krx_special_sessions.csv 를 읽어요).
     반환: (날짜, DataFrame, 설명, 건너뛴 날짜 메모) · 못 찾으면 날짜·DataFrame 이 None."""
@@ -528,7 +536,12 @@ def pick_final_listing(today, fetch_csv, commit_kst, lookback=LISTING_LOOKBACK_D
                 return d, df, f"{d} 최종본 ({ct:%H:%M} KST 커밋, {len(df):,}종목, 시총 {share:.0%})", notes
             notes.append(f"{d} 마지막 커밋 {ct:%m-%d %H:%M} KST — {_hm_ko(cut.time())} 전이라 최종본이 아님 → 건너뜀")
             continue
-        # 커밋 시각을 못 봤으면: 그 뒤 날짜(오늘 포함)에 시가총액이 찬 파일이 있을 때만 '끝난 날'로 봐요
+        # 2026-11-19 (더 엄격하게만): 파이프라인(load_kr_listing)은 unknown_final=False — 커밋 시각을 못 본 파일은 최종본이 아니에요. 캐시가 다음
+        # 거래일의 장중 파일을 올리는 지금은 아래 예전 규칙이 장중 파일(11-17 15:29)을 최종본으로 받아들여요. 그날은 2차 출처가 정해요.
+        if not unknown_final:
+            notes.append(f"!! {d} 커밋 시각 확인 불가 → 최종본으로 보지 않아요 (2차 출처가 정해요)")
+            continue
+        # 커밋 시각을 못 봤으면: 그 뒤 날짜(오늘 포함)에 시가총액이 찬 파일이 있을 때만 '끝난 날'로 봐요 (예전 규칙 · 파이프라인은 쓰지 않아요)
         later = [today - dt.timedelta(days=b) for b in range(0, back)]
         if any(listing_cap_share(get(e)) >= LISTING_MIN_CAP_SHARE for e in later):
             return d, df, (f"{d} 최종본으로 판단 (!! 커밋 시각 확인 불가 · 다음 거래일 파일 있음, "
@@ -544,17 +557,24 @@ VAL20_DAYS = 20           # 평균 거래대금 기간 (거래일)
 VAL20_MIN_DAYS = 10       # 이보다 적은 날만 있으면 (신규 상장 등) 비워 둬요
 
 
-def kr_recent_sessions(px_date, fetch_csv, commit_kst, n=VAL20_DAYS - 1, lookback=45, special=None):
+def kr_recent_sessions(px_date, fetch_csv, commit_kst, n=VAL20_DAYS - 1, lookback=45, special=None, known=None):
     """기준일 앞의 끝난 거래일 목록 파일들 (최신 → 과거, 최대 n개). (순수 함수 — 받아오는 방법은 인자로)
     반환: (세션 [(날짜, DataFrame)], 메모들, 직전 거래일 파일이 최종본인지).
     직전 거래일 파일은 커밋 시각이 그날 마감 + 30분(보통 16시 · 수능일 17시) 전이면 최종본이 아니라 그날 종가를 믿지 않아요 (d1 을 비워요).
-    special: KRX 특별 거래시간 표 (None 이면 data/krx_special_sessions.csv 를 읽어요)."""
+    special: KRX 특별 거래시간 표 (None 이면 data/krx_special_sessions.csv 를 읽어요).
+    known: {날짜: DataFrame} 2차 출처(다음 × 야후 · 마감 + 30분 뒤 · 두 종가가 같은 종목만)로 만든 날 — 캐시 파일 대신 최종본으로 써요 (2026-11-19)."""
     special = load_krx_special_sessions() if special is None else special
     out, notes, prev_final = [], [], None
     for back in range(1, lookback + 1):
         if len(out) >= n:
             break
         d = px_date - dt.timedelta(days=back)
+        if known and d in known:
+            if prev_final is None:
+                prev_final = True
+                notes.append(f"직전 거래일 {d}: 2차 출처 (다음 × 야후 · 확인된 {len(known[d]):,}종목)")
+            out.append((d, known[d]))
+            continue
         try:
             df = fetch_csv(d)
         except Exception as e:
@@ -567,20 +587,20 @@ def kr_recent_sessions(px_date, fetch_csv, commit_kst, n=VAL20_DAYS - 1, lookbac
         # v17.5.4: 모든 날의 파일을 그날 마감 + 30분 기준으로 봐요 (예전에는 직전 거래일만). 최종본이 아닌 날의 값은 가격 고정
         # (공식 종가로 맞추기)·거래대금 평균에 쓰지 않아요 — 수능일처럼 늦게 끝나는 날의 장중 값이 종가 기록에 들어가지 않게.
         ct = commit_kst(d)
-        final = not (ct is not None and ct < listing_final_cut(d, special))
+        # 2026-11-19 (더 엄격하게만): 커밋 시각을 못 본 파일은 최종본이 아니에요 (예전: 더 뒤 날짜 최종본이 있으면 끝난 날로 봤어요)
+        final = ct is not None and ct >= listing_final_cut(d, special)
+        when = f"마지막 커밋이 {ct:%m-%d %H:%M} KST" if ct is not None else "커밋 시각을 확인하지 못해"
         if prev_final is None:                      # 기준일 바로 앞의 거래일 (d1 의 전날)
             sp = special_note(d, special)
             if sp:
                 notes.append(f"직전 거래일 {sp}")
             prev_final = final
             if not final:
-                notes.append(f"!! 직전 거래일 {d} 파일의 마지막 커밋이 {ct:%m-%d %H:%M} KST — 최종본이 아니라 d1 을 비우고 "
+                notes.append(f"!! 직전 거래일 {d} 파일의 {when} — 최종본이 아니라 d1 을 비우고 "
                              "그날 값은 가격 고정·거래대금에 쓰지 않아요")
-            elif ct is None:
-                notes.append(f"직전 거래일 {d}: 커밋 시각 확인 불가 · 더 뒤 날짜({px_date}) 최종본이 있어 끝난 날로 봐요")
         elif not final:
-            notes.append(f"!! {d} 파일의 마지막 커밋이 {ct:%m-%d %H:%M} KST — 그날 마감 + 30분 전이라 최종본이 아니에요 · "
-                         "그날 값은 가격 고정·거래대금에 쓰지 않아요")
+            notes.append(f"!! {d} 파일의 {when} — " + ("그날 마감 + 30분 전이라 최종본이 아니에요" if ct is not None else "최종본으로 보지 않아요")
+                         + " · 그날 값은 가격 고정·거래대금에 쓰지 않아요")
         if not final:
             continue
         out.append((d, df))
@@ -596,6 +616,487 @@ def kr_prev_session(px_date, index_dates):
 def prev_session_ok(sessions, prev_final, want_prev):
     """d1 을 써도 되는지: 직전 파일이 최종본이고, 그 날짜가 KOSPI 의 직전 거래일과 같아야 해요. (순수 함수)"""
     return bool(sessions) and bool(prev_final) and want_prev is not None and sessions[0][0] == want_prev
+
+
+# ────────────────────────────────────────────────────────────
+# 2026-11-19: 공식 종가는 늘 두 출처로 (Jack 규칙 3)
+# ────────────────────────────────────────────────────────────
+# "Permanent two-source rule: official closes always come from two independent sources. If the primary is late or not
+#  final, the second one is used automatically after a cross-check. The publish stops only when neither can be confirmed."
+#  (Jack, 2026-11-19)
+# 사고 (2026-11-18): 자원봉사 캐시(fdr_krx_data_cache)가 11-17 부터 장 마감 뒤 커밋을 하지 않아 최종본이 없었어요 → 발행이 멈췄어요.
+# 1차 출처: 그 캐시의 최종본 목록 파일 (예전 그대로). 그 뒤에 이미 끝난 거래일(KOSPI 일봉)이 있으면 그날은 2차 출처:
+#   다음(Daum) 일별 시세 — KRX 목록 파일과 같은 칸 (공식 종가 · 전일 대비 · 시가 · 고가 · 저가 · 거래량 · 거래대금(시간외 포함) · 상장주식수)
+#   × 야후 .KS/.KQ 일봉 종가 (따로 받는 독립 출처): 두 종가가 원 단위까지 같은 종목만 써요. 한 출처뿐이거나 다르면 그 종목은 빼고
+#   이름을 크게 남겨요 (추측하지 않아요 · 필수 종목이 빠지면 관문이 멈춰요). 코넥스는 야후에 없어 확인되지 않아요 (빠져요).
+# 네이버 일봉 종가는 공식 종가가 아니에요 (시간외 · 넥스트레이드 마지막 체결가 — 11-16: 2,500종목 중 391종목만 같음). 종가 출처로 쓰지 않아요.
+# 1차 출처를 쓴 날도 필수 종목 + 표본을 야후 종가와 맞춰 보고 남겨요 (pxSrc.chk · 관문이 경고해요).
+KR_FB_DAUM_URL = "https://finance.daum.net/api/quote/A{c}/days"
+KR_FB_WORKERS = 4                 # 다음 일별 시세 동시 요청 수 (네이버 시계열은 8 — 더 조심스럽게)
+KR_FB_MAX_DAYS = 25               # 다음 · 야후로 만들 수 있는 끝난 거래일 수 상한 (한 번에 받는 날 수)
+KR_FB_YAHOO_CHUNK = 200           # 야후 한 번에 받는 종목 수
+KR_FB_CHANGE_CODE = {"RISE": 1, "UPPER_LIMIT": 1, "FALL": 2, "LOWER_LIMIT": 2, "EVEN": 3}   # KRX 목록 파일의 ChangeCode (1 상승 · 2 하락 · 3 보합)
+KR_FB_COLS = ["Code", "ISU_CD", "Name", "Market", "Dept", "Close", "ChangeCode", "Changes", "ChagesRatio", "Open", "High", "Low",
+              "Volume", "Amount", "Marcap", "Stocks", "MarketId"]
+KR_FB_CLOSE_TOL = 0.01            # 두 종가 차이 (원) — 부동소수점 끝자리만큼. 같은 호가(원 단위)여야 해요
+KR_FB_UNIVERSE_MIN = 1000         # 종목 목록(이름 · 시장)으로 쓸 파일의 최소 행 수
+KR_FB_LOUD_COVER = 0.98           # 야후에 있는 종목(코넥스 빼고) 중 이보다 적게 받거나 확인하면 크게 남겨요 (!!)
+
+
+def yahoo_kr_symbol(code, market):
+    """야후 심볼: 코스피 .KS · 코스닥 .KQ · 그 밖(코넥스 등)은 None — 야후에 없어 확인 못 해요. (순수 함수)"""
+    sfx = PX_YAHOO_SUFFIX.get(str(market or "").strip().upper())
+    return f"{code}{sfx}" if sfx else None
+
+
+def daum_rows_by_day(js):
+    """다음 일별 시세 응답 → {날짜: 행}. 날짜를 읽을 수 없는 행은 빼고, 같은 날짜가 두 번이면 그 날은 통째로 빼요 (어느 쪽인지 몰라요). (순수 함수)"""
+    out, dup = {}, set()
+    for r in (js or {}).get("data") or []:
+        if not isinstance(r, dict):
+            continue
+        try:
+            d = dt.date.fromisoformat(str(r.get("date") or "")[:10])
+        except ValueError:
+            continue
+        if d in out:
+            dup.add(d)
+        out[d] = r
+    for d in dup:
+        out.pop(d, None)
+    return out
+
+
+def kr_change_ratio(chg, base):
+    """등락률 (%) = 전일 대비 ÷ 기준가 × 100 을 소수 둘째 자리에서 반올림 — 0.5 는 0 에서 먼 쪽 (KRX 목록 파일과 같아요: −0.625 → −0.63 ·
+    파이썬 round 는 −0.62 · 2026-11-13 · 11-16 비교에서 12종목). (순수 함수)"""
+    q = (decimal.Decimal(int(chg)) * 100 / decimal.Decimal(int(base))).quantize(decimal.Decimal("0.01"), rounding=decimal.ROUND_HALF_UP)
+    return float(q)
+
+
+def kr_fb_row(u, r):
+    """다음의 그날 행(r) → KRX 목록 파일과 같은 칸의 한 행. u: 그날(없으면 가장 가까운 앞 날) 목록 파일의 행 (이름 · 시장 · ISU_CD).
+    못 믿을 값이 하나라도 있으면 None (그 종목은 빠져요). (순수 함수)
+    거래량은 totalAccTradeVolume · 거래대금은 totalAccTradePrice (시간외 포함 — KRX 목록 파일 최종본과 같은 값 · 2026-11-13 · 11-16 확인).
+    거래가 없던 날(거래량 0 · 거래대금 0) 다음은 시가 · 고가 · 저가를 종가로 채우지만 KRX 목록 파일은 0 이라 0 으로 적어요 (거래 없음 표시가 같게).
+    전일 대비(Changes)는 다음의 changePrice (거래정지 종목은 prevClosingPrice 가 0 이라 쓰지 않아요) · 기준가 = 종가 − 전일 대비."""
+    if not isinstance(r, dict):
+        return None
+    close, chg, shr = _fin(r.get("tradePrice")), _fin(r.get("changePrice")), _fin(r.get("listedSharesCount"))
+    vol, amt = _fin(r.get("totalAccTradeVolume")), _fin(r.get("totalAccTradePrice"))
+    op, hi, lo = (_fin(r.get(k)) for k in ("openingPrice", "highPrice", "lowPrice"))
+    if close is None or close <= 0 or chg is None or shr is None or shr <= 0 or vol is None or vol < 0 or amt is None or amt < 0:
+        return None
+    if close != round(close) or chg != round(chg) or shr != round(shr):
+        return None
+    base = close - chg
+    if base <= 0:
+        return None
+    if vol == 0 and amt == 0:
+        op = hi = lo = 0.0
+    if op is None or hi is None or lo is None or min(op, hi, lo) < 0:
+        return None
+    cc = KR_FB_CHANGE_CODE.get(str(r.get("change") or "").strip().upper())
+    if cc is None or (cc == 3) != (chg == 0) or (cc == 1 and chg <= 0) or (cc == 2 and chg >= 0):
+        return None
+    code = str(u.get("Code")).strip()
+    return {"Code": code, "ISU_CD": u.get("ISU_CD"), "Name": u.get("Name"), "Market": u.get("Market"), "Dept": u.get("Dept"),
+            "Close": int(close), "ChangeCode": cc, "Changes": int(chg), "ChagesRatio": kr_change_ratio(int(chg), int(base)),
+            "Open": int(round(op)), "High": int(round(hi)), "Low": int(round(lo)), "Volume": int(round(vol)), "Amount": int(round(amt)),
+            "Marcap": int(close) * int(shr), "Stocks": int(shr), "MarketId": u.get("MarketId")}
+
+
+def kr_fb_confirm(day, universe, daum, yahoo, must=GATE_MUST, tol=KR_FB_CLOSE_TOL):
+    """그날(day)의 2차 출처 행: 다음 행 × 야후 종가가 원 단위까지 같은 종목만 (2026-11-19 · 순수 함수).
+    universe: 목록 DataFrame (Code · Name · Market …) · daum: {코드: {날짜: 다음 행}} · yahoo: {코드: {날짜: 종가}}.
+    반환: (DataFrame — 확인된 종목만 · KR_FB_COLS, 집계 dict):
+      n 목록 종목 · conf 확인 · mkt 야후에 없는 시장(코넥스 — 묻지 않아요) · noDaum 다음에 그날 행 없음 · bad 다음 행을 믿을 수 없음 ·
+      noYahoo 야후에 그날 종가 없음 · diff [(코드, 이름, 다음, 야후)] 두 종가가 다름 · must 확인되지 않은 필수 종목 ·
+      shrDiff 목록 파일과 다음의 상장주식수가 다른 종목 (로그만)."""
+    rows, st = [], {"n": 0, "conf": 0, "mkt": [], "noDaum": [], "bad": [], "noYahoo": [], "diff": [], "shrDiff": []}
+    seen = set()
+    for _, u in universe.iterrows():
+        code = str(u.get("Code") or "").strip()
+        if len(code) != 6 or code in seen:
+            continue
+        seen.add(code)
+        st["n"] += 1
+        if not yahoo_kr_symbol(code, u.get("Market")):
+            st["mkt"].append(code)                  # 코넥스 등 — 야후에 없는 시장이라 묻지도 않아요 (두 출처가 될 수 없어요)
+            continue
+        r = (daum.get(code) or {}).get(day)
+        if r is None:
+            st["noDaum"].append(code)
+            continue
+        row = kr_fb_row(u, r)
+        if row is None:
+            st["bad"].append(code)
+            continue
+        s0 = _fin(u.get("Stocks"))
+        if s0 and s0 > 0 and int(s0) != row["Stocks"]:
+            st["shrDiff"].append(code)              # 목록 파일과 다음의 상장주식수가 다름 (확인 여부와 상관없이 · 로그만)
+        y = _fin((yahoo.get(code) or {}).get(day))
+        if y is None or y <= 0:
+            st["noYahoo"].append(code)
+            continue
+        if abs(y - row["Close"]) > tol:
+            st["diff"].append((code, str(u.get("Name") or ""), row["Close"], y))
+            continue
+        rows.append(row)
+        st["conf"] += 1
+    ok = {r["Code"] for r in rows}
+    st["must"] = [c for c in must if c not in ok]
+    return pd.DataFrame(rows, columns=KR_FB_COLS), st
+
+
+def kr_fb_final(d, now, special):
+    """그날 값을 2차 출처에서 받아도 되는지: 그날 마감 + 30분 (보통 16:00 · 수능일 17:00) 이 지났는지 — 목록 파일 최종본과 같은 기준. (순수 함수)
+    야후의 끝나지 않은 날 봉은 장중 값이에요."""
+    return now >= listing_final_cut(d, special)
+
+
+def kr_fb_universe(d, fetch_csv, fallback=None, lookback=LISTING_LOOKBACK_DAYS):
+    """그날 종목 목록 (이름 · 시장 · ISU_CD · 상장주식수만 써요 · 가격은 쓰지 않아요): 그날 캐시 파일 (장 전 · 장중 버전도 돼요) →
+    그 앞 가장 가까운 날의 캐시 파일 → fallback (1차 출처의 최종본). 반환: (DataFrame, 설명) · 못 찾으면 (None, 이유)."""
+    def usable(df):
+        return df is not None and {"Code", "Name", "Market"} <= set(df.columns) and len(df) >= KR_FB_UNIVERSE_MIN
+    for back in range(0, lookback + 1):
+        e = d - dt.timedelta(days=back)
+        try:
+            df = fetch_csv(e)
+        except Exception as ex:
+            df = None
+            if back == 0:
+                log(f"  !! 2차 출처 종목 목록: {e} 캐시 파일 받기 실패 ({ex})")
+        if usable(df):
+            return df, (f"{e} 캐시 파일 (가격은 쓰지 않아요)" if back == 0 else f"!! {d} 파일이 없어 {e} 캐시 파일의 종목 목록 (그 뒤 새 상장은 빠져요)")
+    if usable(fallback):
+        return fallback, "!! 캐시 파일이 없어 1차 출처 최종본의 종목 목록 (그 뒤 새 상장은 빠져요)"
+    return None, "종목 목록으로 쓸 파일이 없어요"
+
+
+_DAUM_LOCAL = threading.local()
+
+
+def _fetch_daum_days(code, n):
+    """다음 일별 시세 (최근 n 거래일). 세 번 시도해도 못 받으면 예외. 일하는 스레드마다 연결 하나를 다시 써요 (요청마다 새로 잇지 않게)."""
+    last = None
+    sess = getattr(_DAUM_LOCAL, "s", None)
+    if sess is None:
+        sess = _DAUM_LOCAL.s = requests.Session()
+    for attempt in range(3):
+        try:
+            r = sess.get(KR_FB_DAUM_URL.format(c=code), params={"symbolCode": f"A{code}", "page": 1, "perPage": n, "pagination": "true"},
+                             headers={"User-Agent": "Mozilla/5.0", "Referer": f"https://finance.daum.net/quotes/A{code}"}, timeout=20)
+            if r.status_code == 200:
+                return r.json()
+            last = f"HTTP {r.status_code}"
+            if 400 <= r.status_code < 500 and r.status_code != 429:
+                break                                # 없는 종목 등 — 다시 물어도 같아요
+        except Exception as e:
+            last = f"{type(e).__name__}: {str(e)[:80]}"
+        time.sleep(1 + attempt)
+    raise RuntimeError(last)
+
+
+def fetch_daum_all(codes, n, fetch=_fetch_daum_days, workers=KR_FB_WORKERS):
+    """{코드: {날짜: 다음 행}} 과 받지 못한 코드 목록."""
+    out, failed, lock = {}, [], threading.Lock()
+
+    def one(c):
+        try:
+            rows = daum_rows_by_day(fetch(c, n))
+        except Exception:
+            with lock:
+                failed.append(c)
+            return
+        with lock:
+            out[c] = rows
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        list(ex.map(one, sorted(codes)))
+    return out, sorted(failed)
+
+
+def fetch_yahoo_kr_closes(code_market, start, end, chunk=KR_FB_YAHOO_CHUNK):
+    """{코드: {날짜: 종가}} — 야후 .KS/.KQ 일봉의 Close (수정 안 한 값) · start ≤ 날짜 < end. 받지 못한 묶음의 종목 수도 돌려줘요.
+    야후에 없는 시장(코넥스)은 묻지 않아요."""
+    import yfinance as yf
+    sym = {}
+    for c, m in code_market.items():
+        s = yahoo_kr_symbol(c, m)
+        if s:
+            sym[s] = c
+    out, failed = {}, 0
+    syms = sorted(sym)
+    for i in range(0, len(syms), chunk):
+        part = syms[i:i + chunk]
+        df = None
+        for attempt in range(3):
+            try:
+                df = yf.download(part, start=start.isoformat(), end=end.isoformat(), progress=False, auto_adjust=False,
+                                 group_by="ticker", threads=True)
+                break
+            except Exception as e:
+                log(f"  (야후 종가 묶음 {i // chunk + 1} 실패 {attempt + 1}회: {str(e)[:80]})")
+                time.sleep(3 * (attempt + 1))
+        if df is None or not len(df):
+            failed += len(part)
+            continue
+        for s in part:
+            try:
+                cl = df[s]["Close"] if isinstance(df.columns, pd.MultiIndex) else df["Close"]
+            except KeyError:
+                continue
+            for ts, v in cl.items():
+                v = _fin(v)
+                if v is not None and v > 0:
+                    out.setdefault(sym[s], {})[pd.Timestamp(ts).date()] = v
+    return out, failed
+
+
+KR_FB_YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=5d&interval=1d"
+KR_FB_META_WORKERS = 6
+KR_META_WINDOW = dt.timedelta(minutes=10)    # regularMarketTime 은 마감 시각 ~ 마감 + 10분 안이어야 해요 (실제: 15:30:01 ~ 15:30:30 · 수능일 16:30)
+_YAHOO_LOCAL = threading.local()
+
+
+def yahoo_chart_close(res, d, close_time):
+    """야후 차트 응답(result[0])에서 그날(KST) 종가 (2026-11-19 · 순수 함수 · 관문의 yahoo_day_close 와 같은 규칙, 코드는 따로).
+    반환: (값, 'bar' | 'meta') 또는 (None, 까닭). 그날 일봉 종가가 있으면 그것 · 일봉은 있는데 종가가 빈 값이면 meta.regularMarketPrice —
+    그 시각(regularMarketTime · KST)이 그날 마감(close_time · 수능일 16:30) ~ 마감 + 10분 안일 때만 (마감 동시호가로 정해진 값 · 시간외 값이 아니게).
+    야후는 그날 일봉 종가를 몇 시간 동안 비워 둬요 (11-19 02:15: 005930 11-18 종가 null · regularMarketPrice 194,700 @ 11-18 15:30:16)."""
+    ts = res.get("timestamp") or []
+    q = ((res.get("indicators") or {}).get("quote") or [{}])[0] or {}
+    bars = [c for t, c in zip(ts, q.get("close") or []) if dt.datetime.fromtimestamp(t, KST).date() == d]
+    if not bars:
+        return None, "그날 일봉 없음"
+    c = _fin(bars[-1])
+    if c is not None and c > 0:
+        return c, "bar"
+    meta = res.get("meta") or {}
+    p, t = _fin(meta.get("regularMarketPrice")), _fin(meta.get("regularMarketTime"))
+    if p is None or p <= 0 or t is None:
+        return None, "종가 빈 값 · meta 없음"
+    when = dt.datetime.fromtimestamp(t, KST)
+    if when.date() != d:
+        return None, "meta 시각이 그날이 아님"
+    start = dt.datetime.combine(d, close_time, KST)
+    if not start <= when < start + KR_META_WINDOW:
+        return None, f"meta 시각 {when:%H:%M} 이 마감 {close_time:%H:%M} ~ +{KR_META_WINDOW.seconds // 60}분 밖"
+    return p, "meta"
+
+
+def _fetch_yahoo_chart(sym):
+    """야후 차트 응답 result[0] (최근 5일). 세 번 시도해도 못 받으면 예외. 일하는 스레드마다 연결 하나."""
+    sess = getattr(_YAHOO_LOCAL, "s", None)
+    if sess is None:
+        sess = _YAHOO_LOCAL.s = requests.Session()
+    last = None
+    for attempt in range(3):
+        try:
+            r = sess.get(KR_FB_YAHOO_CHART.format(sym=sym), headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+            if r.status_code == 200:
+                return r.json()["chart"]["result"][0]
+            last = f"HTTP {r.status_code}"
+            if 400 <= r.status_code < 500 and r.status_code != 429:
+                break
+        except Exception as e:
+            last = f"{type(e).__name__}: {str(e)[:80]}"
+        time.sleep(1 + attempt)
+    raise RuntimeError(last)
+
+
+def yahoo_fill_day(yahoo, code_market, d, close_time, fetch=_fetch_yahoo_chart, workers=KR_FB_META_WORKERS):
+    """일괄 다운로드에 그날 종가가 없는 종목만 야후 차트를 하나씩 다시 읽어 yahoo 에 채워요 (2026-11-19). 반환: 집계 dict
+    {need, bar, meta, none, fail, metaCodes} — meta 는 일봉 종가가 비어 마감 뒤 regularMarketPrice 로 읽은 종목."""
+    need = sorted(c for c, m in code_market.items() if yahoo_kr_symbol(c, m) and d not in (yahoo.get(c) or {}))
+    out = {"need": len(need), "bar": 0, "meta": 0, "none": 0, "fail": 0, "metaCodes": set()}
+    lock = threading.Lock()
+
+    def one(c):
+        try:
+            v, how = yahoo_chart_close(fetch(yahoo_kr_symbol(c, code_market[c])), d, close_time)
+        except Exception:
+            with lock:
+                out["fail"] += 1
+            return
+        with lock:
+            if v is None:
+                out["none"] += 1
+                return
+            yahoo.setdefault(c, {})[d] = v
+            out[how] += 1
+            if how == "meta":
+                out["metaCodes"].add(c)
+    if need:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            list(ex.map(one, need))
+    return out
+
+
+def kr_fallback_days(days, universe_of, now, special, fetch_daum=fetch_daum_all, fetch_yahoo=fetch_yahoo_kr_closes, must=GATE_MUST,
+                     fill_day=yahoo_fill_day):
+    """끝난 거래일(days)마다 2차 출처 행을 만들어요 (2026-11-19). universe_of(d) → (DataFrame, 설명).
+    반환: ({날짜: (DataFrame, 집계)}, 메모들). 마감 + 30분이 지나지 않은 날 · 목록이 없는 날은 빠지고 메모에 남아요."""
+    notes, unis = [], {}
+    for d in sorted(days)[-KR_FB_MAX_DAYS:]:
+        if not kr_fb_final(d, now, special):
+            notes.append(f"!! {d}: 그날 마감 + 30분 ({listing_final_cut(d, special):%H:%M} KST) 전이라 2차 출처도 쓰지 않아요")
+            continue
+        uni, how = universe_of(d)
+        if uni is None:
+            notes.append(f"!! {d}: {how} → 2차 출처로 만들 수 없어요")
+            continue
+        unis[d] = uni
+        notes.append(f"{d} 종목 목록: {how} · {len(uni):,}행")
+    if not unis:
+        return {}, notes
+    cm, n_mkt = {}, set()
+    for uni in unis.values():
+        for c, m in zip(uni["Code"].astype(str).str.strip(), uni["Market"]):
+            if len(c) != 6:
+                continue
+            if yahoo_kr_symbol(c, m):
+                cm.setdefault(c, m)                 # 두 출처가 될 수 있는 종목만 물어요 (코넥스는 야후에 없어요)
+            else:
+                n_mkt.add(c)
+    notes.append(f"야후에 없는 시장(코넥스 등) {len(n_mkt):,}종목은 2차 출처로 확인할 수 없어 묻지 않아요")
+    first = min(unis)
+    n_days = min(KR_FB_MAX_DAYS + 15, (now.date() - first).days + 3)    # 달력 날 수 ≥ 거래일 수 — 첫날까지 넉넉히
+    t0 = time.time()
+    daum, d_fail = fetch_daum(set(cm), n_days)
+    notes.append(f"{'!! ' if len(daum) < KR_FB_LOUD_COVER * len(cm) else ''}다음 일별 시세: {len(daum):,} / {len(cm):,}종목 받음 (최근 {n_days}거래일 · {time.time() - t0:.0f}초)"
+                 + (f" · 못 받음 {len(d_fail):,}: {', '.join(d_fail[:10])}" if d_fail else ""))
+    t0 = time.time()
+    yahoo, y_fail = fetch_yahoo(cm, first - dt.timedelta(days=1), max(unis) + dt.timedelta(days=1))
+    notes.append(f"{'!! ' if len(yahoo) < KR_FB_LOUD_COVER * len(cm) else ''}야후 .KS/.KQ 종가: {len(yahoo):,} / {len(cm):,}종목 받음 ("
+                 f"{time.time() - t0:.0f}초)" + (f" · 못 받은 묶음의 종목 {y_fail:,}" if y_fail else ""))
+    # 야후는 가장 최근 날의 일봉 종가를 몇 시간 비워 둬요 → 그 날 종가가 없고 다음 행은 있는 종목만 차트를 다시 읽어요 (마감 뒤 regularMarketPrice)
+    last = max(unis)
+    need = {c: m for c, m in cm.items() if last in (daum.get(c) or {})}
+    t0 = time.time()
+    fill = fill_day(yahoo, need, last, krx_close(last, special))
+    if fill["need"]:
+        notes.append(f"{'!! ' if fill['fail'] > (1 - KR_FB_LOUD_COVER) * len(need) else ''}야후 {last} 일봉 종가가 빈 종목 {fill['need']:,} → 차트를 다시 읽음: 일봉 종가 {fill['bar']:,} · "
+                     f"마감({krx_close(last, special):%H:%M}) 뒤 regularMarketPrice {fill['meta']:,} · 없음 {fill['none']:,} · 받지 못함 {fill['fail']:,} "
+                     f"({time.time() - t0:.0f}초)")
+    out = {}
+    for d, uni in sorted(unis.items()):
+        fr, st = kr_fb_confirm(d, uni, daum, yahoo, must=must)
+        st["yMeta"] = sum(1 for c in fr["Code"] if c in fill["metaCodes"]) if d == last else 0
+        st["_uni"] = uni                            # 그날 전체 종목 목록 (주식 수는 가격과 상관없어요 — 우선주 주식 수에 써요)
+        st["_daumShr"] = {c: int(_fin(r[d].get("listedSharesCount")) or 0) for c, r in daum.items() if d in r}
+        out[d] = (fr, st)
+    return out, notes
+
+
+def kr_fb_note(d, st, names):
+    """2차 출처 집계 한 줄 (크게 남길지, 글) — 빠진 종목 이름을 모두 셉니다 (예시 12개). (순수 함수)"""
+    def ex(codes):
+        return ", ".join(f"{c} {names.get(c, '')}".strip() for c in codes[:12]) + (" …" if len(codes) > 12 else "")
+    left = len(st["noDaum"]) + len(st["bad"]) + len(st["noYahoo"]) + len(st["diff"])
+    base = st["n"] - len(st.get("mkt") or [])
+    low = st["conf"] < KR_FB_LOUD_COVER * base
+    txt = (f"{d} 2차 출처(다음 × 야후 종가 원 단위까지 같음): 확인 {st['conf']:,} / {base:,}종목 (야후에 있는 시장 · 코넥스 등 {len(st.get('mkt') or []):,}종목 빼고)"
+           + (f" (그중 야후 값이 마감 뒤 regularMarketPrice {st['yMeta']:,})" if st.get("yMeta") else "") + f" · 빠짐 {left:,} "
+           f"(다음 행 없음 {len(st['noDaum']):,} · 다음 값 못 믿음 {len(st['bad']):,} · 야후 종가 없음 {len(st['noYahoo']):,} · "
+           f"두 종가가 다름 {len(st['diff']):,})" + (f" — 확인이 {KR_FB_LOUD_COVER:.0%} 아래예요" if low else ""))
+    if st["diff"]:
+        txt += " — 다름: " + ", ".join(f"{c} {n} 다음 {a:,.0f} · 야후 {b:,.2f}" for c, n, a, b in st["diff"][:12]) + (" …" if len(st["diff"]) > 12 else "")
+    if st["noDaum"]:
+        txt += f" — 다음 행 없음: {ex(st['noDaum'])}"
+    if st["noYahoo"]:
+        txt += f" — 야후 종가 없음: {ex(st['noYahoo'])}"
+    if st["bad"]:
+        txt += f" — 다음 값 못 믿음: {ex(st['bad'])}"
+    if st["shrDiff"]:
+        txt += f" — 목록 파일과 상장주식수가 다른 종목 {len(st['shrDiff']):,} (다음 값을 써요): {ex(st['shrDiff'])}"
+    if st["must"]:
+        txt += f" — !! 확인되지 않은 필수 종목: {', '.join(st['must'])} (관문이 멈춰요)"
+    return bool(st["must"] or st["diff"] or st["bad"] or low), txt
+
+
+def px_src_counts(st):
+    """data.json pxSrc.fb — 2차 출처 집계 (관문이 모양을 봐요). (순수 함수)"""
+    return {"n": st["n"], "conf": st["conf"], "mkt": len(st.get("mkt") or []), "noDaum": len(st["noDaum"]), "bad": len(st["bad"]),
+            "noYahoo": len(st["noYahoo"]),
+            "diff": len(st["diff"]), "yMeta": int(st.get("yMeta") or 0), "diffEx": [f"{c} {n} {a:.0f}/{b:.2f}" for c, n, a, b in st["diff"][:20]], "must": list(st["must"])}
+
+
+def kr_primary_check(listing, px_date, yahoo, sample=PX_CHECK_SAMPLE, must=GATE_MUST):
+    """1차 출처(목록 파일 최종본)의 공식 종가를 야후 종가와 맞춰 봐요 — 필수 종목 + 표본 (2026-11-19 · 순수 함수 · 로그와 pxSrc.chk 만).
+    표본: 코스피 · 코스닥 종목을 코드 순으로 늘어놓고 고르게 sample 개. 반환: {"src", "n", "same", "none", "diff": [...]}."""
+    rows = {str(r["Code"]).strip(): r for _, r in listing.iterrows()}
+    pick = [c for c in must if c in rows]
+    pick += [c for c in px_check_sample(sorted(c for c, r in rows.items() if yahoo_kr_symbol(c, r.get("Market"))), sample) if c not in pick]
+    out = {"src": "yahoo", "n": 0, "same": 0, "none": 0, "diff": []}
+    for c in pick:
+        off = kr_official_close(rows[c])
+        y = _fin((yahoo.get(c) or {}).get(px_date))
+        if off is None or y is None:
+            out["none"] += 1
+            continue
+        out["n"] += 1
+        if abs(y - off) <= KR_FB_CLOSE_TOL:
+            out["same"] += 1
+        else:
+            out["diff"].append(f"{c} {rows[c].get('Name', '')} {off:.0f}/{y:.2f}")
+    return out
+
+
+def px_src_final(src, stocks):
+    """발행 직전의 data.json pxSrc (2026-11-19 · 순수 함수): 발행하는 한국 종목(cls kr · 목록에서 온 것) 수를 출처별로 (n)."""
+    if not isinstance(src, dict):
+        return None
+    out = dict(src)
+    out["n"] = {src.get("px") or "none": sum(1 for x in stocks if x.get("cls") == "kr")}
+    return out
+
+
+def kr_ended_days(px_date, trade_days, today, max_days=KR_FB_MAX_DAYS):
+    """기준일(1차 출처) 뒤에 이미 끝난 거래일 (KOSPI 일봉 날짜 · 오늘은 빼요 · 기준일이 없으면 최근 max_days 거래일). (순수 함수)"""
+    ds = sorted({pd.Timestamp(t).date() for t in trade_days})
+    ended = [d for d in ds if d < today and (px_date is None or d > px_date)]
+    return ended[-max_days:]
+
+
+def kr_second_source(px_date, listing, ended, now, special, universe_of, fallback=kr_fallback_days, names=None):
+    """1차 출처 뒤에 끝난 거래일이 있으면 2차 출처로 그날들을 만들어요 (2026-11-19 · Jack 규칙 3).
+    반환: (기준일, 목록 DataFrame, {날짜: DataFrame} 기준일 앞 2차 출처 날들 (d1 · val20 · 기준가 연결에 써요), pxSrc dict, 로그 [(크게?, 글)],
+    그날 전체 종목 목록 (2차 출처 날이면 확인 못 한 종목까지 · 주식 수에만 써요 · 1차 출처면 목록 그대로) 과 다음 상장주식수 {코드: 주식 수}).
+    기준일은 필수 종목이 모두 확인된 가장 최근 날. 그런 날이 없으면 1차 출처 그대로 (관문의 '끝난 거래일' 줄이 멈춰요)."""
+    logs = []
+    src = {"v": 1, "px": PX_SRC_LISTING if px_date else None, "date": px_date.isoformat() if px_date else None,
+           "days": {}, "fb": None, "must": [], "chk": None, "n": {}}
+    if not ended:
+        return px_date, listing, {}, src, logs, (listing, {})
+    fb, notes = fallback(ended, universe_of, now, special)
+    for n in notes:
+        logs.append((n.startswith("!!"), n.removeprefix("!! ")))
+    names = names or {}
+    for d, (df, st) in sorted(fb.items()):
+        nm = dict(names)
+        loud, txt = kr_fb_note(d, st, nm)
+        logs.append((loud, txt))
+    good = [d for d, (df, st) in fb.items() if not st["must"] and len(df)]
+    if not good:
+        logs.append((True, f"2차 출처로 필수 종목을 모두 확인한 날이 없어요 ({', '.join(d.isoformat() for d in ended)}) — 기준일 {px_date} 그대로 "
+                           "(관문의 '끝난 거래일' 줄이 발행을 멈춰요)"))
+        last = max(fb) if fb else None
+        if last is not None:
+            src["fb"] = px_src_counts(fb[last][1])
+            src["fbDate"] = last.isoformat()
+        return px_date, listing, {}, src, logs, (listing, {})
+    pick = max(good)
+    df, st = fb[pick]
+    known = {d: fb[d][0] for d in fb if d < pick and len(fb[d][0])}
+    src.update({"px": PX_SRC_FB, "date": pick.isoformat(), "fb": px_src_counts(st), "must": list(st["must"])})
+    src["days"] = {d.isoformat(): PX_SRC_FB for d in sorted(known) + [pick]}
+    skipped = [d for d in ended if d > pick]
+    logs.append((bool(skipped), f"기준일: {pick} — 2차 출처 (다음 × 야후 · 확인된 {len(df):,}종목 · 1차 출처 최종본 {px_date})"
+                 + (f" · 그 뒤 확인 못 한 끝난 거래일 {', '.join(d.isoformat() for d in skipped)} (관문이 멈춰요)" if skipped else "")))
+    uni = st.get("_uni")
+    return pick, df.copy(), known, src, logs, (uni if uni is not None else df, st.get("_daumShr") or {})
 
 
 REF_LINK = ("ok", "new", "unknown", "break")   # KRX 기준가 연결 상태 — 뒤로 갈수록 나빠요 (모을 때 가장 나쁜 것)
@@ -980,6 +1481,62 @@ def _txt(x):
     return "" if t in ("", "nan", "NaN", "None", "null", "undefined") or t in DASHES else t
 
 
+KR_DESC_TAIL = re.compile(r"(?: · (?:KOSPI|KOSDAQ|KOSDAQ GLOBAL|KONEX) 상장)?(?: · 시가총액 [0-9,.]+(?:조원|억원))?$")
+IND_CARRY_WARN_DAYS = 14   # 이어 쓴 업종 글자가 이보다 오래되면 관문이 경고해요 (validate_data 와 같은 값 · 2026-11-19)
+
+
+def kr_desc_parse(dk):
+    """지난 발행본의 dk ('업종 · 주요제품: … · 시장 상장 · 시가총액') → (업종, 주요제품). kr_desc_text 로 다시 만들어 같은 글이 나올 때만
+    (업종 이름에 ' · ' 가 들어 있어도 돼요 — '전동기, 발전기 및 전기 변환 · 공급 · 제어 장치 제조업'). 못 읽으면 None. (순수 함수)"""
+    if not isinstance(dk, str):
+        return None
+    s = " · " + dk
+    m = KR_DESC_TAIL.search(s)
+    head, tail = s[:m.start()].removeprefix(" · "), s[m.start():]
+    if head.startswith("주요제품: "):
+        ind, prod = "", head[len("주요제품: "):]
+    elif " · 주요제품: " in head:
+        ind, prod = head.split(" · 주요제품: ", 1)
+    else:
+        ind, prod = head, ""
+    back = (" · " + " · ".join(b for b in (ind, f"주요제품: {prod}" if prod else "") if b) if (ind or prod) else "") + tail
+    return (ind, prod) if back.removeprefix(" · ") == dk else None
+
+
+def kr_prev_desc(prev):
+    """지난 발행본(data.json)의 국내 종목 업종 · 주요제품 {코드: (업종, 주요제품)} 과 그 업종 글자의 날짜 (2026-11-19).
+    날짜: 지난 발행본이 이미 이어 쓴 글자가 있으면 그 indSrc.asOf (더 오래된 날), 아니면 지난 발행 날짜. 읽지 못한 dk 수도 돌려줘요."""
+    out, bad = {}, 0
+    for x in (prev or {}).get("stocks") or []:
+        if x.get("cls") != "kr" or not x.get("t") or not x.get("dk"):
+            continue
+        p = kr_desc_parse(x["dk"])
+        if p is None:
+            bad += 1
+            continue
+        if p[0]:
+            out[str(x["t"])] = p
+    pi = (prev or {}).get("indSrc") or {}
+    day = pi.get("asOf") if pi.get("carried") else str((prev or {}).get("publishedAt") or "")[:10] or None
+    return out, day, bad
+
+
+def kr_desc_carry(desc, prev_desc, codes):
+    """KRX-DESC 에 업종이 없는 종목은 지난 발행본의 업종 · 주요제품을 이어 써요 (2026-11-19 · Jack: "carry forward the last known industry,
+    with a loud log line" · 순수 함수). 반환: (desc, 이어 쓴 코드들, 업종이 없는데 지난 발행본에도 없는 코드들)."""
+    out, carried, none = dict(desc), [], []
+    for c in sorted(codes):
+        if (out.get(c) or ("", ""))[0]:
+            continue
+        p = prev_desc.get(c)
+        if p and p[0]:
+            out[c] = p
+            carried.append(c)
+        else:
+            none.append(c)
+    return out, carried, none
+
+
 def kr_desc_text(industry, products, market, cap):
     """국내 종목 한 줄 설명: '업종 · 주요제품: … · 시장 상장 · 시가총액'. 빈 칸·nan 은 건너뛰어요. (순수 함수)"""
     bits = []
@@ -1161,7 +1718,7 @@ def select_kr_universe(listing, max_n):
 
 def load_kr_listing(today):
     """(목록 날짜, DataFrame). 못 찾으면 (None, None) — 부르는 쪽이 실행을 멈춥니다."""
-    d, df, note, notes = pick_final_listing(today, _fetch_listing_csv, _listing_commit_kst)
+    d, df, note, notes = pick_final_listing(today, _fetch_listing_csv, _listing_commit_kst, unknown_final=False)
     for n in notes:
         log(f"· {n}" if "특별 거래시간" in n else f"  (종목 목록 {n})")
     if d is None:
@@ -3637,13 +4194,17 @@ def icr_inputs(fin):
     return None, None, None, None, ("op" if not any_op else "neg" if neg else "op" if has_int else "ie")
 
 
-def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None, pref_caps=None):
+def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None, pref_caps=None, pref_missing=None):
     """기업분석 탭이 쓰는 corp.json 을 만듭니다. (순수 함수 — 테스트 가능)
     v19.1b: extra = apply_div_basis 의 {코드: 칸} (현금배당금총액 cash3 · 회사가 낸 주당순이익 eps3r · 같은 기준 순이익 epsNi3 · epsB).
     flRan = 실제로 돌린 재무 경고 검사(입력이 다 있었던 것), flNa = 금융업이라 해당 없는 검사. 앱은 네 검사(cr 유동비율 ·
     icr 이자보상배율 · l3 3년 연속 적자 · imp 자본잠식)가 모두 flRan 이나 flNa 에 있을 때만 '재무 경고 신호는 없어요'라고 말할 수 있어요.
-    v19.1f: pref_caps = kr_pref_caps (목록 파일 전체의 우선주 시가총액, 조원) — 없으면 kr_stocks 안의 우선주로."""
+    v19.1f: pref_caps = kr_pref_caps (목록 파일 전체의 우선주 시가총액, 조원) — 없으면 kr_stocks 안의 우선주로.
+    2026-11-19: pref_missing = 상장 우선주의 공식 종가를 두 출처로 확인하지 못한 회사 (코드 앞 5자리) — 회사 시가총액을 알 수 없어 EV · P/CF 를
+    비우고 evNo "prefPx" 를 달아요 (COMPANY_CAP_WITH_PREF 일 때)."""
     extra = extra or {}
+    pref_missing = set(pref_missing or ())
+    ev_blank = []                                   # 2026-11-19: 우선주 종가를 확인하지 못해 EV · P/CF 를 비운 회사
     comps = []
     hold_log, hold_unknown, hold_bad = [], [], []   # v19.1d: 금융 아닌 지주 (코드, 이름, 유동비율, 이자보상배율) · 그룹 없는 지주 · 금융 지주인데 금융이 아님
     why_n = collections.Counter()                   # v19.1d: 이자보상배율을 못 돌린 이유별 기업 수 (flWhy)
@@ -3770,7 +4331,11 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None, pref_caps=Non
         # EV 계열·현금흐름 멀티플 (금융업은 EV 지표가 무의미하므로 제외)
         op0 = eff["op0"]
         ebitda = (op0 + eff["dep"]) if (op0 is not None and eff["dep"] is not None) else None
-        if s.get("cap") and fin:
+        pref_gap = COMPANY_CAP_WITH_PREF and not is_preferred(s["t"]) and s["t"][:5] in pref_missing
+        if pref_gap and s.get("cap") and fin:
+            row["evNo"] = "prefPx"                  # 회사 시가총액에 더할 우선주 종가를 두 출처로 확인하지 못했어요 (2차 출처 날)
+            ev_blank.append(f"{s['t']} {s.get('nk', '')}")
+        if s.get("cap") and fin and not pref_gap:
             co_cap = s["cap"] + (pref_cap[s["t"][:5]] if COMPANY_CAP_WITH_PREF and not is_preferred(s["t"]) else 0.0)   # 조원
             # v19.1f (리뷰 2026-11-08): EBITDA·매출은 연결 100% 라 EV 에 비지배지분(자본총계 − 지배주주 자본)도 더해요. 같은 시점의
             # 두 값이 다 있을 때만 (최신 분기 → 연간). 별도 재무제표는 비지배지분이 없어요. 연결인데 지배주주 자본이 없으면 0 으로 두고 로그
@@ -3861,6 +4426,9 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None, pref_caps=Non
         f"{src_n['ttm']:,} · 연간 {src_n['fy']:,}, 그중 TTM 이자가 없어 연간 영업이익·이자끼리 {src_n['fyBack']:,}) · 경고 "
         f"{sum(1 for c in comps if 'icr' in (c.get('fl') or {})):,}곳 (그중 영업손실 "
         f"{sum(1 for c in comps if (c.get('fl') or {}).get('icr', 1) < 0):,})")
+    if ev_blank:
+        log(f"  !! 상장 우선주의 종가를 두 출처로 확인하지 못해 회사 시가총액을 알 수 없는 회사 {len(ev_blank)}곳 — EV · P/CF 를 비웠어요 (evNo prefPx): "
+            + ", ".join(ev_blank[:15]) + (" …" if len(ev_blank) > 15 else ""))
     n_pc = sum(1 for c in comps if not is_preferred(c["t"]) and pref_cap.get(c["t"][:5]))
     log(f"· EV 회사 시가총액: 상장 우선주를 더한 회사 {n_pc:,}곳 ({'켬' if COMPANY_CAP_WITH_PREF else '끔'} · COMPANY_CAP_WITH_PREF · "
         f"우선주 목록 {'파일 전체' if pref_caps is not None else 'data.json 안'}) · 비지배지분 더하기 {'켬' if EV_WITH_NCI else '끔'}"
@@ -3969,6 +4537,21 @@ def fetch_korea(start, today, rf, prev=None):
     log("· KRX 종목 목록…")
     px_date, listing = load_kr_listing(today)
     list_src = "fdr_krx_data_cache"
+    # 2026-11-19 (Jack 규칙 3): 1차 출처(캐시 최종본) 뒤에 이미 끝난 거래일이 있으면 2차 출처 (다음 × 야후 · 두 종가가 원 단위까지 같은 종목만)
+    ks_all = fdr.DataReader(KR_INDEX, start, today)["Close"].dropna()
+    special = load_krx_special_sessions()
+    ended = kr_ended_days(px_date, ks_all.index, today)
+    names0 = dict(zip(listing["Code"].astype(str).str.strip(), listing["Name"].astype(str))) if listing is not None and "Name" in listing.columns else {}
+    px0 = px_date
+    px_date, listing, fb_known, px_src, fb_logs, (full_list, daum_shr) = kr_second_source(
+        px_date, listing, ended, dt.datetime.now(KST), special,
+        lambda d: kr_fb_universe(d, _fetch_listing_csv, fallback=listing), names=names0)
+    if ended:
+        log(f"  !! 1차 출처(캐시 최종본 {px0}) 뒤에 이미 끝난 거래일 {len(ended)}일: {', '.join(d.isoformat() for d in ended)} — 2차 출처(다음 × 야후 종가)로 확인해요")
+    for loud, txt in fb_logs:
+        log(f"  !! {txt}" if loud else f"· {txt}")
+    if px_src["px"] == PX_SRC_FB:
+        list_src = PX_SRC_FB
     if listing is None:
         listing, list_src = listing_from_prev(prev), "prev-data.json"
     code_col = next((c for c in ("Code", "Symbol", "ShortCode", "종목코드") if c in listing.columns), None)
@@ -3984,9 +4567,25 @@ def fetch_korea(start, today, rf, prev=None):
         if c not in listing.columns:
             listing[c] = np.nan
     listing["Name"] = listing["Name"].fillna(listing["Code"])
-    pref_shares = kr_pref_shares(listing)     # v19.1b: 상위 2,500개로 자르기 전 — 작은 우선주도 회사의 주식 수에 들어가야 해요
-    pref_caps = kr_pref_caps(listing)         # v19.1f: 같은 목록의 우선주 시가총액 (EV 의 회사 시가총액)
-    n_pref = sum(1 for c in listing["Code"] if is_preferred(str(c)))
+    # 2026-11-19 (리뷰 B1): 2차 출처 날은 확인된 종목만 목록에 있어요. 우선주 주식 수는 가격과 상관없으니 그날 전체 목록에서 (확인 못 한 우선주도 ·
+    # 다음 상장주식수와 맞춰 봐요) — EPS · BPS 주식 수와 상장 안 된 우선주 판단이 빠지지 않게. 우선주 시가총액은 확인된 종가로만 (kr_pref_caps(listing)),
+    # 확인 못 한 우선주가 있는 회사는 회사 시가총액을 몰라 EV · P/CF 를 비워요 (build_corp · evNo prefPx).
+    pref_list = full_list if px_src["px"] == PX_SRC_FB and full_list is not None else listing
+    pref_shares = kr_pref_shares(pref_list)   # v19.1b: 상위 2,500개로 자르기 전 — 작은 우선주도 회사의 주식 수에 들어가야 해요
+    pref_caps = kr_pref_caps(listing)         # v19.1f: 같은 목록의 우선주 시가총액 (EV 의 회사 시가총액) — 확인된 종가로만
+    pref_cap_missing = set()
+    if pref_list is not listing:
+        ok_codes = set(listing["Code"].astype(str).str.strip())
+        pcodes = [str(c).strip() for c in pref_list["Code"] if is_preferred(str(c).strip())]
+        unconf = sorted(c for c in pcodes if c not in ok_codes)
+        pref_cap_missing = {c[:5] for c in unconf}
+        shr_full = _shares_map(pref_list)
+        sdiff = sorted(c for c in pcodes if daum_shr.get(c) and shr_full.get(c) and int(shr_full[c]) != daum_shr[c])
+        nm = dict(zip(pref_list["Code"].astype(str).str.strip(), pref_list["Name"].astype(str)))
+        log(f"{'  !! ' if unconf or sdiff else '· '}우선주 (2차 출처 날): 주식 수는 그날 전체 목록 {len(pcodes):,}종목에서 · 종가를 확인 못 한 우선주 {len(unconf):,}"
+            + (" (" + ", ".join(f"{c} {nm.get(c, '')}" for c in unconf[:12]) + f") → 그 회사 {len(pref_cap_missing):,}곳은 EV · P/CF 를 비워요" if unconf else "")
+            + f" · 목록 파일과 다음의 주식 수가 다른 우선주 {len(sdiff):,}" + (f": {', '.join(sdiff[:12])}" if sdiff else ""))
+    n_pref = sum(1 for c in pref_list["Code"] if is_preferred(str(c)))
     n_pref_ok = sum(len(v) for v in pref_shares.values())
     log(f"{'  !! ' if n_pref_ok < n_pref else '· '}우선주 상장 주식 수 (배당 분할 확인용): {n_pref_ok:,} / {n_pref:,}종목 · "
         f"{len(pref_shares):,}개 회사" + (" — 주식 수가 빈 우선주는 그 회사의 배당을 확인하지 못할 수 있어요" if n_pref_ok < n_pref else ""))
@@ -4010,11 +4609,6 @@ def fetch_korea(start, today, rf, prev=None):
                 log(f"  !! 업종 정보 {src}: 예상한 열(Industry)이 없어요 {list(d.columns)} — 업종을 비워요")
         except Exception as e:
             log(f"  !! 업종 정보 {src} 실패: {e}")
-    if not desc and "_prev_s" in listing.columns:
-        log("  !! 업종은 지난 data.json 값을 그대로 사용")
-    elif not desc:
-        log("  !! 업종 정보를 못 받아왔어요 — 업종이 '기타'로 들어갑니다")
-
     n_all = len(listing)
     listing = select_kr_universe(listing, MAX_KR)
     if sample_size():
@@ -4023,6 +4617,27 @@ def fetch_korea(start, today, rf, prev=None):
     if n_all > MAX_KR:
         log(f"  → 전체 {n_all:,}개 중 시가총액 상위 {MAX_KR:,}개 처리 (MAX_KR)")
     log(f"  → {len(listing):,}개 종목 (필수 종목 {len(MUST_KR)}개 확인)")
+    # 2026-11-19: KRX-DESC 가 이름만 주고 업종을 비운 날 (11-18 · KRX 로그인 필요) — 지난 발행본의 업종 · 주요제품을 이어 써요 (크게 남겨요).
+    # 처리하는 종목(시가총액 상위 MAX_KR)만 세요 — 지난 발행본에 없는 종목 = 새로 들어온 종목
+    n_desc = sum(1 for v in desc.values() if v[0])
+    prev_desc, prev_day, prev_bad = kr_prev_desc(prev)
+    codes_all = set(listing["Code"].astype(str).str.strip())
+    desc, carried, no_ind = kr_desc_carry(desc, prev_desc, codes_all)
+    prev_codes = {str(x.get("t")) for x in (prev or {}).get("stocks") or [] if x.get("cls") == "kr"}
+    new_none = sorted(c for c in no_ind if c not in prev_codes)
+    names_l = dict(zip(listing["Code"].astype(str).str.strip(), listing["Name"].astype(str)))
+    ind_src = {"v": 1, "desc": n_desc, "carried": len(carried), "none": len(no_ind), "newNone": len(new_none),
+               "asOf": (prev_day if carried else today.isoformat()), "from": "KRX-DESC" + (" + prev" if carried else "")}
+    if carried:
+        log(f"  !! 업종: KRX-DESC 에 업종이 없어 지난 발행본({prev_day} 업종 글자)의 업종 · 주요제품을 이어 써요 — {len(carried):,}종목 "
+            f"(KRX-DESC 업종 {n_desc:,} · 지난 발행본에서 읽은 업종 {len(prev_desc):,} · 읽지 못한 설명 {prev_bad:,})"
+            + (f" · 업종이 없는 새 종목(지난 발행본에 없음) {len(new_none):,}: " + ", ".join(f"{c} {names_l.get(c, '')}" for c in new_none[:12]) if new_none else ""))
+    else:
+        log(f"· 업종: KRX-DESC {n_desc:,}종목 · 이어 쓴 종목 0 · 업종 없음 {len(no_ind):,} (그중 지난 발행본에 없던 종목 {len(new_none):,})")
+    if not n_desc and not carried and "_prev_s" in listing.columns:
+        log("  !! 업종은 지난 data.json 값을 그대로 사용")
+    elif not n_desc and not carried:
+        log("  !! 업종 정보를 못 받아왔어요 — 업종이 '기타'로 들어갑니다")
 
     # 공식 종가와 파일의 Close(저녁엔 시간외 가격) 비교 — 참고용 로그
     if px_date is not None:
@@ -4030,9 +4645,25 @@ def fetch_korea(start, today, rf, prev=None):
         cl = pd.to_numeric(listing["Close"], errors="coerce")
         diff = ((cl - off).abs() / off > 0.01).sum()
         log(f"· 공식 종가 = 시가총액 ÷ 상장주식수 (기준일 {px_date}) · 파일의 Close 가 1% 넘게 다른 종목 {int(diff):,}개 (시간외 가격)")
+    # 2026-11-19 (Jack 규칙 3): 1차 출처를 쓴 날도 필수 종목 + 표본을 야후 종가와 맞춰 봐요 (로그 · pxSrc.chk · 관문이 경고해요 — 빼지는 않아요)
+    if px_date is not None and px_src["px"] == PX_SRC_LISTING:
+        try:
+            cm = {str(c).strip(): m for c, m in zip(listing["Code"], listing["Market"])}
+            pick = [c for c in GATE_MUST if c in cm] + px_check_sample([c for c, m in cm.items() if yahoo_kr_symbol(c, m)])
+            pcm = {c: cm[c] for c in dict.fromkeys(pick)}
+            ych, _ = fetch_yahoo_kr_closes(pcm, px_date - dt.timedelta(days=7), px_date + dt.timedelta(days=1))
+            yfill = yahoo_fill_day(ych, pcm, px_date, krx_close(px_date, special))     # 그날 일봉 종가가 아직 빈 종목 (마감 뒤 regularMarketPrice)
+            px_src["chk"] = kr_primary_check(listing, px_date, ych)
+            px_src["chk"]["yMeta"] = yfill["meta"]
+        except Exception as e:
+            px_src["chk"] = {"src": "yahoo", "n": 0, "same": 0, "none": 0, "diff": [], "err": type(e).__name__}
+            log(f"  !! 1차 출처 야후 확인 실패: {type(e).__name__}: {str(e)[:120]}")
+        ck = px_src["chk"]
+        log(f"{'  !! ' if ck['diff'] or not ck['n'] else '· '}1차 출처 확인 (필수 종목 + 표본 {PX_CHECK_SAMPLE} · 야후 종가와 원 단위까지): 같음 {ck['same']:,} / {ck['n']:,}"
+            f" · 야후 값 없음 {ck['none']:,}" + (f" · 다름 {len(ck['diff'])}: {', '.join(ck['diff'][:12])}" if ck["diff"] else "")
+            + (f" · 야후를 받지 못했어요 ({ck['err']})" if ck.get("err") else ""))
 
     last = px_date or (today - dt.timedelta(days=1))
-    ks_all = fdr.DataReader(KR_INDEX, start, today)["Close"].dropna()
     # 기준일과 오늘 사이에 끝난 거래일이 있으면 가격이 하루 이상 낡았어요 (그날 최종 목록 파일이 없거나 아직 최종본 아님).
     # 관문(validate_data.py)도 KOSPI 일봉을 따로 받아 같은 검사를 하고 실패시켜요. 여기서는 크게 남겨요.
     if px_date is not None:
@@ -4048,7 +4679,7 @@ def fetch_korea(start, today, rf, prev=None):
     # 직전 파일이 KOSPI 의 직전 거래일과 다르면(그날 파일이 없거나 미완성이라 건너뛴 것) d1 은 이틀치 변화라 비워요.
     d1_map, v20_map, sessions, ok_prev = {}, {}, [], False
     if px_date is not None:
-        sessions, snotes, prev_final = kr_recent_sessions(px_date, _fetch_listing_csv, _listing_commit_kst)
+        sessions, snotes, prev_final = kr_recent_sessions(px_date, _fetch_listing_csv, _listing_commit_kst, special=special, known=fb_known)
         for n in snotes:
             log(f"  ({n})" if not n.startswith("!!") else f"  {n}")
         want_prev = kr_prev_session(px_date, ks_all.index)
@@ -4326,6 +4957,7 @@ def fetch_korea(start, today, rf, prev=None):
     meta = {"pxDate": px_date.isoformat() if px_date else None,
             "ksDate": ks_date.isoformat() if ks_date else None, "listSrc": list_src, "_index": kospi, "_prod": prod_map,
             "_prefShares": pref_shares, "_prefCaps": pref_caps, "krSeries": krs, "d1Blank": d1_blank}
+    meta.update({"pxSrc": px_src, "indSrc": ind_src, "_prefCapMissing": sorted(pref_cap_missing)})      # 2026-11-19: 공식 종가 출처 · 업종 글자 출처 (data.json · 관문 줄)
     return out, bench, mkt, meta
 
 
@@ -8876,6 +9508,13 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                           "저장된 재무제표가 있음 · noScale 분기 보고서가 없음 · eps · cap · anchor 기준값으로 봄 · flows 지난해 칸으로 봄 · notWon 원화가 "
                           "아닌 재무제표라 기준값을 보지 않음 · parLow 액면가가 100원 미만이라 자본금 ÷ 액면가를 보지 않음 · hit 걸린 곳 "
                           "(data.json unitChk 종목 수와 같아요)"),
+         "pxSrc": ("한국 공식 종가의 출처 (2026-11-19 · Jack 규칙 3: 늘 두 출처): px listing = 캐시(fdr_krx_data_cache)의 최종본 목록 파일 · "
+                   "daum+yahoo = 그날 최종본이 없어 다음 일별 시세 × 야후 .KS/.KQ 종가가 원 단위까지 같은 종목만 (한 출처뿐이거나 다르면 빠져요) · "
+                   "date 그 날짜 (= pxDate) · days d1 · val20 에 쓴 앞 거래일 중 2차 출처 날 · fb {n 목록 종목 · conf 확인 · noDaum · bad · noYahoo · "
+                   "diff 두 종가가 다름 · diffEx 예 · must 확인 못 한 필수 종목} · must 확인 못 한 필수 종목 (관문이 실패) · chk 1차 출처를 야후와 맞춘 "
+                   "필수 종목 + 표본 {n · same · none · diff} · n 발행한 한국 종목 수 (출처별)"),
+         "indSrc": ("한국 업종 글자의 출처 (2026-11-19): desc KRX-DESC 에서 업종을 받은 종목 · carried 받지 못해 지난 발행본에서 이어 쓴 종목 · "
+                    "asOf 이어 쓴 글자의 날짜 · none 업종 없음 · newNone 그중 지난 발행본에도 없던 새 상장"),
          "krSeries": ("국내 시계열 점검 (2026-11-14): 최근 거래일(days)의 네이버 일봉(수정주가)을 그날 공식 종가로 고친 봉 pinned · 종목 "
                       "pinStocks — 그날과 오늘 사이에 KRX 기준가(목록 파일의 Close − Changes)가 바뀌지 않았을 때만 (값 차이 "
                       f"{PIN_PX_TOL:.0%} 안, 또는 상장주식수가 오늘과 {PIN_SHR_TOL:.0%} 안이고 {PIN_REF_TOL:.0%} 안) · 기준가를 확인 못 한 날은 "
@@ -9171,6 +9810,8 @@ def main():
         "epsBasis": eps_basis,               # v19.1f: EPS·PER 은 지배주주 몫 — 앱의 '계산 방법을 고치는 중' 줄이 이걸 보면 사라져요
         "unitChkCover": unit_cover,          # (2026-11-13) 공시 단위 확인이 몇 곳을 어떤 방법으로 봤는지 (관문 줄이 보여 줘요)
         "krSeries": kmeta.get("krSeries"),   # (2026-11-14) 국내 시계열 공식 종가 고정 · 자기 점검 · 제한폭 넘는 움직임 (관문 줄이 봐요)
+        "pxSrc": px_src_final(kmeta.get("pxSrc"), stocks),   # (2026-11-19 · Jack 규칙 3) 공식 종가 출처 · 2차 출처 확인 수 (관문 줄이 봐요)
+        "indSrc": kmeta.get("indSrc"),       # (2026-11-19) 국내 업종 글자의 출처 · 이어 쓴 수 (KRX-DESC 가 비면 지난 발행본에서)
         # (2026-11-14) 발행하는 국내 종목의 빈 d1 이유 수 (발행하는 종목 목록에서 다시 세요 — 그 사이에 빠진 종목이 있어도 종목과 같아요) ·
         # 거래 없음을 가릴 수 있었는지 · 어긋난 행 · 표시하지 않은 필수 종목 (관문 줄이 봐요)
         "d1Blank": d1_blank_final(stocks, kmeta.get("d1Blank")),
@@ -9182,7 +9823,8 @@ def main():
         f"미국 {umeta['usPxDate']} · 환율 {fx_last:,.1f}")
 
     kr_mkt.update({"fx": round(fx_last, 1), "rf": round(rf * 100, 2)})
-    corp = build_corp(kr, fin_map, today.isoformat(), kr_mkt, extra=corp_extra, pref_caps=kmeta.get("_prefCaps"))
+    corp = build_corp(kr, fin_map, today.isoformat(), kr_mkt, extra=corp_extra, pref_caps=kmeta.get("_prefCaps"),
+                      pref_missing=kmeta.get("_prefCapMissing"))
     corp.update({"pxDate": kmeta["pxDate"], "publishedAt": published_at, "epsBasis": eps_basis})
     write_json(OUT_CORP, corp)
     dcf_n = sum(1 for c in corp["companies"] if c["dcfReady"])
