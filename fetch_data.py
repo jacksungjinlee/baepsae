@@ -4583,7 +4583,7 @@ def fetch_korea(start, today, rf, prev=None):
         sdiff = sorted(c for c in pcodes if daum_shr.get(c) and shr_full.get(c) and int(shr_full[c]) != daum_shr[c])
         nm = dict(zip(pref_list["Code"].astype(str).str.strip(), pref_list["Name"].astype(str)))
         log(f"{'  !! ' if unconf or sdiff else '· '}우선주 (2차 출처 날): 주식 수는 그날 전체 목록 {len(pcodes):,}종목에서 · 종가를 확인 못 한 우선주 {len(unconf):,}"
-            + (f" ({', '.join(f'{c} {nm.get(c, '')}' for c in unconf[:12])}) → 그 회사 {len(pref_cap_missing):,}곳은 EV · P/CF 를 비워요" if unconf else "")
+            + (" (" + ", ".join(f"{c} {nm.get(c, '')}" for c in unconf[:12]) + f") → 그 회사 {len(pref_cap_missing):,}곳은 EV · P/CF 를 비워요" if unconf else "")
             + f" · 목록 파일과 다음의 주식 수가 다른 우선주 {len(sdiff):,}" + (f": {', '.join(sdiff[:12])}" if sdiff else ""))
     n_pref = sum(1 for c in pref_list["Code"] if is_preferred(str(c)))
     n_pref_ok = sum(len(v) for v in pref_shares.values())
@@ -4631,7 +4631,7 @@ def fetch_korea(start, today, rf, prev=None):
     if carried:
         log(f"  !! 업종: KRX-DESC 에 업종이 없어 지난 발행본({prev_day} 업종 글자)의 업종 · 주요제품을 이어 써요 — {len(carried):,}종목 "
             f"(KRX-DESC 업종 {n_desc:,} · 지난 발행본에서 읽은 업종 {len(prev_desc):,} · 읽지 못한 설명 {prev_bad:,})"
-            + (f" · 업종이 없는 새 종목(지난 발행본에 없음) {len(new_none):,}: {', '.join(f'{c} {names_l.get(c, '')}' for c in new_none[:12])}" if new_none else ""))
+            + (f" · 업종이 없는 새 종목(지난 발행본에 없음) {len(new_none):,}: " + ", ".join(f"{c} {names_l.get(c, '')}" for c in new_none[:12]) if new_none else ""))
     else:
         log(f"· 업종: KRX-DESC {n_desc:,}종목 · 이어 쓴 종목 0 · 업종 없음 {len(no_ind):,} (그중 지난 발행본에 없던 종목 {len(new_none):,})")
     if not n_desc and not carried and "_prev_s" in listing.columns:
