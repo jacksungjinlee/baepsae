@@ -64,8 +64,8 @@ def run(body):
             f"const CORP = JSON.parse(fs.readFileSync({json.dumps(os.path.join(FIX, 'corp.json'))}, 'utf8'));\n"
             f"const L = {json.dumps([L1, L2, L3, L4], ensure_ascii=False)};\n"
             # 파이프라인처럼: 삼성전기 = 줄 1 (nc-unexplained) · 현대차 = 줄 2 (주주배정 유상증자) · SK하이닉스 = 줄 3 (배당 표가 어긋남) ·
-            # 신한지주 = 줄 없이 숨김 (총액 없음 · 방식을 모르는 유상증자 …) · KB금융 = 줄 2 표시가 있어도 수익률이 보이면 줄 없음 ·
-            # 삼성전자 = 모르는 표시 4 (줄 없음) · 애플 = 미국 (줄 없음)
+            # 신한지주 = 표시 없이 숨김 (방식을 모르는 유상증자 · 이름 없는 배당 표 이유 …) · KB금융 = 줄 2 표시가 있어도 수익률이 보이면 줄 없음 ·
+            # 삼성전자 = 모르는 표시 5 (줄 없음) · NAVER = 줄 4 (회사 공시에 조각이 빠짐) · 애플 = 미국 (줄 없음)
             "const hide = (s) => { s.dps3a = s.dps3.map((d) => (d > 0 ? null : d)); s.dpsF = [null, null, null]; s.divSt = 'nc'; delete s.dyt; delete s.dz; };\n"
             "const st = (t) => DATA.stocks.find((x) => x.t === t), co = (t) => CORP.companies.find((x) => x.t === t);\n"
             "DATA.divCheck = { v: 1 };\n"

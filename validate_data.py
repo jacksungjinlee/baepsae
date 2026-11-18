@@ -362,14 +362,15 @@ PROVE_EPS = 0.002        # 반올림 여유 (dps3a 원 둘째 자리 · 총액 �
 # 무상증자가 아닌 사건 · 곱이 1e-6 넘게 다름 · dvProof 없음 — 은 예전과 똑같이 실패해요.
 EXACT_TOL = 1e-6
 # v19.1j (Jack 2026-11-15 답 11 · 13 · 2026-11-19 · 새 줄만): 숨긴 배당수익률의 줄 — 종목의 dvLine 2 · 3 · 4 는 divCheck.proofSub(rights · data 안의 경우)와
-# 꼭 맞아요. fetch_data.py 와 같은 값을 따로 적어요.
+# 꼭 맞아요. fetch_data.py 와 같은 값을 따로 적어요. data 의 other (리뷰 2026-11-19) = 파이프라인이 이름을 붙이지 않은 배당 표 이유 — 줄이
+# 있으면 실패 (PROVE_SUB_LINE 에 없어요), 있기만 해도 그 줄이 경고 (새 이유 글에 이름을 붙일 때까지 이유를 말하지 않는 종목).
 PROVE_LINE = {"line": 1, "rights": 2, "data": 3, "missing": 4}
 PROVE_SUB = {"rights": ("sh", "shnew", "unk"),
-             "data": ("div", "pref0", "neg", "nototal", "prefmix", "nopfo", "nostk", "noshr")}
+             "data": ("div", "pref0", "neg", "nototal", "prefmix", "nopfo", "nostk", "noshr", "other")}
 PROVE_SUB_LINE = {"rights": {"sh": 2}, "data": {"div": 3, "nototal": 4, "nostk": 4, "pref0": 4, "nopfo": 4, "prefmix": 4}}   # 경우 → 줄 (Jack 2026-11-19: 4)
 PROVE_SUB_KO = {"sh": "주주배정 (새 주식 상장됨)", "shnew": "주주배정 (새 주식이 아직 상장 전)", "unk": "방식을 모르는 결정만", "div": "총액 ÷ 주당 배당이 주식 수와 다름", "pref0": "우선주 배당 줄이 있는데 주식의 총수 현황에 우선주 수가 따로 없음",
                 "neg": "총액이 우선주 몫보다 작음", "nototal": "총액 없음", "prefmix": "주당 배당이 다른 종류주가 섞임", "nopfo": "우선주 주식 수 모름",
-                "nostk": "그해 말 주식의 총수 현황 없음", "noshr": "오늘 상장 주식 수 없음"}
+                "nostk": "그해 말 주식의 총수 현황 없음", "noshr": "오늘 상장 주식 수 없음", "other": "이름을 붙이지 않은 배당 표 이유"}
 # v19.6a (새 줄만 · 늦추는 줄 없음 · docs/tasks/v19.6-records-alerts-dark.md Part I.1 · A.6): macro.json fxHist (원/달러 일별 환율 2016~)
 # 와 data.json splits (2016 년부터의 미국 주식 분할). 앱(v19.6a)은 새 미국 기록에 그 날짜의 환율을 저장하고(fxHist), 분할 전 기록을 새 주식
 # 수로 맞춰 읽어요(splits). 둘 다 사용자 기록에 영구히 남는 값이라 모양이 틀리면 실패. fxHist 가 없으면 경고 (앱이 지난 날짜의 미국 기록을
@@ -4074,8 +4075,9 @@ def check_v191j_lines(rep, dc, pf, kr, by, pdata):
     """v19.1j 새 줄 (Jack 2026-11-15 답 11 · 13 · 2026-11-19): 숨긴 배당수익률의 줄 — divCheck.proofSub 와 종목의 dvLine 2 · 3 · 4 가 꼭 맞아요 (우리 기록끼리).
     proofSub: v1 · rights · data 마다 {코드: 경우} 이고, 그 코드들 = divCheck.proof 의 rightsT · dataT, 경우는 정해진 것 (PROVE_SUB) ·
     dvLine 2 = rights 중 주주배정(sh) · dvLine 3 = data 중 배당 표가 회사의 주식 수와 실제로 어긋남(div) · dvLine 4 = data 중 회사 공시에 조각이
-    빠짐(nototal · nostk · pref0 · nopfo · prefmix) — 그 종목엔 꼭, 다른 종목엔 없음 (PROVE_SUB_LINE). 없으면 v19.1j 전
-    데이터라 경고 한 줄만 — 직전 발행본에 있었는데 빠지면 실패 (줄 표시 2 · 3 은 위 '배당 기준 증명 기록' 줄이 이 기록 없이는 막아요)."""
+    빠짐(nototal · nostk · pref0 · nopfo · prefmix) — 그 종목엔 꼭, 다른 종목엔 없음 (PROVE_SUB_LINE). data 의 other (파이프라인이 이름을
+    붙이지 않은 배당 표 이유 · 리뷰 2026-11-19)는 줄이 없어야 하고, 하나라도 있으면 맞더라도 이 줄이 경고예요. 없으면 v19.1j 전
+    데이터라 경고 한 줄만 — 직전 발행본에 있었는데 빠지면 실패 (줄 표시 2 · 3 · 4 는 위 '배당 기준 증명 기록' 줄이 이 기록 없이는 막아요)."""
     name = "숨긴 배당수익률의 줄 (divCheck.proofSub · dvLine 2 · 3 · 4)"
     sub = dc.get("proofSub")
     if not isinstance(sub, dict):
@@ -4102,11 +4104,15 @@ def check_v191j_lines(rep, dc, pf, kr, by, pdata):
         diff = sorted(set(got.items()) ^ set(want.items()))
         bad.append(f"줄 표시 {len(got)} · 기록 {len(want)} 가 달라요 (예: {diff[0][0]} {diff[0][1]})")
     n2, n3, n4 = (sum(1 for v in want.values() if v == n) for n in (2, 3, 4))
+    dm = sub.get("data") if isinstance(sub.get("data"), dict) else {}
+    oth = sorted(t for t, v in dm.items() if v == "other")                     # 리뷰 2026-11-19: 이름을 붙이지 않은 배당 표 이유 → 경고
     rep.add(name, not bad, (f"유상증자 줄 {n2} · 배당 자료 줄 {n3} · " + (f"빠진 자료 줄 {n4} · " if n4 else "") + "줄 없음 "
-                            f"{sum(len(sub.get(k) or {}) for k in PROVE_SUB if isinstance(sub.get(k), dict)) - n2 - n3 - n4}") if not bad
-            else " · ".join(bad[:3]),
+                            f"{sum(len(sub.get(k) or {}) for k in PROVE_SUB if isinstance(sub.get(k), dict)) - n2 - n3 - n4}"
+                            + (f" · 이름 없는 배당 표 이유 {len(oth)}곳 (줄 없음): {', '.join(oth[:4])}{'…' if len(oth) > 4 else ''}" if oth else ""))
+            if not bad else " · ".join(bad[:3]),
             "v1 · rights · data 의 종목 = proof 의 rightsT · dataT · dvLine 2 = 주주배정(sh) · 3 = 배당 표가 주식 수와 실제로 어긋남(div) · "
-            "4 = 회사 공시에 조각이 빠짐(nototal · nostk · pref0 · nopfo · prefmix) — 그 종목에만")
+            "4 = 회사 공시에 조각이 빠짐(nototal · nostk · pref0 · nopfo · prefmix) — 그 종목에만 · 이름 없는 이유(other)는 경고",
+            warn=bool(oth))
 
 
 # ── 파일 읽기 ───────────────────────────────────────────────

@@ -116,9 +116,10 @@ export function tileViews(load, s) {
     add("div", T().label.div, r, phrase, number, { dps3: r.d3 || null, dps: r.dps ?? null, y: r.yieldPct, dpsok: r.dpsOk ? "1" : "" },
       divArt(r.rule));
     // v19.1i (Jack's line, 2026-11-08) and v19.1j (Jack, 2026-11-15, answers 11 and 13): a Korean payer whose yield is hidden says
-    // why, in the number's place, when the pipeline marked the reason (data.json dvLine -> company.js divHiddenLine: share count
-    // changed with no filing, a 주주배정 rights issue past its 권리락, or a dividend table that disagrees with the share counts);
-    // other hidden yields stay as they were. One line at most.
+    // why, in the number's place, when the pipeline marked the reason (data.json dvLine -> company.js divHiddenLine: 1 share count
+    // changed with no filing, 2 a 주주배정 rights issue past its 권리락, 3 a dividend table that disagrees with the share counts,
+    // 4 (Jack, 2026-11-19) the company's filings lack a piece the calculation needs); other hidden yields stay as they were.
+    // One line at most.
     const last = out[out.length - 1];
     const hid = last && last.topic === "div" && !number && !usOf(s) ? divHiddenLine(s, co) : null;
     if (hid && C.co.div[hid]) {

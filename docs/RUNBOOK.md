@@ -570,7 +570,10 @@ It does **not** restore (the stock stays exactly as before, with its reason in `
   year-end share table: 대신밸류리츠), `pref0` (a preferred dividend row while the share table lists no separate preferred count —
   voting preferred shares are written with the common ones: 메디톡스), `nopfo`, `prefmix`. No line only for `neg` (the total is smaller
   than the preferred share of it: a disagreement or our grouping of share classes) and `noshr` (no listed share count: not a company
-  filing); 0 stocks;
+  filing); 0 stocks. A dividend-table reason text the run has no name for (`prove_receiving` returned a text missing from
+  `PROVE_DATA_WHY`) is recorded as `other`: no line (we do not know which one is true), a loud "!! 배당 표의 이름 없는 이유" log line
+  with the count, and a gate warning. Fix: read the stock's dividend table, then give the new text its case in `PROVE_DATA_WHY`
+  (both files' `PROVE_SUB` if it is a new case) — never map it to a line by guess;
 - `fail` — a lookup failed (DART, the per-run limit, an unreadable filing, the share report not received): nothing changes and
   the next run tries again.
 
@@ -612,7 +615,8 @@ uncounted 2, data 22, the 32.5% yield 1; lines: 1 → 0 stocks, 2 → 8, 3 → 1
 - **FAIL "숨긴 배당수익률의 줄 (divCheck.proofSub · dvLine 2 · 3 · 4)"** (since #PR): `divCheck.proofSub` is not v1 with exactly `rights`
   and `data`, its stocks differ from the proof's `rightsT` · `dataT`, a case is unknown, or the marks differ: `dvLine` 2 must be on
   exactly the `rights` stocks with case `sh`, `dvLine` 3 on exactly the `data` stocks with case `div`, `dvLine` 4 on exactly the `data`
-  stocks with case `nototal` · `nostk` · `pref0` · `nopfo` · `prefmix` (`PROVE_SUB_LINE`). Our own bookkeeping only: look at the run's
+  stocks with case `nototal` · `nostk` · `pref0` · `nopfo` · `prefmix` (`PROVE_SUB_LINE`); a `data` stock with case `other` carries no
+  line, and any `other` turns the row into a WARN (see `data` above). Our own bookkeeping only: look at the run's
   "숨긴 배당수익률의 줄" and "그대로 숨김" log lines. A file without `proofSub` (before #PR) is only a warning unless the previous publish
   had it; without it a `dvLine` 2, 3 or 4 fails the "배당 기준 증명 기록" row.
 

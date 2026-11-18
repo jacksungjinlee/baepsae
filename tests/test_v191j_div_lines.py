@@ -135,18 +135,21 @@ def test_the_line_for_each_reason_is_decided_in_one_function():
     assert F.prove_line("data", "div") == 3
     for sub in ("nototal", "nostk", "pref0", "nopfo", "prefmix"):
         assert F.prove_line("data", sub) == 4, sub                                          # 회사 공시에 조각이 빠졌으면 줄 4 (Jack 2026-11-19)
-    for sub in ("neg", "noshr"):
-        assert F.prove_line("data", sub) is None, sub                                       # 어긋남인지 모름 · 회사 공시가 아님 — 줄 없음
+    for sub in ("neg", "noshr", "other"):
+        assert F.prove_line("data", sub) is None, sub                                       # 어긋남인지 모름 · 회사 공시가 아님 · 이름 없는 이유 — 줄 없음
     for reason in ("ratio", "basis", "uncounted", "fail", "today"):
         assert F.prove_line(reason, "div") is None and F.prove_line(reason, "sh") is None
     assert set(F.PROVE_SUB_LINE["data"]) <= set(F.PROVE_SUB["data"]) and set(F.PROVE_SUB_LINE["rights"]) <= set(F.PROVE_SUB["rights"])
 
 
 def test_every_dividend_table_reason_has_its_own_case():
-    """prove_receiving 이 돌려주는 이유 글마다 정해진 경우가 있어요 (모르는 글이면 줄 없는 쪽으로 가요)."""
+    """prove_receiving 이 돌려주는 이유 글마다 정해진 경우가 있어요. 모르는 글이면 other — 줄이 없어요 (리뷰 2026-11-19 · 아래
+    test_an_unnamed_dividend_table_reason_gets_no_line_and_is_counted)."""
     whys = {F.prove_receiving(0, 100, [])[2], F.prove_receiving(1e9, 100, [120.0, 130.0], 1e6)[2], F.prove_receiving(1e9, 100, [120.0], None)[2],
             F.prove_receiving(1e9, 100, [120.0], 0)[2], F.prove_receiving(1e6, 100, [120.0], 1e6)[2]}
     assert whys == set(F.PROVE_DATA_WHY) and set(F.PROVE_DATA_WHY.values()) <= set(F.PROVE_SUB["data"])
+    assert "other" in F.PROVE_SUB["data"] and "other" not in F.PROVE_DATA_WHY.values() and "other" not in F.PROVE_SUB_LINE["data"]
+    assert F.prove_line("data", "other") is None
     assert F.PROVE_DATA_WHY[F.prove_receiving(1e9, 100, [120.0], 0)[2]] == "pref0"          # 메디톡스 (의결권 있는 우선주가 한 줄)
 
 
@@ -269,6 +272,30 @@ def test_data_payers_get_line_three_only_when_the_table_really_disagrees():
     assert by["290650"]["dvWhy"] == {"v": 1, "st": "nc-mismatch"}                              # 맞춤 이유(#98) 그대로 · 줄은 dvLine 하나로
     lines = " ".join(why.summary())
     assert "배당 자료 줄(3) 4 · 빠진 자료 줄(4) 3 · rights · data 중 줄 없음 0" in lines
+
+
+def test_an_unnamed_dividend_table_reason_gets_no_line_and_is_counted(monkeypatch):
+    """리뷰 2026-11-19: prove_receiving 이 PROVE_DATA_WHY 에 없는 새 이유 글을 돌려주면 다른 경우(예전엔 nototal → 줄 4)로 짐작하지 않아요 —
+    other 로 적고 줄 없음 · 로그에 '!!' 와 수. 이름이 있는 다른 종목의 줄은 그대로예요."""
+    orig = F.prove_receiving
+
+    def new_text(cash, d, pds, pfo=None):
+        n, pd, why = orig(cash, d, pds, pfo)
+        return (n, pd, "새로 생긴 배당 표 이유" if why == "현금배당금총액 없음" else why)
+    monkeypatch.setattr(F, "prove_receiving", new_text)
+    by, counts, why, _ = run("003380", "086900", "002310")
+    assert "dvLine" not in by["003380"] and "dyt" not in by["003380"] and "dvProof" not in by["003380"]
+    assert by["086900"]["dvLine"] == 4 and by["002310"]["dvLine"] == 3
+    assert counts["proofSub"]["data"] == {"002310": "div", "003380": "other", "086900": "pref0"}
+    assert sorted(counts["proof"]["dataT"]) == ["002310", "003380", "086900"]
+    out = why.summary()
+    loud = [x for x in out if x.startswith("  !! 배당 표의 이름 없는 이유")]
+    assert len(loud) == 1 and "1곳" in loud[0] and "003380" in loud[0], out
+    assert any("그대로 숨김(data) 003380" in x and "새로 생긴 배당 표 이유" in x and "줄 없음 (other" in x for x in out)
+    assert "배당 자료 줄(3) 1 · 빠진 자료 줄(4) 1 · rights · data 중 줄 없음 1" in " ".join(out)
+    monkeypatch.setattr(F, "prove_receiving", orig)
+    _, _, why, _ = run("003380")
+    assert not any("배당 표의 이름 없는 이유" in x for x in why.summary())                       # 이름이 있으면 그 줄은 없어요
 
 
 def test_line_one_is_unchanged():
@@ -433,6 +460,7 @@ def test_marks_that_match_the_record_pass(line_pair):
     lambda d, a, b, c: a.update(dvLine=2),                                                        # 다른 줄
     lambda d, a, b, c: c.update(dvLine=3),
     lambda d, a, b, c: d["divCheck"]["proofSub"]["data"].update({a["t"]: "nototal"}),             # 기록과 표시가 다름
+    lambda d, a, b, c: d["divCheck"]["proofSub"]["data"].update({b["t"]: "other"}),               # 이름 없는 이유인데 줄 4 표시 (리뷰 2026-11-19)
     lambda d, a, b, c: d["divCheck"]["proofSub"]["data"].pop(b["t"]),                             # 기록의 종목 ≠ dataT
     lambda d, a, b, c: d["divCheck"]["proofSub"]["rights"].update({c["t"]: "maybe"}),             # 모르는 경우
     lambda d, a, b, c: d["divCheck"]["proofSub"].update(v=2),
@@ -443,6 +471,20 @@ def test_marks_that_disagree_with_the_record_fail(line_pair, change):
     change(cur["data"], a, b, c)
     rep = check(cur, prev)
     assert SUB_ROW in {r[0] for r in rep.failed}, rep.table()
+
+
+def test_an_unnamed_reason_without_a_line_only_warns(line_pair):
+    """리뷰 2026-11-19: 이름을 붙이지 않은 배당 표 이유(other)는 줄 없이 발행하되 관문이 경고해요 (이유를 말하지 않는 빈칸이 있다고)."""
+    cur, prev, (a, b, c) = line_pair
+    cur["data"]["divCheck"]["proofSub"]["data"][b["t"]] = "other"
+    b.pop("dvLine")
+    rep = check(cur, prev)
+    assert not rep.failed, rep.table()
+    row = rows_of(rep)[SUB_ROW]
+    assert row[3] == "WARN" and f"이름 없는 배당 표 이유 1곳 (줄 없음): {b['t']}" in row[1], row
+    assert "유상증자 줄 1 · 배당 자료 줄 1 · 줄 없음 1" in row[1]
+    items = [i for _, xs in rep.details for i in xs]
+    assert any(b["t"] in i and "(이름을 붙이지 않은 배당 표 이유 · 줄 없음)" in i for i in items)
 
 
 @pytest.mark.parametrize("change", [
