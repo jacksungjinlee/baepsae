@@ -30,6 +30,11 @@ Two things must never happen:
 
 Every rule below exists to prevent one of them. In Oct 2026 both happened for a month, silently (`docs/HANDOFF.md` § 5).
 
+**Emergency rule (Jack, 2026-11-19):** "When the live site's data is more than one trading day late, or the site is broken,
+fix it before anything else. You may merge the fix, including repairs to tests that fail only because of the date, once CI
+is green, the real-data checks pass and one Opus review is done, without waiting for Jack. Never loosen a safety check.
+Report right after."
+
 ## Safety rules are frozen
 
 - `validate_data.py` thresholds, the must-have stock list, freshness limits, and every test in `tests/` are safety
