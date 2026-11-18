@@ -165,11 +165,6 @@ after it merges and what comes next.
   has every market cap blank; the midday file looks complete but has intraday prices.
 - **Prices are official closes with one date.** Every KR number derives from one `pxDate` (the official close date).
   Cut every series to that date. Never mix today's partial bar into "closing" data.
-- **Two sources for official closes (Jack, 2026-11-19):** "Permanent two-source rule: official closes always come from two
-  independent sources. If the primary is late or not final, the second one is used automatically after a cross-check. The
-  publish stops only when neither can be confirmed." Today: the volunteer KRX list file when final; otherwise Daum's
-  official daily prices, used only where Yahoo `.KS`/`.KQ` agrees to the won (#137). Naver's daily close is not the official
-  close (it includes after-hours trades); never use it as a close source.
 - **All dates in KST** (`ZoneInfo("Asia/Seoul")`). The runner's clock is UTC; `date.today()` there is a bug.
 - **Never mix units or markets.** Same unit for the same field across KR and US; rank factors within each market.
 - **A date shown to users describes the content**, not the run time. Each section carries its own content date.
