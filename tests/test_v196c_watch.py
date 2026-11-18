@@ -147,6 +147,37 @@ def test_q15_an_exactly_equal_shown_value_meets_price_krw_usd_and_pbr_and_yield_
                            "PBR 0.8배 아래 조건에 맞아요. 지금 0.80배예요.", "배당수익률 4% 이상 조건에 맞아요. 지금 4.0%예요."], got["text"]
 
 
+def test_a_korean_price_with_decimals_from_a_records_file_is_judged_as_the_whole_won_the_chip_shows():
+    """Delta review (2026-11-19): the sheet takes whole won only, but store.js takes 2 decimals for any price, so a hand-edited
+    기록 불러오기 file can bring 74999.5. The chip reads "주가 75,000원 아래" (condText rounds), so the chip state, the mark and the
+    홈 row judge it as 75,000원 too (watch.js condV); the stored number is kept as it came. A US price is not rounded."""
+    got = run("""
+      const file = JSON.stringify({ v: 1, decks: [], watch: { '005930': { at: '2026-11-05', conds: [{ k: 'pxBelow', v: 74999.5 }] },
+                                                             AAA: { at: '2026-11-04', conds: [{ k: 'pxBelow', v: 149.99 }] } } });
+      const inc = S.parseImport(file, T);
+      const d = S.mergeStores({ v: 1, decks: [] }, inc, 1762900000000, [], T);
+      const kept = [d.watch['005930'].conds[0].v, d.watch.AAA.conds[0].v];
+      const day = (krPx, usPx) => {
+        const l = loadOf([kr('005930', { price: krPx }), us('AAA', { price: usPx })]);
+        const st = (t) => Wt.condState(l, l.byT.get(t), d.watch[t].conds[0], true);
+        const next = Wt.withWatchHits(d, l);
+        return { kr: [st('005930').state, st('005930').v, Wt.condText('pxBelow', st('005930').v, false)], us: [st('AAA').state, st('AAA').v],
+                 rows: Wt.watchHits(d, l).map((h) => [h.t, h.v, Wt.hitText(h.k, h.v, h.val, h.t === 'AAA')]),
+                 marks: next ? [next.watch['005930'].conds[0].hitAt ?? null, next.watch.AAA.conds[0].hitAt ?? null] : null };
+      };
+      out = { ok: !!inc, stored: kept, label: Wt.condText('pxBelow', 74999.5, false), eq: day(75000, 150), roundedEq: day(75000.4, 149.99), past: day(75001, 149.991) };""")
+    assert got["ok"] is True and got["stored"] == [74999.5, 149.99]           # the file is read and its number kept as it came
+    assert got["label"] == "주가 75,000원 아래"
+    eq = got["eq"]                                                            # shown 75,000원 against "75,000원 아래": met everywhere
+    assert eq["kr"] == ["met", 75000, "주가 75,000원 아래"] and eq["us"] == ["not", 149.99], eq
+    assert eq["rows"] == [["005930", 75000, "주가 75,000원 아래 조건에 맞아요. 지금 75,000원이에요."]] and eq["marks"] == ["2026-11-12", None], eq
+    r = got["roundedEq"]                                                      # 75,000.4 is shown as 75,000원; $149.99 equals $149.99
+    assert r["kr"][0] == "met" and r["us"] == ["met", 149.99] and [x[0] for x in r["rows"]] == ["005930", "AAA"], r
+    assert r["marks"] == ["2026-11-12", "2026-11-11"], r
+    p = got["past"]                                                           # one shown step past: not met, no row, no mark
+    assert p["kr"][0] == "not" and p["us"][0] == "met" and [x[0] for x in p["rows"]] == ["AAA"] and p["marks"] == [None, "2026-11-11"], p
+
+
 def test_q15_a_condition_already_met_at_save_time_marks_on_the_next_fresh_check_and_shows_once_on_home():
     """The branch's rule for a condition met the moment it is saved (unchanged by Q15): a new or changed condition is stored without a
     mark (withWatchConds), so the next fresh-data check marks it with today's close and 홈 shows its row for that close, once. With Q15

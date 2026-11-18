@@ -65,16 +65,22 @@ export const condMet = (k, val, v) => (k === "dyAtLeast" ? val >= v - 1e-9 : val
 // Fresh data: the daily check's own rule (stale, failed or undated data checks nothing).
 export const watchFresh = (load, now) => !!load && load.status === "ok" && dayState(load, now).ok;
 
-// One condition on today's data: { k, v, val, state, date } — state "met" · "not" (fresh data, a number) · "blank" (no
-// number) · "stale" (a number, data not fresh, or the stock priced at an earlier close than its market's: shown, never
-// judged). date = the stock's price date.
+// The entered number as the chip shows it, and so as it is judged: a Korean price in whole won (condText shows
+// Math.round(v)). The sheet only takes whole won, but store.js takes 2 decimals for any price, so a hand-edited records
+// file can bring 74999.5: it reads "주가 75,000원 아래" and is judged as 75,000원 by the chip, the mark and the 홈 row alike
+// (delta review, 2026-11-19). The stored number is left as it is. US prices, PBR and yields are shown and judged as stored.
+export const condV = (s, c) => (c.k === "pxBelow" && s && !usOf(s) ? Math.round(c.v) : c.v);
+
+// One condition on today's data: { k, v, val, state, date } — v the entered number as shown (condV) · state "met" · "not"
+// (fresh data, a number) · "blank" (no number) · "stale" (a number, data not fresh, or the stock priced at an earlier close
+// than its market's: shown, never judged). date = the stock's price date.
 const marketDate = (load, s) => (usOf(s) ? load.data.usPxDate : load.data.pxDate) || null;
 export function condState(load, s, c, fresh) {
-  const val = watchValue(s, c.k);
+  const val = watchValue(s, c.k), v = condV(s, c);
   const date = s && load && load.status === "ok" ? priceDate(load, s) : null;
-  if (val == null) return { k: c.k, v: c.v, val: null, state: "blank", date };
-  if (!fresh || !date || date !== marketDate(load, s)) return { k: c.k, v: c.v, val, state: "stale", date };
-  return { k: c.k, v: c.v, val, state: condMet(c.k, val, c.v) ? "met" : "not", date };
+  if (val == null) return { k: c.k, v, val: null, state: "blank", date };
+  if (!fresh || !date || date !== marketDate(load, s)) return { k: c.k, v, val, state: "stale", date };
+  return { k: c.k, v, val, state: condMet(c.k, val, v) ? "met" : "not", date };
 }
 // The conditions of an entry this app reads, in kind order (a later version's kinds are left out).
 export const condsOf = (e) => WATCH_KINDS.map((k) => (e && Array.isArray(e.conds) ? e.conds.find((c) => c && c.k === k) : null)).filter(Boolean);
@@ -114,7 +120,7 @@ export function watchHits(data, load, now, canMark = true) {
     if (!s) continue;
     for (const c of condsOf(w[t])) {
       const st = condState(load, s, c, true);
-      if (st.state === "met" && (c.hitAt == null || c.hitAt === st.date)) out.push({ t, s, k: c.k, v: c.v, val: st.val, date: st.date });
+      if (st.state === "met" && (c.hitAt == null || c.hitAt === st.date)) out.push({ t, s, k: c.k, v: st.v, val: st.val, date: st.date });
     }
   }
   return out;
