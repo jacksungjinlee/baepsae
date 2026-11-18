@@ -13008,6 +13008,103 @@ def scene_v196f_states(R, files, width=390):
         srv.shutdown()
 
 
+
+def scene_v196f_gaps(R, files, width=390):
+    """v19.6f 리뷰 C (2026-11-19): (a) 가진 미국 종목이 모두 빠지면(환율 기록 없음) 또는 이익인 종목 밖에 하나가 빠지면(평균 단가 없음)
+    '지금 손실 중인 미국 종목은 없어요.'(M3) 는 없고 빠진 종목의 줄만 · (b) 올해 배당이 환율 없는 미국 배당뿐이면 '약 0원' 없이 M1 과 설명만 ·
+    (c) data.json 에 미국 가격 날짜(usPxDate)가 없으면 손실 카드의 날짜 줄이 없어요 (한국 날짜를 대신 쓰지 않아요)."""
+    S = f"v19.6f 빠진 것 {width}"
+    data = clone(files)
+    site = build_site(data)
+    no_us = clone(files)
+    assert no_us["data.json"]["pxDate"] and no_us["data.json"].pop("usPxDate", None)
+    no_us_site = build_site(no_us)
+    today = now_dt().date().isoformat()
+    # DIS: Part C 전의 산 기록 (환율 없음) · $110.94 라 셌다면 손실이었을 종목
+    all_left = [tax_built("dtaxl", "배당 생활비 포트폴리오", "2025-01-02", [("DIS", "Walt Disney Company (The)", 1.0)], plan_fx=None,
+                          purchases=[tax_rec("DIS", 1, 150.0, "2025-03-03")])]
+    # AAPL: 달러 평균 단가 $150, 오늘 $344.63 (이익) · BAC: 평균 단가 없음 (빠짐)
+    mixed_left = [{"id": "dtaxm", "name": "가진 종목 포트폴리오", "createdAt": "2026-01-03", "kind": "imported", "settings": {"points": {"value": 3}, "strict": "normal"},
+                   "holdings": [{"t": "AAPL", "nk": "Apple Inc.", "cls": "us"}, {"t": "BAC", "nk": "Bank of America Corporation", "cls": "us"}],
+                   "purchases": [], "imported": [{"t": "AAPL", "nk": "Apple Inc.", "ccy": "USD", "qty": 2, "avg": 150.0},
+                                                 {"t": "BAC", "nk": "Bank of America Corporation", "ccy": "USD", "qty": 5}]}]
+    # 한국 종목만 가지고, 올해 배당은 환율 없는 미국 배당 2건뿐 (뺀 종목 KO)
+    div_only = [tax_built("dtaxo", "배당 생활비 포트폴리오", "2025-01-02", [("005930", "삼성전자", 1.0)],
+                          purchases=[tax_rec("005930", 10, 70000, "2025-03-04")],
+                          history=[{"t": "KO", "nk": "Coca-Cola Company (The)", "out": "2026-02-01", "cls": "us",
+                                    "divs": [tax_div("KO", 4.25, "2026-04-01"), tax_div("KO", 4.25, "2026-07-01")]}])]
+    cases = [("all-left", site, all_left, "dtaxl"), ("mixed-left", site, mixed_left, "dtaxm"), ("div-only", site, div_only, "dtaxo"),
+             ("no-us-date", no_us_site, tax_store("below")["decks"], "dtaxa")]
+    for case, st, store, did in cases:
+        srv, ctx, page, base = R.open(st, width, init=e_store(store), path=f"/app.html?dev=1#portfolio/returns/{did}")
+        logs = []
+        page.on("console", lambda m: logs.append(m.text))
+
+        def run():
+            at(page, f"portfolio/returns/{did}")
+            link = page.locator('[data-ui-v2="tax-link"]')
+            link.wait_for(state="visible")
+            link.locator("button").click()
+            tax_screen_common(page, width, today)
+            said = [m for m in logs if m.startswith("[v2] tax: ")]
+            lc, dc = page.locator('[data-ui-v2="tax-loss"]'), page.locator('[data-ui-v2="tax-div"]')
+            if case in ("all-left", "mixed-left"):
+                lc.wait_for(state="visible")
+                assert lc.get_attribute("data-stale") is None and lc.locator('[data-ui-v2="tax-loss-row"]').count() == 0
+                # M3 would be false here: the stock left out may be at a loss (DIS would be: 110.94 × 1,338 < 150 × any rate above 1,000)
+                assert lc.locator('[data-ui-v2="tax-loss-none"]').count() == 0, lc.inner_text()
+                assert C["tax"]["lossNone"] not in lc.inner_text(), lc.inner_text()
+                assert lc.locator('[data-ui-v2="tax-loss-note"]').count() == 0                       # 줄이 없으면 그 줄의 설명도 없어요
+                if case == "all-left":
+                    nf = lc.locator('[data-ui-v2="tax-no-fx"]')
+                    assert nf.inner_text() == fillp(C["tax"]["lossNoFx"], n=1, names="DIS") == "환율 기록이 없는 미국 종목 1개(DIS)는 빼고 계산했어요."
+                    assert lc.locator('[data-ui-v2="tax-no-avg"]').count() == 0
+                    assert any("losses card: 1 US stock(s) held, 0 at a loss; left out and named on the card: noFx DIS" in m for m in said), said
+                else:
+                    na = lc.locator('[data-ui-v2="tax-no-avg"]')
+                    assert na.inner_text() == fillp(C["ret"]["noAvg"], n=1, names="BAC") == "평균 단가가 없는 종목 1개(BAC)는 빼고 계산했어요."
+                    assert lc.locator('[data-ui-v2="tax-no-fx"]').count() == 0 and lc.locator('[data-ui-v2="tax-usd-today"]').count() == 0
+                    assert any("losses card: 2 US stock(s) held, 0 at a loss; left out and named on the card: noAvg BAC" in m for m in said), said
+                for k in ("tax-missing", "tax-no-price", "tax-stale"):
+                    assert lc.locator(f'[data-ui-v2="{k}"]').count() == 0, k
+            elif case == "div-only":
+                # the link opens for a dividend this year (tax.taxOpen); none could be counted: no amount, M1 says why
+                assert page.locator('[data-ui-v2="tax-gain"]').count() == 0 and lc.count() == 0
+                dc.wait_for(state="visible")
+                assert dc.get_attribute("data-n") == "0" and dc.get_attribute("data-v") is None, (dc.get_attribute("data-n"), dc.get_attribute("data-v"))
+                assert dc.locator('[data-ui-v2="tax-div-amount"]').count() == 0
+                txt = dc.inner_text()
+                assert "0원" not in txt and fillp(C["tax"]["divAmount"], x=exact_won(0)) not in txt, txt
+                dn = dc.locator('[data-ui-v2="tax-div-no-fx"]')
+                assert dn.inner_text() == fillp(C["tax"]["divNoFx"], n=2) == "환율 기록이 없는 미국 배당 2건은 빼고 더했어요."
+                assert dc.locator('[data-ui-v2="tax-div-note"]').inner_text() == C["tax"]["divNote"]
+                ys = [dc.locator("h3").bounding_box()["y"], dn.bounding_box()["y"], dc.locator('[data-ui-v2="tax-div-note"]').bounding_box()["y"]]
+                assert ys == sorted(ys), ys                                                           # 제목 · M1 · 설명
+                assert page.locator('[data-ui-v2="tax-footer"]').inner_text() == C["tax"]["footer"]
+                assert any("2 US dividend(s) dated 2026 have no exchange rate: left out of the pre-tax sum (0 counted: no sum shown)" in m for m in said), said
+            else:
+                # US prices carry their own date; with none in the file, the card shows no date line (never pxDate)
+                lc.wait_for(state="visible")
+                rows = lc.locator('[data-ui-v2="tax-loss-row"]')
+                got = [(rows.nth(i).get_attribute("data-t"), int(rows.nth(i).get_attribute("data-v"))) for i in range(rows.count())]
+                assert got == TAX_WANT["below"]["loss"], got
+                assert lc.locator('[data-ui-v2="tax-loss-date"]').count() == 0, lc.inner_text()
+                assert mdtext(no_us["data.json"]["pxDate"]) not in lc.inner_text(), lc.inner_text()
+                said = [m for m in logs if m.startswith("[v2] tax: ")]
+                assert any("losses card: data.json has no usPxDate, so no date line" in m for m in said), said   # 조용히 빼지 않아요
+            floor_ok(page, case)
+            no_hscroll(page, width)
+            R.collect(page)
+            if R.shots:
+                os.makedirs(R.shots, exist_ok=True)
+                page.screenshot(path=os.path.join(R.shots, f"v196f-gap-{case}-{width}.png"), full_page=True)
+        R.check(page, S, {"all-left": "가진 미국 종목(DIS)이 환율 기록이 없어 빠짐: M3 없이 M2 줄만",
+                          "mixed-left": "이익인 AAPL · 평균 단가 없는 BAC: M3 없이 평균 단가 줄만",
+                          "div-only": "환율 없는 미국 배당뿐: '약 0원' 없이 M1 (2건) · 설명",
+                          "no-us-date": "미국 가격 날짜 없음: 손실 카드에 날짜 줄 없음 (한국 날짜를 쓰지 않아요)"}[case], run)
+        ctx.close()
+        srv.shutdown()
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -13110,7 +13207,8 @@ def main():
                    lambda: scene_v196f(R, files, 1280), lambda: scene_v196f(R, files, 390, dark=True),
                    lambda: scene_v196f(R, files, 1280, dark=True),                                          # v19.6f 연말에 확인할 숫자 (세 상태)
                    lambda: scene_v196f_window(R, files, 390),                                               # v19.6f 보이는 때 (한국 날짜 · 시간대)
-                   lambda: scene_v196f_states(R, files, 390)):                                              # v19.6f 기록 없음 · 한국만 · 250만원 · 멈춤 · 실패
+                   lambda: scene_v196f_states(R, files, 390),                                               # v19.6f 기록 없음 · 한국만 · 250만원 · 멈춤 · 실패
+                   lambda: scene_v196f_gaps(R, files, 390)):                                                # v19.6f 리뷰 C: 빠진 종목 · 셀 수 없는 배당 · 미국 날짜
             try:
                 fn()
             except Exception as e:

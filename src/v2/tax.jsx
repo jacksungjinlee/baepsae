@@ -92,7 +92,8 @@ function GainCard({ g, win }) {
 // 지금 손실 중인 미국 종목: one row per stock (all portfolios), biggest loss first, then the note and the lines naming what was
 // left out. stale: today's data stopped, so the card says so and shows no number. Its content date (CLAUDE.md: each section
 // carries its own; review B, round 1): the approved 내 수익 date line under the title, with the data's US price date (the rows
-// are those closes at the data's rate; a stock priced at an earlier close is named by OwnCloseNote below).
+// are those closes at the data's rate; a stock priced at an earlier close is named by OwnCloseNote below). A file without a
+// US price date shows no date line: never the Korean date (pxDate) for US prices (review C).
 function LossCard({ ls, stale, load, byT, nameOf }) {
   if (stale) {
     return (
@@ -104,7 +105,7 @@ function LossCard({ ls, stale, load, byT, nameOf }) {
   }
   const stocks = ls.rows.map((r) => byT.get(r.t)).filter(Boolean);
   const absent = ls.absent.map((t) => ({ t, nk: nameOf(t), cls: "us", cost: null }));
-  const d = load.status === "ok" ? load.data.usPxDate || load.data.pxDate : null;
+  const d = load.status === "ok" ? load.data.usPxDate || null : null;
   const md = mdText(d);
   return (
     <Card data-ui-v2="tax-loss" data-n={ls.rows.length} style={{ padding: `${SPACE(4)}px ${SPACE(4) + 2}px` }}>
@@ -119,8 +120,10 @@ function LossCard({ ls, stale, load, byT, nameOf }) {
           </div>
         );
       })}
-      {/* no stock at a loss: M3 (Jack 2026-11-19) in place of the rows; the note about the rows comes with rows only */}
-      {ls.rows.length === 0 && <p data-ui-v2="tax-loss-none" style={tx(SIZE.sm - 1, WEIGHT.bold, COLOR.ink, { wordBreak: "keep-all" })}>{C.tax.lossNone}</p>}
+      {/* M3 (Jack 2026-11-19) in place of the rows only when every held US stock was valued and none is at a loss (tax.js
+          heldLosses none): a stock left out could be at a loss, so then only the lines below name it (review C). The note
+          about the rows comes with rows only. */}
+      {ls.none && <p data-ui-v2="tax-loss-none" style={tx(SIZE.sm - 1, WEIGHT.bold, COLOR.ink, { wordBreak: "keep-all" })}>{C.tax.lossNone}</p>}
       {ls.rows.length > 0 && <p data-ui-v2="tax-loss-note" style={small({ marginTop: SPACE(1) + 2 })}>{C.tax.lossNote}</p>}
       {/* the names in these lines are tickers, as 내 수익 and the missing-stock line write a US stock */}
       {ls.noAvg.length > 0 && <Note data-ui-v2="tax-no-avg">{fill(C.ret.noAvg, { n: ls.noAvg.length, names: ls.noAvg.join(", ") })}</Note>}
@@ -133,18 +136,21 @@ function LossCard({ ls, stale, load, byT, nameOf }) {
   );
 }
 
-// 올해 받은 배당 (세금 떼기 전): "약" small, the amount large (as on the board), then the note.
+// 올해 받은 배당 (세금 떼기 전): "약" small, the amount large (as on the board), then the note. No dividend counted (only US
+// ones without a rate: tax.js yearDivs won null): no amount, never "약 0원"; M1 says what was left out (review C).
 function DivCard({ dv }) {
   const [pre, post] = String(C.tax.divAmount).split("{x}");
   return (
     <Card data-ui-v2="tax-div" data-v={dv.won} data-n={dv.n} style={{ padding: `${SPACE(4)}px ${SPACE(4) + 2}px` }}>
       <Head icon="coins" tone="div">{C.tax.divTitle}</Head>
-      <span data-ui="amount" data-ui-v2="tax-div-amount" style={{ display: "block" }}>
-        <span style={tx(SIZE.body, WEIGHT.heavy, COLOR.text2)}>{pre}</span>
-        <span style={tx(26, WEIGHT.heavy, COLOR.ink, { letterSpacing: "-0.02em" })}><Amount text={exactWon(dv.won)} /></span>
-        {post ? <span style={tx(SIZE.body, WEIGHT.heavy, COLOR.text2)}>{post}</span> : null}
-      </span>
-      {dv.noFx > 0 && <p data-ui-v2="tax-div-no-fx" style={small({ marginTop: SPACE(1) + 2 })}>{fill(C.tax.divNoFx, { n: dv.noFx })}</p>}
+      {dv.won != null && (
+        <span data-ui="amount" data-ui-v2="tax-div-amount" style={{ display: "block" }}>
+          <span style={tx(SIZE.body, WEIGHT.heavy, COLOR.text2)}>{pre}</span>
+          <span style={tx(26, WEIGHT.heavy, COLOR.ink, { letterSpacing: "-0.02em" })}><Amount text={exactWon(dv.won)} /></span>
+          {post ? <span style={tx(SIZE.body, WEIGHT.heavy, COLOR.text2)}>{post}</span> : null}
+        </span>
+      )}
+      {dv.noFx > 0 && <p data-ui-v2="tax-div-no-fx" style={small({ marginTop: dv.won != null ? SPACE(1) + 2 : 0 })}>{fill(C.tax.divNoFx, { n: dv.noFx })}</p>}
       <p data-ui-v2="tax-div-note" style={small({ marginTop: SPACE(1) + 2 })}>{C.tax.divNote}</p>
     </Card>
   );
@@ -179,7 +185,7 @@ export function Tax({ load, store, pad, onBack }) {
   // What stays out, and why, said once each in the console (no fallback is silent).
   if (g && g.left) say(`${g.left} US sale(s) dated ${TAX_YEAR} left out of the gain (gain unknown: no average price, no rate, or more than held); the approved soldLeftOut line names the count`);
   const showDiv = !!dv && dv.n + dv.noFx > 0;
-  if (dv && dv.noFx) say(`${dv.noFx} US dividend(s) dated ${TAX_YEAR} have no exchange rate: left out of the pre-tax sum (${dv.n} counted); the approved divNoFx line names the count`);
+  if (dv && dv.noFx) say(`${dv.noFx} US dividend(s) dated ${TAX_YEAR} have no exchange rate: left out of the pre-tax sum (${dv.n} counted${dv.n ? "" : ": no sum shown"}); the approved divNoFx line names the count`);
   let showLoss = false;
   if (ls) {
     const out = { noAvg: ls.noAvg, noFx: ls.noFx, absent: ls.absent, noPrice: ls.noPrice };
@@ -188,6 +194,7 @@ export function Tax({ load, store, pad, onBack }) {
     else {
       showLoss = true;
       if (named.length) say(`losses card: ${ls.held} US stock(s) held, ${ls.rows.length} at a loss; left out and named on the card: ${named.join("; ")}`);
+      if (!load.data.usPxDate) say("losses card: data.json has no usPxDate, so no date line (US prices never take the Korean pxDate)");
     }
   }
   const stale = ok && !ctx.state.ok && has.usHeld ? { days: ctx.state.days } : null;

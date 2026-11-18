@@ -325,3 +325,61 @@ def test_a_dollar_only_stock_that_is_not_shown_never_switches_on_the_todays_rate
       out = { rows: r.rows, usdOnly: r.usdOnly, absent: r.absent };""")
     # CRM 2 × 229.17 × 1,338 = 613,258.92 − 840,000 = −226,741.08 → −226,741 (a purchase with its own rate)
     assert got == {"rows": [{"t": "CRM", "gain": -226741, "usdOnly": False}], "usdOnly": False, "absent": ["DIS"]}
+
+
+# ── 리뷰 C (2026-11-19): 빠진 종목 · 셀 수 없는 배당 ──
+def test_no_stock_at_a_loss_is_said_only_when_every_held_us_stock_was_valued():
+    """review C: M3 ("지금 손실 중인 미국 종목은 없어요.") is true only when every held US stock was valued today and none is at
+    a loss. TSLA bought at $300 without a rate, now $200: it may well be at a loss, so it is named (noFx) and M3 is not said.
+    The same for a stock without 평균 단가, one missing from today's data, one without a price, and no rate today."""
+    got = run("""
+      const tsla = deck('t', { holdings: hold('TSLA'), purchases: [buy('TSLA', 1, 300, '2026-01-05')] });
+      const gain = deck('g', { holdings: hold('AAPL'), purchases: [buy('AAPL', 1, 100, '2026-01-05', { fx: 1300 })] });
+      const noAvg = deck('n', { kind: 'imported', settings: { points: {} }, holdings: [{ t: 'BAC', nk: 'BAC', cls: 'us' }],
+        imported: [{ t: 'BAC', nk: 'BAC', ccy: 'USD', qty: 5 }] });
+      const gone = deck('x', { holdings: hold('GONE'), purchases: [buy('GONE', 1, 100, '2026-01-05', { fx: 1300 })] });
+      const nopx = deck('p', { holdings: hold('NOPX'), purchases: [buy('NOPX', 1, 100, '2026-01-05', { fx: 1300 })] });
+      const loss = deck('l', { holdings: hold('CRM'), purchases: [buy('CRM', 1, 300, '2026-01-05', { fx: 1400 })] });
+      const px = { TSLA: 200, AAPL: 250, BAC: 50, NOPX: null, CRM: 200 };
+      const pick = (r) => ({ rows: r.rows.length, held: r.held, left: r.left, none: r.none, noFx: r.noFx, noAvg: r.noAvg, absent: r.absent, noPrice: r.noPrice, noToday: r.noToday });
+      out = {
+        tsla: pick(X.heldLosses([tsla], q(px, 1400))),
+        gain: pick(X.heldLosses([gain], q(px, 1400))),
+        gainAndTsla: pick(X.heldLosses([gain, tsla], q(px, 1400))),
+        gainAndNoAvg: pick(X.heldLosses([gain, noAvg], q(px, 1400))),
+        gainAndGone: pick(X.heldLosses([gain, gone], q(px, 1400))),
+        gainAndNoPx: pick(X.heldLosses([gain, nopx], q(px, 1400))),
+        noToday: pick(X.heldLosses([gain], q(px, null))),
+        lossAndTsla: pick(X.heldLosses([loss, tsla], q(px, 1400))),
+        nothing: pick(X.heldLosses([], q(px, 1400))),
+      };""")
+    # TSLA: 1 × $300, 환율 없음 → 원화 원가를 몰라요: 빼고 이름을 남겨요, M3 없음 (리뷰 C 가 재현한 경우)
+    assert got["tsla"] == {"rows": 0, "held": 1, "left": 1, "none": False, "noFx": ["TSLA"], "noAvg": [], "absent": [], "noPrice": [], "noToday": []}
+    # AAPL: 250 × 1,400 = 350,000 − 100 × 1,300 = 130,000 → +220,000 (이익): 모두 셌고 손실 없음 → M3
+    assert got["gain"]["none"] is True and got["gain"]["left"] == 0 and got["gain"]["rows"] == 0
+    for k, why in (("gainAndTsla", "noFx"), ("gainAndNoAvg", "noAvg"), ("gainAndGone", "absent"), ("gainAndNoPx", "noPrice")):
+        assert got[k]["rows"] == 0 and got[k]["held"] == 2 and got[k]["left"] == 1 and got[k]["none"] is False, (k, got[k])
+        assert len(got[k][why]) == 1, (k, got[k])
+    assert got["noToday"]["none"] is False and got["noToday"]["noToday"] == ["AAPL"] and got["noToday"]["left"] == 1
+    # CRM: 200 × 1,400 = 280,000 − 300 × 1,400 = 420,000 → −140,000: 줄이 있으면 M3 는 없어요
+    assert got["lossAndTsla"]["rows"] == 1 and got["lossAndTsla"]["none"] is False and got["lossAndTsla"]["noFx"] == ["TSLA"]
+    assert got["nothing"] == {"rows": 0, "held": 0, "left": 0, "none": False, "noFx": [], "noAvg": [], "absent": [], "noPrice": [], "noToday": []}
+
+
+def test_dividends_none_of_which_can_be_counted_give_no_sum_never_zero():
+    """review C: only US dividends without a rate this year: nothing could be counted, so there is no sum (won null), never
+    a 0 that the card would show as "약 0원"; noFx still counts them for M1. One countable dividend gives a sum again."""
+    got = run("""
+      const noFx = deck('a', { holdings: hold('KO'), purchases: [buy('KO', 10, 60, '2025-03-04', { fx: 1450 })],
+        divs: [div('KO', 4.25, '2026-04-01'), div('KO', 4.25, '2026-07-01')] });
+      const hist = deck('h', { history: [{ t: 'KO', nk: 'KO', out: '2026-02-01', cls: 'us', divs: [div('KO', 4.25, '2026-04-01')] }] });
+      const lastYear = deck('y', { holdings: hold('005930'), purchases: [buy('005930', 3, 70000, '2025-03-04')], divs: [div('005930', 1083, '2025-04-18')] });
+      const one = deck('o', { holdings: hold('005930'), purchases: [buy('005930', 3, 70000, '2025-03-04')], divs: [div('005930', 846, '2026-04-20')] });
+      out = { noFx: X.yearDivs([noFx]), hist: X.yearDivs([hist]), none: X.yearDivs([lastYear]), mixed: X.yearDivs([noFx, one]),
+        rec: X.taxRecords([noFx]) };""")
+    assert got["noFx"] == {"won": None, "exact": 0, "n": 0, "kr": 0, "us": 0, "noFx": 2}
+    assert got["hist"] == {"won": None, "exact": 0, "n": 0, "kr": 0, "us": 0, "noFx": 1}
+    assert got["none"]["won"] is None and got["none"]["n"] == 0 and got["none"]["noFx"] == 0   # 올해 배당이 없으면 카드도 없어요
+    # 846 ÷ 0.846 = 1,000원 (1건) · 환율 없는 2건은 빼고 셈
+    assert got["mixed"] == {"won": 1000, "exact": 1000, "n": 1, "kr": 1, "us": 0, "noFx": 2}
+    assert got["rec"]["div"] is True and got["rec"]["divNoFx"] == 2                              # 링크는 열려요: 배당 카드가 M1 로 말해요

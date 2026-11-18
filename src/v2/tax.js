@@ -151,7 +151,9 @@ export function taxState(G) {
 // ---------------- this year's dividends, before tax ----------------
 // The 2,000만원 test counts pre-tax income: Korea ÷ (1 − 15.4%), US (dollars x the record's own rate) ÷ (1 − 15%). A US
 // dividend without a rate is left out and counted (noFx). C4 (known limit): a 비과세 감액배당, an ISA or pension account, or a
-// 30% US withholding make this an upper or lower estimate. -> { won (rounded to 1,000원), exact, n (counted), kr, us, noFx }
+// 30% US withholding make this an upper or lower estimate. -> { won (rounded to 1,000원; null when no dividend could be
+// counted, e.g. only US dividends without a rate: no sum is shown then, never a "약 0원" that reads as one), exact, n
+// (counted), kr, us, noFx }
 export function yearDivs(decks, year = TAX_YEAR) {
   const out = { won: 0, exact: 0, n: 0, kr: 0, us: 0, noFx: 0 };
   for (const d of Array.isArray(decks) ? decks : []) {
@@ -173,7 +175,7 @@ export function yearDivs(decks, year = TAX_YEAR) {
       }
     }
   }
-  out.won = round1000(out.exact);
+  out.won = out.n > 0 ? round1000(out.exact) : null;
   return out;
 }
 
@@ -185,7 +187,9 @@ export function yearDivs(decks, year = TAX_YEAR) {
 //   noFx     a lot whose cost has no rate (a purchase saved before Part C, or marked noFx)
 //   absent   missing from today's data · noPrice in it without a price · noToday no rate today (data.json fx)
 // -> { rows: [{ t, gain (rounded to the 원, below 0), usdOnly }] biggest loss first, held (US stocks held), noAvg, noFx,
-//      absent, noPrice, noToday (lists of codes), usdOnly (a shown row counted a dollar-only lot at today's rate) }
+//      absent, noPrice, noToday (lists of codes), left (how many stocks those lists hold), usdOnly (a shown row counted a
+//      dollar-only lot at today's rate), none (M3, "no US stock at a loss", may be said: every held US stock was valued
+//      today and none is at a loss; a stock left out could be at a loss, so then the card names it and never says M3) }
 export function heldLosses(decks, q) {
   const by = new Map();
   for (const d of Array.isArray(decks) ? decks : []) {
@@ -214,5 +218,7 @@ export function heldLosses(decks, q) {
   }
   out.rows.sort((a, b) => a.gain - b.gain || (a.t < b.t ? -1 : a.t > b.t ? 1 : 0));
   out.usdOnly = out.rows.some((r) => r.usdOnly);
+  out.left = out.noAvg.length + out.noFx.length + out.absent.length + out.noPrice.length + out.noToday.length;
+  out.none = out.held > 0 && out.left === 0 && out.rows.length === 0;
   return out;
 }
