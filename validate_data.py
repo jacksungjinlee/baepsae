@@ -84,6 +84,29 @@ US_UNCHANGED = 20.0      # 미국 기준일이 바뀌었는데 가격이 그대�
 CORP_MIN, SECTOR_MIN = 2000, 20
 TTM_HARD, TTM_WARN = 50, 80
 NEAR = 2.0               # 기준선에서 2점 안쪽이면 경고
+# 2026-11-19 (Jack 규칙 3, 그대로): "Permanent two-source rule: official closes always come from two independent sources. If the
+# primary is late or not final, the second one is used automatically after a cross-check. The publish stops only when neither
+# can be confirmed." 1차 출처 = 자원봉사 캐시의 최종본 목록 파일 (예전 그대로) · 2차 출처 = 다음(Daum) 일별 시세 × 야후 .KS/.KQ 종가 (원 단위까지
+# 같은 종목만). data.json pxSrc 에 어느 출처인지와 수를 적어요. 관문의 날짜 · 가격 줄은 그 날짜의 캐시 최종본이 있으면 예전 그대로 그것과,
+# 없으면 관문이 야후에서 따로 받은 공식 종가 (필수 종목 + 표본 PX_CHECK_SAMPLE) 와 원 단위까지 맞춰 봐요 — 받지 못하면 '확인 못 함' → 실패.
+PX_SRC_LISTING = "listing"                # 1차 출처: 캐시의 최종본 목록 파일
+PX_SRC_FB = "daum+yahoo"                  # 2차 출처: 다음 일별 시세 × 야후 종가 (원 단위까지 같은 종목만)
+PX_SRCS = (PX_SRC_LISTING, PX_SRC_FB)
+PX_YAHOO_SUFFIX = {"KOSPI": ".KS", "KOSDAQ": ".KQ", "KOSDAQ GLOBAL": ".KQ"}   # 코넥스는 야후에 없어요
+PX_CHECK_SAMPLE = 200                     # 관문(2차 출처 날) · 파이프라인(1차 출처 날)이 야후와 맞춰 보는 표본 수 (필수 종목은 따로 모두)
+PX_YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=1mo&interval=1d"
+PX_ALT_MIN_SHARE = 0.90                   # 관문이 야후에서 받은 표본 종가가 이 비율보다 적으면 '확인 못 함' (실패) — 받지 못한 채 통과시키지 않아요
+PX_ALT_TOL = 0.01                         # 두 종가 차이 (원) — 부동소수점 끝자리만큼. 같은 호가여야 해요
+IND_CARRY_WARN_DAYS = 14                  # 지난 발행본에서 이어 쓴 국내 업종 글자가 이보다 오래되면 경고 (fetch_data 와 같은 값)
+
+
+def px_check_sample(codes, n=PX_CHECK_SAMPLE):
+    """표본: 코드 순으로 늘어놓은 종목에서 고르게 n개 (같은 목록이면 늘 같은 표본 · 코스피 · 코스닥이 섞여요). (순수 함수)"""
+    codes = sorted(set(codes))
+    if len(codes) <= n:
+        return codes
+    step = len(codes) / n
+    return [codes[int(i * step)] for i in range(n)]
 
 # v17.5.1 (v18.0 Part A + 추가 4–9). 새 기준은 첫 실제 실행의 숫자를 보고 Jack 이 승인한 뒤 고정돼요.
 # 영문자에 붙지 않은 nan·None… — 한글 옆도 잡아요 ("시가총액 nan억원"). \b 는 한글을 낱말 글자로 봐서 놓쳤어요.
@@ -775,6 +798,158 @@ def completed_sessions_after(px, today, sessions):
     return [d for d in sessions if px < d < today]
 
 
+# ── 2026-11-19 (Jack 규칙 3): 캐시 최종본이 없는 날의 관문 기준 — 관문이 야후에서 따로 받은 공식 종가 ──
+def px_alt_symbol(s):
+    """data.json 종목의 야후 심볼 — 설명(dk)의 '시장 상장' 으로 (코스피 .KS · 코스닥 .KQ · 그 밖은 None). (순수 함수)"""
+    m = re.search(r"(?:^| · )(KOSPI|KOSDAQ GLOBAL|KOSDAQ|KONEX) 상장(?: · |$)", str(s.get("dk") or ""))
+    sfx = PX_YAHOO_SUFFIX.get(m.group(1)) if m else None
+    return f"{s.get('t')}{sfx}" if sfx else None
+
+
+def px_alt_pick(data):
+    """관문이 야후와 맞춰 볼 종목: 필수 종목 전부 + 표본 PX_CHECK_SAMPLE (코스피 · 코스닥 · 코드 순으로 고르게). 반환: {코드: 심볼}. (순수 함수)
+    필수 종목은 설명이 없어도 코스피(.KS)로 물어요 (일곱 종목 모두 코스피)."""
+    kr = {s.get("t"): s for s in kr_stocks(data) if s.get("t")}
+    out = {c: (px_alt_symbol(kr[c]) if c in kr else None) or f"{c}.KS" for c in MUST}
+    for c in px_check_sample([c for c, s in kr.items() if px_alt_symbol(s)]):
+        out.setdefault(c, px_alt_symbol(kr[c]))
+    return out
+
+
+def _yahoo_day_close(sym, d, get=None):
+    """야후 일봉에서 그날(KST) 종가 하나. 없으면 None · 받지 못하면 예외."""
+    get = get or (lambda u: requests.get(u, timeout=20, headers={"User-Agent": "Mozilla/5.0"}))
+    r = get(PX_YAHOO_CHART.format(sym=sym))
+    r.raise_for_status()
+    res = r.json()["chart"]["result"][0]
+    closes = res["indicators"]["quote"][0]["close"]
+    got = [float(c) for t, c in zip(res.get("timestamp") or [], closes) if c is not None and dt.datetime.fromtimestamp(t, KST).date() == d]
+    return got[-1] if got else None
+
+
+def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4):
+    """관문이 따로 받은 야후 공식 종가: {"date", "closes" {코드: 종가}, "asked", "got", "mustMissing", "err"}. 예외를 내지 않아요 —
+    못 받은 종목은 closes 에 없고, 그만큼 '확인 못 함' 이 돼요 (run_checks 가 실패시켜요)."""
+    from concurrent.futures import ThreadPoolExecutor
+    pick = px_alt_pick(data)
+    closes, errs = {}, []
+
+    def one(item):
+        code, sym = item
+        for i in range(3):
+            try:
+                v = fetch(sym, px)
+                if v is not None and math.isfinite(v) and v > 0:
+                    closes[code] = v
+                return
+            except Exception as e:
+                if i == 2:
+                    errs.append(f"{sym}: {str(e)[:60]}")
+                else:
+                    sleep(i + 1)
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            list(ex.map(one, sorted(pick.items())))
+    except Exception as e:                       # 관문은 네트워크 때문에 멈추지 않아요 — 확인 못 함으로 실패해요
+        errs.append(f"{type(e).__name__}: {str(e)[:80]}")
+    return {"date": px, "closes": closes, "asked": len(pick), "got": len(closes),
+            "mustMissing": [c for c in MUST if c not in closes], "err": errs[:5]}
+
+
+def px_alt_confirms(data, alt, px, final, mode="publish"):
+    """2차 출처 날의 관문 기준을 쓸 수 있는지 (2026-11-19 · Jack 규칙 3 · 순수 함수). 반환: (쓸 수 있는지, 설명).
+    모두 맞아야 해요: 캐시에 pxDate 의 최종본이 없음 (최종본이 있으면 예전 그대로 그것과 비교) · data.json pxSrc 가 2차 출처 · 그 날짜가 pxDate ·
+    확인되지 않은 필수 종목 없음 · 2차 출처 확인 종목 수 ≥ 발행한 국내 종목 수 · 관문이 야후에서 필수 종목을 모두, 표본을 PX_ALT_MIN_SHARE 넘게 받음."""
+    src = data.get("pxSrc")
+    if alt is None:
+        return False, "관문이 야후 종가를 받지 않았어요"
+    if final is not None and mode != "live" and final.get("date") is not None and final["date"] >= px:
+        return False, f"캐시 최종본 {final['date']} 이 있어요 (그것과 비교)"
+    if not isinstance(src, dict) or src.get("px") != PX_SRC_FB:
+        return False, "data.json pxSrc 가 2차 출처가 아니에요"
+    if day(src.get("date")) != px or alt.get("date") != px:
+        return False, f"pxSrc 날짜 {src.get('date')} · 관문 확인 날짜 {alt.get('date')} ≠ pxDate {px}"
+    if src.get("must"):
+        return False, f"확인되지 않은 필수 종목: {', '.join(map(str, src['must']))}"
+    fb = src.get("fb") if isinstance(src.get("fb"), dict) else {}
+    nk = len(kr_stocks(data))
+    if not isinstance(fb.get("conf"), int) or fb["conf"] < nk:
+        return False, f"2차 출처 확인 {fb.get('conf')}종목 < 발행한 국내 종목 {nk:,}"
+    if alt.get("mustMissing"):
+        return False, f"관문이 야후에서 필수 종목 종가를 받지 못했어요: {', '.join(alt['mustMissing'])}" + (f" ({alt['err'][0]})" if alt.get("err") else "")
+    asked, got = alt.get("asked") or 0, alt.get("got") or 0
+    if not asked or got < PX_ALT_MIN_SHARE * asked:
+        return False, f"관문이 야후에서 받은 종가 {got} / {asked} (기준 {PX_ALT_MIN_SHARE:.0%})" + (f" ({alt['err'][0]})" if alt.get("err") else "")
+    return True, f"캐시 최종본 없음 · 관문이 야후에서 따로 받은 공식 종가 {got}/{asked}종목 · 2차 출처(다음 × 야후) 확인 {fb['conf']:,}종목"
+
+
+def px_alt_closes(alt):
+    """관문의 야후 종가 → 비교용 값: 원 단위(PX_ALT_TOL 안)면 정수, 아니면 그대로 (정수인 발행 가격과 같아질 수 없어요). (순수 함수)"""
+    out = {}
+    for c, v in (alt or {}).get("closes", {}).items():
+        out[c] = round(v) if abs(v - round(v)) <= PX_ALT_TOL else v
+    return out
+
+
+def check_px_src(rep, data, today, mode="publish"):
+    """data.json pxSrc · indSrc 줄 (2026-11-19 · 더한 줄만). pxSrc 가 없으면 (예전 발행본 · 시험 데이터) 건너뛰어요."""
+    src = data.get("pxSrc")
+    if src is None:
+        rep.skip("국내 가격 출처 (pxSrc)", "pxSrc 없음 (2026-11-19 전 발행본)")
+    else:
+        bad = []
+        if not isinstance(src, dict) or src.get("v") != 1:
+            bad.append("모양")
+        else:
+            if src.get("px") not in PX_SRCS:
+                bad.append(f"px {src.get('px')}")
+            if day(src.get("date")) != day(data.get("pxDate")):
+                bad.append(f"date {src.get('date')}")
+            if not isinstance(src.get("n"), dict) or not all(isinstance(v, int) and v >= 0 for v in src["n"].values()):
+                bad.append("n")
+            if not isinstance(src.get("must"), list):
+                bad.append("must")
+            fb = src.get("fb")
+            if src.get("px") == PX_SRC_FB and not (isinstance(fb, dict) and all(isinstance(fb.get(k), int) and fb[k] >= 0
+                                                                               for k in ("n", "conf", "noDaum", "bad", "noYahoo", "diff"))):
+                bad.append("fb")
+        n = (src.get("n") or {}) if isinstance(src, dict) else {}
+        rep.add("국내 가격 출처 (pxSrc)", not bad, " · ".join(f"{k} {v:,}" for k, v in n.items() if isinstance(v, int)) or "?",
+                f"{' · '.join(PX_SRCS)} 중 하나 · pxDate 와 같은 날" + (f" (이상: {', '.join(bad)})" if bad else ""))
+        if isinstance(src, dict) and src.get("px") == PX_SRC_FB:
+            fb = src.get("fb") if isinstance(src.get("fb"), dict) else {}
+            must = src.get("must") if isinstance(src.get("must"), list) else ["?"]
+            rep.add("필수 종목 두 출처 확인", not must, "모두 확인" if not must else "확인 못 함: " + ",".join(map(str, must)), ",".join(MUST))
+            left = sum(fb.get(k) or 0 for k in ("noDaum", "bad", "noYahoo", "diff"))
+            rep.add("2차 출처 두 종가가 다른 종목 (경고만)", True,
+                    f"다름 {fb.get('diff', '?')} · 빠짐 모두 {left:,} (다음 행 없음 {fb.get('noDaum', '?')} · 야후 없음 {fb.get('noYahoo', '?')})"
+                    + (f" 예: {'; '.join(map(str, (fb.get('diffEx') or [])[:3]))}" if fb.get("diffEx") else ""), "0", warn=bool(fb.get("diff")))
+        elif isinstance(src, dict) and src.get("px") == PX_SRC_LISTING:
+            ck = src.get("chk")
+            if not isinstance(ck, dict):
+                rep.add("1차 출처 야후 확인 (경고만)", True, "확인하지 않음", "필수 종목 + 표본", warn=True)
+            else:
+                diff = ck.get("diff") or []
+                rep.add("1차 출처 야후 확인 (경고만)", True,
+                        f"같음 {ck.get('same', 0)} / {ck.get('n', 0)}" + (f" · 다름 {len(diff)}: {'; '.join(map(str, diff[:3]))}" if diff else "")
+                        + (f" · {ck['err']}" if ck.get("err") else ""), "다름 0", warn=bool(diff) or not (ck.get("n") or 0))
+    ind = data.get("indSrc")
+    if not isinstance(ind, dict):
+        rep.skip("국내 업종 이어 쓴 종목 (경고만)", "indSrc 없음 (2026-11-19 전 발행본)")
+    else:
+        carried = ind.get("carried") if isinstance(ind.get("carried"), int) else None
+        asof = day(ind.get("asOf"))
+        age = (today - asof).days if asof else None
+        old = carried and (age is None or age > IND_CARRY_WARN_DAYS)
+        rep.add("국내 업종 이어 쓴 종목 (경고만)", True,
+                f"이어 씀 {carried} · 업종 글자 날짜 {ind.get('asOf')}" + (f" ({age}일 전)" if age is not None else "")
+                + f" · 업종 없는 새 상장 {ind.get('newNone')}", f"0 (이어 쓰면 경고 · {IND_CARRY_WARN_DAYS}일 넘으면 더 오래됨)",
+                warn=bool(carried) or carried is None)
+        if old:
+            notes_ = f"이어 쓴 업종 글자가 {age}일 전 것이에요"
+            rep.detail("국내 업종 글자가 오래됨", [notes_])
+
+
 # ── 검사 ────────────────────────────────────────────────────
 def prev_px_date(prev, notes):
     """직전 발행본의 가격 날짜. 예전 형식(pxDate 없음)이면 asOf − 1일 (실행일 아침 기준이라 하루 전 가격)."""
@@ -827,14 +1002,16 @@ def check_us_risk_cover(rep, us, pdata):
 
 
 def run_checks(cur, prev, final, today, mode="publish", count_between=None, notes=None, sessions=None, now=None, hilo=None,
-               special=None):
+               special=None, alt=None):
     """cur/prev: {"data":…, "corp":…, "disc":…, "macro":…} (prev 는 None 가능).
     final: {"date", "closes", "how"} — 비교할 최종본 (None 이면 날짜·가격 검사 실패).
     sessions: {"dates": [KOSPI 거래일…], "src": 출처} — None 이면 받지 못한 것 → FAIL.
     now: 관문 실행 시각(KST) — publishedAt 12시간 검사용 (없으면 today 정오).
     hilo: {코드: {"hi", "lo", "d1"}} 야후 52주 종가 범위와 d1 — None 이면 받지 못한 것 (경고).
     special: KRX 특별 거래시간 표 — None 이면 표 파일을 읽어요 (못 읽으면 FAIL).
-    mode: publish · bootstrap · live.  반환: Report."""
+    mode: publish · bootstrap · live.  반환: Report.
+    alt: (2026-11-19 · Jack 규칙 3) 캐시에 pxDate 최종본이 없을 때 관문이 야후에서 따로 받은 공식 종가 (http_px_alt) — px_alt_confirms 가 허락하면
+    날짜 · 가격 줄의 기준이 이것이 돼요 (같은 줄 · 같은 정확히 같음 · 같은 비율 기준). None 이면 예전 그대로."""
     rep, notes = Report(), (notes if notes is not None else [])
     data, corp, disc, macro = cur["data"], cur["corp"], cur["disc"], cur["macro"]
     rel = mode == "publish"
@@ -844,12 +1021,21 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
 
     # 날짜
     px = day(data.get("pxDate"))
-    if final is None:
-        rep.add("최종본 날짜 계산", False, "실패", "최근 10일 안 최종본")
+    # 2026-11-19 (Jack 규칙 3): 캐시에 pxDate 의 최종본이 있으면 예전 그대로 그것이 기준이에요. 없으면 관문이 야후에서 따로 받은 공식 종가와
+    # data.json pxSrc 의 2차 출처 확인 (px_alt_confirms) — 둘 다 안 되면 예전처럼 실패해요.
+    use_alt, alt_how = (False, None) if alt is None else px_alt_confirms(data, alt, px, final, mode)
+    if alt is not None:
+        notes.append(f"2차 출처 관문 기준 (야후): {'씀' if use_alt else '쓰지 않음'} — {alt_how}")
+    if use_alt:
+        rep.add("pxDate 최종본 여부" if mode == "live" else "pxDate = 최종본 날짜", True, px, f"{px} ({alt_how})")
+        final = {"date": px, "closes": px_alt_closes(alt), "how": alt_how}
+    elif final is None:
+        rep.add("최종본 날짜 계산", False, "실패", "최근 10일 안 최종본" + (f" (2차 출처: {alt_how})" if alt is not None else ""))
     elif mode == "live":
-        rep.add("pxDate 최종본 여부", px == final["date"], px, f"{final['date']} ({final['how']})")
+        rep.add("pxDate 최종본 여부", px == final["date"], px, f"{final['date']} ({final['how']})" + (f" · 2차 출처: {alt_how}" if alt is not None else ""))
     else:
-        rep.add("pxDate = 최종본 날짜", px == final["date"], px, f"{final['date']} ({final['how']})")
+        rep.add("pxDate = 최종본 날짜", px == final["date"], px, f"{final['date']} ({final['how']})" + (f" · 2차 출처: {alt_how}" if alt is not None else ""))
+    check_px_src(rep, data, today, mode)
     # KRX 특별 거래시간 표 (v17.5.4): 최종본 기준에 써요. 읽을 수 있어야 하고, 올해 수능일 줄이 있어야 해요
     # (없으면 9월 1일부터 경고, 11월 1일부터 실패 — Jack, 2026-11-04)
     try:
@@ -3846,8 +4032,22 @@ def _main(argv=None):
             print(f"· 야후 52주 종가 범위: {len(hilo)}/{len(MUST)}종목")
     except Exception as e:
         print(f"!! 야후 52주 범위를 받지 못했어요: {e}")
+    # 2026-11-19 (Jack 규칙 3): 파이프라인이 2차 출처(다음 × 야후)를 썼고 캐시에 그날 최종본이 없으면, 관문이 야후 종가를 따로 받아요 (실패해도 멈추지 않고 '확인 못 함')
+    alt = None
+    try:
+        pxd = day(cur["data"].get("pxDate"))
+        psrc = cur["data"].get("pxSrc")
+        if pxd and isinstance(psrc, dict) and psrc.get("px") == PX_SRC_FB and (final is None or final["date"] < pxd):
+            alt = http_px_alt(cur["data"], pxd)
+            print(f"{'· ' if not alt['mustMissing'] and alt['got'] >= PX_ALT_MIN_SHARE * max(alt['asked'], 1) else '!! '}"
+                  f"관문의 야후 공식 종가 ({pxd}): {alt['got']} / {alt['asked']}종목"
+                  + (f" · 필수 종목 못 받음 {', '.join(alt['mustMissing'])}" if alt["mustMissing"] else "")
+                  + (f" · 오류 예: {alt['err'][0]}" if alt["err"] else ""))
+    except Exception as e:
+        print(f"!! 관문의 야후 공식 종가를 받지 못했어요: {type(e).__name__}: {str(e)[:120]} (확인 못 함 → 날짜 · 가격 줄 실패)")
+        alt = {"date": None, "closes": {}, "asked": 0, "got": 0, "mustMissing": list(MUST), "err": [str(e)[:80]]}
     rep = run_checks(cur, prev, final, today, mode=mode, count_between=count_final_between, notes=notes,
-                     sessions=sessions, now=now, hilo=hilo, special=special)
+                     sessions=sessions, now=now, hilo=hilo, special=special, alt=alt)
     for n in notes:
         print(f"· {n}")
     print()
