@@ -759,7 +759,8 @@ export function payoutWon(pct) {
   return { x: nf(x, d), y: nf(y, d), rest: y > 0 };            // rest false: "나머지 0원" is not said
 }
 const warnedPayout = new Set();
-const HID_UI = { shareHidden: "co-div-share-hidden", rightsHidden: "co-div-rights-hidden", dataHidden: "co-div-data-hidden" };
+const HID_UI = { shareHidden: "co-div-share-hidden", rightsHidden: "co-div-rights-hidden", dataHidden: "co-div-data-hidden",
+  missingHidden: "co-div-missing-hidden" };
 export function DivTab({ load, s }) {
   const Dv = C.co.div;
   const co = load.coByT.get(s.t) || null;

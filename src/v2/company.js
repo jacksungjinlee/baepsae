@@ -229,9 +229,10 @@ export function divShareHidden(s, co = null) {
 // v19.1j (Jack, 2026-11-15, answers 11 and 13): the reason line for a hidden Korean yield, by the one mark the pipeline's proof stage
 // sets (data.json dvLine, checked by the gate against divCheck.proofSub): 1 -> co.div.shareHidden (Jack's line of 11-08), 2 ->
 // co.div.rightsHidden (a 주주배정 rights issue past its 권리락 put today's price on a new basis), 3 -> co.div.dataHidden (the company's
-// own dividend table disagrees with its share counts). The copy key, or null: no mark, an unknown mark, a yield shown, a zero
-// dividend, a US stock or an older file. One line at most: the mark is a single value.
-const DIV_HIDDEN_LINE = { 1: "shareHidden", 2: "rightsHidden", 3: "dataHidden" };
+// own dividend table disagrees with its share counts), 4 -> co.div.missingHidden (Jack, 2026-11-19: the company's filings lack a
+// piece the calculation needs, e.g. no dividend total or no year-end share table). The copy key, or null: no mark, an unknown mark,
+// a yield shown, a zero dividend, a US stock or an older file. One line at most: the mark is a single value.
+const DIV_HIDDEN_LINE = { 1: "shareHidden", 2: "rightsHidden", 3: "dataHidden", 4: "missingHidden" };
 export function divHiddenLine(s, co = null) {
   if (!exactData() || !s || s.cls !== "kr" || typeof s.dvLine !== "number") return null;
   const key = DIV_HIDDEN_LINE[s.dvLine];

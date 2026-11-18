@@ -336,12 +336,12 @@ PROVE_EPS = 0.002        # 반올림 여유 (dps3a 원 둘째 자리 · 총액 �
 # 증명이 되살렸어요 (올해 dvProof.y0 · 앞 해 dvProof.yrs). 그 밖의 깨끗하지 않은 배율 — 파이프라인이 주식 수로 짐작한 배율 · 사건이 없거나
 # 무상증자가 아닌 사건 · 곱이 1e-6 넘게 다름 · dvProof 없음 — 은 예전과 똑같이 실패해요.
 EXACT_TOL = 1e-6
-# v19.1j (Jack 2026-11-15 답 11 · 13 · 새 줄만): 숨긴 배당수익률의 줄 — 종목의 dvLine 2 · 3 은 divCheck.proofSub(rights · data 안의 경우)와
+# v19.1j (Jack 2026-11-15 답 11 · 13 · 2026-11-19 · 새 줄만): 숨긴 배당수익률의 줄 — 종목의 dvLine 2 · 3 · 4 는 divCheck.proofSub(rights · data 안의 경우)와
 # 꼭 맞아요. fetch_data.py 와 같은 값을 따로 적어요.
-PROVE_LINE = {"line": 1, "rights": 2, "data": 3}
+PROVE_LINE = {"line": 1, "rights": 2, "data": 3, "missing": 4}
 PROVE_SUB = {"rights": ("sh", "shnew", "unk"),
              "data": ("div", "pref0", "neg", "nototal", "prefmix", "nopfo", "nostk", "noshr")}
-PROVE_SUB_LINE = {"rights": ("sh",), "data": ("div",)}
+PROVE_SUB_LINE = {"rights": {"sh": 2}, "data": {"div": 3, "nototal": 4, "nostk": 4, "pref0": 4, "nopfo": 4, "prefmix": 4}}   # 경우 → 줄 (Jack 2026-11-19: 4)
 PROVE_SUB_KO = {"sh": "주주배정 (새 주식 상장됨)", "shnew": "주주배정 (새 주식이 아직 상장 전)", "unk": "방식을 모르는 결정만", "div": "총액 ÷ 주당 배당이 주식 수와 다름", "pref0": "우선주 배당 줄이 있는데 주식의 총수 현황에 우선주 수가 따로 없음",
                 "neg": "총액이 우선주 몫보다 작음", "nototal": "총액 없음", "prefmix": "주당 배당이 다른 종류주가 섞임", "nopfo": "우선주 주식 수 모름",
                 "nostk": "그해 말 주식의 총수 현황 없음", "noshr": "오늘 상장 주식 수 없음"}
@@ -3755,9 +3755,9 @@ def check_v191i(rep, data, kr, by, comps, pdata, today=None):
     if any(v > 1 for v in seen.values()):
         bad.append("한 종목이 이유 목록 둘 이상에")
     # Jack 의 줄 (dvLine = 1): 앱이 읽는 표시 — lineT 의 종목에만, 그리고 그 종목엔 꼭 (리뷰 2026-11-15 2차: 줄은 증명이 line 이라고 한 종목에만)
-    # v19.1j: dvLine 2 · 3 (답 11 · 13 의 줄)은 divCheck.proofSub 가 있을 때만 — 그 맞춤은 아래 '숨긴 배당수익률의 줄' 줄이 봐요. 1 의 규칙은 그대로.
+    # v19.1j: dvLine 2 · 3 · 4 (답 11 · 13 · Jack 2026-11-19 의 줄)은 divCheck.proofSub 가 있을 때만 — 그 맞춤은 아래 '숨긴 배당수익률의 줄' 줄이 봐요. 1 의 규칙은 그대로.
     sub_ok = isinstance(dc.get("proofSub"), dict)
-    vals = (1, 2, 3) if sub_ok else (1,)
+    vals = (1, 2, 3, 4) if sub_ok else (1,)
     marked = {s2["t"] for s2 in kr if s2.get("dvLine") == 1 and not isinstance(s2.get("dvLine"), bool)}
     odd = [s2["t"] for s2 in kr if "dvLine" in s2 and (s2["dvLine"] not in vals or isinstance(s2["dvLine"], bool) or is_pref(s2["t"])
                                                          or num(s2.get("dyt")) is not None or "dvProof" in s2
@@ -3804,11 +3804,12 @@ def check_v191i(rep, data, kr, by, comps, pdata, today=None):
 
 
 def check_v191j_lines(rep, dc, pf, kr, by, pdata):
-    """v19.1j 새 줄 (Jack 2026-11-15 답 11 · 13): 숨긴 배당수익률의 줄 — divCheck.proofSub 와 종목의 dvLine 2 · 3 이 꼭 맞아요 (우리 기록끼리).
+    """v19.1j 새 줄 (Jack 2026-11-15 답 11 · 13 · 2026-11-19): 숨긴 배당수익률의 줄 — divCheck.proofSub 와 종목의 dvLine 2 · 3 · 4 가 꼭 맞아요 (우리 기록끼리).
     proofSub: v1 · rights · data 마다 {코드: 경우} 이고, 그 코드들 = divCheck.proof 의 rightsT · dataT, 경우는 정해진 것 (PROVE_SUB) ·
-    dvLine 2 = rights 중 주주배정(sh) · dvLine 3 = data 중 배당 표가 회사의 주식 수와 실제로 어긋남(div) — 그 종목엔 꼭, 다른 종목엔 없음. 없으면 v19.1j 전
+    dvLine 2 = rights 중 주주배정(sh) · dvLine 3 = data 중 배당 표가 회사의 주식 수와 실제로 어긋남(div) · dvLine 4 = data 중 회사 공시에 조각이
+    빠짐(nototal · nostk · pref0 · nopfo · prefmix) — 그 종목엔 꼭, 다른 종목엔 없음 (PROVE_SUB_LINE). 없으면 v19.1j 전
     데이터라 경고 한 줄만 — 직전 발행본에 있었는데 빠지면 실패 (줄 표시 2 · 3 은 위 '배당 기준 증명 기록' 줄이 이 기록 없이는 막아요)."""
-    name = "숨긴 배당수익률의 줄 (divCheck.proofSub · dvLine 2 · 3)"
+    name = "숨긴 배당수익률의 줄 (divCheck.proofSub · dvLine 2 · 3 · 4)"
     sub = dc.get("proofSub")
     if not isinstance(sub, dict):
         had = isinstance(((pdata or {}).get("divCheck") or {}).get("proofSub"), dict)
@@ -3828,16 +3829,17 @@ def check_v191j_lines(rep, dc, pf, kr, by, pdata):
         odd = [t for t, v in m.items() if v not in subs]
         if odd:
             bad.append(f"{k}: 모르는 경우 {m[odd[0]]!r} ({odd[0]})")
-        want.update({t: PROVE_LINE[k] for t, v in m.items() if v in PROVE_SUB_LINE[k]})
-    got = {s["t"]: s["dvLine"] for s in kr if s.get("dvLine") in (2, 3) and not isinstance(s.get("dvLine"), bool)}
+        want.update({t: PROVE_SUB_LINE[k][v] for t, v in m.items() if v in PROVE_SUB_LINE[k]})
+    got = {s["t"]: s["dvLine"] for s in kr if s.get("dvLine") in (2, 3, 4) and not isinstance(s.get("dvLine"), bool)}
     if not bad and got != want:
         diff = sorted(set(got.items()) ^ set(want.items()))
         bad.append(f"줄 표시 {len(got)} · 기록 {len(want)} 가 달라요 (예: {diff[0][0]} {diff[0][1]})")
-    n2, n3 = sum(1 for v in want.values() if v == 2), sum(1 for v in want.values() if v == 3)
-    rep.add(name, not bad, (f"유상증자 줄 {n2} · 배당 자료 줄 {n3} · 줄 없음 "
-                            f"{sum(len(sub.get(k) or {}) for k in PROVE_SUB if isinstance(sub.get(k), dict)) - n2 - n3}") if not bad
+    n2, n3, n4 = (sum(1 for v in want.values() if v == n) for n in (2, 3, 4))
+    rep.add(name, not bad, (f"유상증자 줄 {n2} · 배당 자료 줄 {n3} · " + (f"빠진 자료 줄 {n4} · " if n4 else "") + "줄 없음 "
+                            f"{sum(len(sub.get(k) or {}) for k in PROVE_SUB if isinstance(sub.get(k), dict)) - n2 - n3 - n4}") if not bad
             else " · ".join(bad[:3]),
-            "v1 · rights · data 의 종목 = proof 의 rightsT · dataT · dvLine 2 = 주주배정(sh) · 3 = 배당 표가 주식 수와 실제로 어긋남(div) — 그 종목에만")
+            "v1 · rights · data 의 종목 = proof 의 rightsT · dataT · dvLine 2 = 주주배정(sh) · 3 = 배당 표가 주식 수와 실제로 어긋남(div) · "
+            "4 = 회사 공시에 조각이 빠짐(nototal · nostk · pref0 · nopfo · prefmix) — 그 종목에만")
 
 
 # ── 파일 읽기 ───────────────────────────────────────────────

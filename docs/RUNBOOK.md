@@ -564,10 +564,13 @@ It does **not** restore (the stock stays exactly as before, with its reason in `
   배당수익률은 비워 두었어요." (`dvLine` 3): `div`, the cash dividend total ÷ the dividend per share is more than 3% off both the
   company's year-end outstanding common shares (주식의 총수 현황) and today's listed shares ÷ the factor (each of the 15 on 11-14 was read
   against the raw DART tables on 2026-11-15: interim dividends in the total, the total written in the per-share cell, a total that
-  includes preferred shares the table gives no amount for, a share table in units of 1,000 …). No line where a piece is missing or we
-  cannot split it: `nototal` (no total: 하림지주, 한신기계, HDC, 토니모리, 펌텍코리아), `nostk` (no readable year-end share table:
-  대신밸류리츠), `pref0` (a preferred dividend row while the share table lists no separate preferred count — voting preferred shares
-  are written with the common ones: 메디톡스), `prefmix`, `nopfo`, `neg`, `noshr`;
+  includes preferred shares the table gives no amount for, a share table in units of 1,000 …). Where the company's filings lack a
+  piece the calculation needs, Jack's line of 2026-11-19 ("no blank without a reason") "회사 공시에 배당 계산에 필요한 자료가 빠져 있어서
+  배당수익률은 비워 두었어요." (`dvLine` 4): `nototal` (no total: 하림지주, 한신기계, HDC, 토니모리, 펌텍코리아), `nostk` (no readable
+  year-end share table: 대신밸류리츠), `pref0` (a preferred dividend row while the share table lists no separate preferred count —
+  voting preferred shares are written with the common ones: 메디톡스), `nopfo`, `prefmix`. No line only for `neg` (the total is smaller
+  than the preferred share of it: a disagreement or our grouping of share classes) and `noshr` (no listed share count: not a company
+  filing); 0 stocks;
 - `fail` — a lookup failed (DART, the per-run limit, an unreadable filing, the share report not received): nothing changes and
   the next run tries again.
 
@@ -580,7 +583,7 @@ bonds, e.g. after a spin-off) never shows it, and the stock stays exactly as bef
 On the 2026-11-14 publish: 29 of the 72 hidden yields come back (21 with their bars), 23 of the 86 yields without bars get their
 bars back; still hidden: ratio 7, basis 4, rights 7, uncounted 2, data 22, a 32.5% yield 1; line 0. With #PR on the same data: 35
 of the 72 come back (+ the 6 exact bonus ratios), 31 of the 86 get all their bars back (+ 8); still hidden: ratio 0, basis 4, rights 8 (+ 대동기어),
-uncounted 2, data 22, the 32.5% yield 1; lines: 1 → 0 stocks, 2 → 8, 3 → 15, none → 7 of the data cases.
+uncounted 2, data 22, the 32.5% yield 1; lines: 1 → 0 stocks, 2 → 8, 3 → 15, 4 → 7 (every `rights` and `data` stock has a line).
 
 - **DART calls:** about 4 per stock the first time (the filings lists, decisions, the year-end share report, rights and
   bond counts when needed), at most 150 companies a run (`PROVE_PER_RUN`, separate from `dvWhy`'s own 150); about 160
@@ -606,11 +609,12 @@ uncounted 2, data 22, the 32.5% yield 1; lines: 1 → 0 stocks, 2 → 8, 3 → 1
   the table names each stock and the failing number.
 - **WARN "배당 기준 증명 경고 (되살리지 않은 이유 · 조회 실패)"**: names the stocks not restored, by reason (with the `proofSub` case and
   whether it shows a line, since #PR).
-- **FAIL "숨긴 배당수익률의 줄 (divCheck.proofSub · dvLine 2 · 3)"** (since #PR): `divCheck.proofSub` is not v1 with exactly `rights` and
-  `data`, its stocks differ from the proof's `rightsT` · `dataT`, a case is unknown, or the marks differ: `dvLine` 2 must be on exactly
-  the `rights` stocks with case `sh`, `dvLine` 3 on exactly the `data` stocks with case `div`. Our own bookkeeping only: look at the
-  run's "숨긴 배당수익률의 줄" and "그대로 숨김" log lines. A file without `proofSub` (before #PR) is only a warning unless the previous
-  publish had it; without it a `dvLine` 2 or 3 fails the "배당 기준 증명 기록" row.
+- **FAIL "숨긴 배당수익률의 줄 (divCheck.proofSub · dvLine 2 · 3 · 4)"** (since #PR): `divCheck.proofSub` is not v1 with exactly `rights`
+  and `data`, its stocks differ from the proof's `rightsT` · `dataT`, a case is unknown, or the marks differ: `dvLine` 2 must be on
+  exactly the `rights` stocks with case `sh`, `dvLine` 3 on exactly the `data` stocks with case `div`, `dvLine` 4 on exactly the `data`
+  stocks with case `nototal` · `nostk` · `pref0` · `nopfo` · `prefmix` (`PROVE_SUB_LINE`). Our own bookkeeping only: look at the run's
+  "숨긴 배당수익률의 줄" and "그대로 숨김" log lines. A file without `proofSub` (before #PR) is only a warning unless the previous publish
+  had it; without it a `dvLine` 2, 3 or 4 fails the "배당 기준 증명 기록" row.
 
 ## US stocks added by hand (EXTRA_US)
 

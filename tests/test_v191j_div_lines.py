@@ -43,9 +43,10 @@ TODAY = dt.date.fromisoformat(FX1["today"])
 RATIO7 = ("000500", "004270", "008830", "032540", "084010", "196170", "472850")        # v19.1i 의 ratio 7곳 (11-14)
 RIGHTS_LINE = "유상증자로 주가 기준이 바뀌어서, 배당수익률은 다시 계산하는 동안 비워 두었어요."
 DATA_LINE = "회사가 공시한 배당 자료와 주식 수가 서로 맞지 않아서 배당수익률은 비워 두었어요."
+MISSING_LINE = "회사 공시에 배당 계산에 필요한 자료가 빠져 있어서 배당수익률은 비워 두었어요."            # Jack 2026-11-19
 DIV_ROW = "국내 dps3a = dps3 ÷ 배율 · divSt 맞음"
 WHY_ROWS = ("배당 맞춤 이유 모양 (사건 · 배율 · 날짜 · 접수번호 · a·b · fx)", "배당 맞춤 이유 = 배율 (사건의 곱 = dpsF · 숨긴 수익률 · 날짜는 그 사이)")
-SUB_ROW = "숨긴 배당수익률의 줄 (divCheck.proofSub · dvLine 2 · 3)"
+SUB_ROW = "숨긴 배당수익률의 줄 (divCheck.proofSub · dvLine 2 · 3 · 4)"
 
 
 class Client:
@@ -132,8 +133,10 @@ def test_the_line_for_each_reason_is_decided_in_one_function():
     assert F.prove_line("line") == 1 and F.prove_line("line", None) == 1
     assert F.prove_line("rights", "sh") == 2 and F.prove_line("rights", "shnew") is None and F.prove_line("rights", "unk") is None
     assert F.prove_line("data", "div") == 3
-    for sub in ("pref0", "neg", "nototal", "prefmix", "nopfo", "nostk", "noshr"):
-        assert F.prove_line("data", sub) is None, sub                                       # 자료가 빠졌거나 나눠 셀 수 없으면 줄 없음
+    for sub in ("nototal", "nostk", "pref0", "nopfo", "prefmix"):
+        assert F.prove_line("data", sub) == 4, sub                                          # 회사 공시에 조각이 빠졌으면 줄 4 (Jack 2026-11-19)
+    for sub in ("neg", "noshr"):
+        assert F.prove_line("data", sub) is None, sub                                       # 어긋남인지 모름 · 회사 공시가 아님 — 줄 없음
     for reason in ("ratio", "basis", "uncounted", "fail", "today"):
         assert F.prove_line(reason, "div") is None and F.prove_line(reason, "sh") is None
     assert set(F.PROVE_SUB_LINE["data"]) <= set(F.PROVE_SUB["data"]) and set(F.PROVE_SUB_LINE["rights"]) <= set(F.PROVE_SUB["rights"])
@@ -254,17 +257,18 @@ def test_an_unknown_rights_method_blocks_without_a_line():
 
 def test_data_payers_get_line_three_only_when_the_table_really_disagrees():
     """2026-11-15 원문 확인: 아세아제지 · 엘앤씨바이오 · 와이엔텍(주당 칸에 총액) · 인터로조(우선주 줄 없는 총액)는 배당 표가 회사의 주식 수와
-    어긋나요 (줄 3). 하림지주(총액 없음) · 메디톡스(주식의 총수 현황에 우선주 수가 따로 없음) · 대신밸류리츠(그해 말 표를 읽지 못함)는 줄 없음."""
+    어긋나요 (줄 3). 하림지주(총액 없음) · 메디톡스(주식의 총수 현황에 우선주 수가 따로 없음) · 대신밸류리츠(그해 말 표를 읽지 못함)는 회사 공시에
+    조각이 빠졌어요 (줄 4 — Jack 2026-11-19 '이유 없는 빈칸은 없게')."""
     ts = ("002310", "290650", "067900", "119610", "003380", "086900", "0030R0")
     by, counts, why, _ = run(*ts)
-    assert {t: by[t].get("dvLine") for t in ts} == {"002310": 3, "290650": 3, "067900": 3, "119610": 3, "003380": None, "086900": None,
-                                                    "0030R0": None}
+    assert {t: by[t].get("dvLine") for t in ts} == {"002310": 3, "290650": 3, "067900": 3, "119610": 3, "003380": 4, "086900": 4,
+                                                    "0030R0": 4}
     assert counts["proofSub"]["data"] == {"002310": "div", "290650": "div", "067900": "div", "119610": "div", "003380": "nototal",
                                           "086900": "pref0", "0030R0": "nostk"}
     assert sorted(counts["proof"]["dataT"]) == sorted(ts) and all("dyt" not in by[t] for t in ts)
     assert by["290650"]["dvWhy"] == {"v": 1, "st": "nc-mismatch"}                              # 맞춤 이유(#98) 그대로 · 줄은 dvLine 하나로
     lines = " ".join(why.summary())
-    assert "배당 자료 줄(3) 4" in lines and "rights · data 중 줄 없음 3" in lines
+    assert "배당 자료 줄(3) 4 · 빠진 자료 줄(4) 3 · rights · data 중 줄 없음 0" in lines
 
 
 def test_line_one_is_unchanged():
@@ -386,7 +390,7 @@ def test_a_guessed_non_whole_factor_fails_exactly_as_before():
 
 # ── 5. 관문: 답 11 · 13 의 표시와 기록 ─────────────────────────
 def with_lines(files):
-    """숨긴 배당 회사 셋: data 어긋남(줄 3) · data 총액 없음(줄 없음) · rights 주주배정(줄 2) — 파이프라인처럼 기록과 표시를 함께."""
+    """숨긴 배당 회사 셋: data 어긋남(줄 3) · data 총액 없음(줄 4) · rights 주주배정(줄 2) — 파이프라인처럼 기록과 표시를 함께."""
     files, s = with_proof(files)
     kr = [x for x in files["data"]["stocks"] if x.get("cls") == "kr" and not x.get("fund") and x.get("divSt") == "nd"]
     a, b, c = kr[:3]
@@ -394,7 +398,7 @@ def with_lines(files):
         x["dpsF"] = [None] * 3
         x["dps3a"] = [None if (d or 0) > 0 else d for d in x["dps3"]]
         mirror(files, x)
-    a["dvLine"], c["dvLine"] = 3, 2
+    a["dvLine"], b["dvLine"], c["dvLine"] = 3, 4, 2
     proof = files["data"]["divCheck"]["proof"]
     recount(files)
     recount_why(files)
@@ -415,13 +419,16 @@ def test_marks_that_match_the_record_pass(line_pair):
     cur, prev, (a, b, c) = line_pair
     rep = check(cur, prev)
     assert not rep.failed, rep.table()
-    assert rows_of(rep)[SUB_ROW][3] == "PASS" and "유상증자 줄 1 · 배당 자료 줄 1 · 줄 없음 1" in rows_of(rep)[SUB_ROW][1]
+    assert rows_of(rep)[SUB_ROW][3] == "PASS" and "유상증자 줄 1 · 배당 자료 줄 1 · 빠진 자료 줄 1 · 줄 없음 0" in rows_of(rep)[SUB_ROW][1]
     items = [i for _, xs in rep.details for i in xs]
-    assert any(b["t"] in i and "(총액 없음 · 줄 없음)" in i for i in items) and any(a["t"] in i and "주식 수와 다름 · 줄)" in i for i in items)
+    assert any(b["t"] in i and "(총액 없음 · 줄)" in i for i in items) and any(a["t"] in i and "주식 수와 다름 · 줄)" in i for i in items)
 
 
 @pytest.mark.parametrize("change", [
-    lambda d, a, b, c: b.update(dvLine=3),                                                        # 줄 없는 경우(총액 없음)에 줄 표시
+    lambda d, a, b, c: b.update(dvLine=3),                                                        # 총액 없음에 어긋남의 줄
+    lambda d, a, b, c: b.pop("dvLine"),                                                           # 총액 없음인데 줄 4 표시 없음 (Jack 2026-11-19)
+    lambda d, a, b, c: a.update(dvLine=4),                                                        # 어긋남에 빠진 자료의 줄
+    lambda d, a, b, c: (d["divCheck"]["proofSub"]["data"].update({b["t"]: "neg"})),                # 줄 없는 경우인데 줄 4 표시
     lambda d, a, b, c: a.pop("dvLine"),                                                           # 어긋남인데 표시 없음
     lambda d, a, b, c: a.update(dvLine=2),                                                        # 다른 줄
     lambda d, a, b, c: c.update(dvLine=3),
@@ -439,7 +446,7 @@ def test_marks_that_disagree_with_the_record_fail(line_pair, change):
 
 
 @pytest.mark.parametrize("change", [
-    lambda d, a, b, c: a.update(dvLine=4),                                                        # 모르는 줄 값
+    lambda d, a, b, c: a.update(dvLine=5),                                                        # 모르는 줄 값
     lambda d, a, b, c: a.update(dvLine=True),
     lambda d, a, b, c: (a.update(dyt=1.0)),                                                       # 수익률이 보이는 종목에 줄
     lambda d, a, b, c: d["divCheck"].pop("proofSub"),                                             # 기록 없이 줄 2 · 3
@@ -454,7 +461,7 @@ def test_a_mark_without_its_record_or_on_a_yield_fails(line_pair, change):
 def test_data_before_v191j_is_only_a_warning_until_published(line_pair):
     cur, prev, (a, b, c) = line_pair
     cur["data"]["divCheck"].pop("proofSub")
-    a.pop("dvLine"), c.pop("dvLine")
+    a.pop("dvLine"), b.pop("dvLine"), c.pop("dvLine")
     rep = check(cur, prev)
     assert not rep.failed and rows_of(rep)[SUB_ROW][3] == "WARN", rep.table()
     had = {"data": copy.deepcopy(cur["data"])}
@@ -475,3 +482,25 @@ def test_the_two_lines_are_recorded_once_and_built_once():
         old = f.read()
     for line in (RIGHTS_LINE, DATA_LINE):
         assert src.count(line) == 1 and app.count(line) == 1 and old.count(line) == 0               # 예전 뱁새에는 없어요 (dy 그대로)
+
+
+def test_the_missing_data_line_is_recorded_once_and_built_once():
+    """Jack 2026-11-19: '이유 없는 빈칸은 없게' — 회사 공시에 조각이 빠진 배당 회사(하림지주 · 한신기계 · HDC · 토니모리 · 펌텍코리아 ·
+    대신밸류리츠 · 메디톡스)의 줄."""
+    from copytrace import chat_approved
+    assert chat_approved()["co.div.missingHidden"] == MISSING_LINE
+    src = open(os.path.join(ROOT, "src", "copy", "v2.js"), encoding="utf-8").read()
+    with open(os.path.join(ROOT, "app.html"), encoding="utf-8") as f:
+        app = f.read()
+    with open(os.path.join(ROOT, "baepsae.html"), encoding="utf-8") as f:
+        old = f.read()
+    assert src.count(MISSING_LINE) == 1 and app.count(MISSING_LINE) == 1 and old.count(MISSING_LINE) == 0
+
+
+def test_every_hidden_data_payer_on_the_real_data_has_a_line():
+    """11-14 의 data 22곳 중 우리 fixture 에 있는 7곳: 모두 줄이 있어요 (3 어긋남 · 4 빠진 자료) — 빈칸에 이유가 없는 data 종목은 없어요."""
+    ts = ("002310", "290650", "067900", "119610", "003380", "086900", "0030R0")
+    by, counts, _, _ = run(*ts)
+    assert all(by[t].get("dvLine") in (3, 4) for t in ts)
+    assert {t: v for t, v in counts["proofSub"]["data"].items() if F.prove_line("data", v) == 4} == {"003380": "nototal", "086900": "pref0",
+                                                                                                      "0030R0": "nostk"}

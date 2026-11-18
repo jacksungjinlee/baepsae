@@ -123,7 +123,8 @@ export function tileViews(load, s) {
     const hid = last && last.topic === "div" && !number && !usOf(s) ? divHiddenLine(s, co) : null;
     if (hid && C.co.div[hid]) {
       last.note = C.co.div[hid];
-      last.noteUi = { shareHidden: "div-share-hidden", rightsHidden: "div-rights-hidden", dataHidden: "div-data-hidden" }[hid];
+      last.noteUi = { shareHidden: "div-share-hidden", rightsHidden: "div-rights-hidden", dataHidden: "div-data-hidden",
+        missingHidden: "div-missing-hidden" }[hid];
     }
   }
   if (pxBadFor(s, co) && T().label.risk) {

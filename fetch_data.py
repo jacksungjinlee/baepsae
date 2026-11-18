@@ -34,10 +34,11 @@ validate_data.py 를 통과해야만 커밋(발행)돼요. 파일은 write_json(
            yrs 되살린 앞 해 [1 전기 · 2 전전기] · c 현금배당금총액 3년(원) · shr 오늘 상장 주식 수 · yearEnd 는 cmo · cmi 그해 말 보통주 유통 ·
            발행 주식 수, cv 공시된 새 주식(오늘 주식 수로), fx 그 결정들 · ev 올해 배율의 사건 · 우선주 몫 pf 우선주 유통 주식 수 · pd 우선주
            주당 배당) · dvLine(앱이 숨긴 배당수익률 자리에 보여 줄 줄, data.json 만: 1 Jack 의 '주식 수가 바뀐 비율을 공시로 확인하지 못해…' ·
-           v19.1j 2 '유상증자로 주가 기준이 바뀌어서…' · 3 '회사가 공시한 배당 자료와 주식 수가 서로 맞지 않아서…')
+           v19.1j 2 '유상증자로 주가 기준이 바뀌어서…' · 3 '회사가 공시한 배당 자료와 주식 수가 서로 맞지 않아서…' ·
+           4 '회사 공시에 배당 계산에 필요한 자료가 빠져 있어서…')
            · divCheck.proof(결과마다 수 · 되살리지 않은 이유 line · ratio · basis · rights · uncounted · data · fail 마다 종목 이름)
            · v19.1j divCheck.proofSub(rights · data 로 숨긴 종목마다 그 안의 경우 — rights sh · unk, data div · pref0 · neg · nototal ·
-           prefmix · nopfo · nostk · noshr: 줄은 sh · div 에만)
+           prefmix · nopfo · nostk · noshr: 줄은 sh → 2 · div → 3 · nototal · nostk · pref0 · nopfo · prefmix → 4)
 
 시장 가정(도구의 기본값으로 자동 반영)
   rf 국고채 10년(ECOS, 출처는 settings.rfSrc) · mktVol/usVol/mtVol · rhoKrUs/rhoKrMt/rhoUsMt …
@@ -6233,15 +6234,19 @@ PROVE_SHR_MOVE = 0.03             # 조회 뒤 오늘 상장 주식 수가 이�
 #              새 주식이 아직 보이지 않으면 (shnew: 권리락 전일 수 있어요) · 방식을 모르는 결정만으로 막았으면 (unk) 줄 없음.
 #     3 data   '회사가 공시한 배당 자료와 주식 수가 서로 맞지 않아서 배당수익률은 비워 두었어요.' — 배당 표의 총액 ÷ 주당 배당이 회사의 그해 말
 #              유통 주식 수(주식의 총수 현황)와도, 오늘 상장 주식 수 ÷ 배율과도 3% 넘게 다를 때만 (div · 2026-11-15 원문 확인: 중간배당이 든 총액 ·
-#              주당 배당 칸의 총액 · 우선주 줄 없는 총액 …). 그 밖은 줄 없음 — 자료가 빠졌거나 우리가 나눠 셀 수 없는 것: nototal 총액 없음 ·
-#              prefmix 주당 배당이 다른 종류주가 섞임 · nopfo 우선주 주식 수를 모름 · pref0 배당 표에 우선주 줄이 있는데 주식의 총수 현황에 우선주 수가
-#              따로 없음 (의결권 있는 우선주는 보통주와 한 줄에 적혀요 — 메디톡스) · neg 총액이 우선주 몫보다 작음 (종류주를 잘못 묶었을 수 있어요) ·
-#              nostk 그해 말 주식의 총수 현황 없음 · noshr 오늘 상장 주식 수 없음.
+#              주당 배당 칸의 총액 · 우선주 줄 없는 총액 …).
+#     4 data   (Jack, 2026-11-19 '이유 없는 빈칸은 없게') '회사 공시에 배당 계산에 필요한 자료가 빠져 있어서 배당수익률은 비워 두었어요.' — 회사의
+#              공시에 계산에 필요한 조각이 빠졌을 때: nototal 배당 표에 총액 없음 · nostk 그해 말 주식의 총수 현황 없음(읽을 표가 없음) · pref0 배당 표에
+#              우선주 줄이 있는데 주식의 총수 현황에 우선주 수가 따로 없음 (의결권 있는 우선주는 보통주와 한 줄에 적혀요 — 메디톡스) · nopfo 우선주
+#              주식 수를 모름 (주식의 총수 현황 없음) · prefmix 주당 배당이 다른 종류주가 섞였는데 종류마다의 주식 수가 공시에 없음.
+#     줄 없음  neg 총액이 우선주 몫보다 작음 (어긋남인지 우리가 종류주를 잘못 묶었는지 몰라요) · noshr 오늘 상장 주식 수 없음 (회사 공시가 아니라
+#              거래소 목록) — 2026-11-14 · 11-17 에 0곳.
 PROVE_EXACT_TOL = 1e-6            # 답 12 (나): 정확한 무상증자 배율의 곱(1 + x)과 발행하는 배율(dpsF)의 차이 상한
-PROVE_LINE = {"line": 1, "rights": 2, "data": 3}                         # dvLine 값 (앱이 줄을 고르는 표시)
+PROVE_LINE = {"line": 1, "rights": 2, "data": 3, "missing": 4}         # dvLine 값 (앱이 줄을 고르는 표시)
 PROVE_SUB = {"rights": ("sh", "shnew", "unk"),
              "data": ("div", "pref0", "neg", "nototal", "prefmix", "nopfo", "nostk", "noshr")}
-PROVE_SUB_LINE = {"rights": ("sh",), "data": ("div",)}   # 줄이 맞는 경우 (말이 그대로 맞을 때만)
+PROVE_SUB_LINE = {"rights": {"sh": 2},                                 # 경우 → 줄 (말이 그대로 맞을 때만 · 없으면 줄 없음)
+                  "data": {"div": 3, "nototal": 4, "nostk": 4, "pref0": 4, "nopfo": 4, "prefmix": 4}}
 PROVE_DATA_WHY = {"현금배당금총액 없음": "nototal", "주당 배당이 다른 우선주·종류주가 섞여 있어요": "prefmix",
                   "우선주·종류주 주식 수를 몰라요": "nopfo", "우선주·종류주 배당 줄이 있는데 그해 말 우선주·종류주가 없어요": "pref0",
                   "우선주 몫을 빼면 0 이하": "neg"}
@@ -6251,11 +6256,12 @@ PROVE_SUB_KO = {"sh": "주주배정 (새 주식 상장됨)", "shnew": "주주배
 
 
 def prove_line(reason, sub=None):
-    """숨긴 이유(reason)와 그 안의 경우(sub) → 앱이 보여 줄 줄의 표시(dvLine 1 · 2 · 3) 또는 None (줄 없음). 줄은 그 말이 그대로 맞을 때만:
-    line 은 늘, rights 는 주주배정이라고 읽은 결정이 있을 때(sh), data 는 배당 표가 회사의 주식 수와 실제로 어긋날 때(div). (순수 함수)"""
+    """숨긴 이유(reason)와 그 안의 경우(sub) → 앱이 보여 줄 줄의 표시(dvLine 1 · 2 · 3 · 4) 또는 None (줄 없음). 줄은 그 말이 그대로 맞을 때만:
+    line 은 늘(1), rights 는 주주배정이라고 읽은 결정이 있을 때(sh → 2), data 는 배당 표가 회사의 주식 수와 실제로 어긋날 때(div → 3) ·
+    회사 공시에 계산에 필요한 조각이 빠졌을 때(nototal · nostk · pref0 · nopfo · prefmix → 4, Jack 2026-11-19). (순수 함수)"""
     if reason == "line":
         return PROVE_LINE["line"]
-    return PROVE_LINE[reason] if sub in PROVE_SUB_LINE.get(reason, ()) else None
+    return PROVE_SUB_LINE.get(reason, {}).get(sub)
 
 
 def prove_exact_bonus(e):
@@ -6934,7 +6940,7 @@ class DivWhy:
 
     def proof_sub(self):
         """v19.1j: data.json divCheck.proofSub — rights · data 로 숨긴 종목마다 그 안의 경우 (줄을 고른 근거). 관문이 proof 의 이름 목록 ·
-        종목의 dvLine 과 맞춰 봐요 (rights sh → 2 · data div → 3 · 나머지는 줄 없음)."""
+        종목의 dvLine 과 맞춰 봐요 (prove_line: rights sh → 2 · data div → 3 · 빠진 자료 → 4 · 나머지는 줄 없음)."""
         return {"v": 1, **{k: dict(sorted(self.psub[k].items())) for k in PROVE_SUB}}
 
     def proof_summary(self):
@@ -6956,7 +6962,8 @@ class DivWhy:
         subs = {k: collections.Counter(v.values()) for k, v in self.psub.items()}
         lines = collections.Counter(prove_line(k, sb) for k, v in self.psub.items() for sb in v.values())
         lines[1] += c["line"]
-        ln = ("· 숨긴 배당수익률의 줄 (dvLine): Jack 의 줄(1) " + f"{lines[1]:,} · 유상증자 줄(2) {lines[2]:,} · 배당 자료 줄(3) {lines[3]:,} · rights · data 중 줄 없음 "
+        ln = ("· 숨긴 배당수익률의 줄 (dvLine): Jack 의 줄(1) " + f"{lines[1]:,} · 유상증자 줄(2) {lines[2]:,} · 배당 자료 줄(3) {lines[3]:,} · "
+              + f"빠진 자료 줄(4) {lines[4]:,} · rights · data 중 줄 없음 "
               + f"{lines[None]:,} | " + " · ".join(f"{k} " + ", ".join(f"{PROVE_SUB_KO[x]} {v[x]}" for x in PROVE_SUB[k] if v[x])
                                                   for k, v in subs.items() if v))
         return [line, calls, ln] + ex + [f"  !! {x}" for x in self.pnotes]
