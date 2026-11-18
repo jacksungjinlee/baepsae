@@ -3,6 +3,7 @@
 
 docs/tasks/v19.6-records-alerts-dark.md Part C, A.1 [Q6] [Q7], Acceptance 3 (adds only; the expected values worked by hand):
 - 조건 세 가지의 값: 화면에 보이는 그대로 (한국 주가 원 단위 · 미국 주가 소수 둘째 자리 · PBR 소수 둘째 자리 · 배당수익률 yieldText) 로 견줘요
+- 주가 · PBR 은 보이는 값이 넣은 값 이하(≤), 배당수익률은 이상(≥)이면 맞아요 (Jack, 2026-11-19, Q15: 같은 값도 맞아요)
 - 빈 값은 맞지 않고(정보 없음), hitAt 를 만들지도 지우지도 않아요. PBR 0 이하 · 가치 목록의 가드(한국 0.00 · 미국 PER×ROE) 도 빈 값
 - 한국 배당수익률은 확인한 dyt 만 (divCheck 가 있는 파일), 미국은 배당수익률 목록과 같은 dy
 - hitAt: 신선한 데이터에서 처음 맞은 날 = 그 종목의 가격 날짜, 그날만 오늘 볼 것 줄, 계속 맞으면 다시 안 나옴, 멈춘 날 · 빈 값은 그대로,
@@ -99,11 +100,71 @@ def test_each_kind_reads_the_value_as_the_screens_show_it_and_blanks_stay_blank(
                    "usDy": 1.1, "usDyOver": None, "fund": None, "oldFile": None}
 
 
-def test_met_compares_the_shown_value_strictly_below_or_at_least():
+def test_met_is_at_or_below_for_price_and_pbr_and_at_least_for_yield():
+    """Jack, 2026-11-19 (Q15): 주가 and PBR fire when the shown value is at or below the entered number (≤, "넣은 값 이하가 되면"),
+    배당수익률 when it is at or above (≥). One shown step past the number either way is decided by the side it is on."""
     got = run("""const m = Wt.condMet;
-      out = [m('pxBelow', 74000, 75000), m('pxBelow', 75000, 75000), m('pbrBelow', 0.79, 0.8), m('pbrBelow', 0.8, 0.8),
-             m('dyAtLeast', 4.0, 4), m('dyAtLeast', 3.9, 4), m('pxBelow', 148.5, 150), m('pbrBelow', 0.7, 0.8)];""")
-    assert got == [True, False, True, False, True, False, True, True]
+      out = [m('pxBelow', 74000, 75000), m('pxBelow', 75000, 75000), m('pxBelow', 75001, 75000),
+             m('pxBelow', 148.5, 150), m('pxBelow', 150, 150), m('pxBelow', 150.01, 150), m('pxBelow', 149.99, 150),
+             m('pbrBelow', 0.79, 0.8), m('pbrBelow', 0.8, 0.8), m('pbrBelow', 0.81, 0.8), m('pbrBelow', 0.7, 0.8),
+             m('dyAtLeast', 4.0, 4), m('dyAtLeast', 4.1, 4), m('dyAtLeast', 3.9, 4), m('dyAtLeast', 0.03, 0.1)];""")
+    assert got == [True, True, False,
+                   True, True, False, True,
+                   True, True, False, True,
+                   True, True, False, False]
+
+
+def test_q15_an_exactly_equal_shown_value_meets_price_krw_usd_and_pbr_and_yield_on_chips_marks_and_home_rows():
+    """Jack, 2026-11-19 (Q15). Each stock's shown value equals its entered number: 한국 주가 75,000원 (84,200 → 75,000.4 shown as
+    75,000), 미국 주가 $150.00 (150.004 shown as 150.00), PBR 0.80배 (0.799 shown as 0.80) against 0.8, 배당수익률 4.0% (3.96 shown as
+    4.0) against 4. The chip state (condState), the mark (watchMarks / withWatchHits) and the 홈 row (watchHits) all say met. One
+    shown step past the number (75,001원 · $150.01 · 0.81배 · 3.9%) is not met anywhere."""
+    got = run("""
+      const conds = { '000001': [{ k: 'pxBelow', v: 75000 }], AAA: [{ k: 'pxBelow', v: 150 }], '000002': [{ k: 'pbrBelow', v: 0.8 }], '000003': [{ k: 'dyAtLeast', v: 4 }] };
+      const W4 = () => W(Object.fromEntries(Object.entries(conds).map(([t, c], i) => [t, { at: '2026-11-0' + (i + 1), conds: c }])));
+      const run1 = (stocks) => {
+        const l = loadOf(stocks), d = W4();
+        const chips = Object.fromEntries(Object.entries(conds).map(([t, c]) => [t, Wt.condState(l, l.byT.get(t), c[0], true).state]));
+        const rows = Wt.watchHits(d, l).map((h) => [h.t, h.k, h.val, h.date]);
+        const next = Wt.withWatchHits(d, l);
+        const marks = next ? Object.fromEntries(Object.entries(next.watch).map(([t, e]) => [t, e.conds[0].hitAt ?? null])) : null;
+        return { chips, rows, marks };
+      };
+      const eq = run1([kr('000001', { price: 75000.4 }), us('AAA', { price: 150.004 }), kr('000002', { pbr: 0.799 }), kr('000003', { dyt: 3.96 })]);
+      const past = run1([kr('000001', { price: 75001 }), us('AAA', { price: 150.01 }), kr('000002', { pbr: 0.81 }), kr('000003', { dyt: 3.9 })]);
+      out = { eq, past, text: [Wt.hitText('pxBelow', 75000, 75000, false), Wt.hitText('pxBelow', 150, 150, true), Wt.hitText('pbrBelow', 0.8, 0.8, false),
+                               Wt.hitText('dyAtLeast', 4, 4, false)] };""")
+    eq, past = got["eq"], got["past"]
+    assert eq["chips"] == {"000001": "met", "AAA": "met", "000002": "met", "000003": "met"}, eq["chips"]
+    # list order is newest first (000003 added 11-04 … 000001 11-01); a US stock is dated by its own close (usPxDate)
+    assert eq["rows"] == [["000003", "dyAtLeast", 4.0, "2026-11-12"], ["000002", "pbrBelow", 0.8, "2026-11-12"],
+                          ["AAA", "pxBelow", 150.0, "2026-11-11"], ["000001", "pxBelow", 75000, "2026-11-12"]], eq["rows"]
+    assert eq["marks"] == {"000001": "2026-11-12", "AAA": "2026-11-11", "000002": "2026-11-12", "000003": "2026-11-12"}, eq["marks"]
+    assert past["chips"] == {"000001": "not", "AAA": "not", "000002": "not", "000003": "not"}, past["chips"]
+    assert past["rows"] == [] and past["marks"] is None, past
+    # what the 홈 row says on the equal day (the chip words are Appendix 1's "… 아래" / "… 이상")
+    assert got["text"] == ["주가 75,000원 아래 조건에 맞아요. 지금 75,000원이에요.", "주가 $150.00 아래 조건에 맞아요. 지금 $150.00예요.",
+                           "PBR 0.8배 아래 조건에 맞아요. 지금 0.80배예요.", "배당수익률 4% 이상 조건에 맞아요. 지금 4.0%예요."], got["text"]
+
+
+def test_q15_a_condition_already_met_at_save_time_marks_on_the_next_fresh_check_and_shows_once_on_home():
+    """The branch's rule for a condition met the moment it is saved (unchanged by Q15): a new or changed condition is stored without a
+    mark (withWatchConds), so the next fresh-data check marks it with today's close and 홈 shows its row for that close, once. With Q15
+    this now includes a price or PBR exactly at the entered number."""
+    got = run("""
+      const t = '000001', l = loadOf([kr(t, { price: 75000, pbr: 0.8 })]);
+      let d = S.withWatchAdd({ v: 1, decks: [] }, t, '종목' + t, T, 1762900000000);
+      d = S.withWatchConds(d, t, [{ k: 'pxBelow', v: 75000 }, { k: 'pbrBelow', v: 0.8 }], T, 1762900001000);
+      const saved = d.watch[t].conds;
+      const rows1 = Wt.watchHits(d, l).map((h) => h.k);
+      d = Wt.withWatchHits(d, l) || d;
+      const marks = d.watch[t].conds.map((c) => c.hitAt ?? null);
+      const rows2 = Wt.watchHits(d, l).map((h) => h.k);                                            // the same close: the row stays
+      const next = loadOf([kr(t, { price: 75000, pbr: 0.8 })], { pxDate: '2026-11-13' });          // still equal the next day: no row
+      out = { saved, rows1, marks, rows2, rows3: Wt.watchHits(d, next).map((h) => h.k), again: Wt.withWatchHits(d, next) };""")
+    assert got["saved"] == [{"k": "pxBelow", "v": 75000}, {"k": "pbrBelow", "v": 0.8}]
+    assert got["rows1"] == ["pxBelow", "pbrBelow"] and got["marks"] == ["2026-11-12", "2026-11-12"]
+    assert got["rows2"] == ["pxBelow", "pbrBelow"] and got["rows3"] == [] and got["again"] is None
 
 
 def test_states_on_fresh_stale_and_blank_data():

@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""v19.6c 관심 종목: the Appendix 1 lines word for word, and the condition sheet's proposals parked for Jack.
+"""v19.6c 관심 종목: the Appendix 1 lines word for word, and the condition sheet's six lines Jack approved on 2026-11-19 (Q15).
 
 - each watch.* key holds exactly the Appendix 1 text (docs/tasks/v19.6-records-alerts-dark.md, 관심 종목 · 오늘 볼 것 · import cap),
   is recorded in docs/tasks/v18.3-approved-in-chat.md as "Jack, 2026-11-06 (v19.6 Appendix 1, …)" and is not pending
-- the six condition-sheet labels (watch.form.*) are null and listed in docs/tasks/v18.3-new-strings-pending.md with their proposal
+- the six condition-sheet lines (watch.form.*) hold exactly Jack's approved text of 2026-11-19 (the hint in his wording: "넣은 값
+  이하가 되면", not the earlier proposal's "넣은 값보다 낮아지면"), are recorded as "Jack, 2026-11-19 (…)" and are no longer pending
 - Appendix 1 itself still says each of these lines (the spec is where they come from)
 (what the screens show is checked in tests/smoke_v2.py scene_v196c)
 """
@@ -40,9 +41,11 @@ APPROVED = {
     "hit": "{condition} 조건에 맞아요. 지금 {now}이에요.",
     "hitYe": "{condition} 조건에 맞아요. 지금 {now}예요.",
 }
-PROPOSED = {"form.pxKr": "주가 (원)", "form.pxUs": "주가 (달러)", "form.pbr": "PBR (배)", "form.dy": "배당수익률 (%)",
-            "form.hint": "주가와 PBR은 넣은 값보다 낮아지면, 배당수익률은 넣은 값 이상이 되면 알려 드려요. 비워 두면 그 조건은 쓰지 않아요.",
-            "form.bad": "숫자를 다시 확인해 주세요."}
+# Jack, 2026-11-19 (Q15): "labels and error yes. Hint: …" — the hint in his words, word for word
+APPROVED_Q15 = {"form.pxKr": "주가 (원)", "form.pxUs": "주가 (달러)", "form.pbr": "PBR (배)", "form.dy": "배당수익률 (%)",
+                "form.hint": "주가와 PBR은 넣은 값 이하가 되면, 배당수익률은 넣은 값 이상이 되면 알려 드려요. 비워 두면 그 조건은 쓰지 않아요.",
+                "form.bad": "숫자를 다시 확인해 주세요."}
+OLD_HINT = "주가와 PBR은 넣은 값보다 낮아지면"                                  # the earlier proposal's wording, not approved
 
 
 def read(p):
@@ -65,12 +68,13 @@ def at(d, key):
 
 
 @pytest.mark.skipif(NODE is None, reason="node 가 없어요")
-def test_the_lines_are_exactly_appendix_1_and_the_proposals_wait():
+def test_the_lines_are_exactly_appendix_1_and_jacks_q15_answer():
     w = watch_copy()
     for key, text in APPROVED.items():
         assert at(w, key) == text, key
-    for key in PROPOSED:
-        assert at(w, key) is None, key                                      # 승인 전에는 null (화면은 승인된 이름을 대신 써요)
+    for key, text in APPROVED_Q15.items():
+        assert at(w, key) == text, key
+    assert set(w["form"]) == {k.split(".")[1] for k in APPROVED_Q15}, w["form"]
 
 
 def test_each_line_is_recorded_as_approved_and_appendix_1_says_it():
@@ -92,12 +96,20 @@ def test_each_line_is_recorded_as_approved_and_appendix_1_says_it():
         assert piece in spec, piece
 
 
-def test_the_proposals_are_parked_with_their_wording():
+def test_the_q15_lines_are_recorded_as_approved_and_no_longer_pending():
+    chat = CT.chat_approved()
+    doc = read("docs/tasks/v18.3-approved-in-chat.md")
     pending = read("docs/tasks/v18.3-new-strings-pending.md")
-    for key, text in PROPOSED.items():
-        row = [l for l in pending.splitlines() if l.startswith(f"| `watch.{key}` |")]
-        assert len(row) == 1 and row[0].split("|")[2].strip() == text, key
+    for key, text in APPROVED_Q15.items():
+        k = "watch." + key
+        assert chat.get(k) == text, k
+        row = [l for l in doc.splitlines() if l.startswith(f"| `{k}` |")]
+        assert len(row) == 1 and row[0].split("|")[3].strip().startswith("Jack, 2026-11-19"), k
+        assert f"`{k}`" not in pending, k
     src = read("src/copy/v2.js")
-    for key, text in PROPOSED.items():
+    block = src.split("watch: {", 1)[1].split("\n  },", 1)[0]
+    assert "Jack 승인 대기" not in block and ": null" not in block, "관심 종목에 아직 승인 대기 줄이 있어요"
+    for key, text in APPROVED_Q15.items():
         name = key.split(".")[1]
-        assert re.search(rf'^\s+{name}: null,\s+// 제안 \(Jack 승인 대기, v19\.6c\): "{re.escape(text)}"$', src, re.M), key
+        assert re.search(rf'^\s+{name}: "{re.escape(text)}",', block, re.M), key
+    assert OLD_HINT not in src and OLD_HINT not in pending                  # the earlier proposal is nowhere on screen or pending

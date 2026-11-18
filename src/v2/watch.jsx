@@ -5,7 +5,7 @@
 //               stale data: the values beside the stale date line, never a check. No 뱁이 (numbers); the empty state is its line.
 // WatchSection  the 종목 tab's 관심 종목 section (at the top, only when the list is not empty) with 전체 보기 ›.
 // WatchButton   the company page: 관심 종목에 추가 / 관심 종목에서 빼기 (and the 30-stock line when the list is full).
-// CondSheet     the conditions of one stock (no board: the sheet's labels wait for Jack, the approved 가격 · PBR · 배당수익률 meanwhile).
+// CondSheet     the conditions of one stock (no board: its hint, labels and bad-number line are Jack's of 2026-11-19, Q15).
 // WatchHitRows  홈's 오늘 볼 것: "{name} · 관심 종목 조건", the hit line and the price date (watch.js watchHits).
 // Colours: the shared tokens only (dark mode covers the screen). Icons: Phosphor duotone, the table's tones.
 import React, { useState } from "react";
@@ -122,12 +122,12 @@ function WatchCard({ t, e, load, fresh, onCond, canEdit }) {
 }
 
 // ---------------- the condition sheet ----------------
-// Labels: the proposals (C.watch.form, waiting for Jack) or, until then, approved names (가격 · PBR · 배당수익률); under each
-// field the chip of what was typed, so the direction (아래 · 이상) and the unit read before 저장.
+// Labels (C.watch.form, Jack 2026-11-19: 주가 (원) · 주가 (달러) · PBR (배) · 배당수익률 (%)); the hint above the fields says which way
+// each fires (주가 · PBR at or below, 배당수익률 at or above); under each field the chip of what was typed, before 저장.
 const LABEL = {
-  pxBelow: (us) => (us ? W().form.pxUs : W().form.pxKr) || C.why.srcPrice,
-  pbrBelow: () => W().form.pbr || "PBR",
-  dyAtLeast: () => W().form.dy || C.pick.receipt.yield,
+  pxBelow: (us) => (us ? W().form.pxUs : W().form.pxKr),
+  pbrBelow: () => W().form.pbr,
+  dyAtLeast: () => W().form.dy,
 };
 // typed text -> the number (commas and spaces dropped), "" -> null (no condition), NaN when it is not a valid number for the
 // kind (a Korean price whole won; the decimals and limits of store.js WATCH_DEC · okWatchValue).
@@ -167,7 +167,7 @@ export function CondSheet({ open, store, setStoreData, onClose }) {
   return (
     <BottomSheet open title={hitTitle(open.name)} onClose={onClose} closeLabel={C.app.close} shift={wide ? SIDE_W : 0}>
       <div data-ui-v2="watch-sheet" data-t={t}>
-        {W().form.hint && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{W().form.hint}</p>}
+        <p data-ui-v2="watch-hint" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{W().form.hint}</p>
         {WATCH_KINDS.map((k) => {
           const v = vals[k];
           const now = open.s ? watchValue(open.s, k) : null;
@@ -194,7 +194,7 @@ export function CondSheet({ open, store, setStoreData, onClose }) {
                 <p data-ui-v2="watch-now" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>
                   {now == null ? W().blank : fill(W().now, { now: nowValue(k, now, us) })}</p>
               )}
-              {Number.isNaN(v) && W().form.bad && <Note tone="watch" data-ui-v2="watch-bad">{W().form.bad}</Note>}
+              {Number.isNaN(v) && <Note tone="watch" data-ui-v2="watch-bad">{W().form.bad}</Note>}
             </div>
           );
         })}

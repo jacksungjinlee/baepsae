@@ -3,9 +3,9 @@
 // (the store part and its edits are in store.js). Pure: no React. Words come from src/copy/v2.js (C.watch). Unit tests:
 // tests/test_v196c_watch.py.
 //
-// The three kinds (Part C):
-//   pxBelow   주가 below v: the stock's official close (Korea whole won; US dollars, 2 decimals) — data.json price.
-//   pbrBelow  PBR below v: data.json pbr as the company page shows it (2 decimals). Blank when 0 or below (the spec), when the
+// The three kinds (Part C; Jack, 2026-11-19, Q15: 주가 and PBR fire at or below the entered number, 배당수익률 at or above):
+//   pxBelow   주가 at or below v: the stock's official close (Korea whole won; US dollars, 2 decimals) — data.json price.
+//   pbrBelow  PBR at or below v: data.json pbr as the company page shows it (2 decimals). Blank when 0 or below (the spec), when the
 //             pipeline blanked it (US statements not in dollars fcur, a foreign company's mismatch fgnCut, a US PBR near 0
 //             pbrZero, the Korean unit check unitChk: the field is then missing) and when one of the 가치 list's guards
 //             catches it (ranks.pbrGuardOf: a Korean PBR that rounds to 0.00, a US PBR far under its own PER × ROE): a
@@ -13,7 +13,8 @@
 //   dyAtLeast 배당수익률 at least v (%): Korea only the verified today's-close yield (engine.dytOf, a file with the split check:
 //             exactData); US the same current yield as 종목 순위's 배당수익률 list (engine.okDy). Shown as the company page
 //             shows it (cofmt.yieldText: one decimal, two below 0.1%).
-// Each value is compared as it is shown, so the chip's "지금 {now}" and its state never disagree.
+// Each value is compared as it is shown, so the chip's "지금 {now}" and its state never disagree: "지금 75,000원" meets a
+// 75,000원 price condition, "지금 0.80배" a 0.8배 PBR condition, "지금 4.0%" a 4% 배당수익률 condition.
 // A blank value is never met (the chip says 정보 없음), never a hit, and never clears a hitAt.
 // Met and the hit need fresh data (rules.dayState ok, the same rule as 홈's daily check): on stale or failed data the
 // values still show beside the stale date line (or nothing, with the load-failure message), never a green check.
@@ -56,8 +57,10 @@ export function watchValue(s, k) {
   }
   return null;
 }
-// Is the shown value on the condition's side of v? (pxBelow · pbrBelow strictly below, dyAtLeast at least)
-export const condMet = (k, val, v) => (k === "dyAtLeast" ? val >= v - 1e-9 : val < v - 1e-9);
+// Is the shown value on the condition's side of v? pxBelow · pbrBelow at or below (≤, Jack 2026-11-19, Q15: "넣은 값 이하가
+// 되면"), dyAtLeast at or above (≥). The 1e-9 only absorbs floating-point noise in the rounded values (both sides are shown
+// with at most 2 decimals), so an equal shown value is met and the next shown step either way is decided by the sign.
+export const condMet = (k, val, v) => (k === "dyAtLeast" ? val >= v - 1e-9 : val <= v + 1e-9);
 
 // Fresh data: the daily check's own rule (stale, failed or undated data checks nothing).
 export const watchFresh = (load, now) => !!load && load.status === "ok" && dayState(load, now).ok;

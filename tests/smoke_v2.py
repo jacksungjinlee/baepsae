@@ -85,7 +85,7 @@ from playwright.sync_api import TimeoutError as PWTimeout, sync_playwright
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from copytrace import Matcher, copy_strings, HANGUL  # noqa: E402
-from visualcheck import V2_IMAGES, NAVY_RGB, SELECT_RGB, visual_ok, placements_table, copy_pictures, text_floor  # noqa: E402
+from visualcheck import V2_IMAGES, NAVY_RGB, SELECT_RGB, visual_ok, placements_table, copy_pictures, text_floor, mascot_digit_problems  # noqa: E402
 import tmpdirs  # noqa: E402
 from testclock import TestClock, drift_ok  # noqa: E402
 
@@ -12716,13 +12716,20 @@ def scene_v196c(R, files, width, dark=False, deck=False):
         assert page.locator('[data-ui="bottom-sheet"] h3').inner_text() == f"{by['005380']['nk']} · {W_['hitKind']}"
         labels = sh.locator('[data-ui-v2="watch-field"] label').evaluate_all("(ls) => ls.map((l) => l.childNodes[0].textContent)")
         F = W_["form"]
-        assert labels == [F["pxKr"] or C["why"]["srcPrice"], F["pbr"] or "PBR", F["dy"] or C["pick"]["receipt"]["yield"]], labels
+        # Jack, 2026-11-19 (Q15): the approved labels and hint (no fallback any more)
+        assert labels == ["주가 (원)", "PBR (배)", "배당수익률 (%)"] == [F["pxKr"], F["pbr"], F["dy"]], labels
+        assert sh.locator('[data-ui-v2="watch-hint"]').inner_text() == F["hint"] == (
+            "주가와 PBR은 넣은 값 이하가 되면, 배당수익률은 넣은 값 이상이 되면 알려 드려요. 비워 두면 그 조건은 쓰지 않아요.")
+        assert sh.locator('[data-ui-v2="watch-bad"]').count() == 0
         inp = lambda k: sh.locator(f'[data-ui-v2="watch-field"][data-k="{k}"] input')    # noqa: E731
         assert [inp(k).input_value() for k in ("pxBelow", "pbrBelow", "dyAtLeast")] == ["300000", "0.4", "2"]
         inp("pbrBelow").fill("0.55")                                                    # two decimals: not a PBR condition
         save = sh.get_by_role("button", name=C["lim"]["save"], exact=True)
         assert not save.is_enabled() and inp("pbrBelow").get_attribute("aria-invalid") == "true"
+        bad_line = sh.locator('[data-ui-v2="watch-field"][data-k="pbrBelow"] [data-ui-v2="watch-bad"]')
+        assert bad_line.inner_text() == F["bad"] == "숫자를 다시 확인해 주세요." and sh.locator('[data-ui-v2="watch-bad"]').count() == 1
         inp("pbrBelow").fill("0.5")
+        assert sh.locator('[data-ui-v2="watch-bad"]').count() == 0
         prev = sh.locator('[data-ui-v2="watch-field"][data-k="pbrBelow"] [data-ui-v2="watch-preview"]')
         assert prev.inner_text().replace("\n", "") == "PBR 0.5배 아래· " + fillp(W_["now"], now="0.42배"), prev.inner_text()
         inp("dyAtLeast").fill("")                                                       # blank: no dividend condition
@@ -12799,8 +12806,7 @@ def scene_v196c_stale(R, files, width=390):
     w = v196c_watch()
     w["005380"]["conds"][0]["hitAt"] = "2026-10-29"
     by = {x["t"]: x for x in data["data.json"]["stocks"]}
-    # with a portfolio: 포트폴리오's empty state (뱁이) is not on screen when the import line shows its counts (a count of stocks,
-    # which CLAUDE.md allows beside 뱁이, but visualcheck's NOT_NUMBERS knows only the "{n}종목" form)
+    # with a portfolio here (the empty 포트폴리오 with 뱁이 beside the cap line is its own case below: Q17)
     seeded = {"v": 2, "decks": [e_imported(by, pxd, [("000660", 3, None)])], "watch": w}
     srv, ctx, page, base = R.open(build_site(data), width, init=v196c_seed(seeded), path="/app.html?dev=1#stocks/watch")
     stored = lambda: page.evaluate(STORED_JS)                                                         # noqa: E731
@@ -12851,6 +12857,34 @@ def scene_v196c_stale(R, files, width=390):
         assert "hitAt" not in json.dumps(page.evaluate(STORED_JS)["watch"]["AAPL"]), "멈춘 날에 hitAt 이 생겼어요"
         R.collect(page)
     R.check(page, S, "멈춘 데이터 · 포트폴리오 없는 홈: 관심 종목 조건 줄 없음 · hitAt 없음", stale_first_visit)
+    ctx.close()
+    srv.shutdown()
+    # Q17 (Jack, 2026-11-19 "NOT_NUMBERS exact form: yes"): the real case — a records file holding only 관심 종목, imported on a
+    # phone with no portfolio. The cap line sits beside the empty 포트폴리오's 뱁이; it is a count of stocks, which visualcheck's one
+    # exact form allows (that line only, nothing broader: tests/test_visual.py)
+    srv, ctx, page, base = R.open(build_site(v196c_files(files)), width, init=v196c_seed({"v": 1, "decks": [], "watch": v196c_watch()}),
+                                  path="/app.html?dev=1#portfolio")
+
+    def cap_beside_baepi():
+        at(page, "portfolio")
+        page.locator('[data-ui-v2="deck-empty"]').wait_for(state="visible")
+        many = {str(200000 + i): {"at": "2026-11-0" + str(1 + i % 9)} for i in range(28)}
+        path = os.path.join(tmpdirs.make("baepsae-v2-file-"), "watch-only.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"v": 1, "decks": [], "watch": many}, fh)
+        page.locator('[data-ui-v2="import-file"]').set_input_files(path)
+        cap = page.locator('[data-ui-v2="import-watch-cap"]')
+        cap.wait_for(state="visible")
+        assert cap.inner_text() == fillp(W_["importCap"], n="4") and cap.get_attribute("data-n") == "4"       # 6 here + 24 of the file's 28 = 30
+        assert page.locator('[data-ui-v2="deck-empty"]').count() == 1 and page.locator(MASCOT_IN_MAIN).first.is_visible()
+        assert len(page.evaluate(STORED_JS)["watch"]) == 30 and page.evaluate(STORED_JS)["decks"] == []
+        R.collect(page)                                                    # visual_ok: the 뱁이 screen's only digits are that line
+        v = visual_ok(page)
+        used = [u for _, _, items in v["placements"] for u in mascot_digit_problems(items)[1]]
+        assert "관심 종목 수 (불러오기)" in used, used
+        if R.shots:
+            page.screenshot(path=os.path.join(R.shots, f"v196c-cap-baepi-{width}.png"), full_page=True)
+    R.check(page, S, "Q17: 빈 포트폴리오(뱁이) 옆 '…{n}개는 넣지 못했어요' — 종목 수, 그 한 줄의 꼴만 허락", cap_beside_baepi)
     ctx.close()
     srv.shutdown()
     # review S2: a watch part that cannot be read is kept aside (the records are locked): the screen says so, never "아직 관심 종목이 없어요"
