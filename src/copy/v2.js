@@ -1190,10 +1190,7 @@ export const C = {
     newIndLine: "지금 포트폴리오에 없는 업종의 종목만 보여 드려요.",     // 없는 업종 칩 밑 날짜 줄 다음
     empty: "이 조건에 맞는 종목이 없어요.",
     emptyNewInd: "지금 포트폴리오에 없는 업종에서는 고를 종목이 없어요.",
-    // 제안 (Jack 승인 대기) — docs/tasks/v18.3-new-strings-pending.md § v19.7b. null 인 동안은 lim.save '저장'
-    p: {
-      savePoints: null,   // 제안: "이 기준으로 찾기" — 기준 점수가 없는 포트폴리오: 기준 카드 밑, 고른 점수를 저장하고 목록을 보여 주는 버튼
-    },
+    savePoints: "이 기준으로 찾기",   // chat (Jack, 2026-11-19, P3) — 기준 점수가 없는 포트폴리오: 기준 카드 밑, 고른 점수를 저장하고 목록을 보여 주는 버튼
   },
 
   // v19.7b 두 종목 비교 · 바꾸기 (Part E, 보드 PfCompare3) — chat (2026-11-07: v19.7 Appendix 1). 이/가 · 은/는 · 과/와 는 이름의 마지막
@@ -1223,7 +1220,12 @@ export const C = {
       bigGa: "지난 1년 주가 변동은 {b}가 더 컸어요.",
     },
     rows: { fit: "내 기준", ind: "업종", vol: "주가 변동 (지난 1년)", beta: "코스피 1% →", pbr: "PBR", dy: "배당수익률", growth: "오늘 주가가 가정하는 성장",
-      warn: "재무 경고 신호" },
+      warn: "재무 경고 신호",
+      betaUs: "S&P 500 1% →" },                                     // chat (Jack, 2026-11-19, P4) — 두 미국 종목을 비교할 때의 베타 줄 이름
+    // chat (Jack, 2026-11-19, P1 · P2) — 베타 줄의 칸: 그 칸의 기준 지수가 줄 이름과 같을 때만 (다르면 회사 페이지의 칸 글 그대로:
+    // 한국 종목 줄의 미국 종목은 "S&P 500 1% → 평균 …")
+    betaBand: "평균 {lo}~{hi}%",
+    betaOne: "평균 {x}%",                                           // 범위의 두 끝이 같을 때
     after: "바꾸면 업종 비중",
     afterLine: "{group} {a}% → {b}% · 업종 {n}개 → {m}개",
     addOnly: "{b}만 담기",
@@ -1232,16 +1234,10 @@ export const C = {
     swapNote: "바꾸면 {b}이 {a}의 목표 비중({x}%)을 이어받아요.",
     swapNoteGa: "바꾸면 {b}가 {a}의 목표 비중({x}%)을 이어받아요.",
     swapSale: "판 내용은 다음 화면에서 기록해요.",                    // 가진 주식이 있을 때만 (팔고 빼기로 기록해요)
-    // 제안 (Jack 승인 대기) — docs/tasks/v18.3-new-strings-pending.md § v19.7b. null 인 동안은 회사 페이지의 승인된 칸 글
-    // (co.tiles.riskBand · riskOne: "코스피 1% → 평균 {lo}~{hi}%") 을 칸에 그대로 써요
-    p: {
-      beta: null,      // 제안: "평균 {lo}~{hi}%" — 코스피 1% → 줄의 칸 (보드 PfCompare3)
-      betaOne: null,   // 제안: "평균 {x}%" — 같은 줄, 범위의 두 끝이 같을 때
-      // 제안 P5 (2차 리뷰): 최대 비중 위에 저장된 종목(채권·금)과 바꿀 때, 후보가 그 목표 비중의 일부만 받을 때의 줄. null 인 동안은 첫 문장을
-      // 보이지 않고, 맞는 곳에서는 승인된 edit.max ("이 포트폴리오는 한 종목 최대 비중이 {x}%라서 더 올릴 수 없어요.") 만 보여요
-      swapNoteCap: null,     // 제안: "바꾸면 {b}이 {a}의 목표 비중 {y}% 중 {x}%만 이어받아요." — 받침이 있을 때
-      swapNoteCapGa: null,   // 제안: "바꾸면 {b}가 {a}의 목표 비중 {y}% 중 {x}%만 이어받아요."
-    },
+    // chat (Jack, 2026-11-19, P5: "use the 이/가 helper, and add why only 10% (the per-stock cap)") — 최대 비중 위에 저장된 종목(채권·금)과
+    // 바꿀 때, 후보가 그 목표 비중의 일부만 받을 때의 첫 문장. 바로 뒤에 승인된 edit.max 가 이유를 말해요
+    swapNoteCap: "바꾸면 {b}이 {a}의 목표 비중 {y}% 중 {x}%만 이어받아요.",     // 받침이 있을 때
+    swapNoteCapGa: "바꾸면 {b}가 {a}의 목표 비중 {y}% 중 {x}%만 이어받아요.",
   },
 
   plan: {

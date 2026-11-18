@@ -145,7 +145,7 @@ function PickPoints({ deck, load, store, setStoreData }) {
       {!store.writable && <Note tone="watch">{C.store.unavailable}</Note>}
       {store.locked && <Note tone="watch">{C.store.locked}</Note>}
       <StepCards st={st} set={(patch) => setSt((x) => ({ ...x, ...patch }))} ds={ds} load={load} coach={null} />
-      <div style={{ marginTop: SPACE(4) }}><Button onClick={save} disabled={!can}>{C.find.p.savePoints || C.lim.save}</Button></div>
+      <div style={{ marginTop: SPACE(4) }}><Button onClick={save} disabled={!can}>{C.find.savePoints}</Button></div>
       {fail === "storage" && <Note tone="watch" data-ui-v2="store-fail">{C.store.unavailable}</Note>}
       {fail === "refused" && <Note tone="watch" data-ui-v2="edit-save-fail">{C.edit.saveFail}</Note>}
     </div>

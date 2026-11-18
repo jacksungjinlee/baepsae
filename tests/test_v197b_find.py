@@ -456,40 +456,51 @@ def test_a_korean_stock_whose_verified_yield_is_0_is_not_a_payer_on_an_exact_fil
 
 
 def test_the_short_beta_form_is_used_only_under_its_own_benchmark():
-    """review S3: once Jack approves "평균 {lo}~{hi}%" (cmp.p.beta), a cell drops its benchmark only when it is the row label's: a US
-    stock under "코스피 1% →" keeps the whole "S&P 500 1% → 평균 …". Until then every cell shows the company page's tile text."""
+    """review S3 with Jack's P1/P2 (2026-11-19): a cell drops its benchmark ("평균 {lo}~{hi}%", "평균 {x}%") only when it is the row
+    label's: a US stock under "코스피 1% →" keeps the company page's whole "S&P 500 1% → 평균 …" (in the small type); two US stocks
+    read under "S&P 500 1% →" (P4)."""
     got = run("""const load = loadDir(%s);
       const names = E.indNames(load.data.stocks);
       const kr = { ...load.byT.get('005930'), beta: 1.25, betaSE: 0.05 }, us = { ...load.data.stocks.find((s) => s.cls === 'us' && typeof s.beta === 'number'), beta: 0.9, betaSE: 0.05 };
+      const krOne = { ...kr, beta: 1.2, betaSE: 0.001 };
       En.setDataShape({ divCheck: { v: 1 } });
       const ctx = { stocks: load.data.stocks, points: { value: 3 }, names, load, groups: null, row: null };
-      const b = (s, short) => Cm.compareCells(s, null, { ...ctx, betaShort: short }).beta.text;
-      const before = [b(kr, true), b(us, false)];
-      C.cmp.p.beta = '평균 {lo}~{hi}%%';
-      out = { before, krShort: b(kr, true), usUnderKospi: b(us, false), usUnderSp: b(us, true), band: C.co.tiles.riskBand };""" % json.dumps(FIX))
-    assert got["before"] == [got["band"]["kr"].replace("{lo}", "1.2").replace("{hi}", "1.4"), got["band"]["us"].replace("{lo}", "0.8").replace("{hi}", "1.0")]
-    assert got["krShort"] == "평균 1.2~1.4%"
-    assert got["usUnderKospi"] == got["band"]["us"].replace("{lo}", "0.8").replace("{hi}", "1.0")        # its own benchmark, whole
-    assert got["usUnderSp"] == "평균 0.8~1.0%"
+      const c = (s, short) => Cm.compareCells(s, null, { ...ctx, betaShort: short }).beta;
+      out = { krShort: c(kr, true), krOne: c(krOne, true), usUnderKospi: c(us, false), usUnderSp: c(us, true), band: C.co.tiles.riskBand,
+        rows: C.cmp.rows, keys: [C.cmp.betaBand, C.cmp.betaOne] };""" % json.dumps(FIX))
+    assert got["keys"] == ["평균 {lo}~{hi}%", "평균 {x}%"]
+    assert got["krShort"]["text"] == "평균 1.2~1.4%" and "long" not in got["krShort"]["data"]
+    assert got["krOne"]["text"] == "평균 1.2%" and got["krOne"]["data"]["one"] == "1"
+    assert got["usUnderKospi"]["text"] == got["band"]["us"].replace("{lo}", "0.8").replace("{hi}", "1.0")   # its own benchmark, whole
+    assert got["usUnderKospi"]["data"]["long"] == "1"
+    assert got["usUnderSp"]["text"] == "평균 0.8~1.0%"
+    assert got["rows"]["beta"] == "코스피 1% →" and got["rows"]["betaUs"] == "S&P 500 1% →"
 
 
 def test_the_swap_note_never_says_the_candidate_takes_a_target_it_does_not_get():
-    """round-2 review SF1: "…{a}의 목표 비중({x}%)을 이어받아요." only when the candidate takes the holding's whole target; capped, the
-    capped line (P5) waits for Jack and nothing stands in for it, the approved cap line says why where it is true (not while the cap is
-    a raise still to be tapped); the sale sentence only on the sale path."""
+    """round-2 review SF1 with Jack's P5 (2026-11-19: "use the 이/가 helper, and add why only 10% (the per-stock cap)"):
+    "…{a}의 목표 비중({x}%)을 이어받아요." only when the candidate takes the holding's whole target; capped at the portfolio's cap,
+    "바꾸면 {b}이/가 {a}의 목표 비중 {y}% 중 {x}%만 이어받아요." (이/가 as the verdict picks it) and right after it the approved
+    "이 포트폴리오는 한 종목 최대 비중이 {x}%라서 더 올릴 수 없어요."; never the cap line where it is untrue (a raise still to be tapped,
+    or a candidate that gets other than the cap); the sale sentence only on the sale path."""
     got = run("""
-      const N = (sv) => Cm.swapNoteParts(sv, '솔담정밀', '한화');
+      const N = (sv, b = '한화') => Cm.swapNoteParts(sv, '솔담정밀', b);
       const plain = N({ path: 'sale', pct: 20, from: 20, cap: 20, raised: false });
       const capped = N({ path: 'draft', pct: 10, from: 15, cap: 10, raised: false });
+      const cappedI = N({ path: 'sale', pct: 10, from: 25, cap: 10, raised: false }, '국민은행');
       const raised = N({ path: 'sale', pct: 12, from: 15, cap: 12, raised: true });
-      C.cmp.p.swapNoteCap = '바꾸면 {b}이 {a}의 목표 비중 {y}% 중 {x}%만 이어받아요.';
-      C.cmp.p.swapNoteCapGa = '바꾸면 {b}가 {a}의 목표 비중 {y}% 중 {x}%만 이어받아요.';
-      const p5 = N({ path: 'draft', pct: 10, from: 15, cap: 10, raised: false });
-      out = { plain, capped, raised, p5, none: N(null), max: C.edit.max, note: C.cmp.swapNote, sale: C.cmp.swapSale };""")
+      const notCap = N({ path: 'draft', pct: 8, from: 15, cap: 10, raised: false });
+      out = { plain, capped, cappedI, raised, notCap, none: N(null), max: C.edit.max, sale: C.cmp.swapSale,
+        keys: [C.cmp.swapNoteCap, C.cmp.swapNoteCapGa] };""")
+    assert got["keys"] == ["바꾸면 {b}이 {a}의 목표 비중 {y}% 중 {x}%만 이어받아요.", "바꾸면 {b}가 {a}의 목표 비중 {y}% 중 {x}%만 이어받아요."]
+    cap10 = "이 포트폴리오는 한 종목 최대 비중이 10%라서 더 올릴 수 없어요."
+    assert got["max"].replace("{x}", "10") == cap10
     assert got["plain"] == {"first": "바꾸면 한화가 솔담정밀의 목표 비중(20%)을 이어받아요.", "cap": None, "sale": got["sale"], "capped": False}
-    assert got["capped"] == {"first": None, "cap": got["max"].replace("{x}", "10"), "sale": None, "capped": True}
+    assert got["capped"] == {"first": "바꾸면 한화가 솔담정밀의 목표 비중 15% 중 10%만 이어받아요.", "cap": cap10, "sale": None, "capped": True}
+    assert got["cappedI"] == {"first": "바꾸면 국민은행이 솔담정밀의 목표 비중 25% 중 10%만 이어받아요.", "cap": cap10, "sale": got["sale"], "capped": True}
+    # D2 with shares: the view is the write after the raise to y (SF2); the cap line would be untrue, so neither line (held for Jack)
     assert got["raised"] == {"first": None, "cap": None, "sale": got["sale"], "capped": True}
-    assert got["p5"]["first"] == "바꾸면 한화가 솔담정밀의 목표 비중 15% 중 10%만 이어받아요."      # once Jack approves P5 (한화: 가)
+    assert got["notCap"] == {"first": None, "cap": None, "sale": None, "capped": True}
     assert got["none"] == {"first": None, "cap": None, "sale": None, "capped": False}
 
 
@@ -605,6 +616,12 @@ APPROVED = {
     "cmp.swap": "{a}과 바꾸기", "cmp.swapWa": "{a}와 바꾸기", "cmp.swapNote": "바꾸면 {b}이 {a}의 목표 비중({x}%)을 이어받아요.",
     "cmp.swapNoteGa": "바꾸면 {b}가 {a}의 목표 비중({x}%)을 이어받아요.", "cmp.swapSale": "판 내용은 다음 화면에서 기록해요.",
 }
+# the five proposals, approved by Jack on 2026-11-19 (relayed by the coordinator): P1–P5
+APPROVED_1119 = {
+    "cmp.betaBand": "평균 {lo}~{hi}%", "cmp.betaOne": "평균 {x}%", "find.savePoints": "이 기준으로 찾기", "cmp.rows.betaUs": "S&P 500 1% →",
+    "cmp.swapNoteCap": "바꾸면 {b}이 {a}의 목표 비중 {y}% 중 {x}%만 이어받아요.",
+    "cmp.swapNoteCapGa": "바꾸면 {b}가 {a}의 목표 비중 {y}% 중 {x}%만 이어받아요.",
+}
 SPEC = "docs/tasks/v19.7-portfolio-edit.md"
 
 
@@ -625,6 +642,16 @@ def test_every_shipped_line_is_appendix_1_word_for_word_and_recorded():
         # the Appendix line with its particle chosen: "{b}이/가" → 이 or 가, "{b}은/는" → 은 or 는
         both = v.replace("{b}이 ", "{b}이/가 ").replace("{b}가 ", "{b}이/가 ").replace("{b}은 ", "{b}은/는 ").replace("{b}는 ", "{b}은/는 ")
         assert both in appendix or both.replace("지난 1년 주가 변동은 {b}이/가 더 컸어요.", "…더 컸어요.") in appendix, (k, both)
-    # the three proposals wait (null, listed in the pending doc); the screen shows approved text meanwhile
-    for k in ("find.p.savePoints", "cmp.p.beta", "cmp.p.betaOne"):
-        assert k in vals and vals[k] is None, k
+    # P1–P5, approved 2026-11-19: shipped word for word and recorded with that date; nothing of v19.7b is pending any more
+    for key, text in APPROVED_1119.items():
+        assert vals.get(key) == text, key
+        assert chat.get(key) == text or not CT.HANGUL.search(text), key
+    with open(os.path.join(ROOT, "docs", "tasks", "v18.3-approved-in-chat.md"), encoding="utf-8") as fh:
+        rows = {l.split("|")[1].strip().strip("`"): l for l in fh.read().splitlines() if l.startswith("| `")}
+    for key in APPROVED_1119:
+        assert "Jack, 2026-11-19" in rows.get(key, ""), key
+    assert not [k for k, v in vals.items() if k.startswith(("find.p.", "cmp.p.", "find.", "cmp.")) and v is None]
+    with open(os.path.join(ROOT, "docs", "tasks", "v18.3-new-strings-pending.md"), encoding="utf-8") as fh:
+        pending = fh.read()
+    sec = pending.split("## v19.7b", 1)[1].split("\n## ", 1)[0]
+    assert "Nothing waits here any more" in sec and "| `" not in sec, sec

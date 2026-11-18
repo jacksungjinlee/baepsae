@@ -40,11 +40,12 @@ const cell = (text, note = null, data = {}) => ({ text, note, data });
 // The verdict box (review, 2026-11-15): one neutral box for every wording, so "…덜 맞고 … 더 컸어요" never sits on the calm green; true
 // gives the board's green (COLOR.heroCalm) to every wording, if Jack prefers it.
 export const VERDICT_CALM = false;
-// The β band in a cell: the short form once Jack approves it (cmp.p), and only in a cell whose benchmark is the row label's
+// The β band in a cell: the short form (cmp.betaBand · betaOne, Jack 2026-11-19) only in a cell whose benchmark is the row label's
 // (review S3: under "코스피 1% →" a US stock keeps "S&P 500 1% → 평균 …"); else the company page's approved tile text, whole.
+const shortBeta = (b) => (b.one ? C.cmp.betaOne : C.cmp.betaBand);
 function betaText(s, r, shortOk = false) {
   const b = r.band;
-  const short = !shortOk ? null : b.one ? C.cmp.p.betaOne : C.cmp.p.beta;
+  const short = shortOk ? shortBeta(b) : null;
   if (short) return b.one ? fill(short, { x: (b.lo < 0 ? "−" : "") + p1(Math.abs(b.lo)) }) : fill(short, { lo: (b.lo < 0 ? "−" : "") + p1(Math.abs(b.lo)), hi: (b.hi < 0 ? "−" : "") + p1(Math.abs(b.hi)) });
   return riskBandText(s, r);
 }
@@ -62,7 +63,7 @@ function epsBasisLine(s) {
 
 // The eight cells of one stock (pure; tests). s: its data.json row (null: not in today's data, every number "–") · co: its corp.json
 // row · ctx: { stocks, points, names, load, groups (the portfolio's industry groups, for 새 업종) | null, row (its edit row) | null,
-// betaShort (this cell's benchmark is the β row label's: the short β form may be used once approved) }.
+// betaShort (this cell's benchmark is the β row label's: the short β form) }.
 // -> { fit, ind, vol, beta, pbr, dy, growth, warn }: { text, note, data }
 export function compareCells(s, co, ctx) {
   const out = {};
@@ -88,8 +89,8 @@ export function compareCells(s, co, ctx) {
   if (pxBadFor(s, co)) out.beta = cell(DASH, pxBadOneText(s, co, "beta") || pxBadText(s, co), { band: "pxbad" });
   else {
     const r = riskTile(s);
-    // the whole tile text (until P1/P2, or under another benchmark) is long for a narrow column: the small type, as the edge lines
-    const whole = !(ctx.betaShort && (r.band && (r.band.one ? C.cmp.p.betaOne : C.cmp.p.beta)));
+    // the whole tile text (a US stock under "코스피 1% →") is long for a narrow column: the small type, as the edge lines
+    const whole = !(ctx.betaShort && r.band && shortBeta(r.band));
     out.beta = r.band ? cell(betaText(s, r, !!ctx.betaShort), null, { lo: r.band.lo, hi: r.band.hi, one: r.band.one ? "1" : "", ...(whole ? { long: "1" } : {}) })
       : cell(C.co.tiles.na, null, { band: "" });
   }
@@ -142,18 +143,21 @@ export function verdictText(kind, b) {
 }
 export const swapLabel = (a) => fill(subjectParticle(a) === "i" ? C.cmp.swap : C.cmp.swapWa, { a });
 export const swapNoteText = (a, b, x) => fill(subjectParticle(b) === "i" ? C.cmp.swapNote : C.cmp.swapNoteGa, { a, b, x });
-// The note under the buttons and the cap line, from the swap's view (edit.swapView; pure, tests). Nothing untrue (round-2 review SF1):
+// The note under the buttons, from the swap's view (edit.swapView; pure, tests). Nothing untrue (round-2 review SF1):
 // "…{a}의 목표 비중({x}%)을 이어받아요." only when the candidate takes the holding's whole target. When the cap cuts it (a 채권·금 holding
-// saved above the cap), that sentence would misstate the holding's target: the capped line waits for Jack (cmp.p.swapNoteCap, P5) and
-// shows only once approved; meanwhile the approved "이 포트폴리오는 한 종목 최대 비중이 {x}%라서 더 올릴 수 없어요." says why, where it is
-// true (not while the cap shown is a raise still to be tapped). The second sentence only with shares to sell.
+// saved above the cap), "바꾸면 {b}이/가 {a}의 목표 비중 {y}% 중 {x}%만 이어받아요." (Jack, 2026-11-19, P5; 이/가 as the verdict picks it)
+// and right after it why: the approved "이 포트폴리오는 한 종목 최대 비중이 {x}%라서 더 올릴 수 없어요." — only where it is true, i.e. the
+// candidate gets exactly the portfolio's cap as it stands. With shares and a cap too low to reach 100% (D2) the screen shows the write
+// after the sheet's raise to y (SF2): the cap line would be untrue there (the cap is not y yet, and the candidate gets more than it is),
+// so that case shows neither line (a question for Jack, 2026-11-19). The second sentence only with shares to sell.
 // -> { first: string | null, cap: string | null, sale: string | null, capped }
 export function swapNoteParts(sv, a, b) {
   if (!sv || sv.pct == null) return { first: null, cap: null, sale: null, capped: false };
   const capped = sv.from != null && sv.pct < sv.from - 1e-9;
-  const P5 = subjectParticle(b) === "i" ? C.cmp.p.swapNoteCap : C.cmp.p.swapNoteCapGa;
-  const first = !capped ? swapNoteText(a, b, pctText(sv.pct)) : P5 ? fill(P5, { a, b, x: pctText(sv.pct), y: pctText(sv.from) }) : null;
-  const cap = capped && !sv.raised && sv.cap != null && C.edit.max ? fill(C.edit.max, { x: sv.cap }) : null;
+  const atCap = capped && !sv.raised && sv.cap != null && Math.abs(sv.pct - sv.cap) < 1e-9;
+  const P5 = subjectParticle(b) === "i" ? C.cmp.swapNoteCap : C.cmp.swapNoteCapGa;
+  const first = !capped ? swapNoteText(a, b, pctText(sv.pct)) : atCap ? fill(P5, { a, b, x: pctText(sv.pct), y: pctText(sv.from) }) : null;
+  const cap = atCap ? fill(C.edit.max, { x: sv.cap }) : null;          // the cap as the editor writes it (editor.jsx edit-max)
   return { first, cap, sale: sv.path === "sale" ? C.cmp.swapSale : null, capped };
 }
 
@@ -219,11 +223,10 @@ export function Compare({ deck, draft, load, pad, candT, holdT, setHoldT, xOf, o
   if (!cand || !h || !points) return page(<Note data-ui-v2="cmp-none">{C.co.notFound}</Note>);
   const hs = load.byT.get(h.t) || null;
   const ctxBase = { stocks: load.data.stocks, points, names, load };
-  // the β row's label: "코스피 1% →"; two US stocks read against S&P 500 (the words before "평균" in the approved US tile text; proposal
-  // P4 until Jack says yes, docs/tasks/v18.3-new-strings-pending.md). A cell may drop its benchmark only when it is the label's.
+  // the β row's label: "코스피 1% →"; two US stocks read against S&P 500: "S&P 500 1% →" (Jack, 2026-11-19, P4). A cell may drop its
+  // benchmark only when it is the label's.
   const bothUs = !!hs && usOf(hs) && usOf(cand);
-  const usBeta = (C.co.tiles.riskBand.us || "").split(" \u2192 ")[0];
-  const betaLabel = bothUs && usBeta ? `${usBeta} \u2192` : C.cmp.rows.beta;
+  const betaLabel = bothUs ? C.cmp.rows.betaUs : C.cmp.rows.beta;
   const sameBench = (s) => !!s && (bothUs || !usOf(s));
   const A = compareCells(hs, hs ? load.coByT.get(h.t) || null : null, { ...ctxBase, groups: null, row: h, betaShort: sameBench(hs) });
   const B = compareCells(cand, load.coByT.get(cand.t) || null, { ...ctxBase, groups, row: null, betaShort: sameBench(cand) });
@@ -300,7 +303,6 @@ export function Compare({ deck, draft, load, pad, candT, holdT, setHoldT, xOf, o
               <p data-ui-v2="cmp-after-line" data-ind={ch.key} style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginTop: SPACE(2), wordBreak: "keep-all" })}>
                 {fill(C.cmp.afterLine, { group: ch.name, a: pctText(ch.a), b: pctText(ch.b), n: ch.n, m: ch.m })}</p>
             )}
-            {note.cap && <Note data-ui-v2="cmp-cap">{note.cap}</Note>}
           </Card>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: SPACE(2), marginTop: SPACE(4) }}>
             <Button kind="secondary" onClick={() => onAdd(cand)} style={{ padding: `0 ${SPACE(2)}px`, fontSize: SIZE.sm, wordBreak: "keep-all" }}>
@@ -308,10 +310,11 @@ export function Compare({ deck, draft, load, pad, candT, holdT, setHoldT, xOf, o
             <Button onClick={() => onSwap(h.t, cand)} style={{ padding: `0 ${SPACE(2)}px`, fontSize: SIZE.sm, wordBreak: "keep-all" }}>
               <span data-ui-v2="cmp-swap">{swapLabel(h.nk)}</span></Button>
           </div>
-          {(note.first || note.sale) && (
+          {(note.first || note.cap || note.sale) && (
             <p data-ui-v2="cmp-swap-note" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { margin: `${SPACE(2)}px ${SPACE(1)}px 0`, lineHeight: 1.5, wordBreak: "keep-all" })}>
               {note.first && <span data-ui-v2="cmp-swap-x" data-x={sv.pct}>{note.first}</span>}
-              {note.sale && <span>{note.first ? " " : ""}{note.sale}</span>}
+              {note.cap && <>{note.first ? " " : ""}<span data-ui-v2="cmp-cap">{note.cap}</span></>}
+              {note.sale && <>{note.first || note.cap ? " " : ""}<span>{note.sale}</span></>}
             </p>
           )}
           {dates.length > 0 && (

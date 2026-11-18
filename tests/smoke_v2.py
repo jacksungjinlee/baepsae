@@ -12857,7 +12857,7 @@ def scene_v197b(R, files, width):
         assert np_.locator('[data-ui-v2="find-no-points-line"]').inner_text() == F_["noPoints"]
         assert F_["sub"] not in page.locator('[data-ui-v2="find"]').inner_text()                     # it says points were given
         btn = np_.locator('button[data-ui="button"]').last
-        assert btn.inner_text() == (F_["p"]["savePoints"] or C["lim"]["save"]) and not btn.is_enabled()
+        assert btn.inner_text() == F_["savePoints"] and not btn.is_enabled()
         assert page.locator('[data-ui-v2="find-list"]').count() == 0
         check_page("기준 점수가 없는 포트폴리오", "find-no-points")
         np_.locator('[data-card="value"] [data-ui-v2="card-inc"]').click()
@@ -12993,9 +12993,14 @@ def scene_v197b(R, files, width):
         page.wait_for_function("() => document.querySelector('[data-ui-v2=\"cmp\"]').dataset.hold === '114260'")
         assert page.locator('[data-ui-v2="cmp-after"]').get_attribute("data-path") == "draft"
         assert float(page.locator('[data-ui-v2="cmp-after"]').get_attribute("data-x")) == 10                  # the cap, not the 15%
-        # round-2 review SF1: no "…목표 비중(10%)을 이어받아요." (the holding's target is 15%); the approved cap line says why instead
-        assert page.locator('[data-ui-v2="cmp-swap-x"]').count() == 0 and page.locator('[data-ui-v2="cmp-swap-note"]').count() == 0
-        assert page.locator('[data-ui-v2="cmp-cap"]').inner_text() == fillp(C["edit"]["max"], x=10)
+        # round-2 review SF1 with Jack's P5 (2026-11-19): not "…목표 비중(10%)을 이어받아요." (the holding's target is 15%) but
+        # "…목표 비중 15% 중 10%만 이어받아요." (이/가 by the name) and right after it why: the approved 최대 비중 line
+        p5 = fillp(C["cmp"]["swapNoteCap"] if has_final(by[t]["nk"]) else C["cmp"]["swapNoteCapGa"], a=by["114260"]["nk"], b=by[t]["nk"], x="10", y="15")
+        cap = fillp(C["edit"]["max"], x=10)
+        assert page.locator('[data-ui-v2="cmp-swap-x"]').inner_text() == p5
+        assert page.locator('[data-ui-v2="cmp-cap"]').inner_text() == cap
+        assert page.locator('[data-ui-v2="cmp-swap-note"]').inner_text() == p5 + " " + cap                    # no shares: no sale sentence
+        assert page.locator('[data-ui-v2="cmp-after"] [data-ui-v2="cmp-cap"]').count() == 0                    # once, under the buttons
         bar = lambda sel: sorted(page.locator(f'{sel} [data-ui-v2="edit-ind-part"]').evaluate_all("(xs) => xs.map((x) => [x.dataset.ind, Number(x.dataset.pct)])"))
         shown = bar('[data-ui-v2="cmp-after"]')
         check_page("비교 · 최대 비중 위의 안전자산", "compare-cushion")
@@ -13086,8 +13091,8 @@ def scene_v197b_look(R, files, width, dark=False):
         assert lo, "the Korean candidate has no β band: the fixture changed, so this check would not run"
         f = lambda v: f"{float(v):.1f}".replace("-", "−")
         one = page.locator('[data-cmp-row="beta"] [data-side="cand"]').get_attribute("data-one") == "1"
-        want = fillp(C["co"]["tiles"]["riskOne"]["kr"], x=f(lo)) if one else fillp(C["co"]["tiles"]["riskBand"]["kr"], lo=f(lo), hi=f(hi))
-        assert cell("beta", "cand")[0] == want, (cell("beta", "cand"), want)                          # the approved tile text, whole (P1 waits)
+        want = fillp(C["cmp"]["betaOne"], x=f(lo)) if one else fillp(C["cmp"]["betaBand"], lo=f(lo), hi=f(hi))
+        assert cell("beta", "cand")[0] == want, (cell("beta", "cand"), want)                          # P1/P2 (Jack, 2026-11-19): under 코스피 1% →
         assert page.locator('[data-ui-v2="cmp-beta-note"]').inner_text() in (C["co"]["risk"]["bandNote"], C["co"]["risk"]["oneNote"])
         assert page.locator('[data-ui-v2="cmp-verdict"]').count() == 0 or page.locator('[data-ui-v2="cmp-verdict"]').get_attribute("data-tint") == "neutral"
         check_page("비교 · 과거 주가 기록 오류", "compare-pxbad")
@@ -13096,6 +13101,21 @@ def scene_v197b_look(R, files, width, dark=False):
         assert cell("pbr", "hold") == ("–", C["co"]["fgnCut"]) and cell("dy", "hold") == ("–", C["co"]["fgnCut"])
         assert cell("fit", "hold") == ("–", None)
         assert page.locator('[data-cmp-row="beta"] th').inner_text() == C["cmp"]["rows"]["beta"]       # 한국 후보: 코스피 1% →
+        # the US holding under 코스피 1% → keeps its own benchmark, the company page's whole text; the Korean candidate the short form
+        def band_text(side, us_side):
+            el = page.locator(f'[data-cmp-row="beta"] [data-side="{side}"]')
+            blo, bhi, bone = el.get_attribute("data-lo"), el.get_attribute("data-hi"), el.get_attribute("data-one") == "1"
+            if not blo:
+                return None
+            if us_side:
+                return fillp(C["co"]["tiles"]["riskOne"]["us"], x=f(blo)) if bone else fillp(C["co"]["tiles"]["riskBand"]["us"], lo=f(blo), hi=f(bhi))
+            return fillp(C["cmp"]["betaOne"], x=f(blo)) if bone else fillp(C["cmp"]["betaBand"], lo=f(blo), hi=f(bhi))
+        assert by[fg["t"]]["cls"] == "us" and by[kr]["cls"] == "kr"
+        for side, us_side in (("hold", True), ("cand", False)):
+            want = band_text(side, us_side)
+            assert want is None or cell("beta", side)[0] == want, (side, cell("beta", side), want)
+        assert band_text("cand", False), "the Korean candidate has no β band: the fixture changed, so this check would not run"
+
         check_page("비교 · 외국 회사 숫자", "compare-fgn")
         # 우선주 (가진 종목): 내 기준 – 와 '우선주는 순위를 매기지 않아요.'
         pick("005935")
@@ -13112,7 +13132,16 @@ def scene_v197b_look(R, files, width, dark=False):
         at(page, "portfolio/edit/dlook/find")
         page.locator('[data-ui-v2="find-list"]').wait_for(state="visible")
         compare(us_c, "AAPL")
-        assert page.locator('[data-cmp-row="beta"] th').inner_text() == C["co"]["tiles"]["riskBand"]["us"].split(" → ")[0] + " →"
+        assert page.locator('[data-cmp-row="beta"] th').inner_text() == C["cmp"]["rows"]["betaUs"]       # P4 (Jack, 2026-11-19)
+        bands = 0
+        for side in ("hold", "cand"):                                     # both US: each band in the short form (P1/P2)
+            el = page.locator(f'[data-cmp-row="beta"] [data-side="{side}"]')
+            blo, bhi = el.get_attribute("data-lo"), el.get_attribute("data-hi")
+            if blo:
+                bands += 1
+                want = fillp(C["cmp"]["betaOne"], x=f(blo)) if el.get_attribute("data-one") == "1" else fillp(C["cmp"]["betaBand"], lo=f(blo), hi=f(bhi))
+                assert cell("beta", side)[0] == want, (side, cell("beta", side), want)
+        assert bands, "neither US stock has a β band: the fixture changed, so this check would not run"
         check_page("비교 · 미국끼리", "compare-us")
         assert not R.errors, R.errors[:2]
     R.check(page, S, "찾기 · 비교의 모양 (12px · 가로 스크롤 · 뱁이 없음 · 화면 모드) · 비운 숫자는 – 와 회사 페이지의 줄 · 판정 칸은 무채색", look)
