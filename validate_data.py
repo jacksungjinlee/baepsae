@@ -639,19 +639,26 @@ def http_listing(d):
     raise RuntimeError(f"목록 파일 {d} 을 받지 못했어요")
 
 
-def http_commit_kst(d):
+def http_commit_kst(d, sleep=time.sleep):
+    """그 날짜 파일의 마지막 커밋 시각(KST). 세 번 시도해도 확인하지 못하면 None (= 최종본 아님 · 2026-11-19)."""
     h = {"Accept": "application/vnd.github+json"}
     if os.environ.get("GITHUB_TOKEN"):
         h["Authorization"] = "Bearer " + os.environ["GITHUB_TOKEN"]
-    try:
-        r = requests.get(COMMITS_API, params={"path": f"data/listing/krx/{d.isoformat()}.csv", "per_page": 1},
-                         headers=h, timeout=20)
-        if r.status_code != 200 or not r.json():
-            return None
-        ts = r.json()[0]["commit"]["committer"]["date"]
-        return dt.datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(KST)
-    except (requests.RequestException, ValueError, KeyError, IndexError):
-        return None
+    for i in range(3):
+        try:
+            r = requests.get(COMMITS_API, params={"path": f"data/listing/krx/{d.isoformat()}.csv", "per_page": 1},
+                             headers=h, timeout=20)
+            if r.status_code == 200:
+                js = r.json()
+                if not js:
+                    return None
+                ts = js[0]["commit"]["committer"]["date"]
+                return dt.datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(KST)
+        except (requests.RequestException, ValueError, KeyError, IndexError):
+            pass
+        if i < 2:
+            sleep(2 * (i + 1))
+    return None
 
 
 def is_final(d, text, get_text, get_commit, today, special=None):
@@ -667,12 +674,10 @@ def is_final(d, text, get_text, get_commit, today, special=None):
         tag = (f" · {d} 특별 거래시간({s[2]}): 마감 {s[1]:%H:%M} → 최종본은 {cut:%H:%M} 이후 커밋만"
                if s and s[1] != NORMAL_CLOSE else "")
         return ct >= cut, f"{ct:%m-%d %H:%M} KST 커밋{tag}"
-    later = [d + dt.timedelta(days=i) for i in range(1, (today - d).days + 1)]
-    for e in later:
-        t = get_text(e)
-        if t is not None and official_closes(t)[1] >= MIN_CAP_SHARE:
-            return True, "커밋 시각 확인 불가 · 다음 거래일 파일 있음"
-    return False, "커밋 시각 확인 불가 · 다음 거래일 파일 없음"
+    # 2026-11-19 (더 엄격하게만): 커밋 시각을 확인하지 못한 파일은 최종본으로 보지 않아요. 예전에는 뒤 날짜 파일에 시가총액이 차 있으면 최종본으로
+    # 봤는데, 캐시가 다음 거래일의 장중 파일을 올리는 지금은 그 규칙이 장중 파일(11-17 15:29: 삼성전자 190,200 · 공식 종가 190,300)을 최종본으로
+    # 받아들여요. 그날은 2차 출처(다음 × 야후)가 정해요.
+    return False, "커밋 시각 확인 불가 → 최종본으로 보지 않아요 (2차 출처가 정해요)"
 
 
 def latest_final(today, get_text=http_listing, get_commit=http_commit_kst, special=None, notes=None):
@@ -816,31 +821,58 @@ def px_alt_pick(data):
     return out
 
 
-def _yahoo_day_close(sym, d, get=None):
-    """야후 일봉에서 그날(KST) 종가 하나. 없으면 None · 받지 못하면 예외."""
+def yahoo_day_close(res, d, close_time=NORMAL_CLOSE):
+    """야후 차트 응답(result[0])에서 그날(KST) 종가 (2026-11-19 · 순수 함수). 반환: (값, 'bar' | 'meta') 또는 (None, 까닭).
+    그날 일봉의 종가가 있으면 그것. 일봉은 있는데 종가가 빈 값이면 (야후는 그날 일봉 종가를 몇 시간 동안 비워 둬요 — 11-19 02:15 에 005930 11-18
+    종가 null) meta.regularMarketPrice 를 써요 — 그 시각(regularMarketTime · KST)이 그날이고 그날 마감(close_time · 수능일 16:30) 이후일 때만
+    (그날 안이라 다음 거래일 개장 전이에요). 마감 전이거나 다른 날의 시각이면 확인 못 함."""
+    ts = res.get("timestamp") or []
+    q = ((res.get("indicators") or {}).get("quote") or [{}])[0] or {}
+    closes = q.get("close") or []
+    bars = [c for t, c in zip(ts, closes) if dt.datetime.fromtimestamp(t, KST).date() == d]
+    if not bars:
+        return None, "그날 일봉 없음"
+    c = bars[-1]
+    if c is not None and isinstance(c, (int, float)) and math.isfinite(c) and c > 0:
+        return float(c), "bar"
+    meta = res.get("meta") or {}
+    p, t = meta.get("regularMarketPrice"), meta.get("regularMarketTime")
+    if not isinstance(p, (int, float)) or not math.isfinite(p) or p <= 0 or not isinstance(t, (int, float)):
+        return None, "종가 빈 값 · meta 없음"
+    when = dt.datetime.fromtimestamp(t, KST)
+    if when.date() != d:
+        return None, f"종가 빈 값 · meta 시각 {when:%m-%d %H:%M} 이 그날이 아님"
+    if when.time() < close_time:
+        return None, f"종가 빈 값 · meta 시각 {when:%H:%M} 이 마감 {close_time:%H:%M} 전"
+    return float(p), "meta"
+
+
+def _yahoo_day_close(sym, d, get=None, close_time=NORMAL_CLOSE):
+    """야후 일봉에서 그날(KST) 종가: (값, 'bar' | 'meta') 또는 (None, 까닭) · 받지 못하면 예외."""
     get = get or (lambda u: requests.get(u, timeout=20, headers={"User-Agent": "Mozilla/5.0"}))
     r = get(PX_YAHOO_CHART.format(sym=sym))
     r.raise_for_status()
-    res = r.json()["chart"]["result"][0]
-    closes = res["indicators"]["quote"][0]["close"]
-    got = [float(c) for t, c in zip(res.get("timestamp") or [], closes) if c is not None and dt.datetime.fromtimestamp(t, KST).date() == d]
-    return got[-1] if got else None
+    return yahoo_day_close(r.json()["chart"]["result"][0], d, close_time)
 
 
-def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4):
+def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, special=None):
     """관문이 따로 받은 야후 공식 종가: {"date", "closes" {코드: 종가}, "asked", "got", "mustMissing", "err"}. 예외를 내지 않아요 —
     못 받은 종목은 closes 에 없고, 그만큼 '확인 못 함' 이 돼요 (run_checks 가 실패시켜요)."""
     from concurrent.futures import ThreadPoolExecutor
     pick = px_alt_pick(data)
-    closes, errs = {}, []
+    closes, errs, meta = {}, [], []
+    sp = (special or {}).get(px)
+    close_time = sp[1] if sp else NORMAL_CLOSE
 
     def one(item):
         code, sym = item
         for i in range(3):
             try:
-                v = fetch(sym, px)
+                v, how = fetch(sym, px, close_time=close_time)
                 if v is not None and math.isfinite(v) and v > 0:
                     closes[code] = v
+                    if how == "meta":
+                        meta.append(code)
                 return
             except Exception as e:
                 if i == 2:
@@ -852,7 +884,7 @@ def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4):
             list(ex.map(one, sorted(pick.items())))
     except Exception as e:                       # 관문은 네트워크 때문에 멈추지 않아요 — 확인 못 함으로 실패해요
         errs.append(f"{type(e).__name__}: {str(e)[:80]}")
-    return {"date": px, "closes": closes, "asked": len(pick), "got": len(closes),
+    return {"date": px, "closes": closes, "asked": len(pick), "got": len(closes), "meta": len(meta),
             "mustMissing": [c for c in MUST if c not in closes], "err": errs[:5]}
 
 
@@ -4038,9 +4070,9 @@ def _main(argv=None):
         pxd = day(cur["data"].get("pxDate"))
         psrc = cur["data"].get("pxSrc")
         if pxd and isinstance(psrc, dict) and psrc.get("px") == PX_SRC_FB and (final is None or final["date"] < pxd):
-            alt = http_px_alt(cur["data"], pxd)
+            alt = http_px_alt(cur["data"], pxd, special=special)
             print(f"{'· ' if not alt['mustMissing'] and alt['got'] >= PX_ALT_MIN_SHARE * max(alt['asked'], 1) else '!! '}"
-                  f"관문의 야후 공식 종가 ({pxd}): {alt['got']} / {alt['asked']}종목"
+                  f"관문의 야후 공식 종가 ({pxd}): {alt['got']} / {alt['asked']}종목 (일봉 종가가 비어 마감 뒤 regularMarketPrice 로 읽은 종목 {alt.get('meta', 0)})"
                   + (f" · 필수 종목 못 받음 {', '.join(alt['mustMissing'])}" if alt["mustMissing"] else "")
                   + (f" · 오류 예: {alt['err'][0]}" if alt["err"] else ""))
     except Exception as e:

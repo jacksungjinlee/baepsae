@@ -404,26 +404,31 @@ def _fetch_listing_csv(d):
     raise RuntimeError(f"{d} 파일 다운로드 실패: {last}")
 
 
-def _listing_commit_kst(d):
-    """그 날짜 파일의 마지막 커밋 시각(KST). 확인할 수 없으면 None."""
+def _listing_commit_kst(d, sleep=time.sleep):
+    """그 날짜 파일의 마지막 커밋 시각(KST). 세 번 시도해도 확인할 수 없으면 None — 2026-11-19 부터 None 은 '최종본 아님'이에요
+    (load_kr_listing · kr_recent_sessions · 관문 모두). 그날은 2차 출처(다음 × 야후)가 정해요."""
     headers = {"Accept": "application/vnd.github+json"}
     tok = os.environ.get("GITHUB_TOKEN", "").strip()
     if tok:
         headers["Authorization"] = f"Bearer {tok}"
-    try:
-        r = requests.get(LISTING_COMMITS_API, params={"path": LISTING_PATH.format(d=d.isoformat()), "per_page": 1},
-                         headers=headers, timeout=20)
-        if r.status_code != 200:
-            log(f"  !! 커밋 시각 확인 실패: {d} · HTTP {r.status_code} (다음 거래일 파일로 판단해요)")
-            return None
-        js = r.json()
-        if not js:
-            return None
-        ts = js[0]["commit"]["committer"]["date"]
-        return dt.datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(KST)
-    except Exception as e:
-        log(f"  !! 커밋 시각 확인 실패: {d} · {e} (다음 거래일 파일로 판단해요)")
-        return None
+    why = None
+    for attempt in range(3):
+        try:
+            r = requests.get(LISTING_COMMITS_API, params={"path": LISTING_PATH.format(d=d.isoformat()), "per_page": 1},
+                             headers=headers, timeout=20)
+            if r.status_code == 200:
+                js = r.json()
+                if not js:
+                    return None
+                ts = js[0]["commit"]["committer"]["date"]
+                return dt.datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(KST)
+            why = f"HTTP {r.status_code}"
+        except Exception as e:
+            why = f"{type(e).__name__}: {str(e)[:80]}"
+        if attempt < 2:
+            sleep(2 * (attempt + 1))
+    log(f"  !! 커밋 시각 확인 실패: {d} · {why} (세 번 시도) → 그날 파일은 최종본으로 보지 않아요 (2차 출처가 정해요)")
+    return None
 
 
 def load_krx_special_sessions(path=None):
@@ -496,7 +501,7 @@ def _hm_ko(t):
     return f"{t.hour}시" + (f" {t.minute}분" if t.minute else "")
 
 
-def pick_final_listing(today, fetch_csv, commit_kst, lookback=LISTING_LOOKBACK_DAYS, special=None):
+def pick_final_listing(today, fetch_csv, commit_kst, lookback=LISTING_LOOKBACK_DAYS, special=None, unknown_final=True):
     """오늘(KST) 이전의 가장 최근 최종본을 고릅니다. (순수 함수 — 받아오는 방법은 인자로)
     special: KRX 특별 거래시간 표 (None 이면 data/krx_special_sessions.csv 를 읽어요).
     반환: (날짜, DataFrame, 설명, 건너뛴 날짜 메모) · 못 찾으면 날짜·DataFrame 이 None."""
@@ -531,7 +536,12 @@ def pick_final_listing(today, fetch_csv, commit_kst, lookback=LISTING_LOOKBACK_D
                 return d, df, f"{d} 최종본 ({ct:%H:%M} KST 커밋, {len(df):,}종목, 시총 {share:.0%})", notes
             notes.append(f"{d} 마지막 커밋 {ct:%m-%d %H:%M} KST — {_hm_ko(cut.time())} 전이라 최종본이 아님 → 건너뜀")
             continue
-        # 커밋 시각을 못 봤으면: 그 뒤 날짜(오늘 포함)에 시가총액이 찬 파일이 있을 때만 '끝난 날'로 봐요
+        # 2026-11-19 (더 엄격하게만): 파이프라인(load_kr_listing)은 unknown_final=False — 커밋 시각을 못 본 파일은 최종본이 아니에요. 캐시가 다음
+        # 거래일의 장중 파일을 올리는 지금은 아래 예전 규칙이 장중 파일(11-17 15:29)을 최종본으로 받아들여요. 그날은 2차 출처가 정해요.
+        if not unknown_final:
+            notes.append(f"!! {d} 커밋 시각 확인 불가 → 최종본으로 보지 않아요 (2차 출처가 정해요)")
+            continue
+        # 커밋 시각을 못 봤으면: 그 뒤 날짜(오늘 포함)에 시가총액이 찬 파일이 있을 때만 '끝난 날'로 봐요 (예전 규칙 · 파이프라인은 쓰지 않아요)
         later = [today - dt.timedelta(days=b) for b in range(0, back)]
         if any(listing_cap_share(get(e)) >= LISTING_MIN_CAP_SHARE for e in later):
             return d, df, (f"{d} 최종본으로 판단 (!! 커밋 시각 확인 불가 · 다음 거래일 파일 있음, "
@@ -577,20 +587,20 @@ def kr_recent_sessions(px_date, fetch_csv, commit_kst, n=VAL20_DAYS - 1, lookbac
         # v17.5.4: 모든 날의 파일을 그날 마감 + 30분 기준으로 봐요 (예전에는 직전 거래일만). 최종본이 아닌 날의 값은 가격 고정
         # (공식 종가로 맞추기)·거래대금 평균에 쓰지 않아요 — 수능일처럼 늦게 끝나는 날의 장중 값이 종가 기록에 들어가지 않게.
         ct = commit_kst(d)
-        final = not (ct is not None and ct < listing_final_cut(d, special))
+        # 2026-11-19 (더 엄격하게만): 커밋 시각을 못 본 파일은 최종본이 아니에요 (예전: 더 뒤 날짜 최종본이 있으면 끝난 날로 봤어요)
+        final = ct is not None and ct >= listing_final_cut(d, special)
+        when = f"마지막 커밋이 {ct:%m-%d %H:%M} KST" if ct is not None else "커밋 시각을 확인하지 못해"
         if prev_final is None:                      # 기준일 바로 앞의 거래일 (d1 의 전날)
             sp = special_note(d, special)
             if sp:
                 notes.append(f"직전 거래일 {sp}")
             prev_final = final
             if not final:
-                notes.append(f"!! 직전 거래일 {d} 파일의 마지막 커밋이 {ct:%m-%d %H:%M} KST — 최종본이 아니라 d1 을 비우고 "
+                notes.append(f"!! 직전 거래일 {d} 파일의 {when} — 최종본이 아니라 d1 을 비우고 "
                              "그날 값은 가격 고정·거래대금에 쓰지 않아요")
-            elif ct is None:
-                notes.append(f"직전 거래일 {d}: 커밋 시각 확인 불가 · 더 뒤 날짜({px_date}) 최종본이 있어 끝난 날로 봐요")
         elif not final:
-            notes.append(f"!! {d} 파일의 마지막 커밋이 {ct:%m-%d %H:%M} KST — 그날 마감 + 30분 전이라 최종본이 아니에요 · "
-                         "그날 값은 가격 고정·거래대금에 쓰지 않아요")
+            notes.append(f"!! {d} 파일의 {when} — " + ("그날 마감 + 30분 전이라 최종본이 아니에요" if ct is not None else "최종본으로 보지 않아요")
+                         + " · 그날 값은 가격 고정·거래대금에 쓰지 않아요")
         if not final:
             continue
         out.append((d, df))
@@ -837,7 +847,84 @@ def fetch_yahoo_kr_closes(code_market, start, end, chunk=KR_FB_YAHOO_CHUNK):
     return out, failed
 
 
-def kr_fallback_days(days, universe_of, now, special, fetch_daum=fetch_daum_all, fetch_yahoo=fetch_yahoo_kr_closes, must=GATE_MUST):
+KR_FB_YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=5d&interval=1d"
+KR_FB_META_WORKERS = 6
+_YAHOO_LOCAL = threading.local()
+
+
+def yahoo_chart_close(res, d, close_time):
+    """야후 차트 응답(result[0])에서 그날(KST) 종가 (2026-11-19 · 순수 함수 · 관문의 yahoo_day_close 와 같은 규칙, 코드는 따로).
+    반환: (값, 'bar' | 'meta') 또는 (None, 까닭). 그날 일봉 종가가 있으면 그것 · 일봉은 있는데 종가가 빈 값이면 meta.regularMarketPrice —
+    그 시각(regularMarketTime · KST)이 그날이고 그날 마감(close_time · 수능일 16:30) 이후일 때만 (그날 안이라 다음 거래일 개장 전이에요).
+    야후는 그날 일봉 종가를 몇 시간 동안 비워 둬요 (11-19 02:15: 005930 11-18 종가 null · regularMarketPrice 194,700 @ 11-18 15:30:16)."""
+    ts = res.get("timestamp") or []
+    q = ((res.get("indicators") or {}).get("quote") or [{}])[0] or {}
+    bars = [c for t, c in zip(ts, q.get("close") or []) if dt.datetime.fromtimestamp(t, KST).date() == d]
+    if not bars:
+        return None, "그날 일봉 없음"
+    c = _fin(bars[-1])
+    if c is not None and c > 0:
+        return c, "bar"
+    meta = res.get("meta") or {}
+    p, t = _fin(meta.get("regularMarketPrice")), _fin(meta.get("regularMarketTime"))
+    if p is None or p <= 0 or t is None:
+        return None, "종가 빈 값 · meta 없음"
+    when = dt.datetime.fromtimestamp(t, KST)
+    if when.date() != d:
+        return None, "meta 시각이 그날이 아님"
+    if when.time() < close_time:
+        return None, "meta 시각이 마감 전"
+    return p, "meta"
+
+
+def _fetch_yahoo_chart(sym):
+    """야후 차트 응답 result[0] (최근 5일). 세 번 시도해도 못 받으면 예외. 일하는 스레드마다 연결 하나."""
+    sess = getattr(_YAHOO_LOCAL, "s", None)
+    if sess is None:
+        sess = _YAHOO_LOCAL.s = requests.Session()
+    last = None
+    for attempt in range(3):
+        try:
+            r = sess.get(KR_FB_YAHOO_CHART.format(sym=sym), headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+            if r.status_code == 200:
+                return r.json()["chart"]["result"][0]
+            last = f"HTTP {r.status_code}"
+        except Exception as e:
+            last = f"{type(e).__name__}: {str(e)[:80]}"
+        time.sleep(1 + attempt)
+    raise RuntimeError(last)
+
+
+def yahoo_fill_day(yahoo, code_market, d, close_time, fetch=_fetch_yahoo_chart, workers=KR_FB_META_WORKERS):
+    """일괄 다운로드에 그날 종가가 없는 종목만 야후 차트를 하나씩 다시 읽어 yahoo 에 채워요 (2026-11-19). 반환: 집계 dict
+    {need, bar, meta, none, fail, metaCodes} — meta 는 일봉 종가가 비어 마감 뒤 regularMarketPrice 로 읽은 종목."""
+    need = sorted(c for c, m in code_market.items() if yahoo_kr_symbol(c, m) and d not in (yahoo.get(c) or {}))
+    out = {"need": len(need), "bar": 0, "meta": 0, "none": 0, "fail": 0, "metaCodes": set()}
+    lock = threading.Lock()
+
+    def one(c):
+        try:
+            v, how = yahoo_chart_close(fetch(yahoo_kr_symbol(c, code_market[c])), d, close_time)
+        except Exception:
+            with lock:
+                out["fail"] += 1
+            return
+        with lock:
+            if v is None:
+                out["none"] += 1
+                return
+            yahoo.setdefault(c, {})[d] = v
+            out[how] += 1
+            if how == "meta":
+                out["metaCodes"].add(c)
+    if need:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            list(ex.map(one, need))
+    return out
+
+
+def kr_fallback_days(days, universe_of, now, special, fetch_daum=fetch_daum_all, fetch_yahoo=fetch_yahoo_kr_closes, must=GATE_MUST,
+                     fill_day=yahoo_fill_day):
     """끝난 거래일(days)마다 2차 출처 행을 만들어요 (2026-11-19). universe_of(d) → (DataFrame, 설명).
     반환: ({날짜: (DataFrame, 집계)}, 메모들). 마감 + 30분이 지나지 않은 날 · 목록이 없는 날은 빠지고 메모에 남아요."""
     notes, unis = [], {}
@@ -869,9 +956,20 @@ def kr_fallback_days(days, universe_of, now, special, fetch_daum=fetch_daum_all,
     n_ask = sum(1 for c, m in cm.items() if yahoo_kr_symbol(c, m))
     notes.append(f"{'!! ' if y_fail else ''}야후 .KS/.KQ 종가: {len(yahoo):,} / {n_ask:,}종목 받음 (코넥스 등 야후에 없는 시장 {len(cm) - n_ask:,}종목은 묻지 않아요 · "
                  f"{time.time() - t0:.0f}초)" + (f" · 못 받은 묶음의 종목 {y_fail:,}" if y_fail else ""))
+    # 야후는 가장 최근 날의 일봉 종가를 몇 시간 비워 둬요 → 그 날 종가가 없고 다음 행은 있는 종목만 차트를 다시 읽어요 (마감 뒤 regularMarketPrice)
+    last = max(unis)
+    need = {c: m for c, m in cm.items() if last in (daum.get(c) or {})}
+    t0 = time.time()
+    fill = fill_day(yahoo, need, last, krx_close(last, special))
+    if fill["need"]:
+        notes.append(f"{'!! ' if fill['fail'] else ''}야후 {last} 일봉 종가가 빈 종목 {fill['need']:,} → 차트를 다시 읽음: 일봉 종가 {fill['bar']:,} · "
+                     f"마감({krx_close(last, special):%H:%M}) 뒤 regularMarketPrice {fill['meta']:,} · 없음 {fill['none']:,} · 받지 못함 {fill['fail']:,} "
+                     f"({time.time() - t0:.0f}초)")
     out = {}
     for d, uni in sorted(unis.items()):
-        out[d] = kr_fb_confirm(d, uni, daum, yahoo, must=must)
+        fr, st = kr_fb_confirm(d, uni, daum, yahoo, must=must)
+        st["yMeta"] = sum(1 for c in fr["Code"] if c in fill["metaCodes"]) if d == last else 0
+        out[d] = (fr, st)
     return out, notes
 
 
@@ -880,7 +978,8 @@ def kr_fb_note(d, st, names):
     def ex(codes):
         return ", ".join(f"{c} {names.get(c, '')}".strip() for c in codes[:12]) + (" …" if len(codes) > 12 else "")
     left = len(st["noDaum"]) + len(st["bad"]) + len(st["noYahoo"]) + len(st["diff"])
-    txt = (f"{d} 2차 출처(다음 × 야후 종가 원 단위까지 같음): 확인 {st['conf']:,} / {st['n']:,}종목 · 빠짐 {left:,} "
+    txt = (f"{d} 2차 출처(다음 × 야후 종가 원 단위까지 같음): 확인 {st['conf']:,} / {st['n']:,}종목"
+           + (f" (그중 야후 값이 마감 뒤 regularMarketPrice {st['yMeta']:,})" if st.get("yMeta") else "") + f" · 빠짐 {left:,} "
            f"(다음 행 없음 {len(st['noDaum']):,} · 다음 값 못 믿음 {len(st['bad']):,} · 야후 종가 없음(코넥스 포함) {len(st['noYahoo']):,} · "
            f"두 종가가 다름 {len(st['diff']):,})")
     if st["diff"]:
@@ -899,7 +998,7 @@ def kr_fb_note(d, st, names):
 def px_src_counts(st):
     """data.json pxSrc.fb — 2차 출처 집계 (관문이 모양을 봐요). (순수 함수)"""
     return {"n": st["n"], "conf": st["conf"], "noDaum": len(st["noDaum"]), "bad": len(st["bad"]), "noYahoo": len(st["noYahoo"]),
-            "diff": len(st["diff"]), "diffEx": [f"{c} {n} {a:.0f}/{b:.2f}" for c, n, a, b in st["diff"][:20]], "must": list(st["must"])}
+            "diff": len(st["diff"]), "yMeta": int(st.get("yMeta") or 0), "diffEx": [f"{c} {n} {a:.0f}/{b:.2f}" for c, n, a, b in st["diff"][:20]], "must": list(st["must"])}
 
 
 def kr_primary_check(listing, px_date, yahoo, sample=PX_CHECK_SAMPLE, must=GATE_MUST):
@@ -1595,7 +1694,7 @@ def select_kr_universe(listing, max_n):
 
 def load_kr_listing(today):
     """(목록 날짜, DataFrame). 못 찾으면 (None, None) — 부르는 쪽이 실행을 멈춥니다."""
-    d, df, note, notes = pick_final_listing(today, _fetch_listing_csv, _listing_commit_kst)
+    d, df, note, notes = pick_final_listing(today, _fetch_listing_csv, _listing_commit_kst, unknown_final=False)
     for n in notes:
         log(f"· {n}" if "특별 거래시간" in n else f"  (종목 목록 {n})")
     if d is None:
@@ -4500,8 +4599,11 @@ def fetch_korea(start, today, rf, prev=None):
         try:
             cm = {str(c).strip(): m for c, m in zip(listing["Code"], listing["Market"])}
             pick = [c for c in GATE_MUST if c in cm] + px_check_sample([c for c, m in cm.items() if yahoo_kr_symbol(c, m)])
-            ych, _ = fetch_yahoo_kr_closes({c: cm[c] for c in dict.fromkeys(pick)}, px_date - dt.timedelta(days=7), px_date + dt.timedelta(days=1))
+            pcm = {c: cm[c] for c in dict.fromkeys(pick)}
+            ych, _ = fetch_yahoo_kr_closes(pcm, px_date - dt.timedelta(days=7), px_date + dt.timedelta(days=1))
+            yfill = yahoo_fill_day(ych, pcm, px_date, krx_close(px_date, special))     # 그날 일봉 종가가 아직 빈 종목 (마감 뒤 regularMarketPrice)
             px_src["chk"] = kr_primary_check(listing, px_date, ych)
+            px_src["chk"]["yMeta"] = yfill["meta"]
         except Exception as e:
             px_src["chk"] = {"src": "yahoo", "n": 0, "same": 0, "none": 0, "diff": [], "err": type(e).__name__}
             log(f"  !! 1차 출처 야후 확인 실패: {type(e).__name__}: {str(e)[:120]}")

@@ -196,7 +196,8 @@ def test_second_source_picks_the_latest_day_with_every_must_have():
 def test_earlier_second_source_days_feed_d1_as_final():
     f16 = F.kr_fb_confirm(D16, listing("2026-11-16_0545"), daum(), yahoo())[0]
     files = {D13: listing("2026-11-13_2158")}
-    ss, notes, prev_final = F.kr_recent_sessions(D17, lambda d: files.get(d), lambda d: None, n=2, special={}, known={D16: f16})
+    commits = {D13: dt.datetime(2026, 11, 13, 21, 58, tzinfo=F.KST)}
+    ss, notes, prev_final = F.kr_recent_sessions(D17, lambda d: files.get(d), commits.get, n=2, special={}, known={D16: f16})
     assert [d for d, _ in ss] == [D16, D13] and prev_final
     assert any("2차 출처" in n for n in notes)
 
@@ -328,12 +329,16 @@ def test_gate_live_mode_accepts_the_second_source_day():
 def test_http_px_alt_never_raises():
     cur, _, _, _ = fb_pair()
 
-    def boom(sym, d):
+    def boom(sym, d, close_time=None):
         raise ConnectionError("no network")
     alt = V.http_px_alt(cur["data"], dt.date(2026, 10, 30), fetch=boom, sleep=lambda s: None)
     assert alt["got"] == 0 and set(alt["mustMissing"]) == set(V.MUST) and alt["err"]
-    ok = V.http_px_alt(cur["data"], dt.date(2026, 10, 30), fetch=lambda s, d: 1000.0, sleep=lambda s: None)
-    assert ok["got"] == ok["asked"] and not ok["mustMissing"] and ok["asked"] == len(V.MUST) + V.PX_CHECK_SAMPLE
+    ok = V.http_px_alt(cur["data"], dt.date(2026, 10, 30), fetch=lambda s, d, close_time=None: (1000.0, "meta"), sleep=lambda s: None)
+    assert ok["got"] == ok["asked"] and not ok["mustMissing"] and ok["asked"] == len(V.MUST) + V.PX_CHECK_SAMPLE and ok["meta"] == ok["got"]
+    seen = []
+    V.http_px_alt(cur["data"], CSAT, fetch=lambda s, d, close_time=None: (seen.append(close_time), (None, "x"))[1], sleep=lambda s: None,
+                  special=V.load_special_sessions())
+    assert set(seen) == {dt.time(16, 30)}                                  # 수능일은 16:30 마감 뒤여야 해요
 
 
 def test_yahoo_day_close_reads_the_kst_day():
@@ -344,8 +349,131 @@ def test_yahoo_day_close_reads_the_kst_day():
         def json(self):
             ts = [int(dt.datetime(2026, 11, d, 9, 0, tzinfo=V.KST).timestamp()) for d in (16, 17, 18)]
             return {"chart": {"result": [{"timestamp": ts, "indicators": {"quote": [{"close": [196800.0, 190300.0, None]}]}}]}}
-    assert V._yahoo_day_close("005930.KS", D17, get=lambda u: R()) == 190300.0
-    assert V._yahoo_day_close("005930.KS", D18, get=lambda u: R()) is None
+    assert V._yahoo_day_close("005930.KS", D17, get=lambda u: R()) == (190300.0, "bar")
+    assert V._yahoo_day_close("005930.KS", D18, get=lambda u: R())[0] is None          # 종가 빈 값 · meta 없음
+
+
+# ── 5. 야후 일봉 종가가 빈 날: 마감 뒤 regularMarketPrice (2026-11-19) ─────────────────
+CSAT = dt.date(2026, 11, 19)
+
+
+def chart():
+    """실제 응답 (11-19 02:15 KST): 005930.KS 11-18 일봉 종가 null · regularMarketPrice 194,700 · regularMarketTime 11-18 15:30:16 KST."""
+    return json.load(open(os.path.join(FX, "yahoo_chart_005930_KS.json"), encoding="utf-8"))["chart"]["result"][0]
+
+
+def at_kst(d, hh, mm, ss=0):
+    return int(dt.datetime.combine(d, dt.time(hh, mm, ss), F.KST).timestamp())
+
+
+@pytest.mark.parametrize("fn", [lambda r, d, t: F.yahoo_chart_close(r, d, t), lambda r, d, t: V.yahoo_day_close(r, d, t)])
+def test_empty_daily_close_uses_the_price_after_the_close(fn):
+    r = chart()
+    assert r["indicators"]["quote"][0]["close"][-1] is None
+    assert fn(r, D18, dt.time(15, 30)) == (194700.0, "meta")                 # 다음 11-18 종가도 194,700
+    assert fn(r, D17, dt.time(15, 30)) == (190300.0, "bar")                  # 종가가 있는 날은 일봉 그대로
+    early = dict(r, meta=dict(r["meta"], regularMarketTime=at_kst(D18, 15, 10)))
+    assert fn(early, D18, dt.time(15, 30))[0] is None                         # 마감 전 시각 → 장중 값이라 확인 못 함
+    other = dict(r, meta=dict(r["meta"], regularMarketTime=at_kst(D17, 15, 30, 16)))
+    assert fn(other, D18, dt.time(15, 30))[0] is None                         # 다른 날의 시각 → 확인 못 함
+    nxt = dict(r, meta=dict(r["meta"], regularMarketTime=at_kst(CSAT, 9, 5)))
+    assert fn(nxt, D18, dt.time(15, 30))[0] is None                           # 다음 거래일의 값 → 확인 못 함
+    assert fn(r, D18, dt.time(16, 30))[0] is None                             # 수능일 같은 늦은 마감이면 15:30 값은 장중
+    assert fn(r, CSAT, dt.time(16, 30))[0] is None                            # 그날 일봉이 없으면 확인 못 함
+    assert fn(dict(r, meta={}), D18, dt.time(15, 30))[0] is None
+
+
+def test_fill_day_reads_only_the_missing_closes_and_counts_the_meta_path():
+    yahoo = {"005930": {D17: 190300.0}, "000660": {D17: 1.0, D18: 1153000.0}}
+    asked = []
+
+    def fetch(sym):
+        asked.append(sym)
+        if sym.startswith("000270"):
+            raise ConnectionError("x")
+        return chart()
+    out = F.yahoo_fill_day(yahoo, {"005930": "KOSPI", "000660": "KOSPI", "000270": "KOSPI", KONEX: "KONEX"}, D18, dt.time(15, 30), fetch=fetch)
+    assert sorted(asked) == ["000270.KS", "005930.KS"]                        # 이미 있는 종목 · 코넥스는 묻지 않아요
+    assert yahoo["005930"][D18] == 194700.0 and out["meta"] == 1 and out["fail"] == 1 and out["metaCodes"] == {"005930"}
+
+
+def test_fallback_counts_meta_confirmations():
+    uni = listing("2026-11-18_1452")
+
+    def fetch_daum(codes, n):
+        return daum(), []
+
+    def fetch_yahoo(cm, start, end):
+        return {c: {k: v for k, v in d.items() if k != D18} for c, d in yahoo().items()}, 0
+
+    def fill(y, cm, d, close_time):
+        mc = set()
+        for c, rows in daum().items():
+            if c in cm and d in rows:
+                y.setdefault(c, {})[d] = rows[d]["tradePrice"]              # 시험: 야후 meta 값 = 다음 종가
+                mc.add(c)
+        return {"need": len(mc), "bar": 0, "meta": len(mc), "none": 0, "fail": 0, "metaCodes": mc}
+    out, notes = F.kr_fallback_days([D18], lambda d: (uni, "시험"), dt.datetime(2026, 11, 19, 2, 15, tzinfo=F.KST), {},
+                                    fetch_daum=fetch_daum, fetch_yahoo=fetch_yahoo, fill_day=fill)
+    fr, st = out[D18]
+    assert st["must"] == [] and st["yMeta"] == len(fr) > 0 and F.px_src_counts(st)["yMeta"] == st["yMeta"]
+    assert any("regularMarketPrice" in n for n in notes)
+
+
+# ── 6. 커밋 시각을 확인하지 못한 캐시 파일은 최종본이 아니에요 (2026-11-19 · 더 엄격하게만) ─────────
+def test_pipeline_never_treats_an_unknown_commit_as_final(monkeypatch, capsys):
+    files = {D18: pd.concat([listing("2026-11-18_1452")] * 100, ignore_index=True),
+             D17: pd.concat([listing("2026-11-17_1529")] * 100, ignore_index=True),
+             D16: pd.concat([listing("2026-11-16_2211")] * 100, ignore_index=True)}
+    commits = {D16: dt.datetime(2026, 11, 16, 22, 11, tzinfo=F.KST)}            # 11-17 · 11-18 은 API 실패 (None)
+    monkeypatch.setattr(F, "_fetch_listing_csv", lambda d: files.get(d))
+    monkeypatch.setattr(F, "_listing_commit_kst", lambda d: commits.get(d))
+    d, df = F.load_kr_listing(CSAT)
+    out = capsys.readouterr().out
+    assert d == D16 and "커밋 시각 확인 불가 → 최종본으로 보지 않아요" in out             # 예전 규칙이면 11-17 장중 파일 (190,200)
+    # 그 뒤 끝난 거래일은 2차 출처가 정해요 (다음 × 야후)
+    f17 = F.kr_fb_confirm(D17, listing("2026-11-17_1529"), daum(), yahoo())
+    px, lst, _, src, _ = F.kr_second_source(d, df, [D17, D18], dt.datetime(2026, 11, 19, 4, 0, tzinfo=F.KST), {}, None,
+                                           fallback=fake_fallback({D17: f17}))
+    assert px == D17 and src["px"] == V.PX_SRC_FB and lst.set_index("Code").loc["005930", "Close"] == 190300
+    # 2차 출처도 없으면 1차 출처 그대로 → 관문의 '끝난 거래일' 줄이 발행을 막아요
+    px, lst, _, src, logs = F.kr_second_source(d, df, [D17, D18], dt.datetime(2026, 11, 19, 4, 0, tzinfo=F.KST), {}, None,
+                                              fallback=fake_fallback({}))
+    assert px == D16 and src["px"] == V.PX_SRC_LISTING and any(loud for loud, _ in logs)
+    # d1 · val20 의 앞 날도: 커밋 시각을 모르면 최종본이 아니에요
+    ss, notes, prev_final = F.kr_recent_sessions(D18, lambda d: files.get(d), lambda d: commits.get(d), n=3, special={})
+    assert [x for x, _ in ss] == [D16] and prev_final is False
+    assert any("커밋 시각을 확인하지 못해" in n for n in notes)
+
+
+def test_gate_never_treats_an_unknown_commit_as_final():
+    texts = {D17: open(os.path.join(FX, "krx_2026-11-17_1529.csv"), encoding="utf-8").read(),
+             D18: open(os.path.join(FX, "krx_2026-11-18_1452.csv"), encoding="utf-8").read(),
+             D16: open(os.path.join(FX, "krx_2026-11-16_2211.csv"), encoding="utf-8").read()}
+    commits = {D16: dt.datetime(2026, 11, 16, 22, 11, tzinfo=V.KST)}
+    ok, how = V.is_final(D17, texts[D17], texts.get, commits.get, CSAT, {})
+    assert not ok and "확인 불가" in how                                         # 예전: 11-18 장중 파일이 있어 최종본으로 봤어요
+    d, closes, how = V.latest_final(CSAT, texts.get, commits.get, special={})
+    assert d == D16 and closes["005930"] == 196800
+    # 파이프라인이 그 장중 파일(11-17)로 발행하려 하면 관문이 막아요 (2차 출처 확인 없음)
+    cur, prev, final = good_pair()
+    final = dict(final, date=dt.date(2026, 10, 29))
+    assert "pxDate = 최종본 날짜" in failed(check(cur, prev, final))
+
+
+def test_commit_time_lookups_retry_before_giving_up(monkeypatch):
+    calls = []
+
+    class R:
+        status_code = 502
+
+        def json(self):
+            return []
+    monkeypatch.setattr(V.requests, "get", lambda *a, **k: (calls.append(1), R())[1])
+    assert V.http_commit_kst(D17, sleep=lambda s: None) is None and len(calls) == 3
+    calls.clear()
+    monkeypatch.setattr(F.requests, "get", lambda *a, **k: (calls.append(1), R())[1])
+    assert F._listing_commit_kst(D17, sleep=lambda s: None) is None and len(calls) == 3
 
 
 def test_gate_main_fetches_yahoo_only_for_a_second_source_day(monkeypatch, tmp_path):
@@ -358,7 +486,7 @@ def test_gate_main_fetches_yahoo_only_for_a_second_source_day(monkeypatch, tmp_p
     monkeypatch.setattr(V, "latest_final", lambda *a, **k: (old["date"], old["closes"], "시험"))
     monkeypatch.setattr(V, "http_kospi_sessions", lambda: SESSIONS)
     monkeypatch.setattr(V, "http_hilo", lambda *a, **k: {})
-    monkeypatch.setattr(V, "http_px_alt", lambda data, px: (asked.append(px), alt)[1])
+    monkeypatch.setattr(V, "http_px_alt", lambda data, px, special=None: (asked.append(px), alt)[1])
     monkeypatch.setattr(V, "run_checks", lambda *a, **k: (seen.append(k.get("alt")), V.Report())[1])
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
