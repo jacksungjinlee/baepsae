@@ -127,8 +127,7 @@ def test_the_link_needs_a_us_sale_this_year_a_us_holding_or_a_dividend_this_year
         krSaleThisYear: [deck('a', { holdings: hold('005930'), purchases: [buy('005930', 3, 70000, '2025-03-04')], sales: [sell('005930', 1, 80000, '2026-06-01')] })],
         usHistoryUnsold: [deck('a', { holdings: hold('005930'), purchases: [buy('005930', 1, 70000, '2025-03-04')],
           history: [{ t: 'AAPL', nk: 'AAPL', out: '2026-06-01', cls: 'us', purchases: [buy('AAPL', 3, 200, '2026-02-02', { fx: 1370 })] }] })],
-        // review B: a US dividend without a rate keeps the dividend card out (tax.divNoFx not approved), so it never opens the
-        // link: alone, or next to a Korean dividend of the year (that card would be out too)
+        // a US dividend without a rate opens the link too: the dividend card names it (tax.divNoFx, Jack 2026-11-19)
         usDivNoFxOnly: [deck('a', { history: [{ t: 'KO', nk: 'KO', out: '2026-02-01', cls: 'us', divs: [div('KO', 4.25, '2026-04-01')] }] })],
         krDivAndUsDivNoFx: [deck('a', { holdings: hold('005930'), purchases: [buy('005930', 3, 70000, '2025-03-04')], divs: [div('005930', 1083, '2026-04-20')],
           history: [{ t: 'KO', nk: 'KO', out: '2026-02-01', cls: 'us', divs: [div('KO', 4.25, '2026-04-01')] }] })],
@@ -137,16 +136,14 @@ def test_the_link_needs_a_us_sale_this_year_a_us_holding_or_a_dividend_this_year
     want = {"none": (False, False, False), "krHeldOnly": (False, False, False), "krDivThisYear": (False, False, True),
             "krDivLastYear": (False, False, False), "usHeld": (False, True, False), "usPlannedOnly": (False, False, False),
             "usSoldLastYear": (False, False, False), "usSaleInHistory": (True, False, False), "usDivInHistory": (False, False, True),
-            "krSaleThisYear": (False, False, False), "usHistoryUnsold": (False, False, False), "usDivNoFxOnly": (False, False, False),
-            "krDivAndUsDivNoFx": (False, False, False)}
+            "krSaleThisYear": (False, False, False), "usHistoryUnsold": (False, False, False), "usDivNoFxOnly": (False, False, True),
+            "krDivAndUsDivNoFx": (False, False, True)}
     for k, (sale, held, dv) in want.items():
         r = got[k]["r"]
         assert (r["usSale"], r["usHeld"], r["div"]) == (sale, held, dv), (k, r)
         assert got[k]["open"] is (sale or held or dv), k
         assert got[k]["closed"] is False, k                          # 10월 31일에는 아무에게도 없어요
-    assert (got["usDivNoFxOnly"]["r"]["divAny"], got["usDivNoFxOnly"]["r"]["divNoFx"]) == (True, 1)
-    assert (got["krDivAndUsDivNoFx"]["r"]["divAny"], got["krDivAndUsDivNoFx"]["r"]["divNoFx"]) == (True, 1)
-    assert (got["usDivInHistory"]["r"]["divAny"], got["usDivInHistory"]["r"]["divNoFx"]) == (True, 0)
+    assert got["usDivNoFxOnly"]["r"]["divNoFx"] == 1 and got["krDivAndUsDivNoFx"]["r"]["divNoFx"] == 1 and got["usDivInHistory"]["r"]["divNoFx"] == 0
 
 
 # ── 양도차익 ──
@@ -263,7 +260,7 @@ def test_a_record_whose_date_is_not_a_date_never_counts_for_the_year():
     """A date must be YYYY-MM-DD to fall in the tax year (the store refuses others; a file edited by hand could carry one)."""
     got = run("""const bad = (date) => [deck('a', { holdings: hold('005930', 'AAPL'), purchases: [buy('005930', 3, 70000, '2025-03-04'), buy('AAPL', 2, 100, '2025-03-04', { fx: 1300 })],
         divs: [div('005930', 1083, date)], sales: [sell('AAPL', 1, 120, date, { fx: 1300 })] })];
-      out = ['2026-04', '2026-4-20', '2026-04-20x', '2026-04-20'].map((d) => { const r = X.taxRecords(bad(d)); return [r.divAny, r.usSale, X.yearGains(bad(d)).n, X.yearDivs(bad(d)).n]; });""")
+      out = ['2026-04', '2026-4-20', '2026-04-20x', '2026-04-20'].map((d) => { const r = X.taxRecords(bad(d)); return [r.div, r.usSale, X.yearGains(bad(d)).n, X.yearDivs(bad(d)).n]; });""")
     assert got == [[False, False, 0, 0]] * 3 + [[True, True, 1, 1]]
 
 

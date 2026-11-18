@@ -1,15 +1,15 @@
 // ================= 연말에 확인할 숫자 (v19.6f, Part F, board TaxCheck2): #portfolio/tax =================
 // Every portfolio together, from Nov 1 to Dec 31 (KST) of tax.js TAX_YEAR, reached from 내 수익 ("연말에 확인할 숫자 ›",
 // TaxLink) when the user has a US sale this year, a US holding or a dividend this year (tax.taxOpen: the same rule for the
-// link and the address; app.jsx shows 포트폴리오 for #portfolio/tax otherwise).
+// link and the address; app.jsx turns a closed #portfolio/tax into #portfolio).
 //   올해 해외 주식 양도차익   this year's US realized gains in won, exact to the 원; the bar to the 250만원 deduction; below ·
 //                            above (with the estimate, 약, to 1,000원) · loss. Shown with a US sale this year or a US holding.
 //   지금 손실 중인 미국 종목  held US stocks at a loss today (unrealized; facts only, never a word about selling). Needs today's
 //                            data, fresh: on stale data the card says the data stopped and shows no number.
 //   올해 받은 배당 (세금 떼기 전)  this year's dividend records turned back into pre-tax amounts, 약, to 1,000원.
-// Never a sum that silently leaves records out: a line that would name what is left out and is not approved yet (null in
-// src/copy/v2.js) makes the whole card stay out instead, said in the console with counts. Load failure: the approved
-// message only. No 뱁이 (the screen shows money). Tokens only (dark mode). No Korean here: src/copy/v2.js tax.*.
+// Never a sum that silently leaves records out: what is left out is named on the card with an approved line (Jack's yes to
+// M1-M4 on 2026-11-19), and said in the console with counts. Load failure: the approved message only. No 뱁이 (the
+// screen shows money). Tokens only (dark mode). No Korean here: src/copy/v2.js tax.*.
 import React, { useMemo } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, TOUCH, CHART } from "../ui/tokens.js";
 import { Amount, priceColor } from "../ui/components.jsx";
@@ -55,14 +55,11 @@ function Head({ icon, tone, sub, children }) {
 // 올해 해외 주식 양도차익: the sum, the bar to 250만원 (not in the loss state), the state line, then the notes.
 function GainCard({ g, win }) {
   const st = taxState(g.gain);
-  // Exactly 250만원: "…보다 0원 적어요." is not something a person says (review B, round 1), so until the 'equal' line is approved
-  // the card shows the amount and the full bar without a state line, said in the console.
-  let line = null;
-  if (st.kind === "loss") line = fill(C.tax.loss, { x: exactWon(st.x) });
-  else if (st.kind === "above") line = fill(C.tax.above, { x: exactWon(st.x), t: exactWon(st.t) });
-  else if (st.kind === "equal") line = C.tax.equal || null;
-  else line = fill(C.tax.below, { x: exactWon(st.x) });
-  if (st.kind === "equal" && !C.tax.equal) say("the gain is exactly the 2,500,000 won deduction and the 'equal' line (tax.equal) is not approved yet: no state line");
+  // exactly 250만원 has its own line (M4, Jack 2026-11-19): "…보다 0원 적어요." is not something a person says (review B)
+  const line = st.kind === "loss" ? fill(C.tax.loss, { x: exactWon(st.x) })
+    : st.kind === "above" ? fill(C.tax.above, { x: exactWon(st.x), t: exactWon(st.t) })
+    : st.kind === "equal" ? C.tax.equal
+    : fill(C.tax.below, { x: exactWon(st.x) });
   const both = [C.tax.allDecks, win.ria ? C.tax.ria : null].filter(Boolean).join(" ");
   return (
     <Card data-ui-v2="tax-gain" data-state={st.kind} data-g={g.gain} data-x={st.x} data-t={st.t == null ? undefined : st.t} style={{ padding: `${SPACE(4)}px ${SPACE(4) + 2}px` }}>
@@ -79,14 +76,15 @@ function GainCard({ g, win }) {
           </div>
         </div>
       )}
-      {line && <p data-ui-v2="tax-line" style={tx(SIZE.sm - 1, WEIGHT.bold, COLOR.ink, { marginTop: SPACE(2) + 2, wordBreak: "keep-all" })}>{line}</p>}
+      <p data-ui-v2="tax-line" style={tx(SIZE.sm - 1, WEIGHT.bold, COLOR.ink, { marginTop: SPACE(2) + 2, wordBreak: "keep-all" })}>{line}</p>
       <p data-ui-v2="tax-explain" style={small({ marginTop: SPACE(1) })}>{C.tax.explain}</p>
       <p data-ui-v2="tax-all" data-ria={win.ria ? "1" : "0"} style={small({ marginTop: SPACE(1) + 2 })}>{both}</p>
+      {/* M5 (Jack 2026-11-19, 조세특례제한법 §91의27: tax.js): after the RIA line, under the same condition (tax year 2026) */}
+      {win.ria && <p data-ui-v2="tax-hedge" style={small({ marginTop: SPACE(1) + 2 })}>{C.tax.hedge}</p>}
       {win.settle && <p data-ui-v2="tax-settle" style={small({ marginTop: SPACE(1) + 2 })}>{C.tax.settle}</p>}
       {g.left > 0 && <p data-ui-v2="tax-left" data-n={g.left} style={small({ marginTop: SPACE(1) + 2 })}>{fill(C.ret.soldLeftOut, { n: g.left })}</p>}
       {g.usdOnly && <p data-ui-v2="tax-usd-only" style={small({ marginTop: SPACE(1) + 2 })}>{C.rec.usdOnly}</p>}
-      {C.tax.gainNote && <p data-ui-v2="tax-gain-note" style={small({ marginTop: SPACE(1) + 2 })}>{C.tax.gainNote}</p>}
-      {C.tax.hedge && <p data-ui-v2="tax-hedge" style={small({ marginTop: SPACE(1) + 2 })}>{C.tax.hedge}</p>}
+      <p data-ui-v2="tax-gain-note" style={small({ marginTop: SPACE(1) + 2 })}>{C.tax.gainNote}</p>
     </Card>
   );
 }
@@ -121,11 +119,12 @@ function LossCard({ ls, stale, load, byT, nameOf }) {
           </div>
         );
       })}
-      {ls.rows.length === 0 && C.tax.lossNone && <p data-ui-v2="tax-loss-none" style={small({ marginTop: 0 })}>{C.tax.lossNone}</p>}
-      <p data-ui-v2="tax-loss-note" style={small({ marginTop: SPACE(1) + 2 })}>{C.tax.lossNote}</p>
+      {/* no stock at a loss: M3 (Jack 2026-11-19) in place of the rows; the note about the rows comes with rows only */}
+      {ls.rows.length === 0 && <p data-ui-v2="tax-loss-none" style={tx(SIZE.sm - 1, WEIGHT.bold, COLOR.ink, { wordBreak: "keep-all" })}>{C.tax.lossNone}</p>}
+      {ls.rows.length > 0 && <p data-ui-v2="tax-loss-note" style={small({ marginTop: SPACE(1) + 2 })}>{C.tax.lossNote}</p>}
       {/* the names in these lines are tickers, as 내 수익 and the missing-stock line write a US stock */}
       {ls.noAvg.length > 0 && <Note data-ui-v2="tax-no-avg">{fill(C.ret.noAvg, { n: ls.noAvg.length, names: ls.noAvg.join(", ") })}</Note>}
-      {ls.noFx.length > 0 && C.tax.lossNoFx && <Note data-ui-v2="tax-no-fx">{fill(C.tax.lossNoFx, { n: ls.noFx.length, names: ls.noFx.join(", ") })}</Note>}
+      {ls.noFx.length > 0 && <Note data-ui-v2="tax-no-fx">{fill(C.tax.lossNoFx, { n: ls.noFx.length, names: ls.noFx.join(", ") })}</Note>}
       {absent.length > 0 && <Note tone="watch" data-ui-v2="tax-missing">{fill(C.missing.line, { n: absent.length, names: missingNames(absent) })}</Note>}
       {ls.noPrice.length > 0 && <Note tone="watch" data-ui-v2="tax-no-price">{C.ret.noPrice}</Note>}
       {ls.usdOnly && <Note data-ui-v2="tax-usd-today">{C.pfr.usdToday}</Note>}
@@ -145,7 +144,7 @@ function DivCard({ dv }) {
         <span style={tx(26, WEIGHT.heavy, COLOR.ink, { letterSpacing: "-0.02em" })}><Amount text={exactWon(dv.won)} /></span>
         {post ? <span style={tx(SIZE.body, WEIGHT.heavy, COLOR.text2)}>{post}</span> : null}
       </span>
-      {dv.noFx > 0 && C.tax.divNoFx && <p data-ui-v2="tax-div-no-fx" style={small({ marginTop: SPACE(1) + 2 })}>{fill(C.tax.divNoFx, { n: dv.noFx })}</p>}
+      {dv.noFx > 0 && <p data-ui-v2="tax-div-no-fx" style={small({ marginTop: SPACE(1) + 2 })}>{fill(C.tax.divNoFx, { n: dv.noFx })}</p>}
       <p data-ui-v2="tax-div-note" style={small({ marginTop: SPACE(1) + 2 })}>{C.tax.divNote}</p>
     </Card>
   );
@@ -160,8 +159,7 @@ export function Tax({ load, store, pad, onBack }) {
   const ok = load.status === "ok";
   const live = ok && ctx.state.ok;
   const g = useMemo(() => (ok && (has.usSale || has.usHeld) ? yearGains(decks) : null), [ok, has, decks]);
-  // computed whenever a dividend is dated this year, so a card left out for a line not approved yet is said in the console
-  const dv = useMemo(() => (ok && has.divAny ? yearDivs(decks) : null), [ok, has, decks]);
+  const dv = useMemo(() => (ok && has.div ? yearDivs(decks) : null), [ok, has, decks]);
   const ls = useMemo(() => {
     if (!live || !has.usHeld) return null;
     const pxOf = (t) => { const s = ctx.byT.get(t); return s && s.price > 0 ? s.price : null; };
@@ -180,18 +178,17 @@ export function Tax({ load, store, pad, onBack }) {
 
   // What stays out, and why, said once each in the console (no fallback is silent).
   if (g && g.left) say(`${g.left} US sale(s) dated ${TAX_YEAR} left out of the gain (gain unknown: no average price, no rate, or more than held); the approved soldLeftOut line names the count`);
-  let showDiv = !!dv && dv.n + dv.noFx > 0;
-  if (dv && dv.noFx > 0 && !C.tax.divNoFx) {
-    say(`dividend card left out: ${dv.noFx} US dividend(s) dated ${TAX_YEAR} have no exchange rate and the line naming them (tax.divNoFx) is not approved yet (${dv.n} other dividend(s) not summed)`);
-    showDiv = false;
-  }
+  const showDiv = !!dv && dv.n + dv.noFx > 0;
+  if (dv && dv.noFx) say(`${dv.noFx} US dividend(s) dated ${TAX_YEAR} have no exchange rate: left out of the pre-tax sum (${dv.n} counted); the approved divNoFx line names the count`);
   let showLoss = false;
   if (ls) {
-    const out = ls.noAvg.length + ls.noFx.length + ls.absent.length + ls.noPrice.length + ls.noToday.length;
+    const out = { noAvg: ls.noAvg, noFx: ls.noFx, absent: ls.absent, noPrice: ls.noPrice };
+    const named = Object.entries(out).filter(([, v]) => v.length).map(([k, v]) => `${k} ${v.join(", ")}`);
     if (ls.noToday.length) say(`losses card left out: no exchange rate in today's data (${ls.noToday.length} US stock(s) held)`);
-    else if (ls.noFx.length && !C.tax.lossNoFx) say(`losses card left out: ${ls.noFx.length} US stock(s) held with a purchase saved without an exchange rate (${ls.noFx.join(", ")}) and the line naming them (tax.lossNoFx) is not approved yet`);
-    else if (!ls.rows.length && !C.tax.lossNone) say(`losses card left out: no US stock held at a loss today (${ls.held} held, ${out} of them not valued) and the 'none' line (tax.lossNone) is not approved yet`);
-    else showLoss = true;
+    else {
+      showLoss = true;
+      if (named.length) say(`losses card: ${ls.held} US stock(s) held, ${ls.rows.length} at a loss; left out and named on the card: ${named.join("; ")}`);
+    }
   }
   const stale = ok && !ctx.state.ok && has.usHeld ? { days: ctx.state.days } : null;
   const md = mdText(today);

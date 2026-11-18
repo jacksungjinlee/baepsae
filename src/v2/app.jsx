@@ -521,7 +521,7 @@ export function App({ source }) {
   const taxShown = inTax && taxOpen(view.data.decks, todayKst());
   useEffect(() => {
     if (!inTax || taxShown) return;
-    console.info(`[v2] tax: #portfolio/tax is closed today (${todayKst()}: outside Nov 1 to Dec 31 of the tax year, or no US sale this year, US holding or dividend this year it can show); the address becomes #portfolio`);
+    console.info(`[v2] tax: #portfolio/tax is closed today (${todayKst()}: outside Nov 1 to Dec 31 of the tax year, or no US sale this year, US holding or dividend this year); the address becomes #portfolio`);
     router.replaceRoute("portfolio");
   }, [inTax, taxShown]);
   // v19.6a: 내 수익 of a portfolio that exists (else 포트폴리오)

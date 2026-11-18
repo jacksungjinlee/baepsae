@@ -12641,17 +12641,22 @@ def tax_store(state):
 #         배당: 84,600 ÷ 0.846 = 100,000 · $85 × 1,350 = 114,750 ÷ 0.85 = 135,000 → 235,000
 #  above  AAPL 20 × $150 × 1,300 = 3,900,000 → 15주 판 몫 2,925,000 · 판 금액 15 × $300 × 1,400 = 6,300,000 → 3,375,000
 #         AMZN 판 기록은 환율이 없어 빼고 셈 (1건). 공제보다 875,000 많고 세금 875,000 × 22% = 192,500 → 193,000
-#         손실 카드: DIS 의 산 기록에 환율이 없어 (tax.lossNoFx 승인 전) 통째로 빠져요 · 배당 없음
+#         손실: CRM 229.17 × 1,338 = 306,629.46 − 420,000 = −113,370.54 → −113,371 · AAPL · AMZN 은 이익 · DIS 는 산 기록에 환율이
+#         없어 빠지고 M2 줄이 이름을 말해요 (Jack, 2026-11-19) · 배당 없음
 #  loss   CRM 4 × $300 × 1,400 = 1,680,000 → 2주 판 몫 840,000 · 판 금액 2 × $250 × 1,350 = 675,000 → −165,000
-#         손실: CRM 2 × 229.17 × 1,338 − 840,000 = −226,741 · 배당 카드: 환율 없는 미국 배당 (tax.divNoFx 승인 전) 이 있어 통째로 빠져요
+#         손실: CRM 2 × 229.17 × 1,338 − 840,000 = −226,741 · 배당: 삼성전자 1,000 ÷ 0.846 = 1,182.03 → 1,000원, 환율 없는 CRM $2 는
+#         빠지고 M1 줄이 그 수를 말해요 (Jack, 2026-11-19)
 TAX_WANT = {
     "below": {"deck": "dtaxa", "g": 1761350, "x": 738650, "t": None, "fill": 0.705, "left": 0, "usdOnly": True,
-              "loss": [("CRM", -226741), ("DIS", -156787), ("BA", -51772)], "noAvg": ["BAC"], "usdToday": True, "div": 235000, "logs": []},
-    "above": {"deck": "dtaxc", "g": 3375000, "x": 875000, "t": 193000, "fill": 1, "left": 1, "usdOnly": False, "loss": None, "div": None,
-              "logs": ["1 US sale(s) dated 2026 left out of the gain", "losses card left out: 1 US stock(s) held with a purchase saved without an exchange rate (DIS)"]},
+              "loss": [("CRM", -226741), ("DIS", -156787), ("BA", -51772)], "noAvg": ["BAC"], "noFx": [], "usdToday": True,
+              "div": 235000, "divText": "약 23만 5,000원", "divNoFx": 0,
+              "logs": ["losses card: 6 US stock(s) held, 3 at a loss; left out and named on the card: noAvg BAC"]},   # AAPL CRM BA MSFT DIS BAC
+    "above": {"deck": "dtaxc", "g": 3375000, "x": 875000, "t": 193000, "fill": 1, "left": 1, "usdOnly": False,
+              "loss": [("CRM", -113371)], "noAvg": [], "noFx": ["DIS"], "usdToday": False, "div": None,
+              "logs": ["1 US sale(s) dated 2026 left out of the gain", "losses card: 4 US stock(s) held, 1 at a loss; left out and named on the card: noFx DIS"]},
     "loss": {"deck": "dtaxe", "g": -165000, "x": 165000, "t": None, "fill": None, "left": 0, "usdOnly": False,
-             "loss": [("CRM", -226741)], "noAvg": [], "usdToday": False, "div": None,
-             "logs": ["dividend card left out: 1 US dividend(s) dated 2026 have no exchange rate"]},
+             "loss": [("CRM", -226741)], "noAvg": [], "noFx": [], "usdToday": False, "div": 1000, "divText": "약 1,000원", "divNoFx": 1,
+             "logs": ["1 US dividend(s) dated 2026 have no exchange rate: left out of the pre-tax sum (1 counted)"]},
 }
 
 
@@ -12672,7 +12677,7 @@ def scene_v196f(R, files, width, dark=False):
     """v19.6f (390 · 320 · 1280, 밝게 · 어둡게): 내 수익 → '연말에 확인할 숫자 ›' (기록 내려받기 위) → 세 상태를 손으로 계산한 값으로:
     below (공제보다 적어요 · 막대 · 판 날 환율 줄) · above (많아요 · 세금 약 · 막대 끝까지 · 빼고 더한 판 기록 1건) · loss (손실 · 막대 없음).
     줄마다 켜지고 꺼짐: RIA(2026) · 결제일(12월 15일 전이라 없음) · 손실 카드(종목마다 모든 포트폴리오 · 큰 손실부터 · 평균 단가 없는 종목 ·
-    오늘 환율 줄) · 승인 전 줄 대신 카드를 통째로 빼고 console 에 수 (M1 배당 · M2 손실) · 배당(세금 떼기 전, 약) · 아래 고지 · 앱 푸터 ·
+    오늘 환율 줄) · 빠진 것은 Jack 이 2026-11-19 에 승인한 줄로 (M1 배당 · M2 손실) · 환헤지(M5) · 평균 단가 줄 · 배당(세금 떼기 전, 약) · 아래 고지 · 앱 푸터 ·
     뒤로 → 내 수익 · 12px · 가로 스크롤 없음 · 뱁이 없음 · 승인된 글만."""
     S = f"v19.6f {width}{' 어두운 화면' if dark else ''}"
     wide = width >= 1024
@@ -12730,8 +12735,12 @@ def scene_v196f(R, files, width, dark=False):
                 assert left.inner_text() == fillp(C["ret"]["soldLeftOut"], n=W["left"]) == "수익을 계산하지 못한 판 기록 1건은 빼고 더했어요."
             uo = page.locator('[data-ui-v2="tax-usd-only"]')
             assert uo.count() == (1 if W["usdOnly"] else 0) and (not W["usdOnly"] or uo.inner_text() == C["rec"]["usdOnly"])
-            for k in ("tax-gain-note", "tax-hedge"):                                              # 승인 전 줄은 없어요
-                assert page.locator(f'[data-ui-v2="{k}"]').count() == 0, k
+            # Jack, 2026-11-19: M5 (환헤지, 2026 only, after the RIA line) and the rec.note reuse after the notes
+            hedge, note = page.locator('[data-ui-v2="tax-hedge"]'), page.locator('[data-ui-v2="tax-gain-note"]')
+            assert hedge.inner_text() == C["tax"]["hedge"] == "환헤지 상품에 투자했다면 조건에 맞을 때 공제를 더 받을 수 있어요."
+            assert note.inner_text() == C["tax"]["gainNote"] == C["rec"]["note"]
+            ys = [page.locator(f'[data-ui-v2="{k}"]').bounding_box()["y"] for k in ("tax-all", "tax-hedge", "tax-gain-note")]
+            assert ys == sorted(ys), ys
             # 지금 손실 중인 미국 종목
             lc = page.locator('[data-ui-v2="tax-loss"]')
             if W["loss"] is None:
@@ -12756,7 +12765,11 @@ def scene_v196f(R, files, width, dark=False):
                     assert na.inner_text() == fillp(C["ret"]["noAvg"], n=len(W["noAvg"]), names=", ".join(W["noAvg"])) == "평균 단가가 없는 종목 1개(BAC)는 빼고 계산했어요."
                 ut = lc.locator('[data-ui-v2="tax-usd-today"]')
                 assert ut.count() == (1 if W["usdToday"] else 0) and (not W["usdToday"] or ut.inner_text() == C["pfr"]["usdToday"])
-                for k in ("tax-no-fx", "tax-loss-none", "tax-missing", "tax-no-price", "tax-stale"):
+                nf = lc.locator('[data-ui-v2="tax-no-fx"]')                                  # M2 (Jack, 2026-11-19)
+                assert nf.count() == (1 if W["noFx"] else 0)
+                if W["noFx"]:
+                    assert nf.inner_text() == fillp(C["tax"]["lossNoFx"], n=len(W["noFx"]), names=", ".join(W["noFx"])) == "환율 기록이 없는 미국 종목 1개(DIS)는 빼고 계산했어요."
+                for k in ("tax-loss-none", "tax-missing", "tax-no-price", "tax-stale"):
                     assert lc.locator(f'[data-ui-v2="{k}"]').count() == 0, k
             # 올해 받은 배당 (세금 떼기 전)
             dc = page.locator('[data-ui-v2="tax-div"]')
@@ -12764,9 +12777,12 @@ def scene_v196f(R, files, width, dark=False):
                 assert dc.count() == 0
             else:
                 assert dc.count() == 1 and int(dc.get_attribute("data-v")) == W["div"] and dc.locator("h3").inner_text() == C["tax"]["divTitle"]
-                assert dc.locator('[data-ui-v2="tax-div-amount"]').inner_text() == fillp(C["tax"]["divAmount"], x=exact_won(W["div"])) == "약 23만 5,000원"
+                assert dc.locator('[data-ui-v2="tax-div-amount"]').inner_text() == fillp(C["tax"]["divAmount"], x=exact_won(W["div"])) == W["divText"]
                 assert dc.locator('[data-ui-v2="tax-div-note"]').inner_text() == C["tax"]["divNote"]
-                assert dc.locator('[data-ui-v2="tax-div-no-fx"]').count() == 0
+                dn = dc.locator('[data-ui-v2="tax-div-no-fx"]')                                   # M1 (Jack, 2026-11-19)
+                assert dn.count() == (1 if W["divNoFx"] else 0)
+                if W["divNoFx"]:
+                    assert dn.inner_text() == fillp(C["tax"]["divNoFx"], n=W["divNoFx"]) == "환율 기록이 없는 미국 배당 1건은 빼고 더했어요."
             assert page.locator('[data-ui-v2="tax-footer"]').inner_text() == C["tax"]["footer"]
             order = [k for k in ("tax-gain", "tax-loss", "tax-div", "tax-footer") if page.locator(f'[data-ui-v2="{k}"]').count()]
             tops = [page.locator(f'[data-ui-v2="{k}"]').bounding_box()["y"] for k in order]
@@ -12774,8 +12790,7 @@ def scene_v196f(R, files, width, dark=False):
             said = [m for m in logs if m.startswith("[v2] tax: ")]
             for want in W["logs"]:
                 assert any(want in m for m in said), (want, said)
-            if not W["logs"]:
-                assert not said, said
+            assert len(said) == len(W["logs"]), said
             R.collect(page)
             if R.shots:
                 os.makedirs(R.shots, exist_ok=True)
@@ -12783,9 +12798,9 @@ def scene_v196f(R, files, width, dark=False):
             # 뒤로 → 내 수익
             page.locator('[data-ui-v2="app-bar"] button').first.click()
             at(page, f"portfolio/returns/{W['deck']}")
-        R.check(page, S, f"{state}: " + {"below": "공제보다 73만 8,650원 적어요 · 막대 0.705 · 손실 3종목 · 배당 약 23만 5,000원",
-                                          "above": "87만 5,000원 많아요 · 세금 약 19만 3,000원 · 빼고 더한 판 기록 1건 · 손실 카드 없음(M2) · 배당 없음",
-                                          "loss": "16만 5,000원 손실 · 막대 없음 · 손실 CRM · 배당 카드 없음(M1)"}[state], run)
+        R.check(page, S, f"{state}: " + {"below": "공제보다 73만 8,650원 적어요 · 막대 0.705 · 환헤지 · 평균 단가 줄 · 손실 3종목 · 배당 약 23만 5,000원",
+                                          "above": "87만 5,000원 많아요 · 세금 약 19만 3,000원 · 빼고 더한 판 기록 1건 · 손실 CRM 과 M2 (DIS) · 배당 없음",
+                                          "loss": "16만 5,000원 손실 · 막대 없음 · 손실 CRM · 배당 약 1,000원과 M1 (1건)"}[state], run)
         ctx.close()
         srv.shutdown()
 
@@ -12794,8 +12809,8 @@ def scene_v196f_window(R, files, width=390):
     """v19.6f 보이는 때 (한국 날짜, 기기 시간대와 상관없이): 10월 31일 23:59 에는 링크도 화면도 없고(#portfolio/tax → 주소가 #portfolio 로, console)
     11월 1일 00:00 부터 있어요 · 12월 14일 23:59 에는 결제일 줄이 없고 12월 15일 00:00 부터 있어요 · 12월 31일 23:59 까지 있고 1월 1일 00:00 에는
     없어요 · 2027년 11월에도 없어요 (TAX_YEAR). 기기 시간대는 서울 · 미국 서부 · 키리티마티(UTC+14): 기기 날짜가 한국 날짜와 다른 순간에도
-    한국 날짜를 따라요. 이 포트폴리오는 미국 종목을 이익으로 가지고 있어서 손실 카드는 승인 전 줄(M3) 대신 빠져요 (console). 데이터가 멈춘
-    날(12월)에도 양도차익 카드는 보이고, 손실 카드는 멈춤 줄만."""
+    한국 날짜를 따라요. 이 포트폴리오는 미국 종목을 이익으로 가지고 있어서 손실 카드는 '지금 손실 중인 미국 종목은 없어요.' (M3, Jack
+    2026-11-19). 데이터가 멈춘 날(12월)에도 양도차익 카드는 보이고, 손실 카드는 멈춤 줄만."""
     S = f"v19.6f 창 {width}"
     site = build_site(clone(files))
     store = tax_store("window")["decks"]
@@ -12835,11 +12850,14 @@ def scene_v196f_window(R, files, width=390):
                 if settle:
                     assert page.locator('[data-ui-v2="tax-settle"]').inner_text() == C["tax"]["settle"]
                 lc = page.locator('[data-ui-v2="tax-loss"]')
-                stale = page.locator('[data-ui-v2="tax-stale"]')
-                if lc.count():                                                                    # 멈춘 데이터 (12월): 멈춤 줄만, 숫자 없음
-                    assert stale.count() == 1 and lc.locator('[data-ui-v2="tax-loss-row"]').count() == 0, lc.inner_text()
-                else:                                                                             # 11월 1일: 손실 없음 → M3 승인 전이라 카드 없음
-                    assert any("losses card left out: no US stock held at a loss today (1 held, 0 of them not valued)" in m for m in logs), logs
+                lc.wait_for(state="visible")
+                assert lc.locator('[data-ui-v2="tax-loss-row"]').count() == 0                      # AAPL 은 이익
+                if lc.get_attribute("data-stale") == "1":                                         # 멈춘 데이터 (12월): 멈춤 줄만, 숫자 없음
+                    assert lc.locator('[data-ui-v2="tax-stale"]').count() == 1 and lc.locator('[data-ui-v2="tax-loss-none"]').count() == 0
+                else:                                                                             # 11월 1일: M3 (Jack, 2026-11-19) · 날짜 줄
+                    assert lc.locator('[data-ui-v2="tax-loss-none"]').inner_text() == C["tax"]["lossNone"] == "지금 손실 중인 미국 종목은 없어요."
+                    assert lc.locator('[data-ui-v2="tax-loss-note"]').count() == 0                   # 줄이 없으면 그 줄의 설명도 없어요
+                    assert lc.locator('[data-ui-v2="tax-loss-date"]').count() == 1
                 R.collect(page)
             else:
                 page.evaluate("() => { location.hash = '#portfolio/tax'; }")
@@ -12858,7 +12876,7 @@ def scene_v196f_window(R, files, width=390):
 def scene_v196f_states(R, files, width=390):
     """v19.6f 데이터와 기록의 상태: 기록 없음(링크도 없음, 주소는 #portfolio 로) · 한국 종목만, 올해 배당 있음(배당 카드와 고지만) · 한국 종목만,
     올해 배당 없음(링크 없음) · 바로 연 #portfolio/tax (주소가 #portfolio 로, 거기서 배당을 기록해도 포트폴리오 그대로: 리뷰 B) · 올해 한국 배당과
-    환율 없는 미국 배당(링크 없음: 배당 카드가 빠질 화면) · 양도차익이 정확히 250만원(M4 승인 전: 상태 줄 없음) · 멈춘 데이터(양도차익 · 배당은
+    환율 없는 미국 배당(링크 · 배당 카드와 M1) · 양도차익이 정확히 250만원(M4) · 멈춘 데이터(양도차익 · 배당은
     그대로, 손실 카드는 멈춤 줄) · 불러오기 실패(실패 문구만, 숫자 없음; 내 수익에도 실패 문구와 링크)."""
     S = f"v19.6f 상태 {width}"
     data = clone(files)
@@ -12891,16 +12909,15 @@ def scene_v196f_states(R, files, width=390):
             tax_screen_common(page, width, today)
 
         def run():
-            if case in ("none", "kr-none", "div-nofx"):
+            if case in ("none", "kr-none"):
                 if case != "none":
-                    did = "dtaxn" if case == "kr-none" else "dtaxv"
-                    at(page, f"portfolio/returns/{did}")
+                    at(page, "portfolio/returns/dtaxn")
                     page.locator('[data-ui-v2="ret-csv"]').wait_for(state="visible")
-                    assert page.locator('[data-ui-v2="tax-link"]').count() == 0                 # div-nofx: 배당 카드가 빠질 화면이라 링크도 없음
+                    assert page.locator('[data-ui-v2="tax-link"]').count() == 0
                 page.evaluate("() => { location.hash = '#portfolio/tax'; }")
                 at(page, "portfolio")                                                             # 닫힌 주소는 #portfolio 로
                 assert page.evaluate("() => location.hash") == "#portfolio"
-                page.locator('[data-ui-v2="deck-empty"], [data-deck-id="dtaxn"], [data-deck-id="dtaxv"]').first.wait_for(state="visible")
+                page.locator('[data-ui-v2="deck-empty"], [data-deck-id="dtaxn"]').first.wait_for(state="visible")
                 assert page.locator('[data-ui-v2="tax"]').count() == 0
                 assert any(m.startswith("[v2] tax: #portfolio/tax is closed today") for m in logs), logs
             elif case == "cold":
@@ -12926,6 +12943,16 @@ def scene_v196f_states(R, files, width=390):
                 assert [x["amount"] for x in stored] == [84600, 5000], stored
                 info = page.evaluate("() => window.__info")
                 assert sum(m.startswith("[v2] tax: #portfolio/tax is closed today") for m in info) == 1, info
+            elif case == "div-nofx":
+                # a Korean dividend and a US one without a rate (Jack, 2026-11-19: M1): the link opens; the card names the US one
+                go_tax()
+                assert page.locator('[data-ui-v2="tax-gain"]').count() == 0 and page.locator('[data-ui-v2="tax-loss"]').count() == 0
+                dc = page.locator('[data-ui-v2="tax-div"]')
+                # 84,600 ÷ 0.846 = 100,000원; KO $4.25 (환율 없음) 은 빠지고 M1 줄이 1건이라고 말해요
+                assert dc.count() == 1 and int(dc.get_attribute("data-v")) == 100000
+                assert dc.locator('[data-ui-v2="tax-div-amount"]').inner_text() == "약 10만원"
+                assert dc.locator('[data-ui-v2="tax-div-no-fx"]').inner_text() == fillp(C["tax"]["divNoFx"], n=1) == "환율 기록이 없는 미국 배당 1건은 빼고 더했어요."
+                assert any("1 US dividend(s) dated 2026 have no exchange rate: left out of the pre-tax sum (1 counted)" in m for m in logs), logs
             elif case == "kr-div":
                 go_tax()
                 assert page.locator('[data-ui-v2="tax-gain"]').count() == 0 and page.locator('[data-ui-v2="tax-loss"]').count() == 0
@@ -12939,14 +12966,13 @@ def scene_v196f_states(R, files, width=390):
                 g = page.locator('[data-ui-v2="tax-gain"]')
                 # 판 금액 10 × $250 × 1,400 = 3,500,000 − 10 × $100 × 1,000 = 1,000,000 → 2,500,000원: 공제와 같아요
                 assert g.get_attribute("data-state") == "equal" and int(g.get_attribute("data-g")) == 2500000
-                # review B: "…보다 0원 적어요." is not natural Korean: until tax.equal is approved, no state line at all
-                assert page.locator('[data-ui-v2="tax-line"]').count() == 0 and "0원 적어요" not in g.inner_text()
+                # M4 (Jack, 2026-11-19): its own line ("…보다 0원 적어요." is not natural Korean, review B)
+                assert page.locator('[data-ui-v2="tax-line"]').inner_text() == C["tax"]["equal"] == "양도차익이 공제 250만원과 같아요."
+                assert "0원 적어요" not in g.inner_text()
                 assert page.locator('[data-ui-v2="tax-g"]').inner_text() == exact_won(2500000) == "250만원"
                 assert float(page.locator('[data-ui-v2="tax-bar"]').get_attribute("data-fill")) == 1
                 assert page.locator('[data-ui-v2="tax-explain"]').inner_text() == C["tax"]["explain"]
                 assert page.locator('[data-ui-v2="tax-loss"]').count() == 0                       # 미국 종목을 다 팔았어요
-                assert any("the gain is exactly the 2,500,000 won deduction and the 'equal' line (tax.equal) is not approved yet: no state line" in m
-                           for m in logs), logs
             elif case == "stale":
                 at(page, "portfolio/returns/dtaxa")
                 page.locator('[data-ui-v2="ret-stale"]').wait_for(state="visible")
@@ -12972,10 +12998,10 @@ def scene_v196f_states(R, files, width=390):
                 page.screenshot(path=os.path.join(R.shots, f"v196f-state-{case}-{width}.png"), full_page=True)
         R.check(page, S, {"none": "기록 없음: 링크 없음 · #portfolio/tax → #portfolio",
                           "cold": "한국 종목만, 바로 #portfolio/tax: 주소가 #portfolio 로 · 배당을 기록해도 포트폴리오 그대로 (시트 · 저장 줄)",
-                          "div-nofx": "올해 한국 배당 + 환율 없는 미국 배당: 링크 없음 (배당 카드가 빠질 화면) · 주소는 #portfolio 로",
+                          "div-nofx": "올해 한국 배당 + 환율 없는 미국 배당: 링크 · 배당 약 10만원과 M1 (1건)",
                           "kr-div": "한국 종목 · 올해 배당: 배당 카드(약 10만원)와 고지만",
                           "kr-none": "한국 종목 · 올해 배당 없음: 링크 없음 · 주소는 #portfolio 로",
-                          "equal": "정확히 250만원: 승인 전이라 상태 줄 없음 (금액 · 꽉 찬 막대 · console)",
+                          "equal": "정확히 250만원: '양도차익이 공제 250만원과 같아요.' (M4) · 꽉 찬 막대",
                           "stale": "멈춘 데이터: 양도차익 · 배당 그대로, 손실 카드는 멈춤 줄만",
                           "fail": "불러오기 실패: 실패 문구만 (뱁이 없음), 숫자 없음"}[case], run)
         ctx.close()

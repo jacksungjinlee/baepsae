@@ -13,8 +13,7 @@
 //   taxState(G)           below · equal · above (with the estimate) · loss, and the bar.
 //   yearDivs(decks)       this year's dividend records turned back into pre-tax amounts, and the USD ones without a rate.
 //   heldLosses(decks, q)  held US stocks with a negative unrealized won gain, per stock across portfolios, all or nothing.
-// Nothing here is shown silently: every record left out is counted, and the screen says so (or, for a line that is not
-// approved yet, leaves the whole card out and says why in the console).
+// Nothing here is shown silently: every record left out is counted, and the screen names it with an approved line.
 //
 // ---------------- the facts (re-checked 2026-11-15; re-check them in the PR that moves TAX_YEAR) ----------------
 // 국세청 guide (2025; nts.go.kr cntntsId=8800), p.11: the 250만원 basic deduction a year, 20% tax + local income tax of 10%
@@ -24,15 +23,23 @@
 // included) and the Korean dividend withholding, 14% with 1.4% local (15.4%). The Korea-US tax treaty's 15% US
 // withholding on dividends (no official page found). Cost basis: the legal default is first-in first-out (소득세법 시행령
 // §162⑤); the moving average this app uses is allowed when the broker applies it (국세청 질의회신 국제세원-229). US T+1
-// settlement; the settlement date decides the tax year (비즈워치 2025-12-05). 조세특례제한법 §91의26 (국내시장 복귀계좌,
-// RIA; passed 2026-03-31; hankyung.com 2026033191357, taxtimes 274352): a deduction for 2026 sales, with conditions.
-// 금융투자소득세: abolished.
-// Known limits (said in the v19.6f PR, not on screen): the shared 250만원 above; the 2026 환헤지 deduction (§91의27,
-// proposal M5); the settlement-day rate and date (the app uses the typed trade date and its own rate: C1); 비과세 감액배당,
-// ISA / pension accounts, a 30% US withholding and other countries' withholding on US-listed foreign companies (C4); and a
-// trade recorded in two portfolios (counted twice; the approved "모든 포트폴리오" line).
+// settlement; the settlement date decides the tax year (비즈워치 2025-12-05). 금융투자소득세: abolished.
+// The two 2026 deductions, from the law itself (국가법령정보센터, 조세특례제한법 [시행 2026. 9. 18.] [법률 제21467호],
+// https://www.law.go.kr/법령/조세특례제한법/제91조의27 ; the full text: https://www.law.go.kr/LSW/lsInfoR.do?lsiSeq=284389&efYd=20260918,
+// read 2026-11-18; both articles "[본조신설 2026. 4. 21.]"):
+//   §91의26 국내시장복귀계좌 (RIA): overseas-listed shares held on or before 2025-12-23 and sold through the account by
+//     2026-12-31, the money kept in it a year: 100% / 80% / 50% of the gain off (sold Jan-May / Jun-Jul / Aug-Dec 2026),
+//     times a ratio for overseas shares bought or sold in 2026. RIA_YEARS, the tax.ria line.
+//   §91의27 환율변동위험회피상품 (FX-hedge derivatives): a resident who invests in them by 2026-12-31 takes 5% of that
+//     investment (computed with the overseas-listed shares held on 2025-12-23), at most 500만원, off the gain on overseas
+//     shares sold from 2026-01-01 to 2026-12-31; the hedge's own gain is not a capital gain. The tax.hedge line, under the
+//     same condition as RIA (tax year 2026).
+// Known limits (said in the v19.6f PR, not on screen): the shared 250만원 above; the settlement-day rate and date (the app
+// uses the typed trade date and its own rate: C1); 비과세 감액배당, ISA / pension accounts, a 30% US withholding and other
+// countries' withholding on US-listed foreign companies (C4); and a trade recorded in two portfolios (counted twice; the
+// approved "모든 포트폴리오" line). Neither deduction is computed: the lines only say they exist.
 import { recordSets, ledger, openValue } from "./lots.js";
-import { C, todayKst } from "./format.js";
+import { todayKst } from "./format.js";
 
 export const TAX_YEAR = 2026;                 // the tax law the screen's lines describe ("2026년 세법 기준")
 export const CHECKED = "2026-11-15";          // the day the facts above were last re-checked
@@ -70,12 +77,11 @@ export const taxToday = (now) => todayKst(now);
 
 // ---------------- what the user has ----------------
 // Over every portfolio and its history (A.3). A US holding: a stock held today (shares > 0) in a portfolio (never a history
-// entry: those shares left with their cost) whose records are in dollars. A dividend counts only when the screen can show
-// it: while the line naming a US dividend without a rate (tax.divNoFx) is not approved, such a dividend keeps the whole
-// dividend card out (tax.jsx), so then no dividend of the year opens the link on its own (review B, round 1: never a link
-// to an empty screen). -> { usSale, usHeld, div, divAny (any dividend dated this year), divNoFx (US ones without a rate), any }
+// entry: those shares left with their cost) whose records are in dollars. Any dividend dated this year counts (a US one
+// without a rate too: the dividend card names it with the approved tax.divNoFx line). -> { usSale, usHeld, div, divNoFx
+// (US dividends of the year without a rate), any }
 export function taxRecords(decks, year = TAX_YEAR) {
-  const out = { usSale: false, usHeld: false, div: false, divAny: false, divNoFx: 0 };
+  const out = { usSale: false, usHeld: false, div: false, divNoFx: 0 };
   for (const d of Array.isArray(decks) ? decks : []) {
     if (!d || typeof d !== "object") continue;
     const sets = [d, ...(Array.isArray(d.history) ? d.history : [])];
@@ -84,7 +90,7 @@ export function taxRecords(decks, year = TAX_YEAR) {
       for (const x of Array.isArray(s.sales) ? s.sales : []) if (x && x.ccy === "USD" && inYear(x.date, year)) out.usSale = true;
       for (const x of Array.isArray(s.divs) ? s.divs : []) {
         if (!(x && pos(x.amount) && inYear(x.date, year))) continue;
-        out.divAny = true;
+        out.div = true;
         if (x.ccy === "USD" && !pos(x.fx)) out.divNoFx += 1;
       }
     }
@@ -96,7 +102,6 @@ export function taxRecords(decks, year = TAX_YEAR) {
       }
     }
   }
-  out.div = out.divAny && (out.divNoFx === 0 || !!(C.tax && C.tax.divNoFx));
   out.any = out.usSale || out.usHeld || out.div;
   return out;
 }

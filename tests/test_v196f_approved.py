@@ -4,8 +4,9 @@
 - every tax.* key with text holds exactly the Appendix 1 line it comes from (read from the spec's own table, split at " · "
   as the table writes several lines in one cell), and is recorded in docs/tasks/v18.3-approved-in-chat.md as
   "Jack, 2026-11-06 (v19.6 Appendix 1, 연말에 확인할 숫자 …)"; the "left out" line is the existing ret.soldLeftOut (same text)
-- the planner's proposals (M1–M5) and the rec.note reuse are null, listed in docs/tasks/v18.3-new-strings-pending.md, and the
-  screen reads each of them only behind a check (null: the line is not drawn, or the card stays out, said in the console)
+- the planner's proposals M1–M5 and the rec.note reuse hold exactly what Jack approved on 2026-11-19, are recorded as
+  "Jack, 2026-11-19" and are gone from docs/tasks/v18.3-new-strings-pending.md; the screen draws each of them where it
+  belongs (M5, the 환헤지 line, under the RIA line's condition, with its official source cited in src/v2/tax.js)
 - the numbers in the words match the constants: "2026년 세법 기준" is tax.js TAX_YEAR, "250만원" its DEDUCTION, "22%" its RATE
 - no line says to sell (or buy) anything, and none promises an amount: the estimates say 약
 - the new files use the shared colour tokens only (dark mode), and the screen has no 뱁이
@@ -24,7 +25,15 @@ import copytrace as CT
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NODE = shutil.which("node")
 SPEC = "docs/tasks/v19.6-records-alerts-dark.md"
-PENDING = ("divNoFx", "lossNoFx", "lossNone", "equal", "hedge", "gainNote")
+# Jack, 2026-11-19: yes to M1–M4, the rec.note reuse, and M5 with its official source
+APPROVED_1119 = {
+    "divNoFx": "환율 기록이 없는 미국 배당 {n}건은 빼고 더했어요.",
+    "lossNoFx": "환율 기록이 없는 미국 종목 {n}개({names})는 빼고 계산했어요.",
+    "lossNone": "지금 손실 중인 미국 종목은 없어요.",
+    "equal": "양도차익이 공제 250만원과 같아요.",
+    "hedge": "환헤지 상품에 투자했다면 조건에 맞을 때 공제를 더 받을 수 있어요.",
+    "gainNote": "평균 단가로 계산했어요. 수수료와 세금은 빼지 않았어요.",
+}
 
 
 def read(p):
@@ -75,15 +84,17 @@ def test_appendix_1_has_the_rows_this_screen_needs():
 
 
 @pytest.mark.skipif(NODE is None, reason="node 가 없어요")
-def test_every_tax_line_is_appendix_1_word_for_word_and_the_rest_wait_as_null():
+def test_every_tax_line_is_appendix_1_or_jacks_2026_11_19_yes_word_for_word():
     want, left_out = expected()
     c = copy()
     tax = c["tax"]
     for k, v in want.items():
         assert tax[k] == v, k
-    assert sorted(k for k, v in tax.items() if v is not None) == sorted(want)
-    assert sorted(k for k, v in tax.items() if v is None) == sorted(PENDING)
+    for k, v in APPROVED_1119.items():
+        assert tax[k] == v, k
+    assert sorted(tax) == sorted([*want, *APPROVED_1119]) and not [k for k, v in tax.items() if v is None]
     assert c["ret"]["soldLeftOut"] == left_out                       # 'left out': the same line 내 수익 already shows
+    assert tax["gainNote"] == c["rec"]["note"]                       # the rec.note reuse is the same words
 
 
 def test_each_line_is_recorded_as_approved_with_appendix_1_and_the_proposals_are_parked():
@@ -98,10 +109,16 @@ def test_each_line_is_recorded_as_approved_with_appendix_1_and_the_proposals_are
         assert len(row) == 1 and row[0].split("|")[3].strip().startswith("Jack, 2026-11-06 (v19.6 Appendix 1, 연말에 확인할 숫자"), key
         assert f"`{key}` |" not in pending, key
     assert chat.get("ret.soldLeftOut") == left_out
+    for k, v in APPROVED_1119.items():
+        key = "tax." + k
+        assert chat.get(key) == v, key
+        row = [l for l in doc.splitlines() if l.startswith(f"| `{key}` |")]
+        assert len(row) == 1 and row[0].split("|")[3].strip().startswith("Jack, 2026-11-19"), key
+        assert f"`{key}` |" not in pending, key
+    rd = [l for l in doc.splitlines() if l.startswith("| `ret.date` |")]
+    assert len(rd) == 1 and "Jack, 2026-11-19: also under the title of 연말에 확인할 숫자's losses card" in rd[0]
     section = pending.split("## v19.6f", 1)[1].split("\n## ", 1)[0]
-    for k in PENDING:
-        assert f"| `tax.{k}` |" in section, k
-        assert f"`tax.{k}` |" not in doc, k                          # not approved yet
+    assert "Nothing waits here any more." in section and "| `tax." not in section
 
 
 def test_the_screen_reads_every_line_and_each_waiting_one_only_behind_a_check():
@@ -113,26 +130,26 @@ def test_the_screen_reads_every_line_and_each_waiting_one_only_behind_a_check():
     for k in ("C.ret.soldLeftOut", "C.rec.usdOnly", "C.pfr.usdToday", "C.ret.noAvg", "C.missing.line", "C.ret.noPrice", "C.app.tabs.portfolio",
               "C.ret.date"):
         assert k in jsx, k
-    # a waiting line is read only on a line that checks it first: `C.tax.x && …`, `&& C.tax.x)`, `!C.tax.x` or `C.tax.x || null`
-    for k in PENDING:
-        lines = [l for l in jsx.splitlines() if re.search(r"C\.tax\." + k + r"\b", l)]
-        assert lines, k
-        for l in lines:
-            assert f"C.tax.{k} &&" in l or f"&& C.tax.{k})" in l or f"!C.tax.{k}" in l or f"C.tax.{k} || null" in l, (k, l.strip())
-    # the link rule (tax.js) counts a US dividend without a rate only once the line naming it exists (review B, round 1)
-    assert "out.div = out.divAny && (out.divNoFx === 0 || !!(C.tax && C.tax.divNoFx));" in read("src/v2/tax.js")
-    # exactly 250만원 before tax.equal is approved: no state line at all (never "…보다 0원 적어요.")
-    assert 'else if (st.kind === "equal") line = C.tax.equal || null;' in jsx and "{line && <p data-ui-v2=\"tax-line\"" in jsx
+    # Jack's 2026-11-19 lines: each is read by the screen, without a "until approved" branch
+    for k in APPROVED_1119:
+        assert re.search(r"\bC\.tax\." + k + r"\b", jsx), k
+        assert f"!C.tax.{k}" not in jsx and f"C.tax.{k} ||" not in jsx and f"C.tax.{k} &&" not in jsx, k
+    assert ': st.kind === "equal" ? C.tax.equal' in jsx                          # M4 at exactly 250만원
+    assert '{win.ria && <p data-ui-v2="tax-hedge"' in jsx                        # M5 under the RIA line's condition
+    gain = jsx.split("function GainCard", 1)[1].split("function LossCard", 1)[0]
+    assert gain.index('data-ui-v2="tax-all"') < gain.index('data-ui-v2="tax-hedge"') < gain.index('data-ui-v2="tax-gain-note"')
+    # the link counts every dividend of the year (a US one without a rate too: the dividend card names it with M1)
+    tax = read("src/v2/tax.js")
+    assert "out.div = true;" in tax and "divAny" not in tax
 
 
-def test_every_fallback_for_a_waiting_line_says_so_in_the_console_with_counts():
+def test_what_is_left_out_is_also_said_in_the_console_with_counts():
     jsx = read("src/v2/tax.jsx")
     assert 'console.info("[v2] tax: " + m)' in jsx
-    for needle in ("dividend card left out: ${dv.noFx}", "!C.tax.divNoFx", "losses card left out: ${ls.noFx.length}", "!C.tax.lossNoFx",
-                   "losses card left out: no US stock held at a loss today (${ls.held} held", "!C.tax.lossNone", "!C.tax.equal",
-                   "is not approved yet: no state line",
-                   "US sale(s) dated ${TAX_YEAR} left out of the gain"):
+    for needle in ("US sale(s) dated ${TAX_YEAR} left out of the gain", "US dividend(s) dated ${TAX_YEAR} have no exchange rate",
+                   "losses card left out: no exchange rate in today's data", "left out and named on the card: ${named.join"):
         assert needle in jsx, needle
+    assert "not approved yet" not in jsx
     app = read("src/v2/app.jsx")
     assert "[v2] tax: #portfolio/tax is closed today" in app and "if (taxShown) return <Tax" in app
     # a closed address becomes #portfolio in place (review B, round 1), so a record made there never opens the screen by itself
@@ -166,11 +183,13 @@ def test_tax_js_constants_are_written_as_the_words_say():
     assert "checked 2026-11-15" in src.lower() or 'CHECKED = "2026-11-15"' in src
     footer = expected()[0]["footer"]
     assert footer.endswith("2026년 세법 기준.")
+    # M5 (Jack, 2026-11-19: only with the official source): the law text on 국가법령정보센터 is cited where the line's year lives
+    assert "https://www.law.go.kr/법령/조세특례제한법/제91조의27" in src and "§91의27 환율변동위험회피상품" in src and "[본조신설 2026. 4. 21.]" in src
 
 
 def test_no_line_tells_anyone_to_sell_or_buy_and_estimates_say_about():
     want, left_out = expected()
-    lines = list(want.values()) + [left_out]
+    lines = list(want.values()) + [left_out] + list(APPROVED_1119.values())
     for v in lines:
         for bad in ("파세요", "팔아", "팔면", "매도하", "사세요", "사면", "추천", "절세", "줄이세요", "하세요"):
             assert bad not in v, (bad, v)
