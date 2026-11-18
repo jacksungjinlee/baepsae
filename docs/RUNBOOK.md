@@ -594,17 +594,22 @@ What the daily run writes (`fetch_data.py` `fetch_issues`, `fill_issue_bd`, `ins
   A filing the lookup does not return although it should is asked again the next KST day. Share counts and amounts are read
   only as whole numbers.
 - **Rights-issue board date (`bd`, Q18, Jack 2026-11-19)** — DART's 유상증자 lookup has no board-date field, so after
-  `fetch_issues` the run reads it from each rights filing's own document (`fill_issue_bd`, `document.xml`): the table row
-  "N. 이사회결의일(결정일)" in the filed form (a correction's before/after table is skipped), whose value DART writes as
-  `<TU AUNIT="DRC_DT" AUNITVALUE="YYYYMMDD">`. Only a whole, real date that is on or before the filing date and not more than a
-  year earlier is kept (`ISSUE_BD_MAX_YEARS`); anything else leaves `bd` null and is named in the log ("!! 결의일을 못 읽은
-  유상증자 공시 …"). Withdrawn (`wd`) and pending (`pend`) rows are not read. Each filing is read once ever: the DART cache keeps
-  `{filing number}|issuebd|v1` (date found, or unreadable with the reason), also in a full-DART run, and drops it when the filing
-  leaves the 90 days. A failed or slow fetch, a parser error, the per-run limit (100 documents, `ISSUE_BD_PER_RUN`, newest
-  first) or the time limit (180 s, `ISSUE_BD_SECONDS`) leaves `bd` null for that run only and is not cached, so the next run
-  reads it. None of this stops the run or changes `issueOk`. On a day the list failed (`issueOk` false) nothing is read and
-  last run's rows keep their dates. The log line: "유상증자 이사회 결의일(공시 원문 document.xml): 문서에서 읽음 a / 대상 b,
-  못 읽음 c, 다음 실행으로 d".
+  `fetch_issues` the run reads it from each rights filing's own document (`fill_issue_bd`, `document.xml`): only the zip's main
+  file `{filing number}.xml` (never an attachment), the table row "N. 이사회결의일(결정일)" in the filed form (a correction's
+  before/after table is skipped), whose value DART writes as `<TU AUNIT="DRC_DT" AUNITVALUE="YYYYMMDD">`; the cell must be one
+  whole, real date and the coded value must say the same day. Withdrawn (`wd`) and pending (`pend`) rows are not read.
+  - Cache: `{filing number}|issuebd|v2`, also in a full-DART run, dropped when the filing leaves the 90 days. It keeps the date
+    the document gives, or "unreadable" with the reason (no date in the form, or no main file in the zip). A filing is read
+    once ever; an unreadable-but-delivered document is not read again.
+  - Window: the date is used only when it is on or before the filing date and not more than `ISSUE_BD_MAX_YEARS` (1, a
+    question for Jack) earlier. This is checked each time the cached date is used, so changing the limit needs no re-read. A
+    date outside it leaves `bd` null and is logged separately ("!! 결의일이 공시일과 맞지 않아 비운 유상증자 공시 …"), apart
+    from unreadable documents ("!! 결의일을 못 읽은 유상증자 공시 …").
+  - Retried next run (not cached): a failed or slow fetch, an empty zip, a main file that is empty or won't decode, a parser
+    crash, the per-run limit (100 documents, `ISSUE_BD_PER_RUN`, newest first) and the time limit (180 s,
+    `ISSUE_BD_SECONDS`). None of this stops the run or changes `issueOk`. On a day the list failed (`issueOk` false) nothing
+    is read and last run's rows keep their dates.
+  - Log: "유상증자 이사회 결의일(공시 원문 document.xml): 문서에서 읽음 a / 대상 b, 못 읽음 c, 기간 밖이라 비움 l, 다음 실행으로 d".
 - **Withdrawals (`wd: true`, kept: Jack's yes 2026-11-19)**: DART files a withdrawal as a `[기재정정]` whose number fields are all "-" (the list never marks
   it "철" and the name has no "철회": 더코디 2026-11-05 "납입금미납으로 유상증자철회", 크라우드웍스 2026-08-21, 쏘닉스 CB 2026-11-10).
   Such a row stays, marked `wd: true` with every number blank, so the cards can skip it; the original filing is an older version

@@ -4522,26 +4522,29 @@ def _issue_failed(prev, bgn, why, client):
 # ────────────────────────────────────────────────────────────
 # 왜     유상증자 상세 API(piicDecsn)에는 이사회결의일 칸이 없어요 (사채는 bddd 가 있어요). 그래서 fetch_issues 뒤에 main 이 유상증자 줄마다
 #        (철회 wd · 읽는 중 pend 는 빼고 — 그 줄의 bd 는 늘 빈 칸) 그 공시의 원문을 한 번 읽어요 (fill_issue_bd).
-# 읽기   원문 zip 의 본 파일 (dvwhy_doc_text). 정정 공시의 앞 부분(<CORRECTION> · 정정 전 · 후 표)은 빼고, 첫 칸이 'N. 이사회결의일(결정일)' 인
+# 읽기   원문 zip 의 본 파일 '{접수번호}.xml' 만 (없으면 첨부를 읽지 않고 못 읽은 것 — 리뷰 2026-11-19). 정정 공시의 앞 부분(<CORRECTION> · 정정 전 · 후 표)은 빼고, 첫 칸이 'N. 이사회결의일(결정일)' 인
 #        표 줄의 값 칸 하나를 읽어요. DART 양식은 그 값을 <TU AUNIT="DRC_DT" AUNITVALUE="20261111">2026년 11월 11일</TU> 로 적어요 — 값과
 #        글자가 같은 날이어야 해요. 칸 전체가 날짜 하나일 때만 날짜예요 ('2026년 11월 11일' · '2026-11-11' · '2026.11.11' · '20261111').
 #        값이 '-' 이거나, 날짜가 아니거나, 값 칸이 여럿이거나, 그런 줄이 여럿인데 같은 날이 아니면 읽지 못한 것이에요 (null · 짐작하지 않아요).
 #        조사 2026-11-19: 육일씨엔에쓰 20260826000431 · 뷰노 20261111000261 (정정 — 정정 표의 10-15 → 11-11 은 빼고 양식의 11-11) · STX
 #        20261013000428 (회생계획 인가일 09-16 — 본문 문단의 '15. 이사회결의일(결정일)' 은 표 칸이 아니라 읽지 않아요).
-# 확인   결의일은 공시일 d 이하이고, d 보다 ISSUE_BD_MAX_YEARS 년 넘게 앞이 아니어야 해요 — 아니면 null 로 두고 이름 · 이유와 함께 세요.
-# 캐시   DART 캐시 '{접수번호}|issuebd|v1': 000 (d = 결의일) · nf (원문은 받았는데 못 읽음 · why). 공시는 바뀌지 않아서 한 번만 읽어요 (정정은
-#        새 접수번호). 조회 실패 · 해석 오류 · 실행당 한도 · 시간 한도 · DART 멈춤은 적지 않아요 (다음 실행이 다시). 공시가 90일 기간을 벗어나면
-#        지워요 (다른 판의 키도). full 실행에서도 캐시를 써요 (fetch_issues 처럼).
+# 확인   결의일은 공시일 d 이하이고, d 보다 ISSUE_BD_MAX_YEARS 년 넘게 앞이 아니어야 해요 — 아니면 그 줄의 bd 는 null 로 두고 '기간 밖이라 비움'
+#        으로 따로 세요 (이름 · 이유). 이 확인은 캐시의 값을 쓸 때마다 해요: 캐시에는 원문이 적은 날을 그대로 둬요 (리뷰 2026-11-19 — 한도를
+#        바꿔도 판을 올릴 필요가 없고, 오래 미룬 제3자배정 정정이 '못 읽음'으로 굳지 않게). ISSUE_BD_MAX_YEARS 는 Jack 에게 물어요.
+# 캐시   DART 캐시 '{접수번호}|issuebd|v2': 000 (d = 원문이 적은 결의일) · nf (원문을 받았는데 결의일 칸을 읽지 못함 · zip 에 본 파일이 없음 —
+#        why). 공시는 바뀌지 않아서 한 번만 읽어요 (정정은 새 접수번호). 다시 읽는 것은 조회 실패(응답 없음 · 빈 zip · 글자로 바꾸지 못한 본 파일)
+#        · 해석 오류(파서가 멈춤) · 실행당 한도 · 시간 한도 · DART 멈춤뿐 — 적지 않고 다음 실행이 다시 읽어요. 공시가 90일 기간을 벗어나면
+#        지워요 (다른 판의 키도 · v1 은 기간 밖 날을 nf 로 적었어요). full 실행에서도 캐시를 써요 (fetch_issues 처럼).
 # 한도   실행당 원문 ISSUE_BD_PER_RUN 건 (최근 공시부터) · ISSUE_BD_SECONDS 초 (넘으면 남은 것은 다음 실행). 2026-11-16 의 90일치 유상증자
 #        줄 약 160건 (169 − 철회): 머지 뒤 첫 실행이 최대 100건, 둘째 실행이 나머지 (첫 실행에 상세를 못 읽은 쌍의 줄 포함) — 그 뒤 하루 3~5건.
 # 실패   원문 조회가 실패하거나 느려도 그 줄의 bd 만 null 이에요 — 실행은 계속해요 (issueOk 도 그대로: 줄의 다른 칸은 상세 API 로 다 읽었어요).
 #        목록을 받지 못한 날(issueOk false)은 지난 발행본의 줄(그때의 bd)을 그대로 두고 원문을 읽지 않아요.
-ISSUE_BD_TAG = "issuebd|v1"      # 캐시 키 '{접수번호}|issuebd|v1' — 읽는 방법이 바뀌면 올려요 (다른 판의 키는 지워요)
+ISSUE_BD_TAG = "issuebd|v2"      # 캐시 키 '{접수번호}|issuebd|v2' — 읽는 방법이 바뀌면 올려요 (다른 판의 키는 지워요 · v2: 기간 확인은 쓸 때)
 ISSUE_BD_PER_RUN = 100           # 한 실행에서 새로 읽는 원문 수 상한 (첫 실행의 약 160건은 두 실행에 나눠요)
 ISSUE_BD_SECONDS = 180           # 원문 읽기에 쓰는 시간 상한 (초) — 넘으면 남은 원문은 다음 실행 (DART 가 느린 날 실행을 붙잡지 않게)
 ISSUE_BD_TIMEOUT = 20            # 원문 하나의 응답 대기 (초)
 ISSUE_BD_WORKERS = 4
-ISSUE_BD_MAX_YEARS = 1           # 결의일이 공시일보다 이만큼 넘게 앞이면 읽지 못한 것으로 둬요 (잘못 읽은 날짜일 수 있어요)
+ISSUE_BD_MAX_YEARS = 1           # 결의일이 공시일보다 이만큼 넘게 앞이면 bd 를 비워요 (잘못 읽은 날짜일 수 있어요 · 캐시를 쓸 때 확인 · Jack 에게 물어요)
 _ISSUE_BD_LABEL = re.compile(r"(?:[0-9]+(?:-[0-9]+)?\.)?이사회결의일(?:[(（]결정일[)）])?")
 _ISSUE_TR = re.compile(r"<tr\b[^>]*>([\s\S]*?)</tr\s*>", re.I)
 _ISSUE_CELL = re.compile(r"<(td|th|te|tu)\b([^>]*)>([\s\S]*?)</\1\s*>", re.I)
@@ -4644,6 +4647,22 @@ def read_issue_bd(text, d):
     return (None, why) if why else (bd, None)
 
 
+def issue_doc_main(files, rc):
+    """document.xml zip 의 파일들 → (본 파일 글자, None) 또는 (None, ("fail" | "nf", 이유)). (순수 함수 · 리뷰 2026-11-19)
+    본 파일은 '{접수번호}.xml' (dvwhy_doc_text 와 같은 이름 규칙) — 없으면 가장 큰 파일(첨부일 수 있어요 · 다른 날을 읽을 수 있어요)을 읽지 않고
+    nf (원문은 바뀌지 않아서 다시 받아도 같아요). 빈 zip · 비었거나 글자로 바꾸지 못한(utf-8 · cp949 · euc-kr) 본 파일은 받기 실패 fail
+    (적지 않고 다음 실행이 다시 받아요)."""
+    if not files:
+        return None, ("fail", "받은 zip 이 비었어요")
+    main = [n for n in files if n.rsplit("/", 1)[-1].split(".")[0] == rc]
+    if not main:
+        return None, ("nf", f"zip 에 본 파일({rc}.xml)이 없어요 (다른 파일 {len(files)}개는 읽지 않아요)")
+    text = dvwhy_doc_text({main[0]: files[main[0]]}, rc)
+    if text is None or not text.strip():
+        return None, ("fail", "본 파일이 비었거나 글자로 바꾸지 못했어요 (utf-8 · cp949 · euc-kr)")
+    return text, None
+
+
 def issue_bd_targets(rows):
     """원문에서 결의일을 읽을 issue 줄: 유상증자 · 철회(wd)도 읽는 중(pend)도 아닌 줄. (순수 함수 — 관문 validate_data 와 같은 기준)"""
     return [r for r in rows or [] if isinstance(r, dict) and r.get("kind") == "rights" and r.get("wd") is not True
@@ -4661,13 +4680,22 @@ def fill_issue_bd(disc, client, end):
     today_iso = client.today.isoformat()
     key = lambda rc: f"{rc}|{ISSUE_BD_TAG}"                                    # noqa: E731
     targets = issue_bd_targets(rows)
-    due, nf, cached = [], [], 0
+    due, nf, lim, cached = [], [], [], 0
+
+    def use(r, bd8):
+        """원문이 적은 결의일을 그 줄에 써요 — 공시일과 맞을 때만 (아니면 bd 는 비우고 '기간 밖이라 비움')."""
+        why = issue_bd_range_why(bd8, r["d"])
+        if why is None:
+            r["bd"] = bd8
+        else:
+            lim.append((r, why))
+
     with client.lock:
         for r in targets:
             e = client.entries.get(key(r["rc"])) or {}
             r["bd"] = None
-            if e.get("st") == "000" and issue_bd_range_why(e.get("d"), r["d"]) is None:
-                r["bd"] = e["d"]
+            if e.get("st") == "000" and _ymd_date(e.get("d")) is not None:
+                use(r, e["d"])
                 cached += 1
             elif e.get("st") == "nf":
                 nf.append((r, str(e.get("why") or "?")))
@@ -4688,14 +4716,17 @@ def fill_issue_bd(disc, client, end):
         except Exception as e:             # get_zip 은 예외를 내지 않지만, 하나가 실행을 멈추지 않게 (센 수로 남겨요)
             return r, "fail", type(e).__name__
         if files is None:
-            return r, ("stop" if (client.fatal or client.down) else "fail"), None
+            return r, ("stop" if (client.fatal or client.down) else "fail"), "응답 없음 · 오류 상태"
         try:
-            bd, why = read_issue_bd(dvwhy_doc_text(files, r["rc"]), r["d"])
+            text, bad = issue_doc_main(files, r["rc"])
+            if bad:
+                return (r,) + bad
+            bd, why = parse_issue_bd(text)
         except Exception as e:             # 이상한 원문 하나가 실행을 멈추지 않게 — 적지 않고 다음 실행이 다시 읽어요 (센 수로 남겨요)
             return r, "err", type(e).__name__
         return r, ("000" if bd else "nf"), (bd or why)
 
-    n, errs = collections.Counter(), []
+    n, errs, fails = collections.Counter(), [], []
     if todo:
         with ThreadPoolExecutor(max_workers=ISSUE_BD_WORKERS) as ex:
             res = list(ex.map(one, todo))
@@ -4704,12 +4735,14 @@ def fill_issue_bd(disc, client, end):
                 n[st] += 1
                 if st == "000":
                     client.entries[key(r["rc"])] = {"st": "000", "at": today_iso, "d": v}
-                    r["bd"] = v
+                    use(r, v)
                 elif st == "nf":
                     client.entries[key(r["rc"])] = {"st": "nf", "at": today_iso, "d": None, "why": v}
                     nf.append((r, v))
                 elif st == "err":
                     errs.append(f"{r['nk']} {r['d']} ({v})")
+                elif st == "fail":
+                    fails.append(f"{r['nk']} {r['d']} {r['rc']} ({v})")
     keep = {key(r["rc"]) for r in targets}
     with client.lock:                       # 오늘 줄이 아닌 키 중 기간을 벗어난 공시(접수번호 앞 8자리 < 기간 시작)의 것 · 다른 판의 키는 지워요
         old = [k for k in client.entries if "|issuebd|" in k and k not in keep and (not k.endswith("|" + ISSUE_BD_TAG) or k[:8] < bgn)]
@@ -4718,15 +4751,15 @@ def fill_issue_bd(disc, client, end):
 
     a = sum(1 for r in targets if r.get("bd"))
     later_n = len(later) + n["time"] + n["stop"] + n["fail"] + n["err"]
-    out = {"target": len(targets), "read": a, "unread": len(nf), "later": later_n, "fetched": n["000"] + n["nf"],
+    out = {"target": len(targets), "read": a, "unread": len(nf), "limited": len(lim), "later": later_n, "fetched": n["000"] + n["nf"],
            "cached": cached, "cap": len(later), "time": n["time"], "stop": n["stop"], "fail": n["fail"], "err": n["err"],
            "calls": sum(client.status.values()) - calls0, "dropped": len(old)}
-    log(f"{'  !! ' if (nf or later_n) else '· '}유상증자 이사회 결의일(공시 원문 document.xml): 문서에서 읽음 {a:,} / 대상 {len(targets):,}, "
-        f"못 읽음 {len(nf):,}, 다음 실행으로 {later_n:,} — 오늘 원문 조회 {out['calls']:,}회 (새로 읽음 {n['000']:,} · 못 읽음 {n['nf']:,}) · "
-        f"캐시로 끝 {cached:,} · 실행당 {ISSUE_BD_PER_RUN}건 · {ISSUE_BD_SECONDS}초까지"
+    log(f"{'  !! ' if (nf or lim or later_n) else '· '}유상증자 이사회 결의일(공시 원문 document.xml): 문서에서 읽음 {a:,} / 대상 {len(targets):,}, "
+        f"못 읽음 {len(nf):,}, 기간 밖이라 비움 {len(lim):,}, 다음 실행으로 {later_n:,} — 오늘 원문 조회 {out['calls']:,}회 (새로 읽음 "
+        f"{n['000']:,} · 못 읽음 {n['nf']:,}) · 캐시로 끝 {cached:,} · 실행당 {ISSUE_BD_PER_RUN}건 · {ISSUE_BD_SECONDS}초까지"
         + (f" · 실행당 한도에 닿아 {len(later):,}" if later else "")
         + (f" · 시간 한도에 닿아 {n['time']:,}" if n["time"] else "")
-        + (f" · 조회 실패 {n['fail']:,}" if n["fail"] else "")
+        + (f" · 조회 실패 {n['fail']:,} ({', '.join(fails[:5])})" if n["fail"] else "")
         + (f" · 해석 오류 {n['err']:,} ({', '.join(errs[:5])})" if n["err"] else "")
         + (f" · DART 가 멈춰 {n['stop']:,} ({'상태 ' + client.fatal[0] if client.fatal else '연결 안 됨'})" if n["stop"] else "")
         + (f" · 지운 캐시 {len(old):,}" if old else "")
@@ -4734,6 +4767,10 @@ def fill_issue_bd(disc, client, end):
     if nf:
         log(f"  !! 결의일을 못 읽은 유상증자 공시 {len(nf):,}건 (bd 빈 칸 · 같은 공시는 다시 읽지 않아요): "
             + ", ".join(f"{r['nk']} {r['d']} {r['rc']} ({why})" for r, why in nf[:20]) + (" …" if len(nf) > 20 else ""))
+    if lim:
+        log(f"  !! 결의일이 공시일과 맞지 않아 비운 유상증자 공시 {len(lim):,}건 (bd 빈 칸 · 공시일 뒤이거나 {ISSUE_BD_MAX_YEARS}년 넘게 앞 · "
+            "원문의 날은 캐시에 있어요 — 한도를 바꾸면 다시 받지 않고 다음 실행이 써요): "
+            + ", ".join(f"{r['nk']} {r['d']} {r['rc']} ({why})" for r, why in lim[:20]) + (" …" if len(lim) > 20 else ""))
     return out
 
 

@@ -144,7 +144,8 @@ class Client:
             self.status["예외"] += 1
             return None
         self.status["000"] += 1
-        return {f"{rc}.xml": self.docs[rc]}
+        got = self.docs[rc]
+        return dict(got) if isinstance(got, dict) else {f"{rc}.xml": got}      # dict 면 zip 안의 파일들 그대로
 
 
 def irow(rc, d, kind="rights", **kw):
@@ -177,10 +178,10 @@ def test_fill_reads_each_rights_row_once_and_caches_it(capsys):
     assert by["20261112000444"]["bd"] is None and by["20261111000555"]["bd"] is None     # 철회 · 읽는 중은 읽지 않아요 (bd 늘 빈 칸)
     assert by["20261105000666"]["bd"] == "20261029"                                       # 사채는 상세 API 의 결의일 그대로
     assert sorted(c.calls) == sorted(docs)
-    assert c.entries == {f"{rc}|issuebd|v1": {"st": "000", "at": "2026-11-15", "d": by[rc]["bd"]} for rc in docs}
+    assert c.entries == {f"{rc}|issuebd|v2": {"st": "000", "at": "2026-11-15", "d": by[rc]["bd"]} for rc in docs}
     assert (out["target"], out["read"], out["unread"], out["later"], out["fetched"], out["calls"]) == (3, 3, 0, 0, 3, 3)
     log = capsys.readouterr().out
-    assert "· 유상증자 이사회 결의일(공시 원문 document.xml): 문서에서 읽음 3 / 대상 3, 못 읽음 0, 다음 실행으로 0" in log
+    assert "· 유상증자 이사회 결의일(공시 원문 document.xml): 문서에서 읽음 3 / 대상 3, 못 읽음 0, 기간 밖이라 비움 0, 다음 실행으로 0" in log
 
 
 def test_a_cached_hit_makes_no_call():
@@ -201,16 +202,18 @@ def test_an_unreadable_document_is_cached_counted_and_never_read_again(capsys):
     c = Client(docs)
     out = F.fill_issue_bd(disc_of(rows), c, TODAY)
     assert [r["bd"] for r in rows] == [None, None, None]
-    assert (out["read"], out["unread"], out["later"]) == (0, 3, 0)
-    assert c.entries["20261113000111|issuebd|v1"] == {"st": "nf", "at": "2026-11-15", "d": None, "why": "결의일 칸이 비었어요 ('-')"}
-    assert c.entries["20261110000222|issuebd|v1"]["why"] == "결의일 20261111 이 공시일 20261110 뒤예요"
+    assert (out["read"], out["unread"], out["limited"], out["later"]) == (0, 2, 1, 0)
+    assert c.entries["20261113000111|issuebd|v2"] == {"st": "nf", "at": "2026-11-15", "d": None, "why": "결의일 칸이 비었어요 ('-')"}
+    # 리뷰 2026-11-19: 공시일 뒤 결의일은 '못 읽음'이 아니에요 — 원문의 날을 그대로 적고, 쓸 때 기간을 확인해 비워요 ('기간 밖이라 비움')
+    assert c.entries["20261110000222|issuebd|v2"] == {"st": "000", "at": "2026-11-15", "d": "20261111"}
     log = capsys.readouterr().out
-    assert "  !! 유상증자 이사회 결의일(공시 원문 document.xml): 문서에서 읽음 0 / 대상 3, 못 읽음 3, 다음 실행으로 0" in log
-    assert "!! 결의일을 못 읽은 유상증자 공시 3건 (bd 빈 칸 · 같은 공시는 다시 읽지 않아요): 회사111 20261113 20261113000111 (결의일 칸이 비었어요 ('-'))" in log
+    assert "  !! 유상증자 이사회 결의일(공시 원문 document.xml): 문서에서 읽음 0 / 대상 3, 못 읽음 2, 기간 밖이라 비움 1, 다음 실행으로 0" in log
+    assert "!! 결의일을 못 읽은 유상증자 공시 2건 (bd 빈 칸 · 같은 공시는 다시 읽지 않아요): 회사111 20261113 20261113000111 (결의일 칸이 비었어요 ('-'))" in log
+    assert "!! 결의일이 공시일과 맞지 않아 비운 유상증자 공시 1건" in log and "회사222 20261110 20261110000222 (결의일 20261111 이 공시일 20261110 뒤예요)" in log
     c2 = Client({}, entries=c.entries)
     rows2 = copy.deepcopy(rows)
     out2 = F.fill_issue_bd(disc_of(rows2), c2, TODAY)
-    assert c2.calls == [] and out2["unread"] == 3 and [r["bd"] for r in rows2] == [None, None, None]
+    assert c2.calls == [] and (out2["unread"], out2["limited"]) == (2, 1) and [r["bd"] for r in rows2] == [None, None, None]
 
 
 def test_the_per_run_budget_reads_the_newest_first_and_leaves_the_rest_for_the_next_run(monkeypatch, capsys):
@@ -221,8 +224,8 @@ def test_the_per_run_budget_reads_the_newest_first_and_leaves_the_rest_for_the_n
     out = F.fill_issue_bd(disc_of(rows), c, TODAY)
     assert sorted(c.calls) == ["20261111000011", "20261113000013"]                         # 최근 공시 둘
     assert (out["read"], out["later"], out["cap"]) == (2, 3, 3)
-    assert set(c.entries) == {"20261111000011|issuebd|v1", "20261113000013|issuebd|v1"}      # 못 한 것은 캐시에 적지 않아요
-    assert "  !! 유상증자 이사회 결의일(공시 원문 document.xml): 문서에서 읽음 2 / 대상 5, 못 읽음 0, 다음 실행으로 3" in capsys.readouterr().out
+    assert set(c.entries) == {"20261111000011|issuebd|v2", "20261113000013|issuebd|v2"}      # 못 한 것은 캐시에 적지 않아요
+    assert "  !! 유상증자 이사회 결의일(공시 원문 document.xml): 문서에서 읽음 2 / 대상 5, 못 읽음 0, 기간 밖이라 비움 0, 다음 실행으로 3" in capsys.readouterr().out
     c2 = Client(docs, entries=c.entries)
     out2 = F.fill_issue_bd(disc_of(rows), c2, TODAY)
     assert sorted(c2.calls) == ["20261103000003", "20261109000009"] and (out2["read"], out2["later"]) == (4, 1)
@@ -245,7 +248,7 @@ def test_a_failed_fetch_keeps_bd_blank_is_not_cached_and_is_retried():
     out = F.fill_issue_bd(disc_of(rows), c, TODAY)
     by = {r["rc"]: r for r in rows}
     assert by["20261113000111"]["bd"] == "20261113" and by["20261110000222"]["bd"] is None and by["20261020000333"]["bd"] is None
-    assert (out["read"], out["later"], out["fail"]) == (1, 2, 2) and set(c.entries) == {"20261113000111|issuebd|v1"}
+    assert (out["read"], out["later"], out["fail"]) == (1, 2, 2) and set(c.entries) == {"20261113000111|issuebd|v2"}
     c2 = Client(docs, entries=c.entries)
     rows2, _ = three()
     assert F.fill_issue_bd(disc_of(rows2), c2, TODAY)["read"] == 3 and sorted(c2.calls) == ["20261020000333", "20261110000222"]
@@ -265,7 +268,7 @@ def test_dart_stopping_mid_phase_never_fails_the_run(monkeypatch, capsys):
 def test_a_parser_error_is_counted_not_cached(monkeypatch):
     def boom(*a, **k):
         raise ValueError("x")
-    monkeypatch.setattr(F, "read_issue_bd", boom)
+    monkeypatch.setattr(F, "parse_issue_bd", boom)                       # 원문을 읽는 함수가 멈춰요
     rows, docs = three()
     c = Client(docs)
     out = F.fill_issue_bd(disc_of(rows), c, TODAY)
@@ -282,28 +285,30 @@ def test_nothing_is_read_on_a_day_the_list_failed(capsys):
     assert "!! 유상증자 이사회 결의일: 오늘 주요사항 공시 목록을 받지 못해 원문을 읽지 않아요" in capsys.readouterr().out
 
 
-def test_a_cached_date_that_no_longer_fits_its_filing_is_read_again():
+def test_a_cached_date_outside_the_window_is_blanked_not_read_again():
+    """리뷰 2026-11-19: 캐시의 날이 공시일과 맞지 않으면 그 줄의 bd 만 비워요 (원문을 다시 받지 않아요 · '기간 밖이라 비움')."""
     rows, docs = three()
-    c = Client(docs, entries={"20261113000111|issuebd|v1": {"st": "000", "at": "2026-11-13", "d": "20261120"}})
-    F.fill_issue_bd(disc_of(rows), c, TODAY)
-    assert "20261113000111" in c.calls and rows[0]["bd"] == "20261113"
+    c = Client(docs, entries={"20261113000111|issuebd|v2": {"st": "000", "at": "2026-11-13", "d": "20261120"}})
+    out = F.fill_issue_bd(disc_of(rows), c, TODAY)
+    assert "20261113000111" not in c.calls and rows[0]["bd"] is None and (out["limited"], out["unread"], out["read"]) == (1, 0, 2)
+    assert c.entries["20261113000111|issuebd|v2"]["d"] == "20261120"                     # 캐시는 원문의 날 그대로
 
 
 def test_old_keys_are_dropped_and_todays_rows_keep_theirs():
     rows, docs = three()
     rows.append(irow("20260818000777", "20260819"))                 # 접수번호 날짜는 기간 앞이지만 공시일(목록의 접수일)은 기간 안: 오늘 줄
     docs["20260818000777"] = doc_on("20260818")
-    ent = {"20260818000777|issuebd|v1": {"st": "000", "at": "2026-08-19", "d": "20260818"},
-           "20260801000888|issuebd|v1": {"st": "000", "at": "2026-08-01", "d": "20260801"},       # 기간 밖
-           "20261001000999|issuebd|v1": {"st": "nf", "at": "2026-10-01", "d": None, "why": "x"},  # 기간 안 (오늘 줄은 아니어도 둬요)
+    ent = {"20260818000777|issuebd|v2": {"st": "000", "at": "2026-08-19", "d": "20260818"},
+           "20260801000888|issuebd|v2": {"st": "000", "at": "2026-08-01", "d": "20260801"},       # 기간 밖
+           "20261001000999|issuebd|v2": {"st": "nf", "at": "2026-10-01", "d": None, "why": "x"},  # 기간 안 (오늘 줄은 아니어도 둬요)
            "20261113000111|issuebd|v0": {"st": "000", "at": "2026-11-13", "d": "20261113"},       # 다른 판
            "20261113000111|issue|v2": {"st": "000", "at": "2026-11-13", "d": {}},                 # fetch_issues 의 키 — 손대지 않아요
            "00126380|2025|11011|fin": {"st": "000", "at": "2026-11-01", "d": {}}}
     c = Client(docs, entries=ent)
     out = F.fill_issue_bd(disc_of(rows), c, TODAY)
     assert out["dropped"] == 2 and "20260818000777" not in c.calls and rows[-1]["bd"] == "20260818"
-    assert set(c.entries) == {"20260818000777|issuebd|v1", "20261001000999|issuebd|v1", "20261113000111|issue|v2", "00126380|2025|11011|fin"} \
-        | {f"{rc}|issuebd|v1" for rc in ("20261113000111", "20261110000222", "20261020000333")}
+    assert set(c.entries) == {"20260818000777|issuebd|v2", "20261001000999|issuebd|v2", "20261113000111|issue|v2", "00126380|2025|11011|fin"} \
+        | {f"{rc}|issuebd|v2" for rc in ("20261113000111", "20261110000222", "20261020000333")}
 
 
 def test_targets_are_the_same_rows_the_gate_counts():
@@ -325,7 +330,8 @@ def test_main_reads_board_dates_after_the_issue_list_and_before_the_cache_is_sav
 
 def test_budget_numbers_are_the_stated_ones():
     """보고한 한도: 실행당 원문 100건 · 180초 · 하나 20초. 바꾸면 PR 과 RUNBOOK 의 첫 실행 어림도 고쳐요."""
-    assert (F.ISSUE_BD_PER_RUN, F.ISSUE_BD_SECONDS, F.ISSUE_BD_TIMEOUT, F.ISSUE_BD_TAG) == (100, 180, 20, "issuebd|v1")
+    assert (F.ISSUE_BD_PER_RUN, F.ISSUE_BD_SECONDS, F.ISSUE_BD_TIMEOUT, F.ISSUE_BD_TAG) == (100, 180, 20, "issuebd|v2")
+    assert F.ISSUE_BD_MAX_YEARS == 1                                  # Jack 에게 묻는 한도 (지금은 1년)
     assert "|issue|" not in "x|" + F.ISSUE_BD_TAG                    # fetch_issues 의 정리(키에 '|issue|')가 지우지 않게
 
 
@@ -456,3 +462,86 @@ def test_the_published_json_has_no_new_fields():
     F.fill_issue_bd(disc_of(rows), Client(docs), TODAY)
     assert [list(r) for r in rows] == keys
     json.dumps(rows, allow_nan=False)
+
+
+# ── 리뷰 2026-11-19 (f5d3a54 의 세 가지) ───────────────────────────────────
+
+def test_a_long_postponed_correction_is_cached_as_read_and_used_when_the_limit_changes(monkeypatch, capsys):
+    """1. 원문의 날은 그대로 캐시하고 기간 확인은 쓸 때 해요: 오래 미룬 제3자배정 정정(결의 2024-03-04 · 정정 2026-11-06)은 오늘 '기간 밖이라
+    비움', 한도를 바꾸면 원문을 다시 받지 않고 그날을 써요 (판을 올릴 필요가 없어요)."""
+    rows = [irow("20261106000123", "20261106")]
+    docs = {"20261106000123": doc_on("20240304")}
+    c = Client(docs)
+    out = F.fill_issue_bd(disc_of(rows), c, TODAY)
+    assert rows[0]["bd"] is None and (out["read"], out["unread"], out["limited"], out["later"]) == (0, 0, 1, 0)
+    assert c.entries["20261106000123|issuebd|v2"] == {"st": "000", "at": "2026-11-15", "d": "20240304"}
+    log = capsys.readouterr().out
+    assert "못 읽음 0, 기간 밖이라 비움 1, 다음 실행으로 0" in log
+    assert "(결의일 20240304 이 공시일 20261106 보다 1년 넘게 앞이에요)" in log and "결의일을 못 읽은" not in log
+    monkeypatch.setattr(F, "ISSUE_BD_MAX_YEARS", 3)
+    rows2 = copy.deepcopy(rows)
+    c2 = Client({}, entries=c.entries)
+    out2 = F.fill_issue_bd(disc_of(rows2), c2, TODAY)
+    assert c2.calls == [] and rows2[0]["bd"] == "20240304" and (out2["read"], out2["limited"]) == (1, 0)
+
+
+def test_v1_cache_keys_are_dropped_and_read_again():
+    """v1 은 기간 밖 날을 nf 로 적었어요 — 판을 올려 한 번 다시 읽어요."""
+    rows = [irow("20261106000123", "20261106")]
+    c = Client({"20261106000123": doc_on("20261105")},
+               entries={"20261106000123|issuebd|v1": {"st": "nf", "at": "2026-11-14", "d": None, "why": "결의일 20240304 이 …"}})
+    out = F.fill_issue_bd(disc_of(rows), c, TODAY)
+    assert c.calls == ["20261106000123"] and rows[0]["bd"] == "20261105" and out["dropped"] == 1
+    assert set(c.entries) == {"20261106000123|issuebd|v2"}
+
+
+@pytest.mark.parametrize("files, why", [
+    ({}, "받은 zip 이 비었어요"),
+    ({"20261113000111.xml": b"\xff\xfe\xfa\xfb" * 10}, "본 파일이 비었거나 글자로 바꾸지 못했어요 (utf-8 · cp949 · euc-kr)"),
+    ({"20261113000111.xml": b""}, "본 파일이 비었거나 글자로 바꾸지 못했어요 (utf-8 · cp949 · euc-kr)"),
+    ({"20261113000111.xml": b"  \r\n "}, "본 파일이 비었거나 글자로 바꾸지 못했어요 (utf-8 · cp949 · euc-kr)"),
+])
+def test_an_empty_zip_or_an_undecodable_document_is_a_fetch_failure(files, why, capsys):
+    """2. 빈 zip · 글자로 바꾸지 못한 본 파일은 받기 실패: 적지 않고 (영원한 '못 읽음'이 아니에요) 다음 실행이 다시 받아요 · !! 로 남겨요."""
+    assert F.issue_doc_main(files, "20261113000111") == (None, ("fail", why))
+    rows, docs = three()
+    docs["20261113000111"] = files
+    c = Client(docs)
+    out = F.fill_issue_bd(disc_of(rows), c, TODAY)
+    assert rows[0]["bd"] is None and (out["fail"], out["unread"], out["later"], out["read"]) == (1, 0, 1, 2)
+    assert "20261113000111|issuebd|v2" not in c.entries
+    log = capsys.readouterr().out
+    assert "  !! 유상증자 이사회 결의일" in log and f"조회 실패 1 (회사111 20261113 20261113000111 ({why}))" in log
+    docs["20261113000111"] = doc_on("20261113")                                         # 다음 실행: 제대로 받으면 읽어요
+    c2 = Client(docs, entries=c.entries)
+    rows2, _ = three()
+    assert F.fill_issue_bd(disc_of(rows2), c2, TODAY)["read"] == 3 and c2.calls == ["20261113000111"]
+
+
+def test_without_the_main_file_no_attachment_is_read(capsys):
+    """3. zip 에 본 파일 '{접수번호}.xml' 이 없으면 가장 큰 파일(첨부)을 읽지 않아요 — 첨부의 날을 결의일로 읽을 수 있어요. 원문은 바뀌지 않아서
+    nf 로 적어요 (같은 이유가 로그에)."""
+    att = {"20261113000111_00760.xml": doc_on("20261101"), "20261113000111_00761.xml": raw("rights_dots.xml")}
+    assert F.dvwhy_doc_text(att, "20261113000111")                                       # 예전 길(가장 큰 파일)이라면 첨부를 읽었을 거예요
+    why = "zip 에 본 파일(20261113000111.xml)이 없어요 (다른 파일 2개는 읽지 않아요)"
+    assert F.issue_doc_main(att, "20261113000111") == (None, ("nf", why))
+    rows, docs = three()
+    docs["20261113000111"] = att
+    c = Client(docs)
+    out = F.fill_issue_bd(disc_of(rows), c, TODAY)
+    assert rows[0]["bd"] is None and (out["unread"], out["read"], out["fail"]) == (1, 2, 0)
+    assert c.entries["20261113000111|issuebd|v2"] == {"st": "nf", "at": "2026-11-15", "d": None, "why": why}
+    assert f"회사111 20261113 20261113000111 ({why})" in capsys.readouterr().out
+    c2 = Client({}, entries=c.entries)
+    rows2, _ = three()
+    F.fill_issue_bd(disc_of(rows2), c2, TODAY)
+    assert c2.calls == [] and rows2[0]["bd"] is None
+
+
+def test_the_main_file_is_found_in_a_folder_and_beside_attachments():
+    files = {"doc/20261113000111.xml": doc_on("20261113"), "20261113000111_00760.xml": doc_on("20261101") * 3}
+    text, bad = F.issue_doc_main(files, "20261113000111")
+    assert bad is None and F.parse_issue_bd(text) == ("20261113", None)
+    euc = {"20261113000111.xml": raw("rights_old_html.html")}
+    text, bad = F.issue_doc_main(euc, "20261113000111")
+    assert bad is None and F.parse_issue_bd(text) == ("20260908", None)
