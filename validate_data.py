@@ -1307,6 +1307,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_px_bad(rep, data, comps, pdata)  # 2026-11-14 (Jack, Q2 (a)): 그 움직임이 있는 종목은 52주 · 출렁임 · 위험 숫자를 비워요 (실패) · 필수 종목 추세 · 저변동 순위 (실패)
     check_kr_no_trade(rep, data, pdata)    # 2026-11-14 (Jack, design chat 2026-11-08): 거래 없는 종목은 d1 빈 칸 + noTrade · 빈 d1 은 이유 (실패: 우리 값끼리 어긋날 때만)
     check_v196b(rep, data, disc, by, today)   # v19.6b (Part B.1): 주요사항 공시 · 내부자 역할 · 미국 일정 (모양 · 칸이 없는 예전 파일은 경고만)
+    check_issue_bd(rep, disc)                 # v19.6b Q18 (Jack 2026-11-19): 유상증자 이사회 결의일 (공시일 뒤면 실패 · 빈 줄은 경고)
 
     # 경고만
     rep.add("공시 목록 조회", True, "성공" if disc.get("listOk") else "실패", "실패면 경고", warn=not disc.get("listOk"))
@@ -2001,6 +2002,48 @@ def check_v196b(rep, data, disc, by, today):
             fn(rep, *args)
         except Exception as e:             # 검사 코드의 잘못 — 표는 나오고 이 줄은 실패예요 (확인하지 못한 것을 통과라고 하지 않아요)
             rep.add(name, False, f"검사가 오류로 멈췄어요: {type(e).__name__}: {str(e)[:120]}", "오류 없이 끝나야 함")
+
+
+# ── v19.6b Q18 (Jack 2026-11-19 "rights board date from documents: yes"): 유상증자 줄의 bd — 파이프라인(fetch_data.fill_issue_bd)이 공시
+#    원문의 이사회결의일(결정일)을 읽어 채워요. 새 줄 하나 (더하기만 · check_v196b 의 세 줄은 그대로). 대상은 철회(wd)도 읽는 중(pend)도 아닌
+#    유상증자 줄. 실패: 결의일이 공시일 뒤 (공시는 결의 뒤에 내요 — 우리 읽기의 잘못). 경고: 결의일이 빈 줄 (원문을 아직 다 읽지 못했거나 원문에서
+#    읽지 못했어요 — 머지 뒤 첫 실행은 실행당 100건 한도로 남아요). issue 가 없는 파일(v19.6b 전)은 SKIP (위 '주요사항 공시' 줄이 경고해요).
+ISSUE_BD_ROW = "유상증자 이사회 결의일 (issue bd · 공시 원문)"
+
+
+def _check_issue_bd(rep, disc):
+    th = ("철회 · 읽는 중이 아닌 유상증자 줄의 bd 가 공시일 d 뒤면 실패 — bd 가 빈 줄이 있으면 경고 (원문을 아직 다 읽지 못했거나 원문에서 "
+          "읽지 못했어요 · 실행 로그의 '유상증자 이사회 결의일' 줄)")
+    rows = disc.get("issue")
+    if not isinstance(rows, list):
+        rep.skip(ISSUE_BD_ROW, "issue 가 없거나 목록이 아니에요 (v19.6b 전 파일 — 위 '주요사항 공시' 줄이 봐요)")
+        return
+    tg = [r for r in rows if isinstance(r, dict) and r.get("kind") == "rights" and r.get("wd") is not True and r.get("pend") is not True]
+    have, after, miss = 0, [], []
+    for r in tg:
+        b, d = _ymd8(r.get("bd")), _ymd8(r.get("d"))
+        if b is None:
+            miss.append(r)                 # 빈 칸 (모양이 틀린 bd 는 '주요사항 공시' 줄이 실패로 잡아요)
+        elif d is not None and b > d:
+            after.append(f"{_short(r.get('nk'))} {_short(r.get('rc'))} bd {r['bd']} > d {r['d']}")
+        else:
+            have += 1
+    if after:
+        rep.detail("유상증자 이사회 결의일이 공시일 뒤인 줄", after[:50])
+    if miss:
+        rep.detail("유상증자 이사회 결의일이 빈 줄", [f"{_short(r.get('nk'))} {_short(r.get('d'))} {_short(r.get('rc'))}" for r in miss[:50]])
+    val = (f"결의일 있음 {have:,} / 대상 {len(tg):,}"
+           + (f" · 공시일 뒤 결의일 {len(after):,} ({after[0][:80]})" if after else "")
+           + (f" · 결의일 빈 줄 {len(miss):,} (원문을 아직 다 읽지 못했거나 원문에서 못 읽음)" if miss else ""))
+    rep.add(ISSUE_BD_ROW, not after, val[:300], th, warn=bool(miss))
+
+
+def check_issue_bd(rep, disc):
+    """v19.6b Q18: 한 줄 — 유상증자 이사회 결의일 (issue bd). 어떤 JSON 값이 와도 표는 나와요 (예상하지 못한 오류는 이 줄의 실패)."""
+    try:
+        _check_issue_bd(rep, disc if isinstance(disc, dict) else {})
+    except Exception as e:
+        rep.add(ISSUE_BD_ROW, False, f"검사가 오류로 멈췄어요: {type(e).__name__}: {str(e)[:120]}", "오류 없이 끝나야 함")
 
 
 def check_v1751(rep, cur, kr, us, by, comps, px, today, hilo):

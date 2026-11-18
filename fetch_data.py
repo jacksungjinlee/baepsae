@@ -3403,8 +3403,9 @@ def enrich_with_dart(kr_stocks, client, pref_shares=None):
         if DIV_PROVE:
             log(f"· 배당 기준 증명(v19.1i)은 위 어림 밖이에요: 약 {PROVE_EST_STOCKS}곳 × {PROVE_PER_STOCK}회 = "
                 f"{PROVE_EST_STOCKS * PROVE_PER_STOCK:,}회 더 (실행당 새 조회 {PROVE_PER_RUN}곳까지 · 넘는 곳은 다음 실행이 이어받아요)")
-        log(f"· 주요사항 공시(v19.6b · 유상증자 · CB · BW)도 위 어림 밖이에요: 목록 약 {ISSUE_EST_PAGES}쪽 + 상세 최대 {ISSUE_PER_RUN}회 = "
-            f"최대 약 {ISSUE_EST_PAGES + ISSUE_PER_RUN:,}회 더 (상세는 캐시에 없는 공시만 · 빈 캐시면 90일치를 한도까지 · 넘는 것은 다음 실행)")
+        log(f"· 주요사항 공시(v19.6b · 유상증자 · CB · BW)도 위 어림 밖이에요: 목록 약 {ISSUE_EST_PAGES}쪽 + 상세 최대 {ISSUE_PER_RUN}회 + "
+            f"유상증자 원문(결의일) 최대 {ISSUE_BD_PER_RUN}회 = 최대 약 {ISSUE_EST_PAGES + ISSUE_PER_RUN + ISSUE_BD_PER_RUN:,}회 더 "
+            f"(상세 · 원문은 캐시에 없는 공시만 · 빈 캐시면 90일치를 한도까지 · 넘는 것은 다음 실행)")
     qy = year + 1
     cands = [r for r in Q_NEWEST_FIRST if report_period_end(qy, r) < today]
 
@@ -3955,7 +3956,7 @@ DISC_CALL_CAP = 1200   # 1회 실행당 상세조회 상한 (백필은 다음 �
 
 
 INSIDER_ROLES = ("임원", "주요주주")
-# v19.6b (리뷰 2026-11-16 · Jack 의 yes/no 를 기다려요): 임원 직위가 없는 주요주주 줄의 직위(pos)에 DART 의 관계 말(10%이상주주 · 사실상지배주주 …)을
+# v19.6b (리뷰 2026-11-16 · Jack 의 yes 2026-11-19, Q21): 임원 직위가 없는 주요주주 줄의 직위(pos)에 DART 의 관계 말(10%이상주주 · 사실상지배주주 …)을
 # 그대로 써요 — 2.0 공시 탭 · 예전 뱁새 공시·수급에 보여요 (예전엔 '-' 이라 2.0 은 빈 칸, 예전 앱은 ' · -'). False 면 그 줄의 직위는 빈 칸이에요
 # (2.0 이 지금 '-' 에 하는 것처럼 · role 은 그대로 주요주주). 한 줄로 바꿔요.
 INSIDER_POS_HOLDER_WORDS = True
@@ -4186,17 +4187,17 @@ def fetch_disclosures(kr_stocks, cmap, end, client):
 # 정정   한 결정은 한 줄: 상세 API 가 주는 결정 줄 중 접수번호가 목록 기간 안에 있는 것 (d = 그 공시의 날짜 · cor = 그 공시가 정정 공시인지).
 #        목록의 rm '정'(뒤에 정정 공시가 있음)만으로는 빼지 않아요 — 뒤가 첨부정정뿐이면 그 공시가 결정의 마지막 판이에요 (육일씨엔에쓰 2026-08-26).
 #        Part B.1 의 '같은 회사 · 종류 · bd 는 한 결정' 규칙은 쓰지 않아요: 이사회 한 번에 여러 회차를 정한 회사가 있어 (서진시스템 2026-08-24
-#        CB 네 건 · 아스트 2024-03-04 CB 7회 · 8회) 그 규칙은 다른 결정을 지워요 (보고 · Jack 의 답을 기다려요).
+#        CB 네 건 · 아스트 2024-03-04 CB 7회 · 8회) 그 규칙은 다른 결정을 지워요 (Jack 의 yes 2026-11-19, Q19: DART 의 기록을 따라요).
 # 캐시   DART 캐시 '{접수번호}|issue|v2': 000 결정의 마지막 판 (읽은 칸) · nh 마지막 판이 아님 (뒤에 정정이 있는 옛 판 · 첨부정정) · nf 마지막 판이어야
 #        하는데(rm 이 비었고 첨부정정이 아님) 상세에 없음 → 다음 날(한국 날짜) 다시. 기간 안 공시 중 캐시에 없는 것이 있는 (회사, 종류)만 다시
 #        부르고, 부르면 그 쌍의 기간 안 공시를 모두 다시 적어요 (새 정정이 오면 옛 판이 nh 로 바뀌어요). 결정 공시의 칸은 접수번호마다 바뀌지
 #        않아서 full 실행에서도 캐시를 써요 (업종 코드처럼). 공시가 목록 기간을 벗어나면 지워요. 실행당 ISSUE_PER_RUN 쌍까지 (최근 공시부터).
-# 칸     rc 접수번호 · d 공시일 YYYYMMDD · t 종목코드 · nk 이름 · kind rights | cb | bw · bd 이사회결의일 YYYYMMDD (사채만 — 유상증자 API 에는
-#        이사회결의일 칸이 없어요: null) · how (유상증자만) holders 주주배정 · 주주우선공모 / others 제3자배정 · 일반공모 / null 그 밖 ·
-#        n 새 주식 수 (유상증자: 보통주 + 기타주식) · p % (유상증자: n ÷ 증자 전 발행주식총수 · 사채: 공시의 '전환(행사)에 따라 발행할 주식의
+# 칸     rc 접수번호 · d 공시일 YYYYMMDD · t 종목코드 · nk 이름 · kind rights | cb | bw · bd 이사회결의일 YYYYMMDD (사채: 상세 API 의 bddd ·
+#        유상증자: API 에 칸이 없어 여기서는 null — main 이 fill_issue_bd 로 공시 원문에서 읽어 채워요 (Q18 · 못 읽으면 null)) ·
+#        how (유상증자만) holders 주주배정 · 주주우선공모 / others 제3자배정 · 일반공모 / null 그 밖 · n 새 주식 수 (유상증자: 보통주 + 기타주식) · p % (유상증자: n ÷ 증자 전 발행주식총수 · 사채: 공시의 '전환(행사)에 따라 발행할 주식의
 #        주식총수 대비 비율') · amt 사채 권면(전자등록)총액 원 (bd_fta · '-' 이면 null) · cor 정정 공시([기재정정] · [첨부정정] …)인지.
 #        읽지 못한 칸은 null — 짐작하지 않아요. 주식 수 · 금액은 정수만 읽어요 (소수면 null).
-# 철회   (리뷰 2026-11-16) 상세 줄의 숫자 칸이 모두 '-' 인 정정 공시는 철회예요: DART 목록은 철회 표시(rm '철')를 붙이지 않고 '[기재정정]' 으로
+# 철회   (리뷰 2026-11-16 · Jack 의 yes 2026-11-19, Q20) 상세 줄의 숫자 칸이 모두 '-' 인 정정 공시는 철회예요: DART 목록은 철회 표시(rm '철')를 붙이지 않고 '[기재정정]' 으로
 #        모든 칸을 지워요 (더코디 2026-11-05 '납입금미납으로 유상증자철회' · 크라우드웍스 2026-08-21 '대체납입자 선정 불능에 따른 철회' · 쏘닉스 CB
 #        2026-10-29 결정을 2026-11-10 에 지움). 그 줄은 wd: true 와 빈 숫자로 남겨요 (카드가 건너뛰게 · 데이터는 있는 그대로). 원래 결정이 기간
 #        안에 있으면 그 공시는 옛 판(nh)이라 살아 있는 결정 줄이 없어요.
@@ -4514,6 +4515,226 @@ def _issue_failed(prev, bgn, why, client):
     log(f"  !! {why} — 지난 발행본의 주요사항 공시 {len(keep):,}건을 그대로 둬요 "
         f"(최근 공시 {f'{last[:4]}-{last[4:6]}-{last[6:8]}' if last else '없음'} · issueOk false · 실행은 계속해요)")
     return {"issue": keep, "issueOk": False}
+
+
+# ────────────────────────────────────────────────────────────
+# v19.6b Q18 (Jack 2026-11-19 "rights board date from documents: yes"): 유상증자 줄의 bd — 공시 원문(document.xml)의 이사회결의일(결정일)
+# ────────────────────────────────────────────────────────────
+# 왜     유상증자 상세 API(piicDecsn)에는 이사회결의일 칸이 없어요 (사채는 bddd 가 있어요). 그래서 fetch_issues 뒤에 main 이 유상증자 줄마다
+#        (철회 wd · 읽는 중 pend 는 빼고 — 그 줄의 bd 는 늘 빈 칸) 그 공시의 원문을 한 번 읽어요 (fill_issue_bd).
+# 읽기   원문 zip 의 본 파일 (dvwhy_doc_text). 정정 공시의 앞 부분(<CORRECTION> · 정정 전 · 후 표)은 빼고, 첫 칸이 'N. 이사회결의일(결정일)' 인
+#        표 줄의 값 칸 하나를 읽어요. DART 양식은 그 값을 <TU AUNIT="DRC_DT" AUNITVALUE="20261111">2026년 11월 11일</TU> 로 적어요 — 값과
+#        글자가 같은 날이어야 해요. 칸 전체가 날짜 하나일 때만 날짜예요 ('2026년 11월 11일' · '2026-11-11' · '2026.11.11' · '20261111').
+#        값이 '-' 이거나, 날짜가 아니거나, 값 칸이 여럿이거나, 그런 줄이 여럿인데 같은 날이 아니면 읽지 못한 것이에요 (null · 짐작하지 않아요).
+#        조사 2026-11-19: 육일씨엔에쓰 20260826000431 · 뷰노 20261111000261 (정정 — 정정 표의 10-15 → 11-11 은 빼고 양식의 11-11) · STX
+#        20261013000428 (회생계획 인가일 09-16 — 본문 문단의 '15. 이사회결의일(결정일)' 은 표 칸이 아니라 읽지 않아요).
+# 확인   결의일은 공시일 d 이하이고, d 보다 ISSUE_BD_MAX_YEARS 년 넘게 앞이 아니어야 해요 — 아니면 null 로 두고 이름 · 이유와 함께 세요.
+# 캐시   DART 캐시 '{접수번호}|issuebd|v1': 000 (d = 결의일) · nf (원문은 받았는데 못 읽음 · why). 공시는 바뀌지 않아서 한 번만 읽어요 (정정은
+#        새 접수번호). 조회 실패 · 해석 오류 · 실행당 한도 · 시간 한도 · DART 멈춤은 적지 않아요 (다음 실행이 다시). 공시가 90일 기간을 벗어나면
+#        지워요 (다른 판의 키도). full 실행에서도 캐시를 써요 (fetch_issues 처럼).
+# 한도   실행당 원문 ISSUE_BD_PER_RUN 건 (최근 공시부터) · ISSUE_BD_SECONDS 초 (넘으면 남은 것은 다음 실행). 2026-11-16 의 90일치 유상증자
+#        줄 약 160건 (169 − 철회): 머지 뒤 첫 실행이 최대 100건, 둘째 실행이 나머지 (첫 실행에 상세를 못 읽은 쌍의 줄 포함) — 그 뒤 하루 3~5건.
+# 실패   원문 조회가 실패하거나 느려도 그 줄의 bd 만 null 이에요 — 실행은 계속해요 (issueOk 도 그대로: 줄의 다른 칸은 상세 API 로 다 읽었어요).
+#        목록을 받지 못한 날(issueOk false)은 지난 발행본의 줄(그때의 bd)을 그대로 두고 원문을 읽지 않아요.
+ISSUE_BD_TAG = "issuebd|v1"      # 캐시 키 '{접수번호}|issuebd|v1' — 읽는 방법이 바뀌면 올려요 (다른 판의 키는 지워요)
+ISSUE_BD_PER_RUN = 100           # 한 실행에서 새로 읽는 원문 수 상한 (첫 실행의 약 160건은 두 실행에 나눠요)
+ISSUE_BD_SECONDS = 180           # 원문 읽기에 쓰는 시간 상한 (초) — 넘으면 남은 원문은 다음 실행 (DART 가 느린 날 실행을 붙잡지 않게)
+ISSUE_BD_TIMEOUT = 20            # 원문 하나의 응답 대기 (초)
+ISSUE_BD_WORKERS = 4
+ISSUE_BD_MAX_YEARS = 1           # 결의일이 공시일보다 이만큼 넘게 앞이면 읽지 못한 것으로 둬요 (잘못 읽은 날짜일 수 있어요)
+_ISSUE_BD_LABEL = re.compile(r"(?:[0-9]+(?:-[0-9]+)?\.)?이사회결의일(?:[(（]결정일[)）])?")
+_ISSUE_TR = re.compile(r"<tr\b[^>]*>([\s\S]*?)</tr\s*>", re.I)
+_ISSUE_CELL = re.compile(r"<(td|th|te|tu)\b([^>]*)>([\s\S]*?)</\1\s*>", re.I)
+
+
+def issue_bd_day(s):
+    """원문 칸 글자 → 'YYYYMMDD' — 칸 전체가 날짜 하나일 때만 ('2026년 11월 11일' · '2026-11-11' · '2026.11.11' · '20261111' · 빈칸은
+    무시). 아니면 None (아라비아 숫자 0-9 만 · 없는 날짜도 None). (순수 함수)"""
+    t = re.sub(r"\s+", "", str(s if s is not None else ""))
+    m = (re.fullmatch(r"(?P<y>20[0-9]{2})년(?P<m>[0-9]{1,2})월(?P<d>[0-9]{1,2})일", t)
+         or re.fullmatch(r"(?P<y>20[0-9]{2})(?P<s>[-.])(?P<m>[0-9]{1,2})(?P=s)(?P<d>[0-9]{1,2})\.?", t)
+         or re.fullmatch(r"(?P<y>20[0-9]{2})(?P<m>[0-9]{2})(?P<d>[0-9]{2})", t))
+    if not m:
+        return None
+    try:
+        return dt.date(int(m.group("y")), int(m.group("m")), int(m.group("d"))).strftime("%Y%m%d")
+    except ValueError:
+        return None
+
+
+def _issue_cell_text(c):
+    s = html_unescape(re.sub(r"<[^>]+>", " ", c)).replace("&cr;", " ")
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _issue_bd_cell(attrs, txt):
+    """결의일 줄의 값 칸 하나 → (bd, 이유). AUNIT="DRC_DT" 칸의 AUNITVALUE 가 있으면 글자와 같은 날이어야 해요. (순수 함수)"""
+    av = None
+    if re.search(r'\bAUNIT\s*=\s*"DRC_DT"', attrs, re.I):
+        m = re.search(r'\bAUNITVALUE\s*=\s*"([^"]*)"', attrs, re.I)
+        av = m.group(1).strip() if m else None
+    tv = issue_bd_day(txt)
+    if av and av not in DASHES:
+        a = issue_bd_day(av) if re.fullmatch(r"[0-9]{8}", av) else None
+        if a is None:
+            return None, f"결의일 칸의 값 '{av[:12]}' 이 날짜가 아니에요"
+        if tv != a:
+            return None, f"결의일 칸의 값 {a} 와 글자 '{txt[:20]}' 가 달라요"
+        return a, None
+    if tv:
+        return tv, None
+    if not txt or txt in DASHES:
+        return None, "결의일 칸이 비었어요 ('-')"
+    return None, f"결의일 '{txt[:20]}' 을 날짜로 읽지 못했어요"
+
+
+def parse_issue_bd(text):
+    """유상증자결정 원문 → (이사회결의일 'YYYYMMDD', None) 또는 (None, 읽지 못한 이유). 공시일과의 확인은 read_issue_bd. (순수 함수)"""
+    if not text:
+        return None, "원문 없음"
+    body = re.sub(r"<correction\b[\s\S]*?</correction\s*>", " ", str(text), flags=re.I)     # 정정 전 · 후 표는 빼요 (양식 쪽만)
+    got, multi = [], 0
+    for tr in _ISSUE_TR.findall(body):
+        cells = _ISSUE_CELL.findall(tr)
+        if not cells or not _ISSUE_BD_LABEL.fullmatch(re.sub(r"\s+", "", _issue_cell_text(cells[0][2]))):
+            continue
+        vals = [(a, _issue_cell_text(c)) for _tag, a, c in cells[1:]]
+        vals = [(a, t) for a, t in vals if t or re.search(r'\bAUNITVALUE\s*=\s*"[^"\s]', a, re.I)]
+        if len(vals) > 1:
+            multi += 1                     # 값 칸이 여럿인 줄 = 정정 전 · 후 표 (<CORRECTION> 밖에 있는 옛 원문) — 양식의 줄(값 하나)만 읽어요
+        else:
+            got.append(_issue_bd_cell(*vals[0]) if vals else (None, "결의일 칸이 비었어요 ('-')"))
+    if not got:
+        return None, (f"이사회결의일 줄 {multi}개가 모두 값 칸이 여럿이에요 (정정 전 · 후 표뿐)" if multi
+                      else "원문에 이사회결의일(결정일) 칸이 없어요")
+    days = {bd for bd, _ in got}
+    if len(got) > 1 and (len(days) > 1 or None in days):
+        return None, f"이사회결의일 줄이 {len(got)}개인데 같은 날이 아니에요 ({', '.join(str(bd or why) for bd, why in got[:3])})"
+    return got[-1]
+
+
+def _ymd_date(s):
+    try:
+        return dt.date(int(s[:4]), int(s[4:6]), int(s[6:8])) if isinstance(s, str) and re.fullmatch(r"[0-9]{8}", s) else None
+    except ValueError:
+        return None
+
+
+def issue_bd_range_why(bd, d):
+    """결의일 bd 가 공시일 d 와 맞는지 (d 이하 · ISSUE_BD_MAX_YEARS 년 넘게 앞이 아님) → None (맞음) 또는 이유. (순수 함수)"""
+    b, f = _ymd_date(bd), _ymd_date(d)
+    if b is None:
+        return f"결의일 {bd!r} 이 날짜가 아니에요"
+    if f is None:
+        return f"공시일 {d!r} 을 읽지 못했어요"
+    if b > f:
+        return f"결의일 {bd} 이 공시일 {d} 뒤예요"
+    lo = dt.date(f.year - ISSUE_BD_MAX_YEARS, f.month, 28 if (f.month, f.day) == (2, 29) else f.day)
+    if b < lo:
+        return f"결의일 {bd} 이 공시일 {d} 보다 {ISSUE_BD_MAX_YEARS}년 넘게 앞이에요"
+    return None
+
+
+def read_issue_bd(text, d):
+    """원문 + 공시일 → (결의일 'YYYYMMDD', None) 또는 (None, 이유). (순수 함수)"""
+    bd, why = parse_issue_bd(text)
+    if bd is None:
+        return None, why
+    why = issue_bd_range_why(bd, d)
+    return (None, why) if why else (bd, None)
+
+
+def issue_bd_targets(rows):
+    """원문에서 결의일을 읽을 issue 줄: 유상증자 · 철회(wd)도 읽는 중(pend)도 아닌 줄. (순수 함수 — 관문 validate_data 와 같은 기준)"""
+    return [r for r in rows or [] if isinstance(r, dict) and r.get("kind") == "rights" and r.get("wd") is not True
+            and r.get("pend") is not True and isinstance(r.get("rc"), str) and isinstance(r.get("d"), str)]
+
+
+def fill_issue_bd(disc, client, end):
+    """v19.6b Q18: disc['issue'] 의 유상증자 줄에 bd (원문의 이사회결의일)를 채워요 (줄을 고쳐요) → 센 것 dict. 실행을 멈추지 않아요.
+    issueOk 가 참이 아니면(목록을 받지 못한 날) 아무것도 하지 않아요 (지난 발행본의 줄 그대로)."""
+    rows = disc.get("issue") if isinstance(disc, dict) else None
+    if not isinstance(rows, list) or disc.get("issueOk") is not True:
+        log("  !! 유상증자 이사회 결의일: 오늘 주요사항 공시 목록을 받지 못해 원문을 읽지 않아요 (지난 발행본의 줄과 결의일 그대로)")
+        return {"skip": True}
+    bgn = (end - dt.timedelta(days=DISC_DAYS - 1)).strftime("%Y%m%d")       # fetch_issues 와 같은 기간
+    today_iso = client.today.isoformat()
+    key = lambda rc: f"{rc}|{ISSUE_BD_TAG}"                                    # noqa: E731
+    targets = issue_bd_targets(rows)
+    due, nf, cached = [], [], 0
+    with client.lock:
+        for r in targets:
+            e = client.entries.get(key(r["rc"])) or {}
+            r["bd"] = None
+            if e.get("st") == "000" and issue_bd_range_why(e.get("d"), r["d"]) is None:
+                r["bd"] = e["d"]
+                cached += 1
+            elif e.get("st") == "nf":
+                nf.append((r, str(e.get("why") or "?")))
+                cached += 1
+            else:
+                due.append(r)
+    due.sort(key=lambda r: (r["d"], r["rc"]), reverse=True)
+    todo, later = due[:ISSUE_BD_PER_RUN], due[ISSUE_BD_PER_RUN:]
+    calls0, t0 = sum(client.status.values()), time.time()
+
+    def one(r):
+        if client.fatal or client.down:
+            return r, "stop", None
+        if time.time() - t0 > ISSUE_BD_SECONDS:
+            return r, "time", None
+        try:
+            files = client.get_zip("document.xml", {"rcept_no": r["rc"]}, timeout=ISSUE_BD_TIMEOUT)
+        except Exception as e:             # get_zip 은 예외를 내지 않지만, 하나가 실행을 멈추지 않게 (센 수로 남겨요)
+            return r, "fail", type(e).__name__
+        if files is None:
+            return r, ("stop" if (client.fatal or client.down) else "fail"), None
+        try:
+            bd, why = read_issue_bd(dvwhy_doc_text(files, r["rc"]), r["d"])
+        except Exception as e:             # 이상한 원문 하나가 실행을 멈추지 않게 — 적지 않고 다음 실행이 다시 읽어요 (센 수로 남겨요)
+            return r, "err", type(e).__name__
+        return r, ("000" if bd else "nf"), (bd or why)
+
+    n, errs = collections.Counter(), []
+    if todo:
+        with ThreadPoolExecutor(max_workers=ISSUE_BD_WORKERS) as ex:
+            res = list(ex.map(one, todo))
+        with client.lock:
+            for r, st, v in res:
+                n[st] += 1
+                if st == "000":
+                    client.entries[key(r["rc"])] = {"st": "000", "at": today_iso, "d": v}
+                    r["bd"] = v
+                elif st == "nf":
+                    client.entries[key(r["rc"])] = {"st": "nf", "at": today_iso, "d": None, "why": v}
+                    nf.append((r, v))
+                elif st == "err":
+                    errs.append(f"{r['nk']} {r['d']} ({v})")
+    keep = {key(r["rc"]) for r in targets}
+    with client.lock:                       # 오늘 줄이 아닌 키 중 기간을 벗어난 공시(접수번호 앞 8자리 < 기간 시작)의 것 · 다른 판의 키는 지워요
+        old = [k for k in client.entries if "|issuebd|" in k and k not in keep and (not k.endswith("|" + ISSUE_BD_TAG) or k[:8] < bgn)]
+        for k in old:
+            del client.entries[k]
+
+    a = sum(1 for r in targets if r.get("bd"))
+    later_n = len(later) + n["time"] + n["stop"] + n["fail"] + n["err"]
+    out = {"target": len(targets), "read": a, "unread": len(nf), "later": later_n, "fetched": n["000"] + n["nf"],
+           "cached": cached, "cap": len(later), "time": n["time"], "stop": n["stop"], "fail": n["fail"], "err": n["err"],
+           "calls": sum(client.status.values()) - calls0, "dropped": len(old)}
+    log(f"{'  !! ' if (nf or later_n) else '· '}유상증자 이사회 결의일(공시 원문 document.xml): 문서에서 읽음 {a:,} / 대상 {len(targets):,}, "
+        f"못 읽음 {len(nf):,}, 다음 실행으로 {later_n:,} — 오늘 원문 조회 {out['calls']:,}회 (새로 읽음 {n['000']:,} · 못 읽음 {n['nf']:,}) · "
+        f"캐시로 끝 {cached:,} · 실행당 {ISSUE_BD_PER_RUN}건 · {ISSUE_BD_SECONDS}초까지"
+        + (f" · 실행당 한도에 닿아 {len(later):,}" if later else "")
+        + (f" · 시간 한도에 닿아 {n['time']:,}" if n["time"] else "")
+        + (f" · 조회 실패 {n['fail']:,}" if n["fail"] else "")
+        + (f" · 해석 오류 {n['err']:,} ({', '.join(errs[:5])})" if n["err"] else "")
+        + (f" · DART 가 멈춰 {n['stop']:,} ({'상태 ' + client.fatal[0] if client.fatal else '연결 안 됨'})" if n["stop"] else "")
+        + (f" · 지운 캐시 {len(old):,}" if old else "")
+        + " (대상: 철회 · 읽는 중이 아닌 유상증자 줄 · 사채의 결의일은 상세 API 의 것)")
+    if nf:
+        log(f"  !! 결의일을 못 읽은 유상증자 공시 {len(nf):,}건 (bd 빈 칸 · 같은 공시는 다시 읽지 않아요): "
+            + ", ".join(f"{r['nk']} {r['d']} {r['rc']} ({why})" for r, why in nf[:20]) + (" …" if len(nf) > 20 else ""))
+    return out
 
 
 # ────────────────────────────────────────────────────────────
@@ -10332,6 +10553,8 @@ def main():
         disc = ph.run("공시", fetch_disclosures, kr, client.meta.get("corpMap") or {}, today, client)
         # v19.6b (Part B.1): 유상증자 · 전환사채 · 신주인수권부사채 결정 (issue · issueOk) — DART 를 쓰는 실행에서만 · 지분공시 뒤
         disc.update(ph.run("주요사항 공시", fetch_issues, kr, client.meta.get("corpMap") or {}, today, client))
+        # v19.6b Q18 (Jack 2026-11-19): 유상증자 줄의 이사회결의일(bd)을 공시 원문에서 (실행당 ISSUE_BD_PER_RUN 건 · 실패해도 그 줄의 bd 만 빈 칸)
+        ph.run("유상증자 결의일", fill_issue_bd, disc, client, today)
         client.save()
         log(f"· DART 전체: {client.summary()}")
         n_calls = sum(client.status.values())
