@@ -760,12 +760,18 @@ def kr_fb_universe(d, fetch_csv, fallback=None, lookback=LISTING_LOOKBACK_DAYS):
     return None, "종목 목록으로 쓸 파일이 없어요"
 
 
+_DAUM_LOCAL = threading.local()
+
+
 def _fetch_daum_days(code, n):
-    """다음 일별 시세 (최근 n 거래일). 세 번 시도해도 못 받으면 예외."""
+    """다음 일별 시세 (최근 n 거래일). 세 번 시도해도 못 받으면 예외. 일하는 스레드마다 연결 하나를 다시 써요 (요청마다 새로 잇지 않게)."""
     last = None
+    sess = getattr(_DAUM_LOCAL, "s", None)
+    if sess is None:
+        sess = _DAUM_LOCAL.s = requests.Session()
     for attempt in range(3):
         try:
-            r = requests.get(KR_FB_DAUM_URL.format(c=code), params={"symbolCode": f"A{code}", "page": 1, "perPage": n, "pagination": "true"},
+            r = sess.get(KR_FB_DAUM_URL.format(c=code), params={"symbolCode": f"A{code}", "page": 1, "perPage": n, "pagination": "true"},
                              headers={"User-Agent": "Mozilla/5.0", "Referer": f"https://finance.daum.net/quotes/A{code}"}, timeout=20)
             if r.status_code == 200:
                 return r.json()
@@ -4453,7 +4459,16 @@ def fetch_korea(start, today, rf, prev=None):
                 log(f"  !! 업종 정보 {src}: 예상한 열(Industry)이 없어요 {list(d.columns)} — 업종을 비워요")
         except Exception as e:
             log(f"  !! 업종 정보 {src} 실패: {e}")
-    # 2026-11-19: KRX-DESC 가 이름만 주고 업종을 비운 날 (11-18 · KRX 로그인 필요) — 지난 발행본의 업종 · 주요제품을 이어 써요 (크게 남겨요)
+    n_all = len(listing)
+    listing = select_kr_universe(listing, MAX_KR)
+    if sample_size():
+        listing = sample_universe(listing, sample_size())
+        log(f"  !! 표본 실행: 국내 {len(listing):,}종목만 처리해요")
+    if n_all > MAX_KR:
+        log(f"  → 전체 {n_all:,}개 중 시가총액 상위 {MAX_KR:,}개 처리 (MAX_KR)")
+    log(f"  → {len(listing):,}개 종목 (필수 종목 {len(MUST_KR)}개 확인)")
+    # 2026-11-19: KRX-DESC 가 이름만 주고 업종을 비운 날 (11-18 · KRX 로그인 필요) — 지난 발행본의 업종 · 주요제품을 이어 써요 (크게 남겨요).
+    # 처리하는 종목(시가총액 상위 MAX_KR)만 세요 — 지난 발행본에 없는 종목 = 새로 들어온 종목
     n_desc = sum(1 for v in desc.values() if v[0])
     prev_desc, prev_day, prev_bad = kr_prev_desc(prev)
     codes_all = set(listing["Code"].astype(str).str.strip())
@@ -4466,22 +4481,13 @@ def fetch_korea(start, today, rf, prev=None):
     if carried:
         log(f"  !! 업종: KRX-DESC 에 업종이 없어 지난 발행본({prev_day} 업종 글자)의 업종 · 주요제품을 이어 써요 — {len(carried):,}종목 "
             f"(KRX-DESC 업종 {n_desc:,} · 지난 발행본에서 읽은 업종 {len(prev_desc):,} · 읽지 못한 설명 {prev_bad:,})"
-            + (f" · 업종이 없는 새 상장 {len(new_none):,}: {', '.join(f'{c} {names_l.get(c, '')}' for c in new_none[:12])}" if new_none else ""))
+            + (f" · 업종이 없는 새 종목(지난 발행본에 없음) {len(new_none):,}: {', '.join(f'{c} {names_l.get(c, '')}' for c in new_none[:12])}" if new_none else ""))
     else:
-        log(f"· 업종: KRX-DESC {n_desc:,}종목 · 이어 쓴 종목 0 · 업종 없음 {len(no_ind):,} (그중 새 상장 {len(new_none):,})")
+        log(f"· 업종: KRX-DESC {n_desc:,}종목 · 이어 쓴 종목 0 · 업종 없음 {len(no_ind):,} (그중 지난 발행본에 없던 종목 {len(new_none):,})")
     if not n_desc and not carried and "_prev_s" in listing.columns:
         log("  !! 업종은 지난 data.json 값을 그대로 사용")
     elif not n_desc and not carried:
         log("  !! 업종 정보를 못 받아왔어요 — 업종이 '기타'로 들어갑니다")
-
-    n_all = len(listing)
-    listing = select_kr_universe(listing, MAX_KR)
-    if sample_size():
-        listing = sample_universe(listing, sample_size())
-        log(f"  !! 표본 실행: 국내 {len(listing):,}종목만 처리해요")
-    if n_all > MAX_KR:
-        log(f"  → 전체 {n_all:,}개 중 시가총액 상위 {MAX_KR:,}개 처리 (MAX_KR)")
-    log(f"  → {len(listing):,}개 종목 (필수 종목 {len(MUST_KR)}개 확인)")
 
     # 공식 종가와 파일의 Close(저녁엔 시간외 가격) 비교 — 참고용 로그
     if px_date is not None:
