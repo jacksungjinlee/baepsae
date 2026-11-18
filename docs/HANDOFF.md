@@ -5,7 +5,37 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-15 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-19 KST — read this first)
+
+**Incident, 2026-11-18/19.** No data published after 11-17 06:40 KST (the site said "2일째 갱신이 멈췄어요").
+- **Cause:** the volunteer copy of the KRX list stopped saving its after-close file after 11-16, and KRX's company list now needs a login, so industries came back empty. The gate rightly blocked every run.
+- **Fixes:** #134 (a test that failed only because of the date) merged 01:25 KST. #137 merged 03:59 KST: Daum's official daily prices, kept only where Yahoo `.KS`/`.KQ` agrees to the won; industries carried forward.
+- **Trial run:** 44368441532 passed the gate on pxDate 11-18.
+- **Still to do:** the first real publish with #137 waits for GitHub's late scheduled runs. If none has published by 08:30 KST, start one by hand. Then check the live site and close issue #136.
+
+**Jack, 2026-11-19 (~01:15 KST), verbatim:**
+- "Emergency first. Restoring live data comes before everything else."
+- "2. The price fix: cross-check Naver's closes against a source that is still working, such as Yahoo's .KS closes, not only the volunteer source's next-day file, which may be gone. Merge as soon as the two-day proof and a trial run pass, then publish right away. Don't wait for Jack."
+  - Naver's daily close turned out not to be the official close (it includes after-hours trades), so #137 uses Daum × Yahoo instead. Jack was told.
+- "3. Permanent two-source rule: official closes always come from two independent sources. If the primary is late or not final, the second one is used automatically after a cross-check. The publish stops only when neither can be confirmed."
+  - Not yet in CLAUDE.md: that waits for Jack's yes.
+- "4. Emergency rule for CLAUDE.md (Jack's yes)": now in CLAUDE.md under "The two disasters" (#138).
+- "5. Product change (Jack's yes): when data is late, still run the portfolio check on the last official close, with its date ("11월 16일 종가로 점검했어요."), for up to 5 trading days. Skip it only after that."
+- **Answers to the 11-19 questions:**
+  - KRX industry carry-forward: yes. Later, new listings take their industry from DART's company records.
+  - The 7 dividend blanks: "no blank without a reason; use "회사 공시에 배당 계산에 필요한 자료가 빠져 있어서 배당수익률은 비워 두었어요.""
+  - 대동기어 and 남성: yes. The small-holder yield: a later PR, "labelled as the 소액주주 rate".
+  - v19.7b lines a–d: yes. For e: "use the 이/가 helper, and add why only 10% (the per-stock cap)". Grey verdict box: yes.
+  - Halt list and watchdog retry: yes.
+  - v19.6f lines: yes. The 환헤지 line "only with the official source for the 2026 deduction cited in the PR". Known limits and the 2026 lock: yes.
+  - v19.6c labels and error: yes. Hint: "주가와 PBR은 넣은 값 이하가 되면, 배당수익률은 넣은 값 이상이 되면 알려 드려요. 비워 두면 그 조건은 쓰지 않아요." (price and PBR alert at or below). The 홈 notice while the close shows: yes. NOT_NUMBERS exact form: yes.
+  - v19.6b data: board date read from the filing's document, DART's own replacement record, cancelled 유상증자 kept, and insider words: all yes.
+- "After the data is live again, merge the six waiting branches in your planned order."
+- **Queue:** after the first publish,
+  1. the six waiting branches: US share classes, the dividend follow-up, v19.7b, v19.6f, v19.6c, v19.6b data;
+  2. the late-data portfolio check (item 5);
+  3. follow-ups: a primary-day two-source FAIL with a coverage floor, the halt list, the watchdog retry, industries for new listings from DART, and the 소액주주 yield;
+  4. after that, unchanged: v19.6b screens, v19.6e, v19.6g → v19.4 → v19.6h. v19.6f must merge by Dec 10.
 
 **Jack, 2026-11-15 (morning): answers** to the 11-15 morning update (verbatim where quoted).
 - 1, 3, 4: yes. (#129: merge with the 종목 순위 / 업종별 등락 side effects; switch on row 29
