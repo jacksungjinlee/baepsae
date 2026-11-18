@@ -640,6 +640,7 @@ KR_FB_COLS = ["Code", "ISU_CD", "Name", "Market", "Dept", "Close", "ChangeCode",
               "Volume", "Amount", "Marcap", "Stocks", "MarketId"]
 KR_FB_CLOSE_TOL = 0.01            # 두 종가 차이 (원) — 부동소수점 끝자리만큼. 같은 호가(원 단위)여야 해요
 KR_FB_UNIVERSE_MIN = 1000         # 종목 목록(이름 · 시장)으로 쓸 파일의 최소 행 수
+KR_FB_LOUD_COVER = 0.98           # 야후에 있는 종목(코넥스 빼고) 중 이보다 적게 받거나 확인하면 크게 남겨요 (!!)
 
 
 def yahoo_kr_symbol(code, market):
@@ -709,9 +710,10 @@ def kr_fb_confirm(day, universe, daum, yahoo, must=GATE_MUST, tol=KR_FB_CLOSE_TO
     """그날(day)의 2차 출처 행: 다음 행 × 야후 종가가 원 단위까지 같은 종목만 (2026-11-19 · 순수 함수).
     universe: 목록 DataFrame (Code · Name · Market …) · daum: {코드: {날짜: 다음 행}} · yahoo: {코드: {날짜: 종가}}.
     반환: (DataFrame — 확인된 종목만 · KR_FB_COLS, 집계 dict):
-      n 목록 종목 · conf 확인 · noDaum 다음에 그날 행 없음 · bad 다음 행을 믿을 수 없음 · noYahoo 야후에 그날 종가 없음 (코넥스 포함) ·
-      diff [(코드, 이름, 다음, 야후)] 두 종가가 다름 · must 확인되지 않은 필수 종목 · shrDiff 목록 파일과 상장주식수가 다른 종목 (그날 파일일 때만 · 로그만)."""
-    rows, st = [], {"n": 0, "conf": 0, "noDaum": [], "bad": [], "noYahoo": [], "diff": [], "shrDiff": []}
+      n 목록 종목 · conf 확인 · mkt 야후에 없는 시장(코넥스 — 묻지 않아요) · noDaum 다음에 그날 행 없음 · bad 다음 행을 믿을 수 없음 ·
+      noYahoo 야후에 그날 종가 없음 · diff [(코드, 이름, 다음, 야후)] 두 종가가 다름 · must 확인되지 않은 필수 종목 ·
+      shrDiff 목록 파일과 다음의 상장주식수가 다른 종목 (로그만)."""
+    rows, st = [], {"n": 0, "conf": 0, "mkt": [], "noDaum": [], "bad": [], "noYahoo": [], "diff": [], "shrDiff": []}
     seen = set()
     for _, u in universe.iterrows():
         code = str(u.get("Code") or "").strip()
@@ -719,6 +721,9 @@ def kr_fb_confirm(day, universe, daum, yahoo, must=GATE_MUST, tol=KR_FB_CLOSE_TO
             continue
         seen.add(code)
         st["n"] += 1
+        if not yahoo_kr_symbol(code, u.get("Market")):
+            st["mkt"].append(code)                  # 코넥스 등 — 야후에 없는 시장이라 묻지도 않아요 (두 출처가 될 수 없어요)
+            continue
         r = (daum.get(code) or {}).get(day)
         if r is None:
             st["noDaum"].append(code)
@@ -727,6 +732,9 @@ def kr_fb_confirm(day, universe, daum, yahoo, must=GATE_MUST, tol=KR_FB_CLOSE_TO
         if row is None:
             st["bad"].append(code)
             continue
+        s0 = _fin(u.get("Stocks"))
+        if s0 and s0 > 0 and int(s0) != row["Stocks"]:
+            st["shrDiff"].append(code)              # 목록 파일과 다음의 상장주식수가 다름 (확인 여부와 상관없이 · 로그만)
         y = _fin((yahoo.get(code) or {}).get(day))
         if y is None or y <= 0:
             st["noYahoo"].append(code)
@@ -734,9 +742,6 @@ def kr_fb_confirm(day, universe, daum, yahoo, must=GATE_MUST, tol=KR_FB_CLOSE_TO
         if abs(y - row["Close"]) > tol:
             st["diff"].append((code, str(u.get("Name") or ""), row["Close"], y))
             continue
-        s0 = _fin(u.get("Stocks"))
-        if s0 and s0 > 0 and int(s0) != row["Stocks"]:
-            st["shrDiff"].append(code)
         rows.append(row)
         st["conf"] += 1
     ok = {r["Code"] for r in rows}
@@ -786,6 +791,8 @@ def _fetch_daum_days(code, n):
             if r.status_code == 200:
                 return r.json()
             last = f"HTTP {r.status_code}"
+            if 400 <= r.status_code < 500 and r.status_code != 429:
+                break                                # 없는 종목 등 — 다시 물어도 같아요
         except Exception as e:
             last = f"{type(e).__name__}: {str(e)[:80]}"
         time.sleep(1 + attempt)
@@ -849,13 +856,14 @@ def fetch_yahoo_kr_closes(code_market, start, end, chunk=KR_FB_YAHOO_CHUNK):
 
 KR_FB_YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=5d&interval=1d"
 KR_FB_META_WORKERS = 6
+KR_META_WINDOW = dt.timedelta(minutes=10)    # regularMarketTime 은 마감 시각 ~ 마감 + 10분 안이어야 해요 (실제: 15:30:01 ~ 15:30:30 · 수능일 16:30)
 _YAHOO_LOCAL = threading.local()
 
 
 def yahoo_chart_close(res, d, close_time):
     """야후 차트 응답(result[0])에서 그날(KST) 종가 (2026-11-19 · 순수 함수 · 관문의 yahoo_day_close 와 같은 규칙, 코드는 따로).
     반환: (값, 'bar' | 'meta') 또는 (None, 까닭). 그날 일봉 종가가 있으면 그것 · 일봉은 있는데 종가가 빈 값이면 meta.regularMarketPrice —
-    그 시각(regularMarketTime · KST)이 그날이고 그날 마감(close_time · 수능일 16:30) 이후일 때만 (그날 안이라 다음 거래일 개장 전이에요).
+    그 시각(regularMarketTime · KST)이 그날 마감(close_time · 수능일 16:30) ~ 마감 + 10분 안일 때만 (마감 동시호가로 정해진 값 · 시간외 값이 아니게).
     야후는 그날 일봉 종가를 몇 시간 동안 비워 둬요 (11-19 02:15: 005930 11-18 종가 null · regularMarketPrice 194,700 @ 11-18 15:30:16)."""
     ts = res.get("timestamp") or []
     q = ((res.get("indicators") or {}).get("quote") or [{}])[0] or {}
@@ -872,8 +880,9 @@ def yahoo_chart_close(res, d, close_time):
     when = dt.datetime.fromtimestamp(t, KST)
     if when.date() != d:
         return None, "meta 시각이 그날이 아님"
-    if when.time() < close_time:
-        return None, "meta 시각이 마감 전"
+    start = dt.datetime.combine(d, close_time, KST)
+    if not start <= when < start + KR_META_WINDOW:
+        return None, f"meta 시각 {when:%H:%M} 이 마감 {close_time:%H:%M} ~ +{KR_META_WINDOW.seconds // 60}분 밖"
     return p, "meta"
 
 
@@ -889,6 +898,8 @@ def _fetch_yahoo_chart(sym):
             if r.status_code == 200:
                 return r.json()["chart"]["result"][0]
             last = f"HTTP {r.status_code}"
+            if 400 <= r.status_code < 500 and r.status_code != 429:
+                break
         except Exception as e:
             last = f"{type(e).__name__}: {str(e)[:80]}"
         time.sleep(1 + attempt)
@@ -940,21 +951,25 @@ def kr_fallback_days(days, universe_of, now, special, fetch_daum=fetch_daum_all,
         notes.append(f"{d} 종목 목록: {how} · {len(uni):,}행")
     if not unis:
         return {}, notes
-    cm = {}
+    cm, n_mkt = {}, set()
     for uni in unis.values():
         for c, m in zip(uni["Code"].astype(str).str.strip(), uni["Market"]):
-            if len(c) == 6:
-                cm.setdefault(c, m)
+            if len(c) != 6:
+                continue
+            if yahoo_kr_symbol(c, m):
+                cm.setdefault(c, m)                 # 두 출처가 될 수 있는 종목만 물어요 (코넥스는 야후에 없어요)
+            else:
+                n_mkt.add(c)
+    notes.append(f"야후에 없는 시장(코넥스 등) {len(n_mkt):,}종목은 2차 출처로 확인할 수 없어 묻지 않아요")
     first = min(unis)
     n_days = min(KR_FB_MAX_DAYS + 15, (now.date() - first).days + 3)    # 달력 날 수 ≥ 거래일 수 — 첫날까지 넉넉히
     t0 = time.time()
     daum, d_fail = fetch_daum(set(cm), n_days)
-    notes.append(f"{'!! ' if d_fail else ''}다음 일별 시세: {len(daum):,} / {len(cm):,}종목 받음 (최근 {n_days}거래일 · {time.time() - t0:.0f}초)"
+    notes.append(f"{'!! ' if len(daum) < KR_FB_LOUD_COVER * len(cm) else ''}다음 일별 시세: {len(daum):,} / {len(cm):,}종목 받음 (최근 {n_days}거래일 · {time.time() - t0:.0f}초)"
                  + (f" · 못 받음 {len(d_fail):,}: {', '.join(d_fail[:10])}" if d_fail else ""))
     t0 = time.time()
     yahoo, y_fail = fetch_yahoo(cm, first - dt.timedelta(days=1), max(unis) + dt.timedelta(days=1))
-    n_ask = sum(1 for c, m in cm.items() if yahoo_kr_symbol(c, m))
-    notes.append(f"{'!! ' if y_fail else ''}야후 .KS/.KQ 종가: {len(yahoo):,} / {n_ask:,}종목 받음 (코넥스 등 야후에 없는 시장 {len(cm) - n_ask:,}종목은 묻지 않아요 · "
+    notes.append(f"{'!! ' if len(yahoo) < KR_FB_LOUD_COVER * len(cm) else ''}야후 .KS/.KQ 종가: {len(yahoo):,} / {len(cm):,}종목 받음 ("
                  f"{time.time() - t0:.0f}초)" + (f" · 못 받은 묶음의 종목 {y_fail:,}" if y_fail else ""))
     # 야후는 가장 최근 날의 일봉 종가를 몇 시간 비워 둬요 → 그 날 종가가 없고 다음 행은 있는 종목만 차트를 다시 읽어요 (마감 뒤 regularMarketPrice)
     last = max(unis)
@@ -962,13 +977,15 @@ def kr_fallback_days(days, universe_of, now, special, fetch_daum=fetch_daum_all,
     t0 = time.time()
     fill = fill_day(yahoo, need, last, krx_close(last, special))
     if fill["need"]:
-        notes.append(f"{'!! ' if fill['fail'] else ''}야후 {last} 일봉 종가가 빈 종목 {fill['need']:,} → 차트를 다시 읽음: 일봉 종가 {fill['bar']:,} · "
+        notes.append(f"{'!! ' if fill['fail'] > (1 - KR_FB_LOUD_COVER) * len(need) else ''}야후 {last} 일봉 종가가 빈 종목 {fill['need']:,} → 차트를 다시 읽음: 일봉 종가 {fill['bar']:,} · "
                      f"마감({krx_close(last, special):%H:%M}) 뒤 regularMarketPrice {fill['meta']:,} · 없음 {fill['none']:,} · 받지 못함 {fill['fail']:,} "
                      f"({time.time() - t0:.0f}초)")
     out = {}
     for d, uni in sorted(unis.items()):
         fr, st = kr_fb_confirm(d, uni, daum, yahoo, must=must)
         st["yMeta"] = sum(1 for c in fr["Code"] if c in fill["metaCodes"]) if d == last else 0
+        st["_uni"] = uni                            # 그날 전체 종목 목록 (주식 수는 가격과 상관없어요 — 우선주 주식 수에 써요)
+        st["_daumShr"] = {c: int(_fin(r[d].get("listedSharesCount")) or 0) for c, r in daum.items() if d in r}
         out[d] = (fr, st)
     return out, notes
 
@@ -978,26 +995,31 @@ def kr_fb_note(d, st, names):
     def ex(codes):
         return ", ".join(f"{c} {names.get(c, '')}".strip() for c in codes[:12]) + (" …" if len(codes) > 12 else "")
     left = len(st["noDaum"]) + len(st["bad"]) + len(st["noYahoo"]) + len(st["diff"])
-    txt = (f"{d} 2차 출처(다음 × 야후 종가 원 단위까지 같음): 확인 {st['conf']:,} / {st['n']:,}종목"
+    base = st["n"] - len(st.get("mkt") or [])
+    low = st["conf"] < KR_FB_LOUD_COVER * base
+    txt = (f"{d} 2차 출처(다음 × 야후 종가 원 단위까지 같음): 확인 {st['conf']:,} / {base:,}종목 (야후에 있는 시장 · 코넥스 등 {len(st.get('mkt') or []):,}종목 빼고)"
            + (f" (그중 야후 값이 마감 뒤 regularMarketPrice {st['yMeta']:,})" if st.get("yMeta") else "") + f" · 빠짐 {left:,} "
-           f"(다음 행 없음 {len(st['noDaum']):,} · 다음 값 못 믿음 {len(st['bad']):,} · 야후 종가 없음(코넥스 포함) {len(st['noYahoo']):,} · "
-           f"두 종가가 다름 {len(st['diff']):,})")
+           f"(다음 행 없음 {len(st['noDaum']):,} · 다음 값 못 믿음 {len(st['bad']):,} · 야후 종가 없음 {len(st['noYahoo']):,} · "
+           f"두 종가가 다름 {len(st['diff']):,})" + (f" — 확인이 {KR_FB_LOUD_COVER:.0%} 아래예요" if low else ""))
     if st["diff"]:
         txt += " — 다름: " + ", ".join(f"{c} {n} 다음 {a:,.0f} · 야후 {b:,.2f}" for c, n, a, b in st["diff"][:12]) + (" …" if len(st["diff"]) > 12 else "")
     if st["noDaum"]:
         txt += f" — 다음 행 없음: {ex(st['noDaum'])}"
+    if st["noYahoo"]:
+        txt += f" — 야후 종가 없음: {ex(st['noYahoo'])}"
     if st["bad"]:
         txt += f" — 다음 값 못 믿음: {ex(st['bad'])}"
     if st["shrDiff"]:
         txt += f" — 목록 파일과 상장주식수가 다른 종목 {len(st['shrDiff']):,} (다음 값을 써요): {ex(st['shrDiff'])}"
     if st["must"]:
         txt += f" — !! 확인되지 않은 필수 종목: {', '.join(st['must'])} (관문이 멈춰요)"
-    return bool(st["must"] or st["diff"] or st["bad"]), txt
+    return bool(st["must"] or st["diff"] or st["bad"] or low), txt
 
 
 def px_src_counts(st):
     """data.json pxSrc.fb — 2차 출처 집계 (관문이 모양을 봐요). (순수 함수)"""
-    return {"n": st["n"], "conf": st["conf"], "noDaum": len(st["noDaum"]), "bad": len(st["bad"]), "noYahoo": len(st["noYahoo"]),
+    return {"n": st["n"], "conf": st["conf"], "mkt": len(st.get("mkt") or []), "noDaum": len(st["noDaum"]), "bad": len(st["bad"]),
+            "noYahoo": len(st["noYahoo"]),
             "diff": len(st["diff"]), "yMeta": int(st.get("yMeta") or 0), "diffEx": [f"{c} {n} {a:.0f}/{b:.2f}" for c, n, a, b in st["diff"][:20]], "must": list(st["must"])}
 
 
@@ -1040,13 +1062,14 @@ def kr_ended_days(px_date, trade_days, today, max_days=KR_FB_MAX_DAYS):
 
 def kr_second_source(px_date, listing, ended, now, special, universe_of, fallback=kr_fallback_days, names=None):
     """1차 출처 뒤에 끝난 거래일이 있으면 2차 출처로 그날들을 만들어요 (2026-11-19 · Jack 규칙 3).
-    반환: (기준일, 목록 DataFrame, {날짜: DataFrame} 기준일 앞 2차 출처 날들 (d1 · val20 · 기준가 연결에 써요), pxSrc dict, 로그 [(크게?, 글)]).
+    반환: (기준일, 목록 DataFrame, {날짜: DataFrame} 기준일 앞 2차 출처 날들 (d1 · val20 · 기준가 연결에 써요), pxSrc dict, 로그 [(크게?, 글)],
+    그날 전체 종목 목록 (2차 출처 날이면 확인 못 한 종목까지 · 주식 수에만 써요 · 1차 출처면 목록 그대로) 과 다음 상장주식수 {코드: 주식 수}).
     기준일은 필수 종목이 모두 확인된 가장 최근 날. 그런 날이 없으면 1차 출처 그대로 (관문의 '끝난 거래일' 줄이 멈춰요)."""
     logs = []
     src = {"v": 1, "px": PX_SRC_LISTING if px_date else None, "date": px_date.isoformat() if px_date else None,
            "days": {}, "fb": None, "must": [], "chk": None, "n": {}}
     if not ended:
-        return px_date, listing, {}, src, logs
+        return px_date, listing, {}, src, logs, (listing, {})
     fb, notes = fallback(ended, universe_of, now, special)
     for n in notes:
         logs.append((n.startswith("!!"), n.removeprefix("!! ")))
@@ -1063,7 +1086,7 @@ def kr_second_source(px_date, listing, ended, now, special, universe_of, fallbac
         if last is not None:
             src["fb"] = px_src_counts(fb[last][1])
             src["fbDate"] = last.isoformat()
-        return px_date, listing, {}, src, logs
+        return px_date, listing, {}, src, logs, (listing, {})
     pick = max(good)
     df, st = fb[pick]
     known = {d: fb[d][0] for d in fb if d < pick and len(fb[d][0])}
@@ -1072,7 +1095,8 @@ def kr_second_source(px_date, listing, ended, now, special, universe_of, fallbac
     skipped = [d for d in ended if d > pick]
     logs.append((bool(skipped), f"기준일: {pick} — 2차 출처 (다음 × 야후 · 확인된 {len(df):,}종목 · 1차 출처 최종본 {px_date})"
                  + (f" · 그 뒤 확인 못 한 끝난 거래일 {', '.join(d.isoformat() for d in skipped)} (관문이 멈춰요)" if skipped else "")))
-    return pick, df.copy(), known, src, logs
+    uni = st.get("_uni")
+    return pick, df.copy(), known, src, logs, (uni if uni is not None else df, st.get("_daumShr") or {})
 
 
 REF_LINK = ("ok", "new", "unknown", "break")   # KRX 기준가 연결 상태 — 뒤로 갈수록 나빠요 (모을 때 가장 나쁜 것)
@@ -4170,13 +4194,17 @@ def icr_inputs(fin):
     return None, None, None, None, ("op" if not any_op else "neg" if neg else "op" if has_int else "ie")
 
 
-def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None, pref_caps=None):
+def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None, pref_caps=None, pref_missing=None):
     """기업분석 탭이 쓰는 corp.json 을 만듭니다. (순수 함수 — 테스트 가능)
     v19.1b: extra = apply_div_basis 의 {코드: 칸} (현금배당금총액 cash3 · 회사가 낸 주당순이익 eps3r · 같은 기준 순이익 epsNi3 · epsB).
     flRan = 실제로 돌린 재무 경고 검사(입력이 다 있었던 것), flNa = 금융업이라 해당 없는 검사. 앱은 네 검사(cr 유동비율 ·
     icr 이자보상배율 · l3 3년 연속 적자 · imp 자본잠식)가 모두 flRan 이나 flNa 에 있을 때만 '재무 경고 신호는 없어요'라고 말할 수 있어요.
-    v19.1f: pref_caps = kr_pref_caps (목록 파일 전체의 우선주 시가총액, 조원) — 없으면 kr_stocks 안의 우선주로."""
+    v19.1f: pref_caps = kr_pref_caps (목록 파일 전체의 우선주 시가총액, 조원) — 없으면 kr_stocks 안의 우선주로.
+    2026-11-19: pref_missing = 상장 우선주의 공식 종가를 두 출처로 확인하지 못한 회사 (코드 앞 5자리) — 회사 시가총액을 알 수 없어 EV · P/CF 를
+    비우고 evNo "prefPx" 를 달아요 (COMPANY_CAP_WITH_PREF 일 때)."""
     extra = extra or {}
+    pref_missing = set(pref_missing or ())
+    ev_blank = []                                   # 2026-11-19: 우선주 종가를 확인하지 못해 EV · P/CF 를 비운 회사
     comps = []
     hold_log, hold_unknown, hold_bad = [], [], []   # v19.1d: 금융 아닌 지주 (코드, 이름, 유동비율, 이자보상배율) · 그룹 없는 지주 · 금융 지주인데 금융이 아님
     why_n = collections.Counter()                   # v19.1d: 이자보상배율을 못 돌린 이유별 기업 수 (flWhy)
@@ -4303,7 +4331,11 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None, pref_caps=Non
         # EV 계열·현금흐름 멀티플 (금융업은 EV 지표가 무의미하므로 제외)
         op0 = eff["op0"]
         ebitda = (op0 + eff["dep"]) if (op0 is not None and eff["dep"] is not None) else None
-        if s.get("cap") and fin:
+        pref_gap = COMPANY_CAP_WITH_PREF and not is_preferred(s["t"]) and s["t"][:5] in pref_missing
+        if pref_gap and s.get("cap") and fin:
+            row["evNo"] = "prefPx"                  # 회사 시가총액에 더할 우선주 종가를 두 출처로 확인하지 못했어요 (2차 출처 날)
+            ev_blank.append(f"{s['t']} {s.get('nk', '')}")
+        if s.get("cap") and fin and not pref_gap:
             co_cap = s["cap"] + (pref_cap[s["t"][:5]] if COMPANY_CAP_WITH_PREF and not is_preferred(s["t"]) else 0.0)   # 조원
             # v19.1f (리뷰 2026-11-08): EBITDA·매출은 연결 100% 라 EV 에 비지배지분(자본총계 − 지배주주 자본)도 더해요. 같은 시점의
             # 두 값이 다 있을 때만 (최신 분기 → 연간). 별도 재무제표는 비지배지분이 없어요. 연결인데 지배주주 자본이 없으면 0 으로 두고 로그
@@ -4394,6 +4426,9 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None, pref_caps=Non
         f"{src_n['ttm']:,} · 연간 {src_n['fy']:,}, 그중 TTM 이자가 없어 연간 영업이익·이자끼리 {src_n['fyBack']:,}) · 경고 "
         f"{sum(1 for c in comps if 'icr' in (c.get('fl') or {})):,}곳 (그중 영업손실 "
         f"{sum(1 for c in comps if (c.get('fl') or {}).get('icr', 1) < 0):,})")
+    if ev_blank:
+        log(f"  !! 상장 우선주의 종가를 두 출처로 확인하지 못해 회사 시가총액을 알 수 없는 회사 {len(ev_blank)}곳 — EV · P/CF 를 비웠어요 (evNo prefPx): "
+            + ", ".join(ev_blank[:15]) + (" …" if len(ev_blank) > 15 else ""))
     n_pc = sum(1 for c in comps if not is_preferred(c["t"]) and pref_cap.get(c["t"][:5]))
     log(f"· EV 회사 시가총액: 상장 우선주를 더한 회사 {n_pc:,}곳 ({'켬' if COMPANY_CAP_WITH_PREF else '끔'} · COMPANY_CAP_WITH_PREF · "
         f"우선주 목록 {'파일 전체' if pref_caps is not None else 'data.json 안'}) · 비지배지분 더하기 {'켬' if EV_WITH_NCI else '끔'}"
@@ -4508,7 +4543,7 @@ def fetch_korea(start, today, rf, prev=None):
     ended = kr_ended_days(px_date, ks_all.index, today)
     names0 = dict(zip(listing["Code"].astype(str).str.strip(), listing["Name"].astype(str))) if listing is not None and "Name" in listing.columns else {}
     px0 = px_date
-    px_date, listing, fb_known, px_src, fb_logs = kr_second_source(
+    px_date, listing, fb_known, px_src, fb_logs, (full_list, daum_shr) = kr_second_source(
         px_date, listing, ended, dt.datetime.now(KST), special,
         lambda d: kr_fb_universe(d, _fetch_listing_csv, fallback=listing), names=names0)
     if ended:
@@ -4532,9 +4567,25 @@ def fetch_korea(start, today, rf, prev=None):
         if c not in listing.columns:
             listing[c] = np.nan
     listing["Name"] = listing["Name"].fillna(listing["Code"])
-    pref_shares = kr_pref_shares(listing)     # v19.1b: 상위 2,500개로 자르기 전 — 작은 우선주도 회사의 주식 수에 들어가야 해요
-    pref_caps = kr_pref_caps(listing)         # v19.1f: 같은 목록의 우선주 시가총액 (EV 의 회사 시가총액)
-    n_pref = sum(1 for c in listing["Code"] if is_preferred(str(c)))
+    # 2026-11-19 (리뷰 B1): 2차 출처 날은 확인된 종목만 목록에 있어요. 우선주 주식 수는 가격과 상관없으니 그날 전체 목록에서 (확인 못 한 우선주도 ·
+    # 다음 상장주식수와 맞춰 봐요) — EPS · BPS 주식 수와 상장 안 된 우선주 판단이 빠지지 않게. 우선주 시가총액은 확인된 종가로만 (kr_pref_caps(listing)),
+    # 확인 못 한 우선주가 있는 회사는 회사 시가총액을 몰라 EV · P/CF 를 비워요 (build_corp · evNo prefPx).
+    pref_list = full_list if px_src["px"] == PX_SRC_FB and full_list is not None else listing
+    pref_shares = kr_pref_shares(pref_list)   # v19.1b: 상위 2,500개로 자르기 전 — 작은 우선주도 회사의 주식 수에 들어가야 해요
+    pref_caps = kr_pref_caps(listing)         # v19.1f: 같은 목록의 우선주 시가총액 (EV 의 회사 시가총액) — 확인된 종가로만
+    pref_cap_missing = set()
+    if pref_list is not listing:
+        ok_codes = set(listing["Code"].astype(str).str.strip())
+        pcodes = [str(c).strip() for c in pref_list["Code"] if is_preferred(str(c).strip())]
+        unconf = sorted(c for c in pcodes if c not in ok_codes)
+        pref_cap_missing = {c[:5] for c in unconf}
+        shr_full = _shares_map(pref_list)
+        sdiff = sorted(c for c in pcodes if daum_shr.get(c) and shr_full.get(c) and int(shr_full[c]) != daum_shr[c])
+        nm = dict(zip(pref_list["Code"].astype(str).str.strip(), pref_list["Name"].astype(str)))
+        log(f"{'  !! ' if unconf or sdiff else '· '}우선주 (2차 출처 날): 주식 수는 그날 전체 목록 {len(pcodes):,}종목에서 · 종가를 확인 못 한 우선주 {len(unconf):,}"
+            + (f" ({', '.join(f'{c} {nm.get(c, '')}' for c in unconf[:12])}) → 그 회사 {len(pref_cap_missing):,}곳은 EV · P/CF 를 비워요" if unconf else "")
+            + f" · 목록 파일과 다음의 주식 수가 다른 우선주 {len(sdiff):,}" + (f": {', '.join(sdiff[:12])}" if sdiff else ""))
+    n_pref = sum(1 for c in pref_list["Code"] if is_preferred(str(c)))
     n_pref_ok = sum(len(v) for v in pref_shares.values())
     log(f"{'  !! ' if n_pref_ok < n_pref else '· '}우선주 상장 주식 수 (배당 분할 확인용): {n_pref_ok:,} / {n_pref:,}종목 · "
         f"{len(pref_shares):,}개 회사" + (" — 주식 수가 빈 우선주는 그 회사의 배당을 확인하지 못할 수 있어요" if n_pref_ok < n_pref else ""))
@@ -4906,7 +4957,7 @@ def fetch_korea(start, today, rf, prev=None):
     meta = {"pxDate": px_date.isoformat() if px_date else None,
             "ksDate": ks_date.isoformat() if ks_date else None, "listSrc": list_src, "_index": kospi, "_prod": prod_map,
             "_prefShares": pref_shares, "_prefCaps": pref_caps, "krSeries": krs, "d1Blank": d1_blank}
-    meta.update({"pxSrc": px_src, "indSrc": ind_src})      # 2026-11-19: 공식 종가 출처 · 업종 글자 출처 (data.json · 관문 줄)
+    meta.update({"pxSrc": px_src, "indSrc": ind_src, "_prefCapMissing": sorted(pref_cap_missing)})      # 2026-11-19: 공식 종가 출처 · 업종 글자 출처 (data.json · 관문 줄)
     return out, bench, mkt, meta
 
 
@@ -9772,7 +9823,8 @@ def main():
         f"미국 {umeta['usPxDate']} · 환율 {fx_last:,.1f}")
 
     kr_mkt.update({"fx": round(fx_last, 1), "rf": round(rf * 100, 2)})
-    corp = build_corp(kr, fin_map, today.isoformat(), kr_mkt, extra=corp_extra, pref_caps=kmeta.get("_prefCaps"))
+    corp = build_corp(kr, fin_map, today.isoformat(), kr_mkt, extra=corp_extra, pref_caps=kmeta.get("_prefCaps"),
+                      pref_missing=kmeta.get("_prefCapMissing"))
     corp.update({"pxDate": kmeta["pxDate"], "publishedAt": published_at, "epsBasis": eps_basis})
     write_json(OUT_CORP, corp)
     dcf_n = sum(1 for c in corp["companies"] if c["dcfReady"])

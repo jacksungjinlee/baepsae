@@ -9,6 +9,7 @@
   naver_005930.xml   네이버 일봉 (종가가 공식 종가가 아니라는 증거)
 """
 import datetime as dt
+import inspect
 import json
 import os
 import re
@@ -68,7 +69,7 @@ def test_rebuild_matches_the_real_final_file(d, pre, fin):
         assert not bad, (r["Code"], bad)
         assert r["Close"] == round(g["Marcap"] / g["Stocks"])        # 공식 종가 = 시가총액 ÷ 상장주식수
     # 빠진 종목과 까닭: 코넥스는 두 출처 모두 없음 · STX 는 야후 값이 엉뚱 (거래정지 종목의 수정 값)
-    assert KONEX in st["noDaum"]
+    assert KONEX in st["mkt"] and KONEX not in st["noDaum"]                    # 코넥스는 묻지 않아요 (야후에 없는 시장)
     assert "011810" in {c for c, *_ in st["diff"]}
 
 
@@ -135,9 +136,9 @@ def test_naver_close_is_not_the_official_close():
 def test_one_source_only_is_not_confirmed():
     """11-18: 야후 종가가 아직 빈 값 → 다음 하나뿐이라 한 종목도 확인되지 않아요 (추측하지 않아요)."""
     fr, st = F.kr_fb_confirm(D18, listing("2026-11-18_1452"), daum(), yahoo())
-    assert len(fr) == 0 and set(st["must"]) == set(V.MUST) and len(st["noYahoo"]) >= 11
+    assert len(fr) == 0 and set(st["must"]) == set(V.MUST) and len(st["noYahoo"]) >= 11 and KONEX not in st["noYahoo"]
     fr, st = F.kr_fb_confirm(D16, listing("2026-11-16_0545"), {}, yahoo())
-    assert len(fr) == 0 and len(st["noDaum"]) == 13
+    assert len(fr) == 0 and len(st["noDaum"]) == 12 and st["mkt"] == [KONEX]
 
 
 def test_daum_row_rules():
@@ -179,18 +180,24 @@ def test_second_source_picks_the_latest_day_with_every_must_have():
     f18 = F.kr_fb_confirm(D18, listing("2026-11-18_1452"), daum(), yahoo())
     prim = listing("2026-11-16_2211")
     now = dt.datetime(2026, 11, 19, 4, 0, tzinfo=F.KST)
-    px, lst, known, src, logs = F.kr_second_source(D16, prim, [D17, D18], now, {}, None, fallback=fake_fallback({D17: f17, D18: f18}))
-    assert px == D17 and len(lst) == len(f17[0]) and known == {}
+    px, lst, known, src, logs, (full, dshr) = F.kr_second_source(D16, prim, [D17, D18], now, {}, None,
+                                                                 fallback=fake_fallback({D17: f17, D18: f18}))
+    assert px == D17 and len(lst) == len(f17[0]) and known == {} and len(full) == len(f17[0])
     assert src["px"] == V.PX_SRC_FB and src["date"] == "2026-11-17" and src["must"] == [] and src["fb"]["conf"] == len(f17[0])
     assert src["days"] == {"2026-11-17": V.PX_SRC_FB}
     assert any(loud and "2026-11-18" in t and "관문이 멈춰요" in t for loud, t in logs)     # 11-18 은 확인 못 함 → 크게
     # 필수 종목을 모두 확인한 날이 없으면 1차 출처 그대로 (관문이 멈춰요)
-    px, lst, known, src, logs = F.kr_second_source(D16, prim, [D18], now, {}, None, fallback=fake_fallback({D18: f18}))
+    px, lst, known, src, logs, _ = F.kr_second_source(D16, prim, [D18], now, {}, None, fallback=fake_fallback({D18: f18}))
     assert px == D16 and lst is prim and src["px"] == V.PX_SRC_LISTING and src["fb"]["must"]
     assert any(loud and "필수 종목을 모두 확인한 날이 없어요" in t for loud, t in logs)
     # 끝난 거래일이 없으면 아무것도 받지 않아요
-    px, lst, known, src, logs = F.kr_second_source(D16, prim, [], now, {}, None, fallback=None)
-    assert px == D16 and src["px"] == V.PX_SRC_LISTING and logs == []
+    px, lst, known, src, logs, (full, _) = F.kr_second_source(D16, prim, [], now, {}, None, fallback=None)
+    assert px == D16 and src["px"] == V.PX_SRC_LISTING and logs == [] and full is prim
+    # 필수 종목이 하나만 빠져도 그날은 기준일이 될 수 없어요 (리뷰 F5)
+    f17b = F.kr_fb_confirm(D17, listing("2026-11-17_1529"), daum(), {c: v for c, v in yahoo().items() if c != "012450"})
+    assert f17b[1]["must"] == ["012450"]
+    px, *_ = F.kr_second_source(D16, prim, [D17], now, {}, None, fallback=fake_fallback({D17: f17b}))
+    assert px == D16
 
 
 def test_earlier_second_source_days_feed_d1_as_final():
@@ -320,10 +327,15 @@ def test_gate_uses_the_cache_final_file_when_it_exists():
 
 def test_gate_live_mode_accepts_the_second_source_day():
     cur, _, _, alt = fb_pair()
+    alt["mode"] = "live"
     rep = check(cur, None, None, alt, mode="live")
     names = {r[0]: r for r in rep.rows}
     assert names["pxDate 최종본 여부"][3] == "PASS" and names["한국 가격 = 공식 종가"][3] == "PASS"
     assert "최종본 날짜 계산" in failed(check(cur, None, None, None, mode="live"))
+    assert "최종본 날짜 계산" in failed(check(cur, None, None, dict(alt, mode="publish"), mode="live"))   # 방식이 다르면 쓰지 않아요
+    # 캐시에 pxDate 최종본이 있으면 배포 · 감시도 그것과 비교해요 (리뷰 V11)
+    fin = {"date": dt.date(2026, 10, 30), "closes": {c: v + 1 for c, v in alt["closes"].items()}, "how": "캐시 최종본"}
+    assert "한국 가격 = 공식 종가" in failed(check(cur, None, fin, alt, mode="live"))
 
 
 def test_http_px_alt_never_raises():
@@ -331,13 +343,21 @@ def test_http_px_alt_never_raises():
 
     def boom(sym, d, close_time=None):
         raise ConnectionError("no network")
-    alt = V.http_px_alt(cur["data"], dt.date(2026, 10, 30), fetch=boom, sleep=lambda s: None)
+    d30, k = dt.date(2026, 10, 30), {"sleep": lambda s: None}
+    daum_ok = lambda c, d: (1000.0, "daum")                                     # noqa: E731
+    alt = V.http_px_alt(cur["data"], d30, fetch=boom, fetch_daum=daum_ok, **k)
     assert alt["got"] == 0 and set(alt["mustMissing"]) == set(V.MUST) and alt["err"]
-    ok = V.http_px_alt(cur["data"], dt.date(2026, 10, 30), fetch=lambda s, d, close_time=None: (1000.0, "meta"), sleep=lambda s: None)
+    alt = V.http_px_alt(cur["data"], d30, fetch=lambda s, d, close_time=None: (1000.0, "bar"), fetch_daum=boom, **k)
+    assert alt["got"] == 0 and set(alt["mustMissing"]) == set(V.MUST)        # 다음을 받지 못하면 확인 못 함 (야후만으로는 안 돼요)
+    ok = V.http_px_alt(cur["data"], d30, fetch=lambda s, d, close_time=None: (1000.0, "meta"), fetch_daum=daum_ok, **k)
     assert ok["got"] == ok["asked"] and not ok["mustMissing"] and ok["asked"] == len(V.MUST) + V.PX_CHECK_SAMPLE and ok["meta"] == ok["got"]
+    dis = V.http_px_alt(cur["data"], d30, fetch=lambda s, d, close_time=None: (1001.0, "bar"), fetch_daum=daum_ok, **k)
+    assert dis["got"] == 0 and len(dis["disagree"]) == dis["asked"] and all(v == 1000.5 for v in dis["closes"].values())
+    live = V.http_px_alt(cur["data"], d30, fetch=boom, fetch_daum=daum_ok, mode="live", **k)
+    assert live["got"] == live["asked"] and live["mode"] == "live"           # 배포 · 감시: 다음 + 발행 기록 (야후 일봉이 비어도)
     seen = []
-    V.http_px_alt(cur["data"], CSAT, fetch=lambda s, d, close_time=None: (seen.append(close_time), (None, "x"))[1], sleep=lambda s: None,
-                  special=V.load_special_sessions())
+    V.http_px_alt(cur["data"], CSAT, fetch=lambda s, d, close_time=None: (seen.append(close_time), (None, "x"))[1], fetch_daum=daum_ok,
+                  special=V.load_special_sessions(), **k)
     assert set(seen) == {dt.time(16, 30)}                                  # 수능일은 16:30 마감 뒤여야 해요
 
 
@@ -379,6 +399,12 @@ def test_empty_daily_close_uses_the_price_after_the_close(fn):
     nxt = dict(r, meta=dict(r["meta"], regularMarketTime=at_kst(CSAT, 9, 5)))
     assert fn(nxt, D18, dt.time(15, 30))[0] is None                           # 다음 거래일의 값 → 확인 못 함
     assert fn(r, D18, dt.time(16, 30))[0] is None                             # 수능일 같은 늦은 마감이면 15:30 값은 장중
+    late = dict(r, meta=dict(r["meta"], regularMarketTime=at_kst(D18, 16, 5)))
+    assert fn(late, D18, dt.time(15, 30))[0] is None                          # 마감 + 10분 뒤 시각 (시간외일 수 있어요) → 확인 못 함
+    edge = dict(r, meta=dict(r["meta"], regularMarketTime=at_kst(D18, 15, 39, 59)))
+    assert fn(edge, D18, dt.time(15, 30)) == (194700.0, "meta")
+    nobar = dict(r, timestamp=r["timestamp"][:-1], indicators={"quote": [{"close": r["indicators"]["quote"][0]["close"][:-1]}]})
+    assert fn(nobar, D18, dt.time(15, 30))[0] is None                         # 그날 일봉이 없으면 meta 가 그날이어도 안 돼요 (리뷰 F24 · V8)
     assert fn(r, CSAT, dt.time(16, 30))[0] is None                            # 그날 일봉이 없으면 확인 못 함
     assert fn(dict(r, meta={}), D18, dt.time(15, 30))[0] is None
 
@@ -433,12 +459,12 @@ def test_pipeline_never_treats_an_unknown_commit_as_final(monkeypatch, capsys):
     assert d == D16 and "커밋 시각 확인 불가 → 최종본으로 보지 않아요" in out             # 예전 규칙이면 11-17 장중 파일 (190,200)
     # 그 뒤 끝난 거래일은 2차 출처가 정해요 (다음 × 야후)
     f17 = F.kr_fb_confirm(D17, listing("2026-11-17_1529"), daum(), yahoo())
-    px, lst, _, src, _ = F.kr_second_source(d, df, [D17, D18], dt.datetime(2026, 11, 19, 4, 0, tzinfo=F.KST), {}, None,
-                                           fallback=fake_fallback({D17: f17}))
+    px, lst, _, src, _, _ = F.kr_second_source(d, df, [D17, D18], dt.datetime(2026, 11, 19, 4, 0, tzinfo=F.KST), {}, None,
+                                              fallback=fake_fallback({D17: f17}))
     assert px == D17 and src["px"] == V.PX_SRC_FB and lst.set_index("Code").loc["005930", "Close"] == 190300
     # 2차 출처도 없으면 1차 출처 그대로 → 관문의 '끝난 거래일' 줄이 발행을 막아요
-    px, lst, _, src, logs = F.kr_second_source(d, df, [D17, D18], dt.datetime(2026, 11, 19, 4, 0, tzinfo=F.KST), {}, None,
-                                              fallback=fake_fallback({}))
+    px, lst, _, src, logs, _ = F.kr_second_source(d, df, [D17, D18], dt.datetime(2026, 11, 19, 4, 0, tzinfo=F.KST), {}, None,
+                                                 fallback=fake_fallback({}))
     assert px == D16 and src["px"] == V.PX_SRC_LISTING and any(loud for loud, _ in logs)
     # d1 · val20 의 앞 날도: 커밋 시각을 모르면 최종본이 아니에요
     ss, notes, prev_final = F.kr_recent_sessions(D18, lambda d: files.get(d), lambda d: commits.get(d), n=3, special={})
@@ -486,7 +512,7 @@ def test_gate_main_fetches_yahoo_only_for_a_second_source_day(monkeypatch, tmp_p
     monkeypatch.setattr(V, "latest_final", lambda *a, **k: (old["date"], old["closes"], "시험"))
     monkeypatch.setattr(V, "http_kospi_sessions", lambda: SESSIONS)
     monkeypatch.setattr(V, "http_hilo", lambda *a, **k: {})
-    monkeypatch.setattr(V, "http_px_alt", lambda data, px, special=None: (asked.append(px), alt)[1])
+    monkeypatch.setattr(V, "http_px_alt", lambda data, px, special=None, mode="publish": (asked.append(px), alt)[1])
     monkeypatch.setattr(V, "run_checks", lambda *a, **k: (seen.append(k.get("alt")), V.Report())[1])
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
@@ -561,3 +587,85 @@ def test_shared_constants_come_from_the_gate_file():
     assert F.yahoo_kr_symbol("005930", "KOSPI") == "005930.KS" and F.yahoo_kr_symbol("247540", "KOSDAQ GLOBAL") == "247540.KQ"
     assert F.yahoo_kr_symbol(KONEX, "KONEX") is None
     assert V.px_check_sample([f"{i:06d}" for i in range(1000)], 4) == ["000000", "000250", "000500", "000750"]
+
+
+# ── 7. 리뷰 (2026-11-19) ─────────────────────────────────────────
+def test_gate_second_source_path_needs_a_finished_day():
+    """리뷰: 장중(11:00) 에 pxDate = 오늘이면 2차 출처 기준을 쓰지 않아요 · 어제여도 마감 + 30분 전 (수능일 17:00) 이면 안 돼요."""
+    cur, prev, old, alt = fb_pair()
+    data = cur["data"]
+    px = dt.date(2026, 10, 30)
+    ok, _ = V.px_alt_confirms(data, alt, px, old, today=dt.date(2026, 10, 31), now=NOW, special={})
+    assert ok
+    ok, why = V.px_alt_confirms(data, alt, px, old, today=px, now=dt.datetime(2026, 10, 30, 11, 0, tzinfo=V.KST), special={})
+    assert not ok and "끝나지 않은 날" in why
+    sp = {px: (dt.time(10, 0), dt.time(16, 30), "수능")}
+    ok, why = V.px_alt_confirms(data, alt, px, old, today=dt.date(2026, 10, 31), now=dt.datetime(2026, 10, 30, 16, 59, tzinfo=V.KST), special=sp)
+    assert not ok and "마감 + 30분" in why
+    ok, _ = V.px_alt_confirms(data, alt, px, old, today=None, now=None, special={})
+    assert not ok
+
+
+def test_gate_px_src_date_must_be_the_price_date():
+    cur, prev, final = good_pair()
+    cur["data"]["pxSrc"] = {"v": 1, "px": V.PX_SRC_LISTING, "date": "2026-10-29", "must": [], "n": {"listing": 2400}, "chk": None}
+    assert "국내 가격 출처 (pxSrc)" in failed(check(cur, prev, final))
+
+
+def test_gate_never_asks_yahoo_for_konex():
+    cur, _, _, _ = fb_pair()
+    kx = {"t": KONEX, "cls": "kr", "price": 1176000.0, "dk": "기타 · KONEX 상장 · 시가총액 1.2조원"}
+    assert V.px_alt_symbol(kx) is None
+    cur["data"]["stocks"] = [dict(kx, t=f"49{i:04d}") for i in range(300)] + cur["data"]["stocks"]
+    pick = V.px_alt_pick(cur["data"])
+    assert not any(t.startswith("49") and len(t) == 6 and t[2:].isdigit() and int(t[2:]) < 300 for t in pick)
+    assert all(not sym.endswith(".KQ") or "KOSDAQ" for sym in pick.values())
+
+
+def test_meta_fill_uses_the_csat_close():
+    """리뷰 F21: 수능일(11-19) 마지막 날은 16:30 마감으로 meta 를 봐요."""
+    uni = listing("2026-11-18_1452")
+    seen = []
+
+    def fill(y, cm, d, close_time):
+        seen.append((d, close_time))
+        return {"need": 0, "bar": 0, "meta": 0, "none": 0, "fail": 0, "metaCodes": set()}
+    F.kr_fallback_days([CSAT], lambda d: (uni, "시험"), dt.datetime(2026, 11, 20, 4, 0, tzinfo=F.KST), F.load_krx_special_sessions(),
+                       fetch_daum=lambda codes, n: ({}, []), fetch_yahoo=lambda cm, a, b: ({}, 0), fill_day=fill)
+    assert seen == [(CSAT, dt.time(16, 30))]
+
+
+def test_konex_is_not_asked_and_low_coverage_is_loud():
+    uni = listing("2026-11-16_0545")
+    asked = []
+
+    def fetch_daum(codes, n):
+        asked.extend(codes)
+        return daum(), []
+    out, notes = F.kr_fallback_days([D16], lambda d: (uni, "시험"), dt.datetime(2026, 11, 19, 4, 0, tzinfo=F.KST), {},
+                                    fetch_daum=fetch_daum, fetch_yahoo=lambda cm, a, b: (yahoo(), 0),
+                                    fill_day=lambda *a: {"need": 0, "bar": 0, "meta": 0, "none": 0, "fail": 0, "metaCodes": set()})
+    assert KONEX not in asked and len(asked) == 12
+    loud, txt = F.kr_fb_note(D16, out[D16][1], {})
+    assert loud and "98%" in txt                                              # 12 종목 중 10 확인 (STX 다름 · 하나 더) — 98% 아래
+
+
+def test_unconfirmed_preferred_keeps_the_share_count_and_blanks_ev():
+    """리뷰 B1: 2차 출처 날 우선주(005935) 종가를 확인하지 못해도 삼성전자의 주식 수는 그대로 (그날 전체 목록) · EV · P/CF 는 비우고 까닭을 달아요."""
+    full = pd.DataFrame([{"Code": "005930", "Name": "삼성전자", "Market": "KOSPI", "Stocks": 5846278608, "Marcap": 190300 * 5846278608},
+                         {"Code": "005935", "Name": "삼성전자우", "Market": "KOSPI", "Stocks": 802371203, "Marcap": None}])
+    confirmed = full[full["Code"] == "005930"]
+    s = {"t": "005930", "shr": 5846278608}
+    assert F.kr_pref_shares(confirmed) == {}                                    # 확인된 종목만 쓰면 우선주가 빠져요 (예전 버그)
+    full_shares = F.kr_pref_shares(full)
+    assert full_shares == {"00593": [802371203.0]}
+    assert F.per_share_count(s, full_shares) == 5846278608 + 802371203
+    from test_pipeline import kr_trio
+    kr, fin = kr_trio()
+    plain = {c["t"]: c for c in F.build_corp(kr, fin, "2026-11-02")["companies"]}
+    assert plain["005930"].get("evR") is not None and "evNo" not in plain["005930"]
+    blank = {c["t"]: c for c in F.build_corp(kr, fin, "2026-11-02", pref_missing={"00593"})["companies"]}
+    assert blank["005930"]["evNo"] == "prefPx" and not {"evE", "evR", "pcf"} & set(blank["005930"])
+    src = inspect.getsource(F.fetch_korea)
+    assert "pref_shares = kr_pref_shares(pref_list)" in src and "pref_caps = kr_pref_caps(listing)" in src
+    assert 'pref_missing=kmeta.get("_prefCapMissing")' in inspect.getsource(F.main)

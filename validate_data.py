@@ -95,6 +95,8 @@ PX_SRCS = (PX_SRC_LISTING, PX_SRC_FB)
 PX_YAHOO_SUFFIX = {"KOSPI": ".KS", "KOSDAQ": ".KQ", "KOSDAQ GLOBAL": ".KQ"}   # 코넥스는 야후에 없어요
 PX_CHECK_SAMPLE = 200                     # 관문(2차 출처 날) · 파이프라인(1차 출처 날)이 야후와 맞춰 보는 표본 수 (필수 종목은 따로 모두)
 PX_YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=1mo&interval=1d"
+PX_DAUM_DAYS = "https://finance.daum.net/api/quote/A{code}/days?symbolCode=A{code}&page=1&perPage=10&pagination=true"
+PX_META_WINDOW = dt.timedelta(minutes=10)   # 야후 regularMarketTime 은 그날 마감 ~ 마감 + 10분 안이어야 해요 (실제 15:30:01 ~ 15:30:30 · 수능일 16:30)
 PX_ALT_MIN_SHARE = 0.90                   # 관문이 야후에서 받은 표본 종가가 이 비율보다 적으면 '확인 못 함' (실패) — 받지 못한 채 통과시키지 않아요
 PX_ALT_TOL = 0.01                         # 두 종가 차이 (원) — 부동소수점 끝자리만큼. 같은 호가여야 해요
 IND_CARRY_WARN_DAYS = 14                  # 지난 발행본에서 이어 쓴 국내 업종 글자가 이보다 오래되면 경고 (fetch_data 와 같은 값)
@@ -824,8 +826,8 @@ def px_alt_pick(data):
 def yahoo_day_close(res, d, close_time=NORMAL_CLOSE):
     """야후 차트 응답(result[0])에서 그날(KST) 종가 (2026-11-19 · 순수 함수). 반환: (값, 'bar' | 'meta') 또는 (None, 까닭).
     그날 일봉의 종가가 있으면 그것. 일봉은 있는데 종가가 빈 값이면 (야후는 그날 일봉 종가를 몇 시간 동안 비워 둬요 — 11-19 02:15 에 005930 11-18
-    종가 null) meta.regularMarketPrice 를 써요 — 그 시각(regularMarketTime · KST)이 그날이고 그날 마감(close_time · 수능일 16:30) 이후일 때만
-    (그날 안이라 다음 거래일 개장 전이에요). 마감 전이거나 다른 날의 시각이면 확인 못 함."""
+    종가 null) meta.regularMarketPrice 를 써요 — 그 시각(regularMarketTime · KST)이 그날 마감(close_time · 수능일 16:30) ~ 마감 + 10분 안일 때만
+    (마감 동시호가로 정해진 값). 마감 전 · 그 뒤 · 다른 날의 시각이면 확인 못 함."""
     ts = res.get("timestamp") or []
     q = ((res.get("indicators") or {}).get("quote") or [{}])[0] or {}
     closes = q.get("close") or []
@@ -842,8 +844,9 @@ def yahoo_day_close(res, d, close_time=NORMAL_CLOSE):
     when = dt.datetime.fromtimestamp(t, KST)
     if when.date() != d:
         return None, f"종가 빈 값 · meta 시각 {when:%m-%d %H:%M} 이 그날이 아님"
-    if when.time() < close_time:
-        return None, f"종가 빈 값 · meta 시각 {when:%H:%M} 이 마감 {close_time:%H:%M} 전"
+    start = dt.datetime.combine(d, close_time, KST)
+    if not start <= when < start + PX_META_WINDOW:
+        return None, f"종가 빈 값 · meta 시각 {when:%H:%M} 이 마감 {close_time:%H:%M} ~ +10분 밖"
     return float(p), "meta"
 
 
@@ -855,48 +858,90 @@ def _yahoo_day_close(sym, d, get=None, close_time=NORMAL_CLOSE):
     return yahoo_day_close(r.json()["chart"]["result"][0], d, close_time)
 
 
-def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, special=None):
-    """관문이 따로 받은 야후 공식 종가: {"date", "closes" {코드: 종가}, "asked", "got", "mustMissing", "err"}. 예외를 내지 않아요 —
-    못 받은 종목은 closes 에 없고, 그만큼 '확인 못 함' 이 돼요 (run_checks 가 실패시켜요)."""
+def _daum_day_close(code, d, get=None):
+    """다음 일별 시세에서 그날 종가 (tradePrice). 반환: (값, 'daum') 또는 (None, 까닭) · 받지 못하면 예외 (4xx 는 다시 묻지 않게 까닭으로)."""
+    get = get or (lambda u: requests.get(u, timeout=20, headers={"User-Agent": "Mozilla/5.0", "Referer": f"https://finance.daum.net/quotes/A{code}"}))
+    r = get(PX_DAUM_DAYS.format(code=code))
+    if 400 <= r.status_code < 500 and r.status_code != 429:
+        return None, f"HTTP {r.status_code}"
+    r.raise_for_status()
+    rows = [x for x in (r.json().get("data") or []) if str(x.get("date") or "")[:10] == d.isoformat()]
+    if len(rows) != 1:
+        return None, f"그날 행 {len(rows)}개"
+    v = rows[0].get("tradePrice")
+    return (float(v), "daum") if isinstance(v, (int, float)) and math.isfinite(v) and v > 0 else (None, "종가 없음")
+
+
+def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, special=None, mode="publish", fetch_daum=_daum_day_close):
+    """관문이 따로 받은 두 출처 공식 종가 (2026-11-19 · 리뷰): 필수 종목 + 표본마다 다음 tradePrice 와 야후 종가(일봉 · 비면 마감 직후 meta).
+    publish: 두 값이 원 단위까지 같아야 확인 (closes 에는 확인된 값 · 다른 종목은 발행 가격과 같아질 수 없는 값 — 가격 줄이 실패로 세요).
+    live (배포 · 감시, 다음 날 아침에는 야후 그날 일봉이 비고 meta 가 새 날로 넘어가요): 다음 값 + data.json pxSrc 의 발행 때 다음 × 야후 확인 기록.
+    반환: {"date", "mode", "closes", "asked", "got", "meta", "disagree", "mustMissing", "err"}. 예외를 내지 않아요 — 못 받은 종목은 확인 못 함."""
     from concurrent.futures import ThreadPoolExecutor
     pick = px_alt_pick(data)
-    closes, errs, meta = {}, [], []
+    closes, errs, meta, dis, ok = {}, [], [], [], set()
     sp = (special or {}).get(px)
     close_time = sp[1] if sp else NORMAL_CLOSE
 
-    def one(item):
-        code, sym = item
+    def get(fn, *a, **k):
         for i in range(3):
             try:
-                v, how = fetch(sym, px, close_time=close_time)
-                if v is not None and math.isfinite(v) and v > 0:
-                    closes[code] = v
-                    if how == "meta":
-                        meta.append(code)
-                return
+                return fn(*a, **k)
             except Exception as e:
                 if i == 2:
-                    errs.append(f"{sym}: {str(e)[:60]}")
+                    errs.append(f"{a[0]}: {str(e)[:60]}")
                 else:
                     sleep(i + 1)
+        return None, "실패"
+
+    def one(item):
+        code, sym = item
+        dv, _ = get(fetch_daum, code, px)
+        if dv is None or not math.isfinite(dv) or dv <= 0:
+            return
+        if mode == "live":
+            closes[code] = dv
+            ok.add(code)
+            return
+        yv, how = get(fetch, sym, px, close_time=close_time)
+        if yv is None or not math.isfinite(yv) or yv <= 0:
+            return
+        if abs(dv - yv) <= PX_ALT_TOL:
+            closes[code] = dv
+            ok.add(code)
+            if how == "meta":
+                meta.append(code)
+        else:
+            closes[code] = dv + 0.5                  # 두 출처가 다르면 어느 발행 가격과도 같지 않아요 (확인 못 함)
+            dis.append(f"{code} 다음 {dv:,.0f} · 야후 {yv:,.2f}")
     try:
         with ThreadPoolExecutor(max_workers=workers) as ex:
             list(ex.map(one, sorted(pick.items())))
     except Exception as e:                       # 관문은 네트워크 때문에 멈추지 않아요 — 확인 못 함으로 실패해요
         errs.append(f"{type(e).__name__}: {str(e)[:80]}")
-    return {"date": px, "closes": closes, "asked": len(pick), "got": len(closes), "meta": len(meta),
-            "mustMissing": [c for c in MUST if c not in closes], "err": errs[:5]}
+    return {"date": px, "mode": mode, "closes": closes, "asked": len(pick), "got": len(ok), "meta": len(meta), "disagree": sorted(dis),
+            "mustMissing": [c for c in MUST if c not in ok], "err": errs[:5]}
 
 
-def px_alt_confirms(data, alt, px, final, mode="publish"):
+def px_alt_confirms(data, alt, px, final, mode="publish", today=None, now=None, special=None):
     """2차 출처 날의 관문 기준을 쓸 수 있는지 (2026-11-19 · Jack 규칙 3 · 순수 함수). 반환: (쓸 수 있는지, 설명).
     모두 맞아야 해요: 캐시에 pxDate 의 최종본이 없음 (최종본이 있으면 예전 그대로 그것과 비교) · data.json pxSrc 가 2차 출처 · 그 날짜가 pxDate ·
-    확인되지 않은 필수 종목 없음 · 2차 출처 확인 종목 수 ≥ 발행한 국내 종목 수 · 관문이 야후에서 필수 종목을 모두, 표본을 PX_ALT_MIN_SHARE 넘게 받음."""
+    확인되지 않은 필수 종목 없음 · 2차 출처 확인 종목 수 ≥ 발행한 국내 종목 수 · 관문이 따로 받은 두 출처(http_px_alt — 발행은 다음 × 야후,
+    배포 · 감시는 다음 + 발행 기록)가 필수 종목을 모두, 표본을 PX_ALT_MIN_SHARE 넘게 확인 · pxDate 가 오늘(KST) 전이고 지금이 그날 마감 + 30분 뒤."""
     src = data.get("pxSrc")
     if alt is None:
-        return False, "관문이 야후 종가를 받지 않았어요"
-    if final is not None and mode != "live" and final.get("date") is not None and final["date"] >= px:
+        return False, "관문이 두 출처 종가를 받지 않았어요"
+    if final is not None and final.get("date") is not None and final["date"] >= px:
         return False, f"캐시 최종본 {final['date']} 이 있어요 (그것과 비교)"
+    if today is None or px is None or not px < today:
+        return False, f"pxDate {px} 가 오늘({today}) 전이 아니에요 — 끝나지 않은 날"
+    try:
+        sp = load_special_sessions() if special is None else special
+    except Exception as e:
+        return False, f"KRX 특별 거래시간 표를 읽지 못했어요 ({str(e)[:40]})"
+    ref = now or dt.datetime.combine(today, dt.time(0), KST)
+    if ref < final_cut(px, sp):
+        return False, f"지금({ref:%m-%d %H:%M}) 이 {px} 마감 + 30분 ({final_cut(px, sp):%H:%M}) 전이에요"
     if not isinstance(src, dict) or src.get("px") != PX_SRC_FB:
         return False, "data.json pxSrc 가 2차 출처가 아니에요"
     if day(src.get("date")) != px or alt.get("date") != px:
@@ -907,12 +952,16 @@ def px_alt_confirms(data, alt, px, final, mode="publish"):
     nk = len(kr_stocks(data))
     if not isinstance(fb.get("conf"), int) or fb["conf"] < nk:
         return False, f"2차 출처 확인 {fb.get('conf')}종목 < 발행한 국내 종목 {nk:,}"
+    want = "live" if mode == "live" else "publish"
+    if alt.get("mode", "publish") != want:
+        return False, f"관문 확인 방식 {alt.get('mode')} ≠ {want}"
+    how = "다음 × 야후" if want == "publish" else "다음 + 발행 때 다음 × 야후 기록"
     if alt.get("mustMissing"):
-        return False, f"관문이 야후에서 필수 종목 종가를 받지 못했어요: {', '.join(alt['mustMissing'])}" + (f" ({alt['err'][0]})" if alt.get("err") else "")
+        return False, f"관문이 두 출처({how})로 필수 종목을 확인하지 못했어요: {', '.join(alt['mustMissing'])}" + (f" ({alt['err'][0]})" if alt.get("err") else "")
     asked, got = alt.get("asked") or 0, alt.get("got") or 0
     if not asked or got < PX_ALT_MIN_SHARE * asked:
-        return False, f"관문이 야후에서 받은 종가 {got} / {asked} (기준 {PX_ALT_MIN_SHARE:.0%})" + (f" ({alt['err'][0]})" if alt.get("err") else "")
-    return True, f"캐시 최종본 없음 · 관문이 야후에서 따로 받은 공식 종가 {got}/{asked}종목 · 2차 출처(다음 × 야후) 확인 {fb['conf']:,}종목"
+        return False, f"관문이 두 출처({how})로 확인한 종가 {got} / {asked} (기준 {PX_ALT_MIN_SHARE:.0%})" + (f" ({alt['err'][0]})" if alt.get("err") else "")
+    return True, f"캐시 최종본 없음 · 관문이 따로 받은 공식 종가 ({how}) {got}/{asked}종목 · 2차 출처(다음 × 야후) 확인 {fb['conf']:,}종목"
 
 
 def px_alt_closes(alt):
@@ -1055,7 +1104,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     px = day(data.get("pxDate"))
     # 2026-11-19 (Jack 규칙 3): 캐시에 pxDate 의 최종본이 있으면 예전 그대로 그것이 기준이에요. 없으면 관문이 야후에서 따로 받은 공식 종가와
     # data.json pxSrc 의 2차 출처 확인 (px_alt_confirms) — 둘 다 안 되면 예전처럼 실패해요.
-    use_alt, alt_how = (False, None) if alt is None else px_alt_confirms(data, alt, px, final, mode)
+    use_alt, alt_how = (False, None) if alt is None else px_alt_confirms(data, alt, px, final, mode, today=today, now=now, special=special)
     if alt is not None:
         notes.append(f"2차 출처 관문 기준 (야후): {'씀' if use_alt else '쓰지 않음'} — {alt_how}")
     if use_alt:
@@ -4070,14 +4119,16 @@ def _main(argv=None):
         pxd = day(cur["data"].get("pxDate"))
         psrc = cur["data"].get("pxSrc")
         if pxd and isinstance(psrc, dict) and psrc.get("px") == PX_SRC_FB and (final is None or final["date"] < pxd):
-            alt = http_px_alt(cur["data"], pxd, special=special)
+            alt = http_px_alt(cur["data"], pxd, special=special, mode="live" if mode == "live" else "publish")
             print(f"{'· ' if not alt['mustMissing'] and alt['got'] >= PX_ALT_MIN_SHARE * max(alt['asked'], 1) else '!! '}"
-                  f"관문의 야후 공식 종가 ({pxd}): {alt['got']} / {alt['asked']}종목 (일봉 종가가 비어 마감 뒤 regularMarketPrice 로 읽은 종목 {alt.get('meta', 0)})"
+                  f"관문의 두 출처 공식 종가 ({pxd} · {'다음 + 발행 기록' if alt.get('mode') == 'live' else '다음 × 야후'}): 확인 {alt['got']} / {alt['asked']}종목"
+                  f" (야후 일봉 종가가 비어 마감 직후 regularMarketPrice 로 읽은 종목 {alt.get('meta', 0)})"
+                  + (f" · 두 출처가 다름 {len(alt['disagree'])}: {'; '.join(alt['disagree'][:5])}" if alt.get("disagree") else "")
                   + (f" · 필수 종목 못 받음 {', '.join(alt['mustMissing'])}" if alt["mustMissing"] else "")
                   + (f" · 오류 예: {alt['err'][0]}" if alt["err"] else ""))
     except Exception as e:
         print(f"!! 관문의 야후 공식 종가를 받지 못했어요: {type(e).__name__}: {str(e)[:120]} (확인 못 함 → 날짜 · 가격 줄 실패)")
-        alt = {"date": None, "closes": {}, "asked": 0, "got": 0, "mustMissing": list(MUST), "err": [str(e)[:80]]}
+        alt = {"date": None, "mode": None, "closes": {}, "asked": 0, "got": 0, "mustMissing": list(MUST), "err": [str(e)[:80]]}
     rep = run_checks(cur, prev, final, today, mode=mode, count_between=count_final_between, notes=notes,
                      sessions=sessions, now=now, hilo=hilo, special=special, alt=alt)
     for n in notes:
