@@ -522,7 +522,7 @@ every row of 11-11 to 11-13), so a halt and a day nobody traded look the same; i
   row contradicted itself (`odd`), or a must-have looked like no trade (`must`). The publish goes ahead with those stocks
   unmarked. If it repeats, look at that day's listing file (FinanceData cache) before anything else; the run log has the same
   case as a "!!" line.
-## Korean second-source time limit (2차 출처 시간 한도, since #?)
+## Korean second-source time limit (2차 출처 시간 한도, since #151)
 
 When the volunteer KRX list has no final file for a finished trading day, the run builds that day from Daum's daily prices and
 keeps only the stocks whose Yahoo `.KS`/`.KQ` close agrees to the won (#137, Jack's two-source rule). It asks stock by stock in
