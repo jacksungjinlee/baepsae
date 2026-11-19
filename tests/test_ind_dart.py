@@ -130,9 +130,9 @@ def test_mapping_table_is_the_rules_output_and_covers_every_code():
     assert body == rows, "규칙이나 표가 바뀌었어요 — ksic_map_kr_rows 로 data/ksic_map_kr.csv 를 다시 만들고 PR 에 보여요"
     assert len(MAP) == 234 and set(MAP) == {c for c in NAMES if len(c) == 3}
     count = {st: sum(1 for v in MAP.values() if v["status"] == st) for st in V.KSIC_MAP_STATUS}
-    assert count == {"ok": 111, "none": 94, "ambiguous": 19, "financial": 9, "fund": 1}
+    assert count == {"ok": 110, "none": 94, "ambiguous": 20, "financial": 9, "fund": 1}
     head = "\n".join(x for x in read("data/ksic_map_kr.csv").splitlines() if x.startswith("#"))
-    assert "status ok 111 · none 94 · ambiguous 19 · financial 9 · fund 1" in head
+    assert "status ok 110 · none 94 · ambiguous 20 · financial 9 · fund 1" in head
 
 
 def test_every_ok_code_lands_in_existing_groups_of_both_apps():
@@ -168,12 +168,13 @@ def test_codes_that_do_not_map_cleanly():
         assert MAP[c]["status"] == st and MAP[c]["s"] == s, (c, MAP[c])
         assert ind is None or MAP[c]["ind"] == ind, (c, MAP[c])
     assert sorted(c for c, v in MAP.items() if v["status"] == "ambiguous") == \
-        ["161", "204", "231", "233", "251", "281", "381", "382", "390", "426", "465", "466", "467", "473", "476", "620", "682", "713", "912"]
+        ["161", "204", "231", "233", "251", "281", "319", "381", "382", "390", "426", "465", "466", "467", "473", "476", "620", "682", "713",
+         "912"]
     # 리뷰 2: 업종 읽는 법(LENS)이 그 코드 회사들의 매출원 · 원재료 · 값을 정하는 쪽을 맞게 짚지 못하면 채우지 않아요 (281 은 KRX 글자 길에서
     # utility 라 다른 키로 채우면 한 코드가 두 업종 — 그래서 채우지 않아요 · KRX 길은 그대로)
-    assert sorted(V.KSIC_LENS_MISFIT) == ["161", "231", "233", "281", "381", "382", "390", "682", "713"]
+    assert sorted(V.KSIC_LENS_MISFIT) == ["161", "231", "233", "281", "319", "381", "382", "390", "682", "713"]
     assert F.map_sector_kr(NAMES["281"], "") == "utility" and not hasattr(V, "KSIC_S_FIX")
-    assert "furniture" not in V.IND_SECTOR_KR and "chem" not in V.IND_SECTOR_KR["cosmetics"] and "utility" not in V.IND_SECTOR_KR["power_eq"]
+    assert V.IND_SECTOR_KR["furniture"] == () and "chem" not in V.IND_SECTOR_KR["cosmetics"] and "utility" not in V.IND_SECTOR_KR["power_eq"]
     assert sorted(c for c, v in MAP.items() if v["status"] == "financial") == \
         ["331", "641", "649", "651", "652", "653", "661", "662", "846"]
 
@@ -447,9 +448,9 @@ def filled():
     return stocks, ind, undo
 
 
-def gate(data):
+def gate(data, mode="publish"):
     rep = V.Report()
-    V.check_px_src(rep, data, dt.date(2026, 11, 19))
+    V.check_px_src(rep, data, dt.date(2026, 11, 19), mode)
     return {r[0]: r for r in rep.rows}, rep
 
 
@@ -462,7 +463,7 @@ def test_one_bad_row_is_reverted_logged_and_the_rest_publishes(capsys):
     stocks, ind, undo = filled()
     by_t = {s["t"]: s for s in stocks}
     by_t["282620"]["s"] = "bank"                                   # 우리 단계의 실수 하나 (업종 키가 2.0 그룹과 다름)
-    rec, dropped = F.kr_ind_own_drop(stocks, ind, undo, NAMES, MAP, SHA)
+    rec, dropped = F.kr_ind_own_drop(stocks, ind, undo, NAMES, MAP)
     assert dropped == ["282620"] and rec == {"n": 1, "rows": ["282620 기도산업: 업종 키 bank 가 2.0 그룹 textile 와 맞지 않음"]}
     assert by_t["282620"]["dk"] == "KOSDAQ 상장 · 시가총액 200억원" and by_t["282620"]["s"] == "etc"   # 채우기 전으로
     assert "282620" not in ind["dartT"] and ind["dart"] == 42 and by_t["376930"]["dk"].startswith("의료용 기기 제조업 · ")
@@ -486,10 +487,10 @@ def test_a_reverted_common_takes_its_preferred_share_back_too():
     ind["pref"] = len(ind["prefT"])
     by_t["282620"]["dk"] = by_t["282620"]["dk"].replace("봉제의복", "봉제 의복")   # 글자만 틀림 (숫자와 상관없음)
     by_t["282625"]["dk"] = by_t["282625"]["dk"].replace("봉제의복", "봉제 의복")
-    rec, dropped = F.kr_ind_own_drop(stocks, ind, undo, NAMES, MAP, SHA)
+    rec, dropped = F.kr_ind_own_drop(stocks, ind, undo, NAMES, MAP)
     assert dropped == ["282620", "282625"] and rec["n"] == 2
     assert by_t["282625"]["dk"] == "KOSDAQ 상장 · 시가총액 200억원" and "282625" not in ind["prefT"]
-    assert V.ind_fill_bad(stocks, ind, NAMES, MAP, SHA) == []
+    assert V.ind_fill_bad(stocks, ind, NAMES, MAP) == []
 
 
 def test_more_than_n_reverted_rows_fail_the_gate():
@@ -497,8 +498,8 @@ def test_more_than_n_reverted_rows_fail_the_gate():
     by_t = {s["t"]: s for s in stocks}
     for t in list(ind["dartT"])[:V.IND_FILL_MAX + 1]:
         by_t[t]["s"] = "bank"
-    rec, dropped = F.kr_ind_own_drop(stocks, ind, undo, NAMES, MAP, SHA)
-    assert rec["n"] == V.IND_FILL_MAX + 1 and V.ind_fill_bad(stocks, ind, NAMES, MAP, SHA) == []
+    rec, dropped = F.kr_ind_own_drop(stocks, ind, undo, NAMES, MAP)
+    assert rec["n"] == V.IND_FILL_MAX + 1 and V.ind_fill_bad(stocks, ind, NAMES, MAP) == []
     rows, rep = gate({"stocks": stocks, "indSrc": ind, "ownDrop": {"indFill": rec}})
     assert rows[V.IND_FILL_CHECK][3] == "FAIL" and "되돌림 6" in rows[V.IND_FILL_CHECK][1]
     rec["n"] = V.IND_FILL_MAX                                      # N 까지는 경고
@@ -511,7 +512,7 @@ def test_more_than_n_reverted_rows_fail_the_gate():
     ("code", "산업분류표에 없음", True),
     ("fund", "집합 투자업", True),
     ("unclean", "깔끔히 맞지 않음 (ambiguous)", True),
-    ("unclean_old_table", "채운 뒤 표가 바뀌었어요", False),
+    ("unclean_old_table", "깔끔히 맞지 않음 (ambiguous)", True),
     ("pref_in_dart", "우선주 (DART 로 채우지 않아요)", True),
     ("pref_sector", "업종 키 · 2.0 그룹", True),
     ("pref_group", "업종 키 · 2.0 그룹", True),
@@ -554,11 +555,14 @@ def test_a_remaining_bad_value_fails_only_when_it_shows_a_wrong_number(break_it,
         ind["dartT"].pop("376930")
     else:
         ind["dart"] = 50
-    bad = V.ind_fill_bad(stocks, ind, NAMES, MAP, SHA)
+    bad = V.ind_fill_bad(stocks, ind, NAMES, MAP)
     assert len(bad) == 1 and why in bad[0]["why"] and bad[0]["num"] is num, bad
     rows, rep = gate({"stocks": stocks, "indSrc": ind, "ownDrop": {"indFill": {"n": 0, "rows": []}}})
     assert rows[V.IND_FILL_CHECK][3] == ("FAIL" if num else "WARN") and why in rows[V.IND_FILL_CHECK][1]
     assert any(t == f"{V.IND_FILL_CHECK}: 남은 틀린 값" for t, _ in rep.details)
+    if break_it == "unclean_old_table":        # 발행 전에는 늘 엄격 · 라이브에서 옛 판이면 경고만
+        rows, _ = gate({"stocks": stocks, "indSrc": ind, "ownDrop": {"indFill": {"n": 0, "rows": []}}}, mode="live")
+        assert rows[V.IND_FILL_CHECK][3] == "WARN" and "채운 뒤 규칙이 바뀌었어요" in rows[V.IND_FILL_CHECK][1]
 
 
 def test_gate_passes_a_clean_fill_and_names_dart_stocks_in_the_carry_row():
@@ -782,20 +786,45 @@ def test_unreadable_tables_skip_the_fill_but_not_the_preferred_shares(capsys):
     assert r[3] == "WARN" and "업종 표를 읽지 못해 채우지 않음 57" in r[1] and "채우기 실패 table:ValueError" in r[1]
 
 
-def test_a_fill_made_with_an_older_table_only_warns():
-    """리뷰 4: 라이브 관문이 지난 발행본을 다시 볼 때 — 그 채움이 쓴 표(indSrc.mapSha)가 지금 표와 다르면, 지금 표로 깔끔하지 않은 코드는 경고만.
-    파일 안에서 틀린 것(짝 · 이름 · 집합 투자업 · 우선주)은 그대로 실패."""
+def test_a_fill_made_with_an_older_table_only_warns_on_live():
+    """리뷰 4 · 3차 리뷰: 라이브 관문이 지난 발행본을 다시 볼 때 — 그 채움이 쓴 규칙 판(indSrc.mapSha)이 지금 판과 다르면, 지금 표로 깔끔하지
+    않은 코드는 경고만. 발행 전(publish)에는 늘 실패 · 판이 없는 파일도 실패. 금융 키 같은 틀린 짝은 늘 실패."""
     stocks, ind, _ = filled()
     by_t = {s["t"]: s for s in stocks}
     ind["dartT"]["282620"] = "20499"                                # 지금 표에서는 ambiguous (204)
     by_t["282620"]["dk"] = by_t["282620"]["dk"].replace("봉제의복 제조업", NAMES["204"])
-    for sha, status in ((SHA, "FAIL"), ("000000000000", "WARN"), (None, "WARN")):
+    for sha, publish, live in ((SHA, "FAIL", "FAIL"), ("000000000000", "FAIL", "WARN"), (None, "FAIL", "FAIL")):
         ind2 = dict(ind, mapSha=sha) if sha else {k: v for k, v in ind.items() if k != "mapSha"}
-        rows, _ = gate({"stocks": stocks, "indSrc": ind2, "ownDrop": {"indFill": {"n": 0, "rows": []}}})
-        assert rows[V.IND_FILL_CHECK][3] == status, (sha, rows[V.IND_FILL_CHECK])
-    by_t["282620"]["s"] = "bank"                                    # 짝이 틀리면 표와 상관없이 실패
-    rows, _ = gate({"stocks": stocks, "indSrc": dict(ind, mapSha="000000000000"), "ownDrop": {"indFill": {"n": 0, "rows": []}}})
+        d = {"stocks": stocks, "indSrc": ind2, "ownDrop": {"indFill": {"n": 0, "rows": []}}}
+        assert gate(d)[0][V.IND_FILL_CHECK][3] == publish, sha
+        assert gate(d, mode="live")[0][V.IND_FILL_CHECK][3] == live, sha
+    by_t["282620"]["s"] = "bank"                                    # 금융 키는 판과 상관없이 실패
+    rows, _ = gate({"stocks": stocks, "indSrc": dict(ind, mapSha="000000000000"), "ownDrop": {"indFill": {"n": 0, "rows": []}}}, mode="live")
     assert rows[V.IND_FILL_CHECK][3] == "FAIL"
+
+
+def test_a_wrong_pair_blocks_at_publish_whatever_the_file_says(monkeypatch):
+    """3차 리뷰 (publish_hole.py): 발행 전에 틀린 짝이 남아 있으면 (A 같은 판 · B 판 없음 · C 옛 판 · D 관문이 표를 못 읽음) 늘 실패 — 틀린 짝은
+    예전 뱁새의 비교군 · 중간값 · 섹터 상한에 틀린 숫자를 보여요. 라이브에서는 C 만 경고 (판이 다르고 관문이 지금 판을 알 때)."""
+    st = grouped([stock("100000")], {"100000": "26410"})
+    ind = {"from": "KRX-DESC"}
+    rec = F.kr_ind_fill(st, ["100000"], {"100000": "26410"}, MAP, ind, over=TABLES["over"], names=NAMES, map_sha=SHA)
+    st[0]["s"] = "chem"                                              # telecom_eq 의 짝은 elec · machine
+    base = {"stocks": st, "indSrc": dict(ind, carried=0, asOf="2026-11-19", newNone=0), "ownDrop": {"indFill": rec}}
+    cases = {"A": base, "B": dict(base, indSrc={k: v for k, v in base["indSrc"].items() if k != "mapSha"}),
+             "C": dict(base, indSrc=dict(base["indSrc"], mapSha="000000000000"))}
+    for k, d in cases.items():
+        r = gate(d)[0][V.IND_FILL_CHECK]
+        assert r[3] == "FAIL" and "채운 뒤" not in r[1], (k, r)
+        assert gate(d, mode="live")[0][V.IND_FILL_CHECK][3] == ("WARN" if k == "C" else "FAIL"), k
+
+    def gone(*a, **k):
+        raise OSError("gone")
+    monkeypatch.setattr(V, "load_ksic_names", gone)                  # D: 관문이 표를 읽지 못함 — 짝은 그래도 엄격
+    for mode in ("publish", "live"):
+        for d in (base, cases["C"]):
+            r = gate(d, mode=mode)[0][V.IND_FILL_CHECK]
+            assert r[3] == "FAIL" and "채운 뒤" not in r[1] and "표를 읽지 못해" in r[1], (mode, r)
 
 
 def test_a_later_tightening_of_a_pair_only_warns_on_published_files(monkeypatch):
@@ -818,13 +847,13 @@ def test_a_later_tightening_of_a_pair_only_warns_on_published_files(monkeypatch)
 
     def live(d):
         rep = V.Report()
-        V.check_ind_dart(rep, d, d["indSrc"], names=NAMES, kmap_kr=km, map_sha=new_sha)
+        V.check_ind_dart(rep, d, d["indSrc"], names=NAMES, kmap_kr=km, map_sha=new_sha, mode="live")
         return {x[0]: x for x in rep.rows}[V.IND_FILL_CHECK], rep
     r, rep = live(data)
-    assert r[3] == "WARN" and "채운 뒤 짝이 바뀌었어요" in r[1] and not rep.failed
+    assert r[3] == "WARN" and "채운 뒤 규칙이 바뀌었어요" in r[1] and not rep.failed
     r, _ = live(dict(data, indSrc=dict(data["indSrc"], mapSha=new_sha)))        # 같은 규칙으로 채웠다면 실패
     assert r[3] == "FAIL"
-    for s_, ind_ in (("etc", "telecom_eq"), ("broker", "telecom_eq"), ("machine", "services")):
+    for s_, ind_ in (("etc", "telecom_eq"), ("broker", "telecom_eq"), ("nope", "telecom_eq"), ("machine", "bank"), ("machine", None)):
         st2 = [dict(st[0], s=s_, ind=ind_)]
         r, _ = live(dict(data, stocks=st2))
         assert r[3] == "FAIL", (s_, ind_, r)
@@ -832,6 +861,35 @@ def test_a_later_tightening_of_a_pair_only_warns_on_published_files(monkeypatch)
     st3 = [dict(st[0], s="textile", ind="textile", dk="KOSDAQ 상장")]
     d3 = dict(data, stocks=st3, indSrc=dict(data["indSrc"], dartT={"100000": "99999"}))
     r, _ = live(d3)
-    assert r[3] == "WARN" and "채운 뒤 표가 바뀌었어요" in r[1]
+    assert r[3] == "WARN" and "채운 뒤 규칙이 바뀌었어요" in r[1]
     r, _ = live(dict(d3, indSrc=dict(d3["indSrc"], mapSha=new_sha)))
     assert r[3] == "FAIL" and "산업분류표에 없음" in r[1]
+
+
+
+def test_hard_cases_come_from_constants_not_from_the_pairing_table(monkeypatch):
+    """3차 리뷰: '늘 실패' 는 고정된 목록으로 정해요 (기타 · 금융 키 · 앱이 모르는 키 · 금융 그룹 · 그룹 없음). 짝 표에서 그룹을 () 로 두거나
+    지워도 이미 발행한 채움은 라이브에서 경고만 — IND_SECTOR_KR 의 키는 지우지 않고 () 로 둬요."""
+    assert set(V.OLD_SECTOR_KEYS) == OLD_SECTORS
+    assert set(V.IND_FIN_GROUPS) == {g for g, r in TABLES["groups"].items() if r["financial"] == "yes"}
+    assert set(V.IND_SECTOR_KR) | set(V.IND_FIN_GROUPS) == set(TABLES["groups"])         # 모든 2.0 그룹이 짝 표나 금융 목록에 있어요
+    assert V.IND_SECTOR_KR["services"] == V.IND_SECTOR_KR["holding"] == V.IND_SECTOR_KR["furniture"] == ()
+    assert "키를 지우지 마세요" in inspect.getsource(V).split("IND_SECTOR_KR = {", 1)[0][-300:]
+    st = grouped([stock("100000")], {"100000": "26410"})
+    ind = {"from": "KRX-DESC"}
+    rec = F.kr_ind_fill(st, ["100000"], {"100000": "26410"}, MAP, ind, over=TABLES["over"], names=NAMES, map_sha=SHA)
+    d = {"stocks": st, "indSrc": dict(ind, carried=0, asOf="2026-11-19", newNone=0, mapSha="000000000000"), "ownDrop": {"indFill": rec}}
+    for change in ("empty", "delete"):
+        with monkeypatch.context() as m:
+            if change == "empty":
+                m.setitem(V.IND_SECTOR_KR, "telecom_eq", ())
+            else:
+                m.delitem(V.IND_SECTOR_KR, "telecom_eq")
+            # 그 PR 은 표도 다시 만들어요 (264 는 none) — 관문은 새 표 · 새 판으로 봐요
+            km = {r[0]: {"name": r[1], "s": r[2], "ind": tuple(x for x in r[3].split("·") if x), "status": r[4], "why": r[5]}
+                  for r in F.ksic_map_kr_rows(NAMES, TABLES["kmap"], TABLES["groups"])}
+            assert km["264"]["status"] == "none"
+            for mode, want in (("live", "WARN"), ("publish", "FAIL")):         # 발행 전에는 엄격
+                rep = V.Report()
+                V.check_ind_dart(rep, d, d["indSrc"], names=NAMES, kmap_kr=km, map_sha=V.ksic_map_kr_sha(), mode=mode)
+                assert {x[0]: x for x in rep.rows}[V.IND_FILL_CHECK][3] == want, (change, mode)

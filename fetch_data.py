@@ -1716,7 +1716,7 @@ def ksic_map_kr_rows(names, kmap, groups):
     for c in sorted(x for x in names if len(x) == IND_DART_DIGITS):
         n, s = names[c], map_sector_kr(names[c], "")
         reach = sorted({ksic_group(k, kmap) for k in names if k.startswith(c)} - {None})
-        odd = [g for g in reach if g not in IND_SECTOR_KR]
+        odd = [g for g in reach if not IND_SECTOR_KR.get(g)]          # 짝이 () 이거나 없는 그룹
         if c == KR_FUND_KSIC:
             st, why = "fund", "집합 투자업 — 상장 펀드일 수 있어요"
         elif s in FIN_SECS or any(g in fin_g for g in reach):
@@ -1849,13 +1849,13 @@ def kr_ind_restore(s, before):
             s[k] = v
 
 
-def kr_ind_own_drop(stocks, ind_src, undo, names=None, kmap_kr=None, map_sha=None):
+def kr_ind_own_drop(stocks, ind_src, undo, names=None, kmap_kr=None):
     """Jack 의 상시 규칙 (2026-11-19): 관문과 같은 함수(validate_data.ind_fill_bad)로 채운 값을 확인해 틀린 행은 되돌리고(채우기 전 값) 남은
     것은 발행해요. 되돌린 보통주를 따랐던 우선주도 다음 번 확인에서 되돌려요. 반환: 기록 {n, rows} (data.json ownDrop.indFill) · 되돌린 종목."""
     by_t = {s["t"]: s for s in stocks if s.get("cls") == "kr"}
     dropped, rows = [], []
     for _ in range(3):
-        bad = [b for b in ind_fill_bad(stocks, ind_src, names, kmap_kr, map_sha) if b["t"] in undo and b["t"] not in dropped]
+        bad = [b for b in ind_fill_bad(stocks, ind_src, names, kmap_kr) if b["t"] in undo and b["t"] not in dropped]      # 엄격 (발행 전)
         if not bad:
             break
         rows += ind_fill_rows(bad, stocks)
@@ -1865,7 +1865,7 @@ def kr_ind_own_drop(stocks, ind_src, undo, names=None, kmap_kr=None, map_sha=Non
                 if isinstance(ind_src.get(key), dict) and ind_src[key].pop(b["t"], None) is not None:
                     ind_src[n] = len(ind_src[key])
             dropped.append(b["t"])
-    left = ind_fill_bad(stocks, ind_src, names, kmap_kr, map_sha)
+    left = ind_fill_bad(stocks, ind_src, names, kmap_kr)
     log((f"  !! {IND_FILL_CHECK}: {len(dropped)}건 되돌리고 발행 — " + "; ".join(rows[:30]) if dropped else
          f"· {IND_FILL_CHECK}: 0건 되돌림 (DART {len(ind_src.get('dartT') or {}):,} · 우선주 {len(ind_src.get('prefT') or {}):,} 확인)")
         + (f" · !! 되돌리지 못한 틀린 값 {len(left)}: " + "; ".join(ind_fill_rows(left, stocks)[:10]) + " — 관문이 봐요" if left else ""))
@@ -1904,7 +1904,7 @@ def kr_ind_fill(stocks, no_text, ksic, kmap_kr, ind_src, over=(), names=None, ma
             miss.setdefault("noParse", []).append(t)
         ind_src.update({"dart": len(done), "dartT": dict(sorted(done.items())), "pref": len(pdone), "prefT": dict(sorted(pdone.items())),
                         "prefInd": n_ind})
-        rec, dropped = kr_ind_own_drop(stocks, ind_src, undo, names, kmap_kr, map_sha)
+        rec, dropped = kr_ind_own_drop(stocks, ind_src, undo, names, kmap_kr)
         if dropped:
             miss.setdefault("dropped", []).extend(dropped)
     except Exception as e:

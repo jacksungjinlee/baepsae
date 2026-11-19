@@ -20,7 +20,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 **#143 (v19.6c 관심 종목), 2026-11-19:** watch list with 이하/이상 conditions (Jack's 11-19 lines), 홈 rows, the side key `baepsae2.v1.watch`. App only.
 
-**#146 (KR industry words from DART), 2026-11-19:** reworked per Jack's 17:45 answers. DART industry codes fill a common stock's words only when the code maps cleanly to our existing groups (`data/ksic_map_kr.csv`, 111 / 234 codes ok; `indSrc.mapSha` records the rule version: names, table and pairings); preferred shares copy the common's words, sector and 2.0 group but stay out of old-app peers and medians; standing rule for the gate row (pipeline reverts bad fills, records `ownDrop.indFill`, gate fails above `IND_FILL_MAX` = 5 or on a remaining wrong-group value); 데이터 출처 credit line.
+**#146 (KR industry words from DART), 2026-11-19:** reworked per Jack's 17:45 answers. DART industry codes fill a common stock's words only when the code maps cleanly to our existing groups (`data/ksic_map_kr.csv`, 110 / 234 codes ok; `indSrc.mapSha` records the rule version: names, table and pairings); preferred shares copy the common's words, sector and 2.0 group but stay out of old-app peers and medians; standing rule for the gate row (pipeline reverts bad fills, records `ownDrop.indFill`, gate fails above `IND_FILL_MAX` = 5 or on a remaining wrong-group value); 데이터 출처 credit line.
 
 **#144 (late-data check), 2026-11-19:** when data is late the portfolio check runs on the last official close for up to 5 trading days (from the close date), dated "{date} 종가로 점검했어요"; nothing labelled 오늘 on an old close; "{date} 종가 기준으로는 할 일이 없어요." (Jack, 11-19).
 
