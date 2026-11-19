@@ -93,7 +93,16 @@ NEAR = 2.0               # 기준선에서 2점 안쪽이면 경고
 PX_SRC_LISTING = "listing"                # 1차 출처: 캐시의 최종본 목록 파일
 PX_SRC_FB = "daum+yahoo"                  # 2차 출처: 다음 일별 시세 × 야후 종가 (원 단위까지 같은 종목만)
 PX_SRCS = (PX_SRC_LISTING, PX_SRC_FB)
-PX_YAHOO_SUFFIX = {"KOSPI": ".KS", "KOSDAQ": ".KQ", "KOSDAQ GLOBAL": ".KQ"}   # 코넥스는 야후에 없어요
+# 코스피 · 코스닥의 다음 × 야후 짝에 쓰는 야후 접미어. 코넥스는 여기 없어요: 야후에는 {코드}.KQ 로 107종목 중 96종목이 있지만 (2026-11-19 조사)
+# 다음에는 코넥스가 없어서 다음 × 야후 짝이 될 수 없어요. 코넥스는 따로 야후 .KQ × 네이버 (PX_SRC_KNX · 아래).
+PX_YAHOO_SUFFIX = {"KOSPI": ".KS", "KOSDAQ": ".KQ", "KOSDAQ GLOBAL": ".KQ"}
+# 2026-11-20 (Jack, 2026-11-19 답 5 그대로): "Yes: Naver for KONEX only, always with Yahoo, published only when they agree to the won;
+# daily KONEX checking too." — 코넥스만: 2차 출처 날은 야후 .KQ 일봉 종가 × 네이버 일봉 종가가 원 단위까지 같은 종목만 (코넥스는 시간외 거래가
+# 없어 네이버 일봉 종가 = 공식 종가: 2026-09-15 ~ 11-16 최종본 27일 2,881 / 2,881). 1차 출처 날은 발행하는 코넥스 종목을 모두 네이버와 맞춰 봐요 (경고만).
+# 코스피 · 코스닥에는 네이버를 쓰지 않아요 (시간외 · 넥스트레이드 체결가라 공식 종가가 아니에요).
+PX_SRC_KNX = "yahoo+naver"                # 코넥스 2차 출처: 야후 .KQ 일봉 종가 × 네이버 일봉 종가 (원 단위까지 같은 종목만)
+PX_KNX_MARKET = "KONEX"                   # 목록 파일의 Market 값
+PX_KNX_YAHOO_SUFFIX = ".KQ"               # 야후의 코넥스 접미어 (야후는 코넥스를 KOSDAQ · MUTUALFUND 로 잘못 적지만 일봉은 맞아요)
 PX_CHECK_SAMPLE = 200                     # 관문(2차 출처 날) · 파이프라인(1차 출처 날)이 야후와 맞춰 보는 표본 수 (필수 종목은 따로 모두)
 PX_YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=1mo&interval=1d"
 PX_DAUM_DAYS = "https://finance.daum.net/api/quote/A{code}/days?symbolCode=A{code}&page=1&perPage=10&pagination=true"
@@ -1121,38 +1130,147 @@ def px_alt_closes(alt):
 
 
 PX_CUT_KEYS = ("s", "daum", "yahoo", "fill")
+KNX_CUT_KEYS = ("s", "yahoo", "fill", "naver")      # 2026-11-20: 코넥스 2차 출처 단계 (pxSrc.fb.knx.cut)
+KNX_CHK_CUT_KEYS = ("s", "naver")                    # 2026-11-20: 1차 출처 날 코넥스 네이버 확인 (pxSrc.knx.chk.cut)
 
 
 def check_px_cut(rep, src):
     """2026-11-20 (새 줄 · 경고만): 파이프라인이 두 출처 종가를 묻다가 단계 시간 한도(fetch_data.KR_FB_PHASE_BUDGET_S)에 걸렸는지.
     pxSrc.fb.cut (2차 출처를 돌린 날 — 쓸 날을 찾지 못해 1차 출처 그대로인 날도 · 리뷰 N1) · pxSrc.chk.cut (1차 출처 날의 야후 확인):
     단계마다 시간 한도로 묻지 못한 종목 수. 2차 출처 날 걸린 종목은 확인 못 한 종목이라 그날 파일에서 빠져요 (필수 종목이 빠지면 다른 줄이
-    멈춰요) — 이 줄은 알리기만 해요. 기록이 하나도 없으면 (이 줄 전 발행본) 건너뛰어요."""
+    멈춰요) — 이 줄은 알리기만 해요. 기록이 하나도 없으면 (이 줄 전 발행본) 건너뛰어요.
+    2026-11-20 (더한 기록만 · 경고만): 코넥스 단계 pxSrc.fb.knx.cut (야후 .KQ · 다시 읽기 · 네이버) 와 1차 출처 날 코넥스 네이버 확인
+    pxSrc.knx.chk.cut 도 같은 줄에 적어요 (그 기록이 없으면 이 줄은 예전과 같아요)."""
     name = "가격 확인 시간 한도 (경고만)"
     if not isinstance(src, dict) or src.get("px") not in (PX_SRC_FB, PX_SRC_LISTING):
         return
     recs = []
     fb = src.get("fb")
+    fb_what = "2차 출처" + (" (쓸 날 없음 · 1차 출처 그대로)" if src.get("px") == PX_SRC_LISTING else "")
     if isinstance(fb, dict) and "cut" in fb:
-        recs.append(("2차 출처" + (" (쓸 날 없음 · 1차 출처 그대로)" if src.get("px") == PX_SRC_LISTING else ""), fb["cut"]))
+        recs.append((fb_what, fb["cut"], PX_CUT_KEYS))
     ck = src.get("chk")
     if src.get("px") == PX_SRC_LISTING and isinstance(ck, dict) and "cut" in ck:
-        recs.append(("1차 출처 야후 확인", ck["cut"]))
+        recs.append(("1차 출처 야후 확인", ck["cut"], PX_CUT_KEYS))
+    knx_recs = []
+    if isinstance(fb, dict) and isinstance(fb.get("knx"), dict) and "cut" in fb["knx"]:
+        knx_recs.append(("코넥스 " + fb_what, fb["knx"]["cut"], KNX_CUT_KEYS))
+    kk = src.get("knx")
+    kc = kk.get("chk") if isinstance(kk, dict) else None
+    if src.get("px") == PX_SRC_LISTING and isinstance(kc, dict) and "cut" in kc:
+        knx_recs.append(("1차 출처 코넥스 네이버 확인", kc["cut"], KNX_CHK_CUT_KEYS))
+    recs += knx_recs
     if not recs:
         rep.skip(name, "기록 없음 (시간 한도 전 발행본이거나 1차 출처 야후 확인을 못 한 날)")
         return
+    word = {"daum": "다음", "yahoo": "야후 일봉", "fill": "야후 다시 읽기", "naver": "네이버"}
     vals, rules, hit, odd = [], set(), 0, False
-    for what, cut in recs:
-        if not (isinstance(cut, dict) and all(isinstance(cut.get(k), int) and not isinstance(cut.get(k), bool) and cut[k] >= 0 for k in PX_CUT_KEYS)):
+    for what, cut, keys in recs:
+        if not (isinstance(cut, dict) and all(isinstance(cut.get(k), int) and not isinstance(cut.get(k), bool) and cut[k] >= 0 for k in keys)):
             vals.append(f"{what}: 기록 모양이 이상해요 {str(cut)[:60]}")
             odd = True
             continue
-        n = sum(cut[k] for k in ("daum", "yahoo", "fill"))
+        n = sum(cut[k] for k in keys if k != "s")
         hit += n
         rules.add(cut["s"])
-        vals.append(f"{what}: " + ("없음" if not n else f"묻지 못함 다음 {cut['daum']:,} · 야후 일봉 {cut['yahoo']:,} · 야후 다시 읽기 {cut['fill']:,}종목"))
-    rep.add(name, True, " / ".join(vals), "0 (단계마다 " + "·".join(f"{x}초" for x in sorted(rules)) + " · 2차 출처 날 묻지 못한 종목은 확인 못 해 빠져요 · "
-            "1차 출처 날은 야후 확인만 줄어요)" if rules else "s · daum · yahoo · fill 모두 0 이상의 정수", warn=bool(hit) or odd)
+        if keys is PX_CUT_KEYS:
+            vals.append(f"{what}: " + ("없음" if not n else f"묻지 못함 다음 {cut['daum']:,} · 야후 일봉 {cut['yahoo']:,} · 야후 다시 읽기 {cut['fill']:,}종목"))
+        else:
+            vals.append(f"{what}: " + ("없음" if not n else "묻지 못함 " + " · ".join(f"{word[k]} {cut[k]:,}" for k in keys if k != "s") + "종목"))
+    rule = ("0 (단계마다 " + "·".join(f"{x}초" for x in sorted(rules)) + " · 2차 출처 날 묻지 못한 종목은 확인 못 해 빠져요 · "
+            "1차 출처 날은 야후 확인만 줄어요)" if rules else "s · daum · yahoo · fill 모두 0 이상의 정수")
+    if knx_recs and rules:
+        rule = rule[:-1] + " · 코넥스도 같아요: 2차 출처 날은 빠지고 1차 출처 날은 네이버 확인만 줄어요)"
+    rep.add(name, True, " / ".join(vals), rule, warn=bool(hit) or odd)
+
+
+KNX_ROW = "코넥스 종가 두 출처 (경고만)"
+KNX_FB_KEYS = ("n", "conf", "noNaver", "bad", "noYahoo", "diff")
+_KNX_TAIL = re.compile(r"(?:^| · )KONEX 상장(?: · |$)")
+
+
+def knx_published(data):
+    """발행한 코넥스 종목 코드 (설명 dk 의 'KONEX 상장' 으로 · fetch_data.kr_desc_text 가 만드는 글). (순수 함수)"""
+    return sorted(s.get("t") for s in kr_stocks(data) if s.get("t") and _KNX_TAIL.search(str(s.get("dk") or "")))
+
+
+def _nonneg_ints(d, keys):
+    return isinstance(d, dict) and all(isinstance(d.get(k), int) and not isinstance(d.get(k), bool) and d[k] >= 0 for k in keys)
+
+
+def check_px_knx(rep, data, src):
+    """2026-11-20 (새 줄 · 경고만 · Jack, 2026-11-19 답 5: "Naver for KONEX only, always with Yahoo, published only when they agree to the won;
+    daily KONEX checking too."): 코넥스 종가의 출처와 확인 (data.json pxSrc.knx · pxSrc.fb.knx).
+    - 2차 출처 날 (px daum+yahoo · knx.px yahoo+naver): 야후 .KQ × 네이버 일봉 종가가 원 단위까지 같은 코넥스만 그날 파일에 있어요. 두 종가가 다르거나
+      값을 못 믿은 종목이 있으면 경고 (코스피 · 코스닥의 '2차 출처 두 종가가 다른 종목 (경고만)' 과 같은 기준). 빠진 종목은 그날 파일에 없어요.
+    - 1차 출처 날 (px listing): 발행한 코넥스의 최종본 종가를 모두 네이버와 맞춘 결과 (knx.chk). 다르거나 · 네이버 값이 없거나 · 시간 한도 ·
+      받지 못함이면 경고 (가격은 최종본 그대로 · 빼지 않아요 — 발행을 멈추는 조건은 Jack 의 답이 있어야 해요).
+    - 기록의 모양이 이상하거나 발행한 코넥스 (dk 'KONEX 상장') 와 knx.t 가 다르면 경고. pxSrc.knx 가 없으면 (이 줄 전 발행본) 건너뛰어요.
+    이 줄은 발행을 멈추지 않아요."""
+    if not isinstance(src, dict) or src.get("px") not in PX_SRCS:
+        return
+    k = src.get("knx")
+    if k is None:
+        rep.skip(KNX_ROW, "pxSrc.knx 없음 (2026-11-20 전 발행본)")
+        return
+    pub = knx_published(data)
+    odd = []
+    if not isinstance(k, dict):
+        rep.add(KNX_ROW, True, f"기록 모양이 이상해요 {str(k)[:60]}", "pxSrc.knx {px · t · n · chk}", warn=True)
+        return
+    t = k.get("t") if isinstance(k.get("t"), list) else None
+    if t is None:
+        odd.append("t 모양")
+    elif sorted(map(str, t)) != pub:
+        odd.append(f"발행한 코넥스 {len(pub):,} · 기록 {len(t):,}")
+    n = k.get("n")
+    if not isinstance(n, dict) or not all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in n.values()) \
+            or (t is not None and sum(n.values()) != len(t)):
+        odd.append("n 모양")
+    warn = False
+    if src.get("px") == PX_SRC_FB:
+        fbk = (src.get("fb") or {}).get("knx") if isinstance(src.get("fb"), dict) else None
+        if k.get("px") == PX_SRC_KNX:
+            if not _nonneg_ints(fbk, KNX_FB_KEYS):
+                odd.append("fb.knx 모양")
+                fbk = {}
+            elif t is not None and len(t) > fbk["conf"]:
+                odd.append(f"발행 {len(t):,} > 확인 {fbk['conf']:,}")
+            left = sum(fbk.get(x) or 0 for x in ("noNaver", "bad", "noYahoo", "diff"))
+            val = (f"2차 출처 날 · 야후 .KQ × 네이버: 확인 {fbk.get('conf', '?')} / {fbk.get('n', '?')} · 빠짐 {left:,} (네이버 행 없음 {fbk.get('noNaver', '?')}"
+                   f" · 값 못 믿음 {fbk.get('bad', '?')} · 야후 없음 {fbk.get('noYahoo', '?')} · 다름 {fbk.get('diff', '?')}) · 발행 {len(t or []):,}"
+                   + (f" 예: {'; '.join(map(str, (fbk.get('diffEx') or [])[:3]))}" if fbk.get("diffEx") else ""))
+            warn = bool(fbk.get("diff") or fbk.get("bad"))
+        elif k.get("px") is None:
+            val = "2차 출처 날 · 코넥스 단계를 묻지 않았어요 (그날 파일에 코넥스 없음)"
+            warn = True
+            if pub:
+                odd.append(f"출처 없이 발행한 코넥스 {len(pub):,}")
+        else:
+            val = f"2차 출처 날인데 코넥스 출처가 {k.get('px')!r}"
+            odd.append("px")
+    else:
+        ck = k.get("chk")
+        if k.get("px") != PX_SRC_LISTING:
+            odd.append(f"px {k.get('px')!r}")
+        if not isinstance(ck, dict):
+            val = "1차 출처 날 · 네이버 확인 기록 없음"
+            warn = bool(pub)
+        else:
+            if not _nonneg_ints(ck, ("n", "same", "none")):
+                odd.append("chk 모양")
+            diff = ck.get("diff") if isinstance(ck.get("diff"), list) else []
+            cut = (ck.get("cut") or {}).get("naver") if isinstance(ck.get("cut"), dict) else 0
+            val = (f"1차 출처 날 · 네이버 확인: 같음 {ck.get('same', '?')} / {ck.get('n', '?')} · 네이버 값 없음 {ck.get('none', '?')}"
+                   + (f" ({'; '.join(map(str, (ck.get('noneEx') or [])[:3]))})" if ck.get("noneEx") else "")
+                   + (f" · 다름 {len(diff)}: {'; '.join(map(str, diff[:5]))}" if diff else "")
+                   + (f" · 받지 못함 {ck['fail']}" if ck.get("fail") else "") + (f" · 시간 한도로 묻지 못함 {cut}" if cut else "")
+                   + (f" · {ck['err']}" if ck.get("err") else "") + f" · 발행 {len(t or []):,}")
+            warn = bool(diff or ck.get("none") or cut or ck.get("err") or ck.get("fail") or (pub and not ck.get("n")))
+    if odd:
+        val += f" (이상: {', '.join(odd)})"
+    rep.add(KNX_ROW, True, val, "다름 0 (2차 출처 날: 야후 .KQ × 네이버가 원 단위까지 같은 코넥스만 · 1차 출처 날: 발행한 코넥스를 모두 네이버와 맞춰 봐요 "
+            "· 경고만)", warn=warn or bool(odd))
 
 
 def check_px_src(rep, data, today, mode="publish"):
@@ -1197,6 +1315,7 @@ def check_px_src(rep, data, today, mode="publish"):
                 rep.add("1차 출처 야후 확인 (경고만)", True,
                         f"같음 {ck.get('same', 0)} / {ck.get('n', 0)}" + (f" · 다름 {len(diff)}: {'; '.join(map(str, diff[:3]))}" if diff else "")
                         + (f" · {ck['err']}" if ck.get("err") else ""), "다름 0", warn=bool(diff) or not (ck.get("n") or 0))
+    check_px_knx(rep, data, src)        # 2026-11-20: 코넥스 종가 두 출처 (경고만)
     check_px_cut(rep, src)
     ind = data.get("indSrc")
     if not isinstance(ind, dict):
