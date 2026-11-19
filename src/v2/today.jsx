@@ -8,7 +8,10 @@
 //   loading            nothing yet
 //   failed / undated   the load-failure message (a file did not load, was refused, or cannot be dated)
 //   stale              "데이터가 {n}일째 갱신되지 않아 오늘은 점검하지 않았어요" (no status is computed at all); when n <= 1
-//                      (v19.1c: the due day, n counted from nextPub) today.staleLate instead (format.todayStaleText)
+//                      (v19.1c: the due day, n counted from nextPub) today.staleLate instead (format.todayStaleText).
+//                      Since Jack's 2026-11-19 change only once the closes are more than 5 trading days behind (rules.js
+//                      checkState); until then the check runs on the last close: the verdict below with "{date} 종가로
+//                      점검했어요" (pfr.checked) and, in place of "오늘은 할 일이 없어요", today.calmLate
 //   no held stock      no verdict (nothing was checked), only the way to 포트폴리오 만들기
 //   오늘 확인할 일      규칙 깨짐 or 확인 필요 (watch band, v19.0b: apricot marks data only): each one named, with its
 //                      rule, numbers and report year. The pill is 규칙 깨짐's navy when any stock broke a rule, else amber.
@@ -40,6 +43,7 @@ import { RankCard } from "./rank.jsx";
 import { IosHint } from "./hint.jsx";
 import { Welcome } from "./guide.jsx";
 import { evaluateAll, todayCtx, movesKnown } from "./rules.js";
+import { lateSay } from "./tradedays.js";
 import { withConfirm } from "./store.js";
 import { reasonView, statusChips, DividendAnswers, Line } from "./daily.jsx";
 import { signedPct } from "./deckcalc.js";
@@ -81,6 +85,9 @@ export function brokenTitle(name) {
 
 const namesOf = (deck) => new Map(((deck && deck.holdings) || []).map((h) => [h.t, h.nk]));
 export const isTodo = (x) => x.status === "broken" || x.status === "check";
+// "오늘은 할 일이 없어요", or on late data checked on an older close (lateMd: that close's date, "11월 16일") "{date} 종가
+// 기준으로는 할 일이 없어요." (Jack, 2026-11-19, late-check Q3). The band's eyebrow here and 홈's 오늘 볼 것 card (home2.jsx).
+export const calmLine = (lateMd) => (lateMd ? fill(C.today.calmLate, { date: lateMd }) : C.today.calmEyebrow);
 export const lines = (xs) => { const ls = xs.filter(Boolean); return ls.length ? ls.map((l, i) => <span key={i} style={{ display: "block" }}>{l}</span>) : null; };
 
 export function LinkButton({ children, onClick, ...rest }) {
@@ -159,16 +166,24 @@ export function Hero({ load, ev, held, decks, onConfirm, onWhy, quiet = true }) 
   const seen = new Set();
   const bigs = all.filter(({ x }) => x.bigMove && !seen.has(x.t) && seen.add(x.t));
   const nc = ev.notChecked > 0 ? <span data-ui-v2="today-not-checked">{fill(C.daily.notChecked, { n: ev.notChecked })}</span> : null;
+  // Late data within 5 trading days (rules.js checkState, Jack 2026-11-19): the check ran on the last official close, so the
+  // band says that close's date ("11월 16일 종가로 점검했어요", pfr.checked) and, where it would say "오늘은 할 일이 없어요",
+  // "{date} 종가 기준으로는 할 일이 없어요." (today.calmLate, Jack's Q3); the date line above keeps its stale words.
+  const lateMd = ev.late && load.status === "ok" ? mdText(load.data.pxDate) : null;
+  const dated = lateMd ? <span data-ui-v2="today-late" data-n={ev.late.n}>{fill(C.pfr.checked, { date: lateMd })}</span> : null;
   const deckOf = (id) => decks.find((d) => d.id === id);
   if (todo.length) {
     const first = todo[0].x;
     const broken = first.status === "broken";
     const { todoTs, rest, restCalm } = todayCounts(held);
+    if (dated) lateSay(`the home band's count label (things to check today) is left out (${todoTs.size} found on the ${load.data.pxDate} close; they show without it)`);
     return (
       <>
-        <div style={{ marginTop: SPACE(4) }} data-ui-v2="today-hero" data-state="todo">
-          <HeroBand tone="alert" level={broken ? "broken" : "watch"} eyebrow={fill(C.today.todoN, { n: todoTs.size })} title={broken ? brokenTitle(first.nk) : first.nk}
-            body={lines([broken ? C.daily.sellNow : null, restCalm ? fill(C.today.rest, { n: rest }) : null, nc])}
+        <div style={{ marginTop: SPACE(4) }} data-ui-v2="today-hero" data-state="todo" data-late={dated ? "1" : undefined}>
+          {/* late: the findings without their "오늘 확인할 일 {n}개" count label (review, 2026-11-19: nothing labelled 오늘 on an
+              older close); the dated line in the body says which close they come from */}
+          <HeroBand tone="alert" level={broken ? "broken" : "watch"} eyebrow={dated ? undefined : fill(C.today.todoN, { n: todoTs.size })} title={broken ? brokenTitle(first.nk) : first.nk}
+            body={lines([dated, broken ? C.daily.sellNow : null, restCalm ? fill(C.today.rest, { n: rest }) : null, nc])}
             inset={<>
               {todo.map(({ x, deckId }, i) => <TodoItem key={deckId + x.t} x={x} deck={deckOf(deckId)} onConfirm={onConfirm} sellSaid={broken} first={i === 0} />)}
               {/* v19.1c: an item here about a US stock priced at an earlier close (pxd, carried by the daily check) read that
@@ -183,9 +198,9 @@ export function Hero({ load, ev, held, decks, onConfirm, onWhy, quiet = true }) 
   const { allNone } = todayCounts(held);
   const allD1 = movesKnown(all.map(({ x }) => x));    // 2026-11-14: a halted stock counts at its reference price's change (rules.js)
   return (
-    <div style={{ marginTop: SPACE(4) }} data-ui-v2="today-hero" data-state="calm">
-      <HeroBand tone="calm" eyebrow={allNone && quiet ? C.today.calmEyebrow : undefined} title={C.today.calmTitle}
-        body={lines([bigs.length ? fill(C.today.bigN, { n: bigs.length }) : allD1 ? C.today.noBigMove : null, nc])}
+    <div style={{ marginTop: SPACE(4) }} data-ui-v2="today-hero" data-state="calm" data-late={dated ? "1" : undefined}>
+      <HeroBand tone="calm" eyebrow={allNone && quiet ? calmLine(lateMd) : undefined} title={C.today.calmTitle}
+        body={lines([dated, bigs.length ? fill(C.today.bigN, { n: bigs.length }) : allD1 ? C.today.noBigMove : null, nc])}
         inset={bigs.length ? <BigMoves items={bigs} load={load} onWhy={onWhy} /> : null} />
     </div>
   );
@@ -193,11 +208,16 @@ export function Hero({ load, ev, held, decks, onConfirm, onWhy, quiet = true }) 
 
 // One deck: value, return since purchase, today's move as a small grey line, then my stocks (chips only on
 // exceptions). A big mover's row opens 왜 움직였나; any other row opens the 2.0 company page (v19.1a), each with its mark.
-function DeckStrip({ de, deck, ctx, onWhy, go, load }) {
+// late (rules.js checkState, Jack 2026-11-19; review): nothing labelled 오늘 or meaning today's move: no "오늘 {x}%", no change
+// on the rows, and with a stock missing from the data no value (its line speaks of today's data) and no missing line.
+function DeckStrip({ de, deck, ctx, onWhy, go, load, late = false }) {
   const { openStock } = useNav();
-  const m = deckMoney(deck, de, ctx);                    // v19.0c: a stock missing from today's data is left out, and said
+  const m0 = deckMoney(deck, de, ctx);                   // v19.0c: a stock missing from today's data is left out, and said
+  const m = late && m0.absent && m0.absent.length ? { ok: false } : m0;
+  if (m !== m0) lateSay(`${de.id}: the value and return are left out (${m0.absent.map((a) => a.t).join(", ")} missing from the data; the line that says so speaks of today's data)`);
+  if (late) lateSay(`${de.id}: today's change and the rows' day's change are left out`);
   const gone = new Set(de.absent || []);
-  const day = deckDayChange(de);
+  const day = late ? null : deckDayChange(de);
   const items = m.ok ? [{ label: C.today.value, value: wonText(m.value) },
     ...(m.ret != null ? [{ label: C.today.ret, value: signedPct(m.ret * 100), tone: m.ret > 0 ? "up" : m.ret < 0 ? "down" : undefined }] : [])] : [];
   return (
@@ -217,7 +237,7 @@ function DeckStrip({ de, deck, ctx, onWhy, go, load }) {
       <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { marginTop: SPACE(4) })}>{fill(C.deck.mine, { n: de.holdings.length })}</div>
       {de.holdings.map((x) => (
         <div key={x.t} data-today-holding={x.t} data-status={x.status}>
-          <ListRow title={x.nk} change={gone.has(x.t) ? null : x.d1} chip={statusChips(x)} lead={<CoMark t={x.t} name={x.nk} size={SPACE(9)} />}
+          <ListRow title={x.nk} change={gone.has(x.t) || late ? null : x.d1} chip={statusChips(x)} lead={<CoMark t={x.t} name={x.nk} size={SPACE(9)} />}
             onClick={x.bigMove && !gone.has(x.t) ? () => onWhy(de.id, x.t) : !gone.has(x.t) && openStock && isCompany(ctx.byT.get(x.t)) ? () => openStock(x.t) : undefined} />
         </div>
       ))}
@@ -226,12 +246,12 @@ function DeckStrip({ de, deck, ctx, onWhy, go, load }) {
 }
 
 // v19.3d: one portfolio made with 가진 종목 넣기 on 홈: its four portfolio rules and its holdings (pfview.jsx).
-function ImportedStrip({ deck, de, ctx, load, go }) {
+function ImportedStrip({ deck, de, ctx, load, go, late = false }) {
   const { openStock } = useNav();
   const st = useMemo(() => pfState(deck, ctx, load.status === "ok" ? load.data.stocks : []), [deck, ctx, load]);
   const m = de && de.ok ? deckMoney(deck, de, ctx) : { ok: false };
   return <ImportedDeck deck={deck} st={st} m={m} openStock={openStock} byT={ctx.byT} onMore={() => go("portfolio")} home
-    pxDate={load.status === "ok" ? load.data.pxDate : null} />;
+    pxDate={load.status === "ok" ? load.data.pxDate : null} late={late} />;
 }
 
 // 홈's first visit (no saved portfolio): the descriptor, 포트폴리오 만들기 and 종목 순위 (v19.5b: with its numbers, so no 뱁이
@@ -360,8 +380,8 @@ export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null
       <Hero load={load} ev={ev} held={held} decks={decks} onConfirm={onConfirm} onWhy={onWhy} />
       <WatchLook load={load} store={store} onWatch={onWatch} />
       <Cols main={[
-        ...held.map((de) => <DeckStrip key={de.id} de={de} deck={decks.find((d) => d.id === de.id)} ctx={ctx} onWhy={onWhy} go={go} load={load} />),
-        ...imported.map((d) => <ImportedStrip key={d.id} deck={d} de={ev.decks.find((x) => x.id === d.id)} ctx={ctx} load={load} go={go} />),
+        ...held.map((de) => <DeckStrip key={de.id} de={de} deck={decks.find((d) => d.id === de.id)} ctx={ctx} onWhy={onWhy} go={go} load={load} late={!!ev.late} />),
+        ...imported.map((d) => <ImportedStrip key={d.id} deck={d} de={ev.decks.find((x) => x.id === d.id)} ctx={ctx} load={load} go={go} late={!!ev.late} />),
         ev.ok && !held.length && !imported.length && (
           <Card key="today-empty" data-ui-v2="today-empty"><Button kind="secondary" onClick={() => go("build")}>{C.build.title}</Button></Card>
         ),

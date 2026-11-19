@@ -12254,6 +12254,323 @@ def scene_v197a(R, files, width):
     srv.shutdown()
 
 
+# ── 늦은 데이터의 매일 점검 (Jack, 2026-11-19) ──
+# 시험의 시계는 11-11(수). 그 전 5거래일 = 11-05 · 06 · 09 · 10 · 11 (한국 · 미국 모두 거래일): 11-04 종가는 아직 점검해요 (n = 5),
+# 11-03 종가는 6거래일 뒤라 예전처럼 점검하지 않아요. 발행은 30시간 전 · staleAfter 는 한 시간 전에 지났고 예정일은 어제 → '2일째'.
+LATE_IN, LATE_OUT = "2026-11-04", "2026-11-03"
+
+
+def late_files(files, px=None):
+    """px 가 있으면 그날 종가의 늦은 발행 (위 설명), 없으면 방금 발행한 제때 파일. 홈 띠가 조용하게 반반 포트폴리오의 두 종목(삼성전자 ·
+    현대차)은 산 값과 같은 20만원이고, 현대차는 −6.0% (크게 움직인 종목: 왜 움직였나로 가는 길)."""
+    f = stale_files(files, 30, -1, 1) if px else daily_files(files)
+    if px:
+        for n in ("data.json", "corp.json"):
+            f[n]["pxDate"] = px
+        f["data.json"]["usPxDate"] = px
+    by = {x["t"]: x for x in f["data.json"]["stocks"]}
+    for t in ("005930", "005380"):
+        by[t]["price"] = 200000.0
+    by["005380"]["d1"] = -6.0
+    return f
+
+
+def scene_late_check(R, files, width, dark=False):
+    """늦은 데이터 (Jack, 2026-11-19): 종가가 5거래일 안이면 점검을 그 종가로 계속하고 날짜를 말해요 — 홈 띠 '{date} 종가로 점검했어요',
+    할 일이 없으면 '오늘은 할 일이 없어요' 대신 '{date} 종가 기준으로는 할 일이 없어요.' · 날짜 줄의 멈춤 말은 그대로 · 포트폴리오 '{date}
+    종가로 점검했어요' 줄과 칩 · 내 수익은 숫자와 멈춤 말 · 왜 움직였나는 날짜 줄. 6거래일부터는 예전 그대로 (멈춤 띠 · 점검 없음).
+    제때: 예전 그대로. 12px 바닥 · 가로 스크롤 없음 · 밝은 · 어두운 화면."""
+    S = f"늦은 점검 {width}{' 어두운' if dark else ''}"
+    screen = {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2, "color_scheme": "dark" if dark else "light"}
+    half = _one_deck("dhalf", "반반 포트폴리오", [("005930", "삼성전자", 0.5, [], 1, 200000), ("005380", "현대차", 0.5, [], 1, 200000)])["decks"][0]
+    md_in = mdtext(LATE_IN)
+    late_words = fillp(C["app"]["stale"], n=2)
+    calm_late = fillp(C["today"]["calmLate"], date=md_in)
+    checked = fillp(C["pfr"]["checked"], date=md_in)
+    not_today = C["today"]["stale"].split("{n}")[1]                     # '일째 갱신되지 않아 오늘은 점검하지 않았어요'
+    pill = '[data-ui-v2="today-hero"] [data-ui-part="pill"]'
+
+    def theme(page):
+        assert page.evaluate("() => document.documentElement.dataset.theme || ''") in (("dark",) if dark else ("light", "")), dark
+
+    for state, px in (("fresh", None), ("late", LATE_IN), ("beyond", LATE_OUT)):
+        srv, ctx, page, base = R.open(build_site(late_files(files, px)), width, init=e_store([half]), path="/app.html?dev=1#home", device=screen)
+
+        def home():
+            wait_ready(page)
+            theme(page)
+            dl = page.locator('[data-ui-v2="date-line"]').first
+            body = page.locator("body").inner_text()
+            if state == "fresh":
+                hero = page.locator('[data-ui-v2="today-hero"]')
+                hero.wait_for(state="visible")
+                assert dl.get_attribute("data-stale") == "0" and hero.get_attribute("data-late") is None
+                assert page.locator(pill).inner_text() == C["today"]["calmEyebrow"]          # 제때: 예전 그대로
+                assert page.locator('[data-ui-v2="today-late"]').count() == 0 and calm_late.split(" ", 2)[2] not in body
+            elif state == "late":
+                hero = page.locator('[data-ui-v2="today-hero"]')
+                hero.wait_for(state="visible")
+                assert dl.get_attribute("data-stale") == "1" and dl.inner_text() == fillp(C["app"]["asOf"], md=md_in) + " · " + late_words, dl.inner_text()
+                assert hero.get_attribute("data-state") == "calm" and hero.get_attribute("data-late") == "1"
+                assert hero.locator('[data-ui-v2="today-late"]').get_attribute("data-n") == "5"           # 5거래일 뒤: 아직 점검
+                assert page.locator(pill).inner_text() == calm_late, page.locator(pill).inner_text()   # Jack 의 Q3 줄
+                assert hero.locator('[data-ui-v2="today-late"]').inner_text() == checked
+                assert C["today"]["calmEyebrow"] not in body and not_today not in body, body[:400]
+                assert page.locator('[data-ui-v2="today-stale"]').count() == 0
+                assert page.locator('[data-ui-v2="home-money"][data-deck-id="dhalf"]').count() == 1       # 포트폴리오 칸 · 가진 종목도 그대로
+                assert page.locator('[data-ui-v2="home-held"] [data-home-holding]').count() == 2
+                assert page.locator('[data-ui-v2="home-day"]').count() == 0 and fillp(C["home"]["cols"]) not in body   # 리뷰: '오늘' 붙은 것 없음
+            else:
+                band = page.locator('[data-ui-v2="today-stale"] [data-ui="hero-band"] h2')
+                band.wait_for(state="visible")
+                assert band.inner_text() == fillp(C["today"]["stale"], n=2), band.inner_text()       # 6거래일: 예전 그대로
+                assert dl.get_attribute("data-stale") == "1" and dl.inner_text().endswith(" · " + late_words)
+                assert page.locator('[data-ui-v2="today-hero"], [data-ui-v2="home-block"], [data-ui-v2="today-late"]').count() == 0
+                assert C["today"]["calmLate"].split("{date}")[1] not in body and C["pfr"]["checked"].split("{date}")[1] not in body
+            floor_ok(page, f"홈 {state}")
+            no_hscroll(page, width)
+            R.collect(page)
+        R.check(page, S, {"fresh": "제때: '오늘은 할 일이 없어요' 그대로 · 날짜 줄에 멈춤 말 없음",
+                          "late": f"5거래일 안 ({md_in} 종가): 날짜 줄 '{late_words}' · 띠 '{calm_late}' · '{checked}' · 포트폴리오 칸 그대로",
+                          "beyond": "6거래일: 멈춤 띠 '데이터가 2일째 …점검하지 않았어요' · 점검 없음 (예전 그대로)"}[state], home)
+
+        def portfolio():
+            tab(page, TABS["portfolio"])
+            at(page, "portfolio")
+            page.locator('[data-deck-id="dhalf"]').first.wait_for(state="visible")
+            if state == "late":
+                note = page.locator('[data-ui-v2="deck-late"]')
+                assert note.inner_text() == checked and note.get_attribute("data-n") == "5"
+                assert page.locator('[data-ui-v2="deck-stale"]').count() == 0
+                assert page.locator('[data-deck-id="dhalf"] [data-holding][data-status]').count() == 2      # 칩 · 비중 줄도 그대로
+            elif state == "beyond":
+                assert page.locator('[data-ui-v2="deck-stale"]').inner_text() == fillp(C["today"]["stale"], n=2)
+                assert page.locator('[data-ui-v2="deck-late"]').count() == 0 and page.locator("[data-holding][data-status]").count() == 0
+            else:
+                assert page.locator('[data-ui-v2="deck-late"], [data-ui-v2="deck-stale"]').count() == 0
+                assert page.locator('[data-deck-id="dhalf"] [data-holding][data-status]').count() == 2
+            page.evaluate("location.hash = '#portfolio/returns/dhalf'")
+            page.locator('[data-ui-v2="returns"]').wait_for(state="visible")
+            if state == "late":
+                page.locator('[data-ui-v2="ret-total"]').wait_for(state="visible")                         # 그 종가의 숫자
+                assert page.locator('[data-ui-v2="ret-date"]').inner_text() == fillp(C["ret"]["date"], date=md_in)
+                assert page.locator('[data-ui-v2="ret-late"]').inner_text() == late_words and page.locator('[data-ui-v2="ret-stale"]').count() == 0
+            elif state == "beyond":
+                page.locator('[data-ui-v2="ret-stale"]').wait_for(state="visible")
+                assert page.locator('[data-ui-v2="ret-total"], [data-ui-v2="ret-late"]').count() == 0
+            else:
+                page.locator('[data-ui-v2="ret-total"]').wait_for(state="visible")
+                assert page.locator('[data-ui-v2="ret-late"], [data-ui-v2="ret-stale"]').count() == 0
+            theme(page)
+            floor_ok(page, f"내 수익 {state}")
+            no_hscroll(page, width)
+            R.collect(page)
+        R.check(page, S, {"fresh": "제때: 포트폴리오 · 내 수익 그대로 (늦음 줄 없음)",
+                          "late": f"5거래일 안: 포트폴리오 '{checked}' · 칩 그대로 · 내 수익 숫자 + '{late_words}'",
+                          "beyond": "6거래일: 포트폴리오 '…오늘은 점검하지 않았어요' · 칩 없음 · 내 수익 멈춤 줄만"}[state], portfolio)
+
+        if state == "late":
+            def why():
+                page.evaluate("location.hash = '#home'")
+                at(page, "home")
+                page.locator('[data-ui-v2="today-hero"] [data-ui-v2="why-link"]').first.click()
+                at(page, "home/why")
+                dl = page.locator('[data-ui-v2="date-line"]').first
+                dl.wait_for(state="visible")
+                assert dl.get_attribute("data-stale") == "1" and dl.inner_text() == fillp(C["app"]["asOf"], md=md_in) + " · " + late_words
+                assert fillp(C["why"]["close"], md=md_in) in page.locator("body").inner_text()
+                theme(page)
+                floor_ok(page, "왜 움직였나 late")
+                no_hscroll(page, width)
+                R.collect(page)
+            R.check(page, S, f"5거래일 안: 왜 움직였나에 날짜 줄 '{fillp(C['app']['asOf'], md=md_in)} · {late_words}' · '{md_in} 종가'", why)
+        ctx.close()
+        srv.shutdown()
+
+    # 확인할 일이 있는 날 (매일 점검 덱들): 띠는 '오늘 확인할 일' 그대로 + 그 종가의 날짜
+    init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(DAILY_DECKS, ensure_ascii=False))}); }} catch (e) {{}} }})();"
+    srv, ctx, page, base = R.open(build_site(late_files(files, LATE_IN)), width, init=init, path="/app.html?dev=1#home", device=screen)
+
+    def todo():
+        wait_ready(page)
+        hero = page.locator('[data-ui-v2="today-hero"]')
+        hero.wait_for(state="visible")
+        assert hero.get_attribute("data-state") == "todo" and hero.get_attribute("data-late") == "1"
+        assert hero.locator('[data-ui-v2="today-late"]').inner_text() == checked
+        assert page.locator(pill).count() == 0                                   # 리뷰: '오늘 확인할 일 {n}개' 없이 찾은 것만
+        assert hero.locator('[data-ui-v2="todo-item"]').count() >= 1
+        assert page.locator('[data-ui-v2="today-stale"]').count() == 0
+        theme(page)
+        floor_ok(page, "홈 todo late")
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, f"5거래일 안, 확인할 일이 있는 날: 찾은 것 그대로 + '{checked}' ('오늘 확인할 일 …' 없이)", todo)
+    ctx.close()
+    srv.shutdown()
+
+
+TODAY_WORDS_JS = """() => { const out = new Set(); const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  while (w.nextNode()) { const n = w.currentNode, e = n.parentElement; if (!e || e.closest('script, style')) continue;
+    const r = e.getBoundingClientRect(); if (!r.width && !r.height) continue; const t = n.textContent.trim(); if (t.includes('오늘')) out.add(t); }
+  for (const e of document.querySelectorAll('[aria-label],[alt],[placeholder],[title]'))
+    for (const a of ['aria-label', 'alt', 'placeholder', 'title']) { const v = e.getAttribute(a); if (v && v.includes('오늘')) out.add(v); }
+  return [...out]; }"""
+
+
+def today_words(page):
+    """화면에 보이는 글 · aria-label 가운데 '오늘'이 든 것 (숫자는 # 으로: 날짜 · 금액이 달라도 같은 줄)."""
+    return {re.sub(r"[−+\-]?\d[\d,.]*", "#", t) for t in page.evaluate(TODAY_WORDS_JS)}
+
+
+def scene_late_today_words(R, files, width=390):
+    """늦은 점검 리뷰 (2026-11-19): 지난 종가로 점검할 때 '오늘'이 붙은 숫자 · 줄은 하나도 새로 나오지 않아요 — 점검하지 않던 때(6거래일 뒤)와
+    같아요. 홈(새 홈 · 스위치를 끈 홈) · 포트폴리오 · 내 수익(만든 · 가진 종목) · 종목 바꾸기 · 회사 페이지: 늦은 화면의 '오늘' 글 ⊆ 6거래일 화면의
+    '오늘' 글, 왜 움직였나는 '오늘' 글이 없어요. 제때인 날에는 그 자리들이 그대로 있어요 (홈 '오늘 {금액}' · '비중 · 오늘' · '오늘 확인할 일' ·
+    미국 환율 줄 · 빠진 종목 줄 · 오늘 등락률 줄 · 내 수익 '→ 오늘 {b}원'). 덱: 매일 점검의 확인 덱 · v19.6a 의 만든(미국 기록) · 가진 종목(달러
+    평균 단가) · 빠진 종목(OLDX)."""
+    S = f"늦은 점검 '오늘' {width}"
+    store, _ = missing_store(files)
+    pxd0 = files["data.json"]["pxDate"]
+    by0 = {x["t"]: x for x in files["data.json"]["stocks"]}
+    usd = e_imported(by0, pxd0, [("005930", 10, 200000), ("AAPL", 2, 300.0)], did="dusd", name="달러 평균 단가 포트폴리오")   # 원금 · 수익 = 오늘 환율 줄
+    decks = [DAILY_DECKS["decks"][0]] + v196a_store(pxd0)["decks"] + [store["decks"][0], usd]
+
+    def site_for(px, app=None):
+        f = v196a_files(late_files(files, px))
+        by = {x["t"]: x for x in f["data.json"]["stocks"]}
+        by["035420"].pop("d1", None)                                     # NAVER: 오늘 등락률이 빈 한국 종목 (DayNote '오늘 등락률은 …')
+        for x in f["data.json"]["stocks"]:                               # 반도체가 다 같이 빠진 날 (왜 움직였나 SK하이닉스: 업종이 다 같이)
+            if x.get("cls") == "kr" and x.get("ind") == "semi" and x["t"] != "000660":
+                x["d1"] = -1.5
+        return build_site(f, app=app)
+
+    # 숨긴 것마다 콘솔에 한 번 (CLAUDE.md: 조용한 대체 없음 · 확인 리뷰 2026-11-19): 창의 console.warn 을 모아 둬요
+    warns_js = "(() => { const W = window.__warns = []; const o = console.warn; console.warn = function (...a) { W.push(a.map(String).join(' ')); return o.apply(this, a); }; })();"
+
+    def why_page(page, t):
+        """홈의 크게 움직인 종목에서 그 종목의 왜 움직였나를 열고, 데이터 출처를 펼쳐요. -> 화면 글"""
+        page.evaluate("location.hash = '#home'")
+        at(page, "home")
+        page.locator(f'[data-big-move="{t}"] [data-ui-v2="why-link"]').first.click()
+        at(page, "home/why")
+        page.locator('[data-ui-v2="why-verdict"]').wait_for(state="visible")
+        page.locator('[data-ui-v2="why-sources"] button').click()
+        page.locator('[data-ui-v2="why-sources"] [data-open="1"]').wait_for(state="attached")
+        return page.locator("body").inner_text()
+
+    seen = {}
+    screens = [("home", "#home"), ("portfolio", "#portfolio"), ("ret-built", "#portfolio/returns/dbuilt"), ("ret-imp", "#portfolio/returns/dimp"),
+               ("edit", "#portfolio/edit/dbuilt"), ("company", "#stocks/005930"), ("tax", "#portfolio/tax")]
+    ready = {"home": '[data-ui-v2="home2"]', "portfolio": '[data-deck-id="dbuilt"]', "ret-built": '[data-ui-v2="returns"]', "ret-imp": '[data-ui-v2="returns"]',
+             "edit": '[data-ui-v2="edit-list"]', "company": '[data-ui-v2="company"]', "tax": '[data-ui-v2="tax"]'}
+    for state, px in (("fresh", None), ("beyond", LATE_OUT), ("late", LATE_IN)):
+        srv, ctx, page, base = R.open(site_for(px), width, init=e_store(decks) + warns_js, path="/app.html?dev=1#home")
+
+        def run(state=state):
+            wait_ready(page)
+            got = {}
+            for key, h in screens:
+                page.evaluate("(h) => { location.hash = h; }", h)
+                page.locator(ready[key]).first.wait_for(state="visible")
+                if key == "home":
+                    disc_settled(page)
+                    page.locator('[data-ui-v2="today-hero"], [data-ui-v2="today-stale"]').first.wait_for(state="visible")
+                page.wait_for_timeout(150)
+                got[key] = today_words(page)
+                if state == "fresh" and key == "home":                    # 제때: 그 자리들이 그대로 있어요
+                    assert page.locator('[data-ui-v2="home-day"]').count() >= 1 and page.locator('[data-ui-v2="usd-today"]').count() >= 1
+                    assert page.locator('[data-ui-v2="missing-line"]').count() >= 1 and page.locator('[data-ui-v2="day-note"][data-kind="missing"]').count() >= 1
+                    assert fillp(C["home"]["cols"]) in got[key] and any(w.startswith(C["today"]["todoN"].split("{n}")[0]) for w in got[key]), got[key]
+                if state == "fresh" and key == "ret-built":
+                    assert page.locator('[data-ui-v2="ret-fx-line"]').count() == 1
+                if state == "beyond" and key == "tax":                    # 점검하지 않던 그대로: 예전 멈춤 줄
+                    assert page.locator('[data-ui-v2="tax-stale"]').inner_text() == fillp(C["today"]["stale"], n=2)
+                if state == "late":
+                    extra = got[key] - seen["beyond"][key]
+                    assert not extra, (key, extra)                        # 늦은 점검이 더한 '오늘' 글이 없어요
+                    assert page.locator('[data-ui-v2="home-day"], [data-ui-v2="usd-today"], [data-ui-v2="missing-line"], [data-ui-v2="ret-fx"], '
+                                        '[data-ui-v2="ret-missing"], [data-ui-v2="ret-no-price"], [data-ui-v2="missing-remove"], '
+                                        '[data-ui-v2="home-look"]').count() == 0, key
+                    if key == "home":
+                        assert page.locator('[data-ui-v2="today-hero"]').get_attribute("data-late") == "1"
+                        assert page.locator('[data-ui-v2="today-hero"] [data-ui-part="pill"]').count() == 0     # '오늘 확인할 일 {n}개' 없이 찾은 것만
+                        assert page.locator('[data-ui-v2="home-block"] [data-ui-v2="day-note"]').count() == 0
+                        assert page.locator('[data-ui-v2="home-money"][data-deck-id="dgone"]').count() == 0   # 빠진 종목의 합계는 그 줄과 함께 빠져요
+                        assert page.locator('[data-ui-v2="home-money"][data-deck-id="dimp"] [data-ui-v2="home-gain"]').count() == 0   # 오늘 환율 줄이 설명하는 수익
+                        assert page.locator('[data-ui-v2="home-rules"][data-deck-id="dimp"] [data-ui-v2="home-checked"]').inner_text() == fillp(C["pfr"]["checked"], date=mdtext(LATE_IN))
+                    if key == "portfolio":
+                        assert page.locator('[data-ui-v2="deck-late"]').count() == 1
+                        assert page.locator('[data-deck-id="dgone"] [data-ui-v2="deck-summary"]').count() == 0
+                        assert page.locator('[data-deck-id="dcut"] [data-holding][data-status]').count() >= 1   # 점검 결과(칩)는 그대로
+                    if key == "ret-built":
+                        page.locator('[data-ui-v2="ret-total"]').wait_for(state="visible")                  # 숫자는 그 종가로
+                    if key == "ret-imp":
+                        assert page.locator('[data-ui-v2="ret-total"]').count() == 0 and page.locator('[data-ui-v2="ret-late"]').count() == 1
+                    if key == "tax":                                      # 연말에 확인할 숫자: 숫자 없이 날짜 줄의 멈춤 말 (내 수익과 같은 말)
+                        note = page.locator('[data-ui-v2="tax-stale"]')
+                        assert note.get_attribute("data-late") == "1" and note.inner_text() == fillp(C["app"]["stale"], n=2), note.inner_text()
+                        assert page.locator('[data-ui-v2="tax-loss-row"], [data-ui-v2="tax-loss-none"]').count() == 0
+                floor_ok(page, f"{state} {key}")
+                no_hscroll(page, width)
+                R.collect(page)
+            seen[state] = got
+            together = C["why"]["together"].split("\n")[0]                 # '업종이 다 같이'
+            if state == "fresh":                                           # 제때: 업종 비교 · '업종이 다 같이' · 출처의 업종 줄 그대로
+                body = why_page(page, "000660")
+                assert page.locator('[data-ui-v2="why-peers"]').count() == 1 and together in body, body[:300]
+                assert page.locator('[data-ui-v2="why-sources"]').get_by_text(C["why"]["srcInd"], exact=True).count() == 1
+                R.collect(page)
+            if state == "late":                                            # 왜 움직였나: '오늘' 글 없음 (점검하지 않던 때는 열 수 없었어요)
+                body = why_page(page, "000660")
+                assert not today_words(page), today_words(page)
+                assert page.locator('[data-ui-v2="why-peers"]').count() == 0
+                assert together not in body and C["why"]["c1Title"] not in body, body[:300]     # 업종 묶음은 읽지 않아요: 판정도
+                assert page.locator('[data-ui-v2="why-sources"]').get_by_text(C["why"]["srcInd"], exact=True).count() == 0   # 출처에도 업종 줄 없음
+                R.collect(page)
+                warns = page.evaluate("window.__warns")
+                want = ["[v2] late data: dgone: the value, money put in and return are left out (OLDX",          # 포트폴리오 (만든)
+                        "[v2] dgone: no portfolio value on the home screen today (late data with a held stock missing",  # 홈 포트폴리오 칸
+                        "[v2] dimp: late data: the gain-since-purchase line is left out",                         # 홈 산 가격보다 (달러)
+                        "[v2] late data: dusd: money put in and return are left out (dollar",                     # 포트폴리오 (가진 종목)
+                        "[v2] late data: dimp: the rows' day's change and no-trade line are left out",
+                        "[v2] late data: dcut: the home card's change today is left out",
+                        "[v2] late data: dcut: the home list's weight/today column name",
+                        "[v2] late data: the home band's count label (things to check today) is left out",
+                        "[v2] dimp: late data: returns not shown",
+                        "[v2] dbuilt: late data: the exchange-rate card is left out",
+                        "[v2] late data: why-it-moved 000660: the peer group (same industry) is not read"]
+                missing = [w for w in want if not any(x.startswith(w) for x in warns)]
+                assert not missing, (missing, [x for x in warns if "late" in x])
+        R.check(page, S, {"fresh": "제때: 홈 '오늘 {금액}' · '비중 · 오늘' · '오늘 확인할 일' · 환율 · 빠진 종목 · 오늘 등락률 줄 · 내 수익 '→ 오늘' 그대로",
+                          "beyond": "6거래일 뒤: 점검하지 않던 그대로 (비교 기준)",
+                          "late": "5거래일 안: 여섯 화면 모두 늦은 점검이 더한 '오늘' 글 없음 · 그 줄이 설명하던 숫자도 없음 · 왜 움직였나 '오늘' 없음"}[state], run)
+        ctx.close()
+        srv.shutdown()
+
+    # 새 홈 스위치를 끈 홈 (v19.3d 홈): 같은 규칙
+    app = home2_off_app()
+    off = {}
+    for state, px in (("beyond", LATE_OUT), ("late", LATE_IN)):
+        srv, ctx, page, base = R.open(site_for(px, app=app), width, init=e_store(decks) + warns_js, path="/app.html?dev=1#home")
+
+        def run_off(state=state):
+            wait_ready(page)
+            page.locator('[data-ui-v2="today-hero"], [data-ui-v2="today-stale"]').first.wait_for(state="visible")
+            page.wait_for_timeout(150)
+            off[state] = today_words(page)
+            if state == "late":
+                assert not (off["late"] - off["beyond"]), off["late"] - off["beyond"]
+                assert page.locator('[data-ui-v2="day-change"], [data-ui-v2="usd-today"], [data-ui-v2="missing-line"], [data-ui-v2="day-note"]').count() == 0
+                assert page.locator('[data-ui-v2="deck-strip"]').count() >= 2
+                warns = page.evaluate("window.__warns")
+                for w in ("[v2] late data: dgone: the value and return are left out (OLDX", "[v2] late data: dcut: today's change and the rows' day's change are left out"):
+                    assert any(x.startswith(w) for x in warns), (w, [x for x in warns if "late" in x])
+            R.collect(page)
+        R.check(page, S, f"새 홈 스위치를 끈 홈 ({state}): " + ("늦은 점검이 더한 '오늘' 글 없음 · 포트폴리오 줄은 그대로" if state == "late" else "비교 기준"), run_off)
+        ctx.close()
+        srv.shutdown()
+
+
 def mdtext(iso):
     m = int(iso[5:7]); d = int(iso[8:10])
     return fillp(C["app"]["md"], m=m, d=d)
@@ -13480,6 +13797,129 @@ def scene_v196f_gaps(R, files, width=390):
         srv.shutdown()
 
 
+# ── 왜 움직였나의 종가 날짜: 미국 종목은 한국 날짜를 쓰지 않아요 (2026-11-19) ──
+def scene_why_us_date(R, files, width=390):
+    """왜 움직였나 (why.jsx · cofmt.priceMdSaid): 미국 종목은 한국 날짜를 쓰지 않아요 (CLAUDE.md: 보여 주는 날짜는 그 내용의 날짜 · 시장을
+    섞지 않아요). usPxDate 가 없는 파일: 애플의 머리 줄에 날짜도 '종가'도 없고 (한국 날짜 10월 30일을 대신 쓰지 않아요) 출처에 가격 줄이
+    없고, 콘솔에 한 번 이유 · usPxDate 가 있는 파일(10월 29일): '10월 29일 종가' · '야후 파이낸스 · 현지 기준 10월 29일 종가' 그대로 · 한국
+    종목(삼성전자)은 두 파일 모두 '10월 30일 종가' · '한국거래소 10월 30일 종가' 그대로. 앞선 종가의 미국 종목(pxd)은 오늘 변화가 없어서
+    왜 움직였나를 열 수 없어요 (tests/test_why_us_date.py 가 봐요)."""
+    S = f"왜 움직였나 미국 날짜 {width}"
+    pxd0 = files["data.json"]["pxDate"]
+    band = lambda t: [{"id": "band", "kind": "band", "check": "checked", "target": t, "bands": [0.75 * t, 1.25 * t, 1.4 * t]}]
+    deck = {"id": "dwhyus", "name": "왜 움직였나 포트폴리오", "createdAt": "2026-10-01", "planFx": 1300,      # 만든 포트폴리오 (매일 점검)
+            "holdings": [{"t": "005930", "nk": "삼성전자", "target": 0.5, "plannedQty": 10, "rules": band(0.5)},
+                         {"t": "AAPL", "nk": "Apple Inc.", "cls": "us", "target": 0.5, "plannedQty": 6, "rules": band(0.5)}],
+            "purchases": [{"id": "p1aaaaaa", "t": "005930", "date": "2026-10-01", "qty": 10, "price": 200000, "ccy": "KRW"},
+                          {"id": "p2aaaaaa", "t": "AAPL", "date": "2026-10-01", "qty": 6, "price": 300.0, "ccy": "USD", "fx": 1300}]}
+    warns_js = ("(() => { const W = window.__warns = []; const o = console.warn; console.warn = function (...a) { "
+                "W.push(a.map(String).join(' ')); return o.apply(this, a); }; })();")
+    kr = mdtext(pxd0)
+    said = "[v2] why-it-moved AAPL: the close date and the words that need it are left out"
+    for case, us_px in (("usPxDate 없음", None), ("usPxDate 있음", "2026-10-29")):
+        f = daily_files(files)                                     # 오늘 발행 (매일 점검이 돌아요)
+        d = f["data.json"]
+        if us_px is None:
+            gone = d.pop("usPxDate", None)
+            assert gone and d["pxDate"] == pxd0, gone
+        else:
+            d["usPxDate"] = us_px
+        for x in d["stocks"]:
+            if x["t"] in ("AAPL", "005930"):
+                x["d1"] = -6.5                       # 크게 움직인 종목 (5% 이상): 홈의 '자세히 보기'로 왜 움직였나
+                x.pop("pxd", None)
+        srv, ctx, page, base = R.open(build_site(f), width, init=e_store([deck]) + warns_js, path="/app.html?dev=1#home")
+
+        def why(t):
+            """홈의 크게 움직인 종목에서 그 종목의 왜 움직였나를 열고 출처를 펼쳐요. -> (머리 줄 글, 출처 글)"""
+            page.evaluate("location.hash = '#home'")
+            at(page, "home")
+            page.locator(f'[data-big-move="{t}"] [data-ui-v2="why-link"]').first.click()
+            at(page, "home/why")
+            page.locator('[data-ui-v2="why-verdict"]').wait_for(state="visible")
+            src = page.locator('[data-ui-v2="why-sources"]')
+            st = ""
+            if src.count():
+                src.locator("button").first.click()
+                src.locator('[data-open="1"]').wait_for(state="attached")
+                st = src.inner_text()
+            head = page.locator('[data-ui-v2="why-head"]').inner_text()
+            assert page.locator('[data-ui-v2="why-price"]').inner_text().strip(), "가격이 없어요"
+            no_hscroll(page, width)
+            R.collect(page)
+            return head, st
+
+        def run(us_px=us_px):
+            wait_ready(page)
+            head, st = why("AAPL")
+            if us_px is None:                                       # 미국 날짜가 없으면 날짜 없이 (한국 날짜를 대신 쓰지 않아요)
+                assert kr not in head and "종가" not in head and "{" not in head, head
+                assert "야후 파이낸스" not in st and kr not in st, st
+            else:                                                   # 미국 날짜가 있으면 그대로
+                assert fillp(C["why"]["close"], md=mdtext(us_px)) in head and f"{kr} 종가" not in head, head
+                assert fillp(C["why"]["srcPriceUs"], md=mdtext(us_px)) in st, st
+            why("AAPL")                                             # 다시 열어도 콘솔에는 한 번
+            head, st = why("005930")                                # 한국 종목: 두 파일 모두 한국 종가 날짜 그대로
+            assert fillp(C["why"]["close"], md=kr) in head, head
+            assert fillp(C["why"]["srcPriceKr"], md=kr) in st, st
+            warns = [w for w in page.evaluate("window.__warns") if "why-it-moved" in w]
+            if us_px is None:
+                assert len(warns) == 1 and warns[0].startswith(said) and "usPxDate" in warns[0] and "never takes the Korean date" in warns[0], warns
+            else:
+                assert not warns, warns
+        R.check(page, S, {None: "usPxDate 없는 파일: 애플의 왜 움직였나에 한국 날짜 없음 (머리 줄 · 출처) · 콘솔에 한 번 · 삼성전자는 10월 30일 그대로",
+                          "2026-10-29": "usPxDate 10월 29일: 애플 '10월 29일 종가' · 출처 그대로 · 삼성전자 10월 30일 · 콘솔 없음"}[us_px], run)
+        ctx.close()
+        srv.shutdown()
+
+
+def scene_why_late_dates(R, files, width=390):
+    """늦은 데이터의 왜 움직였나 (리뷰 2026-11-19, #144 에서): 날짜 줄('{date} 기준 · 멈춤 말')은 그 종목 시장의 날짜예요 (회사 페이지와
+    같은 cofmt.lineDate). 한국 종가 11월 5일 · 미국 종가 11월 4일인 늦은 파일 (추수감사절 주처럼 두 날짜가 달라요): 애플은 '11월 4일 기준'과
+    '11월 4일 종가' (한국 날짜 11월 5일 없음) · 삼성전자는 '11월 5일 기준'과 '11월 5일 종가' 그대로."""
+    S = f"왜 움직였나 늦은 날짜 {width}"
+    kr_px, us_px = "2026-11-05", LATE_IN                                   # 미국은 LATE_IN(5거래일 안), 한국은 하루 뒤
+    band = lambda t: [{"id": "band", "kind": "band", "check": "checked", "target": t, "bands": [0.75 * t, 1.25 * t, 1.4 * t]}]
+    deck = {"id": "dwhylate", "name": "늦은 날짜 포트폴리오", "createdAt": "2026-10-01", "planFx": 1300,
+            "holdings": [{"t": "005930", "nk": "삼성전자", "target": 0.5, "plannedQty": 10, "rules": band(0.5)},
+                         {"t": "AAPL", "nk": "Apple Inc.", "cls": "us", "target": 0.5, "plannedQty": 6, "rules": band(0.5)}],
+            "purchases": [{"id": "p1aaaaaa", "t": "005930", "date": "2026-10-01", "qty": 10, "price": 200000, "ccy": "KRW"},
+                          {"id": "p2aaaaaa", "t": "AAPL", "date": "2026-10-01", "qty": 6, "price": 300.0, "ccy": "USD", "fx": 1300}]}
+    f = late_files(files, us_px)                                           # 늦은 발행 (pxDate = usPxDate = LATE_IN)
+    for n in ("data.json", "corp.json"):
+        f[n]["pxDate"] = kr_px
+    assert f["data.json"]["usPxDate"] == us_px
+    for x in f["data.json"]["stocks"]:
+        if x["t"] in ("AAPL", "005930"):
+            x["d1"] = -6.5                                                 # 크게 움직인 종목: 홈의 '자세히 보기'
+            x.pop("pxd", None)
+    srv, ctx, page, base = R.open(build_site(f), width, init=e_store([deck]), path="/app.html?dev=1#home")
+
+    def run():
+        wait_ready(page)
+        for t, iso in (("AAPL", us_px), ("005930", kr_px)):
+            page.evaluate("location.hash = '#home'")
+            at(page, "home")
+            page.locator('[data-ui-v2="today-hero"]').wait_for(state="visible")
+            assert page.locator('[data-ui-v2="today-hero"]').get_attribute("data-late") == "1"   # 늦은 점검이 돌아요
+            page.locator(f'[data-big-move="{t}"] [data-ui-v2="why-link"]').first.click()
+            at(page, "home/why")
+            dl = page.locator('[data-ui-v2="date-line"]')
+            dl.first.wait_for(state="visible")
+            line = dl.first.inner_text()
+            assert dl.count() == 1 and dl.first.get_attribute("data-stale") == "1", (t, dl.count())
+            other = kr_px if iso == us_px else us_px
+            assert line.startswith(fillp(C["app"]["asOf"], md=mdtext(iso))) and mdtext(other) not in line, (t, line)
+            head = page.locator('[data-ui-v2="why-head"]').inner_text()
+            assert fillp(C["why"]["close"], md=mdtext(iso)) in head and mdtext(other) not in head, (t, head)
+            floor_ok(page, f"왜 움직였나 늦은 날짜 {t}")
+            no_hscroll(page, width)
+            R.collect(page)
+    R.check(page, S, "늦은 데이터 (한국 11월 5일 · 미국 11월 4일): 애플의 날짜 줄과 종가는 11월 4일 · 삼성전자는 11월 5일", run)
+    ctx.close()
+    srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -13586,7 +14026,11 @@ def main():
                    lambda: scene_v196f(R, files, 1280, dark=True),                                          # v19.6f 연말에 확인할 숫자 (세 상태)
                    lambda: scene_v196f_window(R, files, 390),                                               # v19.6f 보이는 때 (한국 날짜 · 시간대)
                    lambda: scene_v196f_states(R, files, 390),                                               # v19.6f 기록 없음 · 한국만 · 250만원 · 멈춤 · 실패
-                   lambda: scene_v196f_gaps(R, files, 390)):                                                # v19.6f 리뷰 C: 빠진 종목 · 셀 수 없는 배당 · 미국 날짜
+                   lambda: scene_v196f_gaps(R, files, 390),                                                 # v19.6f 리뷰 C: 빠진 종목 · 셀 수 없는 배당 · 미국 날짜
+                   lambda: scene_late_check(R, files, 390), lambda: scene_late_check(R, files, 390, dark=True),   # 늦은 데이터의 점검 (Jack 2026-11-19)
+                   lambda: scene_late_today_words(R, files, 390),                                           # 늦은 점검 리뷰: '오늘' 글이 새로 나오지 않아요
+                   lambda: scene_why_us_date(R, files, 390),                                                # 왜 움직였나: 미국 종목에 한국 날짜 없음 (2026-11-19)
+                   lambda: scene_why_late_dates(R, files, 390)):                                            # 늦은 데이터의 왜 움직였나: 그 시장의 날짜 줄
             try:
                 fn()
             except Exception as e:

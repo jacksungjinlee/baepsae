@@ -14,7 +14,7 @@ import React, { useMemo } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, TOUCH, CHART } from "../ui/tokens.js";
 import { Amount, priceColor } from "../ui/components.jsx";
 import { IconChip } from "../ui/icons.jsx";
-import { C, fill, mdText, todayKst, todayStaleText, exactWon } from "./format.js";
+import { C, fill, mdText, todayKst, todayStaleText, staleText, exactWon } from "./format.js";
 import { Page, Card, AppBar, LoadFail, Footer, Note, OwnCloseNote, tx, tap } from "./ui.jsx";
 import { ownCloses } from "./stocklist.js";
 import { todayCtx } from "./rules.js";
@@ -99,7 +99,9 @@ function LossCard({ ls, stale, load, byT, nameOf }) {
     return (
       <Card data-ui-v2="tax-loss" data-stale="1" style={{ padding: `${SPACE(4)}px ${SPACE(4) + 2}px` }}>
         <Head icon="deck">{C.tax.lossTitle}</Head>
-        <Note tone="watch" data-ui-v2="tax-stale" style={{ marginTop: 0 }}>{todayStaleText(stale.days)}</Note>
+        {/* late data (the daily check ran on an older close, rules.js checkState): the date line's stale words, as 내 수익 says
+            them, never "…오늘은 점검하지 않았어요" while 홈 says it checked (review, 2026-11-19); still no number */}
+        <Note tone="watch" data-ui-v2="tax-stale" data-late={stale.late ? "1" : undefined} style={{ marginTop: 0 }}>{stale.late ? staleText(stale.days) : todayStaleText(stale.days)}</Note>
       </Card>
     );
   }
@@ -163,7 +165,11 @@ export function Tax({ load, store, pad, onBack }) {
   const has = useMemo(() => taxRecords(decks), [decks]);
   const ctx = useMemo(() => todayCtx(load), [load]);
   const ok = load.status === "ok";
-  const live = ok && ctx.state.ok;
+  // Late data (rules.js checkState, Jack 2026-11-19: the daily check keeps running on the last close for up to 5 trading
+  // days) is still stale here: this card was built to show no number on stale data, and Jack's change is about the daily
+  // check, so the card shows no number, with the date line's stale words (LossCard).
+  const late = ok && ctx.state.ok && ctx.state.late ? ctx.state.late : null;
+  const live = ok && ctx.state.ok && !late;
   const g = useMemo(() => (ok && (has.usSale || has.usHeld) ? yearGains(decks) : null), [ok, has, decks]);
   const dv = useMemo(() => (ok && has.div ? yearDivs(decks) : null), [ok, has, decks]);
   const ls = useMemo(() => {
@@ -197,7 +203,7 @@ export function Tax({ load, store, pad, onBack }) {
       if (!load.data.usPxDate) say("losses card: data.json has no usPxDate, so no date line (US prices never take the Korean pxDate)");
     }
   }
-  const stale = ok && !ctx.state.ok && has.usHeld ? { days: ctx.state.days } : null;
+  const stale = ok && (!ctx.state.ok || late) && has.usHeld ? { days: late ? late.days : ctx.state.days, late: !!late } : null;
   const md = mdText(today);
   return (
     <Page pad={pad}>
