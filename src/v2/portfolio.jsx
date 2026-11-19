@@ -142,6 +142,11 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
       {decks.length > 0 && !ev.ok && ev.why === "stale" && (
         <Note tone="watch" data-ui-v2="deck-stale">{todayStaleText(ev.days)}</Note>
       )}
+      {/* late data within 5 trading days (rules.js checkState, Jack 2026-11-19): the check ran on the last official close;
+          its date here for the portfolios made with 포트폴리오 만들기 (a 가진 종목 portfolio says it in its own head) */}
+      {ev.ok && ev.late && decks.some((d) => !isImported(d)) && (
+        <Note tone="watch" data-ui-v2="deck-late" data-n={ev.late.n}>{fill(C.pfr.checked, { date: mdText(load.data.pxDate) })}</Note>
+      )}
       {decks.map((d) => {
         if (isImported(d)) return <ImportedCard key={d.id} deck={d} ev={ev} ctx={ctx} load={load} openStock={openStock} onRemove={(t) => onRemove(d.id, t)} onRules={onRules ? () => onRules(d.id) : null}
           onRecord={canRecord ? (t, nk) => setFlow(startFlow([d.id], t, nk)) : null} onReturns={onReturns && hasRecords(d) ? () => onReturns(d.id) : null} />;

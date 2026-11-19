@@ -8,7 +8,10 @@
 //   loading            nothing yet
 //   failed / undated   the load-failure message (a file did not load, was refused, or cannot be dated)
 //   stale              "데이터가 {n}일째 갱신되지 않아 오늘은 점검하지 않았어요" (no status is computed at all); when n <= 1
-//                      (v19.1c: the due day, n counted from nextPub) today.staleLate instead (format.todayStaleText)
+//                      (v19.1c: the due day, n counted from nextPub) today.staleLate instead (format.todayStaleText).
+//                      Since Jack's 2026-11-19 change only once the closes are more than 5 trading days behind (rules.js
+//                      checkState); until then the check runs on the last close: the verdict below with "{date} 종가로
+//                      점검했어요" (pfr.checked) and, in place of "오늘은 할 일이 없어요", today.calmLate
 //   no held stock      no verdict (nothing was checked), only the way to 포트폴리오 만들기
 //   오늘 확인할 일      규칙 깨짐 or 확인 필요 (watch band, v19.0b: apricot marks data only): each one named, with its
 //                      rule, numbers and report year. The pill is 규칙 깨짐's navy when any stock broke a rule, else amber.
@@ -79,6 +82,9 @@ export function brokenTitle(name) {
 
 const namesOf = (deck) => new Map(((deck && deck.holdings) || []).map((h) => [h.t, h.nk]));
 export const isTodo = (x) => x.status === "broken" || x.status === "check";
+// "오늘은 할 일이 없어요", or on late data checked on an older close (lateMd: that close's date, "11월 16일") "{date} 종가
+// 기준으로는 할 일이 없어요." (Jack, 2026-11-19, late-check Q3). The band's eyebrow here and 홈's 오늘 볼 것 card (home2.jsx).
+export const calmLine = (lateMd) => (lateMd ? fill(C.today.calmLate, { date: lateMd }) : C.today.calmEyebrow);
 export const lines = (xs) => { const ls = xs.filter(Boolean); return ls.length ? ls.map((l, i) => <span key={i} style={{ display: "block" }}>{l}</span>) : null; };
 
 export function LinkButton({ children, onClick, ...rest }) {
@@ -157,6 +163,11 @@ export function Hero({ load, ev, held, decks, onConfirm, onWhy, quiet = true }) 
   const seen = new Set();
   const bigs = all.filter(({ x }) => x.bigMove && !seen.has(x.t) && seen.add(x.t));
   const nc = ev.notChecked > 0 ? <span data-ui-v2="today-not-checked">{fill(C.daily.notChecked, { n: ev.notChecked })}</span> : null;
+  // Late data within 5 trading days (rules.js checkState, Jack 2026-11-19): the check ran on the last official close, so the
+  // band says that close's date ("11월 16일 종가로 점검했어요", pfr.checked) and, where it would say "오늘은 할 일이 없어요",
+  // "{date} 종가 기준으로는 할 일이 없어요." (today.calmLate, Jack's Q3); the date line above keeps its stale words.
+  const lateMd = ev.late && load.status === "ok" ? mdText(load.data.pxDate) : null;
+  const dated = lateMd ? <span data-ui-v2="today-late" data-n={ev.late.n}>{fill(C.pfr.checked, { date: lateMd })}</span> : null;
   const deckOf = (id) => decks.find((d) => d.id === id);
   if (todo.length) {
     const first = todo[0].x;
@@ -164,9 +175,9 @@ export function Hero({ load, ev, held, decks, onConfirm, onWhy, quiet = true }) 
     const { todoTs, rest, restCalm } = todayCounts(held);
     return (
       <>
-        <div style={{ marginTop: SPACE(4) }} data-ui-v2="today-hero" data-state="todo">
+        <div style={{ marginTop: SPACE(4) }} data-ui-v2="today-hero" data-state="todo" data-late={dated ? "1" : undefined}>
           <HeroBand tone="alert" level={broken ? "broken" : "watch"} eyebrow={fill(C.today.todoN, { n: todoTs.size })} title={broken ? brokenTitle(first.nk) : first.nk}
-            body={lines([broken ? C.daily.sellNow : null, restCalm ? fill(C.today.rest, { n: rest }) : null, nc])}
+            body={lines([dated, broken ? C.daily.sellNow : null, restCalm ? fill(C.today.rest, { n: rest }) : null, nc])}
             inset={<>
               {todo.map(({ x, deckId }, i) => <TodoItem key={deckId + x.t} x={x} deck={deckOf(deckId)} onConfirm={onConfirm} sellSaid={broken} first={i === 0} />)}
               {/* v19.1c: an item here about a US stock priced at an earlier close (pxd, carried by the daily check) read that
@@ -181,9 +192,9 @@ export function Hero({ load, ev, held, decks, onConfirm, onWhy, quiet = true }) 
   const { allNone } = todayCounts(held);
   const allD1 = movesKnown(all.map(({ x }) => x));    // 2026-11-14: a halted stock counts at its reference price's change (rules.js)
   return (
-    <div style={{ marginTop: SPACE(4) }} data-ui-v2="today-hero" data-state="calm">
-      <HeroBand tone="calm" eyebrow={allNone && quiet ? C.today.calmEyebrow : undefined} title={C.today.calmTitle}
-        body={lines([bigs.length ? fill(C.today.bigN, { n: bigs.length }) : allD1 ? C.today.noBigMove : null, nc])}
+    <div style={{ marginTop: SPACE(4) }} data-ui-v2="today-hero" data-state="calm" data-late={dated ? "1" : undefined}>
+      <HeroBand tone="calm" eyebrow={allNone && quiet ? calmLine(lateMd) : undefined} title={C.today.calmTitle}
+        body={lines([dated, bigs.length ? fill(C.today.bigN, { n: bigs.length }) : allD1 ? C.today.noBigMove : null, nc])}
         inset={bigs.length ? <BigMoves items={bigs} load={load} onWhy={onWhy} /> : null} />
     </div>
   );

@@ -8,7 +8,7 @@ import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, CHART } from "../ui/tokens.js";
 import { Amount, priceColor } from "../ui/components.jsx";
 import { IconChip, Icon } from "../ui/icons.jsx";
-import { C, fill, nf, mdText, todayKst, todayStaleText, unitWon, plus, exactWon } from "./format.js";
+import { C, fill, nf, mdText, todayKst, todayStaleText, staleText, unitWon, plus, exactWon } from "./format.js";
 import { Page, Card, AppBar, LoadFail, Footer, Note, OwnCloseNote, tx, tap } from "./ui.jsx";
 import { ownCloses } from "./stocklist.js";
 import { shownName } from "./legacy.js";
@@ -121,6 +121,9 @@ export function Returns({ deck, load, store, pad, onBack, onTax }) {
   const ctx = useMemo(() => todayCtx(load), [load]);
   const ok = load.status === "ok";
   const live = ok && ctx.state.ok;
+  // late data within 5 trading days (rules.js checkState, Jack 2026-11-19): the amounts at the last official close, whose date
+  // the line under the title already gives (ret.date), with the date line's stale words under it
+  const late = live && ctx.state.late ? ctx.state.late : null;
   const q = useMemo(() => {
     if (!live) return null;
     const pxOf = (t) => { const s = ctx.byT.get(t); return s && s.price > 0 ? s.price : null; };
@@ -167,6 +170,7 @@ export function Returns({ deck, load, store, pad, onBack, onTax }) {
         <p data-ui-v2="ret-deck" style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2)}>{shownName(deck.name)}</p>
         {load.status === "fail" && <LoadFail picture={false} />}
         {ok && !ctx.state.ok && <Note tone="watch" data-ui-v2="ret-stale">{todayStaleText(ctx.state.days)}</Note>}
+        {late && <Note tone="watch" data-ui-v2="ret-late" data-n={late.n}>{staleText(late.days)}</Note>}
         {r && (
           <>
             <div data-ui-v2="ret-total" data-v={total} data-exact={Math.round(exact)} style={{ marginTop: SPACE(2) }}>

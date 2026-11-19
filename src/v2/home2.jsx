@@ -30,8 +30,10 @@
 // nothing broken, 한 종목 · 한 업종 · 내 기준 all checked on every holding, value known) and, with a Korean stock held, today's
 // filings checked. Never when no rule could be checked, never while the filings load or after it failed.
 // 시장 한눈에 unchanged; 종목 순위 under it (v19.5b, rank.jsx: phone after 시장 한눈에, PC the right column). Stale data: the stale band only, nothing checked, never a ✓ (the daily check is not ok, so no block
-// exists). Failed: the load-failure message, never "할 일이 없어요". No 뱁이 anywhere here (numbers). The account banner waits
-// for v19.4.
+// exists). Late data whose closes are at most 5 trading days behind (rules.js checkState, Jack 2026-11-19) is not "stale" here:
+// everything shows as on a fresh day, under the date line's stale words, with the close's date in the band and the heroes, and
+// "{date} 종가 기준으로는 할 일이 없어요." in place of "오늘은 할 일이 없어요" (today.calmLate). Failed: the load-failure message,
+// never "할 일이 없어요". No 뱁이 anywhere here (numbers). The account banner waits for v19.4.
 import React, { useMemo } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, holdingShades, HOLDING_SHADES } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
@@ -48,7 +50,7 @@ import { signedPct } from "./deckcalc.js";
 import { ruleLabel, ruleDetail, brokenLine, limitPct, groupName } from "./pfview.jsx";
 import { usHeld, limitsOf } from "./pf.js";
 import { homeBlocks, concentration, barOf, quietBlock } from "./home.js";
-import { MarketGlance, Hero } from "./today.jsx";
+import { MarketGlance, Hero, calmLine } from "./today.jsx";
 import { RankCard } from "./rank.jsx";
 import { discDate } from "./company.js";
 import { filingRows, filingsChecked, holdsKorean } from "./home.js";
@@ -269,7 +271,9 @@ function DiscNote({ id, date, children }) {
   );
 }
 
-function Look({ blocks, load, look, go }) {
+// lateMd: on late data checked on an older close, that close's date: the calm card says "{date} 종가 기준으로는 할 일이
+// 없어요." (today.calmLate, Jack 2026-11-19) instead of "오늘은 할 일이 없어요".
+function Look({ blocks, load, look, go, lateMd = null }) {
   const { openStock } = useNav();
   const H = C.home;
   const { conc, files, calm, discFail, discOld } = look;
@@ -297,7 +301,7 @@ function Look({ blocks, load, look, go }) {
           the 공시 tab's own date line. Each beside the filings rows' chip, so it reads as being about the filings. */}
       {discFail && <DiscNote id="home-disc-fail"><LoadFail picture={false} inline /></DiscNote>}
       {discOld && <DiscNote id="home-disc-old" date={discOld.date}><DateLine date={discOld.date} fresh={{ stale: discOld.stale, days: discOld.days }} style={{ marginTop: 0 }} /></DiscNote>}
-      {calm && <Card data-ui-v2="home-calm" style={{ marginTop: SPACE(2) }}><p style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink)}>{C.today.calmEyebrow}</p></Card>}
+      {calm && <Card data-ui-v2="home-calm" data-late={lateMd ? "1" : undefined} style={{ marginTop: SPACE(2) }}><p style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink)}>{calmLine(lateMd)}</p></Card>}
     </section>
   );
 }
@@ -335,6 +339,8 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
   const held = ev.ok ? ev.decks.filter((d) => d.ok && !d.imported && d.holdings.some((x) => x.qty !== 0)) : [];
   const kr = useMemo(() => holdsKorean(decks, ctx && ctx.byT), [decks, ctx]);
   const look = lookOf(blocks, held, disc, kr);
+  // late data within 5 trading days (rules.js checkState, Jack 2026-11-19): the date of the close the check ran on
+  const lateMd = ev.ok && ev.late && ok ? mdText(load.data.pxDate) : null;
   const many = blocks.length > 1;
   const main = [
     ...blocks.map((b) => (
@@ -344,7 +350,7 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
         <HeldCard block={b} onWhy={onWhy} md={ok ? mdText(load.data.pxDate) : null} />
       </div>
     )),
-    ev.ok && blocks.length > 0 && <Look key="look" blocks={blocks} load={load} look={look} go={go} />,
+    ev.ok && blocks.length > 0 && <Look key="look" blocks={blocks} load={load} look={look} go={go} lateMd={lateMd} />,
     ev.ok && !blocks.length && (
       <Card key="today-empty" data-ui-v2="today-empty"><Button kind="secondary" onClick={() => go("build")}>{C.build.title}</Button></Card>
     ),

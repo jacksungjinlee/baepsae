@@ -163,7 +163,11 @@ export function Tax({ load, store, pad, onBack }) {
   const has = useMemo(() => taxRecords(decks), [decks]);
   const ctx = useMemo(() => todayCtx(load), [load]);
   const ok = load.status === "ok";
-  const live = ok && ctx.state.ok;
+  // Late data (rules.js checkState, Jack 2026-11-19: the daily check keeps running on the last close for up to 5 trading
+  // days) is still stale here: this card was built to show no number on stale data, and Jack's change is about the daily
+  // check, so the card keeps its stale line as before.
+  const late = ok && ctx.state.ok && ctx.state.late ? ctx.state.late : null;
+  const live = ok && ctx.state.ok && !late;
   const g = useMemo(() => (ok && (has.usSale || has.usHeld) ? yearGains(decks) : null), [ok, has, decks]);
   const dv = useMemo(() => (ok && has.div ? yearDivs(decks) : null), [ok, has, decks]);
   const ls = useMemo(() => {
@@ -197,7 +201,7 @@ export function Tax({ load, store, pad, onBack }) {
       if (!load.data.usPxDate) say("losses card: data.json has no usPxDate, so no date line (US prices never take the Korean pxDate)");
     }
   }
-  const stale = ok && !ctx.state.ok && has.usHeld ? { days: ctx.state.days } : null;
+  const stale = ok && (!ctx.state.ok || late) && has.usHeld ? { days: late ? late.days : ctx.state.days } : null;
   const md = mdText(today);
   return (
     <Page pad={pad}>

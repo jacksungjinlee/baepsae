@@ -749,6 +749,7 @@ export const C = {
     staleLate: "데이터 갱신이 늦어지고 있어 오늘은 점검하지 않았어요.", // chat (2026-11-07: 미국 가격 날짜 A3) — 같은 띠, n ≤ 1 (예정일 당일)
     todoN: "오늘 확인할 일 {n}개",                                  // 35
     calmEyebrow: "오늘은 할 일이 없어요",                            // 36
+    calmLate: "{date} 종가 기준으로는 할 일이 없어요.",              // Jack, 2026-11-19, late-check Q3 — calmEyebrow 대신, 늦은 데이터로 지난 종가에 점검했을 때 ({date}: 그 종가의 날짜)
     calmTitle: "매도 조건에 걸린\n종목이 없어요",                    // 38
     brokenTitle: "{name}이\n매도 조건에 걸렸어요",                   // 37 (이름이 받침 · L M N R · 0 1 3 6 7 8 로 끝날 때)
     brokenTitleGa: "{name}가\n매도 조건에 걸렸어요",                 // chat (2026-11-02: 37 의 가 꼴, 그 밖의 이름)
