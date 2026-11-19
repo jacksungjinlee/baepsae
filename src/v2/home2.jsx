@@ -56,6 +56,7 @@ import { discDate } from "./company.js";
 import { filingRows, filingsChecked, holdsKorean } from "./home.js";
 import { IcrOffLine, EpsOwnersNote, StmtCurLine, UnitChkLine, NoDataLine, DayNote } from "./fixnote.jsx";
 import { watchHits } from "./watch.js";
+import { lateSay } from "./tradedays.js";
 import { WatchHitRows } from "./watch.jsx";
 
 const signedWon = (v) => (v > 0 ? "+" : "") + wonText(v);
@@ -134,6 +135,7 @@ function MoneyCard({ block, pxDate, load, late = false }) {
     return null;
   }
   const gainShown = money.ok && money.gain && !(late && money.gain.usdToday);
+  if (late && money.ok && money.day) lateSay(`${deck.id}: the home card's change today is left out`);
   if (late && money.ok && money.gain && money.gain.usdToday) {
     const k = deck.id + "|lateUsd";
     if (!warnedMoney.has(k)) { warnedMoney.add(k); console.warn(`[v2] ${deck.id}: late data: the gain-since-purchase line is left out (its dollar costs are converted at the data's rate, which the approved line calls today's)`); }
@@ -177,6 +179,7 @@ function MoneyCard({ block, pxDate, load, late = false }) {
 // nothing labelled 오늘 on data checked on an older close); the weights and the check's chips stay.
 function HeldCard({ block, onWhy, md = null, late = false }) {
   const { openStock } = useNav();
+  if (late) lateSay(`${block.deck.id}: the home list's weight/today column name, day's changes and no-trade lines are left out`);
   const { deck, list } = block;
   const rows = list.rows;
   const shades = holdingShades(rows.map((r) => r.w));
@@ -295,6 +298,9 @@ function Look({ blocks, load, look, go, onWatch, lateMd = null }) {
   const { openStock } = useNav();
   const H = C.home;
   const { conc, files, calm, discFail, discOld, watch } = look;
+  if (lateMd && (conc.length || files.length || discFail || discOld || (watch && watch.length))) {
+    lateSay(`the things-to-look-at rows are left out (${conc.length} concentration, ${files.length} filings${discFail || discOld ? ", the filings note" : ""}); a broken one-industry rule shows in its hero`);
+  }
   if (lateMd) return calm ? <Card data-ui-v2="home-calm" data-late="1" style={{ marginTop: SPACE(5) }}><p style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink)}>{calmLine(lateMd)}</p></Card> : null;
   if (!H.look || (!conc.length && !files.length && !calm && !discFail && !discOld && !watch.length)) return null;
   const byT = load.status === "ok" ? load.byT : new Map();

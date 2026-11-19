@@ -43,6 +43,7 @@ import { RankCard } from "./rank.jsx";
 import { IosHint } from "./hint.jsx";
 import { Welcome } from "./guide.jsx";
 import { evaluateAll, todayCtx, movesKnown } from "./rules.js";
+import { lateSay } from "./tradedays.js";
 import { withConfirm } from "./store.js";
 import { reasonView, statusChips, DividendAnswers, Line } from "./daily.jsx";
 import { signedPct } from "./deckcalc.js";
@@ -175,6 +176,7 @@ export function Hero({ load, ev, held, decks, onConfirm, onWhy, quiet = true }) 
     const first = todo[0].x;
     const broken = first.status === "broken";
     const { todoTs, rest, restCalm } = todayCounts(held);
+    if (dated) lateSay(`the home band's count label (things to check today) is left out (${todoTs.size} found on the ${load.data.pxDate} close; they show without it)`);
     return (
       <>
         <div style={{ marginTop: SPACE(4) }} data-ui-v2="today-hero" data-state="todo" data-late={dated ? "1" : undefined}>
@@ -212,6 +214,8 @@ function DeckStrip({ de, deck, ctx, onWhy, go, load, late = false }) {
   const { openStock } = useNav();
   const m0 = deckMoney(deck, de, ctx);                   // v19.0c: a stock missing from today's data is left out, and said
   const m = late && m0.absent && m0.absent.length ? { ok: false } : m0;
+  if (m !== m0) lateSay(`${de.id}: the value and return are left out (${m0.absent.map((a) => a.t).join(", ")} missing from the data; the line that says so speaks of today's data)`);
+  if (late) lateSay(`${de.id}: today's change and the rows' day's change are left out`);
   const gone = new Set(de.absent || []);
   const day = late ? null : deckDayChange(de);
   const items = m.ok ? [{ label: C.today.value, value: wonText(m.value) },

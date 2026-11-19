@@ -18,6 +18,7 @@ import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, OwnC
 import { parseImport, importProblem, importIssues, mergeStores, storedStores, downloadRecords, isSafariLike, withConfirm, WATCH_DROPPED } from "./store.js";
 import { withRemoval } from "./edit.js";
 import { evaluateAll, todayCtx } from "./rules.js";
+import { lateSay } from "./tradedays.js";
 import { HoldingRow } from "./daily.jsx";
 import { deckMoney } from "./track.js";
 import { DeckSummary, ByStockHead, WeightLine, AddMoney, MissingNote, PausedNote, plainEdges } from "./tracking.jsx";
@@ -164,6 +165,7 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
         // late data (rules.js checkState; review 2026-11-19): with a stock missing from the data, no totals (the line that explains
         // them speaks of today's data, so it is not shown on an older close) and no 포트폴리오에서 빼기, as before the late check
         const m = late && m0.absent && m0.absent.length ? { ok: false } : m0;
+        if (m !== m0) lateSay(`${d.id}: the value, money put in and return are left out (${m0.absent.map((a) => a.t).join(", ")} missing from the data; the line that says so speaks of today's data)`);
         const paused = !!(de && de.ok && de.weights && de.weights.paused);    // v19.0c: a held stock is missing from today's data
         const start = d.purchases.reduce((a, p) => (p.qty > 0 && (a == null || p.date < a) ? p.date : a), null);
         return (

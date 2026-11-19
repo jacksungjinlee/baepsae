@@ -12431,13 +12431,32 @@ def scene_late_today_words(R, files, width=390):
     S = f"늦은 점검 '오늘' {width}"
     store, _ = missing_store(files)
     pxd0 = files["data.json"]["pxDate"]
-    decks = [DAILY_DECKS["decks"][0]] + v196a_store(pxd0)["decks"] + [store["decks"][0]]
+    by0 = {x["t"]: x for x in files["data.json"]["stocks"]}
+    usd = e_imported(by0, pxd0, [("005930", 10, 200000), ("AAPL", 2, 300.0)], did="dusd", name="달러 평균 단가 포트폴리오")   # 원금 · 수익 = 오늘 환율 줄
+    decks = [DAILY_DECKS["decks"][0]] + v196a_store(pxd0)["decks"] + [store["decks"][0], usd]
 
     def site_for(px, app=None):
         f = v196a_files(late_files(files, px))
         by = {x["t"]: x for x in f["data.json"]["stocks"]}
         by["035420"].pop("d1", None)                                     # NAVER: 오늘 등락률이 빈 한국 종목 (DayNote '오늘 등락률은 …')
+        for x in f["data.json"]["stocks"]:                               # 반도체가 다 같이 빠진 날 (왜 움직였나 SK하이닉스: 업종이 다 같이)
+            if x.get("cls") == "kr" and x.get("ind") == "semi" and x["t"] != "000660":
+                x["d1"] = -1.5
         return build_site(f, app=app)
+
+    # 숨긴 것마다 콘솔에 한 번 (CLAUDE.md: 조용한 대체 없음 · 확인 리뷰 2026-11-19): 창의 console.warn 을 모아 둬요
+    warns_js = "(() => { const W = window.__warns = []; const o = console.warn; console.warn = function (...a) { W.push(a.map(String).join(' ')); return o.apply(this, a); }; })();"
+
+    def why_page(page, t):
+        """홈의 크게 움직인 종목에서 그 종목의 왜 움직였나를 열고, 데이터 출처를 펼쳐요. -> 화면 글"""
+        page.evaluate("location.hash = '#home'")
+        at(page, "home")
+        page.locator(f'[data-big-move="{t}"] [data-ui-v2="why-link"]').first.click()
+        at(page, "home/why")
+        page.locator('[data-ui-v2="why-verdict"]').wait_for(state="visible")
+        page.locator('[data-ui-v2="why-sources"] button').click()
+        page.locator('[data-ui-v2="why-sources"] [data-open="1"]').wait_for(state="attached")
+        return page.locator("body").inner_text()
 
     seen = {}
     screens = [("home", "#home"), ("portfolio", "#portfolio"), ("ret-built", "#portfolio/returns/dbuilt"), ("ret-imp", "#portfolio/returns/dimp"),
@@ -12445,7 +12464,7 @@ def scene_late_today_words(R, files, width=390):
     ready = {"home": '[data-ui-v2="home2"]', "portfolio": '[data-deck-id="dbuilt"]', "ret-built": '[data-ui-v2="returns"]', "ret-imp": '[data-ui-v2="returns"]',
              "edit": '[data-ui-v2="edit-list"]', "company": '[data-ui-v2="company"]', "tax": '[data-ui-v2="tax"]'}
     for state, px in (("fresh", None), ("beyond", LATE_OUT), ("late", LATE_IN)):
-        srv, ctx, page, base = R.open(site_for(px), width, init=e_store(decks), path="/app.html?dev=1#home")
+        srv, ctx, page, base = R.open(site_for(px), width, init=e_store(decks) + warns_js, path="/app.html?dev=1#home")
 
         def run(state=state):
             wait_ready(page)
@@ -12495,15 +12514,33 @@ def scene_late_today_words(R, files, width=390):
                 no_hscroll(page, width)
                 R.collect(page)
             seen[state] = got
+            together = C["why"]["together"].split("\n")[0]                 # '업종이 다 같이'
+            if state == "fresh":                                           # 제때: 업종 비교 · '업종이 다 같이' · 출처의 업종 줄 그대로
+                body = why_page(page, "000660")
+                assert page.locator('[data-ui-v2="why-peers"]').count() == 1 and together in body, body[:300]
+                assert page.locator('[data-ui-v2="why-sources"]').get_by_text(C["why"]["srcInd"], exact=True).count() == 1
+                R.collect(page)
             if state == "late":                                            # 왜 움직였나: '오늘' 글 없음 (점검하지 않던 때는 열 수 없었어요)
-                page.evaluate("location.hash = '#home'")
-                at(page, "home")
-                page.locator('[data-ui-v2="big-moves"] [data-ui-v2="why-link"]').first.click()     # 확인할 일이 있는 날: 띠 밑 카드
-                at(page, "home/why")
-                page.locator('[data-ui-v2="why-verdict"]').wait_for(state="visible")
+                body = why_page(page, "000660")
                 assert not today_words(page), today_words(page)
                 assert page.locator('[data-ui-v2="why-peers"]').count() == 0
+                assert together not in body and C["why"]["c1Title"] not in body, body[:300]     # 업종 묶음은 읽지 않아요: 판정도
+                assert page.locator('[data-ui-v2="why-sources"]').get_by_text(C["why"]["srcInd"], exact=True).count() == 0   # 출처에도 업종 줄 없음
                 R.collect(page)
+                warns = page.evaluate("window.__warns")
+                want = ["[v2] late data: dgone: the value, money put in and return are left out (OLDX",          # 포트폴리오 (만든)
+                        "[v2] dgone: no portfolio value on the home screen today (late data with a held stock missing",  # 홈 포트폴리오 칸
+                        "[v2] dimp: late data: the gain-since-purchase line is left out",                         # 홈 산 가격보다 (달러)
+                        "[v2] late data: dusd: money put in and return are left out (dollar",                     # 포트폴리오 (가진 종목)
+                        "[v2] late data: dimp: the rows' day's change and no-trade line are left out",
+                        "[v2] late data: dcut: the home card's change today is left out",
+                        "[v2] late data: dcut: the home list's weight/today column name",
+                        "[v2] late data: the home band's count label (things to check today) is left out",
+                        "[v2] dimp: late data: returns not shown",
+                        "[v2] dbuilt: late data: the exchange-rate card is left out",
+                        "[v2] late data: why-it-moved 000660: the peer group (same industry) is not read"]
+                missing = [w for w in want if not any(x.startswith(w) for x in warns)]
+                assert not missing, (missing, [x for x in warns if "late" in x])
         R.check(page, S, {"fresh": "제때: 홈 '오늘 {금액}' · '비중 · 오늘' · '오늘 확인할 일' · 환율 · 빠진 종목 · 오늘 등락률 줄 · 내 수익 '→ 오늘' 그대로",
                           "beyond": "6거래일 뒤: 점검하지 않던 그대로 (비교 기준)",
                           "late": "5거래일 안: 여섯 화면 모두 늦은 점검이 더한 '오늘' 글 없음 · 그 줄이 설명하던 숫자도 없음 · 왜 움직였나 '오늘' 없음"}[state], run)
@@ -12514,7 +12551,7 @@ def scene_late_today_words(R, files, width=390):
     app = home2_off_app()
     off = {}
     for state, px in (("beyond", LATE_OUT), ("late", LATE_IN)):
-        srv, ctx, page, base = R.open(site_for(px, app=app), width, init=e_store(decks), path="/app.html?dev=1#home")
+        srv, ctx, page, base = R.open(site_for(px, app=app), width, init=e_store(decks) + warns_js, path="/app.html?dev=1#home")
 
         def run_off(state=state):
             wait_ready(page)
@@ -12525,6 +12562,9 @@ def scene_late_today_words(R, files, width=390):
                 assert not (off["late"] - off["beyond"]), off["late"] - off["beyond"]
                 assert page.locator('[data-ui-v2="day-change"], [data-ui-v2="usd-today"], [data-ui-v2="missing-line"], [data-ui-v2="day-note"]').count() == 0
                 assert page.locator('[data-ui-v2="deck-strip"]').count() >= 2
+                warns = page.evaluate("window.__warns")
+                for w in ("[v2] late data: dgone: the value and return are left out (OLDX", "[v2] late data: dcut: today's change and the rows' day's change are left out"):
+                    assert any(x.startswith(w) for x in warns), (w, [x for x in warns if "late" in x])
             R.collect(page)
         R.check(page, S, f"새 홈 스위치를 끈 홈 ({state}): " + ("늦은 점검이 더한 '오늘' 글 없음 · 포트폴리오 줄은 그대로" if state == "late" else "비교 기준"), run_off)
         ctx.close()

@@ -21,6 +21,7 @@ import { signedPct } from "./deckcalc.js";
 import { IcrOffLine, StmtCurLine, UnitChkLine, NoDataLine, DayNote } from "./fixnote.jsx";
 import { heldUnits } from "./held.js";
 import { RecordButton } from "./records.jsx";
+import { lateSay } from "./tradedays.js";
 
 const pct = (w) => Math.round(w * 100);
 // v19.3e: a share shown against its limit. Whole %, but with one decimal (two if needed) whenever the whole number would
@@ -146,6 +147,9 @@ function WeightBar({ w, shade }) {
 export function ImportedDeck({ deck, st, m: m0, openStock, byT, onRemove, onMore, onRules, onRecord = null, footer = null, home = false, pxDate = null, late = false }) {
   const m = late && m0 && m0.absent && m0.absent.length ? { ok: false } : m0;
   const moneyLine = !!(m && m.ok && m.cost != null && !(late && m.usdToday));
+  if (m !== m0) lateSay(`${deck.id}: the value, money put in and return are left out (${m0.absent.map((a) => a.t).join(", ")} missing from the data; the line that says so speaks of today's data)`);
+  else if (late && m && m.ok && m.cost != null && m.usdToday) lateSay(`${deck.id}: money put in and return are left out (dollar average prices converted at the data's rate, which the approved line calls today's)`);
+  if (late) lateSay(`${deck.id}: the rows' day's change and no-trade line are left out (they speak of today)`);
   const rows = st && st.ok ? st.view.rows : null;
   const shades = rows ? holdingShades(rows.map((r) => r.w)) : [];
   const n = rows ? rows.length : (deck.imported || []).length;

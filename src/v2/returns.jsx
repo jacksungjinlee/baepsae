@@ -165,6 +165,7 @@ export function Returns({ deck, load, store, pad, onBack, onTax }) {
   const usHeld = r ? r.ledgers.filter((L) => L.ccy === "USD" && L.held > 0 && !gone.has(L.t)).map((L) => ctx.byT.get(L.t)).filter(Boolean) : [];
   const lateHold = !!(late && r && (missing.length || r.noPrice.length || r.usdOnly));
   if (lateHold) warnOnce(`[v2] ${deck.id}: late data: returns not shown (their notes speak of today's data, price or rate)`);
+  if (late && fx && !fx.empty) warnOnce(`[v2] ${deck.id}: late data: the exchange-rate card is left out (its line says today's rate)`);
   return (
     <Page pad={pad}>
       <AppBar onBack={onBack} backLabel={C.app.tabs.portfolio} />

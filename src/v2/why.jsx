@@ -23,6 +23,7 @@ import { signedPct } from "./deckcalc.js";
 import { peerGroup, keptCount } from "./track.js";
 import { useDaily, confirmer, brokenTitle } from "./today.jsx";
 import { backLabel } from "./build.jsx";
+import { lateSay } from "./tradedays.js";
 
 const R = () => C.plan.rules;
 const BAND = ["low", "high", "trim"];
@@ -124,7 +125,10 @@ export function Why({ load, store, setStoreData, target, onBack, pad }) {
   }
   const names = new Map(deck.holdings.map((h) => [h.t, h.nk]));
   const conf = confirmer(store, setStoreData);
-  const g = peerGroup(s, load.data.stocks);
+  // late data (rules.js checkState): the peer group is not read (its chart is "…의 오늘 등락"), so the verdict, the peers card
+  // and the sources all go without it (verification review, 2026-11-19); said once in the console
+  const g = ev.late ? { ok: false } : peerGroup(s, load.data.stocks);
+  if (ev.late) lateSay(`why-it-moved ${x.t}: the peer group (same industry) is not read`);
   // v19.1c: a stock priced at an earlier close (pxd) shows that close's date (cofmt.priceDate); others as before
   const md = s.pxd != null ? mdText(priceDate(load, s)) : mdText(s.cls === "us" ? load.data.usPxDate || load.data.pxDate : load.data.pxDate);
   // Today's change as the data gives it (d1, % between official closes). The won change is not shown: worked back from
@@ -153,7 +157,7 @@ export function Why({ load, store, setStoreData, target, onBack, pad }) {
       <Verdict x={x} g={g} names={names} onConfirm={(item, answer) => conf(deck.id, item, answer)} />
       {/* late data (rules.js checkState): no peers card, whose chart is read out as "…의 오늘 등락" (review, 2026-11-19:
           nothing labelled 오늘 on an older close) */}
-      {g.ok && !ev.late && (
+      {g.ok && (
         <Check n={1} title={g.together ? C.why.c1Title : null} data-ui-v2="why-peers">
           <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: g.together ? SPACE(1) : 0 })}>
             {fill(C.why.c1Body, { ind: s.indName, n: g.n, k: g.fell })}</p>
@@ -163,7 +167,7 @@ export function Why({ load, store, setStoreData, target, onBack, pad }) {
           </div>
         </Check>
       )}
-      <Check n={g.ok && !ev.late ? 2 : 1} title={kept(x) ? fill(C.why.keptTitle, { n: kept(x) }) : R().title} data-ui-v2="why-rules">
+      <Check n={g.ok ? 2 : 1} title={kept(x) ? fill(C.why.keptTitle, { n: kept(x) }) : R().title} data-ui-v2="why-rules">
         {C.why.alertLine && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{C.why.alertLine}</p>}
         <HoldingRules x={x} names={names} />
         {de.rebased && C.daily.rebasedNote && (                       // the same note as under the deck on 포트폴리오

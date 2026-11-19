@@ -59,3 +59,12 @@ export function lateDays(data, today) {
   if (kr == null || us == null) return null;
   return { n: Math.max(kr, us), kr, us };
 }
+
+// What a screen leaves out on late data, said once per message in the console (CLAUDE.md: no silent fallback). Every place
+// that hides a number on late data (review 2026-11-19: nothing labelled "today" on an older close) calls this with the reason.
+const LATE_SAID = new Set();
+export function lateSay(msg) {
+  if (LATE_SAID.has(msg)) return;
+  LATE_SAID.add(msg);
+  console.warn("[v2] late data: " + msg);
+}
