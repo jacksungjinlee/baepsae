@@ -197,7 +197,8 @@ def test_a_cached_hit_makes_no_call():
 
 def test_an_unreadable_document_is_cached_counted_and_never_read_again(capsys):
     rows = [irow("20261113000111", "20261113"), irow("20261110000222", "20261110"), irow("20261020000333", "20261020")]
-    docs = {"20261113000111": raw("rights_missing.xml"), "20261110000222": doc_on("20261111"),      # 결의일이 공시일 뒤
+    # 2026-11-19 (Jack 의 상시 규칙): 공시일 뒤 결의일은 이제 쓰기 앞의 own_check_disc 가 비워요 — 여기서는 1년 넘게 앞인 날로 기간 확인을 봐요
+    docs = {"20261113000111": raw("rights_missing.xml"), "20261110000222": doc_on("20251001"),      # 결의일이 공시일보다 1년 넘게 앞
             "20261020000333": raw("rights_garbled.xml")}
     c = Client(docs)
     out = F.fill_issue_bd(disc_of(rows), c, TODAY)
@@ -205,11 +206,11 @@ def test_an_unreadable_document_is_cached_counted_and_never_read_again(capsys):
     assert (out["read"], out["unread"], out["limited"], out["later"]) == (0, 2, 1, 0)
     assert c.entries["20261113000111|issuebd|v2"] == {"st": "nf", "at": "2026-11-15", "d": None, "why": "결의일 칸이 비었어요 ('-')"}
     # 리뷰 2026-11-19: 공시일 뒤 결의일은 '못 읽음'이 아니에요 — 원문의 날을 그대로 적고, 쓸 때 기간을 확인해 비워요 ('기간 밖이라 비움')
-    assert c.entries["20261110000222|issuebd|v2"] == {"st": "000", "at": "2026-11-15", "d": "20261111"}
+    assert c.entries["20261110000222|issuebd|v2"] == {"st": "000", "at": "2026-11-15", "d": "20251001"}
     log = capsys.readouterr().out
     assert "  !! 유상증자 이사회 결의일(공시 원문 document.xml): 문서에서 읽음 0 / 대상 3, 못 읽음 2, 기간 밖이라 비움 1, 다음 실행으로 0" in log
     assert "!! 결의일을 못 읽은 유상증자 공시 2건 (bd 빈 칸 · 같은 공시는 다시 읽지 않아요): 회사111 20261113 20261113000111 (결의일 칸이 비었어요 ('-'))" in log
-    assert "!! 결의일이 공시일과 맞지 않아 비운 유상증자 공시 1건" in log and "회사222 20261110 20261110000222 (결의일 20261111 이 공시일 20261110 뒤예요)" in log
+    assert "!! 결의일이 공시일과 맞지 않아 비운 유상증자 공시 1건" in log and "회사222 20261110 20261110000222 (결의일 20251001 이 공시일 20261110 보다 1년 넘게 앞이에요)" in log
     c2 = Client({}, entries=c.entries)
     rows2 = copy.deepcopy(rows)
     out2 = F.fill_issue_bd(disc_of(rows2), c2, TODAY)
@@ -288,10 +289,11 @@ def test_nothing_is_read_on_a_day_the_list_failed(capsys):
 def test_a_cached_date_outside_the_window_is_blanked_not_read_again():
     """리뷰 2026-11-19: 캐시의 날이 공시일과 맞지 않으면 그 줄의 bd 만 비워요 (원문을 다시 받지 않아요 · '기간 밖이라 비움')."""
     rows, docs = three()
-    c = Client(docs, entries={"20261113000111|issuebd|v2": {"st": "000", "at": "2026-11-13", "d": "20261120"}})
+    # 2026-11-19 (Jack 의 상시 규칙): 공시일 뒤인 날은 own_check_disc 가 비워요 — 여기서는 1년 넘게 앞인 날로 봐요
+    c = Client(docs, entries={"20261113000111|issuebd|v2": {"st": "000", "at": "2026-11-13", "d": "20240101"}})
     out = F.fill_issue_bd(disc_of(rows), c, TODAY)
     assert "20261113000111" not in c.calls and rows[0]["bd"] is None and (out["limited"], out["unread"], out["read"]) == (1, 0, 2)
-    assert c.entries["20261113000111|issuebd|v2"]["d"] == "20261120"                     # 캐시는 원문의 날 그대로
+    assert c.entries["20261113000111|issuebd|v2"]["d"] == "20240101"                     # 캐시는 원문의 날 그대로
 
 
 def test_old_keys_are_dropped_and_todays_rows_keep_theirs():

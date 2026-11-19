@@ -682,26 +682,36 @@ What the daily run writes (`fetch_data.py` `fetch_issues`, `fill_issue_bd`, `ins
 - **US `ed` · `xd`** — from the Yahoo details the run already caches (3 days): `ed` only when Yahoo says the earnings date is not
   an estimate and it is one day; `xd` is Yahoo's ex-dividend date (midnight UTC, read as that date). Either can be in the past.
 
-Gate rows (`validate_data.py` `check_v196b` and `check_issue_bd`; additions only):
-- **FAIL "주요사항 공시 (issue · 유상증자 · CB · BW)"**: a row has a missing or wrong field (filing number, a date outside
-  the 90 days before `asOf`, kind, method or share count on a bond, amount on a rights issue, a non-positive number, a
-  correction mark that is not true/false, a `wd` or `pend` mark that is not true/false, or a number on a `wd` or `pend` row;
-  since Jack's 2026-11-19 answers also: a `cls` other than common · other · null or on a bond, a rights row with `n` but no
-  `cls`, `n2` · `p2` other than on a common row with a positive whole `n2`, a `bonus` that is not `true` or is on a bond), a
-  filing number appears twice, or `issueOk` is missing. That is our own bug: look at
-  the run's "주요사항" log lines. **WARN** (never blocks; the 3,000 % check also covers `p2`): no `issue` section (a file from before #PR, e.g. the live site right
-  after the merge), `issueOk` false (the list failed and last run's rows were kept), 0 rows, a row whose stock left today's
-  list, a ratio above 3,000 % (check the filing; STX's 1,855.66 % on 2026-10-14 is real), or more than 10 % of rows without any
-  number, withdrawals not counted (lookups not finished: normal on the first run after the merge).
-- **FAIL "유상증자 이사회 결의일 (issue bd · 공시 원문)"** (`check_issue_bd`, its own row after the three above): a rights row
-  (not `wd`, not `pend`) whose board date is after its filing date — a filing always comes after the decision, so that is our
-  reading's bug. **WARN**: rights rows with a blank board date (documents not read yet — normal on the first one or two runs
-  after the merge — or unreadable; the run log names them). **SKIP** when there is no `issue` section (a file from before #PR).
-- **FAIL "임원 · 주요주주 역할 (insider role)"**: a `role` that is not 임원, 주요주주, 임원·주요주주 (exactly) or null. **WARN**: rows without `role` or
-  with "-" as the position (files from before #PR).
-- **FAIL "미국 일정 (ed 실적 발표일 · xd 배당락일)"**: a date that is not YYYY-MM-DD, or a date on a stock that is not
-  American. **WARN**: none at all among more than 100 US stocks (a file from before #PR, or Yahoo renamed its fields), or a date
-  more than 400 days ahead.
+Gate rows (`validate_data.py` `check_v196b` and `check_issue_bd`), under **Jack's standing rule (2026-11-19 ~17:45 KST)**:
+"Standing rule for checks on our own processing: a single bad row is dropped or blanked with a loud warning and the rest
+publishes. Block only when many rows fail in one run (set the number from recent runs and show it in the PR) or when a value
+would show a wrong number."
+
+How it works for these four checks: the bad rows are picked by one function each in `validate_data.py` (`issue_bad_rows`,
+`issue_bd_bad_rows`, `insider_bad_rows`, `us_date_bad_rows`). The pipeline runs the same function just before writing the file
+(`fetch_data.own_check_disc` before disc.json, `own_us_dates` before data.json), drops the row or blanks the value, logs it
+("!! {check}: n건 빼고 발행 / 비움 — rows (reason)", or a "·" line with 0), and records it in that file's
+`ownDrop[key] = {"n": count, "rows": [[name, reason]] first 30}` (written on clean runs too, as 0). The gate reads the record
+and runs the same function on the file:
+- **FAIL** when this run dropped or blanked more than N rows (N = 5 for each check: the PR #145 table, 25 data-branch publishes
+  and 5 branch dry runs, all 0 → max(5, 3 × 0)), or when a bad value is still in the file and would show a wrong number (the
+  drop step failed).
+- **WARN** (naming the rows) when 1..N rows were dropped or blanked, or a remaining bad value shows no number.
+- **PASS** when 0. A file without the record (from before #PR) keeps the old rule of each row: a bad row fails.
+
+| Row (key) | Bad row | Pipeline | Remaining value FAILs? |
+|---|---|---|---|
+| 주요사항 공시 (`disc.json` `issueShape`) | a malformed `issue` row (missing or wrong field, date outside the 90 days, method or share count on a bond, amount on a rights issue, non-positive number, a `wd` / `pend` / `cor` mark that is not true/false or a number on a `wd` / `pend` row, `cls` / `n2` / `p2` / `bonus` out of place), or a filing number that appears more than once (every copy) | drops the row (its numbers can't be trusted; no card is better than a wrong one) | yes for dates, numbers and the marks that change how numbers read (`d`, `bd`, `n`, `p`, `amt`, `n2`, `p2`, `kind`, `cls`, `bonus`, `wd`, `pend`); no for filing number, ticker, name, method, correction mark, duplicates. A non-list `issue` or non-boolean `issueOk` only warns (no screen reads `issue` yet) |
+| 유상증자 이사회 결의일 (`disc.json` `issueBd`) | a rights row (not `wd`, not `pend`) whose board date is after its filing date | blanks `bd` (the rest of the row came from DART's lookup; only our reading of the date is wrong). `fill_issue_bd` now applies only the one-year window (Jack, 11-19, 7d) and leaves "after the filing date" to this check, so a run that misreads many dates is caught by N | yes (the date labels the decision's numbers) |
+| 임원 · 주요주주 역할 (`disc.json` `insiderRole`) | a `role` other than 임원, 주요주주, 임원·주요주주 or null; a row that is not an object | blanks `role` (the trade's numbers are right; the role is a title word) · drops a non-object row | yes for a non-object row (the 공시 tab reads its share count and amount); no for a bad role. `insider` not a list still fails (the 공시 tab reads it) |
+| 미국 일정 (`data.json` `usDates`) | an `ed` / `xd` that is not a real YYYY-MM-DD, or one on a stock that is not American | blanks that field only; the stock row stays (prices and dividends are right; dropping a stock would break other checks such as the v19.1i dividend proof lists) | no (event dates, not dates that label a number) |
+
+Other WARNs, unchanged: no `issue` section (a file from before #PR, e.g. the live site right after the merge), `issueOk` false
+(the list failed and last run's rows were kept), 0 rows, a row whose stock left today's list, a ratio (`p` or `p2`) above
+3,000 % (check the filing; STX's 1,855.66 % on 2026-10-14 is real), more than 10 % of rows without any number (normal on the
+first run after the merge), rights rows with a blank board date, insider rows without `role` or with "-" as the position, no US
+dates at all among more than 100 US stocks, a US date more than 400 days ahead. **SKIP** "유상증자 이사회 결의일" when there is
+no `issue` section.
 
 DART calls: the first run after the merge (no cached lookups) makes about 25 list calls, 150 lookups and up to 100 rights
 documents; the next run the remaining ~75 lookups and ~60–70 documents (about 160 rights rows in 90 days on 2026-11-16); then

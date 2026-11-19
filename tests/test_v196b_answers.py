@@ -174,7 +174,7 @@ def T_doc(day8):
 @pytest.mark.parametrize("api_bd, want_bd, limited, read_doc", [
     ("20260731", "20260731", 0, False),
     ("20230731", None, 1, False),           # 1년 넘게 앞 (Jack 7d) — 비우고 '기간 밖이라 비움'
-    ("20261013", None, 1, False),           # 공시일 뒤
+    ("20261013", "20261013", 0, False),     # 공시일 뒤 — 여기서는 쓰고, 쓰기 앞의 own_check_disc 가 비워요 (Jack 의 상시 규칙 · test_v196b_own_rule)
     (None, "20261001", 0, True),            # 상세 API 에 결의일이 없으면 원문을 읽어요
 ])
 def test_rights_plus_bonus_board_date_window(api_bd, want_bd, limited, read_doc):

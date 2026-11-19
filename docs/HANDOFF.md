@@ -20,7 +20,8 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 **#143 (v19.6c 관심 종목), 2026-11-19:** watch list with 이하/이상 conditions (Jack's 11-19 lines), 홈 rows, the side key `baepsae2.v1.watch`. App only.
 
-**#145 (v19.6b data), 2026-11-19:** 오늘 볼 것 data (issue section, insider role, US ed/xd); first publish leaves ~75 pairs pend (gate warns) until the second run. Cards (B.2) next; B.2 must handle `bonus` and `cls`/`n2`/`p2` rows and question 3 (old decisions corrected recently).
+**#145 (v19.6b data), 2026-11-19:** 오늘 볼 것 data (issue section, insider role, US ed/xd); first publish leaves ~75 pairs pend (gate warns) until the second run. Cards (B.2) next; B.2 must handle `bonus` and `cls`/`n2`/`p2` rows and question 3 (old decisions corrected recently). Its four own-processing checks follow Jack's standing rule (11-19): bad rows are dropped or blanked before writing, recorded in `ownDrop` (issueShape · issueBd · insiderRole in disc.json, usDates in data.json), and the gate fails only above N = 5 or when a remaining value would show a wrong number.
+
 **#144 (late-data check), 2026-11-19:** when data is late the portfolio check runs on the last official close for up to 5 trading days (from the close date), dated "{date} 종가로 점검했어요"; nothing labelled 오늘 on an old close; "{date} 종가 기준으로는 할 일이 없어요." (Jack, 11-19).
 
 **#147 (watchdog retry), 2026-11-19:** the Watchdog asks the site once more, 20 s later, after a 5xx before raising an alarm (Jack, 11-19, Q10); once a retry has failed, later 5xx answers fail at once (30-minute job limit). Log and run summary: "5xx 다시 물음". No gate or threshold change.

@@ -89,6 +89,11 @@ from validate_data import PX_SRC_LISTING, PX_SRC_FB, PX_YAHOO_SUFFIX, PX_CHECK_S
 from validate_data import PX_BAD_DATA, PX_BAD_MUST_FAIL, PX_BAD_WIN, PX_BAD_WIN_BARS, PX_BAD_ALWAYS
 # 2026-11-14 (Q5 리뷰 S1 · S2): 외국 회사 검사의 '맞춰 볼 값이 없음' 스위치와 그 사유 글, S&P 500 목록을 믿을 최소 겹침도 관문 파일에 있어요
 from validate_data import US_FGN_NOCMP, US_FGN_NOCMP_KIND, US_FGN_NOCMP_WHY, US_FGN_NOREC_WHY, US_FGN_NOREC, US_SP500_MIN, US_SP500_MAX
+# 2026-11-19 (Jack 의 상시 규칙 · #145 의 네 검사): 빼거나 비울 행을 고르는 함수는 관문 파일에 하나씩 — 파이프라인은 같은 함수를 쓰기 바로 앞의
+# 메모리 데이터에 돌려 그 행을 빼거나 비우고, 크게 남기고, 그 파일의 ownDrop 에 적어요 (논리를 베끼지 않아요)
+from validate_data import (ISSUE_SHAPE_KEY, ISSUE_BD_KEY, INSIDER_ROLE_KEY, US_DATE_KEY, ISSUE_SHAPE_MAX, ISSUE_BD_MAX, INSIDER_ROLE_MAX,
+                           US_DATE_MAX, issue_bad_rows, issue_bd_bad_rows, insider_bad_rows, us_date_bad_rows, own_rows_rec, own_rows_text)
+from validate_data import _iso_day as gate_iso_day
 
 # ────────────────────────────────────────────────────────────
 # 설정
@@ -4712,19 +4717,27 @@ def _ymd_date(s):
         return None
 
 
-def issue_bd_range_why(bd, d):
-    """결의일 bd 가 공시일 d 와 맞는지 (d 이하 · ISSUE_BD_MAX_YEARS 년 넘게 앞이 아님) → None (맞음) 또는 이유. (순수 함수)"""
+def issue_bd_window_why(bd, d):
+    """결의일 bd 가 날짜이고 공시일 d 보다 ISSUE_BD_MAX_YEARS 년 넘게 앞이 아닌지 (Jack 2026-11-19, 7d) → None (맞음) 또는 이유. 공시일 뒤인지는
+    보지 않아요 — 그것은 관문 파일의 issue_bd_bad_rows 가 봐요 (Jack 의 상시 규칙: 같은 함수로 쓰기 앞에서 비우고 ownDrop.issueBd 에 세요). (순수 함수)"""
     b, f = _ymd_date(bd), _ymd_date(d)
     if b is None:
         return f"결의일 {bd!r} 이 날짜가 아니에요"
     if f is None:
         return f"공시일 {d!r} 을 읽지 못했어요"
-    if b > f:
-        return f"결의일 {bd} 이 공시일 {d} 뒤예요"
     lo = dt.date(f.year - ISSUE_BD_MAX_YEARS, f.month, 28 if (f.month, f.day) == (2, 29) else f.day)
     if b < lo:
         return f"결의일 {bd} 이 공시일 {d} 보다 {ISSUE_BD_MAX_YEARS}년 넘게 앞이에요"
     return None
+
+
+def issue_bd_range_why(bd, d):
+    """결의일 bd 가 공시일 d 와 맞는지 (d 이하 · ISSUE_BD_MAX_YEARS 년 넘게 앞이 아님) → None (맞음) 또는 이유. (순수 함수 · read_issue_bd)
+    공시일 뒤인지는 관문 파일의 같은 함수(issue_bd_bad_rows)로 봐요."""
+    why = issue_bd_window_why(bd, d)
+    if why:
+        return why
+    return f"결의일 {bd} 이 공시일 {d} 뒤예요" if issue_bd_bad_rows([{"kind": "rights", "bd": bd, "d": d}]) else None
 
 
 def read_issue_bd(text, d):
@@ -4773,8 +4786,9 @@ def fill_issue_bd(disc, client, end):
     due, nf, lim, cached, api, api_rc = [], [], [], 0, 0, set()
 
     def use(r, bd8):
-        """원문이 적은 결의일을 그 줄에 써요 — 공시일과 맞을 때만 (아니면 bd 는 비우고 '기간 밖이라 비움')."""
-        why = issue_bd_range_why(bd8, r["d"])
+        """원문이 적은 결의일을 그 줄에 써요 — 공시일보다 1년 넘게 앞이 아닐 때만 (아니면 bd 는 비우고 '기간 밖이라 비움'). 공시일 뒤인 날은
+        여기서 쓰고, 쓰기 바로 앞의 own_check_disc 가 관문과 같은 함수로 비우고 ownDrop.issueBd 에 세요 (Jack 의 상시 규칙 2026-11-19)."""
+        why = issue_bd_window_why(bd8, r["d"])
         if why is None:
             r["bd"] = bd8
         else:
@@ -4870,6 +4884,81 @@ def fill_issue_bd(disc, client, end):
             "원문의 날은 캐시에 있어요 — 한도를 바꾸면 다시 받지 않고 다음 실행이 써요): "
             + ", ".join(f"{r['nk']} {r['d']} {r['rc']} ({why})" for r, why in lim[:20]) + (" …" if len(lim) > 20 else ""))
     return out
+
+
+# ────────────────────────────────────────────────────────────
+# Jack 의 상시 규칙 (2026-11-19 ~17:45 KST, 그대로): "Standing rule for checks on our own processing: a single bad row is dropped or
+# blanked with a loud warning and the rest publishes. Block only when many rows fail in one run (set the number from recent runs and show
+# it in the PR) or when a value would show a wrong number." — #145 의 네 검사. 나쁜 행은 관문 파일의 함수가 골라요 (같은 함수 · 한 곳).
+# 여기서는 쓰기 바로 앞에서 빼거나 비우고, 크게 남기고, 그 파일의 ownDrop[열쇠] = {"n", "rows" 앞 30} 에 적어요 (깨끗한 실행도 0).
+# 관문은 n 이 N 을 넘거나 틀린 숫자를 보일 값이 남으면 실패, 1~N 이면 경고예요. 공시 줄(disc.json)만 빼요 — 종목 행은 빼지 않아요 (미국
+# 일정은 그 칸만 비워요 · 배당 증명 목록(v19.1i)의 종목은 그대로).
+# ────────────────────────────────────────────────────────────
+OWN_ISSUE_SHAPE_NAME = "주요사항 공시 줄 모양 (issue)"
+OWN_ISSUE_BD_NAME = "유상증자 이사회 결의일이 공시일 뒤 (issue bd)"
+OWN_INSIDER_ROLE_NAME = "임원 · 주요주주 역할 (insider role)"
+OWN_US_DATE_NAME = "미국 일정 (ed 실적 발표일 · xd 배당락일)"
+
+
+def _own_log(name, rows, mx, verb, where):
+    """검사 한 줄의 로그: 있으면 '!! 이름: n건 빼고 발행 — 이름 (이유) …', 없으면 '· 이름: 0건'."""
+    if rows:
+        gate = f"{mx}건을 넘어 관문에서 실패해 발행하지 않아요" if len(rows) > mx else f"관문 경고 · {mx}건을 넘으면 실패"
+        log(f"  !! {name}: {len(rows):,}건 {verb} — {own_rows_text(rows)} ({where} · {gate})")
+    else:
+        log(f"· {name}: 0건 {verb}")
+
+
+def own_check_disc(disc, today):
+    """disc.json 을 쓰기 바로 앞: 관문과 같은 함수로 나쁜 공시 줄을 빼거나 값을 비우고 disc["ownDrop"] 에 적어요 (줄을 고쳐요) → disc.
+    issueShape 모양이 틀린 issue 줄 · 같은 접수번호가 여러 번 나온 줄 → 줄째 빼요 (그 결정의 숫자를 믿을 수 없어요 — 카드가 없는 것이 틀린 숫자보다
+    나아요) · issueBd 공시일 뒤의 유상증자 결의일 → bd 만 비워요 (줄의 다른 칸은 상세 API 로 읽은 것 · 결의일만 우리가 잘못 읽었어요) ·
+    insiderRole 객체가 아닌 insider 줄 → 빼요 · 허용하지 않은 role → role 만 비워요 (거래 숫자는 맞아요 · role 은 제목의 글자)."""
+    base = gate_iso_day(disc.get("asOf")) or today
+    own = disc.get("ownDrop") if isinstance(disc.get("ownDrop"), dict) else {}
+    pre = []
+    if not isinstance(disc.get("issue"), list):
+        pre = [(-1, "issue", f"목록이 아님 ({type(disc.get('issue')).__name__}) → 빈 목록", False, None)]
+        disc["issue"] = []
+    bad = issue_bad_rows(disc["issue"], base)
+    drop = {b[0] for b in bad}
+    disc["issue"] = [r for i, r in enumerate(disc["issue"]) if i not in drop]
+    own[ISSUE_SHAPE_KEY] = own_rows_rec(pre + bad)
+    _own_log(OWN_ISSUE_SHAPE_NAME, pre + bad, ISSUE_SHAPE_MAX, "빼고 발행", f"disc.json ownDrop.{ISSUE_SHAPE_KEY}")
+    bad = issue_bd_bad_rows(disc["issue"])
+    for b in bad:
+        disc["issue"][b[0]]["bd"] = None
+    own[ISSUE_BD_KEY] = own_rows_rec(bad)
+    _own_log(OWN_ISSUE_BD_NAME, bad, ISSUE_BD_MAX, "비움 (bd)", f"disc.json ownDrop.{ISSUE_BD_KEY}")
+    pre = []
+    if not isinstance(disc.get("insider"), list):
+        pre = [(-1, "insider", f"목록이 아님 ({type(disc.get('insider')).__name__}) → 빈 목록", True, None)]
+        disc["insider"] = []
+    bad = insider_bad_rows(disc["insider"])
+    drop = {b[0] for b in bad if b[4] is None}
+    for b in bad:
+        if b[4] is not None:
+            disc["insider"][b[0]][b[4]] = None
+    disc["insider"] = [r for i, r in enumerate(disc["insider"]) if i not in drop]
+    own[INSIDER_ROLE_KEY] = own_rows_rec(pre + bad)
+    _own_log(OWN_INSIDER_ROLE_NAME, pre + bad, INSIDER_ROLE_MAX, "빼거나 비움", f"disc.json ownDrop.{INSIDER_ROLE_KEY}")
+    disc["ownDrop"] = own
+    return disc
+
+
+def own_us_dates(payload):
+    """data.json 을 쓰기 바로 앞: 관문과 같은 함수(us_date_bad_rows)로 틀린 미국 ed · xd 를 비우고 payload["ownDrop"]["usDates"] 에 적어요.
+    종목 행은 그대로 두고 그 칸만 지워요 (가격 · 배당 숫자는 맞아요 — 행을 빼면 배당 증명 목록(v19.1i) 같은 다른 검사가 깨져요). ownDrop 은
+    setdefault 로 더해요 (claude/own-check-rule 의 usClass · divLine 과 한 칸에 같이 들어가요)."""
+    stocks = payload.get("stocks") if isinstance(payload.get("stocks"), list) else []
+    bad = us_date_bad_rows(stocks)
+    for b in bad:
+        stocks[b[0]].pop(b[4], None)
+    own = payload.get("ownDrop") if isinstance(payload.get("ownDrop"), dict) else {}
+    own[US_DATE_KEY] = own_rows_rec(bad)
+    payload["ownDrop"] = own
+    _own_log(OWN_US_DATE_NAME, bad, US_DATE_MAX, "비움", f"data.json ownDrop.{US_DATE_KEY}")
+    return payload
 
 
 # ────────────────────────────────────────────────────────────
@@ -10947,6 +11036,7 @@ def main():
         "stocks": stocks,
     }
     payload.update(sp_fields)                # v19.6a (A.6): splits · splitsFrom · splitsAsOf · splitsSrc · splitsInfo (UNITS["splits"]) 또는 없음
+    own_us_dates(payload)                    # 2026-11-19 (Jack 의 상시 규칙): 틀린 미국 ed · xd 는 그 칸만 비워요 (data.json ownDrop.usDates)
     write_json(OUT, payload)
     log(f"✓ {OUT} 저장 — {len(stocks):,}종목, {os.path.getsize(OUT) / 1e6:.1f}MB · 기준일 {kmeta['pxDate']} · "
         f"미국 {umeta['usPxDate']} · 환율 {fx_last:,.1f}")
@@ -10994,6 +11084,7 @@ def main():
     else:
         disc = empty_disc(today)
     disc["publishedAt"] = published_at
+    own_check_disc(disc, today)              # 2026-11-19 (Jack 의 상시 규칙): 나쁜 공시 줄은 빼거나 비워요 (disc.json ownDrop · 관문과 같은 함수)
     write_json(OUT_DISC, disc)
     log(f"✓ {OUT_DISC} 저장 — 내부자 {len(disc['insider']):,}건 · 국민연금 {len(disc['nps']):,}건 · 주요사항(유상증자 · CB · BW) "
         f"{len(disc['issue']):,}건{'' if disc['issueOk'] else ' (목록 실패 · 지난 줄)'} · 최근 공시 {disc.get('newest')}")
