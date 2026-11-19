@@ -585,6 +585,50 @@ def test_a_cut_that_does_not_show_is_no_cut_in_the_swap_note():
                             "cap": "이 포트폴리오는 한 종목 최대 비중이 10%라서 더 올릴 수 없어요.", "sale": None, "capped": True}
 
 
+def test_q8b_counts_the_edits_still_waiting_on_the_sale_path():
+    """Review F2 (2026-11-19): a held 30% cushion under a 20% cap and a 10% holding waiting to be taken out. The 빼기 sheet asks for no
+    raise, but once the sale is saved 종목 바꾸기 offers 최대 비중을 25%로 올리기 (four stocks at 20%), as it did before the swap. So the
+    note is P5 + "…최대 비중이 20%예요." (Q8b), read from the editor's own steps after the sale (draftAfterSale, draftD2); without the
+    waiting 빼기 nothing offers a raise and "…20%라서 더 올릴 수 없어요." stays (Q8a)."""
+    got = run(Q8 + """
+      const f2 = () => { const d = deck5(5, 0.2, 20);
+        const w = { '000010': 0.3, '000020': 0.2, '000030': 0.2, '000040': 0.2, '000050': 0.1 };
+        d.holdings = d.holdings.map((h) => ({ ...h, target: w[h.t], kind: h.t === '000010' ? 'cushion' : 'core', rules: [pend('audit'), ...band(w[h.t])] }));
+        d.purchases = d.purchases.filter((p) => p.t === '000010');
+        return d; };
+      const d = f2();
+      const dr = E.removeDraft(d, E.emptyDraft(), '000050', 'other');
+      const sc = E.swapCheck(d, dr, '000010', cand());
+      const v = E.swapView(d, dr, '000010', cand()), v0 = E.swapView(d, E.emptyDraft(), '000010', cand());
+      // what 종목 바꾸기 then shows: the real write, and the draft as editor.jsx sellSwap leaves it
+      const r = E.sellAndSwap(sellAll({ v: 2, decks: [d] }, '000010', 20), 'd1', '000010', cand(), { reason: 'better', raise: sc.up, load, today: T, ts: 1 });
+      const saved = r.ok ? r.data.decks[0] : null;
+      out = { before: E.draftD2(d, dr), sheet: sc.low, v: V(v), v0: V(v0), note: N(v), note0: N(v0), ok: r.ok,
+        after: saved && E.draftD2(saved, E.rebaseDraft(saved, E.draftAfterSale(d, saved, dr, '000010'))), sale: C.cmp.swapSale };""")
+    assert got["before"] == {"low": True, "y": 25} and got["sheet"] is False and got["ok"] is True
+    assert got["after"] == {"low": True, "y": 25}                         # the next screen offers the raise
+    assert got["v"] == {"path": "sale", "pct": 20, "from": 30, "cap": 20, "low": True, "y": 25}
+    first = "바꾸면 삼성전자가 채권의 목표 비중 30% 중 20%만 이어받아요."
+    assert got["note"] == {"first": first, "cap": "이 포트폴리오는 한 종목 최대 비중이 20%예요.", "sale": got["sale"], "capped": True}
+    assert got["v0"]["low"] is False
+    assert got["note0"] == {"first": first, "cap": "이 포트폴리오는 한 종목 최대 비중이 20%라서 더 올릴 수 없어요.", "sale": got["sale"], "capped": True}
+
+
+def test_the_portfolio_swap_view_reads_is_the_one_the_sale_writes():
+    """Review F2: swapView reads 종목 바꾸기's start from edit.swapLeaves; sellAndSwap takes its cap and targets from the same function, so
+    the targets and 최대 비중 it saves are the ones read (no raise, and the sheet's raise to 12%)."""
+    got = run(Q8 + """
+      const tg = (de) => Object.fromEntries(de.holdings.map((h) => [h.t, Math.round(h.target * 1e9) / 1e9]));
+      const a = cushDeck(true), b = dcush(true);
+      const ra = E.sellAndSwap(sellAll({ v: 2, decks: [a] }, '000010', 20), 'd1', '000010', cand(), { reason: 'better', raise: null, load, today: T, ts: 1 });
+      const rb = E.sellAndSwap(sellAll({ v: 2, decks: [b] }, '114260', 10), 'd1', '114260', cand(), { reason: 'better', raise: 12, load, today: T, ts: 1 });
+      const la = E.swapLeaves(a, '000010', cand(), null), lb = E.swapLeaves(b, '114260', cand(), 12);
+      out = { a: [tg(ra.data.decks[0]), ra.data.decks[0].settings.maxPct], la: [tg(la.deck), la.deck.settings.maxPct],
+        b: [tg(rb.data.decks[0]), rb.data.decks[0].settings.maxPct], lb: [tg(lb.deck), lb.deck.settings.maxPct] };""")
+    assert got["a"] == got["la"] and got["a"][1] == 20
+    assert got["b"] == got["lb"] and got["b"][1] == 12
+
+
 def test_the_compare_note_and_the_next_screen_read_one_raise_check():
     """Q8: "will the next screen offer a raise" is that screen's own check, called, never copied: 종목 바꾸기 computes its D2 with
     edit.draftD2 and swapView asks draftD2 about the list the swap leaves; the 빼기 sheet and swapView both read swapCheck."""

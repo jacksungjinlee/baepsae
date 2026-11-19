@@ -149,8 +149,8 @@ export const swapNoteText = (a, b, x) => fill(subjectParticle(b) === "i" ? C.cmp
 // the cap cuts it (a 채권·금 holding saved above the cap), "바꾸면 {b}이/가 {a}의 목표 비중 {y}% 중 {x}%만 이어받아요." (Jack,
 // 2026-11-19, P5; 이/가 as the verdict picks it) and right after it why, only where the candidate gets exactly the cap as it stands:
 // where the next screen offers no raise (the cap is a hard stop) the approved "이 포트폴리오는 한 종목 최대 비중이 {x}%라서 더 올릴 수
-// 없어요." (Q8a); where it will offer 최대 비중을 {y}%로 올리기 (sv.low: the list cannot reach 100% at the cap; the very check that
-// screen makes), "이 포트폴리오는 한 종목 최대 비중이 {x}%예요." (Jack, 2026-11-19, Q8b). The same on both paths. The second sentence
+// 없어요." (Q8a); where it will offer 최대 비중을 {y}%로 올리기 (sv.low: the list cannot reach 100% at the cap, edits still waiting
+// included; the very checks those screens make, edit.swapView), "이 포트폴리오는 한 종목 최대 비중이 {x}%예요." (Jack, 2026-11-19, Q8b). The same on both paths. The second sentence
 // only with shares to sell. -> { first: string | null, cap: string | null, sale: string | null, capped }
 export function swapNoteParts(sv, a, b) {
   if (!sv || sv.pct == null) return { first: null, cap: null, sale: null, capped: false };
