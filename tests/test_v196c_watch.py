@@ -142,14 +142,14 @@ def test_q15_an_exactly_equal_shown_value_meets_price_krw_usd_and_pbr_and_yield_
     assert eq["marks"] == {"000001": "2026-11-12", "AAA": "2026-11-11", "000002": "2026-11-12", "000003": "2026-11-12"}, eq["marks"]
     assert past["chips"] == {"000001": "not", "AAA": "not", "000002": "not", "000003": "not"}, past["chips"]
     assert past["rows"] == [] and past["marks"] is None, past
-    # what the 홈 row says on the equal day (the chip words are Appendix 1's "… 아래" / "… 이상")
-    assert got["text"] == ["주가 75,000원 아래 조건에 맞아요. 지금 75,000원이에요.", "주가 $150.00 아래 조건에 맞아요. 지금 $150.00예요.",
-                           "PBR 0.8배 아래 조건에 맞아요. 지금 0.80배예요.", "배당수익률 4% 이상 조건에 맞아요. 지금 4.0%예요."], got["text"]
+    # what the 홈 row says on the equal day (the chip words: "… 이하" (Jack, 2026-11-19) / "… 이상")
+    assert got["text"] == ["주가 75,000원 이하 조건에 맞아요. 지금 75,000원이에요.", "주가 $150.00 이하 조건에 맞아요. 지금 $150.00예요.",
+                           "PBR 0.8배 이하 조건에 맞아요. 지금 0.80배예요.", "배당수익률 4% 이상 조건에 맞아요. 지금 4.0%예요."], got["text"]
 
 
 def test_a_korean_price_with_decimals_from_a_records_file_is_judged_as_the_whole_won_the_chip_shows():
     """Delta review (2026-11-19): the sheet takes whole won only, but store.js takes 2 decimals for any price, so a hand-edited
-    기록 불러오기 file can bring 74999.5. The chip reads "주가 75,000원 아래" (condText rounds), so the chip state, the mark and the
+    기록 불러오기 file can bring 74999.5. The chip reads "주가 75,000원 이하" (condText rounds), so the chip state, the mark and the
     홈 row judge it as 75,000원 too (watch.js condV); the stored number is kept as it came. A US price is not rounded."""
     got = run("""
       const file = JSON.stringify({ v: 1, decks: [], watch: { '005930': { at: '2026-11-05', conds: [{ k: 'pxBelow', v: 74999.5 }] },
@@ -167,10 +167,10 @@ def test_a_korean_price_with_decimals_from_a_records_file_is_judged_as_the_whole
       };
       out = { ok: !!inc, stored: kept, label: Wt.condText('pxBelow', 74999.5, false), eq: day(75000, 150), roundedEq: day(75000.4, 149.99), past: day(75001, 149.991) };""")
     assert got["ok"] is True and got["stored"] == [74999.5, 149.99]           # the file is read and its number kept as it came
-    assert got["label"] == "주가 75,000원 아래"
-    eq = got["eq"]                                                            # shown 75,000원 against "75,000원 아래": met everywhere
-    assert eq["kr"] == ["met", 75000, "주가 75,000원 아래"] and eq["us"] == ["not", 149.99], eq
-    assert eq["rows"] == [["005930", 75000, "주가 75,000원 아래 조건에 맞아요. 지금 75,000원이에요."]] and eq["marks"] == ["2026-11-12", None], eq
+    assert got["label"] == "주가 75,000원 이하"
+    eq = got["eq"]                                                            # shown 75,000원 against "75,000원 이하": met everywhere
+    assert eq["kr"] == ["met", 75000, "주가 75,000원 이하"] and eq["us"] == ["not", 149.99], eq
+    assert eq["rows"] == [["005930", 75000, "주가 75,000원 이하 조건에 맞아요. 지금 75,000원이에요."]] and eq["marks"] == ["2026-11-12", None], eq
     r = got["roundedEq"]                                                      # 75,000.4 is shown as 75,000원; $149.99 equals $149.99
     assert r["kr"][0] == "met" and r["us"] == ["met", 149.99] and [x[0] for x in r["rows"]] == ["005930", "AAA"], r
     assert r["marks"] == ["2026-11-12", "2026-11-11"], r
@@ -254,13 +254,13 @@ def test_words_follow_appendix_1_with_the_right_particle():
       out = { px: h('pxBelow', 75000, 74000, false), pxUs: h('pxBelow', 150, 148.5, true), pxUs2: h('pxBelow', 150, 148.55, true),
               pbr: h('pbrBelow', 0.8, 0.7, false), dy: h('dyAtLeast', 4, 4.2, false), dy35: Wt.condText('dyAtLeast', 3.5, false),
               pbr1: Wt.condText('pbrBelow', 1, false), now: [Wt.nowValue('pxBelow', 84200, false), Wt.nowValue('pbrBelow', 1.3, false), Wt.nowValue('dyAtLeast', 0.03, false)] };""")
-    assert got["px"] == "주가 75,000원 아래 조건에 맞아요. 지금 74,000원이에요."
+    assert got["px"] == "주가 75,000원 이하 조건에 맞아요. 지금 74,000원이에요."
     # a US price is read "…달러" (review B1): always 예요, whatever its last digit
-    assert got["pxUs"] == "주가 $150.00 아래 조건에 맞아요. 지금 $148.50예요."
-    assert got["pxUs2"] == "주가 $150.00 아래 조건에 맞아요. 지금 $148.55예요."
-    assert got["pbr"] == "PBR 0.8배 아래 조건에 맞아요. 지금 0.70배예요."
+    assert got["pxUs"] == "주가 $150.00 이하 조건에 맞아요. 지금 $148.50예요."
+    assert got["pxUs2"] == "주가 $150.00 이하 조건에 맞아요. 지금 $148.55예요."
+    assert got["pbr"] == "PBR 0.8배 이하 조건에 맞아요. 지금 0.70배예요."
     assert got["dy"] == "배당수익률 4% 이상 조건에 맞아요. 지금 4.2%예요."
-    assert got["dy35"] == "배당수익률 3.5% 이상" and got["pbr1"] == "PBR 1배 아래"
+    assert got["dy35"] == "배당수익률 3.5% 이상" and got["pbr1"] == "PBR 1배 이하"
     assert got["now"] == ["84,200원", "1.30배", "0.03%"]
 
 

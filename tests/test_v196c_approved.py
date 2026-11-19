@@ -3,6 +3,8 @@
 
 - each watch.* key holds exactly the Appendix 1 text (docs/tasks/v19.6-records-alerts-dark.md, 관심 종목 · 오늘 볼 것 · import cap),
   is recorded in docs/tasks/v18.3-approved-in-chat.md as "Jack, 2026-11-06 (v19.6 Appendix 1, …)" and is not pending
+- the chip words of 주가 and PBR (watch.c.pxKr · pxUs · pbr) are Jack's "이하" of 2026-11-19 (Appendix 1 said "아래"); the
+  Appendix 1 row in the spec says so too
 - the six condition-sheet lines (watch.form.*) hold exactly Jack's approved text of 2026-11-19 (the hint in his wording: "넣은 값
   이하가 되면", not the earlier proposal's "넣은 값보다 낮아지면"), are recorded as "Jack, 2026-11-19 (…)" and are no longer pending
 - Appendix 1 itself still says each of these lines (the spec is where they come from)
@@ -25,9 +27,6 @@ APPROVED = {
     "title": "관심 종목",
     "add": "+ 추가",
     "sub": "가지고 있지 않은 종목도 지켜볼 수 있어요.",
-    "c.pxKr": "주가 {x}원 아래",
-    "c.pxUs": "주가 ${x} 아래",
-    "c.pbr": "PBR {x}배 아래",
     "c.dy": "배당수익률 {x}% 이상",
     "now": "지금 {now}",
     "blank": "정보 없음",
@@ -45,6 +44,8 @@ APPROVED = {
 APPROVED_Q15 = {"form.pxKr": "주가 (원)", "form.pxUs": "주가 (달러)", "form.pbr": "PBR (배)", "form.dy": "배당수익률 (%)",
                 "form.hint": "주가와 PBR은 넣은 값 이하가 되면, 배당수익률은 넣은 값 이상이 되면 알려 드려요. 비워 두면 그 조건은 쓰지 않아요.",
                 "form.bad": "숫자를 다시 확인해 주세요."}
+# Jack, 2026-11-19: "1. Yes: "주가 {x}원 이하", "주가 ${x} 이하", "PBR {x}배 이하"" (Appendix 1 said "… 아래")
+APPROVED_IHA = {"c.pxKr": "주가 {x}원 이하", "c.pxUs": "주가 ${x} 이하", "c.pbr": "PBR {x}배 이하"}
 OLD_HINT = "주가와 PBR은 넣은 값보다 낮아지면"                                  # the earlier proposal's wording, not approved
 
 
@@ -72,8 +73,9 @@ def test_the_lines_are_exactly_appendix_1_and_jacks_q15_answer():
     w = watch_copy()
     for key, text in APPROVED.items():
         assert at(w, key) == text, key
-    for key, text in APPROVED_Q15.items():
+    for key, text in {**APPROVED_IHA, **APPROVED_Q15}.items():
         assert at(w, key) == text, key
+    assert set(w["c"]) == {"pxKr", "pxUs", "pbr", "dy"} and not any("아래" in v for v in w["c"].values()), w["c"]
     assert set(w["form"]) == {k.split(".")[1] for k in APPROVED_Q15}, w["form"]
 
 
@@ -89,7 +91,7 @@ def test_each_line_is_recorded_as_approved_and_appendix_1_says_it():
         assert len(row) == 1 and row[0].split("|")[3].strip().startswith("Jack, 2026-11-06 (v19.6 Appendix 1"), k
         assert f"`{k}` |" not in pending, k
     # the pieces as Appendix 1 writes them (its {이에요/예요} is the two keys hit / hitYe)
-    for piece in ("관심 종목 · + 추가", "가지고 있지 않은 종목도 지켜볼 수 있어요.", "주가 {x}원 아래 · 주가 ${x} 아래 · PBR {x}배 아래 · 배당수익률 {x}% 이상 · (chip) · 지금 {now} · 정보 없음",
+    for piece in ("관심 종목 · + 추가", "가지고 있지 않은 종목도 지켜볼 수 있어요.", "주가 {x}원 이하 · 주가 ${x} 이하 · PBR {x}배 이하 · 배당수익률 {x}% 이상 · (chip) · 지금 {now} · 정보 없음 (Jack, 2026-11-19: 이하 replaces 아래",
                   "조건에 맞으면 이 화면과 홈에서 알려 드려요.", "관심 종목에 추가 · 관심 종목에서 빼기", "관심 종목은 30개까지 넣을 수 있어요.",
                   "아직 관심 종목이 없어요. 종목 화면에서 추가할 수 있어요.", "관심 종목은 30개까지라서 {n}개는 넣지 못했어요.", "/ 관심 종목 조건 |",
                   "{condition} 조건에 맞아요. 지금 {now}{이에요/예요}."):
@@ -100,7 +102,7 @@ def test_the_q15_lines_are_recorded_as_approved_and_no_longer_pending():
     chat = CT.chat_approved()
     doc = read("docs/tasks/v18.3-approved-in-chat.md")
     pending = read("docs/tasks/v18.3-new-strings-pending.md")
-    for key, text in APPROVED_Q15.items():
+    for key, text in {**APPROVED_IHA, **APPROVED_Q15}.items():
         k = "watch." + key
         assert chat.get(k) == text, k
         row = [l for l in doc.splitlines() if l.startswith(f"| `{k}` |")]

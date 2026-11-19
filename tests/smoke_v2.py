@@ -12630,11 +12630,11 @@ def scene_v196c(R, files, width, dark=False, deck=False):
         rows.first.wait_for(state="visible")
         got = rows.evaluate_all("(rs) => rs.map((r) => [r.dataset.t, r.dataset.k, r.dataset.date, r.innerText.split('\\n')])")
         assert [g[:3] for g in got] == [["005380", "pxBelow", pxd], ["AAPL", "pxBelow", uspx]], got
-        assert got[0][3] == [f"{by['005380']['nk']} · {W_['hitKind']}", fillp(W_["hit"], condition="주가 300,000원 아래", now="282,000원"),
+        assert got[0][3] == [f"{by['005380']['nk']} · {W_['hitKind']}", fillp(W_["hit"], condition="주가 300,000원 이하", now="282,000원"),
                              fillp(C["why"]["close"], md=md_text)], got[0]
         aapl_now = "$" + f"{by['AAPL']['price']:,.2f}"
         # a US price is read "…달러": always 예요 (review B1)
-        assert got[1][3][:2] == [f"{by['AAPL']['nk']} · {W_['hitKind']}", fillp(W_["hitYe"], condition="주가 $350.00 아래", now=aapl_now)], got[1]
+        assert got[1][3][:2] == [f"{by['AAPL']['nk']} · {W_['hitKind']}", fillp(W_["hitYe"], condition="주가 $350.00 이하", now=aapl_now)], got[1]
         sec = page.locator('[data-ui-v2="home-look"]')
         assert sec.locator("h3").first.inner_text() == C["home"]["look"]
         if not deck:
@@ -12679,12 +12679,12 @@ def scene_v196c(R, files, width, dark=False, deck=False):
         assert page.locator('[data-ui-v2="watch-card"]').evaluate_all("(cs) => cs.map((c) => c.dataset.t)") == WATCH_T
         ch = chips_of(page)
         now = lambda x: "· " + fillp(W_["now"], now=x)                                  # noqa: E731
-        assert ch["005380"] == [["pxBelow", "met", "주가 300,000원 아래" + now("282,000원")], ["pbrBelow", "not", "PBR 0.4배 아래" + now("0.42배")],
+        assert ch["005380"] == [["pxBelow", "met", "주가 300,000원 이하" + now("282,000원")], ["pbrBelow", "not", "PBR 0.4배 이하" + now("0.42배")],
                                 ["dyAtLeast", "met", "배당수익률 2% 이상" + now("2.1%")]], ch["005380"]
-        assert ch["AAPL"] == [["pxBelow", "met", "주가 $350.00 아래" + now("$" + f"{by['AAPL']['price']:,.2f}")]], ch["AAPL"]
-        assert ch["005930"] == [["pxBelow", "not", "주가 200,000원 아래" + now("225,000원")], ["dyAtLeast", "blank", "배당수익률 1% 이상· " + W_["blank"]]], ch["005930"]
-        assert ch["ABBV"] == [["pbrBelow", "blank", "PBR 5배 아래· " + W_["blank"]]] and ch["105560"] == [], ch
-        assert ch["999999"] == [["pxBelow", "blank", "주가 1,000원 아래· " + W_["blank"]]]
+        assert ch["AAPL"] == [["pxBelow", "met", "주가 $350.00 이하" + now("$" + f"{by['AAPL']['price']:,.2f}")]], ch["AAPL"]
+        assert ch["005930"] == [["pxBelow", "not", "주가 200,000원 이하" + now("225,000원")], ["dyAtLeast", "blank", "배당수익률 1% 이상· " + W_["blank"]]], ch["005930"]
+        assert ch["ABBV"] == [["pbrBelow", "blank", "PBR 5배 이하· " + W_["blank"]]] and ch["105560"] == [], ch
+        assert ch["999999"] == [["pxBelow", "blank", "주가 1,000원 이하· " + W_["blank"]]]
         card = lambda t: page.locator(f'[data-ui-v2="watch-card"][data-t="{t}"]')     # noqa: E731
         # blank: the company page's own reason, once, under its card; nothing under the others
         assert card("005930").locator('[data-ui-v2="div-share-hidden"]').inner_text() == C["co"]["div"]["shareHidden"]
@@ -12731,7 +12731,7 @@ def scene_v196c(R, files, width, dark=False, deck=False):
         inp("pbrBelow").fill("0.5")
         assert sh.locator('[data-ui-v2="watch-bad"]').count() == 0
         prev = sh.locator('[data-ui-v2="watch-field"][data-k="pbrBelow"] [data-ui-v2="watch-preview"]')
-        assert prev.inner_text().replace("\n", "") == "PBR 0.5배 아래· " + fillp(W_["now"], now="0.42배"), prev.inner_text()
+        assert prev.inner_text().replace("\n", "") == "PBR 0.5배 이하· " + fillp(W_["now"], now="0.42배"), prev.inner_text()
         inp("dyAtLeast").fill("")                                                       # blank: no dividend condition
         # an empty field shows today's value (review note: something to compare with before typing)
         now_line = sh.locator('[data-ui-v2="watch-field"][data-k="dyAtLeast"] [data-ui-v2="watch-now"]')
@@ -12745,8 +12745,8 @@ def scene_v196c(R, files, width, dark=False, deck=False):
         w = stored()["watch"]["005380"]
         assert no_hit_ts(w["conds"]) == [{"k": "pxBelow", "v": 300000, "hitAt": pxd}, {"k": "pbrBelow", "v": 0.5, "hitAt": pxd}], w
         assert w["ts"] > 1762300000000 and w["at"] == "2026-11-05"
-        assert chips_of(page)["005380"] == [["pxBelow", "met", "주가 300,000원 아래· " + fillp(W_["now"], now="282,000원")],
-                                            ["pbrBelow", "met", "PBR 0.5배 아래· " + fillp(W_["now"], now="0.42배")]]
+        assert chips_of(page)["005380"] == [["pxBelow", "met", "주가 300,000원 이하· " + fillp(W_["now"], now="282,000원")],
+                                            ["pbrBelow", "met", "PBR 0.5배 이하· " + fillp(W_["now"], now="0.42배")]]
     R.check(page, S, "조건 시트: 승인된 칸 이름 · 넣은 값의 칩 · 잘못 넣으면 저장 꺼짐 · 저장(바뀐 조건만 새로 표시)", sheet)
 
     def company():

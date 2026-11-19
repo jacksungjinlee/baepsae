@@ -67,7 +67,7 @@ export const watchFresh = (load, now) => !!load && load.status === "ok" && daySt
 
 // The entered number as the chip shows it, and so as it is judged: a Korean price in whole won (condText shows
 // Math.round(v)). The sheet only takes whole won, but store.js takes 2 decimals for any price, so a hand-edited records
-// file can bring 74999.5: it reads "주가 75,000원 아래" and is judged as 75,000원 by the chip, the mark and the 홈 row alike
+// file can bring 74999.5: it reads "주가 75,000원 이하" and is judged as 75,000원 by the chip, the mark and the 홈 row alike
 // (delta review, 2026-11-19). The stored number is left as it is. US prices, PBR and yields are shown and judged as stored.
 export const condV = (s, c) => (c.k === "pxBelow" && s && !usOf(s) ? Math.round(c.v) : c.v);
 
@@ -127,7 +127,7 @@ export function watchHits(data, load, now, canMark = true) {
 }
 
 // ---------------- words ----------------
-// The condition as the chip names it: "주가 75,000원 아래" · "주가 $150.00 아래" · "PBR 0.8배 아래" · "배당수익률 4% 이상".
+// The condition as the chip names it: "주가 75,000원 이하" · "주가 $150.00 이하" · "PBR 0.8배 이하" · "배당수익률 4% 이상".
 const oneDec = (v) => nf(v, Math.round(v * 10) % 10 ? 1 : 0);          // 0.8 · 4 (no ".0": the board's "4% 이상")
 export function condText(k, v, us) {
   const W = C.watch.c;
