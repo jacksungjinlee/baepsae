@@ -426,7 +426,8 @@ def test_a_swap_with_a_sale_that_cannot_reach_100_under_the_cap_is_refused_until
         same: JSON.stringify(Object.fromEntries(view.rows.map((r) => [r.t, r1000(r.pct)]))) === JSON.stringify(Object.fromEntries(chk.rows.map((r) => [r.t, r1000(r.pct)]))) };""")
     assert {k: got["chk"][k] for k in ("low", "y", "pct")} == {"low": True, "y": 12, "pct": 10}     # 7 × 10 + 10 + 15 = 95 < 100: D2 first (100 ÷ 9 → 12)
     assert got["no"] == {"ok": False, "why": "sum"}                    # never a write that does not add up to 100%
-    assert got["ok"] is True and got["max"] == 12 and got["sum"] == 1 and got["cand"] == 0.12 and got["top"] <= 0.12
+    # Jack, 2026-11-19 ("4. (a)"): the candidate keeps the 10% it was compared at; the others take the raise (none above 12%)
+    assert got["ok"] is True and got["max"] == 12 and got["sum"] == 1 and got["cand"] == 0.1 and got["top"] <= 0.12
     assert got["chk"]["n"] == got["chk"]["names"] == 9 and got["chk"]["cand"] is True    # "종목이 9개뿐이라" beside the same 9 names
     assert got["view"] == {"path": "sale", "cap": 10, "pct": 10, "from": 15, "low": True, "y": 12}    # never the raise before it is tapped
     assert got["same"] is True                                          # the bar shows the rows the sheet's D2 check reads
@@ -627,6 +628,55 @@ def test_the_portfolio_swap_view_reads_is_the_one_the_sale_writes():
         b: [tg(rb.data.decks[0]), rb.data.decks[0].settings.maxPct], lb: [tg(lb.deck), lb.deck.settings.maxPct] };""")
     assert got["a"] == got["la"] and got["a"][1] == 20
     assert got["b"] == got["lb"] and got["b"][1] == 12
+
+
+# Jack, 2026-11-19 (answer 4): "(a), and make both cases behave the same." After 최대 비중을 {y}%로 올리기 in a swap, the candidate keeps
+# the target 두 종목 비교 compared it at and the other stocks take the raise, with or without shares: 팔고 빼기's write and 바꾼 내용 저장
+# after the swap and the raise save the same targets and the same 최대 비중.
+J4 = Q8 + r"""
+const tg = (de) => Object.fromEntries(de.holdings.map((h) => [h.t, Math.round(h.target * 1e9) / 1e9]));
+// both paths from the stored portfolio: without shares, swap → 최대 비중 올리기 on 종목 바꾸기 → 바꾼 내용 저장; with shares, the 빼기
+// sheet's raise → 팔고 빼기 (the y and the compared cap from swapCheck, as editor.jsx sellSwap passes them)
+const both = (mk, t, sellQty) => {
+  const d = mk(false), dh = mk(true);
+  const vd = E.swapView(d, E.emptyDraft(), t, cand()), vs = E.swapView(dh, E.emptyDraft(), t, cand());
+  const dr = E.raiseDraft(d, E.swapDraft(d, E.emptyDraft(), t, 'better', cand()));
+  const sv = E.applyEdit({ v: 2, decks: [d] }, 'd1', dr, { load, today: T, ts: 1 });
+  const chk = E.swapCheck(dh, E.emptyDraft(), t, cand());
+  const ss = E.sellAndSwap(sellAll({ v: 2, decks: [dh] }, t, sellQty), 'd1', t, cand(), { reason: 'better', raise: chk.y, at: chk.cap, load, today: T, ts: 1 });
+  const a = sv.ok ? sv.data.decks[0] : null, b = ss.ok ? ss.data.decks[0] : null;
+  return { x: [vd.pct, vs.pct], low: [vd.low, vs.low, chk.low], y: chk.y, ok: [sv.ok, ss.ok], draft: a && tg(a), sale: b && tg(b),
+    max: [a && a.settings.maxPct, b && b.settings.maxPct], sum: [a && sumT(a), b && sumT(b)] };
+};
+"""
+
+
+def test_jack_4a_after_the_raise_the_candidate_keeps_its_compared_weight_with_or_without_shares():
+    """v19.7a's cushion portfolio (seven at 10% under a 10% cap, two 15% 채권·금 holdings): swapping the first one opens D2 (95%), so
+    both next screens offer 최대 비중을 12%로 올리기. After it, the candidate stays at the 10% 두 종목 비교 showed and the seven take the
+    raise, on both paths, and the two paths save the very same targets."""
+    got = run(J4 + "out = both(dcush, '114260', 10);")
+    assert got["x"] == [10, 10] and got["low"] == [True, True, True] and got["y"] == 12
+    assert got["ok"] == [True, True] and got["max"] == [12, 12] and got["sum"] == [1, 1]
+    assert got["draft"]["005930"] == 0.1 and got["sale"]["005930"] == 0.1          # the compared 10%, not the raised 12%
+    assert got["draft"] == got["sale"]                                              # the same write with or without shares
+    others = [v for k, v in got["sale"].items() if k not in ("005930", "132030")]
+    assert len(others) == 7 and all(0.1 <= v <= 0.12 for v in others) and sum(others) > 0.7 + 1e-9   # the others take the raise
+
+
+def test_jack_4a_both_paths_save_the_same_when_the_others_start_below_the_cap():
+    """A 16% 채권·금 holding under a 10% cap, another at 16%, and seven at 10 · 10 · 10 · 10 · 10 · 9 · 9 (two below the cap). Swapping
+    the first opens D2 (96%: y = 12). The write with shares runs the same steps as the swap without shares (the share-out at the cap,
+    then the raise keeping the candidate), so the saved targets match to the last digit and the candidate keeps 10%."""
+    got = run(J4 + """
+      const mk = (held) => { const d = dcush(held, { '114260': 0.16, '132030': 0.16 });
+        const w = { '000010': 0.1, '000020': 0.1, '000030': 0.1, '000040': 0.1, '000050': 0.1, '000060': 0.09, '000070': 0.09 };
+        d.holdings = d.holdings.map((h) => (w[h.t] != null ? { ...h, target: w[h.t], rules: band(w[h.t]) } : h));
+        return d; };
+      out = both(mk, '114260', 10);""")
+    assert got["x"] == [10, 10] and got["low"] == [True, True, True] and got["y"] == 12
+    assert got["ok"] == [True, True] and got["max"] == [12, 12] and got["sum"] == [1, 1]
+    assert got["draft"]["005930"] == 0.1 and got["draft"] == got["sale"]
 
 
 def test_the_compare_note_and_the_next_screen_read_one_raise_check():

@@ -236,10 +236,12 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
   const swapNow = (t, reason, add) => { setSheet(null); set((d) => E.swapDraft(deck, E.rebaseDraft(deck, d), t, reason, add)); toEdit(); };
   const sellSwap = (t, nk, reason, raise, add) => {
     setSheet(null);
-    const up = raise != null ? raise : E.swapCheck(deck, draft, t, add).up;
+    const chk = E.swapCheck(deck, draft, t, add);
+    const up = raise != null ? raise : chk.up;
     const before = deck;
+    // at: the cap 두 종목 비교 compared the swap at, so the candidate keeps that target after the sheet's raise (Jack, 2026-11-19, 4a)
     setFlow({ stage: "sell", deckId: deck.id, t, nk, prefill: { qty: held(t) }, lockQty: true,
-      finish: (next) => E.sellAndSwap(next, deck.id, t, add, { reason, raise: up, load, today: todayKst(), ts: Date.now() }),
+      finish: (next) => E.sellAndSwap(next, deck.id, t, add, { reason, raise: up, at: chk.cap, load, today: todayKst(), ts: Date.now() }),
       after: (next) => {
         setFail(null);
         const saved = next && Array.isArray(next.decks) ? next.decks.find((d) => d && d.id === before.id) || null : null;
