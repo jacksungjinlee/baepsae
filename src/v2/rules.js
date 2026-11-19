@@ -109,15 +109,25 @@ export function dayState(load, now) {
 // corp.json). -> dayState's answer, or { ok: true, late: { days, n } } (days: the stale count n of the date line and the
 // band, as dayState gave it; n: the trading days behind). Anything that cannot be read -> dayState's answer (no check).
 // The screens then say the close's date beside the result and keep the date line's stale words (two-disasters rule: a
-// check on an old close never looks like today's).
+// check on an old close never looks like today's), and show nothing labelled 오늘 (review, 2026-11-19).
+// A fallback to "no check" for a reason other than the 5-day rule is said once in the console (CLAUDE.md: no silent fallback).
+const lateSaid = new Set();
+const lateWarn = (m) => { if (!lateSaid.has(m)) { lateSaid.add(m); console.warn(m); } };
 export function checkState(load, now) {
   const s = dayState(load, now);
   if (s.ok || s.why !== "stale") return s;
   const d = load.data, c = load.corp;
-  if (!d || !c || !samePublish(d.publishedAt, c.publishedAt)) return s;
+  if (!d || !c || !samePublish(d.publishedAt, c.publishedAt)) {
+    lateWarn(`[v2] late check: not run (data.json published ${d && d.publishedAt}, corp.json ${c && c.publishedAt}: not one publish); the stale data is not checked`);
+    return s;
+  }
   const t = now == null ? Date.now() : now;
   const late = lateDays(d, kstDate(t));
-  if (!late || late.n > LATE_CHECK_DAYS) return s;
+  if (!late) {
+    lateWarn(`[v2] late check: not run (pxDate ${JSON.stringify(d.pxDate)} or usPxDate ${JSON.stringify(d.usPxDate)} cannot be read as a date, so the trading days behind cannot be counted); the stale data is not checked`);
+    return s;
+  }
+  if (late.n > LATE_CHECK_DAYS) return s;
   return { ok: true, late: { days: s.days, n: late.n } };
 }
 

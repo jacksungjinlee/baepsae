@@ -118,13 +118,23 @@ function RulesHero({ block, many, narrow }) {
 // ---------------- the portfolio card ----------------
 // No value today (a held stock has no price: track.deckMoney why "price"): 포트폴리오 shows no reason line for that case, so
 // the card is left out and the console says why; a stock missing from today's data keeps the approved missing line.
+// late (rules.js checkState, Jack 2026-11-19): data checked on an older close shows nothing labelled 오늘 (review, 2026-11-19):
+// no "오늘 {amount}" and no line that speaks of today's rate or today's data; a number that only such a line explains is left
+// out with it (a stock missing from the data: the whole card; a gain at today's rate: the gain line), said in the console.
 const warnedMoney = new Set();
-function MoneyCard({ block, pxDate, load }) {
+function MoneyCard({ block, pxDate, load, late = false }) {
   const { deck, money } = block;
-  if (!money.ok && !(money.absent && money.absent.length)) {
-    const k = deck.id + "|" + (money.why || "");
-    if (!warnedMoney.has(k)) { warnedMoney.add(k); console.warn(`[v2] ${deck.id}: no portfolio value on the home screen today (${money.why || "unknown"}): the card is left out`); }
+  const lateAbsent = late && money.absent && money.absent.length > 0;
+  if (lateAbsent || (!money.ok && !(money.absent && money.absent.length))) {
+    const why = lateAbsent ? "late data with a held stock missing from it: its line speaks of today's data" : money.why || "unknown";
+    const k = deck.id + "|" + why;
+    if (!warnedMoney.has(k)) { warnedMoney.add(k); console.warn(`[v2] ${deck.id}: no portfolio value on the home screen today (${why}): the card is left out`); }
     return null;
+  }
+  const gainShown = money.ok && money.gain && !(late && money.gain.usdToday);
+  if (late && money.ok && money.gain && money.gain.usdToday) {
+    const k = deck.id + "|lateUsd";
+    if (!warnedMoney.has(k)) { warnedMoney.add(k); console.warn(`[v2] ${deck.id}: late data: the 산 가격보다 line is left out (its dollar costs are converted at the data's rate, which the approved line calls today's)`); }
   }
   const md = mdText(pxDate);
   const H = C.home;
@@ -138,20 +148,20 @@ function MoneyCard({ block, pxDate, load }) {
         <div style={{ display: "flex", alignItems: "baseline", gap: SPACE(2), flexWrap: "wrap", marginTop: SPACE(1) }}>
           <span data-ui-v2="home-value" data-v={Math.round(money.value)} style={tx(30, WEIGHT.heavy, COLOR.ink, { lineHeight: 1.15, letterSpacing: "-0.02em" })}>
             <Amount text={wonText(money.value)} /></span>
-          {money.day && H.day && (
+          {money.day && H.day && !late && (
             <span data-ui-v2="home-day" data-pct={Math.round(money.day.pct * 1000) / 1000} style={tx(SIZE.sm, WEIGHT.heavy, tone(Math.round(money.day.pct * 10)))}>
               {fill(H.day, { amount: signedWon(money.day.amount), pct: signedPct(money.day.pct) })}</span>
           )}
         </div>
       )}
-      {money.ok && money.gain && H.gain && H.gainBasis && (
+      {gainShown && H.gain && H.gainBasis && (
         <p data-ui-v2="home-gain" data-n={money.gain.n} data-ret={Math.round(money.gain.ret * 100000) / 1000} style={tx(SIZE.xs, WEIGHT.regular, COLOR.neutral, { marginTop: SPACE(1) })}>
           {/* the approved piece stays one text, coloured by its sign as "오늘 …" is (price red/blue only for up/down) */}
           <b style={{ color: tone(Math.round(money.gain.ret * 1000)) }}>{fill(H.gain, { amount: signedWon(money.gain.gain), pct: signedPct(money.gain.ret * 100) })}</b>{" "}
           <span style={{ color: COLOR.text3 }}>{"· "}{fill(H.gainBasis, { n: money.gain.n })}</span>
         </p>
       )}
-      {money.ok && money.gain && money.gain.usdToday && <Note data-ui-v2="usd-today">{C.pfr.usdToday}</Note>}
+      {gainShown && money.gain.usdToday && <Note data-ui-v2="usd-today">{C.pfr.usdToday}</Note>}
       {money.absent && money.absent.length > 0 && <MissingNote absent={money.absent} deckId={deck.id} />}
       {/* v19.1c (PR #82): a held US stock priced at an earlier close is in the value and the list below: named once here */}
       <OwnCloseNote groups={ownCloses(load, block.list.rows.filter((r) => r.t && !r.absent).map((r) => block.byT && block.byT.get(r.t)))} data-deck-id={deck.id} />
@@ -161,7 +171,9 @@ function MoneyCard({ block, pxDate, load }) {
 
 // ---------------- 가진 종목 ----------------
 // md: the Korean price date as shown ("11월 13일"), for the no-trade line (fixnote.jsx DayNote).
-function HeldCard({ block, onWhy, md = null }) {
+// late (rules.js checkState): no "비중 · 오늘" column name, no day's change and no no-trade line under it (review, 2026-11-19:
+// nothing labelled 오늘 on data checked on an older close); the weights and the check's chips stay.
+function HeldCard({ block, onWhy, md = null, late = false }) {
   const { openStock } = useNav();
   const { deck, list } = block;
   const rows = list.rows;
@@ -177,7 +189,7 @@ function HeldCard({ block, onWhy, md = null }) {
     <Card data-ui-v2="home-held" data-deck-id={deck.id} data-kind={imp ? "imported" : "built"} data-full={full} style={{ padding: `${SPACE(3) + 2}px ${SPACE(4)}px` }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: SPACE(2), marginBottom: 2 }}>
         <h3 style={tx(SIZE.body, WEIGHT.heavy, COLOR.ink)}>{fill(H.held, { n: rows.length })}</h3>
-        {H.cols && <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{H.cols}</span>}
+        {H.cols && !late && <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{H.cols}</span>}
       </div>
       {rows.map((r, i) => {
         const big = r.x && r.x.bigMove && !r.absent;
@@ -201,10 +213,10 @@ function HeldCard({ block, onWhy, md = null }) {
               )}
               {chips && <span style={{ display: "flex", marginTop: SPACE(1) }}>{chips}</span>}
               {/* 2026-11-14 (Jack, design chat 2026-11-08): no change today, said in the row (the change cell stays empty, never 0.0%) */}
-              {!r.absent && r.t && block.byT && <DayNote s={block.byT.get(r.t)} md={md} block={false} style={{ marginTop: SPACE(1) }} />}
+              {!late && !r.absent && r.t && block.byT && <DayNote s={block.byT.get(r.t)} md={md} block={false} style={{ marginTop: SPACE(1) }} />}
             </span>
             <span data-ui-v2="home-change" style={tx(SIZE.sm, WEIGHT.heavy, r.d1 == null ? COLOR.text3 : tone(Math.round(r.d1 * 10)), { minWidth: 56, textAlign: "right", flexShrink: 0, whiteSpace: "nowrap" })}>
-              {r.d1 != null ? signedPct(r.d1) : ""}</span>
+              {r.d1 != null && !late ? signedPct(r.d1) : ""}</span>
           </div>
         );
       })}
@@ -271,12 +283,15 @@ function DiscNote({ id, date, children }) {
   );
 }
 
-// lateMd: on late data checked on an older close, that close's date: the calm card says "{date} 종가 기준으로는 할 일이
-// 없어요." (today.calmLate, Jack 2026-11-19) instead of "오늘은 할 일이 없어요".
+// lateMd: on late data checked on an older close, that close's date. Then only the calm card shows, saying "{date} 종가
+// 기준으로는 할 일이 없어요." (today.calmLate, Jack 2026-11-19) instead of "오늘은 할 일이 없어요": no "오늘 볼 것" heading
+// and none of its rows (review, 2026-11-19: nothing labelled 오늘 on an older close, as before the late check). A broken
+// concentration rule still shows in its portfolio's hero above (brokenLine); the filings rows wait for fresh data.
 function Look({ blocks, load, look, go, lateMd = null }) {
   const { openStock } = useNav();
   const H = C.home;
   const { conc, files, calm, discFail, discOld } = look;
+  if (lateMd) return calm ? <Card data-ui-v2="home-calm" data-late="1" style={{ marginTop: SPACE(5) }}><p style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink)}>{calmLine(lateMd)}</p></Card> : null;
   if (!H.look || (!conc.length && !files.length && !calm && !discFail && !discOld)) return null;
   const byT = load.status === "ok" ? load.byT : new Map();
   return (
@@ -301,7 +316,7 @@ function Look({ blocks, load, look, go, lateMd = null }) {
           the 공시 tab's own date line. Each beside the filings rows' chip, so it reads as being about the filings. */}
       {discFail && <DiscNote id="home-disc-fail"><LoadFail picture={false} inline /></DiscNote>}
       {discOld && <DiscNote id="home-disc-old" date={discOld.date}><DateLine date={discOld.date} fresh={{ stale: discOld.stale, days: discOld.days }} style={{ marginTop: 0 }} /></DiscNote>}
-      {calm && <Card data-ui-v2="home-calm" data-late={lateMd ? "1" : undefined} style={{ marginTop: SPACE(2) }}><p style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink)}>{calmLine(lateMd)}</p></Card>}
+      {calm && <Card data-ui-v2="home-calm" style={{ marginTop: SPACE(2) }}><p style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink)}>{C.today.calmEyebrow}</p></Card>}
     </section>
   );
 }
@@ -346,8 +361,8 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
     ...blocks.map((b) => (
       <div key={b.deck.id} data-ui-v2="home-block" data-deck-id={b.deck.id}>
         {b.st && <RulesHero block={b} many={many} narrow={narrow} />}
-        <MoneyCard block={b} pxDate={ok ? load.data.pxDate : null} load={load} />
-        <HeldCard block={b} onWhy={onWhy} md={ok ? mdText(load.data.pxDate) : null} />
+        <MoneyCard block={b} pxDate={ok ? load.data.pxDate : null} load={load} late={!!lateMd} />
+        <HeldCard block={b} onWhy={onWhy} md={ok ? mdText(load.data.pxDate) : null} late={!!lateMd} />
       </div>
     )),
     ev.ok && blocks.length > 0 && <Look key="look" blocks={blocks} load={load} look={look} go={go} lateMd={lateMd} />,

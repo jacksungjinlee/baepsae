@@ -151,7 +151,9 @@ export function Why({ load, store, setStoreData, target, onBack, pad }) {
         </div>
       </div>
       <Verdict x={x} g={g} names={names} onConfirm={(item, answer) => conf(deck.id, item, answer)} />
-      {g.ok && (
+      {/* late data (rules.js checkState): no peers card, whose chart is read out as "…의 오늘 등락" (review, 2026-11-19:
+          nothing labelled 오늘 on an older close) */}
+      {g.ok && !ev.late && (
         <Check n={1} title={g.together ? C.why.c1Title : null} data-ui-v2="why-peers">
           <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: g.together ? SPACE(1) : 0 })}>
             {fill(C.why.c1Body, { ind: s.indName, n: g.n, k: g.fell })}</p>
@@ -161,7 +163,7 @@ export function Why({ load, store, setStoreData, target, onBack, pad }) {
           </div>
         </Check>
       )}
-      <Check n={g.ok ? 2 : 1} title={kept(x) ? fill(C.why.keptTitle, { n: kept(x) }) : R().title} data-ui-v2="why-rules">
+      <Check n={g.ok && !ev.late ? 2 : 1} title={kept(x) ? fill(C.why.keptTitle, { n: kept(x) }) : R().title} data-ui-v2="why-rules">
         {C.why.alertLine && <p style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>{C.why.alertLine}</p>}
         <HoldingRules x={x} names={names} />
         {de.rebased && C.daily.rebasedNote && (                       // the same note as under the deck on 포트폴리오

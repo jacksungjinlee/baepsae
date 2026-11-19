@@ -280,3 +280,28 @@ def test_the_new_line_is_jacks_wording():
     assert got["checked"] == "11월 16일 종가로 점검했어요"
     src = open(os.path.join(ROOT, "src", "v2", "today.jsx"), encoding="utf-8").read()
     assert re.search(r"calmLine\(lateMd\)", src) and "C.today.calmLate" in src
+
+
+def test_a_fallback_to_no_check_is_said_once_with_its_reason():
+    """Review (2026-11-19): corp.json from another publish, or a date that cannot be read, falls back to "no check" — said once
+    in the console with the reason (CLAUDE.md: no silent fallback). The 5-day rule itself is the rule, not a fallback."""
+    other_corp = files("2026-11-16", "2026-11-16", "2026-11-17T06:40:56+09:00", corp_published="2026-11-16T06:40:00+09:00")
+    bad_us = files("2026-11-16", "2026-11-16", "2026-11-17T06:40:56+09:00")
+    bad_us["data"]["usPxDate"] = "2026/11/16"
+    base = files("2026-11-16", "2026-11-16", "2026-11-17T06:40:56+09:00")
+    got = run(LOAD + """
+const W = '2026-11-19T09:00:00+09:00';
+const n0 = WARN.length;
+const a = [stateAt(OC, W), stateAt(OC, '2026-11-19T10:00:00+09:00')];
+const afterCorp = WARN.slice(n0);
+const n1 = WARN.length;
+const b = [stateAt(BU, W), stateAt(BU, '2026-11-19T11:00:00+09:00')];
+const afterUs = WARN.slice(n1);
+const n2 = WARN.length;
+const c = [stateAt(B, W), stateAt(B, '2026-11-25T09:00:00+09:00')];
+out = { a, b, c, afterCorp: afterCorp.filter((m) => m.includes('late check')), afterUs: afterUs.filter((m) => m.includes('late check')),
+        quiet: WARN.slice(n2).filter((m) => m.includes('late check')) };""", OC=other_corp, BU=bad_us, B=base)
+    assert [x["ok"] for x in got["a"] + got["b"]] == [False] * 4
+    assert len(got["afterCorp"]) == 1 and "not one publish" in got["afterCorp"][0] and "2026-11-16T06:40:00+09:00" in got["afterCorp"][0], got["afterCorp"]
+    assert len(got["afterUs"]) == 1 and "cannot be read" in got["afterUs"][0] and '"2026/11/16"' in got["afterUs"][0], got["afterUs"]
+    assert got["c"][0]["ok"] is True and got["c"][1]["ok"] is False and got["quiet"] == [], got   # 늦은 점검 · 6거래일: 경고 없음

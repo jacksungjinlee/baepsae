@@ -12319,6 +12319,7 @@ def scene_late_check(R, files, width, dark=False):
                 assert page.locator('[data-ui-v2="today-stale"]').count() == 0
                 assert page.locator('[data-ui-v2="home-money"][data-deck-id="dhalf"]').count() == 1       # 포트폴리오 칸 · 가진 종목도 그대로
                 assert page.locator('[data-ui-v2="home-held"] [data-home-holding]').count() == 2
+                assert page.locator('[data-ui-v2="home-day"]').count() == 0 and fillp(C["home"]["cols"]) not in body   # 리뷰: '오늘' 붙은 것 없음
             else:
                 band = page.locator('[data-ui-v2="today-stale"] [data-ui="hero-band"] h2')
                 band.wait_for(state="visible")
@@ -12396,15 +12397,138 @@ def scene_late_check(R, files, width, dark=False):
         hero.wait_for(state="visible")
         assert hero.get_attribute("data-state") == "todo" and hero.get_attribute("data-late") == "1"
         assert hero.locator('[data-ui-v2="today-late"]').inner_text() == checked
-        assert page.locator(pill).inner_text().startswith(C["today"]["todoN"].split("{n}")[0])
+        assert page.locator(pill).count() == 0                                   # 리뷰: '오늘 확인할 일 {n}개' 없이 찾은 것만
+        assert hero.locator('[data-ui-v2="todo-item"]').count() >= 1
         assert page.locator('[data-ui-v2="today-stale"]').count() == 0
         theme(page)
         floor_ok(page, "홈 todo late")
         no_hscroll(page, width)
         R.collect(page)
-    R.check(page, S, f"5거래일 안, 확인할 일이 있는 날: '오늘 확인할 일 …' 띠 그대로 + '{checked}'", todo)
+    R.check(page, S, f"5거래일 안, 확인할 일이 있는 날: 찾은 것 그대로 + '{checked}' ('오늘 확인할 일 …' 없이)", todo)
     ctx.close()
     srv.shutdown()
+
+
+TODAY_WORDS_JS = """() => { const out = new Set(); const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  while (w.nextNode()) { const n = w.currentNode, e = n.parentElement; if (!e || e.closest('script, style')) continue;
+    const r = e.getBoundingClientRect(); if (!r.width && !r.height) continue; const t = n.textContent.trim(); if (t.includes('오늘')) out.add(t); }
+  for (const e of document.querySelectorAll('[aria-label],[alt],[placeholder],[title]'))
+    for (const a of ['aria-label', 'alt', 'placeholder', 'title']) { const v = e.getAttribute(a); if (v && v.includes('오늘')) out.add(v); }
+  return [...out]; }"""
+
+
+def today_words(page):
+    """화면에 보이는 글 · aria-label 가운데 '오늘'이 든 것 (숫자는 # 으로: 날짜 · 금액이 달라도 같은 줄)."""
+    return {re.sub(r"[−+\-]?\d[\d,.]*", "#", t) for t in page.evaluate(TODAY_WORDS_JS)}
+
+
+def scene_late_today_words(R, files, width=390):
+    """늦은 점검 리뷰 (2026-11-19): 지난 종가로 점검할 때 '오늘'이 붙은 숫자 · 줄은 하나도 새로 나오지 않아요 — 점검하지 않던 때(6거래일 뒤)와
+    같아요. 홈(새 홈 · 스위치를 끈 홈) · 포트폴리오 · 내 수익(만든 · 가진 종목) · 종목 바꾸기 · 회사 페이지: 늦은 화면의 '오늘' 글 ⊆ 6거래일 화면의
+    '오늘' 글, 왜 움직였나는 '오늘' 글이 없어요. 제때인 날에는 그 자리들이 그대로 있어요 (홈 '오늘 {금액}' · '비중 · 오늘' · '오늘 확인할 일' ·
+    미국 환율 줄 · 빠진 종목 줄 · 오늘 등락률 줄 · 내 수익 '→ 오늘 {b}원'). 덱: 매일 점검의 확인 덱 · v19.6a 의 만든(미국 기록) · 가진 종목(달러
+    평균 단가) · 빠진 종목(OLDX)."""
+    S = f"늦은 점검 '오늘' {width}"
+    store, _ = missing_store(files)
+    pxd0 = files["data.json"]["pxDate"]
+    decks = [DAILY_DECKS["decks"][0]] + v196a_store(pxd0)["decks"] + [store["decks"][0]]
+
+    def site_for(px, app=None):
+        f = v196a_files(late_files(files, px))
+        by = {x["t"]: x for x in f["data.json"]["stocks"]}
+        by["035420"].pop("d1", None)                                     # NAVER: 오늘 등락률이 빈 한국 종목 (DayNote '오늘 등락률은 …')
+        return build_site(f, app=app)
+
+    seen = {}
+    screens = [("home", "#home"), ("portfolio", "#portfolio"), ("ret-built", "#portfolio/returns/dbuilt"), ("ret-imp", "#portfolio/returns/dimp"),
+               ("edit", "#portfolio/edit/dbuilt"), ("company", "#stocks/005930"), ("tax", "#portfolio/tax")]
+    ready = {"home": '[data-ui-v2="home2"]', "portfolio": '[data-deck-id="dbuilt"]', "ret-built": '[data-ui-v2="returns"]', "ret-imp": '[data-ui-v2="returns"]',
+             "edit": '[data-ui-v2="edit-list"]', "company": '[data-ui-v2="company"]', "tax": '[data-ui-v2="tax"]'}
+    for state, px in (("fresh", None), ("beyond", LATE_OUT), ("late", LATE_IN)):
+        srv, ctx, page, base = R.open(site_for(px), width, init=e_store(decks), path="/app.html?dev=1#home")
+
+        def run(state=state):
+            wait_ready(page)
+            got = {}
+            for key, h in screens:
+                page.evaluate("(h) => { location.hash = h; }", h)
+                page.locator(ready[key]).first.wait_for(state="visible")
+                if key == "home":
+                    disc_settled(page)
+                    page.locator('[data-ui-v2="today-hero"], [data-ui-v2="today-stale"]').first.wait_for(state="visible")
+                page.wait_for_timeout(150)
+                got[key] = today_words(page)
+                if state == "fresh" and key == "home":                    # 제때: 그 자리들이 그대로 있어요
+                    assert page.locator('[data-ui-v2="home-day"]').count() >= 1 and page.locator('[data-ui-v2="usd-today"]').count() >= 1
+                    assert page.locator('[data-ui-v2="missing-line"]').count() >= 1 and page.locator('[data-ui-v2="day-note"][data-kind="missing"]').count() >= 1
+                    assert fillp(C["home"]["cols"]) in got[key] and any(w.startswith(C["today"]["todoN"].split("{n}")[0]) for w in got[key]), got[key]
+                if state == "fresh" and key == "ret-built":
+                    assert page.locator('[data-ui-v2="ret-fx-line"]').count() == 1
+                if state == "beyond" and key == "tax":                    # 점검하지 않던 그대로: 예전 멈춤 줄
+                    assert page.locator('[data-ui-v2="tax-stale"]').inner_text() == fillp(C["today"]["stale"], n=2)
+                if state == "late":
+                    extra = got[key] - seen["beyond"][key]
+                    assert not extra, (key, extra)                        # 늦은 점검이 더한 '오늘' 글이 없어요
+                    assert page.locator('[data-ui-v2="home-day"], [data-ui-v2="usd-today"], [data-ui-v2="missing-line"], [data-ui-v2="ret-fx"], '
+                                        '[data-ui-v2="ret-missing"], [data-ui-v2="ret-no-price"], [data-ui-v2="missing-remove"], '
+                                        '[data-ui-v2="home-look"]').count() == 0, key
+                    if key == "home":
+                        assert page.locator('[data-ui-v2="today-hero"]').get_attribute("data-late") == "1"
+                        assert page.locator('[data-ui-v2="today-hero"] [data-ui-part="pill"]').count() == 0     # '오늘 확인할 일 {n}개' 없이 찾은 것만
+                        assert page.locator('[data-ui-v2="home-block"] [data-ui-v2="day-note"]').count() == 0
+                        assert page.locator('[data-ui-v2="home-money"][data-deck-id="dgone"]').count() == 0   # 빠진 종목의 합계는 그 줄과 함께 빠져요
+                        assert page.locator('[data-ui-v2="home-money"][data-deck-id="dimp"] [data-ui-v2="home-gain"]').count() == 0   # 오늘 환율 줄이 설명하는 수익
+                        assert page.locator('[data-ui-v2="home-rules"][data-deck-id="dimp"] [data-ui-v2="home-checked"]').inner_text() == fillp(C["pfr"]["checked"], date=mdtext(LATE_IN))
+                    if key == "portfolio":
+                        assert page.locator('[data-ui-v2="deck-late"]').count() == 1
+                        assert page.locator('[data-deck-id="dgone"] [data-ui-v2="deck-summary"]').count() == 0
+                        assert page.locator('[data-deck-id="dcut"] [data-holding][data-status]').count() >= 1   # 점검 결과(칩)는 그대로
+                    if key == "ret-built":
+                        page.locator('[data-ui-v2="ret-total"]').wait_for(state="visible")                  # 숫자는 그 종가로
+                    if key == "ret-imp":
+                        assert page.locator('[data-ui-v2="ret-total"]').count() == 0 and page.locator('[data-ui-v2="ret-late"]').count() == 1
+                    if key == "tax":                                      # 연말에 확인할 숫자: 숫자 없이 날짜 줄의 멈춤 말 (내 수익과 같은 말)
+                        note = page.locator('[data-ui-v2="tax-stale"]')
+                        assert note.get_attribute("data-late") == "1" and note.inner_text() == fillp(C["app"]["stale"], n=2), note.inner_text()
+                        assert page.locator('[data-ui-v2="tax-loss-row"], [data-ui-v2="tax-loss-none"]').count() == 0
+                floor_ok(page, f"{state} {key}")
+                no_hscroll(page, width)
+                R.collect(page)
+            seen[state] = got
+            if state == "late":                                            # 왜 움직였나: '오늘' 글 없음 (점검하지 않던 때는 열 수 없었어요)
+                page.evaluate("location.hash = '#home'")
+                at(page, "home")
+                page.locator('[data-ui-v2="big-moves"] [data-ui-v2="why-link"]').first.click()     # 확인할 일이 있는 날: 띠 밑 카드
+                at(page, "home/why")
+                page.locator('[data-ui-v2="why-verdict"]').wait_for(state="visible")
+                assert not today_words(page), today_words(page)
+                assert page.locator('[data-ui-v2="why-peers"]').count() == 0
+                R.collect(page)
+        R.check(page, S, {"fresh": "제때: 홈 '오늘 {금액}' · '비중 · 오늘' · '오늘 확인할 일' · 환율 · 빠진 종목 · 오늘 등락률 줄 · 내 수익 '→ 오늘' 그대로",
+                          "beyond": "6거래일 뒤: 점검하지 않던 그대로 (비교 기준)",
+                          "late": "5거래일 안: 여섯 화면 모두 늦은 점검이 더한 '오늘' 글 없음 · 그 줄이 설명하던 숫자도 없음 · 왜 움직였나 '오늘' 없음"}[state], run)
+        ctx.close()
+        srv.shutdown()
+
+    # 새 홈 스위치를 끈 홈 (v19.3d 홈): 같은 규칙
+    app = home2_off_app()
+    off = {}
+    for state, px in (("beyond", LATE_OUT), ("late", LATE_IN)):
+        srv, ctx, page, base = R.open(site_for(px, app=app), width, init=e_store(decks), path="/app.html?dev=1#home")
+
+        def run_off(state=state):
+            wait_ready(page)
+            page.locator('[data-ui-v2="today-hero"], [data-ui-v2="today-stale"]').first.wait_for(state="visible")
+            page.wait_for_timeout(150)
+            off[state] = today_words(page)
+            if state == "late":
+                assert not (off["late"] - off["beyond"]), off["late"] - off["beyond"]
+                assert page.locator('[data-ui-v2="day-change"], [data-ui-v2="usd-today"], [data-ui-v2="missing-line"], [data-ui-v2="day-note"]').count() == 0
+                assert page.locator('[data-ui-v2="deck-strip"]').count() >= 2
+            R.collect(page)
+        R.check(page, S, f"새 홈 스위치를 끈 홈 ({state}): " + ("늦은 점검이 더한 '오늘' 글 없음 · 포트폴리오 줄은 그대로" if state == "late" else "비교 기준"), run_off)
+        ctx.close()
+        srv.shutdown()
 
 
 def mdtext(iso):
@@ -13362,7 +13486,8 @@ def main():
                    lambda: scene_v196f_window(R, files, 390),                                               # v19.6f 보이는 때 (한국 날짜 · 시간대)
                    lambda: scene_v196f_states(R, files, 390),                                               # v19.6f 기록 없음 · 한국만 · 250만원 · 멈춤 · 실패
                    lambda: scene_v196f_gaps(R, files, 390),                                                 # v19.6f 리뷰 C: 빠진 종목 · 셀 수 없는 배당 · 미국 날짜
-                   lambda: scene_late_check(R, files, 390), lambda: scene_late_check(R, files, 390, dark=True)):   # 늦은 데이터의 점검 (Jack 2026-11-19)
+                   lambda: scene_late_check(R, files, 390), lambda: scene_late_check(R, files, 390, dark=True),   # 늦은 데이터의 점검 (Jack 2026-11-19)
+                   lambda: scene_late_today_words(R, files, 390)):                                          # 늦은 점검 리뷰: '오늘' 글이 새로 나오지 않아요
             try:
                 fn()
             except Exception as e:

@@ -176,7 +176,9 @@ export function Hero({ load, ev, held, decks, onConfirm, onWhy, quiet = true }) 
     return (
       <>
         <div style={{ marginTop: SPACE(4) }} data-ui-v2="today-hero" data-state="todo" data-late={dated ? "1" : undefined}>
-          <HeroBand tone="alert" level={broken ? "broken" : "watch"} eyebrow={fill(C.today.todoN, { n: todoTs.size })} title={broken ? brokenTitle(first.nk) : first.nk}
+          {/* late: the findings without their "오늘 확인할 일 {n}개" count label (review, 2026-11-19: nothing labelled 오늘 on an
+              older close); the dated line in the body says which close they come from */}
+          <HeroBand tone="alert" level={broken ? "broken" : "watch"} eyebrow={dated ? undefined : fill(C.today.todoN, { n: todoTs.size })} title={broken ? brokenTitle(first.nk) : first.nk}
             body={lines([dated, broken ? C.daily.sellNow : null, restCalm ? fill(C.today.rest, { n: rest }) : null, nc])}
             inset={<>
               {todo.map(({ x, deckId }, i) => <TodoItem key={deckId + x.t} x={x} deck={deckOf(deckId)} onConfirm={onConfirm} sellSaid={broken} first={i === 0} />)}
@@ -202,11 +204,14 @@ export function Hero({ load, ev, held, decks, onConfirm, onWhy, quiet = true }) 
 
 // One deck: value, return since purchase, today's move as a small grey line, then my stocks (chips only on
 // exceptions). A big mover's row opens 왜 움직였나; any other row opens the 2.0 company page (v19.1a), each with its mark.
-function DeckStrip({ de, deck, ctx, onWhy, go, load }) {
+// late (rules.js checkState, Jack 2026-11-19; review): nothing labelled 오늘 or meaning today's move: no "오늘 {x}%", no change
+// on the rows, and with a stock missing from the data no value (its line speaks of today's data) and no missing line.
+function DeckStrip({ de, deck, ctx, onWhy, go, load, late = false }) {
   const { openStock } = useNav();
-  const m = deckMoney(deck, de, ctx);                    // v19.0c: a stock missing from today's data is left out, and said
+  const m0 = deckMoney(deck, de, ctx);                   // v19.0c: a stock missing from today's data is left out, and said
+  const m = late && m0.absent && m0.absent.length ? { ok: false } : m0;
   const gone = new Set(de.absent || []);
-  const day = deckDayChange(de);
+  const day = late ? null : deckDayChange(de);
   const items = m.ok ? [{ label: C.today.value, value: wonText(m.value) },
     ...(m.ret != null ? [{ label: C.today.ret, value: signedPct(m.ret * 100), tone: m.ret > 0 ? "up" : m.ret < 0 ? "down" : undefined }] : [])] : [];
   return (
@@ -226,7 +231,7 @@ function DeckStrip({ de, deck, ctx, onWhy, go, load }) {
       <div style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { marginTop: SPACE(4) })}>{fill(C.deck.mine, { n: de.holdings.length })}</div>
       {de.holdings.map((x) => (
         <div key={x.t} data-today-holding={x.t} data-status={x.status}>
-          <ListRow title={x.nk} change={gone.has(x.t) ? null : x.d1} chip={statusChips(x)} lead={<CoMark t={x.t} name={x.nk} size={SPACE(9)} />}
+          <ListRow title={x.nk} change={gone.has(x.t) || late ? null : x.d1} chip={statusChips(x)} lead={<CoMark t={x.t} name={x.nk} size={SPACE(9)} />}
             onClick={x.bigMove && !gone.has(x.t) ? () => onWhy(de.id, x.t) : !gone.has(x.t) && openStock && isCompany(ctx.byT.get(x.t)) ? () => openStock(x.t) : undefined} />
         </div>
       ))}
@@ -235,12 +240,12 @@ function DeckStrip({ de, deck, ctx, onWhy, go, load }) {
 }
 
 // v19.3d: one portfolio made with 가진 종목 넣기 on 홈: its four portfolio rules and its holdings (pfview.jsx).
-function ImportedStrip({ deck, de, ctx, load, go }) {
+function ImportedStrip({ deck, de, ctx, load, go, late = false }) {
   const { openStock } = useNav();
   const st = useMemo(() => pfState(deck, ctx, load.status === "ok" ? load.data.stocks : []), [deck, ctx, load]);
   const m = de && de.ok ? deckMoney(deck, de, ctx) : { ok: false };
   return <ImportedDeck deck={deck} st={st} m={m} openStock={openStock} byT={ctx.byT} onMore={() => go("portfolio")} home
-    pxDate={load.status === "ok" ? load.data.pxDate : null} />;
+    pxDate={load.status === "ok" ? load.data.pxDate : null} late={late} />;
 }
 
 // 홈's first visit (no saved portfolio): the descriptor, 포트폴리오 만들기 and 종목 순위 (v19.5b: with its numbers, so no 뱁이
@@ -351,8 +356,8 @@ export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null
       {store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}
       <Hero load={load} ev={ev} held={held} decks={decks} onConfirm={onConfirm} onWhy={onWhy} />
       <Cols main={[
-        ...held.map((de) => <DeckStrip key={de.id} de={de} deck={decks.find((d) => d.id === de.id)} ctx={ctx} onWhy={onWhy} go={go} load={load} />),
-        ...imported.map((d) => <ImportedStrip key={d.id} deck={d} de={ev.decks.find((x) => x.id === d.id)} ctx={ctx} load={load} go={go} />),
+        ...held.map((de) => <DeckStrip key={de.id} de={de} deck={decks.find((d) => d.id === de.id)} ctx={ctx} onWhy={onWhy} go={go} load={load} late={!!ev.late} />),
+        ...imported.map((d) => <ImportedStrip key={d.id} deck={d} de={ev.decks.find((x) => x.id === d.id)} ctx={ctx} load={load} go={go} late={!!ev.late} />),
         ev.ok && !held.length && !imported.length && (
           <Card key="today-empty" data-ui-v2="today-empty"><Button kind="secondary" onClick={() => go("build")}>{C.build.title}</Button></Card>
         ),

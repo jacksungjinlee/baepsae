@@ -122,7 +122,9 @@ export function Returns({ deck, load, store, pad, onBack, onTax }) {
   const ok = load.status === "ok";
   const live = ok && ctx.state.ok;
   // late data within 5 trading days (rules.js checkState, Jack 2026-11-19): the amounts at the last official close, whose date
-  // the line under the title already gives (ret.date), with the date line's stale words under it
+  // the line under the title already gives (ret.date), with the date line's stale words under it. Nothing labelled 오늘
+  // (review, 2026-11-19): no 환율 card ("→ 오늘 {b}원"), and when a line about today's data, price or rate would be needed
+  // (a stock missing from the data, one without a price, dollar costs at today's rate) no amounts at all, as before.
   const late = live && ctx.state.late ? ctx.state.late : null;
   const q = useMemo(() => {
     if (!live) return null;
@@ -161,6 +163,8 @@ export function Returns({ deck, load, store, pad, onBack, onTax }) {
   // price: ret.noPrice
   const missing = r ? r.absent : [];
   const usHeld = r ? r.ledgers.filter((L) => L.ccy === "USD" && L.held > 0 && !gone.has(L.t)).map((L) => ctx.byT.get(L.t)).filter(Boolean) : [];
+  const lateHold = !!(late && r && (missing.length || r.noPrice.length || r.usdOnly));
+  if (lateHold) warnOnce(`[v2] ${deck.id}: late data: returns not shown (their notes speak of today's data, price or rate)`);
   return (
     <Page pad={pad}>
       <AppBar onBack={onBack} backLabel={C.app.tabs.portfolio} />
@@ -171,7 +175,7 @@ export function Returns({ deck, load, store, pad, onBack, onTax }) {
         {load.status === "fail" && <LoadFail picture={false} />}
         {ok && !ctx.state.ok && <Note tone="watch" data-ui-v2="ret-stale">{todayStaleText(ctx.state.days)}</Note>}
         {late && <Note tone="watch" data-ui-v2="ret-late" data-n={late.n}>{staleText(late.days)}</Note>}
-        {r && (
+        {r && !lateHold && (
           <>
             <div data-ui-v2="ret-total" data-v={total} data-exact={Math.round(exact)} style={{ marginTop: SPACE(2) }}>
               <span style={tx(34, WEIGHT.heavy, none ? COLOR.text2 : priceColor(total, true), { letterSpacing: "-0.02em", lineHeight: 1.2 })}>
@@ -195,7 +199,7 @@ export function Returns({ deck, load, store, pad, onBack, onTax }) {
             {r.usdOnlySold && <Note data-ui-v2="usd-sold">{C.rec.usdOnly}</Note>}
             {/* v19.1c (#82): a held US stock priced at an earlier close than the US date is named, as everywhere else */}
             <OwnCloseNote groups={ownCloses(load, usHeld)} data-ui-v2="ret-own-close" />
-            {fx && (!fx.empty || fx.leftOut.length > 0) && <FxCard fx={fx} today={q.fx} />}
+            {fx && !late && (!fx.empty || fx.leftOut.length > 0) && <FxCard fx={fx} today={q.fx} />}
           </>
         )}
         {onTax && taxOpen(store.data.decks, todayKst()) && <TaxLink onClick={onTax} />}
