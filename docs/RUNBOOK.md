@@ -555,8 +555,17 @@ under today's date label without that line."
   stocks are left out, as before #?), `pxSrc.own.err` holds the reason and the gate's carry row warns. Fix forward; the publish goes on.
 - **Pre-publish screen check (`tests/smoke_app.py --data .`):** the scenes that compare the own-close text exactly (미국날짜,
   확인종가) first remove every real Korean `pxd` from their copy of the data (`strip_kr_carries`) and test only the ones they plant,
-  so a real carry on a second-source day never fails the screen check; two extra scenes run them on a copy with planted "real"
-  carries to prove it.
+  so a real carry on a second-source day never fails the screen check; extra scenes run them on a copy with planted carries to
+  prove it: the three stocks the 11-20 dry run really carried (`tests/fixtures/kr_own_close_real_1120.json`, rows exactly as the
+  pipeline wrote them) plus 삼성전자우 and 삼성전기.
+- **The 11-20 dry run (44627568844) failed this check** (smoke_app 156 / 160: 확인종가 banner and cards, both runs), so a real
+  publish would have been blocked. Cause: a test bug, not the data. The old app's portfolio screen switches its own language one
+  React task after the header's EN button; the scene read the banner right after the click, and on GitHub's machine that read
+  came before the switch. The second check then failed because the screen was left in English. Users saw nothing wrong. Fixed
+  (2026-11-20): the scene waits until the text is exactly the expected one and checks it again 0.3 s later, and the second check
+  starts on the Korean screen. A third run uses a **slow screen** (`slow_screen`: React's scheduled work delayed 0.3 s), which
+  opens that gap on every machine: the old scene fails there exactly as on GitHub, the fixed one passes. If this check fails
+  only on GitHub, look for a read right after a click that does not wait for the new text.
 - **Daily lists:** a carried stock's trading value is its old day's, so it is left out of today's 거래대금 and 거래 급증 lists
   (2.0) and of `data.json` `popular`, like 큰 움직임. It stays in 시가총액 and the 기준 lists, named under the list.
 - **On a warning:** read the named rows in the run summary. A carried stock with a different price or date than the previous

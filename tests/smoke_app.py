@@ -2564,20 +2564,42 @@ def strip_kr_carries(f):
     return f
 
 
+REAL_KR_CARRIES = os.path.join(ROOT, "tests", "fixtures", "kr_own_close_real_1120.json")
+
+
 def with_kr_carries(files):
-    """진짜 데이터에 마지막 확인 종가 종목이 있는 날을 흉내 낸 복사본 (리뷰 M-A): 삼성전자우(005935 · '삼성전자'로 찾으면 나와요) · 삼성전기(009150 · 시가총액
-    1조 넘어 기업분석의 지도에 그려져요)에 pxd 를 심어요 (data.json · corp.json, d1 없음). 그 두 종목이 없는 데이터면 국내 종목 중 앞의 둘."""
+    """진짜 데이터에 마지막 확인 종가 종목이 있는 날을 흉내 낸 복사본 (리뷰 M-A):
+    - 2026-11-20 시험 실행 44627568844 (진짜 2차 출처 날)가 실제로 실은 세 종목 (024070 WISCOM · 092070 디엔에프 · 100220 비상교육)의 data.json ·
+      corp.json 줄을 파이프라인이 쓴 모양 그대로 넣고 (tests/fixtures/kr_own_close_real_1120.json · 같은 코드의 줄은 바꿔요), pxSrc 도 그 실행처럼
+      (px 'daum+yahoo' · own 기록에 심은 종목 모두),
+    - 삼성전자우(005935 · '삼성전자'로 찾으면 나와요) · 삼성전기(009150 · 시가총액 1조 넘어 기업분석의 지도에 그려져요)에도 같은 모양으로 pxd 를 심어요
+      (data.json · corp.json, d1 · d1Why · noTrade · ntD1 없음). 그 종목이 없는 데이터면 국내 종목 중 앞에서 채워 둘.
+    pxd 는 이 데이터의 pxDate 하루 앞이에요 (그 실행과 같은 간격 · 고정 데이터는 날짜가 달라요)."""
     f = json.loads(json.dumps(files, allow_nan=True))
     d = f["data.json"]
     day = _iso_minus(d["pxDate"], 1)
-    kr = [x for x in d["stocks"] if x.get("cls") == "kr" and x.get("t") not in ("005930", "000270")]
-    want = [x for x in kr if x.get("t") in ("005935", "009150")] or kr[:2]
-    cby = {c.get("t"): c for c in (f.get("corp.json") or {}).get("companies") or []}
+    with open(REAL_KR_CARRIES, encoding="utf-8") as fh:
+        real = json.load(fh)
+    real_t = [x["t"] for x in real["stocks"]]
+    assert sorted(real_t) == sorted(real["own"]["codes"]) == sorted(c["t"] for c in real["companies"]), "진짜 실은 종목 파일의 세 목록이 달라요"
+    d["stocks"] = [x for x in d["stocks"] if x.get("t") not in real_t] + [{**x, "pxd": day} for x in real["stocks"]]
+    corp = f.get("corp.json") or {}
+    corp["companies"] = [c for c in corp.get("companies") or [] if c.get("t") not in real_t] + [{**c, "pxd": day} for c in real["companies"]]
+    kr = [x for x in d["stocks"] if x.get("cls") == "kr" and x.get("t") not in ("005930", "000270", *real_t)]
+    pref = [x for x in kr if x.get("t") in ("005935", "009150")]
+    want = (pref + [x for x in kr if x not in pref])[:2]                       # 둘 다 없거나 하나만 있으면 국내 종목 중 앞에서 채워요
+    cby = {c.get("t"): c for c in corp["companies"]}
     for x in want:
         x["pxd"] = day
-        x.pop("d1", None)
+        for k in ("d1", "d1Why", "noTrade", "ntD1"):
+            x.pop(k, None)
         if x.get("t") in cby:
             cby[x["t"]]["pxd"] = day
+    codes = sorted(real_t + [x["t"] for x in want])
+    d["pxSrc"] = {**(d.get("pxSrc") if isinstance(d.get("pxSrc"), dict) else {}), "px": real["px"],
+                  "own": {**real["own"], "codes": codes, "n": len(codes)}}
+    planted = {x.get("t") for x in d["stocks"] if x.get("t") in codes and x.get("cls") == "kr" and x.get("pxd") == day and "d1" not in x}
+    assert len(codes) == 5 and planted == set(codes), (codes, sorted(planted))      # 심은 다섯 종목 모두 (진짜 데이터의 다른 pxd 종목과 상관없이)
     return f
 
 
@@ -3350,10 +3372,52 @@ def scene_kst_dates(R, files):
     ctx.close(); srv.shutdown()
 
 
-def scene_kr_own_close(R, files):
+# 2026-11-20 (시험 실행 44627568844 · 발행 전 화면 검사 실패): 예전 뱁새의 포트폴리오 화면은 머리줄의 EN · 한국어 단추를 누르면 한 박자 늦게 (React 가
+# 다음 일로 미룬 useEffect 에서) 자기 언어를 바꿔요. 장면이 누른 바로 뒤에 배너를 읽으면 GitHub 의 기계에서는 아직 바뀌기 전 글자를 읽었어요 (내 컴퓨터에서는
+# 늘 바뀐 뒤라 통과). 느린 화면(slow_screen): React 의 스케줄러가 맡긴 일(MessageChannel)을 SLOW_SCREEN_MS 늦게 돌려서, 그 사이를 어느 기계에서나 열어 둬요
+# — 바뀌기를 기다리지 않고 읽는 장면은 여기서 늘 실패해요 (고치기 전 장면으로 확인: 그 실행과 같은 네 줄이 실패). 앱의 글자 · 숫자는 그대로예요.
+SLOW_SCREEN_MS = 300
+SLOW_SCREEN_JS = """(() => {
+  const MC = window.MessageChannel;
+  if (!MC || window.__slowScreen) return;
+  window.__slowScreen = { ms: %d, n: 0 };
+  window.MessageChannel = function () {
+    const ch = new MC();
+    const post = ch.port2.postMessage.bind(ch.port2);
+    ch.port2.postMessage = (m) => { window.__slowScreen.n += 1; setTimeout(() => post(m), window.__slowScreen.ms); };
+    return ch;
+  };
+})();""" % SLOW_SCREEN_MS
+
+
+def slow_screen(ctx, page):
+    """그 창을 느린 화면으로 (위 SLOW_SCREEN_JS): 창의 모든 다음 페이지에 심고 지금 페이지를 다시 열어요. 다시 연 페이지에 심어졌는지 확인해요."""
+    ctx.add_init_script(SLOW_SCREEN_JS)
+    page.reload(wait_until="domcontentloaded")
+    assert page.evaluate("() => !!window.__slowScreen && window.__slowScreen.ms") == SLOW_SCREEN_MS, "느린 화면이 심어지지 않았어요"
+
+
+def slow_screen_used(page):
+    """느린 화면이 실제로 React 의 일을 늦췄는지 (지금 페이지에서 늦춘 횟수 > 0)."""
+    n = page.evaluate("() => (window.__slowScreen || {}).n || 0")
+    assert n > 0, "느린 화면이 심어졌는데 React 의 일을 하나도 늦추지 않았어요 (스케줄러가 MessageChannel 을 쓰지 않나요?)"
+
+
+def settled(page, js, want, what):
+    """브라우저 값(js)이 정확히 want 가 될 때까지 기다리고 (poll), SLOW_SCREEN_MS 뒤에도 그대로인지 다시 봐요 (잠깐 맞았다가 바뀌는 화면도 실패)."""
+    poll(page, js, lambda v: v == want, what)
+    page.wait_for_timeout(SLOW_SCREEN_MS)
+    got = page.evaluate(js)
+    assert got == want, f"{what} — 맞았다가 바뀌었어요: {got!r}"
+    return got
+
+
+def scene_kr_own_close(R, files, slow=False):
     """2026-11-19 (Jack): 오늘 종가를 두 출처로 확인하지 못한 국내 종목은 마지막 확인 종가로 (data.json · corp.json pxd). 열린 포트폴리오의
     배너와 종목 고르기 목록 위: '{이름} 가격은 {날짜} 종가예요. 오늘 종가를 확인하지 못해서 {날짜} 종가를 보여 드려요.' (영어 화면은 승인된 영어
-    문장만: '{코드}: priced at the {날짜} close.') · 첫 화면 성적표와 기업분석 머리: 가격 밑에 Jack 의 줄 그대로 · 삼성전자(pxd 없음)는 그대로."""
+    문장만: '{코드}: priced at the {날짜} close.') · 첫 화면 성적표와 기업분석 머리: 가격 밑에 Jack 의 줄 그대로 · 삼성전자(pxd 없음)는 그대로.
+    2026-11-20: 화면을 읽을 때는 그 글자가 될 때까지 기다리고 잠시 뒤 한 번 더 봐요 (settled) · 둘째 확인은 한국어 화면에서 시작해요 (앞 확인이 영어
+    화면에서 멈춰도) · slow=True 면 느린 화면으로 (slow_screen: 그 시험 실행의 실패를 어느 기계에서나 다시 보여 주는 조건)."""
     f = strip_kr_carries(json.loads(json.dumps(files, allow_nan=True)))   # 진짜 데이터의 국내 마지막 확인 종가와 상관없이 (리뷰 M-A)
     d = f["data.json"]
     t = "000270"
@@ -3367,58 +3431,72 @@ def scene_kr_own_close(R, files):
     nk = by[t]["nk"]
     line = f"오늘 종가를 확인하지 못해서 {_md(day, 'ko')} 종가를 보여 드려요."
     want_ko = f"{nk} 가격은 {_md(day, 'ko')} 종가예요. {line}"
+    want_en = f"{t}: priced at the {_md(day, 'en')} close."
     slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": "005930", "mw": 300}, {"t": t, "mw": 200}]}
     srv, ctx, page, base = R.open(build_site(f), local=slot_local([("skrown", "국내 확인 종가 시험", slot)]), once=True)
-    S = "국내 마지막 확인 종가"
+    S = "국내 마지막 확인 종가" + (" · 느린 화면" if slow else "")
+    if slow:
+        slow_screen(ctx, page)
+    BANNER = "() => [...document.querySelectorAll('.nonLiveBanner [data-own-close]')].map((e) => e.innerText)"
+    NOTE = "() => [...document.querySelectorAll('.ownCloseNote')].map((e) => e.innerText.trim())"
 
-    def banner_lines():
+    def banner_is(want, what):
         page.locator(".nonLiveBanner").first.wait_for(state="visible", timeout=WAIT)
-        return page.locator(".nonLiveBanner [data-own-close]").all_inner_texts()
+        settled(page, BANNER, want, what)
 
     def portfolio():
         page.get_by_text("차근차근 만들기", exact=True).click()
         page.get_by_text("국내 확인 종가 시험", exact=False).first.click()
         see(page, "보통 해 ±")
-        assert banner_lines() == [want_ko], banner_lines()
+        banner_is([want_ko], "한국어 배너")
         box = page.get_by_placeholder("종목명·코드 검색")
         box.fill(nk)
-        note = page.locator(".ownCloseNote")
-        note.wait_for(state="visible", timeout=WAIT)
-        assert note.inner_text().strip() == want_ko, note.inner_text()
+        page.locator(".ownCloseNote").wait_for(state="visible", timeout=WAIT)
+        settled(page, NOTE, [want_ko], "종목 고르기 목록 위 안내")
         box.fill("삼성전자")
         page.wait_for_timeout(300)
-        assert page.locator(".ownCloseNote").count() == 0, "pxd 없는 종목만 보이는데 안내가 있어요"
+        settled(page, NOTE, [], "pxd 없는 종목만 보이는데 안내가 있어요")
         box.fill("")
         page.get_by_role("button", name="EN", exact=True).first.click()
-        page.locator(".nonLiveBanner [data-own-close]").first.wait_for(state="visible", timeout=WAIT)
-        assert banner_lines() == [f"{t}: priced at the {_md(day, 'en')} close."], banner_lines()   # 영어: 승인된 문장만
+        banner_is([want_en], "영어 배너: 승인된 영어 문장만")
         page.get_by_role("button", name="한국어", exact=True).first.click()
-        page.locator(".nonLiveBanner [data-own-close]", has_text="가격은").first.wait_for(state="visible", timeout=WAIT)
-        assert banner_lines() == [want_ko], banner_lines()
+        banner_is([want_ko], "한국어로 되돌린 배너")
+        if slow:
+            slow_screen_used(page)
     R.check(page, S, "포트폴리오 배너 · 종목 고르기: '{이름} 가격은 {날짜} 종가예요.' 다음에 Jack 의 줄 · 영어는 승인된 영어 문장만", portfolio)
 
-    def shown():
-        return page.evaluate("""() => [...document.querySelectorAll('[data-fix="kr-own-close"]')].filter((e) => e.getBoundingClientRect().height > 0)
-          .map((e) => [e.innerText.trim(), parseFloat(getComputedStyle(e).fontSize)])""")
+    SHOWN = """() => [...document.querySelectorAll('[data-fix="kr-own-close"]')].filter((e) => e.getBoundingClientRect().height > 0)
+          .map((e) => [e.innerText.trim(), parseFloat(getComputedStyle(e).fontSize)])"""
+
+    def one_line(text, what):
+        """보이는 data-fix="kr-own-close" 줄이 정확히 하나 · 그 글자 · 12px 이상 (그렇게 될 때까지 기다리고 잠시 뒤 한 번 더)."""
+        def ok(v):
+            return len(v) == 1 and v[0][0] == text and v[0][1] >= 12
+        poll(page, SHOWN, ok, what)
+        page.wait_for_timeout(SLOW_SCREEN_MS)
+        got = page.evaluate(SHOWN)
+        assert ok(got), f"{what} — 맞았다가 바뀌었어요: {got!r}"
 
     def cards():
         page.goto("about:blank")
         page.goto(base + "/baepsae.html?dev=1&from=app", wait_until="domcontentloaded")
+        # 한국어 화면에서 시작해요: 앞 확인이 영어 화면에서 멈췄으면 머리줄의 언어(localStorage baepsae_lang)가 영어로 남아 있어요 (그 시험 실행의 둘째 실패)
+        page.evaluate("() => localStorage.setItem('baepsae_lang', 'ko')")
+        page.reload(wait_until="domcontentloaded")
         close_welcome(page, "시작하기")
         search(page, nk, t)
         page.locator("button", has_text=t).first.click()
         see(page, "사실의 요약일 뿐")
-        got = shown()
-        assert got == [[line, 12.0]] or (len(got) == 1 and got[0][0] == line and got[0][1] >= 12), got   # 첫 화면 성적표: 가격 밑에 그대로
+        one_line(line, "첫 화면 성적표: 가격 밑에 Jack 의 줄")
         page.goto("about:blank")
         page.goto(base + f"/baepsae.html?dev=1&from=app#corp={t}", wait_until="domcontentloaded")
         see(page, "밸류에이션 멀티플 · 업종 사분위 대비")
-        got = shown()
-        assert len(got) == 1 and got[0][0] == line and got[0][1] >= 12, got                          # 기업분석 머리: 가격 · 시가총액 밑
+        one_line(line, "기업분석 머리: 가격 · 시가총액 밑에 Jack 의 줄")
         page.goto("about:blank")
         page.goto(base + "/baepsae.html?dev=1&from=app#corp=005930", wait_until="domcontentloaded")
         see(page, "밸류에이션 멀티플 · 업종 사분위 대비")
-        assert shown() == [] and "오늘 종가를 확인하지 못해서" not in page.locator("body").inner_text()
+        page.wait_for_timeout(SLOW_SCREEN_MS)
+        assert page.evaluate(SHOWN) == [] and "오늘 종가를 확인하지 못해서" not in page.locator("body").inner_text()
         # 영어 첫 화면 성적표 (리뷰 M4): 승인된 영어 문장으로 그 종목과 날짜 ('{코드}: priced at the {날짜} close.')
         page.goto("about:blank")
         page.goto(base + "/baepsae.html?dev=1&from=app", wait_until="domcontentloaded")
@@ -3428,9 +3506,10 @@ def scene_kr_own_close(R, files):
         page.locator("button", has_text=t).first.wait_for(state="visible", timeout=WAIT)
         page.locator("button", has_text=t).first.click()
         see(page, "A summary of facts")
-        got = shown()
-        assert len(got) == 1 and got[0][0] == f"{t}: priced at the {_md(day, 'en')} close." and got[0][1] >= 12, got
+        one_line(want_en, "영어 첫 화면 성적표: 승인된 영어 문장")
         page.get_by_role("button", name="한국어", exact=True).first.click()
+        if slow:
+            slow_screen_used(page)
     R.check(page, S, "첫 화면 성적표 · 기업분석 머리: 가격 밑에 Jack 의 줄 그대로 (12px 이상) · 삼성전자는 그대로 · 영어 성적표는 승인된 영어 문장", cards)
 
     def market_map():
@@ -3441,9 +3520,17 @@ def scene_kr_own_close(R, files):
         see(page, "밸류에이션 멀티플 · 업종 사분위 대비")
         page.get_by_role("button", name="시장 지도", exact=True).first.click()
         see(page, "최근 3개월 수익률 지도")
-        got = page.evaluate("""() => [...document.querySelectorAll('[data-fix="kr-own-close-list"]')].filter((e) => e.getBoundingClientRect().height > 0)
-          .map((e) => [e.innerText.trim(), parseFloat(getComputedStyle(e).fontSize)])""")
-        assert len(got) >= 2 and all(x[0] == want_ko and x[1] >= 12 for x in got), got
+        js = """() => [...document.querySelectorAll('[data-fix="kr-own-close-list"]')].filter((e) => e.getBoundingClientRect().height > 0)
+          .map((e) => [e.innerText.trim(), parseFloat(getComputedStyle(e).fontSize)])"""
+
+        def ok(v):
+            return len(v) >= 2 and all(x[0] == want_ko and x[1] >= 12 for x in v)
+        poll(page, js, ok, "시장 지도 밑 줄")
+        page.wait_for_timeout(SLOW_SCREEN_MS)
+        got = page.evaluate(js)
+        assert ok(got), got
+        if slow:
+            slow_screen_used(page)
     R.check(page, S, "기업분석 시장 지도: 3개월 수익률 지도 · ROE × PBR 지도 밑에 이름 문장 + Jack 의 줄", market_map)
     ctx.close(); srv.shutdown()
 
@@ -3467,6 +3554,7 @@ def scene_list(R, fresh, full):
             ("주가기록", lambda: scene_px_bad(R, fresh)),                                                                  # 2026-11-14 과거 주가 기록 오류
             ("확인종가", lambda: scene_kr_own_close(R, fresh)),                                                            # 2026-11-19 국내 마지막 확인 종가
             ("확인종가", lambda: scene_kr_own_close(R, with_kr_carries(fresh))),                                           # 리뷰 M-A: 진짜 데이터에 마지막 확인 종가가 있는 날
+            ("확인종가", lambda: scene_kr_own_close(R, with_kr_carries(fresh), slow=True)),                                # 2026-11-20 시험 실행 44627568844: 느린 화면
             ("미국날짜", lambda: scene_own_close(R, with_kr_carries(fresh)))]                                              # 리뷰 M-A: 같은 날의 미국 자기 날짜 장면
 
 
