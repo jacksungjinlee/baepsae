@@ -996,6 +996,41 @@ def px_alt_closes(alt):
     return out
 
 
+PX_CUT_KEYS = ("s", "daum", "yahoo", "fill")
+
+
+def check_px_cut(rep, src):
+    """2026-11-20 (새 줄 · 경고만): 파이프라인이 두 출처 종가를 묻다가 단계 시간 한도(fetch_data.KR_FB_PHASE_BUDGET_S)에 걸렸는지.
+    pxSrc.fb.cut (2차 출처를 돌린 날 — 쓸 날을 찾지 못해 1차 출처 그대로인 날도 · 리뷰 N1) · pxSrc.chk.cut (1차 출처 날의 야후 확인):
+    단계마다 시간 한도로 묻지 못한 종목 수. 2차 출처 날 걸린 종목은 확인 못 한 종목이라 그날 파일에서 빠져요 (필수 종목이 빠지면 다른 줄이
+    멈춰요) — 이 줄은 알리기만 해요. 기록이 하나도 없으면 (이 줄 전 발행본) 건너뛰어요."""
+    name = "가격 확인 시간 한도 (경고만)"
+    if not isinstance(src, dict) or src.get("px") not in (PX_SRC_FB, PX_SRC_LISTING):
+        return
+    recs = []
+    fb = src.get("fb")
+    if isinstance(fb, dict) and "cut" in fb:
+        recs.append(("2차 출처" + (" (쓸 날 없음 · 1차 출처 그대로)" if src.get("px") == PX_SRC_LISTING else ""), fb["cut"]))
+    ck = src.get("chk")
+    if src.get("px") == PX_SRC_LISTING and isinstance(ck, dict) and "cut" in ck:
+        recs.append(("1차 출처 야후 확인", ck["cut"]))
+    if not recs:
+        rep.skip(name, "기록 없음 (시간 한도 전 발행본이거나 1차 출처 야후 확인을 못 한 날)")
+        return
+    vals, rules, hit, odd = [], set(), 0, False
+    for what, cut in recs:
+        if not (isinstance(cut, dict) and all(isinstance(cut.get(k), int) and not isinstance(cut.get(k), bool) and cut[k] >= 0 for k in PX_CUT_KEYS)):
+            vals.append(f"{what}: 기록 모양이 이상해요 {str(cut)[:60]}")
+            odd = True
+            continue
+        n = sum(cut[k] for k in ("daum", "yahoo", "fill"))
+        hit += n
+        rules.add(cut["s"])
+        vals.append(f"{what}: " + ("없음" if not n else f"묻지 못함 다음 {cut['daum']:,} · 야후 일봉 {cut['yahoo']:,} · 야후 다시 읽기 {cut['fill']:,}종목"))
+    rep.add(name, True, " / ".join(vals), "0 (단계마다 " + "·".join(f"{x}초" for x in sorted(rules)) + " · 2차 출처 날 묻지 못한 종목은 확인 못 해 빠져요 · "
+            "1차 출처 날은 야후 확인만 줄어요)" if rules else "s · daum · yahoo · fill 모두 0 이상의 정수", warn=bool(hit) or odd)
+
+
 def check_px_src(rep, data, today, mode="publish"):
     """data.json pxSrc · indSrc 줄 (2026-11-19 · 더한 줄만). pxSrc 가 없으면 (예전 발행본 · 시험 데이터) 건너뛰어요."""
     src = data.get("pxSrc")
@@ -1038,6 +1073,7 @@ def check_px_src(rep, data, today, mode="publish"):
                 rep.add("1차 출처 야후 확인 (경고만)", True,
                         f"같음 {ck.get('same', 0)} / {ck.get('n', 0)}" + (f" · 다름 {len(diff)}: {'; '.join(map(str, diff[:3]))}" if diff else "")
                         + (f" · {ck['err']}" if ck.get("err") else ""), "다름 0", warn=bool(diff) or not (ck.get("n") or 0))
+    check_px_cut(rep, src)
     ind = data.get("indSrc")
     if not isinstance(ind, dict):
         rep.skip("국내 업종 이어 쓴 종목 (경고만)", "indSrc 없음 (2026-11-19 전 발행본)")
