@@ -743,7 +743,10 @@ export function swapStored(deck, t, add, cap, raise = null) {
 // the swap, its waiting 빼기 counted (draftD2 on swapDraft) — whenever that y also lets the write add up to 100% (y at least the
 // write's own: the saved stocks after the swap are never fewer than the edited ones then); n and names are then that list's. Only a
 // waiting 담기 can make the edited list need a smaller raise than the saved stocks, or none: the write keeps its own y then (the
-// saved stocks must add up to 100%, round-1 B1), and that one case still ends with a higher cap than the path without shares.
+// saved stocks must add up to 100%, round-1 B1). In that one case the paths can end differently: a different cap (none or a smaller
+// raise without shares), and in a small portfolio with a large 채권·금 holding different targets too, the candidate's included
+// (without shares the others may not absorb the smaller raise, so the candidate rises; with shares the larger raise lets it stay).
+// That case is a question for Jack (PR v19.7b); nothing here decides it.
 // -> { rows, pct (the candidate's), cap, up, low, y, names, n }
 export function swapCheck(deck, draft, t, add) {
   const up = draft && draft.maxPct != null && draft.maxPct !== capOf(deck) ? draft.maxPct : null;
@@ -777,37 +780,36 @@ export function swapLeaves(deck, t, add, raise = null, at = null) {
   const settings = save != null && save !== capOf(deck) ? { ...(deck.settings || {}), maxPct: save } : deck.settings;
   return { deck: { ...deck, holdings, settings }, sw, cap: save };
 }
-// What the compare screen shows for "{holding}과/와 바꾸기" — the 업종 bar after it and the target in its note — from the very write
-// the swap will make (review B1/S5): with shares held, 팔고 빼기's (swapStored at swapCheck's cap); without, the draft's (swapDraft).
-// Always at the cap as it stands (a raise already waiting in the draft counts: it is saved with the swap), never at a raise still to
-// be chosen (Jack, 2026-11-19, Q8b: nothing on 두 종목 비교 assumes the raise before the user taps it on the next screen; this
-// replaced round-2 SF2's view after the raise, so both paths show the same split). low / y: whether the next screen offers
-// 최대 비중을 {y}%로 올리기, read with the very checks those screens make — with shares, the 빼기 sheet's (swapCheck) and, once the
-// sale is saved, 종목 바꾸기's on the portfolio the write leaves with what still waits (draftAfterSwap, then draftD2: review F2, a
-// 빼기 or 담기 waiting there can open D2 though the sheet does not); without, 종목 바꾸기's on the list the swap leaves (draftD2).
-// -> { path: "sale" | "draft", rows (the edited list after it), before (the list it starts from), pct (the candidate's), from (the
-// holding's own target on that path), cap (the cap that write uses), low, y } or null
+// What the compare screen shows for "{holding}과/와 바꾸기" — the 업종 bar after it, its line and the targets in its note — on both
+// paths from what the swap leaves on 종목 바꾸기 and what 바꾼 내용 저장 then saves: swapDraft on the draft as it stands (without shares
+// that is the swap itself; with shares it is what waits after 팔고 빼기, draftAfterSwap, before any raise — round-3 S1: a waiting edit
+// that moved the holding's target, e.g. a raise or a share-out, counts on both paths; 팔고 빼기's own write is the saved stocks'
+// version of it, and 저장 then saves this one). Always at the cap as it stands (a raise already waiting counts), never at a raise
+// still to be chosen (Jack, 2026-11-19, Q8b). low / y: whether the next screen offers 최대 비중을 {y}%로 올리기, read with the very
+// checks those screens make — with shares, the 빼기 sheet's (swapCheck) and, once the sale is saved, 종목 바꾸기's on the portfolio the
+// write leaves with what still waits (draftAfterSwap, then draftD2: review F2); without, 종목 바꾸기's on the list the swap leaves
+// (draftD2). -> { path: "sale" | "draft", rows (the edited list after it), before (the edited list before it), pct (the candidate's),
+// from (the holding's target in the edited list), cap (the cap as it stands), low, y } or null
 export function swapView(deck, draft, t, add) {
   // a candidate already in the portfolio (stored, or waiting to be added) is no swap: both writes refuse it
   if (!add || ((deck && deck.holdings) || []).some((h) => h && h.t === add.t) || editRows(deck, draft).some((r) => r.t === add.t)) return null;
-  if (heldShares(deck, t) > 0) {
-    const chk = swapCheck(deck, draft, t, add);
-    // the write when the sheet asks for no raise (editor.jsx sellSwap: raise = a raise already waiting, chk.up), compared at chk.cap
-    const lv = swapLeaves(deck, t, add, chk.up, chk.cap);
-    if (!lv) return null;
-    const sw = lv.sw;
-    // 종목 바꾸기 after the sale: the draft as editor.jsx sellSwap leaves it (draftAfterSwap), read as the editor reads it
-    const next = draftD2(lv.deck, rebaseDraft(lv.deck, draftAfterSwap(deck, lv.deck, draft, t, add)));
-    const low = chk.low || next.low;
-    return { path: "sale", rows: sw.rows, before: editRows(deck, emptyDraft()), pct: sw.pct, from: sw.old, cap: chk.cap, low, y: chk.low ? chk.y : next.y };
-  }
   const d = swapDraft(deck, draft, t, "better", add);
   if (d === draft) return null;
   const rows = editRows(deck, d);
   const c = rows.find((r) => r.t === add.t);
   const h = editRows(deck, draft).find((r) => r.t === t);
+  const view = { rows, before: editRows(deck, draft), pct: c ? c.pct : null, from: h ? h.pct : null, cap: capOf(deck, d) };
+  if (heldShares(deck, t) > 0) {
+    const chk = swapCheck(deck, draft, t, add);
+    // the write when the sheet asks for no raise (editor.jsx sellSwap: raise = a raise already waiting, chk.up), compared at chk.cap
+    const lv = swapLeaves(deck, t, add, chk.up, chk.cap);
+    if (!lv) return null;
+    // 종목 바꾸기 after the sale: the draft as editor.jsx sellSwap leaves it (draftAfterSwap), read as the editor reads it
+    const next = draftD2(lv.deck, rebaseDraft(lv.deck, draftAfterSwap(deck, lv.deck, draft, t, add)));
+    return { path: "sale", ...view, low: chk.low || next.low, y: chk.low ? chk.y : next.y };
+  }
   const d2 = draftD2(deck, d);
-  return { path: "draft", rows, before: editRows(deck, draft), pct: c ? c.pct : null, from: h ? h.pct : null, cap: capOf(deck, d), low: d2.low, y: d2.y };
+  return { path: "draft", ...view, low: d2.low, y: d2.y };
 }
 // 팔고 빼기 as a swap [B4]: the store after the sale (records.withRecord), then the holding taken out with its reason and the
 // candidate added with the target swapStored gives it (newHolding: the build step's rules, planPx today's close, setAt today), the
@@ -871,10 +873,12 @@ export function draftAfterSale(before, after, draft, t) {
 // The draft after a 팔고 빼기 swap saved (Jack, 2026-11-19, answer 4: "make both cases behave the same"): what still waits is exactly
 // what the swap without shares leaves on 종목 바꾸기 — its very steps on the draft as it was (swapDraft; with the 빼기 sheet's raise, the
 // 최대 비중 button's own step, raiseTo) — rebased onto the portfolio the sale saved (the holding gone, the candidate stored, the cap
-// saved). So 바꾼 내용 저장 then saves the targets the path without shares saves, with the edits that were waiting (a step, a raise)
-// read the same way; with none waiting, nothing is left to save (the saved targets are those very values). The candidate is the row
-// just changed, as after the swap without shares. before / after: the portfolio before and after the write; raise: the y the sheet
-// raised the cap to (null: none; a raise already waiting is in the draft).
+// saved). So 바꾼 내용 저장 then saves the targets the path without shares saves, with the edits that were waiting (a step, a 빼기, a
+// raise) read the same way; with none waiting, nothing is left to save (the saved targets are those very values). The candidate is
+// the row just changed, as after the swap without shares. Not with a waiting 담기 when the sheet had to raise the cap further than
+// the path without shares does (swapCheck): the raise here is the sheet's, so the cap, and in a small portfolio the targets, can
+// differ (a question for Jack). before / after: the portfolio before and after the write; raise: the y the sheet raised the cap to
+// (null: none; a raise already waiting is in the draft).
 export function draftAfterSwap(before, after, draft, t, add, raise = null) {
   if (!after) return emptyDraft();
   let d = swapDraft(before, draft, t, "better", add);

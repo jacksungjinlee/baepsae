@@ -589,7 +589,7 @@ def test_a_cut_that_does_not_show_is_no_cut_in_the_swap_note():
 def test_q8b_counts_the_edits_still_waiting_on_the_sale_path():
     """Review F2 (2026-11-19): a held 30% cushion under a 20% cap and a 10% holding waiting to be taken out. The 빼기 sheet asks for no
     raise, but once the sale is saved 종목 바꾸기 offers 최대 비중을 25%로 올리기 (four stocks at 20%), as it did before the swap. So the
-    note is P5 + "…최대 비중이 20%예요." (Q8b), read from the editor's own steps after the sale (draftAfterSale, draftD2); without the
+    note is P5 + "…최대 비중이 20%예요." (Q8b), read from the editor's own steps after the sale (draftAfterSwap, draftD2); without the
     waiting 빼기 nothing offers a raise and "…20%라서 더 올릴 수 없어요." stays (Q8a)."""
     got = run(Q8 + """
       const f2 = () => { const d = deck5(5, 0.2, 20);
@@ -605,7 +605,7 @@ def test_q8b_counts_the_edits_still_waiting_on_the_sale_path():
       const r = E.sellAndSwap(sellAll({ v: 2, decks: [d] }, '000010', 20), 'd1', '000010', cand(), { reason: 'better', raise: sc.up, load, today: T, ts: 1 });
       const saved = r.ok ? r.data.decks[0] : null;
       out = { before: E.draftD2(d, dr), sheet: sc.low, v: V(v), v0: V(v0), note: N(v), note0: N(v0), ok: r.ok,
-        after: saved && E.draftD2(saved, E.rebaseDraft(saved, E.draftAfterSale(d, saved, dr, '000010'))), sale: C.cmp.swapSale };""")
+        after: saved && E.draftD2(saved, E.rebaseDraft(saved, E.draftAfterSwap(d, saved, dr, '000010', cand(), null))), sale: C.cmp.swapSale };""")
     assert got["before"] == {"low": True, "y": 25} and got["sheet"] is False and got["ok"] is True
     assert got["after"] == {"low": True, "y": 25}                         # the next screen offers the raise
     assert got["v"] == {"path": "sale", "pct": 20, "from": 30, "cap": 20, "low": True, "y": 25}
@@ -735,8 +735,9 @@ def test_jack_4a_a_waiting_removal_saves_the_same_with_or_without_shares():
 def test_jack_4a_a_waiting_add_saves_the_same_targets():
     """A 담기 waits (000660 at 5%), then the held 15% holding is swapped. Without shares the edited list reaches 100% at the 10% cap (no
     raise). With shares 팔고 빼기 saves the saved stocks at once, which cannot reach 100% at 10% (95%), so its sheet still asks for 12%
-    (round-1 B1: a write never saves less than 100%). The saved targets are the same on both paths (what waits after the sale is what
-    the swap without shares leaves); only the cap differs (10% · 12%), the open question in the PR."""
+    (round-1 B1: a write never saves less than 100%). In this portfolio the saved targets are the same on both paths and only the cap
+    differs (10% · 12%). Not in general: a waiting 담기 can also lead the two paths to different raises, and in a small portfolio with a
+    large 채권·금 holding to different targets, the candidate's included (the open question in the PR)."""
     got = run(FLOWS + """
       const x = { t: '000660', nk: '하이닉스', cls: 'kr', ind: 'semi', kind: 'pinned', s: { t: '000660', nk: '하이닉스', cls: 'kr', price: 100000, ind: 'semi', indName: '반도체' } };
       const dr0 = E.addDraft(dcush(false), E.emptyDraft(), x, 5);
@@ -745,6 +746,28 @@ def test_jack_4a_a_waiting_add_saves_the_same_targets():
     assert "why" not in a and "why" not in b, (a, b)
     assert a["x"] == b["x"] == 10 and a["saved"] == b["saved"] and a["saved"]["000660"] == 0.05
     assert b["sheet"]["low"] is True and b["sheet"]["y"] == 12                    # the saved stocks alone need the raise
+
+
+def test_the_sale_path_note_reads_the_holdings_edited_target_as_the_save_does():
+    """Round-3 review S1: a waiting edit moved the swapped holding's target (000010 saved at 10%; 000020 waits to be taken out and 최대
+    비중을 13%로 올리기 is tapped, so 000010 reads 12% on 종목 바꾸기). Both paths now show the candidate at the 12% that 바꾼 내용 저장
+    then saves; the share path used to read the saved 10% ("…목표 비중(10%)을 이어받아요.")."""
+    got = run(FLOWS + """
+      const mk = (held) => { const d = dcush(false);
+        if (held) d.purchases = [{ id: 'p1aaaaaa', t: '000010', qty: 10, price: 100000, date: '2026-10-01', ccy: 'KRW' }];
+        return d; };
+      const dr0 = E.raiseDraft(mk(false), E.removeDraft(mk(false), E.emptyDraft(), '000020', 'other'));
+      const vd = E.swapView(mk(false), dr0, '000010', cand()), vs = E.swapView(mk(true), dr0, '000010', cand());
+      const note = (v) => { const p = Cm.swapNoteParts(v, '종목', '삼성전자'); return [p.first, p.cap]; };
+      out = { held: E.editRows(mk(false), dr0).find((r) => r.t === '000010').pct, vd: V(vd), vs: V(vs), nd: note(vd), ns: note(vs),
+        sale: Cm.swapNoteParts(vs, '종목', '삼성전자').sale, draft: flowDraft(mk(false), dr0, '000010'), saleFlow: flowSale(mk(true), dr0, '000010', 10) };""")
+    a, b = got["draft"], got["saleFlow"]
+    assert "why" not in a and "why" not in b, (a, b)
+    x = got["held"]
+    assert x != 10 and got["vd"]["pct"] == got["vs"]["pct"] == got["vd"]["from"] == got["vs"]["from"] == x
+    assert got["vs"]["path"] == "sale" and got["vd"]["path"] == "draft" and got["sale"] is not None
+    assert got["nd"] == got["ns"] == [f"바꾸면 삼성전자가 종목의 목표 비중({x:g}%)을 이어받아요.", None]
+    assert a["saved"]["005930"] == b["saved"]["005930"] == x / 100 and a["saved"] == b["saved"] and a["max"] == b["max"] == 13
 
 
 def test_the_editor_passes_the_compared_cap_and_a_raise_already_waiting_is_saved():
