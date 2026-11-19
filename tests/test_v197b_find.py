@@ -679,6 +679,97 @@ def test_jack_4a_both_paths_save_the_same_when_the_others_start_below_the_cap():
     assert got["draft"]["005930"] == 0.1 and got["draft"] == got["sale"]
 
 
+# Verification review of answer 4 (2026-11-19): with edits waiting, both paths must still save the same. The two flows as the screens
+# run them: without shares, swapDraft on the draft → 최대 비중 올리기 on 종목 바꾸기 when it offers it → 바꾼 내용 저장; with shares, the
+# 빼기 sheet (swapCheck: its raise when it asks) → 팔고 빼기 (sellAndSwap, raise and compared cap as editor.jsx passes them) → the draft
+# after it (draftAfterSwap) → 최대 비중 올리기 if 종목 바꾸기 offers it → 바꾼 내용 저장 when anything waits.
+FLOWS = J4 + r"""
+const flowDraft = (d, dr0, t) => {
+  let dr = E.swapDraft(d, E.rebaseDraft(d, dr0), t, 'better', cand());
+  if (E.draftD2(d, dr).low) dr = E.raiseDraft(d, E.rebaseDraft(d, dr));
+  const r = E.applyEdit({ v: 2, decks: [d] }, 'd1', dr, { load, today: T, ts: 1 });
+  return r.ok ? { x: E.swapView(d, dr0, t, cand()).pct, saved: tg(r.data.decks[0]), max: r.data.decks[0].settings.maxPct } : { why: r.why };
+};
+const flowSale = (dh, dr0, t, qty) => {
+  const chk = E.swapCheck(dh, dr0, t, cand());
+  const raise = chk.low ? chk.y : null;
+  const ss = E.sellAndSwap(sellAll({ v: 2, decks: [dh] }, t, qty), 'd1', t, cand(), { reason: 'better', raise: raise != null ? raise : chk.up, at: chk.cap, load, today: T, ts: 1 });
+  if (!ss.ok) return { why: ss.why };
+  const saved = ss.data.decks[0];
+  let dr = E.draftAfterSwap(dh, saved, E.rebaseDraft(dh, dr0), t, cand(), raise);
+  if (E.draftD2(saved, dr).low) dr = E.raiseDraft(saved, E.rebaseDraft(saved, dr));
+  let fin = saved;
+  if (E.pending(saved, dr)) { const r = E.applyEdit(ss.data, 'd1', dr, { load, today: T, ts: 2 }); if (!r.ok) return { why: 'apply ' + r.why }; fin = r.data.decks[0]; }
+  return { x: E.swapView(dh, dr0, t, cand()).pct, sheet: { low: chk.low, y: chk.y, n: chk.n }, saved: tg(fin), max: fin.settings.maxPct };
+};
+"""
+
+
+def test_jack_4a_a_waiting_step_saves_the_same_with_or_without_shares():
+    """Review: a holding stepped 10 → 1 waits, then the 15% 채권·금 holding is swapped. Without shares the candidate stays at 10% after
+    the raise; with shares 팔고 빼기 used to re-share the waiting step around the stepped row and the candidate ended at 12%. Now what
+    waits after the sale is what the swap without shares leaves (draftAfterSwap), so both save the same targets and the same 12% cap."""
+    got = run(FLOWS + """
+      const dr0 = E.stepDraft(E.emptyDraft(), '000010', 1);
+      out = { draft: flowDraft(dcush(false), dr0, '114260'), sale: flowSale(dcush(true), dr0, '114260', 10) };""")
+    a, b = got["draft"], got["sale"]
+    assert "why" not in a and "why" not in b, (a, b)
+    assert a["x"] == b["x"] == 10 and a["saved"]["005930"] == b["saved"]["005930"] == 0.1
+    assert a["saved"] == b["saved"] and a["max"] == b["max"] == 12
+
+
+def test_jack_4a_a_waiting_removal_saves_the_same_with_or_without_shares():
+    """A holding without shares waits to be taken out (8 stocks after the swap: 종목 바꾸기 offers 13%), then the held 15% holding is
+    swapped. The 빼기 sheet used to offer 12% (the 9 saved stocks), so the cap went 12 → 13 in two steps and the candidate ended at 12%.
+    It now offers the 13% the swap without shares reaches, with the 8 stocks of that list, and both paths save the same."""
+    got = run(FLOWS + """
+      const dr0 = E.removeDraft(dcush(false), E.emptyDraft(), '000020', 'other');
+      out = { draft: flowDraft(dcush(false), dr0, '114260'), sale: flowSale(dcush(true), dr0, '114260', 10) };""")
+    a, b = got["draft"], got["sale"]
+    assert "why" not in a and "why" not in b, (a, b)
+    assert b["sheet"] == {"low": True, "y": 13, "n": 8}
+    assert a["x"] == b["x"] == 10 and a["saved"]["005930"] == b["saved"]["005930"] == 0.1
+    assert a["saved"] == b["saved"] and a["max"] == b["max"] == 13
+
+
+def test_jack_4a_a_waiting_add_saves_the_same_targets():
+    """A 담기 waits (000660 at 5%), then the held 15% holding is swapped. Without shares the edited list reaches 100% at the 10% cap (no
+    raise). With shares 팔고 빼기 saves the saved stocks at once, which cannot reach 100% at 10% (95%), so its sheet still asks for 12%
+    (round-1 B1: a write never saves less than 100%). The saved targets are the same on both paths (what waits after the sale is what
+    the swap without shares leaves); only the cap differs (10% · 12%), the open question in the PR."""
+    got = run(FLOWS + """
+      const x = { t: '000660', nk: '하이닉스', cls: 'kr', ind: 'semi', kind: 'pinned', s: { t: '000660', nk: '하이닉스', cls: 'kr', price: 100000, ind: 'semi', indName: '반도체' } };
+      const dr0 = E.addDraft(dcush(false), E.emptyDraft(), x, 5);
+      out = { draft: flowDraft(dcush(false), dr0, '114260'), sale: flowSale(dcush(true), dr0, '114260', 10) };""")
+    a, b = got["draft"], got["sale"]
+    assert "why" not in a and "why" not in b, (a, b)
+    assert a["x"] == b["x"] == 10 and a["saved"] == b["saved"] and a["saved"]["000660"] == 0.05
+    assert b["sheet"]["low"] is True and b["sheet"]["y"] == 12                    # the saved stocks alone need the raise
+
+
+def test_the_editor_passes_the_compared_cap_and_a_raise_already_waiting_is_saved():
+    """Review (answer 4): editor.jsx sellSwap passes swapCheck's cap as `at`, so with a raise already waiting (a 10% holding taken out
+    without shares → 최대 비중을 13%로 올리기), then the held 15% holding swapped, 두 종목 비교 shows 13% and 팔고 빼기 saves 13%."""
+    with open(os.path.join(ROOT, "src", "v2", "editor.jsx"), encoding="utf-8") as fh:
+        ed = fh.read()
+    body = ed.split("const sellSwap = (t, nk, reason, raise, add) => {", 1)[1].split("\n  };\n", 1)[0]
+    assert "const chk = E.swapCheck(deck, draft, t, add);" in body and "const up = raise != null ? raise : chk.up;" in body
+    assert "E.sellAndSwap(next, deck.id, t, add, { reason, raise: up, at: chk.cap," in body
+    assert "E.draftAfterSwap(before, saved, E.rebaseDraft(before, d), t, add, raise)" in body
+    got = run(FLOWS + """
+      const dh = dcush(true);
+      const dr0 = E.raiseDraft(dh, E.removeDraft(dh, E.emptyDraft(), '000020', 'other'));
+      const chk = E.swapCheck(dh, dr0, '114260', cand());
+      const v = E.swapView(dh, dr0, '114260', cand());
+      // as editor.jsx sellSwap calls it (no raise from the sheet: up = the raise waiting, at = swapCheck's cap) and without `at`
+      const call = (opts) => { const r = E.sellAndSwap(sellAll({ v: 2, decks: [dh] }, '114260', 10), 'd1', '114260', cand(), { reason: 'better', load, today: T, ts: 1, ...opts });
+        return r.ok ? { cand: tg(r.data.decks[0])['005930'], max: r.data.decks[0].settings.maxPct } : r; };
+      out = { up: dr0.maxPct, chk: { low: chk.low, cap: chk.cap, up: chk.up }, x: v.pct, editor: call({ raise: chk.up, at: chk.cap }), noAt: call({ raise: chk.up }) };""")
+    assert got["up"] == 13 and got["chk"] == {"low": False, "cap": 13, "up": 13} and got["x"] == 13
+    assert got["editor"] == {"cand": 0.13, "max": 13}                             # what 두 종목 비교 showed is saved
+    assert got["noAt"] == {"cand": 0.1, "max": 13}                                # without `at` the candidate would not keep it
+
+
 def test_the_compare_note_and_the_next_screen_read_one_raise_check():
     """Q8: "will the next screen offer a raise" is that screen's own check, called, never copied: 종목 바꾸기 computes its D2 with
     edit.draftD2 and swapView asks draftD2 about the list the swap leaves; the 빼기 sheet and swapView both read swapCheck."""

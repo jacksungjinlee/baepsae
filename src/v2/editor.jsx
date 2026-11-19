@@ -245,7 +245,8 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
       after: (next) => {
         setFail(null);
         const saved = next && Array.isArray(next.decks) ? next.decks.find((d) => d && d.id === before.id) || null : null;
-        setDraft((d) => E.draftAfterSale(before, saved, E.rebaseDraft(before, d), t));
+        // Jack, 2026-11-19, answer 4: what waits is what the swap without shares leaves (edit.draftAfterSwap), the sheet's raise included
+        setDraft((d) => E.draftAfterSwap(before, saved, E.rebaseDraft(before, d), t, add, raise));
         toEdit();
       } });
   };
