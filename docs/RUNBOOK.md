@@ -16,8 +16,10 @@ both separate from our pipeline); the last daily run and the last deploy succeed
 the pages users get are the current build, the site's `data.json` is exactly the published copy, and the site does not
 serve the `docs/` folder (two of its files must answer "not found").
 A server error from GitHub Pages (HTTP 5xx) on a data file or page is asked again once, 20 seconds later, before it
-counts (Jack, 2026-11-19): a second 5xx or any other failed answer is a problem as before, and the run log lists each
-retried file and a count ("5xx 다시 시도: N곳"). A "not found"-type answer (4xx) is never asked again.
+counts (Jack, 2026-11-19): a second 5xx or any other failed answer is a problem as before, and once one retry has failed
+the alarm is certain, so later 5xx answers in that check fail at once without waiting (the run cannot overrun its
+30-minute limit and end with no alarm). A "not found"-type answer (4xx) is never asked again. Every line about it in the
+run log starts "5xx 다시 물음", and the count ("· 5xx 다시 물음: N곳") ends the log and, when N > 0, the run's summary page.
 
 ## What an alert means
 

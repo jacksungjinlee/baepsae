@@ -26,8 +26,10 @@
    배포가 돌고 있으면 기다려요.
 
 사이트에 묻는 GET(1 · 4 의 파일)은 5xx 면 RETRY_5XX_WAIT 초 뒤 한 번만 다시 물어요 (Jack 2026-11-19: Pages 의 한 번 서버 오류로
-경보를 열지 않게). 두 번째도 200 이 아니면 전과 같이 실패예요. 4xx 는 다시 묻지 않아요. 6 은 전처럼 5xx 를 두 번까지 다시 물어요.
-다시 물은 곳은 한 줄씩, 끝에 모두 몇 곳인지 로그에 적어요.
+경보를 열지 않게). 두 번째도 200 이 아니면 전과 같이 실패예요. 4xx 는 다시 묻지 않아요. 다시 물은 답이 200 이 아니었으면(연결 오류
+포함) 경보는 이미 확실하니, 그 뒤의 5xx 는 기다리지 않고 바로 실패예요 (점검이 30분 한도를 넘어 경보 없이 취소되지 않게). 6 은 전처럼
+5xx 를 두 번까지 다시 물어요. 다시 물은 곳은 쉬기 전 · 다시 물은 뒤 한 줄씩, 끝에 몇 곳인지 로그에 적어요 ("5xx 다시 물음", 하나라도 있으면
+실행 요약에도).
 """
 import argparse
 import datetime as dt
@@ -128,22 +130,34 @@ class Report:
 
 
 # ── 사이트에 묻기: 5xx 는 한 번 더 ──────────────────────────
-def _again(first):
-    """점검 표의 내용 뒤에 붙여요: 5xx 라서 다시 물은 줄인지 (합격 · 실패는 그대로)."""
-    return f" (처음 HTTP {first}, {RETRY_5XX_WAIT}초 뒤 다시 물었어요)" if first else ""
+class Retries(list):
+    """한 번의 점검에서 5xx 라서 다시 물은 곳 ("{파일} 503 → 200", site_get · check_no_docs). failed: 다시 물은 답이 200 이 아니었던
+    곳이 있었는지 (그러면 그 줄이 실패라 경보는 이미 확실해요). skipped: 그래서 다시 묻지 않은 5xx ("{파일} 503")."""
+
+    def __init__(self, *a):
+        super().__init__(*a)
+        self.failed, self.skipped = False, []
 
 
 def site_get(net, url, sleep=time.sleep, retried=None):
-    """사이트 파일 GET. 반환: (응답, 처음 받은 5xx 또는 None).
+    """사이트 파일 GET. 반환: (응답, 점검 표의 내용 뒤에 붙일 말 — 다시 묻지 않았으면 "").
     5xx 면 RETRY_5XX_WAIT 초 쉬고 한 번만 다시 물어서 그 답을 돌려줘요 (Jack 2026-11-19: GitHub Pages 의 한 번 서버 오류로 경보를
     열지 않게). 또 5xx 이거나 200 이 아니면 부른 쪽이 전과 같이 실패로 봐요. 4xx 는 다시 묻지 않아요. 연결 오류는 Net.get 이 이미
-    세 번 물었으니 그대로 올라가요. 다시 물은 곳은 한 줄로 크게 적고 retried 에 남겨요 (점검 끝에 몇 곳인지 적어요)."""
+    세 번 물었으니 그대로 올라가요. 쉬기 전에 처음 답을 적어요 (그 사이 실행이 취소돼도 로그에 남게).
+    이 점검에서 이미 다시 물은 답이 200 이 아니었으면 (retried.failed: 그 줄이 실패라 경보는 확실해요) 기다리지도 다시 묻지도 않고
+    그 5xx 를 그대로 돌려줘요 — 판단은 같고, 점검이 30분 한도를 넘어 경보 없이 취소되지 않게 (리뷰 S2)."""
     r = net.get(url)
     if r.status_code < 500:
-        return r, None
+        return r, ""
     first, name = r.status_code, url.split("?")[0]
     name = name[len(SITE):] if name.startswith(SITE) else name
+    if getattr(retried, "failed", False):
+        print(f"!! 5xx 다시 물음: {name} {first} — 이미 실패한 재시도가 있어 다시 묻지 않아요 (경보는 이미 확실해요)", flush=True)
+        retried.skipped.append(f"{name} {first}")
+        return r, " (이미 다른 곳의 재시도가 실패해서 다시 묻지 않았어요)"
+    print(f"!! 5xx 다시 물음: {name} {first} — {RETRY_5XX_WAIT}초 뒤 다시 물어요", flush=True)
     sleep(RETRY_5XX_WAIT)
+    note = f" (처음 HTTP {first}, {RETRY_5XX_WAIT}초 뒤 다시 물었어요)"
     try:
         r = net.get(url)
     except RuntimeError as e:
@@ -151,17 +165,23 @@ def site_get(net, url, sleep=time.sleep, retried=None):
         print(f"!! 5xx 다시 물음 ({RETRY_5XX_WAIT}초 뒤): {got}", flush=True)
         if retried is not None:
             retried.append(got)
-        raise RuntimeError(f"{e}{_again(first)}") from e
+            if isinstance(retried, Retries):
+                retried.failed = True
+        raise RuntimeError(f"{e}{note}") from e
     got = f"{name} {first} → {r.status_code}"
     print(f"{'· ' if r.status_code == 200 else '!! '}5xx 다시 물음 ({RETRY_5XX_WAIT}초 뒤): {got}", flush=True)
     if retried is not None:
         retried.append(got)
-    return r, first
+        if r.status_code != 200 and isinstance(retried, Retries):
+            retried.failed = True
+    return r, note
 
 
 def retry_count_line(retried):
-    """점검 끝의 한 줄: 5xx 라서 다시 물은 곳이 몇 곳인지 (없어도 적어요)."""
-    return f"· 5xx 다시 시도: {len(retried)}곳" + (f" ({' · '.join(retried)})" if retried else "")
+    """점검 끝의 한 줄: 5xx 라서 다시 물은 곳이 몇 곳인지 (없어도 적어요), 이미 실패한 재시도 때문에 다시 묻지 않은 곳도."""
+    skipped = getattr(retried, "skipped", [])
+    return (f"· 5xx 다시 물음: {len(retried)}곳" + (f" ({' · '.join(retried)})" if retried else "")
+            + (f" · 이미 실패한 재시도가 있어 다시 묻지 않은 5xx {len(skipped)}곳 ({' · '.join(skipped)})" if skipped else ""))
 
 
 # ── 1. 사이트의 네 파일 → validate_data.py --live ─────────────
@@ -170,12 +190,12 @@ def fetch_live(net, out_dir, now, sleep=time.sleep, retried=None):
     bad = []
     for f in V.FILES:
         try:
-            r, first = site_get(net, f"{SITE}{f}?t={int(now.timestamp())}", sleep, retried)
+            r, note = site_get(net, f"{SITE}{f}?t={int(now.timestamp())}", sleep, retried)
         except RuntimeError as e:
             bad.append(f"{f}: {e}")
             continue
         if r.status_code != 200:
-            bad.append(f"{f}: HTTP {r.status_code}{_again(first)}")
+            bad.append(f"{f}: HTTP {r.status_code}{note}")
             continue
         with open(os.path.join(out_dir, f), "wb") as fh:
             fh.write(r.content)
@@ -325,11 +345,11 @@ def check_pages(rep, net, now, read_ref=ref_file, sleep=time.sleep, retried=None
     pages, tags = {}, {}
     for p in PAGES:
         try:
-            r, first = site_get(net, f"{SITE}{p}?t={int(now.timestamp())}", sleep, retried)
+            r, note = site_get(net, f"{SITE}{p}?t={int(now.timestamp())}", sleep, retried)
         except RuntimeError as e:
             rep.add(f"{p} 열림", False, str(e))
             continue
-        rep.add(f"{p} 열림", r.status_code == 200, f"HTTP {r.status_code}{_again(first)}")
+        rep.add(f"{p} 열림", r.status_code == 200, f"HTTP {r.status_code}{note}")
         if r.status_code == 200:
             pages[p] = r.content
             m = BUILD_RE.search(r.content[:4000].decode("utf-8", "replace"))
@@ -389,7 +409,8 @@ def check_no_docs(rep, net, now, sleep=time.sleep, retried=None):
     """docs/ 는 사이트에 없어야 해요 (Jack 2026-11-06). 설계 자료의 Adobe Stock 그림은 라이선스상 따로 내려받는 파일이 되면 안 되고,
     Deploy 는 docs/ 를 빼고 올려요 (tools/assemble_site.py). 여기서 보이면 Pages 가 브랜치 배포로 되돌아갔거나 배포가 실패한 거예요.
     Pages 의 5xx 는 두 번까지 다시 물어요 (한 번의 서버 오류로 경보를 열지 않게). 그래도 404 가 아니면 실패예요.
-    다시 물은 곳은 한 줄로 크게 적고 retried 에 남겨요 (판단은 그대로)."""
+    다시 물은 곳은 한 줄로 크게 적고 retried 에 남겨요 (판단은 그대로). site_get 의 '이미 확실하면 다시 묻지 않기'는 여기 쓰지
+    않아요: 다시 물으면 404 로 돌아올 줄이 실패가 되어 이 줄의 판단이 바뀌어요 (리뷰 S2)."""
     got = []
     for p in DOCS_PROBES:
         st, seen = None, []
@@ -427,7 +448,7 @@ def check_no_docs(rep, net, now, sleep=time.sleep, retried=None):
 
 # ── 점검 전체 ───────────────────────────────────────────────
 def run_all(net, now, selftest="none", gate=run_live_gate, expect=expected_px, read_ref=ref_file, sleep=time.sleep):
-    live_sha, retried = None, []                                        # retried: 5xx 라서 다시 물은 곳 (site_get · check_no_docs)
+    live_sha, retried = None, Retries()                                 # 5xx 라서 다시 물은 곳 (site_get · check_no_docs)
     rep, ctx = Report(), {"gate_md": "", "px": None, "files_ok": True, "retried": retried}
     with tempfile.TemporaryDirectory(prefix="baepsae-live-") as d:
         bad = fetch_live(net, d, now, sleep, retried)
@@ -643,6 +664,8 @@ def main(argv=None, net=None, now=None, **kw):
     if summ:
         with open(summ, "a", encoding="utf-8") as f:
             f.write(f"### 뱁새 감시 — {'문제 ' + str(len(bad)) + '개' if bad else '정상'}\n\n{rep.markdown()}\n\n")
+            if ctx["retried"]:                                    # 5xx 라서 다시 물은 곳이 있으면 실행 요약에도
+                f.write(retry_count_line(ctx["retried"]) + "\n\n")
     for n, _, d in bad:
         print(f"::error title=뱁새 감시::{V._gh_escape(f'{n}: {d}')}", flush=True)
     if a.dry:
@@ -675,6 +698,8 @@ def finish_selftest(net, now, run_url, hc, kw):
         with open(summ, "a", encoding="utf-8") as f:
             f.write(f"### 시험 뒤 다시 점검 (망가뜨리지 않은 파일) — {'문제 ' + str(len(bad)) + '개' if bad else '정상'}\n\n"
                     f"{rep.markdown()}\n\n")
+            if ctx["retried"]:
+                f.write(retry_count_line(ctx["retried"]) + "\n\n")
     if bad:
         for n, _, d in bad:
             print(f"::error title=뱁새 감시::{V._gh_escape(f'{n}: {d}')}", flush=True)
