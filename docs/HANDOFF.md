@@ -11,6 +11,8 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 **v19.6f (#140), 2026-11-19:** 연말에 확인할 숫자 merges (Nov 1–Dec 31, TAX_YEAR 2026 lock; Jack's M1–M5 lines). Next in the queue: the dividend follow-up, v19.7b (waits on Jack's question 8), v19.6c (question 1), v19.6b data.
 
+**#142 (dividend follow-up), 2026-11-19:** exact bonus ratios with the three guards (Jack's yes, a loosening recorded in the PR), the rights / data / missing-data lines (dvLine 2 · 3 · 4). One publish of its own after the merge. Next: the DART company-record industry mapping for new listings (Jack, 11-19), then v19.7b, v19.6c, v19.6b data, the late-data check.
+
 **Incident, 2026-11-18/19.** No data published after 11-17 06:40 KST (the site said "2일째 갱신이 멈췄어요").
 - **Cause:** the volunteer copy of the KRX list stopped saving its after-close file after 11-16, and KRX's company list now needs a login, so industries came back empty. The gate rightly blocked every run.
 - **Fixes:** #134 (a test that failed only because of the date) merged 01:25 KST. #137 merged 03:59 KST: Daum's official daily prices, kept only where Yahoo `.KS`/`.KQ` agrees to the won; industries carried forward.
