@@ -16,6 +16,8 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 - The 06:40 KST run (Tue–Sat KST, Mon–Fri UTC) is Jack's outside timer: a workflow_dispatch from his account at 21:40 UTC, every such day since 11-04.
 - On second-source days, a stock without a confirmed close is left out of the day's file (company page "이 종목의 데이터를 찾지 못했어요."; portfolios "오늘 데이터에 없는 종목 … 빼고 계산했어요."): never an old price under today's date.
 
+**#143 (v19.6c 관심 종목), 2026-11-19:** watch list with 이하/이상 conditions (Jack's 11-19 lines), 홈 rows, the side key `baepsae2.v1.watch`. App only.
+
 **Incident, 2026-11-18/19.** No data published after 11-17 06:40 KST (the site said "2일째 갱신이 멈췄어요").
 - **Cause:** the volunteer copy of the KRX list stopped saving its after-close file after 11-16, and KRX's company list now needs a login, so industries came back empty. The gate rightly blocked every run.
 - **Fixes:** #134 (a test that failed only because of the date) merged 01:25 KST. #137 merged 03:59 KST: Daum's official daily prices, kept only where Yahoo `.KS`/`.KQ` agrees to the won; industries carried forward.
