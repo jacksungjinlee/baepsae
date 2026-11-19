@@ -36,7 +36,9 @@ import { BottomSheet, Button } from "../ui/components.jsx";
 import { isImported } from "./pf.js";
 import { dataSplits, withDataSplits, storedNotInData, withStoredSplits, outSplits, withoutOutSplits } from "./lots.js";
 import { UNIT } from "./held.js";
-import { companySub, CO_MORE } from "./routes.js";
+import { companySub, CO_MORE, WATCH_SUB } from "./routes.js";
+import { WatchScreen } from "./watch.jsx";
+import { withWatchHits, watchGuardNote } from "./watch.js";
 import { holdsKorean } from "./home.js";
 import { TAB_H, SIDE_W, ModeContext, NavContext, LayoutContext, HeldContext, useWide, Page, AppBar, LoadFail, Footer } from "./ui.jsx";
 import { useRouter, TabBar, MenuSheet, SideMenu, TopBar, useSlashFocus, typingIn, useThemeMode } from "./nav.jsx";
@@ -94,6 +96,7 @@ export function App({ source }) {
   const layout = useMemo(() => ({ wide }), [wide]);
   const [stockQ, setStockQ] = useState("");             // PC: the top bar's search words
   const [phoneQ, setPhoneQ] = useState("");             // phone: 종목's own field (kept here so a company page and back keep it)
+  const [focusQ, setFocusQ] = useState(0);              // v19.6c: 관심 종목's "+ 추가" opens 종목 with its search field focused
   const searchRef = useRef(null);
   useSlashFocus(searchRef, wide);
 
@@ -513,6 +516,22 @@ export function App({ source }) {
     if (fixed.length) setSplitFixed((old) => new Set([...old, ...fixed]));
     setStoreData(r.data);
   }, [store.data, load, splitList]);
+  // v19.6c (Part C): the 관심 종목 hitAt marks, from fresh data only (watch.js withWatchHits: set on the first day a condition is
+  // seen met, cleared when fresh data shows it not met; blank, stale or failed data change nothing). Written once per change,
+  // only when the records can be written; the console names a PBR a 가치 guard keeps from firing a condition.
+  useEffect(() => {
+    if (load.status !== "ok") return;
+    watchGuardNote(store.data, load);
+    if (!store.writable || store.locked) return;
+    const next = withWatchHits(store.data, load);
+    if (next) setStoreData(next);
+  }, [store.data, load]);
+  const openWatch = useCallback(() => router.go("stocks", WATCH_SUB), [router.go]);
+  const addWatch = useCallback(() => {
+    router.go("stocks");
+    setFocusQ((n) => n + 1);
+    if (wide && searchRef.current) { try { searchRef.current.focus(); } catch (e) { /* ignore */ } }
+  }, [router.go, wide]);
   // v19.6f: 연말에 확인할 숫자 (#portfolio/tax), only while tax.taxOpen holds (Nov 1 to Dec 31 KST of tax.js TAX_YEAR, and a US sale
   // this year, a US holding or a dividend this year): the same rule as its link on 내 수익. Otherwise the address itself becomes
   // #portfolio (in place, as #home/why without its target does), said in the console: a closed address that stayed would open
@@ -588,9 +607,15 @@ export function App({ source }) {
     if (tab === "stocks" && loc.code && !loc.about) {
       return <Company load={load} store={store} setStoreData={setStoreData} pad={pad} code={loc.code} ctab={loc.ctab} disc={discView} nav={coNav} />;
     }
-    if (tab === "stocks") return <Stocks load={load} store={store} pad={pad} q={wide ? stockQ : null} ownQ={phoneQ} setOwnQ={setPhoneQ} />;
+    if (tab === "stocks" && loc.sub === WATCH_SUB) {
+      return <WatchScreen load={load} store={store} setStoreData={setStoreData} pad={pad} onBack={() => router.back("stocks")} onAdd={addWatch} />;
+    }
+    if (tab === "stocks") {
+      return <Stocks load={load} store={store} pad={pad} q={wide ? stockQ : null} ownQ={phoneQ} setOwnQ={setPhoneQ} onWatch={openWatch}
+        focusKey={wide ? 0 : focusQ} onFocused={() => setFocusQ(0)} />;
+    }
     if (tab === "market") return <Market load={load} pad={pad} />;
-    return <Home load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onWhy={openWhy} welcome={welcome} disc={discView} />;
+    return <Home load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onWhy={openWhy} onWatch={openWatch} welcome={welcome} disc={discView} />;
   })();
   const nav = { openMenu: wide ? null : router.openMenu, menuOpen: !wide && loc.menu, openStock, goHome };
   // One boundary per screen. A company's tabs are one screen (company.jsx keeps its own boundary per tab), so switching

@@ -15,7 +15,7 @@ import { COLOR, SIZE, WEIGHT, SPACE, TOUCH } from "../ui/tokens.js";
 import { Button, StatusChip } from "../ui/components.jsx";
 import { C, fill, nf, mdText, todayKst, todayStaleText } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, OwnCloseNote, OldAppNote, Mascot, IMG, tx, tap, useNav } from "./ui.jsx";
-import { parseImport, importProblem, importIssues, mergeStores, storedStores, downloadRecords, isSafariLike, withConfirm } from "./store.js";
+import { parseImport, importProblem, importIssues, mergeStores, storedStores, downloadRecords, isSafariLike, withConfirm, WATCH_DROPPED } from "./store.js";
 import { withRemoval } from "./edit.js";
 import { evaluateAll, todayCtx } from "./rules.js";
 import { HoldingRow } from "./daily.jsx";
@@ -81,6 +81,7 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
   const record = (deckId, t, nk) => (canRecord ? () => setFlow(startFlow([deckId], t, nk)) : null);
   const fileRef = useRef(null);
   const [importBad, setImportBad] = useState(false);
+  const [importCap, setImportCap] = useState(0);        // v19.6c [Q6]: 관심 종목 the last records file brought that did not fit (30)
   const decks = store.data.decks;
   // The daily rule check: nothing is computed from stale or failed data (ev.ok false, ev.why says why). Then the screen
   // says so (the stale line, or the load-failure message), so a held stock without a chip never reads as "fine".
@@ -103,6 +104,7 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
     else console.warn("[v2] answer not recorded: " + JSON.stringify(item));
   };
   const onImport = async (e) => {
+    setImportCap(0);                                     // a later import's line never sits beside an earlier one's (review B4)
     const f = e.target.files && e.target.files[0];
     e.target.value = "";
     if (!f) return;
@@ -118,7 +120,11 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
       return;
     }
     setImportBad(false);
-    setStoreData(mergeStores(store.data, inc, Date.now(), storedStores(store.key, todayKst()), todayKst()));   // what the file brings back is an edit made now
+    const merged = mergeStores(store.data, inc, Date.now(), storedStores(store.key, todayKst()), todayKst());   // what the file brings back is an edit made now
+    const dropped = merged[WATCH_DROPPED] || 0;
+    if (dropped) console.warn(`[v2] import: ${dropped} watch-list stock(s) from the file did not fit (at most 30)`);
+    setImportCap(dropped);
+    setStoreData(merged);
   };
   // The record sheet sits outside Page: Page's wrapper changes at the PC width (1024 px), and a half-typed record must
   // survive a window resized or a tablet turned across it.
@@ -242,6 +248,7 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
           <Button kind="secondary" disabled={!store.writable} onClick={() => fileRef.current && fileRef.current.click()}>{C.store.import}</Button>
           <input ref={fileRef} type="file" accept="application/json,.json" onChange={onImport} style={{ display: "none" }} data-ui-v2="import-file" />
         </div>
+        {importCap > 0 && <Note tone="watch" data-ui-v2="import-watch-cap" data-n={importCap}>{fill(C.watch.importCap, { n: importCap })}</Note>}
         {importBad && (
           // a preview file in the live app: otherKind · a live file in the preview: the plain chip · anything else: importFail
           <div data-ui-v2="import-bad" data-why={importBad} style={{ marginTop: SPACE(2) }}>

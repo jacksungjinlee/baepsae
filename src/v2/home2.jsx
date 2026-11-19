@@ -55,6 +55,8 @@ import { RankCard } from "./rank.jsx";
 import { discDate } from "./company.js";
 import { filingRows, filingsChecked, holdsKorean } from "./home.js";
 import { IcrOffLine, EpsOwnersNote, StmtCurLine, UnitChkLine, NoDataLine, DayNote } from "./fixnote.jsx";
+import { watchHits } from "./watch.js";
+import { WatchHitRows } from "./watch.jsx";
 
 const signedWon = (v) => (v > 0 ? "+" : "") + wonText(v);
 const tone = (v) => (v > 0 ? COLOR.up : v < 0 ? COLOR.down : COLOR.text2);
@@ -134,7 +136,7 @@ function MoneyCard({ block, pxDate, load, late = false }) {
   const gainShown = money.ok && money.gain && !(late && money.gain.usdToday);
   if (late && money.ok && money.gain && money.gain.usdToday) {
     const k = deck.id + "|lateUsd";
-    if (!warnedMoney.has(k)) { warnedMoney.add(k); console.warn(`[v2] ${deck.id}: late data: the 산 가격보다 line is left out (its dollar costs are converted at the data's rate, which the approved line calls today's)`); }
+    if (!warnedMoney.has(k)) { warnedMoney.add(k); console.warn(`[v2] ${deck.id}: late data: the gain-since-purchase line is left out (its dollar costs are converted at the data's rate, which the approved line calls today's)`); }
   }
   const md = mdText(pxDate);
   const H = C.home;
@@ -255,7 +257,8 @@ export function discState(disc, kr) {
   if (st === "ok") return filingsChecked(disc, disc.data ? discDate(disc.data) : null) ? "ok" : "stale";
   return st === "fail" || st === "none" ? st : "wait";
 }
-function lookOf(blocks, held, disc, kr) {
+// watch (v19.6c, Part C): the 관심 종목 조건 rows (watch.js watchHits); any of them is something to look at (quiet false).
+function lookOf(blocks, held, disc, kr, watch = []) {
   const H = C.home;
   const imported = blocks.filter((b) => b.st);
   const conc = imported.map((b) => ({ b, c: concentration(b.st) })).filter((x) => x.c && H.concentration);
@@ -266,12 +269,12 @@ function lookOf(blocks, held, disc, kr) {
   const dd = ds === "stale" ? discDate(disc.data) : null;
   const discOld = dd && dd.date ? dd : null;
   const discFail = ds === "fail" || (ds === "stale" && !discOld);
-  const quiet = (ds === "skip" || ds === "ok" || ds === "none") && imported.every(quietBlock) && !conc.length && !files.length;
+  const quiet = (ds === "skip" || ds === "ok" || ds === "none") && imported.every(quietBlock) && !conc.length && !files.length && !watch.length;
   // "오늘은 할 일이 없어요" here: no verdict band (it speaks for itself, as before), at least one 가진 종목 portfolio, all quiet,
   // no card. Never on stale or failed data (no block exists then), never when no rule could be checked (quietBlock), never
   // before the filings were checked when a Korean stock is held.
   const calm = quiet && !held.length && imported.length > 0;
-  return { conc, files, quiet, calm, discFail, discOld, ds };
+  return { conc, files, quiet, calm, discFail, discOld, ds, watch };
 }
 
 function DiscNote({ id, date, children }) {
@@ -286,13 +289,14 @@ function DiscNote({ id, date, children }) {
 // lateMd: on late data checked on an older close, that close's date. Then only the calm card shows, saying "{date} 종가
 // 기준으로는 할 일이 없어요." (today.calmLate, Jack 2026-11-19) instead of "오늘은 할 일이 없어요": no "오늘 볼 것" heading
 // and none of its rows (review, 2026-11-19: nothing labelled 오늘 on an older close, as before the late check). A broken
-// concentration rule still shows in its portfolio's hero above (brokenLine); the filings rows wait for fresh data.
-function Look({ blocks, load, look, go, lateMd = null }) {
+// concentration rule still shows in its portfolio's hero above (brokenLine); the filings rows wait for fresh data, and the
+// 관심 종목 rows have none on late data anyway (watch.js: they need dayState ok).
+function Look({ blocks, load, look, go, onWatch, lateMd = null }) {
   const { openStock } = useNav();
   const H = C.home;
-  const { conc, files, calm, discFail, discOld } = look;
+  const { conc, files, calm, discFail, discOld, watch } = look;
   if (lateMd) return calm ? <Card data-ui-v2="home-calm" data-late="1" style={{ marginTop: SPACE(5) }}><p style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink)}>{calmLine(lateMd)}</p></Card> : null;
-  if (!H.look || (!conc.length && !files.length && !calm && !discFail && !discOld)) return null;
+  if (!H.look || (!conc.length && !files.length && !calm && !discFail && !discOld && !watch.length)) return null;
   const byT = load.status === "ok" ? load.byT : new Map();
   return (
     <section data-ui-v2="home-look" style={{ marginTop: SPACE(5) }}>
@@ -302,6 +306,8 @@ function Look({ blocks, load, look, go, lateMd = null }) {
           owner={blocks.length > 1 ? shownName(b.deck.name) : null}
           title={`${groupName(c)} ${limitPct(c.w, c.limit)}%`} sub={fill(H.concentration, { names: c.names.join(", "), limit: c.limit })} onClick={() => go("portfolio")} />
       ))}
+      {/* v19.6c: 관심 종목 조건 (Part B's order: after 확인 필요, before 지분 변동) */}
+      <WatchHitRows hits={watch} load={load} onOpen={onWatch} />
       {files.map((f) => {
         const s = byT.get(f.t);
         return (
@@ -336,7 +342,8 @@ function useNarrow() {
 }
 
 // ev, ctx: the daily check (today.jsx useDaily). onConfirm: the 확인 필요 answers (today.jsx confirmer).
-export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = null }) {
+// onWatch (v19.6c): opens 관심 종목 (a 관심 종목 조건 row).
+export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = null, onWatch = null }) {
   const decks = store.data.decks;
   const ok = load.status === "ok";
   const narrow = useNarrow();
@@ -353,7 +360,10 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
   // the stale band and the load-failure message.
   const held = ev.ok ? ev.decks.filter((d) => d.ok && !d.imported && d.holdings.some((x) => x.qty !== 0)) : [];
   const kr = useMemo(() => holdsKorean(decks, ctx && ctx.byT), [decks, ctx]);
-  const look = lookOf(blocks, held, disc, kr);
+  // no row when the records cannot be written: its mark could not stop it repeating (review S1)
+  const canMark = !!(store.writable && !store.locked);
+  const hits = useMemo(() => (ev.ok ? watchHits(store.data, load, undefined, canMark) : []), [store.data, load, ev.ok, canMark]);
+  const look = lookOf(blocks, held, disc, kr, hits);
   // late data within 5 trading days (rules.js checkState, Jack 2026-11-19): the date of the close the check ran on
   const lateMd = ev.ok && ev.late && ok ? mdText(load.data.pxDate) : null;
   const many = blocks.length > 1;
@@ -365,7 +375,7 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
         <HeldCard block={b} onWhy={onWhy} md={ok ? mdText(load.data.pxDate) : null} late={!!lateMd} />
       </div>
     )),
-    ev.ok && blocks.length > 0 && <Look key="look" blocks={blocks} load={load} look={look} go={go} lateMd={lateMd} />,
+    ev.ok && (blocks.length > 0 || hits.length > 0) && <Look key="look" blocks={blocks} load={load} look={look} go={go} onWatch={onWatch} lateMd={lateMd} />,
     ev.ok && !blocks.length && (
       <Card key="today-empty" data-ui-v2="today-empty"><Button kind="secondary" onClick={() => go("build")}>{C.build.title}</Button></Card>
     ),
