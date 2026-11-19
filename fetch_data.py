@@ -1212,10 +1212,13 @@ def log_kr_own_close(carried, drop, unconf, names):
             "drop": {k: int(v) for k, v in sorted(dc.items())}, "dropEx": dn[:KR_OWN_SHOW], "bad": {"n": 0, "rows": []}}
 
 
-def kr_own_close_err(err, unconf_n=0):
-    """마지막 확인 종가 단계가 오류로 멈췄을 때의 pxSrc.own (실은 종목 0 · err 에 까닭 — 관문이 경고해요)."""
-    return {"v": 1, "max": KR_OWN_CLOSE_MAX_DAYS, "n": 0, "codes": [], "unconf": int(unconf_n), "drop": {}, "dropEx": [],
-            "bad": {"n": 0, "rows": []}, "err": str(err)[:300]}
+def kr_own_close_err(err, unconf_n=None):
+    """마지막 확인 종가 단계가 오류로 멈췄을 때의 pxSrc.own (실은 종목 0 · err 에 까닭 — 관문이 경고해요). unconf_n: 확인 못 한 종목 수 — 그 수를
+    세기 전에 멈췄으면 None 이고 칸을 빼요 (관문이 '모름'으로 적어요 · 0 으로 보이지 않게)."""
+    out = {"v": 1, "max": KR_OWN_CLOSE_MAX_DAYS, "n": 0, "codes": [], "drop": {}, "dropEx": [], "bad": {"n": 0, "rows": []}, "err": str(err)[:300]}
+    if isinstance(unconf_n, int):
+        out["unconf"] = unconf_n
+    return out
 
 
 def kr_own_close_step(prev, full_list, conf_codes, px_src, px_date, trade_days, out, krs, prod_map):
@@ -1225,7 +1228,7 @@ def kr_own_close_step(prev, full_list, conf_codes, px_src, px_date, trade_days, 
     이 단계의 어떤 오류도 발행을 멈추지 않아요 (Jack 의 규칙 · 2026-11-19 시험 실행이 여기서 멈췄어요): 크게 남기고, 아무것도 싣지 않고 (예전처럼 확인 못 한
     종목은 빠져요), 바꾼 것을 되돌리고, px_src["own"].err 에 까닭을 적어요 (관문이 경고해요). 반환: 실은 종목 수."""
     n0, jump0, hid0 = len(out), list((krs or {}).get("jump") or []), list((krs or {}).get("hidden") or [])
-    added, unconf = [], {}
+    added, unconf = [], None
     try:
         days = [pd.Timestamp(t).date().isoformat() for t in trade_days]
         unconf = kr_unconfirmed(full_list, set(map(str, conf_codes)))
@@ -1252,8 +1255,19 @@ def kr_own_close_step(prev, full_list, conf_codes, px_src, px_date, trade_days, 
         err = f"{type(e).__name__}: {str(e)[:200]}"
         log(f"  !! 마지막 확인 종가 단계가 오류로 멈췄어요 ({err}) — 확인 못 한 국내 종목은 예전처럼 빼고 발행을 이어가요 (실은 종목 0 · "
             "pxSrc.own.err · 관문이 경고해요)")
-        px_src["own"] = kr_own_close_err(err, len(unconf) if isinstance(unconf, dict) else 0)
+        px_src["own"] = kr_own_close_err(err, len(unconf) if isinstance(unconf, dict) else None)
         return 0
+
+
+def kr_own_prune_series(krs, gone):
+    """뺀 마지막 확인 종가 종목의 과거 주가 기록 오류 표시를 krSeries 에서도 빼요 (리뷰 N4): hidden 과, 실을 때 옮겨 온 그 종목의 jump 줄 (그 종목은
+    오늘 목록 파일에 없어서 오늘 시계열 점검의 jump 에는 없어요)."""
+    if not isinstance(krs, dict) or not gone:
+        return
+    if isinstance(krs.get("hidden"), list):
+        krs["hidden"] = [c for c in krs["hidden"] if c not in gone]
+    if isinstance(krs.get("jump"), list):
+        krs["jump"] = [j for j in krs["jump"] if not (isinstance(j, list) and j and j[0] in gone)]
 
 
 def kr_own_close_drop_all(kr, src, krs, err):
@@ -1265,8 +1279,7 @@ def kr_own_close_drop_all(kr, src, krs, err):
         own = src.get("own") if isinstance(src.get("own"), dict) else kr_own_close_err(err)
         own.update({"codes": [], "n": 0, "err": str(err)[:300], "bad": {"n": len(gone), "rows": sorted(gone)[:KR_OWN_SHOW]}})
         src["own"] = own
-    if isinstance(krs, dict) and isinstance(krs.get("hidden"), list):
-        krs["hidden"] = [c for c in krs["hidden"] if c not in gone]
+    kr_own_prune_series(krs, gone)
     return [s for s in kr if s.get("t") not in gone or s.get("cls") != "kr"]
 
 
@@ -1294,8 +1307,7 @@ def kr_own_close_final(kr, src, prev, days, krs=None):
         own["codes"] = [c for c in own.get("codes") or [] if c not in gone]
         own["n"] = len(own["codes"])
         own["bad"] = {"n": len(gone), "rows": rows[:KR_OWN_SHOW]}
-    if isinstance(krs, dict) and isinstance(krs.get("hidden"), list):
-        krs["hidden"] = [c for c in krs["hidden"] if c not in gone]
+    kr_own_prune_series(krs, gone)
     return [s for s in kr if not (s.get("cls") == "kr" and s.get("t") in gone)]
 
 

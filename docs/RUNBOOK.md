@@ -553,6 +553,10 @@ under today's date label without that line."
 - **Never stops the run:** any error in the carry step (`fetch_data.kr_own_close_step`) or in the check after it is logged as
   `!! 마지막 확인 종가 단계가 오류로 멈췄어요 (…)` / `!! 마지막 확인 종가 점검이 오류로 멈췄어요 (…)`; nothing is carried (unconfirmed
   stocks are left out, as before #?), `pxSrc.own.err` holds the reason and the gate's carry row warns. Fix forward; the publish goes on.
+- **Pre-publish screen check (`tests/smoke_app.py --data .`):** the scenes that compare the own-close text exactly (미국날짜,
+  확인종가) first remove every real Korean `pxd` from their copy of the data (`strip_kr_carries`) and test only the ones they plant,
+  so a real carry on a second-source day never fails the screen check; two extra scenes run them on a copy with planted "real"
+  carries to prove it.
 - **Daily lists:** a carried stock's trading value is its old day's, so it is left out of today's 거래대금 and 거래 급증 lists
   (2.0) and of `data.json` `popular`, like 큰 움직임. It stays in 시가총액 and the 기준 lists, named under the list.
 - **On a warning:** read the named rows in the run summary. A carried stock with a different price or date than the previous

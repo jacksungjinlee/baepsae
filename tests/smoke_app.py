@@ -2549,11 +2549,43 @@ def _md(iso, lang):
     return f"{['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.month - 1]} {d.day}" if lang == "en" else f"{d.month}월 {d.day}일"
 
 
+def strip_kr_carries(f):
+    """2026-11-19 (리뷰 M-A): 발행 전 화면 검사는 진짜 데이터로 돌아요 (update-data.yml --data .). 2차 출처 날에는 진짜 데이터에 마지막 확인 종가로
+    실은 국내 종목(pxd)이 있어서, 안내 문장을 정확히 맞춰 보는 장면이 그 종목 때문에 실패하면 발행이 멈춰요. 그래서 그런 장면은 복사본(f)의 국내 종목 ·
+    기업분석 회사에서 pxd 를 지우고 (pxSrc.own 도 비우고) 장면이 스스로 심는 pxd 만으로 봐요. f 를 고쳐서 돌려줘요."""
+    for x in (f.get("data.json") or {}).get("stocks") or []:
+        if x.get("cls") == "kr":
+            x.pop("pxd", None)
+    for c in (f.get("corp.json") or {}).get("companies") or []:
+        c.pop("pxd", None)
+    src = (f.get("data.json") or {}).get("pxSrc")
+    if isinstance(src, dict) and isinstance(src.get("own"), dict):
+        src["own"] = {**src["own"], "codes": [], "n": 0}
+    return f
+
+
+def with_kr_carries(files):
+    """진짜 데이터에 마지막 확인 종가 종목이 있는 날을 흉내 낸 복사본 (리뷰 M-A): 삼성전자우(005935 · '삼성전자'로 찾으면 나와요) · 삼성전기(009150 · 시가총액
+    1조 넘어 기업분석의 지도에 그려져요)에 pxd 를 심어요 (data.json · corp.json, d1 없음). 그 두 종목이 없는 데이터면 국내 종목 중 앞의 둘."""
+    f = json.loads(json.dumps(files, allow_nan=True))
+    d = f["data.json"]
+    day = _iso_minus(d["pxDate"], 1)
+    kr = [x for x in d["stocks"] if x.get("cls") == "kr" and x.get("t") not in ("005930", "000270")]
+    want = [x for x in kr if x.get("t") in ("005935", "009150")] or kr[:2]
+    cby = {c.get("t"): c for c in (f.get("corp.json") or {}).get("companies") or []}
+    for x in want:
+        x["pxd"] = day
+        x.pop("d1", None)
+        if x.get("t") in cby:
+            cby[x["t"]]["pxd"] = day
+    return f
+
+
 def scene_own_close(R, files):
     """v19.1c (Jack 승인 2026-11-07): 미국 종목이 앞선 종가(data.json pxd)일 때 — 열린 포트폴리오의 배너에 '{티커} 가격은 {날짜} 종가예요.'
     (날짜마다 한 줄, 새 날짜 먼저, 영어 '{티커}: priced at the {날짜} close.') · 종목 고르기 목록 위 같은 안내 · 주문 메모 · CSV 맨 아래
     '※ …' · JSON 의 그 종목 줄에 priceDate. 그 날짜가 없는 종목(삼성전자 · 다른 미국 종목)은 안내도 priceDate 도 없어요."""
-    f = json.loads(json.dumps(files, allow_nan=True))
+    f = strip_kr_carries(json.loads(json.dumps(files, allow_nan=True)))   # 2026-11-19: 진짜 데이터의 국내 마지막 확인 종가와 상관없이 (리뷰 M-A)
     d = f["data.json"]
     usd = d.get("usPxDate") or d["pxDate"]
     own = {"AAPL": _iso_minus(usd, 1), "NVDA": _iso_minus(usd, 1), "MSFT": _iso_minus(usd, 2)}
@@ -3322,7 +3354,7 @@ def scene_kr_own_close(R, files):
     """2026-11-19 (Jack): 오늘 종가를 두 출처로 확인하지 못한 국내 종목은 마지막 확인 종가로 (data.json · corp.json pxd). 열린 포트폴리오의
     배너와 종목 고르기 목록 위: '{이름} 가격은 {날짜} 종가예요. 오늘 종가를 확인하지 못해서 {날짜} 종가를 보여 드려요.' (영어 화면은 승인된 영어
     문장만: '{코드}: priced at the {날짜} close.') · 첫 화면 성적표와 기업분석 머리: 가격 밑에 Jack 의 줄 그대로 · 삼성전자(pxd 없음)는 그대로."""
-    f = json.loads(json.dumps(files, allow_nan=True))
+    f = strip_kr_carries(json.loads(json.dumps(files, allow_nan=True)))   # 진짜 데이터의 국내 마지막 확인 종가와 상관없이 (리뷰 M-A)
     d = f["data.json"]
     t = "000270"
     day = _iso_minus(d["pxDate"], 1)
@@ -3433,7 +3465,9 @@ def scene_list(R, fresh, full):
             ("날짜", lambda: scene_kst_dates(R, fresh)),                                                                    # 2026-11-12 한국 날짜
             ("예전줄", lambda: scene_old_app_lines(R, fresh)),                                                              # 2026-11-14 Jack Q3
             ("주가기록", lambda: scene_px_bad(R, fresh)),                                                                  # 2026-11-14 과거 주가 기록 오류
-            ("확인종가", lambda: scene_kr_own_close(R, fresh))]                                                            # 2026-11-19 국내 마지막 확인 종가
+            ("확인종가", lambda: scene_kr_own_close(R, fresh)),                                                            # 2026-11-19 국내 마지막 확인 종가
+            ("확인종가", lambda: scene_kr_own_close(R, with_kr_carries(fresh))),                                           # 리뷰 M-A: 진짜 데이터에 마지막 확인 종가가 있는 날
+            ("미국날짜", lambda: scene_own_close(R, with_kr_carries(fresh)))]                                              # 리뷰 M-A: 같은 날의 미국 자기 날짜 장면
 
 
 def parse_part(text):

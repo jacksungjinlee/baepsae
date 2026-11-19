@@ -1237,7 +1237,8 @@ def check_kr_own_close(rep, data, macro, pdata):
         warn = True
     if own is not None:
         drop = own.get("drop") if isinstance(own.get("drop"), dict) else {}
-        parts.append(f"실음 {own['n']}종목" + (f" ({shown})" if shown else "") + f" · 확인 못 한 종목 {own.get('unconf', '?')}"
+        parts.append(f"실음 {own['n']}종목" + (f" ({shown})" if shown else "")
+                     + f" · 확인 못 한 종목 {own['unconf'] if isinstance(own.get('unconf'), int) else '모름'}"
                      + (" · 싣지 못함 " + " · ".join(f"{k} {v}" for k, v in sorted(drop.items())) if drop else ""))
         if own.get("err"):                 # 파이프라인의 마지막 확인 종가 단계가 오류로 멈춤 → 실은 종목 없이 발행 (예전처럼 빠져요)
             parts.append(f"단계가 오류로 멈춤 (실은 종목 없음): {str(own['err'])[:120]}")

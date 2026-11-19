@@ -157,10 +157,11 @@ def test_pipeline_drops_a_bad_row_loudly_and_publishes_the_rest(capsys):
     prev = prev_file([kr("400010", price=100.0), kr("400020", price=200.0)])
     good, wrong = kr("400010", price=100.0, d1=None, pxd=D16), kr("400020", price=999.0, d1=None, pxd=D16)   # 지난 발행본 가격과 다름
     src = fb_data([], ["400010", "400020"])["pxSrc"]
-    krs = {"hidden": ["400020"]}
+    krs = {"hidden": ["400020"], "jump": [["400020", "2026-05-08", 45.0, "halt"], ["900000", "2026-05-08", 40.0, "halt"]]}
     out = F.kr_own_close_final([kr("005930"), good, wrong], src, prev, KDAYS, krs=krs)
     assert [s["t"] for s in out] == ["005930", "400010"]
     assert src["own"]["codes"] == ["400010"] and src["own"]["n"] == 1 and src["own"]["bad"]["n"] == 1 and krs["hidden"] == []
+    assert krs["jump"] == [["900000", "2026-05-08", 40.0, "halt"]]              # 뺀 종목의 옮겨 온 움직임도 빠져요 (리뷰 N4) · 다른 줄은 그대로
     log = capsys.readouterr().out
     assert "!! 마지막 확인 종가 점검 (관문과 같은 함수): 1종목 빼고 발행" in log and "400020" in log
     # 그 기록을 관문이 경고로 보여요 (실패 아님)
@@ -266,17 +267,20 @@ def test_any_error_in_the_carry_step_keeps_the_run_going_with_no_carries(monkeyp
         assert n == 0 and out == base and krs == {"jump": [["x", "2026-01-02", 40.0, "halt"]], "hidden": ["x"]} and prod == {"a": "b"}, how
         own = src_["own"]
         assert own["n"] == 0 and own["codes"] == [] and own["err"] and V.kr_own_rec({"pxSrc": src_}) is own, (how, own)
+        assert own.get("unconf") == (None if how == "shape" else 2), (how, own)   # 세기 전에 멈추면 '모름' (0 이 아니에요 · 리뷰 N3)
         assert "!! 마지막 확인 종가 단계가 오류로 멈췄어요" in capsys.readouterr().out, how
         rep_ = V.Report()                            # 관문: 경고 (실패 아님)
         V.check_kr_own_close(rep_, {"pxDate": "2026-11-16", "pxSrc": src_, "stocks": base}, None, None)
         rows = {r[0]: (r[1], r[3]) for r in rep_.rows}
         assert rows[PXD_ROW][1] == "PASS" and rows[OWN_ROW][1] == "WARN" and "오류로 멈춤" in rows[OWN_ROW][0], rows
+        assert ("확인 못 한 종목 모름" if how == "shape" else "확인 못 한 종목 2") in rows[OWN_ROW][0], rows
     # 발행 직전 점검이 멈춰도: 마지막 확인 종가 종목을 모두 빼고 이어가요 (main 이 try 로 감싸요)
     kr_ = [kr("005930"), kr("496320", d1=None, pxd="2026-11-16")]
     src2 = {"px": V.PX_SRC_FB, "date": "2026-11-16", "own": own_rec(["496320"])}
-    krs2 = {"hidden": ["496320", "y"]}
+    krs2 = {"hidden": ["496320", "y"], "jump": [["496320", "2026-05-08", 45.0, "halt"], ["y", "2026-05-08", 40.0, "halt"]]}
     left = F.kr_own_close_drop_all(kr_, src2, krs2, "TypeError: 시험")
     assert [s["t"] for s in left] == ["005930"] and krs2["hidden"] == ["y"] and src2["own"]["codes"] == [] and src2["own"]["err"]
+    assert krs2["jump"] == [["y", "2026-05-08", 40.0, "halt"]]
     assert "!! 마지막 확인 종가 점검이 오류로 멈췄어요" in capsys.readouterr().out
     assert "kr = kr_own_close_drop_all(kr, kmeta.get(\"pxSrc\"), kmeta.get(\"krSeries\")" in inspect.getsource(F.main)
 
@@ -538,3 +542,64 @@ out = { val: t(RK.valList(S, 'kr')), surge: t(RK.surgeList(S, 'kr')), cap: t(RK.
     assert got["val"] == ["710000", "730000"] and got["surge"] == ["710000", "730000"], got
     assert got["cap"] == ["710000", "720000", "730000"] or set(got["cap"]) == {"710000", "720000", "730000"}, got
     assert got["usVal"] == ["UA", "UB"] and got["ok"] == [False, True, True, True], got
+
+
+# ── 4. 리뷰 S-A: 실제 발행 행을 마지막 확인 종가로 실어 뒤 단계 · 관문까지 (네트워크 없음) ──────────────────────────
+SNAP = os.path.join(ROOT, "tests", "fixtures", "snapshot")
+
+
+def _later_stages(carry):
+    """고정 데이터(tests/fixtures/snapshot: 실제 하루치 발행을 줄인 사본)를 지난 발행본으로, 다음 날 2차 출처 날을 만들어 main 의 뒤 단계를 차례로
+    (마지막 확인 종가 점검 → 해외 기업 · 원화 아닌 재무제표 비우기 → 배수 → 단위 확인 → 배당 → 손익 집계 · EPS 기준 → 점수 → 필수 종목 순위 → 거래대금
+    순위 → pxSrc · d1Blank → corp.json) 돌리고 관문(run_checks)까지. carry: 삼성전기(009150)를 확인 못 한 종목으로 실을지."""
+    load = lambda n: json.load(open(os.path.join(SNAP, f"snap_{n}.json"), encoding="utf-8"))
+    prev = {k: load(k) for k in ("data", "corp", "disc", "macro")}
+    pdat = prev["data"]
+    T = dt.date.fromisoformat(pdat["pxDate"]) + dt.timedelta(days=1)
+    days = sorted({r[0] for r in prev["macro"]["idxHist"]["KOSPI"]["rows"]} | {T.isoformat()})
+    unconf = {"009150": ("삼성전기", "conf")} if carry else {}
+    carried, jumps, drop = F.kr_own_close_carry(pdat, unconf, T, days)
+    mine = lambda s: s.get("cls") == "kr" and not s.get("fund")
+    kr_ = [copy.deepcopy(s) for s in pdat["stocks"] if mine(s) and s["t"] not in unconf] + carried
+    others = [copy.deepcopy(s) for s in pdat["stocks"] if not mine(s)]
+    src = {"v": 1, "px": V.PX_SRC_FB, "date": T.isoformat(), "days": {T.isoformat(): V.PX_SRC_FB},
+           "fb": {"n": 3000, "conf": 2990, "mkt": 0, "noDaum": 0, "bad": 0, "noYahoo": 0, "diff": 1, "yMeta": 0, "diffEx": [], "must": []},
+           "must": [], "chk": None, "n": {}, "own": F.log_kr_own_close(carried, drop, unconf, {})}
+    krs = copy.deepcopy(pdat.get("krSeries") or {})
+    kr_ = F.kr_own_close_final(kr_, src, pdat, days, krs=krs)
+    fin_map = {}
+    F.blank_foreign_dart(kr_)
+    F.blank_non_won(kr_, fin_map)
+    extra = F.fill_multiples(kr_, fin_map, {})
+    F.unit_guard(kr_, fin_map, extra, {})
+    div_counts, corp_extra = F.apply_div_basis(kr_, fin_map, {}, why=F.DivWhy(None, T))
+    inc, eb = F.income_check(kr_, fin_map, extra), F.eps_basis_of(kr_, extra)
+    F.add_percentiles(kr_)
+    F.trend_rank_missing(kr_)
+    F.dividend_rank_missing(kr_)
+    stocks = kr_ + others
+    data = {**pdat, "pxDate": T.isoformat(), "ksDate": T.isoformat(), "stocks": stocks, "krSeries": krs,
+            "popular": F.popular_list(kr_, [s for s in others if s.get("cls") == "us"]), "pxSrc": F.px_src_final(src, stocks),
+            "d1Blank": F.d1_blank_final(stocks, pdat.get("d1Blank")), "divCheck": div_counts, "incCheck": inc, "epsBasis": eb[0]}
+    corp = F.build_corp(kr_, fin_map, T.isoformat(), extra=corp_extra)
+    corp.update({"pxDate": T.isoformat(), "publishedAt": data.get("publishedAt"), "epsBasis": eb[0]})
+    for x in (data, corp):
+        json.dumps(x, allow_nan=False)                      # NaN · Infinity 없음 (브라우저가 파일을 통째로 못 읽어요)
+    rep = V.run_checks({"data": data, "corp": corp, "disc": prev["disc"], "macro": prev["macro"]}, prev, None, T + dt.timedelta(days=1),
+                       "publish", count_between=lambda a, b: 1, notes=[], sessions={"dates": [dt.date.fromisoformat(x) for x in days], "src": "t"},
+                       now=None, hilo=None, special={}, alt=None)
+    return data, corp, {r[0]: (r[3], r[1]) for r in rep.rows}
+
+
+def test_a_real_published_row_carried_through_the_later_stages_and_the_gate(capsys):
+    data, corp, rows = _later_stages(True)
+    s = next(x for x in data["stocks"] if x["t"] == "009150")
+    c = next(x for x in corp["companies"] if x["t"] == "009150")
+    assert s["pxd"] == c["pxd"] and "d1" not in s and c["price"] == s["price"]
+    assert data["pxSrc"]["own"]["codes"] == ["009150"] and "009150" not in data["popular"]
+    assert rows["국내 자기 가격 날짜 (pxd)"][0] == "PASS" and rows["국내 마지막 확인 종가 (pxSrc.own · 경고만)"][0] == "PASS", rows
+    assert rows["국내 거래 없는 종목 · 빈 d1 이유 (noTrade · d1Why)"][0] == "PASS" and rows["국내 가격 출처 (pxSrc)"][0] == "PASS", rows
+    # 줄인 고정 데이터라 다른 줄은 실패도 있어요 (종목 수 · DART 없음 · 최종본 없음) — 마지막 확인 종가를 싣지 않은 같은 날과 실패 줄이 같아요
+    _, _, plain = _later_stages(False)
+    fails = lambda r: sorted(k for k, v in r.items() if v[0] == "FAIL")
+    assert fails(rows) == fails(plain), (set(fails(rows)) ^ set(fails(plain)))
