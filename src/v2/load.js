@@ -4,7 +4,8 @@
 // Only the v17.5 format is accepted: data.json and corp.json must carry pxDate and publishedAt, macro.json publishedAt
 // (macro.json has no price date in the v17.5 format). Anything else is a load failure, never example data.
 // The preview page (app-preview.html) does not fetch anything: it passes its embedded fictional files to resolveLoad.
-import { loadJson, freshness, staleAfterTime, ownCloseReport, STALE_DAYS, daysSince, nextFreshChange } from "../data.js";
+import { loadJson, freshness, staleAfterTime, ownCloseReport, STALE_DAYS, daysSince, nextFreshChange, kstDate, FRESH_RECHECK_MAX_MS } from "../data.js";
+import { lateDays } from "./tradedays.js";
 import { detectFeatures, missingForBuild, CUSHION_ASSETS, setDataShape } from "./engine.js";
 import { R2022 } from "./y2022.js";
 import { setEpsBasis } from "./fix.js";
@@ -103,14 +104,22 @@ export function refreshFresh(load, now) {
   const o = load.fresh || {};
   const corpPub = load.corp && load.corp.publishedAt;
   const sameCorp = daysSince(corpPub, load.checkedAt) === daysSince(corpPub, t);
-  if (f.stale === o.stale && f.days === o.days && f.md === o.md && !!f.due === !!o.due && sameCorp) return load;
+  // the late check (rules.js checkState, Jack 2026-11-19): on stale data the trading days behind move at 00:00 KST, and the
+  // check stops once they pass 5, so a page left open must not keep showing it (fresh data: the count does not matter)
+  const lateN = (at) => { const x = at == null ? null : lateDays(d, kstDate(at)); return x ? x.n : null; };
+  const sameLate = !(f.stale || o.stale) || lateN(load.checkedAt) === lateN(t);
+  if (f.stale === o.stale && f.days === o.days && f.md === o.md && !!f.due === !!o.due && sameCorp && sameLate) return load;
   return { ...load, fresh: f, checkedAt: t };
 }
 // ms until the stale check can give another answer (data.js nextFreshChange: staleAfter, the next day of either publish
 // time, at most an hour), or null (preview, loading, failed: nothing to re-check).
 export function nextFreshCheck(load, now) {
   if (!load || load.status !== "ok" || load.preview) return null;
-  return nextFreshChange(now, [load.data.publishedAt, load.corp && load.corp.publishedAt], load.data.staleAfter);
+  const base = nextFreshChange(now, [load.data.publishedAt, load.corp && load.corp.publishedAt], load.data.staleAfter);
+  // and the next 00:00 KST, when the late check's trading days move (refreshFresh) — also for a file without staleAfter
+  const t = now == null ? Date.now() : now;
+  const midnight = Date.parse(kstDate(t) + "T00:00:00+09:00") + 86400000 + 1000 - t;
+  return Math.max(1000, Math.min(base == null ? FRESH_RECHECK_MAX_MS : base, midnight));
 }
 
 // ---- An old page brought back into view fetches the files once (Jack, 2026-11-08, Q9) ----

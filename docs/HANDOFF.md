@@ -20,6 +20,8 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 **#143 (v19.6c 관심 종목), 2026-11-19:** watch list with 이하/이상 conditions (Jack's 11-19 lines), 홈 rows, the side key `baepsae2.v1.watch`. App only.
 
+**#144 (late-data check), 2026-11-19:** when data is late the portfolio check runs on the last official close for up to 5 trading days (from the close date), dated "{date} 종가로 점검했어요"; nothing labelled 오늘 on an old close; "{date} 종가 기준으로는 할 일이 없어요." (Jack, 11-19).
+
 **Incident, 2026-11-18/19.** No data published after 11-17 06:40 KST (the site said "2일째 갱신이 멈췄어요").
 - **Cause:** the volunteer copy of the KRX list stopped saving its after-close file after 11-16, and KRX's company list now needs a login, so industries came back empty. The gate rightly blocked every run.
 - **Fixes:** #134 (a test that failed only because of the date) merged 01:25 KST. #137 merged 03:59 KST: Daum's official daily prices, kept only where Yahoo `.KS`/`.KQ` agrees to the won; industries carried forward.

@@ -18,6 +18,7 @@ import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, OwnC
 import { parseImport, importProblem, importIssues, mergeStores, storedStores, downloadRecords, isSafariLike, withConfirm, WATCH_DROPPED } from "./store.js";
 import { withRemoval } from "./edit.js";
 import { evaluateAll, todayCtx } from "./rules.js";
+import { lateSay } from "./tradedays.js";
 import { HoldingRow } from "./daily.jsx";
 import { deckMoney } from "./track.js";
 import { DeckSummary, ByStockHead, WeightLine, AddMoney, MissingNote, PausedNote, plainEdges } from "./tracking.jsx";
@@ -87,6 +88,7 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
   // says so (the stale line, or the load-failure message), so a held stock without a chip never reads as "fine".
   const ctx = useMemo(() => todayCtx(load), [load]);
   const ev = useMemo(() => evaluateAll(decks, ctx), [decks, ctx]);
+  const late = !!(ev.ok && ev.late);                     // the check ran on an older close (rules.js checkState, Jack 2026-11-19)
   // Part E: values use US prices at their own close date; say so when it differs from the Korean one.
   // v19.3d: a 가진 종목 portfolio has no per-stock rows in the daily check, so its dollar holdings are looked up here
   const us = ev.ok && (ev.decks.some((de) => de.ok && de.holdings.some((x) => x.cls === "us")) || decks.some((d) => usHeld(d, load)));
@@ -148,13 +150,22 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
       {decks.length > 0 && !ev.ok && ev.why === "stale" && (
         <Note tone="watch" data-ui-v2="deck-stale">{todayStaleText(ev.days)}</Note>
       )}
+      {/* late data within 5 trading days (rules.js checkState, Jack 2026-11-19): the check ran on the last official close;
+          its date here for the portfolios made with 포트폴리오 만들기 (a 가진 종목 portfolio says it in its own head) */}
+      {ev.ok && ev.late && decks.some((d) => !isImported(d)) && (
+        <Note tone="watch" data-ui-v2="deck-late" data-n={ev.late.n}>{fill(C.pfr.checked, { date: mdText(load.data.pxDate) })}</Note>
+      )}
       {decks.map((d) => {
-        if (isImported(d)) return <ImportedCard key={d.id} deck={d} ev={ev} ctx={ctx} load={load} openStock={openStock} onRemove={(t) => onRemove(d.id, t)} onRules={onRules ? () => onRules(d.id) : null}
+        if (isImported(d)) return <ImportedCard key={d.id} deck={d} ev={ev} ctx={ctx} load={load} openStock={openStock} onRemove={(t) => onRemove(d.id, t)} onRules={onRules ? () => onRules(d.id) : null} late={late}
           onRecord={canRecord ? (t, nk) => setFlow(startFlow([d.id], t, nk)) : null} onReturns={onReturns && hasRecords(d) ? () => onReturns(d.id) : null} />;
         const ts = [...heldQty(d).keys()];
         const de = ev.ok ? ev.decks.find((x) => x.id === d.id) : null;
         const names = new Map(d.holdings.map((h) => [h.t, h.nk]));
-        const m = de && de.ok ? deckMoney(d, de, ctx) : { ok: false };   // Part E: value · 원금 · return (fresh data only)
+        const m0 = de && de.ok ? deckMoney(d, de, ctx) : { ok: false };   // Part E: value · 원금 · return (fresh data only)
+        // late data (rules.js checkState; review 2026-11-19): with a stock missing from the data, no totals (the line that explains
+        // them speaks of today's data, so it is not shown on an older close) and no 포트폴리오에서 빼기, as before the late check
+        const m = late && m0.absent && m0.absent.length ? { ok: false } : m0;
+        if (m !== m0) lateSay(`${d.id}: the value, money put in and return are left out (${m0.absent.map((a) => a.t).join(", ")} missing from the data; the line that says so speaks of today's data)`);
         const paused = !!(de && de.ok && de.weights && de.weights.paused);    // v19.0c: a held stock is missing from today's data
         const start = d.purchases.reduce((a, p) => (p.qty > 0 && (a == null || p.date < a) ? p.date : a), null);
         return (
@@ -185,10 +196,10 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
                 onOpen={!gone && openStock && load.status === "ok" && isCompany(load.byT.get(t)) ? () => openStock(t) : undefined}
                 x={x} names={names} onConfirm={(item, answer) => onConfirm(d.id, item, answer)} change={ret}
                 extra={!gone && m.ok && x ? <WeightLine x={x} /> : null}
-                action={gone || rec ? (
+                action={(gone && !late) || rec ? (
                   <div data-ui-v2="row-actions" style={{ display: "flex", gap: SPACE(2), flexWrap: "wrap", padding: `${SPACE(1)}px 0 ${SPACE(2)}px` }}>
                     {rec && <RecordButton name={h.nk} onClick={rec} />}
-                    {gone && <RemoveButton onClick={() => onRemove(d.id, t)} />}
+                    {gone && !late && <RemoveButton onClick={() => onRemove(d.id, t)} />}
                   </div>
                 ) : null} />;
             })}
@@ -261,10 +272,10 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
 
 // v19.3d (v19.3 F.1): a portfolio made with 가진 종목 넣기. Its four portfolio rules instead of 확인 필요 for every stock;
 // on stale or failed data no number and no rule (the screen's own line says why).
-function ImportedCard({ deck, ev, ctx, load, openStock, onRemove, onRules, onRecord, onReturns }) {
+function ImportedCard({ deck, ev, ctx, load, openStock, onRemove, onRules, onRecord, onReturns, late = false }) {
   const de = ev.ok ? ev.decks.find((x) => x.id === deck.id) : null;
   const st = useMemo(() => pfState(deck, ctx, load.status === "ok" ? load.data.stocks : []), [deck, ctx, load]);
   const m = de && de.ok ? deckMoney(deck, de, ctx) : { ok: false };
   return <ImportedDeck deck={deck} st={st} m={m} openStock={openStock} byT={ctx.byT} onRemove={onRemove} onRules={onRules} onRecord={onRecord}
-    footer={onReturns ? <ReturnsLink onClick={onReturns} /> : null} pxDate={load.status === "ok" ? load.data.pxDate : null} />;
+    footer={onReturns ? <ReturnsLink onClick={onReturns} /> : null} pxDate={load.status === "ok" ? load.data.pxDate : null} late={late} />;
 }

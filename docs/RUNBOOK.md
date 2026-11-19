@@ -986,6 +986,10 @@ see the existing "no longer in today's data" handling). No data run is needed fo
     (the published file was computed with the old table) until the next publish.
   - The 2027 KR rows 노동절 대체 휴일 (5/3) and 제헌절 대체 휴일 (7/19) follow the 2026 law changes and still need KRX's
     own notice.
+  - The app keeps its own copy of the closed days in `src/v2/tradedays.js` (Jack, 2026-11-19: on late data the daily check
+    keeps running on the last close for up to 5 trading days, counted per market). After any edit to the table, copy the
+    same rows there and rebuild `app.html` (`bash build-app.sh`) in the same PR: `tests/test_late_check.py` fails while the
+    two differ. Days past the app's copy count every weekday, so a missing year can only stop the late check earlier.
 - **Exchange-rate history and stock splits** (v19.6a data, for 2.0's 팔았어요 · 배당 받았어요; three gate rows, stricter only):
   - `macro.json` `fxHist` = `{asOf, final, rows: [[date, rate], …]}` from 2016, plus `fxHistSrc` (where the rows come from) and
     `fxHistFresh` (the last day the run read that source itself). A US record dated in the past saves the rate of its own
