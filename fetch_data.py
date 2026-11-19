@@ -4622,9 +4622,11 @@ def _issue_failed(prev, bgn, why, client):
 #        값이 '-' 이거나, 날짜가 아니거나, 값 칸이 여럿이거나, 그런 줄이 여럿인데 같은 날이 아니면 읽지 못한 것이에요 (null · 짐작하지 않아요).
 #        조사 2026-11-19: 육일씨엔에쓰 20260826000431 · 뷰노 20261111000261 (정정 — 정정 표의 10-15 → 11-11 은 빼고 양식의 11-11) · STX
 #        20261013000428 (회생계획 인가일 09-16 — 본문 문단의 '15. 이사회결의일(결정일)' 은 표 칸이 아니라 읽지 않아요).
-# 확인   결의일은 공시일 d 이하이고, d 보다 ISSUE_BD_MAX_YEARS 년 넘게 앞이 아니어야 해요 — 아니면 그 줄의 bd 는 null 로 두고 '기간 밖이라 비움'
-#        으로 따로 세요 (이름 · 이유). 이 확인은 캐시의 값을 쓸 때마다 해요: 캐시에는 원문이 적은 날을 그대로 둬요 (리뷰 2026-11-19 — 한도를
-#        바꿔도 판을 올릴 필요가 없고, 오래 미룬 제3자배정 정정이 '못 읽음'으로 굳지 않게). ISSUE_BD_MAX_YEARS 는 Jack 에게 물어요.
+# 확인   결의일이 공시일 d 보다 ISSUE_BD_MAX_YEARS 년 넘게 앞이 아니어야 해요 (Jack 2026-11-19, 7d: yes) — 아니면 그 줄의 bd 는 null 로 두고
+#        '기간 밖이라 비움' 으로 따로 세요 (이름 · 이유 · 관문의 N 에 들지 않아요 — 관문은 빈 결의일로 경고만). 이 확인은 캐시의 값을 쓸 때마다 해요:
+#        캐시에는 원문이 적은 날을 그대로 둬요 (리뷰 2026-11-19 — 한도를 바꿔도 판을 올릴 필요가 없고, 오래 미룬 제3자배정 정정이 '못 읽음'으로
+#        굳지 않게). 공시일 뒤인 날은 여기서 쓰고, 쓰기 바로 앞의 own_check_disc 가 관문과 같은 함수(issue_bd_bad_rows)로 비우고 ownDrop.issueBd
+#        에 세요 (Jack 의 상시 규칙 2026-11-19 — 한 번에 많이 틀리면 관문 실패).
 # 캐시   DART 캐시 '{접수번호}|issuebd|v2': 000 (d = 원문이 적은 결의일) · nf (원문을 받았는데 결의일 칸을 읽지 못함 · zip 에 본 파일이 없음 —
 #        why). 공시는 바뀌지 않아서 한 번만 읽어요 (정정은 새 접수번호). 다시 읽는 것은 조회 실패(응답 없음 · 빈 zip · 글자로 바꾸지 못한 본 파일)
 #        · 해석 오류(파서가 멈춤) · 실행당 한도 · 시간 한도 · DART 멈춤뿐 — 적지 않고 다음 실행이 다시 읽어요. 공시가 90일 기간을 벗어나면
@@ -4880,8 +4882,9 @@ def fill_issue_bd(disc, client, end):
         log(f"  !! 결의일을 못 읽은 유상증자 공시 {len(nf):,}건 (bd 빈 칸 · 같은 공시는 다시 읽지 않아요): "
             + ", ".join(f"{r['nk']} {r['d']} {r['rc']} ({why})" for r, why in nf[:20]) + (" …" if len(nf) > 20 else ""))
     if lim:
-        log(f"  !! 결의일이 공시일과 맞지 않아 비운 유상증자 공시 {len(lim):,}건 (bd 빈 칸 · 공시일 뒤이거나 {ISSUE_BD_MAX_YEARS}년 넘게 앞 · "
-            "원문의 날은 캐시에 있어요 — 한도를 바꾸면 다시 받지 않고 다음 실행이 써요): "
+        log(f"  !! 결의일이 공시일보다 {ISSUE_BD_MAX_YEARS}년 넘게 앞이라 비운 유상증자 공시 {len(lim):,}건 (bd 빈 칸 · Jack 7d · 원문의 날은 캐시에 "
+            "있어요 — 한도를 바꾸면 다시 받지 않고 다음 실행이 써요 · 공시일 뒤인 날은 쓰기 앞의 own_check_disc 가 따로 비우고 세요 · 이 수는 "
+            "관문의 N 에 들지 않아요 — 관문은 빈 결의일로 경고만): "
             + ", ".join(f"{r['nk']} {r['d']} {r['rc']} ({why})" for r, why in lim[:20]) + (" …" if len(lim) > 20 else ""))
     return out
 
@@ -4913,35 +4916,39 @@ def own_check_disc(disc, today):
     """disc.json 을 쓰기 바로 앞: 관문과 같은 함수로 나쁜 공시 줄을 빼거나 값을 비우고 disc["ownDrop"] 에 적어요 (줄을 고쳐요) → disc.
     issueShape 모양이 틀린 issue 줄 · 같은 접수번호가 여러 번 나온 줄 → 줄째 빼요 (그 결정의 숫자를 믿을 수 없어요 — 카드가 없는 것이 틀린 숫자보다
     나아요) · issueBd 공시일 뒤의 유상증자 결의일 → bd 만 비워요 (줄의 다른 칸은 상세 API 로 읽은 것 · 결의일만 우리가 잘못 읽었어요) ·
-    insiderRole 객체가 아닌 insider 줄 → 빼요 · 허용하지 않은 role → role 만 비워요 (거래 숫자는 맞아요 · role 은 제목의 글자)."""
+    insiderRole 객체가 아닌 insider 줄 → 빼요 · 허용하지 않은 role → role 만 비워요 (거래 숫자는 맞아요 · role 은 제목의 글자).
+    Jack 의 규칙은 한 줄에 대한 것이에요 — 칸 전체를 바꾸지 않아요 (리뷰 2차 2026-11-19): insider 가 목록이 아니면 그대로 두고 크게 남겨요
+    (관문 '임원 · 주요주주 역할' 이 실패해 발행하지 않아요 — 빈 목록으로 바꾸면 공시 탭이 '보고 없음'을 지금 데이터처럼 보여요) · issue 가
+    목록이 아니면 빈 목록과 issueOk false 로 써요 (목록을 받지 못한 날과 같아요 — 앱은 실패 줄 · 관문 경고 · 아직 어느 화면도 issue 를 읽지 않아요)."""
     base = gate_iso_day(disc.get("asOf")) or today
     own = disc.get("ownDrop") if isinstance(disc.get("ownDrop"), dict) else {}
-    pre = []
     if not isinstance(disc.get("issue"), list):
-        pre = [(-1, "issue", f"목록이 아님 ({type(disc.get('issue')).__name__}) → 빈 목록", False, None)]
-        disc["issue"] = []
+        log(f"  !! 주요사항 공시(issue)가 목록이 아님 ({type(disc.get('issue')).__name__}) — 우리 처리의 잘못이에요: 빈 목록과 issueOk false 로 "
+            "써요 (목록을 받지 못한 날과 같아요 · 앱은 실패 줄 · 관문 경고)")
+        disc["issue"], disc["issueOk"] = [], False
     bad = issue_bad_rows(disc["issue"], base)
     drop = {b[0] for b in bad}
     disc["issue"] = [r for i, r in enumerate(disc["issue"]) if i not in drop]
-    own[ISSUE_SHAPE_KEY] = own_rows_rec(pre + bad)
-    _own_log(OWN_ISSUE_SHAPE_NAME, pre + bad, ISSUE_SHAPE_MAX, "빼고 발행", f"disc.json ownDrop.{ISSUE_SHAPE_KEY}")
+    own[ISSUE_SHAPE_KEY] = own_rows_rec(bad)
+    _own_log(OWN_ISSUE_SHAPE_NAME, bad, ISSUE_SHAPE_MAX, "빼고 발행", f"disc.json ownDrop.{ISSUE_SHAPE_KEY}")
     bad = issue_bd_bad_rows(disc["issue"])
     for b in bad:
         disc["issue"][b[0]]["bd"] = None
     own[ISSUE_BD_KEY] = own_rows_rec(bad)
     _own_log(OWN_ISSUE_BD_NAME, bad, ISSUE_BD_MAX, "비움 (bd)", f"disc.json ownDrop.{ISSUE_BD_KEY}")
-    pre = []
-    if not isinstance(disc.get("insider"), list):
-        pre = [(-1, "insider", f"목록이 아님 ({type(disc.get('insider')).__name__}) → 빈 목록", True, None)]
-        disc["insider"] = []
-    bad = insider_bad_rows(disc["insider"])
-    drop = {b[0] for b in bad if b[4] is None}
-    for b in bad:
-        if b[4] is not None:
-            disc["insider"][b[0]][b[4]] = None
-    disc["insider"] = [r for i, r in enumerate(disc["insider"]) if i not in drop]
-    own[INSIDER_ROLE_KEY] = own_rows_rec(pre + bad)
-    _own_log(OWN_INSIDER_ROLE_NAME, pre + bad, INSIDER_ROLE_MAX, "빼거나 비움", f"disc.json ownDrop.{INSIDER_ROLE_KEY}")
+    if isinstance(disc.get("insider"), list):
+        bad = insider_bad_rows(disc["insider"])
+        drop = {b[0] for b in bad if b[4] is None}
+        for b in bad:
+            if b[4] is not None:
+                disc["insider"][b[0]][b[4]] = None
+        disc["insider"] = [r for i, r in enumerate(disc["insider"]) if i not in drop]
+    else:
+        bad = []
+        log(f"  !! 내부자 거래(insider)가 목록이 아님 ({type(disc.get('insider')).__name__}) — 그대로 둬요: 관문 '임원 · 주요주주 역할' 이 실패해 "
+            "발행하지 않아요 (빈 목록으로 바꾸면 공시 탭이 '보고 없음'을 지금 데이터처럼 보여요)")
+    own[INSIDER_ROLE_KEY] = own_rows_rec(bad)
+    _own_log(OWN_INSIDER_ROLE_NAME, bad, INSIDER_ROLE_MAX, "빼거나 비움", f"disc.json ownDrop.{INSIDER_ROLE_KEY}")
     disc["ownDrop"] = own
     return disc
 

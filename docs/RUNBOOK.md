@@ -659,10 +659,13 @@ What the daily run writes (`fetch_data.py` `fetch_issues`, `fill_issue_bd`, `ins
   - Cache: `{filing number}|issuebd|v2`, also in a full-DART run, dropped when the filing leaves the 90 days. It keeps the date
     the document gives, or "unreadable" with the reason (no date in the form, or no main file in the zip). A filing is read
     once ever; an unreadable-but-delivered document is not read again.
-  - Window: the date is used only when it is on or before the filing date and not more than `ISSUE_BD_MAX_YEARS` (1, a
-    question for Jack) earlier. This is checked each time the cached date is used, so changing the limit needs no re-read. A
-    date outside it leaves `bd` null and is logged separately ("!! 결의일이 공시일과 맞지 않아 비운 유상증자 공시 …"), apart
-    from unreadable documents ("!! 결의일을 못 읽은 유상증자 공시 …").
+  - Window: `fill_issue_bd` uses the date only when it is not more than `ISSUE_BD_MAX_YEARS` (1; Jack's yes, 11-19, 7d) before
+    the filing date. This is checked each time the cached date is used, so changing the limit needs no re-read. A date outside
+    it leaves `bd` null and is logged separately ("!! 결의일이 공시일보다 1년 넘게 앞이라 비운 유상증자 공시 …", 8–10 a run in
+    the 11-19 dry runs), apart from unreadable documents ("!! 결의일을 못 읽은 유상증자 공시 …"). These window blanks do not
+    count toward the gate's N; the gate only warns about blank board dates, every day they are there. A date after the filing
+    date is not handled here: it passes through and the shared step before writing (`own_check_disc`, below) blanks it and
+    counts it in `ownDrop.issueBd`.
   - Retried next run (not cached): a failed or slow fetch, an empty zip, a main file that is empty or won't decode, a parser
     crash, the per-run limit (100 documents, `ISSUE_BD_PER_RUN`, newest first) and the time limit (180 s,
     `ISSUE_BD_SECONDS`). None of this stops the run or changes `issueOk`. On a day the list failed (`issueOk` false) nothing
@@ -697,13 +700,18 @@ and runs the same function on the file:
   and 5 branch dry runs, all 0 → max(5, 3 × 0)), or when a bad value is still in the file and would show a wrong number (the
   drop step failed).
 - **WARN** (naming the rows) when 1..N rows were dropped or blanked, or a remaining bad value shows no number.
-- **PASS** when 0. A file without the record (from before #PR) keeps the old rule of each row: a bad row fails.
+- **PASS** when 0. A file without the record (from before #PR) keeps the old rule of each row: a bad row fails. A file whose
+  `ownDrop` is not an object, or whose record has the wrong shape, also keeps the old rule, plus a warning (as #149 does).
+- The rule is about single rows. A whole section is never replaced: an `insider` that is not a list is left as it is and
+  logged with "!!", so the gate fails (an empty list would make the 공시 tab show "no reports" as live data). An `issue` that is
+  not a list is written as an empty list with `issueOk` false, the same as a day the list failed (the app shows its failed
+  state; the gate warns; no screen reads `issue` yet).
 
 | Row (key) | Bad row | Pipeline | Remaining value FAILs? |
 |---|---|---|---|
-| 주요사항 공시 (`disc.json` `issueShape`) | a malformed `issue` row (missing or wrong field, date outside the 90 days, method or share count on a bond, amount on a rights issue, non-positive number, a `wd` / `pend` / `cor` mark that is not true/false or a number on a `wd` / `pend` row, `cls` / `n2` / `p2` / `bonus` out of place), or a filing number that appears more than once (every copy) | drops the row (its numbers can't be trusted; no card is better than a wrong one) | yes for dates, numbers and the marks that change how numbers read (`d`, `bd`, `n`, `p`, `amt`, `n2`, `p2`, `kind`, `cls`, `bonus`, `wd`, `pend`); no for filing number, ticker, name, method, correction mark, duplicates. A non-list `issue` or non-boolean `issueOk` only warns (no screen reads `issue` yet) |
-| 유상증자 이사회 결의일 (`disc.json` `issueBd`) | a rights row (not `wd`, not `pend`) whose board date is after its filing date | blanks `bd` (the rest of the row came from DART's lookup; only our reading of the date is wrong). `fill_issue_bd` now applies only the one-year window (Jack, 11-19, 7d) and leaves "after the filing date" to this check, so a run that misreads many dates is caught by N | yes (the date labels the decision's numbers) |
-| 임원 · 주요주주 역할 (`disc.json` `insiderRole`) | a `role` other than 임원, 주요주주, 임원·주요주주 or null; a row that is not an object | blanks `role` (the trade's numbers are right; the role is a title word) · drops a non-object row | yes for a non-object row (the 공시 tab reads its share count and amount); no for a bad role. `insider` not a list still fails (the 공시 tab reads it) |
+| 주요사항 공시 (`disc.json` `issueShape`) | a malformed `issue` row (missing or wrong field, date outside the 90 days, method or share count on a bond, amount on a rights issue, non-positive number, a `wd` / `pend` / `cor` mark that is not true/false or a number on a `wd` / `pend` row, `cls` / `n2` / `p2` / `bonus` out of place), or a filing number that appears more than once (every copy) | drops the row (its numbers can't be trusted; no card is better than a wrong one) | yes for dates, numbers and the marks that change how numbers read (`d`, `bd`, `n`, `p`, `amt`, `n2`, `p2`, `kind`, `cls`, `bonus`, `wd`, `pend`); yes for a filing number that appears more than once (two rows could carry different numbers); no for filing number, ticker, name, method, correction mark. A non-boolean `issueOk` only warns (no screen reads `issue` yet) |
+| 유상증자 이사회 결의일 (`disc.json` `issueBd`) | a rights row (not `wd`, not `pend`) whose board date is after its filing date (bonds' DART board dates are not checked for this: a known gap, as before) | blanks `bd` (the rest of the row came from DART's lookup; only our reading of the date is wrong). `fill_issue_bd` now applies only the one-year window (Jack, 11-19, 7d) and leaves "after the filing date" to this check, so a run that misreads many dates is caught by N | yes (the date labels the decision's numbers) |
+| 임원 · 주요주주 역할 (`disc.json` `insiderRole`) | a `role` other than 임원, 주요주주, 임원·주요주주 or null; a row that is not an object | blanks `role` (the trade's numbers are right; the role is a title word) · drops a non-object row | yes for a non-object row (the old app reads fields of every row and throws on one that isn't an object: `src/disc.jsx` `x.s`, `src/corp.jsx` `x.t`; 2.0 reads its share count and amount); no for a bad role (no screen reads `role` yet). `insider` not a list still fails (left as it is, see above) |
 | 미국 일정 (`data.json` `usDates`) | an `ed` / `xd` that is not a real YYYY-MM-DD, or one on a stock that is not American | blanks that field only; the stock row stays (prices and dividends are right; dropping a stock would break other checks such as the v19.1i dividend proof lists) | no (event dates, not dates that label a number) |
 
 Other WARNs, unchanged: no `issue` section (a file from before #PR, e.g. the live site right after the merge), `issueOk` false

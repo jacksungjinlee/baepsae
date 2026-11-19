@@ -1953,7 +1953,8 @@ def issue_bad_rows(rows, base):
         else:
             ok.append((i, r))
     seen = collections.Counter(r["rc"] for _i, r in ok)
-    out += [(i, r["rc"], f"같은 접수번호가 {seen[r['rc']]}번", False, None) for i, r in ok if seen[r["rc"]] > 1]
+    # 리뷰 2차 (2026-11-19): 같은 접수번호의 두 줄은 n · p 가 다를 수 있어요 — B.2 카드가 issue 를 읽으면 틀린 숫자예요 (wrong)
+    out += [(i, r["rc"], f"같은 접수번호가 {seen[r['rc']]}번", True, None) for i, r in ok if seen[r["rc"]] > 1]
     return sorted(out)
 
 
@@ -1973,8 +1974,9 @@ def issue_bd_bad_rows(rows):
 
 def insider_bad_rows(rows):
     """Jack 의 상시 규칙 · 임원 · 주요주주 역할: [(순번, 이름, 이유, 틀린 숫자를 보일 수 있는지, 비울 칸 · 줄째 빼면 None)].
-    객체가 아닌 줄은 빼요 (공시 탭이 그 줄의 주식 수 · 금액을 읽어요 — 남으면 틀린 숫자) · 허용하지 않은 role 은 비워요 (role 은 글자 — 숫자가
-    아니에요). 파이프라인(fetch_data.own_check_disc)과 관문(_check_roles)이 같은 함수를 써요. (순수 함수)"""
+    객체가 아닌 줄은 빼요 — 남으면 실패 (wrong): 예전 뱁새가 줄마다 칸을 읽다가 멈춰요 (src/disc.jsx 업종 칸 x.s · src/corp.jsx 종목 칸 x.t —
+    null 줄에서 오류 · 화면이 깨져요) · 2.0 공시 탭도 그 줄의 주식 수 · 금액을 읽어요. 허용하지 않은 role 은 비워요 (role 은 글자 — 숫자가
+    아니에요 · 아직 어느 화면도 읽지 않아요). 파이프라인(fetch_data.own_check_disc)과 관문(_check_roles)이 같은 함수를 써요. (순수 함수)"""
     out = []
     for i, r in enumerate(rows if isinstance(rows, list) else []):
         if not isinstance(r, dict):
@@ -2007,7 +2009,8 @@ def us_date_bad_rows(stocks):
 
 def own_rows_rec(rows):
     """나쁜 행 [(순번, 이름, 이유, …)] → 발행 파일의 ownDrop[열쇠] 값 {"n": 수, "rows": [[이름, 이유]] 앞 OWN_ROWS_SHOW 개}. (순수 함수)
-    모양은 claude/own-check-rule 의 data.json ownDrop (own_drop_rec) 과 같아요 — 그 PR 이 들어오면 하나로 합쳐요."""
+    모양은 #149 (claude/own-check-rule) 의 data.json ownDrop (own_drop_rec · own_drop_text · own_drop_get) 과 같아요. 지금은 도우미가 두 벌이에요
+    (own_rows_* · #149 의 own_drop_*) — 둘 다 들어오면 하나로 합쳐요 (기록 모양 · 읽는 규칙은 같아요)."""
     return {"n": len(rows), "rows": [[str(r[1]), str(r[2])] for r in rows[:OWN_ROWS_SHOW]]}
 
 
@@ -2021,12 +2024,16 @@ def own_rows_text(rows, n=None):
 def own_rows_get(doc, key):
     """발행 파일의 ownDrop[key] → ("none", None) 기록이 없음 (예전 파일 — 예전 규칙) · ("bad", 글) 기록의 모양이 틀림 (예전 규칙 + 경고) ·
     ("ok", (n, rows)). 어떤 JSON 값이 와도 예외 없음."""
-    own = doc.get("ownDrop") if isinstance(doc, dict) else None
-    if not isinstance(own, dict) or key not in own:
+    if not isinstance(doc, dict) or "ownDrop" not in doc:
+        return "none", None
+    own = doc["ownDrop"]
+    if not isinstance(own, dict):          # 리뷰 2차: 칸은 있는데 객체가 아님 — 조용히 넘기지 않고 예전 규칙 + 경고 (#149 의 own_drop_get 과 같아요)
+        return "bad", f"ownDrop 이 객체가 아님 {_short(own, 40)}"
+    if key not in own:
         return "none", None
     rec = own[key]
     n, rows = (rec.get("n"), rec.get("rows")) if isinstance(rec, dict) else (None, None)
-    if not (isinstance(n, int) and not isinstance(n, bool) and n >= 0 and isinstance(rows, list)
+    if not (isinstance(rec, dict) and set(rec) == {"n", "rows"} and isinstance(n, int) and not isinstance(n, bool) and n >= 0 and isinstance(rows, list)
             and len(rows) == min(n, OWN_ROWS_SHOW)
             and all(isinstance(x, list) and len(x) == 2 and all(isinstance(v, str) for v in x) for x in rows)):
         return "bad", f"ownDrop.{key} 기록 모양이 틀림 {_short(rec, 40)}"
@@ -2133,8 +2140,8 @@ def _check_roles(rep, disc):
     name = "임원 · 주요주주 역할 (insider role)"
     th = (f"role 은 {' | '.join(INSIDER_ROLES)} | null (실패) — role 칸이 없는 줄(v19.6b 전) · 직위(pos)가 '-' 인 줄은 경고 "
           f"(DART 의 '-' 는 빈 칸이에요) · 새 파일(ownDrop.{INSIDER_ROLE_KEY} 있음 · Jack 의 상시 규칙 2026-11-19): 파이프라인이 빼거나 비운 줄이 "
-          f"{INSIDER_ROLE_MAX}개를 넘거나 객체가 아닌 줄이 남으면 실패, 남은 틀린 role 은 경고 · insider 가 목록이 아니면 실패 (공시 탭이 그 줄의 "
-          "숫자를 읽어요)")
+          f"{INSIDER_ROLE_MAX}개를 넘거나 객체가 아닌 줄이 남으면 실패 (예전 뱁새가 그 줄의 칸을 읽다가 멈춰요 — disc.jsx x.s · corp.jsx x.t), 남은 "
+          "틀린 role 은 경고 · insider 가 목록이 아니면 실패 (칸 전체 — 공시 탭이 '보고 없음'을 지금 데이터처럼 보이면 안 돼요)")
     ins = disc.get("insider")
     if not isinstance(ins, list):
         rep.add(name, False, f"insider 가 목록이 아님 {_short(ins)}", th)

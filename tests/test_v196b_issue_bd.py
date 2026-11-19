@@ -210,7 +210,7 @@ def test_an_unreadable_document_is_cached_counted_and_never_read_again(capsys):
     log = capsys.readouterr().out
     assert "  !! 유상증자 이사회 결의일(공시 원문 document.xml): 문서에서 읽음 0 / 대상 3, 못 읽음 2, 기간 밖이라 비움 1, 다음 실행으로 0" in log
     assert "!! 결의일을 못 읽은 유상증자 공시 2건 (bd 빈 칸 · 같은 공시는 다시 읽지 않아요): 회사111 20261113 20261113000111 (결의일 칸이 비었어요 ('-'))" in log
-    assert "!! 결의일이 공시일과 맞지 않아 비운 유상증자 공시 1건" in log and "회사222 20261110 20261110000222 (결의일 20251001 이 공시일 20261110 보다 1년 넘게 앞이에요)" in log
+    assert "!! 결의일이 공시일보다 1년 넘게 앞이라 비운 유상증자 공시 1건" in log and "회사222 20261110 20261110000222 (결의일 20251001 이 공시일 20261110 보다 1년 넘게 앞이에요)" in log
     c2 = Client({}, entries=c.entries)
     rows2 = copy.deepcopy(rows)
     out2 = F.fill_issue_bd(disc_of(rows2), c2, TODAY)

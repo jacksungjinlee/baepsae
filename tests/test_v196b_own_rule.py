@@ -77,8 +77,9 @@ def test_thresholds_and_keys_are_the_stated_ones():
 def test_the_shared_functions_pick_the_bad_rows():
     rows = [irow(1), irow(2, p=-1.0), irow(3, nk=""), irow(4), irow(4), "x"]
     bad = V.issue_bad_rows(rows, BASE)
-    assert [(b[0], b[1], b[3]) for b in bad] == [(1, "20261030000002", True), (2, "20261030000003", False), (3, "20261030000004", False),
-                                                 (4, "20261030000004", False), (5, "#5", False)]
+    # 리뷰 2차: 같은 접수번호의 두 줄은 숫자가 다를 수 있어 틀린 숫자 (wrong) 예요
+    assert [(b[0], b[1], b[3]) for b in bad] == [(1, "20261030000002", True), (2, "20261030000003", False), (3, "20261030000004", True),
+                                                 (4, "20261030000004", True), (5, "#5", False)]
     assert "같은 접수번호가 2번" in bad[2][2] and "p -1.0" in bad[0][2]
     assert V.issue_bd_bad_rows([irow(1, bd="20261031"), irow(2, bd="20261030"), irow(3, bd="20261031", wd=True), irow(4, kind="cb", bd="20261031",
                                                                                                                       how=None, n=None, cls=None)]) \
@@ -158,10 +159,48 @@ def test_issue_list_and_flag_shape_only_warn_in_new_files():
     disc["issueOk"] = "yes"
     got, _ = rows_of(files_with(disc))
     assert got[ISSUE][3] == "WARN" and 'issueOk "yes"' in got[ISSUE][1]
+
+
+
+def test_a_non_list_issue_becomes_an_empty_failed_list_not_a_live_one(capsys):
+    """리뷰 2차: 칸 전체는 Jack 의 규칙(한 줄) 밖이에요 — 빈 목록과 issueOk false (목록을 받지 못한 날과 같아요 · 앱은 실패 줄). 줄로 세지 않아요."""
     d2 = disc_of()
     d2["issue"] = "x"
     F.own_check_disc(d2, BASE)
-    assert d2["issue"] == [] and d2["ownDrop"][V.ISSUE_SHAPE_KEY] == {"n": 1, "rows": [["issue", "목록이 아님 (str) → 빈 목록"]]}
+    assert d2["issue"] == [] and d2["issueOk"] is False and d2["ownDrop"][V.ISSUE_SHAPE_KEY] == {"n": 0, "rows": []}
+    assert "  !! 주요사항 공시(issue)가 목록이 아님 (str) — 우리 처리의 잘못이에요: 빈 목록과 issueOk false 로 써요" in capsys.readouterr().out
+    got, _ = rows_of(files_with(d2))
+    assert got[ISSUE][3] == "WARN" and "issueOk false" in got[ISSUE][1]
+
+
+@pytest.mark.parametrize("junk", [None, "x", {"a": 1}, 5])
+def test_a_non_list_insider_is_left_as_is_so_the_gate_fails(junk, capsys):
+    """리뷰 2차 (꼭): 빈 목록으로 바꾸면 공시 탭이 '보고 없음'(2.0) · '최근 90일 · 0건'(예전 뱁새)을 지금 데이터처럼 보여요 — 그대로 두고 크게 남겨요."""
+    d = disc_of()
+    d["insider"] = copy.deepcopy(junk)
+    F.own_check_disc(d, BASE)
+    assert d["insider"] == junk and d["ownDrop"][V.INSIDER_ROLE_KEY] == {"n": 0, "rows": []}
+    assert "  !! 내부자 거래(insider)가 목록이 아님" in capsys.readouterr().out
+    got, _ = rows_of(files_with(d))
+    assert got[ROLE][3] == "FAIL" and "insider 가 목록이 아님" in got[ROLE][1]
+
+
+def test_a_remaining_duplicate_filing_fails_in_new_files():
+    disc = F.own_check_disc(disc_of(), BASE)
+    disc["issue"].append(dict(disc["issue"][0], n=9999))                        # 같은 접수번호 · 다른 숫자
+    got, _ = rows_of(files_with(disc))
+    assert got[ISSUE][3] == "FAIL" and "같은 접수번호가 2번" in got[ISSUE][1]
+
+
+@pytest.mark.parametrize("own", ["x", [], 5, {"issueShape": {"n": 0, "rows": [], "extra": 1}}])
+def test_a_malformed_own_drop_falls_back_to_the_old_rule_with_a_warning(own):
+    """리뷰 2차: ownDrop 이 객체가 아니거나 기록에 다른 칸이 있으면 예전 규칙 + 경고 (#149 의 own_drop_get 과 같아요)."""
+    disc = disc_of([irow(1), irow(2, nk="")])
+    disc["ownDrop"] = own
+    state, why = V.own_rows_get(disc, V.ISSUE_SHAPE_KEY)
+    assert state == "bad" and why
+    got, _ = rows_of(files_with(disc))
+    assert got[ISSUE][3] == "FAIL" and "예전 규칙으로 봐요" in got[ISSUE][1]
 
 
 # ── 유상증자 결의일이 공시일 뒤 (bd 를 비워요) ──────────────────────────────
