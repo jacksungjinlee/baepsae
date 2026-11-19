@@ -189,7 +189,7 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
   const sum = E.sumPct(rows);
   const good = E.sumOk(sum);
   const shown = E.sumShown(sum);
-  const d2 = E.d2Of(rows, cap);
+  const d2 = E.draftD2(deck, draft);                     // the same check 두 종목 비교 makes before it calls the cap final (edit.swapView)
   const bar = E.indBar(rows, load.byT, names);
   const held = (t) => E.heldShares(deck, t);
   const set = (f) => { setFail(null); setCapHit(null); setDraft(f); };
@@ -423,6 +423,7 @@ function RemoveSheet({ deck, draft, row, x, shift, writable, onClose, onSell, on
   const [reason, setReason] = useState(swap ? "better" : broken ? "rule" : null);
   const [raise, setRaise] = useState(null);
   // 팔고 빼기 saves to the stored portfolio at once: its last-holding rule and D2 read the stored holdings left (round-1 B1)
+  // (with a swap, 두 종목 비교 read this same swapCheck to say whether this sheet offers the raise: edit.swapView)
   const sc = swap ? { ...E.swapCheck(deck, draft, row.t, swap), last: false } : E.sellCheck(deck, draft, row.t);
   const chk = { low: sc.low, y: sc.y };
   const n = sc.n, cap = sc.cap;

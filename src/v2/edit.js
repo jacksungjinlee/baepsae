@@ -86,6 +86,10 @@ export function d2Of(rows, cap) {
   const room = rows.reduce((a, r) => a + ceilingOf(r, cap), 0);
   return { low: room < 100 - SUM_TOL, y };
 }
+// [D2] as 종목 바꾸기 checks it (editor.jsx: the edit.capLow line and 최대 비중을 {y}%로 올리기 when low): the edited list at the cap
+// as edited. 두 종목 비교 asks the very same function about the list a swap without shares leaves (swapView), so its note never
+// calls the cap final where that screen will offer to raise it. -> { low, y }
+export const draftD2 = (deck, draft) => d2Of(editRows(deck, draft), capOf(deck, draft));
 
 // ---------------- the edited list ----------------
 // Stored holdings (minus pending removals) with their targets (the draft's first), then pending adds.
@@ -739,27 +743,29 @@ export function swapCheck(deck, draft, t, add) {
   return { rows, pct: sw ? sw.pct : 0, cap, up, low: d2.low, y: d2.y, n: rows.length, names: rows.map((r) => r.nk || r.t) };
 }
 // What the compare screen shows for "{holding}과/와 바꾸기" — the 업종 bar after it and the target in its note — from the very write
-// the swap will make (review B1/S5): with shares held, 팔고 빼기's (swapStored at swapCheck's cap; when that cap cannot reach 100%,
-// the only write 팔고 빼기 can make is after the sheet's raise to y, so the view is at y: round-2 review SF2); without, the draft's
-// (swapDraft). -> { path, rows, before, pct (the candidate's), from (the holding's own target on that path), cap (the cap that write
-// uses), raised (the cap is the raise still to be tapped) } or null
-// -> { path: "sale" | "draft", rows (the edited list after it), before (the list it starts from), pct (the candidate's) } or null
+// the swap will make (review B1/S5): with shares held, 팔고 빼기's (swapStored at swapCheck's cap); without, the draft's (swapDraft).
+// Always at the cap as it stands (a raise already waiting in the draft counts: it is saved with the swap), never at a raise still to
+// be chosen (Jack, 2026-11-19, Q8b: nothing on 두 종목 비교 assumes the raise before the user taps it on the next screen; this
+// replaced round-2 SF2's view after the raise, so both paths show the same split). low / y: whether the next screen offers
+// 최대 비중을 {y}%로 올리기, read with the very check that screen makes — with shares, the 빼기 sheet's (swapCheck); without, 종목
+// 바꾸기's on the list the swap leaves (draftD2) — so the two cannot drift apart.
+// -> { path: "sale" | "draft", rows (the edited list after it), before (the list it starts from), pct (the candidate's), from (the
+// holding's own target on that path), cap (the cap that write uses), low, y } or null
 export function swapView(deck, draft, t, add) {
   // a candidate already in the portfolio (stored, or waiting to be added) is no swap: both writes refuse it
   if (!add || ((deck && deck.holdings) || []).some((h) => h && h.t === add.t) || editRows(deck, draft).some((r) => r.t === add.t)) return null;
   if (heldShares(deck, t) > 0) {
     const chk = swapCheck(deck, draft, t, add);
-    const raised = chk.low && chk.y != null;
-    const cap = raised ? chk.y : chk.cap;
-    const sw = swapStored(deck, t, add, cap);
-    return sw ? { path: "sale", rows: sw.rows, before: editRows(deck, emptyDraft()), pct: sw.pct, from: sw.old, cap, raised } : null;
+    const sw = swapStored(deck, t, add, chk.cap);
+    return sw ? { path: "sale", rows: sw.rows, before: editRows(deck, emptyDraft()), pct: sw.pct, from: sw.old, cap: chk.cap, low: chk.low, y: chk.y } : null;
   }
   const d = swapDraft(deck, draft, t, "better", add);
   if (d === draft) return null;
   const rows = editRows(deck, d);
   const c = rows.find((r) => r.t === add.t);
   const h = editRows(deck, draft).find((r) => r.t === t);
-  return { path: "draft", rows, before: editRows(deck, draft), pct: c ? c.pct : null, from: h ? h.pct : null, cap: capOf(deck, draft), raised: false };
+  const d2 = draftD2(deck, d);
+  return { path: "draft", rows, before: editRows(deck, draft), pct: c ? c.pct : null, from: h ? h.pct : null, cap: capOf(deck, d), low: d2.low, y: d2.y };
 }
 // 팔고 빼기 as a swap [B4]: the store after the sale (records.withRecord), then the holding taken out with its reason and the
 // candidate added with the target swapStored gives it (newHolding: the build step's rules, planPx today's close, setAt today), the

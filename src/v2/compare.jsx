@@ -143,21 +143,23 @@ export function verdictText(kind, b) {
 }
 export const swapLabel = (a) => fill(subjectParticle(a) === "i" ? C.cmp.swap : C.cmp.swapWa, { a });
 export const swapNoteText = (a, b, x) => fill(subjectParticle(b) === "i" ? C.cmp.swapNote : C.cmp.swapNoteGa, { a, b, x });
-// The note under the buttons, from the swap's view (edit.swapView; pure, tests). Nothing untrue (round-2 review SF1):
-// "…{a}의 목표 비중({x}%)을 이어받아요." only when the candidate takes the holding's whole target. When the cap cuts it (a 채권·금 holding
-// saved above the cap), "바꾸면 {b}이/가 {a}의 목표 비중 {y}% 중 {x}%만 이어받아요." (Jack, 2026-11-19, P5; 이/가 as the verdict picks it)
-// and right after it why: the approved "이 포트폴리오는 한 종목 최대 비중이 {x}%라서 더 올릴 수 없어요." — only where it is true, i.e. the
-// candidate gets exactly the portfolio's cap as it stands. With shares and a cap too low to reach 100% (D2) the screen shows the write
-// after the sheet's raise to y (SF2): the cap line would be untrue there (the cap is not y yet, and the candidate gets more than it is),
-// so that case shows neither line (a question for Jack, 2026-11-19). The second sentence only with shares to sell.
-// -> { first: string | null, cap: string | null, sale: string | null, capped }
+// The note under the buttons, from the swap's view (edit.swapView, always at the cap as it stands; pure, tests). Nothing untrue
+// (round-2 review SF1): "…{a}의 목표 비중({x}%)을 이어받아요." only when the candidate takes the holding's whole target as the screen
+// writes targets — a cut that does not show (10.04% saved under a 10% cap: "10.0%" and "10%") is no cut (pctShown's numbers). When
+// the cap cuts it (a 채권·금 holding saved above the cap), "바꾸면 {b}이/가 {a}의 목표 비중 {y}% 중 {x}%만 이어받아요." (Jack,
+// 2026-11-19, P5; 이/가 as the verdict picks it) and right after it why, only where the candidate gets exactly the cap as it stands:
+// where the next screen offers no raise (the cap is a hard stop) the approved "이 포트폴리오는 한 종목 최대 비중이 {x}%라서 더 올릴 수
+// 없어요." (Q8a); where it will offer 최대 비중을 {y}%로 올리기 (sv.low: the list cannot reach 100% at the cap; the very check that
+// screen makes), "이 포트폴리오는 한 종목 최대 비중이 {x}%예요." (Jack, 2026-11-19, Q8b). The same on both paths. The second sentence
+// only with shares to sell. -> { first: string | null, cap: string | null, sale: string | null, capped }
 export function swapNoteParts(sv, a, b) {
   if (!sv || sv.pct == null) return { first: null, cap: null, sale: null, capped: false };
-  const capped = sv.from != null && sv.pct < sv.from - 1e-9;
-  const atCap = capped && !sv.raised && sv.cap != null && Math.abs(sv.pct - sv.cap) < 1e-9;
+  const shown = (p) => E.pctShown(p).n;
+  const capped = sv.from != null && sv.pct < sv.from - 1e-9 && shown(sv.pct) !== shown(sv.from);
+  const atCap = capped && sv.cap != null && Math.abs(sv.pct - sv.cap) < 1e-9;
   const P5 = subjectParticle(b) === "i" ? C.cmp.swapNoteCap : C.cmp.swapNoteCapGa;
   const first = !capped ? swapNoteText(a, b, pctText(sv.pct)) : atCap ? fill(P5, { a, b, x: pctText(sv.pct), y: pctText(sv.from) }) : null;
-  const cap = atCap ? fill(C.edit.max, { x: sv.cap }) : null;          // the cap as the editor writes it (editor.jsx edit-max)
+  const cap = atCap ? fill(sv.low ? C.edit.maxNow : C.edit.max, { x: sv.cap }) : null;     // the cap as the editor writes it (editor.jsx edit-max)
   return { first, cap, sale: sv.path === "sale" ? C.cmp.swapSale : null, capped };
 }
 
@@ -236,7 +238,8 @@ export function Compare({ deck, draft, load, pad, candT, holdT, setHoldT, xOf, o
   const bandShown = [hs, cand].map((s) => (s && !pxBadFor(s, load.coByT.get(s.t) || null) ? riskTile(s) : null)).filter((r) => r && r.band);
   const betaNote = bandShown.length ? (bandShown.some((r) => !r.band.one) ? C.co.risk.bandNote : riskBandNote(bandShown[0])) : null;
   // after the swap: the bar, its line and the note's target all come from the write the swap will make (edit.swapView, review
-  // B1/S5): with shares, 팔고 빼기's stored target set; without, the draft's
+  // B1/S5): with shares, 팔고 빼기's stored target set; without, the draft's; both at the cap as it stands (Jack, 2026-11-19, Q8b:
+  // never at a raise the next screen has yet to offer)
   const add = { t: cand.t, nk: cand.nk, cls: cand.cls === "us" || cand.cls === "kr" ? cand.cls : null, ind: cand.ind || null, kind: "pinned", s: cand };
   const sv = E.swapView(deck, draft, h.t, add);
   const before = E.indBar(sv ? sv.before : E.editRows(deck, draft), load.byT, names);

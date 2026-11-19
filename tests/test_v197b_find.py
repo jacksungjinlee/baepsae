@@ -415,20 +415,21 @@ def test_a_swap_with_a_sale_that_cannot_reach_100_under_the_cap_is_refused_until
       const no = E.sellAndSwap(after, 'd1', '114260', cand(), { reason: 'better', raise: null, load, today: T, ts: 1 });
       const yes = E.sellAndSwap(after, 'd1', '114260', cand(), { reason: 'better', raise: chk.y, load, today: T, ts: 1 });
       const de = yes.ok ? yes.data.decks[0] : null;
-      // round-2 review SF2: what 두 종목 비교 shows is the write the sheet's raise makes (the only one 팔고 빼기 can make here)
+      // Jack, 2026-11-19, Q8b (replacing round-2 SF2's view after the raise): 두 종목 비교 shows the write at the cap as it stands, the
+      // rows the sheet's own D2 check reads, and says that the sheet offers the raise (low, y)
       const view = E.swapView(d, E.emptyDraft(), '114260', cand());
       const r1000 = (x) => Math.round(x * 1000) / 1000;
       out = { chk: { low: chk.low, y: chk.y, pct: chk.pct, n: chk.n, names: chk.names.length, cand: chk.names.includes('삼성전자') }, no, ok: yes.ok,
         max: de && de.settings.maxPct, sum: de && sumT(de),
         cand: de && de.holdings.find((h) => h.t === '005930').target, top: de && Math.max(...de.holdings.filter((h) => h.kind !== 'cushion').map((h) => h.target)),
-        view: { path: view.path, raised: view.raised, cap: view.cap, pct: view.pct, from: view.from },
-        same: de && JSON.stringify(Object.fromEntries(view.rows.map((r) => [r.t, r1000(r.pct)]))) === JSON.stringify(Object.fromEntries(de.holdings.map((h) => [h.t, r1000(h.target * 100)]))) };""")
+        view: { path: view.path, cap: view.cap, pct: view.pct, from: view.from, low: view.low, y: view.y },
+        same: JSON.stringify(Object.fromEntries(view.rows.map((r) => [r.t, r1000(r.pct)]))) === JSON.stringify(Object.fromEntries(chk.rows.map((r) => [r.t, r1000(r.pct)]))) };""")
     assert {k: got["chk"][k] for k in ("low", "y", "pct")} == {"low": True, "y": 12, "pct": 10}     # 7 × 10 + 10 + 15 = 95 < 100: D2 first (100 ÷ 9 → 12)
     assert got["no"] == {"ok": False, "why": "sum"}                    # never a write that does not add up to 100%
     assert got["ok"] is True and got["max"] == 12 and got["sum"] == 1 and got["cand"] == 0.12 and got["top"] <= 0.12
     assert got["chk"]["n"] == got["chk"]["names"] == 9 and got["chk"]["cand"] is True    # "종목이 9개뿐이라" beside the same 9 names
-    assert got["view"] == {"path": "sale", "raised": True, "cap": 12, "pct": 12, "from": 15}
-    assert got["same"] is True                                          # the bar and the note show exactly what is written
+    assert got["view"] == {"path": "sale", "cap": 10, "pct": 10, "from": 15, "low": True, "y": 12}    # never the raise before it is tapped
+    assert got["same"] is True                                          # the bar shows the rows the sheet's D2 check reads
 
 
 def test_a_swap_never_takes_a_candidate_that_is_stored_even_when_its_removal_waits():
@@ -481,14 +482,15 @@ def test_the_swap_note_never_says_the_candidate_takes_a_target_it_does_not_get()
     """round-2 review SF1 with Jack's P5 (2026-11-19: "use the 이/가 helper, and add why only 10% (the per-stock cap)"):
     "…{a}의 목표 비중({x}%)을 이어받아요." only when the candidate takes the holding's whole target; capped at the portfolio's cap,
     "바꾸면 {b}이/가 {a}의 목표 비중 {y}% 중 {x}%만 이어받아요." (이/가 as the verdict picks it) and right after it the approved
-    "이 포트폴리오는 한 종목 최대 비중이 {x}%라서 더 올릴 수 없어요."; never the cap line where it is untrue (a raise still to be tapped,
-    or a candidate that gets other than the cap); the sale sentence only on the sale path."""
+    "이 포트폴리오는 한 종목 최대 비중이 {x}%라서 더 올릴 수 없어요." (Q8a) — or, where the next screen will offer to raise the cap,
+    "이 포트폴리오는 한 종목 최대 비중이 {x}%예요." (Q8b); never a cap line for a candidate that gets other than the cap; the sale
+    sentence only on the sale path."""
     got = run("""
       const N = (sv, b = '한화') => Cm.swapNoteParts(sv, '솔담정밀', b);
       const plain = N({ path: 'sale', pct: 20, from: 20, cap: 20, raised: false });
       const capped = N({ path: 'draft', pct: 10, from: 15, cap: 10, raised: false });
       const cappedI = N({ path: 'sale', pct: 10, from: 25, cap: 10, raised: false }, '국민은행');
-      const raised = N({ path: 'sale', pct: 12, from: 15, cap: 12, raised: true });
+      const raised = N({ path: 'sale', pct: 10, from: 15, cap: 10, low: true, y: 12 });
       const notCap = N({ path: 'draft', pct: 8, from: 15, cap: 10, raised: false });
       out = { plain, capped, cappedI, raised, notCap, none: N(null), max: C.edit.max, sale: C.cmp.swapSale,
         keys: [C.cmp.swapNoteCap, C.cmp.swapNoteCapGa] };""")
@@ -498,10 +500,124 @@ def test_the_swap_note_never_says_the_candidate_takes_a_target_it_does_not_get()
     assert got["plain"] == {"first": "바꾸면 한화가 솔담정밀의 목표 비중(20%)을 이어받아요.", "cap": None, "sale": got["sale"], "capped": False}
     assert got["capped"] == {"first": "바꾸면 한화가 솔담정밀의 목표 비중 15% 중 10%만 이어받아요.", "cap": cap10, "sale": None, "capped": True}
     assert got["cappedI"] == {"first": "바꾸면 국민은행이 솔담정밀의 목표 비중 25% 중 10%만 이어받아요.", "cap": cap10, "sale": got["sale"], "capped": True}
-    # D2 with shares: the view is the write after the raise to y (SF2); the cap line would be untrue, so neither line (held for Jack)
-    assert got["raised"] == {"first": None, "cap": None, "sale": got["sale"], "capped": True}
+    # D2 (the next screen offers 최대 비중을 12%로 올리기): P5 and the cap as it stands, without "더 올릴 수 없어요" (Jack, 2026-11-19, Q8b)
+    assert got["raised"] == {"first": "바꾸면 한화가 솔담정밀의 목표 비중 15% 중 10%만 이어받아요.", "cap": "이 포트폴리오는 한 종목 최대 비중이 10%예요.",
+                             "sale": got["sale"], "capped": True}
     assert got["notCap"] == {"first": None, "cap": None, "sale": None, "capped": True}
     assert got["none"] == {"first": None, "cap": None, "sale": None, "capped": False}
+
+
+# Jack, 2026-11-19, Q8 (review: "더 올릴 수 없어요" beside a next screen that offers 최대 비중을 12%로 올리기). v19.7a's dcush: seven at 10%
+# under a 10% cap and two 15% cushions; with held, the first cushion has shares (the 팔고 빼기 path).
+Q8 = CUSH + r"""
+const dcush = (held = false, w = { '114260': 0.15, '132030': 0.15 }, seventh = 0.1) => {
+  const ts = ['000010', '000020', '000030', '000040', '000050', '000060', '000070'];
+  const hs = ts.map((t, i) => { const x = i === 6 ? seventh : 0.1;
+    return { t, nk: '종목' + i, cls: 'kr', ind: 'semi', kind: 'core', target: x, setAt: '2026-10-01', plannedQty: 10, planPx: 100000, rules: band(x) }; });
+  return { id: 'd1', name: 'c', createdAt: '2026-10-01', planFx: 1300, settings: { points: { value: 3 }, maxPct: 10, amountMan: 1000 },
+    purchases: held ? [{ id: 'p1aaaaaa', t: '114260', qty: 10, price: 100000, date: '2026-10-01', ccy: 'KRW' }] : [],
+    holdings: [...hs, { t: '114260', nk: '채권', cls: 'bond', kind: 'cushion', target: w['114260'], plannedQty: 10, planPx: 100000, rules: band(w['114260']) },
+      { t: '132030', nk: '금', cls: 'metal', kind: 'cushion', target: w['132030'], plannedQty: 10, planPx: 100000, rules: band(w['132030']) }] }; };
+const V = (v) => v && { path: v.path, pct: Math.round(v.pct * 1000) / 1000, from: Math.round(v.from * 1000) / 1000, cap: v.cap, low: v.low, y: v.y };
+const N = (v) => Cm.swapNoteParts(v, '채권', '삼성전자');
+"""
+
+
+def test_q8b_where_the_next_screen_offers_the_raise_both_paths_show_the_cap_as_it_stands_and_say_it():
+    """Jack, 2026-11-19, Q8b: "Keep the 10% line, but replace "더 올릴 수 없어요" with "이 포트폴리오는 한 종목 최대 비중이 {x}%예요." The
+    next screen offers raising it." The split at the cap as it stands (the candidate at 10%) with or without shares; whether the next
+    screen offers the raise is that screen's own check (종목 바꾸기: draftD2 on the list the swap leaves; the 빼기 sheet: swapCheck)."""
+    got = run(Q8 + """
+      const d = dcush(false), dh = dcush(true);
+      const vd = E.swapView(d, E.emptyDraft(), '114260', cand()), vs = E.swapView(dh, E.emptyDraft(), '114260', cand());
+      const ed = E.draftD2(d, E.swapDraft(d, E.emptyDraft(), '114260', 'better', cand()));         // what 종목 바꾸기 then checks
+      const sc = E.swapCheck(dh, E.emptyDraft(), '114260', cand());                                // what the 빼기 sheet checks
+      out = { vd: V(vd), vs: V(vs), ed, sc: { low: sc.low, y: sc.y }, rd: pcts(vd.rows), rs: pcts(vs.rows), sum: E.sumPct(vs.rows),
+        nd: N(vd), ns: N(vs), now: C.edit.maxNow, sale: C.cmp.swapSale };""")
+    assert got["now"] == "이 포트폴리오는 한 종목 최대 비중이 {x}%예요."
+    assert got["vd"] == {"path": "draft", "pct": 10, "from": 15, "cap": 10, "low": True, "y": 12}
+    assert got["vs"] == {"path": "sale", "pct": 10, "from": 15, "cap": 10, "low": True, "y": 12}    # not 12% at a raise not yet chosen
+    assert got["ed"] == {"low": True, "y": 12} and got["sc"] == {"low": True, "y": 12}
+    assert got["rd"] == got["rs"] and got["rs"]["005930"] == 10 and round(got["sum"], 6) == 95      # the same split on both paths
+    first = "바꾸면 삼성전자가 채권의 목표 비중 15% 중 10%만 이어받아요."
+    assert got["nd"] == {"first": first, "cap": "이 포트폴리오는 한 종목 최대 비중이 10%예요.", "sale": None, "capped": True}
+    assert got["ns"] == {"first": first, "cap": "이 포트폴리오는 한 종목 최대 비중이 10%예요.", "sale": got["sale"], "capped": True}
+
+
+def test_q8a_where_the_next_screen_offers_no_raise_the_cap_line_stays_on_both_paths():
+    """Jack, 2026-11-19, Q8a: the P5 + edit.max pair stays where the cap is a hard stop (a 30% cushion under a 20% cap whose others have
+    room: the swap reaches 100%, so neither 종목 바꾸기 nor the 빼기 sheet offers a raise)."""
+    got = run(Q8 + """
+      const d = cushDeck(false), dh = cushDeck(true);
+      const vd = E.swapView(d, E.emptyDraft(), '000010', cand()), vs = E.swapView(dh, E.emptyDraft(), '000010', cand());
+      const ed = E.draftD2(d, E.swapDraft(d, E.emptyDraft(), '000010', 'better', cand()));
+      const sc = E.swapCheck(dh, E.emptyDraft(), '000010', cand());
+      // a raise already waiting in the draft is the cap as it stands (it is saved with the swap): dcush at 12%, no raise left to offer
+      const up = E.raiseDraft(dcush(false), E.emptyDraft());
+      const vu = E.swapView(dcush(false), up, '114260', cand());
+      out = { vd: V(vd), vs: V(vs), ed, sc: { low: sc.low, y: sc.y }, nd: N(vd), ns: N(vs), vu: V(vu), nu: N(vu),
+        edu: E.draftD2(dcush(false), E.swapDraft(dcush(false), up, '114260', 'better', cand())), sale: C.cmp.swapSale };""")
+    assert got["vd"] == {"path": "draft", "pct": 20, "from": 30, "cap": 20, "low": False, "y": 20}
+    assert got["vs"] == {"path": "sale", "pct": 20, "from": 30, "cap": 20, "low": False, "y": 20}
+    assert got["ed"]["low"] is False and got["sc"]["low"] is False
+    first, hard = "바꾸면 삼성전자가 채권의 목표 비중 30% 중 20%만 이어받아요.", "이 포트폴리오는 한 종목 최대 비중이 20%라서 더 올릴 수 없어요."
+    assert got["nd"] == {"first": first, "cap": hard, "sale": None, "capped": True}
+    assert got["ns"] == {"first": first, "cap": hard, "sale": got["sale"], "capped": True}
+    assert got["vu"]["cap"] == 12 and got["vu"]["pct"] == 12 and got["vu"]["low"] is False and got["edu"]["low"] is False
+    assert got["nu"]["cap"] == "이 포트폴리오는 한 종목 최대 비중이 12%라서 더 올릴 수 없어요."
+
+
+def test_a_cut_that_does_not_show_is_no_cut_in_the_swap_note():
+    """Review minor (2026-11-19): a target saved just above the cap (10.04% under a 10% cap) read "10.0% 중 10%만". P5 only when {y} and
+    {x} show different numbers (pctShown: "10.0" and "10" are both 10); then the plain "…{a}의 목표 비중({x}%)을 이어받아요." and no cap line."""
+    got = run(Q8 + """
+      const d = dcush(false, { '114260': 0.1004, '132030': 0.2 }, 0.0996);
+      const v = E.swapView(d, E.emptyDraft(), '114260', cand());
+      out = { v: V(v), note: N(v), sum: E.sumPct(v.rows),
+        sale: N({ path: 'sale', pct: 10, from: 10.04, cap: 10, low: false, y: 10 }),
+        shows: N({ path: 'draft', pct: 10, from: 10.06, cap: 10, low: false, y: 10 }) };""")
+    assert got["v"] == {"path": "draft", "pct": 10, "from": 10.04, "cap": 10, "low": False, "y": 12} and round(got["sum"], 6) == 100
+    plain = "바꾸면 삼성전자가 채권의 목표 비중(10%)을 이어받아요."
+    assert got["note"] == {"first": plain, "cap": None, "sale": None, "capped": False}
+    assert got["sale"]["first"] == plain and got["sale"]["cap"] is None and got["sale"]["capped"] is False
+    # a cut that shows (10.1% → 10%) keeps P5 and the cap line
+    assert got["shows"] == {"first": "바꾸면 삼성전자가 채권의 목표 비중 10.1% 중 10%만 이어받아요.",
+                            "cap": "이 포트폴리오는 한 종목 최대 비중이 10%라서 더 올릴 수 없어요.", "sale": None, "capped": True}
+
+
+def test_the_compare_note_and_the_next_screen_read_one_raise_check():
+    """Q8: "will the next screen offer a raise" is that screen's own check, called, never copied: 종목 바꾸기 computes its D2 with
+    edit.draftD2 and swapView asks draftD2 about the list the swap leaves; the 빼기 sheet and swapView both read swapCheck."""
+    with open(os.path.join(ROOT, "src", "v2", "editor.jsx"), encoding="utf-8") as fh:
+        ed = fh.read()
+    with open(os.path.join(ROOT, "src", "v2", "edit.js"), encoding="utf-8") as fh:
+        js = fh.read()
+    assert re.search(r"const d2 = E\.draftD2\(deck, draft\);", ed) and "E.d2Of(" not in ed
+    assert "E.swapCheck(deck, draft, row.t, swap)" in ed
+    assert "export const draftD2 = (deck, draft) => d2Of(editRows(deck, draft), capOf(deck, draft));" in js
+    view = js.split("export function swapView(", 1)[1].split("\nexport function ", 1)[0]
+    assert "draftD2(deck, d)" in view and "swapCheck(deck, draft, t, add)" in view and "d2Of(" not in view and "capCheck(" not in view
+    with open(os.path.join(ROOT, "src", "v2", "compare.jsx"), encoding="utf-8") as fh:
+        cm = fh.read()
+    note = cm.split("export function swapNoteParts(", 1)[1].split("\n}\n", 1)[0]
+    assert "sv.low ? C.edit.maxNow : C.edit.max" in note and "d2Of(" not in note and "sumPct(" not in note
+
+
+def test_the_q8b_line_is_shipped_word_for_word_and_recorded():
+    import copytrace as CT
+    _, flat = CT.copy_strings()
+    vals = dict(flat)
+    chat = CT.chat_approved()
+    assert vals.get("edit.maxNow") == "이 포트폴리오는 한 종목 최대 비중이 {x}%예요." and chat.get("edit.maxNow") == vals["edit.maxNow"]
+    assert vals.get("edit.max") == "이 포트폴리오는 한 종목 최대 비중이 {x}%라서 더 올릴 수 없어요."
+    with open(os.path.join(ROOT, "docs", "tasks", "v18.3-approved-in-chat.md"), encoding="utf-8") as fh:
+        rows = {l.split("|")[1].strip().strip("`"): l for l in fh.read().splitlines() if l.startswith("| `")}
+    assert "Jack, 2026-11-19, Q8b" in rows["edit.maxNow"] and "Jack, 2026-11-19, Q8a" in rows["edit.max"]
+    with open(os.path.join(ROOT, "src", "copy", "v2.js"), encoding="utf-8") as fh:
+        src = fh.read()
+    i = src.index('maxNow: "')
+    assert "Jack, 2026-11-19, Q8b" in "\n".join(src[:i].splitlines()[-3:])                  # its comment, right above it
+    assert src.index('    max: "이 포트폴리오는') < i < src.index("    capLow:")             # next to edit.max
 
 
 def test_points_are_saved_to_the_portfolio_and_nothing_else_changes():

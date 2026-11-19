@@ -12562,6 +12562,30 @@ def v197b_expect_sub(s):
     return ind if v is None else fillp(C["find"]["row"], industry=ind, vol=f"{round(v * 10) / 10:,.1f}")
 
 
+def v197b_cap_store(by, pxd):
+    """Jack, 2026-11-19, Q8: v19.7a's dcush (seven at 10% under a 10% cap, two 15% cushions) as it is (no shares) and with the first
+    cushion held (dcushh: the 팔고 빼기 path); dhard: a 30% cushion under a 20% cap whose others have room (no raise on the next screen);
+    dnear: a cushion saved at 10.04% under a 10% cap (a cut that does not show)."""
+    st = v197a_store2(by, pxd)
+    cush = [d for d in st["decks"] if d["id"] == "dcush"][0]
+    held = {**clone(cush), "id": "dcushh", "name": "가진 안전자산 포트폴리오",
+            "purchases": [{"id": "p1eeeeee", "t": "114260", "date": "2026-10-01", "qty": 10, "price": by["114260"]["price"], "ccy": "KRW"}]}
+    seven = ["005930", "005380", "105560", "010120", "035420", "051910", "068270"]
+
+    def with_targets(d, did, name, cap, w):
+        out = {**clone(d), "id": did, "name": name, "settings": {**d["settings"], "maxPct": cap}, "purchases": []}
+        hs = [h for h in out["holdings"] if h["t"] in w]
+        for h in hs:
+            h["target"] = w[h["t"]]
+            h["rules"] = [r if r["kind"] != "band" else {**r, "target": w[h["t"]], "bands": [0.75 * w[h["t"]], 1.25 * w[h["t"]], 1.4 * w[h["t"]]]} for r in h["rules"]]
+            h["plannedQty"] = max(1, round(w[h["t"]] * 1e7 / by[h["t"]]["price"]))
+        out["holdings"] = hs
+        return out
+    hard = with_targets(cush, "dhard", "최대 비중 20% 포트폴리오", 20, {"114260": 0.3, "005930": 0.2, "005380": 0.2, "105560": 0.15, "010120": 0.15})
+    near = with_targets(cush, "dnear", "10.04% 포트폴리오", 10, {**{t: 0.1 for t in seven[:6]}, seven[6]: 0.0996, "114260": 0.1004, "132030": 0.2})
+    return {"v": 2, "decks": [cush, held, hard, near], "guideSeen": pxd}
+
+
 def scene_v197b(R, files, width):
     """v19.7b (390 · 1280): 종목 바꾸기의 '내 기준으로 찾기' 칸 → 찾기: 기준 칸(그림 · 이름 · 점) · 네 칩 · 20줄(순서 · 가진 종목 없음 ·
     시장마다 상위 x% 순 · 새 업종 = 포트폴리오에 없는 업종) · 줄의 둘째 줄 · 날짜 줄 · 없는 업종 줄 · 변동성 낮은 순 · 배당 주는 종목 →
@@ -12994,9 +13018,10 @@ def scene_v197b(R, files, width):
         assert page.locator('[data-ui-v2="cmp-after"]').get_attribute("data-path") == "draft"
         assert float(page.locator('[data-ui-v2="cmp-after"]').get_attribute("data-x")) == 10                  # the cap, not the 15%
         # round-2 review SF1 with Jack's P5 (2026-11-19): not "…목표 비중(10%)을 이어받아요." (the holding's target is 15%) but
-        # "…목표 비중 15% 중 10%만 이어받아요." (이/가 by the name) and right after it why: the approved 최대 비중 line
+        # "…목표 비중 15% 중 10%만 이어받아요." (이/가 by the name) and right after it why. 종목 바꾸기 will offer 최대 비중을 12%로 올리기
+        # here (95%: D2, checked below), so not "…라서 더 올릴 수 없어요." but the cap as it stands (Jack, 2026-11-19, Q8b)
         p5 = fillp(C["cmp"]["swapNoteCap"] if has_final(by[t]["nk"]) else C["cmp"]["swapNoteCapGa"], a=by["114260"]["nk"], b=by[t]["nk"], x="10", y="15")
-        cap = fillp(C["edit"]["max"], x=10)
+        cap = fillp(C["edit"]["maxNow"], x=10)
         assert page.locator('[data-ui-v2="cmp-swap-x"]').inner_text() == p5
         assert page.locator('[data-ui-v2="cmp-cap"]').inner_text() == cap
         assert page.locator('[data-ui-v2="cmp-swap-note"]').inner_text() == p5 + " " + cap                    # no shares: no sale sentence
@@ -13014,6 +13039,92 @@ def scene_v197b(R, files, width):
         assert bar('[data-ui-v2="edit-ind"]') == shown, (bar('[data-ui-v2="edit-ind"]'), shown)               # the bar it showed is the one it left
         assert page.locator('[data-ui-v2="edit-cap-low"]').count() == 1                                        # 95%: D2 asks to raise the cap
     R.check(page, S, "최대 비중 위의 안전자산과 바꾸기: 후보는 최대 비중(10%) · 비교의 업종 비중 = 바꾼 뒤 종목 바꾸기의 업종 비중 (D2)", cushion)
+    ctx.close()
+    srv.shutdown()
+
+    # Jack, 2026-11-19, Q8: the note's "why" follows the next screen, and the split is the one at the cap as it stands on BOTH paths.
+    # dcush / dcushh (95% at the cap: the next screen offers 최대 비중을 12%로 올리기): P5 + "…최대 비중이 10%예요." and the candidate at
+    # 10% with or without shares (the bar the same; never the 12% of a raise not yet chosen). dhard (the others have room: no raise
+    # offered): P5 + "…라서 더 올릴 수 없어요." (Q8a). dnear (10.04% saved under 10%: "10.0%" and "10%" show the same): no P5.
+    seed4 = ("(() => { if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');"
+             f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(v197b_cap_store(by, pxd), ensure_ascii=False))}); }})();")
+    srv, ctx, page, base = R.open(build_site(data), width, init=seed4, path="/app.html?dev=1#portfolio/edit/dcush/find", device=device)
+    bar = lambda sel: sorted(page.locator(f'{sel} [data-ui-v2="edit-ind-part"]').evaluate_all("(xs) => xs.map((x) => [x.dataset.ind, Number(x.dataset.pct)])"))
+    note = lambda: page.locator('[data-ui-v2="cmp-swap-note"]').inner_text()
+    p5 = lambda a, b, x, y: fillp(C["cmp"]["swapNoteCap"] if has_final(b) else C["cmp"]["swapNoteCapGa"], a=a, b=b, x=x, y=y)
+
+    def to_compare(did, hold):
+        page.evaluate("(h) => { location.hash = h; }", f"#portfolio/edit/{did}/find")
+        at(page, f"portfolio/edit/{did}/find")
+        page.wait_for_function("(d) => { const f = document.querySelector('[data-ui-v2=\"find\"]'); return !!f && f.dataset.deckId === d; }", arg=did)
+        page.locator('[data-ui-v2="find-list"]').wait_for(state="visible")
+        t = rows()[0][0]
+        page.locator(f'[data-find-row="{t}"] [data-ui-v2="find-compare"]').click()
+        at(page, f"portfolio/edit/{did}/compare/{t}")
+        page.locator('[data-ui-v2="cmp-after"]').wait_for(state="visible")
+        if page.locator('[data-ui-v2="cmp"]').get_attribute("data-hold") != hold:
+            page.locator('[data-ui-v2="cmp-pick-open"]').click()
+            page.locator(f'[data-ui-v2="cmp-picker"] [data-pick="{hold}"]').click()
+            page.wait_for_function("(h) => document.querySelector('[data-ui-v2=\"cmp\"]').dataset.hold === h", arg=hold)
+        assert page.locator('[data-ui-v2="cmp"]').get_attribute("data-deck-id") == did
+        return t
+
+    def cap_both_paths():
+        a = by["114260"]["nk"]
+        now = fillp(C["edit"]["maxNow"], x=10)
+        assert now == "이 포트폴리오는 한 종목 최대 비중이 10%예요."                                               # Jack's words (Q8b)
+        t = to_compare("dcush", "114260")
+        after = page.locator('[data-ui-v2="cmp-after"]')
+        assert after.get_attribute("data-path") == "draft" and float(after.get_attribute("data-x")) == 10
+        assert note() == p5(a, by[t]["nk"], "10", "15") + " " + now
+        draft_bar = bar('[data-ui-v2="cmp-after"]')
+        assert round(sum(x for _, x in draft_bar), 6) == 95, draft_bar                                       # at the cap as it stands
+        draft_line = page.locator('[data-ui-v2="cmp-after-line"]').inner_text()
+        check_page("비교 · 최대 비중 위의 안전자산 (지분 없음)", "compare-cap-draft")
+        u = to_compare("dcushh", "114260")
+        assert u == t                                                                                        # the same holdings: the same candidate
+        assert after.get_attribute("data-path") == "sale"
+        assert float(after.get_attribute("data-x")) == 10                                                   # not the 12% of the raise
+        assert note() == p5(a, by[t]["nk"], "10", "15") + " " + now + " " + C["cmp"]["swapSale"]
+        assert page.locator('[data-ui-v2="cmp-cap"]').inner_text() == now
+        assert bar('[data-ui-v2="cmp-after"]') == draft_bar                                                  # the same split on both paths
+        assert page.locator('[data-ui-v2="cmp-after-line"]').inner_text() == draft_line
+        check_page("비교 · 최대 비중 위의 안전자산 (가진 주식)", "compare-cap-sale")
+        page.locator('[data-ui-v2="cmp-swap"]').click()
+        sh = page.locator('[data-ui-v2="rm-sheet"][data-t="114260"]')
+        sh.wait_for(state="visible")
+        assert sh.get_attribute("data-held") == "1"
+        assert sh.locator('[data-ui-v2="rm-cap-low"] button').inner_text() == fillp(C["edit"]["capRaise"], y=12)   # the raise is offered here
+        page.keyboard.press("Escape")
+        sh.wait_for(state="detached")
+    R.check(page, S, "Q8b: 다음 화면이 최대 비중을 올리자고 할 때 · 지분 없음과 가진 주식 모두 P5 + '…최대 비중이 10%예요.' · 후보 10% · 같은 업종 비중", cap_both_paths)
+
+    def near_cap():
+        t = to_compare("dnear", "114260")
+        after = page.locator('[data-ui-v2="cmp-after"]')
+        assert after.get_attribute("data-path") == "draft" and float(after.get_attribute("data-x")) == 10
+        assert note() == fillp(C["cmp"]["swapNote"] if has_final(by[t]["nk"]) else C["cmp"]["swapNoteGa"], a=by["114260"]["nk"], b=by[t]["nk"], x="10")
+        assert page.locator('[data-ui-v2="cmp-cap"]').count() == 0 and after.get_attribute("data-capped") is None
+    R.check(page, S, "10.04% 로 저장된 안전자산 (최대 10%): '10.0% 중 10%만' 이 아니라 '…목표 비중(10%)을 이어받아요.'", near_cap)
+
+    def hard_cap():                                  # last: it leaves the swap waiting on 종목 바꾸기 (leaving would ask 나갈까요?)
+        t = to_compare("dhard", "114260")
+        after = page.locator('[data-ui-v2="cmp-after"]')
+        assert after.get_attribute("data-path") == "draft" and float(after.get_attribute("data-x")) == 20
+        assert note() == p5(by["114260"]["nk"], by[t]["nk"], "20", "30") + " " + fillp(C["edit"]["max"], x=20)
+        shown = bar('[data-ui-v2="cmp-after"]')
+        assert round(sum(x for _, x in shown), 6) == 100, shown
+        page.locator('[data-ui-v2="cmp-swap"]').click()
+        sh = page.locator('[data-ui-v2="rm-sheet"][data-t="114260"]')
+        sh.wait_for(state="visible")
+        sh.locator("button", has_text=C["rec"]["remove"]).last.click()
+        at(page, "portfolio/edit/dhard")
+        page.locator(f'[data-edit-row="{t}"]').wait_for(state="visible")
+        assert float(page.locator(f'[data-edit-row="{t}"]').get_attribute("data-pct")) == 20
+        assert page.locator('[data-ui-v2="edit-cap-low"]').count() == 0                                      # no raise offered: the cap is final
+        assert page.locator('[data-ui-v2="edit-sum"]').get_attribute("data-ok") == "1"
+        assert bar('[data-ui-v2="edit-ind"]') == shown
+    R.check(page, S, "Q8a: 다음 화면이 올리자고 하지 않을 때 (30% 안전자산 · 최대 20%) · P5 + '…20%라서 더 올릴 수 없어요.'", hard_cap)
     ctx.close()
     srv.shutdown()
 
