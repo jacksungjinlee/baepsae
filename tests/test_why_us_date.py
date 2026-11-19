@@ -117,22 +117,32 @@ def test_each_stock_and_screen_says_it_once():
     assert [w.split(":")[0] for w in warn] == ["[v2] why-it-moved AAPL", "[v2] why-it-moved MSFT", "[v2] other-screen AAPL"], warn
 
 
-def test_why_screen_reads_its_close_date_with_the_shared_rule():
-    src = open(os.path.join(ROOT, "src", "v2", "why.jsx"), encoding="utf-8").read()
-    code = "\n".join(ln for ln in src.splitlines() if not ln.strip().startswith("//"))
-    assert 'priceMdSaid(load, s, "why-it-moved")' in code
-    assert "load.data.pxDate)" not in code.split("const md = ")[1].split("\n")[0]
-    assert "{md ? <span>{fill(C.why.close, { md })}</span> : null}" in code        # 날짜가 없으면 "{md} 종가" 조각도 없어요
-    assert "!md ? null :" in code                                                   # 출처의 가격 줄도 (두 문장 모두 날짜가 있어야 해요)
+# usPxDate 대신 pxDate 를 쓰는 모양: `usPxDate || …pxDate` · `?? …pxDate` · `usPxDate ? … : …pxDate` (여러 줄에 걸쳐도)
+FALLBACK = re.compile(r"usPxDate\s*(\|\||\?\?)\s*[\w.]*\bpxDate\b|usPxDate\s*\?[^:;]{0,200}:\s*[\w.]*\bpxDate\b")
+
+
+def _code(text):
+    """주석을 뺀 코드 (줄 수는 그대로)."""
+    text = re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n"), text, flags=re.S)
+    return re.sub(r"(^|[^:])//[^\n]*", r"\1", text)
+
+
+def test_the_fallback_guard_knows_the_forms():
+    for bad in ("load.data.usPxDate || load.data.pxDate", "d.usPxDate ?? d.pxDate", "d.usPxDate\n    || d.pxDate",
+                "load.data.usPxDate ? load.data.usPxDate : load.data.pxDate", "d.usPxDate\n  ? mdText(d.usPxDate)\n  : d.pxDate"):
+        assert FALLBACK.search(_code(bad)), bad
+    for ok in ("usOf(s) ? load.data.usPxDate : load.data.pxDate", "load.data.usPxDate || null",
+               "load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null",
+               "// usPxDate || pxDate (a comment)"):
+        assert not FALLBACK.search(_code(ok)), ok
 
 
 def test_no_us_date_falls_back_to_the_korean_date_anywhere_in_src():
-    """2.0 과 예전 앱 모두: usPxDate 가 없을 때 pxDate 로 대신하는 곳이 없어요 (`usPxDate || …pxDate`, `?? …pxDate`)."""
-    bad = re.compile(r"usPxDate\s*(\|\||\?\?)\s*[\w.]*\bpxDate\b")
+    """2.0 과 예전 앱 모두: usPxDate 가 없을 때 pxDate 로 대신하는 곳이 없어요."""
     hits = []
     for p in sorted(glob.glob(os.path.join(ROOT, "src", "**", "*.js*"), recursive=True)):
         with open(p, encoding="utf-8") as f:
-            for i, ln in enumerate(f, 1):
-                if not ln.strip().startswith("//") and bad.search(ln):
-                    hits.append(f"{os.path.relpath(p, ROOT)}:{i}: {ln.strip()[:120]}")
+            code = _code(f.read())
+        for m in FALLBACK.finditer(code):
+            hits.append(f"{os.path.relpath(p, ROOT)}:{code.count(chr(10), 0, m.start()) + 1}: {m.group(0)[:120]!r}")
     assert not hits, hits

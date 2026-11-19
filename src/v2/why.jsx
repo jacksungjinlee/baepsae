@@ -14,7 +14,7 @@ import React from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS } from "../ui/tokens.js";
 import { HeroBand, DotStrip, Collapsible, StatusChip, Amount } from "../ui/components.jsx";
 import { hasGroup, todayD1 } from "./engine.js";
-import { priceMdSaid } from "./cofmt.js";
+import { priceMdSaid, lineDate } from "./cofmt.js";
 import { C, fill, priceText } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, Footer, Note, DateLine, tx } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
@@ -135,6 +135,11 @@ export function Why({ load, store, setStoreData, target, onBack, pad }) {
   // A US price never takes the Korean date: in a file without usPxDate it has no date, and the header and the price source
   // leave the date out with the words that need it (no new words; said once in the console).
   const md = priceMdSaid(load, s, "why-it-moved");
+  // The late date line (below) is this stock's market's date, as on the company page (cofmt.lineDate: KR pxDate, US usPxDate,
+  // or its own pxd): a US stock on late data is never headed with the Korean date (review 2026-11-19, from #144). A late check
+  // needs both dates readable (tradedays.lateDays), so it is not empty; if it ever is, the line is left out (said once).
+  const lateDate = ev.late ? lineDate(load, s) : null;
+  if (ev.late && !lateDate) lateSay(`why-it-moved ${x.t}: no date of its own market to head the late data with, so the date line is left out`);
   // Today's change as the data gives it (d1, % between official closes). The won change is not shown: worked back from
   // a rounded percentage it would look exact and be off by a few won.
   const d1 = todayD1(s);
@@ -143,7 +148,7 @@ export function Why({ load, store, setStoreData, target, onBack, pad }) {
       <AppBar onBack={onBack} backLabel={backLabel()} />
       {store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}
       {/* late data within 5 trading days (rules.js checkState, Jack 2026-11-19): the date line with its stale words, as on 홈 */}
-      {ev.late && <DateLine date={load.data.pxDate} fresh={load.fresh} />}
+      {lateDate && <DateLine date={lateDate} fresh={load.fresh} />}
       <div style={{ display: "flex", alignItems: "center", gap: SPACE(3) }}>
         <CoMark t={x.t} name={x.nk} size={SPACE(10)} />
         <div style={{ flex: 1, minWidth: 0 }}><ScreenTitle>{fill(C.why.title, { name: x.nk })}</ScreenTitle></div>

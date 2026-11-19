@@ -13820,7 +13820,8 @@ def scene_why_us_date(R, files, width=390):
         f = daily_files(files)                                     # 오늘 발행 (매일 점검이 돌아요)
         d = f["data.json"]
         if us_px is None:
-            assert d.pop("usPxDate", None) and d["pxDate"] == pxd0
+            gone = d.pop("usPxDate", None)
+            assert gone and d["pxDate"] == pxd0, gone
         else:
             d["usPxDate"] = us_px
         for x in d["stocks"]:
@@ -13870,6 +13871,53 @@ def scene_why_us_date(R, files, width=390):
                           "2026-10-29": "usPxDate 10월 29일: 애플 '10월 29일 종가' · 출처 그대로 · 삼성전자 10월 30일 · 콘솔 없음"}[us_px], run)
         ctx.close()
         srv.shutdown()
+
+
+def scene_why_late_dates(R, files, width=390):
+    """늦은 데이터의 왜 움직였나 (리뷰 2026-11-19, #144 에서): 날짜 줄('{date} 기준 · 멈춤 말')은 그 종목 시장의 날짜예요 (회사 페이지와
+    같은 cofmt.lineDate). 한국 종가 11월 5일 · 미국 종가 11월 4일인 늦은 파일 (추수감사절 주처럼 두 날짜가 달라요): 애플은 '11월 4일 기준'과
+    '11월 4일 종가' (한국 날짜 11월 5일 없음) · 삼성전자는 '11월 5일 기준'과 '11월 5일 종가' 그대로."""
+    S = f"왜 움직였나 늦은 날짜 {width}"
+    kr_px, us_px = "2026-11-05", LATE_IN                                   # 미국은 LATE_IN(5거래일 안), 한국은 하루 뒤
+    band = lambda t: [{"id": "band", "kind": "band", "check": "checked", "target": t, "bands": [0.75 * t, 1.25 * t, 1.4 * t]}]
+    deck = {"id": "dwhylate", "name": "늦은 날짜 포트폴리오", "createdAt": "2026-10-01", "planFx": 1300,
+            "holdings": [{"t": "005930", "nk": "삼성전자", "target": 0.5, "plannedQty": 10, "rules": band(0.5)},
+                         {"t": "AAPL", "nk": "Apple Inc.", "cls": "us", "target": 0.5, "plannedQty": 6, "rules": band(0.5)}],
+            "purchases": [{"id": "p1aaaaaa", "t": "005930", "date": "2026-10-01", "qty": 10, "price": 200000, "ccy": "KRW"},
+                          {"id": "p2aaaaaa", "t": "AAPL", "date": "2026-10-01", "qty": 6, "price": 300.0, "ccy": "USD", "fx": 1300}]}
+    f = late_files(files, us_px)                                           # 늦은 발행 (pxDate = usPxDate = LATE_IN)
+    for n in ("data.json", "corp.json"):
+        f[n]["pxDate"] = kr_px
+    assert f["data.json"]["usPxDate"] == us_px
+    for x in f["data.json"]["stocks"]:
+        if x["t"] in ("AAPL", "005930"):
+            x["d1"] = -6.5                                                 # 크게 움직인 종목: 홈의 '자세히 보기'
+            x.pop("pxd", None)
+    srv, ctx, page, base = R.open(build_site(f), width, init=e_store([deck]), path="/app.html?dev=1#home")
+
+    def run():
+        wait_ready(page)
+        for t, iso in (("AAPL", us_px), ("005930", kr_px)):
+            page.evaluate("location.hash = '#home'")
+            at(page, "home")
+            page.locator('[data-ui-v2="today-hero"]').wait_for(state="visible")
+            assert page.locator('[data-ui-v2="today-hero"]').get_attribute("data-late") == "1"   # 늦은 점검이 돌아요
+            page.locator(f'[data-big-move="{t}"] [data-ui-v2="why-link"]').first.click()
+            at(page, "home/why")
+            dl = page.locator('[data-ui-v2="date-line"]')
+            dl.first.wait_for(state="visible")
+            line = dl.first.inner_text()
+            assert dl.count() == 1 and dl.first.get_attribute("data-stale") == "1", (t, dl.count())
+            other = kr_px if iso == us_px else us_px
+            assert line.startswith(fillp(C["app"]["asOf"], md=mdtext(iso))) and mdtext(other) not in line, (t, line)
+            head = page.locator('[data-ui-v2="why-head"]').inner_text()
+            assert fillp(C["why"]["close"], md=mdtext(iso)) in head and mdtext(other) not in head, (t, head)
+            floor_ok(page, f"왜 움직였나 늦은 날짜 {t}")
+            no_hscroll(page, width)
+            R.collect(page)
+    R.check(page, S, "늦은 데이터 (한국 11월 5일 · 미국 11월 4일): 애플의 날짜 줄과 종가는 11월 4일 · 삼성전자는 11월 5일", run)
+    ctx.close()
+    srv.shutdown()
 
 
 def main():
@@ -13981,7 +14029,8 @@ def main():
                    lambda: scene_v196f_gaps(R, files, 390),                                                 # v19.6f 리뷰 C: 빠진 종목 · 셀 수 없는 배당 · 미국 날짜
                    lambda: scene_late_check(R, files, 390), lambda: scene_late_check(R, files, 390, dark=True),   # 늦은 데이터의 점검 (Jack 2026-11-19)
                    lambda: scene_late_today_words(R, files, 390),                                           # 늦은 점검 리뷰: '오늘' 글이 새로 나오지 않아요
-                   lambda: scene_why_us_date(R, files, 390)):                                               # 왜 움직였나: 미국 종목에 한국 날짜 없음 (2026-11-19)
+                   lambda: scene_why_us_date(R, files, 390),                                                # 왜 움직였나: 미국 종목에 한국 날짜 없음 (2026-11-19)
+                   lambda: scene_why_late_dates(R, files, 390)):                                            # 늦은 데이터의 왜 움직였나: 그 시장의 날짜 줄
             try:
                 fn()
             except Exception as e:
