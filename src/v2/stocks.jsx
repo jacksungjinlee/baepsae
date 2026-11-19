@@ -7,7 +7,7 @@
 // No 뱁이 here (the lists show today's changes). useStockTap is reused by 홈's 종목 순위 (rank.jsx).
 // PC (v19.0d): the search field is the top bar's (nav.jsx TopBar, its words come in as q), so this screen shows no field
 // of its own; the results, lists and taps are the same.
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { Icon } from "../ui/icons.jsx";
 import { C, fill, mdText } from "./format.js";
@@ -19,6 +19,8 @@ import { isCompany, searchStocks, myStocks, ownCloses } from "./stocklist.js";
 import { RankCard } from "./rank.jsx";
 import { DayNote } from "./fixnote.jsx";
 import { readRecent, addRecent, RECENT_KEY, PREVIEW_RECENT_KEY } from "./recent.js";
+import { WatchSection, SECTION_N } from "./watch.jsx";
+import { watchOf, watchOrder } from "./store.js";
 
 const changeColor = (v) => (v > 0 ? COLOR.up : v < 0 ? COLOR.down : COLOR.text2);
 
@@ -78,7 +80,9 @@ export function useStockTap() {
 
 // q: the PC top bar's search words (null on the phone, where this screen has its own field). ownQ / setOwnQ: the phone
 // field's words, kept by the app shell (v19.1a: a company page and back keep them); without them the field keeps its own.
-export function Stocks({ load, store, pad, q: topQ = null, ownQ: shellQ, setOwnQ }) {
+// v19.6c (Part C): onWatch opens 관심 종목 (#stocks/watch) from its section at the top (only when the list is not empty);
+// focusKey (above 0): 관심 종목's "+ 추가" came here, so the phone field takes focus once (onFocused clears it).
+export function Stocks({ load, store, pad, q: topQ = null, ownQ: shellQ, setOwnQ, onWatch = null, focusKey = 0, onFocused = null }) {
   const [localQ, setLocalQ] = useState("");
   const ownQ = setOwnQ ? shellQ || "" : localQ;
   const setQ = setOwnQ || setLocalQ;
@@ -90,14 +94,22 @@ export function Stocks({ load, store, pad, q: topQ = null, ownQ: shellQ, setOwnQ
   const mine = useMemo(() => myStocks(store.data.decks, load), [store.data.decks, load]);
   const recent = ok ? tp.recent.map((t) => load.byT.get(t)).filter(Boolean) : [];
   const typing = q.trim().length > 0;
+  // v19.6c: the 관심 종목 section's rows (the first SECTION_N in data), so the US and own-close lines name them too
+  const watched = ok && onWatch ? watchOrder(watchOf(store.data)).map((t) => load.byT.get(t)).filter(Boolean).slice(0, SECTION_N) : [];
   // US prices are at their own close date: say so when it differs from the Korean one and a US row is on screen
   // (as 홈 and 포트폴리오 do). 종목 순위 carries its own date.
-  const usShown = (typing ? results : [...recent, ...mine.map((x) => x.s || x)]).some((s) => s && s.cls === "us");
+  const usShown = (typing ? results : [...watched, ...recent, ...mine.map((x) => x.s || x)]).some((s) => s && s.cls === "us");
   const usDate = ok && usShown && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
   // v19.1c: the shown rows (search results, or recent and my stocks) with a US stock priced at an earlier close (pxd):
   // named under the date line. 종목 순위 carries its own note.
-  const own = ok ? ownCloses(load, typing ? results : [...recent, ...mine.map((x) => x.s)]) : [];
+  const own = ok ? ownCloses(load, typing ? results : [...watched, ...recent, ...mine.map((x) => x.s)]) : [];
   const krMd = ok ? mdText(load.data.pxDate) : null;     // the no-trade line's date (StockRow)
+  const fieldRef = useRef(null);
+  useEffect(() => {
+    if (!focusKey) return;
+    if (fieldRef.current) { try { fieldRef.current.focus(); } catch (e) { /* ignore */ } }
+    if (onFocused) onFocused();
+  }, [focusKey]);
   return (
     <Page pad={pad}>
       <AppBar />
@@ -110,7 +122,7 @@ export function Stocks({ load, store, pad, q: topQ = null, ownQ: shellQ, setOwnQ
         <label data-ui-v2="stock-search" style={{ display: "flex", alignItems: "center", gap: SPACE(2), marginTop: SPACE(3), minHeight: TOUCH + SPACE(1),
           background: COLOR.surface, border: `1px solid ${COLOR.border}`, borderRadius: RADIUS.md, padding: `0 ${SPACE(3)}px` }}>
           <Icon name="search" size={20} tone="off" />
-          <input type="search" value={q} onChange={(e) => setQ(e.target.value.slice(0, 40))} aria-label={C.stocks.search || C.app.tabs.stocks}
+          <input ref={fieldRef} type="search" value={q} onChange={(e) => setQ(e.target.value.slice(0, 40))} aria-label={C.stocks.search || C.app.tabs.stocks}
             placeholder={C.stocks.search || undefined} enterKeyHint="search" autoComplete="off"
             style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", minHeight: TOUCH, ...tx(SIZE.body, WEIGHT.semi, COLOR.ink) }} />
         </label>
@@ -120,6 +132,10 @@ export function Stocks({ load, store, pad, q: topQ = null, ownQ: shellQ, setOwnQ
           {results.map((s) => <StockRow key={s.t} s={s} t={s.t} cls={s.cls} md={krMd} {...tp.props({ t: s.t, cls: s.cls, s })} />)}
           {!results.length && (C.stocks.noResult ? <Note data-ui-v2="no-result">{C.stocks.noResult}</Note> : <span data-ui-v2="no-result" data-pending="1" hidden />)}
         </Card>
+      )}
+      {!typing && onWatch && (
+        <WatchSection load={load} store={store} onOpen={onWatch}
+          row={(s) => <StockRow key={s.t} s={s} t={s.t} cls={s.cls} md={krMd} {...tp.props({ t: s.t, cls: s.cls, s })} />} />
       )}
       {!typing && recent.length > 0 && (
         <Card data-ui-v2="recent">

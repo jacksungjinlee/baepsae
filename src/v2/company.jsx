@@ -26,7 +26,7 @@ import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.
 import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, CardPic, SIDE_W, tx, tap, useMode, useLayout } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { findCompany, groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, warnings, cardRanks, myCards, holdingsOf, RANK_CARDS,
-  splitGuardCount, SPLIT_GUARD, divCheckCount, warnChips, warnKind, uncheckedCount, divShareHidden } from "./company.js";
+  splitGuardCount, SPLIT_GUARD, divCheckCount, warnChips, warnKind, uncheckedCount, divHiddenLine } from "./company.js";
 import { EarnBars, ValueScale, Coins, Waves } from "./coart.jsx";
 import { pfRows, isImported, limitsOf } from "./pf.js";
 import { limitPct } from "./pfview.jsx";
@@ -46,6 +46,7 @@ import { IcrOffNote, IcrOffLine, StmtCurNote, FcurNote, PbrZeroNote, FgnCutNote,
   DayNote, PrefNote, PrefFitNote } from "./fixnote.jsx";
 import { fcurRowsBlank, fcurBlank, fcurDyBlank, pbrZeroOf, pbrZeroRowsBlank, fgnBlank, fgnRowsBlank } from "./fcur.js";
 import { RecordButton, RecordFlow, companyFlow } from "./records.jsx";
+import { WatchButton } from "./watch.jsx";
 import { decksFor } from "./records.js";
 import { usOf, priceMd, priceDate, lineDate, closeLine, wonOfUsd, wonLineUsd, fxDateLine, US_HEAD2, timesText, pctText, yieldText, usGrowthText, riskBandText } from "./cofmt.js";
 
@@ -115,13 +116,17 @@ export function tileViews(load, s) {
     const number = r.yieldPct != null ? `${C.pick.receipt.yield} ${yieldText(r.yieldPct)}` : null;
     add("div", T().label.div, r, phrase, number, { dps3: r.d3 || null, dps: r.dps ?? null, y: r.yieldPct, dpsok: r.dpsOk ? "1" : "" },
       divArt(r.rule));
-    // v19.1i (Jack's line, 2026-11-08): a Korean payer whose yield is hidden because its share count changed and no filing at all
-    // explains it (the pipeline marks it dvLine = 1) says why, in the number's place (company.js divShareHidden); other hidden
-    // yields stay as they were.
+    // v19.1i (Jack's line, 2026-11-08) and v19.1j (Jack, 2026-11-15, answers 11 and 13): a Korean payer whose yield is hidden says
+    // why, in the number's place, when the pipeline marked the reason (data.json dvLine -> company.js divHiddenLine: 1 share count
+    // changed with no filing, 2 a 주주배정 rights issue past its 권리락, 3 a dividend table that disagrees with the share counts,
+    // 4 (Jack, 2026-11-19) the company's filings lack a piece the calculation needs); other hidden yields stay as they were.
+    // One line at most.
     const last = out[out.length - 1];
-    if (last && last.topic === "div" && !number && !usOf(s) && divShareHidden(s, co) && C.co.div.shareHidden) {
-      last.note = C.co.div.shareHidden;
-      last.noteUi = "div-share-hidden";
+    const hid = last && last.topic === "div" && !number && !usOf(s) ? divHiddenLine(s, co) : null;
+    if (hid && C.co.div[hid]) {
+      last.note = C.co.div[hid];
+      last.noteUi = { shareHidden: "div-share-hidden", rightsHidden: "div-rights-hidden", dataHidden: "div-data-hidden",
+        missingHidden: "div-missing-hidden" }[hid];
     }
   }
   if (pxBadFor(s, co) && T().label.risk) {
@@ -814,6 +819,8 @@ function CompanyPage({ load, s, store, setStoreData, pad, ctab, disc, nav, held,
       <AppBar onBack={nav.back} backLabel={backLabel} />
       <div data-ui-v2="company" data-t={s.t} data-cls={s.cls} data-tab={tab || "summary"}>
         <Header load={load} s={s} />
+        {/* v19.6c (Part C): 관심 종목에 추가 / 관심 종목에서 빼기, under the header on every tab (records that can be written) */}
+        <WatchButton s={s} store={store} setStoreData={setStoreData} />
         {load.fresh && load.fresh.stale && lineDate(load, s) && <DateLine date={lineDate(load, s)} fresh={load.fresh} />}
         <MoveLine load={load} s={s} held={held} onWhy={nav.onWhy} />
         <div ref={mark} aria-hidden="true" />
