@@ -24,6 +24,8 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 **#147 (watchdog retry), 2026-11-19:** the Watchdog asks the site once more, 20 s later, after a 5xx before raising an alarm (Jack, 11-19, Q10); once a retry has failed, later 5xx answers fail at once (30-minute job limit). Log and run summary: "5xx 다시 물음". No gate or threshold change.
 
+**#148 (왜 움직였나 US date), 2026-11-19:** a US stock's close on 왜 움직였나 is never labelled with the Korean date (no usPxDate → no date, said in the console), and the late-data date line follows the stock's own market (cofmt.lineDate; review of #144). Open: 예전 뱁새 "가격은 {md} 공식 종가예요." labels US holdings with the Korean date (needs Jack's wording decision).
+
 **Incident, 2026-11-18/19.** No data published after 11-17 06:40 KST (the site said "2일째 갱신이 멈췄어요").
 - **Cause:** the volunteer copy of the KRX list stopped saving its after-close file after 11-16, and KRX's company list now needs a login, so industries came back empty. The gate rightly blocked every run.
 - **Fixes:** #134 (a test that failed only because of the date) merged 01:25 KST. #137 merged 03:59 KST: Daum's official daily prices, kept only where Yahoo `.KS`/`.KQ` agrees to the won; industries carried forward.

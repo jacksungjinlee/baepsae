@@ -11,6 +11,25 @@ export const usOf = (s) => !!s && s.cls === "us";
 // all (the price is not at the market's date, and a wrong date is worse than none). data.js stockPriceDate.
 export const priceDate = (load, s) => stockPriceDate(s, usOf(s) ? load.data.usPxDate : load.data.pxDate);
 export const priceMd = (load, s) => mdText(priceDate(load, s));
+// priceMd for a screen that labels one stock's close ("{md} 종가"), said once per screen and stock in the console when there
+// is no date to show: a US price never takes the Korean date (a file without usPxDate: no date, CLAUDE.md "a date shown to
+// users describes the content"), a pxd that cannot be read, or no readable market date. The screen then leaves out the date
+// and the words that need it (no new words). 왜 움직였나 (why.jsx) reads its header and price source with it.
+const MD_SAID = new Set();
+export function priceMdSaid(load, s, where) {
+  const md = priceMd(load, s);
+  if (md || !s) return md;
+  const key = `${where} ${s.t}`;
+  if (!MD_SAID.has(key)) {
+    MD_SAID.add(key);
+    const d = load.data;
+    const why = s.pxd != null ? `its own close date (pxd ${JSON.stringify(s.pxd)}) cannot be read`
+      : usOf(s) ? `data.json has no readable US close date (usPxDate ${JSON.stringify(d.usPxDate)}); a US price never takes the Korean date (pxDate ${JSON.stringify(d.pxDate)})`
+        : `data.json has no readable close date (pxDate ${JSON.stringify(d.pxDate)})`;
+    console.warn(`[v2] ${where} ${s.t}: the close date and the words that need it are left out (${why})`);
+  }
+  return md;
+}
 // The date of the company page's date lines (DateLine: "{md} 기준" and the stale warning beside it). Normally the price date
 // above. A pxd that cannot be read leaves the price without a date, but must not take the date line and its stale warning
 // away with it: the line falls back to the market's date (US usPxDate, KR pxDate), with a console warning once per stock.
