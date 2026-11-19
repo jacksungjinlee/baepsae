@@ -2147,8 +2147,12 @@ def check_us_extra(rep, data, us, mode):
 def own_drop_get(data, key):
     """data.json ownDrop[key] (Jack 의 상시 규칙 2026-11-19) → None (기록 없음: 이 규칙 전 파일 — 그 줄은 예전 규칙 그대로) · False (기록 모양이
     틀림: 예전 규칙 그대로에 경고를 더해요) · {"n": 파이프라인이 빼거나 비운 행 수, "rows": [[열쇠, 이유]] 앞 OWN_DROP_SHOW 개}."""
-    od = data.get("ownDrop") if isinstance(data, dict) else None
-    if not isinstance(od, dict) or key not in od:
+    if not isinstance(data, dict) or "ownDrop" not in data:
+        return None
+    od = data["ownDrop"]
+    if not isinstance(od, dict):                       # 리뷰 1차: 칸은 있는데 모양이 틀림 — 조용히 넘기지 않고 예전 규칙 + 경고
+        return False
+    if key not in od:
         return None
     r = od[key]
     n = r.get("n") if isinstance(r, dict) else None
@@ -2172,7 +2176,10 @@ def own_drop_text(rows, n=None):
 
 def _us_sym_parse(rec):
     """usListSym 기록 → 읽은 칸과 모양 문제 (check_us_share_class · us_class_bad_rows 가 같은 규칙을 써요 · 한 곳).
-    sp_unsure: spTickers 를 믿을 수 없는 모양 (그날 S&P 500 목록에서 온 티커인지 알 수 없어요 — 리뷰 2차 2 의 '검사가 조용히 꺼짐')."""
+    unsure: spTickers 를 믿을 수 없는 모양 (그날 S&P 500 목록에서 온 티커인지 알 수 없어요 — #139 리뷰 2차 2 의 '검사가 조용히 꺼짐').
+    mapped: 예전 규칙 그대로 (한 줄이라도 틀리면 비워요 · 'mapped 모양'). 상시 규칙 쪽은 줄마다 읽어요 (리뷰 1차 M1): mapped_ok = 모양이 맞는 줄 ·
+    wrong_all = 그중 관문 표와 다르게 바꾼 줄 · map_blind = 읽을 수 없는 줄이나 점이 지워진 꼴(BRKB · BFB)이 든 틀린 줄이 있어 관문 표와 다른
+    바꾸기를 확인할 수 없음 (그 꼴이 어디로 바뀌었는지 모르면 틀린 회사가 실렸는지도 몰라요 → 발행 실패 · 예전과 같아요)."""
     row3 = lambda x: isinstance(x, list) and len(x) == 3 and all(isinstance(v, str) for v in x)   # noqa: E731
     strs = lambda x: isinstance(x, list) and all(isinstance(t, str) for t in x)                    # noqa: E731
     mapped, unmapped, sp_t = rec.get("mapped"), rec.get("unmapped"), rec.get("spTickers")
@@ -2180,6 +2187,12 @@ def _us_sym_parse(rec):
     bad, unsure = [], False
     if not isinstance(rec.get("read"), bool):
         bad.append("read 가 참 · 거짓이 아님")
+    mapped_ok, map_blind = [], not isinstance(mapped, list)
+    for x in mapped if isinstance(mapped, list) else []:
+        if row3(x):
+            mapped_ok.append(x)
+        elif not (isinstance(x, list) and all(isinstance(v, str) for v in x)) or any(v in US_CLASS_JOINED_SET for v in x):
+            map_blind = True
     if not (isinstance(mapped, list) and all(row3(x) for x in mapped)):
         bad.append("mapped 모양")
         mapped = []
@@ -2210,12 +2223,14 @@ def _us_sym_parse(rec):
         bad.append("spGone 이 spTickers 안에 있지 않음")
         unsure = True
     wrong = [(a, b) for _s, a, b in mapped if a in US_CLASS_JOINED_SET and b != US_CLASS_JOINED_SET[a]]
+    wrong_all = [(a, b) for _s, a, b in mapped_ok if a in US_CLASS_JOINED_SET and b != US_CLASS_JOINED_SET[a]]
     return {"mapped": mapped, "unmapped": unmapped, "sp_t": sp_t, "sp_gone": sp_gone, "no_px": no_px, "sp_err": sp_err, "bad": bad,
-            "unsure": unsure, "wrong": wrong}
+            "unsure": unsure, "wrong": wrong, "mapped_ok": mapped_ok, "wrong_all": wrong_all, "map_blind": map_blind}
 
 
 US_CLASS_WHY_SP = "S&P 500 목록의 점이 지워진 꼴이 바뀌지 않고 실림 (야후가 이 꼴에 답한 다른 증권일 수 있어요)"
 US_CLASS_WHY_UNSURE = "기록(spTickers) 모양이 틀려 S&P 500 목록에서 왔는지 확인할 수 없는 점이 지워진 꼴"
+US_CLASS_BLIND = "mapped 에 읽을 수 없는 줄이나 점이 지워진 꼴이 든 틀린 줄이 있어 관문 표와 다른 바꾸기를 확인할 수 없음 (발행 실패)"
 
 
 def us_class_bad_rows(rec, us):
@@ -2225,8 +2240,10 @@ def us_class_bad_rows(rec, us):
               야후가 다른 증권으로 답한 것 (그 행의 가격 · 시가총액이 다른 회사의 숫자). 다른 출처(나스닥)의 같은 글자는 다른 회사일 수 있어 빼지 않아요.
     종류 unsure — 같은 꼴이 실렸는데 spTickers 모양이 틀려 출처를 알 수 없음 (틀린 숫자일 수 있어 빼요 · 기록이 깨진 날만).
     종류 wrong — 파이프라인이 점이 지워진 꼴을 관문 표(US_CLASS_JOINED_SET)와 다른 티커로 바꿨고 그 티커가 실림 (S&P 목록의 회사가 아닌 증권이
-              S&P 500 회사로 들어와 외국 회사 검사(#133)를 건너뛸 수 있어요). 표의 맞는 티커(BRK-B · BF-B)와 손으로 더한 종목(US_EXTRA_SET ·
-              #126 의 규칙 · 외국 회사는 손 목록으로 늘 검사)은 빼지 않아요 — 그 행은 그 티커의 진짜 숫자예요 (기록 문제로 경고만).
+              S&P 500 회사로 들어와 외국 회사 검사(#133)를 건너뛸 수 있어요). mapped 는 줄마다 읽어요 (틀린 줄 하나가 이 검사를 끄지 않게 · 리뷰 1차
+              M1). 표의 맞는 티커(BRK-B · BF-B)와 손으로 더한 종목(US_EXTRA_SET · #126: 손 목록이 넣은 종목이라 그 행은 그 티커의 야후 숫자예요)은
+              빼지 않아요 (기록 문제로 경고만).
+    기록 문제에는 US_CLASS_BLIND 가 들 수 있어요: mapped 에 읽을 수 없는 줄 · 점이 지워진 꼴이 든 틀린 줄 → 관문은 발행 실패 (사이트 점검 경고).
     기록이 없으면 ([], []) — 출처를 알 수 없어 빼지 않아요 (예전 규칙: 이름만 · 경고)."""
     if not isinstance(rec, dict):
         return [], []
@@ -2240,11 +2257,12 @@ def us_class_bad_rows(rec, us):
         elif p["unsure"]:
             rows.append((t, US_CLASS_WHY_UNSURE, "unsure"))
     good = set(US_CLASS_JOINED_SET.values()) | US_EXTRA_SET
-    for a, b in p["wrong"]:
+    for a, b in p["wrong_all"]:
         if b in tickers and b not in good and b not in {r[0] for r in rows}:
             rows.append((b, f"관문 표와 다르게 바꾼 티커 {a} → {b} (관문 표 {US_CLASS_JOINED_SET[a]})", "wrong"))
-    probs = ([f"관문 표와 다르게 바꿈: {' · '.join(f'{a} → {b} (관문 표 {US_CLASS_JOINED_SET[a]})' for a, b in p['wrong'])}"] if p["wrong"] else []) \
-        + ([f"기록 모양이 틀림: {' · '.join(p['bad'])}"] if p["bad"] else [])
+    probs = ([f"관문 표와 다르게 바꿈: {' · '.join(f'{a} → {b} (관문 표 {US_CLASS_JOINED_SET[a]})' for a, b in p['wrong_all'])}"]
+             if p["wrong_all"] else []) \
+        + ([f"기록 모양이 틀림: {' · '.join(p['bad'])}"] if p["bad"] else []) + ([US_CLASS_BLIND] if p["map_blind"] else [])
     return rows, probs
 
 
@@ -2266,16 +2284,20 @@ def check_us_share_class(rep, data, us, mode):
        적어요 (경고 아님).
        Jack 의 상시 규칙 (2026-11-19 · 우리 처리를 보는 검사): data.json ownDrop.usClass 가 있는 파일은 파이프라인이 빼야 할 행(us_class_bad_rows ·
        같은 함수)을 빼고 발행했어요. 그 파일에서 실패는 둘뿐 — 뺀 행이 US_CLASS_DROP_MAX 를 넘음 (발행 · 사이트 점검은 경고) · 빼야 할 행이 남아
-       실림 (S&P 목록의 꼴은 늘 실패 · 출처를 알 수 없는 꼴과 관문 표와 다른 티커는 발행 실패 · 사이트 점검 경고 — 예전과 같아요). 뺀 행 1~N ·
-       관문 표와 다른 바꾸기 · 기록 모양은 경고 (남은 행이 없으면 틀린 숫자를 보이지 않아요). ownDrop.usClass 가 없는 파일은 예전 규칙 그대로."""
+       실림 (S&P 목록의 꼴은 늘 실패 · 출처를 알 수 없는 꼴과 관문 표와 다른 티커는 발행 실패 · 사이트 점검 경고 — 예전과 같아요). 그리고 mapped 에
+       읽을 수 없는 줄이나 점이 지워진 꼴이 든 틀린 줄이 있어 그 바꾸기를 확인할 수 없으면 발행 실패 · 사이트 점검 경고 (리뷰 1차 M1 · 예전 'mapped 모양'
+       실패의 좁은 꼴). 뺀 행 1~N · 관문 표와 다른 바꾸기 · 그 밖의 기록 모양은 경고 (남은 행이 없으면 틀린 숫자를 보이지 않아요). 이 검사의 행은 표의
+       두 꼴에서만 나와 한 실행에 많아야 4건쯤이라 N(5)을 넘기 어려워요 — 이 검사를 지키는 것은 '빼야 할 행이 남으면 실패'예요. ownDrop.usClass 가
+       없는 파일은 예전 규칙 그대로."""
     name = f"주식 종류 티커로 들어온 미국 종목 ({', '.join(sorted(US_CLASS_SET))}): 목록에 있거나 빠진 이유"
     th = "모두 있어야 함 (빠지면 이유와 함께 경고 · 이유 없이 빠지면 실패)"
     name2 = "미국 목록 출처 티커 (주식 종류 · 점이 지워진 꼴)"
     th2 = ("S&P 500 목록의 점이 지워진 꼴이 바뀌지 않고 목록에 실리지 않음 · 바꾼 꼴이 관문 표와 같음 · 기록 모양 (사이트 점검에서는 표 · 모양은 경고) "
            "(바꾸지 않은 지워진 꼴 · 바꾸지 못한 티커 · 가격 없는 · 오류 난 S&P 500 티커는 경고)")
     th2own = (f"Jack 의 상시 규칙 (2026-11-19): 파이프라인이 빼고 발행 (ownDrop.usClass) · 실패는 뺀 행 > {US_CLASS_DROP_MAX} (사이트 점검은 경고) 또는 "
-              "빼야 할 행이 남아 실림 (S&P 목록의 꼴 · 출처를 알 수 없는 꼴 · 관문 표와 다른 티커 — 뒤 둘은 사이트 점검에서 경고) · 뺀 행 · 관문 표와 다른 "
-              "바꾸기 · 기록 모양 · 바꾸지 않은 지워진 꼴 · 바꾸지 못한 티커 · 가격 없는 · 오류 난 S&P 500 티커는 경고")
+              "빼야 할 행이 남아 실림 (S&P 목록의 꼴 · 출처를 알 수 없는 꼴 · 관문 표와 다른 티커 — 뒤 둘은 사이트 점검에서 경고) 또는 mapped 를 읽지 못해 "
+              "관문 표와 다른 바꾸기를 확인할 수 없음 (사이트 점검은 경고) · 뺀 행 · 관문 표와 다른 바꾸기 · 그 밖의 기록 모양 · 바꾸지 않은 지워진 꼴 · "
+              "바꾸지 못한 티커 · 가격 없는 · 오류 난 S&P 500 티커는 경고")
     rec = data.get("usListSym")
     have = {s.get("t") for s in us if (num(s.get("price")) or 0) > 0}
     tickers = {s.get("t") for s in us}
@@ -2323,7 +2345,7 @@ def check_us_share_class(rep, data, us, mode):
     joined_other = [t for t in joined if t not in sp_set]         # 다른 출처의 같은 글자 티커 (다른 회사일 수 있어요 · 이름만)
     joined_left = sorted(k for k in US_CLASS_JOINED_SET if k in sp_set)   # 리뷰 2차 1: 바꾸지 않은 지워진 꼴이 S&P 목록에 (실렸든 아니든 · 경고)
     soft = mode == "live"                                         # 리뷰 2차 3: 사이트 점검에서는 표 · 모양 문제는 경고 (실린 엉뚱한 회사는 실패 그대로)
-    wrong = [f"{a} → {b} (관문 표 {US_CLASS_JOINED_SET[a]})" for a, b in p["wrong"]]
+    wrong = [f"{a} → {b} (관문 표 {US_CLASS_JOINED_SET[a]})" for a, b in (p["wrong_all"] if isinstance(own, dict) else p["wrong"])]
     shown = " · ".join(f"{a} → {b}" for _s, a, b in mapped[:US_FCUR_SHOW]) + (f" 외 {len(mapped) - US_FCUR_SHOW}개" if len(mapped) > US_FCUR_SHOW else "")
     own_parts, left = [], []
     if isinstance(own, dict):                                     # Jack 의 상시 규칙: 파이프라인이 뺀 행 · 그래도 남은 행
@@ -2331,7 +2353,8 @@ def check_us_share_class(rep, data, us, mode):
         n = max(own["n"], len(left))
         own_parts = ([f"뺀 행 {own['n']}: {own_drop_text(own['rows'], own['n'])}"] if own["n"] else []) \
             + ([f"뺀 행이 기준 {US_CLASS_DROP_MAX} 을 넘음 ({n})"] if n > US_CLASS_DROP_MAX else []) \
-            + ([f"빼야 할 티커가 남아 실림: {own_drop_text(left)}"] if left else [])
+            + ([f"빼야 할 티커가 남아 실림: {own_drop_text(left)}"] if left else []) \
+            + ([US_CLASS_BLIND if not soft else US_CLASS_BLIND.replace("발행 실패", "사이트 점검은 경고")] if p["map_blind"] else [])
     parts = own_parts \
         + ([f"S&P 500 목록의 점이 지워진 꼴이 바뀌지 않고 목록에 있음: {_tickers(joined_sp)}"] if joined_sp else []) \
         + ([f"관문 표와 다르게 바꿈: {' · '.join(wrong)}"] if wrong else []) \
@@ -2351,7 +2374,7 @@ def check_us_share_class(rep, data, us, mode):
     if isinstance(own, dict):
         left_sp = [t for t, _w, k in left if k == "sp"]
         left_other = [t for t, _w, k in left if k != "sp"]
-        ok2 = not (left_sp or ((left_other or max(own["n"], len(left)) > US_CLASS_DROP_MAX) and not soft))
+        ok2 = not (left_sp or ((left_other or p["map_blind"] or max(own["n"], len(left)) > US_CLASS_DROP_MAX) and not soft))
         rep.add(name2, ok2, " · ".join(parts), th2own, warn=warn2 or bool(own["n"] or left))
     else:                                                         # 상시 규칙 전 파일 (ownDrop.usClass 없음): 예전 규칙 그대로
         rep.add(name2, not (joined_sp or ((wrong or bad) and not soft)), " · ".join(parts), th2, warn=warn2)
@@ -4323,8 +4346,8 @@ def _line_ko(v):
 
 def div_line_bad_rows(kr, dc):
     """Jack 의 상시 규칙 (2026-11-19) · #142 의 우리 처리 검사: 숨긴 배당수익률의 줄 (dvLine 2 · 3 · 4) 중 기록(divCheck.proofSub)과 맞지 않는 종목
-    → (행 [(코드, 이유, 종류)], 기록 문제 [글], 기록이 정한 줄 {코드: 줄}). 파이프라인(fetch_data.own_blank_div_lines)과 관문(check_v191j_lines)이
-    같은 함수를 써요. (순수 함수)
+    → (행 [(코드, 이유, 종류)], 기록 문제 [글], 기록이 정한 줄 {코드: 줄}, 확인한 기록 {rights · data 중 모양이 맞아 줄을 정할 수 있었던 것}).
+    파이프라인(fetch_data.own_blank_div_lines)과 관문(check_v191j_lines)이 같은 함수를 써요. (순수 함수)
     종류 shown — 종목에 줄 2 · 3 · 4 가 있는데 기록이 그 줄을 정하지 않음: 다른 줄 · 기록이 줄 없는 경우 · 기록에 없는 종목 · 그 줄을 정하는
                 기록(2 → rights · 3 · 4 → data)이 없거나 모양이 틀려 확인할 수 없음 · 우선주 · 배당수익률(dyt)이 보이는 종목 · 되살린(dvProof) 종목.
                 앱이 그 자리에 틀릴 수 있는 이유 줄을 보여요 → 파이프라인은 그 종목의 줄(dvLine)만 비워요 (숫자는 그대로 · 빈 배당수익률에 이유 줄이
@@ -4372,7 +4395,7 @@ def div_line_bad_rows(kr, dc):
     for t, v in sorted(want.items()):
         if t not in shown and (have.get(t) != v or isinstance(have.get(t), bool)):
             rows.append((t, f"기록은 {_line_ko(v)} 인데 줄 표시 없음 (이유 줄 없이 빈칸)", "missing"))
-    return rows, probs, want
+    return rows, probs, want, ok_k
 
 
 def check_v191j_lines(rep, dc, pf, kr, by, pdata, data=None, mode="publish"):
@@ -4399,34 +4422,43 @@ def check_v191j_lines(rep, dc, pf, kr, by, pdata, data=None, mode="publish"):
 
 
 def _div_lines_own(rep, name, own, dc, kr, pdata, mode):
-    """check_v191j_lines 의 상시 규칙 줄 (ownDrop.divLine 이 있는 파일). 실패: 맞지 않는 줄이 남음 (shown · 틀린 이유 줄) · 비운 줄이
-    DIV_LINE_BLANK_MAX 를 넘음 (발행 때만 · 사이트 점검은 경고). 경고: 비운 줄 1~N · 기록은 줄을 정했는데 표시가 없음 (missing) · 기록 문제 ·
-    기록이 없음 (직전 발행본에 있었어도 — 남은 줄이 없으면 틀린 것을 보이지 않아요) · 이름 없는 이유(other)."""
+    """check_v191j_lines 의 상시 규칙 줄 (ownDrop.divLine 이 있는 파일). 실패: 맞지 않는 줄이 남음 (shown · 틀린 이유 줄) · 이 실행에서 줄을 잃은
+    종목이 DIV_LINE_BLANK_MAX 를 넘음 (발행 때만 · 사이트 점검은 경고). 그 수 = 비운 줄 (ownDrop.divLine.n) · 남은 나쁜 행 · 그리고 오늘 기록(proofSub)이
+    없거나 그 부분의 모양이 틀려 줄을 정할 수 없는데 직전 발행본에 있던 그 부분의 줄 2 · 3 · 4 (리뷰 1차 S2: 기록과 줄이 함께 사라지면 비울 것이 없어
+    0 으로 세어져 30곳이 이유 줄을 잃어도 경고뿐이었어요) 중 큰 값. 경고: 그 수 1~N · 기록은 줄을 정했는데 표시가 없음 (missing) · 기록 문제 · 기록이
+    없음 · 이름 없는 이유(other)."""
     dc = dc if isinstance(dc, dict) else {}
-    left, probs, want = div_line_bad_rows(kr, dc)
+    left, probs, want, checked = div_line_bad_rows(kr, dc)
     shown = [r for r in left if r[2] == "shown"]
     missing = [r for r in left if r[2] == "missing"]
-    n = max(own["n"], len(left))
-    many = n > DIV_LINE_BLANK_MAX
     sub = dc.get("proofSub")
     had = not isinstance(sub, dict) and isinstance(((pdata or {}).get("divCheck") or {}).get("proofSub"), dict)
+    blind = set(PROVE_SUB) - checked                                       # 오늘 기록으로 줄을 정할 수 없는 부분 (rights · data)
+    lost = sorted(s.get("t") for s in kr_stocks(pdata or {}) if s.get("dvLine") in DIV_LINE_OF and not isinstance(s.get("dvLine"), bool)
+                  and DIV_LINE_OF[s["dvLine"]] in blind) if pdata else []
+    n = max(own["n"], len(left), len(lost))
+    many = n > DIV_LINE_BLANK_MAX
     n2, n3, n4 = (sum(1 for v in want.values() if v == x) for x in (2, 3, 4))
     dm = sub.get("data") if isinstance(sub, dict) and isinstance(sub.get("data"), dict) else {}
     oth = sorted(t for t, v in dm.items() if v == "other")
-    rest = sum(len(sub.get(k)) for k in PROVE_SUB if isinstance(sub, dict) and isinstance(sub.get(k), dict)) - n2 - n3 - n4
+    rest = sum(len(sub[k]) for k in checked) - n2 - n3 - n4               # 확인한 기록만 세요 (리뷰 1차: 모양이 틀린 기록의 종목을 '줄 없음'으로 세지 않게)
     parts = ([f"비운 줄 {own['n']}: {own_drop_text(own['rows'], own['n'])}"] if own["n"] else []) \
-        + ([f"비운 줄이 기준 {DIV_LINE_BLANK_MAX} 을 넘음 ({n})"] if many else []) \
+        + ([f"줄을 잃은 종목이 기준 {DIV_LINE_BLANK_MAX} 을 넘음 ({n})"] if many else []) \
         + ([f"기록과 맞지 않는 줄이 남음 {len(shown)}: {own_drop_text(shown)}"] if shown else []) \
         + ([f"기록은 줄인데 표시 없음 {len(missing)} (이유 줄 없이 빈칸): {own_drop_text(missing)}"] if missing else []) \
         + (["기록 없음 — 직전 발행본에는 있었어요"] if had else []) \
+        + ([f"오늘 기록으로 확인할 수 없는 직전 발행본의 줄 2 · 3 · 4 {len(lost)}곳: {', '.join(lost[:10])}{'…' if len(lost) > 10 else ''}"]
+           if lost else []) \
         + [x for x in probs if not (x.startswith("기록 없음") and had)] \
-        + [f"유상증자 줄 {n2} · 배당 자료 줄 {n3} · " + (f"빠진 자료 줄 {n4} · " if n4 else "") + f"줄 없음 {rest}"] \
+        + [f"유상증자 줄 {n2} · 배당 자료 줄 {n3} · " + (f"빠진 자료 줄 {n4} · " if n4 else "") + f"줄 없음 {rest}"
+           + (f" (확인하지 못한 기록: {' · '.join(sorted(blind))})" if blind else "")] \
         + ([f"이름 없는 배당 표 이유 {len(oth)}곳 (줄 없음): {', '.join(oth[:4])}{'…' if len(oth) > 4 else ''}"] if oth else [])
     rep.add(name, not (shown or (many and mode != "live")), " · ".join(parts),
-            f"Jack 의 상시 규칙 (2026-11-19): 기록과 맞지 않는 줄은 파이프라인이 비우고 발행 (ownDrop.divLine) · 실패는 비운 줄 > {DIV_LINE_BLANK_MAX} "
-            "(사이트 점검은 경고) 또는 맞지 않는 줄이 남음 · 비운 줄 · 표시 없는 줄 · 기록 문제 · 이름 없는 이유(other)는 경고 · dvLine 2 = 주주배정(sh) · "
+            f"Jack 의 상시 규칙 (2026-11-19): 기록과 맞지 않는 줄은 파이프라인이 비우고 발행 (ownDrop.divLine) · 실패는 줄을 잃은 종목 > {DIV_LINE_BLANK_MAX} "
+            "(비운 줄 · 기록이 없거나 틀려 확인할 수 없는 직전 발행본의 줄 · 사이트 점검은 경고) 또는 맞지 않는 줄이 남음 · 비운 줄 · 표시 없는 줄 · 기록 문제 · "
+            "이름 없는 이유(other)는 경고 · dvLine 2 = 주주배정(sh) · "
             "3 = 배당 표가 주식 수와 실제로 어긋남(div) · 4 = 회사 공시에 조각이 빠짐(nototal · nostk · pref0 · nopfo · prefmix)",
-            warn=bool(own["n"] or missing or probs or oth or many))
+            warn=bool(own["n"] or missing or probs or oth or many or lost))
     if own["n"]:
         rep.detail("파이프라인이 비운 숨긴 배당수익률의 줄 (ownDrop.divLine)", [f"{t}: {w}" for t, w in own["rows"]]
                    + ([f"… 외 {own['n'] - len(own['rows'])}건"] if own["n"] > len(own["rows"]) else []))

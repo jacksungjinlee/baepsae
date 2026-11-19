@@ -91,8 +91,8 @@ from validate_data import PX_BAD_DATA, PX_BAD_MUST_FAIL, PX_BAD_WIN, PX_BAD_WIN_
 from validate_data import US_FGN_NOCMP, US_FGN_NOCMP_KIND, US_FGN_NOCMP_WHY, US_FGN_NOREC_WHY, US_FGN_NOREC, US_SP500_MIN, US_SP500_MAX
 # 2026-11-19 (Jack 의 상시 규칙 · 우리 처리를 보는 검사): 빼거나 비울 행을 고르는 함수는 관문 파일에 하나씩 — 파이프라인은 같은 함수를 메모리의
 # 데이터에 돌려 그 행을 빼거나 비우고 data.json ownDrop 에 적어요 (논리를 베끼지 않아요)
-from validate_data import (US_CLASS_DROP_KEY, US_CLASS_DROP_MAX, DIV_LINE_DROP_KEY, DIV_LINE_BLANK_MAX, us_class_bad_rows, div_line_bad_rows,
-                           own_drop_rec, own_drop_text, kr_stocks as gate_kr_stocks, us_stocks as gate_us_stocks)
+from validate_data import (US_CLASS_DROP_KEY, US_CLASS_DROP_MAX, DIV_LINE_DROP_KEY, DIV_LINE_BLANK_MAX, US_CLASS_BLIND, us_class_bad_rows,
+                           div_line_bad_rows, own_drop_rec, own_drop_text, kr_stocks as gate_kr_stocks, us_stocks as gate_us_stocks)
 
 # ────────────────────────────────────────────────────────────
 # 설정
@@ -9906,18 +9906,34 @@ def own_drop_us_class(us, umeta):
     bad = {r[0] for r in rows}
     kept = [s for s in us if s.get("t") not in bad]
     if bad:
+        row0 = lambda x: isinstance(x, (list, tuple)) and x and x[0] in bad      # noqa: E731 — [티커, …] 줄
         if isinstance(umeta.get("splits"), list):
-            umeta["splits"] = [x for x in umeta["splits"] if not (isinstance(x, (list, tuple)) and x and x[0] in bad)]
+            umeta["splits"] = [x for x in umeta["splits"] if not row0(x)]
         for k in ("splitsNoCol", "usInfoPartial", "usFcurUnknown"):
             if isinstance(umeta.get(k), list):
                 umeta[k] = [t for t in umeta[k] if t not in bad]
+        uf = umeta.get("usForeign")
+        if isinstance(uf, dict):                       # 리뷰 1차 S1: 뺀 종목의 외국 회사 기록 (관문이 종목의 fgnCut 과 맞춰 봐요)
+            for k in ("checked", "unknown"):
+                if isinstance(uf.get(k), list):
+                    uf[k] = [t for t in uf[k] if t not in bad]
+            for k in ("cut", "kept"):
+                if isinstance(uf.get(k), list):
+                    uf[k] = [x for x in uf[k] if not row0(x)]
+            for k in ("kind", "set"):
+                if isinstance(uf.get(k), dict):
+                    uf[k] = {t: v for t, v in uf[k].items() if t not in bad}
+        if isinstance(umeta.get("usInfo"), list) and len(umeta["usInfo"]) == 2:   # [상세 정보를 붙인 종목, 종목] — 뺀 행만큼 줄여요
+            info = sum(1 for s in us if s.get("t") in bad and s.get("nk") not in (None, s.get("t")))   # 정보가 없는 행의 이름은 티커 그대로예요
+            umeta["usInfo"] = [max(0, umeta["usInfo"][0] - info), len(kept)]
     if rows:
         log(f"  !! {US_CLASS_DROP_NAME}: {len(rows)}건 빼고 발행 — {own_drop_text(rows)} (data.json ownDrop.usClass · 관문 경고 · "
             + (f"{US_CLASS_DROP_MAX}건을 넘어 관문에서 실패해 발행하지 않아요)" if len(rows) > US_CLASS_DROP_MAX else f"{US_CLASS_DROP_MAX}건을 넘으면 실패)"))
     else:
         log(f"· {US_CLASS_DROP_NAME}: 0건 빼고 발행")
     if probs:
-        log(f"  !! {US_CLASS_DROP_NAME} — 기록 문제 (관문 경고): " + " · ".join(probs))
+        log(f"  !! {US_CLASS_DROP_NAME} — 기록 문제 ({'관문에서 실패해 발행하지 않아요' if US_CLASS_BLIND in probs else '관문 경고'}): "
+            + " · ".join(probs))
     return kept, own_drop_rec(rows)
 
 
@@ -9927,7 +9943,7 @@ def own_blank_div_lines(kr, div_counts):
     빈 배당수익률을 보여요 (숫자는 그대로 · 틀릴 수 있는 이유를 말하지 않아요). missing (기록은 줄을 정했는데 표시가 없음): 비울 것이 없어요 (이유
     줄 없이 빈칸 그대로). 둘 다 수에 들어가요. 줄 1 (Jack 의 줄) 은 보지 않아요 (예전 규칙 그대로)."""
     kr_g = gate_kr_stocks({"stocks": kr})
-    rows, probs, _want = div_line_bad_rows(kr_g, div_counts)
+    rows, probs, _want, _checked = div_line_bad_rows(kr_g, div_counts)
     by = {s.get("t"): s for s in kr_g}
     for t, _w, kind in rows:
         if kind == "shown":
