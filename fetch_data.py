@@ -84,6 +84,9 @@ from validate_data import PX_SRC_LISTING, PX_SRC_FB, PX_YAHOO_SUFFIX, PX_CHECK_S
 from validate_data import PX_BAD_DATA, PX_BAD_MUST_FAIL, PX_BAD_WIN, PX_BAD_WIN_BARS, PX_BAD_ALWAYS
 # 2026-11-14 (Q5 리뷰 S1 · S2): 외국 회사 검사의 '맞춰 볼 값이 없음' 스위치와 그 사유 글, S&P 500 목록을 믿을 최소 겹침도 관문 파일에 있어요
 from validate_data import US_FGN_NOCMP, US_FGN_NOCMP_KIND, US_FGN_NOCMP_WHY, US_FGN_NOREC_WHY, US_FGN_NOREC, US_SP500_MIN, US_SP500_MAX
+# 2026-11-19 (Jack: "new listings take their industry from DART's company records"): 한국표준산업분류 11차 표를 읽는 코드와 쓰는 단계(소분류)도
+# 관문 파일에 있어요 (관문이 같은 표로 채운 값을 확인해요)
+from validate_data import load_ksic_names, IND_DART_DIGITS, IND_MISS_KO, IND_MISS_OK
 
 # ────────────────────────────────────────────────────────────
 # 설정
@@ -1505,10 +1508,13 @@ def kr_desc_parse(dk):
 
 def kr_prev_desc(prev):
     """지난 발행본(data.json)의 국내 종목 업종 · 주요제품 {코드: (업종, 주요제품)} 과 그 업종 글자의 날짜 (2026-11-19).
-    날짜: 지난 발행본이 이미 이어 쓴 글자가 있으면 그 indSrc.asOf (더 오래된 날), 아니면 지난 발행 날짜. 읽지 못한 dk 수도 돌려줘요."""
+    날짜: 지난 발행본이 이미 이어 쓴 글자가 있으면 그 indSrc.asOf (더 오래된 날), 아니면 지난 발행 날짜. 읽지 못한 dk 수도 돌려줘요.
+    지난 발행본이 DART 회사 정보로 채운 종목(indSrc.dartT)은 빼요 — KRX 글자로 이어 쓴 것처럼 보이지 않게, 오늘도 DART 로 다시 채워요."""
     out, bad = {}, 0
+    dart = ((prev or {}).get("indSrc") or {}).get("dartT")
+    dart = dart if isinstance(dart, dict) else {}
     for x in (prev or {}).get("stocks") or []:
-        if x.get("cls") != "kr" or not x.get("t") or not x.get("dk"):
+        if x.get("cls") != "kr" or not x.get("t") or not x.get("dk") or str(x["t"]) in dart:
             continue
         p = kr_desc_parse(x["dk"])
         if p is None:
@@ -1685,6 +1691,99 @@ def fetch_ksic(kr_stocks, client):
     log(f"{'· ' if len(out) >= 0.97 * max(len(targets), 1) else '  !! '}DART 업종 코드(KSIC): {len(out):,} / {len(targets):,}곳 "
         f"(DART 기업코드 없는 국내 종목 {sum(1 for s in kr_stocks if s['t'] not in cmap):,}곳) · {client.summary()}")
     return out
+
+
+# ────────────────────────────────────────────────────────────
+# 2026-11-19 (Jack: "Later, new listings take their industry from DART's company records." · 오늘: "146 new listings without an industry:
+# move the DART company-record industry mapping up"): KRX-DESC 에도 지난 발행본에도 업종 글자가 없는 국내 종목은 DART 기업개황 업종 코드
+# (fetch_ksic 가 이미 받은 값 · 기업마다 180일 + 0~59일 보관)의 앞 3자리(소분류) 이름을 통계청 한국표준산업분류 11차 표(data/ksic_names.csv)에서
+# 찾아 KRX 글자가 채우던 자리(dk 의 업종 · 업종 키 s)에 넣어요. DART 를 새로 부르지 않아요 (전체 DART 실행이 될 수 없어요).
+# KRX 글자나 이어 쓴 글자가 있는 종목은 건드리지 않아요. 우선주 · 펀드는 예전 그대로 (KRX 도 업종 글자를 준 적이 없어요).
+# ────────────────────────────────────────────────────────────
+def kr_ind_dart_plan(stocks, no_text, ksic, names, kmap, digits=IND_DART_DIGITS):
+    """업종 글자를 DART 로 채울 계획. (순수 함수 · DART 를 부르지 않아요)
+    no_text: KRX-DESC 에도 지난 발행본에도 업종 글자가 없는 종목코드 · ksic: {종목코드: DART 업종 코드} (fetch_ksic) · names: KSIC 코드 → 이름
+    · kmap: KSIC 접두어 → 업종 그룹. 발행하지 않는 종목(stocks 에 없음)은 건너뛰어요.
+    반환: (fill {종목: (이름, KSIC 코드)}, miss {이유: [종목]}) — 이유 fund 펀드 · pref 우선주 (KRX 도 업종 글자를 준 적이 없어요 —
+    예전 그대로 두고 업종 그룹만 보통주를 따라요 · 보통주의 업종 키를 따를지는 Jack 이 정해요) · noCode DART 업종 코드 없음 ·
+    noName 표에 없는 코드 · noGroup 업종 그룹으로 이어지지 않는 코드."""
+    by_t = {s["t"]: s for s in stocks if s.get("cls") == "kr"}
+    fill, miss = {}, collections.defaultdict(list)
+    for t in sorted(set(no_text)):
+        s = by_t.get(t)
+        if s is None:
+            continue
+        if s.get("etf") or s.get("fund"):
+            miss["fund"].append(t)
+            continue
+        if is_preferred(t):
+            miss["pref"].append(t)
+            continue
+        code = str(ksic.get(t) or "").strip()
+        if not code:
+            miss["noCode"].append(t)
+            continue
+        name = names.get(code[:digits]) if len(code) >= digits else None
+        if not name:
+            miss["noName"].append(t)
+            continue
+        if not ksic_group(code, kmap):
+            miss["noGroup"].append(t)
+            continue
+        fill[t] = (name, code)
+    return fill, dict(miss)
+
+
+def kr_ind_dart_apply(stocks, fill):
+    """계획(fill)대로 설명(dk) 앞에 업종 이름을 붙이고, 업종 키 s 가 비었거나 etc 면 그 이름으로 정해요 (KRX 글자와 같은 map_sector_kr ·
+    같은 kr_desc_text 순서). 업종 글자가 이미 있거나 설명을 읽지 못하는 종목은 그대로 둬요. (순수 함수) 반환: 실제로 채운 {종목: KSIC 코드}.
+    바꿀 값을 모두 먼저 계산하고 마지막에 한꺼번에 넣어요 — 중간에 멈춰도 dartT 에 없는 종목이 바뀌어 있지 않게."""
+    todo = []
+    for s in stocks:
+        v = fill.get(s.get("t")) if s.get("cls") == "kr" else None
+        dk = s.get("dk")
+        if not v or not (dk is None or isinstance(dk, str)):
+            continue
+        p = kr_desc_parse(dk) if dk else ("", "")
+        if p is None or p[0]:
+            continue
+        name, code = v
+        todo.append((s, name + (" · " + dk if dk else ""), map_sector_kr(name, p[1]) if s.get("s") in (None, "", "etc") else s.get("s"), code))
+    for s, dk, sec, _ in todo:
+        s["dk"], s["s"] = dk, sec
+    return {s["t"]: code for s, _, _, code in todo}
+
+
+def kr_ind_dart(stocks, no_text, ksic, names, kmap, ind_src):
+    """계획 → 적용 → indSrc 에 출처를 더하고 크게 남겨요 (dart 채운 수 · dartT {종목: KSIC 코드} · left 그래도 업종 글자 없는 종목 ·
+    dartMiss 이유별 수). 반환: 채운 {종목: KSIC 코드}.
+    채우기가 고장 나도 실행은 멈추지 않아요 (업종 글자는 보탬일 뿐 · 멈추면 하루치 가격이 낡아요): 크게 남기고 indSrc 에 dartErr ·
+    left 없음 — 관문이 경고해요."""
+    try:
+        fill, miss = kr_ind_dart_plan(stocks, no_text, ksic, names, kmap)
+        done = kr_ind_dart_apply(stocks, fill)
+    except Exception as e:
+        log(f"  !! 업종 DART 채우기 실패 ({type(e).__name__}: {str(e)[:160]}) — 업종 글자가 없는 종목은 그대로 발행해요 (관문이 경고해요)")
+        if isinstance(ind_src, dict):
+            ind_src.update({"dart": 0, "dartT": {}, "left": None, "dartMiss": {}, "dartErr": type(e).__name__})
+        return {}
+    for t in sorted(set(fill) - set(done)):          # 계획했지만 설명(dk)을 읽지 못하거나 업종 글자가 있던 종목 (없어야 해요 · 크게 세요)
+        miss.setdefault("noParse", []).append(t)
+    left = sum(len(v) for k, v in miss.items() if k not in IND_MISS_OK)
+    if isinstance(ind_src, dict):
+        ind_src.update({"dart": len(done), "dartT": dict(sorted(done.items())), "left": left,
+                        "dartMiss": {k: len(v) for k, v in sorted(miss.items())}})
+        if done and "DART" not in str(ind_src.get("from") or ""):
+            ind_src["from"] = f"{ind_src.get('from') or 'KRX-DESC'} + DART"
+    need = len(done) + left
+    names_of = {s["t"]: s.get("nk") or "" for s in stocks if s.get("cls") == "kr"}
+    why = " · ".join(f"{IND_MISS_KO.get(k, k)} {len(v):,}: " + ", ".join(f"{t} {names_of.get(t, '')}" for t in v[:6])
+                     for k, v in sorted(miss.items()) if k not in IND_MISS_OK and v)
+    log(f"{'  !! ' if need else '· '}업종 DART 회사 정보로 채움 {len(done):,} / {need:,}, 못 채움 {left:,}" + (f" ({why})" if why else "")
+        + "".join(f" · {IND_MISS_KO[k]} {len(miss[k]):,}" for k in IND_MISS_OK if miss.get(k))
+        + (" — KRX-DESC · 지난 발행본에 업종 글자가 없는 종목을 DART 기업개황 업종 코드의 한국표준산업분류 11차 소분류 이름으로 채웠어요. 예: "
+           + ", ".join(f"{t} {names_of.get(t, '')} {fill[t][0]} ({code})" for t, code in list(done.items())[:5]) if done else ""))
+    return done
 SAMPLE_KEEP = ("000270", "086790", "034730", "003550", "088980", "241520")   # 표본에도 꼭: 업종·ETF 검사에 쓰는 종목
 
 
@@ -4957,7 +5056,8 @@ def fetch_korea(start, today, rf, prev=None):
     meta = {"pxDate": px_date.isoformat() if px_date else None,
             "ksDate": ks_date.isoformat() if ks_date else None, "listSrc": list_src, "_index": kospi, "_prod": prod_map,
             "_prefShares": pref_shares, "_prefCaps": pref_caps, "krSeries": krs, "d1Blank": d1_blank}
-    meta.update({"pxSrc": px_src, "indSrc": ind_src, "_prefCapMissing": sorted(pref_cap_missing)})      # 2026-11-19: 공식 종가 출처 · 업종 글자 출처 (data.json · 관문 줄)
+    # 2026-11-19: 공식 종가 출처 · 업종 글자 출처 (data.json · 관문 줄) · 업종 글자가 없는 종목 (main 이 DART 기업개황 업종 코드로 채워요 · kr_ind_dart)
+    meta.update({"pxSrc": px_src, "indSrc": ind_src, "_prefCapMissing": sorted(pref_cap_missing), "_noInd": sorted(no_ind)})
     return out, bench, mkt, meta
 
 
@@ -9673,7 +9773,11 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                    "diff 두 종가가 다름 · diffEx 예 · must 확인 못 한 필수 종목} · must 확인 못 한 필수 종목 (관문이 실패) · chk 1차 출처를 야후와 맞춘 "
                    "필수 종목 + 표본 {n · same · none · diff} · n 발행한 한국 종목 수 (출처별)"),
          "indSrc": ("한국 업종 글자의 출처 (2026-11-19): desc KRX-DESC 에서 업종을 받은 종목 · carried 받지 못해 지난 발행본에서 이어 쓴 종목 · "
-                    "asOf 이어 쓴 글자의 날짜 · none 업종 없음 · newNone 그중 지난 발행본에도 없던 새 상장"),
+                    "asOf 이어 쓴 글자의 날짜 · none 업종 없음 · newNone 그중 지난 발행본에도 없던 새 상장 · "
+                    "dart none 중 DART 기업개황 업종 코드의 한국표준산업분류 11차 소분류 이름으로 채운 종목 수 · dartT {종목: KSIC 코드} "
+                    "(다음 실행은 이어 쓰지 않고 DART 로 다시 채워요) · left 그래도 업종 글자 없는 종목 (펀드 · 우선주 빼고) · "
+                    "dartMiss 못 채운 이유별 수 (fund 펀드 · pref 우선주 · noCode · noName · noGroup · noParse) · "
+                    "dartErr 채우기가 고장 난 날의 예외 이름 (그날 left 는 빈 값 · 관문 경고)"),
          "krSeries": ("국내 시계열 점검 (2026-11-14): 최근 거래일(days)의 네이버 일봉(수정주가)을 그날 공식 종가로 고친 봉 pinned · 종목 "
                       "pinStocks — 그날과 오늘 사이에 KRX 기준가(목록 파일의 Close − Changes)가 바뀌지 않았을 때만 (값 차이 "
                       f"{PIN_PX_TOL:.0%} 안, 또는 상장주식수가 오늘과 {PIN_SHR_TOL:.0%} 안이고 {PIN_REF_TOL:.0%} 안) · 기준가를 확인 못 한 날은 "
@@ -9767,6 +9871,7 @@ def main():
     ph = Phases()
     prev = read_prev_data()
     tables = load_industry_tables()       # 업종 표가 깨졌으면 여기서 바로 멈춰요
+    ksic_names = load_ksic_names()        # 2026-11-19: 한국표준산업분류 11차 (DART 로 업종 글자 채우기) — 깨졌으면 여기서 멈춰요
     dups = load_us_kr_duplicates()        # 미국-한국 중복 표도 (v17.5.2)
     special = load_krx_special_sessions() # KRX 특별 거래시간 표도 (v17.5.4) — 최종본 판단에 써요
     try:                                  # 휴장일 표도 (v19.1c) — '늦음' 경고 시각에만 써서, 깨졌거나 모자라도 멈추지 않고 크게 남겨요
@@ -9866,6 +9971,8 @@ def main():
         log(f"  !! 국제 금값(GC=F) 실패: {e}")
     funds = ph.run("ETF·금현물", fetch_kr_funds, start, px_date, kr_bench, names, rf, gold_usd, fx)
 
+    # 2026-11-19: KRX-DESC · 지난 발행본에 업종 글자가 없는 국내 종목 → DART 기업개황 업종 코드의 소분류 이름 (DART 를 새로 부르지 않아요)
+    kr_ind_dart(kr, kmeta.get("_noInd") or [], ksic, ksic_names, tables["kmap"], kmeta.get("indSrc"))
     icnt = assign_industries(kr + us, tables, ksic, products=kmeta.get("_prod"))
     for m in ("kr", "us"):
         arr = kr if m == "kr" else us

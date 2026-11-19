@@ -100,6 +100,51 @@ PX_META_WINDOW = dt.timedelta(minutes=10)   # 야후 regularMarketTime 은 그�
 PX_ALT_MIN_SHARE = 0.90                   # 관문이 야후에서 받은 표본 종가가 이 비율보다 적으면 '확인 못 함' (실패) — 받지 못한 채 통과시키지 않아요
 PX_ALT_TOL = 0.01                         # 두 종가 차이 (원) — 부동소수점 끝자리만큼. 같은 호가여야 해요
 IND_CARRY_WARN_DAYS = 14                  # 지난 발행본에서 이어 쓴 국내 업종 글자가 이보다 오래되면 경고 (fetch_data 와 같은 값)
+# 2026-11-19 (Jack: "new listings take their industry from DART's company records"): KRX-DESC 에도 지난 발행본에도 업종 글자가 없는 국내 종목은
+# DART 기업개황 업종 코드(KSIC)의 앞 3자리(소분류) 이름으로 채워요. 이름은 통계청 한국표준산업분류 11차 표에서만 (fetch_data 와 같은 파일 · 읽는 코드는 여기 하나)
+KSIC_NAMES_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "ksic_names.csv")
+IND_MAP_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "industry_map.csv")
+IND_GROUPS_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "industry_groups.csv")
+IND_DART_DIGITS = 3                       # KRX 업종 글자와 같은 단계 (소분류 · 3자리) — 2026-11-19 표본 93종목 모두 KRX 글자 = 이 이름 (띄어쓰기만 다른 19)
+KSIC_LEVELS = {1: 21, 2: 77, 3: 234, 4: 501, 5: 1205}   # 11차 개정의 단계별 항목 수 (대 · 중 · 소 · 세 · 세세) — 파일이 바뀌면 예외
+
+
+def load_ksic_names(path=KSIC_NAMES_CSV):
+    """한국표준산업분류(11차) 코드 → 이름 {코드: 이름} (data/ksic_names.csv · '#' 줄은 출처 설명). 머리줄 · 칸 수 · 빈 이름 · 겹친 코드 ·
+    단계별 항목 수(KSIC_LEVELS)가 다르면 예외 — 조용히 이름 없이 넘어가지 않게."""
+    with open(path, encoding="utf-8") as f:
+        lines = [x for x in f.read().splitlines() if x.strip() and not x.startswith("#")]
+    rows = list(csv.reader(lines))
+    if not rows or rows[0] != ["분류", "코드값", "상세설명"]:
+        raise ValueError(f"!! {os.path.basename(path)} 머리줄이 '분류,코드값,상세설명' 이 아니에요: {rows[:1]}")
+    out = {}
+    for r in rows[1:]:
+        if len(r) != 3 or r[0] != "산업" or not r[1].strip() or not r[2].strip() or r[1] in out:
+            raise ValueError(f"!! {os.path.basename(path)} 이상한 줄: {r}")
+        out[r[1]] = r[2]
+    lv = dict(collections.Counter(len(c) for c in out))
+    if lv != KSIC_LEVELS:
+        raise ValueError(f"!! {os.path.basename(path)} 단계별 항목 수 {lv} ≠ 11차 {KSIC_LEVELS}")
+    return out
+
+
+def load_ksic_map(map_path=IND_MAP_CSV, groups_path=IND_GROUPS_CSV):
+    """관문이 따로 읽는 업종 표: (KSIC 접두어 → 그룹, 그룹 이름 집합). fetch_data.load_industry_tables 와 같은 파일."""
+    with open(map_path, encoding="utf-8") as f:
+        kmap = {r["ksic"].strip(): r["group"].strip() for r in csv.DictReader(f)}
+    with open(groups_path, encoding="utf-8") as f:
+        groups = {r["group"].strip() for r in csv.DictReader(f)}
+    return kmap, groups
+
+
+def ksic_prefix_group(code, kmap):
+    """가장 긴 접두어의 그룹 (fetch_data.ksic_group 과 같은 규칙 · 관문은 따로 계산해요). 없으면 None."""
+    code = (code or "").strip()
+    for n in range(len(code), 1, -1):
+        g = kmap.get(code[:n])
+        if g:
+            return g
+    return None
 
 
 def px_check_sample(codes, n=PX_CHECK_SAMPLE):
@@ -1028,13 +1073,82 @@ def check_px_src(rep, data, today, mode="publish"):
         asof = day(ind.get("asOf"))
         age = (today - asof).days if asof else None
         old = carried and (age is None or age > IND_CARRY_WARN_DAYS)
+        # 2026-11-19: DART 로 채운 종목도 이 줄에 이름을 적고 경고해요 (채운 것 자체가 KRX 글자가 없다는 뜻 · 더 엄격하게만)
+        dart = ind.get("dart") if isinstance(ind.get("dart"), int) else None
+        dnames = ind_dart_names(data, ind)
         rep.add("국내 업종 이어 쓴 종목 (경고만)", True,
                 f"이어 씀 {carried} · 업종 글자 날짜 {ind.get('asOf')}" + (f" ({age}일 전)" if age is not None else "")
-                + f" · 업종 없는 새 상장 {ind.get('newNone')}", f"0 (이어 쓰면 경고 · {IND_CARRY_WARN_DAYS}일 넘으면 더 오래됨)",
-                warn=bool(carried) or carried is None)
+                + f" · 업종 없는 새 상장 {ind.get('newNone')}"
+                + (f" · DART 회사 정보로 채움 {dart}" + (f" ({', '.join(dnames[:5])}{' …' if len(dnames) > 5 else ''})" if dnames else "")
+                   if dart is not None else ""),
+                f"0 (이어 쓰거나 DART 로 채우면 경고 · {IND_CARRY_WARN_DAYS}일 넘으면 더 오래됨)",
+                warn=bool(carried) or carried is None or bool(dart))
         if old:
             notes_ = f"이어 쓴 업종 글자가 {age}일 전 것이에요"
             rep.detail("국내 업종 글자가 오래됨", [notes_])
+        check_ind_dart(rep, data, ind)
+
+
+IND_MISS_KO = {"noCode": "DART 업종 코드 없음", "noName": "산업분류표에 없는 코드", "noGroup": "업종 그룹 없는 코드",
+               "noParse": "설명을 읽지 못함", "fund": "펀드", "pref": "우선주"}   # indSrc.dartMiss 의 이유
+IND_MISS_OK = ("pref", "fund")   # 예전에도 업종 글자가 없던 종류 — left 에 세지 않아요 (우선주: KRX 도 준 적 없음 · 업종 그룹은 보통주를 따라요)
+
+
+def ind_dart_names(data, ind):
+    """indSrc.dartT 종목의 '코드 이름' (로그 · 관문 줄에 적어요)."""
+    dt_ = ind.get("dartT") if isinstance(ind.get("dartT"), dict) else {}
+    nk = {s.get("t"): s.get("nk") for s in data.get("stocks", []) if s.get("cls") == "kr"}
+    return [f"{t} {nk.get(t) or '?'}" for t in sorted(dt_)]
+
+
+def check_ind_dart(rep, data, ind, names=None, kmap=None, groups=None):
+    """2026-11-19: DART 기업개황 업종 코드로 채운 국내 업종 글자 (indSrc.dart · dartT · left · dartMiss) — 더한 줄만.
+    실패: 채운 값이 한국표준산업분류 11차 소분류 이름이 아니거나, 그 종목 설명(dk)의 업종과 다르거나, 아는 업종 그룹으로 이어지지 않을 때.
+    경고: DART 로도 채우지 못해 업종 글자가 없는 종목 (우선주 · 펀드 빼고). dartT 가 없으면 (예전 발행본 · 시험 데이터) 건너뛰어요."""
+    if "dartT" not in ind:
+        rep.skip("국내 업종 DART 로 채운 값", "indSrc.dartT 없음 (DART 채우기 전 발행본)")
+        rep.skip("국내 업종 글자 없는 종목 (경고만)", "indSrc.left 없음 (DART 채우기 전 발행본)")
+        return
+    want = "11차 소분류 이름 = 설명(dk)의 업종 · 아는 업종 그룹"
+    try:
+        names = load_ksic_names() if names is None else names
+        if kmap is None or groups is None:
+            kmap, groups = load_ksic_map()
+    except Exception as e:
+        rep.add("국내 업종 DART 로 채운 값", False, f"표를 읽지 못함 ({type(e).__name__}: {str(e)[:80]})", want)
+        return
+    dt_, bad = ind.get("dartT"), []
+    if not isinstance(dt_, dict):
+        bad.append("dartT 모양")
+        dt_ = {}
+    if ind.get("dart") != len(dt_):
+        bad.append(f"dart {ind.get('dart')} ≠ dartT {len(dt_)}")
+    by_t = {s.get("t"): s for s in data.get("stocks", []) if s.get("cls") == "kr"}
+    for t, code in sorted(dt_.items()):
+        s, code = by_t.get(t), code if isinstance(code, str) else ""
+        name = names.get(code[:IND_DART_DIGITS]) if len(code) >= IND_DART_DIGITS else None
+        dk = (s or {}).get("dk") or ""
+        if s is None or s.get("etf") or s.get("fund"):
+            bad.append(f"{t} 발행한 국내 주식이 아님")
+        elif len(t) == 6 and t[-1] != "0":
+            bad.append(f"{t} 우선주 (채우지 않아요)")
+        elif not name:
+            bad.append(f"{t} 코드 {code or '없음'} 이 산업분류표에 없음")
+        elif not (dk == name or dk.startswith(name + " · ")):
+            bad.append(f"{t} 설명 '{dk[:40]}' ≠ {name}")
+        elif ksic_prefix_group(code, kmap) not in groups:
+            bad.append(f"{t} 코드 {code} 의 업종 그룹 없음")
+    rep.add("국내 업종 DART 로 채운 값", not bad, f"{len(dt_)}종목" + (f" · 이상 {len(bad)}: {'; '.join(bad[:4])}" if bad else ""), want)
+    if bad:
+        rep.detail("국내 업종 DART 로 채운 값이 이상해요", bad)
+    left = ind.get("left")
+    miss = ind.get("dartMiss") if isinstance(ind.get("dartMiss"), dict) else {}
+    why = " · ".join(f"{IND_MISS_KO.get(k, k)} {v}" for k, v in sorted(miss.items()) if k not in IND_MISS_OK and v)
+    ok_ = " · ".join(f"{IND_MISS_KO[k]} {miss[k]}" for k in IND_MISS_OK if miss.get(k))
+    rep.add("국내 업종 글자 없는 종목 (경고만)", True,
+            f"{left}" + (f" ({why})" if why else "") + (f" · 세지 않음: {ok_} (예전에도 없었어요)" if ok_ else "")
+            + (f" · 채우기 실패 {ind.get('dartErr')}" if ind.get("dartErr") else ""),
+            "0 (KRX · 지난 발행본 · DART 모두 없음 · 우선주 · 펀드 빼고)", warn=not isinstance(left, int) or left > 0)
 
 
 # ── 검사 ────────────────────────────────────────────────────
