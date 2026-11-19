@@ -1,6 +1,6 @@
 # 11차 한국표준산업분류 소분류(3자리) → 뱁새의 두 업종 체계 (2026-11-19 · Jack: "Map each official code to our existing industry groups … Report any codes that don't map cleanly.")
 # s 예전 뱁새 업종 키 (src/detail.jsx SECTORS · fetch_data.map_sector_kr 에 공식 이름을 넣은 값 — KRX 업종 글자를 바꾸던 그 규칙) · ind 2.0 업종 그룹 (data/industry_map.csv · 그 코드와 아래 4·5자리가 가는 그룹)
-# status ok 122 · none 92 · ambiguous 10 · financial 9 · fund 1 — ok 만 채워요 (validate_data.IND_SECTOR_KR 의 짝이 맞을 때). 나머지는 채우지 않고 로그에 크게.
+# status ok 117 · none 94 · ambiguous 13 · financial 9 · fund 1 — ok 만 채워요 (validate_data.IND_SECTOR_KR 의 짝이 맞을 때 · 업종 읽는 법 LENS 가 틀리면 KSIC_S_FIX · KSIC_LENS_MISFIT). 나머지는 채우지 않고 로그에 크게.
 # 손으로 고치지 마세요: fetch_data.ksic_map_kr_rows(names, kmap, groups) 가 만들어요 — tests/test_ind_dart.py 가 같은지 봐요. 규칙이나 표가 바뀌면 다시 만들어 PR 에 보여요.
 ksic,name,s,ind,status,why
 011,작물 재배업,etc,food,none,예전 뱁새 업종 키를 찾지 못함 (기타)
@@ -54,7 +54,7 @@ ksic,name,s,ind,status,why
 201,기초 화학물질 제조업,chem,chem,ok,
 202,합성고무 및 플라스틱 물질 제조업,chem,chem,ok,
 203,"비료, 농약 및 살균·살충제 제조업",chem,spchem,ok,
-204,기타 화학제품 제조업,chem,cosmetics·spchem,ok,
+204,기타 화학제품 제조업,chem,cosmetics·spchem,ambiguous,예전 뱁새 chem 와 2.0 cosmetics 가 다른 업종
 205,화학섬유 제조업,chem,chem,ok,
 211,기초 의약 물질 제조업,bio,bio,ok,
 212,의약품 제조업,bio,pharma,ok,
@@ -80,7 +80,7 @@ ksic,name,s,ind,status,why
 271,의료용 기기 제조업,health,medical,ok,
 272,"측정, 시험, 항해, 제어 및 기타 정밀 기기 제조업; 광학 기기 제외",elec,precision,ok,
 273,사진장비 및 광학 기기 제조업,elec,precision,ok,
-281,"전동기, 발전기 및 전기 변환·공급·제어 장치 제조업",utility,power_eq,ok,
+281,"전동기, 발전기 및 전기 변환·공급·제어 장치 제조업",elec,power_eq,ok,이름 규칙은 utility — 업종 읽는 법이 맞지 않아 elec
 282,일차전지 및 이차전지 제조업,battery,battery,ok,
 283,절연선 및 케이블 제조업,etc,power_eq,none,예전 뱁새 업종 키를 찾지 못함 (기타)
 284,전구 및 조명장치 제조업,etc,power_eq,none,예전 뱁새 업종 키를 찾지 못함 (기타)
@@ -96,11 +96,11 @@ ksic,name,s,ind,status,why
 312,철도장비 제조업,machine,machinery,ok,
 313,"항공기, 우주선 및 부품 제조업",defense,defense,ok,
 319,그 외 기타 운송장비 제조업,machine,machinery,ok,
-320,가구 제조업,paper,furniture,ok,
+320,가구 제조업,paper,furniture,none,예전 뱁새에 짝이 없는 2.0 그룹 furniture
 331,귀금속 및 장신용품 제조업,broker,furniture,financial,금융 — 2.0 의 EV 멀티플 · 금융 문구가 바뀌어요
 332,악기 제조업,etc,furniture,none,예전 뱁새 업종 키를 찾지 못함 (기타)
 333,운동 및 경기용구 제조업,etc,furniture,none,예전 뱁새 업종 키를 찾지 못함 (기타)
-334,"인형, 장난감 및 오락용품 제조업",game,furniture,ambiguous,예전 뱁새 game 와 2.0 furniture 가 다른 업종
+334,"인형, 장난감 및 오락용품 제조업",game,furniture,none,예전 뱁새에 짝이 없는 2.0 그룹 furniture
 339,그 외 기타 제품 제조업,etc,furniture,none,예전 뱁새 업종 키를 찾지 못함 (기타)
 340,산업용 기계 및 장비 수리업,machine,,none,2.0 업종 그룹 없음
 351,전기업,etc,utility,none,예전 뱁새 업종 키를 찾지 못함 (기타)
@@ -108,10 +108,10 @@ ksic,name,s,ind,status,why
 353,"증기, 냉·온수 및 공기 조절 공급업",utility,utility,ok,
 360,수도업,utility,utility,ok,
 370,"하수, 폐수 및 분뇨 처리업",etc,utility,none,예전 뱁새 업종 키를 찾지 못함 (기타)
-381,"폐기물 수집, 운반업",utility,utility,ok,
-382,폐기물 처리업,utility,utility,ok,
+381,"폐기물 수집, 운반업",utility,utility,ambiguous,예전 뱁새 utility 의 '요금은 정부가 정해요' 가 이 업종에 맞지 않음
+382,폐기물 처리업,utility,utility,ambiguous,예전 뱁새 utility 의 '요금은 정부가 정해요' 가 이 업종에 맞지 않음
 383,"해체, 선별 및 원료 재생업",etc,utility,none,예전 뱁새 업종 키를 찾지 못함 (기타)
-390,환경 정화 및 복원업,utility,utility,ok,
+390,환경 정화 및 복원업,utility,utility,ambiguous,예전 뱁새 utility 의 '요금은 정부가 정해요' 가 이 업종에 맞지 않음
 411,건물 건설업,build,construction,ok,
 412,토목 건설업,build,construction,ok,
 421,기반조성 및 시설물 축조관련 전문공사업,etc,construction,none,예전 뱁새 업종 키를 찾지 못함 (기타)

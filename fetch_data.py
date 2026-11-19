@@ -92,7 +92,8 @@ from validate_data import US_FGN_NOCMP, US_FGN_NOCMP_KIND, US_FGN_NOCMP_WHY, US_
 # 2026-11-19 (Jack: "new listings take their industry from DART's company records"): 한국표준산업분류 11차 표를 읽는 코드와 쓰는 단계(소분류)도
 # 관문 파일에 있어요 (관문이 같은 표로 채운 값을 확인해요)
 from validate_data import load_ksic_names, IND_DART_DIGITS, IND_MISS_KO, IND_MISS_OK, IND_FUND_KSIC, kr_desc_parse, KR_DESC_TAIL
-from validate_data import (load_ksic_map_kr, IND_SECTOR_KR, IND_FILL_CHECK, ind_fill_bad, ind_fill_rows)
+from validate_data import (load_ksic_map_kr, IND_SECTOR_KR, IND_FILL_CHECK, ind_fill_bad, ind_fill_rows, ksic_map_kr_sha, KSIC_S_FIX,
+                           KSIC_LENS_MISFIT)
 
 # ────────────────────────────────────────────────────────────
 # 설정
@@ -1713,7 +1714,7 @@ def ksic_map_kr_rows(names, kmap, groups):
     fin_g = {g for g, r in groups.items() if str(r.get("financial") or "").strip() == "yes"}
     rows = []
     for c in sorted(x for x in names if len(x) == IND_DART_DIGITS):
-        n, s = names[c], map_sector_kr(names[c], "")
+        n, s = names[c], KSIC_S_FIX.get(c) or map_sector_kr(names[c], "")     # 리뷰: 업종 읽는 법(LENS)이 틀리면 대표 짝 (281 → elec)
         reach = sorted({ksic_group(k, kmap) for k in names if k.startswith(c)} - {None})
         odd = [g for g in reach if g not in IND_SECTOR_KR]
         if c == KR_FUND_KSIC:
@@ -1726,10 +1727,12 @@ def ksic_map_kr_rows(names, kmap, groups):
             st, why = "none", "2.0 업종 그룹 없음"
         elif odd:
             st, why = "none", f"예전 뱁새에 짝이 없는 2.0 그룹 {'·'.join(odd)}"
+        elif c in KSIC_LENS_MISFIT:
+            st, why = "ambiguous", KSIC_LENS_MISFIT[c]
         elif any(s not in IND_SECTOR_KR[g] for g in reach):
             st, why = "ambiguous", f"예전 뱁새 {s} 와 2.0 {'·'.join(g for g in reach if s not in IND_SECTOR_KR[g])} 가 다른 업종"
         else:
-            st, why = "ok", ""
+            st, why = "ok", (f"이름 규칙은 {map_sector_kr(n, '')} — 업종 읽는 법이 맞지 않아 {s}" if c in KSIC_S_FIX else "")
         rows.append([c, n, s, "·".join(reach), st, why])
     return rows
 
@@ -1846,13 +1849,13 @@ def kr_ind_restore(s, before):
             s[k] = v
 
 
-def kr_ind_own_drop(stocks, ind_src, kmap_kr, undo):
+def kr_ind_own_drop(stocks, ind_src, undo, names=None, kmap_kr=None, map_sha=None):
     """Jack 의 상시 규칙 (2026-11-19): 관문과 같은 함수(validate_data.ind_fill_bad)로 채운 값을 확인해 틀린 행은 되돌리고(채우기 전 값) 남은
     것은 발행해요. 되돌린 보통주를 따랐던 우선주도 다음 번 확인에서 되돌려요. 반환: 기록 {n, rows} (data.json ownDrop.indFill) · 되돌린 종목."""
     by_t = {s["t"]: s for s in stocks if s.get("cls") == "kr"}
     dropped, rows = [], []
     for _ in range(3):
-        bad = [b for b in ind_fill_bad(stocks, ind_src, kmap_kr) if b["t"] in undo and b["t"] not in dropped]
+        bad = [b for b in ind_fill_bad(stocks, ind_src, names, kmap_kr, map_sha) if b["t"] in undo and b["t"] not in dropped]
         if not bad:
             break
         rows += ind_fill_rows(bad, stocks)
@@ -1862,22 +1865,33 @@ def kr_ind_own_drop(stocks, ind_src, kmap_kr, undo):
                 if isinstance(ind_src.get(key), dict) and ind_src[key].pop(b["t"], None) is not None:
                     ind_src[n] = len(ind_src[key])
             dropped.append(b["t"])
-    left = ind_fill_bad(stocks, ind_src, kmap_kr)
+    left = ind_fill_bad(stocks, ind_src, names, kmap_kr, map_sha)
     log((f"  !! {IND_FILL_CHECK}: {len(dropped)}건 되돌리고 발행 — " + "; ".join(rows[:30]) if dropped else
          f"· {IND_FILL_CHECK}: 0건 되돌림 (DART {len(ind_src.get('dartT') or {}):,} · 우선주 {len(ind_src.get('prefT') or {}):,} 확인)")
         + (f" · !! 되돌리지 못한 틀린 값 {len(left)}: " + "; ".join(ind_fill_rows(left, stocks)[:10]) + " — 관문이 봐요" if left else ""))
     return {"n": len(dropped), "rows": rows[:30]}, dropped
 
 
-def kr_ind_fill(stocks, no_text, ksic, kmap_kr, ind_src, over=()):
+def kr_ind_fill(stocks, no_text, ksic, kmap_kr, ind_src, over=(), names=None, map_sha=None, table_err=None):
     """DART 로 보통주 채우기 → 우선주는 보통주를 따름 → 같은 확인으로 틀린 행 되돌리기 → indSrc 에 출처 (dart · dartT · pref · prefT ·
     prefInd · left · dartMiss) · 크게 남겨요. 반환: data.json ownDrop.indFill 기록 {n, rows}.
     고장 나도 실행은 멈추지 않아요 (업종 글자는 보탬일 뿐 · 멈추면 하루치 가격이 낡아요): 채운 것을 모두 되돌리고 indSrc.dartErr ·
-    left 없음 — 관문이 경고해요."""
+    left 없음 — 관문이 경고해요. 업종 표를 읽지 못한 날(kmap_kr None · table_err): DART 로 채우지 않고 우선주만 따라요 (dartErr).
+    names · map_sha: 11차 표 · 업종 표의 판 (indSrc.mapSha 로 남겨 관문이 표가 바뀐 뒤의 옛 채움을 막지 않게)."""
     ind_src = ind_src if isinstance(ind_src, dict) else {}
     undo = {}
+    if map_sha is not None:
+        ind_src["mapSha"] = map_sha
     try:
-        fill, miss = kr_ind_dart_plan(stocks, no_text, ksic, kmap_kr)
+        if kmap_kr is None:
+            by_t0 = {s["t"]: s for s in stocks if s.get("cls") == "kr"}
+            commons = sorted(t for t in set(no_text) if t in by_t0 and not is_preferred(t))
+            fill, miss = {}, {"noTable": [t for t in commons if not by_t0[t].get("etf") and not by_t0[t].get("fund")],
+                              "fund": [t for t in commons if by_t0[t].get("etf") or by_t0[t].get("fund")]}
+            miss = {k: v for k, v in miss.items() if v}
+            ind_src["dartErr"] = f"table:{table_err or '없음'}"
+        else:
+            fill, miss = kr_ind_dart_plan(stocks, no_text, ksic, kmap_kr)
         done, u1 = kr_ind_dart_apply(stocks, fill)
         undo.update(u1)
         pdone, pmiss, u2, n_ind = kr_ind_pref_copy(stocks, no_text, over)
@@ -1890,7 +1904,7 @@ def kr_ind_fill(stocks, no_text, ksic, kmap_kr, ind_src, over=()):
             miss.setdefault("noParse", []).append(t)
         ind_src.update({"dart": len(done), "dartT": dict(sorted(done.items())), "pref": len(pdone), "prefT": dict(sorted(pdone.items())),
                         "prefInd": n_ind})
-        rec, dropped = kr_ind_own_drop(stocks, ind_src, kmap_kr, undo)
+        rec, dropped = kr_ind_own_drop(stocks, ind_src, undo, names, kmap_kr, map_sha)
         if dropped:
             miss.setdefault("dropped", []).extend(dropped)
     except Exception as e:
@@ -1924,7 +1938,8 @@ def kr_ind_fill(stocks, no_text, ksic, kmap_kr, ind_src, over=()):
                         f"{kmap_kr[str(ksic.get(t))[:IND_DART_DIGITS]]['status']})" for t in odd[:15])
             + (f" — 집합 투자업 코드: 상장 펀드면 KR_LISTED_FUNDS 에 넣고, 회사면 그대로 둬요 (사람이 판단)" if miss.get("mapFund") else ""))
     try:
-        n_chk, diff = kr_ind_word_check(stocks, ksic, {c: v["name"] for c, v in kmap_kr.items()}, skip=set(dart_t) | set(ind_src["prefT"]))
+        n_chk, diff = kr_ind_word_check(stocks, ksic, {c: v["name"] for c, v in (kmap_kr or {}).items()},
+                                        skip=set(dart_t) | set(ind_src["prefT"]))
         log(f"{'  !! ' if diff else '· '}업종 글자 확인 (막지 않아요): KRX · 이어 쓴 업종 글자와 DART 업종 코드의 11차 소분류 이름이 다른 종목 "
             f"{len(diff):,} / {n_chk:,} (띄어쓰기 빼고)"
             + (f" — 예: {'; '.join(diff[:8])}. DART 기록이 예전(10차) 번호이거나 KRX 와 분류가 달라요 — 그런 종목을 DART 로 채우면 이름이 "
@@ -4463,6 +4478,38 @@ def icr_inputs(fin):
     return None, None, None, None, ("op" if not any_op else "neg" if neg else "op" if has_int else "ie")
 
 
+def corp_sector_stats(comps):
+    """기업분석 업종 통계 (corp.json sectors · 예전 뱁새가 업종 중간값 · 사분위 · 성장률 순위에 써요). (순수 함수)
+    2026-11-19 (#146 · Jack 답 2): 우선주는 보통주의 업종 키를 따르지만 업종 수 · 중간값 · 사분위 · 성장률에서는 빼요 (같은 회사가 두 번
+    들어가지 않게) — 업종 시가총액(mc)에만 넣어요 (실제 시장 가치). 우선주만 있는 업종도 키는 남겨요 (앱이 sectors[c.s] 를 찾아요)."""
+    sectors, by_sec = {}, {}
+    for c in comps:
+        by_sec.setdefault(c["s"], [])
+        if not is_preferred(c["t"]):
+            by_sec[c["s"]].append(c)
+    for sec, arr in by_sec.items():
+        # 업종 성장률: 개별 평균이 아니라 '합산 매출' 기준 (소형주 과대표집 방지)
+        pairs = [(c["rev"][0], c["rev"][2]) for c in arr if c["rev"][0] and c["rev"][2] and c["rev"][2] > 0]
+        g = None
+        if len(pairs) >= 5:
+            r0 = sum(p[0] for p in pairs); r2 = sum(p[1] for p in pairs)
+            if r2 > 0 and r0 > 0:      # 합산 매출이 음수면 제곱근이 복소수가 돼요
+                g = round(((r0 / r2) ** 0.5 - 1) * 100, 1)
+        sectors[sec] = {
+            "n": len(arr), "nG": len(pairs), "g": g,
+            "rev0": round(sum(c["rev"][0] for c in arr if c["rev"][0]) / 1e4, 1),   # 조원
+            "opm": _median([c["opm"] for c in arr]),
+            "roe": _median([c["roe"] for c in arr]),
+            "perQ": _quart([c["per"] for c in arr if c["per"] and 0 < c["per"] < 200]),
+            "pbrQ": _quart([c["pbr"] for c in arr if c["pbr"] and 0 < c["pbr"] < 20]),
+            "evEQ": _quart([c.get("evE") for c in arr if c.get("evE") and 0 < c["evE"] < 60]),
+            "evRQ": _quart([c.get("evR") for c in arr if c.get("evR") and 0 < c["evR"] < 30]),
+            "pcfQ": _quart([c.get("pcf") for c in arr if c.get("pcf") and 0 < c["pcf"] < 60]),
+            "mc": round(sum(c["cap"] for c in comps if c["s"] == sec and c["cap"]), 1),          # 조원 (우선주 포함)
+        }
+    return sectors
+
+
 def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None, pref_caps=None, pref_missing=None):
     """기업분석 탭이 쓰는 corp.json 을 만듭니다. (순수 함수 — 테스트 가능)
     v19.1b: extra = apply_div_basis 의 {코드: 칸} (현금배당금총액 cash3 · 회사가 낸 주당순이익 eps3r · 같은 기준 순이익 epsNi3 · epsB).
@@ -4667,30 +4714,7 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None, pref_caps=Non
                 row.update(roe=None, qz=None)        # 리뷰 4: ROE 와 그 점수도 보여 주지 않아요 (blank_non_won 이 data.json 쪽을 비워요)
         comps.append(row)
 
-    sectors = {}
-    by_sec = {}
-    for c in comps:
-        by_sec.setdefault(c["s"], []).append(c)
-    for sec, arr in by_sec.items():
-        # 업종 성장률: 개별 평균이 아니라 '합산 매출' 기준 (소형주 과대표집 방지)
-        pairs = [(c["rev"][0], c["rev"][2]) for c in arr if c["rev"][0] and c["rev"][2] and c["rev"][2] > 0]
-        g = None
-        if len(pairs) >= 5:
-            r0 = sum(p[0] for p in pairs); r2 = sum(p[1] for p in pairs)
-            if r2 > 0 and r0 > 0:      # 합산 매출이 음수면 제곱근이 복소수가 돼요
-                g = round(((r0 / r2) ** 0.5 - 1) * 100, 1)
-        sectors[sec] = {
-            "n": len(arr), "nG": len(pairs), "g": g,
-            "rev0": round(sum(c["rev"][0] for c in arr if c["rev"][0]) / 1e4, 1),   # 조원
-            "opm": _median([c["opm"] for c in arr]),
-            "roe": _median([c["roe"] for c in arr]),
-            "perQ": _quart([c["per"] for c in arr if c["per"] and 0 < c["per"] < 200]),
-            "pbrQ": _quart([c["pbr"] for c in arr if c["pbr"] and 0 < c["pbr"] < 20]),
-            "evEQ": _quart([c.get("evE") for c in arr if c.get("evE") and 0 < c["evE"] < 60]),
-            "evRQ": _quart([c.get("evR") for c in arr if c.get("evR") and 0 < c["evR"] < 30]),
-            "pcfQ": _quart([c.get("pcf") for c in arr if c.get("pcf") and 0 < c["pcf"] < 60]),
-            "mc": round(sum(c["cap"] for c in arr if c["cap"]), 1),                 # 조원
-        }
+    sectors = corp_sector_stats(comps)
     log(f"· 이자보상배율에 쓴 이자: 손익계산서 이자비용 {src_n['is']:,}곳 · 현금흐름표 이자 지급액 {src_n['cf']:,}곳 (기간: TTM "
         f"{src_n['ttm']:,} · 연간 {src_n['fy']:,}, 그중 TTM 이자가 없어 연간 영업이익·이자끼리 {src_n['fyBack']:,}) · 경고 "
         f"{sum(1 for c in comps if 'icr' in (c.get('fl') or {})):,}곳 (그중 영업손실 "
@@ -10078,8 +10102,9 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                     "dartT {종목: KSIC 코드} (설명 앞에 공식 이름 · 업종 키 s 는 표에서 · 다음 실행은 이어 쓰지 않고 다시 채워요) · "
                     "pref 보통주의 업종 글자 · 업종 키를 따른 우선주 수 · prefT {우선주: 보통주} · prefInd 2.0 그룹을 보통주에 맞춘 우선주 수 · "
                     "left 그래도 업종 글자 없는 종목 (펀드 빼고) · dartMiss 이유별 수 (fund · noCode · noName · mapNone · mapAmbig · mapFin · "
-                    "mapFund · noGroup · noParse · prefNoCommon · prefCommonNone · prefOver · dropped) · dartErr 채우기가 고장 난 날의 예외 이름 "
-                    "(그날 left 는 빈 값 · 관문 경고)"),
+                    "mapFund · noGroup · noParse · prefNoCommon · prefCommonNone · prefOver · dropped · noTable) · dartErr 채우기가 고장 난 날의 "
+                    "예외 이름 (그날 left 는 빈 값) 또는 table:예외 (업종 표를 읽지 못해 DART 로 채우지 않은 날) — 관문 경고 · mapSha 채울 때 쓴 "
+                    "업종 표(data/ksic_map_kr.csv)의 판 (sha256 앞 12자리 · 표가 바뀐 뒤의 옛 채움은 관문이 경고만)"),
          "ownDrop": ("우리 처리 단계의 검사가 되돌리거나 뺀 행 (Jack 의 상시 규칙, 2026-11-19): {검사: {n 수 · rows 앞 30개 '종목 이름: 이유'}} · "
                      "indFill 국내 업종 채운 값 (DART 로 채운 보통주 · 보통주를 따른 우선주 — validate_data.ind_fill_bad)"),
          "krSeries": ("국내 시계열 점검 (2026-11-14): 최근 거래일(days)의 네이버 일봉(수정주가)을 그날 공식 종가로 고친 봉 pinned · 종목 "
@@ -10175,8 +10200,18 @@ def main():
     ph = Phases()
     prev = read_prev_data()
     tables = load_industry_tables()       # 업종 표가 깨졌으면 여기서 바로 멈춰요
-    ksic_names = load_ksic_names()        # 2026-11-19: 한국표준산업분류 11차 (DART 로 업종 글자 채우기) — 깨졌으면 여기서 멈춰요
-    ksic_map = load_ksic_map_kr(names=ksic_names)   # 2026-11-19: 11차 소분류 → 우리 업종 (예전 뱁새 업종 키 · 2.0 그룹) — 깨졌으면 여기서 멈춰요
+    # 2026-11-19: 한국표준산업분류 11차 · 11차 소분류 → 우리 업종 표 (DART 로 업종 글자 채우기). 깨졌으면 크게 남기고 채우기만 건너뛰어요
+    # (리뷰: 표 하나 때문에 하루 발행이 멈추지 않게 — 우선주는 그대로 보통주를 따르고 관문이 경고해요)
+    ksic_names = ksic_map = ksic_sha = ksic_err = None
+    try:
+        ksic_names = load_ksic_names()
+        ksic_map = load_ksic_map_kr(names=ksic_names)
+        ksic_sha = ksic_map_kr_sha()
+    except Exception as e:
+        ksic_names = ksic_map = ksic_sha = None
+        ksic_err = type(e).__name__
+        log(f"  !! 업종 표(data/ksic_names.csv · data/ksic_map_kr.csv)를 읽지 못했어요 ({ksic_err}: {str(e)[:160]}) — DART 로 업종 글자를 "
+            "채우지 않고 발행해요 (우선주는 보통주를 따라요 · 관문이 경고해요). 표를 고쳐 주세요")
     dups = load_us_kr_duplicates()        # 미국-한국 중복 표도 (v17.5.2)
     special = load_krx_special_sessions() # KRX 특별 거래시간 표도 (v17.5.4) — 최종본 판단에 써요
     try:                                  # 휴장일 표도 (v19.1c) — '늦음' 경고 시각에만 써서, 깨졌거나 모자라도 멈추지 않고 크게 남겨요
@@ -10279,7 +10314,8 @@ def main():
     icnt = assign_industries(kr + us, tables, ksic, products=kmeta.get("_prod"))
     # 2026-11-19: KRX-DESC · 지난 발행본에 업종 글자가 없는 국내 보통주 → DART 업종 코드가 우리 업종 표에 깔끔히 맞을 때만 (DART 를 새로
     # 부르지 않아요) · 우선주는 보통주를 따라요 · 틀린 행은 되돌려요 (Jack 의 상시 규칙). 2.0 그룹이 정해진 뒤 · corp.json 보다 먼저
-    ind_drop = kr_ind_fill(kr, kmeta.get("_noInd") or [], ksic, ksic_map, kmeta.get("indSrc"), over=tables["over"])
+    ind_drop = kr_ind_fill(kr, kmeta.get("_noInd") or [], ksic, ksic_map, kmeta.get("indSrc"), over=tables["over"],
+                           names=ksic_names, map_sha=ksic_sha, table_err=ksic_err)
     for m in ("kr", "us"):
         arr = kr if m == "kr" else us
         g = collections.Counter(x.get("ind") for x in arr if x.get("ind"))

@@ -16,7 +16,10 @@ import inspect
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 
 import pytest
 
@@ -30,6 +33,8 @@ NAMES = V.load_ksic_names()
 TABLES = F.load_industry_tables()
 KMAP, GROUPS = V.load_ksic_map()
 MAP = V.load_ksic_map_kr(names=NAMES)
+SHA = V.ksic_map_kr_sha()
+NODE = shutil.which("node")
 
 
 def read(rel):
@@ -124,9 +129,9 @@ def test_mapping_table_is_the_rules_output_and_covers_every_code():
     assert body == rows, "규칙이나 표가 바뀌었어요 — ksic_map_kr_rows 로 data/ksic_map_kr.csv 를 다시 만들고 PR 에 보여요"
     assert len(MAP) == 234 and set(MAP) == {c for c in NAMES if len(c) == 3}
     count = {st: sum(1 for v in MAP.values() if v["status"] == st) for st in V.KSIC_MAP_STATUS}
-    assert count == {"ok": 122, "none": 92, "ambiguous": 10, "financial": 9, "fund": 1}
+    assert count == {"ok": 117, "none": 94, "ambiguous": 13, "financial": 9, "fund": 1}
     head = "\n".join(x for x in read("data/ksic_map_kr.csv").splitlines() if x.startswith("#"))
-    assert "status ok 122 · none 92 · ambiguous 10 · financial 9 · fund 1" in head
+    assert "status ok 117 · none 94 · ambiguous 13 · financial 9 · fund 1" in head
 
 
 def test_every_ok_code_lands_in_existing_groups_of_both_apps():
@@ -136,9 +141,10 @@ def test_every_ok_code_lands_in_existing_groups_of_both_apps():
         assert g in TABLES["groups"] and set(keys) <= OLD_SECTORS and "etc" not in keys, g
         assert not set(keys) & set(F.FIN_SECS) and TABLES["groups"][g]["financial"] != "yes", g
     assert set(V.IND_FIN_SECS) == set(F.FIN_SECS)
+    lens = set(re.findall(r"^\s+(\w+):\s*\{ ko:", read("src/detail.jsx").split("const LENS = {", 1)[1].split("};", 1)[0], re.M))
     for c, v in MAP.items():
         if v["status"] == "ok":
-            assert v["s"] in OLD_SECTORS and v["s"] != "etc" and v["ind"], c
+            assert v["s"] in OLD_SECTORS and v["s"] in lens and v["s"] != "etc" and v["ind"], c
             assert all(g in GROUP_NAMES and v["s"] in V.IND_SECTOR_KR[g] for g in v["ind"]), c
 
 
@@ -148,13 +154,19 @@ def test_codes_that_do_not_map_cleanly():
             "108": ("none", "etc", ("food",)), "339": ("none", "etc", ("furniture",)), "761": ("none", "machine", ("services",)),
             "051": ("none", "energy", ()), "620": ("ambiguous", "elec", ("it_service",)), "473": ("ambiguous", "elec", ("retail",)),
             "467": ("ambiguous", "retail", ("energy", "trading")), "331": ("financial", "broker", ("furniture",)),
+            "281": ("ok", "elec", ("power_eq",)), "204": ("ambiguous", "chem", ("cosmetics", "spchem")),
+            "381": ("ambiguous", "utility", ("utility",)), "390": ("ambiguous", "utility", ("utility",)),
+            "352": ("ok", "utility", ("utility",)), "320": ("none", "paper", ("furniture",)), "334": ("none", "game", ("furniture",)),
             "641": ("financial", "bank", ("bank",)), "649": ("financial", "holding", ("finance", "holding")),
             "642": ("fund", "etc", ("finance",))}
     for c, (st, s, ind) in want.items():
         assert MAP[c]["status"] == st and MAP[c]["s"] == s, (c, MAP[c])
         assert ind is None or MAP[c]["ind"] == ind, (c, MAP[c])
     assert sorted(c for c, v in MAP.items() if v["status"] == "ambiguous") == \
-        ["251", "334", "426", "465", "466", "467", "473", "476", "620", "912"]
+        ["204", "251", "381", "382", "390", "426", "465", "466", "467", "473", "476", "620", "912"]
+    # 리뷰 (업종 읽는 법 LENS): 281 은 이름 규칙의 utility ('요금은 정부가 정해요') 대신 2.0 power_eq 의 대표 짝 elec
+    assert F.map_sector_kr(NAMES["281"], "") == "utility" and V.KSIC_S_FIX == {"281": "elec"} and V.IND_SECTOR_KR["power_eq"][0] == "elec"
+    assert "furniture" not in V.IND_SECTOR_KR and "chem" not in V.IND_SECTOR_KR["cosmetics"] and "utility" not in V.IND_SECTOR_KR["power_eq"]
     assert sorted(c for c, v in MAP.items() if v["status"] == "financial") == \
         ["331", "641", "649", "651", "652", "653", "661", "662", "846"]
 
@@ -207,9 +219,10 @@ def test_the_57_stocks_of_the_0830_publish():
     ksic = {t: code_of(t) for t in gap}
     stocks = grouped([stock(t) for t in gap] + [stock(t) for t in FX["prefGap"]] + [stock("088980", etf=True)], ksic)
     fill, miss = F.kr_ind_dart_plan(stocks, [s["t"] for s in stocks], ksic, MAP)
-    assert len(gap) == 57 and len(fill) == 49
-    assert miss == {"mapAmbig": ["067730", "118000", "342870", "424760"], "mapNone": ["054090", "238200", "365900", "376180"],
-                    "fund": ["088980"]}
+    assert len(gap) == 57 and len(fill) == 45
+    assert miss == {"mapAmbig": ["067730", "110020", "118000", "252500", "342870", "344860", "424760"],
+                    "mapNone": ["054090", "073190", "238200", "365900", "376180"], "fund": ["088980"]}
+    assert fill["288620"] == (NAMES["281"], "281", "elec") and fill["237750"] == (NAMES["281"], "28123", "elec")
     assert fill["282620"] == ("봉제의복 제조업", "14199", "textile") and fill["376930"] == ("의료용 기기 제조업", "27112", "health")
     by_t = {s["t"]: s for s in stocks}
     for t, (name, code, sec) in fill.items():
@@ -300,19 +313,19 @@ def fill_case():
 def test_fill_records_the_source_and_logs_loudly(capsys):
     stocks, ksic = fill_case()
     ind = {"v": 1, "desc": 0, "carried": 2354, "none": 60, "newNone": 2, "asOf": "2026-11-17", "from": "KRX-DESC + prev"}
-    rec = F.kr_ind_fill(stocks, no_text_of(stocks), ksic, MAP, ind, over=TABLES["over"])
+    rec = F.kr_ind_fill(stocks, no_text_of(stocks), ksic, MAP, ind, over=TABLES["over"], names=NAMES, map_sha=SHA)
     assert rec == {"n": 0, "rows": []}
-    assert ind["dart"] == 49 and len(ind["dartT"]) == 49 and ind["dartT"]["282620"] == "14199"
+    assert ind["dart"] == 45 and len(ind["dartT"]) == 45 and ind["dartT"]["282620"] == "14199" and ind["mapSha"] == SHA
     assert ind["pref"] == 2 and ind["prefT"] == {"000815": "000810", "005935": "005930"} and ind["prefInd"] == 0
-    assert ind["left"] == 8 and ind["dartMiss"] == {"fund": 1, "mapAmbig": 4, "mapNone": 4} and ind["from"] == "KRX-DESC + prev + DART"
+    assert ind["left"] == 12 and ind["dartMiss"] == {"fund": 1, "mapAmbig": 7, "mapNone": 5} and ind["from"] == "KRX-DESC + prev + DART"
     assert ind["carried"] == 2354 and ind["none"] == 60          # 예전 칸은 그대로
     out = capsys.readouterr().out
-    assert "  !! 업종 DART 회사 정보로 채움 49 / 57 · 우선주가 보통주를 따름 2 (2.0 그룹을 맞춘 우선주 0) · 그래도 업종 글자 없음 8" in out
+    assert "  !! 업종 DART 회사 정보로 채움 45 / 57 · 우선주가 보통주를 따름 2 (2.0 그룹을 맞춘 우선주 0) · 그래도 업종 글자 없음 12" in out
     assert "예: 002690 동일제강 1차 철강 제조업 (24122 → steel), 005360 모나미 생활용품 도매업 (46452 → retail)" in out
-    assert "  !! 업종 코드가 우리 업종에 깔끔히 맞지 않아 채우지 않은 종목 8개 (예전처럼 업종 글자 없이 · 기타): " in out
+    assert "  !! 업종 코드가 우리 업종에 깔끔히 맞지 않아 채우지 않은 종목 12개 (예전처럼 업종 글자 없이 · 기타): " in out
     assert "067730 로지시스 (62090 컴퓨터 프로그래밍, 시스템 통합 및 관리업 · ambiguous)" in out
     assert "238200 비피도 (108 기타 식품 제조업 · none)" in out
-    assert f"· {V.IND_FILL_CHECK}: 0건 되돌림 (DART 49 · 우선주 2 확인)" in out
+    assert f"· {V.IND_FILL_CHECK}: 0건 되돌림 (DART 45 · 우선주 2 확인)" in out
     # 채울 것이 없는 날 (KRX 글자가 돌아온 11-19 12:16 발행본처럼): 조용한 줄 · from 은 그대로
     ind2 = {"from": "KRX-DESC"}
     assert F.kr_ind_fill([stock("100000", dk="반도체 제조업 · KOSDAQ 상장", ind="semi")], [], {}, MAP, ind2) == {"n": 0, "rows": []}
@@ -333,10 +346,10 @@ def test_a_broken_fill_never_stops_the_run(monkeypatch, capsys):
     assert rec == {"n": 0, "rows": [], "err": "TypeError"} and stocks == before
     assert ind == {"from": "KRX-DESC", "dart": 0, "dartT": {}, "pref": 0, "prefT": {}, "prefInd": 0, "left": None, "dartMiss": {},
                    "dartErr": "TypeError"}
-    assert "  !! 업종 채우기 실패 (TypeError: 고장) — 채운 51종목을 되돌리고" in capsys.readouterr().out
+    assert "  !! 업종 채우기 실패 (TypeError: 고장) — 채운 47종목을 되돌리고" in capsys.readouterr().out
     rows, rep = gate({"stocks": stocks, "indSrc": dict(ind, carried=0, asOf="2026-11-19", newNone=0), "ownDrop": {"indFill": rec}})
     assert rows["국내 업종 글자 없는 종목 (경고만)"][3] == "WARN" and "채우기 실패 TypeError" in rows["국내 업종 글자 없는 종목 (경고만)"][1]
-    assert rows[V.IND_FILL_CHECK][3] == "PASS" and not rep.failed
+    assert rows[V.IND_FILL_CHECK][3] == "WARN" and "채우기 고장 TypeError" in rows[V.IND_FILL_CHECK][1] and not rep.failed
 
 
 def test_filled_words_are_not_carried_as_krx_words():
@@ -355,7 +368,7 @@ def test_filled_words_are_not_carried_as_krx_words():
 # ── 5. DART 호출: 새로 부르지 않아요 · 보관 · 실패 ──────────────────────────
 def test_the_fill_makes_no_dart_calls(monkeypatch):
     """채우기는 fetch_ksic 가 이미 받은 코드만 써요 — 클라이언트를 받지 않고, 기업개황을 부르는 곳은 fetch_ksic 하나예요."""
-    for fn in (F.kr_ind_fill, F.kr_ind_dart_plan, F.kr_ind_dart_apply, F.kr_ind_pref_copy, F.kr_ind_own_drop):
+    for fn in (F.kr_ind_fill, F.kr_ind_dart_plan, F.kr_ind_dart_apply, F.kr_ind_pref_copy, F.kr_ind_own_drop, F.corp_sector_stats):
         assert "client" not in inspect.signature(fn).parameters
     src = inspect.getsource(F)
     assert src.count(".company(") == 1 and ".company(" in inspect.getsource(F.fetch_ksic)
@@ -364,7 +377,7 @@ def test_the_fill_makes_no_dart_calls(monkeypatch):
     fill_at = main.index("kr_ind_fill(kr,")
     assert main.index("fetch_ksic, kr, client") < main.index("icnt = assign_industries(") < fill_at < main.index("corp = build_corp(")
     assert fill_at < main.index('payload.setdefault("ownDrop", {})["indFill"] = ind_drop') < main.index("write_json(OUT, payload)")
-    assert "load_ksic_map_kr(names=ksic_names)" in main
+    assert "load_ksic_map_kr(names=ksic_names)" in main and "names=ksic_names, map_sha=ksic_sha, table_err=ksic_err" in main
 
     def boom(*a, **k):
         raise AssertionError("network")
@@ -416,14 +429,15 @@ def test_company_failure_keeps_the_old_code_or_gives_none(tmp_path, answer):
 
 # ── 6. Jack 의 상시 규칙 (2026-11-19): 틀린 행은 되돌리고 알린 뒤 발행 ─────────────────
 def filled():
-    """kr_ind_fill 을 마친 상태 (데이터 · 되돌릴 값). 049곳 + 우선주 2."""
+    """kr_ind_fill 을 마친 상태 (데이터 · 되돌릴 값). 45곳 + 우선주 2 · 이번 표의 판 (mapSha)."""
     stocks, ksic = fill_case()
     ind = {"v": 1, "desc": 0, "carried": 0, "none": 60, "newNone": 0, "asOf": "2026-11-19", "from": "KRX-DESC"}
     fill, miss = F.kr_ind_dart_plan(stocks, no_text_of(stocks), ksic, MAP)
     done, undo = F.kr_ind_dart_apply(stocks, fill)
     pdone, _, u2, _ = F.kr_ind_pref_copy(stocks, no_text_of(stocks), TABLES["over"])
     undo.update(u2)
-    ind.update({"dart": len(done), "dartT": done, "pref": len(pdone), "prefT": pdone, "prefInd": 0, "left": 8, "dartMiss": {}})
+    ind.update({"dart": len(done), "dartT": done, "pref": len(pdone), "prefT": pdone, "prefInd": 0, "left": 12, "dartMiss": {},
+                "mapSha": SHA})
     return stocks, ind, undo
 
 
@@ -442,10 +456,10 @@ def test_one_bad_row_is_reverted_logged_and_the_rest_publishes(capsys):
     stocks, ind, undo = filled()
     by_t = {s["t"]: s for s in stocks}
     by_t["282620"]["s"] = "bank"                                   # 우리 단계의 실수 하나 (업종 키가 2.0 그룹과 다름)
-    rec, dropped = F.kr_ind_own_drop(stocks, ind, MAP, undo)
+    rec, dropped = F.kr_ind_own_drop(stocks, ind, undo, NAMES, MAP, SHA)
     assert dropped == ["282620"] and rec == {"n": 1, "rows": ["282620 기도산업: 업종 키 bank 가 2.0 그룹 textile 와 맞지 않음"]}
     assert by_t["282620"]["dk"] == "KOSDAQ 상장 · 시가총액 200억원" and by_t["282620"]["s"] == "etc"   # 채우기 전으로
-    assert "282620" not in ind["dartT"] and ind["dart"] == 48 and by_t["376930"]["dk"].startswith("의료용 기기 제조업 · ")
+    assert "282620" not in ind["dartT"] and ind["dart"] == 44 and by_t["376930"]["dk"].startswith("의료용 기기 제조업 · ")
     out = capsys.readouterr().out
     assert f"  !! {V.IND_FILL_CHECK}: 1건 되돌리고 발행 — 282620 기도산업: 업종 키 bank 가 2.0 그룹 textile 와 맞지 않음" in out
     rows, rep = gate({"stocks": stocks, "indSrc": ind, "ownDrop": {"indFill": rec}})
@@ -466,10 +480,10 @@ def test_a_reverted_common_takes_its_preferred_share_back_too():
     ind["pref"] = len(ind["prefT"])
     by_t["282620"]["dk"] = by_t["282620"]["dk"].replace("봉제의복", "봉제 의복")   # 글자만 틀림 (숫자와 상관없음)
     by_t["282625"]["dk"] = by_t["282625"]["dk"].replace("봉제의복", "봉제 의복")
-    rec, dropped = F.kr_ind_own_drop(stocks, ind, MAP, undo)
+    rec, dropped = F.kr_ind_own_drop(stocks, ind, undo, NAMES, MAP, SHA)
     assert dropped == ["282620", "282625"] and rec["n"] == 2
     assert by_t["282625"]["dk"] == "KOSDAQ 상장 · 시가총액 200억원" and "282625" not in ind["prefT"]
-    assert V.ind_fill_bad(stocks, ind, MAP) == []
+    assert V.ind_fill_bad(stocks, ind, NAMES, MAP, SHA) == []
 
 
 def test_more_than_n_reverted_rows_fail_the_gate():
@@ -477,8 +491,8 @@ def test_more_than_n_reverted_rows_fail_the_gate():
     by_t = {s["t"]: s for s in stocks}
     for t in list(ind["dartT"])[:V.IND_FILL_MAX + 1]:
         by_t[t]["s"] = "bank"
-    rec, dropped = F.kr_ind_own_drop(stocks, ind, MAP, undo)
-    assert rec["n"] == V.IND_FILL_MAX + 1 and V.ind_fill_bad(stocks, ind, MAP) == []
+    rec, dropped = F.kr_ind_own_drop(stocks, ind, undo, NAMES, MAP, SHA)
+    assert rec["n"] == V.IND_FILL_MAX + 1 and V.ind_fill_bad(stocks, ind, NAMES, MAP, SHA) == []
     rows, rep = gate({"stocks": stocks, "indSrc": ind, "ownDrop": {"indFill": rec}})
     assert rows[V.IND_FILL_CHECK][3] == "FAIL" and "되돌림 6" in rows[V.IND_FILL_CHECK][1]
     rec["n"] = V.IND_FILL_MAX                                      # N 까지는 경고
@@ -489,7 +503,9 @@ def test_more_than_n_reverted_rows_fail_the_gate():
 @pytest.mark.parametrize("break_it, why, num", [
     ("sector", "업종 키 bank 가 2.0 그룹 textile 와 맞지 않음", True),
     ("code", "산업분류표에 없음", True),
+    ("fund", "집합 투자업", True),
     ("unclean", "깔끔히 맞지 않음 (ambiguous)", True),
+    ("unclean_old_table", "채운 뒤 표가 바뀌었어요", False),
     ("pref_in_dart", "우선주 (DART 로 채우지 않아요)", True),
     ("pref_sector", "업종 키 · 2.0 그룹", True),
     ("pref_group", "업종 키 · 2.0 그룹", True),
@@ -497,7 +513,7 @@ def test_more_than_n_reverted_rows_fail_the_gate():
     ("name", "설명 업종", False),
     ("pref_words", "업종 글자", False),
     ("missing", "발행한 국내 주식이 아님", False),
-    ("count", "dart 50 ≠ dartT 49", False)])
+    ("count", "dart 50 ≠ dartT 45", False)])
 def test_a_remaining_bad_value_fails_only_when_it_shows_a_wrong_number(break_it, why, num):
     """파이프라인이 되돌리지 못한 틀린 값 (되돌리기 단계 고장): 틀린 숫자가 보이면 실패 (업종 키 · 2.0 그룹 → 업종 평균 · 중간값 ·
     EV 멀티플 · 업종별 등락), 글자 · 기록만 틀리면 경고."""
@@ -507,8 +523,13 @@ def test_a_remaining_bad_value_fails_only_when_it_shows_a_wrong_number(break_it,
         by_t["282620"]["s"] = "bank"
     elif break_it == "code":
         ind["dartT"]["282620"] = "999"
-    elif break_it == "unclean":
-        ind["dartT"]["282620"] = "62010"
+    elif break_it == "fund":
+        ind["dartT"]["282620"] = "64201"
+    elif break_it in ("unclean", "unclean_old_table"):          # 설명 · 짝은 맞지만 표에서 깔끔히 맞지 않는 코드 (204 기타 화학제품)
+        ind["dartT"]["282620"] = "20499"
+        by_t["282620"]["dk"] = by_t["282620"]["dk"].replace("봉제의복 제조업", NAMES["204"])
+        if break_it == "unclean_old_table":
+            ind["mapSha"] = "000000000000"                       # 그 채움은 예전 표로 했어요 (그때는 ok 였을 수 있어요)
     elif break_it == "pref_in_dart":
         ind["dartT"]["005935"] = "26410"
         ind["dartT"].pop("376930")
@@ -527,7 +548,7 @@ def test_a_remaining_bad_value_fails_only_when_it_shows_a_wrong_number(break_it,
         ind["dartT"].pop("376930")
     else:
         ind["dart"] = 50
-    bad = V.ind_fill_bad(stocks, ind, MAP)
+    bad = V.ind_fill_bad(stocks, ind, NAMES, MAP, SHA)
     assert len(bad) == 1 and why in bad[0]["why"] and bad[0]["num"] is num, bad
     rows, rep = gate({"stocks": stocks, "indSrc": ind, "ownDrop": {"indFill": {"n": 0, "rows": []}}})
     assert rows[V.IND_FILL_CHECK][3] == ("FAIL" if num else "WARN") and why in rows[V.IND_FILL_CHECK][1]
@@ -537,10 +558,10 @@ def test_a_remaining_bad_value_fails_only_when_it_shows_a_wrong_number(break_it,
 def test_gate_passes_a_clean_fill_and_names_dart_stocks_in_the_carry_row():
     stocks, ind, _ = filled()
     rows, rep = gate({"stocks": stocks, "indSrc": dict(ind, left=0), "ownDrop": {"indFill": {"n": 0, "rows": []}}})
-    assert rows[V.IND_FILL_CHECK][3] == "PASS" and rows[V.IND_FILL_CHECK][1] == "DART 49종목 · 우선주 2 · 되돌림 0"
+    assert rows[V.IND_FILL_CHECK][3] == "PASS" and rows[V.IND_FILL_CHECK][1] == "DART 45종목 · 우선주 2 · 되돌림 0"
     assert rows["국내 업종 글자 없는 종목 (경고만)"][3] == "PASS" and not rep.failed
     carry = rows["국내 업종 이어 쓴 종목 (경고만)"]
-    assert carry[3] == "WARN" and "DART 회사 정보로 채움 49 (002690 동일제강, 005360 모나미" in carry[1]
+    assert carry[3] == "WARN" and "DART 회사 정보로 채움 45 (002690 동일제강, 005360 모나미" in carry[1]
 
 
 def test_gate_warns_without_a_drop_record_or_a_readable_table(monkeypatch):
@@ -552,7 +573,11 @@ def test_gate_warns_without_a_drop_record_or_a_readable_table(monkeypatch):
         raise ValueError("깨짐")
     monkeypatch.setattr(V, "load_ksic_map_kr", broken)
     rows, rep = gate({"stocks": stocks, "indSrc": ind, "ownDrop": {"indFill": {"n": 0, "rows": []}}})
-    assert rows[V.IND_FILL_CHECK][3] == "WARN" and "표를 읽지 못해 확인 못 함" in rows[V.IND_FILL_CHECK][1] and not rep.failed
+    assert rows[V.IND_FILL_CHECK][3] == "WARN" and "표를 읽지 못해 우선주 · 짝만 확인" in rows[V.IND_FILL_CHECK][1] and not rep.failed
+    # 표가 없어도 우선주 확인은 해요 (리뷰 5d): 우선주의 업종 키가 보통주와 다르면 그대로 실패
+    next(x for x in stocks if x["t"] == "005935")["s"] = "machine"
+    rows, rep = gate({"stocks": stocks, "indSrc": ind, "ownDrop": {"indFill": {"n": 0, "rows": []}}})
+    assert rows[V.IND_FILL_CHECK][3] == "FAIL" and "005935" in rows[V.IND_FILL_CHECK][1]
 
 
 def test_gate_warns_when_stocks_are_still_without_words():
@@ -630,11 +655,133 @@ def test_word_check_compares_krx_words_with_dart_names(capsys):
 def test_data_sources_page_credits_the_classification():
     """Jack, 2026-11-19 (답 3): "업종 분류: 통계청 한국표준산업분류" — 데이터 출처 목록은 하나 (예전 뱁새 정보 탭 · 2.0 ☰ 이 열어요)."""
     info = read("src/info.jsx")
-    assert info.count('["업종 분류", "통계청 한국표준산업분류"]') == 1
+    row = '["통계청 한국표준산업분류", "업종 분류"]'          # 이 목록의 모든 줄처럼 왼쪽 출처 · 오른쪽 받는 데이터
+    assert info.count(row) == 1 and '["금융감독원 DART", "재무제표' in info
     i = info.index('<Card id="info-sources">')
-    assert i < info.index('["업종 분류", "통계청 한국표준산업분류"]') < info.index('<div id="info-credits"', i)
+    assert i < info.index(row) < info.index('<div id="info-credits"', i)
     assert 'sources: OLD_APP + "#info=sources"' in read("src/v2/routes.js")
     appr = read("docs/tasks/v18.3-approved-in-chat.md")
     assert "| 업종 분류: 통계청 한국표준산업분류 | Jack, 2026-11-19 (answer 3:" in appr
     html = read("baepsae.html")
-    assert html.count("통계청 한국표준산업분류") == 1 and html.count('"업종 분류"') == 1
+    assert html.count('["통계청 한국표준산업분류","업종 분류"]') == 1                # 빌드한 예전 뱁새 (다시 빌드했어요)
+
+
+# ── 9. 리뷰 (2026-11-19): 우선주는 비교군 · 중간값에서 빼요 · 표를 읽지 못한 날 · 바뀐 표 ───────────────
+def old_bundle():
+    tmp = tempfile.mkdtemp()
+    with open(os.path.join(tmp, "entry.js"), "w", encoding="utf-8") as f:
+        f.write(f"export * as DT from {json.dumps(os.path.join(ROOT, 'src/detail.jsx'))};\n"
+                f"export * as DJ from {json.dumps(os.path.join(ROOT, 'src/data.js'))};\n")
+    r = subprocess.run([os.path.join(ROOT, "node_modules", ".bin", "esbuild"), os.path.join(tmp, "entry.js"), "--bundle", "--format=esm",
+                        "--platform=node", "--jsx=automatic", "--loader:.js=jsx", "--charset=utf8", f"--outfile={tmp}/b.mjs",
+                        "--log-level=error", "--external:react", "--external:react-dom"], cwd=ROOT, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    os.symlink(os.path.join(ROOT, "node_modules"), os.path.join(tmp, "node_modules"))
+    return tmp
+
+
+def today_from(main):
+    """main 의 data.json 에 이 PR 의 채우기를 돌린 오늘 데이터 (우선주가 보통주를 따라요)."""
+    today = copy.deepcopy(main)
+    kr = [s for s in today["stocks"] if s.get("cls") == "kr"]
+    F.kr_ind_fill(kr, no_text_of(kr), {}, MAP, today["indSrc"], over=TABLES["over"], names=NAMES, map_sha=SHA)
+    return today
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_old_app_peers_and_medians_match_main(tmp_path):
+    """리뷰 1 (2026-11-19): 예전 뱁새의 같은 섹터 비교(12곳)와 간단 점검의 업종 중간값 — 오늘 데이터(우선주가 보통주의 업종)에서도 main 의
+    코드 · main 의 data.json 과 같아요. 기타만 예외: main 에서 기타였던 우선주가 기타를 떠나 그 자리를 기타 회사가 채워요 (main 의 기타 목록에서
+    우선주를 뺀 것과 같아요)."""
+    main = json.loads(read("data.json"))
+    today = today_from(main)
+    assert today["indSrc"]["pref"] >= 50
+    (tmp_path / "main.json").write_text(json.dumps(main, ensure_ascii=False), encoding="utf-8")
+    (tmp_path / "today.json").write_text(json.dumps(today, ensure_ascii=False), encoding="utf-8")
+    code = """
+import * as B from './b.mjs'; import fs from 'fs';
+const { DT, DJ } = B; console.warn = () => {};
+const main = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')), today = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const sm = DJ.mergeStocks(DT.BASE_STOCKS, main.stocks), sn = DJ.mergeStocks(DT.BASE_STOCKS, today.stocks);
+const mainIdx = {}; sm.forEach((s) => { (mainIdx[s.s] || (mainIdx[s.s] = [])).push(s); });      // main 의 코드 그대로 (모든 종목)
+const newIdx = DT.sectorIndex(sn), byT = new Map(sn.map((s) => [s.t, s]));
+const out = { n: 0, same: 0, etc: 0, bad: [], prefInPeers: 0, mainPrefOutsideEtc: 0, prefMoved: 0 };
+for (const s of sm) {
+  if (DT.isPrefStock(s)) { if (s.s !== 'etc') out.mainPrefOutsideEtc++; continue; }
+  const x = byT.get(s.t), got = DT.peersOf(newIdx, x);
+  const want = s.s === 'etc' ? (mainIdx.etc || []).filter((p) => !DT.isPrefStock(p)).slice(0, DT.PEER_N) : (mainIdx[s.s] || []).slice(0, DT.PEER_N);
+  out.n++; if (s.s === 'etc') out.etc++;
+  if (got.some(DT.isPrefStock)) out.prefInPeers++;
+  const same = x.s === s.s && got.map((p) => p.t).join() === want.map((p) => p.t).join()
+    && JSON.stringify(DT.peerMedians(got)) === JSON.stringify(DT.peerMedians(want));
+  if (same) out.same++; else if (out.bad.length < 5) out.bad.push(s.t);
+  if (s.s !== 'etc' && JSON.stringify(DT.peerMedians(got)) !== JSON.stringify(DT.peerMedians((mainIdx[s.s] || []).slice(0, 12)))) out.bad.push('med:' + s.t);
+}
+out.prefMoved = sn.filter((s) => DT.isPrefStock(s) && s.s !== 'etc').length;
+console.log(JSON.stringify(out));
+"""
+    r = subprocess.run([NODE, "--input-type=module", "-e", code, str(tmp_path / "main.json"), str(tmp_path / "today.json")],
+                       cwd=old_bundle(), capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr
+    got = json.loads(r.stdout)
+    assert got["n"] > 2000 and got["same"] == got["n"] and not got["bad"] and got["prefInPeers"] == 0, got
+    assert got["mainPrefOutsideEtc"] == 0 and got["prefMoved"] == today["indSrc"]["pref"] and got["etc"] > 0
+
+
+def test_corp_sector_medians_match_main():
+    """기업분석 업종 통계 (corp.json sectors): 우선주가 보통주의 업종으로 옮겨도 중간값 · 사분위 · 성장률은 main 의 corp.json 과 같아요 —
+    업종 수(n)는 우선주를 빼고, 업종 시가총액(mc)에만 우선주가 들어가요 (실제 시장 가치)."""
+    corp = json.loads(read("corp.json"))
+    today = today_from(json.loads(read("data.json")))
+    s_of = {x["t"]: x.get("s") for x in today["stocks"] if x.get("cls") == "kr"}
+    comps = [dict(c, s=s_of.get(c["t"], c["s"])) for c in copy.deepcopy(corp["companies"])]
+    moved = [c for c in comps if F.is_preferred(c["t"]) and c["s"] != "etc"]
+    assert len(moved) >= 50
+    got, main = F.corp_sector_stats(comps), corp["sectors"]
+    assert set(got) == set(main)
+    for sec in main:
+        for k in ("nG", "g", "rev0", "opm", "roe", "perQ", "pbrQ", "evEQ", "evRQ", "pcfQ"):
+            assert got[sec][k] == main[sec][k], (sec, k)
+        n_pref_main = sum(1 for c in corp["companies"] if c["s"] == sec and F.is_preferred(c["t"]))
+        assert got[sec]["n"] == main[sec]["n"] - n_pref_main, sec
+        cap_moved = sum(c["cap"] or 0 for c in moved if c["s"] == sec) - sum(c["cap"] or 0 for c in corp["companies"]
+                                                                              if c["s"] == sec and F.is_preferred(c["t"]))
+        assert abs(got[sec]["mc"] - main[sec]["mc"] - cap_moved) < 0.2, sec
+    # 우선주는 업종 비교의 값이 하나도 없어요 (그래서 중간값이 움직이지 않아요) · 기업분석의 업종 비교 · 기업 비교 후보에서도 빼요
+    assert all(c.get(k) in (None, [None, None, None]) for c in moved for k in ("per", "pbr", "opm", "roe", "g3", "rev", "evE", "evR", "pcf"))
+    cj = read("src/corp.jsx")
+    assert "data.companies.filter((x) => x.s === c.s && !isPrefCode(x.t))" in cj
+    assert "x.s === base?.s && x.t !== baseT && !isPrefCode(x.t)" in cj
+
+
+def test_unreadable_tables_skip_the_fill_but_not_the_preferred_shares(capsys):
+    """리뷰 3: 업종 표를 읽지 못해도 하루 발행은 멈추지 않아요 — DART 로 채우지 않고(크게) 우선주는 보통주를 따라요 · 관문은 경고."""
+    main = inspect.getsource(F.main)
+    i = main.index("ksic_names = load_ksic_names()")
+    assert "try:" in main[i - 120:i] and "except Exception as e:" in main[i:i + 400]
+    stocks, ksic = fill_case()
+    ind = {"from": "KRX-DESC"}
+    rec = F.kr_ind_fill(stocks, no_text_of(stocks), ksic, None, ind, over=TABLES["over"], table_err="ValueError")
+    assert rec == {"n": 0, "rows": []} and ind["dart"] == 0 and ind["pref"] == 2 and ind["dartErr"] == "table:ValueError"
+    assert ind["dartMiss"] == {"fund": 1, "noTable": 57} and ind["left"] == 57 and "mapSha" not in ind
+    assert next(x for x in stocks if x["t"] == "005935")["s"] == "semi"
+    rows, rep = gate({"stocks": stocks, "indSrc": dict(ind, carried=0, asOf="2026-11-19", newNone=0), "ownDrop": {"indFill": rec}})
+    assert rows[V.IND_FILL_CHECK][3] == "WARN" and "채우기 고장 table:ValueError" in rows[V.IND_FILL_CHECK][1] and not rep.failed
+    r = rows["국내 업종 글자 없는 종목 (경고만)"]
+    assert r[3] == "WARN" and "업종 표를 읽지 못해 채우지 않음 57" in r[1] and "채우기 실패 table:ValueError" in r[1]
+
+
+def test_a_fill_made_with_an_older_table_only_warns():
+    """리뷰 4: 라이브 관문이 지난 발행본을 다시 볼 때 — 그 채움이 쓴 표(indSrc.mapSha)가 지금 표와 다르면, 지금 표로 깔끔하지 않은 코드는 경고만.
+    파일 안에서 틀린 것(짝 · 이름 · 집합 투자업 · 우선주)은 그대로 실패."""
+    stocks, ind, _ = filled()
+    by_t = {s["t"]: s for s in stocks}
+    ind["dartT"]["282620"] = "20499"                                # 지금 표에서는 ambiguous (204)
+    by_t["282620"]["dk"] = by_t["282620"]["dk"].replace("봉제의복 제조업", NAMES["204"])
+    for sha, status in ((SHA, "FAIL"), ("000000000000", "WARN"), (None, "WARN")):
+        ind2 = dict(ind, mapSha=sha) if sha else {k: v for k, v in ind.items() if k != "mapSha"}
+        rows, _ = gate({"stocks": stocks, "indSrc": ind2, "ownDrop": {"indFill": {"n": 0, "rows": []}}})
+        assert rows[V.IND_FILL_CHECK][3] == status, (sha, rows[V.IND_FILL_CHECK])
+    by_t["282620"]["s"] = "bank"                                    # 짝이 틀리면 표와 상관없이 실패
+    rows, _ = gate({"stocks": stocks, "indSrc": dict(ind, mapSha="000000000000"), "ownDrop": {"indFill": {"n": 0, "rows": []}}})
+    assert rows[V.IND_FILL_CHECK][3] == "FAIL"
