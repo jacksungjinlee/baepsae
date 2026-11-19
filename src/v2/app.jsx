@@ -28,6 +28,8 @@ import { firstVisitGuide } from "./guide.jsx";
 import { Import, newImporter } from "./import.jsx";
 import { Limits } from "./limits.jsx";
 import { Returns } from "./returns.jsx";
+import { Tax } from "./tax.jsx";
+import { taxOpen } from "./tax.js";
 import { Editor } from "./editor.jsx";
 import { emptyDraft, pending as editPending } from "./edit.js";
 import { BottomSheet, Button } from "../ui/components.jsx";
@@ -511,6 +513,17 @@ export function App({ source }) {
     if (fixed.length) setSplitFixed((old) => new Set([...old, ...fixed]));
     setStoreData(r.data);
   }, [store.data, load, splitList]);
+  // v19.6f: 연말에 확인할 숫자 (#portfolio/tax), only while tax.taxOpen holds (Nov 1 to Dec 31 KST of tax.js TAX_YEAR, and a US sale
+  // this year, a US holding or a dividend this year): the same rule as its link on 내 수익. Otherwise the address itself becomes
+  // #portfolio (in place, as #home/why without its target does), said in the console: a closed address that stayed would open
+  // the screen by itself the moment a record made it true (review B, round 1: under an open record sheet).
+  const inTax = tab === "portfolio" && loc.sub === "tax";
+  const taxShown = inTax && taxOpen(view.data.decks, todayKst());
+  useEffect(() => {
+    if (!inTax || taxShown) return;
+    console.info(`[v2] tax: #portfolio/tax is closed today (${todayKst()}: outside Nov 1 to Dec 31 of the tax year, or no US sale this year, US holding or dividend this year); the address becomes #portfolio`);
+    router.replaceRoute("portfolio");
+  }, [inTax, taxShown]);
   // v19.6a: 내 수익 of a portfolio that exists (else 포트폴리오)
   const returnsDeck = tab === "portfolio" && loc.returns ? view.data.decks.find((d) => d.id === loc.returns) || null : null;
   // v19.7a: 종목 바꾸기 of a portfolio made with 포트폴리오 만들기 that exists (else 포트폴리오)
@@ -554,7 +567,11 @@ export function App({ source }) {
     }
     if (inWhy) return <Why load={load} store={store} setStoreData={setStoreData} pad={pad} target={why} onBack={() => router.back("home")} />;
     if (rulesDeck) return <Limits key={rulesDeck.id} deck={rulesDeck} store={store} setStoreData={setStoreData} pad={pad} onBack={() => router.back("portfolio")} />;
-    if (returnsDeck) return <Returns key={returnsDeck.id} deck={returnsDeck} load={load} store={store} pad={pad} onBack={() => router.back("portfolio")} />;
+    if (taxShown) return <Tax load={load} store={store} pad={pad} onBack={() => router.back("portfolio")} />;
+    if (returnsDeck) {
+      return <Returns key={returnsDeck.id} deck={returnsDeck} load={load} store={store} pad={pad} onBack={() => router.back("portfolio")}
+        onTax={() => router.go("portfolio", "tax")} />;
+    }
     if (heldEdit) {
       // another portfolio's address while this one's edits wait: this one stays (the effect above puts its address back and asks)
       return <Editor key={heldEdit.id} deck={heldEdit} load={load} store={store} setStoreData={setStoreData} draft={editor.draft} setDraft={() => {}} pad={pad}
