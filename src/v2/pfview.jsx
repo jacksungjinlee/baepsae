@@ -21,6 +21,7 @@ import { signedPct } from "./deckcalc.js";
 import { IcrOffLine, StmtCurLine, UnitChkLine, NoDataLine, DayNote } from "./fixnote.jsx";
 import { heldUnits } from "./held.js";
 import { RecordButton } from "./records.jsx";
+import { lateSay } from "./tradedays.js";
 
 const pct = (w) => Math.round(w * 100);
 // v19.3e: a share shown against its limit. Whole %, but with one decimal (two if needed) whenever the whole number would
@@ -139,7 +140,16 @@ function WeightBar({ w, shade }) {
 // onRecord (v19.6a, 포트폴리오 only): (t, name) opens that stock's record sheet; a holding sold down to 0 and kept (남겨 두기)
 // is listed after the held ones with "0주", so its 기록 (a later dividend, a new purchase) stays reachable. footer: under the list.
 // pxDate (2026-11-14): the data's Korean price date, the no-trade line's date when the check carries none (st.pxDate first).
-export function ImportedDeck({ deck, st, m, openStock, byT, onRemove, onMore, onRules, onRecord = null, footer = null, home = false, pxDate = null }) {
+// late (rules.js checkState, Jack 2026-11-19; review): data checked on an older close shows nothing labelled 오늘 or meaning
+// today: no line about today's rate or today's data and none of the numbers only they explain (with a stock missing from the
+// data: no value and no 원금 · 수익; with dollar costs at today's rate: no 원금 · 수익), no day's change on the rows and no
+// no-trade line, no 포트폴리오에서 빼기 (its reason is the missing line). The rule head and the weights stay.
+export function ImportedDeck({ deck, st, m: m0, openStock, byT, onRemove, onMore, onRules, onRecord = null, footer = null, home = false, pxDate = null, late = false }) {
+  const m = late && m0 && m0.absent && m0.absent.length ? { ok: false } : m0;
+  const moneyLine = !!(m && m.ok && m.cost != null && !(late && m.usdToday));
+  if (m !== m0) lateSay(`${deck.id}: the value, money put in and return are left out (${m0.absent.map((a) => a.t).join(", ")} missing from the data; the line that says so speaks of today's data)`);
+  else if (late && m && m.ok && m.cost != null && m.usdToday) lateSay(`${deck.id}: money put in and return are left out (dollar average prices converted at the data's rate, which the approved line calls today's)`);
+  if (late) lateSay(`${deck.id}: the rows' day's change and no-trade line are left out (they speak of today)`);
   const rows = st && st.ok ? st.view.rows : null;
   const shades = rows ? holdingShades(rows.map((r) => r.w)) : [];
   const n = rows ? rows.length : (deck.imported || []).length;
@@ -155,12 +165,12 @@ export function ImportedDeck({ deck, st, m, openStock, byT, onRemove, onMore, on
           ...tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { textDecoration: "underline", textUnderlineOffset: 3 }) }}>{C.today.more}</button>}
       </div>
       {items.length > 0 && <div style={{ marginTop: SPACE(2) }}><StatStrip items={items} /></div>}
-      {m && m.ok && m.cost != null && (
+      {moneyLine && (
         <div data-ui-v2="deck-money" style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2)}>
           {fill(C.deck.money, { cost: wonText(m.cost), gain: (m.gain > 0 ? "+" : "") + wonText(m.gain), pct: signedPct(m.ret * 100) })}
         </div>
       )}
-      {m && m.ok && m.cost != null && m.usdToday && <Note data-ui-v2="usd-today">{C.pfr.usdToday}</Note>}
+      {moneyLine && m.usdToday && <Note data-ui-v2="usd-today">{C.pfr.usdToday}</Note>}
       {m && m.absent && m.absent.length > 0 && <MissingNote absent={m.absent} deckId={deck.id} />}
       {st && st.ok && <RulesHead st={st} pxDate={st.pxDate} />}
       {onRules && (
@@ -176,15 +186,15 @@ export function ImportedDeck({ deck, st, m, openStock, byT, onRemove, onMore, on
         const open = r.t && !r.absent && openStock && isCompany(byT && byT.get(r.t)) ? () => openStock(r.t) : undefined;
         return (
           <div key={r.key} data-pf-holding={r.key} data-weight={r.w != null ? Math.round(r.w * 1000) / 10 : undefined}>
-            <ListRow title={r.nk} sub={sub} value={r.w != null ? `${pct(r.w)}%` : null} change={!r.absent && r.s ? (r.s.d1 ?? null) : null} onClick={open}
+            <ListRow title={r.nk} sub={sub} value={r.w != null ? `${pct(r.w)}%` : null} change={!late && !r.absent && r.s ? (r.s.d1 ?? null) : null} onClick={open}
               lead={r.t ? <CoMark t={r.t} name={r.nk} size={SPACE(9)} /> : null} />
             {r.w != null && <WeightBar w={r.w} shade={shades[i] || HOLDING_SHADES[HOLDING_SHADES.length - 1]} />}
             {/* 2026-11-14 (Jack, design chat 2026-11-08): no change today, said under the row (its change stays empty, never 0.0%) */}
-            {!r.absent && r.s && <DayNote s={r.s} md={mdText((st && st.pxDate) || pxDate)} style={{ marginTop: SPACE(1) }} />}
-            {((r.absent && onRemove) || (onRecord && r.t)) && (
+            {!late && !r.absent && r.s && <DayNote s={r.s} md={mdText((st && st.pxDate) || pxDate)} style={{ marginTop: SPACE(1) }} />}
+            {((r.absent && onRemove && !late) || (onRecord && r.t)) && (
               <div data-ui-v2="row-actions" style={{ display: "flex", gap: SPACE(2), flexWrap: "wrap", padding: `${SPACE(1)}px 0 ${SPACE(2)}px` }}>
                 {onRecord && r.t && <RecordButton name={r.nk} onClick={() => onRecord(r.t, r.nk)} />}
-                {r.absent && onRemove && (
+                {r.absent && onRemove && !late && (
                   <div data-ui-v2="missing-remove">
                     <Button kind="secondary" onClick={() => onRemove(r.t)} style={{ width: "auto", padding: `0 ${SPACE(4)}px` }}>{C.missing.remove}</Button>
                   </div>

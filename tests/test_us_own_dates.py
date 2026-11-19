@@ -367,7 +367,7 @@ out = { first: load.fresh, sameIsSame: same === load, late: late.fresh, lateData
     assert got["sameIsSame"] is True and got["againIsSame"] is True                 # 바뀐 게 없으면 같은 객체 (다시 그리지 않아요)
     assert got["late"] == {"md": "11월 9일", "days": 1, "stale": True, "due": True} and got["lateData"], got   # 데이터는 그대로, 경고만
     assert got["day2"] == {"md": "11월 9일", "days": 2, "stale": True, "due": True}, got["day2"]   # 다음 날(한국 달력)이면 n = 2
-    assert got["stateA"] == {"ok": True} and got["stateB"] == {"ok": False, "why": "stale", "days": 1}, got   # 홈 판정도 멈춤으로
+    assert got["stateA"] == {"ok": True} and got["stateB"] == {"ok": True, "late": {"days": 1, "n": 2}}, got   # 홈 판정은 지난 종가로 계속 (거래일 2일 뒤 · Jack 2026-11-19)
     assert got["prevSame"] is True and got["failSame"] == "fail"                    # 미리 보기 · 실패는 건드리지 않아요
     H, M = 3600000, 60000
     assert got["waits"][0] == H and got["waits"][1] == 17 * M + 1000, got["waits"]  # 길어도 1시간 · staleAfter 1초 뒤

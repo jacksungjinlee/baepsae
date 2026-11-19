@@ -51,7 +51,8 @@
 //   why. A rule this version cannot read is treated as not checked (준비 중), never as passed; a rule book with no rule
 //   that could be checked at all is 확인 필요, never 할 일 없음.
 import { num, isFin, priceWon, fyOf, fellTwice, KR_DIV_TREND, exactData, krDivHistory, todayD1, valueD1 } from "./engine.js";
-import { STALE_DAYS, daysSince, ownCloseDate, backstopFirst } from "../data.js";
+import { STALE_DAYS, daysSince, ownCloseDate, backstopFirst, samePublish, kstDate } from "../data.js";
+import { lateDays, LATE_CHECK_DAYS } from "./tradedays.js";
 import { sameConfirm, planWLimit, planWOk, PLANW_MAX_X } from "./store.js";
 import { heldQty as heldOf, heldUnits } from "./held.js";
 import { unitHeld } from "../repair.js";
@@ -100,10 +101,40 @@ export function dayState(load, now) {
   return { ok: true };
 }
 
+// ---------------- the late check (Jack, 2026-11-19) ----------------
+// "When data is late, still run the portfolio check on the last official close, with its date ("11월 16일 종가로
+// 점검했어요."), for up to 5 trading days. Skip it only after that." Stale by dayState, the check still runs while the
+// closes are at most LATE_CHECK_DAYS trading days behind (tradedays.lateDays: KRX days after pxDate and NYSE days after
+// usPxDate, the larger; a day counts from 00:00 KST) and data.json and corp.json are one publish (the annual rules read
+// corp.json). -> dayState's answer, or { ok: true, late: { days, n } } (days: the stale count n of the date line and the
+// band, as dayState gave it; n: the trading days behind). Anything that cannot be read -> dayState's answer (no check).
+// The screens then say the close's date beside the result and keep the date line's stale words (two-disasters rule: a
+// check on an old close never looks like today's), and show nothing labelled 오늘 (review, 2026-11-19).
+// A fallback to "no check" for a reason other than the 5-day rule is said once in the console (CLAUDE.md: no silent fallback).
+const lateSaid = new Set();
+const lateWarn = (m) => { if (!lateSaid.has(m)) { lateSaid.add(m); console.warn(m); } };
+export function checkState(load, now) {
+  const s = dayState(load, now);
+  if (s.ok || s.why !== "stale") return s;
+  const d = load.data, c = load.corp;
+  if (!d || !c || !samePublish(d.publishedAt, c.publishedAt)) {
+    lateWarn(`[v2] late check: not run (data.json published ${d && d.publishedAt}, corp.json ${c && c.publishedAt}: not one publish); the stale data is not checked`);
+    return s;
+  }
+  const t = now == null ? Date.now() : now;
+  const late = lateDays(d, kstDate(t));
+  if (!late) {
+    lateWarn(`[v2] late check: not run (pxDate ${JSON.stringify(d.pxDate)} or usPxDate ${JSON.stringify(d.usPxDate)} cannot be read as a date, so the trading days behind cannot be counted); the stale data is not checked`);
+    return s;
+  }
+  if (late.n > LATE_CHECK_DAYS) return s;
+  return { ok: true, late: { days: s.days, n: late.n } };
+}
+
 // Everything the evaluation reads from today's data.
 export function todayCtx(load, now) {
   const ok = load && load.status === "ok";
-  return { state: dayState(load, now), byT: ok ? load.byT : new Map(), coByT: ok ? load.coByT : new Map(),
+  return { state: checkState(load, now), byT: ok ? load.byT : new Map(), coByT: ok ? load.coByT : new Map(),
     fx: ok ? load.data.fx : null, pxDate: ok ? load.data.pxDate : null, usPxDate: ok ? load.data.usPxDate || null : null };
 }
 
@@ -578,5 +609,5 @@ export function evaluateAll(decks, ctx) {
   const counts = zeroCounts();
   for (const d of out) for (const k of STATUS_ORDER) counts[k] += d.counts[k];
   return { ok: true, decks: out, counts, todo: counts.broken + counts.check, notChecked: out.reduce((a, d) => a + d.notChecked, 0),
-    bigMoves: out.flatMap((d) => d.bigMoves) };
+    bigMoves: out.flatMap((d) => d.bigMoves), ...(ctx.state.late ? { late: ctx.state.late } : {}) };
 }
