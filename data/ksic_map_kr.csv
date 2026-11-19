@@ -1,6 +1,6 @@
 # 11차 한국표준산업분류 소분류(3자리) → 뱁새의 두 업종 체계 (2026-11-19 · Jack: "Map each official code to our existing industry groups … Report any codes that don't map cleanly.")
 # s 예전 뱁새 업종 키 (src/detail.jsx SECTORS · fetch_data.map_sector_kr 에 공식 이름을 넣은 값 — KRX 업종 글자를 바꾸던 그 규칙) · ind 2.0 업종 그룹 (data/industry_map.csv · 그 코드와 아래 4·5자리가 가는 그룹)
-# status ok 117 · none 94 · ambiguous 13 · financial 9 · fund 1 — ok 만 채워요 (validate_data.IND_SECTOR_KR 의 짝이 맞을 때 · 업종 읽는 법 LENS 가 틀리면 KSIC_S_FIX · KSIC_LENS_MISFIT). 나머지는 채우지 않고 로그에 크게.
+# status ok 111 · none 94 · ambiguous 19 · financial 9 · fund 1 — ok 만 채워요 (validate_data.IND_SECTOR_KR 의 짝이 맞고, 예전 뱁새 업종 읽는 법(LENS)이 그 코드 회사들의 것을 맞게 짚을 때 · KSIC_LENS_MISFIT). 나머지는 채우지 않고 로그에 크게.
 # 손으로 고치지 마세요: fetch_data.ksic_map_kr_rows(names, kmap, groups) 가 만들어요 — tests/test_ind_dart.py 가 같은지 봐요. 규칙이나 표가 바뀌면 다시 만들어 PR 에 보여요.
 ksic,name,s,ind,status,why
 011,작물 재배업,etc,food,none,예전 뱁새 업종 키를 찾지 못함 (기타)
@@ -41,7 +41,7 @@ ksic,name,s,ind,status,why
 144,의복 액세서리 제조업,textile,textile,ok,
 151,"가죽, 가방 및 유사 제품 제조업",textile,textile,ok,
 152,신발 및 신발 부분품 제조업,textile,textile,ok,
-161,제재 및 목재 가공업,paper,paper,ok,
+161,제재 및 목재 가공업,paper,paper,ambiguous,예전 뱁새 paper 의 '원재료(펄프)' — 제재 · 목재 회사의 원재료는 원목이에요
 162,나무제품 제조업,etc,paper,none,예전 뱁새 업종 키를 찾지 못함 (기타)
 163,코르크 및 조물 제품 제조업,etc,paper,none,예전 뱁새 업종 키를 찾지 못함 (기타)
 171,"펄프, 종이 및 판지 제조업",paper,paper,ok,
@@ -61,9 +61,9 @@ ksic,name,s,ind,status,why
 213,의료용품 및 기타 의약 관련제품 제조업,bio,pharma,ok,
 221,고무제품 제조업,chem,rubber,ok,
 222,플라스틱 제품 제조업,chem,rubber,ok,
-231,유리 및 유리제품 제조업,build,cement,ok,
+231,유리 및 유리제품 제조업,build,cement,ambiguous,예전 뱁새 build 의 '수주와 분양 · PF' — 유리 회사의 매출은 제품 판매예요
 232,"내화, 비내화 요업제품 제조업",etc,cement,none,예전 뱁새 업종 키를 찾지 못함 (기타)
-233,"시멘트, 석회, 플라스터 및 그 제품 제조업",build,cement,ok,
+233,"시멘트, 석회, 플라스터 및 그 제품 제조업",build,cement,ambiguous,예전 뱁새 build 의 '수주와 분양 · PF' — 시멘트 회사의 매출은 제품 판매예요
 239,기타 비금속 광물제품 제조업,etc,cement,none,예전 뱁새 업종 키를 찾지 못함 (기타)
 241,1차 철강 제조업,steel,steel,ok,
 242,1차 비철금속 제조업,steel,metal,ok,
@@ -80,7 +80,7 @@ ksic,name,s,ind,status,why
 271,의료용 기기 제조업,health,medical,ok,
 272,"측정, 시험, 항해, 제어 및 기타 정밀 기기 제조업; 광학 기기 제외",elec,precision,ok,
 273,사진장비 및 광학 기기 제조업,elec,precision,ok,
-281,"전동기, 발전기 및 전기 변환·공급·제어 장치 제조업",elec,power_eq,ok,이름 규칙은 utility — 업종 읽는 법이 맞지 않아 elec
+281,"전동기, 발전기 및 전기 변환·공급·제어 장치 제조업",utility,power_eq,ambiguous,"예전 뱁새 utility 의 '요금은 정부가 정해요' 가 맞지 않고, KRX 글자로는 이 코드가 utility 라 다른 키로 채우면 한 코드가 두 업종이 돼요"
 282,일차전지 및 이차전지 제조업,battery,battery,ok,
 283,절연선 및 케이블 제조업,etc,power_eq,none,예전 뱁새 업종 키를 찾지 못함 (기타)
 284,전구 및 조명장치 제조업,etc,power_eq,none,예전 뱁새 업종 키를 찾지 못함 (기타)
@@ -108,10 +108,10 @@ ksic,name,s,ind,status,why
 353,"증기, 냉·온수 및 공기 조절 공급업",utility,utility,ok,
 360,수도업,utility,utility,ok,
 370,"하수, 폐수 및 분뇨 처리업",etc,utility,none,예전 뱁새 업종 키를 찾지 못함 (기타)
-381,"폐기물 수집, 운반업",utility,utility,ambiguous,예전 뱁새 utility 의 '요금은 정부가 정해요' 가 이 업종에 맞지 않음
-382,폐기물 처리업,utility,utility,ambiguous,예전 뱁새 utility 의 '요금은 정부가 정해요' 가 이 업종에 맞지 않음
+381,"폐기물 수집, 운반업",utility,utility,ambiguous,예전 뱁새 utility 의 '요금은 정부가 정해요' — 폐기물 수집 · 운반 요금은 계약으로 정해요
+382,폐기물 처리업,utility,utility,ambiguous,예전 뱁새 utility 의 '요금은 정부가 정해요' — 폐기물 처리 요금은 계약으로 정해요
 383,"해체, 선별 및 원료 재생업",etc,utility,none,예전 뱁새 업종 키를 찾지 못함 (기타)
-390,환경 정화 및 복원업,utility,utility,ambiguous,예전 뱁새 utility 의 '요금은 정부가 정해요' 가 이 업종에 맞지 않음
+390,환경 정화 및 복원업,utility,utility,ambiguous,예전 뱁새 utility 의 '요금은 정부가 정해요' — 환경 정화는 계약 공사예요
 411,건물 건설업,build,construction,ok,
 412,토목 건설업,build,construction,ok,
 421,기반조성 및 시설물 축조관련 전문공사업,etc,construction,none,예전 뱁새 업종 키를 찾지 못함 (기타)
@@ -176,12 +176,12 @@ ksic,name,s,ind,status,why
 661,금융 지원 서비스업,broker,finance·securities,financial,금융 — 2.0 의 EV 멀티플 · 금융 문구가 바뀌어요
 662,보험 및 연금관련 서비스업,insure,insurance,financial,금융 — 2.0 의 EV 멀티플 · 금융 문구가 바뀌어요
 681,부동산 임대 및 공급업,realestate,realestate,ok,
-682,부동산관련 서비스업,realestate,realestate,ok,
+682,부동산관련 서비스업,realestate,realestate,ambiguous,예전 뱁새 realestate 의 '임대수익률과 금리 차이' — 부동산 관련 서비스(중개 · 관리 · 감정)의 매출은 수수료예요
 701,자연과학 및 공학 연구개발업,etc,bio,none,예전 뱁새 업종 키를 찾지 못함 (기타)
 702,인문 및 사회과학 연구개발업,etc,,none,예전 뱁새 업종 키를 찾지 못함 (기타)
 711,법무관련 서비스업,etc,services,none,예전 뱁새 업종 키를 찾지 못함 (기타)
 712,회계 및 세무관련 서비스업,etc,services,none,예전 뱁새 업종 키를 찾지 못함 (기타)
-713,광고업,media,media,ok,
+713,광고업,media,media,ambiguous,예전 뱁새 media 의 '구독자 증가율과 편당 수익성' — 광고 회사의 매출은 광고 대행 수수료예요
 714,시장 조사 및 여론 조사업,etc,services,none,예전 뱁새 업종 키를 찾지 못함 (기타)
 715,회사 본부 및 경영 컨설팅 서비스업,etc,holding,none,예전 뱁새 업종 키를 찾지 못함 (기타)
 716,기타 전문 서비스업,etc,services,none,예전 뱁새 업종 키를 찾지 못함 (기타)

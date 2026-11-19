@@ -92,7 +92,7 @@ from validate_data import US_FGN_NOCMP, US_FGN_NOCMP_KIND, US_FGN_NOCMP_WHY, US_
 # 2026-11-19 (Jack: "new listings take their industry from DART's company records"): 한국표준산업분류 11차 표를 읽는 코드와 쓰는 단계(소분류)도
 # 관문 파일에 있어요 (관문이 같은 표로 채운 값을 확인해요)
 from validate_data import load_ksic_names, IND_DART_DIGITS, IND_MISS_KO, IND_MISS_OK, IND_FUND_KSIC, kr_desc_parse, KR_DESC_TAIL
-from validate_data import (load_ksic_map_kr, IND_SECTOR_KR, IND_FILL_CHECK, ind_fill_bad, ind_fill_rows, ksic_map_kr_sha, KSIC_S_FIX,
+from validate_data import (load_ksic_map_kr, IND_SECTOR_KR, IND_FILL_CHECK, ind_fill_bad, ind_fill_rows, ksic_map_kr_sha,
                            KSIC_LENS_MISFIT)
 
 # ────────────────────────────────────────────────────────────
@@ -1714,7 +1714,7 @@ def ksic_map_kr_rows(names, kmap, groups):
     fin_g = {g for g, r in groups.items() if str(r.get("financial") or "").strip() == "yes"}
     rows = []
     for c in sorted(x for x in names if len(x) == IND_DART_DIGITS):
-        n, s = names[c], KSIC_S_FIX.get(c) or map_sector_kr(names[c], "")     # 리뷰: 업종 읽는 법(LENS)이 틀리면 대표 짝 (281 → elec)
+        n, s = names[c], map_sector_kr(names[c], "")
         reach = sorted({ksic_group(k, kmap) for k in names if k.startswith(c)} - {None})
         odd = [g for g in reach if g not in IND_SECTOR_KR]
         if c == KR_FUND_KSIC:
@@ -1732,7 +1732,7 @@ def ksic_map_kr_rows(names, kmap, groups):
         elif any(s not in IND_SECTOR_KR[g] for g in reach):
             st, why = "ambiguous", f"예전 뱁새 {s} 와 2.0 {'·'.join(g for g in reach if s not in IND_SECTOR_KR[g])} 가 다른 업종"
         else:
-            st, why = "ok", (f"이름 규칙은 {map_sector_kr(n, '')} — 업종 읽는 법이 맞지 않아 {s}" if c in KSIC_S_FIX else "")
+            st, why = "ok", ""
         rows.append([c, n, s, "·".join(reach), st, why])
     return rows
 

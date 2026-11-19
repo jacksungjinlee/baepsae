@@ -135,12 +135,22 @@ IND_SECTOR_KR = {
     "chems": ("chem",), "metals": ("steel",), "hardware": ("elec", "machine"), "health": ("bio", "health"),
     "autos": ("auto",), "transport": ("transport",), "mediaent": ("media",), "softnet": ("platform", "game"),
 }
-# 리뷰 (2026-11-19): 예전 뱁새는 업종 키마다 '업종 읽는 법'(detail.jsx LENS)을 보여요. 그 글이 그 코드의 회사에 틀린 말이면 깔끔히 맞지 않아요.
-#   furniture (가구 · 기타 제조) — paper 의 '원재료(펄프)' 글이 가구 회사에 맞지 않아 짝에서 뺐어요 (예전 뱁새에 가구 키가 없어요)
-#   cosmetics — chem 의 '정제마진 · 스프레드' 글이 화장품 회사에 맞지 않아 짝에서 뺐어요
-#   power_eq — utility 의 '요금은 정부가 정해요' 가 전동기 · 변압기 회사에 맞지 않아 짝에서 뺐어요
-KSIC_S_FIX = {"281": "elec"}      # 이름 규칙(map_sector_kr)은 utility 로 읽어요 → 2.0 power_eq 의 대표 짝 elec (LENS '누구에게 파는지' 가 맞아요)
-KSIC_LENS_MISFIT = {c: "예전 뱁새 utility 의 '요금은 정부가 정해요' 가 이 업종에 맞지 않음" for c in ("381", "382", "390")}   # 폐기물 · 환경 정화
+# 리뷰 (2026-11-19): 예전 뱁새는 업종 키마다 '업종 읽는 법'(detail.jsx LENS)을 보여요. 규칙: 그 글이 그 코드 회사들의 것을 맞게 짚을 때만
+# 채워요 — 글이 이름 붙인 매출원 · 원재료 · 값을 정하는 쪽이 그 회사들의 것이어야 해요 (일반적인 경향 '경기 방어력' · '경우가 많아요' 는 따지지 않아요).
+#   furniture (가구 · 기타 제조) — 예전 뱁새에 가구 키가 없고 paper 의 '원재료(펄프)' 가 가구 회사의 것이 아니라 짝이 없어요
+#   cosmetics — chem 의 '정제마진 · 스프레드' 가 화장품 회사의 것이 아니라 짝에서 뺐어요
+#   power_eq — utility 의 '요금은 정부가 정해요' 가 전동기 · 변압기 회사의 것이 아니라 짝에서 뺐어요
+KSIC_LENS_MISFIT = {
+    "161": "예전 뱁새 paper 의 '원재료(펄프)' — 제재 · 목재 회사의 원재료는 원목이에요",
+    "231": "예전 뱁새 build 의 '수주와 분양 · PF' — 유리 회사의 매출은 제품 판매예요",
+    "233": "예전 뱁새 build 의 '수주와 분양 · PF' — 시멘트 회사의 매출은 제품 판매예요",
+    "281": "예전 뱁새 utility 의 '요금은 정부가 정해요' 가 맞지 않고, KRX 글자로는 이 코드가 utility 라 다른 키로 채우면 한 코드가 두 업종이 돼요",
+    "381": "예전 뱁새 utility 의 '요금은 정부가 정해요' — 폐기물 수집 · 운반 요금은 계약으로 정해요",
+    "382": "예전 뱁새 utility 의 '요금은 정부가 정해요' — 폐기물 처리 요금은 계약으로 정해요",
+    "390": "예전 뱁새 utility 의 '요금은 정부가 정해요' — 환경 정화는 계약 공사예요",
+    "682": "예전 뱁새 realestate 의 '임대수익률과 금리 차이' — 부동산 관련 서비스(중개 · 관리 · 감정)의 매출은 수수료예요",
+    "713": "예전 뱁새 media 의 '구독자 증가율과 편당 수익성' — 광고 회사의 매출은 광고 대행 수수료예요",
+}
 IND_FIN_SECS = ("bank", "insure", "broker", "holding")   # 예전 뱁새의 금융 업종 키 (fetch_data.FIN_SECS 와 같아요 · EV 계열 멀티플을 빼요)
 # Jack 의 상시 규칙 (2026-11-19): 우리 처리 단계에서 틀린 행은 빼고(되돌리고) 크게 알린 뒤 나머지를 발행해요. 한 실행에서 이보다 많이
 # 되돌리면 관문이 실패해요. data 브랜치의 최근 발행본 20개에 새 채우기를 다시 돌려 본 되돌림 수가 모두 0 이라 max(5, 3 × 0) = 5
@@ -1214,10 +1224,15 @@ def _ind_words(dk):
     return p[0] if p else ""
 
 
-def ksic_map_kr_sha(path=KSIC_MAP_KR_CSV):
-    """업종 표(data/ksic_map_kr.csv)의 판 — sha256 앞 12자리. 채울 때 indSrc.mapSha 에 남겨요 (표가 바뀐 뒤 옛 발행본을 새 표로 막지 않게)."""
-    with open(path, "rb") as f:
-        return hashlib.sha256(f.read()).hexdigest()[:12]
+def ksic_map_kr_sha(path=KSIC_MAP_KR_CSV, names_path=KSIC_NAMES_CSV, pairs=None):
+    """채우기 규칙의 판 — 11차 표 · 업종 표(data/ksic_map_kr.csv) · 두 체계의 짝(IND_SECTOR_KR)을 함께 넣은 sha256 앞 12자리. 채울 때
+    indSrc.mapSha 에 남겨요: 규칙이 바뀐 뒤 라이브 관문이 옛 발행본을 새 규칙으로 막지 않게 (리뷰 2026-11-19)."""
+    h = hashlib.sha256()
+    for p in (names_path, path):
+        with open(p, "rb") as f:
+            h.update(f.read())
+    h.update(json.dumps({k: list(v) for k, v in (IND_SECTOR_KR if pairs is None else pairs).items()}, sort_keys=True).encode())
+    return h.hexdigest()[:12]
 
 
 def ind_fill_bad(stocks, ind, names=None, kmap_kr=None, map_sha=None):
@@ -1227,6 +1242,7 @@ def ind_fill_bad(stocks, ind, names=None, kmap_kr=None, map_sha=None):
         같은 업종 (IND_SECTOR_KR — 금융 그룹 · 금융 키는 짝이 없어 여기서 걸려요) · 설명의 업종 글자 = 그 코드의 11차 소분류 이름 (names).
         업종 표의 상태(status)는 그 채움이 쓴 표(indSrc.mapSha)가 지금 표(map_sha)와 같을 때만 '숫자가 틀림' — 표가 바뀐 뒤의 옛 채움은 경고만.
       kind pref (indSrc.prefT {우선주: 보통주}): 같은 회사 · 보통주와 같은 업종 키 · 2.0 그룹 · 업종 글자 (표가 필요 없어요).
+        짝 · 코드도 그 채움이 쓴 규칙(mapSha = 11차 표 · 업종 표 · 짝)이 지금 것과 다르면 경고만 — 기타 · 금융 키 · 짝이 없는 그룹은 늘 실패.
     num: 남아 있으면 틀린 숫자가 보이는지 (업종 키 · 2.0 그룹 → 업종 평균 · 중간값 · EV 멀티플 · 업종별 등락) — 글자 · 기록만 틀리면 False.
     names · kmap_kr 가 None 이면 (표를 읽지 못함) 그 표가 필요한 확인만 건너뛰어요. (순수 함수)"""
     by_t = {s.get("t"): s for s in stocks if s.get("cls") == "kr"}
@@ -1260,9 +1276,13 @@ def ind_fill_bad(stocks, ind, names=None, kmap_kr=None, map_sha=None):
                 elif c3.startswith(IND_FUND_KSIC):
                     bad(t, kind, f"코드 {code} 는 집합 투자업 (채우지 않아요)", True)
                 elif s.get("s") not in IND_SECTOR_KR.get(s.get("ind"), ()):
-                    bad(t, kind, f"업종 키 {s.get('s')} 가 2.0 그룹 {s.get('ind')} 와 맞지 않음", True)
+                    # 기타 · 금융 키 · 짝이 없는 그룹(금융 그룹 포함)은 늘 실패. 보통 업종 키 · 보통 그룹이 짝만 안 맞으면 그 채움이 쓴 규칙이
+                    # 지금 것일 때만 실패 — 나중에 짝을 좁혀도 이미 발행한 파일이 라이브 관문에서 막히지 않게 (그때는 경고)
+                    hard = s.get("s") in (None, "", "etc") or s.get("s") in IND_FIN_SECS or s.get("ind") not in IND_SECTOR_KR
+                    bad(t, kind, f"업종 키 {s.get('s')} 가 2.0 그룹 {s.get('ind')} 와 맞지 않음"
+                        + ("" if hard or same_table else " — 채운 뒤 짝이 바뀌었어요"), hard or same_table)
                 elif names is not None and c3 not in names:
-                    bad(t, kind, f"코드 {code or '없음'} 이 산업분류표에 없음", True)
+                    bad(t, kind, f"코드 {code or '없음'} 이 산업분류표에 없음" + ("" if same_table else " — 채운 뒤 표가 바뀌었어요"), same_table)
                 elif names is not None and words != names[c3]:
                     bad(t, kind, f"설명 업종 '{words[:30]}' ≠ {names[c3]}", False)
                 elif kmap_kr is not None and (row is None or row["status"] != "ok"):
