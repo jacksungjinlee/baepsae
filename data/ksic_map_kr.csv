@@ -1,0 +1,239 @@
+# 11차 한국표준산업분류 소분류(3자리) → 뱁새의 두 업종 체계 (2026-11-19 · Jack: "Map each official code to our existing industry groups … Report any codes that don't map cleanly.")
+# s 예전 뱁새 업종 키 (src/detail.jsx SECTORS · fetch_data.map_sector_kr 에 공식 이름을 넣은 값 — KRX 업종 글자를 바꾸던 그 규칙) · ind 2.0 업종 그룹 (data/industry_map.csv · 그 코드와 아래 4·5자리가 가는 그룹)
+# status ok 122 · none 92 · ambiguous 10 · financial 9 · fund 1 — ok 만 채워요 (validate_data.IND_SECTOR_KR 의 짝이 맞을 때). 나머지는 채우지 않고 로그에 크게.
+# 손으로 고치지 마세요: fetch_data.ksic_map_kr_rows(names, kmap, groups) 가 만들어요 — tests/test_ind_dart.py 가 같은지 봐요. 규칙이나 표가 바뀌면 다시 만들어 PR 에 보여요.
+ksic,name,s,ind,status,why
+011,작물 재배업,etc,food,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+012,축산업,food,food,ok,
+013,작물재배 및 축산 복합농업,food,food,ok,
+014,작물재배 및 축산 관련 서비스업,food,food,ok,
+015,수렵 및 관련 서비스업,etc,food,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+020,임업,etc,food,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+031,어로 어업,food,food,ok,
+032,양식어업 및 어업관련 서비스업,food,food,ok,
+051,석탄 광업,energy,,none,2.0 업종 그룹 없음
+052,원유 및 천연가스 채굴업,energy,,none,2.0 업종 그룹 없음
+061,철 광업,etc,,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+062,비철금속 광업,steel,,none,2.0 업종 그룹 없음
+071,토사석 광업,etc,,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+072,기타 비금속광물 광업,etc,,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+080,광업 지원 서비스업,etc,,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+101,"도축, 육류 가공 및 저장 처리업",etc,food,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+102,수산물 가공 및 저장 처리업,food,food,ok,
+103,"과실, 채소 가공 및 저장 처리업",etc,food,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+104,동·식물성 유지 및 낙농제품 제조업,etc,food,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+105,"곡물 가공품, 전분 및 전분제품 제조업",food,food,ok,
+106,"떡, 빵 및 과자류 제조업",etc,food,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+107,도시락 및 식사용 조리식품 제조업,etc,food,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+108,기타 식품 제조업,etc,food,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+109,동물용 사료 및 조제식품 제조업,etc,food,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+111,알코올 음료 제조업,food,food,ok,
+112,비알코올 음료 및 얼음 제조업,food,food,ok,
+120,담배 제조업,food,food,ok,
+131,방적 및 가공사 제조업,etc,textile,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+132,직물 직조 및 직물제품 제조업,etc,textile,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+133,편조 원단 제조업,etc,textile,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+134,"섬유제품 염색, 정리 및 마무리 가공업",textile,textile,ok,
+139,기타 섬유제품 제조업,textile,textile,ok,
+141,봉제의복 제조업,textile,textile,ok,
+142,모피제품 제조업,etc,textile,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+143,편조의복 제조업,textile,textile,ok,
+144,의복 액세서리 제조업,textile,textile,ok,
+151,"가죽, 가방 및 유사 제품 제조업",textile,textile,ok,
+152,신발 및 신발 부분품 제조업,textile,textile,ok,
+161,제재 및 목재 가공업,paper,paper,ok,
+162,나무제품 제조업,etc,paper,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+163,코르크 및 조물 제품 제조업,etc,paper,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+171,"펄프, 종이 및 판지 제조업",paper,paper,ok,
+172,"골판지, 종이 상자 및 종이 용기 제조업",paper,paper,ok,
+179,기타 종이 및 판지 제품 제조업,paper,paper,ok,
+181,인쇄 및 인쇄관련 산업,paper,paper,ok,
+182,기록매체 복제업,etc,paper,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+191,코크스 및 연탄 제조업,etc,energy,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+192,석유 정제품 제조업,energy,energy,ok,
+201,기초 화학물질 제조업,chem,chem,ok,
+202,합성고무 및 플라스틱 물질 제조업,chem,chem,ok,
+203,"비료, 농약 및 살균·살충제 제조업",chem,spchem,ok,
+204,기타 화학제품 제조업,chem,cosmetics·spchem,ok,
+205,화학섬유 제조업,chem,chem,ok,
+211,기초 의약 물질 제조업,bio,bio,ok,
+212,의약품 제조업,bio,pharma,ok,
+213,의료용품 및 기타 의약 관련제품 제조업,bio,pharma,ok,
+221,고무제품 제조업,chem,rubber,ok,
+222,플라스틱 제품 제조업,chem,rubber,ok,
+231,유리 및 유리제품 제조업,build,cement,ok,
+232,"내화, 비내화 요업제품 제조업",etc,cement,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+233,"시멘트, 석회, 플라스터 및 그 제품 제조업",build,cement,ok,
+239,기타 비금속 광물제품 제조업,etc,cement,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+241,1차 철강 제조업,steel,steel,ok,
+242,1차 비철금속 제조업,steel,metal,ok,
+243,금속 주조업,steel,steel,ok,
+251,"구조용 금속제품, 탱크 및 증기발생기 제조업",utility,metalwork,ambiguous,예전 뱁새 utility 와 2.0 metalwork 가 다른 업종
+252,무기 및 총포탄 제조업,defense,defense,ok,
+259,기타 금속 가공제품 제조업,steel,metalwork,ok,
+261,반도체 제조업,semi,semi,ok,
+262,전자 부품 제조업,elec,display·elec_parts,ok,
+263,컴퓨터 및 주변 장치 제조업,elec,elec_parts,ok,
+264,통신 및 방송장비 제조업,machine,telecom_eq,ok,
+265,영상 및 음향 기기 제조업,etc,appliance,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+266,마그네틱 및 광학 매체 제조업,elec,elec_parts,ok,
+271,의료용 기기 제조업,health,medical,ok,
+272,"측정, 시험, 항해, 제어 및 기타 정밀 기기 제조업; 광학 기기 제외",elec,precision,ok,
+273,사진장비 및 광학 기기 제조업,elec,precision,ok,
+281,"전동기, 발전기 및 전기 변환·공급·제어 장치 제조업",utility,power_eq,ok,
+282,일차전지 및 이차전지 제조업,battery,battery,ok,
+283,절연선 및 케이블 제조업,etc,power_eq,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+284,전구 및 조명장치 제조업,etc,power_eq,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+285,가정용 기기 제조업,etc,appliance,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+289,기타 전기장비 제조업,elec,power_eq,ok,
+291,일반 목적용 기계 제조업,machine,machinery,ok,
+292,특수 목적용 기계 제조업,machine,display·machinery·robot·semi_eq,ok,
+301,자동차용 엔진 및 자동차 제조업,auto,auto,ok,
+302,자동차 차체 및 트레일러 제조업,auto,auto,ok,
+303,자동차 신품 부품 제조업,auto,auto_parts,ok,
+304,자동차 재제조 부품 제조업,auto,auto_parts,ok,
+311,선박 및 보트 건조업,ship,ship,ok,
+312,철도장비 제조업,machine,machinery,ok,
+313,"항공기, 우주선 및 부품 제조업",defense,defense,ok,
+319,그 외 기타 운송장비 제조업,machine,machinery,ok,
+320,가구 제조업,paper,furniture,ok,
+331,귀금속 및 장신용품 제조업,broker,furniture,financial,금융 — 2.0 의 EV 멀티플 · 금융 문구가 바뀌어요
+332,악기 제조업,etc,furniture,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+333,운동 및 경기용구 제조업,etc,furniture,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+334,"인형, 장난감 및 오락용품 제조업",game,furniture,ambiguous,예전 뱁새 game 와 2.0 furniture 가 다른 업종
+339,그 외 기타 제품 제조업,etc,furniture,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+340,산업용 기계 및 장비 수리업,machine,,none,2.0 업종 그룹 없음
+351,전기업,etc,utility,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+352,연료용 가스 제조 및 배관공급업,utility,utility,ok,
+353,"증기, 냉·온수 및 공기 조절 공급업",utility,utility,ok,
+360,수도업,utility,utility,ok,
+370,"하수, 폐수 및 분뇨 처리업",etc,utility,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+381,"폐기물 수집, 운반업",utility,utility,ok,
+382,폐기물 처리업,utility,utility,ok,
+383,"해체, 선별 및 원료 재생업",etc,utility,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+390,환경 정화 및 복원업,utility,utility,ok,
+411,건물 건설업,build,construction,ok,
+412,토목 건설업,build,construction,ok,
+421,기반조성 및 시설물 축조관련 전문공사업,etc,construction,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+422,건물설비 설치 공사업,etc,construction,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+423,전기 및 통신 공사업,etc,construction,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+424,실내건축 및 건축마무리 공사업,build,construction,ok,
+425,시설물 유지관리 공사업,etc,construction,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+426,건설장비 운영업,machine,construction,ambiguous,예전 뱁새 machine 와 2.0 construction 가 다른 업종
+451,자동차 판매업,auto,auto,ok,
+452,자동차 부품 및 내장품 판매업,auto,auto_parts,ok,
+453,모터사이클 및 부품 판매업,retail,,none,2.0 업종 그룹 없음
+461,상품 중개업,etc,trading,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+462,산업용 농·축산물 및 동·식물 도매업,retail,trading,ok,
+463,음·식료품 및 담배 도매업,retail,trading,ok,
+464,생활용품 도매업,retail,trading,ok,
+465,기계장비 및 관련 물품 도매업,machine,trading,ambiguous,예전 뱁새 machine 와 2.0 trading 가 다른 업종
+466,"건축 자재, 철물 및 난방장치 도매업",build,trading,ambiguous,예전 뱁새 build 와 2.0 trading 가 다른 업종
+467,기타 전문 도매업,retail,energy·trading,ambiguous,예전 뱁새 retail 와 2.0 energy 가 다른 업종
+468,상품 종합 도매업,retail,trading,ok,
+471,종합 소매업,retail,retail,ok,
+472,음·식료품 및 담배 소매업,retail,retail,ok,
+473,가전제품 및 정보 통신장비 소매업,elec,retail,ambiguous,예전 뱁새 elec 와 2.0 retail 가 다른 업종
+474,"섬유, 의복, 신발 및 가죽제품 소매업",retail,retail,ok,
+475,기타 생활용품 소매업,retail,retail,ok,
+476,"문화, 오락 및 여가 용품 소매업",game,retail,ambiguous,예전 뱁새 game 와 2.0 retail 가 다른 업종
+477,연료 소매업,energy,energy,ok,
+478,기타 상품 전문 소매업,retail,retail,ok,
+479,무점포 소매업,retail,retail,ok,
+491,철도 운송업,transport,logistics,ok,
+492,육상 여객 운송업,transport,logistics,ok,
+493,도로 화물 운송업,transport,logistics,ok,
+494,소화물 전문 운송업,transport,logistics,ok,
+495,파이프라인 운송업,transport,logistics,ok,
+501,해상 운송업,transport,shipping,ok,
+502,내륙 수상 및 항만 내 운송업,transport,shipping,ok,
+511,항공 여객 운송업,transport,airline,ok,
+512,항공 화물 운송업,transport,airline,ok,
+521,보관 및 창고업,transport,logistics,ok,
+529,기타 운송관련 서비스업,transport,logistics,ok,
+551,일반 및 생활 숙박시설 운영업,hotel,leisure,ok,
+559,기타 숙박업,hotel,leisure,ok,
+561,음식점업,hotel,food,ok,
+562,주점 및 비알코올 음료점업,food,food,ok,
+581,"서적, 잡지 및 기타 인쇄물 출판업",media,media,ok,
+582,소프트웨어 개발 및 공급업,platform,game·software,ok,
+591,"영화, 비디오물, 방송 프로그램 제작 및 배급업",media,entertainment,ok,
+592,오디오물 출판 및 원판 녹음업,media,entertainment,ok,
+601,라디오 방송업,media,media,ok,
+602,텔레비전 방송업,media,media,ok,
+603,영상·오디오물 제공 서비스업,etc,media,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+611,공영 우편업,etc,telecom,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+612,전기 통신업,telecom,telecom,ok,
+620,"컴퓨터 프로그래밍, 시스템 통합 및 관리업",elec,it_service,ambiguous,예전 뱁새 elec 와 2.0 it_service 가 다른 업종
+631,"자료 처리, 호스팅, 포털 및 기타 인터넷 정보 매개 서비스업",platform,internet,ok,
+639,기타 정보 서비스업,platform,it_service,ok,
+641,은행 및 저축기관,bank,bank,financial,금융 — 2.0 의 EV 멀티플 · 금융 문구가 바뀌어요
+642,신탁업 및 집합 투자업,etc,finance,fund,집합 투자업 — 상장 펀드일 수 있어요
+649,기타 금융업,holding,finance·holding,financial,금융 — 2.0 의 EV 멀티플 · 금융 문구가 바뀌어요
+651,보험업,insure,insurance,financial,금융 — 2.0 의 EV 멀티플 · 금융 문구가 바뀌어요
+652,재보험업,insure,insurance,financial,금융 — 2.0 의 EV 멀티플 · 금융 문구가 바뀌어요
+653,공제업,etc,insurance,financial,금융 — 2.0 의 EV 멀티플 · 금융 문구가 바뀌어요
+661,금융 지원 서비스업,broker,finance·securities,financial,금융 — 2.0 의 EV 멀티플 · 금융 문구가 바뀌어요
+662,보험 및 연금관련 서비스업,insure,insurance,financial,금융 — 2.0 의 EV 멀티플 · 금융 문구가 바뀌어요
+681,부동산 임대 및 공급업,realestate,realestate,ok,
+682,부동산관련 서비스업,realestate,realestate,ok,
+701,자연과학 및 공학 연구개발업,etc,bio,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+702,인문 및 사회과학 연구개발업,etc,,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+711,법무관련 서비스업,etc,services,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+712,회계 및 세무관련 서비스업,etc,services,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+713,광고업,media,media,ok,
+714,시장 조사 및 여론 조사업,etc,services,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+715,회사 본부 및 경영 컨설팅 서비스업,etc,holding,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+716,기타 전문 서비스업,etc,services,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+721,"건축 기술, 엔지니어링 및 관련 기술 서비스업",build,construction,ok,
+729,기타 과학기술 서비스업,etc,services,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+731,수의업,etc,services,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+732,전문 디자인업,etc,services,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+733,사진 촬영 및 처리업,etc,services,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+739,"그 외 기타 전문, 과학 및 기술 서비스업",etc,services,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+741,사업시설 유지·관리 서비스업,etc,services,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+742,건물·산업설비 청소 및 방제 서비스업,etc,services,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+743,조경관리 및 유지 서비스업,etc,services,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+751,고용 알선 및 인력 공급업,etc,services,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+752,여행사 및 기타 여행 보조 서비스업,hotel,leisure,ok,
+753,"경비, 경호 및 탐정업",etc,services,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+759,기타 사업 지원 서비스업,etc,services,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+761,운송장비 임대업,machine,services,none,예전 뱁새에 짝이 없는 2.0 그룹 services
+762,개인 및 가정용품 임대업,realestate,services,none,예전 뱁새에 짝이 없는 2.0 그룹 services
+763,산업용 기계 및 장비 임대업,machine,services,none,예전 뱁새에 짝이 없는 2.0 그룹 services
+764,무형 재산권 임대업,realestate,services,none,예전 뱁새에 짝이 없는 2.0 그룹 services
+841,입법 및 일반 정부 행정,etc,,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+842,사회 및 산업정책 행정,etc,,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+843,외무 및 국방 행정,defense,,none,2.0 업종 그룹 없음
+844,사법 및 공공 질서 행정,etc,,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+845,사회보장 행정,etc,,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+846,사회보장보험업 및 연금업,insure,,financial,금융 — 2.0 의 EV 멀티플 · 금융 문구가 바뀌어요
+851,초등 교육기관,edu,education,ok,
+852,중등 교육기관,edu,education,ok,
+853,고등 교육기관,edu,education,ok,
+854,"특수학교, 외국인학교 및 대안학교",etc,education,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+855,일반 교습학원,edu,education,ok,
+856,기타 교육기관,edu,education,ok,
+857,교육 지원 서비스업,edu,education,ok,
+861,병원,health,healthcare,ok,
+862,의원,etc,healthcare,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+863,공중 보건 의료업,health,healthcare,ok,
+869,기타 보건업,etc,healthcare,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+871,거주 복지시설 운영업,etc,,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+872,비거주 복지시설 운영업,etc,,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+901,창작 및 예술관련 서비스업,etc,entertainment,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+902,"도서관, 사적지 및 유사 여가관련 서비스업",etc,entertainment,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+911,스포츠 서비스업,hotel,leisure,ok,
+912,유원지 및 기타 오락관련 서비스업,game,leisure,ambiguous,예전 뱁새 game 와 2.0 leisure 가 다른 업종
+941,산업 및 전문가 단체,etc,,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+942,노동조합,etc,,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+949,기타 협회 및 단체,etc,,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+951,컴퓨터 및 통신장비 수리업,elec,services,none,예전 뱁새에 짝이 없는 2.0 그룹 services
+952,자동차 및 모터사이클 수리업,auto,services,none,예전 뱁새에 짝이 없는 2.0 그룹 services
+953,개인 및 가정용품 수리업,etc,services,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+961,"미용, 욕탕 및 유사 서비스업",etc,services,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+969,그 외 기타 개인 서비스업,etc,services,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+970,가구 내 고용활동,paper,,none,2.0 업종 그룹 없음
+981,자가 소비를 위한 가사 생산 활동,etc,,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+982,자가 소비를 위한 가사 서비스 활동,etc,,none,예전 뱁새 업종 키를 찾지 못함 (기타)
+990,국제 및 외국기관,etc,,none,예전 뱁새 업종 키를 찾지 못함 (기타)

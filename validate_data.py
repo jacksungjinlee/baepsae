@@ -108,6 +108,36 @@ IND_GROUPS_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"
 IND_DART_DIGITS = 3                       # KRX 업종 글자와 같은 단계 (소분류 · 3자리) — 2026-11-19 표본 93종목 모두 KRX 글자 = 이 이름 (띄어쓰기만 다른 19)
 IND_FUND_KSIC = "642"                     # '신탁업 및 집합 투자업' — 상장 펀드일 수 있어 DART 로 회사 업종을 채우지 않아요 (fetch_data KR_FUND_KSIC)
 KSIC_LEVELS = {1: 21, 2: 77, 3: 234, 4: 501, 5: 1205}   # 11차 개정의 단계별 항목 수 (대 · 중 · 소 · 세 · 세세) — 파일이 바뀌면 예외
+# 2026-11-19 (Jack, ~17:45 KST: "don't show 통계청 industry names as new groups. Map each official code to our existing industry
+# groups, so 업종 lists, industry averages and 업종별 등락 keep one naming system. Report any codes that don't map cleanly."):
+# 11차 소분류(3자리) 코드마다 우리 두 업종 체계로 가는 길을 적은 표 (data/ksic_map_kr.csv · fetch_data.ksic_map_kr_rows 가 만들어요):
+#   s       예전 뱁새 업종 키 (detail.jsx SECTORS · KRX 글자를 바꾸던 그 규칙 map_sector_kr 에 11차 이름을 넣은 값)
+#   ind     2.0 업종 그룹 (data/industry_map.csv 의 KSIC 접두어 · 그 코드와 아래 4·5자리 코드가 가는 그룹 모두)
+#   status  ok 깔끔히 맞음 · none 짝 없음 · ambiguous 두 체계가 갈림 · financial 금융 · fund 집합 투자업 — ok 만 채워요
+KSIC_MAP_KR_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "ksic_map_kr.csv")
+KSIC_MAP_STATUS = ("ok", "none", "ambiguous", "financial", "fund")
+# 2.0 업종 그룹 → 그 그룹과 같은 뜻인 예전 뱁새 업종 키 (첫 칸이 대표). 두 체계가 같은 업종을 가리키는지 보는 짝이에요 — 여기 없는 그룹
+# (services 기업 서비스 · holding 지주회사 · 금융 그룹)은 예전 뱁새에 짝이 없거나 금융이라 채우지 않아요. 작은 그룹이 합쳐지는 상위 그룹도 적어요.
+IND_SECTOR_KR = {
+    "food": ("food", "hotel"), "textile": ("textile",), "paper": ("paper",), "furniture": ("paper",),
+    "cosmetics": ("cosmetic", "chem"), "energy": ("energy",), "chem": ("chem",), "spchem": ("chem",), "rubber": ("chem",),
+    "cement": ("build",), "steel": ("steel",), "metal": ("steel",), "metalwork": ("steel",),
+    "semi": ("semi",), "semi_eq": ("semi", "machine"), "display": ("elec", "machine"), "elec_parts": ("elec",),
+    "telecom_eq": ("elec", "machine"), "appliance": ("elec",), "medical": ("health",), "precision": ("elec", "machine"),
+    "power_eq": ("elec", "utility"), "battery": ("battery",), "machinery": ("machine",), "robot": ("machine",),
+    "defense": ("defense",), "ship": ("ship",), "auto": ("auto",), "auto_parts": ("auto",),
+    "pharma": ("bio",), "bio": ("bio",), "healthcare": ("health",), "utility": ("utility",), "construction": ("build",),
+    "trading": ("retail",), "retail": ("retail",), "logistics": ("transport",), "shipping": ("transport",),
+    "airline": ("transport",), "leisure": ("hotel",), "media": ("media",), "entertainment": ("media",),
+    "software": ("platform", "game"), "game": ("game", "platform"), "it_service": ("platform",), "internet": ("platform",),
+    "telecom": ("telecom",), "realestate": ("realestate",), "education": ("edu",),
+    "chems": ("chem",), "metals": ("steel",), "hardware": ("elec", "machine"), "health": ("bio", "health"),
+    "autos": ("auto",), "transport": ("transport",), "mediaent": ("media",), "softnet": ("platform", "game"),
+}
+IND_FIN_SECS = ("bank", "insure", "broker", "holding")   # 예전 뱁새의 금융 업종 키 (fetch_data.FIN_SECS 와 같아요 · EV 계열 멀티플을 빼요)
+# Jack 의 상시 규칙 (2026-11-19): 우리 처리 단계에서 틀린 행은 빼고(되돌리고) 크게 알린 뒤 나머지를 발행해요. 한 실행에서 이보다 많이
+# 되돌리면 관문이 실패해요. 최근 발행본 20개(data 브랜치) · 이 PR 의 시험 실행에서 되돌린 수가 모두 0 이라 max(5, 3 × 0) = 5 (PR #146 의 표).
+IND_FILL_MAX = 5
 
 
 def load_ksic_names(path=KSIC_NAMES_CSV):
@@ -126,6 +156,28 @@ def load_ksic_names(path=KSIC_NAMES_CSV):
     lv = dict(collections.Counter(len(c) for c in out))
     if lv != KSIC_LEVELS:
         raise ValueError(f"!! {os.path.basename(path)} 단계별 항목 수 {lv} ≠ 11차 {KSIC_LEVELS}")
+    return out
+
+
+def load_ksic_map_kr(path=KSIC_MAP_KR_CSV, names=None):
+    """11차 소분류 코드 → {name, s, ind (2.0 그룹 튜플), status, why} (data/ksic_map_kr.csv · '#' 줄은 설명). 머리줄 · 칸 수 · 상태 ·
+    빈 칸이 이상하거나, names(11차 표)와 코드 · 이름이 다르면 예외 — 조용히 넘어가지 않게."""
+    with open(path, encoding="utf-8") as f:
+        lines = [x for x in f.read().splitlines() if x.strip() and not x.startswith("#")]
+    rows = list(csv.reader(lines))
+    if not rows or rows[0] != ["ksic", "name", "s", "ind", "status", "why"]:
+        raise ValueError(f"!! {os.path.basename(path)} 머리줄이 'ksic,name,s,ind,status,why' 가 아니에요: {rows[:1]}")
+    out = {}
+    for r in rows[1:]:
+        if len(r) != 6 or len(r[0]) != IND_DART_DIGITS or r[0] in out or not r[1] or not r[2] or r[4] not in KSIC_MAP_STATUS \
+                or (r[4] == "ok" and (not r[3] or r[2] == "etc" or r[2] in IND_FIN_SECS
+                                      or any(r[2] not in IND_SECTOR_KR.get(g, ()) for g in r[3].split("·")))):
+            raise ValueError(f"!! {os.path.basename(path)} 이상한 줄: {r}")
+        out[r[0]] = {"name": r[1], "s": r[2], "ind": tuple(x for x in r[3].split("·") if x), "status": r[4], "why": r[5]}
+    if names is not None:
+        want = {c: n for c, n in names.items() if len(c) == IND_DART_DIGITS}
+        if {c: v["name"] for c, v in out.items()} != want:
+            raise ValueError(f"!! {os.path.basename(path)} 의 코드 · 이름이 11차 표(소분류 {len(want)}개)와 달라요")
     return out
 
 
@@ -1108,10 +1160,14 @@ def check_px_src(rep, data, today, mode="publish"):
         check_ind_dart(rep, data, ind)
 
 
-IND_MISS_KO = {"noCode": "DART 업종 코드 없음", "noName": "산업분류표에 없는 코드", "noGroup": "업종 그룹 없는 코드",
-               "noParse": "설명을 읽지 못함", "fundCode": "집합 투자업 코드 (펀드일 수 있어 채우지 않음)",
-               "fund": "펀드", "pref": "우선주"}   # indSrc.dartMiss 의 이유
-IND_MISS_OK = ("pref", "fund")   # 예전에도 업종 글자가 없던 종류 — left 에 세지 않아요 (우선주: KRX 도 준 적 없음 · 업종 그룹은 보통주를 따라요)
+IND_MISS_KO = {"noCode": "DART 업종 코드 없음", "noName": "11차 산업분류표에 없는 코드", "noGroup": "2.0 업종 그룹 없음",
+               "mapNone": "우리 업종에 짝이 없는 코드", "mapAmbig": "두 업종 체계가 갈리는 코드", "mapFin": "금융 업종 코드 (채우지 않음)",
+               "mapFund": "집합 투자업 코드 (펀드일 수 있어 채우지 않음)", "noParse": "설명을 읽지 못함",
+               "prefNoCommon": "우선주의 보통주가 목록에 없음", "prefCommonNone": "보통주도 업종 글자 없음",
+               "prefOver": "고정표에서 보통주와 다른 그룹으로 정한 우선주", "dropped": "검사에서 되돌림",
+               "fund": "펀드"}   # indSrc.dartMiss 의 이유
+IND_MISS_OK = ("fund",)   # 업종 글자가 없는 게 맞는 종류 — left 에 세지 않아요
+IND_FILL_CHECK = "국내 업종 DART 로 채운 값"    # 관문 줄 · 파이프라인 로그의 이름 (DART 로 채운 보통주 + 보통주를 따른 우선주)
 
 
 def ind_dart_names(data, ind):
@@ -1121,56 +1177,131 @@ def ind_dart_names(data, ind):
     return [f"{t} {nk.get(t) or '?'}" for t in sorted(dt_)]
 
 
-def check_ind_dart(rep, data, ind, names=None, kmap=None, groups=None):
-    """2026-11-19: DART 기업개황 업종 코드로 채운 국내 업종 글자 (indSrc.dart · dartT · left · dartMiss) — 더한 줄만.
-    실패: 채운 값이 한국표준산업분류 11차 소분류 이름이 아니거나, 그 종목 설명(dk)의 업종과 다르거나, 아는 업종 그룹으로 이어지지 않을 때.
-    경고: DART 로도 채우지 못해 업종 글자가 없는 종목 (우선주 · 펀드 빼고). dartT 가 없으면 (예전 발행본 · 시험 데이터) 건너뛰어요."""
+# 국내 종목 한 줄 설명 '업종 · 주요제품: … · 시장 상장 · 시가총액' 의 뒤쪽 (2026-11-19 · fetch_data.kr_desc_text 가 만드는 글 · 읽는 코드는 여기 하나)
+KR_DESC_TAIL = re.compile(r"(?: · (?:KOSPI|KOSDAQ|KOSDAQ GLOBAL|KONEX) 상장)?(?: · 시가총액 [0-9,.]+(?:조원|억원))?$")
+
+
+def kr_desc_parse(dk):
+    """지난 발행본의 dk ('업종 · 주요제품: … · 시장 상장 · 시가총액') → (업종, 주요제품). kr_desc_text 로 다시 만들어 같은 글이 나올 때만
+    (업종 이름에 ' · ' 가 들어 있어도 돼요 — '전동기, 발전기 및 전기 변환 · 공급 · 제어 장치 제조업'). 못 읽으면 None. (순수 함수)"""
+    if not isinstance(dk, str):
+        return None
+    s = " · " + dk
+    m = KR_DESC_TAIL.search(s)
+    head, tail = s[:m.start()].removeprefix(" · "), s[m.start():]
+    if head.startswith("주요제품: "):
+        ind, prod = "", head[len("주요제품: "):]
+    elif " · 주요제품: " in head:
+        ind, prod = head.split(" · 주요제품: ", 1)
+    else:
+        ind, prod = head, ""
+    back = (" · " + " · ".join(b for b in (ind, f"주요제품: {prod}" if prod else "") if b) if (ind or prod) else "") + tail
+    return (ind, prod) if back.removeprefix(" · ") == dk else None
+
+
+def _ind_words(dk):
+    """설명(dk)의 업종 글자 (kr_desc_parse 의 첫 칸 · 못 읽으면 빈 글)."""
+    p = kr_desc_parse(dk) if dk else None
+    return p[0] if p else ""
+
+
+def ind_fill_bad(stocks, ind, kmap_kr):
+    """2026-11-19 (Jack 의 상시 규칙): 국내 업종을 채운 행 중 틀린 것 [{t, kind, why, num}] — 파이프라인(되돌려요)과 관문이 같은 함수를 써요.
+    kind dart: indSrc.dartT {종목: DART 업종 코드} — 발행하는 국내 보통주 · 코드의 11차 소분류가 표에서 ok · 설명이 그 이름으로 시작 ·
+    업종 키 s 가 그 종목의 2.0 그룹(ind)과 같은 뜻 (IND_SECTOR_KR). kind pref: indSrc.prefT {우선주: 보통주} — 같은 회사 · 보통주와 같은
+    업종 글자 · 업종 키 · 2.0 그룹. num: 남아 있으면 틀린 숫자가 보이는지 (업종 키 · 2.0 그룹 → 업종 평균 · 중간값 · EV 멀티플 · 업종별 등락)
+    — 글자만 틀리면 False (설명 줄 하나), 개수 같은 기록만 틀려도 False. (순수 함수)"""
+    by_t = {s.get("t"): s for s in stocks if s.get("cls") == "kr"}
+    out = []
+
+    def bad(t, kind, why, num):
+        out.append({"t": t, "kind": kind, "why": why, "num": num})
+    for key, kind in (("dartT", "dart"), ("prefT", "pref")):
+        m = ind.get(key)
+        if key in ind and not isinstance(m, dict):
+            bad(key, kind, f"{key} 모양", False)
+            continue
+        m = m or {}
+        n = ind.get("dart" if kind == "dart" else "pref")
+        if key in ind and n != len(m):
+            bad(key, kind, f"{'dart' if kind == 'dart' else 'pref'} {n} ≠ {key} {len(m)}", False)
+        for t, v in sorted(m.items()):
+            s = by_t.get(t)
+            if s is None or s.get("etf") or s.get("fund"):
+                bad(t, kind, "발행한 국내 주식이 아님", False)
+                continue
+            pref = len(t) == 6 and t[-1] != "0"
+            if kind == "dart":
+                code = v if isinstance(v, str) else ""
+                row = kmap_kr.get(code[:IND_DART_DIGITS]) if len(code) >= IND_DART_DIGITS else None
+                words = _ind_words(s.get("dk"))
+                if pref:
+                    bad(t, kind, "우선주 (DART 로 채우지 않아요)", True)
+                elif row is None:
+                    bad(t, kind, f"코드 {code or '없음'} 이 산업분류표에 없음", True)
+                elif row["status"] != "ok":
+                    bad(t, kind, f"코드 {code} ({row['name']}) 는 깔끔히 맞지 않음 ({row['status']})", True)
+                elif s.get("s") not in IND_SECTOR_KR.get(s.get("ind"), ()):
+                    bad(t, kind, f"업종 키 {s.get('s')} 가 2.0 그룹 {s.get('ind')} 와 맞지 않음", True)
+                elif words != row["name"]:
+                    bad(t, kind, f"설명 업종 '{words[:30]}' ≠ {row['name']}", False)
+            else:
+                c = by_t.get(v) if isinstance(v, str) else None
+                if not pref or v != t[:5] + "0" or c is None:
+                    bad(t, kind, f"보통주 {v} 가 이 우선주의 보통주가 아님", True)
+                elif s.get("s") != c.get("s") or s.get("ind") != c.get("ind"):
+                    bad(t, kind, f"업종 키 · 2.0 그룹 {s.get('s')}/{s.get('ind')} ≠ 보통주 {c.get('s')}/{c.get('ind')}", True)
+                elif not _ind_words(s.get("dk")) or _ind_words(s.get("dk")) != _ind_words(c.get("dk")):
+                    bad(t, kind, f"업종 글자 '{_ind_words(s.get('dk'))[:30]}' ≠ 보통주 '{_ind_words(c.get('dk'))[:30]}'", False)
+    return out
+
+
+def ind_fill_rows(bad, stocks):
+    """로그 · 기록에 쓰는 '종목 이름: 이유' (앞 30개)."""
+    nk = {s.get("t"): s.get("nk") for s in stocks if s.get("cls") == "kr"}
+    return [f"{b['t']} {nk.get(b['t']) or ''}: {b['why']}".replace("  ", " ") for b in bad[:30]]
+
+
+def check_ind_dart(rep, data, ind, kmap_kr=None):
+    """2026-11-19: 국내 업종을 채운 값 (DART 로 채운 보통주 indSrc.dartT · 보통주를 따른 우선주 indSrc.prefT) — Jack 의 상시 규칙:
+    파이프라인이 같은 함수(ind_fill_bad)로 틀린 행을 되돌리고 ownDrop.indFill {n, rows} 에 남겨요. 실패는 두 가지뿐: 되돌린 수가
+    IND_FILL_MAX 보다 많을 때 · 틀린 행이 남아 있고 그게 틀린 숫자를 보여 줄 때 (num). 경고: 1~N 행을 되돌림 · 숫자와 상관없는 틀린 행이
+    남음 · 기록이나 표가 없음. 업종 글자 없는 종목은 다음 줄 (경고만). dartT 가 없으면 (예전 발행본 · 시험 데이터) 예전처럼 건너뛰어요."""
     if "dartT" not in ind:
-        rep.skip("국내 업종 DART 로 채운 값", "indSrc.dartT 없음 (DART 채우기 전 발행본)")
+        rep.skip(IND_FILL_CHECK, "indSrc.dartT 없음 (DART 채우기 전 발행본)")
         rep.skip("국내 업종 글자 없는 종목 (경고만)", "indSrc.left 없음 (DART 채우기 전 발행본)")
         return
-    want = "11차 소분류 이름 = 설명(dk)의 업종 · 아는 업종 그룹"
+    want = f"되돌림 ≤ {IND_FILL_MAX} · 숫자가 틀리는 값 0 (11차 코드 → 우리 업종 표 · 우선주 = 보통주)"
+    stocks = data.get("stocks", [])
+    rec = (data.get("ownDrop") or {}).get("indFill") if isinstance(data.get("ownDrop"), dict) else None
+    n_drop = rec.get("n") if isinstance(rec, dict) and isinstance(rec.get("n"), int) else None
     try:
-        names = load_ksic_names() if names is None else names
-        if kmap is None or groups is None:
-            kmap, groups = load_ksic_map()
+        kmap_kr = load_ksic_map_kr(names=load_ksic_names()) if kmap_kr is None else kmap_kr
+        bad = ind_fill_bad(stocks, ind, kmap_kr)
     except Exception as e:
-        rep.add("국내 업종 DART 로 채운 값", False, f"표를 읽지 못함 ({type(e).__name__}: {str(e)[:80]})", want)
-        return
-    dt_, bad = ind.get("dartT"), []
-    if not isinstance(dt_, dict):
-        bad.append("dartT 모양")
-        dt_ = {}
-    if ind.get("dart") != len(dt_):
-        bad.append(f"dart {ind.get('dart')} ≠ dartT {len(dt_)}")
-    by_t = {s.get("t"): s for s in data.get("stocks", []) if s.get("cls") == "kr"}
-    for t, code in sorted(dt_.items()):
-        s, code = by_t.get(t), code if isinstance(code, str) else ""
-        name = names.get(code[:IND_DART_DIGITS]) if len(code) >= IND_DART_DIGITS else None
-        dk = (s or {}).get("dk") or ""
-        if s is None or s.get("etf") or s.get("fund"):
-            bad.append(f"{t} 발행한 국내 주식이 아님")
-        elif len(t) == 6 and t[-1] != "0":
-            bad.append(f"{t} 우선주 (채우지 않아요)")
-        elif not name:
-            bad.append(f"{t} 코드 {code or '없음'} 이 산업분류표에 없음")
-        elif code.startswith(IND_FUND_KSIC):
-            bad.append(f"{t} 코드 {code} 는 집합 투자업 (채우지 않아요)")
-        elif not (dk == name or dk.startswith(name + " · ")):
-            bad.append(f"{t} 설명 '{dk[:40]}' ≠ {name}")
-        elif ksic_prefix_group(code, kmap) not in groups:
-            bad.append(f"{t} 코드 {code} 의 업종 그룹 없음")
-    rep.add("국내 업종 DART 로 채운 값", not bad, f"{len(dt_)}종목" + (f" · 이상 {len(bad)}: {'; '.join(bad[:4])}" if bad else ""), want)
+        kmap_kr, bad = None, []
+        rep.detail(f"{IND_FILL_CHECK}: 표를 읽지 못했어요", [f"{type(e).__name__}: {str(e)[:120]}"])
+    n_dart = len(ind.get("dartT") or {}) if isinstance(ind.get("dartT"), dict) else 0
+    n_pref = len(ind.get("prefT") or {}) if isinstance(ind.get("prefT"), dict) else 0
+    num = [b for b in bad if b["num"]]
+    fail = (n_drop is not None and n_drop > IND_FILL_MAX) or bool(num)
+    warn = not fail and (bool(bad) or n_drop is None or n_drop > 0 or kmap_kr is None)
+    value = (f"DART {n_dart}종목 · 우선주 {n_pref} · 되돌림 {n_drop if n_drop is not None else '기록 없음'}"
+             + (f" · 남은 틀린 값 {len(bad)} (숫자가 틀림 {len(num)}): " + "; ".join(ind_fill_rows(bad, stocks)[:4]) if bad else "")
+             + (" · 표를 읽지 못해 확인 못 함" if kmap_kr is None else ""))
+    rep.add(IND_FILL_CHECK, not fail, value, want, warn=warn)
     if bad:
-        rep.detail("국내 업종 DART 로 채운 값이 이상해요", bad)
+        rep.detail(f"{IND_FILL_CHECK}: 남은 틀린 값", ind_fill_rows(bad, stocks))
+    if n_drop:
+        rep.detail(f"{IND_FILL_CHECK}: 파이프라인이 되돌린 행 {n_drop}", [str(x) for x in (rec.get("rows") or [])][:30])
     left = ind.get("left")
     miss = ind.get("dartMiss") if isinstance(ind.get("dartMiss"), dict) else {}
     why = " · ".join(f"{IND_MISS_KO.get(k, k)} {v}" for k, v in sorted(miss.items()) if k not in IND_MISS_OK and v)
     ok_ = " · ".join(f"{IND_MISS_KO[k]} {miss[k]}" for k in IND_MISS_OK if miss.get(k))
     rep.add("국내 업종 글자 없는 종목 (경고만)", True,
-            f"{left}" + (f" ({why})" if why else "") + (f" · 세지 않음: {ok_} (예전에도 없었어요)" if ok_ else "")
+            f"{left}" + (f" ({why})" if why else "") + (f" · 세지 않음: {ok_} (업종이 없는 게 맞아요)" if ok_ else "")
             + (f" · 채우기 실패 {ind.get('dartErr')}" if ind.get("dartErr") else ""),
-            "0 (KRX · 지난 발행본 · DART 모두 없음 · 우선주 · 펀드 빼고)", warn=not isinstance(left, int) or left > 0)
+            "0 (KRX · 지난 발행본 · DART · 보통주 모두 없음 · 펀드 빼고)", warn=not isinstance(left, int) or left > 0)
 
 
 # ── 검사 ────────────────────────────────────────────────────

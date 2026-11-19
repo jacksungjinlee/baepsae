@@ -105,6 +105,8 @@ export default function InfoApp({ lang, focus, onFocusDone }) {
               ["FinanceDataReader", "국내외 주가 · 상장 정보 · 환율 · 채권 ETF 시세"],
               ["한국은행 ECOS", "국고채 만기별 금리 (수익률 곡선 · 장단기 금리차)"],
               ["FRED (미국 연준)", "미국 국채 금리 · WTI 유가"],
+              // 2026-11-19 (Jack, 답 3): "업종 분류: 통계청 한국표준산업분류" — 이 목록의 두 칸 (항목 · 출처) 으로. 2.0 의 ☰ 데이터 출처도 이 목록을 열어요
+              ["업종 분류", "통계청 한국표준산업분류"],
             ].map(([k, v]) => (
               <div key={k} style={{ display: "flex", gap: 12, padding: "8px 0", borderBottom: "1px solid " + C.line }}>
                 <span style={{ width: 150, flexShrink: 0, fontSize: 12, fontWeight: 800, color: C.ink }}>{k}</span>
