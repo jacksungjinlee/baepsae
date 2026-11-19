@@ -15,6 +15,9 @@ What the watchdog checks, on the files users actually download: the four data fi
 both separate from our pipeline); the last daily run and the last deploy succeeded; the daily run is still switched on;
 the pages users get are the current build, the site's `data.json` is exactly the published copy, and the site does not
 serve the `docs/` folder (two of its files must answer "not found").
+A server error from GitHub Pages (HTTP 5xx) on a data file or page is asked again once, 20 seconds later, before it
+counts (Jack, 2026-11-19): a second 5xx or any other failed answer is a problem as before, and the run log lists each
+retried file and a count ("5xx 다시 시도: N곳"). A "not found"-type answer (4xx) is never asked again.
 
 ## What an alert means
 
