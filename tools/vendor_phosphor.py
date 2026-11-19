@@ -51,6 +51,8 @@ ICONS = [
     "receipt", "currency-dollar", "download-simple",
     # v19.7b 종목 바꾸기의 '내 기준으로 찾기' 칸 (보드 PfEdit3 의 반짝이)
     "sparkle",
+    # v19.6c 관심 종목 (보드 Watch2): 종목마다 조건을 정하는 버튼 · 오늘 볼 것의 관심 종목 조건 줄 · 회사 페이지의 관심 종목 버튼
+    "bell",
 ]
 
 PATH = re.compile(r'<path d="([^"]+)"( opacity="0\.2")?/>')

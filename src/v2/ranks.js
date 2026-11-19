@@ -300,6 +300,8 @@ function mineRows(stocks, mk, settings) {
 // them once per file and market. Their "상위 {x}%" is still among all scorable stocks (criteriaPct, v19.7 Part D [B3]).
 // v19.7b: 내 기준으로 찾기 (find.js) leaves the same rows out of its list with the same two functions.
 const VALUE_GUARDS = new Set(["pbrNotAbove0", "pbrRoundsTo0", "pbrFarUnder"]);
+// v19.6c 관심 종목 (watch.js): the 가치 guard a stock's PBR falls under (one of VALUE_GUARDS), else null. A condition never fires on it.
+export const pbrGuardOf = (s) => { const r = s && (s.cls === "kr" || s.cls === "us") ? critOut(critOf("value"), s, s.cls, null) : null; return VALUE_GUARDS.has(r) ? r : null; };
 export const usesValue = (points) => num(points && points.value) > 0;
 export const valueGuarded = (s, mk) => VALUE_GUARDS.has(critOut(critOf("value"), s, mk, null));
 const mineNoted = new WeakMap();

@@ -197,3 +197,26 @@ def test_mascot_screen_numbers_follow_jacks_definition():
         assert why in [b[0] for b in bad], (item, bad)
     for item in [("10월 30일 기준", ""), ("6일째 갱신이 멈췄어요", date), ("6일째 갱신이 멈췄어요", ""), ("6종목", ""), ("내 종목 12개", "")]:
         assert mascot_digit_problems([item])[0] == [], item
+
+
+def test_q17_only_the_exact_approved_import_cap_line_counts_as_a_count_of_stocks_beside_baepi():
+    """Jack, 2026-11-19 (Q17 "NOT_NUMBERS exact form: yes"): the approved watch.importCap line "관심 종목은 30개까지라서 {n}개는
+    넣지 못했어요." is a count of stocks, so it may sit beside 뱁이 (the empty 포트폴리오 after 기록 불러오기). Only that exact line,
+    as a whole piece of text: anything else around it, another cap, another unit or a near-copy is still caught."""
+    src = read("src/copy/v2.js")
+    m = re.search(r'^\s+importCap: "([^"]+)",', src, re.M)
+    assert m and m.group(1) == "관심 종목은 30개까지라서 {n}개는 넣지 못했어요.", "watch.importCap 이 승인된 문구와 달라요"
+    for n in ("1", "4", "29", "1000"):
+        line = m.group(1).replace("{n}", n)
+        bad, used = mascot_digit_problems([(line, "")])
+        assert bad == [] and used == ["관심 종목 수 (불러오기)"], (line, bad, used)
+    near = ["관심 종목은 31개까지라서 4개는 넣지 못했어요.", "관심 종목은 30개까지라서 4개는 넣지 못했어요. 3", "1 관심 종목은 30개까지라서 4개는 넣지 못했어요.",
+            "관심 종목은 30개까지라서 4개는 넣지 못했어요", "관심 종목은 30개까지라서 4개는 못 넣었어요.", "관심 종목은 30개까지라서 4,000개는 넣지 못했어요.",
+            "4개는 넣지 못했어요.", "관심 종목 4개", "관심 종목은 30개까지예요.", "관심 종목은 30개까지라서 4주는 넣지 못했어요."]
+    for text in near:
+        bad, _ = mascot_digit_problems([(text, "")])
+        assert [b[0] for b in bad] == ["설명되지 않는 숫자"], (text, bad)
+    # money, % and scores are caught first, even in that shape
+    for text, why in (("관심 종목은 30개까지라서 4만원은 넣지 못했어요.", "돈 · 가격"), ("관심 종목은 30개까지라서 4%는 넣지 못했어요.", "% (수익률 · 비중)")):
+        bad, _ = mascot_digit_problems([(text, "")])
+        assert why in [b[0] for b in bad], (text, bad)
