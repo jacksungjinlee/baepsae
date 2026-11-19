@@ -104,9 +104,9 @@ setting to change (where it is and what to click), never just "go to GitHub".
 - no safety rule is loosened.
 
 **An emergency fix** (the emergency rule under "The two disasters") skips only the wait for Jack. It still needs the list
-above: green checks, one Opus fresh-eyes review, a green `dry_run` and the real-data checks for a pipeline fix, and no
-safety rule loosened. In an emergency, use only already-approved wording, and ask Jack about any new wording after the
-fix is live (Jack, 2026-11-19).
+above: green checks, one Opus fresh-eyes review with its findings fixed, the real-data checks, a green `dry_run` for a
+pipeline fix, and no safety rule loosened. In an emergency, use only already-approved wording; ask Jack about any new
+wording after the fix is live, and ship it only after his yes, in a later PR (Jack, 2026-11-19).
 
 **Ask Jack first, in this chat, with a short yes/no question in plain words** (never send him to GitHub), when a change:
 - adds or changes user-facing Korean text — show him the 「새 문구」 table in the chat;
@@ -172,8 +172,8 @@ after it merges and what comes next.
   Cut every series to that date. Never mix today's partial bar into "closing" data.
 - **Two sources for official closes (Jack, 2026-11-19):** "Permanent two-source rule: official closes always come from two
   independent sources. If the primary is late or not final, the second one is used automatically after a cross-check. The
-  publish stops only when neither can be confirmed." Naver's daily close is never the official close (it includes
-  after-hours trades): never use it as a close source.
+  publish stops only when neither can be confirmed." Naver's daily close is never used as the official (`pxDate`) close:
+  it includes after-hours trades.
 - **All dates in KST** (`ZoneInfo("Asia/Seoul")`). The runner's clock is UTC; `date.today()` there is a bug.
 - **Never mix units or markets.** Same unit for the same field across KR and US; rank factors within each market.
 - **A date shown to users describes the content**, not the run time. Each section carries its own content date.
