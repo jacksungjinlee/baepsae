@@ -7,7 +7,7 @@ import { OLD_APP } from "../links.js";
 export { OLD_APP };
 
 export const TABS = ["home", "portfolio", "stocks", "market"];
-const SUBS = { home: ["why"], portfolio: ["build", "import"] };   // v19.3d: #portfolio/import (가진 종목 넣기)
+const SUBS = { home: ["why"], portfolio: ["build", "import", "tax"] };   // v19.3d: #portfolio/import (가진 종목 넣기) · v19.6f: #portfolio/tax (연말에 확인할 숫자)
 // v19.3d2: 내 규칙 정하기 of one portfolio, #portfolio/rules/<deck id> (ids as 2.0 makes them: letters, digits, "_" "-")
 export const DECK_ID_RX = /^[A-Za-z0-9_-]{1,60}$/;
 export const ABOUT_ROUTE = "#about";
