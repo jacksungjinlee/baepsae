@@ -106,6 +106,7 @@ KSIC_NAMES_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"
 IND_MAP_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "industry_map.csv")
 IND_GROUPS_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "industry_groups.csv")
 IND_DART_DIGITS = 3                       # KRX 업종 글자와 같은 단계 (소분류 · 3자리) — 2026-11-19 표본 93종목 모두 KRX 글자 = 이 이름 (띄어쓰기만 다른 19)
+IND_FUND_KSIC = "642"                     # '신탁업 및 집합 투자업' — 상장 펀드일 수 있어 DART 로 회사 업종을 채우지 않아요 (fetch_data KR_FUND_KSIC)
 KSIC_LEVELS = {1: 21, 2: 77, 3: 234, 4: 501, 5: 1205}   # 11차 개정의 단계별 항목 수 (대 · 중 · 소 · 세 · 세세) — 파일이 바뀌면 예외
 
 
@@ -1090,7 +1091,8 @@ def check_px_src(rep, data, today, mode="publish"):
 
 
 IND_MISS_KO = {"noCode": "DART 업종 코드 없음", "noName": "산업분류표에 없는 코드", "noGroup": "업종 그룹 없는 코드",
-               "noParse": "설명을 읽지 못함", "fund": "펀드", "pref": "우선주"}   # indSrc.dartMiss 의 이유
+               "noParse": "설명을 읽지 못함", "fundCode": "집합 투자업 코드 (펀드일 수 있어 채우지 않음)",
+               "fund": "펀드", "pref": "우선주"}   # indSrc.dartMiss 의 이유
 IND_MISS_OK = ("pref", "fund")   # 예전에도 업종 글자가 없던 종류 — left 에 세지 않아요 (우선주: KRX 도 준 적 없음 · 업종 그룹은 보통주를 따라요)
 
 
@@ -1134,6 +1136,8 @@ def check_ind_dart(rep, data, ind, names=None, kmap=None, groups=None):
             bad.append(f"{t} 우선주 (채우지 않아요)")
         elif not name:
             bad.append(f"{t} 코드 {code or '없음'} 이 산업분류표에 없음")
+        elif code.startswith(IND_FUND_KSIC):
+            bad.append(f"{t} 코드 {code} 는 집합 투자업 (채우지 않아요)")
         elif not (dk == name or dk.startswith(name + " · ")):
             bad.append(f"{t} 설명 '{dk[:40]}' ≠ {name}")
         elif ksic_prefix_group(code, kmap) not in groups:

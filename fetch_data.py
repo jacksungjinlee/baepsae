@@ -86,7 +86,7 @@ from validate_data import PX_BAD_DATA, PX_BAD_MUST_FAIL, PX_BAD_WIN, PX_BAD_WIN_
 from validate_data import US_FGN_NOCMP, US_FGN_NOCMP_KIND, US_FGN_NOCMP_WHY, US_FGN_NOREC_WHY, US_FGN_NOREC, US_SP500_MIN, US_SP500_MAX
 # 2026-11-19 (Jack: "new listings take their industry from DART's company records"): 한국표준산업분류 11차 표를 읽는 코드와 쓰는 단계(소분류)도
 # 관문 파일에 있어요 (관문이 같은 표로 채운 값을 확인해요)
-from validate_data import load_ksic_names, IND_DART_DIGITS, IND_MISS_KO, IND_MISS_OK
+from validate_data import load_ksic_names, IND_DART_DIGITS, IND_MISS_KO, IND_MISS_OK, IND_FUND_KSIC
 
 # ────────────────────────────────────────────────────────────
 # 설정
@@ -161,6 +161,13 @@ US_ADDED_LONG_NAME = frozenset(EXTRA_US_ADDED)
 # 진짜 회사도 섞여 있어서(2026-11-01 확인: DSC인베스트먼트, 한국토지신탁 등) 업종이 아니라 종목마다 정해요.
 KR_LISTED_FUNDS = {"088980": "맥쿼리인프라", "415640": "KB발해인프라", "094800": "맵스리얼티"}
 KR_FUND_INDUSTRY = "신탁업 및 집합투자업"     # 이 업종의 새 종목은 로그로 알려요 (목록에 넣을지 사람이 판단)
+KR_FUND_KSIC = IND_FUND_KSIC     # 2026-11-19: 같은 업종의 한국표준산업분류 코드 642 (11차 표는 '신탁업 및 집합 투자업' 으로 띄어 써요) — DART 로 채우지 않아요
+
+
+def is_fund_industry(text):
+    """업종 글자(또는 설명 dk)가 '신탁업 및 집합투자업' 으로 시작하는지 — KRX 글자(집합투자업)와 11차 표(집합 투자업) 띄어쓰기 둘 다. (순수 함수)"""
+    return (text or "").replace(" ", "").startswith(KR_FUND_INDUSTRY.replace(" ", ""))
+
 
 KR_INDEX = "KS11"
 US_INDEX = "^GSPC"
@@ -1706,7 +1713,8 @@ def kr_ind_dart_plan(stocks, no_text, ksic, names, kmap, digits=IND_DART_DIGITS)
     · kmap: KSIC 접두어 → 업종 그룹. 발행하지 않는 종목(stocks 에 없음)은 건너뛰어요.
     반환: (fill {종목: (이름, KSIC 코드)}, miss {이유: [종목]}) — 이유 fund 펀드 · pref 우선주 (KRX 도 업종 글자를 준 적이 없어요 —
     예전 그대로 두고 업종 그룹만 보통주를 따라요 · 보통주의 업종 키를 따를지는 Jack 이 정해요) · noCode DART 업종 코드 없음 ·
-    noName 표에 없는 코드 · noGroup 업종 그룹으로 이어지지 않는 코드."""
+    noName 표에 없는 코드 · fundCode 업종 코드가 '신탁업 및 집합 투자업'(642) — 상장 펀드일 수 있어 회사로 채우지 않아요
+    (크게 남기고 사람이 KR_LISTED_FUNDS 에 넣을지 정해요) · noGroup 업종 그룹으로 이어지지 않는 코드."""
     by_t = {s["t"]: s for s in stocks if s.get("cls") == "kr"}
     fill, miss = {}, collections.defaultdict(list)
     for t in sorted(set(no_text)):
@@ -1726,6 +1734,9 @@ def kr_ind_dart_plan(stocks, no_text, ksic, names, kmap, digits=IND_DART_DIGITS)
         name = names.get(code[:digits]) if len(code) >= digits else None
         if not name:
             miss["noName"].append(t)
+            continue
+        if code.startswith(KR_FUND_KSIC) or is_fund_industry(name):
+            miss["fundCode"].append(t)
             continue
         if not ksic_group(code, kmap):
             miss["noGroup"].append(t)
@@ -1767,7 +1778,9 @@ def kr_ind_dart(stocks, no_text, ksic, names, kmap, ind_src):
         if isinstance(ind_src, dict):
             ind_src.update({"dart": 0, "dartT": {}, "left": None, "dartMiss": {}, "dartErr": type(e).__name__})
         return {}
-    for t in sorted(set(fill) - set(done)):          # 계획했지만 설명(dk)을 읽지 못하거나 업종 글자가 있던 종목 (없어야 해요 · 크게 세요)
+    # 계획했지만 적용하지 않은 종목 → '설명을 읽지 못함' 으로 세요 (크게). 만든 방법상 생기지 않아요: no_text 는 kr_desc_carry 가 업종 글자를
+    # 찾지 못한 종목이고 dk 는 그 뒤 kr_desc_text 로 만든 글이라 늘 읽혀요. 업종 글자가 있는 종목이 여기 오면 이름과 달리 '이미 글자 있음' 이에요
+    for t in sorted(set(fill) - set(done)):
         miss.setdefault("noParse", []).append(t)
     left = sum(len(v) for k, v in miss.items() if k not in IND_MISS_OK)
     if isinstance(ind_src, dict):
@@ -1783,7 +1796,41 @@ def kr_ind_dart(stocks, no_text, ksic, names, kmap, ind_src):
         + "".join(f" · {IND_MISS_KO[k]} {len(miss[k]):,}" for k in IND_MISS_OK if miss.get(k))
         + (" — KRX-DESC · 지난 발행본에 업종 글자가 없는 종목을 DART 기업개황 업종 코드의 한국표준산업분류 11차 소분류 이름으로 채웠어요. 예: "
            + ", ".join(f"{t} {names_of.get(t, '')} {fill[t][0]} ({code})" for t, code in list(done.items())[:5]) if done else ""))
+    if miss.get("fundCode"):
+        log(f"  !! 업종 코드가 '신탁업 및 집합 투자업'({KR_FUND_KSIC})인 종목 {len(miss['fundCode']):,}개는 회사로 채우지 않았어요: "
+            + ", ".join(f"{t} {names_of.get(t, '')} ({ksic.get(t)})" for t in miss["fundCode"][:10])
+            + " — 상장 펀드면 KR_LISTED_FUNDS 에 넣고, 회사면 그대로 둬요 (사람이 판단 · 관문은 경고)")
+    try:
+        n_chk, diff = kr_ind_word_check(stocks, ksic, names, skip=done)
+        log(f"{'  !! ' if diff else '· '}업종 글자 확인 (막지 않아요): KRX · 이어 쓴 업종 글자와 DART 업종 코드의 11차 소분류 이름이 다른 종목 "
+            f"{len(diff):,} / {n_chk:,} (띄어쓰기 빼고)"
+            + (f" — 예: {'; '.join(diff[:8])}. DART 기록이 예전(10차) 번호이거나 KRX 와 분류가 달라요 — 그런 종목을 DART 로 채우면 이름이 "
+               "틀릴 수 있어요 (관문은 잡지 못해요)" if diff else ""))
+    except Exception as e:
+        log(f"  !! 업종 글자 확인 실패 ({type(e).__name__}: {str(e)[:120]}) — 채우기는 그대로예요")
     return done
+
+
+def kr_ind_word_check(stocks, ksic, names, skip=(), digits=IND_DART_DIGITS):
+    """2026-11-19 리뷰: DART 업종 코드가 아직 10차 번호이면 11차 표의 같은 번호 이름이 틀려요 (관문은 잡지 못해요). 업종 글자(KRX · 이어 씀)와
+    DART 코드가 둘 다 있는 보통주에서 11차 소분류 이름과 글자를 띄어쓰기 빼고 맞춰 봐요 — 다른 종목이 늘면 로그로 보여요 (막지 않아요).
+    skip: 이번 실행에 DART 로 채운 종목 (같은 것끼리 비교). (순수 함수) 반환: (맞춰 본 수, ['종목 이름: 글자 ≠ 이름 (코드)' …])."""
+    n, diff = 0, []
+    for s in stocks:
+        t = s.get("t")
+        if s.get("cls") != "kr" or s.get("etf") or s.get("fund") or t in skip or is_preferred(t or "") or not s.get("dk"):
+            continue
+        p = kr_desc_parse(s["dk"])
+        code = str(ksic.get(t) or "").strip()
+        if not p or not p[0] or len(code) < digits:
+            continue
+        n += 1
+        name = names.get(code[:digits])
+        if not name or name.replace(" ", "") != p[0].replace(" ", ""):
+            diff.append(f"{t} {s.get('nk') or ''}: {p[0]} ≠ {name or '표에 없음'} ({code})")
+    return n, diff
+
+
 SAMPLE_KEEP = ("000270", "086790", "034730", "003550", "088980", "241520")   # 표본에도 꼭: 업종·ETF 검사에 쓰는 종목
 
 
@@ -5032,7 +5079,7 @@ def fetch_korea(start, today, rf, prev=None):
     log(f"· 한국 시세 완료: {len(out):,} / {len(listing):,}개"
         + (f" · 빠짐 {dict(dropped)}" if dropped else ""))
     odd = sorted(f"{r['t']} {r['nk']}" for r in out if r["t"] not in KR_LISTED_FUNDS
-                 and (r.get("dk") or "").startswith(KR_FUND_INDUSTRY))
+                 and is_fund_industry(r.get("dk")))      # 2026-11-19: 띄어쓰기 둘 다 (DART 로는 이 업종을 채우지 않아요 · kr_ind_dart_plan)
     log(f"· 상장 펀드(etf) {sum(1 for r in out if r.get('etf'))}개 · 업종 '{KR_FUND_INDUSTRY}'인데 회사로 둔 종목 {len(odd)}개"
         + (f": {', '.join(odd[:15])}" if odd else "") + " (새 펀드가 보이면 KR_LISTED_FUNDS 에 넣어요)")
     if hl_cnt:
@@ -9776,7 +9823,7 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                     "asOf 이어 쓴 글자의 날짜 · none 업종 없음 · newNone 그중 지난 발행본에도 없던 새 상장 · "
                     "dart none 중 DART 기업개황 업종 코드의 한국표준산업분류 11차 소분류 이름으로 채운 종목 수 · dartT {종목: KSIC 코드} "
                     "(다음 실행은 이어 쓰지 않고 DART 로 다시 채워요) · left 그래도 업종 글자 없는 종목 (펀드 · 우선주 빼고) · "
-                    "dartMiss 못 채운 이유별 수 (fund 펀드 · pref 우선주 · noCode · noName · noGroup · noParse) · "
+                    "dartMiss 못 채운 이유별 수 (fund 펀드 · pref 우선주 · noCode · noName · fundCode 집합 투자업 코드 · noGroup · noParse) · "
                     "dartErr 채우기가 고장 난 날의 예외 이름 (그날 left 는 빈 값 · 관문 경고)"),
          "krSeries": ("국내 시계열 점검 (2026-11-14): 최근 거래일(days)의 네이버 일봉(수정주가)을 그날 공식 종가로 고친 봉 pinned · 종목 "
                       "pinStocks — 그날과 오늘 사이에 KRX 기준가(목록 파일의 Close − Changes)가 바뀌지 않았을 때만 (값 차이 "

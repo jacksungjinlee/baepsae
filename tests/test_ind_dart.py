@@ -271,7 +271,7 @@ def test_gate_passes_good_dart_values_and_names_them_in_the_warning():
 
 @pytest.mark.parametrize("break_it, why", [
     ("name", "≠ 봉제의복 제조업"), ("code", "산업분류표에 없음"), ("group", "업종 그룹 없음"), ("count", "dart 3 ≠ dartT 2"),
-    ("pref", "우선주"), ("missing", "발행한 국내 주식이 아님"), ("fund", "발행한 국내 주식이 아님")])
+    ("pref", "우선주"), ("missing", "발행한 국내 주식이 아님"), ("fund", "발행한 국내 주식이 아님"), ("fundcode", "집합 투자업")])
 def test_gate_fails_a_bad_dart_value(break_it, why, monkeypatch):
     data = gate_data({"282620": "14199", "376930": "27112"})
     ind, st = data["indSrc"], {s["t"]: s for s in data["stocks"]}
@@ -287,6 +287,9 @@ def test_gate_fails_a_bad_dart_value(break_it, why, monkeypatch):
         ind["dartT"]["005935"] = "264"
         ind["dart"] = 3
         data["stocks"].append(stock("005935", dk="통신 및 방송장비 제조업 · KOSPI 상장"))
+    elif break_it == "fundcode":
+        ind["dartT"]["282620"] = "64201"
+        st["282620"]["dk"] = "신탁업 및 집합 투자업 · KOSDAQ 상장"
     elif break_it == "missing":
         ind["dartT"]["123450"] = "264"
         ind["dart"] = 3
@@ -320,3 +323,57 @@ def test_gate_fails_when_the_table_cannot_be_read(monkeypatch):
     monkeypatch.setattr(V, "load_ksic_names", broken)
     rows, _ = gate(gate_data({"282620": "14199"}))
     assert rows["국내 업종 DART 로 채운 값"][3] == "FAIL" and "표를 읽지 못함" in rows["국내 업종 DART 로 채운 값"][1]
+
+
+# ── 6. 리뷰 (2026-11-19): 집합 투자업 · 10차 번호 ────────────────────────────
+def test_fund_industry_matches_both_spellings():
+    """KRX 글자는 '집합투자업', 11차 표는 '집합 투자업' — 펀드 확인 로그(fetch_korea)와 채우기가 둘 다 알아봐요."""
+    assert NAMES["642"] == "신탁업 및 집합 투자업" and NAMES["64201"] == "신탁업 및 집합 투자업" and F.KR_FUND_KSIC == V.IND_FUND_KSIC == "642"
+    for text in ("신탁업 및 집합투자업", "신탁업 및 집합 투자업 · KOSPI 상장", "신탁업 및 집합투자업 · 주요제품: 증권투자회사 · KOSPI 상장"):
+        assert F.is_fund_industry(text)
+    for text in (None, "", "신탁업", "기타 금융업 · KOSPI 상장", "KOSPI 상장 · 시가총액 1조원"):
+        assert not F.is_fund_industry(text)
+    src = inspect.getsource(F.fetch_korea)
+    assert "is_fund_industry(r.get(\"dk\"))" in src and ".startswith(KR_FUND_INDUSTRY)" not in src
+
+
+def test_fund_code_is_never_filled_as_a_company(capsys):
+    """업종 코드가 642 (신탁업 및 집합 투자업) 인 종목은 회사로 채우지 않고 크게 남겨요 — 펀드인지 사람이 정해요 · 관문은 경고."""
+    stocks = [stock("100000"), stock("200000"), stock("300000"), stock("282620")]
+    ksic = {"100000": "64201", "200000": "64209", "300000": "642", "282620": "14199"}
+    fill, miss = F.kr_ind_dart_plan(stocks, [s["t"] for s in stocks], ksic, NAMES, TABLES["kmap"])
+    assert list(fill) == ["282620"] and miss == {"fundCode": ["100000", "200000", "300000"]}
+    ind = {"from": "KRX-DESC"}
+    done = F.kr_ind_dart(stocks, [s["t"] for s in stocks], ksic, NAMES, TABLES["kmap"], ind)
+    assert done == {"282620": "14199"} and ind["left"] == 3 and ind["dartMiss"] == {"fundCode": 3}
+    assert all(s["dk"] == "KOSDAQ 상장 · 시가총액 200억원" and s["s"] == "etc" for s in stocks[:3])
+    out = capsys.readouterr().out
+    assert "  !! 업종 코드가 '신탁업 및 집합 투자업'(642)인 종목 3개는 회사로 채우지 않았어요: 100000 100000 (64201)" in out
+    assert "KR_LISTED_FUNDS" in out
+    # 채운 글자에 집합 투자업이 없으니 펀드 확인 로그가 보는 글자(KRX · 이어 씀)와 겹치지 않아요
+    assert not any(F.is_fund_industry(s["dk"]) for s in stocks)
+    rows, rep = gate({"stocks": stocks, "indSrc": dict(ind, carried=0, asOf="2026-11-19", newNone=0)})
+    r = rows["국내 업종 글자 없는 종목 (경고만)"]
+    assert r[3] == "WARN" and "집합 투자업 코드 (펀드일 수 있어 채우지 않음) 3" in r[1]
+    assert rows["국내 업종 DART 로 채운 값"][3] == "PASS" and not rep.failed
+
+
+def test_word_check_compares_krx_words_with_dart_names(capsys):
+    """10차 번호로 남은 DART 기록은 관문이 잡지 못해요 — KRX 글자와 DART 코드가 둘 다 있는 종목을 맞춰 보고 다르면 로그로만 (막지 않아요)."""
+    stocks = [stock(t, dk=f"{FX['krxText'][t]} · KOSPI 상장") for t in FX["sample"]]
+    ksic = {t: code_of(t) for t in FX["sample"]}
+    n, diff = F.kr_ind_word_check(stocks, ksic, NAMES)
+    assert (n, diff) == (40, [])                                   # 기록한 40곳 — 띄어쓰기만 다른 것은 같다고 봐요
+    odd = [stock("100000", dk="과자류 제조업 · KOSDAQ 상장"), stock("200000", dk="반도체 제조업 · KOSDAQ 상장"),
+           stock("300000", dk="반도체 제조업 · KOSDAQ 상장"), stock("005935", dk="반도체 제조업 · KOSPI 상장"),
+           stock("400000"), stock("500000", dk="반도체 제조업 · KOSDAQ 상장"), stock("600000", dk="반도체 제조업", etf=True)]
+    k2 = {"100000": "10712", "200000": "26112", "300000": "999", "005935": "264", "400000": "264", "600000": "264"}
+    n, diff = F.kr_ind_word_check(odd, k2, NAMES, skip={"200000"})
+    assert n == 2 and diff == ["100000 100000: 과자류 제조업 ≠ " + NAMES["107"] + " (10712)", "300000 300000: 반도체 제조업 ≠ 표에 없음 (999)"]
+    # kr_ind_dart 가 이 확인을 로그로 남겨요 (이번에 채운 종목은 빼요)
+    F.kr_ind_dart(odd + [stock("282620")], ["282620"], dict(k2, **{"282620": "14199"}), NAMES, TABLES["kmap"], {})
+    out = capsys.readouterr().out
+    assert "  !! 업종 글자 확인 (막지 않아요): KRX · 이어 쓴 업종 글자와 DART 업종 코드의 11차 소분류 이름이 다른 종목 2 / 3 (띄어쓰기 빼고)" in out
+    F.kr_ind_dart(stocks, [], ksic, NAMES, TABLES["kmap"], {})
+    assert "· 업종 글자 확인 (막지 않아요): KRX · 이어 쓴 업종 글자와 DART 업종 코드의 11차 소분류 이름이 다른 종목 0 / 40 (띄어쓰기 빼고)" \
+        in capsys.readouterr().out
