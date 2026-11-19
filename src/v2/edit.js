@@ -717,7 +717,8 @@ export function swapDraft(deck, draft, t, reason, add) {
   if (p >= r.pct - TGT_TOL) return next;
   return withOver(next, rebalance(editRows(deck, next), add.t, cap), add.t);
 }
-// THE target set a 팔고 빼기 swap writes (review B1/S5: one function feeds the write, its D2 check and what the compare screen shows),
+// THE target set a 팔고 빼기 swap writes at once (it feeds that write and the 빼기 sheet's D2 check, swapCheck; 두 종목 비교 reads the
+// edited list instead, swapView, which is what 바꾼 내용 저장 then saves after it, draftAfterSwap),
 // made by the very steps of the swap without shares, run on the stored portfolio alone (Jack, 2026-11-19: "4. (a), and make both
 // cases behave the same"): swapDraft at cap (the cap the swap is compared at: the saved one, or a raise already waiting in the
 // draft) — the candidate gets t's stored target, never above cap, and when the cap cut it the rest is shared out to the others as
@@ -827,7 +828,7 @@ export function sellAndSwap(afterSale, deckId, t, add, opts) {
   if (!h || before.holdings.some((x) => x && x.t === add.t)) return no("gone");
   const left = heldUnits(before).get(t) || 0;
   if (left > 0) return no("partial", `: ${left / UNIT} shares would stay after the sale`);
-  const lv = swapLeaves(before, t, add, raise, at);                     // the target set and the cap this write saves (swapView reads the same)
+  const lv = swapLeaves(before, t, add, raise, at);                     // the target set and the cap this write saves (swapView reads it for D2)
   const sw = lv ? lv.sw : null;
   if (!sw) return no("gone");
   if (!sumOk(sw.sum)) return no("sum", ": the stocks cannot reach 100% under the cap");

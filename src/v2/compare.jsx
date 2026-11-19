@@ -237,9 +237,9 @@ export function Compare({ deck, draft, load, pad, candT, holdT, setHoldT, xOf, o
   const verdict = verdictText(vd.kind, cand.nk);
   const bandShown = [hs, cand].map((s) => (s && !pxBadFor(s, load.coByT.get(s.t) || null) ? riskTile(s) : null)).filter((r) => r && r.band);
   const betaNote = bandShown.length ? (bandShown.some((r) => !r.band.one) ? C.co.risk.bandNote : riskBandNote(bandShown[0])) : null;
-  // after the swap: the bar, its line and the note's target all come from the write the swap will make (edit.swapView, review
-  // B1/S5): with shares, 팔고 빼기's stored target set; without, the draft's; both at the cap as it stands (Jack, 2026-11-19, Q8b:
-  // never at a raise the next screen has yet to offer)
+  // after the swap: the bar, its line and the note's targets all come from the edited list as the swap leaves it on 종목 바꾸기,
+  // with or without shares (edit.swapView: swapDraft on the draft as it stands; with shares that is what waits after 팔고 빼기,
+  // draftAfterSwap, round-3 S1), at the cap as it stands (Jack, 2026-11-19, Q8b: never at a raise the next screen has yet to offer)
   const add = { t: cand.t, nk: cand.nk, cls: cand.cls === "us" || cand.cls === "kr" ? cand.cls : null, ind: cand.ind || null, kind: "pinned", s: cand };
   const sv = E.swapView(deck, draft, h.t, add);
   const before = E.indBar(sv ? sv.before : E.editRows(deck, draft), load.byT, names);
