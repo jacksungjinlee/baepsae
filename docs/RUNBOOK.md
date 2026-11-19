@@ -594,8 +594,9 @@ change, 44578437586 on the night of 11-20: Daum 133 s, Yahoo one chart per stock
 - between tries a stock waits 1 s, then 2 s; after a 429 ("too many requests") it waits what the server's Retry-After asks, at
   most 5 s (2 s, then 4 s when there is none); there is no wait after the last try. The Yahoo phases ask about 90 times a second
   (6 at a time, `KR_FB_META_WORKERS`); if 429 answers grow, lower that number;
-- the stocks not asked are unconfirmed, exactly like a stock whose source did not answer: left out of that day's file, never an
-  older price. The log says so at once ("!! 2차 출처 시간 한도 600초: 다음 일별 시세를 더 묻지 않아요 …") and in the summary ("!! 2차
+- the stocks not asked are unconfirmed, exactly like a stock whose source did not answer: left out of that day's file, or, when
+  it was in the previous publish, carried at that publish's confirmed close with its own date and Jack's line (see "Korean stocks
+  at their last confirmed close" above); never an older price under the new date. The log says so at once ("!! 2차 출처 시간 한도 600초: 다음 일별 시세를 더 묻지 않아요 …") and in the summary ("!! 2차
   출처 시간 한도 600초 — 다음 일별 시세: 받은 n / 대상 m — 나머지 k종목은 확인 못 한 종목 (…)"); the same for 야후 일봉 종가 and 야후
   차트 다시 읽기;
 - data.json `pxSrc.fb.cut` = `{s, daum, yahoo, fill}`: the limit and the stocks not asked in each phase (also kept when the second
@@ -624,13 +625,15 @@ What protects users when the limit hits (and what does not):
   about 320 stocks not asked (about 440 when the close is filled); "국내 종목 수 변화" (more than 10% from the last publish) comes later.
 - **Plainly, the gap:** on a blank-close night, from about 50 to about 320 stocks not asked, the data publishes with published
   stocks missing (about 3 at 50, about 156 at 300) and only the WARN row. A check that stops the publish there would be a new
-  publish-stopping rule and needs Jack's yes.
+  publish-stopping rule and needs Jack's yes. Since the last-confirmed-close change, a stock from the previous publish is carried at
+  its last confirmed close with its own date and Jack's line instead of going missing (at most 5 KRX trading days).
 
 If the WARN shows:
 1. Find the phase in the run log: the "· 2차 출처: … 묻는 중" line before the "!!" line has the GitHub timestamp, so the gap shows
    which source was slow.
-2. The stocks left out show "이 종목의 데이터를 찾지 못했어요" (portfolios: "오늘 데이터에 없는 종목 … 빼고 계산했어요") for that whole
-   day's data. Later scheduled runs do **not** fill them in: once pxDate and usPxDate are current, `already_published.py` skips the
+2. A stock that was in the previous publish shows its last confirmed close with its own date and Jack's line ("오늘 종가를 확인하지
+   못해서 {date} 종가를 보여 드려요."); any other stock left out shows "이 종목의 데이터를 찾지 못했어요" (portfolios: "오늘 데이터에 없는
+   종목 … 빼고 계산했어요"). Either way this lasts for that whole day's data. Later scheduled runs do **not** fill them in: once pxDate and usPxDate are current, `already_published.py` skips the
    rest of the day's scheduled runs, so they come back with the next day's publish. Only a manual run brings them back sooner
    (after about 06:40 KST it re-reads far fewer Yahoo charts); follow the DART rule for manual runs.
 3. Do not raise the limit to make one run pass. If it hits on days when both sources answer at normal speed, bring the phase
