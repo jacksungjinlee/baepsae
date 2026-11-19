@@ -14,8 +14,8 @@ import React from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS } from "../ui/tokens.js";
 import { HeroBand, DotStrip, Collapsible, StatusChip, Amount } from "../ui/components.jsx";
 import { hasGroup, todayD1 } from "./engine.js";
-import { priceDate } from "./cofmt.js";
-import { C, fill, mdText, priceText } from "./format.js";
+import { priceMdSaid } from "./cofmt.js";
+import { C, fill, priceText } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, Footer, Note, DateLine, tx } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { StatusLines, HoldingRules } from "./daily.jsx";
@@ -94,8 +94,10 @@ function Explainer() {
 function Sources({ s, g, x, md }) {
   const fy = (x.rules || []).reduce((a, r) => (Number.isInteger(r.fy) && (a == null || r.fy > a) ? r.fy : a), null);
   const rows = [
-    // Every non-US row is a Korean-market close (stocks, and the bond and gold cushion ETFs, cls bond / metal)
-    s.cls === "us" ? (C.why.srcPriceUs ? [C.why.srcPrice, fill(C.why.srcPriceUs, { md })] : null) : [C.why.srcPrice, fill(C.why.srcPriceKr, { md })],
+    // Every non-US row is a Korean-market close (stocks, and the bond and gold cushion ETFs, cls bond / metal). Without a
+    // close date (md null: a US stock in a file without usPxDate, never the Korean date) the price row is left out: both
+    // lines need the date (said in the console by priceMdSaid).
+    !md ? null : s.cls === "us" ? (C.why.srcPriceUs ? [C.why.srcPrice, fill(C.why.srcPriceUs, { md })] : null) : [C.why.srcPrice, fill(C.why.srcPriceKr, { md })],
     g.ok ? [C.why.srcInd, fill(C.why.srcIndN, { ind: s.indName, n: g.n })] : null,
     fy ? [C.why.srcRules, fill(C.app.reportYear, { year: fy })] : null,
   ].filter(Boolean);
@@ -129,8 +131,10 @@ export function Why({ load, store, setStoreData, target, onBack, pad }) {
   // and the sources all go without it (verification review, 2026-11-19); said once in the console
   const g = ev.late ? { ok: false } : peerGroup(s, load.data.stocks);
   if (ev.late) lateSay(`why-it-moved ${x.t}: the peer group (same industry) is not read`);
-  // v19.1c: a stock priced at an earlier close (pxd) shows that close's date (cofmt.priceDate); others as before
-  const md = s.pxd != null ? mdText(priceDate(load, s)) : mdText(s.cls === "us" ? load.data.usPxDate || load.data.pxDate : load.data.pxDate);
+  // The close date of this stock's price (cofmt.priceDate): KR pxDate, US usPxDate, or (v19.1c) its own earlier close (pxd).
+  // A US price never takes the Korean date: in a file without usPxDate it has no date, and the header and the price source
+  // leave the date out with the words that need it (no new words; said once in the console).
+  const md = priceMdSaid(load, s, "why-it-moved");
   // Today's change as the data gives it (d1, % between official closes). The won change is not shown: worked back from
   // a rounded percentage it would look exact and be off by a few won.
   const d1 = todayD1(s);
@@ -146,7 +150,7 @@ export function Why({ load, store, setStoreData, target, onBack, pad }) {
       </div>
       <div data-ui-v2="why-head" style={{ marginTop: SPACE(1) }}>
         <div style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>
-          {hasGroup(s) && s.indName ? <><span>{s.indName}</span>{" · "}</> : null}<span>{fill(C.why.close, { md })}</span>
+          {hasGroup(s) && s.indName ? <><span>{s.indName}</span>{md ? " · " : null}</> : null}{md ? <span>{fill(C.why.close, { md })}</span> : null}
         </div>
         <div style={{ display: "flex", alignItems: "baseline", gap: SPACE(2), flexWrap: "wrap", marginTop: SPACE(1) }}>
           <span data-ui-v2="why-price" style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink)}><Amount text={priceText(s)} /></span>
