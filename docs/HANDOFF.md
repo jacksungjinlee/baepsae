@@ -22,6 +22,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 **#144 (late-data check), 2026-11-19:** when data is late the portfolio check runs on the last official close for up to 5 trading days (from the close date), dated "{date} 종가로 점검했어요"; nothing labelled 오늘 on an old close; "{date} 종가 기준으로는 할 일이 없어요." (Jack, 11-19).
 
+**#147 (watchdog retry), 2026-11-19:** the Watchdog asks the site once more, 20 s later, after a 5xx before raising an alarm (Jack, 11-19, Q10); once a retry has failed, later 5xx answers fail at once (30-minute job limit). Log and run summary: "5xx 다시 물음". No gate or threshold change.
 **#148 (왜 움직였나 US date), 2026-11-19:** a US stock's close on 왜 움직였나 is never labelled with the Korean date (no usPxDate → no date, said in the console), and the late-data date line follows the stock's own market (cofmt.lineDate; review of #144). Open: 예전 뱁새 "가격은 {md} 공식 종가예요." labels US holdings with the Korean date (needs Jack's wording decision).
 
 **Incident, 2026-11-18/19.** No data published after 11-17 06:40 KST (the site said "2일째 갱신이 멈췄어요").
