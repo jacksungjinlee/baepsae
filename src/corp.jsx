@@ -314,6 +314,9 @@ function Treemap({ comps, heldMap, onOpen }) {
           </g>
         ))}
       </svg>
+      {/* 2026-11-19 (Jack; review M3): a company drawn here at its last confirmed close (corp.json pxd) shows its 3-month % and 시가총액
+          from that close: named under the map with his line (the companies drawn only) */}
+      <KrOwnCloseListLine list={rects.filter((r) => r.type === "co").map((r) => r.item.c)} />
     </div>
   );
 }
@@ -717,6 +720,7 @@ export function MarketView({ data, heldMap, onOpen, setExplain, stale = null }) 
   const secGMax = Math.max(...secRank.map((r) => Math.abs(r.g)), 1);
   const secExcluded = Object.entries(secs).filter(([k, s]) => s.g == null).map(([k, s]) => `${SEC(k).ko}(${s.n})`);
 
+  const quadIds = useMemo(() => new Set(quadPts.map((p) => p.id)), [quadPts]);
   const pbrRoePts = useMemo(() => comps
     .filter((c) => c.pbr != null && c.roe != null && passBase(c))
     .map((c) => ({ id: c.t, nm: c.nk, x: c.roe, y: c.pbr, r: clamp(Math.sqrt(c.cap || 0.3) * 2.6, 2.5, 15),
@@ -795,6 +799,9 @@ export function MarketView({ data, heldMap, onOpen, setExplain, stale = null }) 
         </div>
         <Scatter pts={quadPts} xDomain={[-30, 50]} yDomain={[-30, 50]} quads zoomable
           xLabel="업종 매출 성장률 (%) — 오른쪽일수록 성장하는 산업" yLabel="기업 매출 성장률 (%) — 위일수록 성장하는 기업" onPick={onOpen} />
+        {/* 2026-11-19 (Jack; review M3): the circle's size and its label's 시가총액 come from the price — a company drawn at its last
+            confirmed close (pxd) is named under the map with his line */}
+        <KrOwnCloseListLine list={comps.filter((c) => quadIds.has(c.t))} />
         <Sub style={{ marginTop: 8, fontSize: 11, color: C.faint }}>휠이나 + 버튼으로 확대, 드래그로 이동할 수 있어요 · 확대하면 회사 이름이 나타나요 · 원을 누르면 기업 페이지로 이동해요</Sub>
       </Card>
 

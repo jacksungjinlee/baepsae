@@ -547,7 +547,14 @@ under today's date label without that line."
   (`pxSrc.own.bad`, same function `validate_data.kr_own_close_bad`). Only clean carries (recorded, before `pxDate`, no daily change,
   within the limit, and the previous publish's price and date) are left out of the `pxDate` price checks (`한국 가격 = 공식 종가`,
   the gate's Daum × Yahoo sample and its confirmed count: `kr_own_codes`); anything else with a `pxd` is still checked as a
-  `pxDate` price. On such a day the 국내 beta · vol 채움 rows can warn (small KONEX names often have no beta).
+  `pxDate` price, and "국내 거래 없는 종목 · 빈 d1 이유" accepts a blank `d1` only for a clean carry (any other Korean `pxd` fails it, as
+  before). The pipeline runs the same check right after the Korean price stage, so a dropped carry never reaches the dividend,
+  income or score steps. On such a day the 국내 beta · vol 채움 rows can warn (small KONEX names often have no beta).
+- **Never stops the run:** any error in the carry step (`fetch_data.kr_own_close_step`) or in the check after it is logged as
+  `!! 마지막 확인 종가 단계가 오류로 멈췄어요 (…)` / `!! 마지막 확인 종가 점검이 오류로 멈췄어요 (…)`; nothing is carried (unconfirmed
+  stocks are left out, as before #?), `pxSrc.own.err` holds the reason and the gate's carry row warns. Fix forward; the publish goes on.
+- **Daily lists:** a carried stock's trading value is its old day's, so it is left out of today's 거래대금 and 거래 급증 lists
+  (2.0) and of `data.json` `popular`, like 큰 움직임. It stays in 시가총액 and the 기준 lists, named under the list.
 - **On a warning:** read the named rows in the run summary. A carried stock with a different price or date than the previous
   publish means our carry step broke: say so to Jack; the stock itself is still labelled with its own date and line.
 - **Check on the site:** search a carried stock (the log names them): its company page shows "{date} 종가" and Jack's line under the

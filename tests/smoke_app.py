@@ -3387,7 +3387,32 @@ def scene_kr_own_close(R, files):
         page.goto(base + "/baepsae.html?dev=1&from=app#corp=005930", wait_until="domcontentloaded")
         see(page, "밸류에이션 멀티플 · 업종 사분위 대비")
         assert shown() == [] and "오늘 종가를 확인하지 못해서" not in page.locator("body").inner_text()
-    R.check(page, S, "첫 화면 성적표 · 기업분석 머리: 가격 밑에 Jack 의 줄 그대로 (12px 이상) · 삼성전자는 그대로", cards)
+        # 영어 첫 화면 성적표 (리뷰 M4): 승인된 영어 문장으로 그 종목과 날짜 ('{코드}: priced at the {날짜} close.')
+        page.goto("about:blank")
+        page.goto(base + "/baepsae.html?dev=1&from=app", wait_until="domcontentloaded")
+        page.get_by_role("button", name="EN", exact=True).first.click()
+        box = page.get_by_placeholder("Search a KRX stock — name or 6-digit code")
+        box.fill(t)
+        page.locator("button", has_text=t).first.wait_for(state="visible", timeout=WAIT)
+        page.locator("button", has_text=t).first.click()
+        see(page, "A summary of facts")
+        got = shown()
+        assert len(got) == 1 and got[0][0] == f"{t}: priced at the {_md(day, 'en')} close." and got[0][1] >= 12, got
+        page.get_by_role("button", name="한국어", exact=True).first.click()
+    R.check(page, S, "첫 화면 성적표 · 기업분석 머리: 가격 밑에 Jack 의 줄 그대로 (12px 이상) · 삼성전자는 그대로 · 영어 성적표는 승인된 영어 문장", cards)
+
+    def market_map():
+        """기업분석 시장 지도 (리뷰 M3): 3개월 수익률 지도 · ROE × PBR 지도 (· 성장 지도에 그 회사가 있으면 그 밑에도) — 그린 회사 중 마지막 확인 종가
+        회사가 있으면 '{이름} 가격은 {날짜} 종가예요.' 다음에 Jack 의 줄."""
+        page.goto("about:blank")
+        page.goto(base + "/baepsae.html?dev=1&from=app#corp=005930", wait_until="domcontentloaded")
+        see(page, "밸류에이션 멀티플 · 업종 사분위 대비")
+        page.get_by_role("button", name="시장 지도", exact=True).first.click()
+        see(page, "최근 3개월 수익률 지도")
+        got = page.evaluate("""() => [...document.querySelectorAll('[data-fix="kr-own-close-list"]')].filter((e) => e.getBoundingClientRect().height > 0)
+          .map((e) => [e.innerText.trim(), parseFloat(getComputedStyle(e).fontSize)])""")
+        assert len(got) >= 2 and all(x[0] == want_ko and x[1] >= 12 for x in got), got
+    R.check(page, S, "기업분석 시장 지도: 3개월 수익률 지도 · ROE × PBR 지도 밑에 이름 문장 + Jack 의 줄", market_map)
     ctx.close(); srv.shutdown()
 
 

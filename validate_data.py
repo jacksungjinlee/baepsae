@@ -1239,6 +1239,9 @@ def check_kr_own_close(rep, data, macro, pdata):
         drop = own.get("drop") if isinstance(own.get("drop"), dict) else {}
         parts.append(f"실음 {own['n']}종목" + (f" ({shown})" if shown else "") + f" · 확인 못 한 종목 {own.get('unconf', '?')}"
                      + (" · 싣지 못함 " + " · ".join(f"{k} {v}" for k, v in sorted(drop.items())) if drop else ""))
+        if own.get("err"):                 # 파이프라인의 마지막 확인 종가 단계가 오류로 멈춤 → 실은 종목 없이 발행 (예전처럼 빠져요)
+            parts.append(f"단계가 오류로 멈춤 (실은 종목 없음): {str(own['err'])[:120]}")
+            warn = True
         pbad = own.get("bad") if isinstance(own.get("bad"), dict) else {}
         if isinstance(pbad.get("n"), int) and pbad["n"] > 0:
             rows = pbad.get("rows") if isinstance(pbad.get("rows"), list) else []
@@ -1510,7 +1513,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_unit(rep, data, kr, by, comps, pdata)
     check_kr_series(rep, data, kr, pdata)  # 2026-11-14 (Jack: "52주 숫자부터"): 다른 기준의 공식 종가 고정 (실패) · 제한폭 넘는 움직임 (경고)
     check_px_bad(rep, data, comps, pdata)  # 2026-11-14 (Jack, Q2 (a)): 그 움직임이 있는 종목은 52주 · 출렁임 · 위험 숫자를 비워요 (실패) · 필수 종목 추세 · 저변동 순위 (실패)
-    check_kr_no_trade(rep, data, pdata)    # 2026-11-14 (Jack, design chat 2026-11-08): 거래 없는 종목은 d1 빈 칸 + noTrade · 빈 d1 은 이유 (실패: 우리 값끼리 어긋날 때만)
+    check_kr_no_trade(rep, data, pdata, macro)    # 2026-11-14 (Jack, design chat 2026-11-08): 거래 없는 종목은 d1 빈 칸 + noTrade · 빈 d1 은 이유 (실패: 우리 값끼리 어긋날 때만)
 
     # 경고만
     rep.add("공시 목록 조회", True, "성공" if disc.get("listOk") else "실패", "실패면 경고", warn=not disc.get("listOk"))
@@ -3565,7 +3568,7 @@ def px_bad_must(data, comps):
     return out
 
 
-def kr_no_trade_problems(data):
+def kr_no_trade_problems(data, pdata=None, days=None):
     """거래 없는 종목 표시(noTrade) · 빈 d1 의 이유(d1Why) · 거래 없는 날의 기준가 변화(ntD1) · 요약(d1Blank)이 서로 맞지 않는 곳 (빈 목록 = 정상).
     우리 파이프라인이 쓴 값끼리만 봐요 — 출처(목록 파일)를 다시 보지 않으니 출처의 잘못으로는 생기지 않아요 (Jack 2026-11-13: 한 종목의 출처 문제가
     모두의 발행을 막으면 안 돼요). 목록 파일에서 온 국내 종목 = cls kr · 펀드(fund) 아님 (펀드는 다른 길로 와요)."""
@@ -3600,10 +3603,12 @@ def kr_no_trade_problems(data):
                 out.append(f"{t} 거래 없음이 아닌데 ntD1")
             if v is None or abs(v) > KR_DAY_LIMIT:
                 out.append(f"{t} ntD1 {str(s.get('ntD1'))[:12]} (±{KR_DAY_LIMIT:g}% 안의 숫자여야 해요)")
+    # 2026-11-19 (Jack): 마지막 확인 종가로 맞게 실린 종목(kr_own_codes — 기록 · 2차 출처 날 · pxDate 보다 앞선 날짜 · 나이 상한 · 지난 발행본의
+    # 가격과 날짜까지 맞는 것)만 pxd(그 종가의 날짜)가 빈 d1 의 이유예요 — 미국 pxd 와 같아요. 그 밖에 pxd 가 있는 국내 종목은 예전 그대로 실패해요
+    # (리뷰 M1: 지난 발행본과 가격이 다른 종목 · 1차 출처 날의 pxd). pdata: 지난 발행본 · days: 거래일 YYYY-MM-DD 들 (없으면 그 둘은 보지 않아요)
+    own = kr_own_codes(data, pdata, days)
     for s in listed:
-        # 2026-11-19 (Jack): 마지막 확인 종가로 실린 종목은 pxd(그 종가의 날짜)가 빈 d1 의 이유예요 — 미국 pxd 와 같아요. pxd 가 pxDate 보다 앞선
-        # 날짜가 아니면 '국내 자기 가격 날짜 (pxd)' 줄이 실패해요 (미국 줄과 같은 실패)
-        if s.get("d1") is None and "d1Why" not in s and not kr_pxd_shape_ok(s, data.get("pxDate")):
+        if s.get("d1") is None and "d1Why" not in s and s.get("t") not in own:
             out.append(f"{s.get('t')} d1 이 빈 칸인데 이유(d1Why)가 없어요")
     db = data.get("d1Blank")
     cnt = collections.Counter(s.get("d1Why") for s in listed if "d1Why" in s)
@@ -3629,7 +3634,7 @@ def kr_no_trade_problems(data):
     return out
 
 
-def check_kr_no_trade(rep, data, pdata):
+def check_kr_no_trade(rep, data, pdata, macro=None):
     """기준일에 거래가 없던 한국 종목 (2026-11-14 · Jack, design chat 2026-11-08 · dart-gaps §9 "거래량 0 종목 = noTrade 표시 · d1 빈 칸" · 새 줄만,
     늦추는 줄 없음). 거래가 없던 날을 0.00% 로 보이지 않게 파이프라인(fetch_data.kr_no_trade · kr_d1_split)이 d1 을 비우고 noTrade 를 달아요.
     실패: 우리 값끼리 어긋날 때만 (kr_no_trade_problems — 거래 없음인데 d1 숫자 · 이유 없는 빈 d1 · 요약 d1Blank 이 종목과 다름 …). d1Blank 이 없으면
@@ -3654,7 +3659,7 @@ def check_kr_no_trade(rep, data, pdata):
         rep.add(name, not had and not marks, f"d1Blank 없음 ({why})", rule, warn=not had and not marks)
         rep.add(wname, True, "d1Blank 없음 (확인 못 함)", wrule, warn=True)
         return
-    probs = kr_no_trade_problems(data)
+    probs = kr_no_trade_problems(data, pdata, kr_days_of(macro))   # 2026-11-19: 맞게 실린 마지막 확인 종가만 빈 d1 의 이유 (macro: 거래일)
     nts = [s for s in stocks if s.get("noTrade") is True]
     rep.add(name, not probs,
             f"거래 없음 {db.get('noTrade')!r} · ±{KR_DAY_LIMIT:g}% 밖 {db.get('range')!r} · 직전 거래일 행 없음 {db.get('new')!r} · 직전 거래일 파일 없음 "

@@ -14000,6 +14000,12 @@ def scene_kr_own_close(R, files, width=390):
             assert page.locator('[data-ui-v2="kr-own-close"]').count() == 0, t
             assert C["app"]["krOwnClose"].split("{")[0] not in page.locator("body").inner_text(), t
         assert mdtext("2026-10-28") in page.locator('[data-ui-v2="co-date"]').inner_text()   # 애플: 그 종목의 미국 날짜 그대로
+        if CO["valueMore"]["title"]:                                       # 가치 자세히 (리뷰 S1): 영수증 · 계산기가 그 종가를 써요 → 맨 위에 그 줄
+            co_hash(page, "#stocks/000270/value-more")
+            page.locator('[data-ui-v2="co-value-more"]').wait_for(state="visible")
+            line = page.locator('[data-ui-v2="co-value-more"] [data-ui-v2="kr-own-close"]')
+            assert line.count() == 1 and line.inner_text() == jack("000270"), line.all_inner_texts()
+            R.collect(page)
     R.check(page, S, "회사 페이지: 국내 pxd 종목은 '{날짜} 종가' 밑에 Jack 의 줄 그대로 · 오늘 변화 없음 · 다른 종목에는 없음", company)
 
     def lists():
@@ -14007,8 +14013,11 @@ def scene_kr_own_close(R, files, width=390):
         at(page, "stocks")
         rank = page.locator('[data-ui-v2="rank"]')
         rank.wait_for(state="visible")
-        rank_chip(page, "val")
+        rank_chip(page, "val")                                             # 거래대금 (리뷰 S2): 그날의 거래대금이라 오늘 목록에 넣지 않아요
         rank_market(page, "kr")
+        assert not set(KR_OWN) & set(rank_ts(page)), rank_ts(page)
+        assert rank.locator('[data-ui-v2="own-close"]').count() == 0
+        rank_chip(page, "cap")                                             # 시가총액: 그 종가의 시가총액으로 들어가고 목록 밑에 안내
         ts = rank_ts(page)
         assert "009150" in ts, ts
         want = kr_own_text(stocks, ts)
@@ -14032,7 +14041,7 @@ def scene_kr_own_close(R, files, width=390):
         floor_ok(page, "종목 순위 · 찾기")
         no_hscroll(page, width)
         R.collect(page)
-    R.check(page, S, "종목 순위(한국 · 거래대금) · 찾기 결과: '{이름} 가격은 {날짜} 종가예요.' 다음에 Jack 의 줄 · 그 종목 줄에 % 없음", lists)
+    R.check(page, S, "종목 순위: 거래대금에는 없음 · 시가총액(한국)과 찾기 결과에 '{이름} 가격은 {날짜} 종가예요.' 다음에 Jack 의 줄 · 그 종목 줄에 % 없음", lists)
 
     def portfolio():
         for hash_, where in (("#home", "home-block"), ("#portfolio", None)):
@@ -14051,6 +14060,37 @@ def scene_kr_own_close(R, files, width=390):
             no_hscroll(page, width)
             R.collect(page)
     R.check(page, S, "포트폴리오 (홈 · 포트폴리오 탭): 기아(국내 pxd)는 이름 문장 + Jack 의 줄 · 애플(미국 pxd)은 예전 문장 그대로", portfolio)
+
+    def importing():
+        """가진 종목 넣기 (리뷰 M2): 넣는 줄 밑과 점검 결과(비중 · 지도 · 규칙 · 비중을 바꿔 보면)의 날짜 줄 밑에 기아의 이름 문장 + Jack 의 줄."""
+        page.evaluate("location.hash = '#home'")
+        at(page, "home")
+        to_build_start(page, width >= 1024)
+        page.locator('[data-ui-v2="start-holdings"]').click()
+        at(page, "portfolio/import")
+        for t, q in (("005930", "10"), ("000270", "5")):
+            page.locator('[data-ui-v2="import-search"] input').fill(t)
+            page.locator(f'[data-import-result="{t}"] button').click()
+            row = page.locator(f'[data-import-row="{t}"]')
+            row.wait_for(state="visible")
+            row.locator('input[data-ui-v2="import-qty"]').fill(q)
+        want = kr_own_text(stocks, ["005930", "000270"])
+        note = page.locator('[data-ui-v2="import-own-close"]')
+        assert note.count() == 1 and note.inner_text() == want, (note.all_inner_texts(), want)
+        R.collect(page)
+        action(page).click()
+        see(page, C["build"]["s1"]["title"])
+        for c in ("value", "value", "div", "div", "stable"):
+            page.locator(f'[data-card="{c}"] [data-ui-v2="card-inc"]').click()
+        action(page).click()
+        page.locator('[data-ui-v2="report"]').wait_for(state="visible")
+        note = page.locator('[data-ui-v2="report-own-close"]')
+        assert note.count() == 1 and note.inner_text() == want, (note.all_inner_texts(), want)
+        assert today_md in page.locator('[data-ui-v2="report-dates"]').inner_text()     # '{날짜} 종가 · …' 밑에 그 안내
+        floor_ok(page, "가진 종목 넣기 점검 결과")
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "가진 종목 넣기: 넣는 줄 밑 · 점검 결과의 날짜 줄 밑에 '기아 가격은 {날짜} 종가예요.' 다음에 Jack 의 줄", importing)
     ctx.close()
     srv.shutdown()
 

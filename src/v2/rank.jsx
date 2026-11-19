@@ -475,7 +475,8 @@ export function RankCard({ load, store, full = false, go = null, tapper = null }
   )) : <div role={copy ? undefined : "list"} aria-labelledby={copy ? undefined : titleId}>{stockList(copy)}</div>);
   const listKey = [mk, chip, crit, openedId || "", top.length].join("|");
   const win = { position: "relative", borderRadius: 16, background: COLOR.surface, boxShadow: `inset 0 0 0 1px ${WIN_LINE}`, overflow: "hidden" };
-  const usRows = kind === "ind" ? [] : top.map((r) => r.s);
+  // the stocks on screen (review 2026-11-19: only the rows shown, so the reduced-motion and stale lists name none they leave out)
+  const usRows = kind === "ind" ? [] : shownRows.map((r) => r.s);
   // The chip rows: on the phone one row that scrolls sideways and runs to the screen's edges (the board); on PC (no sideways
   // swipe with a mouse wheel) they wrap onto more lines inside the card's column.
   const chipRowStyle = wide ? { display: "flex", flexWrap: "wrap", gap: 6 }

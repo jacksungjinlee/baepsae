@@ -130,9 +130,9 @@ def test_derived_numbers_use_the_carried_close(capsys):
 
 def test_normal_day_has_no_korean_pxd():
     src = inspect.getsource(F.fetch_korea)
-    # 확인 못 한 종목 목록 · 싣기는 2차 출처 날에만 (1차 출처 날에는 목록이 비고 싣는 단계가 돌지 않아요)
-    assert 'unconf = kr_unconfirmed(full_list, set(listing["Code"])) if px_src["px"] == PX_SRC_FB else {}' in src
-    assert re.search(r'if px_src\["px"\] == PX_SRC_FB:\n\s+have = \{r\["t"\] for r in out\}\n\s+carried, cjumps, cdrop = kr_own_close_carry', src)
+    # 확인된 코드 · 싣기는 2차 출처 날에만 (1차 출처 날에는 코드가 비고 싣는 단계가 돌지 않아요)
+    assert 'kr_own_conf_codes = set(listing["Code"].astype(str).str.strip()) if px_src["px"] == PX_SRC_FB else set()' in src
+    assert re.search(r'if px_src\["px"\] == PX_SRC_FB:\n\s+kr_own_close_step\(', src)
     # 발행 직전 점검: 1차 출처 날의 국내 pxd 는 관문과 같은 함수가 빼요 (2차 출처 날이 아님)
     kr_ = [kr("005930"), kr("300000", d1=None, pxd=D16)]
     src_ = {"v": 1, "px": V.PX_SRC_LISTING, "date": D18}
@@ -188,6 +188,97 @@ def test_log_and_record_shape_the_gate_reads(capsys):
     assert rec["n"] == 2 and rec["codes"] == ["500010", "500020"] and rec["unconf"] == 4 and rec["drop"] == {"none": 1, "old": 1}
     assert V.kr_own_rec({"pxSrc": {"own": rec}}) is rec
     json.dumps(rec, allow_nan=False)
+
+
+# ── 1b. 2026-11-19 시험 실행이 멈춘 곳: fetch_korea 의 실제 모양 · 어떤 오류도 발행을 멈추지 않아요 ──────────────
+FX2 = os.path.join(ROOT, "tests", "fixtures", "kr_two_source")
+
+
+def fx_listing(name):
+    return F.parse_listing_csv(open(os.path.join(FX2, f"krx_{name}.csv"), encoding="utf-8").read())
+
+
+def fx_daum():
+    js = json.load(open(os.path.join(FX2, "daum_days.json"), encoding="utf-8"))
+    return {c: F.daum_rows_by_day(v) for c, v in js.items()}
+
+
+def fx_yahoo():
+    js = json.load(open(os.path.join(FX2, "yahoo_closes.json"), encoding="utf-8"))
+    return {c: {dt.date.fromisoformat(d): v for d, v in v.items()} for c, v in js.items()}
+
+
+def real_second_source():
+    """fetch_korea 가 받는 그대로의 모양: kr_second_source 가 진짜 kr_fallback_days (다음 · 야후만 실제 응답 픽스처로 바꿈)로 11-16 을 만들어요 —
+    기준일 date · 확인된 DataFrame · pxSrc dict · 그날 전체 목록 DataFrame (st["_uni"]). 11-16: 13종목 중 STX(다음 ≠ 야후) · 본시스템즈(코넥스)가 확인 못 함."""
+    uni = fx_listing("2026-11-16_0545")
+    no_fill = lambda *a: {"need": 0, "bar": 0, "meta": 0, "none": 0, "fail": 0, "metaCodes": set()}
+    fb = lambda days, universe_of, now, special: F.kr_fallback_days(days, universe_of, now, special, fetch_daum=lambda codes, n: (fx_daum(), []),
+                                                                     fetch_yahoo=lambda cm, a, b: (fx_yahoo(), 0), fill_day=no_fill)
+    px, lst, known, src, logs, (full, dshr) = F.kr_second_source(dt.date(2026, 11, 13), fx_listing("2026-11-13_2158"), [dt.date(2026, 11, 16)],
+                                                                 dt.datetime(2026, 11, 19, 4, 0, tzinfo=F.KST), {}, lambda d: (uni, "시험"), fallback=fb)
+    assert px == dt.date(2026, 11, 16) and src["px"] == V.PX_SRC_FB and isinstance(full, pd.DataFrame) and isinstance(lst, pd.DataFrame)
+    return px, lst, src, full
+
+
+def test_carry_step_runs_on_the_real_fetch_korea_shapes(capsys):
+    """2026-11-19 시험 실행(44529100887)은 fetch_korea 안에서 'list' object has no attribute 'items' 로 멈췄어요 — 우선주 단계의 unconf 목록이 이
+    단계의 dict 를 덮어썼어요. 이제 fetch_korea 는 확인된 코드(kr_own_conf_codes)와 그날 전체 목록(full_list)을 kr_own_close_step 한 곳에 넘기고, 그
+    함수가 확인 못 한 종목을 스스로 골라요. 여기서는 실제 모양(DataFrame · pd.Timestamp 거래일 · 코넥스 종목)으로 돌려요."""
+    px, lst, src, full = real_second_source()
+    konex, stx = "496320", "011810"
+    assert sorted(set(full["Code"].astype(str)) - set(lst["Code"].astype(str))) == [stx, konex]        # 다음 ≠ 야후 · 코넥스
+    prev = prev_file([kr(konex, "본시스템즈", price=1176000.0, dk="업종 · 주요제품: 기계 · KONEX 상장 · 시가총액 100억원"),
+                      kr(stx, "STX", price=18360.0)], px="2026-11-13")
+    out = [{"t": c, "cls": "kr", "price": 1.0} for c in lst["Code"].astype(str)]
+    krs, prod = {"jump": [], "hidden": []}, {}
+    days = list(pd.to_datetime(["2026-11-12", "2026-11-13", "2026-11-16", "2026-11-17"]))                # fetch_korea: list(ks_all.index)
+    conf = set(lst["Code"].astype(str).str.strip())
+    n = F.kr_own_close_step(prev, full, conf, src, px, days, out, krs, prod)
+    assert n == 2 and [(r["t"], r["pxd"], r["price"]) for r in out[-2:]] == [(stx, "2026-11-13", 18360.0), (konex, "2026-11-13", 1176000.0)]
+    assert src["own"]["codes"] == [stx, konex] and src["own"]["n"] == 2 and src["own"]["unconf"] == 2 and "err" not in src["own"]
+    assert prod == {konex: "기계"}
+    assert "!! 국내 종가 미확인" in capsys.readouterr().out
+    # fetch_korea 가 이 함수를 그 모양 그대로 불러요 (그 사이에 다른 단계가 쓰는 이름을 넘기지 않아요)
+    body = inspect.getsource(F.fetch_korea)
+    assert body.count("kr_own_conf_codes = ") == 1 and "unconf = kr_unconfirmed" not in body
+    assert "kr_own_close_step(prev, full_list, kr_own_conf_codes, px_src, px_date, list(ks_all.index), out, krs, prod_map)" in body
+    # 코드 목록을 다른 모양으로 받아도 (list · 숫자 아닌 글자) 같아요
+    out2 = [{"t": c, "cls": "kr"} for c in lst["Code"].astype(str)]
+    assert F.kr_own_close_step(prev, full, sorted(conf), dict(src), px, days, out2, {"jump": [], "hidden": []}, {}) == 2
+
+
+def test_any_error_in_the_carry_step_keeps_the_run_going_with_no_carries(monkeypatch, capsys):
+    px, lst, src, full = real_second_source()
+    prev = prev_file([kr("496320", "본시스템즈", price=1176000.0, pxBad="2026-05-08", pxBadF=list(V.PX_BAD_ALWAYS))],
+                     px="2026-11-13", jump=[["496320", "2026-05-08", 45.0, "halt"]])
+    days = list(pd.to_datetime(["2026-11-13", "2026-11-16"]))
+    conf = set(lst["Code"].astype(str))
+    base = [{"t": c, "cls": "kr"} for c in lst["Code"].astype(str)]
+    for how in ("carry", "log", "shape"):
+        out, krs, prod, src_ = [dict(x) for x in base], {"jump": [["x", "2026-01-02", 40.0, "halt"]], "hidden": ["x"]}, {"a": "b"}, dict(src)
+        with monkeypatch.context() as m:
+            if how == "carry":
+                m.setattr(F, "kr_own_close_carry", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("부서졌어요")))
+            elif how == "log":                       # 실은 다음 단계(기록)에서 멈춰도 더한 것을 되돌려요
+                m.setattr(F, "log_kr_own_close", lambda *a, **k: (_ for _ in ()).throw(KeyError("drop")))
+            n = F.kr_own_close_step(prev, ["예전 모양: 목록"] if how == "shape" else full, conf, src_, px, days, out, krs, prod)
+        assert n == 0 and out == base and krs == {"jump": [["x", "2026-01-02", 40.0, "halt"]], "hidden": ["x"]} and prod == {"a": "b"}, how
+        own = src_["own"]
+        assert own["n"] == 0 and own["codes"] == [] and own["err"] and V.kr_own_rec({"pxSrc": src_}) is own, (how, own)
+        assert "!! 마지막 확인 종가 단계가 오류로 멈췄어요" in capsys.readouterr().out, how
+        rep_ = V.Report()                            # 관문: 경고 (실패 아님)
+        V.check_kr_own_close(rep_, {"pxDate": "2026-11-16", "pxSrc": src_, "stocks": base}, None, None)
+        rows = {r[0]: (r[1], r[3]) for r in rep_.rows}
+        assert rows[PXD_ROW][1] == "PASS" and rows[OWN_ROW][1] == "WARN" and "오류로 멈춤" in rows[OWN_ROW][0], rows
+    # 발행 직전 점검이 멈춰도: 마지막 확인 종가 종목을 모두 빼고 이어가요 (main 이 try 로 감싸요)
+    kr_ = [kr("005930"), kr("496320", d1=None, pxd="2026-11-16")]
+    src2 = {"px": V.PX_SRC_FB, "date": "2026-11-16", "own": own_rec(["496320"])}
+    krs2 = {"hidden": ["496320", "y"]}
+    left = F.kr_own_close_drop_all(kr_, src2, krs2, "TypeError: 시험")
+    assert [s["t"] for s in left] == ["005930"] and krs2["hidden"] == ["y"] and src2["own"]["codes"] == [] and src2["own"]["err"]
+    assert "!! 마지막 확인 종가 점검이 오류로 멈췄어요" in capsys.readouterr().out
+    assert "kr = kr_own_close_drop_all(kr, kmeta.get(\"pxSrc\"), kmeta.get(\"krSeries\")" in inspect.getsource(F.main)
 
 
 # ── 2. 관문 ───────────────────────────────────────────────────────────────
@@ -279,11 +370,42 @@ def test_only_a_clean_carry_is_left_out_of_the_pxdate_price_checks():
     assert V.kr_own_pick_data(clean, prev, KDAYS) is clean and V.kr_own_pick_data({"stocks": []}) == {"stocks": []}
 
 
+def test_no_trade_check_keeps_mains_fail_for_anything_but_a_clean_carry():
+    """리뷰 M1: 빈 d1 의 이유로 pxd 를 받는 건 맞게 실린 마지막 확인 종가(kr_own_codes)뿐 — 지난 발행본과 가격이 다른 종목 · 1차 출처 날의 pxd 는
+    예전(main) 그대로 '국내 거래 없는 종목 · 빈 d1 이유' 줄이 실패해요."""
+    blank = {k: 0 for k in V.D1_WHY} | {"seen": True, "odd": [], "must": []}
+    prev = prev_file([kr("620010", price=100.0)], px=D16)
+    want = ["620010 d1 이 빈 칸인데 이유(d1Why)가 없어요"]
+
+    def row(d, pdata):
+        rep_ = V.Report()
+        V.check_kr_no_trade(rep_, d, pdata, MACRO)
+        return {r[0]: r[3] for r in rep_.rows}["국내 거래 없는 종목 · 빈 d1 이유 (noTrade · d1Why)"]
+    clean = {**fb_data([kr("620010", price=100.0, d1=None, pxd=D16)], ["620010"]), "d1Blank": blank}
+    assert V.kr_no_trade_problems(clean, prev, KDAYS) == [] and row(clean, prev) == "PASS"
+    wrong = {**fb_data([kr("620010", price=999.0, d1=None, pxd=D16)], ["620010"]), "d1Blank": blank}   # 지난 발행본은 100원
+    assert V.kr_no_trade_problems(wrong, prev, KDAYS) == want and row(wrong, prev) == "FAIL"
+    old = {**fb_data([kr("620010", price=100.0, d1=None, pxd="2026-11-06")], ["620010"]), "d1Blank": blank}   # 나이 상한 넘음
+    assert V.kr_no_trade_problems(old, prev, KDAYS) == want and row(old, prev) == "FAIL"
+    unrec = {**fb_data([kr("620010", price=100.0, d1=None, pxd=D16)], []), "d1Blank": blank}            # 기록에 없음
+    assert V.kr_no_trade_problems(unrec, prev, KDAYS) == want and row(unrec, prev) == "FAIL"
+    normal = {"pxDate": D18, "pxSrc": {"v": 1, "px": V.PX_SRC_LISTING, "date": D18}, "stocks": [kr("620010", price=100.0, d1=None, pxd=D16)],
+              "d1Blank": blank}                                                                            # 1차 출처 날의 pxd
+    assert V.kr_no_trade_problems(normal) == want and V.kr_no_trade_problems(normal, prev, KDAYS) == want and row(normal, prev) == "FAIL"
+    assert row({**normal, "pxSrc": None, "stocks": [kr("620010", price=100.0, d1=None, pxd=D16)]}, None) == "FAIL"   # 기록 없는 파일도
+
+
+def test_popular_list_leaves_korean_carries_out_and_us_as_before():
+    kr_ = [kr("1", val=10.0), kr("2", val=99.0, d1=None, pxd=D16), kr("3", val=5.0)]
+    us_ = [{"t": "A", "cls": "us", "val": 1.0, "pxd": D16}, {"t": "B", "cls": "us", "val": 2.0}]
+    assert F.popular_list(kr_, us_, n_kr=3, n_us=2) == ["1", "3", "B", "A"]          # 그날 거래대금 · 미국 pxd 는 예전 그대로
+
+
 # ── 3. 앱 (Node) ───────────────────────────────────────────────────────────
 NODE = shutil.which("node")
 _B = {}
 MODS = {"D": "src/data.js", "L": "src/v2/stocklist.js", "R": "src/v2/rules.js", "CF": "src/v2/cofmt.js", "F": "src/v2/format.js",
-        "LD": "src/v2/load.js", "C": "src/copy/v2.js", "P": "src/v2/pf.js", "FX": "src/fixnote.jsx"}
+        "LD": "src/v2/load.js", "C": "src/copy/v2.js", "P": "src/v2/pf.js", "FX": "src/fixnote.jsx", "RK": "src/v2/ranks.js"}
 
 
 def bundle_dir():
@@ -302,7 +424,7 @@ def bundle_dir():
 
 def run(body, **data):
     decl = "".join(f"const {k} = {json.dumps(v, ensure_ascii=False)};\n" for k, v in data.items())
-    code = ("import * as M from './own.mjs';\nconst { D, L, R, CF, F, LD, P, FX } = M; const CP = M.C.C;\n"
+    code = ("import * as M from './own.mjs';\nconst { D, L, R, CF, F, LD, P, FX, RK } = M; const CP = M.C.C;\n"
             "const WARN = []; console.warn = (m) => WARN.push(String(m));\n" + decl + "let out;\n" + body
             + "\nprocess.stdout.write(JSON.stringify(out === undefined ? null : out));\n")
     fd, path = tempfile.mkstemp(suffix=".mjs", dir=bundle_dir())
@@ -328,7 +450,10 @@ def test_app_copy_is_jacks_line_in_both_apps():
     assert got["k"] == JACK and got["fx"] == JACK                   # 2.0 · 예전 뱁새 같은 글자
     assert got["o"] == got["fo"] == "{names} 가격은 {md} 종가예요."
     detail = open(os.path.join(ROOT, "src", "detail.jsx"), encoding="utf-8").read()
-    assert 'const T_OWN_CLOSE = { ko: "{names} 가격은 {md} 종가예요."' in detail and "FIX_KR_OWN_CLOSE.replace(\"{date}\"" in detail
+    assert 'const T_OWN_CLOSE = { ko: "{names} 가격은 {md} 종가예요.", en: "{names}: priced at the {md} close." };' in detail
+    assert "FIX_KR_OWN_CLOSE.replace(\"{date}\"" in detail
+    got2 = run("out = FX.FIX_OWN_CLOSE_EN;")
+    assert got2 == "{names}: priced at the {md} close."                       # 영어 첫 화면 성적표 (리뷰 M4): 승인된 영어 문장 그대로
 
 
 @needs_node
@@ -357,12 +482,14 @@ const load = { status: 'ok', data: { pxDate: '2026-11-18', usPxDate: '2026-11-17
 out = { kr: CF.krOwnCloseText(load, A), plain: CF.krOwnCloseText(load, B), us: CF.krOwnCloseText(load, U), date: CF.priceDate(load, A),
   close: CF.closeLine(load, A), usClose: CF.closeLine(load, U), loading: CF.krOwnCloseText({ status: 'loading' }, A),
   old: [FX.krOwnCloseText(A, null), FX.krOwnCloseText({ t: 'C', pxd: '2026-11-16' }, '2026-11-18'), FX.krOwnCloseText(U, null),
-        FX.krOwnCloseText(B, '2026-11-18'), FX.krOwnCloseListText([{ t: '094800', nk: '맵스리얼티', pxd: '2026-11-16' }, { t: '005930', nk: '삼성전자' }])] };""",
+        FX.krOwnCloseText(B, '2026-11-18'), FX.krOwnCloseListText([{ t: '094800', nk: '맵스리얼티', pxd: '2026-11-16' }, { t: '005930', nk: '삼성전자' }])],
+  en: [FX.krOwnCloseText(A, null, 'en'), FX.krOwnCloseText(B, '2026-11-18', 'en'), FX.krOwnCloseText(U, null, 'en')] };""",
               A=kr("094800", "맵스리얼티", d1=None, pxd=D16), B=kr("005930", "삼성전자"), U=us("AAPL", pxd=D16, d1=None))
     line = JACK.replace("{date}", "11월 16일")
     assert got["kr"] == line and got["plain"] is None and got["us"] is None and got["loading"] is None
     assert got["date"] == D16 and got["close"] == "11월 16일 종가"     # 그 종목의 날짜 (오늘 날짜가 아니에요)
     assert got["old"] == [line, line, None, None, "맵스리얼티 가격은 11월 16일 종가예요. " + line]
+    assert got["en"] == ["094800: priced at the Nov 16 close.", None, None]
 
 
 @needs_node
@@ -395,3 +522,19 @@ out = w.filter((m) => !/staleAfter|nextPub/.test(m));""",
     assert len(got) == 2, got
     assert got[0].startswith("[v2] 1 Korean stocks at their last confirmed close before 2026-11-18") and "094800 2026-11-16" in got[0]
     assert got[1].startswith("[v2] 1 of 1 US stocks at an earlier close than 2026-11-17") and "AAPL 2026-11-16" in got[1]
+
+
+@needs_node
+def test_app_daily_trading_value_lists_leave_korean_carries_out():
+    """리뷰 S2: 국내 거래대금은 그날 하루 값이라, 마지막 확인 종가(pxd) 종목은 오늘의 거래대금 · 거래 급증 목록에 없어요 (큰 움직임처럼).
+    시가총액 목록에는 그 종가의 시가총액으로 있어요 · 미국 목록은 예전 그대로 (야후 3개월 평균)."""
+    base = {"etf": False, "val20": 50.0, "cap": 5.0, "price": 1000.0}
+    S = [kr("710000", **base, val=300.0), kr("720000", **base, val=200.0, d1=None, pxd=D16), kr("730000", **base, val=110.0),
+         us("UA", val=100.0, val20=None, cap=50.0), us("UB", val=90.0, cap=40.0, pxd=D16, d1=None)]
+    got = run("""console.info = () => {};
+const t = (rows) => rows ? rows.map((r) => r.s.t) : rows;
+out = { val: t(RK.valList(S, 'kr')), surge: t(RK.surgeList(S, 'kr')), cap: t(RK.capList(S, 'kr')), usVal: t(RK.valList(S, 'us')),
+  ok: [RK.dayValOk(S[1], 'kr'), RK.dayValOk(S[1], 'us'), RK.dayValOk(S[4], 'us'), RK.dayValOk(S[0], 'kr')] };""", S=S)
+    assert got["val"] == ["710000", "730000"] and got["surge"] == ["710000", "730000"], got
+    assert got["cap"] == ["710000", "720000", "730000"] or set(got["cap"]) == {"710000", "720000", "730000"}, got
+    assert got["usVal"] == ["UA", "UB"] and got["ok"] == [False, True, True, True], got

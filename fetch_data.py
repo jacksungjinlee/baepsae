@@ -1212,8 +1212,67 @@ def log_kr_own_close(carried, drop, unconf, names):
             "drop": {k: int(v) for k, v in sorted(dc.items())}, "dropEx": dn[:KR_OWN_SHOW], "bad": {"n": 0, "rows": []}}
 
 
+def kr_own_close_err(err, unconf_n=0):
+    """마지막 확인 종가 단계가 오류로 멈췄을 때의 pxSrc.own (실은 종목 0 · err 에 까닭 — 관문이 경고해요)."""
+    return {"v": 1, "max": KR_OWN_CLOSE_MAX_DAYS, "n": 0, "codes": [], "unconf": int(unconf_n), "drop": {}, "dropEx": [],
+            "bad": {"n": 0, "rows": []}, "err": str(err)[:300]}
+
+
+def kr_own_close_step(prev, full_list, conf_codes, px_src, px_date, trade_days, out, krs, prod_map):
+    """2차 출처 날의 마지막 확인 종가 단계 (2026-11-19 · fetch_korea 가 부르는 한 곳). 그날 전체 목록(full_list · DataFrame)에서 두 출처로 확인 못 한
+    종목을 골라(kr_unconfirmed) 지난 발행본의 마지막 확인 종가로 out 에 더하고, 과거 주가 기록 오류 표시의 지난 움직임을 krs(krSeries)에 · 주요제품을
+    prod_map 에 옮기고, px_src["own"] 에 기록해요. trade_days: KOSPI 일봉 날짜들 (Timestamp · date · 'YYYY-MM-DD' 아무거나).
+    이 단계의 어떤 오류도 발행을 멈추지 않아요 (Jack 의 규칙 · 2026-11-19 시험 실행이 여기서 멈췄어요): 크게 남기고, 아무것도 싣지 않고 (예전처럼 확인 못 한
+    종목은 빠져요), 바꾼 것을 되돌리고, px_src["own"].err 에 까닭을 적어요 (관문이 경고해요). 반환: 실은 종목 수."""
+    n0, jump0, hid0 = len(out), list((krs or {}).get("jump") or []), list((krs or {}).get("hidden") or [])
+    added, unconf = [], {}
+    try:
+        days = [pd.Timestamp(t).date().isoformat() for t in trade_days]
+        unconf = kr_unconfirmed(full_list, set(map(str, conf_codes)))
+        have = {r.get("t") for r in out}
+        carried, cjumps, cdrop = kr_own_close_carry(prev, {c: v for c, v in unconf.items() if c not in have}, px_date, days)
+        rec = log_kr_own_close(carried, cdrop, unconf, {r["t"]: r.get("nk", "") for r in carried})
+        out.extend(carried)
+        for c in sorted(cjumps):
+            krs["jump"] = list(krs.get("jump") or []) + cjumps[c]
+            krs["hidden"] = list(krs.get("hidden") or []) + [c]
+        for r in carried:
+            dp = kr_desc_parse(r.get("dk"))
+            if dp and dp[1] and r["t"] not in prod_map:
+                prod_map[r["t"]] = dp[1]
+                added.append(r["t"])
+        px_src["own"] = rec
+        return len(carried)
+    except Exception as e:
+        del out[n0:]
+        if isinstance(krs, dict):
+            krs["jump"], krs["hidden"] = jump0, hid0
+        for t in added:
+            prod_map.pop(t, None)
+        err = f"{type(e).__name__}: {str(e)[:200]}"
+        log(f"  !! 마지막 확인 종가 단계가 오류로 멈췄어요 ({err}) — 확인 못 한 국내 종목은 예전처럼 빼고 발행을 이어가요 (실은 종목 0 · "
+            "pxSrc.own.err · 관문이 경고해요)")
+        px_src["own"] = kr_own_close_err(err, len(unconf) if isinstance(unconf, dict) else 0)
+        return 0
+
+
+def kr_own_close_drop_all(kr, src, krs, err):
+    """마지막 확인 종가 점검(kr_own_close_final)이 오류로 멈췄을 때: 국내 pxd 종목을 모두 빼고 (예전처럼 확인 못 한 종목은 빠져요) 크게 남기고 pxSrc.own 에
+    err · 뺀 수를 적어요 (관문이 경고해요). 반환: 남은 국내 종목 목록."""
+    gone = {s.get("t") for s in kr if s.get("cls") == "kr" and s.get("pxd") is not None}
+    log(f"  !! 마지막 확인 종가 점검이 오류로 멈췄어요 ({err}) — 마지막 확인 종가로 실은 {len(gone):,}종목을 모두 빼고 발행을 이어가요 (pxSrc.own.err)")
+    if isinstance(src, dict):
+        own = src.get("own") if isinstance(src.get("own"), dict) else kr_own_close_err(err)
+        own.update({"codes": [], "n": 0, "err": str(err)[:300], "bad": {"n": len(gone), "rows": sorted(gone)[:KR_OWN_SHOW]}})
+        src["own"] = own
+    if isinstance(krs, dict) and isinstance(krs.get("hidden"), list):
+        krs["hidden"] = [c for c in krs["hidden"] if c not in gone]
+    return [s for s in kr if s.get("t") not in gone or s.get("cls") != "kr"]
+
+
 def kr_own_close_final(kr, src, prev, days, krs=None):
-    """파일을 쓰기 직전 (Jack 의 규칙, 2026-11-19 — 우리 처리의 한 줄이 틀리면 그 줄을 빼고 크게 남기고 나머지는 발행해요): 관문과 같은 함수
+    """국내 시세 단계 바로 뒤 · 다른 단계보다 먼저 (Jack 의 규칙, 2026-11-19 — 우리 처리의 한 줄이 틀리면 그 줄을 빼고 크게 남기고 나머지는 발행해요.
+    이 함수가 보는 칸은 그 뒤 바뀌지 않아요 — 뺀 종목이 집계 · 점수 · corp.json 에 남지 않게 여기서 빼요): 관문과 같은 함수
     (validate_data.kr_own_close_bad)로 마지막 확인 종가 종목을 다시 보고, 맞지 않는 종목은 빼요 (pxd 가 맞지 않는 가격은 싣지 않아요 — 그 종목은
     예전처럼 빠져요). src: 발행할 pxSrc (own 을 고쳐요) · prev: 지난 발행본 · days: 거래일 YYYY-MM-DD 들 · krs: data.json krSeries (뺀 종목을
     hidden 에서도 빼요 — 표시한 종목 = hidden). 반환: 남은 국내 종목 목록."""
@@ -4715,9 +4774,9 @@ def fetch_korea(start, today, rf, prev=None):
         if c not in listing.columns:
             listing[c] = np.nan
     listing["Name"] = listing["Name"].fillna(listing["Code"])
-    # 2026-11-19 (Jack): 2차 출처 날에 두 출처로 확인하지 못한 종목 (상위 MAX_KR 로 자르기 전 · 그날 전체 목록에서) — 아래에서 지난 발행본의
-    # 마지막 확인 종가로 실어요 (kr_own_close_carry). 1차 출처 날에는 없어요 (국내 pxd 는 생기지 않아요)
-    unconf = kr_unconfirmed(full_list, set(listing["Code"])) if px_src["px"] == PX_SRC_FB else {}
+    # 2026-11-19 (Jack): 두 출처로 확인된 종목 코드 (상위 MAX_KR 로 자르기 전) — 아래 마지막 확인 종가 단계(kr_own_close_step)가 그날 전체 목록에서
+    # 확인 못 한 종목을 골라요. 이름이 겹치지 않게 따로 둬요 (2026-11-19 시험 실행: 아래 우선주 단계의 'unconf' 목록이 덮어써 멈췄어요)
+    kr_own_conf_codes = set(listing["Code"].astype(str).str.strip()) if px_src["px"] == PX_SRC_FB else set()
     # 2026-11-19 (리뷰 B1): 2차 출처 날은 확인된 종목만 목록에 있어요. 우선주 주식 수는 가격과 상관없으니 그날 전체 목록에서 (확인 못 한 우선주도 ·
     # 다음 상장주식수와 맞춰 봐요) — EPS · BPS 주식 수와 상장 안 된 우선주 판단이 빠지지 않게. 우선주 시가총액은 확인된 종가로만 (kr_pref_caps(listing)),
     # 확인 못 한 우선주가 있는 회사는 회사 시가총액을 몰라 EV · P/CF 를 비워요 (build_corp · evNo prefPx).
@@ -5105,18 +5164,7 @@ def fetch_korea(start, today, rf, prev=None):
     # 것이라 오늘 시계열 점검 · 비우기를 다시 하지 않아요 · 과거 주가 기록 오류 표시는 지난 움직임과 함께 krSeries 에 옮겨요). 재무 · 배당 · 점수는
     # main 이 다른 종목처럼 그 가격으로 다시 만들어요
     if px_src["px"] == PX_SRC_FB:
-        have = {r["t"] for r in out}
-        carried, cjumps, cdrop = kr_own_close_carry(prev, {c: v for c, v in unconf.items() if c not in have}, px_date,
-                                                    [pd.Timestamp(t).date().isoformat() for t in ks_all.index])
-        out.extend(carried)
-        for c in sorted(cjumps):
-            krs["jump"] = list(krs.get("jump") or []) + cjumps[c]
-            krs["hidden"] = list(krs.get("hidden") or []) + [c]
-        for r in carried:
-            dp = kr_desc_parse(r.get("dk"))
-            if dp and dp[1]:
-                prod_map[r["t"]] = dp[1]
-        px_src["own"] = log_kr_own_close(carried, cdrop, unconf, {r["t"]: r.get("nk", "") for r in carried})
+        kr_own_close_step(prev, full_list, kr_own_conf_codes, px_src, px_date, list(ks_all.index), out, krs, prod_map)
     elif px_date is not None:
         log("· 국내 종가 미확인 0종목 (1차 출처 날 · 마지막 확인 종가로 싣는 종목 없음)")
     # 2026-11-14: 발행하는 종목의 빈 d1 이유 수 (data.json d1Blank · 관문이 종목마다의 noTrade · d1Why 와 맞춰 봐요) · cols: 거래 없음을 가릴 수 있었는지
@@ -9915,7 +9963,8 @@ def popular_list(kr, us, n_kr=100, n_us=20):
     def top(arr, n):
         ok = [x for x in arr if _fin(x.get("val")) is not None]
         return [x["t"] for x in sorted(ok, key=lambda x: -_fin(x["val"]))[:n]]
-    return top(kr, n_kr) + top(us, n_us)
+    # 2026-11-19 (Jack · 리뷰 S2): 마지막 확인 종가(pxd)로 실은 국내 종목의 거래대금은 그날 것이라 오늘의 거래대금 순위에 넣지 않아요 (미국은 예전 그대로)
+    return top([x for x in kr if x.get("pxd") is None], n_kr) + top(us, n_us)
 
 
 def read_prev_data(path=OUT):
@@ -10089,6 +10138,14 @@ def main():
 
     rf, rf_src = ph.run("금리", fetch_rf, today)
     kr, kr_bench, kr_mkt, kmeta = ph.run("국내 시세", fetch_korea, start, today, rf, prev)
+    # 2026-11-19 (Jack 의 규칙): 마지막 확인 종가 종목을 관문과 같은 함수로 다시 보고, 맞지 않는 종목은 빼요 (빼면 크게 남기고 pxSrc.own.bad 에 적어요).
+    # 국내 시세 단계 바로 뒤 — 이 함수가 보는 칸(가격 · pxd · d1 · 거래 없음 표시 · 기록)은 여기서 정해지고 뒤 단계가 바꾸지 않아요. 그래서 뺀 종목이
+    # DART · 배당 · 손익 집계(divCheck · incCheck) · 점수(백분위) · 필수 종목 순위 · corp.json 어디에도 남지 않아요 (리뷰: 집계와 종목이 어긋나지 않게)
+    try:
+        kr = kr_own_close_final(kr, kmeta.get("pxSrc"), prev, [pd.Timestamp(t).date().isoformat() for t in kmeta["_index"].index]
+                                if kmeta.get("_index") is not None else None, krs=kmeta.get("krSeries"))
+    except Exception as e:                # 점검이 오류로 멈추면 확인할 수 없는 마지막 확인 종가는 싣지 않아요 (예전처럼 빠져요) — 발행은 이어가요
+        kr = kr_own_close_drop_all(kr, kmeta.get("pxSrc"), kmeta.get("krSeries"), f"{type(e).__name__}: {str(e)[:200]}")
     px_date = dt.date.fromisoformat(kmeta["pxDate"]) if kmeta["pxDate"] else today - dt.timedelta(days=1)
 
     fin_map, client, ksic = {}, None, {}
@@ -10247,9 +10304,6 @@ def main():
            + (" — 관문에서 실패해 발행하지 않아요" if len(miss_dz) >= DIV_RANK_MISS_FAIL
               or any(t not in {s["t"] for s in kr} for t, _ in miss_dz)          # 목록에 없는 필수 종목은 다른 줄이 실패로 막아요
               else " — 관문에서 경고해요 (이 일로는 발행이 막히지 않아요 · 이 종목은 배당 순위에서 빠져요)")))
-    # 2026-11-19 (Jack 의 규칙): 마지막 확인 종가 종목을 관문과 같은 함수로 다시 보고, 맞지 않는 종목은 빼요 (빼면 크게 남기고 pxSrc.own.bad 에 적어요)
-    kr = kr_own_close_final(kr, kmeta.get("pxSrc"), prev, [pd.Timestamp(t).date().isoformat() for t in kmeta["_index"].index]
-                            if kmeta.get("_index") is not None else None, krs=kmeta.get("krSeries"))
     stocks = kr + us + bonds + funds
     if selftest == "corrupt-price":
         for x in stocks:
