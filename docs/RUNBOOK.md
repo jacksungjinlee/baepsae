@@ -577,6 +577,79 @@ every row of 11-11 to 11-13), so a halt and a day nobody traded look the same; i
   row contradicted itself (`odd`), or a must-have looked like no trade (`must`). The publish goes ahead with those stocks
   unmarked. If it repeats, look at that day's listing file (FinanceData cache) before anything else; the run log has the same
   case as a "!!" line.
+## Korean second-source time limit (2차 출처 시간 한도, since #151)
+
+When the volunteer KRX list has no final file for a finished trading day, the run builds that day from Daum's daily prices and
+keeps only the stocks whose Yahoo `.KS`/`.KQ` close agrees to the won (#137, Jack's two-source rule). It asks stock by stock in
+three phases: Daum daily prices (4 at a time), Yahoo daily closes (one chart per stock, 6 at a time; before this change a
+yfinance batch download, 200 stocks per batch), and, for the newest day only, a Yahoo chart re-read of the stocks whose daily
+close Yahoo still leaves blank (6 at a time). After the Korean day ends Yahoo leaves the newest daily close blank for hours (seen
+blank at 01:40 and 02:15 KST, filled by 06:40), so runs in that window re-read about 2,770 charts.
+
+Until 2026-11-20 each request had a limit (20 s, three tries) but no phase did, and the phases' notes were printed only at the
+end. Two branch dry runs on 11-19/20 (23:19 and 00:34 KST starts) sat silent after "· 종목 목록: 2026-11-16 최종본 …" for 74 and
+61 minutes and were cancelled; the same inputs had finished this stage in 3m40s twenty minutes earlier. A slow or throttling source
+could hold a run for hours (Daum timing out on every try: 2,772 ÷ 4 × 66 s ≈ 12.7 hours), and one yfinance batch could wait with no
+limit at all (it loops until every ticker answers, and an abandoned batch would keep the process from ending).
+
+Now (`fetch_data.KR_FB_PHASE_BUDGET_S` = 600 s per phase; normal phase times on four runs, 11-18 03:19 · 06:40 and 11-19 22:59
+KST: Daum 108–144 s, Yahoo batch 111–178 s, chart re-read 0–41 s, 41 s even for 2,764 stocks; on the first dry run with this
+change, 44578437586 on the night of 11-20: Daum 133 s, Yahoo one chart per stock 31 s for 2,766 of 2,772, re-read 30 s for 2,765):
+- each phase logs a line when it starts ("· 2차 출처: 다음 일별 시세 묻는 중 — …"), so a stuck run shows which source it is waiting on;
+- the order is: must-have stocks, then every other stock by the market cap in the volunteer list's last **final** file, largest
+  first (the day's own cache file can be the pre-market version with blank caps, so it is never used to rank), then stocks with no
+  cap there by code. The log says it: "· 2차 출처 묻는 순서: 필수 종목 7 → 1차 출처 최종본 시가총액 큰 순 … → 시가총액 모름 … (코드 순)";
+- when a phase runs out of time it stops asking; requests already in flight finish under their own limits (one stock: 3 tries ×
+  (20 s to connect + 20 s between bytes) + at most 10 s of pauses ≈ 130 s; a DNS lookup and a server that sends a byte every few
+  seconds are outside those limits, never seen). So a phase ends within about 12 minutes and the three phases within about 37
+  minutes, however slow the sources are;
+- between tries a stock waits 1 s, then 2 s; after a 429 ("too many requests") it waits what the server's Retry-After asks, at
+  most 5 s (2 s, then 4 s when there is none); there is no wait after the last try. The Yahoo phases ask about 90 times a second
+  (6 at a time, `KR_FB_META_WORKERS`); if 429 answers grow, lower that number;
+- the stocks not asked are unconfirmed, exactly like a stock whose source did not answer: left out of that day's file, never an
+  older price. The log says so at once ("!! 2차 출처 시간 한도 600초: 다음 일별 시세를 더 묻지 않아요 …") and in the summary ("!! 2차
+  출처 시간 한도 600초 — 다음 일별 시세: 받은 n / 대상 m — 나머지 k종목은 확인 못 한 종목 (…)"); the same for 야후 일봉 종가 and 야후
+  차트 다시 읽기;
+- data.json `pxSrc.fb.cut` = `{s, daum, yahoo, fill}`: the limit and the stocks not asked in each phase (also kept when the second
+  source ran but found no usable day; `pxSrc.chk.cut` on volunteer-file days, where only the Yahoo spot check of must-haves + sample
+  can shrink);
+- the gate and the watchdog show **WARN "가격 확인 시간 한도 (경고만)"** when any count is above 0 (a file from before this change
+  has no record: SKIP). It never stops a publish by itself.
+- The KOSPI daily series (FinanceDataReader `KS11`, read from the volunteer cache without any time limit) is now read under a
+  60 s socket limit (`KR_INDEX_TIMEOUT`) and logged: "· KOSPI 일봉 (KS11 · FinanceDataReader 캐시): n일 · 마지막 … (k초)", loud
+  ("!!") when its last day is before the volunteer final date or when more than 10 calendar days are missing at the start or
+  between two days (that library silently skips a year file it could not read). The data step also runs with `PYTHONUNBUFFERED=1`.
+
+What protects users when the limit hits (and what does not):
+- **Must-haves:** they are asked first. If one is still unconfirmed, that day is not used: the data stays on the last volunteer
+  final day and the gate fails "pxDate 뒤 끝난 거래일 없음", so nothing publishes (no old price under a new date).
+- **Market-cap order:** the run publishes the top 2,500 Korean stocks by market cap among the confirmed ones, so a cut first
+  removes the smallest stocks. How many can go unasked before a published stock is lost depends on how many are unconfirmed anyway:
+  - On a night when Yahoo's newest daily close is still blank (runs from the close until roughly 06:40 KST, when the close is read
+    from Yahoo's price just after the close), about 9% are unconfirmed (2,526 of 2,771 on 11-19), so the room is only about 25–50.
+    Measured on the 11-19 data (stocks not asked → published stocks lost), market-cap order: 25 → 0 · 50 → 3 · 100 → 22 · 200 → 73
+    · 240 → 104 · 300 → 156 · 440 → 278; plain code order: 50 → 34 · 100 → 68 · 200 → 159 · 240 → 195 (code order also drops
+    large recent listings such as LG에너지솔루션 373220 and SK스퀘어 402340, which have high codes).
+  - When Yahoo's newest daily close is filled (e.g. the 06:40 run), about 1.2% are unconfirmed and a cut of up to about 200–240
+    loses none (simulated in `tests/test_kr_fb_budget.py`).
+- **The count rows** stop only large cuts: "국내 종목 수" fails below 2,300 published Korean stocks, which on a blank-close night is
+  about 320 stocks not asked (about 440 when the close is filled); "국내 종목 수 변화" (more than 10% from the last publish) comes later.
+- **Plainly, the gap:** on a blank-close night, from about 50 to about 320 stocks not asked, the data publishes with published
+  stocks missing (about 3 at 50, about 156 at 300) and only the WARN row. A check that stops the publish there would be a new
+  publish-stopping rule and needs Jack's yes.
+
+If the WARN shows:
+1. Find the phase in the run log: the "· 2차 출처: … 묻는 중" line before the "!!" line has the GitHub timestamp, so the gap shows
+   which source was slow.
+2. The stocks left out show "이 종목의 데이터를 찾지 못했어요" (portfolios: "오늘 데이터에 없는 종목 … 빼고 계산했어요") for that whole
+   day's data. Later scheduled runs do **not** fill them in: once pxDate and usPxDate are current, `already_published.py` skips the
+   rest of the day's scheduled runs, so they come back with the next day's publish. Only a manual run brings them back sooner
+   (after about 06:40 KST it re-reads far fewer Yahoo charts); follow the DART rule for manual runs.
+3. Do not raise the limit to make one run pass. If it hits on days when both sources answer at normal speed, bring the phase
+   times from the logs to Jack before changing `KR_FB_PHASE_BUDGET_S`.
+4. If it hits on every run (a source blocking GitHub's servers), the must-haves stay unconfirmed and nothing publishes: that is
+   the two-source rule working. Tell Jack in plain words which source is down.
+
 ## Korean dividend proof (배당 기준 증명, since #PR — Jack 2026-11-14, item 5)
 
 A Korean payer whose dividend could not be put on today's share basis (`divSt` nc · nd) used to show "배당을 줘요" with no
