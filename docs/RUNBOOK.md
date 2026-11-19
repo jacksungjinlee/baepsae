@@ -282,11 +282,13 @@ bad value is still in the file and would show a wrong number or a wrong reason l
 warning, naming them (detail lists "파이프라인이 뺀 미국 종목" and "파이프라인이 비운 숨긴 배당수익률의 줄"). Record problems that
 show users nothing are warnings: a malformed `proofSub` (its lines are blanked and counted), a mapping that differs from the table with
 no published row left, a line the record asks for but the stock lacks, and a malformed `usListSym` field the joined-form and mapping
-checks don't depend on. One record problem still fails the publish, as it did before: a `usListSym.mapped` row the gate can't read, or a
-malformed row that names `BRKB` or `BFB` (the gate then can't tell where that form was mapped, so it can't rule out a wrong company in
-the list; the site checks warn). `mapped` is read row by row, so one bad row about another ticker does not switch the mapping check off.
-For the lines, the count also includes stocks that had a line 2 · 3 · 4 in the previous publish when today's `proofSub` is missing or
-malformed for that part (the record and the lines vanishing together blank nothing, but those stocks still lose their reason line).
+checks don't depend on. One record problem still fails the publish, as it did before: any malformed `usListSym.mapped` row (`mapped`
+only ever holds the joined-form rows, so with a bad row the gate can't tell where a joined form was mapped and can't rule out a wrong
+company in the list; the site checks warn). The rows that are well formed are still read one by one, so a wrongly mapped row is still
+dropped. For the lines, the count is the number of distinct stocks that lose their reason line in the run: lines blanked today, lines
+still wrong in the file, and lines 2 · 3 · 4 of the previous publish that today's `proofSub` can't back because that part is missing or
+malformed (the record and the lines vanishing together blank nothing, but those stocks still lose their line). These are usually
+different stocks, so they are added up, not compared. The run log counts the same stocks (it reads the previous publish).
 On the site checks (`--live`: deploy and watchdog) "more than N" warns instead of failing, and the US rows keep #139's live behaviour.
 A file without `ownDrop` (published before #?) keeps the old rule for that row, so the live gate and the watchdog are not blocked by
 it; a malformed `ownDrop` (the whole object or one entry) also keeps the old rule and adds a warning.
@@ -305,8 +307,8 @@ Yahoo answering a joined form; fix with the recipe in "US share-class tickers" b
 
 **When the gate fails**: "뺀 행이 기준 5 을 넘음" or "줄을 잃은 종목이 기준 5 을 넘음" means many rows broke at once: our reading is
 probably broken for everyone, so nothing is published (users keep the last good data). "빼야 할 티커가 남아 실림" or "기록과 맞지 않는
-줄이 남음" means the drop step did not run or did not work: fix the pipeline. "mapped 에 읽을 수 없는 줄이나 점이 지워진 꼴이 든 틀린 줄이
-있어 …" means `us_tickers` wrote a broken mapping record: fix the record code. Never raise N or skip the row to get a publish out;
+줄이 남음" means the drop step did not run or did not work: fix the pipeline. "mapped 에 모양이 틀린 줄이 있어 …" means `us_tickers`
+wrote a broken mapping record: fix the record code. Never raise N or skip the row to get a publish out;
 a different N needs Jack's yes with new evidence.
 
 ## Checked low-PBR companies (gate warning "PBR 0.1 미만 국내 회사")
@@ -672,8 +674,8 @@ uncounted 2, data 22, the 32.5% yield 1; lines: 1 → 0 stocks, 2 → 8, 3 → 1
   whether it shows a line, since #PR).
 - **"숨긴 배당수익률의 줄 (divCheck.proofSub · dvLine 2 · 3 · 4)"** — since #? under Jack's standing rule (section "Checks on our own
   processing" above): the run blanks every line the record does not back (`ownDrop.divLine`) and publishes; the row fails only when
-  more than 5 stocks lose their line in the run (blanked, or lost together with a missing or malformed `proofSub`, counted from the
-  previous publish) or a line the record does not back is still in the file, and warns otherwise. The rules below are
+  more than 5 distinct stocks lose their line in the run (blanked, still wrong, or lost together with a missing or malformed `proofSub`,
+  counted from the previous publish, all added up) or a line the record does not back is still in the file, and warns otherwise. The rules below are
   what "backed" means, and they are the whole rule for files without `ownDrop` (#142's FAIL as written).
   (since #PR): `divCheck.proofSub` is not v1 with exactly `rights`
   and `data`, its stocks differ from the proof's `rightsT` · `dataT`, a case is unknown, or the marks differ: `dvLine` 2 must be on
@@ -927,9 +929,8 @@ this rule added (`BF-B`) that are not in the day's list → reason · `read` whe
   - **Since #? (Jack's standing rule, section "Checks on our own processing" above):** the run drops the rows this row would fail
     on (`us_class_bad_rows`: the joined form published from the S&P list, the same form when `spTickers` is malformed, the row of a
     ticker mapped differently from the gate's table) and records them in `ownDrop.usClass`. With that record the row fails only when
-    more than 5 rows were dropped, such a row is still published, or a `mapped` row is unreadable or names a joined form while
-    malformed (the mapping can't be checked); other record-shape problems and a mapping that differs from the table with no published
-    row left only warn. The bullets below are the rule for files without `ownDrop`, and what "such a row" means.
+    more than 5 rows were dropped, such a row is still published, or any `mapped` row is malformed (the mapping can't be checked;
+    as strict as before); other record-shape problems and a mapping that differs from the table with no published row left only warn. The bullets below are the rule for files without `ownDrop`, and what "such a row" means.
   - **Fails** only if such a form is also a published ticker. Since Yahoo has no `BFB`/`BRKB`, in practice this catches one case:
     Yahoo answering the joined form with some other security, which would put the wrong company in the list. The same letters from
     another source (a real Nasdaq company that one day gets the ticker `BFB`) are only named, so a real ticker can never block every

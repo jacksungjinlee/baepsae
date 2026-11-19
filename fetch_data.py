@@ -92,7 +92,7 @@ from validate_data import US_FGN_NOCMP, US_FGN_NOCMP_KIND, US_FGN_NOCMP_WHY, US_
 # 2026-11-19 (Jack 의 상시 규칙 · 우리 처리를 보는 검사): 빼거나 비울 행을 고르는 함수는 관문 파일에 하나씩 — 파이프라인은 같은 함수를 메모리의
 # 데이터에 돌려 그 행을 빼거나 비우고 data.json ownDrop 에 적어요 (논리를 베끼지 않아요)
 from validate_data import (US_CLASS_DROP_KEY, US_CLASS_DROP_MAX, DIV_LINE_DROP_KEY, DIV_LINE_BLANK_MAX, US_CLASS_BLIND, us_class_bad_rows,
-                           div_line_bad_rows, own_drop_rec, own_drop_text, kr_stocks as gate_kr_stocks, us_stocks as gate_us_stocks)
+                           div_line_bad_rows, div_lines_lost, own_drop_rec, own_drop_text, kr_stocks as gate_kr_stocks, us_stocks as gate_us_stocks)
 
 # ────────────────────────────────────────────────────────────
 # 설정
@@ -9924,7 +9924,7 @@ def own_drop_us_class(us, umeta):
                 if isinstance(uf.get(k), dict):
                     uf[k] = {t: v for t, v in uf[k].items() if t not in bad}
         if isinstance(umeta.get("usInfo"), list) and len(umeta["usInfo"]) == 2:   # [상세 정보를 붙인 종목, 종목] — 뺀 행만큼 줄여요
-            info = sum(1 for s in us if s.get("t") in bad and s.get("nk") not in (None, s.get("t")))   # 정보가 없는 행의 이름은 티커 그대로예요
+            info = sum(1 for s in us if s.get("t") in bad and "dk" in s)     # dk 는 상세 정보를 붙인 행에만 (apply_us_info · n_ok 와 같은 행)
             umeta["usInfo"] = [max(0, umeta["usInfo"][0] - info), len(kept)]
     if rows:
         log(f"  !! {US_CLASS_DROP_NAME}: {len(rows)}건 빼고 발행 — {own_drop_text(rows)} (data.json ownDrop.usClass · 관문 경고 · "
@@ -9937,26 +9937,35 @@ def own_drop_us_class(us, umeta):
     return kept, own_drop_rec(rows)
 
 
-def own_blank_div_lines(kr, div_counts):
+def own_blank_div_lines(kr, div_counts, prev=None):
     """#142 의 우리 처리 검사 (validate_data.div_line_bad_rows): 기록(divCheck.proofSub)과 맞지 않는 숨긴 배당수익률의 줄을 비워요 →
     ownDrop.divLine 의 값. shown (종목에 줄이 있는데 기록이 그 줄을 정하지 않음): 그 종목의 dvLine 만 지워요 — 앱은 그 자리에 이유 줄 없이
     빈 배당수익률을 보여요 (숫자는 그대로 · 틀릴 수 있는 이유를 말하지 않아요). missing (기록은 줄을 정했는데 표시가 없음): 비울 것이 없어요 (이유
-    줄 없이 빈칸 그대로). 둘 다 수에 들어가요. 줄 1 (Jack 의 줄) 은 보지 않아요 (예전 규칙 그대로)."""
+    줄 없이 빈칸 그대로). 둘 다 수에 들어가요. 줄 1 (Jack 의 줄) 은 보지 않아요 (예전 규칙 그대로).
+    prev (직전 발행본 data.json): 오늘 기록이 없거나 틀려 확인할 수 없는 그 발행본의 줄 2 · 3 · 4 (validate_data.div_lines_lost · 관문과 같은 함수)도
+    로그에 세요 — 기록과 줄이 함께 사라진 날 비울 것이 없어도 그 종목들은 이유 줄을 잃고, 관문은 그 수까지 합쳐 N 을 넘으면 실패해요 (리뷰 2차)."""
     kr_g = gate_kr_stocks({"stocks": kr})
-    rows, probs, _want, _checked = div_line_bad_rows(kr_g, div_counts)
+    rows, probs, _want, checked = div_line_bad_rows(kr_g, div_counts)
+    lost = div_lines_lost(prev, checked)
+    total = len({r[0] for r in rows} | set(lost))
+    over = max(len(rows), total) > DIV_LINE_BLANK_MAX
     by = {s.get("t"): s for s in kr_g}
     for t, _w, kind in rows:
         if kind == "shown":
             by[t].pop("dvLine", None)
     n_miss = sum(1 for r in rows if r[2] == "missing")
+    gate = (f"줄을 잃은 종목 {max(len(rows), total)}곳 — {DIV_LINE_BLANK_MAX}곳을 넘어 관문에서 실패해 발행하지 않아요" if over
+            else f"관문 경고 · 줄을 잃은 종목이 {DIV_LINE_BLANK_MAX}곳을 넘으면 실패")
     if rows:
         log(f"  !! {DIV_LINE_DROP_NAME}: {len(rows)}건 비움" + (f" (그중 줄이 원래 없던 종목 {n_miss})" if n_miss else "")
-            + f" — {own_drop_text(rows)} (data.json ownDrop.divLine · 관문 경고 · "
-            + (f"{DIV_LINE_BLANK_MAX}건을 넘어 관문에서 실패해 발행하지 않아요)" if len(rows) > DIV_LINE_BLANK_MAX else f"{DIV_LINE_BLANK_MAX}건을 넘으면 실패)"))
+            + f" — {own_drop_text(rows)} (data.json ownDrop.divLine · {gate})")
     else:
-        log(f"· {DIV_LINE_DROP_NAME}: 0건 비움")
+        log(f"{'  !! ' if lost else '· '}{DIV_LINE_DROP_NAME}: 0건 비움" + (f" ({gate})" if lost else ""))
+    if lost:
+        log(f"  !! {DIV_LINE_DROP_NAME}: 직전 발행본에 줄 2 · 3 · 4 가 있던 {len(lost)}곳은 오늘 기록(proofSub)이 없거나 틀려 확인할 수 없어 이유 줄이 "
+            f"빠져요 — {', '.join(lost[:30])}{f' 외 {len(lost) - 30}곳' if len(lost) > 30 else ''} ({gate})")
     if probs and isinstance((div_counts or {}).get("proof"), dict):     # 증명이 돌았는데 기록이 맞지 않아요 (증명이 없는 실행은 기록도 없어요)
-        log(f"  !! {DIV_LINE_DROP_NAME} — 기록 문제 (관문 경고): " + " · ".join(probs))
+        log(f"  !! {DIV_LINE_DROP_NAME} — 기록 문제 ({'관문에서 실패해 발행하지 않아요' if over else '관문 경고'}): " + " · ".join(probs))
     return own_drop_rec(rows)
 
 
@@ -10172,7 +10181,7 @@ def main():
 
     # 2026-11-19 (Jack 의 상시 규칙): #142 의 검사가 잡는 숨긴 배당수익률의 줄(기록과 맞지 않는 dvLine 2 · 3 · 4)은 쓰기 바로 앞에서 비워요
     # (data.json ownDrop.divLine) — 그 뒤로 줄을 바꾸는 단계가 없어요 (corp.json 은 dvLine 을 싣지 않아요)
-    own_div = own_blank_div_lines(kr, div_counts)
+    own_div = own_blank_div_lines(kr, div_counts, prev)
     try:      # 여기서 멈추지 않아요: 빈 칸으로 쓰면 관문이 경고하고, 앱은 예전 4일 규칙으로 '늦음'을 봐요 (Jack, 2026-11-07)
         next_pub = next_publish(dt.date.fromisoformat(kmeta["pxDate"]), dt.date.fromisoformat(umeta["usPxDate"]), hol)
         log(f"· 다음 발행 예정일 {next_pub} · 늦음 경고 {stale_after(next_pub)} (휴장일 표 "

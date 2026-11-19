@@ -31,6 +31,8 @@ from test_us_share_class import run as run_us  # noqa: E402
 from test_v191b_data import check, rows_of  # noqa: E402
 from test_v191j_div_lines import with_lines, SUB_ROW, run as run_div  # noqa: E402
 from test_v191i_div_proof import ROWS as PROOF_ROWS  # noqa: E402
+from test_v191b_data import recount  # noqa: E402
+from test_v191h_div_why import recount_why, mirror  # noqa: E402
 
 US_LOG = f"{F.US_CLASS_DROP_NAME}: "
 DIV_LOG = f"{F.DIV_LINE_DROP_NAME}: "
@@ -47,7 +49,7 @@ def test_the_pipeline_uses_the_gates_own_functions_and_writes_the_record():
     assert F.us_class_bad_rows is V.us_class_bad_rows and F.div_line_bad_rows is V.div_line_bad_rows and F.own_drop_rec is V.own_drop_rec
     src = inspect.getsource(F.main)
     assert "us, own_us = own_drop_us_class(us, umeta)" in src
-    assert "own_div = own_blank_div_lines(kr, div_counts)" in src
+    assert "own_div = own_blank_div_lines(kr, div_counts, prev)" in src
     assert '"ownDrop": {US_CLASS_DROP_KEY: own_us, DIV_LINE_DROP_KEY: own_div},' in src
     # 미국 행은 미국 목록이 정해진 바로 뒤에 빼요 (분할 · 업종 · 순위 · 인기 목록 · 종목 수보다 먼저) · 줄은 쓰기 바로 앞에서 비워요
     i_us = src.index("own_drop_us_class(us")
@@ -176,10 +178,8 @@ def test_a_mapping_that_differs_from_the_table_drops_its_row_and_only_warns():
 
 def test_a_broken_record_warns_unless_a_joined_form_of_unknown_source_is_published():
     """기록 모양이 틀린 것만으로는 틀린 숫자를 보이지 않아요 → 경고 (예전 발행 실패). 다만 spTickers 를 믿을 수 없는데 점이 지워진 꼴이 실렸으면
-    S&P 목록에서 왔는지 알 수 없어 빼요 (남았으면 발행 실패). mapped 의 틀린 줄이 점이 지워진 꼴과 상관없으면 (ZZZ) 경고 — 그 꼴이 든 줄이나
-    읽을 수 없는 줄은 아래 시험 (리뷰 1차 M1: 발행 실패 그대로)."""
-    table = [["S&P500", k, v] for k, v in V.US_CLASS_JOINED_SET.items()]
-    for kw in ({"read": "yes"}, {"noPx": ["XYZA"]}, {"mapped": table + [["S&P500", "ZZZ"]]}):
+    S&P 목록에서 왔는지 알 수 없어 빼요 (남았으면 발행 실패). mapped 의 틀린 줄은 아래 시험 (리뷰 1차 M1 · 2차: 발행 실패 그대로)."""
+    for kw in ({"read": "yes"}, {"noPx": ["XYZA"]}, {"unmapped": {"x": 1}}):
         rows, _ = run_us({"usListSym": rec(**kw), "ownDrop": {"usClass": EMPTY}}, us_rows())
         assert rows[ROW2][3] == "WARN" and "기록 모양이 틀림" in rows[ROW2][1], (kw, rows[ROW2])
         assert run_us({"usListSym": rec(**kw)}, us_rows())[0][ROW2][3] == "FAIL"                 # 예전 규칙 (기록 없는 파일)
@@ -195,6 +195,7 @@ def test_a_broken_record_warns_unless_a_joined_form_of_unknown_source_is_publish
 
 
 @pytest.mark.parametrize("mapped", [
+    [["S&P500", "BRKB", "BRK-B"], ["S&P500", "BFB", "BF-B"], ["S&P500", "ZZZ"]],   # 다른 티커의 틀린 줄도 (리뷰 2차: mapped 에는 바꾼 줄만 들어가요)
     [["S&P500", "BRKB", "BRK-B"], ["S&P500", "BFB"]],                       # 점이 지워진 꼴이 든 줄인데 어디로 바뀌었는지 없음
     [["S&P500", "BRKB", "BRK-B"], ["S&P500", "BFB", 3]],                    # 읽을 수 없는 칸
     [["S&P500", "BRKB", "BRK-B"], "BFB→BF-B"],                              # 줄이 목록이 아님
@@ -202,8 +203,8 @@ def test_a_broken_record_warns_unless_a_joined_form_of_unknown_source_is_publish
     None,
 ])
 def test_a_mapped_record_the_gate_cannot_read_for_a_joined_form_still_fails_the_publish(mapped):
-    """리뷰 1차 M1: mapped 의 틀린 줄이 점이 지워진 꼴(BRKB · BFB)에 관한 것이거나 읽을 수 없으면, 그 꼴이 어디로 바뀌었는지 (엉뚱한 회사가
-    실렸는지) 관문이 확인할 수 없어요 → 기록이 있어도 발행 실패 · 사이트 점검 경고 (예전 'mapped 모양' 실패와 같아요)."""
+    """리뷰 1차 M1 · 2차: mapped 에 모양이 틀린 줄이 하나라도 있으면 (mapped 에는 점이 지워진 꼴을 바꾼 줄만 들어가요) 그 꼴이 어디로 바뀌었는지
+    (엉뚱한 회사가 실렸는지) 관문이 맞춰 볼 수 없어요 → 기록이 있어도 발행 실패 · 사이트 점검 경고 (예전 'mapped 모양' 실패와 같아요)."""
     data = {"usListSym": rec(mapped=mapped), "ownDrop": {"usClass": EMPTY}}
     rows, _ = run_us(data, us_rows())
     assert rows[ROW2][3] == "FAIL" and V.US_CLASS_BLIND in rows[ROW2][1], rows[ROW2]
@@ -211,8 +212,9 @@ def test_a_mapped_record_the_gate_cannot_read_for_a_joined_form_still_fails_the_
     assert V.US_CLASS_BLIND in V.us_class_bad_rows(data["usListSym"], us_rows())[1]
 
 
-def test_one_bad_mapped_row_does_not_switch_the_wrong_mapping_guard_off():
-    """리뷰 1차 M1 (probe1): mapped 의 다른 줄 하나가 틀려도 (ZZZ) 나머지 줄은 읽어요 — BFB → BFB-X 의 행은 빼고 경고 (예전 규칙: 발행 실패)."""
+def test_a_malformed_mapped_row_fails_the_publish_but_the_wrong_row_is_still_dropped():
+    """리뷰 1차 M1 (probe1) · 2차: mapped 의 다른 줄 하나가 틀려도 (ZZZ) 나머지 줄은 읽어 BFB → BFB-X 의 행은 빼요. 그래도 틀린 줄이 있으면 발행은
+    실패 · 사이트 점검은 경고 (예전 규칙과 같은 엄격함)."""
     r = rec(mapped=[["S&P500", "BRKB", "BRK-B"], ["S&P500", "BFB", "BFB-X"], ["S&P500", "ZZZ"]])
     us = us_rows(extra=[{"t": "BFB-X", "cls": "us", "price": 5.0}])
     lines = []
@@ -222,9 +224,10 @@ def test_one_bad_mapped_row_does_not_switch_the_wrong_mapping_guard_off():
     finally:
         F.log = old_log
     assert own == {"n": 1, "rows": [["BFB-X", "관문 표와 다르게 바꾼 티커 BFB → BFB-X (관문 표 BF-B)"]]} and "BFB-X" not in {x["t"] for x in kept}
-    assert any("기록 문제 (관문 경고)" in x for x in lines)
+    assert any("기록 문제 (관문에서 실패해 발행하지 않아요)" in x and V.US_CLASS_BLIND in x for x in lines)
     rows, _ = run_us({"usListSym": r, "ownDrop": {"usClass": own}}, kept)
-    assert rows[ROW2][3] == "WARN" and "관문 표와 다르게 바꿈: BFB → BFB-X (관문 표 BF-B)" in rows[ROW2][1]
+    assert rows[ROW2][3] == "FAIL" and "관문 표와 다르게 바꿈: BFB → BFB-X (관문 표 BF-B)" in rows[ROW2][1] and V.US_CLASS_BLIND in rows[ROW2][1]
+    assert run_us({"usListSym": r, "ownDrop": {"usClass": own}}, kept, "live")[0][ROW2][3] == "WARN"
     rows, _ = run_us({"usListSym": r, "ownDrop": {"usClass": EMPTY}}, us)              # 빼지 않고 남음 → 발행 실패
     assert rows[ROW2][3] == "FAIL" and "빼야 할 티커가 남아 실림: BFB-X" in rows[ROW2][1]
     assert run_us({"usListSym": r}, us)[0][ROW2][3] == "FAIL"                           # 예전 규칙 그대로
@@ -233,7 +236,7 @@ def test_one_bad_mapped_row_does_not_switch_the_wrong_mapping_guard_off():
 def test_a_dropped_row_leaves_nothing_behind_in_the_run_record():
     """리뷰 1차 S1: 뺀 종목은 미국 외국 회사 기록(usForeign: checked · cut · kind · kept · set · unknown)에서도 빠져요 — 남으면 check_us_foreign 이
     'kind ≠ 종목 표시' 로 발행 전체를 막아요. usInfo 도 뺀 행만큼 줄여요."""
-    bfb = {"t": "BFB", "cls": "us", "price": 9.0, "nk": "Big Fun Inc", "fgnCut": {"per": "mismatch"}}
+    bfb = {"t": "BFB", "cls": "us", "price": 9.0, "nk": "Big Fun Inc", "dk": "설명", "fgnCut": {"per": "mismatch"}}
     us = us_rows(extra=[bfb])
     uf = {"checked": ["BFB"], "cut": [["BFB", "per", "회사 합계와 맞지 않음"]], "kind": {"BFB": {"per": "mismatch"}}, "kept": [["BFB", "pbr", "x"]],
           "nocmp": V.US_FGN_NOCMP, "set": {"BFB": ["Japan", None, "country"]}, "unknown": ["BFB"], "sp500": {"n": 503, "inList": 500, "ok": True}}
@@ -245,7 +248,15 @@ def test_a_dropped_row_leaves_nothing_behind_in_the_run_record():
         F.log = old_log
     assert own["n"] == 1 and "BFB" not in {x["t"] for x in kept}
     assert umeta["usForeign"] == {**uf, "checked": [], "cut": [], "kind": {}, "kept": [], "set": {}, "unknown": []}
-    assert umeta["usInfo"] == [len(us) - 1, len(kept)]
+    assert umeta["usInfo"] == [len(us) - 1, len(kept)]                                  # 상세 정보(dk)를 붙인 행이었어요
+    bare = {"t": "BFB", "cls": "us", "price": 9.0, "nk": "BFB"}                          # 상세 정보 없는 행 (이름 = 티커 · dk 없음)
+    um2 = {"usListSym": umeta["usListSym"], "usInfo": [len(us) - 1, len(us)]}
+    old_log, F.log = F.log, lambda *a: None
+    try:
+        F.own_drop_us_class(us_rows(extra=[bare]), um2)
+    finally:
+        F.log = old_log
+    assert um2["usInfo"] == [len(us) - 1, len(us) - 1]
     rep = V.Report()
     V.check_us_foreign(rep, {"usForeign": umeta["usForeign"]}, kept, "publish")
     assert not rep.failed, rep.table()
@@ -306,11 +317,11 @@ def line_pair():
     return files, prev, abc
 
 
-def blank(cur, monkeypatch):
-    """파이프라인처럼: 같은 함수로 비우고 data.json ownDrop.divLine 에 적어요 → (기록, 로그)."""
+def blank(cur, monkeypatch, prev=None):
+    """파이프라인처럼: 같은 함수로 비우고 data.json ownDrop.divLine 에 적어요 → (기록, 로그). prev: 직전 발행본 data.json (로그가 잃은 줄을 세요)."""
     lines = []
     monkeypatch.setattr(F, "log", lines.append)
-    own = F.own_blank_div_lines(cur["data"]["stocks"], cur["data"]["divCheck"])
+    own = F.own_blank_div_lines(cur["data"]["stocks"], cur["data"]["divCheck"], prev)
     cur["data"]["ownDrop"] = {"divLine": own}
     return own, lines
 
@@ -431,8 +442,10 @@ def test_lines_lost_with_their_record_count_toward_n(line_pair, monkeypatch, how
         cur["data"]["divCheck"]["proofSub"]["v"] = 2
     for s in abc:
         s.pop("dvLine")
-    own, _lines = blank(cur, monkeypatch)
+    own, lines = blank(cur, monkeypatch, had["data"])
     assert own == EMPTY
+    assert any(x.startswith(f"  !! {DIV_LOG}0건 비움 (관문 경고") for x in lines), lines                 # 리뷰 2차: '· 0건' 이 아니에요
+    assert any(x.startswith(f"  !! {DIV_LOG}직전 발행본에 줄 2 · 3 · 4 가 있던 3곳은") for x in lines), lines
     rep = check(cur, had)
     row = rows_of(rep)[SUB_ROW]
     assert not rep.failed and row[3] == "WARN" and "오늘 기록으로 확인할 수 없는 직전 발행본의 줄 2 · 3 · 4 3곳" in row[1], rep.table()
@@ -440,6 +453,62 @@ def test_lines_lost_with_their_record_count_toward_n(line_pair, monkeypatch, how
     row = rows_of(check(cur, had))[SUB_ROW]
     assert row[3] == "FAIL" and "줄을 잃은 종목이 기준 2 을 넘음 (3)" in row[1], row
     assert rows_of(check(cur, had, mode="live"))[SUB_ROW][3] == "WARN"                  # 사이트 점검은 직전 발행본을 보지 않아요
+
+
+def with_more_lines(files):
+    """with_lines 에 data 어긋남(줄 3) 종목 d 를 하나 더 (data 3곳 · rights 1곳) — 파이프라인처럼 기록과 표시를 함께."""
+    files, (a, b, c) = with_lines(files)
+    kr = [x for x in files["data"]["stocks"] if x.get("cls") == "kr" and not x.get("fund") and x.get("divSt") == "nd"]
+    d, e = kr[3], kr[4]
+    d["dpsF"] = [None] * 3
+    d["dps3a"] = [None if (v or 0) > 0 else v for v in d["dps3"]]
+    mirror(files, d)
+    d["dvLine"] = 3
+    dc = files["data"]["divCheck"]
+    proof, sub = dc["proof"], dc["proofSub"]
+    recount(files)
+    recount_why(files)
+    proof.update(data=3, dataT=sorted([a["t"], b["t"], d["t"]]))
+    sub["data"][d["t"]] = "div"
+    files["data"]["divCheck"]["proof"], files["data"]["divCheck"]["proofSub"] = proof, sub
+    return files, (a, b, c, d, e)
+
+
+def test_blanked_lines_and_lines_lost_with_a_broken_part_are_counted_as_distinct_stocks(monkeypatch):
+    """리뷰 2차 S-A (p1_union): 오늘 비운 줄(data 쪽 3곳)과 모양이 깨진 rights 기록과 함께 사라진 직전 발행본의 줄(3곳)은 서로 다른 종목이에요 —
+    큰 값(3)이 아니라 합친 종목 수(6)로 세요 → 실제 N(5)을 넘어 발행 실패. 파이프라인 로그도 같은 수를 말해요."""
+    cur, prev, _ = good_pair()
+    cur, (a, b, c, d, e) = with_more_lines(cur)
+    assert not check(copy.deepcopy(cur), prev).failed
+    f = next(s for s in cur["data"]["stocks"] if s.get("cls") == "kr" and not s.get("fund") and s["t"] not in V.MUST
+             and s["t"] not in {a["t"], b["t"], c["t"], d["t"], e["t"]})
+    had = copy.deepcopy(prev)
+    had["data"]["divCheck"] = copy.deepcopy(cur["data"]["divCheck"])
+    for s in had["data"]["stocks"]:
+        if s.get("t") in {c["t"], e["t"], f["t"]}:
+            s["dvLine"] = 2                                                         # 직전 발행본: 유상증자 줄 3곳
+    assert sum(1 for s in had["data"]["stocks"] if s.get("dvLine") == 2) == 3
+    cur["data"]["divCheck"]["proofSub"]["rights"] = {c["t"]: "sh", "999999": "sh"}   # rights 기록이 깨지고 그 줄도 사라짐
+    c.pop("dvLine")
+    a["dvLine"], b["dvLine"], d["dvLine"] = 4, 3, 4                                  # data 쪽 틀린 줄 3곳 → 비움
+    own, lines = blank(cur, monkeypatch, had["data"])
+    assert own["n"] == 3 and {r[0] for r in own["rows"]} == {a["t"], b["t"], d["t"]}
+    assert any("줄을 잃은 종목 6곳 — 5곳을 넘어 관문에서 실패해 발행하지 않아요" in x for x in lines), lines
+    rep = check(cur, had)
+    row = rows_of(rep)[SUB_ROW]
+    assert V.DIV_LINE_BLANK_MAX == 5 and row[3] == "FAIL" and "줄을 잃은 종목이 기준 5 을 넘음 (6)" in row[1], row
+    assert [r[0] for r in rep.failed] == [SUB_ROW], rep.table()
+    assert rows_of(check(cur, had, mode="live"))[SUB_ROW][3] == "WARN"
+
+
+def test_a_list_valued_line_never_crashes_the_count():
+    """리뷰 2차 (nit 5): 직전 발행본의 줄 값이 목록 같은 값이어도 관문이 멈추지 않아요 (숫자만 봐요)."""
+    prev = {"stocks": [{"t": "000010", "cls": "kr", "dvLine": [2]}, {"t": "000020", "cls": "kr", "dvLine": {"x": 3}},
+                       {"t": "000030", "cls": "kr", "dvLine": True}, {"t": "000040", "cls": "kr", "dvLine": 2}]}
+    assert V.div_lines_lost(prev, set()) == ["000040"] and V.div_lines_lost(prev, {"rights", "data"}) == []
+    assert V.div_lines_lost(None, set()) == []
+    kr = [{"t": "000010", "cls": "kr", "dvLine": [2]}, {"t": "000020", "cls": "kr", "dvLine": {"x": 3}}]
+    assert V.div_line_bad_rows(kr, {})[0] == []
 
 
 def test_a_broken_record_is_not_counted_as_stocks_without_a_line(line_pair, monkeypatch):
