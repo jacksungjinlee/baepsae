@@ -4203,7 +4203,8 @@ def fetch_disclosures(kr_stocks, cmap, end, client):
 #        how (유상증자만) holders 주주배정 · 주주우선공모 / others 제3자배정 · 일반공모 / null 그 밖 ·
 #        n · p (유상증자 · Jack 2026-11-19, 7b: 같은 종류끼리) n = 새 주식 수 — 보통주를 발행하면 새 보통주, 아니면 새 기타주식 (cls 가 어느
 #        쪽인지: common | other) · p = n ÷ 같은 종류의 증자 전 주식 수 % (육일씨엔에쓰 2026-08-26: 2,305,918 ÷ 보통주 11,204,255 = 20.58%) ·
-#        그 종류의 증자 전 주식이 없으면(처음 내는 기타주식) p null · 보통주와 기타주식을 함께 내면 n · p 는 보통주, n2 · p2 는 기타주식
+#        그 종류의 증자 전 주식이 '-' 이면(처음 내는 기타주식) p null · 그 칸이 없거나 읽지 못해도 p null (0 으로 치지 않아요 — 둘의 이유는
+#        캐시의 pwhy 와 로그에서 따로 세요 · 리뷰 2026-11-19) · 보통주와 기타주식을 함께 내면 n · p 는 보통주, n2 · p2 는 기타주식
 #        (그때만 있는 칸) · 사채의 p: 공시의 '전환(행사)에 따라 발행할 주식의 주식총수 대비 비율' · amt 사채 권면(전자등록)총액 원 (bd_fta ·
 #        '-' 이면 null) · cor 정정 공시([기재정정] · [첨부정정] …)인지 · bonus 유무상증자면 true (그때만 있는 칸 · n · p · how 는 유상 몫 —
 #        무상 몫의 숫자는 싣지 않아요). 유상증자 줄에는 늘 cls 가 있어요 (모르면 · 철회 · 읽는 중이면 null).
@@ -4216,8 +4217,9 @@ def fetch_disclosures(kr_stocks, cmap, end, client):
 #        종류)의 '정' 표시 공시는 그동안 넣지 않아요 — 새 판이 바꾼 옛 숫자를 지금 것처럼 보이지 않게 (하루 늦게 보일 수 있어요).
 # 실패   DART 가 실행을 멈추는 상태(한도 020 · 키 오류)를 이 단계에서 만나면 지난 발행본의 줄을 두고 issueOk false — 실행은 멈추지 않아요 (아직 어느
 #        화면도 이 칸을 읽지 않아요 · 리뷰 2026-11-16). 지분공시(fetch_disclosures)의 규칙은 그대로예요.
-ISSUE_TAG = "issue|v3"           # 캐시 키 '{접수번호}|issue|v3' — 읽는 방법이 바뀌면 올려요 (v2: 철회 표시 blank · 정수만 · v3: 같은 종류 n · p ·
-                                 # cls · n2 · p2 — Jack 2026-11-19, 7b). 다른 판의 키는 지워요 (한 번 다시 읽어요)
+ISSUE_TAG = "issue|v4"           # 캐시 키 '{접수번호}|issue|v4' — 읽는 방법이 바뀌면 올려요 (v2: 철회 표시 blank · 정수만 · v3: 같은 종류 n · p ·
+                                 # cls · n2 · p2 — Jack 2026-11-19, 7b · v4: 없는 칸 · 빈 글자는 0 이 아니라 읽지 못함 + 비율이 빈 이유 pwhy —
+                                 # 리뷰 2026-11-19). 다른 판의 키는 지워요 (한 번 다시 읽어요)
 ISSUE_KINDS = ("rights", "cb", "bw")    # 줄의 kind
 ISSUE_SRC = ISSUE_KINDS + ("pifric",)   # 목록 · 상세를 읽는 종류 (pifric 유무상증자 → 줄은 kind rights + bonus: true · Jack 2026-11-19, 7a)
 ISSUE_RIGHTS = ("rights", "pifric")
@@ -4299,35 +4301,48 @@ def _issue_whole(x):
 
 
 def _issue_count(v):
-    """주식 수 칸 → 정수: '-' · 빈 칸 · 0 은 0 (그 종류는 없어요), 정수인 양수는 그 수, 그 밖(소수 · 음수 · 글자)은 None (읽지 못함). (순수 함수)"""
-    x = _dash_none(v)
-    if x is True:
+    """주식 수 칸 → 정수: '-' 는 0 (DART 는 그 종류가 없으면 '-' 로 적어요) · 0 이상의 정수는 그 수. 칸이 없거나(None) 빈 글자 · 소수 · 음수 ·
+    글자는 None (읽지 못함 — 0 으로 치지 않아요 · 리뷰 2026-11-19). (순수 함수)"""
+    if v is None:
+        return None
+    t = str(v).strip()
+    if t in DASHES:
         return 0
+    x = _num(t) if t else None
     return int(x) if isinstance(x, float) and x >= 0 and x == int(x) else None
 
 
 def issue_rights_numbers(row, pre=""):
     """유상증자(유무상증자의 유상 몫 pre="piic_") 상세 한 줄 → {cls, n, p} (+ 보통주와 기타주식을 함께 내면 n2 · p2), 읽지 못한 칸 [이름].
     Jack 2026-11-19 (7b): 같은 종류끼리 — 새 보통주 ÷ 증자 전 보통주 · 새 기타주식 ÷ 증자 전 기타주식. 보통주를 내면 n · p 는 보통주
-    (cls common), 기타주식만 내면 기타주식 (cls other). 그 종류의 증자 전 주식이 0 이면 p 는 null (나눌 수 없어요 · 못 읽은 것은 아니에요).
-    새 주식 수를 읽지 못하면 셋 다 null. (순수 함수)"""
+    (cls common), 기타주식만 내면 기타주식 (cls other). 비율이 빈 이유는 pwhy {p · p2: zero | unread} 에 적어요 (캐시에만 · 줄에는 싣지 않아요):
+    zero = 그 종류의 증자 전 주식이 '-' · 0 (나눌 수 없어요 — 처음 내는 기타주식) · unread = 증자 전 주식 수 칸이 없거나 읽지 못함 (0 으로
+    치지 않아요 · 리뷰 2026-11-19). 새 주식 수를 읽지 못하면 셋 다 null. (순수 함수)"""
     on, en = _issue_count(row.get(pre + "nstk_ostk_cnt")), _issue_count(row.get(pre + "nstk_estk_cnt"))
     ob, eb = _issue_count(row.get(pre + "bfic_tisstk_ostk")), _issue_count(row.get(pre + "bfic_tisstk_estk"))
     out = {"cls": None, "n": None, "p": None}
     if on is None or en is None or (on == 0 and en == 0):
         return out, ["n", "p"]
+    why, bad = {}, []
 
-    def pct(new, before):
-        return _issue_pct(new / before * 100) if before else None
+    def pct(key, new, before):
+        if before is None:
+            why[key] = "unread"
+            bad.append(key)
+            return None
+        if before == 0:
+            why[key] = "zero"
+            return None
+        return _issue_pct(new / before * 100)
     if on > 0:
-        out.update(cls="common", n=on, p=pct(on, ob))
-        bad = [] if ob is not None else ["p"]
+        out.update(cls="common", n=on, p=pct("p", on, ob))
         if en > 0:
-            out.update(n2=en, p2=pct(en, eb))
-            bad += [] if eb is not None else ["p2"]
-        return out, bad
-    out.update(cls="other", n=en, p=pct(en, eb))
-    return out, ([] if eb is not None else ["p"])
+            out.update(n2=en, p2=pct("p2", en, eb))
+    else:
+        out.update(cls="other", n=en, p=pct("p", en, eb))
+    if why:
+        out["pwhy"] = why
+    return out, bad
 
 
 def issue_blank(row, kind):
@@ -4533,13 +4548,18 @@ def fetch_issues(kr_stocks, cmap, end, client):
     by_kind = collections.Counter(r["kind"] for r in rows)
     no_num = sum(1 for r in rows if r.get("pend"))
     wds = [r for r in rows if r.get("wd")]
-    # 유상증자의 '숫자 못 읽음': n 이 없거나 보통주 줄의 p 가 없음 (기타주식을 처음 내 증자 전 기타주식이 0 이면 p 가 없는 게 맞아요 — 따로 세요)
+    def pwhy(r, k):
+        """그 줄의 비율 k (p · p2) 가 빈 이유: zero (그 종류의 증자 전 주식이 없음) · unread (읽지 못함) · None (이유 없음)."""
+        g = (label.get(r["rc"]) or (None, None))[1]
+        return ((g.get("pwhy") or {}) if isinstance(g, dict) else {}).get(k)
+
+    # 유상증자의 '숫자 못 읽음': n 이 없거나, p · p2 가 비었는데 이유가 '그 종류의 증자 전 주식이 없음'(zero)이 아님 (리뷰 2026-11-19)
     part = sum(1 for r in rows if r["rc"] in read and not r.get("wd")
-               and ((r["n"] is None or (r["p"] is None and r.get("cls") != "other")) if r["kind"] == "rights"
-                    else any(r[k] is None for k in ("bd", "p", "amt"))))
+               and ((r["n"] is None or any(k in r and r[k] is None and pwhy(r, k) != "zero" for k in ("p", "p2")))
+                    if r["kind"] == "rights" else any(r[k] is None for k in ("bd", "p", "amt"))))
     other = [r for r in rows if r["kind"] == "rights" and r.get("cls") == "other"]
     bonus = sum(1 for r in rows if r.get("bonus"))
-    both = sum(1 for r in rows if "n2" in r)
+    both = [r for r in rows if "n2" in r]
     nf_all = sum(1 for st, _d in label.values() if st == "nf")
     left = sum(len(fs) for _, fs in later)
     log(f"· 주요사항 공시 목록(list.json B001): {len(items):,}건 ({page}쪽) · 오늘 국내 종목의 유상증자 · CB · BW · 유무상증자 공시 {len(filings):,}건 "
@@ -4559,9 +4579,12 @@ def fetch_issues(kr_stocks, cmap, end, client):
         + f"{sum(1 for r in rows if r['kind'] == 'rights' and r['rc'] in read and r['how'] is None):,}"
         + (f" · 상세를 아직 못 읽어 숫자 없이 줄만(pend) {no_num:,}" if no_num else "")
         + (f" · 유무상증자(bonus) {bonus:,}" if bonus else "")
-        + (f" · 기타주식만 낸 유상증자 {len(other):,} (그중 증자 전 기타주식이 없어 비율 없음 "
-           f"{sum(1 for r in other if r['p'] is None):,})" if other else "")
-        + (f" · 보통주와 기타주식을 함께 낸 유상증자 {both:,} (n2 · p2)" if both else ""))
+        + (f" · 기타주식만 낸 유상증자 {len(other):,} (비율 없음: 증자 전 기타주식이 없어 "
+           f"{sum(1 for r in other if r['p'] is None and pwhy(r, 'p') == 'zero'):,} · 증자 전 기타주식 수를 읽지 못해 "
+           f"{sum(1 for r in other if r['p'] is None and pwhy(r, 'p') != 'zero'):,})" if other else "")
+        + (f" · 보통주와 기타주식을 함께 낸 유상증자 {len(both):,} (n2 · p2 — p2 없음: 증자 전 기타주식이 없어 "
+           f"{sum(1 for r in both if r['p2'] is None and pwhy(r, 'p2') == 'zero'):,} · 증자 전 기타주식 수를 읽지 못해 "
+           f"{sum(1 for r in both if r['p2'] is None and pwhy(r, 'p2') != 'zero'):,})" if both else ""))
     if wds:
         log(f"  !! 주요사항 공시 철회 (숫자 칸이 모두 '-' 인 정정 공시 · wd: true · 카드가 건너뛰어요) {len(wds):,}건: "
             + ", ".join(f"{r['nk']} {ISSUE_KO['pifric' if r.get('bonus') else r['kind']]} {r['d']}" for r in wds[:40])

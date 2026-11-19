@@ -149,7 +149,7 @@ def test_fetch_issues_includes_rights_plus_bonus_marked_as_such(tmp_path, monkey
                  "how": "holders", "n": 3700000, "p": 13.72, "amt": None, "cor": True, "cls": "common", "bonus": True}
     assert ("pifric", "290650") in d.detail_calls()
     assert sum(1 for x in out["issue"] if x.get("bonus")) == 1 and len(out["issue"]) == len(T.WANT) + 1
-    assert c.entries["20261012000188|issue|v3"]["st"] == "000" and F.ISSUE_TAG == "issue|v3"
+    assert c.entries["20261012000188|issue|v4"]["st"] == "000" and F.ISSUE_TAG == "issue|v4"
     log = capsys.readouterr().out
     assert "주요사항 공시: 유상증자 12 · CB 14 · BW 1 (정정 22), 숫자 못 읽음 0" in log and "유무상증자(bonus) 1" in log
     assert "목록 밖 회사 1" in log                                           # 엘앤씨바이오가 이제 목록 안
@@ -280,3 +280,85 @@ def test_the_cache_tag_moved_so_old_rows_are_read_again(tmp_path, monkeypatch):
 def test_rows_stay_json_clean():
     rows = [good_row(n2=500, p2=25.0, bonus=True)]
     json.dumps(copy.deepcopy(rows), allow_nan=False)
+
+
+# ── 리뷰 2026-11-19 (0b5e1b8): 빈 비율의 이유 · 없는 칸은 0 이 아님 · p2 도 큰 비율 경고 ─────────────
+
+@pytest.mark.parametrize("v, want", [(None, None), ("", None), ("  ", None), ("-", 0), ("－", 0), ("0", 0), ("1,000", 1000),
+                                     ("1.5", None), ("-5", None), ("abc", None), (" 2,153,446 ", 2153446)])
+def test_a_missing_or_blank_count_is_unreadable_not_zero(v, want):
+    assert F._issue_count(v) == want
+
+
+def test_a_missing_pre_issue_count_is_null_with_its_own_reason():
+    # 기타주식만 낸 줄인데 '증자 전 기타주식' 칸이 없음 → p null · 이유 unread (예전: 칸이 없으면 0 으로 읽어 '없어서 비율 없음')
+    row = {"nstk_ostk_cnt": "-", "nstk_estk_cnt": "1,690,042", "bfic_tisstk_ostk": "11,379,656", "ic_mthn": "제3자배정증자"}
+    d, bad = F.parse_issue_detail(row, "rights")
+    assert (d["cls"], d["n"], d["p"], d["pwhy"], bad) == ("other", 1690042, None, {"p": "unread"}, ["p"])
+    row["bfic_tisstk_estk"] = "-"                                            # 진짜 0 (DART 의 '-') → 이유 zero · 못 읽은 것이 아님
+    d, bad = F.parse_issue_detail(row, "rights")
+    assert (d["p"], d["pwhy"], bad) == (None, {"p": "zero"}, [])
+    row["bfic_tisstk_estk"] = ""                                             # 빈 글자도 읽지 못한 것
+    assert F.parse_issue_detail(row, "rights")[0]["pwhy"] == {"p": "unread"}
+    # 새 주식 수 칸이 없으면 0 이 아니라 읽지 못함 (셋 다 null)
+    d, bad = F.parse_issue_detail({"nstk_ostk_cnt": "1,000", "bfic_tisstk_ostk": "10,000", "bfic_tisstk_estk": "-"}, "rights")
+    assert (d["cls"], d["n"], d["p"], bad) == (None, None, None, ["n", "p"])
+    d, _ = F.parse_issue_detail(T.api_row("rights", "191410", "20260826000431"), "rights")
+    assert "pwhy" not in d                                                   # 비율이 있으면 이유 칸도 없어요
+
+
+def _with(row_kw):
+    det = copy.deepcopy(T.detail("rights", "191410"))
+    for r in det["list"]:
+        if r["rcept_no"] == "20260826000431":
+            r.update(row_kw)
+    return det
+
+
+def _run_with(tmp_path, monkeypatch, det):
+    monkeypatch.setattr(F, "OUT_DISC", str(tmp_path / "disc.json"))
+    c = F.DartClient("k", mode="cache", today=TODAY, path=str(tmp_path / "c.json.gz"))
+    c.get = T.Dart(c, details={("rights", "191410"): det})
+    return F.fetch_issues(T.KR, T.CORP, TODAY, c)
+
+
+@pytest.mark.parametrize("before, zero, unread, loud", [("-", 1, 0, False), ("약 5만", 0, 1, True), (None, 0, 1, True)])
+def test_a_null_p2_is_counted_and_logged_with_its_reason(tmp_path, monkeypatch, capsys, before, zero, unread, loud):
+    kw = {"nstk_estk_cnt": "500,000", "bfic_tisstk_estk": before}
+    det = _with({k: v for k, v in kw.items() if v is not None})
+    if before is None:
+        for r in det["list"]:
+            if r["rcept_no"] == "20260826000431":
+                del r["bfic_tisstk_estk"]                                    # 칸이 아예 없음
+    out = _run_with(tmp_path, monkeypatch, det)
+    r = {x["rc"]: x for x in out["issue"]}["20260826000431"]
+    assert (r["cls"], r["n"], r["p"], r["n2"], r["p2"]) == ("common", 2305918, 20.58, 500000, None)
+    log = capsys.readouterr().out
+    assert (f"보통주와 기타주식을 함께 낸 유상증자 1 (n2 · p2 — p2 없음: 증자 전 기타주식이 없어 {zero} · 증자 전 기타주식 수를 읽지 못해 "
+            f"{unread})") in log
+    line = next(x for x in log.splitlines() if "주요사항 공시: 유상증자" in x)
+    assert line.startswith("  !! ") == loud and (f"숫자 못 읽음 {unread}" in line)
+    assert "pwhy" not in r                                                   # 이유는 캐시와 로그에만 (줄에는 싣지 않아요)
+
+
+@pytest.mark.parametrize("before, zero, unread", [("-", 1, 0), ("abc", 0, 1)])
+def test_an_other_only_row_names_why_its_ratio_is_blank(tmp_path, monkeypatch, capsys, before, zero, unread):
+    det = _with({"nstk_ostk_cnt": "-", "nstk_estk_cnt": "2,305,918", "bfic_tisstk_estk": before})
+    out = _run_with(tmp_path, monkeypatch, det)
+    r = {x["rc"]: x for x in out["issue"]}["20260826000431"]
+    assert (r["cls"], r["n"], r["p"]) == ("other", 2305918, None)
+    log = capsys.readouterr().out
+    assert (f"기타주식만 낸 유상증자 1 (비율 없음: 증자 전 기타주식이 없어 {zero} · 증자 전 기타주식 수를 읽지 못해 {unread})") in log
+    assert f"숫자 못 읽음 {unread}" in log
+
+
+def test_gate_warns_on_a_large_p2_too():
+    cur = T.good_files()[0]
+    cur["disc"]["issue"][0].update(n2=500, p2=3500.0)
+    got, _ = T.rows_of(cur)
+    assert got[T.ISSUE_ROW][3] == "WARN" and "3,000% 넘는 줄 1개 (삼성전자 3,500.00% (p2)" in got[T.ISSUE_ROW][1], got[T.ISSUE_ROW]
+    cur["disc"]["issue"][0].update(p=3200.0)                                 # 한 줄에 둘 다 — 줄은 하나로 세요
+    got, _ = T.rows_of(cur)
+    assert "3,000% 넘는 줄 1개 (삼성전자 3,200.00% · 3,500.00% (p2)" in got[T.ISSUE_ROW][1]
+    cur["disc"]["issue"][0].update(p=2.05, p2=25.0)
+    assert T.rows_of(cur)[0][T.ISSUE_ROW][3] == "PASS"

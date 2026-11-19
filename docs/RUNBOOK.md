@@ -588,7 +588,8 @@ What the daily run writes (`fetch_data.py` `fetch_issues`, `fill_issue_bd`, `ins
   DART gives one row per decision, under the filing number of its newest version; an attachment-only correction keeps the
   earlier number (corrections follow this DART record: Jack's yes 2026-11-19). A row is a decision whose filing number is in
   the 90-day list. Results are cached in the DART cache
-  (`{filing number}|issue|v3`: decision row · older version · missing; v3 re-reads rows parsed before the same-class rule), also in a full-DART run, and dropped when the filing
+  (`{filing number}|issue|v4`: decision row · older version · missing; v4 re-reads rows parsed before the same-class rule and the
+  missing-is-not-zero rule), also in a full-DART run, and dropped when the filing
   leaves the window (keys of other versions are dropped too). At most 150 (company, kind) lookups a run (`ISSUE_PER_RUN`),
   newest first; the rest wait for the next run and their newest filings show as `pend: true` with blank numbers meanwhile
   (while a pair has such a filing, its filings the list marks "정" are left out, so an outdated number never shows as current).
@@ -596,8 +597,9 @@ What the daily run writes (`fetch_data.py` `fetch_issues`, `fill_issue_bd`, `ins
   only as whole numbers.
 - **Rights-issue numbers (Jack 2026-11-19, 7b: same class)** — `n` is the new common shares when the decision issues common
   shares, else the new 기타주식 (`cls` says which: `common` · `other`); `p` is `n` ÷ the existing shares of that same class
-  (육일씨엔에쓰 2026-08-26: 2,305,918 ÷ 11,204,255 common = 20.58 %). With no existing shares of that class (a first 기타주식
-  issue) `p` is null. When a decision issues both classes, `n` · `p` are the common shares and `n2` · `p2` the 기타주식 (those two
+  (육일씨엔에쓰 2026-08-26: 2,305,918 ÷ 11,204,255 common = 20.58 %). With no existing shares of that class (DART's "-": a
+  first 기타주식 issue) `p` is null; a count field that is missing, blank or unreadable is never read as 0 — that ratio is null
+  too, and the log counts the two reasons apart ("비율 없음: 증자 전 기타주식이 없어 … · … 읽지 못해 …", also for `p2`). When a decision issues both classes, `n` · `p` are the common shares and `n2` · `p2` the 기타주식 (those two
   keys only then). Every rights row has `cls` (null when unknown, withdrawn or pending).
 - **유무상증자 (`bonus: true`)** — the row is `kind: "rights"` with `bonus: true`; `n` · `p` · `how` describe the paid part
   (`piic_` fields), the bonus part's numbers are not carried, and `bd` is DART's own board date (`fric_bddd`), window-checked
@@ -640,7 +642,7 @@ Gate rows (`validate_data.py` `check_v196b` and `check_issue_bd`; additions only
   since Jack's 2026-11-19 answers also: a `cls` other than common · other · null or on a bond, a rights row with `n` but no
   `cls`, `n2` · `p2` other than on a common row with a positive whole `n2`, a `bonus` that is not `true` or is on a bond), a
   filing number appears twice, or `issueOk` is missing. That is our own bug: look at
-  the run's "주요사항" log lines. **WARN** (never blocks): no `issue` section (a file from before #PR, e.g. the live site right
+  the run's "주요사항" log lines. **WARN** (never blocks; the 3,000 % check also covers `p2`): no `issue` section (a file from before #PR, e.g. the live site right
   after the merge), `issueOk` false (the list failed and last run's rows were kept), 0 rows, a row whose stock left today's
   list, a ratio above 3,000 % (check the filing; STX's 1,855.66 % on 2026-10-14 is real), or more than 10 % of rows without any
   number, withdrawals not counted (lookups not finished: normal on the first run after the merge).

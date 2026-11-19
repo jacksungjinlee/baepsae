@@ -1898,7 +1898,7 @@ def _check_issue(rep, disc, by, base):
           f"또는 YYYYMMDD · how 빈 칸 또는 {'|'.join(ISSUE_HOW)} (유상증자만) · n 양의 정수 (유상증자만) · p 양수 · amt 양수 (사채만) · cor 참/거짓 · "
           f"접수번호 한 번 · issueOk 참/거짓 · wd · pend 는 있으면 참/거짓이고 그 줄의 숫자는 빈 칸 · 유상증자의 cls 는 {'|'.join(ISSUE_CLS)}|null "
           f"(n 이 있으면 꼭) · n2 · p2 는 보통주 줄만 · bonus 는 유상증자에 true 만 (실패) — 칸이 없음(v19.6b 전 파일) · "
-          f"issueOk false · 0건 · 오늘 국내 목록 밖 종목 · p > {ISSUE_P_WARN:,.0f}% · 숫자 없는 줄(철회 빼고) > {ISSUE_BLANK_WARN:g}% 는 경고")
+          f"issueOk false · 0건 · 오늘 국내 목록 밖 종목 · p · p2 > {ISSUE_P_WARN:,.0f}% · 숫자 없는 줄(철회 빼고) > {ISSUE_BLANK_WARN:g}% 는 경고")
     if "issue" not in disc:
         rep.add(name, True, "없음 — v19.6b 전 파일이에요 (DART 를 쓴 실행은 늘 써요)", th, warn=True)
         return
@@ -1928,7 +1928,10 @@ def _check_issue(rep, disc, by, base):
     gone = sorted({r["t"] for r in good if (by.get(r["t"]) or {}).get("cls") != "kr"})
     if gone:
         warns.append(f"오늘 국내 목록에 없는 종목 {len(gone)}곳 ({', '.join(gone[:5])})")
-    big = [f"{r['nk']} {r['p']:,.2f}%" for r in good if r.get("p") is not None and r["p"] > ISSUE_P_WARN]
+    # 리뷰 2026-11-19: 보통주와 함께 낸 기타주식의 비율(p2)도 같은 경고 (더하기만)
+    big = [f"{r['nk']} " + " · ".join(f"{r[k]:,.2f}%" + (" (p2)" if k == "p2" else "") for k in ("p", "p2")
+                                      if r.get(k) is not None and r[k] > ISSUE_P_WARN)
+           for r in good if any(r.get(k) is not None and r[k] > ISSUE_P_WARN for k in ("p", "p2"))]
     if big:
         warns.append(f"p 가 {ISSUE_P_WARN:,.0f}% 넘는 줄 {len(big)}개 ({', '.join(big[:3])} — 공시를 확인해요)")
     live = [r for r in good if r.get("wd") is not True]               # 철회 줄은 숫자가 없는 게 맞아요
