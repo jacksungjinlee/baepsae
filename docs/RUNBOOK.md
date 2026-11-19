@@ -256,7 +256,7 @@ Open a new Claude Code Cloud session and paste (replace N with the issue number,
 Claude reads the run logs, fixes the cause by the CLAUDE.md rules (fix the data or the code, never loosen a check), and
 tells you what happened in plain words.
 
-## Checks on our own processing: drop or blank, then publish (Jack's standing rule, since #?)
+## Checks on our own processing: drop or blank, then publish (Jack's standing rule, since #149)
 
 Jack, 2026-11-19: "Standing rule for checks on our own processing: a single bad row is dropped or blanked with a loud warning and
 the rest publishes. Block only when many rows fail in one run (set the number from recent runs and show it in the PR) or when a
@@ -290,11 +290,11 @@ still wrong in the file, and lines 2 · 3 · 4 of the previous publish that toda
 malformed (the record and the lines vanishing together blank nothing, but those stocks still lose their line). These are usually
 different stocks, so they are added up, not compared. The run log counts the same stocks (it reads the previous publish).
 On the site checks (`--live`: deploy and watchdog) "more than N" warns instead of failing, and the US rows keep #139's live behaviour.
-A file without `ownDrop` (published before #?) keeps the old rule for that row, so the live gate and the watchdog are not blocked by
+A file without `ownDrop` (published before #149) keeps the old rule for that row, so the live gate and the watchdog are not blocked by
 it; a malformed `ownDrop` (the whole object or one entry) also keeps the old rule and adds a warning.
 
 **N** = max(5, 3 × the highest count seen). Replayed over the last 25 publishes on the `data` branch (2026-11-06 to 11-19): 0 for
-both checks every time, so N = 5 (`US_CLASS_DROP_MAX`, `DIV_LINE_BLANK_MAX`; the table is in PR #?). For scale: the 11-19 file has
+both checks every time, so N = 5 (`US_CLASS_DROP_MAX`, `DIV_LINE_BLANK_MAX`; the table is in PR #149). For scale: the 11-19 file has
 800 US stocks and 30 lines 2·3·4, so a broken record that blanks all 30 lines (or loses them with the record) fails the gate, as it should.
 **The US count cannot realistically pass 5:** its rows come only from the two table forms (`BRKB`, `BFB`), at most one joined row and one
 wrongly mapped row each, so about 4 a run (only a hand-made, malformed record could list more). N = 5 is the rule's floor; what protects
@@ -672,7 +672,7 @@ uncounted 2, data 22, the 32.5% yield 1; lines: 1 → 0 stocks, 2 → 8, 3 → 1
   the table names each stock and the failing number.
 - **WARN "배당 기준 증명 경고 (되살리지 않은 이유 · 조회 실패)"**: names the stocks not restored, by reason (with the `proofSub` case and
   whether it shows a line, since #PR).
-- **"숨긴 배당수익률의 줄 (divCheck.proofSub · dvLine 2 · 3 · 4)"** — since #? under Jack's standing rule (section "Checks on our own
+- **"숨긴 배당수익률의 줄 (divCheck.proofSub · dvLine 2 · 3 · 4)"** — since #149 under Jack's standing rule (section "Checks on our own
   processing" above): the run blanks every line the record does not back (`ownDrop.divLine`) and publishes; the row fails only when
   more than 5 distinct stocks lose their line in the run (blanked, still wrong, or lost together with a missing or malformed `proofSub`,
   counted from the previous publish, all added up) or a line the record does not back is still in the file, and warns otherwise. The rules below are
@@ -926,7 +926,7 @@ this rule added (`BF-B`) that are not in the day's list → reason · `read` whe
     mapping row was lost or the rule broke. Yahoo has no such ticker, so that form normally drops for lack of a price; the "들어온 종목"
     row then gives BF-B's reason as "S&P 500 목록에 점이 지워진 꼴 BFB 로 있는데 BF-B 로 바뀌지 않음 (바꾸기 확인 필요)" — a mapping
     problem, not "S&P dropped Brown-Forman" — and `noPx` names `BFB` too. Fix the table (see the recipe below).
-  - **Since #? (Jack's standing rule, section "Checks on our own processing" above):** the run drops the rows this row would fail
+  - **Since #149 (Jack's standing rule, section "Checks on our own processing" above):** the run drops the rows this row would fail
     on (`us_class_bad_rows`: the joined form published from the S&P list, the same form when `spTickers` is malformed, the row of a
     ticker mapped differently from the gate's table) and records them in `ownDrop.usClass`. With that record the row fails only when
     more than 5 rows were dropped, such a row is still published, or any `mapped` row is malformed (the mapping can't be checked;
