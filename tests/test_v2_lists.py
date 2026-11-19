@@ -77,6 +77,19 @@ def test_routes_know_the_four_tabs_about_and_the_two_sub_screens():
                      "corp": "./baepsae.html?from=app#corp=005930", "hash": "#portfolio/build", "old": "./baepsae.html?from=app"}
 
 
+def test_the_year_end_tax_screen_has_its_own_address_under_portfolio():
+    """v19.6f: 연말에 확인할 숫자 is #portfolio/tax (all portfolios together, so no portfolio id). Anything after it, another tab,
+    or another spelling is not that screen (the router shows #home for an address it does not know)."""
+    got = run("""out = Object.fromEntries(H.map((h) => [h, R.parseHash(h)]));""",
+              H=["#portfolio/tax", "#portfolio/tax/", "#portfolio/tax/x", "#home/tax", "#stocks/tax", "#tax", "#portfolio/TAX", "#portfolio/returns/tax"])
+    assert got["#portfolio/tax"] == {"tab": "portfolio", "sub": "tax", "about": False, "known": True}
+    for h in ("#portfolio/tax/", "#portfolio/tax/x", "#home/tax", "#tax", "#portfolio/TAX"):
+        assert got[h] == {"tab": "home", "sub": None, "about": False, "known": False}, h
+    assert got["#stocks/tax"]["known"] is False                                    # 'tax' is not a stock code (upper case only)
+    assert got["#portfolio/returns/tax"]["returns"] == "tax"                       # a portfolio's 내 수익 whose id is "tax" stays that
+    assert run("""out = R.hashOf('portfolio', 'tax');""") == "#portfolio/tax"
+
+
 def test_the_old_app_reads_only_its_own_deep_links():
     got = run("""out = Object.fromEntries(H.map((h) => [h, D.readDeepLink(h)]));""",
               H=["#macro", "#disc", "#corp=005930", "#corp=AAPL", "#info=glossary", "#info=sources", "", "#about", "#corp=",
