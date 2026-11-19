@@ -522,6 +522,48 @@ every row of 11-11 to 11-13), so a halt and a day nobody traded look the same; i
   row contradicted itself (`odd`), or a must-have looked like no trade (`must`). The publish goes ahead with those stocks
   unmarked. If it repeats, look at that day's listing file (FinanceData cache) before anything else; the run log has the same
   case as a "!!" line.
+## Korean second-source time limit (2차 출처 시간 한도, since #?)
+
+When the volunteer KRX list has no final file for a finished trading day, the run builds that day from Daum's daily prices and
+keeps only the stocks whose Yahoo `.KS`/`.KQ` close agrees to the won (#137, Jack's two-source rule). It asks stock by stock in
+three phases: Daum daily prices (4 at a time), Yahoo batch closes (200 per batch), and, for the newest day only, a Yahoo chart
+re-read of the stocks whose daily close Yahoo still leaves blank (6 at a time). After the Korean day ends Yahoo leaves the newest
+daily close blank for hours (seen blank at 01:40 and 02:15 KST, filled by 06:40), so runs in that window re-read about 2,770 charts.
+
+Until 2026-11-20 each request had a limit (20 s, three tries) but no phase did, and the phases' notes were printed only at the
+end. Two branch dry runs on 11-19/20 (23:19 and 00:34 KST starts) sat silent after "· 종목 목록: 2026-11-16 최종본 …" for 74 and
+61 minutes and were cancelled; the same inputs had finished this stage in 3m40s twenty minutes earlier. A slow or throttling source
+could hold a run for hours (Daum not answering at all: 2,772 ÷ 4 × 66 s ≈ 12.7 hours).
+
+Now (`fetch_data.KR_FB_PHASE_BUDGET_S` = 600 s per phase; normal phase times on four runs, 11-18 03:19 · 06:40 and 11-19 22:59
+KST: Daum 108–144 s, Yahoo batch 111–178 s, re-read 0–41 s, 41 s even for 2,764 stocks):
+- each phase logs a line when it starts ("· 2차 출처: 다음 일별 시세 묻는 중 — …"), so a stuck run shows which source it is waiting on;
+- must-have stocks are asked first;
+- when a phase runs out of time it stops asking (requests already in flight finish under their own limits). The stocks not asked
+  are unconfirmed, exactly like a stock whose source did not answer: left out of that day's file, never an older price. The log
+  says so at once ("!! 2차 출처 시간 한도 600초: 다음 일별 시세를 더 묻지 않아요 …") and in the summary ("!! 2차 출처 시간 한도
+  600초 — 다음 일별 시세: 받은 n / 대상 m — 나머지 k종목은 확인 못 한 종목 (…)"); the same for 야후 일괄 종가 and 야후 차트 다시 읽기;
+- data.json `pxSrc.fb.cut` = `{s, daum, yahoo, fill}`: the limit and the stocks not asked in each phase (`pxSrc.chk.cut` on
+  volunteer-file days, where only the Yahoo spot check of must-haves + sample can shrink);
+- the gate and the watchdog show **WARN "가격 확인 시간 한도 (경고만)"** when any count is above 0 (a file from before this change
+  has no record: SKIP). It never stops a publish by itself. The existing rows still decide: a must-have left unconfirmed means
+  that day is not used (the gate stops on "pxDate 뒤 끝난 거래일"), and fewer than 2,300 Korean stocks or a change of more than 10%
+  fails "국내 종목 수".
+- The KOSPI daily series (FinanceDataReader `KS11`, read from the volunteer cache without any time limit) is now read under a
+  60 s socket limit (`KR_INDEX_TIMEOUT`) and logged: "· KOSPI 일봉 (KS11 · FinanceDataReader 캐시): n일 · 마지막 … (k초)", loud
+  ("!!") when its last day is before the volunteer final date. The data step also runs with `PYTHONUNBUFFERED=1`.
+
+If the WARN shows:
+1. Find the phase in the run log: the "· 2차 출처: … 묻는 중" line before the "!!" line has the GitHub timestamp, so the gap shows
+   which source was slow.
+2. Stocks left out show "이 종목의 데이터를 찾지 못했어요" (portfolios: "오늘 데이터에 없는 종목 … 빼고 계산했어요") until a later
+   run confirms them. The next scheduled run normally does; if the newest day's Yahoo close was still blank, a manual run after
+   about 06:40 KST asks far fewer charts. Follow the DART rule for manual runs.
+3. Do not raise the limit to make one run pass. If it hits on days when both sources answer at normal speed, bring the phase
+   times from the logs to Jack before changing `KR_FB_PHASE_BUDGET_S`.
+4. If it hits on every run (a source blocking GitHub's servers), the must-haves stay unconfirmed and nothing publishes: that is
+   the two-source rule working. Tell Jack in plain words which source is down.
+
 ## Korean dividend proof (배당 기준 증명, since #PR — Jack 2026-11-14, item 5)
 
 A Korean payer whose dividend could not be put on today's share basis (`divSt` nc · nd) used to show "배당을 줘요" with no
