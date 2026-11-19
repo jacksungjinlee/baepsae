@@ -200,6 +200,9 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           # v17.5.5: 정해진 시각 · 바깥 타이머 실행 = '자동 실행' — fetch_data.py 도 빈 DART 캐시면 DART 호출 전에 멈춰요
           BAEPSAE_AUTO_RUN: ${{ (github.event_name == 'schedule' || inputs.timer) && '1' || '' }}
+          # 2026-11-20: 파이썬 출력을 버퍼에 모으지 않아요 (log() 는 이미 줄마다 내보내요 — 라이브러리의 출력까지 바로 보이게).
+          # 멈춘 실행의 로그로 어디까지 왔는지 알 수 있게 (데이터는 그대로예요)
+          PYTHONUNBUFFERED: "1"
         run: |
           if [ "$SELFTEST" != "none" ]; then export BAEPSAE_SELFTEST="$SELFTEST"; fi
           python fetch_data.py
