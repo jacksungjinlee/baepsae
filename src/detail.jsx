@@ -455,7 +455,7 @@ const LENS = {
 // price KRW · beta vs KOSPI · vol annual % · x: {mcap 조원, roe %, opm %, g3 rev growth %/y, debt %, frn foreign %, lo/hi 52w, dk/de desc}
 // (today's data, src/data.js: a US stock's g3 is Yahoo's latest quarter vs the same quarter a year before, flagged x.g3Q;
 //  show it only through growthCell, which labels it so)
-const BASE_STOCKS = [
+export const BASE_STOCKS = [   // export: tests/test_ind_dart.py 가 오늘 데이터와 합쳐 같은 섹터 비교를 봐요
   { t:"005930", nk:"삼성전자", ne:"Samsung Elec", s:"semi", price:78000, beta:1.15, vol:32, per:14, pbr:1.4, dy:1.8, al:-6,
     x:{ mcap:466, roe:9.2, opm:15, g3:8, debt:27, frn:52, lo:52300, hi:84500, dk:"메모리 세계 1위. 스마트폰·가전·파운드리 종합 IT. 메모리 가격 사이클을 크게 타요.", de:"World #1 memory; phones, appliances, foundry. Rides the memory cycle." } },
   { t:"000660", nk:"SK하이닉스", ne:"SK Hynix", s:"semi", price:420000, beta:1.50, vol:46, per:9, pbr:2.6, dy:0.4, al:25,
@@ -1316,6 +1316,17 @@ const num = (v, d = 2) => (v == null || isNaN(v) ? "–" : v.toFixed(d));
 // σp² = ΣΣ (Wc1·σc1)(Wc2·σc2)·ρ(c1,c2) + Σ wᵢ²·idioᵢ,  where Wc = Σ_{i∈c} wᵢβᵢ
 const CLS_LIST = ["kr", "us", "metal", "bond"];
 const clsOf = (s) => { const c = s && s.cls; return c === "us" || c === "metal" || c === "bond" ? c : "kr"; };
+// 2026-11-19 (#146 · Jack 답 2): 우선주는 보통주의 업종을 따라요. 같은 섹터 비교 · 간단 점검의 업종 중간값에서는 빼요 — 같은 회사가 두 번
+// 들어가 다른 회사 자리를 밀어내지 않게 (보통주 코드는 0 으로 끝나요 · 2.0 engine.isPreferred · corp.jsx isPrefCode 와 같은 규칙).
+// 포트폴리오의 섹터 비중 · 상한 · 업종 쏠림은 그대로 넣어요 (삼성전자 + 삼성전자우 는 한 업종이에요).
+export const isPrefStock = (s) => clsOf(s) === "kr" && typeof s.t === "string" && s.t.length === 6 && !s.t.endsWith("0");
+export const PEER_N = 12;
+export function sectorIndex(stocks) {   // 업종 → 그 업종 종목 (목록 순서 · 우선주 빼고)
+  const m = {};
+  stocks.forEach((s) => { if (!isPrefStock(s)) (m[s.s] || (m[s.s] = [])).push(s); });
+  return m;
+}
+export const peersOf = (index, s) => (index[s.s] || []).slice(0, PEER_N);
 const clsVol = (c, st) => (c === "us" ? st.usVol : c === "metal" ? st.mtVol : c === "bond" ? (st.bdVol ?? 7) : st.mktVol) / 100;
 const clsMrp = (c, st) => (c === "us" ? st.usMrp : c === "metal" ? st.mtMrp : c === "bond" ? (st.bdMrp ?? 1) : st.mrp) / 100;
 function rhoOf(a, b, st) {
@@ -2121,11 +2132,7 @@ function StockShelf({ lang, t, mode, interested, stocks, holdings, onAdd, onAddC
 
   const byMarket = useMemo(() => stocks.filter((s) => market === "all" || clsOf(s) === market), [stocks, market]);
   // 2,900개 종목을 행마다 훑으면 느려져서, 업종별 색인을 한 번만 만들어 둡니다.
-  const bySector = useMemo(() => {
-    const m = {};
-    stocks.forEach((s) => { (m[s.s] || (m[s.s] = [])).push(s); });
-    return m;
-  }, [stocks]);
+  const bySector = useMemo(() => sectorIndex(stocks), [stocks]);
   const results = useMemo(() => {
     if (q) {
       const hit = byMarket.filter((s) => {
@@ -2228,7 +2235,7 @@ function StockShelf({ lang, t, mode, interested, stocks, holdings, onAdd, onAddC
             {list.map((s) => (
               <StockRow key={s.t} s={s} lang={lang} t={t} mode={mode} settings={settings} loaded={inCart.has(s.t)} onAdd={() => add(s)}
                 open={expanded === s.t} onToggle={() => setExpanded(expanded === s.t ? null : s.t)}
-                peers={(bySector[s.s] || []).slice(0, 12)} updateStock={updateStock} />
+                peers={peersOf(bySector, s)} updateStock={updateStock} />
             ))}
           </div>
         ))}
@@ -2960,20 +2967,28 @@ function QuickFactsCard({ lang, t, metrics, settings, profile }) {
   );
 }
 
-export function MiniCheck({ s, peers, lang, t }) {   // export: tests/test_unit_guard_app.py 가 그려 봐요
+// 간단 점검의 업종 중간값 (같은 섹터 비교 종목에서) — MiniCheck 와 tests/test_ind_dart.py 가 같이 써요. others 가 3곳 미만이면 null.
+// 리뷰 #116: 업종 중간값도 빈 칸을 0 으로 세지 않아요 (빈 부채비율이 0 으로 들어가 중간값을 끌어내렸어요). 부채비율이 있는 업종 회사가 3곳
+// 미만이면 안정성은 '—'
+export function peerMedians(peers) {
   const others = peers.filter((p) => p.x && p.x.roe != null);
-  if (others.length < 3) {
-    return <div style={{ marginTop: 9, background: C.bg, borderRadius: 12, padding: 10, fontSize: 11.5, color: C.faint }}>{t("chkTitle")}: {t("chkNoPeers")}</div>;
-  }
+  if (others.length < 3) return null;
   const med = (arr) => { const a = [...arr].sort((x, y) => x - y); return a[Math.floor(a.length / 2)]; };
-  // 리뷰 #116: 업종 중간값도 빈 칸을 0 으로 세지 않아요 (빈 부채비율이 0 으로 들어가 중간값을 끌어내렸어요). 부채비율이 있는 업종 회사가 3곳
-  // 미만이면 안정성은 '—'
   const fin = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
   const roeMed = med(others.map((p) => fin(p.x.roe)).filter((v) => v != null));
   const debtPeers = others.map((p) => fin(p.x.debt)).filter((v) => v != null);
   const debtMed = debtPeers.length >= 3 ? med(debtPeers) : null;
   const perPeers = others.filter((p) => p.per > 0).map((p) => p.per);
   const perMed = perPeers.length >= 3 ? med(perPeers) : null;
+  return { roeMed, debtMed, perMed };
+}
+
+export function MiniCheck({ s, peers, lang, t }) {   // export: tests/test_unit_guard_app.py 가 그려 봐요
+  const pm = peerMedians(peers);
+  if (!pm) {
+    return <div style={{ marginTop: 9, background: C.bg, borderRadius: 12, padding: 10, fontSize: 11.5, color: C.faint }}>{t("chkTitle")}: {t("chkNoPeers")}</div>;
+  }
+  const { roeMed, debtMed, perMed } = pm;
   const isFin = s.s === "finance";
   const lvl = (good, mid) => (good ? 0 : mid ? 1 : 2);
   // 2026-11-13 (공시 단위 확인): 빈 ROE · 부채비율은 0 이 아니라 '—' (예전엔 0 으로 읽어 부채비율 745% 회사가 '좋은 편'으로 보일 수 있었어요)

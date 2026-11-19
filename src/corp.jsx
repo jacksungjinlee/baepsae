@@ -1180,7 +1180,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
   })();
 
   // 밸류에이션 풋볼필드 — 여러 잣대에서 업종 내 위치 (p5~p95 스케일, 25~75% 상자)
-  const peers = data.companies.filter((x) => x.s === c.s);
+  const peers = data.companies.filter((x) => x.s === c.s && !isPrefCode(x.t));   // #146: 우선주는 업종 비교에서 빼요 (같은 회사가 두 번)
   const psrOf = (x) => x.cap && x.rev && x.rev[0] > 0 ? x.cap * 1e4 / x.rev[0] : null;
   const mkPos = (ko, vals, v, fmt, dir) => {
     const arr = vals.filter((x) => x != null && isFinite(x)).sort((a, b) => a - b);
@@ -1488,7 +1488,8 @@ function DiscSignals({ c }) {
 // ---------------- 기업 비교 ----------------
 export function CompareView({ data, baseT, onOpen, onBack, setExplain }) {
   const base = data.companies.find((x) => x.t === baseT);
-  const peers = useMemo(() => data.companies.filter((x) => x.s === base?.s && x.t !== baseT).sort((a, b) => (b.cap || 0) - (a.cap || 0)), [data, base, baseT]);
+  const peers = useMemo(() => data.companies.filter((x) => x.s === base?.s && x.t !== baseT && !isPrefCode(x.t))     // #146: 우선주는 비교 후보에서 빼요
+    .sort((a, b) => (b.cap || 0) - (a.cap || 0)), [data, base, baseT]);
   const [sel, setSel] = useState(() => peers.slice(0, 2).map((x) => x.t));
   if (!base) return <Card><Sub>데이터를 찾지 못했어요.</Sub></Card>;
   const cols = [base, ...sel.map((t) => data.companies.find((x) => x.t === t)).filter(Boolean)];
