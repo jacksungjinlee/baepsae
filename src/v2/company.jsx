@@ -23,7 +23,7 @@ import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, TOPIC_ART } from "../ui/toke
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { StatusChip, Segmented, BottomSheet, Amount, Button } from "../ui/components.jsx";
 import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.js";
-import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, CardPic, SIDE_W, tx, tap, useMode, useLayout } from "./ui.jsx";
+import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, CardPic, KrOwnCloseLine, SIDE_W, tx, tap, useMode, useLayout } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { findCompany, groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, warnings, cardRanks, myCards, holdingsOf, RANK_CARDS,
   splitGuardCount, SPLIT_GUARD, divCheckCount, warnChips, warnKind, uncheckedCount, divHiddenLine } from "./company.js";
@@ -298,6 +298,9 @@ function Header({ load, s }) {
       {/* 2026-11-14 (Jack, design chat 2026-11-08): no change today, said where it would be — no trade on the price date, or a d1
           left blank for another reason (fixnote.jsx DayNote); right under the price, never as 0.0% */}
       <DayNote s={s} md={priceMd(load, s)} style={{ marginTop: SPACE(1) }} />
+      {/* 2026-11-19 (Jack): a Korean stock at its last confirmed close (pxd): his line with that date, right under the price and
+          its "{md} 종가", once on the page (every tab) */}
+      <KrOwnCloseLine load={load} s={s} style={{ marginTop: SPACE(1) }} />
       {won && <div data-ui-v2="co-won" style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginTop: 2 })}>{(US_HEAD2 && wonLineUsd(load, s.price)) || won}</div>}
       {/* The rate's own date (cofmt.fxDateLine): always without US_HEAD2; with it, whenever the rate is from another day than
           the price date in the header, so the won line never reads as that day's rate */}

@@ -10,7 +10,7 @@ import { Bird, store, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, T_
 import { loadJson, krGrowthBasis, krGrowthDcfLine, krRevDcfText, krRevDcfNote, loadDataPublishFor, corpStaleArgs } from "./data.js";
 // 2026-11-08 (Jack): PER · EPS (와 같은 순이익으로 계산한 ROE · 배당성향 · 주가 분해 · DCF) 칸마다 한 줄, 이자보상배율이 꺼진 회사의
 // 재무 신호 밑에 한 줄 — DART 다시 읽기 전까지 (src/repair.js, src/fixnote.jsx)
-import { EpsFixLine, IcrOffLine, StmtCurLine, UnitChkLine, PxBadLine, PxBadOneLine, epsLineKind } from "./fixnote.jsx";
+import { EpsFixLine, IcrOffLine, StmtCurLine, UnitChkLine, PxBadLine, PxBadOneLine, epsLineKind, KrOwnCloseLine, KrOwnCloseListLine } from "./fixnote.jsx";
 import { epsBase, epsPeriod, stmtNotWon, stmtCurOf, unitHeld, pxBad, pxBadFull } from "./repair.js";
 
 const KEY_DCF = "baepsae_v12_dcf";
@@ -567,6 +567,8 @@ export function ScreenerView({ data, onOpen, setExplain }) {
             {rows.length > 100 && <div style={{ fontSize: 10.5, color: C.faint, marginTop: 8 }}>상위 100개까지 보여요. 조건을 좁히면 더 정확해져요.</div>}
             <EpsFixLine many corp={data} cos={rows.slice(0, 100).filter((c) => c.per != null || c.roe != null)}
               show={cs.some((x) => x.k === "per" || x.k === "roe") && rows.slice(0, 100).some((c) => c.per != null || c.roe != null)} />
+            {/* 2026-11-19 (Jack): 마지막 확인 종가(pxd)로 실은 회사가 보이는 줄에 있으면 이름 · 날짜와 Jack 의 줄 */}
+            <KrOwnCloseListLine list={rows.slice(0, 100)} />
           </>
         )}
       </Card>
@@ -847,6 +849,8 @@ export function MarketView({ data, heldMap, onOpen, setExplain, stale = null }) 
                   xLabel="ROE (%) — 오른쪽일수록 자본을 잘 굴리는 회사" yLabel="PBR (배) — 위일수록 장부가치 대비 비싼 회사" onPick={onOpen} />}
           </div>
           <EpsFixLine many corp={data} cos={comps.filter((c) => c.pbr != null && c.roe != null && passBase(c))} show={hasMult && pbrRoePts.length > 0} />
+          {/* 2026-11-19 (Jack): PBR 은 가격으로 만든 숫자예요 — 마지막 확인 종가(pxd)로 실은 회사가 점으로 있으면 이름 · 날짜와 Jack 의 줄 */}
+          {hasMult && <KrOwnCloseListLine list={comps.filter((c) => c.pbr != null && c.roe != null && passBase(c))} />}
         </Card>
       </div>
 
@@ -937,6 +941,8 @@ export function SearchView({ data, heldMap, onOpen }) {
         )}
         {rows.length === 0 && <Sub style={{ padding: "14px 2px" }}>{/[a-zA-Z]{2,}/.test(q) ? '미국 종목은 포트폴리오 탭에서 담을 수 있어요. 기업분석은 한국 공시(DART) 기반이라 국내 상장사만 다뤄요.' : '검색 결과가 없어요. 회사 이름이나 6자리 코드로 찾아보세요.'}</Sub>}
         <EpsFixLine many corp={data} cos={rows.slice(0, limit).filter((c) => c.per != null)} show={rows.slice(0, limit).some((c) => c.per != null)} style={{ margin: "8px 2px 10px" }} />
+        {/* 2026-11-19 (Jack): 보이는 줄에 마지막 확인 종가(pxd)로 실은 회사가 있으면 이름 · 날짜와 Jack 의 줄 */}
+        <KrOwnCloseListLine list={rows.slice(0, limit)} style={{ margin: "8px 2px 10px" }} />
       </Card>
     </div>
   );
@@ -1234,6 +1240,8 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
       <Card>
         <H num="01" main="투자지표" sub={"밸류에이션 멀티플 · 업종 사분위 대비" + (cur ? "" : epsPeriodSub(c))} onWhy={() => setExplain("box")} />
         {/* DART 다시 읽기 뒤 (Jack, 2026-11-08): 재무제표를 원화가 아닌 통화로 공시한 회사(corp.json stmtCur)는 금액이 비어요 — 그 이유를 한 번 */}
+        {/* 2026-11-19 (Jack): 마지막 확인 종가(pxd)로 실은 회사 — 가격 · 시가총액 · PER · PBR 이 그 종가의 것이라 그 날짜와 Jack 의 줄 */}
+        <KrOwnCloseLine c={c} marketDate={data.pxDate} style={{ marginTop: 6 }} />
         <StmtCurLine c={c} style={{ marginTop: 6 }} />
         <UnitChkLine c={c} style={{ marginTop: 6 }} />
           {[c.vz, c.qz, c.mz, c.pz, c.lz].some((v) => v != null) && (
@@ -1568,6 +1576,8 @@ export function CompareView({ data, baseT, onOpen, onBack, setExplain }) {
         </div>
         <Sub style={{ marginTop: 10, fontSize: 10.5, color: C.faint }}>숫자가 큰 쪽이 항상 좋은 것도, 낮은 멀티플이 항상 싼 것도 아니에요. 차이가 나는 항목에서 이유를 묻는 것이 이 표의 사용법이에요.</Sub>
         <EpsFixLine many corp={data} cos={cols.filter((c) => c.per != null || c.roe != null)} show={cols.some((c) => c.per != null || c.roe != null)} />
+        {/* 2026-11-19 (Jack): 비교하는 회사 중 마지막 확인 종가(pxd)로 실은 회사 — 이름 · 날짜와 Jack 의 줄 */}
+        <KrOwnCloseListLine list={cols} />
         {/* 2026-11-08 (Jack): once, when a compared company files its statements in another currency (its numbers are blank):
             the first such company's currency (repair.js stmtCurOf) */}
         {/* 리뷰 #118 N7: 단위 확인에 걸린 회사는 통화 줄이 아니라 아래 단위 줄로 */}

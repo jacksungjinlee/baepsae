@@ -20,7 +20,7 @@
 // 글자는 12px 이에요 (2.0 의 12px 바닥과 같게).
 import React, { useEffect, useState } from "react";
 import { C } from "./tokens.js";
-import { mdOf, kstDate, loadCorpOnce } from "./data.js";
+import { mdOf, kstDate, loadCorpOnce, ownCloseGroups, ownCloseDate } from "./data.js";
 import { EPS_FIX_DATE, epsBasisLive, epsFixNeeded, epsInFixed, epsTotalNci, epsTotalNeeded, epsTotalSide, icrOff, warnEpsFixLate, stmtCurOf, stmtNotWon, warnStmtCur, unitHeld, pxBad, pxBadFull, pxBadHides } from "./repair.js";
 
 export { icrOff };
@@ -36,6 +36,35 @@ export const FIX_TOTAL = "이 회사는 지배주주 몫 순이익을 따로 공
 export const FIX_UNIT = "공시 자료의 단위를 확인하고 있어서 이 숫자를 잠시 비워 두었어요.";   // Jack 승인 2026-11-13 — 2.0 co.unitChk (한국어만)
 export const FIX_PX_BAD = "과거 주가 기록 일부에 오류가 있어서 52주 범위와 출렁임·위험 숫자는 비워 두었어요.";   // Jack 승인 2026-11-14 — 2.0 co.pxBad (한국어만)
 export const FIX_PX_BAD_ONE = "과거 주가 기록 일부에 오류가 있어서 이 숫자는 비워 두었어요.";   // Jack 승인 2026-11-14 저녁 — 2.0 co.pxBadOne (한국어만)
+// 2026-11-19 (Jack): 오늘 종가를 두 출처로 확인하지 못해 마지막 확인 종가(pxd)로 실은 국내 종목 — 2.0 app.krOwnClose 와 같은 글자
+// (tests/test_kr_own_close.py 가 같은지 봐요). 한국어 화면에서만: 영어 글은 승인되지 않았어요 (영어 포트폴리오는 승인된 "{names}: priced at the {md}
+// close." 로 그 종목과 날짜를 말해요). 목록 · 합계에는 FIX_OWN_CLOSE (detail.jsx T_OWN_CLOSE.ko · 2.0 app.ownClose 와 같은 글자) 다음에 이 줄.
+export const FIX_KR_OWN_CLOSE = "오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요.";   // Jack 승인 2026-11-19
+export const FIX_OWN_CLOSE = "{names} 가격은 {md} 종가예요.";                               // Jack 승인 2026-11-07 (detail.jsx T_OWN_CLOSE.ko)
+// 한 종목 (data.json 종목 또는 corp.json 회사 — 회사 줄에는 cls 가 없어서 marketDate 로 그 데이터의 pxDate 를 받아요): 줄 또는 null
+export function krOwnCloseText(c, marketDate = null) {
+  const d = c && (c.cls == null || c.cls === "kr") ? ownCloseDate(c, marketDate) : null;
+  const md = d ? mdOf(d, "ko") : null;
+  return md ? FIX_KR_OWN_CLOSE.replace("{date}", md) : null;
+}
+export function KrOwnCloseLine({ c, marketDate = null, style, lang = "ko" }) {
+  const text = lang === "en" ? null : krOwnCloseText(c, marketDate);
+  return text ? <div data-fix="kr-own-close" data-t={c.t} data-pxd={c.pxd} style={{ ...LINE, ...style }}>{text}</div> : null;
+}
+// 여러 회사 (기업분석의 목록 · 표): 마지막 확인 종가로 실은 회사를 날짜마다 한 문장 + Jack 의 줄. 없으면 null. list: corp.json 회사들 (cls 없음 → 국내)
+export function krOwnCloseListText(list) {
+  const out = [];
+  for (const g of ownCloseGroups((list || []).filter(Boolean).map((c) => ({ ...c, cls: "kr" })), null)) {
+    const md = mdOf(g.date, "ko");
+    if (!md) return null;
+    out.push(FIX_OWN_CLOSE.replace("{names}", (g.names || g.ts).join(", ")).replace("{md}", md) + " " + FIX_KR_OWN_CLOSE.replace("{date}", md));
+  }
+  return out.length ? out.join(" ") : null;
+}
+export function KrOwnCloseListLine({ list, style }) {
+  const text = krOwnCloseListText(list);
+  return text ? <div data-fix="kr-own-close-list" style={{ ...LINE, ...style }}>{text}</div> : null;
+}
 // "11월 10일" · 영어 화면 "Nov 10" (data.js mdOf: 예전 뱁새의 월 · 일 표시). 날짜를 못 만들면 null (빈 자리가 있는 줄은 보이지 않아요)
 export function fixEpsText(lang = "ko") {
   const en = lang === "en";

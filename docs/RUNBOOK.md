@@ -522,6 +522,38 @@ every row of 11-11 to 11-13), so a halt and a day nobody traded look the same; i
   row contradicted itself (`odd`), or a must-have looked like no trade (`must`). The publish goes ahead with those stocks
   unmarked. If it repeats, look at that day's listing file (FinanceData cache) before anything else; the run log has the same
   case as a "!!" line.
+## Korean stocks at their last confirmed close (국내 마지막 확인 종가, since #?)
+
+Jack, 2026-11-19: "The 129 unconfirmed stocks: stop showing "이 종목의 데이터를 찾지 못했어요." Show each stock's last confirmed close
+with its own date (the existing own-close mechanism), plus "오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요." It must never sit
+under today's date label without that line."
+
+- **When:** only on second-source days (`pxSrc.px` = `daum+yahoo`: the volunteer KRX file was not final, closes came from Daum ×
+  Yahoo). A stock in that day's universe that the two sources could not confirm (KONEX: no second source; or Daum and Yahoo
+  disagree, or one is missing) is carried at the **previous publish's** price (`fetch_data.py` `kr_own_close_carry`): its `pxd` is
+  the previous publish's `pxDate`, or, if it was already carried, the same `pxd` and price (never re-dated). No Daum or Yahoo value
+  from today is used. No `d1`. Its market-data numbers (시가총액, 52주, 출렁임, 베타, 수익률, the description's 시가총액) are copied
+  from that publish; PER, PBR, 배당수익률 and the scores are made again today from that price. A company whose common stock is
+  carried but whose listed 우선주 has today's close gets no EV / P/CF (`corp.json` `evNo: "ownPx"`: the two dates would mix).
+- **Not carried (stays out, as before):** not in the previous publish (most KONEX names are below the top-2,500 cut), more than
+  `KR_OWN_CLOSE_MAX_DAYS` (5) KRX trading days after its close, the previous publish has the same `pxDate`, or a price-history mark
+  without its recorded move. The run log says `!! 국내 종가 미확인 {n}종목 … 마지막 확인 종가로 실음 {k}종목 (pxd …) — names` and
+  `!! 마지막 확인 종가로도 싣지 못한 국내 종목 {m} … — names (reason)`.
+- **Normal days:** nothing changes. No Korean stock gets `pxd`.
+- **data.json:** `pxSrc.own` = `{v, max, n, codes, unconf, drop, dropEx, bad}`; `pxSrc.n` counts only stocks at `pxDate`.
+- **Gate:** `국내 자기 가격 날짜 (pxd)` fails exactly what the US `pxd` row fails (a `pxd` that is not a date before `pxDate`, or a
+  `d1` beside it). `국내 마지막 확인 종가 (pxSrc.own · 경고만)` only warns: a carried stock not in `pxSrc.own.codes`, on a normal day,
+  older than the limit, or not the previous publish's price and date, or rows the pipeline itself dropped just before writing
+  (`pxSrc.own.bad`, same function `validate_data.kr_own_close_bad`). Only clean carries (recorded, before `pxDate`, no daily change,
+  within the limit, and the previous publish's price and date) are left out of the `pxDate` price checks (`한국 가격 = 공식 종가`,
+  the gate's Daum × Yahoo sample and its confirmed count: `kr_own_codes`); anything else with a `pxd` is still checked as a
+  `pxDate` price. On such a day the 국내 beta · vol 채움 rows can warn (small KONEX names often have no beta).
+- **On a warning:** read the named rows in the run summary. A carried stock with a different price or date than the previous
+  publish means our carry step broke: say so to Jack; the stock itself is still labelled with its own date and line.
+- **Check on the site:** search a carried stock (the log names them): its company page shows "{date} 종가" and Jack's line under the
+  price; lists and portfolio totals with it say "{name} 가격은 {date} 종가예요. 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요.";
+  the old app's 기업분석 header and the first screen's card show Jack's line under the price.
+
 ## Korean dividend proof (배당 기준 증명, since #PR — Jack 2026-11-14, item 5)
 
 A Korean payer whose dividend could not be put on today's share basis (`divSt` nc · nd) used to show "배당을 줘요" with no

@@ -78,7 +78,15 @@ export function logDates(d) {
     console.warn("[v2] data.json nextPub is " + (d.nextPub == null ? "missing or null" : "not a YYYY-MM-DD date (" + JSON.stringify(d.nextPub) + ")")
       + ": once staleAfter passes, the day count of the warning counts from publishedAt, not from the due day");
   }
-  const r = ownCloseReport(d.stocks, d.usPxDate);
+  // 2026-11-19 (Jack): US stocks are read against usPxDate as before; Korean stocks at their last confirmed close (pxd, pxSrc.own)
+  // against pxDate, said in a line of their own
+  const r = ownCloseReport(d.stocks.filter((s) => !(s && s.cls === "kr")), d.usPxDate);
+  const k = ownCloseReport(d.stocks.filter((s) => s && s.cls === "kr"), d.pxDate);
+  if (k.own.length) {
+    console.warn(`[v2] ${k.own.length} Korean stocks at their last confirmed close before ${d.pxDate} (pxd: today's close not confirmed by two sources; `
+      + "no daily change; each screen shows Jack's line): " + k.own.slice(0, 30).map(([t, x]) => `${t} ${x}`).join(", ") + (k.own.length > 30 ? ` and ${k.own.length - 30} more` : ""));
+  }
+  if (k.same.length || k.bad.length) console.warn(`[v2] Korean stocks with a pxd equal to pxDate (${k.same.length}) or that cannot be read (${k.bad.length}) (not expected; the gate refuses both): ${[...k.same, ...k.bad].slice(0, 30).join(", ")}`);
   const us = d.stocks.filter((s) => s && s.cls === "us").length;
   if (r.own.length) {
     console.warn(`[v2] ${r.own.length} of ${us} US stocks at an earlier close than ${d.usPxDate} (pxd, no daily change): `

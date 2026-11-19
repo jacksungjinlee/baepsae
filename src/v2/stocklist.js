@@ -19,9 +19,12 @@ export const isCompany = (s) => !!s && (s.cls === "kr" || s.cls === "us") && s.e
 // ownCloseGroups(stocks, usPxDate) -> [{ date, ts }]: one group per date, newest first; tickers in screen order, each once;
 // stocks missing from today's data (null) and stocks at the US date are left out. The rule lives in src/data.js so the
 // old app groups the same way. ownCloses(load, stocks): the same for the loaded data ([] before it loads).
+// 2026-11-19 (Jack): a Korean stock can carry pxd too (its last confirmed close, when today's could not be confirmed by two
+// sources): each stock is compared with its own market's date (KR pxDate, US usPxDate as before), and Korean stocks get a group
+// of their own ({ kr: true, names }: format.ownCloseText adds Jack's line).
 export { ownCloseGroups };
 export function ownCloses(load, stocks) {
-  return load && load.status === "ok" ? ownCloseGroups(stocks, load.data.usPxDate) : [];
+  return load && load.status === "ok" ? ownCloseGroups(stocks, { kr: load.data.pxDate, us: load.data.usPxDate }) : [];
 }
 
 // ---------------- 종목 search ----------------

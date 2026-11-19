@@ -3318,6 +3318,79 @@ def scene_kst_dates(R, files):
     ctx.close(); srv.shutdown()
 
 
+def scene_kr_own_close(R, files):
+    """2026-11-19 (Jack): 오늘 종가를 두 출처로 확인하지 못한 국내 종목은 마지막 확인 종가로 (data.json · corp.json pxd). 열린 포트폴리오의
+    배너와 종목 고르기 목록 위: '{이름} 가격은 {날짜} 종가예요. 오늘 종가를 확인하지 못해서 {날짜} 종가를 보여 드려요.' (영어 화면은 승인된 영어
+    문장만: '{코드}: priced at the {날짜} close.') · 첫 화면 성적표와 기업분석 머리: 가격 밑에 Jack 의 줄 그대로 · 삼성전자(pxd 없음)는 그대로."""
+    f = json.loads(json.dumps(files, allow_nan=True))
+    d = f["data.json"]
+    t = "000270"
+    day = _iso_minus(d["pxDate"], 1)
+    by = {s.get("t"): s for s in d["stocks"]}
+    cby = {c.get("t"): c for c in f["corp.json"]["companies"]}
+    assert t in by and t in cby and by[t].get("cls") == "kr" and "005930" in by, "시험할 국내 종목이 데이터에 없어요"
+    by[t]["pxd"] = day
+    by[t].pop("d1", None)
+    cby[t]["pxd"] = day
+    nk = by[t]["nk"]
+    line = f"오늘 종가를 확인하지 못해서 {_md(day, 'ko')} 종가를 보여 드려요."
+    want_ko = f"{nk} 가격은 {_md(day, 'ko')} 종가예요. {line}"
+    slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": "005930", "mw": 300}, {"t": t, "mw": 200}]}
+    srv, ctx, page, base = R.open(build_site(f), local=slot_local([("skrown", "국내 확인 종가 시험", slot)]), once=True)
+    S = "국내 마지막 확인 종가"
+
+    def banner_lines():
+        page.locator(".nonLiveBanner").first.wait_for(state="visible", timeout=WAIT)
+        return page.locator(".nonLiveBanner [data-own-close]").all_inner_texts()
+
+    def portfolio():
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        page.get_by_text("국내 확인 종가 시험", exact=False).first.click()
+        see(page, "보통 해 ±")
+        assert banner_lines() == [want_ko], banner_lines()
+        box = page.get_by_placeholder("종목명·코드 검색")
+        box.fill(nk)
+        note = page.locator(".ownCloseNote")
+        note.wait_for(state="visible", timeout=WAIT)
+        assert note.inner_text().strip() == want_ko, note.inner_text()
+        box.fill("삼성전자")
+        page.wait_for_timeout(300)
+        assert page.locator(".ownCloseNote").count() == 0, "pxd 없는 종목만 보이는데 안내가 있어요"
+        box.fill("")
+        page.get_by_role("button", name="EN", exact=True).first.click()
+        page.locator(".nonLiveBanner [data-own-close]").first.wait_for(state="visible", timeout=WAIT)
+        assert banner_lines() == [f"{t}: priced at the {_md(day, 'en')} close."], banner_lines()   # 영어: 승인된 문장만
+        page.get_by_role("button", name="한국어", exact=True).first.click()
+        page.locator(".nonLiveBanner [data-own-close]", has_text="가격은").first.wait_for(state="visible", timeout=WAIT)
+        assert banner_lines() == [want_ko], banner_lines()
+    R.check(page, S, "포트폴리오 배너 · 종목 고르기: '{이름} 가격은 {날짜} 종가예요.' 다음에 Jack 의 줄 · 영어는 승인된 영어 문장만", portfolio)
+
+    def shown():
+        return page.evaluate("""() => [...document.querySelectorAll('[data-fix="kr-own-close"]')].filter((e) => e.getBoundingClientRect().height > 0)
+          .map((e) => [e.innerText.trim(), parseFloat(getComputedStyle(e).fontSize)])""")
+
+    def cards():
+        page.goto("about:blank")
+        page.goto(base + "/baepsae.html?dev=1&from=app", wait_until="domcontentloaded")
+        close_welcome(page, "시작하기")
+        search(page, nk, t)
+        page.locator("button", has_text=t).first.click()
+        see(page, "사실의 요약일 뿐")
+        got = shown()
+        assert got == [[line, 12.0]] or (len(got) == 1 and got[0][0] == line and got[0][1] >= 12), got   # 첫 화면 성적표: 가격 밑에 그대로
+        page.goto("about:blank")
+        page.goto(base + f"/baepsae.html?dev=1&from=app#corp={t}", wait_until="domcontentloaded")
+        see(page, "밸류에이션 멀티플 · 업종 사분위 대비")
+        got = shown()
+        assert len(got) == 1 and got[0][0] == line and got[0][1] >= 12, got                          # 기업분석 머리: 가격 · 시가총액 밑
+        page.goto("about:blank")
+        page.goto(base + "/baepsae.html?dev=1&from=app#corp=005930", wait_until="domcontentloaded")
+        see(page, "밸류에이션 멀티플 · 업종 사분위 대비")
+        assert shown() == [] and "오늘 종가를 확인하지 못해서" not in page.locator("body").inner_text()
+    R.check(page, S, "첫 화면 성적표 · 기업분석 머리: 가격 밑에 Jack 의 줄 그대로 (12px 이상) · 삼성전자는 그대로", cards)
+    ctx.close(); srv.shutdown()
+
+
 def scene_list(R, fresh, full):
     """모든 장면을 순서대로 (이름, 함수). 함수는 부를 때만 돌아요 — 목록을 만드는 것만으로는 아무것도 하지 않아요 (--part 시험)."""
     return [("정상", lambda: scene_normal(R, fresh, full)), ("멈춤", lambda: scene_stale(R, fresh)),
@@ -3334,7 +3407,8 @@ def scene_list(R, fresh, full):
             ("다시읽음", lambda: scene_stmt_cur(R, fresh)),                                                                 # 2026-11-08 stmtCur
             ("날짜", lambda: scene_kst_dates(R, fresh)),                                                                    # 2026-11-12 한국 날짜
             ("예전줄", lambda: scene_old_app_lines(R, fresh)),                                                              # 2026-11-14 Jack Q3
-            ("주가기록", lambda: scene_px_bad(R, fresh))]                                                                  # 2026-11-14 과거 주가 기록 오류
+            ("주가기록", lambda: scene_px_bad(R, fresh)),                                                                  # 2026-11-14 과거 주가 기록 오류
+            ("확인종가", lambda: scene_kr_own_close(R, fresh))]                                                            # 2026-11-19 국내 마지막 확인 종가
 
 
 def parse_part(text):

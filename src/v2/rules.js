@@ -490,7 +490,7 @@ export function evaluateHolding(h, deck, ctx, weights, qty) {
   if (!soldOutFails && !rules.some((x) => x.check === "checked")) reasons.unshift({ level: "check", code: "noRules" });
   const status = soldOutFails ? "none" : reasons.length ? reasons[0].level : "none";
   const d1 = todayD1(s);
-  const pxd = ownCloseDate(s, ctx.usPxDate);
+  const pxd = ownCloseDate(s, s && s.cls === "kr" ? ctx.pxDate : ctx.usPxDate);   // 2026-11-19 (Jack): a Korean stock's own date is against pxDate
   const band = rules.find((x) => x.id === "band" && x.check === "checked");
   const div = rules.find((x) => x.id === "divCut" && x.drops);
   return {

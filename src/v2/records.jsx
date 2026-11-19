@@ -8,7 +8,7 @@ import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { Button, BottomSheet, priceColor } from "../ui/components.jsx";
 import { C, fill, nf, mdText, todayKst, exactWon, plus, recDate } from "./format.js";
-import { Note, TextInput, SampleLabel, tx, useMode, useLayout, SIDE_W } from "./ui.jsx";
+import { Note, TextInput, SampleLabel, KrOwnCloseLine, tx, useMode, useLayout, SIDE_W } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { shownName } from "./legacy.js";
 import { writeStore } from "./store.js";
@@ -243,6 +243,8 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
         {/* round-3: with a split between the chosen date and today, today's close is on another share basis: no default price
             (the price is required, records.closeIsDefault), so neither this line nor the close as the placeholder */}
         {kind !== "div" && !byAmount && md && closeOk && <p data-ui-v2="rec-close-line" style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(3), wordBreak: "keep-all" })}>{fill(C.rec.buyBody, { md })}</p>}
+        {/* 2026-11-19 (Jack): the close above is a Korean stock's last confirmed close (pxd): his line, with that date */}
+        {kind !== "div" && !byAmount && md && closeOk && <KrOwnCloseLine load={load} s={s} />}
         {byAmount && <p data-ui-v2="rec-by-amount" style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(3), wordBreak: "keep-all" })}>{C.rec.byAmount}</p>}
         {kind === "div" ? (
           <>

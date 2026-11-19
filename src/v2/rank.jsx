@@ -539,7 +539,8 @@ export function RankCard({ load, store, full = false, go = null, tapper = null }
               background: `linear-gradient(transparent, ${COLOR.surface})` }} />
           </div>
         )}
-      {/* v19.1c: a US stock priced at an earlier close (pxd) among the rows: named once under the list */}
+      {/* v19.1c: a US stock priced at an earlier close (pxd) among the rows: named once under the list. 2026-11-19 (Jack): a Korean
+          stock at its last confirmed close (pxd) too, by its name with his line (usRows are the shown market's rows, Korean or US) */}
       <OwnCloseNote groups={ownCloses(load, usRows)} data-market={mk} />
       {!full && dated && top.length > 0 && chips.length > 0 && (
         <div data-ui-v2="rank-foot" style={{ marginTop: SPACE(1), display: "flex", justifyContent: "space-between", alignItems: "center", gap: SPACE(2) }}>
