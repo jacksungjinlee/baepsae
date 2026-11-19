@@ -124,7 +124,7 @@ def by_rc(rows):
     ("[첨부정정]주요사항보고서(전환사채권발행결정)", ("cb", True, True)),
     ("주요사항보고서(신주인수권부사채권발행결정)", ("bw", False, False)),
     ("주요사항보고서(교환사채권발행결정)", (None, False, False)),        # 교환사채: 새 주식이 없어 이번 범위 밖
-    ("주요사항보고서(유무상증자결정)", (None, False, False)),            # 범위 밖 (보고에 적었어요)
+    ("주요사항보고서(유무상증자결정)", ("pifric", False, False)),        # Jack 2026-11-19 (7a): 넣어요 — 줄은 kind rights + bonus: true
     ("주요사항보고서(자기전환사채만기전취득결정)", (None, False, False)),
     ("주요사항보고서(회사합병결정)", (None, False, False)),
     ("[기재정정]주요사항보고서(유상증자결정)철회", (None, True, False)),  # 철회 공시 자체
@@ -144,13 +144,13 @@ def test_issue_how_follows_the_spec(text, want):
 def test_parse_issue_detail_on_real_rows():
     # 더코디 제3자배정: 보통주 106,022주 ÷ 증자 전 5,160,722주 = 2.05%
     d, bad = F.parse_issue_detail(api_row("rights", "224060", "20261111000265"), "rights")
-    assert d == {"bd": None, "how": "others", "n": 106022, "p": 2.05, "amt": None, "blank": False} and bad == []
+    assert d == {"bd": None, "how": "others", "cls": "common", "n": 106022, "p": 2.05, "amt": None, "blank": False} and bad == []
     # 뷰노 주주배정 (보통주 6,300,000주)
     d, _ = F.parse_issue_detail(api_row("rights", "338220", "20261111000261"), "rights")
     assert d["how"] == "holders" and d["n"] == 6300000 and d["p"] == 44.99
     # 탑선: 정정 공시의 숫자 칸이 모두 '-' (DART 상세 API) → 숫자는 null · blank (정정이면 철회 — issue_rows 가 wd 로)
     d, bad = F.parse_issue_detail(api_row("rights", "180060", "20261113000550"), "rights")
-    assert d == {"bd": None, "how": "others", "n": None, "p": None, "amt": None, "blank": True} and bad == ["n", "p"]
+    assert d == {"bd": None, "how": "others", "cls": None, "n": None, "p": None, "amt": None, "blank": True} and bad == ["n", "p"]
     # 애드바이오텍 CB: 이사회결의일 '2026년 10월 29일' · 권면총액 1,000,000,000원 · 주식총수 대비 3.11%
     d, bad = F.parse_issue_detail(api_row("cb", "179530", "20261112000003"), "cb")
     assert d == {"bd": "20261029", "how": None, "n": None, "p": 3.11, "amt": 1000000000, "blank": False} and bad == []
@@ -162,10 +162,12 @@ def test_parse_issue_detail_on_real_rows():
 
 
 def test_parse_issue_detail_counts_preferred_shares_and_refuses_text():
+    # Jack 2026-11-19 (7b): 같은 종류끼리 — 기타주식만 내면 새 기타주식 ÷ 증자 전 기타주식 (예전: 모든 새 주식 ÷ 모든 주식 = 10%)
     row = {"nstk_ostk_cnt": "-", "nstk_estk_cnt": "1,000,000", "bfic_tisstk_ostk": "9,000,000", "bfic_tisstk_estk": "1,000,000",
            "ic_mthn": "제3자배정증자"}
-    assert F.parse_issue_detail(row, "rights")[0]["n"] == 1000000 and F.parse_issue_detail(row, "rights")[0]["p"] == 10.0
-    row["bfic_tisstk_ostk"] = "약 9백만"                       # 읽지 못하는 글자 → p 는 null (n 은 읽었어요)
+    d, bad = F.parse_issue_detail(row, "rights")
+    assert (d["cls"], d["n"], d["p"], bad) == ("other", 1000000, 100.0, [])
+    row["bfic_tisstk_estk"] = "약 1백만"                       # 읽지 못하는 글자 → p 는 null (n 은 읽었어요)
     d, bad = F.parse_issue_detail(row, "rights")
     assert d["n"] == 1000000 and d["p"] is None and bad == ["p"]
     d, bad = F.parse_issue_detail({"bddd": "2026-13-45", "bd_fta": "-", "ovis_fta": "50,000,000", "cvisstk_tisstk_vs": "0"}, "cb")
@@ -179,7 +181,7 @@ def test_a_tiny_issue_keeps_a_positive_ratio():
     assert d["p"] == 0.0002 and bad == []
     assert F.parse_issue_detail({"bddd": "2026년 10월 29일", "bd_fta": "100", "cvisstk_tisstk_vs": "0.001"}, "cb")[0]["p"] == 0.001
     assert not V.issue_row_problems({"rc": "20261030000111", "d": "20261030", "t": "005930", "nk": "삼성전자", "kind": "rights", "bd": None,
-                                     "how": "others", "n": 100, "p": 0.0002, "amt": None, "cor": False}, dt.date(2026, 10, 31))
+                                     "how": "others", "n": 100, "p": 0.0002, "amt": None, "cor": False, "cls": "common"}, dt.date(2026, 10, 31))
 
 
 # ── fetch_issues: 처음 실행 · 정정 · 캐시 · 한도 · 실패 ─────────────────────
@@ -211,7 +213,7 @@ def test_first_run_gives_one_row_per_decision(env, capsys):
     rows = out["issue"]
     assert out["issueOk"] is True
     assert {r["rc"]: (r["t"], r["kind"], r["cor"]) for r in rows} == {k: (t, k2, cor) for k, (t, k2, cor) in WANT.items()}
-    assert all(list(r)[:len(SPEC_KEYS)] == SPEC_KEYS and set(list(r)[len(SPEC_KEYS):]) <= {"wd", "pend"} for r in rows)   # 스펙의 칸 그대로
+    assert all(list(r)[:len(SPEC_KEYS)] == SPEC_KEYS and set(list(r)[len(SPEC_KEYS):]) <= {"wd", "pend", "cls", "n2", "p2", "bonus"} for r in rows)   # 스펙의 칸 그대로 (+ Jack 2026-11-19 의 칸)
     assert {r["rc"] for r in rows if r.get("wd")} == WD and not any(r.get("pend") for r in rows)
     assert [r["d"] for r in rows] == sorted((r["d"] for r in rows), reverse=True)  # 최신순
     assert sorted(d.detail_calls()) == sorted({(k, t) for t, k, _ in WANT.values()} | {("cb", "079190")})   # 쌍마다 한 번
@@ -221,7 +223,7 @@ def test_first_run_gives_one_row_per_decision(env, capsys):
     log = capsys.readouterr().out
     assert "주요사항 공시: 유상증자 11 · CB 14 · BW 1 (정정 21), 숫자 못 읽음 0" in log    # 칸이 모두 '-' 인 넷은 철회라 '못 읽음'이 아니에요
     assert "!! 주요사항 공시 철회 (숫자 칸이 모두 '-' 인 정정 공시 · wd: true · 카드가 건너뛰어요) 4건: 탑선 유상증자 20261113" in log
-    assert "목록 밖 회사 1" in log                          # 비상장 회사의 유상증자결정
+    assert "목록 밖 회사 2" in log                          # 비상장 회사의 유상증자결정 + 엘앤씨바이오 유무상증자 (고정 자료의 종목 목록 밖 · 7a 뒤로 셈)
 
 
 def test_same_board_date_decisions_stay_separate(env):
@@ -524,9 +526,10 @@ def test_insider_pos_and_role_from_real_rows():
     got = collections.Counter(F.insider_pos_role(r) for r in ELE)
     assert got[("10%이상주주", "주요주주")] == 2 + 8                          # 이지스밸류플러스리츠 · 손오공 (직위 '-')
     assert got[("사실상지배주주", "주요주주")] == 2
-    assert all(role == "임원" for (pos, role) in got if pos in ("상무", "사내이사", "대표이사", "이사"))
+    assert all(role in ("임원", "임원·주요주주") for (pos, role) in got if pos in ("상무", "사내이사", "대표이사", "이사"))
     both = [r for r in ELE if r["isu_exctv_ofcps"] != "-" and r["isu_main_shrholdr"] != "-"]
-    assert both and all(F.insider_pos_role(r) == (r["isu_exctv_ofcps"], "임원") for r in both)   # 삼성전자 상무 + 10%이상주주 → 임원
+    # Jack 2026-11-19 (7c): 삼성전자 상무 + 10%이상주주 → '임원·주요주주' (예전: 임원) · 직위는 그대로 임원 직위
+    assert both and all(F.insider_pos_role(r) == (r["isu_exctv_ofcps"], "임원·주요주주") for r in both)
     assert F.insider_pos_role({"isu_exctv_rgist_at": "비등기임원", "isu_exctv_ofcps": "-", "isu_main_shrholdr": "-"}) == ("", "임원")
     assert F.insider_pos_role({"isu_exctv_rgist_at": "-", "isu_exctv_ofcps": " - ", "isu_main_shrholdr": ""}) == ("", None)
     assert F.insider_pos_role({}) == ("", None)
@@ -534,7 +537,7 @@ def test_insider_pos_and_role_from_real_rows():
 
 def test_parse_elestock_corp_carries_role():
     rows = F.parse_elestock_corp(ELE, "20200101")
-    assert rows and all(r["role"] in ("임원", "주요주주", None) and r["pos"] != "-" for r in rows)
+    assert rows and all(r["role"] in ("임원", "주요주주", "임원·주요주주", None) and r["pos"] != "-" for r in rows)
 
 
 def test_insider_fix_roles_refreshes_earlier_rows_and_blanks_dashes():
@@ -652,7 +655,7 @@ def good_files():
     """좋은 네 파일 (fixture_data) + 새 칸: 고정 자료의 진짜 줄 모양을 good_pair 의 종목 · 날짜(asOf 2026-10-31)로 옮겨요."""
     cur, prev, final = good_pair()
     rows = [{"rc": "20261030000111", "d": "20261030", "t": "005930", "nk": "삼성전자", "kind": "rights", "bd": None, "how": "others",
-             "n": 106022, "p": 2.05, "amt": None, "cor": True},
+             "n": 106022, "p": 2.05, "amt": None, "cor": True, "cls": "common"},
             {"rc": "20261029000222", "d": "20261029", "t": "000660", "nk": "SK하이닉스", "kind": "cb", "bd": "20261029", "how": None, "n": None,
              "p": 3.11, "amt": 1000000000, "cor": False},
             {"rc": "20261013000333", "d": "20261013", "t": "005380", "nk": "현대차", "kind": "bw", "bd": "20240304", "how": None, "n": None,
@@ -922,13 +925,13 @@ def _issue_files(rows, us_dates=None):
 
 def _r(i, **kw):
     base = {"rc": f"2026103000{i:04d}", "d": "20261030", "t": "005930", "nk": "삼성전자", "kind": "rights", "bd": None, "how": "others",
-            "n": 100 + i, "p": 1.0, "amt": None, "cor": False}
+            "n": 100 + i, "p": 1.0, "amt": None, "cor": False, "cls": "common"}
     base.update(kw)
     return base
 
 
-WD_ROW = dict(bd=None, how=None, n=None, p=None, amt=None, cor=True, wd=True)
-PEND_ROW = dict(bd=None, how=None, n=None, p=None, amt=None, pend=True)
+WD_ROW = dict(bd=None, how=None, n=None, p=None, amt=None, cor=True, wd=True, cls=None)       # 파이프라인처럼 철회 · 읽는 중 줄의 cls 는 null
+PEND_ROW = dict(bd=None, how=None, n=None, p=None, amt=None, pend=True, cls=None)
 
 
 @pytest.mark.parametrize("extra", [dict(wd="true"), dict(wd=1), dict(pend=None), dict(pend="yes"),

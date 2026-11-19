@@ -581,18 +581,27 @@ bars back; still hidden: ratio 7, basis 4, rights 7, uncounted 2, data 22, a 32.
 ## 오늘 볼 것 data (v19.6b, since #PR): disc.json `issue`, insider `role`, US `ed` · `xd`
 
 What the daily run writes (`fetch_data.py` `fetch_issues`, `fill_issue_bd`, `insider_pos_role`, `us_event_dates`):
-- **`issue`** — 유상증자 · 전환사채 · 신주인수권부사채 decisions of Korean stocks in our list, filed in the last 90 days. The run
-  reads DART's 주요사항보고서 list (about 25 pages), then, for each (company, kind) with a filing it has not seen, DART's
-  structured lookup (`piicDecsn` · `cvbdIsDecsn` · `bdwtIsDecsn`, asked from 2015 so a correction of an old decision is found).
+- **`issue`** — 유상증자 · 전환사채 · 신주인수권부사채 decisions of Korean stocks in our list, filed in the last 90 days, and
+  유무상증자 (a rights issue and a bonus issue in one decision; Jack 2026-11-19, 7a). The run reads DART's 주요사항보고서 list
+  (about 25 pages), then, for each (company, kind) with a filing it has not seen, DART's structured lookup (`piicDecsn` ·
+  `cvbdIsDecsn` · `bdwtIsDecsn` · `pifricDecsn`, asked from 2015 so a correction of an old decision is found).
   DART gives one row per decision, under the filing number of its newest version; an attachment-only correction keeps the
   earlier number (corrections follow this DART record: Jack's yes 2026-11-19). A row is a decision whose filing number is in
   the 90-day list. Results are cached in the DART cache
-  (`{filing number}|issue|v2`: decision row · older version · missing), also in a full-DART run, and dropped when the filing
+  (`{filing number}|issue|v3`: decision row · older version · missing; v3 re-reads rows parsed before the same-class rule), also in a full-DART run, and dropped when the filing
   leaves the window (keys of other versions are dropped too). At most 150 (company, kind) lookups a run (`ISSUE_PER_RUN`),
   newest first; the rest wait for the next run and their newest filings show as `pend: true` with blank numbers meanwhile
   (while a pair has such a filing, its filings the list marks "정" are left out, so an outdated number never shows as current).
   A filing the lookup does not return although it should is asked again the next KST day. Share counts and amounts are read
   only as whole numbers.
+- **Rights-issue numbers (Jack 2026-11-19, 7b: same class)** — `n` is the new common shares when the decision issues common
+  shares, else the new 기타주식 (`cls` says which: `common` · `other`); `p` is `n` ÷ the existing shares of that same class
+  (육일씨엔에쓰 2026-08-26: 2,305,918 ÷ 11,204,255 common = 20.58 %). With no existing shares of that class (a first 기타주식
+  issue) `p` is null. When a decision issues both classes, `n` · `p` are the common shares and `n2` · `p2` the 기타주식 (those two
+  keys only then). Every rights row has `cls` (null when unknown, withdrawn or pending).
+- **유무상증자 (`bonus: true`)** — the row is `kind: "rights"` with `bonus: true`; `n` · `p` · `how` describe the paid part
+  (`piic_` fields), the bonus part's numbers are not carried, and `bd` is DART's own board date (`fric_bddd`), window-checked
+  like any rights board date. A withdrawal is marked `wd` like a rights issue.
 - **Rights-issue board date (`bd`, Q18, Jack 2026-11-19)** — DART's 유상증자 lookup has no board-date field, so after
   `fetch_issues` the run reads it from each rights filing's own document (`fill_issue_bd`, `document.xml`): only the zip's main
   file `{filing number}.xml` (never an attachment), the table row "N. 이사회결의일(결정일)" in the filed form (a correction's
@@ -616,8 +625,8 @@ What the daily run writes (`fetch_data.py` `fetch_issues`, `fill_issue_bd`, `ins
   and has no row. The run log names them ("!! 주요사항 공시 철회 …").
 - **DART stops in this phase** (daily limit 020, key errors): last run's rows stay with `issueOk` false and the run goes on
   (no screen reads `issue` yet). The 지분공시 phase before it still stops the run, as before.
-- **insider `role`** — 임원 when the filing names a position or 등기/비등기임원, else 주요주주 when it names a major-holder
-  relation, else null. DART's "-" means empty (it used to show as a position). Rows from earlier runs are fixed from the same
+- **insider `role`** — 임원 when the filing names a position or 등기/비등기임원, 주요주주 when it names only a major-holder
+  relation, 임원·주요주주 (exactly that text; Jack 2026-11-19, 7c) when it names both, else null. No screen reads `role` yet. DART's "-" means empty (it used to show as a position). Rows from earlier runs are fixed from the same
   day's lookup of that company; a row the run could not look up again keeps `role` null. A major holder's position is DART's
   own relation word (10%이상주주, 사실상지배주주; Jack's yes 2026-11-19); `fetch_data.INSIDER_POS_HOLDER_WORDS = False` blanks it
   instead (one line). The run log counts the words ("주요주주 줄의 직위 …").
@@ -627,7 +636,9 @@ What the daily run writes (`fetch_data.py` `fetch_issues`, `fill_issue_bd`, `ins
 Gate rows (`validate_data.py` `check_v196b` and `check_issue_bd`; additions only):
 - **FAIL "주요사항 공시 (issue · 유상증자 · CB · BW)"**: a row has a missing or wrong field (filing number, a date outside
   the 90 days before `asOf`, kind, method or share count on a bond, amount on a rights issue, a non-positive number, a
-  correction mark that is not true/false, a `wd` or `pend` mark that is not true/false, or a number on a `wd` or `pend` row), a
+  correction mark that is not true/false, a `wd` or `pend` mark that is not true/false, or a number on a `wd` or `pend` row;
+  since Jack's 2026-11-19 answers also: a `cls` other than common · other · null or on a bond, a rights row with `n` but no
+  `cls`, `n2` · `p2` other than on a common row with a positive whole `n2`, a `bonus` that is not `true` or is on a bond), a
   filing number appears twice, or `issueOk` is missing. That is our own bug: look at
   the run's "주요사항" log lines. **WARN** (never blocks): no `issue` section (a file from before #PR, e.g. the live site right
   after the merge), `issueOk` false (the list failed and last run's rows were kept), 0 rows, a row whose stock left today's
@@ -637,7 +648,7 @@ Gate rows (`validate_data.py` `check_v196b` and `check_issue_bd`; additions only
   (not `wd`, not `pend`) whose board date is after its filing date — a filing always comes after the decision, so that is our
   reading's bug. **WARN**: rights rows with a blank board date (documents not read yet — normal on the first one or two runs
   after the merge — or unreadable; the run log names them). **SKIP** when there is no `issue` section (a file from before #PR).
-- **FAIL "임원 · 주요주주 역할 (insider role)"**: a `role` that is not 임원, 주요주주 or null. **WARN**: rows without `role` or
+- **FAIL "임원 · 주요주주 역할 (insider role)"**: a `role` that is not 임원, 주요주주, 임원·주요주주 (exactly) or null. **WARN**: rows without `role` or
   with "-" as the position (files from before #PR).
 - **FAIL "미국 일정 (ed 실적 발표일 · xd 배당락일)"**: a date that is not YYYY-MM-DD, or a date on a stock that is not
   American. **WARN**: none at all among more than 100 US stocks (a file from before #PR, or Yahoo renamed its fields), or a date

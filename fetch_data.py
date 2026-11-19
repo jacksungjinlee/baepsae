@@ -3955,7 +3955,8 @@ DISC_DAYS = 90
 DISC_CALL_CAP = 1200   # 1회 실행당 상세조회 상한 (백필은 다음 실행이 이어받음)
 
 
-INSIDER_ROLES = ("임원", "주요주주")
+INSIDER_BOTH = "임원·주요주주"    # Jack 2026-11-19 (7c): 임원이면서 주요주주인 사람의 role — 글자 그대로 (스펙 B.2 의 빈 직위 대신 쓰는 말과 같아요)
+INSIDER_ROLES = ("임원", "주요주주", INSIDER_BOTH)
 # v19.6b (리뷰 2026-11-16 · Jack 의 yes 2026-11-19, Q21): 임원 직위가 없는 주요주주 줄의 직위(pos)에 DART 의 관계 말(10%이상주주 · 사실상지배주주 …)을
 # 그대로 써요 — 2.0 공시 탭 · 예전 뱁새 공시·수급에 보여요 (예전엔 '-' 이라 2.0 은 빈 칸, 예전 앱은 ' · -'). False 면 그 줄의 직위는 빈 칸이에요
 # (2.0 이 지금 '-' 에 하는 것처럼 · role 은 그대로 주요주주). 한 줄로 바꿔요.
@@ -3973,9 +3974,11 @@ def insider_pos_role(r):
     """elestock 한 행 → (직위 pos, 역할 role). (순수 함수)
     pos: 임원 직위(isu_exctv_ofcps), 없으면 주요주주 관계(isu_main_shrholdr · 10%이상주주 · 사실상지배주주 …), 없으면 ''.
     role (v19.6b Part B.1): 임원 = 직위가 있거나 등기·비등기임원(isu_exctv_rgist_at)으로 적힌 사람 · 주요주주 = 주요주주 칸만 적힌 사람 ·
-    둘 다 없으면 None. 둘 다 적힌 사람(2026-11-15 삼성전자 3,378행 중 8행: 상무이면서 10%이상주주)은 임원 — pos 와 같은 순서예요."""
+    둘 다 적힌 사람(2026-11-15 삼성전자 3,378행 중 8행: 상무이면서 10%이상주주)은 '임원·주요주주' (Jack 2026-11-19, 7c) · 둘 다 없으면 None.
+    pos 는 임원 직위가 먼저예요 (그대로)."""
     ofc, reg, maj = _ele_txt(r.get("isu_exctv_ofcps")), _ele_txt(r.get("isu_exctv_rgist_at")), _ele_txt(r.get("isu_main_shrholdr"))
-    role = "임원" if (ofc or reg) else ("주요주주" if maj else None)
+    officer = bool(ofc or reg)
+    role = (INSIDER_BOTH if maj else "임원") if officer else ("주요주주" if maj else None)
     return (ofc or maj), role
 
 
@@ -4131,7 +4134,8 @@ def fetch_disclosures(kr_stocks, cmap, end, client):
                 r["pos"] = ""                  # 주요주주 관계 말을 보이지 않아요 (스위치 · 위 주석)
     rc_ = collections.Counter(r.get("role") for r in dedup)
     words = collections.Counter(r.get("pos") or "(빈 칸)" for r in dedup if r.get("role") == "주요주주")
-    log(f"{'  !! ' if fx['unknown'] else '· '}내부자 역할(role): 임원 {rc_['임원']:,} · 주요주주 {rc_['주요주주']:,} · 없음 {rc_[None]:,} "
+    log(f"{'  !! ' if fx['unknown'] else '· '}내부자 역할(role): 임원 {rc_['임원']:,} · 주요주주 {rc_['주요주주']:,} · "
+        f"{INSIDER_BOTH} {rc_[INSIDER_BOTH]:,} · 없음 {rc_[None]:,} "
         f"(오늘 응답으로 고친 지난 줄 {fx['fresh']:,} · 직위 '-' 를 빈 칸으로 {fx['dash']:,}"
         + (f" · 오늘 다시 받지 못해 역할을 모르는 지난 줄 {fx['unknown']:,} — null 로 둬요" if fx["unknown"] else "") + ")"
         + f" · 주요주주 줄의 직위 (DART 의 말 그대로{'' if INSIDER_POS_HOLDER_WORDS else ' — 스위치가 꺼져 빈 칸'}): "
@@ -4180,8 +4184,9 @@ def fetch_disclosures(kr_stocks, cmap, end, client):
 # v19.6b (Part B.1): disc.json issue — 유상증자 · 전환사채 · 신주인수권부사채 결정 (오늘 볼 것 카드의 데이터)
 # ────────────────────────────────────────────────────────────
 # 목록   list.json 주요사항보고서 (pblntf_ty B · pblntf_detail_ty B001) · 지분공시와 같은 90일. 철회된 공시(비고 rm '철') · 이름에 '철회'가 든
-#        공시 · 종속회사 · 자회사 공시는 빼요. 유무상증자 · 교환사채 · 그 밖의 결정(무상증자 · 감자 · 합병)은 이번에 다루지 않아요.
-# 상세   piicDecsn · cvbdIsDecsn · bdwtIsDecsn (DVWHY_FX_EP 와 같은 API). 회사 · 종류마다 한 번 부르면 결정마다 한 줄이 와요 — 그 결정의 마지막
+#        공시 · 종속회사 · 자회사 공시는 빼요. 교환사채 · 그 밖의 결정(무상증자 · 감자 · 합병)은 이번에 다루지 않아요. 유무상증자(유상증자와
+#        무상증자를 한 번에 정한 결정)는 넣어요 (Jack 2026-11-19, 7a): 안에서는 종류 pifric 으로 따로 읽고, 줄은 kind rights + bonus: true.
+# 상세   piicDecsn · cvbdIsDecsn · bdwtIsDecsn · pifricDecsn (ISSUE_EP). 회사 · 종류마다 한 번 부르면 결정마다 한 줄이 와요 — 그 결정의 마지막
 #        판(본문이 바뀐 마지막 공시)의 접수번호로. 2026-11-15 확인: 더코디 유상증자 공시 33건 → 결정 4줄 · 애드바이오텍 CB 21건 → 1줄 ·
 #        첨부정정(본문은 그대로)은 앞 판의 접수번호 그대로예요 (케스피온 CB: 2026-11-11 첨부정정 → 2026-01-20 공시 줄).
 # 정정   한 결정은 한 줄: 상세 API 가 주는 결정 줄 중 접수번호가 목록 기간 안에 있는 것 (d = 그 공시의 날짜 · cor = 그 공시가 정정 공시인지).
@@ -4193,9 +4198,15 @@ def fetch_disclosures(kr_stocks, cmap, end, client):
 #        부르고, 부르면 그 쌍의 기간 안 공시를 모두 다시 적어요 (새 정정이 오면 옛 판이 nh 로 바뀌어요). 결정 공시의 칸은 접수번호마다 바뀌지
 #        않아서 full 실행에서도 캐시를 써요 (업종 코드처럼). 공시가 목록 기간을 벗어나면 지워요. 실행당 ISSUE_PER_RUN 쌍까지 (최근 공시부터).
 # 칸     rc 접수번호 · d 공시일 YYYYMMDD · t 종목코드 · nk 이름 · kind rights | cb | bw · bd 이사회결의일 YYYYMMDD (사채: 상세 API 의 bddd ·
-#        유상증자: API 에 칸이 없어 여기서는 null — main 이 fill_issue_bd 로 공시 원문에서 읽어 채워요 (Q18 · 못 읽으면 null)) ·
-#        how (유상증자만) holders 주주배정 · 주주우선공모 / others 제3자배정 · 일반공모 / null 그 밖 · n 새 주식 수 (유상증자: 보통주 + 기타주식) · p % (유상증자: n ÷ 증자 전 발행주식총수 · 사채: 공시의 '전환(행사)에 따라 발행할 주식의
-#        주식총수 대비 비율') · amt 사채 권면(전자등록)총액 원 (bd_fta · '-' 이면 null) · cor 정정 공시([기재정정] · [첨부정정] …)인지.
+#        유무상증자: pifricDecsn 의 fric_bddd · 유상증자: API 에 칸이 없어 여기서는 null — main 이 fill_issue_bd 로 공시 원문에서 읽어 채워요
+#        (Q18 · 못 읽으면 null) · 유상증자 줄의 bd 는 모두 fill_issue_bd 가 공시일과 맞는지 봐요) ·
+#        how (유상증자만) holders 주주배정 · 주주우선공모 / others 제3자배정 · 일반공모 / null 그 밖 ·
+#        n · p (유상증자 · Jack 2026-11-19, 7b: 같은 종류끼리) n = 새 주식 수 — 보통주를 발행하면 새 보통주, 아니면 새 기타주식 (cls 가 어느
+#        쪽인지: common | other) · p = n ÷ 같은 종류의 증자 전 주식 수 % (육일씨엔에쓰 2026-08-26: 2,305,918 ÷ 보통주 11,204,255 = 20.58%) ·
+#        그 종류의 증자 전 주식이 없으면(처음 내는 기타주식) p null · 보통주와 기타주식을 함께 내면 n · p 는 보통주, n2 · p2 는 기타주식
+#        (그때만 있는 칸) · 사채의 p: 공시의 '전환(행사)에 따라 발행할 주식의 주식총수 대비 비율' · amt 사채 권면(전자등록)총액 원 (bd_fta ·
+#        '-' 이면 null) · cor 정정 공시([기재정정] · [첨부정정] …)인지 · bonus 유무상증자면 true (그때만 있는 칸 · n · p · how 는 유상 몫 —
+#        무상 몫의 숫자는 싣지 않아요). 유상증자 줄에는 늘 cls 가 있어요 (모르면 · 철회 · 읽는 중이면 null).
 #        읽지 못한 칸은 null — 짐작하지 않아요. 주식 수 · 금액은 정수만 읽어요 (소수면 null).
 # 철회   (리뷰 2026-11-16 · Jack 의 yes 2026-11-19, Q20) 상세 줄의 숫자 칸이 모두 '-' 인 정정 공시는 철회예요: DART 목록은 철회 표시(rm '철')를 붙이지 않고 '[기재정정]' 으로
 #        모든 칸을 지워요 (더코디 2026-11-05 '납입금미납으로 유상증자철회' · 크라우드웍스 2026-08-21 '대체납입자 선정 불능에 따른 철회' · 쏘닉스 CB
@@ -4205,9 +4216,14 @@ def fetch_disclosures(kr_stocks, cmap, end, client):
 #        종류)의 '정' 표시 공시는 그동안 넣지 않아요 — 새 판이 바꾼 옛 숫자를 지금 것처럼 보이지 않게 (하루 늦게 보일 수 있어요).
 # 실패   DART 가 실행을 멈추는 상태(한도 020 · 키 오류)를 이 단계에서 만나면 지난 발행본의 줄을 두고 issueOk false — 실행은 멈추지 않아요 (아직 어느
 #        화면도 이 칸을 읽지 않아요 · 리뷰 2026-11-16). 지분공시(fetch_disclosures)의 규칙은 그대로예요.
-ISSUE_TAG = "issue|v2"           # 캐시 키 '{접수번호}|issue|v2' — 읽는 방법이 바뀌면 올려요 (v2: 철회 표시 blank · 정수만). 다른 판의 키는 지워요
-ISSUE_KINDS = ("rights", "cb", "bw")
-ISSUE_KO = {"rights": "유상증자", "cb": "CB", "bw": "BW"}
+ISSUE_TAG = "issue|v3"           # 캐시 키 '{접수번호}|issue|v3' — 읽는 방법이 바뀌면 올려요 (v2: 철회 표시 blank · 정수만 · v3: 같은 종류 n · p ·
+                                 # cls · n2 · p2 — Jack 2026-11-19, 7b). 다른 판의 키는 지워요 (한 번 다시 읽어요)
+ISSUE_KINDS = ("rights", "cb", "bw")    # 줄의 kind
+ISSUE_SRC = ISSUE_KINDS + ("pifric",)   # 목록 · 상세를 읽는 종류 (pifric 유무상증자 → 줄은 kind rights + bonus: true · Jack 2026-11-19, 7a)
+ISSUE_RIGHTS = ("rights", "pifric")
+ISSUE_KO = {"rights": "유상증자", "cb": "CB", "bw": "BW", "pifric": "유무상증자"}
+ISSUE_EP = {"rights": "piicDecsn.json", "cb": "cvbdIsDecsn.json", "bw": "bdwtIsDecsn.json", "pifric": "pifricDecsn.json"}
+ISSUE_PRE = {"rights": "", "pifric": "piic_"}   # 유상 몫의 칸 이름 앞머리 (pifricDecsn 은 유상 몫 piic_ · 무상 몫 fric_)
 ISSUE_P_KEY = {"cb": "cvisstk_tisstk_vs", "bw": "nstk_isstk_tisstk_vs"}   # 사채: 공시의 '주식총수 대비 비율(%)'
 ISSUE_PER_RUN = 150              # 한 실행에서 상세를 새로 부르는 (회사, 종류) 수 상한 — 2026-11-15 의 90일치 약 225쌍은 두 실행에 나눠요
 ISSUE_MAX_PAGES = 40             # 목록 100건짜리 쪽 수 상한 (2026-11-15: 2,228건 · 23쪽). 넘으면 목록을 다 읽지 못한 것 (지난 줄을 둬요)
@@ -4215,16 +4231,18 @@ ISSUE_EST_PAGES = 25             # 호출 수 어림용 목록 쪽 수
 ISSUE_WD_KEYS = {"rights": ("nstk_ostk_cnt", "nstk_estk_cnt", "fv_ps", "bfic_tisstk_ostk", "bfic_tisstk_estk", "fdpp_fclt", "fdpp_bsninh",
                             "fdpp_op", "fdpp_dtrp", "fdpp_ocsa", "fdpp_etc"),
                  "cb": ("bd_fta", "bddd", "cvisstk_tisstk_vs"), "bw": ("bd_fta", "bddd", "nstk_isstk_tisstk_vs")}   # 모두 '-' 인 정정 = 철회
+ISSUE_WD_KEYS["pifric"] = tuple("piic_" + k for k in ISSUE_WD_KEYS["rights"])
 ISSUE_DETAIL_FROM = "20150101"   # 상세 API 의 기간 시작 (최초접수일 · DART 는 2015년부터 줘요): 오래전 결정을 오늘 정정한 공시도 찾게 (아스트 2024년
                                  # CB 네 건을 2026-11-06 에 정정 · 730일로는 못 찾았어요) · 호출 수는 그대로
 
 
 def issue_kind(report_nm):
-    """주요사항보고서 이름 → (rights | cb | bw | None, 정정 공시인지, 첨부만 고친 공시인지). 앞의 [기재정정] · [첨부정정] 표시는 떼고 종류를
-    봐요 (dvwhy_kind). 철회 공시 · 종속회사 · 자회사 공시 · 유무상증자 · 교환사채 · 다른 결정은 None. (순수 함수)"""
+    """주요사항보고서 이름 → (rights | cb | bw | pifric | None, 정정 공시인지, 첨부만 고친 공시인지). 앞의 [기재정정] · [첨부정정] 표시는
+    떼고 종류를 봐요 (dvwhy_kind). pifric = 유무상증자 (Jack 2026-11-19, 7a). 철회 공시 · 종속회사 · 자회사 공시 · 교환사채 · 다른 결정은
+    None. (순수 함수)"""
     kind, wd = dvwhy_kind(report_nm)
     head = re.match(r"^((?:\[[^\]]*\])*)", re.sub(r"\s+", "", str(report_nm or ""))).group(1)
-    return (kind if kind in ISSUE_KINDS and not wd else None), "정정" in head, "첨부" in head
+    return (kind if kind in ISSUE_SRC and not wd else None), "정정" in head, "첨부" in head
 
 
 def issue_filings(items, corp2t, bgn):
@@ -4270,13 +4288,6 @@ def issue_how(text):
     return None
 
 
-def _issue_sum(a, b):
-    """_dash_none 두 값의 합: '-' · 빈 칸은 0, 읽지 못한 값(None)이 하나라도 있으면 None."""
-    if a is None or b is None:
-        return None
-    return (0.0 if a is True else a) + (0.0 if b is True else b)
-
-
 def _issue_pct(x):
     """양수 % → 소수 둘째 자리 (0.005% 아래는 유효숫자 둘: 0 으로 반올림돼 '없음'처럼 보이지 않게). (순수 함수)"""
     return round(x, 2) if x >= 0.005 else float(f"{x:.2g}")
@@ -4287,6 +4298,38 @@ def _issue_whole(x):
     return x if isinstance(x, float) and x > 0 and x == int(x) else None
 
 
+def _issue_count(v):
+    """주식 수 칸 → 정수: '-' · 빈 칸 · 0 은 0 (그 종류는 없어요), 정수인 양수는 그 수, 그 밖(소수 · 음수 · 글자)은 None (읽지 못함). (순수 함수)"""
+    x = _dash_none(v)
+    if x is True:
+        return 0
+    return int(x) if isinstance(x, float) and x >= 0 and x == int(x) else None
+
+
+def issue_rights_numbers(row, pre=""):
+    """유상증자(유무상증자의 유상 몫 pre="piic_") 상세 한 줄 → {cls, n, p} (+ 보통주와 기타주식을 함께 내면 n2 · p2), 읽지 못한 칸 [이름].
+    Jack 2026-11-19 (7b): 같은 종류끼리 — 새 보통주 ÷ 증자 전 보통주 · 새 기타주식 ÷ 증자 전 기타주식. 보통주를 내면 n · p 는 보통주
+    (cls common), 기타주식만 내면 기타주식 (cls other). 그 종류의 증자 전 주식이 0 이면 p 는 null (나눌 수 없어요 · 못 읽은 것은 아니에요).
+    새 주식 수를 읽지 못하면 셋 다 null. (순수 함수)"""
+    on, en = _issue_count(row.get(pre + "nstk_ostk_cnt")), _issue_count(row.get(pre + "nstk_estk_cnt"))
+    ob, eb = _issue_count(row.get(pre + "bfic_tisstk_ostk")), _issue_count(row.get(pre + "bfic_tisstk_estk"))
+    out = {"cls": None, "n": None, "p": None}
+    if on is None or en is None or (on == 0 and en == 0):
+        return out, ["n", "p"]
+
+    def pct(new, before):
+        return _issue_pct(new / before * 100) if before else None
+    if on > 0:
+        out.update(cls="common", n=on, p=pct(on, ob))
+        bad = [] if ob is not None else ["p"]
+        if en > 0:
+            out.update(n2=en, p2=pct(en, eb))
+            bad += [] if eb is not None else ["p2"]
+        return out, bad
+    out.update(cls="other", n=en, p=pct(en, eb))
+    return out, ([] if eb is not None else ["p"])
+
+
 def issue_blank(row, kind):
     """상세 줄의 숫자 칸(ISSUE_WD_KEYS)이 모두 있고 모두 '-' · 빈 칸인지 — 정정 공시면 철회예요. (순수 함수)"""
     keys = ISSUE_WD_KEYS[kind]
@@ -4294,18 +4337,18 @@ def issue_blank(row, kind):
 
 
 def parse_issue_detail(row, kind):
-    """상세 API 한 줄 → ({bd, how, n, p, amt, blank}, 읽지 못한 칸 [이름]). 읽지 못한 칸은 None. blank = 숫자 칸이 모두 '-'. (순수 함수)"""
+    """상세 API 한 줄 → ({bd, how, n, p, amt, blank} + 유상증자는 cls (· n2 · p2), 읽지 못한 칸 [이름]). 읽지 못한 칸은 None.
+    blank = 숫자 칸이 모두 '-'. 유무상증자(pifric)는 유상 몫(piic_)을 읽고 bd 는 fric_bddd (pifricDecsn 의 이사회결의일). (순수 함수)"""
     out = {"bd": None, "how": None, "n": None, "p": None, "amt": None, "blank": issue_blank(row, kind)}
-    if kind == "rights":
-        new = _issue_sum(_dash_none(row.get("nstk_ostk_cnt")), _dash_none(row.get("nstk_estk_cnt")))
-        before = _issue_sum(_dash_none(row.get("bfic_tisstk_ostk")), _dash_none(row.get("bfic_tisstk_estk")))
-        new, before = _issue_whole(new), _issue_whole(before)
-        if new is not None:
-            out["n"] = int(new)
-            if before is not None:
-                out["p"] = _issue_pct(new / before * 100)
-        out["how"] = issue_how(row.get("ic_mthn"))
-        return out, [k for k in ("n", "p") if out[k] is None]
+    if kind in ISSUE_RIGHTS:
+        pre = ISSUE_PRE[kind]
+        got, bad = issue_rights_numbers(row, pre)
+        out.update(got)
+        out["how"] = issue_how(row.get(pre + "ic_mthn"))
+        if kind == "pifric":
+            bd = _kdate(row.get("fric_bddd"))
+            out["bd"] = bd.replace("-", "") if bd else None
+        return out, bad
     bd = _kdate(row.get("bddd"))
     out["bd"] = bd.replace("-", "") if bd else None
     p = _dash_none(row.get(ISSUE_P_KEY[kind]))
@@ -4350,10 +4393,18 @@ def issue_rows(filings, label, info):
             continue
         g = g if st == "000" and isinstance(g, dict) else {}
         wd = st == "000" and bool(g.get("blank")) and bool(f["cor"])
-        rt = f["kind"] == "rights"
-        row = {"rc": f["rc"], "d": f["d"], "t": f["t"], "nk": (info.get(f["t"]) or {}).get("nk") or f["t"], "kind": f["kind"],
-               "bd": None if rt or wd else g.get("bd"), "how": g.get("how") if rt and not wd else None, "n": g.get("n") if rt and not wd else None,
-               "p": None if wd else g.get("p"), "amt": None if rt or wd else g.get("amt"), "cor": bool(f["cor"])}
+        rt = f["kind"] in ISSUE_RIGHTS
+        live = not wd
+        row = {"rc": f["rc"], "d": f["d"], "t": f["t"], "nk": (info.get(f["t"]) or {}).get("nk") or f["t"], "kind": "rights" if rt else f["kind"],
+               "bd": g.get("bd") if live and f["kind"] != "rights" else None, "how": g.get("how") if rt and live else None,
+               "n": g.get("n") if rt and live else None, "p": g.get("p") if live else None, "amt": None if rt or wd else g.get("amt"),
+               "cor": bool(f["cor"])}
+        if rt:
+            row["cls"] = g.get("cls") if live else None
+            if live and "n2" in g:
+                row["n2"], row["p2"] = g["n2"], g.get("p2")
+        if f["kind"] == "pifric":
+            row["bonus"] = True
         if wd:
             row["wd"] = True
         if st != "000":
@@ -4444,7 +4495,7 @@ def fetch_issues(kr_stocks, cmap, end, client):
 
     def one(g):
         (corp, kind), _ = g
-        j = client.get(DVWHY_FX_EP[kind][0], {"corp_code": corp, "bgn_de": ISSUE_DETAIL_FROM, "end_de": dend})
+        j = client.get(ISSUE_EP[kind], {"corp_code": corp, "bgn_de": ISSUE_DETAIL_FROM, "end_de": dend})
         st = str(j.get("status")) if j else None
         if st not in ("000", "013"):
             return g, None
@@ -4482,14 +4533,19 @@ def fetch_issues(kr_stocks, cmap, end, client):
     by_kind = collections.Counter(r["kind"] for r in rows)
     no_num = sum(1 for r in rows if r.get("pend"))
     wds = [r for r in rows if r.get("wd")]
+    # 유상증자의 '숫자 못 읽음': n 이 없거나 보통주 줄의 p 가 없음 (기타주식을 처음 내 증자 전 기타주식이 0 이면 p 가 없는 게 맞아요 — 따로 세요)
     part = sum(1 for r in rows if r["rc"] in read and not r.get("wd")
-               and any(r[k] is None for k in (("n", "p") if r["kind"] == "rights" else ("bd", "p", "amt"))))
+               and ((r["n"] is None or (r["p"] is None and r.get("cls") != "other")) if r["kind"] == "rights"
+                    else any(r[k] is None for k in ("bd", "p", "amt"))))
+    other = [r for r in rows if r["kind"] == "rights" and r.get("cls") == "other"]
+    bonus = sum(1 for r in rows if r.get("bonus"))
+    both = sum(1 for r in rows if "n2" in r)
     nf_all = sum(1 for st, _d in label.values() if st == "nf")
     left = sum(len(fs) for _, fs in later)
-    log(f"· 주요사항 공시 목록(list.json B001): {len(items):,}건 ({page}쪽) · 오늘 국내 종목의 유상증자 · CB · BW 공시 {len(filings):,}건 "
+    log(f"· 주요사항 공시 목록(list.json B001): {len(items):,}건 ({page}쪽) · 오늘 국내 종목의 유상증자 · CB · BW · 유무상증자 공시 {len(filings):,}건 "
         f"(뒤에 정정이 있는 공시 {sum(1 for f in filings if f['sup']):,} · 첨부정정 {sum(1 for f in filings if f['att']):,} 포함 · 철회 "
         f"{cnt['withdrawn']:,} · 목록 밖 회사 {cnt['other']:,} 뺌" + (f" · !! 읽지 못한 줄 {cnt['bad']:,}" if cnt["bad"] else "") + ")")
-    log(f"{'  !! ' if (later or n['fail'] or nf_all) else '· '}주요사항 상세(piicDecsn · cvbdIsDecsn · bdwtIsDecsn): (회사, 종류) "
+    log(f"{'  !! ' if (later or n['fail'] or nf_all) else '· '}주요사항 상세(piicDecsn · cvbdIsDecsn · bdwtIsDecsn · pifricDecsn): (회사, 종류) "
         f"{len(pairs):,}쌍 중 새로 조회 {len(todo):,} (호출 {sum(client.status.values()) - calls0:,}회) · 캐시로 끝 {cached:,}"
         + (f" · 실행당 한도({ISSUE_PER_RUN})에 닿아 다음 실행으로 {len(later):,}쌍 ({left:,}건)" if later else "")
         + (f" · 조회 실패 {n['fail']:,}쌍 (다음 실행이 다시)" if n["fail"] else "")
@@ -4501,10 +4557,15 @@ def fetch_issues(kr_stocks, cmap, end, client):
         + (f" (오늘 읽은 것 중 {' · '.join(f'{k} {v:,}' for k, v in sorted(unread.items()))})" if unread else "")
         + " · 유상증자 방식이 주주배정 · 제3자배정 · 일반공모가 아니거나 모름 "
         + f"{sum(1 for r in rows if r['kind'] == 'rights' and r['rc'] in read and r['how'] is None):,}"
-        + (f" · 상세를 아직 못 읽어 숫자 없이 줄만(pend) {no_num:,}" if no_num else ""))
+        + (f" · 상세를 아직 못 읽어 숫자 없이 줄만(pend) {no_num:,}" if no_num else "")
+        + (f" · 유무상증자(bonus) {bonus:,}" if bonus else "")
+        + (f" · 기타주식만 낸 유상증자 {len(other):,} (그중 증자 전 기타주식이 없어 비율 없음 "
+           f"{sum(1 for r in other if r['p'] is None):,})" if other else "")
+        + (f" · 보통주와 기타주식을 함께 낸 유상증자 {both:,} (n2 · p2)" if both else ""))
     if wds:
         log(f"  !! 주요사항 공시 철회 (숫자 칸이 모두 '-' 인 정정 공시 · wd: true · 카드가 건너뛰어요) {len(wds):,}건: "
-            + ", ".join(f"{r['nk']} {ISSUE_KO[r['kind']]} {r['d']}" for r in wds[:40]) + (" …" if len(wds) > 40 else ""))
+            + ", ".join(f"{r['nk']} {ISSUE_KO['pifric' if r.get('bonus') else r['kind']]} {r['d']}" for r in wds[:40])
+            + (" …" if len(wds) > 40 else ""))
     return {"issue": rows, "issueOk": True}
 
 
@@ -4664,7 +4725,8 @@ def issue_doc_main(files, rc):
 
 
 def issue_bd_targets(rows):
-    """원문에서 결의일을 읽을 issue 줄: 유상증자 · 철회(wd)도 읽는 중(pend)도 아닌 줄. (순수 함수 — 관문 validate_data 와 같은 기준)"""
+    """결의일을 볼 issue 줄: 유상증자(유무상증자 포함) · 철회(wd)도 읽는 중(pend)도 아닌 줄. (순수 함수 — 관문 validate_data 와 같은 기준)
+    유무상증자(bonus)는 상세 API 의 결의일(fric_bddd)이 있으면 원문을 읽지 않아요 (fill_issue_bd)."""
     return [r for r in rows or [] if isinstance(r, dict) and r.get("kind") == "rights" and r.get("wd") is not True
             and r.get("pend") is not True and isinstance(r.get("rc"), str) and isinstance(r.get("d"), str)]
 
@@ -4680,7 +4742,7 @@ def fill_issue_bd(disc, client, end):
     today_iso = client.today.isoformat()
     key = lambda rc: f"{rc}|{ISSUE_BD_TAG}"                                    # noqa: E731
     targets = issue_bd_targets(rows)
-    due, nf, lim, cached = [], [], [], 0
+    due, nf, lim, cached, api, api_rc = [], [], [], 0, 0, set()
 
     def use(r, bd8):
         """원문이 적은 결의일을 그 줄에 써요 — 공시일과 맞을 때만 (아니면 bd 는 비우고 '기간 밖이라 비움')."""
@@ -4693,8 +4755,13 @@ def fill_issue_bd(disc, client, end):
     with client.lock:
         for r in targets:
             e = client.entries.get(key(r["rc"])) or {}
+            given = r.get("bd") if r.get("bonus") is True else None     # 유무상증자: pifricDecsn 의 결의일 (같은 기간 확인)
             r["bd"] = None
-            if e.get("st") == "000" and _ymd_date(e.get("d")) is not None:
+            if _ymd_date(given) is not None:
+                use(r, given)
+                api += 1
+                api_rc.add(r["rc"])
+            elif e.get("st") == "000" and _ymd_date(e.get("d")) is not None:
                 use(r, e["d"])
                 cached += 1
             elif e.get("st") == "nf":
@@ -4750,13 +4817,16 @@ def fill_issue_bd(disc, client, end):
             del client.entries[k]
 
     a = sum(1 for r in targets if r.get("bd"))
+    a_api = sum(1 for r in targets if r.get("bd") and r.get("bonus") is True and r["rc"] in api_rc)
     later_n = len(later) + n["time"] + n["stop"] + n["fail"] + n["err"]
     out = {"target": len(targets), "read": a, "unread": len(nf), "limited": len(lim), "later": later_n, "fetched": n["000"] + n["nf"],
-           "cached": cached, "cap": len(later), "time": n["time"], "stop": n["stop"], "fail": n["fail"], "err": n["err"],
+           "cached": cached, "api": api, "cap": len(later), "time": n["time"], "stop": n["stop"], "fail": n["fail"], "err": n["err"],
            "calls": sum(client.status.values()) - calls0, "dropped": len(old)}
-    log(f"{'  !! ' if (nf or lim or later_n) else '· '}유상증자 이사회 결의일(공시 원문 document.xml): 문서에서 읽음 {a:,} / 대상 {len(targets):,}, "
+    log(f"{'  !! ' if (nf or lim or later_n) else '· '}유상증자 이사회 결의일(공시 원문 document.xml): 문서에서 읽음 {a - a_api:,}"
+        + (f" · 유무상증자 상세 API {a_api:,}" if api else "") + f" / 대상 {len(targets):,}, "
         f"못 읽음 {len(nf):,}, 기간 밖이라 비움 {len(lim):,}, 다음 실행으로 {later_n:,} — 오늘 원문 조회 {out['calls']:,}회 (새로 읽음 "
         f"{n['000']:,} · 못 읽음 {n['nf']:,}) · 캐시로 끝 {cached:,} · 실행당 {ISSUE_BD_PER_RUN}건 · {ISSUE_BD_SECONDS}초까지"
+        + (f" · 유무상증자는 상세 API 의 결의일(fric_bddd)을 같은 기간 확인으로 써요 {api:,}" if api else "")
         + (f" · 실행당 한도에 닿아 {len(later):,}" if later else "")
         + (f" · 시간 한도에 닿아 {n['time']:,}" if n["time"] else "")
         + (f" · 조회 실패 {n['fail']:,} ({', '.join(fails[:5])})" if n["fail"] else "")

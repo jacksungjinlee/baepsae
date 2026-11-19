@@ -1797,11 +1797,12 @@ def check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=None):
 ISSUE_KINDS = ("rights", "cb", "bw")
 ISSUE_HOW = ("holders", "others")
 ISSUE_KEYS = ("rc", "d", "t", "nk", "kind", "bd", "how", "n", "p", "amt", "cor")
+ISSUE_CLS = ("common", "other")   # Jack 2026-11-19 (7b): 유상증자 n · p 의 주식 종류 (보통주 · 기타주식 — 같은 종류끼리 비율)
 ISSUE_DAYS = 90             # fetch_data.DISC_DAYS — 공시일 d 는 disc.json asOf 를 포함한 90일 안
 ISSUE_P_WARN = 3000.0       # % — 새 주식이 증자 전 주식 수의 30배를 넘는 줄은 이름과 함께 경고 (2026-11-15 가장 큰 값: STX 유상증자 1,855.66%)
 ISSUE_BLANK_WARN = 10.0     # % — 숫자가 하나도 없는 줄(n · p · amt 모두 빈 칸)이 이보다 많으면 경고 (상세를 다 읽지 못한 날 · 첫 실행은 약 28%,
 #                             다 읽은 날 2026-11-16 은 13 / 295 = 4.4% — DART 상세 API 가 '-' 만 주는 정정 공시)
-INSIDER_ROLES = ("임원", "주요주주")
+INSIDER_ROLES = ("임원", "주요주주", "임원·주요주주")   # Jack 2026-11-19 (7c): 임원이면서 주요주주 → '임원·주요주주' (글자 그대로)
 POS_DASHES = ("-", "－", "—", "–", "‐")
 US_DATE_FAR_DAYS = 400      # 실적 발표일 · 배당락일이 발행일보다 이만큼 넘게 뒤면 이름과 함께 경고 (야후 값이 틀렸을 수 있어요)
 US_DATE_MIN_US = 100        # 미국 종목이 이만큼 넘는데 실적 발표일이나 배당락일이 하나도 없으면 경고 (야후 칸 이름이 바뀐 날)
@@ -1872,9 +1873,22 @@ def issue_row_problems(r, base):
         p.append("wd 와 pend 가 함께 참")
     for k in ("wd", "pend"):
         if r.get(k) is True:
-            full = [f for f in ("bd", "how", "n", "p", "amt") if r.get(f) is not None]
+            full = [f for f in ("bd", "how", "n", "p", "amt", "cls", "n2", "p2") if r.get(f) is not None]
             if full:
                 p.append(f"{k} 인데 {','.join(full)} 이 있어요")
+    # Jack 2026-11-19 (7a · 7b): 유상증자 줄의 cls (n · p 의 주식 종류) · n2 · p2 (보통주와 함께 낸 기타주식) · bonus (유무상증자) — 새 검사
+    if "cls" in r and not (rights and (r["cls"] is None or (isinstance(r["cls"], str) and r["cls"] in ISSUE_CLS))):
+        p.append(f"cls {_short(r['cls'])}" + ("" if rights else " (유상증자만)"))
+    if rights and r.get("n") is not None and not isinstance(r.get("cls"), str):
+        p.append("n 이 있는데 cls 가 없어요")
+    if "n2" in r or "p2" in r:
+        if not (rights and r.get("cls") == "common" and _posint(r.get("n2"))):
+            p.append(f"n2 {_short(r.get('n2'))} (보통주 줄의 기타주식 수만)")
+        pv2 = json_num(r.get("p2"))
+        if r.get("p2") is not None and (pv2 is None or pv2 <= 0):
+            p.append(f"p2 {_short(r.get('p2'))}")
+    if "bonus" in r and not (rights and r["bonus"] is True):
+        p.append(f"bonus {_short(r['bonus'])}" + ("" if rights else " (유상증자만)"))
     return p
 
 
@@ -1882,7 +1896,8 @@ def _check_issue(rep, disc, by, base):
     name = "주요사항 공시 (issue · 유상증자 · CB · BW)"
     th = (f"줄마다 {'·'.join(ISSUE_KEYS)} · rc 접수번호 · d YYYYMMDD 가 asOf 까지 {ISSUE_DAYS}일 안 · kind {'|'.join(ISSUE_KINDS)} · bd 빈 칸 "
           f"또는 YYYYMMDD · how 빈 칸 또는 {'|'.join(ISSUE_HOW)} (유상증자만) · n 양의 정수 (유상증자만) · p 양수 · amt 양수 (사채만) · cor 참/거짓 · "
-          f"접수번호 한 번 · issueOk 참/거짓 · wd · pend 는 있으면 참/거짓이고 그 줄의 숫자는 빈 칸 (실패) — 칸이 없음(v19.6b 전 파일) · "
+          f"접수번호 한 번 · issueOk 참/거짓 · wd · pend 는 있으면 참/거짓이고 그 줄의 숫자는 빈 칸 · 유상증자의 cls 는 {'|'.join(ISSUE_CLS)}|null "
+          f"(n 이 있으면 꼭) · n2 · p2 는 보통주 줄만 · bonus 는 유상증자에 true 만 (실패) — 칸이 없음(v19.6b 전 파일) · "
           f"issueOk false · 0건 · 오늘 국내 목록 밖 종목 · p > {ISSUE_P_WARN:,.0f}% · 숫자 없는 줄(철회 빼고) > {ISSUE_BLANK_WARN:g}% 는 경고")
     if "issue" not in disc:
         rep.add(name, True, "없음 — v19.6b 전 파일이에요 (DART 를 쓴 실행은 늘 써요)", th, warn=True)
@@ -1926,6 +1941,8 @@ def _check_issue(rep, disc, by, base):
     kinds = collections.Counter(r["kind"] for r in good)
     val = (" · ".join(f"{ko} {kinds[k]:,}" for k, ko in zip(ISSUE_KINDS, ("유상증자", "CB", "BW"))) + f" (정정 {sum(1 for r in good if r['cor']):,} · 철회 {len(good) - len(live):,} · 읽는 중 "
            f"{sum(1 for r in good if r.get('pend') is True):,} · 숫자 없는 줄 {blank:,})"
+           + (f" · 유무상증자 {sum(1 for r in good if r.get('bonus') is True):,}" if any(r.get("bonus") is True for r in good) else "")
+           + (f" · 기타주식 줄 {sum(1 for r in good if r.get('cls') == 'other'):,}" if any(r.get("cls") == "other" for r in good) else "")
            + (" · " + " · ".join(probs) if probs else "") + (" · " + " · ".join(warns) if warns else ""))
     rep.add(name, not probs, val[:300], th, warn=bool(warns))
 
@@ -1955,7 +1972,9 @@ def _check_roles(rep, disc):
     if bad:
         rep.detail("임원 · 주요주주 역할 (insider role) 틀린 줄", bad[:50])
     rep.add(name, not bad, (f"틀린 줄 {len(bad):,} ({bad[0][:80]}) · " if bad else "")
-            + f"임원 {cnt['임원']:,} · 주요주주 {cnt['주요주주']:,} · 없음 {cnt[None]:,} / {len(ins):,}줄" + (" · " + " · ".join(warns) if warns else ""),
+            + f"임원 {cnt['임원']:,} · 주요주주 {cnt['주요주주']:,} · "
+            + (f"임원·주요주주 {cnt['임원·주요주주']:,} · " if cnt["임원·주요주주"] else "")
+            + f"없음 {cnt[None]:,} / {len(ins):,}줄" + (" · " + " · ".join(warns) if warns else ""),
             th, warn=bool(warns))
 
 
