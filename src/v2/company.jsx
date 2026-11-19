@@ -46,6 +46,7 @@ import { IcrOffNote, IcrOffLine, StmtCurNote, FcurNote, PbrZeroNote, FgnCutNote,
   DayNote, PrefNote, PrefFitNote } from "./fixnote.jsx";
 import { fcurRowsBlank, fcurBlank, fcurDyBlank, pbrZeroOf, pbrZeroRowsBlank, fgnBlank, fgnRowsBlank } from "./fcur.js";
 import { RecordButton, RecordFlow, companyFlow } from "./records.jsx";
+import { WatchButton } from "./watch.jsx";
 import { decksFor } from "./records.js";
 import { usOf, priceMd, priceDate, lineDate, closeLine, wonOfUsd, wonLineUsd, fxDateLine, US_HEAD2, timesText, pctText, yieldText, usGrowthText, riskBandText } from "./cofmt.js";
 
@@ -818,6 +819,8 @@ function CompanyPage({ load, s, store, setStoreData, pad, ctab, disc, nav, held,
       <AppBar onBack={nav.back} backLabel={backLabel} />
       <div data-ui-v2="company" data-t={s.t} data-cls={s.cls} data-tab={tab || "summary"}>
         <Header load={load} s={s} />
+        {/* v19.6c (Part C): 관심 종목에 추가 / 관심 종목에서 빼기, under the header on every tab (records that can be written) */}
+        <WatchButton s={s} store={store} setStoreData={setStoreData} />
         {load.fresh && load.fresh.stale && lineDate(load, s) && <DateLine date={lineDate(load, s)} fresh={load.fresh} />}
         <MoveLine load={load} s={s} held={held} onWhy={nav.onWhy} />
         <div ref={mark} aria-hidden="true" />

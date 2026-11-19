@@ -48,6 +48,8 @@ import { pfState, isImported, usHeld } from "./pf.js";
 import { ImportedDeck } from "./pfview.jsx";
 import { Home2 } from "./home2.jsx";
 import { EpsOwnersNote } from "./fixnote.jsx";
+import { watchHits } from "./watch.js";
+import { WatchHitRows } from "./watch.jsx";
 
 // v19.3e (v19.3 Part H, board Home2): the new 홈 for returning visitors (home2.jsx). On since Jack's yes (2026-11-08): the
 // verdict band of portfolios made with 포트폴리오 만들기 stays at the top as before (Hero below), portfolios made with 가진
@@ -235,7 +237,21 @@ function ImportedStrip({ deck, de, ctx, load, go }) {
 // 홈's first visit (no saved portfolio): the descriptor, 포트폴리오 만들기 and 종목 순위 (v19.5b: with its numbers, so no 뱁이
 // here; the v19.3c welcome screen before it carries the 뱁이). The date line stays, with the stale warning when there is one.
 // A failed load shows the load-failure message where 종목 순위 would be (no picture: the screen around it is the same).
-function FirstVisit({ load, store, go }) {
+// v19.6c (Part C): a 관심 종목 condition met today shows here too, under 오늘 볼 것 (a watch list needs no portfolio), and on
+// 홈 without HOME2 (review B3: app.jsx stores the mark whichever 홈 shows, so the one row must show on both). No row when the
+// records cannot be written (the mark could not stop it repeating, review S1).
+function WatchLook({ load, store, onWatch }) {
+  const canMark = !!(store.writable && !store.locked);
+  const hits = useMemo(() => watchHits(store.data, load, undefined, canMark), [store.data, load, canMark]);
+  if (!hits.length || !C.home.look) return null;
+  return (
+    <section data-ui-v2="home-look" data-watch-only="1" style={{ marginTop: SPACE(5) }}>
+      <h3 style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { margin: `0 ${SPACE(1)}px` })}>{C.home.look}</h3>
+      <WatchHitRows hits={hits} load={load} onOpen={onWatch} />
+    </section>
+  );
+}
+function FirstVisit({ load, store, go, onWatch }) {
   const { wide } = useLayout();
   const rank = load.status === "ok" && <RankCard load={load} store={store} go={go} />;
   if (wide) {
@@ -252,6 +268,7 @@ function FirstVisit({ load, store, go }) {
         </Card>
         <IosHint kind="first" />
         {load.status === "fail" && <LoadFail picture={false} />}
+        <WatchLook load={load} store={store} onWatch={onWatch} />
         {rank && <Cols main={null} side={rank} />}
       </>
     );
@@ -267,6 +284,7 @@ function FirstVisit({ load, store, go }) {
       <div data-ui-v2="home-start" style={{ marginTop: SPACE(3) }}><Button onClick={() => go("build")}>{C.build.title}</Button></div>
       <IosHint kind="first" />
       {load.status === "fail" && <LoadFail picture={false} />}
+      <WatchLook load={load} store={store} onWatch={onWatch} />
       {rank}
     </>
   );
@@ -293,7 +311,8 @@ export function MarketGlance({ load, go }) {
 
 // welcome (v19.3c Part E): { onTry, onBrowse } while the first-visit guide's welcome is on (guide.jsx): it takes the place of
 // 홈's content until the user picks 직접 해 보기 or 그냥 둘러볼게요.
-export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null, disc = null }) {
+// onWatch (v19.6c): opens 관심 종목 from a 관심 종목 조건 row.
+export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null, disc = null, onWatch = null }) {
   const decks = store.data.decks;
   const first = decks.length === 0 && !store.locked;
   const { ev, ctx } = useDaily(load, store);
@@ -323,12 +342,12 @@ export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null
     return (
       <Page pad={pad} cols={2}>
         <AppBar />
-        <FirstVisit load={load} store={store} go={go} />
+        <FirstVisit load={load} store={store} go={go} onWatch={onWatch} />
         <Footer />
       </Page>
     );
   }
-  if (HOME2) return <Home2 load={load} store={store} ev={ev} ctx={ctx} onConfirm={onConfirm} pad={pad} onWhy={onWhy} go={go} disc={disc} />;
+  if (HOME2) return <Home2 load={load} store={store} ev={ev} ctx={ctx} onConfirm={onConfirm} pad={pad} onWhy={onWhy} go={go} disc={disc} onWatch={onWatch} />;
   return (
     <Page pad={pad} cols={2}>
       <AppBar />
@@ -339,6 +358,7 @@ export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null
       {store.unmerged && C.store.locked && <Note tone="watch" data-ui-v2="store-unmerged">{C.store.locked}</Note>}
       {store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}
       <Hero load={load} ev={ev} held={held} decks={decks} onConfirm={onConfirm} onWhy={onWhy} />
+      <WatchLook load={load} store={store} onWatch={onWatch} />
       <Cols main={[
         ...held.map((de) => <DeckStrip key={de.id} de={de} deck={decks.find((d) => d.id === de.id)} ctx={ctx} onWhy={onWhy} go={go} load={load} />),
         ...imported.map((d) => <ImportedStrip key={d.id} deck={d} de={ev.decks.find((x) => x.id === d.id)} ctx={ctx} load={load} go={go} />),
