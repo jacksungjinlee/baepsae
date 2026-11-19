@@ -90,6 +90,11 @@ from validate_data import PX_SRC_LISTING, PX_SRC_FB, PX_YAHOO_SUFFIX, PX_CHECK_S
 from validate_data import PX_BAD_DATA, PX_BAD_MUST_FAIL, PX_BAD_WIN, PX_BAD_WIN_BARS, PX_BAD_ALWAYS
 # 2026-11-14 (Q5 리뷰 S1 · S2): 외국 회사 검사의 '맞춰 볼 값이 없음' 스위치와 그 사유 글, S&P 500 목록을 믿을 최소 겹침도 관문 파일에 있어요
 from validate_data import US_FGN_NOCMP, US_FGN_NOCMP_KIND, US_FGN_NOCMP_WHY, US_FGN_NOREC_WHY, US_FGN_NOREC, US_SP500_MIN, US_SP500_MAX
+# 2026-11-19 (Jack: "new listings take their industry from DART's company records"): 한국표준산업분류 11차 표를 읽는 코드와 쓰는 단계(소분류)도
+# 관문 파일에 있어요 (관문이 같은 표로 채운 값을 확인해요)
+from validate_data import load_ksic_names, IND_DART_DIGITS, IND_MISS_KO, IND_MISS_OK, IND_FUND_KSIC, kr_desc_parse, KR_DESC_TAIL
+from validate_data import (load_ksic_map_kr, IND_SECTOR_KR, IND_FILL_CHECK, ind_fill_bad, ind_fill_rows, ksic_map_kr_sha,
+                           KSIC_LENS_MISFIT)
 
 # ────────────────────────────────────────────────────────────
 # 설정
@@ -164,6 +169,13 @@ US_ADDED_LONG_NAME = frozenset(EXTRA_US_ADDED)
 # 진짜 회사도 섞여 있어서(2026-11-01 확인: DSC인베스트먼트, 한국토지신탁 등) 업종이 아니라 종목마다 정해요.
 KR_LISTED_FUNDS = {"088980": "맥쿼리인프라", "415640": "KB발해인프라", "094800": "맵스리얼티"}
 KR_FUND_INDUSTRY = "신탁업 및 집합투자업"     # 이 업종의 새 종목은 로그로 알려요 (목록에 넣을지 사람이 판단)
+KR_FUND_KSIC = IND_FUND_KSIC     # 2026-11-19: 같은 업종의 한국표준산업분류 코드 642 (11차 표는 '신탁업 및 집합 투자업' 으로 띄어 써요) — DART 로 채우지 않아요
+
+
+def is_fund_industry(text):
+    """업종 글자(또는 설명 dk)가 '신탁업 및 집합투자업' 으로 시작하는지 — KRX 글자(집합투자업)와 11차 표(집합 투자업) 띄어쓰기 둘 다. (순수 함수)"""
+    return (text or "").replace(" ", "").startswith(KR_FUND_INDUSTRY.replace(" ", ""))
+
 
 KR_INDEX = "KS11"
 US_INDEX = "^GSPC"
@@ -1706,34 +1718,19 @@ def _txt(x):
     return "" if t in ("", "nan", "NaN", "None", "null", "undefined") or t in DASHES else t
 
 
-KR_DESC_TAIL = re.compile(r"(?: · (?:KOSPI|KOSDAQ|KOSDAQ GLOBAL|KONEX) 상장)?(?: · 시가총액 [0-9,.]+(?:조원|억원))?$")
 IND_CARRY_WARN_DAYS = 14   # 이어 쓴 업종 글자가 이보다 오래되면 관문이 경고해요 (validate_data 와 같은 값 · 2026-11-19)
-
-
-def kr_desc_parse(dk):
-    """지난 발행본의 dk ('업종 · 주요제품: … · 시장 상장 · 시가총액') → (업종, 주요제품). kr_desc_text 로 다시 만들어 같은 글이 나올 때만
-    (업종 이름에 ' · ' 가 들어 있어도 돼요 — '전동기, 발전기 및 전기 변환 · 공급 · 제어 장치 제조업'). 못 읽으면 None. (순수 함수)"""
-    if not isinstance(dk, str):
-        return None
-    s = " · " + dk
-    m = KR_DESC_TAIL.search(s)
-    head, tail = s[:m.start()].removeprefix(" · "), s[m.start():]
-    if head.startswith("주요제품: "):
-        ind, prod = "", head[len("주요제품: "):]
-    elif " · 주요제품: " in head:
-        ind, prod = head.split(" · 주요제품: ", 1)
-    else:
-        ind, prod = head, ""
-    back = (" · " + " · ".join(b for b in (ind, f"주요제품: {prod}" if prod else "") if b) if (ind or prod) else "") + tail
-    return (ind, prod) if back.removeprefix(" · ") == dk else None
 
 
 def kr_prev_desc(prev):
     """지난 발행본(data.json)의 국내 종목 업종 · 주요제품 {코드: (업종, 주요제품)} 과 그 업종 글자의 날짜 (2026-11-19).
-    날짜: 지난 발행본이 이미 이어 쓴 글자가 있으면 그 indSrc.asOf (더 오래된 날), 아니면 지난 발행 날짜. 읽지 못한 dk 수도 돌려줘요."""
+    날짜: 지난 발행본이 이미 이어 쓴 글자가 있으면 그 indSrc.asOf (더 오래된 날), 아니면 지난 발행 날짜. 읽지 못한 dk 수도 돌려줘요.
+    지난 발행본이 DART 회사 정보로 채운 종목(indSrc.dartT) · 보통주를 따른 우선주(indSrc.prefT)는 빼요 — KRX 글자로 이어 쓴 것처럼 보이지
+    않게, 오늘 다시 채우거나 따라요 (그래야 관문이 오늘 값을 확인해요)."""
     out, bad = {}, 0
+    src = (prev or {}).get("indSrc") or {}
+    dart = {t for key in ("dartT", "prefT") if isinstance(src.get(key), dict) for t in src[key]}
     for x in (prev or {}).get("stocks") or []:
-        if x.get("cls") != "kr" or not x.get("t") or not x.get("dk"):
+        if x.get("cls") != "kr" or not x.get("t") or not x.get("dk") or str(x["t"]) in dart:
             continue
         p = kr_desc_parse(x["dk"])
         if p is None:
@@ -1910,6 +1907,288 @@ def fetch_ksic(kr_stocks, client):
     log(f"{'· ' if len(out) >= 0.97 * max(len(targets), 1) else '  !! '}DART 업종 코드(KSIC): {len(out):,} / {len(targets):,}곳 "
         f"(DART 기업코드 없는 국내 종목 {sum(1 for s in kr_stocks if s['t'] not in cmap):,}곳) · {client.summary()}")
     return out
+
+
+# ────────────────────────────────────────────────────────────
+# 2026-11-19 (Jack: "Later, new listings take their industry from DART's company records." · "move the DART company-record industry
+# mapping up" · ~17:45 KST: "don't show 통계청 industry names as new groups. Map each official code to our existing industry groups, so
+# 업종 lists, industry averages and 업종별 등락 keep one naming system. Report any codes that don't map cleanly." · Q2 yes: preferred
+# shares copy their common stock's industry words and sector):
+# KRX-DESC 에도 지난 발행본에도 업종 글자가 없는 국내 보통주는 DART 기업개황 업종 코드(fetch_ksic 가 이미 받은 값 · DART 를 새로 부르지
+# 않아요)의 11차 소분류(3자리)가 우리 두 업종 체계에 깔끔히 맞을 때만 (data/ksic_map_kr.csv status ok) 채워요:
+#   · 설명(dk) 앞에 그 공식 이름 — KRX 글자도 같은 이름이었고, 그 회사 한 줄 설명에만 보여요 (어느 화면도 dk 로 무리를 짓지 않아요)
+#   · 예전 뱁새 업종 키 s 는 표의 키 (기존 SECTORS 키 · 그 종목의 2.0 그룹과 같은 뜻 — validate_data.IND_SECTOR_KR)
+#   · 2.0 그룹(ind · indName)은 예전처럼 assign_industries 가 업종 코드로 정해요 (기존 industry_groups.csv 이름)
+# 깔끔히 맞지 않는 코드(짝 없음 · 갈림 · 금융 · 집합 투자업)는 채우지 않고 종목 · 코드 · 이름을 크게 남겨요.
+# 우선주는 보통주의 업종 글자와 업종 키를 따르고, 2.0 그룹이 보통주와 다르면 맞춰요 (고정표에서 다르게 정한 우선주는 빼요).
+# 채운 값은 관문과 같은 함수(validate_data.ind_fill_bad)로 바로 확인해 틀린 행은 되돌리고 data.json ownDrop.indFill 에 남겨요
+# (Jack 의 상시 규칙 · corp.json 이 업종 키를 옮겨 쓰기 전이라 여기서 해요 · 그 뒤로 dk · s · ind 를 바꾸는 단계는 없어요).
+# ────────────────────────────────────────────────────────────
+KSIC_MAP_MISS = {"none": "mapNone", "ambiguous": "mapAmbig", "financial": "mapFin", "fund": "mapFund"}
+
+
+def ksic_map_kr_rows(names, kmap, groups):
+    """data/ksic_map_kr.csv 의 줄 [ksic, name, s, ind, status, why] — 11차 소분류(3자리) 코드마다 (순수 함수 · 표를 다시 만들 때 ·
+    tests/test_ind_dart.py 가 커밋한 표와 같은지 봐요). s = map_sector_kr(이름) — KRX 글자를 바꾸던 그 규칙 · ind = 그 코드와 아래 4·5자리
+    코드가 가는 2.0 그룹 (industry_map.csv) · groups: industry_groups.csv {그룹: {financial …}}."""
+    fin_g = {g for g, r in groups.items() if str(r.get("financial") or "").strip() == "yes"}
+    rows = []
+    for c in sorted(x for x in names if len(x) == IND_DART_DIGITS):
+        n, s = names[c], map_sector_kr(names[c], "")
+        reach = sorted({ksic_group(k, kmap) for k in names if k.startswith(c)} - {None})
+        odd = [g for g in reach if not IND_SECTOR_KR.get(g)]          # 짝이 () 이거나 없는 그룹
+        if c == KR_FUND_KSIC:
+            st, why = "fund", "집합 투자업 — 상장 펀드일 수 있어요"
+        elif s in FIN_SECS or any(g in fin_g for g in reach):
+            st, why = "financial", "금융 — 2.0 의 EV 멀티플 · 금융 문구가 바뀌어요"
+        elif s == "etc":
+            st, why = "none", "예전 뱁새 업종 키를 찾지 못함 (기타)"
+        elif not reach:
+            st, why = "none", "2.0 업종 그룹 없음"
+        elif odd:
+            st, why = "none", f"예전 뱁새에 짝이 없는 2.0 그룹 {'·'.join(odd)}"
+        elif c in KSIC_LENS_MISFIT:
+            st, why = "ambiguous", KSIC_LENS_MISFIT[c]
+        elif any(s not in IND_SECTOR_KR[g] for g in reach):
+            st, why = "ambiguous", f"예전 뱁새 {s} 와 2.0 {'·'.join(g for g in reach if s not in IND_SECTOR_KR[g])} 가 다른 업종"
+        else:
+            st, why = "ok", ""
+        rows.append([c, n, s, "·".join(reach), st, why])
+    return rows
+
+
+def kr_ind_dart_plan(stocks, no_text, ksic, kmap_kr, digits=IND_DART_DIGITS):
+    """업종 글자를 DART 로 채울 계획 — 보통주만 (우선주는 kr_ind_pref_copy). (순수 함수 · DART 를 부르지 않아요)
+    no_text: KRX-DESC 에도 지난 발행본에도 업종 글자가 없는 종목코드 · ksic: {종목코드: DART 업종 코드} (fetch_ksic) · kmap_kr: 11차 소분류 →
+    {name, s, status …} (validate_data.load_ksic_map_kr). 2.0 그룹(ind)이 이미 정해진 뒤에 불러요 (assign_industries).
+    반환: (fill {종목: (이름, KSIC 코드, 업종 키)}, miss {이유: [종목]}) — 이유 fund 펀드 · noCode 코드 없음 · noName 표에 없는 코드 ·
+    mapNone · mapAmbig · mapFin · mapFund 표에서 깔끔히 맞지 않는 코드 · noGroup 2.0 그룹 없음 (발행하지 않는 종목은 건너뛰어요)."""
+    by_t = {s["t"]: s for s in stocks if s.get("cls") == "kr"}
+    fill, miss = {}, collections.defaultdict(list)
+    for t in sorted(set(no_text)):
+        s = by_t.get(t)
+        if s is None or is_preferred(t):
+            continue
+        if s.get("etf") or s.get("fund"):
+            miss["fund"].append(t)
+            continue
+        code = str(ksic.get(t) or "").strip()
+        if not code:
+            miss["noCode"].append(t)
+            continue
+        row = kmap_kr.get(code[:digits]) if len(code) >= digits else None
+        if row is None:
+            miss["noName"].append(t)
+            continue
+        if row["status"] != "ok":
+            miss[KSIC_MAP_MISS[row["status"]]].append(t)
+            continue
+        if not s.get("ind"):
+            miss["noGroup"].append(t)
+            continue
+        ok_s = IND_SECTOR_KR.get(s["ind"], ())          # 고정표 · 주요제품 · 작은 그룹 합치기로 코드와 다른 그룹이 될 수 있어요
+        sec = row["s"] if s.get("s") in (None, "", "etc") else s["s"]
+        if not ok_s:
+            miss["mapNone"].append(t)
+            continue
+        if sec not in ok_s:
+            miss["mapAmbig"].append(t)
+            continue
+        fill[t] = (row["name"], code, sec)
+    return fill, dict(miss)
+
+
+def kr_ind_dart_apply(stocks, fill):
+    """계획(fill)대로 설명(dk) 앞에 업종 이름을 붙이고 업종 키 s 를 정해요 (kr_desc_text 순서). 업종 글자가 이미 있거나 설명을 읽지 못하는
+    종목은 그대로 둬요. 바꿀 값을 모두 먼저 계산하고 마지막에 한꺼번에 넣어요 (중간에 멈춰도 일부만 바뀌지 않게). (순수 함수)
+    반환: (채운 {종목: KSIC 코드}, 되돌릴 값 {종목: {dk, s}})."""
+    todo = []
+    for s in stocks:
+        v = fill.get(s.get("t")) if s.get("cls") == "kr" else None
+        dk = s.get("dk")
+        if not v or not (dk is None or isinstance(dk, str)):
+            continue
+        p = kr_desc_parse(dk) if dk else ("", "")
+        if p is None or p[0]:
+            continue
+        name, code, sec = v
+        todo.append((s, name + (" · " + dk if dk else ""), sec, code))
+    undo = {s["t"]: {"dk": s.get("dk"), "s": s.get("s")} for s, _, _, _ in todo}
+    for s, dk, sec, _ in todo:
+        s["dk"], s["s"] = dk, sec
+    return {s["t"]: code for s, _, _, code in todo}, undo
+
+
+def kr_ind_pref_copy(stocks, no_text, over=()):
+    """업종 글자가 없는 우선주는 보통주(코드 앞 5자리 + 0)의 업종 글자와 업종 키 s 를 따라요 (Jack Q2, 2026-11-19). 2.0 그룹(ind · indName)이
+    보통주와 다르면 맞춰요 — 고정표(over)에서 다르게 정한 우선주는 건드리지 않아요. 모두 계산한 뒤 한꺼번에 넣어요. (순수 함수)
+    반환: (따른 {우선주: 보통주}, miss {이유: [우선주]}, 되돌릴 값 {우선주: {dk, s, ind, indName}}, 2.0 그룹을 맞춘 수)."""
+    by_t = {s["t"]: s for s in stocks if s.get("cls") == "kr"}
+    miss, todo = collections.defaultdict(list), []
+    for t in sorted(set(no_text)):
+        s = by_t.get(t)
+        if s is None or s.get("etf") or s.get("fund") or not is_preferred(t):
+            continue
+        c = by_t.get(t[:5] + "0")
+        if c is None:
+            miss["prefNoCommon"].append(t)
+            continue
+        cp = kr_desc_parse(c["dk"]) if isinstance(c.get("dk"), str) else None
+        if not cp or not cp[0]:
+            miss["prefCommonNone"].append(t)
+            continue
+        if t in over and s.get("ind") != c.get("ind"):
+            miss["prefOver"].append(t)
+            continue
+        dk = s.get("dk")
+        p = ("", "") if dk in (None, "") else kr_desc_parse(dk)
+        if p is None or p[0]:
+            miss["noParse"].append(t)
+            continue
+        todo.append((s, c, cp[0] + (" · " + dk if dk else "")))
+    undo = {s["t"]: {k: s.get(k) for k in ("dk", "s", "ind", "indName")} for s, _, _ in todo}
+    n_ind = 0
+    for s, c, dk in todo:
+        s["dk"], s["s"] = dk, c.get("s")
+        if s.get("ind") != c.get("ind"):
+            n_ind += 1
+            for k in ("ind", "indName"):
+                if c.get(k) is None:
+                    s.pop(k, None)
+                else:
+                    s[k] = c[k]
+    return {s["t"]: c["t"] for s, c, _ in todo}, dict(miss), undo, n_ind
+
+
+def kr_ind_restore(s, before):
+    """되돌리기: before 의 칸을 그대로 (없던 칸은 지워요)."""
+    for k, v in before.items():
+        if v is None:
+            s.pop(k, None)
+        else:
+            s[k] = v
+
+
+def kr_ind_own_drop(stocks, ind_src, undo, names=None, kmap_kr=None):
+    """Jack 의 상시 규칙 (2026-11-19): 관문과 같은 함수(validate_data.ind_fill_bad)로 채운 값을 확인해 틀린 행은 되돌리고(채우기 전 값) 남은
+    것은 발행해요. 되돌린 보통주를 따랐던 우선주도 다음 번 확인에서 되돌려요. 반환: 기록 {n, rows} (data.json ownDrop.indFill) · 되돌린 종목."""
+    by_t = {s["t"]: s for s in stocks if s.get("cls") == "kr"}
+    dropped, rows = [], []
+    for _ in range(3):
+        bad = [b for b in ind_fill_bad(stocks, ind_src, names, kmap_kr) if b["t"] in undo and b["t"] not in dropped]      # 엄격 (발행 전)
+        if not bad:
+            break
+        rows += ind_fill_rows(bad, stocks)
+        for b in bad:
+            kr_ind_restore(by_t[b["t"]], undo[b["t"]])
+            for key, n in (("dartT", "dart"), ("prefT", "pref")):
+                if isinstance(ind_src.get(key), dict) and ind_src[key].pop(b["t"], None) is not None:
+                    ind_src[n] = len(ind_src[key])
+            dropped.append(b["t"])
+    left = ind_fill_bad(stocks, ind_src, names, kmap_kr)
+    log((f"  !! {IND_FILL_CHECK}: {len(dropped)}건 되돌리고 발행 — " + "; ".join(rows[:30]) if dropped else
+         f"· {IND_FILL_CHECK}: 0건 되돌림 (DART {len(ind_src.get('dartT') or {}):,} · 우선주 {len(ind_src.get('prefT') or {}):,} 확인)")
+        + (f" · !! 되돌리지 못한 틀린 값 {len(left)}: " + "; ".join(ind_fill_rows(left, stocks)[:10]) + " — 관문이 봐요" if left else ""))
+    return {"n": len(dropped), "rows": rows[:30]}, dropped
+
+
+def kr_ind_fill(stocks, no_text, ksic, kmap_kr, ind_src, over=(), names=None, map_sha=None, table_err=None):
+    """DART 로 보통주 채우기 → 우선주는 보통주를 따름 → 같은 확인으로 틀린 행 되돌리기 → indSrc 에 출처 (dart · dartT · pref · prefT ·
+    prefInd · left · dartMiss) · 크게 남겨요. 반환: data.json ownDrop.indFill 기록 {n, rows}.
+    고장 나도 실행은 멈추지 않아요 (업종 글자는 보탬일 뿐 · 멈추면 하루치 가격이 낡아요): 채운 것을 모두 되돌리고 indSrc.dartErr ·
+    left 없음 — 관문이 경고해요. 업종 표를 읽지 못한 날(kmap_kr None · table_err): DART 로 채우지 않고 우선주만 따라요 (dartErr).
+    names · map_sha: 11차 표 · 업종 표의 판 (indSrc.mapSha 로 남겨 관문이 표가 바뀐 뒤의 옛 채움을 막지 않게)."""
+    ind_src = ind_src if isinstance(ind_src, dict) else {}
+    undo = {}
+    if map_sha is not None:
+        ind_src["mapSha"] = map_sha
+    try:
+        if kmap_kr is None:
+            by_t0 = {s["t"]: s for s in stocks if s.get("cls") == "kr"}
+            commons = sorted(t for t in set(no_text) if t in by_t0 and not is_preferred(t))
+            fill, miss = {}, {"noTable": [t for t in commons if not by_t0[t].get("etf") and not by_t0[t].get("fund")],
+                              "fund": [t for t in commons if by_t0[t].get("etf") or by_t0[t].get("fund")]}
+            miss = {k: v for k, v in miss.items() if v}
+            ind_src["dartErr"] = f"table:{table_err or '없음'}"
+        else:
+            fill, miss = kr_ind_dart_plan(stocks, no_text, ksic, kmap_kr)
+        done, u1 = kr_ind_dart_apply(stocks, fill)
+        undo.update(u1)
+        pdone, pmiss, u2, n_ind = kr_ind_pref_copy(stocks, no_text, over)
+        undo.update(u2)
+        for k, v in pmiss.items():
+            miss.setdefault(k, []).extend(v)
+        # 계획했지만 적용하지 않은 종목 → '설명을 읽지 못함' (크게). 만든 방법상 생기지 않아요: no_text 는 kr_desc_carry 가 업종 글자를
+        # 찾지 못한 종목이고 dk 는 그 뒤 kr_desc_text 로 만든 글이라 늘 읽혀요. 업종 글자가 있는 종목이 여기 오면 이름과 달리 '이미 글자 있음' 이에요
+        for t in sorted(set(fill) - set(done)):
+            miss.setdefault("noParse", []).append(t)
+        ind_src.update({"dart": len(done), "dartT": dict(sorted(done.items())), "pref": len(pdone), "prefT": dict(sorted(pdone.items())),
+                        "prefInd": n_ind})
+        rec, dropped = kr_ind_own_drop(stocks, ind_src, undo, names, kmap_kr)
+        if dropped:
+            miss.setdefault("dropped", []).extend(dropped)
+    except Exception as e:
+        by_t = {s["t"]: s for s in stocks if s.get("cls") == "kr"}
+        for t, before in undo.items():
+            if t in by_t:
+                kr_ind_restore(by_t[t], before)
+        log(f"  !! 업종 채우기 실패 ({type(e).__name__}: {str(e)[:160]}) — 채운 {len(undo):,}종목을 되돌리고 업종 글자 없이 발행해요 (관문이 경고해요)")
+        ind_src.update({"dart": 0, "dartT": {}, "pref": 0, "prefT": {}, "prefInd": 0, "left": None, "dartMiss": {},
+                        "dartErr": type(e).__name__})
+        return {"n": 0, "rows": [], "err": type(e).__name__}
+    left = sum(len(v) for k, v in miss.items() if k not in IND_MISS_OK)
+    ind_src.update({"left": left, "dartMiss": {k: len(v) for k, v in sorted(miss.items())}})
+    if ind_src["dart"] and "DART" not in str(ind_src.get("from") or ""):
+        ind_src["from"] = f"{ind_src.get('from') or 'KRX-DESC'} + DART"
+    names_of = {s["t"]: s.get("nk") or "" for s in stocks if s.get("cls") == "kr"}
+    by_t = {s["t"]: s for s in stocks if s.get("cls") == "kr"}
+    dart_t = ind_src["dartT"]
+    n_common = sum(1 for t in set(no_text) if t in by_t and not is_preferred(t) and not by_t[t].get("etf") and not by_t[t].get("fund"))
+    why = " · ".join(f"{IND_MISS_KO.get(k, k)} {len(v):,}: " + ", ".join(f"{t} {names_of.get(t, '')}" for t in v[:6])
+                     for k, v in sorted(miss.items()) if k not in IND_MISS_OK and v)
+    log(f"{'  !! ' if n_common or left else '· '}업종 DART 회사 정보로 채움 {len(dart_t):,} / {n_common:,} · 우선주가 보통주를 따름 "
+        f"{ind_src['pref']:,} (2.0 그룹을 맞춘 우선주 {n_ind:,}) · 그래도 업종 글자 없음 {left:,}" + (f" ({why})" if why else "")
+        + "".join(f" · {IND_MISS_KO[k]} {len(miss[k]):,}" for k in IND_MISS_OK if miss.get(k))
+        + (" — 11차 소분류 이름으로 채우고 업종 키는 우리 업종 표(data/ksic_map_kr.csv)에서. 예: "
+           + ", ".join(f"{t} {names_of.get(t, '')} {fill[t][0]} ({c} → {fill[t][2]})" for t, c in list(dart_t.items())[:5]) if dart_t else ""))
+    odd = [t for k in KSIC_MAP_MISS.values() for t in miss.get(k, [])]
+    if odd:
+        log(f"  !! 업종 코드가 우리 업종에 깔끔히 맞지 않아 채우지 않은 종목 {len(odd):,}개 (예전처럼 업종 글자 없이 · 기타): "
+            + ", ".join(f"{t} {names_of.get(t, '')} ({ksic.get(t)} {kmap_kr[str(ksic.get(t))[:IND_DART_DIGITS]]['name']} · "
+                        f"{kmap_kr[str(ksic.get(t))[:IND_DART_DIGITS]]['status']})" for t in odd[:15])
+            + (f" — 집합 투자업 코드: 상장 펀드면 KR_LISTED_FUNDS 에 넣고, 회사면 그대로 둬요 (사람이 판단)" if miss.get("mapFund") else ""))
+    try:
+        n_chk, diff = kr_ind_word_check(stocks, ksic, {c: v["name"] for c, v in (kmap_kr or {}).items()},
+                                        skip=set(dart_t) | set(ind_src["prefT"]))
+        log(f"{'  !! ' if diff else '· '}업종 글자 확인 (막지 않아요): KRX · 이어 쓴 업종 글자와 DART 업종 코드의 11차 소분류 이름이 다른 종목 "
+            f"{len(diff):,} / {n_chk:,} (띄어쓰기 빼고)"
+            + (f" — 예: {'; '.join(diff[:8])}. DART 기록이 예전(10차) 번호이거나 KRX 와 분류가 달라요 — 그런 종목을 DART 로 채우면 이름이 "
+               "틀릴 수 있어요 (관문은 잡지 못해요)" if diff else ""))
+    except Exception as e:
+        log(f"  !! 업종 글자 확인 실패 ({type(e).__name__}: {str(e)[:120]}) — 채우기는 그대로예요")
+    return rec
+
+
+def kr_ind_word_check(stocks, ksic, names, skip=(), digits=IND_DART_DIGITS):
+    """2026-11-19 리뷰: DART 업종 코드가 아직 10차 번호이면 11차 표의 같은 번호 이름이 틀려요 (관문은 잡지 못해요). 업종 글자(KRX · 이어 씀)와
+    DART 코드가 둘 다 있는 보통주에서 11차 소분류 이름과 글자를 띄어쓰기 빼고 맞춰 봐요 — 다른 종목이 늘면 로그로 보여요 (막지 않아요).
+    skip: 이번 실행에 채운 종목 (같은 것끼리 비교). (순수 함수) 반환: (맞춰 본 수, ['종목 이름: 글자 ≠ 이름 (코드)' …])."""
+    n, diff = 0, []
+    for s in stocks:
+        t = s.get("t")
+        if s.get("cls") != "kr" or s.get("etf") or s.get("fund") or t in skip or is_preferred(t or "") or not s.get("dk"):
+            continue
+        p = kr_desc_parse(s["dk"])
+        code = str(ksic.get(t) or "").strip()
+        if not p or not p[0] or len(code) < digits:
+            continue
+        n += 1
+        name = names.get(code[:digits])
+        if not name or name.replace(" ", "") != p[0].replace(" ", ""):
+            diff.append(f"{t} {s.get('nk') or ''}: {p[0]} ≠ {name or '표에 없음'} ({code})")
+    return n, diff
+
+
 SAMPLE_KEEP = ("000270", "086790", "034730", "003550", "088980", "241520")   # 표본에도 꼭: 업종·ETF 검사에 쓰는 종목
 
 
@@ -4419,6 +4698,38 @@ def icr_inputs(fin):
     return None, None, None, None, ("op" if not any_op else "neg" if neg else "op" if has_int else "ie")
 
 
+def corp_sector_stats(comps):
+    """기업분석 업종 통계 (corp.json sectors · 예전 뱁새가 업종 중간값 · 사분위 · 성장률 순위에 써요). (순수 함수)
+    2026-11-19 (#146 · Jack 답 2): 우선주는 보통주의 업종 키를 따르지만 업종 수 · 중간값 · 사분위 · 성장률에서는 빼요 (같은 회사가 두 번
+    들어가지 않게) — 업종 시가총액(mc)에만 넣어요 (실제 시장 가치). 우선주만 있는 업종도 키는 남겨요 (앱이 sectors[c.s] 를 찾아요)."""
+    sectors, by_sec = {}, {}
+    for c in comps:
+        by_sec.setdefault(c["s"], [])
+        if not is_preferred(c["t"]):
+            by_sec[c["s"]].append(c)
+    for sec, arr in by_sec.items():
+        # 업종 성장률: 개별 평균이 아니라 '합산 매출' 기준 (소형주 과대표집 방지)
+        pairs = [(c["rev"][0], c["rev"][2]) for c in arr if c["rev"][0] and c["rev"][2] and c["rev"][2] > 0]
+        g = None
+        if len(pairs) >= 5:
+            r0 = sum(p[0] for p in pairs); r2 = sum(p[1] for p in pairs)
+            if r2 > 0 and r0 > 0:      # 합산 매출이 음수면 제곱근이 복소수가 돼요
+                g = round(((r0 / r2) ** 0.5 - 1) * 100, 1)
+        sectors[sec] = {
+            "n": len(arr), "nG": len(pairs), "g": g,
+            "rev0": round(sum(c["rev"][0] for c in arr if c["rev"][0]) / 1e4, 1),   # 조원
+            "opm": _median([c["opm"] for c in arr]),
+            "roe": _median([c["roe"] for c in arr]),
+            "perQ": _quart([c["per"] for c in arr if c["per"] and 0 < c["per"] < 200]),
+            "pbrQ": _quart([c["pbr"] for c in arr if c["pbr"] and 0 < c["pbr"] < 20]),
+            "evEQ": _quart([c.get("evE") for c in arr if c.get("evE") and 0 < c["evE"] < 60]),
+            "evRQ": _quart([c.get("evR") for c in arr if c.get("evR") and 0 < c["evR"] < 30]),
+            "pcfQ": _quart([c.get("pcf") for c in arr if c.get("pcf") and 0 < c["pcf"] < 60]),
+            "mc": round(sum(c["cap"] for c in comps if c["s"] == sec and c["cap"]), 1),          # 조원 (우선주 포함)
+        }
+    return sectors
+
+
 def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None, pref_caps=None, pref_missing=None):
     """기업분석 탭이 쓰는 corp.json 을 만듭니다. (순수 함수 — 테스트 가능)
     v19.1b: extra = apply_div_basis 의 {코드: 칸} (현금배당금총액 cash3 · 회사가 낸 주당순이익 eps3r · 같은 기준 순이익 epsNi3 · epsB).
@@ -4623,30 +4934,7 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None, pref_caps=Non
                 row.update(roe=None, qz=None)        # 리뷰 4: ROE 와 그 점수도 보여 주지 않아요 (blank_non_won 이 data.json 쪽을 비워요)
         comps.append(row)
 
-    sectors = {}
-    by_sec = {}
-    for c in comps:
-        by_sec.setdefault(c["s"], []).append(c)
-    for sec, arr in by_sec.items():
-        # 업종 성장률: 개별 평균이 아니라 '합산 매출' 기준 (소형주 과대표집 방지)
-        pairs = [(c["rev"][0], c["rev"][2]) for c in arr if c["rev"][0] and c["rev"][2] and c["rev"][2] > 0]
-        g = None
-        if len(pairs) >= 5:
-            r0 = sum(p[0] for p in pairs); r2 = sum(p[1] for p in pairs)
-            if r2 > 0 and r0 > 0:      # 합산 매출이 음수면 제곱근이 복소수가 돼요
-                g = round(((r0 / r2) ** 0.5 - 1) * 100, 1)
-        sectors[sec] = {
-            "n": len(arr), "nG": len(pairs), "g": g,
-            "rev0": round(sum(c["rev"][0] for c in arr if c["rev"][0]) / 1e4, 1),   # 조원
-            "opm": _median([c["opm"] for c in arr]),
-            "roe": _median([c["roe"] for c in arr]),
-            "perQ": _quart([c["per"] for c in arr if c["per"] and 0 < c["per"] < 200]),
-            "pbrQ": _quart([c["pbr"] for c in arr if c["pbr"] and 0 < c["pbr"] < 20]),
-            "evEQ": _quart([c.get("evE") for c in arr if c.get("evE") and 0 < c["evE"] < 60]),
-            "evRQ": _quart([c.get("evR") for c in arr if c.get("evR") and 0 < c["evR"] < 30]),
-            "pcfQ": _quart([c.get("pcf") for c in arr if c.get("pcf") and 0 < c["pcf"] < 60]),
-            "mc": round(sum(c["cap"] for c in arr if c["cap"]), 1),                 # 조원
-        }
+    sectors = corp_sector_stats(comps)
     log(f"· 이자보상배율에 쓴 이자: 손익계산서 이자비용 {src_n['is']:,}곳 · 현금흐름표 이자 지급액 {src_n['cf']:,}곳 (기간: TTM "
         f"{src_n['ttm']:,} · 연간 {src_n['fy']:,}, 그중 TTM 이자가 없어 연간 영업이익·이자끼리 {src_n['fyBack']:,}) · 경고 "
         f"{sum(1 for c in comps if 'icr' in (c.get('fl') or {})):,}곳 (그중 영업손실 "
@@ -5168,7 +5456,7 @@ def fetch_korea(start, today, rf, prev=None):
     log(f"· 한국 시세 완료: {len(out):,} / {len(listing):,}개"
         + (f" · 빠짐 {dict(dropped)}" if dropped else ""))
     odd = sorted(f"{r['t']} {r['nk']}" for r in out if r["t"] not in KR_LISTED_FUNDS
-                 and (r.get("dk") or "").startswith(KR_FUND_INDUSTRY))
+                 and is_fund_industry(r.get("dk")))      # 2026-11-19: 띄어쓰기 둘 다 (DART 로는 이 업종을 채우지 않아요 · kr_ind_dart_plan)
     log(f"· 상장 펀드(etf) {sum(1 for r in out if r.get('etf'))}개 · 업종 '{KR_FUND_INDUSTRY}'인데 회사로 둔 종목 {len(odd)}개"
         + (f": {', '.join(odd[:15])}" if odd else "") + " (새 펀드가 보이면 KR_LISTED_FUNDS 에 넣어요)")
     if hl_cnt:
@@ -5192,7 +5480,8 @@ def fetch_korea(start, today, rf, prev=None):
     meta = {"pxDate": px_date.isoformat() if px_date else None,
             "ksDate": ks_date.isoformat() if ks_date else None, "listSrc": list_src, "_index": kospi, "_prod": prod_map,
             "_prefShares": pref_shares, "_prefCaps": pref_caps, "krSeries": krs, "d1Blank": d1_blank}
-    meta.update({"pxSrc": px_src, "indSrc": ind_src, "_prefCapMissing": sorted(pref_cap_missing)})      # 2026-11-19: 공식 종가 출처 · 업종 글자 출처 (data.json · 관문 줄)
+    # 2026-11-19: 공식 종가 출처 · 업종 글자 출처 (data.json · 관문 줄) · 업종 글자가 없는 종목 (main 이 DART 기업개황 업종 코드로 채워요 · kr_ind_fill)
+    meta.update({"pxSrc": px_src, "indSrc": ind_src, "_prefCapMissing": sorted(pref_cap_missing), "_noInd": sorted(no_ind)})
     return out, bench, mkt, meta
 
 
@@ -10038,7 +10327,16 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                    "diff 두 종가가 다름 · diffEx 예 · must 확인 못 한 필수 종목} · must 확인 못 한 필수 종목 (관문이 실패) · chk 1차 출처를 야후와 맞춘 "
                    "필수 종목 + 표본 {n · same · none · diff} · n 발행한 한국 종목 수 (출처별)"),
          "indSrc": ("한국 업종 글자의 출처 (2026-11-19): desc KRX-DESC 에서 업종을 받은 종목 · carried 받지 못해 지난 발행본에서 이어 쓴 종목 · "
-                    "asOf 이어 쓴 글자의 날짜 · none 업종 없음 · newNone 그중 지난 발행본에도 없던 새 상장"),
+                    "asOf 이어 쓴 글자의 날짜 · none 업종 없음 · newNone 그중 지난 발행본에도 없던 새 상장 · "
+                    "dart none 중 DART 기업개황 업종 코드의 11차 소분류가 우리 업종 표(data/ksic_map_kr.csv)에 깔끔히 맞아 채운 보통주 수 · "
+                    "dartT {종목: KSIC 코드} (설명 앞에 공식 이름 · 업종 키 s 는 표에서 · 다음 실행은 이어 쓰지 않고 다시 채워요) · "
+                    "pref 보통주의 업종 글자 · 업종 키를 따른 우선주 수 · prefT {우선주: 보통주} · prefInd 2.0 그룹을 보통주에 맞춘 우선주 수 · "
+                    "left 그래도 업종 글자 없는 종목 (펀드 빼고) · dartMiss 이유별 수 (fund · noCode · noName · mapNone · mapAmbig · mapFin · "
+                    "mapFund · noGroup · noParse · prefNoCommon · prefCommonNone · prefOver · dropped · noTable) · dartErr 채우기가 고장 난 날의 "
+                    "예외 이름 (그날 left 는 빈 값) 또는 table:예외 (업종 표를 읽지 못해 DART 로 채우지 않은 날) — 관문 경고 · mapSha 채울 때 쓴 "
+                    "업종 표(data/ksic_map_kr.csv)의 판 (sha256 앞 12자리 · 표가 바뀐 뒤의 옛 채움은 관문이 경고만)"),
+         "ownDrop": ("우리 처리 단계의 검사가 되돌리거나 뺀 행 (Jack 의 상시 규칙, 2026-11-19): {검사: {n 수 · rows 앞 30개 '종목 이름: 이유'}} · "
+                     "indFill 국내 업종 채운 값 (DART 로 채운 보통주 · 보통주를 따른 우선주 — validate_data.ind_fill_bad)"),
          "krSeries": ("국내 시계열 점검 (2026-11-14): 최근 거래일(days)의 네이버 일봉(수정주가)을 그날 공식 종가로 고친 봉 pinned · 종목 "
                       "pinStocks — 그날과 오늘 사이에 KRX 기준가(목록 파일의 Close − Changes)가 바뀌지 않았을 때만 (값 차이 "
                       f"{PIN_PX_TOL:.0%} 안, 또는 상장주식수가 오늘과 {PIN_SHR_TOL:.0%} 안이고 {PIN_REF_TOL:.0%} 안) · 기준가를 확인 못 한 날은 "
@@ -10132,6 +10430,18 @@ def main():
     ph = Phases()
     prev = read_prev_data()
     tables = load_industry_tables()       # 업종 표가 깨졌으면 여기서 바로 멈춰요
+    # 2026-11-19: 한국표준산업분류 11차 · 11차 소분류 → 우리 업종 표 (DART 로 업종 글자 채우기). 깨졌으면 크게 남기고 채우기만 건너뛰어요
+    # (리뷰: 표 하나 때문에 하루 발행이 멈추지 않게 — 우선주는 그대로 보통주를 따르고 관문이 경고해요)
+    ksic_names = ksic_map = ksic_sha = ksic_err = None
+    try:
+        ksic_names = load_ksic_names()
+        ksic_map = load_ksic_map_kr(names=ksic_names)
+        ksic_sha = ksic_map_kr_sha()
+    except Exception as e:
+        ksic_names = ksic_map = ksic_sha = None
+        ksic_err = type(e).__name__
+        log(f"  !! 업종 표(data/ksic_names.csv · data/ksic_map_kr.csv)를 읽지 못했어요 ({ksic_err}: {str(e)[:160]}) — DART 로 업종 글자를 "
+            "채우지 않고 발행해요 (우선주는 보통주를 따라요 · 관문이 경고해요). 표를 고쳐 주세요")
     dups = load_us_kr_duplicates()        # 미국-한국 중복 표도 (v17.5.2)
     special = load_krx_special_sessions() # KRX 특별 거래시간 표도 (v17.5.4) — 최종본 판단에 써요
     try:                                  # 휴장일 표도 (v19.1c) — '늦음' 경고 시각에만 써서, 깨졌거나 모자라도 멈추지 않고 크게 남겨요
@@ -10232,6 +10542,10 @@ def main():
     funds = ph.run("ETF·금현물", fetch_kr_funds, start, px_date, kr_bench, names, rf, gold_usd, fx)
 
     icnt = assign_industries(kr + us, tables, ksic, products=kmeta.get("_prod"))
+    # 2026-11-19: KRX-DESC · 지난 발행본에 업종 글자가 없는 국내 보통주 → DART 업종 코드가 우리 업종 표에 깔끔히 맞을 때만 (DART 를 새로
+    # 부르지 않아요) · 우선주는 보통주를 따라요 · 틀린 행은 되돌려요 (Jack 의 상시 규칙). 2.0 그룹이 정해진 뒤 · corp.json 보다 먼저
+    ind_drop = kr_ind_fill(kr, kmeta.get("_noInd") or [], ksic, ksic_map, kmeta.get("indSrc"), over=tables["over"],
+                           names=ksic_names, map_sha=ksic_sha, table_err=ksic_err)
     for m in ("kr", "us"):
         arr = kr if m == "kr" else us
         g = collections.Counter(x.get("ind") for x in arr if x.get("ind"))
@@ -10349,6 +10663,7 @@ def main():
         "stocks": stocks,
     }
     payload.update(sp_fields)                # v19.6a (A.6): splits · splitsFrom · splitsAsOf · splitsSrc · splitsInfo (UNITS["splits"]) 또는 없음
+    payload.setdefault("ownDrop", {})["indFill"] = ind_drop   # 2026-11-19 (Jack 의 상시 규칙): 업종 채운 값 중 되돌린 행 (관문 줄이 봐요)
     write_json(OUT, payload)
     log(f"✓ {OUT} 저장 — {len(stocks):,}종목, {os.path.getsize(OUT) / 1e6:.1f}MB · 기준일 {kmeta['pxDate']} · "
         f"미국 {umeta['usPxDate']} · 환율 {fx_last:,.1f}")
