@@ -175,12 +175,64 @@ def sim_universe(seed, cut, noise, order_caps=True, unconf=0.012):
 
 
 def test_a_cut_in_cap_order_spares_the_published_top_stocks():
-    """평소 2차 출처 날: 2,772종목 중 ~33종목은 두 출처가 달라 빠지고 상위 2,500종목을 발행해요 → 여유는 약 240종목.
-    시가총액 순이면 한도에 걸려 빠지는 것은 가장 작은 종목들이라 발행 목록이 그대로예요. 코드 순(예전)이면 큰 종목도 빠져요."""
+    """야후 최신 일봉이 채워진 날 (06:40 실행처럼): 2,772종목 중 ~33종목 (~1.2%) 은 두 출처가 달라 빠지고 상위 2,500종목을 발행해요 →
+    여유는 약 240종목. 시가총액 순이면 한도에 걸려 빠지는 것은 가장 작은 종목들이라 발행 목록이 그대로예요. 코드 순이면 큰 종목도 빠져요.
+    여유는 확인 못 하는 종목 수에 달려요: 야후 최신 일봉이 빈 밤 (마감 뒤 regularMarketPrice 로 읽는 날) 은 ~9% (2,526 / 2,771) 를
+    확인 못 해서 여유가 25~50종목뿐이에요. 리뷰 2 가 11-19 실제 데이터로 잰 값 (묻지 못한 수 → 빠지는 발행 종목, 시가총액 순):
+    25 → 0 · 50 → 3 · 100 → 22 · 200 → 73 · 240 → 104 · 300 → 156 · 440 → 278 (코드 순: 50 → 34 · 100 → 68 · 200 → 159 · 240 → 195).
+    그 밤에는 약 50종목 넘게 묻지 못하면 발행할 종목이 빠지고 경고 줄만 떠요 (국내 종목 수 2,300 줄은 약 320종목부터 멈춰요)."""
     for seed in (1, 3, 11):
         assert sim_universe(seed, 200, 0.02) == 0                       # 200종목 묻지 못함 · 그날 시가총액이 ±2% 달라도
         assert sim_universe(seed, 240, 0.0) == 0
         assert sim_universe(seed, 240, 0.02, order_caps=False) >= 150     # 코드 순이었다면 발행할 종목 150개 넘게 빠져요
+
+
+def test_order_line_counts_on_real_caps():
+    """리뷰 2 S1: 묻는 순서 줄의 수는 필수 종목을 빼고 세요 (예전: '시가총액 모름 -5')."""
+    said = []
+    caps = F.kr_fb_caps(listing("2026-11-16_2211"))
+    F.kr_fallback_days([D17], lambda d: (listing("2026-11-17_1529"), "시험"), NOW, {}, fetch_daum=lambda codes, n: ({}, []),
+                       fetch_yahoo=lambda cm, a, b: ({}, 0), fill_day=no_fill, say=said.append, caps=caps)
+    line = next(s for s in said if "2차 출처 묻는 순서" in s)
+    rest = [c for c in listing("2026-11-17_1529")["Code"].astype(str) if c not in V.MUST and c != KONEX]
+    n_cap = sum(1 for c in rest if c in caps)
+    assert f"필수 종목 7 → 1차 출처 최종본 시가총액 큰 순 {n_cap} → 시가총액 모름 {len(rest) - n_cap} (코드 순)" in line, line
+    assert "-" not in line.split("묻는 순서")[1] and n_cap >= 1
+    assert line.lstrip().startswith("!!") == (n_cap < 0.9 * len(rest))
+
+
+def test_cap_order_reaches_both_yahoo_phases():
+    """리뷰 2: 다음 · 야후 일봉 · 야후 다시 읽기가 모두 같은 차례 (필수 종목 → 시가총액 큰 순) 로 받아요."""
+    raw = daum_raw()
+    seen = {}
+
+    def fetch_daum(codes, n):
+        seen["daum"] = list(codes)
+        return {c: F.daum_rows_by_day(raw[c]) for c in codes if c in raw}, []
+
+    def fetch_yahoo(cm, a, b):
+        seen["yahoo"] = list(cm)
+        return {}, 0
+
+    def fill(y, need, d, close_time):
+        seen["fill"] = list(need)
+        return no_fill()
+    caps = F.kr_fb_caps(listing("2026-11-16_2211"))
+    F.kr_fallback_days([D17], lambda d: (listing("2026-11-17_1529"), "시험"), NOW, {}, fetch_daum=fetch_daum, fetch_yahoo=fetch_yahoo,
+                       fill_day=fill, say=lambda s: None, caps=caps)
+    want = F.fb_order(set(seen["daum"]), caps=caps)
+    assert seen["daum"] == want and seen["yahoo"] == want and seen["fill"] == [c for c in want if c in set(seen["fill"])] and seen["fill"]
+
+
+def test_real_yahoo_fetchers_follow_the_given_order():
+    asked = []
+    cm = {"373220": "KOSPI", "000020": "KOSDAQ", "000010": "KOSPI", "005930": "KOSPI"}      # 시가총액 순으로 정한 차례 (코드 순 아님)
+    F.fetch_yahoo_kr_closes(cm, D18, D18 + dt.timedelta(days=1), fetch=lambda s, a, b: (asked.append(s), chart([(D18, 1.0)]))[1], workers=1,
+                            say=say_nothing)
+    assert asked == ["005930.KS", "373220.KS", "000020.KQ", "000010.KS"]
+    asked.clear()
+    F.yahoo_fill_day({}, cm, D18, dt.time(15, 30), fetch=lambda s: (asked.append(s), chart([(D18, 1.0)]))[1], workers=1, say=say_nothing)
+    assert asked == ["005930.KS", "373220.KS", "000020.KQ", "000010.KS"]
 
 
 # ── 3. 야후 일봉 종가: 종목마다 차트 · 한도가 지나면 묻지 않아요 · 멈춘 요청이 있어도 한도 + 요청 하나 (리뷰 S1) ─────
@@ -394,7 +446,52 @@ def test_kospi_series_note_flags_gaps_and_a_stale_end():
     assert not F.kr_index_note(hol, dt.date(2023, 10, 12), D16)[0]
 
 
-# ── 8. 이 길의 HTTP 요청은 모두 시간 한도가 있어요 · 파이썬 출력은 버퍼에 모으지 않아요 ───────────
+# ── 8. 다시 묻기 전 쉬는 시간: 429 는 Retry-After (최대 5초) · 마지막 시도 뒤에는 쉬지 않아요 (리뷰 2) ─────────────
+def test_retry_wait_rules():
+    w = F.fb_retry_wait
+    assert [w(0), w(1), w(2)] == [1.0, 2.0, None]
+    assert [w(0, 429), w(1, 429), w(2, 429)] == [2.0, 4.0, None]
+    assert w(0, 429, "3") == 3.0 and w(0, 429, "100") == F.KR_FB_RETRY_AFTER_MAX and w(1, 429, "Wed, 21 Oct 2026 07:28:00 GMT") == 4.0
+    assert w(0, 500, "100") == 1.0                                             # Retry-After 는 429 에만
+
+
+class FakeResp:
+    def __init__(self, status, headers=None):
+        self.status_code, self.headers = status, headers or {}
+
+    def json(self):
+        raise ValueError("본문 없음")
+
+
+class FakeSession:
+    def __init__(self, resp):
+        self.resp, self.calls = resp, 0
+
+    def get(self, *a, **k):
+        assert k.get("timeout") == 20
+        self.calls += 1
+        return self.resp
+
+
+def test_chart_and_daum_fetchers_wait_per_rules_and_not_after_the_last_try(monkeypatch):
+    slept = []
+    monkeypatch.setattr(F.time, "sleep", slept.append)
+    for local, call in ((F._YAHOO_LOCAL, lambda: F._fetch_yahoo_chart("005930.KS")), (F._DAUM_LOCAL, lambda: F._fetch_daum_days("005930", 5))):
+        for resp, want in ((FakeResp(429, {"Retry-After": "100"}), [5.0, 5.0]), (FakeResp(503), [1.0, 2.0]), (FakeResp(404), [])):
+            slept.clear()
+            sess = FakeSession(resp)
+            local.s = sess
+            try:
+                call()
+                raise AssertionError("예외가 나야 해요")
+            except RuntimeError as e:
+                assert f"HTTP {resp.status_code}" in str(e)
+            finally:
+                del local.s
+            assert slept == want and sess.calls == (1 if resp.status_code == 404 else 3)
+
+
+# ── 9. 이 길의 HTTP 요청은 모두 시간 한도가 있어요 · 파이썬 출력은 버퍼에 모으지 않아요 ───────────
 def test_every_request_on_the_path_has_a_timeout():
     for fn in (F._fetch_daum_days, F._fetch_yahoo_chart, F._fetch_listing_csv, F._listing_commit_kst):
         src = inspect.getsource(fn)

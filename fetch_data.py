@@ -653,8 +653,9 @@ KR_FB_LOUD_COVER = 0.98           # 야후에 있는 종목(코넥스 빼고) �
 # 평소 (GitHub 실행 4번, 11-18 03:19 · 06:40 · 11-19 22:59 KST): 다음 108~144초 · 야후 일괄(예전 yfinance) 111~178초 · 차트 다시 읽기 0~41초
 # (종목마다 차트 2,764종목도 41초).
 # 600초 = 가장 느린 평소 단계(178초)의 3배 넘게 — 조금 느린 밤에는 끊지 않아요.
-# 한도가 지나면 새 종목을 묻지 않아요. 묻는 중인 요청은 자기 시간 한도까지 (요청 하나: 20초 × 세 번 + 쉬는 6초 = 66초 · 소켓 시간 한도라
-# 바이트를 아주 천천히 흘리는 서버는 더 끌 수 있어요 — 본 적은 없어요). 그래서 단계 하나는 최악 600 + 66초, 세 단계 합 약 33분.
+# 한도가 지나면 새 종목을 묻지 않아요. 묻는 중인 요청은 자기 시간 한도까지: 한 종목 최악 세 번 × (연결 20초 + 읽기 20초) + 쉬는 시간
+# 최대 10초 = 130초 (fb_retry_wait · DNS 찾기와 바이트를 아주 천천히 흘리는 서버는 이 한도 밖이에요 — 본 적은 없어요).
+# 그래서 단계 하나는 최악 600 + 130초 (약 12분), 세 단계 합 약 37분.
 # 묻지 못한 종목은 출처가 답하지 않은 종목과 똑같이 '확인 못 한 종목' → 그날 파일에서 빠져요 (두 출처 규칙 그대로).
 # 묻는 순서: 필수 종목 → 1차 출처 최종본의 시가총액 큰 순 → 시가총액을 모르는 종목 (코드 순) — 한도에 걸려도 빠지는 것은 작은 종목부터라,
 # 발행하는 상위 MAX_KR 종목은 대개 그대로예요 (fb_order · 리뷰 M1). 한도에 걸린 수는 pxSrc.fb.cut (1차 출처 날은 pxSrc.chk.cut).
@@ -834,6 +835,23 @@ def with_socket_timeout(fn, secs):
 _DAUM_LOCAL = threading.local()
 
 
+KR_FB_RETRY_AFTER_MAX = 5         # 429 (너무 많이 물음) 의 Retry-After 를 이만큼(초)까지 따라요 — 한 종목의 쉬는 시간이 길어지지 않게
+
+
+def fb_retry_wait(attempt, status=None, retry_after=None, tries=3):
+    """다시 묻기 전에 쉬는 초 (2026-11-20 · 순수 함수 · 리뷰): 마지막 시도 뒤에는 쉬지 않아요 (None).
+    429 는 Retry-After 를 따르되 KR_FB_RETRY_AFTER_MAX 까지 (숫자가 아니면 2 · 4초), 나머지는 1 · 2초."""
+    if attempt >= tries - 1:
+        return None
+    if status == 429:
+        try:
+            ra = float(retry_after)
+        except (TypeError, ValueError):
+            ra = None
+        return float(min(KR_FB_RETRY_AFTER_MAX, ra if ra is not None and ra >= 0 else 2.0 * (attempt + 1)))
+    return 1.0 + attempt
+
+
 def _fetch_daum_days(code, n):
     """다음 일별 시세 (최근 n 거래일). 세 번 시도해도 못 받으면 예외. 일하는 스레드마다 연결 하나를 다시 써요 (요청마다 새로 잇지 않게)."""
     last = None
@@ -841,17 +859,22 @@ def _fetch_daum_days(code, n):
     if sess is None:
         sess = _DAUM_LOCAL.s = requests.Session()
     for attempt in range(3):
+        status = ra = None
         try:
             r = sess.get(KR_FB_DAUM_URL.format(c=code), params={"symbolCode": f"A{code}", "page": 1, "perPage": n, "pagination": "true"},
                              headers={"User-Agent": "Mozilla/5.0", "Referer": f"https://finance.daum.net/quotes/A{code}"}, timeout=20)
             if r.status_code == 200:
                 return r.json()
+            status, ra = r.status_code, r.headers.get("Retry-After")
             last = f"HTTP {r.status_code}"
             if 400 <= r.status_code < 500 and r.status_code != 429:
                 break                                # 없는 종목 등 — 다시 물어도 같아요
         except Exception as e:
             last = f"{type(e).__name__}: {str(e)[:80]}"
-        time.sleep(1 + attempt)
+        wait = fb_retry_wait(attempt, status, ra)
+        if wait is None:
+            break
+        time.sleep(wait)
     raise RuntimeError(last)
 
 
@@ -928,7 +951,7 @@ def fetch_daum_all(codes, n, fetch=_fetch_daum_days, workers=KR_FB_WORKERS, budg
 
 KR_FB_YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=5d&interval=1d"
 KR_FB_YAHOO_CHART_PERIOD = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}?period1={p1}&period2={p2}&interval=1d"
-KR_FB_META_WORKERS = 6
+KR_FB_META_WORKERS = 6           # 야후 차트 동시 요청 수 — 시험 실행 44578437586: 2,766종목 31초 ≈ 초당 90번. 429 가 늘면 이 수를 줄여요
 KR_META_WINDOW = dt.timedelta(minutes=10)    # regularMarketTime 은 마감 시각 ~ 마감 + 10분 안이어야 해요 (실제: 15:30:01 ~ 15:30:30 · 수능일 16:30)
 _YAHOO_LOCAL = threading.local()
 
@@ -972,16 +995,21 @@ def _fetch_yahoo_chart(sym, start=None, end=None):
         url = KR_FB_YAHOO_CHART.format(sym=sym)
     last = None
     for attempt in range(3):
+        status = ra = None
         try:
             r = sess.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
             if r.status_code == 200:
                 return r.json()["chart"]["result"][0]
+            status, ra = r.status_code, r.headers.get("Retry-After")
             last = f"HTTP {r.status_code}"
             if 400 <= r.status_code < 500 and r.status_code != 429:
                 break
         except Exception as e:
             last = f"{type(e).__name__}: {str(e)[:80]}"
-        time.sleep(1 + attempt)
+        wait = fb_retry_wait(attempt, status, ra)
+        if wait is None:
+            break
+        time.sleep(wait)
     raise RuntimeError(last)
 
 
@@ -1126,12 +1154,13 @@ def kr_fallback_days(days, universe_of, now, special, fetch_daum=fetch_daum_all,
     notes.append(f"야후에 없는 시장(코넥스 등) {len(n_mkt):,}종목은 2차 출처로 확인할 수 없어 묻지 않아요")
     order = fb_order(set(cm), first=must, caps=caps)
     cm = {c: cm[c] for c in order}                  # 이 차례로 물어요 (세 단계 모두)
-    n_cap = sum(1 for c in order if caps and _cap_ok(caps.get(c)))
     n_must = sum(1 for c in dict.fromkeys(must) if c in cm)
-    weak = not caps or n_cap < 0.9 * max(len(order) - n_must, 1)     # 1차 출처 시가총액을 모르는 종목이 많으면 크게 (큰 종목도 늦게 물어요)
+    rest = order[n_must:]                           # 필수 종목 뒤 (fb_order 가 필수 종목을 맨 앞에 둬요)
+    n_cap = sum(1 for c in rest if caps and _cap_ok(caps.get(c)))
+    weak = not caps or n_cap < 0.9 * max(len(rest), 1)     # 1차 출처 시가총액을 모르는 종목이 많으면 크게 (큰 종목도 늦게 물어요)
     say(f"{'  !! ' if weak else '· '}2차 출처 묻는 순서: 필수 종목 {n_must} → "
-        + (f"1차 출처 최종본 시가총액 큰 순 {n_cap:,} → 시가총액 모름 {len(order) - n_must - n_cap:,} (코드 순)" if caps
-           else f"코드 순 {len(order) - n_must:,} (1차 출처 시가총액이 없어요)")
+        + (f"1차 출처 최종본 시가총액 큰 순 {n_cap:,} → 시가총액 모름 {len(rest) - n_cap:,} (코드 순)" if caps
+           else f"코드 순 {len(rest):,} (1차 출처 시가총액이 없어요)")
         + (" — 시간 한도에 걸리면 큰 종목도 빠질 수 있어요" if weak else ""))
     first = min(unis)
     n_days = min(KR_FB_MAX_DAYS + 15, (now.date() - first).days + 3)    # 달력 날 수 ≥ 거래일 수 — 첫날까지 넉넉히

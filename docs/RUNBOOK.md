@@ -534,18 +534,23 @@ blank at 01:40 and 02:15 KST, filled by 06:40), so runs in that window re-read a
 Until 2026-11-20 each request had a limit (20 s, three tries) but no phase did, and the phases' notes were printed only at the
 end. Two branch dry runs on 11-19/20 (23:19 and 00:34 KST starts) sat silent after "· 종목 목록: 2026-11-16 최종본 …" for 74 and
 61 minutes and were cancelled; the same inputs had finished this stage in 3m40s twenty minutes earlier. A slow or throttling source
-could hold a run for hours (Daum not answering at all: 2,772 ÷ 4 × 66 s ≈ 12.7 hours), and one yfinance batch could wait with no
+could hold a run for hours (Daum timing out on every try: 2,772 ÷ 4 × 66 s ≈ 12.7 hours), and one yfinance batch could wait with no
 limit at all (it loops until every ticker answers, and an abandoned batch would keep the process from ending).
 
 Now (`fetch_data.KR_FB_PHASE_BUDGET_S` = 600 s per phase; normal phase times on four runs, 11-18 03:19 · 06:40 and 11-19 22:59
-KST: Daum 108–144 s, Yahoo batch 111–178 s, chart re-read 0–41 s, 41 s even for 2,764 stocks):
+KST: Daum 108–144 s, Yahoo batch 111–178 s, chart re-read 0–41 s, 41 s even for 2,764 stocks; on the first dry run with this
+change, 44578437586 on the night of 11-20: Daum 133 s, Yahoo one chart per stock 31 s for 2,766 of 2,772, re-read 30 s for 2,765):
 - each phase logs a line when it starts ("· 2차 출처: 다음 일별 시세 묻는 중 — …"), so a stuck run shows which source it is waiting on;
 - the order is: must-have stocks, then every other stock by the market cap in the volunteer list's last **final** file, largest
   first (the day's own cache file can be the pre-market version with blank caps, so it is never used to rank), then stocks with no
   cap there by code. The log says it: "· 2차 출처 묻는 순서: 필수 종목 7 → 1차 출처 최종본 시가총액 큰 순 … → 시가총액 모름 … (코드 순)";
-- when a phase runs out of time it stops asking; requests already in flight finish under their own limits (one stock: 20 s × 3
-  tries + 6 s of pauses = 66 s at most; a server that sends a byte every few seconds could stretch one request, never seen). So a
-  phase ends within about 11 minutes and the three phases within about 33 minutes, however slow the sources are;
+- when a phase runs out of time it stops asking; requests already in flight finish under their own limits (one stock: 3 tries ×
+  (20 s to connect + 20 s between bytes) + at most 10 s of pauses ≈ 130 s; a DNS lookup and a server that sends a byte every few
+  seconds are outside those limits, never seen). So a phase ends within about 12 minutes and the three phases within about 37
+  minutes, however slow the sources are;
+- between tries a stock waits 1 s, then 2 s; after a 429 ("too many requests") it waits what the server's Retry-After asks, at
+  most 5 s (2 s, then 4 s when there is none); there is no wait after the last try. The Yahoo phases ask about 90 times a second
+  (6 at a time, `KR_FB_META_WORKERS`); if 429 answers grow, lower that number;
 - the stocks not asked are unconfirmed, exactly like a stock whose source did not answer: left out of that day's file, never an
   older price. The log says so at once ("!! 2차 출처 시간 한도 600초: 다음 일별 시세를 더 묻지 않아요 …") and in the summary ("!! 2차
   출처 시간 한도 600초 — 다음 일별 시세: 받은 n / 대상 m — 나머지 k종목은 확인 못 한 종목 (…)"); the same for 야후 일봉 종가 and 야후
@@ -563,14 +568,20 @@ KST: Daum 108–144 s, Yahoo batch 111–178 s, chart re-read 0–41 s, 41 s eve
 What protects users when the limit hits (and what does not):
 - **Must-haves:** they are asked first. If one is still unconfirmed, that day is not used: the data stays on the last volunteer
   final day and the gate fails "pxDate 뒤 끝난 거래일 없음", so nothing publishes (no old price under a new date).
-- **Market-cap order:** on a normal second-source day about 33 of the 2,772 stocks drop out anyway (the two closes differ, or
-  Yahoo has none) and the top 2,500 by market cap are published, so there is room for about 240 more. A cut of up to about 200–240
-  stocks removes only the smallest stocks, which would not have been published anyway (simulated in `tests/test_kr_fb_budget.py`).
-  In plain code order the stocks asked last would be the highest codes, often large recent listings: a cut of 297 would drop
-  LG에너지솔루션 (373220) and SK스퀘어 (402340), and in the simulation a 240-stock cut dropped about 210 published stocks.
-- **Larger cuts publish with the smallest published stocks missing, with only the WARN:** the count rows fail only when the
-  published Korean stocks fall below 2,300 ("국내 종목 수", a cut of about 440 or more) or move more than 10% from the last publish
-  ("국내 종목 수 변화", about 490 or more). Between those, up to about 200 of the smallest published stocks are missing that day.
+- **Market-cap order:** the run publishes the top 2,500 Korean stocks by market cap among the confirmed ones, so a cut first
+  removes the smallest stocks. How many can go unasked before a published stock is lost depends on how many are unconfirmed anyway:
+  - On a night when Yahoo's newest daily close is still blank (runs from the close until roughly 06:40 KST, when the close is read
+    from Yahoo's price just after the close), about 9% are unconfirmed (2,526 of 2,771 on 11-19), so the room is only about 25–50.
+    Measured on the 11-19 data (stocks not asked → published stocks lost), market-cap order: 25 → 0 · 50 → 3 · 100 → 22 · 200 → 73
+    · 240 → 104 · 300 → 156 · 440 → 278; plain code order: 50 → 34 · 100 → 68 · 200 → 159 · 240 → 195 (code order also drops
+    large recent listings such as LG에너지솔루션 373220 and SK스퀘어 402340, which have high codes).
+  - When Yahoo's newest daily close is filled (e.g. the 06:40 run), about 1.2% are unconfirmed and a cut of up to about 200–240
+    loses none (simulated in `tests/test_kr_fb_budget.py`).
+- **The count rows** stop only large cuts: "국내 종목 수" fails below 2,300 published Korean stocks, which on a blank-close night is
+  about 320 stocks not asked (about 440 when the close is filled); "국내 종목 수 변화" (more than 10% from the last publish) comes later.
+- **Plainly, the gap:** on a blank-close night, from about 50 to about 320 stocks not asked, the data publishes with published
+  stocks missing (about 3 at 50, about 156 at 300) and only the WARN row. A check that stops the publish there would be a new
+  publish-stopping rule and needs Jack's yes.
 
 If the WARN shows:
 1. Find the phase in the run log: the "· 2차 출처: … 묻는 중" line before the "!!" line has the GitHub timestamp, so the gap shows
