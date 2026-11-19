@@ -119,7 +119,21 @@ def universe16():
     return pd.concat([kk, kx[~kx["Code"].isin(set(kk["Code"]))]], ignore_index=True)
 
 
-def run_fb(knx=None, said=None, caps=None, day=D16, uni=None, asked_d=None):
+def caps_floor(real, floor):
+    """1차 출처 최종본 시가총액 흉내 (리뷰 M1): real {코드: 시가총액} + 가짜 종목으로 MAX_KR 번째 시가총액이 정확히 floor 가 되게 해요."""
+    above = sum(1 for v in real.values() if v > floor)
+    caps = {f"Z{i:05d}": 1e15 for i in range(F.MAX_KR - 1 - above)}
+    caps["Zfloor"] = float(floor)
+    caps.update(real)
+    assert F.kr_knx_cap_floor(caps) == floor
+    return caps
+
+
+KNX_CAPS = F.kr_fb_caps(knx_listing("2026-11-13_final"))
+CAPS_190 = caps_floor(KNX_CAPS, 190e8)        # 문턱 190억원: 확인되는 넷 (이엠티 · SK시그넷 · 타스컴 203억 · 지에이이노더스 199억) 모두 위
+
+
+def run_fb(knx=None, said=None, caps=CAPS_190, day=D16, uni=None, asked_d=None):
     def fetch_daum(codes, n):
         if asked_d is not None:
             asked_d.extend(codes)
@@ -248,11 +262,92 @@ def test_a_broken_konex_stage_leaves_konex_out_loudly_and_kospi_kosdaq_alone():
     assert px == D16 and src["knx"]["px"] is None                                             # 관문 줄: '코넥스 단계를 묻지 않았어요' (경고)
 
 
+# ── 3b. 리뷰 M1: 평소 날 발행하는 코넥스만 (1차 출처 최종본의 MAX_KR 번째 시가총액 이상) — '국내 종목 수' 바닥이 평소와 같게 ─────────
+def test_cap_floor_and_keep_rules():
+    assert F.kr_knx_cap_floor({}) is None and F.kr_knx_cap_floor(None) is None
+    assert F.kr_knx_cap_floor({"a": 3.0, "b": 2.0, "c": None, "d": float("nan"), "e": -1}, n=2) == 2.0
+    assert F.kr_knx_cap_floor({"a": 3.0, "b": 2.0}, n=3) is None                 # 시가총액을 아는 종목이 모자라면 기준을 몰라요
+    kfr = pd.DataFrame([{"Code": "A", "Marcap": 300}, {"Code": "B", "Marcap": 100}, {"Code": "C", "Marcap": 200}, {"Code": "D", "Marcap": None}])
+    keep, low = F.kr_knx_cap_keep(kfr, 200)
+    assert list(keep["Code"]) == ["A", "C"] and low == ["B", "D"]
+    keep, low = F.kr_knx_cap_keep(kfr, None)
+    assert keep.empty and set(low) == {"A", "B", "C", "D"}                        # 기준을 모르면 하나도 넣지 않아요 (더 엄격하게)
+
+
+def test_confirmed_konex_below_the_normal_day_cut_stay_out_and_are_named():
+    said = []
+    out, notes = run_fb(knx=knx_fakes(said=said), said=said, caps=caps_floor(KNX_CAPS, 200e8))   # 지에이이노더스 199.5억 < 200억
+    fr, st = out[D16]
+    kst = st["knx"]
+    assert set(fr.loc[fr["Market"] == "KONEX", "Code"]) == {"232530", "260870", "336040"}
+    assert kst["conf"] == 4 and kst["kept"] == 3 and kst["capOut"] == ["076340"] and kst["floor"] == 200e8
+    k = F.px_src_counts(st)
+    assert k["knx"]["conf"] == 4 and k["knx"]["kept"] == 3 and k["knx"]["capOut"] == 1 and k["knx"]["floor"] == 20_000_000_000
+    assert k["conf"] == st["conf"] + 3 == len(fr)                                                 # 그날 파일의 행 수 (뺀 코넥스는 세지 않아요)
+    loud, txt = F.kr_knx_note(D16, kst)
+    assert loud and "그날 파일에 넣은 코넥스 3" in txt and "200억원 이상" in txt and "시가총액 기준 아래라 뺀 1: 076340 지에이이노더스" in txt
+    assert any(n.startswith("!! 코넥스 시가총액 기준") and "200억원 이상" in n for n in notes)
+    out, notes = run_fb(knx=knx_fakes(), caps=KNX_CAPS)                                           # 1차 출처 시가총액이 MAX_KR 개보다 적음
+    fr, st = out[D16]
+    assert "KONEX" not in set(fr["Market"]) and st["knx"]["kept"] == 0 and st["knx"]["conf"] == 4
+    assert any(n.startswith("!! 코넥스 시가총액 기준을 정할 수 없어요") for n in notes)
+    assert F.kr_knx_note(D16, st["knx"])[0] and "기준을 정할 수 없어 넣지 않았어요" in F.kr_knx_note(D16, st["knx"])[1]
+
+
+def _synthetic_day(n_kk=2740, n_knx_big=30, n_knx_small=77, unasked=500):
+    """리뷰 M1 의 경우: 코스피 · 코스닥 2,740 (필수 종목 포함 · 시가총액 큰 순) 중 작은 쪽 500종목을 시간 한도로 묻지 못한 아침.
+    코넥스 107 은 모두 두 출처가 같아요 (가장 나쁜 경우) — 그중 30 은 평소 날 상위 2,500 안 시가총액, 77 은 그 아래."""
+    must = list(dict.fromkeys(list(F.MUST_KR) + list(V.MUST)))
+    kk = must + [f"1{i:05d}" for i in range(n_kk - len(must))]
+    kk_cap = {c: (3000 - i) * 1e10 for i, c in enumerate(kk)}                                     # 30조 … 2.61조
+    big = {f"4{j:05d}": (2000 - 50 * j) * 1e10 + 5e9 for j in range(n_knx_big)}                  # 20조 … 5.55조 (코스피 · 코스닥 사이)
+    small = {f"5{j:05d}": 1e9 + j * 1e6 for j in range(n_knx_small)}                               # 10억원 남짓 (모두 아래)
+    caps0 = {**kk_cap, **big, **small}
+    rows = [{"Code": c, "Name": f"N{c}", "Market": "KOSPI", "Stocks": int(v / 1000), "ISU_CD": "", "Dept": "", "MarketId": "STK"} for c, v in kk_cap.items()]
+    rows += [{"Code": c, "Name": f"K{c}", "Market": "KONEX", "Stocks": int(v / 1000), "ISU_CD": "", "Dept": "", "MarketId": "KNX"}
+             for c, v in {**big, **small}.items()]
+    uni = pd.DataFrame(rows)
+    asked = kk[: n_kk - unasked]                                                                    # 시가총액 큰 순으로 물어서 작은 500 이 남아요
+    daum = {c: {D16: {"date": "2026-11-16 00:00:00", "tradePrice": 1000, "changePrice": 0, "change": "EVEN", "listedSharesCount": int(kk_cap[c] / 1000),
+                      "totalAccTradeVolume": 10, "totalAccTradePrice": 10000, "openingPrice": 1000, "highPrice": 1000, "lowPrice": 1000}} for c in asked}
+    yahoo = {c: {D16: 1000.0} for c in asked}
+    knx_codes = list(big) + list(small)
+    knx = {"naver": lambda codes, a, b: ({c: {D16: {"closePrice": 1000.0, "openPrice": 1000.0, "highPrice": 1000.0, "lowPrice": 1000.0,
+                                                    "accumulatedTradingVolume": 5}} for c in codes}, [], []),
+           "yahoo": lambda cm, a, b: ({c: {D16: 1000.0} for c in cm}, 0, 0),
+           "fill": lambda y, need, d, ct: no_fill()}
+    return uni, caps0, daum, yahoo, knx, knx_codes, len(big)
+
+
+def test_floor_trips_as_on_main_when_kospi_kosdaq_confirmations_run_short():
+    """리뷰 M1: 다음이 느려 코스피 · 코스닥 500종목을 묻지 못한 아침 — 예전(main)처럼 '국내 종목 수' 바닥(2,300) 아래라 발행이 멈춰요.
+    확인된 코넥스를 모두 더했다면 2,240 + 107 = 2,347 로 바닥을 넘어, 평소 발행하는 종목 230여 개가 빠진 채 발행됐을 거예요."""
+    uni, caps0, daum, yahoo, knx, knx_codes, n_big = _synthetic_day()
+
+    def run(k):
+        out, _ = F.kr_fallback_days([D16], lambda d: (uni, "시험"), NOW, {}, fetch_daum=lambda codes, n: (daum, [], []),
+                                    fetch_yahoo=lambda cm, a, b: (yahoo, 0, 0), fill_day=no_fill, say=lambda s: None, caps=caps0, knx=k)
+        fr, st = out[D16]
+        assert st["must"] == []
+        return F.select_kr_universe(fr, F.MAX_KR), st
+    main, _ = run(None)
+    now_, st = run(knx)
+    assert len(main) == 2240 and len(main) < V.KR_MIN                                              # main: 바닥 아래 → 실패
+    assert st["knx"]["conf"] == 107 and st["knx"]["kept"] == n_big == 30                           # 평소 날 상위 2,500 안의 코넥스만
+    assert len(now_) == 2240 + 30 < V.KR_MIN                                                        # 이 PR: 그래도 바닥 아래 → 실패 (예전과 같이 멈춰요)
+    assert 2240 + st["knx"]["conf"] >= V.KR_MIN                                                     # 모두 더했다면 통과했을 거예요 (막은 경우)
+    assert set(now_.loc[now_["Market"] == "KONEX", "Code"]) == set(knx_codes[:n_big])
+    # main 도 이 PR 도 평소 날 발행하는 종목 (상위 2,500 · 코넥스 30 포함) 만 내요 → 빠진 '평소 발행 종목' 수 = 2,500 − 발행 수.
+    # 그래서 바닥 (발행 2,300 아래) 은 두 쪽 모두 평소 발행 종목이 200 넘게 빠졌을 때 걸려요 (main 과 같은 보호)
+    normal = set(sorted(caps0, key=lambda c: -caps0[c])[:F.MAX_KR])
+    assert set(main["Code"]) <= normal and set(now_["Code"]) <= normal
+    assert len(normal - set(main["Code"])) == F.MAX_KR - len(main) == 260 and len(normal - set(now_["Code"])) == F.MAX_KR - len(now_) == 230
+
+
 def test_konex_is_asked_in_market_cap_order():
     asked_n = []
-    caps = F.kr_fb_caps(knx_listing("2026-11-13_final"))
-    run_fb(knx=knx_fakes(asked_n, workers=1), caps=caps)
-    by_cap = sorted(KNX, key=lambda c: -caps[c])
+    run_fb(knx=knx_fakes(asked_n, workers=1), caps=CAPS_190)
+    by_cap = sorted(KNX, key=lambda c: -KNX_CAPS[c])
     assert asked_n == by_cap and asked_n[0] == "496320"                                       # 본시스템즈 (1.2조원) 먼저
 
 
@@ -264,8 +359,7 @@ def test_konex_time_limit_leaves_the_rest_unconfirmed_and_the_gate_only_warns(mo
         asked.append(code)
         clk.t += 100
         return naver_raw()[code]["body"]
-    caps = F.kr_fb_caps(knx_listing("2026-11-13_final"))
-    out, notes = run_fb(knx=knx_fakes(naver_fetch=slow, workers=1, clock=clk, said=said), said=said, caps=caps)
+    out, notes = run_fb(knx=knx_fakes(naver_fetch=slow, workers=1, clock=clk, said=said), said=said, caps=CAPS_190)
     fr, st = out[D16]
     assert asked == ["496320", "232530", "260870"]                                            # 0 · 100 · 200초 · 그 뒤로는 묻지 않아요
     kst = st["knx"]
@@ -295,7 +389,7 @@ def test_konex_fill_reads_only_stocks_yahoo_has_and_counts_meta():
     uni = pd.concat([knx_listing("2026-11-19_cache"), kk_listing("2026-11-18_1452")], ignore_index=True)
     out, notes = F.kr_fallback_days([D19], lambda d: (uni, "시험"), NOW, F.load_krx_special_sessions(),
                                     fetch_daum=lambda codes, n: ({}, []), fetch_yahoo=lambda cm, a, b: ({}, 0), fill_day=no_fill,
-                                    say=lambda s: None, knx=knx_fakes(asked_y=asked_y, raw_y=ry))
+                                    say=lambda s: None, knx=knx_fakes(asked_y=asked_y, raw_y=ry), caps=CAPS_190)
     fr, st = out[D19]
     reread = asked_y[len(KNX):]                                                                # 앞 단계는 8종목 모두 · 다시 읽기는 둘만
     assert sorted(reread) == ["232530.KQ", "260870.KQ"]
@@ -311,7 +405,7 @@ def test_second_source_day_records_the_konex_source_and_names_every_stock_left_o
     px, lst, known, src, logs, (full, _) = F.kr_second_source(D13, prim, [D16], NOW, {}, None, fallback=fb)
     assert px == D16 and src["px"] == V.PX_SRC_FB and src["knx"]["px"] == V.PX_SRC_KNX
     assert set(lst.loc[lst["Market"] == "KONEX", "Code"]) == set(TRADED + NO_TRADE)
-    line = next(t for loud, t in logs if "코넥스 2차 출처" in t)
+    line = next(t for loud, t in logs if "코넥스 2차 출처(야후" in t)
     assert next(loud for loud, t in logs if t == line)                                        # 빠진 종목이 있으면 크게
     for c in BASE_MOVED + NOT_ON_YAHOO:
         assert c in line                                                                       # 빠진 종목을 모두 이름과 까닭으로
@@ -406,8 +500,13 @@ def test_daily_check_fetch_is_bounded_and_never_raises():
 
     def boom(*a, **k):
         raise ConnectionError("x")
-    ck = F.kr_knx_daily_check(fin, D16, KNX, fetch=boom, say=lambda s: None)
-    assert ck["err"].startswith("ConnectionError") and ck["n"] == 0
+    said = []
+    ck = F.kr_knx_daily_check(fin, D16, KNX, fetch=boom, say=said.append)
+    assert ck["err"] == "ConnectionError" and ck["n"] == 0 and any("코넥스 네이버 확인 실패: ConnectionError: x" in x for x in said)
+
+    def boom_none(*a, **k):
+        raise TypeError("argument of type None is not iterable")
+    assert F.kr_knx_daily_check(fin, D16, KNX, fetch=boom_none, say=lambda s: None)["err"] == "TypeError"     # 메시지는 파일에 넣지 않아요
     assert F.kr_knx_daily_check(fin, D16, [], fetch=boom)["n"] == 0                 # 코넥스가 없으면 묻지 않아요
     assert F.KR_KNX_CHK_BUDGET_S <= F.KR_FB_PHASE_BUDGET_S
 
@@ -496,8 +595,8 @@ def fb_pair_konex(daum_conf_short=2):
     cur, prev, final = good_pair()
     codes = mark_konex(cur)
     nk = len(V.kr_stocks(cur["data"]))
-    knx_fb = {"n": 107, "conf": 3 + daum_conf_short, "noNaver": 0, "bad": 0, "noYahoo": 11, "diff": 5, "yMeta": 0, "diffEx": ["278990 EMB 2680/2700.00"],
-              "left": [], "cut": F.knx_cut_record()}
+    knx_fb = {"n": 107, "conf": 91, "kept": 3 + daum_conf_short, "capOut": 91 - 3 - daum_conf_short, "floor": int(180e8), "noNaver": 0, "bad": 0,
+              "noYahoo": 11, "diff": 5, "yMeta": 0, "diffEx": ["278990 EMB 2680/2700.00"], "left": [], "cut": F.knx_cut_record()}
     cur["data"]["pxSrc"] = {"v": 1, "px": V.PX_SRC_FB, "date": "2026-10-30", "days": {"2026-10-30": V.PX_SRC_FB},
                             "fb": {"n": nk + 200, "conf": nk, "mkt": 107, "noDaum": 40, "bad": 0, "noYahoo": 7, "diff": 3, "diffEx": [], "must": [],
                                    "cut": F.fb_cut_record(), "knx": knx_fb},
@@ -521,17 +620,48 @@ def row(rep, name=V.KNX_ROW):
 def test_gate_backup_day_counts_konex_confirmations_and_only_warns():
     cur, prev, old, alt, codes = fb_pair_konex()
     rep = check(cur, prev, old, alt)
-    assert not rep.failed, rep.table()                                       # 확인 수(코넥스 포함) = 발행 수 → 2차 출처 관문 기준을 써요
-    assert row(rep, "pxDate = 최종본 날짜")[3] == "PASS"
+    assert not rep.failed, rep.table()                                       # 확인 수(그날 파일에 넣은 코넥스 포함) = 발행 수 → 2차 출처 관문 기준을 써요
+    assert row(rep, "pxDate = 최종본 날짜")[3] == "PASS" and "코넥스 야후 × 네이버 5" in row(rep, "pxDate = 최종본 날짜")[2]
     r = row(rep)
-    assert r[3] == "WARN" and "확인 5 / 107" in r[1] and "다름 5" in r[1] and "발행 3" in r[1] and "278990 EMB" in r[1]
+    # 평소의 다름 (거래 없는 날 기준가 · 하루 3 ~ 9) 은 값 칸에 보이고 경고하지 않아요 (리뷰 S1)
+    assert r[3] == "PASS" and "확인 91 / 107" in r[1] and "다름 5" in r[1] and "발행 3" in r[1] and "278990 EMB" in r[1] and "그날 파일에 5" in r[1]
+    assert "기준 180억원" in r[1]
     assert not any(c in V.px_alt_pick(cur["data"]) for c in codes)          # 관문의 표본에는 여전히 코넥스가 없어요
+
+
+def test_gate_backup_day_warns_when_a_source_is_down_or_unusual():
+    """리뷰 S1: 네이버가 통째로 안 되거나 (noNaver) 야후가 그날 코넥스 종가를 비워 둔 밤 (noYahoo 107) 에 '확인 0 / 107' 로 통과하지 않아요."""
+    cases = ({"noNaver": 107, "conf": 0, "kept": 0, "capOut": 0}, {"noNaver": 1}, {"noYahoo": 107, "conf": 0, "kept": 0, "capOut": 0},
+             {"noYahoo": V.KNX_NOYAHOO_WARN + 1}, {"conf": 50, "capOut": 45}, {"bad": 1}, {"diff": V.KNX_DIFF_WARN + 1}, {"floor": None})
+    for change in cases:
+        cur, prev, old, alt, codes = fb_pair_konex()
+        k = cur["data"]["pxSrc"]["fb"]["knx"]
+        k.update(change)
+        if change.get("kept") == 0:
+            cur["data"]["pxSrc"]["fb"]["conf"] -= 5                         # 그날 파일에 코넥스가 없으면 발행에도 없어요
+            for s in V.kr_stocks(cur["data"]):
+                if s["t"] in codes:
+                    s["dk"] = s["dk"].replace("KONEX 상장", "KOSPI 상장")
+            cur["data"]["pxSrc"]["knx"].update(t=[], n={})
+        rep = check(cur, prev, old, alt)
+        r = row(rep)
+        assert r[3] == "WARN" and "경고:" in r[1] and V.KNX_ROW not in {x[0] for x in rep.failed}, (change, r)
+    for change in ({"noYahoo": V.KNX_NOYAHOO_WARN}, {"diff": V.KNX_DIFF_WARN}):
+        cur, prev, old, alt, codes = fb_pair_konex()
+        cur["data"]["pxSrc"]["fb"]["knx"].update(change)
+        assert row(check(cur, prev, old, alt))[3] == "PASS", change
 
 
 def test_gate_backup_day_without_disagreements_passes_and_odd_records_warn():
     cur, prev, old, alt, codes = fb_pair_konex()
     cur["data"]["pxSrc"]["fb"]["knx"].update(diff=0, diffEx=[])
     assert row(check(cur, prev, old, alt))[3] == "PASS"
+    c4, p4, o4, a4, _ = fb_pair_konex()
+    c4["data"]["pxSrc"]["fb"]["knx"]["diffEx"] = "x"                         # 리뷰 N4: 모양이 이상해도 예외 없이 경고
+    assert row(check(c4, p4, o4, a4))[3] == "WARN"
+    c5, p5, o5, a5, _ = fb_pair_konex()
+    c5["data"]["pxSrc"]["fb"]["knx"]["kept"] = 2                             # 발행 3 > 그날 파일에 넣은 2 → 이상
+    assert row(check(c5, p5, o5, a5))[3] == "WARN" and "그날 파일에 넣은 코넥스 2" in row(check(c5, p5, o5, a5))[1]
     for change in ({"t": codes[:2]}, {"t": "x"}, {"n": {V.PX_SRC_KNX: 99}}, {"px": None}, {"px": "daum+yahoo"}):
         c2, p2, o2, a2, _ = fb_pair_konex()
         c2["data"]["pxSrc"]["fb"]["knx"].update(diff=0, diffEx=[])
@@ -558,7 +688,8 @@ def test_gate_listing_day_daily_check_rows():
     assert row(rep)[3] == "PASS" and "같음 3 / 3" in row(rep)[1] and not rep.failed
     assert row(rep, "가격 확인 시간 한도 (경고만)")[3] == "PASS" and "1차 출처 코넥스 네이버 확인: 없음" in row(rep, "가격 확인 시간 한도 (경고만)")[1]
     for bad in (dict(ok, same=2, diff=[f"{codes[0]} 시험 1000/1010"]), dict(ok, n=2, same=2, none=1, noneEx=[codes[1]]),
-                dict(ok, err="ConnectionError: x", n=0, same=0), dict(ok, cut={"s": 120, "naver": 1}, n=2, same=2, none=1), None):
+                dict(ok, err="ConnectionError: x", n=0, same=0), dict(ok, cut={"s": 120, "naver": 1}, n=2, same=2, none=1), None,
+                dict(ok, noneEx="x"), dict(ok, diff=None)):
         rep = with_chk(bad)
         assert row(rep)[3] == "WARN" and not rep.failed, bad
     rep = with_chk(dict(ok, cut={"s": 120, "naver": 1}, n=2, same=2, none=1))
@@ -577,3 +708,36 @@ def test_gate_skips_files_before_this_change_and_never_fails():
         cur["data"]["pxSrc"]["knx"] = junk
         rep = check(cur, prev, final)
         assert row(rep)[3] in ("WARN", "PASS") and V.KNX_ROW not in {r[0] for r in rep.failed}, junk
+
+
+# ── 9. 관문의 글자 검사 (nan · None · null · undefined) 에 걸리지 않아요 (시험 실행 44635505624: units.pxSrc 설명의 'null' 이 걸렸어요) ─────
+def bad_words(obj):
+    return [f"{p}={v[:40]}" for p, v in V.text_values(obj) if V.BAD_WORD.search(v)]
+
+
+def test_units_and_pxsrc_text_pass_the_gate_text_check():
+    """발행하는 data.json 의 units (설명 글) 와 이 PR 이 만드는 pxSrc 기록 (2차 출처 날 · 1차 출처 날 · 고장 · 기준을 모르는 날) 에
+    관문 '글자에 nan·None·null·undefined 없음' 줄 (V.BAD_WORD · V.text_values) 이 찾는 낱말이 없어요."""
+    assert bad_words(F.UNITS) == []
+    srcs = []
+    prim = pd.concat([kk_listing("2026-11-13_2158"), knx_listing("2026-11-13_final")], ignore_index=True)
+    for caps in (CAPS_190, KNX_CAPS):                                                               # 기준이 있는 날 · 모르는 날 (floor 빈 값)
+        _, _, _, src, _, _ = F.kr_second_source(D13, prim, [D16], NOW, {}, None, fallback=lambda *a, c=caps: run_fb(knx=knx_fakes(), caps=c))
+        src["knx"]["t"] = sorted(TRADED + NO_TRADE)
+        srcs.append(F.px_src_final(src, [{"t": c, "cls": "kr"} for c in TRADED]))
+    _, _, _, src, _, _ = F.kr_second_source(D16, kk_listing("2026-11-16_2211"), [], NOW, {}, None, fallback=None)
+    src["knx"]["t"] = list(KNX)
+
+    def boom(*a, **k):
+        raise TypeError("argument of type None is not iterable")
+    src["knx"]["chk"] = F.kr_knx_daily_check(knx_listing("2026-11-16_final"), D16, KNX, fetch=boom, say=lambda s: None)
+    srcs.append(F.px_src_final(src, [{"t": c, "cls": "kr"} for c in KNX]))
+    for s_ in srcs:
+        assert bad_words({"pxSrc": s_}) == [], s_
+        assert json.dumps(s_, allow_nan=False)
+    # 관문 줄 그대로: 이 pxSrc 와 units 를 실은 data.json 은 그 줄을 통과해요
+    cur, prev, final = good_pair()
+    cur["data"]["units"] = F.UNITS
+    cur["data"]["pxSrc"] = dict(srcs[-1], date="2026-10-30")
+    rep = check(cur, prev, final)
+    assert row(rep, "글자에 nan·None·null·undefined 없음")[3] == "PASS", row(rep, "글자에 nan·None·null·undefined 없음")

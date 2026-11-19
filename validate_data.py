@@ -1118,7 +1118,9 @@ def px_alt_confirms(data, alt, px, final, mode="publish", today=None, now=None, 
     asked, got = alt.get("asked") or 0, alt.get("got") or 0
     if not asked or got < PX_ALT_MIN_SHARE * asked:
         return False, f"관문이 두 출처({how})로 확인한 종가 {got} / {asked} (기준 {PX_ALT_MIN_SHARE:.0%})" + (f" ({alt['err'][0]})" if alt.get("err") else "")
-    return True, f"캐시 최종본 없음 · 관문이 따로 받은 공식 종가 ({how}) {got}/{asked}종목 · 2차 출처(다음 × 야후) 확인 {fb['conf']:,}종목"
+    kk = fb.get("knx") if isinstance(fb.get("knx"), dict) else None
+    return True, (f"캐시 최종본 없음 · 관문이 따로 받은 공식 종가 ({how}) {got}/{asked}종목 · 2차 출처 확인 {fb['conf']:,}종목 (다음 × 야후"
+                  + (f" + 코넥스 야후 × 네이버 {kk.get('kept', kk.get('conf'))}" if kk else "") + ")")
 
 
 def px_alt_closes(alt):
@@ -1185,7 +1187,14 @@ def check_px_cut(rep, src):
 
 
 KNX_ROW = "코넥스 종가 두 출처 (경고만)"
-KNX_FB_KEYS = ("n", "conf", "noNaver", "bad", "noYahoo", "diff")
+KNX_FB_KEYS = ("n", "conf", "kept", "capOut", "noNaver", "bad", "noYahoo", "diff")
+# 2차 출처 날 코넥스 줄이 경고하는 때 (리뷰 S1 · 2026-11-20 · 경고만):
+# - 야후에 없는 코넥스는 11-10 ~ 11-19 여덟 날 모두 같은 11종목이었어요 (496320 본시스템즈 · 0203K0 송우인포텍 …). 새로 상장해 야후가 아직 싣지 않은
+#   종목이 몇 개 더해질 수 있어 15 까지는 평소로 봐요. 그보다 많으면 야후가 그날 코넥스 종가를 비워 둔 거예요 (마감 뒤 몇 시간 · 코넥스는 meta 로 채울 수 없어요).
+KNX_NOYAHOO_WARN = 15
+# - 두 종가가 다른 코넥스는 하루 3 ~ 9종목이었어요 (같은 여덟 날 · 모두 거래 없는 날 KRX 가 기준가를 옮겨 야후가 마지막 체결가로 남은 종목).
+#   평소의 다름은 값 칸에 늘 보이고 경고하지 않아요 (매일 켜지는 경고는 아무도 보지 않아요). 20 을 넘으면 한 출처가 바뀐 것이라 경고해요.
+KNX_DIFF_WARN = 20
 _KNX_TAIL = re.compile(r"(?:^| · )KONEX 상장(?: · |$)")
 
 
@@ -1201,8 +1210,10 @@ def _nonneg_ints(d, keys):
 def check_px_knx(rep, data, src):
     """2026-11-20 (새 줄 · 경고만 · Jack, 2026-11-19 답 5: "Naver for KONEX only, always with Yahoo, published only when they agree to the won;
     daily KONEX checking too."): 코넥스 종가의 출처와 확인 (data.json pxSrc.knx · pxSrc.fb.knx).
-    - 2차 출처 날 (px daum+yahoo · knx.px yahoo+naver): 야후 .KQ × 네이버 일봉 종가가 원 단위까지 같은 코넥스만 그날 파일에 있어요. 두 종가가 다르거나
-      값을 못 믿은 종목이 있으면 경고 (코스피 · 코스닥의 '2차 출처 두 종가가 다른 종목 (경고만)' 과 같은 기준). 빠진 종목은 그날 파일에 없어요.
+    - 2차 출처 날 (px daum+yahoo · knx.px yahoo+naver): 야후 .KQ × 네이버 일봉 종가가 원 단위까지 같고 시가총액이 평소 날 발행 기준 (1차 출처 최종본
+      MAX_KR 번째) 이상인 코넥스만 그날 파일에 있어요. 경고 (리뷰 S1): 네이버 행이 없는 종목이 있음 · 야후 없음이 KNX_NOYAHOO_WARN 보다 많음 ·
+      확인이 절반 아래 · 값을 못 믿은 종목 · 다름이 KNX_DIFF_WARN 보다 많음 · 시가총액 기준을 모름. 평소의 다름 (거래 없는 날 기준가 · 하루 3 ~ 9) 은
+      값 칸에 보이고 그것만으로는 경고하지 않아요. 빠진 종목은 그날 파일에 없어요.
     - 1차 출처 날 (px listing): 발행한 코넥스의 최종본 종가를 모두 네이버와 맞춘 결과 (knx.chk). 다르거나 · 네이버 값이 없거나 · 시간 한도 ·
       받지 못함이면 경고 (가격은 최종본 그대로 · 빼지 않아요 — 발행을 멈추는 조건은 Jack 의 답이 있어야 해요).
     - 기록의 모양이 이상하거나 발행한 코넥스 (dk 'KONEX 상장') 와 knx.t 가 다르면 경고. pxSrc.knx 가 없으면 (이 줄 전 발행본) 건너뛰어요.
@@ -1234,13 +1245,29 @@ def check_px_knx(rep, data, src):
             if not _nonneg_ints(fbk, KNX_FB_KEYS):
                 odd.append("fb.knx 모양")
                 fbk = {}
-            elif t is not None and len(t) > fbk["conf"]:
-                odd.append(f"발행 {len(t):,} > 확인 {fbk['conf']:,}")
+            elif t is not None and len(t) > fbk["kept"]:
+                odd.append(f"발행 {len(t):,} > 그날 파일에 넣은 코넥스 {fbk['kept']:,}")
+            dex = fbk.get("diffEx", [])
+            if not isinstance(dex, list):
+                odd.append("diffEx 모양")
+                dex = []
+            fl = fbk.get("floor")
             left = sum(fbk.get(x) or 0 for x in ("noNaver", "bad", "noYahoo", "diff"))
             val = (f"2차 출처 날 · 야후 .KQ × 네이버: 확인 {fbk.get('conf', '?')} / {fbk.get('n', '?')} · 빠짐 {left:,} (네이버 행 없음 {fbk.get('noNaver', '?')}"
-                   f" · 값 못 믿음 {fbk.get('bad', '?')} · 야후 없음 {fbk.get('noYahoo', '?')} · 다름 {fbk.get('diff', '?')}) · 발행 {len(t or []):,}"
-                   + (f" 예: {'; '.join(map(str, (fbk.get('diffEx') or [])[:3]))}" if fbk.get("diffEx") else ""))
-            warn = bool(fbk.get("diff") or fbk.get("bad"))
+                   f" · 값 못 믿음 {fbk.get('bad', '?')} · 야후 없음 {fbk.get('noYahoo', '?')} · 다름 {fbk.get('diff', '?')}) · 그날 파일에 {fbk.get('kept', '?')}"
+                   f" (시가총액 기준 아래 {fbk.get('capOut', '?')}"
+                   + (f" · 기준 {fl / 1e8:,.0f}억원" if isinstance(fl, (int, float)) and not isinstance(fl, bool) else " · 기준 모름") + f") · 발행 {len(t or []):,}"
+                   + (f" 예: {'; '.join(map(str, dex[:3]))}" if dex else ""))
+            n_ = fbk.get("n") or 0
+            why = ([f"네이버 행 없음 {fbk['noNaver']}"] if fbk.get("noNaver") else []) \
+                + ([f"야후 없음 {fbk['noYahoo']} > {KNX_NOYAHOO_WARN}"] if (fbk.get("noYahoo") or 0) > KNX_NOYAHOO_WARN else []) \
+                + (["확인이 절반 아래"] if n_ and (fbk.get("conf") or 0) < n_ / 2 else []) \
+                + ([f"값 못 믿음 {fbk['bad']}"] if fbk.get("bad") else []) \
+                + ([f"다름 {fbk['diff']} > {KNX_DIFF_WARN}"] if (fbk.get("diff") or 0) > KNX_DIFF_WARN else []) \
+                + (["시가총액 기준 모름"] if fbk and fl is None else [])
+            if why:
+                val += f" — 경고: {', '.join(why)}"
+            warn = bool(why)
         elif k.get("px") is None:
             val = "2차 출처 날 · 코넥스 단계를 묻지 않았어요 (그날 파일에 코넥스 없음)"
             warn = True
@@ -1259,10 +1286,14 @@ def check_px_knx(rep, data, src):
         else:
             if not _nonneg_ints(ck, ("n", "same", "none")):
                 odd.append("chk 모양")
-            diff = ck.get("diff") if isinstance(ck.get("diff"), list) else []
+            diff = ck.get("diff", [])
+            nex = ck.get("noneEx", [])
+            if not isinstance(diff, list) or not isinstance(nex, list):
+                odd.append("diff · noneEx 모양")
+                diff, nex = (diff if isinstance(diff, list) else []), (nex if isinstance(nex, list) else [])
             cut = (ck.get("cut") or {}).get("naver") if isinstance(ck.get("cut"), dict) else 0
             val = (f"1차 출처 날 · 네이버 확인: 같음 {ck.get('same', '?')} / {ck.get('n', '?')} · 네이버 값 없음 {ck.get('none', '?')}"
-                   + (f" ({'; '.join(map(str, (ck.get('noneEx') or [])[:3]))})" if ck.get("noneEx") else "")
+                   + (f" ({'; '.join(map(str, nex[:3]))})" if nex else "")
                    + (f" · 다름 {len(diff)}: {'; '.join(map(str, diff[:5]))}" if diff else "")
                    + (f" · 받지 못함 {ck['fail']}" if ck.get("fail") else "") + (f" · 시간 한도로 묻지 못함 {cut}" if cut else "")
                    + (f" · {ck['err']}" if ck.get("err") else "") + f" · 발행 {len(t or []):,}")
