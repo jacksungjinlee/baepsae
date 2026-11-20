@@ -656,7 +656,7 @@ If the WARN shows:
 4. If it hits on every run (a source blocking GitHub's servers), the must-haves stay unconfirmed and nothing publishes: that is
    the two-source rule working. Tell Jack in plain words which source is down.
 
-## KONEX closes: Yahoo × Naver (코넥스 두 출처, since #PR)
+## KONEX closes: Yahoo × Naver (코넥스 두 출처, since #158)
 
 Jack, 2026-11-19 (answer 5, verbatim): "Yes: Naver for KONEX only, always with Yahoo, published only when they agree to the won;
 daily KONEX checking too." CLAUDE.md says the same under "Two sources for official closes".
