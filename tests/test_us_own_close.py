@@ -100,7 +100,7 @@ def test_halted_new_and_unreadable_stay_as_before():
     carried, same, drop = F.us_own_close_carry(prev_file(rows), {"HALT": "bar", "NEW": "bar", "ZERO": "bar", "ODD": "bar"},
                                                dt.date(2026, 11, 20), UDAYS)
     assert carried == [] and same == []
-    assert drop == {"HALT": "halt", "NEW": "none", "ZERO": "bad", "ODD": "bad"}       # 예전 그대로 (야후의 마지막 봉이 있으면 그 날짜)
+    assert drop == {"HALT": "halted", "NEW": "none", "ZERO": "bad", "ODD": "bad"}       # 예전 그대로 (야후의 마지막 봉이 있으면 그 날짜)
 
 
 def test_age_limit_counts_nyse_trading_days_across_thanksgiving():
@@ -248,6 +248,14 @@ def test_fetch_us_carries_blank_and_zero_newest_bars(tmp_path, monkeypatch):
     meta.pop("_index")
     json.dumps(meta, allow_nan=False, ensure_ascii=False)
     json.dumps(out, allow_nan=False, ensure_ascii=False)
+
+
+def test_fetch_us_aged_stock_is_left_out_with_a_reason(tmp_path, monkeypatch):
+    old = us("BP", price=40.0, d1=None, pxd="2026-11-05", pxc=True)
+    out, meta, lines, prev = _fetch(tmp_path, monkeypatch, blank={"BP"}, extra_prev=[old])
+    assert "BP" not in {r["t"] for r in out}
+    assert meta["usSrc"]["own"]["aged"] == [{"t": "BP", "nk": "BP Inc.", "pxd": "2026-11-05"}]
+    assert meta["usExtraMissing"].get("BP", "").startswith("마지막 확인 종가(2026-11-05) 뒤 미국 거래일 5일이 지나 잠시 뺌")
 
 
 def test_fetch_us_same_day_republish_keeps_the_published_close(tmp_path, monkeypatch):

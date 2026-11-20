@@ -2929,7 +2929,11 @@ def scene_corp_stale_after(R, files):
 
     f = json.loads(json.dumps(files, allow_nan=True))                    # staleAfter 없음 + pxd 를 못 읽는 미국 종목 하나
     f["data.json"].pop("staleAfter", None)
-    us = next(x for x in f["data.json"]["stocks"] if x.get("cls") == "us" and not x.get("etf") and x.get("pxd") is None)
+    # 2026-11-20 (US carry, data preparation only): on a day every US stock is at its last confirmed close (pxc · pxd: Yahoo blank for the
+    # whole list) no US stock is without pxd; then any company stock is used, its carry mark taken off (the check below is unchanged)
+    us = next((x for x in f["data.json"]["stocks"] if x.get("cls") == "us" and not x.get("etf") and x.get("pxd") is None), None) \
+        or next(x for x in f["data.json"]["stocks"] if x.get("cls") == "us" and not x.get("etf"))
+    us.pop("pxc", None)
     us["pxd"] = "2026/11/04"
     R.console.clear()
     srv, ctx, page, _ = R.open(build_site(f))

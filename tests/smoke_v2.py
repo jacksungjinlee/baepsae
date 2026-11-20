@@ -14889,7 +14889,7 @@ def us_own_files(files):
     by["AAPL"]["pxd"] = "2026-10-28"
     by["AAPL"].pop("d1", None)
     d["usSrc"] = {"v": 1, "own": {"v": 1, "max": 5, "n": len(US_OWN), "codes": sorted(US_OWN), "same": [], "unconf": len(US_OWN) + 1,
-                                  "drop": {"halt": 1}, "dropEx": [], "bad": {"n": 0, "rows": []}, "aged": []}}
+                                  "drop": {"halted": 1}, "dropEx": [], "bad": {"n": 0, "rows": []}, "aged": []}}
     return f
 
 
