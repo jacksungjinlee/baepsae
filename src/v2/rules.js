@@ -141,7 +141,7 @@ export function checkState(load, now) {
 // (ctx.aged, ui.jsx KrAgedLine). Every other stock and portfolio is checked as before; the state stays the late one.
 // 2026-11-20 (Jack: "US stocks carry like Korean ones"): a US stock carried at its last confirmed close because Yahoo had no close
 // (data.json pxc: true) is treated the same, in NYSE trading days (tradedays.js CLOSED.US) after that close, against usPxDate. A US
-// pxd without pxc (Yahoo's own last bar: halted) is not touched, as before. -> Map t -> { nk, pxd, n, us } (empty when not late).
+// pxd without pxc (Yahoo's own last bar: halted) is not touched, as before. -> Map t -> { nk, pxd, n } (empty when not late).
 export function lateLeftOut(state, data, today) {
   const out = new Map();
   if (!state || !state.ok || !state.late || !data) return out;
@@ -151,7 +151,7 @@ export function lateLeftOut(state, data, today) {
     if (s.pxd === mkDate) continue;
     const pxd = ownCloseDate(s, mkDate);
     const n = pxd ? tradingDaysAfter(pxd, today, us ? "US" : "KR") : null;
-    if (n == null || n > LATE_CHECK_DAYS) out.set(s.t, { nk: typeof s.nk === "string" ? s.nk : s.t, pxd: s.pxd, n, us });
+    if (n == null || n > LATE_CHECK_DAYS) out.set(s.t, { nk: typeof s.nk === "string" ? s.nk : s.t, pxd: s.pxd, n });
   }
   return out;
 }
@@ -170,7 +170,7 @@ export function todayCtx(load, now) {
     return c;
   };
   if (out.size) lateSay(`left out of the check, shown with the aged line: ${[...out].map(([t, v]) => `${t} (last confirmed close ${JSON.stringify(v.pxd)}, `
-    + `${v.n == null ? "not a date whose age can be counted" : v.n + (v.us ? " NYSE" : " KRX") + " trading days"} before today ${today})`).join(", ")}; more than ${LATE_CHECK_DAYS} in total; every other stock is checked`);
+    + `${v.n == null ? "not a date whose age can be counted" : v.n + ((load.byT.get(t) || {}).cls === "us" ? " NYSE" : " KRX") + " trading days"} before today ${today})`).join(", ")}; more than ${LATE_CHECK_DAYS} in total; every other stock is checked`);
   const aged = new Map(ok && load.aged ? load.aged : []);
   for (const [t, v] of out) if (!aged.has(t)) aged.set(t, { nk: v.nk, pxd: v.pxd });
   return { state, byT: ok ? without(load.byT) : new Map(), coByT: ok ? without(load.coByT) : new Map(),

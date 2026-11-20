@@ -554,15 +554,15 @@ def test_app_aged_map_has_us_stocks_too():
 
 @needs_node
 def test_app_late_check_caps_us_carries_on_nyse_days():
-    """Jack (2026-11-20, f · US): 늦은 데이터의 점검은 마지막 확인 종가가 모두 합쳐 5거래일을 넘으면 돌지 않아요 — 미국은 NYSE 거래일 (추수감사절 휴장)."""
+    """Jack (2026-11-20, f · US · 2026-11-21 answer 4: per stock): 늦은 데이터의 점검은 마지막 확인 종가가 모두 합쳐 5거래일을 넘은 종목을 빼고 나머지를
+    점검해요 — 미국은 NYSE 거래일 (추수감사절 휴장) · 거래 정지 모양의 미국 pxd 는 예전 그대로."""
     got = run("""
-const ctx = (today, S) => ({ byT: new Map(S.map((s) => [s.t, s])), pxDate: '2026-11-25', usPxDate: '2026-11-25', today });
+const data = (S) => ({ pxDate: '2026-11-25', usPxDate: '2026-11-25', stocks: S });
 const st = { ok: true, late: { days: 2, n: 2 } };
-const deck = (t) => ({ id: 'd', holdings: [{ t, target: 1, kind: 'core', rules: [] }], purchases: [{ t, date: '2026-11-02', qty: 1, price: 100, ccy: 'USD' }] });
-out = { d27: R.lateCap(st, ctx('2026-11-27', [A]), [deck('AAPL')]).ok, d30: R.lateCap(st, ctx('2026-11-30', [A]), [deck('AAPL')]).ok,
-  halt30: R.lateCap(st, ctx('2026-11-30', [H]), [deck('HALT')]).ok };""",
+const left = (today, S) => [...R.lateLeftOut(st, data(S), today).keys()];
+out = { d27: left('2026-11-27', [A]), d30: left('2026-11-30', [A]), halt30: left('2026-11-30', [H]), notLate: [...R.lateLeftOut({ ok: true }, data([A]), '2026-11-30').keys()] };""",
               A=us("AAPL", d1=None, pxd=D19, pxc=True), H=us("HALT", d1=None, pxd=D19))
-    assert got == {"d27": True, "d30": False, "halt30": True}, got     # 11-20 · 23 · 24 · 25 · 27 = 5 · 11-30 = 6 · 거래 정지는 예전 그대로
+    assert got == {"d27": [], "d30": ["AAPL"], "halt30": [], "notLate": []}, got     # 11-20 · 23 · 24 · 25 · 27 = 5 · 11-30 = 6 · 거래 정지는 예전 그대로
 
 
 @needs_node
