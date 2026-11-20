@@ -539,10 +539,18 @@ under today's date label without that line."
   `KR_OWN_CLOSE_MAX_DAYS` (5) KRX trading days after its close, the previous publish has the same `pxDate`, or a price-history mark
   without its recorded move. The run log says `!! 국내 종가 미확인 {n}종목 … 마지막 확인 종가로 실음 {k}종목 (pxd …) — names` and
   `!! 마지막 확인 종가로도 싣지 못한 국내 종목 {m} … — names (reason)`.
+- **Past the 5-day limit (Jack, 2026-11-20 a):** a stock still unconfirmed whose last confirmed close is more than 5 KRX trading
+  days old is left out and recorded in `pxSrc.own.aged` (`[{t, nk, pxd}]`, `fetch_data.kr_own_aged`); the log says `!! 마지막 확인
+  종가가 5거래일을 넘어 잠시 뺀 국내 종목 {n} …`. Each later second-source run keeps it there while it stays unconfirmed (from the
+  previous publish's record; it is no longer in its stocks), and removes it once it is confirmed again or leaves the listing. A
+  normal day writes no record. The apps show "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요." instead of "이 종목의 데이터를
+  찾지 못했어요." on its company page (both apps) and under its row in the 2.0 portfolios that hold it.
 - **Normal days:** nothing changes. No Korean stock gets `pxd`.
-- **data.json:** `pxSrc.own` = `{v, max, n, codes, unconf, drop, dropEx, bad}`; `pxSrc.n` counts only stocks at `pxDate`.
+- **data.json:** `pxSrc.own` = `{v, max, n, codes, unconf, drop, dropEx, bad, aged, ind?, err?}`; `pxSrc.n` counts only stocks at `pxDate`.
 - **Gate:** `국내 자기 가격 날짜 (pxd)` fails exactly what the US `pxd` row fails (a `pxd` that is not a date before `pxDate`, or a
-  `d1` beside it). `국내 마지막 확인 종가 (pxSrc.own · 경고만)` only warns: a carried stock not in `pxSrc.own.codes`, on a normal day,
+  `d1` beside it, still in the file). Since 2026-11-20 (Jack d: "drop a carry with a broken date and warn; block only above 5.") it
+  also counts the rows the pipeline dropped in the run (`pxSrc.own.bad.n`): 1 to 5 warn, more than `KR_OWN_DROP_MAX` (5) fail, so
+  nothing publishes (something in our carry step is broken, not one stock). A run whose check itself stopped (`own.err`) only warns. `국내 마지막 확인 종가 (pxSrc.own · 경고만)` only warns: a carried stock not in `pxSrc.own.codes`, on a normal day,
   older than the limit, or not the previous publish's price and date, or rows the pipeline itself dropped just before writing
   (`pxSrc.own.bad`, same function `validate_data.kr_own_close_bad`). Only clean carries (recorded, before `pxDate`, no daily change,
   within the limit, and the previous publish's price and date) are left out of the `pxDate` price checks (`한국 가격 = 공식 종가`,
@@ -578,8 +586,13 @@ under today's date label without that line."
 - **On a warning:** read the named rows in the run summary. A carried stock with a different price or date than the previous
   publish means our carry step broke: say so to Jack; the stock itself is still labelled with its own date and line.
 - **Check on the site:** search a carried stock (the log names them): its company page shows "{date} 종가" and Jack's line under the
-  price; lists and portfolio totals with it say "{name} 가격은 {date} 종가예요. 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요.";
-  the old app's 기업분석 header and the first screen's card show Jack's line under the price.
+  price; lists and portfolio totals with it say "{name}: 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요." (one line per date, since
+  2026-11-20); the old app's 기업분석 header and the first screen's card show Jack's line under the price (English card: "We couldn't
+  confirm today's close, so this shows the {date} close."). A stock in `pxSrc.own.aged`: its company page says "며칠째 종가를 확인하지
+  못해서 이 종목은 잠시 빼 두었어요.".
+- **Late data (#144) with a carried stock (Jack, 2026-11-20 f):** on late data the daily check stops when a held Korean stock's own
+  close is more than 5 KRX trading days before today in total (`src/v2/rules.js` `lateCap`; console "[v2] late data: the check is not
+  run: held …"). Every portfolio then shows the usual stale state for that day.
 
 ## Korean second-source time limit (2차 출처 시간 한도, since #151)
 

@@ -117,6 +117,13 @@ KR_OWN_WHY = {"shape": "pxd 가 pxDate 보다 앞선 날짜가 아님", "d1": "p
               "rec": "pxSrc.own 에 적힌 종목이 아님", "old": f"그 종가 뒤 거래일이 {KR_OWN_CLOSE_MAX_DAYS}일 넘음",
               "prev": "지난 발행본의 마지막 확인 종가 · 날짜와 다름"}
 KR_OWN_FAIL_WHY = ("shape", "d1")
+# 2026-11-20 (Jack, d: "drop a carry with a broken date and warn; block only above 5." · his standing rule of 2026-11-19 for our own
+# processing): the pipeline drops a carried row that kr_own_close_bad finds wrong (kr_own_close_final · pxSrc.own.bad.n) and the
+# '국내 자기 가격 날짜 (pxd)' row warns; more than this many dropped in one run fails it (something is broken, not one stock). N =
+# max(5, 3 × the most dropped in a recent run): no publish before this change has a Korean pxd, so every recent count is 0 → 5.
+# A wrong row still in the file (the drop failed) fails the row as before. A run whose check itself stopped (own.err: every carry
+# dropped, none judged wrong) only warns (the carry row says so).
+KR_OWN_DROP_MAX = 5
 # 2026-11-19 (Jack: "new listings take their industry from DART's company records"): KRX-DESC 에도 지난 발행본에도 업종 글자가 없는 국내 종목은
 # DART 기업개황 업종 코드(KSIC)의 앞 3자리(소분류) 이름으로 채워요. 이름은 통계청 한국표준산업분류 11차 표에서만 (fetch_data 와 같은 파일 · 읽는 코드는 여기 하나)
 KSIC_NAMES_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "ksic_names.csv")
@@ -1567,13 +1574,27 @@ def check_kr_own_close(rep, data, macro, pdata):
     soft = [(t, w) for t, w in bad if w not in KR_OWN_FAIL_WHY]
     days = collections.Counter(str(s.get("pxd")) for s in mine)
     shown = " · ".join(f"{d} {n}종목" for d, n in sorted(days.items(), reverse=True))
-    rep.add(name, not hard, listed(hard) if hard else (f"{len(mine)}종목 ({shown})" if mine else "없음 (모두 기준일 종가)"),
-            f"pxd 가 있는 국내 종목은 pxd < {px} · d1 없음 (미국 pxd 줄과 같아요)")
-    if hard:
-        rep.detail("국내 자기 가격 날짜가 맞지 않는 종목 (우리 코드의 잘못)", [f"{nm(t)}: {KR_OWN_WHY.get(w, w)}" for t, w in hard])
     src = data.get("pxSrc") if isinstance(data.get("pxSrc"), dict) else {}
     raw = src.get("own")
     own = kr_own_rec(data)
+    # 2026-11-20 (Jack, d): the rows the pipeline dropped in this run (pxSrc.own.bad) — warn, fail only above KR_OWN_DROP_MAX
+    obad = own.get("bad") if own is not None and isinstance(own.get("bad"), dict) else {}
+    dropped = obad["n"] if isinstance(obad.get("n"), int) and not isinstance(obad.get("n"), bool) and obad["n"] > 0 else 0
+    drows = obad.get("rows") if isinstance(obad.get("rows"), list) else []
+    counted = dropped if not (own or {}).get("err") else 0
+    over = counted > KR_OWN_DROP_MAX
+    value = listed(hard) if hard else (f"{len(mine)}종목 ({shown})" if mine else "없음 (모두 기준일 종가)")
+    if dropped:
+        value += (f" · 파이프라인이 거른 종목 {dropped}" + (f" (단계가 멈춰 모두 뺌 · 세지 않음)" if not counted else "")
+                  + ": " + ", ".join(map(str, drows[:KR_OWN_SHOW])))
+    rep.add(name, not hard and not over, value,
+            f"pxd 가 있는 국내 종목은 pxd < {px} · d1 없음 (미국 pxd 줄과 같아요) · 파이프라인이 거른 종목 {KR_OWN_DROP_MAX}개 이하 (넘으면 실패 · 있으면 경고)",
+            warn=bool(dropped) and not hard and not over)
+    if hard:
+        rep.detail("국내 자기 가격 날짜가 맞지 않는 종목 (우리 코드의 잘못)", [f"{nm(t)}: {KR_OWN_WHY.get(w, w)}" for t, w in hard])
+    if over:
+        rep.detail(f"파이프라인이 한 번에 거른 마지막 확인 종가 종목이 {KR_OWN_DROP_MAX}개를 넘어요 ({dropped}) — 한 종목이 아니라 우리 처리가 고장 났어요",
+                   [str(x) for x in drows])
     orule = (f"pxd 가 있는 국내 종목은 2차 출처 날 · pxSrc.own 에 있는 종목 · 그 종가 뒤 거래일 {KR_OWN_CLOSE_MAX_DAYS}일 이하 · 지난 발행본의 가격과 날짜 "
              "그대로 · 파이프라인이 거른 종목 0 (어긋나면 경고 · 그 종목은 pxDate 의 가격으로 보고 가격 줄들이 맞춰 봐요)")
     if raw is None and not mine:
@@ -1596,6 +1617,15 @@ def check_kr_own_close(rep, data, macro, pdata):
             rows = pbad.get("rows") if isinstance(pbad.get("rows"), list) else []
             parts.append(f"파이프라인이 거른 종목 {pbad['n']}: " + ", ".join(map(str, rows[:KR_OWN_SHOW])))
             warn = True
+        # 2026-11-20 (Jack, a): 나이 상한을 넘어 잠시 뺀 종목 (pxSrc.own.aged · 앱이 그 종목 자리에 Jack 의 줄) — 모양이 틀리거나 발행하는 종목이면 경고
+        aged = own.get("aged")
+        if aged is not None:
+            ok_a = isinstance(aged, list) and all(isinstance(a, dict) and isinstance(a.get("t"), str) and a["t"] for a in aged)
+            inside = sorted({a["t"] for a in aged if a["t"] in by}) if ok_a else []
+            parts.append(f"{KR_OWN_CLOSE_MAX_DAYS}거래일이 지나 잠시 뺀 종목 {len(aged) if ok_a else '?'}"
+                         + (f" ({', '.join(a['t'] + ' ' + str(a.get('nk') or '') for a in aged[:KR_OWN_SHOW])})" if ok_a and aged else "")
+                         + ("" if ok_a else " · 모양이 잘못됨") + (f" · 그런데 발행하는 종목: {', '.join(inside)}" if inside else ""))
+            warn = warn or not ok_a or bool(inside)
     if soft:
         parts.append(f"어긋남 {len(soft)}: {listed(soft)}")
         rep.detail("마지막 확인 종가 기록과 어긋난 국내 종목 (pxDate 의 가격으로 보고 맞춰 봐요)", [f"{nm(t)}: {KR_OWN_WHY.get(w, w)}" for t, w in soft])

@@ -48,9 +48,9 @@ export function recDate(iso, today) {
 // sentence per date, newest first, joined with a space; names = the tickers, all of them, ", ". groups: data.js
 // ownCloseGroups (stocklist.js). null when there is nothing to say (or a date cannot be written: never a sentence without it).
 // 2026-11-19 (Jack): a Korean stock priced at its last confirmed close (data.json pxd: today's close could not be confirmed by
-// two sources; data.js ownCloseGroups gives it a group of its own, { kr: true, names }) is named by its Korean name, and Jack's
-// line follows that sentence: "맵스리얼티 가격은 11월 16일 종가예요. 오늘 종가를 확인하지 못해서 11월 16일 종가를 보여 드려요."
-// (both approved; no new words). US groups read exactly as before.
+// two sources; data.js ownCloseGroups gives it a group of its own, { kr: true, names }) is named by its Korean name. 2026-11-20
+// (Jack, b): one line per date, "맵스리얼티, STX: 오늘 종가를 확인하지 못해서 11월 16일 종가를 보여 드려요." (app.krOwnCloseList), instead
+// of the names sentence followed by his line. US groups read exactly as before.
 // ownCloseParts: the same sentences, one per item (ui.jsx OwnCloseNote renders them as separate pieces of one note).
 export function ownCloseParts(groups) {
   const out = [];
@@ -58,9 +58,9 @@ export function ownCloseParts(groups) {
     const md = mdText(g && g.date);
     if (!md || !g.ts || !g.ts.length) return null;
     if (g.kr) {
-      if (!C.app.krOwnClose) return null;
+      if (!C.app.krOwnCloseList) return null;
       const names = Array.isArray(g.names) && g.names.length === g.ts.length ? g.names : g.ts;
-      out.push(fill(C.app.ownClose, { names: names.join(", "), md }), fill(C.app.krOwnClose, { date: md }));
+      out.push(fill(C.app.krOwnCloseList, { names: names.join(", "), date: md }));
     } else out.push(fill(C.app.ownClose, { names: g.ts.join(", "), md }));
   }
   return out.length ? out : null;

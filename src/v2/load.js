@@ -4,7 +4,7 @@
 // Only the v17.5 format is accepted: data.json and corp.json must carry pxDate and publishedAt, macro.json publishedAt
 // (macro.json has no price date in the v17.5 format). Anything else is a load failure, never example data.
 // The preview page (app-preview.html) does not fetch anything: it passes its embedded fictional files to resolveLoad.
-import { loadJson, freshness, staleAfterTime, ownCloseReport, STALE_DAYS, daysSince, nextFreshChange, kstDate, FRESH_RECHECK_MAX_MS } from "../data.js";
+import { loadJson, freshness, staleAfterTime, ownCloseReport, ownAgedOf, STALE_DAYS, daysSince, nextFreshChange, kstDate, FRESH_RECHECK_MAX_MS } from "../data.js";
 import { lateDays } from "./tradedays.js";
 import { detectFeatures, missingForBuild, CUSHION_ASSETS, setDataShape } from "./engine.js";
 import { R2022 } from "./y2022.js";
@@ -366,6 +366,9 @@ export function resolveLoad({ data, corp, macro }, now, opts = {}) {
   if (!opts.preview) logDates(d);
   const byT = new Map(d.stocks.map((s) => [s.t, s]));
   const coByT = new Map(c.companies.map((x) => [x.t, x]));
-  return { status: "ok", data: d, corp: c, macro: m, features, missing, fresh, byT, coByT, preview: !!opts.preview,
+  const aged = ownAgedOf(d);           // 2026-11-20 (Jack, a): Korean stocks left out past the age limit (pxSrc.own.aged)
+  if (aged.size && !opts.preview) console.warn(`[v2] ${aged.size} Korean stocks left out: their last confirmed close is past the age limit `
+    + `(pxSrc.own.aged; their pages and rows say so): ${[...aged.keys()].slice(0, 30).join(", ")}${aged.size > 30 ? ` and ${aged.size - 30} more` : ""}`);
+  return { status: "ok", data: d, corp: c, macro: m, features, missing, fresh, byT, coByT, aged, preview: !!opts.preview,
     cushion: opts.cushion || CUSHION_ASSETS, r2022: opts.r2022 || R2022, exact, checkedAt: now == null ? Date.now() : now };
 }

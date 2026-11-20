@@ -1444,6 +1444,42 @@ def log_kr_own_close(carried, drop, unconf, names):
             "drop": {k: int(v) for k, v in sorted(dc.items())}, "dropEx": dn[:KR_OWN_SHOW], "bad": {"n": 0, "rows": []}}
 
 
+def kr_own_aged(prev, unconf, drop):
+    """2026-11-20 (Jack: "After 5 trading days, show "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요." instead of "데이터를 찾지
+    못했어요""): 오늘도 확인 못 한 종목 중 마지막 확인 종가가 나이 상한을 넘어 잠시 뺀 종목 → [{t, nk, pxd}] (코드 순 · data.json pxSrc.own.aged ·
+    앱이 그 종목 자리에 이 줄을 보여요). 지난 발행본에 있었는데 나이를 넘은 종목(drop 'old')과, 지난 발행본이 이미 잠시 뺀 종목(pxSrc.own.aged)
+    중 오늘도 확인 못 한 종목 (지난 발행본의 stocks 에는 없어요 — drop 'none' 을 'old' 로 고쳐요). 오늘 확인된 종목 · 상장 폐지된 종목(그날 전체
+    목록에 없음)은 unconf 에 없어서 저절로 빠져요. drop 을 고쳐요. (순수 함수)"""
+    prev = prev or {}
+    own = (prev.get("pxSrc") or {}).get("own") if isinstance(prev.get("pxSrc"), dict) else None
+    was = {str(a["t"]): a for a in ((own or {}).get("aged") or []) if isinstance(own, dict) and isinstance(a, dict) and a.get("t")}
+    pst = {str(x.get("t")): x for x in prev.get("stocks") or [] if isinstance(x, dict) and x.get("cls") == "kr"}
+    ppx = prev.get("pxDate") if isinstance(prev.get("pxDate"), str) else None
+    out = {}
+    for c, w in sorted(drop.items()):
+        if c not in unconf:
+            continue
+        if w == "old":
+            p = pst.get(c) or {}
+            out[c] = {"t": c, "nk": str(p.get("nk") or unconf[c][0] or c), "pxd": p.get("pxd") or ppx}
+        elif w == "none" and c in was:
+            a = was[c]
+            out[c] = {"t": c, "nk": str(a.get("nk") or unconf[c][0] or c), "pxd": a.get("pxd")}
+            drop[c] = "old"
+    return [out[c] for c in sorted(out)]
+
+
+def kr_own_aged_kept(prev, keep_out):
+    """단계가 오류로 멈춘 날: 지난 발행본이 잠시 뺀 종목 중 오늘 확인된 종목(keep_out: 오늘 out 의 코드)이 아닌 것 그대로 (확인 못 한 종목을 셀 수
+    없어서 · 상장 폐지는 다음 실행이 빼요). 이 함수도 멈추지 않아요 (못 읽으면 빈 목록)."""
+    try:
+        own = ((prev or {}).get("pxSrc") or {}).get("own") or {}
+        return sorted((dict(a) for a in own.get("aged") or [] if isinstance(a, dict) and a.get("t") and str(a["t"]) not in keep_out),
+                      key=lambda a: str(a["t"]))
+    except Exception:
+        return []
+
+
 def kr_own_close_err(err, unconf_n=None):
     """마지막 확인 종가 단계가 오류로 멈췄을 때의 pxSrc.own (실은 종목 0 · err 에 까닭 — 관문이 경고해요). unconf_n: 확인 못 한 종목 수 — 그 수를
     세기 전에 멈췄으면 None 이고 칸을 빼요 (관문이 '모름'으로 적어요 · 0 으로 보이지 않게)."""
@@ -1511,7 +1547,14 @@ def kr_own_close_step(prev, full_list, conf_codes, px_src, px_date, trade_days, 
         unconf = kr_unconfirmed(full_list, set(map(str, conf_codes)))
         have = {r.get("t") for r in out}
         carried, cjumps, cdrop = kr_own_close_carry(prev, {c: v for c, v in unconf.items() if c not in have}, px_date, days)
+        aged = kr_own_aged(prev, unconf, cdrop)
         rec = log_kr_own_close(carried, cdrop, unconf, {r["t"]: r.get("nk", "") for r in carried})
+        rec["aged"] = aged
+        if aged:
+            log(f"  !! 마지막 확인 종가가 {KR_OWN_CLOSE_MAX_DAYS}거래일을 넘어 잠시 뺀 국내 종목 {len(aged):,} (앱은 '며칠째 종가를 확인하지 못해서 이 종목은 "
+                f"잠시 빼 두었어요.' · pxSrc.own.aged · 다시 확인되거나 목록에서 사라지면 빠져요): "
+                + ", ".join(f"{a['t']} {a['nk']} ({a.get('pxd')})" for a in aged[:KR_OWN_SHOW])
+                + (f" 외 {len(aged) - KR_OWN_SHOW}종목" if len(aged) > KR_OWN_SHOW else ""))
         # 리뷰 (2026-11-20): 다시 채울 목록(no_ind)을 받지 않은 호출은 업종 글자를 건드리지 않아요 — 다시 채우지 않고 글자만 빼는 일이 없게
         refill, krx, unread = kr_own_ind_reset(carried, prev, desc) if isinstance(no_ind, list) else ([], [], [])
         if refill or krx or unread:
@@ -1545,6 +1588,7 @@ def kr_own_close_step(prev, full_list, conf_codes, px_src, px_date, trade_days, 
         log(f"  !! 마지막 확인 종가 단계가 오류로 멈췄어요 ({err}) — 확인 못 한 국내 종목은 예전처럼 빼고 발행을 이어가요 (실은 종목 0 · "
             "pxSrc.own.err · 관문이 경고해요)")
         px_src["own"] = kr_own_close_err(err, len(unconf) if isinstance(unconf, dict) else None)
+        px_src["own"]["aged"] = kr_own_aged_kept(prev, {str(r.get("t")) for r in out})
         return 0
 
 
@@ -10615,7 +10659,9 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                    "old 나이 상한 넘음 · bad 값을 읽을 수 없음 · jump 과거 주가 기록 오류 기록 없음) · dropEx 예 · bad 파일을 쓰기 직전 관문과 같은 함수로 "
                    "거른 종목 {n · rows} · ind (2026-11-20 · 있을 때만) 지난 발행본이 DART 로 채웠거나 보통주를 따른 업종 글자를 옮기지 않은 종목 수 "
                    "{refill 오늘 다시 채움 (indSrc.dartT · prefT 에 적혀요) · krx 오늘 KRX-DESC 글자로 · unread 설명을 읽지 못해 비움} · err 이 단계가 오류로 "
-                   "멈춘 까닭 (실은 종목 0)}"),
+                   "멈춘 까닭 (실은 종목 0) · aged (2026-11-20) 마지막 확인 종가가 나이 상한을 넘어 잠시 뺀 종목 [{t · nk · pxd 그 종가 날짜}] — 오늘도 "
+                   "확인 못 한 동안 실행마다 이어 적고, 다시 확인되거나 목록에서 사라지면 빼요 (앱은 그 종목 자리에 '며칠째 종가를 확인하지 못해서 이 "
+                   "종목은 잠시 빼 두었어요.')}"),
          "indSrc": ("한국 업종 글자의 출처 (2026-11-19): desc KRX-DESC 에서 업종을 받은 종목 · carried 받지 못해 지난 발행본에서 이어 쓴 종목 · "
                     "asOf 이어 쓴 글자의 날짜 · none 업종 없음 · newNone 그중 지난 발행본에도 없던 새 상장 · "
                     "dart none 중 DART 기업개황 업종 코드의 11차 소분류가 우리 업종 표(data/ksic_map_kr.csv)에 깔끔히 맞아 채운 보통주 수 · "

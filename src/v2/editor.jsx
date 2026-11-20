@@ -140,7 +140,7 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
   const [flow, setFlow] = useState(null);                // 팔고 빼기: v19.6a's 팔았어요 sheet (records.jsx RecordFlow)
   const [capHit, setCapHit] = useState(null);
   const [fail, setFail] = useState(null);                // "storage" | "refused"
-  const ctx = useMemo(() => todayCtx(load), [load]);
+  const ctx = useMemo(() => todayCtx(load, undefined, store.data.decks), [load, store.data.decks]);   // 2026-11-20 (Jack, f): rules.lateCap
   const de = useMemo(() => (ctx.state.ok ? evaluateDeck(deck, ctx) : null), [deck, ctx]);
   const xOf = (t) => (de && de.ok ? de.holdings.find((y) => y.t === t) || null : null);
   const names = useMemo(() => (ok ? E.indNames(load.data.stocks) : new Map()), [load, ok]);

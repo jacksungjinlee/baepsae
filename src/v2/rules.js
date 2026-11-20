@@ -52,7 +52,7 @@
 //   that could be checked at all is 확인 필요, never 할 일 없음.
 import { num, isFin, priceWon, fyOf, fellTwice, KR_DIV_TREND, exactData, krDivHistory, todayD1, valueD1 } from "./engine.js";
 import { STALE_DAYS, daysSince, ownCloseDate, backstopFirst, samePublish, kstDate } from "../data.js";
-import { lateDays, LATE_CHECK_DAYS } from "./tradedays.js";
+import { lateDays, LATE_CHECK_DAYS, tradingDaysAfter, lateSay } from "./tradedays.js";
 import { sameConfirm, planWLimit, planWOk, PLANW_MAX_X } from "./store.js";
 import { heldQty as heldOf, heldUnits } from "./held.js";
 import { unitHeld } from "../repair.js";
@@ -131,11 +131,39 @@ export function checkState(load, now) {
   return { ok: true, late: { days: s.days, n: late.n } };
 }
 
-// Everything the evaluation reads from today's data.
-export function todayCtx(load, now) {
+// 2026-11-20 (Jack, f: "cap the late-data portfolio check (#144) so it never runs on a close more than 5 KRX trading days old in
+// total (carried close age counts), instead of up to 10"): on late data, a held Korean stock priced at its last confirmed close
+// (data.json pxd) counts its own close: the KRX trading days after that close up to today (KST, the same count as lateDays). When
+// one of the held stocks of these decks is more than LATE_CHECK_DAYS behind, nothing is checked (the state is the stale one
+// dayState gave, as on data more than 5 days late), for every portfolio together, like the rest of the late check. A pxd that
+// cannot be counted stops it too (the stricter side). Said once in the console. -> the state to use.
+export function lateCap(state, ctx, decks) {
+  if (!state || !state.ok || !state.late || !ctx) return state;
+  for (const deck of decks || []) {
+    for (const t of heldOf(deck || {}).keys()) {
+      const s = ctx.byT.get(t);
+      if (!s || s.cls !== "kr") continue;
+      const pxd = ownCloseDate(s, ctx.pxDate);
+      if (!pxd) continue;
+      const n = tradingDaysAfter(pxd, ctx.today, "KR");
+      if (n == null || n > LATE_CHECK_DAYS) {
+        lateSay(`the check is not run: held ${t} is priced at its last confirmed close ${pxd}, ${n == null ? "an age that cannot be counted" : n + " KRX trading days"} before today ${ctx.today} (more than ${LATE_CHECK_DAYS} in total)`);
+        return { ok: false, why: "stale", days: state.late.days, capped: { t, pxd, n } };
+      }
+    }
+  }
+  return state;
+}
+
+// Everything the evaluation reads from today's data. decks (2026-11-20): the saved portfolios whose check this context is for;
+// with them, the late check stops when a held stock's own close is too old in total (lateCap).
+export function todayCtx(load, now, decks) {
   const ok = load && load.status === "ok";
-  return { state: checkState(load, now), byT: ok ? load.byT : new Map(), coByT: ok ? load.coByT : new Map(),
-    fx: ok ? load.data.fx : null, pxDate: ok ? load.data.pxDate : null, usPxDate: ok ? load.data.usPxDate || null : null };
+  const ctx = { state: checkState(load, now), byT: ok ? load.byT : new Map(), coByT: ok ? load.coByT : new Map(),
+    fx: ok ? load.data.fx : null, pxDate: ok ? load.data.pxDate : null, usPxDate: ok ? load.data.usPxDate || null : null,
+    today: kstDate(now == null ? Date.now() : now) };
+  if (decks) ctx.state = lateCap(ctx.state, ctx, decks);
+  return ctx;
 }
 
 // ---------------- one deck ----------------

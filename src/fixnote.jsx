@@ -43,13 +43,24 @@ export const FIX_PX_BAD_ONE = "과거 주가 기록 일부에 오류가 있어�
 export const FIX_KR_OWN_CLOSE = "오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요.";   // Jack 승인 2026-11-19
 export const FIX_OWN_CLOSE = "{names} 가격은 {md} 종가예요.";                               // Jack 승인 2026-11-07 (detail.jsx T_OWN_CLOSE.ko)
 export const FIX_OWN_CLOSE_EN = "{names}: priced at the {md} close.";                         // Jack 승인 2026-11-07 (detail.jsx T_OWN_CLOSE.en)
+// 2026-11-20 (Jack, b · c · a): 목록 · 합계는 날짜마다 한 줄 (이름 + Jack 의 줄 · 2.0 app.krOwnCloseList 와 같은 글자) · 영어 화면은 승인된 영어
+// 문장 (한 종목: 그 문장 · 목록: "{names}: " 다음에 그 문장) · 나이 상한을 넘어 잠시 뺀 종목은 '찾지 못했어요' 대신 Jack 의 줄 (2.0 app.krOwnAged)
+export const FIX_KR_OWN_CLOSE_LIST = "{names}: 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요.";   // Jack 승인 2026-11-20
+export const FIX_KR_OWN_CLOSE_EN = "We couldn't confirm today's close, so this shows the {date} close.";   // Jack 승인 2026-11-20
+export const FIX_KR_AGED = "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요.";                   // Jack 승인 2026-11-20
 // 한 종목 (data.json 종목 또는 corp.json 회사 — 회사 줄에는 cls 가 없어서 marketDate 로 그 데이터의 pxDate 를 받아요): 줄 또는 null.
-// lang "en": 승인된 영어 문장 ("005930: priced at the Nov 16 close.")
+// lang "en": 승인된 영어 문장 ("We couldn't confirm today's close, so this shows the Nov 16 close.")
 export function krOwnCloseText(c, marketDate = null, lang = "ko") {
   const d = c && (c.cls == null || c.cls === "kr") ? ownCloseDate(c, marketDate) : null;
-  if (lang === "en") return d && mdOf(d, "en") ? FIX_OWN_CLOSE_EN.replace("{names}", String(c.t)).replace("{md}", mdOf(d, "en")) : null;
-  const md = d ? mdOf(d, "ko") : null;
-  return md ? FIX_KR_OWN_CLOSE.replace("{date}", md) : null;
+  const md = d ? mdOf(d, lang === "en" ? "en" : "ko") : null;
+  if (!md) return null;
+  return lang === "en" ? FIX_KR_OWN_CLOSE_EN.replace("{date}", md) : FIX_KR_OWN_CLOSE.replace("{date}", md);
+}
+// 목록의 한 줄 (한국어: Korean names · 영어: codes): "{names}: …" — names 는 이미 이은 글
+export function krOwnCloseListLine(names, date, lang = "ko") {
+  const md = mdOf(date, lang === "en" ? "en" : "ko");
+  if (!md) return null;
+  return lang === "en" ? names + ": " + FIX_KR_OWN_CLOSE_EN.replace("{date}", md) : FIX_KR_OWN_CLOSE_LIST.replace("{names}", names).replace("{date}", md);
 }
 export function KrOwnCloseLine({ c, marketDate = null, style, lang = "ko" }) {
   const text = krOwnCloseText(c, marketDate, lang === "en" ? "en" : "ko");
@@ -59,9 +70,9 @@ export function KrOwnCloseLine({ c, marketDate = null, style, lang = "ko" }) {
 export function krOwnCloseListText(list) {
   const out = [];
   for (const g of ownCloseGroups((list || []).filter(Boolean).map((c) => ({ ...c, cls: "kr" })), null)) {
-    const md = mdOf(g.date, "ko");
-    if (!md) return null;
-    out.push(FIX_OWN_CLOSE.replace("{names}", (g.names || g.ts).join(", ")).replace("{md}", md) + " " + FIX_KR_OWN_CLOSE.replace("{date}", md));
+    const line = krOwnCloseListLine((g.names || g.ts).join(", "), g.date, "ko");
+    if (!line) return null;
+    out.push(line);
   }
   return out.length ? out.join(" ") : null;
 }

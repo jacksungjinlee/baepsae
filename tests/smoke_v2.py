@@ -13941,8 +13941,8 @@ def kr_own_files(files):
 
 
 def kr_own_text(stocks, ts):
-    """화면 순서의 종목들 → 앱의 안내: 날짜마다 미국은 '{티커} 가격은 {날짜} 종가예요.', 국내는 '{이름} 가격은 {날짜} 종가예요.' 다음에 Jack 의 줄
-    (새 날짜 먼저 · 같은 날짜면 미국 먼저 · 같은 종목은 한 번). 자기 날짜가 있는 종목이 없으면 None."""
+    """화면 순서의 종목들 → 앱의 안내: 날짜마다 미국은 '{티커} 가격은 {날짜} 종가예요.', 국내는 2026-11-20 (Jack, b) 한 줄 '{이름}: 오늘 종가를
+    확인하지 못해서 {날짜} 종가를 보여 드려요.' (새 날짜 먼저 · 같은 날짜면 미국 먼저 · 같은 종목은 한 번). 자기 날짜가 있는 종목이 없으면 None."""
     by = by_t(stocks)
     groups, seen = {}, set()
     for t in ts:
@@ -13953,8 +13953,8 @@ def kr_own_text(stocks, ts):
         groups.setdefault((s["pxd"], s["cls"] == "kr"), []).append(s["nk"] if s["cls"] == "kr" else t)
     out = []
     for day, krk in sorted(groups, key=lambda k: (k[0], not k[1]), reverse=True):
-        line = fillp(C["app"]["ownClose"], names=", ".join(groups[(day, krk)]), md=mdtext(day))
-        out.append(line + (" " + fillp(C["app"]["krOwnClose"], date=mdtext(day)) if krk else ""))
+        out.append(fillp(C["app"]["krOwnCloseList"], names=", ".join(groups[(day, krk)]), date=mdtext(day)) if krk
+                   else fillp(C["app"]["ownClose"], names=", ".join(groups[(day, krk)]), md=mdtext(day)))
     return " ".join(out) or None
 
 
@@ -14041,7 +14041,7 @@ def scene_kr_own_close(R, files, width=390):
         floor_ok(page, "종목 순위 · 찾기")
         no_hscroll(page, width)
         R.collect(page)
-    R.check(page, S, "종목 순위: 거래대금에는 없음 · 시가총액(한국)과 찾기 결과에 '{이름} 가격은 {날짜} 종가예요.' 다음에 Jack 의 줄 · 그 종목 줄에 % 없음", lists)
+    R.check(page, S, "종목 순위: 거래대금에는 없음 · 시가총액(한국)과 찾기 결과에 '{이름}: ' + Jack 의 줄 한 줄 · 그 종목 줄에 % 없음", lists)
 
     def portfolio():
         for hash_, where in (("#home", "home-block"), ("#portfolio", None)):
@@ -14052,14 +14052,13 @@ def scene_kr_own_close(R, files, width=390):
             note = card.locator('[data-ui-v2="own-close"]').first
             note.wait_for(state="visible")
             want = kr_own_text(stocks, ["000270", "005930", "AAPL"])
-            assert want == (fillp(C["app"]["ownClose"], names="AAPL", md=mdtext("2026-10-28")) + " "
-                            + fillp(C["app"]["ownClose"], names="기아", md=mdtext("2026-10-28")) + " " + jack("000270")), want
+            assert want == (fillp(C["app"]["ownClose"], names="AAPL", md=mdtext("2026-10-28")) + " 기아: " + jack("000270")), want
             assert note.inner_text() == want, (hash_, note.inner_text(), want)
             assert today_md in date_line(page), hash_                       # 오늘 날짜 줄 밑의 합계 · 줄 → 그 줄과 함께
             floor_ok(page, f"포트폴리오 {hash_}")
             no_hscroll(page, width)
             R.collect(page)
-    R.check(page, S, "포트폴리오 (홈 · 포트폴리오 탭): 기아(국내 pxd)는 이름 문장 + Jack 의 줄 · 애플(미국 pxd)은 예전 문장 그대로", portfolio)
+    R.check(page, S, "포트폴리오 (홈 · 포트폴리오 탭): 기아(국내 pxd)는 '기아: ' + Jack 의 줄 한 줄 · 애플(미국 pxd)은 예전 문장 그대로", portfolio)
 
     def importing():
         """가진 종목 넣기 (리뷰 M2): 넣는 줄 밑과 점검 결과(비중 · 지도 · 규칙 · 비중을 바꿔 보면)의 날짜 줄 밑에 기아의 이름 문장 + Jack 의 줄."""
@@ -14090,9 +14089,52 @@ def scene_kr_own_close(R, files, width=390):
         floor_ok(page, "가진 종목 넣기 점검 결과")
         no_hscroll(page, width)
         R.collect(page)
-    R.check(page, S, "가진 종목 넣기: 넣는 줄 밑 · 점검 결과의 날짜 줄 밑에 '기아 가격은 {날짜} 종가예요.' 다음에 Jack 의 줄", importing)
+    R.check(page, S, "가진 종목 넣기: 넣는 줄 밑 · 점검 결과의 날짜 줄 밑에 '기아: ' + Jack 의 줄 한 줄", importing)
     ctx.close()
     srv.shutdown()
+
+    def aged():
+        """Jack (2026-11-20, a): 마지막 확인 종가가 5거래일을 넘어 잠시 뺀 종목 (data.json pxSrc.own.aged · NAVER 를 데이터에서 빼고 그 목록에):
+        회사 페이지는 '이 종목의 데이터를 찾지 못했어요.' 대신 '며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요.' · 그 종목을 가진
+        포트폴리오(홈 · 포트폴리오 탭)는 그 줄 밑에 같은 줄 · 합계의 '오늘 데이터에 없는 종목 …' 줄은 그대로 · 목록에 없는 코드는 예전 그대로."""
+        g = clone(f)
+        d = g["data.json"]
+        nk = by_t(d["stocks"])["035420"]["nk"]
+        d["stocks"] = [x for x in d["stocks"] if x["t"] != "035420"]
+        g["corp.json"]["companies"] = [x for x in g["corp.json"]["companies"] if x["t"] != "035420"]
+        d["pxSrc"] = {"v": 1, "px": "daum+yahoo", "own": {"v": 1, "max": 5, "n": 2, "codes": sorted(KR_OWN), "drop": {"old": 1}, "dropEx": [],
+                                                          "bad": {"n": 0, "rows": []}, "aged": [{"t": "035420", "nk": nk, "pxd": "2026-10-20"}]}}
+        deck2 = {"id": "dkraged", "name": "잠시 뺀 종목 포트폴리오", "createdAt": "2026-10-01",
+                 "holdings": [{"t": "035420", "nk": nk, "target": 0.5, "plannedQty": 1, "rules": band(0.5)},
+                              {"t": "005930", "nk": "삼성전자", "target": 0.5, "plannedQty": 1, "rules": band(0.5)}],
+                 "purchases": [{"id": "p1kraged", "t": "035420", "date": "2026-10-01", "qty": 1, "price": 200000, "ccy": "KRW"},
+                               {"id": "p2kraged", "t": "005930", "date": "2026-10-01", "qty": 1, "price": 200000, "ccy": "KRW"}]}
+        srv2, ctx2, p2, _ = R.open(build_site(g), width, init=e_store([deck2]), path="/app.html?dev=1#stocks")
+        try:
+            wait_ready(p2)
+            aged_line = C["app"]["krOwnAged"]
+            for code, want in (("035420", aged_line), ("999990", C["co"]["notFound"])):
+                co_hash(p2, f"#stocks/{code}")
+                card = p2.locator('[data-ui-v2="co-not-found"]')
+                card.wait_for(state="visible")
+                assert card.inner_text().strip() == want, (code, card.inner_text())
+                assert (card.get_attribute("data-aged") == "1") == (code == "035420"), code
+            for hash_, route in (("#home", "home"), ("#portfolio", "portfolio")):
+                p2.evaluate("(h) => { location.hash = h; }", hash_)
+                at(p2, route)
+                line = p2.locator('[data-ui-v2="kr-aged"][data-t="035420"]').first
+                line.wait_for(state="visible")
+                assert line.inner_text() == aged_line, (hash_, line.inner_text())
+                assert p2.locator('[data-ui-v2="kr-aged"]').count() == 1, hash_                # 그 종목 줄 밑에만
+                miss = p2.locator('[data-ui-v2="missing-line"]').first                         # 합계 줄은 그대로 (그 문장 · 이름)
+                assert miss.inner_text().startswith(C["missing"]["line"].split("{n}")[0] + "1개(" + nk), (hash_, miss.inner_text())
+                floor_ok(p2, f"잠시 뺀 종목 {hash_}")
+                no_hscroll(p2, width)
+            R.collect(p2)
+        finally:
+            ctx2.close()
+            srv2.shutdown()
+    R.check(None, S, "잠시 뺀 종목 (5거래일이 지남): 회사 페이지 · 가진 포트폴리오의 그 줄 밑에 Jack 의 줄 · 다른 코드는 '찾지 못했어요' 그대로", aged)
 
 
 def main():

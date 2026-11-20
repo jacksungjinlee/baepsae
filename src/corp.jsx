@@ -10,7 +10,7 @@ import { Bird, store, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, T_
 import { loadJson, krGrowthBasis, krGrowthDcfLine, krRevDcfText, krRevDcfNote, loadDataPublishFor, corpStaleArgs } from "./data.js";
 // 2026-11-08 (Jack): PER · EPS (와 같은 순이익으로 계산한 ROE · 배당성향 · 주가 분해 · DCF) 칸마다 한 줄, 이자보상배율이 꺼진 회사의
 // 재무 신호 밑에 한 줄 — DART 다시 읽기 전까지 (src/repair.js, src/fixnote.jsx)
-import { EpsFixLine, IcrOffLine, StmtCurLine, UnitChkLine, PxBadLine, PxBadOneLine, epsLineKind, KrOwnCloseLine, KrOwnCloseListLine } from "./fixnote.jsx";
+import { EpsFixLine, IcrOffLine, StmtCurLine, UnitChkLine, PxBadLine, PxBadOneLine, epsLineKind, KrOwnCloseLine, KrOwnCloseListLine, FIX_KR_AGED } from "./fixnote.jsx";
 import { epsBase, epsPeriod, stmtNotWon, stmtCurOf, unitHeld, pxBad, pxBadFull } from "./repair.js";
 
 const KEY_DCF = "baepsae_v12_dcf";
@@ -1136,11 +1136,12 @@ export function epsPeriodSub(c) {
   return !pe ? "" : pe.fy ? " · 직전 사업보고서" : " · 최근 4개분기 합산(" + pe.y + "." + pe.q + "Q)";
 }
 
-export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setExplain }) {
+export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setExplain, aged = null }) {
   const [guideOpen, setGuideOpen] = useState(false);
   const c = data.companies.find((x) => x.t === t);
   const sec = c ? data.sectors[c.s] : null;
-  if (!c) return <Card><Sub>이 종목의 데이터를 찾지 못했어요.</Sub></Card>;
+  // 2026-11-20 (Jack, a): 마지막 확인 종가가 나이 상한을 넘어 잠시 뺀 종목 (data.json pxSrc.own.aged) 은 '찾지 못했어요' 대신 그 줄
+  if (!c) return <Card>{aged && aged.has(t) ? <Sub><span data-fix="kr-aged">{FIX_KR_AGED}</span></Sub> : <Sub>이 종목의 데이터를 찾지 못했어요.</Sub>}</Card>;
 
   const sharesM = c.shm || (c.cap && c.price ? c.cap * 1e12 / c.price / 1e6 : null);
   // DART 다시 읽기 뒤 (Jack, 2026-11-08): 재무제표를 원화가 아닌 통화로 공시한 회사(corp.json stmtCur)는 금액 · PER · PBR · EPS 가 비어요.
@@ -1869,7 +1870,7 @@ export default function CorpApp({ jump, onJumpDone, lang, first, onFirstDone }) 
       {view.kind === "screen" && <ScreenerView data={d} onOpen={(t) => setView({ kind: "co", t })} setExplain={setExplain} />}
       {view.kind === "guide" && <GuideListView onRead={setGuideId} />}
       {view.kind === "search" && <SearchView data={d} heldMap={heldMap} onOpen={(t) => setView({ kind: "co", t })} />}
-      {view.kind === "co" && <CompanyView data={d} t={view.t} heldInfo={heldMap[view.t]} onBack={() => setView({ kind: "search" })} onOpen={(t) => setView({ kind: "co", t })} onCompare={() => setView({ kind: "cmp", t: view.t })} setExplain={setExplain} />}
+      {view.kind === "co" && <CompanyView data={d} t={view.t} heldInfo={heldMap[view.t]} onBack={() => setView({ kind: "search" })} onOpen={(t) => setView({ kind: "co", t })} onCompare={() => setView({ kind: "cmp", t: view.t })} setExplain={setExplain} aged={pub ? pub.aged : null} />}
       {view.kind === "cmp" && <CompareView data={d} baseT={view.t} onOpen={(t) => setView({ kind: "co", t })} onBack={() => setView({ kind: "co", t: view.t })} setExplain={setExplain} />}
       {view.kind === "market" && (
         <div style={{ fontSize: 10.5, color: C.faint, textAlign: "center", marginTop: 20, lineHeight: 1.7 }}>

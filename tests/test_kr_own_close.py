@@ -34,6 +34,9 @@ import fetch_data as F  # noqa: E402
 import validate_data as V  # noqa: E402
 
 JACK = "오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요."
+JACK_LIST = "{names}: 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요."             # Jack, 2026-11-20 (b)
+JACK_EN = "We couldn't confirm today's close, so this shows the {date} close."           # Jack, 2026-11-20 (c)
+JACK_AGED = "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요."                     # Jack, 2026-11-20 (a)
 D13, D16, D17, D18 = "2026-11-13", "2026-11-16", "2026-11-17", "2026-11-18"
 KDAYS = ["2026-11-06", "2026-11-09", "2026-11-10", "2026-11-11", "2026-11-12", D13, D16, D17, D18]     # KOSPI 거래일 (금 · 월 ~ 수)
 
@@ -164,17 +167,95 @@ def test_pipeline_drops_a_bad_row_loudly_and_publishes_the_rest(capsys):
     assert krs["jump"] == [["900000", "2026-05-08", 40.0, "halt"]]              # 뺀 종목의 옮겨 온 움직임도 빠져요 (리뷰 N4) · 다른 줄은 그대로
     log = capsys.readouterr().out
     assert "!! 마지막 확인 종가 점검 (관문과 같은 함수): 1종목 빼고 발행" in log and "400020" in log
-    # 그 기록을 관문이 경고로 보여요 (실패 아님)
+    # 그 기록을 관문이 경고로 보여요 (실패 아님) — 2026-11-20 (Jack, d): 거른 종목은 '국내 자기 가격 날짜 (pxd)' 줄도 경고, 5개를 넘으면 실패
     d = fb_data(out, ["400010"])
     d["pxSrc"]["own"] = src["own"]
     rep = V.Report()
     V.check_kr_own_close(rep, d, None, prev)
     rows = {r[0]: r for r in rep.rows}
-    assert rows["국내 자기 가격 날짜 (pxd)"][3] == "PASS"
+    assert rows["국내 자기 가격 날짜 (pxd)"][3] == "WARN" and "파이프라인이 거른 종목 1: 400020" in rows["국내 자기 가격 날짜 (pxd)"][1]
+    assert not rep.failed
     assert rows["국내 마지막 확인 종가 (pxSrc.own · 경고만)"][3] == "WARN" and "파이프라인이 거른 종목 1" in rows["국내 마지막 확인 종가 (pxSrc.own · 경고만)"][1]
     # 깨끗한 실행: · 줄
     F.kr_own_close_final(out, d["pxSrc"], prev, KDAYS)
     assert "· 마지막 확인 종가 점검 (관문과 같은 함수): 0종목 빼고 발행" in capsys.readouterr().out
+
+
+def test_broken_dates_are_dropped_and_warned_and_more_than_five_in_one_run_fail():
+    """Jack (2026-11-20, d): "drop a carry with a broken date and warn; block only above 5." — 1 개: 그 줄을 빼고 경고 · 나머지는 발행 · 6 개:
+    실패 (한 종목이 아니라 우리 처리가 고장) · 빼지 못하고 파일에 남은 깨진 날짜: 실패 (예전처럼) · 기록이 없는 예전 파일: 예전 그대로."""
+    assert V.KR_OWN_DROP_MAX == 5
+    codes = [f"40{i:02d}10" for i in range(7)]
+    prev = prev_file([kr(c, price=100.0) for c in codes])
+    for n_bad, want in ((1, "WARN"), (5, "WARN"), (6, "FAIL")):
+        rows_in = [kr(c, price=100.0, d1=None, pxd=(D16 if i >= n_bad else "2026-11-31")) for i, c in enumerate(codes)]   # 깨진 날짜 n_bad 개
+        src = fb_data([], codes)["pxSrc"]
+        out = F.kr_own_close_final([kr("005930")] + rows_in, src, prev, KDAYS)
+        assert [s["t"] for s in out] == ["005930"] + codes[n_bad:] and src["own"]["bad"]["n"] == n_bad      # 깨진 줄만 빼고 나머지는 발행
+        d = fb_data(out, codes[n_bad:])
+        d["pxSrc"]["own"] = src["own"]
+        rep = V.Report()
+        V.check_kr_own_close(rep, d, None, prev)
+        row = {r[0]: r for r in rep.rows}[PXD_ROW]
+        assert row[3] == want and f"파이프라인이 거른 종목 {n_bad}" in row[1], (n_bad, row)
+        assert bool(rep.failed) == (want == "FAIL"), n_bad
+    # 깨진 날짜가 파일에 남아 있으면 (빼기가 고장): 실패 — 거른 수와 상관없이
+    d = fb_data([kr("401010", d1=None, pxd="2026-11-31")], ["401010"])
+    assert gate_rows(d)[PXD_ROW][1] == "FAIL"
+    # 단계가 멈춰 모두 뺀 실행 (own.err): 판단해서 거른 것이 아니라 세지 않아요 — 경고 (실은 종목 없이 발행)
+    d = fb_data([kr("005930")], [])
+    d["pxSrc"]["own"].update({"err": "TypeError: 시험", "bad": {"n": 9, "rows": codes}})
+    rows = gate_rows(d)
+    assert rows[PXD_ROW][1] == "WARN" and "세지 않음" in rows[PXD_ROW][0] and rows[OWN_ROW][1] == "WARN"
+    # 기록 없는 예전 파일 · 국내 pxd 없음: 예전 그대로 (PASS)
+    assert gate_rows({"pxDate": D18, "stocks": [kr("005930")]})[PXD_ROW][1] == "PASS"
+
+
+def test_stocks_past_the_age_limit_are_recorded_and_kept_while_still_unconfirmed(capsys):
+    """Jack (2026-11-20, a): "After 5 trading days, show "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요." instead of "데이터를 찾지
+    못했어요"." — 파이프라인은 그 종목을 data.json pxSrc.own.aged 에 이름과 함께 적고, 오늘도 확인 못 한 동안 실행마다 이어 적어요 (지난 발행본의
+    stocks 에는 없어요). 다시 확인되거나 목록에서 사라지면 빼요."""
+    full = pd.DataFrame({"Code": ["005930", "300010", "300020", "300030"], "Name": ["삼성전자", "가", "나", "다"],
+                         "Market": ["KOSPI", "KOSDAQ", "KOSDAQ", "KONEX"]})
+    # 1일째: 300010 은 마지막 확인 종가가 11-06 (11-18 까지 거래일 8일 > 5) → 잠시 뺌 · 300020 은 11-16 → 실음 · 300030 은 지난 발행본에 없음
+    prev = prev_file([kr("300010", "가", pxd="2026-11-06", d1=None), kr("300020", "나")], px=D16)
+    src, out = {"px": V.PX_SRC_FB}, [kr("005930")]
+    n = F.kr_own_close_step(prev, full, {"005930"}, src, dt.date(2026, 11, 18), KDAYS, out, {"jump": [], "hidden": []}, {}, desc={}, no_ind=[])
+    assert n == 1 and [r["t"] for r in out] == ["005930", "300020"]
+    assert src["own"]["aged"] == [{"t": "300010", "nk": "가", "pxd": "2026-11-06"}] and src["own"]["drop"] == {"none": 1, "old": 1}
+    assert "!! 마지막 확인 종가가 5거래일을 넘어 잠시 뺀 국내 종목 1" in capsys.readouterr().out
+    json.dumps(src["own"], allow_nan=False)
+    # 2일째: 지난 발행본(1일째)의 stocks 에 300010 이 없어도, 그 기록으로 이어 적어요 ('지난 발행본에 없음' 이 아니라 'old')
+    prev2 = {"pxDate": D18, "stocks": out, "pxSrc": src, "krSeries": {"v": 1, "jump": []}}
+    src2, out2 = {"px": V.PX_SRC_FB}, [kr("005930")]
+    F.kr_own_close_step(prev2, full, {"005930"}, src2, dt.date(2026, 11, 19), KDAYS + ["2026-11-19"], out2, {"jump": [], "hidden": []}, {},
+                        desc={}, no_ind=[])
+    assert src2["own"]["aged"] == [{"t": "300010", "nk": "가", "pxd": "2026-11-06"}] and src2["own"]["drop"]["old"] == 1
+    # 3일째: 300010 이 다시 확인됨 → 빠져요 · 목록에서 사라진 종목도 (상장 폐지)
+    prev3 = {"pxDate": "2026-11-19", "stocks": out2, "pxSrc": src2}
+    src3 = {"px": V.PX_SRC_FB}
+    F.kr_own_close_step(prev3, full, {"005930", "300010"}, src3, dt.date(2026, 11, 20), KDAYS + ["2026-11-19", "2026-11-20"], [kr("005930")],
+                        {"jump": [], "hidden": []}, {}, desc={}, no_ind=[])
+    assert src3["own"]["aged"] == []
+    src4 = {"px": V.PX_SRC_FB}
+    F.kr_own_close_step(prev3, full[full["Code"] != "300010"], {"005930"}, src4, dt.date(2026, 11, 20), KDAYS + ["2026-11-19", "2026-11-20"],
+                        [kr("005930")], {"jump": [], "hidden": []}, {}, desc={}, no_ind=[])
+    assert src4["own"]["aged"] == []
+    # 단계가 오류로 멈춘 날: 지난 발행본의 기록 중 오늘 확인된 종목만 빼고 그대로 (관문이 경고)
+    src5 = {"px": V.PX_SRC_FB}
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(F, "kr_own_close_carry", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("부서졌어요")))
+        F.kr_own_close_step(prev3, full, {"005930"}, src5, dt.date(2026, 11, 20), KDAYS, [kr("005930")], {"jump": [], "hidden": []}, {},
+                            desc={}, no_ind=[])
+    assert src5["own"]["err"] and src5["own"]["aged"] == [{"t": "300010", "nk": "가", "pxd": "2026-11-06"}]
+    # 관문: 잠시 뺀 종목을 적고 (경고 아님) · 발행하는 종목이 그 목록에 있으면 경고
+    d = fb_data([kr("005930"), dict(kr("300020", "나", d1=None), pxd=D16)], ["300020"])
+    d["pxSrc"]["own"]["aged"] = src["own"]["aged"]
+    rows = gate_rows(d)
+    assert "5거래일이 지나 잠시 뺀 종목 1 (300010 가)" in rows[OWN_ROW][0] and rows[OWN_ROW][1] == "PASS"
+    d["pxSrc"]["own"]["aged"] = [{"t": "300020", "nk": "나", "pxd": D16}]
+    rows = gate_rows(d)
+    assert rows[OWN_ROW][1] == "WARN" and "그런데 발행하는 종목: 300020" in rows[OWN_ROW][0]
 
 
 def test_log_and_record_shape_the_gate_reads(capsys):
@@ -561,14 +642,14 @@ needs_node = pytest.mark.skipif(NODE is None, reason="node 가 없어요")
 
 @needs_node
 def test_app_copy_is_jacks_line_in_both_apps():
-    got = run("out = { k: CP.app.krOwnClose, o: CP.app.ownClose, fx: FX.FIX_KR_OWN_CLOSE, fo: FX.FIX_OWN_CLOSE };")
+    got = run("out = { k: CP.app.krOwnClose, o: CP.app.ownClose, fx: FX.FIX_KR_OWN_CLOSE, fo: FX.FIX_OWN_CLOSE, kl: CP.app.krOwnCloseList,"
+              " fl: FX.FIX_KR_OWN_CLOSE_LIST, ka: CP.app.krOwnAged, fa: FX.FIX_KR_AGED, en: FX.FIX_KR_OWN_CLOSE_EN };")
     assert got["k"] == JACK and got["fx"] == JACK                   # 2.0 · 예전 뱁새 같은 글자
+    assert got["kl"] == got["fl"] == JACK_LIST and got["ka"] == got["fa"] == JACK_AGED and got["en"] == JACK_EN   # Jack, 2026-11-20 (a · b · c)
     assert got["o"] == got["fo"] == "{names} 가격은 {md} 종가예요."
     detail = open(os.path.join(ROOT, "src", "detail.jsx"), encoding="utf-8").read()
-    assert 'const T_OWN_CLOSE = { ko: "{names} 가격은 {md} 종가예요.", en: "{names}: priced at the {md} close." };' in detail
-    assert "FIX_KR_OWN_CLOSE.replace(\"{date}\"" in detail
-    got2 = run("out = FX.FIX_OWN_CLOSE_EN;")
-    assert got2 == "{names}: priced at the {md} close."                       # 영어 첫 화면 성적표 (리뷰 M4): 승인된 영어 문장 그대로
+    assert 'const T_OWN_CLOSE = { ko: "{names} 가격은 {md} 종가예요.", en: "{names}: priced at the {md} close." };' in detail   # 미국 종목은 그대로
+    assert "if (g.kr) return krOwnCloseListLine(" in detail
 
 
 @needs_node
@@ -584,10 +665,11 @@ def test_app_groups_korean_stocks_by_their_own_market_date_and_names_them():
                         {"date": D16, "ts": ["011810", "094800"], "kr": True, "names": ["STX", "맵스리얼티"]},
                         {"date": D13, "ts": ["496320"], "kr": True, "names": ["본시스템즈"]}], got["g"]
     assert got["us"] == [{"date": D16, "ts": ["AAPL"]}]
-    assert got["txt"] == ("같은날 가격은 11월 17일 종가예요. 오늘 종가를 확인하지 못해서 11월 17일 종가를 보여 드려요. "
+    # 2026-11-20 (Jack, b): 국내 종목은 날짜마다 한 줄 "{이름}: 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요." · 미국은 그대로
+    assert got["txt"] == ("같은날: 오늘 종가를 확인하지 못해서 11월 17일 종가를 보여 드려요. "
                           "AAPL 가격은 11월 16일 종가예요. "
-                          "STX, 맵스리얼티 가격은 11월 16일 종가예요. 오늘 종가를 확인하지 못해서 11월 16일 종가를 보여 드려요. "
-                          "본시스템즈 가격은 11월 13일 종가예요. 오늘 종가를 확인하지 못해서 11월 13일 종가를 보여 드려요."), got["txt"]
+                          "STX, 맵스리얼티: 오늘 종가를 확인하지 못해서 11월 16일 종가를 보여 드려요. "
+                          "본시스템즈: 오늘 종가를 확인하지 못해서 11월 13일 종가를 보여 드려요."), got["txt"]
 
 
 @needs_node
@@ -598,13 +680,15 @@ out = { kr: CF.krOwnCloseText(load, A), plain: CF.krOwnCloseText(load, B), us: C
   close: CF.closeLine(load, A), usClose: CF.closeLine(load, U), loading: CF.krOwnCloseText({ status: 'loading' }, A),
   old: [FX.krOwnCloseText(A, null), FX.krOwnCloseText({ t: 'C', pxd: '2026-11-16' }, '2026-11-18'), FX.krOwnCloseText(U, null),
         FX.krOwnCloseText(B, '2026-11-18'), FX.krOwnCloseListText([{ t: '094800', nk: '맵스리얼티', pxd: '2026-11-16' }, { t: '005930', nk: '삼성전자' }])],
-  en: [FX.krOwnCloseText(A, null, 'en'), FX.krOwnCloseText(B, '2026-11-18', 'en'), FX.krOwnCloseText(U, null, 'en')] };""",
+  en: [FX.krOwnCloseText(A, null, 'en'), FX.krOwnCloseText(B, '2026-11-18', 'en'), FX.krOwnCloseText(U, null, 'en'),
+       FX.krOwnCloseListLine('094800, 011810', '2026-11-16', 'en')] };""",
               A=kr("094800", "맵스리얼티", d1=None, pxd=D16), B=kr("005930", "삼성전자"), U=us("AAPL", pxd=D16, d1=None))
     line = JACK.replace("{date}", "11월 16일")
     assert got["kr"] == line and got["plain"] is None and got["us"] is None and got["loading"] is None
     assert got["date"] == D16 and got["close"] == "11월 16일 종가"     # 그 종목의 날짜 (오늘 날짜가 아니에요)
-    assert got["old"] == [line, line, None, None, "맵스리얼티 가격은 11월 16일 종가예요. " + line]
-    assert got["en"] == ["094800: priced at the Nov 16 close.", None, None]
+    assert got["old"] == [line, line, None, None, "맵스리얼티: " + line]                   # 2026-11-20 (b): 목록은 한 줄
+    en = JACK_EN.replace("{date}", "Nov 16")                                               # 2026-11-20 (c): 승인된 영어 문장
+    assert got["en"] == [en, None, None, "094800, 011810: " + en]
 
 
 @needs_node
@@ -731,3 +815,58 @@ def test_slow_screen_run_is_for_ci_only_never_the_daily_pre_publish_check(monkey
     daily = own_scenes()
     assert len(ci) == 3 and len(daily) == 2
     assert sum("slow=True" in s for s in ci) == 1 and not any("slow=True" in s for s in daily)
+
+
+# ── 2026-11-20 (Jack, f): 늦은 데이터의 점검은 그 종목의 종가가 모두 합쳐 5거래일을 넘으면 돌지 않아요 ───────────────────────
+def late_files(stocks, px="2026-11-16", published="2026-11-17T06:40:56+09:00"):
+    hol = F.load_market_holidays()
+    nxt = F.next_publish(dt.date.fromisoformat(px), dt.date.fromisoformat(px), hol)
+    data = {"asOf": published[:10], "pxDate": px, "usPxDate": px, "fxDate": px, "fx": 1350.0, "publishedAt": published,
+            "nextPub": nxt.isoformat(), "staleAfter": F.stale_after(nxt), "stocks": stocks}
+    return {"data": data, "corp": {"pxDate": px, "publishedAt": published, "companies": []}}
+
+
+def held_deck(ts):
+    return {"id": "d1", "name": "P", "createdAt": "2026-11-02",
+            "holdings": [{"t": t, "nk": t, "cls": "kr", "kind": "core", "target": 1 / len(ts), "rules": []} for t in ts],
+            "purchases": [{"t": t, "date": "2026-11-02", "qty": 1, "price": 10000, "ccy": "KRW"} for t in ts]}
+
+
+@needs_node
+def test_the_late_check_never_runs_on_a_close_more_than_five_trading_days_old_in_total():
+    """Jack (2026-11-20, f): "cap the late-data portfolio check (#144) so it never runs on a close more than 5 KRX trading days old in
+    total (carried close age counts), instead of up to 10." — 늦은 데이터(pxDate 11-16)에서 11-13 종가로 실은 종목을 가진 포트폴리오는 11-20 (그
+    종가 뒤 5거래일) 까지 점검하고, 11-23 (6거래일) 에는 점검하지 않아요. 그 종목이 없는 포트폴리오는 예전처럼 11-23 (pxDate 뒤 5거래일) 까지."""
+    f = late_files([kr("005930", "삼성전자"), kr("094800", "맵스리얼티", d1=None, pxd=D13), us("AAPL", pxd="2026-11-13", d1=None)])
+    got = run("""
+const loadOf = (w) => LD.resolveLoad({ data: { ok: true, data: F0.data }, corp: { ok: true, data: F0.corp }, macro: { ok: false, error: 'x' } }, Date.parse(w));
+const ev = (w, decks) => { const ctx = R.todayCtx(loadOf(w), Date.parse(w), decks); const e = R.evaluateAll(decks, ctx);
+  return [e.ok, e.ok ? !!e.late : e.why, ctx.state.capped || null]; };
+const C1 = [CARRY], P1 = [PLAIN], U1 = [USD];
+WARN.splice(0);
+out = { fresh: ev('2026-11-17T09:00:00+09:00', C1), d20: ev('2026-11-20T09:00:00+09:00', C1), d23: ev('2026-11-23T09:00:00+09:00', C1),
+  plain23: ev('2026-11-23T09:00:00+09:00', P1), us23: ev('2026-11-23T09:00:00+09:00', U1), plain24: ev('2026-11-24T09:00:00+09:00', P1),
+  both23: ev('2026-11-23T09:00:00+09:00', [PLAIN, CARRY]), nodecks: R.todayCtx(loadOf('2026-11-23T09:00:00+09:00'), Date.parse('2026-11-23T09:00:00+09:00')).state,
+  warn: WARN.filter((w) => w.includes('last confirmed close')) };""",
+              F0=f, CARRY=held_deck(["005930", "094800"]), PLAIN=held_deck(["005930"]), USD=held_deck(["005930", "AAPL"]))
+    assert got["fresh"] == [True, False, None]                                 # 제때 발행: 늦은 점검이 아니에요 (그대로)
+    assert got["d20"] == [True, True, None]                                    # 11-13 종가 뒤 5거래일: 늦은 점검이 돌아요
+    assert got["d23"] == [False, "stale", {"t": "094800", "pxd": D13, "n": 6}]  # 6거래일: 점검하지 않아요 (예전 10일 → 이제 5일)
+    assert got["plain23"] == [True, True, None]                                # 그 종목이 없으면 예전처럼 pxDate 뒤 5거래일까지
+    assert got["plain24"] == [False, "stale", None]
+    assert got["us23"] == [True, True, None]                                   # 미국 pxd 는 그대로 (이번 변경은 국내 마지막 확인 종가)
+    assert got["both23"][0] is False                                           # 포트폴리오 모두 함께 (늦은 점검은 한 상태예요)
+    assert got["nodecks"]["ok"] is True and got["nodecks"]["late"]["n"] == 5   # 포트폴리오를 넘기지 않으면 예전 그대로
+    assert any("094800" in w and "more than 5 in total" in w for w in got["warn"]), got["warn"]
+
+
+@needs_node
+def test_aged_out_stocks_are_read_for_both_apps():
+    got = run("""
+const d = { stocks: [{ t: '005930' }], pxSrc: { own: { aged: [{ t: '300010', nk: '가', pxd: '2026-11-06' }, { t: '005930', nk: '삼성전자', pxd: '2026-11-06' }] } } };
+const m = D.ownAgedOf(d);
+WARN.splice(0);
+const bad = D.ownAgedOf({ stocks: [], pxSrc: { own: { aged: 'x' } } });
+out = { m: [...m.entries()], none: D.ownAgedOf({ stocks: [] }).size, old: D.ownAgedOf({ pxSrc: { own: {} } }).size, bad: bad.size, warn: WARN.slice() };""")
+    assert got["m"] == [["300010", {"nk": "가", "pxd": "2026-11-06"}]]       # 발행하는 종목(005930)은 그 목록에 있어도 빼요 (그 종목은 보여요)
+    assert got["none"] == 0 and got["old"] == 0 and got["bad"] == 0 and len(got["warn"]) == 1

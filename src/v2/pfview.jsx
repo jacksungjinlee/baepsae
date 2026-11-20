@@ -10,7 +10,7 @@ import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, HOLDING_SHADES, holdingShades } fro
 import { Icon } from "../ui/icons.jsx";
 import { Button, ListRow, StatStrip } from "../ui/components.jsx";
 import { C, fill, nf, mdText, wonText } from "./format.js";
-import { Card, Note, OwnCloseNote, tx } from "./ui.jsx";
+import { Card, Note, OwnCloseNote, KrAgedLine, tx } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { shownName } from "./legacy.js";
 import { isCompany, ownCloseGroups } from "./stocklist.js";
@@ -144,7 +144,7 @@ function WeightBar({ w, shade }) {
 // today: no line about today's rate or today's data and none of the numbers only they explain (with a stock missing from the
 // data: no value and no 원금 · 수익; with dollar costs at today's rate: no 원금 · 수익), no day's change on the rows and no
 // no-trade line, no 포트폴리오에서 빼기 (its reason is the missing line). The rule head and the weights stay.
-export function ImportedDeck({ deck, st, m: m0, openStock, byT, onRemove, onMore, onRules, onRecord = null, footer = null, home = false, pxDate = null, late = false }) {
+export function ImportedDeck({ deck, st, m: m0, openStock, byT, onRemove, onMore, onRules, onRecord = null, footer = null, home = false, pxDate = null, late = false, aged = null }) {
   const m = late && m0 && m0.absent && m0.absent.length ? { ok: false } : m0;
   const moneyLine = !!(m && m.ok && m.cost != null && !(late && m.usdToday));
   if (m !== m0) lateSay(`${deck.id}: the value, money put in and return are left out (${m0.absent.map((a) => a.t).join(", ")} missing from the data; the line that says so speaks of today's data)`);
@@ -194,6 +194,8 @@ export function ImportedDeck({ deck, st, m: m0, openStock, byT, onRemove, onMore
             {r.w != null && <WeightBar w={r.w} shade={shades[i] || HOLDING_SHADES[HOLDING_SHADES.length - 1]} />}
             {/* 2026-11-14 (Jack, design chat 2026-11-08): no change today, said under the row (its change stays empty, never 0.0%) */}
             {!late && !r.absent && r.s && <DayNote s={r.s} md={mdText((st && st.pxDate) || pxDate)} style={{ marginTop: SPACE(1) }} />}
+            {/* 2026-11-20 (Jack, a): left out past the age limit of its last confirmed close: his line under the row */}
+            {r.absent && <KrAgedLine aged={aged} t={r.t} style={{ marginTop: SPACE(1) }} />}
             {((r.absent && onRemove && !late) || (onRecord && r.t)) && (
               <div data-ui-v2="row-actions" style={{ display: "flex", gap: SPACE(2), flexWrap: "wrap", padding: `${SPACE(1)}px 0 ${SPACE(2)}px` }}>
                 {onRecord && r.t && <RecordButton name={r.nk} onClick={() => onRecord(r.t, r.nk)} />}

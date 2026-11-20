@@ -360,7 +360,7 @@ export function Footer() {
 // v19.1c (Jack, 2026-11-07): the note under a list or a total that includes a US stock priced at an earlier close (data.json
 // pxd): "AAPL 가격은 11월 4일 종가예요." (format.ownCloseText). groups: stocklist.js ownCloseGroups. Nothing when none is there.
 // 2026-11-19 (Jack): with a Korean stock at its last confirmed close among them, the note's sentences are separate pieces of the
-// same text (the names sentence, then his line; format.ownCloseParts); the words read the same. US-only notes as before.
+// same text (one per date, format.ownCloseParts; 2026-11-20 one line per Korean date); the words read the same. US-only notes as before.
 export function OwnCloseNote({ groups, style, ...rest }) {
   const text = groups && groups.length ? ownCloseText(groups) : null;
   if (!text) return null;
@@ -370,6 +370,14 @@ export function OwnCloseNote({ groups, style, ...rest }) {
       {parts ? parts.flatMap((p, i) => (i ? [" ", p] : [p])) : text}
     </Note>
   );
+}
+
+// 2026-11-20 (Jack, a): a held Korean stock left out because its last confirmed close is past the age limit (data.json
+// pxSrc.own.aged, load.aged): "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요." under its row. aged: load.aged (a Map). Nothing
+// for any other stock.
+export function KrAgedLine({ aged, t, style, ...rest }) {
+  if (!t || !aged || typeof aged.has !== "function" || !aged.has(t) || !C.app.krOwnAged) return null;
+  return <Note data-ui-v2="kr-aged" data-t={t} style={style} {...rest}>{C.app.krOwnAged}</Note>;
 }
 
 // 2026-11-19 (Jack): one Korean stock priced at its last confirmed close (data.json pxd): Jack's line with its own date, near

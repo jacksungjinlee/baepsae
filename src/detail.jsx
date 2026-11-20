@@ -18,7 +18,7 @@ import { loadJson, freshness, mergeStocks, mdOf, loadCorpOnce, krGrowthBasis, st
 import { SHOW_VERDICTS, SHOW_SCORE, SHOW_ER } from "./flags.js";
 import { ABOUT_URL } from "./links.js";
 // 2026-11-08 (Jack): 한국 PER · ROE 가 보이는 칸마다 한 줄 — DART 다시 읽기 전까지 (src/repair.js, src/fixnote.jsx)
-import { EpsFixLineLoaded, PxBadLine, PxBadOneLine, FIX_KR_OWN_CLOSE } from "./fixnote.jsx";
+import { EpsFixLineLoaded, PxBadLine, PxBadOneLine, krOwnCloseListLine } from "./fixnote.jsx";
 import { pxBadFull, pxBadHides } from "./repair.js";   // 2026-11-14 저녁: 52주는 보이는 종목의 비운 칸
 
 // 오늘 날짜 (YYYY-MM-DD) — 한국 날짜예요. 2026-11-12 (Jack): 예전에는 new Date().toISOString() 의 UTC 날짜를 써서, 한국 시간 00:00~09:00 에는
@@ -1139,16 +1139,17 @@ const T_STALE_LATE = { ko: "갱신이 늦어지고 있어요", en: "update is ru
 // 종목들 → 안내 문장들 (data.js ownCloseGroups: 날짜마다 한 묶음, 새 날짜 먼저). 기준일은 넘기지 않아요: pxd 는 기준일과 다를 때만
 // 있고(관문이 확인해요), 같아도 문장은 맞아요 (그 날짜의 종가니까요).
 // 2026-11-19 (Jack): 오늘 종가를 두 출처로 확인하지 못해 마지막 확인 종가(pxd)로 실은 국내 종목은 따로 묶여요 (data.js ownCloseGroups: kr ·
-// names): 한국어 화면은 한글 이름으로 같은 문장 + Jack 의 줄 "오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요." (fixnote.jsx
-// FIX_KR_OWN_CLOSE) · 영어 화면은 승인된 영어 문장만 (그 줄의 영어 글은 승인되지 않았어요). 미국 종목은 예전 그대로.
+// names): 2026-11-20 (Jack, b · c) 한국어 화면은 날짜마다 한 줄 "{한글 이름}: 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요."
+// (fixnote.jsx FIX_KR_OWN_CLOSE_LIST) · 영어 화면은 "{코드}: We couldn't confirm today's close, so this shows the {date} close."
+// (FIX_KR_OWN_CLOSE_EN). 미국 종목은 예전 그대로.
 // 예전 뱁새의 내장 국내 종목(BASE_STOCKS)에는 cls 가 없어요 (미국만 "us") — cls 가 없는 종목은 국내로 봐요 (pxd 는 국내 · 미국 종목에만 있어요).
 function ownCloseLines(lang, list) {
   const l = lang === "en" ? "en" : "ko";
   return ownCloseGroups((list || []).map((s) => (s && s.cls == null ? { ...s, cls: "kr" } : s)), null).map((g) => {
-    const names = g.kr && l === "ko" && Array.isArray(g.names) ? g.names : g.ts;
-    const line = T_OWN_CLOSE[l].replace("{names}", names.join(", ")).replace("{md}", mdOf(g.date, l));
-    return g.kr && l === "ko" ? line + " " + FIX_KR_OWN_CLOSE.replace("{date}", mdOf(g.date, "ko")) : line;
-  });
+    // 2026-11-20 (Jack, b · c): 국내 종목은 날짜마다 한 줄 "{이름}: 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요." · 영어 화면은 코드와 승인된 영어 문장
+    if (g.kr) return krOwnCloseListLine((l === "ko" && Array.isArray(g.names) ? g.names : g.ts).join(", "), g.date, l);
+    return T_OWN_CLOSE[l].replace("{names}", g.ts.join(", ")).replace("{md}", mdOf(g.date, l));
+  }).filter(Boolean);
 }
 const T_RATES_FAIL = { ko: "금리 데이터를 불러오지 못했어요.", en: "We couldn't load the interest-rate data." };
 // v17.5 리뷰 뒤 새 문구 (Jack 승인 대기): 베타·변동성을 모르는 종목 · 배당 정보가 없는 종목
