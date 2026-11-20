@@ -424,6 +424,11 @@ US_ADDED_SET = {"BTI", "ADC", "NNN", "MAIN", "WPC", "STAG", "EPR", "OHI", "ENB",
                 "AZN", "HSBC", "SAP", "NVS", "RIO", "BHP", "TTE", "DEO", "BUD", "SAN", "GSK"}
 US_COMPANY_SET |= US_ADDED_SET
 US_EXTRA_SET = US_ETF_SET | {"BRK-B", "TSM", "ASML", "BABA", "NVO", "SHOP"} | US_ADDED_SET     # = fetch_data.EXTRA_US
+# 2026-11-21 (Jack: "Yes, warn." · "one stock missing from a source never holds the publish"): 손으로 더한 종목이 목록에 없고 usExtraMissing 에도
+# 없으면 경고 (이름을 적어요). 이런 종목이 이 수를 넘으면 한 종목이 빠진 것이 아니라 두 목록이 어긋났거나 기록이 깨진 것이라 발행 실패 (check_us_extra).
+# Jack 의 상시 규칙 기본값 "more than 5" (2026-11-20) · 데이터 브랜치 발행 27번 (11-06 ~ 11-20 KST): 기록이 있는 11번 (11-14 부터) 모두 0곳 ·
+# 그 전 16번은 그때 목록의 39곳 모두 있음 → max(5, 3 × 0) = 5. 그 16번 파일에는 11-14 에 더한 28곳이 없어요 (이 실패가 잡는 목록 어긋남의 모습).
+US_EXTRA_QUIET_MAX = 5
 # 2026-11-15 (Jack: "fix Brown-Forman B …" · 더하기만): S&P 500 목록(FinanceDataReader)이 점을 지운 주식 종류 티커 → 야후 대시 꼴
 # (= fetch_data.US_CLASS_JOINED 의 바꾸기 · 따로 적어 테스트가 맞춰 봐요). 이 꼴은 야후에 없는 티커라 발행 목록에 있으면 안 돼요.
 US_CLASS_JOINED_SET = {"BRKB": "BRK-B", "BFB": "BF-B"}
@@ -4086,13 +4091,22 @@ def check_us_fcur_more(rep, data, us, pdata):
 
 def check_us_extra(rep, data, us, mode):
     """2026-11-14 (Jack, 2026-11-13 "Missing US stocks" · 더하기만): 손으로 더한 미국 종목(US_EXTRA_SET = fetch_data.EXTRA_US)은 오늘 목록에 있거나
-    (가격 > 0) data.json usExtraMissing 에 빠진 이유가 있어야 해요 — 조용히 사라지지 않게. 이유가 있으면 경고 (이름 · 이유), 이유 없이 빠지면 실패.
+    (가격 > 0) data.json usExtraMissing 에 빠진 이유가 있어야 해요 — 조용히 사라지지 않게. 이유가 있으면 경고 (이름 · 이유).
+    2026-11-21 (Jack: "Yes, warn." · "one stock missing from a source never holds the publish" · BF-B 줄(#149)과 같은 꼴): 목록에 행이 없고
+    usExtraMissing 에도 없는 종목은 경고 (이름 · '이유 없음') — 빠진 종목은 틀린 숫자를 보이지 않아요. 발행 실패는 그대로 셋:
+    ① 그런 종목이 US_EXTRA_QUIET_MAX(5)곳 넘게 (두 목록이 어긋났거나 기록이 깨짐 · 한 종목이 빠진 것이 아니에요),
+    ② 목록에 행이 있는데 가격이 없고 (0 · 빈 칸 · 숫자 아님) 이유도 없음 (앱이 그 종목을 가격 없이 보여요 · 파이프라인은 목록에 있는 종목에 이유를
+       적지 않아요) — data.json stocks 에 그 티커의 행이 있는데 미국 종목 행이 아닌 것 (cls 가 us 가 아님 · fund) 도 같아요 (빠진 것이 아니라 틀린
+       행이에요), ③ usExtraMissing 에 그 종목이 있는데 이유가 글이 아님 (null · 빈 글 · 숫자: 파이프라인은 늘 글을 적어요 — 기록이 깨짐).
     사이트 점검(live)은 실패 대신 경고예요: 종목을 더한 코드가 그 종목이 아직 없는 어제 파일 그대로 배포될 때 막지 않게. usExtraMissing 이 없는
-    파일(이 칸 전 발행본)은 발행 때 경고 · 점검 때 건너뛰어요."""
+    파일(이 칸 전 발행본)은 발행 때 경고 · 점검 때 건너뛰어요 (그대로)."""
     name = "손으로 더한 미국 종목 (EXTRA_US): 목록에 있거나 빠진 이유"
-    th = "모두 있어야 함 (빠지면 이유와 함께 경고 · 이유 없이 빠지면 실패)"
+    th = (f"모두 있어야 함 (빠지면 이유가 있든 없든 경고 · 실패는 이유 없이 빠진 종목 > {US_EXTRA_QUIET_MAX} · 목록에 있는데 가격이 없거나 "
+          "미국 종목 행이 아님 · 이유가 글이 아님, 사이트 점검은 경고)")
     rec = data.get("usExtraMissing")
     have = {s.get("t") for s in us if (num(s.get("price")) or 0) > 0}
+    tickers = {s.get("t") for s in us}
+    rows_t = tickers | {s.get("t") for s in data.get("stocks") or [] if isinstance(s, dict)}     # 미국 행이 아닌 행도 (cls · fund)
     gone = sorted(t for t in US_EXTRA_SET if t not in have)
     if not isinstance(rec, dict):
         if mode == "live":
@@ -4104,15 +4118,26 @@ def check_us_extra(rep, data, us, mode):
     why = {t: rec.get(t) for t in gone}
     told = [t for t in gone if isinstance(why[t], str) and why[t].strip()]
     silent = [t for t in gone if t not in told]
+    no_px_row = [t for t in silent if t in tickers]                     # ② 목록에 행이 있는데 가격이 없고 이유도 없음 → 발행 실패 (그대로)
+    not_us_row = [t for t in silent if t in rows_t and t not in tickers]   # ② 그 티커의 행이 미국 종목 행이 아님 → 발행 실패 (그대로)
+    bad_why = [t for t in silent if t not in rows_t and t in rec]       # ③ 기록에 있는데 이유가 글이 아님 (기록이 깨짐) → 발행 실패 (그대로)
+    quiet = [t for t in silent if t not in rows_t and t not in rec]     # 목록에도 기록에도 없음 → 경고 (Jack 2026-11-21) · ① 5곳 넘으면 발행 실패
+    many = len(quiet) > US_EXTRA_QUIET_MAX
     odd = sorted(str(t) for t in rec if t not in US_EXTRA_SET)          # 관문 목록에 없는 티커 (두 목록이 어긋남)
-    parts = ([f"이유 없이 빠짐 {len(silent)}: {_tickers(silent)}"] if silent else []) \
+    parts = ([f"목록에 있는데 가격이 없음 {len(no_px_row)}: {_tickers(no_px_row)}"] if no_px_row else []) \
+        + ([f"행이 미국 종목 행이 아님 {len(not_us_row)}: {_tickers(not_us_row)}"] if not_us_row else []) \
+        + ([f"이유가 글이 아님 {len(bad_why)}: {_tickers(bad_why)}"] if bad_why else []) \
+        + ([f"이유 없이 빠짐 {len(quiet)}" + (f" (> {US_EXTRA_QUIET_MAX})" if many else "") + f": {_tickers(quiet)}"] if quiet else []) \
         + ([f"빠짐 {len(told)}: " + " · ".join(f"{t} ({why[t]})" for t in told[:US_FCUR_SHOW])
             + (f" 외 {len(told) - US_FCUR_SHOW}곳" if len(told) > US_FCUR_SHOW else "")] if told else []) \
         + ([f"관문 목록에 없는 티커 {len(odd)}: {_tickers(odd)}"] if odd else [])
-    rep.add(name, not silent or mode == "live", f"{len(US_EXTRA_SET) - len(gone)} / {len(US_EXTRA_SET)} 있음" + "".join(f" · {x}" for x in parts),
-            th, warn=bool(gone or odd))
+    rep.add(name, not (no_px_row or not_us_row or bad_why or many) or mode == "live",
+            f"{len(US_EXTRA_SET) - len(gone)} / {len(US_EXTRA_SET)} 있음" + "".join(f" · {x}" for x in parts), th, warn=bool(gone or odd))
     if gone:
-        rep.detail("손으로 더한 미국 종목 중 오늘 없는 종목 (usExtraMissing)", [f"{t}: {why[t] if t in told else '이유 없음'}" for t in gone])
+        rep.detail("손으로 더한 미국 종목 중 오늘 없는 종목 (usExtraMissing)",
+                   [f"{t}: " + (why[t] if t in told else '목록에 있는데 가격이 없음 · 이유 없음' if t in no_px_row
+                                else '행이 미국 종목 행이 아님 · 이유 없음' if t in not_us_row
+                                else '이유가 글이 아님' if t in bad_why else '이유 없음') for t in gone])
 
 
 def own_drop_get(data, key):

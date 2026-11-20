@@ -266,7 +266,8 @@ value would show a wrong number."
 mapping). Checks on what a source sends (freshness, coverage, two-source agreement, must-have stocks) are not covered and keep
 their rules. One exception, by Jack's own answer (2026-11-20, verbatim): "Brown-Forman B: no, it becomes a warning; one stock missing
 from a source never holds the publish." So "주식 종류 티커로 들어온 미국 종목 (BF-B)" only warns when BF-B is missing, with or without a
-reason (see "US share-class tickers" below).
+reason (see "US share-class tickers" below). The same answer now covers the hand-added US stocks (#162, Jack 2026-11-21: "Yes,
+warn."): one missing with no reason warns; more than 5 still fails (see "US stocks added by hand (EXTRA_US)" below).
 
 **How it works.** The rule that picks the bad rows lives once, in `validate_data.py`. The daily run calls the same function on its
 in-memory data, drops or blanks those rows, logs them and records them in `data.json` `ownDrop`; the gate then checks the file.
@@ -1436,11 +1437,23 @@ has 10% of the sale proceeds withheld, and several Korean brokers restricted buy
 **Gate row "손으로 더한 미국 종목 (EXTRA_US): 목록에 있거나 빠진 이유".** Every `EXTRA_US` stock must be in the day's
 data, or named in `data.json` `usExtraMissing` with the reason the run left it out (Yahoo gave no prices, less than 60
 days of prices, a broken bar, a preferred share, a Korean company's US listing; if the run cannot tell, the reason says so
-and asks for a check). A named stock warns, with its reason. The publish fails only when a missing stock has no reason in
-the record at all: the run writes one for every stock it leaves out, so this catches a pipeline list that no longer matches
-the gate's own list (`US_EXTRA_SET`) or a broken record. A file without the record warns on a publish and is skipped by the
-site checks (deploy, watchdog), which also only warn on a missing reason, so code that adds a stock can go live before
-the next publish brings it in.
+and asks for a check). A named stock warns, with its reason.
+Since #162 (Jack, 2026-11-21: "Yes, warn.", under his 11-20 rule "one stock missing from a source never holds the publish",
+the same as BF-B in #149), a stock that is neither in the list nor in the record also only warns, named in the row ("이유 없이
+빠짐 n: …"), the gate log ("!! 경고 …" and the "!! 손으로 더한 미국 종목 중 오늘 없는 종목" list, "BTI: 이유 없음") and the run summary. A stock
+Yahoo doesn't send always had a reason, so this case means our own code lost the stock after the US list was built (no code
+does today); the limit below is Jack's standing rule for checks on our own processing (section above). The publish still
+fails, as before, when (1) more than 5 such stocks are missing with no reason (`US_EXTRA_QUIET_MAX`; the run writes a reason
+for every stock it leaves out, so that many means the pipeline's list no longer matches the gate's own list `US_EXTRA_SET`,
+or the record broke, not one stock missing. History, the 27 data-branch publishes 11-06 to 11-20 KST: the 11 with the record
+(from 11-14) had 0 of 67 missing; the 16 before had all 39 stocks of the list as it was then; so N = max(5, 3 × 0) = 5,
+Jack's default. The 16 older files lack the 28 added on 11-14, the kind of list mismatch this catches), (2) a stock's row is
+in the list without a price and the record gives no reason (the app would show it without a price), or data.json has a row
+for that ticker that is not a US stock row (`cls` not `us`, or `fund`: a wrong row, not a missing one), or (3) the record
+names the stock but its reason is not text (null, empty, a number: a broken record). Stocks named with a reason never fail,
+however many. A file without the record (or whose record is not an object) warns on a publish and is skipped by the site
+checks (deploy, watchdog), which only warn on everything above, so code that adds a stock can go live before the next
+publish brings it in.
 
 **Gate row "미국 상장 외국 회사: 회사 합계와 맞춘 PER·PBR·배당수익률만".** For the foreign companies in the US list that
 report in dollars (no `fcur`; the others are blanked by the currency rule, #114), the run compares Yahoo's per-share
