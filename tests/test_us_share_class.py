@@ -9,7 +9,8 @@ fetch_us(usListSym) 와 validate_data.py check_us_share_class. (네트워크 없
 - 나스닥 목록(네이버)의 종류 티커(GOOGL · GOOG · FOXA · FOX · NWSA · NWS · FWONK · LLYVK …)는 나스닥 자기 티커 그대로라 야후와 같아요 (바꾸지 않아요).
 - 바꾸지 못한 티커는 크게 남기고 기록(usListSym.unmapped)에 적어요 · S&P 500 목록 티커인데 야후가 가격을 하나도 주지 않으면 (점이 지워진 새 주식
   종류 티커의 모습) noPx, 처리하다 오류가 나면 spErr 에 적고 관문이 경고해요.
-- 관문: 이 바꾸기로 들어온 종목(BF-B)은 목록에 있거나 빠진 이유가 있어야 해요 (#126 의 EXTRA_US 줄과 같은 규칙).
+- 관문: 이 바꾸기로 들어온 종목(BF-B)은 목록에 있어야 해요. 빠지면 이유가 있든 없든 경고 (Jack 2026-11-20: "Brown-Forman B: no, it becomes a
+  warning; one stock missing from a source never holds the publish.") · 목록에 있는데 가격이 없으면 발행 실패 (틀린 값).
 
 표(US_CLASS_JOINED)에 줄을 더할 때 (RUNBOOK "US share-class tickers"): 이 파일에는 SP_ROWS 에 그 S&P 500 목록 행 하나만 더하면 돼요
 (test_every_table_row_has_a_fixture_row 가 알려 줘요). 다른 시험은 표에서 기대값을 만들어요.
@@ -34,7 +35,7 @@ from fixture_data import good_pair  # noqa: E402
 ROW1 = f"주식 종류 티커로 들어온 미국 종목 ({', '.join(sorted(V.US_CLASS_SET))}): 목록에 있거나 빠진 이유"
 ROW2 = "미국 목록 출처 티커 (주식 종류 · 점이 지워진 꼴)"
 N_ADDED = len(V.US_CLASS_SET)
-TH1 = "모두 있어야 함 (빠지면 이유와 함께 경고 · 이유 없이 빠지면 실패)"
+TH1 = "모두 있어야 함 (빠지면 이유가 있든 없든 경고 · 목록에 있는데 가격이 없으면 실패, 사이트 점검은 경고)"
 
 # 2026-11-15 FinanceDataReader StockListing("S&P500") 의 행 그대로 (위키백과 표의 BRK.B · BF.B 가 점이 지워진 채로).
 # 표(US_CLASS_JOINED)의 열쇠마다 그 S&P 500 목록 행이 여기 있어야 해요 — 표에 줄을 더하면 여기에도 한 줄.
@@ -581,13 +582,19 @@ def test_gate_missing_with_a_reason_warns_by_name():
 
 
 @pytest.mark.parametrize("why", [None, "", "  ", 3])
-def test_gate_missing_without_a_reason_fails_to_publish_and_warns_on_the_site(why):
+def test_gate_missing_without_a_reason_warns_but_a_listed_row_without_a_price_fails_to_publish(why):
+    """Jack (2026-11-20): "Brown-Forman B: no, it becomes a warning; one stock missing from a source never holds the publish." 목록에 행이 없으면
+    이유가 없어도 경고 (이름을 적어요). 행이 목록에 있는데 가격이 0 이면 틀린 값이 보여요 — 발행 실패 (예전 그대로) · 사이트 점검은 경고."""
     miss = {} if why is None else {"BF-B": why}
-    for us in (us_rows(drop={"BF-B"}), us_rows(drop={"BF-B"}, extra=[{"t": "BF-B", "cls": "us", "price": 0}])):   # 가격 0 도 빠진 것
-        rows, _ = run({"usListSym": rec(missing=miss)}, us)
-        assert rows[ROW1][3] == "FAIL" and "이유 없이 빠짐 1: BF-B" in rows[ROW1][1]
-        rows, _ = run({"usListSym": rec(missing=miss)}, us, "live")
-        assert rows[ROW1][3] == "WARN"
+    for mode in ("publish", "live"):
+        rows, rep = run({"usListSym": rec(missing=miss)}, us_rows(drop={"BF-B"}), mode)
+        assert rows[ROW1][3] == "WARN" and "이유 없이 빠짐 1: BF-B" in rows[ROW1][1]
+        assert ("주식 종류 티커로 들어온 미국 종목 중 오늘 없는 종목 (usListSym.missing)", ["BF-B: 이유 없음"]) in rep.details
+    us = us_rows(drop={"BF-B"}, extra=[{"t": "BF-B", "cls": "us", "price": 0}])                  # 가격 0 인 행이 목록에 있음
+    rows, _ = run({"usListSym": rec(missing=miss)}, us)
+    assert rows[ROW1][3] == "FAIL" and "목록에 있는데 가격이 없음 1: BF-B" in rows[ROW1][1] and "이유 없이 빠짐" not in rows[ROW1][1]
+    rows, _ = run({"usListSym": rec(missing=miss)}, us, "live")
+    assert rows[ROW1][3] == "WARN"
 
 
 def test_gate_without_the_record():
