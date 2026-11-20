@@ -49,6 +49,7 @@
 모든 장면에서 페이지 오류(pageerror) 0건. 인터넷 요청(글꼴·통계)은 막고 localhost 만 허용해요.
 """
 import argparse
+import collections
 import datetime as dt
 import functools
 import http.server
@@ -2549,11 +2550,131 @@ def _md(iso, lang):
     return f"{['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.month - 1]} {d.day}" if lang == "en" else f"{d.month}월 {d.day}일"
 
 
+def strip_kr_carries(f):
+    """2026-11-19 (리뷰 M-A): 발행 전 화면 검사는 진짜 데이터로 돌아요 (update-data.yml --data .). 2차 출처 날에는 진짜 데이터에 마지막 확인 종가로
+    실은 국내 종목(pxd)이 있어서, 안내 문장을 정확히 맞춰 보는 장면이 그 종목 때문에 실패하면 발행이 멈춰요. 그래서 그런 장면은 복사본(f)의 국내 종목 ·
+    기업분석 회사에서 pxd 를 지우고 (pxSrc.own 도 비우고) 장면이 스스로 심는 pxd 만으로 봐요. f 를 고쳐서 돌려줘요."""
+    for x in (f.get("data.json") or {}).get("stocks") or []:
+        if x.get("cls") == "kr":
+            x.pop("pxd", None)
+    for c in (f.get("corp.json") or {}).get("companies") or []:
+        c.pop("pxd", None)
+    src = (f.get("data.json") or {}).get("pxSrc")
+    if isinstance(src, dict) and isinstance(src.get("own"), dict):
+        src["own"] = {**src["own"], "codes": [], "n": 0}
+    return f
+
+
+REAL_KR_CARRIES = os.path.join(ROOT, "tests", "fixtures", "kr_own_close_real_1120.json")
+OWN_FIXTURE_PICKS = {"plain": "005930", "t": "000270"}   # 고정 데이터 (CI · 내 컴퓨터): 예전 그대로
+
+
+def kr_own_picks(f):
+    """2026-11-21 (Jack 의 새 규칙 · CLAUDE.md #154: 발행 전 화면 검사의 장면은 특정 종목 · 특정 날의 데이터에 기대지 않아요): 확인종가 장면들이
+    쓸 국내 종목을 그날 데이터에서 기준으로 골라요 (실제 데이터 --data 일 때만 · 고정 데이터는 OWN_FIXTURE_PICKS 와 기록한 줄 그대로).
+    기준: 국내 보통주 (코드 끝자리 0 · cls kr · 펀드 · ETF 아님) · 가격 · 이름 · 기업분석 회사 (corp.json) 가 있고 pxd 없음, 시가총액 큰 순.
+    - plain: 그 가운데 시가총액이 가장 큰 종목 (안내가 없어야 하는 종목)
+    - t: 기업분석의 두 지도 (3개월 수익률 지도: 업종마다 시가총액 상위 14 · 업종 상위 16 · r3 있음 · ROE × PBR 지도: pbr · roe 있음 · 1조 이상)
+      에 그려지는 종목 중 시가총액이 가장 큰 것 (plain 빼고 · 이름이 서로 겹치지 않게 — 이름으로 찾을 때 섞이지 않게)
+    - pref: plain 의 이름으로 시작하는 우선주 (이름으로 찾으면 함께 나와요) — 없으면 None
+    - small: 그 밖의 국내 보통주 셋 (시가총액 작은 쪽부터 — 기록한 11-20 의 세 종목처럼)
+    반환: dict (고를 수 없으면 그 칸이 None)."""
+    d = f["data.json"]
+    cby = {c.get("t"): c for c in (f.get("corp.json") or {}).get("companies") or []}
+
+    def common(x):
+        t = str(x.get("t") or "")
+        return (x.get("cls") == "kr" and len(t) == 6 and t.endswith("0") and not x.get("fund") and not x.get("etf") and x.get("pxd") is None
+                and (x.get("price") or 0) > 0 and isinstance(x.get("nk"), str) and x["nk"] and t in cby)
+    kr = sorted((x for x in d["stocks"] if common(x)), key=lambda x: -(cby[x["t"]].get("cap") or x.get("cap") or 0))
+    plain = kr[0] if kr else None
+    ok3 = [c for c in cby.values() if c.get("r3") is not None and (c.get("cap") or 0) >= 0.3]
+    sec = collections.defaultdict(list)
+    for c in ok3:
+        sec[c.get("s")].append(c)
+    top = sorted(sec.values(), key=lambda arr: -sum(c.get("cap") or 0 for c in arr))[:16]
+    drawn = {c["t"] for arr in top for c in sorted(arr, key=lambda c: -(c.get("cap") or 0))[:14]}
+    t = next((x for x in kr[1:] if x["t"] in drawn and cby[x["t"]].get("pbr") is not None and cby[x["t"]].get("roe") is not None
+              and (cby[x["t"]].get("cap") or 0) >= 1 and plain and plain["nk"] not in x["nk"] and x["nk"] not in plain["nk"]), None)
+    pref = next((x for x in d["stocks"] if plain and x.get("cls") == "kr" and x.get("pxd") is None and str(x.get("t") or "") != plain["t"]
+                 and isinstance(x.get("nk"), str) and x["nk"].startswith(plain["nk"]) and not str(x.get("t") or "").endswith("0")), None)
+    used = {y["t"] for y in (plain, t, pref) if y}
+    small = [x for x in reversed(kr) if x["t"] not in used][:3]
+    return {"plain": plain["t"] if plain else None, "t": t["t"] if t else None, "pref": pref["t"] if pref else None,
+            "big": t["t"] if t else None, "small": [x["t"] for x in small]}
+
+
+def with_kr_carries(files):
+    """진짜 데이터에 마지막 확인 종가 종목이 있는 날을 흉내 낸 복사본 (리뷰 M-A):
+    - 2026-11-20 시험 실행 44627568844 (진짜 2차 출처 날)가 실제로 실은 세 종목 (024070 WISCOM · 092070 디엔에프 · 100220 비상교육)의 data.json ·
+      corp.json 줄을 파이프라인이 쓴 모양 그대로 넣고 (tests/fixtures/kr_own_close_real_1120.json · 같은 코드의 줄은 바꿔요), pxSrc 도 그 실행처럼
+      (px 'daum+yahoo' · own 기록에 심은 종목 모두),
+    - 삼성전자우(005935 · '삼성전자'로 찾으면 나와요) · 삼성전기(009150 · 시가총액 1조 넘어 기업분석의 지도에 그려져요)에도 같은 모양으로 pxd 를 심어요
+      (data.json · corp.json, d1 · d1Why · noTrade · ntD1 없음). 그 종목이 없는 데이터면 국내 종목 중 앞에서 채워 둘.
+    pxd 는 이 데이터의 pxDate 하루 앞이에요 (그 실행과 같은 간격 · 고정 데이터는 날짜가 달라요).
+    2026-11-21 (CLAUDE.md #154): 실제 데이터(--data · 발행 전 화면 검사)에서는 특정 종목에 기대지 않아요 — 기록한 줄을 넣지 않고 그날 데이터에서
+    기준으로 고른 종목 (kr_own_picks: 작은 보통주 셋 · 그날 가장 큰 종목 이름으로 시작하는 우선주 · 지도에 그려지는 큰 종목) 에 같은 모양으로 심어요.
+    우선주가 없으면 크게 알리고 그 몫은 건너뛰어요 (실패하지 않아요)."""
+    f = json.loads(json.dumps(files, allow_nan=True))
+    d = f["data.json"]
+    day = _iso_minus(d["pxDate"], 1)
+    if REAL_DATA:
+        return _plant_kr_carries(f, day)
+    with open(REAL_KR_CARRIES, encoding="utf-8") as fh:
+        real = json.load(fh)
+    real_t = [x["t"] for x in real["stocks"]]
+    assert sorted(real_t) == sorted(real["own"]["codes"]) == sorted(c["t"] for c in real["companies"]), "진짜 실은 종목 파일의 세 목록이 달라요"
+    d["stocks"] = [x for x in d["stocks"] if x.get("t") not in real_t] + [{**x, "pxd": day} for x in real["stocks"]]
+    corp = f.get("corp.json") or {}
+    corp["companies"] = [c for c in corp.get("companies") or [] if c.get("t") not in real_t] + [{**c, "pxd": day} for c in real["companies"]]
+    kr = [x for x in d["stocks"] if x.get("cls") == "kr" and x.get("t") not in ("005930", "000270", *real_t)]
+    pref = [x for x in kr if x.get("t") in ("005935", "009150")]
+    want = (pref + [x for x in kr if x not in pref])[:2]                       # 둘 다 없거나 하나만 있으면 국내 종목 중 앞에서 채워요
+    cby = {c.get("t"): c for c in corp["companies"]}
+    for x in want:
+        x["pxd"] = day
+        for k in ("d1", "d1Why", "noTrade", "ntD1"):
+            x.pop(k, None)
+        if x.get("t") in cby:
+            cby[x["t"]]["pxd"] = day
+    codes = sorted(real_t + [x["t"] for x in want])
+    d["pxSrc"] = {**(d.get("pxSrc") if isinstance(d.get("pxSrc"), dict) else {}), "px": real["px"],
+                  "own": {**real["own"], "codes": codes, "n": len(codes)}}
+    planted = {x.get("t") for x in d["stocks"] if x.get("t") in codes and x.get("cls") == "kr" and x.get("pxd") == day and "d1" not in x}
+    assert len(codes) == 5 and planted == set(codes), (codes, sorted(planted))      # 심은 다섯 종목 모두 (진짜 데이터의 다른 pxd 종목과 상관없이)
+    return f
+
+
+def _plant_kr_carries(f, day):
+    """실제 데이터용 with_kr_carries (2026-11-21): kr_own_picks 로 고른 종목에 파이프라인이 싣는 모양 (pxd · d1 · d1Why · noTrade · ntD1 없음 ·
+    corp.json 회사에도 pxd) 으로 심고 pxSrc 를 2차 출처 날 · own 기록에 그 종목들로."""
+    d = f["data.json"]
+    pk = kr_own_picks(f)
+    want = list(pk["small"]) + [x for x in (pk["pref"], pk["big"]) if x]
+    if not pk["pref"]:
+        print(f"  · 확인종가 (실제 데이터): 그날 가장 큰 종목({pk['plain']}) 이름으로 시작하는 우선주가 없어 그 몫은 건너뛰어요", flush=True)
+    by = {x.get("t"): x for x in d["stocks"]}
+    cby = {c.get("t"): c for c in (f.get("corp.json") or {}).get("companies") or []}
+    for t in want:
+        by[t]["pxd"] = day
+        for k in ("d1", "d1Why", "noTrade", "ntD1"):
+            by[t].pop(k, None)
+        if t in cby:
+            cby[t]["pxd"] = day
+    codes = sorted(want)
+    d["pxSrc"] = {**(d.get("pxSrc") if isinstance(d.get("pxSrc"), dict) else {}), "px": "daum+yahoo",
+                  "own": {"v": 1, "max": 5, "n": len(codes), "codes": codes, "unconf": len(codes), "drop": {}, "dropEx": [],
+                          "bad": {"n": 0, "rows": []}}}
+    planted = {x.get("t") for x in d["stocks"] if x.get("t") in codes and x.get("pxd") == day and "d1" not in x}
+    assert len(codes) >= 3 and planted == set(codes), (codes, sorted(planted))
+    return f
+
+
 def scene_own_close(R, files):
     """v19.1c (Jack 승인 2026-11-07): 미국 종목이 앞선 종가(data.json pxd)일 때 — 열린 포트폴리오의 배너에 '{티커} 가격은 {날짜} 종가예요.'
     (날짜마다 한 줄, 새 날짜 먼저, 영어 '{티커}: priced at the {날짜} close.') · 종목 고르기 목록 위 같은 안내 · 주문 메모 · CSV 맨 아래
     '※ …' · JSON 의 그 종목 줄에 priceDate. 그 날짜가 없는 종목(삼성전자 · 다른 미국 종목)은 안내도 priceDate 도 없어요."""
-    f = json.loads(json.dumps(files, allow_nan=True))
+    f = strip_kr_carries(json.loads(json.dumps(files, allow_nan=True)))   # 2026-11-19: 진짜 데이터의 국내 마지막 확인 종가와 상관없이 (리뷰 M-A)
     d = f["data.json"]
     usd = d.get("usPxDate") or d["pxDate"]
     own = {"AAPL": _iso_minus(usd, 1), "NVDA": _iso_minus(usd, 1), "MSFT": _iso_minus(usd, 2)}
@@ -3406,6 +3527,209 @@ def scene_kst_dates(R, files):
     ctx.close(); srv.shutdown()
 
 
+# 2026-11-20 (시험 실행 44627568844 · 발행 전 화면 검사 실패): 예전 뱁새의 포트폴리오 화면은 머리줄의 EN · 한국어 단추를 누르면 한 박자 늦게 (React 가
+# 다음 일로 미룬 useEffect 에서) 자기 언어를 바꿔요. 장면이 누른 바로 뒤에 배너를 읽으면 GitHub 의 기계에서는 아직 바뀌기 전 글자를 읽었어요 (내 컴퓨터에서는
+# 늘 바뀐 뒤라 통과). 느린 화면(slow_screen): React 의 스케줄러가 맡긴 일(MessageChannel)을 SLOW_SCREEN_MS 늦게 돌려서, 그 사이를 어느 기계에서나 열어 둬요
+# — 바뀌기를 기다리지 않고 읽는 장면은 여기서 늘 실패해요 (고치기 전 장면으로 확인: 그 실행과 같은 네 줄이 실패). 앱의 글자 · 숫자는 그대로예요.
+SLOW_SCREEN_MS = 300
+SLOW_SCREEN_JS = """(() => {
+  const MC = window.MessageChannel;
+  if (!MC || window.__slowScreen) return;
+  window.__slowScreen = { ms: %d, n: 0 };
+  window.MessageChannel = function () {
+    const ch = new MC();
+    const post = ch.port2.postMessage.bind(ch.port2);
+    ch.port2.postMessage = (m) => { window.__slowScreen.n += 1; setTimeout(() => post(m), window.__slowScreen.ms); };
+    return ch;
+  };
+})();""" % SLOW_SCREEN_MS
+
+
+def slow_screen(ctx, page):
+    """그 창을 느린 화면으로 (위 SLOW_SCREEN_JS): 창의 모든 다음 페이지에 심고 지금 페이지를 다시 열어요. 다시 연 페이지에 심어졌는지 확인해요."""
+    ctx.add_init_script(SLOW_SCREEN_JS)
+    page.reload(wait_until="domcontentloaded")
+    assert page.evaluate("() => !!window.__slowScreen && window.__slowScreen.ms") == SLOW_SCREEN_MS, "느린 화면이 심어지지 않았어요"
+
+
+def slow_screen_used(page):
+    """느린 화면이 실제로 React 의 일을 늦췄는지 (지금 페이지에서 늦춘 횟수 > 0)."""
+    n = page.evaluate("() => (window.__slowScreen || {}).n || 0")
+    assert n > 0, "느린 화면이 심어졌는데 React 의 일을 하나도 늦추지 않았어요 (스케줄러가 MessageChannel 을 쓰지 않나요?)"
+
+
+def settled(page, js, want, what):
+    """브라우저 값(js)이 정확히 want 가 될 때까지 기다리고 (poll), SLOW_SCREEN_MS 뒤에도 그대로인지 다시 봐요 (잠깐 맞았다가 바뀌는 화면도 실패)."""
+    poll(page, js, lambda v: v == want, what)
+    page.wait_for_timeout(SLOW_SCREEN_MS)
+    got = page.evaluate(js)
+    assert got == want, f"{what} — 맞았다가 바뀌었어요: {got!r}"
+    return got
+
+
+def scene_kr_own_close(R, files, slow=False):
+    """2026-11-19 (Jack): 오늘 종가를 두 출처로 확인하지 못한 국내 종목은 마지막 확인 종가로 (data.json · corp.json pxd). 열린 포트폴리오의
+    배너와 종목 고르기 목록 위: 2026-11-20 (Jack, b) '{이름}: 오늘 종가를 확인하지 못해서 {날짜} 종가를 보여 드려요.' 한 줄 (영어 화면은 (c)
+    '{코드}: We couldn't confirm today's close, so this shows the {날짜} close.') · 첫 화면 성적표와 기업분석 머리: 가격 밑에 Jack 의 줄 그대로
+    (영어 성적표는 그 영어 문장) · 삼성전자(pxd 없음)는 그대로 · (a) 나이 상한을 넘어 잠시 뺀 종목의 기업분석: '찾지 못했어요' 대신 Jack 의 줄.
+    2026-11-20: 화면을 읽을 때는 그 글자가 될 때까지 기다리고 잠시 뒤 한 번 더 봐요 (settled) · 둘째 확인은 한국어 화면에서 시작해요 (앞 확인이 영어
+    화면에서 멈춰도) · slow=True 면 느린 화면으로 (slow_screen: 그 시험 실행의 실패를 어느 기계에서나 다시 보여 주는 조건)."""
+    f = strip_kr_carries(json.loads(json.dumps(files, allow_nan=True)))   # 진짜 데이터의 국내 마지막 확인 종가와 상관없이 (리뷰 M-A)
+    d = f["data.json"]
+    # 2026-11-21 (CLAUDE.md #154): 실제 데이터(발행 전 화면 검사)에서는 그날 데이터에서 기준으로 골라요 (kr_own_picks) · 고정 데이터는 예전 그대로
+    pk = kr_own_picks(f) if REAL_DATA else OWN_FIXTURE_PICKS
+    t, plain = pk["t"], pk["plain"]
+    if REAL_DATA and not (t and plain):
+        none_today(R, "국내 마지막 확인 종가", "기업분석 지도에 그려지는 국내 보통주가", "(kr_own_picks 의 기준을 확인하세요)")
+        return
+    day = _iso_minus(d["pxDate"], 1)
+    by = {s.get("t"): s for s in d["stocks"]}
+    cby = {c.get("t"): c for c in f["corp.json"]["companies"]}
+    assert t in by and t in cby and by[t].get("cls") == "kr" and plain in by and plain in cby, "시험할 국내 종목이 데이터에 없어요"
+    plain_nk = by[plain]["nk"]
+    nowhere = next(c for c in (f"{n:06d}" for n in range(999990, 900000, -10)) if c not in by and c not in cby)   # 데이터에 없는 코드
+    by[t]["pxd"] = day
+    for k in ("d1", "d1Why", "noTrade", "ntD1"):                          # 파이프라인이 싣는 모양 그대로 (오늘 변화 · 그 이유 없음)
+        by[t].pop(k, None)
+    cby[t]["pxd"] = day
+    nk = by[t]["nk"]
+    line = f"오늘 종가를 확인하지 못해서 {_md(day, 'ko')} 종가를 보여 드려요."
+    want_ko = f"{nk}: {line}"                                                          # Jack, 2026-11-20 (b): 목록은 한 줄
+    en_line = f"We couldn't confirm today's close, so this shows the {_md(day, 'en')} close."   # Jack, 2026-11-20 (c)
+    want_en = f"{t}: {en_line}"
+    # Jack, 2026-11-20 (a): 나이 상한을 넘어 잠시 뺀 종목 하나 (data.json · corp.json 에서 빼고 pxSrc.own.aged 에 이름과 함께)
+    aged_line = "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요."
+    with open(REAL_KR_CARRIES, encoding="utf-8") as fh:
+        taken = {plain, t, "005935", "009150"} | {x["t"] for x in json.load(fh)["stocks"]}    # 다른 확인종가 장면이 심는 종목은 빼고
+    gone = next(c for c in f["corp.json"]["companies"] if c.get("t") not in taken and by.get(c.get("t"), {}).get("cls") == "kr")["t"]
+    d["stocks"] = [x for x in d["stocks"] if x.get("t") != gone]
+    f["corp.json"]["companies"] = [c for c in f["corp.json"]["companies"] if c.get("t") != gone]
+    d["pxSrc"] = {**(d.get("pxSrc") if isinstance(d.get("pxSrc"), dict) else {}), "px": "daum+yahoo"}
+    d["pxSrc"]["own"] = {**(d["pxSrc"].get("own") if isinstance(d["pxSrc"].get("own"), dict) else {"v": 1, "max": 5, "drop": {}, "dropEx": [],
+                                                                                                  "bad": {"n": 0, "rows": []}}),
+                         "codes": [t], "n": 1, "aged": [{"t": gone, "nk": by[gone].get("nk") or gone, "pxd": _iso_minus(d["pxDate"], 9)}]}
+    slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": plain, "mw": 300}, {"t": t, "mw": 200}]}
+    srv, ctx, page, base = R.open(build_site(f), local=slot_local([("skrown", "국내 확인 종가 시험", slot)]), once=True)
+    S = "국내 마지막 확인 종가" + (" · 느린 화면" if slow else "")
+    if slow:
+        slow_screen(ctx, page)
+    BANNER = "() => [...document.querySelectorAll('.nonLiveBanner [data-own-close]')].map((e) => e.innerText)"
+    NOTE = "() => [...document.querySelectorAll('.ownCloseNote')].map((e) => e.innerText.trim())"
+
+    def banner_is(want, what):
+        page.locator(".nonLiveBanner").first.wait_for(state="visible", timeout=WAIT)
+        settled(page, BANNER, want, what)
+
+    def portfolio():
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        page.get_by_text("국내 확인 종가 시험", exact=False).first.click()
+        see(page, "보통 해 ±")
+        banner_is([want_ko], "한국어 배너")
+        box = page.get_by_placeholder("종목명·코드 검색")
+        box.fill(nk)
+        page.locator(".ownCloseNote").wait_for(state="visible", timeout=WAIT)
+        settled(page, NOTE, [want_ko], "종목 고르기 목록 위 안내")
+        box.fill(plain_nk)
+        page.wait_for_timeout(300)
+        settled(page, NOTE, [], "pxd 없는 종목만 보이는데 안내가 있어요")
+        box.fill("")
+        page.get_by_role("button", name="EN", exact=True).first.click()
+        banner_is([want_en], "영어 배너: 승인된 영어 문장만")
+        page.get_by_role("button", name="한국어", exact=True).first.click()
+        banner_is([want_ko], "한국어로 되돌린 배너")
+        if slow:
+            slow_screen_used(page)
+    R.check(page, S, "포트폴리오 배너 · 종목 고르기: '{이름}: ' + Jack 의 줄 한 줄 · 영어는 '{코드}: ' + 승인된 영어 문장", portfolio)
+
+    SHOWN = """() => [...document.querySelectorAll('[data-fix="kr-own-close"]')].filter((e) => e.getBoundingClientRect().height > 0)
+          .map((e) => [e.innerText.trim(), parseFloat(getComputedStyle(e).fontSize)])"""
+
+    def one_line(text, what):
+        """보이는 data-fix="kr-own-close" 줄이 정확히 하나 · 그 글자 · 12px 이상 (그렇게 될 때까지 기다리고 잠시 뒤 한 번 더)."""
+        def ok(v):
+            return len(v) == 1 and v[0][0] == text and v[0][1] >= 12
+        poll(page, SHOWN, ok, what)
+        page.wait_for_timeout(SLOW_SCREEN_MS)
+        got = page.evaluate(SHOWN)
+        assert ok(got), f"{what} — 맞았다가 바뀌었어요: {got!r}"
+
+    def korean(url):
+        """한국어 화면에서 시작해요: 앞 확인이 영어 화면에서 멈췄으면 머리줄의 언어(localStorage baepsae_lang)가 영어로 남아 있어요 (2026-11-20 시험
+        실행의 둘째 실패 · 리뷰 S2: 그 뒤 확인마다). 언어는 첫 화면에서 정하고 그다음 url 을 열어요 (바로가기 #corp=… 는 처음 열 때 한 번만 읽혀서
+        다시 불러오면 첫 화면이에요)."""
+        page.goto("about:blank")
+        page.goto(base + "/baepsae.html?dev=1&from=app", wait_until="domcontentloaded")
+        page.evaluate("() => localStorage.setItem('baepsae_lang', 'ko')")
+        page.goto("about:blank")
+        page.goto(url, wait_until="domcontentloaded")
+
+    def cards():
+        korean(base + "/baepsae.html?dev=1&from=app")
+        close_welcome(page, "시작하기")
+        search(page, nk, t)
+        page.locator("button", has_text=t).first.click()
+        see(page, "사실의 요약일 뿐")
+        one_line(line, "첫 화면 성적표: 가격 밑에 Jack 의 줄")
+        page.goto("about:blank")
+        page.goto(base + f"/baepsae.html?dev=1&from=app#corp={t}", wait_until="domcontentloaded")
+        see(page, "밸류에이션 멀티플 · 업종 사분위 대비")
+        one_line(line, "기업분석 머리: 가격 · 시가총액 밑에 Jack 의 줄")
+        page.goto("about:blank")
+        page.goto(base + f"/baepsae.html?dev=1&from=app#corp={plain}", wait_until="domcontentloaded")
+        see(page, "밸류에이션 멀티플 · 업종 사분위 대비")
+        for _ in range(2):                                      # 바로 한 번 · 잠시 뒤 한 번 (늦게 나타나는 줄도 잡게)
+            assert page.evaluate(SHOWN) == [] and "오늘 종가를 확인하지 못해서" not in page.locator("body").inner_text()
+            page.wait_for_timeout(SLOW_SCREEN_MS)
+        # 영어 첫 화면 성적표 (리뷰 M4): 승인된 영어 문장으로 그 종목과 날짜 ('{코드}: priced at the {날짜} close.')
+        page.goto("about:blank")
+        page.goto(base + "/baepsae.html?dev=1&from=app", wait_until="domcontentloaded")
+        page.get_by_role("button", name="EN", exact=True).first.click()
+        box = page.get_by_placeholder("Search a KRX stock — name or 6-digit code")
+        box.fill(t)
+        page.locator("button", has_text=t).first.wait_for(state="visible", timeout=WAIT)
+        page.locator("button", has_text=t).first.click()
+        see(page, "A summary of facts")
+        one_line(en_line, "영어 첫 화면 성적표: 승인된 영어 문장 (Jack, 2026-11-20 c)")
+        page.get_by_role("button", name="한국어", exact=True).first.click()
+        if slow:
+            slow_screen_used(page)
+    R.check(page, S, f"첫 화면 성적표 · 기업분석 머리 ({t}): 가격 밑에 Jack 의 줄 그대로 (12px 이상) · {plain}(pxd 없음)는 그대로 · 영어 성적표는 승인된 영어 문장", cards)
+
+    def market_map():
+        """기업분석 시장 지도 (리뷰 M3): 3개월 수익률 지도 · ROE × PBR 지도 (· 성장 지도에 그 회사가 있으면 그 밑에도) — 그린 회사 중 마지막 확인 종가
+        회사가 있으면 '{이름} 가격은 {날짜} 종가예요.' 다음에 Jack 의 줄."""
+        korean(base + f"/baepsae.html?dev=1&from=app#corp={plain}")
+        see(page, "밸류에이션 멀티플 · 업종 사분위 대비")
+        page.get_by_role("button", name="시장 지도", exact=True).first.click()
+        see(page, "최근 3개월 수익률 지도")
+        js = """() => [...document.querySelectorAll('[data-fix="kr-own-close-list"]')].filter((e) => e.getBoundingClientRect().height > 0)
+          .map((e) => [e.innerText.trim(), parseFloat(getComputedStyle(e).fontSize)])"""
+
+        def ok(v):
+            return len(v) >= 2 and all(x[0] == want_ko and x[1] >= 12 for x in v)
+        poll(page, js, ok, "시장 지도 밑 줄")
+        page.wait_for_timeout(SLOW_SCREEN_MS)
+        got = page.evaluate(js)
+        assert ok(got), got
+        if slow:
+            slow_screen_used(page)
+    R.check(page, S, "기업분석 시장 지도: 3개월 수익률 지도 · ROE × PBR 지도 밑에 '{이름}: ' + Jack 의 줄 한 줄", market_map)
+
+    def aged():
+        """Jack (2026-11-20, a): 마지막 확인 종가가 5거래일을 넘어 잠시 뺀 종목 (pxSrc.own.aged) 의 기업분석: '이 종목의 데이터를 찾지 못했어요.' 대신
+        '며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요.' (12px 이상) · 그 목록에 없는 코드는 예전 그대로."""
+        js = """() => [...document.querySelectorAll('[data-fix="kr-aged"]')].filter((e) => e.getBoundingClientRect().height > 0)
+          .map((e) => [e.innerText.trim(), parseFloat(getComputedStyle(e).fontSize)])"""
+        korean(base + f"/baepsae.html?dev=1&from=app#corp={gone}")
+        poll(page, js, lambda v: len(v) == 1 and v[0][0] == aged_line and v[0][1] >= 12, "잠시 뺀 종목의 기업분석 줄")
+        assert "이 종목의 데이터를 찾지 못했어요" not in page.locator("body").inner_text()
+        korean(base + f"/baepsae.html?dev=1&from=app#corp={nowhere}")
+        see(page, "이 종목의 데이터를 찾지 못했어요.")
+        assert page.evaluate(js) == [] and aged_line not in page.locator("body").inner_text()
+    R.check(page, S, "잠시 뺀 종목 (5거래일이 지남): 기업분석에서 '찾지 못했어요' 대신 Jack 의 줄 · 다른 코드는 그대로", aged)
+    ctx.close(); srv.shutdown()
+
+
 def scene_list(R, fresh, full):
     """모든 장면을 순서대로 (이름, 함수). 함수는 부를 때만 돌아요 — 목록을 만드는 것만으로는 아무것도 하지 않아요 (--part 시험)."""
     return [("정상", lambda: scene_normal(R, fresh, full)), ("멈춤", lambda: scene_stale(R, fresh)),
@@ -3423,7 +3747,13 @@ def scene_list(R, fresh, full):
             ("날짜", lambda: scene_kst_dates(R, fresh)),                                                                    # 2026-11-12 한국 날짜
             ("예전줄", lambda: scene_old_app_lines(R, fresh)),                                                              # 2026-11-14 Jack Q3
             ("주가기록", lambda: scene_px_bad(R, fresh)),                                                                  # 2026-11-14 과거 주가 기록 오류
-            ("미국종가", lambda: scene_us_close(R, fresh))]                                                                # 2026-11-19 첫 화면의 미국 종가 날짜
+            ("확인종가", lambda: scene_kr_own_close(R, fresh)),                                                            # 2026-11-19 국내 마지막 확인 종가
+            ("확인종가", lambda: scene_kr_own_close(R, with_kr_carries(fresh))),                                           # 리뷰 M-A: 진짜 데이터에 마지막 확인 종가가 있는 날
+            ("미국날짜", lambda: scene_own_close(R, with_kr_carries(fresh))),                                          # 리뷰 M-A: 같은 날의 미국 자기 날짜 장면
+            ("미국종가", lambda: scene_us_close(R, fresh))] + (                                                          # 2026-11-19 첫 화면의 미국 종가 날짜
+        # 2026-11-20 시험 실행 44627568844: 느린 화면 — 장면 자체를 시험해요 (앱이 아니라). 그래서 고정 데이터(CI · 내 컴퓨터)에서만 돌고, 매일의 발행 전
+        # 화면 검사(--data · REAL_DATA)에서는 돌지 않아요 (리뷰 S3: 발행을 막을 수 있는 확인을 늘리지 않게)
+        [] if REAL_DATA else [("확인종가", lambda: scene_kr_own_close(R, with_kr_carries(fresh), slow=True))])
 
 
 def parse_part(text):
@@ -3449,7 +3779,7 @@ def main():
                     "고정 데이터 tests/fixtures/snapshot 을 그 발행일에 멈춘 시계로 — CI 는 이쪽이에요")
     ap.add_argument("--shots", default=None, help="실패 시 스크린샷을 저장할 폴더")
     ap.add_argument("--part", default=None, help="N/M: 장면을 순서대로 M 몫으로 나눈 것 중 N 번째만 (CI 가 여러 기계로 나눠 돌려요)")
-    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커·2.0링크·바로가기·파일·자동·저장본·미국날짜·늦음·고치는중·다시읽음·날짜·예전줄·주가기록·미국종가)")
+    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커·2.0링크·바로가기·파일·자동·저장본·미국날짜·늦음·고치는중·다시읽음·날짜·예전줄·주가기록·확인종가·미국종가)")
     args = ap.parse_args()
     if args.part is not None:
         parse_part(args.part)                                   # 잘못 적으면 브라우저를 열기 전에 멈춰요

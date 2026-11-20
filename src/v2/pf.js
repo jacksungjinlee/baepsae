@@ -547,7 +547,8 @@ export function importedRecord({ drafts, load, settings, id, name, today }) {
     const scored = (s.cls === "kr" || s.cls === "us") && inUni(load.data.stocks, s) && isStockLike(s);
     const base = { t: s.t, nk: s.nk, ccy, ...(num(d.avg) > 0 ? { avg: d.avg } : {}), ...(scored ? {} : { unscored: true }) };
     if (d.mode === "amount") {
-      const date = usdOf(s) ? (DATE.test(s.pxd || "") ? s.pxd : load.data.usPxDate) : load.data.pxDate;
+      // 2026-11-19 (Jack): a Korean stock at its last confirmed close (pxd) is valued at that close, so the amount is dated with it too
+      const date = DATE.test(s.pxd || "") ? s.pxd : usdOf(s) ? load.data.usPxDate : load.data.pxDate;
       imported.push({ ...base, amountWon: d.amountWon, close: s.price, date, ...(ccy === "USD" ? { fx } : {}) });
     } else imported.push({ ...base, qty: d.qty });
   }
