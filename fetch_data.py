@@ -88,7 +88,7 @@ from validate_data import D1_WHY, MUST as GATE_MUST
 # 2026-11-19 (Jack 규칙 3): 공식 종가의 두 출처 — 출처 이름 · 야후 접미어 · 1차 출처 표본 (관문 파일에 있어요 · 따로 바뀌지 않게)
 from validate_data import PX_SRC_LISTING, PX_SRC_FB, PX_YAHOO_SUFFIX, PX_CHECK_SAMPLE, px_check_sample
 # 2026-11-20 (Jack, 2026-11-19 답 5): 코넥스만 야후 .KQ × 네이버 — 출처 이름 · 시장 · 야후 접미어도 관문 파일에서
-from validate_data import PX_SRC_KNX, PX_KNX_MARKET, PX_KNX_YAHOO_SUFFIX
+from validate_data import PX_SRC_KNX, PX_KNX_MARKET, PX_KNX_YAHOO_SUFFIX, KNX_NOYAHOO_WARN, KNX_DIFF_WARN
 # 2026-11-14 (Jack, Q2 (a)): 그 움직임이 있는 종목에서 비우는 칸 목록도 관문 파일에 있어요 (관문이 같은 목록으로 비었는지 봐요)
 from validate_data import PX_BAD_DATA, PX_BAD_MUST_FAIL, PX_BAD_WIN, PX_BAD_WIN_BARS, PX_BAD_ALWAYS
 # 2026-11-14 (Q5 리뷰 S1 · S2): 외국 회사 검사의 '맞춰 볼 값이 없음' 스위치와 그 사유 글, S&P 500 목록을 믿을 최소 겹침도 관문 파일에 있어요
@@ -789,7 +789,7 @@ def kr_fb_confirm(day, universe, daum, yahoo, must=GATE_MUST, tol=KR_FB_CLOSE_TO
             st["noYahoo"].append(code)
             continue
         if abs(y - row["Close"]) > tol:
-            st["diff"].append((code, str(u.get("Name") or ""), row["Close"], y))
+            st["diff"].append((code, _txt(u.get("Name")), row["Close"], y))     # 2026-11-20 (검증 리뷰): 빈 이름이 'nan' 글자로 pxSrc 에 가지 않게
             continue
         rows.append(row)
         st["conf"] += 1
@@ -1282,7 +1282,7 @@ def kr_knx_confirm(day, universe, yahoo, naver, tol=KR_FB_CLOSE_TOL):
             continue
         seen.add(code)
         st["n"] += 1
-        st["names"][code] = str(u.get("Name") or "")
+        st["names"][code] = _txt(u.get("Name"))     # 빈 이름 (NaN) 이 'nan' 글자로 pxSrc.fb.knx.diffEx 에 가지 않게 (관문 글자 검사 · 검증 리뷰)
         nr = (naver.get(code) or {}).get(day)
         if nr is None:
             st["noNaver"].append(code)
@@ -1329,10 +1329,10 @@ def kr_knx_cap_keep(kfr, floor):
 
 
 def kr_knx_note(d, kst, names=None):
-    """코넥스 2차 출처 한 줄 (크게 남길지, 글) — 빠진 종목을 모두 이름과 까닭으로 (코넥스는 많아야 100여 종목). 하나라도 빠지거나 시간 한도에
-    걸리면 크게 (!!). (2026-11-20 · 순수 함수)"""
+    """코넥스 2차 출처 한 줄 (크게 남길지, 글) — 빠진 종목을 모두 이름과 까닭으로 (코넥스는 많아야 100여 종목). 크게 (!!) 는 예상하지 못한 때만
+    (아래 unusual · 관문 줄과 같은 기준). (2026-11-20 · 순수 함수)"""
     nm = dict(kst.get("names") or {})
-    nm.update({k: v for k, v in (names or {}).items() if v})
+    nm.update({k: _txt(v) for k, v in (names or {}).items() if _txt(v)})
 
     def ex(codes):
         return ", ".join(f"{c} {nm.get(c, '')}".strip() for c in codes)
@@ -1361,7 +1361,12 @@ def kr_knx_note(d, kst, names=None):
     if hit:
         txt += (f" — !! 시간 한도 {int(cut.get('s') or 0)}초로 묻지 못한 종목 (야후 일봉 {int(cut.get('yahoo') or 0):,} · 야후 다시 읽기 "
                 f"{int(cut.get('fill') or 0):,} · 네이버 {int(cut.get('naver') or 0):,}) 이 위 '야후 종가 없음' · '네이버 행 없음' 에 들어 있어요")
-    return bool(left or hit or cap_out or ("kept" in kst and kst.get("floor") is None)), txt
+    # 크게 (!!) 는 예상하지 못한 때만 (검증 리뷰): 네이버 행 없음 · 값 못 믿음 · 야후 없음이 평소보다 많음 · 다름이 평소보다 많음 · 확인이 절반 아래 ·
+    # 시간 한도 · 시가총액 기준을 모름 (관문 '코넥스 종가 두 출처' 줄과 같은 기준). 평소의 빠짐 (야후에 없는 11종목 · 거래 없는 날 다름 3 ~ 9 ·
+    # 시가총액 기준 아래) 은 이름과 까닭을 그대로 적고 '·' 줄로 남겨요.
+    unusual = bool(kst["noNaver"] or kst["bad"] or len(kst["noYahoo"]) > KNX_NOYAHOO_WARN or len(kst["diff"]) > KNX_DIFF_WARN
+                   or (kst["n"] and kst["conf"] < kst["n"] / 2) or hit or ("kept" in kst and kst.get("floor") is None))
+    return unusual, txt
 
 
 KNX_CUT_KEYS = ("s", "yahoo", "fill", "naver")
@@ -1399,13 +1404,13 @@ def kr_knx_check(listing, px_date, naver, codes=None):
         nv = _fin(nr.get("closePrice")) if isinstance(nr, dict) else None
         if off is None or nv is None or nv <= 0:
             out["none"] += 1
-            out["noneEx"].append(f"{c} {rows[c].get('Name', '')}")
+            out["noneEx"].append(f"{c} {_txt(rows[c].get('Name'))}".strip())
             continue
         out["n"] += 1
         if abs(nv - off) <= KR_FB_CLOSE_TOL:
             out["same"] += 1
         else:
-            out["diff"].append(f"{c} {rows[c].get('Name', '')} {off:.0f}/{nv:.0f}")
+            out["diff"].append(f"{c} {_txt(rows[c].get('Name'))} {off:.0f}/{nv:.0f}")
     return out
 
 
@@ -1562,7 +1567,7 @@ def kr_fallback_days(days, universe_of, now, special, fetch_daum=fetch_daum_all,
             notes.append(f"!! 코넥스 시가총액 기준을 정할 수 없어요 — 1차 출처 최종본에서 시가총액을 아는 종목이 {len([1 for v in (caps or {}).values() if _cap_ok(v)]):,}개로 "
                          f"{MAX_KR:,}개보다 적어요 → 그날 파일에 코넥스를 더하지 않아요 (확인은 그대로 남겨요)")
         else:
-            notes.append(f"!! 코넥스 시가총액 기준 (평소 날처럼 시가총액 상위 {MAX_KR:,} 안의 코넥스만 그날 파일에 · 국내 종목 수 바닥이 평소와 같게): "
+            notes.append(f"코넥스 시가총액 기준 (평소 날처럼 시가총액 상위 {MAX_KR:,} 안의 코넥스만 그날 파일에 · 국내 종목 수 바닥이 평소와 같게): "
                          f"1차 출처 최종본의 {MAX_KR:,}번째 시가총액 {floor / 1e8:,.0f}억원 이상 — 날마다 넣은 수와 뺀 종목은 아래 '코넥스 2차 출처' 줄")
         try:
             kn = kr_knx_phases(kcm, unis, now, special, knx, must, caps, notes, say)
@@ -1699,7 +1704,7 @@ def kr_primary_check(listing, px_date, yahoo, sample=PX_CHECK_SAMPLE, must=GATE_
         if abs(y - off) <= KR_FB_CLOSE_TOL:
             out["same"] += 1
         else:
-            out["diff"].append(f"{c} {rows[c].get('Name', '')} {off:.0f}/{y:.2f}")
+            out["diff"].append(f"{c} {_txt(rows[c].get('Name'))} {off:.0f}/{y:.2f}")     # 2026-11-20 (검증 리뷰): 빈 이름이 'nan' 글자로 가지 않게
     return out
 
 

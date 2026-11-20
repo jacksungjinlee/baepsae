@@ -629,9 +629,11 @@ If the KONEX stage itself breaks (an unexpected error, not a source that doesn't
 row below then warns "코넥스 단계를 묻지 않았어요".
 
 A KONEX stock is confirmed when Yahoo's close (the value used) and Naver's close (the check) agree to the won
-(`KR_FB_CLOSE_TOL`). Otherwise it is left out, exactly like a KOSPI/KOSDAQ stock with one source or two that disagree: the log says
-so loudly with every name and the reason ("!! … 코넥스 2차 출처(야후 .KQ × 네이버 종가 원 단위까지 같음): 확인 a / b종목 · 빠짐 …
-— 다름: … — 야후 종가 없음: …"). Expected every day: the 11 KONEX stocks Yahoo does not carry (496320 본시스템즈, 238540 나노솔루션,
+(`KR_FB_CLOSE_TOL`). Otherwise it is left out, exactly like a KOSPI/KOSDAQ stock with one source or two that disagree: the log line
+"… 코넥스 2차 출처(야후 .KQ × 네이버 종가 원 단위까지 같음): 확인 a / b종목 · 빠짐 … — 다름: … — 야후 종가 없음: …" names every stock left
+out with the reason. It is a plain "·" line on a usual day and a loud "!!" line only for the unexpected, by the same rules as the gate
+row below: a missing Naver bar, an unreadable value, more Yahoo gaps or disagreements than usual, fewer than half confirmed, the time
+limit, or no cut-off. Expected every day: the 11 KONEX stocks Yahoo does not carry (496320 본시스템즈, 238540 나노솔루션,
 0077H0, 495810 유비씨, 0203K0 송우인포텍, 0230E0, 059180 엔더블유시, 0070X0, 403810, 476710, 332190) and 3–9 stocks on a day when KRX
 moved the reference price without a trade (Yahoo keeps the last traded price: EMB 11-16, Naver 2,715 · Yahoo 2,895). On the live
 check of 2026-11-20 (pxDate 11-10 … 11-19): 87–93 of 107 confirmed each day, and on the five final days every confirmed close equalled
@@ -647,7 +649,7 @@ floor (2,300) would trip about 70 stocks later than on a normal day (91 confirme
 asked in time leaves 2,240; all KONEX would make it 2,347 and publish with about 230 normally-published stocks missing all day; with
 this rule it is 2,270 and the floor stops the publish, as it does without KONEX. When the last final file has fewer than 2,500 known
 market caps the rule cannot be set, so no KONEX stock is added that day (loud: "!! 코넥스 시가총액 기준을 정할 수 없어요"). The log
-names the cut-off once ("!! 코넥스 시가총액 기준 … 2,500번째 시가총액 …억원 이상") and, per day, how many confirmed KONEX stocks went
+names the cut-off once ("· 코넥스 시가총액 기준 … 2,500번째 시가총액 …억원 이상") and, per day, how many confirmed KONEX stocks went
 in and which were left out under the cut-off ("그날 파일에 넣은 코넥스 k … · 확인됐지만 시가총액 기준 아래라 뺀 m: …").
 
 What this changes for KOSPI/KOSDAQ, plainly: their prices, sources, checks and asking order are unchanged, but which of them are

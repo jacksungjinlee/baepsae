@@ -188,7 +188,15 @@ def test_base_price_moved_without_a_trade_is_a_disagreement():
     d = {c: (n, a, b) for c, n, a, b in st["diff"]}
     assert d["278990"] == ("EMB", 2715.0, 2895.0) and "278990" not in set(fr["Code"])
     loud, txt = F.kr_knx_note(D16, st)
-    assert loud and "278990 EMB 네이버 2,715 · 야후 2,895.00" in txt and "496320 본시스템즈" in txt and "0203K0 송우인포텍" in txt
+    # 평소의 빠짐 (야후에 없는 종목 · 거래 없는 날 다름) 은 이름과 까닭을 적되 '·' 줄 (검증 리뷰: !! 는 예상하지 못한 때만)
+    assert not loud and "278990 EMB 네이버 2,715 · 야후 2,895.00" in txt and "496320 본시스템즈" in txt and "0203K0 송우인포텍" in txt
+    for unusual in ({"noNaver": ["232530"]}, {"bad": ["232530"]}, {"noYahoo": [f"9{i:05d}" for i in range(V.KNX_NOYAHOO_WARN + 1)]},
+                    {"diff": [(f"9{i:05d}", "x", 1.0, 2.0) for i in range(V.KNX_DIFF_WARN + 1)]}, {"conf": 3}, {"kept": 0, "floor": None},
+                    {"cut": {"s": 600, "yahoo": 1, "fill": 0, "naver": 0}}):
+        assert F.kr_knx_note(D16, dict(st, **unusual))[0], unusual
+    for usual in ({"noYahoo": [f"9{i:05d}" for i in range(V.KNX_NOYAHOO_WARN)]}, {"diff": [(f"9{i:05d}", "x", 1.0, 2.0) for i in range(V.KNX_DIFF_WARN)]},
+                  {"kept": 2, "floor": 2e10, "capOut": ["232530", "260870"]}):
+        assert not F.kr_knx_note(D16, dict(st, **usual))[0], usual
     assert "확인 4 / 8종목" in txt and "야후 종가 없음 2" in txt and "두 종가가 다름 2" in txt
 
 
@@ -285,8 +293,8 @@ def test_confirmed_konex_below_the_normal_day_cut_stay_out_and_are_named():
     assert k["knx"]["conf"] == 4 and k["knx"]["kept"] == 3 and k["knx"]["capOut"] == 1 and k["knx"]["floor"] == 20_000_000_000
     assert k["conf"] == st["conf"] + 3 == len(fr)                                                 # 그날 파일의 행 수 (뺀 코넥스는 세지 않아요)
     loud, txt = F.kr_knx_note(D16, kst)
-    assert loud and "그날 파일에 넣은 코넥스 3" in txt and "200억원 이상" in txt and "시가총액 기준 아래라 뺀 1: 076340 지에이이노더스" in txt
-    assert any(n.startswith("!! 코넥스 시가총액 기준") and "200억원 이상" in n for n in notes)
+    assert not loud and "그날 파일에 넣은 코넥스 3" in txt and "200억원 이상" in txt and "시가총액 기준 아래라 뺀 1: 076340 지에이이노더스" in txt
+    assert any(n.startswith("코넥스 시가총액 기준") and "200억원 이상" in n for n in notes)                   # 평소 줄 (·)
     out, notes = run_fb(knx=knx_fakes(), caps=KNX_CAPS)                                           # 1차 출처 시가총액이 MAX_KR 개보다 적음
     fr, st = out[D16]
     assert "KONEX" not in set(fr["Market"]) and st["knx"]["kept"] == 0 and st["knx"]["conf"] == 4
@@ -406,7 +414,7 @@ def test_second_source_day_records_the_konex_source_and_names_every_stock_left_o
     assert px == D16 and src["px"] == V.PX_SRC_FB and src["knx"]["px"] == V.PX_SRC_KNX
     assert set(lst.loc[lst["Market"] == "KONEX", "Code"]) == set(TRADED + NO_TRADE)
     line = next(t for loud, t in logs if "코넥스 2차 출처(야후" in t)
-    assert next(loud for loud, t in logs if t == line)                                        # 빠진 종목이 있으면 크게
+    assert not next(loud for loud, t in logs if t == line)                                    # 평소의 빠짐은 '·' 줄 (이름과 까닭은 그대로)
     for c in BASE_MOVED + NOT_ON_YAHOO:
         assert c in line                                                                       # 빠진 종목을 모두 이름과 까닭으로
     assert src["fb"]["knx"]["conf"] == 4 and src["fb"]["conf"] == len(lst)
@@ -741,3 +749,34 @@ def test_units_and_pxsrc_text_pass_the_gate_text_check():
     cur["data"]["pxSrc"] = dict(srcs[-1], date="2026-10-30")
     rep = check(cur, prev, final)
     assert row(rep, "글자에 nan·None·null·undefined 없음")[3] == "PASS", row(rep, "글자에 nan·None·null·undefined 없음")
+
+
+# ── 10. 검증 리뷰 S-b: 목록 파일의 이름이 비어 있어도 (NaN) pxSrc 에 'nan' 글자가 가지 않아요 (관문 글자 검사 실패 → 발행 멈춤) ─────────
+def test_blank_names_never_write_nan_into_pxsrc():
+    """코넥스 (kr_knx_confirm → pxSrc.fb.knx.diffEx · 1차 출처 날 kr_knx_check) 와 원래 있던 코스피 · 코스닥 길 (kr_fb_confirm → pxSrc.fb.diffEx ·
+    kr_primary_check → pxSrc.chk.diff) 모두 — main 에도 있던, 발행이 막힐 수 있던 길이에요."""
+    nan = float("nan")
+    fin = knx_listing("2026-11-16_final")
+    fin.loc[fin["Code"].isin(["278990", "496320", "232530"]), "Name"] = nan
+    nv = naver()
+    nv["232530"][D16] = dict(nv["232530"][D16], closePrice=10010.0)
+    _, kst = F.kr_knx_confirm(D16, fin, yahoo(), nv)
+    assert "278990" in {c for c, *_ in kst["diff"]}
+    kk = F.px_src_knx_counts(kst)
+    ck = F.kr_knx_check(fin, D16, nv)
+    del nv["496320"][D16]
+    ck2 = F.kr_knx_check(fin, D16, nv)
+    assert ck2["noneEx"] and ck["diff"]
+    uni = kk_listing("2026-11-16_0545")
+    uni.loc[uni["Code"] == "011810", "Name"] = nan                                                  # STX: 다음 × 야후가 다른 종목
+    _, st = F.kr_fb_confirm(D16, uni, daum2(), yahoo2())
+    assert "011810" in {c for c, *_ in st["diff"]}
+    fb = F.px_src_counts(st)
+    prim = kk_listing("2026-11-16_2211")
+    prim.loc[prim["Code"] == "011810", "Name"] = nan
+    pc = F.kr_primary_check(prim, D16, yahoo2())
+    assert any(d.startswith("011810") for d in pc["diff"])
+    for rec in (kk, ck, ck2, fb, pc):
+        assert bad_words(rec) == [], rec
+    loud, txt = F.kr_knx_note(D16, kst, names={"278990": nan, "232530": "nan"})
+    assert not V.BAD_WORD.search(txt)
