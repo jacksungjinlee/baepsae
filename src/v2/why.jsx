@@ -16,7 +16,7 @@ import { HeroBand, DotStrip, Collapsible, StatusChip, Amount } from "../ui/compo
 import { hasGroup, todayD1 } from "./engine.js";
 import { priceMdSaid, lineDate } from "./cofmt.js";
 import { C, fill, priceText } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, Footer, Note, DateLine, tx } from "./ui.jsx";
+import { Page, Card, AppBar, ScreenTitle, Footer, Note, DateLine, KrOwnCloseLine, tx } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { StatusLines, HoldingRules } from "./daily.jsx";
 import { signedPct } from "./deckcalc.js";
@@ -162,6 +162,8 @@ export function Why({ load, store, setStoreData, target, onBack, pad }) {
           {d1 != null && <span data-ui-v2="why-change" style={tx(SIZE.sm, WEIGHT.bold, d1 < 0 ? COLOR.down : d1 > 0 ? COLOR.upOnPage : COLOR.text2)}>
             {signedPct(d1)}</span>}
         </div>
+        {/* 2026-11-19 (Jack): a Korean stock at its last confirmed close (pxd; never a big move, so not expected here): his line */}
+        <KrOwnCloseLine load={load} s={s} />
       </div>
       <Verdict x={x} g={g} names={names} onConfirm={(item, answer) => conf(deck.id, item, answer)} />
       {/* late data (rules.js checkState): no peers card, whose chart is read out as "…의 오늘 등락" (review, 2026-11-19:

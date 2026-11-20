@@ -11,7 +11,7 @@ import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { Icon } from "../ui/icons.jsx";
 import { Button, BottomSheet, StatusChip } from "../ui/components.jsx";
 import { C, fill, nf, todayKst, recDate } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, tx, tap, useLayout, useMode, SIDE_W, SampleLabel } from "./ui.jsx";
+import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, KrOwnCloseLine, tx, tap, useLayout, useMode, SIDE_W, SampleLabel } from "./ui.jsx";
 import { priceDate } from "./cofmt.js";
 import { CoMark } from "./logo.jsx";
 import { writeStore } from "./store.js";
@@ -151,7 +151,7 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
   const badCompare = ok && kind === "compare" && !(F.hasFindPoints(deck) && F.compareHoldings(deck, draft).length > 0
     && (F.findList(load, deck, draft) || { rows: [] }).rows.some((r) => r.t === view.t));
   useEffect(() => { if (badCompare && !leaving.current && goRef.current && goRef.current.replaceFind) goRef.current.replaceFind(); }, [badCompare]);
-  const ctx = useMemo(() => todayCtx(load), [load]);
+  const ctx = useMemo(() => todayCtx(load, undefined, store.data.decks), [load, store.data.decks]);   // 2026-11-20 (Jack, f): rules.lateCap
   const de = useMemo(() => (ctx.state.ok ? evaluateDeck(deck, ctx) : null), [deck, ctx]);
   const xOf = (t) => (de && de.ok ? de.holdings.find((y) => y.t === t) || null : null);
   const names = useMemo(() => (ok ? E.indNames(load.data.stocks) : new Map()), [load, ok]);
@@ -550,6 +550,8 @@ function AddSheet({ deck, draft, s, load, cap, shift, onClose, onAdd }) {
       <div data-ui-v2="add-sheet" data-t={s.t} data-kind={add.kind} data-scored={scored ? "1" : "0"}>
         {/* the stock's own close date (a US stock: its US close, as on its company page; round-1 nit) */}
         <DateLine date={priceDate(load, s)} fresh={load.fresh} style={{ marginTop: 0 }} />
+        {/* 2026-11-19 (Jack): a Korean stock at its last confirmed close (pxd): his line under its own date */}
+        <KrOwnCloseLine load={load} s={s} style={{ marginTop: SPACE(1) }} />
         <div style={{ display: "flex", alignItems: "center", gap: SPACE(3), marginTop: SPACE(2) }}>
           <CoMark s={s} t={s.t} name={s.nk} size={SPACE(11)} />
           <div style={{ minWidth: 0 }}>

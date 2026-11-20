@@ -147,7 +147,7 @@ export function warnStaleFields(j, where) {
 // data.json 의 발행 정보는 한 번 받아 두고, corp.json 이 다른 발행이면 다시 받아요 (포트폴리오가 받은 data.json 도 같이 써요).
 let DATA_PUB = null, DATA_PUB_PENDING = null;
 const pubOf = (j) => ({ publishedAt: (j && j.publishedAt) || null, staleAfter: j && j.staleAfter != null ? j.staleAfter : null,
-  nextPub: j && j.nextPub != null ? j.nextPub : null });
+  nextPub: j && j.nextPub != null ? j.nextPub : null, aged: ownAgedOf(j) });   // aged (2026-11-20): 기업분석의 '잠시 빼 두었어요' 줄
 export function samePublish(a, b) {
   const x = Date.parse(a || ""), y = Date.parse(b || "");
   return Number.isFinite(x) && x === y;
@@ -219,19 +219,46 @@ export function ownCloseDate(s, marketDate) {
   return typeof d === "string" && ISO_DAY.test(d) && d !== marketDate ? d : null;
 }
 // 화면에 나온 종목들 → [{ date, ts }]: 날짜마다 한 묶음, 새 날짜 먼저, 묶음 안은 화면 순서, 같은 종목은 한 번만. 오늘 데이터에
-// 없는 종목(null)이나 자기 날짜가 없는 종목은 빠져요. 이름은 티커(t) — 미국 종목만 pxd 가 있어요.
+// 없는 종목(null)이나 자기 날짜가 없는 종목은 빠져요. 이름은 티커(t).
+// 2026-11-19 (Jack): 국내 종목도 pxd 를 가질 수 있어요 — 2차 출처 날에 오늘 종가를 두 출처로 확인하지 못해 마지막 확인 종가로 실은 종목
+// (data.json pxSrc.own). 그 종목은 따로 묶어요: { date, ts, kr: true, names } (names = 한글 이름 nk · 화면이 Jack 의 줄 "오늘 종가를 확인하지
+// 못해서 {date} 종가를 보여 드려요." 를 덧붙여요). 미국 종목의 묶음은 예전 그대로 { date, ts } 예요. 같은 날짜면 미국 묶음이 먼저.
+// marketDate: 기준일 하나 (예전처럼 · 모든 종목을 그 날짜와 비교) 또는 { kr, us } (종목마다 자기 시장의 기준일 — 국내 pxDate · 미국 usPxDate).
+const krOwnOf = (s) => !!s && s.cls === "kr";
+const marketOf = (marketDate, s) => (marketDate && typeof marketDate === "object" ? (krOwnOf(s) ? marketDate.kr : marketDate.us) : marketDate);
+// 2026-11-20 (Jack: "After 5 trading days, show "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요." instead of "데이터를 찾지
+// 못했어요""): the Korean stocks the pipeline left out because their last confirmed close is past the age limit (data.json
+// pxSrc.own.aged: [{ t, nk, pxd }], fetch_data.kr_own_aged). -> Map t -> { nk, pxd } (empty for files without it). A record
+// that cannot be read is said in the console once and read as empty (those stocks then read as not in the data, as before).
+let AGED_SAID = false;
+export function ownAgedOf(j) {
+  const own = j && j.pxSrc && typeof j.pxSrc === "object" ? j.pxSrc.own : null;
+  const a = own && typeof own === "object" ? own.aged : undefined;
+  if (a === undefined || a === null) return new Map();
+  const ok = Array.isArray(a) && a.every((x) => x && typeof x === "object" && typeof x.t === "string" && x.t);
+  if (!ok) {
+    if (!AGED_SAID) { AGED_SAID = true; console.warn("[뱁새] data.json pxSrc.own.aged 를 읽을 수 없어요 — 그 종목들은 예전처럼 '데이터에 없음'으로 보여요"); }
+    return new Map();
+  }
+  const have = new Set(Array.isArray(j.stocks) ? j.stocks.map((s) => s && s.t) : []);
+  return new Map(a.filter((x) => !have.has(x.t)).map((x) => [x.t, { nk: typeof x.nk === "string" ? x.nk : x.t, pxd: x.pxd || null }]));
+}
+
 export function ownCloseGroups(stocks, marketDate) {
   const by = new Map(), seen = new Set();
   for (const s of stocks || []) {
     if (!s || s.t == null || s.t === "") continue;
     const t = String(s.t);
-    const d = ownCloseDate(s, marketDate);
+    const d = ownCloseDate(s, marketOf(marketDate, s));
     if (!d || seen.has(t)) continue;
     seen.add(t);
-    if (!by.has(d)) by.set(d, []);
-    by.get(d).push(t);
+    const kr = krOwnOf(s), key = (kr ? "kr " : "us ") + d;
+    if (!by.has(key)) by.set(key, kr ? { date: d, ts: [], kr: true, names: [] } : { date: d, ts: [] });
+    const g = by.get(key);
+    g.ts.push(t);
+    if (kr) g.names.push(String(s.nk || t));
   }
-  return [...by.entries()].sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0)).map(([date, ts]) => ({ date, ts }));
+  return [...by.values()].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : (a.kr ? 1 : 0) - (b.kr ? 1 : 0)));
 }
 // 그 종목 가격의 날짜: pxd 가 없으면 기준일(marketDate), 읽을 수 있는 pxd 면 그 날짜, pxd 가 기준일과 같으면 기준일, 읽을 수 없는
 // pxd 면 null (기준일이 아닌 건 아는데 언제인지 몰라요: 틀린 날짜를 보이느니 날짜를 빼요).

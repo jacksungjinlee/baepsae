@@ -52,7 +52,7 @@
 //   that could be checked at all is 확인 필요, never 할 일 없음.
 import { num, isFin, priceWon, fyOf, fellTwice, KR_DIV_TREND, exactData, krDivHistory, todayD1, valueD1 } from "./engine.js";
 import { STALE_DAYS, daysSince, ownCloseDate, backstopFirst, samePublish, kstDate } from "../data.js";
-import { lateDays, LATE_CHECK_DAYS } from "./tradedays.js";
+import { lateDays, LATE_CHECK_DAYS, tradingDaysAfter, lateSay } from "./tradedays.js";
 import { sameConfirm, planWLimit, planWOk, PLANW_MAX_X } from "./store.js";
 import { heldQty as heldOf, heldUnits } from "./held.js";
 import { unitHeld } from "../repair.js";
@@ -131,11 +131,46 @@ export function checkState(load, now) {
   return { ok: true, late: { days: s.days, n: late.n } };
 }
 
-// Everything the evaluation reads from today's data.
-export function todayCtx(load, now) {
+// 2026-11-20 (Jack, f: "cap the late-data portfolio check (#144) so it never runs on a close more than 5 KRX trading days old in
+// total (carried close age counts), instead of up to 10"): on late data, a Korean stock priced at its last confirmed close (data.json
+// pxd) counts its own close: the KRX trading days after that close up to today (KST, the same count as lateDays). The stocks
+// counted are every one the check of these decks reads (review 2026-11-20): the shares held, every holding kept in the deck (a
+// sold-out one is still read for its band and its failing rules, evaluateDeck) and a 가진 종목 portfolio's rows. When one of them
+// is more than LATE_CHECK_DAYS behind, nothing is checked (the state is the stale one dayState gave, as on data more than 5 days
+// late), for every portfolio together, like the rest of the late check. A pxd that is not a readable date stops it too (the
+// stricter side). Said once in the console. -> the state to use.
+export function lateTickers(deck) {
+  const ts = new Set(heldOf(deck || {}).keys());
+  for (const h of (deck && deck.holdings) || []) if (h && h.t) ts.add(h.t);
+  for (const r of (deck && deck.imported) || []) if (r && r.t) ts.add(r.t);
+  return ts;
+}
+export function lateCap(state, ctx, decks) {
+  if (!state || !state.ok || !state.late || !ctx) return state;
+  for (const deck of decks || []) {
+    for (const t of lateTickers(deck)) {
+      const s = ctx.byT.get(t);
+      if (!s || s.cls !== "kr" || s.pxd == null || s.pxd === ctx.pxDate) continue;
+      const pxd = ownCloseDate(s, ctx.pxDate);
+      const n = pxd ? tradingDaysAfter(pxd, ctx.today, "KR") : null;
+      if (n == null || n > LATE_CHECK_DAYS) {
+        lateSay(`the check is not run: ${t} (read by a saved portfolio) is priced at its last confirmed close ${JSON.stringify(s.pxd)}, ${n == null ? "not a date whose age can be counted" : n + " KRX trading days"} before today ${ctx.today} (more than ${LATE_CHECK_DAYS} in total)`);
+        return { ok: false, why: "stale", days: state.late.days, capped: { t, pxd: s.pxd, n } };
+      }
+    }
+  }
+  return state;
+}
+
+// Everything the evaluation reads from today's data. decks (2026-11-20): the saved portfolios whose check this context is for;
+// with them, the late check stops when a held stock's own close is too old in total (lateCap).
+export function todayCtx(load, now, decks) {
   const ok = load && load.status === "ok";
-  return { state: checkState(load, now), byT: ok ? load.byT : new Map(), coByT: ok ? load.coByT : new Map(),
-    fx: ok ? load.data.fx : null, pxDate: ok ? load.data.pxDate : null, usPxDate: ok ? load.data.usPxDate || null : null };
+  const ctx = { state: checkState(load, now), byT: ok ? load.byT : new Map(), coByT: ok ? load.coByT : new Map(),
+    fx: ok ? load.data.fx : null, pxDate: ok ? load.data.pxDate : null, usPxDate: ok ? load.data.usPxDate || null : null,
+    today: kstDate(now == null ? Date.now() : now) };
+  if (decks) ctx.state = lateCap(ctx.state, ctx, decks);
+  return ctx;
 }
 
 // ---------------- one deck ----------------
@@ -490,7 +525,7 @@ export function evaluateHolding(h, deck, ctx, weights, qty) {
   if (!soldOutFails && !rules.some((x) => x.check === "checked")) reasons.unshift({ level: "check", code: "noRules" });
   const status = soldOutFails ? "none" : reasons.length ? reasons[0].level : "none";
   const d1 = todayD1(s);
-  const pxd = ownCloseDate(s, ctx.usPxDate);
+  const pxd = ownCloseDate(s, s && s.cls === "kr" ? ctx.pxDate : ctx.usPxDate);   // 2026-11-19 (Jack): a Korean stock's own date is against pxDate
   const band = rules.find((x) => x.id === "band" && x.check === "checked");
   const div = rules.find((x) => x.id === "divCut" && x.drops);
   return {

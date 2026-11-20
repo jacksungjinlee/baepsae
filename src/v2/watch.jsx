@@ -13,7 +13,7 @@ import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { Button, BottomSheet } from "../ui/components.jsx";
 import { C, fill, mdText, todayKst } from "./format.js";
-import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, OwnCloseNote, tx, tap, useNav, useLayout, SIDE_W } from "./ui.jsx";
+import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, OwnCloseNote, KrAgedLine, tx, tap, useNav, useLayout, SIDE_W } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { isCompany, ownCloses } from "./stocklist.js";
 import { todayD1 } from "./engine.js";
@@ -111,6 +111,8 @@ function WatchCard({ t, e, load, fresh, onCond, canEdit }) {
         )}
       </div>
       {s && <DayNote s={s} md={mdText(load.data.pxDate)} style={{ marginTop: SPACE(1) }} />}
+      {/* 2026-11-20 (Jack, a; review 4): a watched stock left out past the age limit of its last confirmed close says why */}
+      {!s && ok && <KrAgedLine aged={load.aged} t={t} style={{ marginTop: SPACE(1) }} />}
       {sts.length > 0 && (
         <div data-ui-v2="watch-chips" style={{ marginTop: SPACE(2) + 2, display: "flex", flexWrap: "wrap", gap: SPACE(1) + 2 }}>
           {sts.map((st) => <CondChip key={st.k} st={st} us={us} />)}
