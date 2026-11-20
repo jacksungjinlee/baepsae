@@ -1120,3 +1120,31 @@ def test_own_drop_krown_is_checked_on_a_day_without_any_carry():
     d["ownDrop"][V.KR_OWN_DROP_KEY] = {"n": "1", "rows": []}
     assert gate_rows(d)[OWN_ROW][1] == "WARN" and "모양이 잘못됨" in gate_rows(d)[OWN_ROW][0]
     assert gate_rows({"pxDate": D18, "stocks": [kr("005930")]})[OWN_ROW] == ("없음 (모두 기준일 종가)", "PASS")   # 이 기록 전 파일
+
+
+def test_pre_publish_own_close_scenes_pick_their_stocks_from_the_day_s_data(monkeypatch):
+    """2026-11-21 (CLAUDE.md #154): 발행 전 화면 검사(--data)의 확인종가 장면은 특정 종목에 기대지 않아요 — 그날 데이터에서 기준으로 골라요
+    (smoke_app.kr_own_picks). 고정 데이터 (CI) 는 예전 그대로 (000270 · 005930 · 기록한 11-20 줄 · 005935 · 009150). 예전에 이름으로 쓰던 종목이
+    모두 없는 날도 고르고 심어요 · 우선주가 없으면 그 몫만 건너뛰어요 (실패하지 않아요)."""
+    sys.path.insert(0, os.path.join(ROOT, "tests"))
+    import smoke_app as SA
+    files, _ = SA.read_snapshot()
+    named = {"000270", "005930", "005935", "009150", "024070", "092070", "100220"}
+    for drop in (set(), named):
+        f = json.loads(json.dumps(files, allow_nan=True))
+        f["data.json"]["stocks"] = [x for x in f["data.json"]["stocks"] if x.get("t") not in drop]
+        f["corp.json"]["companies"] = [x for x in f["corp.json"]["companies"] if x.get("t") not in drop]
+        pk = SA.kr_own_picks(SA.strip_kr_carries(f))
+        assert pk["plain"] and pk["t"] and len(pk["small"]) == 3 and pk["t"] != pk["plain"], (drop, pk)
+        assert not ({pk["plain"], pk["t"], *pk["small"]} & drop)
+        monkeypatch.setattr(SA, "REAL_DATA", True)
+        g = SA.with_kr_carries(f)
+        codes = g["data.json"]["pxSrc"]["own"]["codes"]
+        assert set(pk["small"]) <= set(codes) and not ({"024070", "092070", "100220"} & set(codes)), codes   # 기록한 줄은 넣지 않아요
+        assert (pk["pref"] in codes) if pk["pref"] else len(codes) == 4, (pk, codes)
+        monkeypatch.setattr(SA, "REAL_DATA", False)
+    src = inspect.getsource(SA.scene_kr_own_close)
+    assert 'pk = kr_own_picks(f) if REAL_DATA else OWN_FIXTURE_PICKS' in src and '"005930"' not in src and '"000270"' not in src
+    assert SA.OWN_FIXTURE_PICKS == {"plain": "005930", "t": "000270"}
+    g = SA.with_kr_carries(files)                                                       # 고정 데이터: 예전 그대로 (기록한 세 줄 + 005935 · 009150)
+    assert sorted(g["data.json"]["pxSrc"]["own"]["codes"]) == ["005935", "009150", "024070", "092070", "100220"]
