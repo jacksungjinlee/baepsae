@@ -1809,6 +1809,12 @@ def kr_pxd_shape_ok(s, px):
     return d is not None and p is not None and d < p
 
 
+def kr_px_count(data):
+    """pxDate 종가로 실은 국내 종목 수 (2026-11-20 · #159 리뷰): 국내 종목 중 pxd 가 없는 것 — 마지막 확인 종가(pxd)로 실은 종목은 깨끗하든 아니든
+    세지 않아요 ('국내 종목 수' 두 줄 · 늦추지 않게). (순수 함수)"""
+    return sum(1 for s in kr_stocks(data) if s.get("pxd") is None)
+
+
 def kr_own_rec(data):
     """data.json pxSrc.own (2차 출처 날에 마지막 확인 종가로 실은 국내 종목의 기록) — 모양이 맞으면 dict, 아니면 None. (순수 함수)"""
     src = (data or {}).get("pxSrc")
@@ -1955,8 +1961,13 @@ def check_kr_own_close(rep, data, macro, pdata):
                    "한 종목이 아니라 그 점검이 고장 났어요", [str(x) for x in drows])
     orule = (f"pxd 가 있는 국내 종목은 2차 출처 날 · pxSrc.own 에 있는 종목 · 그 종가 뒤 거래일 {KR_OWN_CLOSE_MAX_DAYS}일 이하 · 지난 발행본의 가격과 날짜 "
              "그대로 · 파이프라인이 거른 종목 0 (어긋나면 경고 · 그 종목은 pxDate 의 가격으로 보고 가격 줄들이 맞춰 봐요)")
+    # 2026-11-20: data.json ownDrop.krOwn (다른 우리 처리 검사와 같은 곳) 이 pxSrc.own.bad 와 같은 수인지 (경고만 · 없으면 이 기록 전 파일).
+    # 리뷰 (#159): 기록 · pxd 종목이 없는 날 (평소 날) 에도 봐요 — 그날은 0 이어야 해요
+    od = own_drop_get(data, KR_OWN_DROP_KEY)
+    od_part = (f"ownDrop.{KR_OWN_DROP_KEY} 모양이 잘못됨" if od is False
+               else f"ownDrop.{KR_OWN_DROP_KEY} {od['n']} ≠ pxSrc.own.bad {dropped}" if isinstance(od, dict) and od["n"] != dropped else None)
     if raw is None and not mine:
-        rep.add(oname, True, "없음 (모두 기준일 종가)", orule)
+        rep.add(oname, True, "없음 (모두 기준일 종가)" + (f" · {od_part}" if od_part else ""), orule, warn=bool(od_part))
         return
     parts, warn = [], bool(soft)
     if raw is not None and own is None:
@@ -1996,13 +2007,8 @@ def check_kr_own_close(rep, data, macro, pdata):
             if uw.get("knx", 0) != len(fbk["left"]) or uw.get("mkt", 0):
                 parts.append(f"확인 못 한 코넥스 {uw.get('knx', 0)} · 그 밖 시장 {uw.get('mkt', 0)} ≠ 코넥스 2차 출처의 빠진 종목 {len(fbk['left'])} (pxSrc.fb.knx.left)")
                 warn = True
-    # 2026-11-20: data.json ownDrop.krOwn (다른 우리 처리 검사와 같은 곳) 이 pxSrc.own.bad 와 같은 수인지 (경고만 · 없으면 이 기록 전 파일)
-    od = own_drop_get(data, KR_OWN_DROP_KEY)
-    if od is False:
-        parts.append(f"ownDrop.{KR_OWN_DROP_KEY} 모양이 잘못됨")
-        warn = True
-    elif isinstance(od, dict) and od["n"] != dropped:
-        parts.append(f"ownDrop.{KR_OWN_DROP_KEY} {od['n']} ≠ pxSrc.own.bad {dropped}")
+    if od_part:
+        parts.append(od_part)
         warn = True
     if soft:
         parts.append(f"어긋남 {len(soft)}: {listed(soft)}")
@@ -2214,11 +2220,19 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
             f"{CURVE_STALE_DAYS}일 이내")
 
     # 종목 수
-    rep.add("국내 종목 수", len(kr) >= KR_MIN, f"{len(kr):,}", f"≥ {KR_MIN:,}", warn=len(kr) < KR_MIN * 1.02)
+    # 2026-11-20 (#159 리뷰 · 늦추지 않아요): 국내 종목 수 두 줄은 pxDate 종가로 실은 국내 종목만 세요 (kr_px_count). 마지막 확인 종가(pxd)로 실은
+    # 종목은 세지 않아요 — 세면 2차 출처가 시간 한도로 많은 종목을 묻지 못한 날 그 종목들이 옛 종가로 돌아와 바닥(KR_MIN)이 걸리지 않아요 (main 은
+    # 멈춰요). main 의 국내 종목에는 pxd 가 없어서 이 두 줄은 main 과 똑같이 움직여요. 값 칸에 둘 다 적어요.
+    nk_px, nk_own = kr_px_count(data), len(kr) - kr_px_count(data)
+    rep.add("국내 종목 수", nk_px >= KR_MIN, f"{nk_px:,}" + (f" (pxDate 종가 · 그 밖에 마지막 확인 종가 {nk_own:,}종목은 세지 않아요)" if nk_own else ""),
+            f"≥ {KR_MIN:,} (pxDate 종가로 실은 종목)", warn=nk_px < KR_MIN * 1.02)
     rep.add("미국 종목 수", len(us) >= US_MIN, f"{len(us):,}", f"≥ {US_MIN}")
     if pdata:
-        pk, pu = len(kr_stocks(pdata)), len(us_stocks(pdata))
-        rep.add("국내 종목 수 변화", pk > 0 and abs(len(kr) / pk - 1) <= KR_REL, f"{pk:,} → {len(kr):,}", f"±{KR_REL:.0%}")
+        pk, pu = kr_px_count(pdata), len(us_stocks(pdata))
+        pk_own = len(kr_stocks(pdata)) - pk
+        rep.add("국내 종목 수 변화", pk > 0 and abs(nk_px / pk - 1) <= KR_REL, f"{pk:,} → {nk_px:,}"
+                + (f" (pxDate 종가 · 마지막 확인 종가 {pk_own:,} → {nk_own:,}종목은 세지 않아요)" if pk_own or nk_own else ""),
+                f"±{KR_REL:.0%} (pxDate 종가로 실은 종목)")
         rep.add("미국 종목 수 변화", pu > 0 and abs(len(us) / pu - 1) <= US_REL, f"{pu:,} → {len(us):,}", f"±{US_REL:.0%}")
     nb = sum(1 for s in data.get("stocks", []) if s.get("cls") == "bond")
     rep.add("채권 ETF", nb >= BONDS_EXPECTED - 1, nb, f"{BONDS_EXPECTED} (7 경고 · 6 이하 실패)", warn=nb < BONDS_EXPECTED)

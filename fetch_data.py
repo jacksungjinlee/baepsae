@@ -1883,7 +1883,7 @@ def kr_second_source(px_date, listing, ended, now, special, universe_of, fallbac
 # 출렁임 · 베타 · 수익률 · 설명의 시가총액) 는 지난 발행본에서 그대로 옮겨요 — 그 종가까지 자른 시계열로 그날 만든 숫자예요. 재무 · 배당 · 점수 · 업종은
 # 다른 종목처럼 오늘 다시 만들어요 (PER · PBR · 배당수익률은 그 가격으로). 점수(백분위)에는 미국 pxd 종목처럼 들어가요.
 # 나이 상한 KR_OWN_CLOSE_MAX_DAYS (관문 파일): 그 종가 뒤 pxDate 까지 KOSPI 거래일이 이보다 많으면 싣지 않아요 (예전처럼 빠져요).
-from validate_data import KR_OWN_CLOSE_MAX_DAYS, KR_OWN_WHY, KR_OWN_DROP_KEY, kr_own_close_bad, kr_own_age
+from validate_data import KR_OWN_CLOSE_MAX_DAYS, KR_OWN_WHY, KR_OWN_DROP_KEY, kr_own_close_bad, kr_own_age, kr_px_count, KR_MIN as GATE_KR_MIN
 KR_OWN_KEYS = ("t", "nk", "ne", "cls", "s", "price", "vol", "beta", "al", "betaSE", "betaN", "cap", "val", "val20", "lo", "hi", "etf",
                "shr", "r1", "r3", "r36", "frn", "dk", "sh", "mdd", "hit", "mom", "pxBad", "pxBadF")
 KR_OWN_DROP_KO = {"none": "지난 발행본에 없음", "same": "지난 발행본도 같은 기준일 (확인 못 한 오늘 종가는 쓰지 않아요)",
@@ -1948,7 +1948,9 @@ def kr_knx_carry_note(full_list, conf_codes, knx, unconf, px_src):
     if not ran:
         return bool(allk), (f"코넥스 {len(allk):,}종목: 그날 코넥스 2차 출처(야후 .KQ × 네이버)를 묻지 않았거나 멈췄어요 — 모두 확인 못 한 종목 "
                             f"({KR_UNCONF_KO['mkt']}) {len(unc):,} · 마지막 확인 종가 단계로")
-    fbk = ((px_src.get("fb") or {}).get("knx") or {}) if isinstance(px_src, dict) else {}
+    # 리뷰 (#159): pxSrc.fb · fb.knx 가 dict 가 아니면 읽을 수 없는 기록 — 멈추지 않고 (kr_knx_left 가 이미 None 을 줬어요) 크게 남겨요
+    fb = px_src.get("fb") if isinstance(px_src, dict) and isinstance(px_src.get("fb"), dict) else {}
+    fbk = fb.get("knx") if isinstance(fb.get("knx"), dict) else {}
     want = (fbk.get("kept"), fbk.get("capOut"), len(left) if left is not None else None)
     got = (len(inf), len(capo), len(unc))
     odd = left is None or want != got
@@ -2181,6 +2183,15 @@ def kr_own_close_step(prev, full_list, conf_codes, px_src, px_date, trade_days, 
         px_src["own"] = kr_own_close_err(err, len(unconf) if isinstance(unconf, dict) else None)
         px_src["own"]["aged"] = kr_own_aged_kept(prev, {str(r.get("t")) for r in out})
         return 0
+
+
+def kr_count_line(payload):
+    """발행하는 국내 종목 수 한 줄 (2026-11-20 · #159 리뷰): pxDate 종가로 실은 종목 · 마지막 확인 종가(pxd)로 실은 종목 — 관문의 '국내 종목 수' 두
+    줄은 앞의 수만 세요 (validate_data.kr_px_count · 바닥 KR_MIN). 바닥 아래면 크게. (순수 함수)"""
+    n_px = kr_px_count(payload)
+    n_all = sum(1 for s in payload.get("stocks", []) if s.get("cls") == "kr" and not s.get("fund"))
+    return (f"{'  !! ' if n_px < GATE_KR_MIN else '· '}발행하는 국내 종목 {n_all:,}: pxDate 종가 {n_px:,} · 마지막 확인 종가 {n_all - n_px:,} "
+            f"(관문 '국내 종목 수' 는 pxDate 종가만 세요 · 바닥 {GATE_KR_MIN:,})")
 
 
 def kr_own_prune_series(krs, gone):
@@ -12677,6 +12688,7 @@ def main():
     payload.setdefault("ownDrop", {})["indFill"] = ind_drop   # 2026-11-19 (Jack 의 상시 규칙): 업종 채운 값 중 되돌린 행 (관문 줄이 봐요)
     # 2026-11-20 (#159): 마지막 확인 종가로 실었다가 관문과 같은 함수로 뺀 국내 종목 (pxSrc.own.bad 와 같은 수 · 관문이 맞춰 봐요 · 깨끗한 실행도 0)
     payload["ownDrop"][KR_OWN_DROP_KEY] = own_drop_rec(kr_drop)
+    log(kr_count_line(payload))
     write_json(OUT, payload)
     log(f"✓ {OUT} 저장 — {len(stocks):,}종목, {os.path.getsize(OUT) / 1e6:.1f}MB · 기준일 {kmeta['pxDate']} · "
         f"미국 {umeta['usPxDate']} · 환율 {fx_last:,.1f}")

@@ -1044,3 +1044,71 @@ def test_own_drop_record_sits_with_the_other_own_checks_and_units_name_every_key
     body = inspect.getsource(F.main)
     assert "drop_out=kr_drop" in body and 'payload["ownDrop"][KR_OWN_DROP_KEY] = own_drop_rec(kr_drop)' in body
     assert body.index("own_us_dates(payload)") < body.index('payload["ownDrop"][KR_OWN_DROP_KEY]') < body.index("write_json(OUT, payload)")
+
+
+# ── 2026-11-20 (#159 리뷰 · 늦추지 않아요): '국내 종목 수' 두 줄은 pxDate 종가로 실은 국내 종목만 세요 ─────────────────────────
+def count_rows(n_px, n_own, n_prev=2500):
+    """fixture_data 의 발행본 (pxDate 11-16 · 지난 11-13 · 국내 n_prev) 에서 n_px 종목만 pxDate 종가로 남기고, 빠진 종목 중 n_own 을 마지막 확인
+    종가(pxd 11-13 · d1 없음)로 돌려 실은 파일 → run_checks 의 두 줄."""
+    fd = __import__("fixture_data")
+    cur, closes = fd.build(px_date="2026-11-16", us_date="2026-11-16", n_kr=n_prev)
+    prev, _ = fd.build(px_date="2026-11-13", us_date="2026-11-13", n_kr=n_prev, price_shift=-0.01)
+    kr_ = [s for s in cur["data"]["stocks"] if s.get("cls") == "kr"]
+    rest = [s for s in cur["data"]["stocks"] if s.get("cls") != "kr"]
+    keep, gone = kr_[:n_px], kr_[n_px:]
+    carried = [dict({k: v for k, v in s.items() if k != "d1"}, pxd="2026-11-13") for s in gone[:n_own]]
+    cur["data"]["stocks"] = keep + carried + rest
+    rep = V.run_checks(cur, prev, {"date": D16_DATE, "closes": closes, "how": "시험"}, D16_DATE + dt.timedelta(days=2),
+                       count_between=lambda a, b: 1, sessions={"dates": [D16_DATE], "src": "시험"},
+                       now=dt.datetime(2026, 11, 18, 11, 0, tzinfo=V.KST), hilo=None)
+    return {r[0]: (r[1], r[3]) for r in rep.rows if r[0] in ("국내 종목 수", "국내 종목 수 변화")}
+
+
+D16_DATE = dt.date(2026, 11, 16)
+
+
+def test_carried_rows_never_count_toward_the_korean_stock_floor():
+    """시간 한도로 작은 종목 600개를 묻지 못한 날: main 은 1,900 종목 → 바닥(2,300) 아래 실패 · 발행 안 함. 그중 500개가 마지막 확인 종가로
+    돌아와도 (모두 2,400) 두 줄 모두 main 과 같이 실패해요 · 값 칸에 둘 다 적어요."""
+    assert V.KR_MIN == 2300 and V.KR_REL == 0.10
+    rows = count_rows(1900, 500)
+    assert rows["국내 종목 수"][1] == "FAIL" and rows["국내 종목 수"][0].startswith("1,900 (pxDate 종가") and "마지막 확인 종가 500종목" in rows["국내 종목 수"][0]
+    assert rows["국내 종목 수 변화"][1] == "FAIL" and rows["국내 종목 수 변화"][0].startswith("2,500 → 1,900"), rows
+    main_like = count_rows(1900, 0)                                                     # main 과 같은 날 (마지막 확인 종가 없음)
+    assert main_like["국내 종목 수"][1] == "FAIL" and main_like["국내 종목 수 변화"][1] == "FAIL"
+    # 평소의 2차 출처 날: 마지막 확인 종가 몇 종목 — 두 줄 모두 통과 (pxDate 종가 2,490)
+    rows = count_rows(2490, 6)
+    assert rows["국내 종목 수"] == ("2,490 (pxDate 종가 · 그 밖에 마지막 확인 종가 6종목은 세지 않아요)", "PASS"), rows
+    assert rows["국내 종목 수 변화"][1] == "PASS"
+    assert V.kr_px_count({"stocks": [kr("1"), dict(kr("2"), pxd=D13), {"t": "AAPL", "cls": "us"}]}) == 1
+    line = F.kr_count_line({"stocks": [kr(str(i)) for i in range(2299)] + [dict(kr("x"), pxd=D13)]})
+    assert line.startswith("  !! 발행하는 국내 종목 2,300: pxDate 종가 2,299 · 마지막 확인 종가 1")
+
+
+def test_unreadable_konex_record_shapes_never_stop_the_carry_step(capsys):
+    """리뷰 (#159): pxSrc.fb 나 fb.knx 가 dict 가 아니면 읽을 수 없는 기록 — 단계가 멈추지 않고 그날 파일에 없는 코넥스를 모두 확인 못 한 종목으로
+    봐요 (크게 남겨요)."""
+    for bad in ("fb", "knx"):
+        px, lst, src, full = knx_day()
+        if bad == "fb":
+            src["fb"] = "?"
+        else:
+            src["fb"]["knx"] = ["?"]
+        conf = set(lst["Code"].astype(str).str.strip())
+        assert F.kr_knx_left(src) == (True, None)
+        prev = prev_file([kr("076340", "지에이이노더스", price=4000.0, dk=KNX_DK)], px="2026-11-13")
+        out = [dict(kr(c), price=1.0) for c in lst["Code"].astype(str)]
+        n = F.kr_own_close_step(prev, full, conf, src, px, KDAYS, out, {"jump": [], "hidden": []}, {})
+        assert n == 1 and "err" not in src["own"] and src["own"]["unconfWhy"]["knx"] == 5, (bad, src["own"])
+        assert "!! 코넥스 8종목 (야후 .KQ × 네이버): 그날 파일 3 · 확인됐지만 시가총액 기준 아래라 싣지 않음 0 · 확인 못 함 5" in capsys.readouterr().out
+
+
+def test_own_drop_krown_is_checked_on_a_day_without_any_carry():
+    """리뷰 (#159): 기록(pxSrc.own)도 pxd 종목도 없는 날 (평소 날) 에도 ownDrop.krOwn 을 봐요 — 0 이 아니거나 모양이 틀리면 경고."""
+    d = {"pxDate": D18, "stocks": [kr("005930")], "ownDrop": {V.KR_OWN_DROP_KEY: V.own_drop_rec([])}}
+    assert gate_rows(d)[OWN_ROW] == ("없음 (모두 기준일 종가)", "PASS")
+    d["ownDrop"][V.KR_OWN_DROP_KEY] = V.own_drop_rec([("400010", "x")])
+    assert gate_rows(d)[OWN_ROW] == ("없음 (모두 기준일 종가) · ownDrop.krOwn 1 ≠ pxSrc.own.bad 0", "WARN")
+    d["ownDrop"][V.KR_OWN_DROP_KEY] = {"n": "1", "rows": []}
+    assert gate_rows(d)[OWN_ROW][1] == "WARN" and "모양이 잘못됨" in gate_rows(d)[OWN_ROW][0]
+    assert gate_rows({"pxDate": D18, "stocks": [kr("005930")]})[OWN_ROW] == ("없음 (모두 기준일 종가)", "PASS")   # 이 기록 전 파일

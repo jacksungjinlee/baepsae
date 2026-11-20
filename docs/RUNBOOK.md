@@ -730,6 +730,8 @@ What protects users when the limit hits (and what does not):
   Since #158 (KONEX Yahoo × Naver) these numbers hold as before on a blank-close night (no KONEX stock can be confirmed then); when the
   close is filled, the ~23 KONEX stocks a normal day publishes also count, so the floor trips at about 465 not asked instead of
   about 440, with the same number of normally-published stocks missing (see "KONEX closes: Yahoo × Naver").
+  Stocks carried at their last confirmed close (`pxd`, #159) never count toward either row: both count only Korean stocks priced
+  at `pxDate` (`validate_data.kr_px_count`; the row's value names the carried count beside it), so these numbers hold as on main.
 - **Plainly, the gap:** on a blank-close night, from about 50 to about 320 stocks not asked, the data publishes with published
   stocks missing (about 3 at 50, about 156 at 300) and only the WARN row. A check that stops the publish there would be a new
   publish-stopping rule and needs Jack's yes. Since the last-confirmed-close change, a stock from the previous publish is carried at
