@@ -7010,7 +7010,8 @@ def fetch_korea(start, today, rf, prev=None):
         + " · ".join(f"{D1_WHY_KO[k]} {d1_blank[k]:,}" for k in D1_WHY) + (f" · 거래 없음은 가리지 않음 ({nt_unseen})" if nt_unseen else ""))
     meta = {"pxDate": px_date.isoformat() if px_date else None,
             "ksDate": ks_date.isoformat() if ks_date else None, "listSrc": list_src, "_index": kospi, "_prod": prod_map,
-            "_prefShares": pref_shares, "_prefCaps": pref_caps, "krSeries": krs, "d1Blank": d1_blank, "d1Base": d1_base}
+            "_prefShares": pref_shares, "_prefCaps": pref_caps, "krSeries": krs, "d1Blank": d1_blank}
+    meta["d1Base"] = d1_base                 # 2026-11-21: 직전 거래일 파일을 쓸 수 없던 날에만 (kr_d1_base_day) · 보통 날은 None (data.json 에 칸 없음)
     # 2026-11-19: 공식 종가 출처 · 업종 글자 출처 (data.json · 관문 줄) · 업종 글자가 없는 종목 (main 이 DART 기업개황 업종 코드로 채워요 · kr_ind_fill)
     meta.update({"pxSrc": px_src, "indSrc": ind_src, "_prefCapMissing": sorted(pref_cap_missing), "_noInd": sorted(no_ind)})
     return out, bench, mkt, meta

@@ -259,7 +259,8 @@ def test_pipeline_calls_the_base_path_only_when_the_previous_file_cannot_be_used
     src = inspect.getsource(F.fetch_korea)
     assert "if not ok_prev and want_prev is not None:\n            d1_map, base_ok, d1_base = kr_d1_base_day(listing, prev, want_prev)" in src
     assert "kr_d1_split(listing, sessions, ok_prev, d1_map, no_trade, base_ok=base_ok)" in src
-    assert '"d1Base": d1_base' in src
+    assert 'meta["d1Base"] = d1_base' in src
+    assert 'payload["d1Base"] = kmeta["d1Base"]' in inspect.getsource(F.main)
     assert "d1Base" in F.UNITS and "d1Base" in F.UNITS["d1Why"]
     # 관문의 d1Why 목록은 그대로 (새 이유 키는 d1Base 에만)
     assert V.D1_WHY == ("noTrade", "range", "new", "prev")
