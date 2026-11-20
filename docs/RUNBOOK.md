@@ -595,7 +595,7 @@ If the WARN shows:
 4. If it hits on every run (a source blocking GitHub's servers), the must-haves stay unconfirmed and nothing publishes: that is
    the two-source rule working. Tell Jack in plain words which source is down.
 
-## Deploy gate: Daum spot-check time limit (관문 두 출처 확인 시간 한도, since #PR)
+## Deploy gate: Daum spot-check time limit (관문 두 출처 확인 시간 한도, since #157)
 
 Jack, 2026-11-20 (verbatim): "Yes to 10 minutes, but a timeout skips the Daum spot-check with a loud warning; the deploy continues
 on the other checks. An outside site must never block a code fix."
