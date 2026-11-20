@@ -5,7 +5,31 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-19 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-21 KST — read this first)
+
+**Merged 2026-11-21:** **#154** (CLAUDE.md "decide, then report": Jack's rule of 11-20 with his 11-21 tweaks).
+
+**Open 2026-11-21: #163** (Korean `d1` on the first volunteer-final day after backup days). Dry run 44783218618 (02:33 KST) failed
+"필수 종목 d1": the volunteer list had a final 11-20 file but its 11-17/18/19 files were intraday (11-19 last commit 14:52, CSAT
+close 16:30), so every Korean `d1` was blank and nothing would publish (main had the same code: the 11-21 morning runs would fail
+too; the site stays on 11-19 data, dated). Fix: on a day with no usable previous-day file, `d1` comes from KRX's base price in
+today's final file (Close − Changes) only where it equals, to the won, the previous publish's close for that day (its pxDate must
+be the previous trading day; carried `pxd` and no-trade rows do not count); other stocks stay blank with the reason in the log and
+data.json `d1Base`. Real 11-20 files: 2,371 / 2,500 confirmed, 0 differ, all must-haves get `d1`. RUNBOOK "Backup days and the
+first volunteer-final day after them".
+
+**Merged 2026-11-20:** #151 (second-source time limit, below), #146 (KR industry words from DART, below), **#152** (the Deploy and Watchdog logs print as they go, `PYTHONUNBUFFERED`; a deploy hung 19 minutes in the live gate at 09:03 with no output, cancelled, site unaffected), **#155** (v19.7b: 내 기준으로 찾기 and 두 종목 비교; live-checked 16:0x KST), **#156** (예전 뱁새: a US close-date line in the data box, shown only when the US date differs from the Korean one), **#149** (Jack's standing rule for the #139/#142 own-processing checks: more than 5 bad rows in one run stop the publish, fewer are dropped and named; a missing BF-B now warns), **#157** (the deploy's Daum spot check stops after 10 minutes with a loud warning and the deploy goes on; deploy only, the watchdog still checks every price; first deploy 206/206 in 44 s), **#145** (v19.6b data half: `disc.json` `issue` for 유상증자 · CB · BW decisions, insider `role`, US `ed` · `xd`; four own-processing checks under the standing rule; no screens yet; the first publish after it warns once on the 주요사항 공시 row while ~75 lookups wait), **#158** (KONEX closes from Yahoo .KQ × Naver, published only when the two agree to the won and Naver's price on the last final day still matches KRX's final file). Each merge: deploy green and live-checked (삼성전자, 현대차, every tab, both apps, 0 page errors).
+
+**Jack, 2026-11-21 (~01:20 KST), verbatim:** "Hold v19.4 accounts and v19.6g until Jack says otherwise (lowest priority; v19.6h waits with v19.4). Queue: v19.7b, v19.6b screens, v19.6e, v19.3 Part L. Answers: 1. Yes to #154, with two tweaks: * New scenes in the pre-publish screen checks need no yes only if they don't depend on specific stocks or a particular day's data (the 두산밥캣 lesson). Otherwise they're category 2. * Anything that uses Jack's personal accounts or signs him up for something never goes ahead on the 12-hour rule. 2. Yes, warn. 3. Yes. 4. Not all-or-nothing. Leave that one stock out with the approved line ("며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요.") and check the rest. 5. (c), with no new timer for Jack. KRX's final file has been stuck since 11-16, so treat Daum × Yahoo as the normal path. Publish at 06:40 with what's confirmed (carries with their date line). Later runs update that day's data when more closes are confirmed. Hold only if confirmed coverage is below a floor; set it from last week's 06:40 coverage and show the number in the PR. 6. Yes, with a cap. If more than about half of US stocks would carry, the US side shows one line: "미국 종목은 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요." Set the exact cap from history. 7. Yes. 8. Yes as written for up to 5 names plus "외 n종목"; above the Q6 cap, the market-wide line instead. Also: send the design chat the say-why audit file and the 10 dark-mode screenshots in your next update."
+- What the numbers refer to (questions sent 11-21 01:12 KST): 1 = this rule's added lines (#154); 2 = the 67 hand-added US stocks (EXTRA_US) warn instead of stopping; 3 = skip the deploy's Daum check when Daum refuses outright (code deploys only); 4 = the late-data check with a carried close over 5 trading days; 5 = the backup-day early hold (#161); 6 = US carry's two frozen rows (98% d1, AAPL/MSFT/NVDA); 7 = the test edits in #160, US carry and #161; 8 = the shortened carried-stocks line.
+- Order now: v19.7b (done, #155), v19.6b screens, v19.6e, v19.3 Part L. **On hold until Jack says otherwise:** v19.4 accounts, v19.6g, v19.6h (lowest priority).
+
+**Jack, 2026-11-20 (~13:40 KST), verbatim answers:** "1. Yes to “more than 5 rows” as the default for the standing rule. Brown-Forman B: no, it becomes a warning; one stock missing from a source never holds the publish. 2. a) Yes. After 5 trading days, show "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요." instead of "데이터를 찾지 못했어요". b) Yes. c) Yes. d) Yes to the first. Second: drop a carry with a broken date and warn; block only above 5. e) Yes. f) Yes. 3. Yes. 4. Yes. 5. Yes. 6. Yes, but “left out” means carried with its own date and the line, like any other unconfirmed close. 7. Yes. Comment-only test edits never need asking. 8. a) Yes. b) Yes. c) Yes. 9. No, agreed. 10. Yes to 10 minutes, but a timeout skips the Daum spot-check with a loud warning; the deploy continues on the other checks. An outside site must never block a code fix."
+- Also (verbatim): "US stocks carry like Korean ones. A US stock with no close from Yahoo carries its last confirmed close with its own date and the same line. Block only if many are missing (set the number from history), so a Yahoo gap never stops the Korean data again."
+- Also (verbatim): "Order after these merge: v19.7b, then v19.6b screens, v19.6e and v19.3 Part L."
+- What the numbers refer to: 1 = #149 / #145 standing-rule N and the BF-B row; 2 = the last-confirmed-close change (a 5-trading-day limit, b list line "{names}: 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요.", c English "We couldn't confirm today's close, so this shows the {date} close.", d gate changes, e the screen-test edit, f the late-data check capped at 5 trading days in total); 3 = 25 power-equipment makers (KSIC 281) → 전기전자 in the old app; 4 = v19.7b keeps the raise choice on screen; 5 = backup days: before 08:00 KST publish only at ≥97% of the last publish's confirmed count; 6 = KONEX normal-day mismatch → carry; 7 = KONEX test comment; 8 = old-app US date line ("US stocks: priced at the {md} close (US time)."); 9 = no older-publish look-back; 10 = a 10-minute limit on the deploy's Daum spot check.
+
+**Open, 2026-11-20 (evening):** #159 (last confirmed close for Korean stocks, all of Jack's 11-20 answers; dry run passed) merges after the 11-21 06:40 publish, the first with #145, #149 and #158, is live and checked. Built and in review: US carry (Jack's "also"; on top of #159), the power-equipment move (old app, KSIC 281/283/284/289 makers → 전자·전기장비), the backup-day early-publish hold (waits for Jack's timing answer: GitHub's scheduled morning runs start late, 08:53–11:06 on the last five weekdays). Then v19.6b screens, v19.6e, v19.3 Part L.
 
 **Live, 2026-11-19 07:13 KST:** the first publish with #137 (pxDate 11-18, Korean closes from Daum × Yahoo) passed the gate and is live; checked on the site. **#139** (US share-class tickers: Brown-Forman B joins the US list) is merging next, then one publish of its own. Remaining order: the dividend follow-up, v19.7b, v19.6f, v19.6c, v19.6b data.
 
@@ -582,11 +606,13 @@ Cloud sessions from the desktop app's Code tab. No local dev setup on his PC, an
 **Who runs GitHub (standing rule since 2026-10-31).** Claude Code owns the whole GitHub process: branches, pull
 requests, merging, starting and watching workflow runs, and rollbacks. It merges on its own only when build, `pytest`,
 the phone-size smoke test (and, after v17.6, the `ci` check) pass, the fresh-eyes review is done and fixed, pipeline
-changes have a green `dry_run` with the validation summary in the PR, and no safety rule is loosened. It asks Jack
-first, with a short yes/no question in the chat, for new or changed Korean UI text (showing the 「새 문구」 table),
-changes to what users see beyond an approved spec, anything that costs money or needs a sign-up or setting change, any
-change to `CLAUDE.md`, a `validate_data.py` threshold or `tests/` (even when nothing is loosened; added 2026-11-01), and
-— until v17.6 is done — before merging v17.5 and v17.6 (his claude.ai chat reviews those PRs). After every merge it
+changes have a green `dry_run` with the validation summary in the PR, and no safety rule is loosened. Since
+2026-11-20 it decides anything the rules and approved specs already cover and lists those decisions under **Choices I
+made** in the PR. It asks Jack, with a short yes/no question in the chat, only about new Korean wording (showing the
+「새 문구」 table), loosening a safety check or adding one that can stop the publish, changes to what users can do, and
+money, accounts or outside services, with a few clarifications (details in `CLAUDE.md`, including the 12-hour
+go-ahead). (Until 11-20 it also asked about every `CLAUDE.md`, threshold or `tests/` change; v17.5 and v17.6 also waited
+for his claude.ai chat.) After every merge it
 watches the next run, checks the live site, reverts at once if something is wrong, and sends Jack a 3–6 line summary.
 `docs/CHANGELOG.md` has one line per merge. The full rule, including what is never allowed, is in `CLAUDE.md`
 § GitHub process.
