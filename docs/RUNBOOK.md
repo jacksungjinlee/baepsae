@@ -266,7 +266,7 @@ value would show a wrong number."
 mapping). Checks on what a source sends (freshness, coverage, two-source agreement, must-have stocks) are not covered and keep
 their rules. One exception, by Jack's own answer (2026-11-20, verbatim): "Brown-Forman B: no, it becomes a warning; one stock missing
 from a source never holds the publish." So "주식 종류 티커로 들어온 미국 종목 (BF-B)" only warns when BF-B is missing, with or without a
-reason (see "US share-class tickers" below). The same answer now covers the hand-added US stocks (#?, Jack 2026-11-21: "Yes,
+reason (see "US share-class tickers" below). The same answer now covers the hand-added US stocks (#162, Jack 2026-11-21: "Yes,
 warn."): one missing with no reason warns; more than 5 still fails (see "US stocks added by hand (EXTRA_US)" below).
 
 **How it works.** The rule that picks the bad rows lives once, in `validate_data.py`. The daily run calls the same function on its
@@ -1130,7 +1130,7 @@ has 10% of the sale proceeds withheld, and several Korean brokers restricted buy
 data, or named in `data.json` `usExtraMissing` with the reason the run left it out (Yahoo gave no prices, less than 60
 days of prices, a broken bar, a preferred share, a Korean company's US listing; if the run cannot tell, the reason says so
 and asks for a check). A named stock warns, with its reason.
-Since #? (Jack, 2026-11-21: "Yes, warn.", under his 11-20 rule "one stock missing from a source never holds the publish",
+Since #162 (Jack, 2026-11-21: "Yes, warn.", under his 11-20 rule "one stock missing from a source never holds the publish",
 the same as BF-B in #149), a stock that is neither in the list nor in the record also only warns, named in the row ("이유 없이
 빠짐 n: …"), the gate log ("!! 경고 …" and the "!! 손으로 더한 미국 종목 중 오늘 없는 종목" list, "BTI: 이유 없음") and the run summary. A stock
 Yahoo doesn't send always had a reason, so this case means our own code lost the stock after the US list was built (no code
