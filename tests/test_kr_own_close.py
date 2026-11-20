@@ -374,6 +374,19 @@ def test_a_carried_stock_takes_todays_krx_words_when_krx_has_them_and_errors_und
     assert n == 0 and len(out) == n_out and no_ind == ["777770"] and src["own"]["err"]
 
 
+def test_without_a_refill_list_the_industry_words_are_left_alone():
+    """리뷰 (2026-11-20): 다시 채울 목록(no_ind)을 받지 않은 호출은 업종 글자를 빼지 않아요 (빼고 다시 채우지 않는 일이 없게) — 기록도 없어요."""
+    prev, full, out = ind_case()
+    src = {"px": V.PX_SRC_FB}
+    n = F.kr_own_close_step(prev, full, {"005930"}, src, dt.date(2026, 11, 18), KDAYS, out, {"jump": [], "hidden": []}, {},
+                            desc={"282620": ("의복 제조업", "")})
+    by = {r["t"]: r for r in out}
+    assert n == 3 and by["282620"]["dk"] == DART_DK and by["282620"]["s"] == "textile" and by["005935"]["dk"] == PREF_DK
+    assert "ind" not in src["own"]
+    assert '"refill"' in inspect.getsource(F.kr_own_close_step) and "if isinstance(no_ind, list) else ([], [], [])" in inspect.getsource(F.kr_own_close_step)
+    assert "ind (2026-11-20" in F.UNITS["pxSrc"] and "refill" in F.UNITS["pxSrc"]      # data.json 칸 설명에도
+
+
 def test_desc_with_industry_words_replaced():
     assert F.kr_desc_set_ind(DART_DK, "") == "KOSDAQ 상장 · 시가총액 614억원"
     assert F.kr_desc_set_ind("반도체 제조업 · 주요제품: 칩 · KOSDAQ 상장", "") == "주요제품: 칩 · KOSDAQ 상장"

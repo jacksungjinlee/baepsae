@@ -1500,7 +1500,7 @@ def kr_own_close_step(prev, full_list, conf_codes, px_src, px_date, trade_days, 
     종목을 골라(kr_unconfirmed) 지난 발행본의 마지막 확인 종가로 out 에 더하고, 과거 주가 기록 오류 표시의 지난 움직임을 krs(krSeries)에 · 주요제품을
     prod_map 에 옮기고, px_src["own"] 에 기록해요. trade_days: KOSPI 일봉 날짜들 (Timestamp · date · 'YYYY-MM-DD' 아무거나).
     2026-11-20 (리뷰 S1): 지난 발행본이 DART 로 채운 · 보통주를 따른 업종 글자는 kr_own_ind_reset 으로 (desc: 오늘 KRX-DESC {코드: (업종, 주요제품)} ·
-    no_ind: 업종 글자 없는 종목 목록 — 다시 채울 코드를 더해요).
+    no_ind: 업종 글자 없는 종목 목록 — 다시 채울 코드를 더해요 · 없으면(None) 업종 글자를 그대로 둬요).
     이 단계의 어떤 오류도 발행을 멈추지 않아요 (Jack 의 규칙 · 2026-11-19 시험 실행이 여기서 멈췄어요): 크게 남기고, 아무것도 싣지 않고 (예전처럼 확인 못 한
     종목은 빠져요), 바꾼 것을 되돌리고, px_src["own"].err 에 까닭을 적어요 (관문이 경고해요). 반환: 실은 종목 수."""
     n0, jump0, hid0 = len(out), list((krs or {}).get("jump") or []), list((krs or {}).get("hidden") or [])
@@ -1512,7 +1512,8 @@ def kr_own_close_step(prev, full_list, conf_codes, px_src, px_date, trade_days, 
         have = {r.get("t") for r in out}
         carried, cjumps, cdrop = kr_own_close_carry(prev, {c: v for c, v in unconf.items() if c not in have}, px_date, days)
         rec = log_kr_own_close(carried, cdrop, unconf, {r["t"]: r.get("nk", "") for r in carried})
-        refill, krx, unread = kr_own_ind_reset(carried, prev, desc)
+        # 리뷰 (2026-11-20): 다시 채울 목록(no_ind)을 받지 않은 호출은 업종 글자를 건드리지 않아요 — 다시 채우지 않고 글자만 빼는 일이 없게
+        refill, krx, unread = kr_own_ind_reset(carried, prev, desc) if isinstance(no_ind, list) else ([], [], [])
         if refill or krx or unread:
             nm = {r["t"]: r.get("nk", "") for r in carried}
             log(f"{'  !! ' if unread else '· '}마지막 확인 종가 종목의 업종 글자: 지난 발행본이 DART 회사 정보로 채웠거나 보통주를 따른 "
@@ -1520,8 +1521,7 @@ def kr_own_close_step(prev, full_list, conf_codes, px_src, px_date, trade_days, 
                 + (f" · 설명을 읽지 못해 비움 {len(unread):,}" if unread else "") + " — "
                 + ", ".join(f"{t} {nm.get(t, '')}" for t in (refill + krx)[:KR_OWN_SHOW]))
             rec["ind"] = {"refill": len(refill), "krx": len(krx), "unread": len(unread)}
-            if isinstance(no_ind, list):
-                no_ind.extend(t for t in refill if t not in no_ind)
+            no_ind.extend(t for t in refill if t not in no_ind)
         out.extend(carried)
         for c in sorted(cjumps):
             krs["jump"] = list(krs.get("jump") or []) + cjumps[c]
@@ -10613,7 +10613,9 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                    "own (2026-11-19 · 2차 출처 날만) 확인 못 한 종목을 지난 발행본의 마지막 확인 종가로 실은 기록 {v · max 나이 상한 (그 종가 뒤 거래일) · "
                    "n 실은 수 · codes 실은 종목 코드 · unconf 확인 못 한 종목 수 · drop 싣지 못한 까닭별 수 (none 지난 발행본에 없음 · same 같은 기준일 · "
                    "old 나이 상한 넘음 · bad 값을 읽을 수 없음 · jump 과거 주가 기록 오류 기록 없음) · dropEx 예 · bad 파일을 쓰기 직전 관문과 같은 함수로 "
-                   "거른 종목 {n · rows}}"),
+                   "거른 종목 {n · rows} · ind (2026-11-20 · 있을 때만) 지난 발행본이 DART 로 채웠거나 보통주를 따른 업종 글자를 옮기지 않은 종목 수 "
+                   "{refill 오늘 다시 채움 (indSrc.dartT · prefT 에 적혀요) · krx 오늘 KRX-DESC 글자로 · unread 설명을 읽지 못해 비움} · err 이 단계가 오류로 "
+                   "멈춘 까닭 (실은 종목 0)}"),
          "indSrc": ("한국 업종 글자의 출처 (2026-11-19): desc KRX-DESC 에서 업종을 받은 종목 · carried 받지 못해 지난 발행본에서 이어 쓴 종목 · "
                     "asOf 이어 쓴 글자의 날짜 · none 업종 없음 · newNone 그중 지난 발행본에도 없던 새 상장 · "
                     "dart none 중 DART 기업개황 업종 코드의 11차 소분류가 우리 업종 표(data/ksic_map_kr.csv)에 깔끔히 맞아 채운 보통주 수 · "
