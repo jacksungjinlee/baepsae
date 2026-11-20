@@ -11497,6 +11497,44 @@ def splits_fields(prev, us_codes, recent, recent_no_col, recent_from, today, see
     return {"splits": sp["splits"], "splitsFrom": SPLITS_FROM, "splitsAsOf": sp["asOf"], "splitsSrc": sp["src"], "splitsInfo": sp["info"]}
 
 
+def hold_late_splits(fields, prev, us_date=None):
+    """2026-11-20: 미국 기준일(usPxDate) 뒤 날짜의 분할은 이번 발행에 넣지 않아요 (splitsInfo.held). data.json 의 미국 가격은 usPxDate 의
+    종가인데, 앱은 실린 분할을 그 날짜 앞의 모든 기록에 바로 적용해요 (held.js splitFactor · 날짜 위 한도 없음). 06:40 발행의 usPxDate 는 한국
+    오늘보다 하루 앞이라, 야후가 오늘(미국 날짜) 분할을 이미 적었으면 분할 뒤 주식 수 × 분할 전 가격이 돼요 (2026-11-20 21:17 시험 실행: usPxDate
+    11-19 · SNDK 11-20 ×8 → SNDK 를 가진 사람의 평가액이 8배). 분할 날짜 = 새 주식 수로 거래가 시작된 첫 미국 거래일이라 날짜가 usPxDate 와
+    같은 분할은 그 종가가 이미 분할 뒤예요 — 넣어요. usPxDate 뒤 날짜만 빼 두고, usPxDate 가 그 날짜에 닿는 첫 실행에 들어가요 (그날 다시
+    읽어요: 오늘 시세 다운로드 · 시드 · 고정 표 어디서 왔든 이 마지막 목록에서 빼요).
+    지난 발행본에 이미 실린 줄은 빼지 않아요 (lateKept): 빼면 관문 '주식 분할 목록 변화'가 '사라짐'으로 실패하고, 앱이 그 분할을 이미 저장했으면
+    (lots.js withStoredSplits) 빼도 남아요. 그런 줄은 관문 '주식 분할 목록 (splits)'의 '미국 기준일 뒤 날짜' 경고가 그대로 알려요.
+    fields: splits_fields 결과 ({} = 칸을 쓰지 않는 날 → 그대로) · us_date: 이 실행의 usPxDate (None = 예전처럼 그대로).
+    -> 새 dict (splits 에서 뺀 줄 · splitsInfo.held [[코드, 날짜, 배율]] · splitsInfo.lateKept [[코드, 날짜, 배율]]) (순수 함수 + 로그)"""
+    if us_date is None or not isinstance(fields, dict) or not isinstance(fields.get("splits"), list):
+        return fields
+    ud = us_date.isoformat()
+    carried = splits_prev(prev)[0]
+    keep, held, late_kept = [], [], []
+    for x in fields["splits"]:
+        if x[1] <= ud:
+            keep.append(x)
+        elif (x[0], x[1]) in carried:
+            keep.append(x)
+            late_kept.append(list(x))
+        else:
+            held.append(list(x))
+    info = dict(fields.get("splitsInfo") or {}, held=held, lateKept=late_kept)
+    if held:
+        log(f"  !! 주식 분할: 미국 기준일(usPxDate) {ud} 뒤 날짜의 분할 {len(held)}건은 이번 발행에 넣지 않아요 (splitsInfo.held · 이 파일의 미국 "
+            f"가격은 {ud} 종가라 아직 분할 전이에요): "
+            + ", ".join(f"{t} {d} ×{r:g} (미국 기준일 {ud} 뒤라 다음 발행까지 기다려요)" for t, d, r in held))
+    else:
+        log(f"· 주식 분할: 미국 기준일(usPxDate) {ud} 뒤 날짜의 분할 0건 (빼 둔 줄 없음)")
+    if late_kept:
+        log(f"  !! 주식 분할: 미국 기준일 {ud} 뒤 날짜인데 지난 발행본에 이미 실린 분할 {len(late_kept)}건은 그대로 둬요 (splitsInfo.lateKept · 빼면 "
+            "관문 '주식 분할 목록 변화'가 실패하고, 앱이 저장한 분할은 남아요 · 관문이 '미국 기준일 뒤 날짜'로 경고해요): "
+            + ", ".join(f"{t} {d} ×{r:g}" for t, d, r in late_kept))
+    return dict(fields, splits=keep, splitsInfo=info)
+
+
 # ────────────────────────────────────────────────────────────
 # v19.6a: macro.json fxHist — 원/달러 일별 환율 2016-01-01 ~ (Part I.1)
 # ────────────────────────────────────────────────────────────
@@ -11896,7 +11934,9 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                     "한국 종목은 아직 들어 있지 않아요 · splitsAsOf: 야후에서 마지막으로 새로 읽은 날 · splitsSrc: yahoo 모두 읽음 · part 일부 종목을 "
                     "읽지 못함 · kept 하나도 읽지 못해 지난 발행본 그대로 · splitsInfo: noCol 오늘 읽지 못한 종목 수 · gap 2016년부터를 아직 읽지 못한 "
                     "종목 · diff 야후가 빼거나 바꾸거나 날짜를 옮긴 분할 [코드, 날짜, 실은 배율, 야후 배율 또는 빈 값, (야후 날짜)] · fixed 고정 표 "
-                    "[코드, 날짜, 배율 또는 빈 값(빼기), 근거] · fixedKept 코드에서 지웠지만 이어 둔 고정 줄")}
+                    "[코드, 날짜, 배율 또는 빈 값(빼기), 근거] · fixedKept 코드에서 지웠지만 이어 둔 고정 줄 · held 미국 기준일(usPxDate) 뒤 "
+                    "날짜라 이번 발행에 넣지 않은 분할 [코드, 날짜, 배율] (미국 가격이 아직 분할 전 · usPxDate 가 그 날짜에 닿는 실행에 들어가요) · "
+                    "lateKept 미국 기준일 뒤 날짜인데 지난 발행본에 이미 실려 그대로 둔 분할 [코드, 날짜, 배율]")}
 IDX_YEARS = 3
 
 
@@ -12118,6 +12158,8 @@ def main():
     # v19.6a (A.6): 주식 분할 (2016-01-01 부터 · 한 번 실은 분할은 빼지 않아요). 오늘 시세 다운로드가 읽은 분할(umeta) + 커밋한 시드 + 지난
     # 발행본의 줄 (splits_fields · merge_splits). 시드에도 지난 발행본에도 없는 종목만 2016년부터의 이력을 읽어요 (하루 몇 개 · 많아야 20).
     sp_fields = splits_fields(prev, [s["t"] for s in us], umeta.get("splits"), umeta.get("splitsNoCol") or [], start, today)
+    # 2026-11-20: 미국 기준일(usPxDate) 뒤 날짜의 분할은 이번 발행에 넣지 않아요 (미국 가격이 아직 분할 전 · splitsInfo.held · 다음 발행에 들어가요)
+    sp_fields = hold_late_splits(sp_fields, prev, dt.date.fromisoformat(umeta["usPxDate"]))
     names = etf_names()
     bonds, bd_ret = ph.run("채권", fetch_bonds, start, px_date, kr_bench, names, rf)
 

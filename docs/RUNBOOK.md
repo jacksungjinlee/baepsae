@@ -1553,6 +1553,17 @@ see the existing "no longer in today's data" handling). No data run is needed fo
     today), `fixed` (the override table in effect) and `fixedKept` (override rows deleted from the code; see below). On a
     first publish (yesterday's file has no list) the run leaves `splits` out if any of the ten known splits is missing
     or if it could not read Yahoo's split column at all (gate warning "없음"), so a bad first day never blocks the publish.
+  - **A split dated after the run's US price date waits (2026-11-20).** US prices in `data.json` are the closes of
+    `usPxDate`, which at the 06:40 KST publish is one day behind the Korean date, while Yahoo often lists a split on its
+    first day already (SNDK 2026-11-20 ×8 in the 11-20 21:17 KST dry run, `usPxDate` 11-19). The app applies every listed
+    split at once, so publishing it would show holders the new share count at the old price (8× too much). So the run
+    leaves out any split dated after `usPxDate`, wherever it came from (the day's download, a stock's history, the seed
+    or the override table), lists it in `splitsInfo.held`, and logs `!! 주식 분할: 미국 기준일(usPxDate) … 뒤 날짜의 분할
+    N건은 이번 발행에 넣지 않아요` with each `TICKER date ×ratio`. It goes in on the first run whose `usPxDate` reaches its
+    date (normally the next publish; a split dated on `usPxDate` itself is in, as that close is already on the new count).
+    Nothing to do by hand. A row already published is never taken out (the comparison row would fail, and the app may
+    have stored it): if one is dated after `usPxDate` (an older run published it, or `usPxDate` went back a day) it
+    stays, is listed in `splitsInfo.lateKept` with a `!!` log line, and the gate's "미국 기준일 뒤 날짜" warning still shows.
   - Yahoo also writes spin-offs as "splits" with ratios like 1253:1000 (GE, GE Vernova); those are not share-count
     changes, so only clean ratios are kept (the reduced fraction has a side of 20 or less: 10:1, 1:15, 3:2, 21:20).
     Real events Yahoo writes wrongly or leaves out are in `SPLIT_OVERRIDES` in `fetch_data.py`, each with its source:
@@ -1586,7 +1597,8 @@ see the existing "no longer in today's data" handling). No data run is needed fo
     the gap, add it to the override table by hand. It warns when the list is missing on a first day, when
     part was taken over from yesterday (`splitsSrc` kept or part), on any `gap`, `noCol`, `diff` or `fixedKept`, when one
     stock has two splits within 30 days (Yahoo may have written one split twice), on the day a stock first leaves the
-    list (later days only list it under "확인할 것"), and for a split dated after the US price date.
+    list (later days only list it under "확인할 것"), and for a split dated after the US price date (since 2026-11-20
+    only a row already published before, `splitsInfo.lateKept`: the run holds new ones back).
   - **주식 분할 목록 변화 (직전 발행본과)** fails when a split from yesterday's file is gone or its ratio changed (the
     pipeline must never do that; an "out" row or a new ratio in the override table only warns). It warns for a new split
     from Yahoo whose ratio is not a whole number or one over a whole number (3:2, 21:20 …: a person checks it against the
