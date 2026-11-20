@@ -687,9 +687,11 @@ publish, Korean data included.
   multiply the shares. It gets exactly what it got before this change: Yahoo's own-date row (Yahoo's split-adjusted series, the halted
   wording, no `pxc`), or left out when Yahoo has nothing (no aged entry, so the app says "이 종목의 데이터를 찾지 못했어요." as before).
   Recorded in `usSrc.own.split` (log `!! 마지막 확인 종가 뒤에 주식 분할이 있어 싣지 않은 미국 종목 …`). After `splits_fields` the published
-  list is checked again (`us_own_split_late`: a split found only through the seed or the history backfill): such a row is removed, with
-  its new split rows, its `umeta` records (as #139 does) and an EXTRA_US reason (`split` entry with `late: true`). A must-have in this
-  state behaves as before (no exemption).
+  list is checked again (`us_own_split_late`: a split found only through the seed or the history backfill): a stock that had its own
+  Yahoo row today gets that pre-change row back (its split row stays); one Yahoo had nothing for is removed with its new split rows
+  (`split` entry with `late: true`). If the split column cannot be read even per stock, the stock is not carried either (pre-change
+  path, `unread`). Every removal (final check, drop-all, late split) cleans its `umeta` records as #139 does and writes an EXTRA_US
+  reason (`us_own_drop_rows`). A must-have in these states behaves as before (no exemption).
 - **Details of a carried stock (review, 2026-11-20):** Yahoo's PER, PBR, 시가총액 and 배당수익률 follow Yahoo's current quote, so for a
   carried row the info cache records Yahoo's quote price (`currentPrice` / `regularMarketPrice`) as its reference and the numbers are
   rescaled to the carried close. Without a quote price, or with one more than 50% away from the carried close, a cached copy under 14 days old is kept as it was; otherwise those four numbers

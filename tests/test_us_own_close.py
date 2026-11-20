@@ -632,7 +632,7 @@ def test_a_split_after_the_carried_close_takes_mains_path():
         F.log = keep
     assert out == [yahoo_nvda, us("MSFT")] and rec["codes"] == [] and rec["aged"] == []           # 예전 그대로 · TD 는 빠져요
     assert [x["t"] for x in rec["split"]] == ["NVDA", "TD"] and rec["drop"] == {"split": 2}
-    assert any(x.startswith("  !! 마지막 확인 종가 뒤에 주식 분할이 있어 싣지 않은 미국 종목 2") for x in lines), lines
+    assert any(x.startswith("  !! 마지막 확인 종가 뒤에 주식 분할이 있거나 분할 칸을 읽지 못해 싣지 않은 미국 종목 2") for x in lines), lines
 
 
 def _split_gate(data, prev, today=dt.date(2026, 11, 20)):
@@ -689,7 +689,7 @@ def test_a_split_seen_only_in_the_published_list_is_handled_after_splits_fields(
     assert own["codes"] == [] and own["split"] == [{"t": "TD", "pxd": D19, "after": [D20], "late": True}]
     assert umeta["splits"] == [] and umeta["usInfoPartial"] == [] and umeta["usForeign"]["checked"] == [] and umeta["usInfo"] == [1, 1]
     assert umeta["usExtraMissing"]["TD"].startswith("마지막 확인 종가(2026-11-19) 뒤에 주식 분할이 있어 뺌")
-    assert any(x.startswith("  !! 발행할 분할 목록에 마지막 확인 종가 뒤의 분할이 있어 뺀 미국 종목 1") for x in lines), lines
+    assert any(x.startswith("  !! 발행할 분할 목록에 마지막 확인 종가 뒤의 분할이 있어 싣지 않은 미국 종목 1") and "봉이 없어 뺌 1" in x for x in lines), lines
     # 그런 행이 파일에 남으면 관문은 실패
     data = {**_usdata([us("TD", price=60.0, d1=None, pxd=D19, pxc=True)], codes=["TD"]), "splits": [["TD", D20, 2.0]]}
     assert rows_of(lambda rep: V.check_us_own_close(rep, data, macro_days(), prev))["미국 마지막 확인 종가 (usSrc.own · pxc)"][0] == "FAIL"
@@ -779,3 +779,115 @@ def test_carried_details_without_a_quote_keep_a_recent_copy_or_go_blank(tmp_path
     assert not {"per", "pbr", "cap", "dy"} & set(by["SHEL"]), by["SHEL"]            # 보관본도 시세 가격도 없음 → 네 숫자를 비워요
     assert any(x.startswith("  !! 마지막 확인 종가 종목") and "보관본 그대로 1" in x and "SHEL" in x and "AAPL" not in x.split("비움")[1]
                for x in lines), [x for x in lines if "마지막 확인 종가 종목" in x]
+
+
+# ── 2차 확인 (2026-11-20): 단계가 행을 빼는 모든 길 — umeta 정리 · EXTRA_US 까닭 · 분할 줄이 목록과 맞음 (run_checks 까지) ──────────
+def _snap_path(path):
+    """줄인 실제 발행본을 지난 발행본으로 (분할 목록 · EXTRA_US 기록을 더해), 다음 미국 거래일에 EXTRA_US 의 ARKK(야후가 아무것도 주지 않음) · DIA(기준일
+    봉만 빔)를 마지막 확인 종가로 싣고, path 의 길로 행을 빼거나 되돌린 뒤 run_checks. path: plain · final · dropall · late · unread."""
+    snap = os.path.join(ROOT, "tests", "fixtures", "snapshot")
+    load = lambda n: json.load(open(os.path.join(snap, f"snap_{n}.json"), encoding="utf-8"))
+    prev = {k: load(k) for k in ("data", "corp", "disc", "macro")}
+    pdat = prev["data"]
+    usd0 = pdat["usPxDate"]
+    usl = [s for s in pdat["stocks"] if s.get("cls") == "us" and not s.get("fund")]
+    have = {s["t"] for s in usl}
+    pdat.update({"splits": [list(x) for x in V.MUST_SPLITS], "splitsFrom": V.SPLITS_FROM, "splitsAsOf": usd0,
+                 "splitsInfo": {"noCol": 0, "gap": [], "diff": [], "fixed": [], "fixedKept": []},
+                 "usExtraMissing": {t: "미국 요청 목록에 없음 (티커 모양)" for t in F.EXTRA_US if t not in have}})
+    T = next(d.strftime("%Y-%m-%d") for d in pd.bdate_range(usd0, periods=3) if d.strftime("%Y-%m-%d") > usd0)
+    macro = copy.deepcopy(prev["macro"])
+    macro["idxHist"]["SP500"]["rows"].append([T, 6800.0])
+    days = sorted({r[0] for r in macro["idxHist"]["SP500"]["rows"]})
+    t_empty, t_bar = "ARKK", "DIA"
+    assert {t_empty, t_bar} <= have and {t_empty, t_bar} <= set(F.EXTRA_US)
+    out, yahoo_bar = [], None
+    for s in usl:
+        r = copy.deepcopy(s)
+        if s["t"] == t_empty and path != "plain":
+            continue                                                    # 야후가 아무것도 주지 않음
+        if s["t"] == t_bar and path != "plain":
+            r.pop("d1", None)
+            r["pxd"] = days[-3]                                        # 야후의 자기 날짜 봉 (기준일 봉만 빔)
+            r["price"] = round(s["price"] * 0.5, 2)                    # 그 뒤 분할을 반영한 야후 값
+            yahoo_bar = dict(r)
+        out.append(r)
+    nocl = {} if path == "plain" else {t_empty: "empty", t_bar: "bar"}
+    umeta = {"usPxDate": T, "splits": [], "splitsNoCol": [], "usInfoPartial": [], "usFcurUnknown": [], "usInfo": [len(out), len(out)]}
+    own = F.us_own_close_step(pdat, nocl, out, dt.date.fromisoformat(T), days, etfs=F.US_ETFS,
+                              split_unread=frozenset(nocl) if path == "unread" else frozenset())
+    umeta["usSrc"] = {"v": 1, "own": own}
+    umeta["_usOwnYahoo"] = {t_bar: yahoo_bar} if yahoo_bar and t_bar in own.get("codes", []) else {}
+    kept = {r["t"] for r in out}
+    umeta["usExtraMissing"] = {**pdat["usExtraMissing"], **({t_empty: F.US_NO_PX_WHY} if t_empty not in kept else {})}
+    for r in out:                                                       # 상세 정보는 오늘 다시 붙여요 (여기서는 지난 발행본의 값)
+        if r.get("pxc"):
+            p = next(x for x in usl if x["t"] == r["t"])
+            r.update({k: v for k, v in p.items() if k not in F.US_OWN_KEYS and k not in ("d1", "pxd", "pxc")})
+    if path == "final":
+        for r in out:
+            if r["t"] == t_empty:
+                r["price"] = round(r["price"] * 1.5, 2)                 # 우리 단계가 틀린 값을 냈어요 → 점검이 걸러요
+    us_ = F.us_own_close_drop_all(out, umeta, "RuntimeError: x") if path == "dropall" else F.us_own_close_final(out, umeta, pdat, days)
+    sp = {k: copy.deepcopy(pdat[k]) for k in ("splits", "splitsFrom", "splitsAsOf", "splitsInfo")}
+    if path == "late":                                                  # 시드나 다시 읽은 이력에서만 나온 분할 (두 종목 모두 마지막 확인 종가 뒤)
+        sp["splits"] = sp["splits"] + [[t_empty, T, 2.0], [t_bar, T, 2.0]]
+        us_, sp = F.us_own_split_late(us_, umeta, sp, pdat)
+    rest = [copy.deepcopy(s) for s in pdat["stocks"] if not (s.get("cls") == "us" and not s.get("fund"))]
+    data = {**pdat, "usPxDate": T, "stocks": rest + us_, "usSrc": umeta["usSrc"], "usExtraMissing": umeta["usExtraMissing"], **sp}
+    json.dumps(data, allow_nan=False)
+    kdays = [dt.date.fromisoformat(r[0]) for r in prev["macro"]["idxHist"]["KOSPI"]["rows"]]
+    prev = {**prev, "data": pdat}
+    rep = V.run_checks({"data": data, "corp": prev["corp"], "disc": prev["disc"], "macro": macro}, prev, None,
+                       dt.date.fromisoformat(T) + dt.timedelta(days=1), "publish", count_between=lambda a, b: 1, notes=[],
+                       sessions={"dates": kdays, "src": "t"}, now=None, hilo=None, special={}, alt=None)
+    return data, umeta, {r[0]: (r[3], r[1]) for r in rep.rows}
+
+
+EXTRA_ROW = "손으로 더한 미국 종목 (EXTRA_US): 목록에 있거나 빠진 이유"
+SPLIT_ROW = "주식 분할 목록 (splits)"
+OWN_ROW = "미국 마지막 확인 종가 (usSrc.own · pxc)"
+
+
+@pytest.mark.parametrize("path", ["final", "dropall", "late", "unread"])
+def test_every_removal_path_keeps_the_list_splits_and_reasons_consistent(path):
+    _d, _u, plain = _snap_path("plain")
+    data, umeta, rows = _snap_path(path)
+    fails = lambda r: sorted(k for k, v in r.items() if v[0] == "FAIL")
+    assert fails(rows) == fails(plain), (path, set(fails(rows)) ^ set(fails(plain)))
+    assert rows[EXTRA_ROW][0] != "FAIL" and "이유 없이" not in rows[EXTRA_ROW][1], rows[EXTRA_ROW]
+    assert rows[SPLIT_ROW][0] != "FAIL", rows[SPLIT_ROW]
+    by = {s["t"]: s for s in data["stocks"]}
+    xm = data["usExtraMissing"]
+    if path in ("final", "dropall"):                                    # 빠진 행: 까닭이 적혀요 · 기록 정리
+        assert "ARKK" not in by and xm["ARKK"].startswith("마지막 확인 종가 점검"), xm.get("ARKK")
+        assert umeta["usInfo"][1] == sum(1 for s in data["stocks"] if s.get("cls") == "us" and not s.get("fund"))
+    if path == "dropall":
+        assert "DIA" not in by and xm["DIA"].startswith("마지막 확인 종가 점검이 오류로 멈춰 뺌")
+    if path == "late":                                                  # 야후 봉이 있던 DIA 는 예전 길로 되돌아오고, 없던 ARKK 는 빠지고 그 새 분할 줄도 빠져요
+        assert "pxc" not in by["DIA"] and by["DIA"]["pxd"] != data["usPxDate"] and ["DIA", data["usPxDate"], 2.0] in data["splits"]
+        assert "ARKK" not in by and not any(x[0] == "ARKK" for x in data["splits"]) and xm["ARKK"].startswith("마지막 확인 종가(")
+        own = data["usSrc"]["own"]
+        assert {x["t"] for x in own["split"]} == {"ARKK", "DIA"} and own["drop"].get("split") == 2 and own["codes"] == []
+    if path == "unread":                                                # 분할 칸을 읽지 못함: 예전 그대로 (DIA 는 야후의 자기 날짜 봉 · ARKK 는 빠짐)
+        assert "pxc" not in by["DIA"] and "ARKK" not in by and xm["ARKK"] == F.US_NO_PX_WHY
+        assert all(x.get("unread") for x in data["usSrc"]["own"]["split"])
+    assert rows[OWN_ROW][0] != "FAIL", rows[OWN_ROW]
+
+
+def test_a_failed_split_read_keeps_mains_path_in_fetch_us(tmp_path, monkeypatch):
+    """2차 확인 (2): 분할 칸을 한꺼번에 읽다 멈추면 종목마다 다시 읽고, 그래도 못 읽은 종목은 싣지 않아요 (예전 그대로 · 크게 남겨요)."""
+    calls = {"n": 0}
+    real = F.us_splits
+
+    def flaky(data, codes, today, lo=None):
+        calls["n"] += 1
+        if calls["n"] <= 2:                                             # 한꺼번에 · 그 종목 하나 다 멈춤 (그다음 부름은 끝의 분할 목록)
+            raise RuntimeError("boom")
+        return real(data, codes, today, lo)
+    monkeypatch.setattr(F, "us_splits", flaky)
+    out, meta, lines, prev = _fetch(tmp_path, monkeypatch, blank={"NVDA"}, quote={"NVDA": 60.0})
+    by = {r["t"]: r for r in out}
+    assert "pxc" not in by["NVDA"] and by["NVDA"]["pxd"] == D18                     # 예전 그대로: 야후의 자기 날짜 봉
+    assert meta["usSrc"]["own"]["split"] == [{"t": "NVDA", "pxd": D18, "after": [], "unread": True}] and meta["usSrc"]["own"]["drop"] == {"splitRead": 1}
+    assert any(x.startswith("  !! 야후 종가가 없는 미국 종목의 분할 칸을 한꺼번에 읽지 못했어요") and "그래도 읽지 못한 1종목" in x for x in lines), lines
