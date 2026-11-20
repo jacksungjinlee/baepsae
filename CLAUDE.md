@@ -119,8 +119,23 @@ yes/no question in plain words (never send him to GitHub):
 4. money, accounts or outside services.
 
 If a question in categories 3–4 has had no answer for 12 hours and the change is easy to undo, go ahead with your
-recommendation and say so. Comment-only test edits never need asking (Jack, 2026-11-20). Tests that are only added and
-checks made only stricter need no yes either; list them under **안전 규칙 변경** and in the after-merge summary.
+recommendation and say so (paying for anything is never easy to undo).
+
+Tests and checks:
+- Comment-only test edits never need asking (Jack, 2026-11-20).
+- Tests that are only added and checks made only stricter need no yes either, unless they can stop the publish
+  (category 2: a gate row in `validate_data.py`, or the screen checks the daily run runs before publishing —
+  `tests/real_data_check.py`, `smoke_launch.py`, `smoke_app.py`). List them under **안전 규칙 변경** and in the after-merge
+  summary.
+- Any other edit to an existing test or a `validate_data.py` threshold (what it expects, counts or compares, or its
+  fixture) is listed by name under **안전 규칙 변경**. If it would now accept anything it used to reject, it is loosening
+  (category 2).
+- A change to this file that removes or relaxes a rule is category 2 too.
+- When unsure, ask.
+
+What this does not change: where this file, the RUNBOOK or an approved spec says Jack decides something (the locked
+product rules, the mascot and the pictures, a paid run), that still holds; a spec that conflicts with the code is still
+stop and report.
 
 **Never — even if Jack asks casually; explain why first:**
 - loosen, skip or delete a safety rule or test;

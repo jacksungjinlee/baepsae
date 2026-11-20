@@ -576,11 +576,12 @@ Cloud sessions from the desktop app's Code tab. No local dev setup on his PC, an
 **Who runs GitHub (standing rule since 2026-10-31).** Claude Code owns the whole GitHub process: branches, pull
 requests, merging, starting and watching workflow runs, and rollbacks. It merges on its own only when build, `pytest`,
 the phone-size smoke test (and, after v17.6, the `ci` check) pass, the fresh-eyes review is done and fixed, pipeline
-changes have a green `dry_run` with the validation summary in the PR, and no safety rule is loosened. It asks Jack
-first, with a short yes/no question in the chat, for new or changed Korean UI text (showing the 「새 문구」 table),
-changes to what users see beyond an approved spec, anything that costs money or needs a sign-up or setting change, any
-change to `CLAUDE.md`, a `validate_data.py` threshold or `tests/` (even when nothing is loosened; added 2026-11-01), and
-— until v17.6 is done — before merging v17.5 and v17.6 (his claude.ai chat reviews those PRs). After every merge it
+changes have a green `dry_run` with the validation summary in the PR, and no safety rule is loosened. Since
+2026-11-20 it decides anything the rules and approved specs already cover and lists those decisions under **Choices I
+made** in the PR. It asks Jack, with a short yes/no question in the chat, only about new Korean wording (showing the
+「새 문구」 table), loosening a safety check or adding one that can stop the publish, changes to what users can do, and
+money, accounts or outside services. (Until 11-20 it also asked about every `CLAUDE.md`, threshold or `tests/` change;
+v17.5 and v17.6 also waited for his claude.ai chat.) After every merge it
 watches the next run, checks the live site, reverts at once if something is wrong, and sends Jack a 3–6 line summary.
 `docs/CHANGELOG.md` has one line per merge. The full rule, including what is never allowed, is in `CLAUDE.md`
 § GitHub process.
