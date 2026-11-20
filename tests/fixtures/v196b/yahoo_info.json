@@ -1,0 +1,68 @@
+{
+ "fetched": "2026-11-15 (yfinance 1.7.0 Ticker.get_info)",
+ "calendar": {
+  "AAPL": {
+   "Ex-Dividend Date": "2026-11-12",
+   "Earnings Date": "2027-01-28"
+  },
+  "KO": {
+   "Ex-Dividend Date": "2026-12-01",
+   "Earnings Date": "2026-10-27"
+  },
+  "JNJ": {
+   "Ex-Dividend Date": "2026-11-24",
+   "Earnings Date": "2027-01-26"
+  },
+  "O": {
+   "Ex-Dividend Date": "2026-11-30",
+   "Earnings Date": "2026-11-02"
+  },
+  "TSLA": {
+   "Earnings Date": "2027-01-27"
+  }
+ },
+ "info": {
+  "AAPL": {
+   "isEarningsDateEstimate": true,
+   "earningsTimestamp": 1793653200,
+   "earningsTimestampStart": 1801170000,
+   "earningsTimestampEnd": 1801170000,
+   "exDividendDate": 1794441600,
+   "dividendDate": 1794787200,
+   "lastDividendDate": 1794441600
+  },
+  "KO": {
+   "isEarningsDateEstimate": false,
+   "earningsTimestamp": 1793104200,
+   "earningsTimestampStart": 1793104200,
+   "earningsTimestampEnd": 1793104200,
+   "exDividendDate": 1796083200,
+   "dividendDate": 1797292800,
+   "lastDividendDate": 1789430400
+  },
+  "JNJ": {
+   "isEarningsDateEstimate": false,
+   "earningsTimestamp": 1800970200,
+   "earningsTimestampStart": 1800970200,
+   "earningsTimestampEnd": 1800970200,
+   "exDividendDate": 1795478400,
+   "dividendDate": 1796688000,
+   "lastDividendDate": 1787616000
+  },
+  "O": {
+   "isEarningsDateEstimate": false,
+   "earningsTimestamp": 1793653200,
+   "earningsTimestampStart": 1793653200,
+   "earningsTimestampEnd": 1793653200,
+   "exDividendDate": 1795996800,
+   "dividendDate": 1797292800,
+   "lastDividendDate": 1793318400
+  },
+  "TSLA": {
+   "isEarningsDateEstimate": true,
+   "earningsTimestamp": 1792612800,
+   "earningsTimestampStart": 1801083600,
+   "earningsTimestampEnd": 1801083600
+  }
+ }
+}

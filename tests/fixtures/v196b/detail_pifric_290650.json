@@ -1,0 +1,42 @@
+{
+ "status": "000",
+ "message": "정상",
+ "list": [
+  {
+   "rcept_no": "20261012000188",
+   "corp_cls": "K",
+   "corp_code": "01181515",
+   "corp_name": "엘앤씨바이오",
+   "piic_nstk_ostk_cnt": "3,700,000",
+   "piic_nstk_estk_cnt": "-",
+   "piic_fv_ps": "500",
+   "piic_bfic_tisstk_ostk": "26,969,704",
+   "piic_bfic_tisstk_estk": "-",
+   "piic_fdpp_fclt": "105,000,000,000",
+   "piic_fdpp_bsninh": "-",
+   "piic_fdpp_op": "24,670,000,000",
+   "piic_fdpp_dtrp": "15,000,000,000",
+   "piic_fdpp_ocsa": "-",
+   "piic_fdpp_etc": "-",
+   "piic_ic_mthn": "주주배정후 실권주 일반공모",
+   "fric_nstk_ostk_cnt": "30,437,464",
+   "fric_nstk_estk_cnt": "-",
+   "fric_fv_ps": "500",
+   "fric_bfic_tisstk_ostk": "30,669,704",
+   "fric_bfic_tisstk_estk": "-",
+   "fric_nstk_asstd": "2026년 10월 27일",
+   "fric_nstk_ascnt_ps_ostk": "1",
+   "fric_nstk_ascnt_ps_estk": "-",
+   "fric_nstk_dividrk": "2026년 01월 01일",
+   "fric_nstk_dlprd": "-",
+   "fric_nstk_lstprd": "2026년 11월 12일",
+   "fric_bddd": "2026년 07월 31일",
+   "fric_od_a_at_t": "2",
+   "fric_od_a_at_b": "0",
+   "fric_adt_a_atn": "참석",
+   "ssl_at": "Y",
+   "ssl_bgd": "20260801",
+   "ssl_edd": "20261008"
+  }
+ ]
+}
