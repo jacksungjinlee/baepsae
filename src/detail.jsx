@@ -1133,19 +1133,21 @@ const T_GOLD_EST = { ko: "금현물은 국제 금값으로 환산한 추정치�
 const T_PX_OFFICIAL = { ko: "가격은 {md} 공식 종가예요. 다른 수치는 추정치예요.", en: "Prices are official closes from {md}. Other figures are estimates." };
 // 미국 종가 날짜 (Jack 승인 2026-11-19, 답 6 "Yes"): 위 문장의 {md} 는 한국 종가 날짜(pxDate)예요. 미국 종목 가격은 미국 종가 날짜
 // (data.json usPxDate)의 것이라, 두 날짜가 다른 날(미국 휴장 뒤 · 늦은 미국 종가)에는 첫 화면 데이터 칸의 그 문장 아래에 2.0 의 승인
-// 문장(src/copy/v2.js app.usClose)을 글자 그대로 한 줄 더 (usCloseLine). 같은 날이면 예전 그대로예요. 영어 문장은 아직 승인되지 않아서
-// 영어 화면은 예전 그대로예요 (en: null). 그 칸이 있는 첫 화면에는 열린 포트폴리오가 없고, 칸은 앱의 모든 가격을 말해요: 그래서 오늘
-// 데이터에 달러 가격 종목(ccy "USD" · 379800 처럼 원화로 거래되는 펀드는 아니에요)이 있을 때 봐요. 미국 종가보다도 앞선 종가의 미국
+// 문장(src/copy/v2.js app.usClose)을 글자 그대로 한 줄 더 (usCloseLine). 같은 날이면 예전 그대로예요. 영어 화면은 같은 규칙으로 영어
+// 문장 (Jack 승인 2026-11-20, 답 8c · {md} 는 예전 뱁새의 영어 월 · 일 "Nov 25"). 그 칸이 있는 첫 화면에는 열린 포트폴리오가 없고, 칸은
+// 앱의 모든 가격을 말해요: 그래서 저장한 포트폴리오와 상관없이, 오늘 데이터에 달러 가격 종목(ccy "USD" · 379800 처럼 원화로 거래되는
+// 펀드는 아니에요)이 있을 때 봐요 (Jack 2026-11-20, 답 8a · 2.0 메뉴의 날짜 칸과 같은 규칙). 미국 종가보다도 앞선 종가의 미국
 // 종목(pxd)은 열린 포트폴리오의 배너가 이름과 날짜를 따로 말해요 (T_OWN_CLOSE) — 첫 화면에는 그 배너가 없어서 같은 말을 두 번 하지 않아요.
-const T_US_CLOSE = { ko: "미국 종목은 현지 기준 {md} 종가예요.", en: null };
+const T_US_CLOSE = { ko: "미국 종목은 현지 기준 {md} 종가예요.", en: "US stocks: priced at the {md} close (US time)." };
 const ISO_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const isoDay = (x) => typeof x === "string" && ISO_DAY_RE.test(x);
 // dataInfo: AppInner 의 live ({ live, failed, pxDate, usPxDate, usStocks, … }) → 그 한 줄, 또는 null (예전 그대로)
 function usCloseLine(dataInfo, lang) {
-  const tpl = T_US_CLOSE[lang === "en" ? "en" : "ko"];
+  const l = lang === "en" ? "en" : "ko";
+  const tpl = T_US_CLOSE[l];
   const d = dataInfo || {};
   if (!tpl || !d.live || d.failed || !d.usStocks || !isoDay(d.pxDate) || !isoDay(d.usPxDate) || d.usPxDate === d.pxDate) return null;
-  return tpl.replace("{md}", mdOf(d.usPxDate, "ko"));
+  return tpl.replace("{md}", mdOf(d.usPxDate, l));
 }
 // v19.1c (Jack 승인 2026-11-07, 디자인 채팅 · 미국 가격 날짜 A1–A3): 미국 기준일보다 앞선 종가로 나가는 미국 종목(data.json pxd)이
 // 목록이나 보유에 있을 때, 날짜마다 한 문장 (새 날짜 먼저 · 이름은 티커 · 모두 ", " 로). 2.0 의 app.ownClose 와 같은 문장이에요.

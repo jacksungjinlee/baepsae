@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
-"""예전 뱁새의 미국 종가 날짜 (Jack, 2026-11-19 · 답 6 "Yes") — Node 로 실제 컴포넌트를 그려서 봐요.
+"""예전 뱁새의 미국 종가 날짜 (Jack, 2026-11-19 · 답 6 "Yes" · 2026-11-20 답 8 a · b · c "Yes") — Node 로 실제 컴포넌트를 그려서 봐요.
 
 예전 뱁새 포트폴리오 첫 화면(어떻게 시작할까요?)의 데이터 칸: '가격은 {md} 공식 종가예요. 다른 수치는 추정치예요.'(T_PX_OFFICIAL)의 {md} 는
 한국 종가 날짜(data.json pxDate)예요. 미국 종목 가격은 미국 종가 날짜(usPxDate)의 것이라, 두 날짜가 다른 날(미국 휴장 뒤 · 늦은 미국 종가)에는
 그 문단 바로 아래에 2.0 의 승인 문장 '미국 종목은 현지 기준 {md} 종가예요.'(src/copy/v2.js app.usClose, CSV 26)를 글자 그대로 한 줄.
 
-- 날짜가 다르고 오늘 데이터에 달러 가격 종목(ccy "USD")이 있을 때만 · {md} 는 usPxDate (예전 뱁새의 월 · 일, data.js mdOf)
+- 날짜가 다르고 오늘 데이터에 달러 가격 종목(ccy "USD")이 있을 때만 (저장한 포트폴리오와 상관없이 · 답 8a) · {md} 는 usPxDate
+  (예전 뱁새의 월 · 일, data.js mdOf: "11월 25일" · 영어 "Nov 25") · 문단 아래 따로 한 줄 (답 8b)
 - 같은 날 · 달러 종목 없음(379800 KODEX 미국S&P500 은 cls "us" 지만 원화라 세지 않아요) · 못 읽는 날짜 · 못 불러온 날: 예전과 글자 하나 다르지 않아요
-- 영어 화면: 승인된 영어 문장이 없어 예전 그대로
+- 영어 화면: 같은 규칙으로 승인된 영어 문장 'US stocks: priced at the {md} close (US time).' (답 8c)
 - 문단은 언제나 예전 글자 그대로 (smoke_app.py 의 '공식 종가예요. 다른 수치는 추정치예요' 확인이 발행 전 화면 검사에서도 그대로 통과해요)
 - data.json 을 읽을 때(loadLiveData) usPxDate 와 달러 종목 여부를 실어 보내고, 달러 종목이 있는데 usPxDate 를 못 읽으면 console 에 크게
 브라우저 화면은 tests/smoke_app.py 장면 '미국종가'가 봐요.
@@ -27,6 +28,7 @@ NODE = shutil.which("node")
 pytestmark = pytest.mark.skipif(NODE is None, reason="node 가 없어요")
 MODS = {"DT": "src/detail.jsx", "CP": "src/copy/v2.js"}
 US_CLOSE = "미국 종목은 현지 기준 {md} 종가예요."
+US_CLOSE_EN = "US stocks: priced at the {md} close (US time)."      # Jack 승인 2026-11-20 (답 8c)
 OFFICIAL = "공식 종가예요. 다른 수치는 추정치예요"          # tests/smoke_app.py OFFICIAL (발행 전 화면 검사가 찾는 글자)
 KR, US = "2026-11-26", "2026-11-25"                     # 추수감사절 다음 날처럼: 한국 11-26 · 미국 11-25
 _B = {}
@@ -85,12 +87,15 @@ def test_the_line_is_the_approved_2_0_line_word_for_word():
     assert c["app"]["usClose"] == US_CLOSE
     got = run("out = { ko: DT.T_US_CLOSE.ko, en: DT.T_US_CLOSE.en, px: DT.T_PX_OFFICIAL };")
     assert got["ko"] == US_CLOSE                                    # 예전 뱁새의 글자 = 2.0 app.usClose
-    assert got["en"] is None                                        # 승인된 영어가 없어요: 영어 화면은 예전 그대로
+    assert got["en"] == US_CLOSE_EN                                 # Jack 이 그대로 승인한 영어 (2026-11-20, 답 8c)
     assert got["px"] == {"ko": "가격은 {md} 공식 종가예요. 다른 수치는 추정치예요.",
                          "en": "Prices are official closes from {md}. Other figures are estimates."}   # 예전 문장은 손대지 않아요
     with open(os.path.join(ROOT, "docs", "tasks", "v18.3-approved-in-chat.md"), encoding="utf-8") as f:
         rows = [ln for ln in f.read().splitlines() if ln.startswith("| Old app") and US_CLOSE in ln]
     assert len(rows) == 1 and "| Jack, 2026-11-19" in rows[0] and "T_US_CLOSE" in rows[0], rows   # 승인 기록 (예전 뱁새는 키 대신 자리)
+    with open(os.path.join(ROOT, "docs", "tasks", "v18.3-approved-in-chat.md"), encoding="utf-8") as f:
+        en_rows = [ln for ln in f.read().splitlines() if ln.startswith("| Old app") and US_CLOSE_EN in ln]
+    assert len(en_rows) == 1 and "| Jack, 2026-11-20" in en_rows[0] and "8c" in en_rows[0], en_rows
 
 
 # ── 규칙: usCloseLine ──
@@ -99,13 +104,15 @@ def test_the_rule_dates_differ_and_dollar_stocks_in_todays_data():
       const L = (o, lang = 'ko') => DT.usCloseLine(info(o), lang);
       out = {
         differ: L({}), later: L({ usPxDate: '2026-11-27' }), same: L({ usPxDate: KR }), noUsd: L({ usStocks: false }),
-        en: L({}, 'en'), failed: L({ live: false, failed: true }), notLive: L({ live: false }), noUs: L({ usPxDate: null }),
+        en: L({}, 'en'), enSame: L({ usPxDate: KR }, 'en'), enNoUsd: L({ usStocks: false }, 'en'),
+        failed: L({ live: false, failed: true }), notLive: L({ live: false }), noUs: L({ usPxDate: null }),
         badUs: L({ usPxDate: '11/25/2026' }), stampUs: L({ usPxDate: '2026-11-25T06:00:00+09:00' }), noKr: L({ pxDate: null }),
         before: DT.usCloseLine(before({}), 'ko'), none: DT.usCloseLine(null, 'ko'),
       };""")
     assert got["differ"] == "미국 종목은 현지 기준 11월 25일 종가예요.", got["differ"]
     assert got["later"] == "미국 종목은 현지 기준 11월 27일 종가예요."      # 한국이 쉰 날 (미국이 더 새 날짜): 그래도 맞는 말
-    for k in ("same", "noUsd", "en", "failed", "notLive", "noUs", "badUs", "stampUs", "noKr", "before", "none"):
+    assert got["en"] == "US stocks: priced at the Nov 25 close (US time).", got["en"]   # 영어 화면: 같은 규칙 · 영어 월 · 일
+    for k in ("same", "noUsd", "enSame", "enNoUsd", "failed", "notLive", "noUs", "badUs", "stampUs", "noKr", "before", "none"):
         assert got[k] is None, (k, got[k])
 
 
@@ -113,7 +120,8 @@ def test_the_rule_dates_differ_and_dollar_stocks_in_todays_data():
 def test_launch_screen_adds_one_line_right_under_the_unchanged_paragraph():
     got = run("""
       const ls = lines(screen(info({})));
-      out = { ls, base: lines(screen(info({ usPxDate: KR }))), html: screen(info({})) };""")
+      out = { ls, base: lines(screen(info({ usPxDate: KR }))), html: screen(info({})),
+        en: lines(screen(info({}), 'en')), enBase: lines(screen(info({ usPxDate: KR }), 'en')) };""")
     para = "가격은 11월 26일 공식 종가예요. 다른 수치는 추정치예요. 주문 전엔 증권사 앱에서 실제 시세를 확인하세요."
     ls = got["ls"]
     assert ls.count(para) == 1 and OFFICIAL in para, ls             # 문단은 예전 그대로 (발행 전 화면 검사의 글자도 그대로)
@@ -122,25 +130,33 @@ def test_launch_screen_adds_one_line_right_under_the_unchanged_paragraph():
     assert sum("미국 종목은" in x for x in ls) == 1
     assert ls[:i + 1] + ls[i + 2:] == got["base"]                   # 그 한 줄 말고는 같은 날의 화면과 똑같아요
     assert 'data-us-close="1"' in got["html"] and "font-size:12px" in got["html"].split('data-us-close="1"', 1)[1].split(">", 1)[0]
+    # 영어 화면: 영어 문단 그대로, 바로 아래 승인된 영어 한 줄 (답 8c)
+    para_en = "Prices are official closes from Nov 26. Other figures are estimates. Check real quotes in your brokerage app before ordering."
+    en = got["en"]
+    assert en.count(para_en) == 1, en
+    j = en.index(para_en)
+    assert en[j - 1] == "As of Nov 26" and en[j + 1] == "US stocks: priced at the Nov 25 close (US time).", en[j - 1:j + 2]
+    assert sum("US stocks:" in x for x in en) == 1 and not any("미국 종목은" in x for x in en)
+    assert en[:j + 1] + en[j + 2:] == got["enBase"]
 
 
 def test_launch_screen_is_unchanged_when_the_line_does_not_apply():
-    """같은 날 · 달러 종목 없음 · 못 읽는 미국 날짜 · 영어 화면 · 못 불러온 날: 이 PR 전의 화면과 글자 하나 다르지 않아요 (HTML 그대로)."""
+    """같은 날 · 달러 종목 없음 · 못 읽는 미국 날짜 · 못 불러온 날 (한국어 · 영어 화면): 이 PR 전의 화면과 글자 하나 다르지 않아요 (HTML 그대로)."""
     got = run("""
       const pair = (now, old, lang = 'ko') => [screen(now, lang), screen(old, lang)];
       out = {
         same: pair(info({ usPxDate: KR }), before({})),
         noUsd: pair(info({ usStocks: false }), before({})),
         badUs: pair(info({ usPxDate: null }), before({})),
-        en: pair(info({}), before({}), 'en'),
         enSame: pair(info({ usPxDate: KR }), before({}), 'en'),
+        enNoUsd: pair(info({ usStocks: false }), before({}), 'en'),
         failed: pair(info({ live: false, failed: true, pxDate: null, usPxDate: null, usStocks: false }), before({ live: false, failed: true, pxDate: null })),
       };
-      out.en.push(lines(out.en[0]));""")
+      out.enSame.push(lines(out.enSame[0]));""")
     for k, v in got.items():
         assert v[0] == v[1], k                                       # 그대로
-        assert "미국 종목은" not in v[0] and "data-us-close" not in v[0], k
-    assert "Prices are official closes from Nov 26. Other figures are estimates. Check real quotes in your brokerage app before ordering." in got["en"][2]
+        assert "미국 종목은" not in v[0] and "US stocks:" not in v[0] and "data-us-close" not in v[0], k
+    assert "Prices are official closes from Nov 26. Other figures are estimates. Check real quotes in your brokerage app before ordering." in got["enSame"][2]
 
 
 # ── 읽기: loadLiveData 가 usPxDate · 달러 종목 여부를 실어 보내요 ──

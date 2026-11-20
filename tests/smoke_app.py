@@ -2638,6 +2638,7 @@ def scene_own_close(R, files):
 
 
 US_CLOSE = "미국 종목은 현지 기준 {md} 종가예요."      # 2.0 app.usClose (CSV 26) — 예전 뱁새 T_US_CLOSE (Jack 승인 2026-11-19, 답 6)
+US_CLOSE_EN = "US stocks: priced at the {md} close (US time)."   # 예전 뱁새 T_US_CLOSE.en (Jack 승인 2026-11-20, 답 8c)
 US_LINE = """() => { const u = document.querySelector('[data-us-close]'); if (!u) return null;
   const p = u.previousElementSibling; return [u.innerText.trim(), p ? p.innerText.trim() : null, getComputedStyle(u).fontSize]; }"""
 
@@ -2650,14 +2651,18 @@ def _prev_weekday(iso):
 
 
 def scene_us_close(R, files):
-    """2026-11-19 (Jack, 답 6 "Yes"): 예전 뱁새 포트폴리오 첫 화면(어떻게 시작할까요?)의 데이터 칸. 미국 종가 날짜(usPxDate)가 한국 종가
-    날짜(pxDate)와 다른 날이면 '가격은 … 공식 종가예요. 다른 수치는 추정치예요. 주문 전엔 …' 문단 바로 아래에 '미국 종목은 현지 기준
-    {미국 날짜} 종가예요.' 한 줄 (2.0 app.usClose 그대로, 12px). 문단은 언제나 예전 글자 그대로예요. 같은 날 · 달러 종목이 없는 데이터 ·
-    영어 화면은 예전 그대로 (그 줄 없음 · 영어 문장은 승인 전). 날짜는 이 장면이 정해요 (실제 데이터로 돌아도 같은 시험)."""
+    """2026-11-19 (Jack, 답 6 "Yes") · 2026-11-20 (답 8 a · b · c "Yes"): 예전 뱁새 포트폴리오 첫 화면(어떻게 시작할까요?)의 데이터 칸.
+    미국 종가 날짜(usPxDate)가 한국 종가 날짜(pxDate)와 다른 날이면 '가격은 … 공식 종가예요. 다른 수치는 추정치예요. 주문 전엔 …' 문단
+    바로 아래에 따로 한 줄 '미국 종목은 현지 기준 {미국 날짜} 종가예요.' (2.0 app.usClose 그대로, 12px · 답 8b). 영어 화면은 같은 규칙으로
+    'US stocks: priced at the {Mon D} close (US time).' (답 8c). 그 칸은 앱의 모든 가격을 말해서, 저장한 포트폴리오가 미국 종목을 담았든
+    한국 종목만 담았든 없든 같아요 (답 8a). 문단은 언제나 예전 글자 그대로예요. 같은 날 · 달러 종목이 없는 데이터는 예전 그대로 (그 줄 없음).
+    날짜는 이 장면이 정해요 (실제 데이터로 돌아도 같은 시험)."""
     S = "미국 종가"
     kr = files["data.json"]["pxDate"]
     us = _prev_weekday(kr)                                       # 미국이 하루 쉬었거나 미국 종가가 늦은 날처럼: 한 거래일 앞
-    want = US_CLOSE.replace("{md}", _md(us, "ko"))
+    want = {"ko": US_CLOSE.replace("{md}", _md(us, "ko")), "en": US_CLOSE_EN.replace("{md}", _md(us, "en"))}
+    para = {"ko": f"가격은 {_md(kr, 'ko')} 공식 종가예요. 다른 수치는 추정치예요. 주문 전엔",
+            "en": f"Prices are official closes from {_md(kr, 'en')}. Other figures are estimates. Check real quotes"}
 
     def site(us_date, drop_usd=False):
         f = json.loads(json.dumps(files, allow_nan=True))
@@ -2675,30 +2680,39 @@ def scene_us_close(R, files):
         see(page, OFFICIAL)
         page.wait_for_timeout(300)
 
-    slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": "005930", "mw": 400}, {"t": "AAPL", "mw": 300}]}
-    srv, ctx, page, _ = R.open(site(us), local=slot_local([("susd", "미국 종목 시험", slot)]))
-
-    def differ():
-        launch(page)
-        see(page, "미국 종목 시험")                                  # 이어서 하기: 미국 종목을 담은 저장본
-        got = poll(page, US_LINE, bool, "미국 종가 날짜 줄이 없어요")
-        assert got[0] == want, got
-        assert got[1].startswith(f"가격은 {_md(kr, 'ko')} 공식 종가예요. 다른 수치는 추정치예요. 주문 전엔"), got      # 바로 위: 예전 문단 그대로
+    def line_is(page, lang, what):
+        got = poll(page, US_LINE, lambda v: bool(v) and v[0] == want[lang], what)
+        assert got[1].startswith(para[lang]), got                    # 바로 위: 예전 문단 그대로
         assert got[2] == "12px", got
         assert page.locator("[data-us-close]").count() == 1
-    R.check(page, S, f"KO: 날짜가 다르면 문단 아래 '{want}' (문단은 그대로 · 12px)", differ)
 
-    def english():
-        page.get_by_role("button", name="EN", exact=True).first.click()
-        see(page, "How would you like to start?")
-        see(page, "Prices are official closes from")
-        page.wait_for_timeout(300)
-        assert page.locator("[data-us-close]").count() == 0, page.evaluate(US_LINE)
-        page.get_by_role("button", name="한국어", exact=True).first.click()
-        see(page, "어떻게 시작할까요?")
-        assert poll(page, US_LINE, bool, "한국어로 되돌렸는데 미국 종가 날짜 줄이 없어요")[0] == want
-    R.check(page, S, "EN: 영어 화면은 예전 그대로 (그 줄 없음) · 한국어로 되돌리면 다시 그 줄", english)
-    ctx.close(); srv.shutdown()
+    held = lambda *hs: {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": t, "mw": mw} for t, mw in hs]}
+    cases = (("미국 종목을 담은 저장본", [("susd", "미국 종목 시험", held(("005930", 400), ("AAPL", 300)))]),
+             ("한국 종목만 담은 저장본", [("skr", "한국만 시험", held(("005930", 400), ("000660", 300)))]),
+             ("저장본 없음", []))
+    for who, slots in cases:
+        srv, ctx, page, _ = R.open(site(us), local=slot_local(slots))
+
+        def differ():
+            launch(page)
+            for _, name, _ in slots:
+                see(page, name)                                      # 이어서 하기에 그 저장본이 보여요
+            line_is(page, "ko", "미국 종가 날짜 줄이 없어요")
+        R.check(page, S, f"KO · {who}: 날짜가 다르면 문단 아래 '{want['ko']}' (문단은 그대로 · 12px)", differ)
+
+        if slots and slots[0][0] == "susd":
+            def english():
+                page.get_by_role("button", name="EN", exact=True).first.click()
+                see(page, "How would you like to start?")
+                see(page, "Prices are official closes from")
+                line_is(page, "en", "영어 화면에 영어 미국 종가 날짜 줄이 없어요")
+                assert "미국 종목은" not in page.locator("body").inner_text()
+                page.get_by_role("button", name="한국어", exact=True).first.click()
+                see(page, "어떻게 시작할까요?")
+                line_is(page, "ko", "한국어로 되돌렸는데 한국어 미국 종가 날짜 줄이 없어요")
+                assert "US stocks:" not in page.locator("body").inner_text()
+            R.check(page, S, f"EN: 영어 문단 아래 '{want['en']}' · 한국어로 되돌리면 한국어 줄", english)
+        ctx.close(); srv.shutdown()
 
     for name, us_date, drop in (("같은 날", kr, False), ("달러 종목 없음", us, True)):
         srv, ctx, page, _ = R.open(site(us_date, drop), local=slot_local([]))
