@@ -780,3 +780,190 @@ def test_blank_names_never_write_nan_into_pxsrc():
         assert bad_words(rec) == [], rec
     loud, txt = F.kr_knx_note(D16, kst, names={"278990": nan, "232530": "nan"})
     assert not V.BAD_WORD.search(txt)
+
+
+# ── 11. 검증 리뷰 M1: 기준일 맞춰 보기 — 두 출처가 함께 수정된 값 (권리락 · 분할 · 병합 · 무상증자) 으로 같아져도 내지 않아요 ─────────────
+# 장면: 2차 출처 날 d = 11-16 · 1차 출처 최종본 px0 = 11-13 · 어느 코넥스의 권리락(분할 · 무상증자) 날이 11-17. 11-17 에 받으면 야후 (분할 수정) 와
+# 네이버 (수정주가) 가 모두 11-16 종가 ÷ 비율로 원 단위까지 같아요 → 그 값이 11-16 공식 종가로 나가면 시가총액 · d1 이 틀려요.
+A13 = F.kr_knx_anchor(knx_listing("2026-11-13_final"), D13)
+EX17 = dt.date(2026, 11, 17)
+
+
+def adjusted_raw(code, ex_date=EX17, k=2):
+    """기록한 네이버 · 야후 응답에서 code 의 ex_date 앞 모든 봉을 ÷ k (수정주가처럼 · 네이버는 원 단위로)."""
+    rn, ry = naver_raw(), yahoo_raw()
+    for r in rn[code]["body"]:
+        if dt.datetime.strptime(r["localDate"], "%Y%m%d").date() < ex_date:
+            for f in ("closePrice", "openPrice", "highPrice", "lowPrice"):
+                if r.get(f):
+                    r[f] = float(round(r[f] / k))
+    b = ry[code]["body"]
+    q = b["indicators"]["quote"][0]
+    for i, t in enumerate(b["timestamp"]):
+        if dt.datetime.fromtimestamp(t, F.KST).date() < ex_date and q["close"][i] is not None:
+            q["close"][i] = q["close"][i] / k
+    return rn, ry
+
+
+def run_fb_a(knx, anchor, caps=CAPS_190, said=None):
+    return F.kr_fallback_days([D16], lambda d: (universe16(), "시험"), NOW, {}, fetch_daum=lambda codes, n: (daum2(), []),
+                              fetch_yahoo=lambda cm, a, b: (yahoo2(), 0), fill_day=no_fill, say=(said.append if said is not None else (lambda s: None)),
+                              caps=caps, knx=knx, anchor=anchor)
+
+
+def test_anchor_reads_the_px0_final_files_konex_official_closes():
+    fin13 = knx_listing("2026-11-13_final")
+    px0, offs = F.kr_knx_anchor(pd.concat([kk_listing("2026-11-13_2158"), fin13], ignore_index=True), D13)
+    assert px0 == D13 and offs == official(fin13) and set(offs) == set(KNX)                    # 코넥스만 · 공식 종가 = 시가총액 ÷ 주식 수
+    assert offs["232530"] == 10140.0 and A13 == (D13, offs)
+    assert F.kr_knx_anchor(None, D13) == (None, {}) and F.kr_knx_anchor(fin13, None) == (None, {})
+    assert F.kr_knx_anchor(fin13.drop(columns=["Market"]), D13) == (None, {})
+
+
+def test_both_sources_adjusted_after_px0_are_left_out_loudly():
+    rn, ry = adjusted_raw("232530")
+    nv = {c: F.naver_rows_by_day(v["body"]) for c, v in rn.items()}
+    y = {c: F.yahoo_chart_closes(v["body"], dt.date(2026, 11, 1), dt.date(2026, 11, 21)) for c, v in ry.items() if v["status"] == 200}
+    fin16 = knx_listing("2026-11-16_final")
+    assert nv["232530"][D16]["closePrice"] == y["232530"][D16] == 5000.0 != official(fin16)["232530"] == 10000.0
+    fr0, _ = F.kr_knx_confirm(D16, fin16, y, nv)                                                # 맞춰 보지 않으면: 반값이 공식 종가로 나가요 (막을 경우)
+    assert dict(zip(fr0["Code"], fr0["Close"]))["232530"] == 5000
+    fr, st = F.kr_knx_confirm(D16, fin16, y, nv, anchor=A13)
+    assert "232530" not in set(fr["Code"]) and set(fr["Code"]) == set(TRADED + NO_TRADE) - {"232530"}
+    assert st["adj"] == [("232530", "이엠티", 10140.0, 5070.0)] and st["noAnchor"] == [] and st["conf"] == 3 and st["anchor"] == D13
+    k = F.px_src_knx_counts(st)
+    assert k["adj"] == 1 and k["noAnchor"] == 0 and k["anchor"] == "2026-11-13" and "232530" in k["left"] and k["adjEx"] == ["232530 이엠티 10140/5070"]
+    assert json.dumps(k, allow_nan=False) and bad_words(k) == []
+    loud, txt = F.kr_knx_note(D16, st)
+    assert loud and "기준일 2026-11-13 종가가 최종본과 다름" in txt and "232530 이엠티 최종본 10,140 · 네이버 5,070" in txt
+    assert "기준일 종가가 최종본과 다름 1" in txt and "네이버의 2026-11-13 종가 = 그날 최종본 공식 종가" in txt
+    # 파이프라인 길 그대로 (받는 함수 · 네이버 px0 부터 · 시가총액 기준): 그날 파일에 없고, 다른 코넥스는 그대로
+    said = []
+    out, notes = run_fb_a(knx_fakes(raw_y=ry, naver_fetch=lambda c, s, e: rn[c]["body"], said=said), A13, said=said)
+    fr1, st1 = out[D16]
+    assert set(fr1.loc[fr1["Market"] == "KONEX", "Code"]) == set(TRADED + NO_TRADE) - {"232530"}
+    assert [c for c, *_ in st1["knx"]["adj"]] == ["232530"] and F.px_src_counts(st1)["knx"]["adj"] == 1
+    assert any(n.startswith("코넥스 기준일 맞춰 보기 (리뷰 M1)") and "2026-11-13" in n for n in notes)  # 평소 줄 (·)
+    assert F.kr_knx_note(D16, st1["knx"])[0]
+
+
+def test_unadjusted_konex_stay_confirmed_with_the_anchor():
+    """기준일 종가가 최종본과 같은 평소의 경우: 맞춰 보지 않았을 때와 똑같은 행 · 똑같은 집계 (그리고 '·' 줄). 야후의 px0 봉은 보지 않아요."""
+    fin16 = knx_listing("2026-11-16_final")
+    nv, y = naver(), yahoo()
+    fr0, st0 = F.kr_knx_confirm(D16, fin16, y, nv)
+    y["232530"][D13] += 5.0                                                                     # 야후의 px0 봉만 달라도 (거래 없는 날 기준가 등) 그대로
+    fr, st = F.kr_knx_confirm(D16, fin16, y, nv, anchor=A13)
+    pd.testing.assert_frame_equal(fr, fr0)
+    assert st["adj"] == [] and st["noAnchor"] == [] and {k: v for k, v in st.items() if k != "anchor"} == {k: v for k, v in st0.items() if k != "anchor"}
+    assert not F.kr_knx_note(D16, st)[0]
+    for unusual in ({"adj": [("232530", "이엠티", 10140.0, 5070.0)]}, {"noAnchor": ["260870"]}):   # 이것 하나만으로도 크게 (확인 4 / 8 · 절반 아래 아님)
+        assert F.kr_knx_note(D16, dict(st, **unusual))[0], unusual
+    base, _ = run_fb(knx=knx_fakes())
+    out, notes = run_fb_a(knx_fakes(), A13)
+    pd.testing.assert_frame_equal(out[D16][0], base[D16][0])                                    # 그날 파일 그대로 (코스피 · 코스닥 · 코넥스 모두)
+    k = F.px_src_counts(out[D16][1])["knx"]
+    assert k["adj"] == 0 and k["noAnchor"] == 0 and k["anchor"] == "2026-11-13" and k["conf"] == 4
+    assert not any("기준일 맞춰 보기 없이" in n for n in notes)
+
+
+def test_naver_without_the_px0_row_or_no_px0_close_is_left_out():
+    fin16 = knx_listing("2026-11-16_final")
+    nv = naver()
+    del nv["260870"][D13]                                                                       # 네이버에 px0 행 없음
+    offs = dict(A13[1])
+    offs.pop("336040")                                                                          # px0 최종본에 공식 종가 없음 (그 뒤 새 상장 등)
+    fr, st = F.kr_knx_confirm(D16, fin16, yahoo(), nv, anchor=(D13, offs))
+    assert set(fr["Code"]) == {"232530", "076340"} and sorted(st["noAnchor"]) == ["260870", "336040"] and st["adj"] == []
+    k = F.px_src_knx_counts(st)
+    assert k["noAnchor"] == 2 and {"260870", "336040"} <= set(k["left"])
+    loud, txt = F.kr_knx_note(D16, st)
+    assert loud and "기준일 2026-11-13 종가로 맞춰 보지 못함" in txt and "260870 SK시그넷" in txt and "336040 타스컴" in txt
+    fr, st = F.kr_knx_confirm(D16, fin16, yahoo(), naver(), anchor=(None, {}))                  # 최종본이 없으면 한 종목도 확인하지 않아요
+    assert fr.empty and sorted(st["noAnchor"]) == sorted(TRADED + NO_TRADE) and st["conf"] == 0
+    out, notes = run_fb_a(knx_fakes(), (None, {}))
+    assert "KONEX" not in set(out[D16][0]["Market"]) and any(n.startswith("!! 코넥스 기준일 맞춰 보기") for n in notes)
+
+
+def test_naver_is_asked_from_px0_and_a_call_without_anchor_is_loud():
+    seen = []
+
+    def nav(codes, start, end):
+        seen.append((start, end))
+        return {c: v for c, v in naver().items() if c in codes}, [], []
+    knx = {"naver": nav, "yahoo": lambda cm, a, b: ({c: v for c, v in yahoo().items() if c in cm}, 0, 0), "fill": lambda *a: no_fill()}
+    run_fb_a(knx, A13)
+    _, notes = run_fb(knx=knx)
+    assert seen == [(D13, D16), (dt.date(2026, 11, 15), D16)]                                   # 기준일부터 · 맞춰 보지 않는 실행은 예전처럼 첫날 하루 전부터
+    assert any(n.startswith("!! 코넥스 기준일 맞춰 보기 없이 부른 실행") for n in notes)
+    src = inspect.getsource(F.fetch_korea)
+    assert "knx0 = kr_knx_anchor(listing, px_date)" in src and "anchor=knx0" in src
+    assert src.index("knx0 = kr_knx_anchor(listing, px_date)") < src.index("kr_second_source(")      # 1차 출처 최종본으로 (2차 출처가 목록을 바꾸기 전)
+
+
+def test_gate_warns_on_anchor_leave_outs_and_a_malformed_floor():
+    cur, prev, old, alt, codes = fb_pair_konex()
+    cur["data"]["pxSrc"]["fb"]["knx"].update(anchor="2026-10-29", adj=0, noAnchor=0, adjEx=[])
+    r = row(check(cur, prev, old, alt))
+    assert r[3] == "PASS" and "기준일 2026-10-29 종가 다름 0" in r[1]
+    cur["data"]["pxSrc"]["fb"]["knx"]["anchor"] = None
+    assert "기준일 모름 종가 다름 0" in row(check(cur, prev, old, alt))[1]
+    for change, word in (({"adj": 1, "adjEx": ["232530 이엠티 10140/5070"]}, "기준일 종가 다름 1"), ({"noAnchor": 2}, "기준일 맞춰 보지 못함 2"),
+                         ({"adj": "1"}, "adj · noAnchor 모양"), ({"adjEx": "x"}, "adjEx 모양"),
+                         ({"floor": "x"}, "floor 모양"), ({"floor": True}, "floor 모양"), ({"floor": -1}, "floor 모양")):
+        c, p, o, a, _ = fb_pair_konex()
+        c["data"]["pxSrc"]["fb"]["knx"].update(dict({"anchor": "2026-10-29", "adj": 0, "noAnchor": 0, "adjEx": []}, **change))
+        rep = check(c, p, o, a)
+        assert row(rep)[3] == "WARN" and word in row(rep)[1] and not rep.failed, (change, row(rep))
+        if change.get("adjEx"):
+            assert ("232530 이엠티 10140/5070" in row(rep)[1]) == isinstance(change["adjEx"], list)
+
+
+# ── 12. 검증 리뷰 nit: 확인 · 시가총액 기준이 고장 나도 그날 코넥스만 빠지고 크게 (코스피 · 코스닥은 그대로) ─────────────────────
+def test_a_broken_konex_confirm_or_cut_leaves_konex_out_loudly(monkeypatch):
+    base, _ = run_fb(knx=None)
+    for fn in ("kr_knx_confirm", "kr_knx_cap_keep"):
+        def broken(*a, **k):
+            raise RuntimeError("시험 고장")
+        with monkeypatch.context() as m:
+            m.setattr(F, fn, broken)
+            said = []
+            out, notes = run_fb_a(knx_fakes(), A13, said=said)
+            fr, st = out[D16]
+            assert "knx" not in st and "KONEX" not in set(fr["Market"]), fn
+            pd.testing.assert_frame_equal(fr.reset_index(drop=True), base[D16][0].reset_index(drop=True))
+            assert any(n.startswith("!! 2026-11-16 코넥스 2차 출처 확인이 고장 났어요 (RuntimeError: 시험 고장)") for n in notes), fn
+            assert any("코넥스 2차 출처 확인이 고장" in s for s in said)
+            _, _, _, src, _, _ = F.kr_second_source(D13, kk_listing("2026-11-13_2158"), [D16], NOW, {}, None,
+                                                    fallback=lambda *a: run_fb_a(knx_fakes(), A13))
+            assert src["knx"]["px"] is None                                                     # 관문 줄: '코넥스 단계를 묻지 않았어요' (경고)
+
+
+# ── 13. 검증 리뷰 S3: 2차 출처 날 코넥스의 '기준가 연결 확인 못 함' 은 예상한 것 — 따로 '·' 줄로 세고, 그 밖의 확인 못 함만 크게 ─────────
+def test_ref_link_unknowns_from_backup_day_konex_are_counted_quietly(capsys):
+    out, _ = run_fb_a(knx_fakes(), A13)
+    cur = out[D16][0]
+    exp = F.kr_ref_blank_knx([cur])
+    assert exp == set(TRADED + NO_TRADE)                                                        # 그날 파일의 코넥스만 (코스피 · 코스닥 행은 Changes 가 있어요)
+    assert F.kr_ref_blank_knx([knx_listing("2026-11-16_final")]) == set() and F.kr_ref_blank_knx([None, pd.DataFrame()]) == set()
+    prev = pd.concat([kk_listing("2026-11-13_2158"), knx_listing("2026-11-13_final")], ignore_index=True)
+    codes = set(cur["Code"])
+    by_day, events = F.kr_ref_links([(D16, cur), (D13, prev)], [pd.Timestamp(D13), pd.Timestamp(D16)], codes)
+    unk = sorted(c for c, s in by_day[pd.Timestamp(D13)].items() if s == "unknown")
+    names = dict(zip(cur["Code"], cur["Name"].astype(str)))
+    capsys.readouterr()
+    got = F.log_ref_links(by_day, events, names, 1, expected=exp)
+    lines = capsys.readouterr().out.splitlines()
+    assert got["unknownStocks"] == len(unk)                                                     # data.json 은 예전처럼 모두 세요 (관문 모양 그대로)
+    other = [c for c in unk if c not in exp]
+    assert set(unk) >= exp
+    assert lines[0].startswith("  !! " if other else "· KRX 기준가 연결") and f"2차 출처 날 코넥스 {len(exp)}종목은 빼고 셌어요" in lines[0]
+    assert lines[1].startswith("· KRX 기준가 연결 — 2차 출처 날 코넥스") and f"확인 못 한 종목 {len(exp)}: 예상한 것이에요" in lines[1]
+    assert "232530 이엠티" in lines[1]
+    d1 = pd.Timestamp(D13)
+    F.log_ref_links({d1: {"K": "unknown", "B": "ok"}}, [], {"K": "코넥스"}, 1, expected={"K"})
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith("· KRX 기준가 연결") and "확인 못 한 종목 0" in lines[0] and lines[1].startswith("· ") and "K 코넥스" in lines[1]
+    got = F.log_ref_links({d1: {"K": "unknown", "A": "unknown", "B": "ok"}}, [], {}, 1, expected={"K"})
+    assert got["unknownStocks"] == 2 and capsys.readouterr().out.startswith("  !! KRX 기준가 연결")     # 그 밖의 확인 못 함은 그대로 크게
+    assert "expected=ref_exp" in inspect.getsource(F.fetch_korea)

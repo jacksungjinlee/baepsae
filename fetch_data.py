@@ -1151,6 +1151,9 @@ def yahoo_fill_day(yahoo, code_market, d, close_time, fetch=_fetch_yahoo_chart, 
 #   995행이 같았고 그 995행 모두 공식 종가와 같았어요 (다른 61행은 모두 거래 없는 날). 묻는 순서 · 단계 시간 한도 · 크게 남기기는 다음 × 야후와 같아요.
 #   그날 파일에는 평소 날 발행하는 코넥스만 넣어요 (리뷰 M1: 1차 출처 최종본 MAX_KR 번째 시가총액 이상 · kr_knx_cap_floor) — '국내 종목 수' 바닥이
 #   평소와 같게 (확인된 코넥스 90여 종목이 코스피 · 코스닥의 빈자리를 채워 바닥이 늦게 걸리지 않게).
+#   기준일 맞춰 보기 (검증 리뷰 M1): 네이버 일봉을 1차 출처 최종본 날짜(px0)부터 받아, 네이버의 px0 종가가 그 최종본의 공식 종가와 같은 코넥스만
+#   확인해요 (kr_knx_anchor · kr_knx_confirm anchor). 야후 종가는 분할 수정 값이고 네이버 일봉도 수정주가일 수 있어, px0 뒤 권리락 · 분할 · 병합이
+#   있으면 두 출처가 그날 종가 ÷ 비율로 같아질 수 있어요 — 그런 종목은 빠지고 크게 남아요 (pxSrc.fb.knx.adj · noAnchor · 관문이 경고해요).
 # - 1차 출처 날: 발행하는 코넥스 종목의 최종본 종가를 모두 네이버 일봉 종가와 맞춰 봐요 (kr_knx_check · 경고만 · 빼지 않아요).
 KR_KNX_NAVER_URL = "https://api.stock.naver.com/chart/domestic/item/{c}/day"
 KR_KNX_WORKERS = 4                # 네이버 일봉 동시 요청 수 (다음과 같게 — 조심스럽게)
@@ -1268,13 +1271,41 @@ def kr_knx_row(u, n, close):
             "Marcap": int(close) * int(shr), "Stocks": int(shr), "MarketId": u.get("MarketId")}
 
 
-def kr_knx_confirm(day, universe, yahoo, naver, tol=KR_FB_CLOSE_TOL):
+def kr_knx_anchor(listing, px_date):
+    """기준일 맞춰 보기의 기준 (리뷰 M1 · 2026-11-20 · 순수 함수): (1차 출처 최종본 날짜, {코넥스 코드: 그날 공식 종가 = 시가총액 ÷ 상장주식수}).
+    목록이나 날짜가 없으면 (None, {}) — 그러면 코넥스는 한 종목도 확인되지 않아요 (kr_knx_confirm 'noAnchor' · 더 엄격하게)."""
+    if px_date is None or listing is None or not len(listing) or not {"Code", "Market"} <= set(listing.columns):
+        return None, {}
+    out = {}
+    for _, r in listing.iterrows():
+        c = str(r.get("Code") or "").strip()
+        if len(c) == 6 and yahoo_knx_symbol(c, r.get("Market")):
+            v = kr_official_close(r)
+            if v is not None and v > 0:
+                out[c] = v
+    return px_date, out
+
+
+def kr_knx_confirm(day, universe, yahoo, naver, tol=KR_FB_CLOSE_TOL, anchor=None):
     """그날(day)의 코넥스 2차 출처 행: 야후 .KQ 일봉 종가 (행의 값) × 네이버 일봉 종가 (확인) 가 원 단위까지 같은 종목만 (2026-11-20 · 순수 함수).
     universe: 목록 DataFrame — 시장이 코넥스인 행만 봐요 · yahoo: {코드: {날짜: 종가}} · naver: {코드: {날짜: 네이버 행}}.
+    anchor (리뷰 M1 · kr_knx_anchor): (px0, {코드: px0 공식 종가}) — px0 = 1차 출처 최종본 날짜. 주면 네이버의 px0 종가가 그 최종본의 공식 종가와
+      원 단위까지 같은 종목만 확인해요. 까닭: 야후 종가는 분할 수정 값이고 (무상증자도 분할로 적어요) 네이버 일봉도 다른 곳에서는 수정주가예요.
+      px0 뒤에 권리락 · 분할 · 병합이 있으면 두 출처가 모두 그날 종가 ÷ 비율로 같아질 수 있어요 (그날 공식 종가가 아니에요 — 시가총액 · d1 이 틀려요).
+      수정주가는 권리락 앞의 모든 봉을 고치니까, 네이버의 px0 봉이 공식 종가 그대로면 그 뒤 날(day)의 봉도 고쳐지지 않았어요.
+      야후의 px0 봉은 보지 않아요: 쓰는 값은 네이버의 그날 값과 원 단위까지 같아야 하고, 그 네이버 값은 위 맞춰 보기로 수정되지 않은 값이에요 —
+      야후가 수정했든 아니든 결과는 같아요 (야후만 수정했으면 두 값이 달라 빠져요). 그리고 px0 에 거래 없이 KRX 가 기준가를 옮긴 종목은 야후의
+      px0 봉이 마지막 체결가라 (하루 3 ~ 9종목) 그것까지 요구하면 맞는 종목이 더 빠져요.
+      None 이면 맞춰 보지 않아요 (시험만 · kr_fallback_days 가 크게 남겨요 · 파이프라인은 늘 줘요).
     반환: (DataFrame — 확인된 코넥스 종목만 · KR_FB_COLS, 집계 dict):
       n 목록의 코넥스 종목 · conf 확인 · noNaver 네이버에 그날 행 없음 · bad 네이버 행 · 목록 행을 믿을 수 없음 · noYahoo 야후에 그날 종가 없음 ·
-      diff [(코드, 이름, 네이버, 야후)] 두 종가가 다름 (거래 없는 날 KRX 가 기준가를 옮기면 야후는 마지막 체결가 그대로예요) · names {코드: 이름}."""
-    rows, st = [], {"n": 0, "conf": 0, "noNaver": [], "bad": [], "noYahoo": [], "diff": [], "names": {}}
+      diff [(코드, 이름, 네이버, 야후)] 두 종가가 다름 (거래 없는 날 KRX 가 기준가를 옮기면 야후는 마지막 체결가 그대로예요) ·
+      adj [(코드, 이름, px0 공식 종가, 네이버 px0 종가)] 두 출처는 같지만 네이버의 px0 종가가 최종본과 달라요 (그 뒤 값이 수정됐을 수 있어요) ·
+      noAnchor 두 출처는 같지만 px0 공식 종가나 네이버 px0 행이 없어 맞춰 보지 못함 · anchor px0 · names {코드: 이름}.
+    adj · noAnchor 는 두 출처가 같은 종목만 세요 (그 밖의 까닭으로 빠지는 종목은 예전 칸 그대로)."""
+    rows, st = [], {"n": 0, "conf": 0, "noNaver": [], "bad": [], "noYahoo": [], "diff": [], "adj": [], "noAnchor": [], "names": {},
+                    "anchor": anchor[0] if anchor is not None else None}
+    p0, offs = anchor if anchor is not None else (None, {})
     seen = set()
     for _, u in universe.iterrows():
         code = str(u.get("Code") or "").strip()
@@ -1298,6 +1329,16 @@ def kr_knx_confirm(day, universe, yahoo, naver, tol=KR_FB_CLOSE_TOL):
         if abs(y - nc) > tol:
             st["diff"].append((code, st["names"][code], nc, y))
             continue
+        if anchor is not None:                       # 리뷰 M1: 네이버의 px0 종가 = 1차 출처 최종본의 px0 공식 종가 (그 뒤 값이 수정되지 않았어요)
+            off0 = _fin((offs or {}).get(code)) if p0 is not None else None
+            n0 = (naver.get(code) or {}).get(p0) if p0 is not None else None
+            n0c = _fin(n0.get("closePrice")) if isinstance(n0, dict) else None
+            if off0 is None or off0 <= 0 or n0c is None or n0c <= 0:
+                st["noAnchor"].append(code)
+                continue
+            if abs(n0c - off0) > tol:
+                st["adj"].append((code, st["names"][code], off0, n0c))
+                continue
         row = kr_knx_row(u, nr, float(round(y)))     # 행의 값은 야후 (원 단위로 · 네이버와 같아요)
         if row is None:
             st["bad"].append(code)
@@ -1336,13 +1377,18 @@ def kr_knx_note(d, kst, names=None):
 
     def ex(codes):
         return ", ".join(f"{c} {nm.get(c, '')}".strip() for c in codes)
-    left = len(kst["noNaver"]) + len(kst["bad"]) + len(kst["noYahoo"]) + len(kst["diff"])
+    adj, no_anc = list(kst.get("adj") or []), list(kst.get("noAnchor") or [])
+    left = len(kst["noNaver"]) + len(kst["bad"]) + len(kst["noYahoo"]) + len(kst["diff"]) + len(adj) + len(no_anc)
     cut = kst.get("cut") or {}
     hit = sum(int(cut.get(k) or 0) for k in ("yahoo", "fill", "naver"))
-    txt = (f"{d} 코넥스 2차 출처(야후 .KQ × 네이버 종가 원 단위까지 같음): 확인 {kst['conf']:,} / {kst['n']:,}종목"
+    p0 = kst.get("anchor")
+    txt = (f"{d} 코넥스 2차 출처(야후 .KQ × 네이버 종가 원 단위까지 같음"
+           + (f" · 네이버의 {p0} 종가 = 그날 최종본 공식 종가" if p0 else "") + f"): 확인 {kst['conf']:,} / {kst['n']:,}종목"
            + (f" (그중 야후 값이 마감 뒤 regularMarketPrice {kst['yMeta']:,})" if kst.get("yMeta") else "")
            + f" · 빠짐 {left:,} (네이버 행 없음 {len(kst['noNaver']):,} · 값 못 믿음 {len(kst['bad']):,} · 야후 종가 없음 {len(kst['noYahoo']):,} · "
-           f"두 종가가 다름 {len(kst['diff']):,}) — 빠진 종목은 그날 파일에 없어요")
+           f"두 종가가 다름 {len(kst['diff']):,}"
+           + (f" · 기준일 종가가 최종본과 다름 {len(adj):,} · 기준일 종가로 맞춰 보지 못함 {len(no_anc):,}" if "adj" in kst else "")
+           + ") — 빠진 종목은 그날 파일에 없어요")
     cap_out = list(kst.get("capOut") or [])
     if "kept" in kst:
         fl = kst.get("floor")
@@ -1358,14 +1404,20 @@ def kr_knx_note(d, kst, names=None):
         txt += f" — 네이버 행 없음: {ex(kst['noNaver'])}"
     if kst["bad"]:
         txt += f" — 값 못 믿음: {ex(kst['bad'])}"
+    if adj:
+        txt += (f" — !! 기준일 {p0} 종가가 최종본과 다름 (두 출처는 같지만 {p0} 뒤 권리락 · 분할 · 병합 · 무상증자로 값이 수정됐을 수 있어 넣지 않았어요): "
+                + ", ".join(f"{c} {n} 최종본 {a:,.0f} · 네이버 {b:,.0f}" for c, n, a, b in adj))
+    if no_anc:
+        txt += f" — !! 기준일 {p0} 종가로 맞춰 보지 못함 (최종본 공식 종가나 네이버 {p0} 행이 없어요 · 넣지 않았어요): {ex(no_anc)}"
     if hit:
         txt += (f" — !! 시간 한도 {int(cut.get('s') or 0)}초로 묻지 못한 종목 (야후 일봉 {int(cut.get('yahoo') or 0):,} · 야후 다시 읽기 "
                 f"{int(cut.get('fill') or 0):,} · 네이버 {int(cut.get('naver') or 0):,}) 이 위 '야후 종가 없음' · '네이버 행 없음' 에 들어 있어요")
     # 크게 (!!) 는 예상하지 못한 때만 (검증 리뷰): 네이버 행 없음 · 값 못 믿음 · 야후 없음이 평소보다 많음 · 다름이 평소보다 많음 · 확인이 절반 아래 ·
     # 시간 한도 · 시가총액 기준을 모름 (관문 '코넥스 종가 두 출처' 줄과 같은 기준). 평소의 빠짐 (야후에 없는 11종목 · 거래 없는 날 다름 3 ~ 9 ·
     # 시가총액 기준 아래) 은 이름과 까닭을 그대로 적고 '·' 줄로 남겨요.
+    # 리뷰 M1 (2026-11-20): 기준일 종가가 다르거나 맞춰 보지 못한 종목 (두 출처는 같았는데 넣지 않은 종목) 도 크게.
     unusual = bool(kst["noNaver"] or kst["bad"] or len(kst["noYahoo"]) > KNX_NOYAHOO_WARN or len(kst["diff"]) > KNX_DIFF_WARN
-                   or (kst["n"] and kst["conf"] < kst["n"] / 2) or hit or ("kept" in kst and kst.get("floor") is None))
+                   or (kst["n"] and kst["conf"] < kst["n"] / 2) or hit or ("kept" in kst and kst.get("floor") is None) or adj or no_anc)
     return unusual, txt
 
 
@@ -1387,7 +1439,13 @@ def px_src_knx_counts(kst):
             "noNaver": len(kst["noNaver"]), "bad": len(kst["bad"]), "noYahoo": len(kst["noYahoo"]),
             "diff": len(kst["diff"]), "yMeta": int(kst.get("yMeta") or 0),
             "diffEx": [f"{c} {n} {a:.0f}/{b:.2f}" for c, n, a, b in kst["diff"][:20]],
-            "left": sorted(set(kst["noNaver"]) | set(kst["bad"]) | set(kst["noYahoo"]) | {c for c, *_ in kst["diff"]}),
+            # 리뷰 M1: 기준일 맞춰 보기 — anchor 기준일 (1차 출처 최종본 날짜 · 맞춰 보지 않은 실행은 빈 값) · adj 네이버의 기준일 종가가 최종본과
+            # 다름 (그 뒤 값이 수정됐을 수 있어요) · adjEx 예 '코드 이름 최종본/네이버' · noAnchor 기준일 공식 종가나 네이버 기준일 행이 없음
+            "anchor": kst["anchor"].isoformat() if isinstance(kst.get("anchor"), dt.date) else None,
+            "adj": len(kst.get("adj") or []), "noAnchor": len(kst.get("noAnchor") or []),
+            "adjEx": [f"{c} {n} {a:.0f}/{b:.0f}" for c, n, a, b in (kst.get("adj") or [])[:20]],
+            "left": sorted(set(kst["noNaver"]) | set(kst["bad"]) | set(kst["noYahoo"]) | {c for c, *_ in kst["diff"]}
+                           | {c for c, *_ in (kst.get("adj") or [])} | set(kst.get("noAnchor") or [])),
             "cut": knx_cut_record(kst.get("cut"))}
 
 
@@ -1469,7 +1527,7 @@ def kr_fb_cut_note(what, got, target, cut, budget, more=""):
 
 
 def kr_fallback_days(days, universe_of, now, special, fetch_daum=fetch_daum_all, fetch_yahoo=fetch_yahoo_kr_closes, must=GATE_MUST,
-                     fill_day=yahoo_fill_day, say=log, caps=None, knx=None):
+                     fill_day=yahoo_fill_day, say=log, caps=None, knx=None, anchor=None):
     """끝난 거래일(days)마다 2차 출처 행을 만들어요 (2026-11-19). universe_of(d) → (DataFrame, 설명).
     반환: ({날짜: (DataFrame, 집계)}, 메모들). 마감 + 30분이 지나지 않은 날 · 목록이 없는 날은 빠지고 메모에 남아요.
     2026-11-20: 단계마다 시간 한도 (KR_FB_PHASE_BUDGET_S · 받는 함수 안에서) — 걸리면 크게 남기고 집계 cut (pxSrc.fb.cut) 에 적어요.
@@ -1479,7 +1537,10 @@ def kr_fallback_days(days, universe_of, now, special, fetch_daum=fetch_daum_all,
     knx (2026-11-20 · Jack, 2026-11-19 답 5): 코넥스 단계의 받는 함수들 {"yahoo", "fill", "naver"} (kr_knx_fetchers · 파이프라인은 늘 줘요).
     주면 코스피 · 코스닥 세 단계가 끝난 뒤 코넥스만 따로 세 단계 (네이버 일봉 · 야후 .KQ 일봉 종가 · 야후 차트 다시 읽기 · 같은 단계 시간 한도 ·
     같은 묻는 순서) 를 묻고, 두 종가가 원 단위까지 같은 코넥스 종목을 그날 행에 더해요 (집계 knx · kr_knx_confirm). 코스피 · 코스닥 단계와 그
-    집계는 knx 가 있든 없든 같아요. None 이면 코넥스는 예전처럼 묻지 않아요 (시험)."""
+    집계는 knx 가 있든 없든 같아요. None 이면 코넥스는 예전처럼 묻지 않아요 (시험).
+    anchor (리뷰 M1 · kr_knx_anchor): (px0, {코드: px0 공식 종가}) — 1차 출처 최종본의 코넥스 공식 종가. 네이버 일봉을 px0 부터 받아, 네이버의 px0
+    종가가 그 공식 종가와 같은 코넥스만 확인해요 (kr_knx_confirm — px0 뒤 권리락 · 분할 · 병합으로 두 출처가 함께 수정된 값을 막아요). 파이프라인은
+    늘 줘요 (fetch_korea). knx 를 주고 anchor 를 주지 않으면 맞춰 보지 않고 크게 남겨요 (시험만)."""
     notes, unis = [], {}
     for d in sorted(days)[-KR_FB_MAX_DAYS:]:
         if not kr_fb_final(d, now, special):
@@ -1569,8 +1630,15 @@ def kr_fallback_days(days, universe_of, now, special, fetch_daum=fetch_daum_all,
         else:
             notes.append(f"코넥스 시가총액 기준 (평소 날처럼 시가총액 상위 {MAX_KR:,} 안의 코넥스만 그날 파일에 · 국내 종목 수 바닥이 평소와 같게): "
                          f"1차 출처 최종본의 {MAX_KR:,}번째 시가총액 {floor / 1e8:,.0f}억원 이상 — 날마다 넣은 수와 뺀 종목은 아래 '코넥스 2차 출처' 줄")
+        if anchor is None:
+            notes.append("!! 코넥스 기준일 맞춰 보기 없이 부른 실행이에요 (anchor 없음 — 1차 출처 최종본의 코넥스 공식 종가와 네이버를 맞춰 보지 않아요 · 시험만)")
+        else:
+            notes.append(f"{'!! ' if anchor[0] is None or not anchor[1] else ''}코넥스 기준일 맞춰 보기 (리뷰 M1): 네이버의 "
+                         f"{anchor[0] if anchor[0] is not None else '기준일'} 종가가 그날 1차 출처 최종본의 공식 종가와 같은 코넥스만 확인해요 — "
+                         f"그날 공식 종가를 아는 코넥스 {len(anchor[1]):,}종목"
+                         + (" (기준일 최종본이 없어 코넥스는 한 종목도 확인되지 않아요)" if anchor[0] is None or not anchor[1] else ""))
         try:
-            kn = kr_knx_phases(kcm, unis, now, special, knx, must, caps, notes, say)
+            kn = kr_knx_phases(kcm, unis, now, special, knx, must, caps, notes, say, start=anchor[0] if anchor is not None else None)
         except Exception as e:                      # 코넥스 단계의 고장이 코스피 · 코스닥 발행을 막지 않게 — 크게 남기고 코넥스만 빠져요 (관문이 경고해요)
             msg = (f"!! 코넥스 2차 출처 단계가 고장 났어요 ({type(e).__name__}: {str(e)[:120]}) — 그날 파일에 코넥스는 없어요 "
                    "(코스피 · 코스닥은 그대로 · 관문 '코넥스 종가 두 출처' 줄이 경고해요)")
@@ -1584,29 +1652,41 @@ def kr_fallback_days(days, universe_of, now, special, fetch_daum=fetch_daum_all,
         st["_uni"] = uni                            # 그날 전체 종목 목록 (주식 수는 가격과 상관없어요 — 우선주 주식 수에 써요)
         st["_daumShr"] = {c: int(_fin(r[d].get("listedSharesCount")) or 0) for c, r in daum.items() if d in r}
         if kn is not None:                          # 2026-11-20: 코넥스 (야후 .KQ × 네이버) — 확인된 종목만 그날 행에 더해요
-            kfr, kst = kr_knx_confirm(d, uni, kn["yahoo"], kn["naver"])
-            kst["cut"] = kn["cut"]
-            kst["yMeta"] = sum(1 for c in kfr["Code"] if c in kn["metaCodes"]) if d == last else 0
-            kfr, kst["capOut"] = kr_knx_cap_keep(kfr, floor)      # 리뷰 M1: 평소 날 발행하는 코넥스만 (확인 수 conf 는 그대로 · kept 가 그날 파일의 행)
-            kst["kept"], kst["floor"] = len(kfr), floor
-            st["knx"] = kst
-            if len(kfr):
-                fr = pd.concat([fr, kfr], ignore_index=True) if len(fr) else kfr.reset_index(drop=True)
+            # 검증 리뷰: 확인 · 시가총액 기준도 위 단계와 같이 try 안에서 — 고장이 나면 그날 코넥스만 빠지고 크게 남아요 (st 에 knx 가 없으면
+            # pxSrc.knx.px 가 빈 값 → 관문 '코넥스 단계를 묻지 않았어요' 경고). 끝까지 된 뒤에만 그날 행 · 집계에 넣어요 (반쯤 바뀐 값이 남지 않게).
+            try:
+                kfr, kst = kr_knx_confirm(d, uni, kn["yahoo"], kn["naver"], anchor=anchor)
+                kst["cut"] = kn["cut"]
+                kst["yMeta"] = sum(1 for c in kfr["Code"] if c in kn["metaCodes"]) if d == last else 0
+                kfr, kst["capOut"] = kr_knx_cap_keep(kfr, floor)      # 리뷰 M1: 평소 날 발행하는 코넥스만 (확인 수 conf 는 그대로 · kept 가 그날 파일의 행)
+                kst["kept"], kst["floor"] = len(kfr), floor
+                fr_k = (pd.concat([fr, kfr], ignore_index=True) if len(fr) else kfr.reset_index(drop=True)) if len(kfr) else fr
+            except Exception as e:
+                msg = (f"!! {d} 코넥스 2차 출처 확인이 고장 났어요 ({type(e).__name__}: {str(e)[:120]}) — 그날 파일에 코넥스는 없어요 "
+                       "(코스피 · 코스닥은 그대로 · 관문 '코넥스 종가 두 출처' 줄이 경고해요)")
+                notes.append(msg)
+                say(f"  {msg}")
+            else:
+                st["knx"] = kst
+                fr = fr_k
         out[d] = (fr, st)
     return out, notes
 
 
-def kr_knx_phases(kcm, unis, now, special, knx, must, caps, notes, say):
+def kr_knx_phases(kcm, unis, now, special, knx, must, caps, notes, say, start=None):
     """2차 출처 날 코넥스 세 단계 (2026-11-20 · kr_fallback_days 가 코스피 · 코스닥 단계 뒤에 불러요): 네이버 일봉 → 야후 .KQ 일봉 종가 →
     마지막 날 야후 종가가 빈 종목의 차트 다시 읽기 (다음 × 야후 의 다음 → 야후 → 다시 읽기와 같은 차례 · 같은 단계 시간 한도 · 같은 묻는 순서).
+    start (리뷰 M1): 1차 출처 최종본 날짜 px0 — 네이버 일봉을 그날부터 받아요 (기준일 맞춰 보기 · kr_knx_confirm anchor). None 이면 첫날 하루 전부터.
     반환: {"naver", "yahoo", "metaCodes", "cut"} — notes 에 메모를 더해요."""
     budget = fb_budget(None)
     first, last = min(unis), max(unis)
+    n_start = min(start, first - dt.timedelta(days=1)) if start is not None else first - dt.timedelta(days=1)
     order = fb_order(set(kcm), first=must, caps=caps)
     kcm = {c: kcm[c] for c in order}
     t0 = time.time()
-    say(f"· 2차 출처 (코넥스): 네이버 일봉 묻는 중 — {len(kcm):,}종목 ({first} ~ {last} · 단계 시간 한도 {budget:.0f}초)")
-    nv, n_fail, n_cut = fb_parts(knx["naver"](list(kcm), first - dt.timedelta(days=1), last), 3)
+    say(f"· 2차 출처 (코넥스): 네이버 일봉 묻는 중 — {len(kcm):,}종목 ({n_start} ~ {last}" + (f" · {start} 는 기준일 맞춰 보기" if start is not None else "")
+        + f" · 단계 시간 한도 {budget:.0f}초)")
+    nv, n_fail, n_cut = fb_parts(knx["naver"](list(kcm), n_start, last), 3)
     n_cut = list(n_cut or [])
     n_fail = list(n_fail or [])
     notes.append(f"{'!! ' if len(nv) < KR_FB_LOUD_COVER * len(kcm) else ''}코넥스 네이버 일봉: {len(nv):,} / {len(kcm):,}종목 받음 ({time.time() - t0:.0f}초)"
@@ -5505,10 +5585,13 @@ def fetch_korea(start, today, rf, prev=None):
     names0 = dict(zip(listing["Code"].astype(str).str.strip(), listing["Name"].astype(str))) if listing is not None and "Name" in listing.columns else {}
     px0 = px_date
     caps0 = kr_fb_caps(listing)     # 리뷰 M1: 2차 출처는 1차 출처 최종본의 시가총액 큰 순으로 물어요 (그날 캐시 파일의 시가총액은 빌 수 있어요)
+    # 2026-11-20 (리뷰 M1): 코넥스 기준일 맞춰 보기 — 1차 출처 최종본(px0)의 코넥스 공식 종가. 네이버의 px0 종가가 이 값과 같은 코넥스만 확인해요
+    # (px0 뒤 권리락 · 분할 · 병합으로 야후와 네이버가 함께 수정한 값을 그날 공식 종가로 내지 않게 · kr_knx_confirm)
+    knx0 = kr_knx_anchor(listing, px_date)
     px_date, listing, fb_known, px_src, fb_logs, (full_list, daum_shr) = kr_second_source(
         px_date, listing, ended, dt.datetime.now(KST), special,
         lambda d: kr_fb_universe(d, _fetch_listing_csv, fallback=listing), names=names0,
-        fallback=lambda *a: kr_fallback_days(*a, caps=caps0, knx=kr_knx_fetchers()))   # 2026-11-20: 코넥스는 야후 .KQ × 네이버 (Jack, 11-19 답 5)
+        fallback=lambda *a: kr_fallback_days(*a, caps=caps0, knx=kr_knx_fetchers(), anchor=knx0))   # 2026-11-20: 코넥스는 야후 .KQ × 네이버 (Jack, 11-19 답 5)
     if ended:
         log(f"  !! 1차 출처(캐시 최종본 {px0}) 뒤에 이미 끝난 거래일 {len(ended)}일: {', '.join(d.isoformat() for d in ended)} — 2차 출처(다음 × 야후 종가 · "
             "코넥스는 야후 .KQ × 네이버 종가)로 확인해요")
@@ -5703,7 +5786,10 @@ def fetch_korea(start, today, rf, prev=None):
     shr_by_day = {pd.Timestamp(d): _shares_map(df) for d, df in sessions}
     shr_now = _shares_map(listing)
     ref_by_day, ref_events = kr_ref_links([(px_date, listing)] + sessions, ks_all.index, set(listing["Code"])) if px_date else ({}, [])
-    ref_sum = log_ref_links(ref_by_day, ref_events, dict(zip(listing["Code"], listing["Name"].astype(str))), len(sessions))
+    # 2026-11-20 (검증 리뷰 S3): 2차 출처 날 코넥스 행은 전일 대비(Changes)가 빈 값이라 (두 출처 모두 기준가를 주지 않아요 · kr_knx_row) 늘 '확인 못 함'
+    # — 예상한 것이라 따로 세어 '·' 줄로, 그 밖의 확인 못 한 종목만 크게 (!!)
+    ref_exp = kr_ref_blank_knx(([listing] if px_src["px"] == PX_SRC_FB else []) + list((fb_known or {}).values()))
+    ref_sum = log_ref_links(ref_by_day, ref_events, dict(zip(listing["Code"], listing["Name"].astype(str))), len(sessions), expected=ref_exp)
     ks_date = kospi.index[-1].date() if len(kospi) else None
     if px_date is not None and ks_date != px_date:
         log(f"  !! KOSPI 마지막 날짜 {ks_date} ≠ 기준일 {px_date} (검증에서 실패 처리돼요)")
@@ -5939,13 +6025,31 @@ def fetch_korea(start, today, rf, prev=None):
     return out, bench, mkt, meta
 
 
-def log_ref_links(by_day, events, names, days):
+def kr_ref_blank_knx(frames):
+    """2차 출처로 만든 날의 목록(frames)에서 전일 대비(Changes)가 빈 코넥스 종목 (2026-11-20 · 검증 리뷰 S3 · 순수 함수). 코넥스 행 (kr_knx_row) 은
+    두 출처 모두 기준가를 주지 않아 Changes 가 늘 빈 값이라 KRX 기준가 연결은 '확인 못 함' 이 돼요 — 예상한 것 (log_ref_links expected)."""
+    out = set()
+    for df in frames or []:
+        if df is None or not len(df) or not {"Code", "Market", "Changes"} <= set(df.columns):
+            continue
+        for c, m, ch in zip(df["Code"].astype(str).str.strip(), df["Market"], df["Changes"]):
+            if yahoo_knx_symbol(c, m) and _fin(ch) is None:
+                out.add(c)
+    return out
+
+
+def log_ref_links(by_day, events, names, days, expected=()):
     """kr_ref_links 결과를 한 줄로 남기고 data.json krSeries.ref 를 돌려줘요 (2026-11-14). 크게(!!) 남기는 때: 기준가를 확인 못 한 종목이 있거나
     (앞 파일에는 있는 행 · Changes 값이 빠짐 · 사이에 빠진 거래일), 기준가가 새로 정해진 종목이 REF_EVENTS_LOUD 보다 많을 때. 이 기간에 새로 상장한
     종목('new' — 상장 앞 날은 공식 종가가 없어 고칠 봉도 없어요)은 세기만 하고 크게 남기지 않아요 (리뷰 S1: 매일 몇 종목은 새로 상장해요).
-    names: {코드: 이름} · days: 거래일 파일 수. 반환: {breakStocks, unknownStocks, newStocks} (종목 수 — 한 종목에 사건이 여러 번이어도 하나)."""
+    names: {코드: 이름} · days: 거래일 파일 수. 반환: {breakStocks, unknownStocks, newStocks} (종목 수 — 한 종목에 사건이 여러 번이어도 하나).
+    expected (2026-11-20 · 검증 리뷰 S3): 확인 못 함이 예상된 종목 (2차 출처 날 코넥스 · kr_ref_blank_knx) — 그 종목은 따로 '·' 줄에 세고 크게 남기지
+    않아요 (그 밖의 확인 못 한 종목이 있으면 그대로 크게). unknownStocks 는 예전처럼 모두 세요 (관문이 보는 data.json 모양 그대로)."""
     oldest = by_day[min(by_day)] if by_day else {}
-    unknown = sorted(c for c, st in oldest.items() if st == "unknown")
+    unknown_all = sorted(c for c, st in oldest.items() if st == "unknown")
+    exp = set(expected or ())
+    unknown = [c for c in unknown_all if c not in exp]
+    unknown_exp = [c for c in unknown_all if c in exp]
     new = sorted(c for c, st in oldest.items() if st == "new")
     brk = sorted({e[0] for e in events})
     ev_txt = [f"{c} {names.get(c, '')} {d:%m-%d} {p:,.0f}→{r:,.0f}" for c, d, p, r in sorted(events, key=lambda e: (e[1], e[0]))]
@@ -5958,9 +6062,15 @@ def log_ref_links(by_day, events, names, days):
         + (f" ({', '.join(new_txt[:5])}{' 외 ' + str(len(new_txt) - 5) + '종목' if len(new_txt) > 5 else ''} — 상장 앞 날은 고칠 봉이 없어요)"
            if new_txt else "")
         + f" · 확인 못 한 종목 {len(unknown):,}" + (f" (예: {', '.join(unknown[:5])} — 그 종목은 주식 수와 값 차이로만 고쳐요)" if unknown else "")
+        + (f" (2차 출처 날 코넥스 {len(unknown_exp):,}종목은 빼고 셌어요 — 아래 줄)" if unknown_exp else "")
         + (f" — 평소(2026-11-13: 18종목)보다 많아요. 목록 파일의 Changes 칸이 바뀌었을 수 있어요 (고치는 날이 줄 뿐 틀린 값은 들어가지 않아요)"
            if many else ""))
-    return {"breakStocks": len(brk), "unknownStocks": len(unknown), "newStocks": len(new)}
+    if unknown_exp:
+        ex_txt = [f"{c} {names.get(c, '')}".strip() for c in unknown_exp]
+        log(f"· KRX 기준가 연결 — 2차 출처 날 코넥스 (야후 .KQ × 네이버 · 두 출처 모두 기준가를 주지 않아 전일 대비가 빈 값) 확인 못 한 종목 "
+            f"{len(unknown_exp):,}: 예상한 것이에요 (그 종목은 주식 수와 값 차이로만 고쳐요)"
+            + f" ({', '.join(ex_txt[:5])}{' 외 ' + str(len(ex_txt) - 5) + '종목' if len(ex_txt) > 5 else ''})")
+    return {"breakStocks": len(brk), "unknownStocks": len(unknown_all), "newStocks": len(new)}
 
 
 def log_naver_clean(naver_bad):

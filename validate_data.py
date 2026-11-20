@@ -1195,6 +1195,9 @@ KNX_NOYAHOO_WARN = 15
 # - 두 종가가 다른 코넥스는 하루 3 ~ 9종목이었어요 (같은 여덟 날 · 모두 거래 없는 날 KRX 가 기준가를 옮겨 야후가 마지막 체결가로 남은 종목).
 #   평소의 다름은 값 칸에 늘 보이고 경고하지 않아요 (매일 켜지는 경고는 아무도 보지 않아요). 20 을 넘으면 한 출처가 바뀐 것이라 경고해요.
 KNX_DIFF_WARN = 20
+# 2026-11-20 (검증 리뷰 M1 · 더한 기록만 · 경고만): 기준일 맞춰 보기 — 두 출처는 같았지만 네이버의 기준일(1차 출처 최종본 날짜) 종가가 최종본 공식
+# 종가와 달라 (adj · 그 뒤 값이 수정됐을 수 있어요) 또는 맞춰 볼 수 없어 (noAnchor) 넣지 않은 코넥스. 이 기록 전 파일에는 없어요 (없으면 0 으로 읽어요).
+KNX_FB_ANCHOR_KEYS = ("adj", "noAnchor")
 _KNX_TAIL = re.compile(r"(?:^| · )KONEX 상장(?: · |$)")
 
 
@@ -1214,6 +1217,7 @@ def check_px_knx(rep, data, src):
       MAX_KR 번째) 이상인 코넥스만 그날 파일에 있어요. 경고 (리뷰 S1): 네이버 행이 없는 종목이 있음 · 야후 없음이 KNX_NOYAHOO_WARN 보다 많음 ·
       확인이 절반 아래 · 값을 못 믿은 종목 · 다름이 KNX_DIFF_WARN 보다 많음 · 시가총액 기준을 모름. 평소의 다름 (거래 없는 날 기준가 · 하루 3 ~ 9) 은
       값 칸에 보이고 그것만으로는 경고하지 않아요. 빠진 종목은 그날 파일에 없어요.
+      검증 리뷰 (2026-11-20 · 더한 경고만): 기준일 맞춰 보기로 넣지 않은 코넥스 (adj · noAnchor) 가 있으면 · 시가총액 기준(floor)이 숫자가 아니면 경고.
     - 1차 출처 날 (px listing): 발행한 코넥스의 최종본 종가를 모두 네이버와 맞춘 결과 (knx.chk). 다르거나 · 네이버 값이 없거나 · 시간 한도 ·
       받지 못함이면 경고 (가격은 최종본 그대로 · 빼지 않아요 — 발행을 멈추는 조건은 Jack 의 답이 있어야 해요).
     - 기록의 모양이 이상하거나 발행한 코넥스 (dk 'KONEX 상장') 와 knx.t 가 다르면 경고. pxSrc.knx 가 없으면 (이 줄 전 발행본) 건너뛰어요.
@@ -1251,20 +1255,37 @@ def check_px_knx(rep, data, src):
             if not isinstance(dex, list):
                 odd.append("diffEx 모양")
                 dex = []
+            anc = {x: fbk[x] for x in KNX_FB_ANCHOR_KEYS if x in fbk}
+            if anc and not _nonneg_ints(anc, tuple(anc)):
+                odd.append("adj · noAnchor 모양")
+                anc = {}
+            aex = fbk.get("adjEx", [])
+            if not isinstance(aex, list):
+                odd.append("adjEx 모양")
+                aex = []
             fl = fbk.get("floor")
-            left = sum(fbk.get(x) or 0 for x in ("noNaver", "bad", "noYahoo", "diff"))
+            fl_ok = isinstance(fl, (int, float)) and not isinstance(fl, bool) and math.isfinite(fl) and fl > 0
+            if fl is not None and not fl_ok:
+                odd.append(f"floor 모양 {str(fl)[:20]}")      # 검증 리뷰: 숫자가 아닌 기준은 '기준 모름' 으로만 보이지 않고 경고해요
+            left = sum(fbk.get(x) or 0 for x in ("noNaver", "bad", "noYahoo", "diff")) + sum(anc.values())
             val = (f"2차 출처 날 · 야후 .KQ × 네이버: 확인 {fbk.get('conf', '?')} / {fbk.get('n', '?')} · 빠짐 {left:,} (네이버 행 없음 {fbk.get('noNaver', '?')}"
-                   f" · 값 못 믿음 {fbk.get('bad', '?')} · 야후 없음 {fbk.get('noYahoo', '?')} · 다름 {fbk.get('diff', '?')}) · 그날 파일에 {fbk.get('kept', '?')}"
+                   f" · 값 못 믿음 {fbk.get('bad', '?')} · 야후 없음 {fbk.get('noYahoo', '?')} · 다름 {fbk.get('diff', '?')}"
+                   + (f" · 기준일 {fbk['anchor'] if isinstance(fbk.get('anchor'), str) and fbk['anchor'] else '모름'} 종가 다름 {anc.get('adj', 0)}"
+                      f" · 기준일 맞춰 보지 못함 {anc.get('noAnchor', 0)}" if anc else "")
+                   + f") · 그날 파일에 {fbk.get('kept', '?')}"
                    f" (시가총액 기준 아래 {fbk.get('capOut', '?')}"
-                   + (f" · 기준 {fl / 1e8:,.0f}억원" if isinstance(fl, (int, float)) and not isinstance(fl, bool) else " · 기준 모름") + f") · 발행 {len(t or []):,}"
-                   + (f" 예: {'; '.join(map(str, dex[:3]))}" if dex else ""))
+                   + (f" · 기준 {fl / 1e8:,.0f}억원" if fl_ok else " · 기준 모름") + f") · 발행 {len(t or []):,}"
+                   + (f" 예: {'; '.join(map(str, dex[:3]))}" if dex else "")
+                   + (f" · 기준일 종가 다름 예: {'; '.join(map(str, aex[:3]))}" if aex else ""))
             n_ = fbk.get("n") or 0
             why = ([f"네이버 행 없음 {fbk['noNaver']}"] if fbk.get("noNaver") else []) \
                 + ([f"야후 없음 {fbk['noYahoo']} > {KNX_NOYAHOO_WARN}"] if (fbk.get("noYahoo") or 0) > KNX_NOYAHOO_WARN else []) \
                 + (["확인이 절반 아래"] if n_ and (fbk.get("conf") or 0) < n_ / 2 else []) \
                 + ([f"값 못 믿음 {fbk['bad']}"] if fbk.get("bad") else []) \
                 + ([f"다름 {fbk['diff']} > {KNX_DIFF_WARN}"] if (fbk.get("diff") or 0) > KNX_DIFF_WARN else []) \
-                + (["시가총액 기준 모름"] if fbk and fl is None else [])
+                + (["시가총액 기준 모름"] if fbk and fl is None else []) \
+                + ([f"기준일 종가 다름 {anc['adj']}"] if anc.get("adj") else []) \
+                + ([f"기준일 맞춰 보지 못함 {anc['noAnchor']}"] if anc.get("noAnchor") else [])
             if why:
                 val += f" — 경고: {', '.join(why)}"
             warn = bool(why)
