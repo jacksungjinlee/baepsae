@@ -17,6 +17,11 @@
 달력을 받지 못하면 평일 규칙으로 판단해요 (크게 남겨요): 휴장일이면 같은 데이터를 다시 발행할 수 있지만 건너뛰지는 않아요.
 어떤 경우에도 읽을 수 없거나 이상하면 '실행'이에요 — 조용히 건너뛰지 않아요. 표준 라이브러리만 써요 (설치 전에 돌아요).
 
+2026-11-21 (#161 · Jack: "Later runs update that day's data when more closes are confirmed."): 날짜가 다 들어와 있어도, 발행본이 2차 출처 날
+(pxSrc.px daum+yahoo) 이고 확인 못 한 국내 종가가 남아 있으면 (마지막 확인 종가로 실었거나 · 빠졌거나 — open_closes) 건너뛰지 않고 끝까지 돌아요.
+그 실행은 더 나을 때만 같은 날 데이터를 고쳐 발행해요 (tools/publish_hold.py). 확인 못 한 종가가 없는 날 (1차 출처 날 · 모두 확인된 날) 은
+예전처럼 건너뛰어요. 미국 마지막 확인 종가 (US carry) 가 들어오면 open_closes 의 미국 칸에서 같이 봐요 (지금은 늘 0).
+
 발행본 (v17.6 Part 3a): 매일 실행은 검사를 통과한 네 파일을 main 에 커밋한 다음 같은 파일을 data 브랜치에도 올려요. 사이트 배포
 (deploy.yml)가 data 브랜치에서 가져가니, 여기서도 data 브랜치를 봐요. data 브랜치가 아직 없을 때(이 버전의 첫 실행 전)만 main 을
 보고, 그렇다고 크게 남겨요. data 브랜치가 있는지조차 확인하지 못하면 '발행 안 됨'(= 실행)이에요.
@@ -139,6 +144,30 @@ def wait_until(now, us_days, us_today=None):
     return dt.datetime.combine(t.date(), US_CLOSE_FINAL, tzinfo=NY) + AFTER_CLOSE
 
 
+def open_closes(data):
+    """발행본에서 아직 확인 못 한 종가 수 {"kr": n, "us": n} (2026-11-21 · #161 · 순수 함수). 0 이면 그날이 다 찼어요.
+    kr: 2차 출처 날 (pxSrc.px daum+yahoo) 에 그날 전체 목록에서 두 출처로 확인하지 못한 국내 종목 (pxSrc.own.unconf — 마지막 확인 종가로 실었거나
+    빠진 종목) 에서 같은 날 지난 발행본에서 다시 쓴 확인 종가 (pxSrc.own.reuse.n) 를 뺀 수. own 기록이 없으면 fb 로 (목록 − 확인).
+    1차 출처 날 · pxSrc 가 없는 예전 파일은 0. 읽을 수 없는 2차 출처 기록은 1 (모르면 다시 돌아요 — 조용히 건너뛰지 않아요).
+    us: 미국 마지막 확인 종가가 들어오면 여기서 세요 (지금은 0 — 그 일이 들어올 때 고칠 자리예요)."""
+    out = {"kr": 0, "us": 0}
+    src = data.get("pxSrc") if isinstance(data, dict) else None
+    if not isinstance(src, dict) or src.get("px") != "daum+yahoo":
+        return out
+    own, fb = src.get("own"), src.get("fb")
+
+    def n(v):
+        return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
+    if isinstance(own, dict) and n(own.get("unconf")) is not None:
+        rr = own.get("reuse") if isinstance(own.get("reuse"), dict) else {}
+        out["kr"] = max(own["unconf"] - (n(rr.get("n")) or 0), 0)
+    elif isinstance(fb, dict) and n(fb.get("n")) is not None and n(fb.get("conf")) is not None:
+        out["kr"] = max(fb["n"] - fb["conf"], 0)
+    else:
+        out["kr"] = 1
+    return out
+
+
 def decide(data, now, cal):
     """발행본 data.json(dict 또는 None) 과 달력으로 (건너뛸지, 이유)."""
     kr_want, us_want = expected_kr(now, cal.get("kr")), expected_us(now, cal.get("us"))
@@ -151,6 +180,11 @@ def decide(data, now, cal):
     if cal.get("kr") and cal.get("krSources", 2) < 2:
         return False, f"한국 달력을 한 출처에서만 받았어요 (하루 늦을 수 있어요) → 건너뛰지 않고 실행해요 · 기대 한국 {kr_want} · 미국 {us_want}"
     if px == kr_want.isoformat() and usd == us_want.isoformat():
+        left = open_closes(data)
+        if left["kr"] or left["us"]:
+            return False, (f"날짜는 다 들어와 있지만 (한국 {px} · 미국 {usd} · {basis}) 2차 출처 날 발행본에 확인 못 한 종가가 남아 있어요 "
+                           f"(국내 {left['kr']:,}" + (f" · 미국 {left['us']:,}" if left["us"] else "") + ") → 끝까지 돌아요: 더 확인되면 같은 날 "
+                           "데이터를 고쳐 발행하고, 아니면 발행 없이 끝나요 (#161)")
         return True, (f"이미 다 들어와 있어요: 한국 {px} · 미국 {usd} = 기대하는 마지막 거래일 ({basis}) "
                       "→ 데이터 수집 전에 끝내요")
     return False, (f"아직이에요: 발행본은 한국 {px!r} · 미국 {usd!r}, 기대는 한국 {kr_want} · 미국 {us_want} ({basis}) → 실행해요")

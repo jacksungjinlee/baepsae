@@ -1,18 +1,19 @@
 # -*- coding: utf-8 -*-
-"""2026-11-20 (Jack, "5. Yes"): 2차 출처 날의 이른 발행 보류 (tools/publish_hold.py · update-data.yml 단계 id hold).
+"""#161 (Jack, 2026-11-21): 2차 출처 날의 발행 판단 — 확인 비율 바닥 · 같은 날 다시 발행 (tools/publish_hold.py · update-data.yml 단계 id hold).
 
-Jack 이 승인한 제안 (그대로): "Backup days, hold an early publish. Before 08:00 KST on a backup day, publish only when confirmed closes
-reach at least 97% of the last publish's count. Today that means about 80 or fewer missing. Otherwise the run stops and the next one
-tries again. From 08:00, publish what we have; the rest show their last close with your line."
+Jack (그대로): "(c), with no new timer for Jack. KRX's final file has been stuck since 11-16, so treat Daum × Yahoo as the normal path.
+Publish at 06:40 with what's confirmed (carries with their date line). Later runs update that day's data when more closes are confirmed.
+Hold only if confirmed coverage is below a floor; set it from last week's 06:40 coverage and show the number in the PR."
 
-- 규칙은 hold_decision 한 곳 (모드 · KST 시각 · 오늘 확인 수 · 직전 발행본 확인 수): 08:00 전 · 딱 97% · 08:00 부터 · 1차 출처 날 ·
-  직전 수를 모를 때 · 러너의 UTC 시계.
-- '확인' = 코스피 · 코스닥의 두 출처 확인 (pxSrc.fb.conf − 코넥스 fb.knx.kept · #158) — 마지막 확인 종가로 실은 종목(pxSrc.own · pxd · #159)은
-  세지 않아요. 직전 발행본이 1차 출처 날이면 기준은 그 파일의 공식 종가가 있는 코스피 · 코스닥 종목 수.
-- fetch_data 의 진짜 집계 길(kr_fb_confirm → kr_second_source · px_src_counts → px_src_final)로 만든 기록을 그대로 읽어요 (계약 시험).
-- 워크플로: 결정은 한 단계(hold)에서 한 번, 보류면 발행 두 단계만 건너뛰어요 (커밋 · data 브랜치 푸시 · 배포 없음), 실행은 초록
-  (감시에는 중립: 경보를 열지도 닫지도 않아요 · watchdog.is_held_run), already_published.py 는 발행 안 됨으로 봐요.
+- 바닥: 코스피 · 코스닥 확인 비율 (이 실행의 두 출처 확인 + 같은 날 다시 쓴 확인 종가) ÷ 그날 코스피 · 코스닥 목록이 바닥보다 낮으면 보류 — 몇 시든.
+  코넥스 (#158 fb.knx.kept) · 마지막 확인 종가 (#159 pxSrc.own · pxd) 는 세지 않아요. 1차 출처 날은 그대로.
+- 같은 날 다시 발행: already_published.py 는 확인 못 한 종가가 남은 2차 출처 날 뒤의 실행을 멈추지 않아요. 한국 · 미국 기준일이 같은 실행은 더
+  나을 때만 발행해요 (확인이 더 많고 지난 발행본이 그 날짜 종가로 실은 종목을 하나도 잃지 않았을 때 — fetch_data.kr_same_day_reuse 가 그 종가를
+  다시 써요). 관문의 '직전 발행본과 비교하는 줄' 은 같은 날 다시 발행을 그대로 통과해요 (줄은 그대로).
+- 워크플로: 판단은 한 단계 (hold) 에서 한 번, 보류면 발행 두 단계만 건너뛰어요 (커밋 · data 브랜치 푸시 · 배포 없음), 실행은 초록 (감시에는 중립).
+- fetch_data 의 진짜 집계 길로 만든 기록을 그대로 읽어요 (계약 시험 · 코넥스 단계 포함 · 같은 날 다시 쓰기 포함).
 """
+import copy
 import datetime as dt
 import json
 import os
@@ -20,21 +21,24 @@ import stat
 import subprocess
 import sys
 
+import pandas as pd
 import pytest
 import yaml
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tools"))
+sys.path.insert(0, os.path.join(ROOT, "tests"))
 import already_published as A          # noqa: E402
 import fetch_data as F                 # noqa: E402
 import publish_hold as P               # noqa: E402
+import validate_data as V              # noqa: E402
 import watchdog as W                   # noqa: E402
 
 WF = os.path.join(ROOT, ".github", "workflows", "update-data.yml")
 KST = dt.timezone(dt.timedelta(hours=9))
 FB, LISTING = P.PX_SRC_FB, "listing"
-HOLD_STEP = "이른 발행 보류 확인 (2차 출처 날 · 08:00 KST 전 · 직전 발행본의 97%)"
+HOLD_STEP = "발행 판단 (2차 출처 날 확인 비율 바닥 · 같은 날 다시 발행은 더 나을 때만)"
 PUBLISH = ("커밋 & 푸시", "data 브랜치에 올리기")
 GATE = "발행 관문 (validate_data.py)"
 IF_PUBLISH = "${{ !inputs.dry_run && steps.hold.outputs.hold != 'true' }}"
@@ -44,162 +48,191 @@ def kst(y, m, d, hh, mm, ss=0):
     return dt.datetime(y, m, d, hh, mm, ss, tzinfo=KST)
 
 
-def fb_data(px, conf, noYahoo=6, mkt=107, diff=25, own=None, stocks=None, n=None, knx_kept=None):
-    """2차 출처 날 data.json 의 필요한 부분. 기본값은 2026-11-19 발행본의 실제 수 (목록 2,878 · 확인 2,740 · 코넥스 107 · 야후 없음 6 · 다름 25).
-    conf 는 코스피 · 코스닥 확인 수. knx_kept 를 주면 #158 모양: fb.conf = conf + knx_kept, fb.knx 가 붙어요 (n · mkt 는 그대로 — 코넥스는 mkt 에)."""
+def reuse(kk, lost=0, n=None):
+    return {"v": 1, "from": "2026-11-21T06:40:00+09:00", "earlier": 2474, "n": kk if n is None else n, "kk": kk, "codes": [], "lost": lost,
+            "lostEx": []}
+
+
+def fb_data(px, conf, noYahoo=6, mkt=107, diff=25, own=None, stocks=None, n=None, knx_kept=None, us=None, rr=None):
+    """2차 출처 날 data.json 의 필요한 부분. 기본값은 2026-11-20 06:40 발행본의 실제 수 (목록 2,878 · 코스피 · 코스닥 2,771 · 확인 2,740 ·
+    코넥스 107 · 야후 없음 6 · 다름 25). conf 는 이 실행의 코스피 · 코스닥 확인 수. knx_kept 를 주면 #158 모양 (fb.conf = conf + knx_kept ·
+    fb.knx). rr 을 주면 같은 날 다시 쓴 기록 (pxSrc.own.reuse)."""
     fb = {"n": n if n is not None else conf + mkt + noYahoo + diff, "conf": conf, "mkt": mkt, "noDaum": 0, "bad": 0, "noYahoo": noYahoo,
-          "diff": diff, "yMeta": 1, "diffEx": [], "must": [], "cut": {"s": 600, "daum": 0, "yahoo": 0, "fill": 0}}
+          "diff": diff, "yMeta": 1, "diffEx": [], "must": [], "cut": {"s": 600, "daum": 0, "yahoo": 0, "fill": 0}, "diffT": []}
     if knx_kept is not None:                  # fetch_data.px_src_counts (#158) 와 같은 모양
         fb["conf"] = conf + knx_kept
         fb["knx"] = {"n": 107, "conf": knx_kept + 2, "kept": knx_kept, "capOut": 2, "floor": 120000000000, "noNaver": 3, "bad": 0,
                      "noYahoo": 60, "diff": 15, "yMeta": 0, "diffEx": [], "anchor": "2026-11-16", "adj": 0, "noAnchor": 2, "adjEx": [],
-                     "left": [], "cut": {"s": 600, "yahoo": 0, "fill": 0, "naver": 0}}
+                     "left": [], "cut": {"s": 600, "yahoo": 0, "fill": 0, "naver": 0}, "diffT": []}
     src = {"v": 1, "px": FB, "date": px, "days": {px: FB}, "fb": fb, "must": [], "chk": None, "n": {FB: 2475}}
+    if own is None and rr is not None:
+        own = {"v": 1, "max": 5, "n": 0, "codes": [], "unconf": noYahoo + diff + mkt, "drop": {}, "dropEx": [], "bad": {"n": 0, "rows": []}}
     if own is not None:
-        src["own"] = own
-    return {"pxDate": px, "usPxDate": px, "pxSrc": src, "stocks": stocks or [{"t": "005930", "cls": "kr", "px": 50000}]}
+        src["own"] = dict(own)
+        if rr is not None:
+            src["own"]["reuse"] = rr
+    return {"pxDate": px, "usPxDate": us or px, "pxSrc": src, "stocks": stocks or [{"t": "005930", "cls": "kr", "price": 50000.0}]}
 
 
-def kr_stock(t, price=10000.0, market="KOSPI", **kw):
-    return {"t": t, "cls": "kr", "price": price, "dk": f"업종 · 주요제품: 무엇 · {market} 상장 · 시가총액 1.0조원", **kw}
-
-
-def normal_day(px, n_kk, n_konex=0, extra=(), with_src=True):
-    """1차 출처 날 발행본 (with_src=False 면 pxSrc 가 생기기 전 파일 — 11-17 발행본처럼)."""
-    stocks = [kr_stock(f"{i:06d}", market="KOSDAQ GLOBAL" if i % 7 == 0 else ("KOSDAQ" if i % 2 else "KOSPI")) for i in range(n_kk)]
-    stocks += [kr_stock(f"8{i:05d}", market="KONEX") for i in range(n_konex)] + list(extra)
-    stocks += [{"t": "AAPL", "cls": "us", "price": 200.0}]
-    d = {"pxDate": px, "usPxDate": px, "stocks": stocks}
-    if with_src:
-        d["pxSrc"] = {"v": 1, "px": LISTING, "date": px, "days": {}, "fb": None, "must": [], "chk": None, "n": {LISTING: len(stocks) - 1}}
-    return d
-
-
-def listing_data(px):
-    return {"pxDate": px, "usPxDate": px, "stocks": [{"t": "005930", "cls": "kr"}],
+def listing_data(px, us=None):
+    return {"pxDate": px, "usPxDate": us or px, "stocks": [{"t": "005930", "cls": "kr", "price": 50000.0}],
             "pxSrc": {"v": 1, "px": LISTING, "date": px, "days": {}, "fb": None, "must": [],
                       "chk": {"src": "yahoo", "n": 98, "same": 98, "none": 2, "diff": []}, "n": {LISTING: 2475}}}
 
 
-# ── 규칙 (hold_decision) ─────────────────────────────────────
-def test_the_97_percent_line_matches_the_approved_example():
-    # Jack 의 말 "Today that means about 80 or fewer missing": 11-19 발행본 확인 2,740 → 선 2,658 (82종목까지 모자라도 발행)
-    assert P.share_line(2740) == 2658 and 2740 - P.share_line(2740) == 82
-    assert P.HOLD_SHARE_PCT == 97 and P.HOLD_BEFORE == dt.time(8, 0)
+# ── 1. 바닥 ──────────────────────────────────────────────────
+def test_the_floor_against_last_weeks_0640_publishes():
+    """지난주 06:40 발행 (data 브랜치): 11-19 2,743 / 2,771 = 98.99% · 11-20 2,740 / 2,771 = 98.88% — 둘 다 98% 바닥 위 (발행)."""
+    assert P.COVERAGE_FLOOR_PCT == 98
+    for conf in (2743, 2740):
+        d = P.floor_decision(FB, conf, 2771)
+        assert d.hold is False and d.kind == "publish" and "2,771" in d.why
+    # 98% 의 2,771 = 2,715.58 → 2,716 부터 발행 (확인 못 한 종목 55 까지)
+    assert P.floor_decision(FB, 2716, 2771).hold is False
+    d = P.floor_decision(FB, 2715, 2771)
+    assert d.hold is True and d.kind == "floor" and "모자람 1" in d.why and "2,716" in d.why
+    # 야후가 빈 새벽 (11-19 밤 같은 수: 약 240 확인 못 함) → 보류
+    d = P.floor_decision(FB, 2526, 2771)
+    assert d.hold is True and d.loud is True and "91.16%" in d.why and "다음 실행이 다시 해요" in d.why
 
 
-@pytest.mark.parametrize("hh,mm,ss", [(0, 5, 0), (3, 47, 0), (6, 41, 0), (6, 43, 0), (7, 59, 59)])
-def test_before_eight_a_short_run_holds(hh, mm, ss):
-    d = P.hold_decision(FB, kst(2026, 11, 21, hh, mm, ss), 2526, 2740)          # 11-19 밤 같은 수: 약 240종목 확인 못 함
-    assert d.hold is True and d.loud is True
-    for part in ("2,526", "2,658", "2,740", "97%", "모자람 132", f"{hh:02d}:{mm:02d} KST", "08:00 전", "다음 실행"):
-        assert part in d.why, (part, d.why)
+def test_exactly_the_floor_publishes():
+    assert 2744 * 100 == 98 * 2800                                                # 딱 98%
+    assert P.floor_decision(FB, 2744, 2800).hold is False
+    assert P.floor_decision(FB, 2743, 2800).hold is True
+    assert P.floor_decision(FB, 99, 100, floor=99).hold is False and P.floor_decision(FB, 98, 100, floor=99).hold is True
 
 
-def test_exactly_97_percent_publishes_and_one_less_holds():
-    assert 2619 * 100 == 2700 * 97                                               # 딱 97%
-    assert P.hold_decision(FB, kst(2026, 11, 21, 7, 0), 2619, 2700).hold is False
-    assert P.hold_decision(FB, kst(2026, 11, 21, 7, 0), 2618, 2700).hold is True
-    # 나눗셈이 떨어지지 않을 때는 올림: 2,740 × 97% = 2,657.8 → 2,658 부터 발행
-    assert P.hold_decision(FB, kst(2026, 11, 21, 7, 0), 2658, 2740).hold is False
-    assert P.hold_decision(FB, kst(2026, 11, 21, 7, 0), 2657, 2740).hold is True
-    # 더 많이 확인되면 당연히 발행 (직전보다 많아도)
-    assert P.hold_decision(FB, kst(2026, 11, 21, 7, 0), 2800, 2740).hold is False
-
-
-@pytest.mark.parametrize("hh,mm", [(8, 0), (8, 17), (10, 53), (13, 37), (14, 47), (23, 59)])
-def test_from_eight_publish_what_we_have(hh, mm):
-    d = P.hold_decision(FB, kst(2026, 11, 21, hh, mm), 2000, 2740)
-    assert d.hold is False and d.loud is False and "08:00 KST 부터는 있는 대로 발행" in d.why and "2,000" in d.why
-
-
-def test_the_kst_clock_decides_not_the_runners_utc_clock():
-    utc = dt.timezone.utc
-    assert P.hold_decision(FB, dt.datetime(2026, 11, 20, 21, 41, tzinfo=utc), 2526, 2740).hold is True     # = 11-21 06:41 KST
-    assert P.hold_decision(FB, dt.datetime(2026, 11, 20, 22, 59, tzinfo=utc), 2526, 2740).hold is True     # = 07:59 KST
-    assert P.hold_decision(FB, dt.datetime(2026, 11, 20, 23, 0, tzinfo=utc), 2526, 2740).hold is False     # = 08:00 KST
-    assert P.hold_decision(FB, dt.datetime(2026, 11, 21, 3, 0, tzinfo=utc), 2526, 2740).hold is False      # UTC 03:00 = 12:00 KST
-    with pytest.raises(ValueError):
-        P.hold_decision(FB, dt.datetime(2026, 11, 21, 6, 41), 2526, 2740)                                  # 시간대 없는 시각은 받지 않아요
+@pytest.mark.parametrize("hh,mm", [(0, 5), (3, 47), (6, 40), (8, 17), (10, 53), (14, 47), (23, 59)])
+def test_the_floor_applies_at_any_time_of_day(hh, mm):
+    now = kst(2026, 11, 21, hh, mm)
+    d, _ = P.evaluate(fb_data("2026-11-20", 2526, noYahoo=220), "data.json", fb_data("2026-11-19", 2740), "git HEAD:data.json", now)
+    assert d.hold is True and d.kind == "floor"
+    d, _ = P.evaluate(fb_data("2026-11-20", 2740), "data.json", fb_data("2026-11-19", 2740), "git HEAD:data.json", now)
+    assert d.hold is False and d.kind == "publish"
 
 
 @pytest.mark.parametrize("mode", [LISTING, None, "", "daum", "Daum+Yahoo"])
 def test_a_normal_day_never_holds(mode):
-    d = P.hold_decision(mode, kst(2026, 11, 21, 3, 47), 10, 2740)
+    d = P.floor_decision(mode, 10, 2771)
     assert d.hold is False and d.loud is False and "2차 출처 날이 아니에요" in d.why
-    # 1차 출처(KRX 목록 최종본) 날의 data.json 은 확인 수도 없어요 (fb 없음)
-    assert P.fb_confirmed(listing_data("2026-11-20"))[0] is None
+    assert P.kk_counts(listing_data("2026-11-20"))[0] is None
 
 
-def test_no_previous_count_never_holds_and_says_why():
-    for today, prev in ((2526, None), (None, 2740), (None, None)):
-        d = P.hold_decision(FB, kst(2026, 11, 21, 6, 41), today, prev)
-        assert d.hold is False and d.loud is True and "보류하지 않아요" in d.why and "비교가 없다고 발행을 막지 않아요" in d.why
+def test_unknown_coverage_never_holds_and_says_so():
+    for total, listing in ((None, 2771), (2700, None), (None, None), (5, 0)):
+        d = P.floor_decision(FB, total, listing)
+        assert d.hold is False and d.loud is True and d.kind == "unknown" and "보류하지 않아요" in d.why
 
 
-@pytest.mark.parametrize("prev,note", [
-    (None, "git show HEAD:data.json → 종료 코드 128"),                           # 못 읽음
-    ("listing", "git HEAD:data.json"),                                            # 1차 출처 날인데 가격 있는 종목이 없음
-    ("nofb", "git HEAD:data.json"),
-    ("odd", "git HEAD:data.json"),                                                # 칸이 비었음
-    ("datemismatch", "git HEAD:data.json"),
-])
-def test_unreadable_or_incomparable_previous_publish_never_holds(prev, note):
-    cur = fb_data("2026-11-20", 2526)
-    p = {"listing": listing_data("2026-11-19"), "nofb": {**fb_data("2026-11-19", 2740)}, "odd": fb_data("2026-11-19", 2740),
-         "datemismatch": fb_data("2026-11-19", 2740), None: None}[prev]
-    if prev == "nofb":
-        p["pxSrc"] = {**p["pxSrc"], "fb": None}
-    if prev == "odd":
-        p["pxSrc"]["fb"].pop("noYahoo")
-    if prev == "datemismatch":
-        p["pxSrc"]["date"] = "2026-11-18"
-    d, lines = P.evaluate(cur, "data.json", p, note, kst(2026, 11, 21, 6, 41))
-    assert d.hold is False and d.loud is True
-    assert P.last_count(p)[0] is None
-    prev_line = next(ln for ln in lines if "직전 발행본:" in ln)
-    assert prev_line.startswith("!! ") and note in prev_line                      # 왜 비교하지 못했는지 크게 남겨요
+# ── 2. 셈 (kk_counts) ────────────────────────────────────────
+def test_konex_kept_is_subtracted_and_the_listing_is_kospi_and_kosdaq():
+    d = fb_data("2026-11-20", 2700, noYahoo=46, knx_kept=23)
+    assert d["pxSrc"]["fb"]["conf"] == 2723
+    c, why = P.kk_counts(d)
+    assert (c["conf"], c["listing"], c["total"], c["reuse"], c["kept"]) == (2700, 2771, 2700, 0, 23) and "코넥스 23 는 빼고" in why
+    # 2,650 + 코넥스 23 = 2,673 이지만 코스피 · 코스닥은 2,650 = 95.6% → 보류 (빼지 않으면 96.5% 로 보였어요)
+    assert P.evaluate(fb_data("2026-11-20", 2650, noYahoo=96, knx_kept=23), "data.json", None, "없음", kst(2026, 11, 21, 6, 41))[0].hold is True
 
 
-def test_evaluate_holds_on_the_real_numbers_of_a_blank_close_night():
-    d, lines = P.evaluate(fb_data("2026-11-20", 2526, noYahoo=220), "data.json", fb_data("2026-11-19", 2740), "git HEAD:data.json",
-                          kst(2026, 11, 21, 6, 41))
-    assert d.hold is True
-    assert any("코스피 · 코스닥 두 출처 확인 2,526 / 목록 2,878" in ln for ln in lines)
-    assert any("코스피 · 코스닥 두 출처 확인 2,740 / 목록 2,878" in ln for ln in lines)
-    d, _ = P.evaluate(fb_data("2026-11-20", 2738, noYahoo=8), "data.json", fb_data("2026-11-19", 2740), "git HEAD:data.json",
-                      kst(2026, 11, 21, 7, 20))
-    assert d.hold is False                                                        # 야후가 채운 뒤 (06:40 쯤부터)
+@pytest.mark.parametrize("knx", ["x", None, {}, {"kept": None}, {"kept": True}, {"kept": -1}, {"kept": 99999}])
+def test_an_odd_konex_record_is_not_used(knx):
+    d = fb_data("2026-11-20", 2700, knx_kept=23)
+    d["pxSrc"]["fb"]["knx"] = knx
+    c, why = P.kk_counts(d)
+    assert c is None and ("knx" in why or "칸이 맞지 않아요" in why)
 
 
 def test_carried_closes_never_count_as_confirmed():
-    """#159 가 들어오면 확인 못 한 종목을 마지막 확인 종가로 실어요 (pxSrc.own · 종목의 pxd). 그 종목은 두 출처 확인이 아니에요."""
-    carried = [{"t": f"9{i:05d}", "cls": "kr", "px": 1000, "pxd": "2026-11-19"} for i in range(129)]
-    own = {"v": 1, "n": 129, "codes": [s["t"] for s in carried], "max": 5}
-    cur = fb_data("2026-11-20", 2600, noYahoo=145, own=own, stocks=[{"t": "005930", "cls": "kr", "px": 50000}, *carried])
-    cur["pxSrc"]["n"] = {FB: 2346, "own": 129}                                    # 발행 수가 바뀌어도 상관없어요
-    assert P.fb_confirmed(cur)[0] == 2600
-    d, _ = P.evaluate(cur, "data.json", fb_data("2026-11-19", 2740), "git HEAD:data.json", kst(2026, 11, 21, 6, 41))
-    assert d.hold is True and "2,600" in d.why                                    # 2,600 + 129 = 2,729 ≥ 2,658 이지만 실은 종목은 세지 않아요
-    # 누가 실은 종목을 conf 에 더하면 칸이 맞지 않아요 → 그 수를 쓰지 않아요 (오늘 · 직전 모두)
-    bad = fb_data("2026-11-20", 2600, noYahoo=145, own=own)
-    bad["pxSrc"]["fb"]["conf"] += 129
-    n, why = P.fb_confirmed(bad)
-    assert n is None and "칸이 맞지 않아요" in why
-    bad_prev = fb_data("2026-11-19", 2740)
-    bad_prev["pxSrc"]["fb"]["conf"] += 129                                        # 부풀린 직전 수로 보류하지 않아요
-    d, lines = P.evaluate(fb_data("2026-11-20", 2700), "data.json", bad_prev, "git HEAD:data.json", kst(2026, 11, 21, 6, 41))
-    assert d.hold is False and any(ln.startswith("!! 직전 발행본:") and "칸이 맞지 않아요" in ln for ln in lines)
+    """#159: 확인 못 한 종목은 마지막 확인 종가로 실어요 (pxSrc.own · 종목의 pxd). 그 종목은 두 출처 확인이 아니에요."""
+    carried = [{"t": f"9{i:05d}", "cls": "kr", "price": 1000, "pxd": "2026-11-19"} for i in range(129)]
+    own = {"v": 1, "n": 129, "codes": [s["t"] for s in carried], "max": 5, "unconf": 160}
+    cur = fb_data("2026-11-20", 2700, noYahoo=46, own=own, stocks=[{"t": "005930", "cls": "kr", "price": 50000}, *carried])
+    cur["pxSrc"]["n"] = {FB: 2346}
+    assert P.kk_counts(cur)[0]["total"] == 2700                                   # 2,700 + 129 가 아니에요
+    bad = fb_data("2026-11-20", 2700, noYahoo=46, own=own)
+    bad["pxSrc"]["fb"]["conf"] += 129                                             # 누가 실은 종목을 conf 에 더하면 칸이 맞지 않아요
+    c, why = P.kk_counts(bad)
+    assert c is None and "칸이 맞지 않아요" in why
+
+
+def test_same_day_reuse_counts_as_confirmed_but_an_odd_record_is_not_used():
+    d = fb_data("2026-11-20", 2700, noYahoo=46, rr=reuse(30, n=33))
+    c, why = P.kk_counts(d)
+    assert (c["conf"], c["reuse"], c["total"], c["lost"]) == (2700, 30, 2730, 0) and "다시 씀 30" in why
+    for bad in ({"kk": -1, "lost": 0}, {"kk": 30}, {"kk": 30, "lost": None}, {"kk": 500, "lost": 0}, {"kk": True, "lost": 0}):
+        d = fb_data("2026-11-20", 2700, noYahoo=46, rr=dict(reuse(30), **bad))
+        if "lost" not in bad:
+            d["pxSrc"]["own"]["reuse"].pop("lost")
+        assert P.kk_counts(d)[0] is None, bad
 
 
 @pytest.mark.parametrize("v", [True, -1, 2.5, "2740", None])
 def test_counts_must_be_plain_non_negative_integers(v):
     d = fb_data("2026-11-20", 2740)
     d["pxSrc"]["fb"]["conf"] = v
-    assert P.fb_confirmed(d)[0] is None
+    assert P.kk_counts(d)[0] is None
 
 
-# ── 실행 (main) ──────────────────────────────────────────────
+# ── 3. 같은 날 다시 발행 ─────────────────────────────────────
+def n_of(d):
+    return P.kk_counts(d)[0]
+
+
+def test_same_day_publishes_only_when_strictly_better_and_nothing_is_lost():
+    prev = fb_data("2026-11-20", 2716, noYahoo=30)                                # 06:40: 98.01%
+    better = fb_data("2026-11-20", 2700, noYahoo=46, rr=reuse(25))                # 이 실행 2,700 + 다시 씀 25 = 2,725 > 2,716 · 잃은 종목 0
+    d = P.same_day_decision(FB, FB, n_of(better), n_of(prev))
+    assert d.hold is False and d.kind == "publish" and "2,716 → 2,725 (+9)" in d.why
+    same = fb_data("2026-11-20", 2700, noYahoo=46, rr=reuse(16))                  # 2,716 = 2,716
+    d = P.same_day_decision(FB, FB, n_of(same), n_of(prev))
+    assert d.hold is True and d.kind == "same" and "더 많지 않아" in d.why
+    worse = fb_data("2026-11-20", 2690, noYahoo=56, rr=reuse(20))
+    assert P.same_day_decision(FB, FB, n_of(worse), n_of(prev)).hold is True
+    lost = fb_data("2026-11-20", 2740, rr=reuse(0, lost=1))                       # 더 많지만 하나를 잃었어요 (지금 두 출처가 다름 등)
+    d = P.same_day_decision(FB, FB, n_of(lost), n_of(prev))
+    assert d.hold is True and d.loud is True and "1개를 이 실행이 잃었어요" in d.why
+    norec = fb_data("2026-11-20", 2740)                                           # 다시 쓰기 기록이 없으면 잃은 종목을 몰라요 → 발행 안 함
+    d = P.same_day_decision(FB, FB, n_of(norec), n_of(prev))
+    assert d.hold is True and "다시 쓰기 기록" in d.why
+    assert P.same_day_decision(FB, FB, None, n_of(prev)).hold is True and P.same_day_decision(FB, FB, n_of(better), None).hold is True
+
+
+def test_same_day_mode_changes():
+    assert P.same_day_decision(LISTING, FB, None, None).hold is False             # KRX 최종본이 생김 → 발행
+    assert P.same_day_decision(LISTING, LISTING, None, None).hold is False        # 손으로 다시 돌린 1차 출처 날 → 예전 그대로
+    d = P.same_day_decision(FB, LISTING, n_of(fb_data("2026-11-20", 2740, rr=reuse(0))), None)
+    assert d.hold is True and "2차 출처로 바꿔 발행하지 않아요" in d.why
+
+
+def test_evaluate_runs_the_floor_first_then_the_same_day_rule():
+    now = kst(2026, 11, 21, 10, 53)
+    prev = fb_data("2026-11-20", 2716, noYahoo=30)
+    # 같은 날 · 더 나음 → 발행
+    d, lines = P.evaluate(fb_data("2026-11-20", 2700, noYahoo=46, rr=reuse(25)), "data.json", prev, "git HEAD:data.json", now)
+    assert d.hold is False and any("직전 발행본 (같은 날)" in ln for ln in lines)
+    # 같은 날인데 바닥 아래 → 바닥 보류 (같은 날 비교 전에)
+    d, _ = P.evaluate(fb_data("2026-11-20", 2600, noYahoo=146, rr=reuse(10)), "data.json", prev, "git HEAD:data.json", now)
+    assert d.kind == "floor"
+    # 미국 기준일이 바뀌면 새 발행 (바닥만) — 미국 종가를 막지 않아요
+    d, lines = P.evaluate(fb_data("2026-11-20", 2716, noYahoo=30, us="2026-11-20"), "data.json", fb_data("2026-11-20", 2740, us="2026-11-19"),
+                          "git HEAD:data.json", now)
+    assert d.hold is False and any("새 날" in ln for ln in lines)
+    # 새 한국 기준일 → 바닥만
+    assert P.evaluate(fb_data("2026-11-21", 2716, noYahoo=30), "data.json", prev, "git", now)[0].hold is False
+    # 직전 발행본을 못 읽으면 같은 날인지 몰라 바닥만 (크게)
+    d, lines = P.evaluate(fb_data("2026-11-20", 2716, noYahoo=30), "data.json", None, "git show HEAD:data.json → 종료 코드 128", now)
+    assert d.hold is False and d.loud is True and d.kind == "unknown" and any(ln.startswith("!! 직전 발행본:") for ln in lines)
+    # 오늘 기록을 못 쓰면 보류하지 않아요 (크게 · 오늘 줄에 !!)
+    bad = fb_data("2026-11-20", 2700, noYahoo=46)
+    bad["pxSrc"]["fb"]["conf"] += 5
+    d, lines = P.evaluate(bad, "data.json", prev, "git", now)
+    assert d.hold is False and d.loud is True and lines[1].startswith("!! 오늘:")
+    # 오늘 data.json 을 못 읽으면 보류하지 않아요
+    assert P.evaluate(None, "data.json 없음", prev, "git", now)[0].hold is False
+
+
+# ── 4. main: 로그 · 요약 · 출력 · 알림 ────────────────────────
 def run_main(tmp_path, monkeypatch, cur, prev, now, argv=(), dry=False, actions=False):
     out, summ = tmp_path / "out.txt", tmp_path / "summary.md"
     for p in (out, summ):
@@ -221,60 +254,75 @@ def run_main(tmp_path, monkeypatch, cur, prev, now, argv=(), dry=False, actions=
     return hold, out.read_text(), summ.read_text(), seen
 
 
-def test_main_on_a_hold_logs_both_counts_the_line_and_the_time(tmp_path, monkeypatch, capsys):
-    hold, out, summ, seen = run_main(tmp_path, monkeypatch, fb_data("2026-11-20", 2526), fb_data("2026-11-19", 2740),
+def test_main_on_a_floor_hold_logs_the_numbers_and_warns(tmp_path, monkeypatch, capsys):
+    hold, out, summ, seen = run_main(tmp_path, monkeypatch, fb_data("2026-11-20", 2526, noYahoo=220), fb_data("2026-11-19", 2740),
                                      kst(2026, 11, 21, 6, 41), actions=True)
     log = capsys.readouterr().out
-    assert hold is True and seen == ["HEAD"]                                      # 관문과 같은 직전 발행본 (HEAD)
-    assert out.splitlines()[-1] == "hold=true"
+    assert hold is True and seen == ["HEAD"] and out.splitlines()[-1] == "hold=true"
     loud = next(ln for ln in log.splitlines() if ln.startswith("!! [보류]"))
-    for part in ("2,526", "2,740", "97% 선 2,658", "06:41 KST"):
+    for part in ("2,526", "2,771", "91.16%", "바닥 98%", "2,716"):
         assert part in loud, part
-    assert "::warning title=발행 보류 (2차 출처 날 · 08:00 KST 전)::" in log
-    assert "보류 — 이 실행은 발행하지 않아요" in summ and "2,658" in summ and "already_published.py" in summ and "건너뛰어요" in summ
+    assert "::warning title=발행 보류 (2차 출처 확인 비율 바닥 아래)::" in log
+    assert "보류 — 확인 비율이 바닥 아래라 발행하지 않아요" in summ and "already_published.py" in summ
 
 
-def test_main_publishes_from_eight_and_on_normal_days(tmp_path, monkeypatch, capsys):
-    hold, out, summ, _ = run_main(tmp_path, monkeypatch, fb_data("2026-11-20", 2526), fb_data("2026-11-19", 2740), kst(2026, 11, 21, 8, 17))
-    assert hold is False and out.splitlines()[-1] == "hold=false" and "발행 (보류 아님)" in summ
-    hold, out, summ, _ = run_main(tmp_path, monkeypatch, listing_data("2026-11-20"), fb_data("2026-11-19", 2740), kst(2026, 11, 21, 3, 47))
-    assert hold is False and out.splitlines()[-1] == "hold=false" and "2차 출처 날이 아니에요" in summ
-    assert "!!" not in capsys.readouterr().out
-
-
-def test_dry_runs_report_the_decision_too(tmp_path, monkeypatch, capsys):
-    hold, out, summ, _ = run_main(tmp_path, monkeypatch, fb_data("2026-11-20", 2526), fb_data("2026-11-19", 2740),
-                                  kst(2026, 11, 21, 6, 41), dry=True)
+def test_main_same_day_not_better_leaves_a_notice_not_a_warning(tmp_path, monkeypatch, capsys):
+    prev = fb_data("2026-11-20", 2740)
+    hold, out, summ, _ = run_main(tmp_path, monkeypatch, fb_data("2026-11-20", 2740, rr=reuse(0)), prev, kst(2026, 11, 21, 10, 53), actions=True)
+    log = capsys.readouterr().out
     assert hold is True and out.splitlines()[-1] == "hold=true"
-    assert "시험 실행" in summ and "보류" in summ and "시험 실행: 어차피 발행하지 않아요" in capsys.readouterr().out
+    assert "!! [같은 날 · 발행 안 함]" in log and "::notice title=같은 날 다시 발행 안 함 (더 낫지 않음)::" in log and "::warning" not in log
+    assert "발행 안 함 — 같은 날 지난 발행본보다 낫지 않아요" in summ
 
 
-def test_bootstrap_and_a_missing_compare_commit_never_hold(tmp_path, monkeypatch, capsys):
+def test_main_publishes_new_days_and_normal_days_quietly(tmp_path, monkeypatch, capsys):
+    hold, out, summ, _ = run_main(tmp_path, monkeypatch, fb_data("2026-11-20", 2740), fb_data("2026-11-19", 2740), kst(2026, 11, 21, 6, 41),
+                                  actions=True)
+    assert hold is False and out.splitlines()[-1] == "hold=false" and "발행 (보류 아님)" in summ
+    hold, out, summ, _ = run_main(tmp_path, monkeypatch, listing_data("2026-11-20"), fb_data("2026-11-19", 2740), kst(2026, 11, 21, 3, 47),
+                                  actions=True)
+    assert hold is False and "2차 출처 날이 아니에요" in summ
+    assert "::" not in capsys.readouterr().out                                    # 알림 없음
+
+
+def test_dry_runs_and_sample_runs_report_the_decision(tmp_path, monkeypatch, capsys):
+    hold, out, summ, _ = run_main(tmp_path, monkeypatch, fb_data("2026-11-20", 2526, noYahoo=220), fb_data("2026-11-19", 2740),
+                                  kst(2026, 11, 21, 6, 41), dry=True)
+    assert hold is True and out.splitlines()[-1] == "hold=true" and "시험 실행" in summ and "표본" not in summ
+    assert "시험 실행: 어차피 발행하지 않아요" in capsys.readouterr().out
+    monkeypatch.setenv("SAMPLE_KR", "50")
+    _, _, summ, _ = run_main(tmp_path, monkeypatch, fb_data("2026-11-20", 2526, noYahoo=220), fb_data("2026-11-19", 2740),
+                             kst(2026, 11, 21, 6, 41), dry=True)
+    assert "표본 실행(sample)" in summ and "뜻이 없어요" in summ
+
+
+def test_bootstrap_and_a_missing_compare_commit_look_at_the_floor_only(tmp_path, monkeypatch, capsys):
+    same = fb_data("2026-11-20", 2740)
     for argv, word in ((["--bootstrap"], "bootstrap"), (["--no-prev"], "받지 못했어요")):
-        hold, out, summ, seen = run_main(tmp_path, monkeypatch, fb_data("2026-11-20", 2000), fb_data("2026-11-19", 2740),
-                                         kst(2026, 11, 21, 6, 41), argv=argv)
+        hold, out, summ, seen = run_main(tmp_path, monkeypatch, fb_data("2026-11-20", 2716, noYahoo=30), same, kst(2026, 11, 21, 10, 53), argv=argv)
         assert hold is False and seen == [] and out.splitlines()[-1] == "hold=false" and word in summ
-    hold, out, _, seen = run_main(tmp_path, monkeypatch, fb_data("2026-11-20", 2000), fb_data("2026-11-19", 2740),
-                                  kst(2026, 11, 21, 6, 41), argv=["--prev-ref", "FETCH_HEAD"])
-    assert hold is True and seen == ["FETCH_HEAD"]
+    hold, out, _, seen = run_main(tmp_path, monkeypatch, fb_data("2026-11-20", 2716, noYahoo=30, rr=reuse(0)), same, kst(2026, 11, 21, 10, 53),
+                                  argv=["--prev-ref", "FETCH_HEAD"])
+    assert hold is True and seen == ["FETCH_HEAD"]                                # 같은 날 · 더 낫지 않음
 
 
 def test_main_never_holds_when_it_breaks(tmp_path, monkeypatch, capsys):
     out = tmp_path / "out.txt"
     monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
     monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
 
     def boom(path):
         raise RuntimeError("읽기 실패")
     assert P.main([], now_fn=lambda: kst(2026, 11, 21, 6, 41), cur_reader=boom) is False
+    log = capsys.readouterr().out
     assert out.read_text().splitlines()[-1] == "hold=false"
-    assert "!! 이른 발행 보류 확인이 오류로 멈췄어요" in capsys.readouterr().out
-    # 오늘 data.json 을 못 읽어도 보류하지 않아요 (관문이 봐요)
+    assert "!! 발행 판단이 오류로 멈췄어요" in log and log.count("::warning title=발행 판단 확인 못 함 (보류 없이 판단)::") == 1
     hold, text, _, _ = run_main(tmp_path, monkeypatch, None, fb_data("2026-11-19", 2740), kst(2026, 11, 21, 6, 41))
     assert hold is False and text.splitlines()[-1] == "hold=false"
 
 
-def test_read_prev_reads_the_same_file_the_gate_compares_with(tmp_path):
+def test_read_prev_reads_the_same_file_the_gate_compares_with():
     calls = []
 
     class R:
@@ -285,16 +333,207 @@ def test_read_prev_reads_the_same_file_the_gate_compares_with(tmp_path):
         calls.append(cmd)
         return R(0, json.dumps(fb_data("2026-11-19", 2740)).encode())
     data, note = P.read_prev("HEAD", run=fake)
-    assert calls == [["git", "show", "HEAD:data.json"]] and P.fb_confirmed(data)[0] == 2740 and note == "git HEAD:data.json"
+    assert calls == [["git", "show", "HEAD:data.json"]] and P.kk_counts(data)[0]["total"] == 2740 and note == "git HEAD:data.json"
     assert P.read_prev("HEAD", run=lambda cmd, **kw: R(128, b""))[0] is None
     assert P.read_prev("HEAD", run=lambda cmd, **kw: R(0, b"{not json"))[0] is None
-    # 관문의 기본 비교 대상도 HEAD 예요 (validate_data --prev-ref 기본값)
-    import validate_data as V
     src = open(os.path.join(ROOT, "validate_data.py"), encoding="utf-8").read()
     assert 'ap.add_argument("--prev-ref", default="HEAD"' in src and V.PX_SRC_FB == FB
 
 
-# ── 워크플로 ─────────────────────────────────────────────────
+# ── 5. 파이프라인: 같은 날 지난 발행본의 확인 종가 다시 쓰기 ──────────
+def kr(t, price=5000.0, **kw):
+    s = {"t": t, "nk": "종목" + t, "ne": "종목" + t, "cls": "kr", "s": "etc", "price": price, "vol": 30.0, "beta": 1.0, "al": 1.0, "betaSE": 0.05,
+         "betaN": 700, "cap": 0.05, "val": 3.0, "val20": 2.5, "lo": 4000.0, "hi": 6000.0, "etf": False, "shr": 10000000, "r1": 1.0, "r3": 2.0,
+         "r36": 3.0, "dk": "업종 · KOSDAQ 상장 · 시가총액 500억원", "sh": 0.3, "mdd": -40.0, "hit": 50, "mom": 10.0, "d1": 0.5, "per": 25.0, "pbr": 1.2}
+    s.update(kw)
+    return {k: v for k, v in s.items() if v is not None}
+
+
+def test_same_day_reuse_keeps_the_earlier_confirmed_close_and_names_every_loss():
+    px = dt.date(2026, 11, 20)
+    prev = {"pxDate": "2026-11-20", "publishedAt": "2026-11-21T06:40:52+09:00", "krSeries": {"v": 1, "jump": [["400050", "2026-05-08", 90.0, "halt"]]},
+            "stocks": [kr("400010", 7300.0, cap=0.9, d1=-1.2), kr("400020", 100.0, cap=0.1, noTrade=True, d1=None, d1Why="noTrade", ntD1=0.0),
+                       kr("400030"), kr("400040"), kr("400050", pxBad=1, pxBadF=1), kr("400060", pxBad=1),
+                       kr("400070", pxd="2026-11-19", d1=None), kr("400080")]}
+    unconf = {c: ("", "conf") for c in ("400010", "400020", "400030", "400050", "400060", "400070")}
+    unconf["400099"] = ("코넥스", "mkt")
+    src = {"fb": {"diffT": ["400030"]}}
+    reused, jumps, lost, rec = F.kr_same_day_reuse(prev, unconf, {"400080"}, px, src)
+    by = {r["t"]: r for r in reused}
+    assert sorted(by) == ["400010", "400020", "400050"]
+    assert by["400010"]["price"] == 7300.0 and by["400010"]["d1"] == -1.2 and "pxd" not in by["400010"]       # 그 날짜 종가 · d1 그대로
+    assert by["400020"]["noTrade"] is True and by["400020"]["d1Why"] == "noTrade" and "d1" not in by["400020"]
+    assert not {"per", "pbr"} & set(by["400010"])                                                             # 재무 · 점수는 오늘 다시
+    assert jumps == {"400050": [["400050", "2026-05-08", 90.0, "halt"]]}
+    # 잃은 종목: 지금 두 출처가 다름 · 그날 목록에 없음 · 과거 주가 기록 오류 표시인데 지난 움직임이 없음 (400070 은 지난 발행본도 마지막 확인 종가라
+    # 다시 쓰지 않아요 — 마지막 확인 종가 단계가 같은 pxd 로 옮겨요 · 400080 은 이 실행이 확인했어요)
+    assert lost == {"400030": "clash", "400040": "gone", "400060": "jump"}
+    assert (rec["earlier"], rec["n"], rec["kk"], rec["lost"]) == (7, 3, 3, 3) and rec["from"].startswith("2026-11-21T06:40")
+    assert any("400030" in x and "지금 두 출처가 서로 다름" in x for x in rec["lostEx"])
+    # 다른 기준일이면 아무것도 하지 않아요 (같은 날 다시 도는 실행이 아니에요)
+    assert F.kr_same_day_reuse(dict(prev, pxDate="2026-11-19"), unconf, set(), px, src) == ([], {}, {}, None)
+    json.dumps(rec, allow_nan=False)
+
+
+def test_reuse_never_exceeds_this_runs_confirmed_count():
+    """관문: 2차 출처 날 '두 출처 확인 수 ≥ 발행한 그 날짜 종가 종목 수' (validate_data.px_alt_confirms) — 그 줄을 그대로 두고, 다시 쓰는 수를 맞춰요."""
+    px = dt.date(2026, 11, 20)
+    prev = {"pxDate": "2026-11-20", "stocks": [kr("500010", cap=5.0), kr("500020", cap=9.0), kr("500030", cap=1.0)]}
+    unconf = {c: ("", "conf") for c in ("500010", "500020", "500030")}
+    reused, _, lost, rec = F.kr_same_day_reuse(prev, unconf, set(), px, {"fb": {}}, room=2)
+    assert [r["t"] for r in reused] == ["500010", "500020"] and lost == {"500030": "room"} and rec["lost"] == 1     # 시가총액 큰 것부터
+    assert F.kr_same_day_reuse(prev, unconf, set(), px, {"fb": {}}, room=0)[3]["n"] == 0
+
+
+def test_the_step_reuses_on_the_real_fetch_korea_shapes(capsys):
+    """kr_own_close_step 을 진짜 모양으로 (test_kr_own_close.real_second_source: 11-16 · STX 다음 ≠ 야후 · 본시스템즈 코넥스): 지난 발행본이 같은
+    기준일에 두 종목을 그 날짜 종가로 실었어요 → 코넥스는 다시 쓰고, STX 는 지금 두 출처가 달라 잃은 종목 (발행하지 않아요)."""
+    import test_kr_own_close as T
+    px, lst, src, full = T.real_second_source()
+    konex, stx = "496320", "011810"
+    assert stx in src["fb"]["diffT"]                                              # fetch_data 가 직접 적은 다른 종목 목록
+    conf = set(lst["Code"].astype(str).str.strip())
+    kept_out = sorted(conf)[:2]                                                   # 시가총액 상위로 자른 것처럼 (확인됐지만 발행하지 않은 종목 2)
+    out = [{"t": c, "cls": "kr", "price": 1.0} for c in sorted(conf) if c not in kept_out]
+    prev = {"pxDate": px.isoformat(), "publishedAt": "2026-11-17T06:40:00+09:00", "krSeries": {"v": 1, "jump": []},
+            "stocks": [kr(c) for c in sorted(conf) if c not in kept_out]
+            + [kr(konex, 1176000.0, dk="업종 · 주요제품: 기계 · KONEX 상장 · 시가총액 100억원"), kr(stx, 18360.0)]}
+    krs, prod = {"jump": [], "hidden": []}, {}
+    days = list(pd.to_datetime(["2026-11-12", "2026-11-13", "2026-11-16", "2026-11-17"]))
+    n = F.kr_own_close_step(prev, full, conf, src, px, days, out, krs, prod)
+    assert n == 0                                                                 # 마지막 확인 종가로 실은 종목 0 (STX 는 같은 날이라 옮기지 않아요)
+    rr = src["own"]["reuse"]
+    assert (rr["n"], rr["kk"], rr["lost"]) == (1, 0, 1) and rr["codes"] == [konex]
+    assert [r for r in out if r["t"] == konex][0].get("pxd") is None and not [r for r in out if r["t"] == stx]
+    assert src["own"]["unconf"] == 2                                              # 이 실행이 확인 못 한 수는 그대로 (관문의 코넥스 비교와 같게)
+    log = capsys.readouterr().out
+    assert "!! 같은 기준일을 다시 도는 실행" in log and "잃은 종목 1" in log
+    data = json.loads(json.dumps({"pxDate": px.isoformat(), "usPxDate": "2026-11-16", "pxSrc": F.px_src_final(src, out), "stocks": out}))
+    c = P.kk_counts(data)[0]
+    assert c["lost"] == 1 and c["reuse"] == 0
+    d = P.same_day_decision(FB, FB, c, dict(c, total=c["total"] - 1, lost=0))   # 확인이 더 많아도 잃은 종목이 있으면 발행 안 함
+    assert d.hold is True and d.kind == "same" and "1개를 이 실행이 잃었어요" in d.why
+
+
+def test_contract_with_the_pipelines_own_second_source_record():
+    """fetch_data 의 진짜 길로 pxSrc 를 만들어 그대로 읽어요: kr_fallback_days (kr_fb_confirm) → kr_second_source (px_src_counts) → px_src_final."""
+    import test_kr_two_source as T2
+    uni = T2.listing("2026-11-18_1452")
+    D16, D18 = dt.date(2026, 11, 16), dt.date(2026, 11, 18)
+
+    def fill(y, cm, d, close_time):
+        mc = set()
+        for c, rows in T2.daum().items():
+            if c in cm and d in rows:
+                y.setdefault(c, {})[d] = rows[d]["tradePrice"]
+                mc.add(c)
+        return {"need": len(mc), "bar": 0, "meta": len(mc), "none": 0, "fail": 0, "metaCodes": mc}
+    seen = {}
+
+    def fallback(days, universe_of, now, special):
+        out, notes = F.kr_fallback_days(days, universe_of, now, special, fetch_daum=lambda codes, n: (T2.daum(), []),
+                                        fetch_yahoo=lambda cm, s, e: ({c: {k: v for k, v in d.items() if k != D18} for c, d in T2.yahoo().items()}, 0),
+                                        fill_day=fill)
+        seen.update(out)
+        return out, notes
+    px, lst, _, src, _, _ = F.kr_second_source(D16, T2.listing("2026-11-16_2211"), [D18], dt.datetime(2026, 11, 19, 2, 15, tzinfo=F.KST), {},
+                                               lambda d: (uni, "시험"), fallback=fallback)
+    assert px == D18 and src["px"] == FB
+    st = seen[D18][1]
+    stocks = [{"t": str(c), "cls": "kr"} for c in lst["Code"]]
+    data = json.loads(json.dumps({"pxDate": px.isoformat(), "pxSrc": F.px_src_final(src, stocks), "stocks": stocks}, allow_nan=False))
+    c, why = P.kk_counts(data)
+    assert c["conf"] == c["total"] == st["conf"] == len(lst) > 0, why
+    assert c["listing"] == st["n"] - len(st["mkt"]) and st["mkt"]                 # 픽스처의 코넥스 1종목은 mkt 에
+    assert data["pxSrc"]["fb"]["diffT"] == sorted(x for x, *_ in st["diff"])
+
+
+def test_contract_with_the_pipelines_own_konex_record():
+    """#158 의 코넥스 단계까지 진짜 길로 (tests/test_konex_two_source.knx_fakes): fb.knx.kept 를 fetch_data 가 직접 만들고, 돌아오는 수는 코스피 · 코스닥만."""
+    import functools
+    import test_konex_two_source as TK
+    D13, D16 = dt.date(2026, 11, 13), dt.date(2026, 11, 16)
+    prim = TK.pd.concat([TK.kk_listing("2026-11-13_2158"), TK.knx_listing("2026-11-13_final")], ignore_index=True)
+    base, _ = TK.run_fb(knx=None)
+    kk_conf = base[D16][1]["conf"]
+    px, lst, _, src, _, _ = F.kr_second_source(D13, prim, [D16], TK.NOW, {}, None,
+                                               fallback=functools.partial(TK.run_fb_partial, knx=TK.knx_fakes()))
+    kept = src["fb"]["knx"]["kept"]
+    assert px == D16 and kept > 0 and src["fb"]["conf"] == kk_conf + kept
+    assert isinstance(src["fb"]["knx"]["diffT"], list) and set(src["fb"]["knx"]["diffT"]) <= set(src["fb"]["knx"]["left"])
+    stocks = [{"t": str(c), "cls": "kr"} for c in lst["Code"]]
+    data = json.loads(json.dumps({"pxDate": px.isoformat(), "pxSrc": F.px_src_final(src, stocks), "stocks": stocks}, allow_nan=False))
+    c, why = P.kk_counts(data)
+    assert c["conf"] == kk_conf and c["kept"] == kept and f"코넥스 {kept:,} 는 빼고" in why
+
+
+# ── 6. already_published: 확인 못 한 종가가 남은 날은 뒤의 실행도 끝까지 ──────
+def weekdays(start, end):
+    d, out = start, []
+    while d <= end:
+        if d.weekday() < 5:
+            out.append(d)
+        d += dt.timedelta(days=1)
+    return out
+
+
+CAL = {"kr": weekdays(dt.date(2026, 10, 1), dt.date(2026, 11, 20)), "us": weekdays(dt.date(2026, 10, 1), dt.date(2026, 11, 20)),
+       "usToday": None, "krSources": 2}
+
+
+def test_open_closes():
+    own = {"v": 1, "n": 129, "codes": [], "unconf": 160}
+    assert A.open_closes(fb_data("2026-11-20", 2740, own=own)) == {"kr": 160, "us": 0}
+    assert A.open_closes(fb_data("2026-11-20", 2740, own=own, rr=reuse(150, n=160))) == {"kr": 0, "us": 0}     # 모두 다시 씀
+    assert A.open_closes(fb_data("2026-11-20", 2740)) == {"kr": 138, "us": 0}     # own 이 없으면 fb 로 (목록 2,878 − 확인 2,740)
+    assert A.open_closes(listing_data("2026-11-20")) == {"kr": 0, "us": 0}        # 1차 출처 날
+    assert A.open_closes({"pxDate": "2026-11-12", "stocks": []}) == {"kr": 0, "us": 0}   # pxSrc 가 생기기 전 파일
+    odd = fb_data("2026-11-20", 2740)
+    odd["pxSrc"]["fb"] = "x"
+    assert A.open_closes(odd) == {"kr": 1, "us": 0}                               # 모르면 다시 돌아요
+    assert A.open_closes(None) == {"kr": 0, "us": 0}
+
+
+def test_later_scheduled_runs_keep_running_while_the_day_has_open_closes():
+    now = kst(2026, 11, 21, 10, 53)
+    own = {"v": 1, "n": 25, "codes": [], "unconf": 31}
+    skip, why = A.decide(fb_data("2026-11-20", 2740, own=own), now, CAL)
+    assert skip is False and "확인 못 한 종가가 남아 있어요 (국내 31)" in why and "#161" in why
+    skip, why = A.decide(fb_data("2026-11-20", 2740, own=dict(own, unconf=0)), now, CAL)
+    assert skip is True and "이미 다 들어와" in why                               # 다 찬 날은 예전처럼 건너뛰어요
+    assert A.decide(listing_data("2026-11-20"), now, CAL)[0] is True              # 1차 출처 날 그대로
+    assert A.decide(fb_data("2026-11-19", 2740, own=own), now, CAL)[0] is False   # 날짜가 늦으면 예전처럼 실행
+
+
+def test_a_held_run_leaves_the_data_branch_as_it_was_so_the_next_start_runs():
+    prev, cur = fb_data("2026-11-19", 2740), fb_data("2026-11-20", 2526, noYahoo=220)
+    assert P.evaluate(cur, "data.json", prev, "git HEAD:data.json", kst(2026, 11, 21, 6, 41))[0].hold is True
+    for hh, mm in ((6, 43), (8, 17), (10, 53)):
+        skip, why = A.decide(prev, kst(2026, 11, 21, hh, mm), CAL)
+        assert skip is False and "아직이에요" in why
+
+
+# ── 7. 관문: 같은 기준일 다시 발행 ─────────────────────────────
+def test_gate_rows_comparing_with_the_previous_publish_pass_a_same_day_republish():
+    """같은 pxDate 를 더 많이 확인해 다시 발행: '직전 발행본과 비교하는 줄' (pxDate 가 뒤로 가지 않음 · 국내 종목 수 변화 · 큰 가격 변동 비율) 이
+    줄을 바꾸지 않고 통과해요. 지난 발행본 = 같은 날 · 같은 가격 · 5% 적은 종목 (그때 확인 못 한 종목)."""
+    import test_kr_two_source as T2
+    cur, _, old, alt = T2.fb_pair()
+    earlier = copy.deepcopy(cur)
+    codes = [s["t"] for s in V.kr_stocks(earlier["data"]) if s["t"] not in V.MUST]
+    gone = set(codes[:max(1, len(codes) // 20)])
+    earlier["data"]["stocks"] = [s for s in earlier["data"]["stocks"] if s["t"] not in gone]
+    earlier["data"]["pxSrc"]["fb"]["conf"] -= len(gone)
+    assert earlier["data"]["pxDate"] == cur["data"]["pxDate"]
+    rep = V.run_checks(cur, earlier, old, T2.TODAY, mode="publish", count_between=lambda a, b: 0, sessions=T2.SESSIONS, now=T2.NOW,
+                       hilo=T2.hilo_of(cur, V.MUST), alt=alt)                    # 같은 날 사이 거래일 0 (관문이 max(1, 0) 으로)
+    rows = {r[0]: r for r in rep.rows}
+    for name in ("pxDate 가 뒤로 가지 않음", "국내 종목 수 변화", "큰 가격 변동 비율"):
+        assert rows[name][3] == "PASS", rows[name]
+    assert not rep.failed, rep.table()
+
+
+# ── 8. 워크플로 ──────────────────────────────────────────────
 def update_steps():
     with open(WF, encoding="utf-8") as f:
         return yaml.safe_load(f)["jobs"]["update"]["steps"]
@@ -304,7 +543,7 @@ def names(st):
     return [s.get("name") or s.get("uses") for s in st]
 
 
-def test_the_hold_is_decided_once_before_the_gate_and_runs_on_every_run():
+def test_the_decision_is_made_once_before_the_gate_and_runs_on_every_run():
     st = update_steps()
     n = names(st)
     i_fetch, i_save, i_hold, i_gate = n.index("데이터 수집"), n.index("DART 캐시 저장"), n.index(HOLD_STEP), n.index(GATE)
@@ -313,17 +552,14 @@ def test_the_hold_is_decided_once_before_the_gate_and_runs_on_every_run():
     hold = st[i_hold]
     assert hold["id"] == "hold"
     for k in ("if", "env", "continue-on-error", "timeout-minutes"):
-        assert k not in hold, k                                                   # 시험 실행에서도 늘 돌아요 · 토큰 · 비밀 값 없음
+        assert k not in hold, k
     run = hold["run"]
     assert run.count("python tools/publish_hold.py") == 1 and "|| true" not in run
     for bad in ("git push", "git commit", "push_data_branch", "GITHUB_TOKEN", "secrets.", "github.token"):
         assert bad not in json.dumps(hold, ensure_ascii=False), bad
-    # 결정은 이 한 단계에서만 · 그 결과를 보는 곳은 발행 두 단계뿐
     whole = json.dumps(st, ensure_ascii=False)
     assert whole.count("publish_hold.py") == 1
-    users = [s.get("name") for s in st if "steps.hold" in json.dumps(s, ensure_ascii=False)]
-    assert users == list(PUBLISH)
-    assert os.path.isfile(os.path.join(ROOT, "tools", "publish_hold.py"))
+    assert [s.get("name") for s in st if "steps.hold" in json.dumps(s, ensure_ascii=False)] == list(PUBLISH)
 
 
 def test_a_hold_skips_exactly_the_commit_and_the_data_branch_push():
@@ -331,16 +567,14 @@ def test_a_hold_skips_exactly_the_commit_and_the_data_branch_push():
     by = dict(zip(names(st), st))
     for name in PUBLISH:
         assert by[name]["if"] == IF_PUBLISH, name
-    # 저장소에 쓰는 단계는 그 둘뿐 (main 커밋 · data 브랜치 → 배포는 data 브랜치 단계가 성공해야만 해요)
     writers = [s.get("name") for s in st if any(w in (s.get("run") or "") for w in ("git push", "git commit", "push_data_branch"))]
     assert writers == list(PUBLISH)
 
     def gh_if(dry_run, hold_out):
-        """IF_PUBLISH 를 GitHub 처럼 풀어요: !inputs.dry_run && steps.hold.outputs.hold != 'true' (출력이 없으면 빈 값)."""
         return (not dry_run) and (hold_out or "") != "true"
-    assert gh_if(False, "false") is True and gh_if(False, None) is True           # 보류 아님 · 출력 없음 → 예전처럼 발행
-    assert gh_if(False, "true") is False                                          # 보류 → 발행 없음
-    assert gh_if(True, "false") is False and gh_if(True, "true") is False         # 시험 실행은 예전처럼 늘 발행 없음
+    assert gh_if(False, "false") is True and gh_if(False, None) is True
+    assert gh_if(False, "true") is False
+    assert gh_if(True, "false") is False and gh_if(True, "true") is False
 
 
 def fake_bin(tmp_path, py_body, git_ok=True):
@@ -373,13 +607,12 @@ def test_hold_step_bash_passes_the_gate_inputs_and_fails_open(tmp_path):
     r, out, calls = run_hold_step(tmp_path, ok, {"BOOTSTRAP": "true"})
     assert r.returncode == 0 and calls.strip() == "tools/publish_hold.py --bootstrap"
     r, out, calls = run_hold_step(tmp_path, ok, {"PREV_REF": "abc123"})
-    assert r.returncode == 0 and "git fetch --depth=1 origin abc123" in calls and "tools/publish_hold.py --prev-ref FETCH_HEAD" in calls
+    assert "git fetch --depth=1 origin abc123" in calls and "tools/publish_hold.py --prev-ref FETCH_HEAD" in calls
     r, out, calls = run_hold_step(tmp_path, ok, {"PREV_REF": "abc123"}, git_ok=False)
     assert r.returncode == 0 and "tools/publish_hold.py --no-prev" in calls and "받지 못했어요" in r.stdout
-    # 확인 자체가 멈추면 (파이썬 오류) 보류하지 않고 이어가요 — 크게 남겨요 · 단계는 실패하지 않아요
     r, out, calls = run_hold_step(tmp_path, "exit 1\n")
-    assert r.returncode == 0 and out == ["hold=false"] and "!! 이른 발행 보류 확인이 오류로 멈췄어요" in r.stdout
-    assert "::warning title=이른 발행 보류 확인 못 함 (보류 없이 발행)::" in r.stdout                   # 09:13 점검이 읽는 경고 알림
+    assert r.returncode == 0 and out == ["hold=false"] and "!! 발행 판단이 오류로 멈췄어요" in r.stdout
+    assert "::warning title=발행 판단 확인 못 함 (보류 없이 판단)::" in r.stdout
 
 
 def test_hold_step_end_to_end_with_the_real_script_and_git(tmp_path):
@@ -388,35 +621,35 @@ def test_hold_step_end_to_end_with_the_real_script_and_git(tmp_path):
     repo.mkdir()
     genv = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x",
             "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x"}
-    (repo / "data.json").write_text(json.dumps(fb_data("2026-11-19", 2740)))
+    (repo / "data.json").write_text(json.dumps(fb_data("2026-11-20", 2716, noYahoo=30)))       # 06:40 발행본
     for cmd in (["git", "init", "-q"], ["git", "add", "data.json"], ["git", "commit", "-q", "-m", "prev"]):
         subprocess.run(cmd, cwd=repo, env=genv, check=True, capture_output=True)
-    (repo / "data.json").write_text(json.dumps(fb_data("2026-11-20", 2526, noYahoo=220)))     # 오늘 실행이 쓴 것 (커밋 전)
     run = next(s for s in update_steps() if s.get("name") == HOLD_STEP)["run"]
     bin_ = tmp_path / "bin"
     bin_.mkdir()
-    for when, want in (("2026-11-21T06:41:00+09:00", "hold=true"), ("2026-11-21T08:17:00+09:00", "hold=false")):
-        py = bin_ / "python"                                                       # 진짜 파이썬 · 진짜 스크립트에 시각만 정해 줘요
-        py.write_text(f'#!/bin/bash\n[ "$1" = "tools/publish_hold.py" ] || exit 9\nshift\n'
-                      f'exec "{sys.executable}" "{os.path.join(ROOT, "tools", "publish_hold.py")}" "$@" --now {when}\n')
-        py.chmod(py.stat().st_mode | stat.S_IEXEC)
-        out, summ = tmp_path / "out.txt", tmp_path / "summ.md"
+    py = bin_ / "python"
+    py.write_text(f'#!/bin/bash\n[ "$1" = "tools/publish_hold.py" ] || exit 9\nshift\n'
+                  f'exec "{sys.executable}" "{os.path.join(ROOT, "tools", "publish_hold.py")}" "$@"\n')
+    py.chmod(py.stat().st_mode | stat.S_IEXEC)
+    cases = ((fb_data("2026-11-20", 2700, noYahoo=46, rr=reuse(25)), "hold=false"),     # 같은 날 · 더 나음 → 발행
+             (fb_data("2026-11-20", 2716, noYahoo=30, rr=reuse(0)), "hold=true"),       # 같은 날 · 같음 → 발행 안 함
+             (fb_data("2026-11-21", 2526, noYahoo=220), "hold=true"),                   # 새 날 · 바닥 아래 → 보류
+             (fb_data("2026-11-21", 2740), "hold=false"))                               # 새 날 · 바닥 위 → 발행
+    for cur, want in cases:
+        (repo / "data.json").write_text(json.dumps(cur))
+        out = tmp_path / "out.txt"
         out.write_text("")
-        summ.write_text("")
-        e = {**genv, "PATH": f"{bin_}:{os.environ['PATH']}", "GITHUB_OUTPUT": str(out), "GITHUB_STEP_SUMMARY": str(summ),
-             "BOOTSTRAP": "", "PREV_REF": "", "DRY_RUN": ""}
+        e = {**genv, "PATH": f"{bin_}:{os.environ['PATH']}", "GITHUB_OUTPUT": str(out), "BOOTSTRAP": "", "PREV_REF": "", "DRY_RUN": ""}
         e.pop("GITHUB_ACTIONS", None)
+        e.pop("GITHUB_STEP_SUMMARY", None)
         r = subprocess.run(["bash", "-e", "-c", run], cwd=repo, env=e, capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
-        assert out.read_text().splitlines()[-1] == want, (r.stdout, r.stderr)
-        assert "2,526" in r.stdout and "2,740" in r.stdout
-    # 단계는 파일을 바꾸지 않아요 (오늘 data.json 그대로 · 커밋 없음)
-    assert json.loads((repo / "data.json").read_text())["pxDate"] == "2026-11-20"
+        assert out.read_text().splitlines()[-1] == want, (cur["pxDate"], r.stdout, r.stderr)
     log = subprocess.run(["git", "log", "--oneline"], cwd=repo, env=genv, capture_output=True, text=True).stdout
-    assert len(log.strip().splitlines()) == 1
+    assert len(log.strip().splitlines()) == 1                                     # 단계는 커밋하지 않아요
 
 
-# ── 보류한 실행은 발행이 아니에요: 배포 · 감시 · already_published ──
+# ── 9. 발행하지 않은 실행은 발행이 아니에요: 배포 · 감시 ─────────────
 HELD_JOBS = [{"name": "check", "conclusion": "success", "steps": [{"name": "x", "conclusion": "success"}]},
              {"name": "update", "conclusion": "success",
               "steps": [{"name": HOLD_STEP, "conclusion": "success"}, {"name": GATE, "conclusion": "success"},
@@ -425,34 +658,31 @@ HELD_JOBS = [{"name": "check", "conclusion": "success", "steps": [{"name": "x", 
 
 def test_a_held_run_does_not_deploy(tmp_path):
     import test_workflows as TW
-    # 보류한 실행: 실행은 성공, 'data 브랜치에 올리기' 는 건너뜀 → 배포할 새 데이터가 없어요
     rc, go, log = TW._decide(tmp_path, "workflow_run", "workflow", conclusion="success", pushed="skipped")
     assert (rc, go) == (0, "go=false") and "올리지 않았어요" in log
 
 
 def test_a_held_run_raises_no_data_alarm(monkeypatch):
     import test_watchdog as TWD
-    runs = [TWD.run(2, "success"), TWD.run(1, "success")]                         # 보류한 실행 (2) 앞에 발행한 실행 (1)
+    runs = [TWD.run(2, "success"), TWD.run(1, "success")]
     net = TWD.FakeNet(data_runs=runs, jobs={2: HELD_JOBS})
-    assert W.decide(net, "workflow_run", W.DATA_NAME, 2)[0] is True               # 올린 것이 없으니 배포를 기다리지 않고 바로 봐요
-    assert TWD.go(net, TWD.MORNING, monkeypatch=monkeypatch) == 0 and net.issues == []   # 07:05 KST: 경보 이슈 없음
+    assert W.decide(net, "workflow_run", W.DATA_NAME, 2)[0] is True
+    assert TWD.go(net, TWD.MORNING, monkeypatch=monkeypatch) == 0 and net.issues == []
     rep = W.Report()
     W.check_runs(rep, TWD.FakeNet(data_runs=runs, jobs={2: HELD_JOBS}), W.DATA_WF, W.DATA_NAME)
     name, st, detail = rep.rows[-1][:3]
-    assert st == "PASS" and "/runs/1" in detail and "이른 발행 보류 1번" in detail     # 보류한 실행은 셈하지 않고 그 전의 실행으로 판단해요
+    assert st == "PASS" and "/runs/1" in detail and "발행하지 않은 실행 1번" in detail
 
 
 def test_a_held_run_never_closes_a_real_alarm(monkeypatch):
-    """보류한 실행은 초록이지만 발행이 아니에요: 그 전의 실제 실행이 실패해 열린 경보를 닫지 않아요 (정상화됐어요 · healthchecks 정상 신호 없음)."""
     import test_watchdog as TWD
     alarm = {"number": 9, "created_at": "2026-11-04T07:37:00Z", "state": "open"}
     net = TWD.FakeNet(data_runs=[TWD.run(2, "success"), TWD.run(1, "failure")], jobs={2: HELD_JOBS}, issues=[alarm])
-    assert TWD.go(net, TWD.MORNING, monkeypatch=monkeypatch) == 1                 # 그 전의 실패 그대로 → 경보 유지
-    assert not [c for c in net.calls if c[0] == "PATCH"]                          # 닫지 않아요
+    assert TWD.go(net, TWD.MORNING, monkeypatch=monkeypatch) == 1
+    assert not [c for c in net.calls if c[0] == "PATCH"]
     c = TWD.posts(net, "/issues/9/comments")
-    assert len(c) == 1 and "아직 문제가 있어요" in c[0][2]["body"] and not c[0][2]["body"].startswith("정상화됐어요")
-    assert net.urls[-1].endswith("/fail")                                          # healthchecks 에도 정상 신호를 보내지 않아요
-    # 보류한 실행만 있고 그 전의 실행이 성공이면 경보를 열지 않아요 (중립)
+    assert len(c) == 1 and "아직 문제가 있어요" in c[0][2]["body"]
+    assert net.urls[-1].endswith("/fail")
     net = TWD.FakeNet(data_runs=[TWD.run(3, "success"), TWD.run(2, "success"), TWD.run(1, "success")], jobs={3: HELD_JOBS, 2: HELD_JOBS})
     assert TWD.go(net, TWD.MORNING, monkeypatch=monkeypatch) == 0 and net.issues == []
 
@@ -463,198 +693,14 @@ def test_only_a_held_run_is_neutral_and_an_api_hiccup_counts_the_run_as_before(c
     already = [{"name": "check", "conclusion": "success", "steps": []}, {"name": "update", "conclusion": "skipped", "steps": []}]
     net = TWD.FakeNet(jobs={1: HELD_JOBS, 2: pushed, 3: already})
     assert W.is_held_run(net, TWD.run(1, "success")) is True
-    assert W.is_held_run(net, TWD.run(2, "success")) is False                     # 발행한 실행
-    assert W.is_held_run(net, TWD.run(3, "success")) is False                     # 이미 발행돼 건너뛴 실행 (update job 건너뜀)
-    assert W.is_held_run(net, TWD.run(1, "failure")) is False                     # 빨간 실행은 늘 실패로 세요
+    assert W.is_held_run(net, TWD.run(2, "success")) is False
+    assert W.is_held_run(net, TWD.run(3, "success")) is False
+    assert W.is_held_run(net, TWD.run(1, "failure")) is False
 
     class Down(TWD.FakeNet):
         def gh(self, method, path, body=None, ok=(200, 201, 204)):
             if "/jobs" in path:
                 raise RuntimeError("API 막힘")
             return super().gh(method, path, body, ok)
-    assert W.is_held_run(Down(jobs={1: HELD_JOBS}), TWD.run(1, "success")) is False   # 모르면 예전처럼 그 실행으로 판단해요
+    assert W.is_held_run(Down(jobs={1: HELD_JOBS}), TWD.run(1, "success")) is False
     assert "보류한 실행인지 몰라요" in capsys.readouterr().out
-
-
-def weekdays(start, end):
-    d, out = start, []
-    while d <= end:
-        if d.weekday() < 5:
-            out.append(d)
-        d += dt.timedelta(days=1)
-    return out
-
-
-def test_already_published_sees_no_publish_after_a_hold():
-    days = weekdays(dt.date(2026, 10, 1), dt.date(2026, 11, 20))
-    cal = {"kr": days, "us": days, "usToday": None, "krSources": 2}
-    prev, cur = fb_data("2026-11-19", 2740), fb_data("2026-11-20", 2526)
-    now = kst(2026, 11, 21, 6, 41)                                                # 토요일 새벽 실행
-    assert P.evaluate(cur, "data.json", prev, "git HEAD:data.json", now)[0].hold is True
-    # 보류하면 발행 두 단계가 건너뛰어 data 브랜치에는 직전 발행본이 그대로예요 → 다음 실행(06:43 · 08:17)은 건너뛰지 않고 다시 해요
-    for hh, mm in ((6, 43), (7, 20), (8, 17)):
-        skip, why = A.decide(prev, kst(2026, 11, 21, hh, mm), cal)
-        assert skip is False and "아직이에요" in why
-    # (보류하지 않고 발행했다면 뒤의 실행은 모두 건너뛰었을 거예요 — 그래서 240종목이 하루 종일 빠져 있었어요)
-    assert A.decide(cur, kst(2026, 11, 21, 8, 17), cal)[0] is True
-
-
-# ── 코넥스 (#158) · 1차 출처 날 기준 · 경고 알림 · 표본 · 계약 ─────────────
-def test_konex_kept_is_subtracted_so_both_days_count_kospi_and_kosdaq_only():
-    """#158: 코넥스를 그날 파일에 넣은 날 fb.conf = 다음 × 야후 확인 + fb.knx.kept, n · mkt 는 그대로 (코넥스는 mkt 에). 빼지 않으면 칸이 맞지 않아
-    보류가 조용히 꺼져요 — 두 날 모두 코스피 · 코스닥 수로 비교해요."""
-    d = fb_data("2026-11-20", 2700, knx_kept=23)
-    assert d["pxSrc"]["fb"]["conf"] == 2723
-    n, why = P.fb_confirmed(d)
-    assert n == 2700 and "코넥스 23 는 빼고" in why and "conf 2,723" in why
-    now = kst(2026, 11, 21, 6, 41)
-    # 바뀌는 날: 직전 발행본에는 knx 가 없고 (2,740) 오늘은 있어요 — 2,650 + 코넥스 23 = 2,673 ≥ 2,658 이지만 코스피 · 코스닥은 2,650 → 보류
-    prev = fb_data("2026-11-19", 2740)
-    assert P.evaluate(fb_data("2026-11-20", 2650, noYahoo=96, knx_kept=23), "data.json", prev, "git HEAD:data.json", now)[0].hold is True
-    assert P.evaluate(fb_data("2026-11-20", 2660, noYahoo=86, knx_kept=23), "data.json", prev, "git HEAD:data.json", now)[0].hold is False
-    # 거꾸로: 직전에는 knx 가 있고 (2,740 + 23) 오늘은 없어요 — 직전도 코스피 · 코스닥 2,740 으로 (선 2,658) → 2,665 는 발행
-    prev_k = fb_data("2026-11-19", 2740, knx_kept=23)
-    assert P.last_count(prev_k)[0] == 2740
-    assert P.evaluate(fb_data("2026-11-20", 2665, noYahoo=81), "data.json", prev_k, "git HEAD:data.json", now)[0].hold is False
-    assert P.evaluate(fb_data("2026-11-20", 2657, noYahoo=89), "data.json", prev_k, "git HEAD:data.json", now)[0].hold is True
-
-
-@pytest.mark.parametrize("knx", ["x", None, {}, {"kept": None}, {"kept": True}, {"kept": -1}, {"kept": 99999}])
-def test_an_odd_konex_record_is_not_compared(knx):
-    d = fb_data("2026-11-20", 2700, knx_kept=23)
-    if knx is None:
-        d["pxSrc"]["fb"]["knx"] = None                                            # 칸은 있는데 빈 값
-    else:
-        d["pxSrc"]["fb"]["knx"] = knx
-    n, why = P.fb_confirmed(d)
-    assert n is None and ("knx" in why or "칸이 맞지 않아요" in why)
-
-
-def test_a_normal_day_publish_is_a_baseline_too():
-    """첫 2차 출처 날 (직전 발행본이 1차 출처 날): 기준 = 그 파일에서 공식 종가가 있는 코스피 · 코스닥 종목 수 (코넥스 · 펀드 · 가격 없음 · pxd 빼요)."""
-    extra = [{"t": "069500", "cls": "kr", "fund": True, "price": 79900.0, "dk": "KOSPI 상장"},     # 펀드 (KODEX 200)
-             kr_stock("900001", price=None), kr_stock("900002", price=float("nan")), kr_stock("900003", price=0),
-             kr_stock("900004", pxd="2026-11-13"),                                           # 마지막 확인 종가 (세지 않아요)
-             {"t": "900005", "cls": "kr", "price": 5000.0}]                                  # 설명이 없는 종목은 코스피 · 코스닥으로 세요
-    for with_src in (True, False):                                                # pxSrc listing · pxSrc 가 생기기 전 파일 (11-17 발행본처럼)
-        prev = normal_day("2026-11-16", 2441, n_konex=31, extra=extra, with_src=with_src)
-        n, why = P.last_count(prev)
-        assert n == 2442 and "코넥스 31" in why and "펀드 1" in why and "가격 없음 3" in why and "마지막 확인 종가 1" in why
-    prev = normal_day("2026-11-16", 2700)
-    now = kst(2026, 11, 19, 6, 41)
-    d, lines = P.evaluate(fb_data("2026-11-18", 2600, noYahoo=146), "data.json", prev, "git HEAD:data.json", now)
-    assert d.hold is True and "97% 선 2,619" in d.why and any("1차 출처 날 발행본" in ln for ln in lines)
-    assert P.evaluate(fb_data("2026-11-18", 2619, noYahoo=127), "data.json", prev, "git HEAD:data.json", now)[0].hold is False
-    # 실제 11-18 (첫 2차 출처 날): 11-17 06:40 발행본 (pxDate 11-16 · 코스피 · 코스닥 2,441) 이 기준 → 선 2,368.
-    # 11-19 06:40 발행본은 2,743 이라 발행 — 야후가 빈 밤의 수 (2,526) 였어도 발행해요 (발행한 종목만 든 기준이라 낮아요 · RUNBOOK)
-    real = normal_day("2026-11-16", 2441, n_konex=31, extra=extra[:1], with_src=False)
-    assert P.last_count(real)[0] == 2441 and P.share_line(2441) == 2368
-    assert P.evaluate(fb_data("2026-11-18", 2743, noYahoo=3), "data.json", real, "git", now)[0].hold is False
-    assert P.evaluate(fb_data("2026-11-18", 2526, noYahoo=220), "data.json", real, "git", now)[0].hold is False
-
-
-@pytest.mark.parametrize("src", [None, "x", {"px": "listing", "date": "2026-11-13"}, {"px": "other", "date": "2026-11-16"}])
-def test_an_odd_normal_day_record_is_not_compared(src):
-    prev = normal_day("2026-11-16", 2700)
-    prev["pxSrc"] = src
-    d, lines = P.evaluate(fb_data("2026-11-18", 2000), "data.json", prev, "git HEAD:data.json", kst(2026, 11, 19, 6, 41))
-    assert d.hold is False and d.loud is True and P.last_count(prev)[0] is None
-
-
-def test_a_loud_no_hold_leaves_a_warning_and_marks_the_today_line(tmp_path, monkeypatch, capsys):
-    # 2차 출처 날 08:00 전에 비교하지 못하면 (직전을 못 읽음) 보류 없이 발행하지만 경고 알림을 남겨요 (09:13 점검이 읽어요)
-    hold, out, summ, _ = run_main(tmp_path, monkeypatch, fb_data("2026-11-20", 2000), None, kst(2026, 11, 21, 6, 41), actions=True)
-    log = capsys.readouterr().out
-    assert hold is False and out.splitlines()[-1] == "hold=false"
-    assert "::warning title=이른 발행 보류 확인 못 함 (보류 없이 발행)::" in log and "!! 직전 발행본:" in log
-    # 오늘 기록을 쓸 수 없으면 '오늘:' 줄에도 !!
-    bad = fb_data("2026-11-20", 2600, noYahoo=145)
-    bad["pxSrc"]["fb"]["conf"] += 5
-    hold, out, _, _ = run_main(tmp_path, monkeypatch, bad, fb_data("2026-11-19", 2740), kst(2026, 11, 21, 6, 41), actions=True)
-    log = capsys.readouterr().out
-    assert hold is False and "!! 오늘:" in log and "::warning title=이른 발행 보류 확인 못 함" in log
-    # 08:00 뒤 · 1차 출처 날에는 경고가 없어요 (예전 그대로)
-    for cur, when in ((fb_data("2026-11-20", 2000), kst(2026, 11, 21, 8, 17)), (listing_data("2026-11-20"), kst(2026, 11, 21, 3, 47))):
-        run_main(tmp_path, monkeypatch, cur, None, when, actions=True)
-        assert "::warning" not in capsys.readouterr().out
-    # 오류로 멈추면 경고 하나
-    monkeypatch.setenv("GITHUB_ACTIONS", "true")
-    P.main([], now_fn=lambda: kst(2026, 11, 21, 6, 41), cur_reader=lambda p: (_ for _ in ()).throw(RuntimeError("x")))
-    assert capsys.readouterr().out.count("::warning title=이른 발행 보류 확인 못 함 (보류 없이 발행)::") == 1
-
-
-def test_a_sample_dry_run_says_its_decision_means_nothing(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("SAMPLE_KR", "50")
-    _, _, summ, _ = run_main(tmp_path, monkeypatch, fb_data("2026-11-20", 2526), fb_data("2026-11-19", 2740), kst(2026, 11, 21, 6, 41), dry=True)
-    assert "표본 실행(sample)" in summ and "뜻이 없어요" in summ and "표본 실행: 이 결정은 뜻이 없어요" in capsys.readouterr().out
-    monkeypatch.setenv("SAMPLE_KR", "0")
-    _, _, summ, _ = run_main(tmp_path, monkeypatch, fb_data("2026-11-20", 2526), fb_data("2026-11-19", 2740), kst(2026, 11, 21, 6, 41), dry=True)
-    assert "표본" not in summ
-
-
-def test_contract_with_the_pipelines_own_second_source_record():
-    """fetch_data 의 진짜 길로 pxSrc 를 만들어 그대로 읽어요 (실제 응답 픽스처 · tests/fixtures/kr_two_source): kr_fallback_days (kr_fb_confirm) →
-    kr_second_source (px_src_counts) → px_src_final. fetch_data 가 집계 모양을 바꾸면 여기서 깨져요 (보류가 조용히 꺼지지 않게)."""
-    import test_kr_two_source as T2
-    uni = T2.listing("2026-11-18_1452")
-    D16, D18 = dt.date(2026, 11, 16), dt.date(2026, 11, 18)
-
-    def fetch_daum(codes, n):
-        return T2.daum(), []
-
-    def fetch_yahoo(cm, start, end):
-        return {c: {k: v for k, v in d.items() if k != D18} for c, d in T2.yahoo().items()}, 0
-
-    def fill(y, cm, d, close_time):
-        mc = set()
-        for c, rows in T2.daum().items():
-            if c in cm and d in rows:
-                y.setdefault(c, {})[d] = rows[d]["tradePrice"]
-                mc.add(c)
-        return {"need": len(mc), "bar": 0, "meta": len(mc), "none": 0, "fail": 0, "metaCodes": mc}
-    seen = {}
-
-    def fallback(days, universe_of, now, special):
-        out, notes = F.kr_fallback_days(days, universe_of, now, special, fetch_daum=fetch_daum, fetch_yahoo=fetch_yahoo, fill_day=fill)
-        seen.update(out)
-        return out, notes
-    now = dt.datetime(2026, 11, 19, 2, 15, tzinfo=F.KST)
-    px, lst, _, src, _, _ = F.kr_second_source(D16, T2.listing("2026-11-16_2211"), [D18], now, {}, lambda d: (uni, "시험"), fallback=fallback)
-    assert px == D18 and src["px"] == FB
-    st = seen[D18][1]
-    stocks = [{"t": str(c), "cls": "kr"} for c in lst["Code"]]
-    data = {"pxDate": px.isoformat(), "pxSrc": F.px_src_final(src, stocks), "stocks": stocks}
-    data = json.loads(json.dumps(data))                                          # data.json 에 쓰고 읽은 그대로 (발행본처럼)
-    n, why = P.fb_confirmed(data)
-    assert n == st["conf"] == len(lst) > 0, why
-    assert st["mkt"] and P.FB_PARTS == ("mkt", "noDaum", "bad", "noYahoo", "diff")   # 픽스처의 코넥스 1종목이 mkt 에 (코넥스 단계 없이)
-    # 같은 기록이 직전 발행본이면 그 수가 기준이에요 (보류 결정까지)
-    assert P.last_count(data)[0] == n
-    assert P.hold_decision(FB, kst(2026, 11, 19, 6, 41), n, n).hold is False and P.hold_decision(FB, kst(2026, 11, 19, 6, 41), n - 1, n * 2).hold is True
-
-
-def test_contract_with_the_pipelines_own_konex_record():
-    """#158 이 붙인 코넥스 단계까지 fetch_data 의 진짜 길로: kr_fallback_days (코넥스 가짜 fetch · tests/test_konex_two_source.knx_fakes) →
-    kr_second_source (px_src_counts: fb.conf = 다음 × 야후 확인 + fb.knx.kept) → px_src_final. 돌아오는 수는 코스피 · 코스닥만이에요."""
-    import functools
-    import test_konex_two_source as TK
-    D13, D16 = dt.date(2026, 11, 13), dt.date(2026, 11, 16)
-    prim = TK.pd.concat([TK.kk_listing("2026-11-13_2158"), TK.knx_listing("2026-11-13_final")], ignore_index=True)
-    base, _ = TK.run_fb(knx=None)                                                 # 코넥스 단계 없이 같은 날 (코스피 · 코스닥 확인 수)
-    kk_conf = base[D16][1]["conf"]
-    px, lst, _, src, _, _ = F.kr_second_source(D13, prim, [D16], TK.NOW, {}, None,
-                                               fallback=functools.partial(TK.run_fb_partial, knx=TK.knx_fakes()))
-    assert px == D16 and src["px"] == FB
-    kept = src["fb"]["knx"]["kept"]
-    assert kept > 0 and src["fb"]["conf"] == kk_conf + kept                      # fetch_data 가 직접 만든 #158 모양
-    n_konex = int((lst["Market"] == "KONEX").sum())
-    assert n_konex == kept and len(lst) - n_konex == kk_conf
-    stocks = [{"t": str(c), "cls": "kr"} for c in lst["Code"]]
-    data = json.loads(json.dumps({"pxDate": px.isoformat(), "pxSrc": F.px_src_final(src, stocks), "stocks": stocks}, allow_nan=False))
-    n, why = P.fb_confirmed(data)
-    assert n == kk_conf, why                                                      # 코넥스를 뺀 코스피 · 코스닥 확인 수
-    assert f"코넥스 {kept:,} 는 빼고" in why and P.last_count(data)[0] == kk_conf
-    # 직전 발행본이 코넥스 없는 기록이어도 같은 범위로 비교해요 (바뀌는 날)
-    prev = fb_data("2026-11-13", kk_conf)
-    assert P.evaluate(data, "data.json", prev, "git HEAD:data.json", kst(2026, 11, 17, 6, 41))[0].hold is False
-    assert P.evaluate(data, "data.json", fb_data("2026-11-13", kk_conf * 2), "git", kst(2026, 11, 17, 6, 41))[0].hold is True

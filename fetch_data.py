@@ -1455,6 +1455,8 @@ def px_src_knx_counts(kst):
             "adjEx": [f"{c} {n} {a:.0f}/{b:.0f}" for c, n, a, b in (kst.get("adj") or [])[:20]],
             "left": sorted(set(kst["noNaver"]) | set(kst["bad"]) | set(kst["noYahoo"]) | {c for c, *_ in kst["diff"]}
                            | {c for c, *_ in (kst.get("adj") or [])} | set(kst.get("noAnchor") or [])),
+            # 2026-11-21 (#161): 두 출처가 다르거나 (diff) 네이버의 기준일 종가가 최종본과 다른 (adj) 코넥스 — 같은 날 다시 쓰지 않아요 (kr_same_day_reuse)
+            "diffT": sorted({str(c) for c, *_ in kst["diff"]} | {str(c) for c, *_ in (kst.get("adj") or [])}),
             "cut": knx_cut_record(kst.get("cut"))}
 
 
@@ -1770,7 +1772,10 @@ def px_src_counts(st):
     out = {"n": st["n"], "conf": st["conf"] + (int(kst.get("kept", kst["conf"])) if kst else 0), "mkt": len(st.get("mkt") or []), "noDaum": len(st["noDaum"]),
            "bad": len(st["bad"]), "noYahoo": len(st["noYahoo"]),
            "diff": len(st["diff"]), "yMeta": int(st.get("yMeta") or 0), "diffEx": [f"{c} {n} {a:.0f}/{b:.2f}" for c, n, a, b in st["diff"][:20]], "must": list(st["must"]),
-           "cut": fb_cut_record(st.get("cut"))}
+           "cut": fb_cut_record(st.get("cut")),
+           # 2026-11-21 (#161): 두 종가가 다른 종목 코드 모두 — 같은 날 다시 도는 실행이 지난 발행본의 확인 종가를 다시 쓸지 볼 때 (지금 두 출처가
+           # 서로 다르면 다시 쓰지 않아요 · kr_same_day_reuse)
+           "diffT": sorted(str(c) for c, *_ in st["diff"])}
     if kst:
         out["knx"] = px_src_knx_counts(kst)
     return out
@@ -2120,6 +2125,78 @@ def kr_own_ind_reset(carried, prev, desc=None):
     return refill, krx, bad
 
 
+# 2026-11-21 (#161 · Jack: "Later runs update that day's data when more closes are confirmed."): 같은 기준일을 다시 도는 실행.
+# 지난 발행본이 같은 기준일 (pxDate) 이고 그 발행본이 그 날짜의 종가로 실은 종목 (pxd 없음 · 두 출처 또는 KRX 최종본으로 확인된 종가) 을 이 실행이
+# 확인하지 못했으면, 그 종가를 그대로 다시 써요 — 둘 다 그 날짜의 확인된 종가예요 (지우거나 마지막 확인 종가로 옮기지 않아요). #159 의
+# kr_own_close_carry 는 같은 기준일 발행본에서 옮기지 않아요 ('same') — 그래서 여기서 따로, 크게 남기며 해요.
+# 다시 쓰지 않는 종목 (잃은 종목 · lost): 지금 두 출처가 서로 달라요 (pxSrc.fb.diffT · 코넥스 fb.knx.diffT — 어느 쪽이 지난 값과 같은지 몰라요) ·
+# 오늘 그날 전체 목록에 없어요 · 과거 주가 기록 오류 표시인데 지난 krSeries.jump 에 그 움직임이 없어요. 잃은 종목이 하나라도 있으면 이 실행은
+# 지난 발행본보다 낫지 않아서 발행하지 않아요 (tools/publish_hold.py 가 pxSrc.own.reuse.lost 를 봐요).
+KR_REUSE_KEYS = KR_OWN_KEYS + ("d1", "d1Why", "noTrade", "ntD1")
+KR_REUSE_LOST_KO = {"clash": "지금 두 출처가 서로 다름", "gone": "오늘 그날 전체 목록에 없음", "jump": "과거 주가 기록 오류 표시인데 지난 krSeries.jump 에 없음",
+                    "room": "이 실행의 두 출처 확인 수보다 많이 실을 수 없음 (관문: 확인 종목 수 ≥ 발행한 국내 종목 수)"}
+
+
+def kr_same_day_reuse(prev, unconf, conf_codes, px_date, px_src, room=None):
+    """같은 기준일 지난 발행본의 확인 종가 다시 쓰기 (2026-11-21 · #161 · 순수 함수).
+    prev: 지난 발행본 data.json · unconf: 이 실행이 확인 못 한 종목 {코드: (이름, 까닭)} (kr_unconfirmed) · conf_codes: 이 실행이 확인한 코드 ·
+    px_date: 이 실행의 기준일 · px_src: 이 실행의 pxSrc (fb.diffT · fb.knx.diffT) · room: 다시 쓸 수 있는 종목 수의 상한 (None 이면 없음) —
+    관문은 2차 출처 날 '두 출처 확인 수 (pxSrc.fb.conf) ≥ 발행한 그 날짜 종가 종목 수' 를 봐요 (validate_data.px_alt_confirms). 다시 쓴 종목도
+    그 날짜 종가라 그 수에 들어가니, 이 실행의 확인 수를 넘지 않게 시가총액 큰 종목부터만 다시 쓰고 나머지는 잃은 종목 'room' 이에요 (그 줄은 그대로).
+    반환: (다시 쓸 종목 [기록 — KR_REUSE_KEYS · pxd 없음], 과거 주가 기록 오류 종목의 지난 움직임 {코드: [...]}, 잃은 종목 {코드: 까닭},
+    pxSrc.own.reuse 기록 또는 None (지난 발행본이 다른 기준일이면 None — 같은 날 다시 도는 실행이 아니에요))."""
+    prev = prev if isinstance(prev, dict) else {}
+    today = px_date.isoformat()
+    if prev.get("pxDate") != today:
+        return [], {}, {}, None
+    pst = {str(x.get("t")): x for x in prev.get("stocks") or [] if isinstance(x, dict) and x.get("cls") == "kr" and not x.get("fund")}
+    earlier = {c for c, x in pst.items() if x.get("pxd") is None and (_fin(x.get("price")) or 0) > 0}
+    fb = (px_src or {}).get("fb") if isinstance((px_src or {}).get("fb"), dict) else {}
+    fbk = fb.get("knx") if isinstance(fb.get("knx"), dict) else {}
+    clash = {str(c) for c in (fb.get("diffT") or []) + (fbk.get("diffT") or [])}
+    pj = collections.defaultdict(list)
+    for j in ((prev.get("krSeries") or {}).get("jump") or []) if isinstance(prev.get("krSeries"), dict) else []:
+        if isinstance(j, list) and len(j) == 4:
+            pj[str(j[0])].append(list(j))
+    conf = {str(c) for c in conf_codes}
+    reused, jumps, lost = [], {}, {}
+    for c in sorted(earlier - conf):
+        p = pst[c]
+        if c not in unconf:
+            lost[c] = "gone"
+        elif c in clash:
+            lost[c] = "clash"
+        elif p.get("pxBad") and not pj.get(c):
+            lost[c] = "jump"
+        else:
+            reused.append({k: p[k] for k in KR_REUSE_KEYS if k in p})
+    if room is not None and len(reused) > max(room, 0):
+        reused.sort(key=lambda r: (-(_fin(r.get("cap")) or 0), str(r["t"])))
+        for r in reused[max(room, 0):]:
+            lost[r["t"]] = "room"
+        reused = reused[:max(room, 0)]
+    for r in reused:
+        if pst[r["t"]].get("pxBad"):
+            jumps[r["t"]] = pj[r["t"]]
+    reused.sort(key=lambda r: str(r["t"]))
+    names = {c: str(pst[c].get("nk") or (unconf.get(c) or ("",))[0] or "") for c in earlier}
+    kk = sum(1 for r in reused if (unconf.get(r["t"]) or ("", ""))[1] == "conf")
+    rec = {"v": 1, "from": str(prev.get("publishedAt") or ""), "earlier": len(earlier), "n": len(reused), "kk": kk,
+           "codes": sorted(r["t"] for r in reused), "lost": len(lost),
+           "lostEx": [f"{c} {names.get(c, '')} ({KR_REUSE_LOST_KO[w]})".replace("  ", " ") for c, w in sorted(lost.items())][:KR_OWN_SHOW]}
+    return reused, jumps, lost, rec
+
+
+def log_kr_same_day_reuse(rec):
+    """같은 날 다시 쓰기 한 줄 (크게 남겨요 — 같은 날 다시 도는 실행은 드물고, 잃은 종목이 있으면 발행하지 않아요)."""
+    if rec is None:
+        return
+    log(f"  !! 같은 기준일을 다시 도는 실행 (지난 발행본 {rec['from'] or '?'}): 그 발행본이 그 날짜 종가로 실은 국내 종목 {rec['earlier']:,} 중 이 실행이 "
+        f"확인하지 못한 종목의 종가를 지난 발행본에서 다시 씀 {rec['n']:,}종목 (코스피 · 코스닥 {rec['kk']:,} · 둘 다 그 날짜의 확인 종가)"
+        + (f" — 잃은 종목 {rec['lost']:,} (이 실행은 지난 발행본보다 낫지 않아 발행하지 않아요): " + ", ".join(rec["lostEx"]) if rec["lost"] else
+           " — 잃은 종목 0"))
+
+
 def kr_own_close_step(prev, full_list, conf_codes, px_src, px_date, trade_days, out, krs, prod_map, desc=None, no_ind=None):
     """2차 출처 날의 마지막 확인 종가 단계 (2026-11-19 · fetch_korea 가 부르는 한 곳). 그날 전체 목록(full_list · DataFrame)에서 두 출처로 확인 못 한
     종목을 골라(kr_unconfirmed) 지난 발행본의 마지막 확인 종가로 out 에 더하고, 과거 주가 기록 오류 표시의 지난 움직임을 krs(krSeries)에 · 주요제품을
@@ -2139,10 +2216,19 @@ def kr_own_close_step(prev, full_list, conf_codes, px_src, px_date, trade_days, 
         loud, txt = kr_knx_carry_note(full_list, conf, knx, unconf, px_src)
         log(f"  !! {txt}" if loud else f"· {txt}")
         have = {r.get("t") for r in out}
+        # 2026-11-21 (#161): 같은 기준일 지난 발행본의 확인 종가를 먼저 다시 써요 (나머지만 마지막 확인 종가 단계로)
+        fbc = (px_src.get("fb") or {}).get("conf") if isinstance(px_src.get("fb"), dict) else None
+        n_px = sum(1 for r in out if r.get("cls") == "kr" and not r.get("fund") and r.get("pxd") is None)
+        room = fbc - n_px if isinstance(fbc, int) and not isinstance(fbc, bool) else 0      # 기록을 읽지 못하면 다시 쓰지 않아요 (잃은 종목 → 발행 안 함)
+        reused, rjumps, _, rrec = kr_same_day_reuse(prev, {c: v for c, v in unconf.items() if c not in have}, conf, px_date, px_src, room=room)
+        log_kr_same_day_reuse(rrec)
+        have |= {r["t"] for r in reused}
         carried, cjumps, cdrop = kr_own_close_carry(prev, {c: v for c, v in unconf.items() if c not in have}, px_date, days)
         aged = kr_own_aged(prev, unconf, cdrop)
         rec = log_kr_own_close(carried, cdrop, unconf, {r["t"]: r.get("nk", "") for r in carried})
         rec["aged"] = aged
+        if rrec is not None:
+            rec["reuse"] = rrec         # 2026-11-21 (#161): unconf · unconfWhy 는 이 실행이 확인 못 한 수 그대로 (다시 쓴 종목 포함 · 관문의 코넥스 비교와 같게)
         if aged:
             log(f"  !! 마지막 확인 종가가 {KR_OWN_CLOSE_MAX_DAYS}거래일을 넘어 잠시 뺀 국내 종목 {len(aged):,} (앱은 '며칠째 종가를 확인하지 못해서 이 종목은 "
                 f"잠시 빼 두었어요.' · pxSrc.own.aged · 다시 확인되거나 목록에서 사라지면 빠져요): "
@@ -2158,11 +2244,11 @@ def kr_own_close_step(prev, full_list, conf_codes, px_src, px_date, trade_days, 
                 + ", ".join(f"{t} {nm.get(t, '')}" for t in (refill + krx)[:KR_OWN_SHOW]))
             rec["ind"] = {"refill": len(refill), "krx": len(krx), "unread": len(unread)}
             no_ind.extend(t for t in refill if t not in no_ind)
-        out.extend(carried)
-        for c in sorted(cjumps):
-            krs["jump"] = list(krs.get("jump") or []) + cjumps[c]
+        out.extend(reused + carried)
+        for c in sorted({**rjumps, **cjumps}):
+            krs["jump"] = list(krs.get("jump") or []) + ({**rjumps, **cjumps})[c]
             krs["hidden"] = list(krs.get("hidden") or []) + [c]
-        for r in carried:
+        for r in reused + carried:
             dp = kr_desc_parse(r.get("dk"))
             if dp and dp[1] and r["t"] not in prod_map:
                 prod_map[r["t"]] = dp[1]

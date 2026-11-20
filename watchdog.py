@@ -302,8 +302,9 @@ def is_noop_deploy(net, run):
 
 
 def is_held_run(net, run):
-    """이른 발행 보류로 발행하지 않은 매일 실행 (2026-11-20 · Jack "5. Yes" · tools/publish_hold.py): 성공으로 끝났고 update job 도 성공했지만
-    'data 브랜치에 올리기' 가 건너뜀 (시험 실행은 제목으로 이미 뺐어요 — main 의 실제 실행에서 그 단계가 건너뛰는 까닭은 보류뿐이에요).
+    """발행 판단으로 발행하지 않은 매일 실행 (#161 · tools/publish_hold.py — 2차 출처 날 확인 비율 바닥 아래 · 같은 날 다시 돌았는데 더 낫지
+    않음): 성공으로 끝났고 update job 도 성공했지만 'data 브랜치에 올리기' 가 건너뜀 (시험 실행은 제목으로 이미 뺐어요 — main 의 실제 실행에서
+    그 단계가 건너뛰는 까닭은 그 판단뿐이에요).
     감시에는 중립이에요: 경보를 열지도 닫지도 않고, 발행한 실행으로 세지도 않아요 (그 전의 실행으로 판단해요).
     단계를 읽지 못하면 False (예전처럼 그 실행으로 판단해요 — API 한 번 실패로 경보를 열지 않게)."""
     if run.get("conclusion") != "success":
@@ -327,7 +328,7 @@ def check_runs(rep, net, wf, label, skip_noop=False):
     if info.get("state") != "active":
         rep.add(f"{label} 켜짐", False, f"{wf} 가 꺼져 있어요 ({info.get('state')}) — 정해진 시각 실행이 돌지 않아요")
     _, runs = net.gh("GET", f"/repos/{REPO}/actions/workflows/{wf}/runs?branch=main&status=completed&per_page=30")
-    held = []                                              # 이른 발행 보류로 발행하지 않은 실행 (중립 · 그 전의 실행으로 판단해요)
+    held = []                                              # 발행 판단으로 발행하지 않은 실행 (#161 · 중립 · 그 전의 실행으로 판단해요)
     for r in (runs or {}).get("workflow_runs", []):
         if DRY_MARK in (r.get("display_title") or ""):
             continue
@@ -341,7 +342,7 @@ def check_runs(rep, net, wf, label, skip_noop=False):
             held.append(when)
             continue
         rep.add(f"{label} 마지막 실행", c == "success", f"{c} · {when} · {r.get('event')} · {r.get('html_url')}"
-                + (f" · 그 뒤 이른 발행 보류 {len(held)}번 ({', '.join(held[:3])} · 발행 없음 · 셈하지 않아요)" if held else ""))
+                + (f" · 그 뒤 발행하지 않은 실행 {len(held)}번 ({', '.join(held[:3])} · 바닥 아래 · 같은 날 더 낫지 않음 · 셈하지 않아요)" if held else ""))
         return r
     if skip_noop:
         rep.skip(f"{label} 마지막 실행", "최근 30번 모두 건너뛴 배포예요 (Pages 가 아직 브랜치에서 배포되는 동안은 정상)")
