@@ -12279,7 +12279,8 @@ def scene_late_leave_out(R, files, width):
     """Jack (2026-11-20, f · 2026-11-21, 답 4 그대로: "Not all-or-nothing. Leave that one stock out with the approved line ("며칠째 종가를
     확인하지 못해서 이 종목은 잠시 빼 두었어요.") and check the rest."): 고정 데이터 (특정 날의 진짜 데이터가 아니에요) 의 늦은 발행 (pxDate
     LATE_IN · 5거래일 뒤) 에서 한 국내 종목을 그 하루 앞 종가 (pxd · 모두 합쳐 6거래일) 로 실어요 → 그 종목만 점검에서 빠지고 그 줄 밑에 Jack 의
-    줄 · 나머지 종목과 포트폴리오는 '{date} 종가로 점검했어요' 그대로 · '…점검하지 않았어요' 띠는 없어요. 그 종목뿐인 포트폴리오도 그 줄."""
+    줄 · 나머지 종목과 포트폴리오는 '{date} 종가로 점검했어요' 그대로 · '…점검하지 않았어요' 띠는 없어요. 그 종목뿐인 포트폴리오도 그 줄.
+    가진 종목 포트폴리오의 그 줄 밑에도 Jack 의 줄 · 내 수익은 main 과 같이 금액을 멈추고 멈춤 말 (빠진 종목이 있는 늦은 날)."""
     S = f"늦은 점검 · 한 종목만 빼기 {width}"
     f = late_files(files, LATE_IN)
     by = {x["t"]: x for x in f["data.json"]["stocks"]}
@@ -12289,11 +12290,12 @@ def scene_late_leave_out(R, files, width):
         by[t_out].pop(k, None)
     half = _one_deck("dhalf", "반반 포트폴리오", [("005930", "삼성전자", 0.5, [], 1, 200000), (t_out, "현대차", 0.5, [], 1, 200000)])["decks"][0]
     only = _one_deck("donly", "한 종목 포트폴리오", [(t_out, "현대차", 1.0, [], 1, 200000)])["decks"][0]
+    imp = e_imported(by, LATE_IN, [("005930", 2, None), (t_out, 1, None)], did="dimpout", name="가진 종목 포트폴리오")
     md_in = mdtext(LATE_IN)
     checked = fillp(C["pfr"]["checked"], date=md_in)
     aged_line = C["app"]["krOwnAged"]
     not_today = C["today"]["stale"].split("{n}")[1]
-    srv, ctx, page, base = R.open(build_site(f), width, init=e_store([half, only]), path="/app.html?dev=1#home")
+    srv, ctx, page, base = R.open(build_site(f), width, init=e_store([half, only, imp]), path="/app.html?dev=1#home")
     try:
         def home():
             wait_ready(page)
@@ -12302,14 +12304,15 @@ def scene_late_leave_out(R, files, width):
             assert hero.get_attribute("data-late") == "1" and hero.locator('[data-ui-v2="today-late"]').inner_text() == checked
             assert page.locator('[data-ui-v2="today-stale"]').count() == 0 and not_today not in page.locator("body").inner_text()
             lines = page.locator(f'[data-ui-v2="kr-aged"][data-t="{t_out}"]')
-            assert lines.count() == 2 and all(x == aged_line for x in lines.all_inner_texts()), lines.all_inner_texts()   # 두 포트폴리오의 그 줄 밑
-            assert page.locator('[data-ui-v2="kr-aged"]').count() == 2
+            assert lines.count() == 3 and all(x == aged_line for x in lines.all_inner_texts()), lines.all_inner_texts()   # 세 포트폴리오의 그 줄 밑
+            assert page.locator('[data-ui-v2="kr-aged"]').count() == 3
+            assert page.locator(f'[data-deck-id="dimpout"] [data-ui-v2="kr-aged"][data-t="{t_out}"]').count() == 1      # 가진 종목 포트폴리오도
             sam = page.locator('[data-deck-id="dhalf"] [data-home-holding="005930"]')
             assert sam.count() == 1 and sam.get_attribute("data-status"), "나머지 종목은 점검해요"
             floor_ok(page, "홈 한 종목만 빼기")
             no_hscroll(page, width)
             R.collect(page)
-        R.check(page, S, f"홈: '{checked}' 그대로 · 현대차 줄 밑에 Jack 의 줄 (두 포트폴리오) · 삼성전자는 점검 · 멈춤 띠 없음", home)
+        R.check(page, S, f"홈: '{checked}' 그대로 · 현대차 줄 밑에 Jack 의 줄 (세 포트폴리오 · 가진 종목 포트폴리오도) · 삼성전자는 점검 · 멈춤 띠 없음", home)
 
         def portfolio():
             tab(page, TABS["portfolio"])
@@ -12317,14 +12320,26 @@ def scene_late_leave_out(R, files, width):
             page.locator('[data-deck-id="dhalf"]').first.wait_for(state="visible")
             assert page.locator('[data-ui-v2="deck-late"]').inner_text() == checked and page.locator('[data-ui-v2="deck-stale"]').count() == 0
             assert page.locator('[data-deck-id="dhalf"] [data-holding="005930"][data-status]').count() == 1          # 나머지는 점검
-            for d in ("dhalf", "donly"):
+            for d in ("dhalf", "donly", "dimpout"):
                 line = page.locator(f'[data-deck-id="{d}"] [data-ui-v2="kr-aged"][data-t="{t_out}"]')
                 assert line.count() == 1 and line.inner_text() == aged_line, (d, line.count())
-            assert page.locator('[data-ui-v2="kr-aged"]').count() == 2
+            assert page.locator('[data-ui-v2="kr-aged"]').count() == 3
             floor_ok(page, "포트폴리오 한 종목만 빼기")
             no_hscroll(page, width)
             R.collect(page)
-        R.check(page, S, f"포트폴리오: '{checked}' 그대로 · 삼성전자 칩 · 현대차 줄 밑에 Jack 의 줄 (한 종목 포트폴리오도) · 멈춤 줄 없음", portfolio)
+        R.check(page, S, f"포트폴리오: '{checked}' 그대로 · 삼성전자 칩 · 현대차 줄 밑에 Jack 의 줄 (한 종목 · 가진 종목 포트폴리오도) · 멈춤 줄 없음", portfolio)
+
+        def returns():
+            page.evaluate("location.hash = '#portfolio/returns/dhalf'")
+            page.locator('[data-ui-v2="returns"]').wait_for(state="visible")
+            late = page.locator('[data-ui-v2="ret-late"]')
+            late.wait_for(state="visible")
+            assert late.inner_text() == fillp(C["app"]["stale"], n=2), late.inner_text()
+            assert page.locator('[data-ui-v2="ret-total"]').count() == 0                         # main 과 같이: 빠진 종목이 있는 늦은 날은 금액을 멈춰요
+            floor_ok(page, "내 수익 한 종목만 빼기")
+            no_hscroll(page, width)
+            R.collect(page)
+        R.check(page, S, "내 수익: main 과 같이 금액 없음 (ret-total 없음) · 멈춤 말 (ret-late)", returns)
     finally:
         ctx.close()
         srv.shutdown()
