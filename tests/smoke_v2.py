@@ -14874,6 +14874,167 @@ def scene_kr_own_close(R, files, width=390):
     R.check(None, S, "잠시 뺀 종목 (5거래일이 지남): 회사 페이지 · 그 종목을 가진 포트폴리오(만든 · 가진 종목)의 그 줄 밑 · 관심 종목 카드에 Jack 의 줄 · 다른 코드는 '찾지 못했어요' 그대로", aged)
 
 
+US_OWN = {"MSFT": "2026-10-29", "NVDA": "2026-10-27"}       # 2026-11-20 (Jack): 야후 종가가 없어 마지막 확인 종가로 실은 미국 종목 (pxc)
+
+
+def us_own_files(files):
+    """미국 마지막 확인 종가 (data.json pxc · pxd · usSrc.own) 둘 + 거래 정지 모양의 미국 pxd (애플 · pxc 없음 — 예전 그대로) 하나."""
+    f = daily_files(files)
+    d = f["data.json"]
+    by = {x["t"]: x for x in d["stocks"]}
+    for t, day in US_OWN.items():
+        assert by[t]["cls"] == "us" and day < d["usPxDate"], t
+        by[t].update(pxd=day, pxc=True)
+        by[t].pop("d1", None)
+    by["AAPL"]["pxd"] = "2026-10-28"
+    by["AAPL"].pop("d1", None)
+    d["usSrc"] = {"v": 1, "own": {"v": 1, "max": 5, "n": len(US_OWN), "codes": sorted(US_OWN), "same": [], "unconf": len(US_OWN) + 1,
+                                  "drop": {"halt": 1}, "dropEx": [], "bad": {"n": 0, "rows": []}, "aged": []}}
+    return f
+
+
+def us_own_text(stocks, ts):
+    """화면 순서의 종목들 → 앱의 안내 (2026-11-20 · Jack): 마지막 확인 종가 종목(국내 pxd · 미국 pxc)은 날짜마다 한 줄 '{이름 · 미국은 티커}: 오늘
+    종가를 확인하지 못해서 {날짜} 종가를 보여 드려요.' · pxc 없는 미국 pxd 는 예전 그대로 '{티커} 가격은 {날짜} 종가예요.' (새 날짜 먼저 · 같은 날짜면
+    예전 문장 먼저 · 같은 종목은 한 번). 없으면 None."""
+    by = by_t(stocks)
+    groups, seen = {}, set()
+    for t in ts:
+        s = by.get(t)
+        if not s or t in seen or not s.get("pxd"):
+            continue
+        seen.add(t)
+        carried = s["cls"] == "kr" or s.get("pxc") is True
+        groups.setdefault((s["pxd"], carried), []).append(s["nk"] if s["cls"] == "kr" else t)
+    out = []
+    for day, own in sorted(groups, key=lambda k: (k[0], not k[1]), reverse=True):
+        out.append(fillp(C["app"]["krOwnCloseList"], names=", ".join(groups[(day, own)]), date=mdtext(day)) if own
+                   else fillp(C["app"]["ownClose"], names=", ".join(groups[(day, own)]), md=mdtext(day)))
+    return " ".join(out) or None
+
+
+def scene_us_own_close(R, files, width=390):
+    """2026-11-20 (Jack, verbatim: "US stocks carry like Korean ones. A US stock with no close from Yahoo carries its last confirmed close
+    with its own date and the same line."): 미국 마지막 확인 종가 (pxc) — 회사 페이지는 그 종목의 날짜 줄 바로 밑에 Jack 의 줄 그대로 · 오늘 변화
+    없음 · 거래 정지 모양의 미국 pxd(애플 · pxc 없음)와 다른 종목에는 그 줄이 없어요 · 종목 순위(미국 · 시가총액) · 포트폴리오(홈 · 포트폴리오 탭)는
+    '{티커}: ' + Jack 의 줄 한 줄, 애플은 예전 문장 그대로 · 5거래일이 지나 잠시 뺀 미국 종목(usSrc.own.aged)은 회사 페이지와 그 종목을 가진 줄에
+    '며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요.'"""
+    S = f"미국 마지막 확인 종가 {width}"
+    f = us_own_files(files)
+    stocks = f["data.json"]["stocks"]
+    jack = lambda t: fillp(C["app"]["krOwnClose"], date=mdtext(US_OWN[t]))
+    band = lambda t: [{"id": "band", "kind": "band", "check": "checked", "target": t, "bands": [0.75 * t, 1.25 * t, 1.4 * t]}]
+    deck = {"id": "dusown", "name": "미국 마지막 확인 종가 포트폴리오", "createdAt": "2026-10-01", "planFx": 1300,
+            "holdings": [{"t": "MSFT", "nk": "Microsoft Corporation", "cls": "us", "target": 0.4, "plannedQty": 2, "rules": band(0.4)},
+                         {"t": "005930", "nk": "삼성전자", "target": 0.3, "plannedQty": 3, "rules": band(0.3)},
+                         {"t": "AAPL", "nk": "Apple Inc.", "cls": "us", "target": 0.3, "plannedQty": 2, "rules": band(0.3)}],
+            "purchases": [{"id": "p1usownx", "t": "MSFT", "date": "2026-10-01", "qty": 2, "price": 400.0, "ccy": "USD", "fx": 1300},
+                          {"id": "p2usownx", "t": "005930", "date": "2026-10-01", "qty": 3, "price": 200000, "ccy": "KRW"},
+                          {"id": "p3usownx", "t": "AAPL", "date": "2026-10-01", "qty": 2, "price": 250.0, "ccy": "USD", "fx": 1300}]}
+    srv, ctx, page, base = R.open(build_site(f), width, init=e_store([deck]), path="/app.html?dev=1#stocks")
+    today_md = mdtext(f["data.json"]["pxDate"])
+
+    def open_co(code):
+        co_hash(page, f"#stocks/{code}")
+        page.wait_for_function("(t) => { const e = document.querySelector('[data-ui-v2=\"co-head\"]'); return !!e && e.dataset.t === t; }", arg=code)
+
+    def company():
+        wait_ready(page)
+        for t in US_OWN:                                                   # 미국 pxc: 그 날짜의 종가 + Jack 의 줄 그대로, 오늘 변화 없음
+            open_co(t)
+            head = page.locator('[data-ui-v2="co-head"]')
+            assert mdtext(US_OWN[t]) in head.locator('[data-ui-v2="co-date"]').inner_text(), t
+            line = head.locator('[data-ui-v2="kr-own-close"]')
+            assert line.count() == 1 and line.inner_text() == jack(t), (t, line.all_inner_texts())
+            assert head.locator('[data-ui-v2="co-change"]').count() == 0, (t, head.inner_text())
+            floor_ok(page, f"회사 페이지 {t}")
+            no_hscroll(page, width)
+            R.collect(page)
+        for t in ("AAPL", "005930", "GOOGL"):                              # 거래 정지 모양의 미국 pxd · 다른 종목: 그 줄 없음 (예전 그대로)
+            open_co(t)
+            assert page.locator('[data-ui-v2="kr-own-close"]').count() == 0, t
+            assert C["app"]["krOwnClose"].split("{")[0] not in page.locator("body").inner_text(), t
+        open_co("AAPL")
+        assert mdtext("2026-10-28") in page.locator('[data-ui-v2="co-date"]').inner_text()   # 애플: 그 종목의 미국 날짜 그대로
+    R.check(page, S, "회사 페이지: 미국 pxc 종목은 날짜 줄 밑에 Jack 의 줄 그대로 · 오늘 변화 없음 · 거래 정지 모양 pxd · 다른 종목에는 없음", company)
+
+    def lists():
+        page.evaluate("location.hash = '#stocks'")
+        at(page, "stocks")
+        rank = page.locator('[data-ui-v2="rank"]')
+        rank.wait_for(state="visible")
+        rank_chip(page, "cap")                                             # 시가총액 (미국): 그 종가의 시가총액으로 들어가고 목록 밑에 안내
+        rank_market(page, "us")
+        ts = rank_ts(page)
+        assert {"MSFT", "NVDA", "AAPL"} <= set(ts), ts
+        want = us_own_text(stocks, ts)
+        note = rank.locator('[data-ui-v2="own-close"]')
+        assert want and note.count() == 1 and note.inner_text() == want, (note.all_inner_texts(), want)
+        assert "MSFT: " + jack("MSFT") in want and fillp(C["app"]["ownClose"], names="AAPL", md=mdtext("2026-10-28")) in want, want
+        assert today_md in date_line(page)                                 # 오늘 날짜 줄 밑의 목록 → 그 줄과 함께
+        for row in rank.locator('[data-ui-v2="rank-row"][data-t="MSFT"]').all():
+            assert row.locator('[data-ui-v2="rank-change"]').count() == 0 and "%" not in row.inner_text(), row.inner_text()
+        floor_ok(page, "종목 순위 (미국)")
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "종목 순위 (미국 · 시가총액): '{티커}: ' + Jack 의 줄 한 줄 · 애플은 예전 문장 · 그 종목 줄에 % 없음", lists)
+
+    def portfolio():
+        for hash_, where in (("#home", "home-block"), ("#portfolio", None)):
+            page.evaluate("(h) => { location.hash = h; }", hash_)
+            at(page, hash_[1:])
+            card = page.locator(f'[data-ui-v2="{where}"]') if where else page.locator("[data-deck-id]").first
+            card.wait_for(state="visible")
+            note = card.locator('[data-ui-v2="own-close"]').first
+            note.wait_for(state="visible")
+            want = us_own_text(stocks, ["MSFT", "005930", "AAPL"])
+            assert want == ("MSFT: " + jack("MSFT") + " " + fillp(C["app"]["ownClose"], names="AAPL", md=mdtext("2026-10-28"))), want
+            assert note.inner_text() == want, (hash_, note.inner_text(), want)
+            assert today_md in date_line(page), hash_
+            floor_ok(page, f"포트폴리오 {hash_}")
+            no_hscroll(page, width)
+            R.collect(page)
+    R.check(page, S, "포트폴리오 (홈 · 포트폴리오 탭): MSFT(미국 pxc)는 'MSFT: ' + Jack 의 줄 한 줄 · 애플(pxc 없는 pxd)은 예전 문장 그대로", portfolio)
+    ctx.close()
+    srv.shutdown()
+
+    def aged():
+        """5거래일이 지나 잠시 뺀 미국 종목 (usSrc.own.aged · 넷플릭스를 데이터에서 빼고 그 목록에): 회사 페이지 · 그 종목을 가진 포트폴리오에 Jack 의 줄
+        · 목록에 없는 티커는 예전 그대로."""
+        g = clone(f)
+        d = g["data.json"]
+        nk = by_t(d["stocks"])["NFLX"]["nk"]
+        d["stocks"] = [x for x in d["stocks"] if x["t"] != "NFLX"]
+        d["usSrc"]["own"]["aged"] = [{"t": "NFLX", "nk": nk, "pxd": "2026-10-20"}]
+        deck2 = {"id": "dusaged", "name": "잠시 뺀 미국 종목 포트폴리오", "createdAt": "2026-10-01", "planFx": 1300,
+                 "holdings": [{"t": "NFLX", "nk": nk, "cls": "us", "target": 0.5, "plannedQty": 1, "rules": band(0.5)},
+                              {"t": "005930", "nk": "삼성전자", "target": 0.5, "plannedQty": 1, "rules": band(0.5)}],
+                 "purchases": [{"id": "p1usaged", "t": "NFLX", "date": "2026-10-01", "qty": 1, "price": 100.0, "ccy": "USD", "fx": 1300},
+                               {"id": "p2usaged", "t": "005930", "date": "2026-10-01", "qty": 1, "price": 200000, "ccy": "KRW"}]}
+        srv2, ctx2, p2, _ = R.open(build_site(g), width, init=e_store([deck2]), path="/app.html?dev=1#stocks")
+        try:
+            wait_ready(p2)
+            aged_line = C["app"]["krOwnAged"]
+            for code, want in (("NFLX", aged_line), ("ZZZZ", C["co"]["notFound"])):
+                co_hash(p2, f"#stocks/{code}")
+                card = p2.locator('[data-ui-v2="co-not-found"]')
+                card.wait_for(state="visible")
+                assert card.inner_text().strip() == want, (code, card.inner_text())
+            for hash_, route in (("#home", "home"), ("#portfolio", "portfolio")):
+                p2.evaluate("(h) => { location.hash = h; }", hash_)
+                at(p2, route)
+                line = p2.locator('[data-ui-v2="kr-aged"][data-t="NFLX"]').first
+                line.wait_for(state="visible")
+                assert line.inner_text() == aged_line, (hash_, line.inner_text())
+                floor_ok(p2, f"잠시 뺀 미국 종목 {hash_}")
+                no_hscroll(p2, width)
+            R.collect(p2)
+        finally:
+            ctx2.close()
+            srv2.shutdown()
+    R.check(None, S, "잠시 뺀 미국 종목 (5거래일이 지남): 회사 페이지 · 그 종목을 가진 포트폴리오에 Jack 의 줄 · 다른 티커는 '찾지 못했어요' 그대로", aged)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -14990,7 +15151,8 @@ def main():
                    lambda: scene_why_us_date(R, files, 390),                                                # 왜 움직였나: 미국 종목에 한국 날짜 없음 (2026-11-19)
                    lambda: scene_why_late_dates(R, files, 390),                                             # 늦은 데이터의 왜 움직였나: 그 시장의 날짜 줄
                    lambda: scene_kr_own_close(R, files, 390), lambda: scene_kr_own_close(R, files, 320),   # 국내 마지막 확인 종가 (Jack 2026-11-19)
-                   lambda: scene_kr_own_close(R, files, 1280)):                                             # 국내 마지막 확인 종가 · PC
+                   lambda: scene_kr_own_close(R, files, 1280),                                              # 국내 마지막 확인 종가 · PC
+                   lambda: scene_us_own_close(R, files, 390), lambda: scene_us_own_close(R, files, 1280)):   # 미국 마지막 확인 종가 (Jack 2026-11-20)
             try:
                 fn()
             except Exception as e:

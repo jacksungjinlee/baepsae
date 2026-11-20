@@ -51,7 +51,7 @@
 //   why. A rule this version cannot read is treated as not checked (준비 중), never as passed; a rule book with no rule
 //   that could be checked at all is 확인 필요, never 할 일 없음.
 import { num, isFin, priceWon, fyOf, fellTwice, KR_DIV_TREND, exactData, krDivHistory, todayD1, valueD1 } from "./engine.js";
-import { STALE_DAYS, daysSince, ownCloseDate, backstopFirst, samePublish, kstDate } from "../data.js";
+import { STALE_DAYS, daysSince, ownCloseDate, ownCarried, backstopFirst, samePublish, kstDate } from "../data.js";
 import { lateDays, LATE_CHECK_DAYS, tradingDaysAfter, lateSay } from "./tradedays.js";
 import { sameConfirm, planWLimit, planWOk, PLANW_MAX_X } from "./store.js";
 import { heldQty as heldOf, heldUnits } from "./held.js";
@@ -145,16 +145,21 @@ export function lateTickers(deck) {
   for (const r of (deck && deck.imported) || []) if (r && r.t) ts.add(r.t);
   return ts;
 }
+// 2026-11-20 (Jack: "US stocks carry like Korean ones"): a US stock carried at its last confirmed close because Yahoo had no close
+// (data.json pxc: true) counts the same way, in NYSE trading days (tradedays.js CLOSED.US) after that close. A US pxd without pxc
+// (Yahoo's own last bar: halted) is not capped here, as before.
 export function lateCap(state, ctx, decks) {
   if (!state || !state.ok || !state.late || !ctx) return state;
   for (const deck of decks || []) {
     for (const t of lateTickers(deck)) {
       const s = ctx.byT.get(t);
-      if (!s || s.cls !== "kr" || s.pxd == null || s.pxd === ctx.pxDate) continue;
-      const pxd = ownCloseDate(s, ctx.pxDate);
-      const n = pxd ? tradingDaysAfter(pxd, ctx.today, "KR") : null;
+      if (!s || !ownCarried(s)) continue;
+      const us = s.cls === "us", mkDate = us ? ctx.usPxDate : ctx.pxDate;
+      if (s.pxd === mkDate) continue;
+      const pxd = ownCloseDate(s, mkDate);
+      const n = pxd ? tradingDaysAfter(pxd, ctx.today, us ? "US" : "KR") : null;
       if (n == null || n > LATE_CHECK_DAYS) {
-        lateSay(`the check is not run: ${t} (read by a saved portfolio) is priced at its last confirmed close ${JSON.stringify(s.pxd)}, ${n == null ? "not a date whose age can be counted" : n + " KRX trading days"} before today ${ctx.today} (more than ${LATE_CHECK_DAYS} in total)`);
+        lateSay(`the check is not run: ${t} (read by a saved portfolio) is priced at its last confirmed close ${JSON.stringify(s.pxd)}, ${n == null ? "not a date whose age can be counted" : n + (us ? " NYSE" : " KRX") + " trading days"} before today ${ctx.today} (more than ${LATE_CHECK_DAYS} in total)`);
         return { ok: false, why: "stale", days: state.late.days, capped: { t, pxd: s.pxd, n } };
       }
     }

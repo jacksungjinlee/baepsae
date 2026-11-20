@@ -14,6 +14,7 @@ import { Card, Note, OwnCloseNote, KrAgedLine, tx } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { shownName } from "./legacy.js";
 import { isCompany, ownCloseGroups } from "./stocklist.js";
+import { ownCarried } from "../data.js";
 import { subjectParticle } from "./track.js";
 import { MissingNote } from "./tracking.jsx";
 import { avgOf, CHIP_GROUP } from "./pf.js";
@@ -173,8 +174,9 @@ export function ImportedDeck({ deck, st, m: m0, openStock, byT, onRemove, onMore
       {moneyLine && m.usdToday && <Note data-ui-v2="usd-today">{C.pfr.usdToday}</Note>}
       {m && m.absent && m.absent.length > 0 && <MissingNote absent={m.absent} deckId={deck.id} />}
       {/* 2026-11-19 (Jack): a held Korean stock at its last confirmed close (pxd) is in the value and the rows below: named, with his
-          line. Korean stocks only: this card named no US stock at an earlier close before, and that stays as it was */}
-      {rows && <OwnCloseNote groups={ownCloseGroups(rows.map((r) => r.s).filter((s) => s && s.cls === "kr"), { kr: pxDate, us: null })} data-deck-id={deck.id} />}
+          line. Korean stocks only: this card named no US stock at an earlier close before, and that stays as it was. 2026-11-20 (Jack:
+          "US stocks carry like Korean ones … the same line"): a US stock carried because Yahoo had no close (pxc) is named too */}
+      {rows && <OwnCloseNote groups={ownCloseGroups(rows.map((r) => r.s).filter(ownCarried), { kr: pxDate, us: null })} data-deck-id={deck.id} />}
       {st && st.ok && <RulesHead st={st} pxDate={st.pxDate} />}
       {onRules && (
         <div data-ui-v2="pf-rules-edit" style={{ marginTop: SPACE(2) }}>

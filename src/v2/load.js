@@ -91,6 +91,11 @@ export function logDates(d) {
   if (r.own.length) {
     console.warn(`[v2] ${r.own.length} of ${us} US stocks at an earlier close than ${d.usPxDate} (pxd, no daily change): `
       + r.own.slice(0, 30).map(([t, x]) => `${t} ${x}`).join(", ") + (r.own.length > 30 ? ` and ${r.own.length - 30} more` : ""));
+    // 2026-11-20 (Jack): of those, the ones carried at their last confirmed close because Yahoo had no close (pxc; Jack's line)
+    const pc = new Set(d.stocks.filter((s) => s && s.cls === "us" && s.pxc === true).map((s) => String(s.t)));
+    const c = r.own.filter(([t]) => pc.has(t));
+    if (c.length) console.warn(`[v2] ${c.length} of them carried at their last confirmed close (pxc: Yahoo had no close for ${d.usPxDate}; each screen shows Jack's line): `
+      + c.slice(0, 30).map(([t, x]) => `${t} ${x}`).join(", ") + (c.length > 30 ? ` and ${c.length - 30} more` : ""));
   }
   // pxd equal to usPxDate: the pipeline never writes it (the field is left out then) and the publication gate refuses it. If it
   // ever comes, the price is at the US date anyway, so the stock is shown like any other (its d1 is still not read).
@@ -366,9 +371,9 @@ export function resolveLoad({ data, corp, macro }, now, opts = {}) {
   if (!opts.preview) logDates(d);
   const byT = new Map(d.stocks.map((s) => [s.t, s]));
   const coByT = new Map(c.companies.map((x) => [x.t, x]));
-  const aged = ownAgedOf(d);           // 2026-11-20 (Jack, a): Korean stocks left out past the age limit (pxSrc.own.aged)
-  if (aged.size && !opts.preview) console.warn(`[v2] ${aged.size} Korean stocks left out: their last confirmed close is past the age limit `
-    + `(pxSrc.own.aged; their pages and rows say so): ${[...aged.keys()].slice(0, 30).join(", ")}${aged.size > 30 ? ` and ${aged.size - 30} more` : ""}`);
+  const aged = ownAgedOf(d);           // 2026-11-20 (Jack, a): Korean stocks left out past the age limit (pxSrc.own.aged) · US ones too (usSrc.own.aged)
+  if (aged.size && !opts.preview) console.warn(`[v2] ${aged.size} stocks left out: their last confirmed close is past the age limit `
+    + `(pxSrc.own.aged · usSrc.own.aged; their pages and rows say so): ${[...aged.keys()].slice(0, 30).join(", ")}${aged.size > 30 ? ` and ${aged.size - 30} more` : ""}`);
   return { status: "ok", data: d, corp: c, macro: m, features, missing, fresh, byT, coByT, aged, preview: !!opts.preview,
     cushion: opts.cushion || CUSHION_ASSETS, r2022: opts.r2022 || R2022, exact, checkedAt: now == null ? Date.now() : now };
 }

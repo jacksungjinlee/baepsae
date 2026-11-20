@@ -7,6 +7,8 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ## 0. Current state and next steps (updated 2026-11-19 KST — read this first)
 
+**US carry (#?), 2026-11-20 (Jack: "US stocks carry like Korean ones … so a Yahoo gap never stops the Korean data again"):** a US stock with no Yahoo close for the US date is published at its last confirmed close from the previous publish (`pxc`, its own `pxd`, Jack's line in both apps), up to 5 NYSE trading days, then left out with the aged line (`usSrc.own.aged`). A second publish with the same US date keeps that publish's close and change. The gate's `미국 d1 채움` fails only above 5 US stocks with no close and no carry; carried stocks only warn. RUNBOOK "US stocks at their last confirmed close".
+
 **Live, 2026-11-19 07:13 KST:** the first publish with #137 (pxDate 11-18, Korean closes from Daum × Yahoo) passed the gate and is live; checked on the site. **#139** (US share-class tickers: Brown-Forman B joins the US list) is merging next, then one publish of its own. Remaining order: the dividend follow-up, v19.7b, v19.6f, v19.6c, v19.6b data.
 
 **v19.6f (#140), 2026-11-19:** 연말에 확인할 숫자 merges (Nov 1–Dec 31, TAX_YEAR 2026 lock; Jack's M1–M5 lines). Next in the queue: the dividend follow-up, v19.7b (waits on Jack's question 8), v19.6c (question 1), v19.6b data.

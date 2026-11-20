@@ -50,8 +50,9 @@ export const FIX_KR_OWN_CLOSE_EN = "We couldn't confirm today's close, so this s
 export const FIX_KR_AGED = "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요.";                   // Jack 승인 2026-11-20
 // 한 종목 (data.json 종목 또는 corp.json 회사 — 회사 줄에는 cls 가 없어서 marketDate 로 그 데이터의 pxDate 를 받아요): 줄 또는 null.
 // lang "en": 승인된 영어 문장 ("We couldn't confirm today's close, so this shows the Nov 16 close.")
+// 2026-11-20 (Jack, US carry): a US stock carried because Yahoo had no close (data.json pxc: true) reads the same (marketDate: usPxDate).
 export function krOwnCloseText(c, marketDate = null, lang = "ko") {
-  const d = c && (c.cls == null || c.cls === "kr") ? ownCloseDate(c, marketDate) : null;
+  const d = c && (c.cls == null || c.cls === "kr" || (c.cls === "us" && c.pxc === true)) ? ownCloseDate(c, marketDate) : null;
   const md = d ? mdOf(d, lang === "en" ? "en" : "ko") : null;
   if (!md) return null;
   return lang === "en" ? FIX_KR_OWN_CLOSE_EN.replace("{date}", md) : FIX_KR_OWN_CLOSE.replace("{date}", md);

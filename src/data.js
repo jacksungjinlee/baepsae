@@ -224,22 +224,35 @@ export function ownCloseDate(s, marketDate) {
 // (data.json pxSrc.own). 그 종목은 따로 묶어요: { date, ts, kr: true, names } (names = 한글 이름 nk · 화면이 Jack 의 줄 "오늘 종가를 확인하지
 // 못해서 {date} 종가를 보여 드려요." 를 덧붙여요). 미국 종목의 묶음은 예전 그대로 { date, ts } 예요. 같은 날짜면 미국 묶음이 먼저.
 // marketDate: 기준일 하나 (예전처럼 · 모든 종목을 그 날짜와 비교) 또는 { kr, us } (종목마다 자기 시장의 기준일 — 국내 pxDate · 미국 usPxDate).
+// 2026-11-20 (Jack: "Also: US stocks carry like Korean ones. A US stock with no close from Yahoo carries its last confirmed close with
+// its own date and the same line."): 미국 종목도 야후 종가가 없으면 지난 발행본의 마지막 확인 종가로 실어요 (data.json pxc: true · usSrc.own).
+// 그 종목도 국내 마지막 확인 종가와 같은 묶음 ({ kr: true } — 이름은 예전 그대로 · '마지막 확인 종가 · Jack 의 줄'이라는 뜻)에 들어가요.
+// names = 티커 (미국 종목의 안내 문장처럼). pxc 없는 미국 pxd (야후의 마지막 봉 날짜 · 거래 정지)는 예전 그대로 { date, ts } 묶음.
 const krOwnOf = (s) => !!s && s.cls === "kr";
+export const ownCarried = (s) => !!s && s.pxd != null && (s.cls === "kr" || (s.cls === "us" && s.pxc === true));
 const marketOf = (marketDate, s) => (marketDate && typeof marketDate === "object" ? (krOwnOf(s) ? marketDate.kr : marketDate.us) : marketDate);
 // 2026-11-20 (Jack: "After 5 trading days, show "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요." instead of "데이터를 찾지
 // 못했어요""): the Korean stocks the pipeline left out because their last confirmed close is past the age limit (data.json
 // pxSrc.own.aged: [{ t, nk, pxd }], fetch_data.kr_own_aged). -> Map t -> { nk, pxd } (empty for files without it). A record
 // that cannot be read is said in the console once and read as empty (those stocks then read as not in the data, as before).
-let AGED_SAID = false;
-export function ownAgedOf(j) {
-  const own = j && j.pxSrc && typeof j.pxSrc === "object" ? j.pxSrc.own : null;
-  const a = own && typeof own === "object" ? own.aged : undefined;
-  if (a === undefined || a === null) return new Map();
+// 2026-11-20 (Jack, US carry): the US stocks left out the same way (data.json usSrc.own.aged, fetch_data.us_own_aged) are in the
+// same Map (tickers and Korean codes never collide).
+const AGED_SAID = new Set();
+function agedList(j, key) {
+  const src = j && j[key] && typeof j[key] === "object" ? j[key] : null;
+  const own = src && typeof src.own === "object" ? src.own : null;
+  const a = own ? own.aged : undefined;
+  if (a === undefined || a === null) return [];
   const ok = Array.isArray(a) && a.every((x) => x && typeof x === "object" && typeof x.t === "string" && x.t);
   if (!ok) {
-    if (!AGED_SAID) { AGED_SAID = true; console.warn("[뱁새] data.json pxSrc.own.aged 를 읽을 수 없어요 — 그 종목들은 예전처럼 '데이터에 없음'으로 보여요"); }
-    return new Map();
+    if (!AGED_SAID.has(key)) { AGED_SAID.add(key); console.warn(`[뱁새] data.json ${key}.own.aged 를 읽을 수 없어요 — 그 종목들은 예전처럼 '데이터에 없음'으로 보여요`); }
+    return [];
   }
+  return a;
+}
+export function ownAgedOf(j) {
+  const a = [...agedList(j, "pxSrc"), ...agedList(j, "usSrc")];
+  if (!a.length) return new Map();
   const have = new Set(Array.isArray(j.stocks) ? j.stocks.map((s) => s && s.t) : []);
   return new Map(a.filter((x) => !have.has(x.t)).map((x) => [x.t, { nk: typeof x.nk === "string" ? x.nk : x.t, pxd: x.pxd || null }]));
 }
@@ -252,11 +265,11 @@ export function ownCloseGroups(stocks, marketDate) {
     const d = ownCloseDate(s, marketOf(marketDate, s));
     if (!d || seen.has(t)) continue;
     seen.add(t);
-    const kr = krOwnOf(s), key = (kr ? "kr " : "us ") + d;
+    const kr = ownCarried(s), key = (kr ? "kr " : "us ") + d;
     if (!by.has(key)) by.set(key, kr ? { date: d, ts: [], kr: true, names: [] } : { date: d, ts: [] });
     const g = by.get(key);
     g.ts.push(t);
-    if (kr) g.names.push(String(s.nk || t));
+    if (kr) g.names.push(String(krOwnOf(s) ? s.nk || t : t));   // 미국 마지막 확인 종가 (2026-11-20): 티커
   }
   return [...by.values()].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : (a.kr ? 1 : 0) - (b.kr ? 1 : 0)));
 }
@@ -313,6 +326,7 @@ export function mergeStocks(base, live) {
              mcap: v("cap"), lo: v("lo"), hi: v("hi"), g3Q: (L.cls || b.cls) === "us", g3Kr: (L.cls || b.cls) === "kr" },   // 미국 g3 = 최근 분기 · 1년 전 대비
         ...(L.est ? { nk: EST_NAME.ko, ne: EST_NAME.en, est: true } : {}),
         ...(L.pxd != null ? { pxd: L.pxd } : {}),   // v19.1c: 미국 종목의 자기 가격 날짜 (그 종목이 들어간 화면이 안내해요)
+        ...(L.pxc === true ? { pxc: true } : {}),   // 2026-11-20 (Jack): 야후 종가가 없어 마지막 확인 종가로 실은 미국 종목 (Jack 의 줄)
         live: !L.est && !partial });
       delete byT[b.t]; delete byNorm[norm(b.t)];
     } else {
@@ -332,6 +346,7 @@ export function mergeStocks(base, live) {
         pz: L.pz, vz: L.vz, mz: L.mz, qz: L.qz, live: !L.est, auto: true,
         ...(pxBad(L) ? { pxBad: L.pxBad, pxBadF: L.pxBadF } : {}),   // 2026-11-14: 과거 주가 기록 오류 — 펼친 종목의 52주 막대 자리에 그 줄 (detail.jsx StockRow)
         ...(L.pxd != null ? { pxd: L.pxd } : {}),   // v19.1c: 위와 같아요
+        ...(L.pxc === true ? { pxc: true } : {}),   // 2026-11-20: 위와 같아요
         x: { dk: L.dk, de: L.de, roe: L.roe, debt: L.debt, opm: L.opm, g3: L.g3, frn: L.frn,
              mcap: L.cap, lo: L.lo, hi: L.hi, g3Q: L.cls === "us", g3Kr: L.cls === "kr" } });
     }

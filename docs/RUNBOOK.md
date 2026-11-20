@@ -659,6 +659,72 @@ under today's date label without that line."
   가진 종목 rows. Every portfolio then shows the usual stale state for that day (one state for all portfolios). 내 수익 and 연말에
   확인할 숫자 do not use this cap: they show amounts with their dates (and Jack's line), not a check result.
 
+## US stocks at their last confirmed close (미국 마지막 확인 종가, since #?)
+
+Jack, 2026-11-20 (verbatim): "Also: US stocks carry like Korean ones. A US stock with no close from Yahoo carries its last confirmed
+close with its own date and the same line. Block only if many are missing (set the number from history), so a Yahoo gap never stops
+the Korean data again."
+
+Why: on 11-20 Yahoo's newest US daily bars came back blank for hours (01:11 UTC: 799 of 800 tickers; 03:59 and 04:19 UTC: 200), while
+the S&P 500 index bar was there. The gate row `미국 d1 채움` (≥ 98%) failed every trial run in that window, and with it the whole
+publish, Korean data included.
+
+- **What counts as "no close":** the stock's bar for `usPxDate` (the S&P 500's last finished bar) is missing, blank, infinite, 0 or
+  negative (trailing bars like that are dropped first: `fetch_data.us_px_tail_clean`, so a 0 close never becomes a row priced 0), or Yahoo
+  sent no usable price at all or the download for it failed (only for tickers the previous publish had, or had left out as aged).
+- **Carried (`fetch_data.us_own_close_carry`, step `us_own_close_step`, inside `fetch_us` before the stock details are attached):** if the
+  previous publish (`data.json` the run starts from) had the stock at its `usPxDate` close, it is published at **that price**, `pxd` = that
+  publish's `usPxDate`, `pxc: true`, no `d1`. If it was already carried (`pxc`), the same price and `pxd` (never re-dated). Market numbers
+  made from the price series (출렁임, 베타, 52주, 샤프, 최대낙폭, 상승 월, 모멘텀: `US_OWN_KEYS`) are copied from that publish; name, industry,
+  PER, PBR, 시가총액 and 배당수익률 are attached today from that price as for any stock (won amounts use today's rate, as for any US
+  price at an earlier close).
+- **Same US date again (`usSrc.own.same`):** if the previous publish already has the same `usPxDate` (a second publish the same day, which is
+  what 11-20's trial runs were), the stock keeps that publish's close **and its `d1`** for that day: it is that day's confirmed close, so no
+  `pxd`, no `pxc` and no line.
+- **Not carried, as before (`drop`):** `none` not in the previous publish, `halt` the previous publish had it with its own Yahoo date (`pxd`
+  without `pxc`: a halted stock), `bad` unreadable price or date. These keep the existing path: Yahoo's own last bar with its `pxd` (the
+  existing "{티커} 가격은 {md} 종가예요." / "미국 {md} 종가"), or left out when Yahoo has nothing.
+- **Age limit:** `US_OWN_CLOSE_MAX_DAYS` = 5 NYSE trading days after the close, counted on S&P 500 daily bars up to `usPxDate` (holidays such
+  as Thanksgiving have no bar, so they don't count). Past it the stock is left out and recorded in `usSrc.own.aged` (`[{t, nk, pxd}]`,
+  `us_own_aged`), kept there on later runs while Yahoo still has no close, removed once it does or the ticker leaves the list.
+- **Never stops the run:** any error in the step is logged (`!! 마지막 확인 종가 단계(미국)가 오류로 멈췄어요 …`), the rows go back to the
+  existing path, `usSrc.own.err` holds the reason, and the gate warns. Right after the US list is final, `us_own_close_final` runs the
+  gate's own function (`validate_data.us_own_close_bad`) and drops a wrong row (`usSrc.own.bad`, per reason); if that check itself errors,
+  every carried row is dropped (`us_own_close_drop_all`).
+- **Run log:** `!! 미국 종가 미확인 {n}종목 (기준일 … · 까닭별 수): 마지막 확인 종가로 실음 {k}종목 (pxd …) — names · 지난 발행본이 같은 기준일이라
+  그날 종가 · d1 을 그대로 {m}종목 — names`, `!! 마지막 확인 종가로 싣지 않은 미국 종목 …`, `!! 마지막 확인 종가가 5거래일을 넘어 잠시 뺀 미국 종목 …`,
+  `· 마지막 확인 종가 점검 (미국 · 관문과 같은 함수): {n}종목 빼고 발행`. Normal day: `· 미국 종가 미확인 0종목`.
+- **data.json:** `usSrc` = `{v: 1, own: {v, max, n, codes, same, unconf, why {bar · empty · err}, drop, dropEx, bad {n, rows, why}, aged, err?}}`;
+  the stock row has `pxc: true`.
+- **Gate:**
+  - `미국 d1 채움 (미국 기준일 봉)`: a clean carry (`validate_data.us_own_codes`: `pxc`, `pxd` before `usPxDate`, no `d1`, a price, listed in
+    `usSrc.own.codes`, within 5 NYSE days, and in a publish run exactly the previous publish's price and date) is **not counted as missing**,
+    however many there are (warning, named). The row **fails only when more than `US_NO_CLOSE_MAX` (5) US stocks have no `d1` and are not a
+    clean carry** (Yahoo's own older bar, a wrong carry). N = max(5, 3 × the most seen): the 27 publishes on the `data` branch from 11-05 to
+    11-20 had 0 such stocks each (table in the PR). A file without `usSrc` (published before this) keeps the old rule (≥ 98%).
+  - `미국 필수 종목 d1` (AAPL · MSFT · NVDA): a clean carry warns (named with its date) instead of failing; no `d1` without a clean carry still fails.
+  - `미국 가격이 바뀌었는지`: clean carries are left out (their price is the previous publish's by design); with nothing left to compare, it warns.
+  - New `미국 마지막 확인 종가 (usSrc.own · pxc)`: **fails** on a carried row still in the file with a broken date, a `d1` beside it, or a
+    `pxc` mark without `pxd` (as the Korean `pxd` row), and when the pipeline dropped more than `US_OWN_DROP_MAX` (5) rows for one reason in the
+    run (Jack's standing rule); warns on carries, same-day closes, aged stocks, dropped rows and records that disagree (those rows are then
+    treated as today's prices by the rows above). A run whose check itself stopped only warns.
+  - `미국 자기 가격 날짜 (pxd)` is unchanged (every US `pxd` before `usPxDate`, no `d1` beside it).
+- **App (both):** a carried US stock (`pxc`) reads like a Korean carry: on its own screen "오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요."
+  under its "미국 {md} 종가"; in lists and totals one line per date "{티커}: 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요." (in the same
+  line as Korean stocks of the same date); the old app's English lists "{티커}: We couldn't confirm today's close, so this shows the {date}
+  close."; a stock in `usSrc.own.aged`: "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요." on its company page and under its row in
+  portfolios. A US `pxd` without `pxc` keeps "{티커} 가격은 {md} 종가예요." and "미국 {md} 종가". The late-data check (`rules.lateCap`) counts a
+  carried US close in NYSE trading days and stops above 5 in total, like a Korean carry.
+- **Known limit:** after a publish with US carries, later scheduled runs that day stop early (`already_published.py`: `pxDate` and `usPxDate`
+  are current), so the carried closes stay until the next day's publish, as with Korean carries. A manual run can refresh them.
+- **On a warning:** read the named rows. Many carries on one day means Yahoo was blank for them: nothing to fix on our side; the next
+  publish takes Yahoo's closes again. A wrong carry (not the previous publish's price or date) means the carry step broke: tell Jack.
+- **On a failure:** "마지막 확인 종가로 싣지 못한 종목 > 5" means many US stocks had no Yahoo close **and** no previous close to carry (new
+  tickers, a first run without a previous publish, or a broken carry step). The previous publish stays live. Never raise N to get a
+  publish out; a different N needs Jack's yes with new evidence.
+- **Check on the site:** search a carried ticker (the log names them): its company page shows its date and Jack's line; a portfolio holding it
+  shows "{티커}: 오늘 종가를 …". 005930 and 현대차 unchanged.
+
 ## Korean second-source time limit (2차 출처 시간 한도, since #151)
 
 When the volunteer KRX list has no final file for a finished trading day, the run builds that day from Daum's daily prices and

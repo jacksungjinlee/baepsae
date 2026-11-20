@@ -2561,6 +2561,14 @@ def strip_kr_carries(f):
     src = (f.get("data.json") or {}).get("pxSrc")
     if isinstance(src, dict) and isinstance(src.get("own"), dict):
         src["own"] = {**src["own"], "codes": [], "n": 0}
+    # 2026-11-20 (Jack: "US stocks carry like Korean ones"): 같은 까닭으로 진짜 데이터의 미국 마지막 확인 종가 표시(pxc · usSrc.own)도 지워요 — 야후가
+    # 빈 날에도 미국 자기 날짜 장면(미국날짜)이 스스로 심는 pxd 만으로 봐요 (그 장면의 확인은 그대로 · 데이터 준비만)
+    for x in (f.get("data.json") or {}).get("stocks") or []:
+        if x.get("cls") == "us":
+            x.pop("pxc", None)
+    usrc = (f.get("data.json") or {}).get("usSrc")
+    if isinstance(usrc, dict) and isinstance(usrc.get("own"), dict):
+        usrc["own"] = {**usrc["own"], "codes": [], "n": 0}
     return f
 
 
@@ -3656,6 +3664,58 @@ def scene_kr_own_close(R, files, slow=False):
     ctx.close(); srv.shutdown()
 
 
+def scene_us_carry(R, files):
+    """2026-11-20 (Jack, verbatim: "US stocks carry like Korean ones. A US stock with no close from Yahoo carries its last confirmed close with
+    its own date and the same line."): 야후 종가가 없어 마지막 확인 종가로 실은 미국 종목 (data.json pxc · pxd). 열린 포트폴리오의 배너와 종목 고르기
+    목록 위: '{티커}: 오늘 종가를 확인하지 못해서 {날짜} 종가를 보여 드려요.' 한 줄 (영어 화면은 '{티커}: We couldn't confirm today's close, so this
+    shows the {날짜} close.') · pxc 없는 미국 pxd (거래 정지 모양)는 예전 문장 그대로 · 삼성전자는 그대로. 진짜 데이터에서도 돌아요 (복사본의 진짜
+    마지막 확인 종가 표시는 지우고 이 장면이 심은 것만 봐요)."""
+    f = strip_kr_carries(json.loads(json.dumps(files, allow_nan=True)))
+    d = f["data.json"]
+    usd = d.get("usPxDate") or d["pxDate"]
+    carried, halted = _iso_minus(usd, 1), _iso_minus(usd, 2)
+    by = {s.get("t"): s for s in d["stocks"]}
+    assert {"MSFT", "AAPL", "005930"} <= set(by) and by["MSFT"].get("cls") == "us", "시험할 미국 종목이 데이터에 없어요"
+    for t in ("MSFT", "AAPL"):
+        by[t].pop("d1", None)
+    by["MSFT"].update(pxd=carried, pxc=True)
+    by["AAPL"]["pxd"] = halted
+    d["usSrc"] = {"v": 1, "own": {"v": 1, "max": 5, "n": 1, "codes": ["MSFT"], "same": [], "drop": {}, "dropEx": [], "bad": {"n": 0, "rows": []}}}
+    want_ko = [f"MSFT: 오늘 종가를 확인하지 못해서 {_md(carried, 'ko')} 종가를 보여 드려요.", f"AAPL 가격은 {_md(halted, 'ko')} 종가예요."]
+    want_en = [f"MSFT: We couldn't confirm today's close, so this shows the {_md(carried, 'en')} close.",
+               f"AAPL: priced at the {_md(halted, 'en')} close."]
+    slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000,
+            "holdings": [{"t": "005930", "mw": 300}, {"t": "MSFT", "mw": 200}, {"t": "AAPL", "mw": 200}]}
+    srv, ctx, page, base = R.open(build_site(f), local=slot_local([("suscarry", "미국 확인 종가 시험", slot)]), once=True)
+    S = "미국 마지막 확인 종가"
+    BANNER = "() => [...document.querySelectorAll('.nonLiveBanner [data-own-close]')].map((e) => e.innerText)"
+    NOTE = "() => [...document.querySelectorAll('.ownCloseNote')].map((e) => e.innerText.trim())"
+
+    def banner_is(want, what):
+        page.locator(".nonLiveBanner").first.wait_for(state="visible", timeout=WAIT)
+        settled(page, BANNER, want, what)
+
+    def portfolio():
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        page.get_by_text("미국 확인 종가 시험", exact=False).first.click()
+        see(page, "보통 해 ±")
+        banner_is(want_ko, "한국어 배너: MSFT 는 Jack 의 줄 한 줄 · 애플은 예전 문장")
+        box = page.get_by_placeholder("종목명·코드 검색")
+        box.fill("MSFT")
+        page.locator(".ownCloseNote").wait_for(state="visible", timeout=WAIT)
+        settled(page, NOTE, [want_ko[0]], "종목 고르기 목록 위 안내")
+        box.fill("삼성전자")
+        page.wait_for_timeout(300)
+        settled(page, NOTE, [], "pxd 없는 종목만 보이는데 안내가 있어요")
+        box.fill("")
+        page.get_by_role("button", name="EN", exact=True).first.click()
+        banner_is(want_en, "영어 배너: 승인된 영어 문장")
+        page.get_by_role("button", name="한국어", exact=True).first.click()
+        banner_is(want_ko, "한국어로 되돌린 배너")
+    R.check(page, S, "포트폴리오 배너 · 종목 고르기: 'MSFT: ' + Jack 의 줄 한 줄 · 애플(pxc 없음)은 예전 문장 · 영어는 '{티커}: ' + 승인된 영어 문장", portfolio)
+    ctx.close(); srv.shutdown()
+
+
 def scene_list(R, fresh, full):
     """모든 장면을 순서대로 (이름, 함수). 함수는 부를 때만 돌아요 — 목록을 만드는 것만으로는 아무것도 하지 않아요 (--part 시험)."""
     return [("정상", lambda: scene_normal(R, fresh, full)), ("멈춤", lambda: scene_stale(R, fresh)),
@@ -3674,6 +3734,7 @@ def scene_list(R, fresh, full):
             ("예전줄", lambda: scene_old_app_lines(R, fresh)),                                                              # 2026-11-14 Jack Q3
             ("주가기록", lambda: scene_px_bad(R, fresh)),                                                                  # 2026-11-14 과거 주가 기록 오류
             ("확인종가", lambda: scene_kr_own_close(R, fresh)),                                                            # 2026-11-19 국내 마지막 확인 종가
+            ("미국확인종가", lambda: scene_us_carry(R, fresh)),                                                            # 2026-11-20 미국 마지막 확인 종가
             ("확인종가", lambda: scene_kr_own_close(R, with_kr_carries(fresh))),                                           # 리뷰 M-A: 진짜 데이터에 마지막 확인 종가가 있는 날
             ("미국날짜", lambda: scene_own_close(R, with_kr_carries(fresh))),                                          # 리뷰 M-A: 같은 날의 미국 자기 날짜 장면
             ("미국종가", lambda: scene_us_close(R, fresh))] + (                                                          # 2026-11-19 첫 화면의 미국 종가 날짜
@@ -3705,7 +3766,7 @@ def main():
                     "고정 데이터 tests/fixtures/snapshot 을 그 발행일에 멈춘 시계로 — CI 는 이쪽이에요")
     ap.add_argument("--shots", default=None, help="실패 시 스크린샷을 저장할 폴더")
     ap.add_argument("--part", default=None, help="N/M: 장면을 순서대로 M 몫으로 나눈 것 중 N 번째만 (CI 가 여러 기계로 나눠 돌려요)")
-    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커·2.0링크·바로가기·파일·자동·저장본·미국날짜·늦음·고치는중·다시읽음·날짜·예전줄·주가기록·확인종가·미국종가)")
+    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커·2.0링크·바로가기·파일·자동·저장본·미국날짜·늦음·고치는중·다시읽음·날짜·예전줄·주가기록·확인종가·미국종가·미국확인종가)")
     args = ap.parse_args()
     if args.part is not None:
         parse_part(args.part)                                   # 잘못 적으면 브라우저를 열기 전에 멈춰요
