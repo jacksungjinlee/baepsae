@@ -775,7 +775,8 @@ export function Company({ load, store, setStoreData, pad, code, ctab, disc, nav 
     // A fund (an address typed by hand: nothing in 2.0 links a fund here) is not "not found": it has no company page.
     const fund = ok && load.byT.get(code) && !isCompany(load.byT.get(code));
     // 2026-11-20 (Jack, a): a Korean stock left out because its last confirmed close is past the age limit (pxSrc.own.aged) says
-    // so instead of "not found": "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요."
+    // so instead of "not found": "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요." 2026-11-20 (Jack): a US stock left out the same
+    // way (usSrc.own.aged: Yahoo had no close for more than 5 NYSE trading days) too (load.aged holds both)
     const aged = !fund && ok && load.aged && load.aged.has(code) && C.app.krOwnAged;
     return (
       <Page pad={pad}>

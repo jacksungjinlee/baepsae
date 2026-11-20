@@ -23,8 +23,9 @@ export const isCompany = (s) => !!s && (s.cls === "kr" || s.cls === "us") && s.e
 // sources): each stock is compared with its own market's date (KR pxDate, US usPxDate as before), and Korean stocks get a group
 // of their own ({ kr: true, names }: format.ownCloseText adds Jack's line).
 export { ownCloseGroups };
-export function ownCloses(load, stocks) {
-  return load && load.status === "ok" ? ownCloseGroups(stocks, { kr: load.data.pxDate, us: load.data.usPxDate }) : [];
+// opts { compact: true }: a market-wide list (data.js ownCloseGroups: five names + '외 {n}종목', the market-wide US line above the cap).
+export function ownCloses(load, stocks, opts) {
+  return load && load.status === "ok" ? ownCloseGroups(stocks, { kr: load.data.pxDate, us: load.data.usPxDate }, opts) : [];
 }
 
 // ---------------- 종목 search ----------------

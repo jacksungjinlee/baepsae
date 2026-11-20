@@ -539,7 +539,7 @@ export function StepCards({ st, set, ds, load, coach }) {
             );
           })}
           {/* v19.1c: a top stock priced at an earlier US close (pxd): its scores read that price, so it is named */}
-          <OwnCloseNote groups={ownCloses(load, preview.map((x) => x.s))} />
+          <OwnCloseNote groups={ownCloses(load, preview.map((x) => x.s), { compact: true })} />
         </Card>
       )}
       {bubble && (

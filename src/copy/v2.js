@@ -39,6 +39,8 @@ export const C = {
     ownClose: "{names} 가격은 {md} 종가예요.",                       // chat (2026-11-07: 미국 가격 날짜 A1–A3) — 미국 기준일보다 앞선 종가의 종목(pxd)이 든 목록·합계, 날짜마다 한 문장
     krOwnClose: "오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요.", // chat (Jack, 2026-11-19) — 오늘 종가를 두 출처로 확인하지 못해 마지막 확인 종가(pxd)로 실은 국내 종목: 그 종목 화면에는 이 줄
     krOwnCloseList: "{names}: 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요.", // chat (Jack, 2026-11-20 b) — 목록 · 합계: 그런 국내 종목을 날짜마다 한 줄로 (ownClose 문장 + 위 줄 대신)
+    krOwnCloseListMore: "{names} 외 {n}종목: 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요.", // chat (Jack, 2026-11-21 answer 8) — 위 줄의 이름이 5개를 넘으면 앞 5개 + '외 {n}종목' (국내 · 미국 마지막 확인 종가)
+    usOwnCloseAll: "미국 종목은 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요.", // chat (Jack, 2026-11-21 answer 6) — 그날 미국 종목의 절반 넘게 마지막 확인 종가면 목록 · 합계의 미국 쪽은 이 한 줄 (data.js US_CARRY_WIDE)
     krOwnAged: "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요.", // chat (Jack, 2026-11-20 a) — 마지막 확인 종가가 5거래일을 넘어 잠시 뺀 국내 종목 (pxSrc.own.aged): '찾지 못했어요' 대신
     pending: "준비 중",                                            // new
     notChecked: "아직 자동으로 확인할 수 없어요",                    // new

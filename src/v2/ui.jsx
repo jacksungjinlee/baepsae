@@ -375,14 +375,16 @@ export function OwnCloseNote({ groups, style, ...rest }) {
 // 2026-11-20 (Jack, a): a held Korean stock left out because its last confirmed close is past the age limit (data.json
 // pxSrc.own.aged, load.aged): "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요." under its row. 2026-11-21 (Jack, answer 4): also a
 // stock the late-data check leaves out (rules.js lateLeftOut). aged: a Map — ctx.aged on the check's screens (both kinds), load.aged
-// elsewhere. Nothing for any other stock.
+// elsewhere. Nothing for any other stock. 2026-11-20 (Jack): a US stock left out the same way (usSrc.own.aged, or a US carry the
+// late check leaves out) too.
 export function KrAgedLine({ aged, t, style, ...rest }) {
   if (!t || !aged || typeof aged.has !== "function" || !aged.has(t) || !C.app.krOwnAged) return null;
   return <Note data-ui-v2="kr-aged" data-t={t} style={style} {...rest}>{C.app.krOwnAged}</Note>;
 }
 
 // 2026-11-19 (Jack): one Korean stock priced at its last confirmed close (data.json pxd): Jack's line with its own date, near
-// its price and date (cofmt.krOwnCloseText). Nothing for any other stock.
+// its price and date (cofmt.krOwnCloseText). 2026-11-20 (Jack): a US stock carried because Yahoo had no close (pxc) too. Nothing for
+// any other stock.
 export function KrOwnCloseLine({ load, s, style, ...rest }) {
   const text = krOwnCloseText(load, s);
   if (!text) return null;

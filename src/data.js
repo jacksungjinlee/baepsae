@@ -224,27 +224,64 @@ export function ownCloseDate(s, marketDate) {
 // (data.json pxSrc.own). 그 종목은 따로 묶어요: { date, ts, kr: true, names } (names = 한글 이름 nk · 화면이 Jack 의 줄 "오늘 종가를 확인하지
 // 못해서 {date} 종가를 보여 드려요." 를 덧붙여요). 미국 종목의 묶음은 예전 그대로 { date, ts } 예요. 같은 날짜면 미국 묶음이 먼저.
 // marketDate: 기준일 하나 (예전처럼 · 모든 종목을 그 날짜와 비교) 또는 { kr, us } (종목마다 자기 시장의 기준일 — 국내 pxDate · 미국 usPxDate).
+// 2026-11-20 (Jack: "Also: US stocks carry like Korean ones. A US stock with no close from Yahoo carries its last confirmed close with
+// its own date and the same line."): 미국 종목도 야후 종가가 없으면 지난 발행본의 마지막 확인 종가로 실어요 (data.json pxc: true · usSrc.own).
+// 그 종목도 국내 마지막 확인 종가와 같은 묶음 ({ kr: true } — 이름은 예전 그대로 · '마지막 확인 종가 · Jack 의 줄'이라는 뜻)에 들어가요.
+// names = 티커 (미국 종목의 안내 문장처럼). pxc 없는 미국 pxd (야후의 마지막 봉 날짜 · 거래 정지)는 예전 그대로 { date, ts } 묶음.
 const krOwnOf = (s) => !!s && s.cls === "kr";
+export const ownCarried = (s) => !!s && s.pxd != null && (s.cls === "kr" || (s.cls === "us" && s.pxc === true));
 const marketOf = (marketDate, s) => (marketDate && typeof marketDate === "object" ? (krOwnOf(s) ? marketDate.kr : marketDate.us) : marketDate);
 // 2026-11-20 (Jack: "After 5 trading days, show "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요." instead of "데이터를 찾지
 // 못했어요""): the Korean stocks the pipeline left out because their last confirmed close is past the age limit (data.json
 // pxSrc.own.aged: [{ t, nk, pxd }], fetch_data.kr_own_aged). -> Map t -> { nk, pxd } (empty for files without it). A record
 // that cannot be read is said in the console once and read as empty (those stocks then read as not in the data, as before).
-let AGED_SAID = false;
-export function ownAgedOf(j) {
-  const own = j && j.pxSrc && typeof j.pxSrc === "object" ? j.pxSrc.own : null;
-  const a = own && typeof own === "object" ? own.aged : undefined;
-  if (a === undefined || a === null) return new Map();
+// 2026-11-20 (Jack, US carry): the US stocks left out the same way (data.json usSrc.own.aged, fetch_data.us_own_aged) are in the
+// same Map (tickers and Korean codes never collide).
+const AGED_SAID = new Set();
+function agedList(j, key) {
+  const src = j && j[key] && typeof j[key] === "object" ? j[key] : null;
+  const own = src && typeof src.own === "object" ? src.own : null;
+  const a = own ? own.aged : undefined;
+  if (a === undefined || a === null) return [];
   const ok = Array.isArray(a) && a.every((x) => x && typeof x === "object" && typeof x.t === "string" && x.t);
   if (!ok) {
-    if (!AGED_SAID) { AGED_SAID = true; console.warn("[뱁새] data.json pxSrc.own.aged 를 읽을 수 없어요 — 그 종목들은 예전처럼 '데이터에 없음'으로 보여요"); }
-    return new Map();
+    if (!AGED_SAID.has(key)) { AGED_SAID.add(key); console.warn(`[뱁새] data.json ${key}.own.aged 를 읽을 수 없어요 — 그 종목들은 예전처럼 '데이터에 없음'으로 보여요`); }
+    return [];
   }
+  return a;
+}
+export function ownAgedOf(j) {
+  const a = [...agedList(j, "pxSrc"), ...agedList(j, "usSrc")];
+  if (!a.length) return new Map();
   const have = new Set(Array.isArray(j.stocks) ? j.stocks.map((s) => s && s.t) : []);
   return new Map(a.filter((x) => !have.has(x.t)).map((x) => [x.t, { nk: typeof x.nk === "string" ? x.nk : x.t, pxd: x.pxd || null }]));
 }
 
-export function ownCloseGroups(stocks, marketDate) {
+// 2026-11-21 (Jack, answer 6, verbatim: "Yes, with a cap. If more than about half of US stocks would carry, the US side shows one
+// line: "미국 종목은 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요." Set the exact cap from history."): the cap is more than half
+// of the US stocks in the file (history: a partial Yahoo gap left about 200 of 800 without a close, 11-20 03:59 and 04:19 UTC; a full
+// blank 799 of 800, 11-20 01:11 UTC, and 11-07). Above it, market-wide lists name no US carried stock; their group is { usWide: true }
+// and the screens show the market-wide line (format.js ownCloseParts · detail.jsx ownCloseLines). Company pages keep the per-stock line.
+// setOwnCarryWide(data) is called where data.json is loaded (2.0 load.js resolveLoad and keepGlobals, so a later publish held off
+// screen never changes it · old app detail.jsx); before that (tests, preview) it is off.
+// Market-wide lists only (2026-11-21, review of Jack's answers 6 and 8): opts.compact — ranking, finder, pick, the build preview,
+// search results, the old app's 종목 고르기 (Korean screen). There the name lines stop at five names + '외 {n}종목' (group.cut) and,
+// above the cap, the US carries are the market-wide group. Lists of the user's own stocks (holdings, plans, records, the watch
+// list) and every English line leave it off: they name every carried stock in the existing line, grouped as before.
+export const US_CARRY_WIDE = 0.5;
+let US_WIDE = false;
+export function usCarryCounts(j) {
+  const us = (j && Array.isArray(j.stocks) ? j.stocks : []).filter((s) => s && s.cls === "us" && !s.fund);
+  return { carried: us.filter((s) => s.pxc === true && s.pxd != null).length, total: us.length };
+}
+export function setOwnCarryWide(j) {
+  const { carried, total } = usCarryCounts(j);
+  US_WIDE = total > 0 && carried > total * US_CARRY_WIDE;
+  return US_WIDE;
+}
+export const ownCarryWide = () => US_WIDE;
+export function ownCloseGroups(stocks, marketDate, opts) {
+  const compact = !!(opts && opts.compact);
   const by = new Map(), seen = new Set();
   for (const s of stocks || []) {
     if (!s || s.t == null || s.t === "") continue;
@@ -252,13 +289,15 @@ export function ownCloseGroups(stocks, marketDate) {
     const d = ownCloseDate(s, marketOf(marketDate, s));
     if (!d || seen.has(t)) continue;
     seen.add(t);
-    const kr = krOwnOf(s), key = (kr ? "kr " : "us ") + d;
-    if (!by.has(key)) by.set(key, kr ? { date: d, ts: [], kr: true, names: [] } : { date: d, ts: [] });
+    const kr = ownCarried(s), wide = kr && compact && US_WIDE && s.cls === "us";
+    const key = (wide ? "uw " : kr ? "kr " : "us ") + d;
+    if (!by.has(key)) by.set(key, wide ? { date: d, ts: [], kr: true, names: [], usWide: true } : kr ? { date: d, ts: [], kr: true, names: [], ...(compact ? { cut: true } : {}) } : { date: d, ts: [] });
     const g = by.get(key);
     g.ts.push(t);
-    if (kr) g.names.push(String(s.nk || t));
+    if (kr) g.names.push(String(krOwnOf(s) ? s.nk || t : t));   // 미국 마지막 확인 종가 (2026-11-20): 티커
   }
-  return [...by.values()].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : (a.kr ? 1 : 0) - (b.kr ? 1 : 0)));
+  const rank = (g) => (g.usWide ? 2 : g.kr ? 1 : 0);              // 같은 날짜: 예전 미국 문장 · 이름 줄 · 미국 전체 줄
+  return [...by.values()].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : rank(a) - rank(b)));
 }
 // 그 종목 가격의 날짜: pxd 가 없으면 기준일(marketDate), 읽을 수 있는 pxd 면 그 날짜, pxd 가 기준일과 같으면 기준일, 읽을 수 없는
 // pxd 면 null (기준일이 아닌 건 아는데 언제인지 몰라요: 틀린 날짜를 보이느니 날짜를 빼요).
@@ -313,6 +352,7 @@ export function mergeStocks(base, live) {
              mcap: v("cap"), lo: v("lo"), hi: v("hi"), g3Q: (L.cls || b.cls) === "us", g3Kr: (L.cls || b.cls) === "kr" },   // 미국 g3 = 최근 분기 · 1년 전 대비
         ...(L.est ? { nk: EST_NAME.ko, ne: EST_NAME.en, est: true } : {}),
         ...(L.pxd != null ? { pxd: L.pxd } : {}),   // v19.1c: 미국 종목의 자기 가격 날짜 (그 종목이 들어간 화면이 안내해요)
+        ...(L.pxc === true ? { pxc: true } : {}),   // 2026-11-20 (Jack): 야후 종가가 없어 마지막 확인 종가로 실은 미국 종목 (Jack 의 줄)
         live: !L.est && !partial });
       delete byT[b.t]; delete byNorm[norm(b.t)];
     } else {
@@ -332,6 +372,7 @@ export function mergeStocks(base, live) {
         pz: L.pz, vz: L.vz, mz: L.mz, qz: L.qz, live: !L.est, auto: true,
         ...(pxBad(L) ? { pxBad: L.pxBad, pxBadF: L.pxBadF } : {}),   // 2026-11-14: 과거 주가 기록 오류 — 펼친 종목의 52주 막대 자리에 그 줄 (detail.jsx StockRow)
         ...(L.pxd != null ? { pxd: L.pxd } : {}),   // v19.1c: 위와 같아요
+        ...(L.pxc === true ? { pxc: true } : {}),   // 2026-11-20: 위와 같아요
         x: { dk: L.dk, de: L.de, roe: L.roe, debt: L.debt, opm: L.opm, g3: L.g3, frn: L.frn,
              mcap: L.cap, lo: L.lo, hi: L.hi, g3Q: L.cls === "us", g3Kr: L.cls === "kr" } });
     }

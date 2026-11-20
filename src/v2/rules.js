@@ -51,7 +51,7 @@
 //   why. A rule this version cannot read is treated as not checked (준비 중), never as passed; a rule book with no rule
 //   that could be checked at all is 확인 필요, never 할 일 없음.
 import { num, isFin, priceWon, fyOf, fellTwice, KR_DIV_TREND, exactData, krDivHistory, todayD1, valueD1 } from "./engine.js";
-import { STALE_DAYS, daysSince, ownCloseDate, backstopFirst, samePublish, kstDate } from "../data.js";
+import { STALE_DAYS, daysSince, ownCloseDate, ownCarried, backstopFirst, samePublish, kstDate } from "../data.js";
 import { lateDays, LATE_CHECK_DAYS, tradingDaysAfter, lateSay } from "./tradedays.js";
 import { sameConfirm, planWLimit, planWOk, PLANW_MAX_X } from "./store.js";
 import { heldQty as heldOf, heldUnits } from "./held.js";
@@ -138,15 +138,19 @@ export function checkState(load, now) {
 // pxd) whose own close is more than LATE_CHECK_DAYS KRX trading days before today (KST, the same count as lateDays; a pxd that is
 // not a countable date too, the stricter side) is left out of that day's check: the check reads it as not in today's data (v19.0c:
 // its row stays, the totals and the weights leave it out, as for a stock the pipeline left out) and its row shows the approved line
-// (ctx.aged, ui.jsx KrAgedLine). Every other stock and portfolio is checked as before; the state stays the late one. US stocks at an
-// earlier close are not touched. -> Map t -> { nk, pxd, n } (empty when the data is not late).
+// (ctx.aged, ui.jsx KrAgedLine). Every other stock and portfolio is checked as before; the state stays the late one.
+// 2026-11-20 (Jack: "US stocks carry like Korean ones"): a US stock carried at its last confirmed close because Yahoo had no close
+// (data.json pxc: true) is treated the same, in NYSE trading days (tradedays.js CLOSED.US) after that close, against usPxDate. A US
+// pxd without pxc (Yahoo's own last bar: halted) is not touched, as before. -> Map t -> { nk, pxd, n } (empty when not late).
 export function lateLeftOut(state, data, today) {
   const out = new Map();
   if (!state || !state.ok || !state.late || !data) return out;
   for (const s of data.stocks || []) {
-    if (!s || s.cls !== "kr" || s.pxd == null || s.pxd === data.pxDate) continue;
-    const pxd = ownCloseDate(s, data.pxDate);
-    const n = pxd ? tradingDaysAfter(pxd, today, "KR") : null;
+    if (!s || !ownCarried(s)) continue;
+    const us = s.cls === "us", mkDate = us ? data.usPxDate : data.pxDate;
+    if (s.pxd === mkDate) continue;
+    const pxd = ownCloseDate(s, mkDate);
+    const n = pxd ? tradingDaysAfter(pxd, today, us ? "US" : "KR") : null;
     if (n == null || n > LATE_CHECK_DAYS) out.set(s.t, { nk: typeof s.nk === "string" ? s.nk : s.t, pxd: s.pxd, n });
   }
   return out;
@@ -166,7 +170,7 @@ export function todayCtx(load, now) {
     return c;
   };
   if (out.size) lateSay(`left out of the check, shown with the aged line: ${[...out].map(([t, v]) => `${t} (last confirmed close ${JSON.stringify(v.pxd)}, `
-    + `${v.n == null ? "not a date whose age can be counted" : v.n + " KRX trading days"} before today ${today})`).join(", ")}; more than ${LATE_CHECK_DAYS} in total; every other stock is checked`);
+    + `${v.n == null ? "not a date whose age can be counted" : v.n + ((load.byT.get(t) || {}).cls === "us" ? " NYSE" : " KRX") + " trading days"} before today ${today})`).join(", ")}; more than ${LATE_CHECK_DAYS} in total; every other stock is checked`);
   const aged = new Map(ok && load.aged ? load.aged : []);
   for (const [t, v] of out) if (!aged.has(t)) aged.set(t, { nk: v.nk, pxd: v.pxd });
   return { state, byT: ok ? without(load.byT) : new Map(), coByT: ok ? without(load.coByT) : new Map(),
@@ -527,6 +531,8 @@ export function evaluateHolding(h, deck, ctx, weights, qty) {
   const status = soldOutFails ? "none" : reasons.length ? reasons[0].level : "none";
   const d1 = todayD1(s);
   const pxd = ownCloseDate(s, s && s.cls === "kr" ? ctx.pxDate : ctx.usPxDate);   // 2026-11-19 (Jack): a Korean stock's own date is against pxDate
+  // 2026-11-20 (review A): a US stock carried at its last confirmed close keeps its mark (pxc), so 홈 오늘 확인할 일 and 추가로 넣을 돈 group
+  // it with Jack's line (data.js ownCarried), not the halted sentence
   const band = rules.find((x) => x.id === "band" && x.check === "checked");
   const div = rules.find((x) => x.id === "divCut" && x.drops);
   return {
@@ -542,7 +548,7 @@ export function evaluateHolding(h, deck, ctx, weights, qty) {
     px: weights.px && weights.px.has(h.t) ? weights.px.get(h.t) : null,
     absent: !s,                                                   // not in today's data at all (v19.0c: the row stays)
     // a note only: never changes the status. Never on a 0-share holding (verification nit: not in 홈's 큰 움직임)
-    d1, dv: valueD1(s), pxd, bigMove: qty !== 0 && d1 != null && Math.abs(d1) >= BIG_MOVE,
+    d1, dv: valueD1(s), pxd, ...(pxd && s && s.cls === "us" && s.pxc === true ? { pxc: true } : {}), bigMove: qty !== 0 && d1 != null && Math.abs(d1) >= BIG_MOVE,
     noNewMoney: soldOutFails || NO_NEW_MONEY.includes(status),
   };
 }
