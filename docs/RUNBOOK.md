@@ -256,6 +256,64 @@ Open a new Claude Code Cloud session and paste (replace N with the issue number,
 Claude reads the run logs, fixes the cause by the CLAUDE.md rules (fix the data or the code, never loosen a check), and
 tells you what happened in plain words.
 
+## Checks on our own processing: drop or blank, then publish (Jack's standing rule, since #149)
+
+Jack, 2026-11-19: "Standing rule for checks on our own processing: a single bad row is dropped or blanked with a loud warning and
+the rest publishes. Block only when many rows fail in one run (set the number from recent runs and show it in the PR) or when a
+value would show a wrong number."
+
+"Own processing" means a check that catches a mistake in how our pipeline read, mapped or derived something (shape, consistency,
+mapping). Checks on what a source sends (freshness, coverage, two-source agreement, must-have stocks) are not covered and keep
+their rules. One exception, by Jack's own answer (2026-11-20, verbatim): "Brown-Forman B: no, it becomes a warning; one stock missing
+from a source never holds the publish." So "주식 종류 티커로 들어온 미국 종목 (BF-B)" only warns when BF-B is missing, with or without a
+reason (see "US share-class tickers" below).
+
+**How it works.** The rule that picks the bad rows lives once, in `validate_data.py`. The daily run calls the same function on its
+in-memory data, drops or blanks those rows, logs them and records them in `data.json` `ownDrop`; the gate then checks the file.
+
+| Check (PR) | Function | What the run does with a bad row | Recorded as | N |
+|---|---|---|---|---|
+| US share-class tickers (#139): an S&P 500 joined form (`BRKB`, `BFB`) published unmapped; such a form when the record can't tell where it came from; a ticker mapped differently from the gate's table | `us_class_bad_rows` | **drops the US row** right after the US list is built (before industries, ranks, splits, the popular list and counts), together with that ticker's entries in the run's own US records (split rows from the price download, `usForeign`, `usInfoPartial`, `usFcurUnknown`, `usInfo`): its price, market cap and scores may be another security's, so blanking one value would leave wrong numbers | `ownDrop.usClass` | 5 |
+| Hidden-yield reason lines (#142): a `dvLine` 2, 3 or 4 that `divCheck.proofSub` does not back (another line, a case with no line, a record that is missing or malformed, a preferred share, a stock whose yield shows, a restored stock) | `div_line_bad_rows` | **blanks that stock's `dvLine`** just before the files are written: the yield stays blank as it was and the app shows no reason line instead of one that may be wrong. A stock whose record calls for a line it does not carry is counted too (nothing to blank; it shows a blank with no reason) | `ownDrop.divLine` | 5 |
+
+`ownDrop` is `{"usClass": {"n": rows, "rows": [[key, reason], …first 30]}, "divLine": {…}}`, written on every run (0 on a clean run).
+Run log: `!! {check}: {n}건 빼고 발행` (US) or `!! {check}: {n}건 비움` (lines), with the first 30 keys and reasons, or a `· … 0건` line.
+
+**Gate.** For each of these checks the publish fails only when (1) more than N rows were dropped or blanked in the run, or (2) a
+bad value is still in the file and would show a wrong number or a wrong reason line (the drop step itself broke). 1 to N rows:
+warning, naming them (detail lists "파이프라인이 뺀 미국 종목" and "파이프라인이 비운 숨긴 배당수익률의 줄"). Record problems that
+show users nothing are warnings: a malformed `proofSub` (its lines are blanked and counted), a mapping that differs from the table with
+no published row left, a line the record asks for but the stock lacks, and a malformed `usListSym` field the joined-form and mapping
+checks don't depend on. One record problem still fails the publish, as it did before: any malformed `usListSym.mapped` row (`mapped`
+only ever holds the joined-form rows, so with a bad row the gate can't tell where a joined form was mapped and can't rule out a wrong
+company in the list; the site checks warn). The rows that are well formed are still read one by one, so a wrongly mapped row is still
+dropped. For the lines, the count is the number of distinct stocks that lose their reason line in the run: lines blanked today, lines
+still wrong in the file, and lines 2 · 3 · 4 of the previous publish that today's `proofSub` can't back because that part is missing or
+malformed (the record and the lines vanishing together blank nothing, but those stocks still lose their line). These are usually
+different stocks, so they are added up, not compared. The run log counts the same stocks (it reads the previous publish).
+On the site checks (`--live`: deploy and watchdog) "more than N" warns instead of failing, and the US rows keep #139's live behaviour.
+A file without `ownDrop` (published before #149) keeps the old rule for that row, so the live gate and the watchdog are not blocked by
+it; a malformed `ownDrop` (the whole object or one entry) also keeps the old rule and adds a warning.
+
+**N** = max(5, 3 × the highest count seen). Replayed over the last 25 publishes on the `data` branch (2026-11-06 to 11-19): 0 for
+both checks every time, so N = 5 (`US_CLASS_DROP_MAX`, `DIV_LINE_BLANK_MAX`; the table is in PR #149). Jack, 2026-11-20: "Yes to “more
+than 5 rows” as the default for the standing rule." For scale: the 11-19 file has
+800 US stocks and 30 lines 2·3·4, so a broken record that blanks all 30 lines (or loses them with the record) fails the gate, as it should.
+**The US count cannot realistically pass 5:** its rows come only from the two table forms (`BRKB`, `BFB`), at most one joined row and one
+wrongly mapped row each, so about 4 a run (only a hand-made, malformed record could list more). N = 5 is the rule's floor; what protects
+this check is the other fail: a row that should have been dropped is still in the file.
+
+**When the gate warns** (rows dropped or blanked, 1 to N): the publish went out without those rows. Read the reasons in the gate's
+detail list and the run log. A US row: the mapping table (`fetch_data.US_CLASS_JOINED` vs `validate_data.US_CLASS_JOINED_SET`) or
+Yahoo answering a joined form; fix with the recipe in "US share-class tickers" below. A line: the pipeline's `prove_line` and
+`proof_sub` disagree, or the record broke; fix the code in `DivWhy.prove`. The rows stay out until the fix ships; nothing else waits.
+
+**When the gate fails**: "뺀 행이 기준 5 을 넘음" or "줄을 잃은 종목이 기준 5 을 넘음" means many rows broke at once: our reading is
+probably broken for everyone, so nothing is published (users keep the last good data). "빼야 할 티커가 남아 실림" or "기록과 맞지 않는
+줄이 남음" means the drop step did not run or did not work: fix the pipeline. "mapped 에 모양이 틀린 줄이 있어 …" means `us_tickers`
+wrote a broken mapping record: fix the record code. Never raise N or skip the row to get a publish out;
+a different N needs Jack's yes with new evidence.
+
 ## Checked low-PBR companies (gate warning "PBR 0.1 미만 국내 회사")
 
 The daily gate (`validate_data.py`) warns, by name, about every Korean company with a PBR under 0.1 that the unit check
@@ -690,7 +748,12 @@ uncounted 2, data 22, the 32.5% yield 1; lines: 1 → 0 stocks, 2 → 8, 3 → 1
   the table names each stock and the failing number.
 - **WARN "배당 기준 증명 경고 (되살리지 않은 이유 · 조회 실패)"**: names the stocks not restored, by reason (with the `proofSub` case and
   whether it shows a line, since #PR).
-- **FAIL "숨긴 배당수익률의 줄 (divCheck.proofSub · dvLine 2 · 3 · 4)"** (since #PR): `divCheck.proofSub` is not v1 with exactly `rights`
+- **"숨긴 배당수익률의 줄 (divCheck.proofSub · dvLine 2 · 3 · 4)"** — since #149 under Jack's standing rule (section "Checks on our own
+  processing" above): the run blanks every line the record does not back (`ownDrop.divLine`) and publishes; the row fails only when
+  more than 5 distinct stocks lose their line in the run (blanked, still wrong, or lost together with a missing or malformed `proofSub`,
+  counted from the previous publish, all added up) or a line the record does not back is still in the file, and warns otherwise. The rules below are
+  what "backed" means, and they are the whole rule for files without `ownDrop` (#142's FAIL as written).
+  (since #PR): `divCheck.proofSub` is not v1 with exactly `rights`
   and `data`, its stocks differ from the proof's `rightsT` · `dataT`, a case is unknown, or the marks differ: `dvLine` 2 must be on
   exactly the `rights` stocks with case `sh`, `dvLine` 3 on exactly the `data` stocks with case `div`, `dvLine` 4 on exactly the `data`
   stocks with case `nototal` · `nostk` · `pref0` · `nopfo` · `prefmix` (`PROVE_SUB_LINE`); a `data` stock with case `other` carries no
@@ -928,17 +991,26 @@ tickers missing from the day's list → reason (null on a day the list was not t
 all · `spErr` those whose processing stopped on an error (a different problem: not a sign of a dotted class) · `missing` stocks
 this rule added (`BF-B`) that are not in the day's list → reason · `read` whether the run left a ticker record.
 
-**Gate rows** (`check_us_share_class`, stricter only):
+**Gate rows** (`check_us_share_class`; added as stricter-only rows in #139, and since #149 a missing BF-B warns instead of failing):
 - "주식 종류 티커로 들어온 미국 종목 (BF-B): 목록에 있거나 빠진 이유" — #126's rule for the stocks this rule added
   (`US_CLASS_SET` = `fetch_data.US_CLASS_ADDED`): in the day's data, or named in `usListSym.missing` with the reason (S&P 500 list not
-  read, not in today's S&P 500 list, its list name blank or not matching, too little price history …). Named: warn. Missing with no
-  reason: the publish fails; the site checks (deploy, watchdog) only warn. A file without `usListSym` warns on a publish and is
+  read, not in today's S&P 500 list, its list name blank or not matching, too little price history …). **Since #149 (Jack, 2026-11-20:
+  "Brown-Forman B: no, it becomes a warning; one stock missing from a source never holds the publish.")** a missing BF-B only warns,
+  named with its reason, or "이유 없이 빠짐" when the run wrote none (before #149 that case failed the publish). The row fails the
+  publish in one case only: BF-B's row is in the list but has no price (0, blank, negative or not a number) and no reason — the app
+  would show it without a price, a wrong value (the same fail as before; the site checks only warn, as before). A published `BFB`
+  with another security's numbers is the next row's job and still fails. A file without `usListSym` warns on a publish and is
   skipped by the site checks.
 - "미국 목록 출처 티커 (주식 종류 · 점이 지워진 꼴)":
   - **Warns** when a joined form (`BRKB`, `BFB`) is still in that day's S&P 500 tickers (`spTickers`), published or not: the
     mapping row was lost or the rule broke. Yahoo has no such ticker, so that form normally drops for lack of a price; the "들어온 종목"
     row then gives BF-B's reason as "S&P 500 목록에 점이 지워진 꼴 BFB 로 있는데 BF-B 로 바뀌지 않음 (바꾸기 확인 필요)" — a mapping
     problem, not "S&P dropped Brown-Forman" — and `noPx` names `BFB` too. Fix the table (see the recipe below).
+  - **Since #149 (Jack's standing rule, section "Checks on our own processing" above):** the run drops the rows this row would fail
+    on (`us_class_bad_rows`: the joined form published from the S&P list, the same form when `spTickers` is malformed, the row of a
+    ticker mapped differently from the gate's table) and records them in `ownDrop.usClass`. With that record the row fails only when
+    more than 5 rows were dropped, such a row is still published, or any `mapped` row is malformed (the mapping can't be checked;
+    as strict as before); other record-shape problems and a mapping that differs from the table with no published row left only warn. The bullets below are the rule for files without `ownDrop`, and what "such a row" means.
   - **Fails** only if such a form is also a published ticker. Since Yahoo has no `BFB`/`BRKB`, in practice this catches one case:
     Yahoo answering the joined form with some other security, which would put the wrong company in the list. The same letters from
     another source (a real Nasdaq company that one day gets the ticker `BFB`) are only named, so a real ticker can never block every
