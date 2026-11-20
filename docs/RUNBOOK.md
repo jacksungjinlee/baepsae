@@ -601,40 +601,69 @@ Jack, 2026-11-20 (verbatim): "Yes to 10 minutes, but a timeout skips the Daum sp
 on the other checks. An outside site must never block a code fix."
 
 On a second-source day (data.json `pxSrc.px` = `daum+yahoo`) while the volunteer cache still has no final file for pxDate, the gate
-fetches its own closes to compare: the 7 must-haves plus a 200-stock sample (`http_px_alt`, 4 at a time, 20 s per request, three
-tries). The deploy and the watchdog run the gate with `--live`, and there it asks Daum only. On 11-20 at 09:03 KST the deploy sat 19
-minutes in that step with no output (Daum slow); the job's only limit was 80 minutes. A normal run takes about a minute (from here
-on 11-20: 54 s for 206 stocks, the whole gate 66 s).
+fetches its own closes to compare: the 7 must-haves plus a 200-stock sample, about 206 stocks in all on real data (`http_px_alt`,
+4 at a time, 20 s per request, three tries). The deploy and the watchdog run the gate with `--live`, and there it asks Daum only. On
+11-20 at 09:03 KST the deploy sat 19 minutes in that step with no output (Daum slow); the job's only limit was 80 minutes. A normal
+run takes about a minute (from here on 11-20: 54 s for 206 stocks, the whole gate 66 s).
 
-Now, **in `--live` only** (deploy and watchdog), the whole spot check has a 600 s limit (`PX_ALT_LIVE_BUDGET_S`):
-- it logs a start line in both modes: "· 관문의 두 출처 확인 시작 (… · 다음 일별 시세 + 발행 기록): 206종목 · 동시 4 · 시간 한도 600초 …"
-  (the daily publish gate says "시간 한도 없음 (발행 관문 · 예전 그대로)"), and the result line ends with "걸린 시간 n초";
+**Who gets the limit: the deploy only.** Jack's yes names the deploy. The deploy's gate step (`deploy.yml`, "발행 관문
+(validate_data.py --live, 올릴 파일 그대로)") sets `BAEPSAE_DAUM_LIMIT_S: "600"` (= `PX_ALT_LIVE_BUDGET_S`) in that step's `env`; by
+hand the same is `python validate_data.py --live --daum-limit 600 --dir DIR`. A limit shorter than 600 s, or a value that is not a
+number, stops the gate with FAIL before anything is fetched (a shorter limit would skip more often). Not limited, as before:
+- the **watchdog** (`watchdog.py` calls `validate_data.py --live --dir …` with no limit). It opens an alert only on a gate FAIL, so
+  a WARN would turn a slow-Daum watchdog run into a quiet pass. If Daum hangs there, the watchdog job's own 30-minute limit ends it,
+  as before;
+- the **daily run's gate** (publish mode) and `--bootstrap`: no limit even if one is given ("· 다음 확인 시간 한도(…)는 사이트
+  점검(--live)에서만 써요 — 이 실행(publish)은 한도 없이 예전 그대로"), every stock asked, coverage short means FAIL.
+
+In the deploy, the whole spot check has a 600 s limit:
+- it logs a start line: "· 관문의 두 출처 확인 시작 (… · 다음 일별 시세 + 발행 기록): 206종목 · 동시 4 · 시간 한도 600초 (배포 — …)"
+  (the watchdog says "시간 한도 없음 (예전 그대로)", the daily gate "시간 한도 없음 (발행 관문 · 예전 그대로)"), and the result line
+  "관문의 두 출처 공식 종가 …" ends with "걸린 시간 n초";
 - the must-haves are asked first; after 600 s no new request is sent, retries included. A request already in flight finishes under
   its own limits (20 s to connect + 20 s between bytes, so about 40 s; a DNS lookup or a server dribbling bytes is outside that,
   never seen), so the spot check ends by about 10 min 40 s at worst. All worker threads have ended when it returns;
+- each stock ends in exactly one of four states: **close received**, **Daum's definite non-answer** (no row for that day, HTTP 4xx
+  other than 429, no close in the row), **network error** (all three tries failed: timeout, refused, 5xx, 429) or **cut** (not asked,
+  or not asked again, before the limit). A stock that errored and was then cut keeps its error in the log ("… (시간 한도로 다시 묻지 않음)");
 - the log says it twice: at the moment ("!! 관문의 두 출처 확인 시간 한도 600초: 다음 일별 시세를 더 묻지 않아요 …") and after
-  ("!! 관문의 두 출처 확인이 시간 한도 600초에 걸렸어요 (Jack 2026-11-20): 확인 n / 207종목 · 시간 한도로 건너뜀 k …");
-- the row **"pxDate 최종본 여부" turns WARN** with the counts ("…를 시간 한도 600초로 건너뜀 (Jack 2026-11-20) — 한도 전에 확인 n /
-  207종목 …"). It is a GitHub warning annotation, so the morning check sees it. Only the coverage part of the spot check is skipped
-  (all must-haves and 90% of the sample answered). Everything else on that row is checked as before: the file's own record (pxSrc
-  says second source, its date is pxDate, no must-have unconfirmed at publish, confirmed count ≥ published Korean stocks), pxDate
-  before today and after that day's close + 30 min. If one of those fails, the gate fails as before;
-- the closes Daum did return are still compared with the published prices exactly as before: "005930 = 공식 종가" must match to the
-  won, and "한국 가격 = 공식 종가" needs 99% of the stocks received (WARN while it passes, because it saw only part of the sample).
-  With fewer stocks one wrong close weighs more, so this is never looser than a full check. With no close received, both rows WARN;
+  ("!! 관문의 두 출처 확인이 시간 한도 600초에 걸렸어요 (Jack 2026-11-20): 확인 n / 206종목 · 시간 한도로 건너뜀 k · 네트워크 오류 e ·
+  다음이 그날 종가를 주지 않음 d …", ending with what the gate will do).
+
+**What a cut skips, and what still fails.** Only the shortfall that the cut (and network errors) can explain is skipped:
+- **WARN, deploy continues:** every must-have was received, cut or hit a network error, and received + cut + network errors is at
+  least 90% of the stocks asked. The row **"pxDate 최종본 여부" turns WARN** with the counts ("…를 시간 한도 600초로 건너뜀 (Jack
+  2026-11-20) — 한도 전에 확인 n / 206종목 (시간 한도로 건너뜀 k · 네트워크 오류 e · 다음이 그날 종가를 주지 않음 d) …"). It is a GitHub
+  warning annotation, so the morning check sees it;
+- **still FAIL, as before ("최종본 날짜 계산"):** a must-have that Daum definitely did not answer (no row, HTTP 4xx, no close), or
+  so many definite non-answers that even counting every cut and network-error stock as received stays under 90% ("… 모두 받았다고
+  쳐도 n / 206 (기준 90%) …"). These are not caused by the time limit, so the time limit does not excuse them;
+- **still FAIL, as before:** the file's own record (pxSrc says second source, its date is pxDate, no must-have unconfirmed at
+  publish, confirmed count ≥ published Korean stocks), pxDate before today and after that day's close + 30 min;
+- **wrong closes still FAIL:** every close Daum did return is compared with the published price. "005930 = 공식 종가" must match to
+  the won. "한국 가격 = 공식 종가" counts the wrong closes it saw against all the stocks it meant to ask (about 206), treating the
+  stocks it never received as matching: it FAILs when (asked − wrong seen) / asked is under 99%, so a FAIL here always means the full
+  check would have failed too (1 wrong among 60 received: 205/206 → WARN; 3 wrong: 203/206 = 98.5% → FAIL). It is a WARN while it
+  passes, because it saw only part of the sample. With no close received, both price rows WARN;
 - if the limit hits after the must-haves and 90% of the sample have already answered, the row is checked as before and passes, with
   a WARN that says how many were skipped.
 
-The daily run's gate (publish mode) is unchanged: no limit, every stock asked, coverage short means FAIL. A Daum outage that fails
-fast (errors within the 600 s) is also unchanged in `--live`: coverage short means FAIL, as before. Only a timeout is skipped.
+**Known limit (unchanged, needs Jack's yes to change):** a Daum outage that fails fast still blocks every deploy, because nothing is
+cut. If Daum answers 403 to GitHub's servers, every stock is a definite non-answer and the gate fails within seconds; if it refuses
+connections quickly, all three tries fail inside the 600 s and coverage is short with no cut, so the gate fails as before. Only a
+slow Daum is skipped.
 
 If the WARN shows:
-1. Look at the time between the start line and the "!!" line in the deploy (or watchdog) log: that is Daum's speed today.
-2. The deploy went ahead on the other checks. Nothing to undo; the next deploy or watchdog run checks again. If the volunteer cache
-   gets its final file for pxDate later, the gate compares against that file instead and Daum is not asked at all.
-3. Do not raise the limit to make a run pass. If it hits on days when Daum answers at normal speed, bring the log times to Jack.
-4. If a price row fails on a timeout day, it is a real mismatch between Daum's close and the published price (or a must-have's close
-   differs): treat it like the same row failing on a normal day.
+1. Read "걸린 시간 n초" at the end of the line "관문의 두 출처 공식 종가 …" in the deploy log (and the counts on the "!!" line after
+   it): that is Daum's speed today. (The time between the start line and the "!!" line is not reliable where the output is collected
+   and printed at the end.)
+2. The deploy went ahead on the other checks. Nothing to undo; the next deploy, and the watchdog's own unlimited run, check again. If
+   the volunteer cache gets its final file for pxDate later, the gate compares against that file instead and Daum is not asked at all.
+3. Do not shorten or raise the limit to make a run pass. If it hits on days when Daum answers at normal speed, bring the log times
+   to Jack.
+4. If a price row or "최종본 날짜 계산" fails on a timeout day, it is not the timeout: it is a real mismatch between Daum's close and
+   the published price, a must-have Daum has no close for, or too many stocks with no close. Treat it like the same row failing on
+   a normal day.
 
 ## Korean dividend proof (배당 기준 증명, since #PR — Jack 2026-11-14, item 5)
 
