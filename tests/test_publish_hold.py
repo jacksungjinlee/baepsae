@@ -758,7 +758,7 @@ def test_only_a_held_run_is_neutral_and_an_api_hiccup_counts_the_run_as_before(c
 
 
 # ── 10. 같은 날 다시 도는 실행은 발행본이 확인한 종목을 다시 묻지 않아요 (출처 요청 줄이기) ──────────
-def _fb_run(uni, day, cached=None, keep=None, asked=None, no_yahoo=()):
+def _fb_run(uni, day, cached=None, keep=None, asked=None, no_yahoo=(), answered=True):
     """test_kr_two_source 의 실제 응답 픽스처로 kr_fallback_days 를 돌려요. asked: 묻는 종목을 단계마다 적어요 {"daum", "yahoo", "fill"}.
     no_yahoo: 야후가 그날 종가를 주지 않는 종목 (확인 못 한 종목을 만들어요)."""
     import test_kr_two_source as T2
@@ -770,7 +770,10 @@ def _fb_run(uni, day, cached=None, keep=None, asked=None, no_yahoo=()):
 
     def fetch_yahoo(cm, s, e):
         asked.setdefault("yahoo", []).extend(cm)
-        return {c: {k: v for k, v in d.items() if k != day} for c, d in T2.yahoo().items() if c in cm and c not in no_yahoo}, 0
+        out = F.YahooAnswers({c: {k: v for k, v in d.items() if k != day} for c, d in T2.yahoo().items() if c in cm and c not in no_yahoo})
+        if answered:                                                              # 야후가 '자료 없음' 으로 답함 (아니면 받지 못함 — 오류 · 시간 초과)
+            out.empty |= {c for c in no_yahoo if c in cm}
+        return out, 0
 
     def fill(y, cm, d, close_time):
         asked.setdefault("fill", []).extend(cm)
@@ -947,63 +950,106 @@ def test_a_file_with_a_same_day_reuse_record_passes_the_gate_and_the_konex_row_c
 
 
 def test_dart_makes_no_calls_on_a_same_day_rerun(tmp_path, monkeypatch):
-    """리뷰 5: 같은 날 다시 도는 실행은 DART 를 부르지 않아요 (하루 한도 20,000 · 다시 도는 실행마다 670 ~ 800회 × 7 + 전체 DART 날)."""
+    """리뷰 5: 같은 기준일을 다시 도는 실행은 DART 를 부르지 않아요 (하루 한도 20,000 · 다시 도는 실행마다 670 ~ 800회). 재확인 · 다시 읽기 몫도 쓰지 않아요."""
     def boom(*a, **k):
         raise AssertionError("DART 를 불렀어요")
     monkeypatch.setattr(F.requests, "get", boom)
     c = F.DartClient("시험키아님", path=str(tmp_path / "none.json.gz"))
-    c.no_call = "같은 날 다시 도는 실행 (시험)"
+    c.no_call = "같은 기준일을 다시 도는 실행 (시험)"
     assert c.get("list.json", {"corp_code": "00126380"}) is None and c.get("elestock.json", {"corp_code": "1"}) is None
     assert c.blocked == 2 and "DART 를 부르지 않았어요 (막은 조회 2회" in c.summary()
+    # 90일 지난 항목 (재확인 대상): 부르지 않는 실행은 재확인으로 세지 않고 보관본 값을 그대로 줘요
+    key = "00126380|2025|11011|t"
+    c.entries[key] = {"st": "000", "at": "2026-01-01", "d": {"x": 1}}
+    left = c.revalidate_left
+    assert c.report("fnlttSinglAcnt.json", "00126380", 2025, "11011", "t", lambda j: j) == {"x": 1}
+    assert c.revalidated == 0 and c.revalidate_left == left and c.blocked == 2 and "재확인" not in c.summary()
     body = __import__("inspect").getsource(F.main)
-    assert "client.no_call = why_sd" in body and "load_morning_disc()" in body
-    i_reuse, i_fetch = body.index("if prev_disc is not None:"), body.index('disc = ph.run("공시", fetch_disclosures')
-    assert i_reuse < i_fetch                                                      # 아침 발행본이 있으면 공시 단계를 부르지 않아요
+    assert "client.no_call = why_sd" in body and "load_morning_disc(live=prev)" in body
+    assert body.index("if prev_disc is not None:") < body.index('disc = ph.run("공시", fetch_disclosures')
 
 
-def test_same_day_rerun_and_the_morning_disc():
-    today = dt.date(2026, 11, 21)
+def test_same_day_rerun_is_keyed_on_the_price_date_not_the_publish_day():
+    """리뷰 2: 월요일에 금요일 데이터를 다시 도는 실행도 같은 기준일이에요 (DART 를 부르지 않아요) — 발행한 날과 상관없이."""
     prev = dict(pub(kr=KR5), publishedAt="2026-11-21T06:52:00+09:00")
     src = {"px": FB}
-    assert F.kr_same_day_rerun(prev, src, dt.date(2026, 11, 20), today)[0] is True
-    assert F.kr_same_day_rerun(prev, src, dt.date(2026, 11, 21), today)[0] is False       # 새 기준일
-    assert F.kr_same_day_rerun(dict(prev, publishedAt="2026-11-20T23:59:00+09:00"), src, dt.date(2026, 11, 20), today)[0] is False   # 어제 발행
-    assert F.kr_same_day_rerun(prev, {"px": LISTING}, dt.date(2026, 11, 20), today)[0] is False
-    assert F.kr_same_day_rerun(listing_data("2026-11-20"), src, dt.date(2026, 11, 20), today)[0] is False
+    assert F.kr_same_day_rerun(prev, src, dt.date(2026, 11, 20))[0] is True
+    assert F.kr_same_day_rerun(dict(prev, publishedAt="2026-11-14T06:40:00+09:00"), src, dt.date(2026, 11, 20))[0] is True
+    assert F.kr_same_day_rerun(prev, src, dt.date(2026, 11, 21))[0] is False       # 새 기준일
+    assert F.kr_same_day_rerun(prev, {"px": LISTING}, dt.date(2026, 11, 20))[0] is False
+    assert F.kr_same_day_rerun(listing_data("2026-11-20"), src, dt.date(2026, 11, 20))[0] is False
 
 
-def test_load_morning_disc(tmp_path):
+def test_the_morning_disc_is_reused_only_from_the_same_publish(tmp_path):
     p = tmp_path / "disc.json"
-    p.write_text(json.dumps({"insider": [{"t": "005930"}], "nps": [], "issue": []}))
-    d, why = F.load_morning_disc(str(p))
-    assert d["insider"] == [{"t": "005930"}] and "내부자 1건" in why
+    live = {"publishedAt": "2026-11-21T06:52:00+09:00"}
+    p.write_text(json.dumps({"asOf": "2026-11-21", "insider": [{"t": "005930"}], "nps": [], "issue": [], "publishedAt": live["publishedAt"]}))
+    d, why = F.load_morning_disc(str(p), live=live)
+    assert d["insider"] == [{"t": "005930"}] and "내부자 1건" in why and "공시 내용 날짜 2026-11-21" in why
+    d, why = F.load_morning_disc(str(p), live={"publishedAt": "2026-11-21T09:40:00+09:00"})    # 다른 발행의 disc.json → 쓰지 않아요
+    assert d is None and "다른 발행" in why
     p.write_text("{}")
     assert F.load_morning_disc(str(p))[0] is None
     assert F.load_morning_disc(str(tmp_path / "없음.json"))[0] is None
 
 
-def test_a_rerun_that_gained_nothing_quiets_later_starts_for_three_hours():
-    """리뷰 6: 같은 날 다시 돌아 그 날짜 종가 국내 종목을 늘리지 못하면, 3시간 안의 정해진 시각 · 바깥 타이머 실행은 데이터를 모으지 않아요."""
-    prev = dict(pub(kr=KR5, us="2026-11-20"), publishedAt="2026-11-21T06:52:00+09:00")
-    state = F.kr_rerun_state(prev, {"pxDate": "2026-11-20", "usPxDate": "2026-11-20"}, kst(2026, 11, 21, 9, 30), 2474, 2474)
-    assert state["gain"] == 0 and state["day"] == "2026-11-21"
-    why = F.kr_rerun_throttle(state, prev, kst(2026, 11, 21, 11, 0))
-    assert why and "09:30 KST" in why and "90분 남음" in why
-    assert F.kr_rerun_throttle(state, prev, kst(2026, 11, 21, 12, 30)) is None     # 3시간 지남
-    assert F.kr_rerun_throttle(state, prev, kst(2026, 11, 21, 11, 0), auto=False) is None   # 손으로 누른 실행은 늘 돌아요
-    assert F.kr_rerun_throttle(dict(state, gain=3), prev, kst(2026, 11, 21, 11, 0)) is None  # 늘었으면 쉬지 않아요
-    assert F.kr_rerun_throttle(dict(state, gain=None), prev, kst(2026, 11, 21, 11, 0)) is None
-    assert F.kr_rerun_throttle(state, dict(prev, usPxDate="2026-11-21"), kst(2026, 11, 21, 11, 0)) is None   # 발행본 날짜가 바뀜
-    assert F.kr_rerun_throttle(state, prev, kst(2026, 11, 22, 9, 40)) is None      # 다음 날
-    late = F.kr_rerun_state(prev, {"pxDate": "2026-11-20", "usPxDate": "2026-11-20"}, kst(2026, 11, 21, 14, 0), 2474, 2474)
-    assert F.kr_rerun_throttle(late, prev, kst(2026, 11, 21, 15, 31)) is None      # 15:30 뒤에는 새 거래일이 끝날 수 있어 쉬지 않아요
-    assert F.kr_rerun_state(prev, {"pxDate": "2026-11-21", "usPxDate": "2026-11-21"}, kst(2026, 11, 21, 9, 30), 2474, 2474)["gain"] is None
-    assert F.kr_rerun_throttle(None, prev, kst(2026, 11, 21, 11, 0)) is None
+LIVE_ENV = {"GITHUB_RUN_ID": "44700000001", "DRY_RUN": ""}
 
 
-def test_main_skips_collecting_when_quiet(monkeypatch, capsys):
+def test_a_green_rerun_that_gained_nothing_quiets_later_starts_for_three_hours():
+    """리뷰 6 · 2차: 같은 기준일을 다시 돌아 그 날짜 종가 국내 종목을 늘리지 못한 실제 실행이 초록으로 끝났을 때만, 3시간 안의 정해진 시각 · 바깥 타이머
+    실행은 데이터를 모으지 않아요. 시험 실행은 기록을 남기지 않고, 관문 · 화면 검사에 실패한 실행 (초록 아님) 의 기록은 믿지 않아요."""
     prev = dict(pub(kr=KR5, us="2026-11-20"), publishedAt="2026-11-21T06:52:00+09:00")
-    state = F.kr_rerun_state(prev, {"pxDate": "2026-11-20", "usPxDate": "2026-11-20"}, kst(2026, 11, 21, 9, 30), 5, 5)
+    same = pub(kr=KR5, us="2026-11-20")
+    state = F.kr_rerun_state(prev, same, kst(2026, 11, 21, 9, 30), 2474, 2474, env=LIVE_ENV)
+    assert state["gain"] == 0 and state["run"] == "44700000001"
+    green, red = (lambda r: True), (lambda r: False)
+    why = F.kr_rerun_throttle(state, prev, kst(2026, 11, 21, 11, 0), run_ok=green)
+    assert why and "09:30 KST" in why and "90분 남음" in why and "44700000001" in why
+    assert F.kr_rerun_throttle(state, prev, kst(2026, 11, 21, 11, 0), run_ok=red) is None          # 그 실행이 빨갛게 끝남 → 쉬지 않아요
+    assert F.kr_rerun_throttle(state, prev, kst(2026, 11, 21, 11, 0), run_ok=lambda r: None) is None   # 확인 못 함
+    assert F.kr_rerun_throttle(state, prev, kst(2026, 11, 21, 11, 0)) is None                   # 확인하는 함수 없음
+    assert F.kr_rerun_throttle(state, prev, kst(2026, 11, 21, 12, 30), run_ok=green) is None    # 3시간 지남
+    assert F.kr_rerun_throttle(state, prev, kst(2026, 11, 21, 11, 0), auto=False, run_ok=green) is None   # 손으로 누른 실행은 늘 돌아요
+    assert F.kr_rerun_throttle(dict(state, gain=3), prev, kst(2026, 11, 21, 11, 0), run_ok=green) is None
+    assert F.kr_rerun_throttle(state, dict(prev, usPxDate="2026-11-21"), kst(2026, 11, 21, 11, 0), run_ok=green) is None
+    assert F.kr_rerun_throttle(state, prev, kst(2026, 11, 22, 9, 40), run_ok=green) is None     # 다음 날
+    early = F.kr_rerun_state(prev, same, kst(2026, 11, 21, 6, 50), 5, 5, env=LIVE_ENV)
+    assert F.kr_rerun_throttle(early, prev, kst(2026, 11, 21, 7, 30), run_ok=green) is None     # 07:00 전 기록 (미국 종가 확정 앞뒤)
+    late = F.kr_rerun_state(prev, same, kst(2026, 11, 21, 14, 0), 5, 5, env=LIVE_ENV)
+    assert F.kr_rerun_throttle(late, prev, kst(2026, 11, 21, 15, 31), run_ok=green) is None     # 15:30 뒤에는 새 거래일이 끝날 수 있어요
+    # 기록을 남기지 않는 실행: 시험 실행 · GitHub 실행 번호 없음 · 같은 기준일이 아님
+    assert F.kr_rerun_state(prev, same, kst(2026, 11, 21, 9, 30), 5, 5, env={"GITHUB_RUN_ID": "1", "DRY_RUN": "true"}) is None
+    assert F.kr_rerun_state(prev, same, kst(2026, 11, 21, 9, 30), 5, 5, env={}) is None
+    assert F.kr_rerun_state(prev, pub(px="2026-11-21", us="2026-11-21"), kst(2026, 11, 21, 9, 30), 5, 5, env=LIVE_ENV) is None
+    # 월요일: 토요일 기록은 쉬게 하지 않아요 (같은 날 기록만)
+    sat = F.kr_rerun_state(prev, same, kst(2026, 11, 21, 9, 30), 5, 5, env=LIVE_ENV)
+    assert F.kr_rerun_throttle(sat, prev, kst(2026, 11, 23, 10, 53), run_ok=green) is None
+
+
+def test_github_run_succeeded_reads_the_public_run(monkeypatch):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+
+    class R:
+        def __init__(self, st, js):
+            self.status_code, self._js = st, js
+
+        def json(self):
+            return self._js
+    seen = []
+
+    def get(url, **kw):
+        seen.append((url, kw.get("headers", {}).get("Authorization")))
+        return R(200, {"status": "completed", "conclusion": "success"})
+    assert F.github_run_succeeded("123", get=get) is True and seen == [("https://api.github.com/repos/o/r/actions/runs/123", None)]   # 토큰 없이
+    assert F.github_run_succeeded("123", get=lambda u, **k: R(200, {"status": "completed", "conclusion": "failure"})) is False
+    assert F.github_run_succeeded("123", get=lambda u, **k: R(403, {})) is None
+    assert F.github_run_succeeded("123", get=lambda u, **k: (_ for _ in ()).throw(OSError("x"))) is None
+
+
+def test_main_skips_collecting_when_quiet_and_marks_it(tmp_path, monkeypatch, capsys):
+    prev = dict(pub(kr=KR5, us="2026-11-20"), publishedAt="2026-11-21T06:52:00+09:00")
+    state = F.kr_rerun_state(prev, pub(kr=KR5, us="2026-11-20"), kst(2026, 11, 21, 9, 30), 5, 5, env=LIVE_ENV)
 
     class Clock(dt.datetime):
         @classmethod
@@ -1012,11 +1058,77 @@ def test_main_skips_collecting_when_quiet(monkeypatch, capsys):
     monkeypatch.setattr(F.dt, "datetime", Clock)
     monkeypatch.setattr(F, "read_prev_data", lambda: prev)
     monkeypatch.setattr(F, "kr_rerun_state_load", lambda: state)
+    monkeypatch.setattr(F, "github_run_succeeded", lambda r: True)
     monkeypatch.setattr(F, "load_industry_tables", lambda: (_ for _ in ()).throw(AssertionError("데이터를 모으기 시작했어요")))
     monkeypatch.setenv("BAEPSAE_AUTO_RUN", "1")
     monkeypatch.setenv("DART_MODE", "cache")
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     assert F.main() is None
     assert "3시간이 지나기 전이라" in capsys.readouterr().out
+    assert (tmp_path / F.QUIET_MARK).read_text().startswith("같은 기준일을 다시 도는 실행이에요")
+
+
+def test_a_quiet_run_is_neutral_and_never_closes_an_alarm(tmp_path, monkeypatch, capsys):
+    """2차 리뷰 MUST: 쉬는 실행 (데이터 수집 없음 · 파일 = 발행본) 은 시험한 것이 없어 건강한 실행으로 세지 않아요 — 감시에 중립 (표시 단계가 돌아요).
+    재현 (revHB/quiet_same.py): 같은 파일이면 '같은 날 · 더 낫지 않음' (건강) 이 되던 것이 이제 '쉼' (중립) 이에요."""
+    live = pub(kr=KR5, others=US2)
+    mark = tmp_path / "baepsae-quiet.txt"
+    mark.write_text("같은 기준일을 다시 도는 실행이에요: 09:30 KST … 데이터를 모으지 않아요\n")
+    hold, out, summ, _ = run_main(tmp_path, monkeypatch, copy.deepcopy(live), live, kst(2026, 11, 21, 10, 53), argv=["--quiet", str(mark)],
+                                  actions=True)
+    lines = out.splitlines()
+    assert hold is True and "kind=quiet" in lines and "neutral=true" in lines and lines[-1] == "hold=true"
+    log = capsys.readouterr().out
+    assert "!! [쉼]" in log and "::notice title=쉬는 실행" in log and "쉼 — 데이터를 모으지 않은 실행" in summ
+    # 표시 파일이 없으면 예전처럼 (같은 파일 → 같은 날 · 더 낫지 않음 · 건강)
+    hold, out, _, _ = run_main(tmp_path, monkeypatch, copy.deepcopy(live), live, kst(2026, 11, 21, 10, 53), argv=["--quiet", str(tmp_path / "없음")])
+    assert "kind=same" in out.splitlines() and "neutral=false" in out.splitlines()
+    # 워크플로: 데이터 수집이 남긴 표시가 있으면 발행 판단에 넘겨요
+    r, o, calls = run_hold_step(tmp_path, 'echo "hold=true" >> "$GITHUB_OUTPUT"\n', {"RUNNER_TEMP": str(tmp_path)})
+    assert f"--quiet {tmp_path}/baepsae-quiet.txt" in calls
+    mark.unlink()
+    r, o, calls = run_hold_step(tmp_path, 'echo "hold=true" >> "$GITHUB_OUTPUT"\n', {"RUNNER_TEMP": str(tmp_path)})
+    assert "--quiet" not in calls
+
+
+def test_yahoo_empty_answers_are_told_apart_from_failures(monkeypatch):
+    """2차 리뷰 1: '야후가 싣지 않음' (noList) 은 잘 된 빈 답 (빈 차트 · 404 Not Found) 만이에요. 받지 못한 종목 (오류 · 시간 초과) 은 다시 물어요 (남은 것)."""
+    D18 = dt.date(2026, 11, 18)
+    cm = {"000010": "KOSPI", "000020": "KOSPI", "000030": "KOSDAQ", "000040": "KOSPI"}
+
+    def fetch(sym, a, b):
+        c = sym.split(".")[0]
+        if c == "000020":
+            return {"timestamp": [], "indicators": {"quote": [{"close": []}]}}           # 잘 된 빈 답
+        if c == "000030":
+            raise F.YahooNotFound("HTTP 404 Not Found")
+        if c == "000040":
+            raise RuntimeError("ReadTimeout")
+        return {"timestamp": [int(dt.datetime(2026, 11, 18, 9, tzinfo=F.KST).timestamp())], "indicators": {"quote": [{"close": [1000.0]}]}}
+    out, failed, cut = F.fetch_yahoo_kr_closes(cm, D18, D18 + dt.timedelta(days=1), fetch=fetch, workers=1, say=lambda s: None)
+    assert sorted(out) == ["000010"] and out.empty == {"000020", "000030"} and failed == 2 and cut == 0
+    # 404 응답: 야후의 'Not Found' 답만 YahooNotFound (그 밖의 404 · 오류는 예전처럼 실패)
+
+    class Resp:
+        def __init__(self, code, js):
+            self.status_code, self._js, self.headers = code, js, {}
+
+        def json(self):
+            return self._js
+
+    class Sess:
+        def __init__(self, resp):
+            self.resp = resp
+
+        def get(self, *a, **k):
+            return self.resp
+    monkeypatch.setattr(F._YAHOO_LOCAL, "s", Sess(Resp(404, {"chart": {"result": None, "error": {"code": "Not Found"}}})), raising=False)
+    with pytest.raises(F.YahooNotFound):
+        F._fetch_yahoo_chart("000030.KQ")
+    monkeypatch.setattr(F._YAHOO_LOCAL, "s", Sess(Resp(404, {"x": 1})), raising=False)
+    with pytest.raises(RuntimeError) as e:
+        F._fetch_yahoo_chart("000030.KQ")
+    assert not isinstance(e.value, F.YahooNotFound)
 
 
 def test_open_closes_count_only_what_a_re_ask_can_change():
@@ -1024,9 +1136,11 @@ def test_open_closes_count_only_what_a_re_ask_can_change():
     import test_kr_two_source as T2
     D18 = dt.date(2026, 11, 18)
     out, _ = _fb_run(T2.listing("2026-11-18_1452"), D18, no_yahoo=("047400", "090460"))
-    st = out[D18][1]
-    c = F.px_src_counts(st)
-    assert c["noYahoo"] == 2 and c["noList"] == 2 and c["open"] == 0              # 야후에 차트가 없는 두 종목 → 다시 물어도 같아요
+    c = F.px_src_counts(out[D18][1])
+    assert c["noYahoo"] == 2 and c["noList"] == 2 and c["open"] == 0              # 야후가 '자료 없음' 으로 답한 두 종목 → 다시 물어도 같아요
+    out, _ = _fb_run(T2.listing("2026-11-18_1452"), D18, no_yahoo=("047400", "090460"), answered=False)
+    c = F.px_src_counts(out[D18][1])
+    assert c["noYahoo"] == 2 and c["noList"] == 0 and c["open"] == 2              # 받지 못함 (오류 · 시간 초과) → 남은 것 (뒤의 실행이 다시 물어요)
     d = fb_data("2026-11-20", 2740, own={"v": 1, "n": 25, "codes": [], "unconf": 31})
     d["pxSrc"]["fb"].update({"open": 1, "noList": 5})
     assert A.open_closes(d) == {"kr": 1, "us": 0}

@@ -948,14 +948,18 @@ kept only where the two agree to the won (#137). Since 11-16 that is every day.
 Later runs on a backup day (`already_published.py`, `open_closes`):
 - The day counts as open only while the published file has unconfirmed Korean closes **that a re-ask can change**: `pxSrc.fb.open`
   (no Daum row, unreadable Daum row, Yahoo close still blank) plus `fb.knx.open` (KONEX: no Naver row, unreadable, Yahoo blank),
-  minus closes re-used the same day. Persistent cases don't count: Daum and Yahoo disagreeing (about 25 a day, e.g. STX), stocks
-  Yahoo doesn't list at all (`noList`: about 5 KOSPI/KOSDAQ and 11 KONEX). On 11-19 that left 1 open stock. A day with nothing open
-  stops early as before.
-- **Quiet period.** Each run that reaches the end on a same-day re-run records in `.dart-cache/kr-rerun-v1.json` (saved with the DART
-  cache) how many Korean stocks at that date's close it added. If it added none, scheduled and timer starts in the next 3 hours (and
-  only before 15:30 KST, while no new trading day can end) do not collect data: "!! 같은 날 다시 도는 실행이에요: … 3시간이 지나기 전이라
-  데이터를 모으지 않아요". The files stay as published; the gate and the screen check then look at the live files and the decision is
-  "같은 날 · 더 낫지 않음". Manual runs always run.
+  minus closes re-used the same day. Persistent cases don't count: Daum and Yahoo disagreeing (about 25 a day, e.g. STX), and stocks
+  Yahoo answered "no data" for (`noList`: a well-formed empty chart or Yahoo's own 404 "Not Found"; about 5 KOSPI/KOSDAQ and 11
+  KONEX). A Yahoo request that failed or timed out is not "no data": that stock stays open and the next run asks again. On 11-19 that
+  left 1 open stock. A day with nothing open stops early as before.
+- **Quiet period.** A live (not dry) run that re-ran the live file's Korean and US price dates records in `.dart-cache/kr-rerun-v1.json`
+  (saved with the DART cache) how many Korean stocks at that date's close it added, with its GitHub run number. If it added none,
+  scheduled and timer starts in the next 3 hours do not collect data, but only when: that run ended **green** (the gate and the screen
+  check passed; read from GitHub's public run record, without a token; if it can't be read, the run collects as usual), the record and
+  the start are on the same KST day between 07:00 and 15:30 (no new Korean or US trading day can end in between), and the live file
+  still has the recorded dates. The log says "!! 같은 기준일을 다시 도는 실행이에요: … 3시간이 지나기 전이라 데이터를 모으지 않아요"; the
+  files stay as published, and the decision is "쉼" (quiet), which is **neutral** for the watchdog: a run that tested nothing new never
+  closes an alarm. Manual runs always run. A record from an earlier day (for example Saturday's, seen on Monday) never quiets a run.
 - **Fewer requests.** The second-source stage keeps the values it confirmed on the newest day (Daum row fields and Yahoo close; KONEX:
   Naver row and Yahoo close) in `.dart-cache/kr-fb-v1.json`. A later run of the same price date does not ask Daum, Yahoo or Naver
   again for a stock the published file has at that date's close when the kept values match that close to the won
@@ -967,11 +971,15 @@ Later runs on a backup day (`already_published.py`, `open_closes`):
   run loses it and does not publish: the sources now disagree on it, it left the list, its price-history mark lacks its move, it would
   exceed this run's confirmed count (the gate row "확인 종목 수 ≥ 발행한 국내 종목 수" stays), or it is KONEX (the day's KONEX rows are
   only this run's confirmations, so the gate's KONEX row counts stay right; earlier KONEX come back through the kept values).
-- **No DART calls on a same-day re-run** (same price date, last publish made today): the DART client makes no requests (fundamentals
-  from the DART cache; the log's DART line says how many requests it held back) and the disclosure file is the morning publish's
-  `disc.json` as it is ("· 공시: 같은 날 다시 도는 실행이라 아침 발행본의 disc.json 을 그대로 써요"). If that file can't be read, the
-  disclosures are fetched from DART as before (loud). A first run of the day makes about 670 DART calls for disclosures; repeating
-  them on every re-run, plus a full-DART day, could pass the 20,000-a-day limit.
+- **No DART calls on a re-run of the same price date** (this run and the live file are backup days with the same Korean price date,
+  whatever day the live file was published, so Monday's re-runs of Friday's data count): the DART client makes no requests;
+  fundamentals come from the DART cache, and the 90-day re-checks and re-reads wait for the next new-day run without being counted.
+  The log's DART line says how many requests it held back. The disclosure file is the live `disc.json` as it is, but only if the US
+  price date is the same too and that `disc.json` belongs to the same publish as the live `data.json` (same `publishedAt`); otherwise
+  disclosures are fetched from DART as before (loud). The re-used file keeps its own content date (`asOf`), so disclosures filed since
+  then (for example over a weekend) come with the next new-day publish, and the file says how old its content is. A first run of the
+  day makes about 670 DART calls for disclosures; repeating them on every re-run, plus a full-DART day, could pass the 20,000-a-day
+  limit.
 
 Expected requests on a backup day like 11-19 (first run at 06:40, then re-runs while 1 stock is open):
 
@@ -992,13 +1000,14 @@ checks across every stock, so re-using per-stock results needs those records car
 
 What the other pieces see:
 - **Watchdog:** a run that did not publish is either **neutral** or **healthy**. Neutral (floor hold, dates going back, a lost
-  stock, can't decide): the step "발행 판단 표시 (감시에 중립인 보류)" runs, and `watchdog.is_held_run` skips the run when judging
+  stock, can't decide, quiet): the step "발행 판단 표시 (감시에 중립인 보류)" runs, and `watchdog.is_held_run` skips the run when judging
   "the last daily run" (it neither opens nor closes an alarm). Healthy ("같은 날 · 더 낫지 않음": the gate and the screen check passed
   and the dates equal the live file's): that step is skipped and the run counts like a successful run, so **an alarm opened by a red
   later run closes at the next healthy run** ("정상화됐어요"). Runs from before this marker count as neutral.
 - **Deploy:** deploys only after "data 브랜치에 올리기" succeeded, so a run that did not publish deploys nothing.
-- **09:13 check:** it finds publishes by "커밋 & 푸시". The floor, dates-back and lost-stock warnings are for it to report; the
-  same-day notices are normal.
+- **09:13 check:** it finds publishes by "커밋 & 푸시". Its prompt will be updated by the coordinator after this merges; until then it
+  does not know about holds (it may report "data not in" on a held morning without saying why). After the update it reports the
+  floor, dates-back and lost-stock warnings; the same-day and quiet notices are normal.
 - **Gate:** the rows that compare with the last publish pass a same-day republish unchanged (pxDate is not earlier; the KR count change
   is small; same-date prices don't move; `tests/test_publish_hold.py`, also with a re-use record and KONEX rows). No gate row changed.
 

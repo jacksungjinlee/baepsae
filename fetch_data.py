@@ -883,8 +883,8 @@ def kr_fb_confirm(day, universe, daum, yahoo, must=GATE_MUST, tol=KR_FB_CLOSE_TO
         y = _fin((yahoo.get(code) or {}).get(day))
         if y is None or y <= 0:
             st["noYahoo"].append(code)
-            if not yahoo.get(code):
-                st.setdefault("noList", []).append(code)    # 2026-11-21 (#161): 야후에 그 종목 차트가 아예 없어요 (다시 물어도 같아요)
+            if not yahoo.get(code) and code in getattr(yahoo, "empty", ()):
+                st.setdefault("noList", []).append(code)    # 2026-11-21 (#161): 야후가 '자료 없음' 으로 답했어요 (받지 못한 종목은 다시 물어요)
             continue
         if abs(y - row["Close"]) > tol:
             st["diff"].append((code, _txt(u.get("Name")), row["Close"], y))     # 2026-11-20 (검증 리뷰): 빈 이름이 'nan' 글자로 pxSrc 에 가지 않게
@@ -1107,6 +1107,18 @@ def yahoo_chart_close(res, d, close_time):
     return p, "meta"
 
 
+class YahooNotFound(RuntimeError):
+    """야후가 그 심볼이 없다고 분명히 답했어요 (HTTP 404 · chart.error.code 'Not Found') — 실패가 아니라 '자료 없음' 답이에요 (#161 리뷰)."""
+
+
+class YahooAnswers(dict):
+    """{코드: {날짜: 종가}} — empty: 야후가 '자료 없음' 으로 분명히 답한 코드 (빈 차트 · Not Found). 받지 못한 (오류 · 시간 초과) 코드는 들어 있지
+    않아요 (#161 리뷰: 다시 물어서 바뀔 수 있는 종목과 하루 종일 그대로인 종목을 가려요)."""
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.empty = set()
+
+
 def _fetch_yahoo_chart(sym, start=None, end=None):
     """야후 차트 응답 result[0] — 최근 5일, 또는 start ≤ 날짜 < end (KST 0시 기준 · 2026-11-20). 세 번 시도해도 못 받으면 예외.
     일하는 스레드마다 연결 하나."""
@@ -1127,8 +1139,17 @@ def _fetch_yahoo_chart(sym, start=None, end=None):
                 return r.json()["chart"]["result"][0]
             status, ra = r.status_code, r.headers.get("Retry-After")
             last = f"HTTP {r.status_code}"
+            if r.status_code == 404:
+                try:
+                    code = (((r.json() or {}).get("chart") or {}).get("error") or {}).get("code")
+                except Exception:
+                    code = None
+                if code == "Not Found":
+                    raise YahooNotFound(f"HTTP 404 {code}")
             if 400 <= r.status_code < 500 and r.status_code != 429:
                 break
+        except YahooNotFound:
+            raise                                   # 야후의 '없음' 답은 그대로 (실패로 바꾸지 않아요 · 다시 묻지 않아요)
         except Exception as e:
             last = f"{type(e).__name__}: {str(e)[:80]}"
         wait = fb_retry_wait(attempt, status, ra)
@@ -1168,7 +1189,7 @@ def fetch_yahoo_kr_closes(code_market, start, end, fetch=_fetch_yahoo_chart, wor
     2026-11-20 (리뷰 S1): 종목마다 야후 차트 하나 (예전: yfinance 일괄 다운로드 200종목씩 — 묶음 하나를 시간 한도 없이 기다릴 수 있었어요).
     단계 시간 한도가 지나면 새 종목을 묻지 않아요 (묻는 중인 것은 자기 시간 한도까지 · 요청마다 20초 × 세 번)."""
     order = fb_order(c for c, m in code_market.items() if sym(c, m))
-    out, cnt, lock = {}, {"fail": 0, "cut": 0}, threading.Lock()
+    out, cnt, lock = YahooAnswers(), {"fail": 0, "cut": 0}, threading.Lock()
     budget = fb_budget(budget_s)
     deadline = clock() + budget
 
@@ -1182,6 +1203,11 @@ def fetch_yahoo_kr_closes(code_market, start, end, fetch=_fetch_yahoo_chart, wor
             return
         try:
             closes = yahoo_chart_closes(fetch(sym(c, code_market[c]), start, end), start, end)
+        except YahooNotFound:
+            with lock:
+                cnt["fail"] += 1
+                out.empty.add(c)                    # 야후가 '없음' 이라고 답했어요 (다시 물어도 같아요 — 받지 못한 종목과 달라요)
+            return
         except Exception:
             with lock:
                 cnt["fail"] += 1
@@ -1189,6 +1215,9 @@ def fetch_yahoo_kr_closes(code_market, start, end, fetch=_fetch_yahoo_chart, wor
         if closes:
             with lock:
                 out[c] = closes
+        else:
+            with lock:
+                out.empty.add(c)                    # 잘 된 답인데 그 기간 종가가 없어요
     if order:
         with ThreadPoolExecutor(max_workers=workers) as ex:
             list(ex.map(one, order))
@@ -1423,8 +1452,8 @@ def kr_knx_confirm(day, universe, yahoo, naver, tol=KR_FB_CLOSE_TOL, anchor=None
         y = _fin((yahoo.get(code) or {}).get(day))
         if y is None or y <= 0:
             st["noYahoo"].append(code)
-            if not yahoo.get(code):
-                st.setdefault("noList", []).append(code)    # 2026-11-21 (#161): 야후가 싣지 않는 코넥스 (늘 11종목 남짓 — 다시 물어도 같아요)
+            if not yahoo.get(code) and code in getattr(yahoo, "empty", ()):
+                st.setdefault("noList", []).append(code)    # 2026-11-21 (#161): 야후가 싣지 않는 코넥스 ('자료 없음' 답 · 늘 11종목 남짓)
             continue
         if abs(y - nc) > tol:
             st["diff"].append((code, st["names"][code], nc, y))
@@ -2269,24 +2298,23 @@ def kr_own_ind_reset(carried, prev, desc=None):
 # 다시 쓰지 않는 종목 (잃은 종목 · lost): 지금 두 출처가 서로 달라요 (pxSrc.fb.diffT · 코넥스 fb.knx.diffT — 어느 쪽이 지난 값과 같은지 몰라요) ·
 # 오늘 그날 전체 목록에 없어요 · 과거 주가 기록 오류 표시인데 지난 krSeries.jump 에 그 움직임이 없어요. 잃은 종목이 하나라도 있으면 이 실행은
 # 지난 발행본보다 낫지 않아서 발행하지 않아요 (tools/publish_hold.py 가 pxSrc.own.reuse.lost 를 봐요).
-def kr_same_day_rerun(prev, px_src, px_date, today):
-    """같은 날 다시 도는 실행인지 (2026-11-21 · #161 리뷰 · 순수 함수): 이 실행이 2차 출처 날이고, 지난 발행본도 2차 출처 날 · 같은 기준일 ·
-    오늘 (KST) 발행한 파일이에요. 반환: (참/거짓, 설명). 참이면 DART 를 부르지 않고 아침 발행본의 disc.json 을 그대로 써요 (main)."""
+def kr_same_day_rerun(prev, px_src, px_date, today=None):
+    """같은 날 다시 도는 실행인지 (2026-11-21 · #161 리뷰 · 순수 함수): 이 실행과 지난 발행본이 모두 2차 출처 날이고 한국 기준일이 같아요 (발행한 날짜와
+    상관없이 — 월요일에 금요일 데이터를 다시 도는 실행도). 반환: (참/거짓, 설명). 참이면 DART 를 부르지 않아요 (재무는 DART 보관본 · 공시는 미국 기준일도
+    같고 같은 발행의 disc.json 일 때만 그대로 — main). today 는 쓰지 않아요 (예전 호출 모양)."""
     if not isinstance(prev, dict) or not isinstance(px_src, dict) or px_src.get("px") != PX_SRC_FB or px_date is None:
         return False, "2차 출처 날이 아니거나 지난 발행본이 없어요"
     psrc = prev.get("pxSrc") if isinstance(prev.get("pxSrc"), dict) else {}
-    try:
-        pub = dt.datetime.fromisoformat(str(prev.get("publishedAt"))).astimezone(KST).date()
-    except (TypeError, ValueError):
-        pub = None
     pd_ = px_date.isoformat() if isinstance(px_date, dt.date) else str(px_date)
-    if psrc.get("px") != PX_SRC_FB or prev.get("pxDate") != pd_ or pub != today:
-        return False, f"지난 발행본 (기준일 {prev.get('pxDate')} · 발행 {pub}) 과 같은 날이 아니에요"
-    return True, f"같은 날 다시 도는 실행 (기준일 {pd_} · 아침 발행본 {prev.get('publishedAt')})"
+    if psrc.get("px") != PX_SRC_FB or prev.get("pxDate") != pd_:
+        return False, f"지난 발행본 (기준일 {prev.get('pxDate')}) 과 같은 기준일의 2차 출처 날이 아니에요"
+    return True, f"같은 기준일을 다시 도는 실행 (기준일 {pd_} · 발행본 {prev.get('publishedAt')})"
 
 
-def load_morning_disc(path=None):
-    """같은 날 다시 도는 실행이 그대로 쓸 아침 발행본의 disc.json (체크아웃의 파일 = 지난 발행본 · 2026-11-21 · #161 리뷰). 반환: (dict 또는 None, 설명)."""
+def load_morning_disc(path=None, live=None):
+    """같은 날 다시 도는 실행이 그대로 쓸 발행본의 disc.json (체크아웃의 파일 · 2026-11-21 · #161 리뷰). live: 지난 발행본 data.json — 주면 disc.json 이
+    그 발행과 같은 발행 (publishedAt 같음 · 같은 커밋) 일 때만 써요. 반환: (dict 또는 None, 설명). disc.json 의 내용 날짜 (asOf · newest) 는 그대로라,
+    그 뒤에 나온 공시는 다음 새 기준일 발행에 들어가요 (내용 날짜가 그만큼 오래됐다고 파일이 말해요)."""
     path = path or OUT_DISC
     try:
         with open(path, encoding="utf-8") as f:
@@ -2295,49 +2323,92 @@ def load_morning_disc(path=None):
         return None, f"아침 발행본의 {path} 를 읽지 못했어요 ({type(e).__name__})"
     if not isinstance(d, dict) or not all(isinstance(d.get(k), list) for k in ("insider", "nps")):
         return None, f"아침 발행본의 {path} 모양이 달라요"
-    return d, f"아침 발행본의 {path} (내부자 {len(d['insider']):,}건)"
+    if isinstance(live, dict) and (d.get("publishedAt") is None or d.get("publishedAt") != live.get("publishedAt")):
+        return None, f"{path} 가 지금 발행본과 다른 발행이에요 (disc {d.get('publishedAt')} · data {live.get('publishedAt')})"
+    return d, f"발행본의 {path} (내부자 {len(d['insider']):,}건 · 공시 내용 날짜 {d.get('asOf')})"
 
 
 # 2026-11-21 (#161 리뷰): 같은 날 다시 돌았는데 더 얻은 것이 없으면, 그 뒤 3시간 안의 정해진 시각 · 바깥 타이머 실행은 데이터를 모으지 않아요.
 # 보관본 (.dart-cache/kr-rerun-v1.json · DART 캐시와 같이 보관) 에 그 실행의 날 · 기준일 · 미국 기준일 · 시각 · 늘어난 그 날짜 종가 국내 종목 수를 적어요.
+# 2026-11-21 (#161 리뷰 2차): 그 기록은 실제 실행 (시험 실행 아님 · GitHub 실행 번호가 있는 실행) 만 남기고, 다음 실행은 그 실행이 초록으로 끝났을 때만
+# (관문과 화면 검사를 통과 · GitHub 의 그 실행 결과 'success' — github_run_succeeded) 믿어요. 기록은 데이터 수집 단계 끝에 써서 DART 캐시와 같이
+# 보관돼요 (그 단계 뒤의 관문 · 화면 검사 결과는 그때 아직 몰라요 — 그래서 다음 실행이 확인해요). 확인하지 못하면 쉬지 않고 돌아요.
 KR_RERUN_STATE_PATH = os.environ.get("KR_RERUN_STATE", ".dart-cache/kr-rerun-v1.json")
 KR_RERUN_QUIET = dt.timedelta(hours=3)
+KR_RERUN_QUIET_FROM = dt.time(7, 0)          # 미국 종가 확정 (여름 05:30 · 겨울 06:30 KST) 뒤의 기록만
 KR_RERUN_QUIET_BEFORE = dt.time(15, 30)      # 그날 한국 장이 끝나기 전에만 쉬어요 (그 뒤에는 새 거래일이 끝날 수 있어요)
+QUIET_MARK = "baepsae-quiet.txt"             # 쉬는 실행이 RUNNER_TEMP 에 남기는 표시 (발행 판단 단계가 보고 감시에 중립인 보류로)
 
 
-def kr_rerun_throttle(state, prev, now, auto=True):
+def kr_rerun_throttle(state, prev, now, auto=True, run_ok=None):
     """이 실행이 데이터 수집을 건너뛸지 (순수 함수). 반환: 까닭 글 또는 None (예전처럼 돌아요). 모두 맞아야 건너뛰어요:
-    정해진 시각 · 바깥 타이머 실행 (auto) · 지금이 그날 15:30 KST 전 · 보관본이 오늘 · 같은 기준일 · 같은 미국 기준일 · 지난 발행본이 2차 출처 날이고
-    오늘 발행 · 그 실행이 그 날짜 종가 국내 종목을 하나도 늘리지 못함 (gain ≤ 0) · 그 실행 뒤 3시간이 지나지 않음."""
+    정해진 시각 · 바깥 타이머 실행 (auto) · 지난 발행본이 2차 출처 날 · 그 기록의 한국 · 미국 기준일 = 지난 발행본의 것 (발행한 날과 상관없이) ·
+    그 실행이 그 날짜 종가 국내 종목을 하나도 늘리지 못함 (gain ≤ 0) · 그 실행과 지금이 같은 날 (KST) 07:00 ~ 15:30 안 (그 사이에는 새 한국 · 미국
+    거래일이 끝나지 않아요) · 그 실행 뒤 3시간이 지나지 않음 · 그 실행이 초록으로 끝남 (run_ok(실행 번호) — 관문과 화면 검사를 통과했어요 ·
+    run_ok 가 없거나 확인하지 못하면 쉬지 않아요)."""
     if not auto or not isinstance(state, dict) or state.get("v") != 1 or not isinstance(prev, dict):
         return None
     t = now.astimezone(KST)
-    if t.time() >= KR_RERUN_QUIET_BEFORE:
-        return None
     psrc = prev.get("pxSrc") if isinstance(prev.get("pxSrc"), dict) else {}
     try:
         at = dt.datetime.fromisoformat(str(state.get("at"))).astimezone(KST)
-        pub = dt.datetime.fromisoformat(str(prev.get("publishedAt"))).astimezone(KST).date()
     except (TypeError, ValueError):
         return None
     gain = state.get("gain")
-    if (state.get("day") != t.date().isoformat() or pub != t.date() or psrc.get("px") != PX_SRC_FB
-            or state.get("pxDate") != prev.get("pxDate") or state.get("usPxDate") != prev.get("usPxDate")
-            or not isinstance(gain, int) or isinstance(gain, bool) or gain > 0 or not dt.timedelta(0) <= t - at < KR_RERUN_QUIET):
+    if (psrc.get("px") != PX_SRC_FB or state.get("pxDate") != prev.get("pxDate") or state.get("usPxDate") != prev.get("usPxDate")
+            or not isinstance(gain, int) or isinstance(gain, bool) or gain > 0
+            or at.date() != t.date() or at.time() < KR_RERUN_QUIET_FROM or t.time() >= KR_RERUN_QUIET_BEFORE
+            or not dt.timedelta(0) <= t - at < KR_RERUN_QUIET):
+        return None
+    run_id = state.get("run")
+    if run_ok is None or not isinstance(run_id, (int, str)) or not str(run_id).isdigit() or run_ok(str(run_id)) is not True:
         return None
     left = KR_RERUN_QUIET - (t - at)
-    return (f"같은 날 다시 도는 실행이에요: {at:%H:%M} KST 실행이 그 날짜 종가 국내 종목을 늘리지 못했어요 (늘어난 수 {gain}) — 3시간이 지나기 전이라 "
-            f"({int(left.total_seconds() // 60)}분 남음) 데이터를 모으지 않아요 (발행본 그대로 · 다음 실행이 다시 봐요)")
+    return (f"같은 기준일을 다시 도는 실행이에요: {at:%H:%M} KST 실행 ({run_id} · 초록) 이 그 날짜 종가 국내 종목을 늘리지 못했어요 (늘어난 수 {gain}) — 3시간이 지나기 "
+            f"전이라 ({int(left.total_seconds() // 60)}분 남음) 데이터를 모으지 않아요 (발행본 그대로 · 감시에 중립 · 다음 실행이 다시 봐요)")
 
 
-def kr_rerun_state(prev, payload, now, n_now=None, n_prev=None):
-    """이 실행이 같은 날 다시 돈 결과 (보관본에 적어요 · 순수 함수). 같은 날 다시 돈 실행이 아니면 gain 은 None (그러면 뒤의 실행이 쉬지 않아요)."""
-    t = now.astimezone(KST)
+def github_run_succeeded(run_id, get=None):
+    """GitHub 의 그 매일 실행이 초록 (success) 으로 끝났는지 — 공개 저장소의 실행 결과를 토큰 없이 읽어요 (이 job 의 토큰은 실행 기록을 읽을 권한이
+    없어요). 못 읽으면 None (그러면 쉬지 않아요)."""
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    if not repo:
+        return None
+    try:
+        r = (get or requests.get)(f"https://api.github.com/repos/{repo}/actions/runs/{run_id}", headers={"Accept": "application/vnd.github+json"},
+                                  timeout=15)
+        if r.status_code != 200:
+            log(f"  !! 앞선 실행 {run_id} 의 결과를 읽지 못했어요 (HTTP {r.status_code}) → 쉬지 않고 돌아요")
+            return None
+        js = r.json()
+        return js.get("status") == "completed" and js.get("conclusion") == "success"
+    except Exception as e:
+        log(f"  !! 앞선 실행 {run_id} 의 결과를 읽지 못했어요 ({type(e).__name__}) → 쉬지 않고 돌아요")
+        return None
+
+
+def kr_rerun_state(prev, payload, now, n_now=None, n_prev=None, env=None):
+    """이 실행이 같은 기준일을 다시 돈 결과 (보관본에 적어요 · 순수 함수). 시험 실행 · GitHub 실행 번호가 없는 실행 · 같은 기준일이 아닌 실행은 None
+    (쓰지 않아요 — 시험 실행이 실제 실행을 쉬게 하지 않게)."""
+    env = os.environ if env is None else env
+    if (env.get("DRY_RUN") or "").strip().lower() == "true" or not str(env.get("GITHUB_RUN_ID") or "").isdigit():
+        return None
     same = (isinstance(prev, dict) and prev.get("pxDate") == payload.get("pxDate") and prev.get("usPxDate") == payload.get("usPxDate")
-            and ((prev.get("pxSrc") or {}).get("px") if isinstance(prev.get("pxSrc"), dict) else None) == PX_SRC_FB)
-    gain = (n_now - n_prev) if same and isinstance(n_now, int) and isinstance(n_prev, int) else None
-    return {"v": 1, "day": t.date().isoformat(), "at": t.isoformat(timespec="seconds"), "pxDate": payload.get("pxDate"),
-            "usPxDate": payload.get("usPxDate"), "gain": gain}
+            and ((prev.get("pxSrc") or {}).get("px") if isinstance(prev.get("pxSrc"), dict) else None) == PX_SRC_FB
+            and ((payload.get("pxSrc") or {}).get("px") if isinstance(payload.get("pxSrc"), dict) else None) == PX_SRC_FB)
+    if not same or not isinstance(n_now, int) or not isinstance(n_prev, int):
+        return None
+    t = now.astimezone(KST)
+    return {"v": 1, "at": t.isoformat(timespec="seconds"), "pxDate": payload.get("pxDate"), "usPxDate": payload.get("usPxDate"),
+            "gain": n_now - n_prev, "run": str(env.get("GITHUB_RUN_ID"))}
+
+
+def quiet_mark(why):
+    """쉬는 실행의 표시를 RUNNER_TEMP 에 남겨요 (발행 판단 단계가 '쉼' 으로 감시에 중립인 보류를 해요). RUNNER_TEMP 가 없으면 (로컬) 남기지 않아요."""
+    d = os.environ.get("RUNNER_TEMP")
+    if d:
+        with open(os.path.join(d, QUIET_MARK), "w", encoding="utf-8") as f:
+            f.write(why + "\n")
 
 
 def kr_rerun_state_load(path=None):
@@ -3827,13 +3898,13 @@ class DartClient:
             # 찾은 보고서도 90일이 지나면 다시 확인 (정정공시). 실행당 300건까지, 실제로 쓰는 항목만.
             # DART 가 멈췄으면(self.down) 재확인하지 않아요: 칸만 쓰고 '재확인 N건'으로 잘못 세지 않게
             reval = bool(e and e["st"] == "000" and self.mode != "full" and self._stale(e) and self.revalidate_left > 0
-                         and not self.down and not self.fatal)
+                         and not self.down and not self.fatal and not self.no_call)    # #161 리뷰: 부르지 않는 실행은 재확인을 세지 않아요
             if reval:
                 self.revalidate_left -= 1
                 self.revalidated += 1
             rd_tag = None
             if redos and not reval and e and e["st"] == "000" and self.mode != "full" and self.redo_left > 0 \
-                    and not self.down and not self.fatal:
+                    and not self.down and not self.fatal and not self.no_call:
                 rd_tag = next((t for t, f in redos if redo_due(e, (t, f), self.today)), None)
             rd = rd_tag is not None
             if rd:
@@ -12758,9 +12829,10 @@ def main():
     # 2026-11-21 (#161 리뷰): 같은 날 다시 돌았는데 더 얻은 것이 없으면 3시간 안의 정해진 시각 · 바깥 타이머 실행은 데이터를 모으지 않아요
     # (파일을 바꾸지 않아요 — 관문 · 화면 검사는 발행본 그대로를 보고, 발행 판단이 '같은 날 · 더 낫지 않음' 으로 발행하지 않아요)
     auto = os.environ.get("GITHUB_EVENT_NAME") == "schedule" or os.environ.get("BAEPSAE_AUTO_RUN") == "1"
-    quiet = kr_rerun_throttle(kr_rerun_state_load(), prev, dt.datetime.now(KST), auto=auto)
+    quiet = kr_rerun_throttle(kr_rerun_state_load(), prev, dt.datetime.now(KST), auto=auto, run_ok=github_run_succeeded)
     if quiet:
         log(f"  !! {quiet}")
+        quiet_mark(quiet)
         return
     tables = load_industry_tables()       # 업종 표가 깨졌으면 여기서 바로 멈춰요
     # 2026-11-19: 한국표준산업분류 11차 · 11차 소분류 → 우리 업종 표 (DART 로 업종 글자 채우기). 깨졌으면 크게 남기고 채우기만 건너뛰어요
@@ -12825,10 +12897,10 @@ def main():
         log("  !! 시험 실행: DART 를 끄고 진행해요 (재무지표·공시 없음 → 검증에서 실패 처리돼요)")
     elif DART_KEY:
         client = DartClient(DART_KEY, mode=dart_mode, today=today)
-        same_day, why_sd = kr_same_day_rerun(prev, kmeta.get("pxSrc"), kmeta.get("pxDate") and dt.date.fromisoformat(kmeta["pxDate"]), today)
-        if same_day and dart_mode == "cache":           # 2026-11-21 (#161 리뷰): DART 하루 한도 — 같은 날 다시 도는 실행은 보관본 값만
+        same_day, why_sd = kr_same_day_rerun(prev, kmeta.get("pxSrc"), kmeta.get("pxDate") and dt.date.fromisoformat(kmeta["pxDate"]))
+        if same_day and dart_mode == "cache":           # 2026-11-21 (#161 리뷰): DART 하루 한도 — 같은 기준일을 다시 도는 실행은 보관본 값만
             client.no_call = why_sd
-            log(f"  !! {why_sd}: DART 를 부르지 않아요 — 재무는 보관본, 공시 (지분 · 주요사항) 는 아침 발행본의 disc.json 그대로")
+            log(f"  !! {why_sd}: DART 를 부르지 않아요 — 재무는 보관본, 공시 (지분 · 주요사항) 는 미국 기준일도 같으면 발행본의 disc.json 그대로")
         if carry is not None:
             n_carry = adopt_carry(client, carry)
             log(f"· 옛 v2 캐시에서 옮긴 업종 코드 항목 {n_carry:,}건 (읽은 {len(carry[0]):,}건 · 기업코드 목록 "
@@ -13024,15 +13096,16 @@ def main():
     payload["ownDrop"][KR_OWN_DROP_KEY] = own_drop_rec(kr_drop)
     log(kr_count_line(payload))
     write_json(OUT, payload)
-    try:                                     # 2026-11-21 (#161 리뷰): 같은 날 다시 돈 결과 (뒤의 실행이 3시간 쉴지 · 실패해도 발행은 그대로)
+    try:                                     # 2026-11-21 (#161 리뷰): 같은 기준일을 다시 돈 결과 (실제 실행만 · 다음 실행은 이 실행이 초록이었을 때만 믿어요)
         rs = kr_rerun_state(prev, payload, dt.datetime.now(KST), kr_px_count(payload), kr_px_count(prev) if isinstance(prev, dict) else None)
-        os.makedirs(os.path.dirname(KR_RERUN_STATE_PATH) or ".", exist_ok=True)
-        write_json(KR_RERUN_STATE_PATH, rs)
-        if rs["gain"] is not None:
-            log(f"{'  !! ' if rs['gain'] <= 0 else '· '}같은 날 다시 돈 결과: 그 날짜 종가 국내 종목 {rs['gain']:+,} — "
-                + ("늘어난 것이 없어 3시간 안의 정해진 시각 실행은 데이터를 모으지 않아요" if rs["gain"] <= 0 else "뒤의 실행도 그대로 돌아요"))
+        if rs is not None:
+            os.makedirs(os.path.dirname(KR_RERUN_STATE_PATH) or ".", exist_ok=True)
+            write_json(KR_RERUN_STATE_PATH, rs)
+            log(f"{'  !! ' if rs['gain'] <= 0 else '· '}같은 기준일을 다시 돈 결과: 그 날짜 종가 국내 종목 {rs['gain']:+,} — "
+                + ("늘어난 것이 없어, 이 실행이 초록으로 끝나면 3시간 안의 정해진 시각 실행은 데이터를 모으지 않아요" if rs["gain"] <= 0
+                   else "뒤의 실행도 그대로 돌아요"))
     except Exception as e:
-        log(f"  !! 같은 날 다시 하기 보관본을 쓰지 못했어요 ({type(e).__name__}) — 뒤의 실행은 쉬지 않고 돌아요")
+        log(f"  !! 같은 날 다시 하기 기록을 쓰지 못했어요 ({type(e).__name__}) — 뒤의 실행은 쉬지 않고 돌아요")
     log(f"✓ {OUT} 저장 — {len(stocks):,}종목, {os.path.getsize(OUT) / 1e6:.1f}MB · 기준일 {kmeta['pxDate']} · "
         f"미국 {umeta['usPxDate']} · 환율 {fx_last:,.1f}")
 
@@ -13067,15 +13140,19 @@ def main():
 
     prev_disc = None
     if client is not None and client.no_call:
-        prev_disc, why_disc = load_morning_disc()
+        if isinstance(prev, dict) and umeta.get("usPxDate") == prev.get("usPxDate"):
+            prev_disc, why_disc = load_morning_disc(live=prev)
+        else:
+            why_disc = f"미국 기준일이 발행본과 달라요 ({prev.get('usPxDate') if isinstance(prev, dict) else None} → {umeta.get('usPxDate')})"
         if prev_disc is None:
             client.no_call = None
             log(f"  !! {why_disc} → 공시는 예전처럼 DART 로 받아요")
     if prev_disc is not None:
         disc = prev_disc
         client.save()
-        log(f"· 공시: 같은 날 다시 도는 실행이라 아침 발행본의 disc.json 을 그대로 써요 (내부자 {len(disc.get('insider') or []):,}건 · "
-            f"주요사항 {len(disc.get('issue') or []):,}건) · DART 전체: {client.summary()}")
+        log(f"  !! 공시: 같은 기준일을 다시 도는 실행이라 발행본의 disc.json 을 그대로 써요 (내부자 {len(disc.get('insider') or []):,}건 · "
+            f"주요사항 {len(disc.get('issue') or []):,}건 · 공시 내용 날짜 {disc.get('asOf')} 그대로 — 그 뒤 나온 공시는 다음 새 기준일 발행에) · "
+            f"DART 전체: {client.summary()}")
     elif client:
         disc = ph.run("공시", fetch_disclosures, kr, client.meta.get("corpMap") or {}, today, client)
         # v19.6b (Part B.1): 유상증자 · 전환사채 · 신주인수권부사채 결정 (issue · issueOk) — DART 를 쓰는 실행에서만 · 지분공시 뒤

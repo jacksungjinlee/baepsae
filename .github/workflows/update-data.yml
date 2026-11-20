@@ -249,6 +249,8 @@ jobs:
               args="$args --no-prev"
             fi
           fi
+          # 데이터 수집이 쉬었으면 (같은 기준일 · 3시간 안 · fetch_data.quiet_mark) 감시에 중립인 '쉼' 으로
+          if [ -f "$RUNNER_TEMP/baepsae-quiet.txt" ]; then args="$args --quiet $RUNNER_TEMP/baepsae-quiet.txt"; fi
           python tools/publish_hold.py $args \
             || { echo "!! 발행 판단이 오류로 멈췄어요 → 보류하지 않아요 (관문 · 화면 검사가 예전처럼 발행을 정해요)";
                  echo "::warning title=발행 판단 확인 못 함 (보류 없이 판단)::발행 판단이 오류로 멈췄어요 → 보류하지 않아요";

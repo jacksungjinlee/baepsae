@@ -48,7 +48,7 @@ TITLE = f"발행 판단 (2차 출처 날 확인 비율 바닥 {COVERAGE_FLOOR_PC
 Decision = collections.namedtuple("Decision", "hold loud why kind")   # kind: publish · floor · back · loss · same · unknown · error
 # 감시 (watchdog.is_held_run) 에 중립인 보류: 바닥 아래 · 날짜가 뒤로 감 · 잃은 종목 · 비교할 수 없음. '같은 날 · 더 낫지 않음' (관문 · 화면 검사를
 # 통과 · 한국 · 미국 기준일이 발행본과 같음) 은 건강한 실행으로 세요 (#161 리뷰 7: 앞선 빨간 실행의 경보가 닫혀요).
-NEUTRAL = ("floor", "back", "loss", "unknown")
+NEUTRAL = ("floor", "back", "loss", "unknown", "quiet")   # quiet: 데이터를 모으지 않은 실행 (3시간 쉼 · 시험한 것이 없어 건강하다고 세지 않아요)
 
 
 def _count(v):
@@ -252,7 +252,8 @@ def evaluate(cur, cur_note, prev, prev_note, now):
 
 def summary_md(d, lines, dry, sample=False):
     head = {"floor": "보류 — 확인 비율이 바닥 아래라 발행하지 않아요", "same": "발행 안 함 — 같은 날 지난 발행본보다 낫지 않아요",
-            "back": "보류 — 날짜가 지난 발행본보다 앞이에요", "loss": "보류 — 지난 발행본의 종목을 잃어요"}.get(d.kind, "발행 (보류 아님)")
+            "back": "보류 — 날짜가 지난 발행본보다 앞이에요", "loss": "보류 — 지난 발행본의 종목을 잃어요",
+            "quiet": "쉼 — 데이터를 모으지 않은 실행 (발행본 그대로)"}.get(d.kind, "발행 (보류 아님)")
     out = [f"### 뱁새 발행 판단 — {head}", ""]
     out += [f"- {ln.removeprefix('· ').removeprefix('!! ')}" for ln in lines[1:]]
     out.append(f"- **결정:** {d.why}")
@@ -270,6 +271,7 @@ def summary_md(d, lines, dry, sample=False):
 ANNOTATE = {"floor": ("warning", "발행 보류 (2차 출처 확인 비율 바닥 아래)"),
             "back": ("warning", "발행 보류 (날짜가 뒤로 감)"),
             "loss": ("warning", "같은 날 다시 발행 안 함 (지난 발행본의 종목을 잃음)"),
+            "quiet": ("notice", "쉬는 실행 (같은 기준일 · 3시간 안 · 데이터 수집 없음)"),
             "same": ("notice", "같은 날 다시 발행 안 함 (더 낫지 않음)"),
             "unknown": ("warning", "발행 판단 확인 못 함 (보류 없이 판단)"),
             "error": ("warning", "발행 판단 확인 못 함 (보류 없이 판단)")}
@@ -282,6 +284,7 @@ def main(argv=None, now_fn=None, cur_reader=read_cur, prev_reader=read_prev):
     ap.add_argument("--bootstrap", action="store_true", help="bootstrap 실행: 직전 발행본과 비교하지 않아요 (바닥만)")
     ap.add_argument("--no-prev", action="store_true", help="직전 발행본을 받지 못함 (워크플로가 넘겨요): 비교 없이 (바닥만)")
     ap.add_argument("--now", default=None, help="로그의 시각 바꾸기 (ISO · 시간대 포함) — 시험용 (결정은 시각과 상관없어요)")
+    ap.add_argument("--quiet", default=None, metavar="FILE", help="데이터 수집 단계가 쉬었다는 표시 파일 (있으면 그 까닭으로 감시에 중립인 보류)")
     a = ap.parse_args(argv)
     dry = (os.environ.get("DRY_RUN") or "").strip().lower() == "true"
     sample = (os.environ.get("SAMPLE_KR") or "0").strip() not in ("", "0")
@@ -296,14 +299,21 @@ def main(argv=None, now_fn=None, cur_reader=read_cur, prev_reader=read_prev):
             prev, prev_note = None, "직전 발행본(비교 커밋)을 받지 못했어요"
         else:
             prev, prev_note = prev_reader(a.prev_ref)
-        d, lines = evaluate(cur, cur_note, prev, prev_note, now)
+        quiet = None
+        if a.quiet and os.path.exists(a.quiet):
+            with open(a.quiet, encoding="utf-8") as f:
+                quiet = f.read().strip() or "데이터 수집 단계가 쉬었어요"
+        if quiet:                             # 데이터를 모으지 않은 실행: 발행본 그대로라 발행할 것이 없고, 시험한 것도 없어 감시에 중립
+            d, lines = Decision(True, False, f"{quiet}", "quiet"), [f"· {TITLE} — {now.astimezone(KST):%Y-%m-%d %H:%M} KST"]
+        else:
+            d, lines = evaluate(cur, cur_note, prev, prev_note, now)
     except Exception as e:
         d = Decision(False, True, f"발행 판단이 오류로 멈췄어요 ({type(e).__name__}: {str(e)[:200]}) → 보류하지 않아요 "
                                   "(관문 · 화면 검사가 예전처럼 발행을 정해요)", "error")
         lines = [f"· {TITLE}"]
     for ln in lines:
         print(ln, flush=True)
-    tag = {"floor": "!! [보류] ", "same": "!! [같은 날 · 발행 안 함] "}.get(d.kind, "!! " if d.loud else "· ")
+    tag = {"floor": "!! [보류] ", "same": "!! [같은 날 · 발행 안 함] ", "quiet": "!! [쉼] "}.get(d.kind, "!! " if d.loud else "· ")
     print(tag + d.why + (" (시험 실행: 어차피 발행하지 않아요)" if dry else "") + (" (표본 실행: 이 결정은 뜻이 없어요)" if sample else ""), flush=True)
     # 알림 (실행 화면 · 09:13 점검이 읽어요): 바닥 보류 · 판단을 못 함 · 오류 → 경고, 같은 날 발행 안 함 → 알림 (2차 출처 날에는 흔해요)
     if os.environ.get("GITHUB_ACTIONS") == "true" and (d.hold or d.loud):
