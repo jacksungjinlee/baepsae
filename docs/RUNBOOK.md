@@ -544,7 +544,9 @@ and trading value 0 (11-11 to 11-13: 135 to 141 such rows a day; on the 11-14 pu
   halt; a KONEX price can move without a trade) goes to `ntD1`, which the app uses only for a portfolio's 오늘 amount, so holding
   a halted stock never takes that amount away;
 - every other blank Korean `d1` carries its reason in `d1Why`: `range` beyond ±30% (a new listing, a split, a re-listing after a
-  halt), `new` (no official close in the previous day's file), `prev` (no usable previous-day file: then every stock);
+  halt), `new` (no official close in the previous day's file), `prev` (no usable previous-day file: then every stock, except, since
+  #163, the stocks whose KRX base price matches the last publish's close to the won; see "Backup days and the first volunteer-final
+  day after them" below);
 - data.json `d1Blank` holds the published counts per reason, `seen` (whether no-trade could be told at all) and the source
   oddities: `odd` (volume and open 0 but a trading value that is not 0, or blank: the row contradicts itself, not marked) and
   `must` (a gate must-have stock that looked like no trade: not marked, its `d1` is computed as before, so one bad row cannot
@@ -674,6 +676,47 @@ under today's date label without that line."
   5 trading days late, as on main. US stocks at an earlier close are not touched. 내 수익 reads the same day's context: with that
   stock left out it shows no amounts on late data (its existing rule for a stock missing from the data). The old app has no
   late-data check.
+## Backup days and the first volunteer-final day after them (직전 거래일 최종본 없는 날의 d1, since #163)
+
+A backup day is a finished trading day the volunteer KRX list has no final file for: the run builds it from Daum × Yahoo (the
+two-source rule, #137; time limits in the next section) and publishes with `pxSrc.px` = `daum+yahoo`. When the volunteer list comes
+back, it often posts only the newest day's final file; its files for the backup days stay the intraday copies it committed during
+those days. Example (dry run 44783218618, 11-21 02:33 KST): backup days 11-17/18/19 (published 11-20 06:40, pxDate 11-19), then a
+final 11-20 file (23:23 KST commit, 2,878 stocks), while the 11-17/18/19 files were last committed at 15:29, 14:52 and 14:52 KST,
+before each day's close (11-19 was the CSAT day, close 16:30). That run is a normal volunteer-file day for 11-20 (pxDate 11-20,
+`pxSrc.px` = `listing`, the Yahoo spot check of must-haves + sample and the KONEX Naver check as usual), except that the previous
+trading day has no final file:
+
+- **`d1`** (before #163: blank for every stock, so "필수 종목 d1" failed and nothing published). Now (`fetch_data.kr_d1_base_day`): a
+  stock gets `d1` = today's official close ÷ the last publish's close − 1 only when KRX's own base price in today's final file
+  (Close − Changes, the relation the "KRX 기준가 연결" check uses) equals, to the won, the close in the last publish (the data.json
+  the run starts from, the same file the gate reads with `git show HEAD:data.json`). Two independent sources: KRX's base price and
+  a close we already confirmed from two sources. The last publish counts only when its pxDate is the previous KOSPI trading day and
+  its price source is the volunteer list or Daum × Yahoo; a row counts only when it is a confirmed close of that day (a row with its
+  own price date `pxd`, a carried close, or a no-trade row does not). The ±30% and no-trade rules are unchanged. Every other stock
+  keeps a blank `d1` with `d1Why` `prev`; nothing is guessed.
+- The log says it in one loud line: "!! d1: 직전 거래일 최종본이 없어 KRX 기준가 × 지난 발행본 종가로 확인 n / m · 다름 k · 지난 발행본에
+  없음 j · 그날 확인된 종가가 아님 c · 기준가 없음 b (…) — 다름: names with both values — …". When the last publish cannot be used:
+  "!! d1: 직전 거래일 … 최종본이 없고 지난 발행본의 가격 날짜가 직전 거래일이 아니에요 … d1 을 비워요 n종목".
+- data.json `d1Base` (only on such a day): `{v, day, pub, why, n, ok, diff, noPub, notConf, noBase, ex}` (`day` the previous trading
+  day, `pub` the last publish's pxDate, `why` none · day · src when the last publish could not be used, counts over the processed
+  stocks, up to 12 examples per reason). The gate does not read it; its rows stay as they were: "필수 종목 d1" fails if a must-have
+  is still blank, "국내 d1 채움" warns below 95%.
+- On the real 11-20 files: 2,371 of 2,500 confirmed, 0 differ, 88 not in the last publish (stocks the 11-19 backup did not
+  confirm, such as 바이오비쥬 489460, or new to the top 2,500), 41 no-trade rows on 11-19 (all without a trade on 11-20 too). `d1`
+  filled 2,370 of 2,500 (94.8%, so expect the WARN "국내 d1 채움"), every confirmed value equal to KRX's own change ratio, all 7
+  must-haves present (삼성전자 −7.01%).
+- **Other things that use the previous days' files** behave as on any day with a non-final file, and say so loudly ("!! … 파일의
+  마지막 커밋이 … — … 그날 값은 가격 고정·거래대금에 쓰지 않아요"): `val20` averages the 20 newest final files (today and the 19 final
+  days before the gap), so on 11-20 its window reaches three trading days further back; the backup days' Naver bars are not pinned
+  to official closes (their only official closes were the backup files, which this run does not rebuild), so volatility, beta, 52-week
+  and the price-history checks read those three bars as Naver gives them, like any unpinned day ("최근 19거래일 중 고치지 않고 네이버 봉 그대로
+  둔 봉"); "KRX 기준가 연결" reads "확인 못 함" for every stock across the gap. "pxDate 뒤 끝난 거래일 없음" passes (pxDate is the
+  newest day).
+- **When it still stops:** if the last publish is older than the previous trading day (the backup also failed that day), every
+  `d1` stays blank and "필수 종목 d1" fails: nothing publishes, the site keeps its dated data, and the next trading day publishes
+  normally (today's final file is then the previous-day file). The same if a must-have's base differs (a corporate action on a
+  must-have that day). Do not loosen the gate row; check the "d1:" log line and tell Jack in plain words.
 
 ## Korean second-source time limit (2차 출처 시간 한도, since #151)
 
