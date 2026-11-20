@@ -146,8 +146,9 @@ def wait_until(now, us_days, us_today=None):
 
 def open_closes(data):
     """발행본에서 아직 확인 못 한 종가 수 {"kr": n, "us": n} (2026-11-21 · #161 · 순수 함수). 0 이면 그날이 다 찼어요.
-    kr: 2차 출처 날 (pxSrc.px daum+yahoo) 에 그날 전체 목록에서 두 출처로 확인하지 못한 국내 종목 (pxSrc.own.unconf — 마지막 확인 종가로 실었거나
-    빠진 종목) 에서 같은 날 지난 발행본에서 다시 쓴 확인 종가 (pxSrc.own.reuse.n) 를 뺀 수. own 기록이 없으면 fb 로 (목록 − 확인).
+    kr: 2차 출처 날 (pxSrc.px daum+yahoo) 에 다시 물으면 바뀔 수 있는 확인 못 한 국내 종목 (pxSrc.fb.open + fb.knx.open — 두 출처가 다른 종목 ·
+    야후가 싣지 않는 종목은 빼요 · #161 리뷰 6) 에서 같은 날 다시 쓴 종목 (pxSrc.own.reuse.n) 을 뺀 수. 그 기록이 없는 예전 파일은 확인 못 한 종목
+    모두 (pxSrc.own.unconf), 그것도 없으면 fb 로 (목록 − 확인).
     1차 출처 날 · pxSrc 가 없는 예전 파일은 0. 읽을 수 없는 2차 출처 기록은 1 (모르면 다시 돌아요 — 조용히 건너뛰지 않아요).
     us: 미국 마지막 확인 종가가 들어오면 여기서 세요 (지금은 0 — 그 일이 들어올 때 고칠 자리예요)."""
     out = {"kr": 0, "us": 0}
@@ -158,8 +159,13 @@ def open_closes(data):
 
     def n(v):
         return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
-    if isinstance(own, dict) and n(own.get("unconf")) is not None:
-        rr = own.get("reuse") if isinstance(own.get("reuse"), dict) else {}
+    rr = own.get("reuse") if isinstance(own, dict) and isinstance(own.get("reuse"), dict) else {}
+    fbk = fb.get("knx") if isinstance(fb, dict) and isinstance(fb.get("knx"), dict) else None
+    if isinstance(fb, dict) and n(fb.get("open")) is not None and (fbk is None or n(fbk.get("open")) is not None):
+        # #161 리뷰 6: 다시 물으면 바뀔 수 있는 종목만 (다음 행 없음 · 값 못 믿음 · 야후 종가 빈 칸 · 코넥스도 같게) — 두 출처가 다른 종목과 야후가 싣지
+        # 않는 종목은 하루 종일 그대로라 세지 않아요. 같은 날 지난 발행본에서 다시 쓴 종목은 빼요
+        out["kr"] = max(fb["open"] + (fbk["open"] if fbk is not None else 0) - (n(rr.get("n")) or 0), 0)
+    elif isinstance(own, dict) and n(own.get("unconf")) is not None:
         out["kr"] = max(own["unconf"] - (n(rr.get("n")) or 0), 0)
     elif isinstance(fb, dict) and n(fb.get("n")) is not None and n(fb.get("conf")) is not None:
         out["kr"] = max(fb["n"] - fb["conf"], 0)

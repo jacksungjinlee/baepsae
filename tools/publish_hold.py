@@ -32,7 +32,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-from validate_data import KST, PX_SRC_FB, _gh_escape  # noqa: E402  (관문과 같은 정의)
+from validate_data import KST, PX_SRC_FB, _gh_escape, kr_px_count  # noqa: E402  (관문과 같은 정의)
 
 # 바닥 (Jack 2026-11-21: "set it from last week's 06:40 coverage"). 지난주 06:40 발행 (data 브랜치 · 코스피 · 코스닥 두 출처 확인 ÷ 그날 목록):
 #   11-19 (pxDate 11-18) 2,743 / 2,771 = 98.99% · 11-20 (pxDate 11-19) 2,740 / 2,771 = 98.88% — 2차 출처 날은 이 둘뿐이에요.
@@ -45,7 +45,10 @@ COVERAGE_FLOOR_PCT = 97
 FB_PARTS = ("mkt", "noDaum", "bad", "noYahoo", "diff")   # 확인 못 한 칸 (fetch_data.px_src_counts) — 코스피 · 코스닥 확인과 합치면 n
 TITLE = f"발행 판단 (2차 출처 날 확인 비율 바닥 {COVERAGE_FLOOR_PCT}% · 같은 날 다시 발행은 더 나을 때만)"
 
-Decision = collections.namedtuple("Decision", "hold loud why kind")   # kind: publish · floor · same · unknown · error
+Decision = collections.namedtuple("Decision", "hold loud why kind")   # kind: publish · floor · back · loss · same · unknown · error
+# 감시 (watchdog.is_held_run) 에 중립인 보류: 바닥 아래 · 날짜가 뒤로 감 · 잃은 종목 · 비교할 수 없음. '같은 날 · 더 낫지 않음' (관문 · 화면 검사를
+# 통과 · 한국 · 미국 기준일이 발행본과 같음) 은 건강한 실행으로 세요 (#161 리뷰 7: 앞선 빨간 실행의 경보가 닫혀요).
+NEUTRAL = ("floor", "back", "loss", "unknown")
 
 
 def _count(v):
@@ -122,37 +125,75 @@ def floor_decision(mode, total, listing, floor=COVERAGE_FLOOR_PCT):
                                 "이 실행은 발행하지 않아요. 다음 실행이 다시 해요", "floor")
 
 
-def same_day(cur, prev):
-    """같은 날 다시 도는 실행인지: 지난 발행본과 한국 · 미국 기준일이 모두 같아요. (순수 함수)
-    미국 마지막 확인 종가 (US carry) 가 들어오면 여기와 already_published.open_closes 의 미국 칸에서 미국 종가가 늘었는지도 봐요 (지금은 안 봐요)."""
-    return (isinstance(cur, dict) and isinstance(prev, dict) and cur.get("pxDate") is not None
-            and cur.get("pxDate") == prev.get("pxDate") and cur.get("usPxDate") == prev.get("usPxDate"))
+def _day(v):
+    try:
+        return dt.date.fromisoformat(str(v)) if v is not None else None
+    except ValueError:
+        return None
 
 
-def same_day_decision(cur_mode, prev_mode, cur_n, prev_n):
-    """같은 날 다시 발행 (Decision · 순수 함수): 더 나을 때만 발행해요. cur_n · prev_n: kk_counts 의 셈 (모르면 None).
-    - 오늘이 1차 출처 (KRX 최종본) 이고 지난 발행본이 2차 출처 → 발행 (최종본이 생겼어요).
-    - 둘 다 1차 출처 → 예전 그대로 발행 (손으로 다시 돌린 실행).
-    - 오늘 2차 출처 · 지난 발행본 1차 출처 → 발행하지 않아요 (최종본을 2차 출처로 바꾸지 않아요).
-    - 둘 다 2차 출처 → 오늘 확인 > 지난 확인 이고 잃은 종목 0 일 때만. 셈을 모르거나 잃은 종목 수를 모르면 발행하지 않아요."""
-    if cur_mode != PX_SRC_FB:
-        if prev_mode == PX_SRC_FB:
-            return Decision(False, False, "같은 기준일인데 오늘은 KRX 최종본 (1차 출처) — 2차 출처 발행본을 최종본으로 바꿔 발행해요", "publish")
+def dates_back(cur, prev):
+    """날짜가 뒤로 가는지 (#161 리뷰 1 · 순수 함수): 이 실행의 한국 기준일 (pxDate) 이나 미국 기준일 (usPxDate) 이 지난 발행본보다 앞이면 그 이유.
+    (예: 08:17 실행이 10:15 쯤 시작해 야후가 비는 10:00 ~ 10:40 에 걸리면 미국 기준일이 하루 앞으로 가요 — 한국은 그대로.) 아니면 None."""
+    if not isinstance(cur, dict) or not isinstance(prev, dict):
+        return None
+    out = []
+    for k, name in (("pxDate", "한국"), ("usPxDate", "미국")):
+        c, p = _day(cur.get(k)), _day(prev.get(k))
+        if c is not None and p is not None and c < p:
+            out.append(f"{name} 기준일 {c} < 발행본 {p}")
+    return " · ".join(out) or None
+
+
+def stock_sets(data):
+    """발행 파일의 종목 (순수 함수): (그 날짜 종가 국내 코드, 마지막 확인 종가 (pxd) 국내 코드, 그 밖 종목 (종류, 코드) — 미국 · 펀드 · 금 · 채권)."""
+    kr_px, kr_own, other = set(), set(), set()
+    for x in (data or {}).get("stocks") or [] if isinstance(data, dict) else []:
+        if not isinstance(x, dict) or x.get("t") is None:
+            continue
+        t = str(x["t"])
+        if x.get("cls") == "kr" and not x.get("fund"):
+            (kr_own if x.get("pxd") is not None else kr_px).add(t)
+        else:
+            other.add((str(x.get("cls")), t))      # 미국 마지막 확인 종가 (US carry) 가 들어오면 여기서 미국 pxd 도 나눠요
+    return kr_px, kr_own, other
+
+
+def lost_stocks(cur, prev):
+    """같은 날 다시 발행에서 잃는 종목 (#161 리뷰 2 · 순수 함수): 지난 발행본의 모든 종목이 있어야 해요 — 그 날짜 종가 국내 종목은 그 날짜 종가로 (마지막
+    확인 종가로 바뀌거나 빠지면 잃음) · 마지막 확인 종가 국내 종목은 그대로 또는 그 날짜 종가로 · 미국 · 펀드 · 금 · 채권은 그대로. 반환: {kr, own, other}."""
+    cp, co, cx = stock_sets(cur)
+    pp, po, px = stock_sets(prev)
+    return {"kr": sorted(pp - cp), "own": sorted(po - cp - co), "other": sorted(f"{c} {t}" for c, t in px - cx)}
+
+
+def same_day_decision(cur_mode, prev_mode, cur, prev):
+    """같은 한국 기준일 다시 발행 (Decision · 순수 함수 · #161 리뷰 2). 지난 발행본의 종목을 하나도 잃지 않을 때만, 그리고
+    - 미국 기준일이 같으면: 그 날짜 종가 국내 종목 수 (발행 파일 · validate_data.kr_px_count) 가 지난 발행본보다 많을 때만 발행해요.
+    - 미국 기준일이 새로우면: 국내를 잃지 않으면 발행해요 (미국 종가를 막지 않아요).
+    - 오늘 2차 출처 · 지난 발행본 1차 출처 (KRX 최종본) → 발행하지 않아요. 둘 다 1차 출처 → 예전 그대로 발행 (손으로 다시 돌린 실행)."""
+    if cur_mode != PX_SRC_FB and prev_mode != PX_SRC_FB:
         return Decision(False, False, "같은 기준일 · 1차 출처 — 예전 그대로 발행해요", "publish")
-    if prev_mode != PX_SRC_FB:
-        return Decision(True, True, f"같은 기준일인데 지난 발행본이 2차 출처가 아니에요 (pxSrc.px {prev_mode!r}) — 2차 출처로 바꿔 발행하지 않아요", "same")
-    if cur_n is None or prev_n is None:
-        return Decision(True, True, "같은 기준일인데 확인 수를 비교할 수 없어요 (기록을 읽지 못함) → 발행하지 않아요 (그날 데이터는 이미 나가 있어요)", "same")
-    if cur_n["lost"] is None:
-        return Decision(True, True, "같은 기준일인데 이 실행에 같은 날 다시 쓰기 기록 (pxSrc.own.reuse) 이 없어 잃은 종목을 몰라요 → 발행하지 않아요", "same")
-    if cur_n["lost"] > 0:
-        return Decision(True, True, f"같은 기준일 · 지난 발행본이 그 날짜 종가로 실은 종목 {cur_n['lost']:,}개를 이 실행이 잃었어요 (지금 두 출처가 다름 등) → "
-                                    f"더 낫지 않아 발행하지 않아요 (확인 {prev_n['total']:,} → {cur_n['total']:,})", "same")
-    if cur_n["total"] > prev_n["total"]:
-        return Decision(False, False, f"같은 기준일 · 코스피 · 코스닥 확인 {prev_n['total']:,} → {cur_n['total']:,} (+{cur_n['total'] - prev_n['total']:,}) · "
-                                      "잃은 종목 0 → 더 나아서 같은 날 데이터를 고쳐 발행해요", "publish")
-    return Decision(True, False, f"같은 기준일 · 코스피 · 코스닥 확인 {prev_n['total']:,} → {cur_n['total']:,} — 더 많지 않아 발행하지 않아요 "
-                                 "(지난 발행본 그대로)", "same")
+    if cur_mode == PX_SRC_FB and prev_mode != PX_SRC_FB:
+        return Decision(True, True, f"같은 기준일인데 지난 발행본이 2차 출처가 아니에요 (pxSrc.px {prev_mode!r}) — 2차 출처로 바꿔 발행하지 않아요", "loss")
+    lost = lost_stocks(cur, prev)
+    n_lost = sum(len(v) for v in lost.values())
+    try:
+        n_cur, n_prev = kr_px_count(cur), kr_px_count(prev)
+    except Exception as e:
+        return Decision(True, True, f"같은 기준일인데 종목 수를 셀 수 없어요 ({type(e).__name__}) → 발행하지 않아요 (그날 데이터는 이미 나가 있어요)", "unknown")
+    if n_lost:
+        ex = ", ".join((lost["kr"] + lost["own"] + lost["other"])[:12])
+        return Decision(True, True, f"같은 기준일 · 지난 발행본의 종목을 잃어요 — 그 날짜 종가 국내 {len(lost['kr']):,} · 마지막 확인 종가 국내 "
+                                    f"{len(lost['own']):,} · 미국 등 {len(lost['other']):,} ({ex}) → 발행하지 않아요 (그 날짜 종가 국내 {n_prev:,} → {n_cur:,})",
+                        "loss")
+    us_new = (_day(cur.get("usPxDate")) or dt.date.min) > (_day(prev.get("usPxDate")) or dt.date.min)
+    if us_new:
+        return Decision(False, False, f"같은 한국 기준일 · 미국 기준일 {prev.get('usPxDate')} → {cur.get('usPxDate')} · 잃은 종목 0 → 발행해요", "publish")
+    if n_cur > n_prev:
+        return Decision(False, False, f"같은 기준일 · 그 날짜 종가 국내 종목 {n_prev:,} → {n_cur:,} (+{n_cur - n_prev:,}) · 잃은 종목 0 → 더 나아서 "
+                                      "같은 날 데이터를 고쳐 발행해요", "publish")
+    return Decision(True, False, f"같은 기준일 · 그 날짜 종가 국내 종목 {n_prev:,} → {n_cur:,} — 더 많지 않아 발행하지 않아요 (지난 발행본 그대로)", "same")
 
 
 # ── 읽기 ────────────────────────────────────────────────────
@@ -181,14 +222,19 @@ def read_prev(ref="HEAD", run=subprocess.run):
 
 # ── 실행 ────────────────────────────────────────────────────
 def evaluate(cur, cur_note, prev, prev_note, now):
-    """오늘 data.json · 직전 발행본 (dict 또는 None) → (Decision, 로그 줄들). 바닥 → 같은 날 다시 발행 순서로 한 번 정해요."""
+    """오늘 data.json · 직전 발행본 (dict 또는 None) → (Decision, 로그 줄들). 날짜가 뒤로 가는지 → 바닥 → 같은 날 다시 발행 순서로 한 번 정해요."""
     lines = [f"· {TITLE} — {now.astimezone(KST):%Y-%m-%d %H:%M} KST"]
     if cur is None:
         lines.append(f"!! 오늘 data.json: {cur_note}")
         return Decision(False, True, f"오늘 data.json 을 읽지 못했어요 ({cur_note}) → 보류하지 않아요 (관문이 봐요)", "unknown"), lines
     mode = day_mode(cur)
     cn, why_c = kk_counts(cur)
-    lines.append(f"{'!! ' if mode == PX_SRC_FB and cn is None else '· '}오늘: pxSrc.px {mode!r} · {why_c} · 미국 기준일 {cur.get('usPxDate')}")
+    lines.append(f"{'!! ' if mode == PX_SRC_FB and cn is None else '· '}오늘: pxSrc.px {mode!r} · {why_c} · 한국 {cur.get('pxDate')} · 미국 {cur.get('usPxDate')}")
+    if isinstance(prev, dict):
+        back = dates_back(cur, prev)
+        if back:
+            lines.append(f"!! 직전 발행본: {prev_note} · 한국 {prev.get('pxDate')} · 미국 {prev.get('usPxDate')}")
+            return Decision(True, True, f"날짜가 뒤로 가요 ({back}) → 이 실행은 발행하지 않아요 (사이트는 더 새 발행본 그대로)", "back"), lines
     d = floor_decision(mode, cn and cn["total"], cn and cn["listing"])
     if d.hold or d.kind == "unknown":
         return d, lines
@@ -196,16 +242,17 @@ def evaluate(cur, cur_note, prev, prev_note, now):
         lines.append(f"{'!! ' if mode == PX_SRC_FB else '· '}직전 발행본: {prev_note} — 같은 날 다시 도는 실행인지 몰라 바닥만 봐요")
         return (Decision(False, True, d.why + " (직전 발행본을 읽지 못해 같은 날인지 몰라요 · 바닥만 봤어요)", "unknown") if mode == PX_SRC_FB else d), lines
     pmode = day_mode(prev)
-    if not same_day(cur, prev):
+    if cur.get("pxDate") != prev.get("pxDate"):
         lines.append(f"· 직전 발행본: {prev_note} · 한국 {prev.get('pxDate')} · 미국 {prev.get('usPxDate')} → 새 날 (같은 날 다시 발행 아님)")
         return d, lines
-    pn, why_p = kk_counts(prev) if pmode == PX_SRC_FB else (None, f"pxSrc.px {pmode!r}")
-    lines.append(f"{'!! ' if pmode == PX_SRC_FB and pn is None else '· '}직전 발행본 (같은 날): {prev_note} · {why_p}")
-    return same_day_decision(mode, pmode, cn, pn), lines
+    lines.append(f"· 직전 발행본 (같은 한국 기준일): {prev_note} · pxSrc.px {pmode!r} · 미국 {prev.get('usPxDate')} · 그 날짜 종가 국내 "
+                 f"{kr_px_count(prev):,} → 이 실행 {kr_px_count(cur):,}")
+    return same_day_decision(mode, pmode, cur, prev), lines
 
 
 def summary_md(d, lines, dry, sample=False):
-    head = {"floor": "보류 — 확인 비율이 바닥 아래라 발행하지 않아요", "same": "발행 안 함 — 같은 날 지난 발행본보다 낫지 않아요"}.get(d.kind, "발행 (보류 아님)")
+    head = {"floor": "보류 — 확인 비율이 바닥 아래라 발행하지 않아요", "same": "발행 안 함 — 같은 날 지난 발행본보다 낫지 않아요",
+            "back": "보류 — 날짜가 지난 발행본보다 앞이에요", "loss": "보류 — 지난 발행본의 종목을 잃어요"}.get(d.kind, "발행 (보류 아님)")
     out = [f"### 뱁새 발행 판단 — {head}", ""]
     out += [f"- {ln.removeprefix('· ').removeprefix('!! ')}" for ln in lines[1:]]
     out.append(f"- **결정:** {d.why}")
@@ -221,6 +268,8 @@ def summary_md(d, lines, dry, sample=False):
 
 
 ANNOTATE = {"floor": ("warning", "발행 보류 (2차 출처 확인 비율 바닥 아래)"),
+            "back": ("warning", "발행 보류 (날짜가 뒤로 감)"),
+            "loss": ("warning", "같은 날 다시 발행 안 함 (지난 발행본의 종목을 잃음)"),
             "same": ("notice", "같은 날 다시 발행 안 함 (더 낫지 않음)"),
             "unknown": ("warning", "발행 판단 확인 못 함 (보류 없이 판단)"),
             "error": ("warning", "발행 판단 확인 못 함 (보류 없이 판단)")}
@@ -268,9 +317,9 @@ def main(argv=None, now_fn=None, cur_reader=read_cur, prev_reader=read_prev):
         except Exception as e:
             print(f"!! 실행 요약에 쓰지 못했어요 ({type(e).__name__}: {str(e)[:120]}) — 결정은 위 줄 그대로예요", flush=True)
     out = os.environ.get("GITHUB_OUTPUT")
-    if out:                                   # 마지막에 써요 — 발행 두 단계가 이 값을 봐요
+    if out:                                   # hold 를 마지막에 써요 — 발행 두 단계가 이 값을 봐요 (neutral: 감시에 중립인 보류 · 아래 표시 단계)
         with open(out, "a", encoding="utf-8") as f:
-            f.write(f"hold={'true' if d.hold else 'false'}\n")
+            f.write(f"kind={d.kind}\nneutral={'true' if d.hold and d.kind in NEUTRAL else 'false'}\nhold={'true' if d.hold else 'false'}\n")
     return d.hold
 
 

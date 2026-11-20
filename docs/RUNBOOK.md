@@ -13,8 +13,9 @@ One page for Jack. Claude Code does every step below for you; this page says wha
 What the watchdog checks, on the files users actually download: the four data files pass `validate_data.py --live`; after
 15:30 KST, the Korean price date is the last finished trading day (checked against KRX's final listing and Yahoo's KOSPI,
 both separate from our pipeline); the last daily run and the last deploy succeeded (a daily run that held its publish on a backup
-morning or did not improve a same-day publish is skipped, so the run before it counts: "Backup days: coverage floor and
-same-day updates"); the daily run is still switched on;
+morning, dates going back or a lost stock is skipped, so the run before it counts; a same-day run that passed the gate and the
+screen check but was not better counts as healthy: "Backup days: coverage floor and same-day updates"); the daily run is still
+switched on;
 the pages users get are the current build, the site's `data.json` is exactly the published copy, and the site does not
 serve the `docs/` folder (two of its files must answer "not found").
 A server error from GitHub Pages (HTTP 5xx) on a data file or page is asked again once, 20 seconds later, before it
@@ -920,85 +921,102 @@ A backup day is a day the volunteer KRX list has no final file for the price dat
 kept only where the two agree to the won (#137). Since 11-16 that is every day.
 
 **One decision per run** (`tools/publish_hold.py`, step "발행 판단 (2차 출처 날 확인 비율 바닥 · 같은 날 다시 발행은 더 나을 때만)", id
-`hold`, right after the data step and before the gate; at any time of day; normal KRX-final days publish as before):
-1. **Coverage floor.** Coverage = KOSPI/KOSDAQ closes confirmed by both sources (plus closes re-used from an earlier publish of the
-   same day, below) ÷ the day's KOSPI/KOSDAQ list. From `pxSrc.fb`: (`conf` − KONEX `fb.knx.kept`) ÷ (`n` − `mkt`), used only when
-   the record adds up; carried closes (`pxSrc.own`, `pxd`, #159) never count. Below `COVERAGE_FLOOR_PCT` (97%): the run does not
-   publish. Exactly the floor publishes.
+`hold`, right after the data step and before the gate; at any time of day):
+1. **Dates never go back.** If this run's Korean price date or US price date is earlier than the last publish's, it does not publish
+   (warning "발행 보류 (날짜가 뒤로 감)"). Example: a delayed 08:17 start running at about 10:15, inside Yahoo's 10:00–10:40 gap, gets a
+   US date one day older while the Korean date stays.
+2. **Coverage floor (backup days).** Coverage = KOSPI/KOSDAQ closes confirmed by both sources (plus closes re-used from an earlier
+   publish of the same day) ÷ the day's KOSPI/KOSDAQ list: (`pxSrc.fb.conf` − KONEX `fb.knx.kept` + `pxSrc.own.reuse.kk`) ÷
+   (`fb.n` − `fb.mkt`), used only when the record adds up; carried closes (`pxd`, #159) never count. Below `COVERAGE_FLOOR_PCT`
+   (97%) the run does not publish (warning "발행 보류 (2차 출처 확인 비율 바닥 아래)"). Exactly the floor publishes.
    Last week's 06:40 publishes (data branch): 11-19 2,743 / 2,771 = 98.99%; 11-20 2,740 / 2,771 = 98.88% (the only backup days;
-   11-17 … 11-19 runs saw about 98.7%); 11-13, 11-14 and 11-17 were KRX-final days (every listed KOSPI/KOSDAQ stock has its official
-   close: 100%). 97% of 2,771 is 2,688: up to 83 unconfirmed still publish (last week: 28 and 31). Chosen over 98% (only about 0.7
-   points of room) because since #159 unconfirmed stocks show their last close with Jack's line, so a slightly weaker morning should
-   not block the whole publish. A night when Yahoo has not yet filled the day's closes (about 2,526, 91%) is still held.
-2. **Same-day updates.** `already_published.py` no longer stops a later scheduled start when the published file is a backup day
-   that still has unconfirmed Korean closes (`pxSrc.own.unconf` minus re-used ones; US hook in `open_closes`, always 0 until US
-   carries land). That run runs fully. If its Korean and US price dates equal the last publish's, it publishes only if it is
-   **strictly better**: more KOSPI/KOSDAQ closes confirmed for that date than the last publish, and no stock the last publish had at
-   that date's close is lost. A complete day (no unconfirmed closes) and normal days still stop early as before.
-   - For a stock the earlier same-day publish had at that date's close but this run could not confirm, the pipeline re-uses the
-     earlier close (`fetch_data.kr_same_day_reuse`, before #159's carry step): both are confirmed closes of the same date, so the
-     stock keeps its price, d1 and marks and gets no `pxd`. It is logged loudly ("!! 같은 기준일을 다시 도는 실행 …") and recorded in
-     `pxSrc.own.reuse` (`n`, `kk` KOSPI/KOSDAQ, `codes`, `lost`, `lostEx`).
-   - It is **not** re-used, and counts as lost, when the two sources now disagree on it (`pxSrc.fb.diffT`, KONEX `fb.knx.diffT`),
-     when it left the day's list, when it has a price-history mark without its earlier move, or when re-using it would publish more
-     date-priced stocks than this run confirmed (the gate's "확인 종목 수 ≥ 발행한 국내 종목 수" stays as it is; the largest stocks are
-     re-used first). Any loss means the run does not publish.
-   - If the run's Korean or US date moved (a new day, or the US close arrived), it is a normal publish: floor only.
-   - **A same-day run asks the sources only for what is still open.** The second-source stage keeps the values it confirmed on the
-     newest day (Daum row and Yahoo close; KONEX: Naver row and Yahoo close, also those below the KONEX cut) in
-     `.dart-cache/kr-fb-v1.json`, saved with the DART cache. A later run whose newest ended day equals the published file's
-     price date (a backup-day publish) does not ask Daum, Yahoo or Naver again for a stock whose kept values agree with each other to
-     the won and, when the published file has that stock at that date, with its published close (`fetch_data.kr_fb_cache_pick`).
-     Everything else is asked as before: the unconfirmed, carried and left-out stocks, and any stock whose kept value differs from
-     the publish (counted loudly). Confirmation and counts are exactly as if every stock had been asked (`pxSrc.fb.skip` = stocks
-     not asked again). The log line "!! 2차 출처 같은 날 다시 쓰기 …" gives asked vs re-used per phase. On a day like 11-19 (2,743 of
-     2,771 confirmed, 28 not; KONEX 87–93 of 107 confirmed) a re-run asks about 28 Daum + 28 Yahoo (+ up to 6 chart re-reads) and
-     about 15–20 KONEX on Naver and Yahoo: roughly 100 requests instead of about 5,800.
-   - Not scoped, and why: the Naver price series behind volatility, beta and the 52-week range (about 2,500 requests a run) has no
-     cache to re-use; US prices (about 800) move with the US date; the gate's own Daum × Yahoo spot check (about 100) is a safety
-     check that must ask fresh; listing files, the KOSPI index and DART (already cached) are unchanged.
-3. **Not publishing** (below the floor, or a same-day run that is not better): "커밋 & 푸시" and "data 브랜치에 올리기" show as
-   skipped; nothing goes to `main` or `data`, and Deploy does not deploy. The run ends **green**. The log says "!! [보류] …" (floor)
-   or "!! [같은 날 · 발행 안 함] …"; the run page gets a yellow warning "발행 보류 (2차 출처 확인 비율 바닥 아래)" for a floor hold
-   and a notice "같은 날 다시 발행 안 함 (더 낫지 않음)" for a same-day run (common on backup days); the summary section is "뱁새 발행
-   판단 — …".
+   11-17 … 11-19 runs saw about 98.7%); 11-13, 11-14 and 11-17 were KRX-final days (100%). 97% of 2,771 is 2,688: up to 83 unconfirmed
+   still publish. Chosen over 98% (only about 0.7 points of room) because since #159 unconfirmed stocks show their last close with
+   Jack's line. A night when Yahoo has not yet filled the day's closes (about 2,526, 91%) is still held.
+3. **Same-day updates.** A run with the same Korean price date as the last publish publishes only if it **loses no stock** of that
+   publish (every Korean stock at that date's close stays at that date's close; every carried Korean stock is still there, carried
+   or now at that date's close; every US stock, fund, gold and bond row is still there) **and**:
+   - the US date is the same and the file has **strictly more Korean stocks at that date's close** (`validate_data.kr_px_count`;
+     confirmations of stocks outside the published file don't count), or
+   - the US date is newer (the US update is never blocked by Korean counts).
+   Otherwise: "같은 날 · 더 낫지 않음" (notice) or "지난 발행본의 종목을 잃음" (warning). If the last publish was a KRX-final day and this
+   run is a backup day, it does not publish; if this run is KRX-final and loses nothing, it publishes.
 4. **When it can't decide:** today's record unreadable → no hold (warning "발행 판단 확인 못 함 (보류 없이 판단)"). Last publish
-   unreadable, a `bootstrap` run, or a dry run's compare commit not fetched → floor only (warning). Same day but the counts or this
-   run's re-use record can't be read → no publish (the day's data is already out). A crash → no hold (warning), as before.
+   unreadable, a `bootstrap` run, or a dry run's compare commit not fetched → dates and floor only (warning). A crash → no hold
+   (warning), as before.
+
+Later runs on a backup day (`already_published.py`, `open_closes`):
+- The day counts as open only while the published file has unconfirmed Korean closes **that a re-ask can change**: `pxSrc.fb.open`
+  (no Daum row, unreadable Daum row, Yahoo close still blank) plus `fb.knx.open` (KONEX: no Naver row, unreadable, Yahoo blank),
+  minus closes re-used the same day. Persistent cases don't count: Daum and Yahoo disagreeing (about 25 a day, e.g. STX), stocks
+  Yahoo doesn't list at all (`noList`: about 5 KOSPI/KOSDAQ and 11 KONEX). On 11-19 that left 1 open stock. A day with nothing open
+  stops early as before.
+- **Quiet period.** Each run that reaches the end on a same-day re-run records in `.dart-cache/kr-rerun-v1.json` (saved with the DART
+  cache) how many Korean stocks at that date's close it added. If it added none, scheduled and timer starts in the next 3 hours (and
+  only before 15:30 KST, while no new trading day can end) do not collect data: "!! 같은 날 다시 도는 실행이에요: … 3시간이 지나기 전이라
+  데이터를 모으지 않아요". The files stay as published; the gate and the screen check then look at the live files and the decision is
+  "같은 날 · 더 낫지 않음". Manual runs always run.
+- **Fewer requests.** The second-source stage keeps the values it confirmed on the newest day (Daum row fields and Yahoo close; KONEX:
+  Naver row and Yahoo close) in `.dart-cache/kr-fb-v1.json`. A later run of the same price date does not ask Daum, Yahoo or Naver
+  again for a stock the published file has at that date's close when the kept values match that close to the won
+  (`fetch_data.kr_fb_cache_pick`); everything else is asked (`pxSrc.fb.skip` = stocks not asked; the log line "!! 2차 출처 같은 날 다시
+  쓰기 …" gives asked vs re-used). Kept values of stocks the publish does not have at that date's close are not trusted (the cache is
+  saved before the gate, so it can come from a held, gate-failed or dry run).
+- **Same-day re-use.** A stock the earlier same-day publish had at that date's close that this run could not confirm (and has no
+  matching kept value for) keeps the earlier close (`fetch_data.kr_same_day_reuse`, logged, `pxSrc.own.reuse`). Not re-used, so the
+  run loses it and does not publish: the sources now disagree on it, it left the list, its price-history mark lacks its move, it would
+  exceed this run's confirmed count (the gate row "확인 종목 수 ≥ 발행한 국내 종목 수" stays), or it is KONEX (the day's KONEX rows are
+  only this run's confirmations, so the gate's KONEX row counts stay right; earlier KONEX come back through the kept values).
+- **No DART calls on a same-day re-run** (same price date, last publish made today): the DART client makes no requests (fundamentals
+  from the DART cache; the log's DART line says how many requests it held back) and the disclosure file is the morning publish's
+  `disc.json` as it is ("· 공시: 같은 날 다시 도는 실행이라 아침 발행본의 disc.json 을 그대로 써요"). If that file can't be read, the
+  disclosures are fetched from DART as before (loud). A first run of the day makes about 670 DART calls for disclosures; repeating
+  them on every re-run, plus a full-DART day, could pass the 20,000-a-day limit.
+
+Expected requests on a backup day like 11-19 (first run at 06:40, then re-runs while 1 stock is open):
+
+| Source | First run of the day | Full re-run | Quiet run (within 3 h of a run that added nothing) |
+|---|---|---|---|
+| Daum daily rows (KOSPI/KOSDAQ) | about 2,772 | about 300 (not at that date's close in the publish: about 270 below the top-2,500 cut + about 30 unconfirmed) | 0 |
+| Yahoo daily closes + re-read | about 2,772 + 0–41 (about 2,770 on a Yahoo-blank night) | about 300 + a few | 0 |
+| KONEX Naver + Yahoo .KQ | 107 + 107 | about 80–107 each (published KONEX are re-used; others asked) | 0 |
+| Naver price series (FinanceDataReader) | about 2,500 | about 2,500 (not re-used, see below) | 0 |
+| US prices (Yahoo) | about 800 | about 800 | 0 |
+| DART | about 670 (disclosures) | 0 | 0 |
+| Gate's own Daum × Yahoo spot check | about 412 (206 × 2) | about 412 | about 412 |
+
+With the quiet period, a day like 11-19 has about 2–3 full re-runs at most (one every 3 hours until 15:30, plus a delayed afternoon
+start after 15:30); a day with nothing open has none. The Naver price series are not re-used on a re-run: that step also builds
+run-wide price-history records (official-close pins over the last 19 sessions, reference-price links, jump marks) that the gate
+checks across every stock, so re-using per-stock results needs those records carried consistently; that is a separate change.
 
 What the other pieces see:
-- **Watchdog:** a green run whose update job skipped "data 브랜치에 올리기" is neutral (`watchdog.is_held_run`): the "last daily run"
-  check skips it and judges the run before ("그 뒤 발행하지 않은 실행 N번"). It neither opens nor closes an alarm and never counts as
-  a publish. If GitHub's API can't say which steps ran, the run is judged as before.
-- **Deploy:** deploys only after "data 브랜치에 올리기" succeeded, so a run that did not publish deploys nothing. A same-day republish
-  deploys like any publish.
-- **09:13 check:** it finds publishes by "커밋 & 푸시"; runs that did not publish are not publishes. On a backup morning the data is
-  normally in from the 06:40 run. A floor hold leaves the warning above for it to report.
-- **Gate:** the rows that compare with the last publish pass a same-day republish unchanged (pxDate is not earlier; the KR count
-  change is small; prices of the same date don't move; `tests/test_publish_hold.py`). Same-pxDate republishes already happened on
-  11-19 (three) and 11-20 (two). No gate row changed.
+- **Watchdog:** a run that did not publish is either **neutral** or **healthy**. Neutral (floor hold, dates going back, a lost
+  stock, can't decide): the step "발행 판단 표시 (감시에 중립인 보류)" runs, and `watchdog.is_held_run` skips the run when judging
+  "the last daily run" (it neither opens nor closes an alarm). Healthy ("같은 날 · 더 낫지 않음": the gate and the screen check passed
+  and the dates equal the live file's): that step is skipped and the run counts like a successful run, so **an alarm opened by a red
+  later run closes at the next healthy run** ("정상화됐어요"). Runs from before this marker count as neutral.
+- **Deploy:** deploys only after "data 브랜치에 올리기" succeeded, so a run that did not publish deploys nothing.
+- **09:13 check:** it finds publishes by "커밋 & 푸시". The floor, dates-back and lost-stock warnings are for it to report; the
+  same-day notices are normal.
+- **Gate:** the rows that compare with the last publish pass a same-day republish unchanged (pxDate is not earlier; the KR count change
+  is small; same-date prices don't move; `tests/test_publish_hold.py`, also with a re-use record and KONEX rows). No gate row changed.
 
 Costs and limits:
-- **Every later start runs on a backup day.** Some closes stay unconfirmed all day (on 11-19: 25 where Daum and Yahoo disagree, 6
-  Yahoo lacks), so the day is never "complete": each of the seven scheduled starts plus the timer runs the pipeline (about 30–45
-  minutes each). The second-source stage asks only the open stocks (above), but the Naver price series and the US prices are
-  fetched again each run, and each run saves the DART cache (DART reads the cache, so no full-DART run). Most runs end without
-  publishing.
-- **A later run can still go red.** The gate and the screen check run on every run, published or not. A later run that hits a source
-  problem can fail them (for example a must-have that can't be confirmed again makes its price date fall back a day: "pxDate 가 뒤로
-  가지 않음" fails). That opens a data alarm although the site keeps the good earlier publish; the alarm stays until the next publish.
-  Skipping the gate on runs that don't publish would need a change to tests that pin the gate as unconditional (Jack's call).
+- **A later run can still go red** on a source problem (the gate and the screen check run on every run). That opens a data alarm
+  while the site keeps the good earlier publish; the next healthy run (a "같은 날 · 더 낫지 않음" run or a publish) closes it.
 - **Floor holds all day:** if a source stays broken, every run is held and the site keeps the last publish with its date; the
   watchdog's stale-price check alarms after 15:30.
 - The floor counts the whole KOSPI/KOSDAQ list, not just the ~2,500 published stocks.
 
 What to do:
-- A same-day "발행 안 함" notice is normal. A floor-hold warning on the 06:40 run: wait for the next run; if no scheduled run has started
-  by about 11:00 KST, start Actions → 시세 데이터 갱신 → Run workflow (following the DART rule).
+- A same-day "발행 안 함" notice is normal. A floor-hold warning on the 06:40 run: wait for the next run; if no scheduled run has
+  started by about 11:00 KST, start Actions → 시세 데이터 갱신 → Run workflow (following the DART rule).
+- A "날짜가 뒤로 감" warning: a source gap during that run; the next run usually has the dates back. A "종목을 잃음" warning: read which
+  stocks (the decision line names them); one-off source trouble clears on the next run, a repeat means the pipeline drops rows.
 - A red later run on a backup day: read which row failed. If the site's data is the good earlier publish (check the date on the
-  site), it is a source problem on that run; the next run usually passes. Never loosen the row.
-- If every run is held for a day, bring the "!! [보류]" lines (coverage per run) to Jack.
-- Never change the floor (`COVERAGE_FLOOR_PCT`) without Jack's yes.
+  site), it is a source problem on that run; the next healthy run closes the alarm. Never loosen the row.
+- Never change the floor (`COVERAGE_FLOOR_PCT`) or the quiet period (`KR_RERUN_QUIET`) without Jack's yes.
 
 ## Deploy gate: Daum spot-check time limit (관문 두 출처 확인 시간 한도, since #157)
 

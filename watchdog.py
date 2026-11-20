@@ -301,12 +301,15 @@ def is_noop_deploy(net, run):
     return run.get("conclusion") == "success" and jobs.get("build") in (None, "skipped")
 
 
+HOLD_MARK = "발행 판단 표시 (감시에 중립인 보류)"   # update-data.yml 의 표시 단계 (#161 리뷰 7)
+
+
 def is_held_run(net, run):
-    """발행 판단으로 발행하지 않은 매일 실행 (#161 · tools/publish_hold.py — 2차 출처 날 확인 비율 바닥 아래 · 같은 날 다시 돌았는데 더 낫지
-    않음): 성공으로 끝났고 update job 도 성공했지만 'data 브랜치에 올리기' 가 건너뜀 (시험 실행은 제목으로 이미 뺐어요 — main 의 실제 실행에서
-    그 단계가 건너뛰는 까닭은 그 판단뿐이에요).
-    감시에는 중립이에요: 경보를 열지도 닫지도 않고, 발행한 실행으로 세지도 않아요 (그 전의 실행으로 판단해요).
-    단계를 읽지 못하면 False (예전처럼 그 실행으로 판단해요 — API 한 번 실패로 경보를 열지 않게)."""
+    """감시에 중립인 매일 실행 (#161 · tools/publish_hold.py): 성공으로 끝났고 update job 도 성공했지만 'data 브랜치에 올리기' 가 건너뛰었고, 표시 단계
+    (HOLD_MARK) 가 성공했어요 — 2차 출처 날 확인 비율 바닥 아래 · 날짜가 뒤로 감 · 지난 발행본의 종목을 잃음 · 비교할 수 없음. 경보를 열지도 닫지도
+    않고 발행한 실행으로 세지도 않아요 (그 전의 실행으로 판단해요). 표시 단계가 건너뛴 실행 ('같은 날 · 더 낫지 않음': 관문 · 화면 검사를 통과했고
+    발행본과 같은 날짜) 은 중립이 아니라 건강한 실행이에요 (False — 앞선 빨간 실행의 경보가 닫혀요). 표시 단계가 없는 예전 실행은 중립으로 봐요.
+    시험 실행은 제목으로 이미 뺐어요. 단계를 읽지 못하면 False (예전처럼 그 실행으로 판단해요 — API 한 번 실패로 경보를 열지 않게)."""
     if run.get("conclusion") != "success":
         return False
     try:
@@ -316,7 +319,10 @@ def is_held_run(net, run):
         return False
     for j in (js or {}).get("jobs", []):
         if j.get("name") == "update" and j.get("conclusion") == "success":
-            return any(s.get("name") == PUSH_STEP and s.get("conclusion") == "skipped" for s in j.get("steps") or [])
+            st = {s.get("name"): s.get("conclusion") for s in j.get("steps") or []}
+            if st.get(PUSH_STEP) != "skipped":
+                return False
+            return st.get(HOLD_MARK, "success") == "success"
     return False
 
 

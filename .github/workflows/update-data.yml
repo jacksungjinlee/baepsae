@@ -254,6 +254,13 @@ jobs:
                  echo "::warning title=발행 판단 확인 못 함 (보류 없이 판단)::발행 판단이 오류로 멈췄어요 → 보류하지 않아요";
                  echo "hold=false" >> "$GITHUB_OUTPUT"; }
 
+      # #161 리뷰 7: 감시에 중립인 보류 (바닥 아래 · 날짜가 뒤로 감 · 지난 발행본의 종목을 잃음 · 비교할 수 없음) 에만 도는 표시 단계예요. 감시
+      # (watchdog.is_held_run) 는 이 단계가 성공한 실행을 '마지막 실행' 에서 빼요. '같은 날 · 더 낫지 않음' 은 이 단계가 건너뛰어 건강한 실행으로
+      # 세요 (관문 · 화면 검사를 통과했고 발행본과 같은 날짜 — 앞선 빨간 실행의 경보가 닫혀요). 이름을 바꾸면 watchdog.HOLD_MARK 도 같이.
+      - name: 발행 판단 표시 (감시에 중립인 보류)
+        if: steps.hold.outputs.neutral == 'true'
+        run: echo "· 이 실행은 발행하지 않았고 감시에는 중립이에요 (${{ steps.hold.outputs.kind }})"
+
       # 2026-11-20: 관문의 줄도 바로바로 로그에 남겨요 (데이터 수집 단계처럼 · 검사 내용은 그대로).
       - name: 발행 관문 (validate_data.py)
         env:
