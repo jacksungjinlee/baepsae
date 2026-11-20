@@ -254,6 +254,14 @@ SECTOR_RULES = [
     ("paper",     ["종이", "펄프", "목재", "인쇄", "가구"]),
     ("hotel",     ["숙박", "음식점", "호텔", "여행", "레저", "카지노", "스포츠"]),
 ]
+# 2026-11-20 (Jack, "3. Yes": "Old app, power-equipment makers. 25 of them (효성중공업, HD현대일렉트릭, LS ELECTRIC and others) sit in
+# 전기·가스·환경. They show its line "요금은 정부가 정해요…", which is wrong for them. Move them to 전기전자"):
+# 2.0 이 전력기기·전선(power_eq)으로 묶는 전기장비 제조업 11차 소분류의 업종 글자 (띄어쓰기를 뺀 이름 전체 · KRX 글자 = 11차 이름, 띄어쓰기만
+# 달라요): 281 전동기 · 발전기 및 전기 변환 · 공급 · 제어 장치 · 283 절연선 및 케이블 · 284 전구 및 조명장치 · 289 기타 전기장비.
+# 이 회사들이 utility 키워드에 걸리면 (업종 글자의 '발전기' · 주요제품의 '전력' 같은) utility 가 아니라 elec 이에요 — 2.0 짝
+# (validate_data.IND_SECTOR_KR power_eq → elec 만)과 같아요. 주요제품으로 utility 보다 앞 키(반도체 · 2차전지 · 전자 · 기계 …)에 먼저 걸린
+# 회사와, 다른 업종 글자의 회사(전기업 · 가스 · 수도 · 폐기물 …)는 그대로예요. tests/test_oldapp_power_equip.py 가 이름이 11차 표와 같은지 봐요.
+SECTOR_ELEC_NOT_UTILITY = ("전동기,발전기및전기변환·공급·제어장치제조업", "절연선및케이블제조업", "전구및조명장치제조업", "기타전기장비제조업")
 US_GICS = {
     "technology": "platform", "information technology": "platform",
     "communication services": "media", "consumer cyclical": "retail",
@@ -297,6 +305,8 @@ def map_sector_kr(sector_text, product_text=""):
     for key, words in SECTOR_RULES:
         for w in words:
             if w in blob:
+                if key == "utility" and str(sector_text or "").replace(" ", "") in SECTOR_ELEC_NOT_UTILITY:
+                    return "elec"           # 전력기기 · 전선 제조사 (위 SECTOR_ELEC_NOT_UTILITY · Jack 2026-11-20)
                 return key
     return "etc"
 
