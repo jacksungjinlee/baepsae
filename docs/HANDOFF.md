@@ -41,7 +41,7 @@ first volunteer-final day after them".
 **Jack, 2026-11-19 (~09:30 KST), verbatim answers:** "1. Yes: "주가 {x}원 이하", "주가 ${x} 이하", "PBR {x}배 이하". 2. Yes. 3. Don't hide it; use "{date} 종가 기준으로는 할 일이 없어요." while the check runs on an old close. 4. Yes. 5. Yes, both lines. 6. Yes, with one nuance: in an emergency, use only already-approved wording, and ask about new wording after the fix is live. 7. a) Include 유무상증자, marked as such. b) Same-class basis: new shares against existing shares of the same kind (20.58% for 육일씨엔에쓰). c) "임원·주요주주". d) Yes. 8. a) Yes. b) Keep the 10% line, but replace "더 올릴 수 없어요" with "이 포트폴리오는 한 종목 최대 비중이 {x}%예요." The next screen offers raising it."
 - Also (verbatim): "146 new listings without an industry: move the DART company-record industry mapping up, right after the dividend follow-up." and "For KONEX, find a second source to check Daum against."
 - The 06:40 KST run (Tue–Sat KST, Mon–Fri UTC) is Jack's outside timer: a workflow_dispatch from his account at 21:40 UTC, every such day since 11-04.
-- On second-source days, a stock without a confirmed close is left out of the day's file (company page "이 종목의 데이터를 찾지 못했어요."; portfolios "오늘 데이터에 없는 종목 … 빼고 계산했어요."): never an old price under today's date.
+- On second-source days, a Korean stock without a confirmed close is shown at its last confirmed close from the previous publish, with its own date (`pxd`) and Jack's line (#159, see below); a stock with nothing to carry, or past 5 KRX trading days, is left out ("이 종목의 데이터를 찾지 못했어요." / "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요."). Never an old price under today's date.
 
 **#143 (v19.6c 관심 종목), 2026-11-19:** watch list with 이하/이상 conditions (Jack's 11-19 lines), 홈 rows, the side key `baepsae2.v1.watch`. App only.
 
