@@ -627,7 +627,34 @@ def test_contract_with_the_pipelines_own_second_source_record():
     data = json.loads(json.dumps(data))                                          # data.json 에 쓰고 읽은 그대로 (발행본처럼)
     n, why = P.fb_confirmed(data)
     assert n == st["conf"] == len(lst) > 0, why
-    assert st["mkt"] and P.FB_PARTS == ("mkt", "noDaum", "bad", "noYahoo", "diff")   # 픽스처의 코넥스 1종목이 mkt 에 (#158 전)
+    assert st["mkt"] and P.FB_PARTS == ("mkt", "noDaum", "bad", "noYahoo", "diff")   # 픽스처의 코넥스 1종목이 mkt 에 (코넥스 단계 없이)
     # 같은 기록이 직전 발행본이면 그 수가 기준이에요 (보류 결정까지)
     assert P.last_count(data)[0] == n
     assert P.hold_decision(FB, kst(2026, 11, 19, 6, 41), n, n).hold is False and P.hold_decision(FB, kst(2026, 11, 19, 6, 41), n - 1, n * 2).hold is True
+
+
+def test_contract_with_the_pipelines_own_konex_record():
+    """#158 이 붙인 코넥스 단계까지 fetch_data 의 진짜 길로: kr_fallback_days (코넥스 가짜 fetch · tests/test_konex_two_source.knx_fakes) →
+    kr_second_source (px_src_counts: fb.conf = 다음 × 야후 확인 + fb.knx.kept) → px_src_final. 돌아오는 수는 코스피 · 코스닥만이에요."""
+    import functools
+    import test_konex_two_source as TK
+    D13, D16 = dt.date(2026, 11, 13), dt.date(2026, 11, 16)
+    prim = TK.pd.concat([TK.kk_listing("2026-11-13_2158"), TK.knx_listing("2026-11-13_final")], ignore_index=True)
+    base, _ = TK.run_fb(knx=None)                                                 # 코넥스 단계 없이 같은 날 (코스피 · 코스닥 확인 수)
+    kk_conf = base[D16][1]["conf"]
+    px, lst, _, src, _, _ = F.kr_second_source(D13, prim, [D16], TK.NOW, {}, None,
+                                               fallback=functools.partial(TK.run_fb_partial, knx=TK.knx_fakes()))
+    assert px == D16 and src["px"] == FB
+    kept = src["fb"]["knx"]["kept"]
+    assert kept > 0 and src["fb"]["conf"] == kk_conf + kept                      # fetch_data 가 직접 만든 #158 모양
+    n_konex = int((lst["Market"] == "KONEX").sum())
+    assert n_konex == kept and len(lst) - n_konex == kk_conf
+    stocks = [{"t": str(c), "cls": "kr"} for c in lst["Code"]]
+    data = json.loads(json.dumps({"pxDate": px.isoformat(), "pxSrc": F.px_src_final(src, stocks), "stocks": stocks}, allow_nan=False))
+    n, why = P.fb_confirmed(data)
+    assert n == kk_conf, why                                                      # 코넥스를 뺀 코스피 · 코스닥 확인 수
+    assert f"코넥스 {kept:,} 는 빼고" in why and P.last_count(data)[0] == kk_conf
+    # 직전 발행본이 코넥스 없는 기록이어도 같은 범위로 비교해요 (바뀌는 날)
+    prev = fb_data("2026-11-13", kk_conf)
+    assert P.evaluate(data, "data.json", prev, "git HEAD:data.json", kst(2026, 11, 17, 6, 41))[0].hold is False
+    assert P.evaluate(data, "data.json", fb_data("2026-11-13", kk_conf * 2), "git", kst(2026, 11, 17, 6, 41))[0].hold is True

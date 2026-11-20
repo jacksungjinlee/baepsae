@@ -638,6 +638,9 @@ What protects users when the limit hits (and what does not):
     loses none (simulated in `tests/test_kr_fb_budget.py`).
 - **The count rows** stop only large cuts: "국내 종목 수" fails below 2,300 published Korean stocks, which on a blank-close night is
   about 320 stocks not asked (about 440 when the close is filled); "국내 종목 수 변화" (more than 10% from the last publish) comes later.
+  Since #158 (KONEX Yahoo × Naver) these numbers hold as before on a blank-close night (no KONEX stock can be confirmed then); when the
+  close is filled, the ~23 KONEX stocks a normal day publishes also count, so the floor trips at about 465 not asked instead of
+  about 440, with the same number of normally-published stocks missing (see "KONEX closes: Yahoo × Naver").
 - **Plainly, the gap:** on a blank-close night, from about 50 to about 320 stocks not asked, the data publishes with published
   stocks missing (about 3 at 50, about 156 at 300) and only the WARN row. A check that stops the publish there would be a new
   publish-stopping rule and needs Jack's yes. Since #? a run before 08:00 KST whose confirmed count falls below 97% of the last
@@ -656,6 +659,161 @@ If the WARN shows:
    times from the logs to Jack before changing `KR_FB_PHASE_BUDGET_S`.
 4. If it hits on every run (a source blocking GitHub's servers), the must-haves stay unconfirmed and nothing publishes: that is
    the two-source rule working. Tell Jack in plain words which source is down.
+
+## KONEX closes: Yahoo × Naver (코넥스 두 출처, since #158)
+
+Jack, 2026-11-19 (answer 5, verbatim): "Yes: Naver for KONEX only, always with Yahoo, published only when they agree to the won;
+daily KONEX checking too." CLAUDE.md says the same under "Two sources for official closes".
+
+Why KONEX needs its own pair: Daum has no KONEX (all 107 codes answer HTTP 400), so until #158 every KONEX stock (about 31 of them
+are in the published top 2,500) was left out on second-source days, and on volunteer-file days no KONEX close was ever
+cross-checked (`kr_primary_check` samples only KOSPI/KOSDAQ codes). Naver's daily close is the official close for KONEX only:
+KONEX has no after-hours trading and Nextrade does not trade it, so Naver matched the KRX final file on 2,881 of 2,881 KONEX
+stock-days (27 final days, 2026-09-15 to 11-16, no-trade days included), against 186 of 1,276 for KOSPI/KOSDAQ. Naver is never
+used for KOSPI or KOSDAQ.
+
+**Second-source days** (`fetch_data.kr_knx_phases` · `kr_knx_confirm`): after the three Daum × Yahoo phases have finished (their
+order, time limit and results are unchanged), the run asks, for the KONEX stocks only, in the same order (must-haves, then the last
+final file's market cap) and under the same 600 s limit per phase (`KR_FB_PHASE_BUDGET_S`):
+1. Naver daily bars (`api.stock.naver.com/chart/domestic/item/{code}/day`, 4 at a time, 20 s × 3 tries per stock), from the last
+   final day px0 (for the anchor check below) to the newest second-source day;
+2. Yahoo `{code}.KQ` daily closes (Yahoo carries 96 of 107 KONEX stocks, mislabelled MUTUALFUND/KOSDAQ, with a quote header frozen
+   since 2024-07, but the daily bars are right);
+3. for the newest day, a chart re-read of the stocks Yahoo answered but left that day's close blank (stocks Yahoo does not carry
+   at all are not asked again).
+
+Normally the three KONEX phases take about 10 seconds (107 stocks; 9–10 s on the live check of 2026-11-20). In the worst case
+(every request timing out) each is cut at 600 s plus the requests in flight, like the Daum × Yahoo phases, so the second source
+as a whole can now take about 74 minutes instead of 37 before the run moves on (the data job's limit is 300 minutes). A KONEX
+stock not asked in time is left out like any unconfirmed one.
+
+If the KONEX stage itself breaks (an unexpected error, not a source that doesn't answer), the run says so loudly ("!! 코넥스 2차
+출처 단계가 고장 났어요 …"), leaves KONEX out of that day's file as before #158, and carries on with KOSPI/KOSDAQ unchanged; the gate
+row below then warns "코넥스 단계를 묻지 않았어요". The same holds when the per-day KONEX confirmation or the cut-off step breaks
+("!! {day} 코넥스 2차 출처 확인이 고장 났어요 …"): that day's file gets no KONEX rows and no half-built record.
+
+A KONEX stock is confirmed when Yahoo's close (the value used) and Naver's close (the check) agree to the won
+(`KR_FB_CLOSE_TOL`). Otherwise it is left out, exactly like a KOSPI/KOSDAQ stock with one source or two that disagree: the log line
+"… 코넥스 2차 출처(야후 .KQ × 네이버 종가 원 단위까지 같음): 확인 a / b종목 · 빠짐 … — 다름: … — 야후 종가 없음: …" names every stock left
+out with the reason. It is a plain "·" line on a usual day and a loud "!!" line only for the unexpected, by the same rules as the gate
+row below: a missing Naver bar, an unreadable value, more Yahoo gaps or disagreements than usual, fewer than half confirmed, the time
+limit, or no cut-off. Expected every day: the 11 KONEX stocks Yahoo does not carry (496320 본시스템즈, 238540 나노솔루션,
+0077H0, 495810 유비씨, 0203K0 송우인포텍, 0230E0, 059180 엔더블유시, 0070X0, 403810, 476710, 332190) and 3–9 stocks on a day when KRX
+moved the reference price without a trade (Yahoo keeps the last traded price: EMB 11-16, Naver 2,715 · Yahoo 2,895). On the live
+check of 2026-11-20 (pxDate 11-10 … 11-19): 87–93 of 107 confirmed each day, and on the five final days every confirmed close equalled
+the KRX final file (447 of 447, volumes and no-trade flags too).
+
+**Anchor check: both sources can agree on an adjusted price** (second review M1, `kr_knx_anchor` · `kr_knx_confirm(anchor=…)`).
+Yahoo's close is split-adjusted (it books 무상증자 as a split too), and Naver's daily bars are 수정주가 on the endpoints we use for
+KOSPI/KOSDAQ (unverified for this one). Example: backup day 11-16, last final file (px0) 11-13, a KONEX stock's split or 무상증자
+ex-date 11-17. A run on 11-17 can find both sources showing 11-16's close ÷ the ratio, equal to the won, and would publish that as
+the 11-16 official close with pre-action shares (wrong market cap and d1); the gate's own re-check samples KOSPI/KOSDAQ only. So a
+KONEX stock is confirmed only when, in addition, Naver's close on px0 equals the official close (market cap ÷ shares) in the px0
+final file. An adjustment rewrites every bar before the ex-date, px0 included, so if Naver's px0 bar is untouched, its later bars are
+too; the published value equals Naver's to the won, so it is unadjusted whatever Yahoo did (if only Yahoo adjusted, the two disagree
+and the stock drops out). Yahoo's px0 bar is not required: on a no-trade day where KRX moved the reference price it is the last
+traded price (3–9 stocks a day), so requiring it would only drop correct stocks. A stock that fails this is left out of that day's
+file, as before #158, loudly ("!!" line: "기준일 {px0} 종가가 최종본과 다름 …" with both values, or "기준일 {px0} 종가로 맞춰 보지 못함"
+when the px0 file has no official close for it, such as a listing after px0, or Naver has no px0 bar), and counted in
+`pxSrc.fb.knx.adj` / `noAnchor`. When there is no px0 final file at all, no KONEX stock is confirmed (no cut-off either). On the
+fixtures the check changes nothing; it was not re-run live, but Naver matched the final file 107 of 107 on each final day 11-10 …
+11-16, so with any of those days as px0 every stock would have passed it.
+
+**Only the KONEX stocks a normal day would publish go into the file** (review M1, `kr_knx_cap_floor` · `kr_knx_cap_keep`): a
+confirmed KONEX stock is added only when its market cap (close × listed shares) is at least the 2,500th market cap (`MAX_KR`) in the
+volunteer list's last final file, the same file that sets the asking order. For 11-19 (cut-off from the 11-16 final file) that was
+199억원, and 23 of the 91 confirmed KONEX stocks were above it (live check, 2026-11-20); on 11-16, a volunteer-file day, 33 KONEX
+stocks were inside the top 2,500 and 31 were published (5 of those 33 are among the 11 Yahoo lacks). Why: if every confirmed KONEX
+stock (about 90) were added, they would fill the gaps on a morning when many KOSPI/KOSDAQ stocks go unconfirmed, and the "국내 종목 수"
+floor (2,300) would trip about 70 stocks later than on a normal day (91 confirmed vs 23 above the cut-off on 11-19). Example (tests/test_konex_two_source.py): 500 KOSPI/KOSDAQ not
+asked in time leaves 2,240; all KONEX would make it 2,347 and publish with about 230 normally-published stocks missing all day; with
+this rule it is 2,270 and the floor stops the publish, as it does without KONEX. When the last final file has fewer than 2,500 known
+market caps the rule cannot be set, so no KONEX stock is added that day (loud: "!! 코넥스 시가총액 기준을 정할 수 없어요"). The log
+names the cut-off once ("· 코넥스 시가총액 기준 … 2,500번째 시가총액 …억원 이상") and, per day, how many confirmed KONEX stocks went
+in and which were left out under the cut-off ("그날 파일에 넣은 코넥스 k … · 확인됐지만 시가총액 기준 아래라 뺀 m: …").
+
+What this changes for KOSPI/KOSDAQ, plainly: their prices, sources, checks and asking order are unchanged, but which of them are
+published on a second-source day is not. The published list is the top 2,500 by market cap among confirmed stocks, so the ~23 KONEX
+stocks take back their places and about as many of the smallest KOSPI/KOSDAQ stocks near the cut-off (about 200억원) drop out of that
+day's file, exactly as they do on every volunteer-file day.
+
+The #151 trip points ("Korean second-source time limit" above) are unchanged in the sense that matters: on both main and this
+branch every published stock is one a normal day would publish, so the floor trips when more than 200 normally-published stocks are
+missing. Counted in KOSPI/KOSDAQ stocks not asked: on a blank-close night nothing changes at all (Yahoo's newest KONEX close is blank
+too and cannot be read from its frozen quote header, so no KONEX stock is confirmed or added); once the close is filled (the 06:40
+run), the ~23 KONEX stocks count toward the 2,300, so the floor trips about 23 not-asked stocks later than on main (about 465 instead
+of about 440), with the same number of normally-published stocks missing.
+
+The KONEX row is built like the KRX file: close, listed shares, market cap = close × shares, volume, open, high and low from
+Naver. The listed shares come from that day's list file in the volunteer cache, or, when that day has no file, from the nearest
+earlier one ("!! … 캐시 파일의 종목 목록" in the log): neither Yahoo nor Naver gives a share count, so it is not cross-checked (Daum
+gives it for KOSPI/KOSDAQ). The close is exact either way (official close = market cap ÷ shares); only the market cap, and so the
+cut-off test above, can be a few days old after a share change. Two fields are left blank on purpose:
+- **거래대금 (Amount)** on a day with trades: neither Yahoo nor Naver gives a trading value, so it is not guessed. That day's `val` is
+  blank and `val20` averages the days that have one (a no-trade day has exactly 0, which is kept). What users see: nothing changes.
+  `val` appears only in 2.0's 종목 순위 거래대금 and 거래 급증 lists, which only include stocks whose 20-day average is at least
+  5억원; no KONEX stock is near that (the largest was 0.3억원 on 11-16). A KONEX stock's `val20` would go blank only after 11 or more
+  second-source days in a row. Known bias, left as is (second review nit): a traded backup day is skipped while a no-trade day counts
+  0, so a KONEX `val20` that spans backup days reads a little low; it never matters against the 5억원 cut-off.
+- **전일 대비 (Changes) and the change sign/ratio:** KRX moves a KONEX reference price without a trade (EMB 11-18: previous close 2,600,
+  reference 2,700) and neither source gives it, so the KRX reference-price chain (`kr_ref_links`) counts these stocks as unchecked.
+  They are expected, so the log counts them on their own plain line ("· KRX 기준가 연결 — 2차 출처 날 코넥스 … 확인 못 한 종목 n:
+  예상한 것이에요", `kr_ref_blank_knx`), and the main "KRX 기준가 연결" line stays "!!" only for any other unchecked stock (second
+  review S3). `krSeries.ref.unknownStocks` in data.json still counts all of them, as before. No value changes: Naver's bars for KONEX
+  are already the official closes, so the pinning step has nothing to replace. `d1` is unaffected (it compares official closes).
+
+**Volunteer-file days** (`kr_knx_daily_check` · `kr_knx_check`): every KONEX stock the run processes (the published top 2,500) has
+its final-file close compared with Naver's daily close for pxDate, under a 120 s limit (`KR_KNX_CHK_BUDGET_S`; normally a few
+seconds). The log line "코넥스 종가 네이버 확인 (1차 출처 날 …): 같음 n / n" is loud and names every stock when one differs, has no
+Naver value, was not asked in time, or Naver could not be read. Nothing is dropped and nothing stops the publish on this check:
+a publish-stopping rule or dropping a mismatching stock needs Jack's yes. On the five final days 11-10 … 11-16 the check matched
+107 of 107 each day.
+
+**data.json `pxSrc`:** `pxSrc.knx` = `{px, t, n, chk}`: where the published KONEX closes came from (`listing` or `yahoo+naver`; `null`
+when a second-source day had no KONEX stage), the published KONEX codes, the count by source, and the volunteer-day check
+(`{src: naver, n, same, none, noneEx, diff, fail, cut {s, naver}, err}`). `pxSrc.fb.knx` (second-source days) =
+`{n, conf, kept, capOut, floor, noNaver, bad, noYahoo, diff, diffEx, anchor, adj, noAnchor, adjEx, left, yMeta, cut {s, yahoo, fill, naver}}`
+(conf confirmed by both sources, kept put into that day's file, capOut confirmed but under the cut-off, floor the cut-off in won,
+anchor the px0 date, adj / noAnchor the stocks both sources agreed on but the anchor check left out, adjEx examples
+"code name final/naver"). `pxSrc.fb.conf` now
+counts every stock in that day's file, the kept KONEX stocks included (the gate's "confirmed ≥ published" test needs that once
+KONEX is published; a confirmed KONEX stock under the cut-off is not counted); the other `fb` counts stay KOSPI/KOSDAQ
+(Daum × Yahoo) only.
+
+**Gate rows** (all warnings; none stops a publish):
+- **WARN "코넥스 종가 두 출처 (경고만)"** (review S1). On a second-source day the value always shows the counts, the cut-off and a few
+  disagreements; it warns ("— 경고: …") when Naver had no bar for some KONEX stock (Naver down or changed), when more than 15 KONEX
+  stocks had no Yahoo close (`KNX_NOYAHOO_WARN`: the same 11 every day 11-10 … 11-19, plus room for a few new listings Yahoo has not
+  picked up; more means Yahoo left that day's KONEX closes blank, as it does for hours after the close), when fewer than half were
+  confirmed, when a value could not be trusted, when more than 20 disagreed (`KNX_DIFF_WARN`: 3–9 a day on the same eight days, all
+  reference-price moves without a trade; more means a source changed), when the cut-off could not be set or is not a positive number,
+  when the anchor check left out any stock (`adj` or `noAnchor` above 0; a file without these keys reads as 0), or when the stage did
+  not run. The routine 3–9 disagreements alone do not warn (they are in the value every day; a warning that is on every day gets
+  ignored). On a volunteer-file day it warns when a published KONEX close differs from Naver, has no Naver value, was cut by the
+  time limit or Naver could not be read. On any day it warns when the record is malformed or its codes differ from the published
+  KONEX stocks (read from the description's "KONEX 상장"). A file from before #PR has no `pxSrc.knx`: SKIP. It never fails.
+- **"가격 확인 시간 한도 (경고만)"** also lists the KONEX phases ("코넥스 2차 출처: 묻지 못함 야후 일봉 · 야후 다시 읽기 · 네이버") and the
+  volunteer-day Naver check ("1차 출처 코넥스 네이버 확인").
+- The gate's own price re-check on second-source days (`http_px_alt`) still samples KOSPI/KOSDAQ only; KONEX closes rest on the
+  pipeline's Yahoo × Naver record. Open for Jack: whether the gate should also re-fetch a KONEX sample (Naver × Yahoo) itself;
+  stricter, but the gate would then depend on Naver.
+
+If the KONEX row warns (read the reasons after "경고:"):
+1. Second-source day, "다름 n > 20": the routine 3–9 come from KRX moving a KONEX reference price without a trade (those stocks are
+   out of that day's file, "이 종목의 데이터를 찾지 못했어요." on their pages, and come back on the next day both sources agree). More
+   than 20 means one source changed: compare a few names on Naver's and Yahoo's charts.
+   "야후 없음 n > 15" or "확인이 절반 아래" at night: Yahoo has not filled that day's KONEX closes yet; KONEX is out of that night's file
+   and comes back with the next publish (a manual run after about 06:40 KST brings it back sooner; follow the DART rule).
+   "네이버 행 없음": see 3. "시가총액 기준 모름": the volunteer list's last final file had fewer than 2,500 market caps; look at that file.
+   "기준일 종가 다름 n": both sources agreed, but Naver's px0 close differs from the final file. Look for a split, merger, 무상증자 or
+   other ex-date after px0 for that stock (the log line names it with both values); it stays out until the volunteer file is final
+   again, which is the safe outcome. If it hits many stocks at once, Naver's bars may have changed basis: compare Naver's chart with the
+   final file. "기준일 맞춰 보지 못함 n": the stock has no official close in the px0 file (listed after px0) or Naver has no px0 bar.
+2. Volunteer-file day, "다름": this has never happened (0 of 2,881 KONEX stock-days, 09-15 … 11-16; the live check of 11-20 found the
+   same on 11-10 … 11-16). Open the KRX final file and Naver's chart for
+   that stock and date and tell Jack which one is wrong; the published close is the KRX file's.
+3. "네이버 값 없음" for many or "받지 못함": Naver may be blocking GitHub's servers; the KOSPI/KOSDAQ path does not use Naver, so only
+   KONEX is affected (on second-source days every KONEX stock drops out).
 
 ## Backup days: early hold (2차 출처 날 이른 발행 보류, since #?)
 
