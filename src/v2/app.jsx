@@ -36,7 +36,7 @@ import { BottomSheet, Button } from "../ui/components.jsx";
 import { isImported } from "./pf.js";
 import { dataSplits, withDataSplits, storedNotInData, withStoredSplits, outSplits, withoutOutSplits } from "./lots.js";
 import { UNIT } from "./held.js";
-import { companySub, CO_MORE, WATCH_SUB } from "./routes.js";
+import { companySub, CO_MORE, editSub, parseHash, WATCH_SUB } from "./routes.js";
 import { WatchScreen } from "./watch.jsx";
 import { withWatchHits, watchGuardNote } from "./watch.js";
 import { holdsKorean } from "./home.js";
@@ -573,6 +573,36 @@ export function App({ source }) {
     router.replaceRoute("portfolio", "edit/" + heldEdit.id);
   }, [heldEdit, editId]);
   const leaveEdit = useCallback(() => { setEditor(null); router.back("portfolio"); }, [router.back]);
+  // v19.7b: 종목 바꾸기's two screens, 내 기준으로 찾기 (…/find) and 두 종목 비교 (…/compare/<code>), on the same editor (its draft and
+  // sheets). editBase: the history entry of 종목 바꾸기 itself, so that after a 담기 or a swap toEdit() steps back to it (one entry
+  // from the finder, two from the compare screen) rather than adding a new one; reached without it (an address typed or
+  // reloaded), toEdit() replaces the address instead.
+  const editBase = useRef(null);
+  if (editId && !loc.eview) editBase.current = { id: editId, depth: loc.depth };
+  // review S1: forgotten only once the history is back at (or before) that entry without being on it — the user left 종목 바꾸기;
+  // a visit forward from the finder (a company page, 소개) keeps it
+  else if (editBase.current && loc.depth <= editBase.current.depth) editBase.current = null;
+  const editView = loc.eview === "find" ? { kind: "find" } : loc.eview === "compare" ? { kind: "compare", t: loc.ecode } : { kind: "edit" };
+  const editGo = useMemo(() => (editId ? {
+    find: () => router.go("portfolio", editSub(editId, "find")),
+    compare: (t) => router.go("portfolio", editSub(editId, "compare", t)),
+    back: () => router.back("portfolio", loc.eview === "compare" ? editSub(editId, "find") : editSub(editId)),
+    // review S2: the steps come from the live address when this runs (a sheet's callback may run after the back button moved it)
+    toEdit: () => {
+      let live = null;
+      try {
+        const st = window.history.state;
+        live = { ...parseHash(window.location.hash), depth: st && Number.isInteger(st.v2) ? st.v2 : null };
+      } catch (e) { live = null; }
+      if (live && live.edit === editId && !live.eview) return;                  // already on 종목 바꾸기
+      const b = editBase.current;
+      const d = live && live.depth != null ? live.depth : loc.depth;
+      const n = b && b.id === editId ? d - b.depth : 0;
+      if (n > 0) router.back("portfolio", editSub(editId), n);
+      else router.replaceRoute("portfolio", editSub(editId));
+    },
+    replaceFind: () => router.replaceRoute("portfolio", editSub(editId, "find")),
+  } : null), [editId, loc.eview, loc.depth, router.go, router.back, router.replaceRoute]);
   const pad = wide ? SPACE(10) : TAB_H + 32;
   const screen = (() => {
     const store = view;
@@ -598,7 +628,8 @@ export function App({ source }) {
     }
     if (editDeck) {
       return <Editor key={editDeck.id} deck={editDeck} load={load} store={store} setStoreData={setStoreData} draft={editDraft} setDraft={setEditDraft} pad={pad}
-        onLeave={leaveEdit} onSaved={leaveEdit} startRemove={editRm && editRm.deckId === editDeck.id ? editRm.t : null} onStarted={() => setEditRm(null)} />;
+        onLeave={leaveEdit} onSaved={leaveEdit} startRemove={editRm && editRm.deckId === editDeck.id ? editRm.t : null} onStarted={() => setEditRm(null)}
+        view={editView} go={editGo} />;
     }
     if (tab === "portfolio") {
       return <Portfolio load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onImport={openImport}
@@ -620,7 +651,9 @@ export function App({ source }) {
   const nav = { openMenu: wide ? null : router.openMenu, menuOpen: !wide && loc.menu, openStock, goHome };
   // One boundary per screen. A company's tabs are one screen (company.jsx keeps its own boundary per tab), so switching
   // tabs keeps the page mounted; its 자세히 screens are screens of their own.
-  const screenKey = !loc.about && tab === "stocks" && loc.code ? "stocks/" + loc.code + (CO_MORE.includes(loc.ctab) ? "/" + loc.ctab : "") : tab + (loc.sub || "");
+  // v19.7b: 종목 바꾸기 and its two screens are one screen too (one editor: its sheets and a sale being typed stay when the address moves)
+  const screenKey = !loc.about && tab === "stocks" && loc.code ? "stocks/" + loc.code + (CO_MORE.includes(loc.ctab) ? "/" + loc.ctab : "")
+    : !loc.about && tab === "portfolio" && loc.edit ? "portfolio" + editSub(loc.edit) : tab + (loc.sub || "");
   const tall = wide ? {} : { minHeight: "100vh" };
   return (
     <ModeContext.Provider value={{ preview: !!source.preview }}>

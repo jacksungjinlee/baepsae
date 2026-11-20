@@ -86,6 +86,10 @@ export function d2Of(rows, cap) {
   const room = rows.reduce((a, r) => a + ceilingOf(r, cap), 0);
   return { low: room < 100 - SUM_TOL, y };
 }
+// [D2] as 종목 바꾸기 checks it (editor.jsx: the edit.capLow line and 최대 비중을 {y}%로 올리기 when low): the edited list at the cap
+// as edited. 두 종목 비교 asks the very same function about the list a swap without shares leaves (swapView), so its note never
+// calls the cap final where that screen will offer to raise it. -> { low, y }
+export const draftD2 = (deck, draft) => d2Of(editRows(deck, draft), capOf(deck, draft));
 
 // ---------------- the edited list ----------------
 // Stored holdings (minus pending removals) with their targets (the draft's first), then pending adds.
@@ -233,12 +237,14 @@ export function fixDraft(deck, draft, cap = capOf(deck, draft)) {
   const keep = draft.last && rows.some((r) => r.t === draft.last) ? draft.last : null;
   return withOver(draft, rebalance(rows, keep, cap));
 }
-// [D2] 최대 비중을 {y}%로 올리기: the new cap (pending), then the share-out under it.
+// [D2] 최대 비중을 {y}%로 올리기: the new cap (pending), then the share-out under it, keeping the row just changed (fixDraft). raiseTo
+// is the button's own step for a given y; a 팔고 빼기 swap runs it with the y its 빼기 sheet offered (swapStored).
+const raiseTo = (deck, draft, y) => fixDraft(deck, { ...draft, maxPct: y }, y);
 export function raiseDraft(deck, draft) {
   const rows = editRows(deck, draft);
   const { y } = capCheck(rows.length, capOf(deck, draft));
   if (y == null) return draft;
-  return fixDraft(deck, { ...draft, maxPct: y }, y);
+  return raiseTo(deck, draft, y);
 }
 // A stepper tap: the row's new %, the row remembered as the one just changed.
 export const stepDraft = (draft, t, pct) => ({ ...draft, over: { ...draft.over, [t]: pct }, last: t, touched: true });
@@ -675,6 +681,171 @@ export function sellCheck(deck, draft, t) {
   const d2 = d2Of(stored, cap);
   return { last: !stored.length || !left, low: d2.low, y: d2.y, n: stored.length, names: stored.map((r) => r.nk || r.t), cap, up };
 }
+// ---------------- 내 기준으로 찾기 without 기준 points (v19.7b Part D) ----------------
+// The 기준 the user chose on the finder (the build step's cards), saved to this portfolio's settings at once: points, and the
+// strictness the cards screen shows with them. Nothing else of the portfolio changes. -> { ok: true, data } | { ok: false, why }
+export function withPoints(data, deckId, points, strict, today) {
+  const deck = findDeck(data, deckId);
+  if (!deck) return { ok: false, why: "gone" };
+  const st = deck.settings && typeof deck.settings === "object" && !Array.isArray(deck.settings) ? deck.settings : {};
+  const next = { ...deck, settings: { ...st, points: { ...points }, ...(typeof strict === "string" ? { strict } : {}) } };
+  if (!check(next, today)) return { ok: false, why: "store" };
+  return { ok: true, data: putDeck(data, next) };
+}
+
+// ---------------- 두 종목 비교 · 바꾸기 (v19.7b Part E) ----------------
+// "{holding}과/와 바꾸기": the holding leaves (Part B's sheet, 더 잘 맞는 종목을 찾았어요 pre-picked) and the candidate takes its
+// target. A swap keeps the number of stocks, so it never opens D2 and the last stock can be swapped. The candidate's target is
+// the holding's, never above the portfolio's 한 종목 최대 비중 ([C2]: a 안전자산 holding saved above the cap gives the candidate the
+// cap, and the rest is shared out to the others as 합계를 100%로 맞추기 does).
+// [B4] What saves when, as for 빼기: 팔고 빼기 records money, so the sale, the removal and the candidate's add are one write at once
+// (sellAndSwap); 기록 없이 빼기 and 빼기 (no shares) wait for 바꾼 내용 저장 like any 빼기 and 담기 (swapDraft).
+// add: { t, nk, cls, ind, kind, s } as 담기 builds it (editor.jsx addOf).
+const swapPct = (pct, cap) => (cap != null && pct > cap + TGT_TOL ? cap : pct);
+// The draft with the swap waiting: the holding taken out with its reason, the candidate added with its target. -> the draft
+// (unchanged when the holding is not a stored row of the edited list or the candidate is already in it).
+export function swapDraft(deck, draft, t, reason, add) {
+  const rows = editRows(deck, draft);
+  const r = rows.find((x) => x.t === t);
+  if (!r || !r.h || !add || rows.some((x) => x.t === add.t) || ((deck && deck.holdings) || []).some((h) => h && h.t === add.t)) return draft;
+  const cap = capOf(deck, draft);
+  const p = swapPct(r.pct, cap);
+  const over = { ...draft.over, [add.t]: p };
+  delete over[t];
+  const next = { ...draft, over, removed: [...(draft.removed || []).filter((x) => x.t !== t), { t, reason: REASONS.includes(reason) ? reason : null }],
+    adds: [...(draft.adds || []).filter((a) => a.t !== add.t), add], last: add.t };
+  if (p >= r.pct - TGT_TOL) return next;
+  return withOver(next, rebalance(editRows(deck, next), add.t, cap), add.t);
+}
+// THE target set a 팔고 빼기 swap writes at once (it feeds that write and the 빼기 sheet's D2 check, swapCheck; 두 종목 비교 reads the
+// edited list instead, swapView, which is what 바꾼 내용 저장 then saves after it, draftAfterSwap),
+// made by the very steps of the swap without shares, run on the stored portfolio alone (Jack, 2026-11-19: "4. (a), and make both
+// cases behave the same"): swapDraft at cap (the cap the swap is compared at: the saved one, or a raise already waiting in the
+// draft) — the candidate gets t's stored target, never above cap, and when the cap cut it the rest is shared out to the others as
+// 합계를 100%로 맞추기 does — then, with the sheet's 최대 비중을 {y}%로 올리기 (raise), that button's own step (raiseTo): the
+// candidate, the row just changed, keeps the target it was compared at and the others take the raise (it moves only if they
+// cannot take it all, as on 종목 바꾸기). -> { rows (edit rows with the written %), pct (the candidate's), old (t's stored %),
+// capped (cap cut the candidate), sum } or null (t is not a stored holding, or the candidate is already in the portfolio)
+export function swapStored(deck, t, add, cap, raise = null) {
+  const stored = editRows(deck, emptyDraft());
+  const h = stored.find((r) => r.t === t);
+  if (!h || !add) return null;
+  const base = { ...emptyDraft(), maxPct: cap != null && cap !== capOf(deck) ? cap : null };
+  let d = swapDraft(deck, base, t, "better", add);
+  if (d === base) return null;
+  if (raise != null && raise !== cap) d = raiseTo(deck, d, raise);
+  const rows = editRows(deck, d);
+  const c = rows.find((r) => r.t === add.t);
+  return { rows, pct: c.pct, old: h.pct, capped: swapPct(h.pct, cap) < h.pct - TGT_TOL, sum: sumPct(rows) };
+}
+// D2 on that write (only a target above the cap can make it: see above), at the cap the write uses (a raise already waiting in the
+// draft is saved with it): low = the 빼기 sheet asks for 최대 비중을 {y}%로 올리기 before 팔고 빼기. The y it offers (Jack, 2026-11-19,
+// answer 4: "make both cases behave the same") is the one the swap without shares reaches on 종목 바꾸기 — D2 on the edited list after
+// the swap, its waiting 빼기 counted (draftD2 on swapDraft) — whenever that y also lets the write add up to 100% (y at least the
+// write's own: the saved stocks after the swap are never fewer than the edited ones then); n and names are then that list's. Only a
+// waiting 담기 can make the edited list need a smaller raise than the saved stocks, or none: the write keeps its own y then (the
+// saved stocks must add up to 100%, round-1 B1). In that one case the paths can end differently: a different cap (none or a smaller
+// raise without shares), and in a small portfolio with a large 채권·금 holding different targets too, the candidate's included
+// (without shares the others may not absorb the smaller raise, so the candidate rises; with shares the larger raise lets it stay).
+// That case is a question for Jack (PR v19.7b); nothing here decides it.
+// -> { rows, pct (the candidate's), cap, up, low, y, names, n }
+export function swapCheck(deck, draft, t, add) {
+  const up = draft && draft.maxPct != null && draft.maxPct !== capOf(deck) ? draft.maxPct : null;
+  const cap = up != null ? up : capOf(deck);
+  const sw = swapStored(deck, t, add, cap);
+  const rows = sw ? sw.rows : [];
+  const d2 = sw && sw.capped ? d2Of(rows, cap) : { low: false, y: null };
+  // n and names count the same stocks: the ones after the swap, the candidate too (round-2 review: "종목이 9개뿐이라" beside 8 names)
+  let y = d2.y, list = rows;
+  if (d2.low) {
+    const base = draft || emptyDraft();
+    const dd = swapDraft(deck, base, t, "better", add);
+    const e = dd !== base ? draftD2(deck, dd) : null;
+    if (e && e.low && e.y != null && d2.y != null && e.y >= d2.y) { y = e.y; list = editRows(deck, dd); }
+  }
+  return { rows, pct: sw ? sw.pct : 0, cap, up, low: d2.low, y, n: list.length, names: list.map((r) => r.nk || r.t) };
+}
+// The stored portfolio's targets as 팔고 빼기's swap leaves them: swapStored (compared at `at`, then the raise), t out, the candidate
+// in, the cap saved. sellAndSwap writes exactly this set (it takes its targets and the cap it saves from here); the holdings carry
+// no new records or rules, only what 종목 바꾸기 then reads (targets, settings.maxPct). raise: the y the write saves (the sheet's 최대
+// 비중을 {y}%로 올리기, or one already waiting in the draft), or null; at: the cap the swap was compared at (swapCheck's cap: the
+// saved one, or a raise already waiting), the saved cap when left out. -> { deck, sw, cap (the cap saved) } or null
+export function swapLeaves(deck, t, add, raise = null, at = null) {
+  const at0 = at != null ? at : capOf(deck);
+  const sw = swapStored(deck, t, add, at0, raise);
+  if (!sw) return null;
+  const save = raise != null ? raise : at0;
+  const p = new Map(sw.rows.map((r) => [r.t, r.pct]));
+  const holdings = [...((deck && deck.holdings) || []).filter((h) => h && h.t !== t).map((h) => (p.has(h.t) ? { ...h, target: p.get(h.t) / 100 } : h)),
+    { t: add.t, nk: add.nk, cls: add.cls || null, ind: add.ind || null, kind: "pinned", target: sw.pct / 100 }];
+  const settings = save != null && save !== capOf(deck) ? { ...(deck.settings || {}), maxPct: save } : deck.settings;
+  return { deck: { ...deck, holdings, settings }, sw, cap: save };
+}
+// What the compare screen shows for "{holding}과/와 바꾸기" — the 업종 bar after it, its line and the targets in its note — on both
+// paths from what the swap leaves on 종목 바꾸기 and what 바꾼 내용 저장 then saves: swapDraft on the draft as it stands (without shares
+// that is the swap itself; with shares it is what waits after 팔고 빼기, draftAfterSwap, before any raise — round-3 S1: a waiting edit
+// that moved the holding's target, e.g. a raise or a share-out, counts on both paths; 팔고 빼기's own write is the saved stocks'
+// version of it, and 저장 then saves this one). Always at the cap as it stands (a raise already waiting counts), never at a raise
+// still to be chosen (Jack, 2026-11-19, Q8b). low / y: whether the next screen offers 최대 비중을 {y}%로 올리기, read with the very
+// checks those screens make — with shares, the 빼기 sheet's (swapCheck) and, once the sale is saved, 종목 바꾸기's on the portfolio the
+// write leaves with what still waits (draftAfterSwap, then draftD2: review F2); without, 종목 바꾸기's on the list the swap leaves
+// (draftD2). -> { path: "sale" | "draft", rows (the edited list after it), before (the edited list before it), pct (the candidate's),
+// from (the holding's target in the edited list), cap (the cap as it stands), low, y } or null
+export function swapView(deck, draft, t, add) {
+  // a candidate already in the portfolio (stored, or waiting to be added) is no swap: both writes refuse it
+  if (!add || ((deck && deck.holdings) || []).some((h) => h && h.t === add.t) || editRows(deck, draft).some((r) => r.t === add.t)) return null;
+  const d = swapDraft(deck, draft, t, "better", add);
+  if (d === draft) return null;
+  const rows = editRows(deck, d);
+  const c = rows.find((r) => r.t === add.t);
+  const h = editRows(deck, draft).find((r) => r.t === t);
+  const view = { rows, before: editRows(deck, draft), pct: c ? c.pct : null, from: h ? h.pct : null, cap: capOf(deck, d) };
+  if (heldShares(deck, t) > 0) {
+    const chk = swapCheck(deck, draft, t, add);
+    // the write when the sheet asks for no raise (editor.jsx sellSwap: raise = a raise already waiting, chk.up), compared at chk.cap
+    const lv = swapLeaves(deck, t, add, chk.up, chk.cap);
+    if (!lv) return null;
+    // 종목 바꾸기 after the sale: the draft as editor.jsx sellSwap leaves it (draftAfterSwap), read as the editor reads it
+    const next = draftD2(lv.deck, rebaseDraft(lv.deck, draftAfterSwap(deck, lv.deck, draft, t, add)));
+    return { path: "sale", ...view, low: chk.low || next.low, y: chk.low ? chk.y : next.y };
+  }
+  const d2 = draftD2(deck, d);
+  return { path: "draft", ...view, low: d2.low, y: d2.y };
+}
+// 팔고 빼기 as a swap [B4]: the store after the sale (records.withRecord), then the holding taken out with its reason and the
+// candidate added with the target swapStored gives it (newHolding: the build step's rules, planPx today's close, setAt today), the
+// others at swapStored's targets, logged as two lines (뺌, 더함) — one write. opts: { reason, raise (y | null), at (the cap the swap
+// was compared at: swapCheck's cap; the saved cap when left out), load, today, ts }. With the sheet's raise the candidate keeps the
+// target it was compared at and the others take the raise, as without shares (Jack, 2026-11-19, "4. (a)").
+// -> { ok: true, data } | { ok: false, why }. Refused as sellAndRemove ("partial" · "sum" · "gone" · "store"); never "last" (a swap
+// keeps the number of stocks).
+export function sellAndSwap(afterSale, deckId, t, add, opts) {
+  const { reason, raise = null, at = null, load, today, ts } = opts;
+  const no = (why, more = "") => { console.warn(`[v2] ${deckId}: sell and swap ${t} for ${add && add.t} refused (${why})${more}; nothing saved`); return { ok: false, why }; };
+  const before = findDeck(afterSale, deckId);
+  if (!before || !add) return no("gone");
+  const h = before.holdings.find((x) => x && x.t === t);
+  if (!h || before.holdings.some((x) => x && x.t === add.t)) return no("gone");
+  const left = heldUnits(before).get(t) || 0;
+  if (left > 0) return no("partial", `: ${left / UNIT} shares would stay after the sale`);
+  const lv = swapLeaves(before, t, add, raise, at);                     // the target set and the cap this write saves (swapView reads it for D2)
+  const sw = lv ? lv.sw : null;
+  if (!sw) return no("gone");
+  if (!sumOk(sw.sum)) return no("sum", ": the stocks cannot reach 100% under the cap");
+  const x = takeOut(afterSale, deckId, t, reason, today, ts);
+  if (!x) return no("gone");
+  let deck = findDeck(x.data, deckId);
+  const fx = load && load.data ? load.data.fx : null;
+  const others = new Map(sw.rows.filter((r) => r.t !== add.t).map((r) => [r.t, r.pct]));
+  const tg = applyTargets(deck, others, fx, load && load.byT);
+  const cand = newHolding(tg.deck, add, sw.pct / 100, load, today, ts);
+  deck = { ...tg.deck, holdings: withPlanW(before, [...tg.deck.holdings, cand], new Set([...tg.ts, add.t])) };
+  if (lv.cap != null && lv.cap !== capOf(deck)) deck = { ...deck, settings: { ...(deck.settings || {}), maxPct: lv.cap } };
+  deck = withChanges({ ...deck, targetsTs: ts }, [x.change, { at: today, kind: "add", t: add.t, nk: add.nk }]);
+  if (!check(deck, today)) return { ok: false, why: "store" };
+  return { ok: true, data: putDeck(x.data, deck) };
+}
+
 // The draft after the store changed under it (팔고 빼기 saved): edits of holdings that are gone are dropped; the rest stay.
 export function rebaseDraft(deck, draft) {
   if (!deck) return emptyDraft();
@@ -699,6 +870,24 @@ export function draftAfterSale(before, after, draft, t) {
   const x = rebaseDraft(after, { ...draft, over, adds: (draft.adds || []).filter((a) => a.t !== t), removed: (draft.removed || []).filter((r) => r.t !== t),
     maxPct: null, last: draft.last === t ? null : draft.last });
   return pending(after, x) ? fixDraft(after, x) : x;
+}
+// The draft after a 팔고 빼기 swap saved (Jack, 2026-11-19, answer 4: "make both cases behave the same"): what still waits is exactly
+// what the swap without shares leaves on 종목 바꾸기 — its very steps on the draft as it was (swapDraft; with the 빼기 sheet's raise, the
+// 최대 비중 button's own step, raiseTo) — rebased onto the portfolio the sale saved (the holding gone, the candidate stored, the cap
+// saved). So 바꾼 내용 저장 then saves the targets the path without shares saves, with the edits that were waiting (a step, a 빼기, a
+// raise) read the same way; with none waiting, nothing is left to save (the saved targets are those very values). The candidate is
+// the row just changed, as after the swap without shares. Not with a waiting 담기 when the sheet had to raise the cap further than
+// the path without shares does (swapCheck): the raise here is the sheet's, so the cap, and in a small portfolio the targets, can
+// differ (a question for Jack). before / after: the portfolio before and after the write; raise: the y the sheet raised the cap to
+// (null: none; a raise already waiting is in the draft).
+export function draftAfterSwap(before, after, draft, t, add, raise = null) {
+  if (!after) return emptyDraft();
+  let d = swapDraft(before, draft, t, "better", add);
+  if (d === draft) return draftAfterSale(before, after, draft, t);
+  if (raise != null && raise !== capOf(before, d)) d = raiseTo(before, d, raise);
+  const over = Object.fromEntries(editRows(before, d).map((r) => [r.t, r.pct]));
+  return rebaseDraft(after, { ...d, over, adds: (d.adds || []).filter((a) => a.t !== add.t), removed: (d.removed || []).filter((r) => r.t !== t),
+    maxPct: null, last: add.t });
 }
 
 // ---------------- the change log on screen ----------------
