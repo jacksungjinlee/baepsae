@@ -5,7 +5,16 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-19 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-20 KST — read this first)
+
+**Merged 2026-11-20:** #151 (second-source time limit, below), #146 (KR industry words from DART, below), **#152** (the Deploy and Watchdog logs print as they go, `PYTHONUNBUFFERED`; a deploy hung 19 minutes in the live gate at 09:03 with no output, cancelled, site unaffected), **#155** (v19.7b: 내 기준으로 찾기 and 두 종목 비교; live-checked 16:0x KST), **#154** (CLAUDE.md "decide, then report", Jack's rule of 11-20).
+
+**Jack, 2026-11-20 (~13:40 KST), verbatim answers:** "1. Yes to “more than 5 rows” as the default for the standing rule. Brown-Forman B: no, it becomes a warning; one stock missing from a source never holds the publish. 2. a) Yes. After 5 trading days, show "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요." instead of "데이터를 찾지 못했어요". b) Yes. c) Yes. d) Yes to the first. Second: drop a carry with a broken date and warn; block only above 5. e) Yes. f) Yes. 3. Yes. 4. Yes. 5. Yes. 6. Yes, but “left out” means carried with its own date and the line, like any other unconfirmed close. 7. Yes. Comment-only test edits never need asking. 8. a) Yes. b) Yes. c) Yes. 9. No, agreed. 10. Yes to 10 minutes, but a timeout skips the Daum spot-check with a loud warning; the deploy continues on the other checks. An outside site must never block a code fix."
+- Also (verbatim): "US stocks carry like Korean ones. A US stock with no close from Yahoo carries its last confirmed close with its own date and the same line. Block only if many are missing (set the number from history), so a Yahoo gap never stops the Korean data again."
+- Also (verbatim): "Order after these merge: v19.7b, then v19.6b screens, v19.6e and v19.3 Part L."
+- What the numbers refer to: 1 = #149 / #145 standing-rule N and the BF-B row; 2 = the last-confirmed-close change (a 5-trading-day limit, b list line "{names}: 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요.", c English "We couldn't confirm today's close, so this shows the {date} close.", d gate changes, e the screen-test edit, f the late-data check capped at 5 trading days in total); 3 = 25 power-equipment makers (KSIC 281) → 전기전자 in the old app; 4 = v19.7b keeps the raise choice on screen; 5 = backup days: before 08:00 KST publish only at ≥97% of the last publish's confirmed count; 6 = KONEX normal-day mismatch → carry; 7 = KONEX test comment; 8 = old-app US date line ("US stocks: priced at the {md} close (US time)."); 9 = no older-publish look-back; 10 = a 10-minute limit on the deploy's Daum spot check.
+
+**Open, 2026-11-20:** waiting for a dry run after the 06:40 publish (Yahoo's US bars for 11-19 went blank for hours on 11-20, which only the "미국 d1 채움" row caught): #145 (오늘 볼 것 data), #149 (#139/#142 rows under the standing rule), KONEX Yahoo × Naver, the last-confirmed-close change. Built, not yet opened: the old-app US date line, the deploy's 10-minute Daum limit. Next builds: US carry (Jack's "also"), the power-equipment move, the backup-day early-publish hold, then v19.6b screens, v19.6e, v19.3 Part L.
 
 **Live, 2026-11-19 07:13 KST:** the first publish with #137 (pxDate 11-18, Korean closes from Daum × Yahoo) passed the gate and is live; checked on the site. **#139** (US share-class tickers: Brown-Forman B joins the US list) is merging next, then one publish of its own. Remaining order: the dividend follow-up, v19.7b, v19.6f, v19.6c, v19.6b data.
 
@@ -580,8 +589,9 @@ changes have a green `dry_run` with the validation summary in the PR, and no saf
 2026-11-20 it decides anything the rules and approved specs already cover and lists those decisions under **Choices I
 made** in the PR. It asks Jack, with a short yes/no question in the chat, only about new Korean wording (showing the
 「새 문구」 table), loosening a safety check or adding one that can stop the publish, changes to what users can do, and
-money, accounts or outside services. (Until 11-20 it also asked about every `CLAUDE.md`, threshold or `tests/` change;
-v17.5 and v17.6 also waited for his claude.ai chat.) After every merge it
+money, accounts or outside services, with a few clarifications (details in `CLAUDE.md`, including the 12-hour
+go-ahead). (Until 11-20 it also asked about every `CLAUDE.md`, threshold or `tests/` change; v17.5 and v17.6 also waited
+for his claude.ai chat.) After every merge it
 watches the next run, checks the live site, reverts at once if something is wrong, and sends Jack a 3–6 line summary.
 `docs/CHANGELOG.md` has one line per merge. The full rule, including what is never allowed, is in `CLAUDE.md`
 § GitHub process.

@@ -123,13 +123,13 @@ recommendation and say so (paying for anything is never easy to undo).
 
 Tests and checks:
 - Comment-only test edits never need asking (Jack, 2026-11-20).
-- Tests that are only added and checks made only stricter need no yes either, unless they can stop the publish
-  (category 2: a gate row in `validate_data.py`, or the screen checks the daily run runs before publishing —
-  `tests/real_data_check.py`, `smoke_launch.py`, `smoke_app.py`). List them under **안전 규칙 변경** and in the after-merge
-  summary.
+- Tests that are only added and checks made only stricter need no yes either, with one exception: a new or stricter
+  gate row in `validate_data.py` that can fail the publish is category 2. New scenes in the screen checks the daily run
+  runs before publishing (`tests/real_data_check.py`, `smoke_launch.py`, `smoke_app.py`) need no yes when they pass on the
+  latest published data before the merge. List all of them under **안전 규칙 변경** and in the after-merge summary.
 - Any other edit to an existing test or a `validate_data.py` threshold (what it expects, counts or compares, or its
   fixture) is listed by name under **안전 규칙 변경**. If it would now accept anything it used to reject, it is loosening
-  (category 2).
+  (category 2). The emergency rule's repairs to tests that fail only because of the date still go ahead as that rule says.
 - A change to this file that removes or relaxes a rule is category 2 too.
 - When unsure, ask.
 
