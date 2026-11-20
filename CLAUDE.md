@@ -59,6 +59,7 @@ Report right after."
      that only undoes a bad merge: rule 7, green CI and the other merge checks first, its review afterwards.)
 5. Every PR description contains, in this order:
    - **What changed** — plain English, 3–8 bullets, written for Jack.
+   - **Choices I made** — decisions taken under the rules and approved specs without asking Jack (Jack, 2026-11-20). "없음" if none.
    - **「새 문구」** — every new or changed user-facing Korean string, verbatim (before → after). "없음" if none.
    - **안전 규칙 변경** — any change to a safety rule, with reason. Normally "없음".
    - **Test evidence** — commands run and results.
@@ -108,18 +109,18 @@ above: green checks, one Opus fresh-eyes review with its findings fixed, the rea
 pipeline fix, and no safety rule loosened. In an emergency, use only already-approved wording; ask Jack about any new
 wording after the fix is live, and ship it only after his yes, in a later PR (Jack, 2026-11-19).
 
-**Ask Jack first, in this chat, with a short yes/no question in plain words** (never send him to GitHub), when a change:
-- adds or changes user-facing Korean text — show him the 「새 문구」 table in the chat;
-  Korean lines approved by the design chat and relayed by Jack count as approved.
-- changes what users see or how a feature works, beyond what an approved spec already says;
-- needs him to pay for, sign up for, or change a setting in anything;
-- changes `CLAUDE.md`, any threshold in `validate_data.py`, or anything in `tests/` — even when nothing is loosened
-  (Jack, 2026-11-01). Say in one line what changed and why;
-  Exception (Jack, 2026-11-07): tests that are only added, checks made only stricter, and test edits that a merged task
-  spec lists by name need no separate yes. List them under **안전 규칙 변경** and in the after-merge summary. Removing or
-  weakening any test, or an edit no spec lists, still needs Jack's yes first.
-- is v17.5 or v17.6 — open the PR, tell him its number, and wait for his "merge" (his claude.ai chat reviews it first).
-  This rule ends after v17.6.
+**Decide, then report (Jack, 2026-11-20).** Decide anything the existing rules and approved specs already cover, and list
+those decisions under **Choices I made** in the PR. Ask Jack only about the four things below, in this chat, with a short
+yes/no question in plain words (never send him to GitHub):
+1. new Korean wording — show him the 「새 문구」 table in the chat; Korean lines approved by the design chat and relayed by
+   Jack count as approved;
+2. loosening a safety check, or adding one that can stop the publish (removing or weakening a test counts here);
+3. changes to what users can do;
+4. money, accounts or outside services.
+
+If a question in categories 3–4 has had no answer for 12 hours and the change is easy to undo, go ahead with your
+recommendation and say so. Comment-only test edits never need asking (Jack, 2026-11-20). Tests that are only added and
+checks made only stricter need no yes either; list them under **안전 규칙 변경** and in the after-merge summary.
 
 **Never — even if Jack asks casually; explain why first:**
 - loosen, skip or delete a safety rule or test;
