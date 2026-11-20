@@ -1674,6 +1674,8 @@ US_OWN_DROP_KO = {"none": "지난 발행본에 없음 (예전처럼 야후의 �
                   "bad": "지난 발행본의 가격 · 날짜를 읽을 수 없음 (예전처럼 야후의 마지막 봉)"}
 US_NOCL_KO = {"bar": "기준일 종가 없음 (빈 값 · 0 · 음수)", "empty": "쓸 수 있는 가격이 하나도 없음", "err": "시세를 받다가 오류"}
 US_OWN_SHOW = 30
+US_PX_ANCHORED = ("per", "pbr", "cap", "dy", "pbrZero")   # 리뷰 (2026-11-20): 야후 상세 정보 중 그 가격에 맞추는 숫자 (apply_us_info) — 기준 가격을 모르면 비워요
+US_OWN_AGED_LONG = 20     # 리뷰 (2026-11-20): 잠시 뺀 기록이 이 미국 거래일보다 오래되면 크게 적어요 (상장 폐지된 티커가 목록에 남은 것일 수 있어요 · 로그만)
 
 
 def us_px_tail_clean(px):
@@ -1692,22 +1694,56 @@ def us_px_tail_clean(px):
     return px if n == len(px) else px.iloc[:n]
 
 
-def us_own_close_carry(prev, nocl, us_px_date, trade_days, max_days=US_OWN_CLOSE_MAX_DAYS, etfs=frozenset()):
+def us_own_close_carry(prev, nocl, us_px_date, trade_days, max_days=US_OWN_CLOSE_MAX_DAYS, etfs=frozenset(), ybar=None, info=None):
     """야후 종가가 없는 미국 종목(nocl {티커: 까닭})을 지난 발행본(prev · data.json)의 마지막 확인 종가로 (2026-11-20 · Jack · 순수 함수).
     반환: (carried [기록 — 마지막 확인 종가 · pxd · pxc], same [기록 — 같은 날 다시 발행: 그날 종가 · d1], drop {티커: 까닭 (US_OWN_DROP_KO)}).
     - 지난 발행본에 그 종목이 usPxDate 종가로 있었으면 (pxd 없음): 그 usPxDate 가 오늘 기준일보다 앞이면 carried (pxd = 그 날짜), 같으면 same.
     - 지난 발행본에 pxc (마지막 확인 종가)로 있었으면 같은 가격 · 같은 pxd (다시 날짜를 매기지 않아요).
-    - 그 종가 뒤 오늘 기준일까지 미국 거래일(trade_days: YYYY-MM-DD)이 max_days 보다 많으면 old (빼요).
+    - 리뷰 (2026-11-20, 더 새 야후 종가): ybar {티커: 기록} = 오늘 다운로드에서 그 종목의 마지막 봉(기준일 앞)으로 만든 기록 (예전 '자기 날짜' 길 그대로:
+      pxd = 그 봉의 날짜 · 그 가격 · 그 시계열의 숫자 · d1 없음). 그 봉이 마지막 확인 종가의 날짜보다 뒤면 그 기록을 pxc 로 써요 (더 새 종가를 옛 종가로
+      덮지 않게 · info["newer"] 에 {t, pxd, px}). 잠시 뺀 종목(지난 usSrc.own.aged)도 그 날짜 뒤의 봉이 있으면 같은 조건으로 돌아와요 (나이는 그 봉부터).
+    - 그 종가 뒤 오늘 기준일까지 미국 거래일(trade_days: YYYY-MM-DD)이 max_days 보다 많으면 old (빼요 · 그 날짜는 info["oldPxd"]).
     - none 지난 발행본에 없음 · halted 지난 발행본에서도 pxd 만 (거래 정지 · 마지막 확인 종가 아님) · bad 값을 읽을 수 없음: 예전 그대로 (드롭이 아니에요)."""
     prev = prev or {}
+    ybar = ybar or {}
+    info = {} if info is None else info
+    newer, old_pxd = info.setdefault("newer", []), info.setdefault("oldPxd", {})
     pst = {str(x.get("t")): x for x in prev.get("stocks") or [] if isinstance(x, dict) and x.get("cls") == "us" and not x.get("fund")}
+    pown = (prev.get("usSrc") or {}).get("own") if isinstance(prev.get("usSrc"), dict) else None
+    was = {str(a["t"]): a for a in ((pown or {}).get("aged") or []) if isinstance(pown, dict) and isinstance(a, dict) and a.get("t")}
     ppx = prev.get("usPxDate")
     ppx = ppx if isinstance(ppx, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", ppx) else None
     today = us_px_date.isoformat() if isinstance(us_px_date, dt.date) else str(us_px_date)
     carried, same, drop = [], [], {}
+
+    def is_day(x):
+        try:
+            return isinstance(x, str) and dt.date.fromisoformat(x).isoformat() == x
+        except ValueError:
+            return False
+
+    def later_bar(t, own):
+        """오늘 다운로드에 그 종목의 own 뒤 · 기준일 앞 봉이 있으면 그 기록 (가격 > 0)."""
+        y = ybar.get(t)
+        d = (y or {}).get("pxd")
+        return y if (is_day(d) and own < d < today and (_fin(y.get("price")) or 0) > 0 and y.get("d1") is None) else None
+
+    def take(t, own, rec):
+        if kr_own_age(own, today, trade_days) > max_days:
+            drop[t] = "old"
+            old_pxd[t] = own
+            return
+        carried.append(rec)
+
     for t in sorted(nocl):
         p = pst.get(t)
         if p is None:
+            a = was.get(t)                            # 잠시 뺀 종목: 그 날짜 뒤의 야후 봉이 오늘 있으면 돌아와요
+            y = later_bar(t, a.get("pxd")) if a and is_day(a.get("pxd")) else None
+            if y is not None:
+                newer.append({"t": t, "pxd": y["pxd"], "px": y["price"]})
+                take(t, y["pxd"], {**y, "pxc": True})
+                continue
             drop[t] = "none"
             continue
         price = _fin(p.get("price"))
@@ -1736,26 +1772,26 @@ def us_own_close_carry(prev, nocl, us_px_date, trade_days, max_days=US_OWN_CLOSE
                 drop[t] = "halted"
                 continue
             own = p.get("pxd")
-            try:
-                ok_day = isinstance(own, str) and dt.date.fromisoformat(own).isoformat() == own
-            except ValueError:
-                ok_day = False
-            if not ok_day or own >= ppx or own >= today:
+            if not is_day(own) or own >= ppx or own >= today:
                 drop[t] = "bad"
                 continue
-        if kr_own_age(own, today, trade_days) > max_days:
-            drop[t] = "old"
+        y = later_bar(t, own)
+        if y is not None:                             # 야후에 더 새 종가가 있어요 (그 종목의 마지막 봉 · 기준일 앞)
+            newer.append({"t": t, "pxd": y["pxd"], "px": y["price"]})
+            take(t, y["pxd"], {**y, "pxc": True})
             continue
-        carried.append({**base, "pxd": own, "pxc": True})
+        take(t, own, {**base, "pxd": own, "pxc": True})
     return carried, same, drop
 
 
-def us_own_aged(prev, nocl, drop):
+def us_own_aged(prev, nocl, drop, old_pxd=None):
     """2026-11-20 (Jack: 국내와 같게 — "After 5 trading days, show "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요.""): 오늘도 야후 종가가
     없는 종목 중 마지막 확인 종가가 나이 상한을 넘어 잠시 뺀 종목 → [{t, nk, pxd}] (티커 순 · data.json usSrc.own.aged). 지난 발행본에 있었는데 나이를
     넘은 종목(drop 'old')과, 지난 발행본이 이미 잠시 뺀 종목(usSrc.own.aged) 중 오늘도 야후 종가가 없는 종목 (지난 발행본의 stocks 에는 없어요 —
-    drop 'none' 을 'old' 로 고쳐요). 오늘 종가가 있는 종목 · 목록에서 사라진 종목은 nocl 에 없어서 저절로 빠져요. drop 을 고쳐요. (순수 함수)"""
+    drop 'none' 을 'old' 로 고쳐요). 오늘 종가가 있는 종목 · 목록에서 사라진 종목은 nocl 에 없어서 저절로 빠져요. drop 을 고쳐요. old_pxd: 그 종목의
+    마지막 확인 종가 날짜 (us_own_close_carry 의 info["oldPxd"] · 더 새 야후 봉이 있었으면 그 날짜). 지난 기록의 why (예: split) 는 이어 적어요. (순수 함수)"""
     prev = prev or {}
+    old_pxd = old_pxd or {}
     own = (prev.get("usSrc") or {}).get("own") if isinstance(prev.get("usSrc"), dict) else None
     was = {str(a["t"]): a for a in ((own or {}).get("aged") or []) if isinstance(own, dict) and isinstance(a, dict) and a.get("t")}
     pst = {str(x.get("t")): x for x in prev.get("stocks") or [] if isinstance(x, dict) and x.get("cls") == "us"}
@@ -1765,11 +1801,13 @@ def us_own_aged(prev, nocl, drop):
         if t not in nocl:
             continue
         if w == "old":
-            p = pst.get(t) or {}
-            out[t] = {"t": t, "nk": str(p.get("nk") or t), "pxd": p.get("pxd") or ppx}
+            p, a = pst.get(t) or {}, was.get(t) or {}
+            out[t] = {"t": t, "nk": str(p.get("nk") or a.get("nk") or t), "pxd": old_pxd.get(t) or p.get("pxd") or a.get("pxd") or ppx}
         elif w == "none" and t in was:
             a = was[t]
             out[t] = {"t": t, "nk": str(a.get("nk") or t), "pxd": a.get("pxd")}
+            if isinstance(a.get("why"), str):
+                out[t]["why"] = a["why"]
             drop[t] = "old"
     return [out[t] for t in sorted(out)]
 
@@ -1792,8 +1830,12 @@ def us_own_close_step(prev, nocl, out, us_px_date, trade_days, etfs=frozenset())
     try:
         days = [pd.Timestamp(t).date().isoformat() for t in trade_days]
         today = us_px_date.isoformat() if isinstance(us_px_date, dt.date) else str(us_px_date)
-        carried, same, drop = us_own_close_carry(prev, nocl, us_px_date, days, etfs=etfs)
-        aged = us_own_aged(prev, nocl, drop)
+        # 리뷰 (2026-11-20): 그 종목의 야후 마지막 봉으로 만든 기록 (예전 '자기 날짜' 길) — 마지막 확인 종가보다 새 봉이면 그것을 써요
+        ybar = {r["t"]: r for r in out if r.get("t") in nocl and r.get("pxd") is not None and r.get("d1") is None}
+        cinfo = {}
+        carried, same, drop = us_own_close_carry(prev, nocl, us_px_date, days, etfs=etfs, ybar=ybar, info=cinfo)
+        aged = us_own_aged(prev, nocl, drop, cinfo.get("oldPxd"))
+        newer = sorted(cinfo.get("newer") or [], key=lambda x: x["t"])
         repl = {r["t"]: r for r in carried + same}
         gone = {a["t"] for a in aged}
         new = []
@@ -1814,6 +1856,10 @@ def us_own_close_step(prev, nocl, out, us_px_date, trade_days, etfs=frozenset())
                + (f" 외 {len(carried) - US_OWN_SHOW}종목" if len(carried) > US_OWN_SHOW else "") if carried else "")
             + (f" · 지난 발행본이 같은 기준일이라 그날 종가 · d1 을 그대로 {len(same):,}종목 — " + ", ".join(r["t"] for r in same[:US_OWN_SHOW])
                + (f" 외 {len(same) - US_OWN_SHOW}종목" if len(same) > US_OWN_SHOW else "") if same else ""))
+        if newer:
+            log(f"  !! 그중 야후에 마지막 확인 종가보다 새 종가(그 종목의 마지막 봉 · 기준일 앞)가 있어 그 종가로 실은 미국 종목 {len(newer):,}: "
+                + ", ".join(f"{x['t']} ({x['pxd']} {x['px']})" for x in newer[:US_OWN_SHOW])
+                + (f" 외 {len(newer) - US_OWN_SHOW}종목" if len(newer) > US_OWN_SHOW else "") + " (usSrc.own.newer)")
         dc = collections.Counter(drop.values())
         dn = [f"{t} ({US_OWN_DROP_KO[w]} · {US_NOCL_KO.get(nocl.get(t), '?')})" for t, w in sorted(drop.items())]
         if drop:
@@ -1823,8 +1869,13 @@ def us_own_close_step(prev, nocl, out, us_px_date, trade_days, etfs=frozenset())
             log(f"  !! 마지막 확인 종가가 {US_OWN_CLOSE_MAX_DAYS}거래일을 넘어 잠시 뺀 미국 종목 {len(aged):,} (앱은 '며칠째 종가를 확인하지 못해서 이 종목은 "
                 f"잠시 빼 두었어요.' · usSrc.own.aged · 야후 종가가 다시 오거나 목록에서 사라지면 빠져요): "
                 + ", ".join(f"{a['t']} ({a.get('pxd')})" for a in aged[:US_OWN_SHOW]) + (f" 외 {len(aged) - US_OWN_SHOW}종목" if len(aged) > US_OWN_SHOW else ""))
+        long_ = [a for a in aged if isinstance(a.get("pxd"), str) and kr_own_age(a["pxd"], today, days) > US_OWN_AGED_LONG]
+        if long_:
+            log(f"  !! 잠시 뺀 지 {US_OWN_AGED_LONG}거래일이 넘은 미국 종목 {len(long_):,} (상장 폐지 · 티커 변경으로 목록에만 남았는지 확인해 주세요 · "
+                "usSrc.own.aged): " + ", ".join(f"{a['t']} ({a.get('pxd')})" for a in long_[:US_OWN_SHOW])
+                + (f" 외 {len(long_) - US_OWN_SHOW}종목" if len(long_) > US_OWN_SHOW else ""))
         return {"v": 1, "max": US_OWN_CLOSE_MAX_DAYS, "n": len(carried), "codes": sorted(r["t"] for r in carried),
-                "same": sorted(r["t"] for r in same), "unconf": len(nocl), "why": {k: int(v) for k, v in sorted(why.items())},
+                "same": sorted(r["t"] for r in same), "newer": newer, "unconf": len(nocl), "why": {k: int(v) for k, v in sorted(why.items())},
                 "drop": {k: int(v) for k, v in sorted(dc.items())}, "dropEx": dn[:US_OWN_SHOW], "bad": {"n": 0, "rows": []}, "aged": aged}
     except Exception as e:
         out[:] = keep
@@ -1840,22 +1891,51 @@ def us_own_close_step(prev, nocl, out, us_px_date, trade_days, etfs=frozenset())
         return rec
 
 
+def us_carry_splits(recent, prev):
+    """{티커: {분할 날짜 ISO}} — 오늘 시세 다운로드의 분할(umeta splits · [[티커, 날짜, 배율]]) · 지난 발행본의 data.json splits · 고정 표
+    (SPLIT_OVERRIDES 의 배율 있는 줄). 발행할 splits 는 이 셋으로 만들어요 (splits_fields). (순수 함수)"""
+    out = collections.defaultdict(set)
+    pr = (prev or {}).get("splits") if isinstance(prev, dict) else None
+    for x in list(recent or []) + list(pr if isinstance(pr, list) else []):
+        if isinstance(x, (list, tuple)) and len(x) >= 2 and isinstance(x[0], str) and isinstance(x[1], str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", x[1]):
+            out[x[0]].add(x[1])
+    for (t, d), (r, _why) in SPLIT_OVERRIDES.items():
+        if r is not None:
+            out[t].add(d)
+    return out
+
+
 def us_own_close_final(us, umeta, prev, days):
     """미국 목록이 정해진 바로 뒤 · 다른 단계보다 먼저 (Jack 의 규칙 — 우리 처리의 한 줄이 틀리면 그 줄을 빼고 크게 남기고 나머지는 발행해요): 기록
     (umeta usSrc.own)을 남은 행에 맞추고 (우선주 · 한국 종목의 미국 상장분 · 주식 종류 티커로 뺀 행), 관문과 같은 함수(validate_data.us_own_close_bad)로
-    마지막 확인 종가 · 같은 날 다시 쓴 종가를 다시 보고, 맞지 않는 행은 빼요. days: 미국 거래일 YYYY-MM-DD 들. 반환: 남은 미국 종목 목록."""
+    마지막 확인 종가 · 같은 날 다시 쓴 종가를 다시 보고, 맞지 않는 행은 빼요. days: 미국 거래일 YYYY-MM-DD 들. 반환: 남은 미국 종목 목록.
+    리뷰 (2026-11-20, 분할): 그 종가 날짜(pxd) 뒤에 분할이 있는 마지막 확인 종가는 싣지 않아요 — 가격은 분할 전인데 앱(held.js splitFactor)은 주식 수를
+    분할 배율만큼 늘려요 (평가액이 배율만큼 틀려요). 그 종목은 잠시 뺀 종목(aged · why 'split')에 적고 크게 남겨요. splits_fields 보다 먼저예요."""
     src = umeta.get("usSrc") if isinstance(umeta.get("usSrc"), dict) else None
     own = (src or {}).get("own") if isinstance((src or {}).get("own"), dict) else None
     if own is None:
         return us
+    sp = us_carry_splits(umeta.get("splits"), prev)
+    split_hit = [r for r in us if r.get("pxc") and any(d > str(r.get("pxd")) for d in sp.get(r.get("t"), ()))]
+    if split_hit:
+        hit_t = {r["t"] for r in split_hit}
+        aged = [a for a in own.get("aged") or [] if isinstance(a, dict) and a.get("t") not in hit_t]
+        aged += [{"t": r["t"], "nk": str(r.get("nk") or r["t"]), "pxd": r.get("pxd"), "why": "split"} for r in split_hit]
+        own["aged"] = sorted(aged, key=lambda a: str(a.get("t")))
+        log(f"  !! 마지막 확인 종가 뒤에 주식 분할이 있어 싣지 않은 미국 종목 {len(split_hit):,} (가격은 분할 전 · 앱은 주식 수를 분할 배율로 바꿔요 → "
+            "잠시 뺀 종목 · usSrc.own.aged why split): "
+            + ", ".join(f"{r['t']} ({r.get('pxd')} 뒤 분할 {', '.join(sorted(d for d in sp[r['t']] if d > str(r.get('pxd'))))})" for r in split_hit[:US_OWN_SHOW]))
+        us = [r for r in us if r.get("t") not in hit_t]
     have = {r.get("t") for r in us}
     own["codes"] = sorted(r["t"] for r in us if r.get("pxc"))
     own["n"] = len(own["codes"])
     own["same"] = sorted(t for t in own.get("same") or [] if t in have)
+    own["newer"] = [x for x in own.get("newer") or [] if isinstance(x, dict) and x.get("t") in set(own["codes"])]
     if not own["codes"] and not own["same"]:
         log("· 마지막 확인 종가 점검 (미국 · 관문과 같은 함수): 0종목 빼고 발행")
         return us
-    bad = us_own_close_bad({"usPxDate": umeta.get("usPxDate"), "usSrc": src, "stocks": us}, prev, days)
+    bad = us_own_close_bad({"usPxDate": umeta.get("usPxDate"), "usSrc": src, "stocks": us,
+                            "splits": [[t, d, None] for t, ds in sp.items() for d in sorted(ds)]}, prev, days)
     gone = collections.defaultdict(list)
     for t, w in bad:
         gone[t].append(w)
@@ -1866,6 +1946,7 @@ def us_own_close_final(us, umeta, prev, days):
     own["codes"] = [c for c in own["codes"] if c not in gone]
     own["n"] = len(own["codes"])
     own["same"] = [c for c in own["same"] if c not in gone]
+    own["newer"] = [x for x in own["newer"] if x.get("t") not in gone]
     own["bad"] = {"n": len(gone), "rows": rows[:US_OWN_SHOW], "why": dict(sorted(collections.Counter(w for ws in gone.values() for w in set(ws)).items()))}
     return [r for r in us if r.get("t") not in gone]
 
@@ -1877,7 +1958,7 @@ def us_own_close_drop_all(us, umeta, err):
     own = src.get("own") if isinstance(src.get("own"), dict) else us_own_close_err(err)
     gone = {r.get("t") for r in us if r.get("pxc")} | set(own.get("same") or [])
     log(f"  !! 마지막 확인 종가 점검(미국)이 오류로 멈췄어요 ({err}) — 마지막 확인 종가 · 같은 날 다시 쓴 {len(gone):,}종목을 모두 빼고 발행을 이어가요 (usSrc.own.err)")
-    own.update({"codes": [], "n": 0, "same": [], "err": str(err)[:300], "bad": {"n": len(gone), "rows": sorted(gone)[:US_OWN_SHOW]}})
+    own.update({"codes": [], "n": 0, "same": [], "newer": [], "err": str(err)[:300], "bad": {"n": len(gone), "rows": sorted(gone)[:US_OWN_SHOW]}})
     src["own"] = own
     umeta["usSrc"] = src
     return [r for r in us if r.get("t") not in gone]
@@ -10027,11 +10108,29 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
             return False
         if not (info.get("shortName") or info.get("longName")):
             return False
+        anchor, no_anchor = rec.get("price"), False
+        if rec.get("pxc"):
+            # 리뷰 (2026-11-20): 마지막 확인 종가(pxc) 종목의 상세 정보 — 야후의 PER · PBR · 시가총액 · 배당수익률은 야후의 지금 시세 가격 기준이에요.
+            # 그 가격을 기준 가격(px)으로 적어야 apply_us_info 가 실은 종가에 맞춰요 (그 종가를 적으면 배율이 1 이라 시세 가격 기준 숫자가 그대로 나가요)
+            q = next((v for v in (_fin(info.get("currentPrice")), _fin(info.get("regularMarketPrice"))) if v is not None and v > 0), None)
+            if q is not None:
+                anchor = q
+                pxc_info["quote"].append(rec["t"])
+            else:
+                a0 = age(rec["t"])
+                if a0 is not None and a0 <= US_INFO_MAX_AGE_DAYS and not (cache.get(rec["t"]) or {}).get("pxBad"):
+                    pxc_info["kept"].append(rec["t"])
+                    return True                                       # 14일 안의 보관본 그대로 (그날 종가에 맞춘 값)
+                no_anchor = True
+                pxc_info["blank"].append(rec["t"])
         new = {k: info.get(k) for k in US_INFO_KEYS if info.get(k) is not None}
         merged, kept, kage = us_info_merge(new, cache.get(rec["t"]), today)   # #114 리뷰: 시세만 담은 응답이 통화 · 업종 · 설명을 지우지 않게
         if kept:
             sticky[rec["t"]] = (kept, kage)
-        entry = {"at": tday, "px": rec.get("price"), "k": US_INFO_SCHEMA, "info": merged}
+        entry = {"at": tday, "px": anchor, "k": US_INFO_SCHEMA, "info": merged}
+        if no_anchor:
+            entry["pxBad"] = True       # 기준 가격을 몰라요: 이 항목의 PER · PBR · 시가총액 · 배당수익률은 쓰지 않아요 (다음 실행에서 다시 물어봐요)
+            entry["due"] = True
         if us_info_partial(merged, kept, rec.get("etf") is True):
             entry["due"] = True                                       # #114 리뷰 2: 일부만 온 응답 — 다음 실행에서 다시 물어봐요
             partial.add(rec["t"])
@@ -10039,6 +10138,7 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
         return True
 
     sticky, partial = {}, set()
+    pxc_info = {"quote": [], "kept": [], "blank": []}
     need = [r for r in out if us_info_due(cache.get(r["t"]), today)]
     # 2026-11-14 (Q5): 본사 나라(country)가 없는 S&P 500 밖 회사 항목도 오늘 다시 받아요 (외국 회사 판별 · 모양 표시는 그대로라 그 회사들만)
     # 2026-11-14 (리뷰 S2): S&P 500 목록은 오늘 가격을 받은 종목과 US_SP500_MIN 곳 넘게 겹칠 때만 믿어요 (목록 칸 이름이 바뀌어 티커 대신 다른
@@ -10073,17 +10173,27 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
         failed = [r for r, k in zip(failed, okr) if not k]
     failed_t = {r["t"] for r in failed}
     reused, fallback, missing, oldest = 0, 0, [], 0
+    px_blank = []
     for rec in out:
         a = age(rec["t"])
         if a is None or a > US_INFO_MAX_AGE_DAYS or not apply_us_info(rec, cache[rec["t"]]["info"], cache[rec["t"]].get("px"), fx_last, today=today):
             missing.append(rec["t"])
             continue
+        if cache[rec["t"]].get("pxBad"):     # 리뷰 (2026-11-20): 기준 가격을 모르는 항목 — 가격에 맞출 수 없는 네 숫자는 비워요 (틀린 숫자 대신)
+            for k in US_PX_ANCHORED:
+                rec.pop(k, None)
+            px_blank.append(rec["t"])
         if rec["t"] in failed_t:
             fallback += 1
             oldest = max(oldest, a)
         elif a > 0:
             reused += 1
     save_us_info(cache)
+    npc = sum(1 for r in out if r.get("pxc"))
+    if npc or px_blank:
+        log(f"{'  !! ' if px_blank else '· '}마지막 확인 종가 종목 {npc:,}개의 상세 정보: 오늘 받아 야후 시세 가격에 맞춤 {len(pxc_info['quote']):,} · "
+            f"시세 가격이 없어 {US_INFO_MAX_AGE_DAYS}일 안의 보관본 그대로 {len(pxc_info['kept']):,} · 기준 가격을 몰라 PER · PBR · 시가총액 · 배당수익률을 "
+            f"비움 {len(px_blank):,}" + (f" ({', '.join(px_blank[:30])})" if px_blank else ""))
     if sticky:
         fc_kept = sorted(t for t, (ks, _a) in sticky.items() if "financialCurrency" in ks)
         other = sorted(t for t, (ks, _a) in sticky.items() if any(k != "financialCurrency" for k in ks))

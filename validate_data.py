@@ -139,8 +139,12 @@ US_OWN_WHY = {"shape": "pxd 가 usPxDate 보다 앞선 날짜가 아님", "d1": 
               "mark": "pxc 표시가 true 가 아니거나 pxd 가 없음", "price": "가격이 없음",
               "rec": "usSrc.own 에 적힌 종목이 아님", "old": f"그 종가 뒤 미국 거래일이 {US_OWN_CLOSE_MAX_DAYS}일 넘음",
               "prev": "지난 발행본의 마지막 확인 종가 · 날짜와 다름",
-              "same": "같은 날 다시 쓴 종가(usSrc.own.same)가 지난 발행본의 그날 종가 · d1 과 다름"}
-US_OWN_FAIL_WHY = ("shape", "d1", "mark")   # 날짜가 깨졌거나 d1 이 옆에 있는 마지막 확인 종가 — 파일에 남아 있으면 실패 (국내와 같아요)
+              "same": "같은 날 다시 쓴 종가(usSrc.own.same)가 지난 발행본의 그날 종가 · d1 과 다름",
+              "split": "그 종가 날짜 뒤에 주식 분할이 있음 (data.json splits · 가격은 분할 전인데 앱이 주식 수를 바꿔요)",
+              "newer": "더 새 야후 종가(usSrc.own.newer)가 기록 · 지난 발행본의 날짜 · 미국 거래일과 맞지 않음"}
+# 날짜가 깨졌거나 d1 이 옆에 있는 마지막 확인 종가 — 파일에 남아 있으면 실패 (국내와 같아요). 리뷰 (2026-11-20): 같은 날 다시 쓴 종가가 지난 발행본과
+# 다르면 (d1 이 있고 날짜가 없어 미국 기준일 종가로 보여요) · 그 종가 뒤에 분할이 있으면 (평가액이 분할 배율만큼 틀려요) 도 실패
+US_OWN_FAIL_WHY = ("shape", "d1", "mark", "same", "split")
 US_OWN_DROP_MAX = 5                       # 파이프라인이 한 점검에서 거른 행이 이보다 많으면 실패 (Jack 의 상시 규칙 · 국내 KR_OWN_DROP_MAX 와 같아요)
 # N (Jack: "Block only if many are missing (set the number from history)"): 야후 종가가 없는데 마지막 확인 종가로 싣지 못한 미국 종목
 # (d1 이 없고 깨끗한 마지막 확인 종가가 아님 — 예전처럼 야후의 마지막 봉을 자기 날짜로 실은 종목)이 이보다 많으면 '미국 d1 채움' 줄이 실패해요.
@@ -1687,7 +1691,8 @@ def us_own_rec(data):
     if not (isinstance(own, dict) and own.get("v") == 1 and isinstance(own.get("codes"), list)
             and all(isinstance(c, str) and c for c in own["codes"]) and len(set(own["codes"])) == len(own["codes"])
             and isinstance(own.get("n"), int) and not isinstance(own.get("n"), bool) and own["n"] == len(own["codes"])
-            and isinstance(own.get("same", []), list) and all(isinstance(c, str) and c for c in own.get("same", []))):
+            and isinstance(own.get("same", []), list) and all(isinstance(c, str) and c for c in own.get("same", []))
+            and isinstance(own.get("newer", []), list) and all(isinstance(x, dict) and isinstance(x.get("t"), str) for x in own.get("newer", []))):
         return None
     return own
 
@@ -1712,8 +1717,18 @@ def us_own_close_bad(data, pdata=None, days=None, max_days=US_OWN_CLOSE_MAX_DAYS
     own = us_own_rec(data)
     rec = set(own["codes"]) if own else set()
     same = set(own.get("same") or []) if own else set()
+    newer = {x["t"]: x for x in (own.get("newer") or [])} if own else {}
     pby = {x.get("t"): x for x in us_stocks(pdata)} if isinstance(pdata, dict) else None
     ppx = str(pdata.get("usPxDate")) if isinstance(pdata, dict) else None
+    paged = {}
+    if isinstance(pdata, dict):
+        po = us_own_rec(pdata) or ((pdata.get("usSrc") or {}).get("own") if isinstance(pdata.get("usSrc"), dict) else None)
+        paged = {a["t"]: a for a in ((po or {}).get("aged") or []) if isinstance(po, dict) and isinstance(a, dict) and isinstance(a.get("t"), str)}
+    splits = collections.defaultdict(set)                 # 리뷰 (2026-11-20): data.json splits [[티커, 날짜, 배율]]
+    for x in (data or {}).get("splits") or [] if isinstance((data or {}).get("splits"), list) else []:
+        if isinstance(x, (list, tuple)) and len(x) >= 2 and isinstance(x[0], str) and _iso_day(x[1]) is not None:
+            splits[x[0]].add(x[1])
+    dayset = set(days) if days is not None else None
     for s in us_stocks(data or {}):
         t = s.get("t")
         if t in same and "pxc" not in s:
@@ -1741,7 +1756,23 @@ def us_own_close_bad(data, pdata=None, days=None, max_days=US_OWN_CLOSE_MAX_DAYS
             why.append("rec")
         if shape and days is not None and kr_own_age(s["pxd"], usd, days) > max_days:
             why.append("old")
-        if pby is not None:
+        if isinstance(s.get("pxd"), str) and any(d > s["pxd"] for d in splits.get(t, ())):
+            why.append("split")
+        if t in newer:
+            # 리뷰 (2026-11-20): 야후의 더 새 종가 (그 종목의 마지막 봉) — 기록한 날짜 · 가격 그대로 · 미국 거래일 · 지난 발행본의 그 종목 종가 날짜
+            # (pxc 면 그 pxd, 아니면 그 발행본의 usPxDate · 잠시 뺀 종목이면 그 기록의 pxd) 보다 뒤
+            x = newer[t]
+            ok = x.get("pxd") == s.get("pxd") and num(x.get("px")) is not None and num(x.get("px")) == num(s.get("price"))
+            if ok and dayset is not None:
+                ok = s.get("pxd") in dayset
+            if ok and pby is not None:
+                p = pby.get(t)
+                base = (p.get("pxd") if p.get("pxc") is True else (None if p.get("pxd") is not None else ppx)) if p is not None \
+                    else (paged.get(t) or {}).get("pxd")
+                ok = isinstance(base, str) and isinstance(s.get("pxd"), str) and base < s["pxd"]
+            if not ok:
+                why.append("newer")
+        elif pby is not None:
             p = pby.get(t)
             same_px = p is not None and num(p.get("price")) is not None and num(p.get("price")) == num(s.get("price"))
             same_day = p is not None and (s.get("pxd") == p.get("pxd") and p.get("pxc") is True if p.get("pxd") is not None
@@ -1805,6 +1836,7 @@ def check_us_own_close(rep, data, macro, pdata):
         dc = own.get("drop") if isinstance(own.get("drop"), dict) else {}
         parts.append(f"실음 {len(mine)}종목" + (" (" + " · ".join(f"{d} {n}종목" for d, n in sorted(days.items(), reverse=True)) + ")" if mine else "")
                      + (f" · 같은 날 지난 발행본 종가 그대로 {len(own.get('same') or [])}" if own.get("same") else "")
+                     + (f" · 그중 야후의 더 새 종가 {len(own.get('newer') or [])}" if own.get("newer") else "")
                      + f" · 야후 종가 없음 {own['unconf'] if isinstance(own.get('unconf'), int) else '모름'}"
                      + (" · 싣지 못함 " + " · ".join(f"{k} {v}" for k, v in sorted(dc.items())) if dc else ""))
         if own.get("err"):

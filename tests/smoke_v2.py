@@ -15035,6 +15035,70 @@ def scene_us_own_close(R, files, width=390):
     R.check(None, S, "잠시 뺀 미국 종목 (5거래일이 지남): 회사 페이지 · 그 종목을 가진 포트폴리오에 Jack 의 줄 · 다른 티커는 '찾지 못했어요' 그대로", aged)
 
 
+def scene_us_own_close_daily(R, files, width=390):
+    """리뷰 A (2026-11-20): 매일 점검의 결과(rules.evaluateHolding)를 쓰는 두 화면 — 홈 '오늘 확인할 일' 띠 안의 안내와 추가로 넣을 돈의 안내 —
+    도 미국 마지막 확인 종가(pxc)를 Jack 의 줄 한 줄로 · 거래 정지 모양의 미국 pxd(애플)는 예전 문장 그대로."""
+    S = f"미국 마지막 확인 종가 · 매일 점검 {width}"
+    f = us_own_files(files)
+    gby = by_t(f["data.json"]["stocks"])
+    fx = f["data.json"]["fx"]
+    for t in ("MSFT", "AAPL"):
+        gby[t].pop("roe", None)
+    roe = lambda: {"id": "roeFloor", "kind": "keep", "check": "checked", "input": "roe", "baseline": 20.0, "since": None, "roe": 20.0, "floor": 10, "fy": None}
+    rows = [("005930", "삼성전자", "kr", 0.4, 2, "KRW"), ("MSFT", gby["MSFT"]["nk"], "us", 0.3, 1, "USD"), ("AAPL", gby["AAPL"]["nk"], "us", 0.3, 1, "USD")]
+    hold = [{**_holding(t, nk, tg, [] if cls == "kr" else [roe()]), "cls": cls, "plannedQty": q} for t, nk, cls, tg, q, _ in rows]
+    buys = [{"t": t, "date": "2026-10-01", "qty": q, "price": round(gby[t]["price"] * 0.95, 2), "ccy": c, **({"fx": fx} if c == "USD" else {})}
+            for t, _, _, _, q, c in rows]
+    store = {"v": 1, "decks": [{"id": "dustodo", "name": "미국 확인 종가 할 일", "createdAt": "2026-10-01", "holdings": hold, "purchases": buys, "planFx": fx}]}
+    init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(store, ensure_ascii=False))}); }} catch (e) {{}} }})();"
+    want_todo = "MSFT: " + fillp(C["app"]["krOwnClose"], date=mdtext(US_OWN["MSFT"])) + " " + fillp(C["app"]["ownClose"], names="AAPL", md=mdtext("2026-10-28"))
+    srv, ctx, page, _ = R.open(build_site(f), width, init=init)
+
+    def todo_note():
+        hero = page.locator('[data-ui-v2="today-hero"]')
+        hero.wait_for(state="visible")
+        assert hero.get_attribute("data-state") == "todo", hero.inner_text()
+        items = hero.locator('[data-ui-v2="todo-item"]').evaluate_all("(els) => els.map((e) => e.dataset.t)")
+        assert set(items) == {"MSFT", "AAPL"}, items
+        note = hero.locator('[data-ui-v2="own-close"][data-scope="todo"]')
+        assert note.count() == 1 and note.inner_text() == want_todo, (note.all_inner_texts(), want_todo)
+        floor_ok(page, "홈 오늘 확인할 일")
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "홈 '오늘 확인할 일': MSFT(미국 pxc)는 'MSFT: ' + Jack 의 줄 · 애플(pxc 없는 pxd)은 예전 문장", todo_note)
+    ctx.close()
+    srv.shutdown()
+
+    # 추가로 넣을 돈: 비중이 모자란 MSFT(미국 pxc)를 사요 → 그 밑에 'MSFT: ' + Jack 의 줄
+    big = gby["005930"]["price"]
+    rows2 = [("005930", "삼성전자", "kr", 0.5, max(1, int(round(4000000 / big))), "KRW"), ("MSFT", gby["MSFT"]["nk"], "us", 0.5, 1, "USD")]
+    hold2 = [{**_holding(t, nk, tg, []), "cls": cls, "plannedQty": q} for t, nk, cls, tg, q, _ in rows2]
+    buys2 = [{"t": t, "date": "2026-10-01", "qty": q, "price": round(gby[t]["price"], 2), "ccy": c, **({"fx": fx} if c == "USD" else {})}
+             for t, _, _, _, q, c in rows2]
+    store2 = {"v": 1, "decks": [{"id": "dusadd", "name": "미국 확인 종가 추가", "createdAt": "2026-10-01", "holdings": hold2, "purchases": buys2, "planFx": fx}]}
+    init2 = f"(() => {{ try {{ localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(store2, ensure_ascii=False))}); }} catch (e) {{}} }})();"
+    srv, ctx, page, _ = R.open(build_site(f), width, init=init2, path="/app.html?dev=1#portfolio")
+
+    def add_note():
+        at(page, "portfolio")
+        add = page.locator('[data-ui-v2="add-money"]')
+        add.wait_for(state="visible")
+        add.get_by_role("button", name="+1,000만").click()
+        got = page.locator('[data-ui-v2="add-buys"] [data-add]')
+        got.first.wait_for(state="visible")
+        ts = got.evaluate_all("els => els.map(e => e.dataset.add)")
+        assert "MSFT" in ts, ts
+        note = add.locator('[data-ui-v2="own-close"]')
+        want = "MSFT: " + fillp(C["app"]["krOwnClose"], date=mdtext(US_OWN["MSFT"]))
+        assert note.count() == 1 and note.inner_text() == want, (note.all_inner_texts(), want)
+        floor_ok(page, "추가로 넣을 돈")
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "추가로 넣을 돈: 산 MSFT(미국 pxc) 밑에 'MSFT: ' + Jack 의 줄 한 줄", add_note)
+    ctx.close()
+    srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -15152,7 +15216,8 @@ def main():
                    lambda: scene_why_late_dates(R, files, 390),                                             # 늦은 데이터의 왜 움직였나: 그 시장의 날짜 줄
                    lambda: scene_kr_own_close(R, files, 390), lambda: scene_kr_own_close(R, files, 320),   # 국내 마지막 확인 종가 (Jack 2026-11-19)
                    lambda: scene_kr_own_close(R, files, 1280),                                              # 국내 마지막 확인 종가 · PC
-                   lambda: scene_us_own_close(R, files, 390), lambda: scene_us_own_close(R, files, 1280)):   # 미국 마지막 확인 종가 (Jack 2026-11-20)
+                   lambda: scene_us_own_close(R, files, 390), lambda: scene_us_own_close(R, files, 1280),   # 미국 마지막 확인 종가 (Jack 2026-11-20)
+                   lambda: scene_us_own_close_daily(R, files, 390)):                                         # 리뷰 A: 오늘 확인할 일 · 추가로 넣을 돈
             try:
                 fn()
             except Exception as e:

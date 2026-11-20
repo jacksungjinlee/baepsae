@@ -531,6 +531,8 @@ export function evaluateHolding(h, deck, ctx, weights, qty) {
   const status = soldOutFails ? "none" : reasons.length ? reasons[0].level : "none";
   const d1 = todayD1(s);
   const pxd = ownCloseDate(s, s && s.cls === "kr" ? ctx.pxDate : ctx.usPxDate);   // 2026-11-19 (Jack): a Korean stock's own date is against pxDate
+  // 2026-11-20 (review A): a US stock carried at its last confirmed close keeps its mark (pxc), so 홈 오늘 확인할 일 and 추가로 넣을 돈 group
+  // it with Jack's line (data.js ownCarried), not the halted sentence
   const band = rules.find((x) => x.id === "band" && x.check === "checked");
   const div = rules.find((x) => x.id === "divCut" && x.drops);
   return {
@@ -546,7 +548,7 @@ export function evaluateHolding(h, deck, ctx, weights, qty) {
     px: weights.px && weights.px.has(h.t) ? weights.px.get(h.t) : null,
     absent: !s,                                                   // not in today's data at all (v19.0c: the row stays)
     // a note only: never changes the status. Never on a 0-share holding (verification nit: not in 홈's 큰 움직임)
-    d1, dv: valueD1(s), pxd, bigMove: qty !== 0 && d1 != null && Math.abs(d1) >= BIG_MOVE,
+    d1, dv: valueD1(s), pxd, ...(pxd && s && s.cls === "us" && s.pxc === true ? { pxc: true } : {}), bigMove: qty !== 0 && d1 != null && Math.abs(d1) >= BIG_MOVE,
     noNewMoney: soldOutFails || NO_NEW_MONEY.includes(status),
   };
 }

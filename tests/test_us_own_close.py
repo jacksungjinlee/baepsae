@@ -179,7 +179,9 @@ INFO = {"shortName": "Co", "longName": "Co Inc.", "quoteType": "EQUITY", "sector
         "country": "United States", "dividendYield": 0.5}
 
 
-def _fake_yf(series):
+def _fake_yf(series, quote=None):
+    quote = quote or {}
+
     def download(tickers, **kw):
         if isinstance(tickers, str):
             return pd.DataFrame({"Close": series["_spx"]})
@@ -196,11 +198,11 @@ def _fake_yf(series):
             self.t = t
 
         def get_info(self):
-            return dict(INFO, shortName=self.t + " Co")
+            return dict(INFO, shortName=self.t + " Co", **({"currentPrice": quote[self.t]} if self.t in quote else {}))
     return types.SimpleNamespace(download=download, Ticker=Ticker)
 
 
-def _fetch(tmp_path, monkeypatch, blank, zero=(), prev_usd=D18, today_us=dt.date(2026, 11, 19), extra_prev=()):
+def _fetch(tmp_path, monkeypatch, blank, zero=(), prev_usd=D18, today_us=dt.date(2026, 11, 19), extra_prev=(), quote=None, cache=None, empty=()):
     syms = ["AAPL", "MSFT", "NVDA", "SHEL", "BP", "ZERO", "TD", "STAG"]
     days = pd.bdate_range(today_us - dt.timedelta(days=500), today_us)
     days = days[days != pd.Timestamp("2026-11-26")]
@@ -216,15 +218,19 @@ def _fetch(tmp_path, monkeypatch, blank, zero=(), prev_usd=D18, today_us=dt.date
             s.iloc[-1] = np.nan                                       # 야후가 최신 봉을 비움 (2026-11-20 의 모양)
         if t in zero:
             s.iloc[-1] = 0.0                                          # 야후가 빈 값을 0 으로 줌
+        if t in empty:
+            s = pd.Series(np.nan, index=days)                         # 야후가 그 종목의 가격을 하나도 주지 않음
         series[t] = s
     series["STAG"] = pd.Series(np.nan, index=days)                    # 가격을 하나도 주지 않음
     prev_rows = [us(t, price=50.0 + i, d1=0.3) for i, t in enumerate(syms) if t != "STAG"] + list(extra_prev)
     prev = {"pxDate": prev_usd, "usPxDate": prev_usd, "stocks": prev_rows}
-    monkeypatch.setitem(sys.modules, "yfinance", _fake_yf(series))
+    monkeypatch.setitem(sys.modules, "yfinance", _fake_yf(series, quote))
     monkeypatch.setattr(F, "us_tickers", lambda names: list(syms))
     monkeypatch.setattr(F, "us_last_complete_day", lambda now=None: today_us)
     monkeypatch.setattr(F.time, "sleep", lambda s: None)
     monkeypatch.setattr(F, "US_INFO_PATH", str(tmp_path / "us-info.json.gz"))
+    if cache:
+        F.save_us_info(cache)
     lines = []
     monkeypatch.setattr(F, "log", lines.append)
     today = today_us + dt.timedelta(days=1)
@@ -233,7 +239,8 @@ def _fetch(tmp_path, monkeypatch, blank, zero=(), prev_usd=D18, today_us=dt.date
 
 
 def test_fetch_us_carries_blank_and_zero_newest_bars(tmp_path, monkeypatch):
-    out, meta, lines, prev = _fetch(tmp_path, monkeypatch, blank={"AAPL", "SHEL"}, zero={"ZERO"})
+    quote = {t: 101.0 for t in ("AAPL", "SHEL", "ZERO", "TD")}                     # 야후 시세 가격 (리뷰 B: 상세 정보의 기준 가격)
+    out, meta, lines, prev = _fetch(tmp_path, monkeypatch, blank={"AAPL", "SHEL"}, zero={"ZERO"}, quote=quote)
     by = {r["t"]: r for r in out}
     pby = {r["t"]: r for r in prev["stocks"]}
     for t in ("AAPL", "SHEL", "ZERO", "TD"):                           # TD: 야후가 주지 않음 (지난 발행본에는 있었어요)
@@ -252,10 +259,15 @@ def test_fetch_us_carries_blank_and_zero_newest_bars(tmp_path, monkeypatch):
 
 def test_fetch_us_aged_stock_is_left_out_with_a_reason(tmp_path, monkeypatch):
     old = us("BP", price=40.0, d1=None, pxd="2026-11-05", pxc=True)
-    out, meta, lines, prev = _fetch(tmp_path, monkeypatch, blank={"BP"}, extra_prev=[old])
+    out, meta, lines, prev = _fetch(tmp_path, monkeypatch, blank=set(), empty={"BP"}, extra_prev=[old])
     assert "BP" not in {r["t"] for r in out}
     assert meta["usSrc"]["own"]["aged"] == [{"t": "BP", "nk": "BP Inc.", "pxd": "2026-11-05"}]
     assert meta["usExtraMissing"].get("BP", "").startswith("마지막 확인 종가(2026-11-05) 뒤 미국 거래일 5일이 지나 잠시 뺌")
+    # 리뷰 B: 야후에 그 종목의 더 새 봉(11-18)이 있으면 그 종가로 돌아와요 (나이는 그 봉부터)
+    out2, meta2, _l, _p = _fetch(tmp_path, monkeypatch, blank={"BP"}, extra_prev=[old], quote={"BP": 50.0})
+    bp = {r["t"]: r for r in out2}["BP"]
+    assert bp["pxc"] is True and bp["pxd"] == D18 and meta2["usSrc"]["own"]["newer"] == [{"t": "BP", "pxd": D18, "px": bp["price"]}]
+    assert meta2["usSrc"]["own"]["aged"] == []
 
 
 def test_fetch_us_same_day_republish_keeps_the_published_close(tmp_path, monkeypatch):
@@ -550,3 +562,125 @@ def test_app_load_report_says_us_carries():
                   "stocks": [us("AAPL", d1=None, pxd=D18, pxc=True), us("HALT", d1=None, pxd=D18), us("MSFT")]})
     assert len(got) == 2 and got[0].startswith("[v2] 2 of 3 US stocks at an earlier close") and got[1].startswith("[v2] 1 of them carried"), got
     assert "AAPL 2026-11-18" in got[1] and "HALT" not in got[1]
+
+
+# ── 리뷰 (2026-11-20) ─────────────────────────────────────────────────────────
+def test_a_newer_yahoo_bar_wins_over_an_older_carry():
+    """지난 발행본의 미국 날짜 11-18 · 오늘 11-20 · 야후에 그 종목의 11-19 봉이 있으면 그 종가 (11-18 의 마지막 확인 종가가 아니라)."""
+    p = us("AAPL", price=270.0, d1=0.3)
+    y = us("AAPL", price=274.5, d1=None, pxd=D19, vol=31.0)                       # 야후의 마지막 봉으로 만든 기록 (예전 '자기 날짜' 길)
+    info = {}
+    carried, same, drop = F.us_own_close_carry(prev_file([p], usd=D18), {"AAPL": "bar"}, dt.date(2026, 11, 20), UDAYS, ybar={"AAPL": y}, info=info)
+    assert drop == {} and len(carried) == 1 and carried[0]["price"] == 274.5 and carried[0]["pxd"] == D19 and carried[0]["pxc"] is True
+    assert carried[0]["vol"] == 31.0 and "d1" not in carried[0] and info["newer"] == [{"t": "AAPL", "pxd": D19, "px": 274.5}]
+    # 그 봉이 마지막 확인 종가보다 앞이거나 같으면 예전 그대로 마지막 확인 종가
+    old_y = us("AAPL", price=260.0, d1=None, pxd=D18)
+    c2, _s, _d = F.us_own_close_carry(prev_file([p], usd=D18), {"AAPL": "bar"}, dt.date(2026, 11, 20), UDAYS, ybar={"AAPL": old_y}, info={})
+    assert c2[0]["price"] == 270.0 and c2[0]["pxd"] == D18
+
+
+def test_an_aged_stock_comes_back_on_a_newer_bar_and_ages_from_it():
+    aged = [{"t": "OLD", "nk": "OLD Inc.", "pxd": "2026-11-10"}]
+    prev = prev_file([], usd=D19, aged=aged)
+    info = {}
+    back, _s, drop = F.us_own_close_carry(prev, {"OLD": "bar"}, dt.date(2026, 11, 20), UDAYS,
+                                          ybar={"OLD": us("OLD", price=9.5, d1=None, pxd=D19)}, info=info)
+    assert drop == {} and back[0]["pxd"] == D19 and back[0]["price"] == 9.5 and info["newer"][0]["t"] == "OLD"
+    days = [d.strftime("%Y-%m-%d") for d in pd.bdate_range("2026-10-01", "2026-11-20")]
+    info2 = {}
+    _c, _s, drop2 = F.us_own_close_carry(prev, {"OLD": "bar"}, dt.date(2026, 11, 20), days,
+                                         ybar={"OLD": us("OLD", price=9.0, d1=None, pxd="2026-11-12")}, info=info2)
+    assert drop2 == {"OLD": "old"} and info2["oldPxd"] == {"OLD": "2026-11-12"}            # 그 봉부터 6거래일 → 여전히 빠져요
+    assert F.us_own_aged(prev, {"OLD": "bar"}, drop2, info2["oldPxd"]) == [{"t": "OLD", "nk": "OLD Inc.", "pxd": "2026-11-12"}]
+
+
+def test_step_records_newer_and_logs_long_aged(monkeypatch):
+    lines = []
+    monkeypatch.setattr(F, "log", lines.append)
+    days = [d.strftime("%Y-%m-%d") for d in pd.bdate_range("2026-09-01", "2026-11-20")]
+    prev = {**prev_file([us("AAPL", price=270.0)], usd=D18), "usSrc": {"v": 1, "own": {"aged": [{"t": "GONE", "nk": "GONE", "pxd": "2026-09-15"}]}}}
+    out = [us("AAPL", price=274.5, d1=None, pxd=D19), us("MSFT")]
+    rec = F.us_own_close_step(prev, {"AAPL": "bar", "GONE": "empty"}, out, dt.date(2026, 11, 20), days)
+    assert rec["newer"] == [{"t": "AAPL", "pxd": D19, "px": 274.5}] and rec["codes"] == ["AAPL"]
+    assert [r for r in out if r["t"] == "AAPL"][0]["pxc"] is True
+    assert any(x.startswith("  !! 그중 야후에 마지막 확인 종가보다 새 종가") and "AAPL (2026-11-19 274.5)" in x for x in lines), lines
+    assert any(x.startswith("  !! 잠시 뺀 지 20거래일이 넘은 미국 종목 1") and "GONE (2026-09-15)" in x for x in lines), lines
+
+
+def test_a_split_after_the_carried_close_leaves_the_stock_out(monkeypatch):
+    lines = []
+    monkeypatch.setattr(F, "log", lines.append)
+    prev = prev_file([us("NVDA", price=180.0), us("AAPL", price=270.0)], usd=D19)
+    rows = [us("NVDA", price=180.0, d1=None, pxd=D19, pxc=True), us("AAPL", price=270.0, d1=None, pxd=D19, pxc=True), us("MSFT")]
+    umeta = {"usPxDate": D20, "splits": [["NVDA", D20, 10.0], ["AAPL", "2020-08-31", 4.0]],
+             "usSrc": {"v": 1, "own": {"v": 1, "n": 2, "codes": ["AAPL", "NVDA"], "same": [], "newer": [], "aged": [], "bad": {"n": 0, "rows": []}}}}
+    kept = F.us_own_close_final(rows, umeta, prev, UDAYS)
+    own = umeta["usSrc"]["own"]
+    assert [r["t"] for r in kept] == ["AAPL", "MSFT"] and own["codes"] == ["AAPL"]
+    assert own["aged"] == [{"t": "NVDA", "nk": "NVDA Inc.", "pxd": D19, "why": "split"}] and own["bad"] == {"n": 0, "rows": []}
+    assert any(x.startswith("  !! 마지막 확인 종가 뒤에 주식 분할이 있어 싣지 않은 미국 종목 1") and "NVDA" in x for x in lines), lines
+    # 지난 발행본의 splits 에 있는 분할도 (오늘 다운로드에 없어도)
+    rows2 = [us("NVDA", price=180.0, d1=None, pxd=D19, pxc=True)]
+    um2 = {"usPxDate": D20, "splits": None, "usSrc": {"v": 1, "own": {"v": 1, "n": 1, "codes": ["NVDA"], "same": []}}}
+    assert F.us_own_close_final(rows2, um2, {**prev, "splits": [["NVDA", D20, 10.0]]}, UDAYS) == []
+    # 관문: 파일에 남은 그런 행은 실패
+    data = {**_usdata([us("NVDA", price=180.0, d1=None, pxd=D19, pxc=True)], codes=["NVDA"]), "splits": [["NVDA", D20, 10.0]]}
+    r = rows_of(lambda rep: V.check_us_own_close(rep, data, macro_days(), prev))["미국 마지막 확인 종가 (usSrc.own · pxc)"]
+    assert r[0] == "FAIL" and "분할" in r[1], r
+
+
+def test_gate_checks_newer_rows():
+    prev = prev_file([us("AAPL", price=270.0), us("MSFT", price=410.0, d1=None, pxd=D18, pxc=True)], usd=D18)
+    prev["usSrc"] = {"v": 1, "own": {"v": 1, "n": 1, "codes": ["MSFT"], "same": [], "aged": [{"t": "OLD", "nk": "OLD", "pxd": "2026-11-12"}]}}
+    rows = [us("AAPL", price=274.5, d1=None, pxd=D19, pxc=True), us("OLD", price=9.5, d1=None, pxd=D19, pxc=True)]
+    newer = [{"t": "AAPL", "pxd": D19, "px": 274.5}, {"t": "OLD", "pxd": D19, "px": 9.5}]
+    data = _usdata(rows, codes=["AAPL", "OLD"])
+    data["usSrc"]["own"]["newer"] = newer
+    assert V.us_own_close_bad(data, prev, UDAYS) == [] and V.us_own_codes(data, prev, UDAYS) == {"AAPL", "OLD"}
+    bad_px = copy.deepcopy(data)
+    bad_px["usSrc"]["own"]["newer"][0]["px"] = 999.0
+    assert V.us_own_close_bad(bad_px, prev, UDAYS) == [("AAPL", "newer")]
+    not_after = copy.deepcopy(data)                                                  # 지난 발행본의 그 종목 날짜(11-18)보다 뒤가 아님
+    for x in (not_after["stocks"][0], not_after["usSrc"]["own"]["newer"][0]):
+        x["pxd"] = D18
+    assert ("AAPL", "newer") in V.us_own_close_bad(not_after, prev, UDAYS)
+    not_a_day = copy.deepcopy(data)                                                  # 미국 거래일이 아님 (토요일)
+    for x in (not_a_day["stocks"][0], not_a_day["usSrc"]["own"]["newer"][0]):
+        x["pxd"] = "2026-11-14"
+    assert ("AAPL", "newer") in V.us_own_close_bad(not_a_day, prev, UDAYS)
+    stranger = copy.deepcopy(data)                                                   # 지난 발행본에도 잠시 뺀 기록에도 없는 종목
+    stranger["stocks"][1]["t"] = stranger["usSrc"]["own"]["newer"][1]["t"] = "NEW"
+    stranger["usSrc"]["own"]["codes"] = ["AAPL", "NEW"]
+    assert ("NEW", "newer") in V.us_own_close_bad(stranger, prev, UDAYS)
+
+
+def test_a_same_day_mismatch_left_in_the_file_fails():
+    prev = prev_file([us("SHEL", price=71.0, d1=0.8)], usd=D20)
+    bad = _usdata([us("SHEL", price=72.0, d1=0.8)], codes=[], same=["SHEL"])
+    r = rows_of(lambda rep: V.check_us_own_close(rep, bad, macro_days(), prev))["미국 마지막 확인 종가 (usSrc.own · pxc)"]
+    assert r[0] == "FAIL", r
+    ok = _usdata([us("SHEL", price=71.0, d1=0.8)], codes=[], same=["SHEL"])
+    assert rows_of(lambda rep: V.check_us_own_close(rep, ok, macro_days(), prev))["미국 마지막 확인 종가 (usSrc.own · pxc)"][0] == "WARN"
+
+
+def test_carried_details_are_anchored_to_the_yahoo_quote(tmp_path, monkeypatch):
+    """리뷰 B: 야후의 PER · PBR · 시가총액 · 배당수익률은 야후의 지금 시세 가격 기준 — 그 가격을 기준으로 적어 실은 종가에 맞춰요."""
+    out, meta, lines, prev = _fetch(tmp_path, monkeypatch, blank={"AAPL"}, quote={"AAPL": 120.0})
+    by = {r["t"]: r for r in out}
+    a = by["AAPL"]
+    k = a["price"] / 120.0                                                           # 실은 종가 ÷ 야후 시세 가격
+    assert a["pxc"] is True and a["per"] == round(20.0 * k, 1) and a["pbr"] == round(4.0 * k, 2), (a["per"], a["pbr"], k)
+    assert a["dy"] == round(0.5 / k, 2)
+    assert any("야후 시세 가격에 맞춤 1" in x for x in lines), lines
+
+
+def test_carried_details_without_a_quote_keep_a_recent_copy_or_go_blank(tmp_path, monkeypatch):
+    then = (dt.date(2026, 11, 20) - dt.timedelta(days=5)).isoformat()
+    cache = {"AAPL": {"at": then, "px": 40.0, "k": F.US_INFO_SCHEMA, "info": dict(INFO, shortName="AAPL Co")}}
+    out, meta, lines, prev = _fetch(tmp_path, monkeypatch, blank={"AAPL", "SHEL"}, cache=cache)
+    by = {r["t"]: r for r in out}
+    k = by["AAPL"]["price"] / 40.0                                                   # 5일 전 보관본 그대로 (그날 가격 40 기준)
+    assert by["AAPL"]["per"] == round(20.0 * k, 1)
+    assert not {"per", "pbr", "cap", "dy"} & set(by["SHEL"]), by["SHEL"]            # 보관본도 시세 가격도 없음 → 네 숫자를 비워요
+    assert any(x.startswith("  !! 마지막 확인 종가 종목") and "보관본 그대로 1" in x and "SHEL" in x and "AAPL" not in x.split("비움")[1]
+               for x in lines), [x for x in lines if "마지막 확인 종가 종목" in x]
