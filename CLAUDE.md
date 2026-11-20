@@ -119,16 +119,19 @@ yes/no question in plain words (never send him to GitHub):
 4. money, accounts or outside services.
 
 If a question in categories 3–4 has had no answer for 12 hours and the change is easy to undo, go ahead with your
-recommendation and say so. Never on the 12-hour rule (Jack, 2026-11-21): paying for anything, using Jack's personal
-accounts, or signing him up for anything.
+recommendation and say so. Never on the 12-hour rule: paying for anything, and (Jack, 2026-11-21) using Jack's personal
+accounts or signing him up for anything.
 
 Tests and checks:
 - Comment-only test edits never need asking (Jack, 2026-11-20).
-- Tests that are only added and checks made only stricter need no yes either, with one exception: a new or stricter
-  gate row in `validate_data.py` that can fail the publish is category 2. New scenes in the screen checks the daily run
-  runs before publishing (`tests/real_data_check.py`, `smoke_launch.py`, `smoke_app.py`) need no yes only when they don't
-  depend on specific stocks or a particular day's data (the 두산밥캣 lesson: a scene tied to one company's data stopped matching when that data changed) and pass on the latest published data before
-  the merge; otherwise they are category 2 (Jack, 2026-11-21). List all of them under **안전 규칙 변경** and in the after-merge summary.
+- Tests that are only added and checks made only stricter need no yes either, with these exceptions:
+  - a new or stricter gate row in `validate_data.py` that can fail the publish is category 2;
+  - new scenes, or existing ones made stricter, in the screen checks the daily run runs before publishing
+    (`tests/real_data_check.py`, `smoke_launch.py`, `smoke_app.py`) need no yes only when they don't depend on specific
+    stocks or a particular day's data and pass on the latest published data before the merge; otherwise they are
+    category 2 (Jack, 2026-11-21; the 두산밥캣 lesson, Jack 11-12: a scene that needed 두산밥캣 itself would have held
+    everyone's publish if that one company left the market or its data changed).
+  List all of them under **안전 규칙 변경** and in the after-merge summary.
 - Any other edit to an existing test or a `validate_data.py` threshold (what it expects, counts or compares, or its
   fixture) is listed by name under **안전 규칙 변경**. If it would now accept anything it used to reject, it is loosening
   (category 2). The emergency rule's repairs to tests that fail only because of the date still go ahead as that rule says.
