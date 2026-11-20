@@ -218,7 +218,8 @@ def run_live_gate(dir_, run=subprocess.run):
         md_path = tmp.name
     # 2026-11-20 (리뷰): 관문의 다음 확인 시간 한도는 배포만이에요 (Jack 의 yes). 감시는 관문이 실패할 때만 경보를 열어서, 한도에 걸린 경고는
     # 조용한 통과가 돼요 — 그래서 어디서 물려받았든 한도 환경 변수(V.PX_ALT_LIMIT_ENV)를 빼고 불러요 (예전 그대로 한도 없이).
-    env = {k: v for k, v in os.environ.items() if k != V.PX_ALT_LIMIT_ENV}
+    # 2026-11-21: 다음의 거절로 건너뛰기 스위치(V.PX_ALT_REFUSE_ENV · 코드 배포만)도 빼요 — 한도가 없으면 어차피 쓰지 않지만 두 겹으로.
+    env = {k: v for k, v in os.environ.items() if k not in (V.PX_ALT_LIMIT_ENV, V.PX_ALT_REFUSE_ENV)}
     env["GITHUB_STEP_SUMMARY"] = md_path
     here = os.path.dirname(os.path.abspath(__file__))
     r = run([sys.executable, os.path.join(here, "validate_data.py"), "--live", "--dir", dir_], env=env,

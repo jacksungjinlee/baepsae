@@ -257,6 +257,18 @@ SECTOR_RULES = [
     ("paper",     ["종이", "펄프", "목재", "인쇄", "가구"]),
     ("hotel",     ["숙박", "음식점", "호텔", "여행", "레저", "카지노", "스포츠"]),
 ]
+# 2026-11-20 — Jack answered "3. Yes" to this question: "Old app, power-equipment makers. 25 of them (효성중공업, HD현대일렉트릭,
+# LS ELECTRIC and others) sit in 전기·가스·환경. They show its line "요금은 정부가 정해요…", which is wrong for them. Move them to 전기전자
+# in a small separate PR? (Recommended.)"
+# 2.0 이 전력기기·전선(power_eq)으로 묶는 전기장비 제조업 11차 소분류의 업종 글자 (이름 전체 · 띄어쓰기는 빼고 가운뎃점은 · 하나로 맞춰
+# 비교해요 · sector_name_key): 281 전동기 · 발전기 및 전기 변환 · 공급 · 제어 장치 · 283 절연선 및 케이블 · 284 전구 및 조명장치 ·
+# 289 기타 전기장비 (289 는 이름의 '전기장비' 로 이미 elec 이라 지금은 하는 일이 없지만, 목록을 2.0 의 power_eq 코드와 똑같이 두려고 넣어요 ·
+# tests/test_oldapp_power_equip.py 가 그 둘이 같은지 봐요).
+# 이 회사들이 utility 키워드에 걸리면 (업종 글자의 '발전기' · 주요제품의 '전력' 같은) utility 가 아니라 elec 이에요 — 2.0 짝
+# (validate_data.IND_SECTOR_KR power_eq → elec 만)과 같아요. 주요제품으로 utility 보다 앞 키(반도체 · 2차전지 · 전자 · 기계 …)에 먼저 걸린
+# 회사와, 다른 업종 글자의 회사(전기업 · 가스 · 수도 · 폐기물 …)는 그대로예요. 실행마다 옮긴 수와, 2.0 power_eq 인데 utility 로 남은
+# 종목을 크게 남겨요 (power_eq_sector_report).
+SECTOR_ELEC_NOT_UTILITY = ("전동기,발전기및전기변환·공급·제어장치제조업", "절연선및케이블제조업", "전구및조명장치제조업", "기타전기장비제조업")
 US_GICS = {
     "technology": "platform", "information technology": "platform",
     "communication services": "media", "consumer cyclical": "retail",
@@ -295,13 +307,65 @@ def log(*a):
     print(*a, flush=True)
 
 
-def map_sector_kr(sector_text, product_text=""):
+SECTOR_NAME_DOTS = "·ㆍ・•‧∙･."          # 업종 글자의 가운뎃점 꼴 (U+00B7 · U+318D · U+30FB · U+2022 · U+2027 · U+2219 · U+FF65 · 마침표)
+
+
+def sector_name_key(text):
+    """업종 이름을 비교하는 꼴: 띄어쓰기(보통 · U+00A0 · 전각 U+3000 · 탭)를 빼고 가운뎃점 꼴을 모두 · 하나로 (KRX · 11차 표 · DART 가
+    점을 다르게 쓸 수 있어요). (순수 함수)"""
+    t = "".join(ch for ch in str(text or "") if ch not in " \u00a0\u3000\t")       # 띄어쓰기 · 줄바꿈 없는 칸 · 전각 칸 · 탭
+    return "".join("·" if ch in SECTOR_NAME_DOTS else ch for ch in t)
+
+
+SECTOR_ELEC_NOT_UTILITY_KEYS = frozenset(sector_name_key(x) for x in SECTOR_ELEC_NOT_UTILITY)
+
+
+def map_sector_kr_raw(sector_text, product_text=""):
+    """키워드 규칙만 (SECTOR_RULES · 위에서부터 처음 걸린 키). 전력기기 · 전선 고침 전의 값 — map_sector_kr 과 로그 · 시험이 써요."""
     blob = f"{sector_text} {product_text}".replace(" ", "")
     for key, words in SECTOR_RULES:
         for w in words:
             if w in blob:
                 return key
     return "etc"
+
+
+def map_sector_kr(sector_text, product_text=""):
+    key = map_sector_kr_raw(sector_text, product_text)
+    if key == "utility" and sector_name_key(sector_text) in SECTOR_ELEC_NOT_UTILITY_KEYS:
+        return "elec"           # 전력기기 · 전선 제조사 (위 SECTOR_ELEC_NOT_UTILITY · Jack 2026-11-20)
+    return key
+
+
+def power_eq_sector_report(stocks):
+    """실행마다 남기는 두 목록 (SECTOR_ELEC_NOT_UTILITY · Jack 2026-11-20). (순수 함수)
+    moved: 국내 보통주 중 업종 글자(dk)가 그 넷의 이름이고 키워드 규칙만으로는 utility 인데 elec 인 종목 — 이 규칙이 옮긴 종목 [(종목, 이름)]
+    stuck: 2.0 그룹이 전력기기·전선(power_eq)인데 예전 뱁새 업종이 utility 인 국내 종목 [(종목, 이름, 업종 글자)] — 있으면 크게 알려요
+           (업종 글자가 그 넷의 이름과 다르게 왔는지 · 표가 바뀌었는지 볼 일이에요)."""
+    moved, stuck = [], []
+    for st in stocks:
+        if st.get("cls") != "kr":
+            continue
+        p = kr_desc_parse(st["dk"]) if isinstance(st.get("dk"), str) and st.get("dk") else None
+        words = p[0] if p else ""
+        if st.get("ind") == "power_eq" and st.get("s") == "utility":
+            stuck.append((st["t"], st.get("nk") or "", words))
+        if (not is_preferred(st["t"]) and st.get("s") == "elec" and words
+                and sector_name_key(words) in SECTOR_ELEC_NOT_UTILITY_KEYS and map_sector_kr_raw(words, p[1]) == "utility"):
+            moved.append((st["t"], st.get("nk") or ""))
+    return moved, stuck
+
+
+def power_eq_sector_lines(moved, stuck):
+    """로그 줄 (첫 줄은 늘 · 둘째 줄은 stuck 이 있을 때만 '!!')."""
+    names = " · ".join(nk for _, nk in moved[:8]) + (" …" if len(moved) > 8 else "")
+    out = [f"· 예전 뱁새 업종: 전력기기 · 전선 제조사 {len(moved):,}종목을 전기·가스·환경(utility) 대신 전자·전기장비(elec)로 "
+           f"(SECTOR_ELEC_NOT_UTILITY · 보통주){': ' + names if moved else ''}"]
+    if stuck:
+        out.append(f"  !! 2.0 업종이 전력기기·전선(power_eq)인데 예전 뱁새 업종이 전기·가스·환경(utility)인 국내 종목 {len(stuck):,}: "
+                   + " · ".join(f"{t} {nk} ({w or '업종 글자 없음'})" for t, nk, w in stuck[:10]) + (" …" if len(stuck) > 10 else "")
+                   + " — 업종 글자가 SECTOR_ELEC_NOT_UTILITY 의 이름과 다른지 확인")
+    return out
 
 
 def map_sector_us(sector, industry):
@@ -5592,6 +5656,41 @@ def carry_prev_nps(fresh, prev_nps, bgn):
     return sorted(fresh + old, key=lambda r: r.get("d", ""), reverse=True), len(old)
 
 
+def disc_rows_sector_now(rows, info):
+    """2026-11-20 (리뷰 · 예전 뱁새 전력기기 회사 옮기기): 지난 실행에서 이어 온 공시 줄(내부자 · 국민연금)의 예전 뱁새 업종 키 s 를 오늘
+    종목의 값으로 맞춰요 — 새 줄과 같은 규칙 (그 종목의 s, 없으면 etc). 공시·수급 탭이 업종을 줄의 s 로 세고 거르니 (src/disc.jsx), 그대로
+    두면 한 회사가 90일 동안 두 업종에 나뉘어 보여요. 오늘 데이터에 없는 종목의 줄은 그대로 둬요 (알 수 없어요).
+    오늘 업종이 etc(오늘 업종 글자가 비었을 수 있어요)인데 줄에 진짜 업종이 있으면 그 업종을 둬요 — '오늘 모름' 은 '이제 기타' 가 아니에요
+    (리뷰 2026-11-20 · 로그에 '!!' 와 수). 줄을 그 자리에서 바꿔요.
+    반환: (바꾼 Counter {(전 키, 오늘 키): 줄 수}, 둔 Counter {줄의 업종 키: 줄 수} — 오늘 etc 라 두었어요). (순수 함수 — 줄만 바꿔요)"""
+    ch, kept = collections.Counter(), collections.Counter()
+    for r in rows:
+        st = info.get(r.get("t"))
+        if not st:
+            continue
+        now = st.get("s") or "etc"
+        old = r.get("s")
+        if old == now:
+            continue
+        if now == "etc" and old not in (None, "", "etc"):
+            kept[old] += 1
+            continue
+        ch[(old, now)] += 1
+        r["s"] = now
+    return ch, kept
+
+
+def disc_sector_lines(kind, ch, kept):
+    """로그 줄: 업종 키를 오늘 값으로 바꾼 지난 공시 줄 수와 많이 바뀐 짝 (앞 8개) · 오늘 업종이 기타라 그대로 둔 줄이 있으면 '!!' 한 줄."""
+    n = sum(ch.values())
+    top = " · ".join(f"{a or '없음'}→{b} {k:,}" for (a, b), k in ch.most_common(8))
+    out = [f"· {kind} 지난 줄 {n:,}건의 업종 키를 오늘 종목 값으로 바꿈" + (f" ({top}{' …' if len(ch) > 8 else ''})" if n else "")]
+    if kept:
+        out.append(f"  !! {kind} 지난 줄 {sum(kept.values()):,}건은 오늘 업종이 기타(etc)라 원래 업종 키를 그대로 둬요 (오늘 업종 글자가 빈 종목 · "
+                   + " · ".join(f"{k} {v:,}" for k, v in kept.most_common(8)) + ")")
+    return out
+
+
 def fetch_disclosures(kr_stocks, cmap, end, client):
     """최근 90일 내부자 거래 + 국민연금 대량보유 변동. 기존 disc.json에 증분 병합.
     실패는 조용히 넘기지 않고 상태 코드를 로그로 남깁니다.
@@ -5674,6 +5773,8 @@ def fetch_disclosures(kr_stocks, cmap, end, client):
         dedup.append(r)
     if refreshed:
         log(f"· 내부자 거래 {refreshed:,}건의 비어 있던 시가총액을 오늘 값으로 채움")
+    for line in disc_sector_lines("내부자 거래", *disc_rows_sector_now(dedup, info)):    # 이어 온 줄의 업종 키 = 오늘 값 (새 줄은 이미 오늘 값)
+        log(line)
     # v19.6b (Part B.1): 직위의 '-' 는 빈 칸 · 역할(role) 임원 | 주요주주 | null. 지난 실행이 넣은 줄도 오늘 다시 받은 회사면 같은 응답에서 고쳐요
     fx = insider_fix_roles(dedup, fresh)
     if not INSIDER_POS_HOLDER_WORDS:
@@ -5719,6 +5820,8 @@ def fetch_disclosures(kr_stocks, cmap, end, client):
         why = "공시 목록을 받지 못해" if not list_ok else "DART 연결이 끊겨"
         log(f"  !! {why} 지난 발행본의 {carried + n_ins:,}건을 그대로 둬요 "
             f"(최근 공시 {f'{last[:4]}-{last[4:6]}-{last[6:8]}' if last else '없음'}) · 국민연금 {carried:,} · 내부자 {n_ins:,}")
+    for line in disc_sector_lines("국민연금", *disc_rows_sector_now(nps, info)):           # 지난 발행본에서 이어 온 줄 (carry_prev_nps)
+        log(line)
     log(f"· 국민연금(majorstock): 상태 {dict(nps_stat)} · 채택 {len(nps):,}건 · 내부자 누적 {len(dedup):,}건"
         + (" · 상한 도달, 다음 실행이 이어받음" if len(targets) >= DISC_CALL_CAP else ""))
     client.raise_if_fatal()
@@ -12703,6 +12806,8 @@ def main():
     # 부르지 않아요) · 우선주는 보통주를 따라요 · 틀린 행은 되돌려요 (Jack 의 상시 규칙). 2.0 그룹이 정해진 뒤 · corp.json 보다 먼저
     ind_drop = kr_ind_fill(kr, kmeta.get("_noInd") or [], ksic, ksic_map, kmeta.get("indSrc"), over=tables["over"],
                            names=ksic_names, map_sha=ksic_sha, table_err=ksic_err)
+    for line in power_eq_sector_lines(*power_eq_sector_report(kr)):     # 2026-11-20: 전력기기 · 전선 제조사의 예전 뱁새 업종 (옮긴 수 · 남은 utility)
+        log(line)
     for m in ("kr", "us"):
         arr = kr if m == "kr" else us
         g = collections.Counter(x.get("ind") for x in arr if x.get("ind"))
