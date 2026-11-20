@@ -299,6 +299,54 @@ out = { before, ok: r.ok, held, b: b.ok, bWhy: b.why, thrown, shown };""",
     assert got["shown"] == [False, True], got                                               # put on screen: no marker, the line on
 
 
+def _us_carry(files, carried, total):
+    """2026-11-21 (US carry): `total` US stocks, the first `carried` of them at their last confirmed close (pxc, pxd)."""
+    for i in range(total):
+        kw = {"pxd": "2026-11-05", "pxc": True, "d1": None} if i < carried else {}
+        files["data"]["stocks"].append(stock(f"U{i}", cls="us", **kw))
+    return files
+
+
+def test_the_market_wide_us_line_follows_what_is_on_screen():
+    """2026-11-21 (US carry, Jack's answer 6): resolveLoad sets the market-wide US line's flag (data.js setOwnCarryWide: more
+    than half of the US stocks carried) from data.json. A later publish changes it only when it goes on screen (adoptLoad):
+    fetched and held, or refused, the flag of what is on screen stays; a failed first load tried again leaves it off until
+    its state is shown. Both directions."""
+    wide_new, narrow_new = _us_carry(new_files(), 3, 4), _us_carry(new_files(), 1, 4)
+    broken = _us_carry(new_files(), 3, 4)
+    broken["data"]["stocks"].append(None)
+    got = run("""
+const cur = loadOf(NARROW_OLD, NOW);
+const before = D.ownCarryWide();
+serve(SITE_WIDE);
+const r = await LD.refetchNewer(cur, null, at(NOW));
+const held = D.ownCarryWide();
+serve(SITE_BROKEN);
+const b = await LD.refetchNewer(cur, null, at(NOW));
+const refused = D.ownCarryWide();
+LD.adoptLoad(r.load);
+const shown = D.ownCarryWide();
+const wideCur = r.load;
+serve(SITE_NARROW);
+const n = await LD.refetchNewer({ ...wideCur, data: { ...wideCur.data, publishedAt: OLD_PUB } }, null, at(NOW));
+const heldWide = D.ownCarryWide();
+LD.adoptLoad(n.load);
+const shownNarrow = D.ownCarryWide();
+LD.adoptLoad(wideCur);
+serve(SITE_WIDE);
+const f = await LD.refetchNewer({ status: 'fail' }, null, at(NOW));
+const afterRetry = D.ownCarryWide();
+LD.adoptLoad(f.load);
+out = { before, ok: r.ok, held, b: b.ok, refused, shown, n: n.ok, heldWide, shownNarrow, f: f.ok, afterRetry, retryShown: D.ownCarryWide() };""",
+              NARROW_OLD=_us_carry(old_files(), 0, 4), NOW=NOW, OLD_PUB=OLD_PUB, SITE_WIDE=site(wide_new),
+              SITE_NARROW=site(narrow_new), SITE_BROKEN=site(broken))
+    assert got["before"] is False and got["ok"] is True and got["held"] is False, got     # fetched and held: not on screen
+    assert got["b"] is False and got["refused"] is False, got                            # refused: the screen's flag stays
+    assert got["shown"] is True, got                                                      # on screen: 3 of 4 carried
+    assert got["n"] is True and got["heldWide"] is True and got["shownNarrow"] is False, got   # the other direction
+    assert got["f"] is True and got["afterRetry"] is False and got["retryShown"] is True, got
+
+
 def test_the_data_shape_follows_what_is_on_screen():
     """The engine reads the data on screen one way (engine.setDataShape; resolveLoad sets it from the file it reads). A
     data.json that passes its check but cannot be read (a stock that is null) never changes it; a good later publish

@@ -39,7 +39,7 @@ import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, holdingShades, HOLDING_SHADE
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { Amount, Button } from "../ui/components.jsx";
 import { C, fill, p1, mdText, wonText, todayKst } from "./format.js";
-import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, OwnCloseNote, Cols, useLayout, useRoomy, useNav, tx, tap } from "./ui.jsx";
+import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, OwnCloseNote, KrAgedLine, Cols, useLayout, useRoomy, useNav, tx, tap } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { isCompany, ownCloses } from "./stocklist.js";
 import { shownName } from "./legacy.js";
@@ -177,7 +177,7 @@ function MoneyCard({ block, pxDate, load, late = false }) {
 // md: the Korean price date as shown ("11월 13일"), for the no-trade line (fixnote.jsx DayNote).
 // late (rules.js checkState): no "비중 · 오늘" column name, no day's change and no no-trade line under it (review, 2026-11-19:
 // nothing labelled 오늘 on data checked on an older close); the weights and the check's chips stay.
-function HeldCard({ block, onWhy, md = null, late = false }) {
+function HeldCard({ block, onWhy, md = null, late = false, aged = null }) {
   const { openStock } = useNav();
   if (late) lateSay(`${block.deck.id}: the home list's weight/today column name, day's changes and no-trade lines are left out`);
   const { deck, list } = block;
@@ -219,6 +219,8 @@ function HeldCard({ block, onWhy, md = null, late = false }) {
               {chips && <span style={{ display: "flex", marginTop: SPACE(1) }}>{chips}</span>}
               {/* 2026-11-14 (Jack, design chat 2026-11-08): no change today, said in the row (the change cell stays empty, never 0.0%) */}
               {!late && !r.absent && r.t && block.byT && <DayNote s={block.byT.get(r.t)} md={md} block={false} style={{ marginTop: SPACE(1) }} />}
+              {/* 2026-11-20 (Jack, a): left out past the age limit of its last confirmed close */}
+              {r.absent && <KrAgedLine aged={aged} t={r.t} style={{ marginTop: SPACE(1) }} />}
             </span>
             <span data-ui-v2="home-change" style={tx(SIZE.sm, WEIGHT.heavy, r.d1 == null ? COLOR.text3 : tone(Math.round(r.d1 * 10)), { minWidth: 56, textAlign: "right", flexShrink: 0, whiteSpace: "nowrap" })}>
               {r.d1 != null && !late ? signedPct(r.d1) : ""}</span>
@@ -378,7 +380,7 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
       <div key={b.deck.id} data-ui-v2="home-block" data-deck-id={b.deck.id}>
         {b.st && <RulesHero block={b} many={many} narrow={narrow} />}
         <MoneyCard block={b} pxDate={ok ? load.data.pxDate : null} load={load} late={!!lateMd} />
-        <HeldCard block={b} onWhy={onWhy} md={ok ? mdText(load.data.pxDate) : null} late={!!lateMd} />
+        <HeldCard block={b} onWhy={onWhy} md={ok ? mdText(load.data.pxDate) : null} late={!!lateMd} aged={ctx ? ctx.aged : null} />
       </div>
     )),
     ev.ok && (blocks.length > 0 || hits.length > 0) && <Look key="look" blocks={blocks} load={load} look={look} go={go} onWatch={onWatch} lateMd={lateMd} />,
