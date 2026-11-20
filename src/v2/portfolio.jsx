@@ -86,7 +86,7 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
   const decks = store.data.decks;
   // The daily rule check: nothing is computed from stale or failed data (ev.ok false, ev.why says why). Then the screen
   // says so (the stale line, or the load-failure message), so a held stock without a chip never reads as "fine".
-  const ctx = useMemo(() => todayCtx(load, undefined, decks), [load, decks]);   // 2026-11-20 (Jack, f): rules.lateCap
+  const ctx = useMemo(() => todayCtx(load), [load]);
   const ev = useMemo(() => evaluateAll(decks, ctx), [decks, ctx]);
   const late = !!(ev.ok && ev.late);                     // the check ran on an older close (rules.js checkState, Jack 2026-11-19)
   // Part E: values use US prices at their own close date; say so when it differs from the Korean one.
@@ -195,7 +195,7 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
               return <HoldingRow key={t} t={t} title={h.nk} sub={a ? fill(C.deck.holding, { qty: nf(a.qty), price: money(a.avg, a.ccy) }) : null}
                 onOpen={!gone && openStock && load.status === "ok" && isCompany(load.byT.get(t)) ? () => openStock(t) : undefined}
                 x={x} names={names} onConfirm={(item, answer) => onConfirm(d.id, item, answer)} change={ret}
-                extra={!gone && m.ok && x ? <WeightLine x={x} /> : gone ? <KrAgedLine aged={load.status === "ok" ? load.aged : null} t={t} style={{ marginTop: SPACE(1) }} /> : null}
+                extra={!gone && m.ok && x ? <WeightLine x={x} /> : gone ? <KrAgedLine aged={ctx.aged} t={t} style={{ marginTop: SPACE(1) }} /> : null}
                 action={(gone && !late) || rec ? (
                   <div data-ui-v2="row-actions" style={{ display: "flex", gap: SPACE(2), flexWrap: "wrap", padding: `${SPACE(1)}px 0 ${SPACE(2)}px` }}>
                     {rec && <RecordButton name={h.nk} onClick={rec} />}
@@ -276,6 +276,6 @@ function ImportedCard({ deck, ev, ctx, load, openStock, onRemove, onRules, onRec
   const de = ev.ok ? ev.decks.find((x) => x.id === deck.id) : null;
   const st = useMemo(() => pfState(deck, ctx, load.status === "ok" ? load.data.stocks : []), [deck, ctx, load]);
   const m = de && de.ok ? deckMoney(deck, de, ctx) : { ok: false };
-  return <ImportedDeck deck={deck} st={st} m={m} openStock={openStock} byT={ctx.byT} onRemove={onRemove} onRules={onRules} onRecord={onRecord} aged={load.status === "ok" ? load.aged : null}
+  return <ImportedDeck deck={deck} st={st} m={m} openStock={openStock} byT={ctx.byT} onRemove={onRemove} onRules={onRules} onRecord={onRecord} aged={ctx.aged}
     footer={onReturns ? <ReturnsLink onClick={onReturns} /> : null} pxDate={load.status === "ok" ? load.data.pxDate : null} late={late} />;
 }
