@@ -257,6 +257,18 @@ SECTOR_RULES = [
     ("paper",     ["종이", "펄프", "목재", "인쇄", "가구"]),
     ("hotel",     ["숙박", "음식점", "호텔", "여행", "레저", "카지노", "스포츠"]),
 ]
+# 2026-11-20 — Jack answered "3. Yes" to this question: "Old app, power-equipment makers. 25 of them (효성중공업, HD현대일렉트릭,
+# LS ELECTRIC and others) sit in 전기·가스·환경. They show its line "요금은 정부가 정해요…", which is wrong for them. Move them to 전기전자
+# in a small separate PR? (Recommended.)"
+# 2.0 이 전력기기·전선(power_eq)으로 묶는 전기장비 제조업 11차 소분류의 업종 글자 (이름 전체 · 띄어쓰기는 빼고 가운뎃점은 · 하나로 맞춰
+# 비교해요 · sector_name_key): 281 전동기 · 발전기 및 전기 변환 · 공급 · 제어 장치 · 283 절연선 및 케이블 · 284 전구 및 조명장치 ·
+# 289 기타 전기장비 (289 는 이름의 '전기장비' 로 이미 elec 이라 지금은 하는 일이 없지만, 목록을 2.0 의 power_eq 코드와 똑같이 두려고 넣어요 ·
+# tests/test_oldapp_power_equip.py 가 그 둘이 같은지 봐요).
+# 이 회사들이 utility 키워드에 걸리면 (업종 글자의 '발전기' · 주요제품의 '전력' 같은) utility 가 아니라 elec 이에요 — 2.0 짝
+# (validate_data.IND_SECTOR_KR power_eq → elec 만)과 같아요. 주요제품으로 utility 보다 앞 키(반도체 · 2차전지 · 전자 · 기계 …)에 먼저 걸린
+# 회사와, 다른 업종 글자의 회사(전기업 · 가스 · 수도 · 폐기물 …)는 그대로예요. 실행마다 옮긴 수와, 2.0 power_eq 인데 utility 로 남은
+# 종목을 크게 남겨요 (power_eq_sector_report).
+SECTOR_ELEC_NOT_UTILITY = ("전동기,발전기및전기변환·공급·제어장치제조업", "절연선및케이블제조업", "전구및조명장치제조업", "기타전기장비제조업")
 US_GICS = {
     "technology": "platform", "information technology": "platform",
     "communication services": "media", "consumer cyclical": "retail",
@@ -295,13 +307,65 @@ def log(*a):
     print(*a, flush=True)
 
 
-def map_sector_kr(sector_text, product_text=""):
+SECTOR_NAME_DOTS = "·ㆍ・•‧∙･."          # 업종 글자의 가운뎃점 꼴 (U+00B7 · U+318D · U+30FB · U+2022 · U+2027 · U+2219 · U+FF65 · 마침표)
+
+
+def sector_name_key(text):
+    """업종 이름을 비교하는 꼴: 띄어쓰기(보통 · U+00A0 · 전각 U+3000 · 탭)를 빼고 가운뎃점 꼴을 모두 · 하나로 (KRX · 11차 표 · DART 가
+    점을 다르게 쓸 수 있어요). (순수 함수)"""
+    t = "".join(ch for ch in str(text or "") if ch not in " \u00a0\u3000\t")       # 띄어쓰기 · 줄바꿈 없는 칸 · 전각 칸 · 탭
+    return "".join("·" if ch in SECTOR_NAME_DOTS else ch for ch in t)
+
+
+SECTOR_ELEC_NOT_UTILITY_KEYS = frozenset(sector_name_key(x) for x in SECTOR_ELEC_NOT_UTILITY)
+
+
+def map_sector_kr_raw(sector_text, product_text=""):
+    """키워드 규칙만 (SECTOR_RULES · 위에서부터 처음 걸린 키). 전력기기 · 전선 고침 전의 값 — map_sector_kr 과 로그 · 시험이 써요."""
     blob = f"{sector_text} {product_text}".replace(" ", "")
     for key, words in SECTOR_RULES:
         for w in words:
             if w in blob:
                 return key
     return "etc"
+
+
+def map_sector_kr(sector_text, product_text=""):
+    key = map_sector_kr_raw(sector_text, product_text)
+    if key == "utility" and sector_name_key(sector_text) in SECTOR_ELEC_NOT_UTILITY_KEYS:
+        return "elec"           # 전력기기 · 전선 제조사 (위 SECTOR_ELEC_NOT_UTILITY · Jack 2026-11-20)
+    return key
+
+
+def power_eq_sector_report(stocks):
+    """실행마다 남기는 두 목록 (SECTOR_ELEC_NOT_UTILITY · Jack 2026-11-20). (순수 함수)
+    moved: 국내 보통주 중 업종 글자(dk)가 그 넷의 이름이고 키워드 규칙만으로는 utility 인데 elec 인 종목 — 이 규칙이 옮긴 종목 [(종목, 이름)]
+    stuck: 2.0 그룹이 전력기기·전선(power_eq)인데 예전 뱁새 업종이 utility 인 국내 종목 [(종목, 이름, 업종 글자)] — 있으면 크게 알려요
+           (업종 글자가 그 넷의 이름과 다르게 왔는지 · 표가 바뀌었는지 볼 일이에요)."""
+    moved, stuck = [], []
+    for st in stocks:
+        if st.get("cls") != "kr":
+            continue
+        p = kr_desc_parse(st["dk"]) if isinstance(st.get("dk"), str) and st.get("dk") else None
+        words = p[0] if p else ""
+        if st.get("ind") == "power_eq" and st.get("s") == "utility":
+            stuck.append((st["t"], st.get("nk") or "", words))
+        if (not is_preferred(st["t"]) and st.get("s") == "elec" and words
+                and sector_name_key(words) in SECTOR_ELEC_NOT_UTILITY_KEYS and map_sector_kr_raw(words, p[1]) == "utility"):
+            moved.append((st["t"], st.get("nk") or ""))
+    return moved, stuck
+
+
+def power_eq_sector_lines(moved, stuck):
+    """로그 줄 (첫 줄은 늘 · 둘째 줄은 stuck 이 있을 때만 '!!')."""
+    names = " · ".join(nk for _, nk in moved[:8]) + (" …" if len(moved) > 8 else "")
+    out = [f"· 예전 뱁새 업종: 전력기기 · 전선 제조사 {len(moved):,}종목을 전기·가스·환경(utility) 대신 전자·전기장비(elec)로 "
+           f"(SECTOR_ELEC_NOT_UTILITY · 보통주){': ' + names if moved else ''}"]
+    if stuck:
+        out.append(f"  !! 2.0 업종이 전력기기·전선(power_eq)인데 예전 뱁새 업종이 전기·가스·환경(utility)인 국내 종목 {len(stuck):,}: "
+                   + " · ".join(f"{t} {nk} ({w or '업종 글자 없음'})" for t, nk, w in stuck[:10]) + (" …" if len(stuck) > 10 else "")
+                   + " — 업종 글자가 SECTOR_ELEC_NOT_UTILITY 의 이름과 다른지 확인")
+    return out
 
 
 def map_sector_us(sector, industry):
@@ -2214,9 +2278,11 @@ def kr_no_trade(df):
     return out, True, odd
 
 
-def kr_d1_split(cur_df, sessions, ok_prev, d1, no_trade):
+def kr_d1_split(cur_df, sessions, ok_prev, d1, no_trade, base_ok=None):
     """d1 을 거래 없는 종목과 나머지로 나누고 빈 d1 의 이유를 달아요 (2026-11-14 · 순수 함수). kr_d1_val20 의 d1 을 그대로 받아요.
     cur_df: 기준일 목록 · sessions · ok_prev: kr_d1_val20 에 준 것 · no_trade: kr_no_trade 의 코드.
+    base_ok (2026-11-21): 직전 거래일 파일을 쓸 수 없는 날 KRX 기준가 × 지난 발행본 종가로 확인한 종목 (kr_d1_from_base 의 'ok') — d1 이 빈
+    까닭은 ±30% 밖뿐이라 'range'. 그 밖의 종목은 예전처럼 'prev'. None 이면 예전 그대로.
     반환: (d1 {코드: %} — 거래 없는 종목은 빠져요, why {코드: D1_WHY 중 하나} — 빈 d1 마다, nt {코드: %} — 거래 없는 종목의 기준가 변화
     (kr_d1_val20 이 낸 값 · 거래가 없어 등락률로 보이지 않고 포트폴리오 평가 금액의 오늘 변화에만 써요 · 코넥스는 거래 없이도 값이 바뀔 수
     있어요), Counter {이유: 수})."""
@@ -2232,12 +2298,138 @@ def kr_d1_split(cur_df, sessions, ok_prev, d1, no_trade):
         elif v is not None:
             out[code] = v
         elif not (sessions and ok_prev):
-            why[code] = "prev"
+            why[code] = "range" if base_ok and code in base_ok else "prev"
         elif not prev.get(code):
             why[code] = "new"
         else:
             why[code] = "range"
     return out, why, nt, collections.Counter(why.values())
+
+
+# 2026-11-21: 직전 거래일 파일이 최종본이 아니거나 없는 날의 d1 (자원봉사 캐시가 며칠 멈췄다가 오늘 최종본만 올린 날).
+# 사고 (시험 실행 44783218618 · 11-21 02:33 KST): 11-17 ~ 19 는 2차 출처(다음 × 야후)로 발행했고 (11-20 06:40 발행 · pxDate 11-19), 캐시에
+# 11-20 최종본(23:23 KST 커밋)이 생겨 11-20 은 1차 출처 날이 됐어요. 그런데 11-17 ~ 19 파일의 마지막 커밋은 모두 장 마감 전 (11-19 14:52 ·
+# 수능일 마감 16:30) 이라 직전 거래일 파일을 쓸 수 없어 → d1 0.0% · 필수 종목 d1 실패 → 발행이 멈췄어요 (다음 날 06:40 발행도 같았을 거예요).
+# 이제: 오늘 최종본의 KRX 기준가 (Close − Changes · kr_ref_links 와 같은 관계) 가 지난 발행본(data.json · 관문이 git show HEAD 로 읽는 것과
+# 같은 파일)의 그날 종가와 원 단위까지 같은 종목만 d1 = 오늘 공식 종가 ÷ 그 종가 − 1 (Jack 규칙 3: 두 독립 출처 — KRX 의 기준가와 우리가
+# 두 출처로 확인해 발행한 종가). 지난 발행본의 pxDate 가 직전 거래일(KOSPI)일 때만 · 그 종목의 값이 그날 확인된 종가일 때만 (자기 가격 날짜
+# pxd 가 있는 행 · 거래 없음 행은 아니에요). 다르면 (KRX 가 기준가를 새로 정한 날 · 잘못) · 지난 발행본에 없으면 · 오늘 파일에 기준가가 없으면
+# d1 은 빈 칸 (d1Why prev — 직전 거래일 파일을 쓸 수 없음) 이고 까닭(D1_BASE_WHY)은 로그와 data.json d1Base 에 수와 예로 남아요. 추측하지 않아요.
+# ±30% 와 거래 없음 규칙은 그대로예요 (kr_d1_split).
+D1_BASE_WHY = ("diff", "noPub", "notConf", "noBase")
+D1_BASE_KO = {"diff": "다름", "noPub": "지난 발행본에 없음", "notConf": "지난 발행본 값이 그날 확인된 종가가 아님 (거래 없음 · 자기 가격 날짜)",
+              "noBase": "오늘 파일에 기준가 없음"}
+D1_BASE_PUB_KO = {"none": "지난 발행본(data.json)을 읽지 못했어요", "day": "지난 발행본의 가격 날짜가 직전 거래일이 아니에요",
+                  "src": "지난 발행본의 가격 출처가 공식 종가가 아니에요"}
+KR_LIST_SRC_CACHE = "fdr_krx_data_cache"     # fetch_korea 의 list_src (1차 출처 날)
+D1_BASE_EX = 12                              # 까닭마다 data.json d1Base.ex 와 로그에 적는 종목 수
+
+
+def kr_prev_pub_closes(prev, want_prev):
+    """지난 발행본(data.json)에서 직전 거래일(want_prev)의 확인된 종가 (2026-11-21 · 순수 함수).
+    반환: (closes {코드: 원}, skip {코드} — 그날 확인된 종가가 아닌 행 (자기 가격 날짜 pxd · 거래 없음 noTrade · 같은 코드가 두 번), why).
+    why 가 None 이 아니면 그 발행본은 쓸 수 없어요 (closes · skip 은 비어요): 'none' 없음 · 'day' pxDate ≠ want_prev ·
+    'src' 가격 출처(listSrc · pxSrc)가 공식 종가 목록(1차 출처 최종본 · 2차 출처 다음 × 야후)이 아님 (지난 data.json 으로 만든 목록 등)."""
+    if not isinstance(prev, dict) or not isinstance(prev.get("stocks"), list):
+        return {}, set(), "none"
+    day = str(prev.get("pxDate") or "")
+    if want_prev is None or day != want_prev.isoformat():
+        return {}, set(), "day"
+    src = prev.get("pxSrc")
+    if prev.get("listSrc") not in (KR_LIST_SRC_CACHE, PX_SRC_FB) or (src is not None and (
+            not isinstance(src, dict) or src.get("px") not in (PX_SRC_LISTING, PX_SRC_FB) or src.get("date") not in (None, day))):
+        return {}, set(), "src"
+    closes, skip = {}, set()
+    for x in prev["stocks"]:
+        if not isinstance(x, dict) or x.get("cls") != "kr" or x.get("fund") or not x.get("t"):
+            continue
+        t = str(x["t"]).strip()
+        if t in closes or t in skip:                 # 같은 코드가 두 번 — 어느 값인지 몰라요
+            closes.pop(t, None)
+            skip.add(t)
+            continue
+        if "pxd" in x or x.get("noTrade") is True:
+            skip.add(t)
+            continue
+        p = _fin(x.get("price"))
+        if p is not None and p > 0:
+            closes[t] = p
+    return closes, skip, None
+
+
+def kr_d1_from_base(cur_df, closes, skip=(), max_abs=D1_MAX_KR, tol=KR_FB_CLOSE_TOL):
+    """직전 거래일 파일을 쓸 수 없는 날의 d1 (2026-11-21 · 순수 함수): 오늘 목록 파일의 KRX 기준가 (Close − Changes) 가 지난 발행본의
+    그날 종가(closes · kr_prev_pub_closes)와 원 단위까지(tol) 같은 종목만 d1 = 오늘 공식 종가 ÷ 그 종가 − 1 (%, 소수 둘째 자리 · ±max_abs 밖은
+    빈 칸 — kr_d1_val20 과 같은 규칙). 오늘 공식 종가가 없는 종목은 보지 않아요 (kr_d1_split 도 그래요).
+    반환: (d1 {코드: %}, st {코드: 'ok' 또는 D1_BASE_WHY 중 하나}, ex {까닭: [(코드, 지난 발행본 종가, 기준가)]})."""
+    skip = set(skip)
+    d1, st, ex = {}, {}, collections.defaultdict(list)
+    for _, r in cur_df.iterrows():
+        code = str(r["Code"]).strip()
+        c = kr_official_close(r)
+        if not c:
+            continue
+        cl, ch = _fin(r.get("Close")), _fin(r.get("Changes"))
+        base = None if cl is None or ch is None else cl - ch
+        p = closes.get(code)
+        if code in skip:
+            w = "notConf"
+        elif p is None:
+            w = "noPub"
+        elif base is None or base <= 0:
+            w = "noBase"
+        elif abs(base - p) > tol:
+            w = "diff"
+        else:
+            w = "ok"
+            v = (c / p - 1) * 100
+            if abs(v) <= max_abs + D1_LIMIT_EPS:
+                d1[code] = round(v, 2)
+        st[code] = w
+        if w != "ok":
+            ex[w].append((code, p, base))
+    return d1, st, dict(ex)
+
+
+def d1_base_record(want_prev, prev, pub_why, st, ex, names=None, n=None, n_ex=D1_BASE_EX):
+    """data.json d1Base (2026-11-21 · 순수 함수): 직전 거래일 파일을 쓸 수 없던 날에만 — 직전 거래일 · 지난 발행본의 가격 날짜 ·
+    쓸 수 없던 까닭(why · D1_BASE_PUB_KO) · 본 종목 수(n · 처리한 목록의 오늘 공식 종가가 있는 종목 · 주지 않으면 st 의 수) · 확인(ok) ·
+    까닭마다의 수 · 예 (ex). 지난 발행본을 쓸 수 없던 날(why)은 st 가 비어 ok 와 까닭마다의 수가 0 이에요."""
+    names = names or {}
+    cnt = collections.Counter(st.values())
+    out = {"v": 1, "day": want_prev.isoformat() if want_prev else None,
+           "pub": (str(prev.get("pxDate")) if isinstance(prev, dict) and prev.get("pxDate") else None),
+           "why": pub_why, "n": len(st) if n is None else n, "ok": cnt.get("ok", 0)}
+    for k in D1_BASE_WHY:
+        out[k] = cnt.get(k, 0)
+    out["ex"] = {k: [f"{c} {names.get(c, '')}".strip() + (f" {p:,.0f}→{b:,.0f}" if k == "diff" else "")
+                     for c, p, b in sorted(v)[:n_ex]] for k, v in sorted((ex or {}).items()) if v}
+    return out
+
+
+def kr_d1_base_day(cur_df, prev, want_prev):
+    """직전 거래일 파일을 쓸 수 없는 날의 d1 한 번에 (2026-11-21 · 순수 함수 · fetch_korea 가 ok_prev 가 아닐 때만 불러요).
+    반환: (d1 {코드: %}, base_ok {코드} — 두 출처로 기준가를 확인한 종목 (kr_d1_split 의 base_ok · 지난 발행본을 쓸 수 없으면 None),
+    data.json d1Base)."""
+    closes, skip, why = kr_prev_pub_closes(prev, want_prev)
+    d1, st, ex = ({}, {}, {}) if why else kr_d1_from_base(cur_df, closes, skip)
+    names = dict(zip(cur_df["Code"].astype(str).str.strip(), cur_df["Name"].astype(str))) if "Name" in cur_df.columns else {}
+    rec = d1_base_record(want_prev, prev, why, st, ex, names, n=len(_official_map(cur_df)) if why else None)
+    return d1, (None if why else {c for c, w in st.items() if w == "ok"}), rec
+
+
+def d1_base_note(rec):
+    """d1Base 한 줄 (2026-11-21 · 순수 함수 · 로그). 반환 (크게 남길지, 글) — 직전 거래일 최종본이 없는 날이라 늘 크게 (!!)."""
+    if rec.get("why"):
+        return True, (f"d1: 직전 거래일 {rec.get('day')} 최종본이 없고 {D1_BASE_PUB_KO.get(rec['why'], rec['why'])} (지난 발행본 pxDate "
+                      f"{rec.get('pub')}) — KRX 기준가를 확인할 두 번째 출처가 없어 d1 을 비워요 {rec.get('n', 0):,}종목")
+    txt = (f"d1: 직전 거래일 최종본이 없어 KRX 기준가 × 지난 발행본 종가로 확인 {rec['ok']:,} / {rec['n']:,} · 다름 {rec['diff']:,}"
+           f" · 지난 발행본에 없음 {rec['noPub']:,} · 그날 확인된 종가가 아님 {rec['notConf']:,} · 기준가 없음 {rec['noBase']:,}"
+           f" (직전 거래일 {rec.get('day')} · 지난 발행본 pxDate {rec.get('pub')} · 확인 못 한 종목은 d1 빈 칸 · d1Why prev)")
+    for k in D1_BASE_WHY:
+        if (rec.get("ex") or {}).get(k):
+            txt += f" — {D1_BASE_KO[k]}: {', '.join(rec['ex'][k])}{' …' if rec.get(k, 0) > len(rec['ex'][k]) else ''}"
+    return True, txt
 
 
 def _txt(x):
@@ -5080,6 +5272,41 @@ def carry_prev_nps(fresh, prev_nps, bgn):
     return sorted(fresh + old, key=lambda r: r.get("d", ""), reverse=True), len(old)
 
 
+def disc_rows_sector_now(rows, info):
+    """2026-11-20 (리뷰 · 예전 뱁새 전력기기 회사 옮기기): 지난 실행에서 이어 온 공시 줄(내부자 · 국민연금)의 예전 뱁새 업종 키 s 를 오늘
+    종목의 값으로 맞춰요 — 새 줄과 같은 규칙 (그 종목의 s, 없으면 etc). 공시·수급 탭이 업종을 줄의 s 로 세고 거르니 (src/disc.jsx), 그대로
+    두면 한 회사가 90일 동안 두 업종에 나뉘어 보여요. 오늘 데이터에 없는 종목의 줄은 그대로 둬요 (알 수 없어요).
+    오늘 업종이 etc(오늘 업종 글자가 비었을 수 있어요)인데 줄에 진짜 업종이 있으면 그 업종을 둬요 — '오늘 모름' 은 '이제 기타' 가 아니에요
+    (리뷰 2026-11-20 · 로그에 '!!' 와 수). 줄을 그 자리에서 바꿔요.
+    반환: (바꾼 Counter {(전 키, 오늘 키): 줄 수}, 둔 Counter {줄의 업종 키: 줄 수} — 오늘 etc 라 두었어요). (순수 함수 — 줄만 바꿔요)"""
+    ch, kept = collections.Counter(), collections.Counter()
+    for r in rows:
+        st = info.get(r.get("t"))
+        if not st:
+            continue
+        now = st.get("s") or "etc"
+        old = r.get("s")
+        if old == now:
+            continue
+        if now == "etc" and old not in (None, "", "etc"):
+            kept[old] += 1
+            continue
+        ch[(old, now)] += 1
+        r["s"] = now
+    return ch, kept
+
+
+def disc_sector_lines(kind, ch, kept):
+    """로그 줄: 업종 키를 오늘 값으로 바꾼 지난 공시 줄 수와 많이 바뀐 짝 (앞 8개) · 오늘 업종이 기타라 그대로 둔 줄이 있으면 '!!' 한 줄."""
+    n = sum(ch.values())
+    top = " · ".join(f"{a or '없음'}→{b} {k:,}" for (a, b), k in ch.most_common(8))
+    out = [f"· {kind} 지난 줄 {n:,}건의 업종 키를 오늘 종목 값으로 바꿈" + (f" ({top}{' …' if len(ch) > 8 else ''})" if n else "")]
+    if kept:
+        out.append(f"  !! {kind} 지난 줄 {sum(kept.values()):,}건은 오늘 업종이 기타(etc)라 원래 업종 키를 그대로 둬요 (오늘 업종 글자가 빈 종목 · "
+                   + " · ".join(f"{k} {v:,}" for k, v in kept.most_common(8)) + ")")
+    return out
+
+
 def fetch_disclosures(kr_stocks, cmap, end, client):
     """최근 90일 내부자 거래 + 국민연금 대량보유 변동. 기존 disc.json에 증분 병합.
     실패는 조용히 넘기지 않고 상태 코드를 로그로 남깁니다.
@@ -5162,6 +5389,8 @@ def fetch_disclosures(kr_stocks, cmap, end, client):
         dedup.append(r)
     if refreshed:
         log(f"· 내부자 거래 {refreshed:,}건의 비어 있던 시가총액을 오늘 값으로 채움")
+    for line in disc_sector_lines("내부자 거래", *disc_rows_sector_now(dedup, info)):    # 이어 온 줄의 업종 키 = 오늘 값 (새 줄은 이미 오늘 값)
+        log(line)
     # v19.6b (Part B.1): 직위의 '-' 는 빈 칸 · 역할(role) 임원 | 주요주주 | null. 지난 실행이 넣은 줄도 오늘 다시 받은 회사면 같은 응답에서 고쳐요
     fx = insider_fix_roles(dedup, fresh)
     if not INSIDER_POS_HOLDER_WORDS:
@@ -5207,6 +5436,8 @@ def fetch_disclosures(kr_stocks, cmap, end, client):
         why = "공시 목록을 받지 못해" if not list_ok else "DART 연결이 끊겨"
         log(f"  !! {why} 지난 발행본의 {carried + n_ins:,}건을 그대로 둬요 "
             f"(최근 공시 {f'{last[:4]}-{last[4:6]}-{last[6:8]}' if last else '없음'}) · 국민연금 {carried:,} · 내부자 {n_ins:,}")
+    for line in disc_sector_lines("국민연금", *disc_rows_sector_now(nps, info)):           # 지난 발행본에서 이어 온 줄 (carry_prev_nps)
+        log(line)
     log(f"· 국민연금(majorstock): 상태 {dict(nps_stat)} · 채택 {len(nps):,}건 · 내부자 누적 {len(dedup):,}건"
         + (" · 상한 도달, 다음 실행이 이어받음" if len(targets) >= DISC_CALL_CAP else ""))
     client.raise_if_fatal()
@@ -6594,6 +6825,7 @@ def fetch_korea(start, today, rf, prev=None):
     # v17.5.1: d1 (전 거래일 공식 종가 대비) · val20 (20거래일 평균 거래대금) — 그 전 날짜들의 최종 목록 파일에서.
     # 직전 파일이 KOSPI 의 직전 거래일과 다르면(그날 파일이 없거나 미완성이라 건너뛴 것) d1 은 이틀치 변화라 비워요.
     d1_map, v20_map, sessions, ok_prev = {}, {}, [], False
+    base_ok, d1_base = None, None
     if px_date is not None:
         sessions, snotes, prev_final = kr_recent_sessions(px_date, _fetch_listing_csv, _listing_commit_kst, special=special, known=fb_known)
         for n in snotes:
@@ -6601,11 +6833,17 @@ def fetch_korea(start, today, rf, prev=None):
         want_prev = kr_prev_session(px_date, ks_all.index)
         ok_prev = prev_session_ok(sessions, prev_final, want_prev)
         if sessions and not ok_prev and prev_final:
-            log(f"  !! 직전 거래일은 {want_prev} (KOSPI)인데 찾은 목록 파일은 {sessions[0][0]} — 그날 파일이 없거나 최종본이 아니라 d1 을 비워요")
+            log(f"  !! 직전 거래일은 {want_prev} (KOSPI)인데 찾은 목록 파일은 {sessions[0][0]} — 그날 파일이 없거나 최종본이 아니라 d1 을 "
+                "그 파일로 계산하지 않아요 (아래 'd1:' 줄)")
         d1_map, v20_map, dcnt = kr_d1_val20(listing, sessions, ok_prev)
         log(f"{'  !! ' if not ok_prev else '· '}d1·val20: 앞선 거래일 파일 {len(sessions)}개"
             + (f" (직전 {sessions[0][0]})" if sessions else "") + f" · d1 {len(d1_map):,} · val20 {len(v20_map):,}"
             + (f" · {dict(dcnt)}" if dcnt else ""))
+        # 2026-11-21: 직전 거래일 파일을 쓸 수 없는 날 — KRX 기준가 × 지난 발행본 종가 (두 출처가 원 단위까지 같은 종목만 · kr_d1_from_base)
+        if not ok_prev and want_prev is not None:
+            d1_map, base_ok, d1_base = kr_d1_base_day(listing, prev, want_prev)
+            loud, txt = d1_base_note(d1_base)
+            log(f"  !! {txt}" if loud else f"· {txt}")
     # 2026-11-14 (Jack, design chat 2026-11-08): 기준일에 거래가 없던 종목은 d1 빈 칸 + noTrade · 다른 빈 d1 은 이유(d1Why)를 달아요
     # 표시할 종목 · 표시하지 않는 까닭은 kr_no_trade_plan 한 곳에서 (리뷰 S1: 순수 함수로 시험해요)
     no_trade, nt_unseen, nt_odd, nt_must = kr_no_trade_plan(listing) if px_date is not None else (set(), "cols", set(), [])
@@ -6619,7 +6857,7 @@ def fetch_korea(start, today, rf, prev=None):
         must_names = ", ".join(f"{c} {names_of.get(c, '')}" for c in nt_must)
         log(f"  !! 필수 종목 {must_names} 이 거래 없음(거래량 0 · 시가 0)으로 나와요 — "
             "그 행의 잘못일 수 있어 표시하지 않았어요 (d1 은 공식 종가로 계산 · 관문이 경고해요)")
-    d1_map, d1_why, nt_map, why_n = kr_d1_split(listing, sessions, ok_prev, d1_map, no_trade)
+    d1_map, d1_why, nt_map, why_n = kr_d1_split(listing, sessions, ok_prev, d1_map, no_trade, base_ok=base_ok)
     if not nt_unseen:
         nt_names = sorted(f"{c} {names_of.get(c, '')}" for c in no_trade if c in d1_why)
         zero = not why_n["noTrade"]          # 리뷰 S2: 가릴 수 있었는데 한 종목도 없으면 칸의 뜻이 바뀌었을 수 있어요 (보통 날 목록 파일 135 ~ 141행)
@@ -6876,6 +7114,7 @@ def fetch_korea(start, today, rf, prev=None):
     meta = {"pxDate": px_date.isoformat() if px_date else None,
             "ksDate": ks_date.isoformat() if ks_date else None, "listSrc": list_src, "_index": kospi, "_prod": prod_map,
             "_prefShares": pref_shares, "_prefCaps": pref_caps, "krSeries": krs, "d1Blank": d1_blank}
+    meta["d1Base"] = d1_base                 # 2026-11-21: 직전 거래일 파일을 쓸 수 없던 날에만 (kr_d1_base_day) · 보통 날은 None (data.json 에 칸 없음)
     # 2026-11-19: 공식 종가 출처 · 업종 글자 출처 (data.json · 관문 줄) · 업종 글자가 없는 종목 (main 이 DART 기업개황 업종 코드로 채워요 · kr_ind_fill)
     meta.update({"pxSrc": px_src, "indSrc": ind_src, "_prefCapMissing": sorted(pref_cap_missing), "_noInd": sorted(no_ind)})
     return out, bench, mkt, meta
@@ -11779,7 +12018,12 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                      "거래정지 표시는 없어요) · d1 은 빈 칸이고 d1Why noTrade · 거래가 있던 종목에는 칸이 없어요"),
          "d1Why": ("한국 · d1 이 빈 까닭 (d1 이 있으면 칸 없음): noTrade 기준일에 거래가 없음 · range 전 거래일 대비 ±30% 밖 (신규 상장 · 분할 · 재개) · "
                    "new 직전 거래일 목록 파일에 그 종목의 공식 종가가 없음 · prev 직전 거래일 파일이 없거나 최종본이 아니거나 KOSPI 의 직전 거래일이 아님 "
-                   "(그날 모든 종목)"),
+                   "(그날 모든 종목 — 2026-11-21 부터 그런 날은 KRX 기준가가 지난 발행본 종가와 원 단위까지 같은 종목만 d1 이 있고, 나머지가 prev · d1Base)"),
+         "d1Base": ("한국 · 직전 거래일 목록 파일이 없거나 최종본이 아닌 날에만 (2026-11-21): d1 = 오늘 공식 종가 ÷ 지난 발행본의 그날 종가 − 1, 오늘 목록 "
+                    "파일의 KRX 기준가(Close − Changes)가 그 종가와 원 단위까지 같은 종목만 · day 직전 거래일 · pub 지난 발행본 pxDate · why 지난 발행본을 "
+                    "쓸 수 없던 까닭 (none 없음 · day pxDate 가 직전 거래일이 아님 · src 가격 출처가 공식 종가 목록이 아님 · 그러면 모두 빈 칸) · n 처리한 "
+                    "종목 (발행 종목보다 많을 수 있어요) · ok 확인 · diff 기준가가 다름 · noPub 지난 발행본에 없음 · notConf 지난 발행본 값이 그날 확인된 "
+                    "종가가 아님 (거래 없음 · pxd) · noBase 오늘 파일에 기준가 없음 · ex 까닭마다 예"),
          "ntD1": ("% · noTrade 종목의 기준가(공식 종가) 변화 (d1 을 계산했다면 나왔을 값 · ±30% 밖이거나 직전 파일이 없으면 칸 없음) — 거래가 없어 "
                   "등락률로 보이지 않고, 포트폴리오 평가 금액의 오늘 변화에만 써요 (코넥스는 거래 없이 값이 바뀔 수 있어요)"),
          "d1Blank": ("발행하는 한국 종목(목록 파일에서 온 cls kr)의 빈 d1 이유별 수 {noTrade · range · new · prev} (종목의 d1Why 와 같아요) · "
@@ -12134,6 +12378,8 @@ def main():
     # 부르지 않아요) · 우선주는 보통주를 따라요 · 틀린 행은 되돌려요 (Jack 의 상시 규칙). 2.0 그룹이 정해진 뒤 · corp.json 보다 먼저
     ind_drop = kr_ind_fill(kr, kmeta.get("_noInd") or [], ksic, ksic_map, kmeta.get("indSrc"), over=tables["over"],
                            names=ksic_names, map_sha=ksic_sha, table_err=ksic_err)
+    for line in power_eq_sector_lines(*power_eq_sector_report(kr)):     # 2026-11-20: 전력기기 · 전선 제조사의 예전 뱁새 업종 (옮긴 수 · 남은 utility)
+        log(line)
     for m in ("kr", "us"):
         arr = kr if m == "kr" else us
         g = collections.Counter(x.get("ind") for x in arr if x.get("ind"))
@@ -12256,6 +12502,8 @@ def main():
         "stocks": stocks,
     }
     payload.update(sp_fields)                # v19.6a (A.6): splits · splitsFrom · splitsAsOf · splitsSrc · splitsInfo (UNITS["splits"]) 또는 없음
+    if kmeta.get("d1Base"):                  # 2026-11-21: 직전 거래일 파일을 쓸 수 없던 날에만 — KRX 기준가 × 지난 발행본 종가로 확인한 d1 (kr_d1_from_base)
+        payload["d1Base"] = kmeta["d1Base"]
     own_us_dates(payload)                    # 2026-11-19 (Jack 의 상시 규칙): 틀린 미국 ed · xd 는 그 칸만 비워요 (data.json ownDrop.usDates)
     payload.setdefault("ownDrop", {})["indFill"] = ind_drop   # 2026-11-19 (Jack 의 상시 규칙): 업종 채운 값 중 되돌린 행 (관문 줄이 봐요)
     write_json(OUT, payload)
