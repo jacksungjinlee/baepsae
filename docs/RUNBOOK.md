@@ -256,6 +256,64 @@ Open a new Claude Code Cloud session and paste (replace N with the issue number,
 Claude reads the run logs, fixes the cause by the CLAUDE.md rules (fix the data or the code, never loosen a check), and
 tells you what happened in plain words.
 
+## Checks on our own processing: drop or blank, then publish (Jack's standing rule, since #149)
+
+Jack, 2026-11-19: "Standing rule for checks on our own processing: a single bad row is dropped or blanked with a loud warning and
+the rest publishes. Block only when many rows fail in one run (set the number from recent runs and show it in the PR) or when a
+value would show a wrong number."
+
+"Own processing" means a check that catches a mistake in how our pipeline read, mapped or derived something (shape, consistency,
+mapping). Checks on what a source sends (freshness, coverage, two-source agreement, must-have stocks) are not covered and keep
+their rules. One exception, by Jack's own answer (2026-11-20, verbatim): "Brown-Forman B: no, it becomes a warning; one stock missing
+from a source never holds the publish." So "주식 종류 티커로 들어온 미국 종목 (BF-B)" only warns when BF-B is missing, with or without a
+reason (see "US share-class tickers" below).
+
+**How it works.** The rule that picks the bad rows lives once, in `validate_data.py`. The daily run calls the same function on its
+in-memory data, drops or blanks those rows, logs them and records them in `data.json` `ownDrop`; the gate then checks the file.
+
+| Check (PR) | Function | What the run does with a bad row | Recorded as | N |
+|---|---|---|---|---|
+| US share-class tickers (#139): an S&P 500 joined form (`BRKB`, `BFB`) published unmapped; such a form when the record can't tell where it came from; a ticker mapped differently from the gate's table | `us_class_bad_rows` | **drops the US row** right after the US list is built (before industries, ranks, splits, the popular list and counts), together with that ticker's entries in the run's own US records (split rows from the price download, `usForeign`, `usInfoPartial`, `usFcurUnknown`, `usInfo`): its price, market cap and scores may be another security's, so blanking one value would leave wrong numbers | `ownDrop.usClass` | 5 |
+| Hidden-yield reason lines (#142): a `dvLine` 2, 3 or 4 that `divCheck.proofSub` does not back (another line, a case with no line, a record that is missing or malformed, a preferred share, a stock whose yield shows, a restored stock) | `div_line_bad_rows` | **blanks that stock's `dvLine`** just before the files are written: the yield stays blank as it was and the app shows no reason line instead of one that may be wrong. A stock whose record calls for a line it does not carry is counted too (nothing to blank; it shows a blank with no reason) | `ownDrop.divLine` | 5 |
+
+`ownDrop` is `{"usClass": {"n": rows, "rows": [[key, reason], …first 30]}, "divLine": {…}}`, written on every run (0 on a clean run).
+Run log: `!! {check}: {n}건 빼고 발행` (US) or `!! {check}: {n}건 비움` (lines), with the first 30 keys and reasons, or a `· … 0건` line.
+
+**Gate.** For each of these checks the publish fails only when (1) more than N rows were dropped or blanked in the run, or (2) a
+bad value is still in the file and would show a wrong number or a wrong reason line (the drop step itself broke). 1 to N rows:
+warning, naming them (detail lists "파이프라인이 뺀 미국 종목" and "파이프라인이 비운 숨긴 배당수익률의 줄"). Record problems that
+show users nothing are warnings: a malformed `proofSub` (its lines are blanked and counted), a mapping that differs from the table with
+no published row left, a line the record asks for but the stock lacks, and a malformed `usListSym` field the joined-form and mapping
+checks don't depend on. One record problem still fails the publish, as it did before: any malformed `usListSym.mapped` row (`mapped`
+only ever holds the joined-form rows, so with a bad row the gate can't tell where a joined form was mapped and can't rule out a wrong
+company in the list; the site checks warn). The rows that are well formed are still read one by one, so a wrongly mapped row is still
+dropped. For the lines, the count is the number of distinct stocks that lose their reason line in the run: lines blanked today, lines
+still wrong in the file, and lines 2 · 3 · 4 of the previous publish that today's `proofSub` can't back because that part is missing or
+malformed (the record and the lines vanishing together blank nothing, but those stocks still lose their line). These are usually
+different stocks, so they are added up, not compared. The run log counts the same stocks (it reads the previous publish).
+On the site checks (`--live`: deploy and watchdog) "more than N" warns instead of failing, and the US rows keep #139's live behaviour.
+A file without `ownDrop` (published before #149) keeps the old rule for that row, so the live gate and the watchdog are not blocked by
+it; a malformed `ownDrop` (the whole object or one entry) also keeps the old rule and adds a warning.
+
+**N** = max(5, 3 × the highest count seen). Replayed over the last 25 publishes on the `data` branch (2026-11-06 to 11-19): 0 for
+both checks every time, so N = 5 (`US_CLASS_DROP_MAX`, `DIV_LINE_BLANK_MAX`; the table is in PR #149). Jack, 2026-11-20: "Yes to “more
+than 5 rows” as the default for the standing rule." For scale: the 11-19 file has
+800 US stocks and 30 lines 2·3·4, so a broken record that blanks all 30 lines (or loses them with the record) fails the gate, as it should.
+**The US count cannot realistically pass 5:** its rows come only from the two table forms (`BRKB`, `BFB`), at most one joined row and one
+wrongly mapped row each, so about 4 a run (only a hand-made, malformed record could list more). N = 5 is the rule's floor; what protects
+this check is the other fail: a row that should have been dropped is still in the file.
+
+**When the gate warns** (rows dropped or blanked, 1 to N): the publish went out without those rows. Read the reasons in the gate's
+detail list and the run log. A US row: the mapping table (`fetch_data.US_CLASS_JOINED` vs `validate_data.US_CLASS_JOINED_SET`) or
+Yahoo answering a joined form; fix with the recipe in "US share-class tickers" below. A line: the pipeline's `prove_line` and
+`proof_sub` disagree, or the record broke; fix the code in `DivWhy.prove`. The rows stay out until the fix ships; nothing else waits.
+
+**When the gate fails**: "뺀 행이 기준 5 을 넘음" or "줄을 잃은 종목이 기준 5 을 넘음" means many rows broke at once: our reading is
+probably broken for everyone, so nothing is published (users keep the last good data). "빼야 할 티커가 남아 실림" or "기록과 맞지 않는
+줄이 남음" means the drop step did not run or did not work: fix the pipeline. "mapped 에 모양이 틀린 줄이 있어 …" means `us_tickers`
+wrote a broken mapping record: fix the record code. Never raise N or skip the row to get a publish out;
+a different N needs Jack's yes with new evidence.
+
 ## Checked low-PBR companies (gate warning "PBR 0.1 미만 국내 회사")
 
 The daily gate (`validate_data.py`) warns, by name, about every Korean company with a PBR under 0.1 that the unit check
@@ -579,6 +637,9 @@ What protects users when the limit hits (and what does not):
     loses none (simulated in `tests/test_kr_fb_budget.py`).
 - **The count rows** stop only large cuts: "국내 종목 수" fails below 2,300 published Korean stocks, which on a blank-close night is
   about 320 stocks not asked (about 440 when the close is filled); "국내 종목 수 변화" (more than 10% from the last publish) comes later.
+  Since #158 (KONEX Yahoo × Naver) these numbers hold as before on a blank-close night (no KONEX stock can be confirmed then); when the
+  close is filled, the ~23 KONEX stocks a normal day publishes also count, so the floor trips at about 465 not asked instead of
+  about 440, with the same number of normally-published stocks missing (see "KONEX closes: Yahoo × Naver").
 - **Plainly, the gap:** on a blank-close night, from about 50 to about 320 stocks not asked, the data publishes with published
   stocks missing (about 3 at 50, about 156 at 300) and only the WARN row. A check that stops the publish there would be a new
   publish-stopping rule and needs Jack's yes.
@@ -594,6 +655,240 @@ If the WARN shows:
    times from the logs to Jack before changing `KR_FB_PHASE_BUDGET_S`.
 4. If it hits on every run (a source blocking GitHub's servers), the must-haves stay unconfirmed and nothing publishes: that is
    the two-source rule working. Tell Jack in plain words which source is down.
+
+## KONEX closes: Yahoo × Naver (코넥스 두 출처, since #158)
+
+Jack, 2026-11-19 (answer 5, verbatim): "Yes: Naver for KONEX only, always with Yahoo, published only when they agree to the won;
+daily KONEX checking too." CLAUDE.md says the same under "Two sources for official closes".
+
+Why KONEX needs its own pair: Daum has no KONEX (all 107 codes answer HTTP 400), so until #158 every KONEX stock (about 31 of them
+are in the published top 2,500) was left out on second-source days, and on volunteer-file days no KONEX close was ever
+cross-checked (`kr_primary_check` samples only KOSPI/KOSDAQ codes). Naver's daily close is the official close for KONEX only:
+KONEX has no after-hours trading and Nextrade does not trade it, so Naver matched the KRX final file on 2,881 of 2,881 KONEX
+stock-days (27 final days, 2026-09-15 to 11-16, no-trade days included), against 186 of 1,276 for KOSPI/KOSDAQ. Naver is never
+used for KOSPI or KOSDAQ.
+
+**Second-source days** (`fetch_data.kr_knx_phases` · `kr_knx_confirm`): after the three Daum × Yahoo phases have finished (their
+order, time limit and results are unchanged), the run asks, for the KONEX stocks only, in the same order (must-haves, then the last
+final file's market cap) and under the same 600 s limit per phase (`KR_FB_PHASE_BUDGET_S`):
+1. Naver daily bars (`api.stock.naver.com/chart/domestic/item/{code}/day`, 4 at a time, 20 s × 3 tries per stock), from the last
+   final day px0 (for the anchor check below) to the newest second-source day;
+2. Yahoo `{code}.KQ` daily closes (Yahoo carries 96 of 107 KONEX stocks, mislabelled MUTUALFUND/KOSDAQ, with a quote header frozen
+   since 2024-07, but the daily bars are right);
+3. for the newest day, a chart re-read of the stocks Yahoo answered but left that day's close blank (stocks Yahoo does not carry
+   at all are not asked again).
+
+Normally the three KONEX phases take about 10 seconds (107 stocks; 9–10 s on the live check of 2026-11-20). In the worst case
+(every request timing out) each is cut at 600 s plus the requests in flight, like the Daum × Yahoo phases, so the second source
+as a whole can now take about 74 minutes instead of 37 before the run moves on (the data job's limit is 300 minutes). A KONEX
+stock not asked in time is left out like any unconfirmed one.
+
+If the KONEX stage itself breaks (an unexpected error, not a source that doesn't answer), the run says so loudly ("!! 코넥스 2차
+출처 단계가 고장 났어요 …"), leaves KONEX out of that day's file as before #158, and carries on with KOSPI/KOSDAQ unchanged; the gate
+row below then warns "코넥스 단계를 묻지 않았어요". The same holds when the per-day KONEX confirmation or the cut-off step breaks
+("!! {day} 코넥스 2차 출처 확인이 고장 났어요 …"): that day's file gets no KONEX rows and no half-built record.
+
+A KONEX stock is confirmed when Yahoo's close (the value used) and Naver's close (the check) agree to the won
+(`KR_FB_CLOSE_TOL`). Otherwise it is left out, exactly like a KOSPI/KOSDAQ stock with one source or two that disagree: the log line
+"… 코넥스 2차 출처(야후 .KQ × 네이버 종가 원 단위까지 같음): 확인 a / b종목 · 빠짐 … — 다름: … — 야후 종가 없음: …" names every stock left
+out with the reason. It is a plain "·" line on a usual day and a loud "!!" line only for the unexpected, by the same rules as the gate
+row below: a missing Naver bar, an unreadable value, more Yahoo gaps or disagreements than usual, fewer than half confirmed, the time
+limit, or no cut-off. Expected every day: the 11 KONEX stocks Yahoo does not carry (496320 본시스템즈, 238540 나노솔루션,
+0077H0, 495810 유비씨, 0203K0 송우인포텍, 0230E0, 059180 엔더블유시, 0070X0, 403810, 476710, 332190) and 3–9 stocks on a day when KRX
+moved the reference price without a trade (Yahoo keeps the last traded price: EMB 11-16, Naver 2,715 · Yahoo 2,895). On the live
+check of 2026-11-20 (pxDate 11-10 … 11-19): 87–93 of 107 confirmed each day, and on the five final days every confirmed close equalled
+the KRX final file (447 of 447, volumes and no-trade flags too).
+
+**Anchor check: both sources can agree on an adjusted price** (second review M1, `kr_knx_anchor` · `kr_knx_confirm(anchor=…)`).
+Yahoo's close is split-adjusted (it books 무상증자 as a split too), and Naver's daily bars are 수정주가 on the endpoints we use for
+KOSPI/KOSDAQ (unverified for this one). Example: backup day 11-16, last final file (px0) 11-13, a KONEX stock's split or 무상증자
+ex-date 11-17. A run on 11-17 can find both sources showing 11-16's close ÷ the ratio, equal to the won, and would publish that as
+the 11-16 official close with pre-action shares (wrong market cap and d1); the gate's own re-check samples KOSPI/KOSDAQ only. So a
+KONEX stock is confirmed only when, in addition, Naver's close on px0 equals the official close (market cap ÷ shares) in the px0
+final file. An adjustment rewrites every bar before the ex-date, px0 included, so if Naver's px0 bar is untouched, its later bars are
+too; the published value equals Naver's to the won, so it is unadjusted whatever Yahoo did (if only Yahoo adjusted, the two disagree
+and the stock drops out). Yahoo's px0 bar is not required: on a no-trade day where KRX moved the reference price it is the last
+traded price (3–9 stocks a day), so requiring it would only drop correct stocks. A stock that fails this is left out of that day's
+file, as before #158, loudly ("!!" line: "기준일 {px0} 종가가 최종본과 다름 …" with both values, or "기준일 {px0} 종가로 맞춰 보지 못함"
+when the px0 file has no official close for it, such as a listing after px0, or Naver has no px0 bar), and counted in
+`pxSrc.fb.knx.adj` / `noAnchor`. When there is no px0 final file at all, no KONEX stock is confirmed (no cut-off either). On the
+fixtures the check changes nothing; it was not re-run live, but Naver matched the final file 107 of 107 on each final day 11-10 …
+11-16, so with any of those days as px0 every stock would have passed it.
+
+**Only the KONEX stocks a normal day would publish go into the file** (review M1, `kr_knx_cap_floor` · `kr_knx_cap_keep`): a
+confirmed KONEX stock is added only when its market cap (close × listed shares) is at least the 2,500th market cap (`MAX_KR`) in the
+volunteer list's last final file, the same file that sets the asking order. For 11-19 (cut-off from the 11-16 final file) that was
+199억원, and 23 of the 91 confirmed KONEX stocks were above it (live check, 2026-11-20); on 11-16, a volunteer-file day, 33 KONEX
+stocks were inside the top 2,500 and 31 were published (5 of those 33 are among the 11 Yahoo lacks). Why: if every confirmed KONEX
+stock (about 90) were added, they would fill the gaps on a morning when many KOSPI/KOSDAQ stocks go unconfirmed, and the "국내 종목 수"
+floor (2,300) would trip about 70 stocks later than on a normal day (91 confirmed vs 23 above the cut-off on 11-19). Example (tests/test_konex_two_source.py): 500 KOSPI/KOSDAQ not
+asked in time leaves 2,240; all KONEX would make it 2,347 and publish with about 230 normally-published stocks missing all day; with
+this rule it is 2,270 and the floor stops the publish, as it does without KONEX. When the last final file has fewer than 2,500 known
+market caps the rule cannot be set, so no KONEX stock is added that day (loud: "!! 코넥스 시가총액 기준을 정할 수 없어요"). The log
+names the cut-off once ("· 코넥스 시가총액 기준 … 2,500번째 시가총액 …억원 이상") and, per day, how many confirmed KONEX stocks went
+in and which were left out under the cut-off ("그날 파일에 넣은 코넥스 k … · 확인됐지만 시가총액 기준 아래라 뺀 m: …").
+
+What this changes for KOSPI/KOSDAQ, plainly: their prices, sources, checks and asking order are unchanged, but which of them are
+published on a second-source day is not. The published list is the top 2,500 by market cap among confirmed stocks, so the ~23 KONEX
+stocks take back their places and about as many of the smallest KOSPI/KOSDAQ stocks near the cut-off (about 200억원) drop out of that
+day's file, exactly as they do on every volunteer-file day.
+
+The #151 trip points ("Korean second-source time limit" above) are unchanged in the sense that matters: on both main and this
+branch every published stock is one a normal day would publish, so the floor trips when more than 200 normally-published stocks are
+missing. Counted in KOSPI/KOSDAQ stocks not asked: on a blank-close night nothing changes at all (Yahoo's newest KONEX close is blank
+too and cannot be read from its frozen quote header, so no KONEX stock is confirmed or added); once the close is filled (the 06:40
+run), the ~23 KONEX stocks count toward the 2,300, so the floor trips about 23 not-asked stocks later than on main (about 465 instead
+of about 440), with the same number of normally-published stocks missing.
+
+The KONEX row is built like the KRX file: close, listed shares, market cap = close × shares, volume, open, high and low from
+Naver. The listed shares come from that day's list file in the volunteer cache, or, when that day has no file, from the nearest
+earlier one ("!! … 캐시 파일의 종목 목록" in the log): neither Yahoo nor Naver gives a share count, so it is not cross-checked (Daum
+gives it for KOSPI/KOSDAQ). The close is exact either way (official close = market cap ÷ shares); only the market cap, and so the
+cut-off test above, can be a few days old after a share change. Two fields are left blank on purpose:
+- **거래대금 (Amount)** on a day with trades: neither Yahoo nor Naver gives a trading value, so it is not guessed. That day's `val` is
+  blank and `val20` averages the days that have one (a no-trade day has exactly 0, which is kept). What users see: nothing changes.
+  `val` appears only in 2.0's 종목 순위 거래대금 and 거래 급증 lists, which only include stocks whose 20-day average is at least
+  5억원; no KONEX stock is near that (the largest was 0.3억원 on 11-16). A KONEX stock's `val20` would go blank only after 11 or more
+  second-source days in a row. Known bias, left as is (second review nit): a traded backup day is skipped while a no-trade day counts
+  0, so a KONEX `val20` that spans backup days reads a little low; it never matters against the 5억원 cut-off.
+- **전일 대비 (Changes) and the change sign/ratio:** KRX moves a KONEX reference price without a trade (EMB 11-18: previous close 2,600,
+  reference 2,700) and neither source gives it, so the KRX reference-price chain (`kr_ref_links`) counts these stocks as unchecked.
+  They are expected, so the log counts them on their own plain line ("· KRX 기준가 연결 — 2차 출처 날 코넥스 … 확인 못 한 종목 n:
+  예상한 것이에요", `kr_ref_blank_knx`), and the main "KRX 기준가 연결" line stays "!!" only for any other unchecked stock (second
+  review S3). `krSeries.ref.unknownStocks` in data.json still counts all of them, as before. No value changes: Naver's bars for KONEX
+  are already the official closes, so the pinning step has nothing to replace. `d1` is unaffected (it compares official closes).
+
+**Volunteer-file days** (`kr_knx_daily_check` · `kr_knx_check`): every KONEX stock the run processes (the published top 2,500) has
+its final-file close compared with Naver's daily close for pxDate, under a 120 s limit (`KR_KNX_CHK_BUDGET_S`; normally a few
+seconds). The log line "코넥스 종가 네이버 확인 (1차 출처 날 …): 같음 n / n" is loud and names every stock when one differs, has no
+Naver value, was not asked in time, or Naver could not be read. Nothing is dropped and nothing stops the publish on this check:
+a publish-stopping rule or dropping a mismatching stock needs Jack's yes. On the five final days 11-10 … 11-16 the check matched
+107 of 107 each day.
+
+**data.json `pxSrc`:** `pxSrc.knx` = `{px, t, n, chk}`: where the published KONEX closes came from (`listing` or `yahoo+naver`; `null`
+when a second-source day had no KONEX stage), the published KONEX codes, the count by source, and the volunteer-day check
+(`{src: naver, n, same, none, noneEx, diff, fail, cut {s, naver}, err}`). `pxSrc.fb.knx` (second-source days) =
+`{n, conf, kept, capOut, floor, noNaver, bad, noYahoo, diff, diffEx, anchor, adj, noAnchor, adjEx, left, yMeta, cut {s, yahoo, fill, naver}}`
+(conf confirmed by both sources, kept put into that day's file, capOut confirmed but under the cut-off, floor the cut-off in won,
+anchor the px0 date, adj / noAnchor the stocks both sources agreed on but the anchor check left out, adjEx examples
+"code name final/naver"). `pxSrc.fb.conf` now
+counts every stock in that day's file, the kept KONEX stocks included (the gate's "confirmed ≥ published" test needs that once
+KONEX is published; a confirmed KONEX stock under the cut-off is not counted); the other `fb` counts stay KOSPI/KOSDAQ
+(Daum × Yahoo) only.
+
+**Gate rows** (all warnings; none stops a publish):
+- **WARN "코넥스 종가 두 출처 (경고만)"** (review S1). On a second-source day the value always shows the counts, the cut-off and a few
+  disagreements; it warns ("— 경고: …") when Naver had no bar for some KONEX stock (Naver down or changed), when more than 15 KONEX
+  stocks had no Yahoo close (`KNX_NOYAHOO_WARN`: the same 11 every day 11-10 … 11-19, plus room for a few new listings Yahoo has not
+  picked up; more means Yahoo left that day's KONEX closes blank, as it does for hours after the close), when fewer than half were
+  confirmed, when a value could not be trusted, when more than 20 disagreed (`KNX_DIFF_WARN`: 3–9 a day on the same eight days, all
+  reference-price moves without a trade; more means a source changed), when the cut-off could not be set or is not a positive number,
+  when the anchor check left out any stock (`adj` or `noAnchor` above 0; a file without these keys reads as 0), or when the stage did
+  not run. The routine 3–9 disagreements alone do not warn (they are in the value every day; a warning that is on every day gets
+  ignored). On a volunteer-file day it warns when a published KONEX close differs from Naver, has no Naver value, was cut by the
+  time limit or Naver could not be read. On any day it warns when the record is malformed or its codes differ from the published
+  KONEX stocks (read from the description's "KONEX 상장"). A file from before #PR has no `pxSrc.knx`: SKIP. It never fails.
+- **"가격 확인 시간 한도 (경고만)"** also lists the KONEX phases ("코넥스 2차 출처: 묻지 못함 야후 일봉 · 야후 다시 읽기 · 네이버") and the
+  volunteer-day Naver check ("1차 출처 코넥스 네이버 확인").
+- The gate's own price re-check on second-source days (`http_px_alt`) still samples KOSPI/KOSDAQ only; KONEX closes rest on the
+  pipeline's Yahoo × Naver record. Open for Jack: whether the gate should also re-fetch a KONEX sample (Naver × Yahoo) itself;
+  stricter, but the gate would then depend on Naver.
+
+If the KONEX row warns (read the reasons after "경고:"):
+1. Second-source day, "다름 n > 20": the routine 3–9 come from KRX moving a KONEX reference price without a trade (those stocks are
+   out of that day's file, "이 종목의 데이터를 찾지 못했어요." on their pages, and come back on the next day both sources agree). More
+   than 20 means one source changed: compare a few names on Naver's and Yahoo's charts.
+   "야후 없음 n > 15" or "확인이 절반 아래" at night: Yahoo has not filled that day's KONEX closes yet; KONEX is out of that night's file
+   and comes back with the next publish (a manual run after about 06:40 KST brings it back sooner; follow the DART rule).
+   "네이버 행 없음": see 3. "시가총액 기준 모름": the volunteer list's last final file had fewer than 2,500 market caps; look at that file.
+   "기준일 종가 다름 n": both sources agreed, but Naver's px0 close differs from the final file. Look for a split, merger, 무상증자 or
+   other ex-date after px0 for that stock (the log line names it with both values); it stays out until the volunteer file is final
+   again, which is the safe outcome. If it hits many stocks at once, Naver's bars may have changed basis: compare Naver's chart with the
+   final file. "기준일 맞춰 보지 못함 n": the stock has no official close in the px0 file (listed after px0) or Naver has no px0 bar.
+2. Volunteer-file day, "다름": this has never happened (0 of 2,881 KONEX stock-days, 09-15 … 11-16; the live check of 11-20 found the
+   same on 11-10 … 11-16). Open the KRX final file and Naver's chart for
+   that stock and date and tell Jack which one is wrong; the published close is the KRX file's.
+3. "네이버 값 없음" for many or "받지 못함": Naver may be blocking GitHub's servers; the KOSPI/KOSDAQ path does not use Naver, so only
+   KONEX is affected (on second-source days every KONEX stock drops out).
+
+## Deploy gate: Daum spot-check time limit (관문 두 출처 확인 시간 한도, since #157)
+
+Jack, 2026-11-20 (verbatim): "Yes to 10 minutes, but a timeout skips the Daum spot-check with a loud warning; the deploy continues
+on the other checks. An outside site must never block a code fix."
+
+On a second-source day (data.json `pxSrc.px` = `daum+yahoo`) while the volunteer cache still has no final file for pxDate, the gate
+fetches its own closes to compare: the 7 must-haves plus a 200-stock sample, about 206 stocks in all on real data (`http_px_alt`,
+4 at a time, 20 s per request, three tries). The deploy and the watchdog run the gate with `--live`, and there it asks Daum only. On
+11-20 at 09:03 KST the deploy sat 19 minutes in that step with no output (Daum slow); the job's only limit was 80 minutes. A normal
+run takes about a minute (from here on 11-20: 54 s for 206 stocks, the whole gate 66 s).
+
+**Who gets the limit: the deploy only.** Jack's yes names the deploy. The deploy's gate step (`deploy.yml`, "발행 관문
+(validate_data.py --live, 올릴 파일 그대로)") sets `BAEPSAE_DAUM_LIMIT_S: "600"` (= `PX_ALT_LIVE_BUDGET_S`) in that step's `env`; by
+hand the same is `python validate_data.py --live --daum-limit 600 --dir DIR`. A limit shorter than 600 s, or a value that is not a
+number, stops the gate with FAIL before anything is fetched (a shorter limit would skip more often). Not limited, as before:
+- the **watchdog** (`watchdog.py` calls `validate_data.py --live --dir …` with no limit, and removes `BAEPSAE_DAUM_LIMIT_S` from the
+  environment it passes to the gate, so it can never inherit one). It opens an alert only on a gate FAIL, so a WARN would turn a
+  slow-Daum watchdog run into a quiet pass. If Daum hangs there, the watchdog job's own 30-minute limit ends it, as before;
+- the **daily run's gate** (publish mode) and `--bootstrap`: no limit even if one is given ("· 다음 확인 시간 한도(…)는 사이트
+  점검(--live)에서만 써요 — 이 실행(publish)은 한도 없이 예전 그대로"), every stock asked, coverage short means FAIL.
+
+In the deploy, the whole spot check has a 600 s limit:
+- it logs a start line: "· 관문의 두 출처 확인 시작 (… · 다음 일별 시세 + 발행 기록): 206종목 · 동시 4 · 시간 한도 600초 (배포 — …)"
+  (the watchdog says "시간 한도 없음 (예전 그대로)", the daily gate "시간 한도 없음 (발행 관문 · 예전 그대로)"), and the result line
+  "관문의 두 출처 공식 종가 …" ends with "걸린 시간 n초";
+- the must-haves are asked first; after 600 s no new request is sent, retries included. A request already in flight finishes under
+  its own limits (20 s to connect + 20 s between bytes, so about 40 s; a DNS lookup or a server dribbling bytes is outside that,
+  never seen), so the spot check ends by about 10 min 40 s at worst. All worker threads have ended when it returns;
+- each stock ends in exactly one of four states (retries and their pauses are the same whatever the error):
+  - **close received**;
+  - **network error**: all three tries used, and the last one failed with a connection error or timeout (requests' `ConnectionError`
+    or `Timeout`, Python's `ConnectionError` or `TimeoutError`) or HTTP 429 or 5xx;
+  - **Daum's definite non-answer**: no row for that day, HTTP 4xx other than 429, no close in the row, or the last try failed with
+    anything that is not a network error (a 200 reply that is not JSON or has the wrong shape, such as a block or captcha page). A
+    stock whose last answer before the limit was one of these counts here even if its retry was cut;
+  - **cut**: not asked, or not asked again after a network error, before the limit. The last errors of the stocks cut after a
+    network error are kept apart from the general error examples and printed on the second "!!" line (up to five, with the count:
+    "네트워크 오류 뒤 다시 묻지 못한 종목 m (마지막 오류: … (시간 한도로 다시 묻지 않음))");
+- the log says it twice: at the moment ("!! 관문의 두 출처 확인 시간 한도 600초: 다음 일별 시세를 더 묻지 않아요 …") and after
+  ("!! 관문의 두 출처 확인이 시간 한도 600초에 걸렸어요 (Jack 2026-11-20): 확인 n / 206종목 · 시간 한도로 건너뜀 k · 네트워크 오류 e ·
+  다음이 그날 종가를 주지 않음 d … · 네트워크 오류 뒤 다시 묻지 못한 종목 m (마지막 오류: …)", ending with what the gate will do).
+
+**What a cut skips, and what still fails.** Only the shortfall that the cut (and network errors) can explain is skipped:
+- **WARN, deploy continues:** every must-have was received, cut or hit a network error, and received + cut + network errors is at
+  least 90% of the stocks asked. The row **"pxDate 최종본 여부" turns WARN** with the counts ("…를 시간 한도 600초로 건너뜀 (Jack
+  2026-11-20) — 한도 전에 확인 n / 206종목 (시간 한도로 건너뜀 k · 네트워크 오류 e · 다음이 그날 종가를 주지 않음 d) …"). It is a GitHub
+  warning annotation, so the morning check sees it;
+- **still FAIL, as before ("최종본 날짜 계산"):** a must-have that Daum definitely did not answer (no row, HTTP 4xx, no close, a
+  reply that is not JSON), or
+  so many definite non-answers that even counting every cut and network-error stock as received stays under 90% ("… 모두 받았다고
+  쳐도 n / 206 (기준 90%) …"). These are not caused by the time limit, so the time limit does not excuse them;
+- **still FAIL, as before:** the file's own record (pxSrc says second source, its date is pxDate, no must-have unconfirmed at
+  publish, confirmed count ≥ published Korean stocks), pxDate before today and after that day's close + 30 min;
+- **wrong closes still FAIL:** every close Daum did return is compared with the published price. "005930 = 공식 종가" must match to
+  the won. Whenever the limit was hit, "한국 가격 = 공식 종가" counts the wrong closes it saw against all the stocks it meant to ask
+  (about 206), treating the stocks it never received as matching: it FAILs when (asked − wrong seen) / asked is under 99%, so a FAIL
+  here always means the full check would have failed too (1 wrong among 60 received: 205/206 → WARN; 2 wrong among 192 received:
+  204/206 → WARN; 3 wrong: 203/206 = 98.5% → FAIL). It is a WARN while it passes, because it saw only part of the sample; a FAIL that
+  would round to "99.0%" shows two decimals (e.g. "98.99%"). With no close received, both price rows WARN;
+- if the limit hits after the must-haves and 90% of the sample have already answered, "pxDate 최종본 여부" is checked as before and
+  passes, with a WARN that says how many were skipped; the price row is counted as above.
+
+**Known limit (unchanged, needs Jack's yes to change):** a Daum outage that fails fast still blocks every deploy, because nothing is
+cut. If Daum answers 403 to GitHub's servers, every stock is a definite non-answer and the gate fails within seconds; if it refuses
+connections quickly, all three tries fail inside the 600 s and coverage is short with no cut, so the gate fails as before. Only a
+slow Daum is skipped.
+
+If the WARN shows:
+1. Read "걸린 시간 n초" at the end of the line "관문의 두 출처 공식 종가 …" in the deploy log (and the counts on the "!!" line after
+   it): that is Daum's speed today. (The time between the start line and the "!!" line is not reliable where the output is collected
+   and printed at the end.)
+2. The deploy went ahead on the other checks. Nothing to undo; the next deploy, and the watchdog's own unlimited run, check again. If
+   the volunteer cache gets its final file for pxDate later, the gate compares against that file instead and Daum is not asked at all.
+3. Do not shorten or raise the limit to make a run pass. If it hits on days when Daum answers at normal speed, bring the log times
+   to Jack.
+4. If a price row or "최종본 날짜 계산" fails on a timeout day, it is not the timeout: it is a real mismatch between Daum's close and
+   the published price, a must-have Daum has no close for, or too many stocks with no close. Treat it like the same row failing on
+   a normal day.
 
 ## Korean dividend proof (배당 기준 증명, since #PR — Jack 2026-11-14, item 5)
 
@@ -690,13 +985,119 @@ uncounted 2, data 22, the 32.5% yield 1; lines: 1 → 0 stocks, 2 → 8, 3 → 1
   the table names each stock and the failing number.
 - **WARN "배당 기준 증명 경고 (되살리지 않은 이유 · 조회 실패)"**: names the stocks not restored, by reason (with the `proofSub` case and
   whether it shows a line, since #PR).
-- **FAIL "숨긴 배당수익률의 줄 (divCheck.proofSub · dvLine 2 · 3 · 4)"** (since #PR): `divCheck.proofSub` is not v1 with exactly `rights`
+- **"숨긴 배당수익률의 줄 (divCheck.proofSub · dvLine 2 · 3 · 4)"** — since #149 under Jack's standing rule (section "Checks on our own
+  processing" above): the run blanks every line the record does not back (`ownDrop.divLine`) and publishes; the row fails only when
+  more than 5 distinct stocks lose their line in the run (blanked, still wrong, or lost together with a missing or malformed `proofSub`,
+  counted from the previous publish, all added up) or a line the record does not back is still in the file, and warns otherwise. The rules below are
+  what "backed" means, and they are the whole rule for files without `ownDrop` (#142's FAIL as written).
+  (since #PR): `divCheck.proofSub` is not v1 with exactly `rights`
   and `data`, its stocks differ from the proof's `rightsT` · `dataT`, a case is unknown, or the marks differ: `dvLine` 2 must be on
   exactly the `rights` stocks with case `sh`, `dvLine` 3 on exactly the `data` stocks with case `div`, `dvLine` 4 on exactly the `data`
   stocks with case `nototal` · `nostk` · `pref0` · `nopfo` · `prefmix` (`PROVE_SUB_LINE`); a `data` stock with case `other` carries no
   line, and any `other` turns the row into a WARN (see `data` above). Our own bookkeeping only: look at the run's
   "숨긴 배당수익률의 줄" and "그대로 숨김" log lines. A file without `proofSub` (before #PR) is only a warning unless the previous publish
   had it; without it a `dvLine` 2, 3 or 4 fails the "배당 기준 증명 기록" row.
+
+## 오늘 볼 것 data (v19.6b, since #PR): disc.json `issue`, insider `role`, US `ed` · `xd`
+
+What the daily run writes (`fetch_data.py` `fetch_issues`, `fill_issue_bd`, `insider_pos_role`, `us_event_dates`):
+- **`issue`** — 유상증자 · 전환사채 · 신주인수권부사채 decisions of Korean stocks in our list, filed in the last 90 days, and
+  유무상증자 (a rights issue and a bonus issue in one decision; Jack 2026-11-19, 7a). The run reads DART's 주요사항보고서 list
+  (about 25 pages), then, for each (company, kind) with a filing it has not seen, DART's structured lookup (`piicDecsn` ·
+  `cvbdIsDecsn` · `bdwtIsDecsn` · `pifricDecsn`, asked from 2015 so a correction of an old decision is found).
+  DART gives one row per decision, under the filing number of its newest version; an attachment-only correction keeps the
+  earlier number (corrections follow this DART record: Jack's yes 2026-11-19). A row is a decision whose filing number is in
+  the 90-day list. Results are cached in the DART cache
+  (`{filing number}|issue|v4`: decision row · older version · missing; v4 re-reads rows parsed before the same-class rule and the
+  missing-is-not-zero rule), also in a full-DART run, and dropped when the filing
+  leaves the window (keys of other versions are dropped too). At most 150 (company, kind) lookups a run (`ISSUE_PER_RUN`),
+  newest first; the rest wait for the next run and their newest filings show as `pend: true` with blank numbers meanwhile
+  (while a pair has such a filing, its filings the list marks "정" are left out, so an outdated number never shows as current).
+  A filing the lookup does not return although it should is asked again the next KST day. Share counts and amounts are read
+  only as whole numbers.
+- **Rights-issue numbers (Jack 2026-11-19, 7b: same class)** — `n` is the new common shares when the decision issues common
+  shares, else the new 기타주식 (`cls` says which: `common` · `other`); `p` is `n` ÷ the existing shares of that same class
+  (육일씨엔에쓰 2026-08-26: 2,305,918 ÷ 11,204,255 common = 20.58 %). With no existing shares of that class (DART's "-": a
+  first 기타주식 issue) `p` is null; a count field that is missing, blank or unreadable is never read as 0 — that ratio is null
+  too, and the log counts the two reasons apart ("비율 없음: 증자 전 기타주식이 없어 … · … 읽지 못해 …", also for `p2`). When a decision issues both classes, `n` · `p` are the common shares and `n2` · `p2` the 기타주식 (those two
+  keys only then). Every rights row has `cls` (null when unknown, withdrawn or pending).
+- **유무상증자 (`bonus: true`)** — the row is `kind: "rights"` with `bonus: true`; `n` · `p` · `how` describe the paid part
+  (`piic_` fields), the bonus part's numbers are not carried, and `bd` is DART's own board date (`fric_bddd`), window-checked
+  like any rights board date. A withdrawal is marked `wd` like a rights issue.
+- **Rights-issue board date (`bd`, Q18, Jack 2026-11-19)** — DART's 유상증자 lookup has no board-date field, so after
+  `fetch_issues` the run reads it from each rights filing's own document (`fill_issue_bd`, `document.xml`): only the zip's main
+  file `{filing number}.xml` (never an attachment), the table row "N. 이사회결의일(결정일)" in the filed form (a correction's
+  before/after table is skipped), whose value DART writes as `<TU AUNIT="DRC_DT" AUNITVALUE="YYYYMMDD">`; the cell must be one
+  whole, real date and the coded value must say the same day. Withdrawn (`wd`) and pending (`pend`) rows are not read.
+  - Cache: `{filing number}|issuebd|v2`, also in a full-DART run, dropped when the filing leaves the 90 days. It keeps the date
+    the document gives, or "unreadable" with the reason (no date in the form, or no main file in the zip). A filing is read
+    once ever; an unreadable-but-delivered document is not read again.
+  - Window: `fill_issue_bd` uses the date only when it is not more than `ISSUE_BD_MAX_YEARS` (1; Jack's yes, 11-19, 7d) before
+    the filing date. This is checked each time the cached date is used, so changing the limit needs no re-read. A date outside
+    it leaves `bd` null and is logged separately ("!! 결의일이 공시일보다 1년 넘게 앞이라 비운 유상증자 공시 …", 8–10 a run in
+    the 11-19 dry runs), apart from unreadable documents ("!! 결의일을 못 읽은 유상증자 공시 …"). These window blanks do not
+    count toward the gate's N; the gate only warns about blank board dates, every day they are there. A date after the filing
+    date is not handled here: it passes through and the shared step before writing (`own_check_disc`, below) blanks it and
+    counts it in `ownDrop.issueBd`.
+  - Retried next run (not cached): a failed or slow fetch, an empty zip, a main file that is empty or won't decode, a parser
+    crash, the per-run limit (100 documents, `ISSUE_BD_PER_RUN`, newest first) and the time limit (180 s,
+    `ISSUE_BD_SECONDS`). None of this stops the run or changes `issueOk`. On a day the list failed (`issueOk` false) nothing
+    is read and last run's rows keep their dates.
+  - Log: "유상증자 이사회 결의일(공시 원문 document.xml): 문서에서 읽음 a / 대상 b, 못 읽음 c, 기간 밖이라 비움 l, 다음 실행으로 d".
+- **Withdrawals (`wd: true`, kept: Jack's yes 2026-11-19)**: DART files a withdrawal as a `[기재정정]` whose number fields are all "-" (the list never marks
+  it "철" and the name has no "철회": 더코디 2026-11-05 "납입금미납으로 유상증자철회", 크라우드웍스 2026-08-21, 쏘닉스 CB 2026-11-10).
+  Such a row stays, marked `wd: true` with every number blank, so the cards can skip it; the original filing is an older version
+  and has no row. The run log names them ("!! 주요사항 공시 철회 …").
+- **DART stops in this phase** (daily limit 020, key errors): last run's rows stay with `issueOk` false and the run goes on
+  (no screen reads `issue` yet). The 지분공시 phase before it still stops the run, as before.
+- **insider `role`** — 임원 when the filing names a position or 등기/비등기임원, 주요주주 when it names only a major-holder
+  relation, 임원·주요주주 (exactly that text; Jack 2026-11-19, 7c) when it names both, else null. No screen reads `role` yet. DART's "-" means empty (it used to show as a position). Rows from earlier runs are fixed from the same
+  day's lookup of that company; a row the run could not look up again keeps `role` null. A major holder's position is DART's
+  own relation word (10%이상주주, 사실상지배주주; Jack's yes 2026-11-19); `fetch_data.INSIDER_POS_HOLDER_WORDS = False` blanks it
+  instead (one line). The run log counts the words ("주요주주 줄의 직위 …").
+- **US `ed` · `xd`** — from the Yahoo details the run already caches (3 days): `ed` only when Yahoo says the earnings date is not
+  an estimate and it is one day; `xd` is Yahoo's ex-dividend date (midnight UTC, read as that date). Either can be in the past.
+
+Gate rows (`validate_data.py` `check_v196b` and `check_issue_bd`), under **Jack's standing rule (2026-11-19 ~17:45 KST)**:
+"Standing rule for checks on our own processing: a single bad row is dropped or blanked with a loud warning and the rest
+publishes. Block only when many rows fail in one run (set the number from recent runs and show it in the PR) or when a value
+would show a wrong number."
+
+How it works for these four checks: the bad rows are picked by one function each in `validate_data.py` (`issue_bad_rows`,
+`issue_bd_bad_rows`, `insider_bad_rows`, `us_date_bad_rows`). The pipeline runs the same function just before writing the file
+(`fetch_data.own_check_disc` before disc.json, `own_us_dates` before data.json), drops the row or blanks the value, logs it
+("!! {check}: n건 빼고 발행 / 비움 — rows (reason)", or a "·" line with 0), and records it in that file's
+`ownDrop[key] = {"n": count, "rows": [[name, reason]] first 30}` (written on clean runs too, as 0). The gate reads the record
+and runs the same function on the file:
+- **FAIL** when this run dropped or blanked more than N rows (N = 5 for each check: the PR #145 table, 25 data-branch publishes
+  and 5 branch dry runs, all 0 → max(5, 3 × 0)), or when a bad value is still in the file and would show a wrong number (the
+  drop step failed).
+- **WARN** (naming the rows) when 1..N rows were dropped or blanked, or a remaining bad value shows no number.
+- **PASS** when 0. A file without the record (from before #PR) keeps the old rule of each row: a bad row fails. A file whose
+  `ownDrop` is not an object, or whose record has the wrong shape, also keeps the old rule, plus a warning (as #149 does).
+- The rule is about single rows. A whole section is never replaced: an `insider` that is not a list is left as it is and
+  logged with "!!", so the gate fails (an empty list would make the 공시 tab show "no reports" as live data). An `issue` that is
+  not a list is written as an empty list with `issueOk` false, the same as a day the list failed (the app shows its failed
+  state; the gate warns; no screen reads `issue` yet).
+
+| Row (key) | Bad row | Pipeline | Remaining value FAILs? |
+|---|---|---|---|
+| 주요사항 공시 (`disc.json` `issueShape`) | a malformed `issue` row (missing or wrong field, date outside the 90 days, method or share count on a bond, amount on a rights issue, non-positive number, a `wd` / `pend` / `cor` mark that is not true/false or a number on a `wd` / `pend` row, `cls` / `n2` / `p2` / `bonus` out of place), or a filing number that appears more than once (every copy) | drops the row (its numbers can't be trusted; no card is better than a wrong one) | yes for dates, numbers and the marks that change how numbers read (`d`, `bd`, `n`, `p`, `amt`, `n2`, `p2`, `kind`, `cls`, `bonus`, `wd`, `pend`); yes for a filing number that appears more than once (two rows could carry different numbers); no for filing number, ticker, name, method, correction mark. A non-boolean `issueOk` only warns (no screen reads `issue` yet) |
+| 유상증자 이사회 결의일 (`disc.json` `issueBd`) | a rights row (not `wd`, not `pend`) whose board date is after its filing date (bonds' DART board dates are not checked for this: a known gap, as before) | blanks `bd` (the rest of the row came from DART's lookup; only our reading of the date is wrong). `fill_issue_bd` now applies only the one-year window (Jack, 11-19, 7d) and leaves "after the filing date" to this check, so a run that misreads many dates is caught by N | yes (the date labels the decision's numbers) |
+| 임원 · 주요주주 역할 (`disc.json` `insiderRole`) | a `role` other than 임원, 주요주주, 임원·주요주주 or null; a row that is not an object | blanks `role` (the trade's numbers are right; the role is a title word) · drops a non-object row | yes for a non-object row (the old app reads fields of every row and throws on one that isn't an object: `src/disc.jsx` `x.s`, `src/corp.jsx` `x.t`; 2.0 reads its share count and amount); no for a bad role (no screen reads `role` yet). `insider` not a list still fails (left as it is, see above) |
+| 미국 일정 (`data.json` `usDates`) | an `ed` / `xd` that is not a real YYYY-MM-DD, or one on a stock that is not American | blanks that field only; the stock row stays (prices and dividends are right; dropping a stock would break other checks such as the v19.1i dividend proof lists) | no (event dates, not dates that label a number) |
+
+Other WARNs, unchanged: no `issue` section (a file from before #PR, e.g. the live site right after the merge), `issueOk` false
+(the list failed and last run's rows were kept), 0 rows, a row whose stock left today's list, a ratio (`p` or `p2`) above
+3,000 % (check the filing; STX's 1,855.66 % on 2026-10-14 is real), more than 10 % of rows without any number (normal on the
+first run after the merge), rights rows with a blank board date, insider rows without `role` or with "-" as the position, no US
+dates at all among more than 100 US stocks, a US date more than 400 days ahead. **SKIP** "유상증자 이사회 결의일" when there is
+no `issue` section.
+
+DART calls: the first run after the merge (no cached lookups) makes about 25 list calls, 150 lookups and up to 100 rights
+documents; the next run the remaining ~75 lookups and ~60–70 documents (about 160 rights rows in 90 days on 2026-11-16); then
+about 25 list calls, 10–20 lookups and 3–5 documents a run. A full-DART run with an empty cache adds up to about 275 calls
+(logged separately from the pinned estimate).
 
 ## US stocks added by hand (EXTRA_US)
 
@@ -928,17 +1329,26 @@ tickers missing from the day's list → reason (null on a day the list was not t
 all · `spErr` those whose processing stopped on an error (a different problem: not a sign of a dotted class) · `missing` stocks
 this rule added (`BF-B`) that are not in the day's list → reason · `read` whether the run left a ticker record.
 
-**Gate rows** (`check_us_share_class`, stricter only):
+**Gate rows** (`check_us_share_class`; added as stricter-only rows in #139, and since #149 a missing BF-B warns instead of failing):
 - "주식 종류 티커로 들어온 미국 종목 (BF-B): 목록에 있거나 빠진 이유" — #126's rule for the stocks this rule added
   (`US_CLASS_SET` = `fetch_data.US_CLASS_ADDED`): in the day's data, or named in `usListSym.missing` with the reason (S&P 500 list not
-  read, not in today's S&P 500 list, its list name blank or not matching, too little price history …). Named: warn. Missing with no
-  reason: the publish fails; the site checks (deploy, watchdog) only warn. A file without `usListSym` warns on a publish and is
+  read, not in today's S&P 500 list, its list name blank or not matching, too little price history …). **Since #149 (Jack, 2026-11-20:
+  "Brown-Forman B: no, it becomes a warning; one stock missing from a source never holds the publish.")** a missing BF-B only warns,
+  named with its reason, or "이유 없이 빠짐" when the run wrote none (before #149 that case failed the publish). The row fails the
+  publish in one case only: BF-B's row is in the list but has no price (0, blank, negative or not a number) and no reason — the app
+  would show it without a price, a wrong value (the same fail as before; the site checks only warn, as before). A published `BFB`
+  with another security's numbers is the next row's job and still fails. A file without `usListSym` warns on a publish and is
   skipped by the site checks.
 - "미국 목록 출처 티커 (주식 종류 · 점이 지워진 꼴)":
   - **Warns** when a joined form (`BRKB`, `BFB`) is still in that day's S&P 500 tickers (`spTickers`), published or not: the
     mapping row was lost or the rule broke. Yahoo has no such ticker, so that form normally drops for lack of a price; the "들어온 종목"
     row then gives BF-B's reason as "S&P 500 목록에 점이 지워진 꼴 BFB 로 있는데 BF-B 로 바뀌지 않음 (바꾸기 확인 필요)" — a mapping
     problem, not "S&P dropped Brown-Forman" — and `noPx` names `BFB` too. Fix the table (see the recipe below).
+  - **Since #149 (Jack's standing rule, section "Checks on our own processing" above):** the run drops the rows this row would fail
+    on (`us_class_bad_rows`: the joined form published from the S&P list, the same form when `spTickers` is malformed, the row of a
+    ticker mapped differently from the gate's table) and records them in `ownDrop.usClass`. With that record the row fails only when
+    more than 5 rows were dropped, such a row is still published, or any `mapped` row is malformed (the mapping can't be checked;
+    as strict as before); other record-shape problems and a mapping that differs from the table with no published row left only warn. The bullets below are the rule for files without `ownDrop`, and what "such a row" means.
   - **Fails** only if such a form is also a published ticker. Since Yahoo has no `BFB`/`BRKB`, in practice this catches one case:
     Yahoo answering the joined form with some other security, which would put the wrong company in the list. The same letters from
     another source (a real Nasdaq company that one day gets the ticker `BFB`) are only named, so a real ticker can never block every

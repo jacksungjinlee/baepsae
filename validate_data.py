@@ -10,6 +10,8 @@ fetch_data.py 가 만든 네 파일을 검사해요. 하나라도 FAIL 이면 ex
   python validate_data.py --prev-ref 7890e2b  # 직전 발행본 대신 특정 커밋과 비교 (시험용)
   python validate_data.py --bootstrap         # 직전 발행본을 읽을 수 없을 때 '한 번만' (수동 입력으로만)
   python validate_data.py --live --dir DIR    # 사이트에 올라간 파일 점검 (비교 없이 절대 기준만, v17.6 감시용)
+  BAEPSAE_DAUM_LIMIT_S=600 python validate_data.py --live --dir _site   # 배포 (deploy.yml) — 다음 확인 전체에 600초 한도 (Jack 2026-11-20 · 배포만)
+  python validate_data.py --live --daum-limit 600 --dir DIR             # 손으로 같은 한도 (600초 이상만 받아요)
 
 '최종본 날짜'는 fetch_data.py 를 쓰지 않고 이 파일의 코드로 따로 계산해요 (같은 실수를 같이 하지 않게).
 규칙: 오늘(KST) 이전, 시가총액 90% 이상, 마지막 커밋이 그날 KRX 정규장 마감 + 30분 이후 (보통 15:30 → 16:00 KST).
@@ -33,6 +35,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from zoneinfo import ZoneInfo
 
@@ -93,13 +96,39 @@ NEAR = 2.0               # 기준선에서 2점 안쪽이면 경고
 PX_SRC_LISTING = "listing"                # 1차 출처: 캐시의 최종본 목록 파일
 PX_SRC_FB = "daum+yahoo"                  # 2차 출처: 다음 일별 시세 × 야후 종가 (원 단위까지 같은 종목만)
 PX_SRCS = (PX_SRC_LISTING, PX_SRC_FB)
-PX_YAHOO_SUFFIX = {"KOSPI": ".KS", "KOSDAQ": ".KQ", "KOSDAQ GLOBAL": ".KQ"}   # 코넥스는 야후에 없어요
+# 코스피 · 코스닥의 다음 × 야후 짝에 쓰는 야후 접미어. 코넥스는 여기 없어요: 야후에는 {코드}.KQ 로 107종목 중 96종목이 있지만 (2026-11-19 조사)
+# 다음에는 코넥스가 없어서 다음 × 야후 짝이 될 수 없어요. 코넥스는 따로 야후 .KQ × 네이버 (PX_SRC_KNX · 아래).
+PX_YAHOO_SUFFIX = {"KOSPI": ".KS", "KOSDAQ": ".KQ", "KOSDAQ GLOBAL": ".KQ"}
+# 2026-11-20 (Jack, 2026-11-19 답 5 그대로): "Yes: Naver for KONEX only, always with Yahoo, published only when they agree to the won;
+# daily KONEX checking too." — 코넥스만: 2차 출처 날은 야후 .KQ 일봉 종가 × 네이버 일봉 종가가 원 단위까지 같은 종목만 (코넥스는 시간외 거래가
+# 없어 네이버 일봉 종가 = 공식 종가: 2026-09-15 ~ 11-16 최종본 27일 2,881 / 2,881). 1차 출처 날은 발행하는 코넥스 종목을 모두 네이버와 맞춰 봐요 (경고만).
+# 코스피 · 코스닥에는 네이버를 쓰지 않아요 (시간외 · 넥스트레이드 체결가라 공식 종가가 아니에요).
+PX_SRC_KNX = "yahoo+naver"                # 코넥스 2차 출처: 야후 .KQ 일봉 종가 × 네이버 일봉 종가 (원 단위까지 같은 종목만)
+PX_KNX_MARKET = "KONEX"                   # 목록 파일의 Market 값
+PX_KNX_YAHOO_SUFFIX = ".KQ"               # 야후의 코넥스 접미어 (야후는 코넥스를 KOSDAQ · MUTUALFUND 로 잘못 적지만 일봉은 맞아요)
 PX_CHECK_SAMPLE = 200                     # 관문(2차 출처 날) · 파이프라인(1차 출처 날)이 야후와 맞춰 보는 표본 수 (필수 종목은 따로 모두)
 PX_YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=1mo&interval=1d"
 PX_DAUM_DAYS = "https://finance.daum.net/api/quote/A{code}/days?symbolCode=A{code}&page=1&perPage=10&pagination=true"
 PX_META_WINDOW = dt.timedelta(minutes=10)   # 야후 regularMarketTime 은 그날 마감 ~ 마감 + 10분 안이어야 해요 (실제 15:30:01 ~ 15:30:30 · 수능일 16:30)
 PX_ALT_MIN_SHARE = 0.90                   # 관문이 야후에서 받은 표본 종가가 이 비율보다 적으면 '확인 못 함' (실패) — 받지 못한 채 통과시키지 않아요
 PX_ALT_TOL = 0.01                         # 두 종가 차이 (원) — 부동소수점 끝자리만큼. 같은 호가여야 해요
+# 2026-11-20 (Jack, 그대로): "Yes to 10 minutes, but a timeout skips the Daum spot-check with a loud warning; the deploy continues
+# on the other checks. An outside site must never block a code fix."
+# 사고: 11-20 09:03 KST 배포의 발행 관문(--live)이 19분 동안 한 줄도 남기지 않고 멈춰 있었어요 — 관문이 따로 묻는 다음 일별 시세(http_px_alt ·
+# 필수 7 + 표본 200, 동시 4)가 느렸던 것으로 보여요. 요청마다 시간 한도(20초 · 세 번)는 있었지만 확인 전체에는 없었어요 (작업 한도 80분만).
+# 배포의 관문만 (Jack 의 yes 는 배포만이에요): deploy.yml 의 관문 단계가 환경 변수 PX_ALT_LIMIT_ENV = 이 값을 줘요 (또는 손으로 --daum-limit 초).
+# 감시(watchdog.py)는 예전 그대로 한도 없이 불러요 — 감시는 관문이 실패할 때만 경보를 여는데, 경고로 바꾸면 느린 다음이 조용한 통과가 돼요
+# (멈추면 감시 job 의 30분 한도가 예전처럼 끝내요). 발행 관문(publish · bootstrap, 매일 실행)도 한도를 받지 않아요 — 발행을 거르는 검사를
+# 느슨하게 하는 일이라 Jack 의 yes 가 따로 필요해요. 이 값보다 짧은 한도는 받지 않아요 (더 자주 건너뛰어 느슨해져요 · _main).
+# 확인 전체에 600초 (fetch_data.KR_FB_PHASE_BUDGET_S 와 같은 꼴 · #151). 지나면 새 요청을 하지 않아요 (다시 묻기도) — 묻는 중인 요청은
+# 자기 시간 한도까지 (연결 20초 + 바이트 사이 20초 ≈ 40초 · DNS 찾기와 바이트를 아주 천천히 흘리는 서버는 이 한도 밖이에요 — 본 적은 없어요)
+# → 확인은 최악 약 600 + 40초 (약 10분 40초) 안에 끝나요. 일하는 스레드는 모두 끝난 뒤 돌아와요.
+# 걸리면 시간 한도(와 네트워크 오류)로 설명되는 모자람만 경고로 건너뛰어요 (px_alt_cut_gap · 리뷰 2026-11-20): 다음이 분명히 답하지 않은
+# 필수 종목(그날 행 없음 · HTTP 4xx · 종가 없음)이 있거나, 그런 종목만으로 표본 90% 를 못 채우면 예전 그대로 실패해요. 파일의 발행
+# 기록(pxSrc) 조건도 예전 그대로이고, 받은 종가가 발행 가격과 다르면 가격 줄이 실패해요 (005930 정확히 같음 · 99% 는 묻기로 한 종목 수 기준 —
+# 받지 못한 종목이 모두 맞았다고 쳐도 99% 에 못 미칠 때만 실패: 다 받았을 때도 반드시 실패하는 경우).
+PX_ALT_LIVE_BUDGET_S = 600
+PX_ALT_LIMIT_ENV = "BAEPSAE_DAUM_LIMIT_S"   # deploy.yml 관문 단계의 환경 변수 (그 단계에만 · 시험이 맞춰 봐요)
 IND_CARRY_WARN_DAYS = 14                  # 지난 발행본에서 이어 쓴 국내 업종 글자가 이보다 오래되면 경고 (fetch_data 와 같은 값)
 # 2026-11-19 (Jack: "new listings take their industry from DART's company records"): KRX-DESC 에도 지난 발행본에도 업종 글자가 없는 국내 종목은
 # DART 기업개황 업종 코드(KSIC)의 앞 3자리(소분류) 이름으로 채워요. 이름은 통계청 한국표준산업분류 11차 표에서만 (fetch_data 와 같은 파일 · 읽는 코드는 여기 하나)
@@ -324,8 +353,9 @@ US_EXTRA_SET = US_ETF_SET | {"BRK-B", "TSM", "ASML", "BABA", "NVO", "SHOP"} | US
 # 2026-11-15 (Jack: "fix Brown-Forman B …" · 더하기만): S&P 500 목록(FinanceDataReader)이 점을 지운 주식 종류 티커 → 야후 대시 꼴
 # (= fetch_data.US_CLASS_JOINED 의 바꾸기 · 따로 적어 테스트가 맞춰 봐요). 이 꼴은 야후에 없는 티커라 발행 목록에 있으면 안 돼요.
 US_CLASS_JOINED_SET = {"BRKB": "BRK-B", "BFB": "BF-B"}
-# 이 바꾸기로 새로 들어온 종목 (= fetch_data.US_CLASS_ADDED · BRK-B 는 EXTRA_US 로 이미 있었어요): 목록에 있거나 data.json
-# usListSym.missing 에 빠진 이유가 있어야 해요 (#126 의 EXTRA_US 줄과 같은 규칙 · check_us_share_class).
+# 이 바꾸기로 새로 들어온 종목 (= fetch_data.US_CLASS_ADDED · BRK-B 는 EXTRA_US 로 이미 있었어요): 목록에 없으면 이름과 data.json
+# usListSym.missing 의 빠진 이유를 적고 경고만 해요 (Jack 2026-11-20: "one stock missing from a source never holds the publish" ·
+# check_us_share_class ①). 실패는 그 종목의 행이 목록에 있는데 가격이 없고 빠진 이유도 없을 때뿐이에요 (틀린 값이 보여요).
 US_CLASS_SET = {"BF-B"}
 US_FOREIGN_SET = {"BTI", "ENB", "BCE", "TD", "RY", "SHEL", "BP", "UL", "TM", "SONY", "AZN", "HSBC", "SAP", "NVS", "RIO", "BHP", "TTE",
                   "DEO", "BUD", "SAN", "GSK"}                                                     # = fetch_data.US_FOREIGN (더한 외국 회사)
@@ -501,6 +531,24 @@ PROVE_SUB_LINE = {"rights": {"sh": 2}, "data": {"div": 3, "nototal": 4, "nostk":
 PROVE_SUB_KO = {"sh": "주주배정 (새 주식 상장됨)", "shnew": "주주배정 (새 주식이 아직 상장 전)", "unk": "방식을 모르는 결정만", "div": "총액 ÷ 주당 배당이 주식 수와 다름", "pref0": "우선주 배당 줄이 있는데 주식의 총수 현황에 우선주 수가 따로 없음",
                 "neg": "총액이 우선주 몫보다 작음", "nototal": "총액 없음", "prefmix": "주당 배당이 다른 종류주가 섞임", "nopfo": "우선주 주식 수 모름",
                 "nostk": "그해 말 주식의 총수 현황 없음", "noshr": "오늘 상장 주식 수 없음", "other": "이름을 붙이지 않은 배당 표 이유"}
+# ── Jack 의 상시 규칙 (2026-11-19 ~17:45 KST · 우리 처리를 보는 검사) ── Jack, verbatim: "Standing rule for checks on our own processing: a
+# single bad row is dropped or blanked with a loud warning and the rest publishes. Block only when many rows fail in one run (set the number
+# from recent runs and show it in the PR) or when a value would show a wrong number."
+# 나쁜 행을 고르는 함수는 이 파일에 하나씩 (us_class_bad_rows · div_line_bad_rows). 파이프라인(fetch_data.py)은 같은 함수를 메모리의 데이터에
+# 돌려 그 행을 빼거나(미국 행) 비우고(dvLine) 크게 남기며, data.json ownDrop[열쇠] = {"n": 수, "rows": [[열쇠, 이유]] 앞 OWN_DROP_SHOW 개} 에
+# 적어요. 관문: 실패는 둘뿐 — n 이 그 검사의 N 을 넘음 (한 실행에서 많은 행이 틀림) · 빼야 할 값이 파일에 남아 틀린 숫자나 틀린 이유 줄을
+# 보임 (빼는 단계가 고장). 1~N 이면 그 행 이름과 경고 · 0 이면 그대로. ownDrop 에 그 열쇠가 없는 파일 (이 규칙 전): 그 줄은 예전 규칙 그대로.
+# 소스가 보내는 것을 보는 검사 (신선도 · 덮는 비율 · 두 출처 · 필수 종목)는 그대로예요. #139 의 'BF-B 가 있거나 빠진 이유' 줄은 Jack 의 답
+# (2026-11-20, verbatim: "Brown-Forman B: no, it becomes a warning; one stock missing from a source never holds the publish.")으로 BF-B 가
+# 목록에 없으면 경고예요 (check_us_share_class ① · 실패는 목록에 있는 행에 가격이 없을 때뿐).
+# N = max(5, 3 × 최근 발행본에서 본 가장 큰 수): data 가지의 최근 발행 25회 (2026-11-06 ~ 11-19)를 같은 함수로 다시 돌린 표는 PR 에 있어요
+# (두 검사 모두 25회 내내 0건 → N = 5).
+OWN_DROP_SHOW = 30                 # 기록 · 로그 · 관문 값 칸에 이름을 적는 행 수
+US_CLASS_DROP_KEY = "usClass"      # #139: S&P 500 목록의 점이 지워진 꼴이 바뀌지 않고 실림 · 관문 표와 다르게 바꾼 티커 → 미국 행을 빼요
+US_CLASS_DROP_MAX = 5              # N (PR 의 표: 최근 발행 25회 모두 0)
+DIV_LINE_DROP_KEY = "divLine"      # #142: 기록(proofSub)과 맞지 않는 숨긴 배당수익률의 줄 (dvLine 2 · 3 · 4) → 그 종목의 줄을 비워요
+DIV_LINE_BLANK_MAX = 5             # N (PR 의 표: 최근 발행 25회 모두 0)
+DIV_LINE_OF = {v: k for k, m in PROVE_SUB_LINE.items() for v in m.values()}   # 줄 → 그 줄을 정하는 기록 (2 rights · 3 · 4 data)
 # v19.6a (새 줄만 · 늦추는 줄 없음 · docs/tasks/v19.6-records-alerts-dark.md Part I.1 · A.6): macro.json fxHist (원/달러 일별 환율 2016~)
 # 와 data.json splits (2016 년부터의 미국 주식 분할). 앱(v19.6a)은 새 미국 기록에 그 날짜의 환율을 저장하고(fxHist), 분할 전 기록을 새 주식
 # 수로 맞춰 읽어요(splits). 둘 다 사용자 기록에 영구히 남는 값이라 모양이 틀리면 실패. fxHist 가 없으면 경고 (앱이 지난 날짜의 미국 기록을
@@ -1020,38 +1068,148 @@ def _daum_day_close(code, d, get=None):
     return (float(v), "daum") if isinstance(v, (int, float)) and math.isfinite(v) and v > 0 else (None, "종가 없음")
 
 
-def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, special=None, mode="publish", fetch_daum=_daum_day_close):
+def px_alt_budget(mode, budget_s=None):
+    """관문 두 출처 확인 전체의 시간 한도 (초 · 2026-11-20 Jack) — 사이트 점검(live)에서 한도를 받았을 때만 (배포: _main 이 deploy.yml 의
+    PX_ALT_LIMIT_ENV 나 --daum-limit 에서 줘요). 한도를 받지 않으면 None — 감시(watchdog)는 예전 그대로 한도 없이. 발행(publish) · bootstrap 은
+    늘 None — 한도 없이 예전 그대로. 인자만 읽어요 (모듈 값은 읽지 않아요 · 순수 함수)."""
+    if mode != "live" or budget_s is None:
+        return None
+    return float(budget_s)
+
+
+def px_alt_secs(x):
+    """한도 초를 로그 · 표에 쓰는 꼴: 600 → '600' · 0.5 → '0.5' (1초 아래가 '0초'로 보이지 않게 · 순수 함수)."""
+    return f"{x:g}" if isinstance(x, (int, float)) else "?"
+
+
+def px_alt_was_cut(alt):
+    """관문 두 출처 확인이 사이트 점검(live)의 시간 한도에 걸렸는지 — 묻지 못한 종목이 하나라도 있으면 참. (순수 함수)"""
+    cut = alt.get("cut") if isinstance(alt, dict) else None
+    return isinstance(alt, dict) and alt.get("mode") == "live" and isinstance(cut, int) and not isinstance(cut, bool) and cut > 0
+
+
+def _count(v):
+    """기록의 종목 수 — 0 이상의 정수가 아니면 0 (모르면 설명해 주지 않는 쪽으로 · 순수 함수)."""
+    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else 0
+
+
+def px_alt_cut_gap(alt):
+    """시간 한도에 걸린 확인(live)에서 시간 한도 · 네트워크 오류로 설명할 수 없는 모자람 (2026-11-20 리뷰 · 순수 함수).
+    반환: (hard, reach) — hard: 받지 못한 필수 종목 가운데 시간 한도로 건너뛰지도, 네트워크 오류로 끝나지도 않은 종목 (다음이 분명히 답하지
+    않았어요: 그날 행 없음 · HTTP 4xx · 종가 없음 — 기록이 없는 종목도 여기에 넣어요) · reach: 받은 + 시간 한도로 건너뜀 + 네트워크 오류 종목 수
+    (= 모두 제때 답했다면 받을 수 있었던 가장 많은 수). hard 가 있거나 reach 가 표본 기준에 못 미치면 한도와 상관없이 실패예요."""
+    expl = set(alt.get("cutMust") or []) | set(alt.get("netMust") or [])
+    hard = [c for c in (alt.get("mustMissing") or []) if c not in expl]
+    return hard, _count(alt.get("got")) + _count(alt.get("cut")) + _count(alt.get("net"))
+
+
+def px_net_error(e):
+    """관문 두 출처 확인에서 난 예외가 네트워크 오류인지 (2026-11-20 리뷰 · 순수 함수). 네트워크 오류는 연결 · 시간 초과
+    (requests 의 ConnectionError · Timeout, 파이썬의 ConnectionError · TimeoutError) 와 HTTP 429 · 5xx 뿐이에요. 그 밖의 예외 — 200 인데
+    JSON 이 아니거나 모양이 다른 응답 (차단 · 확인 쪽), 다른 4xx 등 — 은 출처가 분명히 답하지 않은 것으로 세요 (시간 한도로 건너뛰지 않아요)."""
+    if isinstance(e, (requests.ConnectionError, requests.Timeout, ConnectionError, TimeoutError)):
+        return True
+    if isinstance(e, requests.HTTPError):
+        st = getattr(getattr(e, "response", None), "status_code", None)
+        if not isinstance(st, int):                  # 응답이 붙지 않은 HTTPError: 맨 앞의 세 자리 상태 코드로
+            m = re.match(r"\s*(\d{3})\b", str(e))
+            st = int(m.group(1)) if m else None
+        return isinstance(st, int) and (st == 429 or 500 <= st <= 599)
+    return False
+
+
+def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, special=None, mode="publish", fetch_daum=_daum_day_close,
+                budget_s=None, clock=time.monotonic, say=None):
     """관문이 따로 받은 두 출처 공식 종가 (2026-11-19 · 리뷰): 필수 종목 + 표본마다 다음 tradePrice 와 야후 종가(일봉 · 비면 마감 직후 meta).
     publish: 두 값이 원 단위까지 같아야 확인 (closes 에는 확인된 값 · 다른 종목은 발행 가격과 같아질 수 없는 값 — 가격 줄이 실패로 세요).
     live (배포 · 감시, 다음 날 아침에는 야후 그날 일봉이 비고 meta 가 새 날로 넘어가요): 다음 값 + data.json pxSrc 의 발행 때 다음 × 야후 확인 기록.
-    반환: {"date", "mode", "closes", "asked", "got", "meta", "disagree", "mustMissing", "err"}. 예외를 내지 않아요 — 못 받은 종목은 확인 못 함."""
+    2026-11-20 (Jack): budget_s 를 받은 live 만 (배포 · px_alt_budget) 확인 전체에 시간 한도 — 지나면 새 요청(다시 묻기도)을 하지 않고 크게
+    남겨요. 묻는 중인 요청은 자기 시간 한도까지 끝나고, 일하는 스레드는 모두 끝난 뒤 돌아와요. 한도가 있을 때는 필수 종목을 먼저 물어요.
+    시작할 때 한 줄 (종목 수 · 한도) 을 남겨요 (두 모드 모두 · 로그만).
+    반환: {"date", "mode", "closes", "asked", "got", "meta", "disagree", "mustMissing", "err", "cut", "cutMust", "limit", "secs",
+           "no", "noMust", "noEx", "net", "netMust"}
+    (cut: 시간 한도로 건너뛴 종목 수 — 묻지 않았거나 다시 묻지 못한 종목 · cutMust: 그중 필수 종목 · limit: 한도 초 또는 None · secs: 걸린 초 ·
+    다음 단계에서 (리뷰 2026-11-20 — 한도에 걸린 날 무엇을 건너뛸 수 있는지 가려요): no: 다음이 분명히 답하지 않은 종목 수 (그날 행 없음 · HTTP 4xx ·
+    종가 없음 · 마지막 오류가 네트워크 오류가 아님 — px_net_error: JSON 이 아닌 응답 등. 그런 답 뒤 다시 묻기 전에 한도가 지난 종목도) ·
+    noMust: 그중 필수 종목 · noEx: 보기 다섯 · net: 마지막 오류가 네트워크 오류(연결 · 시간 초과 · HTTP 429 · 5xx)로 세 번을 다 쓴 종목 수 ·
+    netMust: 그중 필수 종목 · cutErr / cutErrN: 네트워크 오류 뒤 다시 묻기 전에 한도가 지난 종목의 마지막 오류 (보기 다섯 · 수) — err 에도 남지만
+    err 은 처음 다섯만이라 따로 둬요).
+    예외를 내지 않아요 — 못 받은 종목은 확인 못 함."""
     from concurrent.futures import ThreadPoolExecutor
+    say = say or (lambda line: print(line, flush=True))
     pick = px_alt_pick(data)
     closes, errs, meta, dis, ok = {}, [], [], [], set()
+    no, net = {}, set()                          # 다음 단계: 분명히 답하지 않음 (코드 → 까닭) · 네트워크 오류 (세 번 모두)
     sp = (special or {}).get(px)
     close_time = sp[1] if sp else NORMAL_CLOSE
+    limit = px_alt_budget(mode, budget_s)
+    t0 = clock()
+    deadline = None if limit is None else t0 + limit
+    cut, lock = set(), threading.Lock()
+    order = sorted(pick.items())
+    if limit is not None:                        # 한도에 걸려도 필수 종목은 이미 물었게 (발행 관문은 한도가 없어 예전 순서 그대로)
+        order = [(c, pick[c]) for c in MUST if c in pick] + [x for x in order if x[0] not in MUST]
+    say(f"· 관문의 두 출처 확인 시작 ({px} · {'다음 일별 시세 + 발행 기록' if mode == 'live' else '다음 × 야후'}): {len(pick)}종목 · 동시 {workers} · "
+        + (f"시간 한도 {px_alt_secs(limit)}초 (배포 — 넘으면 새로 묻지 않고, 시간 한도로 못 받은 부분만 경고로 건너뛰어요)" if limit is not None
+           else ("시간 한도 없음" + (" (발행 관문 · 예전 그대로)" if mode != "live" else " (예전 그대로)"))))
 
-    def get(fn, *a, **k):
+    cut_errs = []                                # 네트워크 오류 뒤 다시 묻기 전에 한도가 지난 종목의 마지막 오류 (리뷰: err 다섯에 묻히지 않게)
+
+    def late():
+        """시간 한도가 지났는지."""
+        return deadline is not None and clock() >= deadline
+
+    def mark_cut(code):
+        """그 종목을 '시간 한도로 건너뜀'으로 적어요 (처음 한 번 크게 남겨요)."""
+        with lock:
+            first = not cut
+            cut.add(code)                        # 먼저 적고 (남기다 잘못돼도 건너뛴 종목은 세요) 처음 한 번 크게 남겨요
+            if first:
+                say(f"!! 관문의 두 출처 확인 시간 한도 {px_alt_secs(limit)}초: 다음 일별 시세를 더 묻지 않아요 (확인 {len(ok)} / 대상 {len(pick)}) — "
+                    "묻는 중인 요청은 자기 시간 한도(약 40초)까지 · 남은 종목은 건너뛰어요")
+
+    def get(fn, code, *a, **k):
+        """(값, 까닭, 어떻게): 어떻게 = 'ans' (출처가 답했어요 — 값이 None 이면 분명히 답하지 않음) · 'no' (마지막 오류가 네트워크 오류가
+        아니에요 — px_net_error · 분명히 답하지 않음) · 'net' (마지막 오류가 네트워크 오류로 세 번을 다 썼어요) · 'cut' (시간 한도).
+        다시 묻는 횟수와 쉬는 시간은 오류 종류와 상관없이 예전 그대로예요."""
+        last, last_net = None, True
         for i in range(3):
+            if late():
+                if last is not None:             # 오류 뒤 다시 묻기 전에 한도가 지났어요 — 왜 못 받았는지 (시간 초과 · 거절 · 차단 쪽) 남겨요
+                    note = f"{a[0]}: {last} (시간 한도로 다시 묻지 않음)"
+                    errs.append(note)
+                    if not last_net:             # 네트워크 오류가 아닌 답 (차단 쪽 · JSON 이 아님) 이었어요 — 시간 한도 탓이 아니에요
+                        return None, last, "no"
+                    cut_errs.append(note)
+                mark_cut(code)
+                return None, "시간 한도", "cut"
             try:
-                return fn(*a, **k)
+                r = fn(*a, **k)
             except Exception as e:
+                last, last_net = str(e)[:60], px_net_error(e)
                 if i == 2:
-                    errs.append(f"{a[0]}: {str(e)[:60]}")
-                else:
+                    errs.append(f"{a[0]}: {last}")
+                elif deadline is None or clock() < deadline:     # 한도가 지났으면 쉬지 않고 바로 건너뛰어요
                     sleep(i + 1)
-        return None, "실패"
+                continue
+            v, why = r
+            return v, why, "ans"
+        return None, last, ("net" if last_net else "no")
 
     def one(item):
         code, sym = item
-        dv, _ = get(fetch_daum, code, px)
+        dv, dwhy, dhow = get(fetch_daum, code, code, px)
+        if dhow == "net":
+            net.add(code)
         if dv is None or not math.isfinite(dv) or dv <= 0:
+            if dhow in ("ans", "no"):
+                no[code] = str(dwhy)[:40]
             return
         if mode == "live":
             closes[code] = dv
             ok.add(code)
             return
-        yv, how = get(fetch, sym, px, close_time=close_time)
+        yv, how, _ = get(fetch, code, sym, px, close_time=close_time)
         if yv is None or not math.isfinite(yv) or yv <= 0:
             return
         if abs(dv - yv) <= PX_ALT_TOL:
@@ -1063,19 +1221,26 @@ def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, s
             closes[code] = dv + 0.5                  # 두 출처가 다르면 어느 발행 가격과도 같지 않아요 (확인 못 함)
             dis.append(f"{code} 다음 {dv:,.0f} · 야후 {yv:,.2f}")
     try:
-        with ThreadPoolExecutor(max_workers=workers) as ex:
-            list(ex.map(one, sorted(pick.items())))
+        with ThreadPoolExecutor(max_workers=workers) as ex:     # with: 묻는 중인 요청이 끝날 때까지 기다려요 (남는 스레드 없음)
+            list(ex.map(one, order))
     except Exception as e:                       # 관문은 네트워크 때문에 멈추지 않아요 — 확인 못 함으로 실패해요
         errs.append(f"{type(e).__name__}: {str(e)[:80]}")
     return {"date": px, "mode": mode, "closes": closes, "asked": len(pick), "got": len(ok), "meta": len(meta), "disagree": sorted(dis),
-            "mustMissing": [c for c in MUST if c not in ok], "err": errs[:5]}
+            "mustMissing": [c for c in MUST if c not in ok], "err": errs[:5], "cut": len(cut), "cutMust": [c for c in MUST if c in cut],
+            "limit": limit, "secs": round(clock() - t0, 1),
+            "no": len(no), "noMust": [c for c in MUST if c in no], "noEx": [f"{c} {no[c]}" for c in ([c for c in MUST if c in no] + sorted(c for c in no if c not in MUST))[:5]],
+            "net": len(net), "netMust": [c for c in MUST if c in net], "cutErr": cut_errs[:5], "cutErrN": len(cut_errs)}
 
 
-def px_alt_confirms(data, alt, px, final, mode="publish", today=None, now=None, special=None):
+def px_alt_confirms(data, alt, px, final, mode="publish", today=None, now=None, special=None, cover=True):
     """2차 출처 날의 관문 기준을 쓸 수 있는지 (2026-11-19 · Jack 규칙 3 · 순수 함수). 반환: (쓸 수 있는지, 설명).
     모두 맞아야 해요: 캐시에 pxDate 의 최종본이 없음 (최종본이 있으면 예전 그대로 그것과 비교) · data.json pxSrc 가 2차 출처 · 그 날짜가 pxDate ·
     확인되지 않은 필수 종목 없음 · 2차 출처 확인 종목 수 ≥ 발행한 국내 종목 수 · 관문이 따로 받은 두 출처(http_px_alt — 발행은 다음 × 야후,
-    배포 · 감시는 다음 + 발행 기록)가 필수 종목을 모두, 표본을 PX_ALT_MIN_SHARE 넘게 확인 · pxDate 가 오늘(KST) 전이고 지금이 그날 마감 + 30분 뒤."""
+    배포 · 감시는 다음 + 발행 기록)가 필수 종목을 모두, 표본을 PX_ALT_MIN_SHARE 넘게 확인 · pxDate 가 오늘(KST) 전이고 지금이 그날 마감 + 30분 뒤.
+    cover=False (2026-11-20 Jack · 배포의 확인이 시간 한도에 걸렸을 때만 — px_alt_was_cut): 마지막 '받은 종목 수' 조건(필수 종목 모두 ·
+    표본 PX_ALT_MIN_SHARE)에서 시간 한도(와 네트워크 오류)로 설명되는 모자람만 건너뛰어요 (px_alt_cut_gap · 리뷰) — 다음이 분명히 답하지 않은
+    필수 종목이 있거나, 건너뜀 · 네트워크 오류 종목을 모두 받았다고 쳐도 표본 기준에 못 미치면 거짓이에요. 나머지 조건은 모두 그대로예요.
+    한도에 걸리지 않은 확인이나 발행 관문에는 참을 주지 않아요."""
     src = data.get("pxSrc")
     if alt is None:
         return False, "관문이 두 출처 종가를 받지 않았어요"
@@ -1104,12 +1269,32 @@ def px_alt_confirms(data, alt, px, final, mode="publish", today=None, now=None, 
     if alt.get("mode", "publish") != want:
         return False, f"관문 확인 방식 {alt.get('mode')} ≠ {want}"
     how = "다음 × 야후" if want == "publish" else "다음 + 발행 때 다음 × 야후 기록"
+    if not cover:
+        if want != "live" or not px_alt_was_cut(alt):
+            return False, "시간 한도로 건너뛸 수 있는 확인이 아니에요 (사이트 점검에서 한도에 걸린 확인만)"
+        asked, got, cut, net, nno = _count(alt.get("asked")), _count(alt.get("got")), alt["cut"], _count(alt.get("net")), _count(alt.get("no"))
+        ex = f" (보기: {'; '.join(map(str, alt['noEx'][:3]))})" if alt.get("noEx") else ""
+        # 2026-11-20 리뷰: 시간 한도(와 네트워크 오류)로 설명되는 모자람만 건너뛰어요 — 다음이 분명히 답하지 않은 몫은 한도와 상관없이 예전 그대로 실패
+        hard, reach = px_alt_cut_gap(alt)
+        if hard:
+            return False, (f"관문이 두 출처({how})로 필수 종목을 확인하지 못했어요: {', '.join(hard)} — 다음이 그날 종가를 주지 않았어요{ex} "
+                           "(시간 한도에 걸렸지만 이 종목들은 시간 한도 때문이 아니에요)")
+        if not asked or reach < PX_ALT_MIN_SHARE * asked:
+            return False, (f"관문이 두 출처({how})로 확인한 종가 {got} / {asked} — 시간 한도로 건너뜀 {cut} · 네트워크 오류 {net} 을 모두 받았다고 쳐도 "
+                           f"{reach} / {asked} (기준 {PX_ALT_MIN_SHARE:.0%}) · 다음이 그날 종가를 주지 않은 종목 {nno}{ex} (시간 한도 때문이 아니에요)")
+        nm = len(MUST) - len(alt.get("mustMissing") or [])
+        lim = alt.get("limit")
+        return True, (f"관문의 두 출처 확인({how})을 시간 한도{f' {px_alt_secs(lim)}초' if isinstance(lim, (int, float)) else ''}로 건너뜀 (Jack 2026-11-20) — "
+                      f"한도 전에 확인 {got} / {asked}종목 (시간 한도로 건너뜀 {cut} · 네트워크 오류 {net} · 다음이 그날 종가를 주지 않음 {nno}) · "
+                      f"필수 종목 {nm} / {len(MUST)} · 발행 때 2차 출처(다음 × 야후) 확인 {fb['conf']:,}종목 · 받은 종가는 가격 줄에서 비교")
     if alt.get("mustMissing"):
         return False, f"관문이 두 출처({how})로 필수 종목을 확인하지 못했어요: {', '.join(alt['mustMissing'])}" + (f" ({alt['err'][0]})" if alt.get("err") else "")
     asked, got = alt.get("asked") or 0, alt.get("got") or 0
     if not asked or got < PX_ALT_MIN_SHARE * asked:
         return False, f"관문이 두 출처({how})로 확인한 종가 {got} / {asked} (기준 {PX_ALT_MIN_SHARE:.0%})" + (f" ({alt['err'][0]})" if alt.get("err") else "")
-    return True, f"캐시 최종본 없음 · 관문이 따로 받은 공식 종가 ({how}) {got}/{asked}종목 · 2차 출처(다음 × 야후) 확인 {fb['conf']:,}종목"
+    kk = fb.get("knx") if isinstance(fb.get("knx"), dict) else None
+    return True, (f"캐시 최종본 없음 · 관문이 따로 받은 공식 종가 ({how}) {got}/{asked}종목 · 2차 출처 확인 {fb['conf']:,}종목 (다음 × 야후"
+                  + (f" + 코넥스 야후 × 네이버 {kk.get('kept', kk.get('conf'))}" if kk else "") + ")")
 
 
 def px_alt_closes(alt):
@@ -1121,38 +1306,197 @@ def px_alt_closes(alt):
 
 
 PX_CUT_KEYS = ("s", "daum", "yahoo", "fill")
+KNX_CUT_KEYS = ("s", "yahoo", "fill", "naver")      # 2026-11-20: 코넥스 2차 출처 단계 (pxSrc.fb.knx.cut)
+KNX_CHK_CUT_KEYS = ("s", "naver")                    # 2026-11-20: 1차 출처 날 코넥스 네이버 확인 (pxSrc.knx.chk.cut)
 
 
 def check_px_cut(rep, src):
     """2026-11-20 (새 줄 · 경고만): 파이프라인이 두 출처 종가를 묻다가 단계 시간 한도(fetch_data.KR_FB_PHASE_BUDGET_S)에 걸렸는지.
     pxSrc.fb.cut (2차 출처를 돌린 날 — 쓸 날을 찾지 못해 1차 출처 그대로인 날도 · 리뷰 N1) · pxSrc.chk.cut (1차 출처 날의 야후 확인):
     단계마다 시간 한도로 묻지 못한 종목 수. 2차 출처 날 걸린 종목은 확인 못 한 종목이라 그날 파일에서 빠져요 (필수 종목이 빠지면 다른 줄이
-    멈춰요) — 이 줄은 알리기만 해요. 기록이 하나도 없으면 (이 줄 전 발행본) 건너뛰어요."""
+    멈춰요) — 이 줄은 알리기만 해요. 기록이 하나도 없으면 (이 줄 전 발행본) 건너뛰어요.
+    2026-11-20 (더한 기록만 · 경고만): 코넥스 단계 pxSrc.fb.knx.cut (야후 .KQ · 다시 읽기 · 네이버) 와 1차 출처 날 코넥스 네이버 확인
+    pxSrc.knx.chk.cut 도 같은 줄에 적어요 (그 기록이 없으면 이 줄은 예전과 같아요)."""
     name = "가격 확인 시간 한도 (경고만)"
     if not isinstance(src, dict) or src.get("px") not in (PX_SRC_FB, PX_SRC_LISTING):
         return
     recs = []
     fb = src.get("fb")
+    fb_what = "2차 출처" + (" (쓸 날 없음 · 1차 출처 그대로)" if src.get("px") == PX_SRC_LISTING else "")
     if isinstance(fb, dict) and "cut" in fb:
-        recs.append(("2차 출처" + (" (쓸 날 없음 · 1차 출처 그대로)" if src.get("px") == PX_SRC_LISTING else ""), fb["cut"]))
+        recs.append((fb_what, fb["cut"], PX_CUT_KEYS))
     ck = src.get("chk")
     if src.get("px") == PX_SRC_LISTING and isinstance(ck, dict) and "cut" in ck:
-        recs.append(("1차 출처 야후 확인", ck["cut"]))
+        recs.append(("1차 출처 야후 확인", ck["cut"], PX_CUT_KEYS))
+    knx_recs = []
+    if isinstance(fb, dict) and isinstance(fb.get("knx"), dict) and "cut" in fb["knx"]:
+        knx_recs.append(("코넥스 " + fb_what, fb["knx"]["cut"], KNX_CUT_KEYS))
+    kk = src.get("knx")
+    kc = kk.get("chk") if isinstance(kk, dict) else None
+    if src.get("px") == PX_SRC_LISTING and isinstance(kc, dict) and "cut" in kc:
+        knx_recs.append(("1차 출처 코넥스 네이버 확인", kc["cut"], KNX_CHK_CUT_KEYS))
+    recs += knx_recs
     if not recs:
         rep.skip(name, "기록 없음 (시간 한도 전 발행본이거나 1차 출처 야후 확인을 못 한 날)")
         return
+    word = {"daum": "다음", "yahoo": "야후 일봉", "fill": "야후 다시 읽기", "naver": "네이버"}
     vals, rules, hit, odd = [], set(), 0, False
-    for what, cut in recs:
-        if not (isinstance(cut, dict) and all(isinstance(cut.get(k), int) and not isinstance(cut.get(k), bool) and cut[k] >= 0 for k in PX_CUT_KEYS)):
+    for what, cut, keys in recs:
+        if not (isinstance(cut, dict) and all(isinstance(cut.get(k), int) and not isinstance(cut.get(k), bool) and cut[k] >= 0 for k in keys)):
             vals.append(f"{what}: 기록 모양이 이상해요 {str(cut)[:60]}")
             odd = True
             continue
-        n = sum(cut[k] for k in ("daum", "yahoo", "fill"))
+        n = sum(cut[k] for k in keys if k != "s")
         hit += n
         rules.add(cut["s"])
-        vals.append(f"{what}: " + ("없음" if not n else f"묻지 못함 다음 {cut['daum']:,} · 야후 일봉 {cut['yahoo']:,} · 야후 다시 읽기 {cut['fill']:,}종목"))
-    rep.add(name, True, " / ".join(vals), "0 (단계마다 " + "·".join(f"{x}초" for x in sorted(rules)) + " · 2차 출처 날 묻지 못한 종목은 확인 못 해 빠져요 · "
-            "1차 출처 날은 야후 확인만 줄어요)" if rules else "s · daum · yahoo · fill 모두 0 이상의 정수", warn=bool(hit) or odd)
+        if keys is PX_CUT_KEYS:
+            vals.append(f"{what}: " + ("없음" if not n else f"묻지 못함 다음 {cut['daum']:,} · 야후 일봉 {cut['yahoo']:,} · 야후 다시 읽기 {cut['fill']:,}종목"))
+        else:
+            vals.append(f"{what}: " + ("없음" if not n else "묻지 못함 " + " · ".join(f"{word[k]} {cut[k]:,}" for k in keys if k != "s") + "종목"))
+    rule = ("0 (단계마다 " + "·".join(f"{x}초" for x in sorted(rules)) + " · 2차 출처 날 묻지 못한 종목은 확인 못 해 빠져요 · "
+            "1차 출처 날은 야후 확인만 줄어요)" if rules else "s · daum · yahoo · fill 모두 0 이상의 정수")
+    if knx_recs and rules:
+        rule = rule[:-1] + " · 코넥스도 같아요: 2차 출처 날은 빠지고 1차 출처 날은 네이버 확인만 줄어요)"
+    rep.add(name, True, " / ".join(vals), rule, warn=bool(hit) or odd)
+
+
+KNX_ROW = "코넥스 종가 두 출처 (경고만)"
+KNX_FB_KEYS = ("n", "conf", "kept", "capOut", "noNaver", "bad", "noYahoo", "diff")
+# 2차 출처 날 코넥스 줄이 경고하는 때 (리뷰 S1 · 2026-11-20 · 경고만):
+# - 야후에 없는 코넥스는 11-10 ~ 11-19 여덟 날 모두 같은 11종목이었어요 (496320 본시스템즈 · 0203K0 송우인포텍 …). 새로 상장해 야후가 아직 싣지 않은
+#   종목이 몇 개 더해질 수 있어 15 까지는 평소로 봐요. 그보다 많으면 야후가 그날 코넥스 종가를 비워 둔 거예요 (마감 뒤 몇 시간 · 코넥스는 meta 로 채울 수 없어요).
+KNX_NOYAHOO_WARN = 15
+# - 두 종가가 다른 코넥스는 하루 3 ~ 9종목이었어요 (같은 여덟 날 · 모두 거래 없는 날 KRX 가 기준가를 옮겨 야후가 마지막 체결가로 남은 종목).
+#   평소의 다름은 값 칸에 늘 보이고 경고하지 않아요 (매일 켜지는 경고는 아무도 보지 않아요). 20 을 넘으면 한 출처가 바뀐 것이라 경고해요.
+KNX_DIFF_WARN = 20
+# 2026-11-20 (검증 리뷰 M1 · 더한 기록만 · 경고만): 기준일 맞춰 보기 — 두 출처는 같았지만 네이버의 기준일(1차 출처 최종본 날짜) 종가가 최종본 공식
+# 종가와 달라 (adj · 그 뒤 값이 수정됐을 수 있어요) 또는 맞춰 볼 수 없어 (noAnchor) 넣지 않은 코넥스. 이 기록 전 파일에는 없어요 (없으면 0 으로 읽어요).
+KNX_FB_ANCHOR_KEYS = ("adj", "noAnchor")
+_KNX_TAIL = re.compile(r"(?:^| · )KONEX 상장(?: · |$)")
+
+
+def knx_published(data):
+    """발행한 코넥스 종목 코드 (설명 dk 의 'KONEX 상장' 으로 · fetch_data.kr_desc_text 가 만드는 글). (순수 함수)"""
+    return sorted(s.get("t") for s in kr_stocks(data) if s.get("t") and _KNX_TAIL.search(str(s.get("dk") or "")))
+
+
+def _nonneg_ints(d, keys):
+    return isinstance(d, dict) and all(isinstance(d.get(k), int) and not isinstance(d.get(k), bool) and d[k] >= 0 for k in keys)
+
+
+def check_px_knx(rep, data, src):
+    """2026-11-20 (새 줄 · 경고만 · Jack, 2026-11-19 답 5: "Naver for KONEX only, always with Yahoo, published only when they agree to the won;
+    daily KONEX checking too."): 코넥스 종가의 출처와 확인 (data.json pxSrc.knx · pxSrc.fb.knx).
+    - 2차 출처 날 (px daum+yahoo · knx.px yahoo+naver): 야후 .KQ × 네이버 일봉 종가가 원 단위까지 같고 시가총액이 평소 날 발행 기준 (1차 출처 최종본
+      MAX_KR 번째) 이상인 코넥스만 그날 파일에 있어요. 경고 (리뷰 S1): 네이버 행이 없는 종목이 있음 · 야후 없음이 KNX_NOYAHOO_WARN 보다 많음 ·
+      확인이 절반 아래 · 값을 못 믿은 종목 · 다름이 KNX_DIFF_WARN 보다 많음 · 시가총액 기준을 모름. 평소의 다름 (거래 없는 날 기준가 · 하루 3 ~ 9) 은
+      값 칸에 보이고 그것만으로는 경고하지 않아요. 빠진 종목은 그날 파일에 없어요.
+      검증 리뷰 (2026-11-20 · 더한 경고만): 기준일 맞춰 보기로 넣지 않은 코넥스 (adj · noAnchor) 가 있으면 · 시가총액 기준(floor)이 숫자가 아니면 경고.
+    - 1차 출처 날 (px listing): 발행한 코넥스의 최종본 종가를 모두 네이버와 맞춘 결과 (knx.chk). 다르거나 · 네이버 값이 없거나 · 시간 한도 ·
+      받지 못함이면 경고 (가격은 최종본 그대로 · 빼지 않아요 — 발행을 멈추는 조건은 Jack 의 답이 있어야 해요).
+    - 기록의 모양이 이상하거나 발행한 코넥스 (dk 'KONEX 상장') 와 knx.t 가 다르면 경고. pxSrc.knx 가 없으면 (이 줄 전 발행본) 건너뛰어요.
+    이 줄은 발행을 멈추지 않아요."""
+    if not isinstance(src, dict) or src.get("px") not in PX_SRCS:
+        return
+    k = src.get("knx")
+    if k is None:
+        rep.skip(KNX_ROW, "pxSrc.knx 없음 (2026-11-20 전 발행본)")
+        return
+    pub = knx_published(data)
+    odd = []
+    if not isinstance(k, dict):
+        rep.add(KNX_ROW, True, f"기록 모양이 이상해요 {str(k)[:60]}", "pxSrc.knx {px · t · n · chk}", warn=True)
+        return
+    t = k.get("t") if isinstance(k.get("t"), list) else None
+    if t is None:
+        odd.append("t 모양")
+    elif sorted(map(str, t)) != pub:
+        odd.append(f"발행한 코넥스 {len(pub):,} · 기록 {len(t):,}")
+    n = k.get("n")
+    if not isinstance(n, dict) or not all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in n.values()) \
+            or (t is not None and sum(n.values()) != len(t)):
+        odd.append("n 모양")
+    warn = False
+    if src.get("px") == PX_SRC_FB:
+        fbk = (src.get("fb") or {}).get("knx") if isinstance(src.get("fb"), dict) else None
+        if k.get("px") == PX_SRC_KNX:
+            if not _nonneg_ints(fbk, KNX_FB_KEYS):
+                odd.append("fb.knx 모양")
+                fbk = {}
+            elif t is not None and len(t) > fbk["kept"]:
+                odd.append(f"발행 {len(t):,} > 그날 파일에 넣은 코넥스 {fbk['kept']:,}")
+            dex = fbk.get("diffEx", [])
+            if not isinstance(dex, list):
+                odd.append("diffEx 모양")
+                dex = []
+            anc = {x: fbk[x] for x in KNX_FB_ANCHOR_KEYS if x in fbk}
+            if anc and not _nonneg_ints(anc, tuple(anc)):
+                odd.append("adj · noAnchor 모양")
+                anc = {}
+            aex = fbk.get("adjEx", [])
+            if not isinstance(aex, list):
+                odd.append("adjEx 모양")
+                aex = []
+            fl = fbk.get("floor")
+            fl_ok = isinstance(fl, (int, float)) and not isinstance(fl, bool) and math.isfinite(fl) and fl > 0
+            if fl is not None and not fl_ok:
+                odd.append(f"floor 모양 {str(fl)[:20]}")      # 검증 리뷰: 숫자가 아닌 기준은 '기준 모름' 으로만 보이지 않고 경고해요
+            left = sum(fbk.get(x) or 0 for x in ("noNaver", "bad", "noYahoo", "diff")) + sum(anc.values())
+            val = (f"2차 출처 날 · 야후 .KQ × 네이버: 확인 {fbk.get('conf', '?')} / {fbk.get('n', '?')} · 빠짐 {left:,} (네이버 행 없음 {fbk.get('noNaver', '?')}"
+                   f" · 값 못 믿음 {fbk.get('bad', '?')} · 야후 없음 {fbk.get('noYahoo', '?')} · 다름 {fbk.get('diff', '?')}"
+                   + (f" · 기준일 {fbk['anchor'] if isinstance(fbk.get('anchor'), str) and fbk['anchor'] else '모름'} 종가 다름 {anc.get('adj', 0)}"
+                      f" · 기준일 맞춰 보지 못함 {anc.get('noAnchor', 0)}" if anc else "")
+                   + f") · 그날 파일에 {fbk.get('kept', '?')}"
+                   f" (시가총액 기준 아래 {fbk.get('capOut', '?')}"
+                   + (f" · 기준 {fl / 1e8:,.0f}억원" if fl_ok else " · 기준 모름") + f") · 발행 {len(t or []):,}"
+                   + (f" 예: {'; '.join(map(str, dex[:3]))}" if dex else "")
+                   + (f" · 기준일 종가 다름 예: {'; '.join(map(str, aex[:3]))}" if aex else ""))
+            n_ = fbk.get("n") or 0
+            why = ([f"네이버 행 없음 {fbk['noNaver']}"] if fbk.get("noNaver") else []) \
+                + ([f"야후 없음 {fbk['noYahoo']} > {KNX_NOYAHOO_WARN}"] if (fbk.get("noYahoo") or 0) > KNX_NOYAHOO_WARN else []) \
+                + (["확인이 절반 아래"] if n_ and (fbk.get("conf") or 0) < n_ / 2 else []) \
+                + ([f"값 못 믿음 {fbk['bad']}"] if fbk.get("bad") else []) \
+                + ([f"다름 {fbk['diff']} > {KNX_DIFF_WARN}"] if (fbk.get("diff") or 0) > KNX_DIFF_WARN else []) \
+                + (["시가총액 기준 모름"] if fbk and fl is None else []) \
+                + ([f"기준일 종가 다름 {anc['adj']}"] if anc.get("adj") else []) \
+                + ([f"기준일 맞춰 보지 못함 {anc['noAnchor']}"] if anc.get("noAnchor") else [])
+            if why:
+                val += f" — 경고: {', '.join(why)}"
+            warn = bool(why)
+        elif k.get("px") is None:
+            val = "2차 출처 날 · 코넥스 단계를 묻지 않았어요 (그날 파일에 코넥스 없음)"
+            warn = True
+            if pub:
+                odd.append(f"출처 없이 발행한 코넥스 {len(pub):,}")
+        else:
+            val = f"2차 출처 날인데 코넥스 출처가 {k.get('px')!r}"
+            odd.append("px")
+    else:
+        ck = k.get("chk")
+        if k.get("px") != PX_SRC_LISTING:
+            odd.append(f"px {k.get('px')!r}")
+        if not isinstance(ck, dict):
+            val = "1차 출처 날 · 네이버 확인 기록 없음"
+            warn = bool(pub)
+        else:
+            if not _nonneg_ints(ck, ("n", "same", "none")):
+                odd.append("chk 모양")
+            diff = ck.get("diff", [])
+            nex = ck.get("noneEx", [])
+            if not isinstance(diff, list) or not isinstance(nex, list):
+                odd.append("diff · noneEx 모양")
+                diff, nex = (diff if isinstance(diff, list) else []), (nex if isinstance(nex, list) else [])
+            cut = (ck.get("cut") or {}).get("naver") if isinstance(ck.get("cut"), dict) else 0
+            val = (f"1차 출처 날 · 네이버 확인: 같음 {ck.get('same', '?')} / {ck.get('n', '?')} · 네이버 값 없음 {ck.get('none', '?')}"
+                   + (f" ({'; '.join(map(str, nex[:3]))})" if nex else "")
+                   + (f" · 다름 {len(diff)}: {'; '.join(map(str, diff[:5]))}" if diff else "")
+                   + (f" · 받지 못함 {ck['fail']}" if ck.get("fail") else "") + (f" · 시간 한도로 묻지 못함 {cut}" if cut else "")
+                   + (f" · {ck['err']}" if ck.get("err") else "") + f" · 발행 {len(t or []):,}")
+            warn = bool(diff or ck.get("none") or cut or ck.get("err") or ck.get("fail") or (pub and not ck.get("n")))
+    if odd:
+        val += f" (이상: {', '.join(odd)})"
+    rep.add(KNX_ROW, True, val, "다름 0 (2차 출처 날: 야후 .KQ × 네이버가 원 단위까지 같은 코넥스만 · 1차 출처 날: 발행한 코넥스를 모두 네이버와 맞춰 봐요 "
+            "· 경고만)", warn=warn or bool(odd))
 
 
 def check_px_src(rep, data, today, mode="publish"):
@@ -1197,6 +1541,7 @@ def check_px_src(rep, data, today, mode="publish"):
                 rep.add("1차 출처 야후 확인 (경고만)", True,
                         f"같음 {ck.get('same', 0)} / {ck.get('n', 0)}" + (f" · 다름 {len(diff)}: {'; '.join(map(str, diff[:3]))}" if diff else "")
                         + (f" · {ck['err']}" if ck.get("err") else ""), "다름 0", warn=bool(diff) or not (ck.get("n") or 0))
+    check_px_knx(rep, data, src)        # 2026-11-20: 코넥스 종가 두 출처 (경고만)
     check_px_cut(rep, src)
     ind = data.get("indSrc")
     if not isinstance(ind, dict):
@@ -1477,11 +1822,25 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     # 2026-11-19 (Jack 규칙 3): 캐시에 pxDate 의 최종본이 있으면 예전 그대로 그것이 기준이에요. 없으면 관문이 야후에서 따로 받은 공식 종가와
     # data.json pxSrc 의 2차 출처 확인 (px_alt_confirms) — 둘 다 안 되면 예전처럼 실패해요.
     use_alt, alt_how = (False, None) if alt is None else px_alt_confirms(data, alt, px, final, mode, today=today, now=now, special=special)
+    # 2026-11-20 (Jack: "a timeout skips the Daum spot-check with a loud warning; the deploy continues on the other checks"): 배포의 관문(live ·
+    # 한도를 받았을 때만)의 확인이 시간 한도에 걸려 받은 종목 수가 모자라면, 시간 한도(와 네트워크 오류)로 설명되는 몫만 건너뛰고 경고해요 —
+    # 다음이 분명히 답하지 않은 필수 종목이 있거나 그런 종목만으로 표본 기준에 못 미치면 예전 그대로 실패 (px_alt_cut_gap · 리뷰). 다른 조건(발행
+    # 기록 · 날짜 · 마감 뒤)은 그대로 보고, 받은 종가는 아래 가격 줄에서 비교해요 (다르면 실패). 발행 관문(publish)은 예전 그대로.
+    skip_alt = False
+    if alt is not None and not use_alt and mode == "live" and px_alt_was_cut(alt):
+        skip_alt, alt_how = px_alt_confirms(data, alt, px, final, mode, today=today, now=now, special=special, cover=False)
     if alt is not None:
-        notes.append(f"2차 출처 관문 기준 (야후): {'씀' if use_alt else '쓰지 않음'} — {alt_how}")
+        notes.append(f"2차 출처 관문 기준 (야후): {'씀' if use_alt else ('시간 한도로 확인을 건너뜀 (경고)' if skip_alt else '쓰지 않음')} — {alt_how}")
     if use_alt:
-        rep.add("pxDate 최종본 여부" if mode == "live" else "pxDate = 최종본 날짜", True, px, f"{px} ({alt_how})")
+        cutn = px_alt_was_cut(alt)               # 한도에 걸렸지만 그 전에 예전 기준을 채운 확인 — 통과 그대로, 한도에 걸린 것은 경고로 알려요
+        rep.add("pxDate 최종본 여부" if mode == "live" else "pxDate = 최종본 날짜", True, px,
+                f"{px} ({alt_how}" + (f" · 시간 한도로 건너뜀 {alt['cut']}종목 (Jack 2026-11-20)" if cutn else "") + ")", warn=cutn)
         final = {"date": px, "closes": px_alt_closes(alt), "how": alt_how}
+        if cutn:                                 # 리뷰 2: 이 길도 일부만 받았어요 — 가격 줄은 아래 '한도에 걸린 날' 기준 (묻기로 한 종목 수로 나눠요)
+            final.update(cut=True, asked=alt.get("asked"))
+    elif skip_alt:
+        rep.add("pxDate 최종본 여부", True, px, f"{px} ({alt_how})", warn=True)
+        final = {"date": px, "closes": px_alt_closes(alt), "how": alt_how, "cut": True, "asked": alt.get("asked")}
     elif final is None:
         rep.add("최종본 날짜 계산", False, "실패", "최근 10일 안 최종본" + (f" (2차 출처: {alt_how})" if alt is not None else ""))
     elif mode == "live":
@@ -1552,14 +1911,35 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     kr = kr_stocks(data)
     if final is not None:
         cl = final["closes"]
+        part = bool(final.get("cut"))            # 2026-11-20: 배포의 두 출처 확인이 시간 한도에 걸린 날 — 받은 종가만 비교해요
         inl = [s for s in kr if s.get("t") in cl]
         same = sum(1 for s in inl if num(s.get("price")) is not None and round(num(s["price"])) == cl[s["t"]])
         share = 100.0 * same / len(inl) if inl else 0.0
-        rep.pct("한국 가격 = 공식 종가", share, PRICE_MATCH)
+        if not part:
+            rep.pct("한국 가격 = 공식 종가", share, PRICE_MATCH)
+        elif inl:
+            # 2026-11-20 리뷰: 같은 99% 를 묻기로 한 종목 수(asked)로 나눠요 — 받은 종목에서 본 다른 종가 수만 빼고, 받지 못한 종목은 맞았다고 쳐요.
+            # 그래서 여기서 실패하면 다 받았을 때도 반드시 실패해요 (받은 종목만으로 나누면 60종목 중 1개가 98.3% 로 실패 — 다 받은 날보다 엄했어요).
+            # asked 를 읽을 수 없으면 받은 종목 수로 (더 엄한 쪽).
+            asked = final.get("asked")
+            n = asked if isinstance(asked, int) and not isinstance(asked, bool) and asked >= len(inl) else len(inl)
+            bad = len(inl) - same
+            share = 100.0 * (n - bad) / n
+            shown = f"{share:.1f}%"
+            if share < PRICE_MATCH and shown == f"{PRICE_MATCH:.1f}%":     # 실패인데 반올림으로 기준과 같아 보이면 한 자리 더 (내림)
+                shown = f"{math.floor(share * 100) / 100:.2f}%"
+            rep.add("한국 가격 = 공식 종가", share >= PRICE_MATCH, shown,
+                    f"≥ {PRICE_MATCH}% (시간 한도: 받은 {len(inl)}종목만 비교 · 다름 {bad} · 비율은 묻기로 한 {n}종목 기준 · 나머지는 건너뜀)", warn=True)
+        else:
+            rep.add("한국 가격 = 공식 종가", True, "비교 못 함", f"≥ {PRICE_MATCH}% (시간 한도: 받은 종가 없음 · 건너뜀)", warn=True)
         s5 = next((s for s in kr if s.get("t") == "005930"), None)
         want = cl.get("005930")
-        rep.add("005930 = 공식 종가", bool(s5) and want is not None and round(num(s5.get("price")) or -1) == want,
-                f"{num((s5 or {}).get('price')):,.0f}" if s5 and num(s5.get("price")) else "없음", f"{want:,}" if want else "?")
+        if part and want is None:
+            rep.add("005930 = 공식 종가", True, f"{num((s5 or {}).get('price')):,.0f}" if s5 and num(s5.get("price")) else "없음",
+                    "? (시간 한도: 다음 값을 받지 못해 건너뜀)", warn=True)
+        else:
+            rep.add("005930 = 공식 종가", bool(s5) and want is not None and round(num(s5.get("price")) or -1) == want,
+                    f"{num((s5 or {}).get('price')):,.0f}" if s5 and num(s5.get("price")) else "없음", f"{want:,}" if want else "?")
 
     # 미국 신선도
     us = us_stocks(data)
@@ -1670,7 +2050,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
         check_stmt_marks(rep, comps, prev)      # 경고가 많은 날에도 알림 10개 안에 들도록 앞쪽에 (외국 기업 줄 바로 다음)
     check_v191b(rep, data, kr, us, by, comps, pdata, today)
     check_v191h(rep, data, kr, by, comps, pdata, today)
-    check_v191i(rep, data, kr, by, comps, pdata, today)   # Jack 2026-11-14 (item 5): 되살린 배당수익률 = 배당 총액 ÷ 시가총액
+    check_v191i(rep, data, kr, by, comps, pdata, today, mode)   # Jack 2026-11-14 (item 5): 되살린 배당수익률 = 배당 총액 ÷ 시가총액
     check_v191c(rep, cur, us, mode, today)
     check_v191f(rep, data, corp, kr, by, comps, pdata)
     check_eps_line_left(rep, corp, comps)   # 2026-11-14 (Jack Q3 · 리뷰 S4): 다시 읽은 뒤에도 날짜가 지난 '고치는 중' 줄이 남을 회사 (경고)
@@ -1679,6 +2059,8 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_kr_series(rep, data, kr, pdata)  # 2026-11-14 (Jack: "52주 숫자부터"): 다른 기준의 공식 종가 고정 (실패) · 제한폭 넘는 움직임 (경고)
     check_px_bad(rep, data, comps, pdata)  # 2026-11-14 (Jack, Q2 (a)): 그 움직임이 있는 종목은 52주 · 출렁임 · 위험 숫자를 비워요 (실패) · 필수 종목 추세 · 저변동 순위 (실패)
     check_kr_no_trade(rep, data, pdata)    # 2026-11-14 (Jack, design chat 2026-11-08): 거래 없는 종목은 d1 빈 칸 + noTrade · 빈 d1 은 이유 (실패: 우리 값끼리 어긋날 때만)
+    check_v196b(rep, data, disc, by, today)   # v19.6b (Part B.1): 주요사항 공시 · 내부자 역할 · 미국 일정 (모양 · 칸이 없는 예전 파일은 경고만)
+    check_issue_bd(rep, disc)                 # v19.6b Q18 (Jack 2026-11-19): 유상증자 이사회 결의일 (공시일 뒤면 실패 · 빈 줄은 경고)
 
     # 경고만
     rep.add("공시 목록 조회", True, "성공" if disc.get("listOk") else "실패", "실패면 경고", warn=not disc.get("listOk"))
@@ -2154,6 +2536,494 @@ def check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=None):
                    + [f"새 줄 정수 아닌 배율 {x}" for x in odd] + [f"지난 날짜로 새로 {x}" for x in old_new])
 
 
+# ── v19.6b (Part B.1 · 오늘 볼 것 데이터): disc.json issue · insider role · data.json 미국 ed · xd — 새 줄 셋 (v19.6 스펙 'Test changes',
+#    Jack 의 yes). 파이프라인(fetch_data.fetch_issues · insider_pos_role · us_event_dates)과 따로 적어요. 칸이 아예 없는 파일(v19.6b 전 —
+#    머지 직후의 배포 · 감시 --live 가 보는 사이트 파일)은 경고만, 모양이 틀린 값은 실패, 빈 issue 목록은 경고만 (발행을 막지 않아요).
+#    어떤 JSON 값이 와도 검사가 멈추지 않아요 (멈추면 관문이 발행을 막아요): 예상하지 못한 오류는 그 줄의 실패로 적어요 (표는 그대로 나와요).
+ISSUE_KINDS = ("rights", "cb", "bw")
+ISSUE_HOW = ("holders", "others")
+ISSUE_KEYS = ("rc", "d", "t", "nk", "kind", "bd", "how", "n", "p", "amt", "cor")
+ISSUE_CLS = ("common", "other")   # Jack 2026-11-19 (7b): 유상증자 n · p 의 주식 종류 (보통주 · 기타주식 — 같은 종류끼리 비율)
+ISSUE_DAYS = 90             # fetch_data.DISC_DAYS — 공시일 d 는 disc.json asOf 를 포함한 90일 안
+ISSUE_P_WARN = 3000.0       # % — 새 주식이 증자 전 주식 수의 30배를 넘는 줄은 이름과 함께 경고 (2026-11-15 가장 큰 값: STX 유상증자 1,855.66%)
+ISSUE_BLANK_WARN = 10.0     # % — 숫자가 하나도 없는 줄(n · p · amt 모두 빈 칸)이 이보다 많으면 경고 (상세를 다 읽지 못한 날 · 첫 실행은 약 28%,
+#                             다 읽은 날 2026-11-16 은 13 / 295 = 4.4% — DART 상세 API 가 '-' 만 주는 정정 공시)
+INSIDER_ROLES = ("임원", "주요주주", "임원·주요주주")   # Jack 2026-11-19 (7c): 임원이면서 주요주주 → '임원·주요주주' (글자 그대로)
+POS_DASHES = ("-", "－", "—", "–", "‐")
+US_DATE_FAR_DAYS = 400      # 실적 발표일 · 배당락일이 발행일보다 이만큼 넘게 뒤면 이름과 함께 경고 (야후 값이 틀렸을 수 있어요)
+US_DATE_MIN_US = 100        # 미국 종목이 이만큼 넘는데 실적 발표일이나 배당락일이 하나도 없으면 경고 (야후 칸 이름이 바뀐 날)
+ISSUE_NUM_KEYS = ("d", "kind", "bd", "n", "p", "amt")   # 없으면 틀린 숫자를 보일 수 있는 칸 (_issue_row_bad 의 wrong)
+
+# ── Jack 의 상시 규칙 (2026-11-19 ~17:45 KST, 그대로): "Standing rule for checks on our own processing: a single bad row is dropped or
+#    blanked with a loud warning and the rest publishes. Block only when many rows fail in one run (set the number from recent runs and show
+#    it in the PR) or when a value would show a wrong number." — #145 의 네 검사 (issue 모양 · insider role · 미국 ed · xd · 유상증자 bd).
+#    나쁜 행은 아래 함수가 골라요 (파이프라인과 관문이 같은 함수 · 한 곳). 파이프라인은 쓰기 바로 앞에서 그 행을 빼거나 값을 비우고, 크게 남기고,
+#    그 파일의 ownDrop[열쇠] = {"n", "rows" 앞 30} 에 적어요 (깨끗한 실행도 0). 관문: n 이 N 을 넘거나 틀린 숫자를 보일 값이 남으면 실패 ·
+#    1~N 또는 숫자를 보이지 않는 값이 남으면 경고 · 0 이면 통과. 기록이 없는 예전 파일은 예전 규칙 그대로 (--live · 감시).
+#    N 은 최근 실행에서 (PR #145 의 표: data 브랜치 발행 25번 + 이 브랜치 시험 실행 5번 — 모두 0) max(5, 3 × 가장 큰 수) = 5.
+OWN_ROWS_SHOW = 30                 # 기록 · 로그 · 관문 값 칸에 이름을 적는 행 수
+ISSUE_SHAPE_KEY = "issueShape"     # disc.json ownDrop: 모양이 틀린 issue 줄 (뺐어요)
+ISSUE_BD_KEY = "issueBd"           # disc.json ownDrop: 공시일 뒤의 유상증자 결의일 (bd 를 비웠어요)
+INSIDER_ROLE_KEY = "insiderRole"   # disc.json ownDrop: 허용하지 않은 insider role (비웠어요) · 객체가 아닌 insider 줄 (뺐어요)
+US_DATE_KEY = "usDates"            # data.json ownDrop: 틀린 미국 ed · xd (비웠어요)
+ISSUE_SHAPE_MAX = 5                # PR #145 표 (최근 실행 0) — max(5, 3 × 0)
+ISSUE_BD_MAX = 5                   # PR #145 표 (최근 실행 0)
+INSIDER_ROLE_MAX = 5               # PR #145 표 (최근 실행 0)
+US_DATE_MAX = 5                    # PR #145 표 (최근 실행 0)
+
+
+def _ymd8(x):
+    """'YYYYMMDD' 로 적힌 진짜 날짜면 date, 아니면 None (어떤 값이 와도 예외 없음 · 아라비아 숫자 0-9 만)."""
+    if not isinstance(x, str) or not re.fullmatch(r"[0-9]{8}", x):
+        return None
+    try:
+        return dt.date(int(x[:4]), int(x[4:6]), int(x[6:8]))
+    except ValueError:
+        return None
+
+
+def _short(x, n=16):
+    """값을 표에 적을 짧은 글 (어떤 값이든)."""
+    try:
+        s = json.dumps(x, ensure_ascii=False)
+    except (TypeError, ValueError):
+        s = repr(x)
+    return s if len(s) <= n else s[:n] + "…"
+
+
+def _issue_row_bad(r, base):
+    """disc.json issue 한 줄의 모양 문제 [(글, 틀린 숫자를 보일 수 있는지)] — 비면 괜찮아요. base = 목록의 날짜 (disc.json asOf).
+    어떤 JSON 값이 와도 예외 없이 답해요. 둘째 값(wrong)은 Jack 의 상시 규칙(2026-11-19)의 '틀린 숫자를 보일 값' — 날짜(d · bd) · 숫자(n · p ·
+    amt · n2 · p2) · 숫자를 읽는 법을 바꾸는 표시(kind · cls · bonus · wd · pend)의 문제예요. 접수번호 · 종목 · 이름 · 방식(how) · 정정 표시(cor)의
+    문제는 숫자를 보이지 않아요 (틀린 링크 · 글자 · 빈 카드)."""
+    if not isinstance(r, dict):
+        return [(f"줄이 객체가 아님 {_short(r)}", False)]
+    p = []
+    miss = [k for k in ISSUE_KEYS if k not in r]
+    if miss:
+        p.append(("칸 없음 " + ",".join(miss), any(k in ISSUE_NUM_KEYS for k in miss)))
+    if not _rc_ok(r.get("rc"), base):
+        p.append((f"rc {_short(r.get('rc'))}", False))
+    d = _ymd8(r.get("d"))
+    if d is None:
+        p.append((f"d {_short(r.get('d'))}", True))
+    elif d > base or (base - d).days >= ISSUE_DAYS:
+        p.append((f"d {r['d']} 가 {ISSUE_DAYS}일 기간 밖 (asOf {base})", True))
+    for k in ("t", "nk"):
+        if not (isinstance(r.get(k), str) and r[k].strip()):
+            p.append((f"{k} {_short(r.get(k))}", False))
+    kind = r.get("kind")
+    if not (isinstance(kind, str) and kind in ISSUE_KINDS):
+        p.append((f"kind {_short(kind)}", True))
+    rights = kind == "rights"
+    if r.get("bd") is not None and _ymd8(r.get("bd")) is None:
+        p.append((f"bd {_short(r.get('bd'))}", True))
+    how = r.get("how")
+    if how is not None and not (rights and isinstance(how, str) and how in ISSUE_HOW):
+        p.append((f"how {_short(how)}" + ("" if rights else " (유상증자만)"), False))
+    n = r.get("n")
+    if n is not None and not (rights and _posint(n)):
+        p.append((f"n {_short(n)}" + ("" if rights else " (유상증자만)"), True))
+    pv = json_num(r.get("p"))
+    if r.get("p") is not None and (pv is None or pv <= 0):
+        p.append((f"p {_short(r.get('p'))}", True))
+    amt = json_num(r.get("amt"))
+    if r.get("amt") is not None and (rights or amt is None or amt <= 0):
+        p.append((f"amt {_short(r.get('amt'))}" + (" (사채만)" if rights else ""), True))
+    if not isinstance(r.get("cor"), bool):
+        p.append((f"cor {_short(r.get('cor'))}", False))
+    # 리뷰 2026-11-16: wd (철회 — 숫자 칸이 모두 '-' 인 정정) · pend (상세를 아직 못 읽음) 는 있을 때만, 참/거짓이고 그 줄의 숫자는 비어 있어요
+    for k in ("wd", "pend"):
+        if k in r and not isinstance(r[k], bool):
+            p.append((f"{k} {_short(r[k])}", True))
+    if r.get("wd") is True and r.get("pend") is True:
+        p.append(("wd 와 pend 가 함께 참", True))
+    for k in ("wd", "pend"):
+        if r.get(k) is True:
+            full = [f for f in ("bd", "how", "n", "p", "amt", "cls", "n2", "p2") if r.get(f) is not None]
+            if full:
+                p.append((f"{k} 인데 {','.join(full)} 이 있어요", True))
+    # Jack 2026-11-19 (7a · 7b): 유상증자 줄의 cls (n · p 의 주식 종류) · n2 · p2 (보통주와 함께 낸 기타주식) · bonus (유무상증자) — 새 검사
+    if "cls" in r and not (rights and (r["cls"] is None or (isinstance(r["cls"], str) and r["cls"] in ISSUE_CLS))):
+        p.append((f"cls {_short(r['cls'])}" + ("" if rights else " (유상증자만)"), True))
+    if rights and r.get("n") is not None and not isinstance(r.get("cls"), str):
+        p.append(("n 이 있는데 cls 가 없어요", True))
+    if "n2" in r or "p2" in r:
+        if not (rights and r.get("cls") == "common" and _posint(r.get("n2"))):
+            p.append((f"n2 {_short(r.get('n2'))} (보통주 줄의 기타주식 수만)", True))
+        pv2 = json_num(r.get("p2"))
+        if r.get("p2") is not None and (pv2 is None or pv2 <= 0):
+            p.append((f"p2 {_short(r.get('p2'))}", True))
+    if "bonus" in r and not (rights and r["bonus"] is True):
+        p.append((f"bonus {_short(r['bonus'])}" + ("" if rights else " (유상증자만)"), True))
+    return p
+
+
+def issue_row_problems(r, base):
+    """disc.json issue 한 줄의 모양 문제 (글) 목록 — 비면 괜찮아요 (_issue_row_bad 의 글만). 어떤 JSON 값이 와도 예외 없이 답해요."""
+    return [t for t, _w in _issue_row_bad(r, base)]
+
+
+def _own_key(r, i):
+    """나쁜 행의 이름: 접수번호(글자)면 그것, 아니면 '#순번'."""
+    return r["rc"] if isinstance(r, dict) and isinstance(r.get("rc"), str) and r["rc"].strip() else f"#{i}"
+
+
+def issue_bad_rows(rows, base):
+    """Jack 의 상시 규칙 (2026-11-19) · 주요사항 공시 (issue) 줄 모양: 뺄 줄 [(순번, 이름, 이유, 틀린 숫자를 보일 수 있는지, None)].
+    파이프라인(fetch_data.own_check_disc — 줄을 빼요)과 관문(_check_issue)이 같은 함수를 써요. 모양이 틀린 줄 + 같은 접수번호가 여러 번 나온
+    줄(모두 — 어느 쪽이 맞는지 몰라요). (순수 함수 · 어떤 JSON 값에도 예외 없음)"""
+    out, ok = [], []
+    for i, r in enumerate(rows if isinstance(rows, list) else []):
+        pr = _issue_row_bad(r, base)
+        if pr:
+            out.append((i, _own_key(r, i), "; ".join(t for t, _w in pr), any(w for _t, w in pr), None))
+        else:
+            ok.append((i, r))
+    seen = collections.Counter(r["rc"] for _i, r in ok)
+    # 리뷰 2차 (2026-11-19): 같은 접수번호의 두 줄은 n · p 가 다를 수 있어요 — B.2 카드가 issue 를 읽으면 틀린 숫자예요 (wrong)
+    out += [(i, r["rc"], f"같은 접수번호가 {seen[r['rc']]}번", True, None) for i, r in ok if seen[r["rc"]] > 1]
+    return sorted(out)
+
+
+def issue_bd_bad_rows(rows):
+    """Jack 의 상시 규칙 · 유상증자 이사회 결의일: 비울 bd [(순번, 접수번호, 이유, True, "bd")] — 철회 · 읽는 중이 아닌 유상증자 줄의 결의일이 공시일
+    뒤 (공시는 결의 뒤에 내요 — 원문 · 상세를 우리가 잘못 읽은 것). 파이프라인(bd 를 비워요)과 관문(check_issue_bd)이 같은 함수를 써요.
+    결의일은 그 결정의 숫자에 붙는 날짜라 남으면 틀린 숫자를 보일 값이에요. (순수 함수)"""
+    out = []
+    for i, r in enumerate(rows if isinstance(rows, list) else []):
+        if not (isinstance(r, dict) and r.get("kind") == "rights" and r.get("wd") is not True and r.get("pend") is not True):
+            continue
+        b, d = _ymd8(r.get("bd")), _ymd8(r.get("d"))
+        if b is not None and d is not None and b > d:
+            out.append((i, _own_key(r, i), f"bd {r['bd']} > d {r['d']}", True, "bd"))
+    return out
+
+
+def insider_bad_rows(rows):
+    """Jack 의 상시 규칙 · 임원 · 주요주주 역할: [(순번, 이름, 이유, 틀린 숫자를 보일 수 있는지, 비울 칸 · 줄째 빼면 None)].
+    객체가 아닌 줄은 빼요 — 남으면 실패 (wrong): 예전 뱁새가 줄마다 칸을 읽다가 멈춰요 (src/disc.jsx 업종 칸 x.s · src/corp.jsx 종목 칸 x.t —
+    null 줄에서 오류 · 화면이 깨져요) · 2.0 공시 탭도 그 줄의 주식 수 · 금액을 읽어요. 허용하지 않은 role 은 비워요 (role 은 글자 — 숫자가
+    아니에요 · 아직 어느 화면도 읽지 않아요). 파이프라인(fetch_data.own_check_disc)과 관문(_check_roles)이 같은 함수를 써요. (순수 함수)"""
+    out = []
+    for i, r in enumerate(rows if isinstance(rows, list) else []):
+        if not isinstance(r, dict):
+            out.append((i, f"#{i}", f"객체가 아닌 줄 {_short(r)}", True, None))
+        elif "role" in r and r["role"] is not None and not (isinstance(r["role"], str) and r["role"] in INSIDER_ROLES):
+            out.append((i, _own_key(r, i), f"role {_short(r['role'])}", False, "role"))
+    return out
+
+
+def us_date_bad_rows(stocks):
+    """Jack 의 상시 규칙 · 미국 일정 (ed · xd): 비울 값 [(순번, '티커 칸', 이유, False, 칸)] — 미국 종목이 아닌데 있는 날짜 · YYYY-MM-DD 진짜
+    날짜가 아닌 값. 종목 행은 그대로 두고 그 칸만 비워요 (가격 · 배당 숫자는 맞아요 · 행을 빼면 다른 검사(v19.1i 배당 증명 목록)가 깨져요).
+    실적 발표일 · 배당락일은 일정의 날짜라 숫자에 붙는 날짜가 아니에요 (남아도 틀린 숫자는 아니에요). 파이프라인(fetch_data.own_us_dates)과
+    관문(_check_us_dates)이 같은 함수를 써요. (순수 함수)"""
+    out = []
+    for i, s in enumerate(stocks if isinstance(stocks, list) else []):
+        if not isinstance(s, dict):
+            continue
+        for k in ("ed", "xd"):
+            v = s.get(k)
+            if v is None or v == "":
+                continue                       # 빈 칸 (모름)
+            t = s.get("t") if isinstance(s.get("t"), str) else _short(s.get("t"))
+            if s.get("cls") != "us":
+                out.append((i, f"{t} {k}", f"{_short(v)} (미국 종목이 아님)", False, k))
+            elif _iso_day(v) is None:
+                out.append((i, f"{t} {k}", f"{_short(v)} (YYYY-MM-DD 날짜가 아님)", False, k))
+    return out
+
+
+def own_rows_rec(rows):
+    """나쁜 행 [(순번, 이름, 이유, …)] → 발행 파일의 ownDrop[열쇠] 값 {"n": 수, "rows": [[이름, 이유]] 앞 OWN_ROWS_SHOW 개}. (순수 함수)
+    모양은 #149 (claude/own-check-rule) 의 data.json ownDrop (own_drop_rec · own_drop_text · own_drop_get) 과 같아요. 지금은 도우미가 두 벌이에요
+    (own_rows_* · #149 의 own_drop_*) — 둘 다 들어오면 하나로 합쳐요 (기록 모양 · 읽는 규칙은 같아요)."""
+    return {"n": len(rows), "rows": [[str(r[1]), str(r[2])] for r in rows[:OWN_ROWS_SHOW]]}
+
+
+def own_rows_text(rows, n=None):
+    """[[이름, 이유]] 또는 [(순번, 이름, 이유, …)] → '이름 (이유) · …' 앞 OWN_ROWS_SHOW 개 (+ ' 외 N건')."""
+    pick = [(r[0], r[1]) if len(r) == 2 else (r[1], r[2]) for r in rows[:OWN_ROWS_SHOW]]
+    n = len(rows) if n is None else n
+    return " · ".join(f"{a} ({b})" for a, b in pick) + (f" 외 {n - OWN_ROWS_SHOW}건" if n > OWN_ROWS_SHOW else "")
+
+
+def own_rows_get(doc, key):
+    """발행 파일의 ownDrop[key] → ("none", None) 기록이 없음 (예전 파일 — 예전 규칙) · ("bad", 글) 기록의 모양이 틀림 (예전 규칙 + 경고) ·
+    ("ok", (n, rows)). 어떤 JSON 값이 와도 예외 없음."""
+    if not isinstance(doc, dict) or "ownDrop" not in doc:
+        return "none", None
+    own = doc["ownDrop"]
+    if not isinstance(own, dict):          # 리뷰 2차: 칸은 있는데 객체가 아님 — 조용히 넘기지 않고 예전 규칙 + 경고 (#149 의 own_drop_get 과 같아요)
+        return "bad", f"ownDrop 이 객체가 아님 {_short(own, 40)}"
+    if key not in own:
+        return "none", None
+    rec = own[key]
+    n, rows = (rec.get("n"), rec.get("rows")) if isinstance(rec, dict) else (None, None)
+    if not (isinstance(rec, dict) and set(rec) == {"n", "rows"} and isinstance(n, int) and not isinstance(n, bool) and n >= 0 and isinstance(rows, list)
+            and len(rows) == min(n, OWN_ROWS_SHOW)
+            and all(isinstance(x, list) and len(x) == 2 and all(isinstance(v, str) for v in x) for x in rows)):
+        return "bad", f"ownDrop.{key} 기록 모양이 틀림 {_short(rec, 40)}"
+    return "ok", (n, rows)
+
+
+def own_verdict(state, rec, remaining, mx, what):
+    """Jack 의 상시 규칙의 판정 (새 파일만): → (실패 글 목록, 경고 글 목록). 실패 = 이번 실행에 빼거나 비운 행이 mx 를 넘음 · 빼야 할 값이 남았고
+    틀린 숫자를 보일 수 있음. 경고 = 1~mx 행을 빼거나 비움 · 남은 값이 숫자를 보이지 않음. what = '뺀 줄' · '비운 값' 같은 말."""
+    fails, warns = [], []
+    if state != "ok":
+        return fails, warns
+    n, rows = rec
+    if n > mx:
+        fails.append(f"이번 실행에 {what} {n:,}개 — {mx}개를 넘어요 (한 번에 많은 행이 틀림 · {own_rows_text(rows, n)[:120]})")
+    elif n:
+        warns.append(f"파이프라인이 {what} {n:,}개 ({own_rows_text(rows, n)[:150]})")
+    wrong = [r for r in remaining if r[3]]
+    rest = [r for r in remaining if not r[3]]
+    if wrong:
+        fails.append(f"빼거나 비워야 할 값이 남았어요 {len(wrong):,}개 — 틀린 숫자를 보일 수 있어요 ({wrong[0][1]} {wrong[0][2]})"[:200])
+    if rest:
+        warns.append(f"빼거나 비워야 할 값이 남았어요 {len(rest):,}개 — 숫자를 보이지 않아요 ({rest[0][1]} {rest[0][2]})"[:200])
+    return fails, warns
+
+
+def _check_issue(rep, disc, by, base):
+    name = "주요사항 공시 (issue · 유상증자 · CB · BW)"
+    th = (f"줄마다 {'·'.join(ISSUE_KEYS)} · rc 접수번호 · d YYYYMMDD 가 asOf 까지 {ISSUE_DAYS}일 안 · kind {'|'.join(ISSUE_KINDS)} · bd 빈 칸 "
+          f"또는 YYYYMMDD · how 빈 칸 또는 {'|'.join(ISSUE_HOW)} (유상증자만) · n 양의 정수 (유상증자만) · p 양수 · amt 양수 (사채만) · cor 참/거짓 · "
+          f"접수번호 한 번 · issueOk 참/거짓 · wd · pend 는 있으면 참/거짓이고 그 줄의 숫자는 빈 칸 · 유상증자의 cls 는 {'|'.join(ISSUE_CLS)}|null "
+          f"(n 이 있으면 꼭) · n2 · p2 는 보통주 줄만 · bonus 는 유상증자에 true 만 (실패) — 칸이 없음(v19.6b 전 파일) · "
+          f"issueOk false · 0건 · 오늘 국내 목록 밖 종목 · p · p2 > {ISSUE_P_WARN:,.0f}% · 숫자 없는 줄(철회 빼고) > {ISSUE_BLANK_WARN:g}% 는 경고 · "
+          f"새 파일(ownDrop.{ISSUE_SHAPE_KEY} 있음 · Jack 의 상시 규칙 2026-11-19): 파이프라인이 뺀 줄이 {ISSUE_SHAPE_MAX}개를 넘거나 틀린 숫자를 "
+          "보일 줄이 남으면 실패, 그 밖의 모양 문제 · 목록 · issueOk 모양은 경고")
+    if "issue" not in disc:
+        rep.add(name, True, "없음 — v19.6b 전 파일이에요 (DART 를 쓴 실행은 늘 써요)", th, warn=True)
+        return
+    state, rec = own_rows_get(disc, ISSUE_SHAPE_KEY)
+    new = state == "ok"
+    rows, flag = disc.get("issue"), disc.get("issueOk")
+    probs, warns = [], []
+    if state == "bad":
+        warns.append(f"{rec} — 예전 규칙으로 봐요")
+    if not isinstance(rows, list):
+        (warns if new else probs).append(f"목록이 아님 {_short(rows)}")       # 새 파일: 숫자를 보이지 않아요 (아직 어느 화면도 issue 를 읽지 않아요)
+        rows = []
+    if not isinstance(flag, bool):
+        (warns if new else probs).append(f"issueOk {_short(flag)}")
+    elif not flag:
+        warns.append("목록을 받지 못해 지난 발행본의 줄을 그대로 뒀어요 (issueOk false — 앱은 늦음 · 실패 줄)")
+    if new:                                # Jack 의 상시 규칙: 같은 함수(issue_bad_rows)로 남은 줄을 봐요
+        left = issue_bad_rows(rows, base)
+        drop = {x[0] for x in left}
+        good = [r for i, r in enumerate(rows) if i not in drop]
+        f2, w2 = own_verdict(state, rec, left, ISSUE_SHAPE_MAX, "뺀 줄")
+        probs += f2
+        warns += w2
+        if rec[1]:
+            rep.detail("주요사항 공시 (issue) 파이프라인이 뺀 줄", [f"{a} ({b})" for a, b in rec[1]])
+        if left:
+            rep.detail("주요사항 공시 (issue) 남은 모양 문제", [f"{x[1]} {x[2]}" + (" (틀린 숫자)" if x[3] else "") for x in left[:50]])
+    else:                                  # 예전 파일 (기록 없음): 예전 규칙 그대로
+        bad, good = [], []
+        for r in rows:
+            pr = issue_row_problems(r, base)
+            if pr:
+                bad.append(f"{_short(r.get('rc')) if isinstance(r, dict) else '?'} {'; '.join(pr)}")
+            else:
+                good.append(r)
+        if bad:
+            probs.append(f"모양이 틀린 줄 {len(bad):,}개 ({bad[0][:120]})")
+            rep.detail("주요사항 공시 (issue) 모양이 틀린 줄", bad[:50])
+        seen = collections.Counter(r["rc"] for r in good)
+        dup = sorted(rc for rc, c in seen.items() if c > 1)
+        if dup:
+            probs.append(f"같은 접수번호 {len(dup)}개 ({', '.join(dup[:3])})")
+    gone = sorted({r["t"] for r in good if (by.get(r["t"]) or {}).get("cls") != "kr"})
+    if gone:
+        warns.append(f"오늘 국내 목록에 없는 종목 {len(gone)}곳 ({', '.join(gone[:5])})")
+    # 리뷰 2026-11-19: 보통주와 함께 낸 기타주식의 비율(p2)도 같은 경고 (더하기만)
+    big = [f"{r['nk']} " + " · ".join(f"{r[k]:,.2f}%" + (" (p2)" if k == "p2" else "") for k in ("p", "p2")
+                                      if r.get(k) is not None and r[k] > ISSUE_P_WARN)
+           for r in good if any(r.get(k) is not None and r[k] > ISSUE_P_WARN for k in ("p", "p2"))]
+    if big:
+        warns.append(f"p 가 {ISSUE_P_WARN:,.0f}% 넘는 줄 {len(big)}개 ({', '.join(big[:3])} — 공시를 확인해요)")
+    live = [r for r in good if r.get("wd") is not True]               # 철회 줄은 숫자가 없는 게 맞아요
+    blank = sum(1 for r in live if r.get("n") is None and r.get("p") is None and r.get("amt") is None)
+    if live and 100.0 * blank / len(live) > ISSUE_BLANK_WARN:
+        warns.append(f"숫자가 하나도 없는 줄 {blank:,} / {len(live):,} ({100.0 * blank / len(live):.1f}% — 상세를 다 읽지 못했어요 · 앱은 '숫자를 못 "
+                     "읽은' 줄)")
+    if not rows and flag is True:
+        warns.append("0건 — 90일 동안 한 건도 없는 건 드물어요 (발행은 막지 않아요 · 목록 읽기를 확인해요)")
+    kinds = collections.Counter(r["kind"] for r in good)
+    val = (" · ".join(f"{ko} {kinds[k]:,}" for k, ko in zip(ISSUE_KINDS, ("유상증자", "CB", "BW"))) + f" (정정 {sum(1 for r in good if r['cor']):,} · 철회 {len(good) - len(live):,} · 읽는 중 "
+           f"{sum(1 for r in good if r.get('pend') is True):,} · 숫자 없는 줄 {blank:,})"
+           + (f" · 유무상증자 {sum(1 for r in good if r.get('bonus') is True):,}" if any(r.get("bonus") is True for r in good) else "")
+           + (f" · 기타주식 줄 {sum(1 for r in good if r.get('cls') == 'other'):,}" if any(r.get("cls") == "other" for r in good) else "")
+           + (" · " + " · ".join(probs) if probs else "") + (" · " + " · ".join(warns) if warns else ""))
+    rep.add(name, not probs, val[:300], th, warn=bool(warns))
+
+
+def _check_roles(rep, disc):
+    name = "임원 · 주요주주 역할 (insider role)"
+    th = (f"role 은 {' | '.join(INSIDER_ROLES)} | null (실패) — role 칸이 없는 줄(v19.6b 전) · 직위(pos)가 '-' 인 줄은 경고 "
+          f"(DART 의 '-' 는 빈 칸이에요) · 새 파일(ownDrop.{INSIDER_ROLE_KEY} 있음 · Jack 의 상시 규칙 2026-11-19): 파이프라인이 빼거나 비운 줄이 "
+          f"{INSIDER_ROLE_MAX}개를 넘거나 객체가 아닌 줄이 남으면 실패 (예전 뱁새가 그 줄의 칸을 읽다가 멈춰요 — disc.jsx x.s · corp.jsx x.t), 남은 "
+          "틀린 role 은 경고 · insider 가 목록이 아니면 실패 (칸 전체 — 공시 탭이 '보고 없음'을 지금 데이터처럼 보이면 안 돼요)")
+    ins = disc.get("insider")
+    if not isinstance(ins, list):
+        rep.add(name, False, f"insider 가 목록이 아님 {_short(ins)}", th)
+        return
+    state, rec = own_rows_get(disc, INSIDER_ROLE_KEY)
+    nokey, dash, cnt = 0, 0, collections.Counter()
+    for r in ins:
+        if not isinstance(r, dict):
+            continue
+        if "role" not in r:
+            nokey += 1
+        elif r["role"] is None or (isinstance(r["role"], str) and r["role"] in INSIDER_ROLES):
+            cnt[r["role"]] += 1
+        if isinstance(r.get("pos"), str) and r["pos"].strip() in POS_DASHES:
+            dash += 1
+    left = insider_bad_rows(ins)
+    warns = ([f"role 칸이 없는 줄 {nokey:,} (v19.6b 전 줄)"] if nokey else []) + ([f"직위가 '-' 인 줄 {dash:,}"] if dash else [])
+    if state == "ok":                      # Jack 의 상시 규칙 (새 파일)
+        fails, w2 = own_verdict(state, rec, left, INSIDER_ROLE_MAX, "빼거나 비운 줄")
+        warns += w2
+        bad = []
+        if rec[1]:
+            rep.detail("임원 · 주요주주 역할 (insider role) 파이프라인이 빼거나 비운 줄", [f"{a} ({b})" for a, b in rec[1]])
+        if left:
+            rep.detail("임원 · 주요주주 역할 (insider role) 남은 문제", [f"{x[1]} {x[2]}" for x in left[:50]])
+    else:                                  # 예전 파일: 예전 규칙 그대로 (틀린 줄은 실패)
+        fails = []
+        if state == "bad":
+            warns.append(f"{rec} — 예전 규칙으로 봐요")
+        bad = [x[2] if x[4] is None else f"{_short(ins[x[0]].get('rc'))} {x[2]}" for x in left]
+        if bad:
+            rep.detail("임원 · 주요주주 역할 (insider role) 틀린 줄", bad[:50])
+    rep.add(name, not (bad or fails), (f"틀린 줄 {len(bad):,} ({bad[0][:80]}) · " if bad else "")
+            + (" · ".join(fails) + " · " if fails else "")
+            + f"임원 {cnt['임원']:,} · 주요주주 {cnt['주요주주']:,} · "
+            + (f"임원·주요주주 {cnt['임원·주요주주']:,} · " if cnt["임원·주요주주"] else "")
+            + f"없음 {cnt[None]:,} / {len(ins):,}줄" + (" · " + " · ".join(warns) if warns else ""),
+            th, warn=bool(warns))
+
+
+def _check_us_dates(rep, data, base):
+    name = "미국 일정 (ed 실적 발표일 · xd 배당락일)"
+    th = (f"미국 종목만 · 빈 칸 또는 YYYY-MM-DD 진짜 날짜 (실패) — 둘 다 하나도 없음(v19.6b 전 파일 · 미국 {US_DATE_MIN_US}종목 넘을 때) · "
+          f"발행일보다 {US_DATE_FAR_DAYS}일 넘게 뒤는 경고 · 새 파일(ownDrop.{US_DATE_KEY} 있음 · Jack 의 상시 규칙 2026-11-19): 파이프라인이 비운 "
+          f"값이 {US_DATE_MAX}개를 넘으면 실패, 남은 틀린 값은 경고 (일정의 날짜 — 숫자에 붙는 날짜가 아니에요)")
+    stocks = data.get("stocks")
+    stocks = [s for s in stocks if isinstance(s, dict)] if isinstance(stocks, list) else []
+    state, rec = own_rows_get(data, US_DATE_KEY)
+    left = us_date_bad_rows(stocks)
+    bad_i = {(x[0], x[4]) for x in left}
+    far, n = [], collections.Counter()
+    for i, s in enumerate(stocks):
+        for k in ("ed", "xd"):
+            v = s.get(k)
+            if v is None or v == "" or (i, k) in bad_i:
+                continue                       # 빈 칸 (모름) · 틀린 값 (위)
+            d = _iso_day(v)
+            n[k] += 1
+            if (d - base).days > US_DATE_FAR_DAYS:
+                t = s.get("t") if isinstance(s.get("t"), str) else _short(s.get("t"))
+                far.append(f"{t} {k} {v}")
+    us = sum(1 for s in stocks if s.get("cls") == "us")
+    warns = []
+    if state == "ok":                      # Jack 의 상시 규칙 (새 파일): 남은 틀린 값은 경고 · 비운 수가 N 을 넘으면 실패
+        fails, w2 = own_verdict(state, rec, left, US_DATE_MAX, "비운 값")
+        warns += w2
+        bad = []
+        if rec[1]:
+            rep.detail("미국 일정 (ed · xd) 파이프라인이 비운 값", [f"{a} ({b})" for a, b in rec[1]])
+        if left:
+            rep.detail("미국 일정 (ed · xd) 남은 틀린 값", [f"{x[1]} {x[2]}" for x in left[:50]])
+    else:                                  # 예전 파일: 예전 규칙 그대로 (틀린 값은 실패)
+        fails = []
+        if state == "bad":
+            warns.append(f"{rec} — 예전 규칙으로 봐요")
+        bad = [f"{x[1]} {x[2]}".replace(" (YYYY-MM-DD 날짜가 아님)", "") for x in left]
+    if us > US_DATE_MIN_US and not (n["ed"] or n["xd"]):
+        warns.append("둘 다 하나도 없음 (v19.6b 전 파일이거나 야후 칸 이름이 바뀌었어요)")
+    else:
+        warns += [f"{'실적 발표일' if k == 'ed' else '배당락일'}이 하나도 없음" for k in ("ed", "xd") if us > US_DATE_MIN_US and not n[k]]
+    if far:
+        warns.append(f"{US_DATE_FAR_DAYS}일 넘게 뒤 {len(far)}개 ({', '.join(far[:3])})")
+    if bad:
+        rep.detail("미국 일정 (ed · xd) 틀린 값", bad[:50])
+    rep.add(name, not (bad or fails), (f"틀린 값 {len(bad):,} ({bad[0][:60]}) · " if bad else "") + (" · ".join(fails) + " · " if fails else "")
+            + f"실적 발표일 {n['ed']:,} · 배당락일 {n['xd']:,} / 미국 {us:,}종목" + (" · " + " · ".join(warns) if warns else ""),
+            th, warn=bool(warns))
+
+
+def check_v196b(rep, data, disc, by, today):
+    """v19.6b (Part B.1): 세 줄 — 주요사항 공시 (issue) · 임원 · 주요주주 역할 (insider role) · 미국 일정 (ed · xd)."""
+    disc = disc if isinstance(disc, dict) else {}
+    data = data if isinstance(data, dict) else {}
+    by = by if isinstance(by, dict) else {}
+    for name, fn, args in (("주요사항 공시 (issue · 유상증자 · CB · BW)", _check_issue, (disc, by, _iso_day(disc.get("asOf")) or today)),
+                           ("임원 · 주요주주 역할 (insider role)", _check_roles, (disc,)),
+                           ("미국 일정 (ed 실적 발표일 · xd 배당락일)", _check_us_dates, (data, _iso_day(data.get("asOf")) or today))):
+        try:
+            fn(rep, *args)
+        except Exception as e:             # 검사 코드의 잘못 — 표는 나오고 이 줄은 실패예요 (확인하지 못한 것을 통과라고 하지 않아요)
+            rep.add(name, False, f"검사가 오류로 멈췄어요: {type(e).__name__}: {str(e)[:120]}", "오류 없이 끝나야 함")
+
+
+# ── v19.6b Q18 (Jack 2026-11-19 "rights board date from documents: yes"): 유상증자 줄의 bd — 파이프라인(fetch_data.fill_issue_bd)이 공시
+#    원문의 이사회결의일(결정일)을 읽어 채워요. 새 줄 하나 (더하기만 · check_v196b 의 세 줄은 그대로). 대상은 철회(wd)도 읽는 중(pend)도 아닌
+#    유상증자 줄. 실패: 결의일이 공시일 뒤 (공시는 결의 뒤에 내요 — 우리 읽기의 잘못). 경고: 결의일이 빈 줄 (원문을 아직 다 읽지 못했거나 원문에서
+#    읽지 못했어요 — 머지 뒤 첫 실행은 실행당 100건 한도로 남아요). issue 가 없는 파일(v19.6b 전)은 SKIP (위 '주요사항 공시' 줄이 경고해요).
+ISSUE_BD_ROW = "유상증자 이사회 결의일 (issue bd · 공시 원문)"
+
+
+def _check_issue_bd(rep, disc):
+    th = ("철회 · 읽는 중이 아닌 유상증자 줄의 bd 가 공시일 d 뒤면 실패 — bd 가 빈 줄이 있으면 경고 (원문을 아직 다 읽지 못했거나 원문에서 "
+          f"읽지 못했어요 · 실행 로그의 '유상증자 이사회 결의일' 줄) · 새 파일(ownDrop.{ISSUE_BD_KEY} 있음 · Jack 의 상시 규칙 2026-11-19): "
+          f"파이프라인이 비운 결의일이 {ISSUE_BD_MAX}개를 넘거나 공시일 뒤 결의일이 남으면 실패, 1개 이상 비웠으면 경고")
+    rows = disc.get("issue")
+    if not isinstance(rows, list):
+        rep.skip(ISSUE_BD_ROW, "issue 가 없거나 목록이 아니에요 (v19.6b 전 파일 — 위 '주요사항 공시' 줄이 봐요)")
+        return
+    state, rec = own_rows_get(disc, ISSUE_BD_KEY)
+    left = issue_bd_bad_rows(rows)           # 공시일 뒤 결의일 (파이프라인과 같은 함수)
+    after_i = {x[0] for x in left}
+    tg = [(i, r) for i, r in enumerate(rows)
+          if isinstance(r, dict) and r.get("kind") == "rights" and r.get("wd") is not True and r.get("pend") is not True]
+    have, miss = 0, []
+    for i, r in tg:
+        if _ymd8(r.get("bd")) is None:
+            miss.append(r)                 # 빈 칸 (모양이 틀린 bd 는 '주요사항 공시' 줄이 잡아요)
+        elif i not in after_i:
+            have += 1
+    after = [f"{_short(rows[x[0]].get('nk'))} {_short(rows[x[0]].get('rc'))} {x[2]}" for x in left]
+    fails, warns = own_verdict(state, rec, [], ISSUE_BD_MAX, "비운 결의일")     # 남은 값은 아래 (공시일 뒤 결의일은 늘 실패 — 틀린 숫자)
+    if state == "bad":
+        warns.append(f"{rec} — 예전 규칙으로 봐요")
+    if state == "ok" and rec[1]:
+        rep.detail("유상증자 이사회 결의일 파이프라인이 비운 값", [f"{a} ({b})" for a, b in rec[1]])
+    if after:
+        rep.detail("유상증자 이사회 결의일이 공시일 뒤인 줄", after[:50])
+    if miss:
+        rep.detail("유상증자 이사회 결의일이 빈 줄", [f"{_short(r.get('nk'))} {_short(r.get('d'))} {_short(r.get('rc'))}" for r in miss[:50]])
+    val = (f"결의일 있음 {have:,} / 대상 {len(tg):,}"
+           + (f" · 공시일 뒤 결의일 {len(after):,} ({after[0][:80]})" if after else "")
+           + (f" · 결의일 빈 줄 {len(miss):,} (원문을 아직 다 읽지 못했거나 원문에서 못 읽음)" if miss else "")
+           + (" · " + " · ".join(fails + warns) if fails or warns else ""))
+    rep.add(ISSUE_BD_ROW, not (after or fails), val[:300], th, warn=bool(miss or warns))
+
+
+def check_issue_bd(rep, disc):
+    """v19.6b Q18: 한 줄 — 유상증자 이사회 결의일 (issue bd). 어떤 JSON 값이 와도 표는 나와요 (예상하지 못한 오류는 이 줄의 실패)."""
+    try:
+        _check_issue_bd(rep, disc if isinstance(disc, dict) else {})
+    except Exception as e:
+        rep.add(ISSUE_BD_ROW, False, f"검사가 오류로 멈췄어요: {type(e).__name__}: {str(e)[:120]}", "오류 없이 끝나야 함")
+
+
 def check_v1751(rep, cur, kr, us, by, comps, px, today, hilo):
     data, macro = cur["data"], cur["macro"]
     must_kr = [t for t in MUST if (by.get(t) or {}).get("cls") == "kr"]
@@ -2476,64 +3346,52 @@ def check_us_extra(rep, data, us, mode):
         rep.detail("손으로 더한 미국 종목 중 오늘 없는 종목 (usExtraMissing)", [f"{t}: {why[t] if t in told else '이유 없음'}" for t in gone])
 
 
-def check_us_share_class(rep, data, us, mode):
-    """2026-11-15 (Jack: "fix Brown-Forman B, then check every share-class ticker in the S&P 500 and NASDAQ sources" · 더하기만). 두 줄:
-    ① '주식 종류 티커로 들어온 미국 종목': 이 바꾸기로 들어온 종목(US_CLASS_SET = fetch_data.US_CLASS_ADDED)은 오늘 목록에 있거나 (가격 > 0)
-       data.json usListSym.missing 에 빠진 이유가 있어야 해요 — check_us_extra (#126) 와 같은 규칙: 이유가 있으면 경고, 이유 없이 빠지면 발행
-       실패, 사이트 점검(live)은 경고 · 기록이 없는 파일은 발행 때 경고 · 점검 때 건너뜀.
-    ② '미국 목록 출처 티커 (주식 종류)': 실패 — 점이 지워진 꼴(BRKB · BFB)이 S&P 500 목록에서 바뀌지 않은 채 발행 목록의 티커로 있음 (그날
-       기록의 spTickers 에 그 꼴이 있음). 야후에는 그 꼴의 티커가 없어서 보통은 가격이 없어 빠지고 (아래 경고), 이 실패는 야후가 그 꼴에 다른 증권으로
-       답해 엉뚱한 회사가 실리는 경우를 잡아요. 파이프라인이 바꾼 꼴이 이 파일의 표(US_CLASS_JOINED_SET)와 다르거나 기록 모양이 틀려도 실패 — 단
-       사이트 점검(live)에서는 경고 (리뷰 2차 3: 칸을 더하는 다음 PR 이 아직 살아 있는 예전 파일 때문에 배포 점검에서 막히지 않게 · 이 줄은 이 PR 에서
-       새로 생겼어요). 다른 출처(나스닥 등)에서 온 같은 글자의 티커는 다른 회사일 수 있어 이름만 적어요 (리뷰 4: 진짜 회사가 그 티커를 쓰게 되면
-       날마다 발행이 막혀 사이트가 멈추지 않게) · 기록이 없는 파일에서는 출처를 알 수 없어 경고만. 경고 — 점이 지워진 꼴이 그날 S&P 500 목록 티커
-       (spTickers)에 그대로 있음 (실리지 않았어도 · 바꾸기 표의 줄을 잃었거나 바꾸기가 고장: 리뷰 2차 1), 바꾸지 못한 출처 티커(unmapped), S&P
-       500 목록 종목인데 야후가 가격을 하나도 주지 않은 티커(noPx: 점이 지워진 새 주식 종류 티커의 모습), 처리하다 오류로 멈춘 S&P 500 티커(spErr),
-       출처 티커 기록이 없는 실행(read false). S&P 500 목록 종목 중 오늘 없는 다른 종목(spGone: 가격 이력이 60일이 안 된 새 상장 등)은 이름만
-       적어요 (경고 아님)."""
-    name = f"주식 종류 티커로 들어온 미국 종목 ({', '.join(sorted(US_CLASS_SET))}): 목록에 있거나 빠진 이유"
-    th = "모두 있어야 함 (빠지면 이유와 함께 경고 · 이유 없이 빠지면 실패)"
-    name2 = "미국 목록 출처 티커 (주식 종류 · 점이 지워진 꼴)"
-    th2 = ("S&P 500 목록의 점이 지워진 꼴이 바뀌지 않고 목록에 실리지 않음 · 바꾼 꼴이 관문 표와 같음 · 기록 모양 (사이트 점검에서는 표 · 모양은 경고) "
-           "(바꾸지 않은 지워진 꼴 · 바꾸지 못한 티커 · 가격 없는 · 오류 난 S&P 500 티커는 경고)")
-    rec = data.get("usListSym")
-    have = {s.get("t") for s in us if (num(s.get("price")) or 0) > 0}
-    tickers = {s.get("t") for s in us}
-    joined = sorted(t for t in US_CLASS_JOINED_SET if t in tickers)
-    gone = sorted(t for t in US_CLASS_SET if t not in have)
-    if not isinstance(rec, dict):
-        if mode == "live":
-            rep.skip(name, "기록 없음 (data.json usListSym 이 없는 발행본)")
-        else:
-            rep.add(name, True, f"기록 없음 (data.json usListSym) · 오늘 없는 종목 {len(gone)}" + (f": {_tickers(gone)}" if gone else ""), th, warn=True)
-        if joined or mode != "live":       # 기록이 없으면 출처를 알 수 없어요: 점이 지워진 꼴과 같은 티커는 경고로 이름만 · 발행 때 경고, 점검 때 건너뜀
-            rep.add(name2, True, (f"점이 지워진 꼴과 같은 티커가 목록에 있음 (출처 모름): {_tickers(joined)} · " if joined else "")
-                    + "기록 없음 (data.json usListSym)", th2, warn=True)
-        else:
-            rep.skip(name2, "기록 없음 (data.json usListSym 이 없는 발행본)")
-        return
-    # ① 들어온 종목: 있거나 빠진 이유
-    miss = rec.get("missing")
-    miss = miss if isinstance(miss, dict) else {}
-    why = {t: miss.get(t) for t in gone}
-    told = [t for t in gone if isinstance(why[t], str) and why[t].strip()]
-    silent = [t for t in gone if t not in told]
-    odd = sorted(str(t) for t in miss if t not in US_CLASS_SET)
-    parts = ([f"이유 없이 빠짐 {len(silent)}: {_tickers(silent)}"] if silent else []) \
-        + ([f"빠짐 {len(told)}: " + " · ".join(f"{t} ({why[t]})" for t in told)] if told else []) \
-        + ([f"관문 목록에 없는 티커 {len(odd)}: {_tickers(odd)}"] if odd else [])
-    rep.add(name, not silent or mode == "live", f"{len(US_CLASS_SET) - len(gone)} / {len(US_CLASS_SET)} 있음" + "".join(f" · {x}" for x in parts),
-            th, warn=bool(gone or odd))
-    if gone:
-        rep.detail("주식 종류 티커로 들어온 미국 종목 중 오늘 없는 종목 (usListSym.missing)", [f"{t}: {why[t] if t in told else '이유 없음'}" for t in gone])
-    # ② 출처 티커: 모양 · 표 · 바꾸지 못한 티커 · 가격 없는 · 오류 난 S&P 500 티커
+def own_drop_get(data, key):
+    """data.json ownDrop[key] (Jack 의 상시 규칙 2026-11-19) → None (기록 없음: 이 규칙 전 파일 — 그 줄은 예전 규칙 그대로) · False (기록 모양이
+    틀림: 예전 규칙 그대로에 경고를 더해요) · {"n": 파이프라인이 빼거나 비운 행 수, "rows": [[열쇠, 이유]] 앞 OWN_DROP_SHOW 개}."""
+    if not isinstance(data, dict) or "ownDrop" not in data:
+        return None
+    od = data["ownDrop"]
+    if not isinstance(od, dict):                       # 리뷰 1차: 칸은 있는데 모양이 틀림 — 조용히 넘기지 않고 예전 규칙 + 경고
+        return False
+    if key not in od:
+        return None
+    r = od[key]
+    n = r.get("n") if isinstance(r, dict) else None
+    rows = r.get("rows") if isinstance(r, dict) else None
+    ok = (isinstance(r, dict) and set(r) == {"n", "rows"} and isinstance(n, int) and not isinstance(n, bool) and n >= 0
+          and isinstance(rows, list) and len(rows) == min(n, OWN_DROP_SHOW)
+          and all(isinstance(x, list) and len(x) == 2 and all(isinstance(v, str) for v in x) for x in rows))
+    return r if ok else False
+
+
+def own_drop_rec(rows):
+    """나쁜 행 [(열쇠, 이유, …)] → data.json ownDrop[열쇠] 의 값 {"n", "rows" (앞 OWN_DROP_SHOW 개 · [열쇠, 이유])}. (순수 함수 · 파이프라인이 써요)"""
+    return {"n": len(rows), "rows": [[str(r[0]), str(r[1])] for r in rows[:OWN_DROP_SHOW]]}
+
+
+def own_drop_text(rows, n=None):
+    """[(열쇠, 이유, …)] → '열쇠 (이유) · …' 앞 OWN_DROP_SHOW 개 (+ ' 외 N건')."""
+    n = len(rows) if n is None else n
+    return " · ".join(f"{r[0]} ({r[1]})" for r in rows[:OWN_DROP_SHOW]) + (f" 외 {n - OWN_DROP_SHOW}건" if n > OWN_DROP_SHOW else "")
+
+
+def _us_sym_parse(rec):
+    """usListSym 기록 → 읽은 칸과 모양 문제 (check_us_share_class · us_class_bad_rows 가 같은 규칙을 써요 · 한 곳).
+    unsure: spTickers 를 믿을 수 없는 모양 (그날 S&P 500 목록에서 온 티커인지 알 수 없어요 — #139 리뷰 2차 2 의 '검사가 조용히 꺼짐').
+    mapped: 예전 규칙 그대로 (한 줄이라도 틀리면 비워요 · 'mapped 모양'). 상시 규칙 쪽은 줄마다 읽어요 (리뷰 1차 M1): mapped_ok = 모양이 맞는 줄 ·
+    wrong_all = 그중 관문 표와 다르게 바꾼 줄 (그 행은 빼요) · map_blind = 모양이 틀린 줄이 하나라도 있음 (리뷰 2차: mapped 에는 점이 지워진 꼴을
+    바꾼 줄만 들어가요 — 틀린 줄이 있으면 그 꼴이 어디로 바뀌었는지 관문 표와 맞춰 볼 수 없어 틀린 회사가 실렸는지도 몰라요 → 발행 실패 · 사이트
+    점검 경고 · 예전 'mapped 모양' 과 같은 엄격함)."""
     row3 = lambda x: isinstance(x, list) and len(x) == 3 and all(isinstance(v, str) for v in x)   # noqa: E731
     strs = lambda x: isinstance(x, list) and all(isinstance(t, str) for t in x)                    # noqa: E731
     mapped, unmapped, sp_t = rec.get("mapped"), rec.get("unmapped"), rec.get("spTickers")
     sp_gone, no_px, sp_err = rec.get("spGone"), rec.get("noPx"), rec.get("spErr")
-    bad = []
+    bad, unsure = [], False
     if not isinstance(rec.get("read"), bool):
         bad.append("read 가 참 · 거짓이 아님")
+    mapped_ok = [x for x in mapped if row3(x)] if isinstance(mapped, list) else []
+    map_blind = not (isinstance(mapped, list) and len(mapped_ok) == len(mapped))
     if not (isinstance(mapped, list) and all(row3(x) for x in mapped)):
         bad.append("mapped 모양")
         mapped = []
@@ -2544,7 +3402,7 @@ def check_us_share_class(rep, data, us, mode):
         bad.append("missing 모양")
     if sp_t is not None and not strs(sp_t):
         bad.append("spTickers 모양")
-        sp_t = []
+        sp_t, unsure = [], True
     if sp_gone is not None and not (isinstance(sp_gone, dict) and all(isinstance(t, str) and isinstance(w, str) for t, w in sp_gone.items())):
         bad.append("spGone 모양")
         sp_gone = {}
@@ -2559,16 +3417,152 @@ def check_us_share_class(rep, data, us, mode):
         bad.append("noPx 와 spErr 가 겹침")
     if sp_gone is not None and not strs(rec.get("spTickers")):          # 리뷰 2차 2: spTickers 가 없으면 아래 실패 검사가 조용히 꺼져요
         bad.append("spGone 이 있는데 spTickers 가 목록이 아님")
+        unsure = True
     elif sp_gone and not set(sp_gone) <= set(sp_t or []):
         bad.append("spGone 이 spTickers 안에 있지 않음")
+        unsure = True
+    wrong = [(a, b) for _s, a, b in mapped if a in US_CLASS_JOINED_SET and b != US_CLASS_JOINED_SET[a]]
+    wrong_all = [(a, b) for _s, a, b in mapped_ok if a in US_CLASS_JOINED_SET and b != US_CLASS_JOINED_SET[a]]
+    return {"mapped": mapped, "unmapped": unmapped, "sp_t": sp_t, "sp_gone": sp_gone, "no_px": no_px, "sp_err": sp_err, "bad": bad,
+            "unsure": unsure, "wrong": wrong, "mapped_ok": mapped_ok, "wrong_all": wrong_all, "map_blind": map_blind}
+
+
+US_CLASS_WHY_SP = "S&P 500 목록의 점이 지워진 꼴이 바뀌지 않고 실림 (야후가 이 꼴에 답한 다른 증권일 수 있어요)"
+US_CLASS_WHY_UNSURE = "기록(spTickers) 모양이 틀려 S&P 500 목록에서 왔는지 확인할 수 없는 점이 지워진 꼴"
+US_CLASS_BLIND = "mapped 에 모양이 틀린 줄이 있어 점이 지워진 꼴의 바꾸기를 관문 표와 맞춰 볼 수 없음 (발행 실패)"
+
+
+def us_class_bad_rows(rec, us):
+    """Jack 의 상시 규칙 (2026-11-19) · #139 의 우리 처리 검사: 발행 목록에서 빼야 할 미국 행 → (행 [(티커, 이유, 종류)], 기록 문제 [글]).
+    파이프라인(fetch_data.own_drop_us_class)과 관문(check_us_share_class)이 같은 함수를 써요. (순수 함수)
+    종류 sp — 점이 지워진 꼴(BRKB · BFB)이 그날 S&P 500 목록(spTickers)에 그대로 있는데 그 티커로 실림: 야후는 그 꼴의 티커가 없으니 실렸다면
+              야후가 다른 증권으로 답한 것 (그 행의 가격 · 시가총액이 다른 회사의 숫자). 다른 출처(나스닥)의 같은 글자는 다른 회사일 수 있어 빼지 않아요.
+    종류 unsure — 같은 꼴이 실렸는데 spTickers 모양이 틀려 출처를 알 수 없음 (틀린 숫자일 수 있어 빼요 · 기록이 깨진 날만).
+    종류 wrong — 파이프라인이 점이 지워진 꼴을 관문 표(US_CLASS_JOINED_SET)와 다른 티커로 바꿨고 그 티커가 실림 (S&P 목록의 회사가 아닌 증권이
+              S&P 500 회사로 들어와 외국 회사 검사(#133)를 건너뛸 수 있어요). mapped 는 줄마다 읽어요 (틀린 줄 하나가 이 검사를 끄지 않게 · 리뷰 1차
+              M1). 표의 맞는 티커(BRK-B · BF-B)와 손으로 더한 종목(US_EXTRA_SET · #126: 손 목록이 넣은 종목이라 그 행은 그 티커의 야후 숫자예요)은
+              빼지 않아요 (기록 문제로 경고만).
+    기록 문제에는 US_CLASS_BLIND 가 들 수 있어요: mapped 에 모양이 틀린 줄 → 관문은 발행 실패 (사이트 점검 경고 · 맞는 줄의 다르게 바꾼 행은 그래도 빼요).
+    기록이 없으면 ([], []) — 출처를 알 수 없어 빼지 않아요 (예전 규칙: 이름만 · 경고)."""
+    if not isinstance(rec, dict):
+        return [], []
+    p = _us_sym_parse(rec)
+    tickers = {s.get("t") for s in us if isinstance(s, dict)}
+    sp_set = set(p["sp_t"] or [])
+    rows = []
+    for t in sorted(k for k in US_CLASS_JOINED_SET if k in tickers):
+        if t in sp_set:
+            rows.append((t, US_CLASS_WHY_SP, "sp"))
+        elif p["unsure"]:
+            rows.append((t, US_CLASS_WHY_UNSURE, "unsure"))
+    good = set(US_CLASS_JOINED_SET.values()) | US_EXTRA_SET
+    for a, b in p["wrong_all"]:
+        if b in tickers and b not in good and b not in {r[0] for r in rows}:
+            rows.append((b, f"관문 표와 다르게 바꾼 티커 {a} → {b} (관문 표 {US_CLASS_JOINED_SET[a]})", "wrong"))
+    probs = ([f"관문 표와 다르게 바꿈: {' · '.join(f'{a} → {b} (관문 표 {US_CLASS_JOINED_SET[a]})' for a, b in p['wrong_all'])}"]
+             if p["wrong_all"] else []) \
+        + ([f"기록 모양이 틀림: {' · '.join(p['bad'])}"] if p["bad"] else []) + ([US_CLASS_BLIND] if p["map_blind"] else [])
+    return rows, probs
+
+
+def check_us_share_class(rep, data, us, mode):
+    """2026-11-15 (Jack: "fix Brown-Forman B, then check every share-class ticker in the S&P 500 and NASDAQ sources" · 더하기만). 두 줄:
+    ① '주식 종류 티커로 들어온 미국 종목': 이 바꾸기로 들어온 종목(US_CLASS_SET = fetch_data.US_CLASS_ADDED)은 오늘 목록에 있어야 해요 (가격 > 0).
+       Jack (2026-11-20, verbatim): "Brown-Forman B: no, it becomes a warning; one stock missing from a source never holds the publish."
+       그래서 목록에 그 종목의 행이 없으면 — data.json usListSym.missing 에 이유가 있든 없든 — 경고로 이름과 이유(없으면 '이유 없이 빠짐')를
+       적어요 (빠진 종목은 틀린 숫자를 보이지 않아요). 실패는 하나뿐: 그 종목의 행이 목록에 있는데 가격이 없음 (0 · 빈 칸 · 숫자 아님) 이고 빠진
+       이유도 없음 — 앱이 그 종목을 가격 없이 보여 틀린 값이에요 (예전과 같은 실패 · 사이트 점검(live)은 예전처럼 경고 · 파이프라인은 목록에 있는
+       종목에 이유를 적지 않아요). 기록이 없는 파일은 발행 때 경고 · 점검 때 건너뜀 (그대로). 손으로 더한 종목 줄(check_us_extra · #126)은 바꾸지
+       않았어요.
+    ② '미국 목록 출처 티커 (주식 종류 · 점이 지워진 꼴)': 실패 — 점이 지워진 꼴(BRKB · BFB)이 S&P 500 목록에서 바뀌지 않은 채 발행 목록의 티커로 있음 (그날
+       기록의 spTickers 에 그 꼴이 있음). 야후에는 그 꼴의 티커가 없어서 보통은 가격이 없어 빠지고 (아래 경고), 이 실패는 야후가 그 꼴에 다른 증권으로
+       답해 엉뚱한 회사가 실리는 경우를 잡아요. 파이프라인이 바꾼 꼴이 이 파일의 표(US_CLASS_JOINED_SET)와 다르거나 기록 모양이 틀려도 실패 — 단
+       사이트 점검(live)에서는 경고 (리뷰 2차 3: 칸을 더하는 다음 PR 이 아직 살아 있는 예전 파일 때문에 배포 점검에서 막히지 않게 · 이 줄은 이 PR 에서
+       새로 생겼어요). 다른 출처(나스닥 등)에서 온 같은 글자의 티커는 다른 회사일 수 있어 이름만 적어요 (리뷰 4: 진짜 회사가 그 티커를 쓰게 되면
+       날마다 발행이 막혀 사이트가 멈추지 않게) · 기록이 없는 파일에서는 출처를 알 수 없어 경고만. 경고 — 점이 지워진 꼴이 그날 S&P 500 목록 티커
+       (spTickers)에 그대로 있음 (실리지 않았어도 · 바꾸기 표의 줄을 잃었거나 바꾸기가 고장: 리뷰 2차 1), 바꾸지 못한 출처 티커(unmapped), S&P
+       500 목록 종목인데 야후가 가격을 하나도 주지 않은 티커(noPx: 점이 지워진 새 주식 종류 티커의 모습), 처리하다 오류로 멈춘 S&P 500 티커(spErr),
+       출처 티커 기록이 없는 실행(read false). S&P 500 목록 종목 중 오늘 없는 다른 종목(spGone: 가격 이력이 60일이 안 된 새 상장 등)은 이름만
+       적어요 (경고 아님).
+       Jack 의 상시 규칙 (2026-11-19 · 우리 처리를 보는 검사): data.json ownDrop.usClass 가 있는 파일은 파이프라인이 빼야 할 행(us_class_bad_rows ·
+       같은 함수)을 빼고 발행했어요. 그 파일에서 실패는 둘뿐 — 뺀 행이 US_CLASS_DROP_MAX 를 넘음 (발행 · 사이트 점검은 경고) · 빼야 할 행이 남아
+       실림 (S&P 목록의 꼴은 늘 실패 · 출처를 알 수 없는 꼴과 관문 표와 다른 티커는 발행 실패 · 사이트 점검 경고 — 예전과 같아요). 그리고 mapped 에
+       모양이 틀린 줄이 있어 그 바꾸기를 관문 표와 맞춰 볼 수 없으면 발행 실패 · 사이트 점검 경고 (리뷰 1차 M1 · 2차 · 예전 'mapped 모양' 실패와 같아요). 뺀 행 1~N · 관문 표와 다른 바꾸기 · 그 밖의 기록 모양은 경고 (남은 행이 없으면 틀린 숫자를 보이지 않아요). 이 검사의 행은 표의
+       두 꼴에서만 나와 한 실행에 많아야 4건쯤이라 N(5)을 넘기 어려워요 — 이 검사를 지키는 것은 '빼야 할 행이 남으면 실패'예요. ownDrop.usClass 가
+       없는 파일은 예전 규칙 그대로."""
+    name = f"주식 종류 티커로 들어온 미국 종목 ({', '.join(sorted(US_CLASS_SET))}): 목록에 있거나 빠진 이유"
+    th = "모두 있어야 함 (빠지면 이유가 있든 없든 경고 · 목록에 있는데 가격이 없으면 실패, 사이트 점검은 경고)"
+    name2 = "미국 목록 출처 티커 (주식 종류 · 점이 지워진 꼴)"
+    th2 = ("S&P 500 목록의 점이 지워진 꼴이 바뀌지 않고 목록에 실리지 않음 · 바꾼 꼴이 관문 표와 같음 · 기록 모양 (사이트 점검에서는 표 · 모양은 경고) "
+           "(바꾸지 않은 지워진 꼴 · 바꾸지 못한 티커 · 가격 없는 · 오류 난 S&P 500 티커는 경고)")
+    th2own = (f"Jack 의 상시 규칙 (2026-11-19): 파이프라인이 빼고 발행 (ownDrop.usClass) · 실패는 뺀 행 > {US_CLASS_DROP_MAX} (사이트 점검은 경고) 또는 "
+              "빼야 할 행이 남아 실림 (S&P 목록의 꼴 · 출처를 알 수 없는 꼴 · 관문 표와 다른 티커 — 뒤 둘은 사이트 점검에서 경고) 또는 mapped 에 모양이 틀린 "
+              "줄 (사이트 점검은 경고) · 뺀 행 · 관문 표와 다른 바꾸기 · 그 밖의 기록 모양 · 바꾸지 않은 지워진 꼴 · "
+              "바꾸지 못한 티커 · 가격 없는 · 오류 난 S&P 500 티커는 경고")
+    rec = data.get("usListSym")
+    have = {s.get("t") for s in us if (num(s.get("price")) or 0) > 0}
+    tickers = {s.get("t") for s in us}
+    joined = sorted(t for t in US_CLASS_JOINED_SET if t in tickers)
+    gone = sorted(t for t in US_CLASS_SET if t not in have)
+    own = own_drop_get(data, US_CLASS_DROP_KEY)
+    if isinstance(own, dict) and own["n"]:
+        rep.detail("파이프라인이 뺀 미국 종목 (ownDrop.usClass · 주식 종류 티커)", [f"{t}: {w}" for t, w in own["rows"]]
+                   + ([f"… 외 {own['n'] - len(own['rows'])}건"] if own["n"] > len(own["rows"]) else []))
+    if not isinstance(rec, dict):
+        if mode == "live":
+            rep.skip(name, "기록 없음 (data.json usListSym 이 없는 발행본)")
+        else:
+            rep.add(name, True, f"기록 없음 (data.json usListSym) · 오늘 없는 종목 {len(gone)}" + (f": {_tickers(gone)}" if gone else ""), th, warn=True)
+        if isinstance(own, dict):          # 상시 규칙 뒤 파일인데 usListSym 이 없음: 뺀 수는 그대로 봐요 (출처는 알 수 없어 이름만 · 경고)
+            many = own["n"] > US_CLASS_DROP_MAX
+            rep.add(name2, not (many and mode != "live"), (f"뺀 행 {own['n']}: {own_drop_text(own['rows'], own['n'])} · " if own["n"] else "")
+                    + (f"점이 지워진 꼴과 같은 티커가 목록에 있음 (출처 모름): {_tickers(joined)} · " if joined else "")
+                    + "기록 없음 (data.json usListSym)", th2own, warn=True)
+        elif joined or mode != "live":       # 기록이 없으면 출처를 알 수 없어요: 점이 지워진 꼴과 같은 티커는 경고로 이름만 · 발행 때 경고, 점검 때 건너뜀
+            rep.add(name2, True, (f"점이 지워진 꼴과 같은 티커가 목록에 있음 (출처 모름): {_tickers(joined)} · " if joined else "")
+                    + "기록 없음 (data.json usListSym)" + (" · 뺀 행 기록(ownDrop.usClass) 모양이 틀림" if own is False else ""), th2, warn=True)
+        else:
+            rep.skip(name2, "기록 없음 (data.json usListSym 이 없는 발행본)")
+        return
+    # ① 들어온 종목: 있거나 빠진 이유 — Jack (2026-11-20): 한 종목이 출처에서 빠져도 발행을 막지 않아요 (이유가 있든 없든 경고 · 이름을 적어요).
+    # 실패는 목록에 행이 있는데 가격이 없는 종목뿐 (빠진 이유도 없음 · 틀린 값이 보여요 · 예전과 같은 실패 · 사이트 점검은 경고).
+    miss = rec.get("missing")
+    miss = miss if isinstance(miss, dict) else {}
+    why = {t: miss.get(t) for t in gone}
+    told = [t for t in gone if isinstance(why[t], str) and why[t].strip()]
+    silent = [t for t in gone if t not in told]
+    no_px_row = [t for t in silent if t in tickers]      # 목록에 행이 있는데 가격이 없음 (0 · 빈 칸 · 숫자 아님) → 발행 실패
+    quiet = [t for t in silent if t not in tickers]      # 목록에 없고 이유도 없음 → 경고 (Jack 2026-11-20)
+    odd = sorted(str(t) for t in miss if t not in US_CLASS_SET)
+    parts = ([f"목록에 있는데 가격이 없음 {len(no_px_row)}: {_tickers(no_px_row)}"] if no_px_row else []) \
+        + ([f"이유 없이 빠짐 {len(quiet)}: {_tickers(quiet)}"] if quiet else []) \
+        + ([f"빠짐 {len(told)}: " + " · ".join(f"{t} ({why[t]})" for t in told)] if told else []) \
+        + ([f"관문 목록에 없는 티커 {len(odd)}: {_tickers(odd)}"] if odd else [])
+    rep.add(name, not no_px_row or mode == "live", f"{len(US_CLASS_SET) - len(gone)} / {len(US_CLASS_SET)} 있음" + "".join(f" · {x}" for x in parts),
+            th, warn=bool(gone or odd))
+    if gone:
+        rep.detail("주식 종류 티커로 들어온 미국 종목 중 오늘 없는 종목 (usListSym.missing)",
+                   [f"{t}: {why[t] if t in told else ('목록에 있는데 가격이 없음 · 이유 없음' if t in tickers else '이유 없음')}" for t in gone])
+    # ② 출처 티커: 모양 · 표 · 바꾸지 못한 티커 · 가격 없는 · 오류 난 S&P 500 티커
+    p = _us_sym_parse(rec)
+    mapped, unmapped, sp_t, sp_gone, no_px, sp_err, bad = (p[k] for k in ("mapped", "unmapped", "sp_t", "sp_gone", "no_px", "sp_err", "bad"))
     sp_set = set(sp_t or [])
     joined_sp = [t for t in joined if t in sp_set]                # S&P 500 목록에서 바뀌지 않고 실린 꼴 (실패)
     joined_other = [t for t in joined if t not in sp_set]         # 다른 출처의 같은 글자 티커 (다른 회사일 수 있어요 · 이름만)
     joined_left = sorted(k for k in US_CLASS_JOINED_SET if k in sp_set)   # 리뷰 2차 1: 바꾸지 않은 지워진 꼴이 S&P 목록에 (실렸든 아니든 · 경고)
     soft = mode == "live"                                         # 리뷰 2차 3: 사이트 점검에서는 표 · 모양 문제는 경고 (실린 엉뚱한 회사는 실패 그대로)
-    wrong = [f"{a} → {b} (관문 표 {US_CLASS_JOINED_SET[a]})" for _s, a, b in mapped if a in US_CLASS_JOINED_SET and b != US_CLASS_JOINED_SET[a]]
+    wrong = [f"{a} → {b} (관문 표 {US_CLASS_JOINED_SET[a]})" for a, b in (p["wrong_all"] if isinstance(own, dict) else p["wrong"])]
     shown = " · ".join(f"{a} → {b}" for _s, a, b in mapped[:US_FCUR_SHOW]) + (f" 외 {len(mapped) - US_FCUR_SHOW}개" if len(mapped) > US_FCUR_SHOW else "")
-    parts = ([f"S&P 500 목록의 점이 지워진 꼴이 바뀌지 않고 목록에 있음: {_tickers(joined_sp)}"] if joined_sp else []) \
+    own_parts, left = [], []
+    if isinstance(own, dict):                                     # Jack 의 상시 규칙: 파이프라인이 뺀 행 · 그래도 남은 행
+        left, _probs = us_class_bad_rows(rec, us)
+        n = max(own["n"], len(left))
+        own_parts = ([f"뺀 행 {own['n']}: {own_drop_text(own['rows'], own['n'])}"] if own["n"] else []) \
+            + ([f"뺀 행이 기준 {US_CLASS_DROP_MAX} 을 넘음 ({n})"] if n > US_CLASS_DROP_MAX else []) \
+            + ([f"빼야 할 티커가 남아 실림: {own_drop_text(left)}"] if left else []) \
+            + ([US_CLASS_BLIND if not soft else US_CLASS_BLIND.replace("발행 실패", "사이트 점검은 경고")] if p["map_blind"] else [])
+    parts = own_parts \
+        + ([f"S&P 500 목록의 점이 지워진 꼴이 바뀌지 않고 목록에 있음: {_tickers(joined_sp)}"] if joined_sp else []) \
         + ([f"관문 표와 다르게 바꿈: {' · '.join(wrong)}"] if wrong else []) \
         + ([f"기록 모양이 틀림: {' · '.join(bad)}"] if bad else []) \
         + ([f"S&P 500 목록에 점이 지워진 꼴이 바뀌지 않고 그대로 있음 (바꾸기 확인 필요): {_tickers(joined_left)}"] if joined_left else []) \
@@ -2580,9 +3574,16 @@ def check_us_share_class(rep, data, us, mode):
             + (f" 외 {len(sp_gone) - US_FCUR_SHOW}곳" if len(sp_gone) > US_FCUR_SHOW else "")] if sp_gone else []) \
         + (["S&P 500 목록을 믿지 못한 날 (빠진 종목을 세지 않음)"] if sp_gone is None else []) \
         + ([f"다른 출처의 같은 글자 티커 (S&P 500 목록 밖 · 다른 회사일 수 있어요): {_tickers(joined_other)}"] if joined_other else []) \
-        + (["출처 티커 기록이 없는 실행 (read false)"] if rec.get("read") is False else [])
-    rep.add(name2, not (joined_sp or ((wrong or bad) and not soft)), " · ".join(parts), th2,
-            warn=bool(joined_left or unmapped or no_px or sp_err or rec.get("read") is False or wrong or bad))
+        + (["출처 티커 기록이 없는 실행 (read false)"] if rec.get("read") is False else []) \
+        + (["뺀 행 기록(ownDrop.usClass) 모양이 틀림"] if own is False else [])
+    warn2 = bool(joined_left or unmapped or no_px or sp_err or rec.get("read") is False or wrong or bad or own is False)
+    if isinstance(own, dict):
+        left_sp = [t for t, _w, k in left if k == "sp"]
+        left_other = [t for t, _w, k in left if k != "sp"]
+        ok2 = not (left_sp or ((left_other or p["map_blind"] or max(own["n"], len(left)) > US_CLASS_DROP_MAX) and not soft))
+        rep.add(name2, ok2, " · ".join(parts), th2own, warn=warn2 or bool(own["n"] or left))
+    else:                                                         # 상시 규칙 전 파일 (ownDrop.usClass 없음): 예전 규칙 그대로
+        rep.add(name2, not (joined_sp or ((wrong or bad) and not soft)), " · ".join(parts), th2, warn=warn2)
     if unmapped:
         rep.detail("야후 모양으로 바꾸지 못해 요청하지 않은 미국 목록 티커 (usListSym.unmapped)", [f"{s0} '{a}': {w}" for s0, a, w in unmapped])
     if sp_gone:
@@ -4444,10 +5445,14 @@ def exact_bonus_set(data, kr, comps, today=None):
     return out
 
 
-def check_v191i(rep, data, kr, by, comps, pdata, today=None):
-    """v19.1i 새 줄 (Jack 2026-11-14 item 5): 배당 기준 증명 (dvProof · divCheck.proof)."""
+def check_v191i(rep, data, kr, by, comps, pdata, today=None, mode="publish"):
+    """v19.1i 새 줄 (Jack 2026-11-14 item 5): 배당 기준 증명 (dvProof · divCheck.proof).
+    mode: Jack 의 상시 규칙 (2026-11-19) 의 '비운 줄이 N 을 넘음' 실패는 발행 때만 (사이트 점검 live 는 경고 · check_v191j_lines)."""
     dc = data.get("divCheck")
+    own = own_drop_get(data, DIV_LINE_DROP_KEY)
     if not isinstance(dc, dict):
+        if isinstance(own, dict) and own["n"]:            # 상시 규칙: 기록이 없어도 비운 수는 봐요 (줄을 맞춰 볼 기록이 없어요)
+            check_v191j_lines(rep, {}, {}, kr, by, pdata, data=data, mode=mode)
         return
     pf = dc.get("proof")
     name = "배당 기준 증명 기록 (divCheck.proof)"
@@ -4458,6 +5463,8 @@ def check_v191i(rep, data, kr, by, comps, pdata, today=None):
         stray = [s["t"] for s in kr if "dvProof" in s or "dvLine" in s]
         if stray:
             rep.add("되살린 배당수익률 = 배당 총액 ÷ 시가총액 (dvProof)", False, f"기록 없이 dvProof · dvLine {len(stray)} (예: {stray[0]})", "0")
+        if isinstance(own, dict) and own["n"]:            # 상시 규칙: 기록이 없어도 비운 수는 봐요
+            check_v191j_lines(rep, dc, {}, kr, by, pdata, data=data, mode=mode)
         return
     px = day(data.get("pxDate")) if is_day(data.get("pxDate")) else None
     kr_t = {s.get("t") for s in kr}
@@ -4536,17 +5543,149 @@ def check_v191i(rep, data, kr, by, comps, pdata, today=None):
             "없음" if not named else " · ".join(f"{g} {len(ts)}: {', '.join(nm(t) for t in ts[:4])}{'…' if len(ts) > 4 else ''}"
                                                for g, ts in named),
             f"있으면 경고 (발행은 막지 않아요) · 되살림 {len(has)}", warn=bool(named))
-    check_v191j_lines(rep, dc, pf, kr, by, pdata)
+    check_v191j_lines(rep, dc, pf, kr, by, pdata, data=data, mode=mode)
 
 
-def check_v191j_lines(rep, dc, pf, kr, by, pdata):
+def _line_ko(v):
+    return f"줄 {v:g}" if isinstance(v, (int, float)) and not isinstance(v, bool) else "줄 없음"
+
+
+def div_line_bad_rows(kr, dc):
+    """Jack 의 상시 규칙 (2026-11-19) · #142 의 우리 처리 검사: 숨긴 배당수익률의 줄 (dvLine 2 · 3 · 4) 중 기록(divCheck.proofSub)과 맞지 않는 종목
+    → (행 [(코드, 이유, 종류)], 기록 문제 [글], 기록이 정한 줄 {코드: 줄}, 확인한 기록 {rights · data 중 모양이 맞아 줄을 정할 수 있었던 것}).
+    파이프라인(fetch_data.own_blank_div_lines)과 관문(check_v191j_lines)이 같은 함수를 써요. (순수 함수)
+    종류 shown — 종목에 줄 2 · 3 · 4 가 있는데 기록이 그 줄을 정하지 않음: 다른 줄 · 기록이 줄 없는 경우 · 기록에 없는 종목 · 그 줄을 정하는
+                기록(2 → rights · 3 · 4 → data)이 없거나 모양이 틀려 확인할 수 없음 · 우선주 · 배당수익률(dyt)이 보이는 종목 · 되살린(dvProof) 종목.
+                앱이 그 자리에 틀릴 수 있는 이유 줄을 보여요 → 파이프라인은 그 종목의 줄(dvLine)만 비워요 (숫자는 그대로 · 빈 배당수익률에 이유 줄이
+                없을 뿐 틀린 말은 없어요). 관문: 남아 있으면 실패 (틀린 이유 줄 = 틀린 것으로 봐요).
+    종류 missing — 기록은 줄 2 · 3 · 4 를 정했는데 종목에 그 줄이 없음: 빈 배당수익률에 이유 줄이 없을 뿐 틀린 것을 보이지 않아요 (비울 것이
+                없어요 · 수에는 들어가요). 관문: 경고.
+    줄 1 (Jack 의 줄 · v19.1i) · 다른 값의 줄은 '배당 기준 증명 기록' 줄의 예전 규칙 그대로 (이 함수는 보지 않아요)."""
+    dc = dc if isinstance(dc, dict) else {}
+    sub, pf = dc.get("proofSub"), dc.get("proof")
+    pf = pf if isinstance(pf, dict) else {}
+    kr_t = {s.get("t") for s in kr}
+    probs, want, ok_k = [], {}, set()
+    if not isinstance(sub, dict):
+        probs.append("기록 없음 (divCheck.proofSub)")
+    else:
+        top = sub.get("v") == 1 and not isinstance(sub.get("v"), bool) and set(sub) == {"v"} | set(PROVE_SUB)
+        if not top:
+            probs.append(f"모양 {sorted(map(str, sub))} · v{sub.get('v')}")
+        for k, subs in PROVE_SUB.items():
+            m = sub.get(k)
+            lst = pf.get(k + "T")
+            lst = lst if isinstance(lst, list) and all(isinstance(t, str) for t in lst) else None
+            if not isinstance(m, dict) or lst is None or set(m) != set(lst) or any(t not in kr_t for t in m):
+                probs.append(f"{k}: proof 의 {k}T 와 다른 종목")
+                continue
+            odd = [t for t, v in m.items() if not isinstance(v, str) or v not in subs]
+            if odd:
+                probs.append(f"{k}: 모르는 경우 {m[odd[0]]!r} ({odd[0]})")
+            if top:
+                ok_k.add(k)
+                want.update({t: PROVE_SUB_LINE[k][v] for t, v in m.items() if isinstance(v, str) and v in PROVE_SUB_LINE[k]})
+    rows = []
+    for s in kr:
+        v, t = s.get("dvLine"), s.get("t")
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or v not in DIV_LINE_OF:
+            continue
+        why = ("우선주에 줄" if is_pref(t) else "배당수익률(dyt)이 보이는 종목에 줄" if num(s.get("dyt")) is not None
+               else "되살린 배당수익률(dvProof)이 있는 종목에 줄" if "dvProof" in s
+               else f"기록(proofSub.{DIV_LINE_OF[v]})으로 확인할 수 없는 {_line_ko(v)}" if DIV_LINE_OF[v] not in ok_k
+               else None if want.get(t) == v else f"기록은 {_line_ko(want.get(t))} 인데 {_line_ko(v)}")
+        if why:
+            rows.append((t, why, "shown"))
+    shown = {r[0] for r in rows}
+    have = {s.get("t"): s.get("dvLine") for s in kr}
+    for t, v in sorted(want.items()):
+        if t not in shown and (have.get(t) != v or isinstance(have.get(t), bool)):
+            rows.append((t, f"기록은 {_line_ko(v)} 인데 줄 표시 없음 (이유 줄 없이 빈칸)", "missing"))
+    return rows, probs, want, ok_k
+
+
+def check_v191j_lines(rep, dc, pf, kr, by, pdata, data=None, mode="publish"):
     """v19.1j 새 줄 (Jack 2026-11-15 답 11 · 13 · 2026-11-19): 숨긴 배당수익률의 줄 — divCheck.proofSub 와 종목의 dvLine 2 · 3 · 4 가 꼭 맞아요 (우리 기록끼리).
     proofSub: v1 · rights · data 마다 {코드: 경우} 이고, 그 코드들 = divCheck.proof 의 rightsT · dataT, 경우는 정해진 것 (PROVE_SUB) ·
     dvLine 2 = rights 중 주주배정(sh) · dvLine 3 = data 중 배당 표가 회사의 주식 수와 실제로 어긋남(div) · dvLine 4 = data 중 회사 공시에 조각이
     빠짐(nototal · nostk · pref0 · nopfo · prefmix) — 그 종목엔 꼭, 다른 종목엔 없음 (PROVE_SUB_LINE). data 의 other (파이프라인이 이름을
     붙이지 않은 배당 표 이유 · 리뷰 2026-11-19)는 줄이 없어야 하고, 하나라도 있으면 맞더라도 이 줄이 경고예요. 없으면 v19.1j 전
-    데이터라 경고 한 줄만 — 직전 발행본에 있었는데 빠지면 실패 (줄 표시 2 · 3 · 4 는 위 '배당 기준 증명 기록' 줄이 이 기록 없이는 막아요)."""
+    데이터라 경고 한 줄만 — 직전 발행본에 있었는데 빠지면 실패 (줄 표시 2 · 3 · 4 는 위 '배당 기준 증명 기록' 줄이 이 기록 없이는 막아요).
+    Jack 의 상시 규칙 (2026-11-19 · 우리 처리를 보는 검사): data.json ownDrop.divLine 이 있는 파일은 파이프라인이 같은 함수(div_line_bad_rows)로
+    맞지 않는 줄을 비우고 발행했어요 → _div_lines_own. ownDrop.divLine 이 없는 파일은 아래 예전 규칙 그대로 (모양이 틀린 기록이면 경고를 더해요)."""
     name = "숨긴 배당수익률의 줄 (divCheck.proofSub · dvLine 2 · 3 · 4)"
+    own = own_drop_get(data, DIV_LINE_DROP_KEY)
+    if isinstance(own, dict):
+        _div_lines_own(rep, name, own, dc, kr, pdata, mode)
+        return
+    n0 = len(rep.rows)
+    _div_lines_old(rep, name, dc, pf, kr, pdata)
+    if own is False:                                       # 기록 모양이 틀림: 예전 규칙 그대로에 경고를 더해요
+        for i in range(n0, len(rep.rows)):
+            a, b, c, st = rep.rows[i]
+            if a == name:
+                rep.rows[i] = (a, b + " · 비운 줄 기록(ownDrop.divLine) 모양이 틀림", c, "WARN" if st == "PASS" else st)
+
+
+def div_lines_lost(pdata, checked):
+    """직전 발행본(pdata)의 줄 2 · 3 · 4 중 오늘 기록으로 확인할 수 없는 것 (그 줄을 정하는 기록 부분이 checked 에 없음 · 기록이 없거나 모양이
+    틀림) → 그 종목 코드 [정렬]. 그 종목은 이번 실행에서 이유 줄을 잃어요 (리뷰 1차 S2). 관문(_div_lines_own)과 파이프라인 로그
+    (fetch_data.own_blank_div_lines)가 같이 써요. 줄 값은 숫자만 봐요 (리뷰 2차: 목록 같은 값으로 관문이 멈추지 않게). (순수 함수)"""
+    blind = set(PROVE_SUB) - set(checked or ())
+    if not isinstance(pdata, dict) or not blind:
+        return []
+    out = []
+    for s in kr_stocks(pdata):
+        v = s.get("dvLine")
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and v in DIV_LINE_OF and DIV_LINE_OF[v] in blind:
+            out.append(s.get("t"))
+    return sorted(t for t in out if isinstance(t, str))
+
+
+def _div_lines_own(rep, name, own, dc, kr, pdata, mode):
+    """check_v191j_lines 의 상시 규칙 줄 (ownDrop.divLine 이 있는 파일). 실패: 맞지 않는 줄이 남음 (shown · 틀린 이유 줄) · 이 실행에서 줄을 잃은
+    종목이 DIV_LINE_BLANK_MAX 를 넘음 (발행 때만 · 사이트 점검은 경고). 그 수 = 서로 다른 종목 수: 비운 줄 (ownDrop.divLine.rows) · 남은 나쁜 행 ·
+    오늘 기록(proofSub)이 없거나 그 부분의 모양이 틀려 줄을 정할 수 없는데 직전 발행본에 있던 그 부분의 줄 2 · 3 · 4 (리뷰 1차 S2: 기록과 줄이 함께
+    사라지면 비울 것이 없어 0 으로 세어졌어요 · 리뷰 2차: 둘은 보통 다른 종목이라 큰 값이 아니라 합쳐 세요). 기록에 이름이 30개까지만 있어 ownDrop n
+    과도 견줘 큰 값 (n ≤ 30 이면 정확). 경고: 그 수 1~N · 기록은 줄을 정했는데 표시가 없음 (missing) · 기록 문제 · 기록이 없음 · 이름 없는 이유(other)."""
+    dc = dc if isinstance(dc, dict) else {}
+    left, probs, want, checked = div_line_bad_rows(kr, dc)
+    shown = [r for r in left if r[2] == "shown"]
+    missing = [r for r in left if r[2] == "missing"]
+    sub = dc.get("proofSub")
+    had = not isinstance(sub, dict) and isinstance(((pdata or {}).get("divCheck") or {}).get("proofSub"), dict)
+    blind = set(PROVE_SUB) - checked                                       # 오늘 기록으로 줄을 정할 수 없는 부분 (rights · data)
+    lost = div_lines_lost(pdata, checked)
+    n = max(own["n"], len(left), len(set(lost) | {r[0] for r in own["rows"]} | {r[0] for r in left}))
+    many = n > DIV_LINE_BLANK_MAX
+    n2, n3, n4 = (sum(1 for v in want.values() if v == x) for x in (2, 3, 4))
+    dm = sub.get("data") if isinstance(sub, dict) and isinstance(sub.get("data"), dict) else {}
+    oth = sorted(t for t, v in dm.items() if v == "other")
+    rest = sum(len(sub[k]) for k in checked) - n2 - n3 - n4               # 확인한 기록만 세요 (리뷰 1차: 모양이 틀린 기록의 종목을 '줄 없음'으로 세지 않게)
+    parts = ([f"비운 줄 {own['n']}: {own_drop_text(own['rows'], own['n'])}"] if own["n"] else []) \
+        + ([f"줄을 잃은 종목이 기준 {DIV_LINE_BLANK_MAX} 을 넘음 ({n})"] if many else []) \
+        + ([f"기록과 맞지 않는 줄이 남음 {len(shown)}: {own_drop_text(shown)}"] if shown else []) \
+        + ([f"기록은 줄인데 표시 없음 {len(missing)} (이유 줄 없이 빈칸): {own_drop_text(missing)}"] if missing else []) \
+        + (["기록 없음 — 직전 발행본에는 있었어요"] if had else []) \
+        + ([f"오늘 기록으로 확인할 수 없는 직전 발행본의 줄 2 · 3 · 4 {len(lost)}곳: {', '.join(lost[:10])}{'…' if len(lost) > 10 else ''}"]
+           if lost else []) \
+        + [x for x in probs if not (x.startswith("기록 없음") and had)] \
+        + [f"유상증자 줄 {n2} · 배당 자료 줄 {n3} · " + (f"빠진 자료 줄 {n4} · " if n4 else "") + f"줄 없음 {rest}"
+           + (f" (확인하지 못한 기록: {' · '.join(sorted(blind))})" if blind else "")] \
+        + ([f"이름 없는 배당 표 이유 {len(oth)}곳 (줄 없음): {', '.join(oth[:4])}{'…' if len(oth) > 4 else ''}"] if oth else [])
+    rep.add(name, not (shown or (many and mode != "live")), " · ".join(parts),
+            f"Jack 의 상시 규칙 (2026-11-19): 기록과 맞지 않는 줄은 파이프라인이 비우고 발행 (ownDrop.divLine) · 실패는 줄을 잃은 종목 > {DIV_LINE_BLANK_MAX} "
+            "(비운 줄 · 기록이 없거나 틀려 확인할 수 없는 직전 발행본의 줄 · 사이트 점검은 경고) 또는 맞지 않는 줄이 남음 · 비운 줄 · 표시 없는 줄 · 기록 문제 · "
+            "이름 없는 이유(other)는 경고 · dvLine 2 = 주주배정(sh) · "
+            "3 = 배당 표가 주식 수와 실제로 어긋남(div) · 4 = 회사 공시에 조각이 빠짐(nototal · nostk · pref0 · nopfo · prefmix)",
+            warn=bool(own["n"] or missing or probs or oth or many or lost))
+    if own["n"]:
+        rep.detail("파이프라인이 비운 숨긴 배당수익률의 줄 (ownDrop.divLine)", [f"{t}: {w}" for t, w in own["rows"]]
+                   + ([f"… 외 {own['n'] - len(own['rows'])}건"] if own["n"] > len(own["rows"]) else []))
+
+
+def _div_lines_old(rep, name, dc, pf, kr, pdata):
+    """check_v191j_lines 의 예전 규칙 (ownDrop.divLine 이 없는 파일 · #142 그대로)."""
     sub = dc.get("proofSub")
     if not isinstance(sub, dict):
         had = isinstance(((pdata or {}).get("divCheck") or {}).get("proofSub"), dict)
@@ -4656,6 +5795,9 @@ def _main(argv=None):
     ap.add_argument("--bootstrap", action="store_true", help="직전 발행본 비교를 건너뜀 — 첫 실행 한 번만")
     ap.add_argument("--live", action="store_true", help="사이트 점검: 절대 기준만")
     ap.add_argument("--today", default=None, help="오늘 날짜(KST) 바꾸기 — 시험용")
+    ap.add_argument("--daum-limit", type=float, default=None, metavar="SECONDS",
+                    help=f"--live 에서 관문의 다음 확인 전체 시간 한도 (초 · {PX_ALT_LIVE_BUDGET_S} 이상 · Jack 2026-11-20 · 배포만). "
+                         f"없으면 환경 변수 {PX_ALT_LIMIT_ENV} (deploy.yml 관문 단계), 그것도 없으면 한도 없음 (감시 · 예전 그대로). 발행 관문은 쓰지 않아요")
     a = ap.parse_args(argv)
     now = dt.datetime.now(KST)
     today = day(a.today) if a.today else now.date()
@@ -4663,6 +5805,23 @@ def _main(argv=None):
     print(f"뱁새 발행 관문 · 오늘(KST) {today} · 모드 {mode}")
     if mode == "bootstrap":
         print("!! --bootstrap: 직전 발행본과의 비교를 건너뛰어요. 첫 실행 한 번만 써야 해요.")
+    # 2026-11-20 (Jack: "Yes to 10 minutes" — 배포만): 다음 확인의 시간 한도는 받았을 때만 (deploy.yml 관문 단계의 환경 변수 · 또는 --daum-limit).
+    # 감시(watchdog.py)는 받지 않아요 (예전 그대로 한도 없이). 발행 · bootstrap 은 받아도 쓰지 않아요. 짧은 한도(더 자주 건너뜀)는 받지 않아요.
+    raw_limit = a.daum_limit if a.daum_limit is not None else (os.environ.get(PX_ALT_LIMIT_ENV) or "").strip() or None
+    daum_limit = None
+    if raw_limit is not None and mode != "live":
+        print(f"· 다음 확인 시간 한도({raw_limit})는 사이트 점검(--live)에서만 써요 — 이 실행({mode})은 한도 없이 예전 그대로")
+    elif raw_limit is not None:
+        try:
+            daum_limit = float(raw_limit)
+        except ValueError:
+            daum_limit = math.nan
+        if not math.isfinite(daum_limit) or daum_limit < PX_ALT_LIVE_BUDGET_S:
+            msg = (f"다음 확인 시간 한도 {str(raw_limit)[:20]}초를 쓸 수 없어요 — {PX_ALT_LIVE_BUDGET_S}초 이상의 숫자여야 해요 "
+                   f"(Jack 2026-11-20 · 짧으면 더 자주 건너뛰어 느슨해져요 · --daum-limit 또는 {PX_ALT_LIMIT_ENV})")
+            print(f"!! FAIL  {msg}")
+            _annotate_error(msg)
+            return 1
 
     try:
         cur = load_dir(a.dir)
@@ -4742,13 +5901,30 @@ def _main(argv=None):
         pxd = day(cur["data"].get("pxDate"))
         psrc = cur["data"].get("pxSrc")
         if pxd and isinstance(psrc, dict) and psrc.get("px") == PX_SRC_FB and (final is None or final["date"] < pxd):
-            alt = http_px_alt(cur["data"], pxd, special=special, mode="live" if mode == "live" else "publish")
+            lim_kw = {"budget_s": daum_limit} if daum_limit is not None else {}     # 한도가 없으면 예전과 같은 꼴로 불러요
+            alt = http_px_alt(cur["data"], pxd, special=special, mode="live" if mode == "live" else "publish", **lim_kw)
             print(f"{'· ' if not alt['mustMissing'] and alt['got'] >= PX_ALT_MIN_SHARE * max(alt['asked'], 1) else '!! '}"
                   f"관문의 두 출처 공식 종가 ({pxd} · {'다음 + 발행 기록' if alt.get('mode') == 'live' else '다음 × 야후'}): 확인 {alt['got']} / {alt['asked']}종목"
                   f" (야후 일봉 종가가 비어 마감 직후 regularMarketPrice 로 읽은 종목 {alt.get('meta', 0)})"
                   + (f" · 두 출처가 다름 {len(alt['disagree'])}: {'; '.join(alt['disagree'][:5])}" if alt.get("disagree") else "")
                   + (f" · 필수 종목 못 받음 {', '.join(alt['mustMissing'])}" if alt["mustMissing"] else "")
-                  + (f" · 오류 예: {alt['err'][0]}" if alt["err"] else ""))
+                  + (f" · 오류 예: {alt['err'][0]}" if alt["err"] else "")
+                  + (f" · 걸린 시간 {alt['secs']:.0f}초" if isinstance(alt.get("secs"), (int, float)) else ""))
+            if alt.get("cut"):                   # 2026-11-20 (Jack): 배포만 — 시간 한도에 걸린 확인은 그 몫만 건너뛰고 크게 경고해요
+                hard, reach = px_alt_cut_gap(alt)
+                print(f"!! 관문의 두 출처 확인이 시간 한도 {px_alt_secs(alt.get('limit'))}초에 걸렸어요 (Jack 2026-11-20): 확인 {alt['got']} / {alt['asked']}종목 · "
+                      f"시간 한도로 건너뜀 {alt['cut']}" + (f" (필수 종목 {', '.join(alt.get('cutMust') or [])})" if alt.get("cutMust") else "")
+                      + f" · 네트워크 오류 {alt.get('net', 0)}" + (f" (필수 종목 {', '.join(alt.get('netMust') or [])})" if alt.get("netMust") else "")
+                      + f" · 다음이 그날 종가를 주지 않음 {alt.get('no', 0)}" + (f" (보기: {'; '.join(alt.get('noEx') or [])})" if alt.get("noEx") else "")
+                      + (f" · 네트워크 오류 뒤 다시 묻지 못한 종목 {alt.get('cutErrN', 0)} (마지막 오류: {'; '.join(alt.get('cutErr') or [])})"
+                         if alt.get("cutErr") else "")
+                      + (" — 한도 전에 받은 종목으로 예전 기준(필수 종목 모두 · 표본 90%)을 채웠어요"
+                         if not alt["mustMissing"] and alt["got"] >= PX_ALT_MIN_SHARE * max(alt["asked"], 1)
+                         else (f" — 시간 한도 때문이 아닌 모자람이 있어 예전 그대로 실패해요 (필수 종목 {', '.join(hard)}) ('최종본 날짜 계산' 줄)" if hard
+                               else (f" — 시간 한도 때문이 아닌 모자람이 있어 예전 그대로 실패해요 (모두 받았다고 쳐도 {reach} / {alt['asked']} < "
+                                     f"{PX_ALT_MIN_SHARE:.0%}) ('최종본 날짜 계산' 줄)" if reach < PX_ALT_MIN_SHARE * max(alt["asked"], 1)
+                                     else " — 시간 한도(와 네트워크 오류)로 못 받은 몫만 건너뛰고 경고 ('pxDate 최종본 여부' 줄) · 나머지 검사는 "
+                                          "예전 그대로 · 받은 종가가 발행 가격과 다르면 가격 줄은 실패"))))
     except Exception as e:
         print(f"!! 관문의 야후 공식 종가를 받지 못했어요: {type(e).__name__}: {str(e)[:120]} (확인 못 함 → 날짜 · 가격 줄 실패)")
         alt = {"date": None, "mode": None, "closes": {}, "asked": 0, "got": 0, "mustMissing": list(MUST), "err": [str(e)[:80]]}
