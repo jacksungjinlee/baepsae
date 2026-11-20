@@ -95,6 +95,10 @@ from validate_data import US_FGN_NOCMP, US_FGN_NOCMP_KIND, US_FGN_NOCMP_WHY, US_
 from validate_data import (ISSUE_SHAPE_KEY, ISSUE_BD_KEY, INSIDER_ROLE_KEY, US_DATE_KEY, ISSUE_SHAPE_MAX, ISSUE_BD_MAX, INSIDER_ROLE_MAX,
                            US_DATE_MAX, issue_bad_rows, issue_bd_bad_rows, insider_bad_rows, us_date_bad_rows, own_rows_rec, own_rows_text)
 from validate_data import _iso_day as gate_iso_day
+# 2026-11-19 (Jack 의 상시 규칙 · 우리 처리를 보는 검사): 빼거나 비울 행을 고르는 함수는 관문 파일에 하나씩 — 파이프라인은 같은 함수를 메모리의
+# 데이터에 돌려 그 행을 빼거나 비우고 data.json ownDrop 에 적어요 (논리를 베끼지 않아요)
+from validate_data import (US_CLASS_DROP_KEY, US_CLASS_DROP_MAX, DIV_LINE_DROP_KEY, DIV_LINE_BLANK_MAX, US_CLASS_BLIND, us_class_bad_rows,
+                           div_line_bad_rows, div_lines_lost, own_drop_rec, own_drop_text, kr_stocks as gate_kr_stocks, us_stocks as gate_us_stocks)
 # 2026-11-19 (Jack: "new listings take their industry from DART's company records"): 한국표준산업분류 11차 표를 읽는 코드와 쓰는 단계(소분류)도
 # 관문 파일에 있어요 (관문이 같은 표로 채운 값을 확인해요)
 from validate_data import load_ksic_names, IND_DART_DIGITS, IND_MISS_KO, IND_MISS_OK, IND_FUND_KSIC, kr_desc_parse, KR_DESC_TAIL
@@ -10159,7 +10163,7 @@ def us_list_sym(symrec, sp500, sp_ok, asked, kept, why, added=None):
        S&P 500 목록에서 바뀌지 않고 실렸는지 봐요), "spGone": S&P 500 목록 종목 중 오늘 없는 티커 → 이유 (믿지 못한 날 None),
        "noPx": 그중 야후가 가격을 하나도 주지 않은 티커 (점이 지워진 새 주식 종류 티커의 모습 · 믿지 못한 날 None),
        "spErr": 그중 처리하다 오류로 멈춘 티커 (가격이 없다는 뜻이 아니에요 · 믿지 못한 날 None),
-       "missing": 더한 종목(US_CLASS_ADDED) 중 오늘 없는 티커 → 이유 (관문: 이유 없이 빠지면 발행 실패)}"""
+       "missing": 더한 종목(US_CLASS_ADDED) 중 오늘 없는 티커 → 이유 (관문: 빠지면 이유가 있든 없든 경고 · Jack 2026-11-20)}"""
     added = US_CLASS_ADDED if added is None else added          # 부를 때의 표 (정의할 때 묶지 않아요)
     read = isinstance(symrec, dict)
     mapped = [list(x) for x in (symrec or {}).get("mapped") or []] if read else []
@@ -11255,8 +11259,6 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                     "mapFund · noGroup · noParse · prefNoCommon · prefCommonNone · prefOver · dropped · noTable) · dartErr 채우기가 고장 난 날의 "
                     "예외 이름 (그날 left 는 빈 값) 또는 table:예외 (업종 표를 읽지 못해 DART 로 채우지 않은 날) — 관문 경고 · mapSha 채울 때 쓴 "
                     "업종 표(data/ksic_map_kr.csv)의 판 (sha256 앞 12자리 · 표가 바뀐 뒤의 옛 채움은 관문이 경고만)"),
-         "ownDrop": ("우리 처리 단계의 검사가 되돌리거나 뺀 행 (Jack 의 상시 규칙, 2026-11-19): {검사: {n 수 · rows 앞 30개 '종목 이름: 이유'}} · "
-                     "indFill 국내 업종 채운 값 (DART 로 채운 보통주 · 보통주를 따른 우선주 — validate_data.ind_fill_bad)"),
          "krSeries": ("국내 시계열 점검 (2026-11-14): 최근 거래일(days)의 네이버 일봉(수정주가)을 그날 공식 종가로 고친 봉 pinned · 종목 "
                       "pinStocks — 그날과 오늘 사이에 KRX 기준가(목록 파일의 Close − Changes)가 바뀌지 않았을 때만 (값 차이 "
                       f"{PIN_PX_TOL:.0%} 안, 또는 상장주식수가 오늘과 {PIN_SHR_TOL:.0%} 안이고 {PIN_REF_TOL:.0%} 안) · 기준가를 확인 못 한 날은 "
@@ -11307,6 +11309,12 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                        "날은 빈 값) · noPx = 그중 야후가 가격을 하나도 주지 않은 티커 (점이 지워진 새 주식 종류 티커일 수 있어요) · spErr = 그중 "
                        "처리하다 오류로 멈춘 티커 · spTickers = 그날 S&P 500 목록의 티커 (야후 모양 · 못 읽은 날 빈 값) · missing = 이 "
                        "바꾸기로 들어온 종목(BF-B) 중 오늘 없는 티커 → 빠진 이유 · read = 출처 티커 기록이 있었는지"),
+         "ownDrop": ("우리 처리 검사가 빼거나 비우거나 되돌린 행 (Jack 의 상시 규칙 2026-11-19): {검사 열쇠: {n 행 수, rows 앞 30개}} · usClass = "
+                     "미국 목록에서 뺀 행 (S&P 500 의 점이 지워진 꼴이 바뀌지 않고 실림 · 관문 표와 다르게 바꾼 티커 · rows [열쇠, 이유]) · divLine = "
+                     "기록(divCheck.proofSub)과 맞지 않아 비운 숨긴 배당수익률의 줄 (dvLine 2 · 3 · 4 · 기록은 줄인데 표시가 없던 종목도 수에 들어가요 · "
+                     "rows [열쇠, 이유]) · 두 검사의 관문은 n 이 기준을 넘거나 그런 값이 남으면 실패, 1 이상이면 경고 · indFill = 국내 업종 채운 값 중 "
+                     "되돌린 행 (DART 로 채운 보통주 · 보통주를 따른 우선주 — validate_data.ind_fill_bad · rows '종목 이름: 이유') · usDates = 틀린 미국 ed · "
+                     "xd 를 비운 행 (v19.6b · validate_data.us_date_bad_rows · 그 칸만 비워요)"),
          "fgnCut": ("미국 상장 외국 회사의 종목 칸: 회사 합계와 맞지 않아 비운 칸 {per · pbr · dy: mismatch 맞춰 봤는데 맞지 않음 · currency 재무제표 "
                     "통화를 확인하지 못함 · norecord 배당 기록 · 가격을 읽지 못한 배당수익률 · nocompare 회사 숫자로 PER · PBR 을 맞춰 볼 수 없음 (적자 · ROE 없음) · "
                     "nocompare-own 같은 뜻, 스위치 own 일 때 (지금 · 앱 줄 co.fgnNoCmp) · stopped 검사가 멈춘 날 맞춰 보지 않고 비움 (앱 줄 co.fgnStopped)} "
@@ -11328,6 +11336,89 @@ def idx_hist(series):
     last = s.index[-1]
     s = s[s.index > last - pd.DateOffset(years=IDX_YEARS)]
     return {"asOf": last.date().isoformat(), "rows": [[d.date().isoformat(), round(float(v), 2)] for d, v in s.items()]}
+
+
+# ── Jack 의 상시 규칙 (2026-11-19 ~17:45 KST · 우리 처리를 보는 검사) ──────────────────────────────
+# Jack, verbatim: "Standing rule for checks on our own processing: a single bad row is dropped or blanked with a loud warning and the
+# rest publishes. Block only when many rows fail in one run (set the number from recent runs and show it in the PR) or when a value would
+# show a wrong number." 나쁜 행은 관문 파일의 함수가 골라요 (같은 함수 · 한 곳). 여기서는 빼거나 비우고, 크게 남기고, data.json ownDrop 에
+# 적어요 ({열쇠: {"n", "rows" 앞 30}} · 깨끗한 실행도 0 으로). 관문은 n 이 N 을 넘거나 빼야 할 값이 남으면 실패, 1~N 이면 경고예요.
+US_CLASS_DROP_NAME = "미국 주식 종류 티커 (S&P 500 의 점이 지워진 꼴 · 관문 표와 다른 바꾸기)"
+DIV_LINE_DROP_NAME = "숨긴 배당수익률의 줄 (dvLine 2 · 3 · 4 가 기록 proofSub 와 맞지 않음)"
+
+
+def own_drop_us_class(us, umeta):
+    """#139 의 우리 처리 검사 (validate_data.us_class_bad_rows): 발행하면 안 되는 미국 행을 빼요 → (남긴 미국 목록, ownDrop.usClass 의 값).
+    빼는 행: S&P 500 목록의 점이 지워진 꼴(BRKB · BFB)이 바뀌지 않고 실린 행 (야후가 그 꼴에 답했다면 다른 증권이에요) · 기록이 깨져 출처를 알 수
+    없는 그 꼴 · 관문 표와 다르게 바꾼 티커의 행. 행 통째로 빼요: 가격 · 시가총액 · 점수가 모두 다른 증권의 숫자일 수 있어 값 하나만 비우면 틀린
+    숫자가 남아요. 업종 · 순위 · 분할 · 인기 목록보다 먼저 부르면 그 계산에도 들어가지 않아요 (main). umeta (fetch_us 의 기록) 에서 그 행의 것도
+    빼요: 오늘 시세 다운로드의 분할 줄(splits · 목록에 없는 종목의 새 분할 줄은 관문 실패) · splitsNoCol · usInfoPartial · usFcurUnknown 의 티커.
+    usListSym 은 출처 기록이라 그대로 둬요 (관문이 같은 함수로 남은 행을 다시 봐요)."""
+    rows, probs = us_class_bad_rows(umeta.get("usListSym"), gate_us_stocks({"stocks": us}))
+    bad = {r[0] for r in rows}
+    kept = [s for s in us if s.get("t") not in bad]
+    if bad:
+        row0 = lambda x: isinstance(x, (list, tuple)) and x and x[0] in bad      # noqa: E731 — [티커, …] 줄
+        if isinstance(umeta.get("splits"), list):
+            umeta["splits"] = [x for x in umeta["splits"] if not row0(x)]
+        for k in ("splitsNoCol", "usInfoPartial", "usFcurUnknown"):
+            if isinstance(umeta.get(k), list):
+                umeta[k] = [t for t in umeta[k] if t not in bad]
+        uf = umeta.get("usForeign")
+        if isinstance(uf, dict):                       # 리뷰 1차 S1: 뺀 종목의 외국 회사 기록 (관문이 종목의 fgnCut 과 맞춰 봐요)
+            for k in ("checked", "unknown"):
+                if isinstance(uf.get(k), list):
+                    uf[k] = [t for t in uf[k] if t not in bad]
+            for k in ("cut", "kept"):
+                if isinstance(uf.get(k), list):
+                    uf[k] = [x for x in uf[k] if not row0(x)]
+            for k in ("kind", "set"):
+                if isinstance(uf.get(k), dict):
+                    uf[k] = {t: v for t, v in uf[k].items() if t not in bad}
+        if isinstance(umeta.get("usInfo"), list) and len(umeta["usInfo"]) == 2:   # [상세 정보를 붙인 종목, 종목] — 뺀 행만큼 줄여요
+            info = sum(1 for s in us if s.get("t") in bad and "dk" in s)     # dk 는 상세 정보를 붙인 행에만 (apply_us_info · n_ok 와 같은 행)
+            umeta["usInfo"] = [max(0, umeta["usInfo"][0] - info), len(kept)]
+    if rows:
+        log(f"  !! {US_CLASS_DROP_NAME}: {len(rows)}건 빼고 발행 — {own_drop_text(rows)} (data.json ownDrop.usClass · 관문 경고 · "
+            + (f"{US_CLASS_DROP_MAX}건을 넘어 관문에서 실패해 발행하지 않아요)" if len(rows) > US_CLASS_DROP_MAX else f"{US_CLASS_DROP_MAX}건을 넘으면 실패)"))
+    else:
+        log(f"· {US_CLASS_DROP_NAME}: 0건 빼고 발행")
+    if probs:
+        log(f"  !! {US_CLASS_DROP_NAME} — 기록 문제 ({'관문에서 실패해 발행하지 않아요' if US_CLASS_BLIND in probs else '관문 경고'}): "
+            + " · ".join(probs))
+    return kept, own_drop_rec(rows)
+
+
+def own_blank_div_lines(kr, div_counts, prev=None):
+    """#142 의 우리 처리 검사 (validate_data.div_line_bad_rows): 기록(divCheck.proofSub)과 맞지 않는 숨긴 배당수익률의 줄을 비워요 →
+    ownDrop.divLine 의 값. shown (종목에 줄이 있는데 기록이 그 줄을 정하지 않음): 그 종목의 dvLine 만 지워요 — 앱은 그 자리에 이유 줄 없이
+    빈 배당수익률을 보여요 (숫자는 그대로 · 틀릴 수 있는 이유를 말하지 않아요). missing (기록은 줄을 정했는데 표시가 없음): 비울 것이 없어요 (이유
+    줄 없이 빈칸 그대로). 둘 다 수에 들어가요. 줄 1 (Jack 의 줄) 은 보지 않아요 (예전 규칙 그대로).
+    prev (직전 발행본 data.json): 오늘 기록이 없거나 틀려 확인할 수 없는 그 발행본의 줄 2 · 3 · 4 (validate_data.div_lines_lost · 관문과 같은 함수)도
+    로그에 세요 — 기록과 줄이 함께 사라진 날 비울 것이 없어도 그 종목들은 이유 줄을 잃고, 관문은 그 수까지 합쳐 N 을 넘으면 실패해요 (리뷰 2차)."""
+    kr_g = gate_kr_stocks({"stocks": kr})
+    rows, probs, _want, checked = div_line_bad_rows(kr_g, div_counts)
+    lost = div_lines_lost(prev, checked)
+    total = len({r[0] for r in rows} | set(lost))
+    over = max(len(rows), total) > DIV_LINE_BLANK_MAX
+    by = {s.get("t"): s for s in kr_g}
+    for t, _w, kind in rows:
+        if kind == "shown":
+            by[t].pop("dvLine", None)
+    n_miss = sum(1 for r in rows if r[2] == "missing")
+    gate = (f"줄을 잃은 종목 {max(len(rows), total)}곳 — {DIV_LINE_BLANK_MAX}곳을 넘어 관문에서 실패해 발행하지 않아요" if over
+            else f"관문 경고 · 줄을 잃은 종목이 {DIV_LINE_BLANK_MAX}곳을 넘으면 실패")
+    if rows:
+        log(f"  !! {DIV_LINE_DROP_NAME}: {len(rows)}건 비움" + (f" (그중 줄이 원래 없던 종목 {n_miss})" if n_miss else "")
+            + f" — {own_drop_text(rows)} (data.json ownDrop.divLine · {gate})")
+    else:
+        log(f"{'  !! ' if lost else '· '}{DIV_LINE_DROP_NAME}: 0건 비움" + (f" ({gate})" if lost else ""))
+    if lost:
+        log(f"  !! {DIV_LINE_DROP_NAME}: 직전 발행본에 줄 2 · 3 · 4 가 있던 {len(lost)}곳은 오늘 기록(proofSub)이 없거나 틀려 확인할 수 없어 이유 줄이 "
+            f"빠져요 — {', '.join(lost[:30])}{f' 외 {len(lost) - 30}곳' if len(lost) > 30 else ''} ({gate})")
+    if probs and isinstance((div_counts or {}).get("proof"), dict):     # 증명이 돌았는데 기록이 맞지 않아요 (증명이 없는 실행은 기록도 없어요)
+        log(f"  !! {DIV_LINE_DROP_NAME} — 기록 문제 ({'관문에서 실패해 발행하지 않아요' if over else '관문 경고'}): " + " · ".join(probs))
+    return own_drop_rec(rows)
 
 
 def main():
@@ -11451,6 +11542,9 @@ def main():
     us, us_bench, fx, fx_last, us_vol_krw, umeta = ph.run("미국", fetch_us, start, today, rf,
                                                           kr_codes=frozenset(s["t"] for s in kr), dups=dups,
                                                           prev_fgn=prev_foreign_set(prev))   # 리뷰 S2: 어제 발행한 외국 회사 목록
+    # 2026-11-19 (Jack 의 상시 규칙): #139 의 검사가 잡는 미국 행(점이 지워진 꼴 · 관문 표와 다른 바꾸기)은 여기서 빼요 — 미국 목록이 정해진
+    # 바로 뒤라 아래 분할 · 업종 · 순위 · 인기 목록 · 종목 수에도 들어가지 않아요 (data.json ownDrop.usClass)
+    us, own_us = own_drop_us_class(us, umeta)
     # v19.6a (A.6): 주식 분할 (2016-01-01 부터 · 한 번 실은 분할은 빼지 않아요). 오늘 시세 다운로드가 읽은 분할(umeta) + 커밋한 시드 + 지난
     # 발행본의 줄 (splits_fields · merge_splits). 시드에도 지난 발행본에도 없는 종목만 2016년부터의 이력을 읽어요 (하루 몇 개 · 많아야 20).
     sp_fields = splits_fields(prev, [s["t"] for s in us], umeta.get("splits"), umeta.get("splitsNoCol") or [], start, today)
@@ -11553,6 +11647,9 @@ def main():
                 x["price"] = round(x["price"] * 1.1)
                 log(f"  !! 시험용(selftest): 005930 가격을 일부러 {x['price']:,}원으로 틀리게 써요 — 검증이 막아야 합니다")
 
+    # 2026-11-19 (Jack 의 상시 규칙): #142 의 검사가 잡는 숨긴 배당수익률의 줄(기록과 맞지 않는 dvLine 2 · 3 · 4)은 쓰기 바로 앞에서 비워요
+    # (data.json ownDrop.divLine) — 그 뒤로 줄을 바꾸는 단계가 없어요 (corp.json 은 dvLine 을 싣지 않아요)
+    own_div = own_blank_div_lines(kr, div_counts, prev)
     try:      # 여기서 멈추지 않아요: 빈 칸으로 쓰면 관문이 경고하고, 앱은 예전 4일 규칙으로 '늦음'을 봐요 (Jack, 2026-11-07)
         next_pub = next_publish(dt.date.fromisoformat(kmeta["pxDate"]), dt.date.fromisoformat(umeta["usPxDate"]), hol)
         log(f"· 다음 발행 예정일 {next_pub} · 늦음 경고 {stale_after(next_pub)} (휴장일 표 "
@@ -11574,6 +11671,8 @@ def main():
         "usForeign": umeta["usForeign"],           # 2026-11-14: 미국 상장 외국 회사 주당 숫자 검사 (관문이 비운 칸 · 빠짐없이 확인했는지 봐요)
         "usExtraMissing": umeta["usExtraMissing"], # 2026-11-14: EXTRA_US 중 오늘 없는 종목과 이유 (관문이 이름과 이유를 경고로 · 이유 없으면 실패)
         "usListSym": umeta["usListSym"],           # 2026-11-15: 주식 종류 티커 (BRKB → BRK-B · BFB → BF-B) · 바꾸지 못한 티커 (관문)
+        # 2026-11-19 (Jack 의 상시 규칙): 우리 처리 검사가 빼거나 비운 행 — 관문이 수(N)와 남은 값을 봐요 (이 칸이 없는 예전 파일은 예전 규칙)
+        "ownDrop": {US_CLASS_DROP_KEY: own_us, DIV_LINE_DROP_KEY: own_div},
         "divCheck": div_counts,              # v19.1b: 배당 분할 확인 집계 (관문이 종목과 맞춰 봐요 · 이 칸이 있으면 새 검사가 다 돌아요)
         "incCheck": inc_check,               # v19.1f: 손익 줄 집계 (관문이 corp.json 과 맞춰 봐요 · 이 칸이 있으면 손익 줄 검사가 다 돌아요)
         "epsBasis": eps_basis,               # v19.1f: EPS·PER 은 지배주주 몫 — 앱의 '계산 방법을 고치는 중' 줄이 이걸 보면 사라져요
