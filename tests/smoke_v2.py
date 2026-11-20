@@ -15049,7 +15049,7 @@ def scene_us_own_close_daily(R, files, width=390):
     hold = [{**_holding(t, nk, tg, [] if cls == "kr" else [roe()]), "cls": cls, "plannedQty": q} for t, nk, cls, tg, q, _ in rows]
     buys = [{"t": t, "date": "2026-10-01", "qty": q, "price": round(gby[t]["price"] * 0.95, 2), "ccy": c, **({"fx": fx} if c == "USD" else {})}
             for t, _, _, _, q, c in rows]
-    store = {"v": 1, "decks": [{"id": "dustodo", "name": "미국 확인 종가 할 일", "createdAt": "2026-10-01", "holdings": hold, "purchases": buys, "planFx": fx}]}
+    store = {"v": 1, "decks": [{"id": "dustodo", "name": "미국 확인 포트폴리오", "createdAt": "2026-10-01", "holdings": hold, "purchases": buys, "planFx": fx}]}
     init = f"(() => {{ try {{ if (!localStorage.getItem('baepsae2.v1')) localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(store, ensure_ascii=False))}); }} catch (e) {{}} }})();"
     want_todo = "MSFT: " + fillp(C["app"]["krOwnClose"], date=mdtext(US_OWN["MSFT"])) + " " + fillp(C["app"]["ownClose"], names="AAPL", md=mdtext("2026-10-28"))
     srv, ctx, page, _ = R.open(build_site(f), width, init=init)

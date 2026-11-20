@@ -2484,11 +2484,15 @@ def us_own_close_step(prev, nocl, out, us_px_date, trade_days, etfs=frozenset(),
             log(f"  !! 그중 야후에 마지막 확인 종가보다 새 종가(그 종목의 마지막 봉 · 기준일 앞)가 있어 그 종가로 실은 미국 종목 {len(newer):,}: "
                 + ", ".join(f"{x['t']} ({x['pxd']} {x['px']})" for x in newer[:US_OWN_SHOW])
                 + (f" 외 {len(newer) - US_OWN_SHOW}종목" if len(newer) > US_OWN_SHOW else "") + " (usSrc.own.newer)")
-        if split:
-            log(f"  !! 마지막 확인 종가 뒤에 주식 분할이 있거나 분할 칸을 읽지 못해 싣지 않은 미국 종목 {len(split):,} (지난 발행본의 가격은 분할 전일 수 있고 "
-                "앱은 주식 수를 바꿔요 → 예전 그대로: 야후의 자기 날짜 봉 · 없으면 빠짐 · usSrc.own.split): "
-                + ", ".join(f"{x['t']} ({x['pxd']} " + ("뒤 분할을 읽지 못함" if x.get("unread") else f"뒤 분할 {', '.join(x['after'])}") + ")"
-                            for x in split[:US_OWN_SHOW]))
+        sp_after = [x for x in split if not x.get("unread")]
+        sp_unread = [x for x in split if x.get("unread")]
+        if sp_after:
+            log(f"  !! 마지막 확인 종가 뒤에 주식 분할이 있어 싣지 않은 미국 종목 {len(sp_after):,} (지난 발행본의 가격은 분할 전 · 앱은 주식 수를 바꿔요 → "
+                "예전 그대로: 야후의 자기 날짜 봉 · 없으면 빠짐 · usSrc.own.split): "
+                + ", ".join(f"{x['t']} ({x['pxd']} 뒤 분할 {', '.join(x['after'])})" for x in sp_after[:US_OWN_SHOW]))
+        if sp_unread:
+            log(f"  !! 분할 칸을 읽지 못해 마지막 확인 종가로 싣지 않은 미국 종목 {len(sp_unread):,} (분할을 몰라요 → 예전 그대로: 야후의 자기 날짜 봉 · "
+                "없으면 빠짐 · usSrc.own.split unread): " + ", ".join(f"{x['t']} ({x['pxd']})" for x in sp_unread[:US_OWN_SHOW]))
         dc = collections.Counter(drop.values())
         dn = [f"{t} ({US_OWN_DROP_KO[w]} · {US_NOCL_KO.get(nocl.get(t), '?')})" for t, w in sorted(drop.items())]
         if drop:
@@ -2602,7 +2606,8 @@ def us_own_split_late(us, umeta, sp_fields, prev):
     if not hit:
         return us, sp_fields
     stash = umeta.get("_usOwnYahoo") if isinstance(umeta.get("_usOwnYahoo"), dict) else {}
-    back = {r["t"]: us_own_restore(r, stash[r["t"]]) for r in hit if isinstance(stash.get(r["t"]), dict)}
+    cut = []
+    back = {r["t"]: us_own_restore(r, stash[r["t"]], cut) for r in hit if isinstance(stash.get(r["t"]), dict)}
     back = {t: x for t, x in back.items() if x is not None}
     bad = {r["t"] for r in hit} - set(back)
     pmap = {(x[0], x[1]) for x in ((prev or {}).get("splits") or []) if isinstance(x, (list, tuple)) and len(x) >= 2}
@@ -2624,13 +2629,17 @@ def us_own_split_late(us, umeta, sp_fields, prev):
     log(f"  !! 발행할 분할 목록에 마지막 확인 종가 뒤의 분할이 있어 싣지 않은 미국 종목 {len(hit):,} (단계가 보지 못한 분할 · 시드나 다시 읽은 이력 · "
         f"usSrc.own.split late) — 예전 그대로 야후의 자기 날짜 봉 {len(back):,} · 봉이 없어 뺌 {len(hit) - len(back):,}: "
         + ", ".join(f"{x['t']} ({x['pxd']} 뒤 {', '.join(x['after'])}" + (" → 야후 봉" if x["t"] in back else " → 뺌") + ")" for x in recs[:US_OWN_SHOW]))
+    if cut:
+        log(f"  !! 예전 길로 되돌린 미국 종목의 PER · PBR · 배당수익률 중 그 가격에 맞추자 범위(apply_us_info 와 같아요)를 벗어나 비운 칸 {len(cut):,}: "
+            + ", ".join(cut[:US_OWN_SHOW]))
     return kept, sp_fields
 
 
-def us_own_restore(row, y):
+def us_own_restore(row, y, cut=None):
     """마지막 확인 종가 행(row · 상세 정보까지 붙은 것)을 예전 길의 행으로: 야후의 자기 날짜 봉 기록(y · fetch_us 의 시세 기록)의 가격 · 날짜 · 시계열
     숫자를 쓰고 pxc 를 빼요. 그 가격에 맞추는 상세 숫자(PER · PBR · 시가총액 · 배당수익률 · 거래대금)는 가격 비율로 다시 맞춰요 (apply_us_info 와 같은
-    자리수). 쓸 수 없으면 None. (순수 함수)"""
+    자리수 · 같은 범위: PER 0~500 · PBR 0~100 · 0.005 미만 PBR 은 빈 칸 · 배당수익률 0~30% — 벗어나면 그 칸을 비우고 cut 에 '티커 칸' 을 적어요).
+    쓸 수 없으면 None. (순수 함수)"""
     yp, cp = _fin(y.get("price")), _fin(row.get("price"))
     if not (yp and yp > 0 and cp and cp > 0 and isinstance(y.get("pxd"), str)):
         return None
@@ -2639,11 +2648,28 @@ def us_own_restore(row, y):
     out.update({key: y[key] for key in US_OWN_KEYS if key in y and y[key] is not None})
     out["pxd"] = y["pxd"]
     out.pop("d1", None)
+    cut = [] if cut is None else cut
+    t = str(out.get("t"))
+    pb = _fin(out.get("pbr"))
+    if pb is not None and 0 < pb * k < US_PBR_MIN:      # apply_us_info (us_info_cuts) 처럼: 0.00 으로 반올림되는 PBR 은 빈 칸 · 표시
+        out.pop("pbr", None)
+        if not out.get("fcur"):
+            out["pbrZero"] = True
+        cut.append(f"{t} pbr")
     for key, nd in (("per", 1), ("pbr", 2), ("cap", 3), ("val", 1)):
         if _fin(out.get(key)) is not None:
             out[key] = round(out[key] * k, nd)
     if _fin(out.get("dy")) is not None:
         out["dy"] = round(out["dy"] / k, 2)
+    for key, lo, hi in (("per", 0, 500), ("pbr", 0, 100)):          # 3차 확인 잔 지적: apply_us_info 의 범위 그대로
+        v = _fin(out.get(key))
+        if v is not None and not (lo < v < hi):
+            out.pop(key, None)
+            cut.append(f"{t} {key}")
+    v = _fin(out.get("dy"))
+    if v is not None and not (0 <= v < 30):
+        out.pop("dy", None)
+        cut.append(f"{t} dy")
     return out
 
 

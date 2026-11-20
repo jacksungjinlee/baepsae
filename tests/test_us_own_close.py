@@ -176,7 +176,7 @@ def test_final_check_drops_wrong_rows_with_the_gate_function(monkeypatch):
 # ── fetch_us 를 가짜 야후로: 2026-11-20 처럼 최신 봉이 비거나 0 인 종목 ─────────────────────────────
 INFO = {"shortName": "Co", "longName": "Co Inc.", "quoteType": "EQUITY", "sector": "Technology", "industry": "Software",
         "financialCurrency": "USD", "currency": "USD", "trailingPE": 20.0, "priceToBook": 4.0, "marketCap": 1e11, "averageVolume": 1e6,
-        "country": "United States", "dividendYield": 0.5}
+        "country": "United States", "dividendYield": 0.5, "exDividendDate": 1795132800}       # 2026-11-19 (#145 xd)
 
 
 def _fake_yf(series, quote=None, splits=None):
@@ -255,6 +255,7 @@ def test_fetch_us_carries_blank_and_zero_newest_bars(tmp_path, monkeypatch):
     assert by["MSFT"]["d1"] is not None and "pxd" not in by["MSFT"] and "pxc" not in by["MSFT"]
     assert "STAG" not in by                                            # 지난 발행본에 없고 가격도 없음 → 예전처럼 빠져요
     assert all(r["price"] > 0 for r in out)                            # 0 종가가 가격 0 인 행이 되지 않아요 (EXTRA_US · 주식 종류 티커 줄)
+    assert by["AAPL"].get("xd") and V.us_date_bad_rows(out) == []      # #145 의 xd: 마지막 확인 종가 행도 오늘 상세 정보에서 (관문 규칙 그대로)
     own = meta["usSrc"]["own"]
     assert own["codes"] == ["AAPL", "SHEL", "TD", "ZERO"] and own["unconf"] == 4 and own["why"] == {"bar": 3, "err": 1}
     assert any(x.startswith("  !! 미국 종가 미확인 4종목") for x in lines), lines
@@ -632,7 +633,7 @@ def test_a_split_after_the_carried_close_takes_mains_path():
         F.log = keep
     assert out == [yahoo_nvda, us("MSFT")] and rec["codes"] == [] and rec["aged"] == []           # 예전 그대로 · TD 는 빠져요
     assert [x["t"] for x in rec["split"]] == ["NVDA", "TD"] and rec["drop"] == {"split": 2}
-    assert any(x.startswith("  !! 마지막 확인 종가 뒤에 주식 분할이 있거나 분할 칸을 읽지 못해 싣지 않은 미국 종목 2") for x in lines), lines
+    assert any(x.startswith("  !! 마지막 확인 종가 뒤에 주식 분할이 있어 싣지 않은 미국 종목 2") for x in lines), lines
 
 
 def _split_gate(data, prev, today=dt.date(2026, 11, 20)):
@@ -891,3 +892,25 @@ def test_a_failed_split_read_keeps_mains_path_in_fetch_us(tmp_path, monkeypatch)
     assert "pxc" not in by["NVDA"] and by["NVDA"]["pxd"] == D18                     # 예전 그대로: 야후의 자기 날짜 봉
     assert meta["usSrc"]["own"]["split"] == [{"t": "NVDA", "pxd": D18, "after": [], "unread": True}] and meta["usSrc"]["own"]["drop"] == {"splitRead": 1}
     assert any(x.startswith("  !! 야후 종가가 없는 미국 종목의 분할 칸을 한꺼번에 읽지 못했어요") and "그래도 읽지 못한 1종목" in x for x in lines), lines
+
+
+def test_restored_ratios_keep_the_normal_limits():
+    """3차 확인 잔 지적: 예전 길로 되돌린 행의 PER · PBR · 배당수익률은 그 가격에 맞춘 뒤 apply_us_info 와 같은 범위 — 벗어나면 비우고 셉니다."""
+    row = us("NVDA", price=100.0, d1=None, pxd=D19, pxc=True, per=300.0, pbr=60.0, dy=1.0, cap=4000.0, val=900.0)
+    y = us("NVDA", price=200.0, d1=None, pxd=D18, vol=40.0)                         # 가격 비율 2 → PER 600 · PBR 120 (범위 밖) · 배당 0.5
+    cut = []
+    r = F.us_own_restore(row, y, cut)
+    assert "pxc" not in r and r["pxd"] == D18 and r["price"] == 200.0 and r["vol"] == 40.0
+    assert "per" not in r and "pbr" not in r and r["dy"] == 0.5 and r["cap"] == 8000.0 and r["val"] == 1800.0
+    assert cut == ["NVDA per", "NVDA pbr"]
+    tiny = F.us_own_restore(us("X", price=100.0, d1=None, pxd=D19, pxc=True, pbr=0.006), us("X", price=50.0, d1=None, pxd=D18), cut)
+    assert "pbr" not in tiny and tiny["pbrZero"] is True and cut[-1] == "X pbr"
+
+
+def test_an_unreadable_split_column_has_its_own_words_in_the_gate():
+    prev = prev_file([us("NVDA", price=180.0)], usd=D19)
+    data = _usdata([us("NVDA", price=18.0, d1=None, pxd=D18), us("AAPL", price=270.0, d1=None, pxd=D18)], codes=[])
+    data["usSrc"]["own"]["split"] = [{"t": "NVDA", "pxd": D19, "after": [], "unread": True}, {"t": "AAPL", "pxd": D19, "after": [D20]}]
+    v = rows_of(lambda rep: V.check_us_own_close(rep, data, macro_days(), prev))["미국 마지막 확인 종가 (usSrc.own · pxc)"][1]
+    assert "분할 칸을 읽지 못해 싣지 않음 (분할을 몰라요 · 예전 그대로) NVDA" in v and "그 종가 뒤 분할이 있어 싣지 않음 (예전 그대로) AAPL" in v, v
+

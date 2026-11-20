@@ -2196,8 +2196,12 @@ def check_us_own_close(rep, data, macro, pdata):
         parts.append(f"실음 {len(mine)}종목" + (" (" + " · ".join(f"{d} {n}종목" for d, n in sorted(days.items(), reverse=True)) + ")" if mine else "")
                      + (f" · 같은 날 지난 발행본 종가 그대로 {len(own.get('same') or [])}" if own.get("same") else "")
                      + (f" · 그중 야후의 더 새 종가 {len(own.get('newer') or [])}" if own.get("newer") else "")
-                     + (" · 그 종가 뒤 분할이 있어 싣지 않음 (예전 그대로) " + ", ".join(str(x.get("t")) for x in own.get("split") or [])
-                        if own.get("split") else "")
+                     + (" · 그 종가 뒤 분할이 있어 싣지 않음 (예전 그대로) " + ", ".join(str(x.get("t")) for x in own.get("split") or []
+                                                                       if isinstance(x, dict) and not x.get("unread"))
+                        if any(isinstance(x, dict) and not x.get("unread") for x in own.get("split") or []) else "")
+                     + (" · 분할 칸을 읽지 못해 싣지 않음 (분할을 몰라요 · 예전 그대로) " + ", ".join(str(x.get("t")) for x in own.get("split") or []
+                                                                             if isinstance(x, dict) and x.get("unread"))
+                        if any(isinstance(x, dict) and x.get("unread") for x in own.get("split") or []) else "")
                      + f" · 야후 종가 없음 {own['unconf'] if isinstance(own.get('unconf'), int) else '모름'}"
                      + (" · 싣지 못함 " + " · ".join(f"{k} {v}" for k, v in sorted(dc.items())) if dc else ""))
         if own.get("err"):
