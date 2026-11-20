@@ -545,7 +545,7 @@ and trading value 0 (11-11 to 11-13: 135 to 141 such rows a day; on the 11-14 pu
   a halted stock never takes that amount away;
 - every other blank Korean `d1` carries its reason in `d1Why`: `range` beyond ±30% (a new listing, a split, a re-listing after a
   halt), `new` (no official close in the previous day's file), `prev` (no usable previous-day file: then every stock, except, since
-  #?, the stocks whose KRX base price matches the last publish's close to the won; see "Backup days and the first volunteer-final
+  #163, the stocks whose KRX base price matches the last publish's close to the won; see "Backup days and the first volunteer-final
   day after them" below);
 - data.json `d1Blank` holds the published counts per reason, `seen` (whether no-trade could be told at all) and the source
   oddities: `odd` (volume and open 0 but a trading value that is not 0, or blank: the row contradicts itself, not marked) and
@@ -582,7 +582,7 @@ every row of 11-11 to 11-13), so a halt and a day nobody traded look the same; i
   row contradicted itself (`odd`), or a must-have looked like no trade (`must`). The publish goes ahead with those stocks
   unmarked. If it repeats, look at that day's listing file (FinanceData cache) before anything else; the run log has the same
   case as a "!!" line.
-## Backup days and the first volunteer-final day after them (직전 거래일 최종본 없는 날의 d1, since #?)
+## Backup days and the first volunteer-final day after them (직전 거래일 최종본 없는 날의 d1, since #163)
 
 A backup day is a finished trading day the volunteer KRX list has no final file for: the run builds it from Daum × Yahoo (the
 two-source rule, #137; time limits in the next section) and publishes with `pxSrc.px` = `daum+yahoo`. When the volunteer list comes
@@ -593,7 +593,7 @@ before each day's close (11-19 was the CSAT day, close 16:30). That run is a nor
 `pxSrc.px` = `listing`, the Yahoo spot check of must-haves + sample and the KONEX Naver check as usual), except that the previous
 trading day has no final file:
 
-- **`d1`** (before #?: blank for every stock, so "필수 종목 d1" failed and nothing published). Now (`fetch_data.kr_d1_base_day`): a
+- **`d1`** (before #163: blank for every stock, so "필수 종목 d1" failed and nothing published). Now (`fetch_data.kr_d1_base_day`): a
   stock gets `d1` = today's official close ÷ the last publish's close − 1 only when KRX's own base price in today's final file
   (Close − Changes, the relation the "KRX 기준가 연결" check uses) equals, to the won, the close in the last publish (the data.json
   the run starts from, the same file the gate reads with `git show HEAD:data.json`). Two independent sources: KRX's base price and

@@ -9,7 +9,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 **Merged 2026-11-21:** **#154** (CLAUDE.md "decide, then report": Jack's rule of 11-20 with his 11-21 tweaks).
 
-**Open 2026-11-21: #?** (Korean `d1` on the first volunteer-final day after backup days). Dry run 44783218618 (02:33 KST) failed
+**Open 2026-11-21: #163** (Korean `d1` on the first volunteer-final day after backup days). Dry run 44783218618 (02:33 KST) failed
 "필수 종목 d1": the volunteer list had a final 11-20 file but its 11-17/18/19 files were intraday (11-19 last commit 14:52, CSAT
 close 16:30), so every Korean `d1` was blank and nothing would publish (main had the same code: the 11-21 morning runs would fail
 too; the site stays on 11-19 data, dated). Fix: on a day with no usable previous-day file, `d1` comes from KRX's base price in
