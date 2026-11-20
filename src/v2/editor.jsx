@@ -7,7 +7,7 @@
 // words (the 규칙 깨짐 lines need fresh data and are left out then). Failed data: the load-failure message instead of the
 // list. No 뱁이 (the screen shows weights and scores). No Korean here: src/copy/v2.js.
 import React, { useEffect, useMemo, useState } from "react";
-import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, holdingShades, HOLDING_SHADES } from "../ui/tokens.js";
+import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { Icon } from "../ui/icons.jsx";
 import { Button, BottomSheet, StatusChip } from "../ui/components.jsx";
 import { C, fill, nf, todayKst, recDate } from "./format.js";
@@ -18,18 +18,21 @@ import { writeStore } from "./store.js";
 import { evaluateDeck, todayCtx } from "./rules.js";
 import { objectParticle } from "./track.js";
 import { searchStocks } from "./stocklist.js";
-import { warnings } from "./warn.js";
-import { icrOffShown } from "./fix.js";
-import { warnKind, uncheckedCount } from "./company.js";
 import { activeCards } from "./engine.js";
 import { criteriaPct } from "./fitpct.js";
 import { RecordFlow } from "./records.jsx";
 import { stockState } from "./records.js";
 import * as E from "./edit.js";
+import * as F from "./find.js";
+import { Finder } from "./finder.jsx";
+import { Compare } from "./compare.jsx";
+import { IndBar, pctText, addWarnView } from "./editparts.jsx";
+
+// 담기 sheet's 재무 경고 row (tests/test_fin_warn_lines.py reads it from here): moved to editparts.jsx in v19.7b, unchanged
+export { addWarnView };
 
 const qtyText = (q) => Number(q).toLocaleString("ko-KR", { maximumFractionDigits: 4 });
 const ownMoney = (v, ccy) => (ccy === "USD" ? "$" + nf(v, 2) : fill(C.app.won, { n: nf(Math.round(v)) }));
-const pctText = (p) => { const x = E.pctShown(p); return nf(x.n, x.d); };
 const won = (v) => nf(Math.round(v));
 // "왜 빼나요? (선택)": the question, and its "(선택)" in the board's lighter weight
 const splitWhy = (t) => { const m = /^(.*?)\s*(\([^)]*\))$/.exec(String(t || "")); return m ? [m[1], m[2]] : [t, ""]; };
@@ -53,28 +56,6 @@ function BrokenLine({ x, boxed = false }) {
       ...(boxed ? { background: COLOR.watchBg, borderRadius: RADIUS.md, padding: `${SPACE(2) + 2}px ${SPACE(3)}px` } : { marginLeft: SPACE(11) + 2 }) }}>
       <Icon name="warning" size={boxed ? 18 : 16} tone="on" />
       <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.watch, { wordBreak: "keep-all" })}><b>{C.daily.broken}</b>{pieces.map((p, i) => <span key={i}>{" · "}{p}</span>)}</span>
-    </div>
-  );
-}
-
-// The stacked bar of target weights by industry group, with its legend (navy shades by weight, never logo colours).
-function IndBar({ parts }) {
-  const shades = holdingShades(parts.map((p) => p.pct));
-  const total = parts.reduce((a, p) => a + p.pct, 0) || 1;
-  return (
-    <div data-ui-v2="edit-ind-bar">
-      <div aria-hidden="true" style={{ display: "flex", gap: 2, borderRadius: 7, overflow: "hidden", height: 14, background: COLOR.page }}>
-        {parts.map((p, i) => <span key={p.key || "none"} style={{ width: `${(p.pct / total) * 100}%`, background: shades[i] || HOLDING_SHADES[HOLDING_SHADES.length - 1] }} />)}
-      </div>
-      <div style={{ display: "flex", flexWrap: "wrap" }}>
-        {parts.map((p, i) => (
-          <span key={p.key || "none"} data-ui-v2="edit-ind-part" data-ind={p.key} data-pct={Math.round(p.pct * 100) / 100}
-            style={{ ...tx(SIZE.xs, WEIGHT.regular, COLOR.neutral), display: "inline-flex", alignItems: "center", gap: 5, margin: `${SPACE(2)}px ${SPACE(3)}px 0 0` }}>
-            <span aria-hidden="true" style={{ width: 10, height: 10, borderRadius: 3, background: shades[i] || HOLDING_SHADES[HOLDING_SHADES.length - 1], flexShrink: 0 }} />
-            {p.cushion ? C.build.s4.cushionLabel : p.name || C.rpt.noInd} <b style={{ color: COLOR.ink }}>{pctText(p.pct)}%</b>
-          </span>
-        ))}
-      </div>
     </div>
   );
 }
@@ -131,7 +112,13 @@ function Row({ r, qty, ind, x, cap, rows, onStep, onRemove, capHit, only }) {
 // 포트폴리오 (the draft dropped); onSaved: after 바꾼 내용 저장.
 // startRemove (Jack 2026-11-13, J4): a stock whose 빼기 sheet opens with the screen (the "다 판 종목이에요. …" line on 포트폴리오
 // and on the company page); onStarted: called once it has opened.
-export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, pad, onLeave, onSaved, startRemove = null, onStarted = null }) {
+// v19.7b: view { kind: "edit" | "find" | "compare", t } is the screen of this editor the address names (#portfolio/edit/<id>,
+// …/find, …/compare/<code>): 종목 바꾸기, 내 기준으로 찾기 (finder.jsx) or 두 종목 비교 (compare.jsx). The three share this editor's
+// draft and its sheets (담기, 빼기 with its swap, 팔고 빼기). go: { find(), compare(t), back(), toEdit() } (app.jsx: the addresses);
+// after a 담기 or a swap from the two new screens, toEdit() goes back to 종목 바꾸기, where the change waits for 바꾼 내용 저장 (or
+// shows as saved, for 팔고 빼기).
+export const addOf = (s) => ({ t: s.t, nk: s.nk, cls: s.cls === "us" || s.cls === "kr" ? s.cls : null, ind: s.ind || null, kind: "pinned", s });
+export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, pad, onLeave, onSaved, startRemove = null, onStarted = null, view = null, go = null }) {
   const { wide } = useLayout();
   const ok = load.status === "ok";
   const draft = useMemo(() => E.rebaseDraft(deck, raw), [deck, raw]);
@@ -140,6 +127,30 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
   const [flow, setFlow] = useState(null);                // 팔고 빼기: v19.6a's 팔았어요 sheet (records.jsx RecordFlow)
   const [capHit, setCapHit] = useState(null);
   const [fail, setFail] = useState(null);                // "storage" | "refused"
+  const [findChip, setFindChip] = useState("all");       // 내 기준으로 찾기's chip (kept when 두 종목 비교 comes back)
+  const [pick, setPick] = useState(null);                // 두 종목 비교: { cand, hold } the holding picked for that candidate
+  const kind = go && view && (view.kind === "find" || view.kind === "compare") ? view.kind : "edit";
+  // review S2: toEdit runs from a sheet's or the sale form's callback, so it reads the app's latest go (the live address there),
+  // never the one of the render that opened the sheet
+  const goRef = React.useRef(go);
+  goRef.current = go;
+  const leaving = React.useRef(false);                   // a 담기 or a swap is on its way back to 종목 바꾸기
+  if (kind === "edit") leaving.current = false;
+  // review S2: a sheet or the sale form belongs to the screen it was opened on; when the address moves (the phone's back button),
+  // it closes and nothing is written
+  const viewKey = kind + "|" + (view && view.t ? view.t : "");
+  const firstView = React.useRef(true);
+  useEffect(() => {
+    if (firstView.current) { firstView.current = false; return; }
+    setSheet(null);
+    setFlow(null);
+  }, [viewKey]);
+  // a 두 종목 비교 address the finder would never offer (typed by hand: a stock already in the portfolio, an ETF, a bond or gold fund,
+  // a 우선주, another share class of a held company, an unknown code; or no 기준 points, or no stored holding to compare with): the
+  // finder in its place, by replacing the address (not a new history entry)
+  const badCompare = ok && kind === "compare" && !(F.hasFindPoints(deck) && F.compareHoldings(deck, draft).length > 0
+    && (F.findList(load, deck, draft) || { rows: [] }).rows.some((r) => r.t === view.t));
+  useEffect(() => { if (badCompare && !leaving.current && goRef.current && goRef.current.replaceFind) goRef.current.replaceFind(); }, [badCompare]);
   const ctx = useMemo(() => todayCtx(load, undefined, store.data.decks), [load, store.data.decks]);   // 2026-11-20 (Jack, f): rules.lateCap
   const de = useMemo(() => (ctx.state.ok ? evaluateDeck(deck, ctx) : null), [deck, ctx]);
   const xOf = (t) => (de && de.ok ? de.holdings.find((y) => y.t === t) || null : null);
@@ -158,12 +169,14 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
     </BottomSheet>
   );
   if (!ok) {
-    // the load-failure screen: its back button asks too before a waiting edit is dropped (round-1 nit)
+    // the load-failure screen: its back button asks too before a waiting edit is dropped (round-1 nit). 내 기준으로 찾기 and 두 종목
+    // 비교 show their own title over the same message, and their back button goes one screen back.
+    const sub = kind === "find" ? C.find.sub : kind === "compare" ? null : C.edit.sub;
     return (
       <>
         <Page pad={pad}>
-          <AppBar onBack={back} backLabel={C.app.tabs.portfolio} />
-          <ScreenTitle sub={C.edit.sub}>{C.edit.title}</ScreenTitle>
+          <AppBar onBack={kind === "edit" ? back : go.back} backLabel={kind === "find" ? C.edit.title : kind === "compare" ? C.find.title : C.app.tabs.portfolio} />
+          <ScreenTitle sub={sub}>{kind === "find" ? C.find.title : kind === "compare" ? C.cmp.title : C.edit.title}</ScreenTitle>
           {load.status === "fail" && <LoadFail picture={false} />}
           <Footer />
         </Page>
@@ -176,7 +189,7 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
   const sum = E.sumPct(rows);
   const good = E.sumOk(sum);
   const shown = E.sumShown(sum);
-  const d2 = E.d2Of(rows, cap);
+  const d2 = E.draftD2(deck, draft);                     // the same check 두 종목 비교 makes before it calls the cap final (edit.swapView)
   const bar = E.indBar(rows, load.byT, names);
   const held = (t) => E.heldShares(deck, t);
   const set = (f) => { setFail(null); setCapHit(null); setDraft(f); };
@@ -215,9 +228,66 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
       } });
   };
   const removeNow = (t, reason) => { setSheet(null); set((d) => E.removeDraft(deck, E.rebaseDraft(deck, d), t, reason)); };
+  // v19.7b: after a 담기 or a swap from 내 기준으로 찾기 or 두 종목 비교, back to 종목 바꾸기 where the change shows
+  const toEdit = () => { const g = goRef.current; if (g && kind !== "edit") { leaving.current = true; g.toEdit(); } };
+  const addNow = (add, pct) => { setSheet(null); setCapHit(null); set((d) => E.addDraft(deck, E.rebaseDraft(deck, d), add, pct)); toEdit(); };
+  // "{holding}과/와 바꾸기" [Part E]: 기록 없이 빼기 · 빼기 wait with the candidate's add (edit.swapDraft); 팔고 빼기 saves the sale, the
+  // removal and the add in one write (edit.sellAndSwap), then the draft follows the saved portfolio as after 팔고 빼기
+  const swapNow = (t, reason, add) => { setSheet(null); set((d) => E.swapDraft(deck, E.rebaseDraft(deck, d), t, reason, add)); toEdit(); };
+  const sellSwap = (t, nk, reason, raise, add) => {
+    setSheet(null);
+    const chk = E.swapCheck(deck, draft, t, add);
+    const up = raise != null ? raise : chk.up;
+    const before = deck;
+    // at: the cap 두 종목 비교 compared the swap at, so the candidate keeps that target after the sheet's raise (Jack, 2026-11-19, 4a)
+    setFlow({ stage: "sell", deckId: deck.id, t, nk, prefill: { qty: held(t) }, lockQty: true,
+      finish: (next) => E.sellAndSwap(next, deck.id, t, add, { reason, raise: up, at: chk.cap, load, today: todayKst(), ts: Date.now() }),
+      after: (next) => {
+        setFail(null);
+        const saved = next && Array.isArray(next.decks) ? next.decks.find((d) => d && d.id === before.id) || null : null;
+        // Jack, 2026-11-19, answer 4: what waits is what the swap without shares leaves (edit.draftAfterSwap), the sheet's raise included
+        setDraft((d) => E.draftAfterSwap(before, saved, E.rebaseDraft(before, d), t, add, raise));
+        toEdit();
+      } });
+  };
   const logs = E.changeList(deck);                       // 바꾼 기록, at the bottom of this screen (Jack, 2026-11-13)
   const nameOf = (c) => c.nk || ((deck.holdings || []).find((h) => h.t === c.t) || {}).nk || c.t;
   const cur = sheet && sheet.kind === "remove" ? rows.find((r) => r.t === sheet.t) || null : null;
+  const swap = cur && sheet.swap ? sheet.swap : null;
+  const sheets = (
+    <>
+      {/* the sheets sit outside Page: Page's wrapper changes at the PC width (1024 px), and what is typed must survive it */}
+      {cur && <RemoveSheet key={cur.t + (swap ? ":" + swap.t : "")} deck={deck} draft={draft} row={cur} x={xOf(cur.t)} shift={shift} writable={writable} onClose={() => setSheet(null)}
+        swap={swap} onSell={swap ? (t, nk, reason, raise) => sellSwap(t, nk, reason, raise, swap) : sellOut}
+        onRemove={swap ? (t, reason) => swapNow(t, reason, swap) : removeNow} />}
+      {sheet && sheet.kind === "find" && <FindSheet load={load} rows={rows} draft={draft} shift={shift} onClose={() => setSheet(null)}
+        onPick={(s) => setSheet({ kind: "add", s })} />}
+      {sheet && sheet.kind === "add" && <AddSheet deck={deck} draft={draft} s={sheet.s} load={load} cap={cap} shift={shift} onClose={() => setSheet(null)}
+        onAdd={addNow} />}
+      {leaveSheet}
+      <RecordFlow flow={flow} setFlow={setFlow} load={load} store={store} setStoreData={setStoreData} />
+    </>
+  );
+  // v19.7b: 내 기준으로 찾기 (also for an address of 두 종목 비교 that cannot be shown: badCompare above replaces it)
+  if (kind === "find" || badCompare) {
+    return (
+      <>
+        <Finder deck={deck} draft={draft} load={load} store={store} setStoreData={setStoreData} pad={pad} chip={findChip} setChip={setFindChip}
+          onBack={go.back} onCompare={(t) => go.compare(t)} onAdd={(s) => setSheet({ kind: "add", s })} />
+        {sheets}
+      </>
+    );
+  }
+  if (kind === "compare") {
+    return (
+      <>
+        <Compare deck={deck} draft={draft} load={load} pad={pad} candT={view.t} holdT={pick && pick.cand === view.t ? pick.hold : null}
+          setHoldT={(t) => setPick({ cand: view.t, hold: t })} xOf={xOf} onBack={go.back} onAdd={(s) => setSheet({ kind: "add", s })}
+          onSwap={(t, s) => setSheet({ kind: "remove", t, swap: addOf(s) })} />
+        {sheets}
+      </>
+    );
+  }
   return (
     <>
       <Page pad={pad}>
@@ -267,6 +337,20 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
                 <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block" })}>{C.edit.byNameSub}</span>
               </span>
             </button>
+            {/* v19.7b Part D: 내 기준으로 찾기 (the board's sparkle) */}
+            {go && (
+              <button type="button" data-ui-v2="edit-by-crit" onClick={() => go.find()}
+                style={{ ...tap, display: "flex", alignItems: "center", gap: SPACE(2) + 2, padding: SPACE(3), borderRadius: RADIUS.md, background: COLOR.surface,
+                  border: "none", textAlign: "left", minHeight: TOUCH + SPACE(4) }}>
+                <span style={{ width: 34, height: 34, borderRadius: 10, background: COLOR.select, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <Icon name="sparkle" size={21} tone="on" />
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <span style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { display: "block" })}>{C.edit.byCrit}</span>
+                  <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block" })}>{C.edit.byCritSub}</span>
+                </span>
+              </button>
+            )}
           </div>
           <div style={{ marginTop: SPACE(4) }}>
             <Button onClick={save} disabled={!canSave}>{C.edit.save}</Button>
@@ -291,15 +375,7 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
         </div>
         <Footer />
       </Page>
-      {/* the sheets sit outside Page: Page's wrapper changes at the PC width (1024 px), and what is typed must survive it */}
-      {cur && <RemoveSheet key={cur.t} deck={deck} draft={draft} row={cur} x={xOf(cur.t)} shift={shift} writable={writable} onClose={() => setSheet(null)}
-        onSell={sellOut} onRemove={removeNow} />}
-      {sheet && sheet.kind === "find" && <FindSheet load={load} rows={rows} draft={draft} shift={shift} onClose={() => setSheet(null)}
-        onPick={(s) => setSheet({ kind: "add", s })} />}
-      {sheet && sheet.kind === "add" && <AddSheet deck={deck} draft={draft} s={sheet.s} load={load} cap={cap} shift={shift} onClose={() => setSheet(null)}
-        onAdd={(add, pct) => { setSheet(null); setCapHit(null); set((d) => E.addDraft(deck, E.rebaseDraft(deck, d), add, pct)); }} />}
-      {leaveSheet}
-      <RecordFlow flow={flow} setFlow={setFlow} load={load} store={store} setStoreData={setStoreData} />
+      {sheets}
     </>
   );
 }
@@ -339,15 +415,19 @@ function Reasons({ value, onChange, q, opt }) {
 }
 
 // ---------------- 빼기 (Part B) ----------------
-function RemoveSheet({ deck, draft, row, x, shift, writable, onClose, onSell, onRemove }) {
+// swap (v19.7b Part E, "{holding}과/와 바꾸기"): the candidate taking this holding's target ({ t, nk, cls, ind, kind, s }), or null.
+// With a swap, 더 잘 맞는 종목을 찾았어요 is picked first, the number of stocks stays (no last-holding rule), and D2 reads the stored
+// rows with the candidate in the holding's place (edit.swapCheck; only a holding saved above the cap can open it).
+function RemoveSheet({ deck, draft, row, x, shift, writable, onClose, onSell, onRemove, swap = null }) {
   const { preview } = useMode();
   const st = row.h ? stockState(deck, row.t) : null;
   const held = !!st && st.held > 0;
   const broken = !!brokenPieces(x);
-  const [reason, setReason] = useState(broken ? "rule" : null);
+  const [reason, setReason] = useState(swap ? "better" : broken ? "rule" : null);
   const [raise, setRaise] = useState(null);
   // 팔고 빼기 saves to the stored portfolio at once: its last-holding rule and D2 read the stored holdings left (round-1 B1)
-  const sc = E.sellCheck(deck, draft, row.t);
+  // (with a swap, 두 종목 비교 read this same swapCheck to say whether this sheet offers the raise: edit.swapView)
+  const sc = swap ? { ...E.swapCheck(deck, draft, row.t, swap), last: false } : E.sellCheck(deck, draft, row.t);
   const chk = { low: sc.low, y: sc.y };
   const n = sc.n, cap = sc.cap;
   const pendingRows = (draft.adds || []).length > 0 || (draft.removed || []).length > 0;
@@ -360,7 +440,7 @@ function RemoveSheet({ deck, draft, row, x, shift, writable, onClose, onSell, on
   return (
     <BottomSheet open title={title} onClose={onClose} closeLabel={C.app.close} shift={shift}>
       {preview && <div style={{ marginBottom: SPACE(2) }}><SampleLabel /></div>}
-      <div data-ui-v2="rm-sheet" data-t={row.t} data-held={held ? "1" : "0"}>
+      <div data-ui-v2="rm-sheet" data-t={row.t} data-held={held ? "1" : "0"} data-swap={swap ? swap.t : undefined}>
         <div style={{ display: "flex", alignItems: "center", gap: SPACE(3) }}>
           <CoMark t={row.t} name={row.nk} s={row.add ? row.add.s : undefined} size={SPACE(11)} />
           <div style={{ minWidth: 0 }}>
@@ -438,25 +518,6 @@ function FindSheet({ load, rows, draft, shift, onClose, onPick }) {
 }
 
 // ---------------- 담기 (Part C) ----------------
-// The 재무 경고 row of the 담기 sheet (pure; tests). The company page's rule (company.js warnKind, Jack 2026-11-14): a count when
-// a check fired, "…없어요" only when every check ran, "확인한 …" when only some did (PR #68's case and the "some" case), "재무 경고"
-// when none could run. A short line here: no ✓ chips in this sheet (as for "없어요"); under the row the company page's reason
-// lines: the 이자보상배율 one (warn.js icrIe), "4가지 중 {k}가지는 …" for the other checks that could not run, and "필요한 자료가
-// 없어서 확인하지 못했어요." when none could. s: the data.json row · co: its corp.json row.
-// -> { w, kind, warnLine, unchecked, why, whyKind: "noIcr" | "count" | "noData" | null }
-export function addWarnView(s, co) {
-  const w = s && s.cls === "kr" ? warnings(s, co) : null;
-  const W = C.co.warn;
-  const kind = warnKind(s, w);
-  const warnLine = kind === "flags" ? fill(W.count, { n: w.flags.length }) : kind === "partial" || kind === "some" ? W.nonePartial : kind === "none" ? W.none : null;
-  const unchecked = kind === "unchecked" && !!C.rank.warn && !!W.noData;      // "재무 경고" in the row, Jack's reason line under it
-  const noIcr = w && w.icrIe && W.noneSubNoIcr ? W.noneSubNoIcr : null;
-  const k = (kind === "flags" || kind === "some") ? uncheckedCount(w, s.cls === "kr" && icrOffShown(co)) : 0;
-  const cnt = k && W.uncheckedN ? fill(W.uncheckedN, { k }) : null;
-  const why = noIcr || cnt || (unchecked ? W.noData : null);
-  return { w, kind, warnLine, unchecked, why, whyKind: noIcr ? "noIcr" : cnt ? "count" : why ? "noData" : null };
-}
-
 // The stock's logo, name and industry, its 내 기준 상위 {x}% for this portfolio (fitpct.criteriaPct; a stock it cannot score
 // is 직접 추가, with the build step's note), its 재무 경고 count (the company page's rule), and a 목표 비중 stepper from an
 // equal share, with the others scaled in proportion and the 업종 비중 bar after the change. Nothing is saved here.

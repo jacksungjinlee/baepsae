@@ -141,11 +141,13 @@ export function useRouter() {
     sync();
   }, [sync]);
   // Leave a sub-screen or 소개 (see the top of this file). fallback: the route that replaces it when there is no step back
-  // (fallbackSub: a company page's 자세히 falls back to its tab, v19.1a).
-  const back = useCallback((fallbackTab = "home", fallbackSub = null) => {
+  // (fallbackSub: a company page's 자세히 falls back to its tab, v19.1a). steps (v19.7b): how many entries back (두 종목 비교 →
+  // 종목 바꾸기 after a 담기 is two); only when this page made that many entries, else the fallback.
+  const back = useCallback((fallbackTab = "home", fallbackSub = null, steps = 1) => {
     const cur = locRef.current;
-    const viaSite = cur.about && cur.depth === 0 && cameFromThisSite();
-    if (cur.depth > 0 || viaSite) {
+    const n = Number.isInteger(steps) && steps > 1 ? steps : 1;
+    const viaSite = n === 1 && cur.about && cur.depth === 0 && cameFromThisSite();
+    if (cur.depth >= n || viaSite) {
       // If the step back did not happen at all (no history event, the page did not leave), the fallback replaces this
       // entry after a moment. Any move in between (the step back itself, or a later tap) cancels it.
       let left = false;
@@ -153,7 +155,7 @@ export function useRouter() {
       const onHide = () => { left = true; };
       try {
         window.addEventListener("pagehide", onHide, { once: true });
-        window.history.back();
+        if (n === 1) window.history.back(); else window.history.go(-n);
         window.setTimeout(() => {
           window.removeEventListener("pagehide", onHide);
           if (!left && moves.current === seen) replaceRoute(fallbackTab, fallbackSub);
