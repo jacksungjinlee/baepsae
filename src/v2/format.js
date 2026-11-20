@@ -47,14 +47,27 @@ export function recDate(iso, today) {
 // (data.json pxd), one short note names it: "AAPL, TSLA 가격은 11월 5일 종가예요. NVDA 가격은 11월 4일 종가예요." — one
 // sentence per date, newest first, joined with a space; names = the tickers, all of them, ", ". groups: data.js
 // ownCloseGroups (stocklist.js). null when there is nothing to say (or a date cannot be written: never a sentence without it).
-export function ownCloseText(groups) {
+// 2026-11-19 (Jack): a Korean stock priced at its last confirmed close (data.json pxd: today's close could not be confirmed by
+// two sources; data.js ownCloseGroups gives it a group of its own, { kr: true, names }) is named by its Korean name. 2026-11-20
+// (Jack, b): one line per date, "맵스리얼티, STX: 오늘 종가를 확인하지 못해서 11월 16일 종가를 보여 드려요." (app.krOwnCloseList), instead
+// of the names sentence followed by his line. US groups read exactly as before.
+// ownCloseParts: the same sentences, one per item (ui.jsx OwnCloseNote renders them as separate pieces of one note).
+export function ownCloseParts(groups) {
   const out = [];
   for (const g of groups || []) {
     const md = mdText(g && g.date);
     if (!md || !g.ts || !g.ts.length) return null;
-    out.push(fill(C.app.ownClose, { names: g.ts.join(", "), md }));
+    if (g.kr) {
+      if (!C.app.krOwnCloseList) return null;
+      const names = Array.isArray(g.names) && g.names.length === g.ts.length ? g.names : g.ts;
+      out.push(fill(C.app.krOwnCloseList, { names: names.join(", "), date: md }));
+    } else out.push(fill(C.app.ownClose, { names: g.ts.join(", "), md }));
   }
-  return out.length ? out.join(" ") : null;
+  return out.length ? out : null;
+}
+export function ownCloseText(groups) {
+  const parts = ownCloseParts(groups);
+  return parts ? parts.join(" ") : null;
 }
 
 // The stale part of a date line (Jack, 2026-11-07): n <= 1 (the due day: n counts from the morning the publish was due, data.js

@@ -33,7 +33,7 @@ import React, { useMemo } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, TOUCH } from "../ui/tokens.js";
 import { HeroBand, StatStrip, ListRow, Button } from "../ui/components.jsx";
 import { C, fill, mdText, wonText, todayKst, todayStaleText } from "./format.js";
-import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, OwnCloseNote, Cols, useLayout, useRoomy, useCol, useNav, tx, tap } from "./ui.jsx";
+import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, OwnCloseNote, KrAgedLine, Cols, useLayout, useRoomy, useCol, useNav, tx, tap } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { isCompany, ownCloses, ownCloseGroups } from "./stocklist.js";
 import { shownName } from "./legacy.js";
@@ -239,6 +239,7 @@ function DeckStrip({ de, deck, ctx, onWhy, go, load, late = false }) {
         <div key={x.t} data-today-holding={x.t} data-status={x.status}>
           <ListRow title={x.nk} change={gone.has(x.t) || late ? null : x.d1} chip={statusChips(x)} lead={<CoMark t={x.t} name={x.nk} size={SPACE(9)} />}
             onClick={x.bigMove && !gone.has(x.t) ? () => onWhy(de.id, x.t) : !gone.has(x.t) && openStock && isCompany(ctx.byT.get(x.t)) ? () => openStock(x.t) : undefined} />
+          {gone.has(x.t) && <KrAgedLine aged={ctx.aged} t={x.t} style={{ marginTop: SPACE(1) }} />}
         </div>
       ))}
     </Card>
@@ -250,7 +251,7 @@ function ImportedStrip({ deck, de, ctx, load, go, late = false }) {
   const { openStock } = useNav();
   const st = useMemo(() => pfState(deck, ctx, load.status === "ok" ? load.data.stocks : []), [deck, ctx, load]);
   const m = de && de.ok ? deckMoney(deck, de, ctx) : { ok: false };
-  return <ImportedDeck deck={deck} st={st} m={m} openStock={openStock} byT={ctx.byT} onMore={() => go("portfolio")} home
+  return <ImportedDeck deck={deck} st={st} m={m} openStock={openStock} byT={ctx.byT} onMore={() => go("portfolio")} aged={ctx.aged} home
     pxDate={load.status === "ok" ? load.data.pxDate : null} late={late} />;
 }
 

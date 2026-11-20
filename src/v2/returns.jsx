@@ -163,6 +163,8 @@ export function Returns({ deck, load, store, pad, onBack, onTax }) {
   // price: ret.noPrice
   const missing = r ? r.absent : [];
   const usHeld = r ? r.ledgers.filter((L) => L.ccy === "USD" && L.held > 0 && !gone.has(L.t)).map((L) => ctx.byT.get(L.t)).filter(Boolean) : [];
+  // 2026-11-19 (Jack): a held Korean stock at its last confirmed close (pxd) is in the value too: named the same way, with his line
+  const krHeld = r ? r.ledgers.filter((L) => L.ccy !== "USD" && L.held > 0 && !gone.has(L.t)).map((L) => ctx.byT.get(L.t)).filter((s) => s && s.cls === "kr") : [];
   const lateHold = !!(late && r && (missing.length || r.noPrice.length || r.usdOnly));
   if (lateHold) warnOnce(`[v2] ${deck.id}: late data: returns not shown (their notes speak of today's data, price or rate)`);
   if (late && fx && !fx.empty) warnOnce(`[v2] ${deck.id}: late data: the exchange-rate card is left out (its line says today's rate)`);
@@ -199,7 +201,7 @@ export function Returns({ deck, load, store, pad, onBack, onTax }) {
             {r.usdOnly && <Note data-ui-v2="usd-today">{C.pfr.usdToday}</Note>}
             {r.usdOnlySold && <Note data-ui-v2="usd-sold">{C.rec.usdOnly}</Note>}
             {/* v19.1c (#82): a held US stock priced at an earlier close than the US date is named, as everywhere else */}
-            <OwnCloseNote groups={ownCloses(load, usHeld)} data-ui-v2="ret-own-close" />
+            <OwnCloseNote groups={ownCloses(load, [...usHeld, ...krHeld])} data-ui-v2="ret-own-close" />
             {fx && !late && (!fx.empty || fx.leftOut.length > 0) && <FxCard fx={fx} today={q.fx} />}
           </>
         )}

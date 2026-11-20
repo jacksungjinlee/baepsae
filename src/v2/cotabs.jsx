@@ -35,7 +35,7 @@ import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, HOLDING_SHADES, CHART } from
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { StatusChip, Segmented, Amount, Button } from "../ui/components.jsx";
 import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, tx, tap, useMode } from "./ui.jsx";
+import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, KrOwnCloseLine, tx, tap, useMode } from "./ui.jsx";
 import { groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, growthVsInd, annualRows, yoy, decompose, pbrStrip, indMedian,
   roePbrMap, impliedGrowth, receipt, discFor, discDate, perMillionView, perMillionKr, payout, DCF, round, pastNiGrowth, dcfVs, divHiddenLine } from "./company.js";
 import { growthBasis, num, exactData } from "./engine.js";
@@ -717,6 +717,9 @@ export function ValueMore({ load, s, store, setStoreData, pad, onBack, backLabel
         {/* statements not in won (corp.json stmtCur): no ratios to list; the reason where they would be */}
         <StmtCurNote s={s} co={co} />
         <UnitChkNote s={s} co={co} />
+        {/* 2026-11-19 (Jack; review S1): a Korean stock at its last confirmed close (pxd): the receipts ("{p}원"), the map and the
+            calculator below all use that close — his line once, at the top of the page */}
+        <KrOwnCloseLine load={load} s={s} />
         {rows.length > 0 && V.ratios && (
           <Card data-ui-v2="co-ratios">
             <CardHead icon="tag" tone="value" title={V.ratios} />

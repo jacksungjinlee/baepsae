@@ -583,6 +583,100 @@ every row of 11-11 to 11-13), so a halt and a day nobody traded look the same; i
   row contradicted itself (`odd`), or a must-have looked like no trade (`must`). The publish goes ahead with those stocks
   unmarked. If it repeats, look at that day's listing file (FinanceData cache) before anything else; the run log has the same
   case as a "!!" line.
+## Korean stocks at their last confirmed close (국내 마지막 확인 종가, since #?)
+
+Jack, 2026-11-19: "The 129 unconfirmed stocks: stop showing "이 종목의 데이터를 찾지 못했어요." Show each stock's last confirmed close
+with its own date (the existing own-close mechanism), plus "오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요." It must never sit
+under today's date label without that line."
+
+- **When:** only on second-source days (`pxSrc.px` = `daum+yahoo`: the volunteer KRX file was not final, closes came from Daum ×
+  Yahoo). A stock in that day's universe that the two sources could not confirm (KONEX: no second source; or Daum and Yahoo
+  disagree, or one is missing) is carried at the **previous publish's** price (`fetch_data.py` `kr_own_close_carry`): its `pxd` is
+  the previous publish's `pxDate`, or, if it was already carried, the same `pxd` and price (never re-dated). No Daum or Yahoo value
+  from today is used. No `d1`. Its market-data numbers (시가총액, 52주, 출렁임, 베타, 수익률, the description's 시가총액) are copied
+  from that publish; PER, PBR, 배당수익률 and the scores are made again today from that price. A company whose common stock is
+  carried but whose listed 우선주 has today's close gets no EV / P/CF (`corp.json` `evNo: "ownPx"`: the two dates would mix).
+- **Not carried (stays out, as before):** not in the previous publish (most KONEX names are below the top-2,500 cut), more than
+  `KR_OWN_CLOSE_MAX_DAYS` (5) KRX trading days after its close, the previous publish has the same `pxDate`, or a price-history mark
+  without its recorded move. The run log says `!! 국내 종가 미확인 {n}종목 … 마지막 확인 종가로 실음 {k}종목 (pxd …) — names` and
+  `!! 마지막 확인 종가로도 싣지 못한 국내 종목 {m} … — names (reason)`.
+- **Past the 5-day limit (Jack, 2026-11-20 a):** a stock still unconfirmed whose last confirmed close is more than 5 KRX trading
+  days old is left out and recorded in `pxSrc.own.aged` (`[{t, nk, pxd}]`, `fetch_data.kr_own_aged`); the log says `!! 마지막 확인
+  종가가 5거래일을 넘어 잠시 뺀 국내 종목 {n} …`. Each later second-source run keeps it there while it stays unconfirmed (from the
+  previous publish's record; it is no longer in its stocks), and removes it once it is confirmed again or leaves the listing. A
+  normal day writes no record. The apps show "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요." instead of "이 종목의 데이터를
+  찾지 못했어요." on its company page (both apps), under its row in the 2.0 portfolios that hold it (built and 가진 종목) and on its
+  관심 종목 card. **Known limit:** a carried stock the pipeline drops just before writing (`kr_own_close_final`: a wrong row), and
+  every carry on a day the carry step or its check stopped (`own.err`), is not added to `aged`: it shows "이 종목의 데이터를 찾지
+  못했어요." until it is confirmed again (no wrong number is shown; the gate warns about those days).
+- **KONEX with #158 (Yahoo .KQ × Naver):** a KONEX stock the two sources confirmed is never carried: it is in that day's file
+  (`pxSrc.fb.knx.kept`) or, below the usual market-cap cut, simply not published (`capOut`), exactly like a confirmed KOSPI or
+  KOSDAQ stock below the cut. Only the KONEX stocks #158 left out (`pxSrc.fb.knx.left`) go to the carry step, with the reason
+  `knx` ("야후 .KQ × 네이버로 확인 못 함 (코넥스)"); on a day the KONEX stage did not run or stopped, every KONEX stock goes there with
+  the reason `mkt`, as before #158. The log line `· 코넥스 {n}종목 (야후 .KQ × 네이버): 그날 파일 … · 확인됐지만 시가총액 기준 아래라
+  싣지 않음 … · 확인 못 함 …` says where each went (`!!` when the counts differ from #158's record or `left` cannot be read; then every
+  KONEX stock outside the file counts as unconfirmed). A carried KONEX stock is not in `pxSrc.knx.t`, and #158's `코넥스 종가 두 출처`
+  row leaves clean carries out of its comparison; the carry row warns if `pxSrc.own.unconfWhy.knx` differs from `len(left)`.
+- **Normal days:** nothing changes. No Korean stock gets `pxd`.
+- **data.json:** `pxSrc.own` = `{v, max, n, codes, unconf, unconfWhy, drop, dropEx, bad, aged, ind?, err?}`; `pxSrc.n` counts only stocks at
+  `pxDate`. The rows the final check drops are also in `ownDrop.krOwn` (`{n, rows}`, beside the other own-processing checks; the
+  carry row warns if its `n` differs from `pxSrc.own.bad.n`).
+- **Gate:** `국내 자기 가격 날짜 (pxd)` fails exactly what the US `pxd` row fails (a `pxd` that is not a date before `pxDate`, or a
+  `d1` beside it, still in the file). Since 2026-11-20 (Jack d: "drop a carry with a broken date and warn; block only above 5.") it
+  also counts the rows the pipeline dropped in the run, per reason (`pxSrc.own.bad.why`; Jack's standing rule: more than 5 rows fail
+  one check in one run): any drop warns; more than `KR_OWN_DROP_MAX` (5) for one reason fails, so nothing publishes (that check is
+  broken, not one stock). Reasons are not added up (a broken date also counts as "not the previous publish's date"). A run whose
+  check itself stopped (`own.err`) only warns. `국내 마지막 확인 종가 (pxSrc.own · 경고만)` only warns: a carried stock not in `pxSrc.own.codes`, on a normal day,
+  older than the limit, or not the previous publish's price and date, or rows the pipeline itself dropped just before writing
+  (`pxSrc.own.bad`, same function `validate_data.kr_own_close_bad`). Only clean carries (recorded, before `pxDate`, no daily change,
+  within the limit, and the previous publish's price and date) are left out of the `pxDate` price checks (`한국 가격 = 공식 종가`,
+  the gate's Daum × Yahoo sample and its confirmed count: `kr_own_codes`); anything else with a `pxd` is still checked as a
+  `pxDate` price, and "국내 거래 없는 종목 · 빈 d1 이유" accepts a blank `d1` only for a clean carry (any other Korean `pxd` fails it, as
+  before). The pipeline runs the same check right after the Korean price stage, so a dropped carry never reaches the dividend,
+  income or score steps. On such a day the 국내 beta · vol 채움 rows can warn (small KONEX names often have no beta).
+- **Never stops the run:** any error in the carry step (`fetch_data.kr_own_close_step`) or in the check after it is logged as
+  `!! 마지막 확인 종가 단계가 오류로 멈췄어요 (…)` / `!! 마지막 확인 종가 점검이 오류로 멈췄어요 (…)`; nothing is carried (unconfirmed
+  stocks are left out, as before #?), `pxSrc.own.err` holds the reason and the gate's carry row warns. Fix forward; the publish goes on.
+- **Pre-publish screen check (`tests/smoke_app.py --data .`):** the scenes that compare the own-close text exactly (미국날짜,
+  확인종가) first remove every real Korean `pxd` from their copy of the data (`strip_kr_carries`) and test only the ones they plant,
+  so a real carry on a second-source day never fails the screen check; extra scenes run them on a copy with planted carries to
+  prove it: the three stocks the 11-20 dry run really carried (`tests/fixtures/kr_own_close_real_1120.json`, rows exactly as the
+  pipeline wrote them) plus 삼성전자우 and 삼성전기.
+- **The 11-20 dry run (44627568844) failed this check** (smoke_app 156 / 160: 확인종가 banner and cards, both runs), so a real
+  publish would have been blocked. Cause: a test bug, not the data. The old app's portfolio screen switches its own language one
+  React task after the header's EN button; the scene read the banner right after the click, and on GitHub's machine that read
+  came before the switch. The second check then failed because the screen was left in English. Users saw nothing wrong. Fixed
+  (2026-11-20): the scene waits until the text is exactly the expected one and checks it again 0.3 s later, and the second check
+  and every later check starts on the Korean screen. A third run uses a **slow screen** (`slow_screen`: React's scheduled work
+  delayed 0.3 s), which opens that gap on every machine: with the old scene the same four checks fail there (the banner detail
+  differs: the slow screen keeps the Korean line longer), the fixed one passes. That run tests the scene, not the app, so it runs
+  only in CI and local runs on the fixture, never in this daily check (`--data`). If this check fails only on GitHub, look for a
+  read right after a click that does not wait for the new text.
+- **Industry words of a carried stock (review S1, 2026-11-20):** a carried row copies the previous publish's description. If that
+  publish had filled the stock's industry from DART (`indSrc.dartT`) or from its common stock (`indSrc.prefT`, #146), those words
+  are not copied as they are (`kr_own_ind_reset`, same rule as #146's `kr_prev_desc`): today's KRX-DESC words if it has them,
+  otherwise the words are taken off and the stock is filled again today, so it is in today's `dartT`/`prefT` and the gate checks
+  it. The log says "· 마지막 확인 종가 종목의 업종 글자: … 오늘 다시 채움 n · 오늘 KRX 글자로 m"; `pxSrc.own.ind` has the counts.
+- **Daily lists:** a carried stock's trading value is its old day's, so it is left out of today's 거래대금 and 거래 급증 lists
+  (2.0) and of `data.json` `popular`, like 큰 움직임. It stays in 시가총액 and the 기준 lists, named under the list.
+- **On a warning:** read the named rows in the run summary. A carried stock with a different price or date than the previous
+  publish means our carry step broke: say so to Jack; the stock itself is still labelled with its own date and line.
+- **Check on the site:** search a carried stock (the log names them): its company page shows "{date} 종가" and Jack's line under the
+  price; lists and portfolio totals with it say "{name}: 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요." (one line per date, since
+  2026-11-20); the old app's 기업분석 header and the first screen's card show Jack's line under the price (English card: "We couldn't
+  confirm today's close, so this shows the {date} close."). A stock in `pxSrc.own.aged`: its company page says "며칠째 종가를 확인하지
+  못해서 이 종목은 잠시 빼 두었어요.".
+- **Late data (#144) with a carried stock (Jack, 2026-11-20 f; 2026-11-21 answer 4: "Not all-or-nothing. Leave that one stock out
+  with the approved line … and check the rest."):** on late data (the closes at most 5 trading days behind) a Korean stock priced
+  at its last confirmed close whose own close is more than 5 KRX trading days before today in total, or is not a readable date,
+  is left out of that day's check (`src/v2/rules.js` `lateLeftOut` / `todayCtx`; console "[v2] late data: left out of the check,
+  shown with the aged line: …"). The check reads it as not in today's data (its row stays and shows "며칠째 종가를 확인하지
+  못해서 이 종목은 잠시 빼 두었어요."; totals and weights leave it out; a sold-out holding is not read; a portfolio holding only that
+  stock shows that row and no totals). Every other stock and portfolio is checked as usual and the screens keep "{date} 종가로
+  점검했어요". The stale state ("데이터가 {n}일째 갱신되지 않아 오늘은 점검하지 않았어요") comes only when the data itself is more than
+  5 trading days late, as on main. US stocks at an earlier close are not touched. 내 수익 reads the same day's context: with that
+  stock left out it shows no amounts on late data (its existing rule for a stock missing from the data). The old app has no
+  late-data check.
 ## Backup days and the first volunteer-final day after them (직전 거래일 최종본 없는 날의 d1, since #163)
 
 A backup day is a finished trading day the volunteer KRX list has no final file for: the run builds it from Daum × Yahoo (the
@@ -654,8 +748,9 @@ change, 44578437586 on the night of 11-20: Daum 133 s, Yahoo one chart per stock
 - between tries a stock waits 1 s, then 2 s; after a 429 ("too many requests") it waits what the server's Retry-After asks, at
   most 5 s (2 s, then 4 s when there is none); there is no wait after the last try. The Yahoo phases ask about 90 times a second
   (6 at a time, `KR_FB_META_WORKERS`); if 429 answers grow, lower that number;
-- the stocks not asked are unconfirmed, exactly like a stock whose source did not answer: left out of that day's file, never an
-  older price. The log says so at once ("!! 2차 출처 시간 한도 600초: 다음 일별 시세를 더 묻지 않아요 …") and in the summary ("!! 2차
+- the stocks not asked are unconfirmed, exactly like a stock whose source did not answer: left out of that day's file, or, when
+  it was in the previous publish, carried at that publish's confirmed close with its own date and Jack's line (see "Korean stocks
+  at their last confirmed close" above); never an older price under the new date. The log says so at once ("!! 2차 출처 시간 한도 600초: 다음 일별 시세를 더 묻지 않아요 …") and in the summary ("!! 2차
   출처 시간 한도 600초 — 다음 일별 시세: 받은 n / 대상 m — 나머지 k종목은 확인 못 한 종목 (…)"); the same for 야후 일봉 종가 and 야후
   차트 다시 읽기;
 - data.json `pxSrc.fb.cut` = `{s, daum, yahoo, fill}`: the limit and the stocks not asked in each phase (also kept when the second
@@ -685,15 +780,19 @@ What protects users when the limit hits (and what does not):
   Since #158 (KONEX Yahoo × Naver) these numbers hold as before on a blank-close night (no KONEX stock can be confirmed then); when the
   close is filled, the ~23 KONEX stocks a normal day publishes also count, so the floor trips at about 465 not asked instead of
   about 440, with the same number of normally-published stocks missing (see "KONEX closes: Yahoo × Naver").
+  Stocks carried at their last confirmed close (`pxd`, #159) never count toward either row: both count only Korean stocks priced
+  at `pxDate` (`validate_data.kr_px_count`; the row's value names the carried count beside it), so these numbers hold as on main.
 - **Plainly, the gap:** on a blank-close night, from about 50 to about 320 stocks not asked, the data publishes with published
   stocks missing (about 3 at 50, about 156 at 300) and only the WARN row. A check that stops the publish there would be a new
-  publish-stopping rule and needs Jack's yes.
+  publish-stopping rule and needs Jack's yes. Since the last-confirmed-close change, a stock from the previous publish is carried at
+  its last confirmed close with its own date and Jack's line instead of going missing (at most 5 KRX trading days).
 
 If the WARN shows:
 1. Find the phase in the run log: the "· 2차 출처: … 묻는 중" line before the "!!" line has the GitHub timestamp, so the gap shows
    which source was slow.
-2. The stocks left out show "이 종목의 데이터를 찾지 못했어요" (portfolios: "오늘 데이터에 없는 종목 … 빼고 계산했어요") for that whole
-   day's data. Later scheduled runs do **not** fill them in: once pxDate and usPxDate are current, `already_published.py` skips the
+2. A stock that was in the previous publish shows its last confirmed close with its own date and Jack's line ("오늘 종가를 확인하지
+   못해서 {date} 종가를 보여 드려요."); any other stock left out shows "이 종목의 데이터를 찾지 못했어요" (portfolios: "오늘 데이터에 없는
+   종목 … 빼고 계산했어요"). Either way this lasts for that whole day's data. Later scheduled runs do **not** fill them in: once pxDate and usPxDate are current, `already_published.py` skips the
    rest of the day's scheduled runs, so they come back with the next day's publish. Only a manual run brings them back sooner
    (after about 06:40 KST it re-reads far fewer Yahoo charts); follow the DART rule for manual runs.
 3. Do not raise the limit to make one run pass. If it hits on days when both sources answer at normal speed, bring the phase

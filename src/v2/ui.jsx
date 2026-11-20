@@ -5,7 +5,8 @@ import { COLOR, FONT, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, SELECTED, TOPIC_CHIP, 
 import { CARD_PICS, DECK_PICS, PIC_SIZES } from "./pictures.js";
 import { Icon } from "../ui/icons.jsx";
 import { StatusChip, Button } from "../ui/components.jsx";
-import { C, fill, mdText, staleText, ownCloseText } from "./format.js";
+import { C, fill, mdText, staleText, ownCloseText, ownCloseParts } from "./format.js";
+import { krOwnCloseText } from "./cofmt.js";
 import { hasOldAppRecords } from "./store.js";
 import { ABOUT_HASH } from "../links.js";
 
@@ -358,10 +359,34 @@ export function Footer() {
 
 // v19.1c (Jack, 2026-11-07): the note under a list or a total that includes a US stock priced at an earlier close (data.json
 // pxd): "AAPL 가격은 11월 4일 종가예요." (format.ownCloseText). groups: stocklist.js ownCloseGroups. Nothing when none is there.
+// 2026-11-19 (Jack): with a Korean stock at its last confirmed close among them, the note's sentences are separate pieces of the
+// same text (one per date, format.ownCloseParts; 2026-11-20 one line per Korean date); the words read the same. US-only notes as before.
 export function OwnCloseNote({ groups, style, ...rest }) {
   const text = groups && groups.length ? ownCloseText(groups) : null;
   if (!text) return null;
-  return <Note data-ui-v2="own-close" data-ts={groups.flatMap((g) => g.ts).join(",")} style={style} {...rest}>{text}</Note>;
+  const parts = groups.some((g) => g && g.kr) ? ownCloseParts(groups) : null;
+  return (
+    <Note data-ui-v2="own-close" data-ts={groups.flatMap((g) => g.ts).join(",")} style={style} {...rest}>
+      {parts ? parts.flatMap((p, i) => (i ? [" ", p] : [p])) : text}
+    </Note>
+  );
+}
+
+// 2026-11-20 (Jack, a): a held Korean stock left out because its last confirmed close is past the age limit (data.json
+// pxSrc.own.aged, load.aged): "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요." under its row. 2026-11-21 (Jack, answer 4): also a
+// stock the late-data check leaves out (rules.js lateLeftOut). aged: a Map — ctx.aged on the check's screens (both kinds), load.aged
+// elsewhere. Nothing for any other stock.
+export function KrAgedLine({ aged, t, style, ...rest }) {
+  if (!t || !aged || typeof aged.has !== "function" || !aged.has(t) || !C.app.krOwnAged) return null;
+  return <Note data-ui-v2="kr-aged" data-t={t} style={style} {...rest}>{C.app.krOwnAged}</Note>;
+}
+
+// 2026-11-19 (Jack): one Korean stock priced at its last confirmed close (data.json pxd): Jack's line with its own date, near
+// its price and date (cofmt.krOwnCloseText). Nothing for any other stock.
+export function KrOwnCloseLine({ load, s, style, ...rest }) {
+  const text = krOwnCloseText(load, s);
+  if (!text) return null;
+  return <Note data-ui-v2="kr-own-close" data-t={s.t} data-pxd={s.pxd} style={style} {...rest}>{text}</Note>;
 }
 
 export function Note({ children, tone, style, ...rest }) {

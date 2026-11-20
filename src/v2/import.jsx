@@ -23,8 +23,9 @@ import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, SELECTED, HOLDING_SHADES, ho
 import { Icon } from "../ui/icons.jsx";
 import { Amount } from "../ui/components.jsx";
 import { C, fill, nf, mdText, wonText, todayKst } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingBlock, Footer, Note, ActionBar, useLayout, tx, tap } from "./ui.jsx";
+import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, PendingBlock, Footer, Note, OwnCloseNote, ActionBar, useLayout, tx, tap } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
+import { ownCloses } from "./stocklist.js";
 import { defaultSettings, activeCards, num } from "./engine.js";
 import { deckState } from "./deckcalc.js";
 import { StepCards } from "./build.jsx";
@@ -166,6 +167,9 @@ function HoldingsStep({ load, importer, setImporter, go, onExit }) {
             </p>
           )}
           {usMd && <Note>{fill(C.app.usClose, { md: usMd })}</Note>}
+          {/* 2026-11-19 (Jack): a Korean stock at its last confirmed close (pxd) is valued at that close: named, with his line.
+              Korean rows only: this screen named no US stock at an earlier close before, and that stays as it was */}
+          <OwnCloseNote groups={ownCloses(load, rows.map((x) => x.s).filter((s) => s && s.cls === "kr"))} data-ui-v2="import-own-close" />
         </Card>
       )}
       {importer.amount && (

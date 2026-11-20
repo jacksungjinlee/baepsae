@@ -52,7 +52,7 @@
 //   that could be checked at all is 확인 필요, never 할 일 없음.
 import { num, isFin, priceWon, fyOf, fellTwice, KR_DIV_TREND, exactData, krDivHistory, todayD1, valueD1 } from "./engine.js";
 import { STALE_DAYS, daysSince, ownCloseDate, backstopFirst, samePublish, kstDate } from "../data.js";
-import { lateDays, LATE_CHECK_DAYS } from "./tradedays.js";
+import { lateDays, LATE_CHECK_DAYS, tradingDaysAfter, lateSay } from "./tradedays.js";
 import { sameConfirm, planWLimit, planWOk, PLANW_MAX_X } from "./store.js";
 import { heldQty as heldOf, heldUnits } from "./held.js";
 import { unitHeld } from "../repair.js";
@@ -131,11 +131,47 @@ export function checkState(load, now) {
   return { ok: true, late: { days: s.days, n: late.n } };
 }
 
-// Everything the evaluation reads from today's data.
+// 2026-11-20 (Jack, f: "cap the late-data portfolio check (#144) so it never runs on a close more than 5 KRX trading days old in
+// total (carried close age counts), instead of up to 10") and 2026-11-21 (Jack, answer 4, verbatim: "Not all-or-nothing. Leave that
+// one stock out with the approved line ("며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요.") and check the rest."):
+// on late data (checkState: the closes at most LATE_CHECK_DAYS behind), a Korean stock priced at its last confirmed close (data.json
+// pxd) whose own close is more than LATE_CHECK_DAYS KRX trading days before today (KST, the same count as lateDays; a pxd that is
+// not a countable date too, the stricter side) is left out of that day's check: the check reads it as not in today's data (v19.0c:
+// its row stays, the totals and the weights leave it out, as for a stock the pipeline left out) and its row shows the approved line
+// (ctx.aged, ui.jsx KrAgedLine). Every other stock and portfolio is checked as before; the state stays the late one. US stocks at an
+// earlier close are not touched. -> Map t -> { nk, pxd, n } (empty when the data is not late).
+export function lateLeftOut(state, data, today) {
+  const out = new Map();
+  if (!state || !state.ok || !state.late || !data) return out;
+  for (const s of data.stocks || []) {
+    if (!s || s.cls !== "kr" || s.pxd == null || s.pxd === data.pxDate) continue;
+    const pxd = ownCloseDate(s, data.pxDate);
+    const n = pxd ? tradingDaysAfter(pxd, today, "KR") : null;
+    if (n == null || n > LATE_CHECK_DAYS) out.set(s.t, { nk: typeof s.nk === "string" ? s.nk : s.t, pxd: s.pxd, n });
+  }
+  return out;
+}
+
+// Everything the evaluation reads from today's data. On late data the stocks lateLeftOut names are not in byT · coByT (left out
+// of the day's check) and are in aged with the stocks the pipeline left out (load.aged: pxSrc.own.aged), for the line on their rows.
 export function todayCtx(load, now) {
   const ok = load && load.status === "ok";
-  return { state: checkState(load, now), byT: ok ? load.byT : new Map(), coByT: ok ? load.coByT : new Map(),
-    fx: ok ? load.data.fx : null, pxDate: ok ? load.data.pxDate : null, usPxDate: ok ? load.data.usPxDate || null : null };
+  const state = checkState(load, now);
+  const today = kstDate(now == null ? Date.now() : now);
+  const out = ok ? lateLeftOut(state, load.data, today) : new Map();
+  const without = (m) => {
+    if (!out.size) return m;
+    const c = new Map(m);
+    for (const t of out.keys()) c.delete(t);
+    return c;
+  };
+  if (out.size) lateSay(`left out of the check, shown with the aged line: ${[...out].map(([t, v]) => `${t} (last confirmed close ${JSON.stringify(v.pxd)}, `
+    + `${v.n == null ? "not a date whose age can be counted" : v.n + " KRX trading days"} before today ${today})`).join(", ")}; more than ${LATE_CHECK_DAYS} in total; every other stock is checked`);
+  const aged = new Map(ok && load.aged ? load.aged : []);
+  for (const [t, v] of out) if (!aged.has(t)) aged.set(t, { nk: v.nk, pxd: v.pxd });
+  return { state, byT: ok ? without(load.byT) : new Map(), coByT: ok ? without(load.coByT) : new Map(),
+    fx: ok ? load.data.fx : null, pxDate: ok ? load.data.pxDate : null, usPxDate: ok ? load.data.usPxDate || null : null,
+    today, aged, lateOut: out };
 }
 
 // ---------------- one deck ----------------
@@ -490,7 +526,7 @@ export function evaluateHolding(h, deck, ctx, weights, qty) {
   if (!soldOutFails && !rules.some((x) => x.check === "checked")) reasons.unshift({ level: "check", code: "noRules" });
   const status = soldOutFails ? "none" : reasons.length ? reasons[0].level : "none";
   const d1 = todayD1(s);
-  const pxd = ownCloseDate(s, ctx.usPxDate);
+  const pxd = ownCloseDate(s, s && s.cls === "kr" ? ctx.pxDate : ctx.usPxDate);   // 2026-11-19 (Jack): a Korean stock's own date is against pxDate
   const band = rules.find((x) => x.id === "band" && x.check === "checked");
   const div = rules.find((x) => x.id === "divCut" && x.drops);
   return {
