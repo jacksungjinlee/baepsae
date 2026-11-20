@@ -172,8 +172,10 @@ after it merges and what comes next.
   Cut every series to that date. Never mix today's partial bar into "closing" data.
 - **Two sources for official closes (Jack, 2026-11-19):** "Permanent two-source rule: official closes always come from two
   independent sources. If the primary is late or not final, the second one is used automatically after a cross-check. The
-  publish stops only when neither can be confirmed." Naver's daily close is never used as the official (`pxDate`) close:
-  it includes after-hours trades.
+  publish stops only when neither can be confirmed." Naver's daily close is never used as the official (`pxDate`) close
+  for KOSPI or KOSDAQ: it includes after-hours trades. KONEX only (Jack, 2026-11-19): Naver is one of the two sources,
+  always paired with Yahoo, and a KONEX close is published only when the two agree to the won; Naver also checks KONEX
+  closes every day.
 - **All dates in KST** (`ZoneInfo("Asia/Seoul")`). The runner's clock is UTC; `date.today()` there is a bug.
 - **Never mix units or markets.** Same unit for the same field across KR and US; rank factors within each market.
 - **A date shown to users describes the content**, not the run time. Each section carries its own content date.
