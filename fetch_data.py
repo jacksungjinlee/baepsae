@@ -311,8 +311,9 @@ SECTOR_NAME_DOTS = "·ㆍ・•‧∙･."          # 업종 글자의 가운뎃
 
 
 def sector_name_key(text):
-    """업종 이름을 비교하는 꼴: 띄어쓰기를 빼고 가운뎃점 꼴을 모두 · 하나로 (KRX · 11차 표 · DART 가 점을 다르게 쓸 수 있어요). (순수 함수)"""
-    t = str(text or "").replace(" ", "").replace("\u00a0", "")
+    """업종 이름을 비교하는 꼴: 띄어쓰기(보통 · U+00A0 · 전각 U+3000 · 탭)를 빼고 가운뎃점 꼴을 모두 · 하나로 (KRX · 11차 표 · DART 가
+    점을 다르게 쓸 수 있어요). (순수 함수)"""
+    t = "".join(ch for ch in str(text or "") if ch not in " \u00a0\u3000\t")       # 띄어쓰기 · 줄바꿈 없는 칸 · 전각 칸 · 탭
     return "".join("·" if ch in SECTOR_NAME_DOTS else ch for ch in t)
 
 
@@ -5146,25 +5147,36 @@ def carry_prev_nps(fresh, prev_nps, bgn):
 def disc_rows_sector_now(rows, info):
     """2026-11-20 (리뷰 · 예전 뱁새 전력기기 회사 옮기기): 지난 실행에서 이어 온 공시 줄(내부자 · 국민연금)의 예전 뱁새 업종 키 s 를 오늘
     종목의 값으로 맞춰요 — 새 줄과 같은 규칙 (그 종목의 s, 없으면 etc). 공시·수급 탭이 업종을 줄의 s 로 세고 거르니 (src/disc.jsx), 그대로
-    두면 한 회사가 90일 동안 두 업종에 나뉘어 보여요. 오늘 데이터에 없는 종목의 줄은 그대로 둬요 (알 수 없어요). 줄을 그 자리에서 바꿔요.
-    반환: Counter {(전 키, 오늘 키): 줄 수}. (순수 함수 — 줄만 바꿔요)"""
-    ch = collections.Counter()
+    두면 한 회사가 90일 동안 두 업종에 나뉘어 보여요. 오늘 데이터에 없는 종목의 줄은 그대로 둬요 (알 수 없어요).
+    오늘 업종이 etc(오늘 업종 글자가 비었을 수 있어요)인데 줄에 진짜 업종이 있으면 그 업종을 둬요 — '오늘 모름' 은 '이제 기타' 가 아니에요
+    (리뷰 2026-11-20 · 로그에 '!!' 와 수). 줄을 그 자리에서 바꿔요.
+    반환: (바꾼 Counter {(전 키, 오늘 키): 줄 수}, 둔 Counter {줄의 업종 키: 줄 수} — 오늘 etc 라 두었어요). (순수 함수 — 줄만 바꿔요)"""
+    ch, kept = collections.Counter(), collections.Counter()
     for r in rows:
         st = info.get(r.get("t"))
         if not st:
             continue
         now = st.get("s") or "etc"
-        if r.get("s") != now:
-            ch[(r.get("s"), now)] += 1
-            r["s"] = now
-    return ch
+        old = r.get("s")
+        if old == now:
+            continue
+        if now == "etc" and old not in (None, "", "etc"):
+            kept[old] += 1
+            continue
+        ch[(old, now)] += 1
+        r["s"] = now
+    return ch, kept
 
 
-def disc_sector_line(kind, ch):
-    """로그 한 줄: 업종 키를 오늘 값으로 바꾼 지난 공시 줄 수와 많이 바뀐 짝 (앞 8개)."""
+def disc_sector_lines(kind, ch, kept):
+    """로그 줄: 업종 키를 오늘 값으로 바꾼 지난 공시 줄 수와 많이 바뀐 짝 (앞 8개) · 오늘 업종이 기타라 그대로 둔 줄이 있으면 '!!' 한 줄."""
     n = sum(ch.values())
     top = " · ".join(f"{a or '없음'}→{b} {k:,}" for (a, b), k in ch.most_common(8))
-    return f"· {kind} 지난 줄 {n:,}건의 업종 키를 오늘 종목 값으로 바꿈" + (f" ({top}{' …' if len(ch) > 8 else ''})" if n else "")
+    out = [f"· {kind} 지난 줄 {n:,}건의 업종 키를 오늘 종목 값으로 바꿈" + (f" ({top}{' …' if len(ch) > 8 else ''})" if n else "")]
+    if kept:
+        out.append(f"  !! {kind} 지난 줄 {sum(kept.values()):,}건은 오늘 업종이 기타(etc)라 원래 업종 키를 그대로 둬요 (오늘 업종 글자가 빈 종목 · "
+                   + " · ".join(f"{k} {v:,}" for k, v in kept.most_common(8)) + ")")
+    return out
 
 
 def fetch_disclosures(kr_stocks, cmap, end, client):
@@ -5249,7 +5261,8 @@ def fetch_disclosures(kr_stocks, cmap, end, client):
         dedup.append(r)
     if refreshed:
         log(f"· 내부자 거래 {refreshed:,}건의 비어 있던 시가총액을 오늘 값으로 채움")
-    log(disc_sector_line("내부자 거래", disc_rows_sector_now(dedup, info)))    # 이어 온 줄의 업종 키 = 오늘 값 (새 줄은 이미 오늘 값)
+    for line in disc_sector_lines("내부자 거래", *disc_rows_sector_now(dedup, info)):    # 이어 온 줄의 업종 키 = 오늘 값 (새 줄은 이미 오늘 값)
+        log(line)
     # v19.6b (Part B.1): 직위의 '-' 는 빈 칸 · 역할(role) 임원 | 주요주주 | null. 지난 실행이 넣은 줄도 오늘 다시 받은 회사면 같은 응답에서 고쳐요
     fx = insider_fix_roles(dedup, fresh)
     if not INSIDER_POS_HOLDER_WORDS:
@@ -5295,7 +5308,8 @@ def fetch_disclosures(kr_stocks, cmap, end, client):
         why = "공시 목록을 받지 못해" if not list_ok else "DART 연결이 끊겨"
         log(f"  !! {why} 지난 발행본의 {carried + n_ins:,}건을 그대로 둬요 "
             f"(최근 공시 {f'{last[:4]}-{last[4:6]}-{last[6:8]}' if last else '없음'}) · 국민연금 {carried:,} · 내부자 {n_ins:,}")
-    log(disc_sector_line("국민연금", disc_rows_sector_now(nps, info)))           # 지난 발행본에서 이어 온 줄 (carry_prev_nps)
+    for line in disc_sector_lines("국민연금", *disc_rows_sector_now(nps, info)):           # 지난 발행본에서 이어 온 줄 (carry_prev_nps)
+        log(line)
     log(f"· 국민연금(majorstock): 상태 {dict(nps_stat)} · 채택 {len(nps):,}건 · 내부자 누적 {len(dedup):,}건"
         + (" · 상한 도달, 다음 실행이 이어받음" if len(targets) >= DISC_CALL_CAP else ""))
     client.raise_if_fatal()

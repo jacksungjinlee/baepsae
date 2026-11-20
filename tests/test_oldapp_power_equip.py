@@ -183,7 +183,11 @@ def test_any_middle_dot_in_the_281_name_still_lands_in_elec(dot):
         name = f"전동기, 발전기 및 전기 변환{sep}공급{sep}제어 장치 제조업"
         assert F.map_sector_kr_raw(name, "") == "utility" and F.map_sector_kr(name, "") == "elec", name
         assert F.map_sector_kr(name, "송배전용금구류,변압기") == "elec" and F.map_sector_kr(name, "반도체 및 디스플레이 모션시스템") == "semi"
-    assert F.sector_name_key("전동기, 발전기 및 전기 변환ㆍ공급ㆍ제어 장치 제조업") == F.sector_name_key(NAMES["281"])
+    assert F.sector_name_key("전동기,\u00a0발전기 및 전기 변환ㆍ공급ㆍ제어 장치 제조업") == F.sector_name_key(NAMES["281"])
+    for gap in ("\u3000", "\t", "\u00a0", "  "):                 # 전각 칸 · 탭 · 줄바꿈 없는 칸 · 두 칸
+        name = f"전동기,{gap}발전기{gap}및{gap}전기{gap}변환ㆍ공급ㆍ제어{gap}장치{gap}제조업"
+        assert F.sector_name_key(name) == F.sector_name_key(NAMES["281"]) and F.map_sector_kr(name, "") == "elec", repr(gap)
+    assert F.map_sector_kr("절연선\u3000및\t케이블 제조업", "전력선,통신케이블") == "elec"
     assert F.map_sector_kr("구조용 금속제품, 탱크 및 증기발생기 제조업", "") == F.map_sector_kr_raw("구조용 금속제품, 탱크 및 증기발생기 제조업", "")
 
 
@@ -228,17 +232,32 @@ def test_the_main_run_logs_the_report_after_industries_are_set():
 
 
 def test_carried_disclosure_rows_take_todays_sector():
-    info = {"298040": {"t": "298040", "s": "elec"}, "005930": {"t": "005930", "s": "semi"}, "000001": {"t": "000001"}}
-    rows = [{"rc": "R1", "t": "298040", "s": "utility"}, {"rc": "R2", "t": "298040", "s": "utility"},
-            {"rc": "R3", "t": "005930", "s": "semi"}, {"rc": "R4", "t": "005930", "s": "etc"},
+    info = {"298040": {"t": "298040", "s": "elec"}, "005930": {"t": "005930", "s": "semi"}, "000001": {"t": "000001"},
+            "000002": {"t": "000002", "s": "etc"}}
+    rows = [{"rc": "R1", "t": "298040", "s": "utility"}, {"rc": "R2", "t": "298040", "s": "utility"},     # 진짜 → 진짜: 바꿔요
+            {"rc": "R3", "t": "005930", "s": "semi"}, {"rc": "R4", "t": "005930", "s": "etc"},             # 기타 → 진짜: 바꿔요
             {"rc": "R5", "t": "123450", "s": "chem"},              # 오늘 데이터에 없는 종목: 그대로
-            {"rc": "R6", "t": "000001", "s": "bio"}, {"rc": "R7", "t": "005930"}]
-    ch = F.disc_rows_sector_now(rows, info)
-    assert [r.get("s") for r in rows] == ["elec", "elec", "semi", "semi", "chem", "etc", "semi"]
-    assert ch == {("utility", "elec"): 2, ("etc", "semi"): 1, ("bio", "etc"): 1, (None, "semi"): 1}
-    line = F.disc_sector_line("내부자 거래", ch)
-    assert line.startswith("· 내부자 거래 지난 줄 5건의 업종 키를 오늘 종목 값으로 바꿈 (utility→elec 2") and "없음→semi 1" in line
-    assert F.disc_sector_line("국민연금", F.disc_rows_sector_now([], info)) == "· 국민연금 지난 줄 0건의 업종 키를 오늘 종목 값으로 바꿈"
+            {"rc": "R6", "t": "000001", "s": "bio"},               # 오늘 업종이 비었어요 (기타): 진짜 업종은 그대로
+            {"rc": "R7", "t": "005930"},                           # 업종 키가 없던 줄: 오늘 값
+            {"rc": "R8", "t": "000002", "s": "etc"}, {"rc": "R9", "t": "000002"}]   # 기타 → 기타 · 없음 → 기타
+    ch, kept = F.disc_rows_sector_now(rows, info)
+    assert [r.get("s") for r in rows] == ["elec", "elec", "semi", "semi", "chem", "bio", "semi", "etc", "etc"]
+    assert ch == {("utility", "elec"): 2, ("etc", "semi"): 1, (None, "semi"): 1, (None, "etc"): 1} and kept == {"bio": 1}
+    lines = F.disc_sector_lines("내부자 거래", ch, kept)
+    assert lines[0].startswith("· 내부자 거래 지난 줄 5건의 업종 키를 오늘 종목 값으로 바꿈 (utility→elec 2") and "없음→semi 1" in lines[0]
+    assert lines[1] == "  !! 내부자 거래 지난 줄 1건은 오늘 업종이 기타(etc)라 원래 업종 키를 그대로 둬요 (오늘 업종 글자가 빈 종목 · bio 1)"
+    assert F.disc_sector_lines("국민연금", *F.disc_rows_sector_now([], info)) == ["· 국민연금 지난 줄 0건의 업종 키를 오늘 종목 값으로 바꿈"]
+
+
+def test_a_blank_industry_day_keeps_real_sectors_in_carried_rows():
+    """업종 글자가 빈 날 (모든 종목 etc): 진짜 업종이 있던 줄은 그대로 · 기타였던 줄은 기타 · 한 줄도 기타로 내려가지 않아요."""
+    rows = [{"t": "298040", "s": "elec"}, {"t": "005930", "s": "semi"}, {"t": "035420", "s": "etc"}, {"t": "000660", "s": "semi"}]
+    info = {r["t"]: {"t": r["t"], "s": "etc"} for r in rows}
+    ch, kept = F.disc_rows_sector_now(rows, info)
+    assert [r["s"] for r in rows] == ["elec", "semi", "etc", "semi"] and not ch and kept == {"semi": 2, "elec": 1}
+    assert F.disc_sector_lines("내부자 거래", ch, kept)[1].startswith("  !! 내부자 거래 지난 줄 3건은 오늘 업종이 기타(etc)라")
+    info = {r["t"]: {"t": r["t"]} for r in rows}            # 업종 키가 아예 없는 날도 같아요
+    assert F.disc_rows_sector_now(rows, info)[1] == {"semi": 2, "elec": 1}
 
 
 class FakeDart:
@@ -271,4 +290,4 @@ def test_fetch_disclosures_moves_carried_rows_of_moved_makers(monkeypatch, tmp_p
     assert [(r["t"], r["s"]) for r in out["nps"]] == [("010120", "elec")]
     log = capsys.readouterr().out
     assert "· 내부자 거래 지난 줄 2건의 업종 키를 오늘 종목 값으로 바꿈 (" in log and "utility→elec 1" in log and "etc→elec 1" in log
-    assert "· 국민연금 지난 줄 1건의 업종 키를 오늘 종목 값으로 바꿈 (utility→elec 1)" in log
+    assert "· 국민연금 지난 줄 1건의 업종 키를 오늘 종목 값으로 바꿈 (utility→elec 1)" in log and "그대로 둬요 (오늘 업종 글자가" not in log
