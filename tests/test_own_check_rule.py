@@ -10,7 +10,9 @@ wrong number."
 - #142 (숨긴 배당수익률의 줄 dvLine 2 · 3 · 4): 기록(divCheck.proofSub)과 맞지 않는 줄 → 파이프라인이 그 종목의 줄을 비워요
   (fetch_data.own_blank_div_lines · validate_data.div_line_bad_rows · data.json ownDrop.divLine).
 - 관문: 실패는 둘뿐 — 뺀 · 비운 행이 N(5)을 넘음 · 빼야 할 값이 남아 틀린 숫자나 틀린 이유 줄을 보임. 1~N 은 경고. ownDrop 이 없는 파일은 예전 규칙.
-- 소스가 보내는 것을 보는 #139 의 'BF-B 가 있거나 빠진 이유' 줄은 그대로예요 (필수 종목 규칙)."""
+- #139 의 'BF-B 가 있거나 빠진 이유' 줄: Jack (2026-11-20, verbatim) "Brown-Forman B: no, it becomes a warning; one stock missing from a source
+  never holds the publish." — BF-B 가 목록에 없으면 이유가 없어도 경고. 실패는 BF-B 행이 목록에 있는데 가격이 없을 때 · 점이 지워진 꼴(BFB)이
+  실려 다른 회사의 숫자를 보일 때 (위 #139 규칙)뿐."""
 import copy
 import datetime as dt
 import inspect
@@ -303,10 +305,79 @@ def test_files_before_the_rule_keep_the_old_rule_and_a_bad_record_warns():
     assert rows[ROW2][3] == "FAIL"
 
 
-def test_the_bf_b_row_is_a_must_have_rule_and_is_unchanged():
-    """'BF-B 가 있거나 빠진 이유' 는 소스가 보낸 것 · 필수 종목을 보는 #126 의 규칙이라 상시 규칙 밖: 이유 없이 빠지면 기록이 있어도 발행 실패."""
-    rows, _ = run_us({"usListSym": rec(missing={}), "ownDrop": {"usClass": EMPTY}}, us_rows(drop={"BF-B"}))
-    assert rows[ROW1][3] == "FAIL" and "이유 없이 빠짐 1: BF-B" in rows[ROW1][1]
+def test_the_bf_b_row_warns_when_bf_b_is_missing_without_a_reason():
+    """Jack (2026-11-20, verbatim): "Brown-Forman B: no, it becomes a warning; one stock missing from a source never holds the publish."
+    'BF-B 가 있거나 빠진 이유' 줄: BF-B 가 목록에 없으면 이유가 없어도 경고 (이름을 적어요) — 기록(ownDrop)이 있든 없든 · 발행이든 사이트 점검이든."""
+    for data in ({"usListSym": rec(missing={}), "ownDrop": {"usClass": EMPTY}}, {"usListSym": rec(missing={})}):
+        for mode in ("publish", "live"):
+            rows, _ = run_us(copy.deepcopy(data), us_rows(drop={"BF-B"}), mode)
+            assert rows[ROW1][3] == "WARN" and "이유 없이 빠짐 1: BF-B" in rows[ROW1][1], rows[ROW1]
+            assert rows[ROW2][3] == "PASS", rows[ROW2]
+
+
+def gate_all(cur, prev, final):
+    """발행 관문 전체 (test_us_share_class.test_the_rows_run_in_the_publish_gate 와 같은 시험 날짜)."""
+    return V.run_checks(cur, prev, final, dt.date(2026, 10, 31), mode="publish", count_between=lambda a, b: 1,
+                        sessions={"dates": [dt.date(2026, 10, d) for d in (27, 28, 29, 30)], "src": "시험"},
+                        now=dt.datetime(2026, 10, 31, 11, 0, tzinfo=V.KST), hilo=None)
+
+
+@pytest.mark.parametrize("own", [None, EMPTY])
+@pytest.mark.parametrize("missing", [{}, {"BF-B": ""}, {"BF-B": "오늘 S&P 500 목록에 없음 (지수에서 빠졌는지 확인)"}])
+def test_bf_b_missing_warns_and_the_rest_publishes(missing, own):
+    """Jack (2026-11-20): 한 종목이 출처에서 빠져도 발행을 막지 않아요. 관문 전체를 돌려요: BF-B 가 없는 파일(이유가 있든 없든 · ownDrop 이 있든
+    없든)은 그 줄이 경고이고 실패가 하나도 없어요 (예전 규칙이면 이유 없이 빠진 두 경우는 발행 실패였어요)."""
+    cur, prev, final = good_pair()
+    assert "BF-B" not in {s["t"] for s in cur["data"]["stocks"]}
+    cur["data"]["usListSym"] = rec(missing=missing)
+    if own is not None:
+        cur["data"]["ownDrop"] = {"usClass": own}
+    rep = gate_all(cur, prev, final)
+    rows = {r[0]: r for r in rep.rows}
+    assert rows[ROW1][3] == "WARN" and "BF-B" in rows[ROW1][1], rows[ROW1]
+    assert rep.failed == []
+
+
+@pytest.mark.parametrize("own", [None, EMPTY])
+@pytest.mark.parametrize("mode", ["publish", "live"])
+def test_a_broken_bfb_ticker_published_still_fails_while_bf_b_missing_only_warns(own, mode):
+    """BF-B 는 빠지고 S&P 500 목록의 점이 지워진 꼴 'BFB' 가 바뀌지 않고 실렸어요 (야후가 그 꼴에 다른 증권으로 답한 것 — 그 행의 가격 ·
+    시가총액은 다른 회사의 숫자). BF-B 가 빠진 줄은 경고, 틀린 숫자를 보이는 BFB 행은 그대로 실패 (발행 · 사이트 점검 모두 · ownDrop 이 있든 없든)."""
+    us = us_rows(drop={"BF-B"}, extra=[{"t": "BFB", "cls": "us", "price": 9.0}])
+    data = {"usListSym": rec(spTickers=sorted({"AAPL", "BFB", "BRK-B"}), missing={})}
+    if own is not None:
+        data["ownDrop"] = {"usClass": own}
+    rows, _ = run_us(data, us, mode)
+    assert rows[ROW1][3] == "WARN" and "이유 없이 빠짐 1: BF-B" in rows[ROW1][1], rows[ROW1]
+    assert rows[ROW2][3] == "FAIL", rows[ROW2]
+    assert ("빼야 할 티커가 남아 실림: BFB" if own is not None else "S&P 500 목록의 점이 지워진 꼴이 바뀌지 않고 목록에 있음: BFB") in rows[ROW2][1]
+
+
+def test_a_broken_bfb_ticker_fails_the_whole_publish_gate_and_only_that_row_fails():
+    """관문 전체: 같은 파일(BF-B 없음 · BFB 실림)에서 실패는 출처 티커 줄 하나뿐 — BF-B 가 빠진 줄은 경고예요."""
+    cur, prev, final = good_pair()
+    src = next(s for s in cur["data"]["stocks"] if s.get("cls") == "us" and s["t"] == "U0000")
+    cur["data"]["stocks"].append(dict(copy.deepcopy(src), t="BFB"))
+    cur["data"]["usListSym"] = rec(spTickers=sorted({"AAPL", "BFB", "BRK-B"}), missing={})
+    rep = gate_all(cur, prev, final)
+    rows = {r[0]: r for r in rep.rows}
+    assert rows[ROW1][3] == "WARN" and "이유 없이 빠짐 1: BF-B" in rows[ROW1][1]
+    assert {r[0] for r in rep.failed} == {ROW2}, rep.failed
+
+
+@pytest.mark.parametrize("own", [None, EMPTY])
+@pytest.mark.parametrize("price", [0, None, -1.0, "x"])
+def test_a_listed_bf_b_row_without_a_price_still_fails_to_publish(price, own):
+    """BF-B 의 행이 목록에 있는데 가격이 없어요 (0 · 빈 칸 · 음수 · 숫자 아님) — 빠진 것이 아니라 앱이 그 종목을 가격 없이 보여요 (틀린 값).
+    발행 실패는 예전 그대로 · 사이트 점검은 예전처럼 경고."""
+    us = us_rows(drop={"BF-B"}, extra=[{"t": "BF-B", "cls": "us", "price": price}])
+    data = {"usListSym": rec(missing={})}
+    if own is not None:
+        data["ownDrop"] = {"usClass": own}
+    rows, _ = run_us(copy.deepcopy(data), us)
+    assert rows[ROW1][3] == "FAIL" and "목록에 있는데 가격이 없음 1: BF-B" in rows[ROW1][1], rows[ROW1]
+    rows, _ = run_us(copy.deepcopy(data), us, "live")
+    assert rows[ROW1][3] == "WARN", rows[ROW1]
 
 
 # ── #142: 숨긴 배당수익률의 줄 ─────────────────────────────────

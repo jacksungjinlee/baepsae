@@ -324,8 +324,9 @@ US_EXTRA_SET = US_ETF_SET | {"BRK-B", "TSM", "ASML", "BABA", "NVO", "SHOP"} | US
 # 2026-11-15 (Jack: "fix Brown-Forman B …" · 더하기만): S&P 500 목록(FinanceDataReader)이 점을 지운 주식 종류 티커 → 야후 대시 꼴
 # (= fetch_data.US_CLASS_JOINED 의 바꾸기 · 따로 적어 테스트가 맞춰 봐요). 이 꼴은 야후에 없는 티커라 발행 목록에 있으면 안 돼요.
 US_CLASS_JOINED_SET = {"BRKB": "BRK-B", "BFB": "BF-B"}
-# 이 바꾸기로 새로 들어온 종목 (= fetch_data.US_CLASS_ADDED · BRK-B 는 EXTRA_US 로 이미 있었어요): 목록에 있거나 data.json
-# usListSym.missing 에 빠진 이유가 있어야 해요 (#126 의 EXTRA_US 줄과 같은 규칙 · check_us_share_class).
+# 이 바꾸기로 새로 들어온 종목 (= fetch_data.US_CLASS_ADDED · BRK-B 는 EXTRA_US 로 이미 있었어요): 목록에 없으면 이름과 data.json
+# usListSym.missing 의 빠진 이유를 적고 경고만 해요 (Jack 2026-11-20: "one stock missing from a source never holds the publish" ·
+# check_us_share_class ①). 실패는 그 종목의 행이 목록에 있는데 가격이 없을 때뿐이에요 (틀린 값이 보여요).
 US_CLASS_SET = {"BF-B"}
 US_FOREIGN_SET = {"BTI", "ENB", "BCE", "TD", "RY", "SHEL", "BP", "UL", "TM", "SONY", "AZN", "HSBC", "SAP", "NVS", "RIO", "BHP", "TTE",
                   "DEO", "BUD", "SAN", "GSK"}                                                     # = fetch_data.US_FOREIGN (더한 외국 회사)
@@ -508,7 +509,9 @@ PROVE_SUB_KO = {"sh": "주주배정 (새 주식 상장됨)", "shnew": "주주배
 # 돌려 그 행을 빼거나(미국 행) 비우고(dvLine) 크게 남기며, data.json ownDrop[열쇠] = {"n": 수, "rows": [[열쇠, 이유]] 앞 OWN_DROP_SHOW 개} 에
 # 적어요. 관문: 실패는 둘뿐 — n 이 그 검사의 N 을 넘음 (한 실행에서 많은 행이 틀림) · 빼야 할 값이 파일에 남아 틀린 숫자나 틀린 이유 줄을
 # 보임 (빼는 단계가 고장). 1~N 이면 그 행 이름과 경고 · 0 이면 그대로. ownDrop 에 그 열쇠가 없는 파일 (이 규칙 전): 그 줄은 예전 규칙 그대로.
-# 소스가 보내는 것을 보는 검사 (신선도 · 덮는 비율 · 두 출처 · 필수 종목 — #139 의 'BF-B 가 있거나 빠진 이유' 줄 포함)는 그대로예요.
+# 소스가 보내는 것을 보는 검사 (신선도 · 덮는 비율 · 두 출처 · 필수 종목)는 그대로예요. #139 의 'BF-B 가 있거나 빠진 이유' 줄은 Jack 의 답
+# (2026-11-20, verbatim: "Brown-Forman B: no, it becomes a warning; one stock missing from a source never holds the publish.")으로 BF-B 가
+# 목록에 없으면 경고예요 (check_us_share_class ① · 실패는 목록에 있는 행에 가격이 없을 때뿐).
 # N = max(5, 3 × 최근 발행본에서 본 가장 큰 수): data 가지의 최근 발행 25회 (2026-11-06 ~ 11-19)를 같은 함수로 다시 돌린 표는 PR 에 있어요
 # (두 검사 모두 25회 내내 0건 → N = 5).
 OWN_DROP_SHOW = 30                 # 기록 · 로그 · 관문 값 칸에 이름을 적는 행 수
@@ -2613,10 +2616,13 @@ def us_class_bad_rows(rec, us):
 
 def check_us_share_class(rep, data, us, mode):
     """2026-11-15 (Jack: "fix Brown-Forman B, then check every share-class ticker in the S&P 500 and NASDAQ sources" · 더하기만). 두 줄:
-    ① '주식 종류 티커로 들어온 미국 종목': 이 바꾸기로 들어온 종목(US_CLASS_SET = fetch_data.US_CLASS_ADDED)은 오늘 목록에 있거나 (가격 > 0)
-       data.json usListSym.missing 에 빠진 이유가 있어야 해요 — check_us_extra (#126) 와 같은 규칙: 이유가 있으면 경고, 이유 없이 빠지면 발행
-       실패, 사이트 점검(live)은 경고 · 기록이 없는 파일은 발행 때 경고 · 점검 때 건너뜀. (소스가 보낸 것 · 필수 종목을 보는 줄이라 Jack 의 상시
-       규칙(2026-11-19) 밖 — 그대로예요.)
+    ① '주식 종류 티커로 들어온 미국 종목': 이 바꾸기로 들어온 종목(US_CLASS_SET = fetch_data.US_CLASS_ADDED)은 오늘 목록에 있어야 해요 (가격 > 0).
+       Jack (2026-11-20, verbatim): "Brown-Forman B: no, it becomes a warning; one stock missing from a source never holds the publish."
+       그래서 목록에 그 종목의 행이 없으면 — data.json usListSym.missing 에 이유가 있든 없든 — 경고로 이름과 이유(없으면 '이유 없이 빠짐')를
+       적어요 (빠진 종목은 틀린 숫자를 보이지 않아요). 실패는 하나뿐: 그 종목의 행이 목록에 있는데 가격이 없음 (0 · 빈 칸 · 숫자 아님) 이고 빠진
+       이유도 없음 — 앱이 그 종목을 가격 없이 보여 틀린 값이에요 (예전과 같은 실패 · 사이트 점검(live)은 예전처럼 경고 · 파이프라인은 목록에 있는
+       종목에 이유를 적지 않아요). 기록이 없는 파일은 발행 때 경고 · 점검 때 건너뜀 (그대로). 손으로 더한 종목 줄(check_us_extra · #126)은 바꾸지
+       않았어요.
     ② '미국 목록 출처 티커 (주식 종류 · 점이 지워진 꼴)': 실패 — 점이 지워진 꼴(BRKB · BFB)이 S&P 500 목록에서 바뀌지 않은 채 발행 목록의 티커로 있음 (그날
        기록의 spTickers 에 그 꼴이 있음). 야후에는 그 꼴의 티커가 없어서 보통은 가격이 없어 빠지고 (아래 경고), 이 실패는 야후가 그 꼴에 다른 증권으로
        답해 엉뚱한 회사가 실리는 경우를 잡아요. 파이프라인이 바꾼 꼴이 이 파일의 표(US_CLASS_JOINED_SET)와 다르거나 기록 모양이 틀려도 실패 — 단
@@ -2634,7 +2640,7 @@ def check_us_share_class(rep, data, us, mode):
        두 꼴에서만 나와 한 실행에 많아야 4건쯤이라 N(5)을 넘기 어려워요 — 이 검사를 지키는 것은 '빼야 할 행이 남으면 실패'예요. ownDrop.usClass 가
        없는 파일은 예전 규칙 그대로."""
     name = f"주식 종류 티커로 들어온 미국 종목 ({', '.join(sorted(US_CLASS_SET))}): 목록에 있거나 빠진 이유"
-    th = "모두 있어야 함 (빠지면 이유와 함께 경고 · 이유 없이 빠지면 실패)"
+    th = "모두 있어야 함 (빠지면 이유가 있든 없든 경고 · 목록에 있는데 가격이 없으면 실패, 사이트 점검은 경고)"
     name2 = "미국 목록 출처 티커 (주식 종류 · 점이 지워진 꼴)"
     th2 = ("S&P 500 목록의 점이 지워진 꼴이 바뀌지 않고 목록에 실리지 않음 · 바꾼 꼴이 관문 표와 같음 · 기록 모양 (사이트 점검에서는 표 · 모양은 경고) "
            "(바꾸지 않은 지워진 꼴 · 바꾸지 못한 티커 · 가격 없는 · 오류 난 S&P 500 티커는 경고)")
@@ -2667,20 +2673,25 @@ def check_us_share_class(rep, data, us, mode):
         else:
             rep.skip(name2, "기록 없음 (data.json usListSym 이 없는 발행본)")
         return
-    # ① 들어온 종목: 있거나 빠진 이유
+    # ① 들어온 종목: 있거나 빠진 이유 — Jack (2026-11-20): 한 종목이 출처에서 빠져도 발행을 막지 않아요 (이유가 있든 없든 경고 · 이름을 적어요).
+    # 실패는 목록에 행이 있는데 가격이 없는 종목뿐 (빠진 이유도 없음 · 틀린 값이 보여요 · 예전과 같은 실패 · 사이트 점검은 경고).
     miss = rec.get("missing")
     miss = miss if isinstance(miss, dict) else {}
     why = {t: miss.get(t) for t in gone}
     told = [t for t in gone if isinstance(why[t], str) and why[t].strip()]
     silent = [t for t in gone if t not in told]
+    no_px_row = [t for t in silent if t in tickers]      # 목록에 행이 있는데 가격이 없음 (0 · 빈 칸 · 숫자 아님) → 발행 실패
+    quiet = [t for t in silent if t not in tickers]      # 목록에 없고 이유도 없음 → 경고 (Jack 2026-11-20)
     odd = sorted(str(t) for t in miss if t not in US_CLASS_SET)
-    parts = ([f"이유 없이 빠짐 {len(silent)}: {_tickers(silent)}"] if silent else []) \
+    parts = ([f"목록에 있는데 가격이 없음 {len(no_px_row)}: {_tickers(no_px_row)}"] if no_px_row else []) \
+        + ([f"이유 없이 빠짐 {len(quiet)}: {_tickers(quiet)}"] if quiet else []) \
         + ([f"빠짐 {len(told)}: " + " · ".join(f"{t} ({why[t]})" for t in told)] if told else []) \
         + ([f"관문 목록에 없는 티커 {len(odd)}: {_tickers(odd)}"] if odd else [])
-    rep.add(name, not silent or mode == "live", f"{len(US_CLASS_SET) - len(gone)} / {len(US_CLASS_SET)} 있음" + "".join(f" · {x}" for x in parts),
+    rep.add(name, not no_px_row or mode == "live", f"{len(US_CLASS_SET) - len(gone)} / {len(US_CLASS_SET)} 있음" + "".join(f" · {x}" for x in parts),
             th, warn=bool(gone or odd))
     if gone:
-        rep.detail("주식 종류 티커로 들어온 미국 종목 중 오늘 없는 종목 (usListSym.missing)", [f"{t}: {why[t] if t in told else '이유 없음'}" for t in gone])
+        rep.detail("주식 종류 티커로 들어온 미국 종목 중 오늘 없는 종목 (usListSym.missing)",
+                   [f"{t}: {why[t] if t in told else ('목록에 있는데 가격이 없음 · 이유 없음' if t in tickers else '이유 없음')}" for t in gone])
     # ② 출처 티커: 모양 · 표 · 바꾸지 못한 티커 · 가격 없는 · 오류 난 S&P 500 티커
     p = _us_sym_parse(rec)
     mapped, unmapped, sp_t, sp_gone, no_px, sp_err, bad = (p[k] for k in ("mapped", "unmapped", "sp_t", "sp_gone", "no_px", "sp_err", "bad"))

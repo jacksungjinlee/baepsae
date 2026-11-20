@@ -9252,7 +9252,7 @@ def us_list_sym(symrec, sp500, sp_ok, asked, kept, why, added=None):
        S&P 500 목록에서 바뀌지 않고 실렸는지 봐요), "spGone": S&P 500 목록 종목 중 오늘 없는 티커 → 이유 (믿지 못한 날 None),
        "noPx": 그중 야후가 가격을 하나도 주지 않은 티커 (점이 지워진 새 주식 종류 티커의 모습 · 믿지 못한 날 None),
        "spErr": 그중 처리하다 오류로 멈춘 티커 (가격이 없다는 뜻이 아니에요 · 믿지 못한 날 None),
-       "missing": 더한 종목(US_CLASS_ADDED) 중 오늘 없는 티커 → 이유 (관문: 이유 없이 빠지면 발행 실패)}"""
+       "missing": 더한 종목(US_CLASS_ADDED) 중 오늘 없는 티커 → 이유 (관문: 빠지면 이유가 있든 없든 경고 · Jack 2026-11-20)}"""
     added = US_CLASS_ADDED if added is None else added          # 부를 때의 표 (정의할 때 묶지 않아요)
     read = isinstance(symrec, dict)
     mapped = [list(x) for x in (symrec or {}).get("mapped") or []] if read else []
@@ -10339,8 +10339,6 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                     "mapFund · noGroup · noParse · prefNoCommon · prefCommonNone · prefOver · dropped · noTable) · dartErr 채우기가 고장 난 날의 "
                     "예외 이름 (그날 left 는 빈 값) 또는 table:예외 (업종 표를 읽지 못해 DART 로 채우지 않은 날) — 관문 경고 · mapSha 채울 때 쓴 "
                     "업종 표(data/ksic_map_kr.csv)의 판 (sha256 앞 12자리 · 표가 바뀐 뒤의 옛 채움은 관문이 경고만)"),
-         "ownDrop": ("우리 처리 단계의 검사가 되돌리거나 뺀 행 (Jack 의 상시 규칙, 2026-11-19): {검사: {n 수 · rows 앞 30개 '종목 이름: 이유'}} · "
-                     "indFill 국내 업종 채운 값 (DART 로 채운 보통주 · 보통주를 따른 우선주 — validate_data.ind_fill_bad)"),
          "krSeries": ("국내 시계열 점검 (2026-11-14): 최근 거래일(days)의 네이버 일봉(수정주가)을 그날 공식 종가로 고친 봉 pinned · 종목 "
                       "pinStocks — 그날과 오늘 사이에 KRX 기준가(목록 파일의 Close − Changes)가 바뀌지 않았을 때만 (값 차이 "
                       f"{PIN_PX_TOL:.0%} 안, 또는 상장주식수가 오늘과 {PIN_SHR_TOL:.0%} 안이고 {PIN_REF_TOL:.0%} 안) · 기준가를 확인 못 한 날은 "
@@ -10387,10 +10385,11 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                        "날은 빈 값) · noPx = 그중 야후가 가격을 하나도 주지 않은 티커 (점이 지워진 새 주식 종류 티커일 수 있어요) · spErr = 그중 "
                        "처리하다 오류로 멈춘 티커 · spTickers = 그날 S&P 500 목록의 티커 (야후 모양 · 못 읽은 날 빈 값) · missing = 이 "
                        "바꾸기로 들어온 종목(BF-B) 중 오늘 없는 티커 → 빠진 이유 · read = 출처 티커 기록이 있었는지"),
-         "ownDrop": ("우리 처리 검사가 빼거나 비운 행 (Jack 의 상시 규칙 2026-11-19): {검사 열쇠: {n 행 수, rows [열쇠, 이유] 앞 30개}} · usClass = "
-                     "미국 목록에서 뺀 행 (S&P 500 의 점이 지워진 꼴이 바뀌지 않고 실림 · 관문 표와 다르게 바꾼 티커) · divLine = 기록(divCheck.proofSub)과 "
-                     "맞지 않아 비운 숨긴 배당수익률의 줄 (dvLine 2 · 3 · 4 · 기록은 줄인데 표시가 없던 종목도 수에 들어가요) · 관문은 n 이 기준을 "
-                     "넘거나 그런 값이 남으면 실패, 1 이상이면 경고"),
+         "ownDrop": ("우리 처리 검사가 빼거나 비우거나 되돌린 행 (Jack 의 상시 규칙 2026-11-19): {검사 열쇠: {n 행 수, rows 앞 30개}} · usClass = "
+                     "미국 목록에서 뺀 행 (S&P 500 의 점이 지워진 꼴이 바뀌지 않고 실림 · 관문 표와 다르게 바꾼 티커 · rows [열쇠, 이유]) · divLine = "
+                     "기록(divCheck.proofSub)과 맞지 않아 비운 숨긴 배당수익률의 줄 (dvLine 2 · 3 · 4 · 기록은 줄인데 표시가 없던 종목도 수에 들어가요 · "
+                     "rows [열쇠, 이유]) · 두 검사의 관문은 n 이 기준을 넘거나 그런 값이 남으면 실패, 1 이상이면 경고 · indFill = 국내 업종 채운 값 중 "
+                     "되돌린 행 (DART 로 채운 보통주 · 보통주를 따른 우선주 — validate_data.ind_fill_bad · rows '종목 이름: 이유')"),
          "fgnCut": ("미국 상장 외국 회사의 종목 칸: 회사 합계와 맞지 않아 비운 칸 {per · pbr · dy: mismatch 맞춰 봤는데 맞지 않음 · currency 재무제표 "
                     "통화를 확인하지 못함 · norecord 배당 기록 · 가격을 읽지 못한 배당수익률 · nocompare 회사 숫자로 PER · PBR 을 맞춰 볼 수 없음 (적자 · ROE 없음) · "
                     "nocompare-own 같은 뜻, 스위치 own 일 때 (지금 · 앱 줄 co.fgnNoCmp) · stopped 검사가 멈춘 날 맞춰 보지 않고 비움 (앱 줄 co.fgnStopped)} "

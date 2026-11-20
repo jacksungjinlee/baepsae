@@ -264,7 +264,9 @@ value would show a wrong number."
 
 "Own processing" means a check that catches a mistake in how our pipeline read, mapped or derived something (shape, consistency,
 mapping). Checks on what a source sends (freshness, coverage, two-source agreement, must-have stocks) are not covered and keep
-their rules: for example "주식 종류 티커로 들어온 미국 종목 (BF-B)" still fails when BF-B is missing with no reason.
+their rules. One exception, by Jack's own answer (2026-11-20, verbatim): "Brown-Forman B: no, it becomes a warning; one stock missing
+from a source never holds the publish." So "주식 종류 티커로 들어온 미국 종목 (BF-B)" only warns when BF-B is missing, with or without a
+reason (see "US share-class tickers" below).
 
 **How it works.** The rule that picks the bad rows lives once, in `validate_data.py`. The daily run calls the same function on its
 in-memory data, drops or blanks those rows, logs them and records them in `data.json` `ownDrop`; the gate then checks the file.
@@ -294,7 +296,8 @@ A file without `ownDrop` (published before #149) keeps the old rule for that row
 it; a malformed `ownDrop` (the whole object or one entry) also keeps the old rule and adds a warning.
 
 **N** = max(5, 3 × the highest count seen). Replayed over the last 25 publishes on the `data` branch (2026-11-06 to 11-19): 0 for
-both checks every time, so N = 5 (`US_CLASS_DROP_MAX`, `DIV_LINE_BLANK_MAX`; the table is in PR #149). For scale: the 11-19 file has
+both checks every time, so N = 5 (`US_CLASS_DROP_MAX`, `DIV_LINE_BLANK_MAX`; the table is in PR #149). Jack, 2026-11-20: "Yes to “more
+than 5 rows” as the default for the standing rule." For scale: the 11-19 file has
 800 US stocks and 30 lines 2·3·4, so a broken record that blanks all 30 lines (or loses them with the record) fails the gate, as it should.
 **The US count cannot realistically pass 5:** its rows come only from the two table forms (`BRKB`, `BFB`), at most one joined row and one
 wrongly mapped row each, so about 4 a run (only a hand-made, malformed record could list more). N = 5 is the rule's floor; what protects
@@ -991,8 +994,12 @@ this rule added (`BF-B`) that are not in the day's list → reason · `read` whe
 **Gate rows** (`check_us_share_class`, stricter only):
 - "주식 종류 티커로 들어온 미국 종목 (BF-B): 목록에 있거나 빠진 이유" — #126's rule for the stocks this rule added
   (`US_CLASS_SET` = `fetch_data.US_CLASS_ADDED`): in the day's data, or named in `usListSym.missing` with the reason (S&P 500 list not
-  read, not in today's S&P 500 list, its list name blank or not matching, too little price history …). Named: warn. Missing with no
-  reason: the publish fails; the site checks (deploy, watchdog) only warn. A file without `usListSym` warns on a publish and is
+  read, not in today's S&P 500 list, its list name blank or not matching, too little price history …). **Since #149 (Jack, 2026-11-20:
+  "Brown-Forman B: no, it becomes a warning; one stock missing from a source never holds the publish.")** a missing BF-B only warns,
+  named with its reason, or "이유 없이 빠짐" when the run wrote none (before #149 that case failed the publish). The row fails the
+  publish in one case only: BF-B's row is in the list but has no price (0, blank, negative or not a number) and no reason — the app
+  would show it without a price, a wrong value (the same fail as before; the site checks only warn, as before). A published `BFB`
+  with another security's numbers is the next row's job and still fails. A file without `usListSym` warns on a publish and is
   skipped by the site checks.
 - "미국 목록 출처 티커 (주식 종류 · 점이 지워진 꼴)":
   - **Warns** when a joined form (`BRKB`, `BFB`) is still in that day's S&P 500 tickers (`spTickers`), published or not: the
