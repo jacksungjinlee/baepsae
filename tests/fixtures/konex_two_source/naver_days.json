@@ -1,0 +1,618 @@
+{
+"232530": {
+"status": 200,
+"body": [
+{
+"localDate": "20261110",
+"closePrice": 10160.0,
+"openPrice": 10260.0,
+"highPrice": 10990.0,
+"lowPrice": 10000.0,
+"accumulatedTradingVolume": 1693,
+"foreignRetentionRate": 16.45
+},
+{
+"localDate": "20261111",
+"closePrice": 10130.0,
+"openPrice": 10160.0,
+"highPrice": 11400.0,
+"lowPrice": 9600.0,
+"accumulatedTradingVolume": 9708,
+"foreignRetentionRate": 16.45
+},
+{
+"localDate": "20261112",
+"closePrice": 10140.0,
+"openPrice": 10500.0,
+"highPrice": 10500.0,
+"lowPrice": 10000.0,
+"accumulatedTradingVolume": 2768,
+"foreignRetentionRate": 16.45
+},
+{
+"localDate": "20261113",
+"closePrice": 10140.0,
+"openPrice": 10140.0,
+"highPrice": 10140.0,
+"lowPrice": 10140.0,
+"accumulatedTradingVolume": 412,
+"foreignRetentionRate": 16.45
+},
+{
+"localDate": "20261116",
+"closePrice": 10000.0,
+"openPrice": 10500.0,
+"highPrice": 10500.0,
+"lowPrice": 9900.0,
+"accumulatedTradingVolume": 6322,
+"foreignRetentionRate": 16.45
+},
+{
+"localDate": "20261117",
+"closePrice": 10390.0,
+"openPrice": 10000.0,
+"highPrice": 10400.0,
+"lowPrice": 9800.0,
+"accumulatedTradingVolume": 5514,
+"foreignRetentionRate": 16.45
+},
+{
+"localDate": "20261118",
+"closePrice": 10200.0,
+"openPrice": 10380.0,
+"highPrice": 10380.0,
+"lowPrice": 10200.0,
+"accumulatedTradingVolume": 897,
+"foreignRetentionRate": 16.45
+},
+{
+"localDate": "20261119",
+"closePrice": 10090.0,
+"openPrice": 10500.0,
+"highPrice": 10500.0,
+"lowPrice": 10090.0,
+"accumulatedTradingVolume": 366,
+"foreignRetentionRate": 16.45
+}
+]
+},
+"260870": {
+"status": 200,
+"body": [
+{
+"localDate": "20261110",
+"closePrice": 8050.0,
+"openPrice": 8040.0,
+"highPrice": 8050.0,
+"lowPrice": 8040.0,
+"accumulatedTradingVolume": 2384,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261111",
+"closePrice": 8100.0,
+"openPrice": 8100.0,
+"highPrice": 8100.0,
+"lowPrice": 8100.0,
+"accumulatedTradingVolume": 167,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261112",
+"closePrice": 8100.0,
+"openPrice": 8100.0,
+"highPrice": 8100.0,
+"lowPrice": 8100.0,
+"accumulatedTradingVolume": 2059,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261113",
+"closePrice": 8040.0,
+"openPrice": 8050.0,
+"highPrice": 8050.0,
+"lowPrice": 8020.0,
+"accumulatedTradingVolume": 196,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261116",
+"closePrice": 8050.0,
+"openPrice": 8040.0,
+"highPrice": 8050.0,
+"lowPrice": 8040.0,
+"accumulatedTradingVolume": 1364,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261117",
+"closePrice": 8050.0,
+"openPrice": 8050.0,
+"highPrice": 8050.0,
+"lowPrice": 8030.0,
+"accumulatedTradingVolume": 3570,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261118",
+"closePrice": 8060.0,
+"openPrice": 8050.0,
+"highPrice": 8100.0,
+"lowPrice": 8050.0,
+"accumulatedTradingVolume": 699,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261119",
+"closePrice": 8060.0,
+"openPrice": 8050.0,
+"highPrice": 8060.0,
+"lowPrice": 8050.0,
+"accumulatedTradingVolume": 1235,
+"foreignRetentionRate": 0.0
+}
+]
+},
+"336040": {
+"status": 200,
+"body": [
+{
+"localDate": "20261110",
+"closePrice": 3500.0,
+"openPrice": 3500.0,
+"highPrice": 3500.0,
+"lowPrice": 3500.0,
+"accumulatedTradingVolume": 1,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261111",
+"closePrice": 3500.0,
+"openPrice": 3500.0,
+"highPrice": 3500.0,
+"lowPrice": 3500.0,
+"accumulatedTradingVolume": 1,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261112",
+"closePrice": 3500.0,
+"openPrice": 3500.0,
+"highPrice": 3500.0,
+"lowPrice": 3500.0,
+"accumulatedTradingVolume": 1,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261113",
+"closePrice": 3500.0,
+"openPrice": 3500.0,
+"highPrice": 3500.0,
+"lowPrice": 3500.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261116",
+"closePrice": 3500.0,
+"openPrice": 3500.0,
+"highPrice": 3500.0,
+"lowPrice": 3500.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261117",
+"closePrice": 3500.0,
+"openPrice": 3500.0,
+"highPrice": 3500.0,
+"lowPrice": 3500.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261118",
+"closePrice": 3500.0,
+"openPrice": 3500.0,
+"highPrice": 3500.0,
+"lowPrice": 3500.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261119",
+"closePrice": 3500.0,
+"openPrice": 3500.0,
+"highPrice": 3500.0,
+"lowPrice": 3500.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+}
+]
+},
+"076340": {
+"status": 200,
+"body": [
+{
+"localDate": "20261110",
+"closePrice": 4190.0,
+"openPrice": 4190.0,
+"highPrice": 4190.0,
+"lowPrice": 4190.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261111",
+"closePrice": 4195.0,
+"openPrice": 3900.0,
+"highPrice": 4195.0,
+"lowPrice": 3700.0,
+"accumulatedTradingVolume": 81,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261112",
+"closePrice": 4095.0,
+"openPrice": 4095.0,
+"highPrice": 4095.0,
+"lowPrice": 4095.0,
+"accumulatedTradingVolume": 10,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261113",
+"closePrice": 4095.0,
+"openPrice": 4095.0,
+"highPrice": 4095.0,
+"lowPrice": 4095.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261116",
+"closePrice": 4095.0,
+"openPrice": 4095.0,
+"highPrice": 4095.0,
+"lowPrice": 4095.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261117",
+"closePrice": 4095.0,
+"openPrice": 4100.0,
+"highPrice": 4100.0,
+"lowPrice": 3980.0,
+"accumulatedTradingVolume": 3,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261118",
+"closePrice": 4095.0,
+"openPrice": 4000.0,
+"highPrice": 4100.0,
+"lowPrice": 4000.0,
+"accumulatedTradingVolume": 18,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261119",
+"closePrice": 4095.0,
+"openPrice": 4095.0,
+"highPrice": 4095.0,
+"lowPrice": 4095.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+}
+]
+},
+"278990": {
+"status": 200,
+"body": [
+{
+"localDate": "20261110",
+"closePrice": 3000.0,
+"openPrice": 2900.0,
+"highPrice": 3000.0,
+"lowPrice": 2700.0,
+"accumulatedTradingVolume": 260,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261111",
+"closePrice": 3000.0,
+"openPrice": 3000.0,
+"highPrice": 3000.0,
+"lowPrice": 3000.0,
+"accumulatedTradingVolume": 1,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261112",
+"closePrice": 2895.0,
+"openPrice": 2800.0,
+"highPrice": 2895.0,
+"lowPrice": 2700.0,
+"accumulatedTradingVolume": 131,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261113",
+"closePrice": 2895.0,
+"openPrice": 2895.0,
+"highPrice": 2895.0,
+"lowPrice": 2895.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261116",
+"closePrice": 2715.0,
+"openPrice": 2715.0,
+"highPrice": 2715.0,
+"lowPrice": 2715.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261117",
+"closePrice": 2700.0,
+"openPrice": 2900.0,
+"highPrice": 2900.0,
+"lowPrice": 2600.0,
+"accumulatedTradingVolume": 22,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261118",
+"closePrice": 2700.0,
+"openPrice": 2700.0,
+"highPrice": 2700.0,
+"lowPrice": 2700.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261119",
+"closePrice": 2680.0,
+"openPrice": 2680.0,
+"highPrice": 2680.0,
+"lowPrice": 2680.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+}
+]
+},
+"296520": {
+"status": 200,
+"body": [
+{
+"localDate": "20261110",
+"closePrice": 239.0,
+"openPrice": 239.0,
+"highPrice": 239.0,
+"lowPrice": 239.0,
+"accumulatedTradingVolume": 1,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261111",
+"closePrice": 274.0,
+"openPrice": 274.0,
+"highPrice": 274.0,
+"lowPrice": 274.0,
+"accumulatedTradingVolume": 1,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261112",
+"closePrice": 315.0,
+"openPrice": 315.0,
+"highPrice": 315.0,
+"lowPrice": 315.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261113",
+"closePrice": 315.0,
+"openPrice": 315.0,
+"highPrice": 315.0,
+"lowPrice": 315.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261116",
+"closePrice": 315.0,
+"openPrice": 315.0,
+"highPrice": 315.0,
+"lowPrice": 315.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261117",
+"closePrice": 268.0,
+"openPrice": 268.0,
+"highPrice": 268.0,
+"lowPrice": 268.0,
+"accumulatedTradingVolume": 1,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261118",
+"closePrice": 230.0,
+"openPrice": 230.0,
+"highPrice": 230.0,
+"lowPrice": 230.0,
+"accumulatedTradingVolume": 1,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261119",
+"closePrice": 264.0,
+"openPrice": 264.0,
+"highPrice": 264.0,
+"lowPrice": 264.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+}
+]
+},
+"496320": {
+"status": 200,
+"body": [
+{
+"localDate": "20261110",
+"closePrice": 1176000.0,
+"openPrice": 1176000.0,
+"highPrice": 1176000.0,
+"lowPrice": 1176000.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261111",
+"closePrice": 1176000.0,
+"openPrice": 1176000.0,
+"highPrice": 1176000.0,
+"lowPrice": 1176000.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261112",
+"closePrice": 1176000.0,
+"openPrice": 1176000.0,
+"highPrice": 1176000.0,
+"lowPrice": 1176000.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261113",
+"closePrice": 1176000.0,
+"openPrice": 1176000.0,
+"highPrice": 1176000.0,
+"lowPrice": 1176000.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261116",
+"closePrice": 1176000.0,
+"openPrice": 1176000.0,
+"highPrice": 1176000.0,
+"lowPrice": 1176000.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261117",
+"closePrice": 1176000.0,
+"openPrice": 1176000.0,
+"highPrice": 1176000.0,
+"lowPrice": 1176000.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261118",
+"closePrice": 1176000.0,
+"openPrice": 1176000.0,
+"highPrice": 1176000.0,
+"lowPrice": 1176000.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261119",
+"closePrice": 1176000.0,
+"openPrice": 1176000.0,
+"highPrice": 1176000.0,
+"lowPrice": 1176000.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+}
+]
+},
+"0203K0": {
+"status": 200,
+"body": [
+{
+"localDate": "20261110",
+"closePrice": 10850.0,
+"openPrice": 10850.0,
+"highPrice": 10850.0,
+"lowPrice": 10850.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261111",
+"closePrice": 10850.0,
+"openPrice": 10850.0,
+"highPrice": 10850.0,
+"lowPrice": 10850.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261112",
+"closePrice": 10850.0,
+"openPrice": 10850.0,
+"highPrice": 10850.0,
+"lowPrice": 10850.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261113",
+"closePrice": 10850.0,
+"openPrice": 10850.0,
+"highPrice": 10850.0,
+"lowPrice": 10850.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261116",
+"closePrice": 10850.0,
+"openPrice": 10850.0,
+"highPrice": 10850.0,
+"lowPrice": 10850.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261117",
+"closePrice": 10850.0,
+"openPrice": 10850.0,
+"highPrice": 10850.0,
+"lowPrice": 10850.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261118",
+"closePrice": 10850.0,
+"openPrice": 10850.0,
+"highPrice": 10850.0,
+"lowPrice": 10850.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+},
+{
+"localDate": "20261119",
+"closePrice": 10850.0,
+"openPrice": 10850.0,
+"highPrice": 10850.0,
+"lowPrice": 10850.0,
+"accumulatedTradingVolume": 0,
+"foreignRetentionRate": 0.0
+}
+]
+}
+}

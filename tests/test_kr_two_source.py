@@ -68,8 +68,8 @@ def test_rebuild_matches_the_real_final_file(d, pre, fin):
         bad = [k for k in FIELDS if not same(g[k], r[k], k)]
         assert not bad, (r["Code"], bad)
         assert r["Close"] == round(g["Marcap"] / g["Stocks"])        # 공식 종가 = 시가총액 ÷ 상장주식수
-    # 빠진 종목과 까닭: 코넥스는 두 출처 모두 없음 · STX 는 야후 값이 엉뚱 (거래정지 종목의 수정 값)
-    assert KONEX in st["mkt"] and KONEX not in st["noDaum"]                    # 코넥스는 묻지 않아요 (야후에 없는 시장)
+    # 빠진 종목과 까닭: 코넥스는 이 다음 × 야후 단계에서 묻지 않아요 (다음에 코넥스가 없어요 · 코넥스는 따로 야후 .KQ × 네이버 단계 — test_konex_two_source.py) · STX 는 야후 값이 엉뚱 (거래정지 종목의 수정 값)
+    assert KONEX in st["mkt"] and KONEX not in st["noDaum"]                    # 코넥스는 이 단계에서 묻지 않아요 (다음에 없는 시장)
     assert "011810" in {c for c, *_ in st["diff"]}
 
 
