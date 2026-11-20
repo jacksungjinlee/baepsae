@@ -811,7 +811,7 @@ If the KONEX row warns (read the reasons after "경고:"):
 3. "네이버 값 없음" for many or "받지 못함": Naver may be blocking GitHub's servers; the KOSPI/KOSDAQ path does not use Naver, so only
    KONEX is affected (on second-source days every KONEX stock drops out).
 
-## Deploy gate: Daum spot-check time limit (관문 두 출처 확인 시간 한도, since #157)
+## Deploy gate: Daum spot-check time limit and refusal (관문 두 출처 확인 시간 한도 · 거절, since #157 and #?)
 
 Jack, 2026-11-20 (verbatim): "Yes to 10 minutes, but a timeout skips the Daum spot-check with a loud warning; the deploy continues
 on the other checks. An outside site must never block a code fix."
@@ -873,10 +873,39 @@ In the deploy, the whole spot check has a 600 s limit:
 - if the limit hits after the must-haves and 90% of the sample have already answered, "pxDate 최종본 여부" is checked as before and
   passes, with a WARN that says how many were skipped; the price row is counted as above.
 
-**Known limit (unchanged, needs Jack's yes to change):** a Daum outage that fails fast still blocks every deploy, because nothing is
-cut. If Daum answers 403 to GitHub's servers, every stock is a definite non-answer and the gate fails within seconds; if it refuses
-connections quickly, all three tries fail inside the 600 s and coverage is short with no cut, so the gate fails as before. Only a
-slow Daum is skipped.
+**When Daum refuses outright (since #?, Jack 2026-11-21).** Jack's question 3 of 11-20, verbatim: "Deploy price check when Daum
+refuses instead of being slow. Your 10-minute limit covers a slow Daum. If Daum starts refusing GitHub's servers outright, the way KRX
+did, nothing times out, and every code deploy stops until Daum answers again. Skip the Daum check in that case too, with the same loud
+warning? It loosens a check, so it's yours. (Recommended: yes, for code deploys only. The daily data publish keeps its own two-source
+checks either way.)" Jack, 2026-11-21: "3. Yes."
+
+Same switch as the limit: only a `--live` run that has the limit (the deploy's gate step, or `--daum-limit` by hand). The watchdog
+and the daily publish gate have no limit, so they have no refusal rule either: they ask every stock and fail as before.
+- **A refusal** (per stock): Daum answers HTTP 401, 403 or 451; or all three tries fail with a refused connection, a connection reset
+  or abort (including "Remote end closed connection without response" and broken pipe), a TLS connection cut or refused by the far
+  end, or HTTP 429. Not a refusal (unchanged): timeouts (the time limit covers those), HTTP 5xx, a DNS failure, a proxy error, a
+  certificate that fails verification, a bare connection error that names no cause, a 200 reply that is not JSON (it could be a block
+  page, but it could as well be a changed address, so it stays a definite non-answer), HTTP 404 and other 4xx, no row for the day.
+  Every refusal is already a #157 network error or a #157 definite non-answer (`px_refusal_error`, `px_refusal_answer`).
+- **Daum refuses outright** when every stock whose Daum answer is settled so far is a refusal (no close, no "no row", nothing else),
+  every must-have is among them, and there are at least `px_alt_refuse_need(asked)` of them: the smallest count that already makes
+  the old 90% rule impossible even if every other stock answered (21 for 206 or 207 stocks). At that point the old check could not
+  pass anyway. The must-haves are asked first, so with 4 at a time this takes seconds (403: 21 requests; refused connections:
+  21 stocks × 3 tries). If any other answer arrives first, the rule is off for that run and everything behaves as before
+  (**partial refusal = as today**).
+- Then the check stops asking (retries included; requests already in flight finish under their own limits, and their closes are
+  kept), logs at the moment "!! 관문의 두 출처 확인: 다음이 거절해요 — 답이 정해진 21종목이 모두 거절 (필수 종목 7 / 7 · 보기: …) …" and
+  after it "!! 관문의 두 출처 확인을 다음이 거절했어요 (Jack 2026-11-21 · 배포만): 거절 21종목 … · 거절 뒤 묻지 않음 n · 확인 … — 다음의
+  확인을 건너뛰고 경고 ('pxDate 최종본 여부' 줄) …". The row **"pxDate 최종본 여부" turns WARN** ("…을 다음이 거절해 건너뜀 (Jack
+  2026-11-21 · 배포만) — 거절 21종목 (필수 종목 7 / 7 · 보기: …) · 거절 뒤 묻지 않음 n · 확인 … · 발행 때 2차 출처(다음 × 야후) 확인 …"), so
+  it is in the run summary table and a GitHub warning annotation the morning check reads. The deploy continues on the other checks.
+- **Still FAIL, exactly as #157:** a must-have Daum definitely answered with no close (no row, 404, a reply that is not JSON): that is
+  an answer, so the refusal rule never starts; the file's own record conditions; and every close Daum did return (in-flight ones
+  after the stop) is compared in the price rows by #157's rule ("005930 = 공식 종가" to the won when received; "한국 가격 = 공식 종가"
+  counts wrong closes against all stocks asked, e.g. 3 wrong: 204/207 = 98.6% → FAIL). With no close received, both price rows WARN
+  with "다음이 거절: …".
+- Known limit after this change: a Daum outage that fails fast with **5xx**, a block that serves a **200 page that is not JSON**, or a
+  **DNS** failure still blocks every code deploy (not refusals by the definition above; widening it needs Jack's yes).
 
 If the WARN shows:
 1. Read "걸린 시간 n초" at the end of the line "관문의 두 출처 공식 종가 …" in the deploy log (and the counts on the "!!" line after
@@ -889,6 +918,10 @@ If the WARN shows:
 4. If a price row or "최종본 날짜 계산" fails on a timeout day, it is not the timeout: it is a real mismatch between Daum's close and
    the published price, a must-have Daum has no close for, or too many stocks with no close. Treat it like the same row failing on
    a normal day.
+5. If the WARN says "다음이 거절해 건너뜀": read the examples on the "!!" lines (HTTP 403, connection refused, …). One deploy is
+   nothing to act on. If every deploy shows it, or the watchdog's own run (no limit) fails "최종본 날짜 계산" with the same errors,
+   Daum is blocking GitHub's servers: tell Jack in plain words, since the deploy then checks prices only against the daily run's
+   two-source record. Do not change the refusal definition or the count to make a run pass.
 
 ## Korean dividend proof (배당 기준 증명, since #PR — Jack 2026-11-14, item 5)
 

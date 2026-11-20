@@ -12,6 +12,7 @@ fetch_data.py 가 만든 네 파일을 검사해요. 하나라도 FAIL 이면 ex
   python validate_data.py --live --dir DIR    # 사이트에 올라간 파일 점검 (비교 없이 절대 기준만, v17.6 감시용)
   BAEPSAE_DAUM_LIMIT_S=600 python validate_data.py --live --dir _site   # 배포 (deploy.yml) — 다음 확인 전체에 600초 한도 (Jack 2026-11-20 · 배포만)
   python validate_data.py --live --daum-limit 600 --dir DIR             # 손으로 같은 한도 (600초 이상만 받아요)
+  (한도를 받은 --live 만: 다음이 아예 거절하면 더 묻지 않고 경고로 건너뛰어요 — Jack 2026-11-21 · PX_ALT_LIMIT_ENV 옆 설명)
 
 '최종본 날짜'는 fetch_data.py 를 쓰지 않고 이 파일의 코드로 따로 계산해요 (같은 실수를 같이 하지 않게).
 규칙: 오늘(KST) 이전, 시가총액 90% 이상, 마지막 커밋이 그날 KRX 정규장 마감 + 30분 이후 (보통 15:30 → 16:00 KST).
@@ -33,6 +34,7 @@ import json
 import math
 import os
 import re
+import ssl
 import subprocess
 import sys
 import threading
@@ -129,6 +131,17 @@ PX_ALT_TOL = 0.01                         # 두 종가 차이 (원) — 부동�
 # 받지 못한 종목이 모두 맞았다고 쳐도 99% 에 못 미칠 때만 실패: 다 받았을 때도 반드시 실패하는 경우).
 PX_ALT_LIVE_BUDGET_S = 600
 PX_ALT_LIMIT_ENV = "BAEPSAE_DAUM_LIMIT_S"   # deploy.yml 관문 단계의 환경 변수 (그 단계에만 · 시험이 맞춰 봐요)
+# 2026-11-21 (Jack, 11-20 질문 3 "Deploy price check when Daum refuses instead of being slow … Skip the Daum check in that case too, with the
+# same loud warning? … (Recommended: yes, for code deploys only. …)" → 11-21 "3. Yes."): 다음이 느린 게 아니라 아예 거절하면 (KRX 처럼)
+# 시간 한도에 걸리지 않아 배포가 매번 멈춰요. 같은 스위치(위의 한도를 받은 --live · 배포만)에서만, 다음이 거절한다고 볼 수 있으면 더 묻지 않고
+# 한도에 걸렸을 때와 같이 크게 경고하고 건너뛰어요. 감시 · 발행 관문은 예전 그대로예요 (한도가 없으면 이 규칙도 없어요).
+# 거절 (종목마다 · px_refusal_answer · px_refusal_error): 다음이 HTTP 401 · 403 · 451 로 답함, 또는 세 번 모두 연결 거부 · 연결 끊김(reset ·
+# abort · 응답 없이 닫음) · TLS 가 끊기거나 거절됨 · HTTP 429. 시간 초과 · 5xx · DNS · 프록시 · 인증서 확인 실패 · JSON 이 아닌 200 (차단 쪽
+# 화면일 수도, 주소가 바뀐 것일 수도 있어요) · 404 · 그날 행 없음은 거절이 아니에요 (예전 그대로).
+# 다음이 거절한다고 보는 때 (px_alt_refuse_need): 답이 정해진 종목이 모두 거절이고 (종가 · 그날 행 없음 같은 다른 답이 하나도 없음),
+# 필수 종목이 모두 그 안에 있고, 그 수가 표본 기준(PX_ALT_MIN_SHARE)을 이미 채울 수 없게 하는 수 이상일 때 (207종목이면 21) — 그때는
+# 예전 규칙으로도 이 확인은 통과할 수 없어요. 다른 답이 하나라도 먼저 오면 이 규칙은 그 실행에서 꺼지고 예전 그대로예요 (일부만 거절).
+# 건너뛰어도 받은 종가는 가격 줄에서 비교하고 (#157 과 같은 기준), 다음이 분명히 답하지 않은 필수 종목은 예전 그대로 실패해요.
 IND_CARRY_WARN_DAYS = 14                  # 지난 발행본에서 이어 쓴 국내 업종 글자가 이보다 오래되면 경고 (fetch_data 와 같은 값)
 # 2026-11-19 (Jack: "new listings take their industry from DART's company records"): KRX-DESC 에도 지난 발행본에도 업종 글자가 없는 국내 종목은
 # DART 기업개황 업종 코드(KSIC)의 앞 3자리(소분류) 이름으로 채워요. 이름은 통계청 한국표준산업분류 11차 표에서만 (fetch_data 와 같은 파일 · 읽는 코드는 여기 하나)
@@ -1097,10 +1110,14 @@ def px_alt_cut_gap(alt):
     """시간 한도에 걸린 확인(live)에서 시간 한도 · 네트워크 오류로 설명할 수 없는 모자람 (2026-11-20 리뷰 · 순수 함수).
     반환: (hard, reach) — hard: 받지 못한 필수 종목 가운데 시간 한도로 건너뛰지도, 네트워크 오류로 끝나지도 않은 종목 (다음이 분명히 답하지
     않았어요: 그날 행 없음 · HTTP 4xx · 종가 없음 — 기록이 없는 종목도 여기에 넣어요) · reach: 받은 + 시간 한도로 건너뜀 + 네트워크 오류 종목 수
-    (= 모두 제때 답했다면 받을 수 있었던 가장 많은 수). hard 가 있거나 reach 가 표본 기준에 못 미치면 한도와 상관없이 실패예요."""
-    expl = set(alt.get("cutMust") or []) | set(alt.get("netMust") or [])
+    (= 모두 제때 답했다면 받을 수 있었던 가장 많은 수). hard 가 있거나 reach 가 표본 기준에 못 미치면 한도와 상관없이 실패예요.
+    2026-11-21: 다음이 거절해 멈춘 확인 (px_alt_was_refused) 이면 거절 종목(refMust)도 설명된 것으로 보고, reach 에 거절 · 거절 뒤 묻지 않은 종목을
+    더해요. 그렇지 않으면 예전과 같아요."""
+    refd = px_alt_was_refused(alt)
+    expl = set(alt.get("cutMust") or []) | set(alt.get("netMust") or []) | (set(alt.get("refMust") or []) if refd else set())
     hard = [c for c in (alt.get("mustMissing") or []) if c not in expl]
-    return hard, _count(alt.get("got")) + _count(alt.get("cut")) + _count(alt.get("net"))
+    reach = _count(alt.get("got")) + _count(alt.get("cut")) + _count(alt.get("net"))
+    return hard, reach + ((_count(alt.get("ref")) + _count(alt.get("rskip"))) if refd else 0)
 
 
 def px_net_error(e):
@@ -1116,6 +1133,75 @@ def px_net_error(e):
             st = int(m.group(1)) if m else None
         return isinstance(st, int) and (st == 429 or 500 <= st <= 599)
     return False
+
+
+PX_REFUSE_HTTP = re.compile(r"HTTP (401|403|451)")          # _daum_day_close 가 4xx 에 돌려주는 까닭 그대로 ('HTTP 403')
+_PX_REFUSE_OS = (ConnectionRefusedError, ConnectionResetError, ConnectionAbortedError, BrokenPipeError)
+
+
+def px_refusal_answer(why):
+    """다음의 답(값 없음)이 거절인지 (2026-11-21 · 순수 함수): HTTP 401 · 403 · 451 (들어오지 못하게 함)만. 404 · 그날 행 없음 · 종가 없음은
+    다음이 답한 거예요 (거절이 아니에요)."""
+    return isinstance(why, str) and PX_REFUSE_HTTP.fullmatch(why) is not None
+
+
+def _exc_chain(e, depth=8):
+    """예외와 그 안의 예외들 (args · reason · __cause__ · __context__ — requests 가 urllib3 · 소켓 오류를 감싸는 꼴) · 순수 함수."""
+    out, todo, seen = [], [e], set()
+    while todo and len(out) < 4 * depth:
+        x = todo.pop(0)
+        if not isinstance(x, BaseException) or id(x) in seen:
+            continue
+        seen.add(id(x))
+        out.append(x)
+        todo += [a for a in (getattr(x, "args", None) or ()) if isinstance(a, BaseException)]
+        todo += [getattr(x, "reason", None), x.__cause__, x.__context__]
+    return out
+
+
+def px_refusal_error(e):
+    """관문 두 출처 확인에서 난 예외가 다음의 거절인지 (2026-11-21 · 순수 함수). 거절: 연결 거부 · 연결 끊김 (reset · abort · 응답 없이 닫음 ·
+    broken pipe) · TLS 가 끊기거나 거절됨 · HTTP 429 (요청이 너무 많다며 받지 않음). 거절이 아님: 시간 초과 (requests 의 ConnectTimeout 은
+    ConnectionError 이기도 해요) · 5xx · DNS 찾기 실패 · 프록시 오류 · 인증서 확인 실패 · 무엇 때문인지 적히지 않은 ConnectionError ·
+    JSON 이 아닌 응답 등. 모두 px_net_error 의 네트워크 오류 안이거나 (429 · 연결) 다음이 답한 것이에요."""
+    if isinstance(e, (requests.Timeout, TimeoutError, requests.exceptions.ProxyError)):
+        return False
+    if isinstance(e, requests.HTTPError):
+        st = getattr(getattr(e, "response", None), "status_code", None)
+        if not isinstance(st, int):
+            m = re.match(r"\s*(\d{3})\b", str(e))
+            st = int(m.group(1)) if m else None
+        return st == 429
+    if not isinstance(e, (requests.ConnectionError, ConnectionError, ssl.SSLError)):
+        return False
+    chain = _exc_chain(e)
+    if any(isinstance(x, (TimeoutError, ssl.SSLCertVerificationError)) for x in chain) or "CERTIFICATE_VERIFY_FAILED" in str(e):
+        return False
+    return any(isinstance(x, _PX_REFUSE_OS) or (isinstance(x, ssl.SSLError) and not isinstance(x, ssl.SSLCertVerificationError))
+               for x in chain)
+
+
+def px_alt_refuse_need(asked):
+    """다음이 거절한다고 볼 거절 종목 수 (2026-11-21 · 순수 함수): 그만큼 빠지면 나머지가 모두 답해도 표본 기준(PX_ALT_MIN_SHARE)을 채울 수
+    없는 가장 작은 수 — 예전 규칙으로도 그 확인은 이미 통과할 수 없어요 (207종목 → 21 · 206 → 21 · 200 → 21). 필수 종목 수보다 작지 않아요
+    (필수 종목도 모두 거절이어야 해요 · http_px_alt)."""
+    n = _count(asked)
+    k = 0
+    while k < n and n - k >= PX_ALT_MIN_SHARE * n:
+        k += 1
+    return max(k, len(MUST))
+
+
+def px_alt_was_refused(alt):
+    """관문 두 출처 확인을 다음이 거절해 그만 물었는지 (사이트 점검 · 한도를 받았을 때만 · 2026-11-21 · 순수 함수)."""
+    return (isinstance(alt, dict) and alt.get("mode") == "live" and alt.get("refStop") is True
+            and _count(alt.get("ref")) >= len(MUST) and set(alt.get("refMust") or []) == set(MUST))
+
+
+def px_alt_stop_why(alt):
+    """확인을 일찍 멈춘 까닭 (로그 · 표에 쓰는 말): 시간 한도 · 다음이 거절 · 둘 다. (순수 함수)"""
+    cut, ref = px_alt_was_cut(alt), px_alt_was_refused(alt)
+    return "시간 한도 · 다음이 거절" if cut and ref else ("다음이 거절" if ref else "시간 한도")
 
 
 def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, special=None, mode="publish", fetch_daum=_daum_day_close,
@@ -1134,6 +1220,11 @@ def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, s
     noMust: 그중 필수 종목 · noEx: 보기 다섯 · net: 마지막 오류가 네트워크 오류(연결 · 시간 초과 · HTTP 429 · 5xx)로 세 번을 다 쓴 종목 수 ·
     netMust: 그중 필수 종목 · cutErr / cutErrN: 네트워크 오류 뒤 다시 묻기 전에 한도가 지난 종목의 마지막 오류 (보기 다섯 · 수) — err 에도 남지만
     err 은 처음 다섯만이라 따로 둬요).
+    2026-11-21 (Jack "3. Yes." · 한도를 받은 live 만): 다음이 아예 거절하면 (px_refusal_answer · px_refusal_error) 더 묻지 않아요 — 답이 정해진
+    종목이 모두 거절이고, 필수 종목이 모두 그 안에 있고, 그 수가 px_alt_refuse_need 이상일 때 (다른 답이 하나라도 먼저 오면 그 실행에서는 꺼져요).
+    그 순간 크게 한 줄 남기고, 남은 종목은 묻지 않아요 (묻는 중인 요청은 끝까지). 더한 기록: refStop (그렇게 멈췄는지) · ref: 거절로 끝난 종목 수
+    (멈췄을 때만 — 그 종목은 no · net 에서 빼요 · 멈추지 않았으면 0 이고 no · net 은 예전 그대로) · refMust: 그중 필수 종목 · refEx: 보기 다섯 ·
+    rskip: 거절로 멈춘 뒤 묻지 않은 종목 수 · refNeed: 거절로 볼 종목 수 (한도가 없으면 None). 종목마다 got · cut · no · net · ref · rskip 하나로만 세요.
     예외를 내지 않아요 — 못 받은 종목은 확인 못 함."""
     from concurrent.futures import ThreadPoolExecutor
     say = say or (lambda line: print(line, flush=True))
@@ -1154,10 +1245,30 @@ def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, s
            else ("시간 한도 없음" + (" (발행 관문 · 예전 그대로)" if mode != "live" else " (예전 그대로)"))))
 
     cut_errs = []                                # 네트워크 오류 뒤 다시 묻기 전에 한도가 지난 종목의 마지막 오류 (리뷰: err 다섯에 묻히지 않게)
+    # 2026-11-21 (Jack "3. Yes."): 다음이 아예 거절하는지 — 한도를 받은 live 만 (배포). 감시 · 발행 관문은 need 가 None 이라 예전 그대로예요.
+    need = px_alt_refuse_need(len(pick)) if limit is not None and mode == "live" else None
+    ref, rskip, rstate = {}, set(), {"other": False, "stop": False}   # 거절로 끝난 종목 (코드 → 까닭) · 거절로 멈춘 뒤 묻지 않은 종목
 
     def late():
         """시간 한도가 지났는지."""
         return deadline is not None and clock() >= deadline
+
+    def settle(code, refused, why):
+        """다음 단계의 답이 정해진 종목을 적어요 (거절인지) — 거절로 멈출 때가 되면 그 순간 크게 한 번 남겨요."""
+        if need is None:
+            return
+        with lock:
+            if refused:
+                ref[code] = str(why)[:40]
+            else:
+                rstate["other"] = True               # 거절이 아닌 답이 왔어요 — 이 실행에서는 거절로 멈추지 않아요 (일부만 거절 · 예전 그대로)
+            if (not rstate["stop"] and not rstate["other"] and len(ref) >= need
+                    and all(c in ref for c in MUST if c in pick)):
+                rstate["stop"] = True
+                ex = "; ".join(f"{c} {ref[c]}" for c in [c for c in MUST if c in ref][:3])
+                say(f"!! 관문의 두 출처 확인: 다음이 거절해요 — 답이 정해진 {len(ref)}종목이 모두 거절 (필수 종목 "
+                    f"{sum(1 for c in MUST if c in ref)} / {len(MUST)} · 보기: {ex}) · 다음 일별 시세를 더 묻지 않아요 (확인 {len(ok)} / 대상 "
+                    f"{len(pick)} · Jack 2026-11-21 · 배포만) — 묻는 중인 요청은 끝까지 · 남은 종목은 건너뛰어요")
 
     def mark_cut(code):
         """그 종목을 '시간 한도로 건너뜀'으로 적어요 (처음 한 번 크게 남겨요)."""
@@ -1171,36 +1282,46 @@ def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, s
     def get(fn, code, *a, **k):
         """(값, 까닭, 어떻게): 어떻게 = 'ans' (출처가 답했어요 — 값이 None 이면 분명히 답하지 않음) · 'no' (마지막 오류가 네트워크 오류가
         아니에요 — px_net_error · 분명히 답하지 않음) · 'net' (마지막 오류가 네트워크 오류로 세 번을 다 썼어요) · 'cut' (시간 한도).
-        다시 묻는 횟수와 쉬는 시간은 오류 종류와 상관없이 예전 그대로예요."""
-        last, last_net = None, True
+        다시 묻는 횟수와 쉬는 시간은 오류 종류와 상관없이 예전 그대로예요.
+        2026-11-21: 'ref' (세 번 모두 거절 쪽 네트워크 오류 — px_refusal_error · net 의 한 갈래) · 'rskip' (다음이 거절해 멈춘 뒤라 묻지 않음)."""
+        last, last_net, all_ref = None, True, True
         for i in range(3):
-            if late():
+            stop = "cut" if late() else ("rskip" if rstate["stop"] else None)
+            if stop:
                 if last is not None:             # 오류 뒤 다시 묻기 전에 한도가 지났어요 — 왜 못 받았는지 (시간 초과 · 거절 · 차단 쪽) 남겨요
-                    note = f"{a[0]}: {last} (시간 한도로 다시 묻지 않음)"
+                    note = f"{a[0]}: {last} ({'시간 한도로' if stop == 'cut' else '다음이 거절해'} 다시 묻지 않음)"
                     errs.append(note)
                     if not last_net:             # 네트워크 오류가 아닌 답 (차단 쪽 · JSON 이 아님) 이었어요 — 시간 한도 탓이 아니에요
                         return None, last, "no"
-                    cut_errs.append(note)
+                    if stop == "cut":
+                        cut_errs.append(note)
+                if stop == "rskip":              # 다음이 거절해 멈췄어요 (2026-11-21) — 시간 한도와 따로 세요
+                    with lock:
+                        rskip.add(code)
+                    return None, "다음이 거절", "rskip"
                 mark_cut(code)
                 return None, "시간 한도", "cut"
             try:
                 r = fn(*a, **k)
             except Exception as e:
                 last, last_net = str(e)[:60], px_net_error(e)
+                all_ref = all_ref and px_refusal_error(e)
                 if i == 2:
                     errs.append(f"{a[0]}: {last}")
-                elif deadline is None or clock() < deadline:     # 한도가 지났으면 쉬지 않고 바로 건너뛰어요
+                elif (deadline is None or clock() < deadline) and not rstate["stop"]:   # 한도가 지났거나 거절로 멈췄으면 쉬지 않고 바로 건너뛰어요
                     sleep(i + 1)
                 continue
             v, why = r
             return v, why, "ans"
-        return None, last, ("net" if last_net else "no")
+        return None, last, (("ref" if all_ref else "net") if last_net else "no")
 
     def one(item):
         code, sym = item
         dv, dwhy, dhow = get(fetch_daum, code, code, px)
-        if dhow == "net":
+        if dhow in ("net", "ref"):
             net.add(code)
+        if dhow in ("ans", "no", "net", "ref"):   # 다음 단계의 답이 정해졌어요 (시간 한도 · 거절로 묻지 않은 종목은 빼고)
+            settle(code, dhow == "ref" or (dhow == "ans" and dv is None and px_refusal_answer(dwhy)), dwhy)
         if dv is None or not math.isfinite(dv) or dv <= 0:
             if dhow in ("ans", "no"):
                 no[code] = str(dwhy)[:40]
@@ -1225,11 +1346,18 @@ def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, s
             list(ex.map(one, order))
     except Exception as e:                       # 관문은 네트워크 때문에 멈추지 않아요 — 확인 못 함으로 실패해요
         errs.append(f"{type(e).__name__}: {str(e)[:80]}")
+    # 2026-11-21: 거절로 멈췄을 때만 거절 종목을 따로 세요 (no · net 에서 빼요). 멈추지 않았으면 no · net 은 예전 그대로예요.
+    rf = dict(ref) if rstate["stop"] else {}
+    no = {c: w for c, w in no.items() if c not in rf}
+    net = {c for c in net if c not in rf}
     return {"date": px, "mode": mode, "closes": closes, "asked": len(pick), "got": len(ok), "meta": len(meta), "disagree": sorted(dis),
             "mustMissing": [c for c in MUST if c not in ok], "err": errs[:5], "cut": len(cut), "cutMust": [c for c in MUST if c in cut],
             "limit": limit, "secs": round(clock() - t0, 1),
             "no": len(no), "noMust": [c for c in MUST if c in no], "noEx": [f"{c} {no[c]}" for c in ([c for c in MUST if c in no] + sorted(c for c in no if c not in MUST))[:5]],
-            "net": len(net), "netMust": [c for c in MUST if c in net], "cutErr": cut_errs[:5], "cutErrN": len(cut_errs)}
+            "net": len(net), "netMust": [c for c in MUST if c in net], "cutErr": cut_errs[:5], "cutErrN": len(cut_errs),
+            "refStop": rstate["stop"], "ref": len(rf), "refMust": [c for c in MUST if c in rf],
+            "refEx": [f"{c} {rf[c]}" for c in ([c for c in MUST if c in rf] + sorted(c for c in rf if c not in MUST))[:5]],
+            "rskip": len(rskip), "refNeed": need}
 
 
 def px_alt_confirms(data, alt, px, final, mode="publish", today=None, now=None, special=None, cover=True):
@@ -1270,20 +1398,33 @@ def px_alt_confirms(data, alt, px, final, mode="publish", today=None, now=None, 
         return False, f"관문 확인 방식 {alt.get('mode')} ≠ {want}"
     how = "다음 × 야후" if want == "publish" else "다음 + 발행 때 다음 × 야후 기록"
     if not cover:
-        if want != "live" or not px_alt_was_cut(alt):
-            return False, "시간 한도로 건너뛸 수 있는 확인이 아니에요 (사이트 점검에서 한도에 걸린 확인만)"
-        asked, got, cut, net, nno = _count(alt.get("asked")), _count(alt.get("got")), alt["cut"], _count(alt.get("net")), _count(alt.get("no"))
+        refd = px_alt_was_refused(alt)           # 2026-11-21 (Jack "3. Yes."): 다음이 거절해 멈춘 확인도 같은 길로 (한도를 받은 사이트 점검만)
+        if want != "live" or not (px_alt_was_cut(alt) or refd):
+            return False, "시간 한도나 다음의 거절로 건너뛸 수 있는 확인이 아니에요 (사이트 점검에서 한도에 걸렸거나 다음이 거절한 확인만)"
+        asked, got, cut, net, nno = _count(alt.get("asked")), _count(alt.get("got")), _count(alt.get("cut")), _count(alt.get("net")), _count(alt.get("no"))
         ex = f" (보기: {'; '.join(map(str, alt['noEx'][:3]))})" if alt.get("noEx") else ""
         # 2026-11-20 리뷰: 시간 한도(와 네트워크 오류)로 설명되는 모자람만 건너뛰어요 — 다음이 분명히 답하지 않은 몫은 한도와 상관없이 예전 그대로 실패
+        # 2026-11-21: 다음의 거절로 멈췄으면 거절 · 거절 뒤 묻지 않은 몫도 설명돼요 (px_alt_cut_gap) — 다음이 분명히 답하지 않은 몫은 그대로 실패
         hard, reach = px_alt_cut_gap(alt)
+        nref, nrskip = _count(alt.get("ref")), _count(alt.get("rskip"))
         if hard:
             return False, (f"관문이 두 출처({how})로 필수 종목을 확인하지 못했어요: {', '.join(hard)} — 다음이 그날 종가를 주지 않았어요{ex} "
-                           "(시간 한도에 걸렸지만 이 종목들은 시간 한도 때문이 아니에요)")
+                           + ("(시간 한도에 걸렸지만 이 종목들은 시간 한도 때문이 아니에요)" if not refd
+                              else "(다음이 거절해 멈췄지만 이 종목들은 거절 때문이 아니에요)"))
         if not asked or reach < PX_ALT_MIN_SHARE * asked:
-            return False, (f"관문이 두 출처({how})로 확인한 종가 {got} / {asked} — 시간 한도로 건너뜀 {cut} · 네트워크 오류 {net} 을 모두 받았다고 쳐도 "
-                           f"{reach} / {asked} (기준 {PX_ALT_MIN_SHARE:.0%}) · 다음이 그날 종가를 주지 않은 종목 {nno}{ex} (시간 한도 때문이 아니에요)")
+            return False, (f"관문이 두 출처({how})로 확인한 종가 {got} / {asked} — "
+                           + (f"다음의 거절 {nref} · 거절 뒤 묻지 않음 {nrskip} · " if refd else "")
+                           + f"시간 한도로 건너뜀 {cut} · 네트워크 오류 {net} 을 모두 받았다고 쳐도 "
+                           f"{reach} / {asked} (기준 {PX_ALT_MIN_SHARE:.0%}) · 다음이 그날 종가를 주지 않은 종목 {nno}{ex} "
+                           + ("(시간 한도 때문이 아니에요)" if not refd else "(거절 · 시간 한도 때문이 아니에요)"))
         nm = len(MUST) - len(alt.get("mustMissing") or [])
         lim = alt.get("limit")
+        if refd:
+            rex = f" · 보기: {'; '.join(map(str, alt['refEx'][:3]))}" if alt.get("refEx") else ""
+            return True, (f"관문의 두 출처 확인({how})을 다음이 거절해 건너뜀 (Jack 2026-11-21 · 배포만) — 거절 {nref}종목 (필수 종목 "
+                          f"{len(alt.get('refMust') or [])} / {len(MUST)}{rex}) · 거절 뒤 묻지 않음 {nrskip} · 확인 {got} / {asked}종목 "
+                          f"(네트워크 오류 {net} · 다음이 그날 종가를 주지 않음 {nno}" + (f" · 시간 한도로 건너뜀 {cut}" if cut else "") + ") · "
+                          f"발행 때 2차 출처(다음 × 야후) 확인 {fb['conf']:,}종목 · 받은 종가는 가격 줄에서 비교")
         return True, (f"관문의 두 출처 확인({how})을 시간 한도{f' {px_alt_secs(lim)}초' if isinstance(lim, (int, float)) else ''}로 건너뜀 (Jack 2026-11-20) — "
                       f"한도 전에 확인 {got} / {asked}종목 (시간 한도로 건너뜀 {cut} · 네트워크 오류 {net} · 다음이 그날 종가를 주지 않음 {nno}) · "
                       f"필수 종목 {nm} / {len(MUST)} · 발행 때 2차 출처(다음 × 야후) 확인 {fb['conf']:,}종목 · 받은 종가는 가격 줄에서 비교")
@@ -1826,11 +1967,14 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     # 한도를 받았을 때만)의 확인이 시간 한도에 걸려 받은 종목 수가 모자라면, 시간 한도(와 네트워크 오류)로 설명되는 몫만 건너뛰고 경고해요 —
     # 다음이 분명히 답하지 않은 필수 종목이 있거나 그런 종목만으로 표본 기준에 못 미치면 예전 그대로 실패 (px_alt_cut_gap · 리뷰). 다른 조건(발행
     # 기록 · 날짜 · 마감 뒤)은 그대로 보고, 받은 종가는 아래 가격 줄에서 비교해요 (다르면 실패). 발행 관문(publish)은 예전 그대로.
+    # 2026-11-21 (Jack, 11-20 질문 3 → "3. Yes."): 같은 배포에서 다음이 아예 거절해 멈춘 확인 (px_alt_was_refused) 도 같은 길로 — 거절로
+    # 설명되는 몫만 건너뛰고 같은 줄을 경고로 (받은 종가 비교 · 다음이 분명히 답하지 않은 필수 종목 · 발행 기록은 그대로).
     skip_alt = False
-    if alt is not None and not use_alt and mode == "live" and px_alt_was_cut(alt):
+    stop_why = px_alt_stop_why(alt)
+    if alt is not None and not use_alt and mode == "live" and (px_alt_was_cut(alt) or px_alt_was_refused(alt)):
         skip_alt, alt_how = px_alt_confirms(data, alt, px, final, mode, today=today, now=now, special=special, cover=False)
     if alt is not None:
-        notes.append(f"2차 출처 관문 기준 (야후): {'씀' if use_alt else ('시간 한도로 확인을 건너뜀 (경고)' if skip_alt else '쓰지 않음')} — {alt_how}")
+        notes.append(f"2차 출처 관문 기준 (야후): {'씀' if use_alt else ((('시간 한도로' if stop_why == '시간 한도' else '다음이 거절해') + ' 확인을 건너뜀 (경고)') if skip_alt else '쓰지 않음')} — {alt_how}")
     if use_alt:
         cutn = px_alt_was_cut(alt)               # 한도에 걸렸지만 그 전에 예전 기준을 채운 확인 — 통과 그대로, 한도에 걸린 것은 경고로 알려요
         rep.add("pxDate 최종본 여부" if mode == "live" else "pxDate = 최종본 날짜", True, px,
@@ -1840,7 +1984,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
             final.update(cut=True, asked=alt.get("asked"))
     elif skip_alt:
         rep.add("pxDate 최종본 여부", True, px, f"{px} ({alt_how})", warn=True)
-        final = {"date": px, "closes": px_alt_closes(alt), "how": alt_how, "cut": True, "asked": alt.get("asked")}
+        final = {"date": px, "closes": px_alt_closes(alt), "how": alt_how, "cut": True, "asked": alt.get("asked"), "why": stop_why}
     elif final is None:
         rep.add("최종본 날짜 계산", False, "실패", "최근 10일 안 최종본" + (f" (2차 출처: {alt_how})" if alt is not None else ""))
     elif mode == "live":
@@ -1912,6 +2056,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     if final is not None:
         cl = final["closes"]
         part = bool(final.get("cut"))            # 2026-11-20: 배포의 두 출처 확인이 시간 한도에 걸린 날 — 받은 종가만 비교해요
+        stop = final.get("why") or "시간 한도"     # 2026-11-21: 다음이 거절해 멈춘 날도 같은 비교 (표의 말만 달라요)
         inl = [s for s in kr if s.get("t") in cl]
         same = sum(1 for s in inl if num(s.get("price")) is not None and round(num(s["price"])) == cl[s["t"]])
         share = 100.0 * same / len(inl) if inl else 0.0
@@ -1929,14 +2074,14 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
             if share < PRICE_MATCH and shown == f"{PRICE_MATCH:.1f}%":     # 실패인데 반올림으로 기준과 같아 보이면 한 자리 더 (내림)
                 shown = f"{math.floor(share * 100) / 100:.2f}%"
             rep.add("한국 가격 = 공식 종가", share >= PRICE_MATCH, shown,
-                    f"≥ {PRICE_MATCH}% (시간 한도: 받은 {len(inl)}종목만 비교 · 다름 {bad} · 비율은 묻기로 한 {n}종목 기준 · 나머지는 건너뜀)", warn=True)
+                    f"≥ {PRICE_MATCH}% ({stop}: 받은 {len(inl)}종목만 비교 · 다름 {bad} · 비율은 묻기로 한 {n}종목 기준 · 나머지는 건너뜀)", warn=True)
         else:
-            rep.add("한국 가격 = 공식 종가", True, "비교 못 함", f"≥ {PRICE_MATCH}% (시간 한도: 받은 종가 없음 · 건너뜀)", warn=True)
+            rep.add("한국 가격 = 공식 종가", True, "비교 못 함", f"≥ {PRICE_MATCH}% ({stop}: 받은 종가 없음 · 건너뜀)", warn=True)
         s5 = next((s for s in kr if s.get("t") == "005930"), None)
         want = cl.get("005930")
         if part and want is None:
             rep.add("005930 = 공식 종가", True, f"{num((s5 or {}).get('price')):,.0f}" if s5 and num(s5.get("price")) else "없음",
-                    "? (시간 한도: 다음 값을 받지 못해 건너뜀)", warn=True)
+                    f"? ({stop}: 다음 값을 받지 못해 건너뜀)", warn=True)
         else:
             rep.add("005930 = 공식 종가", bool(s5) and want is not None and round(num(s5.get("price")) or -1) == want,
                     f"{num((s5 or {}).get('price')):,.0f}" if s5 and num(s5.get("price")) else "없음", f"{want:,}" if want else "?")
@@ -5910,7 +6055,19 @@ def _main(argv=None):
                   + (f" · 필수 종목 못 받음 {', '.join(alt['mustMissing'])}" if alt["mustMissing"] else "")
                   + (f" · 오류 예: {alt['err'][0]}" if alt["err"] else "")
                   + (f" · 걸린 시간 {alt['secs']:.0f}초" if isinstance(alt.get("secs"), (int, float)) else ""))
-            if alt.get("cut"):                   # 2026-11-20 (Jack): 배포만 — 시간 한도에 걸린 확인은 그 몫만 건너뛰고 크게 경고해요
+            if px_alt_was_refused(alt):          # 2026-11-21 (Jack "3. Yes."): 배포만 — 다음이 아예 거절하면 그 몫만 건너뛰고 크게 경고해요
+                hard, reach = px_alt_cut_gap(alt)
+                print(f"!! 관문의 두 출처 확인을 다음이 거절했어요 (Jack 2026-11-21 · 배포만): 거절 {alt['ref']}종목 (필수 종목 "
+                      f"{len(alt.get('refMust') or [])} / {len(MUST)}" + (f" · 보기: {'; '.join(alt.get('refEx') or [])}" if alt.get("refEx") else "")
+                      + f") · 거절 뒤 묻지 않음 {alt.get('rskip', 0)} · 확인 {alt['got']} / {alt['asked']}종목 · 네트워크 오류 {alt.get('net', 0)}"
+                      + f" · 다음이 그날 종가를 주지 않음 {alt.get('no', 0)}" + (f" (보기: {'; '.join(alt.get('noEx') or [])})" if alt.get("noEx") else "")
+                      + (f" · 시간 한도로 건너뜀 {alt['cut']}" if alt.get("cut") else "")
+                      + (f" — 거절 때문이 아닌 모자람이 있어 예전 그대로 실패해요 (필수 종목 {', '.join(hard)}) ('최종본 날짜 계산' 줄)" if hard
+                         else (f" — 거절 때문이 아닌 모자람이 있어 예전 그대로 실패해요 (모두 받았다고 쳐도 {reach} / {alt['asked']} < "
+                               f"{PX_ALT_MIN_SHARE:.0%}) ('최종본 날짜 계산' 줄)" if reach < PX_ALT_MIN_SHARE * max(alt["asked"], 1)
+                               else " — 다음의 확인을 건너뛰고 경고 ('pxDate 최종본 여부' 줄) · 나머지 검사는 예전 그대로 · 받은 종가가 발행 가격과 "
+                                    "다르면 가격 줄은 실패 · 감시는 한도 없이 모든 종목을 예전 그대로 물어요")))
+            elif alt.get("cut"):                 # 2026-11-20 (Jack): 배포만 — 시간 한도에 걸린 확인은 그 몫만 건너뛰고 크게 경고해요
                 hard, reach = px_alt_cut_gap(alt)
                 print(f"!! 관문의 두 출처 확인이 시간 한도 {px_alt_secs(alt.get('limit'))}초에 걸렸어요 (Jack 2026-11-20): 확인 {alt['got']} / {alt['asked']}종목 · "
                       f"시간 한도로 건너뜀 {alt['cut']}" + (f" (필수 종목 {', '.join(alt.get('cutMust') or [])})" if alt.get("cutMust") else "")
