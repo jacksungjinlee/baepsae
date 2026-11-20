@@ -610,9 +610,9 @@ run takes about a minute (from here on 11-20: 54 s for 206 stocks, the whole gat
 (validate_data.py --live, 올릴 파일 그대로)") sets `BAEPSAE_DAUM_LIMIT_S: "600"` (= `PX_ALT_LIVE_BUDGET_S`) in that step's `env`; by
 hand the same is `python validate_data.py --live --daum-limit 600 --dir DIR`. A limit shorter than 600 s, or a value that is not a
 number, stops the gate with FAIL before anything is fetched (a shorter limit would skip more often). Not limited, as before:
-- the **watchdog** (`watchdog.py` calls `validate_data.py --live --dir …` with no limit). It opens an alert only on a gate FAIL, so
-  a WARN would turn a slow-Daum watchdog run into a quiet pass. If Daum hangs there, the watchdog job's own 30-minute limit ends it,
-  as before;
+- the **watchdog** (`watchdog.py` calls `validate_data.py --live --dir …` with no limit, and removes `BAEPSAE_DAUM_LIMIT_S` from the
+  environment it passes to the gate, so it can never inherit one). It opens an alert only on a gate FAIL, so a WARN would turn a
+  slow-Daum watchdog run into a quiet pass. If Daum hangs there, the watchdog job's own 30-minute limit ends it, as before;
 - the **daily run's gate** (publish mode) and `--bootstrap`: no limit even if one is given ("· 다음 확인 시간 한도(…)는 사이트
   점검(--live)에서만 써요 — 이 실행(publish)은 한도 없이 예전 그대로"), every stock asked, coverage short means FAIL.
 
@@ -623,30 +623,39 @@ In the deploy, the whole spot check has a 600 s limit:
 - the must-haves are asked first; after 600 s no new request is sent, retries included. A request already in flight finishes under
   its own limits (20 s to connect + 20 s between bytes, so about 40 s; a DNS lookup or a server dribbling bytes is outside that,
   never seen), so the spot check ends by about 10 min 40 s at worst. All worker threads have ended when it returns;
-- each stock ends in exactly one of four states: **close received**, **Daum's definite non-answer** (no row for that day, HTTP 4xx
-  other than 429, no close in the row), **network error** (all three tries failed: timeout, refused, 5xx, 429) or **cut** (not asked,
-  or not asked again, before the limit). A stock that errored and was then cut keeps its error in the log ("… (시간 한도로 다시 묻지 않음)");
+- each stock ends in exactly one of four states (retries and their pauses are the same whatever the error):
+  - **close received**;
+  - **network error**: all three tries used, and the last one failed with a connection error or timeout (requests' `ConnectionError`
+    or `Timeout`, Python's `ConnectionError` or `TimeoutError`) or HTTP 429 or 5xx;
+  - **Daum's definite non-answer**: no row for that day, HTTP 4xx other than 429, no close in the row, or the last try failed with
+    anything that is not a network error (a 200 reply that is not JSON or has the wrong shape, such as a block or captcha page). A
+    stock whose last answer before the limit was one of these counts here even if its retry was cut;
+  - **cut**: not asked, or not asked again after a network error, before the limit. The last errors of the stocks cut after a
+    network error are kept apart from the general error examples and printed on the second "!!" line (up to five, with the count:
+    "네트워크 오류 뒤 다시 묻지 못한 종목 m (마지막 오류: … (시간 한도로 다시 묻지 않음))");
 - the log says it twice: at the moment ("!! 관문의 두 출처 확인 시간 한도 600초: 다음 일별 시세를 더 묻지 않아요 …") and after
   ("!! 관문의 두 출처 확인이 시간 한도 600초에 걸렸어요 (Jack 2026-11-20): 확인 n / 206종목 · 시간 한도로 건너뜀 k · 네트워크 오류 e ·
-  다음이 그날 종가를 주지 않음 d …", ending with what the gate will do).
+  다음이 그날 종가를 주지 않음 d … · 네트워크 오류 뒤 다시 묻지 못한 종목 m (마지막 오류: …)", ending with what the gate will do).
 
 **What a cut skips, and what still fails.** Only the shortfall that the cut (and network errors) can explain is skipped:
 - **WARN, deploy continues:** every must-have was received, cut or hit a network error, and received + cut + network errors is at
   least 90% of the stocks asked. The row **"pxDate 최종본 여부" turns WARN** with the counts ("…를 시간 한도 600초로 건너뜀 (Jack
   2026-11-20) — 한도 전에 확인 n / 206종목 (시간 한도로 건너뜀 k · 네트워크 오류 e · 다음이 그날 종가를 주지 않음 d) …"). It is a GitHub
   warning annotation, so the morning check sees it;
-- **still FAIL, as before ("최종본 날짜 계산"):** a must-have that Daum definitely did not answer (no row, HTTP 4xx, no close), or
+- **still FAIL, as before ("최종본 날짜 계산"):** a must-have that Daum definitely did not answer (no row, HTTP 4xx, no close, a
+  reply that is not JSON), or
   so many definite non-answers that even counting every cut and network-error stock as received stays under 90% ("… 모두 받았다고
   쳐도 n / 206 (기준 90%) …"). These are not caused by the time limit, so the time limit does not excuse them;
 - **still FAIL, as before:** the file's own record (pxSrc says second source, its date is pxDate, no must-have unconfirmed at
   publish, confirmed count ≥ published Korean stocks), pxDate before today and after that day's close + 30 min;
 - **wrong closes still FAIL:** every close Daum did return is compared with the published price. "005930 = 공식 종가" must match to
-  the won. "한국 가격 = 공식 종가" counts the wrong closes it saw against all the stocks it meant to ask (about 206), treating the
-  stocks it never received as matching: it FAILs when (asked − wrong seen) / asked is under 99%, so a FAIL here always means the full
-  check would have failed too (1 wrong among 60 received: 205/206 → WARN; 3 wrong: 203/206 = 98.5% → FAIL). It is a WARN while it
-  passes, because it saw only part of the sample. With no close received, both price rows WARN;
-- if the limit hits after the must-haves and 90% of the sample have already answered, the row is checked as before and passes, with
-  a WARN that says how many were skipped.
+  the won. Whenever the limit was hit, "한국 가격 = 공식 종가" counts the wrong closes it saw against all the stocks it meant to ask
+  (about 206), treating the stocks it never received as matching: it FAILs when (asked − wrong seen) / asked is under 99%, so a FAIL
+  here always means the full check would have failed too (1 wrong among 60 received: 205/206 → WARN; 2 wrong among 192 received:
+  204/206 → WARN; 3 wrong: 203/206 = 98.5% → FAIL). It is a WARN while it passes, because it saw only part of the sample; a FAIL that
+  would round to "99.0%" shows two decimals (e.g. "98.99%"). With no close received, both price rows WARN;
+- if the limit hits after the must-haves and 90% of the sample have already answered, "pxDate 최종본 여부" is checked as before and
+  passes, with a WARN that says how many were skipped; the price row is counted as above.
 
 **Known limit (unchanged, needs Jack's yes to change):** a Daum outage that fails fast still blocks every deploy, because nothing is
 cut. If Daum answers 403 to GitHub's servers, every stock is a definite non-answer and the gate fails within seconds; if it refuses

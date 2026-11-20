@@ -1075,6 +1075,21 @@ def px_alt_cut_gap(alt):
     return hard, _count(alt.get("got")) + _count(alt.get("cut")) + _count(alt.get("net"))
 
 
+def px_net_error(e):
+    """관문 두 출처 확인에서 난 예외가 네트워크 오류인지 (2026-11-20 리뷰 · 순수 함수). 네트워크 오류는 연결 · 시간 초과
+    (requests 의 ConnectionError · Timeout, 파이썬의 ConnectionError · TimeoutError) 와 HTTP 429 · 5xx 뿐이에요. 그 밖의 예외 — 200 인데
+    JSON 이 아니거나 모양이 다른 응답 (차단 · 확인 쪽), 다른 4xx 등 — 은 출처가 분명히 답하지 않은 것으로 세요 (시간 한도로 건너뛰지 않아요)."""
+    if isinstance(e, (requests.ConnectionError, requests.Timeout, ConnectionError, TimeoutError)):
+        return True
+    if isinstance(e, requests.HTTPError):
+        st = getattr(getattr(e, "response", None), "status_code", None)
+        if not isinstance(st, int):                  # 응답이 붙지 않은 HTTPError: 맨 앞의 세 자리 상태 코드로
+            m = re.match(r"\s*(\d{3})\b", str(e))
+            st = int(m.group(1)) if m else None
+        return isinstance(st, int) and (st == 429 or 500 <= st <= 599)
+    return False
+
+
 def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, special=None, mode="publish", fetch_daum=_daum_day_close,
                 budget_s=None, clock=time.monotonic, say=None):
     """관문이 따로 받은 두 출처 공식 종가 (2026-11-19 · 리뷰): 필수 종목 + 표본마다 다음 tradePrice 와 야후 종가(일봉 · 비면 마감 직후 meta).
@@ -1087,8 +1102,10 @@ def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, s
            "no", "noMust", "noEx", "net", "netMust"}
     (cut: 시간 한도로 건너뛴 종목 수 — 묻지 않았거나 다시 묻지 못한 종목 · cutMust: 그중 필수 종목 · limit: 한도 초 또는 None · secs: 걸린 초 ·
     다음 단계에서 (리뷰 2026-11-20 — 한도에 걸린 날 무엇을 건너뛸 수 있는지 가려요): no: 다음이 분명히 답하지 않은 종목 수 (그날 행 없음 · HTTP 4xx ·
-    종가 없음) · noMust: 그중 필수 종목 · noEx: 보기 다섯 · net: 세 번 모두 네트워크 오류 · 시간 초과로 끝난 종목 수 · netMust: 그중 필수 종목.
-    시간 한도로 건너뛰기 전에 오류가 났던 종목은 그 오류도 err 에 남겨요).
+    종가 없음 · 마지막 오류가 네트워크 오류가 아님 — px_net_error: JSON 이 아닌 응답 등. 그런 답 뒤 다시 묻기 전에 한도가 지난 종목도) ·
+    noMust: 그중 필수 종목 · noEx: 보기 다섯 · net: 마지막 오류가 네트워크 오류(연결 · 시간 초과 · HTTP 429 · 5xx)로 세 번을 다 쓴 종목 수 ·
+    netMust: 그중 필수 종목 · cutErr / cutErrN: 네트워크 오류 뒤 다시 묻기 전에 한도가 지난 종목의 마지막 오류 (보기 다섯 · 수) — err 에도 남지만
+    err 은 처음 다섯만이라 따로 둬요).
     예외를 내지 않아요 — 못 받은 종목은 확인 못 함."""
     from concurrent.futures import ThreadPoolExecutor
     say = say or (lambda line: print(line, flush=True))
@@ -1108,30 +1125,40 @@ def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, s
         + (f"시간 한도 {px_alt_secs(limit)}초 (배포 — 넘으면 새로 묻지 않고, 시간 한도로 못 받은 부분만 경고로 건너뛰어요)" if limit is not None
            else ("시간 한도 없음" + (" (발행 관문 · 예전 그대로)" if mode != "live" else " (예전 그대로)"))))
 
-    def late(code):
-        """시간 한도가 지났으면 그 종목을 '시간 한도로 건너뜀'으로 적고 참 (처음 한 번 크게 남겨요)."""
-        if deadline is None or clock() < deadline:
-            return False
+    cut_errs = []                                # 네트워크 오류 뒤 다시 묻기 전에 한도가 지난 종목의 마지막 오류 (리뷰: err 다섯에 묻히지 않게)
+
+    def late():
+        """시간 한도가 지났는지."""
+        return deadline is not None and clock() >= deadline
+
+    def mark_cut(code):
+        """그 종목을 '시간 한도로 건너뜀'으로 적어요 (처음 한 번 크게 남겨요)."""
         with lock:
             first = not cut
             cut.add(code)                        # 먼저 적고 (남기다 잘못돼도 건너뛴 종목은 세요) 처음 한 번 크게 남겨요
             if first:
                 say(f"!! 관문의 두 출처 확인 시간 한도 {px_alt_secs(limit)}초: 다음 일별 시세를 더 묻지 않아요 (확인 {len(ok)} / 대상 {len(pick)}) — "
                     "묻는 중인 요청은 자기 시간 한도(약 40초)까지 · 남은 종목은 건너뛰어요")
-        return True
 
     def get(fn, code, *a, **k):
-        """(값, 까닭, 어떻게): 어떻게 = 'ans' (출처가 답했어요 — 값이 None 이면 분명히 답하지 않음) · 'net' (세 번 모두 예외) · 'cut' (시간 한도)."""
-        last = None
+        """(값, 까닭, 어떻게): 어떻게 = 'ans' (출처가 답했어요 — 값이 None 이면 분명히 답하지 않음) · 'no' (마지막 오류가 네트워크 오류가
+        아니에요 — px_net_error · 분명히 답하지 않음) · 'net' (마지막 오류가 네트워크 오류로 세 번을 다 썼어요) · 'cut' (시간 한도).
+        다시 묻는 횟수와 쉬는 시간은 오류 종류와 상관없이 예전 그대로예요."""
+        last, last_net = None, True
         for i in range(3):
-            if late(code):
-                if last is not None:             # 오류 뒤 다시 묻기 전에 한도가 지났어요 — 왜 못 받았는지 (시간 초과 · 거절) 남겨요
-                    errs.append(f"{a[0]}: {last} (시간 한도로 다시 묻지 않음)")
+            if late():
+                if last is not None:             # 오류 뒤 다시 묻기 전에 한도가 지났어요 — 왜 못 받았는지 (시간 초과 · 거절 · 차단 쪽) 남겨요
+                    note = f"{a[0]}: {last} (시간 한도로 다시 묻지 않음)"
+                    errs.append(note)
+                    if not last_net:             # 네트워크 오류가 아닌 답 (차단 쪽 · JSON 이 아님) 이었어요 — 시간 한도 탓이 아니에요
+                        return None, last, "no"
+                    cut_errs.append(note)
+                mark_cut(code)
                 return None, "시간 한도", "cut"
             try:
                 r = fn(*a, **k)
             except Exception as e:
-                last = str(e)[:60]
+                last, last_net = str(e)[:60], px_net_error(e)
                 if i == 2:
                     errs.append(f"{a[0]}: {last}")
                 elif deadline is None or clock() < deadline:     # 한도가 지났으면 쉬지 않고 바로 건너뛰어요
@@ -1139,7 +1166,7 @@ def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, s
                 continue
             v, why = r
             return v, why, "ans"
-        return None, "실패", "net"
+        return None, last, ("net" if last_net else "no")
 
     def one(item):
         code, sym = item
@@ -1147,7 +1174,7 @@ def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, s
         if dhow == "net":
             net.add(code)
         if dv is None or not math.isfinite(dv) or dv <= 0:
-            if dhow == "ans":
+            if dhow in ("ans", "no"):
                 no[code] = str(dwhy)[:40]
             return
         if mode == "live":
@@ -1174,7 +1201,7 @@ def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, s
             "mustMissing": [c for c in MUST if c not in ok], "err": errs[:5], "cut": len(cut), "cutMust": [c for c in MUST if c in cut],
             "limit": limit, "secs": round(clock() - t0, 1),
             "no": len(no), "noMust": [c for c in MUST if c in no], "noEx": [f"{c} {no[c]}" for c in ([c for c in MUST if c in no] + sorted(c for c in no if c not in MUST))[:5]],
-            "net": len(net), "netMust": [c for c in MUST if c in net]}
+            "net": len(net), "netMust": [c for c in MUST if c in net], "cutErr": cut_errs[:5], "cutErrN": len(cut_errs)}
 
 
 def px_alt_confirms(data, alt, px, final, mode="publish", today=None, now=None, special=None, cover=True):
@@ -1619,6 +1646,8 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
         rep.add("pxDate 최종본 여부" if mode == "live" else "pxDate = 최종본 날짜", True, px,
                 f"{px} ({alt_how}" + (f" · 시간 한도로 건너뜀 {alt['cut']}종목 (Jack 2026-11-20)" if cutn else "") + ")", warn=cutn)
         final = {"date": px, "closes": px_alt_closes(alt), "how": alt_how}
+        if cutn:                                 # 리뷰 2: 이 길도 일부만 받았어요 — 가격 줄은 아래 '한도에 걸린 날' 기준 (묻기로 한 종목 수로 나눠요)
+            final.update(cut=True, asked=alt.get("asked"))
     elif skip_alt:
         rep.add("pxDate 최종본 여부", True, px, f"{px} ({alt_how})", warn=True)
         final = {"date": px, "closes": px_alt_closes(alt), "how": alt_how, "cut": True, "asked": alt.get("asked")}
@@ -1706,7 +1735,10 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
             n = asked if isinstance(asked, int) and not isinstance(asked, bool) and asked >= len(inl) else len(inl)
             bad = len(inl) - same
             share = 100.0 * (n - bad) / n
-            rep.add("한국 가격 = 공식 종가", share >= PRICE_MATCH, f"{share:.1f}%",
+            shown = f"{share:.1f}%"
+            if share < PRICE_MATCH and shown == f"{PRICE_MATCH:.1f}%":     # 실패인데 반올림으로 기준과 같아 보이면 한 자리 더 (내림)
+                shown = f"{math.floor(share * 100) / 100:.2f}%"
+            rep.add("한국 가격 = 공식 종가", share >= PRICE_MATCH, shown,
                     f"≥ {PRICE_MATCH}% (시간 한도: 받은 {len(inl)}종목만 비교 · 다름 {bad} · 비율은 묻기로 한 {n}종목 기준 · 나머지는 건너뜀)", warn=True)
         else:
             rep.add("한국 가격 = 공식 종가", True, "비교 못 함", f"≥ {PRICE_MATCH}% (시간 한도: 받은 종가 없음 · 건너뜀)", warn=True)
@@ -4935,6 +4967,8 @@ def _main(argv=None):
                       f"시간 한도로 건너뜀 {alt['cut']}" + (f" (필수 종목 {', '.join(alt.get('cutMust') or [])})" if alt.get("cutMust") else "")
                       + f" · 네트워크 오류 {alt.get('net', 0)}" + (f" (필수 종목 {', '.join(alt.get('netMust') or [])})" if alt.get("netMust") else "")
                       + f" · 다음이 그날 종가를 주지 않음 {alt.get('no', 0)}" + (f" (보기: {'; '.join(alt.get('noEx') or [])})" if alt.get("noEx") else "")
+                      + (f" · 네트워크 오류 뒤 다시 묻지 못한 종목 {alt.get('cutErrN', 0)} (마지막 오류: {'; '.join(alt.get('cutErr') or [])})"
+                         if alt.get("cutErr") else "")
                       + (" — 한도 전에 받은 종목으로 예전 기준(필수 종목 모두 · 표본 90%)을 채웠어요"
                          if not alt["mustMissing"] and alt["got"] >= PX_ALT_MIN_SHARE * max(alt["asked"], 1)
                          else (f" — 시간 한도 때문이 아닌 모자람이 있어 예전 그대로 실패해요 (필수 종목 {', '.join(hard)}) ('최종본 날짜 계산' 줄)" if hard

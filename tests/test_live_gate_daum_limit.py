@@ -220,7 +220,9 @@ def test_live_timeout_after_enough_closes_passes_with_a_warning():
     assert not rep.failed, rep.table()
     r = rows(rep)
     assert r["pxDate 최종본 여부"][3] == "WARN" and "시간 한도로 건너뜀 7종목" in r["pxDate 최종본 여부"][2]
-    assert r["한국 가격 = 공식 종가"][3] == "PASS" and r["005930 = 공식 종가"][3] == "PASS"   # 가격 줄은 예전 그대로
+    # 가격 줄: 일부만 받았으니 묻기로 한 종목 수 기준 · 경고 (리뷰 2 — 예전에는 받은 200종목으로 나눠 PASS) · 005930 은 원 단위까지 그대로
+    assert r["한국 가격 = 공식 종가"][3] == "WARN" and "받은 200종목만 비교 · 다름 0 · 비율은 묻기로 한 207종목 기준" in r["한국 가격 = 공식 종가"][2]
+    assert r["005930 = 공식 종가"][3] == "PASS"
 
 
 def test_live_timeout_before_any_close_warns_without_failing():
@@ -283,8 +285,9 @@ def test_partial_results_with_a_mismatch_fail_as_before():
 
 
 # ── 5. main: 배포의 관문 실행 (--live + deploy.yml 의 한도 · 끝 코드 · 로그 · GitHub 알림) ─────────────────────
-def run_main(monkeypatch, capsys, cur, step, wrong=None):
-    """배포의 관문 그대로: --live + deploy.yml 관문 단계의 환경 변수 (PX_ALT_LIMIT_ENV = PX_ALT_LIVE_BUDGET_S)."""
+def run_main(monkeypatch, capsys, cur, step, wrong=None, fetch=None):
+    """배포의 관문 그대로: --live + deploy.yml 관문 단계의 환경 변수 (PX_ALT_LIMIT_ENV = PX_ALT_LIVE_BUDGET_S).
+    fetch: 가짜 시계를 받아 가짜 다음을 돌려주는 함수 (없으면 발행 가격 그대로 · 한 번에 step 초)."""
     files = {k: cur[k] for k in ("data", "corp", "disc", "macro")}
     monkeypatch.setattr(V, "load_dir", lambda d: files)
     monkeypatch.setattr(V, "http_listing", lambda d: None)                    # 캐시에 pxDate 최종본 없음
@@ -294,8 +297,8 @@ def run_main(monkeypatch, capsys, cur, step, wrong=None):
 
     def alt_fn(data, px, special=None, mode="publish", **kw):              # main 이 부르는 꼴 그대로 (진짜 함수 · 가짜 출처와 시계)
         seen.append((mode, kw))
-        return REAL_HTTP_PX_ALT(data, px, special=special, mode=mode, fetch_daum=daum(cur, clk, step, None, wrong), workers=1, clock=clk,
-                                sleep=lambda s: None, **kw)
+        return REAL_HTTP_PX_ALT(data, px, special=special, mode=mode, fetch_daum=fetch(clk) if fetch else daum(cur, clk, step, None, wrong),
+                                workers=1, clock=clk, sleep=lambda s: None, **kw)
     monkeypatch.setattr(V, "http_px_alt", alt_fn)
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
@@ -410,11 +413,53 @@ def test_cut_price_share_counts_every_stock_asked():
     assert rows(part)["한국 가격 = 공식 종가"][1] == "98.6%"
     two = {c: 1 for c in got[10:12]}                                    # (207 - 2)/207 = 99.03% — 다 받은 날과 같이 통과
     assert "한국 가격 = 공식 종가" not in failed(check(cur, live_alt(cur, step=10.0, wrong=two)))
-    # 한도에 걸린 날 실패하면 다 받은 날도 실패해요 (다른 종목 수 0 ~ 8 · 받은 종목 안에서)
-    for k in range(9):
-        bad = {c: 1 for c in got[:k]}
-        if "한국 가격 = 공식 종가" in failed(check(cur, live_alt(cur, step=10.0, wrong=bad))):
-            assert "한국 가격 = 공식 종가" in failed(check(cur, live_alt(cur, step=0.0, wrong=bad))), k
+    # 한도에 걸린 날 실패하면 다 받은 날도 실패해요 (다른 종목 수 0 ~ 8 · 받은 종목 안에서) — 두 길 모두:
+    # 받은 종목 수가 모자라 건너뛴 길 (60종목) · 한도 전에 90% 를 채워 예전 기준을 쓴 길 (192종목 · 15종목 건너뜀 · 리뷰 2)
+    for step in (10.0, 600.0 / 192):
+        alt0 = live_alt(cur, step=step)
+        assert V.px_alt_was_cut(alt0) and alt0["got"] in (60, 192)
+        seen = [c for c in alt0["closes"] if c not in V.MUST]
+        hit = 0
+        for k in range(9):
+            bad = {c: 1 for c in seen[:k]}
+            if "한국 가격 = 공식 종가" in failed(check(cur, live_alt(cur, step=step, wrong=bad))):
+                hit += 1
+                assert "한국 가격 = 공식 종가" in failed(check(cur, live_alt(cur, step=0.0, wrong=bad))), (step, k)
+        assert hit == 6, step                                          # 3 ~ 8종목 다르면 실패 ((207 - 3)/207 < 99%)
+
+
+def test_cut_after_most_answers_divides_by_every_stock_asked():
+    """리뷰 2 (반드시): 한도 전에 필수 종목과 표본 90% 를 받아 예전 기준을 쓴 길도 일부만 받았어요 — 99% 는 묻기로 한 종목 수 기준.
+    207종목 중 192종목을 받고 15종목을 건너뛴 날 2종목이 다르면: 받은 종목으로 나누면 190/192 = 98.96% 로 실패했지만, 다 받았으면
+    205/207 로 통과 — 이제 (207 - 2)/207 = 99.03% 로 통과 (경고). 3종목이 다르면 실패 (다 받았어도 실패)."""
+    cur, _, _ = fb_files()
+    for ncut in (8, 15, 20):
+        alt0 = live_alt(cur, step=600.0 / (206.5 - ncut))
+        assert alt0["cut"] == ncut and not alt0["mustMissing"] and alt0["got"] >= V.PX_ALT_MIN_SHARE * alt0["asked"]
+        seen = [c for c in alt0["closes"] if c not in V.MUST]
+        two = {c: 5 for c in seen[:2]}
+        alt = live_alt(cur, step=600.0 / (206.5 - ncut), wrong=two)
+        rep = check(cur, alt)
+        assert not rep.failed, (ncut, rep.table())
+        r = rows(rep)
+        assert r["pxDate 최종본 여부"][3] == "WARN" and r["한국 가격 = 공식 종가"][3] == "WARN" and r["한국 가격 = 공식 종가"][1] == "99.0%"
+        assert f"받은 {207 - ncut}종목만 비교 · 다름 2 · 비율은 묻기로 한 207종목 기준" in r["한국 가격 = 공식 종가"][2]
+        assert not check(cur, live_alt(cur, step=0.0, wrong=two)).failed                     # 다 받은 날도 통과 (205/207)
+        three = {c: 5 for c in seen[:3]}
+        rep = check(cur, live_alt(cur, step=600.0 / (206.5 - ncut), wrong=three))
+        assert "한국 가격 = 공식 종가" in failed(rep) and rows(rep)["한국 가격 = 공식 종가"][1] == "98.6%"
+        assert "한국 가격 = 공식 종가" in failed(check(cur, live_alt(cur, step=0.0, wrong=three)))
+        # 005930 은 이 길에서도 원 단위까지
+        assert "005930 = 공식 종가" in failed(check(cur, live_alt(cur, step=600.0 / (206.5 - ncut), wrong={"005930": 1})))
+
+
+def test_a_fail_that_rounds_to_the_threshold_shows_one_more_digit():
+    """반올림으로 '99.0%' 가 실패 옆에 서지 않게 (한도에 걸린 날의 가격 줄만 · 발행 관문의 줄은 예전 그대로)."""
+    cur, _, _ = fb_files()
+    alt = live_alt(cur, step=10.0, wrong={c: 1 for c in [c for c in live_alt(cur, step=10.0)["closes"] if c not in V.MUST][:2]})
+    rep = check(cur, dict(alt, asked=199))                             # (199 - 2)/199 = 98.995% → '99.0%' 로 보일 값
+    r = rows(rep)["한국 가격 = 공식 종가"]
+    assert r[3] == "FAIL" and r[1] == "98.99%", r
 
 
 # ── 9. 리뷰 2026-11-20 (B-2): 한도에 걸려도 시간 한도로 설명되지 않는 모자람은 예전 그대로 실패 ─────────────────────
@@ -616,3 +661,144 @@ def test_watchdog_style_live_run_has_no_limit_and_judges_as_before():
     alt = live_alt(cur, step=100.0, calls=calls, budget_s=None)
     assert len(calls) == alt["asked"] == alt["got"] and alt["cut"] == 0 and alt["limit"] is None and not V.px_alt_was_cut(alt)
     assert not check(cur, alt).failed
+
+
+# ── 11. 리뷰 2026-11-20 2차: 네트워크 오류는 연결 · 시간 초과 · 429 · 5xx 뿐 — 차단 쪽 (JSON 이 아님) 은 분명히 답하지 않음 ─────────
+class FakeResp:
+    """가짜 응답 (_daum_day_close 가 읽는 꼴): status · JSON 몸 · JSON 이 아닌 몸 (차단 · 확인 쪽)."""
+    def __init__(self, status, body=None, html=False):
+        self.status_code, self.body, self.html = status, body, html
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            import requests
+            raise requests.HTTPError(f"{self.status_code} Server Error", response=self)
+
+    def json(self):
+        if self.html:
+            import requests
+            raise requests.exceptions.JSONDecodeError("Expecting value", "<html>", 0)
+        return self.body
+
+
+def test_only_connection_errors_timeouts_429_and_5xx_are_network_errors():
+    import requests
+    net = [requests.ConnectionError("x"), requests.Timeout("x"), requests.exceptions.ReadTimeout("x"), requests.exceptions.ConnectTimeout("x"),
+           requests.exceptions.ProxyError("x"), ConnectionError("x"), ConnectionRefusedError("x"), TimeoutError("read timed out"),
+           requests.HTTPError("x", response=FakeResp(429)), requests.HTTPError("x", response=FakeResp(500)),
+           requests.HTTPError("x", response=FakeResp(503)), requests.HTTPError("502 err")]          # 응답이 붙지 않으면 맨 앞 세 자리로
+    definite = [requests.exceptions.JSONDecodeError("Expecting value", "<html>", 0), ValueError("Expecting value"), KeyError("data"),
+                TypeError("x"), requests.HTTPError("x", response=FakeResp(403)), requests.HTTPError("x", response=FakeResp(404)),
+                requests.HTTPError("weird"), RuntimeError("x")]
+    assert all(V.px_net_error(e) for e in net), [e for e in net if not V.px_net_error(e)]
+    assert not any(V.px_net_error(e) for e in definite), [e for e in definite if V.px_net_error(e)]
+
+
+def via_daum_page(cur, clk, kind_for, step=4.0):
+    """진짜 _daum_day_close 를 가짜 응답으로 (리뷰 rv2/s2 와 같은 꼴): kind_for(code) → 200 · 'html' · 'norow' · 상태 코드."""
+    px = prices(cur)
+
+    def f(code, d):
+        clk.t += step
+        k = kind_for(code)
+        if k == 200:
+            r = FakeResp(200, {"data": [{"date": d.isoformat() + " 00:00:00", "tradePrice": px.get(code, 1000.0)}]})
+        elif k == "html":
+            r = FakeResp(200, html=True)
+        elif k == "norow":
+            r = FakeResp(200, {"data": []})
+        else:
+            r = FakeResp(k)
+        return V._daum_day_close(code, d, get=lambda u: r)
+    return f
+
+
+def test_a_block_page_for_a_must_have_still_fails_on_a_cut():
+    """005930 만 다르게 답하고 나머지는 느려서 한도에 걸리는 날: 429 · 5xx 는 네트워크 오류 (건너뛰고 경고) · JSON 이 아닌 200 (차단 ·
+    확인 쪽) · 403 · 404 · 그날 행 없음은 분명히 답하지 않음 — 한도가 없을 때처럼 실패해요."""
+    cur, _, _ = fb_files()
+    for kind, want_fail in ((429, False), (500, False), (503, False), ("html", True), (403, True), (404, True), ("norow", True)):
+        clk = Clock()
+        alt = live_alt(cur, clk=clk, fetch_daum=via_daum_page(cur, clk, lambda c, kind=kind: kind if c == "005930" else 200))
+        assert alt["cut"] > 0, kind
+        assert (alt["noMust"], alt["netMust"]) == ((["005930"], []) if want_fail else ([], ["005930"])), kind
+        rep = check(cur, alt)
+        assert ("최종본 날짜 계산" in failed(rep)) is want_fail and (not rep.failed) is (not want_fail), (kind, rep.table())
+        if kind == "html":
+            assert "Expecting value" in rows(rep)["최종본 날짜 계산"][2]
+        clk2 = Clock()                                                 # 한도가 없을 때 (감시): 모두 예전 그대로 실패
+        full = live_alt(cur, clk=clk2, fetch_daum=via_daum_page(cur, clk2, lambda c, kind=kind: kind if c == "005930" else 200, step=0.0),
+                        budget_s=None)
+        assert "최종본 날짜 계산" in failed(check(cur, full)), kind
+
+
+def test_a_block_page_then_a_cut_before_the_retry_is_a_definite_non_answer():
+    """차단 쪽 답(JSON 이 아님) 뒤 다시 묻기 전에 한도가 지나면 '시간 한도로 건너뜀'이 아니라 '분명히 답하지 않음' — 시간 초과 뒤라면 건너뜀."""
+    cur, _, _ = fb_files()
+    for exc, want in ((ValueError("Expecting value: line 1 column 1 (char 0)"), "no"), (TimeoutError("read timed out"), "cut")):
+        clk = Clock()
+
+        def f(code, d, exc=exc, clk=clk):
+            clk.t += 700.0
+            raise exc
+        alt = live_alt(cur, clk=clk, fetch_daum=f)
+        first = "005930"
+        assert (first in alt["noMust"], first in alt["cutMust"]) == (want == "no", want == "cut"), want
+        assert alt["got"] + alt["cut"] + alt["no"] + alt["net"] == alt["asked"]
+        assert ("최종본 날짜 계산" in failed(check(cur, alt))) is (want == "no"), want
+
+
+# ── 12. 리뷰 2026-11-20 2차: 다시 묻지 못한 종목의 오류는 따로 (err 다섯에 묻히지 않게) ─────────────────────────
+def test_cut_stocks_errors_are_kept_apart_and_printed(monkeypatch, capsys):
+    cur, _, _ = fb_files()
+    px = prices(cur)
+
+    def fetch(clk):
+        def f(code, d):
+            if code in V.MUST[:6]:                                      # 필수 여섯은 바로 거절 (세 번 · err 다섯을 채워요)
+                raise ConnectionError(f"refused {code}")
+            if code == V.MUST[6]:                                       # 일곱째는 700초 걸려 시간 초과 → 다시 묻기 전에 한도
+                clk.t += 700.0
+                raise TimeoutError("read timed out")
+            clk.t += 10.0
+            return px[code], "daum"
+        return f
+    clk = Clock()
+    alt = live_alt(cur, clk=clk, fetch_daum=fetch(clk))
+    want = f"{V.MUST[6]}: read timed out (시간 한도로 다시 묻지 않음)"
+    assert alt["err"] == [f"{c}: refused {c}" for c in V.MUST[:5]] and want not in alt["err"]   # err 은 처음 다섯만
+    assert alt["cutErr"] == [want] and alt["cutErrN"] == 1 and alt["net"] == 6 and alt["cutMust"] == [V.MUST[6]]
+    assert not check(cur, alt).failed                                  # 네트워크 오류 · 시간 한도 몫이라 경고만
+    code, out = run_main(monkeypatch, capsys, cur, 0.0, fetch=fetch)
+    assert code == 0, out
+    loud = next(ln for ln in out.splitlines() if ln.startswith("!! 관문의 두 출처 확인이 시간 한도"))
+    assert f"네트워크 오류 뒤 다시 묻지 못한 종목 1 (마지막 오류: {want})" in loud and "네트워크 오류 6" in loud
+
+
+# ── 13. 리뷰 2026-11-20 2차: 감시는 물려받은 한도도 쓰지 않아요 · 매일 실행의 관문 줄은 바로바로 ─────────────────────
+def test_the_watchdog_drops_an_inherited_limit(monkeypatch, tmp_path):
+    sys.path.insert(0, ROOT)
+    import watchdog as W
+    monkeypatch.setenv(V.PX_ALT_LIMIT_ENV, "600")
+    monkeypatch.setenv("BAEPSAE_TEST_KEEP", "1")
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["cmd"], seen["env"] = cmd, kw["env"]
+        with open(kw["env"]["GITHUB_STEP_SUMMARY"], "w", encoding="utf-8") as f:
+            f.write("표")
+
+        class R:
+            returncode, stdout, stderr = 0, "", ""
+        return R()
+    W.run_live_gate(str(tmp_path), run=fake_run)
+    assert seen["cmd"][2:] == ["--live", "--dir", str(tmp_path)]
+    assert V.PX_ALT_LIMIT_ENV not in seen["env"] and seen["env"]["BAEPSAE_TEST_KEEP"] == "1" and "GITHUB_STEP_SUMMARY" in seen["env"]
+    assert os.environ[V.PX_ALT_LIMIT_ENV] == "600"                    # 이 프로세스의 환경은 그대로 (감시가 넘기는 것에서만 빼요)
+
+
+def test_the_daily_gate_step_prints_as_it_goes():
+    import yaml
+    wf = yaml.safe_load(open(os.path.join(ROOT, ".github", "workflows", "update-data.yml"), encoding="utf-8"))
+    st = next(s for s in wf["jobs"]["update"]["steps"] if s.get("name") == "발행 관문 (validate_data.py)")
+    assert st["env"] == {"GITHUB_TOKEN": "${{ github.token }}", "PYTHONUNBUFFERED": "1"}
