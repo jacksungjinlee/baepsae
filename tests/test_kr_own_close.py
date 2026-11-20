@@ -917,3 +917,198 @@ out = { sold: at(SOLD_F, w, [SOLD]), sold20: at(SOLD_F, w20, [SOLD]), imp: at(SO
     assert got["bad"] == [False, {"t": "094800", "pxd": "11/13", "n": None}, False]  # 날짜가 아닌 pxd: 멈춰요
     assert got["bad2"][0] is False and got["bad2"][1]["n"] is None
     assert got["same"] == [True, None, True]                                         # 기준일과 같은 pxd: 마지막 확인 종가가 아니에요
+
+
+# ── 2026-11-20 (#159 × #158): 코넥스는 야후 .KQ × 네이버로 확인한 종목이면 마지막 확인 종가로 싣지 않아요 ──────────────────
+def knx_day(knx=True, floor=200e8):
+    """#158 의 코넥스 가짜 (tests/test_konex_two_source.py · 기록한 실제 응답) 로 11-16 을 2차 출처 날로 만들어요. 시가총액 기준 200억원:
+    그날 파일 (kept) 232530 · 260870 · 336040 · 기준 아래 (capOut) 076340 · 확인 못 함 (left) 278990 · 296520 (거래 없이 기준가가 옮겨 두 종가가
+    다름) · 496320 · 0203K0 (야후에 없음). 코스피 STX 011810 은 다음 ≠ 야후."""
+    import test_konex_two_source as K
+    caps = K.caps_floor(K.KNX_CAPS, floor)
+    fb = lambda days, universe_of, now, special: K.run_fb(knx=K.knx_fakes() if knx else None, caps=caps, day=days[0], uni=universe_of(days[0])[0])
+    prim = pd.concat([K.kk_listing("2026-11-13_2158"), K.knx_listing("2026-11-13_final")], ignore_index=True)
+    px, lst, known, src, logs, (full, _) = F.kr_second_source(K.D13, prim, [K.D16], K.NOW, {}, lambda d: (K.universe16(), "시험"), fallback=fb)
+    assert px == K.D16 and src["px"] == V.PX_SRC_FB
+    # fetch_korea 와 같이: 처리하는 코넥스 = 그날 파일의 코넥스 (pxSrc.knx.t)
+    src["knx"]["t"] = sorted({c for c, m in zip(lst["Code"].astype(str).str.strip(), lst["Market"]) if F.yahoo_knx_symbol(c, m)})
+    return px, lst, src, full
+
+
+KNX_DK = "업종 · 주요제품: 기계 · KONEX 상장 · 시가총액 100억원"
+
+
+def test_konex_confirmed_by_yahoo_and_naver_is_never_carried_and_the_rest_agree_with_158(capsys):
+    """코넥스의 네 가지 (그날 파일 · 확인됐지만 기준 아래 · 확인 못 해 마지막 확인 종가로 · 확인 못 했는데 5거래일이 지나 잠시 뺌) 에서 확인 못 한
+    종목 목록 · pxSrc.own · 관문의 깨끗한 실음(kr_own_codes) · #158 의 '코넥스 종가 두 출처' 줄이 같은 말을 해요. #158 의 실제 단계로 만든 날이에요."""
+    px, lst, src, full = knx_day()
+    kept, cap_out, left = ["232530", "260870", "336040"], ["076340"], ["0203K0", "278990", "296520", "496320"]
+    fbk = src["fb"]["knx"]
+    assert sorted(src["knx"]["t"]) == kept and fbk["kept"] == 3 and fbk["capOut"] == 1 and fbk["left"] == left      # #158 의 기록
+    # 지난 발행본 (11-13): 그날 파일의 코넥스 하나 · 기준 아래 코넥스 하나 (지난 발행본에 있어도 싣지 않아요) · 확인 못 한 코넥스 셋 (하나는 이미 11-06 종가)
+    prev = prev_file([kr("232530", "이엠티", price=9990.0, dk=KNX_DK), kr("076340", "지에이이노더스", price=4000.0, dk=KNX_DK),
+                      kr("278990", "EMB", price=2895.0, dk=KNX_DK), kr("496320", "본시스템즈", price=1176000.0, dk=KNX_DK),
+                      kr("296520", "가이아코퍼레이션", price=900.0, d1=None, pxd="2026-11-06", dk=KNX_DK),
+                      kr("011810", "STX", price=18360.0)], px="2026-11-13")
+    conf = set(lst["Code"].astype(str).str.strip())
+    assert set(kept) <= conf and not (set(cap_out + left) & conf)
+    unconf = F.kr_unconfirmed(full, conf, F.kr_knx_left(src))
+    assert {c: w for c, (_, w) in unconf.items()} == {**{c: "knx" for c in left}, "011810": "conf"}      # 076340 (확인됨 · 기준 아래) 은 없어요
+    out = [dict(kr(c, dk=KNX_DK if F.yahoo_knx_symbol(c, m) else kr(c)["dk"]), price=1.0) for c, m in zip(lst["Code"].astype(str), lst["Market"])]
+    n = F.kr_own_close_step(prev, full, conf, src, px, KDAYS, out, {"jump": [], "hidden": []}, {})
+    carried = {r["t"]: (r["pxd"], r["price"]) for r in out if r.get("pxd")}
+    assert n == 3 and carried == {"011810": ("2026-11-13", 18360.0), "278990": ("2026-11-13", 2895.0), "496320": ("2026-11-13", 1176000.0)}
+    own = src["own"]
+    assert own["codes"] == ["011810", "278990", "496320"] and own["unconf"] == 5 and own["unconfWhy"] == {"mkt": 0, "conf": 1, "knx": 4}
+    assert own["aged"] == [{"t": "296520", "nk": "가이아코퍼레이션", "pxd": "2026-11-06"}]                 # 확인 못 했고 5거래일이 지남 → 잠시 뺌
+    assert own["drop"] == {"none": 1, "old": 1}                                                          # 0203K0 은 지난 발행본에 없어요
+    assert "076340" not in carried and [r["price"] for r in out if r["t"] == "232530"] == [1.0]          # 확인된 코넥스는 오늘 종가 그대로
+    log = capsys.readouterr().out
+    assert "· 코넥스 8종목 (야후 .KQ × 네이버): 그날 파일 3 · 확인됐지만 시가총액 기준 아래라 싣지 않음 1 · 확인 못 함 4" in log
+    assert "야후 .KQ × 네이버로 확인 못 함 (코넥스) 4" in log
+    # 관문: 발행하는 파일 (그날 파일의 종목 + 마지막 확인 종가 종목) 로 줄들이 같은 말을 해요
+    stocks = [dict(s, d1=0.5) if not s.get("pxd") else s for s in out]
+    data = {"pxDate": px.isoformat(), "pxSrc": F.px_src_final(src, stocks), "stocks": stocks,
+            "ownDrop": {V.KR_OWN_DROP_KEY: V.own_drop_rec([])}}
+    assert data["pxSrc"]["knx"]["t"] == kept and data["pxSrc"]["n"] == {V.PX_SRC_FB: len(stocks) - 3}   # 마지막 확인 종가 종목은 세지 않아요
+    own_ok = V.kr_own_codes(data, prev, KDAYS)
+    assert own_ok == {"011810", "278990", "496320"}                                                     # 깨끗한 실음 = 실은 코넥스 둘 + STX
+    rows = gate_rows(data, prev, MACRO)
+    assert rows[PXD_ROW][1] == "PASS" and rows[OWN_ROW][1] == "PASS", rows
+    rep = V.Report()
+    V.check_px_knx(rep, data, data["pxSrc"], own=own_ok)
+    knx_row = {r[0]: r for r in rep.rows}[V.KNX_ROW]
+    assert knx_row[3] == "PASS" and "이상" not in knx_row[1], knx_row                                    # 발행한 코넥스 (실은 둘 빼고) = knx.t
+    rep = V.Report()
+    V.check_px_knx(rep, data, data["pxSrc"], own=set())                                                # 빼지 않으면 #158 줄이 어긋남으로 봐요
+    assert "발행한 코넥스 5 · 기록 3" in {r[0]: r for r in rep.rows}[V.KNX_ROW][1]
+    # 기록이 서로 다르면 경고 (경고만): 확인 못 한 코넥스 수 ≠ #158 의 left · ownDrop.krOwn ≠ pxSrc.own.bad
+    d2 = copy.deepcopy(data)
+    d2["pxSrc"]["own"]["unconfWhy"]["knx"] = 3
+    assert gate_rows(d2, prev, MACRO)[OWN_ROW][1] == "WARN" and "코넥스 2차 출처의 빠진 종목 4" in gate_rows(d2, prev, MACRO)[OWN_ROW][0]
+    d3 = copy.deepcopy(data)
+    d3["ownDrop"][V.KR_OWN_DROP_KEY] = V.own_drop_rec([("278990", "x")])
+    assert gate_rows(d3, prev, MACRO)[OWN_ROW][1] == "WARN" and "ownDrop.krOwn 1 ≠ pxSrc.own.bad 0" in gate_rows(d3, prev, MACRO)[OWN_ROW][0]
+    json.dumps(data["pxSrc"], allow_nan=False)
+
+
+def test_konex_on_a_day_the_konex_stage_did_not_run_all_go_to_the_carry_step(capsys):
+    """코넥스 단계를 묻지 않았거나 멈춘 날 (pxSrc.knx.px 빈 값): 그날 파일에 코넥스가 없고, 코넥스는 모두 '두 번째 출처 없음' 으로 마지막 확인 종가
+    단계에 가요 (예전과 같아요) · 크게 남겨요. #158 줄은 그 날을 경고하지만 (예전 그대로) 실은 코넥스를 '출처 없이 발행' 으로 보지 않아요."""
+    px, lst, src, full = knx_day(knx=False)
+    assert src["knx"]["px"] is None and src["knx"]["t"] == []
+    prev = prev_file([kr("232530", "이엠티", price=9990.0, dk=KNX_DK), kr("076340", "지에이이노더스", price=4000.0, dk=KNX_DK)], px="2026-11-13")
+    conf = set(lst["Code"].astype(str).str.strip())
+    unconf = F.kr_unconfirmed(full, conf, F.kr_knx_left(src))
+    assert {c for c, (_, w) in unconf.items() if w == "mkt"} == {"232530", "260870", "336040", "076340", "278990", "296520", "496320", "0203K0"}
+    out = [dict(kr(c), price=1.0) for c in lst["Code"].astype(str)]
+    assert F.kr_own_close_step(prev, full, conf, src, px, KDAYS, out, {"jump": [], "hidden": []}, {}) == 2
+    assert src["own"]["unconfWhy"] == {"mkt": 8, "conf": 1, "knx": 0}
+    assert "!! 코넥스 8종목: 그날 코넥스 2차 출처(야후 .KQ × 네이버)를 묻지 않았거나 멈췄어요" in capsys.readouterr().out
+    stocks = [dict(s, d1=0.5) if not s.get("pxd") else s for s in out]
+    data = {"pxDate": px.isoformat(), "pxSrc": F.px_src_final(src, stocks), "stocks": stocks}
+    rep = V.Report()
+    V.check_px_knx(rep, data, data["pxSrc"], own=V.kr_own_codes(data, prev, KDAYS))
+    row = {r[0]: r for r in rep.rows}[V.KNX_ROW]
+    assert row[3] == "WARN" and "출처 없이 발행한 코넥스" not in row[1], row
+
+
+def test_konex_left_record_unreadable_counts_every_konex_outside_the_file_as_unconfirmed(capsys):
+    """#158 의 빠진 종목 기록 (pxSrc.fb.knx.left) 을 읽을 수 없으면: 그날 파일에 없는 코넥스는 모두 확인 못 한 종목 ('knx') — 크게 남겨요."""
+    px, lst, src, full = knx_day()
+    src["fb"]["knx"]["left"] = "?"
+    conf = set(lst["Code"].astype(str).str.strip())
+    assert F.kr_knx_left(src) == (True, None)
+    unconf = F.kr_unconfirmed(full, conf, F.kr_knx_left(src))
+    assert sorted(c for c, (_, w) in unconf.items() if w == "knx") == ["0203K0", "076340", "278990", "296520", "496320"]
+    loud, txt = F.kr_knx_carry_note(full, conf, F.kr_knx_left(src), unconf, src)
+    assert loud and "left 를 읽을 수 없어" in txt
+
+
+def test_own_drop_record_sits_with_the_other_own_checks_and_units_name_every_key():
+    """2026-11-20: 마지막 확인 종가 점검이 뺀 종목은 data.json ownDrop.krOwn (다른 우리 처리 검사 usClass · divLine · indFill · usDates 와 같은 곳 ·
+    같은 모양) 에도 적어요 · UNITS 의 ownDrop 설명이 그 열쇠를 모두 적어요 · main 이 그 기록을 payload 에 넣어요."""
+    for k in (V.US_CLASS_DROP_KEY, V.DIV_LINE_DROP_KEY, "indFill", "usDates", V.KR_OWN_DROP_KEY):
+        assert k in F.UNITS["ownDrop"], k
+    prev = prev_file([kr("400010", price=100.0), kr("400020", price=200.0)])
+    src = fb_data([], ["400010", "400020"])["pxSrc"]
+    drop = []
+    F.kr_own_close_final([kr("005930"), kr("400010", price=100.0, d1=None, pxd=D16), kr("400020", price=999.0, d1=None, pxd=D16)], src, prev, KDAYS,
+                         drop_out=drop)
+    rec = V.own_drop_rec(drop)
+    assert rec == {"n": 1, "rows": [["400020", V.KR_OWN_WHY["prev"]]]} and V.own_drop_get({"ownDrop": {V.KR_OWN_DROP_KEY: rec}}, V.KR_OWN_DROP_KEY) == rec
+    assert rec["n"] == src["own"]["bad"]["n"]
+    drop2 = []
+    F.kr_own_close_drop_all([kr("400010", price=100.0, d1=None, pxd=D16)], fb_data([], ["400010"])["pxSrc"], None, "TypeError: 시험", drop_out=drop2)
+    assert drop2 == [("400010", "err TypeError: 시험")]
+    body = inspect.getsource(F.main)
+    assert "drop_out=kr_drop" in body and 'payload["ownDrop"][KR_OWN_DROP_KEY] = own_drop_rec(kr_drop)' in body
+    assert body.index("own_us_dates(payload)") < body.index('payload["ownDrop"][KR_OWN_DROP_KEY]') < body.index("write_json(OUT, payload)")
+
+
+# ── 2026-11-20 (#159 리뷰 · 늦추지 않아요): '국내 종목 수' 두 줄은 pxDate 종가로 실은 국내 종목만 세요 ─────────────────────────
+def count_rows(n_px, n_own, n_prev=2500):
+    """fixture_data 의 발행본 (pxDate 11-16 · 지난 11-13 · 국내 n_prev) 에서 n_px 종목만 pxDate 종가로 남기고, 빠진 종목 중 n_own 을 마지막 확인
+    종가(pxd 11-13 · d1 없음)로 돌려 실은 파일 → run_checks 의 두 줄."""
+    fd = __import__("fixture_data")
+    cur, closes = fd.build(px_date="2026-11-16", us_date="2026-11-16", n_kr=n_prev)
+    prev, _ = fd.build(px_date="2026-11-13", us_date="2026-11-13", n_kr=n_prev, price_shift=-0.01)
+    kr_ = [s for s in cur["data"]["stocks"] if s.get("cls") == "kr"]
+    rest = [s for s in cur["data"]["stocks"] if s.get("cls") != "kr"]
+    keep, gone = kr_[:n_px], kr_[n_px:]
+    carried = [dict({k: v for k, v in s.items() if k != "d1"}, pxd="2026-11-13") for s in gone[:n_own]]
+    cur["data"]["stocks"] = keep + carried + rest
+    rep = V.run_checks(cur, prev, {"date": D16_DATE, "closes": closes, "how": "시험"}, D16_DATE + dt.timedelta(days=2),
+                       count_between=lambda a, b: 1, sessions={"dates": [D16_DATE], "src": "시험"},
+                       now=dt.datetime(2026, 11, 18, 11, 0, tzinfo=V.KST), hilo=None)
+    return {r[0]: (r[1], r[3]) for r in rep.rows if r[0] in ("국내 종목 수", "국내 종목 수 변화")}
+
+
+D16_DATE = dt.date(2026, 11, 16)
+
+
+def test_carried_rows_never_count_toward_the_korean_stock_floor():
+    """시간 한도로 작은 종목 600개를 묻지 못한 날: main 은 1,900 종목 → 바닥(2,300) 아래 실패 · 발행 안 함. 그중 500개가 마지막 확인 종가로
+    돌아와도 (모두 2,400) 두 줄 모두 main 과 같이 실패해요 · 값 칸에 둘 다 적어요."""
+    assert V.KR_MIN == 2300 and V.KR_REL == 0.10
+    rows = count_rows(1900, 500)
+    assert rows["국내 종목 수"][1] == "FAIL" and rows["국내 종목 수"][0].startswith("1,900 (pxDate 종가") and "마지막 확인 종가 500종목" in rows["국내 종목 수"][0]
+    assert rows["국내 종목 수 변화"][1] == "FAIL" and rows["국내 종목 수 변화"][0].startswith("2,500 → 1,900"), rows
+    main_like = count_rows(1900, 0)                                                     # main 과 같은 날 (마지막 확인 종가 없음)
+    assert main_like["국내 종목 수"][1] == "FAIL" and main_like["국내 종목 수 변화"][1] == "FAIL"
+    # 평소의 2차 출처 날: 마지막 확인 종가 몇 종목 — 두 줄 모두 통과 (pxDate 종가 2,490)
+    rows = count_rows(2490, 6)
+    assert rows["국내 종목 수"] == ("2,490 (pxDate 종가 · 그 밖에 마지막 확인 종가 6종목은 세지 않아요)", "PASS"), rows
+    assert rows["국내 종목 수 변화"][1] == "PASS"
+    assert V.kr_px_count({"stocks": [kr("1"), dict(kr("2"), pxd=D13), {"t": "AAPL", "cls": "us"}]}) == 1
+    line = F.kr_count_line({"stocks": [kr(str(i)) for i in range(2299)] + [dict(kr("x"), pxd=D13)]})
+    assert line.startswith("  !! 발행하는 국내 종목 2,300: pxDate 종가 2,299 · 마지막 확인 종가 1")
+
+
+def test_unreadable_konex_record_shapes_never_stop_the_carry_step(capsys):
+    """리뷰 (#159): pxSrc.fb 나 fb.knx 가 dict 가 아니면 읽을 수 없는 기록 — 단계가 멈추지 않고 그날 파일에 없는 코넥스를 모두 확인 못 한 종목으로
+    봐요 (크게 남겨요)."""
+    for bad in ("fb", "knx"):
+        px, lst, src, full = knx_day()
+        if bad == "fb":
+            src["fb"] = "?"
+        else:
+            src["fb"]["knx"] = ["?"]
+        conf = set(lst["Code"].astype(str).str.strip())
+        assert F.kr_knx_left(src) == (True, None)
+        prev = prev_file([kr("076340", "지에이이노더스", price=4000.0, dk=KNX_DK)], px="2026-11-13")
+        out = [dict(kr(c), price=1.0) for c in lst["Code"].astype(str)]
+        n = F.kr_own_close_step(prev, full, conf, src, px, KDAYS, out, {"jump": [], "hidden": []}, {})
+        assert n == 1 and "err" not in src["own"] and src["own"]["unconfWhy"]["knx"] == 5, (bad, src["own"])
+        assert "!! 코넥스 8종목 (야후 .KQ × 네이버): 그날 파일 3 · 확인됐지만 시가총액 기준 아래라 싣지 않음 0 · 확인 못 함 5" in capsys.readouterr().out
+
+
+def test_own_drop_krown_is_checked_on_a_day_without_any_carry():
+    """리뷰 (#159): 기록(pxSrc.own)도 pxd 종목도 없는 날 (평소 날) 에도 ownDrop.krOwn 을 봐요 — 0 이 아니거나 모양이 틀리면 경고."""
+    d = {"pxDate": D18, "stocks": [kr("005930")], "ownDrop": {V.KR_OWN_DROP_KEY: V.own_drop_rec([])}}
+    assert gate_rows(d)[OWN_ROW] == ("없음 (모두 기준일 종가)", "PASS")
+    d["ownDrop"][V.KR_OWN_DROP_KEY] = V.own_drop_rec([("400010", "x")])
+    assert gate_rows(d)[OWN_ROW] == ("없음 (모두 기준일 종가) · ownDrop.krOwn 1 ≠ pxSrc.own.bad 0", "WARN")
+    d["ownDrop"][V.KR_OWN_DROP_KEY] = {"n": "1", "rows": []}
+    assert gate_rows(d)[OWN_ROW][1] == "WARN" and "모양이 잘못됨" in gate_rows(d)[OWN_ROW][0]
+    assert gate_rows({"pxDate": D18, "stocks": [kr("005930")]})[OWN_ROW] == ("없음 (모두 기준일 종가)", "PASS")   # 이 기록 전 파일

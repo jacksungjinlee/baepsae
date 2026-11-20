@@ -1,0 +1,48 @@
+{
+ "status": "000",
+ "message": "정상",
+ "list": [
+  {
+   "rcept_no": "20261111000261",
+   "corp_cls": "K",
+   "corp_code": "01344202",
+   "corp_name": "뷰노",
+   "nstk_ostk_cnt": "6,300,000",
+   "nstk_estk_cnt": "-",
+   "fv_ps": "100",
+   "bfic_tisstk_ostk": "14,001,823",
+   "bfic_tisstk_estk": "-",
+   "fdpp_fclt": "-",
+   "fdpp_bsninh": "-",
+   "fdpp_op": "10,624,000,000",
+   "fdpp_dtrp": "20,000,000,000",
+   "fdpp_ocsa": "-",
+   "fdpp_etc": "750,000,000",
+   "ic_mthn": "주주배정후 실권주 일반공모",
+   "ssl_at": "N",
+   "ssl_bgd": "-",
+   "ssl_edd": "-"
+  },
+  {
+   "rcept_no": "20230131000359",
+   "corp_cls": "K",
+   "corp_code": "01344202",
+   "corp_name": "뷰노",
+   "nstk_ostk_cnt": "-",
+   "nstk_estk_cnt": "1,690,042",
+   "fv_ps": "100",
+   "bfic_tisstk_ostk": "11,379,656",
+   "bfic_tisstk_estk": "-",
+   "fdpp_fclt": "-",
+   "fdpp_bsninh": "-",
+   "fdpp_op": "9,999,978,514",
+   "fdpp_dtrp": "-",
+   "fdpp_ocsa": "-",
+   "fdpp_etc": "-",
+   "ic_mthn": "제3자배정증자",
+   "ssl_at": "N",
+   "ssl_bgd": "-",
+   "ssl_edd": "-"
+  }
+ ]
+}
