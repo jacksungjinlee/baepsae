@@ -811,6 +811,85 @@ If the KONEX row warns (read the reasons after "경고:"):
 3. "네이버 값 없음" for many or "받지 못함": Naver may be blocking GitHub's servers; the KOSPI/KOSDAQ path does not use Naver, so only
    KONEX is affected (on second-source days every KONEX stock drops out).
 
+## Deploy gate: Daum spot-check time limit (관문 두 출처 확인 시간 한도, since #157)
+
+Jack, 2026-11-20 (verbatim): "Yes to 10 minutes, but a timeout skips the Daum spot-check with a loud warning; the deploy continues
+on the other checks. An outside site must never block a code fix."
+
+On a second-source day (data.json `pxSrc.px` = `daum+yahoo`) while the volunteer cache still has no final file for pxDate, the gate
+fetches its own closes to compare: the 7 must-haves plus a 200-stock sample, about 206 stocks in all on real data (`http_px_alt`,
+4 at a time, 20 s per request, three tries). The deploy and the watchdog run the gate with `--live`, and there it asks Daum only. On
+11-20 at 09:03 KST the deploy sat 19 minutes in that step with no output (Daum slow); the job's only limit was 80 minutes. A normal
+run takes about a minute (from here on 11-20: 54 s for 206 stocks, the whole gate 66 s).
+
+**Who gets the limit: the deploy only.** Jack's yes names the deploy. The deploy's gate step (`deploy.yml`, "발행 관문
+(validate_data.py --live, 올릴 파일 그대로)") sets `BAEPSAE_DAUM_LIMIT_S: "600"` (= `PX_ALT_LIVE_BUDGET_S`) in that step's `env`; by
+hand the same is `python validate_data.py --live --daum-limit 600 --dir DIR`. A limit shorter than 600 s, or a value that is not a
+number, stops the gate with FAIL before anything is fetched (a shorter limit would skip more often). Not limited, as before:
+- the **watchdog** (`watchdog.py` calls `validate_data.py --live --dir …` with no limit, and removes `BAEPSAE_DAUM_LIMIT_S` from the
+  environment it passes to the gate, so it can never inherit one). It opens an alert only on a gate FAIL, so a WARN would turn a
+  slow-Daum watchdog run into a quiet pass. If Daum hangs there, the watchdog job's own 30-minute limit ends it, as before;
+- the **daily run's gate** (publish mode) and `--bootstrap`: no limit even if one is given ("· 다음 확인 시간 한도(…)는 사이트
+  점검(--live)에서만 써요 — 이 실행(publish)은 한도 없이 예전 그대로"), every stock asked, coverage short means FAIL.
+
+In the deploy, the whole spot check has a 600 s limit:
+- it logs a start line: "· 관문의 두 출처 확인 시작 (… · 다음 일별 시세 + 발행 기록): 206종목 · 동시 4 · 시간 한도 600초 (배포 — …)"
+  (the watchdog says "시간 한도 없음 (예전 그대로)", the daily gate "시간 한도 없음 (발행 관문 · 예전 그대로)"), and the result line
+  "관문의 두 출처 공식 종가 …" ends with "걸린 시간 n초";
+- the must-haves are asked first; after 600 s no new request is sent, retries included. A request already in flight finishes under
+  its own limits (20 s to connect + 20 s between bytes, so about 40 s; a DNS lookup or a server dribbling bytes is outside that,
+  never seen), so the spot check ends by about 10 min 40 s at worst. All worker threads have ended when it returns;
+- each stock ends in exactly one of four states (retries and their pauses are the same whatever the error):
+  - **close received**;
+  - **network error**: all three tries used, and the last one failed with a connection error or timeout (requests' `ConnectionError`
+    or `Timeout`, Python's `ConnectionError` or `TimeoutError`) or HTTP 429 or 5xx;
+  - **Daum's definite non-answer**: no row for that day, HTTP 4xx other than 429, no close in the row, or the last try failed with
+    anything that is not a network error (a 200 reply that is not JSON or has the wrong shape, such as a block or captcha page). A
+    stock whose last answer before the limit was one of these counts here even if its retry was cut;
+  - **cut**: not asked, or not asked again after a network error, before the limit. The last errors of the stocks cut after a
+    network error are kept apart from the general error examples and printed on the second "!!" line (up to five, with the count:
+    "네트워크 오류 뒤 다시 묻지 못한 종목 m (마지막 오류: … (시간 한도로 다시 묻지 않음))");
+- the log says it twice: at the moment ("!! 관문의 두 출처 확인 시간 한도 600초: 다음 일별 시세를 더 묻지 않아요 …") and after
+  ("!! 관문의 두 출처 확인이 시간 한도 600초에 걸렸어요 (Jack 2026-11-20): 확인 n / 206종목 · 시간 한도로 건너뜀 k · 네트워크 오류 e ·
+  다음이 그날 종가를 주지 않음 d … · 네트워크 오류 뒤 다시 묻지 못한 종목 m (마지막 오류: …)", ending with what the gate will do).
+
+**What a cut skips, and what still fails.** Only the shortfall that the cut (and network errors) can explain is skipped:
+- **WARN, deploy continues:** every must-have was received, cut or hit a network error, and received + cut + network errors is at
+  least 90% of the stocks asked. The row **"pxDate 최종본 여부" turns WARN** with the counts ("…를 시간 한도 600초로 건너뜀 (Jack
+  2026-11-20) — 한도 전에 확인 n / 206종목 (시간 한도로 건너뜀 k · 네트워크 오류 e · 다음이 그날 종가를 주지 않음 d) …"). It is a GitHub
+  warning annotation, so the morning check sees it;
+- **still FAIL, as before ("최종본 날짜 계산"):** a must-have that Daum definitely did not answer (no row, HTTP 4xx, no close, a
+  reply that is not JSON), or
+  so many definite non-answers that even counting every cut and network-error stock as received stays under 90% ("… 모두 받았다고
+  쳐도 n / 206 (기준 90%) …"). These are not caused by the time limit, so the time limit does not excuse them;
+- **still FAIL, as before:** the file's own record (pxSrc says second source, its date is pxDate, no must-have unconfirmed at
+  publish, confirmed count ≥ published Korean stocks), pxDate before today and after that day's close + 30 min;
+- **wrong closes still FAIL:** every close Daum did return is compared with the published price. "005930 = 공식 종가" must match to
+  the won. Whenever the limit was hit, "한국 가격 = 공식 종가" counts the wrong closes it saw against all the stocks it meant to ask
+  (about 206), treating the stocks it never received as matching: it FAILs when (asked − wrong seen) / asked is under 99%, so a FAIL
+  here always means the full check would have failed too (1 wrong among 60 received: 205/206 → WARN; 2 wrong among 192 received:
+  204/206 → WARN; 3 wrong: 203/206 = 98.5% → FAIL). It is a WARN while it passes, because it saw only part of the sample; a FAIL that
+  would round to "99.0%" shows two decimals (e.g. "98.99%"). With no close received, both price rows WARN;
+- if the limit hits after the must-haves and 90% of the sample have already answered, "pxDate 최종본 여부" is checked as before and
+  passes, with a WARN that says how many were skipped; the price row is counted as above.
+
+**Known limit (unchanged, needs Jack's yes to change):** a Daum outage that fails fast still blocks every deploy, because nothing is
+cut. If Daum answers 403 to GitHub's servers, every stock is a definite non-answer and the gate fails within seconds; if it refuses
+connections quickly, all three tries fail inside the 600 s and coverage is short with no cut, so the gate fails as before. Only a
+slow Daum is skipped.
+
+If the WARN shows:
+1. Read "걸린 시간 n초" at the end of the line "관문의 두 출처 공식 종가 …" in the deploy log (and the counts on the "!!" line after
+   it): that is Daum's speed today. (The time between the start line and the "!!" line is not reliable where the output is collected
+   and printed at the end.)
+2. The deploy went ahead on the other checks. Nothing to undo; the next deploy, and the watchdog's own unlimited run, check again. If
+   the volunteer cache gets its final file for pxDate later, the gate compares against that file instead and Daum is not asked at all.
+3. Do not shorten or raise the limit to make a run pass. If it hits on days when Daum answers at normal speed, bring the log times
+   to Jack.
+4. If a price row or "최종본 날짜 계산" fails on a timeout day, it is not the timeout: it is a real mismatch between Daum's close and
+   the published price, a must-have Daum has no close for, or too many stocks with no close. Treat it like the same row failing on
+   a normal day.
+
 ## Korean dividend proof (배당 기준 증명, since #PR — Jack 2026-11-14, item 5)
 
 A Korean payer whose dividend could not be put on today's share basis (`divSt` nc · nd) used to show "배당을 줘요" with no
@@ -918,6 +997,107 @@ uncounted 2, data 22, the 32.5% yield 1; lines: 1 → 0 stocks, 2 → 8, 3 → 1
   line, and any `other` turns the row into a WARN (see `data` above). Our own bookkeeping only: look at the run's
   "숨긴 배당수익률의 줄" and "그대로 숨김" log lines. A file without `proofSub` (before #PR) is only a warning unless the previous publish
   had it; without it a `dvLine` 2, 3 or 4 fails the "배당 기준 증명 기록" row.
+
+## 오늘 볼 것 data (v19.6b, since #PR): disc.json `issue`, insider `role`, US `ed` · `xd`
+
+What the daily run writes (`fetch_data.py` `fetch_issues`, `fill_issue_bd`, `insider_pos_role`, `us_event_dates`):
+- **`issue`** — 유상증자 · 전환사채 · 신주인수권부사채 decisions of Korean stocks in our list, filed in the last 90 days, and
+  유무상증자 (a rights issue and a bonus issue in one decision; Jack 2026-11-19, 7a). The run reads DART's 주요사항보고서 list
+  (about 25 pages), then, for each (company, kind) with a filing it has not seen, DART's structured lookup (`piicDecsn` ·
+  `cvbdIsDecsn` · `bdwtIsDecsn` · `pifricDecsn`, asked from 2015 so a correction of an old decision is found).
+  DART gives one row per decision, under the filing number of its newest version; an attachment-only correction keeps the
+  earlier number (corrections follow this DART record: Jack's yes 2026-11-19). A row is a decision whose filing number is in
+  the 90-day list. Results are cached in the DART cache
+  (`{filing number}|issue|v4`: decision row · older version · missing; v4 re-reads rows parsed before the same-class rule and the
+  missing-is-not-zero rule), also in a full-DART run, and dropped when the filing
+  leaves the window (keys of other versions are dropped too). At most 150 (company, kind) lookups a run (`ISSUE_PER_RUN`),
+  newest first; the rest wait for the next run and their newest filings show as `pend: true` with blank numbers meanwhile
+  (while a pair has such a filing, its filings the list marks "정" are left out, so an outdated number never shows as current).
+  A filing the lookup does not return although it should is asked again the next KST day. Share counts and amounts are read
+  only as whole numbers.
+- **Rights-issue numbers (Jack 2026-11-19, 7b: same class)** — `n` is the new common shares when the decision issues common
+  shares, else the new 기타주식 (`cls` says which: `common` · `other`); `p` is `n` ÷ the existing shares of that same class
+  (육일씨엔에쓰 2026-08-26: 2,305,918 ÷ 11,204,255 common = 20.58 %). With no existing shares of that class (DART's "-": a
+  first 기타주식 issue) `p` is null; a count field that is missing, blank or unreadable is never read as 0 — that ratio is null
+  too, and the log counts the two reasons apart ("비율 없음: 증자 전 기타주식이 없어 … · … 읽지 못해 …", also for `p2`). When a decision issues both classes, `n` · `p` are the common shares and `n2` · `p2` the 기타주식 (those two
+  keys only then). Every rights row has `cls` (null when unknown, withdrawn or pending).
+- **유무상증자 (`bonus: true`)** — the row is `kind: "rights"` with `bonus: true`; `n` · `p` · `how` describe the paid part
+  (`piic_` fields), the bonus part's numbers are not carried, and `bd` is DART's own board date (`fric_bddd`), window-checked
+  like any rights board date. A withdrawal is marked `wd` like a rights issue.
+- **Rights-issue board date (`bd`, Q18, Jack 2026-11-19)** — DART's 유상증자 lookup has no board-date field, so after
+  `fetch_issues` the run reads it from each rights filing's own document (`fill_issue_bd`, `document.xml`): only the zip's main
+  file `{filing number}.xml` (never an attachment), the table row "N. 이사회결의일(결정일)" in the filed form (a correction's
+  before/after table is skipped), whose value DART writes as `<TU AUNIT="DRC_DT" AUNITVALUE="YYYYMMDD">`; the cell must be one
+  whole, real date and the coded value must say the same day. Withdrawn (`wd`) and pending (`pend`) rows are not read.
+  - Cache: `{filing number}|issuebd|v2`, also in a full-DART run, dropped when the filing leaves the 90 days. It keeps the date
+    the document gives, or "unreadable" with the reason (no date in the form, or no main file in the zip). A filing is read
+    once ever; an unreadable-but-delivered document is not read again.
+  - Window: `fill_issue_bd` uses the date only when it is not more than `ISSUE_BD_MAX_YEARS` (1; Jack's yes, 11-19, 7d) before
+    the filing date. This is checked each time the cached date is used, so changing the limit needs no re-read. A date outside
+    it leaves `bd` null and is logged separately ("!! 결의일이 공시일보다 1년 넘게 앞이라 비운 유상증자 공시 …", 8–10 a run in
+    the 11-19 dry runs), apart from unreadable documents ("!! 결의일을 못 읽은 유상증자 공시 …"). These window blanks do not
+    count toward the gate's N; the gate only warns about blank board dates, every day they are there. A date after the filing
+    date is not handled here: it passes through and the shared step before writing (`own_check_disc`, below) blanks it and
+    counts it in `ownDrop.issueBd`.
+  - Retried next run (not cached): a failed or slow fetch, an empty zip, a main file that is empty or won't decode, a parser
+    crash, the per-run limit (100 documents, `ISSUE_BD_PER_RUN`, newest first) and the time limit (180 s,
+    `ISSUE_BD_SECONDS`). None of this stops the run or changes `issueOk`. On a day the list failed (`issueOk` false) nothing
+    is read and last run's rows keep their dates.
+  - Log: "유상증자 이사회 결의일(공시 원문 document.xml): 문서에서 읽음 a / 대상 b, 못 읽음 c, 기간 밖이라 비움 l, 다음 실행으로 d".
+- **Withdrawals (`wd: true`, kept: Jack's yes 2026-11-19)**: DART files a withdrawal as a `[기재정정]` whose number fields are all "-" (the list never marks
+  it "철" and the name has no "철회": 더코디 2026-11-05 "납입금미납으로 유상증자철회", 크라우드웍스 2026-08-21, 쏘닉스 CB 2026-11-10).
+  Such a row stays, marked `wd: true` with every number blank, so the cards can skip it; the original filing is an older version
+  and has no row. The run log names them ("!! 주요사항 공시 철회 …").
+- **DART stops in this phase** (daily limit 020, key errors): last run's rows stay with `issueOk` false and the run goes on
+  (no screen reads `issue` yet). The 지분공시 phase before it still stops the run, as before.
+- **insider `role`** — 임원 when the filing names a position or 등기/비등기임원, 주요주주 when it names only a major-holder
+  relation, 임원·주요주주 (exactly that text; Jack 2026-11-19, 7c) when it names both, else null. No screen reads `role` yet. DART's "-" means empty (it used to show as a position). Rows from earlier runs are fixed from the same
+  day's lookup of that company; a row the run could not look up again keeps `role` null. A major holder's position is DART's
+  own relation word (10%이상주주, 사실상지배주주; Jack's yes 2026-11-19); `fetch_data.INSIDER_POS_HOLDER_WORDS = False` blanks it
+  instead (one line). The run log counts the words ("주요주주 줄의 직위 …").
+- **US `ed` · `xd`** — from the Yahoo details the run already caches (3 days): `ed` only when Yahoo says the earnings date is not
+  an estimate and it is one day; `xd` is Yahoo's ex-dividend date (midnight UTC, read as that date). Either can be in the past.
+
+Gate rows (`validate_data.py` `check_v196b` and `check_issue_bd`), under **Jack's standing rule (2026-11-19 ~17:45 KST)**:
+"Standing rule for checks on our own processing: a single bad row is dropped or blanked with a loud warning and the rest
+publishes. Block only when many rows fail in one run (set the number from recent runs and show it in the PR) or when a value
+would show a wrong number."
+
+How it works for these four checks: the bad rows are picked by one function each in `validate_data.py` (`issue_bad_rows`,
+`issue_bd_bad_rows`, `insider_bad_rows`, `us_date_bad_rows`). The pipeline runs the same function just before writing the file
+(`fetch_data.own_check_disc` before disc.json, `own_us_dates` before data.json), drops the row or blanks the value, logs it
+("!! {check}: n건 빼고 발행 / 비움 — rows (reason)", or a "·" line with 0), and records it in that file's
+`ownDrop[key] = {"n": count, "rows": [[name, reason]] first 30}` (written on clean runs too, as 0). The gate reads the record
+and runs the same function on the file:
+- **FAIL** when this run dropped or blanked more than N rows (N = 5 for each check: the PR #145 table, 25 data-branch publishes
+  and 5 branch dry runs, all 0 → max(5, 3 × 0)), or when a bad value is still in the file and would show a wrong number (the
+  drop step failed).
+- **WARN** (naming the rows) when 1..N rows were dropped or blanked, or a remaining bad value shows no number.
+- **PASS** when 0. A file without the record (from before #PR) keeps the old rule of each row: a bad row fails. A file whose
+  `ownDrop` is not an object, or whose record has the wrong shape, also keeps the old rule, plus a warning (as #149 does).
+- The rule is about single rows. A whole section is never replaced: an `insider` that is not a list is left as it is and
+  logged with "!!", so the gate fails (an empty list would make the 공시 tab show "no reports" as live data). An `issue` that is
+  not a list is written as an empty list with `issueOk` false, the same as a day the list failed (the app shows its failed
+  state; the gate warns; no screen reads `issue` yet).
+
+| Row (key) | Bad row | Pipeline | Remaining value FAILs? |
+|---|---|---|---|
+| 주요사항 공시 (`disc.json` `issueShape`) | a malformed `issue` row (missing or wrong field, date outside the 90 days, method or share count on a bond, amount on a rights issue, non-positive number, a `wd` / `pend` / `cor` mark that is not true/false or a number on a `wd` / `pend` row, `cls` / `n2` / `p2` / `bonus` out of place), or a filing number that appears more than once (every copy) | drops the row (its numbers can't be trusted; no card is better than a wrong one) | yes for dates, numbers and the marks that change how numbers read (`d`, `bd`, `n`, `p`, `amt`, `n2`, `p2`, `kind`, `cls`, `bonus`, `wd`, `pend`); yes for a filing number that appears more than once (two rows could carry different numbers); no for filing number, ticker, name, method, correction mark. A non-boolean `issueOk` only warns (no screen reads `issue` yet) |
+| 유상증자 이사회 결의일 (`disc.json` `issueBd`) | a rights row (not `wd`, not `pend`) whose board date is after its filing date (bonds' DART board dates are not checked for this: a known gap, as before) | blanks `bd` (the rest of the row came from DART's lookup; only our reading of the date is wrong). `fill_issue_bd` now applies only the one-year window (Jack, 11-19, 7d) and leaves "after the filing date" to this check, so a run that misreads many dates is caught by N | yes (the date labels the decision's numbers) |
+| 임원 · 주요주주 역할 (`disc.json` `insiderRole`) | a `role` other than 임원, 주요주주, 임원·주요주주 or null; a row that is not an object | blanks `role` (the trade's numbers are right; the role is a title word) · drops a non-object row | yes for a non-object row (the old app reads fields of every row and throws on one that isn't an object: `src/disc.jsx` `x.s`, `src/corp.jsx` `x.t`; 2.0 reads its share count and amount); no for a bad role (no screen reads `role` yet). `insider` not a list still fails (left as it is, see above) |
+| 미국 일정 (`data.json` `usDates`) | an `ed` / `xd` that is not a real YYYY-MM-DD, or one on a stock that is not American | blanks that field only; the stock row stays (prices and dividends are right; dropping a stock would break other checks such as the v19.1i dividend proof lists) | no (event dates, not dates that label a number) |
+
+Other WARNs, unchanged: no `issue` section (a file from before #PR, e.g. the live site right after the merge), `issueOk` false
+(the list failed and last run's rows were kept), 0 rows, a row whose stock left today's list, a ratio (`p` or `p2`) above
+3,000 % (check the filing; STX's 1,855.66 % on 2026-10-14 is real), more than 10 % of rows without any number (normal on the
+first run after the merge), rights rows with a blank board date, insider rows without `role` or with "-" as the position, no US
+dates at all among more than 100 US stocks, a US date more than 400 days ahead. **SKIP** "유상증자 이사회 결의일" when there is
+no `issue` section.
+
+DART calls: the first run after the merge (no cached lookups) makes about 25 list calls, 150 lookups and up to 100 rights
+documents; the next run the remaining ~75 lookups and ~60–70 documents (about 160 rights rows in 90 days on 2026-11-16); then
+about 25 list calls, 10–20 lookups and 3–5 documents a run. A full-DART run with an empty cache adds up to about 275 calls
+(logged separately from the pinned estimate).
 
 ## US stocks added by hand (EXTRA_US)
 

@@ -1,0 +1,27 @@
+{
+ "status": "000",
+ "message": "정상",
+ "list": [
+  {
+   "rcept_no": "20261113000550",
+   "corp_cls": "N",
+   "corp_code": "00874937",
+   "corp_name": "탑선",
+   "nstk_ostk_cnt": "-",
+   "nstk_estk_cnt": "-",
+   "fv_ps": "-",
+   "bfic_tisstk_ostk": "-",
+   "bfic_tisstk_estk": "-",
+   "fdpp_fclt": "-",
+   "fdpp_bsninh": "-",
+   "fdpp_op": "-",
+   "fdpp_dtrp": "-",
+   "fdpp_ocsa": "-",
+   "fdpp_etc": "-",
+   "ic_mthn": "제3자배정증자",
+   "ssl_at": "N",
+   "ssl_bgd": "-",
+   "ssl_edd": "-"
+  }
+ ]
+}
