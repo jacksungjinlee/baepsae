@@ -171,10 +171,12 @@ US_OWN_WHY = {"shape": "pxd 가 usPxDate 보다 앞선 날짜가 아님", "d1": 
               "prev": "지난 발행본의 마지막 확인 종가 · 날짜와 다름",
               "same": "같은 날 다시 쓴 종가(usSrc.own.same)가 지난 발행본의 그날 종가 · d1 과 다름",
               "split": "그 종가 날짜 뒤에 주식 분할이 있음 (data.json splits · 가격은 분할 전인데 앱이 주식 수를 바꿔요)",
-              "newer": "더 새 야후 종가(usSrc.own.newer)가 기록 · 지난 발행본의 날짜 · 미국 거래일과 맞지 않음"}
+              "newer": "더 새 야후 종가(usSrc.own.newer)가 기록 · 지난 발행본의 날짜 · 미국 거래일과 맞지 않음",
+              "from": "야후가 무엇을 줬는지(usSrc.own.from: bar · empty · err)가 적혀 있지 않음 (미국 종목 수에 셀지 정할 수 없어요)"}
 # 날짜가 깨졌거나 d1 이 옆에 있는 마지막 확인 종가 — 파일에 남아 있으면 실패 (국내와 같아요). 리뷰 (2026-11-20): 같은 날 다시 쓴 종가가 지난 발행본과
 # 다르면 (d1 이 있고 날짜가 없어 미국 기준일 종가로 보여요) · 그 종가 뒤에 분할이 있으면 (평가액이 분할 배율만큼 틀려요) 도 실패
-US_OWN_FAIL_WHY = ("shape", "d1", "mark", "same", "split")
+US_OWN_FAIL_WHY = ("shape", "d1", "mark", "same", "split", "from")
+US_OWN_FROM = ("bar", "empty", "err")     # usSrc.own.from 의 값 — '미국 종목 수' 두 줄은 bar 만 세요 (예전에도 야후의 자기 날짜 봉으로 실렸을 행)
 US_OWN_DROP_MAX = 5                       # 파이프라인이 한 점검에서 거른 행이 이보다 많으면 실패 (Jack 의 상시 규칙 · 국내 KR_OWN_DROP_MAX 와 같아요)
 # N (Jack: "Block only if many are missing (set the number from history)"): 야후 종가가 없는데 마지막 확인 종가로 싣지 못한 미국 종목
 # (d1 이 없고 깨끗한 마지막 확인 종가가 아님 — 예전처럼 야후의 마지막 봉을 자기 날짜로 실은 종목)이 이보다 많으면 '미국 d1 채움' 줄이 실패해요.
@@ -2051,7 +2053,8 @@ def us_own_rec(data):
             and isinstance(own.get("n"), int) and not isinstance(own.get("n"), bool) and own["n"] == len(own["codes"])
             and isinstance(own.get("same", []), list) and all(isinstance(c, str) and c for c in own.get("same", []))
             and isinstance(own.get("newer", []), list) and all(isinstance(x, dict) and isinstance(x.get("t"), str) for x in own.get("newer", []))
-            and isinstance(own.get("split", []), list) and all(isinstance(x, dict) and isinstance(x.get("t"), str) for x in own.get("split", []))):
+            and isinstance(own.get("split", []), list) and all(isinstance(x, dict) and isinstance(x.get("t"), str) for x in own.get("split", []))
+            and isinstance(own.get("from", {}), dict)):
         return None
     return own
 
@@ -2077,6 +2080,7 @@ def us_own_close_bad(data, pdata=None, days=None, max_days=US_OWN_CLOSE_MAX_DAYS
     rec = set(own["codes"]) if own else set()
     same = set(own.get("same") or []) if own else set()
     newer = {x["t"]: x for x in (own.get("newer") or [])} if own else {}
+    frm = own.get("from") if own and isinstance(own.get("from"), dict) else {}
     pby = {x.get("t"): x for x in us_stocks(pdata)} if isinstance(pdata, dict) else None
     ppx = str(pdata.get("usPxDate")) if isinstance(pdata, dict) else None
     paged = {}
@@ -2097,6 +2101,8 @@ def us_own_close_bad(data, pdata=None, days=None, max_days=US_OWN_CLOSE_MAX_DAYS
                                        and num(p.get("price")) == num(s.get("price")) and num(p.get("d1")) == num(s.get("d1")))))
             if not ok:
                 out.append((t, "same"))
+            if own and frm.get(t) not in US_OWN_FROM:
+                out.append((t, "from"))
             continue
         if "pxc" not in s and t not in rec:
             continue
@@ -2113,6 +2119,8 @@ def us_own_close_bad(data, pdata=None, days=None, max_days=US_OWN_CLOSE_MAX_DAYS
             why.append("price")
         if t not in rec:
             why.append("rec")
+        if own and frm.get(t) not in US_OWN_FROM:
+            why.append("from")
         if shape and days is not None and kr_own_age(s["pxd"], usd, days) > max_days:
             why.append("old")
         if isinstance(s.get("pxd"), str) and any(d > s["pxd"] for d in splits.get(t, ())):
@@ -2140,6 +2148,37 @@ def us_own_close_bad(data, pdata=None, days=None, max_days=US_OWN_CLOSE_MAX_DAYS
                 why.append("prev")
         out += [(t, w) for w in why]
     return out
+
+
+def us_px_count(data):
+    """머지 확인 (2026-11-20, 1 · 예전보다 늦추지 않아요): '미국 종목 수' 두 줄이 세는 미국 종목 → (센 수, 세지 않은 마지막 확인 종가 수). 예전에도 실렸을
+    행만 세요: pxc 가 없는 행 · 마지막 확인 종가(pxc)와 같은 날 다시 쓴 행(same) 중 야후에 그 종목의 시계열이 있던 것 (usSrc.own.from 'bar' — 예전이면
+    야후의 자기 날짜 봉으로 실렸어요). 야후가 아무것도 주지 않은 행(empty · err — 예전이면 빠졌어요)과 까닭이 적혀 있지 않은 행은 세지 않아요 (야후
+    다운로드가 통째로 고장 난 날은 예전처럼 이 줄들이 막아요). (순수 함수)"""
+    own = us_own_rec(data)
+    frm = own.get("from") if own and isinstance(own.get("from"), dict) else {}
+    same = set(own.get("same") or []) if own else set()
+    n = nc = 0
+    for s in us_stocks(data or {}):
+        if "pxc" in s or s.get("t") in same:
+            if frm.get(s.get("t")) == "bar":
+                n += 1
+            else:
+                nc += 1
+        else:
+            n += 1
+    return n, nc
+
+
+def check_us_counts(rep, data, pdata):
+    """'미국 종목 수' · '미국 종목 수 변화' (기준 그대로 · 머지 확인 2026-11-20: us_px_count 로 세요 — 지난 발행본도 같은 방법)."""
+    n, nc = us_px_count(data)
+    note = (f" (야후가 아무것도 주지 않아 마지막 확인 종가로 실은 {nc:,}종목은 세지 않아요)" if nc else "")
+    rep.add("미국 종목 수", n >= US_MIN, f"{n:,}" + note, f"≥ {US_MIN} (예전에도 실렸을 종목)")
+    if pdata:
+        pu, pnc = us_px_count(pdata)
+        rep.add("미국 종목 수 변화", pu > 0 and abs(n / pu - 1) <= US_REL, f"{pu:,} → {n:,}"
+                + (f" (세지 않은 마지막 확인 종가 {pnc:,} → {nc:,})" if pnc or nc else ""), f"±{US_REL:.0%} (예전에도 실렸을 종목)")
 
 
 def us_own_codes(data, pdata=None, days=None):
@@ -2456,14 +2495,13 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     nk_px, nk_own = kr_px_count(data), len(kr) - kr_px_count(data)
     rep.add("국내 종목 수", nk_px >= KR_MIN, f"{nk_px:,}" + (f" (pxDate 종가 · 그 밖에 마지막 확인 종가 {nk_own:,}종목은 세지 않아요)" if nk_own else ""),
             f"≥ {KR_MIN:,} (pxDate 종가로 실은 종목)", warn=nk_px < KR_MIN * 1.02)
-    rep.add("미국 종목 수", len(us) >= US_MIN, f"{len(us):,}", f"≥ {US_MIN}")
+    check_us_counts(rep, data, pdata)     # 머지 확인 (2026-11-20, 1): 예전에도 실렸을 미국 행만 세요 (us_px_count)
     if pdata:
-        pk, pu = kr_px_count(pdata), len(us_stocks(pdata))
+        pk = kr_px_count(pdata)
         pk_own = len(kr_stocks(pdata)) - pk
         rep.add("국내 종목 수 변화", pk > 0 and abs(nk_px / pk - 1) <= KR_REL, f"{pk:,} → {nk_px:,}"
                 + (f" (pxDate 종가 · 마지막 확인 종가 {pk_own:,} → {nk_own:,}종목은 세지 않아요)" if pk_own or nk_own else ""),
                 f"±{KR_REL:.0%} (pxDate 종가로 실은 종목)")
-        rep.add("미국 종목 수 변화", pu > 0 and abs(len(us) / pu - 1) <= US_REL, f"{pu:,} → {len(us):,}", f"±{US_REL:.0%}")
     nb = sum(1 for s in data.get("stocks", []) if s.get("cls") == "bond")
     rep.add("채권 ETF", nb >= BONDS_EXPECTED - 1, nb, f"{BONDS_EXPECTED} (7 경고 · 6 이하 실패)", warn=nb < BONDS_EXPECTED)
 

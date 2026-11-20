@@ -2436,7 +2436,7 @@ def us_own_aged(prev, nocl, drop, old_pxd=None):
 
 def us_own_close_err(err, nocl_n=None):
     """마지막 확인 종가 단계(미국)가 오류로 멈췄을 때의 usSrc.own (실은 종목 0 · err — 관문이 경고해요 · 예전 그대로 야후의 마지막 봉으로 나가요)."""
-    out = {"v": 1, "max": US_OWN_CLOSE_MAX_DAYS, "n": 0, "codes": [], "same": [], "newer": [], "split": [], "drop": {}, "dropEx": [],
+    out = {"v": 1, "max": US_OWN_CLOSE_MAX_DAYS, "n": 0, "codes": [], "same": [], "from": {}, "newer": [], "split": [], "drop": {}, "dropEx": [],
            "bad": {"n": 0, "rows": []}, "err": str(err)[:300]}
     if isinstance(nocl_n, int):
         out["unconf"] = nocl_n
@@ -2507,8 +2507,11 @@ def us_own_close_step(prev, nocl, out, us_px_date, trade_days, etfs=frozenset(),
             log(f"  !! 잠시 뺀 지 {US_OWN_AGED_LONG}거래일이 넘은 미국 종목 {len(long_):,} (상장 폐지 · 티커 변경으로 목록에만 남았는지 확인해 주세요 · "
                 "usSrc.own.aged): " + ", ".join(f"{a['t']} ({a.get('pxd')})" for a in long_[:US_OWN_SHOW])
                 + (f" 외 {len(long_) - US_OWN_SHOW}종목" if len(long_) > US_OWN_SHOW else ""))
+        # 머지 확인 (2026-11-20, 1): 실은 행마다 야후가 무엇을 줬는지 (bar 그 종목의 시계열은 있고 기준일 봉만 없음 · empty 쓸 수 있는 가격이 하나도 없음 ·
+        # err 받다가 오류) — 관문의 '미국 종목 수' 두 줄은 bar 만 세요 (예전에도 실렸을 행 · empty · err 는 예전이면 빠졌어요)
+        src_of = {r["t"]: nocl.get(r["t"]) for r in carried + same}
         return {"v": 1, "max": US_OWN_CLOSE_MAX_DAYS, "n": len(carried), "codes": sorted(r["t"] for r in carried),
-                "same": sorted(r["t"] for r in same), "newer": newer, "split": split, "unconf": len(nocl), "why": {k: int(v) for k, v in sorted(why.items())},
+                "same": sorted(r["t"] for r in same), "from": dict(sorted(src_of.items())), "newer": newer, "split": split, "unconf": len(nocl), "why": {k: int(v) for k, v in sorted(why.items())},
                 "drop": {k: int(v) for k, v in sorted(dc.items())}, "dropEx": dn[:US_OWN_SHOW], "bad": {"n": 0, "rows": []}, "aged": aged}
     except Exception as e:
         out[:] = keep
@@ -2541,6 +2544,13 @@ def us_own_drop_rows(us, umeta, bad, why):
     return [r for r in us if r.get("t") not in bad]
 
 
+def us_own_from_sync(own):
+    """usSrc.own.from (실은 행 · 같은 날 다시 쓴 행마다 야후가 준 것) 을 남은 codes · same 에 맞춰요."""
+    keep = set(own.get("codes") or []) | set(own.get("same") or [])
+    if isinstance(own.get("from"), dict):
+        own["from"] = {t: w for t, w in sorted(own["from"].items()) if t in keep}
+
+
 def us_carry_splits(recent, prev):
     """{티커: {분할 날짜 ISO}} — 오늘 시세 다운로드의 분할(umeta splits · [[티커, 날짜, 배율]]) · 지난 발행본의 data.json splits · 고정 표
     (SPLIT_OVERRIDES 의 배율 있는 줄). 발행할 splits 는 이 셋으로 만들어요 (splits_fields). (순수 함수)"""
@@ -2569,6 +2579,7 @@ def us_own_close_final(us, umeta, prev, days):
     own["n"] = len(own["codes"])
     own["same"] = sorted(t for t in own.get("same") or [] if t in have)
     own["newer"] = [x for x in own.get("newer") or [] if isinstance(x, dict) and x.get("t") in set(own["codes"])]
+    us_own_from_sync(own)
     if not own["codes"] and not own["same"]:
         log("· 마지막 확인 종가 점검 (미국 · 관문과 같은 함수): 0종목 빼고 발행")
         return us
@@ -2584,6 +2595,7 @@ def us_own_close_final(us, umeta, prev, days):
     own["n"] = len(own["codes"])
     own["same"] = [c for c in own["same"] if c not in gone]
     own["newer"] = [x for x in own["newer"] if x.get("t") not in gone]
+    us_own_from_sync(own)
     own["bad"] = {"n": len(gone), "rows": rows[:US_OWN_SHOW], "why": dict(sorted(collections.Counter(w for ws in gone.values() for w in set(ws)).items()))}
     return us_own_drop_rows(us, umeta, gone, {t: "마지막 확인 종가 점검(관문과 같은 함수)이 거름: " + " · ".join(US_OWN_WHY.get(w, w) for w in ws)
                                               + " (usSrc.own.bad)" for t, ws in gone.items()})
@@ -2622,6 +2634,7 @@ def us_own_split_late(us, umeta, sp_fields, prev):
         own["n"] = len(own["codes"])
         own["newer"] = [x for x in own.get("newer") or [] if isinstance(x, dict) and x.get("t") not in bad]
         own["split"] = sorted([x for x in own.get("split") or [] if isinstance(x, dict) and x.get("t") not in bad] + recs, key=lambda x: str(x.get("t")))
+        us_own_from_sync(own)
         dr = dict(own.get("drop") or {}) if isinstance(own.get("drop"), dict) else {}      # 2차 확인 잔 지적: 기록의 수가 맞게
         dr["split"] = int(dr.get("split") or 0) + len(hit)
         own["drop"] = dict(sorted(dr.items()))
@@ -2656,20 +2669,20 @@ def us_own_restore(row, y, cut=None):
         if not out.get("fcur"):
             out["pbrZero"] = True
         cut.append(f"{t} pbr")
+    for key, lo, hi in (("per", 0, 500), ("pbr", 0, 100)):          # apply_us_info 처럼: 범위는 반올림 전 값으로 (리뷰 · 머지 확인 2)
+        v = _fin(out.get(key))
+        if v is not None and not (lo < v * k < hi):
+            out.pop(key, None)
+            cut.append(f"{t} {key}")
+    v = _fin(out.get("dy"))
+    if v is not None and not (0 <= v / k < 30):
+        out.pop("dy", None)
+        cut.append(f"{t} dy")
     for key, nd in (("per", 1), ("pbr", 2), ("cap", 3), ("val", 1)):
         if _fin(out.get(key)) is not None:
             out[key] = round(out[key] * k, nd)
     if _fin(out.get("dy")) is not None:
         out["dy"] = round(out["dy"] / k, 2)
-    for key, lo, hi in (("per", 0, 500), ("pbr", 0, 100)):          # 3차 확인 잔 지적: apply_us_info 의 범위 그대로
-        v = _fin(out.get(key))
-        if v is not None and not (lo < v < hi):
-            out.pop(key, None)
-            cut.append(f"{t} {key}")
-    v = _fin(out.get("dy"))
-    if v is not None and not (0 <= v < 30):
-        out.pop("dy", None)
-        cut.append(f"{t} dy")
     return out
 
 
@@ -2680,7 +2693,7 @@ def us_own_close_drop_all(us, umeta, err):
     own = src.get("own") if isinstance(src.get("own"), dict) else us_own_close_err(err)
     gone = {r.get("t") for r in us if r.get("pxc")} | set(own.get("same") or [])
     log(f"  !! 마지막 확인 종가 점검(미국)이 오류로 멈췄어요 ({err}) — 마지막 확인 종가 · 같은 날 다시 쓴 {len(gone):,}종목을 모두 빼고 발행을 이어가요 (usSrc.own.err)")
-    own.update({"codes": [], "n": 0, "same": [], "newer": [], "err": str(err)[:300], "bad": {"n": len(gone), "rows": sorted(gone)[:US_OWN_SHOW]}})
+    own.update({"codes": [], "n": 0, "same": [], "from": {}, "newer": [], "err": str(err)[:300], "bad": {"n": len(gone), "rows": sorted(gone)[:US_OWN_SHOW]}})
     src["own"] = own
     umeta["usSrc"] = src
     return us_own_drop_rows(us, umeta, gone, f"마지막 확인 종가 점검이 오류로 멈춰 뺌 ({str(err)[:80]} · usSrc.own.err)")
@@ -12820,7 +12833,8 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
          "usExtraMissing": "손으로 더한 미국 종목(EXTRA_US) 중 오늘 목록에 없는 티커 → 빠진 이유",
          "usSrc": ("미국 종가의 출처 기록 (2026-11-20 · Jack: 야후 종가가 없는 미국 종목도 마지막 확인 종가로): own {v · max 나이 상한 (그 종가 뒤 미국 "
                    "거래일) · n 실은 수 · codes 마지막 확인 종가(pxc)로 실은 티커 · same 지난 발행본이 같은 usPxDate 라 그날 종가와 d1 을 그대로 실은 티커 "
-                   "(pxd 없음) · newer (리뷰) 야후에 그 종목의 더 새 봉(기준일 앞 · 미국 거래일)이 있어 그 종가로 실은 [{t · pxd · px}] · split (리뷰) "
+                   "(pxd 없음) · from (머지 확인) codes · same 의 행마다 야후가 준 것 {티커: bar 시계열은 있고 기준일 봉만 없음 · empty 쓸 수 있는 가격이 "
+                   "하나도 없음 · err 받다가 오류} — 관문의 '미국 종목 수' 두 줄은 bar 만 세요 · newer (리뷰) 야후에 그 종목의 더 새 봉(기준일 앞 · 미국 거래일)이 있어 그 종가로 실은 [{t · pxd · px}] · split (리뷰) "
                    "그 종가 뒤 분할이 있어 싣지 않은 종목 [{t · pxd · after 분할 날짜 · late 발행할 splits 에서 찾음}] (예전 그대로: 야후의 자기 날짜 봉 · "
                    "없으면 빠짐) · unconf 미국 기준일 종가가 야후에 없는 종목 수 · why 그 까닭별 수 (bar 기준일 종가 없음 · 빈 값 · 0 · 음수 · empty 쓸 수 있는 "
                    "가격이 하나도 없음 · err 받다가 오류) · drop 싣지 않은 까닭별 수 (none 지난 발행본에 없음 · halted 지난 발행본에서도 자기 날짜 — 둘 다 "

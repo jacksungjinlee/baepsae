@@ -160,7 +160,8 @@ def test_final_check_drops_wrong_rows_with_the_gate_function(monkeypatch):
     prev = prev_file([us("AAPL", price=270.0), us("MSFT", price=410.0), us("SHEL", price=71.0, d1=0.8)], usd=D19)
     rows = [us("AAPL", price=270.0, d1=None, pxd=D19, pxc=True), us("MSFT", price=999.0, d1=None, pxd=D19, pxc=True),
             us("NVDA"), us("XX", d1=None, pxd=D19, pxc=True)]
-    umeta = {"usPxDate": D20, "usSrc": {"v": 1, "own": {"v": 1, "n": 9, "codes": ["AAPL", "MSFT", "GONE"], "same": ["GONE"], "bad": {"n": 0, "rows": []}}}}
+    umeta = {"usPxDate": D20, "usSrc": {"v": 1, "own": {"v": 1, "n": 9, "codes": ["AAPL", "MSFT", "GONE"], "same": ["GONE"], "bad": {"n": 0, "rows": []},
+                                                         "from": {"AAPL": "bar", "MSFT": "bar", "XX": "bar", "GONE": "bar"}}}}
     kept = F.us_own_close_final(rows, umeta, prev, UDAYS)
     own = umeta["usSrc"]["own"]
     assert [r["t"] for r in kept] == ["AAPL", "NVDA"]                                # MSFT 는 지난 발행본의 가격이 아님 · XX 는 지난 발행본에 없음
@@ -293,9 +294,11 @@ def test_fetch_us_normal_day_records_nothing(tmp_path, monkeypatch):
 
 
 # ── 2. 관문 ─────────────────────────────────────────────────────────────
-def _usdata(stocks, usd=D20, codes=None, same=(), bad=None, aged=None, err=None):
+def _usdata(stocks, usd=D20, codes=None, same=(), bad=None, aged=None, err=None, frm="bar"):
     own = {"v": 1, "max": 5, "n": len(codes or []), "codes": sorted(codes or []), "same": list(same), "unconf": len(codes or []) + len(same),
            "drop": {}, "dropEx": [], "bad": bad or {"n": 0, "rows": []}}
+    if frm is not None:                                                  # 머지 확인: 실은 행마다 야후가 준 것 (bar · empty · err)
+        own["from"] = {t: frm for t in list(codes or []) + list(same)}
     if aged is not None:
         own["aged"] = aged
     if err:
@@ -914,3 +917,60 @@ def test_an_unreadable_split_column_has_its_own_words_in_the_gate():
     v = rows_of(lambda rep: V.check_us_own_close(rep, data, macro_days(), prev))["미국 마지막 확인 종가 (usSrc.own · pxc)"][1]
     assert "분할 칸을 읽지 못해 싣지 않음 (분할을 몰라요 · 예전 그대로) NVDA" in v and "그 종가 뒤 분할이 있어 싣지 않음 (예전 그대로) AAPL" in v, v
 
+
+
+# ── 머지 확인 (2026-11-20): '미국 종목 수' 두 줄은 예전에도 실렸을 행만 세요 ─────────────────────────────────
+def _count_rows(data, pdata):
+    return rows_of(lambda rep: V.check_us_counts(rep, data, pdata))
+
+
+def _day(n_total, carried, frm, usd=D20):
+    rows = [us(f"S{i:03d}") for i in range(n_total - carried)] + [us(f"C{i:03d}", d1=None, pxd=D19, pxc=True) for i in range(carried)]
+    d = _usdata(rows, usd=usd, codes=[f"C{i:03d}" for i in range(carried)], frm=None)
+    d["usSrc"]["own"]["from"] = {f"C{i:03d}": (frm(i) if callable(frm) else frm) for i in range(carried)}
+    return d
+
+
+def test_count_rows_count_what_main_would_publish():
+    prev = {"usPxDate": D19, "stocks": [us(f"P{i:03d}") for i in range(600)]}
+    main_mass = {"usPxDate": D20, "stocks": [us(f"S{i:03d}") for i in range(50)]}            # 예전: 야후가 아무것도 주지 않은 550종목은 빠져요
+    mass = _day(600, 550, lambda i: "empty" if i % 2 else "err")
+    got, want = _count_rows(mass, prev), _count_rows(main_mass, prev)
+    assert got["미국 종목 수"][0] == want["미국 종목 수"][0] == "FAIL" and got["미국 종목 수 변화"][0] == want["미국 종목 수 변화"][0] == "FAIL"
+    assert got["미국 종목 수"][1].startswith("50 ") and "550종목은 세지 않아요" in got["미국 종목 수"][1]
+    gap = _day(600, 550, "bar")                                                                 # 2026-11-20 처럼: 시계열은 있고 그날 봉만 없음
+    assert _count_rows(gap, prev)["미국 종목 수"] == ("PASS", "600") and _count_rows(gap, prev)["미국 종목 수 변화"][0] == "PASS"
+    few = _day(600, 5, lambda i: "bar" if i < 3 else "empty")                                  # 보통 날 · 마지막 확인 종가 몇 개
+    r = _count_rows(few, prev)
+    assert r["미국 종목 수"][0] == "PASS" and r["미국 종목 수"][1].startswith("598 ") and r["미국 종목 수 변화"][0] == "PASS"
+    nov07 = _day(600, 600, "bar")                                                               # 2026-11-07 처럼: 필수 종목까지 모두 그날 봉만 없음
+    assert _count_rows(nov07, prev)["미국 종목 수"][0] == "PASS"
+    # 지난 발행본도 같은 방법으로 세요 (야후가 아무것도 주지 않아 실은 행은 빼고)
+    pmass = _day(600, 550, "empty", usd=D19)
+    r = _count_rows(gap, pmass)
+    assert r["미국 종목 수 변화"][0] == "FAIL" and r["미국 종목 수 변화"][1].startswith("50 → 600")
+    # 같은 날 다시 쓴 행도 같아요 (야후가 아무것도 주지 않은 행은 세지 않아요)
+    same = _usdata([us(f"S{i:03d}") for i in range(600)], codes=[], same=[f"S{i:03d}" for i in range(550)], frm="err")
+    assert _count_rows(same, prev)["미국 종목 수"][0] == "FAIL"
+
+
+def test_a_carried_row_without_a_recorded_source_fails_and_is_not_counted():
+    prev = prev_file([us("AAPL", price=270.0)], usd=D19)
+    data = _usdata([us("AAPL", price=270.0, d1=None, pxd=D19, pxc=True)], codes=["AAPL"], frm=None)
+    assert V.us_px_count(data) == (0, 1)
+    r = rows_of(lambda rep: V.check_us_own_close(rep, data, macro_days(), prev))["미국 마지막 확인 종가 (usSrc.own · pxc)"]
+    assert r[0] == "FAIL" and "야후가 무엇을 줬는지" in r[1], r
+
+
+def test_the_step_records_what_yahoo_gave_for_each_carried_row(tmp_path, monkeypatch):
+    out, meta, lines, prev = _fetch(tmp_path, monkeypatch, blank={"AAPL", "SHEL"}, zero={"ZERO"}, quote={t: 60.0 for t in ("AAPL", "SHEL", "ZERO", "TD")})
+    assert meta["usSrc"]["own"]["from"] == {"AAPL": "bar", "SHEL": "bar", "TD": "err", "ZERO": "bar"}
+    assert V.us_px_count({"usPxDate": meta["usPxDate"], "stocks": out, "usSrc": meta["usSrc"]})[1] == 1      # TD (야후가 아무것도 주지 않음)
+
+
+def test_restored_ranges_use_the_raw_value_like_apply_us_info():
+    row = us("Z", price=100.0, d1=None, pxd=D19, pxc=True, per=249.98, pbr=10.0, dy=1.0)
+    r = F.us_own_restore(row, us("Z", price=200.0, d1=None, pxd=D18), [])
+    assert r["per"] == 500.0                                                          # 반올림 전 499.96 < 500 → 남아요 (예전 길과 같아요)
+    r2 = F.us_own_restore({**row, "per": 250.01}, us("Z", price=200.0, d1=None, pxd=D18), [])
+    assert "per" not in r2

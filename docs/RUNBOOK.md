@@ -733,6 +733,12 @@ publish, Korean data included.
     clean carry** (Yahoo's own older bar, a wrong carry). N = max(5, 3 × the most seen): the 27 publishes on the `data` branch from 11-05 to
     11-20 had 0 such stocks each (table in the PR). A file without `usSrc` (published before this) keeps the old rule (≥ 98%).
   - `미국 필수 종목 d1` (AAPL · MSFT · NVDA): a clean carry warns (named with its date) instead of failing; no `d1` without a clean carry still fails.
+  - `미국 종목 수` and `미국 종목 수 변화` (thresholds unchanged) count what main would publish for the same input (`us_px_count`):
+    every row without `pxc`, plus carried and same-day rows where Yahoo had the stock's history but no bar for the US date
+    (`usSrc.own.from` = `bar`: main would have published Yahoo's own-date row). Rows where Yahoo sent nothing (`empty`, `err`: main
+    would have dropped them) are not counted, on both sides of the change row. So a Yahoo gap (history present, the day's bar
+    missing) carries and never stops the publish, while Yahoo returning nothing for most stocks (a broken source) still fails these
+    rows as before. A carried row without a recorded source fails the carry row.
   - `미국 가격이 바뀌었는지`: clean carries are left out (their price is the previous publish's by design); with nothing left to compare, it warns.
   - New `미국 마지막 확인 종가 (usSrc.own · pxc)`: **fails** on a carried row still in the file with a broken date, a `d1` beside it, a
     `pxc` mark without `pxd` (as the Korean `pxd` row), a split in `data.json splits` dated after its `pxd`, or a same-day row (`same`)
