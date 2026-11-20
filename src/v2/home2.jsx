@@ -380,7 +380,7 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
       <div key={b.deck.id} data-ui-v2="home-block" data-deck-id={b.deck.id}>
         {b.st && <RulesHero block={b} many={many} narrow={narrow} />}
         <MoneyCard block={b} pxDate={ok ? load.data.pxDate : null} load={load} late={!!lateMd} />
-        <HeldCard block={b} onWhy={onWhy} md={ok ? mdText(load.data.pxDate) : null} late={!!lateMd} aged={ok ? load.aged : null} />
+        <HeldCard block={b} onWhy={onWhy} md={ok ? mdText(load.data.pxDate) : null} late={!!lateMd} aged={ctx ? ctx.aged : null} />
       </div>
     )),
     ev.ok && (blocks.length > 0 || hits.length > 0) && <Look key="look" blocks={blocks} load={load} look={look} go={go} onWatch={onWatch} lateMd={lateMd} />,

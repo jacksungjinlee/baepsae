@@ -49,6 +49,7 @@
 모든 장면에서 페이지 오류(pageerror) 0건. 인터넷 요청(글꼴·통계)은 막고 localhost 만 허용해요.
 """
 import argparse
+import collections
 import datetime as dt
 import functools
 import http.server
@@ -2565,6 +2566,42 @@ def strip_kr_carries(f):
 
 
 REAL_KR_CARRIES = os.path.join(ROOT, "tests", "fixtures", "kr_own_close_real_1120.json")
+OWN_FIXTURE_PICKS = {"plain": "005930", "t": "000270"}   # 고정 데이터 (CI · 내 컴퓨터): 예전 그대로
+
+
+def kr_own_picks(f):
+    """2026-11-21 (Jack 의 새 규칙 · CLAUDE.md #154: 발행 전 화면 검사의 장면은 특정 종목 · 특정 날의 데이터에 기대지 않아요): 확인종가 장면들이
+    쓸 국내 종목을 그날 데이터에서 기준으로 골라요 (실제 데이터 --data 일 때만 · 고정 데이터는 OWN_FIXTURE_PICKS 와 기록한 줄 그대로).
+    기준: 국내 보통주 (코드 끝자리 0 · cls kr · 펀드 · ETF 아님) · 가격 · 이름 · 기업분석 회사 (corp.json) 가 있고 pxd 없음, 시가총액 큰 순.
+    - plain: 그 가운데 시가총액이 가장 큰 종목 (안내가 없어야 하는 종목)
+    - t: 기업분석의 두 지도 (3개월 수익률 지도: 업종마다 시가총액 상위 14 · 업종 상위 16 · r3 있음 · ROE × PBR 지도: pbr · roe 있음 · 1조 이상)
+      에 그려지는 종목 중 시가총액이 가장 큰 것 (plain 빼고 · 이름이 서로 겹치지 않게 — 이름으로 찾을 때 섞이지 않게)
+    - pref: plain 의 이름으로 시작하는 우선주 (이름으로 찾으면 함께 나와요) — 없으면 None
+    - small: 그 밖의 국내 보통주 셋 (시가총액 작은 쪽부터 — 기록한 11-20 의 세 종목처럼)
+    반환: dict (고를 수 없으면 그 칸이 None)."""
+    d = f["data.json"]
+    cby = {c.get("t"): c for c in (f.get("corp.json") or {}).get("companies") or []}
+
+    def common(x):
+        t = str(x.get("t") or "")
+        return (x.get("cls") == "kr" and len(t) == 6 and t.endswith("0") and not x.get("fund") and not x.get("etf") and x.get("pxd") is None
+                and (x.get("price") or 0) > 0 and isinstance(x.get("nk"), str) and x["nk"] and t in cby)
+    kr = sorted((x for x in d["stocks"] if common(x)), key=lambda x: -(cby[x["t"]].get("cap") or x.get("cap") or 0))
+    plain = kr[0] if kr else None
+    ok3 = [c for c in cby.values() if c.get("r3") is not None and (c.get("cap") or 0) >= 0.3]
+    sec = collections.defaultdict(list)
+    for c in ok3:
+        sec[c.get("s")].append(c)
+    top = sorted(sec.values(), key=lambda arr: -sum(c.get("cap") or 0 for c in arr))[:16]
+    drawn = {c["t"] for arr in top for c in sorted(arr, key=lambda c: -(c.get("cap") or 0))[:14]}
+    t = next((x for x in kr[1:] if x["t"] in drawn and cby[x["t"]].get("pbr") is not None and cby[x["t"]].get("roe") is not None
+              and (cby[x["t"]].get("cap") or 0) >= 1 and plain and plain["nk"] not in x["nk"] and x["nk"] not in plain["nk"]), None)
+    pref = next((x for x in d["stocks"] if plain and x.get("cls") == "kr" and x.get("pxd") is None and str(x.get("t") or "") != plain["t"]
+                 and isinstance(x.get("nk"), str) and x["nk"].startswith(plain["nk"]) and not str(x.get("t") or "").endswith("0")), None)
+    used = {y["t"] for y in (plain, t, pref) if y}
+    small = [x for x in reversed(kr) if x["t"] not in used][:3]
+    return {"plain": plain["t"] if plain else None, "t": t["t"] if t else None, "pref": pref["t"] if pref else None,
+            "big": t["t"] if t else None, "small": [x["t"] for x in small]}
 
 
 def with_kr_carries(files):
@@ -2574,10 +2611,15 @@ def with_kr_carries(files):
       (px 'daum+yahoo' · own 기록에 심은 종목 모두),
     - 삼성전자우(005935 · '삼성전자'로 찾으면 나와요) · 삼성전기(009150 · 시가총액 1조 넘어 기업분석의 지도에 그려져요)에도 같은 모양으로 pxd 를 심어요
       (data.json · corp.json, d1 · d1Why · noTrade · ntD1 없음). 그 종목이 없는 데이터면 국내 종목 중 앞에서 채워 둘.
-    pxd 는 이 데이터의 pxDate 하루 앞이에요 (그 실행과 같은 간격 · 고정 데이터는 날짜가 달라요)."""
+    pxd 는 이 데이터의 pxDate 하루 앞이에요 (그 실행과 같은 간격 · 고정 데이터는 날짜가 달라요).
+    2026-11-21 (CLAUDE.md #154): 실제 데이터(--data · 발행 전 화면 검사)에서는 특정 종목에 기대지 않아요 — 기록한 줄을 넣지 않고 그날 데이터에서
+    기준으로 고른 종목 (kr_own_picks: 작은 보통주 셋 · 그날 가장 큰 종목 이름으로 시작하는 우선주 · 지도에 그려지는 큰 종목) 에 같은 모양으로 심어요.
+    우선주가 없으면 크게 알리고 그 몫은 건너뛰어요 (실패하지 않아요)."""
     f = json.loads(json.dumps(files, allow_nan=True))
     d = f["data.json"]
     day = _iso_minus(d["pxDate"], 1)
+    if REAL_DATA:
+        return _plant_kr_carries(f, day)
     with open(REAL_KR_CARRIES, encoding="utf-8") as fh:
         real = json.load(fh)
     real_t = [x["t"] for x in real["stocks"]]
@@ -2600,6 +2642,31 @@ def with_kr_carries(files):
                   "own": {**real["own"], "codes": codes, "n": len(codes)}}
     planted = {x.get("t") for x in d["stocks"] if x.get("t") in codes and x.get("cls") == "kr" and x.get("pxd") == day and "d1" not in x}
     assert len(codes) == 5 and planted == set(codes), (codes, sorted(planted))      # 심은 다섯 종목 모두 (진짜 데이터의 다른 pxd 종목과 상관없이)
+    return f
+
+
+def _plant_kr_carries(f, day):
+    """실제 데이터용 with_kr_carries (2026-11-21): kr_own_picks 로 고른 종목에 파이프라인이 싣는 모양 (pxd · d1 · d1Why · noTrade · ntD1 없음 ·
+    corp.json 회사에도 pxd) 으로 심고 pxSrc 를 2차 출처 날 · own 기록에 그 종목들로."""
+    d = f["data.json"]
+    pk = kr_own_picks(f)
+    want = list(pk["small"]) + [x for x in (pk["pref"], pk["big"]) if x]
+    if not pk["pref"]:
+        print(f"  · 확인종가 (실제 데이터): 그날 가장 큰 종목({pk['plain']}) 이름으로 시작하는 우선주가 없어 그 몫은 건너뛰어요", flush=True)
+    by = {x.get("t"): x for x in d["stocks"]}
+    cby = {c.get("t"): c for c in (f.get("corp.json") or {}).get("companies") or []}
+    for t in want:
+        by[t]["pxd"] = day
+        for k in ("d1", "d1Why", "noTrade", "ntD1"):
+            by[t].pop(k, None)
+        if t in cby:
+            cby[t]["pxd"] = day
+    codes = sorted(want)
+    d["pxSrc"] = {**(d.get("pxSrc") if isinstance(d.get("pxSrc"), dict) else {}), "px": "daum+yahoo",
+                  "own": {"v": 1, "max": 5, "n": len(codes), "codes": codes, "unconf": len(codes), "drop": {}, "dropEx": [],
+                          "bad": {"n": 0, "rows": []}}}
+    planted = {x.get("t") for x in d["stocks"] if x.get("t") in codes and x.get("pxd") == day and "d1" not in x}
+    assert len(codes) >= 3 and planted == set(codes), (codes, sorted(planted))
     return f
 
 
@@ -3509,11 +3576,18 @@ def scene_kr_own_close(R, files, slow=False):
     화면에서 멈춰도) · slow=True 면 느린 화면으로 (slow_screen: 그 시험 실행의 실패를 어느 기계에서나 다시 보여 주는 조건)."""
     f = strip_kr_carries(json.loads(json.dumps(files, allow_nan=True)))   # 진짜 데이터의 국내 마지막 확인 종가와 상관없이 (리뷰 M-A)
     d = f["data.json"]
-    t = "000270"
+    # 2026-11-21 (CLAUDE.md #154): 실제 데이터(발행 전 화면 검사)에서는 그날 데이터에서 기준으로 골라요 (kr_own_picks) · 고정 데이터는 예전 그대로
+    pk = kr_own_picks(f) if REAL_DATA else OWN_FIXTURE_PICKS
+    t, plain = pk["t"], pk["plain"]
+    if REAL_DATA and not (t and plain):
+        none_today(R, "국내 마지막 확인 종가", "기업분석 지도에 그려지는 국내 보통주가", "(kr_own_picks 의 기준을 확인하세요)")
+        return
     day = _iso_minus(d["pxDate"], 1)
     by = {s.get("t"): s for s in d["stocks"]}
     cby = {c.get("t"): c for c in f["corp.json"]["companies"]}
-    assert t in by and t in cby and by[t].get("cls") == "kr" and "005930" in by, "시험할 국내 종목이 데이터에 없어요"
+    assert t in by and t in cby and by[t].get("cls") == "kr" and plain in by and plain in cby, "시험할 국내 종목이 데이터에 없어요"
+    plain_nk = by[plain]["nk"]
+    nowhere = next(c for c in (f"{n:06d}" for n in range(999990, 900000, -10)) if c not in by and c not in cby)   # 데이터에 없는 코드
     by[t]["pxd"] = day
     for k in ("d1", "d1Why", "noTrade", "ntD1"):                          # 파이프라인이 싣는 모양 그대로 (오늘 변화 · 그 이유 없음)
         by[t].pop(k, None)
@@ -3526,7 +3600,7 @@ def scene_kr_own_close(R, files, slow=False):
     # Jack, 2026-11-20 (a): 나이 상한을 넘어 잠시 뺀 종목 하나 (data.json · corp.json 에서 빼고 pxSrc.own.aged 에 이름과 함께)
     aged_line = "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요."
     with open(REAL_KR_CARRIES, encoding="utf-8") as fh:
-        taken = {"005930", t, "005935", "009150"} | {x["t"] for x in json.load(fh)["stocks"]}    # 다른 확인종가 장면이 심는 종목은 빼고
+        taken = {plain, t, "005935", "009150"} | {x["t"] for x in json.load(fh)["stocks"]}    # 다른 확인종가 장면이 심는 종목은 빼고
     gone = next(c for c in f["corp.json"]["companies"] if c.get("t") not in taken and by.get(c.get("t"), {}).get("cls") == "kr")["t"]
     d["stocks"] = [x for x in d["stocks"] if x.get("t") != gone]
     f["corp.json"]["companies"] = [c for c in f["corp.json"]["companies"] if c.get("t") != gone]
@@ -3534,7 +3608,7 @@ def scene_kr_own_close(R, files, slow=False):
     d["pxSrc"]["own"] = {**(d["pxSrc"].get("own") if isinstance(d["pxSrc"].get("own"), dict) else {"v": 1, "max": 5, "drop": {}, "dropEx": [],
                                                                                                   "bad": {"n": 0, "rows": []}}),
                          "codes": [t], "n": 1, "aged": [{"t": gone, "nk": by[gone].get("nk") or gone, "pxd": _iso_minus(d["pxDate"], 9)}]}
-    slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": "005930", "mw": 300}, {"t": t, "mw": 200}]}
+    slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": plain, "mw": 300}, {"t": t, "mw": 200}]}
     srv, ctx, page, base = R.open(build_site(f), local=slot_local([("skrown", "국내 확인 종가 시험", slot)]), once=True)
     S = "국내 마지막 확인 종가" + (" · 느린 화면" if slow else "")
     if slow:
@@ -3555,7 +3629,7 @@ def scene_kr_own_close(R, files, slow=False):
         box.fill(nk)
         page.locator(".ownCloseNote").wait_for(state="visible", timeout=WAIT)
         settled(page, NOTE, [want_ko], "종목 고르기 목록 위 안내")
-        box.fill("삼성전자")
+        box.fill(plain_nk)
         page.wait_for_timeout(300)
         settled(page, NOTE, [], "pxd 없는 종목만 보이는데 안내가 있어요")
         box.fill("")
@@ -3601,7 +3675,7 @@ def scene_kr_own_close(R, files, slow=False):
         see(page, "밸류에이션 멀티플 · 업종 사분위 대비")
         one_line(line, "기업분석 머리: 가격 · 시가총액 밑에 Jack 의 줄")
         page.goto("about:blank")
-        page.goto(base + "/baepsae.html?dev=1&from=app#corp=005930", wait_until="domcontentloaded")
+        page.goto(base + f"/baepsae.html?dev=1&from=app#corp={plain}", wait_until="domcontentloaded")
         see(page, "밸류에이션 멀티플 · 업종 사분위 대비")
         for _ in range(2):                                      # 바로 한 번 · 잠시 뒤 한 번 (늦게 나타나는 줄도 잡게)
             assert page.evaluate(SHOWN) == [] and "오늘 종가를 확인하지 못해서" not in page.locator("body").inner_text()
@@ -3619,12 +3693,12 @@ def scene_kr_own_close(R, files, slow=False):
         page.get_by_role("button", name="한국어", exact=True).first.click()
         if slow:
             slow_screen_used(page)
-    R.check(page, S, "첫 화면 성적표 · 기업분석 머리: 가격 밑에 Jack 의 줄 그대로 (12px 이상) · 삼성전자는 그대로 · 영어 성적표는 승인된 영어 문장", cards)
+    R.check(page, S, f"첫 화면 성적표 · 기업분석 머리 ({t}): 가격 밑에 Jack 의 줄 그대로 (12px 이상) · {plain}(pxd 없음)는 그대로 · 영어 성적표는 승인된 영어 문장", cards)
 
     def market_map():
         """기업분석 시장 지도 (리뷰 M3): 3개월 수익률 지도 · ROE × PBR 지도 (· 성장 지도에 그 회사가 있으면 그 밑에도) — 그린 회사 중 마지막 확인 종가
         회사가 있으면 '{이름} 가격은 {날짜} 종가예요.' 다음에 Jack 의 줄."""
-        korean(base + "/baepsae.html?dev=1&from=app#corp=005930")
+        korean(base + f"/baepsae.html?dev=1&from=app#corp={plain}")
         see(page, "밸류에이션 멀티플 · 업종 사분위 대비")
         page.get_by_role("button", name="시장 지도", exact=True).first.click()
         see(page, "최근 3개월 수익률 지도")
@@ -3649,7 +3723,7 @@ def scene_kr_own_close(R, files, slow=False):
         korean(base + f"/baepsae.html?dev=1&from=app#corp={gone}")
         poll(page, js, lambda v: len(v) == 1 and v[0][0] == aged_line and v[0][1] >= 12, "잠시 뺀 종목의 기업분석 줄")
         assert "이 종목의 데이터를 찾지 못했어요" not in page.locator("body").inner_text()
-        korean(base + "/baepsae.html?dev=1&from=app#corp=999990")
+        korean(base + f"/baepsae.html?dev=1&from=app#corp={nowhere}")
         see(page, "이 종목의 데이터를 찾지 못했어요.")
         assert page.evaluate(js) == [] and aged_line not in page.locator("body").inner_text()
     R.check(page, S, "잠시 뺀 종목 (5거래일이 지남): 기업분석에서 '찾지 못했어요' 대신 Jack 의 줄 · 다른 코드는 그대로", aged)

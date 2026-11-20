@@ -65,7 +65,7 @@ export const HOME2 = true;
 // The daily check for every saved deck (nothing is computed from stale or failed data: ev.ok false, ev.why says why).
 export function useDaily(load, store) {
   const decks = store.data.decks;
-  const ctx = useMemo(() => todayCtx(load, undefined, decks), [load, decks]);   // 2026-11-20 (Jack, f): rules.lateCap
+  const ctx = useMemo(() => todayCtx(load), [load]);
   const ev = useMemo(() => evaluateAll(decks, ctx), [decks, ctx]);
   return { ev, ctx };
 }
@@ -239,7 +239,7 @@ function DeckStrip({ de, deck, ctx, onWhy, go, load, late = false }) {
         <div key={x.t} data-today-holding={x.t} data-status={x.status}>
           <ListRow title={x.nk} change={gone.has(x.t) || late ? null : x.d1} chip={statusChips(x)} lead={<CoMark t={x.t} name={x.nk} size={SPACE(9)} />}
             onClick={x.bigMove && !gone.has(x.t) ? () => onWhy(de.id, x.t) : !gone.has(x.t) && openStock && isCompany(ctx.byT.get(x.t)) ? () => openStock(x.t) : undefined} />
-          {gone.has(x.t) && <KrAgedLine aged={load.status === "ok" ? load.aged : null} t={x.t} style={{ marginTop: SPACE(1) }} />}
+          {gone.has(x.t) && <KrAgedLine aged={ctx.aged} t={x.t} style={{ marginTop: SPACE(1) }} />}
         </div>
       ))}
     </Card>
@@ -251,7 +251,7 @@ function ImportedStrip({ deck, de, ctx, load, go, late = false }) {
   const { openStock } = useNav();
   const st = useMemo(() => pfState(deck, ctx, load.status === "ok" ? load.data.stocks : []), [deck, ctx, load]);
   const m = de && de.ok ? deckMoney(deck, de, ctx) : { ok: false };
-  return <ImportedDeck deck={deck} st={st} m={m} openStock={openStock} byT={ctx.byT} onMore={() => go("portfolio")} aged={load.status === "ok" ? load.aged : null} home
+  return <ImportedDeck deck={deck} st={st} m={m} openStock={openStock} byT={ctx.byT} onMore={() => go("portfolio")} aged={ctx.aged} home
     pxDate={load.status === "ok" ? load.data.pxDate : null} late={late} />;
 }
 

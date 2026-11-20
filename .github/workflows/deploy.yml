@@ -168,10 +168,13 @@ jobs:
       # 2026-11-20 (Jack: "Yes to 10 minutes, but a timeout skips the Daum spot-check with a loud warning; the deploy continues on the
       # other checks. An outside site must never block a code fix."): 관문이 따로 묻는 다음 확인 전체에 600초 한도 — 이 단계에만
       # (validate_data.PX_ALT_LIVE_BUDGET_S 와 같은 값 · 시험이 맞춰 봐요). 감시(watchdog)와 매일 실행의 관문은 한도 없이 예전 그대로예요.
+      # 2026-11-21 (Jack, 11-20 질문 3 → "3. Yes.", 코드 배포만): 다음이 아예 거절하면 (HTTP 403 · 연결 거부 등) 그 확인도 크게 경고하고 건너뛰어요.
+      # 코드 배포(push · 손으로)에만 1 — 데이터 실행 바로 뒤의 배포(workflow_run)는 0 이라 예전 그대로 (시간 한도만). 시험이 이 줄을 맞춰 봐요.
       - name: 발행 관문 (validate_data.py --live, 올릴 파일 그대로)
         env:
           GITHUB_TOKEN: ${{ github.token }}
           BAEPSAE_DAUM_LIMIT_S: "600"
+          BAEPSAE_DAUM_REFUSE_SKIP: "${{ github.event_name != 'workflow_run' && '1' || '0' }}"
         run: |
           python validate_data.py --live --dir _site
           for p in baepsae.html app.html app-preview.html styleguide.html; do
