@@ -12,7 +12,8 @@ One page for Jack. Claude Code does every step below for you; this page says wha
 
 What the watchdog checks, on the files users actually download: the four data files pass `validate_data.py --live`; after
 15:30 KST, the Korean price date is the last finished trading day (checked against KRX's final listing and Yahoo's KOSPI,
-both separate from our pipeline); the last daily run and the last deploy succeeded; the daily run is still switched on;
+both separate from our pipeline); the last daily run and the last deploy succeeded (a daily run that held its publish on a backup
+morning is skipped, so the run before it counts: "Backup days: early hold"); the daily run is still switched on;
 the pages users get are the current build, the site's `data.json` is exactly the published copy, and the site does not
 serve the `docs/` folder (two of its files must answer "not found").
 A server error from GitHub Pages (HTTP 5xx) on a data file or page is asked again once, 20 seconds later, before it
@@ -671,18 +672,24 @@ The rule lives in `tools/publish_hold.py` (`hold_decision`). The daily run decid
 날 · 08:00 KST 전 · 직전 발행본의 97%)" (id `hold`), right after the data step and before the gate:
 - **Backup days only:** today's data.json has `pxSrc.px` = `daum+yahoo`. A normal day (KRX final file, `listing`) is unchanged.
 - **Before 08:00 KST only,** by the clock when that step runs (the runner's clock is UTC; the script converts to KST).
-- **Confirmed** = `pxSrc.fb.conf`, the stocks whose Daum and Yahoo closes agree to the won. Carried closes (a stock shown with its
-  last confirmed close, `pxSrc.own` and `pxd`, #159) never count: the script reads only `fb.conf`, and only when the record adds up
-  (n = conf + mkt + noDaum + bad + noYahoo + diff, each listed stock in exactly one of them). It never counts published stocks or
-  `pxSrc.n`.
-- **The line** is 97% of the previous publish's `pxSrc.fb.conf`, rounded up. The previous publish is the same file the gate compares
-  with (`git show HEAD:data.json`, the `main` copy the daily run commits). With the 11-19 publish (2,740 confirmed) the line is 2,658:
-  up to 82 fewer confirmed stocks still publish. Exactly 97% publishes.
+- **Today's count** = KOSPI and KOSDAQ closes confirmed by both sources: `pxSrc.fb.conf`, minus the KONEX stocks #158 adds to it
+  (`pxSrc.fb.knx.kept`, confirmed by Yahoo × Naver). It is used only when the record adds up (n = KOSPI/KOSDAQ confirmed + mkt +
+  noDaum + bad + noYahoo + diff; KONEX sits in `mkt`). Carried closes (a stock shown with its last confirmed close, `pxSrc.own` and
+  `pxd`, #159) never count: the script never counts published stocks or `pxSrc.n`, and a `conf` with carries folded in would stop
+  adding up.
+- **The previous count** comes from the same file the gate compares with (`git show HEAD:data.json`, the `main` copy every publish
+  commits):
+  - previous publish on a backup day: its KOSPI/KOSDAQ count, worked out the same way as today's;
+  - previous publish on a normal day (`pxSrc.px` = `listing`, or a file from before 11-19 with no `pxSrc`): its KOSPI and KOSDAQ
+    stocks with an official close (all KRX final), leaving out KONEX (by "KONEX 상장" in the stock's description), funds, stocks
+    without a price and carried closes.
+- **The line** is 97% of the previous count, rounded up. With the 11-19 publish (2,740) it is 2,658: up to 82 fewer confirmed
+  stocks still publish. Exactly 97% publishes.
 - **Below the line, before 08:00, on a backup day: hold.** Anything else publishes as before.
-- **No comparison, no hold.** The step says why with a "!!" line: the previous file can't be read, the previous publish was a normal
-  day (normal-day files carry no two-source count), its record doesn't add up or has another date, a `bootstrap` run, or a dry run's
-  compare commit couldn't be fetched. If the check itself crashes it does not hold either ("!! 이른 발행 보류 확인이 오류로 멈췄어요"),
-  and the gate and the screen check decide the publish as before. A missing comparison never blocks a publish.
+- **No comparison, no hold.** The step says why with a "!!" line and leaves a yellow warning "이른 발행 보류 확인 못 함 (보류 없이
+  발행)" on the run page: the previous file can't be read, a record doesn't add up or carries another date, a `bootstrap` run, or a
+  dry run's compare commit couldn't be fetched. The same warning appears if the check itself crashes ("!! 이른 발행 보류 확인이 오류로
+  멈췄어요"); the gate and the screen check then decide the publish as before. A missing comparison never blocks a publish.
 
 What a hold looks like:
 - The run ends **green**. The gate and the screen check still run on the held data (a failure there is red, as on any run). Then
@@ -692,27 +699,45 @@ What a hold looks like:
   run page has a yellow warning "발행 보류 (2차 출처 날 · 08:00 KST 전)"; the run summary has the section "뱁새 이른 발행 보류 확인 —
   보류 — 이 실행은 발행하지 않아요".
 - Users keep the last publish, with its own date. `already_published.py` reads the `data` branch, which did not change, so the next
-  start (06:43, Jack's 06:40 timer, 08:17) runs again. A run that reaches the step at 08:00 or later publishes what it has.
-- **Why green, not red:** a red daily run makes the watchdog open the 뱁새 데이터 경보 issue ("last run failed") for planned
-  behaviour that the next run fixes. A green run whose two publishing steps were skipped is what the watchdog, Deploy and the
-  09:13 check already read as "did not publish", exactly like a dry run, so it can't be taken for a publish either.
-- Dry runs run the step too; their summary says what a real run would have done.
+  scheduled start runs again. A run that reaches the step at 08:00 or later publishes what it has.
+- **The watchdog treats a held run as neutral** (`watchdog.is_held_run`: a green run whose update job succeeded but skipped "data
+  브랜치에 올리기"). It neither opens nor closes the 뱁새 데이터 경보 issue and never counts as a successful publish: the "last daily
+  run" check skips it and looks at the run before (its row then says "그 뒤 이른 발행 보류 N번"). So a held run can't close a real
+  alarm or send healthchecks.io an "up" signal while nothing was published. If GitHub's API can't say which steps ran, the run is
+  judged as before.
+- **Why green, not red:** a red daily run makes the watchdog open the alarm issue ("last run failed") for planned behaviour.
+- Dry runs run the step too; their summary says what a real run would have done. With `sample` set the summary says the decision
+  means nothing (a sample run is not a real day's count).
+
+The real cost of a hold (GitHub's scheduled runs start late):
+- On the last five weekdays the first scheduled run started at 08:53 (11-13), 11:06 (11-17), 10:19 (11-18), 09:44 (11-19) and
+  09:56 (11-20) KST. Only Jack's 06:40 timer runs on time.
+- So if the 06:40 run holds, the next publish realistically comes about **10:00–11:30 KST**, and the US closes wait with it (they go
+  out in the same publish). The 09:13 morning check will report that the morning data is not in yet. That is the trade the rule
+  makes: a later publish with about 1% of Korean stocks unconfirmed instead of a 06:45 publish with about 9% missing all day.
+- Each held morning adds one more complete data run (another round of Daum, Yahoo and other source requests, and another DART-cache
+  save; DART itself reads the cache, so it is not a full-DART run).
 
 Limits:
-- The first backup day after a normal day has nothing to compare with, so it is never held (it behaves as before this change). A
-  different baseline (for example today's own list size) would be a new rule: ask Jack first.
+- **First backup day after a normal day:** the normal-day baseline counts only the published stocks (the top ~2,500 by market cap),
+  while today's count covers the whole KOSPI/KOSDAQ list (~2,770). So that day's line is low. Replayed on the real 11-18 case: the
+  11-17 06:40 publish (pxDate 11-16) gives 2,441 KOSPI/KOSDAQ stocks, line 2,368; the 11-19 06:40 publish had 2,743 confirmed and
+  publishes. Even a blank-close night (about 2,526) would publish: on that day the hold catches only about 400 or more unconfirmed.
+- **The bar can drift down.** The baseline is the last publish's own count, so several early publishes in a row just above 97% lower
+  it each time (0.97⁵ ≈ 86% of the first count after five such days), and a weak publish after 08:00 lowers the next day's bar.
 - The hold applies to every run that reaches the step before 08:00: scheduled, Jack's 06:40 timer and manual runs alike. A manual
   run at 07:30 on a backup day can be held; start another after 08:00 if the data must go out.
-- If GitHub starts the 08:17 run late (it has been 2–5 hours late before), a held morning waits for it.
 - From 08:00 the stocks still unconfirmed are left out of that day's file, as before. Once #159 lands they show their last close
   with its line.
 
 What to do:
-- A hold before 08:00 on a backup morning is expected. Nothing to do unless no run has published by about 09:00 KST: check that a
-  later run started; if none did, start Actions → 시세 데이터 갱신 → Run workflow (after 08:00 it publishes what it has), following
-  the DART rule.
-- If every run holds until 08:00 for several days with the counts far apart (for example Yahoo stops filling Korean closes), bring
-  the "!! [보류]" lines to Jack.
+- A hold before 08:00 on a backup morning is expected; the 09:13 check saying the data is not in is then expected too. If no
+  scheduled run has started by about 11:00 KST, start Actions → 시세 데이터 갱신 → Run workflow (after 08:00 it publishes what it
+  has), following the DART rule.
+- If every early run holds for several days with the counts far apart (for example Yahoo stops filling Korean closes), bring the
+  "!! [보류]" lines to Jack.
+- A yellow "이른 발행 보류 확인 못 함" warning means the rule could not run that morning; read the "!!" line for the reason. One
+  morning is fine; if it repeats (a record that doesn't add up), the pipeline's counts changed: fix `tools/publish_hold.py` in a PR.
 - Never change 97% or 08:00 (`HOLD_SHARE_PCT`, `HOLD_BEFORE`) without Jack's yes.
 
 ## Deploy gate: Daum spot-check time limit (관문 두 출처 확인 시간 한도, since #157)
