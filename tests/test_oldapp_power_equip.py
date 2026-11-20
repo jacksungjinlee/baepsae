@@ -170,3 +170,105 @@ def test_old_app_has_a_reading_line_for_elec_and_keeps_the_utility_line():
     lens = src.split("const LENS = {", 1)[1].split("};", 1)[0]
     assert re.search(r"^\s+elec:\s*\{ ko:", lens, re.M)
     assert 'utility:  { ko: "요금은 정부가 정해요. 실적보다 정책·규제 방향이 주가를 움직여요."' in lens
+
+
+# ── 리뷰 (2026-11-20): 가운뎃점 꼴 · 실행마다 남기는 줄 · 지난 공시 줄의 업종 키 ─────────────────
+DOTS = ["·", "ㆍ", "・", "•", "‧", "∙", "･", "."]
+
+
+@pytest.mark.parametrize("dot", DOTS, ids=[hex(ord(d)) for d in DOTS])
+def test_any_middle_dot_in_the_281_name_still_lands_in_elec(dot):
+    for spaced in (True, False):
+        sep = f" {dot} " if spaced else dot
+        name = f"전동기, 발전기 및 전기 변환{sep}공급{sep}제어 장치 제조업"
+        assert F.map_sector_kr_raw(name, "") == "utility" and F.map_sector_kr(name, "") == "elec", name
+        assert F.map_sector_kr(name, "송배전용금구류,변압기") == "elec" and F.map_sector_kr(name, "반도체 및 디스플레이 모션시스템") == "semi"
+    assert F.sector_name_key("전동기, 발전기 및 전기 변환ㆍ공급ㆍ제어 장치 제조업") == F.sector_name_key(NAMES["281"])
+    assert F.map_sector_kr("구조용 금속제품, 탱크 및 증기발생기 제조업", "") == F.map_sector_kr_raw("구조용 금속제품, 탱크 및 증기발생기 제조업", "")
+
+
+def test_raw_rule_is_the_old_rule_everywhere_else():
+    """map_sector_kr_raw 는 고치기 전의 규칙 그대로 (이 파일의 raw_key 와 같아요) · map_sector_kr 은 그 위에 utility → elec 만."""
+    for c, name in NAMES.items():
+        if len(c) == 3:
+            for prod in ("", "전력선", "도시가스", "반도체"):
+                assert F.map_sector_kr_raw(name, prod) == raw_key(name, prod), (c, prod)
+
+
+def kr(t, nk, s, ind, dk):
+    return {"t": t, "nk": nk, "cls": "kr", "s": s, "ind": ind, "dk": dk}
+
+
+def test_run_log_counts_the_moved_makers_and_shouts_when_one_is_left_in_utility():
+    dk = KRX_281 + " · 주요제품: 변압기, 고압차단기, 회전기, 배전반 등 · KOSPI 상장 · 시가총액 15.0조원"
+    odd = "전동기, 발전기 및 전기 변환 / 공급 / 제어 장치 제조업 · 주요제품: 변압기 · KOSPI 상장 · 시가총액 1.0조원"   # 다른 꼴의 글자
+    stocks = [kr("267260", "HD현대일렉트릭", "elec", "power_eq", dk),
+              kr("298040", "효성중공업", "elec", "power_eq", KRX_281 + " · KOSPI 상장 · 시가총액 16.7조원"),
+              kr("336260", "두산퓨얼셀", "elec", "power_eq", KRX_281 + " · 주요제품: 연료전지 · KOSPI 상장 · 시가총액 1.7조원"),   # 규칙이 옮긴 게 아님
+              kr("33626K", "두산퓨얼셀1우", "elec", "power_eq", KRX_281 + " · KOSPI 상장 · 시가총액 607억원"),                  # 우선주는 세지 않아요
+              kr("015760", "한국전력", "utility", "utility", "전기업 · 주요제품: 전력자원개발,발전,송전,전력용기자재확보 · KOSPI 상장 · 시가총액 16.2조원"),
+              {"t": "AAPL", "cls": "us", "s": "utility", "ind": "power_eq"}]
+    moved, stuck = F.power_eq_sector_report(stocks)
+    assert moved == [("267260", "HD현대일렉트릭"), ("298040", "효성중공업")] and stuck == []
+    lines = F.power_eq_sector_lines(moved, stuck)
+    assert len(lines) == 1 and lines[0].startswith("· 예전 뱁새 업종: 전력기기 · 전선 제조사 2종목을") and "HD현대일렉트릭 · 효성중공업" in lines[0]
+    stocks.append(kr("999990", "가상전기", "utility", "power_eq", odd))
+    moved, stuck = F.power_eq_sector_report(stocks)
+    assert len(moved) == 2 and stuck == [("999990", "가상전기", "전동기, 발전기 및 전기 변환 / 공급 / 제어 장치 제조업")]
+    lines = F.power_eq_sector_lines(moved, stuck)
+    assert len(lines) == 2 and lines[1].startswith("  !! 2.0 업종이 전력기기·전선(power_eq)인데 예전 뱁새 업종이 전기·가스·환경(utility)인 국내 종목 1: 999990 가상전기")
+    assert F.power_eq_sector_lines([], [])[0].startswith("· 예전 뱁새 업종: 전력기기 · 전선 제조사 0종목을")
+
+
+def test_the_main_run_logs_the_report_after_industries_are_set():
+    src = open(os.path.join(ROOT, "fetch_data.py"), encoding="utf-8").read()
+    main = src[src.index("    ind_drop = kr_ind_fill(kr,"):]
+    assert main.index("power_eq_sector_lines(*power_eq_sector_report(kr))") < main.index("build_corp(kr,")
+    assert main.index("power_eq_sector_lines(*power_eq_sector_report(kr))") < main.index("fetch_disclosures, kr,")
+
+
+def test_carried_disclosure_rows_take_todays_sector():
+    info = {"298040": {"t": "298040", "s": "elec"}, "005930": {"t": "005930", "s": "semi"}, "000001": {"t": "000001"}}
+    rows = [{"rc": "R1", "t": "298040", "s": "utility"}, {"rc": "R2", "t": "298040", "s": "utility"},
+            {"rc": "R3", "t": "005930", "s": "semi"}, {"rc": "R4", "t": "005930", "s": "etc"},
+            {"rc": "R5", "t": "123450", "s": "chem"},              # 오늘 데이터에 없는 종목: 그대로
+            {"rc": "R6", "t": "000001", "s": "bio"}, {"rc": "R7", "t": "005930"}]
+    ch = F.disc_rows_sector_now(rows, info)
+    assert [r.get("s") for r in rows] == ["elec", "elec", "semi", "semi", "chem", "etc", "semi"]
+    assert ch == {("utility", "elec"): 2, ("etc", "semi"): 1, ("bio", "etc"): 1, (None, "semi"): 1}
+    line = F.disc_sector_line("내부자 거래", ch)
+    assert line.startswith("· 내부자 거래 지난 줄 5건의 업종 키를 오늘 종목 값으로 바꿈 (utility→elec 2") and "없음→semi 1" in line
+    assert F.disc_sector_line("국민연금", F.disc_rows_sector_now([], info)) == "· 국민연금 지난 줄 0건의 업종 키를 오늘 종목 값으로 바꿈"
+
+
+class FakeDart:
+    """가짜 DART: 공시 목록을 받지 못한 날 (지난 발행본의 줄을 그대로 이어 써요)."""
+    down = None
+
+    def get(self, endpoint, params):
+        return None
+
+    def raise_if_fatal(self):
+        pass
+
+
+def test_fetch_disclosures_moves_carried_rows_of_moved_makers(monkeypatch, tmp_path, capsys):
+    """지난 disc.json 에 utility 로 남은 효성중공업 내부자 줄 · 국민연금 줄 → 오늘 종목의 elec (공시·수급 탭이 한 회사를 두 업종에 세지 않게)."""
+    import datetime as dt
+    import json
+    prev = {"asOf": "2026-11-19", "newest": "2026-11-18", "listOk": True,
+            "insider": [{"rc": "R1", "d": "20261110", "t": "298040", "nk": "효성중공업", "s": "utility", "q": -10, "role": "임원"},
+                        {"rc": "R2", "d": "20261105", "t": "267260", "nk": "HD현대일렉트릭", "s": "etc", "q": 5, "role": "임원"},
+                        {"rc": "R3", "d": "20261101", "t": "123450", "nk": "오늘없음", "s": "chem", "q": 1, "role": "임원"}],
+            "nps": [{"d": "20261108", "t": "010120", "nk": "LS ELECTRIC", "s": "utility", "cap": 18.1, "rt": 7.1, "chg": 0.2}]}
+    p = tmp_path / "disc.json"
+    p.write_text(json.dumps(prev, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(F, "OUT_DISC", str(p))
+    stocks = [{"t": t, "nk": nk, "cls": "kr", "s": "elec", "cap": 10.0, "price": 1.0}
+              for t, nk in (("298040", "효성중공업"), ("267260", "HD현대일렉트릭"), ("010120", "LS ELECTRIC"))]
+    out = F.fetch_disclosures(stocks, {"298040": "C1", "267260": "C2", "010120": "C3"}, dt.date(2026, 11, 20), FakeDart())
+    assert [(r["rc"], r["s"]) for r in out["insider"]] == [("R1", "elec"), ("R2", "elec"), ("R3", "chem")]
+    assert [(r["t"], r["s"]) for r in out["nps"]] == [("010120", "elec")]
+    log = capsys.readouterr().out
+    assert "· 내부자 거래 지난 줄 2건의 업종 키를 오늘 종목 값으로 바꿈 (" in log and "utility→elec 1" in log and "etc→elec 1" in log
+    assert "· 국민연금 지난 줄 1건의 업종 키를 오늘 종목 값으로 바꿈 (utility→elec 1)" in log
