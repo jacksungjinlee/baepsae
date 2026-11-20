@@ -260,9 +260,14 @@ export function ownAgedOf(j) {
 // 2026-11-21 (Jack, answer 6, verbatim: "Yes, with a cap. If more than about half of US stocks would carry, the US side shows one
 // line: "미국 종목은 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요." Set the exact cap from history."): the cap is more than half
 // of the US stocks in the file (history: a partial Yahoo gap left about 200 of 800 without a close, 11-20 03:59 and 04:19 UTC; a full
-// blank 799 of 800, 11-20 01:11 UTC, and 11-07). Above it, lists and totals name no US carried stock; their group is { usWide: true }
+// blank 799 of 800, 11-20 01:11 UTC, and 11-07). Above it, market-wide lists name no US carried stock; their group is { usWide: true }
 // and the screens show the market-wide line (format.js ownCloseParts · detail.jsx ownCloseLines). Company pages keep the per-stock line.
-// setOwnCarryWide(data) is called where data.json is loaded (2.0 load.js · old app detail.jsx); before that (tests, preview) it is off.
+// setOwnCarryWide(data) is called where data.json is loaded (2.0 load.js resolveLoad and keepGlobals, so a later publish held off
+// screen never changes it · old app detail.jsx); before that (tests, preview) it is off.
+// Market-wide lists only (2026-11-21, review of Jack's answers 6 and 8): opts.compact — ranking, finder, pick, the build preview,
+// search results, the old app's 종목 고르기 (Korean screen). There the name lines stop at five names + '외 {n}종목' (group.cut) and,
+// above the cap, the US carries are the market-wide group. Lists of the user's own stocks (holdings, plans, records, the watch
+// list) and every English line leave it off: they name every carried stock in the existing line, grouped as before.
 export const US_CARRY_WIDE = 0.5;
 let US_WIDE = false;
 export function usCarryCounts(j) {
@@ -275,7 +280,8 @@ export function setOwnCarryWide(j) {
   return US_WIDE;
 }
 export const ownCarryWide = () => US_WIDE;
-export function ownCloseGroups(stocks, marketDate) {
+export function ownCloseGroups(stocks, marketDate, opts) {
+  const compact = !!(opts && opts.compact);
   const by = new Map(), seen = new Set();
   for (const s of stocks || []) {
     if (!s || s.t == null || s.t === "") continue;
@@ -283,9 +289,9 @@ export function ownCloseGroups(stocks, marketDate) {
     const d = ownCloseDate(s, marketOf(marketDate, s));
     if (!d || seen.has(t)) continue;
     seen.add(t);
-    const kr = ownCarried(s), wide = kr && US_WIDE && s.cls === "us";
+    const kr = ownCarried(s), wide = kr && compact && US_WIDE && s.cls === "us";
     const key = (wide ? "uw " : kr ? "kr " : "us ") + d;
-    if (!by.has(key)) by.set(key, wide ? { date: d, ts: [], kr: true, names: [], usWide: true } : kr ? { date: d, ts: [], kr: true, names: [] } : { date: d, ts: [] });
+    if (!by.has(key)) by.set(key, wide ? { date: d, ts: [], kr: true, names: [], usWide: true } : kr ? { date: d, ts: [], kr: true, names: [], ...(compact ? { cut: true } : {}) } : { date: d, ts: [] });
     const g = by.get(key);
     g.ts.push(t);
     if (kr) g.names.push(String(krOwnOf(s) ? s.nk || t : t));   // 미국 마지막 확인 종가 (2026-11-20): 티커

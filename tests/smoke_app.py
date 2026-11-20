@@ -3755,10 +3755,12 @@ def strip_us_own_dates(f):
 def us_carry_picks(f, n):
     """2026-11-21 (Jack 의 규칙 · CLAUDE.md #154: 발행 전 화면 검사의 장면은 특정 종목 · 특정 날의 데이터에 기대지 않아요): 미국 마지막 확인 종가 장면이
     쓸 미국 회사 주식을 그날 데이터에서 기준으로 골라요 — cls us · 펀드 · ETF 아님 · 가격 · 이름 있음 · pxd 없음, 시가총액 큰 순 앞 n개 (고정 데이터도
-    같은 기준). 국내 쪽은 kr_own_picks 의 plain (실제 데이터) · 005930 (고정 데이터). 모자라면 None."""
+    같은 기준). 국내 쪽은 kr_own_picks 의 plain (실제 데이터) · 005930 (고정 데이터). 모자라면 None. '-' 나 '.' 가 든 티커 (BRK-B: 예전 뱁새는
+    BRK.B 로 적어요) 는 고르지 않아요 (리뷰 2026-11-21)."""
     d = f["data.json"]
     us = sorted((x for x in d["stocks"] if x.get("cls") == "us" and not x.get("fund") and not x.get("etf") and (x.get("price") or 0) > 0
-                 and x.get("pxd") is None and isinstance(x.get("nk"), str) and x["nk"] and isinstance(x.get("t"), str)),
+                 and x.get("pxd") is None and isinstance(x.get("nk"), str) and x["nk"] and isinstance(x.get("t"), str)
+                 and "-" not in x["t"] and "." not in x["t"]),
                 key=lambda x: (-(x.get("cap") or 0), x["t"]))
     return [x["t"] for x in us[:n]] if len(us) >= n else None
 
@@ -3828,9 +3830,10 @@ def scene_us_carry(R, files):
 
 
 def scene_us_carry_many(R, files):
-    """2026-11-21 (Jack, answers 8 · 6): 마지막 확인 종가 종목이 5개를 넘으면 한국어 줄은 앞 5개 + '외 {n}종목' · 그날 미국 종목의 절반 넘게 마지막 확인
-    종가면 미국 쪽은 '미국 종목은 오늘 종가를 확인하지 못해서 {날짜} 종가를 보여 드려요.' 한 줄. 영어 화면은 승인된 영어가 없어 예전 그대로 (모든 코드).
-    종목은 그날 데이터에서 골라요 (us_carry_picks · CLAUDE.md #154)."""
+    """2026-11-21 (Jack, answers 8 · 6; review 2026-11-21: market-wide lists only): 시장 전체 목록 (종목 고르기 · 미국 · 시총) 의 한국어 줄은 마지막 확인
+    종가 종목이 5개를 넘으면 앞 5개 + '외 {n}종목' · 그날 미국 종목의 절반 넘게 마지막 확인 종가면 미국 쪽은 '미국 종목은 오늘 종가를 확인하지 못해서
+    {날짜} 종가를 보여 드려요.' 한 줄. 내 보유 목록 (포트폴리오 배너) 은 두 날 모두 예전 그대로 모든 이름 + Jack 의 줄. 영어 화면은 어디서나 예전 그대로
+    (모든 코드, 묶음도 같아요). 종목은 그날 데이터에서 골라요 (us_carry_picks · CLAUDE.md #154)."""
     S = "미국 마지막 확인 종가 · 많은 날"
     base_f = strip_us_own_dates(strip_kr_carries(json.loads(json.dumps(files, allow_nan=True))))
     picks, (kt, _knk) = us_carry_picks(base_f, 7), _kr_plain(base_f)
@@ -3841,9 +3844,11 @@ def scene_us_carry_many(R, files):
     day = _iso_minus(usd, 1)
     md_ko, md_en = _md(day, "ko"), _md(day, "en")
     jack = f"오늘 종가를 확인하지 못해서 {md_ko} 종가를 보여 드려요."
-    en_all = f"{', '.join(picks)}: We couldn't confirm today's close, so this shows the {md_en} close."
+    en_line = f"We couldn't confirm today's close, so this shows the {md_en} close."
     BANNER = "() => [...document.querySelectorAll('.nonLiveBanner [data-own-close]')].map((e) => e.innerText)"
+    NOTE = "() => [...document.querySelectorAll('.ownCloseNote div')].map((e) => e.innerText.trim())"
     slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": kt, "mw": 300}] + [{"t": t, "mw": 50} for t in picks]}
+    banner_ko, banner_en = [f"{', '.join(picks)}: {jack}"], [f"{', '.join(picks)}: {en_line}"]     # 내 보유 목록: 모두, 두 날 모두
 
     def run(wide):
         f = json.loads(json.dumps(base_f))
@@ -3857,26 +3862,38 @@ def scene_us_carry_many(R, files):
         d["usSrc"] = {"v": 1, "own": {"v": 1, "max": 5, "n": len(codes), "codes": codes, "same": [], "from": {t: "bar" for t in codes},
                                       "drop": {}, "dropEx": [], "bad": {"n": 0, "rows": []}}}
         assert (len(mark) * 2 > len([s for s in d["stocks"] if s.get("cls") == "us" and not s.get("fund")])) == wide
-        want_ko = [f"미국 종목은 {jack}"] if wide else [f"{', '.join(picks[:5])} 외 2종목: {jack}"]
+        list_ko = [f"미국 종목은 {jack}"] if wide else [f"{', '.join(picks[:5])} 외 2종목: {jack}"]
         srv, ctx, page, _ = R.open(build_site(f), local=slot_local([("susmany", "미국 많은 종목 시험", slot)]), once=True)
         try:
+            def list_en_ok():
+                got = page.evaluate(NOTE)
+                return len(got) == 1 and got[0].endswith(": " + en_line) and all(t in got[0].split(": ")[0].split(", ") for t in picks), got
+
             def check():
                 page.get_by_text("차근차근 만들기", exact=True).click()
                 page.get_by_text("미국 많은 종목 시험", exact=False).first.click()
                 see(page, "보통 해 ±")
                 page.locator(".nonLiveBanner").first.wait_for(state="visible", timeout=WAIT)
-                settled(page, BANNER, want_ko, "한국어 배너")
+                settled(page, BANNER, banner_ko, "한국어 배너: 내 보유 목록은 모든 이름 + Jack 의 줄")
+                page.get_by_role("button", name="US", exact=True).first.click()           # 종목 고르기: 미국 · 시총 (시장 전체 목록)
+                page.get_by_role("button", name="시총", exact=True).first.click()
+                page.locator(".ownCloseNote").wait_for(state="visible", timeout=WAIT)
+                settled(page, NOTE, list_ko, "종목 고르기 목록 위: 5개 + 외 n종목 · 미국 전체 한 줄")
                 page.get_by_role("button", name="EN", exact=True).first.click()
                 page.locator(".nonLiveBanner").first.wait_for(state="visible", timeout=WAIT)
-                settled(page, BANNER, [en_all], "영어 배너: 예전 그대로 (모든 코드)")
+                settled(page, BANNER, banner_en, "영어 배너: 예전 그대로 (모든 코드)")
+                page.wait_for_function("() => document.querySelectorAll('.ownCloseNote div').length === 1", timeout=WAIT)
+                ok, got = list_en_ok()
+                assert ok, ("영어 종목 고르기: 예전 그대로 한 줄 (모든 코드)", got)
                 page.get_by_role("button", name="한국어", exact=True).first.click()
-                settled(page, BANNER, want_ko, "한국어로 되돌린 배너")
-            R.check(page, S, ("절반 넘게: 미국 쪽은 '미국 종목은 …' 한 줄" if wide else "일곱 종목: 앞 5개 + '외 2종목'") + " · 영어는 예전 그대로", check)
+                settled(page, BANNER, banner_ko, "한국어로 되돌린 배너")
+                settled(page, NOTE, list_ko, "한국어로 되돌린 종목 고르기")
+            R.check(page, S, ("절반 넘게: 종목 고르기의 미국 쪽은 '미국 종목은 …' 한 줄" if wide else "일곱 종목: 종목 고르기는 앞 5개 + '외 2종목'")
+                    + " · 배너 (내 보유) 는 모든 이름 · 영어는 예전 그대로", check)
         finally:
             ctx.close(); srv.shutdown()
     run(False)
     run(True)
-
 
 def scene_list(R, fresh, full):
     """모든 장면을 순서대로 (이름, 함수). 함수는 부를 때만 돌아요 — 목록을 만드는 것만으로는 아무것도 하지 않아요 (--part 시험)."""

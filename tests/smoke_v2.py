@@ -15169,19 +15169,47 @@ def scene_us_own_close_daily(R, files, width=390):
     srv.shutdown()
 
 
+def us_own_text_compact(stocks, ts, wide):
+    """시장 전체 목록의 안내 (2026-11-21, Jack 답 8 · 6 · 리뷰): us_own_text 와 같은데 마지막 확인 종가의 이름 줄은 5개까지 + '외 {n}종목' · wide (그날
+    미국 종목의 절반 넘게 마지막 확인 종가)면 미국의 마지막 확인 종가 종목은 '미국 종목은 …' 한 줄 (같은 날짜면 예전 문장 · 이름 줄 · 미국 전체 줄 순서)."""
+    by = by_t(stocks)
+    groups, seen = {}, set()
+    for t in ts:
+        s = by.get(t)
+        if not s or t in seen or not s.get("pxd"):
+            continue
+        seen.add(t)
+        carried = s["cls"] == "kr" or s.get("pxc") is True
+        kind = 2 if carried and wide and s["cls"] == "us" else 1 if carried else 0
+        groups.setdefault((s["pxd"], kind), []).append(s["nk"] if s["cls"] == "kr" else t)
+    out = []
+    for day, kind in sorted(groups, key=lambda k: (k[0], -k[1]), reverse=True):
+        names, md = groups[(day, kind)], mdtext(day)
+        if kind == 2:
+            out.append(fillp(C["app"]["usOwnCloseAll"], date=md))
+        elif kind == 1 and len(names) > 5:
+            out.append(fillp(C["app"]["krOwnCloseListMore"], names=", ".join(names[:5]), n=len(names) - 5, date=md))
+        elif kind == 1:
+            out.append(fillp(C["app"]["krOwnCloseList"], names=", ".join(names), date=md))
+        else:
+            out.append(fillp(C["app"]["ownClose"], names=", ".join(names), md=md))
+    return " ".join(out) or None
+
+
 def scene_us_own_close_many(R, files, width=390):
-    """2026-11-21 (Jack, answers 8 · 6): 홈 포트폴리오 카드의 안내 — 마지막 확인 종가 종목이 5개를 넘으면 앞 5개 + '외 {n}종목' 한 줄 · 그날 미국 종목의
-    절반 넘게 마지막 확인 종가면 미국 쪽은 '미국 종목은 오늘 종가를 확인하지 못해서 {날짜} 종가를 보여 드려요.' 한 줄 (회사 페이지는 종목마다 Jack 의 줄)."""
+    """2026-11-21 (Jack, answers 8 · 6; review 2026-11-21: market-wide lists only): 시장 전체 목록 (종목 순위 · 미국 · 시가총액) 의 안내 — 마지막 확인
+    종가 종목이 5개를 넘으면 앞 5개 + '외 {n}종목' 한 줄 · 그날 미국 종목의 절반 넘게 마지막 확인 종가면 미국 쪽은 '미국 종목은 …' 한 줄. 내 보유 목록
+    (홈 포트폴리오 카드) 은 두 날 모두 예전 그대로 모든 이름 + Jack 의 줄 · 회사 페이지는 종목마다 Jack 의 줄."""
     S = f"미국 마지막 확인 종가 · 많은 날 {width}"
     base = daily_files(files)
-    us_all = [x for x in base["data.json"]["stocks"] if x.get("cls") == "us" and not x.get("fund")]
-    picks = [x["t"] for x in sorted((x for x in us_all if not x.get("etf") and (x.get("price") or 0) > 0 and not x.get("pxd")),
-                                    key=lambda x: (-(x.get("cap") or 0), x["t"]))[:7]]
+    by0 = by_t(base["data.json"]["stocks"])
+    order = rank_expect(base["data.json"]["stocks"], "us", "cap")                # 종목 순위 (미국 · 시가총액) 의 위에서부터 (pxd 가 없는 종목)
+    picks = [t for t in order if not by0[t].get("pxd") and (by0[t].get("price") or 0) > 0][:7]
     assert len(picks) == 7, picks
     day = "2026-10-29"
     jack = fillp(C["app"]["krOwnClose"], date=mdtext(day))
+    wide_line = fillp(C["app"]["usOwnCloseAll"], date=mdtext(day))
     band = lambda t: [{"id": "band", "kind": "band", "check": "checked", "target": t, "bands": [0.75 * t, 1.25 * t, 1.4 * t]}]
-    by0 = by_t(base["data.json"]["stocks"])
     deck = {"id": "dusmany", "name": "미국 확인 포트폴리오", "createdAt": "2026-10-01", "planFx": 1300,
             "holdings": [{"t": t, "nk": by0[t]["nk"], "cls": "us", "target": 1 / 7, "plannedQty": 1, "rules": band(1 / 7)} for t in picks],
             "purchases": [{"id": f"p{i}usmany", "t": t, "date": "2026-10-01", "qty": 1, "price": 100.0, "ccy": "USD", "fx": 1300} for i, t in enumerate(picks)]}
@@ -15197,33 +15225,46 @@ def scene_us_own_close_many(R, files, width=390):
         d["usSrc"] = {"v": 1, "own": {"v": 1, "max": 5, "n": len(codes), "codes": codes, "same": [], "from": {t: "bar" for t in codes}, "drop": {},
                                       "dropEx": [], "bad": {"n": 0, "rows": []}, "aged": []}}
         return f
-    for wide, want in ((False, fillp(C["app"]["krOwnCloseListMore"], names=", ".join(picks[:5]), n=2, date=mdtext(day))),
-                       (True, fillp(C["app"]["usOwnCloseAll"], date=mdtext(day)))):
-        srv, ctx, page, _ = R.open(build_site(files_for(wide)), width, init=e_store([deck]))
+    for wide in (False, True):
+        f = files_for(wide)
+        stocks = f["data.json"]["stocks"]
+        srv, ctx, page, _ = R.open(build_site(f), width, init=e_store([deck]))
 
-        def home():
-            card = page.locator('[data-ui-v2="home-block"]')
+        def run():
+            card = page.locator('[data-ui-v2="home-block"]')                    # 내 보유 목록: 모든 이름 + Jack 의 줄 (자르지 않고, 미국 전체 줄도 없이)
             card.wait_for(state="visible")
             note = card.locator('[data-ui-v2="own-close"]').first
             note.wait_for(state="visible")
             got = note.inner_text()
-            if wide:
-                assert got == want, (got, want)
-            else:                                                                    # 이름은 화면 순서 (비중 순) — 앞 5개 · 외 2종목 · Jack 의 줄
-                head, _sep, tail = got.partition(" 외 2종목: ")
-                names = head.split(", ")
-                assert tail == jack and len(names) == 5 and set(names) <= set(picks) and len(set(names)) == 5, (got, want)
+            head, sep, tail = got.partition(": ")
+            assert sep and tail == jack and sorted(head.split(", ")) == sorted(picks), (got, picks)
+            assert wide_line not in got and " 외 " not in got, got
+            page.evaluate("location.hash = '#stocks'")                         # 시장 전체 목록: 종목 순위 (미국 · 시가총액)
+            at(page, "stocks")
+            rank = page.locator('[data-ui-v2="rank"]')
+            rank.wait_for(state="visible")
+            rank_chip(page, "cap")
+            rank_market(page, "us")
+            ts = rank_ts(page)
+            assert set(picks) <= set(ts), (picks, ts)
+            want = us_own_text_compact(stocks, ts, wide)
+            note = rank.locator('[data-ui-v2="own-close"]')
+            assert want and note.count() == 1 and note.inner_text() == want, (note.all_inner_texts(), want)
+            if wide:                                                           # 미국 쪽은 한 줄: 티커를 하나도 적지 않아요
+                assert wide_line in want and not any(t + ":" in want or t + "," in want for t in ts), want
+            else:                                                              # 일곱 종목: 화면 순서로 앞 5개 · 외 2종목 · Jack 의 줄
+                assert fillp(C["app"]["krOwnCloseListMore"], names=", ".join([t for t in ts if t in picks][:5]), n=2, date=mdtext(day)) in want, want
+            floor_ok(page, "종목 순위 · 많은 날")
+            no_hscroll(page, width)
             co_hash(page, f"#stocks/{picks[0]}")                                     # 회사 페이지는 종목마다 Jack 의 줄 그대로
             page.wait_for_function("(t) => { const e = document.querySelector('[data-ui-v2=\"co-head\"]'); return !!e && e.dataset.t === t; }", arg=picks[0])
             line = page.locator('[data-ui-v2="co-head"] [data-ui-v2="kr-own-close"]')
             assert line.count() == 1 and line.inner_text() == jack, line.all_inner_texts()
-            floor_ok(page, "홈 · 많은 날")
-            no_hscroll(page, width)
             R.collect(page)
-        R.check(page, S, ("절반 넘게: 미국 쪽은 '미국 종목은 …' 한 줄" if wide else "일곱 종목: 앞 5개 + '외 2종목' 한 줄") + " · 회사 페이지는 Jack 의 줄", home)
+        R.check(page, S, ("절반 넘게: 종목 순위의 미국 쪽은 '미국 종목은 …' 한 줄" if wide else "일곱 종목: 종목 순위는 앞 5개 + '외 2종목' 한 줄")
+                + " · 홈 포트폴리오 카드는 모든 이름 + Jack 의 줄 · 회사 페이지는 Jack 의 줄", run)
         ctx.close()
         srv.shutdown()
-
 
 def main():
     ap = argparse.ArgumentParser()

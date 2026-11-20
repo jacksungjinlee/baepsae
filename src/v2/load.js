@@ -267,11 +267,12 @@ async function laterPublish(cur, discNow, now, o) {
   return { ok: true, load: next, disc: res.disc ? res.disc.data : null };
 }
 
-// The app-wide readings resolveLoad sets from the files of a load (engine.setDataShape from data.json; fix.js setEpsBasis
-// from corp.json, #89), set again for the load on screen (a failed load: as before any load).
+// The app-wide readings resolveLoad sets from the files of a load (engine.setDataShape and data.js setOwnCarryWide from
+// data.json; fix.js setEpsBasis from corp.json, #89), set again for the load on screen (a failed load: as before any load).
 function keepGlobals(load) {
   setDataShape(load && load.data);
   setEpsBasis(load && load.corp, { preview: !!(load && load.preview) });
+  setOwnCarryWide(load && load.data);     // 2026-11-21: the market-wide US line follows the data on screen (data.js US_CARRY_WIDE)
 }
 // The state refetchNewer returned, as it goes on screen: the app reads the new files their own way from now on (the data
 // shape and the PER/EPS line's basis, as resolveLoad sets them for a first load). -> the state to show.

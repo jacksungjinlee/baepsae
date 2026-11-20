@@ -1173,13 +1173,16 @@ const T_STALE_LATE = { ko: "갱신이 늦어지고 있어요", en: "update is ru
 // (fixnote.jsx FIX_KR_OWN_CLOSE_LIST) · 영어 화면은 "{코드}: We couldn't confirm today's close, so this shows the {date} close."
 // (FIX_KR_OWN_CLOSE_EN). 미국 종목은 예전 그대로.
 // 예전 뱁새의 내장 국내 종목(BASE_STOCKS)에는 cls 가 없어요 (미국만 "us") — cls 가 없는 종목은 국내로 봐요 (pxd 는 국내 · 미국 종목에만 있어요).
-function ownCloseLines(lang, list) {
+// compact: 시장 전체 목록 (종목 고르기). 보유 종목 · 주문 메모 · CSV 는 compact 없이 마지막 확인 종가 종목을 모두 적어요.
+function ownCloseLines(lang, list, compact = false) {
   const l = lang === "en" ? "en" : "ko";
-  return ownCloseGroups((list || []).map((s) => (s && s.cls == null ? { ...s, cls: "kr" } : s)), null).map((g) => {
+  return ownCloseGroups((list || []).map((s) => (s && s.cls == null ? { ...s, cls: "kr" } : s)), null, { compact: compact && l === "ko" }).map((g) => {
     // 2026-11-20 (Jack, b · c): 국내 종목은 날짜마다 한 줄 "{이름}: 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요." · 영어 화면은 코드와 승인된 영어 문장
-    // 2026-11-21 (Jack, answers 8 · 6): 한국어 화면은 이름 5개까지 + '외 {n}종목' · 미국 종목의 절반 넘게 마지막 확인 종가면 미국 쪽은 한 줄 (영어 화면은 예전 그대로)
-    if (g.usWide && l === "ko") return usOwnCloseAllLine(g.date);
-    if (g.kr) return krOwnCloseListLine((l === "ko" && Array.isArray(g.names) ? g.names : g.ts), g.date, l);
+    // 2026-11-21 (Jack, answers 8 · 6): 시장 전체 목록의 한국어 화면만 이름 5개까지 + '외 {n}종목' (g.cut) · 미국 종목의 절반 넘게 마지막 확인
+    // 종가면 미국 쪽은 한 줄 (g.usWide). 내 보유 목록과 영어 화면은 예전 그대로 (모두 적고, 묶음도 같아요)
+    const names = l === "ko" && Array.isArray(g.names) ? g.names : g.ts;
+    if (g.usWide) return usOwnCloseAllLine(g.date);
+    if (g.kr) return krOwnCloseListLine((g.cut ? names : names.join(", ")), g.date, l);
     return T_OWN_CLOSE[l].replace("{names}", g.ts.join(", ")).replace("{md}", mdOf(g.date, l));
   }).filter(Boolean);
 }
@@ -2195,7 +2198,7 @@ function StockShelf({ lang, t, mode, interested, stocks, holdings, onAdd, onAddC
     return CLS_LIST.filter((c) => g[c].length).map((c) => [c, g[c]]);
   }, [results]);
   // v19.1c: 보이는 줄에 앞선 종가로 나가는 미국 종목(pxd)이 있으면 목록 위에 이름과 날짜 (가격은 그 날짜의 종가)
-  const ownShown = useMemo(() => ownCloseLines(lang, results), [lang, results]);
+  const ownShown = useMemo(() => ownCloseLines(lang, results, true), [lang, results]);     // 시장 전체 목록 (2026-11-21)
 
   const add = (s) => {
     onAdd(s);

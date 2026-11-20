@@ -65,8 +65,9 @@ export function ownCloseParts(groups) {
     } else if (g.kr) {
       if (!C.app.krOwnCloseList) return null;
       const names = Array.isArray(g.names) && g.names.length === g.ts.length ? g.names : g.ts;
-      // 2026-11-21 (Jack, answer 8): at most OWN_LIST_MAX names, then "외 {n}종목"
-      if (names.length > OWN_LIST_MAX && C.app.krOwnCloseListMore) {
+      // 2026-11-21 (Jack, answer 8): on a market-wide list (data.js ownCloseGroups opts.compact: g.cut) at most OWN_LIST_MAX names,
+      // then "외 {n}종목"; a list of the user's own stocks names every one
+      if (g.cut && names.length > OWN_LIST_MAX && C.app.krOwnCloseListMore) {
         out.push(fill(C.app.krOwnCloseListMore, { names: names.slice(0, OWN_LIST_MAX).join(", "), n: names.length - OWN_LIST_MAX, date: md }));
       } else out.push(fill(C.app.krOwnCloseList, { names: names.join(", "), date: md }));
     } else out.push(fill(C.app.ownClose, { names: g.ts.join(", "), md }));
