@@ -1131,19 +1131,21 @@ data, or named in `data.json` `usExtraMissing` with the reason the run left it o
 days of prices, a broken bar, a preferred share, a Korean company's US listing; if the run cannot tell, the reason says so
 and asks for a check). A named stock warns, with its reason.
 Since #? (Jack, 2026-11-21: "Yes, warn.", under his 11-20 rule "one stock missing from a source never holds the publish",
-the same as BF-B in #149), a stock that is neither in the list nor in the record also only warns, named with "이유 없음" in the
-row, the gate log ("!! 경고 …" and the "!! 손으로 더한 미국 종목 중 오늘 없는 종목" list) and the run summary. The publish still fails, as
-before, when (1) more than 5 such stocks are missing with no reason (`US_EXTRA_QUIET_MAX`; the run writes a reason for every
-stock it leaves out, so that many means the pipeline's list no longer matches the gate's own list `US_EXTRA_SET`, or the
-record broke, not one stock missing. History, the 27 data-branch publishes 11-06 to 11-20 KST: the 11 with the record (from
-11-14) had 0 of 67 missing; the 16 before had all 39 stocks of the list as it was then; so N = max(5, 3 × 0) = 5, Jack's
-default. The 16 older files lack the 28 added on 11-14, the kind of list mismatch this catches), (2) a stock's row is in the
-list without a price and the record gives no reason (the app would show it without a price), or data.json has a row for that
-ticker that is not a US stock row (`cls` not `us`, or `fund`: a wrong row, not a missing one), or (3) the record names the
-stock but its reason is not text (null, empty, a number: a broken record). Stocks named with a reason never fail, however
-many. A file without the record (or whose record is not an object) warns on a publish and is skipped by the site checks
-(deploy, watchdog), which only warn on everything above, so code that adds a stock can go live before the next publish
-brings it in.
+the same as BF-B in #149), a stock that is neither in the list nor in the record also only warns, named in the row ("이유 없이
+빠짐 n: …"), the gate log ("!! 경고 …" and the "!! 손으로 더한 미국 종목 중 오늘 없는 종목" list, "BTI: 이유 없음") and the run summary. A stock
+Yahoo doesn't send always had a reason, so this case means our own code lost the stock after the US list was built (no code
+does today); the limit below is Jack's standing rule for checks on our own processing (section above). The publish still
+fails, as before, when (1) more than 5 such stocks are missing with no reason (`US_EXTRA_QUIET_MAX`; the run writes a reason
+for every stock it leaves out, so that many means the pipeline's list no longer matches the gate's own list `US_EXTRA_SET`,
+or the record broke, not one stock missing. History, the 27 data-branch publishes 11-06 to 11-20 KST: the 11 with the record
+(from 11-14) had 0 of 67 missing; the 16 before had all 39 stocks of the list as it was then; so N = max(5, 3 × 0) = 5,
+Jack's default. The 16 older files lack the 28 added on 11-14, the kind of list mismatch this catches), (2) a stock's row is
+in the list without a price and the record gives no reason (the app would show it without a price), or data.json has a row
+for that ticker that is not a US stock row (`cls` not `us`, or `fund`: a wrong row, not a missing one), or (3) the record
+names the stock but its reason is not text (null, empty, a number: a broken record). Stocks named with a reason never fail,
+however many. A file without the record (or whose record is not an object) warns on a publish and is skipped by the site
+checks (deploy, watchdog), which only warn on everything above, so code that adds a stock can go live before the next
+publish brings it in.
 
 **Gate row "미국 상장 외국 회사: 회사 합계와 맞춘 PER·PBR·배당수익률만".** For the foreign companies in the US list that
 report in dollars (no `fcur`; the others are blanked by the currency rule, #114), the run compares Yahoo's per-share
