@@ -80,7 +80,7 @@ ksic,name,s,ind,status,why
 271,의료용 기기 제조업,health,medical,ok,
 272,"측정, 시험, 항해, 제어 및 기타 정밀 기기 제조업; 광학 기기 제외",elec,precision,ok,
 273,사진장비 및 광학 기기 제조업,elec,precision,ok,
-281,"전동기, 발전기 및 전기 변환·공급·제어 장치 제조업",utility,power_eq,ambiguous,"예전 뱁새 utility 의 '요금은 정부가 정해요' 가 맞지 않고, KRX 글자로는 이 코드가 utility 라 다른 키로 채우면 한 코드가 두 업종이 돼요"
+281,"전동기, 발전기 및 전기 변환·공급·제어 장치 제조업",elec,power_eq,ambiguous,KRX 글자 길을 2026-11-20 utility 에서 elec 으로 옮겼어요 (그 전엔 utility 의 '요금은 정부가 정해요' 가 맞지 않아 채우지 않았어요) — DART 로 채우는 건 Jack 의 답을 기다려요
 282,일차전지 및 이차전지 제조업,battery,battery,ok,
 283,절연선 및 케이블 제조업,etc,power_eq,none,예전 뱁새 업종 키를 찾지 못함 (기타)
 284,전구 및 조명장치 제조업,etc,power_eq,none,예전 뱁새 업종 키를 찾지 못함 (기타)
