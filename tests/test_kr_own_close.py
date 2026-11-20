@@ -848,30 +848,33 @@ def held_deck(ts):
 
 
 @needs_node
-def test_the_late_check_never_runs_on_a_close_more_than_five_trading_days_old_in_total():
-    """Jack (2026-11-20, f): "cap the late-data portfolio check (#144) so it never runs on a close more than 5 KRX trading days old in
-    total (carried close age counts), instead of up to 10." — 늦은 데이터(pxDate 11-16)에서 11-13 종가로 실은 종목을 가진 포트폴리오는 11-20 (그
-    종가 뒤 5거래일) 까지 점검하고, 11-23 (6거래일) 에는 점검하지 않아요. 그 종목이 없는 포트폴리오는 예전처럼 11-23 (pxDate 뒤 5거래일) 까지."""
-    f = late_files([kr("005930", "삼성전자"), kr("094800", "맵스리얼티", d1=None, pxd=D13), us("AAPL", pxd="2026-11-13", d1=None)])
+def test_the_late_check_leaves_out_only_a_carried_stock_more_than_five_trading_days_old_in_total():
+    """Jack (2026-11-20, f) and (2026-11-21, answer 4, verbatim: "Not all-or-nothing. Leave that one stock out with the approved line
+    ("며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요.") and check the rest.") — 늦은 데이터(pxDate 11-16)에서 11-13 종가로 실은 종목은
+    11-20 (그 종가 뒤 5거래일) 까지 점검에 들고, 11-23 (6거래일) 에는 그 종목만 빠져요 (오늘 데이터에 없는 종목처럼 · 줄은 Jack 의 줄) — 나머지
+    종목과 포트폴리오는 그대로 점검해요 · 늦은 상태는 그대로예요 ('…점검하지 않았어요' 띠는 데이터 자체가 5거래일을 넘을 때만, main 과 같아요)."""
+    f = late_files([kr("005930", "삼성전자"), kr("094800", "맵스리얼티", d1=None, pxd=D13), us("AAPL", pxd="2026-11-06", d1=None)])
     got = run("""
 const loadOf = (w) => LD.resolveLoad({ data: { ok: true, data: F0.data }, corp: { ok: true, data: F0.corp }, macro: { ok: false, error: 'x' } }, Date.parse(w));
-const ev = (w, decks) => { const ctx = R.todayCtx(loadOf(w), Date.parse(w), decks); const e = R.evaluateAll(decks, ctx);
-  return [e.ok, e.ok ? !!e.late : e.why, ctx.state.capped || null]; };
-const C1 = [CARRY], P1 = [PLAIN], U1 = [USD];
+const ev = (w, decks) => { const ctx = R.todayCtx(loadOf(w), Date.parse(w)); const e = R.evaluateAll(decks, ctx);
+  return { ok: e.ok, late: e.ok && e.late ? e.late.n : (e.why || null), out: [...ctx.lateOut.keys()], aged: [...ctx.aged.keys()],
+    by: ['005930', '094800', 'AAPL'].map((t) => ctx.byT.has(t)),
+    decks: e.ok ? e.decks.map((d) => ({ absent: d.absent, st: d.holdings.map((x) => [x.t, x.absent]) })) : [] }; };
 WARN.splice(0);
-out = { fresh: ev('2026-11-17T09:00:00+09:00', C1), d20: ev('2026-11-20T09:00:00+09:00', C1), d23: ev('2026-11-23T09:00:00+09:00', C1),
-  plain23: ev('2026-11-23T09:00:00+09:00', P1), us23: ev('2026-11-23T09:00:00+09:00', U1), plain24: ev('2026-11-24T09:00:00+09:00', P1),
-  both23: ev('2026-11-23T09:00:00+09:00', [PLAIN, CARRY]), nodecks: R.todayCtx(loadOf('2026-11-23T09:00:00+09:00'), Date.parse('2026-11-23T09:00:00+09:00')).state,
-  warn: WARN.filter((w) => w.includes('last confirmed close')) };""",
-              F0=f, CARRY=held_deck(["005930", "094800"]), PLAIN=held_deck(["005930"]), USD=held_deck(["005930", "AAPL"]))
-    assert got["fresh"] == [True, False, None]                                 # 제때 발행: 늦은 점검이 아니에요 (그대로)
-    assert got["d20"] == [True, True, None]                                    # 11-13 종가 뒤 5거래일: 늦은 점검이 돌아요
-    assert got["d23"] == [False, "stale", {"t": "094800", "pxd": D13, "n": 6}]  # 6거래일: 점검하지 않아요 (예전 10일 → 이제 5일)
-    assert got["plain23"] == [True, True, None]                                # 그 종목이 없으면 예전처럼 pxDate 뒤 5거래일까지
-    assert got["plain24"] == [False, "stale", None]
-    assert got["us23"] == [True, True, None]                                   # 미국 pxd 는 그대로 (이번 변경은 국내 마지막 확인 종가)
-    assert got["both23"][0] is False                                           # 포트폴리오 모두 함께 (늦은 점검은 한 상태예요)
-    assert got["nodecks"]["ok"] is True and got["nodecks"]["late"]["n"] == 5   # 포트폴리오를 넘기지 않으면 예전 그대로
+out = { fresh: ev('2026-11-17T09:00:00+09:00', [CARRY]), d20: ev('2026-11-20T09:00:00+09:00', [CARRY]), d23: ev('2026-11-23T09:00:00+09:00', [CARRY, PLAIN, USD]),
+  d24: ev('2026-11-24T09:00:00+09:00', [CARRY, PLAIN]), only23: ev('2026-11-23T09:00:00+09:00', [ONLY]),
+  warn: WARN.filter((w) => w.includes('left out of the check')) };""",
+              F0=f, CARRY=held_deck(["005930", "094800"]), PLAIN=held_deck(["005930"]), USD=held_deck(["005930", "AAPL"]), ONLY=held_deck(["094800"]))
+    assert got["fresh"]["ok"] and got["fresh"]["late"] is None and got["fresh"]["out"] == []          # 제때 발행: 늦은 점검이 아니에요 (그대로)
+    assert got["d20"]["ok"] and got["d20"]["late"] == 4 and got["d20"]["out"] == [] and got["d20"]["by"] == [True, True, True]   # 5거래일: 그대로
+    d23 = got["d23"]
+    assert d23["ok"] and d23["late"] == 5 and d23["out"] == ["094800"] and d23["by"] == [True, False, True]      # 6거래일: 그 종목만 빠져요
+    assert d23["aged"] == ["094800"]                                                                             # 그 줄 밑에 Jack 의 줄
+    assert d23["decks"][0] == {"absent": ["094800"], "st": [["005930", False], ["094800", True]]}               # 나머지는 점검해요
+    assert d23["decks"][1] == {"absent": [], "st": [["005930", False]]}                                         # 다른 포트폴리오는 그대로
+    assert d23["decks"][2] == {"absent": [], "st": [["005930", False], ["AAPL", False]]}                       # 미국 pxd 는 그대로 (11-06 종가)
+    assert got["only23"]["ok"] and got["only23"]["decks"][0]["absent"] == ["094800"]                          # 그 종목뿐인 포트폴리오: 그 줄만 (합계 없음)
+    assert got["d24"] == {"ok": False, "late": "stale", "out": [], "aged": [], "by": [True, True, True], "decks": []}   # 데이터 자체가 6거래일: 예전 그대로
     assert any("094800" in w and "more than 5 in total" in w for w in got["warn"]), got["warn"]
 
 
@@ -888,35 +891,40 @@ out = { m: [...m.entries()], none: D.ownAgedOf({ stocks: [] }).size, old: D.ownA
 
 
 @needs_node
-def test_the_late_cap_counts_every_stock_the_check_reads_and_stops_on_an_unreadable_date():
-    """리뷰 4 (2026-11-20): 다 팔고 포트폴리오에 남겨 둔 종목도 점검이 읽어요 (밴드 · 깨진 규칙, evaluateDeck) — 그 종목의 마지막 확인 종가도 세요.
-    가진 종목 넣기의 줄도 · 날짜로 읽을 수 없는 pxd 는 멈춰요 (더 엄격한 쪽) · pxd 가 기준일과 같으면 마지막 확인 종가가 아니에요."""
+def test_the_late_leave_out_covers_sold_out_and_imported_holdings_and_unreadable_dates():
+    """리뷰 4 (2026-11-20) · Jack (2026-11-21, 답 4): 다 팔고 포트폴리오에 남겨 둔 종목 (밴드 · 깨진 규칙을 읽어요, evaluateDeck) · 가진 종목 넣기의
+    줄도 그 종목만 빠지고 나머지는 점검해요 · 날짜로 읽을 수 없는 pxd 는 빠져요 (더 엄격한 쪽) · pxd 가 기준일과 같으면 마지막 확인 종가가 아니에요."""
     rules = [{"id": "band", "check": "checked", "target": 0.5, "bands": [0.05, 0.1, 0.15]}, {"id": "per", "check": "checked", "max": 10}]
     sold = {"id": "d1", "name": "P", "createdAt": "2026-11-02",
             "holdings": [{"t": t, "nk": t, "cls": "kr", "kind": "core", "target": 0.5, "rules": rules} for t in ("005930", "094800")],
             "purchases": [{"t": t, "date": "2026-11-02", "qty": 1, "price": 10000, "ccy": "KRW"} for t in ("005930", "094800")],
             "sales": [{"t": "094800", "date": "2026-11-03", "qty": 1, "price": 10000, "ccy": "KRW"}]}
     imported = {"id": "d2", "name": "가진", "kind": "imported", "createdAt": "2026-11-02", "holdings": [],
-                "imported": [{"t": "094800", "qty": 1, "date": "2026-11-02", "close": 10000, "ccy": "KRW"}]}
+                "imported": [{"t": "094800", "qty": 1, "date": "2026-11-02", "close": 10000, "ccy": "KRW"},
+                             {"t": "005930", "qty": 1, "date": "2026-11-02", "close": 10000, "ccy": "KRW"}]}
     cases = {"sold": [kr("005930", "삼성전자"), kr("094800", "맵스리얼티", d1=None, pxd=D13)],
              "bad": [kr("005930", "삼성전자"), kr("094800", "맵스리얼티", d1=None, pxd="11/13")],
              "bad2": [kr("005930", "삼성전자"), kr("094800", "맵스리얼티", d1=None, pxd="2026-11-31")],
              "same": [kr("005930", "삼성전자"), kr("094800", "맵스리얼티", d1=None, pxd="2026-11-16")]}
     got = run("""
-const at = (f, w, decks) => { const load = LD.resolveLoad({ data: { ok: true, data: f.data }, corp: { ok: true, data: f.corp }, macro: { ok: false, error: 'x' } }, Date.parse(w));
-  const ctx = R.todayCtx(load, Date.parse(w), decks); return [ctx.state.ok, ctx.state.capped || null, R.evaluateAll(decks, ctx).ok]; };
+const at = (f, w, deck) => { const load = LD.resolveLoad({ data: { ok: true, data: f.data }, corp: { ok: true, data: f.corp }, macro: { ok: false, error: 'x' } }, Date.parse(w));
+  const ctx = R.todayCtx(load, Date.parse(w)); const e = R.evaluateAll([deck], ctx);
+  const d = e.ok ? e.decks[0] : null;
+  return { ok: e.ok, late: !!(e.ok && e.late), out: [...ctx.lateOut.entries()], hold: d ? d.holdings.map((x) => [x.t, x.absent, x.qty]) : null,
+    held: d && d.held ? d.held.map(([t]) => t) : null, rows: d && deck.kind === 'imported' ? P.pfRows(deck, ctx).rows.map((r) => [r.t, r.absent]) : null }; };
 const w = '2026-11-23T09:00:00+09:00', w20 = '2026-11-20T09:00:00+09:00';
-out = { sold: at(SOLD_F, w, [SOLD]), sold20: at(SOLD_F, w20, [SOLD]), imp: at(SOLD_F, w, [IMP]), bad: at(BAD_F, w20, [SOLD]), bad2: at(BAD2_F, w20, [SOLD]),
-  same: at(SAME_F, w, [SOLD]), ts: [...R.lateTickers(SOLD)].sort(), held: [...R.heldQty(SOLD).keys()] };""",
+out = { sold: at(SOLD_F, w, SOLD), sold20: at(SOLD_F, w20, SOLD), imp: at(SOLD_F, w, IMP), bad: at(BAD_F, w20, SOLD), bad2: at(BAD2_F, w20, SOLD),
+  same: at(SAME_F, w, SOLD) };""",
               SOLD=sold, IMP=imported, SOLD_F=late_files(cases["sold"]), BAD_F=late_files(cases["bad"]), BAD2_F=late_files(cases["bad2"]),
               SAME_F=late_files(cases["same"]))
-    assert got["held"] == ["005930"] and got["ts"] == ["005930", "094800"]           # 0 주라도 점검이 읽는 종목
-    assert got["sold"] == [False, {"t": "094800", "pxd": D13, "n": 6}, False]        # 11-13 종가 뒤 6거래일: 점검하지 않아요 (리뷰의 재현)
-    assert got["sold20"] == [True, None, True]                                       # 5거래일: 돌아요
-    assert got["imp"][0] is False and got["imp"][1]["t"] == "094800"                 # 가진 종목 넣기의 줄도
-    assert got["bad"] == [False, {"t": "094800", "pxd": "11/13", "n": None}, False]  # 날짜가 아닌 pxd: 멈춰요
-    assert got["bad2"][0] is False and got["bad2"][1]["n"] is None
-    assert got["same"] == [True, None, True]                                         # 기준일과 같은 pxd: 마지막 확인 종가가 아니에요
+    s23 = got["sold"]
+    assert s23["ok"] and s23["late"] and s23["out"] == [["094800", {"nk": "맵스리얼티", "pxd": D13, "n": 6}]]
+    assert s23["hold"] == [["005930", False, 1]]                       # 다 판 종목은 그 종가로 읽지 않아요 (오늘 데이터에 없는 다 판 종목처럼 줄 없음) · 나머지는 점검
+    assert got["sold20"]["out"] == [] and ["094800", False, 0] in got["sold20"]["hold"]               # 5거래일: 다 판 종목도 예전처럼 읽어요
+    assert got["imp"]["ok"] and got["imp"]["rows"] == [["094800", True], ["005930", False]]            # 가진 종목 넣기의 줄도 그 종목만
+    assert got["bad"]["out"] == [["094800", {"nk": "맵스리얼티", "pxd": "11/13", "n": None}]] and got["bad"]["ok"]   # 날짜가 아닌 pxd: 빠져요
+    assert got["bad2"]["out"][0][1]["n"] is None
+    assert got["same"]["out"] == [] and got["same"]["ok"]                                              # 기준일과 같은 pxd: 마지막 확인 종가가 아니에요
 
 
 # ── 2026-11-20 (#159 × #158): 코넥스는 야후 .KQ × 네이버로 확인한 종목이면 마지막 확인 종가로 싣지 않아요 ──────────────────
@@ -1112,3 +1120,31 @@ def test_own_drop_krown_is_checked_on_a_day_without_any_carry():
     d["ownDrop"][V.KR_OWN_DROP_KEY] = {"n": "1", "rows": []}
     assert gate_rows(d)[OWN_ROW][1] == "WARN" and "모양이 잘못됨" in gate_rows(d)[OWN_ROW][0]
     assert gate_rows({"pxDate": D18, "stocks": [kr("005930")]})[OWN_ROW] == ("없음 (모두 기준일 종가)", "PASS")   # 이 기록 전 파일
+
+
+def test_pre_publish_own_close_scenes_pick_their_stocks_from_the_day_s_data(monkeypatch):
+    """2026-11-21 (CLAUDE.md #154): 발행 전 화면 검사(--data)의 확인종가 장면은 특정 종목에 기대지 않아요 — 그날 데이터에서 기준으로 골라요
+    (smoke_app.kr_own_picks). 고정 데이터 (CI) 는 예전 그대로 (000270 · 005930 · 기록한 11-20 줄 · 005935 · 009150). 예전에 이름으로 쓰던 종목이
+    모두 없는 날도 고르고 심어요 · 우선주가 없으면 그 몫만 건너뛰어요 (실패하지 않아요)."""
+    sys.path.insert(0, os.path.join(ROOT, "tests"))
+    import smoke_app as SA
+    files, _ = SA.read_snapshot()
+    named = {"000270", "005930", "005935", "009150", "024070", "092070", "100220"}
+    for drop in (set(), named):
+        f = json.loads(json.dumps(files, allow_nan=True))
+        f["data.json"]["stocks"] = [x for x in f["data.json"]["stocks"] if x.get("t") not in drop]
+        f["corp.json"]["companies"] = [x for x in f["corp.json"]["companies"] if x.get("t") not in drop]
+        pk = SA.kr_own_picks(SA.strip_kr_carries(f))
+        assert pk["plain"] and pk["t"] and len(pk["small"]) == 3 and pk["t"] != pk["plain"], (drop, pk)
+        assert not ({pk["plain"], pk["t"], *pk["small"]} & drop)
+        monkeypatch.setattr(SA, "REAL_DATA", True)
+        g = SA.with_kr_carries(f)
+        codes = g["data.json"]["pxSrc"]["own"]["codes"]
+        assert set(pk["small"]) <= set(codes) and not ({"024070", "092070", "100220"} & set(codes)), codes   # 기록한 줄은 넣지 않아요
+        assert (pk["pref"] in codes) if pk["pref"] else len(codes) == 4, (pk, codes)
+        monkeypatch.setattr(SA, "REAL_DATA", False)
+    src = inspect.getsource(SA.scene_kr_own_close)
+    assert 'pk = kr_own_picks(f) if REAL_DATA else OWN_FIXTURE_PICKS' in src and '"005930"' not in src and '"000270"' not in src
+    assert SA.OWN_FIXTURE_PICKS == {"plain": "005930", "t": "000270"}
+    g = SA.with_kr_carries(files)                                                       # 고정 데이터: 예전 그대로 (기록한 세 줄 + 005935 · 009150)
+    assert sorted(g["data.json"]["pxSrc"]["own"]["codes"]) == ["005935", "009150", "024070", "092070", "100220"]

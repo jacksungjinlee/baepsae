@@ -132,50 +132,50 @@ export function checkState(load, now) {
 }
 
 // 2026-11-20 (Jack, f: "cap the late-data portfolio check (#144) so it never runs on a close more than 5 KRX trading days old in
-// total (carried close age counts), instead of up to 10"): on late data, a Korean stock priced at its last confirmed close (data.json
-// pxd) counts its own close: the KRX trading days after that close up to today (KST, the same count as lateDays). The stocks
-// counted are every one the check of these decks reads (review 2026-11-20): the shares held, every holding kept in the deck (a
-// sold-out one is still read for its band and its failing rules, evaluateDeck) and a 가진 종목 portfolio's rows. When one of them
-// is more than LATE_CHECK_DAYS behind, nothing is checked (the state is the stale one dayState gave, as on data more than 5 days
-// late), for every portfolio together, like the rest of the late check. A pxd that is not a readable date stops it too (the
-// stricter side). Said once in the console. -> the state to use.
-export function lateTickers(deck) {
-  const ts = new Set(heldOf(deck || {}).keys());
-  for (const h of (deck && deck.holdings) || []) if (h && h.t) ts.add(h.t);
-  for (const r of (deck && deck.imported) || []) if (r && r.t) ts.add(r.t);
-  return ts;
-}
+// total (carried close age counts), instead of up to 10") and 2026-11-21 (Jack, answer 4, verbatim: "Not all-or-nothing. Leave that
+// one stock out with the approved line ("며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요.") and check the rest."):
+// on late data (checkState: the closes at most LATE_CHECK_DAYS behind), a Korean stock priced at its last confirmed close (data.json
+// pxd) whose own close is more than LATE_CHECK_DAYS KRX trading days before today (KST, the same count as lateDays; a pxd that is
+// not a countable date too, the stricter side) is left out of that day's check: the check reads it as not in today's data (v19.0c:
+// its row stays, the totals and the weights leave it out, as for a stock the pipeline left out) and its row shows the approved line
+// (ctx.aged, ui.jsx KrAgedLine). Every other stock and portfolio is checked as before; the state stays the late one.
 // 2026-11-20 (Jack: "US stocks carry like Korean ones"): a US stock carried at its last confirmed close because Yahoo had no close
-// (data.json pxc: true) counts the same way, in NYSE trading days (tradedays.js CLOSED.US) after that close. A US pxd without pxc
-// (Yahoo's own last bar: halted) is not capped here, as before.
-export function lateCap(state, ctx, decks) {
-  if (!state || !state.ok || !state.late || !ctx) return state;
-  for (const deck of decks || []) {
-    for (const t of lateTickers(deck)) {
-      const s = ctx.byT.get(t);
-      if (!s || !ownCarried(s)) continue;
-      const us = s.cls === "us", mkDate = us ? ctx.usPxDate : ctx.pxDate;
-      if (s.pxd === mkDate) continue;
-      const pxd = ownCloseDate(s, mkDate);
-      const n = pxd ? tradingDaysAfter(pxd, ctx.today, us ? "US" : "KR") : null;
-      if (n == null || n > LATE_CHECK_DAYS) {
-        lateSay(`the check is not run: ${t} (read by a saved portfolio) is priced at its last confirmed close ${JSON.stringify(s.pxd)}, ${n == null ? "not a date whose age can be counted" : n + (us ? " NYSE" : " KRX") + " trading days"} before today ${ctx.today} (more than ${LATE_CHECK_DAYS} in total)`);
-        return { ok: false, why: "stale", days: state.late.days, capped: { t, pxd: s.pxd, n } };
-      }
-    }
+// (data.json pxc: true) is treated the same, in NYSE trading days (tradedays.js CLOSED.US) after that close, against usPxDate. A US
+// pxd without pxc (Yahoo's own last bar: halted) is not touched, as before. -> Map t -> { nk, pxd, n, us } (empty when not late).
+export function lateLeftOut(state, data, today) {
+  const out = new Map();
+  if (!state || !state.ok || !state.late || !data) return out;
+  for (const s of data.stocks || []) {
+    if (!s || !ownCarried(s)) continue;
+    const us = s.cls === "us", mkDate = us ? data.usPxDate : data.pxDate;
+    if (s.pxd === mkDate) continue;
+    const pxd = ownCloseDate(s, mkDate);
+    const n = pxd ? tradingDaysAfter(pxd, today, us ? "US" : "KR") : null;
+    if (n == null || n > LATE_CHECK_DAYS) out.set(s.t, { nk: typeof s.nk === "string" ? s.nk : s.t, pxd: s.pxd, n, us });
   }
-  return state;
+  return out;
 }
 
-// Everything the evaluation reads from today's data. decks (2026-11-20): the saved portfolios whose check this context is for;
-// with them, the late check stops when a held stock's own close is too old in total (lateCap).
-export function todayCtx(load, now, decks) {
+// Everything the evaluation reads from today's data. On late data the stocks lateLeftOut names are not in byT · coByT (left out
+// of the day's check) and are in aged with the stocks the pipeline left out (load.aged: pxSrc.own.aged), for the line on their rows.
+export function todayCtx(load, now) {
   const ok = load && load.status === "ok";
-  const ctx = { state: checkState(load, now), byT: ok ? load.byT : new Map(), coByT: ok ? load.coByT : new Map(),
+  const state = checkState(load, now);
+  const today = kstDate(now == null ? Date.now() : now);
+  const out = ok ? lateLeftOut(state, load.data, today) : new Map();
+  const without = (m) => {
+    if (!out.size) return m;
+    const c = new Map(m);
+    for (const t of out.keys()) c.delete(t);
+    return c;
+  };
+  if (out.size) lateSay(`left out of the check, shown with the aged line: ${[...out].map(([t, v]) => `${t} (last confirmed close ${JSON.stringify(v.pxd)}, `
+    + `${v.n == null ? "not a date whose age can be counted" : v.n + (v.us ? " NYSE" : " KRX") + " trading days"} before today ${today})`).join(", ")}; more than ${LATE_CHECK_DAYS} in total; every other stock is checked`);
+  const aged = new Map(ok && load.aged ? load.aged : []);
+  for (const [t, v] of out) if (!aged.has(t)) aged.set(t, { nk: v.nk, pxd: v.pxd });
+  return { state, byT: ok ? without(load.byT) : new Map(), coByT: ok ? without(load.coByT) : new Map(),
     fx: ok ? load.data.fx : null, pxDate: ok ? load.data.pxDate : null, usPxDate: ok ? load.data.usPxDate || null : null,
-    today: kstDate(now == null ? Date.now() : now) };
-  if (decks) ctx.state = lateCap(ctx.state, ctx, decks);
-  return ctx;
+    today, aged, lateOut: out };
 }
 
 // ---------------- one deck ----------------

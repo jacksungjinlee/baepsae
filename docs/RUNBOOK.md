@@ -663,11 +663,17 @@ under today's date label without that line."
   2026-11-20); the old app's 기업분석 header and the first screen's card show Jack's line under the price (English card: "We couldn't
   confirm today's close, so this shows the {date} close."). A stock in `pxSrc.own.aged`: its company page says "며칠째 종가를 확인하지
   못해서 이 종목은 잠시 빼 두었어요.".
-- **Late data (#144) with a carried stock (Jack, 2026-11-20 f):** on late data the daily check stops when a held Korean stock's own
-  close is more than 5 KRX trading days before today in total, or is not a readable date (`src/v2/rules.js` `lateCap`; console
-  "[v2] late data: the check is not run: …"). Every stock the check reads counts: shares held, sold-out holdings kept in a portfolio,
-  가진 종목 rows. Every portfolio then shows the usual stale state for that day (one state for all portfolios). 내 수익 and 연말에
-  확인할 숫자 do not use this cap: they show amounts with their dates (and Jack's line), not a check result.
+- **Late data (#144) with a carried stock (Jack, 2026-11-20 f; 2026-11-21 answer 4: "Not all-or-nothing. Leave that one stock out
+  with the approved line … and check the rest."):** on late data (the closes at most 5 trading days behind) a Korean stock priced
+  at its last confirmed close whose own close is more than 5 KRX trading days before today in total, or is not a readable date,
+  is left out of that day's check (`src/v2/rules.js` `lateLeftOut` / `todayCtx`; console "[v2] late data: left out of the check,
+  shown with the aged line: …"). The check reads it as not in today's data (its row stays and shows "며칠째 종가를 확인하지
+  못해서 이 종목은 잠시 빼 두었어요."; totals and weights leave it out; a sold-out holding is not read; a portfolio holding only that
+  stock shows that row and no totals). Every other stock and portfolio is checked as usual and the screens keep "{date} 종가로
+  점검했어요". The stale state ("데이터가 {n}일째 갱신되지 않아 오늘은 점검하지 않았어요") comes only when the data itself is more than
+  5 trading days late, as on main. US stocks at an earlier close are not touched. 내 수익 reads the same day's context: with that
+  stock left out it shows no amounts on late data (its existing rule for a stock missing from the data). The old app has no
+  late-data check.
 
 ## US stocks at their last confirmed close (미국 마지막 확인 종가, since #?)
 

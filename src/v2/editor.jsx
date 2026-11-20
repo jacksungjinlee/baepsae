@@ -151,7 +151,7 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
   const badCompare = ok && kind === "compare" && !(F.hasFindPoints(deck) && F.compareHoldings(deck, draft).length > 0
     && (F.findList(load, deck, draft) || { rows: [] }).rows.some((r) => r.t === view.t));
   useEffect(() => { if (badCompare && !leaving.current && goRef.current && goRef.current.replaceFind) goRef.current.replaceFind(); }, [badCompare]);
-  const ctx = useMemo(() => todayCtx(load, undefined, store.data.decks), [load, store.data.decks]);   // 2026-11-20 (Jack, f): rules.lateCap
+  const ctx = useMemo(() => todayCtx(load), [load]);
   const de = useMemo(() => (ctx.state.ok ? evaluateDeck(deck, ctx) : null), [deck, ctx]);
   const xOf = (t) => (de && de.ok ? de.holdings.find((y) => y.t === t) || null : null);
   const names = useMemo(() => (ok ? E.indNames(load.data.stocks) : new Map()), [load, ok]);
