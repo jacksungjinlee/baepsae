@@ -855,7 +855,7 @@ If the KONEX row warns (read the reasons after "경고:"):
 3. "네이버 값 없음" for many or "받지 못함": Naver may be blocking GitHub's servers; the KOSPI/KOSDAQ path does not use Naver, so only
    KONEX is affected (on second-source days every KONEX stock drops out).
 
-## Deploy gate: Daum spot-check time limit and refusal (관문 두 출처 확인 시간 한도 · 거절, since #157 and #?)
+## Deploy gate: Daum spot-check time limit and refusal (관문 두 출처 확인 시간 한도 · 거절, since #157 and #164)
 
 Jack, 2026-11-20 (verbatim): "Yes to 10 minutes, but a timeout skips the Daum spot-check with a loud warning; the deploy continues
 on the other checks. An outside site must never block a code fix."
@@ -917,7 +917,7 @@ In the deploy, the whole spot check has a 600 s limit:
 - if the limit hits after the must-haves and 90% of the sample have already answered, "pxDate 최종본 여부" is checked as before and
   passes, with a WARN that says how many were skipped; the price row is counted as above.
 
-**When Daum refuses outright (since #?, Jack 2026-11-21).** Jack's question 3 of 11-20, verbatim: "Deploy price check when Daum
+**When Daum refuses outright (since #164, Jack 2026-11-21).** Jack's question 3 of 11-20, verbatim: "Deploy price check when Daum
 refuses instead of being slow. Your 10-minute limit covers a slow Daum. If Daum starts refusing GitHub's servers outright, the way KRX
 did, nothing times out, and every code deploy stops until Daum answers again. Skip the Daum check in that case too, with the same loud
 warning? It loosens a check, so it's yours. (Recommended: yes, for code deploys only. The daily data publish keeps its own two-source
