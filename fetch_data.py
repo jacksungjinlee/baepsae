@@ -1671,10 +1671,12 @@ US_OWN_KEYS = ("price", "vol", "beta", "al", "betaSE", "betaN", "lo", "hi", "sh"
 US_OWN_DROP_KO = {"none": "지난 발행본에 없음 (예전처럼 야후의 마지막 봉 · 없으면 빠짐)",
                   "halted": "지난 발행본에서도 자기 날짜(pxd)로 실림 · 마지막 확인 종가가 아님 (예전처럼 야후의 마지막 봉)",
                   "old": f"그 종가 뒤 미국 거래일 {US_OWN_CLOSE_MAX_DAYS}일 넘음 (빼요)",
-                  "bad": "지난 발행본의 가격 · 날짜를 읽을 수 없음 (예전처럼 야후의 마지막 봉)"}
+                  "bad": "지난 발행본의 가격 · 날짜를 읽을 수 없음 (예전처럼 야후의 마지막 봉)",
+                  "split": "그 종가 날짜 뒤에 주식 분할이 있음 (예전처럼 야후의 자기 날짜 봉 · 없으면 빠짐 · usSrc.own.split)"}
 US_NOCL_KO = {"bar": "기준일 종가 없음 (빈 값 · 0 · 음수)", "empty": "쓸 수 있는 가격이 하나도 없음", "err": "시세를 받다가 오류"}
 US_OWN_SHOW = 30
-US_PX_ANCHORED = ("per", "pbr", "cap", "dy", "pbrZero")   # 리뷰 (2026-11-20): 야후 상세 정보 중 그 가격에 맞추는 숫자 (apply_us_info) — 기준 가격을 모르면 비워요
+US_PX_ANCHORED = ("per", "pbr", "cap", "dy", "pbrZero")
+US_QUOTE_FAR = 0.5        # 리뷰 (2026-11-20, 4): 야후 시세 가격이 실은 종가와 이보다 많이 다르면 기준 가격으로 쓰지 않아요 (보관본 · 없으면 비움)   # 리뷰 (2026-11-20): 야후 상세 정보 중 그 가격에 맞추는 숫자 (apply_us_info) — 기준 가격을 모르면 비워요
 US_OWN_AGED_LONG = 20     # 리뷰 (2026-11-20): 잠시 뺀 기록이 이 미국 거래일보다 오래되면 크게 적어요 (상장 폐지된 티커가 목록에 남은 것일 수 있어요 · 로그만)
 
 
@@ -1694,7 +1696,8 @@ def us_px_tail_clean(px):
     return px if n == len(px) else px.iloc[:n]
 
 
-def us_own_close_carry(prev, nocl, us_px_date, trade_days, max_days=US_OWN_CLOSE_MAX_DAYS, etfs=frozenset(), ybar=None, info=None):
+def us_own_close_carry(prev, nocl, us_px_date, trade_days, max_days=US_OWN_CLOSE_MAX_DAYS, etfs=frozenset(), ybar=None, info=None,
+                       split_dates=None):
     """야후 종가가 없는 미국 종목(nocl {티커: 까닭})을 지난 발행본(prev · data.json)의 마지막 확인 종가로 (2026-11-20 · Jack · 순수 함수).
     반환: (carried [기록 — 마지막 확인 종가 · pxd · pxc], same [기록 — 같은 날 다시 발행: 그날 종가 · d1], drop {티커: 까닭 (US_OWN_DROP_KO)}).
     - 지난 발행본에 그 종목이 usPxDate 종가로 있었으면 (pxd 없음): 그 usPxDate 가 오늘 기준일보다 앞이면 carried (pxd = 그 날짜), 같으면 same.
@@ -1703,11 +1706,16 @@ def us_own_close_carry(prev, nocl, us_px_date, trade_days, max_days=US_OWN_CLOSE
       pxd = 그 봉의 날짜 · 그 가격 · 그 시계열의 숫자 · d1 없음). 그 봉이 마지막 확인 종가의 날짜보다 뒤면 그 기록을 pxc 로 써요 (더 새 종가를 옛 종가로
       덮지 않게 · info["newer"] 에 {t, pxd, px}). 잠시 뺀 종목(지난 usSrc.own.aged)도 그 날짜 뒤의 봉이 있으면 같은 조건으로 돌아와요 (나이는 그 봉부터).
     - 그 종가 뒤 오늘 기준일까지 미국 거래일(trade_days: YYYY-MM-DD)이 max_days 보다 많으면 old (빼요 · 그 날짜는 info["oldPxd"]).
-    - none 지난 발행본에 없음 · halted 지난 발행본에서도 pxd 만 (거래 정지 · 마지막 확인 종가 아님) · bad 값을 읽을 수 없음: 예전 그대로 (드롭이 아니에요)."""
+    - none 지난 발행본에 없음 · halted 지난 발행본에서도 pxd 만 (거래 정지 · 마지막 확인 종가 아님) · bad 값을 읽을 수 없음: 예전 그대로 (드롭이 아니에요).
+    - 리뷰 (2026-11-20, 분할): split_dates {티커: {분할 날짜}} 에 그 종가 날짜 뒤의 분할이 있으면 싣지 않아요 (split · info["split"]) — 예전 그대로
+      (야후의 자기 날짜 봉: 분할을 반영한 야후 시계열이에요 · 없으면 빠져요 · 잠시 뺀 종목에 적지 않아요). 지난 발행본의 가격은 분할 전이라 앱이 주식 수를
+      바꾸면 평가액이 배율만큼 틀려요. 더 새 야후 봉은 미국 거래일(trade_days)에 있는 날짜일 때만 써요 (휴장일의 엉뚱한 봉은 쓰지 않아요)."""
     prev = prev or {}
     ybar = ybar or {}
+    split_dates = split_dates or {}
     info = {} if info is None else info
-    newer, old_pxd = info.setdefault("newer", []), info.setdefault("oldPxd", {})
+    newer, old_pxd, split_out = info.setdefault("newer", []), info.setdefault("oldPxd", {}), info.setdefault("split", [])
+    tdays = {str(d)[:10] for d in trade_days}
     pst = {str(x.get("t")): x for x in prev.get("stocks") or [] if isinstance(x, dict) and x.get("cls") == "us" and not x.get("fund")}
     pown = (prev.get("usSrc") or {}).get("own") if isinstance(prev.get("usSrc"), dict) else None
     was = {str(a["t"]): a for a in ((pown or {}).get("aged") or []) if isinstance(pown, dict) and isinstance(a, dict) and a.get("t")}
@@ -1726,14 +1734,21 @@ def us_own_close_carry(prev, nocl, us_px_date, trade_days, max_days=US_OWN_CLOSE
         """오늘 다운로드에 그 종목의 own 뒤 · 기준일 앞 봉이 있으면 그 기록 (가격 > 0)."""
         y = ybar.get(t)
         d = (y or {}).get("pxd")
-        return y if (is_day(d) and own < d < today and (_fin(y.get("price")) or 0) > 0 and y.get("d1") is None) else None
+        return y if (is_day(d) and d in tdays and own < d < today and (_fin(y.get("price")) or 0) > 0 and y.get("d1") is None) else None
 
-    def take(t, own, rec):
+    def take(t, own, rec, nw=None):
+        after = sorted(d for d in split_dates.get(t, ()) if d > own)
+        if after:                                     # 그 종가 뒤에 분할: 싣지 않아요 (예전 그대로)
+            drop[t] = "split"
+            split_out.append({"t": t, "pxd": own, "after": after})
+            return
         if kr_own_age(own, today, trade_days) > max_days:
             drop[t] = "old"
             old_pxd[t] = own
             return
         carried.append(rec)
+        if nw is not None:                            # 실은 것만 newer 에 (나이 상한으로 빠진 봉은 아니에요)
+            newer.append(nw)
 
     for t in sorted(nocl):
         p = pst.get(t)
@@ -1741,8 +1756,7 @@ def us_own_close_carry(prev, nocl, us_px_date, trade_days, max_days=US_OWN_CLOSE
             a = was.get(t)                            # 잠시 뺀 종목: 그 날짜 뒤의 야후 봉이 오늘 있으면 돌아와요
             y = later_bar(t, a.get("pxd")) if a and is_day(a.get("pxd")) else None
             if y is not None:
-                newer.append({"t": t, "pxd": y["pxd"], "px": y["price"]})
-                take(t, y["pxd"], {**y, "pxc": True})
+                take(t, y["pxd"], {**y, "pxc": True}, {"t": t, "pxd": y["pxd"], "px": y["price"]})
                 continue
             drop[t] = "none"
             continue
@@ -1776,9 +1790,8 @@ def us_own_close_carry(prev, nocl, us_px_date, trade_days, max_days=US_OWN_CLOSE
                 drop[t] = "bad"
                 continue
         y = later_bar(t, own)
-        if y is not None:                             # 야후에 더 새 종가가 있어요 (그 종목의 마지막 봉 · 기준일 앞)
-            newer.append({"t": t, "pxd": y["pxd"], "px": y["price"]})
-            take(t, y["pxd"], {**y, "pxc": True})
+        if y is not None:                             # 야후에 더 새 종가가 있어요 (그 종목의 마지막 봉 · 기준일 앞 · 미국 거래일)
+            take(t, y["pxd"], {**y, "pxc": True}, {"t": t, "pxd": y["pxd"], "px": y["price"]})
             continue
         take(t, own, {**base, "pxd": own, "pxc": True})
     return carried, same, drop
@@ -1814,14 +1827,14 @@ def us_own_aged(prev, nocl, drop, old_pxd=None):
 
 def us_own_close_err(err, nocl_n=None):
     """마지막 확인 종가 단계(미국)가 오류로 멈췄을 때의 usSrc.own (실은 종목 0 · err — 관문이 경고해요 · 예전 그대로 야후의 마지막 봉으로 나가요)."""
-    out = {"v": 1, "max": US_OWN_CLOSE_MAX_DAYS, "n": 0, "codes": [], "same": [], "drop": {}, "dropEx": [], "bad": {"n": 0, "rows": []},
-           "err": str(err)[:300]}
+    out = {"v": 1, "max": US_OWN_CLOSE_MAX_DAYS, "n": 0, "codes": [], "same": [], "newer": [], "split": [], "drop": {}, "dropEx": [],
+           "bad": {"n": 0, "rows": []}, "err": str(err)[:300]}
     if isinstance(nocl_n, int):
         out["unconf"] = nocl_n
     return out
 
 
-def us_own_close_step(prev, nocl, out, us_px_date, trade_days, etfs=frozenset()):
+def us_own_close_step(prev, nocl, out, us_px_date, trade_days, etfs=frozenset(), split_dates=None):
     """미국 마지막 확인 종가 단계 (2026-11-20 · fetch_us 가 시세를 다 받은 바로 뒤 · 상세 정보를 붙이기 전에 부르는 한 곳). nocl {티커: 까닭 (US_NOCL_KO)}:
     오늘 기준일 종가가 야후에 없는 종목. out: 오늘 미국 기록 (야후의 마지막 봉으로 만든 기록이 있으면 바꾸고, 없으면 더해요 · 나이 상한을 넘은 종목은
     빼요). trade_days: 미국 거래일 (S&P 500 일봉 날짜 · Timestamp · date · 'YYYY-MM-DD' 아무거나). 반환: data.json usSrc.own.
@@ -1833,9 +1846,10 @@ def us_own_close_step(prev, nocl, out, us_px_date, trade_days, etfs=frozenset())
         # 리뷰 (2026-11-20): 그 종목의 야후 마지막 봉으로 만든 기록 (예전 '자기 날짜' 길) — 마지막 확인 종가보다 새 봉이면 그것을 써요
         ybar = {r["t"]: r for r in out if r.get("t") in nocl and r.get("pxd") is not None and r.get("d1") is None}
         cinfo = {}
-        carried, same, drop = us_own_close_carry(prev, nocl, us_px_date, days, etfs=etfs, ybar=ybar, info=cinfo)
+        carried, same, drop = us_own_close_carry(prev, nocl, us_px_date, days, etfs=etfs, ybar=ybar, info=cinfo, split_dates=split_dates)
         aged = us_own_aged(prev, nocl, drop, cinfo.get("oldPxd"))
         newer = sorted(cinfo.get("newer") or [], key=lambda x: x["t"])
+        split = sorted(cinfo.get("split") or [], key=lambda x: x["t"])
         repl = {r["t"]: r for r in carried + same}
         gone = {a["t"] for a in aged}
         new = []
@@ -1860,6 +1874,10 @@ def us_own_close_step(prev, nocl, out, us_px_date, trade_days, etfs=frozenset())
             log(f"  !! 그중 야후에 마지막 확인 종가보다 새 종가(그 종목의 마지막 봉 · 기준일 앞)가 있어 그 종가로 실은 미국 종목 {len(newer):,}: "
                 + ", ".join(f"{x['t']} ({x['pxd']} {x['px']})" for x in newer[:US_OWN_SHOW])
                 + (f" 외 {len(newer) - US_OWN_SHOW}종목" if len(newer) > US_OWN_SHOW else "") + " (usSrc.own.newer)")
+        if split:
+            log(f"  !! 마지막 확인 종가 뒤에 주식 분할이 있어 싣지 않은 미국 종목 {len(split):,} (지난 발행본의 가격은 분할 전 · 앱은 주식 수를 바꿔요 → "
+                "예전 그대로: 야후의 자기 날짜 봉 · 없으면 빠짐 · usSrc.own.split): "
+                + ", ".join(f"{x['t']} ({x['pxd']} 뒤 분할 {', '.join(x['after'])})" for x in split[:US_OWN_SHOW]))
         dc = collections.Counter(drop.values())
         dn = [f"{t} ({US_OWN_DROP_KO[w]} · {US_NOCL_KO.get(nocl.get(t), '?')})" for t, w in sorted(drop.items())]
         if drop:
@@ -1875,7 +1893,7 @@ def us_own_close_step(prev, nocl, out, us_px_date, trade_days, etfs=frozenset())
                 "usSrc.own.aged): " + ", ".join(f"{a['t']} ({a.get('pxd')})" for a in long_[:US_OWN_SHOW])
                 + (f" 외 {len(long_) - US_OWN_SHOW}종목" if len(long_) > US_OWN_SHOW else ""))
         return {"v": 1, "max": US_OWN_CLOSE_MAX_DAYS, "n": len(carried), "codes": sorted(r["t"] for r in carried),
-                "same": sorted(r["t"] for r in same), "newer": newer, "unconf": len(nocl), "why": {k: int(v) for k, v in sorted(why.items())},
+                "same": sorted(r["t"] for r in same), "newer": newer, "split": split, "unconf": len(nocl), "why": {k: int(v) for k, v in sorted(why.items())},
                 "drop": {k: int(v) for k, v in sorted(dc.items())}, "dropEx": dn[:US_OWN_SHOW], "bad": {"n": 0, "rows": []}, "aged": aged}
     except Exception as e:
         out[:] = keep
@@ -1909,23 +1927,11 @@ def us_own_close_final(us, umeta, prev, days):
     """미국 목록이 정해진 바로 뒤 · 다른 단계보다 먼저 (Jack 의 규칙 — 우리 처리의 한 줄이 틀리면 그 줄을 빼고 크게 남기고 나머지는 발행해요): 기록
     (umeta usSrc.own)을 남은 행에 맞추고 (우선주 · 한국 종목의 미국 상장분 · 주식 종류 티커로 뺀 행), 관문과 같은 함수(validate_data.us_own_close_bad)로
     마지막 확인 종가 · 같은 날 다시 쓴 종가를 다시 보고, 맞지 않는 행은 빼요. days: 미국 거래일 YYYY-MM-DD 들. 반환: 남은 미국 종목 목록.
-    리뷰 (2026-11-20, 분할): 그 종가 날짜(pxd) 뒤에 분할이 있는 마지막 확인 종가는 싣지 않아요 — 가격은 분할 전인데 앱(held.js splitFactor)은 주식 수를
-    분할 배율만큼 늘려요 (평가액이 배율만큼 틀려요). 그 종목은 잠시 뺀 종목(aged · why 'split')에 적고 크게 남겨요. splits_fields 보다 먼저예요."""
+    분할은 단계(us_own_close_carry · split_dates)가 이미 보고 (예전 길로), 발행할 splits 가 정해진 뒤 us_own_split_late 가 한 번 더 봐요."""
     src = umeta.get("usSrc") if isinstance(umeta.get("usSrc"), dict) else None
     own = (src or {}).get("own") if isinstance((src or {}).get("own"), dict) else None
     if own is None:
         return us
-    sp = us_carry_splits(umeta.get("splits"), prev)
-    split_hit = [r for r in us if r.get("pxc") and any(d > str(r.get("pxd")) for d in sp.get(r.get("t"), ()))]
-    if split_hit:
-        hit_t = {r["t"] for r in split_hit}
-        aged = [a for a in own.get("aged") or [] if isinstance(a, dict) and a.get("t") not in hit_t]
-        aged += [{"t": r["t"], "nk": str(r.get("nk") or r["t"]), "pxd": r.get("pxd"), "why": "split"} for r in split_hit]
-        own["aged"] = sorted(aged, key=lambda a: str(a.get("t")))
-        log(f"  !! 마지막 확인 종가 뒤에 주식 분할이 있어 싣지 않은 미국 종목 {len(split_hit):,} (가격은 분할 전 · 앱은 주식 수를 분할 배율로 바꿔요 → "
-            "잠시 뺀 종목 · usSrc.own.aged why split): "
-            + ", ".join(f"{r['t']} ({r.get('pxd')} 뒤 분할 {', '.join(sorted(d for d in sp[r['t']] if d > str(r.get('pxd'))))})" for r in split_hit[:US_OWN_SHOW]))
-        us = [r for r in us if r.get("t") not in hit_t]
     have = {r.get("t") for r in us}
     own["codes"] = sorted(r["t"] for r in us if r.get("pxc"))
     own["n"] = len(own["codes"])
@@ -1934,8 +1940,7 @@ def us_own_close_final(us, umeta, prev, days):
     if not own["codes"] and not own["same"]:
         log("· 마지막 확인 종가 점검 (미국 · 관문과 같은 함수): 0종목 빼고 발행")
         return us
-    bad = us_own_close_bad({"usPxDate": umeta.get("usPxDate"), "usSrc": src, "stocks": us,
-                            "splits": [[t, d, None] for t, ds in sp.items() for d in sorted(ds)]}, prev, days)
+    bad = us_own_close_bad({"usPxDate": umeta.get("usPxDate"), "usSrc": src, "stocks": us}, prev, days)
     gone = collections.defaultdict(list)
     for t, w in bad:
         gone[t].append(w)
@@ -1949,6 +1954,43 @@ def us_own_close_final(us, umeta, prev, days):
     own["newer"] = [x for x in own["newer"] if x.get("t") not in gone]
     own["bad"] = {"n": len(gone), "rows": rows[:US_OWN_SHOW], "why": dict(sorted(collections.Counter(w for ws in gone.values() for w in set(ws)).items()))}
     return [r for r in us if r.get("t") not in gone]
+
+
+def us_own_split_late(us, umeta, sp_fields, prev):
+    """리뷰 (2026-11-20, 3): 발행할 splits(splits_fields 뒤 · 시드 · 2016년부터 다시 읽은 이력 포함)에 마지막 확인 종가(pxc) 날짜 뒤의 분할이 있는 행 —
+    단계가 보지 못한 분할 (예: 오늘 다운로드에 그 종목이 없어 이력에서만 읽힘). 그 행은 빼요 (예전처럼 야후 봉이 없는 종목은 빠져요 · 잠시 뺀 종목에 적지
+    않아요), 그 종목의 새 분할 줄(지난 발행본 · 고정 표에 없는 줄)도 splits 에서 빼요 (목록에 없는 종목의 새 줄은 관문 실패), umeta 의 그 종목 기록을
+    #139 처럼 정리하고 EXTRA_US 의 빠진 까닭을 적고 usSrc.own.split 에 late 로 적고 크게 남겨요. 반환: (미국 목록, splits 칸)."""
+    rows = (sp_fields or {}).get("splits")
+    if not isinstance(rows, list):
+        return us, sp_fields
+    sd = collections.defaultdict(set)
+    for x in rows:
+        if isinstance(x, (list, tuple)) and len(x) >= 2 and isinstance(x[0], str) and isinstance(x[1], str):
+            sd[x[0]].add(x[1])
+    hit = [r for r in us if r.get("pxc") and any(d > str(r.get("pxd")) for d in sd.get(r.get("t"), ()))]
+    if not hit:
+        return us, sp_fields
+    bad = {r["t"] for r in hit}
+    pmap = {(x[0], x[1]) for x in ((prev or {}).get("splits") or []) if isinstance(x, (list, tuple)) and len(x) >= 2}
+    sp_fields = {**sp_fields, "splits": [x for x in rows if not (x[0] in bad and (x[0], x[1]) not in pmap and (x[0], x[1]) not in SPLIT_OVERRIDES)]}
+    us_meta_drop(umeta, us, bad)
+    kept = [r for r in us if r.get("t") not in bad]
+    own = ((umeta.get("usSrc") or {}).get("own")) if isinstance(umeta.get("usSrc"), dict) else None
+    recs = [{"t": r["t"], "pxd": r.get("pxd"), "after": sorted(d for d in sd[r["t"]] if d > str(r.get("pxd"))), "late": True} for r in hit]
+    if isinstance(own, dict):
+        own["codes"] = [c for c in own.get("codes") or [] if c not in bad]
+        own["n"] = len(own["codes"])
+        own["newer"] = [x for x in own.get("newer") or [] if isinstance(x, dict) and x.get("t") not in bad]
+        own["split"] = sorted([x for x in own.get("split") or [] if isinstance(x, dict) and x.get("t") not in bad] + recs, key=lambda x: str(x.get("t")))
+    xm = umeta.get("usExtraMissing")
+    if isinstance(xm, dict):
+        for r in hit:
+            if r["t"] in EXTRA_US:
+                xm[r["t"]] = f"마지막 확인 종가({r.get('pxd')}) 뒤에 주식 분할이 있어 뺌 (usSrc.own.split)"
+    log(f"  !! 발행할 분할 목록에 마지막 확인 종가 뒤의 분할이 있어 뺀 미국 종목 {len(hit):,} (단계가 보지 못한 분할 · 시드나 다시 읽은 이력 · "
+        "usSrc.own.split late): " + ", ".join(f"{x['t']} ({x['pxd']} 뒤 {', '.join(x['after'])})" for x in recs[:US_OWN_SHOW]))
+    return kept, sp_fields
 
 
 def us_own_close_drop_all(us, umeta, err):
@@ -10088,7 +10130,14 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
     except Exception:
         pus, paged = set(), set()
     nocl = {t: w for t, w in nocl.items() if w == "bar" or t in pus or t in paged}
-    us_own = us_own_close_step(prev, nocl, out, us_px_date, list(spx.index), etfs=US_ETFS)
+    # 리뷰 (2026-11-20, 분할): 그 종목들의 분할 날짜 — 오늘 다운로드의 분할 칸 · 지난 발행본의 splits · 고정 표. 마지막 확인 종가 뒤에 분할이 있으면
+    # 싣지 않아요 (예전 그대로: 야후의 자기 날짜 봉 · 분할을 반영한 야후 시계열)
+    try:
+        nsp = us_splits(data, sorted(nocl), today)[0] if nocl else []
+    except Exception as e:
+        nsp = []
+        log(f"  !! 야후 종가가 없는 미국 종목의 분할 칸을 읽지 못했어요 ({type(e).__name__}) — 지난 발행본의 splits 와 고정 표로만 봐요 (발행할 splits 가 한 번 더 봐요)")
+    us_own = us_own_close_step(prev, nocl, out, us_px_date, list(spx.index), etfs=US_ETFS, split_dates=us_carry_splits(nsp, prev))
     for a in us_own.get("aged") or []:      # EXTRA_US · 주식 종류 티커 줄이 빠진 까닭을 적어요
         extra_why[a["t"]] = f"마지막 확인 종가({a.get('pxd')}) 뒤 미국 거래일 {US_OWN_CLOSE_MAX_DAYS}일이 지나 잠시 뺌 (usSrc.own.aged)"
 
@@ -10113,6 +10162,10 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
             # 리뷰 (2026-11-20): 마지막 확인 종가(pxc) 종목의 상세 정보 — 야후의 PER · PBR · 시가총액 · 배당수익률은 야후의 지금 시세 가격 기준이에요.
             # 그 가격을 기준 가격(px)으로 적어야 apply_us_info 가 실은 종가에 맞춰요 (그 종가를 적으면 배율이 1 이라 시세 가격 기준 숫자가 그대로 나가요)
             q = next((v for v in (_fin(info.get("currentPrice")), _fin(info.get("regularMarketPrice"))) if v is not None and v > 0), None)
+            cp = _fin(rec.get("price"))
+            if q is not None and cp and abs(q / cp - 1) > US_QUOTE_FAR:   # 리뷰 (2026-11-20, 4): 실은 종가와 너무 다른 시세 가격은 쓰지 않아요
+                pxc_info["far"].append(rec["t"])
+                q = None
             if q is not None:
                 anchor = q
                 pxc_info["quote"].append(rec["t"])
@@ -10138,7 +10191,7 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
         return True
 
     sticky, partial = {}, set()
-    pxc_info = {"quote": [], "kept": [], "blank": []}
+    pxc_info = {"quote": [], "kept": [], "blank": [], "far": []}
     need = [r for r in out if us_info_due(cache.get(r["t"]), today)]
     # 2026-11-14 (Q5): 본사 나라(country)가 없는 S&P 500 밖 회사 항목도 오늘 다시 받아요 (외국 회사 판별 · 모양 표시는 그대로라 그 회사들만)
     # 2026-11-14 (리뷰 S2): S&P 500 목록은 오늘 가격을 받은 종목과 US_SP500_MIN 곳 넘게 겹칠 때만 믿어요 (목록 칸 이름이 바뀌어 티커 대신 다른
@@ -10189,11 +10242,32 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
         elif a > 0:
             reused += 1
     save_us_info(cache)
-    npc = sum(1 for r in out if r.get("pxc"))
-    if npc or px_blank:
-        log(f"{'  !! ' if px_blank else '· '}마지막 확인 종가 종목 {npc:,}개의 상세 정보: 오늘 받아 야후 시세 가격에 맞춤 {len(pxc_info['quote']):,} · "
-            f"시세 가격이 없어 {US_INFO_MAX_AGE_DAYS}일 안의 보관본 그대로 {len(pxc_info['kept']):,} · 기준 가격을 몰라 PER · PBR · 시가총액 · 배당수익률을 "
-            f"비움 {len(px_blank):,}" + (f" ({', '.join(px_blank[:30])})" if px_blank else ""))
+    # 리뷰 (2026-11-20, 잔 지적): 마지막 확인 종가 종목마다 한 가지로 세요 (더하면 그 종목 수)
+    pcs = [r["t"] for r in out if r.get("pxc")]
+    cat = collections.Counter()
+    blank_pc = []
+    for t in pcs:
+        if t in missing:
+            cat["none"] += 1
+        elif t in px_blank:
+            cat["blank"] += 1
+            blank_pc.append(t)
+        elif t in pxc_info["quote"]:
+            cat["quote"] += 1
+        elif t in pxc_info["kept"]:
+            cat["kept"] += 1
+        else:
+            cat["cache"] += 1
+    if pcs:
+        log(f"{'  !! ' if blank_pc or pxc_info['far'] else '· '}마지막 확인 종가 종목 {len(pcs):,}개의 상세 정보: 오늘 받아 야후 시세 가격에 맞춤 "
+            f"{cat['quote']:,} · 3일 안에 받은 보관본 (또는 오늘 받지 못해 보관본) {cat['cache']:,} · 시세 가격이 없거나 실은 종가와 "
+            f"{US_QUOTE_FAR:.0%} 넘게 달라 {US_INFO_MAX_AGE_DAYS}일 안의 보관본 그대로 {cat['kept']:,} · 기준 가격을 몰라 PER · PBR · 시가총액 · "
+            f"배당수익률을 비움 {cat['blank']:,}" + (f" ({', '.join(blank_pc[:30])})" if blank_pc else "") + f" · 상세 정보 없음 {cat['none']:,}"
+            + (f" — 시세 가격이 {US_QUOTE_FAR:.0%} 넘게 달라 쓰지 않음 {len(pxc_info['far']):,} ({', '.join(pxc_info['far'][:30])})" if pxc_info["far"] else ""))
+    other_blank = [t for t in px_blank if t not in set(pcs)]
+    if other_blank:
+        log(f"  !! 기준 가격을 모르는 보관본이라 PER · PBR · 시가총액 · 배당수익률을 비운 미국 종목 (마지막 확인 종가가 아님 · 오늘 다시 받지 못함) "
+            f"{len(other_blank):,}: {', '.join(other_blank[:30])}")
     if sticky:
         fc_kept = sorted(t for t, (ks, _a) in sticky.items() if "financialCurrency" in ks)
         other = sorted(t for t, (ks, _a) in sticky.items() if any(k != "financialCurrency" for k in ks))
@@ -11084,7 +11158,9 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
          "usExtraMissing": "손으로 더한 미국 종목(EXTRA_US) 중 오늘 목록에 없는 티커 → 빠진 이유",
          "usSrc": ("미국 종가의 출처 기록 (2026-11-20 · Jack: 야후 종가가 없는 미국 종목도 마지막 확인 종가로): own {v · max 나이 상한 (그 종가 뒤 미국 "
                    "거래일) · n 실은 수 · codes 마지막 확인 종가(pxc)로 실은 티커 · same 지난 발행본이 같은 usPxDate 라 그날 종가와 d1 을 그대로 실은 티커 "
-                   "(pxd 없음) · unconf 미국 기준일 종가가 야후에 없는 종목 수 · why 그 까닭별 수 (bar 기준일 종가 없음 · 빈 값 · 0 · 음수 · empty 쓸 수 있는 "
+                   "(pxd 없음) · newer (리뷰) 야후에 그 종목의 더 새 봉(기준일 앞 · 미국 거래일)이 있어 그 종가로 실은 [{t · pxd · px}] · split (리뷰) "
+                   "그 종가 뒤 분할이 있어 싣지 않은 종목 [{t · pxd · after 분할 날짜 · late 발행할 splits 에서 찾음}] (예전 그대로: 야후의 자기 날짜 봉 · "
+                   "없으면 빠짐) · unconf 미국 기준일 종가가 야후에 없는 종목 수 · why 그 까닭별 수 (bar 기준일 종가 없음 · 빈 값 · 0 · 음수 · empty 쓸 수 있는 "
                    "가격이 하나도 없음 · err 받다가 오류) · drop 싣지 않은 까닭별 수 (none 지난 발행본에 없음 · halted 지난 발행본에서도 자기 날짜 — 둘 다 "
                    "예전처럼 야후의 마지막 봉 · old 나이 상한 넘음 · bad 값을 읽을 수 없음) · dropEx 예 · bad 관문과 같은 함수로 거른 행 {n · rows · why} · "
                    "aged 나이 상한을 넘어 잠시 뺀 종목 [{t · nk · pxd}] (앱은 '며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요.') · err 이 단계가 "
@@ -11134,6 +11210,32 @@ US_CLASS_DROP_NAME = "미국 주식 종류 티커 (S&P 500 의 점이 지워진 
 DIV_LINE_DROP_NAME = "숨긴 배당수익률의 줄 (dvLine 2 · 3 · 4 가 기록 proofSub 와 맞지 않음)"
 
 
+def us_meta_drop(umeta, us, bad):
+    """뺀 미국 행(bad: 티커들)의 것을 umeta (fetch_us 의 기록) 에서도 빼요 (#139 · 2026-11-20 리뷰 3 이 함께 써요): 오늘 시세 다운로드의 분할 줄
+    (splits · 목록에 없는 종목의 새 분할 줄은 관문 실패) · splitsNoCol · usInfoPartial · usFcurUnknown 의 티커 · usForeign 의 그 종목 기록 · usInfo 수.
+    us: 빼기 전 목록. umeta 를 고쳐요."""
+    row0 = lambda x: isinstance(x, (list, tuple)) and x and x[0] in bad      # noqa: E731 — [티커, …] 줄
+    if isinstance(umeta.get("splits"), list):
+        umeta["splits"] = [x for x in umeta["splits"] if not row0(x)]
+    for k in ("splitsNoCol", "usInfoPartial", "usFcurUnknown"):
+        if isinstance(umeta.get(k), list):
+            umeta[k] = [t for t in umeta[k] if t not in bad]
+    uf = umeta.get("usForeign")
+    if isinstance(uf, dict):                       # 리뷰 1차 S1: 뺀 종목의 외국 회사 기록 (관문이 종목의 fgnCut 과 맞춰 봐요)
+        for k in ("checked", "unknown"):
+            if isinstance(uf.get(k), list):
+                uf[k] = [t for t in uf[k] if t not in bad]
+        for k in ("cut", "kept"):
+            if isinstance(uf.get(k), list):
+                uf[k] = [x for x in uf[k] if not row0(x)]
+        for k in ("kind", "set"):
+            if isinstance(uf.get(k), dict):
+                uf[k] = {t: v for t, v in uf[k].items() if t not in bad}
+    if isinstance(umeta.get("usInfo"), list) and len(umeta["usInfo"]) == 2:   # [상세 정보를 붙인 종목, 종목] — 뺀 행만큼 줄여요
+        info = sum(1 for s in us if s.get("t") in bad and "dk" in s)     # dk 는 상세 정보를 붙인 행에만 (apply_us_info · n_ok 와 같은 행)
+        umeta["usInfo"] = [max(0, umeta["usInfo"][0] - info), sum(1 for s in us if s.get("t") not in bad)]
+
+
 def own_drop_us_class(us, umeta):
     """#139 의 우리 처리 검사 (validate_data.us_class_bad_rows): 발행하면 안 되는 미국 행을 빼요 → (남긴 미국 목록, ownDrop.usClass 의 값).
     빼는 행: S&P 500 목록의 점이 지워진 꼴(BRKB · BFB)이 바뀌지 않고 실린 행 (야후가 그 꼴에 답했다면 다른 증권이에요) · 기록이 깨져 출처를 알 수
@@ -11145,26 +11247,7 @@ def own_drop_us_class(us, umeta):
     bad = {r[0] for r in rows}
     kept = [s for s in us if s.get("t") not in bad]
     if bad:
-        row0 = lambda x: isinstance(x, (list, tuple)) and x and x[0] in bad      # noqa: E731 — [티커, …] 줄
-        if isinstance(umeta.get("splits"), list):
-            umeta["splits"] = [x for x in umeta["splits"] if not row0(x)]
-        for k in ("splitsNoCol", "usInfoPartial", "usFcurUnknown"):
-            if isinstance(umeta.get(k), list):
-                umeta[k] = [t for t in umeta[k] if t not in bad]
-        uf = umeta.get("usForeign")
-        if isinstance(uf, dict):                       # 리뷰 1차 S1: 뺀 종목의 외국 회사 기록 (관문이 종목의 fgnCut 과 맞춰 봐요)
-            for k in ("checked", "unknown"):
-                if isinstance(uf.get(k), list):
-                    uf[k] = [t for t in uf[k] if t not in bad]
-            for k in ("cut", "kept"):
-                if isinstance(uf.get(k), list):
-                    uf[k] = [x for x in uf[k] if not row0(x)]
-            for k in ("kind", "set"):
-                if isinstance(uf.get(k), dict):
-                    uf[k] = {t: v for t, v in uf[k].items() if t not in bad}
-        if isinstance(umeta.get("usInfo"), list) and len(umeta["usInfo"]) == 2:   # [상세 정보를 붙인 종목, 종목] — 뺀 행만큼 줄여요
-            info = sum(1 for s in us if s.get("t") in bad and "dk" in s)     # dk 는 상세 정보를 붙인 행에만 (apply_us_info · n_ok 와 같은 행)
-            umeta["usInfo"] = [max(0, umeta["usInfo"][0] - info), len(kept)]
+        us_meta_drop(umeta, us, bad)
     if rows:
         log(f"  !! {US_CLASS_DROP_NAME}: {len(rows)}건 빼고 발행 — {own_drop_text(rows)} (data.json ownDrop.usClass · 관문 경고 · "
             + (f"{US_CLASS_DROP_MAX}건을 넘어 관문에서 실패해 발행하지 않아요)" if len(rows) > US_CLASS_DROP_MAX else f"{US_CLASS_DROP_MAX}건을 넘으면 실패)"))
@@ -11351,6 +11434,11 @@ def main():
     # v19.6a (A.6): 주식 분할 (2016-01-01 부터 · 한 번 실은 분할은 빼지 않아요). 오늘 시세 다운로드가 읽은 분할(umeta) + 커밋한 시드 + 지난
     # 발행본의 줄 (splits_fields · merge_splits). 시드에도 지난 발행본에도 없는 종목만 2016년부터의 이력을 읽어요 (하루 몇 개 · 많아야 20).
     sp_fields = splits_fields(prev, [s["t"] for s in us], umeta.get("splits"), umeta.get("splitsNoCol") or [], start, today)
+    # 2026-11-20 (리뷰 3): 발행할 분할에 마지막 확인 종가 뒤의 분할이 있는 행 (단계가 보지 못한 분할) — 빼고 그 종목의 새 분할 줄도 빼요
+    try:
+        us, sp_fields = us_own_split_late(us, umeta, sp_fields, prev)
+    except Exception as e:
+        log(f"  !! 마지막 확인 종가의 분할 다시 보기가 오류로 멈췄어요 ({type(e).__name__}: {str(e)[:160]}) — 관문이 그런 행을 막아요")
     names = etf_names()
     bonds, bd_ret = ph.run("채권", fetch_bonds, start, px_date, kr_bench, names, rf)
 

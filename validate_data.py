@@ -1692,7 +1692,8 @@ def us_own_rec(data):
             and all(isinstance(c, str) and c for c in own["codes"]) and len(set(own["codes"])) == len(own["codes"])
             and isinstance(own.get("n"), int) and not isinstance(own.get("n"), bool) and own["n"] == len(own["codes"])
             and isinstance(own.get("same", []), list) and all(isinstance(c, str) and c for c in own.get("same", []))
-            and isinstance(own.get("newer", []), list) and all(isinstance(x, dict) and isinstance(x.get("t"), str) for x in own.get("newer", []))):
+            and isinstance(own.get("newer", []), list) and all(isinstance(x, dict) and isinstance(x.get("t"), str) for x in own.get("newer", []))
+            and isinstance(own.get("split", []), list) and all(isinstance(x, dict) and isinstance(x.get("t"), str) for x in own.get("split", []))):
         return None
     return own
 
@@ -1837,6 +1838,8 @@ def check_us_own_close(rep, data, macro, pdata):
         parts.append(f"실음 {len(mine)}종목" + (" (" + " · ".join(f"{d} {n}종목" for d, n in sorted(days.items(), reverse=True)) + ")" if mine else "")
                      + (f" · 같은 날 지난 발행본 종가 그대로 {len(own.get('same') or [])}" if own.get("same") else "")
                      + (f" · 그중 야후의 더 새 종가 {len(own.get('newer') or [])}" if own.get("newer") else "")
+                     + (" · 그 종가 뒤 분할이 있어 싣지 않음 (예전 그대로) " + ", ".join(str(x.get("t")) for x in own.get("split") or [])
+                        if own.get("split") else "")
                      + f" · 야후 종가 없음 {own['unconf'] if isinstance(own.get('unconf'), int) else '모름'}"
                      + (" · 싣지 못함 " + " · ".join(f"{k} {v}" for k, v in sorted(dc.items())) if dc else ""))
         if own.get("err"):
@@ -1866,7 +1869,8 @@ def check_us_own_close(rep, data, macro, pdata):
         if real:
             parts.append(f"어긋남 {len(real)}: {listed(real)}")
             rep.detail("미국 마지막 확인 종가 기록과 어긋난 종목 (오늘 가격으로 보고 가격 줄들이 봐요)", [f"{t}: {US_OWN_WHY.get(w, w)}" for t, w in real])
-    warn = bool(mine or soft or dropped or (own is not None and (own.get("same") or own.get("err") or own.get("aged"))) or (raw is not None and own is None))
+    warn = bool(mine or soft or dropped or (own is not None and (own.get("same") or own.get("err") or own.get("aged") or own.get("split")))
+                or (raw is not None and own is None))
     rep.add(name, not hard and not over, " · ".join(parts) or "?", rule, warn=warn and not hard and not over)
 
 

@@ -678,17 +678,21 @@ publish, Korean data included.
   made from the price series (출렁임, 베타, 52주, 샤프, 최대낙폭, 상승 월, 모멘텀: `US_OWN_KEYS`) are copied from that publish; name, industry,
   PER, PBR, 시가총액 and 배당수익률 are attached today from that price as for any stock (won amounts use today's rate, as for any US
   price at an earlier close).
-- **A newer Yahoo bar wins (review, 2026-11-20):** if today's download has the stock's own bar dated after the carried close and before
-  `usPxDate` (e.g. last publish's US date 11-18, today's 11-20, Yahoo has 11-19 but not 11-20), that bar is used instead: Yahoo's price
+- **A newer Yahoo bar wins (review, 2026-11-20):** if today's download has the stock's own bar dated after the carried close, before
+  `usPxDate` and on an NYSE day (a day with an S&P 500 bar; a stray bar on a holiday is ignored) (e.g. last publish's US date 11-18, today's 11-20, Yahoo has 11-19 but not 11-20), that bar is used instead: Yahoo's price
   and date, the series numbers up to it, `pxc: true`, no `d1` (the existing own-date row, marked). Recorded in `usSrc.own.newer`
   (`[{t, pxd, px}]`). An aged stock with such a bar comes back on the same terms (its age counts from the new date).
-- **A split after the carried close (review, 2026-11-20):** if `data.json splits` (today's download, the previous publish's list or the
-  fixed table) has a split for the stock dated after its carried `pxd`, the stock is not carried: the price is pre-split while the app
-  (`held.js splitFactor`) would multiply the shares. It is left out and recorded in `usSrc.own.aged` with `why: "split"` (log
-  `!! 마지막 확인 종가 뒤에 주식 분할이 있어 싣지 않은 미국 종목 …`).
+- **A split after the carried close (review, 2026-11-20):** if the stock has a split dated after its carried `pxd` (today's download, the
+  previous publish's `splits` or the fixed table), it is not carried: that price is pre-split while the app (`held.js splitFactor`) would
+  multiply the shares. It gets exactly what it got before this change: Yahoo's own-date row (Yahoo's split-adjusted series, the halted
+  wording, no `pxc`), or left out when Yahoo has nothing (no aged entry, so the app says "이 종목의 데이터를 찾지 못했어요." as before).
+  Recorded in `usSrc.own.split` (log `!! 마지막 확인 종가 뒤에 주식 분할이 있어 싣지 않은 미국 종목 …`). After `splits_fields` the published
+  list is checked again (`us_own_split_late`: a split found only through the seed or the history backfill): such a row is removed, with
+  its new split rows, its `umeta` records (as #139 does) and an EXTRA_US reason (`split` entry with `late: true`). A must-have in this
+  state behaves as before (no exemption).
 - **Details of a carried stock (review, 2026-11-20):** Yahoo's PER, PBR, 시가총액 and 배당수익률 follow Yahoo's current quote, so for a
   carried row the info cache records Yahoo's quote price (`currentPrice` / `regularMarketPrice`) as its reference and the numbers are
-  rescaled to the carried close. Without a quote price, a cached copy under 14 days old is kept as it was; otherwise those four numbers
+  rescaled to the carried close. Without a quote price, or with one more than 50% away from the carried close, a cached copy under 14 days old is kept as it was; otherwise those four numbers
   are left blank for that row (`pxBad` on the cache entry; log `마지막 확인 종가 종목 …의 상세 정보: …`).
 - **Same US date again (`usSrc.own.same`):** if the previous publish already has the same `usPxDate` (a second publish the same day, which is
   what 11-20's trial runs were), the stock keeps that publish's close **and its `d1`** for that day: it is that day's confirmed close, so no
@@ -708,7 +712,7 @@ publish, Korean data included.
 - **Run log:** `!! 미국 종가 미확인 {n}종목 (기준일 … · 까닭별 수): 마지막 확인 종가로 실음 {k}종목 (pxd …) — names · 지난 발행본이 같은 기준일이라
   그날 종가 · d1 을 그대로 {m}종목 — names`, `!! 마지막 확인 종가로 싣지 않은 미국 종목 …`, `!! 마지막 확인 종가가 5거래일을 넘어 잠시 뺀 미국 종목 …`,
   `· 마지막 확인 종가 점검 (미국 · 관문과 같은 함수): {n}종목 빼고 발행`. Normal day: `· 미국 종가 미확인 0종목`.
-- **data.json:** `usSrc` = `{v: 1, own: {v, max, n, codes, same, newer, unconf, why {bar · empty · err}, drop, dropEx, bad {n, rows, why}, aged, err?}}`;
+- **data.json:** `usSrc` = `{v: 1, own: {v, max, n, codes, same, newer, split, unconf, why {bar · empty · err}, drop, dropEx, bad {n, rows, why}, aged, err?}}`;
   the stock row has `pxc: true`.
 - **Gate:**
   - `미국 d1 채움 (미국 기준일 봉)`: a clean carry (`validate_data.us_own_codes`: `pxc`, `pxd` before `usPxDate`, no `d1`, a price, listed in

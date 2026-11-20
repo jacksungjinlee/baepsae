@@ -179,8 +179,9 @@ INFO = {"shortName": "Co", "longName": "Co Inc.", "quoteType": "EQUITY", "sector
         "country": "United States", "dividendYield": 0.5}
 
 
-def _fake_yf(series, quote=None):
+def _fake_yf(series, quote=None, splits=None):
     quote = quote or {}
+    splits = splits or {}
 
     def download(tickers, **kw):
         if isinstance(tickers, str):
@@ -191,6 +192,10 @@ def _fake_yf(series, quote=None):
                 continue
             cols[(t, "Close")] = series[t]
             cols[(t, "Dividends")] = pd.Series(0.0, index=series[t].index)
+            sp = pd.Series(0.0, index=series[t].index)
+            for d, r in splits.get(t, []):
+                sp[pd.Timestamp(d)] = r
+            cols[(t, "Stock Splits")] = sp
         return pd.DataFrame(cols)
 
     class Ticker:
@@ -202,7 +207,8 @@ def _fake_yf(series, quote=None):
     return types.SimpleNamespace(download=download, Ticker=Ticker)
 
 
-def _fetch(tmp_path, monkeypatch, blank, zero=(), prev_usd=D18, today_us=dt.date(2026, 11, 19), extra_prev=(), quote=None, cache=None, empty=()):
+def _fetch(tmp_path, monkeypatch, blank, zero=(), prev_usd=D18, today_us=dt.date(2026, 11, 19), extra_prev=(), quote=None, cache=None, empty=(),
+           splits=None, prev_extra=None):
     syms = ["AAPL", "MSFT", "NVDA", "SHEL", "BP", "ZERO", "TD", "STAG"]
     days = pd.bdate_range(today_us - dt.timedelta(days=500), today_us)
     days = days[days != pd.Timestamp("2026-11-26")]
@@ -223,8 +229,8 @@ def _fetch(tmp_path, monkeypatch, blank, zero=(), prev_usd=D18, today_us=dt.date
         series[t] = s
     series["STAG"] = pd.Series(np.nan, index=days)                    # 가격을 하나도 주지 않음
     prev_rows = [us(t, price=50.0 + i, d1=0.3) for i, t in enumerate(syms) if t != "STAG"] + list(extra_prev)
-    prev = {"pxDate": prev_usd, "usPxDate": prev_usd, "stocks": prev_rows}
-    monkeypatch.setitem(sys.modules, "yfinance", _fake_yf(series, quote))
+    prev = {"pxDate": prev_usd, "usPxDate": prev_usd, "stocks": prev_rows, **(prev_extra or {})}
+    monkeypatch.setitem(sys.modules, "yfinance", _fake_yf(series, quote, splits))
     monkeypatch.setattr(F, "us_tickers", lambda names: list(syms))
     monkeypatch.setattr(F, "us_last_complete_day", lambda now=None: today_us)
     monkeypatch.setattr(F.time, "sleep", lambda s: None)
@@ -239,7 +245,7 @@ def _fetch(tmp_path, monkeypatch, blank, zero=(), prev_usd=D18, today_us=dt.date
 
 
 def test_fetch_us_carries_blank_and_zero_newest_bars(tmp_path, monkeypatch):
-    quote = {t: 101.0 for t in ("AAPL", "SHEL", "ZERO", "TD")}                     # 야후 시세 가격 (리뷰 B: 상세 정보의 기준 가격)
+    quote = {t: 60.0 for t in ("AAPL", "SHEL", "ZERO", "TD")}                      # 야후 시세 가격 (리뷰 B: 상세 정보의 기준 가격 · 실은 종가 50~56)
     out, meta, lines, prev = _fetch(tmp_path, monkeypatch, blank={"AAPL", "SHEL"}, zero={"ZERO"}, quote=quote)
     by = {r["t"]: r for r in out}
     pby = {r["t"]: r for r in prev["stocks"]}
@@ -607,26 +613,115 @@ def test_step_records_newer_and_logs_long_aged(monkeypatch):
     assert any(x.startswith("  !! 잠시 뺀 지 20거래일이 넘은 미국 종목 1") and "GONE (2026-09-15)" in x for x in lines), lines
 
 
-def test_a_split_after_the_carried_close_leaves_the_stock_out(monkeypatch):
+def test_a_split_after_the_carried_close_takes_mains_path():
+    """리뷰 (2026-11-20, 분할 · coordinator 의 결정): 그 종가 날짜 뒤에 분할이 있으면 싣지 않고 예전 그대로 — 야후의 자기 날짜 봉(분할을 반영한 야후
+    시계열 · pxc 없음)이 있으면 그 행, 없으면 빠져요 (잠시 뺀 종목에 적지 않아요 · usSrc.own.split 에만)."""
+    prev = prev_file([us("NVDA", price=180.0), us("TD", price=60.0), us("AAPL", price=270.0)], usd=D19)
+    info = {}
+    carried, same, drop = F.us_own_close_carry(prev, {"NVDA": "bar", "TD": "empty", "AAPL": "bar"}, dt.date(2026, 11, 20), UDAYS, info=info,
+                                               split_dates={"NVDA": {D20}, "TD": {D20, "2020-01-02"}, "AAPL": {D19}})
+    assert [r["t"] for r in carried] == ["AAPL"] and drop == {"NVDA": "split", "TD": "split"}      # AAPL: 그 종가 날짜의 분할 = 뒤가 아님
+    assert info["split"] == [{"t": "NVDA", "pxd": D19, "after": [D20]}, {"t": "TD", "pxd": D19, "after": [D20]}]
+    lines = []
+    yahoo_nvda = us("NVDA", price=18.1, d1=None, pxd=D18)                           # 야후의 자기 날짜 봉 (분할을 반영한 값)
+    out = [yahoo_nvda, us("MSFT")]
+    F.log, keep = lines.append, F.log
+    try:
+        rec = F.us_own_close_step(prev, {"NVDA": "bar", "TD": "empty"}, out, dt.date(2026, 11, 20), UDAYS, split_dates={"NVDA": {D20}, "TD": {D20}})
+    finally:
+        F.log = keep
+    assert out == [yahoo_nvda, us("MSFT")] and rec["codes"] == [] and rec["aged"] == []           # 예전 그대로 · TD 는 빠져요
+    assert [x["t"] for x in rec["split"]] == ["NVDA", "TD"] and rec["drop"] == {"split": 2}
+    assert any(x.startswith("  !! 마지막 확인 종가 뒤에 주식 분할이 있어 싣지 않은 미국 종목 2") for x in lines), lines
+
+
+def _split_gate(data, prev, today=dt.date(2026, 11, 20)):
+    by = {s["t"]: s for s in data["stocks"]}
+    us_ = V.us_stocks(data)
+    rep = V.Report()
+    V.check_v196a(rep, data, {}, by, prev, "publish", today, pmacro=None)
+    V.check_us_extra(rep, data, us_, "publish")
+    V.check_us_own_close(rep, data, macro_days(), prev)
+    return {r[0]: (r[3], r[1]) for r in rep.rows}
+
+
+def test_split_cases_through_fetch_us_splits_fields_and_the_gate(tmp_path, monkeypatch):
+    """NVDA 처럼 (야후에 자기 날짜 봉이 있음 · 오늘 다운로드의 분할 칸) · EXTRA_US 의 TD 처럼 (야후가 아무것도 주지 않음 · 지난 발행본의 분할):
+    둘 다 예전 그대로 · 발행할 splits 가 목록과 맞고 (목록에 없는 종목의 새 줄 없음) · EXTRA_US 의 빠진 까닭 · 마지막 확인 종가 줄은 실패하지 않아요."""
+    must = [list(x) for x in V.MUST_SPLITS]
+    pextra = {"splits": must + [["TD", "2026-11-19", 2.0]], "splitsFrom": V.SPLITS_FROM, "splitsAsOf": D18,
+              "splitsInfo": {"noCol": 0, "gap": [], "diff": [], "fixed": [], "fixedKept": []}}
+    out, meta, lines, prev = _fetch(tmp_path, monkeypatch, blank={"NVDA"}, splits={"NVDA": [(D19, 10.0)]}, prev_extra=pextra,
+                                    quote={"AAPL": 100.0})
+    by = {r["t"]: r for r in out}
+    assert "pxc" not in by["NVDA"] and by["NVDA"]["pxd"] == D18                      # 예전 그대로: 야후의 자기 날짜 봉
+    assert "TD" not in by and meta["usExtraMissing"]["TD"].startswith("시세를 받지 못함")  # 예전 그대로 빠지고 까닭도 그대로
+    own = meta["usSrc"]["own"]
+    assert {x["t"] for x in own["split"]} == {"NVDA", "TD"} and own["aged"] == [] and "NVDA" not in own["codes"] and "TD" not in own["codes"]
+    # main 처럼: 미국 목록 → splits_fields → 관문
+    hist = lambda need, today: ([], {"noCol": []})
+    sp = F.splits_fields(prev, [r["t"] for r in out], meta["splits"], meta.get("splitsNoCol") or [], dt.date(2025, 6, 1), dt.date(2026, 11, 20),
+                         seed=({}, set(), None), history=hist)
+    out2, sp2 = F.us_own_split_late(out, meta, sp, prev)
+    assert out2 == out and sp2 == sp                                                   # 단계가 이미 봐서 더 뺄 것이 없어요
+    assert ["NVDA", D19, 10.0] in sp["splits"] and ["TD", "2026-11-19", 2.0] in sp["splits"]
+    data = {"pxDate": D19, "usPxDate": D19, "asOf": "2026-11-20", "stocks": out, "usSrc": meta["usSrc"], "usExtraMissing": meta["usExtraMissing"], **sp}
+    rows = _split_gate(data, prev)
+    assert rows["주식 분할 목록 (splits)"][0] != "FAIL", rows["주식 분할 목록 (splits)"]
+    assert "새 줄" not in rows["주식 분할 목록 (splits)"][1]
+    assert rows["손으로 더한 미국 종목 (EXTRA_US): 목록에 있거나 빠진 이유"][0] != "FAIL"
+    assert rows["미국 마지막 확인 종가 (usSrc.own · pxc)"][0] == "WARN" and "분할" in rows["미국 마지막 확인 종가 (usSrc.own · pxc)"][1]
+
+
+def test_a_split_seen_only_in_the_published_list_is_handled_after_splits_fields(monkeypatch):
+    """리뷰 3: 발행할 splits 에만 있는 분할 (예: 2016년부터 다시 읽은 이력) — 그 행을 빼고, 그 종목의 새 줄도 빼고, umeta 를 정리하고, EXTRA_US 까닭."""
     lines = []
     monkeypatch.setattr(F, "log", lines.append)
-    prev = prev_file([us("NVDA", price=180.0), us("AAPL", price=270.0)], usd=D19)
-    rows = [us("NVDA", price=180.0, d1=None, pxd=D19, pxc=True), us("AAPL", price=270.0, d1=None, pxd=D19, pxc=True), us("MSFT")]
-    umeta = {"usPxDate": D20, "splits": [["NVDA", D20, 10.0], ["AAPL", "2020-08-31", 4.0]],
-             "usSrc": {"v": 1, "own": {"v": 1, "n": 2, "codes": ["AAPL", "NVDA"], "same": [], "newer": [], "aged": [], "bad": {"n": 0, "rows": []}}}}
-    kept = F.us_own_close_final(rows, umeta, prev, UDAYS)
+    prev = {**prev_file([us("TD", price=60.0), us("MSFT")], usd=D19), "splits": [["AAPL", "2020-08-31", 4.0]]}
+    rows = [us("TD", price=60.0, d1=None, pxd=D19, pxc=True, dk="x"), us("MSFT", dk="x")]
+    umeta = {"usPxDate": D20, "splits": [["TD", D20, 2.0]], "splitsNoCol": ["TD"], "usInfoPartial": ["TD"], "usFcurUnknown": [], "usInfo": [2, 2],
+             "usExtraMissing": {}, "usForeign": {"checked": ["TD"], "unknown": [], "cut": [], "kept": [], "kind": {}, "set": {"TD": ["Canada", None, "floor"]}},
+             "usSrc": {"v": 1, "own": {"v": 1, "n": 1, "codes": ["TD"], "same": [], "newer": [], "split": [], "aged": []}}}
+    sp = {"splits": [["AAPL", "2020-08-31", 4.0], ["TD", D20, 2.0]], "splitsFrom": V.SPLITS_FROM}
+    kept, sp2 = F.us_own_split_late(rows, umeta, sp, prev)
+    assert [r["t"] for r in kept] == ["MSFT"] and sp2["splits"] == [["AAPL", "2020-08-31", 4.0]]
     own = umeta["usSrc"]["own"]
-    assert [r["t"] for r in kept] == ["AAPL", "MSFT"] and own["codes"] == ["AAPL"]
-    assert own["aged"] == [{"t": "NVDA", "nk": "NVDA Inc.", "pxd": D19, "why": "split"}] and own["bad"] == {"n": 0, "rows": []}
-    assert any(x.startswith("  !! 마지막 확인 종가 뒤에 주식 분할이 있어 싣지 않은 미국 종목 1") and "NVDA" in x for x in lines), lines
-    # 지난 발행본의 splits 에 있는 분할도 (오늘 다운로드에 없어도)
-    rows2 = [us("NVDA", price=180.0, d1=None, pxd=D19, pxc=True)]
-    um2 = {"usPxDate": D20, "splits": None, "usSrc": {"v": 1, "own": {"v": 1, "n": 1, "codes": ["NVDA"], "same": []}}}
-    assert F.us_own_close_final(rows2, um2, {**prev, "splits": [["NVDA", D20, 10.0]]}, UDAYS) == []
-    # 관문: 파일에 남은 그런 행은 실패
-    data = {**_usdata([us("NVDA", price=180.0, d1=None, pxd=D19, pxc=True)], codes=["NVDA"]), "splits": [["NVDA", D20, 10.0]]}
-    r = rows_of(lambda rep: V.check_us_own_close(rep, data, macro_days(), prev))["미국 마지막 확인 종가 (usSrc.own · pxc)"]
-    assert r[0] == "FAIL" and "분할" in r[1], r
+    assert own["codes"] == [] and own["split"] == [{"t": "TD", "pxd": D19, "after": [D20], "late": True}]
+    assert umeta["splits"] == [] and umeta["usInfoPartial"] == [] and umeta["usForeign"]["checked"] == [] and umeta["usInfo"] == [1, 1]
+    assert umeta["usExtraMissing"]["TD"].startswith("마지막 확인 종가(2026-11-19) 뒤에 주식 분할이 있어 뺌")
+    assert any(x.startswith("  !! 발행할 분할 목록에 마지막 확인 종가 뒤의 분할이 있어 뺀 미국 종목 1") for x in lines), lines
+    # 그런 행이 파일에 남으면 관문은 실패
+    data = {**_usdata([us("TD", price=60.0, d1=None, pxd=D19, pxc=True)], codes=["TD"]), "splits": [["TD", D20, 2.0]]}
+    assert rows_of(lambda rep: V.check_us_own_close(rep, data, macro_days(), prev))["미국 마지막 확인 종가 (usSrc.own · pxc)"][0] == "FAIL"
+
+
+def test_a_stray_bar_on_a_market_holiday_is_not_used():
+    """리뷰 2: 추수감사절(11-26) 처럼 S&P 500 봉이 없는 날의 야후 봉은 더 새 종가로 쓰지 않아요 — 예전처럼 마지막 확인 종가."""
+    prev = prev_file([us(f"S{i}", price=100.0 + i) for i in range(7)], usd="2026-11-25")
+    out = [us(f"S{i}", price=90.0 + i, d1=None, pxd="2026-11-26") for i in range(7)]
+    info = {}
+    carried, _s, drop = F.us_own_close_carry(prev, {f"S{i}": "bar" for i in range(7)}, dt.date(2026, 11, 27), UDAYS,
+                                             ybar={r["t"]: r for r in out}, info=info)
+    assert drop == {} and info["newer"] == [] and all(r["pxd"] == "2026-11-25" and r["price"] == 100.0 + i for i, r in enumerate(carried))
+
+
+def test_a_newer_bar_that_ages_out_is_not_listed_as_newer():
+    days = [d.strftime("%Y-%m-%d") for d in pd.bdate_range("2026-10-01", "2026-11-20")]
+    info = {}
+    _c, _s, drop = F.us_own_close_carry(prev_file([us("OLD", price=10.0)], usd="2026-11-02"), {"OLD": "bar"}, dt.date(2026, 11, 20), days,
+                                        ybar={"OLD": us("OLD", price=9.0, d1=None, pxd="2026-11-05")}, info=info)
+    assert drop == {"OLD": "old"} and info["newer"] == [] and info["oldPxd"] == {"OLD": "2026-11-05"}
+
+
+def test_a_quote_far_from_the_carried_close_is_not_used(tmp_path, monkeypatch):
+    out, meta, lines, prev = _fetch(tmp_path, monkeypatch, blank={"AAPL", "SHEL"}, quote={"AAPL": 999.0, "SHEL": 60.0, "TD": 60.0})
+    by = {r["t"]: r for r in out}
+    assert not {"per", "pbr", "cap", "dy"} & set(by["AAPL"]), by["AAPL"]            # 시세 가격이 50% 넘게 다름 · 보관본 없음 → 비움
+    assert by["SHEL"].get("cap") is not None                                         # 시세 가격이 가까움 → 맞춰요 (PER · PBR 은 외국 회사 검사가 따로 봐요)
+    line = next(x for x in lines if "마지막 확인 종가 종목" in x and "상세 정보" in x)
+    n = int(line.split("마지막 확인 종가 종목 ")[1].split("개")[0])
+    nums = [int(x) for x in __import__("re").findall(r"(?:맞춤|못해 보관본\)|그대로|비움|없음) (\d+)", line)]
+    assert n == sum(nums) and "50% 넘게 달라 쓰지 않음 1 (AAPL)" in line, (line, nums)
 
 
 def test_gate_checks_newer_rows():
@@ -665,10 +760,10 @@ def test_a_same_day_mismatch_left_in_the_file_fails():
 
 def test_carried_details_are_anchored_to_the_yahoo_quote(tmp_path, monkeypatch):
     """리뷰 B: 야후의 PER · PBR · 시가총액 · 배당수익률은 야후의 지금 시세 가격 기준 — 그 가격을 기준으로 적어 실은 종가에 맞춰요."""
-    out, meta, lines, prev = _fetch(tmp_path, monkeypatch, blank={"AAPL"}, quote={"AAPL": 120.0})
+    out, meta, lines, prev = _fetch(tmp_path, monkeypatch, blank={"AAPL"}, quote={"AAPL": 62.0})
     by = {r["t"]: r for r in out}
     a = by["AAPL"]
-    k = a["price"] / 120.0                                                           # 실은 종가 ÷ 야후 시세 가격
+    k = a["price"] / 62.0                                                            # 실은 종가(50) ÷ 야후 시세 가격
     assert a["pxc"] is True and a["per"] == round(20.0 * k, 1) and a["pbr"] == round(4.0 * k, 2), (a["per"], a["pbr"], k)
     assert a["dy"] == round(0.5 / k, 2)
     assert any("야후 시세 가격에 맞춤 1" in x for x in lines), lines
