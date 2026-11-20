@@ -14109,7 +14109,12 @@ def scene_kr_own_close(R, files, width=390):
                               {"t": "005930", "nk": "삼성전자", "target": 0.5, "plannedQty": 1, "rules": band(0.5)}],
                  "purchases": [{"id": "p1kraged", "t": "035420", "date": "2026-10-01", "qty": 1, "price": 200000, "ccy": "KRW"},
                                {"id": "p2kraged", "t": "005930", "date": "2026-10-01", "qty": 1, "price": 200000, "ccy": "KRW"}]}
-        srv2, ctx2, p2, _ = R.open(build_site(g), width, init=e_store([deck2]), path="/app.html?dev=1#stocks")
+        # 리뷰 4: 가진 종목 포트폴리오(pfview.jsx)와 관심 종목 카드(watch.jsx)에도 — 같은 종목을 가진 가진 종목 포트폴리오 · 관심 종목 하나
+        by0 = by_t(f["data.json"]["stocks"])
+        imp = e_imported(by0, f["data.json"]["pxDate"], [("035420", 2, None), ("005930", 1, None)], did="dimpaged", name="잠시 뺀 가진 종목")
+        store2 = {"v": 2, "decks": [deck2, imp], "watch": {"035420": {"at": "2026-10-29", "conds": [{"k": "pxBelow", "v": 100000}]}}}
+        init2 = f"(() => {{ try {{ localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(store2, ensure_ascii=False))}); }} catch (e) {{}} }})();"
+        srv2, ctx2, p2, _ = R.open(build_site(g), width, init=init2, path="/app.html?dev=1#stocks")
         try:
             wait_ready(p2)
             aged_line = C["app"]["krOwnAged"]
@@ -14125,16 +14130,28 @@ def scene_kr_own_close(R, files, width=390):
                 line = p2.locator('[data-ui-v2="kr-aged"][data-t="035420"]').first
                 line.wait_for(state="visible")
                 assert line.inner_text() == aged_line, (hash_, line.inner_text())
-                assert p2.locator('[data-ui-v2="kr-aged"]').count() == 1, hash_                # 그 종목 줄 밑에만
+                # 그 종목 줄 밑에만: 만든 포트폴리오 하나 · 가진 종목 포트폴리오 하나 (pfview.jsx · 리뷰 4)
+                got = p2.locator('[data-ui-v2="kr-aged"]').evaluate_all(
+                    "(es) => es.map((e) => [e.closest('[data-deck-id]') ? e.closest('[data-deck-id]').dataset.deckId : null, e.dataset.t, e.innerText])")
+                assert sorted(got) == sorted([[deck2["id"], "035420", aged_line], [imp["id"], "035420", aged_line]]), (hash_, got)
                 miss = p2.locator('[data-ui-v2="missing-line"]').first                         # 합계 줄은 그대로 (그 문장 · 이름)
                 assert miss.inner_text().startswith(C["missing"]["line"].split("{n}")[0] + "1개(" + nk), (hash_, miss.inner_text())
                 floor_ok(p2, f"잠시 뺀 종목 {hash_}")
                 no_hscroll(p2, width)
+            # 관심 종목 (리뷰 4): 이름만 있는 카드 대신 그 줄
+            p2.evaluate("(h) => { location.replace(h); }", "#stocks/watch")
+            at(p2, "stocks/watch")
+            card = p2.locator('[data-ui-v2="watch-card"][data-t="035420"]')
+            card.wait_for(state="visible")
+            assert card.get_attribute("data-missing") == "1" and card.locator('[data-ui-v2="kr-aged"]').inner_text() == aged_line, card.inner_text()
+            assert p2.locator('[data-ui-v2="kr-aged"]').count() == 1
+            floor_ok(p2, "잠시 뺀 종목 관심 종목")
+            no_hscroll(p2, width)
             R.collect(p2)
         finally:
             ctx2.close()
             srv2.shutdown()
-    R.check(None, S, "잠시 뺀 종목 (5거래일이 지남): 회사 페이지 · 가진 포트폴리오의 그 줄 밑에 Jack 의 줄 · 다른 코드는 '찾지 못했어요' 그대로", aged)
+    R.check(None, S, "잠시 뺀 종목 (5거래일이 지남): 회사 페이지 · 그 종목을 가진 포트폴리오(만든 · 가진 종목)의 그 줄 밑 · 관심 종목 카드에 Jack 의 줄 · 다른 코드는 '찾지 못했어요' 그대로", aged)
 
 
 def main():

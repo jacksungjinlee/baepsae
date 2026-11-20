@@ -173,7 +173,7 @@ def test_pipeline_drops_a_bad_row_loudly_and_publishes_the_rest(capsys):
     rep = V.Report()
     V.check_kr_own_close(rep, d, None, prev)
     rows = {r[0]: r for r in rep.rows}
-    assert rows["국내 자기 가격 날짜 (pxd)"][3] == "WARN" and "파이프라인이 거른 종목 1: 400020" in rows["국내 자기 가격 날짜 (pxd)"][1]
+    assert rows["국내 자기 가격 날짜 (pxd)"][3] == "WARN" and "파이프라인이 거른 종목 1 (지난 발행본의 마지막 확인 종가 · 날짜와 다름 1): 400020" in rows["국내 자기 가격 날짜 (pxd)"][1]
     assert not rep.failed
     assert rows["국내 마지막 확인 종가 (pxSrc.own · 경고만)"][3] == "WARN" and "파이프라인이 거른 종목 1" in rows["국내 마지막 확인 종가 (pxSrc.own · 경고만)"][1]
     # 깨끗한 실행: · 줄
@@ -199,6 +199,21 @@ def test_broken_dates_are_dropped_and_warned_and_more_than_five_in_one_run_fail(
         row = {r[0]: r for r in rep.rows}[PXD_ROW]
         assert row[3] == want and f"파이프라인이 거른 종목 {n_bad}" in row[1], (n_bad, row)
         assert bool(rep.failed) == (want == "FAIL"), n_bad
+    # 리뷰 4 (Jack 의 상시 규칙: 한 점검에서 5개를 넘을 때만): 6 개라도 까닭이 둘로 나뉘면 (깨진 날짜 3 · 지난 발행본과 다름 3) 경고만 — 더하지 않아요
+    # (깨진 날짜는 지난 발행본의 날짜와도 달라서 그 점검에도 걸려요 — 두 점검 모두 세요)
+    rows_in = [kr(c, price=100.0, d1=None, pxd="2026-11-31") for c in codes[:3]] + [kr(c, price=100.0, d1=None, pxd=D16, noTrade=True) for c in codes[3:6]]
+    src = fb_data([], codes[:6])["pxSrc"]
+    out = F.kr_own_close_final([kr("005930")] + rows_in, src, prev, KDAYS)
+    assert [s["t"] for s in out] == ["005930"] and src["own"]["bad"]["n"] == 6 and src["own"]["bad"]["why"] == {"mark": 3, "prev": 3, "shape": 3}
+    d = fb_data(out, [])
+    d["pxSrc"]["own"] = src["own"]
+    rep_ = V.Report()
+    V.check_kr_own_close(rep_, d, None, prev)
+    row = {r[0]: r for r in rep_.rows}[PXD_ROW]
+    assert row[3] == "WARN" and not rep_.failed and "파이프라인이 거른 종목 6 (" in row[1], row
+    # 까닭별 수가 없는 기록 (이 변경 전에는 없었어요): 세지 않고 경고
+    d["pxSrc"]["own"] = dict(src["own"], bad={"n": 7, "rows": codes})
+    assert gate_rows(d)[PXD_ROW][1] == "WARN" and "까닭별 수 없음" in gate_rows(d)[PXD_ROW][0]
     # 깨진 날짜가 파일에 남아 있으면 (빼기가 고장): 실패 — 거른 수와 상관없이
     d = fb_data([kr("401010", d1=None, pxd="2026-11-31")], ["401010"])
     assert gate_rows(d)[PXD_ROW][1] == "FAIL"
@@ -870,3 +885,35 @@ const bad = D.ownAgedOf({ stocks: [], pxSrc: { own: { aged: 'x' } } });
 out = { m: [...m.entries()], none: D.ownAgedOf({ stocks: [] }).size, old: D.ownAgedOf({ pxSrc: { own: {} } }).size, bad: bad.size, warn: WARN.slice() };""")
     assert got["m"] == [["300010", {"nk": "가", "pxd": "2026-11-06"}]]       # 발행하는 종목(005930)은 그 목록에 있어도 빼요 (그 종목은 보여요)
     assert got["none"] == 0 and got["old"] == 0 and got["bad"] == 0 and len(got["warn"]) == 1
+
+
+@needs_node
+def test_the_late_cap_counts_every_stock_the_check_reads_and_stops_on_an_unreadable_date():
+    """리뷰 4 (2026-11-20): 다 팔고 포트폴리오에 남겨 둔 종목도 점검이 읽어요 (밴드 · 깨진 규칙, evaluateDeck) — 그 종목의 마지막 확인 종가도 세요.
+    가진 종목 넣기의 줄도 · 날짜로 읽을 수 없는 pxd 는 멈춰요 (더 엄격한 쪽) · pxd 가 기준일과 같으면 마지막 확인 종가가 아니에요."""
+    rules = [{"id": "band", "check": "checked", "target": 0.5, "bands": [0.05, 0.1, 0.15]}, {"id": "per", "check": "checked", "max": 10}]
+    sold = {"id": "d1", "name": "P", "createdAt": "2026-11-02",
+            "holdings": [{"t": t, "nk": t, "cls": "kr", "kind": "core", "target": 0.5, "rules": rules} for t in ("005930", "094800")],
+            "purchases": [{"t": t, "date": "2026-11-02", "qty": 1, "price": 10000, "ccy": "KRW"} for t in ("005930", "094800")],
+            "sales": [{"t": "094800", "date": "2026-11-03", "qty": 1, "price": 10000, "ccy": "KRW"}]}
+    imported = {"id": "d2", "name": "가진", "kind": "imported", "createdAt": "2026-11-02", "holdings": [],
+                "imported": [{"t": "094800", "qty": 1, "date": "2026-11-02", "close": 10000, "ccy": "KRW"}]}
+    cases = {"sold": [kr("005930", "삼성전자"), kr("094800", "맵스리얼티", d1=None, pxd=D13)],
+             "bad": [kr("005930", "삼성전자"), kr("094800", "맵스리얼티", d1=None, pxd="11/13")],
+             "bad2": [kr("005930", "삼성전자"), kr("094800", "맵스리얼티", d1=None, pxd="2026-11-31")],
+             "same": [kr("005930", "삼성전자"), kr("094800", "맵스리얼티", d1=None, pxd="2026-11-16")]}
+    got = run("""
+const at = (f, w, decks) => { const load = LD.resolveLoad({ data: { ok: true, data: f.data }, corp: { ok: true, data: f.corp }, macro: { ok: false, error: 'x' } }, Date.parse(w));
+  const ctx = R.todayCtx(load, Date.parse(w), decks); return [ctx.state.ok, ctx.state.capped || null, R.evaluateAll(decks, ctx).ok]; };
+const w = '2026-11-23T09:00:00+09:00', w20 = '2026-11-20T09:00:00+09:00';
+out = { sold: at(SOLD_F, w, [SOLD]), sold20: at(SOLD_F, w20, [SOLD]), imp: at(SOLD_F, w, [IMP]), bad: at(BAD_F, w20, [SOLD]), bad2: at(BAD2_F, w20, [SOLD]),
+  same: at(SAME_F, w, [SOLD]), ts: [...R.lateTickers(SOLD)].sort(), held: [...R.heldQty(SOLD).keys()] };""",
+              SOLD=sold, IMP=imported, SOLD_F=late_files(cases["sold"]), BAD_F=late_files(cases["bad"]), BAD2_F=late_files(cases["bad2"]),
+              SAME_F=late_files(cases["same"]))
+    assert got["held"] == ["005930"] and got["ts"] == ["005930", "094800"]           # 0 주라도 점검이 읽는 종목
+    assert got["sold"] == [False, {"t": "094800", "pxd": D13, "n": 6}, False]        # 11-13 종가 뒤 6거래일: 점검하지 않아요 (리뷰의 재현)
+    assert got["sold20"] == [True, None, True]                                       # 5거래일: 돌아요
+    assert got["imp"][0] is False and got["imp"][1]["t"] == "094800"                 # 가진 종목 넣기의 줄도
+    assert got["bad"] == [False, {"t": "094800", "pxd": "11/13", "n": None}, False]  # 날짜가 아닌 pxd: 멈춰요
+    assert got["bad2"][0] is False and got["bad2"][1]["n"] is None
+    assert got["same"] == [True, None, True]                                         # 기준일과 같은 pxd: 마지막 확인 종가가 아니에요

@@ -132,23 +132,30 @@ export function checkState(load, now) {
 }
 
 // 2026-11-20 (Jack, f: "cap the late-data portfolio check (#144) so it never runs on a close more than 5 KRX trading days old in
-// total (carried close age counts), instead of up to 10"): on late data, a held Korean stock priced at its last confirmed close
-// (data.json pxd) counts its own close: the KRX trading days after that close up to today (KST, the same count as lateDays). When
-// one of the held stocks of these decks is more than LATE_CHECK_DAYS behind, nothing is checked (the state is the stale one
-// dayState gave, as on data more than 5 days late), for every portfolio together, like the rest of the late check. A pxd that
-// cannot be counted stops it too (the stricter side). Said once in the console. -> the state to use.
+// total (carried close age counts), instead of up to 10"): on late data, a Korean stock priced at its last confirmed close (data.json
+// pxd) counts its own close: the KRX trading days after that close up to today (KST, the same count as lateDays). The stocks
+// counted are every one the check of these decks reads (review 2026-11-20): the shares held, every holding kept in the deck (a
+// sold-out one is still read for its band and its failing rules, evaluateDeck) and a 가진 종목 portfolio's rows. When one of them
+// is more than LATE_CHECK_DAYS behind, nothing is checked (the state is the stale one dayState gave, as on data more than 5 days
+// late), for every portfolio together, like the rest of the late check. A pxd that is not a readable date stops it too (the
+// stricter side). Said once in the console. -> the state to use.
+export function lateTickers(deck) {
+  const ts = new Set(heldOf(deck || {}).keys());
+  for (const h of (deck && deck.holdings) || []) if (h && h.t) ts.add(h.t);
+  for (const r of (deck && deck.imported) || []) if (r && r.t) ts.add(r.t);
+  return ts;
+}
 export function lateCap(state, ctx, decks) {
   if (!state || !state.ok || !state.late || !ctx) return state;
   for (const deck of decks || []) {
-    for (const t of heldOf(deck || {}).keys()) {
+    for (const t of lateTickers(deck)) {
       const s = ctx.byT.get(t);
-      if (!s || s.cls !== "kr") continue;
+      if (!s || s.cls !== "kr" || s.pxd == null || s.pxd === ctx.pxDate) continue;
       const pxd = ownCloseDate(s, ctx.pxDate);
-      if (!pxd) continue;
-      const n = tradingDaysAfter(pxd, ctx.today, "KR");
+      const n = pxd ? tradingDaysAfter(pxd, ctx.today, "KR") : null;
       if (n == null || n > LATE_CHECK_DAYS) {
-        lateSay(`the check is not run: held ${t} is priced at its last confirmed close ${pxd}, ${n == null ? "an age that cannot be counted" : n + " KRX trading days"} before today ${ctx.today} (more than ${LATE_CHECK_DAYS} in total)`);
-        return { ok: false, why: "stale", days: state.late.days, capped: { t, pxd, n } };
+        lateSay(`the check is not run: ${t} (read by a saved portfolio) is priced at its last confirmed close ${JSON.stringify(s.pxd)}, ${n == null ? "not a date whose age can be counted" : n + " KRX trading days"} before today ${ctx.today} (more than ${LATE_CHECK_DAYS} in total)`);
+        return { ok: false, why: "stale", days: state.late.days, capped: { t, pxd: s.pxd, n } };
       }
     }
   }

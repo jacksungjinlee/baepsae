@@ -1437,7 +1437,8 @@ def log_kr_own_close(carried, drop, unconf, names):
     dc = collections.Counter(drop.values())
     dn = [f"{nm(c)} ({KR_OWN_DROP_KO[w]} · {KR_UNCONF_KO[unconf[c][1]] if c in unconf else '?'})" for c, w in sorted(drop.items())]
     if drop:
-        log(f"  !! 마지막 확인 종가로도 싣지 못한 국내 종목 {len(drop):,} (예전처럼 빠져요 · 앱은 '이 종목의 데이터를 찾지 못했어요'): "
+        log(f"  !! 마지막 확인 종가로도 싣지 못한 국내 종목 {len(drop):,} (빠져요 · 앱은 '이 종목의 데이터를 찾지 못했어요', 나이 상한을 넘은 종목(old)은 "
+            "'며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요.'): "
             + " · ".join(f"{KR_OWN_DROP_KO[k]} {v:,}" for k, v in sorted(dc.items())) + " — " + ", ".join(dn[:KR_OWN_SHOW])
             + (f" 외 {len(dn) - KR_OWN_SHOW}종목" if len(dn) > KR_OWN_SHOW else ""))
     return {"v": 1, "max": KR_OWN_CLOSE_MAX_DAYS, "n": len(carried), "codes": sorted(r["t"] for r in carried), "unconf": len(unconf),
@@ -1639,7 +1640,8 @@ def kr_own_close_final(kr, src, prev, days, krs=None):
     if own is not None:
         own["codes"] = [c for c in own.get("codes") or [] if c not in gone]
         own["n"] = len(own["codes"])
-        own["bad"] = {"n": len(gone), "rows": rows[:KR_OWN_SHOW]}
+        # 2026-11-20 (리뷰 4): 까닭(점검)마다 뺀 수 — 관문은 한 점검에서 5개를 넘을 때만 실패해요 (Jack 의 상시 규칙). 한 종목이 두 점검에 걸리면 둘 다 세요
+        own["bad"] = {"n": len(gone), "rows": rows[:KR_OWN_SHOW], "why": dict(sorted(collections.Counter(w for ws in gone.values() for w in set(ws)).items()))}
     kr_own_prune_series(krs, gone)
     return [s for s in kr if not (s.get("cls") == "kr" and s.get("t") in gone)]
 
@@ -10657,7 +10659,7 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                    "own (2026-11-19 · 2차 출처 날만) 확인 못 한 종목을 지난 발행본의 마지막 확인 종가로 실은 기록 {v · max 나이 상한 (그 종가 뒤 거래일) · "
                    "n 실은 수 · codes 실은 종목 코드 · unconf 확인 못 한 종목 수 · drop 싣지 못한 까닭별 수 (none 지난 발행본에 없음 · same 같은 기준일 · "
                    "old 나이 상한 넘음 · bad 값을 읽을 수 없음 · jump 과거 주가 기록 오류 기록 없음) · dropEx 예 · bad 파일을 쓰기 직전 관문과 같은 함수로 "
-                   "거른 종목 {n · rows} · ind (2026-11-20 · 있을 때만) 지난 발행본이 DART 로 채웠거나 보통주를 따른 업종 글자를 옮기지 않은 종목 수 "
+                   "거른 종목 {n · rows · why 까닭(점검)별 수} · ind (2026-11-20 · 있을 때만) 지난 발행본이 DART 로 채웠거나 보통주를 따른 업종 글자를 옮기지 않은 종목 수 "
                    "{refill 오늘 다시 채움 (indSrc.dartT · prefT 에 적혀요) · krx 오늘 KRX-DESC 글자로 · unread 설명을 읽지 못해 비움} · err 이 단계가 오류로 "
                    "멈춘 까닭 (실은 종목 0) · aged (2026-11-20) 마지막 확인 종가가 나이 상한을 넘어 잠시 뺀 종목 [{t · nk · pxd 그 종가 날짜}] — 오늘도 "
                    "확인 못 한 동안 실행마다 이어 적고, 다시 확인되거나 목록에서 사라지면 빼요 (앱은 그 종목 자리에 '며칠째 종가를 확인하지 못해서 이 "
