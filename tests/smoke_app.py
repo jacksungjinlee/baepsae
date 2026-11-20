@@ -3426,7 +3426,8 @@ def scene_kr_own_close(R, files, slow=False):
     cby = {c.get("t"): c for c in f["corp.json"]["companies"]}
     assert t in by and t in cby and by[t].get("cls") == "kr" and "005930" in by, "시험할 국내 종목이 데이터에 없어요"
     by[t]["pxd"] = day
-    by[t].pop("d1", None)
+    for k in ("d1", "d1Why", "noTrade", "ntD1"):                          # 파이프라인이 싣는 모양 그대로 (오늘 변화 · 그 이유 없음)
+        by[t].pop(k, None)
     cby[t]["pxd"] = day
     nk = by[t]["nk"]
     line = f"오늘 종가를 확인하지 못해서 {_md(day, 'ko')} 종가를 보여 드려요."
@@ -3477,12 +3478,18 @@ def scene_kr_own_close(R, files, slow=False):
         got = page.evaluate(SHOWN)
         assert ok(got), f"{what} — 맞았다가 바뀌었어요: {got!r}"
 
-    def cards():
+    def korean(url):
+        """한국어 화면에서 시작해요: 앞 확인이 영어 화면에서 멈췄으면 머리줄의 언어(localStorage baepsae_lang)가 영어로 남아 있어요 (2026-11-20 시험
+        실행의 둘째 실패 · 리뷰 S2: 그 뒤 확인마다). 언어는 첫 화면에서 정하고 그다음 url 을 열어요 (바로가기 #corp=… 는 처음 열 때 한 번만 읽혀서
+        다시 불러오면 첫 화면이에요)."""
         page.goto("about:blank")
         page.goto(base + "/baepsae.html?dev=1&from=app", wait_until="domcontentloaded")
-        # 한국어 화면에서 시작해요: 앞 확인이 영어 화면에서 멈췄으면 머리줄의 언어(localStorage baepsae_lang)가 영어로 남아 있어요 (그 시험 실행의 둘째 실패)
         page.evaluate("() => localStorage.setItem('baepsae_lang', 'ko')")
-        page.reload(wait_until="domcontentloaded")
+        page.goto("about:blank")
+        page.goto(url, wait_until="domcontentloaded")
+
+    def cards():
+        korean(base + "/baepsae.html?dev=1&from=app")
         close_welcome(page, "시작하기")
         search(page, nk, t)
         page.locator("button", has_text=t).first.click()
@@ -3516,8 +3523,7 @@ def scene_kr_own_close(R, files, slow=False):
     def market_map():
         """기업분석 시장 지도 (리뷰 M3): 3개월 수익률 지도 · ROE × PBR 지도 (· 성장 지도에 그 회사가 있으면 그 밑에도) — 그린 회사 중 마지막 확인 종가
         회사가 있으면 '{이름} 가격은 {날짜} 종가예요.' 다음에 Jack 의 줄."""
-        page.goto("about:blank")
-        page.goto(base + "/baepsae.html?dev=1&from=app#corp=005930", wait_until="domcontentloaded")
+        korean(base + "/baepsae.html?dev=1&from=app#corp=005930")
         see(page, "밸류에이션 멀티플 · 업종 사분위 대비")
         page.get_by_role("button", name="시장 지도", exact=True).first.click()
         see(page, "최근 3개월 수익률 지도")
@@ -3555,8 +3561,10 @@ def scene_list(R, fresh, full):
             ("주가기록", lambda: scene_px_bad(R, fresh)),                                                                  # 2026-11-14 과거 주가 기록 오류
             ("확인종가", lambda: scene_kr_own_close(R, fresh)),                                                            # 2026-11-19 국내 마지막 확인 종가
             ("확인종가", lambda: scene_kr_own_close(R, with_kr_carries(fresh))),                                           # 리뷰 M-A: 진짜 데이터에 마지막 확인 종가가 있는 날
-            ("확인종가", lambda: scene_kr_own_close(R, with_kr_carries(fresh), slow=True)),                                # 2026-11-20 시험 실행 44627568844: 느린 화면
-            ("미국날짜", lambda: scene_own_close(R, with_kr_carries(fresh)))]                                              # 리뷰 M-A: 같은 날의 미국 자기 날짜 장면
+            ("미국날짜", lambda: scene_own_close(R, with_kr_carries(fresh)))] + (                                          # 리뷰 M-A: 같은 날의 미국 자기 날짜 장면
+        # 2026-11-20 시험 실행 44627568844: 느린 화면 — 장면 자체를 시험해요 (앱이 아니라). 그래서 고정 데이터(CI · 내 컴퓨터)에서만 돌고, 매일의 발행 전
+        # 화면 검사(--data · REAL_DATA)에서는 돌지 않아요 (리뷰 S3: 발행을 막을 수 있는 확인을 늘리지 않게)
+        [] if REAL_DATA else [("확인종가", lambda: scene_kr_own_close(R, with_kr_carries(fresh), slow=True))])
 
 
 def parse_part(text):
@@ -3582,7 +3590,7 @@ def main():
                     "고정 데이터 tests/fixtures/snapshot 을 그 발행일에 멈춘 시계로 — CI 는 이쪽이에요")
     ap.add_argument("--shots", default=None, help="실패 시 스크린샷을 저장할 폴더")
     ap.add_argument("--part", default=None, help="N/M: 장면을 순서대로 M 몫으로 나눈 것 중 N 번째만 (CI 가 여러 기계로 나눠 돌려요)")
-    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커·2.0링크·바로가기·파일·자동·저장본·미국날짜·늦음·고치는중·다시읽음·날짜·예전줄·주가기록)")
+    ap.add_argument("--only", default=None, help="이 장면만 (정상·멈춤·NaN·corp·data·금·금리·위험값·B안·빠진·베타·서비스워커·2.0링크·바로가기·파일·자동·저장본·미국날짜·늦음·고치는중·다시읽음·날짜·예전줄·주가기록·확인종가)")
     args = ap.parse_args()
     if args.part is not None:
         parse_part(args.part)                                   # 잘못 적으면 브라우저를 열기 전에 멈춰요

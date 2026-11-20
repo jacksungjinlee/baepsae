@@ -563,9 +563,16 @@ under today's date label without that line."
   React task after the header's EN button; the scene read the banner right after the click, and on GitHub's machine that read
   came before the switch. The second check then failed because the screen was left in English. Users saw nothing wrong. Fixed
   (2026-11-20): the scene waits until the text is exactly the expected one and checks it again 0.3 s later, and the second check
-  starts on the Korean screen. A third run uses a **slow screen** (`slow_screen`: React's scheduled work delayed 0.3 s), which
-  opens that gap on every machine: the old scene fails there exactly as on GitHub, the fixed one passes. If this check fails
-  only on GitHub, look for a read right after a click that does not wait for the new text.
+  and every later check starts on the Korean screen. A third run uses a **slow screen** (`slow_screen`: React's scheduled work
+  delayed 0.3 s), which opens that gap on every machine: with the old scene the same four checks fail there (the banner detail
+  differs: the slow screen keeps the Korean line longer), the fixed one passes. That run tests the scene, not the app, so it runs
+  only in CI and local runs on the fixture, never in this daily check (`--data`). If this check fails only on GitHub, look for a
+  read right after a click that does not wait for the new text.
+- **Industry words of a carried stock (review S1, 2026-11-20):** a carried row copies the previous publish's description. If that
+  publish had filled the stock's industry from DART (`indSrc.dartT`) or from its common stock (`indSrc.prefT`, #146), those words
+  are not copied as they are (`kr_own_ind_reset`, same rule as #146's `kr_prev_desc`): today's KRX-DESC words if it has them,
+  otherwise the words are taken off and the stock is filled again today, so it is in today's `dartT`/`prefT` and the gate checks
+  it. The log says "· 마지막 확인 종가 종목의 업종 글자: … 오늘 다시 채움 n · 오늘 KRX 글자로 m"; `pxSrc.own.ind` has the counts.
 - **Daily lists:** a carried stock's trading value is its old day's, so it is left out of today's 거래대금 and 거래 급증 lists
   (2.0) and of `data.json` `popular`, like 큰 움직임. It stays in 시가총액 and the 기준 lists, named under the list.
 - **On a warning:** read the named rows in the run summary. A carried stock with a different price or date than the previous

@@ -243,7 +243,8 @@ def test_carry_step_runs_on_the_real_fetch_korea_shapes(capsys):
     # fetch_korea 가 이 함수를 그 모양 그대로 불러요 (그 사이에 다른 단계가 쓰는 이름을 넘기지 않아요)
     body = inspect.getsource(F.fetch_korea)
     assert body.count("kr_own_conf_codes = ") == 1 and "unconf = kr_unconfirmed" not in body
-    assert "kr_own_close_step(prev, full_list, kr_own_conf_codes, px_src, px_date, list(ks_all.index), out, krs, prod_map)" in body
+    assert ("kr_own_close_step(prev, full_list, kr_own_conf_codes, px_src, px_date, list(ks_all.index), out, krs, prod_map, desc=desc, "
+            "no_ind=no_ind)") in body and 'ind_src["none"] = len(no_ind)' in body
     # 코드 목록을 다른 모양으로 받아도 (list · 숫자 아닌 글자) 같아요
     out2 = [{"t": c, "cls": "kr"} for c in lst["Code"].astype(str)]
     assert F.kr_own_close_step(prev, full, sorted(conf), dict(src), px, days, out2, {"jump": [], "hidden": []}, {}) == 2
@@ -283,6 +284,103 @@ def test_any_error_in_the_carry_step_keeps_the_run_going_with_no_carries(monkeyp
     assert krs2["jump"] == [["y", "2026-05-08", 40.0, "halt"]]
     assert "!! 마지막 확인 종가 점검이 오류로 멈췄어요" in capsys.readouterr().out
     assert "kr = kr_own_close_drop_all(kr, kmeta.get(\"pxSrc\"), kmeta.get(\"krSeries\")" in inspect.getsource(F.main)
+
+
+# ── 1c. 2026-11-20 리뷰 S1 (#146 을 합친 뒤): 지난 발행본이 DART 로 채운 업종 글자 ──────────────────────────────────
+DART_DK = "봉제의복 제조업 · KOSDAQ 상장 · 시가총액 614억원"
+PREF_DK = "통신 및 방송장비 제조업 · KOSPI 상장 · 시가총액 126.8조원"
+
+
+def ind_case():
+    """지난 발행본: 282620 은 DART 회사 정보로 채운 업종 글자 (indSrc.dartT) · 005935 는 보통주를 따른 우선주 (prefT) · 123450 은 KRX 글자.
+    오늘 셋 다 두 출처로 확인 못 함 (마지막 확인 종가로 실어요) · 005930 은 오늘 확인됨."""
+    prev = prev_file([kr("282620", "의류회사", dk=DART_DK, s="textile"), kr("005935", "삼성전자우", dk=PREF_DK, s="machine"),
+                      kr("123450", "그대로", dk="반도체 제조업 · 주요제품: 칩 · KOSDAQ 상장 · 시가총액 500억원", s="semi")])
+    prev["indSrc"] = {"dart": 1, "dartT": {"282620": "14199"}, "pref": 1, "prefT": {"005935": "005930"}}
+    full = pd.DataFrame({"Code": ["005930", "005935", "123450", "282620"], "Name": ["삼성전자", "삼성전자우", "그대로", "의류회사"],
+                         "Market": ["KOSPI", "KOSPI", "KOSDAQ", "KOSDAQ"]})
+    out = [kr("005930", "삼성전자", dk="통신 및 방송장비 제조업 · 주요제품: 반도체 · KOSPI 상장 · 시가총액 1,138.3조원", s="machine")]
+    return prev, full, out
+
+
+def test_a_carried_stocks_dart_filled_industry_is_filled_again_today_and_the_gate_checks_it(capsys):
+    """리뷰 S1: 마지막 확인 종가로 실은 종목이 지난 발행본에서 DART 로 채운 업종 글자를 그대로 옮기면, 오늘 indSrc.dartT 에 없어 관문이 다시 보지 않고
+    다음 실행은 그 글자를 KRX 글자처럼 이어 써요 (#146 의 kr_prev_desc 가 막는 것). 이제 그 글자를 빼고 오늘 다시 채워요 — #146 의 규칙 그대로."""
+    prev, full, out = ind_case()
+    src, no_ind = {"px": V.PX_SRC_FB}, ["777770"]
+    n = F.kr_own_close_step(prev, full, {"005930"}, src, dt.date(2026, 11, 18), KDAYS, out, {"jump": [], "hidden": []}, {}, desc={}, no_ind=no_ind)
+    by = {r["t"]: r for r in out}
+    assert n == 3 and by["282620"]["pxd"] == D16 and by["282620"]["price"] == 5000.0
+    assert by["282620"]["dk"] == "KOSDAQ 상장 · 시가총액 614억원" and by["282620"]["s"] == "etc"          # 업종 글자를 빼요 (오늘 다시 채워요)
+    assert by["005935"]["dk"] == "KOSPI 상장 · 시가총액 126.8조원" and by["005935"]["s"] == "etc"
+    assert by["123450"]["dk"] == "반도체 제조업 · 주요제품: 칩 · KOSDAQ 상장 · 시가총액 500억원" and by["123450"]["s"] == "semi"   # KRX 글자는 그대로
+    assert no_ind == ["777770", "005935", "282620"] and src["own"]["ind"] == {"refill": 2, "krx": 0, "unread": 0}
+    assert "· 마지막 확인 종가 종목의 업종 글자: 지난 발행본이 DART 회사 정보로 채웠거나 보통주를 따른 2종목은 그 글자를 옮기지 않아요 — 오늘 다시 채움 2" \
+        in capsys.readouterr().out
+    # main 의 순서 그대로: 2.0 그룹 → 업종 채우기 (DART 를 부르지 않아요 · 보관한 업종 코드)
+    names, tables = V.load_ksic_names(), F.load_industry_tables()
+    kmap = V.load_ksic_map_kr(names=names)
+    ksic = {"282620": "14199", "005930": "26410", "005935": "26410", "123450": "26110"}
+    F.assign_industries(out, tables, ksic, min_members=1)
+    ind = {"v": 1, "desc": 0, "carried": 0, "none": len(no_ind), "newNone": 0, "asOf": "2026-11-18", "from": "KRX-DESC"}
+    rec = F.kr_ind_fill(out, no_ind, ksic, kmap, ind, over=tables["over"], names=names, map_sha=V.ksic_map_kr_sha())
+    assert rec == {"n": 0, "rows": []}
+    assert ind["dartT"] == {"282620": "14199"} and ind["prefT"] == {"005935": "005930"} and ind["left"] == 0 and ind["dartMiss"] == {}
+    assert by["282620"]["dk"] == DART_DK and by["282620"]["s"] == "textile"                             # 같은 글자로 다시 · 오늘 기록에 있어요
+    assert by["005935"]["dk"] == PREF_DK and by["005935"]["s"] == "machine" and by["005935"]["ind"] == by["005930"]["ind"]
+    # 관문 (#146 의 줄): 통과
+    rep = V.Report()
+    V.check_px_src(rep, {"stocks": out, "indSrc": ind, "ownDrop": {"indFill": rec}}, dt.date(2026, 11, 19), "publish")
+    rows = {r[0]: r for r in rep.rows}
+    assert rows[V.IND_FILL_CHECK][3] == "PASS" and rows[V.IND_FILL_CHECK][1] == "DART 1종목 · 우선주 1 · 되돌림 0"
+    assert rows["국내 업종 글자 없는 종목 (경고만)"][3] == "PASS" and not rep.failed
+    assert not V.ind_fill_bad(out, ind, names, kmap)
+    # 다음 실행이 이 발행본을 지난 발행본으로 읽어도 DART 글자를 KRX 글자로 이어 쓰지 않아요
+    pdesc, _, _ = F.kr_prev_desc({"indSrc": ind, "stocks": out, "publishedAt": "2026-11-19T07:00:00+09:00"})
+    assert "282620" not in pdesc and "005935" not in pdesc and pdesc["005930"][0] == "통신 및 방송장비 제조업"
+
+
+def test_before_the_fix_the_fill_missed_it_and_the_record_lost_it():
+    """리뷰 S1 의 재현: 글자를 그대로 옮긴 행(고치기 전)은 오늘 dartT 에 없어요 — 관문이 다시 보지 않고, 다음 실행은 KRX 글자처럼 이어 써요."""
+    prev, full, out = ind_case()
+    carried, _, _ = F.kr_own_close_carry(prev, {"282620": ("의류회사", "conf")}, dt.date(2026, 11, 18), KDAYS)
+    assert carried[0]["dk"] == DART_DK                                       # 지난 발행본 글자 그대로 (kr_own_ind_reset 전)
+    ind = {"from": "KRX-DESC"}
+    F.kr_ind_fill(out + carried, [], {"282620": "14199"}, V.load_ksic_map_kr(names=V.load_ksic_names()), ind)
+    assert ind["dartT"] == {}
+    pdesc, _, _ = F.kr_prev_desc({"indSrc": ind, "stocks": out + carried, "publishedAt": "2026-11-19T07:00:00+09:00"})
+    assert pdesc["282620"] == ("봉제의복 제조업", "")                         # KRX 글자처럼 보였어요
+
+
+def test_a_carried_stock_takes_todays_krx_words_when_krx_has_them_and_errors_undo_the_list():
+    prev, full, out = ind_case()
+    src, no_ind = {"px": V.PX_SRC_FB}, []
+    F.kr_own_close_step(prev, full, {"005930"}, src, dt.date(2026, 11, 18), KDAYS, out, {"jump": [], "hidden": []}, {},
+                        desc={"282620": ("의복 제조업", "셔츠")}, no_ind=no_ind)
+    by = {r["t"]: r for r in out}
+    assert by["282620"]["dk"] == "의복 제조업 · KOSDAQ 상장 · 시가총액 614억원" and by["282620"]["s"] == F.map_sector_kr("의복 제조업", "")
+    assert no_ind == ["005935"] and src["own"]["ind"] == {"refill": 1, "krx": 1, "unread": 0}
+    # 글자를 고친 뒤 단계가 멈춰도 (주요제품 표에 넣다가): 실은 종목 · 더한 코드 모두 되돌려요
+    prev, full, out = ind_case()
+    prev["stocks"][0]["dk"] = "주요제품: 셔츠 · KOSDAQ 상장"
+
+    class Boom(dict):
+        def __setitem__(self, k, v):
+            raise RuntimeError("부서졌어요")
+    no_ind, n_out = ["777770"], len(out)
+    src = {"px": V.PX_SRC_FB}
+    n = F.kr_own_close_step(prev, full, {"005930"}, src, dt.date(2026, 11, 18), KDAYS, out, {"jump": [], "hidden": []}, Boom(),
+                            desc={}, no_ind=no_ind)
+    assert n == 0 and len(out) == n_out and no_ind == ["777770"] and src["own"]["err"]
+
+
+def test_desc_with_industry_words_replaced():
+    assert F.kr_desc_set_ind(DART_DK, "") == "KOSDAQ 상장 · 시가총액 614억원"
+    assert F.kr_desc_set_ind("반도체 제조업 · 주요제품: 칩 · KOSDAQ 상장", "") == "주요제품: 칩 · KOSDAQ 상장"
+    assert F.kr_desc_set_ind("주요제품: 칩 · KOSDAQ 상장", "새 업종") == "새 업종 · 주요제품: 칩 · KOSDAQ 상장"
+    assert F.kr_desc_set_ind("반도체 제조업", "") is None and F.kr_desc_set_ind(None, "") is None and F.kr_desc_set_ind("", "가") == "가"
+    for dk in (DART_DK, PREF_DK, "주요제품: 칩 · KOSDAQ 상장"):
+        assert F.kr_desc_parse(F.kr_desc_set_ind(dk, "가 업종"))[0] == "가 업종"
 
 
 # ── 2. 관문 ───────────────────────────────────────────────────────────────
@@ -603,3 +701,20 @@ def test_a_real_published_row_carried_through_the_later_stages_and_the_gate(caps
     _, _, plain = _later_stages(False)
     fails = lambda r: sorted(k for k, v in r.items() if v[0] == "FAIL")
     assert fails(rows) == fails(plain), (set(fails(rows)) ^ set(fails(plain)))
+
+
+def test_slow_screen_run_is_for_ci_only_never_the_daily_pre_publish_check(monkeypatch):
+    """리뷰 S3 (2026-11-20): 느린 화면 장면은 장면 자체를 시험해요 — 고정 데이터(CI · 내 컴퓨터)에서만 돌고, 매일의 발행 전 화면 검사(--data ·
+    REAL_DATA)에는 없어요. 다른 확인종가 장면(진짜 데이터에서도 도는 둘)은 그대로예요."""
+    sys.path.insert(0, os.path.join(ROOT, "tests"))
+    import smoke_app as SA
+    import inspect as _i
+
+    def own_scenes():
+        return [_i.getsource(fn).strip() for key, fn in SA.scene_list(None, None, False) if key == "확인종가"]
+    monkeypatch.setattr(SA, "REAL_DATA", False)
+    ci = own_scenes()
+    monkeypatch.setattr(SA, "REAL_DATA", True)
+    daily = own_scenes()
+    assert len(ci) == 3 and len(daily) == 2
+    assert sum("slow=True" in s for s in ci) == 1 and not any("slow=True" in s for s in daily)

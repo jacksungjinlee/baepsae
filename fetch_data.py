@@ -1453,13 +1453,58 @@ def kr_own_close_err(err, unconf_n=None):
     return out
 
 
-def kr_own_close_step(prev, full_list, conf_codes, px_src, px_date, trade_days, out, krs, prod_map):
+def kr_desc_set_ind(dk, ind):
+    """설명(dk '업종 · 주요제품: … · 시장 상장 · 시가총액')의 업종 글자만 ind 로 바꾼 글 (ind 가 빈 글이면 업종 글자를 빼요 · 주요제품과 뒤쪽은 그대로).
+    dk 가 비었으면 ind 만, 읽지 못하는 dk 면 None. (순수 함수 · validate_data.kr_desc_parse 로 다시 읽혀요)"""
+    if dk in (None, ""):
+        return ind or None
+    p = kr_desc_parse(dk)
+    if p is None:
+        return None
+    s = " · " + dk
+    tail = s[KR_DESC_TAIL.search(s).start():]
+    head = " · ".join(b for b in (ind, f"주요제품: {p[1]}" if p[1] else "") if b)
+    return (head + tail) if head else (tail.removeprefix(" · ") or None)
+
+
+def kr_own_ind_reset(carried, prev, desc=None):
+    """2026-11-20 (리뷰 S1 · #146 과 같은 규칙): 마지막 확인 종가로 실은 종목의 업종 글자. 지난 발행본이 그 종목의 업종 글자를 DART 회사 정보로
+    채웠거나(indSrc.dartT) 보통주를 따랐으면(indSrc.prefT) 그 글자를 그대로 옮기지 않아요 — kr_prev_desc 가 그런 종목을 KRX 글자처럼 이어 쓰지 않는
+    것과 같아요: 오늘 KRX-DESC(desc)에 업종 글자가 있으면 그 글자로, 없으면 업종 글자를 빼서 오늘 다시 채우게 해요 (돌려준 코드를 업종 글자 없는
+    종목 no_ind 에 더하면 main 의 kr_ind_fill 이 오늘 표로 채우고 indSrc.dartT · prefT 에 적어요 → 관문이 오늘 값을 확인하고, 다음 실행도 KRX 글자로
+    잘못 이어 쓰지 않아요). 업종 키 s 도 그 글자로 다시 정해요 (map_sector_kr · 다른 종목과 같은 규칙). 그 밖의 종목은 그대로.
+    rows(carried)를 고쳐요. 반환: (다시 채울 코드 · 오늘 KRX 글자로 바꾼 코드 · 설명을 읽지 못해 설명을 비운 코드)."""
+    src = (prev or {}).get("indSrc") or {}
+    filled = {str(t) for key in ("dartT", "prefT") if isinstance(src.get(key), dict) for t in src[key]}
+    refill, krx, bad = [], [], []
+    for r in carried:
+        t = str(r.get("t"))
+        if t not in filled:
+            continue
+        today = ((desc or {}).get(t) or ("", ""))[0]
+        dk = kr_desc_set_ind(r.get("dk"), today or "")
+        if dk is None and r.get("dk") not in (None, ""):
+            bad.append(t)                     # 만든 방법상 생기지 않아요 (DART 채우기 · 우선주 따르기는 읽히는 글만 써요) — 설명을 비우고 다시 채워요
+        p = kr_desc_parse(dk) if dk else ("", "")
+        if dk is None:
+            r.pop("dk", None)
+        else:
+            r["dk"] = dk
+        r["s"] = map_sector_kr(p[0] if p else "", p[1] if p else "")
+        (krx if today else refill).append(t)
+    return refill, krx, bad
+
+
+def kr_own_close_step(prev, full_list, conf_codes, px_src, px_date, trade_days, out, krs, prod_map, desc=None, no_ind=None):
     """2차 출처 날의 마지막 확인 종가 단계 (2026-11-19 · fetch_korea 가 부르는 한 곳). 그날 전체 목록(full_list · DataFrame)에서 두 출처로 확인 못 한
     종목을 골라(kr_unconfirmed) 지난 발행본의 마지막 확인 종가로 out 에 더하고, 과거 주가 기록 오류 표시의 지난 움직임을 krs(krSeries)에 · 주요제품을
     prod_map 에 옮기고, px_src["own"] 에 기록해요. trade_days: KOSPI 일봉 날짜들 (Timestamp · date · 'YYYY-MM-DD' 아무거나).
+    2026-11-20 (리뷰 S1): 지난 발행본이 DART 로 채운 · 보통주를 따른 업종 글자는 kr_own_ind_reset 으로 (desc: 오늘 KRX-DESC {코드: (업종, 주요제품)} ·
+    no_ind: 업종 글자 없는 종목 목록 — 다시 채울 코드를 더해요).
     이 단계의 어떤 오류도 발행을 멈추지 않아요 (Jack 의 규칙 · 2026-11-19 시험 실행이 여기서 멈췄어요): 크게 남기고, 아무것도 싣지 않고 (예전처럼 확인 못 한
     종목은 빠져요), 바꾼 것을 되돌리고, px_src["own"].err 에 까닭을 적어요 (관문이 경고해요). 반환: 실은 종목 수."""
     n0, jump0, hid0 = len(out), list((krs or {}).get("jump") or []), list((krs or {}).get("hidden") or [])
+    ni0 = list(no_ind) if isinstance(no_ind, list) else None
     added, unconf = [], None
     try:
         days = [pd.Timestamp(t).date().isoformat() for t in trade_days]
@@ -1467,6 +1512,16 @@ def kr_own_close_step(prev, full_list, conf_codes, px_src, px_date, trade_days, 
         have = {r.get("t") for r in out}
         carried, cjumps, cdrop = kr_own_close_carry(prev, {c: v for c, v in unconf.items() if c not in have}, px_date, days)
         rec = log_kr_own_close(carried, cdrop, unconf, {r["t"]: r.get("nk", "") for r in carried})
+        refill, krx, unread = kr_own_ind_reset(carried, prev, desc)
+        if refill or krx or unread:
+            nm = {r["t"]: r.get("nk", "") for r in carried}
+            log(f"{'  !! ' if unread else '· '}마지막 확인 종가 종목의 업종 글자: 지난 발행본이 DART 회사 정보로 채웠거나 보통주를 따른 "
+                f"{len(refill) + len(krx):,}종목은 그 글자를 옮기지 않아요 — 오늘 다시 채움 {len(refill):,} · 오늘 KRX 글자로 {len(krx):,}"
+                + (f" · 설명을 읽지 못해 비움 {len(unread):,}" if unread else "") + " — "
+                + ", ".join(f"{t} {nm.get(t, '')}" for t in (refill + krx)[:KR_OWN_SHOW]))
+            rec["ind"] = {"refill": len(refill), "krx": len(krx), "unread": len(unread)}
+            if isinstance(no_ind, list):
+                no_ind.extend(t for t in refill if t not in no_ind)
         out.extend(carried)
         for c in sorted(cjumps):
             krs["jump"] = list(krs.get("jump") or []) + cjumps[c]
@@ -1484,6 +1539,8 @@ def kr_own_close_step(prev, full_list, conf_codes, px_src, px_date, trade_days, 
             krs["jump"], krs["hidden"] = jump0, hid0
         for t in added:
             prod_map.pop(t, None)
+        if ni0 is not None:
+            no_ind[:] = ni0
         err = f"{type(e).__name__}: {str(e)[:200]}"
         log(f"  !! 마지막 확인 종가 단계가 오류로 멈췄어요 ({err}) — 확인 못 한 국내 종목은 예전처럼 빼고 발행을 이어가요 (실은 종목 0 · "
             "pxSrc.own.err · 관문이 경고해요)")
@@ -5693,8 +5750,10 @@ def fetch_korea(start, today, rf, prev=None):
     # 2026-11-19 (Jack): 확인 못 한 종목은 지난 발행본의 마지막 확인 종가로 (pxd · d1 없음) — 오늘 만든 종목 뒤에 더해요 (그 시세 숫자는 그 종가의
     # 것이라 오늘 시계열 점검 · 비우기를 다시 하지 않아요 · 과거 주가 기록 오류 표시는 지난 움직임과 함께 krSeries 에 옮겨요). 재무 · 배당 · 점수는
     # main 이 다른 종목처럼 그 가격으로 다시 만들어요
+    # 2026-11-20 (리뷰 S1): 지난 발행본이 DART 로 채운 업종 글자는 오늘 다시 채워요 (no_ind 에 더해요 · indSrc.none 도 그 수로)
     if px_src["px"] == PX_SRC_FB:
-        kr_own_close_step(prev, full_list, kr_own_conf_codes, px_src, px_date, list(ks_all.index), out, krs, prod_map)
+        kr_own_close_step(prev, full_list, kr_own_conf_codes, px_src, px_date, list(ks_all.index), out, krs, prod_map, desc=desc, no_ind=no_ind)
+        ind_src["none"] = len(no_ind)
     elif px_date is not None:
         log("· 국내 종가 미확인 0종목 (1차 출처 날 · 마지막 확인 종가로 싣는 종목 없음)")
     # 2026-11-14: 발행하는 종목의 빈 d1 이유 수 (data.json d1Blank · 관문이 종목마다의 noTrade · d1Why 와 맞춰 봐요) · cols: 거래 없음을 가릴 수 있었는지
