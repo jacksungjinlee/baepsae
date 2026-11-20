@@ -643,7 +643,7 @@ What protects users when the limit hits (and what does not):
   about 440, with the same number of normally-published stocks missing (see "KONEX closes: Yahoo × Naver").
 - **Plainly, the gap:** on a blank-close night, from about 50 to about 320 stocks not asked, the data publishes with published
   stocks missing (about 3 at 50, about 156 at 300) and only the WARN row. A check that stops the publish there would be a new
-  publish-stopping rule and needs Jack's yes. Since #? a run before 08:00 KST whose confirmed count falls below 97% of the last
+  publish-stopping rule and needs Jack's yes. Since #161 a run before 08:00 KST whose confirmed count falls below 97% of the last
   publish's is held instead (it publishes nothing and the next run tries again; "Backup days: early hold" below). From 08:00 the
   gap above is unchanged.
 
@@ -654,7 +654,7 @@ If the WARN shows:
    day's data. Later scheduled runs do **not** fill them in: once pxDate and usPxDate are current, `already_published.py` skips the
    rest of the day's scheduled runs, so they come back with the next day's publish. Only a manual run brings them back sooner
    (after about 06:40 KST it re-reads far fewer Yahoo charts); follow the DART rule for manual runs. Before 08:00 KST a run that
-   confirms fewer than 97% of the last publish's count does not publish at all (since #?, next section).
+   confirms fewer than 97% of the last publish's count does not publish at all (since #161, next section).
 3. Do not raise the limit to make one run pass. If it hits on days when both sources answer at normal speed, bring the phase
    times from the logs to Jack before changing `KR_FB_PHASE_BUDGET_S`.
 4. If it hits on every run (a source blocking GitHub's servers), the must-haves stay unconfirmed and nothing publishes: that is
@@ -815,7 +815,7 @@ If the KONEX row warns (read the reasons after "경고:"):
 3. "네이버 값 없음" for many or "받지 못함": Naver may be blocking GitHub's servers; the KOSPI/KOSDAQ path does not use Naver, so only
    KONEX is affected (on second-source days every KONEX stock drops out).
 
-## Backup days: early hold (2차 출처 날 이른 발행 보류, since #?)
+## Backup days: early hold (2차 출처 날 이른 발행 보류, since #161)
 
 Jack, 2026-11-20 ("5. Yes"), verbatim: "Backup days, hold an early publish. Before 08:00 KST on a backup day, publish only when
 confirmed closes reach at least 97% of the last publish's count. Today that means about 80 or fewer missing. Otherwise the run stops
@@ -1503,7 +1503,7 @@ see the existing "no longer in today's data" handling). No data run is needed fo
 - **`data`** is a branch that holds only the four data files (`data.json`, `corp.json`, `disc.json`, `macro.json`). Only
   the daily run writes to it, and only after the publication gate and (since 2026-11-12) the screen check passed: each
   leaves a fingerprint (sha256) of the four files it checked, and the upload refuses any file that doesn't match either
-  one. It never force-pushes. A run that holds its publish (backup day before 08:00 KST, "Backup days: early hold", since #?)
+  one. It never force-pushes. A run that holds its publish (backup day before 08:00 KST, "Backup days: early hold", since #161)
   writes nothing to `main` or `data`.
   The first daily run after v17.6 creates the branch by itself.
 - **Deploy** builds the pages from `main`, takes the four files from `data`, runs the gate's `--live` check on exactly the
