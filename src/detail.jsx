@@ -348,8 +348,15 @@ async function loadLiveData() {
       + "개는 pxd(자기 가격 날짜)를 읽을 수 없어요 · 그 종목은 날짜 안내 없이 나가요: " + px.bad.slice(0, 30).join(", "));
   }
   rememberDataPublish(j);                                    // 기업분석 · 첫 화면 성적표가 같은 발행이면 늦음 시각을 같이 써요 (data.js)
+  // 2026-11-19: 첫 화면 데이터 칸의 미국 종가 날짜 줄 (usCloseLine). 달러 종목이 있는데 usPxDate 를 못 읽으면 그 줄을 뺀다고 크게 남겨요
+  // (관문이 그런 파일을 막아요 · 여기 오면 알려야 해요).
+  const usStocks = j.stocks.some((s) => s && s.ccy === "USD");
+  if (usStocks && !isoDay(j.usPxDate)) {
+    console.warn("[뱁새] data.json 의 usPxDate " + (j.usPxDate == null ? "가 없어요" : JSON.stringify(j.usPxDate) + " 를 읽을 수 없어요")
+      + " · 첫 화면 데이터 칸에 미국 종목의 종가 날짜를 말하지 않아요 (달러 종목 " + j.stocks.filter((s) => s && s.ccy === "USD").length + "개)");
+  }
   return { asOf: j.asOf || null, pxDate: j.pxDate || null, publishedAt: j.publishedAt || j.asOf || null, staleAfter: j.staleAfter || null,
-    nextPub: j.nextPub || null,
+    nextPub: j.nextPub || null, usPxDate: isoDay(j.usPxDate) ? j.usPxDate : null, usStocks,
     fx: typeof j.fx === "number" ? j.fx : null, settings: (j.settings && typeof j.settings === "object") ? j.settings : null,
     stocks: j.stocks, popular: Array.isArray(j.popular) ? j.popular : [] };
 }
@@ -1124,6 +1131,24 @@ const T_NONLIVE = { ko: "일부 종목은 최신 시세가 아니라 예시 가�
 const T_NOLIVE_ALL = { ko: "최신 시세를 불러오지 못해 예시 가격으로 보여 드려요.", en: "We couldn't load the latest prices, so sample prices are shown." };
 const T_GOLD_EST = { ko: "금현물은 국제 금값으로 환산한 추정치예요.", en: "Gold is an estimate converted from the world gold price." };
 const T_PX_OFFICIAL = { ko: "가격은 {md} 공식 종가예요. 다른 수치는 추정치예요.", en: "Prices are official closes from {md}. Other figures are estimates." };
+// 미국 종가 날짜 (Jack 승인 2026-11-19, 답 6 "Yes"): 위 문장의 {md} 는 한국 종가 날짜(pxDate)예요. 미국 종목 가격은 미국 종가 날짜
+// (data.json usPxDate)의 것이라, 두 날짜가 다른 날(미국 휴장 뒤 · 늦은 미국 종가)에는 첫 화면 데이터 칸의 그 문장 아래에 2.0 의 승인
+// 문장(src/copy/v2.js app.usClose)을 글자 그대로 한 줄 더 (usCloseLine). 같은 날이면 예전 그대로예요. 영어 화면은 같은 규칙으로 영어
+// 문장 (Jack 승인 2026-11-20, 답 8c · {md} 는 예전 뱁새의 영어 월 · 일 "Nov 25"). 그 칸이 있는 첫 화면에는 열린 포트폴리오가 없고, 칸은
+// 앱의 모든 가격을 말해요: 그래서 저장한 포트폴리오와 상관없이, 오늘 데이터에 달러 가격 종목(ccy "USD" · 379800 처럼 원화로 거래되는
+// 펀드는 아니에요)이 있을 때 봐요 (Jack 2026-11-20, 답 8a · 2.0 메뉴의 날짜 칸과 같은 규칙). 미국 종가보다도 앞선 종가의 미국
+// 종목(pxd)은 열린 포트폴리오의 배너가 이름과 날짜를 따로 말해요 (T_OWN_CLOSE) — 첫 화면에는 그 배너가 없어서 같은 말을 두 번 하지 않아요.
+const T_US_CLOSE = { ko: "미국 종목은 현지 기준 {md} 종가예요.", en: "US stocks: priced at the {md} close (US time)." };
+const ISO_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const isoDay = (x) => typeof x === "string" && ISO_DAY_RE.test(x);
+// dataInfo: AppInner 의 live ({ live, failed, pxDate, usPxDate, usStocks, … }) → 그 한 줄, 또는 null (예전 그대로)
+function usCloseLine(dataInfo, lang) {
+  const l = lang === "en" ? "en" : "ko";
+  const tpl = T_US_CLOSE[l];
+  const d = dataInfo || {};
+  if (!tpl || !d.live || d.failed || !d.usStocks || !isoDay(d.pxDate) || !isoDay(d.usPxDate) || d.usPxDate === d.pxDate) return null;
+  return tpl.replace("{md}", mdOf(d.usPxDate, l));
+}
 // v19.1c (Jack 승인 2026-11-07, 디자인 채팅 · 미국 가격 날짜 A1–A3): 미국 기준일보다 앞선 종가로 나가는 미국 종목(data.json pxd)이
 // 목록이나 보유에 있을 때, 날짜마다 한 문장 (새 날짜 먼저 · 이름은 티커 · 모두 ", " 로). 2.0 의 app.ownClose 와 같은 문장이에요.
 const T_OWN_CLOSE = { ko: "{names} 가격은 {md} 종가예요.", en: "{names}: priced at the {md} close." };
@@ -4748,6 +4773,7 @@ function LaunchScreen({ lang, t, slots, onNew, onOpen, onDelete, onRename, onImp
       {(() => {
         const stale = dataInfo.live && freshness(dataInfo.pxDate || dataInfo.asOf, dataInfo.publishedAt, lang, undefined, dataInfo.staleAfter, dataInfo.nextPub).stale;
         const warn = stale || dataInfo.failed;
+        const usLine = usCloseLine(dataInfo, lang);           // 미국 종가 날짜가 다른 날만 (Jack 2026-11-19) · 아래 문단은 예전 그대로
         return (
           <Card style={{ padding: 14, background: warn ? C.sandSoft : C.bg, border: "1px solid " + (warn ? "#F3DCB2" : C.line) }}>
             <div style={{ fontSize: 12, fontWeight: 800, color: warn ? "#8A5A16" : C.sub }}>
@@ -4759,6 +4785,7 @@ function LaunchScreen({ lang, t, slots, onNew, onOpen, onDelete, onRename, onImp
                 : (dataInfo.pxDate ? T_PX_OFFICIAL[lang].replace("{md}", mdOf(dataInfo.pxDate, lang)) : (lang === "ko" ? "모든 수치는 추정치예요." : "All figures are estimates."))
                   + (lang === "ko" ? " 주문 전엔 증권사 앱에서 실제 시세를 확인하세요." : " Check real quotes in your brokerage app before ordering.")}
             </div>
+            {usLine && <div data-us-close="1" style={{ fontSize: 12, color: warn ? "#8A5A16" : C.faint, marginTop: 3, lineHeight: 1.55, wordBreak: "keep-all" }}>{usLine}</div>}
           </Card>
         );
       })()}
@@ -4860,7 +4887,7 @@ function AppInner({ seed, lang: langProp }) {
   const [slotName, setSlotName] = useState("");
   const [booted, setBooted] = useState(false);
   const [onb, setOnb] = useState(false);
-  const [live, setLive] = useState({ live: false, failed: false, asOf: null, pxDate: null, publishedAt: null, staleAfter: null, nextPub: null });
+  const [live, setLive] = useState({ live: false, failed: false, asOf: null, pxDate: null, publishedAt: null, staleAfter: null, nextPub: null, usPxDate: null, usStocks: false });
   const universe = useRef(null);
   // v19.1c: 열어 둔 화면도 '늦음'을 놓치지 않게 (데이터를 다시 받지 않아요): 화면이 다시 보일 때와, staleAfter 바로 뒤 · 발행 뒤
   // 날 수가 느는 때(길어도 1시간)에 data.json 의 freshness 를 다시 봐요. 답이 바뀌었을 때만 다시 그려요 (DateBadge 와 경고 칸).
@@ -4912,12 +4939,13 @@ function AppInner({ seed, lang: langProp }) {
         if (L.settings) AUTO.forEach((k) => { if (isFinNum(L.settings[k])) vals[k] = L.settings[k]; });
         setSettings((s) => ({ ...s, ...vals }));
         setAutoVals(vals);
-        setLive({ live: true, failed: false, asOf: L.asOf, pxDate: L.pxDate, publishedAt: L.publishedAt, staleAfter: L.staleAfter, nextPub: L.nextPub });
+        setLive({ live: true, failed: false, asOf: L.asOf, pxDate: L.pxDate, publishedAt: L.publishedAt, staleAfter: L.staleAfter, nextPub: L.nextPub,
+          usPxDate: L.usPxDate, usStocks: L.usStocks });
       } else {
         // 못 읽었어요: 내장 예시 가격으로 열되, 모든 종목을 '실시간 아님'으로 표시하고 화면에서 알려요
         universe.current = mergeStocks(BASE_STOCKS, null);
         setStocks(universe.current.map((s) => ({ ...s })));
-        setLive({ live: false, failed: true, asOf: null, pxDate: null, publishedAt: null, staleAfter: null, nextPub: null });
+        setLive({ live: false, failed: true, asOf: null, pxDate: null, publishedAt: null, staleAfter: null, nextPub: null, usPxDate: null, usStocks: false });
       }
       setBooted(true);
     })();
@@ -5279,4 +5307,6 @@ export { Bird, DEFAULT_SETTINGS, store, normCdf, SECTORS, SEC, KEY_SLOTS, KEY_SL
   // v18.5: Node 로 시험하려고 (tests/test_app_data.py)
   missingHoldings, missingLine, shownProfile, scoreProfile,
   // v18.6: 자동 설정 (tests/test_app_data.py)
-  cleanTypedKeys, withTodaysAuto, autoChip, freshSettings, readSavedSlot };
+  cleanTypedKeys, withTodaysAuto, autoChip, freshSettings, readSavedSlot,
+  // 2026-11-19: 첫 화면 데이터 칸의 미국 종가 날짜 줄 (tests/test_oldapp_us_close.py)
+  LaunchScreen, usCloseLine, loadLiveData, T_US_CLOSE, T_PX_OFFICIAL };
