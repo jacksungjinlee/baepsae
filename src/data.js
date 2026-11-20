@@ -257,6 +257,24 @@ export function ownAgedOf(j) {
   return new Map(a.filter((x) => !have.has(x.t)).map((x) => [x.t, { nk: typeof x.nk === "string" ? x.nk : x.t, pxd: x.pxd || null }]));
 }
 
+// 2026-11-21 (Jack, answer 6, verbatim: "Yes, with a cap. If more than about half of US stocks would carry, the US side shows one
+// line: "미국 종목은 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요." Set the exact cap from history."): the cap is more than half
+// of the US stocks in the file (history: a partial Yahoo gap left about 200 of 800 without a close, 11-20 03:59 and 04:19 UTC; a full
+// blank 799 of 800, 11-20 01:11 UTC, and 11-07). Above it, lists and totals name no US carried stock; their group is { usWide: true }
+// and the screens show the market-wide line (format.js ownCloseParts · detail.jsx ownCloseLines). Company pages keep the per-stock line.
+// setOwnCarryWide(data) is called where data.json is loaded (2.0 load.js · old app detail.jsx); before that (tests, preview) it is off.
+export const US_CARRY_WIDE = 0.5;
+let US_WIDE = false;
+export function usCarryCounts(j) {
+  const us = (j && Array.isArray(j.stocks) ? j.stocks : []).filter((s) => s && s.cls === "us" && !s.fund);
+  return { carried: us.filter((s) => s.pxc === true && s.pxd != null).length, total: us.length };
+}
+export function setOwnCarryWide(j) {
+  const { carried, total } = usCarryCounts(j);
+  US_WIDE = total > 0 && carried > total * US_CARRY_WIDE;
+  return US_WIDE;
+}
+export const ownCarryWide = () => US_WIDE;
 export function ownCloseGroups(stocks, marketDate) {
   const by = new Map(), seen = new Set();
   for (const s of stocks || []) {
@@ -265,13 +283,15 @@ export function ownCloseGroups(stocks, marketDate) {
     const d = ownCloseDate(s, marketOf(marketDate, s));
     if (!d || seen.has(t)) continue;
     seen.add(t);
-    const kr = ownCarried(s), key = (kr ? "kr " : "us ") + d;
-    if (!by.has(key)) by.set(key, kr ? { date: d, ts: [], kr: true, names: [] } : { date: d, ts: [] });
+    const kr = ownCarried(s), wide = kr && US_WIDE && s.cls === "us";
+    const key = (wide ? "uw " : kr ? "kr " : "us ") + d;
+    if (!by.has(key)) by.set(key, wide ? { date: d, ts: [], kr: true, names: [], usWide: true } : kr ? { date: d, ts: [], kr: true, names: [] } : { date: d, ts: [] });
     const g = by.get(key);
     g.ts.push(t);
     if (kr) g.names.push(String(krOwnOf(s) ? s.nk || t : t));   // 미국 마지막 확인 종가 (2026-11-20): 티커
   }
-  return [...by.values()].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : (a.kr ? 1 : 0) - (b.kr ? 1 : 0)));
+  const rank = (g) => (g.usWide ? 2 : g.kr ? 1 : 0);              // 같은 날짜: 예전 미국 문장 · 이름 줄 · 미국 전체 줄
+  return [...by.values()].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : rank(a) - rank(b)));
 }
 // 그 종목 가격의 날짜: pxd 가 없으면 기준일(marketDate), 읽을 수 있는 pxd 면 그 날짜, pxd 가 기준일과 같으면 기준일, 읽을 수 없는
 // pxd 면 null (기준일이 아닌 건 아는데 언제인지 몰라요: 틀린 날짜를 보이느니 날짜를 빼요).

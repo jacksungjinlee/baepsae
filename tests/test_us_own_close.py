@@ -974,3 +974,38 @@ def test_restored_ranges_use_the_raw_value_like_apply_us_info():
     assert r["per"] == 500.0                                                          # 반올림 전 499.96 < 500 → 남아요 (예전 길과 같아요)
     r2 = F.us_own_restore({**row, "per": 250.01}, us("Z", price=200.0, d1=None, pxd=D18), [])
     assert "per" not in r2
+
+
+# ── Jack, 2026-11-21 (answers 8 · 6): 이름은 5개까지 + '외 {n}종목' · 미국 종목의 절반 넘게 마지막 확인 종가면 미국 쪽은 한 줄 ─────────────
+JACK_MORE = "{names} 외 {n}종목: 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요."
+JACK_US_ALL = "미국 종목은 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요."
+
+
+@needs_node
+def test_app_list_lines_cap_names_at_five_and_show_one_us_line_above_half():
+    seven = [us(f"T{i}", d1=None, pxd=D18, pxc=True) for i in range(7)]
+    krs = [kr(f"00{i}000", f"가{i}", d1=None, pxd=D18) for i in range(6)]
+    half = [us(f"H{i}", d1=None, pxd=D18, pxc=True) for i in range(3)] + [us(f"N{i}") for i in range(3)]
+    more = [us(f"H{i}", d1=None, pxd=D18, pxc=True) for i in range(4)] + [us(f"N{i}") for i in range(3)]
+    got = run("""
+const load = { status: 'ok', data: { pxDate: '2026-11-19', usPxDate: '2026-11-19' } };
+const txt = (rows) => F.ownCloseText(L.ownCloses(load, rows));
+const r = { copy: [CP.app.krOwnCloseListMore === FX.FIX_KR_OWN_CLOSE_LIST_MORE, CP.app.usOwnCloseAll === FX.FIX_US_OWN_CLOSE_ALL, CP.app.krOwnCloseListMore, CP.app.usOwnCloseAll] };
+r.offSeven = txt(SEVEN); r.offKr = txt(KRS);
+r.half = D.setOwnCarryWide({ stocks: HALF }); r.more = D.setOwnCarryWide({ stocks: MORE });
+r.onMixed = txt([...KRS.slice(0, 2), ...SEVEN, U]); r.onGroups = L.ownCloses(load, [...KRS.slice(0, 2), ...SEVEN.slice(0, 2), U]);
+r.oldKo = FX.krOwnCloseListLine(['A', 'B', 'C', 'D', 'E', 'F'], '2026-11-18', 'ko'); r.oldEn = FX.krOwnCloseListLine(['A', 'B', 'C', 'D', 'E', 'F'], '2026-11-18', 'en');
+r.oldStr = FX.krOwnCloseListLine('A, B', '2026-11-18', 'ko'); r.oldAll = FX.usOwnCloseAllLine('2026-11-18');
+D.setOwnCarryWide({ stocks: [] });
+r.after = D.ownCarryWide();
+out = r;""", SEVEN=seven, KRS=krs, HALF=half, MORE=more, U=us("HALT", d1=None, pxd=D18))
+    assert got["copy"] == [True, True, JACK_MORE, JACK_US_ALL]
+    line = lambda names: JACK_LIST.replace("{names}", names).replace("{date}", "11월 18일")
+    assert got["offSeven"] == JACK_MORE.replace("{names}", "T0, T1, T2, T3, T4").replace("{n}", "2").replace("{date}", "11월 18일")
+    assert got["offKr"] == JACK_MORE.replace("{names}", "가0, 가1, 가2, 가3, 가4").replace("{n}", "1").replace("{date}", "11월 18일")   # 국내 목록도
+    assert got["half"] is False and got["more"] is True                              # 정확히 절반은 아니에요 · 절반 넘게
+    assert got["onMixed"] == ("HALT 가격은 11월 18일 종가예요. " + line("가0, 가1") + " " + JACK_US_ALL.replace("{date}", "11월 18일")), got["onMixed"]
+    assert [g.get("usWide", False) for g in got["onGroups"]] == [False, False, True] and got["onGroups"][2]["ts"] == ["T0", "T1"]
+    assert got["oldKo"] == JACK_MORE.replace("{names}", "A, B, C, D, E").replace("{n}", "1").replace("{date}", "11월 18일")
+    assert got["oldEn"] == "A, B, C, D, E, F: " + JACK_EN.replace("{date}", "Nov 18")                    # 영어는 예전 그대로 (모든 코드)
+    assert got["oldStr"] == line("A, B") and got["oldAll"] == JACK_US_ALL.replace("{date}", "11월 18일") and got["after"] is False

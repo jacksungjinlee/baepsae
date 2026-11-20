@@ -15169,6 +15169,62 @@ def scene_us_own_close_daily(R, files, width=390):
     srv.shutdown()
 
 
+def scene_us_own_close_many(R, files, width=390):
+    """2026-11-21 (Jack, answers 8 · 6): 홈 포트폴리오 카드의 안내 — 마지막 확인 종가 종목이 5개를 넘으면 앞 5개 + '외 {n}종목' 한 줄 · 그날 미국 종목의
+    절반 넘게 마지막 확인 종가면 미국 쪽은 '미국 종목은 오늘 종가를 확인하지 못해서 {날짜} 종가를 보여 드려요.' 한 줄 (회사 페이지는 종목마다 Jack 의 줄)."""
+    S = f"미국 마지막 확인 종가 · 많은 날 {width}"
+    base = daily_files(files)
+    us_all = [x for x in base["data.json"]["stocks"] if x.get("cls") == "us" and not x.get("fund")]
+    picks = [x["t"] for x in sorted((x for x in us_all if not x.get("etf") and (x.get("price") or 0) > 0 and not x.get("pxd")),
+                                    key=lambda x: (-(x.get("cap") or 0), x["t"]))[:7]]
+    assert len(picks) == 7, picks
+    day = "2026-10-29"
+    jack = fillp(C["app"]["krOwnClose"], date=mdtext(day))
+    band = lambda t: [{"id": "band", "kind": "band", "check": "checked", "target": t, "bands": [0.75 * t, 1.25 * t, 1.4 * t]}]
+    by0 = by_t(base["data.json"]["stocks"])
+    deck = {"id": "dusmany", "name": "미국 확인 포트폴리오", "createdAt": "2026-10-01", "planFx": 1300,
+            "holdings": [{"t": t, "nk": by0[t]["nk"], "cls": "us", "target": 1 / 7, "plannedQty": 1, "rules": band(1 / 7)} for t in picks],
+            "purchases": [{"id": f"p{i}usmany", "t": t, "date": "2026-10-01", "qty": 1, "price": 100.0, "ccy": "USD", "fx": 1300} for i, t in enumerate(picks)]}
+
+    def files_for(wide):
+        f = clone(base)
+        d = f["data.json"]
+        mark = [x for x in d["stocks"] if x.get("cls") == "us" and not x.get("fund") and (wide or x["t"] in picks)]
+        for x in mark:
+            x.pop("d1", None)
+            x.update(pxd=day, pxc=True)
+        codes = sorted(x["t"] for x in mark)
+        d["usSrc"] = {"v": 1, "own": {"v": 1, "max": 5, "n": len(codes), "codes": codes, "same": [], "from": {t: "bar" for t in codes}, "drop": {},
+                                      "dropEx": [], "bad": {"n": 0, "rows": []}, "aged": []}}
+        return f
+    for wide, want in ((False, fillp(C["app"]["krOwnCloseListMore"], names=", ".join(picks[:5]), n=2, date=mdtext(day))),
+                       (True, fillp(C["app"]["usOwnCloseAll"], date=mdtext(day)))):
+        srv, ctx, page, _ = R.open(build_site(files_for(wide)), width, init=e_store([deck]))
+
+        def home():
+            card = page.locator('[data-ui-v2="home-block"]')
+            card.wait_for(state="visible")
+            note = card.locator('[data-ui-v2="own-close"]').first
+            note.wait_for(state="visible")
+            got = note.inner_text()
+            if wide:
+                assert got == want, (got, want)
+            else:                                                                    # 이름은 화면 순서 (비중 순) — 앞 5개 · 외 2종목 · Jack 의 줄
+                head, _sep, tail = got.partition(" 외 2종목: ")
+                names = head.split(", ")
+                assert tail == jack and len(names) == 5 and set(names) <= set(picks) and len(set(names)) == 5, (got, want)
+            co_hash(page, f"#stocks/{picks[0]}")                                     # 회사 페이지는 종목마다 Jack 의 줄 그대로
+            page.wait_for_function("(t) => { const e = document.querySelector('[data-ui-v2=\"co-head\"]'); return !!e && e.dataset.t === t; }", arg=picks[0])
+            line = page.locator('[data-ui-v2="co-head"] [data-ui-v2="kr-own-close"]')
+            assert line.count() == 1 and line.inner_text() == jack, line.all_inner_texts()
+            floor_ok(page, "홈 · 많은 날")
+            no_hscroll(page, width)
+            R.collect(page)
+        R.check(page, S, ("절반 넘게: 미국 쪽은 '미국 종목은 …' 한 줄" if wide else "일곱 종목: 앞 5개 + '외 2종목' 한 줄") + " · 회사 페이지는 Jack 의 줄", home)
+        ctx.close()
+        srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -15288,7 +15344,8 @@ def main():
                    lambda: scene_kr_own_close(R, files, 390), lambda: scene_kr_own_close(R, files, 320),   # 국내 마지막 확인 종가 (Jack 2026-11-19)
                    lambda: scene_kr_own_close(R, files, 1280),                                              # 국내 마지막 확인 종가 · PC
                    lambda: scene_us_own_close(R, files, 390), lambda: scene_us_own_close(R, files, 1280),   # 미국 마지막 확인 종가 (Jack 2026-11-20)
-                   lambda: scene_us_own_close_daily(R, files, 390)):                                         # 리뷰 A: 오늘 확인할 일 · 추가로 넣을 돈
+                   lambda: scene_us_own_close_daily(R, files, 390),                                          # 리뷰 A: 오늘 확인할 일 · 추가로 넣을 돈
+                   lambda: scene_us_own_close_many(R, files, 390)):                                          # Jack 2026-11-21 (8 · 6): 외 n종목 · 미국 전체 한 줄
             try:
                 fn()
             except Exception as e:

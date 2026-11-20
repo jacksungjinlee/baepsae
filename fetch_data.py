@@ -2538,9 +2538,11 @@ def us_own_drop_rows(us, umeta, bad, why):
     xm = umeta.get("usExtraMissing")
     if not isinstance(xm, dict):
         xm = umeta["usExtraMissing"] = {}
+    fallback = "마지막 확인 종가 단계가 뺌 (usSrc.own)"           # 리뷰 B 잔 지적: 까닭이 빈 글이 되지 않게
     for t in sorted(bad):
         if t in EXTRA_US:
-            xm[t] = why.get(t, "") if isinstance(why, dict) else why
+            w = why.get(t) if isinstance(why, dict) else why
+            xm[t] = w if isinstance(w, str) and w.strip() else fallback
     return [r for r in us if r.get("t") not in bad]
 
 

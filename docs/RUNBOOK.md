@@ -771,7 +771,11 @@ publish, Korean data included.
   must-have rows stop the publish.
 - **App late cap:** counts NYSE days up to the KST date (one day stricter than the pipeline's count, the safe side).
 - **Popular list:** keeps US carries (`val` is from average volume, not one day's).
-- **Ranking note on a full-blank day:** lists every carried ticker in one sentence (a shorter line needs new wording; not changed).
+- **Long lists (Jack, 2026-11-21, answers 8 and 6):** a list line names at most 5 carried stocks, then "외 {n}종목" (Korean screens of
+  both apps, US and Korean carries). When more than half of the US stocks in the file are carried (`data.js` `US_CARRY_WIDE`; history:
+  partial Yahoo gaps ~200 of 800, full blanks 799–800), the US side of every list and total is one line, "미국 종목은 오늘 종가를
+  확인하지 못해서 {date} 종가를 보여 드려요." (console: "[v2] … US stocks at their last confirmed close (more than half)"). Company pages
+  keep the per-stock line. English screens keep the full list until Jack approves English for these shapes.
 - **Known limit:** after a publish with US carries, later scheduled runs that day stop early (`already_published.py`: `pxDate` and `usPxDate`
   are current), so the carried closes stay until the next day's publish, as with Korean carries. A manual run can refresh them.
 - **On a warning:** read the named rows. Many carries on one day means Yahoo was blank for them: nothing to fix on our side; the next

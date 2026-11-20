@@ -3742,30 +3742,63 @@ def scene_kr_own_close(R, files, slow=False):
     ctx.close(); srv.shutdown()
 
 
+def strip_us_own_dates(f):
+    """미국 마지막 확인 종가 장면들의 복사본에서 미국 종목의 자기 날짜(pxd · pxc)를 모두 지워요 — 야후가 빈 날의 진짜 데이터에서도 장면이 심은 것만 보게
+    (그 장면들은 배너의 미국 날짜 줄을 정확히 맞춰 봐요). f 를 고쳐서 돌려줘요."""
+    for x in (f.get("data.json") or {}).get("stocks") or []:
+        if x.get("cls") == "us":
+            x.pop("pxd", None)
+            x.pop("pxc", None)
+    return f
+
+
+def us_carry_picks(f, n):
+    """2026-11-21 (Jack 의 규칙 · CLAUDE.md #154: 발행 전 화면 검사의 장면은 특정 종목 · 특정 날의 데이터에 기대지 않아요): 미국 마지막 확인 종가 장면이
+    쓸 미국 회사 주식을 그날 데이터에서 기준으로 골라요 — cls us · 펀드 · ETF 아님 · 가격 · 이름 있음 · pxd 없음, 시가총액 큰 순 앞 n개 (고정 데이터도
+    같은 기준). 국내 쪽은 kr_own_picks 의 plain (실제 데이터) · 005930 (고정 데이터). 모자라면 None."""
+    d = f["data.json"]
+    us = sorted((x for x in d["stocks"] if x.get("cls") == "us" and not x.get("fund") and not x.get("etf") and (x.get("price") or 0) > 0
+                 and x.get("pxd") is None and isinstance(x.get("nk"), str) and x["nk"] and isinstance(x.get("t"), str)),
+                key=lambda x: (-(x.get("cap") or 0), x["t"]))
+    return [x["t"] for x in us[:n]] if len(us) >= n else None
+
+
+def _kr_plain(f):
+    pk = kr_own_picks(f) if REAL_DATA else OWN_FIXTURE_PICKS
+    t = pk.get("plain")
+    by = {s.get("t"): s for s in f["data.json"]["stocks"]}
+    return (t, by[t]["nk"]) if t in by else (None, None)
+
+
 def scene_us_carry(R, files):
     """2026-11-20 (Jack, verbatim: "US stocks carry like Korean ones. A US stock with no close from Yahoo carries its last confirmed close with
     its own date and the same line."): 야후 종가가 없어 마지막 확인 종가로 실은 미국 종목 (data.json pxc · pxd). 열린 포트폴리오의 배너와 종목 고르기
     목록 위: '{티커}: 오늘 종가를 확인하지 못해서 {날짜} 종가를 보여 드려요.' 한 줄 (영어 화면은 '{티커}: We couldn't confirm today's close, so this
-    shows the {날짜} close.') · pxc 없는 미국 pxd (거래 정지 모양)는 예전 문장 그대로 · 삼성전자는 그대로. 진짜 데이터에서도 돌아요 (복사본의 진짜
-    마지막 확인 종가 표시는 지우고 이 장면이 심은 것만 봐요)."""
-    f = strip_kr_carries(json.loads(json.dumps(files, allow_nan=True)))
+    shows the {날짜} close.') · pxc 없는 미국 pxd (거래 정지 모양)는 예전 문장 그대로 · 국내 종목은 그대로. 진짜 데이터에서도 돌아요 (복사본의 진짜
+    마지막 확인 종가 표시는 지우고 이 장면이 심은 것만 봐요 · 종목은 그날 데이터에서 골라요: us_carry_picks · kr_own_picks)."""
+    S = "미국 마지막 확인 종가"
+    f = strip_us_own_dates(strip_kr_carries(json.loads(json.dumps(files, allow_nan=True))))
     d = f["data.json"]
+    picks, (kt, knk) = us_carry_picks(f, 2), _kr_plain(f)
+    if not picks or not kt:
+        none_today(R, S, "가격 · 이름이 있는 미국 회사 주식 둘과 국내 보통주")
+        return
+    tc, th = picks
     usd = d.get("usPxDate") or d["pxDate"]
     carried, halted = _iso_minus(usd, 1), _iso_minus(usd, 2)
     by = {s.get("t"): s for s in d["stocks"]}
-    assert {"MSFT", "AAPL", "005930"} <= set(by) and by["MSFT"].get("cls") == "us", "시험할 미국 종목이 데이터에 없어요"
-    for t in ("MSFT", "AAPL"):
+    for t in (tc, th):
         by[t].pop("d1", None)
-    by["MSFT"].update(pxd=carried, pxc=True)
-    by["AAPL"]["pxd"] = halted
-    d["usSrc"] = {"v": 1, "own": {"v": 1, "max": 5, "n": 1, "codes": ["MSFT"], "same": [], "drop": {}, "dropEx": [], "bad": {"n": 0, "rows": []}}}
-    want_ko = [f"MSFT: 오늘 종가를 확인하지 못해서 {_md(carried, 'ko')} 종가를 보여 드려요.", f"AAPL 가격은 {_md(halted, 'ko')} 종가예요."]
-    want_en = [f"MSFT: We couldn't confirm today's close, so this shows the {_md(carried, 'en')} close.",
-               f"AAPL: priced at the {_md(halted, 'en')} close."]
+    by[tc].update(pxd=carried, pxc=True)
+    by[th]["pxd"] = halted
+    d["usSrc"] = {"v": 1, "own": {"v": 1, "max": 5, "n": 1, "codes": [tc], "same": [], "from": {tc: "bar"}, "drop": {}, "dropEx": [],
+                                  "bad": {"n": 0, "rows": []}}}
+    want_ko = [f"{tc}: 오늘 종가를 확인하지 못해서 {_md(carried, 'ko')} 종가를 보여 드려요.", f"{th} 가격은 {_md(halted, 'ko')} 종가예요."]
+    want_en = [f"{tc}: We couldn't confirm today's close, so this shows the {_md(carried, 'en')} close.",
+               f"{th}: priced at the {_md(halted, 'en')} close."]
     slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000,
-            "holdings": [{"t": "005930", "mw": 300}, {"t": "MSFT", "mw": 200}, {"t": "AAPL", "mw": 200}]}
+            "holdings": [{"t": kt, "mw": 300}, {"t": tc, "mw": 200}, {"t": th, "mw": 200}]}
     srv, ctx, page, base = R.open(build_site(f), local=slot_local([("suscarry", "미국 확인 종가 시험", slot)]), once=True)
-    S = "미국 마지막 확인 종가"
     BANNER = "() => [...document.querySelectorAll('.nonLiveBanner [data-own-close]')].map((e) => e.innerText)"
     NOTE = "() => [...document.querySelectorAll('.ownCloseNote')].map((e) => e.innerText.trim())"
 
@@ -3777,12 +3810,12 @@ def scene_us_carry(R, files):
         page.get_by_text("차근차근 만들기", exact=True).click()
         page.get_by_text("미국 확인 종가 시험", exact=False).first.click()
         see(page, "보통 해 ±")
-        banner_is(want_ko, "한국어 배너: MSFT 는 Jack 의 줄 한 줄 · 애플은 예전 문장")
+        banner_is(want_ko, f"한국어 배너: {tc} 는 Jack 의 줄 한 줄 · {th} 은 예전 문장")
         box = page.get_by_placeholder("종목명·코드 검색")
-        box.fill("MSFT")
+        box.fill(tc)
         page.locator(".ownCloseNote").wait_for(state="visible", timeout=WAIT)
         settled(page, NOTE, [want_ko[0]], "종목 고르기 목록 위 안내")
-        box.fill("삼성전자")
+        box.fill(knk)
         page.wait_for_timeout(300)
         settled(page, NOTE, [], "pxd 없는 종목만 보이는데 안내가 있어요")
         box.fill("")
@@ -3790,8 +3823,59 @@ def scene_us_carry(R, files):
         banner_is(want_en, "영어 배너: 승인된 영어 문장")
         page.get_by_role("button", name="한국어", exact=True).first.click()
         banner_is(want_ko, "한국어로 되돌린 배너")
-    R.check(page, S, "포트폴리오 배너 · 종목 고르기: 'MSFT: ' + Jack 의 줄 한 줄 · 애플(pxc 없음)은 예전 문장 · 영어는 '{티커}: ' + 승인된 영어 문장", portfolio)
+    R.check(page, S, "포트폴리오 배너 · 종목 고르기: '{티커}: ' + Jack 의 줄 한 줄 · pxc 없는 미국 pxd 는 예전 문장 · 영어는 '{티커}: ' + 승인된 영어 문장", portfolio)
     ctx.close(); srv.shutdown()
+
+
+def scene_us_carry_many(R, files):
+    """2026-11-21 (Jack, answers 8 · 6): 마지막 확인 종가 종목이 5개를 넘으면 한국어 줄은 앞 5개 + '외 {n}종목' · 그날 미국 종목의 절반 넘게 마지막 확인
+    종가면 미국 쪽은 '미국 종목은 오늘 종가를 확인하지 못해서 {날짜} 종가를 보여 드려요.' 한 줄. 영어 화면은 승인된 영어가 없어 예전 그대로 (모든 코드).
+    종목은 그날 데이터에서 골라요 (us_carry_picks · CLAUDE.md #154)."""
+    S = "미국 마지막 확인 종가 · 많은 날"
+    base_f = strip_us_own_dates(strip_kr_carries(json.loads(json.dumps(files, allow_nan=True))))
+    picks, (kt, _knk) = us_carry_picks(base_f, 7), _kr_plain(base_f)
+    if not picks or not kt:
+        none_today(R, S, "가격 · 이름이 있는 미국 회사 주식 일곱과 국내 보통주")
+        return
+    usd = base_f["data.json"].get("usPxDate") or base_f["data.json"]["pxDate"]
+    day = _iso_minus(usd, 1)
+    md_ko, md_en = _md(day, "ko"), _md(day, "en")
+    jack = f"오늘 종가를 확인하지 못해서 {md_ko} 종가를 보여 드려요."
+    en_all = f"{', '.join(picks)}: We couldn't confirm today's close, so this shows the {md_en} close."
+    BANNER = "() => [...document.querySelectorAll('.nonLiveBanner [data-own-close]')].map((e) => e.innerText)"
+    slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": kt, "mw": 300}] + [{"t": t, "mw": 50} for t in picks]}
+
+    def run(wide):
+        f = json.loads(json.dumps(base_f))
+        d = f["data.json"]
+        us_all = [s for s in d["stocks"] if s.get("cls") == "us" and not s.get("fund") and (s.get("price") or 0) > 0]
+        mark = us_all if wide else [s for s in us_all if s["t"] in picks]
+        for s in mark:
+            s.pop("d1", None)
+            s.update(pxd=day, pxc=True)
+        codes = sorted(s["t"] for s in mark)
+        d["usSrc"] = {"v": 1, "own": {"v": 1, "max": 5, "n": len(codes), "codes": codes, "same": [], "from": {t: "bar" for t in codes},
+                                      "drop": {}, "dropEx": [], "bad": {"n": 0, "rows": []}}}
+        assert (len(mark) * 2 > len([s for s in d["stocks"] if s.get("cls") == "us" and not s.get("fund")])) == wide
+        want_ko = [f"미국 종목은 {jack}"] if wide else [f"{', '.join(picks[:5])} 외 2종목: {jack}"]
+        srv, ctx, page, _ = R.open(build_site(f), local=slot_local([("susmany", "미국 많은 종목 시험", slot)]), once=True)
+        try:
+            def check():
+                page.get_by_text("차근차근 만들기", exact=True).click()
+                page.get_by_text("미국 많은 종목 시험", exact=False).first.click()
+                see(page, "보통 해 ±")
+                page.locator(".nonLiveBanner").first.wait_for(state="visible", timeout=WAIT)
+                settled(page, BANNER, want_ko, "한국어 배너")
+                page.get_by_role("button", name="EN", exact=True).first.click()
+                page.locator(".nonLiveBanner").first.wait_for(state="visible", timeout=WAIT)
+                settled(page, BANNER, [en_all], "영어 배너: 예전 그대로 (모든 코드)")
+                page.get_by_role("button", name="한국어", exact=True).first.click()
+                settled(page, BANNER, want_ko, "한국어로 되돌린 배너")
+            R.check(page, S, ("절반 넘게: 미국 쪽은 '미국 종목은 …' 한 줄" if wide else "일곱 종목: 앞 5개 + '외 2종목'") + " · 영어는 예전 그대로", check)
+        finally:
+            ctx.close(); srv.shutdown()
+    run(False)
+    run(True)
 
 
 def scene_list(R, fresh, full):
@@ -3813,6 +3897,7 @@ def scene_list(R, fresh, full):
             ("주가기록", lambda: scene_px_bad(R, fresh)),                                                                  # 2026-11-14 과거 주가 기록 오류
             ("확인종가", lambda: scene_kr_own_close(R, fresh)),                                                            # 2026-11-19 국내 마지막 확인 종가
             ("미국확인종가", lambda: scene_us_carry(R, fresh)),                                                            # 2026-11-20 미국 마지막 확인 종가
+            ("미국확인종가", lambda: scene_us_carry_many(R, fresh)),                                                       # 2026-11-21 (Jack 8 · 6) 5개 + 외 n종목 · 미국 전체 한 줄
             ("확인종가", lambda: scene_kr_own_close(R, with_kr_carries(fresh))),                                           # 리뷰 M-A: 진짜 데이터에 마지막 확인 종가가 있는 날
             ("미국날짜", lambda: scene_own_close(R, with_kr_carries(fresh))),                                          # 리뷰 M-A: 같은 날의 미국 자기 날짜 장면
             ("미국종가", lambda: scene_us_close(R, fresh))] + (                                                          # 2026-11-19 첫 화면의 미국 종가 날짜
