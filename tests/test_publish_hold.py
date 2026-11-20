@@ -82,24 +82,24 @@ def listing_data(px, us=None):
 
 # ── 1. 바닥 ──────────────────────────────────────────────────
 def test_the_floor_against_last_weeks_0640_publishes():
-    """지난주 06:40 발행 (data 브랜치): 11-19 2,743 / 2,771 = 98.99% · 11-20 2,740 / 2,771 = 98.88% — 둘 다 98% 바닥 위 (발행)."""
-    assert P.COVERAGE_FLOOR_PCT == 98
+    """지난주 06:40 발행 (data 브랜치): 11-19 2,743 / 2,771 = 98.99% · 11-20 2,740 / 2,771 = 98.88% — 둘 다 97% 바닥 위 (발행)."""
+    assert P.COVERAGE_FLOOR_PCT == 97
     for conf in (2743, 2740):
         d = P.floor_decision(FB, conf, 2771)
         assert d.hold is False and d.kind == "publish" and "2,771" in d.why
-    # 98% 의 2,771 = 2,715.58 → 2,716 부터 발행 (확인 못 한 종목 55 까지)
-    assert P.floor_decision(FB, 2716, 2771).hold is False
-    d = P.floor_decision(FB, 2715, 2771)
-    assert d.hold is True and d.kind == "floor" and "모자람 1" in d.why and "2,716" in d.why
+    # 97% 의 2,771 = 2,687.87 → 2,688 부터 발행 (확인 못 한 종목 83 까지)
+    assert P.floor_decision(FB, 2688, 2771).hold is False
+    d = P.floor_decision(FB, 2687, 2771)
+    assert d.hold is True and d.kind == "floor" and "모자람 1" in d.why and "2,688" in d.why
     # 야후가 빈 새벽 (11-19 밤 같은 수: 약 240 확인 못 함) → 보류
     d = P.floor_decision(FB, 2526, 2771)
     assert d.hold is True and d.loud is True and "91.16%" in d.why and "다음 실행이 다시 해요" in d.why
 
 
 def test_exactly_the_floor_publishes():
-    assert 2744 * 100 == 98 * 2800                                                # 딱 98%
-    assert P.floor_decision(FB, 2744, 2800).hold is False
-    assert P.floor_decision(FB, 2743, 2800).hold is True
+    assert 2716 * 100 == 97 * 2800                                                # 딱 97%
+    assert P.floor_decision(FB, 2716, 2800).hold is False
+    assert P.floor_decision(FB, 2715, 2800).hold is True
     assert P.floor_decision(FB, 99, 100, floor=99).hold is False and P.floor_decision(FB, 98, 100, floor=99).hold is True
 
 
@@ -260,7 +260,7 @@ def test_main_on_a_floor_hold_logs_the_numbers_and_warns(tmp_path, monkeypatch, 
     log = capsys.readouterr().out
     assert hold is True and seen == ["HEAD"] and out.splitlines()[-1] == "hold=true"
     loud = next(ln for ln in log.splitlines() if ln.startswith("!! [보류]"))
-    for part in ("2,526", "2,771", "91.16%", "바닥 98%", "2,716"):
+    for part in ("2,526", "2,771", "91.16%", "바닥 97%", "2,688"):
         assert part in loud, part
     assert "::warning title=발행 보류 (2차 출처 확인 비율 바닥 아래)::" in log
     assert "보류 — 확인 비율이 바닥 아래라 발행하지 않아요" in summ and "already_published.py" in summ
@@ -704,3 +704,154 @@ def test_only_a_held_run_is_neutral_and_an_api_hiccup_counts_the_run_as_before(c
             return super().gh(method, path, body, ok)
     assert W.is_held_run(Down(jobs={1: HELD_JOBS}), TWD.run(1, "success")) is False
     assert "보류한 실행인지 몰라요" in capsys.readouterr().out
+
+
+# ── 10. 같은 날 다시 도는 실행은 발행본이 확인한 종목을 다시 묻지 않아요 (출처 요청 줄이기) ──────────
+def _fb_run(uni, day, cached=None, keep=None, asked=None, no_yahoo=()):
+    """test_kr_two_source 의 실제 응답 픽스처로 kr_fallback_days 를 돌려요. asked: 묻는 종목을 단계마다 적어요 {"daum", "yahoo", "fill"}.
+    no_yahoo: 야후가 그날 종가를 주지 않는 종목 (확인 못 한 종목을 만들어요)."""
+    import test_kr_two_source as T2
+    asked = asked if asked is not None else {}
+
+    def fetch_daum(codes, n):
+        asked.setdefault("daum", []).extend(codes)
+        return {c: v for c, v in T2.daum().items() if c in codes}, []
+
+    def fetch_yahoo(cm, s, e):
+        asked.setdefault("yahoo", []).extend(cm)
+        return {c: {k: v for k, v in d.items() if k != day} for c, d in T2.yahoo().items() if c in cm and c not in no_yahoo}, 0
+
+    def fill(y, cm, d, close_time):
+        asked.setdefault("fill", []).extend(cm)
+        mc = set()
+        for c, rows in T2.daum().items():
+            if c in cm and c not in no_yahoo and d in rows and d not in (y.get(c) or {}):
+                y.setdefault(c, {})[d] = rows[d]["tradePrice"]
+                mc.add(c)
+        return {"need": len(cm), "bar": 0, "meta": len(mc), "none": 0, "fail": 0, "metaCodes": mc}
+    return F.kr_fallback_days([day], lambda d: (uni, "시험"), dt.datetime(2026, 11, 19, 7, 0, tzinfo=F.KST), {}, fetch_daum=fetch_daum,
+                              fetch_yahoo=fetch_yahoo, fill_day=fill, say=lambda s: None, cached=cached, keep=keep)
+
+
+def _published(fr, day, extra=()):
+    return {"pxDate": day.isoformat(), "usPxDate": day.isoformat(), "pxSrc": {"px": FB, "date": day.isoformat()},
+            "stocks": [{"t": str(r["Code"]), "cls": "kr", "price": float(r["Close"])} for _, r in fr.iterrows()] + list(extra)}
+
+
+def test_a_same_day_rerun_asks_only_the_unconfirmed_stocks_and_confirms_the_same(tmp_path):
+    import test_kr_two_source as T2
+    D18 = dt.date(2026, 11, 18)
+    uni = T2.listing("2026-11-18_1452")
+    miss = ("047400", "090460")                                                   # 야후가 그날 종가를 주지 않는 두 종목 (두 실행 모두 · 필수 종목 아님)
+    keep, asked0 = {}, {}
+    out0, _ = _fb_run(uni, D18, keep=keep, asked=asked0, no_yahoo=miss)
+    fr0, st0 = out0[D18]
+    assert set(miss) <= set(asked0["daum"]) and not set(miss) & set(fr0["Code"].astype(str))
+    assert keep["day"] == "2026-11-18" and set(keep["kk"]) == set(fr0["Code"].astype(str)) and keep["knx"] == {}
+    path = str(tmp_path / "kr-fb-v1.json")
+    F.kr_fb_cache_save(keep, path)                                                # 보관본에 쓰고 읽어 와요 (진짜 파일 모양)
+    cache = F.kr_fb_cache_load(path)
+    cached, why = F.kr_fb_cache_pick(cache, _published(fr0, D18), D18)
+    assert set(cached["kk"]) == set(fr0["Code"].astype(str)) and "다시 묻지 않아요" in why
+    asked1 = {}
+    out1, notes = _fb_run(uni, D18, cached=cached, asked=asked1, no_yahoo=miss)
+    fr1, st1 = out1[D18]
+    # 묻는 종목: 발행본이 확인하지 못한 종목만 (다음 · 야후 · 다시 읽기 모두) — 확인된 종목은 다시 묻지 않아요
+    unconf = sorted(set(asked0["daum"]) - set(fr0["Code"].astype(str)))
+    assert unconf == sorted(miss) and sorted(asked1["daum"]) == unconf and sorted(asked1["yahoo"]) == unconf and set(asked1.get("fill", [])) <= set(unconf)
+    assert len(asked0["daum"]) == len(fr0) + len(unconf) > len(asked1["daum"])
+    # 확인 결과는 모두 물은 실행과 똑같아요 (같은 종목 · 같은 종가 · 같은 집계)
+    pd.testing.assert_frame_equal(fr1.sort_values("Code").reset_index(drop=True), fr0.sort_values("Code").reset_index(drop=True), check_dtype=False)
+    for k in ("n", "conf", "mkt", "noDaum", "bad", "noYahoo", "diff", "must"):
+        assert (len(st1[k]) if isinstance(st1[k], list) else st1[k]) == (len(st0[k]) if isinstance(st0[k], list) else st0[k]), k
+    assert st1["skip"] == len(cached["kk"]) and F.px_src_counts(st1)["skip"] == len(cached["kk"]) and F.px_src_counts(st0)["skip"] == 0
+    assert any("다음 · 야후 다시 묻지 않음" in n and f"묻는 종목 {len(unconf)}" in n for n in notes)
+
+
+def test_the_cache_is_used_only_for_same_day_two_source_closes_that_match_the_publish():
+    import test_kr_two_source as T2
+    D18 = dt.date(2026, 11, 18)
+    keep = {}
+    out0, _ = _fb_run(T2.listing("2026-11-18_1452"), D18, keep=keep)
+    fr0 = out0[D18][0]
+    pub = _published(fr0, D18)
+    cache = json.loads(json.dumps(keep))
+    one = str(fr0["Code"].iloc[0])
+    # 발행본 가격과 보관본 종가가 1원이라도 다르면 그 종목은 다시 물어요
+    moved = copy.deepcopy(pub)
+    next(s for s in moved["stocks"] if s["t"] == one)["price"] += 1
+    c, why = F.kr_fb_cache_pick(cache, moved, D18)
+    assert one not in c["kk"] and len(c["kk"]) == len(fr0) - 1 and "다시 물어요" in why
+    # 발행본에 그 날짜 종가로 없는 종목 (마지막 확인 종가로 실었거나 · 시가총액 기준 밖이라 없음) 은 보관본이 두 출처 확인이면 다시 묻지 않아요
+    carried = copy.deepcopy(pub)
+    next(s for s in carried["stocks"] if s["t"] == one)["pxd"] = "2026-11-17"
+    c, why = F.kr_fb_cache_pick(cache, carried, D18)
+    assert one in c["kk"] and "발행본에 그 날짜 종가로 없음 1" in why
+    absent = dict(pub, stocks=[s for s in pub["stocks"] if s["t"] != one])
+    assert one in F.kr_fb_cache_pick(cache, absent, D18)[0]["kk"]
+    # 보관본의 두 값이 서로 다르면 (두 출처 확인이 아니에요) 다시 물어요
+    split = copy.deepcopy(cache)
+    split["kk"][one]["y"]["2026-11-18"] += 1
+    c, why = F.kr_fb_cache_pick(split, absent, D18)
+    assert one not in c["kk"] and "읽을 수 없는 1종목은 다시 물어요" in why
+    # 같은 날이 아니면 (새 거래일 · 발행본이 1차 출처 날 · 보관본 날짜가 다름 · 모양이 다름) 모두 물어요
+    assert F.kr_fb_cache_pick(cache, pub, dt.date(2026, 11, 19))[0] is None
+    assert F.kr_fb_cache_pick(cache, dict(pub, pxSrc={"px": LISTING, "date": "2026-11-18"}), D18)[0] is None
+    assert F.kr_fb_cache_pick(dict(cache, day="2026-11-17"), pub, D18)[0] is None
+    assert F.kr_fb_cache_pick(dict(cache, v=99), pub, D18)[0] is None and F.kr_fb_cache_pick(None, pub, D18)[0] is None
+    bad = copy.deepcopy(cache)
+    bad["kk"][one]["d"] = {"어제": {}}
+    assert one not in F.kr_fb_cache_pick(bad, pub, D18)[0]["kk"]
+
+
+def test_a_same_day_rerun_asks_only_unconfirmed_konex():
+    """코넥스 (#158 · 야후 .KQ × 네이버): 그날 파일에 넣은 코넥스는 다시 묻지 않고, 확인 못 한 코넥스만 네이버 · 야후에 물어요. 결과는 같아요."""
+    import test_konex_two_source as TK
+    D16 = TK.D16
+
+    def run(cached=None, keep=None, asked_n=None, asked_y=None):
+        return F.kr_fallback_days([D16], lambda d: (TK.universe16(), "시험"), TK.NOW, {}, fetch_daum=lambda codes, n: (TK.daum2(), []),
+                                  fetch_yahoo=lambda cm, a, b: (TK.yahoo2(), 0), fill_day=TK.no_fill, say=lambda s: None,
+                                  caps=TK.CAPS_190, knx=TK.knx_fakes(asked_n, asked_y), cached=cached, keep=keep)
+    keep, an0, ay0 = {}, [], []
+    out0, _ = run(keep=keep, asked_n=an0, asked_y=ay0)
+    fr0, st0 = out0[D16]
+    kept = set(fr0.loc[fr0["Market"] == "KONEX", "Code"].astype(str))
+    assert kept and set(keep["knx"]) == kept
+    cached, _ = F.kr_fb_cache_pick(json.loads(json.dumps(keep)), _published(fr0, D16), D16)
+    assert set(cached["knx"]) == kept
+    an1, ay1 = [], []
+    out1, notes = run(cached=cached, asked_n=an1, asked_y=ay1)
+    fr1, st1 = out1[D16]
+    assert set(an1) == set(an0) - kept and not kept & set(an1)
+    assert {s.split(".")[0] for s in ay1} <= set(an0) - kept
+    assert sorted(fr1["Code"].astype(str)) == sorted(fr0["Code"].astype(str))
+    assert st1["knx"]["conf"] == st0["knx"]["conf"] and st1["knx"]["kept"] == st0["knx"]["kept"] and st1["conf"] == st0["conf"]
+    assert F.px_src_counts(st1)["conf"] == F.px_src_counts(st0)["conf"]
+
+
+def test_fetch_korea_wires_the_cache_once():
+    import inspect
+    body = inspect.getsource(F.fetch_korea)
+    assert body.count("kr_fb_cache_pick(kr_fb_cache_load(), prev, max(ended))") == 1
+    assert "cached=fb_cached, keep=fb_keep" in body and body.count("kr_fb_cache_save(fb_keep)") == 1
+    assert F.KR_FB_CACHE_PATH.startswith(".dart-cache/")                          # 'DART 캐시 저장' 단계가 같이 보관해요
+    with open(WF, encoding="utf-8") as f:
+        wf = yaml.safe_load(f)
+    save = next(s for s in wf["jobs"]["update"]["steps"] if s.get("name") == "DART 캐시 저장")
+    assert save["with"]["path"] == ".dart-cache" and save["if"] == "always()"
+
+
+def test_the_kept_daum_fields_build_the_same_row():
+    """보관본은 다음 행에서 KR_FB_DAUM_KEEP 칸만 남겨요 — 그 칸만으로 만든 행이 원래 행으로 만든 것과 같아야 해요 (실제 응답 픽스처 모두)."""
+    import test_kr_two_source as T2
+    uni = T2.listing("2026-11-18_1452")
+    us = {str(r["Code"]).strip(): r for _, r in uni.iterrows()}
+    n = 0
+    for c, rows in T2.daum().items():
+        if c not in us:
+            continue
+        for d, r in rows.items():
+            assert F.kr_fb_row(us[c], {k: r[k] for k in F.KR_FB_DAUM_KEEP if k in r}) == F.kr_fb_row(us[c], r), (c, d)
+            n += 1
+    assert n > 50

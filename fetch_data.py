@@ -695,6 +695,94 @@ KR_FB_PHASE_BUDGET_S = 600
 KR_INDEX_TIMEOUT = 60             # KOSPI 일봉 (FinanceDataReader KS11 = 캐시 CSV) 소켓 시간 한도 (초) — 그 라이브러리는 시간 한도 없이 받아요
 
 
+# 2026-11-21 (#161 · 리뷰: 같은 날 다시 도는 실행의 출처 요청 줄이기): 2차 출처 날 마지막 날 두 출처로 확인된 종목의 값 (다음 행 · 야후 종가 ·
+# 코넥스는 네이버 행 · 야후 종가) 을 DART 캐시 폴더에 남겨요 (.dart-cache — 'DART 캐시 저장' 단계가 같이 보관해요 · us-info 처럼). 같은 기준일을
+# 다시 도는 실행은 발행본(지난 data.json)이 그 날짜 종가로 실은 종목 중 이 보관본의 값이 그 종가와 원 단위까지 같은 종목만 다시 묻지 않아요
+# (kr_fb_cache_pick). 나머지 (확인 못 한 · 마지막 확인 종가로 실은 · 빠진 종목) 만 다음 · 야후 · 네이버에 물어요.
+KR_FB_CACHE_PATH = os.environ.get("KR_FB_CACHE", ".dart-cache/kr-fb-v1.json")
+KR_FB_CACHE_V = 1
+# 다음 행에서 남기는 칸 — kr_fb_row 와 그날 상장주식수 (_daumShr) 가 읽는 칸 모두 (시험이 kr_fb_row 결과가 같은지 봐요). 보관본을 작게 해요.
+KR_FB_DAUM_KEEP = ("tradePrice", "changePrice", "change", "listedSharesCount", "totalAccTradeVolume", "totalAccTradePrice",
+                   "openingPrice", "highPrice", "lowPrice")
+
+
+def kr_fb_cache_load(path=None):
+    """2차 출처 보관본 (kr-fb-v1) 을 읽어요. 없거나 못 읽으면 None (크게 남겨요 · 그러면 모두 물어요)."""
+    path = path or KR_FB_CACHE_PATH
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        log("· 2차 출처 보관본 없음 → 모두 물어요")
+    except Exception as e:
+        log(f"  !! 2차 출처 보관본을 읽지 못했어요 ({type(e).__name__}: {str(e)[:120]}) → 모두 물어요")
+    return None
+
+
+def kr_fb_cache_save(keep, path=None):
+    """마지막 날 두 출처로 확인된 종목의 값을 보관본에 써요 (write_json — NaN 없이 · 실패해도 발행은 그대로: 크게 남기고 다음 실행이 모두 물어요)."""
+    path = path or KR_FB_CACHE_PATH
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        write_json(path, keep)
+        log(f"· 2차 출처 보관본 저장: {keep.get('day')} 코스피 · 코스닥 {len(keep.get('kk') or {}):,} · 코넥스 {len(keep.get('knx') or {}):,}종목 ({path})")
+    except Exception as e:
+        log(f"  !! 2차 출처 보관본 저장 실패 ({type(e).__name__}: {str(e)[:120]}) — 다음 같은 날 실행은 모두 물어요")
+
+
+def _iso_keys(m):
+    out = {}
+    for k, v in (m or {}).items() if isinstance(m, dict) else []:
+        try:
+            out[dt.date.fromisoformat(str(k))] = v
+        except ValueError:
+            return None
+    return out
+
+
+def kr_fb_cache_pick(cache, prev, day, tol=KR_FB_CLOSE_TOL):
+    """같은 날 다시 도는 실행이 다시 묻지 않을 종목 (2026-11-21 · #161 · 순수 함수). 반환: (cached dict 또는 None, 설명).
+    모두 맞아야 해요: 보관본의 모양 · 날짜 (cache.day) = 이 실행의 마지막 끝난 거래일 (day) = 발행본(prev)의 pxDate · 발행본이 2차 출처 날.
+    종목마다: 보관본의 그날 다음 종가 (코넥스는 네이버 종가) 와 야후 종가가 원 단위까지 같아요 (같은 날 앞선 실행이 두 출처로 확인한 종가). 발행본이 그
+    종목을 그 날짜 종가로 실었으면 (pxd 없음) 그 가격과도 같아야 해요 — 다르면 다시 물어요 (크게 셉니다). 발행본에 그 날짜 종가로 없는 종목 (시가총액
+    상위 MAX_KR 밖 · 코넥스 시가총액 기준 아래 · 그때 확인 못 해 마지막 확인 종가로 실었는데 뒤의 실행이 확인한 종목) 도 보관본이 두 출처 확인이면
+    다시 묻지 않아요. 그 밖에는 예전처럼 물어요."""
+    if not isinstance(cache, dict) or cache.get("v") != KR_FB_CACHE_V:
+        return None, "보관본이 없거나 모양이 달라요 → 모두 물어요"
+    D = day.isoformat() if isinstance(day, dt.date) else None
+    if not isinstance(prev, dict) or prev.get("pxDate") != D or ((prev.get("pxSrc") or {}).get("px") if isinstance(prev.get("pxSrc"), dict) else None) != PX_SRC_FB:
+        return None, f"같은 날 다시 도는 실행이 아니에요 (발행본 {(prev or {}).get('pxDate') if isinstance(prev, dict) else None} · 이 실행 {D}) → 모두 물어요"
+    if cache.get("day") != D:
+        return None, f"보관본 날짜 {cache.get('day')} ≠ {D} → 모두 물어요"
+    pst = {}
+    for x in prev.get("stocks") or []:
+        if isinstance(x, dict) and x.get("cls") == "kr" and not x.get("fund") and x.get("pxd") is None and (_fin(x.get("price")) or 0) > 0:
+            pst[str(x.get("t"))] = _fin(x["price"])
+    out, same, extra, bad, odd = {"kk": {}, "knx": {}}, 0, 0, 0, 0
+    for part, row_key, close_key in (("kk", "d", "tradePrice"), ("knx", "n", "closePrice")):
+        for c, v in (cache.get(part) or {}).items() if isinstance(cache.get(part), dict) else []:
+            rows, ys = _iso_keys((v or {}).get(row_key)), _iso_keys((v or {}).get("y"))
+            r = (rows or {}).get(day)
+            a = _fin(r.get(close_key)) if isinstance(r, dict) else None
+            y = _fin((ys or {}).get(day))
+            if rows is None or ys is None or a is None or y is None or a <= 0 or abs(a - y) > tol:
+                odd += 1
+                continue
+            p = pst.get(str(c))
+            if p is not None and abs(a - p) > tol:
+                bad += 1
+                continue
+            if p is None:
+                extra += 1
+            else:
+                same += 1
+            out[part][str(c)] = {row_key: rows, "y": ys}
+    n = len(out["kk"]) + len(out["knx"])
+    return out, (f"같은 날 다시 도는 실행 ({D}): 같은 날 앞선 실행이 두 출처로 확인한 {n:,}종목 (코스피 · 코스닥 {len(out['kk']):,} · 코넥스 {len(out['knx']):,}) 은 "
+                 f"다시 묻지 않아요 — 발행본의 그 날짜 종가와 같음 {same:,} · 발행본에 그 날짜 종가로 없음 {extra:,}"
+                 + (f" · 발행본과 다른 {bad:,}종목은 다시 물어요" if bad else "") + (f" · 보관본 값을 읽을 수 없는 {odd:,}종목은 다시 물어요" if odd else ""))
+
+
 def yahoo_kr_symbol(code, market):
     """다음 × 야후 짝의 야후 심볼: 코스피 .KS · 코스닥 .KQ · 그 밖(코넥스 등)은 None — 다음에 없는 시장이라 이 짝이 될 수 없어요
     (코넥스는 야후에 .KQ 로 있지만 짝은 야후 × 네이버 · yahoo_knx_symbol). (순수 함수)"""
@@ -1538,7 +1626,7 @@ def kr_fb_cut_note(what, got, target, cut, budget, more=""):
 
 
 def kr_fallback_days(days, universe_of, now, special, fetch_daum=fetch_daum_all, fetch_yahoo=fetch_yahoo_kr_closes, must=GATE_MUST,
-                     fill_day=yahoo_fill_day, say=log, caps=None, knx=None, anchor=None):
+                     fill_day=yahoo_fill_day, say=log, caps=None, knx=None, anchor=None, cached=None, keep=None):
     """끝난 거래일(days)마다 2차 출처 행을 만들어요 (2026-11-19). universe_of(d) → (DataFrame, 설명).
     반환: ({날짜: (DataFrame, 집계)}, 메모들). 마감 + 30분이 지나지 않은 날 · 목록이 없는 날은 빠지고 메모에 남아요.
     2026-11-20: 단계마다 시간 한도 (KR_FB_PHASE_BUDGET_S · 받는 함수 안에서) — 걸리면 크게 남기고 집계 cut (pxSrc.fb.cut) 에 적어요.
@@ -1551,7 +1639,11 @@ def kr_fallback_days(days, universe_of, now, special, fetch_daum=fetch_daum_all,
     집계는 knx 가 있든 없든 같아요. None 이면 코넥스는 예전처럼 묻지 않아요 (시험).
     anchor (리뷰 M1 · kr_knx_anchor): (px0, {코드: px0 공식 종가}) — 1차 출처 최종본의 코넥스 공식 종가. 네이버 일봉을 px0 부터 받아, 네이버의 px0
     종가가 그 공식 종가와 같은 코넥스만 확인해요 (kr_knx_confirm — px0 뒤 권리락 · 분할 · 병합으로 두 출처가 함께 수정된 값을 막아요). 파이프라인은
-    늘 줘요 (fetch_korea). knx 를 주고 anchor 를 주지 않으면 맞춰 보지 않고 크게 남겨요 (시험만)."""
+    늘 줘요 (fetch_korea). knx 를 주고 anchor 를 주지 않으면 맞춰 보지 않고 크게 남겨요 (시험만).
+    cached (2026-11-21 · #161 · kr_fb_cache_pick): 같은 날 다시 도는 실행 — 발행본이 이미 두 출처로 확인한 종목의 지난 실행 값 {"kk": {코드: {"d":
+    {날짜: 다음 행}, "y": {날짜: 야후 종가}}}, "knx": {코드: {"n": {날짜: 네이버 행}, "y": {날짜: 야후 종가}}}}. 그 종목은 다음 · 야후 · 네이버에
+    다시 묻지 않고 그 값으로 확인해요 (확인 · 집계는 물은 종목과 똑같이 · 묻는 수만 줄어요). keep (dict): 주면 마지막 날 두 출처로 확인된 종목의
+    값을 같은 모양으로 담아요 (fetch_korea 가 보관본에 써요 — 다음 같은 날 실행이 써요)."""
     notes, unis = [], {}
     for d in sorted(days)[-KR_FB_MAX_DAYS:]:
         if not kr_fb_final(d, now, special):
@@ -1583,6 +1675,17 @@ def kr_fallback_days(days, universe_of, now, special, fetch_daum=fetch_daum_all,
         notes.append(f"다음에 없는 시장(코넥스 등) {len(n_mkt):,}종목은 2차 출처로 확인할 수 없어 묻지 않아요 (코넥스 야후 × 네이버 단계를 부르지 않은 실행)")
     else:
         notes.append(f"다음에 없는 시장 {len(n_mkt):,}종목 (그중 코넥스 {len(kcm):,}종목은 아래 야후 .KQ × 네이버 · 그 밖 {len(n_mkt - set(kcm)):,}종목은 묻지 않아요)")
+    ck = (cached or {}).get("kk") if isinstance((cached or {}).get("kk"), dict) else {}
+    cx = (cached or {}).get("knx") if isinstance((cached or {}).get("knx"), dict) else {}
+    skip_kk = sorted(c for c in cm if c in ck)
+    skip_kx = sorted(c for c in kcm if c in cx)
+    if cached is not None:
+        say(f"  !! 2차 출처 같은 날 다시 쓰기 (#161): 발행본이 이미 두 출처로 확인한 종목은 다시 묻지 않아요 — 코스피 · 코스닥 다시 씀 {len(skip_kk):,} · "
+            f"묻는 종목 {len(cm) - len(skip_kk):,} / {len(cm):,} · 코넥스 다시 씀 {len(skip_kx):,} · 묻는 종목 {len(kcm) - len(skip_kx):,} / {len(kcm):,}")
+        notes.append(f"!! 2차 출처 같은 날 다시 쓰기: 다음 · 야후 다시 묻지 않음 {len(skip_kk):,}종목 · 묻는 종목 {len(cm) - len(skip_kk):,} — "
+                     f"코넥스 네이버 · 야후 다시 묻지 않음 {len(skip_kx):,} · 묻는 종목 {len(kcm) - len(skip_kx):,}")
+    cm = {c: m for c, m in cm.items() if c not in ck}
+    kcm = {c: m for c, m in kcm.items() if c not in cx}
     order = fb_order(set(cm), first=must, caps=caps)
     cm = {c: cm[c] for c in order}                  # 이 차례로 물어요 (세 단계 모두)
     n_must = sum(1 for c in dict.fromkeys(must) if c in cm)
@@ -1649,16 +1752,26 @@ def kr_fallback_days(days, universe_of, now, special, fetch_daum=fetch_daum_all,
                          f"그날 공식 종가를 아는 코넥스 {len(anchor[1]):,}종목"
                          + (" (기준일 최종본이 없어 코넥스는 한 종목도 확인되지 않아요)" if anchor[0] is None or not anchor[1] else ""))
         try:
-            kn = kr_knx_phases(kcm, unis, now, special, knx, must, caps, notes, say, start=anchor[0] if anchor is not None else None)
+            if kcm:
+                kn = kr_knx_phases(kcm, unis, now, special, knx, must, caps, notes, say, start=anchor[0] if anchor is not None else None)
+            else:                                   # 2026-11-21 (#161): 물을 코넥스가 없어요 (모두 보관본) — 묻지 않고 빈 결과
+                kn = {"naver": {}, "yahoo": {}, "metaCodes": set(), "cut": knx_cut_record({"yahoo": 0, "fill": 0, "naver": 0})}
+            for c in skip_kx:
+                kn["naver"][c] = dict(cx[c].get("n") or {})
+                kn["yahoo"][c] = dict(cx[c].get("y") or {})
         except Exception as e:                      # 코넥스 단계의 고장이 코스피 · 코스닥 발행을 막지 않게 — 크게 남기고 코넥스만 빠져요 (관문이 경고해요)
             msg = (f"!! 코넥스 2차 출처 단계가 고장 났어요 ({type(e).__name__}: {str(e)[:120]}) — 그날 파일에 코넥스는 없어요 "
                    "(코스피 · 코스닥은 그대로 · 관문 '코넥스 종가 두 출처' 줄이 경고해요)")
             notes.append(msg)
             say(f"  {msg}")
+    for c in skip_kk:                               # 2026-11-21 (#161): 다시 묻지 않은 종목은 지난 실행의 그 값으로 (확인은 물은 종목과 똑같이)
+        daum[c] = dict(ck[c].get("d") or {})
+        yahoo[c] = dict(ck[c].get("y") or {})
     out = {}
     for d, uni in sorted(unis.items()):
         fr, st = kr_fb_confirm(d, uni, daum, yahoo, must=must)
         st["cut"] = cut                             # 2026-11-20: 시간 한도로 묻지 못한 종목 수 (단계마다 · 모든 날에 같은 값)
+        st["skip"] = len(skip_kk) if cached is not None else None    # 2026-11-21 (#161): 다시 묻지 않은 코스피 · 코스닥 (pxSrc.fb.skip)
         st["yMeta"] = sum(1 for c in fr["Code"] if c in fill["metaCodes"]) if d == last else 0
         st["_uni"] = uni                            # 그날 전체 종목 목록 (주식 수는 가격과 상관없어요 — 우선주 주식 수에 써요)
         st["_daumShr"] = {c: int(_fin(r[d].get("listedSharesCount")) or 0) for c, r in daum.items() if d in r}
@@ -1681,6 +1794,18 @@ def kr_fallback_days(days, universe_of, now, special, fetch_daum=fetch_daum_all,
                 st["knx"] = kst
                 fr = fr_k
         out[d] = (fr, st)
+    if isinstance(keep, dict) and last in out:      # 2026-11-21 (#161): 마지막 날 두 출처로 확인된 종목의 값 (다음 같은 날 실행이 다시 묻지 않게)
+        ok = set(out[last][0]["Code"].astype(str).str.strip())
+        ud = set(unis)
+        kk = {c: {"d": {d.isoformat(): {k: r[k] for k in KR_FB_DAUM_KEEP if k in r} for d, r in daum[c].items() if d in ud and isinstance(r, dict)},
+                  "y": {d.isoformat(): v for d, v in yahoo[c].items() if d in ud}}
+              for c in sorted(ok) if c in daum and c in yahoo and last in daum[c]}
+        kx = {}
+        if kn is not None:                          # 그날 파일에 넣은 코넥스 + 확인됐지만 시가총액 기준 아래라 넣지 않은 코넥스 (capOut) — 모두 두 출처 확인
+            okx = ok | set(((out[last][1].get("knx") or {}).get("capOut")) or [])
+            kx = {c: {"n": {d.isoformat(): r for d, r in kn["naver"][c].items()}, "y": {d.isoformat(): v for d, v in kn["yahoo"][c].items() if d in ud}}
+                  for c in sorted(okx) if c in kn["naver"] and c in kn["yahoo"]}
+        keep.update({"v": KR_FB_CACHE_V, "day": last.isoformat(), "days": sorted(d.isoformat() for d in ud), "kk": kk, "knx": kx})
     return out, notes
 
 
@@ -1773,6 +1898,8 @@ def px_src_counts(st):
            "bad": len(st["bad"]), "noYahoo": len(st["noYahoo"]),
            "diff": len(st["diff"]), "yMeta": int(st.get("yMeta") or 0), "diffEx": [f"{c} {n} {a:.0f}/{b:.2f}" for c, n, a, b in st["diff"][:20]], "must": list(st["must"]),
            "cut": fb_cut_record(st.get("cut")),
+           # 2026-11-21 (#161): 같은 날 다시 도는 실행이 다시 묻지 않은 코스피 · 코스닥 (발행본이 이미 확인 · 지난 실행의 값으로 확인 · conf 에 들어 있어요)
+           "skip": int(st.get("skip") or 0),
            # 2026-11-21 (#161): 두 종가가 다른 종목 코드 모두 — 같은 날 다시 도는 실행이 지난 발행본의 확인 종가를 다시 쓸지 볼 때 (지금 두 출처가
            # 서로 다르면 다시 쓰지 않아요 · kr_same_day_reuse)
            "diffT": sorted(str(c) for c, *_ in st["diff"])}
@@ -6921,10 +7048,17 @@ def fetch_korea(start, today, rf, prev=None):
     # 2026-11-20 (리뷰 M1): 코넥스 기준일 맞춰 보기 — 1차 출처 최종본(px0)의 코넥스 공식 종가. 네이버의 px0 종가가 이 값과 같은 코넥스만 확인해요
     # (px0 뒤 권리락 · 분할 · 병합으로 야후와 네이버가 함께 수정한 값을 그날 공식 종가로 내지 않게 · kr_knx_confirm)
     knx0 = kr_knx_anchor(listing, px_date)
+    # 2026-11-21 (#161): 같은 날 다시 도는 실행은 발행본이 이미 두 출처로 확인한 종목을 다시 묻지 않아요 (보관본의 그 값으로 · kr_fb_cache_pick)
+    fb_cached, fb_keep = None, {}
+    if ended:
+        fb_cached, why = kr_fb_cache_pick(kr_fb_cache_load(), prev, max(ended))
+        log(f"{'  !! ' if fb_cached else '· '}2차 출처 보관본: {why}")
     px_date, listing, fb_known, px_src, fb_logs, (full_list, daum_shr) = kr_second_source(
         px_date, listing, ended, dt.datetime.now(KST), special,
         lambda d: kr_fb_universe(d, _fetch_listing_csv, fallback=listing), names=names0,
-        fallback=lambda *a: kr_fallback_days(*a, caps=caps0, knx=kr_knx_fetchers(), anchor=knx0))   # 2026-11-20: 코넥스는 야후 .KQ × 네이버 (Jack, 11-19 답 5)
+        fallback=lambda *a: kr_fallback_days(*a, caps=caps0, knx=kr_knx_fetchers(), anchor=knx0, cached=fb_cached, keep=fb_keep))   # 2026-11-20: 코넥스는 야후 .KQ × 네이버 (Jack, 11-19 답 5)
+    if px_src["px"] == PX_SRC_FB and fb_keep.get("kk"):
+        kr_fb_cache_save(fb_keep)
     if ended:
         log(f"  !! 1차 출처(캐시 최종본 {px0}) 뒤에 이미 끝난 거래일 {len(ended)}일: {', '.join(d.isoformat() for d in ended)} — 2차 출처(다음 × 야후 종가 · "
             "코넥스는 야후 .KQ × 네이버 종가)로 확인해요")
