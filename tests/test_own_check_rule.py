@@ -62,6 +62,22 @@ def test_the_pipeline_uses_the_gates_own_functions_and_writes_the_record():
     assert "ownDrop" in F.UNITS
 
 
+def test_units_has_no_duplicate_keys_and_names_every_own_drop_key():
+    """(리뷰 3차 · 더하기만) UNITS 사전에 같은 키가 두 번 있으면 뒤의 설명이 앞을 조용히 덮어써요 → fetch_data.py 의 UNITS 글자 그대로 키가
+    한 번씩만 있는지 봐요. 그리고 data.json ownDrop 설명이 지금 쓰는 키(usClass · divLine · indFill)를 모두 적는지 봐요."""
+    import ast
+    tree = ast.parse(open(os.path.join(os.path.dirname(F.__file__), "fetch_data.py"), encoding="utf-8").read())
+    units = [n.value for n in tree.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "UNITS"
+                                                                               for t in n.targets)]
+    assert len(units) == 1 and isinstance(units[0], ast.Dict)
+    keys = [k.value for k in units[0].keys if isinstance(k, ast.Constant)]
+    assert len(keys) == len(units[0].keys) and len(keys) > 30
+    dup = sorted({k for k in keys if keys.count(k) > 1})
+    assert not dup, dup
+    for k in (V.US_CLASS_DROP_KEY, V.DIV_LINE_DROP_KEY, "indFill"):
+        assert k in F.UNITS["ownDrop"], k
+
+
 def test_the_thresholds_come_from_the_replay_of_recent_publishes():
     """N = max(5, 3 × 최근 발행본에서 본 가장 큰 수): data 가지의 최근 발행 25회 (2026-11-06 ~ 11-19) 를 같은 함수로 다시 돌리면 두 검사 모두
     0건 → 5 (PR 의 표)."""

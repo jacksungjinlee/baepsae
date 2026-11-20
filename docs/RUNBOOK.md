@@ -991,7 +991,7 @@ tickers missing from the day's list → reason (null on a day the list was not t
 all · `spErr` those whose processing stopped on an error (a different problem: not a sign of a dotted class) · `missing` stocks
 this rule added (`BF-B`) that are not in the day's list → reason · `read` whether the run left a ticker record.
 
-**Gate rows** (`check_us_share_class`, stricter only):
+**Gate rows** (`check_us_share_class`; added as stricter-only rows in #139, and since #149 a missing BF-B warns instead of failing):
 - "주식 종류 티커로 들어온 미국 종목 (BF-B): 목록에 있거나 빠진 이유" — #126's rule for the stocks this rule added
   (`US_CLASS_SET` = `fetch_data.US_CLASS_ADDED`): in the day's data, or named in `usListSym.missing` with the reason (S&P 500 list not
   read, not in today's S&P 500 list, its list name blank or not matching, too little price history …). **Since #149 (Jack, 2026-11-20:

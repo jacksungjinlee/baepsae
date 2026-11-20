@@ -326,7 +326,7 @@ US_EXTRA_SET = US_ETF_SET | {"BRK-B", "TSM", "ASML", "BABA", "NVO", "SHOP"} | US
 US_CLASS_JOINED_SET = {"BRKB": "BRK-B", "BFB": "BF-B"}
 # 이 바꾸기로 새로 들어온 종목 (= fetch_data.US_CLASS_ADDED · BRK-B 는 EXTRA_US 로 이미 있었어요): 목록에 없으면 이름과 data.json
 # usListSym.missing 의 빠진 이유를 적고 경고만 해요 (Jack 2026-11-20: "one stock missing from a source never holds the publish" ·
-# check_us_share_class ①). 실패는 그 종목의 행이 목록에 있는데 가격이 없을 때뿐이에요 (틀린 값이 보여요).
+# check_us_share_class ①). 실패는 그 종목의 행이 목록에 있는데 가격이 없고 빠진 이유도 없을 때뿐이에요 (틀린 값이 보여요).
 US_CLASS_SET = {"BF-B"}
 US_FOREIGN_SET = {"BTI", "ENB", "BCE", "TD", "RY", "SHEL", "BP", "UL", "TM", "SONY", "AZN", "HSBC", "SAP", "NVS", "RIO", "BHP", "TTE",
                   "DEO", "BUD", "SAN", "GSK"}                                                     # = fetch_data.US_FOREIGN (더한 외국 회사)
