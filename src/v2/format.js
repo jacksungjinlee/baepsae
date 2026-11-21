@@ -52,15 +52,24 @@ export function recDate(iso, today) {
 // (Jack, b): one line per date, "맵스리얼티, STX: 오늘 종가를 확인하지 못해서 11월 16일 종가를 보여 드려요." (app.krOwnCloseList), instead
 // of the names sentence followed by his line. US groups read exactly as before.
 // ownCloseParts: the same sentences, one per item (ui.jsx OwnCloseNote renders them as separate pieces of one note).
+export const OWN_LIST_MAX = 5;     // 2026-11-21 (Jack, answer 8): names shown before "외 {n}종목"
 export function ownCloseParts(groups) {
   const out = [];
   for (const g of groups || []) {
     const md = mdText(g && g.date);
     if (!md || !g.ts || !g.ts.length) return null;
-    if (g.kr) {
+    if (g.kr && g.usWide) {
+      // 2026-11-21 (Jack, answer 6): more than half of the US stocks carried — the US side is one market-wide line
+      if (!C.app.usOwnCloseAll) return null;
+      out.push(fill(C.app.usOwnCloseAll, { date: md }));
+    } else if (g.kr) {
       if (!C.app.krOwnCloseList) return null;
       const names = Array.isArray(g.names) && g.names.length === g.ts.length ? g.names : g.ts;
-      out.push(fill(C.app.krOwnCloseList, { names: names.join(", "), date: md }));
+      // 2026-11-21 (Jack, answer 8): on a market-wide list (data.js ownCloseGroups opts.compact: g.cut) at most OWN_LIST_MAX names,
+      // then "외 {n}종목"; a list of the user's own stocks names every one
+      if (g.cut && names.length > OWN_LIST_MAX && C.app.krOwnCloseListMore) {
+        out.push(fill(C.app.krOwnCloseListMore, { names: names.slice(0, OWN_LIST_MAX).join(", "), n: names.length - OWN_LIST_MAX, date: md }));
+      } else out.push(fill(C.app.krOwnCloseList, { names: names.join(", "), date: md }));
     } else out.push(fill(C.app.ownClose, { names: g.ts.join(", "), md }));
   }
   return out.length ? out : null;

@@ -312,7 +312,8 @@ function SheetSample() {
 // 종가" (co.usClose) with the row's own date (cofmt.priceDate: usPxDate, or the stock's pxd). Before v19.1c a US row read the
 // Korean date only. Nothing for Korean rows, or when the dates are the same.
 function RecordClose({ load, s }) {
-  // 2026-11-19 (Jack): a Korean row at its last confirmed close (pxd): his line under the row, with that date
+  // 2026-11-19 (Jack): a Korean row at its last confirmed close (pxd): his line under the row, with that date. 2026-11-20: a US row
+  // carried because Yahoo had no close (pxc) too, instead of "미국 {md} 종가"
   if (krOwnCloseText(load, s)) return <div data-ui-v2="record-close" data-kr-own="1" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{krOwnCloseText(load, s)}</div>;
   const own = usOf(s) ? priceDate(load, s) : null;
   const md = own && own !== load.data.pxDate ? mdText(own) : null;

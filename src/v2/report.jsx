@@ -18,6 +18,7 @@ import { Amount, Collapsible } from "../ui/components.jsx";
 import { C, fill, mdText, wonText, p1 } from "./format.js";
 import { Card, LoadFail, Note, OwnCloseNote, CardPic, tx, useHeld } from "./ui.jsx";
 import { ownCloses } from "./stocklist.js";
+import { ownCarried } from "../data.js";
 import { CoMark } from "./logo.jsx";
 import { CARDS, POINTS_TOTAL } from "./engine.js";
 import { CARD_PICS, dotColor } from "./pictures.js";
@@ -106,8 +107,9 @@ function Headline({ st, deck, load }) {
       {d.us && usMd && <div data-ui-v2="report-us-date" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{fill(C.app.usClose, { md: usMd })}</div>}
       {/* 2026-11-19 (Jack; review M2): a Korean stock at its last confirmed close (pxd) is weighed at that close in every card below
           (weights, the map, the rules, 비중을 바꿔 보면): named here under the date line, with his line. Korean stocks only: this report
-          named no US stock at an earlier close before, and that stays as it was */}
-      <OwnCloseNote groups={ownCloses(load, st.view.rows.map((r) => r.s).filter((s) => s && s.cls === "kr"))} data-ui-v2="report-own-close" style={{ marginTop: SPACE(1) }} />
+          named no US stock at an earlier close before, and that stays as it was. 2026-11-20 (Jack): a US stock carried because Yahoo
+          had no close (pxc) is named the same way */}
+      <OwnCloseNote groups={ownCloses(load, st.view.rows.map((r) => r.s).filter(ownCarried))} data-ui-v2="report-own-close" style={{ marginTop: SPACE(1) }} />
       <h2 data-ui-v2="report-headline" style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(1), lineHeight: 1.35, textWrap: "balance" })}>
         {fill(C.rpt.head, { a: s.fit.length, b: s.less.length })}
       </h2>
