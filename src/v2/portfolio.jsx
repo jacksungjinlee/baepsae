@@ -14,7 +14,7 @@ import React, { useMemo, useRef, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, TOUCH } from "../ui/tokens.js";
 import { Button, StatusChip } from "../ui/components.jsx";
 import { C, fill, nf, mdText, todayKst, todayStaleText } from "./format.js";
-import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, OwnCloseNote, OldAppNote, Mascot, IMG, tx, tap, useNav } from "./ui.jsx";
+import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, OwnCloseNote, KrAgedLine, OldAppNote, Mascot, IMG, tx, tap, useNav } from "./ui.jsx";
 import { parseImport, importProblem, importIssues, mergeStores, storedStores, downloadRecords, isSafariLike, withConfirm, WATCH_DROPPED } from "./store.js";
 import { withRemoval } from "./edit.js";
 import { evaluateAll, todayCtx } from "./rules.js";
@@ -195,7 +195,7 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
               return <HoldingRow key={t} t={t} title={h.nk} sub={a ? fill(C.deck.holding, { qty: nf(a.qty), price: money(a.avg, a.ccy) }) : null}
                 onOpen={!gone && openStock && load.status === "ok" && isCompany(load.byT.get(t)) ? () => openStock(t) : undefined}
                 x={x} names={names} onConfirm={(item, answer) => onConfirm(d.id, item, answer)} change={ret}
-                extra={!gone && m.ok && x ? <WeightLine x={x} /> : null}
+                extra={!gone && m.ok && x ? <WeightLine x={x} /> : gone ? <KrAgedLine aged={ctx.aged} t={t} style={{ marginTop: SPACE(1) }} /> : null}
                 action={(gone && !late) || rec ? (
                   <div data-ui-v2="row-actions" style={{ display: "flex", gap: SPACE(2), flexWrap: "wrap", padding: `${SPACE(1)}px 0 ${SPACE(2)}px` }}>
                     {rec && <RecordButton name={h.nk} onClick={rec} />}
@@ -276,6 +276,6 @@ function ImportedCard({ deck, ev, ctx, load, openStock, onRemove, onRules, onRec
   const de = ev.ok ? ev.decks.find((x) => x.id === deck.id) : null;
   const st = useMemo(() => pfState(deck, ctx, load.status === "ok" ? load.data.stocks : []), [deck, ctx, load]);
   const m = de && de.ok ? deckMoney(deck, de, ctx) : { ok: false };
-  return <ImportedDeck deck={deck} st={st} m={m} openStock={openStock} byT={ctx.byT} onRemove={onRemove} onRules={onRules} onRecord={onRecord}
+  return <ImportedDeck deck={deck} st={st} m={m} openStock={openStock} byT={ctx.byT} onRemove={onRemove} onRules={onRules} onRecord={onRecord} aged={ctx.aged}
     footer={onReturns ? <ReturnsLink onClick={onReturns} /> : null} pxDate={load.status === "ok" ? load.data.pxDate : null} late={late} />;
 }

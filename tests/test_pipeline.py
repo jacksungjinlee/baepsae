@@ -394,7 +394,7 @@ def test_workflow_never_hides_failures():
         if "always()" in str(st.get("if", "")):
             assert n == "DART 캐시 저장", n
     assert "if" not in by["발행 관문 (validate_data.py)"]          # 관문은 조건 없이 늘 실행
-    assert by["커밋 & 푸시"]["if"].replace(" ", "") == "${{!inputs.dry_run}}"
+    assert by["커밋 & 푸시"]["if"].replace(" ", "") == "${{!inputs.dry_run&&steps.hold.outputs.hold!='true'}}"
     assert 'if [ "$GITHUB_REF" != "refs/heads/main" ]' in by["커밋 & 푸시"]["run"]
     assert "validate_data.py" in by["발행 관문 (validate_data.py)"]["run"]
     # 시험용 입력은 main 에서 거부

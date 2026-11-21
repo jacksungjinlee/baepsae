@@ -122,13 +122,17 @@ export function rankBase(stocks, mk) {
 
 // 1. 시가총액: cap (조원), largest first.
 export const capList = (stocks, mk) => oneEach(ranked(rankBase(stocks, mk).map((s) => ({ s, v: num(s.cap) })), 1));
+// 2026-11-19 (Jack; review S2): a Korean stock at its last confirmed close (data.json pxd: today's close not confirmed by two
+// sources) carries that older day's trading value, so it is never in today's 거래대금 or 거래 급증 list (like 큰 움직임). US lists
+// as before (Yahoo's 3-month average).
+export const dayValOk = (s, mk) => !(mk === "kr" && s && s.pxd != null);
 // 2. 거래대금: val (억원), largest first. Korea: that day's trading value; US: Yahoo's 3-month daily average (the line says so).
-export const valList = (stocks, mk) => oneEach(ranked(rankBase(stocks, mk).map((s) => ({ s, v: num(s.val) })), 1));
+export const valList = (stocks, mk) => oneEach(ranked(rankBase(stocks, mk).filter((s) => dayValOk(s, mk)).map((s) => ({ s, v: num(s.val) })), 1));
 // 3. 거래 급증 (Korea only; null under 미국: US data has no day's value or 20-day average): val ÷ val20, only at SURGE_X or
 //    more and only for a market cap of SURGE_CAP_JO (3,000억원) or more. [] = none today (the screen says so).
 export function surgeList(stocks, mk) {
   if (mk !== "kr") return null;
-  return ranked(rankBase(stocks, mk).map((s) => {
+  return ranked(rankBase(stocks, mk).filter((s) => dayValOk(s, mk)).map((s) => {
     const v = num(s.val), avg = num(s.val20), cap = num(s.cap);
     const x = v != null && v >= 0 && avg > 0 ? v / avg : null;
     return { s, v: x != null && x >= SURGE_X - EPS && cap != null && cap >= SURGE_CAP_JO - EPS ? x : null };

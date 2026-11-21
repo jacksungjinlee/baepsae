@@ -7,7 +7,8 @@ us_div_12m · us_foreign_check · us_extra_missing · add_more_seeds · fetch_us
 - 외국 회사(US_FOREIGN) 중 재무제표 통화가 달러인 곳은 야후의 PER · PBR · 배당수익률이 회사 합계 · 실제 배당과 맞을 때만 나가요 (ADR 하나가
   원주 몇 주인지 섞인 값: 2026-11-14 BP PBR 7.62 · HSBC 7.07 · 디아지오 93.64). 달러가 아닌 회사는 #114 가 이미 비워요 (fcur).
 - 새 종목의 2016년부터 분할은 커밋한 두 번째 시드(data/us_splits_seed_more.csv)에 있어 첫 실행이 이력을 따로 읽지 않아요.
-- 관문: 더한 종목은 목록에 있거나 빠진 이유가 있어야 하고 (이유 없으면 발행 실패), 외국 회사의 맞지 않는 칸은 빈 칸이어야 해요.
+- 관문: 더한 종목은 목록에 있거나 빠진 이유가 있어야 하고 (2026-11-21 Jack "Yes, warn.": 이유 없이 빠지면 경고 · 5곳 넘게, 목록에 있는데
+  가격이 없거나 미국 종목 행이 아니거나, 이유가 글이 아니면 발행 실패), 외국 회사의 맞지 않는 칸은 빈 칸이어야 해요.
 """
 import datetime as dt
 import json
@@ -486,7 +487,8 @@ def us_rows(extra=(), drop=()):
 def test_gate_extra_all_present_passes():
     rep = V.Report()
     V.check_us_extra(rep, {"usExtraMissing": {}}, us_rows(), "publish")
-    assert row(rep, EXTRA)[1:] == ("67 / 67 있음", "모두 있어야 함 (빠지면 이유와 함께 경고 · 이유 없이 빠지면 실패)", "PASS")
+    assert row(rep, EXTRA)[1:] == ("67 / 67 있음", "모두 있어야 함 (빠지면 이유가 있든 없든 경고 · 실패는 이유 없이 빠진 종목 > 5 · "
+                                   "목록에 있는데 가격이 없거나 미국 종목 행이 아님 · 이유가 글이 아님, 사이트 점검은 경고)", "PASS")
 
 
 def test_gate_extra_missing_with_a_reason_warns_by_name():
@@ -497,16 +499,126 @@ def test_gate_extra_missing_with_a_reason_warns_by_name():
     assert ("손으로 더한 미국 종목 중 오늘 없는 종목 (usExtraMissing)", ["BTI: 시세를 받지 못함 (KeyError)"]) in rep.details
 
 
-@pytest.mark.parametrize("why", [None, "", "  ", 3])
-def test_gate_extra_missing_without_a_reason_fails_to_publish(why):
-    miss = {} if why is None else {"BTI": why}
+# 2026-11-21 (Jack: "Yes, warn." — "one stock missing from a source never holds the publish") ─────────────
+# 예전 (#126): test_gate_extra_missing_without_a_reason_fails_to_publish — 목록에 없고 이유도 없는 BTI 가 발행 실패였어요. 이제 경고예요
+# (Jack 이 승인한 느슨하게 · 아래 첫 시험). 나머지 실패(목록에 있는데 가격 없음 · 이유가 글이 아님 · 5곳 넘게)는 그대로 실패예요.
+@pytest.mark.parametrize("mode", ["publish", "live"])
+def test_gate_extra_one_missing_without_a_reason_warns_by_name(mode):
     rep = V.Report()
-    V.check_us_extra(rep, {"usExtraMissing": miss}, us_rows(drop={"BTI", "SHEL"}) + [{"t": "SHEL", "cls": "us", "price": 0}], "publish")
+    V.check_us_extra(rep, {"usExtraMissing": {}}, us_rows(drop={"BTI"}), mode)
     r = row(rep, EXTRA)
-    assert r[3] == "FAIL" and "이유 없이 빠짐 2: BTI, SHEL" in r[1]                    # 가격 0 도 빠진 것
+    assert r[3] == "WARN" and r[1] == "66 / 67 있음 · 이유 없이 빠짐 1: BTI", rep.table()
+    assert ("손으로 더한 미국 종목 중 오늘 없는 종목 (usExtraMissing)", ["BTI: 이유 없음"]) in rep.details
+    assert not rep.failed
+
+
+def test_gate_extra_up_to_five_missing_without_a_reason_warn_six_fail_to_publish():
+    five = sorted(V.US_ADDED_SET)[:5]
     rep = V.Report()
-    V.check_us_extra(rep, {"usExtraMissing": miss}, us_rows(drop={"BTI"}), "live")      # 사이트 점검은 경고 (어제 파일로 배포될 때 막지 않게)
+    V.check_us_extra(rep, {"usExtraMissing": {}}, us_rows(drop=set(five)), "publish")
+    assert V.US_EXTRA_QUIET_MAX == 5 and row(rep, EXTRA)[3] == "WARN" and f"이유 없이 빠짐 5: {', '.join(five)}" in row(rep, EXTRA)[1]
+    six = sorted(V.US_ADDED_SET)[:6]
+    rep = V.Report()
+    V.check_us_extra(rep, {"usExtraMissing": {}}, us_rows(drop=set(six)), "publish")       # 두 목록이 어긋났거나 기록이 깨짐 → 실패 (그대로)
+    r = row(rep, EXTRA)
+    assert r[3] == "FAIL" and "이유 없이 빠짐 6 (> 5): " in r[1], rep.table()
+    rep = V.Report()
+    V.check_us_extra(rep, {"usExtraMissing": {}}, us_rows(drop=set(V.US_ADDED_SET)), "publish")   # 11-14 전 파일처럼 28곳이 한꺼번에
+    assert row(rep, EXTRA)[3] == "FAIL" and "이유 없이 빠짐 28 (> 5): " in row(rep, EXTRA)[1]
+    rep = V.Report()
+    V.check_us_extra(rep, {"usExtraMissing": {}}, us_rows(drop=set(six)), "live")          # 사이트 점검은 경고 (그대로)
     assert row(rep, EXTRA)[3] == "WARN"
+
+
+def test_gate_extra_many_missing_with_reasons_still_only_warn():
+    gone = sorted(V.US_ADDED_SET)[:10]
+    rep = V.Report()
+    V.check_us_extra(rep, {"usExtraMissing": {t: F.US_NO_PX_WHY for t in gone}}, us_rows(drop=set(gone)), "publish")
+    assert row(rep, EXTRA)[3] == "WARN" and "빠짐 10: " in row(rep, EXTRA)[1] and "이유 없이" not in row(rep, EXTRA)[1]
+
+
+@pytest.mark.parametrize("why", [None, "", "  ", 3, ["x"]])
+def test_gate_extra_reason_that_is_not_text_still_fails_to_publish(why):
+    """예전 시험(…_fails_to_publish)의 '', '  ', 3 그대로 + null · 목록: 기록에 그 종목이 있는데 이유가 글이 아니면 기록이 깨진 것 (파이프라인은 늘
+    글을 적어요) → 발행 실패 (그대로) · 사이트 점검은 경고 (그대로)."""
+    rep = V.Report()
+    V.check_us_extra(rep, {"usExtraMissing": {"BTI": why}}, us_rows(drop={"BTI"}), "publish")
+    r = row(rep, EXTRA)
+    assert r[3] == "FAIL" and "이유가 글이 아님 1: BTI" in r[1], rep.table()
+    assert ("손으로 더한 미국 종목 중 오늘 없는 종목 (usExtraMissing)", ["BTI: 이유가 글이 아님"]) in rep.details
+    rep = V.Report()
+    V.check_us_extra(rep, {"usExtraMissing": {"BTI": why}}, us_rows(drop={"BTI"}), "live")
+    assert row(rep, EXTRA)[3] == "WARN"
+
+
+@pytest.mark.parametrize("px", [0, None, "x", -1.0])
+def test_gate_extra_listed_row_without_a_price_still_fails_to_publish(px):
+    """예전 시험(…_fails_to_publish)의 SHEL (가격 0) 그대로: 목록에 행이 있는데 가격이 없고 이유도 없으면 앱이 가격 없이 보여요 → 발행 실패 (그대로) ·
+    사이트 점검은 경고 (그대로) · 이유가 있으면 경고 (그대로)."""
+    rows = us_rows(drop={"SHEL"}) + [{"t": "SHEL", "cls": "us", "price": px}]
+    rep = V.Report()
+    V.check_us_extra(rep, {"usExtraMissing": {}}, rows, "publish")
+    r = row(rep, EXTRA)
+    assert r[3] == "FAIL" and "목록에 있는데 가격이 없음 1: SHEL" in r[1], rep.table()
+    assert ("손으로 더한 미국 종목 중 오늘 없는 종목 (usExtraMissing)", ["SHEL: 목록에 있는데 가격이 없음 · 이유 없음"]) in rep.details
+    rep = V.Report()
+    V.check_us_extra(rep, {"usExtraMissing": {}}, rows, "live")
+    assert row(rep, EXTRA)[3] == "WARN"
+    rep = V.Report()
+    V.check_us_extra(rep, {"usExtraMissing": {"SHEL": F.US_NO_PX_WHY}}, rows, "publish")
+    assert row(rep, EXTRA)[3] == "WARN" and f"SHEL ({F.US_NO_PX_WHY})" in row(rep, EXTRA)[1]
+
+
+@pytest.mark.parametrize("bad", [{"cls": "kr"}, {"cls": None}, {"fund": True}])
+def test_gate_extra_row_that_is_not_a_us_stock_row_still_fails_to_publish(bad):
+    """그 티커의 행이 data.json 에 있는데 미국 종목 행이 아님 (cls · fund): 빠진 것이 아니라 틀린 행이에요 → 발행 실패 (예전 그대로 · 예전에는
+    '이유 없이 빠짐'으로 실패) · 사이트 점검은 경고 (그대로)."""
+    data = {"usExtraMissing": {}, "stocks": us_rows(drop={"BTI"}) + [{"t": "BTI", "cls": "us", "price": 61.89, **bad}]}
+    rep = V.Report()
+    V.check_us_extra(rep, data, V.us_stocks(data), "publish")
+    r = row(rep, EXTRA)
+    assert r[3] == "FAIL" and r[1] == "66 / 67 있음 · 행이 미국 종목 행이 아님 1: BTI", rep.table()
+    assert ("손으로 더한 미국 종목 중 오늘 없는 종목 (usExtraMissing)", ["BTI: 행이 미국 종목 행이 아님 · 이유 없음"]) in rep.details
+    rep = V.Report()
+    V.check_us_extra(rep, data, V.us_stocks(data), "live")
+    assert row(rep, EXTRA)[3] == "WARN"
+
+
+def test_gate_extra_one_missing_without_a_reason_beside_a_failing_row_names_both():
+    """예전 시험(…_fails_to_publish)의 모양 그대로 (BTI 목록에 없음 · SHEL 가격 0 · 둘 다 이유 없음): 실패는 SHEL 때문이고 BTI 는 경고로 이름만."""
+    rep = V.Report()
+    V.check_us_extra(rep, {"usExtraMissing": {}}, us_rows(drop={"BTI", "SHEL"}) + [{"t": "SHEL", "cls": "us", "price": 0}], "publish")
+    r = row(rep, EXTRA)
+    assert r[3] == "FAIL" and r[1] == "65 / 67 있음 · 목록에 있는데 가격이 없음 1: SHEL · 이유 없이 빠짐 1: BTI", rep.table()
+    rep = V.Report()
+    V.check_us_extra(rep, {"usExtraMissing": {}}, us_rows(drop={"BTI"}), "live")      # 사이트 점검은 경고 (어제 파일로 배포될 때 막지 않게)
+    assert row(rep, EXTRA)[3] == "WARN"
+
+
+def test_gate_extra_run_checks_publishes_with_one_missing_and_no_reason():
+    """관문 전체로 (시험 데이터의 미국 행 이름을 손으로 더한 67곳으로 바꿔 모든 줄이 통과하는 파일): 손으로 더한 종목 하나가 목록에도 기록에도 없으면
+    이 줄은 경고이고 발행은 실패하지 않아요 · 6곳이면 이 줄 하나만 실패해요."""
+    cur, prev, final = good_pair()
+    kw = dict(mode="publish", count_between=lambda a, b: 1, sessions={"dates": [dt.date(2026, 10, d) for d in (27, 28, 29, 30)], "src": "시험"},
+              now=dt.datetime(2026, 10, 31, 11, 0, tzinfo=V.KST), hilo=None)
+    full = clone(cur)
+    have = {s["t"] for s in V.us_stocks(full["data"])}
+    need = sorted(V.US_EXTRA_SET - have)
+    spare = [s for s in full["data"]["stocks"] if s.get("cls") == "us" and s["t"].startswith("U")][-len(need):]
+    for s, t in zip(spare, need):
+        s["t"], s["etf"] = t, t in V.US_ETF_SET
+        if s["etf"]:
+            s.pop("ind", None), s.pop("indName", None)                          # ETF 는 업종 그룹 없음 (다른 줄)
+    full["data"]["usExtraMissing"] = {}
+
+    def gate(drop):
+        d = clone(full)
+        d["data"]["stocks"] = [s for s in d["data"]["stocks"] if s.get("t") not in drop]
+        return V.run_checks(d, prev, final, dt.date(2026, 10, 31), **kw)
+    a, b, c = gate(()), gate({"BTI"}), gate(set(sorted(V.US_ADDED_SET)[:6]))
+    assert len(need) == 64 and row(a, EXTRA)[3] == "PASS" and not a.failed, a.table()
+    assert row(b, EXTRA)[3] == "WARN" and "이유 없이 빠짐 1: BTI" in row(b, EXTRA)[1] and not b.failed, b.table()
+    assert [r[0] for r in c.failed] == [EXTRA] and "이유 없이 빠짐 6 (> 5): " in row(c, EXTRA)[1]
 
 
 def test_gate_extra_without_the_record():

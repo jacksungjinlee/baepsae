@@ -10,7 +10,7 @@ import { Bird, store, SECTORS, SEC, KEY_SLOTS, KEY_SLOT, LoadFail, DateBadge, T_
 import { loadJson, krGrowthBasis, krGrowthDcfLine, krRevDcfText, krRevDcfNote, loadDataPublishFor, corpStaleArgs } from "./data.js";
 // 2026-11-08 (Jack): PER · EPS (와 같은 순이익으로 계산한 ROE · 배당성향 · 주가 분해 · DCF) 칸마다 한 줄, 이자보상배율이 꺼진 회사의
 // 재무 신호 밑에 한 줄 — DART 다시 읽기 전까지 (src/repair.js, src/fixnote.jsx)
-import { EpsFixLine, IcrOffLine, StmtCurLine, UnitChkLine, PxBadLine, PxBadOneLine, epsLineKind } from "./fixnote.jsx";
+import { EpsFixLine, IcrOffLine, StmtCurLine, UnitChkLine, PxBadLine, PxBadOneLine, epsLineKind, KrOwnCloseLine, KrOwnCloseListLine, FIX_KR_AGED } from "./fixnote.jsx";
 import { epsBase, epsPeriod, stmtNotWon, stmtCurOf, unitHeld, pxBad, pxBadFull } from "./repair.js";
 
 const KEY_DCF = "baepsae_v12_dcf";
@@ -314,6 +314,9 @@ function Treemap({ comps, heldMap, onOpen }) {
           </g>
         ))}
       </svg>
+      {/* 2026-11-19 (Jack; review M3): a company drawn here at its last confirmed close (corp.json pxd) shows its 3-month % and 시가총액
+          from that close: named under the map with his line (the companies drawn only) */}
+      <KrOwnCloseListLine list={rects.filter((r) => r.type === "co").map((r) => r.item.c)} />
     </div>
   );
 }
@@ -567,6 +570,8 @@ export function ScreenerView({ data, onOpen, setExplain }) {
             {rows.length > 100 && <div style={{ fontSize: 10.5, color: C.faint, marginTop: 8 }}>상위 100개까지 보여요. 조건을 좁히면 더 정확해져요.</div>}
             <EpsFixLine many corp={data} cos={rows.slice(0, 100).filter((c) => c.per != null || c.roe != null)}
               show={cs.some((x) => x.k === "per" || x.k === "roe") && rows.slice(0, 100).some((c) => c.per != null || c.roe != null)} />
+            {/* 2026-11-19 (Jack): 마지막 확인 종가(pxd)로 실은 회사가 보이는 줄에 있으면 이름 · 날짜와 Jack 의 줄 */}
+            <KrOwnCloseListLine list={rows.slice(0, 100)} />
           </>
         )}
       </Card>
@@ -715,6 +720,7 @@ export function MarketView({ data, heldMap, onOpen, setExplain, stale = null }) 
   const secGMax = Math.max(...secRank.map((r) => Math.abs(r.g)), 1);
   const secExcluded = Object.entries(secs).filter(([k, s]) => s.g == null).map(([k, s]) => `${SEC(k).ko}(${s.n})`);
 
+  const quadIds = useMemo(() => new Set(quadPts.map((p) => p.id)), [quadPts]);
   const pbrRoePts = useMemo(() => comps
     .filter((c) => c.pbr != null && c.roe != null && passBase(c))
     .map((c) => ({ id: c.t, nm: c.nk, x: c.roe, y: c.pbr, r: clamp(Math.sqrt(c.cap || 0.3) * 2.6, 2.5, 15),
@@ -793,6 +799,9 @@ export function MarketView({ data, heldMap, onOpen, setExplain, stale = null }) 
         </div>
         <Scatter pts={quadPts} xDomain={[-30, 50]} yDomain={[-30, 50]} quads zoomable
           xLabel="업종 매출 성장률 (%) — 오른쪽일수록 성장하는 산업" yLabel="기업 매출 성장률 (%) — 위일수록 성장하는 기업" onPick={onOpen} />
+        {/* 2026-11-19 (Jack; review M3): the circle's size and its label's 시가총액 come from the price — a company drawn at its last
+            confirmed close (pxd) is named under the map with his line */}
+        <KrOwnCloseListLine list={comps.filter((c) => quadIds.has(c.t))} />
         <Sub style={{ marginTop: 8, fontSize: 11, color: C.faint }}>휠이나 + 버튼으로 확대, 드래그로 이동할 수 있어요 · 확대하면 회사 이름이 나타나요 · 원을 누르면 기업 페이지로 이동해요</Sub>
       </Card>
 
@@ -847,6 +856,8 @@ export function MarketView({ data, heldMap, onOpen, setExplain, stale = null }) 
                   xLabel="ROE (%) — 오른쪽일수록 자본을 잘 굴리는 회사" yLabel="PBR (배) — 위일수록 장부가치 대비 비싼 회사" onPick={onOpen} />}
           </div>
           <EpsFixLine many corp={data} cos={comps.filter((c) => c.pbr != null && c.roe != null && passBase(c))} show={hasMult && pbrRoePts.length > 0} />
+          {/* 2026-11-19 (Jack): PBR 은 가격으로 만든 숫자예요 — 마지막 확인 종가(pxd)로 실은 회사가 점으로 있으면 이름 · 날짜와 Jack 의 줄 */}
+          {hasMult && <KrOwnCloseListLine list={comps.filter((c) => c.pbr != null && c.roe != null && passBase(c))} />}
         </Card>
       </div>
 
@@ -937,6 +948,8 @@ export function SearchView({ data, heldMap, onOpen }) {
         )}
         {rows.length === 0 && <Sub style={{ padding: "14px 2px" }}>{/[a-zA-Z]{2,}/.test(q) ? '미국 종목은 포트폴리오 탭에서 담을 수 있어요. 기업분석은 한국 공시(DART) 기반이라 국내 상장사만 다뤄요.' : '검색 결과가 없어요. 회사 이름이나 6자리 코드로 찾아보세요.'}</Sub>}
         <EpsFixLine many corp={data} cos={rows.slice(0, limit).filter((c) => c.per != null)} show={rows.slice(0, limit).some((c) => c.per != null)} style={{ margin: "8px 2px 10px" }} />
+        {/* 2026-11-19 (Jack): 보이는 줄에 마지막 확인 종가(pxd)로 실은 회사가 있으면 이름 · 날짜와 Jack 의 줄 */}
+        <KrOwnCloseListLine list={rows.slice(0, limit)} style={{ margin: "8px 2px 10px" }} />
       </Card>
     </div>
   );
@@ -1123,11 +1136,12 @@ export function epsPeriodSub(c) {
   return !pe ? "" : pe.fy ? " · 직전 사업보고서" : " · 최근 4개분기 합산(" + pe.y + "." + pe.q + "Q)";
 }
 
-export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setExplain }) {
+export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setExplain, aged = null }) {
   const [guideOpen, setGuideOpen] = useState(false);
   const c = data.companies.find((x) => x.t === t);
   const sec = c ? data.sectors[c.s] : null;
-  if (!c) return <Card><Sub>이 종목의 데이터를 찾지 못했어요.</Sub></Card>;
+  // 2026-11-20 (Jack, a): 마지막 확인 종가가 나이 상한을 넘어 잠시 뺀 종목 (data.json pxSrc.own.aged) 은 '찾지 못했어요' 대신 그 줄
+  if (!c) return <Card>{aged && aged.has(t) ? <Sub><span data-fix="kr-aged">{FIX_KR_AGED}</span></Sub> : <Sub>이 종목의 데이터를 찾지 못했어요.</Sub>}</Card>;
 
   const sharesM = c.shm || (c.cap && c.price ? c.cap * 1e12 / c.price / 1e6 : null);
   // DART 다시 읽기 뒤 (Jack, 2026-11-08): 재무제표를 원화가 아닌 통화로 공시한 회사(corp.json stmtCur)는 금액 · PER · PBR · EPS 가 비어요.
@@ -1234,6 +1248,8 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
       <Card>
         <H num="01" main="투자지표" sub={"밸류에이션 멀티플 · 업종 사분위 대비" + (cur ? "" : epsPeriodSub(c))} onWhy={() => setExplain("box")} />
         {/* DART 다시 읽기 뒤 (Jack, 2026-11-08): 재무제표를 원화가 아닌 통화로 공시한 회사(corp.json stmtCur)는 금액이 비어요 — 그 이유를 한 번 */}
+        {/* 2026-11-19 (Jack): 마지막 확인 종가(pxd)로 실은 회사 — 가격 · 시가총액 · PER · PBR 이 그 종가의 것이라 그 날짜와 Jack 의 줄 */}
+        <KrOwnCloseLine c={c} marketDate={data.pxDate} style={{ marginTop: 6 }} />
         <StmtCurLine c={c} style={{ marginTop: 6 }} />
         <UnitChkLine c={c} style={{ marginTop: 6 }} />
           {[c.vz, c.qz, c.mz, c.pz, c.lz].some((v) => v != null) && (
@@ -1569,6 +1585,8 @@ export function CompareView({ data, baseT, onOpen, onBack, setExplain }) {
         </div>
         <Sub style={{ marginTop: 10, fontSize: 10.5, color: C.faint }}>숫자가 큰 쪽이 항상 좋은 것도, 낮은 멀티플이 항상 싼 것도 아니에요. 차이가 나는 항목에서 이유를 묻는 것이 이 표의 사용법이에요.</Sub>
         <EpsFixLine many corp={data} cos={cols.filter((c) => c.per != null || c.roe != null)} show={cols.some((c) => c.per != null || c.roe != null)} />
+        {/* 2026-11-19 (Jack): 비교하는 회사 중 마지막 확인 종가(pxd)로 실은 회사 — 이름 · 날짜와 Jack 의 줄 */}
+        <KrOwnCloseListLine list={cols} />
         {/* 2026-11-08 (Jack): once, when a compared company files its statements in another currency (its numbers are blank):
             the first such company's currency (repair.js stmtCurOf) */}
         {/* 리뷰 #118 N7: 단위 확인에 걸린 회사는 통화 줄이 아니라 아래 단위 줄로 */}
@@ -1852,7 +1870,7 @@ export default function CorpApp({ jump, onJumpDone, lang, first, onFirstDone }) 
       {view.kind === "screen" && <ScreenerView data={d} onOpen={(t) => setView({ kind: "co", t })} setExplain={setExplain} />}
       {view.kind === "guide" && <GuideListView onRead={setGuideId} />}
       {view.kind === "search" && <SearchView data={d} heldMap={heldMap} onOpen={(t) => setView({ kind: "co", t })} />}
-      {view.kind === "co" && <CompanyView data={d} t={view.t} heldInfo={heldMap[view.t]} onBack={() => setView({ kind: "search" })} onOpen={(t) => setView({ kind: "co", t })} onCompare={() => setView({ kind: "cmp", t: view.t })} setExplain={setExplain} />}
+      {view.kind === "co" && <CompanyView data={d} t={view.t} heldInfo={heldMap[view.t]} onBack={() => setView({ kind: "search" })} onOpen={(t) => setView({ kind: "co", t })} onCompare={() => setView({ kind: "cmp", t: view.t })} setExplain={setExplain} aged={pub ? pub.aged : null} />}
       {view.kind === "cmp" && <CompareView data={d} baseT={view.t} onOpen={(t) => setView({ kind: "co", t })} onBack={() => setView({ kind: "co", t: view.t })} setExplain={setExplain} />}
       {view.kind === "market" && (
         <div style={{ fontSize: 10.5, color: C.faint, textAlign: "center", marginTop: 20, lineHeight: 1.7 }}>
