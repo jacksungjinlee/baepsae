@@ -18,7 +18,7 @@ are confirmed. Hold only if confirmed coverage is below a floor; set it from las
    새로우면 그것만으로 발행해요. 아니면 발행하지 않아요 (같은 보류 길). 같은 날 다시 하는 실행은 국내 종가만 채워요 — 미국 마지막 확인 종가(pxc)는
    다시 돌 까닭이 아니고 (already_published.open_closes 의 미국 칸은 늘 0) 다음 새 미국 기준일 발행에서 채워져요 (#161 리뷰 S4).
 '지난 발행본' 은 사이트가 보여 주는 발행본 = data 브랜치의 data.json 이에요 (#161 리뷰 3차 B-M1 · already_published.read_published 와 같은 길 · 그
-브랜치가 아직 없으면 main). main 의 HEAD 와 다르면 (지난 발행의 'data 브랜치에 올리기' 가 실패했어요) '같은 날 · 더 낫지 않음' 으로 보류하지 않고
+브랜치가 아직 없으면 main). main 의 HEAD 가 그보다 새 발행이면 (publishedAt · 지난 발행의 'data 브랜치에 올리기' 가 실패했어요) '같은 날 · 더 낫지 않음' 으로 보류하지 않고
 발행해 data 브랜치를 고쳐요 (잃는 것이 있으면 그대로 보류).
 보류하면: 발행 두 단계 ('커밋 & 푸시' · 'data 브랜치에 올리기') 가 건너뛰어요 (if: steps.hold.outputs.hold != 'true') → main · data 브랜치 · 사이트
 그대로. 실행은 실패가 아니라 초록으로 끝나요. 감시에는 중립이에요 (watchdog.is_held_run). 관문 · 화면 검사는 보류해도 그대로 돌아요.
@@ -246,8 +246,10 @@ def same_day_decision(cur_mode, prev_mode, cur, prev):
         # #161 리뷰 3차 B-S3: 미국 기준일이 새로우면 미국 목록이 바뀌는 것은 정상이에요 (S&P 500 편입 · 편출 · 마지막 확인 종가가 5 미국 거래일을 넘어 잠시 뺌)
         # — 미국 종목이 빠진 것으로 보류하지 않아요 (그러면 한국 휴장일 (설 · 추석) 에 미국 종가가 며칠 멈춰요 · 미국 종목 수는 관문의 줄이 봐요).
         # 펀드 · 금 · 채권 행은 정해진 목록이라 그대로 세요 (빠지면 데이터 문제예요 · 한국 휴장일과 상관없어요).
-        us_gone = [x for x in lost["other"] if x.startswith("us ")]
-        lost["other"] = [x for x in lost["other"] if not x.startswith("us ")]
+        # #161 리뷰 4차: 미국 '종목' 만 (펀드 행 — 예: 379800 KODEX 미국S&P500 · cls us · fund — 은 정해진 목록이라 그대로 세요)
+        funds = {str(x.get("t")) for x in prev.get("stocks") or [] if isinstance(x, dict) and x.get("cls") == "us" and x.get("fund")}
+        us_gone = [x for x in lost["other"] if x.startswith("us ") and x.split(" ", 1)[1] not in funds]
+        lost["other"] = [x for x in lost["other"] if x not in us_gone]
     n_lost = sum(len(v) for v in lost.values())
     try:
         n_cur, n_prev = kr_px_count(cur), kr_px_count(prev)
@@ -304,6 +306,15 @@ def read_live(run=None):
     return None, "data 브랜치의 data.json 을 받지 못했어요"
 
 
+def _newer(a, b):
+    """a 의 publishedAt 이 b 의 것보다 뒤인지 (#161 리뷰 4차 · 시간대가 있는 날짜만 · 읽을 수 없으면 False)."""
+    try:
+        x, y = dt.datetime.fromisoformat(str(a.get("publishedAt"))), dt.datetime.fromisoformat(str(b.get("publishedAt")))
+    except (TypeError, ValueError, AttributeError):
+        return False
+    return x.tzinfo is not None and y.tzinfo is not None and x > y
+
+
 def _kr_px(data):
     """로그용 그 날짜 종가 국내 종목 수 — 셀 수 없으면 '?' (#161 리뷰 3차 nit: 로그 줄이 판단을 멈추지 않게)."""
     try:
@@ -328,7 +339,13 @@ def evaluate(cur, cur_note, prev, prev_note, now, head=None, live_failed=False):
     if live_failed and prev is None:
         hp = head.get("pxDate") if isinstance(head, dict) else None
         lines.append(f"!! 지난 발행본: {prev_note} · main HEAD 한국 기준일 {hp!r}")
-        if hp is None or hp == cur.get("pxDate"):
+        hu, cu = (_day(head.get("usPxDate")) if isinstance(head, dict) else None), _day(cur.get("usPxDate"))
+        if hp is not None and hp == cur.get("pxDate") and hu is not None and cu is not None and cu > hu:
+            # #161 리뷰 4차 (선택): 한국 휴장일 아침 (같은 한국 기준일 · 새 미국 기준일) 은 main HEAD 와 비교해요 — 미국 종가가 빨간 실행에 막히지 않게
+            # (main HEAD 는 사이트의 발행본과 같거나 더 새 발행이에요 · 잃는 것 · 날짜는 그대로 봐요)
+            lines.append(f"!! data 브랜치를 읽지 못했지만 새 미국 기준일 ({hu} → {cu}) 이라 main HEAD 의 data.json 과 비교해요")
+            prev, prev_note, head = head, "main HEAD 의 data.json (data 브랜치를 읽지 못함)", None
+        elif hp is None or hp == cur.get("pxDate"):
             return Decision(True, True, f"사이트의 발행본 (data 브랜치) 을 읽지 못했는데 오늘 파일 (한국 {cur.get('pxDate')}) 이 같은 날 다시 하는 실행"
                                         f"{'일 수 있어요 (main HEAD 도 읽지 못함)' if hp is None else '이에요 (main HEAD 와 같은 한국 기준일)'} → 판단할 수 없어 발행하지 "
                                         "않고 이 실행을 실패로 끝내요 (감시가 알려요 · 다음 실행이 다시 해요)", "stop"), lines
@@ -352,7 +369,7 @@ def evaluate(cur, cur_note, prev, prev_note, now, head=None, live_failed=False):
     lines.append(f"· 직전 발행본 (같은 한국 기준일): {prev_note} · pxSrc.px {pmode!r} · 미국 {prev.get('usPxDate')} · 그 날짜 종가 국내 "
                  f"{_kr_px(prev)} → 이 실행 {_kr_px(cur)}")
     sd = same_day_decision(mode, pmode, cur, prev)
-    if sd.kind == "same" and isinstance(head, dict) and head != prev:
+    if sd.kind == "same" and isinstance(head, dict) and head != prev and _newer(head, prev):
         # #161 리뷰 3차 B-M1: main 의 HEAD 가 사이트의 발행본과 달라요 — 지난 발행의 'data 브랜치에 올리기' 가 실패했어요. 보류하면 사이트가 main 보다
         # 뒤인 채로 '건강한' 실행이 경보를 닫아요. 잃는 것이 없으니 발행해 data 브랜치를 고쳐요.
         lines.append(f"!! main HEAD 의 data.json (한국 {head.get('pxDate')} · 발행 {head.get('publishedAt')}) 이 사이트의 발행본 (data 브랜치 · 발행 "

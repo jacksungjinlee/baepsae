@@ -703,7 +703,7 @@ def test_hold_step_end_to_end_with_the_real_script_and_git(tmp_path):
 
     def git(*cmd, cwd=repo):
         return subprocess.run(["git", *cmd], cwd=cwd, env=genv, check=True, capture_output=True, text=True)
-    morning = pub(kr=KR5, own=["100060"], others=US2, conf=2716, noYahoo=30)                    # 06:40 발행본
+    morning = dict(pub(kr=KR5, own=["100060"], others=US2, conf=2716, noYahoo=30), publishedAt="2026-11-21T06:40:00+09:00")   # 06:40 발행본
     (repo / "data.json").write_text(json.dumps(morning))
     git("init", "-q", "--bare", str(origin), cwd=tmp_path)
     for cmd in (["init", "-q"], ["add", "data.json"], ["commit", "-q", "-m", "prev"], ["remote", "add", "origin", str(origin)],
@@ -739,7 +739,7 @@ def test_hold_step_end_to_end_with_the_real_script_and_git(tmp_path):
         assert "data 브랜치의 data.json (한국 2026-11-20" in r.stdout                           # 사이트의 발행본과 비교했어요
     # B-M1: 지난 발행의 'data 브랜치에 올리기' 가 실패해 main HEAD (10:53 발행본) 가 data 브랜치 (06:40) 보다 앞서요 — 같은 것을 다시 받은 실행은
     # '같은 날 · 더 낫지 않음' 으로 보류하지 않고 발행해 data 브랜치를 고쳐요 (예전: main HEAD 와 비교해 건강한 보류 → 경보가 닫히고 사이트는 뒤)
-    noon = pub(kr=KR5 + ["100060"], others=US2, conf=2720, noYahoo=26)
+    noon = dict(pub(kr=KR5 + ["100060"], others=US2, conf=2720, noYahoo=26), publishedAt="2026-11-21T10:53:00+09:00")
     (repo / "data.json").write_text(json.dumps(noon))
     git("commit", "-q", "-am", "10:53 발행 (main 에만)")
     r, lines = step(morning)
@@ -1674,8 +1674,8 @@ def test_evaluate_compares_with_the_site_and_repairs_a_half_finished_publish():
     head = pub(kr=KR5, own=["100060"], others=US2)                              # main (오늘 · data 브랜치에 오르지 못함)
     d, _ = P.evaluate(copy.deepcopy(head), "data.json", live, "data 브랜치", now, head=head)
     assert d.hold is False and d.kind == "publish"                               # 사이트와 비교하면 새 날 → 발행 (예전: main 과 같은 날 · 건강한 보류)
-    live2 = pub(kr=KR5, own=["100060"], others=US2)                             # data 브랜치도 오늘 06:40 · main 은 10:53
-    head2 = pub(kr=KR5 + ["100060"], others=US2)
+    live2 = dict(pub(kr=KR5, own=["100060"], others=US2), publishedAt="2026-11-21T06:40:00+09:00")   # data 브랜치도 오늘 06:40 · main 은 10:53
+    head2 = dict(pub(kr=KR5 + ["100060"], others=US2), publishedAt="2026-11-21T10:53:00+09:00")
     d, lines = P.evaluate(copy.deepcopy(live2), "data.json", live2, "data 브랜치", now, head=head2)
     assert d.hold is False and d.kind == "publish" and d.loud and "data 브랜치를 고쳐요" in d.why
     assert any("지난 발행이 data 브랜치에 다 오르지 못했어요" in ln for ln in lines)
@@ -1736,3 +1736,58 @@ def test_watchdog_held_run_suffix_names_only_the_neutral_kinds():
     import inspect
     src = inspect.getsource(W)
     assert "같은 날 더 낫지 않음 · 셈하지 않아요" not in src and "바닥 아래 · 날짜가 뒤로 감 · 종목을 잃음 · 비교할 수 없음 · 쉼 · 셈하지 않아요" in src
+
+
+# ── 12. #161 리뷰 (4차) ─────────────────────────────────────
+def test_the_repair_rule_needs_main_head_to_be_the_newer_publish():
+    """리뷰 4차 1 (rev161c/probe1.py 2): main HEAD 가 data 브랜치보다 '앞' (publishedAt 이 뒤) 일 때만 '같은 날 · 더 낫지 않음' 을 발행으로 바꿔요. HEAD 가
+    더 옛 발행 (가지의 시험 실행 · 앞 실행 뒤에 줄 선 손 실행) 이면 예전처럼 보류 — 발행하면 git pull --rebase 충돌로 빨간 실행이 돼요. 읽을 수 없으면 고치지 않아요."""
+    now = kst(2026, 11, 21, 10, 55)
+    live = dict(fb_data("2026-11-20", 2740), publishedAt="2026-11-21T06:41:00+09:00")
+    stale = dict(fb_data("2026-11-19", 2740), publishedAt="2026-11-20T06:41:00+09:00")
+    d, lines = P.evaluate(fb_data("2026-11-20", 2740), "data.json", live, "data 브랜치", now, head=stale)
+    assert d.kind == "same" and d.hold is True and "data 브랜치를 고쳐요" not in d.why
+    assert not any("다 오르지 못했어요" in ln for ln in lines)
+    newer = dict(fb_data("2026-11-20", 2741), publishedAt="2026-11-21T10:53:00+09:00")
+    assert P.evaluate(fb_data("2026-11-20", 2740), "data.json", live, "data 브랜치", now, head=newer)[0].kind == "publish"
+    for bad in (None, "어제", "2026-11-21T10:53:00"):                               # 없음 · 읽을 수 없음 · 시간대 없음 → 고치지 않아요
+        h = dict(newer, publishedAt=bad)
+        assert P.evaluate(fb_data("2026-11-20", 2740), "data.json", live, "data 브랜치", now, head=h)[0].kind == "same"
+    assert P._newer({"publishedAt": "2026-11-21T10:53:00+09:00"}, {"publishedAt": "2026-11-21T01:53:00+00:00"}) is False   # 같은 시각 (UTC)
+
+
+def test_a_dry_run_never_marks_the_dart_cache(tmp_path):
+    """리뷰 4차 2: 시험 실행의 보관본도 main 의 캐시로 저장돼요 — dartAt 을 적지 않아요 (실제 실행의 표시만 믿어요 · kr_rerun_state 와 같게)."""
+    c = F.DartClient("시험키아님", path=str(tmp_path / "none.json.gz"))
+    c.meta["dartAt"] = "2026-11-21T06:40:00+09:00"
+    assert F.dart_cache_mark(c, "2026-11-21T06:45:00+09:00", env={"DRY_RUN": "true"}) is False
+    assert c.meta["dartAt"] == "2026-11-21T06:40:00+09:00"
+    assert F.dart_cache_mark(c, "2026-11-21T10:53:00+09:00", env={"DRY_RUN": ""}) is True and c.meta["dartAt"] == "2026-11-21T10:53:00+09:00"
+
+
+def test_a_us_fund_row_leaving_still_counts_with_a_newer_us_date():
+    """리뷰 4차 3 (probe1 3): 새 미국 기준일에 세지 않는 것은 미국 '종목' 만이에요 — 379800 (KODEX 미국S&P500 · cls us · fund) 같은 펀드 행은 정해진
+    목록이라 빠지면 그대로 잃음 (RUNBOOK 'Funds, gold and bond rows … still count')."""
+    prev = fb_data("2026-11-20", 2740, us="2026-11-19", stocks=[{"t": "005930", "cls": "kr", "price": 50000.0},
+                                                                {"t": "379800", "cls": "us", "fund": True, "price": 20000.0},
+                                                                {"t": "AAPL", "cls": "us", "price": 1.0}, {"t": "XYZ", "cls": "us", "price": 1.0}])
+    cur = fb_data("2026-11-20", 2740, us="2026-11-20", stocks=[{"t": "005930", "cls": "kr", "price": 50000.0}, {"t": "AAPL", "cls": "us", "price": 1.0}])
+    d = P.same_day_decision(FB, FB, cur, prev)
+    assert d.kind == "loss" and d.hold is True and "us 379800" in d.why and "XYZ" not in d.why
+    cur["stocks"].append({"t": "379800", "cls": "us", "fund": True, "price": 20100.0})
+    d = P.same_day_decision(FB, FB, cur, prev)
+    assert d.kind == "publish" and "빠진 1종목" in d.why and "XYZ" in d.why
+
+
+def test_a_korean_holiday_morning_compares_with_main_head_when_the_data_branch_is_unreadable():
+    """리뷰 4차 (선택): 같은 한국 기준일 · 새 미국 기준일인데 data 브랜치를 읽지 못하면 main HEAD 와 비교해요 (예전: stop · 빨간 실행으로 미국 종가가 막혔어요).
+    같은 미국 기준일이면 그대로 stop."""
+    now = kst(2026, 11, 21, 6, 45)
+    head = fb_data("2026-11-20", 2740, us="2026-11-20")
+    d, lines = P.evaluate(fb_data("2026-11-20", 2740, us="2026-11-21"), "data.json", None, "받지 못함", now, head=head, live_failed=True)
+    assert d.kind == "publish" and d.hold is False and any("main HEAD 의 data.json 과 비교해요" in ln for ln in lines)
+    d, _ = P.evaluate(fb_data("2026-11-20", 2740, us="2026-11-21", stocks=[{"t": "000660", "cls": "kr", "price": 1.0}]), "data.json", None,
+                      "받지 못함", now, head=head, live_failed=True)
+    assert d.kind == "loss"                                                       # HEAD 와 비교해 잃는 것은 그대로 봐요
+    d, _ = P.evaluate(fb_data("2026-11-20", 2740, us="2026-11-20"), "data.json", None, "받지 못함", now, head=head, live_failed=True)
+    assert d.kind == "stop"

@@ -1121,18 +1121,20 @@ next run looked "same, not better" (healthy), closed the alarm and left the site
    it publishes when it loses nothing and has more Korean stocks at that date's close, which it usually has (the morning's carried
    stocks now have official closes); otherwise it is "같은 날 · 더 낫지 않음" and the morning publish stays.
    - When the US date is newer, US stocks that left the list (an S&P 500 change, a carry past 5 US trading days) are not a loss
-     (otherwise US prices would stall through Korean holidays such as 설 and 추석; the gate's US count rows still apply). Funds, gold
-     and bond rows are a fixed list and still count.
-   - **Half-finished publish:** if main's `HEAD` `data.json` differs from the `data` branch's (the last "data 브랜치에 올리기" failed), a
-     run that would be "같은 날 · 더 낫지 않음" publishes instead (loud), so the `data` branch push repairs the site. A run that loses
-     something is still held.
+     (otherwise US prices would stall through Korean holidays such as 설 and 추석; the gate's US count rows still apply). Funds
+     (including US-listed fund rows such as 379800 KODEX 미국S&P500), gold and bond rows are a fixed list and still count.
+   - **Half-finished publish:** if main's `HEAD` `data.json` is a newer publish than the `data` branch's (`publishedAt` later; the last
+     "data 브랜치에 올리기" failed), a run that would be "같은 날 · 더 낫지 않음" publishes instead (loud), so the `data` branch push repairs
+     the site. A run that loses something is still held. An older or unreadable `HEAD` (a dry run on a branch with a stale
+     `data.json`, a manual run queued behind a live run) changes nothing.
 4. **When it can't decide:**
    - Today's file unreadable → no hold (warning; the gate fails on that file anyway).
    - Today's coverage can't be computed (the record doesn't add up) → the floor is skipped but the same-day rule still applies (a
      same-day file that loses stocks is held); if nothing is held, it publishes with a warning.
    - No previous file to compare (a `bootstrap` run, or a dry run whose compare commit wasn't fetched) → floor only (warning).
    - **Can't decide on a same-day run** (kind `stop`): the decision crashed, or the `data` branch couldn't be read, and today's file
-     has the same Korean date as the last publish (or main's `HEAD` when the `data` branch is unreadable), or it can't tell. The script
+     has the same Korean date as the last publish (or main's `HEAD` when the `data` branch is unreadable), or it can't tell. Exception:
+     an unreadable `data` branch on a Korean-holiday morning (same Korean date as `HEAD`, newer US date) compares with `HEAD` instead. The script
      writes `hold=true`, ends with exit code 3, and the step fails: the gate, the screen check and both publish steps are skipped, the
      run is red and the watchdog alarms (not neutral). The next run tries again.
    - A crash on the day's first run (a new Korean date) → no hold (warning), as before: the gate and the screen check decide. If the
@@ -1205,7 +1207,8 @@ Later runs on a backup day (`already_published.py`, `open_closes`):
   cache is empty, a same-day run stops before any DART call (an empty-cache DART run is a full-DART run, allowed once a day and only
   by hand); the site keeps the live publish and the run is red. Caches saved before this change have no `dartAt`, so the first
   same-day re-runs after it ships call DART once (about 670 disclosure calls plus anything missing); the first run that finishes
-  writes it. With a covering cache the DART client makes no requests;
+  writes it. Dry runs never write `dartAt` (their cache is saved in main's scope too and may lack a live run's entries). With a
+  covering cache the DART client makes no requests;
   fundamentals come from the DART cache, and the 90-day re-checks and re-reads wait for the next new-day run without being counted.
   The log's DART line says how many requests it held back. The disclosure file is the live `disc.json` as it is, but only if the US
   price date is the same too and that `disc.json` belongs to the same publish as the live `data.json` (same `publishedAt`); otherwise

@@ -2413,10 +2413,15 @@ def dart_cache_covers(meta, prev):
     return False, f"DART 보관본 (dartAt {at}) 이 발행본 ({pub}) 보다 앞의 값이에요 (그 실행의 보관본 저장이 실패했거나 더 앞의 보관본을 불러왔어요)"
 
 
-def dart_cache_mark(client, published_at):
+def dart_cache_mark(client, published_at, env=None):
     """보관본에 dartAt = 이 실행의 publishedAt 을 적어요 (#161 리뷰 3차 A-S3): 이 실행의 재무 · 공시가 이 보관본의 값이에요 — DART 를 예전처럼
     불렀거나, 같은 날 다시 하는 실행이 발행본을 덮는 보관본 (dart_cache_covers) 만 썼어요. DART 가 이 실행 중 멈췄으면 (down · fatal) 적지 않아요 —
-    그러면 다음 같은 날 실행은 DART 를 불러요 (크게)."""
+    그러면 다음 같은 날 실행은 DART 를 불러요 (크게). 시험 실행 (DRY_RUN) 도 적지 않아요 (#161 리뷰 4차 · kr_rerun_state 와 같게): 그 보관본도 main 의
+    캐시로 저장되는데, 06:40 실제 실행과 겹친 시험 실행이 그 실행의 항목이 없는 보관본에 표시하면 뒤의 같은 날 실행이 DART 를 잘못 건너뛰어요."""
+    env = os.environ if env is None else env
+    if (env.get("DRY_RUN") or "").strip().lower() == "true":
+        log("· 시험 실행이라 DART 보관본에 dartAt 을 적지 않아요 (실제 실행의 표시만 믿어요 · 같은 날 다시 하는 실행은 그 표시로 DART 를 건너뛸지 정해요)")
+        return False
     if client.down or client.fatal:
         log(f"  !! DART 가 이 실행 중 멈췄어요 ({client.down or client.fatal}) — 보관본의 dartAt 을 고치지 않아요 (같은 날 다시 하는 실행은 DART 를 불러요)")
         return False
