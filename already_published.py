@@ -17,6 +17,13 @@
 달력을 받지 못하면 평일 규칙으로 판단해요 (크게 남겨요): 휴장일이면 같은 데이터를 다시 발행할 수 있지만 건너뛰지는 않아요.
 어떤 경우에도 읽을 수 없거나 이상하면 '실행'이에요 — 조용히 건너뛰지 않아요. 표준 라이브러리만 써요 (설치 전에 돌아요).
 
+2026-11-21 (#161 · Jack: "Later runs update that day's data when more closes are confirmed."): 날짜가 다 들어와 있어도, 발행본이 2차 출처 날
+(pxSrc.px daum+yahoo) 이고 확인 못 한 국내 종가가 남아 있으면 (마지막 확인 종가로 실었거나 · 빠졌거나 — open_closes) 건너뛰지 않고 끝까지 돌아요.
+그 실행은 더 나을 때만 같은 날 데이터를 고쳐 발행해요 (tools/publish_hold.py). 확인 못 한 종가가 없는 날 (1차 출처 날 · 모두 확인된 날) 은
+예전처럼 건너뛰어요. 같은 날 다시 하는 실행은 국내 종가만 채워요 (#161 리뷰 S4 결정): 미국 마지막 확인 종가 (US carry · pxc) 는 다시 돌 까닭이
+아니에요 (open_closes 의 미국 칸은 늘 0) — 다음 새 미국 기준일 발행에서 채워져요. 국내 때문에 다시 돈 실행도 미국 종가를 새로 받아, 그 실행이 발행하면
+그사이 채워진 미국 종가가 함께 실려요 (미국만 나아진 것으로는 발행하지 않아요).
+
 발행본 (v17.6 Part 3a): 매일 실행은 검사를 통과한 네 파일을 main 에 커밋한 다음 같은 파일을 data 브랜치에도 올려요. 사이트 배포
 (deploy.yml)가 data 브랜치에서 가져가니, 여기서도 data 브랜치를 봐요. data 브랜치가 아직 없을 때(이 버전의 첫 실행 전)만 main 을
 보고, 그렇다고 크게 남겨요. data 브랜치가 있는지조차 확인하지 못하면 '발행 안 됨'(= 실행)이에요.
@@ -139,6 +146,37 @@ def wait_until(now, us_days, us_today=None):
     return dt.datetime.combine(t.date(), US_CLOSE_FINAL, tzinfo=NY) + AFTER_CLOSE
 
 
+def open_closes(data):
+    """발행본에서 아직 확인 못 한 종가 수 {"kr": n, "us": n} (2026-11-21 · #161 · 순수 함수). 0 이면 그날이 다 찼어요.
+    kr: 2차 출처 날 (pxSrc.px daum+yahoo) 에 다시 물으면 바뀔 수 있는 확인 못 한 국내 종목 (pxSrc.fb.open + fb.knx.open — 두 출처가 다른 종목 ·
+    야후가 싣지 않는 종목은 빼요 · #161 리뷰 6) 에서 같은 날 다시 쓴 종목 (pxSrc.own.reuse.n) 을 뺀 수. 그 기록이 없는 예전 파일은 확인 못 한 종목
+    모두 (pxSrc.own.unconf), 그것도 없으면 fb 로 (목록 − 확인).
+    1차 출처 날 · pxSrc 가 없는 예전 파일은 0. 읽을 수 없는 2차 출처 기록은 1 (모르면 다시 돌아요 — 조용히 건너뛰지 않아요).
+    us: 늘 0 — 같은 날 다시 하는 실행은 국내 종가만 채워요 (#161 리뷰 S4 결정 · 미국 마지막 확인 종가 pxc 는 다음 새 미국 기준일 발행에서 채워져요).
+    세면 미국 마지막 확인 종가가 남은 날 (최대 5 미국 거래일 · 1차 출처 날 포함) 마다 하루 종일 다시 돌고, '더 나음' 판단에 미국 수까지 넣어야 해요."""
+    out = {"kr": 0, "us": 0}
+    src = data.get("pxSrc") if isinstance(data, dict) else None
+    if not isinstance(src, dict) or src.get("px") != "daum+yahoo":
+        return out
+    own, fb = src.get("own"), src.get("fb")
+
+    def n(v):
+        return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
+    rr = own.get("reuse") if isinstance(own, dict) and isinstance(own.get("reuse"), dict) else {}
+    fbk = fb.get("knx") if isinstance(fb, dict) and isinstance(fb.get("knx"), dict) else None
+    if isinstance(fb, dict) and n(fb.get("open")) is not None and (fbk is None or n(fbk.get("open")) is not None):
+        # #161 리뷰 6: 다시 물으면 바뀔 수 있는 종목만 (다음 행 없음 · 값 못 믿음 · 야후 종가 빈 칸 · 코넥스도 같게) — 두 출처가 다른 종목과 야후가 싣지
+        # 않는 종목은 하루 종일 그대로라 세지 않아요. 같은 날 지난 발행본에서 다시 쓴 종목은 빼요
+        out["kr"] = max(fb["open"] + (fbk["open"] if fbk is not None else 0) - (n(rr.get("n")) or 0), 0)
+    elif isinstance(own, dict) and n(own.get("unconf")) is not None:
+        out["kr"] = max(own["unconf"] - (n(rr.get("n")) or 0), 0)
+    elif isinstance(fb, dict) and n(fb.get("n")) is not None and n(fb.get("conf")) is not None:
+        out["kr"] = max(fb["n"] - fb["conf"], 0)
+    else:
+        out["kr"] = 1
+    return out
+
+
 def decide(data, now, cal):
     """발행본 data.json(dict 또는 None) 과 달력으로 (건너뛸지, 이유)."""
     kr_want, us_want = expected_kr(now, cal.get("kr")), expected_us(now, cal.get("us"))
@@ -151,6 +189,11 @@ def decide(data, now, cal):
     if cal.get("kr") and cal.get("krSources", 2) < 2:
         return False, f"한국 달력을 한 출처에서만 받았어요 (하루 늦을 수 있어요) → 건너뛰지 않고 실행해요 · 기대 한국 {kr_want} · 미국 {us_want}"
     if px == kr_want.isoformat() and usd == us_want.isoformat():
+        left = open_closes(data)
+        if left["kr"] or left["us"]:
+            return False, (f"날짜는 다 들어와 있지만 (한국 {px} · 미국 {usd} · {basis}) 2차 출처 날 발행본에 확인 못 한 종가가 남아 있어요 "
+                           f"(국내 {left['kr']:,}" + (f" · 미국 {left['us']:,}" if left["us"] else "") + ") → 끝까지 돌아요: 더 확인되면 같은 날 "
+                           "데이터를 고쳐 발행하고, 아니면 발행 없이 끝나요 (#161)")
         return True, (f"이미 다 들어와 있어요: 한국 {px} · 미국 {usd} = 기대하는 마지막 거래일 ({basis}) "
                       "→ 데이터 수집 전에 끝내요")
     return False, (f"아직이에요: 발행본은 한국 {px!r} · 미국 {usd!r}, 기대는 한국 {kr_want} · 미국 {us_want} ({basis}) → 실행해요")
