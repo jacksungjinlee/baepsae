@@ -1401,3 +1401,82 @@ def test_fetch_korea_tries_the_same_day_d1_only_after_the_163_path_says_day():
     assert a < b < c < d
     assert "same 1" in F.UNITS["d1Base"]
 
+
+def test_the_same_day_hold_now_sees_lost_d1_and_the_fixed_run_passes_it():
+    """#161 리뷰 S5: 같은 종가인데 d1 을 잃은 국내 종목은 잃은 것 (이름과 함께 · 보류). 위 고침이 있는 실행은 잃지 않아요."""
+    import test_d1_after_gap as G
+    cur = G.cur20()
+    pub20 = same_day_pub20(cur)
+    nt = F.kr_no_trade_plan(cur, max_share=1.0)[0]
+
+    def file_of(r):
+        st = []
+        for c, p in F._official_map(cur).items():
+            s = {"t": c, "cls": "kr", "price": p}
+            if c in r["d1"]:
+                s["d1"] = r["d1"][c]
+            if c in nt:
+                s.update(noTrade=True, d1Why="noTrade")
+            elif c in r["why"]:
+                s["d1Why"] = r["why"][c]
+            st.append(s)
+        return {"pxDate": "2026-11-20", "usPxDate": "2026-11-20", "pxSrc": {"px": LISTING, "date": "2026-11-20"}, "stocks": st}
+    good = file_of(run_d1(cur, pub20))
+    assert P.lost_stocks(good, pub20)["d1"] == [] and P.same_day_decision(LISTING, FB, good, pub20).kind == "same"
+    bad = file_of(G.run_day(cur, pub20))                                           # 이 고침 전의 실행 (모든 d1 빈 칸)
+    d = P.same_day_decision(LISTING, FB, bad, pub20)
+    assert d.hold is True and d.kind == "loss" and "같은 종가인데 d1 을 잃은 국내 11" in d.why and "005930 (d1 빈 칸)" in d.why
+
+
+def test_kr_d1_lost_counts_only_same_close_rows_that_lost_d1():
+    prev = pub(kr=KR5)
+    for s in prev["stocks"]:
+        s["d1"] = 1.5
+    cur = copy.deepcopy(prev)
+    by = {s["t"]: s for s in cur["stocks"]}
+    by["100010"].pop("d1")                                                         # 같은 종가 · d1 없음 → 잃음
+    by["100020"].pop("d1")
+    by["100020"]["price"] = 1010.0                                                 # 종가가 다름 → d1 도 다를 수 있어 세지 않아요
+    by["100030"].pop("d1")
+    by["100030"].update(noTrade=True, d1Why="noTrade")                             # 거래 없음 → 까닭이 있어요
+    by["100040"]["d1"] = float("nan")                                              # 숫자가 아님 → 잃음
+    assert P.kr_d1_lost(cur, prev) == ["100010", "100040"]
+    d = P.same_day_decision(FB, FB, cur, prev)
+    assert d.kind == "loss" and "같은 종가인데 d1 을 잃은 국내 2" in d.why and "100010 (d1 빈 칸)" in d.why
+    cur["stocks"].append(dict(by["100050"]))                                       # 같은 코드가 두 번 → 어느 값인지 몰라 잃은 것으로
+    assert "100050" in P.kr_d1_lost(cur, prev)
+    # 지난 발행본에 d1 이 없던 종목 · 마지막 확인 종가 행 · 이 실행에 없는 종목은 여기서 세지 않아요 (없는 종목은 kr)
+    prev2 = pub(kr=KR5, own=["100060"])
+    cur2 = pub(kr=KR5[:4])
+    assert P.kr_d1_lost(cur2, prev2) == [] and P.lost_stocks(cur2, prev2)["kr"] == ["100050"]
+    assert P.kr_d1_lost(None, prev) == [] and P.kr_d1_lost(cur, None) == []
+
+
+def test_a_us_close_that_drops_back_to_an_older_date_is_lost():
+    """#161 리뷰 S3 (rev161/repro_us.py): 미국 기준일이 같은데 그 날짜 종가였던 미국 종목이 자기 날짜 (야후의 옛 봉 pxd · 마지막 확인 종가 pxc) 로
+    바뀌면 잃은 것. 미국 기준일이 새로우면 마지막 확인 종가로 넘어가는 것이 정상이에요."""
+    prev = pub(kr=KR5, others=US2)
+    cur = pub(kr=KR5, others=US2)
+    cur["stocks"][-2]["pxd"] = "2026-11-19"                                        # AAPL: 야후의 옛 봉
+    lost = P.lost_stocks(cur, prev)
+    assert lost["us"] == ["AAPL"] and lost["other"] == []
+    d = P.same_day_decision(FB, FB, cur, prev)
+    assert d.kind == "loss" and "미국 기준일 종가가 옛 날짜로 1" in d.why and "미국 AAPL (옛 날짜로)" in d.why
+    cur["stocks"][-2]["pxc"] = True                                                # 마지막 확인 종가로 옮겨도 같아요
+    assert P.lost_stocks(cur, prev)["us"] == ["AAPL"]
+    # 미국 기준일이 새로우면: 그 종목이 지난 기준일 종가로 남는 것은 정상 (잃음 아님)
+    old = pub(kr=KR5, others=US2, us="2026-11-19")
+    newer = pub(kr=KR5, others=US2, us="2026-11-20")
+    newer["stocks"][-2].update(pxd="2026-11-19", pxc=True)
+    assert P.lost_stocks(newer, old)["us"] == [] and P.same_day_decision(FB, FB, newer, old).kind == "publish"
+    # 지난 발행본이 자기 날짜였던 종목: 그 날짜 종가로 돌아오거나 그대로면 잃음 아님
+    p2 = pub(kr=KR5, others=US2)
+    p2["stocks"][-1].update(pxd="2026-11-19", pxc=True)
+    assert P.lost_stocks(pub(kr=KR5, others=US2), p2)["us"] == [] and P.lost_stocks(copy.deepcopy(p2), p2)["us"] == []
+    # 진짜 미국 단계 (us_own_close_carry): 지난 발행본의 그날 종가를 다시 쓰지 못하면 (d1 없음 → bad) 야후의 옛 봉 → 잃음
+    prev3 = {"usPxDate": "2026-11-20", "pxDate": "2026-11-20", "stocks": [{"t": "ZZZ", "cls": "us", "price": 50.0}, {"t": "AAA", "cls": "us", "price": 10.0, "d1": 1.0}]}
+    ybar = {"ZZZ": {"t": "ZZZ", "cls": "us", "price": 48.0, "pxd": "2026-11-19"}}
+    carried, same, drop = F.us_own_close_carry(prev3, {"ZZZ": "bar", "AAA": "bar"}, D20, ["2026-11-18", "2026-11-19", "2026-11-20"], ybar=ybar)
+    assert carried == [] and [s["t"] for s in same] == ["AAA"] and drop == {"ZZZ": "bad"}
+    cur3 = {"usPxDate": "2026-11-20", "pxDate": "2026-11-20", "stocks": [ybar["ZZZ"]] + same}
+    assert P.lost_stocks(cur3, prev3)["us"] == ["ZZZ"]

@@ -11,9 +11,12 @@ are confirmed. Hold only if confirmed coverage is below a floor; set it from las
    낮으면 보류해요. 확인 비율 = (이 실행이 두 출처로 확인한 코스피 · 코스닥 종가 + 같은 날 지난 발행본에서 다시 쓴 확인 종가) ÷ 그날 코스피 ·
    코스닥 목록 (pxSrc.fb: n − mkt · conf − 코넥스 fb.knx.kept · 칸이 맞아떨어질 때만 · pxSrc.own.reuse.kk). 마지막 확인 종가로 실은 종목
    (pxSrc.own · pxd · #159) 은 세지 않아요. 1차 출처 (KRX 목록 최종본) 날은 예전 그대로예요.
-2. 같은 날 다시 발행 (same_day_decision): 지난 발행본과 한국 기준일 (pxDate) · 미국 기준일 (usPxDate) 이 같은 실행 (already_published.py 가
-   확인 못 한 종가가 남은 날 다시 돌게 해요) 은 더 나을 때만 발행해요 — 확인된 코스피 · 코스닥 종가가 지난 발행본보다 많고, 지난 발행본이 그
-   날짜 종가로 실은 종목을 하나도 잃지 않았을 때 (pxSrc.own.reuse.lost == 0 · fetch_data.kr_same_day_reuse). 아니면 발행하지 않아요 (같은 보류 길).
+2. 같은 날 다시 발행 (same_day_decision): 지난 발행본과 한국 기준일 (pxDate) 이 같은 실행 (already_published.py 가 확인 못 한 국내 종가가 남은 날
+   다시 돌게 해요) 은 지난 발행본에서 아무것도 잃지 않을 때만 (lost_stocks: 그 날짜 종가 국내 종목은 그 날짜 종가로 · 마지막 확인 종가 국내 종목은
+   그대로 또는 그 날짜 종가로 · 미국 · 펀드 · 금 · 채권 행은 그대로 · 미국 기준일이 같으면 그 날짜 종가 미국 종목은 그 날짜 종가로 · 같은 종가인
+   국내 종목은 d1 그대로), 그리고 미국 기준일이 같으면 그 날짜 종가 국내 종목이 지난 발행본보다 많을 때 (validate_data.kr_px_count) · 미국 기준일이
+   새로우면 그것만으로 발행해요. 아니면 발행하지 않아요 (같은 보류 길). 같은 날 다시 하는 실행은 국내 종가만 채워요 — 미국 마지막 확인 종가(pxc)는
+   다시 돌 까닭이 아니고 (already_published.open_closes 의 미국 칸은 늘 0) 다음 새 미국 기준일 발행에서 채워져요 (#161 리뷰 S4).
 보류하면: 발행 두 단계 ('커밋 & 푸시' · 'data 브랜치에 올리기') 가 건너뛰어요 (if: steps.hold.outputs.hold != 'true') → main · data 브랜치 · 사이트
 그대로. 실행은 실패가 아니라 초록으로 끝나요. 감시에는 중립이에요 (watchdog.is_held_run). 관문 · 화면 검사는 보류해도 그대로 돌아요.
 비교할 수 없으면: 오늘 기록을 못 읽으면 보류하지 않아요 (크게 · 경고 알림). 지난 발행본을 못 읽으면 같은 날인지 몰라 바닥만 봐요 (크게 · 경고 알림).
@@ -26,13 +29,14 @@ import argparse
 import collections
 import datetime as dt
 import json
+import math
 import os
 import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-from validate_data import KST, PX_SRC_FB, _gh_escape, kr_px_count  # noqa: E402  (관문과 같은 정의)
+from validate_data import KST, PX_ALT_TOL, PX_SRC_FB, _gh_escape, kr_px_count  # noqa: E402  (관문과 같은 정의)
 
 # 바닥 (Jack 2026-11-21: "set it from last week's 06:40 coverage"). 지난주 06:40 발행 (data 브랜치 · 코스피 · 코스닥 두 출처 확인 ÷ 그날 목록):
 #   11-19 (pxDate 11-18) 2,743 / 2,771 = 98.99% · 11-20 (pxDate 11-19) 2,740 / 2,771 = 98.88% — 2차 출처 날은 이 둘뿐이에요.
@@ -155,20 +159,73 @@ def stock_sets(data):
         if x.get("cls") == "kr" and not x.get("fund"):
             (kr_own if x.get("pxd") is not None else kr_px).add(t)
         else:
-            other.add((str(x.get("cls")), t))      # 미국 마지막 확인 종가 (US carry) 가 들어오면 여기서 미국 pxd 도 나눠요
+            other.add((str(x.get("cls")), t))      # 있는지만 봐요 — 미국 행의 날짜는 us_date_sets 가 따로 나눠요 (#161 리뷰 S3)
     return kr_px, kr_own, other
 
 
+def us_date_sets(data):
+    """발행 파일의 미국 종목 (#161 리뷰 S3 · 순수 함수): (미국 기준일 종가 티커 — pxd 없음, 자기 날짜 티커 — pxd 있음: 마지막 확인 종가 pxc 든 야후의
+    옛 봉이든)."""
+    at, own = set(), set()
+    for x in (data or {}).get("stocks") or [] if isinstance(data, dict) else []:
+        if isinstance(x, dict) and x.get("t") is not None and x.get("cls") == "us" and not x.get("fund"):
+            (own if x.get("pxd") is not None else at).add(str(x["t"]))
+    return at, own
+
+
+def _num(v):
+    """유한한 숫자만 (True/False 는 아니에요) — 아니면 None."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    return float(v) if math.isfinite(v) else None
+
+
+def kr_d1_lost(cur, prev, tol=PX_ALT_TOL):
+    """같은 날 다시 발행에서 d1 을 잃은 국내 종목 (#161 리뷰 S5 · 순수 함수): 지난 발행본이 그 날짜 종가와 d1 으로 실은 국내 종목이 이 실행에도 그 날짜
+    종가로, 같은 가격 (원 단위까지 · tol) 인데 d1 이 없음. 거래 없음 (noTrade) 으로 바뀐 종목은 빼요 (빈 d1 의 까닭이 있어요). 가격이 달라진 종목은 d1 도
+    달라질 수 있어 세지 않아요. 이 실행에 없거나 마지막 확인 종가로 바뀐 종목은 lost_stocks 의 kr 이 세요. 반환: 코드 목록 (정렬)."""
+    cur_by, dup = {}, set()
+    for x in (cur or {}).get("stocks") or [] if isinstance(cur, dict) else []:
+        if isinstance(x, dict) and x.get("t") is not None and x.get("cls") == "kr" and not x.get("fund") and x.get("pxd") is None:
+            t = str(x["t"])
+            if t in cur_by:                    # 같은 코드가 두 번 — 어느 값인지 몰라요 (잃은 것으로)
+                dup.add(t)
+            cur_by[t] = x
+    out = set()
+    for x in (prev or {}).get("stocks") or [] if isinstance(prev, dict) else []:
+        if not isinstance(x, dict) or x.get("t") is None or x.get("cls") != "kr" or x.get("fund") or x.get("pxd") is not None:
+            continue
+        t = str(x["t"])
+        c = cur_by.get(t)
+        if c is None or _num(x.get("d1")) is None or c.get("noTrade") is True:
+            continue
+        pp, cp = _num(x.get("price")), _num(c.get("price"))
+        if pp is None or cp is None or abs(pp - cp) > tol:
+            continue
+        if _num(c.get("d1")) is None or t in dup:
+            out.add(t)
+    return sorted(out)
+
+
 def lost_stocks(cur, prev):
-    """같은 날 다시 발행에서 잃는 종목 (#161 리뷰 2 · 순수 함수): 지난 발행본의 모든 종목이 있어야 해요 — 그 날짜 종가 국내 종목은 그 날짜 종가로 (마지막
-    확인 종가로 바뀌거나 빠지면 잃음) · 마지막 확인 종가 국내 종목은 그대로 또는 그 날짜 종가로 · 미국 · 펀드 · 금 · 채권은 그대로. 반환: {kr, own, other}."""
+    """같은 날 다시 발행에서 잃는 것 (#161 리뷰 2 · S3 · S5 · 순수 함수): 지난 발행본의 모든 종목이 있어야 해요 — 그 날짜 종가 국내 종목은 그 날짜 종가로
+    (마지막 확인 종가로 바뀌거나 빠지면 잃음) · 마지막 확인 종가 국내 종목은 그대로 또는 그 날짜 종가로 · 미국 · 펀드 · 금 · 채권은 그대로 (kr · own ·
+    other). 미국 기준일이 같으면 그 날짜 종가 미국 종목이 자기 날짜 (pxd · 마지막 확인 종가든 야후의 옛 봉이든) 로 바뀌면 잃음 (us · 빠진 종목은 other
+    에서 세요 · 미국 기준일이 새로우면 마지막 확인 종가로 넘어가는 것이 정상이라 보지 않아요). 같은 가격인 국내 종목이 d1 을 잃으면 잃음 (d1 ·
+    kr_d1_lost). 반환: {kr, own, other, us, d1}."""
     cp, co, cx = stock_sets(cur)
     pp, po, px = stock_sets(prev)
-    return {"kr": sorted(pp - cp), "own": sorted(po - cp - co), "other": sorted(f"{c} {t}" for c, t in px - cx)}
+    us = []
+    cu, pu = _day((cur or {}).get("usPxDate")), _day((prev or {}).get("usPxDate"))
+    if cu is not None and cu == pu:
+        us = sorted(us_date_sets(prev)[0] & us_date_sets(cur)[1])
+    return {"kr": sorted(pp - cp), "own": sorted(po - cp - co), "other": sorted(f"{c} {t}" for c, t in px - cx), "us": us,
+            "d1": kr_d1_lost(cur, prev)}
 
 
 def same_day_decision(cur_mode, prev_mode, cur, prev):
-    """같은 한국 기준일 다시 발행 (Decision · 순수 함수 · #161 리뷰 2). 지난 발행본의 종목을 하나도 잃지 않을 때만, 그리고
+    """같은 한국 기준일 다시 발행 (Decision · 순수 함수 · #161 리뷰 2). 지난 발행본에서 아무것도 잃지 않을 때만 (lost_stocks: 종목 · 미국 기준일 종가 ·
+    같은 종가의 d1), 그리고
     - 미국 기준일이 같으면: 그 날짜 종가 국내 종목 수 (발행 파일 · validate_data.kr_px_count) 가 지난 발행본보다 많을 때만 발행해요.
     - 미국 기준일이 새로우면: 국내를 잃지 않으면 발행해요 (미국 종가를 막지 않아요).
     - 오늘 2차 출처 · 지난 발행본 1차 출처 (KRX 최종본) → 발행하지 않아요. 둘 다 1차 출처 → 예전 그대로 발행 (손으로 다시 돌린 실행)."""
@@ -183,9 +240,11 @@ def same_day_decision(cur_mode, prev_mode, cur, prev):
     except Exception as e:
         return Decision(True, True, f"같은 기준일인데 종목 수를 셀 수 없어요 ({type(e).__name__}) → 발행하지 않아요 (그날 데이터는 이미 나가 있어요)", "unknown")
     if n_lost:
-        ex = ", ".join((lost["kr"] + lost["own"] + lost["other"])[:12])
+        ex = ", ".join((lost["kr"] + lost["own"] + lost["other"] + [f"미국 {t} (옛 날짜로)" for t in lost["us"]]
+                        + [f"{t} (d1 빈 칸)" for t in lost["d1"]])[:12])
         return Decision(True, True, f"같은 기준일 · 지난 발행본의 종목을 잃어요 — 그 날짜 종가 국내 {len(lost['kr']):,} · 마지막 확인 종가 국내 "
-                                    f"{len(lost['own']):,} · 미국 등 {len(lost['other']):,} ({ex}) → 발행하지 않아요 (그 날짜 종가 국내 {n_prev:,} → {n_cur:,})",
+                                    f"{len(lost['own']):,} · 미국 등 {len(lost['other']):,} · 미국 기준일 종가가 옛 날짜로 {len(lost['us']):,} · "
+                                    f"같은 종가인데 d1 을 잃은 국내 {len(lost['d1']):,} ({ex}) → 발행하지 않아요 (그 날짜 종가 국내 {n_prev:,} → {n_cur:,})",
                         "loss")
     us_new = (_day(cur.get("usPxDate")) or dt.date.min) > (_day(prev.get("usPxDate")) or dt.date.min)
     if us_new:
