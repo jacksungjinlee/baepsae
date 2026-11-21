@@ -3630,8 +3630,76 @@ def kr_d1_base_day(cur_df, prev, want_prev):
     return d1, (None if why else {c for c, w in st.items() if w == "ok"}), rec
 
 
+# 2026-11-21 (#161 리뷰 M2): 같은 기준일을 다시 도는 실행의 d1. 사고 모양 (리뷰 재현): 06:40 에 기준일 D 를 2차 출처(다음 × 야후)로 발행했고, 그 뒤
+# 자원봉사 캐시에 D 최종본이 생겼는데 D−1 파일은 아직 장중 값이에요 → 다음 실행은 1차 출처 날 · 같은 기준일 D 이고 직전 거래일 파일을 쓸 수 없어
+# kr_d1_base_day 를 불러요. 그런데 지난 발행본은 그날 아침의 D 발행본이라 (pxDate D · 직전 거래일이 아님) 모든 d1 이 빈 칸 → '필수 종목 d1' 실패 →
+# 13:37 · 14:47 · 바깥 타이머 실행마다 빨간 실행이었어요 (3시간 쉼은 2차 출처 날의 다시 도는 실행만 봐요).
+# 이제: 지난 발행본의 기준일이 이 실행과 같으면 그 발행본의 d1 (같은 D−1 기준 · 이미 확인돼 관문을 통과한 값) 을, 오늘 공식 종가가 그 발행본의 가격과
+# 원 단위까지 같은 종목만 그대로 써요 (그 행에 pxd · noTrade 가 없을 때만 · kr_prev_pub_closes 와 같은 규칙). 가격이 다르거나 · 지난 발행본에 없거나 ·
+# 지난 발행본도 d1 이 빈 칸이면 빈 칸 (d1Why prev · 지난 발행본이 ±30% 밖(range)이었으면 range) — 까닭마다 수와 예를 로그와 d1Base 에 (same: 1).
+# 지난 발행본의 기준일이 이 실행보다 앞이면 (#163 의 길) 예전 그대로예요.
+D1_SAME_KO = {"diff": "오늘 공식 종가가 앞선 발행본의 가격과 다름", "noPub": "앞선 발행본에 없음",
+              "notConf": "앞선 발행본 값이 그날 확인된 종가가 아님 (거래 없음 · 자기 가격 날짜)", "noD1": "앞선 발행본도 d1 빈 칸"}
+
+
+def kr_d1_same_day(cur_df, prev, px_date, want_prev, max_abs=D1_MAX_KR, tol=KR_FB_CLOSE_TOL):
+    """같은 기준일 지난 발행본의 d1 다시 쓰기 (2026-11-21 · #161 리뷰 M2 · 순수 함수 · fetch_korea 가 kr_d1_base_day 의 까닭이 'day' 일 때만 불러요).
+    지난 발행본(prev)의 pxDate 가 이 실행의 기준일(px_date)이 아니거나 그 발행본을 쓸 수 없으면 (kr_prev_pub_closes 의 까닭) None — 부르는 쪽은
+    kr_d1_base_day 의 결과(모두 빈 칸 · 그 까닭)를 그대로 써요. 반환: (d1 {코드: %}, base_ok {코드} — d1 이 있거나 지난 발행본이 range 였던 종목
+    (kr_d1_split 이 빈 d1 을 range 로) · data.json d1Base (same 1 · from 그 발행본의 publishedAt · noD1 수))."""
+    closes, skip, why = kr_prev_pub_closes(prev, px_date)
+    if why:
+        return None
+    rows = {str(x["t"]).strip(): x for x in prev["stocks"]
+            if isinstance(x, dict) and x.get("cls") == "kr" and not x.get("fund") and x.get("t") and str(x["t"]).strip() in closes}
+    d1, base_ok, st, ex = {}, set(), {}, collections.defaultdict(list)
+    for _, r in cur_df.iterrows():
+        code = str(r["Code"]).strip()
+        c = kr_official_close(r)
+        if not c:
+            continue
+        p = closes.get(code)
+        if code in skip:
+            w = "notConf"
+        elif p is None:
+            w = "noPub"
+        elif abs(c - p) > tol:
+            w = "diff"
+        else:
+            v = _fin(rows[code].get("d1"))
+            if v is not None and abs(v) <= max_abs + D1_LIMIT_EPS:
+                w = "ok"
+                d1[code] = v
+                base_ok.add(code)
+            elif v is not None or rows[code].get("d1Why") == "range":
+                w = "ok"                                     # 지난 발행본도 ±30% 밖 — 같은 기준 · 빈 칸의 까닭은 range
+                base_ok.add(code)
+            else:
+                w = "noD1"
+        st[code] = w
+        if w != "ok":
+            ex[w].append((code, p, c))
+    names = dict(zip(cur_df["Code"].astype(str).str.strip(), cur_df["Name"].astype(str))) if "Name" in cur_df.columns else {}
+    rec = d1_base_record(want_prev, prev, None, st, {k: v for k, v in ex.items() if k != "noD1"}, names)
+    rec["same"] = 1
+    rec["from"] = str(prev.get("publishedAt") or "")
+    rec["noD1"] = sum(1 for w in st.values() if w == "noD1")
+    if ex.get("noD1"):                                       # (다름의 예는 앞선 발행본 가격 → 오늘 공식 종가 · d1_base_record 와 같은 모양)
+        rec["ex"]["noD1"] = [f"{c} {names.get(c, '')}".strip() for c, _, _ in sorted(ex["noD1"])[:D1_BASE_EX]]
+    return d1, base_ok, rec
+
+
 def d1_base_note(rec):
     """d1Base 한 줄 (2026-11-21 · 순수 함수 · 로그). 반환 (크게 남길지, 글) — 직전 거래일 최종본이 없는 날이라 늘 크게 (!!)."""
+    if rec.get("same"):                     # #161 리뷰 M2: 같은 기준일 지난 발행본의 d1 (kr_d1_same_day)
+        txt = (f"d1: 직전 거래일 {rec.get('day')} 최종본이 없고 지난 발행본이 같은 기준일 {rec.get('pub')} ({rec.get('from') or '?'}) 이라, 오늘 공식 종가가 "
+               f"그 발행본의 가격과 원 단위까지 같은 종목은 그 발행본의 d1 을 그대로 써요 (같은 직전 거래일 기준 · 이미 확인된 값): {rec['ok']:,} / {rec['n']:,}"
+               f" · 가격이 다름 {rec['diff']:,} · 앞선 발행본에 없음 {rec['noPub']:,} · 그날 확인된 종가가 아님 {rec['notConf']:,} · 앞선 발행본도 d1 빈 칸 "
+               f"{rec.get('noD1', 0):,} (나머지는 d1 빈 칸 · d1Why prev)")
+        for k in ("diff", "noPub", "notConf", "noD1"):
+            if (rec.get("ex") or {}).get(k):
+                txt += f" — {D1_SAME_KO[k]}: {', '.join(rec['ex'][k])}{' …' if rec.get(k, 0) > len(rec['ex'][k]) else ''}"
+        return True, txt
     if rec.get("why"):
         return True, (f"d1: 직전 거래일 {rec.get('day')} 최종본이 없고 {D1_BASE_PUB_KO.get(rec['why'], rec['why'])} (지난 발행본 pxDate "
                       f"{rec.get('pub')}) — KRX 기준가를 확인할 두 번째 출처가 없어 d1 을 비워요 {rec.get('n', 0):,}종목")
@@ -4143,17 +4211,62 @@ def sample_universe(listing, n):
     return listing[listing["Code"].isin(top | keep)].copy()
 
 
-def select_kr_universe(listing, max_n):
+def select_kr_universe(listing, max_n, keep=()):
     """시가총액 큰 순으로 max_n 개. 꼭 있어야 할 종목이 빠지면 예외. (순수 함수)
-    시가총액이 비면 정렬이 안 돼 가나다순이 남아요(2026-10 사고). 그래서 결과를 꼭 확인합니다."""
+    시가총액이 비면 정렬이 안 돼 가나다순이 남아요(2026-10 사고). 그래서 결과를 꼭 확인합니다.
+    keep (2026-11-21 · #161 리뷰 M1): 상위 max_n 밖이어도 목록에 있으면 처리하는 코드 (같은 기준일 2차 출처 발행본의 국내 종목 · kr_same_day_keep).
+    상위 max_n 뒤에 시가총액 순으로 붙여요 (결과도 시가총액 순). 비면 예전 그대로."""
     listing = listing.copy()
     for c in ("Marcap", "Amount"):
         listing[c] = pd.to_numeric(listing[c], errors="coerce")
-    listing = listing.sort_values("Marcap", ascending=False, na_position="last").head(max_n)
+    listing = listing.sort_values("Marcap", ascending=False, na_position="last")
+    keep = {str(c).strip() for c in keep or ()}
+    if keep:
+        rest = listing.iloc[max_n:]
+        listing = pd.concat([listing.head(max_n), rest[rest["Code"].astype(str).str.strip().isin(keep)]])
+    else:
+        listing = listing.head(max_n)
     missing = [c for c in MUST_KR if c not in set(listing["Code"])]
     if missing:
         raise RuntimeError(f"!! 꼭 있어야 할 종목이 목록에 없어요: {', '.join(missing)} — 발행하지 않고 중단합니다")
     return listing
+
+
+def kr_same_day_keep(prev, px_date):
+    """같은 기준일을 다시 도는 실행이 상위 MAX_KR 밖이어도 처리할 국내 종목 (2026-11-21 · #161 리뷰 M1 · 순수 함수).
+    지난 발행본이 2차 출처 날 (pxSrc.px daum+yahoo) 이고 한국 기준일(pxDate)이 이 실행과 같으면, 그 발행본의 국내 종목 코드 모두 (그 날짜 종가 ·
+    마지막 확인 종가(pxd) · 펀드 빼고). 아니면 빈 set — 그날의 첫 실행 (06:40 · 지난 발행본은 전날) 과 1차 출처 발행본 뒤의 실행은 예전 그대로예요.
+    왜: 2차 출처 날 확인된 종목이 MAX_KR 보다 많으면 (11-20: 2,740) 상위 MAX_KR 로 잘라요. 아침에 마지막 확인 종가로 실은 종목 X 가 나중에 확인되면 X 가
+    상위 MAX_KR 에 들어와 아침에 그 날짜 종가로 실은 종목 Y 를 밀어내요 — Y 는 확인됐으니 다시 쓰기(kr_same_day_reuse) · 마지막 확인 종가에도 들지 않아
+    빠지고, 같은 날 다시 발행 판단(tools/publish_hold.py)이 '종목을 잃음' 으로 막아요 (X 가 상위 밖이면 X 가 빠져요). 그래서 같은 날의 실행은 지난 발행본의
+    종목 중 오늘 목록에 있는 (2차 출처 날이면 확인된 · 1차 출처 날이면 KRX 최종본에 있는) 종목을 모두 처리해요. 확인 못 한 종목은 예전처럼 다시 쓰기 ·
+    마지막 확인 종가 단계가 그날 전체 목록에서 골라요 (이 자르기와 상관없어요). 다음 새 기준일은 다시 상위 MAX_KR 이에요."""
+    if not isinstance(prev, dict) or px_date is None:
+        return set()
+    src = prev.get("pxSrc") if isinstance(prev.get("pxSrc"), dict) else {}
+    day = px_date.isoformat() if isinstance(px_date, dt.date) else str(px_date)
+    if src.get("px") != PX_SRC_FB or prev.get("pxDate") != day:
+        return set()
+    return {str(x["t"]).strip() for x in prev.get("stocks") or []
+            if isinstance(x, dict) and x.get("cls") == "kr" and not x.get("fund") and x.get("t")}
+
+
+def kr_same_day_keep_note(keep, listing, max_n, n_all):
+    """kr_same_day_keep 로 상위 max_n 밖에서 더 처리한 종목 한 줄 (#161 리뷰 M1 · 순수 함수). keep 이 비면 None.
+    반환 (크게 남길지, 글) — 더한 종목이 있으면 크게 (!! · 이름과 함께)."""
+    if not keep:
+        return None
+    codes = listing["Code"].astype(str).str.strip().tolist()
+    extra = codes[max_n:]
+    have = set(codes)
+    nm = dict(zip(codes, listing["Name"].astype(str))) if "Name" in listing.columns else {}
+    gone = len(keep - have)
+    ex = [f"{c} {nm.get(c, '')}".strip() for c in extra[:12]]
+    txt = (f"같은 기준일을 다시 도는 실행: 지난 발행본의 국내 종목 {len(keep):,} 중 오늘 목록에 있는 {len(keep & have):,}종목은 시가총액 상위 {max_n:,} 밖이어도 "
+           f"처리해요 → 상위 밖에서 더한 종목 {len(extra):,} · 처리하는 종목 {len(codes):,} (오늘 목록 {n_all:,}) — 지난 발행본의 종목을 잃지 않게 (#161)"
+           + (f": {', '.join(ex)}{' …' if len(extra) > len(ex) else ''}" if extra else "")
+           + (f" · 오늘 목록에 없는 {gone:,}종목은 다시 쓰기 · 마지막 확인 종가 단계가 봐요" if gone else ""))
+    return bool(extra), txt
 
 
 def load_kr_listing(today):
@@ -7981,7 +8094,12 @@ def fetch_korea(start, today, rf, prev=None):
         except Exception as e:
             log(f"  !! 업종 정보 {src} 실패: {e}")
     n_all = len(listing)
-    listing = select_kr_universe(listing, MAX_KR)
+    # 2026-11-21 (#161 리뷰 M1): 같은 기준일을 다시 도는 실행은 지난 발행본의 국내 종목을 상위 MAX_KR 밖이어도 처리해요 (잃지 않게 · kr_same_day_keep)
+    keep_same = kr_same_day_keep(prev, px_date)
+    listing = select_kr_universe(listing, MAX_KR, keep=keep_same)
+    kn = kr_same_day_keep_note(keep_same, listing, MAX_KR, n_all)
+    if kn:
+        log(f"  !! {kn[1]}" if kn[0] else f"· {kn[1]}")
     if sample_size():
         listing = sample_universe(listing, sample_size())
         log(f"  !! 표본 실행: 국내 {len(listing):,}종목만 처리해요")
@@ -8079,6 +8197,10 @@ def fetch_korea(start, today, rf, prev=None):
         # 2026-11-21: 직전 거래일 파일을 쓸 수 없는 날 — KRX 기준가 × 지난 발행본 종가 (두 출처가 원 단위까지 같은 종목만 · kr_d1_from_base)
         if not ok_prev and want_prev is not None:
             d1_map, base_ok, d1_base = kr_d1_base_day(listing, prev, want_prev)
+            # #161 리뷰 M2: 지난 발행본이 같은 기준일 (그날 아침 발행 · 직전 거래일이 아님) 이면 그 발행본의 d1 을 같은 종가인 종목만 (kr_d1_same_day)
+            same_d1 = kr_d1_same_day(listing, prev, px_date, want_prev) if d1_base.get("why") == "day" else None
+            if same_d1 is not None:
+                d1_map, base_ok, d1_base = same_d1
             loud, txt = d1_base_note(d1_base)
             log(f"  !! {txt}" if loud else f"· {txt}")
     # 2026-11-14 (Jack, design chat 2026-11-08): 기준일에 거래가 없던 종목은 d1 빈 칸 + noTrade · 다른 빈 d1 은 이유(d1Why)를 달아요
@@ -13364,7 +13486,9 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                     "파일의 KRX 기준가(Close − Changes)가 그 종가와 원 단위까지 같은 종목만 · day 직전 거래일 · pub 지난 발행본 pxDate · why 지난 발행본을 "
                     "쓸 수 없던 까닭 (none 없음 · day pxDate 가 직전 거래일이 아님 · src 가격 출처가 공식 종가 목록이 아님 · 그러면 모두 빈 칸) · n 처리한 "
                     "종목 (발행 종목보다 많을 수 있어요) · ok 확인 · diff 기준가가 다름 · noPub 지난 발행본에 없음 · notConf 지난 발행본 값이 그날 확인된 "
-                    "종가가 아님 (거래 없음 · pxd) · noBase 오늘 파일에 기준가 없음 · ex 까닭마다 예"),
+                    "종가가 아님 (거래 없음 · pxd) · noBase 오늘 파일에 기준가 없음 · ex 까닭마다 예. same 1 (#161 리뷰 M2): 지난 발행본이 같은 기준일 "
+                    "(그날 앞선 발행) 이라 그 발행본의 d1 을 오늘 공식 종가가 그 가격과 원 단위까지 같은 종목만 그대로 쓴 날 — from 그 발행본의 "
+                    "publishedAt · diff 가격이 다름 · noD1 앞선 발행본도 d1 빈 칸 · noBase 0"),
          "ntD1": ("% · noTrade 종목의 기준가(공식 종가) 변화 (d1 을 계산했다면 나왔을 값 · ±30% 밖이거나 직전 파일이 없으면 칸 없음) — 거래가 없어 "
                   "등락률로 보이지 않고, 포트폴리오 평가 금액의 오늘 변화에만 써요 (코넥스는 거래 없이 값이 바뀔 수 있어요)"),
          "d1Blank": ("발행하는 한국 종목(목록 파일에서 온 cls kr)의 빈 d1 이유별 수 {noTrade · range · new · prev} (종목의 d1Why 와 같아요) · "

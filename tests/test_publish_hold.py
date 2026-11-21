@@ -1149,3 +1149,255 @@ def test_open_closes_count_only_what_a_re_ask_can_change():
     assert A.decide(d, kst(2026, 11, 21, 10, 53), CAL)[0] is True                  # 바뀔 수 있는 것이 없으면 예전처럼 건너뛰어요
     d["pxSrc"]["fb"]["knx"] = {"kept": 20, "open": 3}
     assert A.open_closes(d) == {"kr": 3, "us": 0}
+
+
+# ── 10. #161 리뷰 (2차): 상위 자르기 · 같은 날 d1 · 미국 날짜 · d1 잃음 ─────────────
+D20 = dt.date(2026, 11, 20)
+CUT_CODES = ["100010", "100020", "100030", "100040", "100050", "100060"]           # 시가총액 큰 순
+CUT_CAPS = dict(zip(list(F.MUST_KR) + CUT_CODES, [9e14 - i * 1e13 for i in range(len(F.MUST_KR))] + [6e12, 5e12, 4e12, 3e12, 2e12, 1e12]))
+CUT_MAX = len(F.MUST_KR) + 3                                                        # 필수 종목 + 3 (진짜는 2,500)
+CUT_FULL = pd.DataFrame({"Code": list(CUT_CAPS), "Name": ["종목" + c for c in CUT_CAPS], "Market": ["KOSPI"] * len(CUT_CAPS),
+                         "Marcap": list(CUT_CAPS.values()), "Amount": [1e9] * len(CUT_CAPS)})
+CUT_DAYS = list(pd.to_datetime(["2026-11-17", "2026-11-18", "2026-11-19", "2026-11-20"]))
+
+
+def cut_row(c, **kw):
+    return {"t": c, "cls": "kr", "nk": "종목" + c, "price": 1000.0, "cap": CUT_CAPS[c], "d1": 0.5, **kw}
+
+
+def cut_run(prev, conf, mode=FB, keep=True):
+    """fetch_korea 의 순서 그대로 (줄인 모양): 그날 목록 (2차 출처 날은 확인된 종목만) → select_kr_universe (같은 기준일이면 지난 발행본 종목도 ·
+    kr_same_day_keep) → 시세 → 2차 출처 날이면 kr_own_close_step (다시 쓰기 · 마지막 확인 종가). keep=False 는 이 고침 전 (상위 자르기만)."""
+    lst = CUT_FULL[CUT_FULL["Code"].isin(conf)] if mode == FB else CUT_FULL
+    ks = F.kr_same_day_keep(prev, D20) if keep else set()
+    uni = F.select_kr_universe(lst, CUT_MAX, keep=ks)
+    out = [cut_row(c) for c in uni["Code"]]
+    if mode == FB:
+        src = {"px": FB, "date": D20.isoformat(), "fb": {"conf": len(conf), "diffT": []}, "knx": {"px": None}}
+        F.kr_own_close_step(prev, CUT_FULL, set(conf), src, D20, CUT_DAYS, out, {"jump": [], "hidden": []}, {})
+    else:
+        src = {"px": LISTING, "date": D20.isoformat()}
+    data = {"pxDate": D20.isoformat(), "usPxDate": D20.isoformat(), "publishedAt": f"2026-11-21T{len(out):02d}:00:00+09:00",
+            "pxSrc": F.px_src_final(src, out), "stocks": out}
+    return json.loads(json.dumps(data, allow_nan=False)), ks, uni, len(lst)
+
+
+def cut_yesterday():
+    """어제 발행본 (pxDate 11-19 · 2차 출처): 필수 종목 + 100010 · 100020 · 100030 · 100060 (그날 시가총액 순위는 달랐어요)."""
+    rows = [cut_row(c) for c in list(F.MUST_KR) + ["100010", "100020", "100030", "100060"]]
+    return {"pxDate": "2026-11-19", "usPxDate": "2026-11-19", "publishedAt": "2026-11-20T06:40:00+09:00", "pxSrc": {"px": FB, "date": "2026-11-19"},
+            "krSeries": {"jump": []}, "stocks": rows}
+
+
+def at_date(data):
+    return sorted(s["t"] for s in data["stocks"] if s.get("cls") == "kr" and s.get("pxd") is None)
+
+
+def test_a_same_day_rerun_keeps_every_stock_of_the_earlier_publish_through_the_top_cut(capsys):
+    """#161 리뷰 M1 (scratchpad rev161/repro_cut.py): 확인된 종목이 상위 자르기보다 많은 날, 06:40 에 마지막 확인 종가로 실은 종목이 나중에 확인되면 상위에
+    들어와 06:40 에 그 날짜 종가로 실은 종목을 밀어내거나 (그 종목은 확인돼 다시 쓰기 · 마지막 확인 종가에도 들지 않음), 상위 밖이라 빠졌어요 → 같은 날 다시
+    발행이 날마다 '종목을 잃음' 이었어요. 이제 같은 기준일 실행은 지난 발행본의 종목을 상위 밖이어도 처리해요."""
+    yday = cut_yesterday()
+    unconf = {"100030", "100060"}                                                   # 06:40: 야후 종가가 아직 빈 두 종목
+    conf0 = [c for c in CUT_CAPS if c not in unconf]
+    p1, ks, uni, _ = cut_run(yday, conf0)
+    # 06:40 (그날 첫 실행 · 지난 발행본은 어제): 예전 그대로 — 정확히 상위 CUT_MAX · 확인 못 한 두 종목은 마지막 확인 종가
+    assert ks == set() and len(uni) == CUT_MAX
+    assert at_date(p1) == sorted(list(F.MUST_KR) + ["100010", "100020", "100040"])
+    assert sorted(s["t"] for s in p1["stocks"] if s.get("pxd")) == ["100030", "100060"]
+    # 10:53: 모두 확인 — 예전 (상위 자르기만): 100030 이 상위에 들어와 100040 을 밀어내고, 100060 은 상위 밖이라 빠져요 → 잃음
+    before, _, _, _ = cut_run(p1, list(CUT_CAPS), keep=False)
+    lost = P.lost_stocks(before, p1)
+    assert lost["kr"] == ["100040"] and lost["own"] == ["100060"]
+    assert P.same_day_decision(FB, FB, before, p1).kind == "loss"
+    # 이제: 지난 발행본의 종목은 상위 밖이어도 처리 → 잃은 것 없음 · 그 날짜 종가 국내 +2 → 발행
+    capsys.readouterr()
+    p2, ks, uni, n_all = cut_run(p1, list(CUT_CAPS))
+    assert ks == set(s["t"] for s in p1["stocks"])
+    assert list(uni["Code"]) == list(F.MUST_KR) + ["100010", "100020", "100030", "100040", "100060"]   # 시가총액 순 · 상위 뒤에 붙어요
+    assert "100050" not in at_date(p2)                                              # 지난 발행본에 없던 종목은 예전처럼 상위 안만
+    assert all(not v for v in P.lost_stocks(p2, p1).values())
+    d = P.same_day_decision(FB, FB, p2, p1)
+    assert d.hold is False and d.kind == "publish" and f"{CUT_MAX:,} → {CUT_MAX + 2:,}" in d.why
+    loud, txt = F.kr_same_day_keep_note(ks, uni, CUT_MAX, n_all)
+    assert loud and "상위 밖에서 더한 종목 2" in txt and "100040 종목100040" in txt and "100060 종목100060" in txt
+    # 13:37 (같은 날 또 · 지난 발행본은 10:53): 같은 종목 · 같은 수 → '같은 날 · 더 낫지 않음' (잃음 아님)
+    p3, _, _, _ = cut_run(p2, list(CUT_CAPS))
+    assert at_date(p3) == at_date(p2) and P.same_day_decision(FB, FB, p3, p2).kind == "same"
+    # 다음 새 기준일은 다시 상위 CUT_MAX 만 (지난 발행본의 기준일이 달라요)
+    assert F.kr_same_day_keep(p2, dt.date(2026, 11, 21)) == set()
+
+
+def test_the_volunteer_final_switch_run_keeps_the_morning_stocks_too():
+    """같은 기준일에 KRX 최종본이 생긴 실행 (1차 출처 · 그날 목록 전체): 06:40 (2차 출처) 발행본의 종목을 모두 처리해요 → 잃지 않고 발행."""
+    yday = cut_yesterday()
+    p1, _, _, _ = cut_run(yday, [c for c in CUT_CAPS if c not in ("100030", "100060")])
+    before, _, _, _ = cut_run(p1, [], mode=LISTING, keep=False)
+    assert P.same_day_decision(LISTING, FB, before, p1).kind == "loss"            # 예전: 100040 을 잃어요
+    sw, ks, uni, _ = cut_run(p1, [], mode=LISTING)
+    assert ks and all(not v for v in P.lost_stocks(sw, p1).values())
+    d = P.same_day_decision(LISTING, FB, sw, p1)
+    assert d.hold is False and d.kind == "publish"
+
+
+def test_the_keep_set_is_only_for_a_same_date_backup_publish():
+    p = cut_yesterday()
+    assert F.kr_same_day_keep(p, dt.date(2026, 11, 19)) == set(s["t"] for s in p["stocks"])
+    assert F.kr_same_day_keep(p, D20) == set()                                      # 그날 첫 실행 (지난 발행본은 어제)
+    assert F.kr_same_day_keep(dict(p, pxSrc={"px": LISTING, "date": "2026-11-19"}), dt.date(2026, 11, 19)) == set()   # 1차 출처 발행본 뒤
+    assert F.kr_same_day_keep(None, D20) == set() and F.kr_same_day_keep(p, None) == set()
+    p["stocks"] += [{"t": "069500", "cls": "kr", "fund": True, "price": 1.0}, {"t": "AAPL", "cls": "us", "price": 1.0}]
+    assert "069500" not in F.kr_same_day_keep(p, dt.date(2026, 11, 19)) and "AAPL" not in F.kr_same_day_keep(p, dt.date(2026, 11, 19))
+    # keep 이 비면 예전과 똑같은 결과 (같은 표 · 같은 순서)
+    assert F.select_kr_universe(CUT_FULL, CUT_MAX).equals(F.select_kr_universe(CUT_FULL, CUT_MAX, keep=()))
+    assert F.kr_same_day_keep_note(set(), CUT_FULL, CUT_MAX, len(CUT_FULL)) is None
+    # 필수 종목 확인은 그대로
+    with pytest.raises(RuntimeError):
+        F.select_kr_universe(CUT_FULL[CUT_FULL["Code"] != "005930"], CUT_MAX, keep={"100060"})
+
+
+def test_fetch_korea_wires_the_keep_set_before_the_sample_cut():
+    import inspect
+    src = inspect.getsource(F.fetch_korea)
+    a = src.index("keep_same = kr_same_day_keep(prev, px_date)")
+    b = src.index("listing = select_kr_universe(listing, MAX_KR, keep=keep_same)")
+    c = src.index("if sample_size():")
+    assert a < b < c and "kr_same_day_keep_note(keep_same, listing, MAX_KR, n_all)" in src
+    assert src.count("select_kr_universe(") == 1
+
+
+def test_gate_korean_count_rows_have_no_upper_bound_and_pass_slightly_above_the_cut():
+    """'국내 종목 수' (바닥 KR_MIN) 와 '국내 종목 수 변화' (±KR_REL) 는 pxDate 종가만 세고 위 한도가 없어요 — 같은 날 상위 밖 종목을 더해 2,500 을 조금
+    넘어도 (예: 2,500 → 2,530 · 다음 날 2,530 → 2,500) 그대로 통과해요. 관문의 그 두 줄을 같은 비율 (30 / 2,400) 로 돌려 봐요."""
+    assert V.KR_MIN < F.MAX_KR
+    for a, b in ((F.MAX_KR, F.MAX_KR + 30), (F.MAX_KR + 30, F.MAX_KR)):
+        assert abs(b / a - 1) <= V.KR_REL
+    import test_kr_two_source as T2
+    cur, _, old, alt = T2.fb_pair()
+    codes = [s["t"] for s in V.kr_stocks(cur["data"]) if s["t"] not in V.MUST]
+    for direction in ("up", "down"):
+        a, b = copy.deepcopy(cur), copy.deepcopy(cur)
+        fewer = a if direction == "up" else b
+        gone = set(codes[-30:])
+        fewer["data"]["stocks"] = [s for s in fewer["data"]["stocks"] if s["t"] not in gone]
+        rep = V.run_checks(b, a, old, T2.TODAY, mode="publish", count_between=lambda x, y: 0, sessions=T2.SESSIONS, now=T2.NOW,
+                           hilo=T2.hilo_of(b, V.MUST), alt=alt)
+        rows = {r[0]: r for r in rep.rows}
+        assert rows["국내 종목 수"][3] == "PASS" and rows["국내 종목 수 변화"][3] == "PASS", (direction, rows["국내 종목 수 변화"])
+        if direction == "up":
+            assert not rep.failed, rep.table()
+
+
+# M2: 같은 기준일에 자원봉사 최종본이 생긴 실행의 d1 (리뷰 재현 rev161/repro_d1.py)
+def same_day_pub20(cur, **kw):
+    """11-20 06:40 발행본 흉내 (pxDate 11-20 · 2차 출처): 오늘 최종본과 같은 공식 종가 · d1 = KRX 등락률 (같은 11-19 기준 · 소수 둘째 자리) ·
+    거래 없는 종목은 noTrade."""
+    import test_d1_after_gap as G
+    ratio, nt = G.krx_ratio(cur), F.kr_no_trade_plan(cur, max_share=1.0)[0]
+    stocks = []
+    for c, p in F._official_map(cur).items():
+        stocks.append({"t": c, "cls": "kr", "price": p, "noTrade": True, "d1Why": "noTrade"} if c in nt
+                      else {"t": c, "cls": "kr", "price": p, "d1": round(ratio[c], 2)})
+    out = {"pxDate": "2026-11-20", "usPxDate": "2026-11-20", "publishedAt": "2026-11-21T06:40:00+09:00", "listSrc": FB,
+           "pxSrc": {"px": FB, "date": "2026-11-20"}, "stocks": stocks}
+    out.update(kw)
+    return out
+
+
+def run_d1(cur, pub_, px_date=D20):
+    """fetch_korea 의 d1 부분 그대로 (test_d1_after_gap.run_day + 이 고침의 같은 날 길 — 아래 시험이 fetch_korea 의 그 줄을 확인해요)."""
+    import test_d1_after_gap as G
+    sessions, notes, prev_final = F.kr_recent_sessions(px_date, lambda d: G.FILES[d]() if d in G.FILES else None, G.COMMITS.get, n=4,
+                                                       special=F.load_krx_special_sessions())
+    want_prev = F.kr_prev_session(px_date, [t for t in G.TRADE_DAYS if t.date() <= px_date])
+    ok_prev = F.prev_session_ok(sessions, prev_final, want_prev)
+    d1, _, _ = F.kr_d1_val20(cur, sessions, ok_prev)
+    base_ok, rec = None, None
+    if not ok_prev and want_prev is not None:
+        d1, base_ok, rec = F.kr_d1_base_day(cur, pub_, want_prev)
+        same_d1 = F.kr_d1_same_day(cur, pub_, px_date, want_prev) if rec.get("why") == "day" else None
+        if same_d1 is not None:
+            d1, base_ok, rec = same_d1
+    nt = F.kr_no_trade_plan(cur, max_share=1.0)[0]
+    out, why, ntm, cnt = F.kr_d1_split(cur, sessions, ok_prev, d1, nt, base_ok=base_ok)
+    return {"ok_prev": ok_prev, "d1": out, "why": why, "nt": ntm, "cnt": cnt, "rec": rec, "base_ok": base_ok}
+
+
+def test_a_same_day_volunteer_final_run_keeps_the_morning_d1():
+    import test_d1_after_gap as G
+    cur = G.cur20()
+    pub20 = same_day_pub20(cur)
+    # 이 고침 전: 지난 발행본이 같은 기준일이라 (직전 거래일 아님) 모두 빈 칸 → '필수 종목 d1' 실패
+    old = G.run_day(cur, pub20)
+    assert old["d1"] == {} and old["rec"]["why"] == "day" and all(old["why"][c] == "prev" for c in G.MUST)
+    r = run_d1(cur, pub20)
+    assert not r["ok_prev"] and r["rec"]["same"] == 1 and r["rec"]["why"] is None and r["rec"]["from"] == "2026-11-21T06:40:00+09:00"
+    assert r["rec"]["day"] == "2026-11-19" and r["rec"]["pub"] == "2026-11-20"
+    assert (r["rec"]["ok"], r["rec"]["notConf"], r["rec"]["diff"], r["rec"]["noPub"], r["rec"]["noD1"], r["rec"]["noBase"]) == (11, 3, 0, 0, 0, 0)
+    ratio = G.krx_ratio(cur)
+    for c in G.MUST:
+        assert r["d1"][c] == pytest.approx(ratio[c], abs=0.005), c
+        assert c not in r["why"]
+    assert r["d1"]["005930"] == -7.01
+    assert r["why"]["001570"] == r["why"]["011810"] == r["why"]["496320"] == "noTrade"
+    loud, txt = F.d1_base_note(r["rec"])
+    assert loud and txt.startswith("d1: 직전 거래일 2026-11-19 최종본이 없고 지난 발행본이 같은 기준일 2026-11-20 (2026-11-21T06:40:00+09:00)")
+    assert "11 / 14" in txt
+    json.dumps(r["rec"], allow_nan=False)
+    # 관문 '필수 종목 d1' 이 그 값으로 통과해요
+    gcur, gprev, gfinal = G.good_pair()
+    for s in gcur["data"]["stocks"]:
+        if s["t"] in G.MUST:
+            s["d1"] = r["d1"][s["t"]]
+    rep, rows = G.gate_rows(gcur, gprev, gfinal)
+    assert rows["필수 종목 d1"][3] == "PASS" and not rep.failed, rep.table()
+
+
+def test_same_day_d1_is_blank_where_the_close_differs_or_the_morning_had_none():
+    import test_d1_after_gap as G
+    cur = G.cur20()
+    pub20 = same_day_pub20(cur)
+    by = {s["t"]: s for s in pub20["stocks"]}
+    by["005380"]["price"] = 254000.0                                               # 그날 아침 값과 다른 종가 → 그 d1 은 쓰지 않아요
+    by["090460"].pop("d1")
+    by["090460"]["d1Why"] = "prev"                                                 # 아침에도 빈 칸 → 빈 칸
+    by["047400"].pop("d1")
+    by["047400"]["d1Why"] = "range"                                                # 아침에 ±30% 밖 → range
+    by["035420"]["pxd"] = "2026-11-19"                                             # 아침에 마지막 확인 종가 → 그날 확인된 종가가 아님
+    pub20["stocks"] = [s for s in pub20["stocks"] if s["t"] != "489460"]           # 아침 발행본에 없음
+    r = run_d1(cur, pub20)
+    rec = r["rec"]
+    assert (rec["diff"], rec["noD1"], rec["notConf"], rec["noPub"]) == (1, 1, 4, 1) and rec["ok"] == 7
+    assert "005380" not in r["d1"] and r["why"]["005380"] == "prev" and rec["ex"]["diff"] == ["005380 현대차 254,000→255,000"]
+    assert r["why"]["090460"] == "prev" and rec["ex"]["noD1"] == ["090460 비에이치"]
+    assert r["why"]["047400"] == "range" and "047400" in r["base_ok"]
+    assert r["why"]["035420"] == "prev" and r["why"]["489460"] == "prev"
+    txt = F.d1_base_note(rec)[1]
+    assert "가격이 다름 1" in txt and "오늘 공식 종가가 앞선 발행본의 가격과 다름: 005380 현대차 254,000→255,000" in txt and "앞선 발행본도 d1 빈 칸: 090460 비에이치" in txt
+
+
+def test_163_after_backup_days_is_unchanged():
+    """#163 의 길 (지난 발행본이 직전 거래일): 같은 날 길은 쓰이지 않고 결과가 예전과 같아요. 지난 발행본이 그보다 앞이면 예전처럼 모두 빈 칸."""
+    import test_d1_after_gap as G
+    cur, pub19 = G.cur20(), G.pub19()
+    old, new = G.run_day(cur, pub19), run_d1(cur, pub19)
+    assert new["d1"] == old["d1"] and new["why"] == old["why"] and new["rec"] == old["rec"] and "same" not in new["rec"]
+    assert F.kr_d1_same_day(cur, pub19, D20, G.D19) is None                       # 그 발행본의 pxDate 는 11-19 (이 실행은 11-20)
+    p18 = G.pub19()
+    p18["pxDate"], p18["pxSrc"]["date"] = "2026-11-18", "2026-11-18"
+    r = run_d1(cur, p18)
+    assert r["d1"] == {} and r["rec"]["why"] == "day" and "same" not in r["rec"]
+    # 같은 기준일이어도 가격 출처를 모르는 발행본은 쓰지 않아요
+    assert F.kr_d1_same_day(cur, same_day_pub20(cur, listSrc="prev-data.json"), D20, G.D19) is None
+
+
+def test_fetch_korea_tries_the_same_day_d1_only_after_the_163_path_says_day():
+    import inspect
+    src = inspect.getsource(F.fetch_korea)
+    a = src.index("d1_map, base_ok, d1_base = kr_d1_base_day(listing, prev, want_prev)")
+    b = src.index('same_d1 = kr_d1_same_day(listing, prev, px_date, want_prev) if d1_base.get("why") == "day" else None')
+    c = src.index("d1_map, base_ok, d1_base = same_d1")
+    d = src.index("loud, txt = d1_base_note(d1_base)")
+    assert a < b < c < d
+    assert "same 1" in F.UNITS["d1Base"]
+
