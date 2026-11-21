@@ -586,7 +586,7 @@ every row of 11-11 to 11-13), so a halt and a day nobody traded look the same; i
   row contradicted itself (`odd`), or a must-have looked like no trade (`must`). The publish goes ahead with those stocks
   unmarked. If it repeats, look at that day's listing file (FinanceData cache) before anything else; the run log has the same
   case as a "!!" line.
-## Korean stocks at their last confirmed close (국내 마지막 확인 종가, since #?)
+## Korean stocks at their last confirmed close (국내 마지막 확인 종가, since #159)
 
 Jack, 2026-11-19: "The 129 unconfirmed stocks: stop showing "이 종목의 데이터를 찾지 못했어요." Show each stock's last confirmed close
 with its own date (the existing own-close mechanism), plus "오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요." It must never sit
@@ -639,7 +639,7 @@ under today's date label without that line."
   income or score steps. On such a day the 국내 beta · vol 채움 rows can warn (small KONEX names often have no beta).
 - **Never stops the run:** any error in the carry step (`fetch_data.kr_own_close_step`) or in the check after it is logged as
   `!! 마지막 확인 종가 단계가 오류로 멈췄어요 (…)` / `!! 마지막 확인 종가 점검이 오류로 멈췄어요 (…)`; nothing is carried (unconfirmed
-  stocks are left out, as before #?), `pxSrc.own.err` holds the reason and the gate's carry row warns. Fix forward; the publish goes on.
+  stocks are left out, as before #159), `pxSrc.own.err` holds the reason and the gate's carry row warns. Fix forward; the publish goes on.
 - **Pre-publish screen check (`tests/smoke_app.py --data .`):** the scenes that compare the own-close text exactly (미국날짜,
   확인종가) first remove every real Korean `pxd` from their copy of the data (`strip_kr_carries`) and test only the ones they plant,
   so a real carry on a second-source day never fails the screen check; extra scenes run them on a copy with planted carries to
@@ -677,12 +677,12 @@ under today's date label without that line."
   못해서 이 종목은 잠시 빼 두었어요."; totals and weights leave it out; a sold-out holding is not read; a portfolio holding only that
   stock shows that row and no totals). Every other stock and portfolio is checked as usual and the screens keep "{date} 종가로
   점검했어요". The stale state ("데이터가 {n}일째 갱신되지 않아 오늘은 점검하지 않았어요") comes only when the data itself is more than
-  5 trading days late, as on main. A US stock carried at its last confirmed close (`pxc`, since #?) is left out the same way, counted
+  5 trading days late, as on main. A US stock carried at its last confirmed close (`pxc`, since #165) is left out the same way, counted
   in NYSE trading days; a US stock at Yahoo's own older bar (halted) is not touched. 내 수익 reads the same day's context: with that
   stock left out it shows no amounts on late data (its existing rule for a stock missing from the data). The old app has no
   late-data check.
 
-## US stocks at their last confirmed close (미국 마지막 확인 종가, since #?)
+## US stocks at their last confirmed close (미국 마지막 확인 종가, since #165)
 
 Jack, 2026-11-20 (verbatim): "Also: US stocks carry like Korean ones. A US stock with no close from Yahoo carries its last confirmed
 close with its own date and the same line. Block only if many are missing (set the number from history), so a Yahoo gap never stops
