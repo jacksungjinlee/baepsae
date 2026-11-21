@@ -17,13 +17,19 @@ are confirmed. Hold only if confirmed coverage is below a floor; set it from las
    국내 종목은 d1 그대로), 그리고 미국 기준일이 같으면 그 날짜 종가 국내 종목이 지난 발행본보다 많을 때 (validate_data.kr_px_count) · 미국 기준일이
    새로우면 그것만으로 발행해요. 아니면 발행하지 않아요 (같은 보류 길). 같은 날 다시 하는 실행은 국내 종가만 채워요 — 미국 마지막 확인 종가(pxc)는
    다시 돌 까닭이 아니고 (already_published.open_closes 의 미국 칸은 늘 0) 다음 새 미국 기준일 발행에서 채워져요 (#161 리뷰 S4).
+'지난 발행본' 은 사이트가 보여 주는 발행본 = data 브랜치의 data.json 이에요 (#161 리뷰 3차 B-M1 · already_published.read_published 와 같은 길 · 그
+브랜치가 아직 없으면 main). main 의 HEAD 와 다르면 (지난 발행의 'data 브랜치에 올리기' 가 실패했어요) '같은 날 · 더 낫지 않음' 으로 보류하지 않고
+발행해 data 브랜치를 고쳐요 (잃는 것이 있으면 그대로 보류).
 보류하면: 발행 두 단계 ('커밋 & 푸시' · 'data 브랜치에 올리기') 가 건너뛰어요 (if: steps.hold.outputs.hold != 'true') → main · data 브랜치 · 사이트
 그대로. 실행은 실패가 아니라 초록으로 끝나요. 감시에는 중립이에요 (watchdog.is_held_run). 관문 · 화면 검사는 보류해도 그대로 돌아요.
-비교할 수 없으면: 오늘 기록을 못 읽으면 보류하지 않아요 (크게 · 경고 알림). 지난 발행본을 못 읽으면 같은 날인지 몰라 바닥만 봐요 (크게 · 경고 알림).
-같은 날인데 더 나은지 알 수 없으면 (지난 발행본의 기록을 못 읽음 · 이 실행의 다시 쓰기 기록이 없음) 발행하지 않아요 — 그날 데이터는 이미 나가
-있어요 (크게 · 알림). 이 확인이 오류로 멈추면 보류하지 않아요 (크게 · 경고 알림) — 예전처럼 관문과 화면 검사가 발행을 정해요.
+비교할 수 없으면: 오늘 기록을 못 읽으면 보류하지 않아요 (크게 · 경고 알림 · 관문이 그 파일을 봐요). 오늘 확인 비율을 셀 수 없으면 바닥은 보지 않고
+같은 날 규칙은 그대로 봐요 (크게). bootstrap · 비교 커밋을 받지 못한 시험 실행은 바닥만 봐요 (크게).
+판단할 수 없는 같은 날 다시 하는 실행 (#161 리뷰 3차 B-S5 · kind stop): 이 확인이 오류로 멈췄거나 data 브랜치를 읽지 못했는데, 오늘 파일의 한국 기준일이
+지난 발행본 (못 읽었으면 main 의 HEAD) 과 같거나 같은지 모르면 — 발행하지 않고 (hold=true) 종료 코드 3 으로 끝나요. 워크플로의 단계가 그 코드를
+보고 실패로 끝나 (관문 · 화면 검사 · 발행이 모두 건너뛰어요) 빨간 실행이 되고 감시가 알려요 (중립이 아니에요). 그날의 첫 실행 (새 기준일) 은
+예전처럼 보류하지 않아요 (크게 · 경고 알림 · 관문과 화면 검사가 발행을 정해요).
 
-쓰는 법: python tools/publish_hold.py [--prev-ref REF] [--bootstrap] [--no-prev]  → GITHUB_OUTPUT 에 hold=true|false (마지막 줄)
+쓰는 법: python tools/publish_hold.py [--prev-ref REF] [--bootstrap] [--no-prev]  → GITHUB_OUTPUT 에 hold=true|false (마지막 줄) · 종료 코드 3 = stop
 """
 import argparse
 import collections
@@ -49,7 +55,7 @@ COVERAGE_FLOOR_PCT = 97
 FB_PARTS = ("mkt", "noDaum", "bad", "noYahoo", "diff")   # 확인 못 한 칸 (fetch_data.px_src_counts) — 코스피 · 코스닥 확인과 합치면 n
 TITLE = f"발행 판단 (2차 출처 날 확인 비율 바닥 {COVERAGE_FLOOR_PCT}% · 같은 날 다시 발행은 더 나을 때만)"
 
-Decision = collections.namedtuple("Decision", "hold loud why kind")   # kind: publish · floor · back · loss · same · unknown · error
+Decision = collections.namedtuple("Decision", "hold loud why kind")   # kind: publish · floor · back · loss · same · unknown · error · stop
 # 감시 (watchdog.is_held_run) 에 중립인 보류: 바닥 아래 · 날짜가 뒤로 감 · 잃은 종목 · 비교할 수 없음. '같은 날 · 더 낫지 않음' (관문 · 화면 검사를
 # 통과 · 한국 · 미국 기준일이 발행본과 같음) 은 건강한 실행으로 세요 (#161 리뷰 7: 앞선 빨간 실행의 경보가 닫혀요).
 NEUTRAL = ("floor", "back", "loss", "unknown", "quiet")   # quiet: 데이터를 모으지 않은 실행 (3시간 쉼 · 시험한 것이 없어 건강하다고 세지 않아요)
@@ -234,6 +240,14 @@ def same_day_decision(cur_mode, prev_mode, cur, prev):
     if cur_mode == PX_SRC_FB and prev_mode != PX_SRC_FB:
         return Decision(True, True, f"같은 기준일인데 지난 발행본이 2차 출처가 아니에요 (pxSrc.px {prev_mode!r}) — 2차 출처로 바꿔 발행하지 않아요", "loss")
     lost = lost_stocks(cur, prev)
+    us_new = (_day(cur.get("usPxDate")) or dt.date.min) > (_day(prev.get("usPxDate")) or dt.date.min)
+    us_gone = []
+    if us_new:
+        # #161 리뷰 3차 B-S3: 미국 기준일이 새로우면 미국 목록이 바뀌는 것은 정상이에요 (S&P 500 편입 · 편출 · 마지막 확인 종가가 5 미국 거래일을 넘어 잠시 뺌)
+        # — 미국 종목이 빠진 것으로 보류하지 않아요 (그러면 한국 휴장일 (설 · 추석) 에 미국 종가가 며칠 멈춰요 · 미국 종목 수는 관문의 줄이 봐요).
+        # 펀드 · 금 · 채권 행은 정해진 목록이라 그대로 세요 (빠지면 데이터 문제예요 · 한국 휴장일과 상관없어요).
+        us_gone = [x for x in lost["other"] if x.startswith("us ")]
+        lost["other"] = [x for x in lost["other"] if not x.startswith("us ")]
     n_lost = sum(len(v) for v in lost.values())
     try:
         n_cur, n_prev = kr_px_count(cur), kr_px_count(prev)
@@ -246,9 +260,10 @@ def same_day_decision(cur_mode, prev_mode, cur, prev):
                                     f"{len(lost['own']):,} · 미국 등 {len(lost['other']):,} · 미국 기준일 종가가 옛 날짜로 {len(lost['us']):,} · "
                                     f"같은 종가인데 d1 을 잃은 국내 {len(lost['d1']):,} ({ex}) → 발행하지 않아요 (그 날짜 종가 국내 {n_prev:,} → {n_cur:,})",
                         "loss")
-    us_new = (_day(cur.get("usPxDate")) or dt.date.min) > (_day(prev.get("usPxDate")) or dt.date.min)
     if us_new:
-        return Decision(False, False, f"같은 한국 기준일 · 미국 기준일 {prev.get('usPxDate')} → {cur.get('usPxDate')} · 잃은 종목 0 → 발행해요", "publish")
+        return Decision(False, bool(us_gone), f"같은 한국 기준일 · 미국 기준일 {prev.get('usPxDate')} → {cur.get('usPxDate')} · 잃은 종목 0"
+                        + (f" (미국 목록에서 빠진 {len(us_gone):,}종목은 새 미국 기준일이라 세지 않아요: {', '.join(t.split(' ', 1)[1] for t in us_gone[:12])})"
+                           if us_gone else "") + " → 발행해요", "publish")
     if n_cur > n_prev:
         return Decision(False, False, f"같은 기준일 · 그 날짜 종가 국내 종목 {n_prev:,} → {n_cur:,} (+{n_cur - n_prev:,}) · 잃은 종목 0 → 더 나아서 "
                                       "같은 날 데이터를 고쳐 발행해요", "publish")
@@ -279,9 +294,30 @@ def read_prev(ref="HEAD", run=subprocess.run):
         return None, f"git {ref}:data.json 을 읽지 못했어요 ({type(e).__name__})"
 
 
+def read_live(run=None):
+    """사이트가 보여 주는 발행본 = data 브랜치의 data.json (#161 리뷰 3차 B-M1) — already_published.read_published 와 같은 길 (그 브랜치가 아직 없으면
+    main · 못 읽으면 크게 남기고 None). 반환: (dict 또는 None, 설명)."""
+    import already_published as A
+    d = A.read_published(run) if run else A.read_published()
+    if isinstance(d, dict):
+        return d, "data 브랜치의 data.json (사이트가 보여 주는 발행본)"
+    return None, "data 브랜치의 data.json 을 받지 못했어요"
+
+
+def _kr_px(data):
+    """로그용 그 날짜 종가 국내 종목 수 — 셀 수 없으면 '?' (#161 리뷰 3차 nit: 로그 줄이 판단을 멈추지 않게)."""
+    try:
+        return f"{kr_px_count(data):,}"
+    except Exception:
+        return "?"
+
+
 # ── 실행 ────────────────────────────────────────────────────
-def evaluate(cur, cur_note, prev, prev_note, now):
-    """오늘 data.json · 직전 발행본 (dict 또는 None) → (Decision, 로그 줄들). 날짜가 뒤로 가는지 → 바닥 → 같은 날 다시 발행 순서로 한 번 정해요."""
+def evaluate(cur, cur_note, prev, prev_note, now, head=None, live_failed=False):
+    """오늘 data.json · 지난 발행본 (사이트의 발행본 = data 브랜치 · dict 또는 None) → (Decision, 로그 줄들). 날짜가 뒤로 가는지 → 바닥 → 같은 날 다시
+    발행 순서로 한 번 정해요. head: main 의 HEAD data.json (live_failed 일 때 같은 날인지 · 지난 발행이 data 브랜치에 다 올랐는지 볼 때 · 없으면 None).
+    live_failed (#161 리뷰 3차 B-M1): data 브랜치를 읽지 못했어요 — 오늘 파일의 한국 기준일이 main HEAD 와 같거나 HEAD 도 모르면 판단할 수 없는 같은 날
+    다시 하는 실행이라 stop (발행하지 않고 빨간 실행), 아니면 (새 날) 바닥만 봐요."""
     lines = [f"· {TITLE} — {now.astimezone(KST):%Y-%m-%d %H:%M} KST"]
     if cur is None:
         lines.append(f"!! 오늘 data.json: {cur_note}")
@@ -289,30 +325,53 @@ def evaluate(cur, cur_note, prev, prev_note, now):
     mode = day_mode(cur)
     cn, why_c = kk_counts(cur)
     lines.append(f"{'!! ' if mode == PX_SRC_FB and cn is None else '· '}오늘: pxSrc.px {mode!r} · {why_c} · 한국 {cur.get('pxDate')} · 미국 {cur.get('usPxDate')}")
+    if live_failed and prev is None:
+        hp = head.get("pxDate") if isinstance(head, dict) else None
+        lines.append(f"!! 지난 발행본: {prev_note} · main HEAD 한국 기준일 {hp!r}")
+        if hp is None or hp == cur.get("pxDate"):
+            return Decision(True, True, f"사이트의 발행본 (data 브랜치) 을 읽지 못했는데 오늘 파일 (한국 {cur.get('pxDate')}) 이 같은 날 다시 하는 실행"
+                                        f"{'일 수 있어요 (main HEAD 도 읽지 못함)' if hp is None else '이에요 (main HEAD 와 같은 한국 기준일)'} → 판단할 수 없어 발행하지 "
+                                        "않고 이 실행을 실패로 끝내요 (감시가 알려요 · 다음 실행이 다시 해요)", "stop"), lines
     if isinstance(prev, dict):
         back = dates_back(cur, prev)
         if back:
             lines.append(f"!! 직전 발행본: {prev_note} · 한국 {prev.get('pxDate')} · 미국 {prev.get('usPxDate')}")
             return Decision(True, True, f"날짜가 뒤로 가요 ({back}) → 이 실행은 발행하지 않아요 (사이트는 더 새 발행본 그대로)", "back"), lines
     d = floor_decision(mode, cn and cn["total"], cn and cn["listing"])
-    if d.hold or d.kind == "unknown":
+    if d.hold:
         return d, lines
+    floor_unknown = d.kind == "unknown"        # #161 리뷰 3차 B-S4: 바닥을 볼 수 없어도 같은 날 규칙 (잃는 것 · 더 나음) 은 그대로 봐요
     if prev is None:
         lines.append(f"{'!! ' if mode == PX_SRC_FB else '· '}직전 발행본: {prev_note} — 같은 날 다시 도는 실행인지 몰라 바닥만 봐요")
-        return (Decision(False, True, d.why + " (직전 발행본을 읽지 못해 같은 날인지 몰라요 · 바닥만 봤어요)", "unknown") if mode == PX_SRC_FB else d), lines
+        return (Decision(False, True, d.why + " (직전 발행본을 읽지 못해 같은 날인지 몰라요 · 바닥만 봤어요)", "unknown")
+                if mode == PX_SRC_FB and not floor_unknown else d), lines
     pmode = day_mode(prev)
     if cur.get("pxDate") != prev.get("pxDate"):
         lines.append(f"· 직전 발행본: {prev_note} · 한국 {prev.get('pxDate')} · 미국 {prev.get('usPxDate')} → 새 날 (같은 날 다시 발행 아님)")
         return d, lines
     lines.append(f"· 직전 발행본 (같은 한국 기준일): {prev_note} · pxSrc.px {pmode!r} · 미국 {prev.get('usPxDate')} · 그 날짜 종가 국내 "
-                 f"{kr_px_count(prev):,} → 이 실행 {kr_px_count(cur):,}")
-    return same_day_decision(mode, pmode, cur, prev), lines
+                 f"{_kr_px(prev)} → 이 실행 {_kr_px(cur)}")
+    sd = same_day_decision(mode, pmode, cur, prev)
+    if sd.kind == "same" and isinstance(head, dict) and head != prev:
+        # #161 리뷰 3차 B-M1: main 의 HEAD 가 사이트의 발행본과 달라요 — 지난 발행의 'data 브랜치에 올리기' 가 실패했어요. 보류하면 사이트가 main 보다
+        # 뒤인 채로 '건강한' 실행이 경보를 닫아요. 잃는 것이 없으니 발행해 data 브랜치를 고쳐요.
+        lines.append(f"!! main HEAD 의 data.json (한국 {head.get('pxDate')} · 발행 {head.get('publishedAt')}) 이 사이트의 발행본 (data 브랜치 · 발행 "
+                     f"{prev.get('publishedAt')}) 과 달라요 — 지난 발행이 data 브랜치에 다 오르지 못했어요")
+        sd = Decision(False, True, sd.why.replace(" — 더 많지 않아 발행하지 않아요 (지난 발행본 그대로)", "")
+                      + " — 더 많지 않지만 main 이 사이트의 발행본과 달라 (지난 data 브랜치 올리기 실패) 발행해서 data 브랜치를 고쳐요", "publish")
+    if floor_unknown and not sd.hold:
+        return Decision(False, True, d.why + " · 같은 날 규칙: " + sd.why, "unknown"), lines
+    return sd, lines
 
 
 def summary_md(d, lines, dry, sample=False):
     head = {"floor": "보류 — 확인 비율이 바닥 아래라 발행하지 않아요", "same": "발행 안 함 — 같은 날 지난 발행본보다 낫지 않아요",
             "back": "보류 — 날짜가 지난 발행본보다 앞이에요", "loss": "보류 — 지난 발행본의 종목을 잃어요",
-            "quiet": "쉼 — 데이터를 모으지 않은 실행 (발행본 그대로)"}.get(d.kind, "발행 (보류 아님)")
+            "quiet": "쉼 — 데이터를 모으지 않은 실행 (발행본 그대로)",
+            "stop": "멈춤 — 같은 날 다시 하는 실행인데 판단할 수 없어 발행하지 않고 실패로 끝내요"}.get(d.kind)
+    if head is None:                          # #161 리뷰 3차 nit: 보류한 '비교할 수 없음' 을 '발행' 으로 적지 않게
+        head = ("보류 — 비교할 수 없어 발행하지 않아요" if d.hold else
+                "발행 (보류 아님 · 판단을 다 하지 못했어요 — 아래 결정)" if d.kind in ("unknown", "error") else "발행 (보류 아님)")
     out = [f"### 뱁새 발행 판단 — {head}", ""]
     out += [f"- {ln.removeprefix('· ').removeprefix('!! ')}" for ln in lines[1:]]
     out.append(f"- **결정:** {d.why}")
@@ -333,13 +392,23 @@ ANNOTATE = {"floor": ("warning", "발행 보류 (2차 출처 확인 비율 바�
             "quiet": ("notice", "쉬는 실행 (같은 기준일 · 3시간 안 · 데이터 수집 없음)"),
             "same": ("notice", "같은 날 다시 발행 안 함 (더 낫지 않음)"),
             "unknown": ("warning", "발행 판단 확인 못 함 (보류 없이 판단)"),
+            "stop": ("error", "발행 판단 못 함 (같은 날 다시 하는 실행 · 발행하지 않고 실패로 끝내요)"),
             "error": ("warning", "발행 판단 확인 못 함 (보류 없이 판단)")}
 
 
-def main(argv=None, now_fn=None, cur_reader=read_cur, prev_reader=read_prev):
+def _same_day_or_unknown(cur, prev, head):
+    """오류로 멈춘 판단 (#161 리뷰 3차 B-S5): 오늘 파일의 한국 기준일이 지난 발행본 (없으면 main HEAD) 과 같거나, 같은지 모르면 True."""
+    cp = cur.get("pxDate") if isinstance(cur, dict) else None
+    ref = prev if isinstance(prev, dict) else head if isinstance(head, dict) else None
+    pp = ref.get("pxDate") if isinstance(ref, dict) else None
+    return cp is None or pp is None or cp == pp
+
+
+def decide(argv=None, now_fn=None, cur_reader=read_cur, prev_reader=read_prev, live_reader=read_live):
+    """한 번의 판단 (main 이 부르고 결과를 출력 · 요약 · GITHUB_OUTPUT 에 남겨요). 반환: Decision."""
     ap = argparse.ArgumentParser(description=f"2차 출처 날 발행 판단 (확인 비율 바닥 {COVERAGE_FLOOR_PCT}% · 같은 날 다시 발행은 더 나을 때만)")
     ap.add_argument("--data", default="data.json", help="오늘 만든 data.json (기본 ./data.json)")
-    ap.add_argument("--prev-ref", default="HEAD", help="직전 발행본의 git ref (관문과 같은 기본 HEAD · 시험용으로 바꿔요)")
+    ap.add_argument("--prev-ref", default=None, help="지난 발행본의 git ref (시험 실행의 비교 커밋 · 주지 않으면 사이트의 발행본 = data 브랜치)")
     ap.add_argument("--bootstrap", action="store_true", help="bootstrap 실행: 직전 발행본과 비교하지 않아요 (바닥만)")
     ap.add_argument("--no-prev", action="store_true", help="직전 발행본을 받지 못함 (워크플로가 넘겨요): 비교 없이 (바닥만)")
     ap.add_argument("--now", default=None, help="로그의 시각 바꾸기 (ISO · 시간대 포함) — 시험용 (결정은 시각과 상관없어요)")
@@ -347,17 +416,23 @@ def main(argv=None, now_fn=None, cur_reader=read_cur, prev_reader=read_prev):
     a = ap.parse_args(argv)
     dry = (os.environ.get("DRY_RUN") or "").strip().lower() == "true"
     sample = (os.environ.get("SAMPLE_KR") or "0").strip() not in ("", "0")
+    cur = prev = head = None
     try:
         now = dt.datetime.fromisoformat(a.now) if a.now else (now_fn() if now_fn else dt.datetime.now(KST))
         if now.tzinfo is None:
             raise ValueError("시각에 시간대가 없어요 (러너 시계는 UTC 예요)")
         cur, cur_note = cur_reader(a.data)
+        live_failed = False
         if a.bootstrap:
             prev, prev_note = None, "bootstrap 실행이라 직전 발행본과 비교하지 않아요"
         elif a.no_prev:
             prev, prev_note = None, "직전 발행본(비교 커밋)을 받지 못했어요"
-        else:
+        elif a.prev_ref:
             prev, prev_note = prev_reader(a.prev_ref)
+        else:                                 # #161 리뷰 3차 B-M1: 사이트의 발행본 (data 브랜치) 과 비교 · main HEAD 는 같은 날인지 · 다 올랐는지 볼 때만
+            prev, prev_note = live_reader()
+            head, _ = prev_reader("HEAD")
+            live_failed = prev is None
         quiet = None
         if a.quiet and os.path.exists(a.quiet):
             with open(a.quiet, encoding="utf-8") as f:
@@ -365,18 +440,34 @@ def main(argv=None, now_fn=None, cur_reader=read_cur, prev_reader=read_prev):
         if quiet:                             # 데이터를 모으지 않은 실행: 발행본 그대로라 발행할 것이 없고, 시험한 것도 없어 감시에 중립
             d, lines = Decision(True, False, f"{quiet}", "quiet"), [f"· {TITLE} — {now.astimezone(KST):%Y-%m-%d %H:%M} KST"]
         else:
-            d, lines = evaluate(cur, cur_note, prev, prev_note, now)
+            d, lines = evaluate(cur, cur_note, prev, prev_note, now, head=head, live_failed=live_failed)
     except Exception as e:
-        d = Decision(False, True, f"발행 판단이 오류로 멈췄어요 ({type(e).__name__}: {str(e)[:200]}) → 보류하지 않아요 "
-                                  "(관문 · 화면 검사가 예전처럼 발행을 정해요)", "error")
+        err = f"{type(e).__name__}: {str(e)[:200]}"
         lines = [f"· {TITLE}"]
+        try:
+            if cur is None:
+                cur, _ = cur_reader(a.data)
+            if prev is None and head is None and not (a.bootstrap or a.no_prev):
+                head, _ = prev_reader(a.prev_ref or "HEAD")
+            same = _same_day_or_unknown(cur, prev, head)
+        except Exception:
+            same = True
+        if same and not (a.bootstrap or a.no_prev):
+            # #161 리뷰 3차 B-S5: 같은 날 다시 하는 실행 (또는 같은지 모름) 의 판단이 멈추면 발행하지 않고 빨간 실행으로 (감시가 알려요 · 중립 아님)
+            d = Decision(True, True, f"발행 판단이 오류로 멈췄어요 ({err}) — 같은 날 다시 하는 실행이거나 같은 날인지 몰라요 → 발행하지 않고 이 실행을 "
+                                     "실패로 끝내요 (감시가 알려요)", "stop")
+        else:
+            d = Decision(False, True, f"발행 판단이 오류로 멈췄어요 ({err}) → 보류하지 않아요 (그날의 첫 실행 · 관문 · 화면 검사가 예전처럼 "
+                                      "발행을 정해요)", "error")
     for ln in lines:
         print(ln, flush=True)
-    tag = {"floor": "!! [보류] ", "same": "!! [같은 날 · 발행 안 함] ", "quiet": "!! [쉼] "}.get(d.kind, "!! " if d.loud else "· ")
+    tag = {"floor": "!! [보류] ", "same": "!! [같은 날 · 발행 안 함] ", "quiet": "!! [쉼] ", "stop": "!! [멈춤] "}.get(d.kind, "!! " if d.loud else "· ")
     print(tag + d.why + (" (시험 실행: 어차피 발행하지 않아요)" if dry else "") + (" (표본 실행: 이 결정은 뜻이 없어요)" if sample else ""), flush=True)
     # 알림 (실행 화면 · 09:13 점검이 읽어요): 바닥 보류 · 판단을 못 함 · 오류 → 경고, 같은 날 발행 안 함 → 알림 (2차 출처 날에는 흔해요)
     if os.environ.get("GITHUB_ACTIONS") == "true" and (d.hold or d.loud):
         kind, title = ANNOTATE.get(d.kind, ("warning", "발행 판단 확인 못 함 (보류 없이 판단)"))
+        if d.kind == "unknown" and d.hold:
+            title = "발행 판단 확인 못 함 (발행하지 않음)"
         print(f"::{kind} title={title}::{_gh_escape(d.why)}", flush=True)
     summ = os.environ.get("GITHUB_STEP_SUMMARY")
     if summ:
@@ -389,9 +480,16 @@ def main(argv=None, now_fn=None, cur_reader=read_cur, prev_reader=read_prev):
     if out:                                   # hold 를 마지막에 써요 — 발행 두 단계가 이 값을 봐요 (neutral: 감시에 중립인 보류 · 아래 표시 단계)
         with open(out, "a", encoding="utf-8") as f:
             f.write(f"kind={d.kind}\nneutral={'true' if d.hold and d.kind in NEUTRAL else 'false'}\nhold={'true' if d.hold else 'false'}\n")
-    return d.hold
+    return d
+
+
+def main(argv=None, now_fn=None, cur_reader=read_cur, prev_reader=read_prev, live_reader=read_live):
+    """decide 의 hold (참 · 거짓) — 시험이 부르는 모양."""
+    return decide(argv, now_fn, cur_reader, prev_reader, live_reader).hold
+
+
+STOP_EXIT = 3     # 판단할 수 없는 같은 날 다시 하는 실행 (kind stop) — 워크플로 단계가 이 코드를 보고 실패로 끝내요 (hold=true 는 이미 썼어요)
 
 
 if __name__ == "__main__":
-    main()
-    sys.exit(0)
+    sys.exit(STOP_EXIT if decide().kind == "stop" else 0)

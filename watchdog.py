@@ -349,7 +349,7 @@ def check_runs(rep, net, wf, label, skip_noop=False):
             held.append(when)
             continue
         rep.add(f"{label} 마지막 실행", c == "success", f"{c} · {when} · {r.get('event')} · {r.get('html_url')}"
-                + (f" · 그 뒤 발행하지 않은 실행 {len(held)}번 ({', '.join(held[:3])} · 바닥 아래 · 같은 날 더 낫지 않음 · 셈하지 않아요)" if held else ""))
+                + (f" · 그 뒤 발행하지 않은 실행 {len(held)}번 ({', '.join(held[:3])} · 바닥 아래 · 날짜가 뒤로 감 · 종목을 잃음 · 비교할 수 없음 · 쉼 · 셈하지 않아요)" if held else ""))
         return r
     if skip_noop:
         rep.skip(f"{label} 마지막 실행", "최근 30번 모두 건너뛴 배포예요 (Pages 가 아직 브랜치에서 배포되는 동안은 정상)")
