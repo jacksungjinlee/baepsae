@@ -541,7 +541,11 @@ def _us_run(tmp_path, monkeypatch, prev_usd="2026-11-18", blank_last=("MSFT",), 
         extra(series)
     prev = {"pxDate": prev_usd, "usPxDate": prev_usd,
             "stocks": [{"t": t, "nk": t, "cls": "us", "ccy": "USD", "price": 55.0, "d1": 0.2, "vol": 20.0, "beta": 1.0, "lo": 40.0, "hi": 60.0}
-                       for t in blank_last]}
+                       for t in blank_last]
+                      # #169 (Jack, 11-22): 지난 발행본에 없는 티커는 기준일 종가가 확인될 때까지 들어오지 않아요 — 거래 정지 종목은 실제로는
+                      # 지난 발행본에 자기 날짜(pxd)로 이미 있어요 (#165 의 halted 길: 예전처럼 야후의 마지막 봉 날짜)
+                      + [{"t": "HALT", "nk": "HALT", "cls": "us", "ccy": "USD", "price": 50.0, "pxd": "2026-11-17", "vol": 20.0, "beta": 1.0,
+                          "lo": 40.0, "hi": 60.0}]}
     monkeypatch.setitem(sys.modules, "yfinance", _fake_yf(series, divs, splits))
     monkeypatch.setattr(F, "us_tickers", lambda names: list(TICKERS))
     monkeypatch.setattr(F, "us_last_complete_day", lambda now=None: today_us)
