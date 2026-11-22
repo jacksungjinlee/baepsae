@@ -2481,6 +2481,52 @@ def check_us_own_close(rep, data, macro, pdata):
     rep.add(name, not hard and not over, " · ".join(parts) or "?", rule, warn=warn and not hard and not over)
 
 
+US_NEW_WAIT_ROW = "미국 새 종목 확인 종가 기다림 (usSrc.newWait · 경고만)"
+
+
+def us_new_wait_list(data):
+    """data.json usSrc.newWait → (티커 목록 또는 None (칸 없음), 모양이 맞는지). 맞는 모양 = 빈 글이 아닌 글자의 목록. (순수 함수)"""
+    src = (data or {}).get("usSrc") if isinstance(data, dict) else None
+    if not isinstance(src, dict) or "newWait" not in src:
+        return None, True
+    nw = src["newWait"]
+    ok = isinstance(nw, list) and all(isinstance(t, str) and t.strip() for t in nw)
+    return (nw if ok else None), ok
+
+
+def check_us_new_wait(rep, data, pdata):
+    """2026-11-22 (Jack, verbatim: "2. No relaxation. Instead, a stock newly added to the S&P (or NASDAQ) list joins our list only once it
+    has a confirmed close; until then it isn't added. Nobody can hold it in the app before it joins, so nothing is lost, and the check
+    stays as it is."): 파이프라인(fetch_data.us_new_wait_step)은 지난 발행본에 없던 미국 티커가 미국 기준일 종가가 없으면 넣지 않고 data.json
+    usSrc.newWait 에 적어요. 이 줄은 **경고만** 해요 — 실패하지 않아요 (발행 · 사이트 점검 모두): 기다리는 티커가 있으면 이름을 적고, 그중 지난
+    발행본도 기다리던 티커(두 발행본 넘게 이어서 기다림 — 출처 목록에 남은 죽은 티커일 수 있어요 · 발행 모드에서만 지난 발행본을 봐요)를 따로
+    적어요. 모양이 틀린 기록(글자 목록이 아님) · 기다린다면서 발행하는 티커도 경고. 칸이 없거나 비면 통과. (리뷰 2026-11-22: 예전에는 '미국 d1 채움'
+    줄이 그런 티커를 이름으로 적었어요 — 기다리는 동안 아무도 모르게 남지 않게)"""
+    rule = "새로 들어온 미국 종목은 미국 기준일 종가가 확인되면 들어와요 (기다리는 종목 · 이어서 기다리는 종목 · 모양이 틀린 기록은 경고 · 실패 없음)"
+    nw, ok = us_new_wait_list(data)
+    if not ok:
+        raw = ((data or {}).get("usSrc") or {}).get("newWait")
+        rep.add(US_NEW_WAIT_ROW, True, f"usSrc.newWait 모양이 잘못됨 (빈 글이 아닌 글자 목록이어야 해요: {str(raw)[:80]})", rule, warn=True)
+        return
+    if not nw:
+        rep.add(US_NEW_WAIT_ROW, True, "없음", rule)
+        return
+    pnw, _pok = us_new_wait_list(pdata) if isinstance(pdata, dict) else (None, True)
+    pset = set(pnw or [])
+    again = [t for t in nw if t in pset]
+    listed = {s.get("t") for s in us_stocks(data)}
+    inside = [t for t in nw if t in listed]
+    parts = [f"{len(nw)}종목: " + ", ".join(nw[:US_OWN_SHOW]) + (f" 외 {len(nw) - US_OWN_SHOW}종목" if len(nw) > US_OWN_SHOW else "")]
+    if again:
+        parts.append(f"지난 발행본부터 이어서 기다림 {len(again)}: " + ", ".join(again[:US_OWN_SHOW])
+                     + (f" 외 {len(again) - US_OWN_SHOW}종목" if len(again) > US_OWN_SHOW else "") + " (출처 목록의 티커가 살아 있는지 확인)")
+    if inside:
+        parts.append(f"그런데 발행하는 종목: {', '.join(inside[:US_OWN_SHOW])}")
+    rep.add(US_NEW_WAIT_ROW, True, " · ".join(parts), rule, warn=True)
+    rep.detail("미국 기준일 종가를 기다리는 새 미국 종목 (usSrc.newWait · 목록에 넣지 않았어요)",
+               [t + (" (지난 발행본부터 이어서)" if t in again else "") for t in nw])
+
+
 def coverage(arr, key):
     if not arr:
         return 0.0
@@ -2792,6 +2838,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v191c(rep, cur, us, mode, today)
     check_kr_own_close(rep, data, macro, pdata)   # 2026-11-19 (Jack): 국내 종목의 마지막 확인 종가 (pxd · 미국 pxd 줄과 같은 실패 + 경고 줄)
     check_us_own_close(rep, data, macro, pdata)   # 2026-11-20 (Jack): 미국 종목의 마지막 확인 종가 (pxc · 날짜가 깨졌거나 d1 이 옆에 있으면 실패 · 나머지는 경고)
+    check_us_new_wait(rep, data, pdata)   # 2026-11-22 (Jack): 미국 기준일 종가를 기다리는 새 미국 종목 (usSrc.newWait · 경고만 · 실패 없음)
     check_v191f(rep, data, corp, kr, by, comps, pdata)
     check_eps_line_left(rep, corp, comps)   # 2026-11-14 (Jack Q3 · 리뷰 S4): 다시 읽은 뒤에도 날짜가 지난 '고치는 중' 줄이 남을 회사 (경고)
     check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=(prev or {}).get("macro") if rel else None)
@@ -3775,8 +3822,10 @@ C1W_COVER_MIN = 95.0        # % — 그 시장 기준일 종가 종목 중 c1w �
 #                             주식 수 변화로 국내 수십 종목 = 1 ~ 2% · 미국은 새 종목뿐). 파이프라인도 이 값 아래면 크게 남겨요
 C1W_FROM_MAX_DAYS = 12      # wkFrom · usWkFrom 은 기준일보다 이 날 수 안 (휴장일 표 2026 ~ 2027 의 가장 긴 사이 9일: 추석 2026-09-23 → 10-02 ·
 #                             연말 2026-12-30 → 2027-01-08 — 갑자기 정해지는 임시공휴일 몫으로 3일 더). 파이프라인도 넘으면 그 주 날짜를 쓰지 않아요
-C1W_RATIO_BAND = (0.5, 2.0) # price ÷ c1w 가 이 밖이면 (한 주에 반 넘게 내림 · 두 배 넘게 오름) 이름과 함께 경고 — 진짜 움직임일 수 있어요 (확인용).
-#                             한국 주식은 가격 제한폭(코스피 · 코스닥 30% · 코넥스 15%)을 그 주 거래일 수만큼 곱한 범위 밖이면 '제한폭 밖'으로 따로 세요
+C1W_RATIO_BAND = (0.5, 2.0) # price ÷ c1w 가 이 밖이면 (한 주에 반 넘게 내림 · 두 배 넘게 오름) 이름을 적어요 — 진짜 움직임일 수 있어요 (확인용).
+#                             미국 주식 · 채권 · ETF · 금은 경고. 한국 주식은 가격 제한폭(코스피 · 코스닥 30% · 코넥스 15%)을 그 주 거래일 수만큼 곱한
+#                             범위 안이면 이름만 (경고 아님 — 테마주의 진짜 움직임이 한 달에 몇 번 있어요 · 알림 소음), 그 범위 밖이면 '제한폭 밖'으로 경고
+#                             (제한폭이 없는 정리매매 날 말고는 보통 파이프라인이 놓친 기준가 재설정이에요)
 C1W_SHOW = 10               # 값 칸에 적는 종목 수 (나머지는 요약 목록에)
 C1W_GROUPS = ("kr", "us", "fund")
 C1W_GROUP_KO = {"kr": "국내", "us": "미국", "fund": "채권·ETF·금"}
@@ -3809,11 +3858,22 @@ def c1w_week_expect(px, closed, start=None, end=None):
     return None
 
 
+def _c1w_idx_days(macro, name):
+    """macro.json idxHist[name] 의 거래일들 (YYYY-MM-DD · 정렬) — 어느 칸이든 모양이 틀리면 None (이 줄 전체가 멈추지 않게). (순수 함수)"""
+    ih = macro.get("idxHist") if isinstance(macro, dict) else None
+    one = ih.get(name) if isinstance(ih, dict) else None
+    rows = one.get("rows") if isinstance(one, dict) else None
+    if not isinstance(rows, list):
+        return None
+    ds = sorted({str(r[0]) for r in rows if isinstance(r, (list, tuple)) and r and is_day(r[0])})
+    return ds or None
+
+
 def _check_v196e(rep, data, macro):
     th = (f"경고만 (발행을 막지 않아요) — wkFrom · usWkFrom: YYYY-MM-DD · 기준일(pxDate · usPxDate)이 든 주의 월요일 앞 · 기준일과 {C1W_FROM_MAX_DAYS}일 안 · "
           "휴장일 표 · 지수 일봉(idxHist)으로 본 그 주 앞 마지막 거래일과 같음 · c1w: 빈 칸 또는 0 보다 큰 유한한 숫자 · 자기 가격 날짜(pxd · pxc · est) "
           f"종목은 빈 칸 · 기준일 종가 종목 중 채움 ≥ {C1W_COVER_MIN:g}% (국내 · 미국) · 채권·ETF·금 모두 · price ÷ c1w 가 "
-          f"{C1W_RATIO_BAND[0]:g} ~ {C1W_RATIO_BAND[1]:g} 밖이면 이름 (한국은 제한폭 밖도 따로)")
+          f"{C1W_RATIO_BAND[0]:g} ~ {C1W_RATIO_BAND[1]:g} 밖이면 이름 (미국 · 채권·ETF·금은 경고 · 한국은 그 주 거래일만큼 곱한 가격 제한폭 밖일 때만 경고)")
     stocks = [s for s in data.get("stocks") or [] if isinstance(s, dict)] if isinstance(data.get("stocks"), list) else []
     n_c1w = sum(1 for s in stocks if s.get("c1w") is not None)
     if "wkFrom" not in data and "usWkFrom" not in data and not n_c1w:
@@ -3826,7 +3886,10 @@ def _check_v196e(rep, data, macro):
         hol, end = None, None
         warns.append(f"휴장일 표를 읽지 못해 날짜를 표와 맞춰 보지 않았어요 ({type(e).__name__})")
     dates = {}
-    for g, key, pkey, mk, days in (("kr", "wkFrom", "pxDate", "KR", kr_days_of(macro)), ("us", "usWkFrom", "usPxDate", "US", us_days_of(macro))):
+    kdays, udays = _c1w_idx_days(macro, "KOSPI"), _c1w_idx_days(macro, "SP500")
+    notes = [f"{n} 없어 지수 일봉 확인{' · 한국 제한폭 확인' if n == 'idxHist KOSPI' else ''} 건너뜀" for n, d in (("idxHist KOSPI", kdays), ("idxHist SP500", udays))
+             if d is None]
+    for g, key, pkey, mk, days in (("kr", "wkFrom", "pxDate", "KR", kdays), ("us", "usWkFrom", "usPxDate", "US", udays)):
         dates[g] = None
         raw = data.get(key)
         if key not in data:
@@ -3858,13 +3921,13 @@ def _check_v196e(rep, data, macro):
         before = [d for d in (days or []) if d < mon.isoformat()]
         if before and before[-1] != wk.isoformat():
             warns.append(f"{key} {wk} ≠ 지수 일봉(idxHist {'KOSPI' if g == 'kr' else 'SP500'})으로 본 {before[-1]}")
-    # 한국 주식의 제한폭 범위: 그 주 거래일 수 (wkFrom < 날 ≤ pxDate · 지수 일봉) — 모르면 이 범위는 보지 않아요
-    kdays, px_kr = kr_days_of(macro), _iso_day(data.get("pxDate"))
+    # 한국 주식의 제한폭 범위: 그 주 거래일 수 (wkFrom < 날 ≤ pxDate · 지수 일봉) — 모르면 이 범위는 보지 않아요 (값 칸에 적어요)
+    px_kr = _iso_day(data.get("pxDate"))
     n_kr = (sum(1 for d in kdays if dates["kr"].isoformat() < d <= px_kr.isoformat())
             if kdays and dates["kr"] is not None and px_kr is not None else 0)
-    knx = set(knx_published(data))
+    knx = {s.get("t") for s in stocks if c1w_group(s) == "kr" and _KNX_TAIL.search(str(s.get("dk") or ""))}
     cnt = {g: [0, 0] for g in C1W_GROUPS}          # [c1w 있음, 기준일 종가 종목]
-    bad, own, nodate, odd, far, lim = [], [], [], [], [], []
+    bad, own, nodate, odd, far, lim, kr_far = [], [], [], [], [], [], []
     for s in stocks:
         g = c1w_group(s)
         t, nk = s.get("t"), s.get("nk")
@@ -3893,12 +3956,18 @@ def _check_v196e(rep, data, macro):
         if p is None or p <= 0:
             continue
         r = p / v
-        if not (C1W_RATIO_BAND[0] <= r <= C1W_RATIO_BAND[1]):
-            far.append(f"{nm} {(r - 1) * 100:+.0f}%")
+        if not math.isfinite(r):
+            bad.append(f"{nm} {_short(v0)} (price ÷ c1w 가 무한대)")
+            cnt[g][0] -= 1
+            continue
+        txt = f"{nm} {(r - 1) * 100:+.0f}%"
         if g == "kr" and n_kr:
             k = (KONEX_DAY_LIMIT if s.get("t") in knx else KR_DAY_LIMIT) / 100.0
             if r < (1 - k) ** n_kr * (1 - 1e-9) or r > (1 + k) ** n_kr * (1 + 1e-9):
-                lim.append(f"{nm} {(r - 1) * 100:+.0f}%")
+                lim.append(txt)
+                continue
+        if not (C1W_RATIO_BAND[0] <= r <= C1W_RATIO_BAND[1]):
+            (kr_far if g == "kr" else far).append(txt)
     parts = []
     for g, key in (("kr", "wkFrom"), ("us", "usWkFrom")):
         k, n = cnt[g]
@@ -3912,12 +3981,18 @@ def _check_v196e(rep, data, macro):
     for title, items, what in (("c1w 가 숫자가 아니거나 0 이하", bad, "숫자가 아님"), ("자기 가격 날짜 종목에 c1w", own, "자기 가격 날짜 종목에 있음"),
                                ("그 시장 날짜(wkFrom · usWkFrom) 없이 c1w", nodate, "그 시장 날짜 없이 있음"),
                                ("시장을 모르는 행에 c1w", odd, "시장을 모르는 행에 있음"),
-                               (f"price ÷ c1w 가 {C1W_RATIO_BAND[0]:g} ~ {C1W_RATIO_BAND[1]:g} 밖 (확인)", far, f"{C1W_RATIO_BAND[0]:g} ~ {C1W_RATIO_BAND[1]:g} 밖"),
+                               (f"미국 · 채권·ETF·금 price ÷ c1w 가 {C1W_RATIO_BAND[0]:g} ~ {C1W_RATIO_BAND[1]:g} 밖 (확인)", far,
+                                f"{C1W_RATIO_BAND[0]:g} ~ {C1W_RATIO_BAND[1]:g} 밖"),
                                (f"한국 주식 price ÷ c1w 가 가격 제한폭 {n_kr}거래일 밖", lim, "제한폭 밖")):
         if items:
             rep.detail(title, items[:50])
             warns.append(f"{what} {len(items):,} ({', '.join(items[:C1W_SHOW])}{' …' if len(items) > C1W_SHOW else ''})")
-    rep.add(C1W_ROW, True, (" · ".join(parts) + (" · " + " · ".join(warns) if warns else ""))[:600], th, warn=bool(warns))
+    info = list(notes)
+    if kr_far:                                # 한국 주식 · 제한폭 안 (또는 제한폭을 모르는 날): 이름만 (경고 아님)
+        rep.detail(f"한국 주식 price ÷ c1w 가 {C1W_RATIO_BAND[0]:g} ~ {C1W_RATIO_BAND[1]:g} 밖 (제한폭 안 · 확인용)", kr_far[:50])
+        info.append(f"한국 {C1W_RATIO_BAND[0]:g} ~ {C1W_RATIO_BAND[1]:g} 밖 {len(kr_far):,} (경고 아님 · {', '.join(kr_far[:C1W_SHOW])}"
+                    f"{' …' if len(kr_far) > C1W_SHOW else ''})")
+    rep.add(C1W_ROW, True, (" · ".join(parts + warns + info))[:600], th, warn=bool(warns))
 
 
 def check_v196e(rep, data, macro):
