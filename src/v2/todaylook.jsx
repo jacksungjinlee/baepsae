@@ -28,7 +28,7 @@ import { subjectParticle } from "./track.js";
 import { withSeen } from "./store.js";
 import { watchHits } from "./watch.js";
 import { WatchHitRows } from "./watch.jsx";
-import { lookModel, lookSay } from "./look.js";
+import { lookModel, lookSay, INS_TITLE } from "./look.js";
 import { dartFilingUrl } from "./routes.js";
 
 const L = () => C.look;
@@ -49,7 +49,6 @@ export function issueText(c) {
   if (c.body === "cb" || c.body === "bw") return fill(c.body === "cb" ? L().cbBody : L().bwBody, { amt: bigWon(c.amt), p: pct2(c.p) });
   return null;
 }
-const INS_TITLE = { exec: "insExec", major: "insMajor", both: "insBoth" };
 export const insiderTitle = (c) => titled(c.nk, L()[INS_TITLE[c.title]]);
 export function insiderText(c) {
   const p = c.pos || L().posAny;

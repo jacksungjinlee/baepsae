@@ -176,3 +176,52 @@ def test_the_console_no_longer_says_the_insider_cards_wait():
       out = { n: m.insider.length, warns };""")
     assert got["n"] == 2
     assert not [w for w in got["warns"] if "insider" in w], got["warns"]
+
+
+def test_a_stock_shown_at_an_older_close_gets_no_insider_card_and_the_console_names_it():
+    """Review (2026-11-22): a stock priced at its last confirmed close (data.json pxd) would read "지금 주가로 약 …" from an older close
+    under today's date line. It gets no card (watch.js never judges such a stock either); the console says why."""
+    got = run("""
+      const stocks = [kr('000001', { pxd: '2026-11-10' }), kr('000002'), kr('000003'), kr('000004')];
+      const insider = [ins(1, '000001', 0, 5000, '임원'), ins(2, '000001', 1, 10, '임원'), ins(3, '000002', 0, 5000, '주요주주')];
+      const m = Lk.lookModel(loadOf(stocks), STORE, discOf({ insider }), T, NOW);
+      Lk.lookSay(m, 'pxd');
+      out = { cards: m.insider.map((c) => c.t), shown: Tl.shownInsider(m).map((c) => c.t), skipped: m.skipped.map((x) => [x.rc.slice(-1), x.why]),
+        rows: Tl.lookRowCount(m, new Set(['000001'])), warns };""")
+    assert got["cards"] == ["000002"] and got["shown"] == ["000002"]
+    # only the report that would have made a card (5,000 × 50,000 = 2.5억원) is named; 10 shares never would have
+    assert got["skipped"] == [["1", "shown at its last confirmed close (pxd \"2026-11-10\"), not today's"]], got["skipped"]
+    assert got["rows"] == 1                                                    # 홈: the watched stock's row only
+    assert len(got["warns"]) == 1 and got["warns"][0].startswith("[v2] today-look (pxd): left out 1 (")
+    assert "000001 20260000000001 (shown at its last confirmed close" in got["warns"][0]
+
+
+def test_the_position_keeps_one_space_for_each_run_of_spaces_and_line_breaks():
+    """Review (2026-11-22): real data has "수석매니저\\n(직책 : 본부장)" (2 rows on the 11-21 file, 75 positions with spaces)."""
+    got = run("""
+      const insider = [ins(1, '000001', 0, 2000, '임원', '수석매니저\\n(직책 : 본부장)'), ins(2, '000001', 1, -2000, '임원', '  대표이사\\t \\n사장 '),
+        ins(3, '000001', 2, 2000, '주요주주', ' \\n\\t ')];
+      const m = Lk.lookModel(loadOf(STOCKS), STORE, discOf({ insider }), T, NOW);
+      out = m.insider.map((c) => [c.pos, Tl.insiderText(c)]);""")
+    assert got == [["수석매니저 (직책 : 본부장)", "수석매니저 (직책 : 본부장)이 지분을 늘린 보고가 있어요. 지금 주가로 약 1억원이에요."],
+                   ["대표이사 사장", "대표이사 사장이 지분을 줄인 보고가 있어요. 지금 주가로 약 1억원이에요."],
+                   [None, "임원·주요주주가 지분을 늘린 보고가 있어요. 지금 주가로 약 1억원이에요."]], got
+
+
+def test_the_console_says_what_happens_to_an_unknown_role_and_to_a_card_without_a_title():
+    """Review (2026-11-22): a role that is none of the three (the pipeline and its gate allow only 임원 · 주요주주 · 임원·주요주주 or blank)
+    is shown with the both-or-blank title, so the console says "shown", never "left out"; a card whose title has no words (the role
+    not read) is named as not shown."""
+    got = run("""
+      const insider = [ins(1, '000001', 0, 5000, '감사', '감사'), ins(2, '000002', 0, 5000, '임원')];
+      const m = Lk.lookModel(loadOf(STOCKS), STORE, discOf({ insider }), T, NOW);
+      Lk.lookSay(m, 'odd');
+      const w1 = [...warns]; warns.length = 0;
+      Lk.lookSay({ fresh: true, skipped: [], oddRole: [], missing: false, insider: [{ t: 'A', rc: '20260000000009', title: 'none' }, { t: 'B', rc: '20260000000008', title: 'exec' }] }, 'none');
+      out = { cards: m.insider.map((c) => [c.t, c.title, Tl.insiderTitle(c)]), skipped: m.skipped.length, odd: m.oddRole.map((x) => [x.t, x.why]),
+        w1, w2: [...warns] };""")
+    assert got["cards"] == [["000002", "exec", "종목000002 · 임원 지분 변동"], ["000001", "both", "종목000001 · 임원·주요주주 지분 변동"]], got["cards"]
+    assert got["skipped"] == 0 and got["odd"] == [["000001", 'role "감사" is not one of the three']]
+    assert got["w1"] == ['[v2] today-look (odd): insider cards shown with the title for both or blank (look.insBoth), their role is none of the three: '
+                         '000001 20260000000001 (role "감사" is not one of the three)'], got["w1"]
+    assert got["w2"] == ["[v2] today-look (none): insider cards not shown, no title for them (none): A 20260000000009"], got["w2"]
