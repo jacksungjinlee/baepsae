@@ -254,8 +254,12 @@ def test_unconfirmed_base_link_blanks_a_row_without_changes():
     """그날 행의 전일 대비가 빈 값이면 (2차 출처 행 · 받지 못한 칸) 그 종목의 연결은 확인 못 함 → 비워요 (주식 수는 그대로라 20% 규칙만으로는 −54%)."""
     by, _, info, kw = kr_run(_bonus(listing("2026-11-16_2211"), changes=np.nan))
     assert kw["ref"]["000660"] == "unknown" and "c1w" not in by["000660"]
-    assert ("000660", "SK하이닉스", "확인 못 함") in info["kr"]["link"] and info["kr"]["why"]["link"] == 1
+    assert ("000660", "SK하이닉스", F.C1W_LINK_WHY_KO["none"]) in info["kr"]["link"] and info["kr"]["why"]["link"] == 1
     assert by["005930"]["c1w"] == 206000.0                                    # 다른 종목은 그대로 (연결 ok)
+    # 다른 자료로 확인해 봐도 (3차): 기준일 행의 기준가가 없어 기준일 연결을 확인할 수 없어요 → 비워요
+    df16 = _bonus(listing("2026-11-16_2211"), changes=np.nan)
+    res = F.kr_c1w_rescue(D16, D13, TD, [(D13, listing("2026-11-13_2158"))], df16, codes=["000660"])
+    assert res == {"000660": ("blank", "pxLink")}
 
 
 def test_konex_on_a_backup_day_is_blank_and_on_a_final_day_is_kept():
@@ -350,14 +354,16 @@ def test_logs_name_counts_and_reasons(monkeypatch):
     assert "  !! c1w 미국 빈 칸 2: 그 주에 주식 분할 (야후 분할 칸 · splits) 1 · 그 주의 배당락을 실제 종가로 되돌리지 못함 1" in lines
     assert "· c1w 주식 수 20% 넘게 바뀌어 비움: 1 / 5 — B 나 (10 → 30주)" in lines
     assert "· c1w KRX 기준가가 그 사이 새로 정해져 비움 (분할 · 병합 · 감자 · 권리락 · 무상증자 · 코넥스 기준가 조정 등): 1 / 5 — C 다" in lines
-    assert ("  !! c1w 기준가 연결 확인 못 함 2 · 그중 비움 2 / 5 (그 사이 최종본 목록 파일이 없는 거래일: 2026-11-17) — D 라 (확인 못 함), "
-            "E 마 (오늘 목록에 없음)") in lines
+    assert ("  !! c1w 기준가 연결을 목록 파일끼리 확인 못 함 2 / 5 (그 사이 최종본 목록 파일이 없는 거래일: 2026-11-17) — 다른 자료로 확인해 실음 0 "
+            "(KRX 기준가로 날마다 0 · 네이버 수정주가로 0) · 다른 자료로 본 기준가 재설정 0 · 비움 2 (확인 자료 없음 1 · 오늘 목록에 없음 (오늘 받은 자료가 "
+            "없어요) 1) — D 라 (확인 자료 없음), E 마 (오늘 목록에 없음 (오늘 받은 자료가 없어요))") in lines
     assert "  !! c1w 미국 그 주 배당락: 실제 종가로 되돌림 1 (X) · 되돌리지 못해 비움 1 (W 배당락 앞 거래일 봉이 없음) · 그 주 분할로 비움 1 (Y)" in lines
     lines.clear()
     F.c1w_fields([{"t": "A", "cls": "kr", "price": 101.0, "shr": 10}], dict(kr_wk, ref={"A": "ok"}, gap=[], src="fb", rows=2400),
                  dict(us_wk, unadj=[], bad={}), HOL)
     assert lines[0].startswith("· c1w") and "(wkFrom 2026-11-13 · 2차 출처 행 (두 출처로 확인한 2,400종목))" in lines[0], lines[0]
-    assert "· c1w 주식 수 20% 넘게 바뀌어 비움: 0 / 1" in lines and "· c1w 기준가 연결 확인 못 함 0 · 그중 비움 0 / 1" in lines   # 0 이어도 적어요
+    assert "· c1w 주식 수 20% 넘게 바뀌어 비움: 0 / 1" in lines and any(x.startswith("· c1w 기준가 연결을 목록 파일끼리 확인 못 함 0 / 1 — ")
+                                                                    for x in lines)   # 0 이어도 적어요
     assert "· c1w 미국 그 주 배당락: 실제 종가로 되돌림 0 · 되돌리지 못해 비움 0 · 그 주 분할로 비움 0" in lines
 
 
@@ -488,7 +494,7 @@ def test_us_dividend_undo_matches_yfinance_auto_adjust():
     (lambda d, g: (d.where(d.index != pd.Timestamp("2026-11-16"), -0.2), g), "odd"),           # 음수 배당 기록
     (lambda d, g: (pd.concat([d, pd.Series([0.3], index=pd.to_datetime(["2026-11-20"]))]), g), "after"),   # 기준일 뒤 배당락
     (lambda d, g: (d, pd.Series([0.0, 0.7], index=pd.to_datetime(["2026-11-16", "2026-11-17"]))), "gain"),
-    (lambda d, g: (d.where(d.index != pd.Timestamp("2026-11-18"), 200.0), g), "size"),           # 배당 ≥ 앞 종가
+    (lambda d, g: (d, pd.Series([0.0, 0.4], index=pd.to_datetime(["2026-11-19", "2026-11-20"]))), "after"),   # 기준일 뒤 자본이득 분배 (3차)
 ])
 def test_us_dividend_undo_blanks_when_inputs_are_missing_or_odd(change, why):
     idx = pd.to_datetime(USD[3:])
@@ -678,7 +684,7 @@ def test_main_and_fetchers_are_wired_in_the_right_order():
     assert "kr_wk = kr_week_closes_safe(px_date, ks_all.index, sessions, ref_by_day, known=fb_known)" in kr and 'meta["_c1wKr"] = kr_wk' in kr
     us = inspect.getsource(F.fetch_us)
     i_nocl, i_add = us.index('nocl[sym] = "bar"'), us.index("us_c1w_add(us_wk, sym, px, data, us_mon)")
-    assert i_nocl < i_add and 'meta["_c1wUs"] = us_c1w_finish(us_wk)' in us and "us_wk = us_week_start(us_px_date, spx.index)" in us
+    assert i_nocl < i_add and 'meta["_c1wUs"] = us_c1w_finish_safe(us_wk)' in us and "us_wk = us_week_start(us_px_date, spx.index)" in us
     bonds = inspect.getsource(F.fetch_bonds)
     assert bonds.index("proxy = px.pct_change().dropna()") < bonds.index("fund_c1w(recs[-1], px, wk_from)")
     assert F.c1w_group is V.c1w_group and F.C1W_COVER_MIN is V.C1W_COVER_MIN     # 파이프라인과 관문이 같은 함수 · 같은 값
@@ -792,9 +798,9 @@ def test_gate_says_what_it_skipped_and_survives_odd_macro(monkeypatch):
     _st(cur["data"], "005380").update(c1w=_st(cur["data"], "005380")["price"] / 4)
     for macro in ({}, {"idxHist": {"KOSPI": "x", "SP500": [1, 2]}}, {"idxHist": {"SP500": {"rows": None}}}):
         r = one(cur["data"], macro)
-        assert r[3] == "PASS", r                                                 # 제한폭을 모르는 날: +300% 는 이름만
+        assert r[3] == "WARN", r                                                 # 3차 (검증): 제한폭을 모르는 날은 한국도 경고
         assert "idxHist KOSPI 없어 지수 일봉 확인 · 한국 제한폭 확인 건너뜀" in r[1] and "idxHist SP500 없어 지수 일봉 확인 건너뜀" in r[1], r
-        assert "한국 0.5 ~ 2 밖 1 (경고 아님 · 005380 현대차 +300%)" in r[1]
+        assert "0.5 ~ 2 밖 1 (005380 현대차 +300%)" in r[1] and "경고 아님" not in r[1]
     # 휴장일 표를 읽지 못함 → 경고 (날짜는 지수 일봉으로만 맞춰 봐요)
     monkeypatch.setattr(V, "load_holidays", lambda *a: 1 / 0)
     r = one(with_c1w(FD.good_pair()[0])["data"], FD.build()[0]["macro"])
@@ -854,3 +860,226 @@ def test_real_day_snapshot_fails_the_same_rows_with_or_without_c1w():
     assert sorted(x[0] for x in rep.failed) == sorted(x[0] for x in base.failed)
     assert row(rep)[3] == "PASS", row(rep)
     assert V.C1W_ROW not in {x[0] for x in rep.failed} | {x[0] for x in base.failed}
+
+
+# ── 6. 3차 (dry run 44993787748 · 11-16 ~ 11-20 주 국내 0 / 2,474): 최종본 목록 파일이 없는 날을 다른 자료로 하루씩 확인 ─────────────────
+FXG = os.path.join(ROOT, "tests", "fixtures", "d1_after_gap")
+D17, D18, D19, D20 = (D(2026, 11, d) for d in (17, 18, 19, 20))
+TD_WEEK = [pd.Timestamp(d) for d in (D13, D16, D17, D18, D19, D20)]
+
+
+def _gap_week():
+    """그 주 그대로 (실제 파일): 11-13 · 11-16 최종본 · 11-17 (15:29) · 11-18 (14:52) · 11-19 (14:52) 장중 파일 · 11-20 최종본 · 11-20 06:40 발행본 (pxDate 11-19)."""
+    lf = lambda d, n: F.parse_listing_csv(open(os.path.join(d, f"krx_{n}.csv"), encoding="utf-8").read())
+    f13, f16 = lf(FX2, "2026-11-13_2158"), lf(FX2, "2026-11-16_2211")
+    nonfinal = {D17: lf(FX2, "2026-11-17_1529"), D18: lf(FX2, "2026-11-18_1452"), D19: lf(FXG, "krx_2026-11-19_1452"[4:])}
+    f20 = lf(FXG, "2026-11-20_2323")
+    pub = json.load(open(os.path.join(FXG, "pub_2026-11-19.json"), encoding="utf-8"))
+    return [(D16, f16), (D13, f13)], nonfinal, f20, pub
+
+
+def _naver_like(sessions, nonfinal, f20, codes, scale=None):
+    """네이버 일봉 대신 (시험용): 최종본 날은 공식 종가, 장중 파일 날은 그 파일의 값 · scale {코드: (날짜, 배율)} = 그 날짜 앞 봉에 배율 (수정주가)."""
+    nv = {c: {} for c in codes}
+    for d, df in list(sessions) + [(D20, f20)]:
+        for c, v in F._official_map(df).items():
+            if c in nv:
+                nv[c][d.isoformat()] = v
+    for d, df in nonfinal.items():
+        for c, v in zip(df["Code"].astype(str).str.strip(), df["Close"]):
+            if c in nv:
+                nv[c][d.isoformat()] = float(v)
+    for c, (day, k) in (scale or {}).items():
+        nv[c] = {d: (v * k if d < day else v) for d, v in nv[c].items()}
+    return nv
+
+
+def test_the_dry_run_week_is_rescued_day_by_day_from_real_files():
+    """kr_recent_sessions 가 최종본이 아닌 날의 파일을 모아요 (그날 기준가만) → 11-17 은 장중 파일의 기준가 = 11-16 공식 종가 (정확) · 11-20 은 최종본
+    기준가 = 지난 발행본의 11-19 종가 (정확) · 11-18 · 11-19 는 종가를 알 수 없어 네이버 수정주가로. 지난 발행본에 없는 종목 (STX · 바이오비쥬 · 코넥스
+    본시스템즈) 은 기준일 연결을 확인 못 해 비우고, 유니온머티리얼 (실제 5:1 병합) 은 기준가 재설정으로 비워요."""
+    files = {D19: lambda: _gap_week()[1][D19], D18: lambda: _gap_week()[1][D18], D17: lambda: _gap_week()[1][D17],
+             D16: lambda: _gap_week()[0][0][1], D13: lambda: _gap_week()[0][1][1]}
+    commits = {D19: dt.datetime(2026, 11, 19, 14, 52, tzinfo=F.KST), D18: dt.datetime(2026, 11, 18, 14, 52, tzinfo=F.KST),
+               D17: dt.datetime(2026, 11, 17, 15, 29, tzinfo=F.KST), D16: dt.datetime(2026, 11, 16, 22, 11, tzinfo=F.KST),
+               D13: dt.datetime(2026, 11, 13, 21, 58, tzinfo=F.KST)}
+    nonfinal = {}
+    sessions, _notes, _pf = F.kr_recent_sessions(D20, lambda d: files[d]() if d in files else None, commits.get, n=4,
+                                                 special=F.load_krx_special_sessions(), nonfinal=nonfinal)
+    assert [d for d, _ in sessions] == [D16, D13] and sorted(nonfinal) == [D17, D18, D19]
+    _s, _n, f20, pub = _gap_week()
+    codes = sorted(set(f20["Code"].astype(str).str.strip()))
+    nv = _naver_like(sessions, nonfinal, f20, codes)
+    res = F.kr_c1w_rescue(D20, D13, TD_WEEK, sessions, f20, nonfinal, pub, nv, codes, knx={"496320"}, ndays=(2, 10))
+    assert res["047400"] == ("base", None)
+    assert {c for c, v in res.items() if v == ("blank", "pxLink")} == {"011810", "489460", "496320"}
+    assert {c for c, v in res.items() if v[0] == "naver"} == set(codes) - {"047400", "011810", "489460", "496320"}
+    assert F.kr_c1w_rescue(D20, D13, TD_WEEK, sessions, f20, nonfinal, pub, nv, ["005930"]) == {"005930": ("blank", "few")}   # 최소 5일 (실제는 19일)
+    # 다음 보관본 (지난 2차 출처 날의 다음 행 · 야후 종가 — 실제 응답 tests/fixtures/kr_two_source) 이 11-17 · 11-18 을 덮으면 그날들도 KRX 기준가로 정확히
+    daum_js = json.load(open(os.path.join(FX2, "daum_days.json"), encoding="utf-8"))
+    yc = json.load(open(os.path.join(FX2, "yahoo_closes.json"), encoding="utf-8"))
+    for c, v in daum_js.items():                                   # 11-18 야후 종가는 그 파일에 없어서 다음 종가와 같게 (두 출처 같음)
+        yc.setdefault(c, {})["2026-11-18"] = next(r["tradePrice"] for r in v["data"] if r["date"].startswith("2026-11-18"))
+    daum = {"v": 1, "day": "2026-11-18", "days": ["2026-11-17", "2026-11-18"],
+            "kk": {c: {"d": {r["date"][:10]: r for r in v["data"]}, "y": yc[c]} for c, v in daum_js.items()}}
+    res2 = F.kr_c1w_rescue(D20, D13, TD_WEEK, sessions, f20, nonfinal, pub, nv, codes, knx={"496320"}, daum=daum, ndays=(2, 10))
+    krx = {c for c, v in res2.items() if v[0] == "krx"}
+    assert krx == set(daum_js) - {"047400", "011810"} and res2["047400"] == ("base", None)    # 다음 행도 11-16 의 재설정을 보여요
+    assert res2["011810"] == ("blank", "pxLink")                  # 지난 발행본에 없고 다음 보관본에 11-19 종가가 없어요
+    # 다음 보관본의 기준가가 장중 파일의 기준가와 다르면 (자료끼리 다름) 비워요
+    bad = copy.deepcopy(daum)
+    bad["kk"]["005930"]["d"]["2026-11-18"]["changePrice"] = 4300.0
+    assert F.kr_c1w_rescue(D20, D13, TD_WEEK, sessions, f20, nonfinal, pub, nv, ["005930"], daum=bad, ndays=(2, 10)) == {"005930": ("blank", "conflict")}
+
+
+def test_the_real_reset_cases_never_come_back():
+    """실제 자료 (tests/fixtures/kr_pin_samples · 2026-11-14 에 받은 네이버 수정주가와 그날들 목록 파일): 10-23 ~ 10-30 주, 10-26 ~ 10-29 의 최종본이
+    없다고 하고 (그날 파일은 기준가만 · 장중 파일처럼) 지난 발행본은 10-29. 코나아이 1.5배 무상증자 권리락 (10-29) · 엘앤씨바이오 1:1 무상증자 권리락
+    (10-26) · CMG제약 10:1 병합 (10-27) · DGI 권리락 (10-21, 앞선 날들에 있어 맞춰 볼 날이 모자람) 은 모두 비워요. 삼성전자 · 에코프로비엠 · 코넥스
+    본시스템즈 · 시간외 큰 움직임 (대원제약 10-29) 은 네이버 수정주가로 실어요."""
+    P = json.load(open(os.path.join(ROOT, "tests", "fixtures", "kr_pin_samples.json"), encoding="utf-8"))
+
+    def frame(day):
+        return pd.DataFrame([{"Code": c, "Name": c, **by[day]} for c, by in P["listing"].items() if by.get(day)])
+    td = [pd.Timestamp(d) for d in P["tradeDays"]]
+    sessions = [(D.fromisoformat(d), frame(d)) for d in ("2026-10-23", "2026-10-22", "2026-10-21", "2026-10-20", "2026-10-19")]
+    nonfinal = {D.fromisoformat(d): frame(d) for d in ("2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29")}
+    prev = {"pxDate": "2026-10-29", "stocks": [{"t": c, "cls": "kr", "price": round(r["2026-10-29"]["Marcap"] / r["2026-10-29"]["Stocks"])}
+                                                for c, r in P["listing"].items() if r.get("2026-10-29")]}
+    nv = {c: {d: v for d, v in rows if "2026-10-19" <= d <= "2026-10-30"} for c, rows in P["naver"].items()}
+    codes = ["052400", "290650", "058820", "099520", "005930", "247540", "496320", "003220"]
+    res = F.kr_c1w_rescue(D(2026, 10, 30), D(2026, 10, 23), td, sessions, frame("2026-10-30"), nonfinal, prev, nv, codes, knx={"496320"})
+    assert res["290650"] == ("base", None)                        # 10-26 장중 파일의 기준가 ≠ 10-23 공식 종가 (정확)
+    assert res["052400"][0] == "blank" and res["058820"][0] == "blank" and res["099520"] == ("blank", "few")
+    assert {c for c, v in res.items() if v[0] == "naver"} == {"005930", "247540", "496320", "003220"}
+    assert all(abs(res[c][1]) <= F.C1W_NV_TOL for c in ("005930", "247540", "496320", "003220"))
+    # 그날 기준가 자료 (장중 파일) 가 없으면 네이버만으로는 싣지 않아요
+    res0 = F.kr_c1w_rescue(D(2026, 10, 30), D(2026, 10, 23), td, sessions, frame("2026-10-30"), None, prev, nv, codes, knx={"496320"})
+    assert {v for v in res0.values()} <= {("blank", "noBase"), ("blank", "few")}
+
+
+def test_naver_late_and_small_resets_and_the_residual_bound():
+    """네이버가 재설정을 아직 반영하지 않았다면 (늦음): 큰 재설정은 하루 움직임 (제한폭 밖) 으로, 작은 재설정은 그날 KRX 기준가 ÷ 네이버 앞 봉
+    (PIN_PX_TOL 5%) 으로 잡아요. 네이버가 반영했다면 앞선 날들의 네이버 ÷ 공식 종가 중앙값 (C1W_NV_TOL 1%) 으로. 그보다 작은 재설정은 남는 위험이에요
+    (반영: 약 1 ~ 2% · 늦음: 약 5% — RUNBOOK)."""
+    sessions, nonfinal, f20, pub = _gap_week()
+    codes = ["005930"]
+
+    def run(scale=None, day=None, k=1.0, lag=False):
+        nf = {d: df.astype({"Close": float, "Changes": float}) for d, df in nonfinal.items()}
+        f20b, pubb = f20.astype({"Close": float, "Changes": float, "Marcap": float}), copy.deepcopy(pub)
+        if day:                                                   # day 에 기준가 재설정 k (그날부터 가격이 k 배 · 앞 종가 기준)
+            for d, df in nf.items():
+                if d >= day:
+                    i = df.index[df["Code"] == "005930"][0]
+                    base0 = df.at[i, "Close"] - df.at[i, "Changes"]
+                    df.at[i, "Close"] = df.at[i, "Close"] * k
+                    df.at[i, "Changes"] = df.at[i, "Close"] - base0 * k   # 그날 기준가 = 앞 종가 × k (그 뒤 날도 같은 기준)
+            i = f20b.index[f20b["Code"] == "005930"][0]
+            for col in ("Close", "Changes", "Marcap"):
+                f20b.at[i, col] = f20b.at[i, col] * k
+            for x in pubb["stocks"]:
+                if x["t"] == "005930":
+                    x["price"] = round(f20b.at[i, "Close"] - f20b.at[i, "Changes"])
+        nv = _naver_like(sessions, nf, f20b, codes, scale=None if lag or not day else {"005930": (day.isoformat(), k)})
+        return F.kr_c1w_rescue(D20, D13, TD_WEEK, sessions, f20b, nf, pubb, nv, codes, ndays=(2, 10))["005930"]
+    assert run()[0] == "naver"
+    assert run(day=D18, k=0.5) == ("blank", "adj")                # 1:1 무상증자 · 네이버 반영 → 앞선 날들이 0.5 배
+    assert run(day=D18, k=0.5, lag=True) == ("blank", "move")     # 네이버 늦음 → 그날 −50% 하루 움직임
+    assert run(day=D18, k=0.9, lag=True) == ("blank", "near")     # 네이버 늦음 · 10% → 11-18 기준가가 네이버 11-17 봉보다 10% 낮음
+    assert run(day=D18, k=0.97, lag=True)[0] == "naver"           # 남는 위험: 늦은 네이버 · 3% 재설정은 못 잡아요 (5% 안)
+    assert run(day=D18, k=0.992)[0] == "naver"                    # 남는 위험: 반영된 1% 안 재설정 (실제는 + 앞선 날들의 시간외 차이 중앙값) 은 못 잡아요
+    assert run(day=D18, k=0.985) == ("blank", "adj")              # 시험 자료는 시간외 차이가 0 이라 1.5% 는 잡혀요 (실제 중앙값 흔들림 0 ~ 0.7%)
+    assert run(day=D18, k=0.97) == ("blank", "adj")               # 반영된 3% 재설정은 잡아요
+
+
+def test_c1w_apply_uses_the_rescue_and_logs_it(monkeypatch):
+    lines = []
+    monkeypatch.setattr(F, "log", lines.append)
+    kr_wk = {"date": "2026-11-13", "px": "2026-11-20", "why": None, "close": {k: 100.0 for k in "ABCDE"}, "shr": {k: 10.0 for k in "ABCDE"},
+             "ref": {k: "unknown" for k in "ABCDE"}, "src": "listing", "rows": 2500, "gap": ["2026-11-17", "2026-11-18", "2026-11-19"],
+             "rescue": {"A": ("krx", None), "B": ("naver", 0.002), "C": ("base", None), "D": ("blank", "adj")},
+             "rescueSrc": {"intraday": ["2026-11-17", "2026-11-18", "2026-11-19"], "pub": "2026-11-19", "daum": [], "naver": 2474, "nvErr": 0}}
+    st = [{"t": k, "nk": k * 2, "cls": "kr", "price": 101.0, "shr": 10} for k in "ABCDE"]
+    meta, info = F.c1w_apply(st, kr_wk, None, HOL)
+    assert [s.get("c1w") for s in st] == [100.0, 100.0, None, None, None]
+    assert info["kr"]["rescued"] == collections.Counter({"krx": 1, "naver": 1}) and info["kr"]["rescueBase"] == 1
+    assert info["kr"]["why"] == collections.Counter({"base": 1, "link": 2}) and info["kr"]["linkWhy"] == collections.Counter({"adj": 1, "none": 1})
+    F.log_c1w(info)
+    assert ("  !! c1w 기준가 연결을 목록 파일끼리 확인 못 함 5 / 5 (그 사이 최종본 목록 파일이 없는 거래일: 2026-11-17, 2026-11-18, 2026-11-19) — "
+            "다른 자료로 확인해 실음 2 (KRX 기준가로 날마다 1 · 네이버 수정주가로 1) · 다른 자료로 본 기준가 재설정 1 · 비움 2 (네이버 수정주가가 공식 종가와 "
+            "1% 넘게 다름 (그 사이 기준가 재설정) 1 · 확인 자료 없음 1) — D DD (네이버 수정주가가 공식 종가와 1% 넘게 다름 (그 사이 기준가 재설정)), "
+            "E EE (확인 자료 없음)") in lines
+    assert ("· c1w 기준가 연결 자료: 장중 목록 파일 2026-11-17, 2026-11-18, 2026-11-19 · 지난 발행본 2026-11-19 · 다음 보관본 없음 · 네이버 일봉 "
+            "2,474종목 — 실은 종목 (예): A AA (KRX 기준가로 날마다 확인), B BB (네이버 수정주가로 확인)") in lines
+    assert "· c1w KRX 기준가가 그 사이 새로 정해져 비움 (분할 · 병합 · 감자 · 권리락 · 무상증자 · 코넥스 기준가 조정 등): 1 / 5 — C CC" in lines
+
+
+def test_the_rescue_step_reads_the_daum_cache_and_never_stops_the_run(tmp_path, monkeypatch):
+    lines = []
+    monkeypatch.setattr(F, "log", lines.append)
+    sessions, nonfinal, f20, pub = _gap_week()
+    ref, _ = F.kr_ref_links([(D20, f20)] + sessions, TD_WEEK, set(f20["Code"].astype(str).str.strip()))
+    kw = F.kr_week_closes(D20, TD_WEEK, sessions, ref)
+    assert kw["gap"] == ["2026-11-17", "2026-11-18", "2026-11-19"] and set(kw["ref"].values()) <= {"unknown", "break", "new"}
+    path = tmp_path / "kr-fb-v1.json"
+    path.write_text(json.dumps({"v": 1, "day": "2026-11-18", "days": ["2026-11-17", "2026-11-18"], "kk": {}}), encoding="utf-8")
+    monkeypatch.setattr(F, "KR_FB_CACHE_PATH", str(path))
+    out = F.kr_c1w_rescue_step(dict(kw), D20, TD_WEEK, sessions, f20, nonfinal, pub, {}, nv_err=2)
+    assert out["rescueSrc"] == {"intraday": ["2026-11-17", "2026-11-18", "2026-11-19"], "pub": "2026-11-19", "daum": ["2026-11-17", "2026-11-18"],
+                                "naver": 0, "nvErr": 2}
+    assert "047400" not in out["rescue"] and kw["ref"]["047400"] == "break"   # 목록 파일끼리 본 재설정은 다시 보지 않아요 (그대로 비움)
+    assert out["rescue"]["005930"] == ("blank", "noNaver")                     # 네이버 일봉을 주지 않았어요
+    path.write_text("{broken", encoding="utf-8")
+    assert F.c1w_daum_cache() is None
+    monkeypatch.setattr(F, "kr_c1w_rescue", lambda *a, **k: 1 / 0)
+    out = F.kr_c1w_rescue_step(dict(kw), D20, TD_WEEK, sessions, f20, nonfinal, pub, {})
+    assert out["rescue"] == {} and out["rescueErr"].startswith("ZeroDivisionError")
+    assert lines[-1].startswith("  !! c1w: 기준가 연결을 다른 자료로 확인하다가 멈췄어요 (ZeroDivisionError")
+    st = [{"t": "005930", "cls": "kr", "price": 1.0, "shr": 5846278608}]
+    F.c1w_apply(st, out, None, HOL)
+    assert "c1w" not in st[0]
+
+
+def test_naver_pick_never_drops_a_stock_and_fetch_korea_is_wired():
+    raw = pd.Series([1.0, 2.0, np.nan, 4.0], index=pd.to_datetime(["2026-11-12", "2026-11-13", "2026-11-16", "2026-11-17"]))
+    assert F.c1w_naver_pick(raw, {"2026-11-13", "2026-11-16", "2026-11-17"}) == {"2026-11-13": 2.0, "2026-11-17": 4.0}
+    assert F.c1w_naver_pick(raw, set()) == {} and F.c1w_naver_pick(None, {"2026-11-13"}) == {}
+    assert F.c1w_naver_pick("not a series", {"2026-11-13"}) is None   # 읽지 못하면 None (그 종목은 그대로 · 세요)
+    kr = inspect.getsource(F.fetch_korea)
+    assert "nonfinal=c1w_nonfinal)" in kr and "nvw = c1w_naver_pick(raw, c1w_nv_days)" in kr
+    i_pool, i_step, i_meta = kr.index("with ThreadPoolExecutor(max_workers=8) as ex:"), kr.index("kr_wk = kr_c1w_rescue_step("), kr.index('meta["_c1wKr"] = kr_wk')
+    assert i_pool < i_step < i_meta
+    assert kr.index("bad = pin_audit(raw, px, px_date") < kr.index("nvw = c1w_naver_pick(raw, c1w_nv_days)") < kr.index("jm = kr_jumps(px, raw")
+
+
+def test_a_dividend_yfinance_moved_onto_the_week_start_is_not_ignored():
+    """검증 (3차): yfinance 1.7.0 safe_merge_dfs 는 그 종목 봉이 없는 배당락일 (월 11-16) 의 배당을 앞의 봉 (금 11-13 = 그 주 시작) 으로 옮겨요 → 그 주 밖
+    으로 보여 되돌리지 않으면 1% 어긋나요 (94.76 vs 실제 95.76). 그 다음 미국 거래일에 봉이 없으면 비워요."""
+    idx = pd.to_datetime(["2026-11-13", "2026-11-17", "2026-11-18", "2026-11-19"])            # 11-16 봉 없음
+    px = pd.Series([94.76, 96.0, 97.0, 98.0], index=idx)
+    divs = pd.Series([1.0, 0.0, 0.0, 0.0], index=idx)                                         # 11-16 의 배당이 11-13 에
+    assert F.us_c1w_close(px, divs, None, D13, USD) == (None, "moved")
+    full = pd.Series([94.76, 95.5, 96.0, 97.0, 98.0], index=pd.to_datetime(USD[3:]))          # 봉이 날마다 있으면 11-13 배당락은 그 주 밖 (그대로)
+    assert F.us_c1w_close(full, pd.Series([1.0, 0, 0, 0, 0], index=full.index), None, D13, USD) == (94.76, "plain")
+
+
+def test_a_big_special_dividend_is_still_undone_exactly():
+    idx = pd.to_datetime(USD[3:])
+    raw = pd.Series([100.0, 101.0, 102.0, 52.0, 53.0], index=idx)                           # 11-18 특별 배당 50 달러
+    adj = crsp_adjust(raw, {"2026-11-18": 50.0})
+    divs = pd.Series(0.0, index=idx)
+    divs["2026-11-18"] = 50.0
+    v, how = F.us_c1w_close(adj, divs, None, D13, USD)
+    assert how == "unadj" and round(v, 9) == 100.0 and "size" not in F.C1W_DIV_KO
+
+
+def test_a_broken_us_week_step_never_loses_us_data(tmp_path, monkeypatch):
+    base, bmeta, _l, _s = _us_run(tmp_path, monkeypatch)
+    for name in ("us_week_start", "us_c1w_finish"):
+        with monkeypatch.context() as m:
+            m.setattr(F, name, lambda *a, **k: 1 / 0)
+            out, meta, lines, _s = _us_run(tmp_path, monkeypatch)
+        assert out == base and meta["usSrc"] == bmeta["usSrc"] and meta["splits"] == bmeta["splits"], name
+        assert meta["_c1wUs"]["date"] is None and meta["_c1wUs"]["why"] == "err" and meta["_c1wUs"]["close"] == {}, name
+        assert any(x.startswith("  !! c1w: 미국") and "ZeroDivisionError" in x for x in lines), name

@@ -3873,7 +3873,7 @@ def _check_v196e(rep, data, macro):
     th = (f"경고만 (발행을 막지 않아요) — wkFrom · usWkFrom: YYYY-MM-DD · 기준일(pxDate · usPxDate)이 든 주의 월요일 앞 · 기준일과 {C1W_FROM_MAX_DAYS}일 안 · "
           "휴장일 표 · 지수 일봉(idxHist)으로 본 그 주 앞 마지막 거래일과 같음 · c1w: 빈 칸 또는 0 보다 큰 유한한 숫자 · 자기 가격 날짜(pxd · pxc · est) "
           f"종목은 빈 칸 · 기준일 종가 종목 중 채움 ≥ {C1W_COVER_MIN:g}% (국내 · 미국) · 채권·ETF·금 모두 · price ÷ c1w 가 "
-          f"{C1W_RATIO_BAND[0]:g} ~ {C1W_RATIO_BAND[1]:g} 밖이면 이름 (미국 · 채권·ETF·금은 경고 · 한국은 그 주 거래일만큼 곱한 가격 제한폭 밖일 때만 경고)")
+          f"{C1W_RATIO_BAND[0]:g} ~ {C1W_RATIO_BAND[1]:g} 밖이면 이름 (미국 · 채권·ETF·금은 경고 · 한국은 그 주 거래일만큼 곱한 가격 제한폭 밖일 때만 경고 — 제한폭을 모르면 경고)")
     stocks = [s for s in data.get("stocks") or [] if isinstance(s, dict)] if isinstance(data.get("stocks"), list) else []
     n_c1w = sum(1 for s in stocks if s.get("c1w") is not None)
     if "wkFrom" not in data and "usWkFrom" not in data and not n_c1w:
@@ -3966,8 +3966,8 @@ def _check_v196e(rep, data, macro):
             if r < (1 - k) ** n_kr * (1 - 1e-9) or r > (1 + k) ** n_kr * (1 + 1e-9):
                 lim.append(txt)
                 continue
-        if not (C1W_RATIO_BAND[0] <= r <= C1W_RATIO_BAND[1]):
-            (kr_far if g == "kr" else far).append(txt)
+        if not (C1W_RATIO_BAND[0] <= r <= C1W_RATIO_BAND[1]):     # 3차 (검증): 제한폭을 모르는 날 (idxHist KOSPI 없음) 은 한국도 경고
+            (kr_far if g == "kr" and n_kr else far).append(txt)
     parts = []
     for g, key in (("kr", "wkFrom"), ("us", "usWkFrom")):
         k, n = cnt[g]
@@ -3981,14 +3981,14 @@ def _check_v196e(rep, data, macro):
     for title, items, what in (("c1w 가 숫자가 아니거나 0 이하", bad, "숫자가 아님"), ("자기 가격 날짜 종목에 c1w", own, "자기 가격 날짜 종목에 있음"),
                                ("그 시장 날짜(wkFrom · usWkFrom) 없이 c1w", nodate, "그 시장 날짜 없이 있음"),
                                ("시장을 모르는 행에 c1w", odd, "시장을 모르는 행에 있음"),
-                               (f"미국 · 채권·ETF·금 price ÷ c1w 가 {C1W_RATIO_BAND[0]:g} ~ {C1W_RATIO_BAND[1]:g} 밖 (확인)", far,
+                               (f"price ÷ c1w 가 {C1W_RATIO_BAND[0]:g} ~ {C1W_RATIO_BAND[1]:g} 밖 (확인 · 미국 · 채권·ETF·금 · 제한폭을 모르는 날의 한국)", far,
                                 f"{C1W_RATIO_BAND[0]:g} ~ {C1W_RATIO_BAND[1]:g} 밖"),
                                (f"한국 주식 price ÷ c1w 가 가격 제한폭 {n_kr}거래일 밖", lim, "제한폭 밖")):
         if items:
             rep.detail(title, items[:50])
             warns.append(f"{what} {len(items):,} ({', '.join(items[:C1W_SHOW])}{' …' if len(items) > C1W_SHOW else ''})")
     info = list(notes)
-    if kr_far:                                # 한국 주식 · 제한폭 안 (또는 제한폭을 모르는 날): 이름만 (경고 아님)
+    if kr_far:                                # 한국 주식 · 제한폭 안: 이름만 (경고 아님)
         rep.detail(f"한국 주식 price ÷ c1w 가 {C1W_RATIO_BAND[0]:g} ~ {C1W_RATIO_BAND[1]:g} 밖 (제한폭 안 · 확인용)", kr_far[:50])
         info.append(f"한국 {C1W_RATIO_BAND[0]:g} ~ {C1W_RATIO_BAND[1]:g} 밖 {len(kr_far):,} (경고 아님 · {', '.join(kr_far[:C1W_SHOW])}"
                     f"{' …' if len(kr_far) > C1W_SHOW else ''})")
