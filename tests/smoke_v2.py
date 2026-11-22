@@ -15307,6 +15307,9 @@ def v196b_files(files, issue_ok=True):
         {**issue(7, "005930", "cb", 0), "wd": True, "cor": True, "bd": None},                    # 철회
         issue(8, "000660", "cb", 1, amt=50000000000, p=3.0),                                     # 관심 종목만: 지분 이야기라 가진 종목만
         issue(9, "005930", "rights", 40, how="others", n=1000, p=1.0),                           # 30일 밖
+        # 오래된 결정의 정정 (#145 질문 3, Jack 의 답 전까지 빠져요): MSDI 모양 · 넥스턴앤롤코리아 모양
+        issue(10, "005930", "rights", 1, how="others", n=11166945, p=55.24, cor=True, bd="20260512"),
+        issue(11, "005380", "cb", 2, amt=70000000000, p=12.65, cor=True, bd="20241128"),
     ]
     d["issueOk"] = issue_ok
 
@@ -15439,7 +15442,7 @@ def scene_v196b(R, files, width, dark=False):
         assert dc.locator('[data-ui-v2="look-us-note"]').inner_text() == LK["usNote"] and dc.locator('[data-ui-v2="look-no-kr"]').inner_text() == LK["noKr"]
         # 승인 문장이 없는 모양은 빠져요: 유무상증자 · 기타주식 · 둘 다인 역할 · 철회 · 1억원 아래 · 7일 · 30일 밖 · 가지지 않은 종목의 증자
         body = scr.inner_text()
-        for bad in ("13.72", "1,150,000", "전무가", "상무가", "회장", "KB금융", nm("035420")):
+        for bad in ("13.72", "1,150,000", "전무가", "상무가", "회장", "KB금융", nm("035420"), "55.24", "11,166,945", "12.65", "700억원"):
             assert bad not in body, bad
         assert scr.locator('[data-ui-v2="look-issue"][data-t="000660"]').count() == 0
         # 확인 필요 꼬리표 · 버튼은 토큰 색 · 44px · 공시 보기는 새 탭 아이콘
@@ -15447,6 +15450,10 @@ def scene_v196b(R, files, width, dark=False):
         assert tag.get_attribute("data-tone") == "watch"
         b = scr.locator('[data-ui-v2="look-seen"]').first.bounding_box()
         assert b["height"] >= 44, b
+        # 확인했어요 는 그 카드의 제목을 설명으로 가리켜요
+        desc = scr.locator('[data-ui-v2="look-issue"]').evaluate_all(
+            "(cs) => cs.map((c) => [c.querySelector('[data-ui-v2=\"look-seen\"]').getAttribute('aria-describedby'), c.querySelector('[data-ui-v2=\"look-title\"]').id])")
+        assert all(a == t and t for a, t in desc), desc
         icons = scr.locator('[data-ui="icon-chip"]').evaluate_all("(cs) => cs.map((c) => c.dataset.icon + ':' + (c.dataset.topic || ''))")
         assert icons == ["warning:risk"] * 4 + ["bell:", "bank:disc", "bank:disc", "calendar-dots:earn"], icons
         for bad in ("팔아야", "위험해요"):
@@ -15459,6 +15466,8 @@ def scene_v196b(R, files, width, dark=False):
         card = scr.locator('[data-ui-v2="look-issue"][data-rc="20990000000002"]')
         card.locator('[data-ui-v2="look-seen"]').click()
         card.wait_for(state="detached")
+        # 초점은 다음 확인 필요 카드로 (마지막이면 페이지 제목으로)
+        page.wait_for_function("() => document.activeElement && document.activeElement.dataset.key === '20990000000003'")
         st = stored()
         mark = [x for x in st["seen"] if x["rc"] == "20990000000002"]
         assert len(mark) == 1 and {k: mark[0][k] for k in ("t", "kind", "bd", "n", "p", "amt", "at")} == {

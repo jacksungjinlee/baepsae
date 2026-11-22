@@ -66,8 +66,9 @@
 // 유상증자 · 전환사채 · 신주인수권부사채 decision (disc.json issue) the user marked 확인했어요, with the stock, the kind (rights · cb · bw), the
 // board date (YYYYMMDD, or null) and the numbers as the card read them (null when blank), rc the filing it was marked on, at the
 // date (KST) and ts the time (ms). A card stays hidden while an entry has its stock, kind and numbers and either its filing or
-// its board date: a correction with other numbers shows again (Part B.2), and the same filing whose board date the pipeline reads
-// a day later stays hidden. An entry older than SEEN_DAYS (120) is pruned when another is added. Travels in a records file and is
+// (when the mark has a board date and at least one number) its board date: a correction with other numbers shows again (Part
+// B.2), the same filing whose board date the pipeline reads a day later stays hidden, and a mark with no board date or no number
+// hides only its own filing (never every such decision of the stock). An entry older than SEEN_DAYS (120) is pruned when another is added. Travels in a records file and is
 // merged as a union (A.1 [Q6]: the newest time for the same entry); not a version-2 part (an earlier app keeps it as a top-level
 // part it does not know).
 // Top level: guideSeen (v19.3c Part E: the first-visit guide was seen, the date) — a flag of this device, so it never
@@ -534,20 +535,27 @@ export function seenProblem(s) {
 }
 export const seenOf = (data) => (data && Array.isArray(data.seen) ? data.seen.filter(plainObj) : []);
 const nv = (x) => (x == null ? null : x);
-// The same decision with the same numbers (a 정정 with other numbers is not), on the same filing or the same board date.
+// The same decision with the same numbers (a 정정 with other numbers is not), on the same filing, or on the same board date when
+// the mark has one and at least one number (two blank marks would otherwise match every blank decision of that stock and kind).
 // r: a disc.json issue row (or another mark).
+const hasNumber = (e) => ["n", "p", "amt"].some((k) => nv(e[k]) != null);
 export const seenMatch = (e, r) => !!(plainObj(e) && plainObj(r) && e.t === r.t && e.kind === r.kind
-  && ["n", "p", "amt"].every((k) => nv(e[k]) === nv(r[k])) && ((okRc(e.rc) && e.rc === r.rc) || nv(e.bd) === nv(r.bd)));
+  && ["n", "p", "amt"].every((k) => nv(e[k]) === nv(r[k]))
+  && ((okRc(e.rc) && e.rc === r.rc) || (e.bd != null && hasNumber(e) && nv(e.bd) === nv(r.bd))));
 export const isSeen = (data, r) => seenOf(data).some((e) => seenMatch(e, r));
 const seenKey = (e) => canon({ t: e.t, kind: e.kind, bd: nv(e.bd), n: nv(e.n), p: nv(e.p), amt: nv(e.amt), rc: nv(e.rc) });
-// Two lists of marks: every mark of the current one, then the other's; the same mark keeps the later time (laterOf).
+// Two lists of marks: every mark of the current one, then the other's; the same mark keeps the later time (laterOf). At most
+// SEEN_MAX, the newest kept in their order (a merge never makes a list the store's own check refuses).
 function unionSeen(cur, other) {
   const out = [], at = new Map();
   for (const e of [...seenOf(cur), ...seenOf(other)]) {
     const k = seenKey(e);
     if (!at.has(k)) { at.set(k, out.length); out.push(e); } else out[at.get(k)] = laterOf(out[at.get(k)], e);
   }
-  return out;
+  if (out.length <= SEEN_MAX) return out;
+  const rank = out.map((e, i) => i).sort((a, b) => -editOrder(out[a], out[b]) || b - a);     // newest first (the later one on a tie)
+  const keep = new Set(rank.slice(0, SEEN_MAX));
+  return out.filter((e, i) => keep.has(i));
 }
 // The store with row r marked 확인했어요 today (ts: the time, Date.now()), marks older than SEEN_DAYS before today left out,
 // at most SEEN_MAX (the newest). null when there is nothing valid to save (a row that is not a decision of the three kinds).

@@ -292,3 +292,78 @@ def test_the_heading_opens_the_page_only_when_it_shows_a_card():
     assert got == [False, True, True, True, True, False, False, 1]
     got = run("out = [Tl.insiderTitle({ nk: 'A', title: 'none' }), Tl.pageHas({ fresh: true, issue: [], nps: [], dates: [], insider: [{ title: 'none' }] })];")
     assert got == [None, False]                                                     # while the role is not read, no insider card
+
+
+def test_a_correction_of_an_old_decision_is_left_out_and_named_until_jack_answers_question_3():
+    """Coordinator's decision (2026-11-22) until Jack answers #145's question 3: a correction (cor) filed 30 or more days after its
+    board date, or one with no readable board date, is not news (MSDI on 11-21: a 2026-05-12 decision's 55.24% filed again on 11-20;
+    넥스턴앤롤코리아: a 2024-11-28 CB's 12.65% on that time's share count). A correction of a recent decision and every
+    non-correction are unaffected. The flag (look.js OLD_CORRECTIONS) brings them back in one line."""
+    got = run("""
+      const issue = [row(1, '000001', 'rights', 2, { how: 'others', n: 11166945, p: 55.24, cor: true, bd: '20260512' }),   // MSDI-shaped
+        row(2, '000001', 'cb', 5, { amt: 3e10, p: 12.65, cor: true, bd: '20241128' }),                                        // 넥스턴앤롤코리아-shaped
+        row(3, '000001', 'bw', 1, { amt: 1e10, p: 3, cor: true }),                                                            // a recent decision corrected
+        row(4, '000001', 'rights', 0, { how: 'holders', n: 10, p: 1, cor: true, bd: ymd(29) }),                              // 29 days: in
+        row(5, '000001', 'rights', 0, { how: 'holders', n: 10, p: 1, cor: true, bd: ymd(30) }),                              // 30 days: out
+        row(6, '000001', 'cb', 3, { amt: 1e9, p: 1, cor: true, bd: null }),                                                    // no board date: out
+        row(7, '000001', 'cb', 3, { amt: 1e9, p: 1, cor: false, bd: '20240101' })];                                            // not a correction
+      const held = new Set(['000001']);
+      const on = Lk.issueCards(discOf({ issue }), held, T, {});
+      const all = Lk.issueCards(discOf({ issue }), held, T, {}, null, true);
+      out = { flag: Lk.OLD_CORRECTIONS, shown: on.cards.map((c) => c.rc.slice(-1)).sort(), left: on.skipped.map((x) => [x.rc.slice(-1), x.why]),
+        withFlag: all.cards.map((c) => c.rc.slice(-1)).sort(),
+        model: (() => { const m = Lk.lookModel(loadOf([kr('000001')]), { data: { v: 2, decks: [deckOf([['000001', 'kr']])] } }, discOf({ issue }), T, NOW);
+          return [m.issue.length, m.skipped.length]; })() };""")
+    assert got["flag"] is False
+    assert got["shown"] == ["3", "4", "7"], got
+    assert sorted(got["left"]) == [["1", 'a correction of an older decision (board date "20260512", filed 20261110)'],
+                                   ["2", 'a correction of an older decision (board date "20241128", filed 20261107)'],
+                                   ["5", 'a correction of an older decision (board date "20261013", filed 20261112)'],
+                                   ["6", 'a correction of an older decision (board date null, filed 20261109)']], got["left"]
+    assert got["withFlag"] == ["1", "2", "3", "4", "5", "6", "7"] and got["model"] == [3, 4]
+
+
+def test_a_mark_without_a_board_date_or_numbers_hides_only_its_own_filing():
+    got = run("""
+      const blank = row(1, '000001', 'cb', 0, { pend: true, bd: null });                        // no board date, no numbers
+      const bdOnly = row(2, '000001', 'bw', 0, { pend: true });                                  // a board date, no numbers
+      const numOnly = row(3, '000001', 'rights', 0, { how: 'others', n: 10, p: 1, bd: null });   // numbers, no board date
+      let d = { v: 1, decks: [] };
+      for (const r of [blank, bdOnly, numOnly]) d = S.withSeen(d, r, T, 1);
+      const other = (r) => ({ ...r, rc: '20269999999999' });
+      out = [S.isSeen(d, blank), S.isSeen(d, other(blank)), S.isSeen(d, bdOnly), S.isSeen(d, other(bdOnly)), S.isSeen(d, numOnly), S.isSeen(d, other(numOnly)),
+        S.isSeen(d, { ...blank, rc: undefined }), S.seenMatch({ t: '000001', kind: 'cb', bd: null, n: null, p: null, amt: null, at: T }, other(blank))];""")
+    assert got == [True, False, True, False, True, False, False, False]
+
+
+def test_a_share_reads_as_the_pipeline_stores_it_and_names_come_from_todays_data():
+    got = run("""
+      const s = Tl.pct2;
+      const issue = [row(1, '000001', 'cb', 0, { amt: 3e10, p: 0.0012 }), row(2, '000002', 'cb', 0, { amt: 3e10, p: 1, nk: undefined })];
+      const r = Lk.issueCards(discOf({ issue }), new Set(['000001', '000002']), T, {}, new Map([['000001', kr('000001', { nk: '오늘이름' })]]));
+      out = { pct: [s(18), s(20.58), s(7.04), s(0.5), s(1855.66), s(0.0012), s(0.004), s(0.00456)],
+        text: Tl.issueText({ body: 'cb', amt: 30000000000, p: 0.0012 }), names: r.cards.map((c) => [c.t, c.nk]).sort() };""")
+    assert got["pct"] == ["18", "20.58", "7.04", "0.5", "1,855.66", "0.0012", "0.004", "0.0046"]
+    assert got["text"] == "회사가 나중에 주식으로 바꿀 수 있는 채권을 300억원어치 발행하기로 했어요. 모두 주식으로 바뀌면 주식 수가 지금보다 0.0012% 늘어나요."
+    assert got["names"] == [["000001", "오늘이름"], ["000002", "000002"]]
+
+
+def test_merged_marks_stay_within_the_stores_limit_keeping_the_newest():
+    got = run("""
+      const mk = (i, ts) => ({ t: '000001', kind: 'cb', bd: null, n: null, p: 1, amt: 1e9, rc: '2026' + String(i).padStart(10, '0'), at: T, ts });
+      const a = { v: 1, decks: [], seen: Array.from({ length: 300 }, (_, i) => mk(i, 1000 + i)) };
+      const b = { v: 1, decks: [], seen: Array.from({ length: 300 }, (_, i) => mk(1000 + i, 5000 + i)) };
+      const m = S.mergeTabs(b, a, T);
+      const f = S.mergeStores(a, b, 99, [], T);
+      out = { tabs: m && [m.seen.length, Math.min(...m.seen.map((x) => x.ts)), S.validStore(m, T)], file: [f.seen.length, Math.min(...f.seen.map((x) => x.ts)), S.validStore(f, T)] };""")
+    # 600 marks → the 500 newest (times 1100 … 1299 and 5000 … 5299), and the result passes the store's own check
+    assert got == {"tabs": [500, 1100, True], "file": [500, 1100, True]}
+
+
+def test_nps_tenths_are_worked_out_in_whole_hundredths():
+    got = run("""
+      const nps = [{ d: ymd(0), t: '000001', rt: 6.05, chg: 0.1 }, { d: ymd(0), t: '000002', rt: 9.95, chg: 0.05 }];
+      const all = new Set(['000001', '000002']);
+      out = Lk.npsCards(discOf({ nps }), { held: all, watched: new Set(), all }, T, new Map()).map((c) => [c.t, c.a, c.b]);""")
+    # 6.05 − 0.1 = 5.95 → 6.0 (never 5.9 from floating-point noise), 6.05 → 6.1; 9.95 → 10.0, 9.90 → 9.9
+    assert got == [["000002", 9.9, 10.0], ["000001", 6.0, 6.1]], got              # the same day: the later code first

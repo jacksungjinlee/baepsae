@@ -17,7 +17,7 @@
 // C.look.open.
 // No 뱁이 anywhere here (numbers). Colours: the shared tokens only (dark mode covers the screen). Icons: Phosphor duotone with
 // the topic tints (확인 필요 출렁임·위험 · 지분 변동 and 국민연금 공시·수급 · 일정 실적).
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { StatusChip } from "../ui/components.jsx";
@@ -35,8 +35,11 @@ const L = () => C.look;
 const MARK = 28;                                    // the company mark beside a title (the letter mark stays at 12 px or more)
 // "{name} · {title}" (the shape of watch.jsx hitTitle)
 const titled = (name, kind) => (kind ? `${name} · ${kind}` : null);
-// a share of up to two decimals as the filing gives it ("20.58", "7", "3.5")
-const pct2 = (x) => Number(Math.round(x * 100) / 100).toLocaleString("ko-KR", { maximumFractionDigits: 2 });
+// a share as the pipeline stores it (fetch_data _issue_pct): two decimals ("20.58", "7", "3.5"), and below 0.005% two significant
+// digits ("0.0012"), so a small ratio never reads "0%"
+export const pct2 = (x) => (x >= 0.005
+  ? Number(Math.round(x * 100) / 100).toLocaleString("ko-KR", { maximumFractionDigits: 2 })
+  : Number(x).toLocaleString("ko-KR", { maximumSignificantDigits: 2 }));
 
 // ---------------- words ----------------
 export const issueTitle = (c) => titled(c.nk, L()[c.kind]);
@@ -70,13 +73,13 @@ function Bolded({ text, part }) {
 }
 
 // ---------------- one card ----------------
-function LookCard({ icon, tone, t, name, title, tag, date, children, actions, ...rest }) {
+function LookCard({ icon, tone, t, name, title, titleId, tag, date, children, actions, ...rest }) {
   return (
     <section {...rest} style={{ marginTop: SPACE(2), background: COLOR.surface, borderRadius: RADIUS.lg - 2, padding: `${SPACE(3) + 2}px ${SPACE(4)}px` }}>
       <div style={{ display: "flex", alignItems: "center", gap: SPACE(2) + 2 }}>
         <IconChip name={icon} tone={tone} size={40} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <h3 data-ui-v2="look-title" style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { display: "flex", alignItems: "center", gap: SPACE(1) + 2, lineHeight: 1.35, wordBreak: "keep-all" })}>
+          <h3 data-ui-v2="look-title" id={titleId} style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { display: "flex", alignItems: "center", gap: SPACE(1) + 2, lineHeight: 1.35, wordBreak: "keep-all" })}>
             {t && <CoMark t={t} name={name} size={MARK} />}
             <span style={{ minWidth: 0 }}>{title}</span>
           </h3>
@@ -95,15 +98,18 @@ const body = (text, extra) => (
 const btn = { ...tap, flex: 1, minHeight: TOUCH, borderRadius: RADIUS.sm, display: "flex", alignItems: "center", justifyContent: "center", gap: SPACE(1) + 2,
   padding: `0 ${SPACE(3)}px`, textDecoration: "none", cursor: "pointer" };
 
+// tabIndex -1: focus can be put on the card (the page moves it to the next card when one is marked 확인했어요)
+const issueKey = (c) => String(c.rc || c.t + c.date);
 function IssueCard({ c, onSeen }) {
+  const titleId = "look-title-" + issueKey(c);
   return (
-    <LookCard data-ui-v2="look-issue" data-t={c.t} data-rc={c.rc} data-kind={c.kind} data-body={c.body} data-date={c.date}
-      icon="warning" tone="risk" t={c.t} name={c.nk} title={issueTitle(c)} date={mdText(c.date)}
+    <LookCard data-ui-v2="look-issue" data-t={c.t} data-rc={c.rc} data-kind={c.kind} data-body={c.body} data-date={c.date} data-key={issueKey(c)} tabIndex={-1}
+      icon="warning" tone="risk" t={c.t} name={c.nk} title={issueTitle(c)} titleId={titleId} date={mdText(c.date)}
       tag={<span data-ui-v2="look-tag" style={{ flexShrink: 0 }}><StatusChip tone="watch">{C.daily.check}</StatusChip></span>}
       actions={onSeen && (
         // the right half, where the board puts it (the left half is 공시 보기's, see the top of this file)
         <div style={{ marginTop: SPACE(3), display: "flex", justifyContent: "flex-end", gap: SPACE(2) }}>
-          <button type="button" data-ui-v2="look-seen" onClick={() => onSeen(c)}
+          <button type="button" data-ui-v2="look-seen" aria-describedby={titleId} onClick={() => onSeen(c)}
             style={{ ...btn, flex: `0 1 calc(50% - ${SPACE(1)}px)`, border: "none", background: COLOR.primary, ...tx(SIZE.sm, WEIGHT.bold, COLOR.onPrimary) }}>{L().seen}</button>
         </div>
       )}>
@@ -190,9 +196,22 @@ export function TodayLook({ load, store, setStoreData, disc, pad, onBack, onLeav
     console.info(`[v2] today-look: nothing to show here (${load.status !== "ok" ? "no data" : !m.fresh ? "the data is not fresh" : "no card"}): back to the home screen`);
     onLeave();
   }, [leave]);
+  // After 확인했어요 the card goes away: focus moves to the next 확인 필요 card, or to the page heading when it was the last one.
+  const headRef = useRef(null);
+  const [focusTo, setFocusTo] = useState(null);           // { key } | { head: true }
+  useEffect(() => {
+    if (!focusTo) return;
+    const el = focusTo.key ? document.querySelector(`[data-ui-v2="look-issue"][data-key="${focusTo.key}"]`) : headRef.current;
+    if (el && typeof el.focus === "function") { try { el.focus(); } catch (e) { /* ignore */ } }
+    setFocusTo(null);
+  }, [focusTo, m]);
   const onSeen = canMark ? (c) => {
     const next = withSeen(store.data, c, todayKst(), Date.now());
-    if (next) setStoreData(next); else console.warn("[v2] today-look: the mark was not saved for " + c.t + " " + c.rc);
+    if (!next) { console.warn("[v2] today-look: the mark was not saved for " + c.t + " " + c.rc); return; }
+    const i = m.issue.findIndex((x) => issueKey(x) === issueKey(c));
+    const after = i >= 0 ? m.issue[i + 1] : null;
+    setStoreData(next);
+    setFocusTo(after ? { key: issueKey(after) } : { head: true });
   } : null;
   const ok = load.status === "ok" && m.fresh;
   return (
@@ -200,10 +219,10 @@ export function TodayLook({ load, store, setStoreData, disc, pad, onBack, onLeav
       <AppBar onBack={onBack} backLabel={C.app.tabs.home} />
       {ok && (
         <div data-ui-v2="today-look" data-disc={m.ds} data-n={cards}>
-          <h2 style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(2) })}>{C.home.look}</h2>
+          <h2 ref={headRef} tabIndex={-1} data-ui-v2="today-look-head" style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(2) })}>{C.home.look}</h2>
           <DateLine date={load.data.pxDate} fresh={load.fresh} />
           <LookNotes m={m} prefix="look" />
-          {m.issue.map((c) => <IssueCard key={c.rc || c.t + c.date} c={c} onSeen={onSeen} />)}
+          {m.issue.map((c) => <IssueCard key={issueKey(c)} c={c} onSeen={onSeen} />)}
           <WatchHitRows hits={hits} load={load} onOpen={onWatch} />
           {filings.map(({ c, k }) => (k === "ins" ? <InsiderCard key={"i" + c.rc} c={c} /> : <NpsCard key={"n" + c.t + c.date} c={c} />))}
           {(m.dates.length > 0 || (cards > 0 && m.noKr)) && <DatesCard rows={m.dates} noKr={m.noKr} />}

@@ -16,7 +16,10 @@
 //            (issueBody null: a 유무상증자 (bonus), a 기타주식 issue (cls other), one that issues both classes (n2 · p2), or a rights
 //            issue whose method is neither 주주배정 nor 제3자배정 · 일반공모): the PR asks Jack for their wording (#145's notes for
 //            this PR); the console names them. A filing whose numbers are not read (pend) or blank gets the 숫자를 읽지 못했어요
-//            line. When the day's 주요사항 list failed (issueOk false) there is no issue card and the page says the list did not
+//            line. A correction (cor) of a decision made ISSUE_DAYS or more days before it was filed (bd at least ISSUE_DAYS before
+//            d), or a correction whose board date cannot be read, is left out too while OLD_CORRECTIONS is false (coordinator's
+//            decision of 2026-11-22 until Jack answers #145's open question 3: on the 11-21 data such rows showed a May decision's
+//            numbers, worked out on that time's share count, as news of 11-20); the console names them. When the day's 주요사항 list failed (issueOk false) there is no issue card and the page says the list did not
 //            load (issueFail); a file without the section at all (from before #145) has none, said in the console.
 //   insider  disc.json insider, held and watched stocks, filed within the last INSIDER_DAYS days, |q| × today's official close at
 //            least INSIDER_MIN_WON (1억원; disc.json amt used that run's price, so the amount is recomputed). Title by role
@@ -45,6 +48,8 @@ export const NPS_DAYS = 7;
 export const DATE_DAYS = 7;
 export const DATES_MAX = 5;
 export const INSIDER_MIN_WON = 1e8;
+// Corrections of old decisions (see the top of this file): false = left out until Jack answers #145's question 3.
+export const OLD_CORRECTIONS = false;
 // How lookModel reads an insider row's role (see the top of this file): null = not read yet, so the insider cards stay off.
 export const ROLE_OF = null;
 
@@ -96,9 +101,16 @@ export function issueBody(r) {
   if (r.kind === "cb" || r.kind === "bw") return r.pend === true || !pos(r.amt) || !pos(r.p) ? "unread" : r.kind;
   return null;
 }
-// disc: app.jsx's { status, data } · held: Set · today: KST YYYY-MM-DD · data: store.data (the 확인했어요 marks).
+// A correction of a decision made ISSUE_DAYS or more days before the correction was filed, or one whose board date cannot be read.
+export function oldCorrection(r) {
+  if (!r || r.cor !== true) return false;
+  const d = ymdOf(r.d), bd = ymdOf(r.bd);
+  return !d || !bd || dayNum(d) - dayNum(bd) >= ISSUE_DAYS;
+}
+// disc: app.jsx's { status, data } · held: Set · today: KST YYYY-MM-DD · data: store.data (the 확인했어요 marks) · byT: today's data
+// rows (the name the screens use; the filing's own name, then the code, when the stock is not in them) · oldCorrections: the flag.
 // -> { cards: [{ rc, t, nk, kind, date, body, n, p, amt, bd, cor }], skipped: [{ t, rc, why }], fail, missing }
-export function issueCards(disc, held, today, data) {
+export function issueCards(disc, held, today, data, byT = null, oldCorrections = OLD_CORRECTIONS) {
   const out = { cards: [], skipped: [], fail: false, missing: false };
   if (!disc || !disc.data) return out;
   const d = disc.data;
@@ -108,6 +120,10 @@ export function issueCards(disc, held, today, data) {
     if (!r || typeof r !== "object" || !held.has(r.t) || r.wd === true) continue;
     const date = ymdOf(r.d);
     if (!within(date, today, ISSUE_DAYS)) continue;
+    if (!oldCorrections && oldCorrection(r)) {
+      out.skipped.push({ t: r.t, rc: r.rc, why: `a correction of an older decision (board date ${JSON.stringify(r.bd)}, filed ${r.d})` });
+      continue;
+    }
     const body = issueBody(r);
     if (!body) {
       out.skipped.push({ t: r.t, rc: r.rc, why: r.bonus === true ? "bonus: a rights and bonus issue" : r.cls === "other" ? "cls other: a non-common class"
@@ -115,7 +131,9 @@ export function issueCards(disc, held, today, data) {
       continue;
     }
     if (isSeen(data, r)) continue;
-    out.cards.push({ rc: r.rc, t: r.t, nk: r.nk, kind: r.kind, date, body, n: pos(r.n) ? r.n : null, p: pos(r.p) ? r.p : null,
+    const s = byT && typeof byT.get === "function" ? byT.get(r.t) : null;
+    const nk = (s && typeof s.nk === "string" && s.nk) || (typeof r.nk === "string" && r.nk) || String(r.t);
+    out.cards.push({ rc: r.rc, t: r.t, nk, kind: r.kind, date, body, n: pos(r.n) ? r.n : null, p: pos(r.p) ? r.p : null,
       amt: pos(r.amt) ? r.amt : null, bd: typeof r.bd === "string" ? r.bd : null, cor: r.cor === true });
   }
   out.cards.sort(desc);
@@ -150,7 +168,9 @@ export function insiderCards(disc, cover, today, byT, roleOf = null) {
 }
 
 // ---------------- 국민연금 ----------------
-const r1 = (x) => Math.round(x * 10) / 10;
+// one decimal, worked out in whole hundredths (6.05 − 0.1 is 5.95, shown 6.0: never 5.9 from floating-point noise)
+const hundredths = (x) => Math.round(x * 100);
+const tenthOf = (h) => Math.round(h / 10) / 10;
 export function npsCards(disc, cover, today, byT) {
   const out = [];
   if (!disc || !disc.data || !Array.isArray(disc.data.nps)) return out;
@@ -159,7 +179,7 @@ export function npsCards(disc, cover, today, byT) {
     const date = ymdOf(x.d);
     const rt = num(x.rt), chg = num(x.chg);
     if (!within(date, today, NPS_DAYS) || rt == null || chg == null) continue;
-    const a = r1(rt - chg), b = r1(rt);
+    const a = tenthOf(hundredths(rt) - hundredths(chg)), b = tenthOf(hundredths(rt));
     if (a === b) continue;
     const s = byT && byT.get(x.t);
     out.push({ t: x.t, nk: (s && s.nk) || x.nk || x.t, date, a, b, up: b > a, rc: null });
@@ -202,7 +222,7 @@ export function lookModel(load, store, disc, today, now) {
   const dd = disc && disc.status === "ok" && disc.data ? discDate(disc.data, now) : null;
   const ds = st === "skip" ? "skip" : st === "ok" ? (filingsChecked(disc, dd) ? "ok" : "stale") : st === "fail" || st === "none" ? st : "wait";
   const checked = ds === "ok";
-  const iss = checked ? issueCards(disc, cover.held, today, data) : { cards: [], skipped: [], fail: false, missing: false };
+  const iss = checked ? issueCards(disc, cover.held, today, data, load.byT) : { cards: [], skipped: [], fail: false, missing: false };
   const ins = checked ? insiderCards(disc, cover, today, load.byT, ROLE_OF) : { cards: [], skipped: [] };
   const nps = checked ? npsCards(disc, cover, today, load.byT) : [];
   const dates = dateRows(load.byT, cover, today);
@@ -218,7 +238,7 @@ const said = new Set();
 export function lookSay(m, where) {
   if (!m || !m.fresh) return;
   const lines = [];
-  if (m.skipped.length) lines.push(`left out (no approved wording yet, or no close to size it): ${m.skipped.map((x) => `${x.t} ${x.rc || ""} (${x.why})`).join("; ")}`);
+  if (m.skipped.length) lines.push(`left out ${m.skipped.length} (an old decision's correction, no approved wording yet, or no close to size it): ${m.skipped.map((x) => `${x.t} ${x.rc || ""} (${x.why})`).join("; ")}`);
   const both = m.insider.filter((c) => c.title === "both");
   if (both.length && !(C.look && C.look.insBoth)) lines.push(`insider cards waiting for Jack's title (role both or blank): ${both.map((c) => `${c.t} ${c.rc}`).join(", ")}`);
   const none = m.insider.filter((c) => c.title === "none");

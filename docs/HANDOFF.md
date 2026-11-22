@@ -18,8 +18,9 @@ are built but off (`look.js` `ROLE_OF` null): their title needs `role`, and
 loads disc.json when a Korean stock is held or watched. Not built, waiting for Jack: 공시 보기 (an existing test,
 `tests/test_v2_app.py::test_pages_never_load_fixtures_or_other_sites`, keeps DART links to the 공시 tab), cards for 유무상증자 (`bonus`),
 기타주식 (`cls` other) and two-class (`n2` · `p2`) rows, and the insider title for role 임원·주요주주 or blank (`look.insBoth`,
-proposed "임원·주요주주 지분 변동"); #145's open question 3 (old decisions corrected recently) follows the spec literally (the
-correction's own filing date counts) until Jack sets a rule.
+proposed "임원·주요주주 지분 변동"); #145's open question 3 (old decisions corrected recently): until Jack answers, a correction filed 30 or more days after its
+board date, or one with no readable board date, is left out and named in the console (`look.js` `OLD_CORRECTIONS` false; 48 of
+the 116 rows of the last 30 days on the 11-21 file, e.g. MSDI's 2026-05-12 decision filed again on 11-20).
 
 **#162 (hand-added US stocks), 2026-11-21:** Jack's 11-21 answer 2 ("Yes, warn."), applied under his standing rule for checks on our own processing (11-19; N = 5, 11-20). A hand-added US stock (`EXTRA_US`, 67) that Yahoo doesn't send already only warned: the run writes a reason for every one it leaves out (`us_extra_missing`), and #149's drop step never drops them. What changes is only a hand-added stock missing from data.json with no reason in `usExtraMissing` (our own code losing it after `fetch_us`; no such path today): 1 to 5 now warn, named ("이유 없이 빠짐 n: …"); more than 5 still fail (`US_EXTRA_QUIET_MAX`, new; the 11 publishes with the record, 11-14 to 11-20, had 0). Still failing as before: a listed row with no price (or not a US stock row) and no reason, and a reason that is not text. RUNBOOK "US stocks added by hand (EXTRA_US)".
 
