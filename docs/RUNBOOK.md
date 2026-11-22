@@ -1699,19 +1699,40 @@ the file is written). No new downloads and no DART calls.
   - the row is shown at its own older date (`pxd`, `pxc`: last confirmed close or halted; and `est` gold) — `price ÷ c1w − 1`
     would then be a move up to that row's own date, not the week, so the screen leaves the stock out and names it (Part E);
   - the series or that day's listing has no row for that date (new listings; an earlier day is never used);
-  - Korea: the KRX base-price link from that day to the price date is not confirmed "ok" for every day of the week
-    (`kr_ref_links`). "break" means KRX reset the base price (split, merge, capital reduction, 권리락, 무상증자, a KONEX base move on
-    a no-trade day); any other status means it could not be confirmed (a final listing file missing for a day in between, the stock's
-    row missing that day, or `Changes` blank — KONEX rows on backup days always). This is stricter than the spec on purpose: in a
-    무상증자 the price drops on the 권리락 day while the new shares list weeks later, so the share-count rule alone would show a fake
-    −54% (the same case `pin_why_not` already guards, 코나아이 1.5×);
+  - Korea: the KRX base-price link from that day to the price date is not confirmed "ok" for every day of the week. A link is
+    "ok" when that day's KRX base price (`Close − Changes`) is within 1 won of the previous trading day's close. Between final listing
+    files this is `kr_ref_links`; "break" means KRX reset the base price (split, merge, capital reduction, 권리락, 무상증자, a KONEX
+    base move on a no-trade day). This is stricter than the spec on purpose: in a 무상증자 the price drops on the 권리락 day while the
+    new shares list weeks later, so the share-count rule alone would show a fake −54% (the same case `pin_why_not` already guards,
+    코나아이 1.5×). **Days without a final listing file** (backup-source days, the volunteer cache only committed intraday — 3 of 5
+    days in the week of 11-16; the first dry run had 0 / 2,474 Korean `c1w`) are checked one by one from other evidence
+    (`kr_c1w_rescue`, run in `fetch_korea` after the price phase):
+    - **A, KRX base day by day (`krx`, exact).** The day's base price from that day's non-final cache file (`kr_recent_sessions`
+      now hands those files over; KRX fixes the base before the open, so an intraday file has the right one — checked on the real
+      11-17 file: 13 / 13 equal the 11-16 official close), a final file, or the last backup run's Daum rows (`.dart-cache/kr-fb-v1.json`,
+      close − change); the previous close from a final file, the previous publish (its `pxDate`), or the Daum cache when Daum and
+      Yahoo agree to the won. Sources that disagree → blank (`conflict`). Any reset seen → blank (counted as a base reset).
+    - **B, Naver adjusted series (`naver`), only for days A could not settle.** Naver rewrites every bar before a reset onto the new
+      basis. So: the median of Naver ÷ official close over the 5–10 linked days up to the last settled day (G0) must be within 1%
+      (`C1W_NV_TOL`; real 2026-11-14 samples: normal stocks 0.0–0.7%, single days up to ±3% from after-hours trades, which is why it
+      is a median); Naver must have a bar on every day after G0, no Naver day move beyond the price limit (30%, KONEX 15%: a large reset
+      Naver has not applied yet), every unsettled day must have a KRX base from an intraday file or the Daum cache, within 5%
+      (`PIN_PX_TOL`) of Naver's previous bar (a smaller reset Naver has not applied yet), and the price date's own link must be
+      settled by A (Naver could lag on the newest day). Any missing piece → blank, with its reason.
+    - **What can still slip through (rescued `naver` rows only):** a reset Naver has applied that moves the basis by about 2% or less
+      (1% plus the median's after-hours wobble), or one Naver has not applied yet of about 5% or less. Both are typically small
+      주주배정 rights issues or stock dividends on a day without a final file; the weekly move of that stock is then off by that much.
+      Rows rescued by A carry no such error. Real cases blanked in the tests: 코나아이 1.5× bonus, 엘앤씨바이오 1:1 bonus, CMG제약 10:1
+      merge, DGI 권리락, 유니온머티리얼 5:1 merge, and the reviewers' 000660 권리락 probes;
   - Korea, [Q9]: the listed share count changed by more than 20% between that day's file and today (`C1W_SHR_PCT`; exactly 20% is
     kept; an unknown count also blanks). That day's count is used inside the run only and is not written to data.json;
   - US: a split dated after the week start and up to the price date (the download's `Stock Splits` column, any non-zero value
     including spin-off adjustments, or a row of the published `splits`);
   - US: an ex-dividend inside the week that cannot be undone: the `Dividends` column unreadable, a blank or infinite value on a day
-    with a price bar, an ex-dividend after the price date in the download, a fund's capital-gains distribution that week, no bar on
-    the trading day before the ex-date, or a dividend not smaller than that day's close.
+    with a price bar, a negative value, an ex-dividend or a capital-gains distribution after the price date in the download, a
+    fund's capital-gains distribution that week, no bar on the trading day before the ex-date, or a dividend on a day (from the week
+    start to the price date) whose next US trading day has no bar for that stock (yfinance 1.7.0 `safe_merge_dfs` moves a dividend
+    whose ex-date has no bar onto the previous bar, so it could sit on the week start and look outside the week).
 - **Log** (every run; "!!" when a market's week date or listing file could not be used, fewer than 95% of the rows priced at the
   market's date have `c1w`, a bond/ETF/gold row lacks one, any Korean row was blanked for an unconfirmed link, or a US dividend could
   not be undone). The counts use the same denominator as the 95% rule and the gate (rows priced at the market's date); rows at their
@@ -1721,7 +1742,9 @@ the file is written). No new downloads and no DART calls.
   - "c1w 국내 빈 칸 b: {reason} {count} · …" (one line per market with blanks)
   - "c1w 주식 수 20% 넘게 바뀌어 비움: n / N — code name (then → now주) …"
   - "c1w KRX 기준가가 그 사이 새로 정해져 비움 (분할 · 병합 · 감자 · 권리락 · 무상증자 · 코넥스 기준가 조정 등): n / N — …"
-  - "c1w 기준가 연결 확인 못 함 n · 그중 비움 k / N (그 사이 최종본 목록 파일이 없는 거래일: …) — code name (확인 못 함 | 오늘 목록에 없음) …"
+  - "c1w 기준가 연결을 목록 파일끼리 확인 못 함 n / N (그 사이 최종본 목록 파일이 없는 거래일: …) — 다른 자료로 확인해 실음 r (KRX 기준가로 날마다 a ·
+    네이버 수정주가로 b) · 다른 자료로 본 기준가 재설정 x · 비움 k (reason counts) — code name (reason) …"
+  - "c1w 기준가 연결 자료: 장중 목록 파일 … · 지난 발행본 … · 다음 보관본 … · 네이버 일봉 n종목 — 실은 종목 (예): code name (how) …" (only when n > 0)
   - "c1w 미국 그 주 배당락: 실제 종가로 되돌림 n (…) · 되돌리지 못해 비움 k (ticker reason …) · 그 주 분할로 비움 s (…)"
   The last four are printed every run, also with 0. If this step crashes, every `c1w` is removed, both dates are written blank, the
   run logs "!! c1w 단계가 오류로 멈췄어요" and publishes as usual. A crash while collecting one US stock's or one fund's week-start
@@ -1739,7 +1762,8 @@ half or up by more than double in a week — it can be real; the row names the s
 price limit compounded over the week's trading days (30%, KONEX 15%). Outside that limit usually means a base reset the blanking
 missed; the exception is a 정리매매 (delisting liquidation) week, which has no limit. A Korean ratio outside 0.5–2.0 but inside the
 compounded limit is only named in the value, without a warning (real theme-stock moves happen a few times a month; they should not
-raise the morning alarm). When `idxHist` KOSPI or SP500 is missing or malformed, the value says which cross-checks were skipped.
+raise the morning alarm). When `idxHist` KOSPI or SP500 is missing or malformed, the value says which cross-checks were skipped, and a
+Korean ratio outside 0.5–2.0 then warns (the limit is unknown).
 The gate cannot see the base-price link itself (data.json carries only counts in `krSeries.ref`), so a Korean row the pipeline
 should have blanked for an unconfirmed link is caught by the gate only if its move breaks the compounded limit.
 

@@ -651,12 +651,14 @@ VAL20_DAYS = 20           # 평균 거래대금 기간 (거래일)
 VAL20_MIN_DAYS = 10       # 이보다 적은 날만 있으면 (신규 상장 등) 비워 둬요
 
 
-def kr_recent_sessions(px_date, fetch_csv, commit_kst, n=VAL20_DAYS - 1, lookback=45, special=None, known=None):
+def kr_recent_sessions(px_date, fetch_csv, commit_kst, n=VAL20_DAYS - 1, lookback=45, special=None, known=None, nonfinal=None):
     """기준일 앞의 끝난 거래일 목록 파일들 (최신 → 과거, 최대 n개). (순수 함수 — 받아오는 방법은 인자로)
     반환: (세션 [(날짜, DataFrame)], 메모들, 직전 거래일 파일이 최종본인지).
     직전 거래일 파일은 커밋 시각이 그날 마감 + 30분(보통 16시 · 수능일 17시) 전이면 최종본이 아니라 그날 종가를 믿지 않아요 (d1 을 비워요).
     special: KRX 특별 거래시간 표 (None 이면 data/krx_special_sessions.csv 를 읽어요).
-    known: {날짜: DataFrame} 2차 출처(다음 × 야후 · 마감 + 30분 뒤 · 두 종가가 같은 종목만)로 만든 날 — 캐시 파일 대신 최종본으로 써요 (2026-11-19)."""
+    known: {날짜: DataFrame} 2차 출처(다음 × 야후 · 마감 + 30분 뒤 · 두 종가가 같은 종목만)로 만든 날 — 캐시 파일 대신 최종본으로 써요 (2026-11-19).
+    nonfinal (v19.6e): dict 를 주면 시가총액이 찬 (장 전 파일이 아닌) 최종본이 아닌 날의 파일을 {날짜: DataFrame} 으로 담아요 — 종가로는 쓰지 않고
+    그날의 KRX 기준가 (Close − Changes · 장 시작 전에 정해져 장중에도 같아요) 만 c1w 의 기준가 연결 확인에 써요 (kr_c1w_rescue)."""
     special = load_krx_special_sessions() if special is None else special
     out, notes, prev_final = [], [], None
     for back in range(1, lookback + 1):
@@ -696,6 +698,8 @@ def kr_recent_sessions(px_date, fetch_csv, commit_kst, n=VAL20_DAYS - 1, lookbac
             notes.append(f"!! {d} 파일의 {when} — " + ("그날 마감 + 30분 전이라 최종본이 아니에요" if ct is not None else "최종본으로 보지 않아요")
                          + " · 그날 값은 가격 고정·거래대금에 쓰지 않아요")
         if not final:
+            if isinstance(nonfinal, dict):
+                nonfinal[d] = df
             continue
         out.append((d, df))
     return out, notes, bool(prev_final)
@@ -8403,9 +8407,11 @@ def fetch_korea(start, today, rf, prev=None):
     # v17.5.1: d1 (전 거래일 공식 종가 대비) · val20 (20거래일 평균 거래대금) — 그 전 날짜들의 최종 목록 파일에서.
     # 직전 파일이 KOSPI 의 직전 거래일과 다르면(그날 파일이 없거나 미완성이라 건너뛴 것) d1 은 이틀치 변화라 비워요.
     d1_map, v20_map, sessions, ok_prev = {}, {}, [], False
+    c1w_nonfinal = {}                         # v19.6e: 최종본이 아닌 날의 목록 파일 {날짜: DataFrame} (그날 KRX 기준가만 · kr_c1w_rescue)
     base_ok, d1_base = None, None
     if px_date is not None:
-        sessions, snotes, prev_final = kr_recent_sessions(px_date, _fetch_listing_csv, _listing_commit_kst, special=special, known=fb_known)
+        sessions, snotes, prev_final = kr_recent_sessions(px_date, _fetch_listing_csv, _listing_commit_kst, special=special, known=fb_known,
+                                                          nonfinal=c1w_nonfinal)   # v19.6e: 최종본이 아닌 날의 파일 (그날 기준가만 · c1w)
         for n in snotes:
             log(f"  ({n})" if not n.startswith("!!") else f"  {n}")
         want_prev = kr_prev_session(px_date, ks_all.index)
@@ -8513,6 +8519,10 @@ def fetch_korea(start, today, rf, prev=None):
     pin_kept, kept_names, pin_bad, jumps = collections.Counter(), {}, [], []    # 2026-11-14: 고치지 않은 봉 · 자기 점검 · 제한폭 넘는 움직임
     win_cut = {}                # 2026-11-14 저녁: 움직임이 있는 종목의 창마다 첫 봉 날짜 (mark_px_bad 가 그 창에 움직임이 드는지 봐요)
     naver_bad = []                                                              # 2026-11-14 (리뷰 S2): 네이버 시계열의 같은 날짜 · 잘못된 값
+    # v19.6e 3차: c1w 의 기준가 연결 확인용 네이버 원래 일봉 — 가장 앞 최종본 날 ~ 기준일 거래일 (KOSPI 일봉) 의 값만 {코드: {날짜: 원}}
+    c1w_nv, c1w_nv_err = {}, []
+    c1w_nv_days = ({pd.Timestamp(t).date().isoformat() for t in ks_all.index
+                    if min([d for d, _ in sessions] + [px_date]) <= pd.Timestamp(t).date() <= px_date} if px_date is not None else set())
     lock = threading.Lock()
     prev_hl = {x["t"]: (_fin(x.get("hi")), _fin(x.get("lo"))) for x in (prev or {}).get("stocks", []) if x.get("cls") == "kr"}
     prod_map = {}               # 주요제품 (업종 그룹 나누기용, 파일에는 dk 로만 나가요)
@@ -8577,6 +8587,7 @@ def fetch_korea(start, today, rf, prev=None):
                 kc = collections.Counter()
                 px, nfix = pin_recent(px, off_by_day, code, shr_by_day, shr_now.get(code), kept=kc, ref_by_day=ref_by_day)
                 bad = pin_audit(raw, px, px_date, off_by_day, shr_by_day, shr_now.get(code), code, ref_by_day=ref_by_day)
+                nvw = c1w_naver_pick(raw, c1w_nv_days)     # v19.6e: 스스로 감싸요 (None = 읽지 못함 · 이 종목은 그대로 처리)
                 with lock:
                     pin[how] += 1
                     pin["recent_fixed"] += nfix
@@ -8586,6 +8597,10 @@ def fetch_korea(start, today, rf, prev=None):
                         kept_names[code] = (str(row["Name"]), dict(kc))
                     if bad:
                         pin_bad.append((code, str(row["Name"]), bad))
+                    if nvw is None:
+                        c1w_nv_err.append(code)
+                    elif nvw:
+                        c1w_nv[code] = nvw
             else:
                 px = cut_at(px, last)
                 raw = px
@@ -8674,6 +8689,10 @@ def fetch_korea(start, today, rf, prev=None):
 
     log(f"· 한국 시세 완료: {len(out):,} / {len(listing):,}개"
         + (f" · 빠짐 {dict(dropped)}" if dropped else ""))
+    # v19.6e 3차: 목록 파일끼리 기준가 연결을 확인 못 한 종목 → 장중 목록 파일 · 지난 발행본 · 다음 보관본 · 네이버 수정주가로 날마다 (kr_c1w_rescue)
+    if px_date is not None:
+        kr_wk = kr_c1w_rescue_step(kr_wk, px_date, list(ks_all.index), sessions, listing, c1w_nonfinal, prev, c1w_nv, knx=knx_codes,
+                                   nv_err=len(c1w_nv_err))
     odd = sorted(f"{r['t']} {r['nk']}" for r in out if r["t"] not in KR_LISTED_FUNDS
                  and is_fund_industry(r.get("dk")))      # 2026-11-19: 띄어쓰기 둘 다 (DART 로는 이 업종을 채우지 않아요 · kr_ind_dart_plan)
     log(f"· 상장 펀드(etf) {sum(1 for r in out if r.get('etf'))}개 · 업종 '{KR_FUND_INDUSTRY}'인데 회사로 둔 종목 {len(odd)}개"
@@ -12696,8 +12715,13 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
     log(f"· 미국 기준일(S&P500 마지막 봉) {us_px_date} · 환율 {fx_last:,.1f} ({fx_date})")
     # v19.6e (Part I.2): 미국의 이번 주 앞 마지막 거래일 (S&P 500 일봉) — 종목마다 가격과 같은 시계열의 그날 봉을 실제 종가 기준으로 c1w 재료에
     # (us_c1w_add · main 의 c1w_step). 멈춰도 발행은 이어가요
-    us_wk = us_week_start(us_px_date, spx.index)
-    us_mon = week_monday(us_px_date)
+    try:
+        us_wk = us_week_start(us_px_date, spx.index)
+        us_mon = week_monday(us_px_date)
+    except Exception as e:                    # 3차 (검증): 여기서 멈춰도 미국 시세는 그대로 — 미국 c1w 만 모두 빈 칸
+        us_wk, us_mon = {"date": None, "px": None, "why": "err", "close": {}, "unadj": [], "bad": {}, "split": [], "bars": 0, "barsEx": [],
+                         "err": 0, "days": []}, None
+        log(f"  !! c1w: 미국의 그 주 시작을 정하다가 멈췄어요 ({type(e).__name__}: {str(e)[:160]}) — 미국 c1w 는 모두 빈 칸 (미국 시세는 그대로)")
     bench = spx.pct_change().dropna()
     bench.name = "bench"
     spx_krw = (spx * fx.reindex(spx.index).ffill()).dropna()
@@ -13025,7 +13049,7 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
             "_usOwnYahoo": us_own_yahoo,                    # 2차 확인: 실은 종목의 야후 자기 날짜 봉 (us_own_split_late 만 써요 · 파일에 나가지 않아요)
             # v19.6a: None = 분할을 읽다 멈춤 · splitsNoCol = 분할 칸이 없던 종목 (둘 다 main 이 지난 발행본으로 이어요)
             "splits": splits, "splitsNoCol": list(sinfo.get("noCol") or [])}
-    meta["_c1wUs"] = us_c1w_finish(us_wk)   # v19.6e: c1w 재료 (파일에 나가지 않아요 · main 의 c1w_step)
+    meta["_c1wUs"] = us_c1w_finish_safe(us_wk)   # v19.6e: c1w 재료 (파일에 나가지 않아요 · main 의 c1w_step · 멈춰도 미국 시세는 그대로)
     return out, bench, fx, fx_last, us_vol_krw, meta
 
 
@@ -13756,8 +13780,9 @@ C1W_WEEK_KO = {"noPx": "기준일 없음", "noDay": "그 주 월요일 앞 거�
                "table": "휴장일 표와 맞지 않음 (지수 일봉이 빠뜨린 거래일 · 휴장일의 봉)",
                "bars": f"그날과 그 주 월요일 사이에 봉이 있는 종목이 {C1W_US_BARS_MAX}개를 넘음 (S&P 500 일봉이 거래일을 빠뜨렸어요)",
                "err": "단계가 오류로 멈춤"}
-C1W_DIV_KO = {"noDiv": "배당 기록 칸을 읽지 못함", "odd": "배당 기록 값이 숫자가 아님", "after": "기준일 뒤 배당락이 다운로드에 있음",
-              "gain": "그 주에 펀드 자본이득 분배", "prev": "배당락 앞 거래일 봉이 없음", "size": "배당이 앞 종가보다 크거나 같음"}
+C1W_DIV_KO = {"noDiv": "배당 기록 칸을 읽지 못함", "odd": "배당 기록 값이 숫자가 아님", "after": "기준일 뒤 배당락 · 자본이득 분배가 다운로드에 있음",
+              "gain": "그 주에 펀드 자본이득 분배", "prev": "배당락 앞 거래일 봉이 없음",
+              "moved": "배당 기록 다음 거래일에 그 종목 봉이 없음 (yfinance 가 봉 없는 배당락일의 배당을 앞 봉으로 옮겨요)"}
 C1W_LINK_KO = {"unknown": "확인 못 함", "new": "그 사이 새로 상장", None: "오늘 목록에 없음"}   # kr_ref_links 의 상태 (로그용)
 C1W_SHOW = 12             # 로그 한 줄에 이름을 적는 종목 수
 
@@ -13872,6 +13897,211 @@ def kr_week_closes_safe(px_date, trade_days, sessions, ref_by_day, known=None):
                 "rows": 0, "gap": []}
 
 
+# ── v19.6e 3차 (dry run 44993787748): 그 주에 최종본 목록 파일이 없는 날 (2차 출처 날 · 캐시가 장중 값만 올린 날) 이 있으면 KRX 기준가 연결을 목록
+#    파일끼리 확인할 수 없어요 (11-16 ~ 11-20 주: 국내 0 / 2,474). 그날들을 다른 자료로 하루씩 확인해요 — 기준가 재설정이 있던 종목은 절대 싣지 않게:
+#    A. KRX 기준가로 날마다 (krx · 정확): 그날 기준가 (최종본 · 장중 목록 파일의 Close − Changes · 다음 보관본의 종가 − 전일 대비) 가 앞 거래일의
+#       종가 (최종본 공식 종가 · 지난 발행본의 그날 종가 · 다음 보관본의 종가가 야후와 원 단위까지 같을 때) 와 1원 안이면 그날은 재설정 없음.
+#       자료끼리 다르면 (conflict) 비워요. 한 날이라도 다르면 (break) 재설정 → 비워요.
+#    B. 그래도 확인 못 한 날이 남으면 네이버 수정주가 (naver): 그 종목의 네이버 일봉 (FinanceDataReader · 재설정이 있으면 그 앞 봉을 모두 새 기준으로
+#       고쳐 둬요) 이 확인 못 한 날 바로 앞 (G0) 까지 공식 종가와 같은 기준인지 — 연결이 확인된 앞선 날들 (5 ~ 10일) 의 네이버 ÷ 공식 종가 중앙값이
+#       1 ± C1W_NV_TOL 안 (넥스트레이드 · 시간외 차이는 하루 ±3% 까지 흔들려 중앙값으로 봐요 · 2026-11-14 실제 표본: 보통 종목 0.0 ~ 0.7%). 그리고
+#       G0 ~ 기준일 네이버 봉이 날마다 있고 · 하루 움직임이 가격 제한폭 안 (네이버가 아직 재설정을 반영하지 않았을 때의 큰 재설정) · 확인 못 한 날마다
+#       그날 KRX 기준가 (장중 목록 파일 · 다음 보관본) 가 있고 네이버 앞 봉과 PIN_PX_TOL 안 (같은 경우의 작은 재설정) · 기준일의 연결은 A 로 확인
+#       (가장 최근 날은 네이버가 늦을 수 있어요).
+#    어느 자료든 없으면 비워요. 남는 위험 (RUNBOOK): B 로 실은 종목에 네이버가 반영한 약 ±2% 이하 재설정 (C1W_NV_TOL + 중앙값의 흔들림), 네이버가
+#    반영하지 않은 약 ±5% 이하 재설정 (PIN_PX_TOL + 그날 시간외 차이).
+C1W_NV_TOL = 0.01         # 네이버 수정주가 ÷ 공식 종가 중앙값의 허용 차이 — 이보다 크면 그 사이 네이버가 맞춘 기준가 재설정이 있어요 (비움)
+C1W_NV_DAYS = (5, 10)     # 그 중앙값에 쓰는 앞선 날 수 (최소 · 최대) — 연결이 확인된 날만
+C1W_RESCUE_KO = {"krx": "KRX 기준가로 날마다 확인", "naver": "네이버 수정주가로 확인"}
+C1W_LINK_WHY_KO = {"conflict": "그날 기준가 · 종가 자료끼리 다름", "pxLink": "기준일의 기준가를 앞 거래일 종가로 확인 못 함",
+                   "noNaver": "네이버 일봉 없음", "stale": "그 사이 네이버 봉이 빠짐", "move": "그 사이 네이버 하루 움직임이 가격 제한폭 밖",
+                   "noBase": "확인 못 한 날의 KRX 기준가 자료 없음 (장중 목록 파일 · 다음 보관본)",
+                   "near": f"그날 KRX 기준가가 네이버 앞 봉과 {PIN_PX_TOL:.0%} 넘게 다름",
+                   "few": f"네이버와 맞춰 볼 연결 확인된 앞선 날이 {C1W_NV_DAYS[0]}일보다 적음",
+                   "adj": f"네이버 수정주가가 공식 종가와 {C1W_NV_TOL:.0%} 넘게 다름 (그 사이 기준가 재설정)", "none": "확인 자료 없음",
+                   "rows": "오늘 목록에 없음 (오늘 받은 자료가 없어요)", "err": "확인 단계가 오류로 멈춤"}
+
+
+def c1w_naver_pick(raw, days):
+    """fetch_korea 의 one() 이 종목마다 부르는 한 곳: 네이버 원래 일봉 (raw · naver_clean 뒤 · 공식 종가로 고치기 전) 의 그 날들 (days: 'YYYY-MM-DD'
+    set) 값 {날짜: 원}. 어떤 오류도 그 종목을 빼지 않게 None 을 돌려줘요 (부르는 쪽이 세요 · 그 종목은 네이버 확인 없이 — 확인이 필요하면 비워요)."""
+    try:
+        if raw is None or not len(raw) or not days:
+            return {}
+        first = pd.Timestamp(min(days))
+        out = {}
+        for ts, v in raw[raw.index >= first].items():
+            k = pd.Timestamp(ts).date().isoformat()
+            f = _fin(v)
+            if k in days and f is not None and f > 0:
+                out[k] = f
+        return out
+    except Exception:
+        return None
+
+
+def _c1w_frame_vals(df):
+    """목록 파일 → {코드: (공식 종가 또는 None, KRX 기준가 Close − Changes 또는 None)}."""
+    out = {}
+    if df is None or "Code" not in getattr(df, "columns", ()):
+        return out
+    for _, r in df.iterrows():
+        cl, ch = _fin(r.get("Close")), _fin(r.get("Changes"))
+        out[str(r["Code"]).strip()] = (kr_official_close(r), None if cl is None or ch is None else cl - ch)
+    return out
+
+
+def _c1w_one(vals, tol=1.0):
+    """한 날 · 한 종목의 값들 → 값 하나 · None (없음) · 'conflict' (자료끼리 tol 넘게 다름)."""
+    if not vals:
+        return None
+    return "conflict" if max(vals) - min(vals) > tol else vals[0]
+
+
+def kr_c1w_rescue(px_date, wk, trade_days, sessions, listing, nonfinal=None, prev=None, naver=None, codes=(), knx=(), daum=None,
+                  tol=C1W_NV_TOL, ndays=C1W_NV_DAYS):
+    """KRX 기준가 연결을 목록 파일끼리 확인하지 못한 국내 종목 (codes) 을 날마다 다른 자료로 확인 (순수 함수 · 위 설명).
+    sessions: 최종본 [(날짜, DataFrame)] · listing: 기준일 목록 · nonfinal: {날짜: 최종본이 아닌 목록 파일} (kr_recent_sessions) · prev: 지난 발행본
+    data.json · naver: {코드: {날짜: 네이버 원래 일봉}} (c1w_naver_pick) · knx: 코넥스 코드 (가격 제한폭 15%) · daum: 2차 출처 보관본 (kr-fb-v1).
+    반환: {코드: (how, detail)} — how 'krx' · 'naver' (실어요 · naver 의 detail 은 중앙값 차이) · 'base' (그 사이 기준가 재설정 — 비워요) ·
+    'blank' (detail = C1W_LINK_WHY_KO 의 키 — 비워요)."""
+    wk, px_date = _c1w_day(wk), _c1w_day(px_date)
+    if wk is None or px_date is None:
+        return {}
+    first = min([d for d, _ in sessions] + [wk])
+    days = sorted({pd.Timestamp(t).date() for t in trade_days if first <= pd.Timestamp(t).date() <= px_date} | {px_date})
+    prevd = {b: a for a, b in zip(days, days[1:])}
+    close, base = collections.defaultdict(dict), collections.defaultdict(dict)
+
+    def add(m, d, c, v):
+        v = _fin(v)
+        if v is not None and v > 0:
+            m[d].setdefault(c, []).append(v)
+    for d, df in list(sessions) + [(px_date, listing)]:
+        for c, (o, b) in _c1w_frame_vals(df).items():
+            add(close, d, c, o)
+            add(base, d, c, b)
+    for d, df in (nonfinal or {}).items():
+        d = _c1w_day(d)
+        if d in prevd:                                            # 장중 파일: 그날 기준가만 (종가는 장중 값이라 쓰지 않아요)
+            for c, (_o, b) in _c1w_frame_vals(df).items():
+                add(base, d, c, b)
+    pd0 = _c1w_day((prev or {}).get("pxDate")) if isinstance(prev, dict) else None
+    if pd0 in days and pd0 < px_date and isinstance(prev.get("stocks"), list):
+        for x in prev["stocks"]:                                  # 지난 발행본의 그날 종가 (자기 가격 날짜 pxd 인 행은 빼요)
+            if isinstance(x, dict) and x.get("cls") == "kr" and not x.get("fund") and x.get("t") and "pxd" not in x:
+                add(close, pd0, str(x["t"]).strip(), x.get("price"))
+    if isinstance(daum, dict) and daum.get("v") == KR_FB_CACHE_V and isinstance(daum.get("kk"), dict):
+        for c, v in daum["kk"].items():
+            rows, ys = (v or {}).get("d"), (v or {}).get("y")
+            if not isinstance(rows, dict) or not isinstance(ys, dict):
+                continue
+            for iso, r in rows.items():
+                d = _c1w_day(iso)
+                if d not in prevd or not isinstance(r, dict):
+                    continue
+                tp, chg, y = _fin(r.get("tradePrice")), _fin(r.get("changePrice")), _fin(ys.get(iso))
+                if tp is not None and y is not None and abs(tp - y) <= KR_FB_CLOSE_TOL:
+                    add(close, d, str(c), tp)                     # 두 출처가 원 단위까지 같은 종가만
+                if tp is not None and chg is not None:
+                    add(base, d, str(c), tp - chg)
+    knx = set(knx)
+    out = {}
+    for code in codes:
+        st = {}
+        for d in days[1:]:
+            c, b = _c1w_one(close[prevd[d]].get(code)), _c1w_one(base[d].get(code))
+            if c == "conflict" or b == "conflict":
+                st[d] = "conflict"
+            elif c is None or b is None:
+                st[d] = "unknown"
+            else:
+                st[d] = "break" if abs(b - c) > 1.0 else "ok"
+        win = [d for d in days if wk < d <= px_date]
+        if any(st.get(d) == "break" for d in win):
+            out[code] = ("base", None)
+            continue
+        if any(st.get(d) == "conflict" for d in win):
+            out[code] = ("blank", "conflict")
+            continue
+        unk = [d for d in win if st.get(d) != "ok"]
+        if not unk:
+            out[code] = ("krx", None)
+            continue
+        if st.get(px_date) != "ok":
+            out[code] = ("blank", "pxLink")
+            continue
+        nv = (naver or {}).get(code)
+        if not nv:
+            out[code] = ("blank", "noNaver")
+            continue
+        g0 = prevd.get(min(unk))
+        span = [d for d in days if g0 is not None and g0 < d <= px_date]
+        if g0 is None or g0.isoformat() not in nv or any(d.isoformat() not in nv for d in span):
+            out[code] = ("blank", "stale")
+            continue
+        lim = (KONEX_DAY_LIMIT if code in knx else KR_DAY_LIMIT) / 100.0
+        if any(abs(nv[d.isoformat()] / nv[prevd[d].isoformat()] - 1) > lim + 1e-9 for d in span):
+            out[code] = ("blank", "move")
+            continue
+        if any(not isinstance(_c1w_one(base[d].get(code)), float) for d in unk):
+            out[code] = ("blank", "noBase")                   # 그날 KRX 기준가가 없는 날은 네이버가 늦었을 때 큰 재설정밖에 못 잡아요 → 비워요
+            continue
+        if any(abs(_c1w_one(base[d].get(code)) / nv[prevd[d].isoformat()] - 1) > PIN_PX_TOL for d in unk):
+            out[code] = ("blank", "near")
+            continue
+        cal, d = [], g0
+        while d is not None and len(cal) < ndays[1]:
+            o = _c1w_one(close[d].get(code))
+            if isinstance(o, float) and d.isoformat() in nv:
+                cal.append(nv[d.isoformat()] / o)
+            if st.get(d) != "ok":
+                break
+            d = prevd.get(d)
+        if len(cal) < ndays[0]:
+            out[code] = ("blank", "few")
+            continue
+        med = float(np.median(cal)) - 1
+        out[code] = ("naver", round(med, 4)) if abs(med) <= tol else ("blank", "adj")
+    return out
+
+
+def c1w_daum_cache(path=None):
+    """2차 출처 보관본 (kr-fb-v1 · 지난 2차 출처 날의 다음 행 · 야후 종가) 을 c1w 의 기준가 연결 확인에 읽어요. 없거나 못 읽으면 None (그날들은
+    다른 자료로 · 조용히 — 로그는 kr_c1w_rescue_step 이 적어요)."""
+    try:
+        with open(path or KR_FB_CACHE_PATH, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) and d.get("v") == KR_FB_CACHE_V else None
+    except Exception:
+        return None
+
+
+def kr_c1w_rescue_step(kr_wk, px_date, trade_days, sessions, listing, nonfinal, prev, naver, knx=(), nv_err=0, daum=None):
+    """fetch_korea 가 시세 단계 뒤에 부르는 한 곳: 목록 파일끼리 연결을 확인 못 한 종목 (kr_wk['ref'] 가 ok · break 가 아님) 만 kr_c1w_rescue 로.
+    kr_wk 에 rescue {코드: (how, detail)} · rescueSrc (쓴 자료) 를 적어요. 멈추면 크게 남기고 rescue 없이 (그 종목들은 비워요 · 발행은 이어가요)."""
+    try:
+        if not isinstance(kr_wk, dict) or not kr_wk.get("date") or kr_wk.get("why"):
+            return kr_wk
+        codes = sorted(c for c, s in (kr_wk.get("ref") or {}).items() if s not in ("ok", "break", "new"))   # new: 그 주 시작 날 행이 없어요
+        if not codes:
+            kr_wk["rescue"] = {}
+            return kr_wk
+        if daum is None:
+            daum = c1w_daum_cache()
+        kr_wk["rescue"] = kr_c1w_rescue(px_date, kr_wk["date"], trade_days, sessions, listing, nonfinal, prev, naver, codes, knx, daum)
+        wk = _c1w_day(kr_wk["date"])
+        nd = sorted(d.isoformat() for d in (_c1w_day(x) for x in (nonfinal or {})) if d and wk < d < px_date)
+        dd = sorted(x for x in ((daum or {}).get("days") or []) if isinstance(x, str) and wk.isoformat() < x < px_date.isoformat())
+        kr_wk["rescueSrc"] = {"intraday": nd, "pub": (prev or {}).get("pxDate") if isinstance(prev, dict) else None, "daum": dd,
+                              "naver": len(naver or {}), "nvErr": int(nv_err)}
+    except Exception as e:
+        kr_wk["rescue"] = {}
+        kr_wk["rescueErr"] = f"{type(e).__name__}: {str(e)[:160]}"
+        log(f"  !! c1w: 기준가 연결을 다른 자료로 확인하다가 멈췄어요 ({kr_wk['rescueErr']}) — 확인 못 한 국내 종목은 모두 빈 칸 (발행은 이어가요)")
+    return kr_wk
+
+
 def us_week_start(us_px_date, trade_days):
     """fetch_us 가 부르는 한 곳: 미국 c1w 재료의 빈 기록 {"date", "px", "why", "close", "unadj", "bad", "split", "bars", "barsEx", "err"} —
     날짜는 S&P 500 일봉으로 (c1w_week). 멈추면 크게 남기고 날짜 없이 (미국 c1w 모두 빈 칸 · 발행은 이어가요)."""
@@ -13929,14 +14159,23 @@ def us_c1w_close(px, divs, gains, wk, days):
         return None, "after"
     g = _num_col(gains)
     if g is not None:
+        if (g[g.index > pxd].fillna(0) != 0).any():
+            return None, "after"                   # 기준일 뒤 자본이득 분배 — 배당과 같게
         gw = g[(g.index > wts) & (g.index <= pxd)]
         if (gw.fillna(0) != 0).any():
             return None, "gain"
+    ds = sorted(days)
+    # 3차 (검증): yfinance 1.7.0 utils.safe_merge_dfs 는 그 종목 봉이 없는 배당락일의 배당을 앞의 봉으로 옮겨요 — 그 주 시작 날 (wk) 에 옮겨지면 그 주
+    # 밖으로 보여 되돌리지 않아요 (실제와 1% 어긋남). 배당 기록이 있는 날 (wk ~ 기준일) 다음 미국 거래일에 그 종목 봉이 없으면 어느 날 배당락인지 몰라요 → 비워요
+    for t, d in v[(v.index >= wts) & (v.index <= pxd)].items():
+        if _fin(d) is not None and d > 0:
+            nxt = min((x for x in ds if x > t.date().isoformat()), default=None)
+            if nxt is not None and nxt <= pxd.date().isoformat() and pd.Timestamp(nxt) not in bars:
+                return None, "moved"
     ex = [(t, float(d)) for t, d in after_wk.items() if d > 0]
     if not ex:
         return c, "plain"
     idx = px.index.normalize()
-    ds = sorted(days)
     mult = 1.0
     for e, d in sorted(ex, reverse=True):
         prev_day = max((x for x in ds if x < e.date().isoformat()), default=None)
@@ -13946,9 +14185,7 @@ def us_c1w_close(px, divs, gains, wk, days):
         a = _fin(hit.iloc[0])
         if a is None or a <= 0:
             return None, "prev"
-        a = a / mult
-        if not (0 < d < a):
-            return None, "size"
+        a = a / mult                               # a > 0 · d > 0 → 실제 앞 종가 a + d 가 늘 배당보다 커요 (m 은 늘 0 ~ 1)
         mult *= a / (a + d)
     return c / mult, "unadj"
 
@@ -14019,6 +14256,15 @@ def us_c1w_finish(us_wk):
     return us_wk
 
 
+def us_c1w_finish_safe(us_wk):
+    """fetch_us 가 부르는 한 곳: us_c1w_finish 가 멈추면 크게 남기고 미국 c1w 를 모두 비우는 기록 (미국 시세는 그대로)."""
+    try:
+        return us_c1w_finish(us_wk)
+    except Exception as e:
+        log(f"  !! c1w: 미국 그 주 시작 종가를 마무리하다가 멈췄어요 ({type(e).__name__}: {str(e)[:160]}) — 미국 c1w 는 모두 빈 칸 (미국 시세는 그대로)")
+        return {"date": None, "px": None, "why": "err", "close": {}, "unadj": [], "bad": {}, "split": [], "bars": 0, "barsEx": [], "err": 0}
+
+
 def _c1w_week_of(w, mk, hol):
     """kr_week_closes · fetch_us 의 기록을 휴장일 표로 다시 본 사본 (date 는 date 또는 None)."""
     w = dict(w) if isinstance(w, dict) else {"why": "err"}
@@ -14045,8 +14291,9 @@ def c1w_apply(stocks, kr_wk, us_wk, hol=None, splits=None):
     base [(코드, 이름)], link [(코드, 이름, 상태)], linkN 연결 확인 못 한 기준일 종가 행, split [티커]}, "wk": {kr · us: (날짜, 까닭, 예)},
     "table": 휴장일 표로 봤는지, "krSrc", "krRows", "krGap", "us": … unadj · bad · err})."""
     kw, uw = _c1w_week_of(kr_wk, "KR", hol), _c1w_week_of(us_wk, "US", hol)
-    info = {g: {"n": 0, "px": 0, "ok": 0, "why": collections.Counter(), "shr": [], "base": [], "link": [], "linkN": 0, "split": []}
-            for g in C1W_GROUPS}
+    info = {g: {"n": 0, "px": 0, "ok": 0, "why": collections.Counter(), "shr": [], "base": [], "link": [], "linkN": 0, "split": [],
+                "rescued": collections.Counter(), "rescuedEx": [], "linkWhy": collections.Counter(), "rescueBase": 0} for g in C1W_GROUPS}
+    rescue = kw.get("rescue") if isinstance(kw.get("rescue"), dict) else {}
     usd, uspx = uw.get("date"), _c1w_day(uw.get("px"))
     sp_t = set()
     for r in splits or []:
@@ -14085,13 +14332,19 @@ def c1w_apply(stocks, kr_wk, us_wk, hol=None, splits=None):
             val = (w.get("close") or {}).get(t)
             if val is None:
                 why = "none"
-            elif g == "kr" and st == "break":
-                why = "base"
+            elif g == "kr" and (st == "break" or (st != "ok" and (rescue.get(t) or ("",))[0] == "base")):
+                why = "base"                          # 목록 파일끼리 · 또는 다른 자료 (장중 파일 · 다음 보관본) 로 본 기준가 재설정
                 x["base"].append((t, str(s.get("nk") or "")))
-            elif g == "kr" and st != "ok":
+                x["rescueBase"] += st != "break"
+            elif g == "kr" and st != "ok" and (rescue.get(t) or ("",))[0] not in C1W_RESCUE_KO:
                 why = "link"
-                x["link"].append((t, str(s.get("nk") or ""), C1W_LINK_KO.get(st, str(st))))
-            elif g == "kr":
+                lw = (rescue[t][1] if t in rescue else "err" if kw.get("rescueErr") else "rows" if st is None else "none")
+                x["linkWhy"][lw] += 1
+                x["link"].append((t, str(s.get("nk") or ""), C1W_LINK_WHY_KO.get(lw, C1W_LINK_KO.get(st, str(st)))))
+            if why is None and g == "kr":
+                if st != "ok":
+                    x["rescued"][rescue[t][0]] += 1
+                    x["rescuedEx"].append((t, str(s.get("nk") or ""), rescue[t][0]))
                 a, b = _fin((w.get("shr") or {}).get(t)), _fin(s.get("shr"))
                 if a is None or b is None or a <= 0 or b <= 0 or abs(b - a) * 100 > C1W_SHR_PCT * a:
                     why = "shr"
@@ -14109,6 +14362,7 @@ def c1w_apply(stocks, kr_wk, us_wk, hol=None, splits=None):
     info["wk"] = {"kr": (meta["wkFrom"], kw.get("why"), kw.get("ex") or []), "us": (meta["usWkFrom"], uw.get("why"), uw.get("ex") or [])}
     info["table"] = bool(isinstance(hol, dict) and hol.get("end"))
     info["krSrc"], info["krRows"], info["krGap"] = kw.get("src"), kw.get("rows") or 0, list(kw.get("gap") or [])
+    info["krRescueSrc"], info["krRescueErr"] = kw.get("rescueSrc") or {}, kw.get("rescueErr")
     kept_us = {str(s.get("t")) for s in stocks if c1w_group(s) == "us" and s.get("c1w") is not None}
     info["usAdj"] = {"unadj": sorted(t for t in (uw.get("unadj") or []) if t in kept_us),
                      "bad": dict(sorted((uw.get("bad") or {}).items())), "err": int(uw.get("err") or 0)}
@@ -14164,9 +14418,20 @@ def log_c1w(info):
     log(f"· c1w KRX 기준가가 그 사이 새로 정해져 비움 (분할 · 병합 · 감자 · 권리락 · 무상증자 · 코넥스 기준가 조정 등): {len(bs):,} / {kr['px']:,}"
         + (" — " + _c1w_names(bs, lambda r: f"{r[0]} {r[1]}") if bs else ""))
     gap = info.get("krGap") or []
-    log(f"{'  !! ' if lk else '· '}c1w 기준가 연결 확인 못 함 {kr['linkN']:,} · 그중 비움 {len(lk):,} / {kr['px']:,}"
+    rs, rsrc = kr["rescued"], info.get("krRescueSrc") or {}
+    log(f"{'  !! ' if lk or kr['rescueBase'] else '· '}c1w 기준가 연결을 목록 파일끼리 확인 못 함 {kr['linkN']:,} / {kr['px']:,}"
         + (f" (그 사이 최종본 목록 파일이 없는 거래일: {', '.join(gap)})" if gap else "")
+        + f" — 다른 자료로 확인해 실음 {sum(rs.values()):,} (KRX 기준가로 날마다 {rs['krx']:,} · 네이버 수정주가로 {rs['naver']:,})"
+        + f" · 다른 자료로 본 기준가 재설정 {kr['rescueBase']:,} · 비움 {len(lk):,}"
+        + (" (" + " · ".join(f"{C1W_LINK_WHY_KO.get(k, k)} {v:,}" for k, v in kr["linkWhy"].most_common()) + ")" if lk else "")
         + (" — " + _c1w_names(lk, lambda r: f"{r[0]} {r[1]} ({r[2]})") if lk else ""))
+    if kr["linkN"]:
+        ex = kr["rescuedEx"]
+        log(f"· c1w 기준가 연결 자료: 장중 목록 파일 {', '.join(rsrc.get('intraday') or []) or '없음'} · 지난 발행본 {rsrc.get('pub') or '없음'} · "
+            f"다음 보관본 {', '.join(rsrc.get('daum') or []) or '없음'} · 네이버 일봉 {rsrc.get('naver', 0):,}종목"
+            + (f" · !! 네이버 값을 읽지 못한 종목 {rsrc['nvErr']:,}" if rsrc.get("nvErr") else "")
+            + (f" · !! 확인 단계 멈춤 ({info['krRescueErr']})" if info.get("krRescueErr") else "")
+            + (" — 실은 종목 (예): " + _c1w_names(ex, lambda r: f"{r[0]} {r[1]} ({C1W_RESCUE_KO[r[2]]})") if ex else ""))
     ua = info.get("usAdj") or {}
     bad = sorted((ua.get("bad") or {}).items())
     sp = info["us"]["split"]
@@ -14316,7 +14581,8 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                  "배당 기록으로 실제 종가로 되돌린 값 · 있으면 그 사이 분할이 없어 오늘 주식 수 기준이에요), 채권 · ETF · 금은 그 시계열 (네이버 일봉 · KRX "
                  "금시장). 그 주의 움직임 = price ÷ c1w − 1. 칸 없음 (빈 칸): 자기 가격 날짜 종목 (pxd · pxc · 금현물 추정 est) · 그날 종가가 없는 종목 (새로 "
                  "상장 · 그날 목록 · 시계열에 없음 — 더 앞 날의 값을 쓰지 않아요) · 한국: 그날과 기준일 사이 KRX 기준가 연결이 모두 확인되지 않은 종목 (기준가가 "
-                 "새로 정해짐 — 분할 · 병합 · 감자 · 권리락 · 무상증자 · 코넥스 기준가 조정 등 — 또는 그 사이 목록 파일 · 그날 행 · 전일 대비가 없어 확인 못 함) · "
+                 "새로 정해짐 — 분할 · 병합 · 감자 · 권리락 · 무상증자 · 코넥스 기준가 조정 등 — 또는 확인 못 함: 최종본 목록 파일이 없는 날은 장중 목록 파일의 "
+                 "기준가 · 지난 발행본 · 다음 보관본으로 날마다, 그래도 모르는 날은 네이버 수정주가가 그 앞까지 공식 종가와 같은 기준인지로 확인해요 — RUNBOOK) · "
                  f"상장주식수가 그날보다 {C1W_SHR_PCT}% 넘게 바뀐 종목 (정확히 {C1W_SHR_PCT}% 는 남겨요 · 그날 주식 수는 이 실행 안에서만 쓰고 싣지 않아요) · "
                  "미국: 그 주에 분할이 있는 종목 · 그 주의 배당락을 되돌릴 재료가 모자란 종목 · 그 시장의 그 주 날짜를 정하지 못한 날 (wkFrom · usWkFrom "
                  "빈 값) 의 그 시장 모두 · 그날 최종본 목록 파일이 없는 날의 한국 주식 모두"),
