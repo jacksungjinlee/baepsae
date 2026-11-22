@@ -29,6 +29,9 @@
 // no verdict band (it speaks for itself, as before), no card, every 가진 종목 portfolio quiet (home.quietBlock: checked,
 // nothing broken, 한 종목 · 한 업종 · 내 기준 all checked on every holding, value known) and, with a Korean stock held, today's
 // filings checked. Never when no rule could be checked, never while the filings load or after it failed.
+// v19.6b (Part B.2, board Today2): the 오늘 볼 것 cards join that list as compact rows (todaylook.jsx LookRows: 확인 필요 first, then the
+// 관심 종목 조건 rows, the filings, a watched stock's 지분 변동 and every 국민연금, then 다가오는 일정); each row, a 관심 종목 조건 row and
+// the heading open the 오늘 볼 것 page (#home/today). Any of them means "오늘은 할 일이 없어요" does not show.
 // 시장 한눈에 unchanged; 종목 순위 under it (v19.5b, rank.jsx: phone after 시장 한눈에, PC the right column). Stale data: the stale band only, nothing checked, never a ✓ (the daily check is not ok, so no block
 // exists). Late data whose closes are at most 5 trading days behind (rules.js checkState, Jack 2026-11-19) is not "stale" here:
 // everything shows as on a fresh day, under the date line's stale words, with the close's date in the band and the heroes, and
@@ -58,6 +61,8 @@ import { IcrOffLine, EpsOwnersNote, StmtCurLine, UnitChkLine, NoDataLine, DayNot
 import { watchHits } from "./watch.js";
 import { lateSay } from "./tradedays.js";
 import { WatchHitRows } from "./watch.jsx";
+import { lookModel, lookSay, coversKorean } from "./look.js";
+import { LookRows, lookRowCount, pageHas } from "./todaylook.jsx";
 
 const signedWon = (v) => (v > 0 ? "+" : "") + wonText(v);
 const tone = (v) => (v > 0 ? COLOR.up : v < 0 ? COLOR.down : COLOR.text2);
@@ -232,12 +237,12 @@ function HeldCard({ block, onWhy, md = null, late = false, aged = null }) {
 }
 
 // ---------------- 오늘 볼 것 ----------------
-function LookRow({ icon, title, sub, onClick, data, owner }) {
+function LookRow({ icon, title, sub, onClick, data, owner, tone }) {
   return (
     <button type="button" {...data} onClick={onClick}
       style={{ ...tap, width: "100%", marginTop: SPACE(2), border: "none", textAlign: "left", background: COLOR.surface, borderRadius: RADIUS.lg - 2, padding: SPACE(3) + 2,
         display: "flex", alignItems: "center", gap: SPACE(3), minHeight: TOUCH }}>
-      <IconChip name={icon} size={40} />
+      <IconChip name={icon} size={40} tone={tone} />
       <span style={{ flex: 1, minWidth: 0 }}>
         {owner && <span data-ui-v2="home-look-owner" style={tx(SIZE.xs, WEIGHT.bold, COLOR.text2, { display: "block" })}>{owner}</span>}
         <span style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { display: "block" })}>{title}</span>
@@ -249,7 +254,7 @@ function LookRow({ icon, title, sub, onClick, data, owner }) {
 }
 
 // What 오늘 볼 것 holds today: the concentration cards, the filings rows, and whether "오늘은 할 일이 없어요" shows there.
-// quiet: every 가진 종목 portfolio quiet (home.quietBlock), no card, and, when a Korean stock is held (kr: home.holdsKorean),
+// quiet: every 가진 종목 portfolio quiet (home.quietBlock), no card, and, when a Korean stock is held or watched (kr: look.coversKorean),
 // today's filings checked (disc.json loaded and current): the verdict band at the top may then say it too. A filings load
 // that failed shows the 공시 tab's failure message here (discFail); a list that stopped (the file is old, or that day's
 // DART list did not come in: company.discDate stale) shows the 공시 tab's own date line, "{md} 기준 · {n}일째 갱신이
@@ -263,7 +268,9 @@ export function discState(disc, kr) {
   return st === "fail" || st === "none" ? st : "wait";
 }
 // watch (v19.6c, Part C): the 관심 종목 조건 rows (watch.js watchHits); any of them is something to look at (quiet false).
-function lookOf(blocks, held, disc, kr, watch = []) {
+// m (v19.6b, Part B.2): the 오늘 볼 것 cards (look.js lookModel); their compact rows (todaylook.jsx LookRows) and a failed
+// 주요사항 list (issueFail) are something to look at too. kr: a Korean stock held or watched (the filings cover both).
+function lookOf(blocks, held, disc, kr, watch = [], m = null) {
   const H = C.home;
   const imported = blocks.filter((b) => b.st);
   const conc = imported.map((b) => ({ b, c: concentration(b.st) })).filter((x) => x.c && H.concentration);
@@ -274,12 +281,15 @@ function lookOf(blocks, held, disc, kr, watch = []) {
   const dd = ds === "stale" ? discDate(disc.data) : null;
   const discOld = dd && dd.date ? dd : null;
   const discFail = ds === "fail" || (ds === "stale" && !discOld);
-  const quiet = (ds === "skip" || ds === "ok" || ds === "none") && imported.every(quietBlock) && !conc.length && !files.length && !watch.length;
+  const rows = lookRowCount(m, heldTs);
+  const issueFail = !!(m && m.issueFail);
+  const quiet = (ds === "skip" || ds === "ok" || ds === "none") && imported.every(quietBlock) && !conc.length && !files.length && !watch.length
+    && !rows && !issueFail;
   // "오늘은 할 일이 없어요" here: no verdict band (it speaks for itself, as before), at least one 가진 종목 portfolio, all quiet,
   // no card. Never on stale or failed data (no block exists then), never when no rule could be checked (quietBlock), never
   // before the filings were checked when a Korean stock is held.
   const calm = quiet && !held.length && imported.length > 0;
-  return { conc, files, quiet, calm, discFail, discOld, ds, watch };
+  return { conc, files, quiet, calm, discFail, discOld, ds, watch, m, rows, issueFail, heldTs };
 }
 
 function DiscNote({ id, date, children }) {
@@ -291,31 +301,51 @@ function DiscNote({ id, date, children }) {
   );
 }
 
+// v19.6b: the 오늘 볼 것 heading; with something on the 오늘 볼 것 page (open), the heading opens it (Part B.2: "Tapping a row, or
+// the list's header"). The tap area is padded out to the 44 px touch size without moving the heading.
+export function LookHead({ open }) {
+  const H = C.home;
+  return (
+    <h3 style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { margin: `0 ${SPACE(1)}px` })}>
+      {open ? (
+        <button type="button" data-ui-v2="home-look-open" onClick={open}
+          style={{ ...tap, border: "none", background: "none", display: "inline-flex", alignItems: "center", gap: SPACE(1), padding: `${SPACE(3)}px ${SPACE(2)}px`,
+            margin: `-${SPACE(3)}px -${SPACE(2)}px`, ...tx(SIZE.sm, WEIGHT.heavy, COLOR.ink) }}>
+          <span>{H.look}</span><Icon name="chevronRight" size={16} tone="on" />
+        </button>
+      ) : H.look}
+    </h3>
+  );
+}
+
 // lateMd: on late data checked on an older close, that close's date. Then only the calm card shows, saying "{date} 종가
 // 기준으로는 할 일이 없어요." (today.calmLate, Jack 2026-11-19) instead of "오늘은 할 일이 없어요": no "오늘 볼 것" heading
 // and none of its rows (review, 2026-11-19: nothing labelled 오늘 on an older close, as before the late check). A broken
 // concentration rule still shows in its portfolio's hero above (brokenLine); the filings rows wait for fresh data, and the
 // 관심 종목 rows have none on late data anyway (watch.js: they need dayState ok).
-function Look({ blocks, load, look, go, onWatch, lateMd = null }) {
+function Look({ blocks, load, look, go, onWatch, onToday = null, lateMd = null }) {
   const { openStock } = useNav();
   const H = C.home;
-  const { conc, files, calm, discFail, discOld, watch } = look;
+  const { conc, files, calm, discFail, discOld, watch, m, rows, issueFail, heldTs } = look;
   if (lateMd && (conc.length || files.length || discFail || discOld || (watch && watch.length))) {
     lateSay(`the things-to-look-at rows are left out (${conc.length} concentration, ${files.length} filings${discFail || discOld ? ", the filings note" : ""}); a broken one-industry rule shows in its hero`);
   }
   if (lateMd) return calm ? <Card data-ui-v2="home-calm" data-late="1" style={{ marginTop: SPACE(5) }}><p style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink)}>{calmLine(lateMd)}</p></Card> : null;
-  if (!H.look || (!conc.length && !files.length && !calm && !discFail && !discOld && !watch.length)) return null;
+  if (!H.look || (!conc.length && !files.length && !calm && !discFail && !discOld && !watch.length && !rows && !issueFail)) return null;
   const byT = load.status === "ok" ? load.byT : new Map();
   return (
     <section data-ui-v2="home-look" style={{ marginTop: SPACE(5) }}>
-      <h3 style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { margin: `0 ${SPACE(1)}px` })}>{H.look}</h3>
+      <LookHead open={onToday && (pageHas(m) || watch.length > 0) ? onToday : null} />
       {conc.map(({ b, c }) => (
         <LookRow key={b.deck.id} icon="buildings" data={{ "data-ui-v2": "home-conc", "data-deck-id": b.deck.id, "data-w": Math.round(c.w * 1000) / 10 }}
           owner={blocks.length > 1 ? shownName(b.deck.name) : null}
           title={`${groupName(c)} ${limitPct(c.w, c.limit)}%`} sub={fill(H.concentration, { names: c.names.join(", "), limit: c.limit })} onClick={() => go("portfolio")} />
       ))}
-      {/* v19.6c: 관심 종목 조건 (Part B's order: after 확인 필요, before 지분 변동) */}
-      <WatchHitRows hits={watch} load={load} onOpen={onWatch} />
+      {/* v19.6b: 확인 필요 (유상증자 · 전환사채 · 신주인수권부사채, newest first), then v19.6c's 관심 종목 조건 (Part B's order) */}
+      <LookRows m={m} part="issue" onOpen={onToday} />
+      {/* v19.6b: on 홈 a 관심 종목 조건 row opens the 오늘 볼 것 page too (Part B.2: "Tapping a row … opens the 오늘 볼 것 page");
+          its card there opens 관심 종목 */}
+      <WatchHitRows hits={watch} load={load} onOpen={onToday || onWatch} />
       {files.map((f) => {
         const s = byT.get(f.t);
         return (
@@ -326,10 +356,15 @@ function Look({ blocks, load, look, go, onWatch, lateMd = null }) {
             onClick={openStock && isCompany(s) ? () => openStock(f.t) : undefined} />
         );
       })}
+      {/* v19.6b: a watched stock's 지분 변동 (a held stock's is the 공시 row above) and 국민연금, then 다가오는 일정 */}
+      <LookRows m={m} part="filings" onOpen={onToday} heldTs={heldTs} />
+      <LookRows m={m} part="dates" onOpen={onToday} />
       {/* the filings did not load: the 공시 tab's own failure message (no picture: this screen has numbers); the list stopped:
           the 공시 tab's own date line. Each beside the filings rows' chip, so it reads as being about the filings. */}
       {discFail && <DiscNote id="home-disc-fail"><LoadFail picture={false} inline /></DiscNote>}
       {discOld && <DiscNote id="home-disc-old" date={discOld.date}><DateLine date={discOld.date} fresh={{ stale: discOld.stale, days: discOld.days }} style={{ marginTop: 0 }} /></DiscNote>}
+      {/* v19.6b: the day's 주요사항 list did not come in (disc.json issueOk false): the same failure message, beside the same chip */}
+      {issueFail && <DiscNote id="home-issue-fail"><LoadFail picture={false} inline /></DiscNote>}
       {calm && <Card data-ui-v2="home-calm" style={{ marginTop: SPACE(2) }}><p style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink)}>{C.today.calmEyebrow}</p></Card>}
     </section>
   );
@@ -351,7 +386,8 @@ function useNarrow() {
 
 // ev, ctx: the daily check (today.jsx useDaily). onConfirm: the 확인 필요 answers (today.jsx confirmer).
 // onWatch (v19.6c): opens 관심 종목 (a 관심 종목 조건 row).
-export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = null, onWatch = null }) {
+// onToday (v19.6b): opens the 오늘 볼 것 page (#home/today).
+export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = null, onWatch = null, onToday = null }) {
   const decks = store.data.decks;
   const ok = load.status === "ok";
   const narrow = useNarrow();
@@ -367,11 +403,14 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
   // The verdict band of the portfolios made with 포트폴리오 만들기 (their per-stock rules and bands), exactly as before; also
   // the stale band and the load-failure message.
   const held = ev.ok ? ev.decks.filter((d) => d.ok && !d.imported && d.holdings.some((x) => x.qty !== 0)) : [];
-  const kr = useMemo(() => holdsKorean(decks, ctx && ctx.byT), [decks, ctx]);
+  const kr = useMemo(() => coversKorean(decks, store.data, ctx && ctx.byT), [decks, store.data, ctx]);
   // no row when the records cannot be written: its mark could not stop it repeating (review S1)
   const canMark = !!(store.writable && !store.locked);
   const hits = useMemo(() => (ev.ok ? watchHits(store.data, load, undefined, canMark) : []), [store.data, load, ev.ok, canMark]);
-  const look = lookOf(blocks, held, disc, kr, hits);
+  // v19.6b (Part B.2): the 오늘 볼 것 cards (fresh data only); the console names what they leave out
+  const lm = useMemo(() => lookModel(load, store, disc, todayKst()), [load, store, disc]);
+  React.useEffect(() => { lookSay(lm, "home"); }, [lm]);
+  const look = lookOf(blocks, held, disc, kr, hits, lm);
   // late data within 5 trading days (rules.js checkState, Jack 2026-11-19): the date of the close the check ran on
   const lateMd = ev.ok && ev.late && ok ? mdText(load.data.pxDate) : null;
   const many = blocks.length > 1;
@@ -383,7 +422,7 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
         <HeldCard block={b} onWhy={onWhy} md={ok ? mdText(load.data.pxDate) : null} late={!!lateMd} aged={ctx ? ctx.aged : null} />
       </div>
     )),
-    ev.ok && (blocks.length > 0 || hits.length > 0) && <Look key="look" blocks={blocks} load={load} look={look} go={go} onWatch={onWatch} lateMd={lateMd} />,
+    ev.ok && (blocks.length > 0 || hits.length > 0 || look.rows > 0 || look.issueFail) && <Look key="look" blocks={blocks} load={load} look={look} go={go} onWatch={onWatch} onToday={onToday} lateMd={lateMd} />,
     ev.ok && !blocks.length && (
       <Card key="today-empty" data-ui-v2="today-empty"><Button kind="secondary" onClick={() => go("build")}>{C.build.title}</Button></Card>
     ),

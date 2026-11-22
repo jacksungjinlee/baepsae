@@ -36,6 +36,8 @@ import validate_data as V  # noqa: E402
 JACK = "오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요."
 JACK_LIST = "{names}: 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요."
 JACK_EN = "We couldn't confirm today's close, so this shows the {date} close."
+JACK_EN_ONE = "{names}: we couldn't confirm today's close, so this shows the {date} close."                  # Jack, 2026-11-22: 목록 줄 · 한 종목
+JACK_EN_MORE = "{names} and {n} more: we couldn't confirm today's close, so these show the {date} close."     # Jack, 2026-11-22: 시장 전체 목록
 JACK_AGED = "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요."
 # 미국 거래일 (S&P 500 일봉 날짜 · 2026-11-26 추수감사절은 휴장)
 UDAYS = ["2026-11-12", "2026-11-13", "2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19", "2026-11-20", "2026-11-23", "2026-11-24",
@@ -540,7 +542,8 @@ out = { c: CF.krOwnCloseText(load, A), h: CF.krOwnCloseText(load, H), f: CF.krOw
     line = JACK.replace("{date}", "11월 18일")
     assert got["c"] == line and got["h"] is None and got["f"] is None
     assert got["old"] == [line, None, JACK_EN.replace("{date}", "Nov 18")]
-    assert got["list"] == "AAPL: " + JACK_EN.replace("{date}", "Nov 18") and got["carried"] == [True, False, False]
+    # 2026-11-22 (Jack): 목록 줄은 콜론 뒤 소문자 "we" · 한 종목이면 "this shows"
+    assert got["list"] == JACK_EN_ONE.replace("{names}", "AAPL").replace("{date}", "Nov 18") and got["carried"] == [True, False, False]
     assert got["merged"] == [["AAPL", D18, True]]                     # 예전 뱁새도 표시를 받아요
 
 
@@ -977,7 +980,7 @@ def test_restored_ranges_use_the_raw_value_like_apply_us_info():
 
 
 # ── Jack, 2026-11-21 (answers 8 · 6): 시장 전체 목록은 이름 5개까지 + '외 {n}종목' · 미국 종목의 절반 넘게 마지막 확인 종가면 미국 쪽은 한 줄 ──
-# (내 보유 목록 · 영어 화면은 예전 그대로: 모두 적고 묶음도 같아요 — 리뷰 2026-11-21)
+# (내 보유 목록은 예전 그대로: 모두 적고 묶음도 같아요 — 리뷰 2026-11-21 · 영어 화면은 2026-11-22 (Jack) 부터 같은 규칙: tests/test_oldapp_en_carry.py)
 JACK_MORE = "{names} 외 {n}종목: 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요."
 JACK_US_ALL = "미국 종목은 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요."
 
@@ -1014,5 +1017,6 @@ out = r;""", SEVEN=seven, KRS=krs, HALF=half, MORE=more, U=us("HALT", d1=None, p
     assert got["onOwn"] == "HALT 가격은 11월 18일 종가예요. " + line("가0, 가1, T0, T1, T2, T3, T4, T5, T6"), got["onOwn"]
     assert got["onOwnGroups"] == [{"date": D18, "ts": ["HALT"]}, {"date": D18, "ts": ["000000", "001000", "T0", "T1"], "kr": True, "names": ["가0", "가1", "T0", "T1"]}], got["onOwnGroups"]
     assert got["oldKo"] == JACK_MORE.replace("{names}", "A, B, C, D, E").replace("{n}", "1").replace("{date}", "11월 18일")
-    assert got["oldEn"] == "A, B, C, D, E, F: " + JACK_EN.replace("{date}", "Nov 18")                    # 영어는 예전 그대로 (모든 코드)
+    # 2026-11-22 (Jack): 영어도 같은 규칙 — 이름 목록(시장 전체 목록)은 앞 5개 + "and {n} more" (tests/test_oldapp_en_carry.py)
+    assert got["oldEn"] == JACK_EN_MORE.replace("{names}", "A, B, C, D, E").replace("{n}", "1").replace("{date}", "Nov 18")
     assert got["oldStr"] == line("A, B") and got["oldAll"] == JACK_US_ALL.replace("{date}", "11월 18일") and got["after"] is False
