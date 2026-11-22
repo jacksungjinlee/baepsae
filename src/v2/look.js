@@ -22,13 +22,11 @@
 //            numbers, worked out on that time's share count, as news of 11-20); the console names them. When the day's 주요사항 list failed (issueOk false) there is no issue card and the page says the list did not
 //            load (issueFail); a file without the section at all (from before #145) has none, said in the console.
 //   insider  disc.json insider, held and watched stocks, filed within the last INSIDER_DAYS days, |q| × today's official close at
-//            least INSIDER_MIN_WON (1억원; disc.json amt used that run's price, so the amount is recomputed). Title by role
-//            (임원 · 주요주주; someone who is both, or a row without a role, waits for Jack's title: left out, said in the
-//            console); the body names the position (pos, blank: 임원·주요주주) with 이/가 by its last syllable.
-//            NOT ON YET: the screens do not read the role field (ROLE_OF null below), so no insider card shows (title "none",
-//            said in the console). #145's test tests/test_v196b_answers.py test_the_role_field_is_not_read_by_either_app_yet pins
-//            that no screen reads it; changing that test needs Jack's yes (CLAUDE.md). With his yes: set ROLE_OF to the function
-//            that returns the row's role field, and let that test allow this one read in look.js.
+//            least INSIDER_MIN_WON (1억원; disc.json amt used that run's price, so the amount is recomputed). Title by role:
+//            임원 · 주요주주, and for someone who is both or a row without a role C.look.insBoth (Jack, 2026-11-22); the body
+//            names the position (pos, blank: 임원·주요주주) with 이/가 by its last syllable. The role is read only here, by ROLE_OF
+//            below (Jack's yes of 2026-11-22: tests/test_v196b_answers.py allows this one read). On 홈 a held stock's report
+//            stays the v19.3e 공시 row (todaylook.jsx LookRows), so only a watched stock's card gets a row of its own there.
 //   nps      disc.json nps, held and watched stocks, filed within the last NPS_DAYS days: "{a}%에서 {b}%로" with b = rt and
 //            a = rt − chg, one decimal; left out when chg is blank or a and b round to the same number.
 //   dates    US 실적 발표 (data.json ed, Yahoo's confirmed date) and 배당락일 (xd) of held and watched US stocks from today to
@@ -50,8 +48,8 @@ export const DATES_MAX = 5;
 export const INSIDER_MIN_WON = 1e8;
 // Corrections of old decisions (see the top of this file): false = left out until Jack answers #145's question 3.
 export const OLD_CORRECTIONS = false;
-// How lookModel reads an insider row's role (see the top of this file): null = not read yet, so the insider cards stay off.
-export const ROLE_OF = null;
+// How lookModel reads an insider row's role (see the top of this file; Jack, 2026-11-22: the insider cards are on).
+export const ROLE_OF = (x) => x.role;
 
 const ymdOf = (d) => (typeof d === "string" && /^\d{8}$/.test(d) ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}` : null);
 const isIso = (x) => typeof x === "string" && /^\d{4}-\d{2}-\d{2}$/.test(x) && !Number.isNaN(Date.parse(x + "T00:00:00Z"))
@@ -141,7 +139,7 @@ export function issueCards(disc, held, today, data, byT = null, oldCorrections =
 }
 
 // ---------------- 임원 · 주요주주 지분 변동 ----------------
-// byT: today's data rows. roleOf: reads a row's role (lookModel passes ROLE_OF; null: not read, every title "none").
+// byT: today's data rows. roleOf: reads a row's role (lookModel passes ROLE_OF; null: not read, every title "none", no card shown).
 // -> { cards: [{ rc, t, nk, date, role, title ("exec" | "major" | "both" | "none"), pos, q, won, up, s }], skipped }
 export function insiderCards(disc, cover, today, byT, roleOf = null) {
   const out = { cards: [], skipped: [] };
@@ -209,7 +207,7 @@ export function dateRows(byT, cover, today) {
 // load: the data · store: { data } (the in-memory view) · disc: app.jsx's · today: KST · now (tests).
 // -> { fresh, kr, krHeld, ds, issue, insider, nps, dates, noKr, issueFail, discFail, discOld, any, skipped }
 //   ds: the filings state (home2.jsx discState): skip (no Korean stock covered) · wait · ok · stale · fail · none.
-//   any: a card of any kind (an insider card whose title waits for Jack is counted here; todaylook.jsx pageHas leaves it out).
+//   any: a card of any kind (an insider card without a title is counted here; todaylook.jsx pageHas leaves it out).
 export function lookModel(load, store, disc, today, now) {
   const empty = { fresh: false, kr: false, krHeld: false, ds: "skip", issue: [], insider: [], nps: [], dates: [], noKr: false,
     issueFail: false, discFail: false, discOld: null, any: false, skipped: [], missing: false };

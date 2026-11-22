@@ -264,7 +264,7 @@ def test_the_role_field_is_not_read_by_either_app_yet():
                 with open(os.path.join(base, name), encoding="utf-8") as f:
                     text = f.read()
                 hits += [(name, m) for m in re.findall(r"[A-Za-z_$]+\.role\b|\[[\'\"]role[\'\"]\]", text)]
-    assert hits == [("about.jsx", "m.role")], hits
+    assert sorted(hits) == [("about.jsx", "m.role"), ("look.js", "x.role")], hits    # Jack, 2026-11-22 yes: 지분 변동 카드 (look.js ROLE_OF) 한 곳만
 
 
 def test_the_cache_tag_moved_so_old_rows_are_read_again(tmp_path, monkeypatch):

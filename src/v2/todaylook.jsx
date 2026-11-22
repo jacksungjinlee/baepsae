@@ -1,7 +1,7 @@
 // ================= 2.0: 오늘 볼 것 (v19.6b, docs/tasks/v19.6-records-alerts-dark.md Part B.2, board Today2) =================
 // TodayLook   the 오늘 볼 것 page (#home/today), opened from 홈's 오늘 볼 것 header or one of its new rows. Cards, in Part B.2's
 //             order: 확인 필요 (유상증자 · 전환사채 · 신주인수권부사채 결정, newest first: tag 확인 필요, the approved body by kind and
-//             method or the 숫자를 읽지 못했어요 line, and 확인했어요 (store.js seen: the card goes away)), then 관심 종목 조건 (watch.jsx's rows), then 임원 · 주요주주 지분 변동 and 국민연금 (newest first), then
+//             method or the 숫자를 읽지 못했어요 line, 공시 보기 and 확인했어요 (store.js seen: the card goes away)), then 관심 종목 조건 (watch.jsx's rows), then 임원 · 주요주주 지분 변동 and 국민연금 (newest first), then
 //             다가오는 일정 (US dates with the US-date note; the no-Korean-dates line when a Korean stock is held). Every card shows
 //             its own filing date; the page's date line is the price date the 지분 변동 amounts use. When disc.json failed or its
 //             list stopped, the 공시 tab's failure message or date line (as on 홈); when the day's 주요사항 list failed
@@ -11,10 +11,9 @@
 // LookRows    홈's compact rows for the new kinds (title and date, like the v19.3e 공시 row; home2.jsx Look and the first-visit
 //             list): each opens this page. The held stocks' 지분 변동 stay the v19.3e 공시 row on 홈 (it counts every report of the
 //             week, the cards only those of 1억원 or more), so only a watched stock's 지분 변동 gets a row of its own there.
-// 공시 보기 (Part B.2: the filing in DART's own viewer, new tab) is not here yet: tests/test_v2_app.py
-// test_pages_never_load_fixtures_or_other_sites keeps every DART address to one place (the company page's 공시 tab rows, Jack
-// 2026-11-05), so a second place needs that test changed first, which needs Jack's yes (CLAUDE.md). The approved label waits in
-// C.look.open.
+// 공시 보기 (Part B.2; Jack's yes of 2026-11-22): the left button of a 확인 필요 card, a plain link to that one filing in DART's own
+// viewer (routes.js dartFilingUrl: the exact receipt number only, else no button), new tab, noopener, with the arrow-out mark
+// the company page's 공시 rows use. Nothing is fetched from DART (tests/test_v2_app.py: this card and the 공시 tab only).
 // No 뱁이 anywhere here (numbers). Colours: the shared tokens only (dark mode covers the screen). Icons: Phosphor duotone with
 // the topic tints (확인 필요 출렁임·위험 · 지분 변동 and 국민연금 공시·수급 · 일정 실적).
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -30,6 +29,7 @@ import { withSeen } from "./store.js";
 import { watchHits } from "./watch.js";
 import { WatchHitRows } from "./watch.jsx";
 import { lookModel, lookSay } from "./look.js";
+import { dartFilingUrl } from "./routes.js";
 
 const L = () => C.look;
 const MARK = 28;                                    // the company mark beside a title (the letter mark stays at 12 px or more)
@@ -59,7 +59,7 @@ export function insiderText(c) {
 export const npsTitle = (c) => titled(c.nk, L().nps);
 export const npsText = (c) => fill(c.up ? L().npsUp : L().npsDown, { a: p1(c.a), b: p1(c.b) });
 const dateKind = (k) => (k === "earn" ? L().earn : L().exDiv);
-// The cards a screen can show: the insider cards with a title (role both or blank waits for Jack's title, and no title at all while
+// The cards a screen can show: the insider cards with a title (임원 · 주요주주, and C.look.insBoth for both or blank; none while
 // the role is not read: look.js ROLE_OF, lookSay).
 export const shownInsider = (m) => m.insider.filter((c) => insiderTitle(c));
 // Whether the page has a card to show (besides the 관심 종목 조건 ones the caller counts): the heading opens it only then.
@@ -100,17 +100,26 @@ const btn = { ...tap, flex: 1, minHeight: TOUCH, borderRadius: RADIUS.sm, displa
 
 // tabIndex -1: focus can be put on the card (the page moves it to the next card when one is marked 확인했어요)
 const issueKey = (c) => String(c.rc || c.t + c.date);
+const half = `0 1 calc(50% - ${SPACE(1)}px)`;
 function IssueCard({ c, onSeen }) {
   const titleId = "look-title-" + issueKey(c);
+  const href = dartFilingUrl(c.rc);
   return (
     <LookCard data-ui-v2="look-issue" data-t={c.t} data-rc={c.rc} data-kind={c.kind} data-body={c.body} data-date={c.date} data-key={issueKey(c)} tabIndex={-1}
       icon="warning" tone="risk" t={c.t} name={c.nk} title={issueTitle(c)} titleId={titleId} date={mdText(c.date)}
       tag={<span data-ui-v2="look-tag" style={{ flexShrink: 0 }}><StatusChip tone="watch">{C.daily.check}</StatusChip></span>}
-      actions={onSeen && (
-        // the right half, where the board puts it (the left half is 공시 보기's, see the top of this file)
-        <div style={{ marginTop: SPACE(3), display: "flex", justifyContent: "flex-end", gap: SPACE(2) }}>
-          <button type="button" data-ui-v2="look-seen" aria-describedby={titleId} onClick={() => onSeen(c)}
-            style={{ ...btn, flex: `0 1 calc(50% - ${SPACE(1)}px)`, border: "none", background: COLOR.primary, ...tx(SIZE.sm, WEIGHT.bold, COLOR.onPrimary) }}>{L().seen}</button>
+      actions={(href || onSeen) && (
+        // the board's two halves: 공시 보기 on the left (outlined), 확인했어요 on the right (navy); either one alone keeps its half
+        <div style={{ marginTop: SPACE(3), display: "flex", gap: SPACE(2) }}>
+          {href && (
+            <a data-ui-v2="look-open" aria-describedby={titleId} href={href} target="_blank" rel="noopener"
+              style={{ ...btn, flex: half, border: `1.5px solid ${COLOR.edge}`, background: COLOR.surface, ...tx(SIZE.sm, WEIGHT.bold, COLOR.ink) }}>
+              {L().open}<Icon name="arrow-square-out" size={16} tone="on" /></a>
+          )}
+          {onSeen && (
+            <button type="button" data-ui-v2="look-seen" aria-describedby={titleId} onClick={() => onSeen(c)}
+              style={{ ...btn, flex: half, marginLeft: "auto", border: "none", background: COLOR.primary, ...tx(SIZE.sm, WEIGHT.bold, COLOR.onPrimary) }}>{L().seen}</button>
+          )}
         </div>
       )}>
       {body(issueText(c))}
