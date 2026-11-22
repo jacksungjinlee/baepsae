@@ -36,6 +36,7 @@ import validate_data as V  # noqa: E402
 JACK = "오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요."
 JACK_LIST = "{names}: 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요."             # Jack, 2026-11-20 (b)
 JACK_EN = "We couldn't confirm today's close, so this shows the {date} close."           # Jack, 2026-11-20 (c)
+JACK_EN_LIST = "{names}: we couldn't confirm today's close, so these show the {date} close."   # Jack, 2026-11-22: 목록 줄 · 둘 이상이면 "these show"
 JACK_AGED = "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요."                     # Jack, 2026-11-20 (a)
 D13, D16, D17, D18 = "2026-11-13", "2026-11-16", "2026-11-17", "2026-11-18"
 KDAYS = ["2026-11-06", "2026-11-09", "2026-11-10", "2026-11-11", "2026-11-12", D13, D16, D17, D18]     # KOSPI 거래일 (금 · 월 ~ 수)
@@ -703,7 +704,8 @@ out = { kr: CF.krOwnCloseText(load, A), plain: CF.krOwnCloseText(load, B), us: C
     assert got["date"] == D16 and got["close"] == "11월 16일 종가"     # 그 종목의 날짜 (오늘 날짜가 아니에요)
     assert got["old"] == [line, line, None, None, "맵스리얼티: " + line]                   # 2026-11-20 (b): 목록은 한 줄
     en = JACK_EN.replace("{date}", "Nov 16")                                               # 2026-11-20 (c): 승인된 영어 문장
-    assert got["en"] == [en, None, None, "094800, 011810: " + en]
+    # 2026-11-22 (Jack): 목록 줄은 콜론 뒤 소문자 "we" · 두 종목이면 "these show" (한 종목 카드의 문장은 그대로)
+    assert got["en"] == [en, None, None, JACK_EN_LIST.replace("{names}", "094800, 011810").replace("{date}", "Nov 16")]
 
 
 @needs_node
