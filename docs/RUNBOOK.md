@@ -763,8 +763,9 @@ publish, Korean data included.
   - `미국 자기 가격 날짜 (pxd)` is unchanged (every US `pxd` before `usPxDate`, no `d1` beside it).
 - **App (both):** a carried US stock (`pxc`) reads like a Korean carry: on its own screen "오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요."
   under its "미국 {md} 종가"; in lists and totals one line per date "{티커}: 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요." (in the same
-  line as Korean stocks of the same date); the old app's English lists "{티커}: We couldn't confirm today's close, so this shows the {date}
-  close."; a stock in `usSrc.own.aged`: "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요." on its company page and under its row in
+  line as Korean stocks of the same date); the old app's English lists "{티커}: we couldn't confirm today's close, so this shows the {date}
+  close." (one stock; two or more: "…, so these show the {date} close."; 종목 고르기 cuts to five names "… and {n} more: …" and,
+  above the US cap, "US stocks: we couldn't confirm today's close, so these show the {date} close.", since 2026-11-22); a stock in `usSrc.own.aged`: "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요." on its company page and under its row in
   portfolios. A US `pxd` without `pxc` keeps "{티커} 가격은 {md} 종가예요." and "미국 {md} 종가". On late data the check leaves out a
   carried US stock whose close is more than 5 NYSE trading days old in total (`rules.lateLeftOut`, like a Korean carry: its row shows
   the aged line, the rest is checked).

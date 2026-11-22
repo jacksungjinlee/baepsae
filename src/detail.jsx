@@ -1171,7 +1171,7 @@ const T_STALE_LATE = { ko: "갱신이 늦어지고 있어요", en: "update is ru
 // 2026-11-19 (Jack): 오늘 종가를 두 출처로 확인하지 못해 마지막 확인 종가(pxd)로 실은 국내 종목은 따로 묶여요 (data.js ownCloseGroups: kr ·
 // names): 2026-11-20 (Jack, b · c) 한국어 화면은 날짜마다 한 줄 "{한글 이름}: 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요."
 // (fixnote.jsx FIX_KR_OWN_CLOSE_LIST) · 영어 화면은 2026-11-22 (Jack) 부터 "{코드}: we couldn't confirm today's close, so this shows the {date} close."
-// (코드 하나) · "…, so these show the {date} close." (코드 둘 이상) (fixnote.jsx FIX_KR_OWN_CLOSE_LIST_EN_ONE · FIX_KR_OWN_CLOSE_LIST_EN). 미국 종목은 예전 그대로.
+// (코드 하나) · "…, so these show the {date} close." (코드 둘 이상) (fixnote.jsx FIX_KR_OWN_CLOSE_LIST_EN_ONE · FIX_KR_OWN_CLOSE_LIST_EN). pxc 없는 미국 pxd (멈춘 종목 · 새 종목) 는 예전 그대로.
 // 예전 뱁새의 내장 국내 종목(BASE_STOCKS)에는 cls 가 없어요 (미국만 "us") — cls 가 없는 종목은 국내로 봐요 (pxd 는 국내 · 미국 종목에만 있어요).
 // compact: 시장 전체 목록 (종목 고르기 · 한국어와 영어 화면 모두). 보유 종목 · 주문 메모 · CSV 는 compact 없이 마지막 확인 종가 종목을 모두 적어요.
 function ownCloseLines(lang, list, compact = false) {
