@@ -1666,7 +1666,7 @@ documents; the next run the remaining ~75 lookups and ~60–70 documents (about 
 about 25 list calls, 10–20 lookups and 3–5 documents a run. A full-DART run with an empty cache adds up to about 275 calls
 (logged separately from the pinned estimate).
 
-## 이번 주 정리 data (v19.6e, since #?): data.json `c1w`, `wkFrom`, `usWkFrom`
+## 이번 주 정리 data (v19.6e, since #170): data.json `c1w`, `wkFrom`, `usWkFrom`
 
 What the daily run writes (`fetch_data.py`: `kr_week_closes` in `fetch_korea`, `us_week_start` · `us_c1w_add` · `us_c1w_finish` in
 `fetch_us`, `fund_c1w` in `fetch_bonds` · `fetch_kr_funds`, then `c1w_step` in `main`, after every step that drops rows and before
@@ -1784,7 +1784,7 @@ Gate row **이번 주 시작 종가 (c1w · wkFrom · usWkFrom · 경고만)** (
 the check itself is a warning too. The Korean part of its value shows how the rows were confirmed, e.g. "국내 2,069 / 2,474 (wkFrom
 2026-11-13 · 목록 0 · KRX 0 · 네이버 2,069)". It warns when: `c1wSrc` is missing, malformed, or its counts disagree with the rows
 (`listing` + `krx` + `naver` ≠ Korean `c1w` rows, or `naver` ≠ rows with `c1wv`); a `c1wv` is anything but `"nv"` next to a Korean
-`c1w`; the file has none of the three fields (a file from before #?, e.g. the live site
+`c1w`; the file has none of the three fields (a file from before #170, e.g. the live site
 right after the merge); `wkFrom` / `usWkFrom` is missing, blank, not a real date, not before the Monday of the price date's week,
 more than 12 days before the price date, on a weekend, or different from the gate's own count from the holiday table (read by its own
 loader) or from `macro.json` `idxHist`; the holiday table cannot be read; a `c1w` is not a positive finite number, sits on a row shown
