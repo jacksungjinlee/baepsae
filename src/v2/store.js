@@ -62,6 +62,15 @@
 // the newest edit wins even after a clock that was ahead has been corrected (round-3 review).
 // gone.watch { [code]: { at, ts } }: a stock taken out of 관심 종목 (so a merge with an older copy does not bring it back);
 // on this device only, like gone.notes.
+// Top level: seen (v19.6b, 오늘 볼 것 · 확인했어요, v19.6 Part B.2): [{ t, kind, bd, n, p, amt, rc?, at, ts? }], at most SEEN_MAX: a
+// 유상증자 · 전환사채 · 신주인수권부사채 decision (disc.json issue) the user marked 확인했어요, with the stock, the kind (rights · cb · bw), the
+// board date (YYYYMMDD, or null) and the numbers as the card read them (null when blank), rc the filing it was marked on, at the
+// date (KST) and ts the time (ms). A card stays hidden while an entry has its stock, kind and numbers and either its filing or
+// (when the mark has a board date and at least one number) its board date: a correction with other numbers shows again (Part
+// B.2), the same filing whose board date the pipeline reads a day later stays hidden, and a mark with no board date or no number
+// hides only its own filing (never every such decision of the stock). An entry older than SEEN_DAYS (120) is pruned when another is added. Travels in a records file and is
+// merged as a union (A.1 [Q6]: the newest time for the same entry); not a version-2 part (an earlier app keeps it as a top-level
+// part it does not know).
 // Top level: guideSeen (v19.3c Part E: the first-visit guide was seen, the date) — a flag of this device, so it never
 // travels in a records file; until v19.3d it lived in its own key (key + ".guideSeen"), which is still read once.
 // Two tabs (v19.3d review): so two copies of the records merge without losing the later edit, these optional parts are
@@ -385,7 +394,7 @@ export function problemText(deck, p) {
 }
 
 // ---------------- the whole store ----------------
-const KNOWN_TOP = ["v", "decks", "notes", "assume", "guideSeen", "gone", "wts", "preview", "setAside", "watch"];
+const KNOWN_TOP = ["v", "decks", "notes", "assume", "guideSeen", "gone", "wts", "preview", "setAside", "watch", "seen"];
 // -> { readable: false, why } when it is not a records store this app can read at all (not an object, an unknown or newer
 // version, no portfolio list); else { readable: true, data, problems: [text] }: data keeps every valid portfolio and part,
 // problems names what was set aside (a bad portfolio, a duplicate id, a bad notes / assume / guideSeen part).
@@ -433,6 +442,11 @@ export function checkStore(d, today) {
   if (d.watch != null) {
     const p = watchProblem(d.watch, today);
     if (p) problems.push("watch (the watch list): " + p); else data.watch = d.watch;
+  }
+  // v19.6b 오늘 볼 것 · 확인했어요 marks (see the top of this file): a bad part is set aside with its reason, the rest reads
+  if (d.seen != null) {
+    const p = seenProblem(d.seen);
+    if (p) problems.push("seen (marks of filings the user has read): " + p); else data.seen = d.seen;
   }
   // A top-level part this version does not know (a later version's) is kept as it is, so a write from this tab never drops
   // it; this app reads nothing from it.
@@ -492,8 +506,68 @@ export const noteOf = (data, t) => { const n = perStock(data, "notes"); return n
 export const assumeOf = (data, t) => { const a = perStock(data, "assume"); return a && plainObj(a[t]) && okAssume(a[t]) ? a[t] : null; };
 // What travels in a records file besides the portfolios (the guide flag stays on the device).
 // v19.6c: 관심 종목 too, without hitAt (this device's mark, Part C [Q7]); deletion marks (gone) stay on the device.
+// v19.6b: the 확인했어요 marks too (A.1 [Q6]: a records file brings them, merged as a union).
 const extras = (d) => ({ ...(perStock(d, "notes") ? { notes: d.notes } : {}), ...(perStock(d, "assume") ? { assume: d.assume } : {}),
-  ...(plainObj(d && d.watch) ? { watch: watchNoHits(d.watch) } : {}) });
+  ...(plainObj(d && d.watch) ? { watch: watchNoHits(d.watch) } : {}), ...(Array.isArray(d && d.seen) && d.seen.length ? { seen: d.seen } : {}) });
+
+// ---------------- 오늘 볼 것 · 확인했어요 (v19.6b, v19.6 Part B.2; the shape is at the top of this file) ----------------
+export const SEEN_MAX = 500;
+export const SEEN_DAYS = 120;
+export const SEEN_KINDS = ["rights", "cb", "bw"];
+const okYmd8 = (x) => typeof x === "string" && /^\d{8}$/.test(x) && isDate(`${x.slice(0, 4)}-${x.slice(4, 6)}-${x.slice(6, 8)}`);
+const okRc = (x) => typeof x === "string" && /^\d{14}$/.test(x);
+const nullOr = (x, ok) => x == null || ok(x);
+// null when the part is valid, else the first problem (English, for the console)
+export function seenProblem(s) {
+  if (!Array.isArray(s)) return "not a list";
+  if (s.length > SEEN_MAX) return `more than ${SEEN_MAX} marks`;
+  for (let i = 0; i < s.length; i++) {
+    const e = s[i], at = `mark ${i + 1}`;
+    if (!plainObj(e) || !okStockCode(e.t)) return `${at}: not a mark with a stock code`;
+    if (!SEEN_KINDS.includes(e.kind)) return `${at} (${e.t}): the kind must be ${SEEN_KINDS.join(", ")}`;
+    if (!nullOr(e.bd, okYmd8)) return `${at} (${e.t}): the board date must be YYYYMMDD or null`;
+    if (!["n", "p", "amt"].every((k) => nullOr(e[k], isPos))) return `${at} (${e.t}): numbers must be above 0 or null`;
+    if (!nullOr(e.rc, okRc)) return `${at} (${e.t}): the filing number must be 14 digits`;
+    if (!isDate(e.at)) return `${at} (${e.t}): the date must be a real date`;
+    if (!nullOr(e.ts, okTs)) return `${at} (${e.t}): the time must be a time in ms`;
+  }
+  return null;
+}
+export const seenOf = (data) => (data && Array.isArray(data.seen) ? data.seen.filter(plainObj) : []);
+const nv = (x) => (x == null ? null : x);
+// The same decision with the same numbers (a 정정 with other numbers is not), on the same filing, or on the same board date when
+// the mark has one and at least one number (two blank marks would otherwise match every blank decision of that stock and kind).
+// r: a disc.json issue row (or another mark).
+const hasNumber = (e) => ["n", "p", "amt"].some((k) => nv(e[k]) != null);
+export const seenMatch = (e, r) => !!(plainObj(e) && plainObj(r) && e.t === r.t && e.kind === r.kind
+  && ["n", "p", "amt"].every((k) => nv(e[k]) === nv(r[k]))
+  && ((okRc(e.rc) && e.rc === r.rc) || (e.bd != null && hasNumber(e) && nv(e.bd) === nv(r.bd))));
+export const isSeen = (data, r) => seenOf(data).some((e) => seenMatch(e, r));
+const seenKey = (e) => canon({ t: e.t, kind: e.kind, bd: nv(e.bd), n: nv(e.n), p: nv(e.p), amt: nv(e.amt), rc: nv(e.rc) });
+// Two lists of marks: every mark of the current one, then the other's; the same mark keeps the later time (laterOf). At most
+// SEEN_MAX, the newest kept in their order (a merge never makes a list the store's own check refuses).
+function unionSeen(cur, other) {
+  const out = [], at = new Map();
+  for (const e of [...seenOf(cur), ...seenOf(other)]) {
+    const k = seenKey(e);
+    if (!at.has(k)) { at.set(k, out.length); out.push(e); } else out[at.get(k)] = laterOf(out[at.get(k)], e);
+  }
+  if (out.length <= SEEN_MAX) return out;
+  const rank = out.map((e, i) => i).sort((a, b) => -editOrder(out[a], out[b]) || b - a);     // newest first (the later one on a tie)
+  const keep = new Set(rank.slice(0, SEEN_MAX));
+  return out.filter((e, i) => keep.has(i));
+}
+// The store with row r marked 확인했어요 today (ts: the time, Date.now()), marks older than SEEN_DAYS before today left out,
+// at most SEEN_MAX (the newest). null when there is nothing valid to save (a row that is not a decision of the three kinds).
+export function withSeen(data, r, today, ts = null) {
+  if (!plainObj(r) || !okStockCode(r.t) || !SEEN_KINDS.includes(r.kind) || !isDate(today) || (ts != null && !okTs(ts))) return null;
+  const e = { t: r.t, kind: r.kind, bd: okYmd8(r.bd) ? r.bd : null, n: isPos(r.n) ? r.n : null, p: isPos(r.p) ? r.p : null,
+    amt: isPos(r.amt) ? r.amt : null, ...(okRc(r.rc) ? { rc: r.rc } : {}), at: today, ...(ts != null ? { ts } : {}) };
+  const from = new Date(Date.parse(today + "T00:00:00Z") - SEEN_DAYS * 86400000).toISOString().slice(0, 10);
+  const keep = seenOf(data).filter((x) => isDate(x.at) && x.at >= from && seenKey(x) !== seenKey(e));
+  const seen = [...keep, e].slice(-SEEN_MAX);
+  return seenProblem(seen) ? null : { ...data, seen };
+}
 
 // ---------------- 관심 종목 (v19.6c, v19.6 Part C; the shape is at the top of this file) ----------------
 export const WATCH_MAX = 30;
@@ -1147,6 +1221,10 @@ export function mergeTabs(other, cur, today) {
     delete out.gone;
     if (Object.keys(g).length) out.gone = g;
   }
+  // v19.6b 확인했어요: the union of the two lists (nothing either copy marked comes back as a card)
+  delete out.seen;
+  const seen = unionSeen(cur, other);
+  if (seen.length) out.seen = seen;
   if (guideSeenIn(cur) || guideSeenIn(other)) out.guideSeen = guideSeenIn(cur) ? cur.guideSeen : other.guideSeen;
   delete out.preview;
   delete out.setAside;
@@ -1286,6 +1364,8 @@ function restoreMoved(key, cur, raw, today) {
     const { guideSeen: _g, ...top } = d;
     // v19.6c: the 관심 종목 hitAt marks are this device's state, not the user's words: a copy that differs only in them is quiet too
     if (plainObj(top.watch)) top.watch = watchNoHits(top.watch);
+    // v19.6b: so are the 확인했어요 marks (a card hidden again is nothing to check in the records)
+    delete top.seen;
     return canon({ ...top, decks: (d.decks || []).map((x) => { if (!plainObj(x)) return x; const { limitsTs: _t, ...r } = x; return r; }) });
   };
   const notice = (changed && noTs(merged) !== noTs(base)) || used.some(([, d]) => droppedFrom(d, merged));
@@ -1881,6 +1961,9 @@ export function mergeStores(cur, inc, ts = Date.now(), known = [], today = null)
   // v19.6c 관심 종목 (Part C [Q6]): this device's list first, then the file's, up to WATCH_MAX (watchImport)
   const wi = watchImport(cur, inc, ts, kn);
   if (Object.keys(wi.watch).length) out.watch = wi.watch;
+  // v19.6b 확인했어요 (Part A.1 [Q6]): the union, the newest time for the same mark
+  const seen = unionSeen(cur, inc);
+  if (seen.length) out.seen = seen;
   if (cur && plainObj(cur.gone)) {                       // deletion marks stay on this device, minus the notes the file brings
     const gone = { ...cur.gone };
     if (plainObj(gone.notes)) {

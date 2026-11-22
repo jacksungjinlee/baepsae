@@ -475,7 +475,8 @@ export function RankCard({ load, store, full = false, go = null, tapper = null }
   )) : <div role={copy ? undefined : "list"} aria-labelledby={copy ? undefined : titleId}>{stockList(copy)}</div>);
   const listKey = [mk, chip, crit, openedId || "", top.length].join("|");
   const win = { position: "relative", borderRadius: 16, background: COLOR.surface, boxShadow: `inset 0 0 0 1px ${WIN_LINE}`, overflow: "hidden" };
-  const usRows = kind === "ind" ? [] : top.map((r) => r.s);
+  // the stocks on screen (review 2026-11-19: only the rows shown, so the reduced-motion and stale lists name none they leave out)
+  const usRows = kind === "ind" ? [] : shownRows.map((r) => r.s);
   // The chip rows: on the phone one row that scrolls sideways and runs to the screen's edges (the board); on PC (no sideways
   // swipe with a mouse wheel) they wrap onto more lines inside the card's column.
   const chipRowStyle = wide ? { display: "flex", flexWrap: "wrap", gap: 6 }
@@ -539,8 +540,9 @@ export function RankCard({ load, store, full = false, go = null, tapper = null }
               background: `linear-gradient(transparent, ${COLOR.surface})` }} />
           </div>
         )}
-      {/* v19.1c: a US stock priced at an earlier close (pxd) among the rows: named once under the list */}
-      <OwnCloseNote groups={ownCloses(load, usRows)} data-market={mk} />
+      {/* v19.1c: a US stock priced at an earlier close (pxd) among the rows: named once under the list. 2026-11-19 (Jack): a Korean
+          stock at its last confirmed close (pxd) too, by its name with his line (usRows are the shown market's rows, Korean or US) */}
+      <OwnCloseNote groups={ownCloses(load, usRows, { compact: true })} data-market={mk} />
       {!full && dated && top.length > 0 && chips.length > 0 && (
         <div data-ui-v2="rank-foot" style={{ marginTop: SPACE(1), display: "flex", justifyContent: "space-between", alignItems: "center", gap: SPACE(2) }}>
           {/* phones only: on PC the mouse over the list already stops it (Jack, 2026-11-12) */}

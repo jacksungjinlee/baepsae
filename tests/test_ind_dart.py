@@ -155,7 +155,7 @@ def test_codes_that_do_not_map_cleanly():
             "108": ("none", "etc", ("food",)), "339": ("none", "etc", ("furniture",)), "761": ("none", "machine", ("services",)),
             "051": ("none", "energy", ()), "620": ("ambiguous", "elec", ("it_service",)), "473": ("ambiguous", "elec", ("retail",)),
             "467": ("ambiguous", "retail", ("energy", "trading")), "331": ("financial", "broker", ("furniture",)),
-            "281": ("ambiguous", "utility", ("power_eq",)), "204": ("ambiguous", "chem", ("cosmetics", "spchem")),
+            "281": ("ambiguous", "elec", ("power_eq",)), "204": ("ambiguous", "chem", ("cosmetics", "spchem")),
             "161": ("ambiguous", "paper", ("paper",)), "231": ("ambiguous", "build", ("cement",)), "233": ("ambiguous", "build", ("cement",)),
             "682": ("ambiguous", "realestate", ("realestate",)), "713": ("ambiguous", "media", ("media",)),
             "171": ("ok", "paper", ("paper",)), "172": ("ok", "paper", ("paper",)), "411": ("ok", "build", ("construction",)),
@@ -171,9 +171,10 @@ def test_codes_that_do_not_map_cleanly():
         ["161", "204", "231", "233", "251", "281", "319", "381", "382", "390", "426", "465", "466", "467", "473", "476", "620", "682", "713",
          "912"]
     # 리뷰 2: 업종 읽는 법(LENS)이 그 코드 회사들의 매출원 · 원재료 · 값을 정하는 쪽을 맞게 짚지 못하면 채우지 않아요 (281 은 KRX 글자 길에서
-    # utility 라 다른 키로 채우면 한 코드가 두 업종 — 그래서 채우지 않아요 · KRX 길은 그대로)
+    # utility 라 다른 키로 채우면 한 코드가 두 업종 — 그래서 채우지 않았어요). 2026-11-20 (Jack "3. Yes"): KRX 글자 길이 elec 으로 바뀌었어요
+    # (fetch_data.SECTOR_ELEC_NOT_UTILITY · tests/test_oldapp_power_equip.py) — DART 로 채우는 건 그 답에 없어 281 은 그대로 채우지 않아요
     assert sorted(V.KSIC_LENS_MISFIT) == ["161", "231", "233", "281", "319", "381", "382", "390", "682", "713"]
-    assert F.map_sector_kr(NAMES["281"], "") == "utility" and not hasattr(V, "KSIC_S_FIX")
+    assert F.map_sector_kr(NAMES["281"], "") == "elec" and not hasattr(V, "KSIC_S_FIX")
     assert V.IND_SECTOR_KR["furniture"] == () and "chem" not in V.IND_SECTOR_KR["cosmetics"] and "utility" not in V.IND_SECTOR_KR["power_eq"]
     assert sorted(c for c, v in MAP.items() if v["status"] == "financial") == \
         ["331", "641", "649", "651", "652", "653", "661", "662", "846"]

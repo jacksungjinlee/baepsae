@@ -383,7 +383,7 @@ def test_daily_run_gate_comes_before_main_and_data_branch():
     assert gate[i_r].strip() == 'sha256sum data.json corp.json disc.json macro.json > "$RUNNER_TEMP/gate-pass.sha256"'
     assert "if" not in st[i_gate]
     main_run, data_run = st[i_main]["run"], st[i_data]["run"]
-    assert st[i_main]["if"] == st[i_data]["if"] == "${{ !inputs.dry_run }}"
+    assert st[i_main]["if"] == st[i_data]["if"] == "${{ !inputs.dry_run && steps.hold.outputs.hold != 'true' }}"
     assert main_run.index('sha256sum --quiet --strict -c "$RUNNER_TEMP/gate-pass.sha256"') < main_run.index("git add")
     assert '[ "$GITHUB_REF" != "refs/heads/main" ]' in data_run and "exit 1" in data_run
     assert data_run.strip().splitlines()[-1].strip() == 'bash tools/push_data_branch.sh "$RUNNER_TEMP/gate-pass.sha256"'

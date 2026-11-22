@@ -23,10 +23,10 @@ import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, TOPIC_ART } from "../ui/toke
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { StatusChip, Segmented, BottomSheet, Amount, Button } from "../ui/components.jsx";
 import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.js";
-import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, CardPic, SIDE_W, tx, tap, useMode, useLayout } from "./ui.jsx";
+import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, CardPic, KrOwnCloseLine, SIDE_W, tx, tap, useMode, useLayout } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { findCompany, groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, warnings, cardRanks, myCards, holdingsOf, RANK_CARDS,
-  splitGuardCount, SPLIT_GUARD, divCheckCount, warnChips, warnKind, uncheckedCount, divHiddenLine } from "./company.js";
+  splitGuardCount, SPLIT_GUARD, divCheckCount, warnChips, warnKind, uncheckedCount, divHiddenLine, DIV_HIDDEN_UI } from "./company.js";
 import { EarnBars, ValueScale, Coins, Waves } from "./coart.jsx";
 import { pfRows, isImported, limitsOf } from "./pf.js";
 import { limitPct } from "./pfview.jsx";
@@ -125,8 +125,7 @@ export function tileViews(load, s) {
     const hid = last && last.topic === "div" && !number && !usOf(s) ? divHiddenLine(s, co) : null;
     if (hid && C.co.div[hid]) {
       last.note = C.co.div[hid];
-      last.noteUi = { shareHidden: "div-share-hidden", rightsHidden: "div-rights-hidden", dataHidden: "div-data-hidden",
-        missingHidden: "div-missing-hidden" }[hid];
+      last.noteUi = DIV_HIDDEN_UI[hid];
     }
   }
   if (pxBadFor(s, co) && T().label.risk) {
@@ -298,6 +297,9 @@ function Header({ load, s }) {
       {/* 2026-11-14 (Jack, design chat 2026-11-08): no change today, said where it would be — no trade on the price date, or a d1
           left blank for another reason (fixnote.jsx DayNote); right under the price, never as 0.0% */}
       <DayNote s={s} md={priceMd(load, s)} style={{ marginTop: SPACE(1) }} />
+      {/* 2026-11-19 (Jack): a Korean stock at its last confirmed close (pxd): his line with that date, right under the price and
+          its "{md} 종가", once on the page (every tab) */}
+      <KrOwnCloseLine load={load} s={s} style={{ marginTop: SPACE(1) }} />
       {won && <div data-ui-v2="co-won" style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginTop: 2 })}>{(US_HEAD2 && wonLineUsd(load, s.price)) || won}</div>}
       {/* The rate's own date (cofmt.fxDateLine): always without US_HEAD2; with it, whenever the rate is from another day than
           the price date in the header, so the won line never reads as that day's rate */}
@@ -771,11 +773,15 @@ export function Company({ load, store, setStoreData, pad, code, ctab, disc, nav 
   if (!s) {
     // A fund (an address typed by hand: nothing in 2.0 links a fund here) is not "not found": it has no company page.
     const fund = ok && load.byT.get(code) && !isCompany(load.byT.get(code));
+    // 2026-11-20 (Jack, a): a Korean stock left out because its last confirmed close is past the age limit (pxSrc.own.aged) says
+    // so instead of "not found": "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요." 2026-11-20 (Jack): a US stock left out the same
+    // way (usSrc.own.aged: Yahoo had no close for more than 5 NYSE trading days) too (load.aged holds both)
+    const aged = !fund && ok && load.aged && load.aged.has(code) && C.app.krOwnAged;
     return (
       <Page pad={pad}>
         <AppBar onBack={nav.back} backLabel={backLabel} />
-        <Card data-ui-v2="co-not-found" data-fund={fund ? "1" : undefined}>
-          <p style={tx(SIZE.body, WEIGHT.bold, COLOR.ink)}>{fund ? C.co.fundNote || C.stocks.krOnly : C.co.notFound}</p></Card>
+        <Card data-ui-v2="co-not-found" data-fund={fund ? "1" : undefined} data-aged={aged ? "1" : undefined}>
+          <p style={tx(SIZE.body, WEIGHT.bold, COLOR.ink)}>{fund ? C.co.fundNote || C.stocks.krOnly : aged ? C.app.krOwnAged : C.co.notFound}</p></Card>
         <Footer />
       </Page>
     );
