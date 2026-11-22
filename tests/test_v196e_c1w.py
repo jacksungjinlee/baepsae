@@ -118,7 +118,7 @@ def test_whole_market_blank_when_the_table_disagrees():
     st = [{"t": "005930", "cls": "kr", "price": 101.0, "shr": 10}, {"t": "AAPL", "cls": "us", "price": 11.0},
           {"t": "069500", "cls": "kr", "fund": True, "price": 5.0, "c1w": 4.0}]
     meta, info = F.c1w_apply(st, kr_wk, us_wk, HOL)
-    assert meta == {"wkFrom": None, "usWkFrom": "2026-11-13"}
+    assert (meta["wkFrom"], meta["usWkFrom"]) == (None, "2026-11-13")
     assert "c1w" not in st[0] and "c1w" not in st[2] and st[1]["c1w"] == 10.0
     assert info["wk"]["kr"] == (None, "table", ["2026-11-13"]) and info["kr"]["why"]["week"] == 1 and info["fund"]["why"]["week"] == 1
 
@@ -344,7 +344,9 @@ def test_logs_name_counts_and_reasons(monkeypatch):
           {"t": "P", "nk": "바", "cls": "kr", "price": 50.0, "shr": 10, "pxd": "2026-11-19"},
           {"t": "X", "cls": "us", "price": 11.0}, {"t": "Y", "cls": "us", "price": 11.0}, {"t": "W", "cls": "us", "price": 11.0}]
     meta = F.c1w_fields(st, kr_wk, us_wk, HOL, splits=[["Y", "2026-11-17", 2.0], ["X", "2026-11-12", 2.0]])
-    assert meta == {"wkFrom": "2026-11-13", "usWkFrom": "2026-11-13"}
+    assert (meta["wkFrom"], meta["usWkFrom"]) == ("2026-11-13", "2026-11-13")
+    assert meta["c1wSrc"] == {"v": 1, "listing": 1, "krx": 0, "naver": 0, "blank": {"own": 1, "base": 1, "link": 2, "shr": 1},
+                              "link": {"none": 1, "rows": 1}}
     text = "\n".join(lines)
     assert lines[0] == ("  !! c1w (이번 주 정리 · 그 시장의 이번 주 앞 마지막 거래일 종가 · 기준일 종가 종목 중): 국내 1 / 5 (wkFrom 2026-11-13 · "
                         "최종본 목록 파일 · 자기 가격 날짜 1종목은 빼고) · 미국 1 / 3 (usWkFrom 2026-11-13 · 야후 일봉 · 실제 종가 기준) · 채권·ETF·금 0 / 0"), lines[0]
@@ -371,7 +373,9 @@ def test_a_crash_blanks_everything_and_says_so(monkeypatch):
     lines = []
     monkeypatch.setattr(F, "log", lines.append)
     st = [{"t": "A", "cls": "kr", "price": 1.0, "c1w": 1.0}, {"t": "X", "cls": "us", "price": 1.0, "c1w": 2.0}]
-    assert F.c1w_fail(st, ValueError("x")) == {"wkFrom": None, "usWkFrom": None}
+    st[0]["c1wv"] = "nv"
+    assert F.c1w_fail(st, ValueError("x")) == {"wkFrom": None, "usWkFrom": None, "c1wSrc": None}
+    assert not any("c1wv" in s for s in st)
     assert not any("c1w" in s for s in st) and lines[0].startswith("  !! c1w 단계가 오류로 멈췄어요 (ValueError: x)")
 
 
@@ -397,7 +401,7 @@ def test_a_crash_inside_the_log_reaches_c1w_fail_through_the_main_step(monkeypat
     def boom(info):
         raise KeyError("log broke")
     monkeypatch.setattr(F, "log_c1w", boom)
-    assert F.c1w_step(st, kr_wk, None, HOL) == {"wkFrom": None, "usWkFrom": None}
+    assert F.c1w_step(st, kr_wk, None, HOL) == {"wkFrom": None, "usWkFrom": None, "c1wSrc": None}
     assert "c1w" not in st[0] and lines[-1].startswith("  !! c1w 단계가 오류로 멈췄어요 (KeyError: 'log broke')")
     assert "c1w_meta = c1w_step(stocks, " in inspect.getsource(F.main)        # main 은 이 한 곳으로만 불러요
 
@@ -579,7 +583,7 @@ def test_fetch_us_records_the_week_start_close_price_only_and_c1w_step_applies_i
     assert by["MSFT"].get("pxc") is True and by["HALT"].get("pxd") == "2026-11-17"
     assert not any("c1w" in r for r in out)                                    # 붙이는 곳은 main 의 c1w_step 한 곳
     m = F.c1w_step(out, None, uw, HOL, splits=meta.get("splits"))
-    assert m == {"wkFrom": None, "usWkFrom": "2026-11-13"}
+    assert (m["wkFrom"], m["usWkFrom"]) == (None, "2026-11-13") and m["c1wSrc"]["listing"] == 0
     for t in ("AAPL", "SHEL"):
         assert by[t]["c1w"] == round(float(series[t].loc["2026-11-13"]), 2) and by[t]["price"] == round(float(series[t].iloc[-1]), 2)
     assert by["KO"]["c1w"] == uw["close"]["KO"]
@@ -688,8 +692,9 @@ def test_main_and_fetchers_are_wired_in_the_right_order():
     bonds = inspect.getsource(F.fetch_bonds)
     assert bonds.index("proxy = px.pct_change().dropna()") < bonds.index("fund_c1w(recs[-1], px, wk_from)")
     assert F.c1w_group is V.c1w_group and F.C1W_COVER_MIN is V.C1W_COVER_MIN     # 파이프라인과 관문이 같은 함수 · 같은 값
-    for k in ("c1w", "wkFrom", "usWkFrom"):
+    for k in ("c1w", "wkFrom", "usWkFrom", "c1wv", "c1wSrc"):
         assert k in F.UNITS and not [p for p, v in V.text_values({k: F.UNITS[k]}) if V.BAD_WORD.search(v)]
+    assert "5% 에 그날 시간외 가격 차이를 더한 만큼" in F.UNITS["c1wv"]
     assert 'cls 가 us 이고 fund 가 아닌 행 (미국 주식) 은 usWkFrom' in F.UNITS["c1w"] and "ccy USD" not in F.UNITS["c1w"]
 
 
@@ -701,7 +706,15 @@ def with_c1w(cur, factor=1.0 / 1.01, wk="2026-10-23", uwk="2026-10-23"):
     for s in d["stocks"]:
         if V.c1w_group(s) and not V.c1w_own_date(s):
             s["c1w"] = round(s["price"] * factor, 2)
+    _src(d)
     return cur
+
+
+def _src(d):
+    """파이프라인처럼 data.json c1wSrc 를 행에서 다시 세요 (시험용 · 목록 = c1wv 없는 국내 c1w · 네이버 = c1wv nv)."""
+    kr = [s for s in d["stocks"] if V.c1w_group(s) == "kr" and s.get("c1w") is not None]
+    d["c1wSrc"] = {"v": 1, "listing": sum(1 for s in kr if "c1wv" not in s), "krx": 0, "naver": sum(1 for s in kr if s.get("c1wv") == "nv"),
+                   "blank": {}, "link": {}}
 
 
 def gate(cur, prev=None, final=None):
@@ -728,7 +741,8 @@ def test_gate_passes_on_good_data_and_changes_no_other_row():
     rep = gate(with_c1w(cur), prev, final)
     r = row(rep)
     assert r[3] == "PASS", r
-    assert r[1].startswith("국내 2,400 / 2,400 (wkFrom 2026-10-23) · 미국 600 / 600 (usWkFrom 2026-10-23) · 채권·ETF·금 13 / 13"), r
+    assert r[1].startswith("국내 2,400 / 2,400 (wkFrom 2026-10-23 · 목록 2,400 · KRX 0 · 네이버 0) · 미국 600 / 600 (usWkFrom 2026-10-23) · "
+                           "채권·ETF·금 13 / 13"), r
     assert [x for x in rep.rows if x[0] != V.C1W_ROW] == [x for x in base.rows if x[0] != V.C1W_ROW]
     assert row(base)[3] == "WARN" and "v19.6e 전 파일" in row(base)[1]           # 예전 파일 (지금 사이트) 은 경고만
     assert rep.rows.index(r) > [x[0] for x in rep.rows].index(V.ISSUE_BD_ROW)   # v19.6b 줄들 뒤 (알림 앞자리를 밀어내지 않게)
@@ -818,6 +832,7 @@ def test_ninety_five_percent_is_still_fine():
     cur, _, _ = FD.good_pair()
     cur = with_c1w(cur)
     _pop(cur["data"], "kr", 120)
+    _src(cur["data"])
     assert one(cur["data"], cur["macro"])[3] == "PASS"                          # 2,280 / 2,400 = 95.0% — 기준 그대로
 
 
@@ -856,6 +871,7 @@ def test_real_day_snapshot_fails_the_same_rows_with_or_without_c1w():
     for s in new["data"]["stocks"]:
         if V.c1w_group(s) and not V.c1w_own_date(s):
             s["c1w"] = round(s["price"] / 1.02, 2)
+    _src(new["data"])
     rep = run(new)
     assert sorted(x[0] for x in rep.failed) == sorted(x[0] for x in base.failed)
     assert row(rep)[3] == "PASS", row(rep)
@@ -927,9 +943,12 @@ def test_the_dry_run_week_is_rescued_day_by_day_from_real_files():
     assert krx == set(daum_js) - {"047400", "011810"} and res2["047400"] == ("base", None)    # 다음 행도 11-16 의 재설정을 보여요
     assert res2["011810"] == ("blank", "pxLink")                  # 지난 발행본에 없고 다음 보관본에 11-19 종가가 없어요
     # 다음 보관본의 기준가가 장중 파일의 기준가와 다르면 (자료끼리 다름) 비워요
-    bad = copy.deepcopy(daum)
-    bad["kk"]["005930"]["d"]["2026-11-18"]["changePrice"] = 4300.0
+    bad = copy.deepcopy(daum)                                     # 다음 행이 스스로 맞지만 (종가 − 전일 대비 = 전일 종가) 장중 파일의 기준가와 다름
+    bad["kk"]["005930"]["d"]["2026-11-18"].update(changePrice=4300.0, prevClosingPrice=190400.0)
     assert F.kr_c1w_rescue(D20, D13, TD_WEEK, sessions, f20, nonfinal, pub, nv, ["005930"], daum=bad, ndays=(2, 10)) == {"005930": ("blank", "conflict")}
+    odd = copy.deepcopy(daum)                                     # 스스로 맞지 않는 다음 행 (전일 종가와 어긋남) 은 기준가로 쓰지 않아요 → 장중 파일로 그대로
+    odd["kk"]["005930"]["d"]["2026-11-18"]["changePrice"] = 4300.0
+    assert F.kr_c1w_rescue(D20, D13, TD_WEEK, sessions, f20, nonfinal, pub, nv, ["005930"], daum=odd, ndays=(2, 10)) == {"005930": ("krx", None)}
 
 
 def test_the_real_reset_cases_never_come_back():
@@ -1083,3 +1102,130 @@ def test_a_broken_us_week_step_never_loses_us_data(tmp_path, monkeypatch):
         assert out == base and meta["usSrc"] == bmeta["usSrc"] and meta["splits"] == bmeta["splits"], name
         assert meta["_c1wUs"]["date"] is None and meta["_c1wUs"]["why"] == "err" and meta["_c1wUs"]["close"] == {}, name
         assert any(x.startswith("  !! c1w: 미국") and "ZeroDivisionError" in x for x in lines), name
+
+
+# ── 7. 4차 (dry run 44998856207: 국내 2,069 / 2,474 · 모두 네이버): c1wv · c1wSrc · 다음 행 · 장중 파일 시각 ───────────────────────────
+def test_naver_rows_are_tagged_and_the_sources_are_counted():
+    kr_wk = {"date": "2026-11-13", "px": "2026-11-20", "why": None, "close": {k: 100.0 for k in "ABCDE"}, "shr": {k: 10.0 for k in "ABCDE"},
+             "ref": {"A": "ok", "B": "unknown", "C": "unknown", "D": "unknown", "E": "unknown"},
+             "rescue": {"B": ("krx", None), "C": ("naver", 0.003), "D": ("blank", "near"), "E": ("naver", 0.001)}}
+    st = [{"t": k, "nk": k, "cls": "kr", "price": 101.0, "shr": 10} for k in "ABCDE"]
+    st[4]["shr"] = 30                                              # 네이버로 확인했지만 주식 수 20% 넘게 바뀜 → 빈 칸 (태그도 없음)
+    st[0]["c1wv"] = "nv"                                           # 지난 값이 남아 있어도 다시 정해요
+    meta, info = F.c1w_apply(st, kr_wk, None, HOL)
+    assert [(s.get("c1w"), s.get("c1wv")) for s in st] == [(100.0, None), (100.0, None), (100.0, "nv"), (None, None), (None, None)]
+    assert meta["c1wSrc"] == {"v": 1, "listing": 1, "krx": 1, "naver": 1, "blank": {"link": 1, "shr": 1}, "link": {"near": 1}}
+    json.dumps(meta, allow_nan=False)
+    d = {"pxDate": "2026-11-20", "usPxDate": "2026-11-20", "wkFrom": "2026-11-13", "usWkFrom": "2026-11-13", "stocks": st, **meta}
+    r = one(d, {})
+    assert "국내 3 / 5 (wkFrom 2026-11-13 · 목록 1 · KRX 1 · 네이버 1)" in r[1], r
+
+
+def test_gate_checks_c1wsrc_and_c1wv():
+    cur, _, _ = FD.good_pair()
+    cur = with_c1w(cur)
+    d = cur["data"]
+    _st(d, "005930")["c1wv"] = "nv"
+    d["c1wSrc"].update(listing=2399, naver=1)
+    assert one(d, cur["macro"])[3] == "PASS"                       # 목록 2,399 + 네이버 1 = 2,400 · c1wv nv 1
+    d["c1wSrc"]["naver"] = 2
+    r = one(d, cur["macro"])
+    assert r[3] == "WARN" and "c1wSrc (목록 2,399 + KRX 0 + 네이버 2) 가 종목과 다름 (국내 c1w 2,400 · c1wv nv 1)" in r[1], r
+    d["c1wSrc"]["naver"] = 1
+    _st(d, "AAPL")["c1wv"] = "nv"                                  # 미국 행의 태그
+    _st(d, "000660")["c1wv"] = "x"
+    r = one(d, cur["macro"])
+    assert r[3] == "WARN" and "c1wv 이상 2 (000660 SK하이닉스 \"x\", AAPL US Corp 0 \"nv\")" in r[1], r
+    d.pop("c1wSrc")
+    for k in ("c1wv",):
+        _st(d, "AAPL").pop(k)
+        _st(d, "000660").pop(k)
+    r = one(d, cur["macro"])
+    assert r[3] == "WARN" and "c1wSrc 없음" in r[1], r
+    d["c1wSrc"] = "x"
+    assert "c1wSrc 모양이 틀림" in one(d, cur["macro"])[1]
+
+
+def test_daum_filler_rows_of_a_halted_stock_are_not_a_base():
+    """검증 (4차 S2): 거래정지 종목 (STX 011810 · 실제 응답) 의 다음 행은 prevClosingPrice 0 · changePrice 0 — 기준가가 아니에요. 다음의 기준가는
+    prevClosingPrice > 0 이고 종가 − 전일 대비 = 전일 종가일 때만. 그리고 같은 날 종가와 기준가를 둘 다 알면 그 비가 제한폭 안이어야 해요."""
+    sessions, nonfinal, f20, pub = _gap_week()
+    daum_js = json.load(open(os.path.join(FX2, "daum_days.json"), encoding="utf-8"))
+    rows = {r["date"][:10]: r for r in daum_js["011810"]["data"]}
+    assert rows["2026-11-18"]["prevClosingPrice"] == 0 and rows["2026-11-18"]["changePrice"] == 0
+    daum = {"v": 1, "days": ["2026-11-17", "2026-11-18"], "kk": {"011810": {"d": rows, "y": {"2026-11-17": 18360.0, "2026-11-18": 18360.0}}}}
+    pub2 = copy.deepcopy(pub)
+    pub2["stocks"].append({"t": "011810", "cls": "kr", "price": 18360.0})
+    nf = {d: df for d, df in nonfinal.items() if d != D18}         # 11-18 장중 파일이 없으면 그날 기준가는 다음 행뿐
+    res = F.kr_c1w_rescue(D20, D13, TD_WEEK, sessions, f20, nf, pub2, {}, ["011810"], daum=daum, ndays=(2, 10))
+    assert res["011810"] == ("blank", "noNaver")                   # 11-18 은 기준가가 없어 확인 못 한 날로 (거짓 'ok' 가 아니에요)
+    good = copy.deepcopy(daum)
+    for r in good["kk"]["011810"]["d"].values():
+        r["prevClosingPrice"] = r["tradePrice"] - r["changePrice"]
+    assert F.kr_c1w_rescue(D20, D13, TD_WEEK, sessions, f20, nf, pub2, {}, ["011810"], daum=good, ndays=(2, 10))["011810"][0] in ("krx", "blank")
+    # 같은 날 종가 (다음 · 야후) 와 기준가 (장중 파일) 가 제한폭 넘게 다르면 그날 자료가 서로 맞지 않아요 → conflict
+    # (11-18 기준가 120,000 · 종가 194,700 = 1.62 배 — 기준가 자료 둘 (장중 파일 · 다음 행) 은 서로 같고, 종가는 다음 × 야후가 같아요)
+    nf2 = {d: df.astype({"Close": float, "Changes": float}) for d, df in nonfinal.items()}
+    i = nf2[D18].index[nf2[D18]["Code"] == "005930"][0]
+    nf2[D18].at[i, "Changes"] = nf2[D18].at[i, "Close"] - 120000.0
+    rows5 = {"2026-11-18": {"tradePrice": 194700.0, "changePrice": 74700.0, "prevClosingPrice": 120000.0}}
+    far = {"v": 1, "days": ["2026-11-18"], "kk": {"005930": {"d": rows5, "y": {"2026-11-18": 194700.0}}}}
+    assert F.kr_c1w_rescue(D20, D13, TD_WEEK, sessions, f20, nf2, pub, {}, ["005930"], daum=far, ndays=(2, 10)) == {"005930": ("blank", "conflict")}
+    assert "prevClosingPrice" in F.KR_FB_DAUM_KEEP
+
+
+def test_intraday_files_count_only_after_the_open():
+    """검증 (4차 N1): 장 전에 올린 파일은 어제 값일 수 있어요 — 그날 정규장 시작 (09:00 · 수능일 10:00) 뒤 커밋만 · 커밋 시각을 모르면 쓰지 않아요."""
+    _s, nonfinal, _f, _p = _gap_week()
+    files = {D16: lambda: _gap_week()[0][0][1], D17: lambda: nonfinal[D17], D18: lambda: nonfinal[D18], D19: lambda: nonfinal[D19]}
+    for commits, want in (({D17: dt.datetime(2026, 11, 17, 8, 59, tzinfo=F.KST), D18: dt.datetime(2026, 11, 18, 9, 0, tzinfo=F.KST),
+                            D19: dt.datetime(2026, 11, 19, 9, 30, tzinfo=F.KST)}, [D18]),           # 11-19 수능일: 10:00 시작 → 09:30 은 장 전
+                          ({D18: dt.datetime(2026, 11, 18, 14, 52, tzinfo=F.KST), D19: dt.datetime(2026, 11, 19, 14, 52, tzinfo=F.KST)}, [D18, D19])):
+        commits = {**commits, D16: dt.datetime(2026, 11, 16, 22, 11, tzinfo=F.KST)}
+        nf = {}
+        F.kr_recent_sessions(D20, lambda d: files[d]() if d in files else None, commits.get, n=3, special=F.load_krx_special_sessions(), nonfinal=nf)
+        assert sorted(nf) == want, (sorted(nf), want)
+    assert F.kr_session_open(D19, F.load_krx_special_sessions()).time() == dt.time(10, 0)
+    assert F.kr_session_open(D18, {}).time() == dt.time(9, 0)
+
+
+def test_the_rescue_step_survives_a_non_dict_record(monkeypatch):
+    monkeypatch.setattr(F, "log", lambda *a: None)
+    assert F.kr_c1w_rescue_step(None, D20, TD_WEEK, [], None, {}, None, {}) is None
+    monkeypatch.setattr(F, "kr_c1w_rescue", lambda *a, **k: 1 / 0)
+
+    class Odd(dict):
+        def get(self, k, d=None):
+            return {"date": "2026-11-13", "why": None, "ref": {"A": "unknown"}}.get(k, d)
+    odd = Odd()
+    assert F.kr_c1w_rescue_step(odd, D20, TD_WEEK, [], None, {}, None, {}, daum={}) is odd and odd["rescue"] == {}
+
+
+def test_the_residual_naver_case_is_tagged():
+    """검증 (4차 S1 · rev_a2_exp1): 네이버가 늦고 그 앞 봉이 시간외로 공식 종가보다 4% 낮으면 8% 재설정을 'near' (5%) 가 못 잡아요 — 남는 위험은
+    '5% + 그날 시간외 차이' 예요 (RUNBOOK). 그런 행은 c1wv 'nv' 라서 화면이 다르게 다룰 수 있어요."""
+    sessions, nonfinal, f20, pub = _gap_week()
+    nf = {d: df.astype({"Close": float, "Changes": float}) for d, df in nonfinal.items()}
+    f20b, pubb = f20.astype({"Close": float, "Changes": float, "Marcap": float}), copy.deepcopy(pub)
+    k = 0.92
+    for d, df in nf.items():
+        if d >= D18:
+            i = df.index[df["Code"] == "005930"][0]
+            base0 = df.at[i, "Close"] - df.at[i, "Changes"]
+            df.at[i, "Close"] = df.at[i, "Close"] * k
+            df.at[i, "Changes"] = df.at[i, "Close"] - base0 * k
+    i = f20b.index[f20b["Code"] == "005930"][0]
+    for col in ("Close", "Changes", "Marcap"):
+        f20b.at[i, col] = f20b.at[i, col] * k
+    for x in pubb["stocks"]:
+        if x["t"] == "005930":
+            x["price"] = round(f20b.at[i, "Close"] - f20b.at[i, "Changes"])
+    nv = _naver_like(sessions, nf, f20b, ["005930"])
+    nv["005930"]["2026-11-17"] *= 0.96
+    res = F.kr_c1w_rescue(D20, D13, TD_WEEK, sessions, f20b, nf, pubb, nv, ["005930"], ndays=(2, 10))
+    assert res["005930"][0] == "naver"
+    kw = F.kr_week_closes(D20, TD_WEEK, sessions, {pd.Timestamp(D13): {"005930": "unknown"}})
+    kw["rescue"] = res
+    row = {"t": "005930", "cls": "kr", "price": float(f20b.at[i, "Marcap"] / f20b.at[i, "Stocks"]), "shr": int(f20b.at[i, "Stocks"])}
+    F.c1w_apply([row], kw, None, HOL)
+    assert row["c1wv"] == "nv" and round(row["price"] / row["c1w"] - 1, 3) == -0.182   # 실제는 약 −11% — 오차 그대로 (태그로 알려요)

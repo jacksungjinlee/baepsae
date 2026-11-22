@@ -1708,10 +1708,22 @@ the file is written). No new downloads and no DART calls.
     days in the week of 11-16; the first dry run had 0 / 2,474 Korean `c1w`) are checked one by one from other evidence
     (`kr_c1w_rescue`, run in `fetch_korea` after the price phase):
     - **A, KRX base day by day (`krx`, exact).** The day's base price from that day's non-final cache file (`kr_recent_sessions`
-      now hands those files over; KRX fixes the base before the open, so an intraday file has the right one — checked on the real
-      11-17 file: 13 / 13 equal the 11-16 official close), a final file, or the last backup run's Daum rows (`.dart-cache/kr-fb-v1.json`,
-      close − change); the previous close from a final file, the previous publish (its `pxDate`), or the Daum cache when Daum and
-      Yahoo agree to the won. Sources that disagree → blank (`conflict`). Any reset seen → blank (counted as a base reset).
+      now hands those files over, only when committed at or after that day's open — 09:00, or the special-session table's start such as
+      10:00 on the CSAT day — and never when the commit time is unknown, because a pre-open file can still carry the previous day's
+      values; KRX fixes the base before the open, so an intraday file has the right one — checked on the real 11-17 file: 13 / 13 equal
+      the 11-16 official close), a final file, or the last backup run's Daum rows (`.dart-cache/kr-fb-v1.json`, close − change, used
+      only when `prevClosingPrice` > 0 and close − change equals it: a halted stock's Daum row carries `prevClosingPrice` 0 and
+      `changePrice` 0 as filler, STX 011810); the previous close from a final file, the previous publish (its `pxDate`), or the Daum
+      cache when Daum and Yahoo agree to the won. Sources that disagree → blank (`conflict`); when a day's close and base are both known,
+      their ratio must be inside the daily price limit (30%, KONEX 15%), else that day is a conflict too. Any reset seen → blank
+      (counted as a base reset). A stock is rescued by A only when every day of the week settles this way.
+      **Why A settled 0 stocks in the 11-16 week (dry run 44998856207):** the closes of 11-17 and 11-18 exist nowhere in that run (no
+      final file, the previous publish is 11-19, and the Daum file did not exist yet: it came with #161 on 11-21), so the 11-18 and
+      11-19 links cannot be checked exactly; 11-17 (intraday base vs the 11-16 file) and 11-20 (final base vs the 11-19 publish) did
+      settle. What could supply those closes, not built: the 11-19 publish's own `d1` gives the 11-18 close to 0.01% (would settle
+      11-19 only); the earlier publishes in the `data` branch history (the workflow would have to fetch them); a small rolling store
+      of confirmed closes per day in `.dart-cache`. From now on, a backup week's Daum file covers the backup days of the last backup
+      run, so A settles those days when the file is restored.
     - **B, Naver adjusted series (`naver`), only for days A could not settle.** Naver rewrites every bar before a reset onto the new
       basis. So: the median of Naver ÷ official close over the 5–10 linked days up to the last settled day (G0) must be within 1%
       (`C1W_NV_TOL`; real 2026-11-14 samples: normal stocks 0.0–0.7%, single days up to ±3% from after-hours trades, which is why it
@@ -1719,10 +1731,22 @@ the file is written). No new downloads and no DART calls.
       Naver has not applied yet), every unsettled day must have a KRX base from an intraday file or the Daum cache, within 5%
       (`PIN_PX_TOL`) of Naver's previous bar (a smaller reset Naver has not applied yet), and the price date's own link must be
       settled by A (Naver could lag on the newest day). Any missing piece → blank, with its reason.
-    - **What can still slip through (rescued `naver` rows only):** a reset Naver has applied that moves the basis by about 2% or less
-      (1% plus the median's after-hours wobble), or one Naver has not applied yet of about 5% or less. Both are typically small
-      주주배정 rights issues or stock dividends on a day without a final file; the weekly move of that stock is then off by that much.
-      Rows rescued by A carry no such error. Real cases blanked in the tests: 코나아이 1.5× bonus, 엘앤씨바이오 1:1 bonus, CMG제약 10:1
+    - **What can still slip through (rescued `naver` rows only — rare):** a reset Naver has applied that moves the basis by about 2%
+      or less (1% plus the median's after-hours wobble), or one Naver has not applied yet of at most about 5% **plus that day's
+      after-hours difference**: the `near` check compares the day's KRX base with Naver's previous bar, which is the last trade
+      including after-hours (NXT and KRX single-price sessions), not the official close. Usually that difference is under 3%, but on
+      a day with a big after-hours move it can be larger, and a reset of that size in the same direction would pass (reviewer probe
+      `rev_a2_exp1`: an 8% reset with Naver's previous bar 4% under the official close is kept, −18.2% instead of about −11%). These
+      are typically small 주주배정 rights issues or stock dividends on a day without a final file; the weekly move of that stock is
+      then off by that much. Rows rescued by A carry no such error. Comparing with an official close instead of Naver's bar is path
+      A, which needs exactly the closes that are missing. **Every row rescued by B carries `c1wv: "nv"`** (absent otherwise), so the
+      screen can decide whether to use, footnote or leave out those rows (owner's decision in the screens PR).
+    - **Known false blanks (lower coverage, never a wrong value):** a week whose start day itself has no final listing file (all
+      Korean `c1w` blank, "그날 최종본 목록 파일이 없음"); a stock with a base reset in the few days before the last settled day
+      (fewer than 5 linked days to compare with Naver, `few`); a stock not in the previous publish when the price date's link is
+      unknown (`pxLink`); a single after-hours day more than 5% away (`near`) or a median more than 1% away (`adj`) without any reset.
+      In the 11-16 week (dry run 44998856207): Korean `c1w` 2,069 / 2,474 (83.6%), all rescued by Naver; blank 405: adj 236 · near
+      98 · pxLink 62 · move 5 · base reset 1 · share count 3. Real cases blanked in the tests: 코나아이 1.5× bonus, 엘앤씨바이오 1:1 bonus, CMG제약 10:1
       merge, DGI 권리락, 유니온머티리얼 5:1 merge, and the reviewers' 000660 권리락 probes;
   - Korea, [Q9]: the listed share count changed by more than 20% between that day's file and today (`C1W_SHR_PCT`; exactly 20% is
     kept; an unknown count also blanks). That day's count is used inside the run only and is not written to data.json;
@@ -1745,6 +1769,11 @@ the file is written). No new downloads and no DART calls.
   - "c1w 기준가 연결을 목록 파일끼리 확인 못 함 n / N (그 사이 최종본 목록 파일이 없는 거래일: …) — 다른 자료로 확인해 실음 r (KRX 기준가로 날마다 a ·
     네이버 수정주가로 b) · 다른 자료로 본 기준가 재설정 x · 비움 k (reason counts) — code name (reason) …"
   - "c1w 기준가 연결 자료: 장중 목록 파일 … · 지난 발행본 … · 다음 보관본 … · 네이버 일봉 n종목 — 실은 종목 (예): code name (how) …" (only when n > 0)
+- **`c1wv`** (Korean rows only): `"nv"` when that row's `c1w` was confirmed by path B (Naver); absent for rows confirmed between final
+  files or by path A. **`c1wSrc`** (meta, Korean stocks): `{v: 1, listing, krx, naver, blank: {reason: n}, link: {reason: n}}` —
+  `listing` + `krx` + `naver` = Korean rows with `c1w` (by how the base link was confirmed; `naver` = rows with `c1wv`), `blank`
+  counts the Korean rows without `c1w` by the log's reasons (week, own, none, base, link, shr, bad), `link` splits `blank.link` by
+  path-B reason (conflict, pxLink, noNaver, stale, move, noBase, near, few, adj, none, rows, err). Blank (`null`) when the step crashed.
   - "c1w 미국 그 주 배당락: 실제 종가로 되돌림 n (…) · 되돌리지 못해 비움 k (ticker reason …) · 그 주 분할로 비움 s (…)"
   The last four are printed every run, also with 0. If this step crashes, every `c1w` is removed, both dates are written blank, the
   run logs "!! c1w 단계가 오류로 멈췄어요" and publishes as usual. A crash while collecting one US stock's or one fund's week-start
@@ -1752,7 +1781,10 @@ the file is written). No new downloads and no DART calls.
 
 Gate row **이번 주 시작 종가 (c1w · wkFrom · usWkFrom · 경고만)** (`validate_data.check_v196e`, after the v19.6b rows). It only
 **warns**, in every mode (Jack's yes is needed before any of it may stop a publish; to be asked with the screens PR), and a crash of
-the check itself is a warning too. It warns when: the file has none of the three fields (a file from before #?, e.g. the live site
+the check itself is a warning too. The Korean part of its value shows how the rows were confirmed, e.g. "국내 2,069 / 2,474 (wkFrom
+2026-11-13 · 목록 0 · KRX 0 · 네이버 2,069)". It warns when: `c1wSrc` is missing, malformed, or its counts disagree with the rows
+(`listing` + `krx` + `naver` ≠ Korean `c1w` rows, or `naver` ≠ rows with `c1wv`); a `c1wv` is anything but `"nv"` next to a Korean
+`c1w`; the file has none of the three fields (a file from before #?, e.g. the live site
 right after the merge); `wkFrom` / `usWkFrom` is missing, blank, not a real date, not before the Monday of the price date's week,
 more than 12 days before the price date, on a weekend, or different from the gate's own count from the holiday table (read by its own
 loader) or from `macro.json` `idxHist`; the holiday table cannot be read; a `c1w` is not a positive finite number, sits on a row shown
