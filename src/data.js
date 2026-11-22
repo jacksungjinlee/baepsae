@@ -265,9 +265,9 @@ export function ownAgedOf(j) {
 // setOwnCarryWide(data) is called where data.json is loaded (2.0 load.js resolveLoad and keepGlobals, so a later publish held off
 // screen never changes it · old app detail.jsx); before that (tests, preview) it is off.
 // Market-wide lists only (2026-11-21, review of Jack's answers 6 and 8): opts.compact — ranking, finder, pick, the build preview,
-// search results, the old app's 종목 고르기 (Korean screen). There the name lines stop at five names + '외 {n}종목' (group.cut) and,
-// above the cap, the US carries are the market-wide group. Lists of the user's own stocks (holdings, plans, records, the watch
-// list) and every English line leave it off: they name every carried stock in the existing line, grouped as before.
+// search results, the old app's 종목 고르기 (Korean and, since 2026-11-22 (Jack), English screens). There the name lines stop at five
+// names + '외 {n}종목' / "and {n} more" (group.cut) and, above the cap, the US carries are the market-wide group. Lists of the user's
+// own stocks (holdings, plans, records, the watch list) leave it off: they name every carried stock in the existing line, grouped as before.
 export const US_CARRY_WIDE = 0.5;
 let US_WIDE = false;
 export function usCarryCounts(j) {

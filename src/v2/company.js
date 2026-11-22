@@ -233,6 +233,11 @@ export function divShareHidden(s, co = null) {
 // piece the calculation needs, e.g. no dividend total or no year-end share table). The copy key, or null: no mark, an unknown mark,
 // a yield shown, a zero dividend, a US stock or an older file. One line at most: the mark is a single value.
 const DIV_HIDDEN_LINE = { 1: "shareHidden", 2: "rightsHidden", 3: "dataHidden", 4: "missingHidden" };
+// The line's data-ui-v2 mark where it stands in the number's place: the 요약 배당 tile (company.jsx), 관심 종목's card (watch.jsx)
+// and 두 종목 비교's 배당수익률 cell (compare.jsx data-blank) share these (say-why N-01 · N-02, 2026-11-22). The 배당 tab keeps its
+// own co- marks (cotabs.jsx HID_UI).
+export const DIV_HIDDEN_UI = { shareHidden: "div-share-hidden", rightsHidden: "div-rights-hidden", dataHidden: "div-data-hidden",
+  missingHidden: "div-missing-hidden" };
 export function divHiddenLine(s, co = null) {
   if (!exactData() || !s || s.cls !== "kr" || typeof s.dvLine !== "number") return null;
   const key = DIV_HIDDEN_LINE[s.dvLine];
