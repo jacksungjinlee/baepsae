@@ -3874,7 +3874,7 @@ def _check_v196e(rep, data, macro):
           "휴장일 표 · 지수 일봉(idxHist)으로 본 그 주 앞 마지막 거래일과 같음 · c1w: 빈 칸 또는 0 보다 큰 유한한 숫자 · 자기 가격 날짜(pxd · pxc · est) "
           f"종목은 빈 칸 · 기준일 종가 종목 중 채움 ≥ {C1W_COVER_MIN:g}% (국내 · 미국) · 채권·ETF·금 모두 · price ÷ c1w 가 "
           f"{C1W_RATIO_BAND[0]:g} ~ {C1W_RATIO_BAND[1]:g} 밖이면 이름 (미국 · 채권·ETF·금은 경고 · 한국은 그 주 거래일만큼 곱한 가격 제한폭 밖일 때만 경고 — 제한폭을 모르면 경고) · "
-          "c1wSrc (목록 + KRX + 네이버 = 국내 c1w 수 · 네이버 = c1wv nv 행 수) · c1wv 는 한국 주식 c1w 옆의 nv 만")
+          "c1wSrc (목록 + KRX + 지난 발행본 + 네이버 = 국내 c1w 수 · 네이버 = c1wv nv 행 수) · c1wv 는 한국 주식 c1w 옆의 nv 만")
     stocks = [s for s in data.get("stocks") or [] if isinstance(s, dict)] if isinstance(data.get("stocks"), list) else []
     n_c1w = sum(1 for s in stocks if s.get("c1w") is not None)
     if "wkFrom" not in data and "usWkFrom" not in data and not n_c1w:
@@ -3977,11 +3977,14 @@ def _check_v196e(rep, data, macro):
             (kr_far if g == "kr" and n_kr else far).append(txt)
     parts = []
     src = data.get("c1wSrc")
+    # 5차 (Jack, 2026-11-22): pub — 지난 발행본 종가와 KRX 기준가로 확인한 국내 c1w (지난 발행본을 볼 수 있던 실행에만 · 없으면 0 으로 셈)
     src_ok = isinstance(src, dict) and all(isinstance(src.get(k), int) and not isinstance(src.get(k), bool) and src[k] >= 0
-                                            for k in ("listing", "krx", "naver"))
+                                            for k in ("listing", "krx", "naver") + (("pub",) if "pub" in src else ()))
+    n_pub = src.get("pub", 0) if src_ok else 0
     for g, key in (("kr", "wkFrom"), ("us", "usWkFrom")):
         k, n = cnt[g]
-        how = (f" · 목록 {src['listing']:,} · KRX {src['krx']:,} · 네이버 {src['naver']:,}" if g == "kr" and src_ok else "")
+        how = (f" · 목록 {src['listing']:,} · KRX {src['krx']:,}" + (f" · 지난 발행본 {n_pub:,}" if "pub" in src else "")
+               + f" · 네이버 {src['naver']:,}" if g == "kr" and src_ok else "")
         parts.append(f"{C1W_GROUP_KO[g]} {k:,} / {n:,} ({key} {dates[g] or '없음'}{how})")
         if dates[g] is not None and n and 100.0 * k / n < C1W_COVER_MIN:      # 내림으로 적어요 (94.96% 가 95.0% 로 보이지 않게)
             warns.append(f"{C1W_GROUP_KO[g]} 채움 {math.floor(1000.0 * k / n) / 10:.1f}% (< {C1W_COVER_MIN:g}%)")
@@ -3989,9 +3992,9 @@ def _check_v196e(rep, data, macro):
         warns.append(f"c1wSrc 모양이 틀림 ({_short(src, 40)})")
     elif src is None and ("wkFrom" in data or n_c1w):
         warns.append("c1wSrc 없음 (국내 c1w 를 어떻게 확인했는지 몰라요)")
-    elif src_ok and (src["listing"] + src["krx"] + src["naver"] != cnt["kr"][0] or src["naver"] != n_nv):
-        warns.append(f"c1wSrc (목록 {src['listing']:,} + KRX {src['krx']:,} + 네이버 {src['naver']:,}) 가 종목과 다름 (국내 c1w {cnt['kr'][0]:,} · "
-                     f"c1wv nv {n_nv:,})")
+    elif src_ok and (src["listing"] + src["krx"] + n_pub + src["naver"] != cnt["kr"][0] or src["naver"] != n_nv):
+        warns.append(f"c1wSrc (목록 {src['listing']:,} + KRX {src['krx']:,}" + (f" + 지난 발행본 {n_pub:,}" if "pub" in src else "")
+                     + f" + 네이버 {src['naver']:,}) 가 종목과 다름 (국내 c1w {cnt['kr'][0]:,} · c1wv nv {n_nv:,})")
     k, n = cnt["fund"]
     parts.append(f"{C1W_GROUP_KO['fund']} {k} / {n}")
     if dates["kr"] is not None and k < n:
