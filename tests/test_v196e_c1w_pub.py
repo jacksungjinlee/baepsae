@@ -661,3 +661,10 @@ def test_logs_show_the_evidence_per_day(monkeypatch):
                             "2026-11-18, 2026-11-19 · ") for x in lines), lines
     assert "· c1w 지난 발행본 종가 ↔ 같은 날 최종본 목록 파일: 다른 종목 0 (비움)" in lines
     json.dumps(meta, allow_nan=False)
+
+
+def test_git_never_starts_background_cleanup():
+    """리뷰 (2026-11-22): 50번 넘게 받으면 git 이 뒤에서 정리(gc)를 시작해 단계보다 오래 남고 지우기와 겨뤄요 — 모든 git 호출에 끄는 설정이 붙어요."""
+    cfg = list(F.C1W_PUB_GIT_CFG)
+    pairs = {cfg[i + 1] for i in range(0, len(cfg) - 1, 2) if cfg[i] == "-c"}
+    assert {"gc.auto=0", "maintenance.auto=false", "credential.helper=", "core.askPass="} <= pairs, cfg

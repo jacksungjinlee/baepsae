@@ -14207,7 +14207,8 @@ C1W_PUB_MAX_READ = 80         # 읽을 발행본(data.json) 수 상한 (하나 �
 C1W_PUB_TIMEOUT = 120         # git 한 번의 초 (남은 전체 시간보다 길지 않게)
 C1W_PUB_DEADLINE = 180        # 지난 발행본 읽기 전체의 초 — 넘으면 거기서 멈추고 오늘 받은 자료만으로 (아침 실행이 이만큼보다 늦어지지 않게)
 C1W_PUB_GIT_CFG = ("-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=30",     # 30초 동안 1KB/s 아래면 git 이 스스로 멈춰요
-                   "-c", "credential.helper=", "-c", "core.askPass=")                # 자격 증명을 찾거나 묻지 않아요
+                   "-c", "credential.helper=", "-c", "core.askPass=",                # 자격 증명을 찾거나 묻지 않아요
+                   "-c", "gc.auto=0", "-c", "maintenance.auto=false")              # 리뷰 (11-22): 50번 넘게 받으면 git 이 뒤에서 정리를 시작해 단계보다 오래 남아요 — 끄기
 C1W_PUB_ENV_KEEP = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY",
                     "no_proxy", "SSL_CERT_FILE", "SSL_CERT_DIR", "GIT_SSL_CAINFO")    # git 에 넘기는 환경 (망 · 인증서 설정만 · API 키 없음)
 C1W_PUB_D1_HALF = 0.005 + 1e-9    # 발행한 d1 은 소수 둘째 자리 (%) 로 반올림 — 그 반 (부동소수점 끝자리만큼 더)
@@ -14301,7 +14302,7 @@ def c1w_pub_pick(commits, load, wk, px_date, trade_days, max_read=C1W_PUB_MAX_RE
             continue
         iso = day.isoformat()
         if low is not None and day > low:
-            out["rolled"].append((str(sha)[:7], iso))         # 되돌린 발행본 — 쓰지 않아요 (그날은 그 앞 발행본이 있으면 그것으로)
+            out["rolled"].append((str(sha)[:7], iso))         # 되돌린 발행본 — 쓰지 않아요 (그 뒤로 읽는 그날의 더 오래된 커밋도 건너뛰어서 그날은 발행본이 없는 날로 쳐요)
             continue
         low = day
         if day in miss:
