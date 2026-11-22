@@ -198,7 +198,7 @@ export function Finder({ deck, draft, load, store, setStoreData, pad, chip, setC
             {chip === "newInd" && rows.length > 0 && (
               <p data-ui-v2="find-new-ind-line" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { margin: `${SPACE(1)}px ${SPACE(1)}px 0`, wordBreak: "keep-all" })}>{C.find.newIndLine}</p>
             )}
-            <OwnCloseNote groups={ownCloses(load, rows.map((r) => r.s))} style={{ margin: `${SPACE(1)}px ${SPACE(1)}px 0` }} />
+            <OwnCloseNote groups={ownCloses(load, rows.map((r) => r.s), { compact: true })} style={{ margin: `${SPACE(1)}px ${SPACE(1)}px 0` }} />
           </>
         )}
       </div>

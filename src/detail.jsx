@@ -14,11 +14,11 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { C, FONT, SERIF, RAD, HAIR } from "./tokens.js";
 import { Ic } from "./icons.jsx";
 import { renderPortfolioCard, saveCard, shareCard } from "./sharecard.js";
-import { loadJson, freshness, mergeStocks, mdOf, loadCorpOnce, krGrowthBasis, staleWordsLate, ownCloseGroups, nextFreshChange, warnStaleFields, ownCloseReport, rememberDataPublish, kstDate } from "./data.js";
+import { loadJson, freshness, mergeStocks, mdOf, loadCorpOnce, krGrowthBasis, staleWordsLate, ownCloseGroups, nextFreshChange, warnStaleFields, ownCloseReport, rememberDataPublish, kstDate, setOwnCarryWide, usCarryCounts } from "./data.js";
 import { SHOW_VERDICTS, SHOW_SCORE, SHOW_ER } from "./flags.js";
 import { ABOUT_URL } from "./links.js";
 // 2026-11-08 (Jack): 한국 PER · ROE 가 보이는 칸마다 한 줄 — DART 다시 읽기 전까지 (src/repair.js, src/fixnote.jsx)
-import { EpsFixLineLoaded, PxBadLine, PxBadOneLine } from "./fixnote.jsx";
+import { EpsFixLineLoaded, PxBadLine, PxBadOneLine, krOwnCloseListLine, usOwnCloseAllLine } from "./fixnote.jsx";
 import { pxBadFull, pxBadHides } from "./repair.js";   // 2026-11-14 저녁: 52주는 보이는 종목의 비운 칸
 
 // 오늘 날짜 (YYYY-MM-DD) — 한국 날짜예요. 2026-11-12 (Jack): 예전에는 new Date().toISOString() 의 UTC 날짜를 써서, 한국 시간 00:00~09:00 에는
@@ -342,7 +342,19 @@ async function loadLiveData() {
   // nextPub (발행 예정일): 늦음 경고의 n 을 그 예정일 아침부터 세요 (data.js freshness)
   // 대체하는 경우는 조용히 넘기지 않아요: 두 칸을 못 읽으면 · pxd 를 못 읽는 미국 종목이 있으면 console 에 개수와 함께 남겨요.
   warnStaleFields(j, "포트폴리오");
-  const px = ownCloseReport(j.stocks, j.usPxDate || null);
+  // 2026-11-21 (Jack, answer 6): 그날 미국 종목의 절반 넘게 마지막 확인 종가면 목록의 미국 쪽은 한 줄 (data.js US_CARRY_WIDE)
+  if (setOwnCarryWide(j)) {
+    const c = usCarryCounts(j);
+    console.warn("[뱁새] 미국 종목 " + c.total + "개 중 " + c.carried + "개가 마지막 확인 종가예요 (절반 넘음) — 목록의 미국 쪽은 '미국 종목은 …' 한 줄로 말해요");
+  }
+  const px = ownCloseReport(j.stocks.filter((s) => !(s && s.cls === "kr")), j.usPxDate || null);
+  // 2026-11-19 (Jack): 마지막 확인 종가(pxd)로 실은 국내 종목 — 화면마다 Jack 의 줄로 그 날짜를 말해요 (console 에는 수와 이름)
+  const kpx = ownCloseReport(j.stocks.filter((s) => s && s.cls === "kr"), j.pxDate || null);
+  if (kpx.own.length) {
+    console.warn("[뱁새] 오늘 종가를 확인하지 못해 마지막 확인 종가로 나가는 국내 종목 " + kpx.own.length + "개 (pxd · 오늘 변화 없음): "
+      + kpx.own.slice(0, 30).map(([t, d]) => t + " " + d).join(", "));
+  }
+  if (kpx.same.length || kpx.bad.length) console.warn("[뱁새] pxd 가 기준일과 같거나 읽을 수 없는 국내 종목 " + (kpx.same.length + kpx.bad.length) + "개 (관문이 막는 경우예요): " + [...kpx.same, ...kpx.bad].slice(0, 30).join(", "));
   if (px.bad.length) {
     console.warn("[뱁새] data.json 의 미국 종목 " + j.stocks.filter((s) => s && s.cls === "us").length + "개 중 " + px.bad.length
       + "개는 pxd(자기 가격 날짜)를 읽을 수 없어요 · 그 종목은 날짜 안내 없이 나가요: " + px.bad.slice(0, 30).join(", "));
@@ -1156,9 +1168,23 @@ const T_OWN_CLOSE = { ko: "{names} 가격은 {md} 종가예요.", en: "{names}: 
 const T_STALE_LATE = { ko: "갱신이 늦어지고 있어요", en: "update is running late" };
 // 종목들 → 안내 문장들 (data.js ownCloseGroups: 날짜마다 한 묶음, 새 날짜 먼저). 기준일은 넘기지 않아요: pxd 는 기준일과 다를 때만
 // 있고(관문이 확인해요), 같아도 문장은 맞아요 (그 날짜의 종가니까요).
-function ownCloseLines(lang, list) {
+// 2026-11-19 (Jack): 오늘 종가를 두 출처로 확인하지 못해 마지막 확인 종가(pxd)로 실은 국내 종목은 따로 묶여요 (data.js ownCloseGroups: kr ·
+// names): 2026-11-20 (Jack, b · c) 한국어 화면은 날짜마다 한 줄 "{한글 이름}: 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요."
+// (fixnote.jsx FIX_KR_OWN_CLOSE_LIST) · 영어 화면은 "{코드}: We couldn't confirm today's close, so this shows the {date} close."
+// (FIX_KR_OWN_CLOSE_EN). 미국 종목은 예전 그대로.
+// 예전 뱁새의 내장 국내 종목(BASE_STOCKS)에는 cls 가 없어요 (미국만 "us") — cls 가 없는 종목은 국내로 봐요 (pxd 는 국내 · 미국 종목에만 있어요).
+// compact: 시장 전체 목록 (종목 고르기). 보유 종목 · 주문 메모 · CSV 는 compact 없이 마지막 확인 종가 종목을 모두 적어요.
+function ownCloseLines(lang, list, compact = false) {
   const l = lang === "en" ? "en" : "ko";
-  return ownCloseGroups(list, null).map((g) => T_OWN_CLOSE[l].replace("{names}", g.ts.join(", ")).replace("{md}", mdOf(g.date, l)));
+  return ownCloseGroups((list || []).map((s) => (s && s.cls == null ? { ...s, cls: "kr" } : s)), null, { compact: compact && l === "ko" }).map((g) => {
+    // 2026-11-20 (Jack, b · c): 국내 종목은 날짜마다 한 줄 "{이름}: 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요." · 영어 화면은 코드와 승인된 영어 문장
+    // 2026-11-21 (Jack, answers 8 · 6): 시장 전체 목록의 한국어 화면만 이름 5개까지 + '외 {n}종목' (g.cut) · 미국 종목의 절반 넘게 마지막 확인
+    // 종가면 미국 쪽은 한 줄 (g.usWide). 내 보유 목록과 영어 화면은 예전 그대로 (모두 적고, 묶음도 같아요)
+    const names = l === "ko" && Array.isArray(g.names) ? g.names : g.ts;
+    if (g.usWide) return usOwnCloseAllLine(g.date);
+    if (g.kr) return krOwnCloseListLine((g.cut ? names : names.join(", ")), g.date, l);
+    return T_OWN_CLOSE[l].replace("{names}", g.ts.join(", ")).replace("{md}", mdOf(g.date, l));
+  }).filter(Boolean);
 }
 const T_RATES_FAIL = { ko: "금리 데이터를 불러오지 못했어요.", en: "We couldn't load the interest-rate data." };
 // v17.5 리뷰 뒤 새 문구 (Jack 승인 대기): 베타·변동성을 모르는 종목 · 배당 정보가 없는 종목
@@ -2172,7 +2198,7 @@ function StockShelf({ lang, t, mode, interested, stocks, holdings, onAdd, onAddC
     return CLS_LIST.filter((c) => g[c].length).map((c) => [c, g[c]]);
   }, [results]);
   // v19.1c: 보이는 줄에 앞선 종가로 나가는 미국 종목(pxd)이 있으면 목록 위에 이름과 날짜 (가격은 그 날짜의 종가)
-  const ownShown = useMemo(() => ownCloseLines(lang, results), [lang, results]);
+  const ownShown = useMemo(() => ownCloseLines(lang, results, true), [lang, results]);     // 시장 전체 목록 (2026-11-21)
 
   const add = (s) => {
     onAdd(s);

@@ -257,6 +257,18 @@ SECTOR_RULES = [
     ("paper",     ["종이", "펄프", "목재", "인쇄", "가구"]),
     ("hotel",     ["숙박", "음식점", "호텔", "여행", "레저", "카지노", "스포츠"]),
 ]
+# 2026-11-20 — Jack answered "3. Yes" to this question: "Old app, power-equipment makers. 25 of them (효성중공업, HD현대일렉트릭,
+# LS ELECTRIC and others) sit in 전기·가스·환경. They show its line "요금은 정부가 정해요…", which is wrong for them. Move them to 전기전자
+# in a small separate PR? (Recommended.)"
+# 2.0 이 전력기기·전선(power_eq)으로 묶는 전기장비 제조업 11차 소분류의 업종 글자 (이름 전체 · 띄어쓰기는 빼고 가운뎃점은 · 하나로 맞춰
+# 비교해요 · sector_name_key): 281 전동기 · 발전기 및 전기 변환 · 공급 · 제어 장치 · 283 절연선 및 케이블 · 284 전구 및 조명장치 ·
+# 289 기타 전기장비 (289 는 이름의 '전기장비' 로 이미 elec 이라 지금은 하는 일이 없지만, 목록을 2.0 의 power_eq 코드와 똑같이 두려고 넣어요 ·
+# tests/test_oldapp_power_equip.py 가 그 둘이 같은지 봐요).
+# 이 회사들이 utility 키워드에 걸리면 (업종 글자의 '발전기' · 주요제품의 '전력' 같은) utility 가 아니라 elec 이에요 — 2.0 짝
+# (validate_data.IND_SECTOR_KR power_eq → elec 만)과 같아요. 주요제품으로 utility 보다 앞 키(반도체 · 2차전지 · 전자 · 기계 …)에 먼저 걸린
+# 회사와, 다른 업종 글자의 회사(전기업 · 가스 · 수도 · 폐기물 …)는 그대로예요. 실행마다 옮긴 수와, 2.0 power_eq 인데 utility 로 남은
+# 종목을 크게 남겨요 (power_eq_sector_report).
+SECTOR_ELEC_NOT_UTILITY = ("전동기,발전기및전기변환·공급·제어장치제조업", "절연선및케이블제조업", "전구및조명장치제조업", "기타전기장비제조업")
 US_GICS = {
     "technology": "platform", "information technology": "platform",
     "communication services": "media", "consumer cyclical": "retail",
@@ -295,13 +307,65 @@ def log(*a):
     print(*a, flush=True)
 
 
-def map_sector_kr(sector_text, product_text=""):
+SECTOR_NAME_DOTS = "·ㆍ・•‧∙･."          # 업종 글자의 가운뎃점 꼴 (U+00B7 · U+318D · U+30FB · U+2022 · U+2027 · U+2219 · U+FF65 · 마침표)
+
+
+def sector_name_key(text):
+    """업종 이름을 비교하는 꼴: 띄어쓰기(보통 · U+00A0 · 전각 U+3000 · 탭)를 빼고 가운뎃점 꼴을 모두 · 하나로 (KRX · 11차 표 · DART 가
+    점을 다르게 쓸 수 있어요). (순수 함수)"""
+    t = "".join(ch for ch in str(text or "") if ch not in " \u00a0\u3000\t")       # 띄어쓰기 · 줄바꿈 없는 칸 · 전각 칸 · 탭
+    return "".join("·" if ch in SECTOR_NAME_DOTS else ch for ch in t)
+
+
+SECTOR_ELEC_NOT_UTILITY_KEYS = frozenset(sector_name_key(x) for x in SECTOR_ELEC_NOT_UTILITY)
+
+
+def map_sector_kr_raw(sector_text, product_text=""):
+    """키워드 규칙만 (SECTOR_RULES · 위에서부터 처음 걸린 키). 전력기기 · 전선 고침 전의 값 — map_sector_kr 과 로그 · 시험이 써요."""
     blob = f"{sector_text} {product_text}".replace(" ", "")
     for key, words in SECTOR_RULES:
         for w in words:
             if w in blob:
                 return key
     return "etc"
+
+
+def map_sector_kr(sector_text, product_text=""):
+    key = map_sector_kr_raw(sector_text, product_text)
+    if key == "utility" and sector_name_key(sector_text) in SECTOR_ELEC_NOT_UTILITY_KEYS:
+        return "elec"           # 전력기기 · 전선 제조사 (위 SECTOR_ELEC_NOT_UTILITY · Jack 2026-11-20)
+    return key
+
+
+def power_eq_sector_report(stocks):
+    """실행마다 남기는 두 목록 (SECTOR_ELEC_NOT_UTILITY · Jack 2026-11-20). (순수 함수)
+    moved: 국내 보통주 중 업종 글자(dk)가 그 넷의 이름이고 키워드 규칙만으로는 utility 인데 elec 인 종목 — 이 규칙이 옮긴 종목 [(종목, 이름)]
+    stuck: 2.0 그룹이 전력기기·전선(power_eq)인데 예전 뱁새 업종이 utility 인 국내 종목 [(종목, 이름, 업종 글자)] — 있으면 크게 알려요
+           (업종 글자가 그 넷의 이름과 다르게 왔는지 · 표가 바뀌었는지 볼 일이에요)."""
+    moved, stuck = [], []
+    for st in stocks:
+        if st.get("cls") != "kr":
+            continue
+        p = kr_desc_parse(st["dk"]) if isinstance(st.get("dk"), str) and st.get("dk") else None
+        words = p[0] if p else ""
+        if st.get("ind") == "power_eq" and st.get("s") == "utility":
+            stuck.append((st["t"], st.get("nk") or "", words))
+        if (not is_preferred(st["t"]) and st.get("s") == "elec" and words
+                and sector_name_key(words) in SECTOR_ELEC_NOT_UTILITY_KEYS and map_sector_kr_raw(words, p[1]) == "utility"):
+            moved.append((st["t"], st.get("nk") or ""))
+    return moved, stuck
+
+
+def power_eq_sector_lines(moved, stuck):
+    """로그 줄 (첫 줄은 늘 · 둘째 줄은 stuck 이 있을 때만 '!!')."""
+    names = " · ".join(nk for _, nk in moved[:8]) + (" …" if len(moved) > 8 else "")
+    out = [f"· 예전 뱁새 업종: 전력기기 · 전선 제조사 {len(moved):,}종목을 전기·가스·환경(utility) 대신 전자·전기장비(elec)로 "
+           f"(SECTOR_ELEC_NOT_UTILITY · 보통주){': ' + names if moved else ''}"]
+    if stuck:
+        out.append(f"  !! 2.0 업종이 전력기기·전선(power_eq)인데 예전 뱁새 업종이 전기·가스·환경(utility)인 국내 종목 {len(stuck):,}: "
+                   + " · ".join(f"{t} {nk} ({w or '업종 글자 없음'})" for t, nk, w in stuck[:10]) + (" …" if len(stuck) > 10 else "")
+                   + " — 업종 글자가 SECTOR_ELEC_NOT_UTILITY 의 이름과 다른지 확인")
+    return out
 
 
 def map_sector_us(sector, industry):
@@ -695,6 +759,93 @@ KR_FB_PHASE_BUDGET_S = 600
 KR_INDEX_TIMEOUT = 60             # KOSPI 일봉 (FinanceDataReader KS11 = 캐시 CSV) 소켓 시간 한도 (초) — 그 라이브러리는 시간 한도 없이 받아요
 
 
+# 2026-11-21 (#161 · 리뷰: 같은 날 다시 도는 실행의 출처 요청 줄이기): 2차 출처 날 마지막 날 두 출처로 확인된 종목의 값 (다음 행 · 야후 종가 ·
+# 코넥스는 네이버 행 · 야후 종가) 을 DART 캐시 폴더에 남겨요 (.dart-cache — 'DART 캐시 저장' 단계가 같이 보관해요 · us-info 처럼). 같은 기준일을
+# 다시 도는 실행은 발행본(지난 data.json)이 그 날짜 종가로 실은 종목 중 이 보관본의 값이 그 종가와 원 단위까지 같은 종목만 다시 묻지 않아요
+# (kr_fb_cache_pick). 나머지 (확인 못 한 · 마지막 확인 종가로 실은 · 빠진 종목) 만 다음 · 야후 · 네이버에 물어요.
+KR_FB_CACHE_PATH = os.environ.get("KR_FB_CACHE", ".dart-cache/kr-fb-v1.json")
+KR_FB_CACHE_V = 1
+# 다음 행에서 남기는 칸 — kr_fb_row 와 그날 상장주식수 (_daumShr) 가 읽는 칸 모두 (시험이 kr_fb_row 결과가 같은지 봐요). 보관본을 작게 해요.
+KR_FB_DAUM_KEEP = ("tradePrice", "changePrice", "change", "listedSharesCount", "totalAccTradeVolume", "totalAccTradePrice",
+                   "openingPrice", "highPrice", "lowPrice")
+
+
+def kr_fb_cache_load(path=None):
+    """2차 출처 보관본 (kr-fb-v1) 을 읽어요. 없거나 못 읽으면 None (크게 남겨요 · 그러면 모두 물어요)."""
+    path = path or KR_FB_CACHE_PATH
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        log("· 2차 출처 보관본 없음 → 모두 물어요")
+    except Exception as e:
+        log(f"  !! 2차 출처 보관본을 읽지 못했어요 ({type(e).__name__}: {str(e)[:120]}) → 모두 물어요")
+    return None
+
+
+def kr_fb_cache_save(keep, path=None):
+    """마지막 날 두 출처로 확인된 종목의 값을 보관본에 써요 (write_json — NaN 없이 · 실패해도 발행은 그대로: 크게 남기고 다음 실행이 모두 물어요)."""
+    path = path or KR_FB_CACHE_PATH
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        write_json(path, keep)
+        log(f"· 2차 출처 보관본 저장: {keep.get('day')} 코스피 · 코스닥 {len(keep.get('kk') or {}):,} · 코넥스 {len(keep.get('knx') or {}):,}종목 ({path})")
+    except Exception as e:
+        log(f"  !! 2차 출처 보관본 저장 실패 ({type(e).__name__}: {str(e)[:120]}) — 다음 같은 날 실행은 모두 물어요")
+
+
+def _iso_keys(m):
+    out = {}
+    for k, v in (m or {}).items() if isinstance(m, dict) else []:
+        try:
+            out[dt.date.fromisoformat(str(k))] = v
+        except ValueError:
+            return None
+    return out
+
+
+def kr_fb_cache_pick(cache, prev, day, tol=KR_FB_CLOSE_TOL):
+    """같은 날 다시 도는 실행이 다시 묻지 않을 종목 (2026-11-21 · #161 · 순수 함수). 반환: (cached dict 또는 None, 설명).
+    모두 맞아야 해요: 보관본의 모양 · 날짜 (cache.day) = 이 실행의 마지막 끝난 거래일 (day) = 발행본(prev)의 pxDate · 발행본이 2차 출처 날.
+    종목마다: 발행본이 그 종목을 그 날짜 종가로 실었고 (pxd 없음), 보관본의 그날 다음 종가 (코넥스는 네이버 종가) 와 야후 종가가 그 가격과 원 단위까지
+    같아요 (발행된 두 출처 확인 종가). 발행본에 그 날짜 종가로 없는 종목은 보관본을 믿지 않고 다시 물어요 (리뷰: 보관본은 관문 전에 저장돼, 보류 ·
+    관문 실패 · 시험 실행의 값일 수 있어요). 그 밖에는 예전처럼 물어요."""
+    if not isinstance(cache, dict) or cache.get("v") != KR_FB_CACHE_V:
+        return None, "보관본이 없거나 모양이 달라요 → 모두 물어요"
+    D = day.isoformat() if isinstance(day, dt.date) else None
+    if not isinstance(prev, dict) or prev.get("pxDate") != D or ((prev.get("pxSrc") or {}).get("px") if isinstance(prev.get("pxSrc"), dict) else None) != PX_SRC_FB:
+        return None, f"같은 날 다시 도는 실행이 아니에요 (발행본 {(prev or {}).get('pxDate') if isinstance(prev, dict) else None} · 이 실행 {D}) → 모두 물어요"
+    if cache.get("day") != D:
+        return None, f"보관본 날짜 {cache.get('day')} ≠ {D} → 모두 물어요"
+    pst = {}
+    for x in prev.get("stocks") or []:
+        if isinstance(x, dict) and x.get("cls") == "kr" and not x.get("fund") and x.get("pxd") is None and (_fin(x.get("price")) or 0) > 0:
+            pst[str(x.get("t"))] = _fin(x["price"])
+    out, same, extra, bad, odd = {"kk": {}, "knx": {}}, 0, 0, 0, 0
+    for part, row_key, close_key in (("kk", "d", "tradePrice"), ("knx", "n", "closePrice")):
+        for c, v in (cache.get(part) or {}).items() if isinstance(cache.get(part), dict) else []:
+            rows, ys = _iso_keys((v or {}).get(row_key)), _iso_keys((v or {}).get("y"))
+            r = (rows or {}).get(day)
+            a = _fin(r.get(close_key)) if isinstance(r, dict) else None
+            y = _fin((ys or {}).get(day))
+            if rows is None or ys is None or a is None or y is None or a <= 0 or abs(a - y) > tol:
+                odd += 1
+                continue
+            p = pst.get(str(c))
+            if p is None:                           # 리뷰 (#161): 발행본이 그 날짜 종가로 싣지 않은 종목은 보관본을 믿지 않아요 (보류 · 관문 실패 ·
+                extra += 1                          # 시험 실행의 값일 수 있어요 — 보관본은 관문 전에 저장돼요) → 다시 물어요
+                continue
+            if abs(a - p) > tol:
+                bad += 1
+                continue
+            same += 1
+            out[part][str(c)] = {row_key: rows, "y": ys}
+    n = len(out["kk"]) + len(out["knx"])
+    return out, (f"같은 날 다시 도는 실행 ({D}): 발행본이 그 날짜 종가로 실은 종목 중 보관본 값이 그 종가와 같은 {n:,}종목 (코스피 · 코스닥 "
+                 f"{len(out['kk']):,} · 코넥스 {len(out['knx']):,}) 은 다시 묻지 않아요 — 발행본에 그 날짜 종가로 없는 보관본 종목 {extra:,}은 다시 물어요"
+                 + (f" · 발행본과 다른 {bad:,}종목은 다시 물어요" if bad else "") + (f" · 보관본 값을 읽을 수 없는 {odd:,}종목은 다시 물어요" if odd else ""))
+
+
 def yahoo_kr_symbol(code, market):
     """다음 × 야후 짝의 야후 심볼: 코스피 .KS · 코스닥 .KQ · 그 밖(코넥스 등)은 None — 다음에 없는 시장이라 이 짝이 될 수 없어요
     (코넥스는 야후에 .KQ 로 있지만 짝은 야후 × 네이버 · yahoo_knx_symbol). (순수 함수)"""
@@ -796,6 +947,8 @@ def kr_fb_confirm(day, universe, daum, yahoo, must=GATE_MUST, tol=KR_FB_CLOSE_TO
         y = _fin((yahoo.get(code) or {}).get(day))
         if y is None or y <= 0:
             st["noYahoo"].append(code)
+            if not yahoo.get(code) and code in getattr(yahoo, "empty", ()):
+                st.setdefault("noList", []).append(code)    # 2026-11-21 (#161): 야후가 '자료 없음' 으로 답했어요 (받지 못한 종목은 다시 물어요)
             continue
         if abs(y - row["Close"]) > tol:
             st["diff"].append((code, _txt(u.get("Name")), row["Close"], y))     # 2026-11-20 (검증 리뷰): 빈 이름이 'nan' 글자로 pxSrc 에 가지 않게
@@ -805,6 +958,23 @@ def kr_fb_confirm(day, universe, daum, yahoo, must=GATE_MUST, tol=KR_FB_CLOSE_TO
     ok = {r["Code"] for r in rows}
     st["must"] = [c for c in must if c not in ok]
     return pd.DataFrame(rows, columns=KR_FB_COLS), st
+
+
+def kr_fb_one_source(day, st, daum, yahoo):
+    """그날 두 출처 중 한 출처만 종가를 준 코스피 · 코스닥 종목 (#161 리뷰 3차 A-S2 · 순수 함수): {코드: (출처, 종가)} — 야후 종가가 없는 종목
+    (noYahoo) 은 다음 행의 종가 (tradePrice), 다음 행이 없거나 믿을 수 없는 종목 (noDaum · bad) 은 야후 종가. 확인에는 쓰지 않아요 (한 출처뿐) —
+    같은 날 다시 쓰기 (kr_same_day_reuse) 가 지난 발행본의 종가와 다른지 볼 때만 써요. 내부 칸이라 data.json 에 쓰지 않아요 (pxSrc._one · px_src_final 이 빼요)."""
+    out = {}
+    for c in st.get("noYahoo") or []:
+        r = (daum.get(c) or {}).get(day)
+        v = _fin(r.get("tradePrice")) if isinstance(r, dict) else None
+        if v is not None and v > 0:
+            out[str(c)] = ("daum", v)
+    for c in list(st.get("noDaum") or []) + list(st.get("bad") or []):
+        v = _fin((yahoo.get(c) or {}).get(day))
+        if v is not None and v > 0:
+            out[str(c)] = ("yahoo", v)
+    return out
 
 
 def kr_fb_final(d, now, special):
@@ -1018,6 +1188,18 @@ def yahoo_chart_close(res, d, close_time):
     return p, "meta"
 
 
+class YahooNotFound(RuntimeError):
+    """야후가 그 심볼이 없다고 분명히 답했어요 (HTTP 404 · chart.error.code 'Not Found') — 실패가 아니라 '자료 없음' 답이에요 (#161 리뷰)."""
+
+
+class YahooAnswers(dict):
+    """{코드: {날짜: 종가}} — empty: 야후가 '자료 없음' 으로 분명히 답한 코드 (빈 차트 · Not Found). 받지 못한 (오류 · 시간 초과) 코드는 들어 있지
+    않아요 (#161 리뷰: 다시 물어서 바뀔 수 있는 종목과 하루 종일 그대로인 종목을 가려요)."""
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.empty = set()
+
+
 def _fetch_yahoo_chart(sym, start=None, end=None):
     """야후 차트 응답 result[0] — 최근 5일, 또는 start ≤ 날짜 < end (KST 0시 기준 · 2026-11-20). 세 번 시도해도 못 받으면 예외.
     일하는 스레드마다 연결 하나."""
@@ -1038,8 +1220,17 @@ def _fetch_yahoo_chart(sym, start=None, end=None):
                 return r.json()["chart"]["result"][0]
             status, ra = r.status_code, r.headers.get("Retry-After")
             last = f"HTTP {r.status_code}"
+            if r.status_code == 404:
+                try:
+                    code = (((r.json() or {}).get("chart") or {}).get("error") or {}).get("code")
+                except Exception:
+                    code = None
+                if code == "Not Found":
+                    raise YahooNotFound(f"HTTP 404 {code}")
             if 400 <= r.status_code < 500 and r.status_code != 429:
                 break
+        except YahooNotFound:
+            raise                                   # 야후의 '없음' 답은 그대로 (실패로 바꾸지 않아요 · 다시 묻지 않아요)
         except Exception as e:
             last = f"{type(e).__name__}: {str(e)[:80]}"
         wait = fb_retry_wait(attempt, status, ra)
@@ -1079,7 +1270,7 @@ def fetch_yahoo_kr_closes(code_market, start, end, fetch=_fetch_yahoo_chart, wor
     2026-11-20 (리뷰 S1): 종목마다 야후 차트 하나 (예전: yfinance 일괄 다운로드 200종목씩 — 묶음 하나를 시간 한도 없이 기다릴 수 있었어요).
     단계 시간 한도가 지나면 새 종목을 묻지 않아요 (묻는 중인 것은 자기 시간 한도까지 · 요청마다 20초 × 세 번)."""
     order = fb_order(c for c, m in code_market.items() if sym(c, m))
-    out, cnt, lock = {}, {"fail": 0, "cut": 0}, threading.Lock()
+    out, cnt, lock = YahooAnswers(), {"fail": 0, "cut": 0}, threading.Lock()
     budget = fb_budget(budget_s)
     deadline = clock() + budget
 
@@ -1093,6 +1284,11 @@ def fetch_yahoo_kr_closes(code_market, start, end, fetch=_fetch_yahoo_chart, wor
             return
         try:
             closes = yahoo_chart_closes(fetch(sym(c, code_market[c]), start, end), start, end)
+        except YahooNotFound:
+            with lock:
+                cnt["fail"] += 1
+                out.empty.add(c)                    # 야후가 '없음' 이라고 답했어요 (다시 물어도 같아요 — 받지 못한 종목과 달라요)
+            return
         except Exception:
             with lock:
                 cnt["fail"] += 1
@@ -1100,6 +1296,9 @@ def fetch_yahoo_kr_closes(code_market, start, end, fetch=_fetch_yahoo_chart, wor
         if closes:
             with lock:
                 out[c] = closes
+        else:
+            with lock:
+                out.empty.add(c)                    # 잘 된 답인데 그 기간 종가가 없어요
     if order:
         with ThreadPoolExecutor(max_workers=workers) as ex:
             list(ex.map(one, order))
@@ -1334,6 +1533,8 @@ def kr_knx_confirm(day, universe, yahoo, naver, tol=KR_FB_CLOSE_TOL, anchor=None
         y = _fin((yahoo.get(code) or {}).get(day))
         if y is None or y <= 0:
             st["noYahoo"].append(code)
+            if not yahoo.get(code) and code in getattr(yahoo, "empty", ()):
+                st.setdefault("noList", []).append(code)    # 2026-11-21 (#161): 야후가 싣지 않는 코넥스 ('자료 없음' 답 · 늘 11종목 남짓)
             continue
         if abs(y - nc) > tol:
             st["diff"].append((code, st["names"][code], nc, y))
@@ -1455,6 +1656,11 @@ def px_src_knx_counts(kst):
             "adjEx": [f"{c} {n} {a:.0f}/{b:.0f}" for c, n, a, b in (kst.get("adj") or [])[:20]],
             "left": sorted(set(kst["noNaver"]) | set(kst["bad"]) | set(kst["noYahoo"]) | {c for c, *_ in kst["diff"]}
                            | {c for c, *_ in (kst.get("adj") or [])} | set(kst.get("noAnchor") or [])),
+            # 2026-11-21 (#161): 두 출처가 다르거나 (diff) 네이버의 기준일 종가가 최종본과 다른 (adj) 코넥스 — 같은 날 다시 쓰지 않아요 (kr_same_day_reuse)
+            "diffT": sorted({str(c) for c, *_ in kst["diff"]} | {str(c) for c, *_ in (kst.get("adj") or [])}),
+            # 2026-11-21 (#161 리뷰): 다시 물으면 바뀔 수 있는 확인 못 한 코넥스 (네이버 행 없음 · 값 못 믿음 · 야후 종가 빈 칸 — 야후가 싣지 않는 종목 빼고)
+            "noList": len(kst.get("noList") or []),
+            "open": len(kst["noNaver"]) + len(kst["bad"]) + len(kst["noYahoo"]) - len(kst.get("noList") or []),
             "cut": knx_cut_record(kst.get("cut"))}
 
 
@@ -1536,7 +1742,7 @@ def kr_fb_cut_note(what, got, target, cut, budget, more=""):
 
 
 def kr_fallback_days(days, universe_of, now, special, fetch_daum=fetch_daum_all, fetch_yahoo=fetch_yahoo_kr_closes, must=GATE_MUST,
-                     fill_day=yahoo_fill_day, say=log, caps=None, knx=None, anchor=None):
+                     fill_day=yahoo_fill_day, say=log, caps=None, knx=None, anchor=None, cached=None, keep=None):
     """끝난 거래일(days)마다 2차 출처 행을 만들어요 (2026-11-19). universe_of(d) → (DataFrame, 설명).
     반환: ({날짜: (DataFrame, 집계)}, 메모들). 마감 + 30분이 지나지 않은 날 · 목록이 없는 날은 빠지고 메모에 남아요.
     2026-11-20: 단계마다 시간 한도 (KR_FB_PHASE_BUDGET_S · 받는 함수 안에서) — 걸리면 크게 남기고 집계 cut (pxSrc.fb.cut) 에 적어요.
@@ -1549,7 +1755,11 @@ def kr_fallback_days(days, universe_of, now, special, fetch_daum=fetch_daum_all,
     집계는 knx 가 있든 없든 같아요. None 이면 코넥스는 예전처럼 묻지 않아요 (시험).
     anchor (리뷰 M1 · kr_knx_anchor): (px0, {코드: px0 공식 종가}) — 1차 출처 최종본의 코넥스 공식 종가. 네이버 일봉을 px0 부터 받아, 네이버의 px0
     종가가 그 공식 종가와 같은 코넥스만 확인해요 (kr_knx_confirm — px0 뒤 권리락 · 분할 · 병합으로 두 출처가 함께 수정된 값을 막아요). 파이프라인은
-    늘 줘요 (fetch_korea). knx 를 주고 anchor 를 주지 않으면 맞춰 보지 않고 크게 남겨요 (시험만)."""
+    늘 줘요 (fetch_korea). knx 를 주고 anchor 를 주지 않으면 맞춰 보지 않고 크게 남겨요 (시험만).
+    cached (2026-11-21 · #161 · kr_fb_cache_pick): 같은 날 다시 도는 실행 — 발행본이 이미 두 출처로 확인한 종목의 지난 실행 값 {"kk": {코드: {"d":
+    {날짜: 다음 행}, "y": {날짜: 야후 종가}}}, "knx": {코드: {"n": {날짜: 네이버 행}, "y": {날짜: 야후 종가}}}}. 그 종목은 다음 · 야후 · 네이버에
+    다시 묻지 않고 그 값으로 확인해요 (확인 · 집계는 물은 종목과 똑같이 · 묻는 수만 줄어요). keep (dict): 주면 마지막 날 두 출처로 확인된 종목의
+    값을 같은 모양으로 담아요 (fetch_korea 가 보관본에 써요 — 다음 같은 날 실행이 써요)."""
     notes, unis = [], {}
     for d in sorted(days)[-KR_FB_MAX_DAYS:]:
         if not kr_fb_final(d, now, special):
@@ -1581,6 +1791,17 @@ def kr_fallback_days(days, universe_of, now, special, fetch_daum=fetch_daum_all,
         notes.append(f"다음에 없는 시장(코넥스 등) {len(n_mkt):,}종목은 2차 출처로 확인할 수 없어 묻지 않아요 (코넥스 야후 × 네이버 단계를 부르지 않은 실행)")
     else:
         notes.append(f"다음에 없는 시장 {len(n_mkt):,}종목 (그중 코넥스 {len(kcm):,}종목은 아래 야후 .KQ × 네이버 · 그 밖 {len(n_mkt - set(kcm)):,}종목은 묻지 않아요)")
+    ck = (cached or {}).get("kk") if isinstance((cached or {}).get("kk"), dict) else {}
+    cx = (cached or {}).get("knx") if isinstance((cached or {}).get("knx"), dict) else {}
+    skip_kk = sorted(c for c in cm if c in ck)
+    skip_kx = sorted(c for c in kcm if c in cx)
+    if cached is not None:
+        say(f"  !! 2차 출처 같은 날 다시 쓰기 (#161): 발행본이 이미 두 출처로 확인한 종목은 다시 묻지 않아요 — 코스피 · 코스닥 다시 씀 {len(skip_kk):,} · "
+            f"묻는 종목 {len(cm) - len(skip_kk):,} / {len(cm):,} · 코넥스 다시 씀 {len(skip_kx):,} · 묻는 종목 {len(kcm) - len(skip_kx):,} / {len(kcm):,}")
+        notes.append(f"!! 2차 출처 같은 날 다시 쓰기: 다음 · 야후 다시 묻지 않음 {len(skip_kk):,}종목 · 묻는 종목 {len(cm) - len(skip_kk):,} — "
+                     f"코넥스 네이버 · 야후 다시 묻지 않음 {len(skip_kx):,} · 묻는 종목 {len(kcm) - len(skip_kx):,}")
+    cm = {c: m for c, m in cm.items() if c not in ck}
+    kcm = {c: m for c, m in kcm.items() if c not in cx}
     order = fb_order(set(cm), first=must, caps=caps)
     cm = {c: cm[c] for c in order}                  # 이 차례로 물어요 (세 단계 모두)
     n_must = sum(1 for c in dict.fromkeys(must) if c in cm)
@@ -1647,19 +1868,30 @@ def kr_fallback_days(days, universe_of, now, special, fetch_daum=fetch_daum_all,
                          f"그날 공식 종가를 아는 코넥스 {len(anchor[1]):,}종목"
                          + (" (기준일 최종본이 없어 코넥스는 한 종목도 확인되지 않아요)" if anchor[0] is None or not anchor[1] else ""))
         try:
-            kn = kr_knx_phases(kcm, unis, now, special, knx, must, caps, notes, say, start=anchor[0] if anchor is not None else None)
+            if kcm:
+                kn = kr_knx_phases(kcm, unis, now, special, knx, must, caps, notes, say, start=anchor[0] if anchor is not None else None)
+            else:                                   # 2026-11-21 (#161): 물을 코넥스가 없어요 (모두 보관본) — 묻지 않고 빈 결과
+                kn = {"naver": {}, "yahoo": {}, "metaCodes": set(), "cut": knx_cut_record({"yahoo": 0, "fill": 0, "naver": 0})}
+            for c in skip_kx:
+                kn["naver"][c] = dict(cx[c].get("n") or {})
+                kn["yahoo"][c] = dict(cx[c].get("y") or {})
         except Exception as e:                      # 코넥스 단계의 고장이 코스피 · 코스닥 발행을 막지 않게 — 크게 남기고 코넥스만 빠져요 (관문이 경고해요)
             msg = (f"!! 코넥스 2차 출처 단계가 고장 났어요 ({type(e).__name__}: {str(e)[:120]}) — 그날 파일에 코넥스는 없어요 "
                    "(코스피 · 코스닥은 그대로 · 관문 '코넥스 종가 두 출처' 줄이 경고해요)")
             notes.append(msg)
             say(f"  {msg}")
+    for c in skip_kk:                               # 2026-11-21 (#161): 다시 묻지 않은 종목은 지난 실행의 그 값으로 (확인은 물은 종목과 똑같이)
+        daum[c] = dict(ck[c].get("d") or {})
+        yahoo[c] = dict(ck[c].get("y") or {})
     out = {}
     for d, uni in sorted(unis.items()):
         fr, st = kr_fb_confirm(d, uni, daum, yahoo, must=must)
         st["cut"] = cut                             # 2026-11-20: 시간 한도로 묻지 못한 종목 수 (단계마다 · 모든 날에 같은 값)
+        st["skip"] = len(skip_kk) if cached is not None else None    # 2026-11-21 (#161): 다시 묻지 않은 코스피 · 코스닥 (pxSrc.fb.skip)
         st["yMeta"] = sum(1 for c in fr["Code"] if c in fill["metaCodes"]) if d == last else 0
         st["_uni"] = uni                            # 그날 전체 종목 목록 (주식 수는 가격과 상관없어요 — 우선주 주식 수에 써요)
         st["_daumShr"] = {c: int(_fin(r[d].get("listedSharesCount")) or 0) for c, r in daum.items() if d in r}
+        st["_one"] = kr_fb_one_source(d, st, daum, yahoo)       # #161 리뷰 3차 A-S2: 한 출처만 있는 종가 (같은 날 다시 쓰기가 봐요 · data.json 에는 없어요)
         if kn is not None:                          # 2026-11-20: 코넥스 (야후 .KQ × 네이버) — 확인된 종목만 그날 행에 더해요
             # 검증 리뷰: 확인 · 시가총액 기준도 위 단계와 같이 try 안에서 — 고장이 나면 그날 코넥스만 빠지고 크게 남아요 (st 에 knx 가 없으면
             # pxSrc.knx.px 가 빈 값 → 관문 '코넥스 단계를 묻지 않았어요' 경고). 끝까지 된 뒤에만 그날 행 · 집계에 넣어요 (반쯤 바뀐 값이 남지 않게).
@@ -1679,6 +1911,18 @@ def kr_fallback_days(days, universe_of, now, special, fetch_daum=fetch_daum_all,
                 st["knx"] = kst
                 fr = fr_k
         out[d] = (fr, st)
+    if isinstance(keep, dict) and last in out:      # 2026-11-21 (#161): 마지막 날 두 출처로 확인된 종목의 값 (다음 같은 날 실행이 다시 묻지 않게)
+        ok = set(out[last][0]["Code"].astype(str).str.strip())
+        ud = set(unis)
+        kk = {c: {"d": {d.isoformat(): {k: r[k] for k in KR_FB_DAUM_KEEP if k in r} for d, r in daum[c].items() if d in ud and isinstance(r, dict)},
+                  "y": {d.isoformat(): v for d, v in yahoo[c].items() if d in ud}}
+              for c in sorted(ok) if c in daum and c in yahoo and last in daum[c]}
+        kx = {}
+        if kn is not None:                          # 그날 파일에 넣은 코넥스 + 확인됐지만 시가총액 기준 아래라 넣지 않은 코넥스 (capOut) — 모두 두 출처 확인
+            okx = ok | set(((out[last][1].get("knx") or {}).get("capOut")) or [])
+            kx = {c: {"n": {d.isoformat(): r for d, r in kn["naver"][c].items()}, "y": {d.isoformat(): v for d, v in kn["yahoo"][c].items() if d in ud}}
+                  for c in sorted(okx) if c in kn["naver"] and c in kn["yahoo"]}
+        keep.update({"v": KR_FB_CACHE_V, "day": last.isoformat(), "days": sorted(d.isoformat() for d in ud), "kk": kk, "knx": kx})
     return out, notes
 
 
@@ -1770,7 +2014,16 @@ def px_src_counts(st):
     out = {"n": st["n"], "conf": st["conf"] + (int(kst.get("kept", kst["conf"])) if kst else 0), "mkt": len(st.get("mkt") or []), "noDaum": len(st["noDaum"]),
            "bad": len(st["bad"]), "noYahoo": len(st["noYahoo"]),
            "diff": len(st["diff"]), "yMeta": int(st.get("yMeta") or 0), "diffEx": [f"{c} {n} {a:.0f}/{b:.2f}" for c, n, a, b in st["diff"][:20]], "must": list(st["must"]),
-           "cut": fb_cut_record(st.get("cut"))}
+           "cut": fb_cut_record(st.get("cut")),
+           # 2026-11-21 (#161): 같은 날 다시 도는 실행이 다시 묻지 않은 코스피 · 코스닥 (발행본이 이미 확인 · 지난 실행의 값으로 확인 · conf 에 들어 있어요)
+           "skip": int(st.get("skip") or 0),
+           # 2026-11-21 (#161 리뷰): 다시 물으면 바뀔 수 있는 확인 못 한 종목 (다음 행 없음 · 다음 값 못 믿음 · 야후 종가 빈 칸) — 두 종가가 다른 종목과
+           # 야후에 차트가 아예 없는 종목 (noList) 은 빼요. already_published.open_closes 가 이 수로 뒤의 실행을 돌릴지 정해요
+           "noList": len(st.get("noList") or []),
+           "open": len(st["noDaum"]) + len(st["bad"]) + len(st["noYahoo"]) - len(st.get("noList") or []),
+           # 2026-11-21 (#161): 두 종가가 다른 종목 코드 모두 — 같은 날 다시 도는 실행이 지난 발행본의 확인 종가를 다시 쓸지 볼 때 (지금 두 출처가
+           # 서로 다르면 다시 쓰지 않아요 · kr_same_day_reuse)
+           "diffT": sorted(str(c) for c, *_ in st["diff"])}
     if kst:
         out["knx"] = px_src_knx_counts(kst)
     return out
@@ -1802,12 +2055,15 @@ def px_src_final(src, stocks):
     2026-11-20: knx 가 있으면 t 를 발행하는 코넥스 종목으로 줄이고 n 에 출처별 수를 적어요 (그 사이에 빠진 종목이 있어도 발행 목록과 같게)."""
     if not isinstance(src, dict):
         return None
-    out = dict(src)
-    out["n"] = {src.get("px") or "none": sum(1 for x in stocks if x.get("cls") == "kr")}
+    out = {k: v for k, v in src.items() if not str(k).startswith("_")}     # #161 리뷰 3차: 내부 칸 (_one) 은 data.json 에 쓰지 않아요
+    # 2026-11-19 (Jack): 마지막 확인 종가(pxd)로 실은 종목은 이 출처의 pxDate 가격이 아니라 세지 않아요 (그 수는 pxSrc.own)
+    out["n"] = {src.get("px") or "none": sum(1 for x in stocks if x.get("cls") == "kr" and x.get("pxd") is None)}
     if isinstance(src.get("knx"), dict):
         k = dict(src["knx"])
         want = set(k.get("t") or [])
-        pub = sorted(x["t"] for x in stocks if x.get("cls") == "kr" and x.get("t") in want)
+        # 2026-11-20 (#159 × #158): 마지막 확인 종가(pxd)로 실은 코넥스는 그날 야후 .KQ × 네이버로 확인한 종목이 아니라 knx.t 에 넣지 않아요
+        # (want 는 그날 파일의 코넥스라 그런 종목은 원래 없어요 — 두 번 지켜요)
+        pub = sorted(x["t"] for x in stocks if x.get("cls") == "kr" and x.get("t") in want and x.get("pxd") is None)
         k["t"] = pub
         k["n"] = {k.get("px") or "none": len(pub)} if pub else {}
         out["knx"] = k
@@ -1857,6 +2113,7 @@ def kr_second_source(px_date, listing, ended, now, special, universe_of, fallbac
     df, st = fb[pick]
     known = {d: fb[d][0] for d in fb if d < pick and len(fb[d][0])}
     src.update({"px": PX_SRC_FB, "date": pick.isoformat(), "fb": px_src_counts(st), "must": list(st["must"])})
+    src["_one"] = dict(st.get("_one") or {})      # #161 리뷰 3차 A-S2: 내부 칸 (kr_same_day_reuse) — px_src_final 이 빼요
     src["knx"]["px"] = PX_SRC_KNX if st.get("knx") else None     # 코넥스 단계를 묻지 않았으면 그날 파일에 코넥스가 없어요
     src["days"] = {d.isoformat(): PX_SRC_FB for d in sorted(known) + [pick]}
     skipped = [d for d in ended if d > pick]
@@ -1866,6 +2123,1190 @@ def kr_second_source(px_date, listing, ended, now, special, universe_of, fallbac
                  + (f" · 그 뒤 확인 못 한 끝난 거래일 {', '.join(d.isoformat() for d in skipped)} (관문이 멈춰요)" if skipped else "")))
     uni = st.get("_uni")
     return pick, df.copy(), known, src, logs, (uni if uni is not None else df, st.get("_daumShr") or {})
+
+
+# ────────────────────────────────────────────────────────────
+# 2026-11-19: 확인 못 한 국내 종목은 마지막 확인 종가로 (Jack)
+# ────────────────────────────────────────────────────────────
+# "The 129 unconfirmed stocks: stop showing "이 종목의 데이터를 찾지 못했어요." Show each stock's last confirmed close with its own date
+#  (the existing own-close mechanism), plus "오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요." It must never sit under today's date
+#  label without that line." (Jack, 2026-11-19)
+# 2차 출처 날에 두 출처로 확인하지 못한 종목 (코넥스처럼 두 번째 출처가 없거나 · 다음과 야후가 다르거나 · 한쪽이 없음): 지난 발행본(data.json)에 그
+# 종목이 있으면 그 발행본의 가격을 그대로 싣고 pxd = 그 종가의 날짜 (지난 발행본의 pxDate · 그 발행본도 이미 pxd 로 실었으면 같은 pxd · 같은 가격 —
+# 날짜를 바꾸지 않아요). 오늘 다음 · 야후 값은 하나도 쓰지 않아요. d1 은 없어요 (미국 pxd 와 같아요). 그 가격으로 만든 시세 숫자 (시가총액 · 52주 ·
+# 출렁임 · 베타 · 수익률 · 설명의 시가총액) 는 지난 발행본에서 그대로 옮겨요 — 그 종가까지 자른 시계열로 그날 만든 숫자예요. 재무 · 배당 · 점수 · 업종은
+# 다른 종목처럼 오늘 다시 만들어요 (PER · PBR · 배당수익률은 그 가격으로). 점수(백분위)에는 미국 pxd 종목처럼 들어가요.
+# 나이 상한 KR_OWN_CLOSE_MAX_DAYS (관문 파일): 그 종가 뒤 pxDate 까지 KOSPI 거래일이 이보다 많으면 싣지 않아요 (예전처럼 빠져요).
+from validate_data import KR_OWN_CLOSE_MAX_DAYS, KR_OWN_WHY, KR_OWN_DROP_KEY, kr_own_close_bad, kr_own_age, kr_px_count, KR_MIN as GATE_KR_MIN
+KR_OWN_KEYS = ("t", "nk", "ne", "cls", "s", "price", "vol", "beta", "al", "betaSE", "betaN", "cap", "val", "val20", "lo", "hi", "etf",
+               "shr", "r1", "r3", "r36", "frn", "dk", "sh", "mdd", "hit", "mom", "pxBad", "pxBadF")
+KR_OWN_DROP_KO = {"none": "지난 발행본에 없음", "same": "지난 발행본도 같은 기준일 (확인 못 한 오늘 종가는 쓰지 않아요)",
+                  "old": f"그 종가 뒤 거래일 {KR_OWN_CLOSE_MAX_DAYS}일 넘음", "bad": "지난 발행본의 가격 · 날짜를 읽을 수 없음",
+                  "jump": "과거 주가 기록 오류 표시인데 지난 발행본의 krSeries.jump 에 없음"}
+KR_UNCONF_KO = {"mkt": "두 번째 출처 없음 (코넥스 등)", "conf": "다음 × 야후로 확인 못 함", "knx": "야후 .KQ × 네이버로 확인 못 함 (코넥스)"}
+KR_UNCONF_WHY = ("mkt", "conf", "knx")
+KR_OWN_SHOW = 30          # 로그 · dropEx 에 이름을 적는 종목 수
+
+
+def kr_knx_left(px_src):
+    """2026-11-20 (#159 × #158): 그날 코넥스 2차 출처 (야후 .KQ × 네이버) 를 물었는지와 확인하지 못한 코넥스 코드 (순수 함수).
+    반환: (물었는지, 확인 못 한 코드 set 또는 None). 물었다 = pxSrc.knx.px 가 yahoo+naver (그날 코넥스 단계가 끝까지 돌았어요). 확인 못 한 코드는
+    pxSrc.fb.knx.left (#158: 네이버 행 없음 · 값 못 믿음 · 야후 없음 · 다름 · 기준일 종가 다름 · 기준일로 맞춰 보지 못함). 물었는데 그 기록을
+    읽을 수 없으면 None — 그때는 그날 파일에 없는 코넥스를 모두 확인 못 한 종목으로 봐요 (kr_unconfirmed)."""
+    knx = px_src.get("knx") if isinstance(px_src, dict) else None
+    if not isinstance(knx, dict) or knx.get("px") != PX_SRC_KNX:
+        return False, None
+    fb = px_src.get("fb") if isinstance(px_src.get("fb"), dict) else {}
+    left = fb.get("knx").get("left") if isinstance(fb.get("knx"), dict) else None
+    if not isinstance(left, list) or not all(isinstance(c, str) for c in left):
+        return True, None
+    return True, set(left)
+
+
+def kr_unconfirmed(full_list, conf_codes, knx=(False, None)):
+    """2차 출처 날: 그날 전체 목록에 있는데 두 출처로 확인하지 못한 종목 → {코드: (이름, 까닭)} (순수 함수).
+    까닭: 'mkt' 두 번째 출처가 없는 시장 (그날 코넥스 단계를 묻지 않았거나 멈춘 날의 코넥스) · 'conf' 다음 × 야후로 확인 못 함 (다름 · 한쪽 없음 ·
+    값을 못 믿음) · 'knx' (2026-11-20 · #158) 야후 .KQ × 네이버로 확인 못 한 코넥스 (pxSrc.fb.knx.left).
+    knx: kr_knx_left 의 (물었는지, 확인 못 한 코넥스). 물은 날 그 목록에 없는 코넥스는 두 출처로 확인된 종목이에요 — 그날 파일에 있거나 (kept ·
+    conf_codes), 평소 날 발행 기준(시가총액) 아래라 그날 파일에 넣지 않았어요 (capOut). 둘 다 확인 못 한 종목이 아니라서 빼요: 확인된 오늘 종가가
+    있는데 '오늘 종가를 확인하지 못해서' 로 옛 종가를 싣지 않게. 목록을 읽을 수 없으면 (None) 그날 파일에 없는 코넥스는 모두 'knx'."""
+    out = {}
+    if full_list is None or "Code" not in full_list.columns:
+        return out
+    ran, left = knx if isinstance(knx, tuple) and len(knx) == 2 else (False, None)
+    mk = full_list["Market"] if "Market" in full_list.columns else [None] * len(full_list)
+    nm = full_list["Name"] if "Name" in full_list.columns else [""] * len(full_list)
+    for c, m, n in zip(full_list["Code"].astype(str).str.strip(), mk, nm):
+        if len(c) != 6 or c in conf_codes or c in out:
+            continue
+        if yahoo_knx_symbol(c, m):
+            if ran and left is not None and c not in left:
+                continue
+            why = "knx" if ran else "mkt"
+        else:
+            why = "conf" if yahoo_kr_symbol(c, m) else "mkt"
+        out[c] = (str(n) if isinstance(n, str) else "", why)
+    return out
+
+
+def kr_knx_carry_note(full_list, conf_codes, knx, unconf, px_src):
+    """2026-11-20 (#159 × #158): 코넥스가 이 단계에서 어디로 갔는지 한 줄 (크게 남길지, 글) — 그날 파일 (두 출처 확인) · 확인됐지만 시가총액 기준
+    아래 (capOut · 싣지 않아요) · 확인 못 함 (마지막 확인 종가 단계로). #158 의 기록 (pxSrc.fb.knx kept · capOut · left) 과 수가 다르면 크게."""
+    ran, left = knx
+    if full_list is None or "Code" not in full_list.columns or "Market" not in full_list.columns:
+        return False, "코넥스: 그날 전체 목록을 읽을 수 없어요"
+    allk = {c for c, m in zip(full_list["Code"].astype(str).str.strip(), full_list["Market"]) if len(c) == 6 and yahoo_knx_symbol(c, m)}
+    inf = allk & set(conf_codes)
+    unc = {c for c in allk if c in unconf}
+    capo = allk - inf - unc
+    if not ran:
+        return bool(allk), (f"코넥스 {len(allk):,}종목: 그날 코넥스 2차 출처(야후 .KQ × 네이버)를 묻지 않았거나 멈췄어요 — 모두 확인 못 한 종목 "
+                            f"({KR_UNCONF_KO['mkt']}) {len(unc):,} · 마지막 확인 종가 단계로")
+    # 리뷰 (#159): pxSrc.fb · fb.knx 가 dict 가 아니면 읽을 수 없는 기록 — 멈추지 않고 (kr_knx_left 가 이미 None 을 줬어요) 크게 남겨요
+    fb = px_src.get("fb") if isinstance(px_src, dict) and isinstance(px_src.get("fb"), dict) else {}
+    fbk = fb.get("knx") if isinstance(fb.get("knx"), dict) else {}
+    want = (fbk.get("kept"), fbk.get("capOut"), len(left) if left is not None else None)
+    got = (len(inf), len(capo), len(unc))
+    odd = left is None or want != got
+    return odd, (f"코넥스 {len(allk):,}종목 (야후 .KQ × 네이버): 그날 파일 {len(inf):,} · 확인됐지만 시가총액 기준 아래라 싣지 않음 {len(capo):,} · "
+                 f"확인 못 함 {len(unc):,} (마지막 확인 종가 단계로)"
+                 + (" — !! pxSrc.fb.knx.left 를 읽을 수 없어 그날 파일에 없는 코넥스를 모두 확인 못 한 종목으로 봐요" if left is None else "")
+                 + (f" — !! #158 기록과 다름 (kept · capOut · left {want})" if left is not None and want != got else ""))
+
+
+def kr_own_close_carry(prev, unconf, px_date, trade_days, max_days=KR_OWN_CLOSE_MAX_DAYS):
+    """확인 못 한 종목(unconf · kr_unconfirmed)을 지난 발행본(prev · data.json)의 마지막 확인 종가로 (2026-11-19 · Jack · 순수 함수).
+    반환: (실을 종목들 [기록 — KR_OWN_KEYS + pxd], 과거 주가 기록 오류 종목의 지난 움직임 {코드: [[코드, 날짜, %, 이유]…]}, 싣지 못한 {코드: 까닭}).
+    - 지난 발행본에 그 종목이 기준일 종가로 있었으면 그 가격 · pxd = 그 발행본의 pxDate. 이미 pxd 로 있었으면 같은 가격 · 같은 pxd (다시 날짜를 매기지 않아요).
+    - 싣지 않아요 (예전처럼 빠져요): 지난 발행본에 없음 (none) · 그 날짜가 오늘 기준일보다 앞이 아님 (same · 오늘 확인 못 한 값을 오늘 날짜로 싣지 않아요) ·
+      그 종가 뒤 pxDate 까지 거래일(trade_days: YYYY-MM-DD)이 max_days 보다 많음 (old) · 가격 · 날짜를 읽을 수 없음 (bad) · 과거 주가 기록 오류 표시인데
+      지난 krSeries.jump 에 그 움직임이 없음 (jump — 오늘 관문이 표시와 움직임을 맞춰 봐요)."""
+    prev = prev or {}
+    pst = {str(x.get("t")): x for x in prev.get("stocks") or [] if isinstance(x, dict) and x.get("cls") == "kr" and not x.get("fund")}
+    ppx = prev.get("pxDate")
+    ppx = ppx if isinstance(ppx, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", ppx) else None
+    pj = collections.defaultdict(list)
+    for j in ((prev.get("krSeries") or {}).get("jump") or []) if isinstance(prev.get("krSeries"), dict) else []:
+        if isinstance(j, list) and len(j) == 4:
+            pj[str(j[0])].append(list(j))
+    today = px_date.isoformat()
+    carried, jumps, drop = [], {}, {}
+    for code in sorted(unconf):
+        p = pst.get(code)
+        if p is None:
+            drop[code] = "none"
+            continue
+        own = p.get("pxd") if p.get("pxd") is not None else ppx
+        try:
+            ok_day = isinstance(own, str) and dt.date.fromisoformat(own).isoformat() == own
+        except ValueError:
+            ok_day = False
+        price = _fin(p.get("price"))
+        if not ok_day or (p.get("pxd") is not None and (ppx is None or own >= ppx)) or price is None or price <= 0:
+            drop[code] = "bad"
+            continue
+        if own >= today:
+            drop[code] = "same"
+            continue
+        if kr_own_age(own, today, trade_days) > max_days:
+            drop[code] = "old"
+            continue
+        if p.get("pxBad") and not pj.get(code):
+            drop[code] = "jump"
+            continue
+        rec = {k: p[k] for k in KR_OWN_KEYS if k in p}
+        rec["pxd"] = own
+        carried.append(rec)
+        if p.get("pxBad"):
+            jumps[code] = pj[code]
+    return carried, jumps, drop
+
+
+def log_kr_own_close(carried, drop, unconf, names):
+    """마지막 확인 종가로 실은 종목 · 싣지 못한 종목을 크게 남기고 data.json pxSrc.own 을 돌려줘요 (2026-11-19). names: {코드: 이름}."""
+    def nm(c):
+        return f"{c} {names.get(c) or (unconf.get(c) or ('',))[0]}".strip()
+    by_day = collections.Counter(r["pxd"] for r in carried)
+    days = " · ".join(f"{d} {n}" for d, n in sorted(by_day.items(), reverse=True))
+    cn = [f"{nm(r['t'])} ({r['pxd'][5:]})" for r in carried]
+    why_u = collections.Counter(w for _, w in unconf.values())
+    log(f"{'  !! ' if unconf else '· '}국내 종가 미확인 {len(unconf):,}종목 ("
+        + " · ".join(f"{KR_UNCONF_KO[k]} {why_u[k]:,}" for k in KR_UNCONF_WHY if why_u[k]) + ")"
+        + (f": 마지막 확인 종가로 실음 {len(carried):,}종목 (pxd {days}) — " + ", ".join(cn[:KR_OWN_SHOW])
+           + (f" 외 {len(cn) - KR_OWN_SHOW}종목" if len(cn) > KR_OWN_SHOW else "") if carried else ": 마지막 확인 종가로 실은 종목 0"))
+    dc = collections.Counter(drop.values())
+    dn = [f"{nm(c)} ({KR_OWN_DROP_KO[w]} · {KR_UNCONF_KO[unconf[c][1]] if c in unconf else '?'})" for c, w in sorted(drop.items())]
+    if drop:
+        log(f"  !! 마지막 확인 종가로도 싣지 못한 국내 종목 {len(drop):,} (빠져요 · 앱은 '이 종목의 데이터를 찾지 못했어요', 나이 상한을 넘은 종목(old)은 "
+            "'며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요.'): "
+            + " · ".join(f"{KR_OWN_DROP_KO[k]} {v:,}" for k, v in sorted(dc.items())) + " — " + ", ".join(dn[:KR_OWN_SHOW])
+            + (f" 외 {len(dn) - KR_OWN_SHOW}종목" if len(dn) > KR_OWN_SHOW else ""))
+    return {"v": 1, "max": KR_OWN_CLOSE_MAX_DAYS, "n": len(carried), "codes": sorted(r["t"] for r in carried), "unconf": len(unconf),
+            # 2026-11-20 (#159 × #158): 확인 못 한 종목의 까닭별 수 (mkt · conf · knx — 관문이 knx 를 #158 의 pxSrc.fb.knx.left 와 맞춰 봐요)
+            "unconfWhy": {k: int(why_u[k]) for k in KR_UNCONF_WHY},
+            "drop": {k: int(v) for k, v in sorted(dc.items())}, "dropEx": dn[:KR_OWN_SHOW], "bad": {"n": 0, "rows": []}}
+
+
+def kr_own_aged(prev, unconf, drop):
+    """2026-11-20 (Jack: "After 5 trading days, show "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요." instead of "데이터를 찾지
+    못했어요""): 오늘도 확인 못 한 종목 중 마지막 확인 종가가 나이 상한을 넘어 잠시 뺀 종목 → [{t, nk, pxd}] (코드 순 · data.json pxSrc.own.aged ·
+    앱이 그 종목 자리에 이 줄을 보여요). 지난 발행본에 있었는데 나이를 넘은 종목(drop 'old')과, 지난 발행본이 이미 잠시 뺀 종목(pxSrc.own.aged)
+    중 오늘도 확인 못 한 종목 (지난 발행본의 stocks 에는 없어요 — drop 'none' 을 'old' 로 고쳐요). 오늘 확인된 종목 · 상장 폐지된 종목(그날 전체
+    목록에 없음)은 unconf 에 없어서 저절로 빠져요. drop 을 고쳐요. (순수 함수)"""
+    prev = prev or {}
+    own = (prev.get("pxSrc") or {}).get("own") if isinstance(prev.get("pxSrc"), dict) else None
+    was = {str(a["t"]): a for a in ((own or {}).get("aged") or []) if isinstance(own, dict) and isinstance(a, dict) and a.get("t")}
+    pst = {str(x.get("t")): x for x in prev.get("stocks") or [] if isinstance(x, dict) and x.get("cls") == "kr"}
+    ppx = prev.get("pxDate") if isinstance(prev.get("pxDate"), str) else None
+    out = {}
+    for c, w in sorted(drop.items()):
+        if c not in unconf:
+            continue
+        if w == "old":
+            p = pst.get(c) or {}
+            out[c] = {"t": c, "nk": str(p.get("nk") or unconf[c][0] or c), "pxd": p.get("pxd") or ppx}
+        elif w == "none" and c in was:
+            a = was[c]
+            out[c] = {"t": c, "nk": str(a.get("nk") or unconf[c][0] or c), "pxd": a.get("pxd")}
+            drop[c] = "old"
+    return [out[c] for c in sorted(out)]
+
+
+def kr_own_aged_kept(prev, keep_out):
+    """단계가 오류로 멈춘 날: 지난 발행본이 잠시 뺀 종목 중 오늘 확인된 종목(keep_out: 오늘 out 의 코드)이 아닌 것 그대로 (확인 못 한 종목을 셀 수
+    없어서 · 상장 폐지는 다음 실행이 빼요). 이 함수도 멈추지 않아요 (못 읽으면 빈 목록)."""
+    try:
+        own = ((prev or {}).get("pxSrc") or {}).get("own") or {}
+        return sorted((dict(a) for a in own.get("aged") or [] if isinstance(a, dict) and a.get("t") and str(a["t"]) not in keep_out),
+                      key=lambda a: str(a["t"]))
+    except Exception:
+        return []
+
+
+def kr_own_close_err(err, unconf_n=None):
+    """마지막 확인 종가 단계가 오류로 멈췄을 때의 pxSrc.own (실은 종목 0 · err 에 까닭 — 관문이 경고해요). unconf_n: 확인 못 한 종목 수 — 그 수를
+    세기 전에 멈췄으면 None 이고 칸을 빼요 (관문이 '모름'으로 적어요 · 0 으로 보이지 않게)."""
+    out = {"v": 1, "max": KR_OWN_CLOSE_MAX_DAYS, "n": 0, "codes": [], "drop": {}, "dropEx": [], "bad": {"n": 0, "rows": []}, "err": str(err)[:300]}
+    if isinstance(unconf_n, int):
+        out["unconf"] = unconf_n
+    return out
+
+
+def kr_desc_set_ind(dk, ind):
+    """설명(dk '업종 · 주요제품: … · 시장 상장 · 시가총액')의 업종 글자만 ind 로 바꾼 글 (ind 가 빈 글이면 업종 글자를 빼요 · 주요제품과 뒤쪽은 그대로).
+    dk 가 비었으면 ind 만, 읽지 못하는 dk 면 None. (순수 함수 · validate_data.kr_desc_parse 로 다시 읽혀요)"""
+    if dk in (None, ""):
+        return ind or None
+    p = kr_desc_parse(dk)
+    if p is None:
+        return None
+    s = " · " + dk
+    tail = s[KR_DESC_TAIL.search(s).start():]
+    head = " · ".join(b for b in (ind, f"주요제품: {p[1]}" if p[1] else "") if b)
+    return (head + tail) if head else (tail.removeprefix(" · ") or None)
+
+
+def kr_own_ind_reset(carried, prev, desc=None):
+    """2026-11-20 (리뷰 S1 · #146 과 같은 규칙): 마지막 확인 종가로 실은 종목의 업종 글자. 지난 발행본이 그 종목의 업종 글자를 DART 회사 정보로
+    채웠거나(indSrc.dartT) 보통주를 따랐으면(indSrc.prefT) 그 글자를 그대로 옮기지 않아요 — kr_prev_desc 가 그런 종목을 KRX 글자처럼 이어 쓰지 않는
+    것과 같아요: 오늘 KRX-DESC(desc)에 업종 글자가 있으면 그 글자로, 없으면 업종 글자를 빼서 오늘 다시 채우게 해요 (돌려준 코드를 업종 글자 없는
+    종목 no_ind 에 더하면 main 의 kr_ind_fill 이 오늘 표로 채우고 indSrc.dartT · prefT 에 적어요 → 관문이 오늘 값을 확인하고, 다음 실행도 KRX 글자로
+    잘못 이어 쓰지 않아요). 업종 키 s 도 그 글자로 다시 정해요 (map_sector_kr · 다른 종목과 같은 규칙). 그 밖의 종목은 그대로.
+    rows(carried)를 고쳐요. 반환: (다시 채울 코드 · 오늘 KRX 글자로 바꾼 코드 · 설명을 읽지 못해 설명을 비운 코드)."""
+    src = (prev or {}).get("indSrc") or {}
+    filled = {str(t) for key in ("dartT", "prefT") if isinstance(src.get(key), dict) for t in src[key]}
+    refill, krx, bad = [], [], []
+    for r in carried:
+        t = str(r.get("t"))
+        if t not in filled:
+            continue
+        today = ((desc or {}).get(t) or ("", ""))[0]
+        dk = kr_desc_set_ind(r.get("dk"), today or "")
+        if dk is None and r.get("dk") not in (None, ""):
+            bad.append(t)                     # 만든 방법상 생기지 않아요 (DART 채우기 · 우선주 따르기는 읽히는 글만 써요) — 설명을 비우고 다시 채워요
+        p = kr_desc_parse(dk) if dk else ("", "")
+        if dk is None:
+            r.pop("dk", None)
+        else:
+            r["dk"] = dk
+        r["s"] = map_sector_kr(p[0] if p else "", p[1] if p else "")
+        (krx if today else refill).append(t)
+    return refill, krx, bad
+
+
+# 2026-11-21 (#161 · Jack: "Later runs update that day's data when more closes are confirmed."): 같은 기준일을 다시 도는 실행.
+# 지난 발행본이 같은 기준일 (pxDate) 이고 그 발행본이 그 날짜의 종가로 실은 종목 (pxd 없음 · 두 출처 또는 KRX 최종본으로 확인된 종가) 을 이 실행이
+# 확인하지 못했으면, 그 종가를 그대로 다시 써요 — 둘 다 그 날짜의 확인된 종가예요 (지우거나 마지막 확인 종가로 옮기지 않아요). #159 의
+# kr_own_close_carry 는 같은 기준일 발행본에서 옮기지 않아요 ('same') — 그래서 여기서 따로, 크게 남기며 해요.
+# 다시 쓰지 않는 종목 (잃은 종목 · lost): 지금 두 출처가 서로 달라요 (pxSrc.fb.diffT · 코넥스 fb.knx.diffT — 어느 쪽이 지난 값과 같은지 몰라요) ·
+# 오늘 그날 전체 목록에 없어요 · 과거 주가 기록 오류 표시인데 지난 krSeries.jump 에 그 움직임이 없어요. 잃은 종목이 하나라도 있으면 이 실행은
+# 지난 발행본보다 낫지 않아서 발행하지 않아요 (tools/publish_hold.py 가 pxSrc.own.reuse.lost 를 봐요).
+def kr_same_day_rerun(prev, px_src, px_date, today=None):
+    """같은 날 다시 도는 실행인지 (2026-11-21 · #161 리뷰 · 순수 함수): 이 실행과 지난 발행본이 모두 2차 출처 날이고 한국 기준일이 같아요 (발행한 날짜와
+    상관없이 — 월요일에 금요일 데이터를 다시 도는 실행도). 반환: (참/거짓, 설명). 참이면 DART 를 부르지 않아요 (재무는 DART 보관본 · 공시는 미국 기준일도
+    같고 같은 발행의 disc.json 일 때만 그대로 — main). today 는 쓰지 않아요 (예전 호출 모양)."""
+    if not isinstance(prev, dict) or not isinstance(px_src, dict) or px_src.get("px") != PX_SRC_FB or px_date is None:
+        return False, "2차 출처 날이 아니거나 지난 발행본이 없어요"
+    psrc = prev.get("pxSrc") if isinstance(prev.get("pxSrc"), dict) else {}
+    pd_ = px_date.isoformat() if isinstance(px_date, dt.date) else str(px_date)
+    if psrc.get("px") != PX_SRC_FB or prev.get("pxDate") != pd_:
+        return False, f"지난 발행본 (기준일 {prev.get('pxDate')}) 과 같은 기준일의 2차 출처 날이 아니에요"
+    return True, f"같은 기준일을 다시 도는 실행 (기준일 {pd_} · 발행본 {prev.get('publishedAt')})"
+
+
+def dart_cache_covers(meta, prev):
+    """같은 기준일을 다시 도는 실행이 DART 를 부르지 않아도 되는지 (#161 리뷰 3차 A-S3 · 순수 함수). 불러온 DART 보관본의 meta.dartAt = 재무 · 공시를
+    이 보관본의 값으로 만든 마지막 실행의 publishedAt (dart_cache_mark — DART 를 예전처럼 불렀거나 발행본을 덮는 보관본만 쓴 같은 날 실행 · DART 가
+    멈춘 실행은 빼요). 그 값이 발행본
+    (prev.publishedAt) 과 같거나 뒤면 (True, 설명) — 보관본에 발행본을 만든 실행 (또는 그 뒤 실행) 이 받은 값이 다 있어요. 아니면 (False, 설명):
+    그 실행의 저장이 실패했거나, 더 앞의 보관본을 불러왔을 수 있어요 — 그 보관본으로 DART 를 부르지 않으면 재무가 발행본보다 옛 값으로 돌아갈 수 있어요."""
+    at = (meta or {}).get("dartAt") if isinstance(meta, dict) else None
+    pub = prev.get("publishedAt") if isinstance(prev, dict) else None
+    try:
+        a, p = dt.datetime.fromisoformat(str(at)), dt.datetime.fromisoformat(str(pub))
+        if a.tzinfo is None or p.tzinfo is None:
+            raise ValueError("시간대 없음")
+    except (TypeError, ValueError):
+        return False, f"DART 보관본이 어느 발행의 값인지 몰라요 (보관본 dartAt {at!r} · 발행본 publishedAt {pub!r})"
+    if a >= p:
+        return True, f"DART 보관본 (dartAt {at}) 이 발행본 ({pub}) 을 만든 실행 또는 그 뒤의 값이에요"
+    return False, f"DART 보관본 (dartAt {at}) 이 발행본 ({pub}) 보다 앞의 값이에요 (그 실행의 보관본 저장이 실패했거나 더 앞의 보관본을 불러왔어요)"
+
+
+def dart_cache_mark(client, published_at, env=None):
+    """보관본에 dartAt = 이 실행의 publishedAt 을 적어요 (#161 리뷰 3차 A-S3): 이 실행의 재무 · 공시가 이 보관본의 값이에요 — DART 를 예전처럼
+    불렀거나, 같은 날 다시 하는 실행이 발행본을 덮는 보관본 (dart_cache_covers) 만 썼어요. DART 가 이 실행 중 멈췄으면 (down · fatal) 적지 않아요 —
+    그러면 다음 같은 날 실행은 DART 를 불러요 (크게). 시험 실행 (DRY_RUN) 도 적지 않아요 (#161 리뷰 4차 · kr_rerun_state 와 같게): 그 보관본도 main 의
+    캐시로 저장되는데, 06:40 실제 실행과 겹친 시험 실행이 그 실행의 항목이 없는 보관본에 표시하면 뒤의 같은 날 실행이 DART 를 잘못 건너뛰어요."""
+    env = os.environ if env is None else env
+    if (env.get("DRY_RUN") or "").strip().lower() == "true":
+        log("· 시험 실행이라 DART 보관본에 dartAt 을 적지 않아요 (실제 실행의 표시만 믿어요 · 같은 날 다시 하는 실행은 그 표시로 DART 를 건너뛸지 정해요)")
+        return False
+    if client.down or client.fatal:
+        log(f"  !! DART 가 이 실행 중 멈췄어요 ({client.down or client.fatal}) — 보관본의 dartAt 을 고치지 않아요 (같은 날 다시 하는 실행은 DART 를 불러요)")
+        return False
+    client.meta["dartAt"] = published_at
+    return True
+
+
+def load_morning_disc(path=None, live=None):
+    """같은 날 다시 도는 실행이 그대로 쓸 발행본의 disc.json (체크아웃의 파일 · 2026-11-21 · #161 리뷰). live: 지난 발행본 data.json — 주면 disc.json 이
+    그 발행과 같은 발행 (publishedAt 같음 · 같은 커밋) 일 때만 써요. 반환: (dict 또는 None, 설명). disc.json 의 내용 날짜 (asOf · newest) 는 그대로라,
+    그 뒤에 나온 공시는 다음 새 기준일 발행에 들어가요 (내용 날짜가 그만큼 오래됐다고 파일이 말해요)."""
+    path = path or OUT_DISC
+    try:
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
+    except Exception as e:
+        return None, f"아침 발행본의 {path} 를 읽지 못했어요 ({type(e).__name__})"
+    if not isinstance(d, dict) or not all(isinstance(d.get(k), list) for k in ("insider", "nps")):
+        return None, f"아침 발행본의 {path} 모양이 달라요"
+    if isinstance(live, dict) and (d.get("publishedAt") is None or d.get("publishedAt") != live.get("publishedAt")):
+        return None, f"{path} 가 지금 발행본과 다른 발행이에요 (disc {d.get('publishedAt')} · data {live.get('publishedAt')})"
+    return d, f"발행본의 {path} (내부자 {len(d['insider']):,}건 · 공시 내용 날짜 {d.get('asOf')})"
+
+
+# 2026-11-21 (#161 리뷰): 같은 날 다시 돌았는데 더 얻은 것이 없으면, 그 뒤 3시간 안의 정해진 시각 · 바깥 타이머 실행은 데이터를 모으지 않아요.
+# 보관본 (.dart-cache/kr-rerun-v1.json · DART 캐시와 같이 보관) 에 그 실행의 날 · 기준일 · 미국 기준일 · 시각 · 늘어난 그 날짜 종가 국내 종목 수를 적어요.
+# 2026-11-21 (#161 리뷰 2차): 그 기록은 실제 실행 (시험 실행 아님 · GitHub 실행 번호가 있는 실행) 만 남기고, 다음 실행은 그 실행이 초록으로 끝났을 때만
+# (관문과 화면 검사를 통과 · GitHub 의 그 실행 결과 'success' — github_run_succeeded) 믿어요. 기록은 데이터 수집 단계 끝에 써서 DART 캐시와 같이
+# 보관돼요 (그 단계 뒤의 관문 · 화면 검사 결과는 그때 아직 몰라요 — 그래서 다음 실행이 확인해요). 확인하지 못하면 쉬지 않고 돌아요.
+KR_RERUN_STATE_PATH = os.environ.get("KR_RERUN_STATE", ".dart-cache/kr-rerun-v1.json")
+KR_RERUN_QUIET = dt.timedelta(hours=3)
+KR_RERUN_QUIET_FROM = dt.time(7, 0)          # 미국 종가 확정 (여름 05:30 · 겨울 06:30 KST) 뒤의 기록만
+KR_RERUN_QUIET_BEFORE = dt.time(15, 30)      # 그날 한국 장이 끝나기 전에만 쉬어요 (그 뒤에는 새 거래일이 끝날 수 있어요)
+#   (#161 리뷰 3차 nit: 고정 15:30 으로 둬요 — KRX 특별 거래시간 표는 마감을 늦출 수만 있어서 (KRX_CLOSE · 수능일 16:30), 15:30 은 늘 그날 마감과 같거나
+#   앞이라 쉬는 창이 짧아지는 쪽 (안전한 쪽) 이에요. 그날 표를 읽으려면 이 순수 함수에 표를 넘겨야 해서 그대로 둬요.)
+# #161 리뷰 3차 A-M1: 쉬는 실행은 data.json 을 새로 쓰지 않아 관문이 발행본을 그대로 봐요 — 관문의 'publishedAt 12시간 이내' (PUBLISHED_MAX_HOURS) 가
+# 발행본의 나이로 실패해요 (월요일에 토요일 아침 발행본을 다시 돌 때 · 연휴 뒤). 그래서 발행본이 그 한도 − 1시간보다 오래됐으면 쉬지 않아요.
+from validate_data import PUBLISHED_MAX_HOURS as GATE_PUBLISHED_MAX_HOURS
+KR_RERUN_QUIET_PUB_AGE = dt.timedelta(hours=GATE_PUBLISHED_MAX_HOURS - 1)
+QUIET_MARK = "baepsae-quiet.txt"             # 쉬는 실행이 RUNNER_TEMP 에 남기는 표시 (발행 판단 단계가 보고 감시에 중립인 보류로)
+
+
+def kr_rerun_throttle(state, prev, now, auto=True, run_ok=None):
+    """이 실행이 데이터 수집을 건너뛸지 (순수 함수). 반환: 까닭 글 또는 None (예전처럼 돌아요). 모두 맞아야 건너뛰어요:
+    정해진 시각 · 바깥 타이머 실행 (auto) · 지난 발행본이 2차 출처 날 · 그 기록의 한국 · 미국 기준일 = 지난 발행본의 것 (발행한 날과 상관없이) ·
+    그 실행이 그 날짜 종가 국내 종목을 하나도 늘리지 못함 (gain ≤ 0) · 그 실행과 지금이 같은 날 (KST) 07:00 ~ 15:30 안 (그 사이에는 새 한국 · 미국
+    거래일이 끝나지 않아요) · 그 실행 뒤 3시간이 지나지 않음 · 그 실행이 초록으로 끝남 (run_ok(실행 번호) — 관문과 화면 검사를 통과했어요 ·
+    run_ok 가 없거나 확인하지 못하면 쉬지 않아요) · 발행본 (prev.publishedAt) 이 KR_RERUN_QUIET_PUB_AGE (관문 한도 − 1시간) 보다 새로움 (#161 리뷰 3차
+    A-M1: 쉬는 실행은 관문이 발행본을 그대로 봐요 — 오래된 발행본이면 'publishedAt 12시간 이내' 가 실패해 빨간 실행이 돼요. 그러면 돌아요)."""
+    if not auto or not isinstance(state, dict) or state.get("v") != 1 or not isinstance(prev, dict):
+        return None
+    t = now.astimezone(KST)
+    psrc = prev.get("pxSrc") if isinstance(prev.get("pxSrc"), dict) else {}
+    try:
+        at = dt.datetime.fromisoformat(str(state.get("at"))).astimezone(KST)
+        pub = dt.datetime.fromisoformat(str(prev.get("publishedAt")))
+        if pub.tzinfo is None:
+            return None
+    except (TypeError, ValueError):
+        return None
+    if not dt.timedelta(0) <= t - pub < KR_RERUN_QUIET_PUB_AGE:
+        return None
+    gain = state.get("gain")
+    if (psrc.get("px") != PX_SRC_FB or state.get("pxDate") != prev.get("pxDate") or state.get("usPxDate") != prev.get("usPxDate")
+            or not isinstance(gain, int) or isinstance(gain, bool) or gain > 0
+            or at.date() != t.date() or at.time() < KR_RERUN_QUIET_FROM or t.time() >= KR_RERUN_QUIET_BEFORE
+            or not dt.timedelta(0) <= t - at < KR_RERUN_QUIET):
+        return None
+    run_id = state.get("run")
+    if run_ok is None or not isinstance(run_id, (int, str)) or not str(run_id).isdigit() or run_ok(str(run_id)) is not True:
+        return None
+    left = KR_RERUN_QUIET - (t - at)
+    return (f"같은 기준일을 다시 도는 실행이에요: {at:%H:%M} KST 실행 ({run_id} · 초록) 이 그 날짜 종가 국내 종목을 늘리지 못했어요 (늘어난 수 {gain}) — 3시간이 지나기 "
+            f"전이라 ({int(left.total_seconds() // 60)}분 남음) 데이터를 모으지 않아요 (발행본 그대로 · 감시에 중립 · 다음 실행이 다시 봐요)")
+
+
+def github_run_succeeded(run_id, get=None):
+    """GitHub 의 그 매일 실행이 초록 (success) 으로 끝났는지 — 공개 저장소의 실행 결과를 토큰 없이 읽어요 (이 job 의 토큰은 실행 기록을 읽을 권한이
+    없어요). 못 읽으면 None (그러면 쉬지 않아요)."""
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    if not repo:
+        return None
+    try:
+        r = (get or requests.get)(f"https://api.github.com/repos/{repo}/actions/runs/{run_id}", headers={"Accept": "application/vnd.github+json"},
+                                  timeout=15)
+        if r.status_code != 200:
+            log(f"  !! 앞선 실행 {run_id} 의 결과를 읽지 못했어요 (HTTP {r.status_code}) → 쉬지 않고 돌아요")
+            return None
+        js = r.json()
+        return js.get("status") == "completed" and js.get("conclusion") == "success"
+    except Exception as e:
+        log(f"  !! 앞선 실행 {run_id} 의 결과를 읽지 못했어요 ({type(e).__name__}) → 쉬지 않고 돌아요")
+        return None
+
+
+def kr_rerun_state(prev, payload, now, n_now=None, n_prev=None, env=None):
+    """이 실행이 같은 기준일을 다시 돈 결과 (보관본에 적어요 · 순수 함수). 시험 실행 · GitHub 실행 번호가 없는 실행 · 같은 기준일이 아닌 실행은 None
+    (쓰지 않아요 — 시험 실행이 실제 실행을 쉬게 하지 않게)."""
+    env = os.environ if env is None else env
+    if (env.get("DRY_RUN") or "").strip().lower() == "true" or not str(env.get("GITHUB_RUN_ID") or "").isdigit():
+        return None
+    same = (isinstance(prev, dict) and prev.get("pxDate") == payload.get("pxDate") and prev.get("usPxDate") == payload.get("usPxDate")
+            and ((prev.get("pxSrc") or {}).get("px") if isinstance(prev.get("pxSrc"), dict) else None) == PX_SRC_FB
+            and ((payload.get("pxSrc") or {}).get("px") if isinstance(payload.get("pxSrc"), dict) else None) == PX_SRC_FB)
+    if not same or not isinstance(n_now, int) or not isinstance(n_prev, int):
+        return None
+    t = now.astimezone(KST)
+    return {"v": 1, "at": t.isoformat(timespec="seconds"), "pxDate": payload.get("pxDate"), "usPxDate": payload.get("usPxDate"),
+            "gain": n_now - n_prev, "run": str(env.get("GITHUB_RUN_ID"))}
+
+
+def quiet_mark(why):
+    """쉬는 실행의 표시를 RUNNER_TEMP 에 남겨요 (발행 판단 단계가 '쉼' 으로 감시에 중립인 보류를 해요). RUNNER_TEMP 가 없으면 (로컬) 남기지 않아요."""
+    d = os.environ.get("RUNNER_TEMP")
+    if d:
+        with open(os.path.join(d, QUIET_MARK), "w", encoding="utf-8") as f:
+            f.write(why + "\n")
+
+
+def kr_rerun_state_load(path=None):
+    try:
+        with open(path or KR_RERUN_STATE_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        log(f"  !! 같은 날 다시 하기 보관본을 읽지 못했어요 ({type(e).__name__}) → 쉬지 않고 돌아요")
+        return None
+
+
+KR_REUSE_KEYS = KR_OWN_KEYS + ("d1", "d1Why", "noTrade", "ntD1")
+KR_REUSE_LOST_KO = {"clash": "지금 두 출처가 서로 다름", "clash1": "지금 한 출처만 종가를 줬는데 지난 발행본의 종가와 다름", "gone": "오늘 그날 전체 목록에 없음", "jump": "과거 주가 기록 오류 표시인데 지난 krSeries.jump 에 없음",
+                    "konex": "코넥스 (이 실행의 두 출처 확인 · 보관본으로만 실어요 — 관문의 코넥스 줄이 그날 넣은 수로 맞춰 봐요)",
+                    "room": "이 실행의 두 출처 확인 수보다 많이 실을 수 없음 (관문: 확인 종목 수 ≥ 발행한 국내 종목 수)"}
+
+
+def _one_close(one, c):
+    """kr_fb_one_source 의 그 종목 종가 (없거나 모양이 다르면 None)."""
+    v = one.get(c) if isinstance(one, dict) else None
+    return _fin(v[1]) if isinstance(v, (list, tuple)) and len(v) == 2 else None
+
+
+def kr_same_day_reuse(prev, unconf, conf_codes, px_date, px_src, room=None):
+    """같은 기준일 지난 발행본의 확인 종가 다시 쓰기 (2026-11-21 · #161 · 순수 함수).
+    prev: 지난 발행본 data.json · unconf: 이 실행이 확인 못 한 종목 {코드: (이름, 까닭)} (kr_unconfirmed) · conf_codes: 이 실행이 확인한 코드 ·
+    px_date: 이 실행의 기준일 · px_src: 이 실행의 pxSrc (fb.diffT · fb.knx.diffT · _one 한 출처만 준 종가 — 지난 발행본 종가와 다르면 'clash1') · room: 다시 쓸 수 있는 종목 수의 상한 (None 이면 없음) —
+    관문은 2차 출처 날 '두 출처 확인 수 (pxSrc.fb.conf) ≥ 발행한 그 날짜 종가 종목 수' 를 봐요 (validate_data.px_alt_confirms). 다시 쓴 종목도
+    그 날짜 종가라 그 수에 들어가니, 이 실행의 확인 수를 넘지 않게 시가총액 큰 종목부터만 다시 쓰고 나머지는 잃은 종목 'room' 이에요 (그 줄은 그대로).
+    반환: (다시 쓸 종목 [기록 — KR_REUSE_KEYS · pxd 없음], 과거 주가 기록 오류 종목의 지난 움직임 {코드: [...]}, 잃은 종목 {코드: 까닭},
+    pxSrc.own.reuse 기록 또는 None (지난 발행본이 다른 기준일이면 None — 같은 날 다시 도는 실행이 아니에요))."""
+    prev = prev if isinstance(prev, dict) else {}
+    today = px_date.isoformat()
+    if prev.get("pxDate") != today:
+        return [], {}, {}, None
+    pst = {str(x.get("t")): x for x in prev.get("stocks") or [] if isinstance(x, dict) and x.get("cls") == "kr" and not x.get("fund")}
+    earlier = {c for c, x in pst.items() if x.get("pxd") is None and (_fin(x.get("price")) or 0) > 0}
+    fb = (px_src or {}).get("fb") if isinstance((px_src or {}).get("fb"), dict) else {}
+    fbk = fb.get("knx") if isinstance(fb.get("knx"), dict) else {}
+    clash = {str(c) for c in (fb.get("diffT") or []) + (fbk.get("diffT") or [])}
+    one = (px_src or {}).get("_one") if isinstance((px_src or {}).get("_one"), dict) else {}     # #161 리뷰 3차 A-S2: 한 출처만 준 종가
+    pj = collections.defaultdict(list)
+    for j in ((prev.get("krSeries") or {}).get("jump") or []) if isinstance(prev.get("krSeries"), dict) else []:
+        if isinstance(j, list) and len(j) == 4:
+            pj[str(j[0])].append(list(j))
+    conf = {str(c) for c in conf_codes}
+    reused, jumps, lost = [], {}, {}
+    for c in sorted(earlier - conf):
+        p = pst[c]
+        if c not in unconf:
+            lost[c] = "gone"
+        elif unconf[c][1] != "conf":                # 코넥스 (knx · mkt): 그날 파일의 코넥스는 이 실행이 확인한 것만 (pxSrc.knx.t · fb.knx.kept 와 같게)
+            lost[c] = "konex"
+        elif c in clash:
+            lost[c] = "clash"
+        elif _one_close(one, c) is not None and abs(_one_close(one, c) - (_fin(p.get("price")) or 0)) > KR_FB_CLOSE_TOL:
+            lost[c] = "clash1"                      # 한 출처뿐이어도 지난 발행본과 다르면 그 종가를 믿을 수 없어요 (다시 쓰지 않아요 · 크게)
+        elif p.get("pxBad") and not pj.get(c):
+            lost[c] = "jump"
+        else:
+            reused.append({k: p[k] for k in KR_REUSE_KEYS if k in p})
+    if room is not None and len(reused) > max(room, 0):
+        reused.sort(key=lambda r: (-(_fin(r.get("cap")) or 0), str(r["t"])))
+        for r in reused[max(room, 0):]:
+            lost[r["t"]] = "room"
+        reused = reused[:max(room, 0)]
+    for r in reused:
+        if pst[r["t"]].get("pxBad"):
+            jumps[r["t"]] = pj[r["t"]]
+    reused.sort(key=lambda r: str(r["t"]))
+    names = {c: str(pst[c].get("nk") or (unconf.get(c) or ("",))[0] or "") for c in earlier}
+    kk = sum(1 for r in reused if (unconf.get(r["t"]) or ("", ""))[1] == "conf")
+    rec = {"v": 1, "from": str(prev.get("publishedAt") or ""), "earlier": len(earlier), "n": len(reused), "kk": kk,
+           "codes": sorted(r["t"] for r in reused), "lost": len(lost),
+           "lostEx": [f"{c} {names.get(c, '')} ({KR_REUSE_LOST_KO[w]})".replace("  ", " ") for c, w in sorted(lost.items())][:KR_OWN_SHOW]}
+    return reused, jumps, lost, rec
+
+
+def log_kr_same_day_reuse(rec):
+    """같은 날 다시 쓰기 한 줄 (크게 남겨요 — 같은 날 다시 도는 실행은 드물고, 잃은 종목이 있으면 발행하지 않아요)."""
+    if rec is None:
+        return
+    log(f"  !! 같은 기준일을 다시 도는 실행 (지난 발행본 {rec['from'] or '?'}): 그 발행본이 그 날짜 종가로 실은 국내 종목 {rec['earlier']:,} 중 이 실행이 "
+        f"확인하지 못한 종목의 종가를 지난 발행본에서 다시 씀 {rec['n']:,}종목 (코스피 · 코스닥 {rec['kk']:,} · 둘 다 그 날짜의 확인 종가)"
+        + (f" — 잃은 종목 {rec['lost']:,} (이 실행은 지난 발행본보다 낫지 않아 발행하지 않아요): " + ", ".join(rec["lostEx"]) if rec["lost"] else
+           " — 잃은 종목 0"))
+
+
+def kr_own_close_step(prev, full_list, conf_codes, px_src, px_date, trade_days, out, krs, prod_map, desc=None, no_ind=None):
+    """2차 출처 날의 마지막 확인 종가 단계 (2026-11-19 · fetch_korea 가 부르는 한 곳). 그날 전체 목록(full_list · DataFrame)에서 두 출처로 확인 못 한
+    종목을 골라(kr_unconfirmed) 지난 발행본의 마지막 확인 종가로 out 에 더하고, 과거 주가 기록 오류 표시의 지난 움직임을 krs(krSeries)에 · 주요제품을
+    prod_map 에 옮기고, px_src["own"] 에 기록해요. trade_days: KOSPI 일봉 날짜들 (Timestamp · date · 'YYYY-MM-DD' 아무거나).
+    2026-11-20 (리뷰 S1): 지난 발행본이 DART 로 채운 · 보통주를 따른 업종 글자는 kr_own_ind_reset 으로 (desc: 오늘 KRX-DESC {코드: (업종, 주요제품)} ·
+    no_ind: 업종 글자 없는 종목 목록 — 다시 채울 코드를 더해요 · 없으면(None) 업종 글자를 그대로 둬요).
+    이 단계의 어떤 오류도 발행을 멈추지 않아요 (Jack 의 규칙 · 2026-11-19 시험 실행이 여기서 멈췄어요): 크게 남기고, 아무것도 싣지 않고 (예전처럼 확인 못 한
+    종목은 빠져요), 바꾼 것을 되돌리고, px_src["own"].err 에 까닭을 적어요 (관문이 경고해요). 반환: 실은 종목 수."""
+    n0, jump0, hid0 = len(out), list((krs or {}).get("jump") or []), list((krs or {}).get("hidden") or [])
+    ni0 = list(no_ind) if isinstance(no_ind, list) else None
+    added, unconf = [], None
+    try:
+        days = [pd.Timestamp(t).date().isoformat() for t in trade_days]
+        conf = set(map(str, conf_codes))
+        knx = kr_knx_left(px_src)          # 2026-11-20 (#158): 야후 .KQ × 네이버로 확인된 코넥스는 확인 못 한 종목이 아니에요
+        unconf = kr_unconfirmed(full_list, conf, knx)
+        loud, txt = kr_knx_carry_note(full_list, conf, knx, unconf, px_src)
+        log(f"  !! {txt}" if loud else f"· {txt}")
+        have = {r.get("t") for r in out}
+        # 2026-11-21 (#161): 같은 기준일 지난 발행본의 확인 종가를 먼저 다시 써요 (나머지만 마지막 확인 종가 단계로)
+        fbc = (px_src.get("fb") or {}).get("conf") if isinstance(px_src.get("fb"), dict) else None
+        n_px = sum(1 for r in out if r.get("cls") == "kr" and not r.get("fund") and r.get("pxd") is None)
+        room = fbc - n_px if isinstance(fbc, int) and not isinstance(fbc, bool) else 0      # 기록을 읽지 못하면 다시 쓰지 않아요 (잃은 종목 → 발행 안 함)
+        reused, rjumps, _, rrec = kr_same_day_reuse(prev, {c: v for c, v in unconf.items() if c not in have}, conf, px_date, px_src, room=room)
+        log_kr_same_day_reuse(rrec)
+        have |= {r["t"] for r in reused}
+        carried, cjumps, cdrop = kr_own_close_carry(prev, {c: v for c, v in unconf.items() if c not in have}, px_date, days)
+        aged = kr_own_aged(prev, unconf, cdrop)
+        rec = log_kr_own_close(carried, cdrop, unconf, {r["t"]: r.get("nk", "") for r in carried})
+        rec["aged"] = aged
+        if rrec is not None:
+            rec["reuse"] = rrec         # 2026-11-21 (#161): unconf · unconfWhy 는 이 실행이 확인 못 한 수 그대로 (다시 쓴 종목 포함 · 관문의 코넥스 비교와 같게)
+        if aged:
+            log(f"  !! 마지막 확인 종가가 {KR_OWN_CLOSE_MAX_DAYS}거래일을 넘어 잠시 뺀 국내 종목 {len(aged):,} (앱은 '며칠째 종가를 확인하지 못해서 이 종목은 "
+                f"잠시 빼 두었어요.' · pxSrc.own.aged · 다시 확인되거나 목록에서 사라지면 빠져요): "
+                + ", ".join(f"{a['t']} {a['nk']} ({a.get('pxd')})" for a in aged[:KR_OWN_SHOW])
+                + (f" 외 {len(aged) - KR_OWN_SHOW}종목" if len(aged) > KR_OWN_SHOW else ""))
+        # 리뷰 (2026-11-20): 다시 채울 목록(no_ind)을 받지 않은 호출은 업종 글자를 건드리지 않아요 — 다시 채우지 않고 글자만 빼는 일이 없게
+        refill, krx, unread = kr_own_ind_reset(carried, prev, desc) if isinstance(no_ind, list) else ([], [], [])
+        if refill or krx or unread:
+            nm = {r["t"]: r.get("nk", "") for r in carried}
+            log(f"{'  !! ' if unread else '· '}마지막 확인 종가 종목의 업종 글자: 지난 발행본이 DART 회사 정보로 채웠거나 보통주를 따른 "
+                f"{len(refill) + len(krx):,}종목은 그 글자를 옮기지 않아요 — 오늘 다시 채움 {len(refill):,} · 오늘 KRX 글자로 {len(krx):,}"
+                + (f" · 설명을 읽지 못해 비움 {len(unread):,}" if unread else "") + " — "
+                + ", ".join(f"{t} {nm.get(t, '')}" for t in (refill + krx)[:KR_OWN_SHOW]))
+            rec["ind"] = {"refill": len(refill), "krx": len(krx), "unread": len(unread)}
+            no_ind.extend(t for t in refill if t not in no_ind)
+        out.extend(reused + carried)
+        for c in sorted({**rjumps, **cjumps}):
+            krs["jump"] = list(krs.get("jump") or []) + ({**rjumps, **cjumps})[c]
+            krs["hidden"] = list(krs.get("hidden") or []) + [c]
+        for r in reused + carried:
+            dp = kr_desc_parse(r.get("dk"))
+            if dp and dp[1] and r["t"] not in prod_map:
+                prod_map[r["t"]] = dp[1]
+                added.append(r["t"])
+        px_src["own"] = rec
+        return len(carried)
+    except Exception as e:
+        del out[n0:]
+        if isinstance(krs, dict):
+            krs["jump"], krs["hidden"] = jump0, hid0
+        for t in added:
+            prod_map.pop(t, None)
+        if ni0 is not None:
+            no_ind[:] = ni0
+        err = f"{type(e).__name__}: {str(e)[:200]}"
+        log(f"  !! 마지막 확인 종가 단계가 오류로 멈췄어요 ({err}) — 확인 못 한 국내 종목은 예전처럼 빼고 발행을 이어가요 (실은 종목 0 · "
+            "pxSrc.own.err · 관문이 경고해요)")
+        px_src["own"] = kr_own_close_err(err, len(unconf) if isinstance(unconf, dict) else None)
+        px_src["own"]["aged"] = kr_own_aged_kept(prev, {str(r.get("t")) for r in out})
+        return 0
+
+
+def kr_count_line(payload):
+    """발행하는 국내 종목 수 한 줄 (2026-11-20 · #159 리뷰): pxDate 종가로 실은 종목 · 마지막 확인 종가(pxd)로 실은 종목 — 관문의 '국내 종목 수' 두
+    줄은 앞의 수만 세요 (validate_data.kr_px_count · 바닥 KR_MIN). 바닥 아래면 크게. (순수 함수)"""
+    n_px = kr_px_count(payload)
+    n_all = sum(1 for s in payload.get("stocks", []) if s.get("cls") == "kr" and not s.get("fund"))
+    return (f"{'  !! ' if n_px < GATE_KR_MIN else '· '}발행하는 국내 종목 {n_all:,}: pxDate 종가 {n_px:,} · 마지막 확인 종가 {n_all - n_px:,} "
+            f"(관문 '국내 종목 수' 는 pxDate 종가만 세요 · 바닥 {GATE_KR_MIN:,})")
+
+
+def kr_own_prune_series(krs, gone):
+    """뺀 마지막 확인 종가 종목의 과거 주가 기록 오류 표시를 krSeries 에서도 빼요 (리뷰 N4): hidden 과, 실을 때 옮겨 온 그 종목의 jump 줄 (그 종목은
+    오늘 목록 파일에 없어서 오늘 시계열 점검의 jump 에는 없어요)."""
+    if not isinstance(krs, dict) or not gone:
+        return
+    if isinstance(krs.get("hidden"), list):
+        krs["hidden"] = [c for c in krs["hidden"] if c not in gone]
+    if isinstance(krs.get("jump"), list):
+        krs["jump"] = [j for j in krs["jump"] if not (isinstance(j, list) and j and j[0] in gone)]
+
+
+def kr_own_close_drop_all(kr, src, krs, err, drop_out=None):
+    """마지막 확인 종가 점검(kr_own_close_final)이 오류로 멈췄을 때: 국내 pxd 종목을 모두 빼고 (예전처럼 확인 못 한 종목은 빠져요) 크게 남기고 pxSrc.own 에
+    err · 뺀 수를 적어요 (관문이 경고해요). drop_out (2026-11-20): 주면 뺀 종목 (코드, 까닭) 을 더해요 (data.json ownDrop.krOwn).
+    반환: 남은 국내 종목 목록."""
+    gone = {s.get("t") for s in kr if s.get("cls") == "kr" and s.get("pxd") is not None}
+    if isinstance(drop_out, list):
+        drop_out.extend((str(t), f"err {str(err)[:120]}") for t in sorted(gone, key=str))
+    log(f"  !! 마지막 확인 종가 점검이 오류로 멈췄어요 ({err}) — 마지막 확인 종가로 실은 {len(gone):,}종목을 모두 빼고 발행을 이어가요 (pxSrc.own.err)")
+    if isinstance(src, dict):
+        own = src.get("own") if isinstance(src.get("own"), dict) else kr_own_close_err(err)
+        own.update({"codes": [], "n": 0, "err": str(err)[:300], "bad": {"n": len(gone), "rows": sorted(gone)[:KR_OWN_SHOW]}})
+        src["own"] = own
+    kr_own_prune_series(krs, gone)
+    return [s for s in kr if s.get("t") not in gone or s.get("cls") != "kr"]
+
+
+def kr_own_close_final(kr, src, prev, days, krs=None, drop_out=None):
+    """국내 시세 단계 바로 뒤 · 다른 단계보다 먼저 (Jack 의 규칙, 2026-11-19 — 우리 처리의 한 줄이 틀리면 그 줄을 빼고 크게 남기고 나머지는 발행해요.
+    이 함수가 보는 칸은 그 뒤 바뀌지 않아요 — 뺀 종목이 집계 · 점수 · corp.json 에 남지 않게 여기서 빼요): 관문과 같은 함수
+    (validate_data.kr_own_close_bad)로 마지막 확인 종가 종목을 다시 보고, 맞지 않는 종목은 빼요 (pxd 가 맞지 않는 가격은 싣지 않아요 — 그 종목은
+    예전처럼 빠져요). src: 발행할 pxSrc (own 을 고쳐요) · prev: 지난 발행본 · days: 거래일 YYYY-MM-DD 들 · krs: data.json krSeries (뺀 종목을
+    hidden 에서도 빼요 — 표시한 종목 = hidden). 반환: 남은 국내 종목 목록."""
+    if not any(s.get("pxd") is not None for s in kr if s.get("cls") == "kr"):
+        if isinstance((src or {}).get("own"), dict):
+            log("· 마지막 확인 종가 점검 (관문과 같은 함수): 0종목 빼고 발행")
+        return kr
+    bad = kr_own_close_bad({"pxDate": src.get("date") if isinstance(src, dict) else None, "pxSrc": src, "stocks": kr}, prev, days)
+    gone = collections.defaultdict(list)
+    for t, w in bad:
+        gone[t].append(w)
+    names = {s.get("t"): s.get("nk", "") for s in kr}
+    rows = [f"{t} {names.get(t, '')} ({' · '.join(KR_OWN_WHY.get(w, w) for w in ws)})" for t, ws in sorted(gone.items())]
+    log(f"{'  !! ' if gone else '· '}마지막 확인 종가 점검 (관문과 같은 함수): {len(gone):,}종목 빼고 발행" + (" — " + ", ".join(rows[:KR_OWN_SHOW]) if rows else ""))
+    if not gone:
+        return kr
+    own = src.get("own") if isinstance(src, dict) and isinstance(src.get("own"), dict) else None
+    if own is not None:
+        own["codes"] = [c for c in own.get("codes") or [] if c not in gone]
+        own["n"] = len(own["codes"])
+        # 2026-11-20 (리뷰 4): 까닭(점검)마다 뺀 수 — 관문은 한 점검에서 5개를 넘을 때만 실패해요 (Jack 의 상시 규칙). 한 종목이 두 점검에 걸리면 둘 다 세요
+        own["bad"] = {"n": len(gone), "rows": rows[:KR_OWN_SHOW], "why": dict(sorted(collections.Counter(w for ws in gone.values() for w in set(ws)).items()))}
+    if isinstance(drop_out, list):          # 2026-11-20: data.json ownDrop.krOwn (다른 우리 처리 검사와 같은 곳 · 같은 모양 {n, rows [코드, 까닭]})
+        drop_out.extend((str(t), " · ".join(KR_OWN_WHY.get(w, w) for w in ws)) for t, ws in sorted(gone.items()))
+    kr_own_prune_series(krs, gone)
+    return [s for s in kr if not (s.get("cls") == "kr" and s.get("t") in gone)]
+
+
+# ────────────────────────────────────────────────────────────
+# 2026-11-20: 야후 종가가 없는 미국 종목도 마지막 확인 종가로 (Jack)
+# ────────────────────────────────────────────────────────────
+# "Also: US stocks carry like Korean ones. A US stock with no close from Yahoo carries its last confirmed close with its own date and
+#  the same line. Block only if many are missing (set the number from history), so a Yahoo gap never stops the Korean data again."
+#  (Jack, 2026-11-20)
+# 미국 기준일(usPxDate · S&P 500 의 마지막 끝난 봉) 종가가 야후에 없는 종목 (빈 값 · 무한 · 0 · 음수 봉은 종가가 없는 것으로 봐요 · 가격을 하나도
+# 받지 못함 · 받다가 오류): 지난 발행본(data.json)에 그 종목이 기준일 종가로 있었으면 그 가격을 그대로 싣고 pxd = 그 발행본의 usPxDate · pxc = true
+# (마지막 확인 종가 표시 — 야후가 그 종목의 마지막 봉을 자기 날짜로 준 '거래 정지' pxd 와 앱 · 관문이 구별해요). 지난 발행본도 pxc 로 실었으면 같은
+# 가격 · 같은 pxd (날짜를 바꾸지 않아요). 그 가격으로 만든 시세 숫자(US_OWN_KEYS: 출렁임 · 베타 · 52주 · 샤프 · 최대낙폭 · 상승 월 · 모멘텀)는 지난
+# 발행본에서 그대로 옮기고, 상세 정보(이름 · 업종 · PER · PBR · 시가총액 · 배당수익률)는 다른 종목처럼 오늘 그 가격으로 붙여요 (apply_us_info).
+# 지난 발행본의 usPxDate 가 오늘과 같으면 (같은 날 다시 발행 · 2026-11-20 의 시험 실행들이 이랬어요) 그 종목의 그날 종가와 d1 을 그대로 실어요
+# (그날의 확인된 종가예요 · pxd 없음 · usSrc.own.same). 나이 상한 US_OWN_CLOSE_MAX_DAYS (관문 파일): 그 종가 뒤 usPxDate 까지 미국 거래일(S&P 500
+# 일봉)이 이보다 많으면 싣지 않고 빼요 (usSrc.own.aged · 앱은 '며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요.').
+# 지난 발행본에 없거나 (새 종목) · 지난 발행본에서도 자기 날짜(pxd · pxc 없음)였거나 · 값을 읽을 수 없으면 예전 그대로예요: 야후의 마지막 봉이 있으면 그
+# 날짜(pxd)로 · 없으면 빠져요. 이 단계의 어떤 오류도 발행을 멈추지 않아요 (그때는 예전 그대로).
+# 2026-11-22 (Jack): 새 종목(지난 발행본의 미국 종목에도 usSrc.own.aged 에도 없는 티커)은 이 단계 앞에서 빠져요 — 미국 기준일 종가가 확인될 때까지
+# 넣지 않아요 (us_new_wait_step · usSrc.newWait). 그래서 drop 'none' 은 지난 발행본을 읽지 못한 날(첫 실행)에만 남아요.
+from validate_data import US_OWN_CLOSE_MAX_DAYS, US_OWN_WHY, us_own_close_bad
+US_OWN_KEYS = ("price", "vol", "beta", "al", "betaSE", "betaN", "lo", "hi", "sh", "mdd", "hit", "mom")
+US_OWN_DROP_KO = {"none": "지난 발행본에 없음 (예전처럼 야후의 마지막 봉 · 없으면 빠짐)",
+                  "halted": "지난 발행본에서도 자기 날짜(pxd)로 실림 · 마지막 확인 종가가 아님 (예전처럼 야후의 마지막 봉)",
+                  "old": f"그 종가 뒤 미국 거래일 {US_OWN_CLOSE_MAX_DAYS}일 넘음 (빼요)",
+                  "bad": "지난 발행본의 가격 · 날짜를 읽을 수 없음 (예전처럼 야후의 마지막 봉)",
+                  "split": "그 종가 날짜 뒤에 주식 분할이 있음 (예전처럼 야후의 자기 날짜 봉 · 없으면 빠짐 · usSrc.own.split)",
+                  "splitRead": "오늘 다운로드의 분할 칸을 읽지 못함 (분할을 몰라 예전처럼 야후의 자기 날짜 봉 · 없으면 빠짐 · usSrc.own.split)"}
+US_NOCL_KO = {"bar": "기준일 종가 없음 (빈 값 · 0 · 음수)", "empty": "쓸 수 있는 가격이 하나도 없음", "err": "시세를 받다가 오류"}
+US_OWN_SHOW = 30
+# 리뷰 (2026-11-20): 야후 상세 정보 중 그 가격에 맞추는 숫자 (apply_us_info) — 기준 가격을 모르면 비워요
+US_PX_ANCHORED = ("per", "pbr", "cap", "dy", "pbrZero")
+US_QUOTE_FAR = 0.5        # 리뷰 (2026-11-20, 4): 야후 시세 가격이 실은 종가와 이보다 많이 다르면 기준 가격으로 쓰지 않아요 (보관본 · 없으면 비움)
+US_OWN_AGED_LONG = 20     # 리뷰 (2026-11-20): 잠시 뺀 기록이 이 미국 거래일보다 오래되면 크게 적어요 (상장 폐지된 티커가 목록에 남은 것일 수 있어요 · 로그만)
+
+
+def us_px_tail_clean(px):
+    """끝에 붙은 쓸 수 없는 종가(무한 · 0 · 음수 — 야후가 빈 값을 0 으로 주는 날)를 떼요: 그날은 그 종목의 야후 종가가 없는 날이에요 (2026-11-20 ·
+    0 종가가 가격 0 인 행으로 나가지 않게 — 관문의 EXTRA_US · 주식 종류 티커 줄이 가격 없는 행으로 봐요). 가운데의 봉은 그대로 (순수 함수)."""
+    n = len(px)
+    while n:
+        v = px.iloc[n - 1]
+        try:
+            ok = math.isfinite(float(v)) and float(v) > 0
+        except (TypeError, ValueError):
+            ok = False
+        if ok:
+            break
+        n -= 1
+    return px if n == len(px) else px.iloc[:n]
+
+
+def us_own_close_carry(prev, nocl, us_px_date, trade_days, max_days=US_OWN_CLOSE_MAX_DAYS, etfs=frozenset(), ybar=None, info=None,
+                       split_dates=None, split_unread=frozenset()):
+    """야후 종가가 없는 미국 종목(nocl {티커: 까닭})을 지난 발행본(prev · data.json)의 마지막 확인 종가로 (2026-11-20 · Jack · 순수 함수).
+    반환: (carried [기록 — 마지막 확인 종가 · pxd · pxc], same [기록 — 같은 날 다시 발행: 그날 종가 · d1], drop {티커: 까닭 (US_OWN_DROP_KO)}).
+    - 지난 발행본에 그 종목이 usPxDate 종가로 있었으면 (pxd 없음): 그 usPxDate 가 오늘 기준일보다 앞이면 carried (pxd = 그 날짜), 같으면 same.
+    - 지난 발행본에 pxc (마지막 확인 종가)로 있었으면 같은 가격 · 같은 pxd (다시 날짜를 매기지 않아요).
+    - 리뷰 (2026-11-20, 더 새 야후 종가): ybar {티커: 기록} = 오늘 다운로드에서 그 종목의 마지막 봉(기준일 앞)으로 만든 기록 (예전 '자기 날짜' 길 그대로:
+      pxd = 그 봉의 날짜 · 그 가격 · 그 시계열의 숫자 · d1 없음). 그 봉이 마지막 확인 종가의 날짜보다 뒤면 그 기록을 pxc 로 써요 (더 새 종가를 옛 종가로
+      덮지 않게 · info["newer"] 에 {t, pxd, px}). 잠시 뺀 종목(지난 usSrc.own.aged)도 그 날짜 뒤의 봉이 있으면 같은 조건으로 돌아와요 (나이는 그 봉부터).
+    - 그 종가 뒤 오늘 기준일까지 미국 거래일(trade_days: YYYY-MM-DD)이 max_days 보다 많으면 old (빼요 · 그 날짜는 info["oldPxd"]).
+    - none 지난 발행본에 없음 · halted 지난 발행본에서도 pxd 만 (거래 정지 · 마지막 확인 종가 아님) · bad 값을 읽을 수 없음: 예전 그대로 (드롭이 아니에요).
+    - 리뷰 (2026-11-20, 분할): split_dates {티커: {분할 날짜}} 에 그 종가 날짜 뒤의 분할이 있으면 싣지 않아요 (split · info["split"]) — 예전 그대로
+      (야후의 자기 날짜 봉: 분할을 반영한 야후 시계열이에요 · 없으면 빠져요 · 잠시 뺀 종목에 적지 않아요). 지난 발행본의 가격은 분할 전이라 앱이 주식 수를
+      바꾸면 평가액이 배율만큼 틀려요. 더 새 야후 봉은 미국 거래일(trade_days)에 있는 날짜일 때만 써요 (휴장일의 엉뚱한 봉은 쓰지 않아요).
+      split_unread: 오늘 다운로드의 분할 칸을 읽지 못한 티커 — 분할을 모르니 싣지 않고 예전 그대로 (splitRead)."""
+    prev = prev or {}
+    ybar = ybar or {}
+    split_dates = split_dates or {}
+    info = {} if info is None else info
+    newer, old_pxd, split_out = info.setdefault("newer", []), info.setdefault("oldPxd", {}), info.setdefault("split", [])
+    tdays = {str(d)[:10] for d in trade_days}
+    pst = {str(x.get("t")): x for x in prev.get("stocks") or [] if isinstance(x, dict) and x.get("cls") == "us" and not x.get("fund")}
+    pown = (prev.get("usSrc") or {}).get("own") if isinstance(prev.get("usSrc"), dict) else None
+    was = {str(a["t"]): a for a in ((pown or {}).get("aged") or []) if isinstance(pown, dict) and isinstance(a, dict) and a.get("t")}
+    ppx = prev.get("usPxDate")
+    ppx = ppx if isinstance(ppx, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", ppx) else None
+    today = us_px_date.isoformat() if isinstance(us_px_date, dt.date) else str(us_px_date)
+    carried, same, drop = [], [], {}
+
+    def is_day(x):
+        try:
+            return isinstance(x, str) and dt.date.fromisoformat(x).isoformat() == x
+        except ValueError:
+            return False
+
+    def later_bar(t, own):
+        """오늘 다운로드에 그 종목의 own 뒤 · 기준일 앞 봉이 있으면 그 기록 (가격 > 0)."""
+        y = ybar.get(t)
+        d = (y or {}).get("pxd")
+        return y if (is_day(d) and d in tdays and own < d < today and (_fin(y.get("price")) or 0) > 0 and y.get("d1") is None) else None
+
+    def take(t, own, rec, nw=None):
+        if t in split_unread:                         # 분할을 몰라요: 싣지 않아요 (예전 그대로)
+            drop[t] = "splitRead"
+            split_out.append({"t": t, "pxd": own, "after": [], "unread": True})
+            return
+        after = sorted(d for d in split_dates.get(t, ()) if d > own)
+        if after:                                     # 그 종가 뒤에 분할: 싣지 않아요 (예전 그대로)
+            drop[t] = "split"
+            split_out.append({"t": t, "pxd": own, "after": after})
+            return
+        if kr_own_age(own, today, trade_days) > max_days:
+            drop[t] = "old"
+            old_pxd[t] = own
+            return
+        carried.append(rec)
+        if nw is not None:                            # 실은 것만 newer 에 (나이 상한으로 빠진 봉은 아니에요)
+            newer.append(nw)
+
+    for t in sorted(nocl):
+        p = pst.get(t)
+        if p is None:
+            a = was.get(t)                            # 잠시 뺀 종목: 그 날짜 뒤의 야후 봉이 오늘 있으면 돌아와요
+            y = later_bar(t, a.get("pxd")) if a and is_day(a.get("pxd")) else None
+            if y is not None:
+                take(t, y["pxd"], {**y, "pxc": True}, {"t": t, "pxd": y["pxd"], "px": y["price"]})
+                continue
+            drop[t] = "none"
+            continue
+        price = _fin(p.get("price"))
+        if price is None or price <= 0 or ppx is None:
+            drop[t] = "bad"
+            continue
+        base = {"t": t, "nk": t, "ne": t, "cls": "us", "ccy": "USD", "fxu": True, "s": "etc", "etf": t in etfs}
+        base.update({k: p[k] for k in US_OWN_KEYS if k in p and p[k] is not None})
+        if p.get("pxd") is None:
+            if p.get("pxc") is not None:
+                drop[t] = "bad"
+                continue
+            if ppx == today:
+                d1 = _fin(p.get("d1"))
+                if d1 is None:
+                    drop[t] = "bad"
+                    continue
+                same.append({**base, "d1": d1})
+                continue
+            if ppx > today:
+                drop[t] = "bad"
+                continue
+            own = ppx
+        else:
+            if p.get("pxc") is not True:
+                drop[t] = "halted"
+                continue
+            own = p.get("pxd")
+            if not is_day(own) or own >= ppx or own >= today:
+                drop[t] = "bad"
+                continue
+        y = later_bar(t, own)
+        if y is not None:                             # 야후에 더 새 종가가 있어요 (그 종목의 마지막 봉 · 기준일 앞 · 미국 거래일)
+            take(t, y["pxd"], {**y, "pxc": True}, {"t": t, "pxd": y["pxd"], "px": y["price"]})
+            continue
+        take(t, own, {**base, "pxd": own, "pxc": True})
+    return carried, same, drop
+
+
+def us_own_aged(prev, nocl, drop, old_pxd=None):
+    """2026-11-20 (Jack: 국내와 같게 — "After 5 trading days, show "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요.""): 오늘도 야후 종가가
+    없는 종목 중 마지막 확인 종가가 나이 상한을 넘어 잠시 뺀 종목 → [{t, nk, pxd}] (티커 순 · data.json usSrc.own.aged). 지난 발행본에 있었는데 나이를
+    넘은 종목(drop 'old')과, 지난 발행본이 이미 잠시 뺀 종목(usSrc.own.aged) 중 오늘도 야후 종가가 없는 종목 (지난 발행본의 stocks 에는 없어요 —
+    drop 'none' 을 'old' 로 고쳐요). 오늘 종가가 있는 종목 · 목록에서 사라진 종목은 nocl 에 없어서 저절로 빠져요. drop 을 고쳐요. old_pxd: 그 종목의
+    마지막 확인 종가 날짜 (us_own_close_carry 의 info["oldPxd"] · 더 새 야후 봉이 있었으면 그 날짜). 지난 기록의 why (예: split) 는 이어 적어요. (순수 함수)"""
+    prev = prev or {}
+    old_pxd = old_pxd or {}
+    own = (prev.get("usSrc") or {}).get("own") if isinstance(prev.get("usSrc"), dict) else None
+    was = {str(a["t"]): a for a in ((own or {}).get("aged") or []) if isinstance(own, dict) and isinstance(a, dict) and a.get("t")}
+    pst = {str(x.get("t")): x for x in prev.get("stocks") or [] if isinstance(x, dict) and x.get("cls") == "us"}
+    ppx = prev.get("usPxDate") if isinstance(prev.get("usPxDate"), str) else None
+    out = {}
+    for t, w in sorted(drop.items()):
+        if t not in nocl:
+            continue
+        if w == "old":
+            p, a = pst.get(t) or {}, was.get(t) or {}
+            out[t] = {"t": t, "nk": str(p.get("nk") or a.get("nk") or t), "pxd": old_pxd.get(t) or p.get("pxd") or a.get("pxd") or ppx}
+        elif w == "none" and t in was:
+            a = was[t]
+            out[t] = {"t": t, "nk": str(a.get("nk") or t), "pxd": a.get("pxd")}
+            if isinstance(a.get("why"), str):
+                out[t]["why"] = a["why"]
+            drop[t] = "old"
+    return [out[t] for t in sorted(out)]
+
+
+def us_own_close_err(err, nocl_n=None):
+    """마지막 확인 종가 단계(미국)가 오류로 멈췄을 때의 usSrc.own (실은 종목 0 · err — 관문이 경고해요 · 예전 그대로 야후의 마지막 봉으로 나가요)."""
+    out = {"v": 1, "max": US_OWN_CLOSE_MAX_DAYS, "n": 0, "codes": [], "same": [], "from": {}, "newer": [], "split": [], "drop": {}, "dropEx": [],
+           "bad": {"n": 0, "rows": []}, "err": str(err)[:300]}
+    if isinstance(nocl_n, int):
+        out["unconf"] = nocl_n
+    return out
+
+
+def us_own_close_step(prev, nocl, out, us_px_date, trade_days, etfs=frozenset(), split_dates=None, split_unread=frozenset()):
+    """미국 마지막 확인 종가 단계 (2026-11-20 · fetch_us 가 시세를 다 받은 바로 뒤 · 상세 정보를 붙이기 전에 부르는 한 곳). nocl {티커: 까닭 (US_NOCL_KO)}:
+    오늘 기준일 종가가 야후에 없는 종목. out: 오늘 미국 기록 (야후의 마지막 봉으로 만든 기록이 있으면 바꾸고, 없으면 더해요 · 나이 상한을 넘은 종목은
+    빼요). trade_days: 미국 거래일 (S&P 500 일봉 날짜 · Timestamp · date · 'YYYY-MM-DD' 아무거나). 반환: data.json usSrc.own.
+    이 단계의 어떤 오류도 발행을 멈추지 않아요 (Jack 의 상시 규칙): 크게 남기고, out 을 되돌리고 (예전 그대로 야후의 마지막 봉), err 에 까닭을 적어요."""
+    keep = list(out)
+    try:
+        days = [pd.Timestamp(t).date().isoformat() for t in trade_days]
+        today = us_px_date.isoformat() if isinstance(us_px_date, dt.date) else str(us_px_date)
+        # 리뷰 (2026-11-20): 그 종목의 야후 마지막 봉으로 만든 기록 (예전 '자기 날짜' 길) — 마지막 확인 종가보다 새 봉이면 그것을 써요
+        ybar = {r["t"]: r for r in out if r.get("t") in nocl and r.get("pxd") is not None and r.get("d1") is None}
+        cinfo = {}
+        carried, same, drop = us_own_close_carry(prev, nocl, us_px_date, days, etfs=etfs, ybar=ybar, info=cinfo, split_dates=split_dates,
+                                                 split_unread=split_unread)
+        aged = us_own_aged(prev, nocl, drop, cinfo.get("oldPxd"))
+        newer = sorted(cinfo.get("newer") or [], key=lambda x: x["t"])
+        split = sorted(cinfo.get("split") or [], key=lambda x: x["t"])
+        repl = {r["t"]: r for r in carried + same}
+        gone = {a["t"] for a in aged}
+        new = []
+        for r in out:
+            t = r.get("t")
+            if t in repl:
+                new.append(repl.pop(t))
+            elif t not in gone:
+                new.append(r)
+        new.extend(repl[t] for t in sorted(repl))     # 야후가 가격을 하나도 주지 않은 종목
+        out[:] = new
+        why = collections.Counter(nocl.values())
+        by_day = collections.Counter(r["pxd"] for r in carried)
+        log(f"{'  !! ' if nocl else '· '}미국 종가 미확인 {len(nocl):,}종목 (기준일 {today} · "
+            + (" · ".join(f"{US_NOCL_KO[k]} {why[k]:,}" for k in ("bar", "empty", "err") if why[k]) or "없음") + ")"
+            + (f": 마지막 확인 종가로 실음 {len(carried):,}종목 (pxd " + " · ".join(f"{d} {n}" for d, n in sorted(by_day.items(), reverse=True))
+               + ") — " + ", ".join(f"{r['t']} ({r['pxd'][5:]})" for r in carried[:US_OWN_SHOW])
+               + (f" 외 {len(carried) - US_OWN_SHOW}종목" if len(carried) > US_OWN_SHOW else "") if carried else "")
+            + (f" · 지난 발행본이 같은 기준일이라 그날 종가 · d1 을 그대로 {len(same):,}종목 — " + ", ".join(r["t"] for r in same[:US_OWN_SHOW])
+               + (f" 외 {len(same) - US_OWN_SHOW}종목" if len(same) > US_OWN_SHOW else "") if same else ""))
+        if newer:
+            log(f"  !! 그중 야후에 마지막 확인 종가보다 새 종가(그 종목의 마지막 봉 · 기준일 앞)가 있어 그 종가로 실은 미국 종목 {len(newer):,}: "
+                + ", ".join(f"{x['t']} ({x['pxd']} {x['px']})" for x in newer[:US_OWN_SHOW])
+                + (f" 외 {len(newer) - US_OWN_SHOW}종목" if len(newer) > US_OWN_SHOW else "") + " (usSrc.own.newer)")
+        sp_after = [x for x in split if not x.get("unread")]
+        sp_unread = [x for x in split if x.get("unread")]
+        if sp_after:
+            log(f"  !! 마지막 확인 종가 뒤에 주식 분할이 있어 싣지 않은 미국 종목 {len(sp_after):,} (지난 발행본의 가격은 분할 전 · 앱은 주식 수를 바꿔요 → "
+                "예전 그대로: 야후의 자기 날짜 봉 · 없으면 빠짐 · usSrc.own.split): "
+                + ", ".join(f"{x['t']} ({x['pxd']} 뒤 분할 {', '.join(x['after'])})" for x in sp_after[:US_OWN_SHOW]))
+        if sp_unread:
+            log(f"  !! 분할 칸을 읽지 못해 마지막 확인 종가로 싣지 않은 미국 종목 {len(sp_unread):,} (분할을 몰라요 → 예전 그대로: 야후의 자기 날짜 봉 · "
+                "없으면 빠짐 · usSrc.own.split unread): " + ", ".join(f"{x['t']} ({x['pxd']})" for x in sp_unread[:US_OWN_SHOW]))
+        dc = collections.Counter(drop.values())
+        dn = [f"{t} ({US_OWN_DROP_KO[w]} · {US_NOCL_KO.get(nocl.get(t), '?')})" for t, w in sorted(drop.items())]
+        if drop:
+            log(f"  !! 마지막 확인 종가로 싣지 않은 미국 종목 {len(drop):,}: " + " · ".join(f"{k} {v:,}" for k, v in sorted(dc.items())) + " — "
+                + ", ".join(dn[:US_OWN_SHOW]) + (f" 외 {len(dn) - US_OWN_SHOW}종목" if len(dn) > US_OWN_SHOW else ""))
+        if aged:
+            log(f"  !! 마지막 확인 종가가 {US_OWN_CLOSE_MAX_DAYS}거래일을 넘어 잠시 뺀 미국 종목 {len(aged):,} (앱은 '며칠째 종가를 확인하지 못해서 이 종목은 "
+                f"잠시 빼 두었어요.' · usSrc.own.aged · 야후 종가가 다시 오거나 목록에서 사라지면 빠져요): "
+                + ", ".join(f"{a['t']} ({a.get('pxd')})" for a in aged[:US_OWN_SHOW]) + (f" 외 {len(aged) - US_OWN_SHOW}종목" if len(aged) > US_OWN_SHOW else ""))
+        long_ = [a for a in aged if isinstance(a.get("pxd"), str) and kr_own_age(a["pxd"], today, days) > US_OWN_AGED_LONG]
+        if long_:
+            log(f"  !! 잠시 뺀 지 {US_OWN_AGED_LONG}거래일이 넘은 미국 종목 {len(long_):,} (상장 폐지 · 티커 변경으로 목록에만 남았는지 확인해 주세요 · "
+                "usSrc.own.aged): " + ", ".join(f"{a['t']} ({a.get('pxd')})" for a in long_[:US_OWN_SHOW])
+                + (f" 외 {len(long_) - US_OWN_SHOW}종목" if len(long_) > US_OWN_SHOW else ""))
+        # 머지 확인 (2026-11-20, 1): 실은 행마다 야후가 무엇을 줬는지 (bar 그 종목의 시계열은 있고 기준일 봉만 없음 · empty 쓸 수 있는 가격이 하나도 없음 ·
+        # err 받다가 오류) — 관문의 '미국 종목 수' 두 줄은 bar 만 세요 (예전에도 실렸을 행 · empty · err 는 예전이면 빠졌어요)
+        src_of = {r["t"]: nocl.get(r["t"]) for r in carried + same}
+        return {"v": 1, "max": US_OWN_CLOSE_MAX_DAYS, "n": len(carried), "codes": sorted(r["t"] for r in carried),
+                "same": sorted(r["t"] for r in same), "from": dict(sorted(src_of.items())), "newer": newer, "split": split, "unconf": len(nocl), "why": {k: int(v) for k, v in sorted(why.items())},
+                "drop": {k: int(v) for k, v in sorted(dc.items())}, "dropEx": dn[:US_OWN_SHOW], "bad": {"n": 0, "rows": []}, "aged": aged}
+    except Exception as e:
+        out[:] = keep
+        err = f"{type(e).__name__}: {str(e)[:200]}"
+        log(f"  !! 마지막 확인 종가 단계(미국)가 오류로 멈췄어요 ({err}) — 야후 종가가 없는 미국 종목은 예전처럼 야후의 마지막 봉으로 내보내요 "
+            "(실은 종목 0 · usSrc.own.err · 관문이 경고해요)")
+        rec = us_own_close_err(err, len(nocl) if isinstance(nocl, dict) else None)
+        try:
+            rec["aged"] = [dict(a) for a in (((prev or {}).get("usSrc") or {}).get("own") or {}).get("aged") or []
+                           if isinstance(a, dict) and a.get("t") and a["t"] in (nocl or {})]
+        except Exception:
+            rec["aged"] = []
+        return rec
+
+
+def us_own_drop_rows(us, umeta, bad, why):
+    """리뷰 (2026-11-20, 2차 확인 1): 마지막 확인 종가 단계가 뺀 미국 행 (점검이 거른 행 · 점검이 멈춰 모두 뺀 행 · 발행할 splits 로 다시 본 행) —
+    #139 처럼 umeta 의 그 종목 기록을 정리하고 (us_meta_drop · 오늘 다운로드의 새 분할 줄 포함) EXTRA_US 의 빠진 까닭을 적어요 (까닭 없이 빠지면
+    관문 실패). why: 까닭 글 (티커 → 글 dict 도 돼요). 반환: 남은 미국 목록."""
+    bad = set(bad)
+    if not bad:
+        return us
+    us_meta_drop(umeta, us, bad)
+    xm = umeta.get("usExtraMissing")
+    if not isinstance(xm, dict):
+        xm = umeta["usExtraMissing"] = {}
+    fallback = "마지막 확인 종가 단계가 뺌 (usSrc.own)"           # 리뷰 B 잔 지적: 까닭이 빈 글이 되지 않게
+    for t in sorted(bad):
+        if t in EXTRA_US:
+            w = why.get(t) if isinstance(why, dict) else why
+            xm[t] = w if isinstance(w, str) and w.strip() else fallback
+    return [r for r in us if r.get("t") not in bad]
+
+
+def us_own_from_sync(own):
+    """usSrc.own.from (실은 행 · 같은 날 다시 쓴 행마다 야후가 준 것) 을 남은 codes · same 에 맞춰요."""
+    keep = set(own.get("codes") or []) | set(own.get("same") or [])
+    if isinstance(own.get("from"), dict):
+        own["from"] = {t: w for t, w in sorted(own["from"].items()) if t in keep}
+
+
+def us_carry_splits(recent, prev):
+    """{티커: {분할 날짜 ISO}} — 오늘 시세 다운로드의 분할(umeta splits · [[티커, 날짜, 배율]]) · 지난 발행본의 data.json splits · 고정 표
+    (SPLIT_OVERRIDES 의 배율 있는 줄). 발행할 splits 는 이 셋으로 만들어요 (splits_fields). (순수 함수)"""
+    out = collections.defaultdict(set)
+    pr = (prev or {}).get("splits") if isinstance(prev, dict) else None
+    for x in list(recent or []) + list(pr if isinstance(pr, list) else []):
+        if isinstance(x, (list, tuple)) and len(x) >= 2 and isinstance(x[0], str) and isinstance(x[1], str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", x[1]):
+            out[x[0]].add(x[1])
+    for (t, d), (r, _why) in SPLIT_OVERRIDES.items():
+        if r is not None:
+            out[t].add(d)
+    return out
+
+
+def us_own_close_final(us, umeta, prev, days):
+    """미국 목록이 정해진 바로 뒤 · 다른 단계보다 먼저 (Jack 의 규칙 — 우리 처리의 한 줄이 틀리면 그 줄을 빼고 크게 남기고 나머지는 발행해요): 기록
+    (umeta usSrc.own)을 남은 행에 맞추고 (우선주 · 한국 종목의 미국 상장분 · 주식 종류 티커로 뺀 행), 관문과 같은 함수(validate_data.us_own_close_bad)로
+    마지막 확인 종가 · 같은 날 다시 쓴 종가를 다시 보고, 맞지 않는 행은 빼요. days: 미국 거래일 YYYY-MM-DD 들. 반환: 남은 미국 종목 목록.
+    분할은 단계(us_own_close_carry · split_dates)가 이미 보고 (예전 길로), 발행할 splits 가 정해진 뒤 us_own_split_late 가 한 번 더 봐요."""
+    src = umeta.get("usSrc") if isinstance(umeta.get("usSrc"), dict) else None
+    own = (src or {}).get("own") if isinstance((src or {}).get("own"), dict) else None
+    if own is None:
+        return us
+    have = {r.get("t") for r in us}
+    own["codes"] = sorted(r["t"] for r in us if r.get("pxc"))
+    own["n"] = len(own["codes"])
+    own["same"] = sorted(t for t in own.get("same") or [] if t in have)
+    own["newer"] = [x for x in own.get("newer") or [] if isinstance(x, dict) and x.get("t") in set(own["codes"])]
+    us_own_from_sync(own)
+    if not own["codes"] and not own["same"]:
+        log("· 마지막 확인 종가 점검 (미국 · 관문과 같은 함수): 0종목 빼고 발행")
+        return us
+    bad = us_own_close_bad({"usPxDate": umeta.get("usPxDate"), "usSrc": src, "stocks": us}, prev, days)
+    gone = collections.defaultdict(list)
+    for t, w in bad:
+        gone[t].append(w)
+    rows = [f"{t} ({' · '.join(US_OWN_WHY.get(w, w) for w in ws)})" for t, ws in sorted(gone.items())]
+    log(f"{'  !! ' if gone else '· '}마지막 확인 종가 점검 (미국 · 관문과 같은 함수): {len(gone):,}종목 빼고 발행" + (" — " + ", ".join(rows[:US_OWN_SHOW]) if rows else ""))
+    if not gone:
+        return us
+    own["codes"] = [c for c in own["codes"] if c not in gone]
+    own["n"] = len(own["codes"])
+    own["same"] = [c for c in own["same"] if c not in gone]
+    own["newer"] = [x for x in own["newer"] if x.get("t") not in gone]
+    us_own_from_sync(own)
+    own["bad"] = {"n": len(gone), "rows": rows[:US_OWN_SHOW], "why": dict(sorted(collections.Counter(w for ws in gone.values() for w in set(ws)).items()))}
+    return us_own_drop_rows(us, umeta, gone, {t: "마지막 확인 종가 점검(관문과 같은 함수)이 거름: " + " · ".join(US_OWN_WHY.get(w, w) for w in ws)
+                                              + " (usSrc.own.bad)" for t, ws in gone.items()})
+
+
+def us_own_split_late(us, umeta, sp_fields, prev):
+    """리뷰 (2026-11-20, 3): 발행할 splits(splits_fields 뒤 · 시드 · 2016년부터 다시 읽은 이력 포함)에 마지막 확인 종가(pxc) 날짜 뒤의 분할이 있는 행 —
+    단계가 보지 못한 분할 (예: 오늘 다운로드에 그 종목이 없어 이력에서만 읽힘). 예전 그대로 해요 (2차 확인): 오늘 다운로드에 그 종목의 자기 날짜 봉이
+    있었으면 (umeta _usOwnYahoo) 그 행으로 되돌리고 (가격 · 날짜 · 시계열 숫자는 그 봉 · pxc 없음 · PER · PBR · 시가총액 · 배당수익률 · 거래대금은 그
+    가격에 맞춰요), 없었으면 빼요 (잠시 뺀 종목에 적지 않아요 · 그 종목의 새 분할 줄(지난 발행본 · 고정 표에 없는 줄)도 splits 에서 빼요 — 목록에 없는
+    종목의 새 줄은 관문 실패 · umeta 정리와 EXTRA_US 까닭은 us_own_drop_rows). usSrc.own.split 에 late 로 적고 크게 남겨요. 반환: (미국 목록, splits 칸)."""
+    rows = (sp_fields or {}).get("splits")
+    if not isinstance(rows, list):
+        return us, sp_fields
+    sd = collections.defaultdict(set)
+    for x in rows:
+        if isinstance(x, (list, tuple)) and len(x) >= 2 and isinstance(x[0], str) and isinstance(x[1], str):
+            sd[x[0]].add(x[1])
+    hit = [r for r in us if r.get("pxc") and any(d > str(r.get("pxd")) for d in sd.get(r.get("t"), ()))]
+    if not hit:
+        return us, sp_fields
+    stash = umeta.get("_usOwnYahoo") if isinstance(umeta.get("_usOwnYahoo"), dict) else {}
+    cut = []
+    back = {r["t"]: us_own_restore(r, stash[r["t"]], cut) for r in hit if isinstance(stash.get(r["t"]), dict)}
+    back = {t: x for t, x in back.items() if x is not None}
+    bad = {r["t"] for r in hit} - set(back)
+    pmap = {(x[0], x[1]) for x in ((prev or {}).get("splits") or []) if isinstance(x, (list, tuple)) and len(x) >= 2}
+    sp_fields = {**sp_fields, "splits": [x for x in rows if not (x[0] in bad and (x[0], x[1]) not in pmap and (x[0], x[1]) not in SPLIT_OVERRIDES)]}
+    us = [back.get(r.get("t"), r) for r in us]
+    kept = us_own_drop_rows(us, umeta, bad, {r["t"]: f"마지막 확인 종가({r.get('pxd')}) 뒤에 주식 분할이 있어 뺌 (usSrc.own.split)" for r in hit})
+    bad = bad | set(back)                     # 기록에서는 둘 다 마지막 확인 종가가 아니에요
+    own = ((umeta.get("usSrc") or {}).get("own")) if isinstance(umeta.get("usSrc"), dict) else None
+    recs = [{"t": r["t"], "pxd": r.get("pxd"), "after": sorted(d for d in sd[r["t"]] if d > str(r.get("pxd"))), "late": True} for r in hit]
+    if isinstance(own, dict):
+        own["codes"] = [c for c in own.get("codes") or [] if c not in bad]
+        own["n"] = len(own["codes"])
+        own["newer"] = [x for x in own.get("newer") or [] if isinstance(x, dict) and x.get("t") not in bad]
+        own["split"] = sorted([x for x in own.get("split") or [] if isinstance(x, dict) and x.get("t") not in bad] + recs, key=lambda x: str(x.get("t")))
+        us_own_from_sync(own)
+        dr = dict(own.get("drop") or {}) if isinstance(own.get("drop"), dict) else {}      # 2차 확인 잔 지적: 기록의 수가 맞게
+        dr["split"] = int(dr.get("split") or 0) + len(hit)
+        own["drop"] = dict(sorted(dr.items()))
+        own["dropEx"] = (list(own.get("dropEx") or []) + [f"{x['t']} ({US_OWN_DROP_KO['split']} · 발행할 splits 에서 찾음)" for x in recs])[:US_OWN_SHOW]
+    log(f"  !! 발행할 분할 목록에 마지막 확인 종가 뒤의 분할이 있어 싣지 않은 미국 종목 {len(hit):,} (단계가 보지 못한 분할 · 시드나 다시 읽은 이력 · "
+        f"usSrc.own.split late) — 예전 그대로 야후의 자기 날짜 봉 {len(back):,} · 봉이 없어 뺌 {len(hit) - len(back):,}: "
+        + ", ".join(f"{x['t']} ({x['pxd']} 뒤 {', '.join(x['after'])}" + (" → 야후 봉" if x["t"] in back else " → 뺌") + ")" for x in recs[:US_OWN_SHOW]))
+    if cut:
+        log(f"  !! 예전 길로 되돌린 미국 종목의 PER · PBR · 배당수익률 중 그 가격에 맞추자 범위(apply_us_info 와 같아요)를 벗어나 비운 칸 {len(cut):,}: "
+            + ", ".join(cut[:US_OWN_SHOW]))
+    return kept, sp_fields
+
+
+def us_own_restore(row, y, cut=None):
+    """마지막 확인 종가 행(row · 상세 정보까지 붙은 것)을 예전 길의 행으로: 야후의 자기 날짜 봉 기록(y · fetch_us 의 시세 기록)의 가격 · 날짜 · 시계열
+    숫자를 쓰고 pxc 를 빼요. 그 가격에 맞추는 상세 숫자(PER · PBR · 시가총액 · 배당수익률 · 거래대금)는 가격 비율로 다시 맞춰요 (apply_us_info 와 같은
+    자리수 · 같은 범위: PER 0~500 · PBR 0~100 · 0.005 미만 PBR 은 빈 칸 · 배당수익률 0~30% — 벗어나면 그 칸을 비우고 cut 에 '티커 칸' 을 적어요).
+    쓸 수 없으면 None. (순수 함수)"""
+    yp, cp = _fin(y.get("price")), _fin(row.get("price"))
+    if not (yp and yp > 0 and cp and cp > 0 and isinstance(y.get("pxd"), str)):
+        return None
+    k = yp / cp
+    out = {key: v for key, v in row.items() if key not in ("pxc",) and key not in US_OWN_KEYS}
+    out.update({key: y[key] for key in US_OWN_KEYS if key in y and y[key] is not None})
+    out["pxd"] = y["pxd"]
+    out.pop("d1", None)
+    cut = [] if cut is None else cut
+    t = str(out.get("t"))
+    pb = _fin(out.get("pbr"))
+    if pb is not None and 0 < pb * k < US_PBR_MIN:      # apply_us_info (us_info_cuts) 처럼: 0.00 으로 반올림되는 PBR 은 빈 칸 · 표시
+        out.pop("pbr", None)
+        if not out.get("fcur"):
+            out["pbrZero"] = True
+        cut.append(f"{t} pbr")
+    for key, lo, hi in (("per", 0, 500), ("pbr", 0, 100)):          # apply_us_info 처럼: 범위는 반올림 전 값으로 (리뷰 · 머지 확인 2)
+        v = _fin(out.get(key))
+        if v is not None and not (lo < v * k < hi):
+            out.pop(key, None)
+            cut.append(f"{t} {key}")
+    v = _fin(out.get("dy"))
+    if v is not None and not (0 <= v / k < 30):
+        out.pop("dy", None)
+        cut.append(f"{t} dy")
+    for key, nd in (("per", 1), ("pbr", 2), ("cap", 3), ("val", 1)):
+        if _fin(out.get(key)) is not None:
+            out[key] = round(out[key] * k, nd)
+    if _fin(out.get("dy")) is not None:
+        out["dy"] = round(out["dy"] / k, 2)
+    return out
+
+
+def us_own_close_drop_all(us, umeta, err):
+    """미국 마지막 확인 종가 점검(us_own_close_final)이 오류로 멈췄을 때: pxc 행 · 같은 날 다시 쓴 행을 모두 빼고 크게 남기고 usSrc.own 에 err · 뺀 수를
+    적어요 (관문이 경고해요). 반환: 남은 미국 종목 목록."""
+    src = umeta.get("usSrc") if isinstance(umeta.get("usSrc"), dict) else {}
+    own = src.get("own") if isinstance(src.get("own"), dict) else us_own_close_err(err)
+    gone = {r.get("t") for r in us if r.get("pxc")} | set(own.get("same") or [])
+    log(f"  !! 마지막 확인 종가 점검(미국)이 오류로 멈췄어요 ({err}) — 마지막 확인 종가 · 같은 날 다시 쓴 {len(gone):,}종목을 모두 빼고 발행을 이어가요 (usSrc.own.err)")
+    own.update({"codes": [], "n": 0, "same": [], "from": {}, "newer": [], "err": str(err)[:300], "bad": {"n": len(gone), "rows": sorted(gone)[:US_OWN_SHOW]}})
+    src["own"] = own
+    umeta["usSrc"] = src
+    return us_own_drop_rows(us, umeta, gone, f"마지막 확인 종가 점검이 오류로 멈춰 뺌 ({str(err)[:80]} · usSrc.own.err)")
+
+
+# ────────────────────────────────────────────────────────────
+# 2026-11-22: 새로 들어온 미국 종목은 미국 기준일 종가가 확인된 날부터 (Jack)
+# ────────────────────────────────────────────────────────────
+# Jack (2026-11-22, verbatim): "2. No relaxation. Instead, a stock newly added to the S&P (or NASDAQ) list joins our list only once it
+#  has a confirmed close; until then it isn't added. Nobody can hold it in the app before it joins, so nothing is lost, and the check
+#  stays as it is."
+# 왜: 지난 발행본에 없는 종목은 마지막 확인 종가(#165)가 없어서 예전처럼 야후의 더 오래된 봉을 자기 날짜(pxd)로 실었어요. 관문의 '미국 d1 채움' 줄은
+# 그런 종목이 US_NO_CLOSE_MAX(5)를 넘으면 실패해요 — 야후가 통째로 빈 날에 S&P 목록이 6종목 넘게 바뀌면 그 줄 하나가 국내 데이터까지 발행 전체를
+# 멈췄을 거예요 (2026-11-21 시험 실행 44849045557 · 야후 10:00~10:40 KST 빈 시간: 796종목 실음 · 지난 발행본에 없던 LGND · MKTX · SNDK · VRNS 4종목이
+# 그 줄의 빠짐).
+# 규칙: 오늘 미국 목록(fetch_us 가 야후에 묻는 티커 — S&P 500 · 나스닥 상위 400 · EXTRA_US, 그 ETF 까지) 중 지난 발행본의 미국 종목 행(cls us ·
+# 펀드 아님)에도 잠시 뺀 기록(usSrc.own.aged)에도 없는 티커가 미국 기준일(usPxDate) 종가가 야후에 없으면 (fetch_us nocl 'bar': 그 종목의 시계열은
+# 있는데 기준일 봉이 없거나 빈 값 · 0 · 음수 · 무한) 오늘은 넣지 않아요: 그 행을 빼고 크게 남기고 data.json usSrc.newWait 에 적고, 빠진 까닭
+# (US_NEW_WAIT_WHY)을 손으로 더한 종목(usExtraMissing) · 주식 종류 티커 · S&P 500 중 빠진 종목(usListSym) 기록에 적어요 (손으로 더한 종목 줄은 경고).
+# 종가가 확인되는 첫 실행에 다른 종목처럼 들어와요. 앱에서는 들어오기 전에 아무도 가질 수 없었으니 잃는 것이 없어요.
+# - 야후가 가격을 하나도 주지 않은 새 티커(empty · err)와 이력 60일 미만 종목은 예전에도 넣지 않았어요 (그대로 · 까닭도 그대로 — usListSym.noPx 가
+#   그 글로 골라요).
+# - 지난 발행본이 없거나 읽을 수 없으면 (첫 실행) 무엇이 새로 들어왔는지 알 수 없어 예전 그대로예요 (크게 남겨요 · newWait 없음).
+# - 국내 상장 펀드 · 채권 ETF · 금 (KR_FUNDS · BOND_ETFS · 금현물)은 고정 목록이고 fetch_us 를 지나지 않아 이 규칙 밖이에요.
+# - 관문은 그대로예요 ('미국 d1 채움' N = 5 · 손으로 더한 종목 줄 · 주식 종류 티커 줄 · 미국 종목 수 두 줄).
+US_NEW_WAIT_WHY = "새로 들어온 종목 · 확인된 종가를 기다려요 (지난 발행본에 없고 미국 기준일 종가가 야후에 없음 · usSrc.newWait)"
+
+
+def us_new_wait(prev, nocl, out=()):
+    """새로 들어온 미국 종목 중 미국 기준일 종가를 기다릴 티커 (2026-11-22 · Jack · 순수 함수).
+    prev: 지난 발행본 data.json · nocl: fetch_us 의 {티커: 'bar' · 'empty' · 'err'} (미국 기준일 종가가 야후에 없는 종목) · out: 오늘 미국 기록 (로그용).
+    반환 {"wait": 기다릴 티커 (정렬) — nocl 이 'bar' 이고 지난 발행본의 미국 종목 행(cls us · 펀드 아님)에도 usSrc.own.aged 에도 없는 티커,
+          "joined": 지난 발행본이 모르던 티커 중 미국 기준일 종가가 있어 오늘 들어가는 티커 (정렬 · 로그만 · 지난 발행본의 usLeftOut 에 있던 티커는 빼요:
+                    우선주 · 한국 종목 상장분처럼 날마다 뒤에서 빠지는 티커가 날마다 '새로 들어옴' 으로 적히지 않게),
+          "off": None 또는 지난 발행본을 쓸 수 없는 까닭 (그러면 wait · joined 는 비어요 — 예전 그대로)}."""
+    if not isinstance(prev, dict):
+        return {"wait": [], "joined": [], "off": "지난 발행본이 없거나 읽지 못했어요 (첫 실행?)"}
+    rows = prev.get("stocks")
+    have = {str(x["t"]) for x in rows if isinstance(x, dict) and x.get("cls") == "us" and not x.get("fund") and x.get("t")} \
+        if isinstance(rows, list) else set()
+    if not have:
+        return {"wait": [], "joined": [], "off": "지난 발행본에 미국 종목 행이 없어요"}
+    src = prev.get("usSrc")
+    own = src.get("own") if isinstance(src, dict) else None
+    aged = own.get("aged") if isinstance(own, dict) else None
+    known = have | ({str(a["t"]) for a in aged if isinstance(a, dict) and a.get("t")} if isinstance(aged, list) else set())
+    lo = prev.get("usLeftOut") if isinstance(prev.get("usLeftOut"), dict) else {}
+    left = {str(t) for k in ("preferred", "krListing", "badBar") if isinstance(lo.get(k), list) for t in lo[k]}
+    nocl = nocl if isinstance(nocl, dict) else {}
+    wait = sorted(str(t) for t, w in nocl.items() if w == "bar" and str(t) not in known)
+    joined = sorted({str(r["t"]) for r in out if isinstance(r, dict) and r.get("t") and str(r["t"]) not in known and r["t"] not in nocl
+                     and str(r["t"]) not in left})
+    return {"wait": wait, "joined": joined, "off": None}
+
+
+def us_new_wait_step(prev, nocl, out, why, us_px_date):
+    """fetch_us 안에서 마지막 확인 종가 단계 바로 앞 (2026-11-22 · Jack): 새로 들어온 종목 중 미국 기준일 종가가 야후에 없는 티커(us_new_wait)의
+    행을 out 에서 빼고 nocl 에서도 빼요 — 마지막 확인 종가 단계 · 분할 칸 읽기 · 상세 정보 · 분할 목록 · 발행 파일 어디에도 가지 않게. why (fetch_us
+    의 extra_why: usExtraMissing · usListSym 의 빠진 까닭)에 US_NEW_WAIT_WHY 를 적어요. 반환: data.json usSrc.newWait (티커 · 정렬 · 없으면 []).
+    이 단계의 어떤 오류도 발행을 멈추지 않아요: 크게 남기고 예전 그대로예요 (가리다 멈추면 out · nocl · why 를 건드리지 않아요)."""
+    usd = us_px_date.isoformat() if isinstance(us_px_date, dt.date) else str(us_px_date)
+    try:
+        r = us_new_wait(prev, nocl, out)
+    except Exception as e:
+        log(f"  !! 새로 들어온 미국 종목을 가리다 오류로 멈췄어요 ({type(e).__name__}: {str(e)[:160]}) — 예전 그대로예요 (미국 기준일 {usd} 종가가 "
+            "없는 새 종목은 야후의 마지막 봉 날짜로 · usSrc.newWait 없음)")
+        return []
+    if r["off"]:
+        nb = sum(1 for w in nocl.values() if w == "bar")
+        log(f"{'  !! ' if nb else '· '}{r['off']} — 새로 들어온 미국 종목을 가릴 수 없어 예전 그대로예요 (미국 기준일 {usd} 종가가 없는 "
+            f"{nb:,}종목은 야후의 마지막 봉 날짜로 · usSrc.newWait 없음)")
+        return []
+    wait, joined = r["wait"], r["joined"]
+    jtxt = (f"{len(joined):,}" + (": " + ", ".join(joined[:US_OWN_SHOW]) + (f" 외 {len(joined) - US_OWN_SHOW}종목" if len(joined) > US_OWN_SHOW else "")
+                                  if joined else ""))
+    if not wait:
+        log(f"· 새로 들어온 미국 종목 (지난 발행본에 없던 티커): 미국 기준일 {usd} 종가가 있어 오늘 들어감 {jtxt} · 종가를 기다림 0")
+        return []
+    ws = set(wait)
+    n0 = len(out)
+    out[:] = [x for x in out if x.get("t") not in ws]
+    for t in wait:
+        nocl.pop(t, None)
+        why[t] = US_NEW_WAIT_WHY
+    log(f"  !! 새로 들어온 미국 종목 {len(wait):,} (지난 발행본에 없고 미국 기준일 {usd} 종가가 야후에 없음): " + ", ".join(wait[:US_OWN_SHOW])
+        + (f" 외 {len(wait) - US_OWN_SHOW}종목" if len(wait) > US_OWN_SHOW else "")
+        + " — 오늘은 넣지 않아요 · 미국 기준일 종가가 확인되면 넣어요 (usSrc.newWait · 관문 '미국 d1 채움' 은 그대로)")
+    if n0 - len(out) != len(wait):           # 'bar' 종목은 늘 행이 있어요 — 아니면 fetch_us 가 바뀐 거예요 (크게 남겨요 · 기다리는 종목은 그래도 빠져요)
+        log(f"  !! 새로 들어온 미국 종목 {len(wait):,} 중 뺀 행이 {n0 - len(out):,}개예요 (종목마다 한 행이어야 해요 — fetch_us 의 nocl · 행을 확인해 주세요)")
+    log(f"· 새로 들어온 미국 종목 중 미국 기준일 {usd} 종가가 있어 오늘 들어감 {jtxt}")
+    return wait
 
 
 REF_LINK = ("ok", "new", "unknown", "break")   # KRX 기준가 연결 상태 — 뒤로 갈수록 나빠요 (모을 때 가장 나쁜 것)
@@ -2354,8 +3795,96 @@ def kr_d1_base_day(cur_df, prev, want_prev):
     return d1, (None if why else {c for c, w in st.items() if w == "ok"}), rec
 
 
+# 2026-11-21 (#161 리뷰 M2): 같은 기준일을 다시 도는 실행의 d1. 사고 모양 (리뷰 재현): 06:40 에 기준일 D 를 2차 출처(다음 × 야후)로 발행했고, 그 뒤
+# 자원봉사 캐시에 D 최종본이 생겼는데 D−1 파일은 아직 장중 값이에요 → 다음 실행은 1차 출처 날 · 같은 기준일 D 이고 직전 거래일 파일을 쓸 수 없어
+# kr_d1_base_day 를 불러요. 그런데 지난 발행본은 그날 아침의 D 발행본이라 (pxDate D · 직전 거래일이 아님) 모든 d1 이 빈 칸 → '필수 종목 d1' 실패 →
+# 13:37 · 14:47 · 바깥 타이머 실행마다 빨간 실행이었어요 (3시간 쉼은 2차 출처 날의 다시 도는 실행만 봐요).
+# 이제: 지난 발행본의 기준일이 이 실행과 같으면 그 발행본의 d1 (같은 D−1 기준 · 이미 확인돼 관문을 통과한 값) 을, 오늘 공식 종가가 그 발행본의 가격과
+# 원 단위까지 같은 종목만 그대로 써요 (그 행에 pxd · noTrade 가 없을 때만 · kr_prev_pub_closes 와 같은 규칙). 가격이 다르거나 · 지난 발행본에 없거나 ·
+# 지난 발행본도 d1 이 빈 칸이면 빈 칸 (d1Why prev · 지난 발행본이 ±30% 밖(range)이었으면 range) — 까닭마다 수와 예를 로그와 d1Base 에 (same: 1).
+# 지난 발행본의 기준일이 이 실행보다 앞이면 (#163 의 길) 예전 그대로예요.
+# #161 리뷰 3차 A-S1: 오늘 목록 파일에 KRX 기준가 (Close − Changes) 가 있으면, 다시 쓰는 d1 이 그 기준가로 본 등락률 (오늘 공식 종가 ÷ 기준가 − 1 ·
+# 소수 둘째 자리) 과 0.01 안일 때만 다시 써요. 다르면 (아침의 기준이 두 출처의 직전 거래일 종가였는데 KRX 가 기준가를 새로 정한 날 — 권리락 · 분할 등)
+# 빈 칸 (d1Why prev · 까닭 krx · 로그와 d1Base 에 수와 예).
+D1_SAME_KRX_TOL = 0.01
+D1_SAME_KO = {"diff": "오늘 공식 종가가 앞선 발행본의 가격과 다름", "noPub": "앞선 발행본에 없음",
+              "notConf": "앞선 발행본 값이 그날 확인된 종가가 아님 (거래 없음 · 자기 가격 날짜)", "noD1": "앞선 발행본도 d1 빈 칸",
+              "krx": "앞선 발행본의 d1 이 오늘 파일의 KRX 기준가로 본 등락률과 다름"}
+
+
+def kr_d1_same_day(cur_df, prev, px_date, want_prev, max_abs=D1_MAX_KR, tol=KR_FB_CLOSE_TOL):
+    """같은 기준일 지난 발행본의 d1 다시 쓰기 (2026-11-21 · #161 리뷰 M2 · 순수 함수 · fetch_korea 가 kr_d1_base_day 의 까닭이 'day' 일 때만 불러요).
+    지난 발행본(prev)의 pxDate 가 이 실행의 기준일(px_date)이 아니거나 그 발행본을 쓸 수 없으면 (kr_prev_pub_closes 의 까닭) None — 부르는 쪽은
+    kr_d1_base_day 의 결과(모두 빈 칸 · 그 까닭)를 그대로 써요. 반환: (d1 {코드: %}, base_ok {코드} — d1 이 있거나 지난 발행본이 range 였던 종목
+    (kr_d1_split 이 빈 d1 을 range 로) · data.json d1Base (same 1 · from 그 발행본의 publishedAt · noD1 수))."""
+    closes, skip, why = kr_prev_pub_closes(prev, px_date)
+    if why:
+        return None
+    rows = {str(x["t"]).strip(): x for x in prev["stocks"]
+            if isinstance(x, dict) and x.get("cls") == "kr" and not x.get("fund") and x.get("t") and str(x["t"]).strip() in closes}
+    d1, base_ok, st, ex = {}, set(), {}, collections.defaultdict(list)
+    for _, r in cur_df.iterrows():
+        code = str(r["Code"]).strip()
+        c = kr_official_close(r)
+        if not c:
+            continue
+        p = closes.get(code)
+        if code in skip:
+            w = "notConf"
+        elif p is None:
+            w = "noPub"
+        elif abs(c - p) > tol:
+            w = "diff"
+        else:
+            v = _fin(rows[code].get("d1"))
+            cl, ch = _fin(r.get("Close")), _fin(r.get("Changes"))
+            base = None if cl is None or ch is None or cl - ch <= 0 else cl - ch
+            kv = round((c / base - 1) * 100, 2) if base else None       # 오늘 파일의 KRX 기준가로 본 등락률 (없으면 맞춰 보지 않아요)
+            in_range = v is not None and abs(v) <= max_abs + D1_LIMIT_EPS
+            if in_range and kv is not None and abs(kv - v) > D1_SAME_KRX_TOL + 1e-9:
+                w = "krx"
+            elif in_range:
+                w = "ok"
+                d1[code] = v
+                base_ok.add(code)
+            elif v is not None or rows[code].get("d1Why") == "range":
+                if kv is not None and abs(kv) <= max_abs + D1_LIMIT_EPS:
+                    w = "krx"                                # 아침은 ±30% 밖인데 KRX 기준가로는 안 — 기준이 달라요
+                else:
+                    w = "ok"                                 # 지난 발행본도 ±30% 밖 — 같은 기준 · 빈 칸의 까닭은 range
+                    base_ok.add(code)
+            else:
+                w = "noD1"
+        st[code] = w
+        if w == "krx":
+            ex[w].append((code, _fin(rows[code].get("d1")), kv))
+        elif w != "ok":
+            ex[w].append((code, p, c))
+    names = dict(zip(cur_df["Code"].astype(str).str.strip(), cur_df["Name"].astype(str))) if "Name" in cur_df.columns else {}
+    rec = d1_base_record(want_prev, prev, None, st, {k: v for k, v in ex.items() if k not in ("noD1", "krx")}, names)
+    rec["same"] = 1
+    rec["from"] = str(prev.get("publishedAt") or "")
+    rec["noD1"] = sum(1 for w in st.values() if w == "noD1")
+    rec["krx"] = sum(1 for w in st.values() if w == "krx")
+    if ex.get("noD1"):                                       # (다름의 예는 앞선 발행본 가격 → 오늘 공식 종가 · d1_base_record 와 같은 모양)
+        rec["ex"]["noD1"] = [f"{c} {names.get(c, '')}".strip() for c, _, _ in sorted(ex["noD1"])[:D1_BASE_EX]]
+    if ex.get("krx"):                                        # 앞선 발행본 d1 → KRX 기준가로 본 등락률 (%)
+        rec["ex"]["krx"] = [f"{c} {names.get(c, '')}".strip() + (f" {a:+.2f}%→{b:+.2f}%" if a is not None and b is not None else "")
+                            for c, a, b in sorted(ex["krx"], key=lambda e: e[0])[:D1_BASE_EX]]
+    return d1, base_ok, rec
+
+
 def d1_base_note(rec):
     """d1Base 한 줄 (2026-11-21 · 순수 함수 · 로그). 반환 (크게 남길지, 글) — 직전 거래일 최종본이 없는 날이라 늘 크게 (!!)."""
+    if rec.get("same"):                     # #161 리뷰 M2: 같은 기준일 지난 발행본의 d1 (kr_d1_same_day)
+        txt = (f"d1: 직전 거래일 {rec.get('day')} 최종본이 없고 지난 발행본이 같은 기준일 {rec.get('pub')} ({rec.get('from') or '?'}) 이라, 오늘 공식 종가가 "
+               f"그 발행본의 가격과 원 단위까지 같은 종목은 그 발행본의 d1 을 그대로 써요 (같은 직전 거래일 기준 · 이미 확인된 값): {rec['ok']:,} / {rec['n']:,}"
+               f" · 가격이 다름 {rec['diff']:,} · 앞선 발행본에 없음 {rec['noPub']:,} · 그날 확인된 종가가 아님 {rec['notConf']:,} · 앞선 발행본도 d1 빈 칸 "
+               f"{rec.get('noD1', 0):,} · KRX 기준가로 본 등락률과 다름 {rec.get('krx', 0):,} (나머지는 d1 빈 칸 · d1Why prev)")
+        for k in ("diff", "noPub", "notConf", "noD1", "krx"):
+            if (rec.get("ex") or {}).get(k):
+                txt += f" — {D1_SAME_KO[k]}: {', '.join(rec['ex'][k])}{' …' if rec.get(k, 0) > len(rec['ex'][k]) else ''}"
+        return True, txt
     if rec.get("why"):
         return True, (f"d1: 직전 거래일 {rec.get('day')} 최종본이 없고 {D1_BASE_PUB_KO.get(rec['why'], rec['why'])} (지난 발행본 pxDate "
                       f"{rec.get('pub')}) — KRX 기준가를 확인할 두 번째 출처가 없어 d1 을 비워요 {rec.get('n', 0):,}종목")
@@ -2867,17 +4396,62 @@ def sample_universe(listing, n):
     return listing[listing["Code"].isin(top | keep)].copy()
 
 
-def select_kr_universe(listing, max_n):
+def select_kr_universe(listing, max_n, keep=()):
     """시가총액 큰 순으로 max_n 개. 꼭 있어야 할 종목이 빠지면 예외. (순수 함수)
-    시가총액이 비면 정렬이 안 돼 가나다순이 남아요(2026-10 사고). 그래서 결과를 꼭 확인합니다."""
+    시가총액이 비면 정렬이 안 돼 가나다순이 남아요(2026-10 사고). 그래서 결과를 꼭 확인합니다.
+    keep (2026-11-21 · #161 리뷰 M1): 상위 max_n 밖이어도 목록에 있으면 처리하는 코드 (같은 기준일 2차 출처 발행본의 국내 종목 · kr_same_day_keep).
+    상위 max_n 뒤에 시가총액 순으로 붙여요 (결과도 시가총액 순). 비면 예전 그대로."""
     listing = listing.copy()
     for c in ("Marcap", "Amount"):
         listing[c] = pd.to_numeric(listing[c], errors="coerce")
-    listing = listing.sort_values("Marcap", ascending=False, na_position="last").head(max_n)
+    listing = listing.sort_values("Marcap", ascending=False, na_position="last")
+    keep = {str(c).strip() for c in keep or ()}
+    if keep:
+        rest = listing.iloc[max_n:]
+        listing = pd.concat([listing.head(max_n), rest[rest["Code"].astype(str).str.strip().isin(keep)]])
+    else:
+        listing = listing.head(max_n)
     missing = [c for c in MUST_KR if c not in set(listing["Code"])]
     if missing:
         raise RuntimeError(f"!! 꼭 있어야 할 종목이 목록에 없어요: {', '.join(missing)} — 발행하지 않고 중단합니다")
     return listing
+
+
+def kr_same_day_keep(prev, px_date):
+    """같은 기준일을 다시 도는 실행이 상위 MAX_KR 밖이어도 처리할 국내 종목 (2026-11-21 · #161 리뷰 M1 · 순수 함수).
+    지난 발행본이 2차 출처 날 (pxSrc.px daum+yahoo) 이고 한국 기준일(pxDate)이 이 실행과 같으면, 그 발행본의 국내 종목 코드 모두 (그 날짜 종가 ·
+    마지막 확인 종가(pxd) · 펀드 빼고). 아니면 빈 set — 그날의 첫 실행 (06:40 · 지난 발행본은 전날) 과 1차 출처 발행본 뒤의 실행은 예전 그대로예요.
+    왜: 2차 출처 날 확인된 종목이 MAX_KR 보다 많으면 (11-20: 2,740) 상위 MAX_KR 로 잘라요. 아침에 마지막 확인 종가로 실은 종목 X 가 나중에 확인되면 X 가
+    상위 MAX_KR 에 들어와 아침에 그 날짜 종가로 실은 종목 Y 를 밀어내요 — Y 는 확인됐으니 다시 쓰기(kr_same_day_reuse) · 마지막 확인 종가에도 들지 않아
+    빠지고, 같은 날 다시 발행 판단(tools/publish_hold.py)이 '종목을 잃음' 으로 막아요 (X 가 상위 밖이면 X 가 빠져요). 그래서 같은 날의 실행은 지난 발행본의
+    종목 중 오늘 목록에 있는 (2차 출처 날이면 확인된 · 1차 출처 날이면 KRX 최종본에 있는) 종목을 모두 처리해요. 확인 못 한 종목은 예전처럼 다시 쓰기 ·
+    마지막 확인 종가 단계가 그날 전체 목록에서 골라요 (이 자르기와 상관없어요). 다음 새 기준일은 다시 상위 MAX_KR 이에요."""
+    if not isinstance(prev, dict) or px_date is None:
+        return set()
+    src = prev.get("pxSrc") if isinstance(prev.get("pxSrc"), dict) else {}
+    day = px_date.isoformat() if isinstance(px_date, dt.date) else str(px_date)
+    if src.get("px") != PX_SRC_FB or prev.get("pxDate") != day:
+        return set()
+    return {str(x["t"]).strip() for x in prev.get("stocks") or []
+            if isinstance(x, dict) and x.get("cls") == "kr" and not x.get("fund") and x.get("t")}
+
+
+def kr_same_day_keep_note(keep, listing, max_n, n_all):
+    """kr_same_day_keep 로 상위 max_n 밖에서 더 처리한 종목 한 줄 (#161 리뷰 M1 · 순수 함수). keep 이 비면 None.
+    반환 (크게 남길지, 글) — 더한 종목이 있으면 크게 (!! · 이름과 함께)."""
+    if not keep:
+        return None
+    codes = listing["Code"].astype(str).str.strip().tolist()
+    extra = codes[max_n:]
+    have = set(codes)
+    nm = dict(zip(codes, listing["Name"].astype(str))) if "Name" in listing.columns else {}
+    gone = len(keep - have)
+    ex = [f"{c} {nm.get(c, '')}".strip() for c in extra[:12]]
+    txt = (f"같은 기준일을 다시 도는 실행: 지난 발행본의 국내 종목 {len(keep):,} 중 오늘 목록에 있는 {len(keep & have):,}종목은 시가총액 상위 {max_n:,} 밖이어도 "
+           f"처리해요 → 상위 밖에서 더한 종목 {len(extra):,} · 처리하는 종목 {len(codes):,} (오늘 목록 {n_all:,}) — 지난 발행본의 종목을 잃지 않게 (#161)"
+           + (f": {', '.join(ex)}{' …' if len(extra) > len(ex) else ''}" if extra else "")
+           + (f" · 오늘 목록에 없는 {gone:,}종목은 다시 쓰기 · 마지막 확인 종가 단계가 봐요" if gone else ""))
+    return bool(extra), txt
 
 
 def load_kr_listing(today):
@@ -3095,6 +4669,8 @@ class DartClient:
         self.net_streak = 0          # 연달아 난 네트워크 예외 수 (서버가 답하면 0)
         self.down = None             # DART 에 닿지 않아 조회를 멈췄으면 그때의 예외 이름
         self.skipped_down = 0        # 멈춘 뒤 건너뛴 조회 수
+        self.no_call = None          # 2026-11-21 (#161 리뷰): 같은 날 다시 도는 실행 — DART 를 부르지 않아요 (까닭 글 · 보관본 값만)
+        self.blocked = 0             # 그래서 부르지 않은 조회 수
         self.entries, self.meta = {}, {}
         self.carried = 0                     # v19.1f: 옛 버전 캐시에서 옮긴 업종 코드 항목 수 (adopt_carry)
         self.remove_after_save = []          # v19.1f: 새 캐시를 처음 저장한 뒤에 지울 옛 캐시 파일 (그 전에 멈추면 다시 실행이 또 옮겨 써요)
@@ -3164,6 +4740,10 @@ class DartClient:
         """HTTP 응답, 또는 못 받으면 None (get · get_zip 이 같이 써요). 키는 params 에만 넣고 어디에도 남기지 않아요.
         v17.5.2: 네트워크 예외가 DART_DOWN_AFTER 번 연달아 나면 그 뒤로는 바로 None (보관본을 써요 · 로그와 summary 에 크게 남아요)."""
         if self.fatal:
+            return None
+        if self.no_call:             # 2026-11-21 (#161 리뷰): 같은 날 다시 도는 실행은 DART 를 부르지 않아요 (하루 한도 · 보관본 값만)
+            with self.lock:
+                self.blocked += 1
             return None
         if self.down:
             with self.lock:
@@ -3257,13 +4837,13 @@ class DartClient:
             # 찾은 보고서도 90일이 지나면 다시 확인 (정정공시). 실행당 300건까지, 실제로 쓰는 항목만.
             # DART 가 멈췄으면(self.down) 재확인하지 않아요: 칸만 쓰고 '재확인 N건'으로 잘못 세지 않게
             reval = bool(e and e["st"] == "000" and self.mode != "full" and self._stale(e) and self.revalidate_left > 0
-                         and not self.down and not self.fatal)
+                         and not self.down and not self.fatal and not self.no_call)    # #161 리뷰: 부르지 않는 실행은 재확인을 세지 않아요
             if reval:
                 self.revalidate_left -= 1
                 self.revalidated += 1
             rd_tag = None
             if redos and not reval and e and e["st"] == "000" and self.mode != "full" and self.redo_left > 0 \
-                    and not self.down and not self.fatal:
+                    and not self.down and not self.fatal and not self.no_call:
                 rd_tag = next((t for t, f in redos if redo_due(e, (t, f), self.today)), None)
             rd = rd_tag is not None
             if rd:
@@ -3345,6 +4925,8 @@ class DartClient:
         if self.down:
             extra += (f" · !! DART 연결 안 됨: 연속 {DART_DOWN_AFTER}회 실패({self.down}) → 이번 실행에서 DART 조회를 멈췄어요"
                       f" (건너뛴 조회 {self.skipped_down:,}회 · 보관본 값만 씀)")
+        if self.no_call:
+            extra += f" · !! {self.no_call} → DART 를 부르지 않았어요 (막은 조회 {self.blocked:,}회 · 보관본 값만 씀)"
         return f"호출 {sum(self.status.values()):,}회 (상태 {st or '없음'}) · 캐시 사용 {self.cache_hits:,}건{extra}"
 
     def raise_if_fatal(self):
@@ -5208,6 +6790,41 @@ def carry_prev_nps(fresh, prev_nps, bgn):
     return sorted(fresh + old, key=lambda r: r.get("d", ""), reverse=True), len(old)
 
 
+def disc_rows_sector_now(rows, info):
+    """2026-11-20 (리뷰 · 예전 뱁새 전력기기 회사 옮기기): 지난 실행에서 이어 온 공시 줄(내부자 · 국민연금)의 예전 뱁새 업종 키 s 를 오늘
+    종목의 값으로 맞춰요 — 새 줄과 같은 규칙 (그 종목의 s, 없으면 etc). 공시·수급 탭이 업종을 줄의 s 로 세고 거르니 (src/disc.jsx), 그대로
+    두면 한 회사가 90일 동안 두 업종에 나뉘어 보여요. 오늘 데이터에 없는 종목의 줄은 그대로 둬요 (알 수 없어요).
+    오늘 업종이 etc(오늘 업종 글자가 비었을 수 있어요)인데 줄에 진짜 업종이 있으면 그 업종을 둬요 — '오늘 모름' 은 '이제 기타' 가 아니에요
+    (리뷰 2026-11-20 · 로그에 '!!' 와 수). 줄을 그 자리에서 바꿔요.
+    반환: (바꾼 Counter {(전 키, 오늘 키): 줄 수}, 둔 Counter {줄의 업종 키: 줄 수} — 오늘 etc 라 두었어요). (순수 함수 — 줄만 바꿔요)"""
+    ch, kept = collections.Counter(), collections.Counter()
+    for r in rows:
+        st = info.get(r.get("t"))
+        if not st:
+            continue
+        now = st.get("s") or "etc"
+        old = r.get("s")
+        if old == now:
+            continue
+        if now == "etc" and old not in (None, "", "etc"):
+            kept[old] += 1
+            continue
+        ch[(old, now)] += 1
+        r["s"] = now
+    return ch, kept
+
+
+def disc_sector_lines(kind, ch, kept):
+    """로그 줄: 업종 키를 오늘 값으로 바꾼 지난 공시 줄 수와 많이 바뀐 짝 (앞 8개) · 오늘 업종이 기타라 그대로 둔 줄이 있으면 '!!' 한 줄."""
+    n = sum(ch.values())
+    top = " · ".join(f"{a or '없음'}→{b} {k:,}" for (a, b), k in ch.most_common(8))
+    out = [f"· {kind} 지난 줄 {n:,}건의 업종 키를 오늘 종목 값으로 바꿈" + (f" ({top}{' …' if len(ch) > 8 else ''})" if n else "")]
+    if kept:
+        out.append(f"  !! {kind} 지난 줄 {sum(kept.values()):,}건은 오늘 업종이 기타(etc)라 원래 업종 키를 그대로 둬요 (오늘 업종 글자가 빈 종목 · "
+                   + " · ".join(f"{k} {v:,}" for k, v in kept.most_common(8)) + ")")
+    return out
+
+
 def fetch_disclosures(kr_stocks, cmap, end, client):
     """최근 90일 내부자 거래 + 국민연금 대량보유 변동. 기존 disc.json에 증분 병합.
     실패는 조용히 넘기지 않고 상태 코드를 로그로 남깁니다.
@@ -5290,6 +6907,8 @@ def fetch_disclosures(kr_stocks, cmap, end, client):
         dedup.append(r)
     if refreshed:
         log(f"· 내부자 거래 {refreshed:,}건의 비어 있던 시가총액을 오늘 값으로 채움")
+    for line in disc_sector_lines("내부자 거래", *disc_rows_sector_now(dedup, info)):    # 이어 온 줄의 업종 키 = 오늘 값 (새 줄은 이미 오늘 값)
+        log(line)
     # v19.6b (Part B.1): 직위의 '-' 는 빈 칸 · 역할(role) 임원 | 주요주주 | null. 지난 실행이 넣은 줄도 오늘 다시 받은 회사면 같은 응답에서 고쳐요
     fx = insider_fix_roles(dedup, fresh)
     if not INSIDER_POS_HOLDER_WORDS:
@@ -5335,6 +6954,8 @@ def fetch_disclosures(kr_stocks, cmap, end, client):
         why = "공시 목록을 받지 못해" if not list_ok else "DART 연결이 끊겨"
         log(f"  !! {why} 지난 발행본의 {carried + n_ins:,}건을 그대로 둬요 "
             f"(최근 공시 {f'{last[:4]}-{last[4:6]}-{last[6:8]}' if last else '없음'}) · 국민연금 {carried:,} · 내부자 {n_ins:,}")
+    for line in disc_sector_lines("국민연금", *disc_rows_sector_now(nps, info)):           # 지난 발행본에서 이어 온 줄 (carry_prev_nps)
+        log(line)
     log(f"· 국민연금(majorstock): 상태 {dict(nps_stat)} · 채택 {len(nps):,}건 · 내부자 누적 {len(dedup):,}건"
         + (" · 상한 도달, 다음 실행이 이어받음" if len(targets) >= DISC_CALL_CAP else ""))
     client.raise_if_fatal()
@@ -6301,6 +7922,8 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None, pref_caps=Non
             "bor": _b.get("bor") if _b.get("bor") is not None else fin.get("bor"),
             "cash": _b.get("cash") if _b.get("cash") is not None else fin.get("cash"),
         }
+        if s.get("pxd") is not None:
+            row["pxd"] = s["pxd"]                          # 2026-11-19 (Jack): 마지막 확인 종가의 날짜 (예전 뱁새 기업분석이 그 날짜와 Jack 의 줄을 보여요)
         if fin.get("bq"):
             row["bq"] = fin["bq"]
         if fin.get("unitFix") and not s.get("unitChk"):
@@ -6375,9 +7998,13 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None, pref_caps=Non
         op0 = eff["op0"]
         ebitda = (op0 + eff["dep"]) if (op0 is not None and eff["dep"] is not None) else None
         pref_gap = COMPANY_CAP_WITH_PREF and not is_preferred(s["t"]) and s["t"][:5] in pref_missing
-        if pref_gap and s.get("cap") and fin:
-            row["evNo"] = "prefPx"                  # 회사 시가총액에 더할 우선주 종가를 두 출처로 확인하지 못했어요 (2차 출처 날)
-            ev_blank.append(f"{s['t']} {s.get('nk', '')}")
+        # 2026-11-19 (Jack): 마지막 확인 종가(pxd)로 실은 보통주에 오늘 종가의 상장 우선주가 있으면 회사 시가총액이 두 날짜를 섞어요 → 같은 자리에서 비워요
+        own_gap = (COMPANY_CAP_WITH_PREF and not is_preferred(s["t"]) and s.get("pxd") is not None and not pref_gap
+                   and (pref_cap[s["t"][:5]] or 0) > 0)
+        if (pref_gap or own_gap) and s.get("cap") and fin:
+            row["evNo"] = "ownPx" if own_gap else "prefPx"   # 회사 시가총액에 더할 우선주 종가를 두 출처로 확인하지 못했어요 (2차 출처 날) · ownPx: 날짜가 달라요
+            ev_blank.append(f"{s['t']} {s.get('nk', '')}" + (" (마지막 확인 종가라 오늘 우선주 종가와 날짜가 달라요 · ownPx)" if own_gap else ""))
+        pref_gap = pref_gap or own_gap
         if s.get("cap") and fin and not pref_gap:
             co_cap = s["cap"] + (pref_cap[s["t"][:5]] if COMPANY_CAP_WITH_PREF and not is_preferred(s["t"]) else 0.0)   # 조원
             # v19.1f (리뷰 2026-11-08): EBITDA·매출은 연결 100% 라 EV 에 비지배지분(자본총계 − 지배주주 자본)도 더해요. 같은 시점의
@@ -6447,7 +8074,8 @@ def build_corp(kr_stocks, fin_map, as_of, market=None, extra=None, pref_caps=Non
         f"{sum(1 for c in comps if 'icr' in (c.get('fl') or {})):,}곳 (그중 영업손실 "
         f"{sum(1 for c in comps if (c.get('fl') or {}).get('icr', 1) < 0):,})")
     if ev_blank:
-        log(f"  !! 상장 우선주의 종가를 두 출처로 확인하지 못해 회사 시가총액을 알 수 없는 회사 {len(ev_blank)}곳 — EV · P/CF 를 비웠어요 (evNo prefPx): "
+        log(f"  !! 상장 우선주의 종가를 두 출처로 확인하지 못했거나 (prefPx) 보통주를 마지막 확인 종가로 실어 (ownPx) 회사 시가총액을 알 수 없는 회사 "
+            f"{len(ev_blank)}곳 — EV · P/CF 를 비웠어요: "
             + ", ".join(ev_blank[:15]) + (" …" if len(ev_blank) > 15 else ""))
     n_pc = sum(1 for c in comps if not is_preferred(c["t"]) and pref_cap.get(c["t"][:5]))
     log(f"· EV 회사 시가총액: 상장 우선주를 더한 회사 {n_pc:,}곳 ({'켬' if COMPANY_CAP_WITH_PREF else '끔'} · COMPANY_CAP_WITH_PREF · "
@@ -6572,10 +8200,17 @@ def fetch_korea(start, today, rf, prev=None):
     # 2026-11-20 (리뷰 M1): 코넥스 기준일 맞춰 보기 — 1차 출처 최종본(px0)의 코넥스 공식 종가. 네이버의 px0 종가가 이 값과 같은 코넥스만 확인해요
     # (px0 뒤 권리락 · 분할 · 병합으로 야후와 네이버가 함께 수정한 값을 그날 공식 종가로 내지 않게 · kr_knx_confirm)
     knx0 = kr_knx_anchor(listing, px_date)
+    # 2026-11-21 (#161): 같은 날 다시 도는 실행은 발행본이 이미 두 출처로 확인한 종목을 다시 묻지 않아요 (보관본의 그 값으로 · kr_fb_cache_pick)
+    fb_cached, fb_keep = None, {}
+    if ended:
+        fb_cached, why = kr_fb_cache_pick(kr_fb_cache_load(), prev, max(ended))
+        log(f"{'  !! ' if fb_cached else '· '}2차 출처 보관본: {why}")
     px_date, listing, fb_known, px_src, fb_logs, (full_list, daum_shr) = kr_second_source(
         px_date, listing, ended, dt.datetime.now(KST), special,
         lambda d: kr_fb_universe(d, _fetch_listing_csv, fallback=listing), names=names0,
-        fallback=lambda *a: kr_fallback_days(*a, caps=caps0, knx=kr_knx_fetchers(), anchor=knx0))   # 2026-11-20: 코넥스는 야후 .KQ × 네이버 (Jack, 11-19 답 5)
+        fallback=lambda *a: kr_fallback_days(*a, caps=caps0, knx=kr_knx_fetchers(), anchor=knx0, cached=fb_cached, keep=fb_keep))   # 2026-11-20: 코넥스는 야후 .KQ × 네이버 (Jack, 11-19 답 5)
+    if px_src["px"] == PX_SRC_FB and fb_keep.get("kk"):
+        kr_fb_cache_save(fb_keep)
     if ended:
         log(f"  !! 1차 출처(캐시 최종본 {px0}) 뒤에 이미 끝난 거래일 {len(ended)}일: {', '.join(d.isoformat() for d in ended)} — 2차 출처(다음 × 야후 종가 · "
             "코넥스는 야후 .KQ × 네이버 종가)로 확인해요")
@@ -6598,6 +8233,9 @@ def fetch_korea(start, today, rf, prev=None):
         if c not in listing.columns:
             listing[c] = np.nan
     listing["Name"] = listing["Name"].fillna(listing["Code"])
+    # 2026-11-19 (Jack): 두 출처로 확인된 종목 코드 (상위 MAX_KR 로 자르기 전) — 아래 마지막 확인 종가 단계(kr_own_close_step)가 그날 전체 목록에서
+    # 확인 못 한 종목을 골라요. 이름이 겹치지 않게 따로 둬요 (2026-11-19 시험 실행: 아래 우선주 단계의 'unconf' 목록이 덮어써 멈췄어요)
+    kr_own_conf_codes = set(listing["Code"].astype(str).str.strip()) if px_src["px"] == PX_SRC_FB else set()
     # 2026-11-19 (리뷰 B1): 2차 출처 날은 확인된 종목만 목록에 있어요. 우선주 주식 수는 가격과 상관없으니 그날 전체 목록에서 (확인 못 한 우선주도 ·
     # 다음 상장주식수와 맞춰 봐요) — EPS · BPS 주식 수와 상장 안 된 우선주 판단이 빠지지 않게. 우선주 시가총액은 확인된 종가로만 (kr_pref_caps(listing)),
     # 확인 못 한 우선주가 있는 회사는 회사 시가총액을 몰라 EV · P/CF 를 비워요 (build_corp · evNo prefPx).
@@ -6641,7 +8279,12 @@ def fetch_korea(start, today, rf, prev=None):
         except Exception as e:
             log(f"  !! 업종 정보 {src} 실패: {e}")
     n_all = len(listing)
-    listing = select_kr_universe(listing, MAX_KR)
+    # 2026-11-21 (#161 리뷰 M1): 같은 기준일을 다시 도는 실행은 지난 발행본의 국내 종목을 상위 MAX_KR 밖이어도 처리해요 (잃지 않게 · kr_same_day_keep)
+    keep_same = kr_same_day_keep(prev, px_date)
+    listing = select_kr_universe(listing, MAX_KR, keep=keep_same)
+    kn = kr_same_day_keep_note(keep_same, listing, MAX_KR, n_all)
+    if kn:
+        log(f"  !! {kn[1]}" if kn[0] else f"· {kn[1]}")
     if sample_size():
         listing = sample_universe(listing, sample_size())
         log(f"  !! 표본 실행: 국내 {len(listing):,}종목만 처리해요")
@@ -6739,6 +8382,10 @@ def fetch_korea(start, today, rf, prev=None):
         # 2026-11-21: 직전 거래일 파일을 쓸 수 없는 날 — KRX 기준가 × 지난 발행본 종가 (두 출처가 원 단위까지 같은 종목만 · kr_d1_from_base)
         if not ok_prev and want_prev is not None:
             d1_map, base_ok, d1_base = kr_d1_base_day(listing, prev, want_prev)
+            # #161 리뷰 M2: 지난 발행본이 같은 기준일 (그날 아침 발행 · 직전 거래일이 아님) 이면 그 발행본의 d1 을 같은 종가인 종목만 (kr_d1_same_day)
+            same_d1 = kr_d1_same_day(listing, prev, px_date, want_prev) if d1_base.get("why") == "day" else None
+            if same_d1 is not None:
+                d1_map, base_ok, d1_base = same_d1
             loud, txt = d1_base_note(d1_base)
             log(f"  !! {txt}" if loud else f"· {txt}")
     # 2026-11-14 (Jack, design chat 2026-11-08): 기준일에 거래가 없던 종목은 d1 빈 칸 + noTrade · 다른 빈 d1 은 이유(d1Why)를 달아요
@@ -7004,6 +8651,15 @@ def fetch_korea(start, today, rf, prev=None):
     krs = kr_series_check(pin, pin_kept, kept_names, pin_bad, jumps, {r["t"] for r in out}, len(off_by_day),
                           ref=ref_sum)
     mark_px_bad(out, krs, win_cut)           # 2026-11-14 (Jack): 그 움직임이 계산 창에 든 숫자를 비워요 (점수 · corp.json 보다 먼저)
+    # 2026-11-19 (Jack): 확인 못 한 종목은 지난 발행본의 마지막 확인 종가로 (pxd · d1 없음) — 오늘 만든 종목 뒤에 더해요 (그 시세 숫자는 그 종가의
+    # 것이라 오늘 시계열 점검 · 비우기를 다시 하지 않아요 · 과거 주가 기록 오류 표시는 지난 움직임과 함께 krSeries 에 옮겨요). 재무 · 배당 · 점수는
+    # main 이 다른 종목처럼 그 가격으로 다시 만들어요
+    # 2026-11-20 (리뷰 S1): 지난 발행본이 DART 로 채운 업종 글자는 오늘 다시 채워요 (no_ind 에 더해요 · indSrc.none 도 그 수로)
+    if px_src["px"] == PX_SRC_FB:
+        kr_own_close_step(prev, full_list, kr_own_conf_codes, px_src, px_date, list(ks_all.index), out, krs, prod_map, desc=desc, no_ind=no_ind)
+        ind_src["none"] = len(no_ind)
+    elif px_date is not None:
+        log("· 국내 종가 미확인 0종목 (1차 출처 날 · 마지막 확인 종가로 싣는 종목 없음)")
     # 2026-11-14: 발행하는 종목의 빈 d1 이유 수 (data.json d1Blank · 관문이 종목마다의 noTrade · d1Why 와 맞춰 봐요) · cols: 거래 없음을 가릴 수 있었는지
     d1_blank = d1_blank_counts(out, not nt_unseen, nt_unseen, nt_odd, nt_must)
     log(f"{'  !! ' if d1_blank['prev'] or nt_unseen else '· '}발행하는 국내 종목의 d1 빈 칸: "
@@ -10839,7 +12495,7 @@ def prev_foreign_set(prev):
 
 def us_extra_missing(extra, kept, why):
     """EXTRA_US 중 오늘 발행 목록(kept)에 없는 종목 → {티커: 빠진 이유}. 이유를 적지 못한 종목은 그렇다고 적어요 (관문이 이름과 함께 경고 ·
-    기록 자체가 없으면 실패). (순수 함수)"""
+    기록 자체가 없으면 발행 때 경고 · 목록에도 기록에도 없는 종목은 경고, 5곳 넘으면 실패 — validate_data.check_us_extra). (순수 함수)"""
     return {t: why.get(t) or "발행 목록에 없음 (빠진 까닭을 파이프라인이 적지 못했어요 — 확인 필요)" for t in extra if t not in kept}
 
 
@@ -10973,12 +12629,13 @@ def log_us_fcur(sm):
             + ", ".join(f"{t}({c})" for t, c in q[:20]) + (f" 외 {len(q) - 20}곳" if len(q) > 20 else ""))
 
 
-def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None):
+def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, prev=None):
     """미국 주식 (yfinance). v17.5.2: 우선주·예탁증서와 한국 종목의 미국 상장분(kr_codes · dups)은 빼요 (clean_us_list). v17.5:
     · end 는 그날을 빼므로 오늘(KST)+1일까지 요청하고, 장이 안 끝난 봉은 버려요 (예전엔 하루 늦었어요).
     · 시가총액(cap)은 조원, 거래대금(val)은 억원 — 한국과 같은 단위 (그날 환율로 환산).
     · 상세 정보(이름·업종·설명)를 못 받은 종목 수를 남기고, 실패분은 한 번 더 천천히 시도해요.
-    prev_fgn (2026-11-14 Q5 리뷰 S2): 어제 발행한 data.json usForeign.set — S&P 500 목록을 쓸 수 없는 날 외국 회사 판별이 이어 써요."""
+    prev_fgn (2026-11-14 Q5 리뷰 S2): 어제 발행한 data.json usForeign.set — S&P 500 목록을 쓸 수 없는 날 외국 회사 판별이 이어 써요.
+    prev (2026-11-20 · Jack): 지난 발행본 data.json — 미국 기준일 종가가 야후에 없는 종목을 그 발행본의 마지막 확인 종가로 실어요 (us_own_close_step)."""
     import yfinance as yf
 
     list_names = UsListNames()
@@ -11006,13 +12663,17 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None):
                        auto_adjust=True, group_by="ticker", threads=True, actions=True)
 
     out, dropped, bad_bar = [], [], []
+    nocl = {}            # 2026-11-20 (Jack): 미국 기준일 종가가 야후에 없는 종목 → 까닭 (us_own_close_step 이 마지막 확인 종가로 실어요)
     asked = set(syms)
     extra_why = {t: "미국 요청 목록에 없음 (티커 모양)" for t in EXTRA_US if t not in asked}   # 2026-11-14: EXTRA_US 가 빠진 이유 (usExtraMissing)
     for sym in syms:
         try:
-            px = cut_at(_yf_close(data, sym), us_px_date)
+            # 2026-11-20: 끝에 붙은 무한 · 0 · 음수 봉은 종가가 없는 날로 봐요 (가격 0 인 행이 나가지 않게 · 그 종목은 마지막 확인 종가로)
+            px = us_px_tail_clean(cut_at(_yf_close(data, sym), us_px_date))
             if len(px) < 60:
                 extra_why[sym] = (f"가격 이력 {len(px)}일 (60일 미만이라 넣지 않아요)" if len(px) else US_NO_PX_WHY)
+                if not len(px):
+                    nocl[sym] = "empty"
                 continue
             ret = px.pct_change().dropna()
             ret.name = "r"
@@ -11031,15 +12692,51 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None):
                    "lo": round(float(px.tail(252).min()), 2), "hi": round(float(px.tail(252).max()), 2)}
             rec.update(perf_stats(px, rf))
             out.append({k: v for k, v in rec.items() if v is not None})
+            if px.index[-1].date() != us_px_date:
+                nocl[sym] = "bar"
         except Exception as e:
             dropped.append(sym)
             extra_why[sym] = f"시세를 받지 못함 ({type(e).__name__})"
+            nocl[sym] = "err"
     for sym in bad_bar:
         extra_why[sym] = f"미국 기준일 {us_px_date} 봉 앞의 봉이 깨짐 (0 · 무한)"
     if dropped:
         log(f"  !! 시세를 받지 못해 빠진 미국 종목 {len(dropped)}개: {', '.join(dropped[:8])}{'…' if len(dropped) > 8 else ''}")
     if bad_bar:
         log(f"  !! 기준일 {us_px_date} 봉은 있는데 그 전 봉이 깨져(0·무한) 뺀 미국 종목 {len(bad_bar)}개: {', '.join(bad_bar)}")
+    # 2026-11-20 (Jack): 야후 종가가 없는 종목 → 지난 발행본의 마지막 확인 종가로 (상세 정보를 붙이기 전에 — 시가총액 · PER 이 그 가격으로 맞춰져요).
+    # 가격을 하나도 받지 못한 티커는 지난 발행본에 있었거나 잠시 뺀 종목일 때만 봐요 (야후가 모르는 티커는 예전처럼 빠져요 · 로그가 시끄럽지 않게)
+    try:
+        pus = {str(x.get("t")) for x in (prev or {}).get("stocks") or [] if isinstance(x, dict) and x.get("cls") == "us"}
+        paged = {str(a.get("t")) for a in ((((prev or {}).get("usSrc") or {}).get("own") or {}).get("aged") or []) if isinstance(a, dict)}
+    except Exception as e:
+        pus, paged = set(), set()
+        log(f"  !! 지난 발행본의 미국 종목 · 잠시 뺀 종목을 읽지 못했어요 ({type(e).__name__}) — 가격을 하나도 받지 못한 티커는 마지막 확인 종가로 보지 않아요 "
+            "(기준일 봉만 빠진 종목은 그대로 봐요)")
+    nocl = {t: w for t, w in nocl.items() if w == "bar" or t in pus or t in paged}
+    # 2026-11-22 (Jack): 지난 발행본에 없던(새로 들어온) 종목은 미국 기준일 종가가 확인된 날부터 — 종가가 없으면 그 행을 빼고 usSrc.newWait 에 적어요
+    # (마지막 확인 종가가 없어 예전이면 야후의 더 오래된 봉을 자기 날짜로 실었어요 · 아래 분할 칸 읽기 · 마지막 확인 종가 단계 · 상세 정보에도 가지 않아요)
+    new_wait = us_new_wait_step(prev, nocl, out, extra_why, us_px_date)
+    # 리뷰 (2026-11-20, 분할): 그 종목들의 분할 날짜 — 오늘 다운로드의 분할 칸 · 지난 발행본의 splits · 고정 표. 마지막 확인 종가 뒤에 분할이 있으면
+    # 싣지 않아요 (예전 그대로: 야후의 자기 날짜 봉 · 분할을 반영한 야후 시계열)
+    # 2차 확인 (2): 읽다가 멈추면 종목마다 다시 읽고, 그래도 읽지 못한 종목은 분할을 모르니 싣지 않아요 (예전 그대로: 야후의 자기 날짜 봉 · 없으면 빠짐)
+    nsp, sp_unread = [], set()
+    try:
+        nsp = us_splits(data, sorted(nocl), today)[0] if nocl else []
+    except Exception as e:
+        for t in sorted(nocl):
+            try:
+                nsp += us_splits(data, [t], today)[0]
+            except Exception:
+                sp_unread.add(t)
+        log(f"  !! 야후 종가가 없는 미국 종목의 분할 칸을 한꺼번에 읽지 못했어요 ({type(e).__name__}) — 종목마다 다시 읽음 · 그래도 읽지 못한 "
+            f"{len(sp_unread):,}종목은 마지막 확인 종가로 싣지 않아요 (예전 그대로 · usSrc.own.split unread)" + (f": {', '.join(sorted(sp_unread)[:30])}" if sp_unread else ""))
+    ybar0 = {r["t"]: dict(r) for r in out if r.get("t") in nocl and r.get("pxd") is not None and r.get("d1") is None}
+    us_own = us_own_close_step(prev, nocl, out, us_px_date, list(spx.index), etfs=US_ETFS, split_dates=us_carry_splits(nsp, prev),
+                               split_unread=frozenset(sp_unread))
+    us_own_yahoo = {t: ybar0[t] for t in us_own.get("codes") or [] if t in ybar0}   # 발행할 splits 로 다시 볼 때 예전 길로 되돌릴 야후의 자기 날짜 봉
+    for a in us_own.get("aged") or []:      # EXTRA_US · 주식 종류 티커 줄이 빠진 까닭을 적어요
+        extra_why[a["t"]] = f"마지막 확인 종가({a.get('pxd')}) 뒤 미국 거래일 {US_OWN_CLOSE_MAX_DAYS}일이 지나 잠시 뺌 (usSrc.own.aged)"
 
     # 상세 정보(이름·업종·설명·기초 지표)는 자주 바뀌지 않아요. 3일 안에 받은 것은 다시 쓰고,
     # 오늘 못 받으면 14일 안의 보관본을 (크게 알리고) 써요. 그보다 오래되면 비워 두고 검증이 잡아요.
@@ -11057,11 +12754,33 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None):
             return False
         if not (info.get("shortName") or info.get("longName")):
             return False
+        anchor, no_anchor = rec.get("price"), False
+        if rec.get("pxc"):
+            # 리뷰 (2026-11-20): 마지막 확인 종가(pxc) 종목의 상세 정보 — 야후의 PER · PBR · 시가총액 · 배당수익률은 야후의 지금 시세 가격 기준이에요.
+            # 그 가격을 기준 가격(px)으로 적어야 apply_us_info 가 실은 종가에 맞춰요 (그 종가를 적으면 배율이 1 이라 시세 가격 기준 숫자가 그대로 나가요)
+            q = next((v for v in (_fin(info.get("currentPrice")), _fin(info.get("regularMarketPrice"))) if v is not None and v > 0), None)
+            cp = _fin(rec.get("price"))
+            if q is not None and cp and abs(q / cp - 1) > US_QUOTE_FAR:   # 리뷰 (2026-11-20, 4): 실은 종가와 너무 다른 시세 가격은 쓰지 않아요
+                pxc_info["far"].append(rec["t"])
+                q = None
+            if q is not None:
+                anchor = q
+                pxc_info["quote"].append(rec["t"])
+            else:
+                a0 = age(rec["t"])
+                if a0 is not None and a0 <= US_INFO_MAX_AGE_DAYS and not (cache.get(rec["t"]) or {}).get("pxBad"):
+                    pxc_info["kept"].append(rec["t"])
+                    return True                                       # 14일 안의 보관본 그대로 (그날 종가에 맞춘 값)
+                no_anchor = True
+                pxc_info["blank"].append(rec["t"])
         new = {k: info.get(k) for k in US_INFO_KEYS if info.get(k) is not None}
         merged, kept, kage = us_info_merge(new, cache.get(rec["t"]), today)   # #114 리뷰: 시세만 담은 응답이 통화 · 업종 · 설명을 지우지 않게
         if kept:
             sticky[rec["t"]] = (kept, kage)
-        entry = {"at": tday, "px": rec.get("price"), "k": US_INFO_SCHEMA, "info": merged}
+        entry = {"at": tday, "px": anchor, "k": US_INFO_SCHEMA, "info": merged}
+        if no_anchor:
+            entry["pxBad"] = True       # 기준 가격을 몰라요: 이 항목의 PER · PBR · 시가총액 · 배당수익률은 쓰지 않아요 (다음 실행에서 다시 물어봐요)
+            entry["due"] = True
         if us_info_partial(merged, kept, rec.get("etf") is True):
             entry["due"] = True                                       # #114 리뷰 2: 일부만 온 응답 — 다음 실행에서 다시 물어봐요
             partial.add(rec["t"])
@@ -11069,6 +12788,7 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None):
         return True
 
     sticky, partial = {}, set()
+    pxc_info = {"quote": [], "kept": [], "blank": [], "far": []}
     need = [r for r in out if us_info_due(cache.get(r["t"]), today)]
     # 2026-11-14 (Q5): 본사 나라(country)가 없는 S&P 500 밖 회사 항목도 오늘 다시 받아요 (외국 회사 판별 · 모양 표시는 그대로라 그 회사들만)
     # 2026-11-14 (리뷰 S2): S&P 500 목록은 오늘 가격을 받은 종목과 US_SP500_MIN 곳 넘게 겹칠 때만 믿어요 (목록 칸 이름이 바뀌어 티커 대신 다른
@@ -11103,17 +12823,48 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None):
         failed = [r for r, k in zip(failed, okr) if not k]
     failed_t = {r["t"] for r in failed}
     reused, fallback, missing, oldest = 0, 0, [], 0
+    px_blank = []
     for rec in out:
         a = age(rec["t"])
         if a is None or a > US_INFO_MAX_AGE_DAYS or not apply_us_info(rec, cache[rec["t"]]["info"], cache[rec["t"]].get("px"), fx_last, today=today):
             missing.append(rec["t"])
             continue
+        if cache[rec["t"]].get("pxBad"):     # 리뷰 (2026-11-20): 기준 가격을 모르는 항목 — 가격에 맞출 수 없는 네 숫자는 비워요 (틀린 숫자 대신)
+            for k in US_PX_ANCHORED:
+                rec.pop(k, None)
+            px_blank.append(rec["t"])
         if rec["t"] in failed_t:
             fallback += 1
             oldest = max(oldest, a)
         elif a > 0:
             reused += 1
     save_us_info(cache)
+    # 리뷰 (2026-11-20, 잔 지적): 마지막 확인 종가 종목마다 한 가지로 세요 (더하면 그 종목 수)
+    pcs = [r["t"] for r in out if r.get("pxc")]
+    cat = collections.Counter()
+    blank_pc = []
+    for t in pcs:
+        if t in missing:
+            cat["none"] += 1
+        elif t in px_blank:
+            cat["blank"] += 1
+            blank_pc.append(t)
+        elif t in pxc_info["quote"]:
+            cat["quote"] += 1
+        elif t in pxc_info["kept"]:
+            cat["kept"] += 1
+        else:
+            cat["cache"] += 1
+    if pcs:
+        log(f"{'  !! ' if blank_pc or pxc_info['far'] else '· '}마지막 확인 종가 종목 {len(pcs):,}개의 상세 정보: 오늘 받아 야후 시세 가격에 맞춤 "
+            f"{cat['quote']:,} · 3일 안에 받은 보관본 (또는 오늘 받지 못해 보관본) {cat['cache']:,} · 시세 가격이 없거나 실은 종가와 "
+            f"{US_QUOTE_FAR:.0%} 넘게 달라 {US_INFO_MAX_AGE_DAYS}일 안의 보관본 그대로 {cat['kept']:,} · 기준 가격을 몰라 PER · PBR · 시가총액 · "
+            f"배당수익률을 비움 {cat['blank']:,}" + (f" ({', '.join(blank_pc[:30])})" if blank_pc else "") + f" · 상세 정보 없음 {cat['none']:,}"
+            + (f" — 시세 가격이 {US_QUOTE_FAR:.0%} 넘게 달라 쓰지 않음 {len(pxc_info['far']):,} ({', '.join(pxc_info['far'][:30])})" if pxc_info["far"] else ""))
+    other_blank = [t for t in px_blank if t not in set(pcs)]
+    if other_blank:
+        log(f"  !! 기준 가격을 모르는 보관본이라 PER · PBR · 시가총액 · 배당수익률을 비운 미국 종목 (마지막 확인 종가가 아님 · 오늘 다시 받지 못함) "
+            f"{len(other_blank):,}: {', '.join(other_blank[:30])}")
     if sticky:
         fc_kept = sorted(t for t, (ks, _a) in sticky.items() if "financialCurrency" in ks)
         other = sorted(t for t, (ks, _a) in sticky.items() if any(k != "financialCurrency" for k in ks))
@@ -11221,6 +12972,10 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None):
             "usForeign": ufor,                              # 2026-11-14: 외국 회사 주당 숫자 검사 (확인한 종목 · 비운 칸과 이유)
             "usExtraMissing": xmiss,                        # 2026-11-14: EXTRA_US 중 오늘 없는 종목 → 이유 (관문)
             "usListSym": usym,                              # 2026-11-15: 출처 티커 → 야후 모양 · 바꾸지 못한 티커 · S&P 500 중 빠진 종목 (관문)
+            # 2026-11-20 (Jack): 야후 종가가 없어 마지막 확인 종가로 실은 종목 (관문 · 앱) · 2026-11-22 (Jack): newWait 새로 들어왔는데 미국
+            # 기준일 종가가 없어 오늘 넣지 않은 티커 (있을 때만 — 보통 날의 파일은 예전과 같아요)
+            "usSrc": {"v": 1, "own": us_own, **({"newWait": new_wait} if new_wait else {})},
+            "_usOwnYahoo": us_own_yahoo,                    # 2차 확인: 실은 종목의 야후 자기 날짜 봉 (us_own_split_late 만 써요 · 파일에 나가지 않아요)
             # v19.6a: None = 분할을 읽다 멈춤 · splitsNoCol = 분할 칸이 없던 종목 (둘 다 main 이 지난 발행본으로 이어요)
             "splits": splits, "splitsNoCol": list(sinfo.get("noCol") or [])}
     return out, bench, fx, fx_last, us_vol_krw, meta
@@ -11894,7 +13649,8 @@ def popular_list(kr, us, n_kr=100, n_us=20):
     def top(arr, n):
         ok = [x for x in arr if _fin(x.get("val")) is not None]
         return [x["t"] for x in sorted(ok, key=lambda x: -_fin(x["val"]))[:n]]
-    return top(kr, n_kr) + top(us, n_us)
+    # 2026-11-19 (Jack · 리뷰 S2): 마지막 확인 종가(pxd)로 실은 국내 종목의 거래대금은 그날 것이라 오늘의 거래대금 순위에 넣지 않아요 (미국은 예전 그대로)
+    return top([x for x in kr if x.get("pxd") is None], n_kr) + top(us, n_us)
 
 
 def read_prev_data(path=OUT):
@@ -11920,7 +13676,10 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                     "파일의 KRX 기준가(Close − Changes)가 그 종가와 원 단위까지 같은 종목만 · day 직전 거래일 · pub 지난 발행본 pxDate · why 지난 발행본을 "
                     "쓸 수 없던 까닭 (none 없음 · day pxDate 가 직전 거래일이 아님 · src 가격 출처가 공식 종가 목록이 아님 · 그러면 모두 빈 칸) · n 처리한 "
                     "종목 (발행 종목보다 많을 수 있어요) · ok 확인 · diff 기준가가 다름 · noPub 지난 발행본에 없음 · notConf 지난 발행본 값이 그날 확인된 "
-                    "종가가 아님 (거래 없음 · pxd) · noBase 오늘 파일에 기준가 없음 · ex 까닭마다 예"),
+                    "종가가 아님 (거래 없음 · pxd) · noBase 오늘 파일에 기준가 없음 · ex 까닭마다 예. same 1 (#161 리뷰 M2): 지난 발행본이 같은 기준일 "
+                    "(그날 앞선 발행) 이라 그 발행본의 d1 을 오늘 공식 종가가 그 가격과 원 단위까지 같은 종목만 그대로 쓴 날 — from 그 발행본의 "
+                    "publishedAt · diff 가격이 다름 · noD1 앞선 발행본도 d1 빈 칸 · krx 앞선 발행본의 d1 이 오늘 파일의 KRX 기준가 (Close − Changes) 로 본 "
+                    "등락률과 0.01 넘게 다름 (빈 칸) · noBase 0"),
          "ntD1": ("% · noTrade 종목의 기준가(공식 종가) 변화 (d1 을 계산했다면 나왔을 값 · ±30% 밖이거나 직전 파일이 없으면 칸 없음) — 거래가 없어 "
                   "등락률로 보이지 않고, 포트폴리오 평가 금액의 오늘 변화에만 써요 (코넥스는 거래 없이 값이 바뀔 수 있어요)"),
          "d1Blank": ("발행하는 한국 종목(목록 파일에서 온 cls kr)의 빈 d1 이유별 수 {noTrade · range · new · prev} (종목의 d1Why 와 같아요) · "
@@ -11958,9 +13717,20 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                    "단위까지 같은 종목만) {n 목록의 코넥스 · conf 확인 · kept 그날 파일에 넣은 수 (평소 날처럼 1차 출처 최종본 MAX_KR 번째 시가총액 이상만) · "
                    "capOut 확인됐지만 그 기준 아래라 뺀 수 · floor 그 기준 (원 · 기준을 모르면 빈 값) · noNaver · bad · noYahoo · diff · diffEx · left 빠진 코드 · yMeta · cut {s · yahoo · "
                    "fill · naver}}} · must 확인 못 한 필수 종목 (관문이 실패) · chk 1차 출처를 야후와 맞춘 "
-                   "필수 종목 + 표본 {n · same · none · diff} · n 발행한 한국 종목 수 (출처별) · knx 코넥스 종가 (2026-11-20) {px 출처 (listing · "
-                   "yahoo+naver · 그날 파일에 코넥스가 없는 2차 출처 날은 빈 값) · t 발행한 코넥스 코드 · n 출처별 수 · chk 1차 출처 날 네이버 확인 {src naver · n · same · none · noneEx · "
-                   "diff · fail · cut {s · naver} · err}}"),
+                   "필수 종목 + 표본 {n · same · none · diff} · n 발행한 한국 종목 중 pxDate 종가로 실은 수 (출처별 · pxd 종목 빼고) · "
+                   "knx 코넥스 종가 (2026-11-20) {px 출처 (listing · "
+                   "yahoo+naver · 그날 파일에 코넥스가 없는 2차 출처 날은 빈 값) · t 발행한 코넥스 코드 (pxd 종목 빼고) · n 출처별 수 · chk 1차 출처 날 네이버 확인 {src naver · n · same · none · noneEx · "
+                   "diff · fail · cut {s · naver} · err}} · "
+                   "own (2026-11-19 · 2차 출처 날만) 확인 못 한 종목을 지난 발행본의 마지막 확인 종가로 실은 기록 {v · max 나이 상한 (그 종가 뒤 거래일) · "
+                   "n 실은 수 · codes 실은 종목 코드 · unconf 확인 못 한 종목 수 (코넥스는 그날 야후 .KQ × 네이버로 확인하지 못한 종목만 · 2026-11-20) · "
+                   "unconfWhy 그 까닭별 수 {mkt 두 번째 출처 없음 (코넥스 단계를 묻지 않은 날의 코넥스) · conf 다음 × 야후로 확인 못 함 · knx 야후 .KQ × 네이버로 확인 못 한 "
+                   "코넥스 (= pxSrc.fb.knx.left 의 수 · 관문이 맞춰 봐요)} · drop 싣지 못한 까닭별 수 (none 지난 발행본에 없음 · same 같은 기준일 · "
+                   "old 나이 상한 넘음 · bad 값을 읽을 수 없음 · jump 과거 주가 기록 오류 기록 없음) · dropEx 예 · bad 파일을 쓰기 직전 관문과 같은 함수로 "
+                   "거른 종목 {n · rows · why 까닭(점검)별 수} · ind (2026-11-20 · 있을 때만) 지난 발행본이 DART 로 채웠거나 보통주를 따른 업종 글자를 옮기지 않은 종목 수 "
+                   "{refill 오늘 다시 채움 (indSrc.dartT · prefT 에 적혀요) · krx 오늘 KRX-DESC 글자로 · unread 설명을 읽지 못해 비움} · err 이 단계가 오류로 "
+                   "멈춘 까닭 (실은 종목 0) · aged (2026-11-20) 마지막 확인 종가가 나이 상한을 넘어 잠시 뺀 종목 [{t · nk · pxd 그 종가 날짜}] — 오늘도 "
+                   "확인 못 한 동안 실행마다 이어 적고, 다시 확인되거나 목록에서 사라지면 빼요 (앱은 그 종목 자리에 '며칠째 종가를 확인하지 못해서 이 "
+                   "종목은 잠시 빼 두었어요.')}"),
          "indSrc": ("한국 업종 글자의 출처 (2026-11-19): desc KRX-DESC 에서 업종을 받은 종목 · carried 받지 못해 지난 발행본에서 이어 쓴 종목 · "
                     "asOf 이어 쓴 글자의 날짜 · none 업종 없음 · newNone 그중 지난 발행본에도 없던 새 상장 · "
                     "dart none 중 DART 기업개황 업종 코드의 11차 소분류가 우리 업종 표(data/ksic_map_kr.csv)에 깔끔히 맞아 채운 보통주 수 · "
@@ -11991,7 +13761,9 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
          "etf": "true = ETF·펀드·금현물 (회사 주식이 아님)",
          "price": "한국 원 · 미국 달러 · 금현물 원/g", "pct": "% (vol·mdd·r1·r3·r36·mom·al·dy·roe 등)",
          "pxDate": "한국 가격의 공식 종가 날짜", "usPxDate": "미국 가격의 마지막 완성 봉 날짜",
-         "pxd": "미국 종목의 자기 가격 날짜 (그 종목의 마지막 봉이 usPxDate 가 아닐 때만 · 가격·d1 은 이 날짜 기준, d1 은 빈 칸)",
+         "pxd": ("그 종목의 자기 가격 날짜 · 미국: 그 종목의 마지막 봉이 usPxDate 가 아닐 때만 (2026-11-20: pxc 가 있으면 usPxDate 종가가 야후에 없어 "
+                 "지난 발행본의 마지막 확인 종가로 실은 종목 · usSrc.own · 그 종가 뒤 미국 거래일 5일까지) · 한국 (2026-11-19): 2차 출처 날에 두 출처로 확인하지 못해 "
+                 "지난 발행본의 마지막 확인 종가로 실은 종목 (pxSrc.own · 그 종가 뒤 거래일 5일까지) · 가격과 그 가격으로 만든 숫자는 이 날짜 기준, d1 은 빈 칸"),
          "ed": ("미국 종목의 다음 실적 발표일 (미국 현지 날짜 YYYY-MM-DD · 야후가 확정이라고 적은 날만 · 모르거나 추정이면 칸 없음 · 야후 상세 정보 "
                 "보관본은 며칠 묵고 발표가 끝난 지난 날짜일 수 있어 앱은 오늘 이후 날짜만 써요 · v19.6b)"),
          "xd": ("미국 종목의 배당락일 (미국 현지 날짜 YYYY-MM-DD · 야후 exDividendDate · 그 전날까지 산 주식이 그 배당을 받아요 · 지난 날짜일 수 "
@@ -12014,6 +13786,20 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                        "keep 비우지 않음 · own 비우고 새 줄) · kept = 스위치 keep 이라 비우지 않은 칸 [티커, 칸, 이유] · sp500 = {n S&P 500 목록 "
                        "크기, inList 오늘 미국 목록과 겹침, ok 믿었는지 (400곳 아래면 본사 나라 규칙을 쓰지 않은 날)}"),
          "usExtraMissing": "손으로 더한 미국 종목(EXTRA_US) 중 오늘 목록에 없는 티커 → 빠진 이유",
+         "usSrc": ("미국 종가의 출처 기록 (2026-11-20 · Jack: 야후 종가가 없는 미국 종목도 마지막 확인 종가로): own {v · max 나이 상한 (그 종가 뒤 미국 "
+                   "거래일) · n 실은 수 · codes 마지막 확인 종가(pxc)로 실은 티커 · same 지난 발행본이 같은 usPxDate 라 그날 종가와 d1 을 그대로 실은 티커 "
+                   "(pxd 없음) · from (머지 확인) codes · same 의 행마다 야후가 준 것 {티커: bar 시계열은 있고 기준일 봉만 없음 · empty 쓸 수 있는 가격이 "
+                   "하나도 없음 · err 받다가 오류} — 관문의 '미국 종목 수' 두 줄은 bar 만 세요 · newer (리뷰) 야후에 그 종목의 더 새 봉(기준일 앞 · 미국 거래일)이 있어 그 종가로 실은 [{t · pxd · px}] · split (리뷰) "
+                   "그 종가 뒤 분할이 있어 싣지 않은 종목 [{t · pxd · after 분할 날짜 · late 발행할 splits 에서 찾음}] (예전 그대로: 야후의 자기 날짜 봉 · "
+                   "없으면 빠짐) · unconf 미국 기준일 종가가 야후에 없는 종목 수 · why 그 까닭별 수 (bar 기준일 종가 없음 · 빈 값 · 0 · 음수 · empty 쓸 수 있는 "
+                   "가격이 하나도 없음 · err 받다가 오류) · drop 싣지 않은 까닭별 수 (none 지난 발행본에 없음 · halted 지난 발행본에서도 자기 날짜 — 둘 다 "
+                   "예전처럼 야후의 마지막 봉 · old 나이 상한 넘음 · bad 값을 읽을 수 없음) · dropEx 예 · bad 관문과 같은 함수로 거른 행 {n · rows · why} · "
+                   "aged 나이 상한을 넘어 잠시 뺀 종목 [{t · nk · pxd}] (앱은 '며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요.') · err 이 단계가 "
+                   "오류로 멈춘 까닭 (실은 종목 0)} · newWait (2026-11-22 · Jack) 지난 발행본의 미국 종목에도 aged 에도 없던(새로 들어온) 티커 중 미국 "
+                   "기준일 종가가 야후에 없어 오늘 넣지 않은 티커 (정렬 · 있을 때만 · 종가가 확인되는 날 들어와요 · 그래서 drop none 은 지난 발행본을 "
+                   "읽지 못한 날만)"),
+         "pxc": ("미국 · true = 미국 기준일 종가가 야후에 없어 지난 발행본의 마지막 확인 종가로 실은 종목 (2026-11-20 · usSrc.own.codes · pxd = 그 "
+                 "종가의 날짜 · d1 빈 칸 · 앱은 '오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요.' — pxc 없는 pxd 는 예전처럼 야후의 마지막 봉 날짜)"),
          "usListSym": ("미국 목록 출처의 티커를 야후 모양으로 바꾼 기록 (2026-11-15): mapped = [출처, 출처 티커, 야후 티커] (S&P 500 목록의 BRKB → "
                        "BRK-B · BFB → BF-B: FinanceDataReader 가 위키백과의 점을 지워요 · 점 · 빗금 · 띄어쓰기 꼴 → 대시) · unmapped = [출처, 출처 "
                        "티커, 이유] 바꾸지 못해 요청하지 않은 티커 · spGone = S&P 500 목록 종목 중 오늘 목록에 없는 티커 → 이유 (목록을 믿지 못한 "
@@ -12025,7 +13811,9 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                      "기록(divCheck.proofSub)과 맞지 않아 비운 숨긴 배당수익률의 줄 (dvLine 2 · 3 · 4 · 기록은 줄인데 표시가 없던 종목도 수에 들어가요 · "
                      "rows [열쇠, 이유]) · 두 검사의 관문은 n 이 기준을 넘거나 그런 값이 남으면 실패, 1 이상이면 경고 · indFill = 국내 업종 채운 값 중 "
                      "되돌린 행 (DART 로 채운 보통주 · 보통주를 따른 우선주 — validate_data.ind_fill_bad · rows '종목 이름: 이유') · usDates = 틀린 미국 ed · "
-                     "xd 를 비운 행 (v19.6b · validate_data.us_date_bad_rows · 그 칸만 비워요)"),
+                     "xd 를 비운 행 (v19.6b · validate_data.us_date_bad_rows · 그 칸만 비워요) · krOwn = 마지막 확인 종가(pxd)로 실었다가 관문과 같은 함수"
+                     "(validate_data.kr_own_close_bad)로 뺀 국내 종목 (2026-11-20 · rows [코드, 까닭] · pxSrc.own.bad 와 같은 수 · 관문은 한 점검에서 "
+                     "5개를 넘으면 실패, 있으면 경고)"),
          "fgnCut": ("미국 상장 외국 회사의 종목 칸: 회사 합계와 맞지 않아 비운 칸 {per · pbr · dy: mismatch 맞춰 봤는데 맞지 않음 · currency 재무제표 "
                     "통화를 확인하지 못함 · norecord 배당 기록 · 가격을 읽지 못한 배당수익률 · nocompare 회사 숫자로 PER · PBR 을 맞춰 볼 수 없음 (적자 · ROE 없음) · "
                     "nocompare-own 같은 뜻, 스위치 own 일 때 (지금 · 앱 줄 co.fgnNoCmp) · stopped 검사가 멈춘 날 맞춰 보지 않고 비움 (앱 줄 co.fgnStopped)} "
@@ -12058,6 +13846,32 @@ US_CLASS_DROP_NAME = "미국 주식 종류 티커 (S&P 500 의 점이 지워진 
 DIV_LINE_DROP_NAME = "숨긴 배당수익률의 줄 (dvLine 2 · 3 · 4 가 기록 proofSub 와 맞지 않음)"
 
 
+def us_meta_drop(umeta, us, bad):
+    """뺀 미국 행(bad: 티커들)의 것을 umeta (fetch_us 의 기록) 에서도 빼요 (#139 · 2026-11-20 리뷰 3 이 함께 써요): 오늘 시세 다운로드의 분할 줄
+    (splits · 목록에 없는 종목의 새 분할 줄은 관문 실패) · splitsNoCol · usInfoPartial · usFcurUnknown 의 티커 · usForeign 의 그 종목 기록 · usInfo 수.
+    us: 빼기 전 목록. umeta 를 고쳐요."""
+    row0 = lambda x: isinstance(x, (list, tuple)) and x and x[0] in bad      # noqa: E731 — [티커, …] 줄
+    if isinstance(umeta.get("splits"), list):
+        umeta["splits"] = [x for x in umeta["splits"] if not row0(x)]
+    for k in ("splitsNoCol", "usInfoPartial", "usFcurUnknown"):
+        if isinstance(umeta.get(k), list):
+            umeta[k] = [t for t in umeta[k] if t not in bad]
+    uf = umeta.get("usForeign")
+    if isinstance(uf, dict):                       # 리뷰 1차 S1: 뺀 종목의 외국 회사 기록 (관문이 종목의 fgnCut 과 맞춰 봐요)
+        for k in ("checked", "unknown"):
+            if isinstance(uf.get(k), list):
+                uf[k] = [t for t in uf[k] if t not in bad]
+        for k in ("cut", "kept"):
+            if isinstance(uf.get(k), list):
+                uf[k] = [x for x in uf[k] if not row0(x)]
+        for k in ("kind", "set"):
+            if isinstance(uf.get(k), dict):
+                uf[k] = {t: v for t, v in uf[k].items() if t not in bad}
+    if isinstance(umeta.get("usInfo"), list) and len(umeta["usInfo"]) == 2:   # [상세 정보를 붙인 종목, 종목] — 뺀 행만큼 줄여요
+        info = sum(1 for s in us if s.get("t") in bad and "dk" in s)     # dk 는 상세 정보를 붙인 행에만 (apply_us_info · n_ok 와 같은 행)
+        umeta["usInfo"] = [max(0, umeta["usInfo"][0] - info), sum(1 for s in us if s.get("t") not in bad)]
+
+
 def own_drop_us_class(us, umeta):
     """#139 의 우리 처리 검사 (validate_data.us_class_bad_rows): 발행하면 안 되는 미국 행을 빼요 → (남긴 미국 목록, ownDrop.usClass 의 값).
     빼는 행: S&P 500 목록의 점이 지워진 꼴(BRKB · BFB)이 바뀌지 않고 실린 행 (야후가 그 꼴에 답했다면 다른 증권이에요) · 기록이 깨져 출처를 알 수
@@ -12069,26 +13883,7 @@ def own_drop_us_class(us, umeta):
     bad = {r[0] for r in rows}
     kept = [s for s in us if s.get("t") not in bad]
     if bad:
-        row0 = lambda x: isinstance(x, (list, tuple)) and x and x[0] in bad      # noqa: E731 — [티커, …] 줄
-        if isinstance(umeta.get("splits"), list):
-            umeta["splits"] = [x for x in umeta["splits"] if not row0(x)]
-        for k in ("splitsNoCol", "usInfoPartial", "usFcurUnknown"):
-            if isinstance(umeta.get(k), list):
-                umeta[k] = [t for t in umeta[k] if t not in bad]
-        uf = umeta.get("usForeign")
-        if isinstance(uf, dict):                       # 리뷰 1차 S1: 뺀 종목의 외국 회사 기록 (관문이 종목의 fgnCut 과 맞춰 봐요)
-            for k in ("checked", "unknown"):
-                if isinstance(uf.get(k), list):
-                    uf[k] = [t for t in uf[k] if t not in bad]
-            for k in ("cut", "kept"):
-                if isinstance(uf.get(k), list):
-                    uf[k] = [x for x in uf[k] if not row0(x)]
-            for k in ("kind", "set"):
-                if isinstance(uf.get(k), dict):
-                    uf[k] = {t: v for t, v in uf[k].items() if t not in bad}
-        if isinstance(umeta.get("usInfo"), list) and len(umeta["usInfo"]) == 2:   # [상세 정보를 붙인 종목, 종목] — 뺀 행만큼 줄여요
-            info = sum(1 for s in us if s.get("t") in bad and "dk" in s)     # dk 는 상세 정보를 붙인 행에만 (apply_us_info · n_ok 와 같은 행)
-            umeta["usInfo"] = [max(0, umeta["usInfo"][0] - info), len(kept)]
+        us_meta_drop(umeta, us, bad)
     if rows:
         log(f"  !! {US_CLASS_DROP_NAME}: {len(rows)}건 빼고 발행 — {own_drop_text(rows)} (data.json ownDrop.usClass · 관문 경고 · "
             + (f"{US_CLASS_DROP_MAX}건을 넘어 관문에서 실패해 발행하지 않아요)" if len(rows) > US_CLASS_DROP_MAX else f"{US_CLASS_DROP_MAX}건을 넘으면 실패)"))
@@ -12155,6 +13950,14 @@ def main():
             "관문의 종목 수 검사는 실패하는 게 정상이에요)")
     ph = Phases()
     prev = read_prev_data()
+    # 2026-11-21 (#161 리뷰): 같은 날 다시 돌았는데 더 얻은 것이 없으면 3시간 안의 정해진 시각 · 바깥 타이머 실행은 데이터를 모으지 않아요
+    # (파일을 바꾸지 않아요 — 관문 · 화면 검사는 발행본 그대로를 보고, 발행 판단이 '같은 날 · 더 낫지 않음' 으로 발행하지 않아요)
+    auto = os.environ.get("GITHUB_EVENT_NAME") == "schedule" or os.environ.get("BAEPSAE_AUTO_RUN") == "1"
+    quiet = kr_rerun_throttle(kr_rerun_state_load(), prev, dt.datetime.now(KST), auto=auto, run_ok=github_run_succeeded)
+    if quiet:
+        log(f"  !! {quiet}")
+        quiet_mark(quiet)
+        return
     tables = load_industry_tables()       # 업종 표가 깨졌으면 여기서 바로 멈춰요
     # 2026-11-19: 한국표준산업분류 11차 · 11차 소분류 → 우리 업종 표 (DART 로 업종 글자 채우기). 깨졌으면 크게 남기고 채우기만 건너뛰어요
     # (리뷰: 표 하나 때문에 하루 발행이 멈추지 않게 — 우선주는 그대로 보통주를 따르고 관문이 경고해요)
@@ -12186,6 +13989,16 @@ def main():
 
     rf, rf_src = ph.run("금리", fetch_rf, today)
     kr, kr_bench, kr_mkt, kmeta = ph.run("국내 시세", fetch_korea, start, today, rf, prev)
+    # 2026-11-19 (Jack 의 규칙): 마지막 확인 종가 종목을 관문과 같은 함수로 다시 보고, 맞지 않는 종목은 빼요 (빼면 크게 남기고 pxSrc.own.bad 에 적어요).
+    # 국내 시세 단계 바로 뒤 — 이 함수가 보는 칸(가격 · pxd · d1 · 거래 없음 표시 · 기록)은 여기서 정해지고 뒤 단계가 바꾸지 않아요. 그래서 뺀 종목이
+    # DART · 배당 · 손익 집계(divCheck · incCheck) · 점수(백분위) · 필수 종목 순위 · corp.json 어디에도 남지 않아요 (리뷰: 집계와 종목이 어긋나지 않게)
+    kr_drop = []                          # 2026-11-20: 뺀 종목 (코드, 까닭) → data.json ownDrop.krOwn (다른 우리 처리 검사와 같은 곳)
+    try:
+        kr = kr_own_close_final(kr, kmeta.get("pxSrc"), prev, [pd.Timestamp(t).date().isoformat() for t in kmeta["_index"].index]
+                                if kmeta.get("_index") is not None else None, krs=kmeta.get("krSeries"), drop_out=kr_drop)
+    except Exception as e:                # 점검이 오류로 멈추면 확인할 수 없는 마지막 확인 종가는 싣지 않아요 (예전처럼 빠져요) — 발행은 이어가요
+        kr_drop.clear()
+        kr = kr_own_close_drop_all(kr, kmeta.get("pxSrc"), kmeta.get("krSeries"), f"{type(e).__name__}: {str(e)[:200]}", drop_out=kr_drop)
     px_date = dt.date.fromisoformat(kmeta["pxDate"]) if kmeta["pxDate"] else today - dt.timedelta(days=1)
 
     fin_map, client, ksic = {}, None, {}
@@ -12208,6 +14021,20 @@ def main():
         log("  !! 시험 실행: DART 를 끄고 진행해요 (재무지표·공시 없음 → 검증에서 실패 처리돼요)")
     elif DART_KEY:
         client = DartClient(DART_KEY, mode=dart_mode, today=today)
+        same_day, why_sd = kr_same_day_rerun(prev, kmeta.get("pxSrc"), kmeta.get("pxDate") and dt.date.fromisoformat(kmeta["pxDate"]))
+        if same_day and dart_mode == "cache":           # 2026-11-21 (#161 리뷰): DART 하루 한도 — 같은 기준일을 다시 도는 실행은 보관본 값만
+            # #161 리뷰 3차 A-S3: 빈 보관본으로 DART 를 부르면 전체 DART 실행이에요 (하루 한 번 · 수동 · CLAUDE.md) — 같은 날 다시 하는 실행은 그러지
+            # 않고 멈춰요 (사이트는 발행본 그대로 · 빨간 실행으로 알려요). 정해진 시각 실행은 그 전에 워크플로 · DartClient 가 멈춰요.
+            if client.started_empty:
+                raise RuntimeError(f"!! {why_sd} 인데 DART 보관본이 비어 있어요 — 빈 보관본으로 DART 를 부르면 전체 DART 실행이라 (하루 한 번 · 수동) "
+                                   "DART 를 부르지 않고 여기서 멈춰요 (발행본의 재무 그대로 · 사이트 그대로)")
+            covers, why_cov = dart_cache_covers(client.meta, prev)
+            if covers:
+                client.no_call = why_sd
+                log(f"  !! {why_sd}: DART 를 부르지 않아요 ({why_cov}) — 재무는 보관본, 공시 (지분 · 주요사항) 는 미국 기준일도 같으면 발행본의 disc.json 그대로")
+            else:
+                log(f"  !! {why_sd} 이지만 {why_cov} → DART 를 예전처럼 불러요 (보관본에 있는 항목은 다시 받지 않아요 · 빈 보관본이 아니라 전체 DART "
+                    "실행이 아니에요 · 공시도 DART 로)")
         if carry is not None:
             n_carry = adopt_carry(client, carry)
             log(f"· 옛 v2 캐시에서 옮긴 업종 코드 항목 {n_carry:,}건 (읽은 {len(carry[0]):,}건 · 기업코드 목록 "
@@ -12252,13 +14079,26 @@ def main():
 
     us, us_bench, fx, fx_last, us_vol_krw, umeta = ph.run("미국", fetch_us, start, today, rf,
                                                           kr_codes=frozenset(s["t"] for s in kr), dups=dups,
-                                                          prev_fgn=prev_foreign_set(prev))   # 리뷰 S2: 어제 발행한 외국 회사 목록
+                                                          prev_fgn=prev_foreign_set(prev),   # 리뷰 S2: 어제 발행한 외국 회사 목록
+                                                          prev=prev)   # 2026-11-20 (Jack): 야후 종가가 없는 종목은 지난 발행본의 마지막 확인 종가로
     # 2026-11-19 (Jack 의 상시 규칙): #139 의 검사가 잡는 미국 행(점이 지워진 꼴 · 관문 표와 다른 바꾸기)은 여기서 빼요 — 미국 목록이 정해진
     # 바로 뒤라 아래 분할 · 업종 · 순위 · 인기 목록 · 종목 수에도 들어가지 않아요 (data.json ownDrop.usClass)
     us, own_us = own_drop_us_class(us, umeta)
+    # 2026-11-20 (Jack 의 상시 규칙): 마지막 확인 종가로 실은 미국 행을 관문과 같은 함수로 다시 보고 맞지 않는 행은 빼요 (usSrc.own.bad) — 미국 목록이
+    # 정해진 바로 뒤라 아래 단계 어디에도 남지 않아요. 점검이 오류로 멈추면 그 행들을 모두 빼고 발행을 이어가요
+    try:
+        us = us_own_close_final(us, umeta, prev, [pd.Timestamp(t).date().isoformat() for t in umeta["_index"].index]
+                                if umeta.get("_index") is not None else None)
+    except Exception as e:
+        us = us_own_close_drop_all(us, umeta, f"{type(e).__name__}: {str(e)[:200]}")
     # v19.6a (A.6): 주식 분할 (2016-01-01 부터 · 한 번 실은 분할은 빼지 않아요). 오늘 시세 다운로드가 읽은 분할(umeta) + 커밋한 시드 + 지난
     # 발행본의 줄 (splits_fields · merge_splits). 시드에도 지난 발행본에도 없는 종목만 2016년부터의 이력을 읽어요 (하루 몇 개 · 많아야 20).
     sp_fields = splits_fields(prev, [s["t"] for s in us], umeta.get("splits"), umeta.get("splitsNoCol") or [], start, today)
+    # 2026-11-20 (리뷰 3): 발행할 분할에 마지막 확인 종가 뒤의 분할이 있는 행 (단계가 보지 못한 분할) — 빼고 그 종목의 새 분할 줄도 빼요
+    try:
+        us, sp_fields = us_own_split_late(us, umeta, sp_fields, prev)
+    except Exception as e:
+        log(f"  !! 마지막 확인 종가의 분할 다시 보기가 오류로 멈췄어요 ({type(e).__name__}: {str(e)[:160]}) — 관문이 그런 행을 막아요")
     names = etf_names()
     bonds, bd_ret = ph.run("채권", fetch_bonds, start, px_date, kr_bench, names, rf)
 
@@ -12275,6 +14115,8 @@ def main():
     # 부르지 않아요) · 우선주는 보통주를 따라요 · 틀린 행은 되돌려요 (Jack 의 상시 규칙). 2.0 그룹이 정해진 뒤 · corp.json 보다 먼저
     ind_drop = kr_ind_fill(kr, kmeta.get("_noInd") or [], ksic, ksic_map, kmeta.get("indSrc"), over=tables["over"],
                            names=ksic_names, map_sha=ksic_sha, table_err=ksic_err)
+    for line in power_eq_sector_lines(*power_eq_sector_report(kr)):     # 2026-11-20: 전력기기 · 전선 제조사의 예전 뱁새 업종 (옮긴 수 · 남은 utility)
+        log(line)
     for m in ("kr", "us"):
         arr = kr if m == "kr" else us
         g = collections.Counter(x.get("ind") for x in arr if x.get("ind"))
@@ -12380,8 +14222,9 @@ def main():
         "usFcurUnknown": umeta["usFcurUnknown"],   # #114: 재무제표 통화를 모르는 미국 회사 (비우지 않았어요 — 관문이 경고해요)
         "usInfoPartial": umeta["usInfoPartial"],   # #114 리뷰 2: 오늘 야후 응답이 일부만 와 예전 설명 칸을 쓴 미국 종목 (관문이 경고해요)
         "usForeign": umeta["usForeign"],           # 2026-11-14: 미국 상장 외국 회사 주당 숫자 검사 (관문이 비운 칸 · 빠짐없이 확인했는지 봐요)
-        "usExtraMissing": umeta["usExtraMissing"], # 2026-11-14: EXTRA_US 중 오늘 없는 종목과 이유 (관문이 이름과 이유를 경고로 · 이유 없으면 실패)
+        "usExtraMissing": umeta["usExtraMissing"], # 2026-11-14: EXTRA_US 중 오늘 없는 종목과 이유 (관문이 이름과 이유를 경고로 · 기록에도 없으면 경고, 5곳 넘으면 실패)
         "usListSym": umeta["usListSym"],           # 2026-11-15: 주식 종류 티커 (BRKB → BRK-B · BFB → BF-B) · 바꾸지 못한 티커 (관문)
+        "usSrc": umeta.get("usSrc") or {"v": 1, "own": us_own_close_err("기록 없음")},   # 2026-11-20 (Jack): 마지막 확인 종가로 실은 미국 종목 (관문 · 앱)
         # 2026-11-19 (Jack 의 상시 규칙): 우리 처리 검사가 빼거나 비운 행 — 관문이 수(N)와 남은 값을 봐요 (이 칸이 없는 예전 파일은 예전 규칙)
         "ownDrop": {US_CLASS_DROP_KEY: own_us, DIV_LINE_DROP_KEY: own_div},
         "divCheck": div_counts,              # v19.1b: 배당 분할 확인 집계 (관문이 종목과 맞춰 봐요 · 이 칸이 있으면 새 검사가 다 돌아요)
@@ -12401,7 +14244,20 @@ def main():
         payload["d1Base"] = kmeta["d1Base"]
     own_us_dates(payload)                    # 2026-11-19 (Jack 의 상시 규칙): 틀린 미국 ed · xd 는 그 칸만 비워요 (data.json ownDrop.usDates)
     payload.setdefault("ownDrop", {})["indFill"] = ind_drop   # 2026-11-19 (Jack 의 상시 규칙): 업종 채운 값 중 되돌린 행 (관문 줄이 봐요)
+    # 2026-11-20 (#159): 마지막 확인 종가로 실었다가 관문과 같은 함수로 뺀 국내 종목 (pxSrc.own.bad 와 같은 수 · 관문이 맞춰 봐요 · 깨끗한 실행도 0)
+    payload["ownDrop"][KR_OWN_DROP_KEY] = own_drop_rec(kr_drop)
+    log(kr_count_line(payload))
     write_json(OUT, payload)
+    try:                                     # 2026-11-21 (#161 리뷰): 같은 기준일을 다시 돈 결과 (실제 실행만 · 다음 실행은 이 실행이 초록이었을 때만 믿어요)
+        rs = kr_rerun_state(prev, payload, dt.datetime.now(KST), kr_px_count(payload), kr_px_count(prev) if isinstance(prev, dict) else None)
+        if rs is not None:
+            os.makedirs(os.path.dirname(KR_RERUN_STATE_PATH) or ".", exist_ok=True)
+            write_json(KR_RERUN_STATE_PATH, rs)
+            log(f"{'  !! ' if rs['gain'] <= 0 else '· '}같은 기준일을 다시 돈 결과: 그 날짜 종가 국내 종목 {rs['gain']:+,} — "
+                + ("늘어난 것이 없어, 이 실행이 초록으로 끝나면 3시간 안의 정해진 시각 실행은 데이터를 모으지 않아요" if rs["gain"] <= 0
+                   else "뒤의 실행도 그대로 돌아요"))
+    except Exception as e:
+        log(f"  !! 같은 날 다시 하기 기록을 쓰지 못했어요 ({type(e).__name__}) — 뒤의 실행은 쉬지 않고 돌아요")
     log(f"✓ {OUT} 저장 — {len(stocks):,}종목, {os.path.getsize(OUT) / 1e6:.1f}MB · 기준일 {kmeta['pxDate']} · "
         f"미국 {umeta['usPxDate']} · 환율 {fx_last:,.1f}")
 
@@ -12434,12 +14290,29 @@ def main():
     write_json(OUT_MACRO, macro)
     log(f"✓ {OUT_MACRO} 저장 — 커브 {macro['curve']['date'] if macro.get('curve') else 'X'} · 원자재 {'O' if macro.get('gold') else 'X'}")
 
-    if client:
+    prev_disc = None
+    if client is not None and client.no_call:
+        if isinstance(prev, dict) and umeta.get("usPxDate") == prev.get("usPxDate"):
+            prev_disc, why_disc = load_morning_disc(live=prev)
+        else:
+            why_disc = f"미국 기준일이 발행본과 달라요 ({prev.get('usPxDate') if isinstance(prev, dict) else None} → {umeta.get('usPxDate')})"
+        if prev_disc is None:
+            client.no_call = None
+            log(f"  !! {why_disc} → 공시는 예전처럼 DART 로 받아요")
+    if prev_disc is not None:
+        disc = prev_disc
+        dart_cache_mark(client, published_at)
+        client.save()
+        log(f"  !! 공시: 같은 기준일을 다시 도는 실행이라 발행본의 disc.json 을 그대로 써요 (내부자 {len(disc.get('insider') or []):,}건 · "
+            f"주요사항 {len(disc.get('issue') or []):,}건 · 공시 내용 날짜 {disc.get('asOf')} 그대로 — 그 뒤 나온 공시는 다음 새 기준일 발행에) · "
+            f"DART 전체: {client.summary()}")
+    elif client:
         disc = ph.run("공시", fetch_disclosures, kr, client.meta.get("corpMap") or {}, today, client)
         # v19.6b (Part B.1): 유상증자 · 전환사채 · 신주인수권부사채 결정 (issue · issueOk) — DART 를 쓰는 실행에서만 · 지분공시 뒤
         disc.update(ph.run("주요사항 공시", fetch_issues, kr, client.meta.get("corpMap") or {}, today, client))
         # v19.6b Q18 (Jack 2026-11-19): 유상증자 줄의 이사회결의일(bd)을 공시 원문에서 (실행당 ISSUE_BD_PER_RUN 건 · 실패해도 그 줄의 bd 만 빈 칸)
         ph.run("유상증자 결의일", fill_issue_bd, disc, client, today)
+        dart_cache_mark(client, published_at)
         client.save()
         log(f"· DART 전체: {client.summary()}")
         n_calls = sum(client.status.values())
@@ -12450,8 +14323,10 @@ def main():
     disc["publishedAt"] = published_at
     own_check_disc(disc, today)              # 2026-11-19 (Jack 의 상시 규칙): 나쁜 공시 줄은 빼거나 비워요 (disc.json ownDrop · 관문과 같은 함수)
     write_json(OUT_DISC, disc)
-    log(f"✓ {OUT_DISC} 저장 — 내부자 {len(disc['insider']):,}건 · 국민연금 {len(disc['nps']):,}건 · 주요사항(유상증자 · CB · BW) "
-        f"{len(disc['issue']):,}건{'' if disc['issueOk'] else ' (목록 실패 · 지난 줄)'} · 최근 공시 {disc.get('newest')}")
+    if "issueOk" not in disc:                # #161 리뷰 3차 nit: 다시 쓴 아침 disc.json 에 칸이 없어도 멈추지 않고 크게 (관문이 그 파일을 봐요)
+        log(f"  !! {OUT_DISC} 에 issueOk 칸이 없어요 — 주요사항 공시 목록을 받았는지 몰라요 (관문이 봐요)")
+    log(f"✓ {OUT_DISC} 저장 — 내부자 {len(disc.get('insider') or []):,}건 · 국민연금 {len(disc.get('nps') or []):,}건 · 주요사항(유상증자 · CB · BW) "
+        f"{len(disc.get('issue') or []):,}건{'' if disc.get('issueOk') else ' (목록 실패 · 지난 줄)'} · 최근 공시 {disc.get('newest')}")
     log(ph.summary())
 
 

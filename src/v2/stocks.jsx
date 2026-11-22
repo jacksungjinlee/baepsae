@@ -102,7 +102,9 @@ export function Stocks({ load, store, pad, q: topQ = null, ownQ: shellQ, setOwnQ
   const usDate = ok && usShown && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
   // v19.1c: the shown rows (search results, or recent and my stocks) with a US stock priced at an earlier close (pxd):
   // named under the date line. 종목 순위 carries its own note.
-  const own = ok ? ownCloses(load, typing ? results : [...watched, ...recent, ...mine.map((x) => x.s)]) : [];
+  // 2026-11-21: search results are a market-wide list (five names + '외 {n}종목', the market-wide US line above the cap); the
+  // user's own lists (관심 종목, 최근 본 종목, 내 포트폴리오 종목) name every carried stock
+  const own = ok ? ownCloses(load, typing ? results : [...watched, ...recent, ...mine.map((x) => x.s)], { compact: typing }) : [];
   const krMd = ok ? mdText(load.data.pxDate) : null;     // the no-trade line's date (StockRow)
   const fieldRef = useRef(null);
   useEffect(() => {

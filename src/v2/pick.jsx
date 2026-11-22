@@ -45,7 +45,7 @@ export function Pick({ load, builder, setBuilder }) {
         <Note style={{ marginTop: 0 }}>{fill(C.app.usClose, { md: mdText(load.data.usPxDate) })}</Note>
       )}
       {/* v19.1c: a candidate (or a 꼭 담을 종목) priced at an earlier US close (pxd) is named under the date line */}
-      <OwnCloseNote groups={ownCloses(load, [...ds.pinned, ...all.map((c) => c.s)])} style={{ marginTop: 0 }} />
+      <OwnCloseNote groups={ownCloses(load, [...ds.pinned, ...all.map((c) => c.s)], { compact: true })} style={{ marginTop: 0 }} />
       <div style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginTop: SPACE(1) })}>{deckLine}</div>
       <ScreenTitle sub={C.pick.body}>{fill(C.pick.heading, { n: N })}</ScreenTitle>
       {msg && <Note tone="watch" data-ui-v2="pick-limit">{msg}</Note>}

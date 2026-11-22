@@ -2,7 +2,7 @@
 // come from src/copy/v2.js. US per-share figures are $ first with 원 small (Jack's decision 7, v19.1).
 import { C, fill, nf, p1, mdText, wonText } from "./format.js";
 import { eokText, signedPct } from "./deckcalc.js";
-import { stockPriceDate } from "../data.js";
+import { stockPriceDate, ownCloseDate, ownCarried } from "../data.js";
 
 export const usOf = (s) => !!s && s.cls === "us";
 // The price date of this stock: its market's date (KR pxDate, US usPxDate: never the Korean date for a US price, none then),
@@ -29,6 +29,18 @@ export function priceMdSaid(load, s, where) {
     console.warn(`[v2] ${where} ${s.t}: the close date and the words that need it are left out (${why})`);
   }
   return md;
+}
+// 2026-11-19 (Jack): a Korean stock priced at its last confirmed close (data.json pxd, pxSrc.own: today's close could not be
+// confirmed by two sources) says so wherever it is shown on its own: "오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요."
+// (app.krOwnClose, Jack's line) with its own date. null for every other stock (US stocks keep their own-close wording; a Korean
+// stock at pxDate says nothing) and for a pxd that cannot be read (its price shows no date: priceMdSaid says so).
+// 2026-11-20 (Jack: "US stocks carry like Korean ones … with its own date and the same line"): a US stock the pipeline carried
+// because Yahoo had no close (data.json pxc: true) gets the same line with its own date (against usPxDate). A US stock with a pxd
+// but no pxc (Yahoo's own last bar: halted) keeps its existing wording.
+export function krOwnCloseText(load, s) {
+  if (!s || !ownCarried(s) || !load || load.status !== "ok" || !C.app.krOwnClose) return null;
+  const md = mdText(ownCloseDate(s, s.cls === "us" ? load.data.usPxDate : load.data.pxDate));
+  return md ? fill(C.app.krOwnClose, { date: md }) : null;
 }
 // The date of the company page's date lines (DateLine: "{md} 기준" and the stale warning beside it). Normally the price date
 // above. A pxd that cannot be read leaves the price without a date, but must not take the date line and its stale warning

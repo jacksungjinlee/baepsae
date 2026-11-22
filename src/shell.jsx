@@ -7,7 +7,7 @@ import { Ic, Seal } from "./icons.jsx";
 import DetailApp, { Bird, store, DateBadge, T_LOAD_FAIL, SiteFooterLine } from "./detail.jsx";
 import { loadJson, loadCorpOnce, krGrowthScoreLine, loadDataPublishFor, corpStaleArgs } from "./data.js";
 import { SHOW_SCORE } from "./flags.js";
-import { EpsFixLine, IcrOffLine, stmtCurLineText, FIX_UNIT } from "./fixnote.jsx";
+import { EpsFixLine, IcrOffLine, stmtCurLineText, FIX_UNIT, KrOwnCloseLine } from "./fixnote.jsx";
 import { stmtCurOf, stmtNotWon, unitHeld } from "./repair.js";
 import SimpleApp from "./simple.jsx";
 import CorpApp from "./corp.jsx";
@@ -141,6 +141,8 @@ export function ScoreCard({ c, sectors, onOpenCorp, onQuickDiag, lang, asOf, cor
           {c.r3 != null && <span style={{ marginLeft: 8, fontSize: 11.5, color: c.r3 >= 0 ? C.up : C.down }}>3개월 {c.r3 >= 0 ? "+" : ""}{c.r3}%</span>}
         </span>
       </div>
+      {/* 2026-11-19 (Jack): 마지막 확인 종가(pxd)로 실은 국내 종목 — 가격 바로 밑에 Jack 의 줄 (한국어 화면만) */}
+      <KrOwnCloseLine c={c} marketDate={asOf && asOf.date} lang={lang} style={{ marginTop: 4 }} />
       <div style={{ marginTop: 9, display: "flex", flexDirection: "column", gap: 6 }}>
         {lines.map((l, i) => <div key={i} style={{ fontSize: 12, color: C.ink, lineHeight: 1.6 }}>{l}</div>)}
         <EpsFixLine corp={corp} cos={[c]} show={perShown} lang={lang} style={{ marginTop: 0 }} />
