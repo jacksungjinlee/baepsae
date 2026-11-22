@@ -55,7 +55,7 @@ import { EpsOwnersNote } from "./fixnote.jsx";
 import { watchHits } from "./watch.js";
 import { WatchHitRows } from "./watch.jsx";
 import { lookModel, lookSay } from "./look.js";
-import { LookRows, LookNotes, lookRowCount } from "./todaylook.jsx";
+import { LookRows, LookNotes, lookRowCount, pageHas } from "./todaylook.jsx";
 import { LookHead } from "./home2.jsx";
 
 // v19.3e (v19.3 Part H, board Home2): the new 홈 for returning visitors (home2.jsx). On since Jack's yes (2026-11-08): the
@@ -275,7 +275,7 @@ function WatchLook({ load, store, onWatch, disc = null, onToday = null }) {
   if ((!hits.length && !lookRowCount(m) && !notes) || !C.home.look) return null;
   return (
     <section data-ui-v2="home-look" data-watch-only="1" style={{ marginTop: SPACE(5) }}>
-      <LookHead open={onToday && (m.any || hits.length > 0) ? onToday : null} />
+      <LookHead open={onToday && (pageHas(m) || hits.length > 0) ? onToday : null} />
       <LookRows m={m} part="issue" onOpen={onToday} />
       <WatchHitRows hits={hits} load={load} onOpen={onToday || onWatch} />
       <LookRows m={m} part="filings" onOpen={onToday} />

@@ -58,6 +58,8 @@ export const npsText = (c) => fill(c.up ? L().npsUp : L().npsDown, { a: p1(c.a),
 const dateKind = (k) => (k === "earn" ? L().earn : L().exDiv);
 // The cards a screen can show: the insider cards with a title (role both or blank waits for Jack's title: look.js lookSay).
 export const shownInsider = (m) => m.insider.filter((c) => insiderTitle(c));
+// Whether the page has a card to show (besides the 관심 종목 조건 ones the caller counts): the heading opens it only then.
+export const pageHas = (m) => !!(m && m.fresh && (m.issue.length || shownInsider(m).length || m.nps.length || m.dates.length));
 
 // The approved sentence with its 지분을 늘린 보고 / 지분을 줄인 보고 in bold (board Today2; the same words as co.disc.buys · sells).
 function Bolded({ text, part }) {

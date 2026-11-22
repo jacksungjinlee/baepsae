@@ -62,7 +62,7 @@ import { watchHits } from "./watch.js";
 import { lateSay } from "./tradedays.js";
 import { WatchHitRows } from "./watch.jsx";
 import { lookModel, lookSay, coversKorean } from "./look.js";
-import { LookRows, lookRowCount } from "./todaylook.jsx";
+import { LookRows, lookRowCount, pageHas } from "./todaylook.jsx";
 
 const signedWon = (v) => (v > 0 ? "+" : "") + wonText(v);
 const tone = (v) => (v > 0 ? COLOR.up : v < 0 ? COLOR.down : COLOR.text2);
@@ -335,7 +335,7 @@ function Look({ blocks, load, look, go, onWatch, onToday = null, lateMd = null }
   const byT = load.status === "ok" ? load.byT : new Map();
   return (
     <section data-ui-v2="home-look" style={{ marginTop: SPACE(5) }}>
-      <LookHead open={onToday && m && (m.any || watch.length > 0) ? onToday : null} />
+      <LookHead open={onToday && (pageHas(m) || watch.length > 0) ? onToday : null} />
       {conc.map(({ b, c }) => (
         <LookRow key={b.deck.id} icon="buildings" data={{ "data-ui-v2": "home-conc", "data-deck-id": b.deck.id, "data-w": Math.round(c.w * 1000) / 10 }}
           owner={blocks.length > 1 ? shownName(b.deck.name) : null}

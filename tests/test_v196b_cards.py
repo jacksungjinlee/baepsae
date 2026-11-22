@@ -274,3 +274,15 @@ def test_the_model_needs_fresh_data_and_the_days_filings_and_says_why_otherwise(
     assert got["issueFail"] == [True, "ok", 0, 0, 0, 1, True, False, False, True, True, True]
     assert got["usOnly"] == [True, "skip", 0, 0, 0, 1, False, False, False, True, False, False]
     assert got["watchKr"] == [True, "ok", 0, 0, 0, 0, False, False, False, False, False, True]
+
+
+def test_the_heading_opens_the_page_only_when_it_shows_a_card():
+    """An insider card whose title waits for Jack (role 임원·주요주주 or blank: look.insBoth null) is not shown, so on its own it does not
+    make the 오늘 볼 것 heading a link (the page would be empty and go straight back to 홈)."""
+    got = run("""
+      const base = { fresh: true, issue: [], insider: [], nps: [], dates: [] };
+      const ins = (title) => ({ t: 'A', nk: 'A', title, rc: '20260000000001', date: T, up: true, won: 1e8, pos: null });
+      out = [Tl.pageHas({ ...base, insider: [ins('both')] }), Tl.pageHas({ ...base, insider: [ins('both'), ins('exec')] }),
+        Tl.pageHas({ ...base, dates: [{}] }), Tl.pageHas({ ...base, nps: [{}] }), Tl.pageHas({ ...base, issue: [{}] }), Tl.pageHas(base),
+        Tl.pageHas({ ...base, fresh: false, issue: [{}] }), Tl.lookRowCount({ ...base, insider: [ins('both'), ins('exec')] })];""")
+    assert got == [False, True, True, True, True, False, False, 1]

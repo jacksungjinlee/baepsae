@@ -181,7 +181,7 @@ export function dateRows(byT, cover, today) {
 // load: the data · store: { data } (the in-memory view) · disc: app.jsx's · today: KST · now (tests).
 // -> { fresh, kr, krHeld, ds, issue, insider, nps, dates, noKr, issueFail, discFail, discOld, any, skipped }
 //   ds: the filings state (home2.jsx discState): skip (no Korean stock covered) · wait · ok · stale · fail · none.
-//   any: the page has a card (the 오늘 볼 것 header opens it; an empty page goes back to 홈).
+//   any: a card of any kind (an insider card whose title waits for Jack is counted here; todaylook.jsx pageHas leaves it out).
 export function lookModel(load, store, disc, today, now) {
   const empty = { fresh: false, kr: false, krHeld: false, ds: "skip", issue: [], insider: [], nps: [], dates: [], noKr: false,
     issueFail: false, discFail: false, discOld: null, any: false, skipped: [], missing: false };
