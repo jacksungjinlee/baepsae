@@ -189,10 +189,12 @@ export function npsCards(disc, cover, today, byT) {
 
 // ---------------- 다가오는 일정 ----------------
 // -> [{ t, nk, date, kind: "earn" | "xd", s }] (US local dates), earliest first, then 실적 발표 before 배당락일, at most DATES_MAX.
-export function dateRows(byT, cover, today) {
+// v19.6e (Part E, 이번 주 정리 · 다음 주): last and max are optional. The weekly card asks for next week's Monday to Sunday (today =
+// that Monday, last = that Sunday) and every row (max null). Without them: today to today + DATE_DAYS, at most DATES_MAX, as before.
+export function dateRows(byT, cover, today, last = null, max = DATES_MAX) {
   const out = [];
   if (!isIso(today)) return out;
-  const end = addDays(today, DATE_DAYS);
+  const end = last != null && isIso(last) ? last : addDays(today, DATE_DAYS);
   for (const t of cover.all) {
     const s = byT && byT.get(t);
     if (!s || s.cls !== "us") continue;
@@ -202,7 +204,7 @@ export function dateRows(byT, cover, today) {
     }
   }
   out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.kind !== b.kind ? (a.kind === "earn" ? -1 : 1) : a.t < b.t ? -1 : 1));
-  return out.slice(0, DATES_MAX);
+  return max == null ? out : out.slice(0, max);
 }
 
 // ---------------- everything for one screen ----------------

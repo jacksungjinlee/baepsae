@@ -370,10 +370,13 @@ function highEdge(x, target) {
 // -> { ok: false, n } | { ok: true, n, fell, rose, avg, together, togetherUp, items: [{ id, pct }] }
 //   together: the stock fell and at least 80% of its group fell · togetherUp (v19.3e): the same on a rise
 // v19.1c: a stock priced at an earlier close (pxd) has no change today (engine.todayD1): never in a group, never the one shown.
-export function peerGroup(s, stocks) {
-  const d1 = todayD1(s);
+// v19.6e (Part E, 이번 주 정리): moveOf reads each stock's move in % (default: today's change, todayD1). The weekly card passes the
+// week's move (weekly.js weekPct: price ÷ c1w − 1), so the same rule (GROUP_MIN, TOGETHER_SHARE, both directions) runs on the week;
+// items' d1 is then that move.
+export function peerGroup(s, stocks, moveOf = todayD1) {
+  const d1 = moveOf(s);
   if (!s || !hasGroup(s) || d1 == null || (s.cls !== "kr" && s.cls !== "us")) return { ok: false, n: 0 };
-  const items = universe(stocks || [], s.cls).filter((x) => hasGroup(x) && x.ind === s.ind && todayD1(x) != null).map((x) => ({ t: x.t, d1: todayD1(x) }));
+  const items = universe(stocks || [], s.cls).filter((x) => hasGroup(x) && x.ind === s.ind && moveOf(x) != null).map((x) => ({ t: x.t, d1: moveOf(x) }));
   if (!items.some((x) => x.t === s.t)) items.push({ t: s.t, d1 });
   const n = items.length;
   if (n < GROUP_MIN) return { ok: false, n };
