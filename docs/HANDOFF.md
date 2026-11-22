@@ -11,8 +11,10 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 (`#home/today`, `src/v2/todaylook.jsx`; pure rules in `src/v2/look.js`) and 홈's new compact rows (home2.jsx `Look`, today.jsx
 `WatchLook` on a first visit). Cards in Part B's order: 확인 필요 (held stocks' 유상증자 · CB · BW decisions filed in the last 30 days;
 확인했어요 writes the new store part `seen`, matched by stock, kind and numbers on the same filing or board date, so a correction with
-other numbers shows again; marks older than 120 days pruned on the next mark), 관심 종목 조건, 지분 변동 (held + watched, 7 days,
-|q| × today's close ≥ 1억원) and 국민연금 (7 days, one decimal), 다가오는 일정 (US `ed` · `xd`, today to +7 days, 5 rows). 홈 now
+other numbers shows again; marks older than 120 days pruned on the next mark), 관심 종목 조건, 국민연금 (7 days, one decimal),
+다가오는 일정 (US `ed` · `xd`, today to +7 days, 5 rows). 지분 변동 cards (held + watched, 7 days, |q| × today's close ≥ 1억원)
+are built but off (`look.js` `ROLE_OF` null): their title needs `role`, and
+`tests/test_v196b_answers.py::test_the_role_field_is_not_read_by_either_app_yet` pins that no screen reads it. 홈 now
 loads disc.json when a Korean stock is held or watched. Not built, waiting for Jack: 공시 보기 (an existing test,
 `tests/test_v2_app.py::test_pages_never_load_fixtures_or_other_sites`, keeps DART links to the 공시 tab), cards for 유무상증자 (`bonus`),
 기타주식 (`cls` other) and two-class (`n2` · `p2`) rows, and the insider title for role 임원·주요주주 or blank (`look.insBoth`,

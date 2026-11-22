@@ -22,6 +22,10 @@
 //            least INSIDER_MIN_WON (1억원; disc.json amt used that run's price, so the amount is recomputed). Title by role
 //            (임원 · 주요주주; someone who is both, or a row without a role, waits for Jack's title: left out, said in the
 //            console); the body names the position (pos, blank: 임원·주요주주) with 이/가 by its last syllable.
+//            NOT ON YET: the screens do not read the role field (ROLE_OF null below), so no insider card shows (title "none",
+//            said in the console). #145's test tests/test_v196b_answers.py test_the_role_field_is_not_read_by_either_app_yet pins
+//            that no screen reads it; changing that test needs Jack's yes (CLAUDE.md). With his yes: set ROLE_OF to the function
+//            that returns the row's role field, and let that test allow this one read in look.js.
 //   nps      disc.json nps, held and watched stocks, filed within the last NPS_DAYS days: "{a}%에서 {b}%로" with b = rt and
 //            a = rt − chg, one decimal; left out when chg is blank or a and b round to the same number.
 //   dates    US 실적 발표 (data.json ed, Yahoo's confirmed date) and 배당락일 (xd) of held and watched US stocks from today to
@@ -41,6 +45,8 @@ export const NPS_DAYS = 7;
 export const DATE_DAYS = 7;
 export const DATES_MAX = 5;
 export const INSIDER_MIN_WON = 1e8;
+// How lookModel reads an insider row's role (see the top of this file): null = not read yet, so the insider cards stay off.
+export const ROLE_OF = null;
 
 const ymdOf = (d) => (typeof d === "string" && /^\d{8}$/.test(d) ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}` : null);
 const isIso = (x) => typeof x === "string" && /^\d{4}-\d{2}-\d{2}$/.test(x) && !Number.isNaN(Date.parse(x + "T00:00:00Z"))
@@ -117,8 +123,9 @@ export function issueCards(disc, held, today, data) {
 }
 
 // ---------------- 임원 · 주요주주 지분 변동 ----------------
-// byT: today's data rows. -> { cards: [{ rc, t, nk, date, role, title ("exec" | "major" | "both"), pos, q, won, up, s }], skipped }
-export function insiderCards(disc, cover, today, byT) {
+// byT: today's data rows. roleOf: reads a row's role (lookModel passes ROLE_OF; null: not read, every title "none").
+// -> { cards: [{ rc, t, nk, date, role, title ("exec" | "major" | "both" | "none"), pos, q, won, up, s }], skipped }
+export function insiderCards(disc, cover, today, byT, roleOf = null) {
   const out = { cards: [], skipped: [] };
   if (!disc || !disc.data || !Array.isArray(disc.data.insider)) return out;
   const R = roleWords();
@@ -131,8 +138,9 @@ export function insiderCards(disc, cover, today, byT) {
     if (!(px > 0)) { out.skipped.push({ t: x.t, rc: x.rc, why: "no official close in today's data" }); continue; }
     const won = Math.abs(x.q) * px;
     if (won < INSIDER_MIN_WON) continue;
-    const role = typeof x.role === "string" ? x.role : null;
-    const title = role != null && role === R.exec ? "exec" : role != null && role === R.major ? "major" : "both";
+    const r0 = roleOf ? roleOf(x) : null;
+    const role = typeof r0 === "string" ? r0 : null;
+    const title = !roleOf ? "none" : role != null && role === R.exec ? "exec" : role != null && role === R.major ? "major" : "both";
     if (role != null && role !== R.exec && role !== R.major && role !== R.both) out.skipped.push({ t: x.t, rc: x.rc, why: `role ${JSON.stringify(role)} is not one of the three` });
     const p = typeof x.pos === "string" ? x.pos.trim() : "";
     out.cards.push({ rc: x.rc, t: x.t, nk: (s && s.nk) || x.nk || x.t, date, role, title, pos: p && p !== "-" ? p : null, q: x.q, won, up: x.q > 0, s });
@@ -195,7 +203,7 @@ export function lookModel(load, store, disc, today, now) {
   const ds = st === "skip" ? "skip" : st === "ok" ? (filingsChecked(disc, dd) ? "ok" : "stale") : st === "fail" || st === "none" ? st : "wait";
   const checked = ds === "ok";
   const iss = checked ? issueCards(disc, cover.held, today, data) : { cards: [], skipped: [], fail: false, missing: false };
-  const ins = checked ? insiderCards(disc, cover, today, load.byT) : { cards: [], skipped: [] };
+  const ins = checked ? insiderCards(disc, cover, today, load.byT, ROLE_OF) : { cards: [], skipped: [] };
   const nps = checked ? npsCards(disc, cover, today, load.byT) : [];
   const dates = dateRows(load.byT, cover, today);
   const discOld = ds === "stale" && dd && dd.date ? dd : null;
@@ -213,7 +221,9 @@ export function lookSay(m, where) {
   if (m.skipped.length) lines.push(`left out (no approved wording yet, or no close to size it): ${m.skipped.map((x) => `${x.t} ${x.rc || ""} (${x.why})`).join("; ")}`);
   const both = m.insider.filter((c) => c.title === "both");
   if (both.length && !(C.look && C.look.insBoth)) lines.push(`insider cards waiting for Jack's title (role both or blank): ${both.map((c) => `${c.t} ${c.rc}`).join(", ")}`);
-  if (m.missing) lines.push("disc.json has no issue section (a file from before #145): no rights, CB or BW cards");
+  const none = m.insider.filter((c) => c.title === "none");
+  if (none.length) lines.push(`insider cards not shown, the role field is not read yet (waits for Jack's yes to a test edit): ${none.map((c) => `${c.t} ${c.rc}`).join(", ")}`);
+  if (m.missing) lines.push("disc.json has no issue section (a file from before PR 145): no rights, CB or BW cards");
   for (const l of lines) {
     const k = where + "|" + l;
     if (said.has(k)) continue;

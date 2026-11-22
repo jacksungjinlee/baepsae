@@ -180,8 +180,10 @@ def test_insider_cards_last_7_days_from_100m_won_at_todays_close_with_role_title
         ins(6, '000002', 2, 1000, null, '-'), ins(7, '000003', 0, 100000, '임원', '회장'), ins(8, '000009', 0, 100000, '임원', '회장'),
         ins(9, '000002', -1, 5000, '임원', '이사'), ins(10, '000002', 0, 0, '임원', '이사'), ins(11, '000002', 0, 1500, '감사', '감사')];
       const cover = { held: new Set(['000001']), watched: new Set(['000002', '000003']), all: new Set(['000001', '000002', '000003']) };
-      const r = Lk.insiderCards(discOf({ insider }), cover, T, new Map(stocks.map((s) => [s.t, s])));
-      out = { cards: r.cards.map((c) => [c.rc.slice(-2), c.title, c.pos, Math.round(c.won), c.up]), skipped: r.skipped.map((x) => [x.rc.slice(-2), x.why]),
+      const roleOf = (x) => x.role;                          // the reader the screens get once Jack says yes (look.js ROLE_OF; tests/ is not scanned)
+      const r = Lk.insiderCards(discOf({ insider }), cover, T, new Map(stocks.map((s) => [s.t, s])), roleOf);
+      const off = Lk.insiderCards(discOf({ insider }), cover, T, new Map(stocks.map((s) => [s.t, s])));
+      out = { off: [Lk.ROLE_OF, off.cards.map((c) => c.title)], cards: r.cards.map((c) => [c.rc.slice(-2), c.title, c.pos, Math.round(c.won), c.up]), skipped: r.skipped.map((x) => [x.rc.slice(-2), x.why]),
         roles: Lk.roleWords() };""")
     # 2,000 × 50,000 = 1억원 exactly is in; 1,999 × 50,000 is under; 7 days back and a future date are out; the stored amt is not used
     assert got["cards"] == [["11", "both", "감사", 150000000, True], ["01", "exec", "대표이사", 100000000, True],
@@ -189,6 +191,8 @@ def test_insider_cards_last_7_days_from_100m_won_at_todays_close_with_role_title
                             ["02", "major", "10%이상주주", 100000000, False]], got["cards"]
     assert got["skipped"] == [["07", "no official close in today's data"], ["11", 'role "감사" is not one of the three']], got["skipped"]
     assert got["roles"] == {"both": "임원·주요주주", "exec": "임원", "major": "주요주주"}
+    # the screens do not read the role yet (#145's test_the_role_field_is_not_read_by_either_app_yet; Jack's yes needed): no title
+    assert got["off"] == [None, ["none"] * 5]
 
 
 def test_the_role_words_are_the_ones_the_pipeline_writes():
@@ -286,3 +290,5 @@ def test_the_heading_opens_the_page_only_when_it_shows_a_card():
         Tl.pageHas({ ...base, dates: [{}] }), Tl.pageHas({ ...base, nps: [{}] }), Tl.pageHas({ ...base, issue: [{}] }), Tl.pageHas(base),
         Tl.pageHas({ ...base, fresh: false, issue: [{}] }), Tl.lookRowCount({ ...base, insider: [ins('both'), ins('exec')] })];""")
     assert got == [False, True, True, True, True, False, False, 1]
+    got = run("out = [Tl.insiderTitle({ nk: 'A', title: 'none' }), Tl.pageHas({ fresh: true, issue: [], nps: [], dates: [], insider: [{ title: 'none' }] })];")
+    assert got == [None, False]                                                     # while the role is not read, no insider card
