@@ -15512,6 +15512,7 @@ def main():
                    lambda: scene_v196c_stale(R, files),                                                     # v19.6c 멈춘 날 · 실패 · 불러오기 30개
                    lambda: scene_div_lines(R, files, 390), lambda: scene_div_lines(R, files, 390, dark=True),   # say-why N-01 · N-02: 숨긴 배당수익률의 줄
                    lambda: scene_div_lines(R, files, 1280), lambda: scene_div_lines(R, files, 1280, dark=True),
+                   lambda: scene_div_lines(R, files, 320), lambda: scene_div_lines(R, files, 320, dark=True),   # 리뷰: 320 도
                    lambda: scene_v196f(R, files, 390), lambda: scene_v196f(R, files, 320),
                    lambda: scene_v196f(R, files, 1280), lambda: scene_v196f(R, files, 390, dark=True),
                    lambda: scene_v196f(R, files, 1280, dark=True),                                          # v19.6f 연말에 확인할 숫자 (세 상태)
