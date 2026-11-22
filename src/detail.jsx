@@ -1170,18 +1170,20 @@ const T_STALE_LATE = { ko: "갱신이 늦어지고 있어요", en: "update is ru
 // 있고(관문이 확인해요), 같아도 문장은 맞아요 (그 날짜의 종가니까요).
 // 2026-11-19 (Jack): 오늘 종가를 두 출처로 확인하지 못해 마지막 확인 종가(pxd)로 실은 국내 종목은 따로 묶여요 (data.js ownCloseGroups: kr ·
 // names): 2026-11-20 (Jack, b · c) 한국어 화면은 날짜마다 한 줄 "{한글 이름}: 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요."
-// (fixnote.jsx FIX_KR_OWN_CLOSE_LIST) · 영어 화면은 "{코드}: We couldn't confirm today's close, so this shows the {date} close."
-// (FIX_KR_OWN_CLOSE_EN). 미국 종목은 예전 그대로.
+// (fixnote.jsx FIX_KR_OWN_CLOSE_LIST) · 영어 화면은 2026-11-22 (Jack) 부터 "{코드}: we couldn't confirm today's close, so this shows the {date} close."
+// (코드 하나) · "…, so these show the {date} close." (코드 둘 이상) (fixnote.jsx FIX_KR_OWN_CLOSE_LIST_EN_ONE · FIX_KR_OWN_CLOSE_LIST_EN). 미국 종목은 예전 그대로.
 // 예전 뱁새의 내장 국내 종목(BASE_STOCKS)에는 cls 가 없어요 (미국만 "us") — cls 가 없는 종목은 국내로 봐요 (pxd 는 국내 · 미국 종목에만 있어요).
-// compact: 시장 전체 목록 (종목 고르기). 보유 종목 · 주문 메모 · CSV 는 compact 없이 마지막 확인 종가 종목을 모두 적어요.
+// compact: 시장 전체 목록 (종목 고르기 · 한국어와 영어 화면 모두). 보유 종목 · 주문 메모 · CSV 는 compact 없이 마지막 확인 종가 종목을 모두 적어요.
 function ownCloseLines(lang, list, compact = false) {
   const l = lang === "en" ? "en" : "ko";
-  return ownCloseGroups((list || []).map((s) => (s && s.cls == null ? { ...s, cls: "kr" } : s)), null, { compact: compact && l === "ko" }).map((g) => {
+  return ownCloseGroups((list || []).map((s) => (s && s.cls == null ? { ...s, cls: "kr" } : s)), null, { compact }).map((g) => {
     // 2026-11-20 (Jack, b · c): 국내 종목은 날짜마다 한 줄 "{이름}: 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요." · 영어 화면은 코드와 승인된 영어 문장
-    // 2026-11-21 (Jack, answers 8 · 6): 시장 전체 목록의 한국어 화면만 이름 5개까지 + '외 {n}종목' (g.cut) · 미국 종목의 절반 넘게 마지막 확인
-    // 종가면 미국 쪽은 한 줄 (g.usWide). 내 보유 목록과 영어 화면은 예전 그대로 (모두 적고, 묶음도 같아요)
+    // 2026-11-21 (Jack, answers 8 · 6): 시장 전체 목록은 이름 5개까지 + '외 {n}종목' (g.cut) · 미국 종목의 절반 넘게 마지막 확인 종가면 미국 쪽은
+    // 한 줄 (g.usWide). 내 보유 목록은 예전 그대로 (모두 적고, 묶음도 같아요)
+    // 2026-11-22 (Jack): 영어 화면도 같은 규칙 — 코드 5개까지 + "and {n} more" · "US stocks: …" 한 줄 (fixnote.jsx FIX_KR_OWN_CLOSE_LIST_MORE_EN ·
+    // FIX_US_OWN_CLOSE_ALL_EN). 같은 날짜의 국내 · 미국 마지막 확인 종가는 예전처럼 한 줄 (미국 한 줄이 아닐 때)
     const names = l === "ko" && Array.isArray(g.names) ? g.names : g.ts;
-    if (g.usWide) return usOwnCloseAllLine(g.date);
+    if (g.usWide) return usOwnCloseAllLine(g.date, l);
     if (g.kr) return krOwnCloseListLine((g.cut ? names : names.join(", ")), g.date, l);
     return T_OWN_CLOSE[l].replace("{names}", g.ts.join(", ")).replace("{md}", mdOf(g.date, l));
   }).filter(Boolean);
@@ -5335,4 +5337,6 @@ export { Bird, DEFAULT_SETTINGS, store, normCdf, SECTORS, SEC, KEY_SLOTS, KEY_SL
   // v18.6: 자동 설정 (tests/test_app_data.py)
   cleanTypedKeys, withTodaysAuto, autoChip, freshSettings, readSavedSlot,
   // 2026-11-19: 첫 화면 데이터 칸의 미국 종가 날짜 줄 (tests/test_oldapp_us_close.py)
-  LaunchScreen, usCloseLine, loadLiveData, T_US_CLOSE, T_PX_OFFICIAL };
+  LaunchScreen, usCloseLine, loadLiveData, T_US_CLOSE, T_PX_OFFICIAL,
+  // 2026-11-22: 마지막 확인 종가의 목록 줄 · 영어 화면 (tests/test_oldapp_en_carry.py)
+  ownCloseLines };

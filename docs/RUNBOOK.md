@@ -782,7 +782,7 @@ publish, Korean data included.
   800, full blanks 799–800), the US side of those lists is one line, "미국 종목은 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요."
   (console: "[v2] … US stocks at their last confirmed close (more than half)"). Lists of the user's own stocks (portfolio cards, 오늘
   확인할 일, 내 수익, records, 매수 계획, 관심 종목; old app banner, memo, CSV) always name every carried stock in the existing line. Company
-  pages keep the per-stock line. English screens keep the full list and today's grouping until Jack approves English for these shapes.
+  pages keep the per-stock line. English screens (old app, Jack 2026-11-22): the same rules in English, "{codes} and {n} more: we couldn't confirm today's close, so these show the {date} close." and "US stocks: we couldn't confirm today's close, so these show the {date} close."; every English list line naming two or more stocks says "these show", one stock "this shows".
 - **Known limit:** US carries never make a later run re-run. Since #161, later scheduled runs keep going only while a backup-day
   publish has open **Korean** closes (`already_published.open_closes` counts Korean closes only; its US count is always 0, decided in
   the #161 second review). Such a run fetches US prices again: if it publishes (more Korean stocks at that date's close, nothing lost),

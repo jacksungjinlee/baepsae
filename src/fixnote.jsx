@@ -44,15 +44,26 @@ export const FIX_KR_OWN_CLOSE = "오늘 종가를 확인하지 못해서 {date} 
 export const FIX_OWN_CLOSE = "{names} 가격은 {md} 종가예요.";                               // Jack 승인 2026-11-07 (detail.jsx T_OWN_CLOSE.ko)
 export const FIX_OWN_CLOSE_EN = "{names}: priced at the {md} close.";                         // Jack 승인 2026-11-07 (detail.jsx T_OWN_CLOSE.en)
 // 2026-11-20 (Jack, b · c · a): 목록 · 합계는 날짜마다 한 줄 (이름 + Jack 의 줄 · 2.0 app.krOwnCloseList 와 같은 글자) · 영어 화면은 승인된 영어
-// 문장 (한 종목: 그 문장 · 목록: "{names}: " 다음에 그 문장) · 나이 상한을 넘어 잠시 뺀 종목은 '찾지 못했어요' 대신 Jack 의 줄 (2.0 app.krOwnAged)
+// 문장 (한 종목: 그 문장 · 목록: 2026-11-22 부터 아래의 영어 목록 줄) · 나이 상한을 넘어 잠시 뺀 종목은 '찾지 못했어요' 대신 Jack 의 줄 (2.0 app.krOwnAged)
 export const FIX_KR_OWN_CLOSE_LIST = "{names}: 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요.";   // Jack 승인 2026-11-20
 export const FIX_KR_OWN_CLOSE_EN = "We couldn't confirm today's close, so this shows the {date} close.";   // Jack 승인 2026-11-20
 export const FIX_KR_AGED = "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요.";                   // Jack 승인 2026-11-20
 // 2026-11-21 (Jack, answers 8 · 6): 목록 줄의 이름은 5개까지 + '외 {n}종목' · 그날 미국 종목의 절반 넘게 마지막 확인 종가면 미국 쪽은 한 줄 (2.0 app.krOwnCloseListMore ·
-// app.usOwnCloseAll 와 같은 글자). 영어 화면은 Jack 이 승인한 영어가 없어 예전 그대로 (모든 코드를 적어요)
+// app.usOwnCloseAll 와 같은 글자). 시장 전체 목록만 (종목 고르기 · 기업분석의 목록) — 내 보유 목록(배너 · 주문 메모 · CSV)은 모든 이름을 적어요
 export const FIX_KR_OWN_CLOSE_LIST_MORE = "{names} 외 {n}종목: 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요.";   // Jack 승인 2026-11-21
 export const FIX_US_OWN_CLOSE_ALL = "미국 종목은 오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요.";                // Jack 승인 2026-11-21
 export const FIX_OWN_LIST_MAX = 5;
+// 2026-11-22 (Jack, verbatim: "1. Yes, with "these show" when several stocks are listed: * "AAPL, MSFT, NVDA, AMZN, GOOGL and 2 more: we couldn't
+// confirm today's close, so these show the Nov 20 close." * "US stocks: we couldn't confirm today's close, so these show the Nov 20 close.""):
+// 예전 뱁새 영어 화면의 목록 줄 ({names} = 코드 · {date} = "Nov 20"). 시장 전체 목록(종목 고르기)은 한국어 줄과 같은 규칙 (코드 5개까지 +
+// "and {n} more" · 미국 상한을 넘으면 미국 쪽은 "US stocks: …" 한 줄) · 내 보유 목록은 모든 코드. 줄이 종목 둘 이상을 말하면 "these show",
+// 한 종목이면 "this shows" · 콜론 뒤는 소문자 "we". 한 종목 카드의 문장(FIX_KR_OWN_CLOSE_EN, 앞에 코드 없음)은 그대로예요.
+export const FIX_KR_OWN_CLOSE_LIST_EN_ONE = "{names}: we couldn't confirm today's close, so this shows the {date} close.";                // Jack 승인 2026-11-22
+export const FIX_KR_OWN_CLOSE_LIST_EN = "{names}: we couldn't confirm today's close, so these show the {date} close.";                    // Jack 승인 2026-11-22
+export const FIX_KR_OWN_CLOSE_LIST_MORE_EN = "{names} and {n} more: we couldn't confirm today's close, so these show the {date} close.";  // Jack 승인 2026-11-22
+export const FIX_US_OWN_CLOSE_ALL_EN = "US stocks: we couldn't confirm today's close, so these show the {date} close.";                   // Jack 승인 2026-11-22
+// 자리 채우기: 넣는 글에 '$' 가 있어도 그대로 들어가요 (String.replace 의 '$&' 같은 뜻이 생기지 않게 함수로)
+const fillOwn = (tpl, v) => tpl.replace(/\{(names|n|date)\}/g, (m, k) => (v[k] == null ? m : String(v[k])));
 // 한 종목 (data.json 종목 또는 corp.json 회사 — 회사 줄에는 cls 가 없어서 marketDate 로 그 데이터의 pxDate 를 받아요): 줄 또는 null.
 // lang "en": 승인된 영어 문장 ("We couldn't confirm today's close, so this shows the Nov 16 close.")
 // 2026-11-20 (Jack, US carry): a US stock carried because Yahoo had no close (data.json pxc: true) reads the same (marketDate: usPxDate).
@@ -62,22 +73,31 @@ export function krOwnCloseText(c, marketDate = null, lang = "ko") {
   if (!md) return null;
   return lang === "en" ? FIX_KR_OWN_CLOSE_EN.replace("{date}", md) : FIX_KR_OWN_CLOSE.replace("{date}", md);
 }
-// 목록의 한 줄 (한국어: Korean names · 영어: codes): "{names}: …" — names 는 이미 이은 글
-// names: 이은 글 또는 이름 목록 (2026-11-21: 목록이면 한국어 화면은 5개까지 + '외 {n}종목' · 영어 화면은 모두)
+// 목록의 한 줄 (한국어: Korean names · 영어: codes): "{names}: …"
+// names: 이은 글 (", " 로 · 내 보유 목록: 모두 적어요) 또는 이름 목록 (시장 전체 목록: 5개를 넘으면 앞 5개 + 한국어 '외 {n}종목' · 영어 "and {n} more")
+// 영어 (Jack 2026-11-22): 이 줄이 말하는 종목이 하나면 "this shows", 둘 이상이면 "these show" (이은 글은 ", " 로 세요 — 영어 화면의 이름은 코드라
+// ", " 가 들어 있지 않아요)
 export function krOwnCloseListLine(names, date, lang = "ko") {
   const md = mdOf(date, lang === "en" ? "en" : "ko");
   if (!md) return null;
   const arr = Array.isArray(names) ? names : null;
-  if (lang === "en") return (arr ? arr.join(", ") : names) + ": " + FIX_KR_OWN_CLOSE_EN.replace("{date}", md);
+  if (lang === "en") {
+    if (arr && arr.length > FIX_OWN_LIST_MAX) {
+      return fillOwn(FIX_KR_OWN_CLOSE_LIST_MORE_EN, { names: arr.slice(0, FIX_OWN_LIST_MAX).join(", "), n: arr.length - FIX_OWN_LIST_MAX, date: md });
+    }
+    const all = arr || String(names).split(", ");
+    return fillOwn(all.length > 1 ? FIX_KR_OWN_CLOSE_LIST_EN : FIX_KR_OWN_CLOSE_LIST_EN_ONE, { names: all.join(", "), date: md });
+  }
   if (arr && arr.length > FIX_OWN_LIST_MAX) {
     return FIX_KR_OWN_CLOSE_LIST_MORE.replace("{names}", arr.slice(0, FIX_OWN_LIST_MAX).join(", ")).replace("{n}", String(arr.length - FIX_OWN_LIST_MAX)).replace("{date}", md);
   }
   return FIX_KR_OWN_CLOSE_LIST.replace("{names}", arr ? arr.join(", ") : names).replace("{date}", md);
 }
-// 2026-11-21 (Jack, answer 6): 그날 미국 종목의 절반 넘게 마지막 확인 종가일 때 미국 쪽의 한 줄 (한국어 화면만 · 영어는 예전 그대로)
-export function usOwnCloseAllLine(date) {
-  const md = mdOf(date, "ko");
-  return md ? FIX_US_OWN_CLOSE_ALL.replace("{date}", md) : null;
+// 2026-11-21 (Jack, answer 6): 그날 미국 종목의 절반 넘게 마지막 확인 종가일 때 미국 쪽의 한 줄 · 영어 화면 (Jack 2026-11-22): "US stocks: …"
+export function usOwnCloseAllLine(date, lang = "ko") {
+  const en = lang === "en";
+  const md = mdOf(date, en ? "en" : "ko");
+  return md ? fillOwn(en ? FIX_US_OWN_CLOSE_ALL_EN : FIX_US_OWN_CLOSE_ALL, { date: md }) : null;
 }
 export function KrOwnCloseLine({ c, marketDate = null, style, lang = "ko" }) {
   const text = krOwnCloseText(c, marketDate, lang === "en" ? "en" : "ko");
