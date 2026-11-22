@@ -1724,32 +1724,72 @@ the file is written). No new downloads and no DART calls.
       that day … Use Naver only for a stock missing from our own data … Leave a stock out only if neither exists").** Only in a week
       with a day that has no final listing file (`c1w_pub_need`: the week-start day itself, or a day in between — a normal week reads
       nothing and logs "읽지 않아요"), `c1w_pub_step` reads the `data` branch history: per price date (`pxDate`) the **latest**
-      publish of that day, rows of Korean stocks without `pxd` and without `noTrade` (the same rule as `kr_prev_pub_closes`, #161:
-      a carried or no-trade row is not that day's confirmed close), only publishes whose price source is an official close list (a
-      final file, or Daum × Yahoo equal to the won — every close published since the outage). Those closes become "the previous
-      trading day's close" of path A. A day with **no publish at all** (11-17: nothing was published with that price date) is
-      covered by the next trading day's publish: its `d1` (that day's close ÷ the previous close − 1, rounded to 0.01%) gives the
-      previous close to within ±0.005% (`C1W_PUB_D1_HALF`) plus 1 won, and the next day's KRX base must fall inside that range
-      ("ok"), else it is a reset ("break" → blank). Checked on the real 11-18 publish: the 11-18 intraday base of 2,431 / 2,431
-      stocks with a `d1` is inside the range; the range is at most about 0.01% wide, so only a reset smaller than that could slip
-      through (the weekly move would then be off by that much). When a close of that day is also known from a final file or the Daum
-      file, it must sit inside the range too (else `conflict`). A stock rescued this way is counted as `pub` (at least one day's
-      previous close came only from our publishes) — exact, no `c1wv`. If the week-start day has no final file, that day's publish
-      gives `c1w` itself and the [Q9] share count (`kr_week_closes(..., pub=)`, source "지난 발행본"); every link is then checked
-      by A from that close. **Conflict rule:** a published close (or `d1` range) that differs by more than 1 won from a final
-      listing file of the same day blanks that stock — every Korean stock, also those linked between final files
-      (`c1w_pub_diff` → `pubDiff`, logged with "!!"). **How it is read (cost):** a throw-away bare repo in the runner's temp folder
-      (the checkout's `.git` is never touched; removed afterwards), `git fetch --no-tags --filter=blob:none --depth=150` of `data`
-      (commits and trees only, a few hundred KB), then `data.json` only for the commits needed, newest first (one blob ≈ 0.5 MB on
-      the wire, 2.7 MB unpacked), stopping when every day from the week start to the day before the price date is found, or a
-      publish older than every missing day appears (publishes go in date order), or the commit date is before the week start, or
-      40 publishes were read. For the 11-16 week (run with price date 11-20): 28 commits, 8 publishes read, about 8 seconds. The
-      repo is public, so no token is used (as `already_published.py`). **Fail-safe:** any failure (no origin URL, fetch refused,
-      timeout 120 s, broken JSON) is logged with "!!" and the run continues with today's sources only, as before.
-      **The 11-16 week with this (real files and real publishes, price date 11-20):** Korean `c1w` 2,363 / 2,474 (95.5%), all
-      `pub` (exact); blank 111: the price date's link unknown 103 (62 stocks missing from the 11-19 publish — Daum and Yahoo
-      disagreed, no Yahoo close, KONEX — and 41 with no trade on 11-19), share count 3, a reset 1 (유니온머티리얼 5:1 merge), and
-      4 that need Naver (missing from one publish; Naver data was not in the simulation).
+      publish of that day, rows of Korean stocks without `pxd`, only publishes whose price source is an official close list (a final
+      file, or Daum × Yahoo equal to the won — every close published since the outage; the same rule as `kr_prev_pub_closes`, #161).
+      Those closes become "the previous trading day's close" of path A.
+      - **No-trade rows** (`noTrade`, e.g. 금양 001570 halted all week at 9,900): a no-trade day's official close equals that day's
+        KRX base, so it is used for the day-by-day link checks only, never as the week-start `c1w` value (`c1w_pub_rows` keeps them
+        apart as `nt`). Without this the 11-16 week lost 41 halted stocks that round 4 had kept via Naver.
+      - **Rolled-back publishes:** the bad-data rollback below is a revert commit on `data`. Reading newest → oldest, once a publish
+        with an earlier price date has appeared, an older commit with a later price date was rolled back and is never used (logged
+        "되돌린 발행본이라 쓰지 않음 sha (date)"); that day then counts as having no publish.
+      - **A day with no publish at all** (11-17: nothing was published with that price date) is covered by the next trading day's
+        publish: its `d1` (that day's close ÷ the previous close − 1, rounded to 0.01%) gives the previous close to within ±0.005
+        percentage points (`C1W_PUB_D1_HALF`) plus 1 won, and the next day's KRX base must fall inside that range ("ok"), else it is
+        a reset ("break" → blank). Checked on the real 11-18 publish: the 11-18 intraday base of 2,431 / 2,431 stocks with a `d1` is
+        inside the range (삼성전자: range 190,295–190,313, base 190,300). **Blind spot:** a reset smaller than the range — 0.01% or
+        1–2 won, whichever is larger — would pass, and the weekly move of that stock would be off by that much. When a close of that
+        day is also known from a final file or the Daum file, it must sit inside the range too (else `conflict`).
+      - **Is that `d1` against the previous close, not the reset base? (reviewer S4 — verified offline on one real case.)** The 11-17
+        close behind the 11-18 publish's `d1` came from Daum × Yahoo during the outage. Yahoo rewrites past closes after a split or
+        merge; if Daum's daily bars did too, both could agree on an adjusted close and `d1` would be measured against the new base,
+        hiding the reset. The real Daum response in `tests/fixtures/kr_two_source/daum_days.json` (fetched around 11-19, after
+        유니온머티리얼 047400's 5:1 merge on 11-16) shows the bars before the merge unchanged at 746 won (and the old share count
+        42,000,000), while Yahoo shows 3,730 for the same days. So Daum's past bars are **not** rewritten for a merge, the two sources
+        then disagree, and that day is simply not confirmed (the stock drops out of that backup day) — the two-source rule fails
+        safe. Not verified: other kinds of reset (rights issues, bonus issues, splits) in Daum's history; no such case is in the
+        fixtures and checking it needs a live Daum call. The same fact underlies PR #170's use of the Daum file's closes.
+      - A stock rescued this way is counted as `pub` (at least one day's previous close came only from our publishes) — exact, no
+        `c1wv`. If the week-start day has no final file, that day's publish gives `c1w` itself and the [Q9] share count
+        (`kr_week_closes(..., pub=)`, source "지난 발행본"); every link is then checked by A from that close. When it cannot (no
+        publish of that day, the publish is unusable, or the history could not be read), all Korean `c1w` stay blank and the first
+        `c1w` log line says which ("그날 지난 발행본도 없음" · "그날 지난 발행본은 쓸 수 없음 (가격 출처)" · "지난 발행본을 읽지 못함").
+      - **Conflict rule:** a published close (or `d1` range) that differs by more than 1 won from a final listing file of the same day
+        blanks that stock — every Korean stock, also those linked between final files (`c1w_pub_diff` → `pubDiff`, logged with "!!").
+      - **How it is read (cost):** a throw-away bare repo in the runner's temp folder (the checkout's `.git` is never touched; removed
+        afterwards), `git fetch --no-tags --filter=blob:none --depth=150` of `data` (commits and trees only, a few hundred KB), then
+        `data.json` only for the commits needed, newest first (one file ≈ 0.5 MB downloaded, 2.7 MB unpacked — the log shows the
+        unpacked total, "data.json 풀어서 21.6MB" ≈ 4 MB downloaded), stopping when every day from the week start to the day before the
+        price date is found, or a publish older than every missing day appears (publishes go in date order), or the commit date is
+        before the week start, or 80 publishes were read (`C1W_PUB_MAX_READ`; the log says so with "!!" when that cap stops the read
+        with days still missing). The address is `GITHUB_SERVER_URL/GITHUB_REPOSITORY` (https), else the checkout's origin when it is
+        an https or file address (never ssh). The repo is public, so no token is used (as `already_published.py`). Git runs with a
+        minimal environment (PATH, HOME, LANG, LC_ALL, TMPDIR, proxy and CA-file settings only — no API keys, no `GIT_DIR`,
+        `GIT_WORK_TREE`, `GIT_INDEX_FILE` or `GIT_CONFIG_*`), `GIT_TERMINAL_PROMPT=0`, empty `GIT_ASKPASS`, `-c credential.helper=`,
+        `-c core.askPass=`, empty stdin, and `-c http.lowSpeedLimit=1000 -c http.lowSpeedTime=30` (git gives up by itself after 30
+        seconds under 1 KB/s). Dry run 45022241453 (11-22): 4.3 s.
+      - **Fail-safe — exactly what happens:**
+        - *Time:* one deadline for the whole read, 180 s (`C1W_PUB_DEADLINE`), checked before every git call; each call may take at
+          most 120 s (`C1W_PUB_TIMEOUT`) or what is left of the 180 s, whichever is shorter. When a call runs over, its whole process
+          group is killed (no `git-remote-https` left behind) and **the whole read stops there** — no further publish is tried. The
+          log says "!! c1w 지난 발행본 (data 브랜치) 을 읽지 못했어요 — 시간 초과 — 거기서 멈춤 (git cat-file 이 Ns 안에 끝나지 않음 …)",
+          naming the git step (fetch, log, ls-tree or cat-file), or "전체 180s 를 넘어 git … 앞에서 멈춤". The morning run is
+          delayed by at most about 3 minutes.
+        - *Any other failure of the read* (no usable address, fetch refused, `git log` failing, any exception): the same "!!" line
+          with the reason, and **nothing from the history is used**: the later steps run exactly as in round 4 (only the previous
+          publish, intraday files, the Daum file and Naver; `c1wSrc.pub` is 0; no `pubDiff`). The same happens when the read worked
+          but found no publish in the week (tested: a failed read gives the same `c1w`, `c1wv`, rescue and counts as round 4).
+        - *One broken or unreadable publish* (bad JSON, a download error that is not a timeout): that publish is skipped and named
+          ("!! 읽지 못한 발행본 sha (…)"); the read goes on with the next commit. Its day then counts as having no publish.
+        - Nothing in this step can stop the run or the publish.
+      - **The 11-16 week with this (real files, real publishes, real Naver bars, price date 11-20, simulated):** Korean `c1w` 2,405 /
+        2,474 (97.2%): `pub` 2,363 (exact) and Naver 42 (the halted stocks and a few missing from one publish, tagged `c1wv: "nv"`);
+        blank 69: the price date's link unknown 62 (stocks missing from the 11-19 publish — Daum and Yahoo disagreed, no Yahoo
+        close, KONEX), Naver basis more than 1% off 3, share count 3, a reset 1 (유니온머티리얼 5:1 merge). Dry run 45022241453
+        (before the no-trade change): 2,366 (`pub` 2,363 · Naver 3).
+      - **Why the 62 stay blank (`pxLink`, kept on purpose):** Naver is never trusted for the newest day — its last bar can lag a day
+        or carry after-hours trades — so the price date's own link must be settled by A. A stock that is not in the publish of the day
+        before the price date has no confirmed close for that day, so its link to the price date cannot be checked and it is left out.
     - **B, Naver adjusted series (`naver`), only for days A could not settle — and, when our publishes were read, only for a stock
       whose previous close of such a day is missing from every source (missing from our own publishes); a stock whose closes are all
       known but whose KRX base of a day is missing is blanked (`noBase`) without asking Naver.** Naver rewrites every bar before a reset onto the new
@@ -1770,7 +1810,8 @@ the file is written). No new downloads and no DART calls.
       A, which needs exactly the closes that are missing. **Every row rescued by B carries `c1wv: "nv"`** (absent otherwise), so the
       screen can decide whether to use, footnote or leave out those rows (owner's decision in the screens PR).
     - **Known false blanks (lower coverage, never a wrong value):** a week whose start day has neither a final listing file nor a
-      publish of its own (all Korean `c1w` blank, "그날 최종본 목록 파일도 그날 지난 발행본도 없음"); a stock missing from the publish of
+      usable publish of its own (all Korean `c1w` blank; the log says why: "그날 지난 발행본도 없음" · "… 쓸 수 없음" · "… 읽지 못함"); a
+      stock missing from the publish of
       the day before the price date (the price date's link stays unknown, `pxLink` — Naver is not used for the newest day); a stock with a base reset in the few days before the last settled day
       (fewer than 5 linked days to compare with Naver, `few`); a stock not in the previous publish when the price date's link is
       unknown (`pxLink`); a single after-hours day more than 5% away (`near`) or a median more than 1% away (`adj`) without any reset.
@@ -1800,12 +1841,14 @@ the file is written). No new downloads and no DART calls.
   - "c1w 기준가 연결 자료: 장중 목록 파일 … · 지난 발행본 … · 다음 보관본 … · 네이버 일봉 n종목 — 실은 종목 (예): code name (how) …" (only when n > 0;
     with our publishes read, "지난 발행본" lists every publish day used)
   - 5차, right after the week-start line of the price phase: "c1w 지난 발행본: 읽지 않아요 (그 주 날마다 최종본 목록 파일이 있어요)" in a
-    normal week, else "c1w 지난 발행본 (data 브랜치 · 기준일마다 그날의 마지막 발행본 · {why}: days): 2026-11-13 db341a0 2,407종목 (뺀 행 66)
-    · 2026-11-17 발행본 없음 (다음 거래일 발행본의 등락률로 그날 종가 범위 2,431종목) · … — 커밋 28개 · 읽은 발행본 8개 (data.json 21.6MB · 8s · 멈춤
-    older)" ("!!" when a day without a final file has neither its own publish nor a next-day range, when the week-start day needed
-    for `c1w` has no publish, or when a publish could not be read); "!! c1w 지난 발행본 (data 브랜치) 을 읽지 못했어요 — {reason} … →
-    오늘 받은 자료만으로 확인해요" on failure. With publishes read, the link line adds "지난 발행본 종가와 KRX 기준가로 p", and one more line:
-    "c1w 지난 발행본 종가 ↔ 같은 날 최종본 목록 파일: 다른 종목 n (비움) — code name (day 발행 v · 파일 w)" ("!!" when n > 0).
+    normal week, else "c1w 지난 발행본 (data 브랜치 · 기준일마다 그날의 마지막 발행본 · {why}: days): 2026-11-13 db341a0 2,407종목 · 거래 없음 66
+    · 2026-11-17 발행본 없음 (다음 거래일 발행본의 등락률로 그날 종가 범위 2,431종목) · … — 커밋 28개 · 읽은 발행본 8개 (data.json 풀어서 21.6MB
+    · 5.8s · {why it stopped})" ("!!" when a day without a final file has neither its own publish nor a next-day range, when the
+    week-start day needed for `c1w` has no publish, when a publish could not be read, or when the 80-publish cap stopped the read with
+    days still missing; rolled-back publishes are named); "!! c1w 지난 발행본 (data 브랜치) 을 읽지 못했어요 — {reason} … → 오늘 받은
+    자료만으로 확인해요 (4차 그대로 …)" on failure. Whenever the run could look at publishes, the link line adds "지난 발행본 종가와 KRX 기준가로
+    p"; when publishes were read and used, one more line: "c1w 지난 발행본 종가 ↔ 같은 날 최종본 목록 파일: 다른 종목 n (비움) — code name (day
+    발행 v · 파일 w)" ("!!" when n > 0).
 - **`c1wv`** (Korean rows only): `"nv"` when that row's `c1w` was confirmed by path B (Naver); absent for rows confirmed between final
   files or by path A. **`c1wSrc`** (meta, Korean stocks): `{v: 1, listing, krx, pub, naver, blank: {reason: n}, link: {reason: n}}` —
   `listing` + `krx` + `pub` + `naver` = Korean rows with `c1w` (by how the base link was confirmed; `pub` = path A that needed our own
@@ -1820,8 +1863,8 @@ the file is written). No new downloads and no DART calls.
 
 Gate row **이번 주 시작 종가 (c1w · wkFrom · usWkFrom · 경고만)** (`validate_data.check_v196e`, after the v19.6b rows). It only
 **warns**, in every mode (Jack's yes is needed before any of it may stop a publish; to be asked with the screens PR), and a crash of
-the check itself is a warning too. The Korean part of its value shows how the rows were confirmed, e.g. "국내 2,363 / 2,474 (wkFrom
-2026-11-13 · 목록 0 · KRX 0 · 지난 발행본 2,363 · 네이버 0)" ("지난 발행본" only when `c1wSrc` has `pub`). It warns when: `c1wSrc` is
+the check itself is a warning too. The Korean part of its value shows how the rows were confirmed, e.g. "국내 2,366 / 2,474 (wkFrom
+2026-11-13 · 목록 0 · KRX 0 · 지난 발행본 2,363 · 네이버 3)" (dry run 45022241453) ("지난 발행본" only when `c1wSrc` has `pub`). It warns when: `c1wSrc` is
 missing, malformed (also a non-integer `pub`), or its counts disagree with the rows (`listing` + `krx` + `pub` + `naver` ≠ Korean
 `c1w` rows, or `naver` ≠ rows with `c1wv`); a `c1wv` is anything but `"nv"` next to a Korean
 `c1w`; the file has none of the three fields (a file from before #170, e.g. the live site
