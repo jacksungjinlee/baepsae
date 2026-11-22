@@ -66,10 +66,12 @@ export const shownInsider = (m) => m.insider.filter((c) => insiderTitle(c));
 export const pageHas = (m) => !!(m && m.fresh && (m.issue.length || shownInsider(m).length || m.nps.length || m.dates.length));
 
 // The approved sentence with its 지분을 늘린 보고 / 지분을 줄인 보고 in bold (board Today2; the same words as co.disc.buys · sells).
+// One span holds the whole sentence (data-ui="amount", as build.jsx does for its sentences with a bold number), so the sentence
+// still reads as the one approved line, never as three pieces ("…가 있어요. 지금 주가로 약 4억원이에요." alone is no approved line).
 function Bolded({ text, part }) {
   const i = part ? text.indexOf(part) : -1;
   if (i < 0) return text;
-  return <>{text.slice(0, i)}<b style={{ fontWeight: WEIGHT.heavy, color: COLOR.ink }}>{part}</b>{text.slice(i + part.length)}</>;
+  return <span data-ui="amount">{text.slice(0, i)}<b style={{ fontWeight: WEIGHT.heavy, color: COLOR.ink }}>{part}</b>{text.slice(i + part.length)}</span>;
 }
 
 // ---------------- one card ----------------
