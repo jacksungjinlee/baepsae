@@ -2481,6 +2481,51 @@ def check_us_own_close(rep, data, macro, pdata):
     rep.add(name, not hard and not over, " · ".join(parts) or "?", rule, warn=warn and not hard and not over)
 
 
+US_NEW_WAIT_ROW = "미국 새 종목 확인 종가 기다림 (usSrc.newWait · 경고만)"
+
+
+def us_new_wait_list(data):
+    """data.json usSrc.newWait → (티커 목록 또는 None (칸 없음), 모양이 맞는지). 맞는 모양 = 빈 글이 아닌 글자의 목록. (순수 함수)"""
+    src = (data or {}).get("usSrc") if isinstance(data, dict) else None
+    if not isinstance(src, dict) or "newWait" not in src:
+        return None, True
+    nw = src["newWait"]
+    ok = isinstance(nw, list) and all(isinstance(t, str) and t.strip() for t in nw)
+    return (nw if ok else None), ok
+
+
+def check_us_new_wait(rep, data, pdata):
+    """2026-11-22 (Jack, verbatim: "2. No relaxation. Instead, a stock newly added to the S&P (or NASDAQ) list joins our list only once it
+    has a confirmed close; until then it isn't added. Nobody can hold it in the app before it joins, so nothing is lost, and the check
+    stays as it is."): 파이프라인(fetch_data.us_new_wait_step)은 지난 발행본에 없던 미국 티커가 미국 기준일 종가가 없으면 넣지 않고 data.json
+    usSrc.newWait 에 적어요. 이 줄은 **경고만** 해요 — 실패하지 않아요 (발행 · 사이트 점검 모두): 기다리는 티커가 있으면 이름을 적고, 그중 지난
+    발행본도 기다리던 티커(두 발행본 넘게 이어서 기다림 — 출처 목록에 남은 죽은 티커일 수 있어요 · 발행 모드에서만 지난 발행본을 봐요)를 따로
+    적어요. 모양이 틀린 기록(글자 목록이 아님) · 기다린다면서 발행하는 티커도 경고. 칸이 없거나 비면 통과. (리뷰 2026-11-22: 예전에는 '미국 d1 채움'
+    줄이 그런 티커를 이름으로 적었어요 — 기다리는 동안 아무도 모르게 남지 않게)"""
+    rule = "새로 들어온 미국 종목은 미국 기준일 종가가 확인되면 들어와요 (기다리는 종목 · 이어서 기다리는 종목 · 모양이 틀린 기록은 경고 · 실패 없음)"
+    nw, ok = us_new_wait_list(data)
+    if not ok:
+        raw = ((data or {}).get("usSrc") or {}).get("newWait")
+        rep.add(US_NEW_WAIT_ROW, True, f"usSrc.newWait 모양이 잘못됨 (빈 글이 아닌 글자 목록이어야 해요: {str(raw)[:80]})", rule, warn=True)
+        return
+    if not nw:
+        rep.add(US_NEW_WAIT_ROW, True, "없음", rule)
+        return
+    pnw, _pok = us_new_wait_list(pdata) if isinstance(pdata, dict) else (None, True)
+    again = [t for t in nw if t in set(pnw or [])]
+    listed = {s.get("t") for s in us_stocks(data)}
+    inside = [t for t in nw if t in listed]
+    parts = [f"{len(nw)}종목: " + ", ".join(nw[:US_OWN_SHOW]) + (f" 외 {len(nw) - US_OWN_SHOW}종목" if len(nw) > US_OWN_SHOW else "")]
+    if again:
+        parts.append(f"지난 발행본부터 이어서 기다림 {len(again)}: " + ", ".join(again[:US_OWN_SHOW])
+                     + (f" 외 {len(again) - US_OWN_SHOW}종목" if len(again) > US_OWN_SHOW else "") + " (출처 목록의 티커가 살아 있는지 확인)")
+    if inside:
+        parts.append(f"그런데 발행하는 종목: {', '.join(inside[:US_OWN_SHOW])}")
+    rep.add(US_NEW_WAIT_ROW, True, " · ".join(parts), rule, warn=True)
+    rep.detail("미국 기준일 종가를 기다리는 새 미국 종목 (usSrc.newWait · 목록에 넣지 않았어요)",
+               [t + (" (지난 발행본부터 이어서)" if t in again else "") for t in nw])
+
+
 def coverage(arr, key):
     if not arr:
         return 0.0
@@ -2792,6 +2837,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v191c(rep, cur, us, mode, today)
     check_kr_own_close(rep, data, macro, pdata)   # 2026-11-19 (Jack): 국내 종목의 마지막 확인 종가 (pxd · 미국 pxd 줄과 같은 실패 + 경고 줄)
     check_us_own_close(rep, data, macro, pdata)   # 2026-11-20 (Jack): 미국 종목의 마지막 확인 종가 (pxc · 날짜가 깨졌거나 d1 이 옆에 있으면 실패 · 나머지는 경고)
+    check_us_new_wait(rep, data, pdata)   # 2026-11-22 (Jack): 미국 기준일 종가를 기다리는 새 미국 종목 (usSrc.newWait · 경고만 · 실패 없음)
     check_v191f(rep, data, corp, kr, by, comps, pdata)
     check_eps_line_left(rep, corp, comps)   # 2026-11-14 (Jack Q3 · 리뷰 S4): 다시 읽은 뒤에도 날짜가 지난 '고치는 중' 줄이 남을 회사 (경고)
     check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=(prev or {}).get("macro") if rel else None)

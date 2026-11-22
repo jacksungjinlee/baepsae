@@ -47,10 +47,14 @@ def test_the_rule_waits_only_for_tickers_the_previous_publish_did_not_know():
     nocl = {"NEW": "bar", "AAPL": "bar", "OLD": "bar", "EMP": "empty", "ERR": "err"}
     out = [us("AAPL", d1=None, pxd=D18), us("NEW", d1=None, pxd=D18), us("OLD", d1=None, pxd=D18), us("JOIN"), us("PFD"), us("MSFT")]
     r = F.us_new_wait(prev, nocl, out)
-    assert r == {"wait": ["NEW"], "joined": ["JOIN"], "off": None}, r     # 지난 발행본의 종목 · 잠시 뺀 종목은 #165 · 가격이 없는 새 티커는 예전 그대로
+    assert r == {"wait": ["NEW"], "left": [], "joined": ["JOIN"], "off": None}, r   # 지난 발행본의 종목 · 잠시 뺀 종목은 #165 · 가격이 없는 새 티커는 예전 그대로
+    # 리뷰 (2026-11-22): 지난 발행본이 일부러 뺀 티커 (usLeftOut 의 어느 목록이든) 는 기다리지 않아요 — 예전 길 그대로
+    lo = {**prev, "usLeftOut": {"preferred": ["PFD"], "krListing": ["SKHY"], "badBar": ["XBAD"], "later": ["ODD"]}}
+    r2 = F.us_new_wait(lo, {"NEW": "bar", "PFD": "bar", "SKHY": "bar", "XBAD": "bar", "ODD": "bar"}, out)
+    assert r2["wait"] == ["NEW"] and r2["left"] == ["ODD", "PFD", "SKHY", "XBAD"], r2
     for bad in (None, [], {"stocks": None}, {"stocks": [{"t": "069500", "cls": "kr"}]}, {"stocks": [us("X", fund=True)]}):
         got = F.us_new_wait(bad, {"NEW": "bar"}, out)
-        assert got["wait"] == [] and got["joined"] == [] and got["off"], (bad, got)   # 무엇이 새로 들어왔는지 알 수 없어요 → 예전 그대로
+        assert got["wait"] == [] and got["left"] == [] and got["joined"] == [] and got["off"], (bad, got)   # 무엇이 새로 들어왔는지 알 수 없어요 → 예전 그대로
     # 모양이 틀린 aged 기록은 아는 티커가 아니에요 (그 종목은 기다려요 — 틀린 숫자 대신 빠짐)
     weird = {**prev, "usSrc": {"v": 1, "own": {"aged": "x"}}}
     assert F.us_new_wait(weird, {"OLD": "bar"})["wait"] == ["OLD"]
@@ -77,16 +81,45 @@ def test_the_step_removes_the_row_writes_the_reason_and_logs(monkeypatch):
     out3, nocl3 = [us("NEW", d1=None, pxd=D18)], {"NEW": "bar"}
     assert F.us_new_wait_step(None, nocl3, out3, {}, dt.date(2026, 11, 19)) == [] and [r["t"] for r in out3] == ["NEW"] and nocl3 == {"NEW": "bar"}
     assert len(lines) == 1 and lines[0].startswith("  !! 지난 발행본이 없거나 읽지 못했어요") and "종가가 없는 1종목은 야후의 마지막 봉 날짜로" in lines[0]
+    # 지난 발행본이 없고 기준일 종가가 없는 종목도 없음: 그래도 크게 (리뷰 2026-11-22 · 예전 그대로라는 것을)
+    lines.clear()
+    assert F.us_new_wait_step(None, {}, [us("AAPL")], {}, dt.date(2026, 11, 19)) == []
+    assert len(lines) == 1 and lines[0].startswith("  !! 지난 발행본이 없거나 읽지 못했어요") and "종가가 없는 0종목" in lines[0], lines
     # 가리다 멈춤: 예전 그대로 · 크게 남겨요 (발행은 멈추지 않아요)
     lines.clear()
+    real = F.us_new_wait
     monkeypatch.setattr(F, "us_new_wait", lambda *a, **k: 1 / 0)
     out4, nocl4 = [us("NEW", d1=None, pxd=D18)], {"NEW": "bar"}
     assert F.us_new_wait_step(prev, nocl4, out4, {}, dt.date(2026, 11, 19)) == [] and len(out4) == 1 and nocl4 == {"NEW": "bar"}
     assert lines and lines[0].startswith("  !! 새로 들어온 미국 종목을 가리다 오류로 멈췄어요 (ZeroDivisionError")
+    monkeypatch.setattr(F, "us_new_wait", real)
+    # 행을 뺀 뒤에 멈춰도 (리뷰 2026-11-22): 바꾼 것을 모두 되돌려요 — out · nocl · why 가 단계 앞과 같아요
+    class Boom(dict):
+        def __setitem__(self, k, v):
+            raise KeyError("boom")
+    lines.clear()
+    out5, nocl5, why5 = [us("AAPL", d1=None, pxd=D18), us("NEW", d1=None, pxd=D18)], {"AAPL": "bar", "NEW": "bar"}, Boom(x="kept")
+    before = (copy.deepcopy(out5), dict(nocl5), dict(why5))
+    assert F.us_new_wait_step(prev, nocl5, out5, why5, dt.date(2026, 11, 19)) == []
+    assert (out5, nocl5, dict(why5)) == before, (out5, nocl5, why5)
+    assert lines and lines[-1].startswith("  !! 새로 들어온 미국 종목을 가리다 오류로 멈췄어요 (KeyError")
+
+
+def test_the_step_says_so_when_a_waiting_ticker_had_no_row(monkeypatch):
+    """'bar' 종목은 늘 행이 있어요 — 아니면 크게 남겨요 (그래도 기다리는 종목은 빠져요 · 리뷰 2026-11-22)."""
+    lines = []
+    monkeypatch.setattr(F, "log", lines.append)
+    out = [us("AAPL"), us("NEW", d1=None, pxd=D18)]
+    nocl, why = {"NEW": "bar", "GHOST": "bar"}, {}
+    assert F.us_new_wait_step({"stocks": [us("AAPL")]}, nocl, out, why, dt.date(2026, 11, 19)) == ["GHOST", "NEW"]
+    assert [r["t"] for r in out] == ["AAPL"] and nocl == {} and why == {"GHOST": WAIT, "NEW": WAIT}
+    assert any(x == "  !! 새로 들어온 미국 종목 2 중 뺀 행이 1개예요 (종목마다 한 행이어야 해요 — fetch_us 의 nocl · 행을 확인해 주세요)"
+               for x in lines), lines
 
 
 # ── 2. fetch_us 를 가짜 야후로 ─────────────────────────────────────────────────
-def _run(tmp_path, monkeypatch, syms, prev_t=None, blank=(), aged=None, prev_usd=D18, splits=None, sp500=None, tag="a", step=True, quote=None):
+def _run(tmp_path, monkeypatch, syms, prev_t=None, blank=(), aged=None, prev_usd=D18, splits=None, sp500=None, tag="a", step=True, quote=None,
+         kr_codes=frozenset(), dups=None, prev_extra=None):
     """syms: 오늘 미국 목록 · prev_t: 지난 발행본의 미국 종목 (None = 지난 발행본 없음) · blank: 기준일(11-19) 봉이 빈 종목 ·
     aged: 지난 발행본의 usSrc.own.aged · sp500: 가짜 S&P 500 목록 (주면 겹침 기준을 작게) · step=False: 새 단계를 끈 결과 (예전과 같은지 맞춰 봐요)."""
     today_us = dt.date(2026, 11, 19)
@@ -107,6 +140,7 @@ def _run(tmp_path, monkeypatch, syms, prev_t=None, blank=(), aged=None, prev_usd
         prev = {"pxDate": prev_usd, "usPxDate": prev_usd, "stocks": [us(t, price=50.0 + i, d1=0.3) for i, t in enumerate(prev_t)]}
         if aged is not None:
             prev["usSrc"] = {"v": 1, "own": {"v": 1, "n": 0, "codes": [], "same": [], "aged": aged}}
+        prev.update(prev_extra or {})
 
     def tickers(names):
         if sp500 is not None and hasattr(names, "sp500"):
@@ -124,7 +158,7 @@ def _run(tmp_path, monkeypatch, syms, prev_t=None, blank=(), aged=None, prev_usd
     lines = []
     monkeypatch.setattr(F, "log", lines.append)
     today = today_us + dt.timedelta(days=1)
-    out, *_rest, meta = F.fetch_us(today - dt.timedelta(days=500), today, 0.03, prev=copy.deepcopy(prev))
+    out, *_rest, meta = F.fetch_us(today - dt.timedelta(days=500), today, 0.03, kr_codes=kr_codes, dups=dups or {}, prev=copy.deepcopy(prev))
     meta.pop("_index")
     json.dumps(meta, allow_nan=False, ensure_ascii=False)
     json.dumps(out, allow_nan=False, ensure_ascii=False)
@@ -183,6 +217,33 @@ def test_no_previous_publish_keeps_todays_behaviour(tmp_path, monkeypatch):
     assert any(x.startswith("  !! 지난 발행본이 없거나 읽지 못했어요") and "예전 그대로" in x for x in lines), lines
     out0, meta0, _l, _p = _run(tmp_path, monkeypatch, syms, prev_t=None, blank={"LGND"}, tag="b", step=False)
     assert out == out0 and meta == meta0
+
+
+def test_left_out_tickers_become_newwait_on_yahoo_blank(tmp_path, monkeypatch):
+    """리뷰 A (2026-11-22): 야후가 모든 종가를 비운 날, 지난 발행본이 일부러 뺀 티커 (SKHY 한국 종목 상장분 · GOOGM 우선주) 는 기다리지 않아요 —
+    그날의 usLeftOut 이 예전처럼 채워지고, newWait 에도 '새로 들어온' 로그에도 없어요 (새 단계를 끈 결과와 같아요)."""
+    syms = BASE + ["SKHY", "GOOGM"]
+    kw = dict(prev_t=BASE, blank=set(syms), kr_codes=frozenset({"000660"}), dups={"SKHY": ("000660", "SK하이닉스")},
+              prev_extra={"usLeftOut": {"preferred": ["GOOGM"], "krListing": ["SKHY"], "badBar": []}})
+    out, meta, lines, _p = _run(tmp_path, monkeypatch, syms, tag="a", **kw)
+    assert "newWait" not in meta["usSrc"]
+    assert meta["usLeftOut"]["preferred"] == ["GOOGM"] and meta["usLeftOut"]["krListing"] == ["SKHY"], meta["usLeftOut"]
+    assert not any(x.startswith("  !! 새로 들어온 미국 종목") for x in lines), lines
+    assert any(x.startswith("· 지난 발행본이 일부러 뺀 티커(usLeftOut) 중 미국 기준일 2026-11-19 종가가 야후에 없는 2: GOOGM, SKHY") for x in lines), lines
+    out0, meta0, _l, _p0 = _run(tmp_path, monkeypatch, syms, tag="b", step=False, **kw)
+    assert json.dumps([out, meta], sort_keys=True) == json.dumps([out0, meta0], sort_keys=True)
+
+
+def test_badbar_yesterday_takes_its_old_path(tmp_path, monkeypatch):
+    """리뷰 A (2026-11-22): 지난 발행본이 깨진 봉으로 뺀 티커 (usLeftOut.badBar) 는 오늘 기준일 종가가 없어도 기다리지 않고 예전 길 (야후의 더 오래된
+    봉을 자기 날짜로) — main 과 같아요."""
+    syms = BASE + ["XBAD"]
+    kw = dict(prev_t=BASE, blank={"XBAD"}, prev_extra={"usLeftOut": {"preferred": [], "krListing": [], "badBar": ["XBAD"]}})
+    out, meta, _l, _p = _run(tmp_path, monkeypatch, syms, tag="a", **kw)
+    x = {r["t"]: r for r in out}["XBAD"]
+    assert x["pxd"] == D18 and "pxc" not in x and "newWait" not in meta["usSrc"]
+    out0, meta0, _l0, _p0 = _run(tmp_path, monkeypatch, syms, tag="b", step=False, **kw)
+    assert json.dumps([out, meta], sort_keys=True) == json.dumps([out0, meta0], sort_keys=True)
 
 
 def test_a_normal_day_is_the_same_as_before(tmp_path, monkeypatch):
@@ -244,14 +305,17 @@ def test_same_day_republish_new_ticker_still_waits(tmp_path, monkeypatch):
 
 
 # ── 3. 2026-11-21 의 모양 (줄인 실제 발행본 tests/fixtures/snapshot · 관문 run_checks 까지) ──────────────────
-def _snap_new(new=(), carry_all=True, step=True):
+def _snap_new(new=(), carry_all=True, step=True, mode="publish", prev_wait=None, mutate=None):
     """줄인 실제 하루치 발행본을 지난 발행본으로, 다음 미국 거래일에 필수 세 종목(AAPL · MSFT · NVDA)을 뺀 모든 미국 종목의 기준일 봉이 비고
     (carry_all · 마지막 확인 종가로), 지난 발행본에 없던 new 종목들도 기준일 봉이 빈 날 (야후의 더 오래된 봉만 · 예전이면 그 봉의 자기 날짜로 실렸어요).
-    step=False: 새 단계 없이 (예전 길)."""
+    step=False: 새 단계 없이 (예전 길). mode: 관문 모드 (live = 사이트 점검 · 배포와 감시가 부르는 모드 · 지난 발행본 없이) · prev_wait: 지난 발행본의
+    usSrc.newWait · mutate(data): 관문 앞에 파일을 바꿔요. 반환: (data, {줄: (결과, 값)}, why, 실패한 줄 이름 set)."""
     snap = os.path.join(ROOT, "tests", "fixtures", "snapshot")
     load = lambda n: json.load(open(os.path.join(snap, f"snap_{n}.json"), encoding="utf-8"))   # noqa: E731
     prev = {k: load(k) for k in ("data", "corp", "disc", "macro")}
     pdat = prev["data"]
+    if prev_wait is not None:
+        pdat["usSrc"] = {"v": 1, "newWait": prev_wait}
     usd0 = pdat["usPxDate"]
     T = next(d.strftime("%Y-%m-%d") for d in pd.bdate_range(usd0, periods=3) if d.strftime("%Y-%m-%d") > usd0)
     macro = copy.deepcopy(prev["macro"])
@@ -289,17 +353,19 @@ def _snap_new(new=(), carry_all=True, step=True):
             r.update({k: v for k, v in p.items() if k not in F.US_OWN_KEYS and k not in ("d1", "pxd", "pxc")})
     stocks = [copy.deepcopy(s) for s in pdat["stocks"] if not (s.get("cls") == "us" and not s.get("fund"))] + out
     data = {**pdat, "usPxDate": T, "stocks": stocks, "usSrc": umeta["usSrc"]}
+    if mutate:
+        mutate(data)
     json.dumps(data, allow_nan=False)
     kdays = [dt.date.fromisoformat(r[0]) for r in prev["macro"]["idxHist"]["KOSPI"]["rows"]]
-    rep = V.run_checks({"data": data, "corp": prev["corp"], "disc": prev["disc"], "macro": macro}, prev, None,
-                       dt.date.fromisoformat(T) + dt.timedelta(days=1), "publish", count_between=lambda a, b: 1, notes=[],
+    rep = V.run_checks({"data": data, "corp": prev["corp"], "disc": prev["disc"], "macro": macro}, prev if mode == "publish" else None, None,
+                       dt.date.fromisoformat(T) + dt.timedelta(days=1), mode, count_between=lambda a, b: 1, notes=[],
                        sessions={"dates": kdays, "src": "t"}, now=None, hilo=None, special={}, alt=None)
-    return data, rows_of(rep), why
+    return data, rows_of(rep), why, {r[0] for r in rep.failed}
 
 
 def test_the_1121_shape_publishes_with_no_uncarried_stock():
-    data, rows, why = _snap_new(NEW_1121)
-    _d0, plain, _w0 = _snap_new((), carry_all=False)
+    data, rows, why, _f = _snap_new(NEW_1121)
+    _d0, plain, _w0, _f0 = _snap_new((), carry_all=False)
     fails = lambda r: sorted(k for k, v in r.items() if v[0] == "FAIL")      # noqa: E731
     # 줄인 고정 데이터라 실패하는 줄도 있어요 (최종본 없음 · 종목 수) — 야후가 빈 날과 보통 날의 실패 줄이 같아요
     assert fails(rows) == fails(plain), set(fails(rows)) ^ set(fails(plain))
@@ -311,23 +377,63 @@ def test_the_1121_shape_publishes_with_no_uncarried_stock():
     assert not set(NEW_1121) & {s["t"] for s in data["stocks"]}
     assert rows[OWN_ROW][0] == "WARN" and "none" not in rows[OWN_ROW][1], rows[OWN_ROW]
     # 이 단계가 없었으면: 4종목이 '빠짐' (5 이하라 경고였어요)
-    _d, old4, _w = _snap_new(NEW_1121, step=False)
+    _d, old4, _w, _f4 = _snap_new(NEW_1121, step=False)
     assert old4[D1_ROW][0] == "WARN" and "빠짐 4" in old4[D1_ROW][1], old4[D1_ROW]
 
 
 def test_six_new_tickers_on_a_full_yahoo_blank_no_longer_stop_the_publish():
     """11-21 에 찾은 위험: 야후가 통째로 빈 날에 S&P 목록이 6종목 넘게 바뀌면 '미국 d1 채움' 이 실패해 국내 데이터까지 발행이 멈춰요."""
     six = NEW_1121 + ["NEWA", "NEWB"]
-    data, rows, _w = _snap_new(six)
+    data, rows, _w, _f = _snap_new(six)
     assert rows[D1_ROW][0] == "WARN" and "빠짐" not in rows[D1_ROW][1], rows[D1_ROW]
     assert data["usSrc"]["newWait"] == sorted(six)
-    _d, old, _w2 = _snap_new(six, step=False)
+    _d, old, _w2, _f2 = _snap_new(six, step=False)
     assert old[D1_ROW][0] == "FAIL" and "빠짐 6" in old[D1_ROW][1], old[D1_ROW]       # 관문은 그대로예요 (N = 5)
 
 
 def test_the_snapshot_normal_day_is_unchanged():
     """야후가 다 준 날 (기다리는 종목 없음): 이 단계가 있든 없든 같은 파일 · 같은 관문 결과."""
-    d1, r1, _w = _snap_new((), carry_all=False)
-    d0, r0, _w0 = _snap_new((), carry_all=False, step=False)
+    d1, r1, _w, _f1 = _snap_new((), carry_all=False)
+    d0, r0, _w0, _f0 = _snap_new((), carry_all=False, step=False)
     assert json.dumps(d1, sort_keys=True, ensure_ascii=False) == json.dumps(d0, sort_keys=True, ensure_ascii=False) and r1 == r0
     assert set(d1["usSrc"]) == {"v", "own"}
+
+
+# ── 4. 관문의 새 줄 '미국 새 종목 확인 종가 기다림 (usSrc.newWait · 경고만)' (리뷰 2026-11-22 · 경고만 · 실패 없음) ──────────────
+ROW = V.US_NEW_WAIT_ROW
+
+
+def test_new_wait_row_names_the_waiting_tickers_and_never_fails():
+    _d, rows, _w, failed = _snap_new(NEW_1121)
+    assert rows[ROW][0] == "WARN" and rows[ROW][1].startswith("4종목: LGND, MKTX, SNDK, VRNS") and "이어서" not in rows[ROW][1], rows[ROW]
+    assert ROW not in failed
+    # 지난 발행본도 기다리던 티커 (두 발행본 넘게): 따로 적어요 (출처 목록의 죽은 티커일 수 있어요)
+    _d, rows2, _w, failed2 = _snap_new(NEW_1121, prev_wait=["LGND", "GONE"])
+    assert rows2[ROW][0] == "WARN" and "지난 발행본부터 이어서 기다림 1: LGND" in rows2[ROW][1] and ROW not in failed2, rows2[ROW]
+
+
+def test_new_wait_row_passes_when_empty_or_absent():
+    _d, rows, _w, _f = _snap_new((), carry_all=False)
+    assert rows[ROW] == ("PASS", "없음")
+    for drop in (lambda d: d.pop("usSrc"), lambda d: d["usSrc"].update(newWait=[])):
+        _d, r, _w, _f = _snap_new((), carry_all=False, mutate=drop)
+        assert r[ROW] == ("PASS", "없음"), r[ROW]
+
+
+def test_new_wait_row_warns_on_a_broken_record_or_a_listed_ticker():
+    for bad in ("LGND", [1, "A"], [""], {"LGND": 1}, None):
+        _d, r, _w, failed = _snap_new((), carry_all=False, mutate=lambda d, b=bad: d["usSrc"].update(newWait=b))
+        assert r[ROW][0] == "WARN" and "모양이 잘못됨" in r[ROW][1] and ROW not in failed, (bad, r[ROW])
+    _d, r, _w, failed = _snap_new((), carry_all=False, mutate=lambda d: d["usSrc"].update(newWait=["AAPL", "ZZZZ"]))
+    assert r[ROW][0] == "WARN" and "그런데 발행하는 종목: AAPL" in r[ROW][1] and ROW not in failed, r[ROW]
+
+
+def test_new_wait_row_in_the_site_checks_is_a_warning_like_the_others():
+    """배포 · 감시가 부르는 사이트 점검(live): 지난 발행본 없이 같은 줄 · 경고만 (관문의 끝 코드는 실패 줄만 봐요: validate_data.main)."""
+    _d, rows, _w, failed = _snap_new(NEW_1121, mode="live")
+    assert rows[ROW][0] == "WARN" and rows[ROW][1].startswith("4종목: LGND") and ROW not in failed, rows[ROW]
+    _d, rows0, _w, _f = _snap_new((), carry_all=False, mode="live")
+    assert rows0[ROW] == ("PASS", "없음")
+    rep = V.Report()
+    V.check_us_new_wait(rep, {"usSrc": {"v": 1, "newWait": "x"}}, None)
+    assert rep.failed == [] and len(rep.warned) == 1
