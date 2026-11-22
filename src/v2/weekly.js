@@ -142,7 +142,7 @@ export function weekPct(s, starts, nv = WEEK_NV, splits = null, today = null) {
 // ---------------- 내 포트폴리오 ----------------
 // deck: the portfolio as the screens read it (with data.json's splits, held.js VIEW_SPLITS) · q: { byT, week (weekState), rateAt(date)
 // -> won per dollar from fxHist | null, usPxDate, nv, splits, today }.
-// -> { ok, gain, pct, start, buys, sells, end, n, left: [{ t, nk, why }], per: [{ t, start, end, buys, sells, gain, nv }], nvUsed: [t] }
+// -> { ok, gain, pct, start, buys, sells, end, n, left: [{ t, nk, why }], per: [{ t, nk, start, end, buys, sells, gain, nv }], nvUsed: [t] }
 export function weekMoney(deck, q) {
   const w = q.week;
   const out = { start: 0, buys: 0, sells: 0, end: 0, n: 0, left: [], per: [], nvUsed: [] };
@@ -207,7 +207,7 @@ export function weekMoney(deck, q) {
         else end = (uEnd / UNIT) * px * rate;
       }
     }
-    rows.push(why ? { t, nk, why } : { t, nk, r: { t, start, end, buys, sells, gain: end - start - buys + sells, nv: nvRow } });
+    rows.push(why ? { t, nk, why } : { t, nk, r: { t, nk, start, end, buys, sells, gain: end - start - buys + sells, nv: nvRow } });
   }
   // taken out from the week's Monday on with no history entry (no sale or dividend): its records are gone (round 2, M1)
   const gone = new Map();
@@ -300,7 +300,7 @@ export function nextWeek(byT, held, w, today = null) {
 }
 
 // ---------------- 가장 많이 움직인 종목 ----------------
-// -> { t, nk, s, pct, why: "fell" | "rose" | null, n } | null (no held stock with a week's move, or the largest rounds to 0.0%)
+// -> { t, nk, s, pct, why: "fell" | "rose" | null, n, nv } | null (no held stock with a week's move, or the largest rounds to 0.0%)
 export function weekMover(held, byT, stocks, starts, nv = WEEK_NV, splits = null, today = null) {
   let best = null;
   for (const t of [...held].sort()) {
@@ -312,7 +312,8 @@ export function weekMover(held, byT, stocks, starts, nv = WEEK_NV, splits = null
   if (!best || Math.round(Math.abs(best.pct) * 10) === 0) return null;
   const g = peerGroup(best.s, stocks, (x) => weekPct(x, starts, nv, splits, today));
   const why = g.ok && g.together ? "fell" : g.ok && g.togetherUp ? "rose" : null;
-  return { t: best.t, nk: best.s.nk || best.t, s: best.s, pct: best.pct, why, n: g.ok ? g.n : 0 };
+  // nv: its last-week close was confirmed through Naver (the footnote names it under WEEK_NV "note")
+  return { t: best.t, nk: best.s.nk || best.t, s: best.s, pct: best.pct, why, n: g.ok ? g.n : 0, nv: !!c1wOf(best.s, starts, nv, splits, today).nv };
 }
 
 // ---------------- the week's exchange rate ----------------

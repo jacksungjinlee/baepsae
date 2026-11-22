@@ -1275,9 +1275,9 @@ export const C = {
     noKr: "한국 종목 일정은 아직 보여 드리지 못해요.",
   },
 
-  // 이번 주 정리 (v19.6e, v19.6 Part E, 보드 Weekly2) — chat (2026-11-06: v19.6 Appendix 1 '이번 주 정리', Jack 이 v19.6 작업을 넘기며 승인).
-  // 머리의 규칙 줄은 pfr.kept 그대로, 닫기 버튼은 app.close 그대로, 환율 없는 미국 배당 줄은 tax.divNoFx (M1) 그대로예요.
-  // null = 제안 (Jack 승인 대기, docs/tasks/v18.3-new-strings-pending.md). 카드 전체는 weekcfg.js WEEKLY_ON 이 false 인 동안 보이지 않아요.
+  // 이번 주 정리 (v19.6e, v19.6 Part E, 보드 Weekly2) — chat (2026-11-06: v19.6 Appendix 1 '이번 주 정리', Jack 이 v19.6 작업을 넘기며 승인)
+  // 과 chat (2026-11-22: Jack 의 답 — 빠진 종목 두 줄, 칩 셋, 네이버 각주). 머리의 규칙 줄은 pfr.kept 그대로, 닫기 버튼은 app.close 그대로,
+  // 환율 없는 미국 배당 줄은 tax.divNoFx (M1) 그대로예요. null = 제안 (Jack 승인 대기, docs/tasks/v18.3-new-strings-pending.md).
   weekly: {
     range: "{from} ~ {to}",                                       // 머리의 날짜 ('{date} ~ {date}': 그 주 첫 한국 거래일 ~ pxDate, app.md)
     title: "이번 주 정리",
@@ -1289,20 +1289,21 @@ export const C = {
     kinds: {
       rights: "유상증자 {n}",                                      // Appendix 1 '유상증자 {a}'
       ins: "지분 변동 {n}",                                        // Appendix 1 '지분 변동 {b}'
-      cb: null,                                                    // 제안 (Jack 승인 대기): "전환사채 {n}" — 그 주에 전환사채 발행 결정이 있으면 공시 칸은 빠져요 (console)
-      bw: null,                                                    // 제안 (Jack 승인 대기): "신주인수권부사채 {n}" — 같은 방식
-      nps: null,                                                   // 제안 (Jack 승인 대기): "국민연금 지분 {n}" (승인된 카드 제목 look.nps '국민연금 지분') — 같은 방식
+      cb: "전환사채 {n}건",                                         // chat (2026-11-22: Jack, "전환사채 {n}건 · 신주인수권부사채 {n}건")
+      bw: "신주인수권부사채 {n}건",                                  // chat (2026-11-22: 같은 답)
+      nps: "국민연금 지분 변동 {n}건",                                // chat (2026-11-22: Jack)
     },
     next: "다음 주",
     nextUs: "다음 주 미국 일정",                                    // 한국 종목도 가지고 있을 때 (한국 일정은 없어요, [Q12])
     earn: "실적 발표 {n}",
-    exDiv: null,                                                   // 제안 (Jack 승인 대기): "배당락일 {n}" — 그동안 다음 주 칸은 실적 발표만 세요 (배당락일은 console)
+    exDiv: "배당락 {n}종목",                                        // chat (2026-11-22: Jack) — 다음 주 칸, '실적 발표 {n}' 다음
     mover: "가장 많이 움직인 종목",
     fell: "같은 업종이 다 같이 빠진 한 주였어요",
     rose: "같은 업종이 다 같이 오른 한 주였어요",
-    leftOut: null,                                                 // 제안 (Jack 승인 대기): "이번 주 움직임을 확인하지 못한 종목 {n}개({names})는 빼고 계산했어요." — 없으면 그런 종목이 있을 때 내 포트폴리오 칸이 빠져요
-    leftOutMore: null,                                             // 제안 (Jack 승인 대기): "이번 주 움직임을 확인하지 못한 {names} 외 {n}종목은 빼고 계산했어요." — 6개부터 (앞 5개 이름, app.krOwnCloseListMore 의 '외 {n}종목' 모양). 없으면 그때 내 포트폴리오 칸이 빠져요
-    nvNote: null,                                                  // 제안 (Jack 승인 대기, WEEK_NV "note" 일 때만): "{names}의 지난주 종가는 다른 자료로 확인한 값이에요. 이번 주 움직임이 실제와 조금 다를 수 있어요." — 없으면 "note" 는 "out" 처럼 돌아요
+    leftOut: "이번 주 움직임을 확인하지 못한 종목 {n}개({names})는 빼고 계산했어요.",   // chat (2026-11-22: Jack, "Yes to the two required lines as written")
+    leftOutMore: "이번 주 움직임을 확인하지 못한 {names} 외 {n}종목은 빼고 계산했어요.",  // chat (2026-11-22: 같은 답) — 6개부터 (앞 5개 이름)
+    nvNote: "{names}의 지난주 종가는 다른 자료로 확인한 값이에요. 이번 주 움직임이 실제와 조금 다를 수 있어요.",   // chat (2026-11-22: Jack, (c) 각주) — WEEK_NV "note"
+    nvNoteMore: null,                                              // 제안 (Jack 승인 대기): "{names} 외 {n}종목의 지난주 종가는 다른 자료로 확인한 값이에요. 이번 주 움직임이 실제와 조금 다를 수 있어요." — 6개부터. 없으면 그 카드는 그 종목들을 빼고 (빠진 종목 줄로 이름을 적어요) 계산해요
   },
 
   // v19.7a 빼기 (Part B, 보드 PfRemove3) — chat (2026-11-07: v19.7 Appendix 1). 머리줄은 rec.head · rec.heldQty, 지분 없는 종목의 버튼은

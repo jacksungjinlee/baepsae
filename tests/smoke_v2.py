@@ -15758,15 +15758,20 @@ def scene_v196b_states(R, files, width=390):
     srv.shutdown()
 
 # ── v19.6e 이번 주 정리 (src/v2/weekly.js · weekly.jsx · weekcfg.js, board Weekly2 · Part E) ──
-# 커밋한 빌드는 스위치가 꺼져 있어요 (weekcfg.js WEEKLY_ON: 빠진 종목을 적는 줄 C.weekly.leftOut 이 Jack 의 승인을 기다려요). 장면은 스위치를
-# 켠 임시 빌드로 카드를 시험하고, 커밋한 빌드에는 카드가 없는지도 봐요. 지어낸 시험 데이터예요 (실제 회사 숫자가 아니에요).
+# 커밋한 빌드는 켜져 있어요 (weekcfg.js WEEKLY_ON true · WEEK_NV "note": Jack 이 2026-11-22 에 빠진 종목 두 줄과 네이버 각주를 승인했어요).
+# 장면은 커밋한 빌드로 카드를 시험하고, WEEK_NV 의 다른 두 값과 스위치를 끈 비상 빌드는 임시 빌드로 봐요. 지어낸 시험 데이터예요 (실제 회사 숫자가
+# 아니에요). 예전 장면들의 고정 데이터에는 wkFrom 이 없어서 그 장면들에는 카드가 나오지 않아요 (weekly.js weekState "wkFrom").
 _WEEKLY = {}
 WK = C["weekly"]
 
 
-def weekly_on_app(nv="out"):
-    """app.html 을 이번 주 정리 스위치(WEEKLY_ON)를 켜고 WEEK_NV 를 nv 로 놓아 임시 폴더에 빌드해요 (커밋하지 않아요, 폴더는 바로 지워요)."""
-    if nv not in _WEEKLY:
+def weekly_on_app(nv="note", on_=True):
+    """이번 주 정리 스위치(WEEKLY_ON)를 on_ 으로, WEEK_NV 를 nv 로 놓은 app.html. 커밋한 빌드와 같은 값이면 None (커밋한 app.html 을 써요),
+    아니면 임시 폴더에 빌드해요 (커밋하지 않아요, 폴더는 바로 지워요)."""
+    if nv == "note" and on_:
+        return None
+    key = f"{nv}|{on_}"
+    if key not in _WEEKLY:
         tmp = tmpdirs.make("baepsae-weekly-on-")
         try:
             shutil.copytree(os.path.join(ROOT, "src"), os.path.join(tmp, "src"))
@@ -15779,19 +15784,19 @@ def weekly_on_app(nv="out"):
                 src = fh.read()
             on = re.findall(r"^export const WEEKLY_ON = (?:true|false);$", src, flags=re.M)
             mode = re.findall(r'^export const WEEK_NV = "(?:out|use|note)";$', src, flags=re.M)
-            assert on == ["export const WEEKLY_ON = false;"] and len(mode) == 1, (on, mode)     # 커밋한 빌드는 꺼져 있어요
+            assert on == ["export const WEEKLY_ON = true;"] and mode == ['export const WEEK_NV = "note";'], (on, mode)   # 커밋한 빌드 (Jack, 2026-11-22)
             with open(p, "w", encoding="utf-8") as fh:
-                fh.write(src.replace(on[0], "export const WEEKLY_ON = true;").replace(mode[0], f'export const WEEK_NV = "{nv}";'))
+                fh.write(src.replace(on[0], f"export const WEEKLY_ON = {'true' if on_ else 'false'};").replace(mode[0], f'export const WEEK_NV = "{nv}";'))
             out = os.path.join(tmp, "out")
             r = subprocess.run(["bash", "build-app.sh", out], cwd=tmp, capture_output=True, text=True, encoding="utf-8")
             assert r.returncode == 0, r.stdout + r.stderr
             with open(os.path.join(out, "app.html"), encoding="utf-8") as a, open(os.path.join(ROOT, "app.html"), encoding="utf-8") as b:
                 html = a.read()
-                assert html != b.read(), "스위치를 켜서 빌드했는데 app.html 이 같아요"
-            _WEEKLY[nv] = html
+                assert html != b.read(), "스위치를 바꿔 빌드했는데 app.html 이 같아요"
+            _WEEKLY[key] = html
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
-    return _WEEKLY[nv]
+    return _WEEKLY[key]
 
 
 def v196e_files(files, px="2026-11-13", wk_from="2026-11-06", pub="2026-11-14T06:45:00+09:00", nv=()):
@@ -15971,7 +15976,8 @@ def scene_v196e(R, files, width, dark=False):
 
 
 def scene_v196e_states(R, files, width=390):
-    """v19.6e 이번 주 정리의 때와 상태 (390): 커밋한 빌드(스위치 꺼짐)에는 카드 없음 · 금요일(그 주가 아직 끝나지 않음) 없음 · 다음 월요일 그대로 ·
+    """v19.6e 이번 주 정리의 때와 상태 (390): 커밋한 빌드(켜짐, Jack 2026-11-22)에는 끝난 주에 카드 · 스위치를 끈 비상 빌드에는 없음 · 금요일(그 주가
+    아직 끝나지 않음) 없음 · 다음 월요일 그대로 ·
     (2차) 금요일 휴장 주의 금요일 아침 발행 · 금요일이 거래일인 주의 토요일 목요일 종가는 없음 · 늦은 데이터(5거래일 안)에는 없음 ·
     (3차) 2026-12-28 주: 목요일 발행은 미국 종가를 기다려 없음, 금요일 발행부터 (12-31 한국 휴장의 fxHist 빈 날은 그 앞 종가) ·
     다음 한국 종가가 나오면 없음 · 금요일 휴장 주(12월 21일 ~ 24일) · 닫기는 그 주만 (다음 주는 다시) · c1w 없는 종목: 빠진 종목 줄이 승인되기 전에는
@@ -16006,7 +16012,8 @@ def scene_v196e_states(R, files, width=390):
             assert page.locator('[data-ui-v2="weekly-range"]').inner_text() == rng
         return chk
 
-    one("커밋한 빌드 (스위치 꺼짐): 끝난 주라도 카드 없음", base, sat, none_but_home, app=None)
+    one("커밋한 빌드 (켜짐, Jack 2026-11-22): 끝난 주에 카드 '11월 9일 ~ 11월 13일'", base, sat, shows("11월 9일 ~ 11월 13일"), app=None)
+    one("스위치를 끈 비상 빌드 (WEEKLY_ON false): 끝난 주라도 카드 없음", base, sat, none_but_home, app=weekly_on_app(on_=False))
     one("금요일 아침 (목요일 종가 발행 · 그 주가 아직 끝나지 않음): 카드 없음",
         v196e_files(files, px="2026-11-12", pub="2026-11-13T06:45:00+09:00"), dt.datetime(2026, 11, 13, 9, 0, tzinfo=KST), none_but_home)
     one("다음 월요일 (아직 새 발행 없음): 그대로", base, dt.datetime(2026, 11, 16, 9, 0, tzinfo=KST), shows("11월 9일 ~ 11월 13일"))
@@ -16037,12 +16044,13 @@ def scene_v196e_states(R, files, width=390):
 
     def left_out(page, logs):
         page.locator(WEEKLY_CARD).wait_for(state="visible")
-        assert [t[0] for t in weekly_tiles(page)] == ["div", "disc", "next"]                      # 내 포트폴리오 칸이 빠져요 (이름을 적을 줄이 승인 전)
-        assert page.locator('[data-ui-v2^="weekly-note"]').count() == 0 and WK["leftOut"] is None
+        assert [t[0] for t in weekly_tiles(page)] == ["pf", "div", "disc", "next"] and page.locator('[data-tile="pf"]').get_attribute("data-n") == "2"
+        # Jack 의 줄 (2026-11-22): 양쪽에서 뺀 종목의 이름
+        assert page.locator('[data-ui-v2="weekly-note-left"]').inner_text() == fillp(WK["leftOut"], n=1, names="삼성전자")
         got = logs()
         assert any("weekly (dweek): left out of the week's gain: 005930 (none)" in x for x in got), got
-        assert any("C.weekly.leftOut" in x for x in got), got
-    one("c1w 없는 종목 (삼성전자): 빠진 종목 줄이 승인 전이라 내 포트폴리오 칸 없음 · console 이 이름과 까닭을 말해요", no_c1w, sat, left_out)
+        assert not any("C.weekly.leftOut" in x for x in got), got
+    one("c1w 없는 종목 (삼성전자): 양쪽에서 빼고 '이번 주 움직임을 확인하지 못한 종목 1개(삼성전자)…' · console 도 이름과 까닭", no_c1w, sat, left_out)
 
     def stale(page, logs):
         page.locator('[data-ui-v2="today-stale"]').wait_for(state="visible")
@@ -16088,19 +16096,25 @@ def scene_v196e_states(R, files, width=390):
         def nv_check(page, logs, mode=mode):
             c = page.locator(WEEKLY_CARD)
             c.wait_for(state="visible")
-            # "note" 는 각주 말(C.weekly.nvNote)이 승인될 때까지 "out" 으로 돌아요 (2차): 각주 없이 nv 행을 쓰지 않아요
-            assert c.get_attribute("data-nv-set") == mode and c.get_attribute("data-nv") == ("out" if mode == "note" else mode)
+            # 커밋한 빌드는 "note" (Jack, 2026-11-22): 네이버로 확인한 지난주 종가를 쓰고 각주가 이름을 적어요
+            assert c.get_attribute("data-nv-set") == mode and c.get_attribute("data-nv") == mode
             tiles = [t[0] for t in weekly_tiles(page)]
             mv = page.locator('[data-ui-v2="weekly-mover"]')
-            if mode in ("out", "note"):
-                # SK하이닉스는 양쪽에서 빠지고 (이름을 적을 줄이 승인 전이라 내 포트폴리오 칸 없음), 움직인 종목도 아니에요: 삼성전자 −2.0% (나머지 반도체도 모두 빠짐)
-                assert "pf" not in tiles and mv.get_attribute("data-t") == "005930" and mv.get_attribute("data-why") == "fell"
+            nvn = page.locator('[data-ui-v2="weekly-note-nv"]')
+            if mode == "out":
+                # SK하이닉스는 양쪽에서 빠지고 (Jack 의 줄로 이름), 움직인 종목도 아니에요: 삼성전자 −2.0% (나머지 반도체도 모두 빠짐)
+                assert tiles[0] == "pf" and page.locator('[data-tile="pf"]').get_attribute("data-n") == "2"
+                assert page.locator('[data-ui-v2="weekly-note-left"]').inner_text() == fillp(WK["leftOut"], n=1, names="SK하이닉스")
+                assert mv.get_attribute("data-t") == "005930" and mv.get_attribute("data-why") == "fell" and nvn.count() == 0
                 assert any("000660 (nv)" in x for x in logs()), logs()
-                assert any('read as "out"' in x for x in logs()) == (mode == "note"), logs()
             else:
                 assert tiles[0] == "pf" and page.locator('[data-tile="pf"]').get_attribute("data-n") == "3" and mv.get_attribute("data-t") == "000660"
-            assert page.locator('[data-ui-v2="weekly-note-nv"]').count() == 0
-        one(f"nv 행 (SK하이닉스 c1wv nv) · WEEK_NV {mode}", nvd, sat, nv_check, app=weekly_on_app(mode))
+                assert page.locator('[data-ui-v2="weekly-note-left"]').count() == 0
+                if mode == "note":                                                                 # SK하이닉스: 셈에도, 움직인 종목에도 쓰였어요
+                    assert nvn.inner_text() == fillp(WK["nvNote"], names="SK하이닉스")
+                else:
+                    assert nvn.count() == 0
+        one(f"nv 행 (SK하이닉스 c1wv nv) · WEEK_NV {mode}" + (" (커밋한 빌드)" if mode == "note" else ""), nvd, sat, nv_check, app=weekly_on_app(mode))
 
     # ── 2차 (fresh-eyes review): 금요일 휴장 주의 금요일 아침 발행 · 금요일이 거래일인 주의 목요일 종가 · 늦은 데이터 ──
     one("금요일 휴장 주 (성탄절, 두 시장 모두 휴장): 금요일 아침 발행(목요일 종가)부터 카드 '12월 21일 ~ 12월 24일' (토요일 실행은 already_published 가 건너뛰어요)",

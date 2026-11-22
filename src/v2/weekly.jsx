@@ -2,8 +2,8 @@
 // One card per portfolio 홈 shows (home.homeBlocks: the portfolios holding something today, in store order: "the one 홈 uses",
 // v19.3 Part H), at the top of 홈 under its date line, only while the week's numbers are final (weekly.js weekState) and 홈's own
 // daily check runs on fresh data (home2.jsx: never on late data, round 2, where the week it would call 이번 주 is already the week
-// before; nor on stale or failed data, where 홈 has no portfolio blocks). Behind weekcfg.js WEEKLY_ON (off until Jack approves the
-// left-out line).
+// before; nor on stale or failed data, where 홈 has no portfolio blocks). Behind weekcfg.js WEEKLY_ON (on since
+// Jack approved the left-out lines, 2026-11-22).
 //   hero (navy)   "{the week's first Korean trading day} ~ {pxDate}", 이번 주 정리, and for a portfolio made with 가진 종목 넣기
 //                 the rule line of its 홈 hero ("내 규칙 {n}개 중 {k}개를 지키고 있어요", the same n and k, only when 홈's hero shows it:
 //                 at least one rule checked). With two or more portfolios the portfolio's name (user text) starts it, as 홈's heroes do.
@@ -15,7 +15,10 @@
 //   mover         가장 많이 움직인 종목: mark, name, the week's move, and the reason line only from the same-industry rule (fell · rose).
 //   notes         the stocks left out of the week's gain (C.weekly.leftOut; more than LEFT_NAMES names: C.weekly.leftOutMore with
 //                 the first LEFT_NAMES), US dividends without a rate (C.tax.divNoFx), and under WEEK_NV "note" the Naver footnote
-//                 (C.weekly.nvNote): each only with approved words. "note" without its footnote's words is read as "out" (round 2).
+//                 (C.weekly.nvNote, Jack 2026-11-22) naming every counted stock (and the mover) whose last-week close was confirmed
+//                 through Naver: each only with approved words. "note" without its footnote's words is read as "out" (round 2); so is a
+//                 card with more than LEFT_NAMES such stocks while the capped footnote (C.weekly.nvNoteMore) has no words: those stocks
+//                 are then left out and named by the approved left-out line, never used without a footnote that names them all.
 //   닫기          hides that portfolio's card for that week on this device (weekly.js closeWeek).
 // No card when nothing but the hero would show. No 뱁이 (numbers). Colours: tokens only (dark mode). Facts only: no forecast or advice.
 import React, { useMemo, useState } from "react";
@@ -38,6 +41,20 @@ const signedWon = (v) => (Math.round(Math.abs(v)) > 0 && v > 0 ? "+" : "") + won
 export const LEFT_NAMES = 5;
 // The WEEK_NV mode in effect: "note" needs its footnote's words (C.weekly.nvNote); without them the rows are left out ("out").
 export const nvMode = (nv) => (nv === "note" && !W().nvNote ? "out" : nv);
+// The stocks the footnote names: the counted ones confirmed through Naver, then the mover when it is one of them (its move reads c1w).
+export const nvNames = (m) => {
+  const out = (m && m.money ? m.money.per : []).filter((p) => p.nv).map((p) => p.nk);
+  if (m && m.mover && m.mover.nv && !out.includes(m.mover.nk)) out.push(m.mover.nk);
+  return out;
+};
+// One card's model: under "note" with more than LEFT_NAMES Naver-confirmed names and no capped footnote words, the card is worked out
+// again under "out" (see notes above). -> { m, mode, said }
+export function cardModel(args, mode) {
+  const m = weeklyModel({ ...args, nv: mode });
+  if (mode !== "note" || !m.ok || nvNames(m).length <= LEFT_NAMES || W().nvNoteMore) return { m, mode, said: null };
+  return { m: weeklyModel({ ...args, nv: "out" }), mode: "out",
+    said: `${nvNames(m).length} Naver-confirmed stocks: the capped footnote waits for Jack (C.weekly.nvNoteMore), so they are left out as under "out"` };
+}
 const tone = (r) => (r > 0 ? COLOR.up : r < 0 ? COLOR.down : COLOR.text2);
 const r1 = (x) => Math.round(x * 10);                       // the sign as shown at one decimal
 
@@ -63,9 +80,8 @@ export function weeklyView(m, opts = {}) {
         "data-n": money.n, "data-left": money.left.length } });
     if (names.length > LEFT_NAMES) notes.push({ id: "left", text: fill(L.leftOutMore, { names: names.slice(0, LEFT_NAMES).join(", "), n: names.length - LEFT_NAMES }) });
     else if (names.length) notes.push({ id: "left", text: fill(L.leftOut, { n: names.length, names: names.join(", ") }) });
-    const nvNames = money.per.filter((p) => p.nv).map((p) => p.t);
-    if (m.nv === "note" && nvNames.length && L.nvNote) notes.push({ id: "nv", text: fill(L.nvNote, { names: nvNames.join(", ") }) });
   }
+  const pfShown = tiles.length > 0;
   // 받은 배당
   if (m.divs.n > 0) {
     tiles.push({ id: "div", icon: "coins", tone: "div", label: L.div, big: exactWon(m.divs.won), sub: fill(L.count, { n: m.divs.n }),
@@ -99,6 +115,11 @@ export function weeklyView(m, opts = {}) {
   }
   // 가장 많이 움직인 종목
   const mover = m.mover ? { ...m.mover, line: m.mover.why === "fell" ? L.fell : m.mover.why === "rose" ? L.rose : null } : null;
+  // WEEK_NV "note" (Jack, 2026-11-22): every number shown that reads a Naver-confirmed last-week close is named (the tile's counted
+  // stocks, the mover), at most LEFT_NAMES names with "외 {n}종목" (cardModel keeps it from ever needing more without those words)
+  const nv = m.nv === "note" ? nvNames({ money: { per: pfShown ? money.per : [] }, mover }) : [];
+  if (nv.length > LEFT_NAMES && L.nvNoteMore) notes.push({ id: "nv", text: fill(L.nvNoteMore, { names: nv.slice(0, LEFT_NAMES).join(", "), n: nv.length - LEFT_NAMES }) });
+  else if (nv.length && nv.length <= LEFT_NAMES && L.nvNote) notes.push({ id: "nv", text: fill(L.nvNote, { names: nv.join(", ") }) });
   const show = tiles.length > 0 || !!mover;
   if (!show) say.push("nothing to show but the heading: no card");
   return { tiles, mover, notes, say, show };
@@ -191,7 +212,11 @@ export function WeeklyCards({ blocks, load, ctx, disc, nv = WEEK_NV }) {
   const key = preview ? PREVIEW_WEEK_KEY : WEEK_KEY;
   const mode = nvMode(nv);
   if (mode !== nv) weeklySay("all", [`WEEK_NV "${nv}" without its footnote's words (C.weekly.nvNote): read as "${mode}"`]);
-  const models = useMemo(() => blocks.map((b) => ({ b, m: weeklyModel({ deck: b.deck, load, ctx, disc, nv: mode }) })), [blocks, load, ctx, disc, mode]);
+  const models = useMemo(() => blocks.map((b) => {
+    const x = cardModel({ deck: b.deck, load, ctx, disc }, mode);
+    if (x.said) weeklySay(b.deck.id, [x.said]);
+    return { b, m: x.m };
+  }), [blocks, load, ctx, disc, mode]);
   const discWait = !!disc && disc.status !== "ok" && disc.status !== "fail" && disc.status !== "none";
   const firstOk = models.find((x) => x.m.ok);
   const mon = firstOk ? firstOk.m.week.mon : null;

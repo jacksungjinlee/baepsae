@@ -146,9 +146,9 @@ def test_the_hand_worked_week_with_a_buy_a_sale_and_a_us_holding():
     # AAPL: 4주 × $200 × 1,400 (usWkFrom 11-13 의 fxHist) = 1,120,000 → 4주 × $210 × 1,450 (오늘 환율) = 1,218,000 · 이득 98,000
     # 000660: c1w 없음 → 양쪽에서 빠지고 이름이 남아요 (50,000 × 2 = 100,000 은 어디에도 없어요)
     assert m["per"] == [
-        {"t": "005930", "start": 1000000, "end": 1650000, "buys": 525000, "sells": 0, "gain": 125000, "nv": False},
-        {"t": "005380", "start": 4000000, "end": 2850000, "buys": 0, "sells": 1050000, "gain": -100000, "nv": False},
-        {"t": "AAPL", "start": 1120000, "end": 1218000, "buys": 0, "sells": 0, "gain": 98000, "nv": False}], m["per"]
+        {"t": "005930", "nk": "종목005930", "start": 1000000, "end": 1650000, "buys": 525000, "sells": 0, "gain": 125000, "nv": False},
+        {"t": "005380", "nk": "종목005380", "start": 4000000, "end": 2850000, "buys": 0, "sells": 1050000, "gain": -100000, "nv": False},
+        {"t": "AAPL", "nk": "AAPL Inc.", "start": 1120000, "end": 1218000, "buys": 0, "sells": 0, "gain": 98000, "nv": False}], m["per"]
     # 이득 = 5,718,000 − 6,120,000 − 525,000 + 1,050,000 = 123,000 · % = 123,000 ÷ (6,120,000 + 525,000) = 1.851%
     assert (m["start"], m["buys"], m["sells"], m["end"], m["gain"], m["pct"], m["n"]) == (6120000, 525000, 1050000, 5718000, 123000, 1.851, 3)
     assert m["left"] == [{"t": "000660", "nk": "종목000660", "why": "none"}] and m["ok"] is True
@@ -267,23 +267,24 @@ def test_naver_confirmed_rows_under_each_switch():
           says: v.say.filter((l) => l.includes('Naver')).length, pct: r3(W.weekPct(st[1], m.week.starts, nv)) }; };
       C.weekly.leftOut = '{n}|{names}';
       const before = C.weekly.nvNote;
-      // "note" without its footnote's words is read as "out" (round 2): never used without the footnote
-      const out1 = { def: Cfg.WEEK_NV, modes: Cfg.NV_MODES, out: g('out'), use: g('use'), modeNote: WV.nvMode('note'), note: g(WV.nvMode('note')),
+      // Jack's footnote (2026-11-22) is in: "note" is in use, counts the row and names it by its stock name
+      const out1 = { def: Cfg.WEEK_NV, modes: Cfg.NV_MODES, out: g('out'), use: g('use'), modeWorded: WV.nvMode('note'),
+        noteWorded: (() => { const m = model(deck, loadOf(st), { nv: WV.nvMode('note') }); return [m.money.nvUsed, WV.weeklyView(m).notes.map((n) => [n.id, n.text])]; })(),
         modes2: [WV.nvMode('out'), WV.nvMode('use')] };
-      C.weekly.nvNote = '{names}';
-      out1.modeWorded = WV.nvMode('note');
-      out1.noteWorded = (() => { const m = model(deck, loadOf(st), { nv: WV.nvMode('note') }); return [m.money.nvUsed, WV.weeklyView(m).notes.map((n) => [n.id, n.text])]; })();
+      // without its words "note" would be read as "out" (round 2): never used without the footnote
+      C.weekly.nvNote = null;
+      out1.modeNote = WV.nvMode('note'); out1.note = g(WV.nvMode('note'));
       C.weekly.nvNote = before;
       out = out1;""")
-    assert got["def"] == "out" and got["modes"] == ["out", "use", "note"]
+    assert got["def"] == "note" and got["modes"] == ["out", "use", "note"]
     # out: 000660 leaves both ends (named: 'nv'); the week is 005930's alone, 1,000,000 → 1,100,000
     assert got["out"] == {"start": 1000000, "gain": 100000, "left": ["nv"], "nvUsed": [], "notes": ["left"], "says": 0, "pct": None}
     # use: 000660 counts (500,000 → 450,000), no footnote
     assert got["use"] == {"start": 1500000, "gain": 50000, "left": [], "nvUsed": ["000660"], "notes": [], "says": 0, "pct": -10.0}
-    # note: while its footnote has no words, read as out (the same as out above)
+    # note (in use): counted, and Jack's footnote names it
+    assert got["modeWorded"] == "note" and got["noteWorded"] == [["000660"], [["nv", "종목000660의 지난주 종가는 다른 자료로 확인한 값이에요. 이번 주 움직임이 실제와 조금 다를 수 있어요."]]]
+    # without the footnote's words: read as out (the same as out above)
     assert got["modeNote"] == "out" and got["note"] == got["out"] and got["modes2"] == ["out", "use"]
-    # with the footnote's words: counted, and the footnote names it
-    assert got["modeWorded"] == "note" and got["noteWorded"] == [["000660"], [["nv", "000660"]]]
 
 
 # ── 코스피 · 받은 배당 · 공시 · 다음 주 ──────────────────────────────────────────
@@ -337,16 +338,16 @@ def test_filings_tile_counts_this_weeks_part_b_cards_of_held_stocks():
         stale: f(discOf({}, { listOk: false })).why, fail: f({ status: 'fail' }).why, wait: f({ status: 'loading' }).why, none: f(null).why,
         issueFail: f(discOf({}, { issueOk: false })).why, noIssue: (() => { const x = discOf(); delete x.data.issue; return f(x).why; })(),
         usOnly: f(d, deckOf([imp('AAPL', 1)])).why,
-        view: (() => { const m = W.weeklyModel({ deck, load: loadOf(st), ctx: ctxOf(loadOf(st)), disc: d, now: NOW }); const v = WV.weeklyView(m);
+        view: (() => { const b = { ...C.weekly.kinds }; C.weekly.kinds.cb = null; C.weekly.kinds.nps = null;
+          const m = W.weeklyModel({ deck, load: loadOf(st), ctx: ctxOf(loadOf(st)), disc: d, now: NOW }); const v = WV.weeklyView(m); Object.assign(C.weekly.kinds, b);
           return [v.tiles.filter((t) => t.id === 'disc').length, v.say.filter((l) => l.includes('cb, nps')).length, v.say.filter((l) => l.includes('insider report')).length]; })(),
         rightsOnly: (() => { const d2 = discOf({ issue: [iss(1, '005930', 'rights', '2026-11-17')], insider: [ins(1, '005930', '2026-11-18', 1000)] });
           const v = WV.weeklyView(W.weeklyModel({ deck, load: loadOf(st), ctx: ctxOf(loadOf(st)), disc: d2, now: NOW }));
           return v.tiles.filter((t) => t.id === 'disc').map((t) => [t.big, t.sub]); })(),
         insOnly: (() => { const d2 = discOf({ insider: [ins(1, '005930', '2026-11-18', 1000)] });
           return WV.weeklyView(W.weeklyModel({ deck, load: loadOf(st), ctx: ctxOf(loadOf(st)), disc: d2, now: NOW })).tiles.filter((t) => t.id === 'disc').length; })(),
-        viewWorded: (() => { const b = { ...C.weekly.kinds }; C.weekly.kinds.cb = '전환사채 {n}'; C.weekly.kinds.nps = '국민연금 지분 {n}';
-          const m = W.weeklyModel({ deck, load: loadOf(st), ctx: ctxOf(loadOf(st)), disc: d, now: NOW }); const v = WV.weeklyView(m);
-          Object.assign(C.weekly.kinds, b); return v.tiles.filter((t) => t.id === 'disc').map((t) => [t.label, t.big, t.sub]); })() };""")
+        viewWorded: (() => { const m = W.weeklyModel({ deck, load: loadOf(st), ctx: ctxOf(loadOf(st)), disc: d, now: NOW }); const v = WV.weeklyView(m);
+          return v.tiles.filter((t) => t.id === 'disc').map((t) => [t.label, t.big, t.sub]); })() };""")
     # this week: the 11-17 rights issue and the 11-20 CB (held 005930); not 11-13 (last week), not 005380 (not held), not the withdrawal, not
     # the 유무상증자 (no approved shape, v19.6b leaves it out); the 11-18 report of 1억원 (1,000 × 100,000); not 9,990만원; not last week's;
     # the 국민연금 change of 11-19. The insider card comes back as a list without a title (look.js ROLE_OF is null)
@@ -355,11 +356,12 @@ def test_filings_tile_counts_this_weeks_part_b_cards_of_held_stocks():
     assert got["seenData"] == [{"rights": 1, "cb": 1, "bw": 0, "nps": 1}, 1]
     assert (got["stale"], got["fail"], got["wait"], got["none"], got["issueFail"], got["noIssue"], got["usOnly"]) == (
         "stale", "disc", "disc", "disc", "issue", "issue", "noKr")
-    # cb and nps have no approved tile word yet: the tile is left out that week and the console says which; the insider report is not
-    # counted while 오늘 볼 것 cannot show it (round 2), said in the console
+    # a kind without a tile word (as before Jack's answer of 2026-11-22): the tile is left out that week and the console says which; the
+    # insider report is not counted while 오늘 볼 것 cannot show it (round 2), said in the console
     assert got["view"] == [0, 1, 1]
     assert got["rightsOnly"] == [["1건", "유상증자 1"]] and got["insOnly"] == 0              # only a report it cannot show: no 공시 tile
-    assert got["viewWorded"] == [["공시", "3건", "유상증자 1 · 전환사채 1 · 국민연금 지분 1"]]
+    # Jack's chips (2026-11-22), with the tile's own " · "
+    assert got["viewWorded"] == [["공시", "3건", "유상증자 1 · 전환사채 1건 · 국민연금 지분 변동 1건"]]
 
 
 def test_next_week_dates_count_and_first_name():
@@ -373,18 +375,21 @@ def test_next_week_dates_count_and_first_name():
       const usOnly = g([imp('AAPL', 1), imp('MSFT', 1)]);
       const kOnly = g([imp('005930', 1)]);
       const xdOnly = g([imp('KO', 0.5)].map((r) => ({ ...r, qty: 1 })));
-      const b = C.weekly.exDiv; C.weekly.exDiv = '배당락일 {n}';
       const worded = g([imp('AAPL', 1), imp('MSFT', 1)]);
+      const b = C.weekly.exDiv; C.weekly.exDiv = null;                  // as before Jack's answer: earnings only
+      const unworded = g([imp('005930', 1), imp('AAPL', 1), imp('MSFT', 1), imp('NVDA', 1), imp('JNJ', 1)]);
       C.weekly.exDiv = b;
-      out = { both, usOnly, kOnly, xdOnly, worded };""")
+      out = { both, usOnly, kOnly, xdOnly, worded, unworded };""")
     # next week is 11-23 to 11-29 (US dates): AAPL's ex-date 11-24 and earnings 11-25, MSFT 11-27; NVDA (this week) and JNJ (11-30) are not
     assert got["both"]["rows"] == [["AAPL", "xd", "2026-11-24"], ["AAPL", "earn", "2026-11-25"], ["MSFT", "earn", "2026-11-27"]]
-    # 배당락일 waits for its word: earnings only, the first name is the first earnings row's; a Korean stock held → 다음 주 미국 일정
-    assert got["both"]["tile"] == [["다음 주 미국 일정", "실적 발표 2", "AAPL Inc."]] and got["both"]["say"] == 1
-    assert got["usOnly"]["tile"] == [["다음 주", "실적 발표 2", "AAPL Inc."]]
+    # Jack's chip (2026-11-22): "배당락 {n}종목" after 실적 발표; the first name is the first row's; a Korean stock held → 다음 주 미국 일정
+    assert got["both"]["tile"] == [["다음 주 미국 일정", "실적 발표 2 · 배당락 1종목", "AAPL Inc."]] and got["both"]["say"] == 0
+    assert got["usOnly"]["tile"] == [["다음 주", "실적 발표 2 · 배당락 1종목", "AAPL Inc."]]
+    # without the chip's word: earnings only, the first earnings row's name, said in the console
+    assert got["unworded"]["tile"] == [["다음 주 미국 일정", "실적 발표 2", "AAPL Inc."]] and got["unworded"]["say"] == 1
     assert got["kOnly"]["tile"] == [] and got["kOnly"]["rows"] == []
     assert got["xdOnly"]["tile"] == [["다음 주", "실적 발표 1", "KO Inc."]]            # KO's earnings 11-23 (Monday of next week)
-    assert got["worded"]["tile"] == [["다음 주", "실적 발표 2 · 배당락일 1", "AAPL Inc."]] and got["worded"]["say"] == 0
+    assert got["worded"]["tile"] == [["다음 주", "실적 발표 2 · 배당락 1종목", "AAPL Inc."]] and got["worded"]["say"] == 0
 
 
 def test_next_week_never_shows_a_date_before_today():
@@ -480,14 +485,19 @@ def test_close_hides_that_portfolios_card_for_that_week_on_this_device():
     assert got["keys"] == ["baepsae2.weekly.v1", "baepsae2.preview.weekly.v1"] and got["records"] == 0   # never in the records
 
 
-def test_switches_are_off_until_the_left_out_line_is_approved():
+def test_switches_are_on_with_jacks_lines():
+    """Jack, 2026-11-22: "Yes to the two required lines as written" and the (c) footnote: the card is on, Naver-confirmed rows are used
+    with the footnote (WEEK_NV "note"). The capped footnote is the one line still proposed."""
     with open(os.path.join(ROOT, "src", "v2", "weekcfg.js"), encoding="utf-8") as f:
         cfg = f.read()
-    assert re.findall(r"^export const WEEKLY_ON = (true|false);$", cfg, flags=re.M) == ["false"]
-    assert re.findall(r'^export const WEEK_NV = "(out|use|note)";$', cfg, flags=re.M) == ["out"]
-    got = run("out = { leftOut: C.weekly.leftOut, leftOutMore: C.weekly.leftOutMore, nvNote: C.weekly.nvNote, exDiv: C.weekly.exDiv, kinds: C.weekly.kinds };")
-    assert got["leftOut"] is None and got["leftOutMore"] is None and got["nvNote"] is None and got["exDiv"] is None
-    assert got["kinds"] == {"rights": "유상증자 {n}", "ins": "지분 변동 {n}", "cb": None, "bw": None, "nps": None}
+    assert re.findall(r"^export const WEEKLY_ON = (true|false);$", cfg, flags=re.M) == ["true"]
+    assert re.findall(r'^export const WEEK_NV = "(out|use|note)";$', cfg, flags=re.M) == ["note"]
+    got = run("out = { leftOut: C.weekly.leftOut, leftOutMore: C.weekly.leftOutMore, nvNote: C.weekly.nvNote, nvNoteMore: C.weekly.nvNoteMore, exDiv: C.weekly.exDiv, kinds: C.weekly.kinds };")
+    assert got["leftOut"] == "이번 주 움직임을 확인하지 못한 종목 {n}개({names})는 빼고 계산했어요."
+    assert got["leftOutMore"] == "이번 주 움직임을 확인하지 못한 {names} 외 {n}종목은 빼고 계산했어요."
+    assert got["nvNote"] == "{names}의 지난주 종가는 다른 자료로 확인한 값이에요. 이번 주 움직임이 실제와 조금 다를 수 있어요."
+    assert got["nvNoteMore"] is None and got["exDiv"] == "배당락 {n}종목"
+    assert got["kinds"] == {"rights": "유상증자 {n}", "ins": "지분 변동 {n}", "cb": "전환사채 {n}건", "bw": "신주인수권부사채 {n}건", "nps": "국민연금 지분 변동 {n}건"}
     with open(os.path.join(ROOT, "src", "v2", "home2.jsx"), encoding="utf-8") as f:
         home = f.read()
     assert "{WEEKLY_ON && ev.ok && !ev.late && blocks.length > 0 && <WeeklyCards " in home       # never on late data (round 2)
@@ -496,7 +506,9 @@ def test_switches_are_off_until_the_left_out_line_is_approved():
 def test_without_the_left_out_line_the_gain_tile_is_left_out_and_nothing_but_the_heading_means_no_card():
     got = run("""
       const { deck, load } = WORKED(); const m = model(deck, load);
+      const keep = C.weekly.leftOut; C.weekly.leftOut = null;            // as before Jack's yes: the tile cannot name the stock left out
       const v = WV.weeklyView(m);
+      C.weekly.leftOut = keep;
       const empty = model(deckOf([imp('000660', 1)]), loadOf([kr('000660')]));
       const ve = WV.weeklyView(empty);
       out = { tiles: v.tiles.map((t) => t.id), notes: v.notes, say: v.say.filter((l) => l.includes('waits for Jack')).length, mover: v.mover && v.mover.t,
@@ -621,7 +633,7 @@ def test_more_than_five_stocks_left_out_take_the_capped_line():
       const codes = ['000020', '000030', '000040', '000050', '000060', '000070'];
       const st = [kr('005930', { c1w: 100000, price: 110000 }), ...codes.map((t) => kr(t))];
       const m = model(deckOf([imp('005930', 1), ...codes.map((t) => imp(t, 1))]), loadOf(st));
-      C.weekly.leftOut = '{n}|{names}';
+      C.weekly.leftOut = '{n}|{names}'; C.weekly.leftOutMore = null;    // without the capped line (before Jack's yes): no tile
       const before = WV.weeklyView(m);
       C.weekly.leftOutMore = '{names}|{n}';
       const after = WV.weeklyView(m);
@@ -729,3 +741,33 @@ def test_the_week_end_rate_bridges_a_korean_holiday_gap_in_fxhist_only():
     assert got["direct"] == 1430 and got["before"] == 1400 and got["gapRate"] == 1430 and got["newYear"] == 1430
     assert got["nextWorkday"] is None
     assert got["rateFor"] == {"ok": False, "why": "notYet"}
+
+
+# ── round 4 (Jack, 2026-11-22): the card is on, Naver-confirmed rows used with his footnote ──
+def test_the_naver_footnote_names_every_number_that_reads_such_a_close_capped_at_five():
+    """WEEK_NV "note": the footnote names the counted stocks and the mover whose last-week close came through Naver, by stock name, at most
+    5. More than 5 with no capped footnote words (C.weekly.nvNoteMore, proposed) → that card is worked out as under "out": the stocks
+    are left out and named by the approved capped left-out line, never used without a footnote that names them all."""
+    got = run("""
+      const codes = ['000020', '000030', '000040', '000050', '000060', '000070'];
+      const st = [kr('005930', { c1w: 100000, price: 101000 }), ...codes.map((t, i) => kr(t, { c1w: 100000, price: 100000 - (i + 1) * 1000, c1wv: 'nv' }))];
+      const L = loadOf(st);
+      const args = (n) => ({ deck: deckOf([imp('005930', 1), ...codes.slice(0, n).map((t) => imp(t, 1))]), load: L, ctx: ctxOf(L), now: NOW });
+      const five = WV.cardModel(args(5), 'note'), six = WV.cardModel(args(6), 'note');
+      const v5 = WV.weeklyView(five.m), v6 = WV.weeklyView(six.m);
+      C.weekly.nvNoteMore = '{names}|{n}';
+      const sixWorded = WV.cardModel(args(6), 'note'); const v6w = WV.weeklyView(sixWorded.m);
+      out = {
+        five: [five.mode, five.said, five.m.money.n, v5.notes.map((n) => [n.id, n.text])],
+        six: [six.mode, !!six.said, six.m.money.n, six.m.money.left.map((x) => x.why), v6.notes.map((n) => [n.id, n.text])],
+        sixWorded: [sixWorded.mode, sixWorded.m.money.n, v6w.notes.map((n) => [n.id, n.text])],
+        // the mover (−6%, 000070) read through Naver and the tile hidden: the footnote still names it
+        moverOnly: (() => { const x = WV.weeklyView({ ...five.m, money: { ...five.m.money, ok: false } }); return x.notes.map((n) => n.text.split('의 ')[0]); })(),
+      };""")
+    jack = "의 지난주 종가는 다른 자료로 확인한 값이에요. 이번 주 움직임이 실제와 조금 다를 수 있어요."
+    names5 = "종목000020, 종목000030, 종목000040, 종목000050, 종목000060"
+    assert got["five"] == ["note", None, 6, [["nv", names5 + jack]]]                 # the mover (000060, −5%) is one of the five
+    assert got["six"][0] == "out" and got["six"][1] is True and got["six"][2] == 1 and got["six"][3] == ["nv"] * 6
+    assert got["six"][4] == [["left", "이번 주 움직임을 확인하지 못한 " + names5 + " 외 1종목은 빼고 계산했어요."]]
+    assert got["sixWorded"] == ["note", 7, [["nv", names5 + "|1"]]]
+    assert got["moverOnly"] == ["종목000060"]
