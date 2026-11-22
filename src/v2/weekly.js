@@ -2,12 +2,14 @@
 // The numbers behind 홈's weekly card (weekly.jsx). Pure functions, no React and no Korean text (the words come from
 // src/copy/v2.js C.weekly). Unit tests: tests/test_v196e_weekly.py (run through Node). The two switches are in weekcfg.js.
 //
-// When (weekState; coordinator's rule of 2026-11-22, round 2, after "once the week's data is final" and "a Friday holiday makes
-// Thursday the last day"): the week of pxDate (Monday to Sunday) is final when no Korean trading day comes after pxDate up to that
-// Sunday (tradedays.js, the app's copy of the holiday table) and data.json publishedAt is on a KST date after pxDate (the close is
-// in). So a normal week is final from Saturday's publish, a week whose Friday is a holiday from Friday's publish of Thursday's close
-// (on a day both markets are closed, already_published.py skips the Saturday runs), and a Saturday file whose pxDate is Thursday
-// while Friday was a trading day is not final (a partial week). The card then stays until the next Korean close is published (it
+// When (weekState; coordinator's rule of 2026-11-22, rounds 2 and 3, after "once the week's data is final" and "a Friday holiday
+// makes Thursday the last day"): the week of pxDate (Monday to Sunday) is final when no Korean trading day comes after pxDate up to
+// that Sunday, no US trading day comes after usPxDate up to that Sunday (tradedays.js, the app's copy of both holiday tables), and
+// data.json publishedAt is on a KST date after pxDate (the close is in). So a normal week is final from Saturday's publish; a week
+// whose Friday both markets close (Christmas 2026) from Friday's publish of Thursday's closes (already_published.py skips the Saturday
+// runs then); a week where only Korea closes on Friday (2027-12-31) or only the US (Good Friday) once the other market's last close
+// is in; the week of 2026-12-28 (Korea closed 12-31 and 01-01, the US only 01-01) from Friday 01-01's publish, which brings the US
+// 12-31 close; and a file still at Thursday's close of a market that traded on Friday (a partial week) never. The card then stays until the next Korean close is published (it
 // moves pxDate into a new week). A file without the week's start date (wkFrom: from before #170, or a day the pipeline could not
 // set the Korean week) has no card. The caller also needs 홈's own daily check on fresh data (weekly.jsx: never on late, stale or
 // failed data) and a portfolio block.
@@ -20,7 +22,9 @@
 //   value now = shares held at the week's end (records dated up to its Sunday) × today's official close.
 //   A USD price takes macro.json fxHist at both ends (coordinator, round 2: one source for the week): the rate of usWkFrom at the
 //   start and the rate of usPxDate now, each "the close on that date, or the last close before it" (Part I.1, records.rateFor; never
-//   data.json fx, Yahoo's rate, which 홈's other numbers keep using). A date fxHist does not reach leaves the stock out ("fx").
+//   data.json fx, Yahoo's rate, which 홈's other numbers keep using). A date fxHist does not reach leaves the stock out ("fx"), unless
+//   only Korean non-trading days lie between fxHist's last row (marked final) and that date: that row is then its rate (weekRate,
+//   round 3: ECOS has no row on a Korean holiday such as 2026-12-31, when the US trades).
 //   buys = 샀어요 records of the week at their own rate (lots.purchaseRate); sales = 팔았어요 records of the week at their own rate.
 //   A 가진 종목 row dated in the week (금액으로 넣기 dates its row with that day's close) is not a buy: nothing says it was bought then.
 //   A stock whose week cannot be worked out is left out of both ends and named (left: [{ t, nk, why }], never counted as 0). One
@@ -91,14 +95,17 @@ export function weekStarts(data) {
 
 // Whether the week's numbers are final, and its dates. data: data.json.
 // -> { ok: true, mon, sun, start (the Sunday before), first (the week's first Korean trading day), to (pxDate), nextMon, nextSun,
-//      starts } | { ok: false, why: "pxDate" | "publishedAt" | "open" (a Korean trading day is still to come that week) |
-//      "notFinal" (published on or before pxDate) | "wkFrom" }
+//      starts } | { ok: false, why: "pxDate" | "publishedAt" | "open" (a Korean trading day is still to come that week) | "usOpen"
+//      (a US trading day after usPxDate that week, or no readable usPxDate in it) | "notFinal" (published on or before pxDate) | "wkFrom" }
 export function weekState(data) {
   if (!data || !isDay(data.pxDate)) return { ok: false, why: "pxDate" };
   const pub = Date.parse(data.publishedAt || "");
   if (!Number.isFinite(pub)) return { ok: false, why: "publishedAt" };
   const { mon, sun } = weekOf(data.pxDate);
   for (let d = addDays(data.pxDate, 1); d <= sun; d = addDays(d, 1)) if (isTradingDay(d, "KR")) return { ok: false, why: "open" };
+  // the US side of the same week (round 3): its last close must be in too (a US date before the week counts as open: the safe side)
+  if (!isDay(data.usPxDate) || data.usPxDate > sun || data.usPxDate < mon) return { ok: false, why: "usOpen" };
+  for (let d = addDays(data.usPxDate, 1); d <= sun; d = addDays(d, 1)) if (isTradingDay(d, "US")) return { ok: false, why: "usOpen" };
   if (!(kstDate(pub) > data.pxDate)) return { ok: false, why: "notFinal" };
   const starts = weekStarts(data);
   if (!starts.kr) return { ok: false, why: "wkFrom" };
@@ -308,6 +315,26 @@ export function weekMover(held, byT, stocks, starts, nv = WEEK_NV, splits = null
   return { t: best.t, nk: best.s.nk || best.t, s: best.s, pct: best.pct, why, n: g.ok ? g.n : 0 };
 }
 
+// ---------------- the week's exchange rate ----------------
+// fxHist only (records.rateFor without its today branch, which reads data.json fx): the close of that date or the last one before it
+// (Part I.1). Round 3: a date after fxHist's last row whose days in between are all Korean non-trading days (ECOS writes no row on a
+// Korean holiday, e.g. 2026-12-31 while the US trades) takes that last row, only when fxHist marks it final; any other gap has no rate.
+// Weekly only: rateFor itself is unchanged for its other callers. load: the data · today: KST. -> (date) => won per dollar | null
+export function weekRate(load, today) {
+  const env = { ...rateEnv(load, today), today: null };
+  const fh = env.fxHist;
+  return (date) => {
+    const r = rateFor(date, env);
+    if (r.ok) return num(r.fx) > 0 ? r.fx : null;
+    if (r.why !== "notYet" || !fh || fh.final !== true) return null;
+    const rows = validRows(fh);
+    const last = rows ? rows[rows.length - 1] : null;
+    if (!last || !(num(last[1]) > 0) || fh.asOf !== last[0]) return null;
+    for (let d = addDays(last[0], 1); d <= date; d = addDays(d, 1)) if (isTradingDay(d, "KR")) return null;
+    return last[1];
+  };
+}
+
 // ---------------- the card of one portfolio ----------------
 // deck: the portfolio (the screens' view) · load: the data · ctx: rules.todayCtx (byT) · disc: app.jsx's · nv: the WEEK_NV mode in
 // effect (weekly.jsx) · now: tests. -> { ok: false, why } | { ok: true, week, money, kospi, divs, files, next, mover, kr, held }
@@ -317,9 +344,7 @@ export function weeklyModel({ deck, load, ctx, disc = null, nv = WEEK_NV, now = 
   if (!week.ok) return { ok: false, why: week.why };
   const byT = (ctx && ctx.byT) || load.byT || new Map();
   const today = kstDate(now == null ? Date.now() : now);
-  // fxHist only (rateFor without its today branch, which reads data.json fx): the close of that date or the last one before it
-  const env = { ...rateEnv(load, today), today: null };
-  const rateAt = (date) => { const r = rateFor(date, env); return r.ok && num(r.fx) > 0 ? r.fx : null; };
+  const rateAt = weekRate(load, today);
   const splits = [...dataSplits(load.data).list, ...(Array.isArray(deck.splits) ? deck.splits : []), ...(Array.isArray(deck[VIEW_SPLITS]) ? deck[VIEW_SPLITS] : [])];
   const money = weekMoney(deck, { byT, week, rateAt, usPxDate: load.data.usPxDate, nv, splits, today });
   const held = new Set([...heldUnits(deck, week.sun)].filter(([, u]) => u > 0).map(([t]) => t));

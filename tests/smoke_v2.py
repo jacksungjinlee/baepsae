@@ -15973,6 +15973,7 @@ def scene_v196e(R, files, width, dark=False):
 def scene_v196e_states(R, files, width=390):
     """v19.6e 이번 주 정리의 때와 상태 (390): 커밋한 빌드(스위치 꺼짐)에는 카드 없음 · 금요일(그 주가 아직 끝나지 않음) 없음 · 다음 월요일 그대로 ·
     (2차) 금요일 휴장 주의 금요일 아침 발행 · 금요일이 거래일인 주의 토요일 목요일 종가는 없음 · 늦은 데이터(5거래일 안)에는 없음 ·
+    (3차) 2026-12-28 주: 목요일 발행은 미국 종가를 기다려 없음, 금요일 발행부터 (12-31 한국 휴장의 fxHist 빈 날은 그 앞 종가) ·
     다음 한국 종가가 나오면 없음 · 금요일 휴장 주(12월 21일 ~ 24일) · 닫기는 그 주만 (다음 주는 다시) · c1w 없는 종목: 빠진 종목 줄이 승인되기 전에는
     내 포트폴리오 칸이 빠지고 console 이 말해요 · 멈춘 데이터 · 불러오기 실패에는 없음 · 포트폴리오 둘 (이름 · 만든 포트폴리오는 규칙 줄 없음 · 하나만
     닫기) · nv 행: out (빠짐) · use (들어감) · note (들어가고 각주는 승인 전이라 없음)."""
@@ -16115,6 +16116,20 @@ def scene_v196e_states(R, files, width=390):
         assert page.locator('[data-ui-v2="home-rules"]').count() == 1 and page.locator('[data-ui-v2="today-stale"]').count() == 0
         assert page.locator(WEEKLY_CARD).count() == 0                                       # 지난주를 '이번 주'라고 부르지 않아요
     one("늦은 데이터 (토요일 발행 뒤 화요일 발행이 늦음 · 2거래일 늦음, 점검은 그대로): 카드 없음", late, dt.datetime(2026, 11, 17, 12, 0, tzinfo=KST), late_check)
+
+    # ── 3차: 2026-12-28 주 (한국은 12-31 · 01-01 휴장, 미국은 01-01 만 휴장) ──
+    ny_thu = v196e_files(files, px="2026-12-30", wk_from="2026-12-24", pub="2026-12-31T06:45:00+09:00")
+    one("2026-12-28 주, 12월 31일(목) 아침 발행: 미국 12월 31일 종가가 아직이라 카드 없음", ny_thu, dt.datetime(2026, 12, 31, 9, 0, tzinfo=KST), none_but_home)
+    ny_fri = v196e_files(files, px="2026-12-30", wk_from="2026-12-24", pub="2027-01-01T06:45:00+09:00")
+    ny_fri["data.json"]["usPxDate"] = "2026-12-31"                                            # fxHist 는 12-30 에서 끝나요 (12-31 은 한국 휴장)
+
+    def new_year(page, logs):
+        shows("12월 28일 ~ 12월 30일")(page, logs)
+        # AAPL 은 지금 값을 12-30 의 fxHist(1,450)로: 사이의 12-31 이 한국 휴장이라 그 앞 마지막 종가 (Part I.1) → 세 종목 모두 세요
+        assert page.locator('[data-tile="pf"]').get_attribute("data-n") == "3" and page.locator('[data-tile="pf"]').get_attribute("data-left") == "0"
+        assert not [x for x in logs() if "AAPL (fx)" in x], logs()
+    one("2026-12-28 주, 1월 1일(금) 아침 발행 (미국 12월 31일 종가 도착): 카드 '12월 28일 ~ 12월 30일' · 미국 종목도 셈 (fxHist 12-30, 한국 휴장 사이)",
+        ny_fri, dt.datetime(2027, 1, 1, 9, 0, tzinfo=KST), new_year)
 
 
 def main():

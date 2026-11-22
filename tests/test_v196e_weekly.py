@@ -37,7 +37,7 @@ def run(body):
         entry = os.path.join(tmp, "entry.js")
         with open(entry, "w", encoding="utf-8") as f:
             for name, mod in (("W", "weekly.js"), ("WV", "weekly.jsx"), ("Tr", "track.js"), ("Lk", "look.js"), ("Cfg", "weekcfg.js"),
-                              ("St", "store.js"), ("Ed", "edit.js")):
+                              ("St", "store.js"), ("Ed", "edit.js"), ("Rec", "records.js")):
                 f.write(f"export * as {name} from {json.dumps(os.path.join(ROOT, 'src', 'v2', mod))};\n")
             f.write(f"export {{ C }} from {json.dumps(os.path.join(ROOT, 'src', 'copy', 'v2.js'))};\n")
         exe = os.path.join(ROOT, "node_modules", ".bin", "esbuild")
@@ -45,7 +45,7 @@ def run(body):
                             "--loader:.js=jsx", "--jsx=automatic", "--charset=utf8"], cwd=ROOT, capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
         _B["p"] = tmp
-    code = ("import { W, WV, Tr, Lk, Cfg, St, Ed, C } from './w.mjs';\n" + FAKE + "let out;\n" + body + "\nprocess.stdout.write(JSON.stringify(out));")
+    code = ("import { W, WV, Tr, Lk, Cfg, St, Ed, Rec, C } from './w.mjs';\n" + FAKE + "let out;\n" + body + "\nprocess.stdout.write(JSON.stringify(out));")
     r = subprocess.run([NODE, "--input-type=module", "-e", code], cwd=_B["p"], capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
@@ -108,13 +108,13 @@ def test_the_week_is_final_once_no_korean_trading_day_is_left_and_its_last_close
         // a Friday holiday (12-25, both markets closed): Thursday's close is the week's last, final from the holiday morning's publish
         // (already_published.py skips the Saturday runs then) and on Saturday too
         friHoliday: st(dataOf([], { pxDate: '2026-12-24', usPxDate: '2026-12-24', publishedAt: '2026-12-26T06:45:00+09:00', wkFrom: '2026-12-18', usWkFrom: '2026-12-18' })),
-        friHolidayEarly: st(dataOf([], { pxDate: '2026-12-24', publishedAt: '2026-12-25T06:45:00+09:00', wkFrom: '2026-12-18' })),
-        friHolidayDay: st(dataOf([], { pxDate: '2026-12-24', publishedAt: '2026-12-24T20:00:00+09:00', wkFrom: '2026-12-18' })),
+        friHolidayEarly: st(dataOf([], { pxDate: '2026-12-24', usPxDate: '2026-12-24', publishedAt: '2026-12-25T06:45:00+09:00', wkFrom: '2026-12-18', usWkFrom: '2026-12-18' })),
+        friHolidayDay: st(dataOf([], { pxDate: '2026-12-24', usPxDate: '2026-12-24', publishedAt: '2026-12-24T20:00:00+09:00', wkFrom: '2026-12-18', usWkFrom: '2026-12-18' })),
         // Friday 11-20 was a trading day: a Saturday file still at Thursday's close is a partial week, and so is Friday's publish of it
         partialSat: st(dataOf([], { pxDate: '2026-11-19', publishedAt: '2026-11-21T06:45:00+09:00' })),
         partialFri: st(dataOf([], { pxDate: '2026-11-19', publishedAt: '2026-11-20T06:45:00+09:00' })),
-        // Monday 10-05 and Friday 10-09 closed: the week runs Tuesday to Thursday
-        both: st(dataOf([], { pxDate: '2026-10-08', usPxDate: '2026-10-08', publishedAt: '2026-10-10T07:00:00+09:00', wkFrom: '2026-10-02', usWkFrom: '2026-10-02' })),
+        // Monday 10-05 and Friday 10-09 closed in Korea (the US trades on 10-09): the week runs Tuesday to Thursday
+        both: st(dataOf([], { pxDate: '2026-10-08', usPxDate: '2026-10-09', publishedAt: '2026-10-10T07:00:00+09:00', wkFrom: '2026-10-02', usWkFrom: '2026-10-02' })),
         noWk: st(dataOf([], { wkFrom: undefined })), blankWk: st(dataOf([], { wkFrom: '' })), wkInWeek: st(dataOf([], { wkFrom: '2026-11-16' })),
         wkTooOld: st(dataOf([], { wkFrom: '2026-11-07' })), noPub: st(dataOf([], { publishedAt: 'x' })), noPx: st(dataOf([], { pxDate: null })),
       };""")
@@ -181,7 +181,9 @@ def test_a_us_holding_takes_the_fxhist_rate_of_the_us_week_start():
         usOwnStart: f({ usWkFrom: '2026-11-12' }),                     // the US week began a day earlier: that day's rate (1,395)
         lastBefore: f({}, noRow),                                       // no row on 11-13: the last one before it (11-12, 1,395)
         noFxHist: f({}, { idxHist: MACRO.idxHist }),
-        otherWeek: f({ usPxDate: '2026-11-13', usWkFrom: '2026-11-06' }),   // US prices from another week: never this week's move
+        // US prices from another week: never this week's move (round 3: the week is not final then, so no card; weekStarts says so too)
+        otherWeek: [model(deck, loadOf(st, { usPxDate: '2026-11-13', usWkFrom: '2026-11-06' })).why,
+          W.weekStarts(dataOf(st, { usPxDate: '2026-11-13', usWkFrom: '2026-11-06' })).us],
         noUsWk: f({ usWkFrom: '' }),
         // bought this week (nothing held at the start): no last-week close or start rate is needed; the buy at its own rate
         bought: (() => { const d = deckOf([], { kind: undefined, holdings: [{ t: 'AAPL', nk: 'AAPL' }], imported: [],
@@ -191,7 +193,7 @@ def test_a_us_holding_takes_the_fxhist_rate_of_the_us_week_start():
     assert got["same"] == [1120000, 1218000, 98000]                     # 4 × 200 × 1,400 → 4 × 210 × 1,450
     assert got["usOwnStart"] == got["lastBefore"] == [1116000, 1218000, 102000]   # 4 × 200 × 1,395
     assert got["noFxHist"] == [{"t": "AAPL", "nk": "AAPL Inc.", "why": "fx"}]
-    assert got["otherWeek"] == [{"t": "AAPL", "nk": "AAPL Inc.", "why": "week"}]
+    assert got["otherWeek"] == ["usOpen", None]
     assert got["noUsWk"] == [{"t": "AAPL", "nk": "AAPL Inc.", "why": "week"}]
     assert got["bought"] == [0, 586300, 609000, 22700]                 # 2 × 205 × 1,430 → 2 × 210 × 1,450
 
@@ -584,7 +586,7 @@ def test_us_holdings_take_fxhist_at_both_ends_never_data_json_fx():
         yahoo: g({ fx: 1460 }),                                                                       // data.json fx differs: not used
         lastBefore: g({}, fh([['2026-11-13', 1400], ['2026-11-19', 1440]])),                           // fxHist ends 11-19: does not reach 11-20
         notFinal: g({}, fh([['2026-11-13', 1400], ['2026-11-20', 1450]], { final: false })),          // the last row is a live rate
-        holiday: g({ usPxDate: '2026-11-19' }, fh([['2026-11-13', 1400], ['2026-11-18', 1430], ['2026-11-20', 1450]])),   // 11-19 → 11-18's
+        holiday: g({}, fh([['2026-11-13', 1400], ['2026-11-19', 1430], ['2026-11-23', 1450]])),   // no 11-20 row: the last one before it, 11-19's
       };""")
     assert got["yahoo"]["per"] == [["AAPL", 1120000, 1218000], ["005930", 100000, 110000]] and got["yahoo"]["left"] == []
     assert got["lastBefore"]["left"] == [{"t": "AAPL", "nk": "AAPL Inc.", "why": "fx"}] and got["lastBefore"]["per"] == [["005930", 100000, 110000]]
@@ -655,3 +657,75 @@ def test_one_stock_is_counted_or_named_never_both():
       const x = money(d, loadOf(st));
       out = [x.n, x.per.map((p) => p.t), x.left, r3(x.pct)];""")
     assert got == [1, ["005930"], [{"t": "000660", "nk": "종목000660", "why": "out"}], 10.0]
+
+
+
+# ── round 3 (2026-11-22): weeks where one market trades and the other is closed ──
+def test_the_week_is_final_only_when_both_markets_last_closes_are_in():
+    """R1 fix 1, with the app's 2026-27 holiday tables (tradedays.js CLOSED.KR · CLOSED.US): Christmas 2026 (both closed on Friday) is
+    final from Friday's publish; Good Friday 2027 (US closed, Korea open) from Saturday's; the week of 2026-12-28 (Korea closed 12-31 and
+    01-01, the US only 01-01) from Friday 01-01's publish, which brings the US 12-31 close, not Thursday 12-31's; 2027-12-31 (Korea
+    closed, the US open) from Saturday's; a Saturday file still at Thursday's US close gives no card."""
+    got = run("""
+      const st = (d) => { const s = W.weekState(dataOf([], d)); return s.ok ? [s.first, s.to] : s.why; };
+      const wk = (px, us, pub, from, usFrom = from) => st({ pxDate: px, usPxDate: us, publishedAt: pub + 'T06:45:00+09:00', wkFrom: from, usWkFrom: usFrom });
+      out = {
+        xmasFri: wk('2026-12-24', '2026-12-24', '2026-12-25', '2026-12-18'), xmasSat: wk('2026-12-24', '2026-12-24', '2026-12-26', '2026-12-18'),
+        goodFriFri: wk('2027-03-25', '2027-03-25', '2027-03-26', '2027-03-19'),              // Korea trades on Friday 03-26: open
+        goodFriSat: wk('2027-03-26', '2027-03-25', '2027-03-27', '2027-03-19'),
+        newYearThu: wk('2026-12-30', '2026-12-30', '2026-12-31', '2026-12-24'),              // the US trades on 12-31: not yet
+        newYearFri: wk('2026-12-30', '2026-12-31', '2027-01-01', '2026-12-24'),
+        y27Fri: wk('2027-12-30', '2027-12-30', '2027-12-31', '2027-12-24', '2027-12-23'),   // the US trades on 12-31: not yet
+        y27Sat: wk('2027-12-30', '2027-12-31', '2028-01-01', '2027-12-24', '2027-12-23'),
+        stuckUs: wk('2026-11-20', '2026-11-19', '2026-11-21', '2026-11-13'),                 // Saturday file, US still at Thursday's close
+        noUs: st({ usPxDate: null }), usLastWeek: wk('2026-11-20', '2026-11-13', '2026-11-21', '2026-11-13'),
+      };""")
+    assert got["xmasFri"] == got["xmasSat"] == ["2026-12-21", "2026-12-24"]
+    assert got["goodFriFri"] == "open" and got["goodFriSat"] == ["2027-03-22", "2027-03-26"]
+    assert got["newYearThu"] == "usOpen" and got["newYearFri"] == ["2026-12-28", "2026-12-30"]
+    assert got["y27Fri"] == "usOpen" and got["y27Sat"] == ["2027-12-28", "2027-12-30"]          # Korea also closed Monday 12-27
+    assert got["stuckUs"] == got["noUs"] == got["usLastWeek"] == "usOpen"
+
+
+def test_the_holiday_tables_behind_the_round_3_weeks():
+    """The five weeks above read the app's own tables (copied from data/market_holidays.csv; tests/test_late_check.py keeps them equal)."""
+    with open(os.path.join(ROOT, "src", "v2", "tradedays.js"), encoding="utf-8") as f:
+        src = f.read()
+    kr, us = src.split("KR: new Set([", 1)[1].split("]),", 1)[0], src.split("US: new Set([", 1)[1].split("]),", 1)[0]
+    for d in ("2026-12-25", "2026-12-31", "2027-01-01", "2027-12-27", "2027-12-31"):
+        assert f'"{d}"' in kr, d
+    for d in ("2026-12-25", "2027-01-01", "2027-03-26"):
+        assert f'"{d}"' in us, d
+    for d in ("2026-12-31", "2027-12-31"):
+        assert f'"{d}"' not in us, d
+    assert '"2027-03-26"' not in kr
+
+
+def test_the_week_end_rate_bridges_a_korean_holiday_gap_in_fxhist_only():
+    """R1 fix 2: ECOS writes no row on a Korean holiday, so on the Friday 2027-01-01 publish fxHist can end 12-30 while usPxDate is 12-31.
+    Every day in between being a Korean non-trading day, the last row (when final) is that date's rate (Part I.1: "the close on that
+    date, or the last close before it"). Any other gap, or a last row not final, has no rate ("fx"). records.rateFor is unchanged."""
+    got = run("""
+      const st = [us('AAPL', { c1w: 200, price: 210 }), kr('005930', { c1w: 100000, price: 101000 })];
+      const L = (rows, final = true, more = {}) => loadOf(st, { pxDate: '2026-12-30', usPxDate: '2026-12-31', publishedAt: '2027-01-01T06:45:00+09:00',
+        wkFrom: '2026-12-24', usWkFrom: '2026-12-24', fx: 1500, ...more }, { ...MACRO, fxHist: { asOf: rows[rows.length - 1][0], final, rows } });
+      const NOW1 = Date.parse('2027-01-01T09:00:00+09:00');
+      const g = (load) => { const m = W.weeklyModel({ deck: deckOf([imp('AAPL', 4), imp('005930', 1)]), load, ctx: ctxOf(load), now: NOW1 });
+        return m.ok ? { per: m.money.per.map((p) => [p.t, p.start, p.end]), left: m.money.left.map((x) => x.t + ':' + x.why) } : m.why; };
+      const base = [['2026-12-24', 1400], ['2026-12-28', 1410], ['2026-12-29', 1420], ['2026-12-30', 1430]];
+      const R = (rows, final = true) => { const ld = L(rows, final); return W.weekRate(ld, '2027-01-01'); };
+      out = {
+        gap: g(L(base)),                                                    // 12-31 is a Korean holiday: 12-30's 1,430
+        notFinal: g(L(base, false)),                                        // the last row not marked final: no rate
+        // a gap over a Korean trading day (fxHist ends 12-29, 12-30 traded): no rate
+        tradingGap: g(L(base.slice(0, 3))),
+        direct: R(base)('2026-12-30'), before: R(base)('2026-12-26'), gapRate: R(base)('2026-12-31'), newYear: R(base)('2027-01-01'),
+        nextWorkday: R(base)('2027-01-04'),                                // 01-04 (Monday) is a Korean trading day: no rate
+        // records.rateFor itself still says "notYet" for 12-31 (its other callers keep their behaviour)
+        rateFor: Rec.rateFor('2026-12-31', { ...Rec.rateEnv(L(base), '2027-01-01'), today: null }),
+      };""")
+    assert got["gap"] == {"per": [["AAPL", 1120000, 1201200], ["005930", 100000, 101000]], "left": []}        # 4 × 200 × 1,400 → 4 × 210 × 1,430
+    assert got["notFinal"]["left"] == ["AAPL:fx"] and got["tradingGap"]["left"] == ["AAPL:fx"]
+    assert got["direct"] == 1430 and got["before"] == 1400 and got["gapRate"] == 1430 and got["newYear"] == 1430
+    assert got["nextWorkday"] is None
+    assert got["rateFor"] == {"ok": False, "why": "notYet"}
