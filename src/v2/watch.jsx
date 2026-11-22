@@ -308,7 +308,7 @@ export function WatchButton({ s, store, setStoreData }) {
 
 // ---------------- 홈: 오늘 볼 것 ----------------
 // hits: watch.js watchHits. Each row: "{name} · 관심 종목 조건", the hit line, and the stock's price date ("{md} 종가", US
-// "{date} 종가 (미국 시간)": cofmt.closeLine). Tapping opens 관심 종목 (the 오늘 볼 것 page comes with v19.6b).
+// "{date} 종가 (미국 시간)": cofmt.closeLine). onOpen: on 홈 the 오늘 볼 것 page (v19.6b), on that page 관심 종목.
 export function WatchHitRows({ hits, load, onOpen }) {
   return hits.map((h) => {
     const date = closeLine(load, h.s);

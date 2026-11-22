@@ -36,10 +36,11 @@ import { BottomSheet, Button } from "../ui/components.jsx";
 import { isImported } from "./pf.js";
 import { dataSplits, withDataSplits, storedNotInData, withStoredSplits, outSplits, withoutOutSplits } from "./lots.js";
 import { UNIT } from "./held.js";
-import { companySub, CO_MORE, editSub, parseHash, WATCH_SUB } from "./routes.js";
+import { companySub, CO_MORE, editSub, parseHash, WATCH_SUB, TODAY_SUB } from "./routes.js";
 import { WatchScreen } from "./watch.jsx";
 import { withWatchHits, watchGuardNote } from "./watch.js";
-import { holdsKorean } from "./home.js";
+import { coversKorean } from "./look.js";
+import { TodayLook } from "./todaylook.jsx";
 import { TAB_H, SIDE_W, ModeContext, NavContext, LayoutContext, HeldContext, useWide, Page, AppBar, LoadFail, Footer } from "./ui.jsx";
 import { useRouter, TabBar, MenuSheet, SideMenu, TopBar, useSlashFocus, typingIn, useThemeMode } from "./nav.jsx";
 
@@ -253,7 +254,8 @@ export function App({ source }) {
   // v19.1a: disc.json, once, when the first company page opens (a failure shows the load-failure message on 공시).
   // v19.3e (Jack, 2026-11-08): also when 홈 opens and a saved portfolio holds a Korean stock (오늘 볼 것's filings rows; a
   // failure shows the same message there). After the first paint (an effect), once per visit for both.
-  const homeKr = useMemo(() => holdsKorean(store.data.decks, load.status === "ok" ? load.byT : null), [store.data.decks, load]);
+  // v19.6b (Part B.2): also a watched Korean stock (the 오늘 볼 것 cards cover 관심 종목 too)
+  const homeKr = useMemo(() => coversKorean(store.data.decks, store.data, load.status === "ok" ? load.byT : null), [store.data, load]);
   const wantDisc = !!loc.code || (loc.tab === "home" && homeKr);
   // 2026-11-08 (the stale re-fetch): a load still out when a newer publish goes on screen is not used (discGen: it loads
   // again with that publish, hold.js discAfter), and one loaded again then is shown only if it is not older than that
@@ -527,6 +529,9 @@ export function App({ source }) {
     if (next) setStoreData(next);
   }, [store.data, load]);
   const openWatch = useCallback(() => router.go("stocks", WATCH_SUB), [router.go]);
+  // v19.6b: the 오늘 볼 것 page (#home/today), from 홈's 오늘 볼 것 header and its new rows
+  const openToday = useCallback(() => router.go("home", TODAY_SUB), [router.go]);
+  const leaveToday = useCallback(() => router.back("home"), [router.back]);
   const addWatch = useCallback(() => {
     router.go("stocks");
     setFocusQ((n) => n + 1);
@@ -615,6 +620,9 @@ export function App({ source }) {
         onSaved={importSaved} />;
     }
     if (inWhy) return <Why load={load} store={store} setStoreData={setStoreData} pad={pad} target={why} onBack={() => router.back("home")} />;
+    if (tab === "home" && loc.sub === TODAY_SUB) {
+      return <TodayLook load={load} store={store} setStoreData={setStoreData} disc={discView} pad={pad} onBack={leaveToday} onLeave={leaveToday} onWatch={openWatch} />;
+    }
     if (rulesDeck) return <Limits key={rulesDeck.id} deck={rulesDeck} store={store} setStoreData={setStoreData} pad={pad} onBack={() => router.back("portfolio")} />;
     if (taxShown) return <Tax load={load} store={store} pad={pad} onBack={() => router.back("portfolio")} />;
     if (returnsDeck) {
@@ -646,7 +654,7 @@ export function App({ source }) {
         focusKey={wide ? 0 : focusQ} onFocused={() => setFocusQ(0)} />;
     }
     if (tab === "market") return <Market load={load} pad={pad} />;
-    return <Home load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onWhy={openWhy} onWatch={openWatch} welcome={welcome} disc={discView} />;
+    return <Home load={load} store={store} setStoreData={setStoreData} pad={pad} go={go} onWhy={openWhy} onWatch={openWatch} onToday={openToday} welcome={welcome} disc={discView} />;
   })();
   const nav = { openMenu: wide ? null : router.openMenu, menuOpen: !wide && loc.menu, openStock, goHome };
   // One boundary per screen. A company's tabs are one screen (company.jsx keeps its own boundary per tab), so switching
