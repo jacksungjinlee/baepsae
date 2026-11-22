@@ -724,11 +724,11 @@ publish, Korean data included.
   `pxd`, no `pxc` and no line.
 - **Not carried, as before (`drop`):** `none` not in the previous publish, `halted` the previous publish had it with its own Yahoo date (`pxd`
   without `pxc`: a halted stock), `bad` unreadable price or date. These keep the existing path: Yahoo's own last bar with its `pxd` (the
-  existing "{티커} 가격은 {md} 종가예요." / "미국 {md} 종가"), or left out when Yahoo has nothing. Since #? (below) a new ticker that
+  existing "{티커} 가격은 {md} 종가예요." / "미국 {md} 종가"), or left out when Yahoo has nothing. Since #169 (below) a new ticker that
   waits never reaches this step, so `none` is left only for new tickers that don't wait: a ticker the previous publish left out on
   purpose (`usLeftOut`), a run whose previous `data.json` is missing, unreadable or has no US rows, and a run where the wait step
   itself stopped on an error.
-- **New tickers wait for a confirmed close (since #?, Jack 2026-11-22, verbatim):** "2. No relaxation. Instead, a stock newly added to
+- **New tickers wait for a confirmed close (since #169, Jack 2026-11-22, verbatim):** "2. No relaxation. Instead, a stock newly added to
   the S&P (or NASDAQ) list joins our list only once it has a confirmed close; until then it isn't added. Nobody can hold it in the app
   before it joins, so nothing is lost, and the check stays as it is." Why: a ticker the previous publish did not have has no last
   confirmed close to carry, so it used to go out at Yahoo's older bar with its own date, and every such stock counts as missing in
@@ -795,7 +795,7 @@ publish, Korean data included.
   그날 종가 · d1 을 그대로 {m}종목 — names`, `!! 마지막 확인 종가로 싣지 않은 미국 종목 …`, `!! 마지막 확인 종가가 5거래일을 넘어 잠시 뺀 미국 종목 …`,
   `· 마지막 확인 종가 점검 (미국 · 관문과 같은 함수): {n}종목 빼고 발행`. Normal day: `· 미국 종가 미확인 0종목`.
 - **data.json:** `usSrc` = `{v: 1, own: {v, max, n, codes, same, newer, split, unconf, why {bar · empty · err}, drop, dropEx, bad {n, rows, why}, aged, err?}, newWait?}`;
-  the stock row has `pxc: true`. `newWait` (since #?) lists the new tickers left out today while they wait for a confirmed close (above);
+  the stock row has `pxc: true`. `newWait` (since #169) lists the new tickers left out today while they wait for a confirmed close (above);
   `unconf` and `why` count only the stocks that went to the carry step, so waiting tickers are not in them.
 - **Gate:**
   - `미국 d1 채움 (미국 기준일 봉)`: a clean carry (`validate_data.us_own_codes`: `pxc`, `pxd` before `usPxDate`, no `d1`, a price, listed in
@@ -829,7 +829,7 @@ publish, Korean data included.
   the aged line, the rest is checked).
 - **Halted stocks:** the existing wording ("{티커} 가격은 {md} 종가예요." / "미국 {md} 종가") now remains only for stocks already halted
   before this change (and, on a run without a readable previous publish, for new tickers); a stock that stops trading after it becomes a
-  carry with Jack's line and is left out after 5 NYSE trading days. Since #? a new ticker without a close waits instead (above).
+  carry with Jack's line and is left out after 5 NYSE trading days. Since #169 a new ticker without a close waits instead (above).
 - **A long full outage:** every US stock is carried for 5 NYSE trading days (warnings); on day 6 they age out and the US count and
   must-have rows stop the publish.
 - **App late cap:** counts NYSE days up to the KST date (one day stricter than the pipeline's count, the safe side).
@@ -852,7 +852,7 @@ publish, Korean data included.
   publish takes Yahoo's closes again. A wrong carry (not the previous publish's price or date) means the carry step broke: tell Jack.
 - **On a failure:** "마지막 확인 종가로 싣지 못한 종목 > 5" means many US stocks had no Yahoo close **and** no previous close to carry (a
   first run without a previous publish, halted stocks, splits after the carried close, tickers the previous publish left out on purpose
-  (`usLeftOut.preferred` / `krListing`), or a broken carry step; since #? other new tickers wait instead of counting here). The previous publish stays live. Never raise N to get a publish out; a different N needs Jack's yes with
+  (`usLeftOut.preferred` / `krListing`), or a broken carry step; since #169 other new tickers wait instead of counting here). The previous publish stays live. Never raise N to get a publish out; a different N needs Jack's yes with
   new evidence.
 - **Check on the site:** search a carried ticker (the log names them): its company page shows its date and Jack's line; a portfolio holding it
   shows "{티커}: 오늘 종가를 …". 005930 and 현대차 unchanged.
@@ -1691,13 +1691,13 @@ has 10% of the sale proceeds withheld, and several Korean brokers restricted buy
    whose ratio is not a whole number or its inverse (GSK 4:5 on the first publish after 2026-11-14).
 5. Check Yahoo's names (`shortName`, `longName`) against the preferred-share rule (`us_preferred_reason`), and its
    industry against `data/industry_us.csv` (an industry not in the table means no 업종 group; the run log names it).
-6. Since #? (Jack, 2026-11-22) a newly added stock joins on the first run where Yahoo has its close for the US date: until
+6. Since #169 (Jack, 2026-11-22) a newly added stock joins on the first run where Yahoo has its close for the US date: until
    then it waits (`usSrc.newWait`) and `usExtraMissing` gives "새로 들어온 종목 · 확인된 종가를 기다려요 (…)", so the gate row
    below warns ("US stocks at their last confirmed close", "New tickers wait for a confirmed close").
 
 **Gate row "손으로 더한 미국 종목 (EXTRA_US): 목록에 있거나 빠진 이유".** Every `EXTRA_US` stock must be in the day's
 data, or named in `data.json` `usExtraMissing` with the reason the run left it out (Yahoo gave no prices, less than 60
-days of prices, a broken bar, a preferred share, a Korean company's US listing, since #? a new stock waiting for its first
+days of prices, a broken bar, a preferred share, a Korean company's US listing, since #169 a new stock waiting for its first
 confirmed close; if the run cannot tell, the reason says so and asks for a check). A named stock warns, with its reason.
 Since #162 (Jack, 2026-11-21: "Yes, warn.", under his 11-20 rule "one stock missing from a source never holds the publish",
 the same as BF-B in #149), a stock that is neither in the list nor in the record also only warns, named in the row ("이유 없이
