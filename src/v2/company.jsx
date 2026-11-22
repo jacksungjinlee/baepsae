@@ -26,7 +26,7 @@ import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.
 import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, CardPic, KrOwnCloseLine, SIDE_W, tx, tap, useMode, useLayout } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { findCompany, groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, warnings, cardRanks, myCards, holdingsOf, RANK_CARDS,
-  splitGuardCount, SPLIT_GUARD, divCheckCount, warnChips, warnKind, uncheckedCount, divHiddenLine } from "./company.js";
+  splitGuardCount, SPLIT_GUARD, divCheckCount, warnChips, warnKind, uncheckedCount, divHiddenLine, DIV_HIDDEN_UI } from "./company.js";
 import { EarnBars, ValueScale, Coins, Waves } from "./coart.jsx";
 import { pfRows, isImported, limitsOf } from "./pf.js";
 import { limitPct } from "./pfview.jsx";
@@ -125,8 +125,7 @@ export function tileViews(load, s) {
     const hid = last && last.topic === "div" && !number && !usOf(s) ? divHiddenLine(s, co) : null;
     if (hid && C.co.div[hid]) {
       last.note = C.co.div[hid];
-      last.noteUi = { shareHidden: "div-share-hidden", rightsHidden: "div-rights-hidden", dataHidden: "div-data-hidden",
-        missingHidden: "div-missing-hidden" }[hid];
+      last.noteUi = DIV_HIDDEN_UI[hid];
     }
   }
   if (pxBadFor(s, co) && T().label.risk) {

@@ -22,7 +22,7 @@ import { C, fill, p1 } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, DateLine, Footer, Note, SIDE_W, tx, tap, useLayout, useHeld } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { num } from "./engine.js";
-import { riskTile, impliedGrowth, divKr, divUs, divShareHidden, round } from "./company.js";
+import { riskTile, impliedGrowth, divKr, divUs, divHiddenLine, DIV_HIDDEN_UI, round } from "./company.js";
 import { criteriaPct } from "./fitpct.js";
 import { riskBandText, riskBandNote, timesText, yieldText, usOf } from "./cofmt.js";
 import { subjectParticle } from "./track.js";
@@ -111,8 +111,12 @@ export function compareCells(s, co, ctx) {
   else if (fgnBlank(s, "dy")) out.dy = cell(DASH, fgnLine(s, "dy"), { blank: "fgn" });
   else {
     const r = usOf(s) ? divUs(s) : divKr(s, co);
+    // a hidden Korean yield (say-why N-02, 2026-11-22): the line the 배당 tile puts in the number's place, by the same pipeline mark
+    // (company.js divHiddenLine: dvLine 1 share count · 2 rights issue · 3 dividend table · 4 missing filing data); else no statements
+    const hid = r.yieldPct == null && !usOf(s) ? divHiddenLine(s, co) : null;
+    const hidText = hid && C.co.div[hid] ? C.co.div[hid] : null;
     out.dy = r.yieldPct != null ? cell(yieldText(r.yieldPct), null, { y: r.yieldPct })
-      : cell(DASH, !usOf(s) && divShareHidden(s, co) ? C.co.div.shareHidden || null : noStmtFor(s, co) ? C.co.noStmt || null : null, { y: "" });
+      : cell(DASH, hidText || (noStmtFor(s, co) ? C.co.noStmt || null : null), { y: "", ...(hidText ? { blank: DIV_HIDDEN_UI[hid] } : {}) });
   }
   // 오늘 주가가 가정하는 성장: impliedGrowth, the company page's number ("첫해 {g}%") or its edge line; US and no data -> "–"
   const ig = impliedGrowth(s, co);
