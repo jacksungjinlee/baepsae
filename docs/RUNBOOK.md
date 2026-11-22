@@ -724,8 +724,10 @@ publish, Korean data included.
   `pxd`, no `pxc` and no line.
 - **Not carried, as before (`drop`):** `none` not in the previous publish, `halted` the previous publish had it with its own Yahoo date (`pxd`
   without `pxc`: a halted stock), `bad` unreadable price or date. These keep the existing path: Yahoo's own last bar with its `pxd` (the
-  existing "{티커} 가격은 {md} 종가예요." / "미국 {md} 종가"), or left out when Yahoo has nothing. Since #? (below) a new ticker never
-  reaches this step when the previous publish was read, so `none` is left only for a run without a readable previous publish.
+  existing "{티커} 가격은 {md} 종가예요." / "미국 {md} 종가"), or left out when Yahoo has nothing. Since #? (below) a new ticker that
+  waits never reaches this step, so `none` is left only for new tickers that don't wait: a ticker the previous publish left out on
+  purpose (`usLeftOut`), a run whose previous `data.json` is missing, unreadable or has no US rows, and a run where the wait step
+  itself stopped on an error.
 - **New tickers wait for a confirmed close (since #?, Jack 2026-11-22, verbatim):** "2. No relaxation. Instead, a stock newly added to
   the S&P (or NASDAQ) list joins our list only once it has a confirmed close; until then it isn't added. Nobody can hold it in the app
   before it joins, so nothing is lost, and the check stays as it is." Why: a ticker the previous publish did not have has no last
@@ -733,6 +735,11 @@ publish, Korean data included.
   `미국 d1 채움` (fails above 5). In trial run 44849045557 (11-21, Yahoo's 10:00–10:40 KST gap) 796 stocks were carried and 4 were
   missing: LGND, MKTX, SNDK, VRNS, none of them in that run's previous file. On a full Yahoo blank on a day the S&P list adds 6 or more
   tickers, that one row would have stopped the whole publish, Korean data included.
+  **"Nobody can hold it" is not always true (review, 2026-11-22):** a ticker can drop out of one publish and come back. LGND and SNDK
+  were in every `main` publish from 11-06 to 11-18, missing on 11-19 (Yahoo sent SNDK only 2–3 days of history: `spGone` "가격 이력
+  3일") and back on 11-20. Safety still holds: a waiting ticker was also missing from the previous publish, so anyone holding it from
+  an earlier day: the previous publish already showed it missing, and it shows the same line again ("이 종목의 데이터를 찾지 못했어요.") and no number. It can't
+  be added while it waits.
   - **Rule (`fetch_data.us_new_wait`, step `us_new_wait_step` in `fetch_us`, right before the carry step):** a ticker on today's US list
     (S&P 500, NASDAQ top 400 and `EXTRA_US`, its ETFs included) that is in neither the previous publish's US stock rows (`cls` us, not a
     fund) nor its `usSrc.own.aged`, and has no close for `usPxDate` (Yahoo has its history but the day's bar is missing, blank, 0,
@@ -741,21 +748,40 @@ publish, Korean data included.
     date. Recorded in `data.json` `usSrc.newWait` (sorted tickers; the key is there only when something waits, so a normal day's `usSrc` and US
     rows are unchanged; `units.usSrc` describes it), and its reason `새로 들어온 종목 · 확인된 종가를 기다려요 (…)` goes into `usExtraMissing` (a hand-added stock: the gate's
     EXTRA_US row warns, not fails), `usListSym.missing` (BF-B: warns) and `usListSym.spGone` (an S&P 500 ticker: named only).
+  - **Tickers the previous publish left out on purpose don't wait (review, 2026-11-22):** a ticker in the previous publish's
+    `usLeftOut.preferred` or `usLeftOut.krListing` (the lists `clean_us_list` removes every day; e.g. SKHY, GOOGM, GOOGN, STRC) takes its old path: the later
+    steps leave it out again and record it in that day's `usLeftOut` as before (if it waited, that day's `usLeftOut` would come out empty
+    and the next day would log it as joining). Log: `· 지난 발행본이 일부러 뺀 티커(usLeftOut) 중 미국 기준일 {date} 종가가 야후에 없는
+    {n}: names — 기다리지 않고 예전 길 그대로 …`. Only these two lists: a ticker the previous publish left out as `badBar` (or in any
+    list added later) was not in that publish, so it waits like any new ticker (verification review, 2026-11-22).
+  - **Known effect:** "new" means "not in the previous publish's US rows, aged list or `usLeftOut.preferred` / `krListing`". A ticker that was missing from the
+    previous publish for any one-day reason is new by this rule, and waits if Yahoo has no close for it today, where `main` would have
+    published Yahoo's older bar with its own date: under 60 days of history that day (SNDK on 11-19), dropped by the carry check
+    (`us_own_close_final`, `us_own_close_drop_all`) or the late split check (`us_own_split_late`), or Yahoo sending nothing for a ticker
+    that had nothing to carry. It joins on the next run with a confirmed close, like any new ticker.
   - **Unchanged:** a ticker the previous publish had, or had left out as aged, keeps the carry path above; a new ticker Yahoo sends no
     price for at all (`empty`, `err`) or with under 60 days of history is left out as before, with its old reason (`usListSym.noPx`
     still picks those up); KR-listed funds, bond ETFs and gold are fixed lists outside `fetch_us` and are not touched.
   - **No previous publish** (first run, or `data.json` unreadable or with no US rows): we can't tell what is new, so today's behaviour
     stays (Yahoo's older bar with its own date) and the log says so: `!! 지난 발행본이 없거나 읽지 못했어요 (첫 실행?) — 새로 들어온 미국
-    종목을 가릴 수 없어 예전 그대로예요 …`. An error in the step itself is logged (`!! 새로 들어온 미국 종목을 가리다 오류로 멈췄어요 …`) and
-    also falls back to today's behaviour; it never stops the run.
+    종목을 가릴 수 없어 예전 그대로예요 …` (or `!! 지난 발행본에 미국 종목 행이 없어요 — …`). An error in the step itself is logged (`!! 새로
+    들어온 미국 종목을 가리다 오류로 멈췄어요 …`), every change the step made is undone, and the run goes on with today's behaviour; it
+    never stops the run.
   - **Run log:** `!! 새로 들어온 미국 종목 {n} (지난 발행본에 없고 미국 기준일 {date} 종가가 야후에 없음): names — 오늘은 넣지 않아요 · 미국
     기준일 종가가 확인되면 넣어요 (usSrc.newWait …)`, then `· 새로 들어온 미국 종목 중 미국 기준일 {date} 종가가 있어 오늘 들어감 {k}: names`.
     Normal day: `· 새로 들어온 미국 종목 (지난 발행본에 없던 티커): 미국 기준일 {date} 종가가 있어 오늘 들어감 {k} · 종가를 기다림 0` (tickers the
     previous publish recorded in `usLeftOut`, such as preferred shares, are not listed as joining).
-  - **Gate:** no row changed. `미국 d1 채움 (미국 기준일 봉)` still fails above `US_NO_CLOSE_MAX` (5) stocks with no `d1` that are not a
-    clean carry; a waiting ticker is simply not in the file. Nobody can hold it in the app before it joins.
-  - **On a warning:** a ticker in `newWait` for many days means Yahoo still has no close for it (a renamed or not-yet-trading ticker in
-    the source list): check the source list; nothing to fix on our side while it waits.
+  - **Gate:** no existing row changed. `미국 d1 채움 (미국 기준일 봉)` still fails above `US_NO_CLOSE_MAX` (5) stocks with no `d1` that are
+    not a clean carry; a waiting ticker is simply not in the file. New row **`미국 새 종목 확인 종가 기다림 (usSrc.newWait · 경고만)`**
+    (`validate_data.check_us_new_wait`), **warning only, it never fails** (publish, deploy and watchdog alike; a warning never changes
+    the gate's exit code): PASS when `usSrc.newWait` is absent or empty; WARN naming the waiting tickers, and separately those the
+    previous publish's `newWait` already had ("지난 발행본부터 이어서 기다림 n: …", publish runs only: the site checks have no previous
+    publish); WARN when the record is malformed (not a list of non-empty strings) or names a ticker that is in the file anyway. Before
+    this change the `미국 d1 채움` row named such tickers; this row keeps a waiting ticker from going unnoticed by the morning check.
+  - **On a warning:** read the named tickers. One waiting a day is Yahoo missing its close: nothing to fix, it joins with the next
+    confirmed close. One "이어서 기다림" (two publishes or more) means Yahoo still has no close for it (a renamed, delisted or
+    not-yet-trading ticker in the source list): check the source list (FinanceDataReader's S&P 500, Nasdaq's first 400, `EXTRA_US`);
+    nothing on our side shows a wrong number while it waits.
 - **Age limit:** `US_OWN_CLOSE_MAX_DAYS` = 5 NYSE trading days after the close, counted on S&P 500 daily bars up to `usPxDate` (holidays such
   as Thanksgiving have no bar, so they don't count). Past it the stock is left out and recorded in `usSrc.own.aged` (`[{t, nk, pxd}]`,
   `us_own_aged`), kept there on later runs while Yahoo still has no close, removed once it does or the ticker leaves the list. An entry
@@ -824,8 +850,8 @@ publish, Korean data included.
 - **On a warning:** read the named rows. Many carries on one day means Yahoo was blank for them: nothing to fix on our side; the next
   publish takes Yahoo's closes again. A wrong carry (not the previous publish's price or date) means the carry step broke: tell Jack.
 - **On a failure:** "마지막 확인 종가로 싣지 못한 종목 > 5" means many US stocks had no Yahoo close **and** no previous close to carry (a
-  first run without a previous publish, halted stocks, splits after the carried close, or a broken carry step; since #? new tickers wait
-  instead of counting here). The previous publish stays live. Never raise N to get a publish out; a different N needs Jack's yes with
+  first run without a previous publish, halted stocks, splits after the carried close, tickers the previous publish left out on purpose
+  (`usLeftOut.preferred` / `krListing`), or a broken carry step; since #? other new tickers wait instead of counting here). The previous publish stays live. Never raise N to get a publish out; a different N needs Jack's yes with
   new evidence.
 - **Check on the site:** search a carried ticker (the log names them): its company page shows its date and Jack's line; a portfolio holding it
   shows "{티커}: 오늘 종가를 …". 005930 and 현대차 unchanged.

@@ -2787,7 +2787,8 @@ def kr_own_close_final(kr, src, prev, days, krs=None, drop_out=None):
 # 지난 발행본에 없거나 (새 종목) · 지난 발행본에서도 자기 날짜(pxd · pxc 없음)였거나 · 값을 읽을 수 없으면 예전 그대로예요: 야후의 마지막 봉이 있으면 그
 # 날짜(pxd)로 · 없으면 빠져요. 이 단계의 어떤 오류도 발행을 멈추지 않아요 (그때는 예전 그대로).
 # 2026-11-22 (Jack): 새 종목(지난 발행본의 미국 종목에도 usSrc.own.aged 에도 없는 티커)은 이 단계 앞에서 빠져요 — 미국 기준일 종가가 확인될 때까지
-# 넣지 않아요 (us_new_wait_step · usSrc.newWait). 그래서 drop 'none' 은 지난 발행본을 읽지 못한 날(첫 실행)에만 남아요.
+# 넣지 않아요 (us_new_wait_step · usSrc.newWait). 그래서 drop 'none' 은 기다리지 않는 새 티커에만 남아요: 지난 발행본이 일부러 뺀 티커
+# (usLeftOut — 우선주 · 한국 종목 상장분 · 깨진 봉) · 지난 발행본을 읽지 못했거나 미국 종목 행이 없는 날 · 그 단계가 오류로 멈춘 날.
 from validate_data import US_OWN_CLOSE_MAX_DAYS, US_OWN_WHY, us_own_close_bad
 US_OWN_KEYS = ("price", "vol", "beta", "al", "betaSE", "betaN", "lo", "hi", "sh", "mdd", "hit", "mom")
 US_OWN_DROP_KO = {"none": "지난 발행본에 없음 (예전처럼 야후의 마지막 봉 · 없으면 빠짐)",
@@ -3235,7 +3236,11 @@ def us_own_close_drop_all(us, umeta, err):
 # 펀드 아님)에도 잠시 뺀 기록(usSrc.own.aged)에도 없는 티커가 미국 기준일(usPxDate) 종가가 야후에 없으면 (fetch_us nocl 'bar': 그 종목의 시계열은
 # 있는데 기준일 봉이 없거나 빈 값 · 0 · 음수 · 무한) 오늘은 넣지 않아요: 그 행을 빼고 크게 남기고 data.json usSrc.newWait 에 적고, 빠진 까닭
 # (US_NEW_WAIT_WHY)을 손으로 더한 종목(usExtraMissing) · 주식 종류 티커 · S&P 500 중 빠진 종목(usListSym) 기록에 적어요 (손으로 더한 종목 줄은 경고).
-# 종가가 확인되는 첫 실행에 다른 종목처럼 들어와요. 앱에서는 들어오기 전에 아무도 가질 수 없었으니 잃는 것이 없어요.
+# 종가가 확인되는 첫 실행에 다른 종목처럼 들어와요. 기다리는 동안은 넣을 수 없어요 — 앞선 날에 그 종목을 가졌던 사람(티커가 하루 빠졌다 돌아온
+# 경우: LGND · SNDK 는 11-06 ~ 11-18 의 발행본에 모두 있었고 11-19 에 빠졌다가 (야후가 SNDK 이력을 3일만 줌) 11-20 에 돌아왔어요)은 지난
+# 발행본에서 이미 그 종목이 없는 것을 봤고, 오늘도 같은 줄('이 종목의 데이터를 찾지 못했어요.')만 보고 숫자는 보지 않아요 (틀린 숫자가 없어요).
+# - 지난 발행본이 일부러 뺀 티커 (data.json usLeftOut: 우선주 · 한국 종목의 미국 상장분 · 깨진 봉 …) 는 기다리지 않아요: 예전 길 그대로 가서 뒤 단계가
+#   예전처럼 빼고 usLeftOut 에 적어요 (기다리게 하면 그날 usLeftOut 이 비고 다음 날 '새로 들어옴' 으로 적혀요 · 리뷰 2026-11-22).
 # - 야후가 가격을 하나도 주지 않은 새 티커(empty · err)와 이력 60일 미만 종목은 예전에도 넣지 않았어요 (그대로 · 까닭도 그대로 — usListSym.noPx 가
 #   그 글로 골라요).
 # - 지난 발행본이 없거나 읽을 수 없으면 (첫 실행) 무엇이 새로 들어왔는지 알 수 없어 예전 그대로예요 (크게 남겨요 · newWait 없음).
@@ -3247,66 +3252,80 @@ US_NEW_WAIT_WHY = "새로 들어온 종목 · 확인된 종가를 기다려요 (
 def us_new_wait(prev, nocl, out=()):
     """새로 들어온 미국 종목 중 미국 기준일 종가를 기다릴 티커 (2026-11-22 · Jack · 순수 함수).
     prev: 지난 발행본 data.json · nocl: fetch_us 의 {티커: 'bar' · 'empty' · 'err'} (미국 기준일 종가가 야후에 없는 종목) · out: 오늘 미국 기록 (로그용).
-    반환 {"wait": 기다릴 티커 (정렬) — nocl 이 'bar' 이고 지난 발행본의 미국 종목 행(cls us · 펀드 아님)에도 usSrc.own.aged 에도 없는 티커,
-          "joined": 지난 발행본이 모르던 티커 중 미국 기준일 종가가 있어 오늘 들어가는 티커 (정렬 · 로그만 · 지난 발행본의 usLeftOut 에 있던 티커는 빼요:
+    반환 {"wait": 기다릴 티커 (정렬) — nocl 이 'bar' 이고 지난 발행본의 미국 종목 행(cls us · 펀드 아님)에도 usSrc.own.aged 에도 usLeftOut 에도 없는 티커,
+          "left": nocl 이 'bar' 인데 지난 발행본이 일부러 뺀 티커 (usLeftOut 의 목록 칸 모두 — 우선주 · 한국 종목 상장분 · 깨진 봉 …: 기다리지 않고
+                  예전 길로 · 로그만),
+          "joined": 지난 발행본이 모르던 티커 중 미국 기준일 종가가 있어 오늘 들어가는 티커 (정렬 · 로그만 · usLeftOut 의 티커는 빼요:
                     우선주 · 한국 종목 상장분처럼 날마다 뒤에서 빠지는 티커가 날마다 '새로 들어옴' 으로 적히지 않게),
-          "off": None 또는 지난 발행본을 쓸 수 없는 까닭 (그러면 wait · joined 는 비어요 — 예전 그대로)}."""
+          "off": None 또는 지난 발행본을 쓸 수 없는 까닭 (그러면 나머지는 비어요 — 예전 그대로)}."""
     if not isinstance(prev, dict):
-        return {"wait": [], "joined": [], "off": "지난 발행본이 없거나 읽지 못했어요 (첫 실행?)"}
+        return {"wait": [], "left": [], "joined": [], "off": "지난 발행본이 없거나 읽지 못했어요 (첫 실행?)"}
     rows = prev.get("stocks")
     have = {str(x["t"]) for x in rows if isinstance(x, dict) and x.get("cls") == "us" and not x.get("fund") and x.get("t")} \
         if isinstance(rows, list) else set()
     if not have:
-        return {"wait": [], "joined": [], "off": "지난 발행본에 미국 종목 행이 없어요"}
+        return {"wait": [], "left": [], "joined": [], "off": "지난 발행본에 미국 종목 행이 없어요"}
     src = prev.get("usSrc")
     own = src.get("own") if isinstance(src, dict) else None
     aged = own.get("aged") if isinstance(own, dict) else None
     known = have | ({str(a["t"]) for a in aged if isinstance(a, dict) and a.get("t")} if isinstance(aged, list) else set())
     lo = prev.get("usLeftOut") if isinstance(prev.get("usLeftOut"), dict) else {}
-    left = {str(t) for k in ("preferred", "krListing", "badBar") if isinstance(lo.get(k), list) for t in lo[k]}
+    # 검증 리뷰 (11-22): clean_us_list 가 매일 빼는 목록 (우선주 · 국내 상장) 만 — badBar 는 이 실행에서 'bar' 가 될 수 없고, 앞으로 생길 목록이
+    # 저절로 예외가 되지 않게 이름을 적어요 (그 밖의 지난 발행본에 없는 종목은 Jack 의 규칙대로 기다려요)
+    left = {str(t) for k in ("preferred", "krListing") for t in (lo.get(k) if isinstance(lo.get(k), list) else []) if isinstance(t, (str, int))}
     nocl = nocl if isinstance(nocl, dict) else {}
-    wait = sorted(str(t) for t, w in nocl.items() if w == "bar" and str(t) not in known)
+    new = sorted(str(t) for t, w in nocl.items() if w == "bar" and str(t) not in known)
     joined = sorted({str(r["t"]) for r in out if isinstance(r, dict) and r.get("t") and str(r["t"]) not in known and r["t"] not in nocl
                      and str(r["t"]) not in left})
-    return {"wait": wait, "joined": joined, "off": None}
+    return {"wait": [t for t in new if t not in left], "left": [t for t in new if t in left], "joined": joined, "off": None}
 
 
 def us_new_wait_step(prev, nocl, out, why, us_px_date):
     """fetch_us 안에서 마지막 확인 종가 단계 바로 앞 (2026-11-22 · Jack): 새로 들어온 종목 중 미국 기준일 종가가 야후에 없는 티커(us_new_wait)의
     행을 out 에서 빼고 nocl 에서도 빼요 — 마지막 확인 종가 단계 · 분할 칸 읽기 · 상세 정보 · 분할 목록 · 발행 파일 어디에도 가지 않게. why (fetch_us
     의 extra_why: usExtraMissing · usListSym 의 빠진 까닭)에 US_NEW_WAIT_WHY 를 적어요. 반환: data.json usSrc.newWait (티커 · 정렬 · 없으면 []).
-    이 단계의 어떤 오류도 발행을 멈추지 않아요: 크게 남기고 예전 그대로예요 (가리다 멈추면 out · nocl · why 를 건드리지 않아요)."""
+    이 단계의 어떤 오류도 발행을 멈추지 않아요: 크게 남기고 예전 그대로예요 (out · nocl · why 를 바꾸기 전으로 되돌려요)."""
     usd = us_px_date.isoformat() if isinstance(us_px_date, dt.date) else str(us_px_date)
+    keep_out, keep_nocl, keep_why = list(out), dict(nocl), dict(why)
     try:
         r = us_new_wait(prev, nocl, out)
+        if r["off"]:
+            nb = sum(1 for w in nocl.values() if w == "bar")
+            log(f"  !! {r['off']} — 새로 들어온 미국 종목을 가릴 수 없어 예전 그대로예요 (미국 기준일 {usd} 종가가 없는 "
+                f"{nb:,}종목은 야후의 마지막 봉 날짜로 · usSrc.newWait 없음)")
+            return []
+        wait, joined, left = r["wait"], r["joined"], r["left"]
+        jtxt = (f"{len(joined):,}" + (": " + ", ".join(joined[:US_OWN_SHOW]) + (f" 외 {len(joined) - US_OWN_SHOW}종목" if len(joined) > US_OWN_SHOW else "")
+                                      if joined else ""))
+        if left:
+            log(f"· 지난 발행본이 일부러 뺀 티커(usLeftOut) 중 미국 기준일 {usd} 종가가 야후에 없는 {len(left):,}: " + ", ".join(left[:US_OWN_SHOW])
+                + (f" 외 {len(left) - US_OWN_SHOW}종목" if len(left) > US_OWN_SHOW else "")
+                + " — 기다리지 않고 예전 길 그대로 (우선주 · 한국 종목 상장분은 뒤 단계가 예전처럼 빼요)")
+        if not wait:
+            log(f"· 새로 들어온 미국 종목 (지난 발행본에 없던 티커): 미국 기준일 {usd} 종가가 있어 오늘 들어감 {jtxt} · 종가를 기다림 0")
+            return []
+        ws = set(wait)
+        n0 = len(out)
+        out[:] = [x for x in out if x.get("t") not in ws]
+        for t in wait:
+            nocl.pop(t, None)
+            why[t] = US_NEW_WAIT_WHY
+        log(f"  !! 새로 들어온 미국 종목 {len(wait):,} (지난 발행본에 없고 미국 기준일 {usd} 종가가 야후에 없음): " + ", ".join(wait[:US_OWN_SHOW])
+            + (f" 외 {len(wait) - US_OWN_SHOW}종목" if len(wait) > US_OWN_SHOW else "")
+            + " — 오늘은 넣지 않아요 · 미국 기준일 종가가 확인되면 넣어요 (usSrc.newWait · 관문 '미국 d1 채움' 은 그대로)")
+        if n0 - len(out) != len(wait):       # 'bar' 종목은 늘 행이 있어요 — 아니면 fetch_us 가 바뀐 거예요 (크게 남겨요 · 기다리는 종목은 그래도 빠져요)
+            log(f"  !! 새로 들어온 미국 종목 {len(wait):,} 중 뺀 행이 {n0 - len(out):,}개예요 (종목마다 한 행이어야 해요 — fetch_us 의 nocl · 행을 확인해 주세요)")
+        log(f"· 새로 들어온 미국 종목 중 미국 기준일 {usd} 종가가 있어 오늘 들어감 {jtxt}")
+        return wait
     except Exception as e:
+        out[:] = keep_out
+        nocl.clear()
+        nocl.update(keep_nocl)
+        why.clear()
+        why.update(keep_why)
         log(f"  !! 새로 들어온 미국 종목을 가리다 오류로 멈췄어요 ({type(e).__name__}: {str(e)[:160]}) — 예전 그대로예요 (미국 기준일 {usd} 종가가 "
             "없는 새 종목은 야후의 마지막 봉 날짜로 · usSrc.newWait 없음)")
         return []
-    if r["off"]:
-        nb = sum(1 for w in nocl.values() if w == "bar")
-        log(f"{'  !! ' if nb else '· '}{r['off']} — 새로 들어온 미국 종목을 가릴 수 없어 예전 그대로예요 (미국 기준일 {usd} 종가가 없는 "
-            f"{nb:,}종목은 야후의 마지막 봉 날짜로 · usSrc.newWait 없음)")
-        return []
-    wait, joined = r["wait"], r["joined"]
-    jtxt = (f"{len(joined):,}" + (": " + ", ".join(joined[:US_OWN_SHOW]) + (f" 외 {len(joined) - US_OWN_SHOW}종목" if len(joined) > US_OWN_SHOW else "")
-                                  if joined else ""))
-    if not wait:
-        log(f"· 새로 들어온 미국 종목 (지난 발행본에 없던 티커): 미국 기준일 {usd} 종가가 있어 오늘 들어감 {jtxt} · 종가를 기다림 0")
-        return []
-    ws = set(wait)
-    n0 = len(out)
-    out[:] = [x for x in out if x.get("t") not in ws]
-    for t in wait:
-        nocl.pop(t, None)
-        why[t] = US_NEW_WAIT_WHY
-    log(f"  !! 새로 들어온 미국 종목 {len(wait):,} (지난 발행본에 없고 미국 기준일 {usd} 종가가 야후에 없음): " + ", ".join(wait[:US_OWN_SHOW])
-        + (f" 외 {len(wait) - US_OWN_SHOW}종목" if len(wait) > US_OWN_SHOW else "")
-        + " — 오늘은 넣지 않아요 · 미국 기준일 종가가 확인되면 넣어요 (usSrc.newWait · 관문 '미국 d1 채움' 은 그대로)")
-    if n0 - len(out) != len(wait):           # 'bar' 종목은 늘 행이 있어요 — 아니면 fetch_us 가 바뀐 거예요 (크게 남겨요 · 기다리는 종목은 그래도 빠져요)
-        log(f"  !! 새로 들어온 미국 종목 {len(wait):,} 중 뺀 행이 {n0 - len(out):,}개예요 (종목마다 한 행이어야 해요 — fetch_us 의 nocl · 행을 확인해 주세요)")
-    log(f"· 새로 들어온 미국 종목 중 미국 기준일 {usd} 종가가 있어 오늘 들어감 {jtxt}")
-    return wait
 
 
 REF_LINK = ("ok", "new", "unknown", "break")   # KRX 기준가 연결 상태 — 뒤로 갈수록 나빠요 (모을 때 가장 나쁜 것)
@@ -13796,8 +13815,8 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                    "예전처럼 야후의 마지막 봉 · old 나이 상한 넘음 · bad 값을 읽을 수 없음) · dropEx 예 · bad 관문과 같은 함수로 거른 행 {n · rows · why} · "
                    "aged 나이 상한을 넘어 잠시 뺀 종목 [{t · nk · pxd}] (앱은 '며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요.') · err 이 단계가 "
                    "오류로 멈춘 까닭 (실은 종목 0)} · newWait (2026-11-22 · Jack) 지난 발행본의 미국 종목에도 aged 에도 없던(새로 들어온) 티커 중 미국 "
-                   "기준일 종가가 야후에 없어 오늘 넣지 않은 티커 (정렬 · 있을 때만 · 종가가 확인되는 날 들어와요 · 그래서 drop none 은 지난 발행본을 "
-                   "읽지 못한 날만)"),
+                   "기준일 종가가 야후에 없어 오늘 넣지 않은 티커 (정렬 · 있을 때만 · 종가가 확인되는 날 들어와요 · 지난 발행본이 일부러 뺀 티커(usLeftOut)는 "
+                   "기다리지 않아요 · 그래서 drop none 은 그런 티커와 지난 발행본을 쓸 수 없던 날 · 이 단계가 멈춘 날만)"),
          "pxc": ("미국 · true = 미국 기준일 종가가 야후에 없어 지난 발행본의 마지막 확인 종가로 실은 종목 (2026-11-20 · usSrc.own.codes · pxd = 그 "
                  "종가의 날짜 · d1 빈 칸 · 앱은 '오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요.' — pxc 없는 pxd 는 예전처럼 야후의 마지막 봉 날짜)"),
          "usListSym": ("미국 목록 출처의 티커를 야후 모양으로 바꾼 기록 (2026-11-15): mapped = [출처, 출처 티커, 야후 티커] (S&P 500 목록의 BRKB → "
