@@ -2,47 +2,61 @@
 // The numbers behind 홈's weekly card (weekly.jsx). Pure functions, no React and no Korean text (the words come from
 // src/copy/v2.js C.weekly). Unit tests: tests/test_v196e_weekly.py (run through Node). The two switches are in weekcfg.js.
 //
-// When (weekState): data.json publishedAt is on the Saturday (KST) of pxDate's Monday–Sunday week or later, so the week's last
-// Korean close is in (a Friday holiday makes Thursday the last day: nothing here asks for a Friday). The card then stays until the
-// next Korean close is published (the next publish moves pxDate into a new week, whose Saturday has not come). A file without the
-// week's start date (wkFrom: from before #170, or a day the pipeline could not set the Korean week) has no card. The caller also
-// needs 홈's own daily check to run (rules.checkState ok, so fresh or late data, never stale or failed) and a portfolio block.
+// When (weekState; coordinator's rule of 2026-11-22, round 2, after "once the week's data is final" and "a Friday holiday makes
+// Thursday the last day"): the week of pxDate (Monday to Sunday) is final when no Korean trading day comes after pxDate up to that
+// Sunday (tradedays.js, the app's copy of the holiday table) and data.json publishedAt is on a KST date after pxDate (the close is
+// in). So a normal week is final from Saturday's publish, a week whose Friday is a holiday from Friday's publish of Thursday's close
+// (on a day both markets are closed, already_published.py skips the Saturday runs), and a Saturday file whose pxDate is Thursday
+// while Friday was a trading day is not final (a partial week). The card then stays until the next Korean close is published (it
+// moves pxDate into a new week). A file without the week's start date (wkFrom: from before #170, or a day the pipeline could not
+// set the Korean week) has no card. The caller also needs 홈's own daily check on fresh data (weekly.jsx: never on late, stale or
+// failed data) and a portfolio block.
 // Records "this week" are those dated Monday to Sunday (KST) of that week; "at the start" is every record dated before that
 // Monday (held.js, so an undated 가진 종목 row counts as held before every dated record).
 //
 // 내 포트폴리오 (weekMoney), per stock of the portfolio (its records and the entries of stocks taken out this week, lots.recordSets):
 //   gain = value now − value at the start − buys this week + sales this week; % = gain ÷ (value at the start + buys this week).
-//   value at the start = shares held at the start × c1w (data.json, Part I.2: last week's close on today's share basis), a USD
-//   price at the fxHist rate of the US week's start date (records.rateFor: that day's close or the last one before it).
-//   value now = shares held at the week's end (records dated up to its Sunday) × today's official close (US at today's rate).
-//   buys = 샀어요 records of the week (their own rate, lots.purchaseRate) and 금액으로 넣기 rows dated in the week (their amount);
-//   sales = 팔았어요 records of the week at their own rate.
-//   A stock whose week cannot be worked out is left out of both ends and named (left: [{ t, nk, why }], never counted as 0):
+//   value at the start = shares held at the start × c1w (data.json, Part I.2: last week's close on today's share basis).
+//   value now = shares held at the week's end (records dated up to its Sunday) × today's official close.
+//   A USD price takes macro.json fxHist at both ends (coordinator, round 2: one source for the week): the rate of usWkFrom at the
+//   start and the rate of usPxDate now, each "the close on that date, or the last close before it" (Part I.1, records.rateFor; never
+//   data.json fx, Yahoo's rate, which 홈's other numbers keep using). A date fxHist does not reach leaves the stock out ("fx").
+//   buys = 샀어요 records of the week at their own rate (lots.purchaseRate); sales = 팔았어요 records of the week at their own rate.
+//   A 가진 종목 row dated in the week (금액으로 넣기 dates its row with that day's close) is not a buy: nothing says it was bought then.
+//   A stock whose week cannot be worked out is left out of both ends and named (left: [{ t, nk, why }], never counted as 0). One
+//   stock is either counted or named, never both (a stock with a history entry and a holding again counts only when both do):
 //     none · own · week · nv   no usable c1w for shares held at the start (blank; priced at its own date; its market's week date
 //                              could not be read or the US prices are from another week; Naver-confirmed under WEEK_NV "out")
-//     fx                       a USD amount without a rate (the start's fxHist rate, a record's own)
+//     split                    a stock split recorded after its c1w date (the portfolio's or data.json's splits): c1w would be
+//                              on the old share basis (the pipeline blanks such a c1w; this is the screen's own guard)
+//     fx                       a USD amount without a rate (fxHist at either end, a record's own)
 //     absent · price           not in today's data, or no price today, while shares are held at the week's end
 //     made                     an undated 가진 종목 row of a portfolio made after the week began (its start holding is unknown)
-//     imp                      a 가진 종목 row with a quantity dated in the week (no price to count it as a buy)
-//     out                      taken out of the portfolio this week with shares left (기록 없이 빼기: nothing says what they fetched)
+//     imp                      a 가진 종목 row dated in the week (금액으로 넣기 or a dated quantity: not a 샀어요 record)
+//     out                      taken out of the portfolio from the week's Monday on, either with shares left in its history entry
+//                              (기록 없이 빼기) or with no history entry at all (no sale or dividend: store.withoutHolding drops its
+//                              records, and only the removal mark (removed) and the change log (changes, kind "remove", also from
+//                              종목 바꾸기) remain). A stock the change log names may never have been bought (종목 바꾸기 can take out a
+//                              planned stock); it is named all the same: the records cannot tell, and a name is never hidden.
 //     name                     a row added by name only (no code, not in the data: its week cannot be checked)
 //   코스피 (kospiWeek): macro.json idxHist KOSPI, the close of wkFrom to the close of pxDate (both rows must be there).
 // 받은 배당 (weekDivs): dividend records of the week, the stocks taken out included, in won (USD at the record's own rate; one
 //   without a rate is counted in noFx, the approved tax.divNoFx line names the count).
 // 공시 (weekFilings): v19.6b's own cards (look.js issueCards · insiderCards · npsCards, the same rules: held stocks, 1억원, the
 //   approved shapes) for the stocks held at the week's end, dated in the week. A 확인했어요 mark does not take a filing out of the
-//   week's count. Only when today's filings were checked (home.filingsChecked) and the day's 주요사항 list came in; otherwise the
+//   week's count. The insider cards come back as a list: the screen counts only the ones 오늘 볼 것 can show (while look.js ROLE_OF
+//   is null, none). Only when today's filings were checked (home.filingsChecked) and the day's 주요사항 list came in; otherwise the
 //   tile is left out (never a count from a list that stopped). No Korean stock held: no tile (the filings are Korean).
 // 다음 주 (nextWeek): look.dateRows (US 실적 발표 and 배당락일 of the held stocks) for next Monday to Sunday, none before today.
 // 가장 많이 움직인 종목 (weekMover): the held stock with the largest |price ÷ c1w − 1|; its reason only from 왜 움직였나's
 //   same-industry rule (track.peerGroup: GROUP_MIN, TOGETHER_SHARE) run on the week's moves: "fell" (it fell and at least 80% of
 //   its group fell) or "rose" (the mirror, [Q12]); otherwise none.
-import { num, priceWon, isUsdPrice } from "./engine.js";
+import { num, isUsdPrice } from "./engine.js";
 import { isDay, isTradingDay } from "./tradedays.js";
 import { heldUnits, UNIT, VIEW_SPLITS, importedUnits, okUnits } from "./held.js";
-import { purchaseRate, recordSets } from "./lots.js";
+import { purchaseRate, recordSets, splitSince, dataSplits } from "./lots.js";
 import { validRows, peerGroup } from "./track.js";
-import { issueCards, insiderCards, npsCards, dateRows, addDays } from "./look.js";
+import { issueCards, insiderCards, npsCards, dateRows, addDays, ROLE_OF } from "./look.js";
 import { filingsChecked, holdsKorean } from "./home.js";
 import { discDate } from "./company.js";
 import { rateFor, rateEnv } from "./records.js";
@@ -76,48 +90,51 @@ export function weekStarts(data) {
 }
 
 // Whether the week's numbers are final, and its dates. data: data.json.
-// -> { ok: true, mon, sun, sat, start (the Sunday before), first (the week's first Korean trading day), to (pxDate), nextMon,
-//      nextSun, starts } | { ok: false, why: "pxDate" | "publishedAt" | "notFinal" | "wkFrom" }
+// -> { ok: true, mon, sun, start (the Sunday before), first (the week's first Korean trading day), to (pxDate), nextMon, nextSun,
+//      starts } | { ok: false, why: "pxDate" | "publishedAt" | "open" (a Korean trading day is still to come that week) |
+//      "notFinal" (published on or before pxDate) | "wkFrom" }
 export function weekState(data) {
   if (!data || !isDay(data.pxDate)) return { ok: false, why: "pxDate" };
   const pub = Date.parse(data.publishedAt || "");
   if (!Number.isFinite(pub)) return { ok: false, why: "publishedAt" };
   const { mon, sun } = weekOf(data.pxDate);
-  const sat = addDays(mon, 5);
-  if (kstDate(pub) < sat) return { ok: false, why: "notFinal" };
+  for (let d = addDays(data.pxDate, 1); d <= sun; d = addDays(d, 1)) if (isTradingDay(d, "KR")) return { ok: false, why: "open" };
+  if (!(kstDate(pub) > data.pxDate)) return { ok: false, why: "notFinal" };
   const starts = weekStarts(data);
   if (!starts.kr) return { ok: false, why: "wkFrom" };
   let first = null;
   for (let d = mon; d <= data.pxDate && !first; d = addDays(d, 1)) if (isTradingDay(d, "KR")) first = d;
-  return { ok: true, mon, sun, sat, start: addDays(mon, -1), first: first || data.pxDate, to: data.pxDate,
+  return { ok: true, mon, sun, start: addDays(mon, -1), first: first || data.pxDate, to: data.pxDate,
     nextMon: addDays(mon, 7), nextSun: addDays(mon, 13), starts };
 }
 
 // ---------------- one stock's week ----------------
-// Its last-week close and the date it is from. s: a data.json row · starts: weekStarts · nv: WEEK_NV.
-// -> { c1w, date, nv (confirmed through Naver) } | { why: "absent" | "own" | "none" | "week" | "nv" }
+// Its last-week close and the date it is from. s: a data.json row · starts: weekStarts · nv: WEEK_NV (weekly.jsx passes the mode in
+// effect) · splits: [{ t, date, r }] (the portfolio's stored ones, data.json's) · today: KST.
+// -> { c1w, date, nv (confirmed through Naver) } | { why: "absent" | "own" | "none" | "week" | "nv" | "split" }
 // A c1wv other than "nv" (the gate warns on any) is read the same way: not confirmed between final files.
-export function c1wOf(s, starts, nv = WEEK_NV) {
+export function c1wOf(s, starts, nv = WEEK_NV, splits = null, today = null) {
   if (!s) return { why: "absent" };
   if (s.pxd != null) return { why: "own" };
   const c = num(s.c1w);
   if (!(c > 0)) return { why: "none" };
   const date = s.cls === "us" && !s.fund ? starts && starts.us : starts && starts.kr;
   if (!date) return { why: "week" };
+  if (splits && splitSince(splits, s.t, date, today)) return { why: "split" };
   const flagged = s.c1wv != null;
   if (flagged && nv === "out") return { why: "nv" };
   return { c1w: c, date, nv: flagged };
 }
 // The week's move of one stock in % (price ÷ c1w − 1), or null (no usable c1w, or no price).
-export function weekPct(s, starts, nv = WEEK_NV) {
-  const c = c1wOf(s, starts, nv);
+export function weekPct(s, starts, nv = WEEK_NV, splits = null, today = null) {
+  const c = c1wOf(s, starts, nv, splits, today);
   const px = s ? num(s.price) : null;
   return c.c1w && px > 0 ? (px / c.c1w - 1) * 100 : null;
 }
 
 // ---------------- 내 포트폴리오 ----------------
-// deck: the portfolio as the screens read it (with data.json's splits, held.js VIEW_SPLITS) · q: { byT, fx (today's rate), week
-// (weekState), rateAt(date) -> won per dollar | null, nv }.
+// deck: the portfolio as the screens read it (with data.json's splits, held.js VIEW_SPLITS) · q: { byT, week (weekState), rateAt(date)
+// -> won per dollar from fxHist | null, usPxDate, nv, splits, today }.
 // -> { ok, gain, pct, start, buys, sells, end, n, left: [{ t, nk, why }], per: [{ t, start, end, buys, sells, gain, nv }], nvUsed: [t] }
 export function weekMoney(deck, q) {
   const w = q.week;
@@ -127,10 +144,14 @@ export function weekMoney(deck, q) {
   const leave = (t, nk, why) => { if (!out.left.some((x) => x.t === t && x.nk === nk)) out.left.push({ t, nk, why }); };
   // made after the week began (a portfolio's createdAt is the KST date it was made): its undated rows' start holding is unknown
   const madeLate = isDay(deck.createdAt) && deck.createdAt > w.start;
+  const endRate = q.rateAt(q.usPxDate);
+  const rows = [];                                                            // one per record set: { t, nk, why } | { t, nk, r }
+  const hist = new Set();                                                     // stocks with a history entry taken out from Monday on
   for (const set of recordSets(deck)) {
     const t = set.t;
     const entry = set.history ? (deck.history || [])[set.entry] : null;
     if (entry && !(isDay(entry.out) && entry.out >= w.mon)) continue;          // taken out before the week (or no readable date)
+    if (entry) hist.add(t);
     const recs = set.history ? { ...set.recs, splits: deck.splits, [VIEW_SPLITS]: deck[VIEW_SPLITS], createdAt: deck.createdAt } : deck;
     const s = q.byT && q.byT.get(t) ? q.byT.get(t) : null;
     const nk = (s && s.nk) || names.get(t) || (entry && entry.nk) || t;
@@ -147,7 +168,7 @@ export function weekMoney(deck, q) {
     for (const r of imp) {
       if (!inWeek(r.date, w) || importedUnits(r) == null) continue;
       moved = true;
-      if (r.qty == null && num(r.amountWon) > 0) buys += r.amountWon; else why = why || "imp";
+      why = why || "imp";                                                     // dated in the week: not a 샀어요 record (round 2, M2)
     }
     for (const x of Array.isArray(recs.sales) ? recs.sales : []) {
       if (!x || x.t !== t || !inWeek(x.date, w) || !okUnits(x.qty) || !(num(x.price) > 0)) continue;
@@ -159,7 +180,7 @@ export function weekMoney(deck, q) {
     const usRow = !!s && s.cls === "us" && !s.fund;
     if (uStart > 0) {
       if (madeLate && imp.some((r) => !r.date && importedUnits(r) != null)) why = why || "made";
-      const c = c1wOf(s, q.week.starts, q.nv);
+      const c = c1wOf(s, q.week.starts, q.nv, q.splits, q.today);
       if (!c.c1w) why = why || c.why;
       else {
         const rate = isUsdPrice(s) ? q.rateAt(c.date) : 1;
@@ -172,14 +193,36 @@ export function weekMoney(deck, q) {
       else if (s.pxd != null) why = why || "own";                              // its price is another day's close, not the week's end
       else if (usRow && !q.week.starts.usSame) why = why || "week";
       else {
-        const px = priceWon(s, q.fx);
-        if (!(px > 0)) why = why || "price"; else end = (uEnd / UNIT) * px;
+        const px = num(s.price);
+        const rate = isUsdPrice(s) ? endRate : 1;
+        if (!(px > 0)) why = why || "price";
+        else if (!(rate > 0)) why = why || "fx";
+        else end = (uEnd / UNIT) * px * rate;
       }
     }
-    if (why) { leave(t, nk, why); continue; }
-    out.start += start; out.end += end; out.buys += buys; out.sells += sells; out.n += 1;
-    if (nvRow) out.nvUsed.push(t);
-    out.per.push({ t, start, end, buys, sells, gain: end - start - buys + sells, nv: nvRow });
+    rows.push(why ? { t, nk, why } : { t, nk, r: { t, start, end, buys, sells, gain: end - start - buys + sells, nv: nvRow } });
+  }
+  // taken out from the week's Monday on with no history entry (no sale or dividend): its records are gone (round 2, M1)
+  const gone = new Map();
+  for (const r of Array.isArray(deck.removed) ? deck.removed : []) if (r && typeof r.t === "string" && isDay(r.at) && r.at >= w.mon) gone.set(r.t, names.get(r.t) || null);
+  for (const c of Array.isArray(deck.changes) ? deck.changes : []) {
+    if (c && c.kind === "remove" && typeof c.t === "string" && isDay(c.at) && c.at >= w.mon) gone.set(c.t, gone.get(c.t) || (typeof c.nk === "string" ? c.nk : null));
+  }
+  for (const [t, nk] of gone) {
+    if (hist.has(t)) continue;                                                 // its history entry speaks for it (counted or named above)
+    const s = q.byT && q.byT.get(t);
+    rows.push({ t, nk: (s && s.nk) || nk || t, why: "out" });
+  }
+  // one stock is counted whole or named, never both (round 2): any row of it left out takes every row of it out
+  const lost = new Map();
+  for (const x of rows) if (x.why && !lost.has(x.t)) lost.set(x.t, x);
+  for (const x of rows) {
+    if (lost.has(x.t)) { const l = lost.get(x.t); leave(l.t, l.nk, l.why); continue; }
+    const r = x.r;
+    out.start += r.start; out.end += r.end; out.buys += r.buys; out.sells += r.sells;
+    if (!out.per.some((p) => p.t === r.t)) out.n += 1;
+    if (r.nv && !out.nvUsed.includes(r.t)) out.nvUsed.push(r.t);
+    out.per.push(r);
   }
   // a row added by name only: no code, so its week cannot be checked (its value is the amount typed)
   for (const r of Array.isArray(deck.imported) ? deck.imported : []) {
@@ -220,7 +263,8 @@ export function weekDivs(deck, w) {
 
 // ---------------- 공시 ----------------
 // held: Set of the codes held at the week's end · byT: today's data rows · now: for the filings' freshness (tests).
-// -> { ok: true, n, kinds: { rights, cb, bw, ins, nps } } | { ok: false, why: "none" | "noKr" | "disc" | "stale" | "issue" }
+// -> { ok: true, kinds: { rights, cb, bw, nps }, ins: [insider cards of the week], skipped } | { ok: false, why: "none" | "noKr" |
+//    "disc" | "stale" | "issue" }. The screen counts the insider cards it can show (kinds.ins) and adds them up.
 export const FILING_KINDS = ["rights", "cb", "bw", "ins", "nps"];
 export function weekFilings(disc, held, w, byT, now) {
   if (!held || !held.size) return { ok: false, why: "none" };
@@ -231,11 +275,11 @@ export function weekFilings(disc, held, w, byT, now) {
   const iss = issueCards(disc, held, w.sun, null, byT);
   if (iss.fail || iss.missing) return { ok: false, why: "issue" };
   const cover = { held, watched: new Set(), all: held };
-  const kinds = { rights: 0, cb: 0, bw: 0, ins: 0, nps: 0 };
+  const kinds = { rights: 0, cb: 0, bw: 0, nps: 0 };
   for (const c of iss.cards) if (inWeek(c.date, w)) kinds[c.kind] += 1;
-  for (const c of insiderCards(disc, cover, w.sun, byT, null).cards) if (inWeek(c.date, w)) kinds.ins += 1;
   for (const c of npsCards(disc, cover, w.sun, byT)) if (inWeek(c.date, w)) kinds.nps += 1;
-  return { ok: true, n: FILING_KINDS.reduce((a, k) => a + kinds[k], 0), kinds, skipped: iss.skipped };
+  const ins = insiderCards(disc, cover, w.sun, byT, ROLE_OF).cards.filter((c) => inWeek(c.date, w));
+  return { ok: true, kinds, ins, skipped: iss.skipped };
 }
 
 // ---------------- 다음 주 ----------------
@@ -250,33 +294,34 @@ export function nextWeek(byT, held, w, today = null) {
 
 // ---------------- 가장 많이 움직인 종목 ----------------
 // -> { t, nk, s, pct, why: "fell" | "rose" | null, n } | null (no held stock with a week's move, or the largest rounds to 0.0%)
-export function weekMover(held, byT, stocks, starts, nv = WEEK_NV) {
+export function weekMover(held, byT, stocks, starts, nv = WEEK_NV, splits = null, today = null) {
   let best = null;
   for (const t of [...held].sort()) {
     const s = byT && byT.get(t);
-    const m = weekPct(s, starts, nv);
+    const m = weekPct(s, starts, nv, splits, today);
     if (m == null) continue;
     if (!best || Math.abs(m) > Math.abs(best.pct) + 1e-12) best = { t, s, pct: m };
   }
   if (!best || Math.round(Math.abs(best.pct) * 10) === 0) return null;
-  const g = peerGroup(best.s, stocks, (x) => weekPct(x, starts, nv));
+  const g = peerGroup(best.s, stocks, (x) => weekPct(x, starts, nv, splits, today));
   const why = g.ok && g.together ? "fell" : g.ok && g.togetherUp ? "rose" : null;
   return { t: best.t, nk: best.s.nk || best.t, s: best.s, pct: best.pct, why, n: g.ok ? g.n : 0 };
 }
 
 // ---------------- the card of one portfolio ----------------
-// deck: the portfolio (the screens' view) · load: the data · ctx: rules.todayCtx (byT, fx) · disc: app.jsx's · nv: WEEK_NV ·
-// now: tests. -> { ok: false, why } | { ok: true, week, money, kospi, divs, files, next, mover, kr, held }
+// deck: the portfolio (the screens' view) · load: the data · ctx: rules.todayCtx (byT) · disc: app.jsx's · nv: the WEEK_NV mode in
+// effect (weekly.jsx) · now: tests. -> { ok: false, why } | { ok: true, week, money, kospi, divs, files, next, mover, kr, held }
 export function weeklyModel({ deck, load, ctx, disc = null, nv = WEEK_NV, now = null } = {}) {
   if (!deck || !load || load.status !== "ok" || !load.data) return { ok: false, why: "load" };
   const week = weekState(load.data);
   if (!week.ok) return { ok: false, why: week.why };
   const byT = (ctx && ctx.byT) || load.byT || new Map();
-  const fx = ctx && ctx.fx != null ? ctx.fx : load.data.fx;
   const today = kstDate(now == null ? Date.now() : now);
-  const env = rateEnv(load, today);
+  // fxHist only (rateFor without its today branch, which reads data.json fx): the close of that date or the last one before it
+  const env = { ...rateEnv(load, today), today: null };
   const rateAt = (date) => { const r = rateFor(date, env); return r.ok && num(r.fx) > 0 ? r.fx : null; };
-  const money = weekMoney(deck, { byT, fx, week, rateAt, nv });
+  const splits = [...dataSplits(load.data).list, ...(Array.isArray(deck.splits) ? deck.splits : []), ...(Array.isArray(deck[VIEW_SPLITS]) ? deck[VIEW_SPLITS] : [])];
+  const money = weekMoney(deck, { byT, week, rateAt, usPxDate: load.data.usPxDate, nv, splits, today });
   const held = new Set([...heldUnits(deck, week.sun)].filter(([, u]) => u > 0).map(([t]) => t));
   return {
     ok: true, week, nv, held, money,
@@ -284,7 +329,7 @@ export function weeklyModel({ deck, load, ctx, disc = null, nv = WEEK_NV, now = 
     divs: weekDivs(deck, week),
     files: weekFilings(disc, held, week, byT, now),
     next: nextWeek(byT, held, week, today),
-    mover: weekMover(held, byT, load.data.stocks || [], week.starts, nv),
+    mover: weekMover(held, byT, load.data.stocks || [], week.starts, nv, splits, today),
     kr: holdsKorean([deck], byT),
   };
 }

@@ -443,8 +443,9 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
         {store.unmerged && C.store.locked && <Note tone="watch" data-ui-v2="store-unmerged">{C.store.locked}</Note>}
         {store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}
         {/* v19.6e (Part E, board Weekly2): 이번 주 정리, one card per portfolio block, at the top (under the date line and the store
-            notes, which stay first), once the week's numbers are final; behind weekcfg.js WEEKLY_ON (weekly.jsx) */}
-        {WEEKLY_ON && ev.ok && blocks.length > 0 && <WeeklyCards blocks={blocks} load={load} ctx={ctx} disc={disc} />}
+            notes, which stay first), once the week's numbers are final; never on late data (round 2: the week it would call 이번 주
+            is already the week before); behind weekcfg.js WEEKLY_ON (weekly.jsx) */}
+        {WEEKLY_ON && ev.ok && !ev.late && blocks.length > 0 && <WeeklyCards blocks={blocks} load={load} ctx={ctx} disc={disc} />}
         <Hero load={load} ev={ev} held={held} decks={decks} onConfirm={onConfirm} onWhy={onWhy} quiet={look.quiet} />
         <Cols main={rankInMain ? [...main, rankCard] : main} side={ok && [<MarketGlance key="glance" load={load} go={go} />, !rankInMain && rankCard]} />
       </div>

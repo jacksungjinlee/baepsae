@@ -15847,7 +15847,8 @@ def v196e_store(by, more=None, extra=None):
 
 
 def v196e_expect(by, fx=1450.0, fx0=1400.0):
-    """위 포트폴리오의 그 주 (손으로 푼 식): 이득 = 지금 − 시작 − 산 돈 + 판 돈 · % = 이득 ÷ (시작 + 산 돈)."""
+    """위 포트폴리오의 그 주 (손으로 푼 식): 이득 = 지금 − 시작 − 산 돈 + 판 돈 · % = 이득 ÷ (시작 + 산 돈). 미국은 fxHist: 시작 usWkFrom 1,400 ·
+    지금 usPxDate 1,450 (v196e_files 는 data.json fx 도 1,450 이에요; 둘이 다른 경우는 tests/test_v196e_weekly.py)."""
     p, c = (lambda t: by[t]["price"]), (lambda t: by[t]["c1w"])
     start = 10 * c("005930") + 3 * c("000660") + 2 * c("AAPL") * fx0
     buys, sells = 2 * 220000.0, 1 * 1500000.0
@@ -15887,7 +15888,7 @@ def weekly_tiles(page, card=WEEKLY_CARD):
 def scene_v196e(R, files, width, dark=False):
     """v19.6e 이번 주 정리 (스위치를 켠 빌드 · 320 · 390 · 1280 · 어두운 화면): 토요일 아침, 11월 9일 주의 마지막 종가(13일)가 발행된 뒤 — 홈 맨 위
     (날짜 줄 밑, 판정 띠와 포트폴리오보다 앞)에 카드 · 머리 '11월 9일 ~ 11월 13일 · 이번 주 정리 · 내 규칙 …'(홈 남색 띠와 같은 n · k) · 네 칸(내 포트폴리오:
-    손으로 푼 이득과 % · 코스피, 받은 배당, 공시: 이번 주 것만, 다음 주 미국 일정) · 가장 많이 움직인 종목(SK하이닉스 −8.0%, 같은 업종이 다 같이 빠진
+    손으로 푼 이득과 % (미국은 양쪽 모두 fxHist) · 코스피, 받은 배당, 공시: 이번 주 것 중 오늘 볼 것이 보여 주는 것만, 다음 주 미국 일정) · 가장 많이 움직인 종목(SK하이닉스 −8.0%, 같은 업종이 다 같이 빠진
     한 주) → 회사 화면 · 닫기 → 그 주에는 다시 열어도 없음 (기록 파일에는 아무것도 쓰지 않아요) · 토큰 색 · 12px · 가로 스크롤 없음 · 뱁이 없음."""
     S = f"v19.6e 이번 주 정리 {width}{' 어두운' if dark else ''}"
     data = v196e_files(files)
@@ -15914,7 +15915,8 @@ def scene_v196e(R, files, width, dark=False):
         tiles = weekly_tiles(page)
         assert tiles == [["pf", WK["pf"], signed_pct(pct), f"{signed_won(gain)} · {fillp(WK['kospi'], pct='+2.5%')}"],
                          ["div", WK["div"], "3,610원", fillp(WK["count"], n=1)],
-                         ["disc", WK["disc"], fillp(WK["count"], n=2), f"{fillp(WK['kinds']['rights'], n=1)} · {fillp(WK['kinds']['ins'], n=1)}"],
+                         # 이번 주 SK하이닉스 지분 변동(1.418억원)은 세지 않아요: 오늘 볼 것이 아직 보여 주지 못해요 (look.js ROLE_OF, 2차)
+                         ["disc", WK["disc"], fillp(WK["count"], n=1), fillp(WK["kinds"]["rights"], n=1)],
                          ["next", WK["nextUs"], fillp(WK["earn"], n=1), "Apple Inc."]], tiles
         t = c.locator('[data-tile="pf"]')
         assert abs(float(t.get_attribute("data-gain")) - gain) <= 1 and abs(float(t.get_attribute("data-pct")) - pct) < 0.001 and t.get_attribute("data-n") == "3"
@@ -15936,7 +15938,9 @@ def scene_v196e(R, files, width, dark=False):
         floor_ok(page, "이번 주 정리")
         no_hscroll(page, width)
         assert page.locator(MASCOT_IN_MAIN).count() == 0, "숫자가 있는 카드 옆에 뱁이"
-        assert not [x for x in logs() if "weekly" in x], [x for x in logs() if "weekly" in x]
+        # console: only the insider report the tile does not count yet (nothing else left out, unchecked or waiting for words)
+        wk = [x for x in logs() if "weekly" in x]
+        assert wk == ["[v2] weekly (dweek): 1 insider report(s) of the week not counted: the today-look page cannot show them yet (look.js ROLE_OF)"], wk
         R.collect(page)
         if R.shots:
             os.makedirs(R.shots, exist_ok=True)
@@ -15968,6 +15972,7 @@ def scene_v196e(R, files, width, dark=False):
 
 def scene_v196e_states(R, files, width=390):
     """v19.6e 이번 주 정리의 때와 상태 (390): 커밋한 빌드(스위치 꺼짐)에는 카드 없음 · 금요일(그 주가 아직 끝나지 않음) 없음 · 다음 월요일 그대로 ·
+    (2차) 금요일 휴장 주의 금요일 아침 발행 · 금요일이 거래일인 주의 토요일 목요일 종가는 없음 · 늦은 데이터(5거래일 안)에는 없음 ·
     다음 한국 종가가 나오면 없음 · 금요일 휴장 주(12월 21일 ~ 24일) · 닫기는 그 주만 (다음 주는 다시) · c1w 없는 종목: 빠진 종목 줄이 승인되기 전에는
     내 포트폴리오 칸이 빠지고 console 이 말해요 · 멈춘 데이터 · 불러오기 실패에는 없음 · 포트폴리오 둘 (이름 · 만든 포트폴리오는 규칙 줄 없음 · 하나만
     닫기) · nv 행: out (빠짐) · use (들어감) · note (들어가고 각주는 승인 전이라 없음)."""
@@ -16041,7 +16046,7 @@ def scene_v196e_states(R, files, width=390):
     def stale(page, logs):
         page.locator('[data-ui-v2="today-stale"]').wait_for(state="visible")
         assert page.locator(WEEKLY_CARD).count() == 0 and page.locator('[data-ui-v2="home-block"]').count() == 0
-    one("멈춘 데이터 (토요일 발행을 다음 주 수요일에 · 5거래일 넘게 늦음): 멈춤 띠만, 카드 없음", base, dt.datetime(2026, 11, 25, 9, 0, tzinfo=KST), stale)
+    one("멈춘 데이터 (11월 14일 토요일 발행을 11일 뒤 11월 25일 수요일에 · 5거래일 넘게 늦음): 멈춤 띠만, 카드 없음", base, dt.datetime(2026, 11, 25, 9, 0, tzinfo=KST), stale)
 
     def fail(page, logs):
         see(page, LOAD_FAIL)
@@ -16082,18 +16087,34 @@ def scene_v196e_states(R, files, width=390):
         def nv_check(page, logs, mode=mode):
             c = page.locator(WEEKLY_CARD)
             c.wait_for(state="visible")
-            assert c.get_attribute("data-nv") == mode
+            # "note" 는 각주 말(C.weekly.nvNote)이 승인될 때까지 "out" 으로 돌아요 (2차): 각주 없이 nv 행을 쓰지 않아요
+            assert c.get_attribute("data-nv-set") == mode and c.get_attribute("data-nv") == ("out" if mode == "note" else mode)
             tiles = [t[0] for t in weekly_tiles(page)]
             mv = page.locator('[data-ui-v2="weekly-mover"]')
-            if mode == "out":
+            if mode in ("out", "note"):
                 # SK하이닉스는 양쪽에서 빠지고 (이름을 적을 줄이 승인 전이라 내 포트폴리오 칸 없음), 움직인 종목도 아니에요: 삼성전자 −2.0% (나머지 반도체도 모두 빠짐)
                 assert "pf" not in tiles and mv.get_attribute("data-t") == "005930" and mv.get_attribute("data-why") == "fell"
                 assert any("000660 (nv)" in x for x in logs()), logs()
+                assert any('read as "out"' in x for x in logs()) == (mode == "note"), logs()
             else:
                 assert tiles[0] == "pf" and page.locator('[data-tile="pf"]').get_attribute("data-n") == "3" and mv.get_attribute("data-t") == "000660"
-                assert page.locator('[data-ui-v2="weekly-note-nv"]').count() == 0                  # 각주는 승인 전 (note 도)
-                assert any("C.weekly.nvNote" in x for x in logs()) == (mode == "note"), logs()
+            assert page.locator('[data-ui-v2="weekly-note-nv"]').count() == 0
         one(f"nv 행 (SK하이닉스 c1wv nv) · WEEK_NV {mode}", nvd, sat, nv_check, app=weekly_on_app(mode))
+
+    # ── 2차 (fresh-eyes review): 금요일 휴장 주의 금요일 아침 발행 · 금요일이 거래일인 주의 목요일 종가 · 늦은 데이터 ──
+    one("금요일 휴장 주 (성탄절, 두 시장 모두 휴장): 금요일 아침 발행(목요일 종가)부터 카드 '12월 21일 ~ 12월 24일' (토요일 실행은 already_published 가 건너뛰어요)",
+        v196e_files(files, px="2026-12-24", wk_from="2026-12-18", pub="2026-12-25T06:45:00+09:00"), dt.datetime(2026, 12, 25, 9, 0, tzinfo=KST),
+        shows("12월 21일 ~ 12월 24일"))
+    one("금요일이 거래일인 주: 토요일 파일이 아직 목요일 종가면 끝나지 않은 주 · 카드 없음",
+        v196e_files(files, px="2026-11-12", pub="2026-11-14T06:45:00+09:00"), sat, none_but_home)
+    late = v196e_files(files)
+    late["data.json"].update(nextPub="2026-11-17", staleAfter="2026-11-17T08:47:00+09:00")
+
+    def late_check(page, logs):
+        page.locator('[data-ui-v2="home-block"]').wait_for(state="visible")               # 늦은 데이터의 점검은 그대로 (5거래일 안)
+        assert page.locator('[data-ui-v2="home-rules"]').count() == 1 and page.locator('[data-ui-v2="today-stale"]').count() == 0
+        assert page.locator(WEEKLY_CARD).count() == 0                                       # 지난주를 '이번 주'라고 부르지 않아요
+    one("늦은 데이터 (토요일 발행 뒤 화요일 발행이 늦음 · 2거래일 늦음, 점검은 그대로): 카드 없음", late, dt.datetime(2026, 11, 17, 12, 0, tzinfo=KST), late_check)
 
 
 def main():

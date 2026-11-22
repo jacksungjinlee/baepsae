@@ -1291,7 +1291,7 @@ export const C = {
       ins: "지분 변동 {n}",                                        // Appendix 1 '지분 변동 {b}'
       cb: null,                                                    // 제안 (Jack 승인 대기): "전환사채 {n}" — 그 주에 전환사채 발행 결정이 있으면 공시 칸은 빠져요 (console)
       bw: null,                                                    // 제안 (Jack 승인 대기): "신주인수권부사채 {n}" — 같은 방식
-      nps: null,                                                   // 제안 (Jack 승인 대기): "국민연금 {n}" — 같은 방식
+      nps: null,                                                   // 제안 (Jack 승인 대기): "국민연금 지분 {n}" (승인된 카드 제목 look.nps '국민연금 지분') — 같은 방식
     },
     next: "다음 주",
     nextUs: "다음 주 미국 일정",                                    // 한국 종목도 가지고 있을 때 (한국 일정은 없어요, [Q12])
@@ -1301,7 +1301,8 @@ export const C = {
     fell: "같은 업종이 다 같이 빠진 한 주였어요",
     rose: "같은 업종이 다 같이 오른 한 주였어요",
     leftOut: null,                                                 // 제안 (Jack 승인 대기): "이번 주 움직임을 확인하지 못한 종목 {n}개({names})는 빼고 계산했어요." — 없으면 그런 종목이 있을 때 내 포트폴리오 칸이 빠져요
-    nvNote: null,                                                  // 제안 (Jack 승인 대기, WEEK_NV "note" 일 때만): "{names}의 지난주 종가는 다른 자료로 확인해서 드물게 몇 % 다를 수 있어요."
+    leftOutMore: null,                                             // 제안 (Jack 승인 대기): "이번 주 움직임을 확인하지 못한 {names} 외 {n}종목은 빼고 계산했어요." — 6개부터 (앞 5개 이름, app.krOwnCloseListMore 의 '외 {n}종목' 모양). 없으면 그때 내 포트폴리오 칸이 빠져요
+    nvNote: null,                                                  // 제안 (Jack 승인 대기, WEEK_NV "note" 일 때만): "{names}의 지난주 종가는 다른 자료로 확인한 값이에요. 이번 주 움직임이 실제와 조금 다를 수 있어요." — 없으면 "note" 는 "out" 처럼 돌아요
   },
 
   // v19.7a 빼기 (Part B, 보드 PfRemove3) — chat (2026-11-07: v19.7 Appendix 1). 머리줄은 rec.head · rec.heldQty, 지분 없는 종목의 버튼은

@@ -2,12 +2,15 @@
 """뱁새 2.0 v19.6e 이번 주 정리 (src/v2/weekly.js 의 숫자 · weekly.jsx 의 weeklyView · weekcfg.js 스위치) — Node 에서 돌려봐요.
 
 docs/tasks/v19.6-records-alerts-dark.md Part E · Part I.2 (adds only; every expected value worked by hand in the comments):
-- 언제: publishedAt 이 그 주(pxDate 가 든 월 ~ 일) 토요일(한국 날짜) 이후 · 금요일 휴장이면 목요일이 마지막 날 · 다음 월요일에도 그대로 ·
-  다음 한국 종가가 나오면 없음 · 그 주 첫 한국 거래일 (월요일 휴장이면 화요일) · wkFrom 이 없거나 이상한 파일은 카드 없음
+- 언제 (2차, 조정자의 규칙): pxDate 뒤 그 주 일요일까지 한국 거래일이 없고, publishedAt 의 한국 날짜가 pxDate 뒤 · 금요일 휴장이면 금요일
+  아침 발행부터 · 금요일이 거래일인데 목요일 종가면 아님 · 다음 월요일에도 그대로 · 다음 한국 종가가 나오면 없음 · 그 주 첫 한국 거래일
+  (월요일 휴장이면 화요일) · wkFrom 이 없거나 이상한 파일은 카드 없음
 - 내 포트폴리오: 이득 = 지금 가치 − 그 주 시작 가치 − 이번 주 산 돈 + 이번 주 판 돈 · % = 이득 ÷ (시작 가치 + 산 돈) · 손으로 푼 예 (산 것 ·
-  판 것 · 미국 종목 하나) · 미국은 usWkFrom 의 fxHist 환율 (그날 또는 그 앞 마지막 날) · c1w 없는 종목은 양쪽에서 빠지고 이름이 남아요 ·
-  nv 행은 스위치마다 (out · use · note)
-- 코스피: idxHist 의 wkFrom 종가 → pxDate 종가 · 받은 배당 · 공시 (v19.6b 카드 그대로, 이번 주 것만) · 다음 주 일정
+  판 것 · 미국 종목 하나) · 미국은 양쪽 모두 fxHist (시작 usWkFrom · 지금 usPxDate, 그날 또는 그 앞 마지막 날; data.json fx 는 안 써요) ·
+  c1w 없는 종목은 양쪽에서 빠지고 이름이 남아요 · 이번 주에 뺀 종목 (기록 없이 · 종목 바꾸기) · 그 주 날짜의 가진 종목 줄 (금액으로 넣기) ·
+  c1w 뒤 분할 · 한 종목은 세거나 이름을 남기거나 둘 중 하나 · nv 행은 스위치마다 (out · use · note, note 는 각주 말이 생길 때까지 out)
+- 코스피: idxHist 의 wkFrom 종가 → pxDate 종가 · 받은 배당 (센 기록이 있을 때만 칸) · 공시 (v19.6b 카드 그대로, 이번 주 것만, 오늘 볼 것이
+  보여 줄 수 있는 것만: 지분 변동은 ROLE_OF 가 켜질 때까지 0) · 다음 주 일정 · 0원은 부호 없이
 - 가장 많이 움직인 종목: 같은 업종 규칙 (GROUP_MIN · TOGETHER_SHARE) 을 그 주의 움직임에: 빠진 한 주 · 오른 한 주 ([Q12], 따로 시험)
 - 닫기: 그 주 그 포트폴리오만, 이 기기에만 (다른 주는 다시 보여요 · 저장이 막혀도 오류 없음)
 - 승인되지 않은 말이 필요한 칸은 빠지고 console 이 말해요 · WEEKLY_ON 은 꺼져 있어요 (빠진 종목 줄이 승인되면 켜요)
@@ -33,7 +36,8 @@ def run(body):
         tmp = tempfile.mkdtemp(prefix="baepsae-weekly-")
         entry = os.path.join(tmp, "entry.js")
         with open(entry, "w", encoding="utf-8") as f:
-            for name, mod in (("W", "weekly.js"), ("WV", "weekly.jsx"), ("Tr", "track.js"), ("Lk", "look.js"), ("Cfg", "weekcfg.js")):
+            for name, mod in (("W", "weekly.js"), ("WV", "weekly.jsx"), ("Tr", "track.js"), ("Lk", "look.js"), ("Cfg", "weekcfg.js"),
+                              ("St", "store.js"), ("Ed", "edit.js")):
                 f.write(f"export * as {name} from {json.dumps(os.path.join(ROOT, 'src', 'v2', mod))};\n")
             f.write(f"export {{ C }} from {json.dumps(os.path.join(ROOT, 'src', 'copy', 'v2.js'))};\n")
         exe = os.path.join(ROOT, "node_modules", ".bin", "esbuild")
@@ -41,7 +45,7 @@ def run(body):
                             "--loader:.js=jsx", "--jsx=automatic", "--charset=utf8"], cwd=ROOT, capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
         _B["p"] = tmp
-    code = ("import { W, WV, Tr, Lk, Cfg, C } from './w.mjs';\n" + FAKE + "let out;\n" + body + "\nprocess.stdout.write(JSON.stringify(out));")
+    code = ("import { W, WV, Tr, Lk, Cfg, St, Ed, C } from './w.mjs';\n" + FAKE + "let out;\n" + body + "\nprocess.stdout.write(JSON.stringify(out));")
     r = subprocess.run([NODE, "--input-type=module", "-e", code], cwd=_B["p"], capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
@@ -89,7 +93,7 @@ const WORKED = () => {
 
 
 # ── when the card shows ─────────────────────────────────────────────────────────
-def test_the_week_is_final_from_saturdays_publish_and_stays_until_the_next_korean_close():
+def test_the_week_is_final_once_no_korean_trading_day_is_left_and_its_last_close_is_published():
     got = run("""
       const st = (d) => { const s = W.weekState(d); return s.ok ? [s.mon, s.sun, s.first, s.to] : s.why; };
       out = {
@@ -99,11 +103,16 @@ def test_the_week_is_final_from_saturdays_publish_and_stays_until_the_next_korea
         satUtc: st(dataOf([], { publishedAt: '2026-11-20T15:30:00Z' })), friUtc: st(dataOf([], { publishedAt: '2026-11-20T14:59:00Z' })),
         sunday: st(dataOf([], { publishedAt: '2026-11-22T07:00:00+09:00' })),
         // Monday after: the same file (nothing new published yet) still shows the week; the next Korean close (Monday's, published
-        // Tuesday) is a new week whose Saturday has not come
+        // Tuesday) is a new week with trading days still to come
         nextClose: st(dataOf([], { pxDate: '2026-11-23', usPxDate: '2026-11-23', publishedAt: '2026-11-24T06:45:00+09:00', wkFrom: '2026-11-20', usWkFrom: '2026-11-20' })),
-        // a Friday holiday (12-25): Thursday's close is the week's last; published on Saturday it is final, on the holiday itself not yet
+        // a Friday holiday (12-25, both markets closed): Thursday's close is the week's last, final from the holiday morning's publish
+        // (already_published.py skips the Saturday runs then) and on Saturday too
         friHoliday: st(dataOf([], { pxDate: '2026-12-24', usPxDate: '2026-12-24', publishedAt: '2026-12-26T06:45:00+09:00', wkFrom: '2026-12-18', usWkFrom: '2026-12-18' })),
         friHolidayEarly: st(dataOf([], { pxDate: '2026-12-24', publishedAt: '2026-12-25T06:45:00+09:00', wkFrom: '2026-12-18' })),
+        friHolidayDay: st(dataOf([], { pxDate: '2026-12-24', publishedAt: '2026-12-24T20:00:00+09:00', wkFrom: '2026-12-18' })),
+        // Friday 11-20 was a trading day: a Saturday file still at Thursday's close is a partial week, and so is Friday's publish of it
+        partialSat: st(dataOf([], { pxDate: '2026-11-19', publishedAt: '2026-11-21T06:45:00+09:00' })),
+        partialFri: st(dataOf([], { pxDate: '2026-11-19', publishedAt: '2026-11-20T06:45:00+09:00' })),
         // Monday 10-05 and Friday 10-09 closed: the week runs Tuesday to Thursday
         both: st(dataOf([], { pxDate: '2026-10-08', usPxDate: '2026-10-08', publishedAt: '2026-10-10T07:00:00+09:00', wkFrom: '2026-10-02', usWkFrom: '2026-10-02' })),
         noWk: st(dataOf([], { wkFrom: undefined })), blankWk: st(dataOf([], { wkFrom: '' })), wkInWeek: st(dataOf([], { wkFrom: '2026-11-16' })),
@@ -111,8 +120,10 @@ def test_the_week_is_final_from_saturdays_publish_and_stays_until_the_next_korea
       };""")
     assert got["saturday"] == ["2026-11-16", "2026-11-22", "2026-11-16", "2026-11-20"]
     assert got["friday"] == "notFinal" and got["friUtc"] == "notFinal" and got["satUtc"] == got["saturday"] == got["sunday"]
-    assert got["nextClose"] == "notFinal"
-    assert got["friHoliday"] == ["2026-12-21", "2026-12-27", "2026-12-21", "2026-12-24"] and got["friHolidayEarly"] == "notFinal"
+    assert got["nextClose"] == "open"
+    assert got["friHoliday"] == got["friHolidayEarly"] == ["2026-12-21", "2026-12-27", "2026-12-21", "2026-12-24"]
+    assert got["friHolidayDay"] == "notFinal"                                  # published on Thursday's own date: not its close yet
+    assert got["partialSat"] == got["partialFri"] == "open"
     assert got["both"] == ["2026-10-05", "2026-10-11", "2026-10-06", "2026-10-08"]
     assert got["noWk"] == got["blankWk"] == got["wkInWeek"] == got["wkTooOld"] == "wkFrom"
     assert got["noPub"] == "publishedAt" and got["noPx"] == "pxDate"
@@ -220,8 +231,8 @@ def test_amount_rows_history_entries_and_records_without_a_rate():
       const st = [kr('005930', { c1w: 100000, price: 110000 }), us('AAPL', { c1w: 200, price: 210 })];
       const L = loadOf(st);
       out = {
-        // 금액으로 넣기 dated in the week: its amount is the buy (2,000,000 at Tuesday's close → 20주), the week's end at today's close
-        amount: (() => { const x = money(deckOf([{ t: '005930', nk: 'a', ccy: 'KRW', amountWon: 2000000, close: 100000, date: '2026-11-17' }]), L); return [x.start, x.buys, x.end]; })(),
+        // 금액으로 넣기 dated in the week (round 2, M2): not a buy (nothing says it was bought then): left out and named
+        amount: (() => { const x = money(deckOf([{ t: '005930', nk: 'a', ccy: 'KRW', amountWon: 2000000, close: 100000, date: '2026-11-17' }]), L); return [x.ok, x.buys, x.left]; })(),
         qtyDated: money(deckOf([imp('005930', 3, { date: '2026-11-17' })]), L).left,
         // sold out and taken out this week (history entry): the sale counts, nothing at the end
         soldOut: (() => { const x = money(deckOf([], { holdings: [], imported: [], history: [{ t: '005930', nk: '삼성', out: '2026-11-19', imported: imp('005930', 10),
@@ -236,7 +247,7 @@ def test_amount_rows_history_entries_and_records_without_a_rate():
         buyNoRate: money(deckOf([], { kind: undefined, holdings: [{ t: 'AAPL', nk: 'AAPL' }], imported: [], purchases: [{ t: 'AAPL', qty: 1, price: 205, ccy: 'USD', date: '2026-11-18' }] }), L).left,
         buyPlanFx: money(deckOf([], { kind: undefined, planFx: 1300, holdings: [{ t: 'AAPL', nk: 'AAPL' }], imported: [], purchases: [{ t: 'AAPL', qty: 1, price: 205, ccy: 'USD', date: '2026-11-18' }] }), L).buys,
       };""")
-    assert got["amount"] == [0, 2000000, 2200000]
+    assert got["amount"] == [False, 0, [{"t": "005930", "nk": "종목005930", "why": "imp"}]]
     assert got["qtyDated"] == [{"t": "005930", "nk": "종목005930", "why": "imp"}]
     assert got["soldOut"] == [1000000, 1050000, 0, 50000]
     assert got["outNoSale"] == [{"t": "005930", "nk": "종목005930", "why": "out"}]
@@ -254,9 +265,12 @@ def test_naver_confirmed_rows_under_each_switch():
           says: v.say.filter((l) => l.includes('Naver')).length, pct: r3(W.weekPct(st[1], m.week.starts, nv)) }; };
       C.weekly.leftOut = '{n}|{names}';
       const before = C.weekly.nvNote;
-      const out1 = { def: Cfg.WEEK_NV, modes: Cfg.NV_MODES, out: g('out'), use: g('use'), note: g('note') };
+      // "note" without its footnote's words is read as "out" (round 2): never used without the footnote
+      const out1 = { def: Cfg.WEEK_NV, modes: Cfg.NV_MODES, out: g('out'), use: g('use'), modeNote: WV.nvMode('note'), note: g(WV.nvMode('note')),
+        modes2: [WV.nvMode('out'), WV.nvMode('use')] };
       C.weekly.nvNote = '{names}';
-      out1.noteWorded = (() => { const m = model(deck, loadOf(st), { nv: 'note' }); return WV.weeklyView(m).notes.map((n) => [n.id, n.text]); })();
+      out1.modeWorded = WV.nvMode('note');
+      out1.noteWorded = (() => { const m = model(deck, loadOf(st), { nv: WV.nvMode('note') }); return [m.money.nvUsed, WV.weeklyView(m).notes.map((n) => [n.id, n.text])]; })();
       C.weekly.nvNote = before;
       out = out1;""")
     assert got["def"] == "out" and got["modes"] == ["out", "use", "note"]
@@ -264,9 +278,10 @@ def test_naver_confirmed_rows_under_each_switch():
     assert got["out"] == {"start": 1000000, "gain": 100000, "left": ["nv"], "nvUsed": [], "notes": ["left"], "says": 0, "pct": None}
     # use: 000660 counts (500,000 → 450,000), no footnote
     assert got["use"] == {"start": 1500000, "gain": 50000, "left": [], "nvUsed": ["000660"], "notes": [], "says": 0, "pct": -10.0}
-    # note: counts, and the footnote waits for Jack's words (nothing shown, said in the console)
-    assert got["note"] == {"start": 1500000, "gain": 50000, "left": [], "nvUsed": ["000660"], "notes": [], "says": 1, "pct": -10.0}
-    assert got["noteWorded"] == [["nv", "000660"]]
+    # note: while its footnote has no words, read as out (the same as out above)
+    assert got["modeNote"] == "out" and got["note"] == got["out"] and got["modes2"] == ["out", "use"]
+    # with the footnote's words: counted, and the footnote names it
+    assert got["modeWorded"] == "note" and got["noteWorded"] == [["000660"], [["nv", "000660"]]]
 
 
 # ── 코스피 · 받은 배당 · 공시 · 다음 주 ──────────────────────────────────────────
@@ -315,26 +330,34 @@ def test_filings_tile_counts_this_weeks_part_b_cards_of_held_stocks():
         nps: [{ d: '20261119', t: '005930', nk: 'x', rt: 7.31, chg: -0.12 }] });
       const f = (disc, dk = deck) => W.weeklyModel({ deck: dk, load: loadOf(st), ctx: ctxOf(loadOf(st)), disc, now: NOW }).files;
       const seen = { ...deck };                                    // a 확인했어요 mark never takes a filing out of the week's count
-      out = { ok: f(d), seenData: W.weekFilings(d, new Set(['005930']), W.weekState(dataOf(st)), loadOf(st).byT, NOW).n,
+      out = { ok: (() => { const x = f(d); return { ...x, ins: x.ins.map((c) => [c.t, c.date, c.title]) }; })(),
+        seenData: (() => { const x = W.weekFilings(d, new Set(['005930']), W.weekState(dataOf(st)), loadOf(st).byT, NOW); return [x.kinds, x.ins.length]; })(),
         stale: f(discOf({}, { listOk: false })).why, fail: f({ status: 'fail' }).why, wait: f({ status: 'loading' }).why, none: f(null).why,
         issueFail: f(discOf({}, { issueOk: false })).why, noIssue: (() => { const x = discOf(); delete x.data.issue; return f(x).why; })(),
         usOnly: f(d, deckOf([imp('AAPL', 1)])).why,
         view: (() => { const m = W.weeklyModel({ deck, load: loadOf(st), ctx: ctxOf(loadOf(st)), disc: d, now: NOW }); const v = WV.weeklyView(m);
-          return [v.tiles.filter((t) => t.id === 'disc').length, v.say.filter((l) => l.includes('cb, nps')).length]; })(),
-        viewWorded: (() => { const b = { ...C.weekly.kinds }; C.weekly.kinds.cb = '전환사채 {n}'; C.weekly.kinds.nps = '국민연금 {n}';
+          return [v.tiles.filter((t) => t.id === 'disc').length, v.say.filter((l) => l.includes('cb, nps')).length, v.say.filter((l) => l.includes('insider report')).length]; })(),
+        rightsOnly: (() => { const d2 = discOf({ issue: [iss(1, '005930', 'rights', '2026-11-17')], insider: [ins(1, '005930', '2026-11-18', 1000)] });
+          const v = WV.weeklyView(W.weeklyModel({ deck, load: loadOf(st), ctx: ctxOf(loadOf(st)), disc: d2, now: NOW }));
+          return v.tiles.filter((t) => t.id === 'disc').map((t) => [t.big, t.sub]); })(),
+        insOnly: (() => { const d2 = discOf({ insider: [ins(1, '005930', '2026-11-18', 1000)] });
+          return WV.weeklyView(W.weeklyModel({ deck, load: loadOf(st), ctx: ctxOf(loadOf(st)), disc: d2, now: NOW })).tiles.filter((t) => t.id === 'disc').length; })(),
+        viewWorded: (() => { const b = { ...C.weekly.kinds }; C.weekly.kinds.cb = '전환사채 {n}'; C.weekly.kinds.nps = '국민연금 지분 {n}';
           const m = W.weeklyModel({ deck, load: loadOf(st), ctx: ctxOf(loadOf(st)), disc: d, now: NOW }); const v = WV.weeklyView(m);
           Object.assign(C.weekly.kinds, b); return v.tiles.filter((t) => t.id === 'disc').map((t) => [t.label, t.big, t.sub]); })() };""")
     # this week: the 11-17 rights issue and the 11-20 CB (held 005930); not 11-13 (last week), not 005380 (not held), not the withdrawal, not
     # the 유무상증자 (no approved shape, v19.6b leaves it out); the 11-18 report of 1억원 (1,000 × 100,000); not 9,990만원; not last week's;
-    # the 국민연금 change of 11-19
-    assert got["ok"] == {"ok": True, "n": 4, "kinds": {"rights": 1, "cb": 1, "bw": 0, "ins": 1, "nps": 1},
+    # the 국민연금 change of 11-19. The insider card comes back as a list without a title (look.js ROLE_OF is null)
+    assert got["ok"] == {"ok": True, "kinds": {"rights": 1, "cb": 1, "bw": 0, "nps": 1}, "ins": [["005930", "2026-11-18", "none"]],
                          "skipped": [{"t": "005930", "rc": "20990000000006", "why": "bonus: a rights and bonus issue"}]}
-    assert got["seenData"] == 4
+    assert got["seenData"] == [{"rights": 1, "cb": 1, "bw": 0, "nps": 1}, 1]
     assert (got["stale"], got["fail"], got["wait"], got["none"], got["issueFail"], got["noIssue"], got["usOnly"]) == (
         "stale", "disc", "disc", "disc", "issue", "issue", "noKr")
-    # cb and nps have no approved tile word yet: the tile is left out that week and the console says which
-    assert got["view"] == [0, 1]
-    assert got["viewWorded"] == [["공시", "4건", "유상증자 1 · 전환사채 1 · 지분 변동 1 · 국민연금 1"]]
+    # cb and nps have no approved tile word yet: the tile is left out that week and the console says which; the insider report is not
+    # counted while 오늘 볼 것 cannot show it (round 2), said in the console
+    assert got["view"] == [0, 1, 1]
+    assert got["rightsOnly"] == [["1건", "유상증자 1"]] and got["insOnly"] == 0              # only a report it cannot show: no 공시 tile
+    assert got["viewWorded"] == [["공시", "3건", "유상증자 1 · 전환사채 1 · 국민연금 지분 1"]]
 
 
 def test_next_week_dates_count_and_first_name():
@@ -460,12 +483,12 @@ def test_switches_are_off_until_the_left_out_line_is_approved():
         cfg = f.read()
     assert re.findall(r"^export const WEEKLY_ON = (true|false);$", cfg, flags=re.M) == ["false"]
     assert re.findall(r'^export const WEEK_NV = "(out|use|note)";$', cfg, flags=re.M) == ["out"]
-    got = run("out = { leftOut: C.weekly.leftOut, nvNote: C.weekly.nvNote, exDiv: C.weekly.exDiv, kinds: C.weekly.kinds };")
-    assert got["leftOut"] is None and got["nvNote"] is None and got["exDiv"] is None
+    got = run("out = { leftOut: C.weekly.leftOut, leftOutMore: C.weekly.leftOutMore, nvNote: C.weekly.nvNote, exDiv: C.weekly.exDiv, kinds: C.weekly.kinds };")
+    assert got["leftOut"] is None and got["leftOutMore"] is None and got["nvNote"] is None and got["exDiv"] is None
     assert got["kinds"] == {"rights": "유상증자 {n}", "ins": "지분 변동 {n}", "cb": None, "bw": None, "nps": None}
     with open(os.path.join(ROOT, "src", "v2", "home2.jsx"), encoding="utf-8") as f:
         home = f.read()
-    assert "{WEEKLY_ON && ev.ok && blocks.length > 0 && <WeeklyCards " in home
+    assert "{WEEKLY_ON && ev.ok && !ev.late && blocks.length > 0 && <WeeklyCards " in home       # never on late data (round 2)
 
 
 def test_without_the_left_out_line_the_gain_tile_is_left_out_and_nothing_but_the_heading_means_no_card():
@@ -490,3 +513,145 @@ def test_weekly_code_has_no_fixed_colour_small_text_or_mascot():
     sizes = [float(x) for x in re.findall(r"tx\(\s*([0-9.]+)\s*,", text)]
     assert sizes and min(sizes) >= 12, sizes
     assert "baepi" not in text.lower() and "Mascot" not in text
+
+
+# ── round 2 (fresh-eyes review, 2026-11-22) ────────────────────────────────────
+def test_a_stock_taken_out_this_week_without_a_sale_is_named_not_dropped():
+    """M1: store.withoutHolding keeps no history entry for a stock with no sale or dividend; only the removal mark (removed) and the change
+    log (changes, kind "remove": 빼기 and 종목 바꾸기) remain. The week then names it ("out") instead of silently dropping it."""
+    got = run("""
+      const st = [kr('005930', { c1w: 100000, price: 110000 }), kr('000660', { c1w: 200000, price: 150000 })];
+      const L = loadOf(st);
+      const deck = deckOf([imp('005930', 10), imp('000660', 10)]);
+      const data = { v: 2, decks: [deck] };
+      const g = (d) => { const x = money(d, L); return [x.n, r3(x.pct), x.left]; };
+      const band = (t) => [{ id: 'band', kind: 'band', check: 'checked', target: t, bands: [0.75 * t, 1.25 * t, 1.4 * t] }];
+      const built = { id: 'b1', name: '만든', createdAt: '2026-10-01', holdings: [{ t: '005930', nk: '삼성', target: 0.5, plannedQty: 10, rules: band(0.5) },
+        { t: '000660', nk: '하이닉스', target: 0.5, plannedQty: 10, rules: band(0.5) }],
+        purchases: [{ t: '005930', qty: 10, price: 90000, ccy: 'KRW', date: '2026-10-01' }, { t: '000660', qty: 10, price: 180000, ccy: 'KRW', date: '2026-10-01' }] };
+      const edited = Ed.applyEdit({ v: 1, decks: [built] }, 'b1', { ...Ed.emptyDraft(), over: { '005930': 100 }, removed: [{ t: '000660', reason: 'thesis' }], touched: true },
+        { load: L, today: '2026-11-19', ts: 1700000000000 });
+      const readd = (() => { const d = St.withoutHolding(data, 'd1', '000660', '2026-11-18', 1).decks[0];
+        return { ...d, holdings: [...d.holdings, { t: '000660', nk: '종목000660', cls: 'kr' }], purchases: [{ t: '000660', qty: 1, price: 160000, ccy: 'KRW', date: '2026-11-19' }] }; })();
+      out = {
+        before: g(deck),
+        plain: g(St.withoutHolding(data, 'd1', '000660', '2026-11-18', 1).decks[0]),                          // removal mark only
+        logged: g(Ed.withRemoval(data, 'd1', '000660', '2026-11-18', 1).decks[0]),                            // mark + change log
+        logOnly: (() => { const d = Ed.withRemoval(data, 'd1', '000660', '2026-11-18', 1).decks[0]; const { removed, ...rest } = d; return g(rest); })(),
+        edit: [edited.ok, g(edited.data.decks[0])],                                                              // 종목 바꾸기
+        mondayAfter: g(Ed.withRemoval(data, 'd1', '000660', '2026-11-23', 1).decks[0]),                       // while the card still shows
+        lastWeek: g(Ed.withRemoval(data, 'd1', '000660', '2026-11-10', 1).decks[0]),                          // before the week: not part of it
+        // with a sale this week: its history entry counts it (no name)
+        sold: g(St.withoutHolding({ v: 2, decks: [{ ...deck, sales: [{ t: '000660', qty: 10, price: 160000, ccy: 'KRW', date: '2026-11-18' }] }] }, 'd1', '000660', '2026-11-18', 1).decks[0]),
+        // taken out and bought again this week: its start holding is gone with the removed records, so it is named, never counted too
+        readd: g(readd),
+      };""")
+    out = [{"t": "000660", "nk": "종목000660", "why": "out"}]
+    assert got["before"] == [2, -13.333, []]               # 1,000,000 → 1,100,000 and 2,000,000 → 1,500,000: −400,000 ÷ 3,000,000
+    assert got["plain"] == got["logged"] == got["mondayAfter"] == got["readd"] == [1, 10.0, out]
+    assert got["logOnly"] == [1, 10.0, out]                                     # the change log alone is enough (a merge can drop the mark)
+    assert got["edit"][0] is True and got["edit"][1][0] == 1 and got["edit"][1][2] == out, got["edit"]
+    assert got["lastWeek"] == [1, 10.0, []]
+    # 2,000,000 at the start, sold for 1,600,000: −400,000; with 005930's +100,000 → −300,000 ÷ 3,000,000 = −10%
+    assert got["sold"] == [2, -10.0, []]
+
+
+def test_a_portfolio_made_by_amount_in_the_week_is_not_a_buy():
+    """M2: 가진 종목 넣기 by amount dates each row with that day's close (pf.importedRecord), so a portfolio made on Saturday has rows dated
+    Friday. They were not bought then: left out and named ("imp"), no "0.0%" from rounding."""
+    got = run("""
+      const st = [kr('005930', { c1w: 100000, price: 110000 }), kr('000660', { c1w: 200000, price: 150000 })];
+      const d = deckOf([{ t: '005930', nk: 'a', ccy: 'KRW', amountWon: 3000000, close: 110000, date: T }, { t: '000660', nk: 'b', ccy: 'KRW', amountWon: 2000000, close: 150000, date: T }],
+        { createdAt: '2026-11-21' });
+      const m = model(d, loadOf(st)); C.weekly.leftOut = '{n}|{names}';
+      out = { ok: m.money.ok, buys: m.money.buys, left: m.money.left.map((x) => x.why), tiles: WV.weeklyView(m).tiles.map((t) => t.id),
+        // a row dated before the week (made on Monday morning from the Friday-before close) is held at the start: counted
+        before: (() => { const x = money(deckOf([{ t: '005930', nk: 'a', ccy: 'KRW', amountWon: 2000000, close: 100000, date: '2026-11-13' }], { createdAt: '2026-11-16' }), loadOf(st));
+          return [x.ok, x.start, x.end]; })() };""")
+    assert got["ok"] is False and got["buys"] == 0 and got["left"] == ["imp", "imp"] and "pf" not in got["tiles"]
+    assert got["before"] == [True, 2000000, 2200000]
+
+
+def test_us_holdings_take_fxhist_at_both_ends_never_data_json_fx():
+    """M3 (coordinator's decision): start at fxHist of usWkFrom, now at fxHist of usPxDate (that day or the last one before it); data.json
+    fx (Yahoo) is never read for the week. fxHist that does not reach usPxDate leaves the stock out ("fx")."""
+    got = run("""
+      const st = [us('AAPL', { c1w: 200, price: 210 }), kr('005930', { c1w: 100000, price: 110000 })];
+      const deck = deckOf([imp('AAPL', 4), imp('005930', 1)]);
+      const g = (more = {}, macro = MACRO) => { const x = money(deck, loadOf(st, more, macro)); return { per: x.per.map((p) => [p.t, p.start, p.end]), left: x.left }; };
+      const fh = (rows, more = {}) => ({ ...MACRO, fxHist: { asOf: rows[rows.length - 1][0], final: true, rows, ...more } });
+      out = {
+        yahoo: g({ fx: 1460 }),                                                                       // data.json fx differs: not used
+        lastBefore: g({}, fh([['2026-11-13', 1400], ['2026-11-19', 1440]])),                           // fxHist ends 11-19: does not reach 11-20
+        notFinal: g({}, fh([['2026-11-13', 1400], ['2026-11-20', 1450]], { final: false })),          // the last row is a live rate
+        holiday: g({ usPxDate: '2026-11-19' }, fh([['2026-11-13', 1400], ['2026-11-18', 1430], ['2026-11-20', 1450]])),   // 11-19 → 11-18's
+      };""")
+    assert got["yahoo"]["per"] == [["AAPL", 1120000, 1218000], ["005930", 100000, 110000]] and got["yahoo"]["left"] == []
+    assert got["lastBefore"]["left"] == [{"t": "AAPL", "nk": "AAPL Inc.", "why": "fx"}] and got["lastBefore"]["per"] == [["005930", 100000, 110000]]
+    assert got["notFinal"]["left"] == [{"t": "AAPL", "nk": "AAPL Inc.", "why": "fx"}]
+    assert got["holiday"]["per"][0] == ["AAPL", 1120000, 1201200]                     # 4 × 210 × 1,430
+
+
+def test_dividend_tile_only_with_a_counted_record_and_its_note_either_way():
+    """S3: a week whose only dividend is a US one without a rate shows no "0원 · 0건" tile; the approved line still names it."""
+    got = run("""
+      const g = (divs) => { const v = WV.weeklyView(model(deckOf([imp('005930', 10)], { divs }), loadOf([kr('005930', { c1w: 100000 })])));
+        return [v.tiles.filter((t) => t.id === 'div').map((t) => [t.big, t.sub]), v.notes.map((n) => n.id)]; };
+      out = { only: g([{ t: 'AAPL', amount: 2, ccy: 'USD', date: '2026-11-18' }]),
+        both: g([{ t: 'AAPL', amount: 2, ccy: 'USD', date: '2026-11-18' }, { t: '005930', amount: 1000, ccy: 'KRW', date: '2026-11-18' }]) };""")
+    assert got["only"] == [[], ["divfx"]]
+    assert got["both"] == [[["1,000원", "1건"]], ["divfx"]]
+
+
+def test_an_amount_that_rounds_to_zero_has_no_sign():
+    got = run("""
+      const st = [kr('005930', { c1w: 100000, price: 100000 })];
+      const g = (price) => { const m = model(deckOf([imp('005930', 1)], { purchases: [{ t: '005930', qty: 1, price, ccy: 'KRW', date: '2026-11-18' }] }), loadOf(st));
+        return [m.money.gain, WV.weeklyView(m).tiles.filter((t) => t.id === 'pf').map((t) => [t.big, t.sub.split(' · ')[0]])[0]]; };
+      out = { up: g(99999.6), down: g(100000.4), real: g(99000) };""")
+    assert abs(got["up"][0] - 0.4) < 1e-6 and got["up"][1] == ["0.0%", "0원"]
+    assert abs(got["down"][0] + 0.4) < 1e-6 and got["down"][1] == ["0.0%", "0원"]
+    assert got["real"][1] == ["+0.5%", "+1,000원"]
+
+
+def test_more_than_five_stocks_left_out_take_the_capped_line():
+    got = run("""
+      const codes = ['000020', '000030', '000040', '000050', '000060', '000070'];
+      const st = [kr('005930', { c1w: 100000, price: 110000 }), ...codes.map((t) => kr(t))];
+      const m = model(deckOf([imp('005930', 1), ...codes.map((t) => imp(t, 1))]), loadOf(st));
+      C.weekly.leftOut = '{n}|{names}';
+      const before = WV.weeklyView(m);
+      C.weekly.leftOutMore = '{names}|{n}';
+      const after = WV.weeklyView(m);
+      const five = WV.weeklyView(model(deckOf([imp('005930', 1), ...codes.slice(0, 5).map((t) => imp(t, 1))]), loadOf(st)));
+      out = { cap: WV.LEFT_NAMES, before: [before.tiles.map((t) => t.id), before.say.filter((l) => l.includes('leftOutMore')).length],
+        after: after.notes.map((n) => n.text), five: five.notes.map((n) => n.text) };""")
+    assert got["cap"] == 5 and got["before"] == [[], 1]
+    assert got["after"] == ["종목000020, 종목000030, 종목000040, 종목000050, 종목000060|1"]
+    assert got["five"] == ["5|종목000020, 종목000030, 종목000040, 종목000050, 종목000060"]
+
+
+def test_a_split_after_last_weeks_close_leaves_the_stock_out():
+    """Defence in depth on top of the pipeline (it blanks such a c1w): a split recorded after the stock's week date, in the portfolio or
+    in data.json, leaves it out ("split") and out of the mover; one on or before that date does not."""
+    got = run("""
+      const st = [us('AAPL', { c1w: 400, price: 210 }), kr('005930', { c1w: 100000, price: 101000 })];
+      const deck = deckOf([imp('AAPL', 4), imp('005930', 1)]);
+      const g = (d, more = {}) => { const m = model(d, loadOf(st, more)); return [m.money.left.map((x) => x.t + ':' + x.why), m.mover && m.mover.t]; };
+      out = { stored: g({ ...deck, splits: [{ t: 'AAPL', date: '2026-11-17', r: 2 }] }), data: g(deck, { splits: [['AAPL', '2026-11-17', 2]] }),
+        before: g(deck, { splits: [['AAPL', '2026-11-13', 2]] }), none: g(deck) };""")
+    assert got["stored"] == got["data"] == [["AAPL:split"], "005930"]
+    assert got["before"] == got["none"] == [[], "AAPL"]                                  # 400 → 210: −47.5%, the largest move
+
+
+def test_one_stock_is_counted_or_named_never_both():
+    """A stock with a history entry taken out this week with shares left (named "out") and bought again this week (its own records would
+    count) is named once and not counted."""
+    got = run("""
+      const st = [kr('005930', { c1w: 100000, price: 110000 }), kr('000660', { c1w: 200000, price: 150000 })];
+      const d = deckOf([imp('005930', 10)], { holdings: [{ t: '005930', nk: 'a', cls: 'kr' }, { t: '000660', nk: 'b', cls: 'kr' }],
+        purchases: [{ t: '000660', qty: 1, price: 160000, ccy: 'KRW', date: '2026-11-19' }],
+        history: [{ t: '000660', nk: 'b', out: '2026-11-18', imported: imp('000660', 10), divs: [{ t: '000660', amount: 100, ccy: 'KRW', date: '2026-11-17' }] }] });
+      const x = money(d, loadOf(st));
+      out = [x.n, x.per.map((p) => p.t), x.left, r3(x.pct)];""")
+    assert got == [1, ["005930"], [{"t": "000660", "nk": "종목000660", "why": "out"}], 10.0]

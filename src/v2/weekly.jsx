@@ -1,17 +1,21 @@
 // ================= 이번 주 정리 card on 홈 (v19.6e, docs/tasks/v19.6-records-alerts-dark.md Part E, board Weekly2) =================
 // One card per portfolio 홈 shows (home.homeBlocks: the portfolios holding something today, in store order: "the one 홈 uses",
 // v19.3 Part H), at the top of 홈 under its date line, only while the week's numbers are final (weekly.js weekState) and 홈's own
-// daily check runs (fresh or late data: never on stale or failed data, where 홈 has no portfolio blocks). Behind weekcfg.js
-// WEEKLY_ON (off until Jack approves the left-out line).
+// daily check runs on fresh data (home2.jsx: never on late data, round 2, where the week it would call 이번 주 is already the week
+// before; nor on stale or failed data, where 홈 has no portfolio blocks). Behind weekcfg.js WEEKLY_ON (off until Jack approves the
+// left-out line).
 //   hero (navy)   "{the week's first Korean trading day} ~ {pxDate}", 이번 주 정리, and for a portfolio made with 가진 종목 넣기
 //                 the rule line of its 홈 hero ("내 규칙 {n}개 중 {k}개를 지키고 있어요", the same n and k, only when 홈's hero shows it:
 //                 at least one rule checked). With two or more portfolios the portfolio's name (user text) starts it, as 홈's heroes do.
-//   tiles         내 포트폴리오 (the week's % in price red/blue, "{±won} · 코스피 {±%}") · 받은 배당 ("{won}", "{n}건") · 공시 ("{n}건",
-//                 "유상증자 {a} · 지분 변동 {b}") · 다음 주 / 다음 주 미국 일정 ("실적 발표 {n}", the first name). A tile with nothing
-//                 to show is left out; a tile whose words are not approved yet is left out too (the console says which).
+//   tiles         내 포트폴리오 (the week's % in price red/blue, "{±won} · 코스피 {±%}"; a won amount that rounds to 0 has no sign) ·
+//                 받은 배당 ("{won}", "{n}건"; only with a record counted) · 공시 ("{n}건", "유상증자 {a} · 지분 변동 {b}": only the kinds
+//                 오늘 볼 것 can show, so no 지분 변동 while look.js ROLE_OF is null) · 다음 주 / 다음 주 미국 일정 ("실적 발표 {n}", the
+//                 first name). A tile with nothing to show is left out; a tile whose words are not approved yet is left out too (the
+//                 console says which).
 //   mover         가장 많이 움직인 종목: mark, name, the week's move, and the reason line only from the same-industry rule (fell · rose).
-//   notes         the stocks left out of the week's gain (C.weekly.leftOut), US dividends without a rate (C.tax.divNoFx), and under
-//                 WEEK_NV "note" the Naver footnote (C.weekly.nvNote): each only with approved words.
+//   notes         the stocks left out of the week's gain (C.weekly.leftOut; more than LEFT_NAMES names: C.weekly.leftOutMore with
+//                 the first LEFT_NAMES), US dividends without a rate (C.tax.divNoFx), and under WEEK_NV "note" the Naver footnote
+//                 (C.weekly.nvNote): each only with approved words. "note" without its footnote's words is read as "out" (round 2).
 //   닫기          hides that portfolio's card for that week on this device (weekly.js closeWeek).
 // No card when nothing but the hero would show. No 뱁이 (numbers). Colours: tokens only (dark mode). Facts only: no forecast or advice.
 import React, { useMemo, useState } from "react";
@@ -24,10 +28,16 @@ import { signedPct } from "./deckcalc.js";
 import { isCompany } from "./stocklist.js";
 import { shownName } from "./legacy.js";
 import { weeklyModel, readClosed, closeWeek, WEEK_KEY, PREVIEW_WEEK_KEY, FILING_KINDS } from "./weekly.js";
+import { insiderTitle } from "./todaylook.jsx";
 import { WEEK_NV } from "./weekcfg.js";
 
 const W = () => C.weekly;
-const signedWon = (v) => (v > 0 ? "+" : "") + wonText(v);
+// the sign of the amount as shown (format.wonText rounds: 만원 from 1만원, else 원): "+0원" never shows (round 2)
+const signedWon = (v) => (Math.round(Math.abs(v)) > 0 && v > 0 ? "+" : "") + wonText(v);
+// names on the left-out line before "외 {n}종목" (the approved app.krOwnCloseListMore shape, OWN_LIST_MAX)
+export const LEFT_NAMES = 5;
+// The WEEK_NV mode in effect: "note" needs its footnote's words (C.weekly.nvNote); without them the rows are left out ("out").
+export const nvMode = (nv) => (nv === "note" && !W().nvNote ? "out" : nv);
 const tone = (r) => (r > 0 ? COLOR.up : r < 0 ? COLOR.down : COLOR.text2);
 const r1 = (x) => Math.round(x * 10);                       // the sign as shown at one decimal
 
@@ -43,6 +53,7 @@ export function weeklyView(m, opts = {}) {
   if (money.left.length) say.push(`left out of the week's gain: ${money.left.map((x) => `${x.t || x.nk} (${x.why})`).join(", ")}`);
   if (!money.ok) say.push("no stock's week could be worked out: no portfolio tile");
   else if (money.left.length && !L.leftOut) say.push("the line naming the stocks left out waits for Jack (C.weekly.leftOut): no portfolio tile");
+  else if (money.left.length > LEFT_NAMES && !L.leftOutMore) say.push(`${money.left.length} stocks left out: the capped line waits for Jack (C.weekly.leftOutMore): no portfolio tile`);
   else {
     const k = m.kospi && m.kospi.pct != null ? m.kospi.pct : null;
     if (k == null) say.push(`no KOSPI week (${m.kospi ? m.kospi.why : "none"})`);
@@ -50,28 +61,31 @@ export function weeklyView(m, opts = {}) {
       sub: [signedWon(money.gain), k != null ? fill(L.kospi, { pct: signedPct(k) }) : null].filter(Boolean).join(" · "),
       data: { "data-pct": Math.round(money.pct * 1000) / 1000, "data-gain": Math.round(money.gain), "data-kospi": k != null ? Math.round(k * 1000) / 1000 : "",
         "data-n": money.n, "data-left": money.left.length } });
-    if (money.left.length) notes.push({ id: "left", text: fill(L.leftOut, { n: money.left.length, names: names.join(", ") }) });
+    if (names.length > LEFT_NAMES) notes.push({ id: "left", text: fill(L.leftOutMore, { names: names.slice(0, LEFT_NAMES).join(", "), n: names.length - LEFT_NAMES }) });
+    else if (names.length) notes.push({ id: "left", text: fill(L.leftOut, { n: names.length, names: names.join(", ") }) });
     const nvNames = money.per.filter((p) => p.nv).map((p) => p.t);
-    if ((opts.nv || m.nv) === "note" && nvNames.length) {
-      if (L.nvNote) notes.push({ id: "nv", text: fill(L.nvNote, { names: nvNames.join(", ") }) });
-      else say.push(`Naver-confirmed rows used (${nvNames.join(", ")}): their footnote waits for Jack (C.weekly.nvNote)`);
-    }
+    if (m.nv === "note" && nvNames.length && L.nvNote) notes.push({ id: "nv", text: fill(L.nvNote, { names: nvNames.join(", ") }) });
   }
   // 받은 배당
-  if (m.divs.n + m.divs.noFx > 0) {
+  if (m.divs.n > 0) {
     tiles.push({ id: "div", icon: "coins", tone: "div", label: L.div, big: exactWon(m.divs.won), sub: fill(L.count, { n: m.divs.n }),
       data: { "data-won": Math.round(m.divs.won), "data-n": m.divs.n, "data-nofx": m.divs.noFx } });
-    if (m.divs.noFx > 0 && C.tax && C.tax.divNoFx) notes.push({ id: "divfx", text: fill(C.tax.divNoFx, { n: m.divs.noFx }) });
   }
+  // a US dividend of the week without a rate: named whether or not another dividend made a tile (never "0원 · 0건", round 2)
+  if (m.divs.noFx > 0 && C.tax && C.tax.divNoFx) notes.push({ id: "divfx", text: fill(C.tax.divNoFx, { n: m.divs.noFx }) });
   // 공시
   const f = m.files;
-  if (f.ok && f.n > 0) {
-    const present = FILING_KINDS.filter((k) => f.kinds[k] > 0);
+  // the insider cards 오늘 볼 것 can show (a title: look.js ROLE_OF reads the role; while it is null, none, said in the console)
+  const kinds = f.ok ? { ...f.kinds, ins: f.ins.filter((c) => insiderTitle(c)).length } : null;
+  if (f.ok && f.ins.length > kinds.ins) say.push(`${f.ins.length - kinds.ins} insider report(s) of the week not counted: the today-look page cannot show them yet (look.js ROLE_OF)`);
+  const fn = kinds ? FILING_KINDS.reduce((a, k) => a + kinds[k], 0) : 0;
+  if (f.ok && fn > 0) {
+    const present = FILING_KINDS.filter((k) => kinds[k] > 0);
     const missing = present.filter((k) => !L.kinds[k]);
     if (missing.length) say.push(`this week's filings include ${missing.join(", ")}, whose tile word waits for Jack (C.weekly.kinds): no filings tile`);
     else {
-      tiles.push({ id: "disc", icon: "file-text", tone: "disc", label: L.disc, big: fill(L.count, { n: f.n }),
-        sub: present.map((k) => fill(L.kinds[k], { n: f.kinds[k] })).join(" · "), data: { "data-n": f.n } });
+      tiles.push({ id: "disc", icon: "file-text", tone: "disc", label: L.disc, big: fill(L.count, { n: fn }),
+        sub: present.map((k) => fill(L.kinds[k], { n: kinds[k] })).join(" · "), data: { "data-n": fn } });
     }
   } else if (!f.ok && f.why !== "none" && f.why !== "noKr" && !(f.why === "disc" && opts.discWait)) say.push(`this week's filings were not checked (${f.why}): no filings tile`);
   // 다음 주
@@ -136,7 +150,7 @@ function Mover({ mv }) {
   );
 }
 
-function WeeklyCard({ block, m, v, many, onClose }) {
+function WeeklyCard({ block, m, v, many, onClose, nvSet }) {
   const { wide } = useLayout();
   const st = block.st;
   const w = m.week;
@@ -144,7 +158,7 @@ function WeeklyCard({ block, m, v, many, onClose }) {
   const kept = !!(st && st.ok && st.checked > 0 && C.pfr.kept);
   const cols = wide ? Math.min(4, Math.max(2, v.tiles.length)) : 2;
   return (
-    <section data-ui-v2="weekly" data-deck-id={block.deck.id} data-week={w.mon} data-from={w.first} data-to={w.to} data-nv={m.nv}
+    <section data-ui-v2="weekly" data-deck-id={block.deck.id} data-week={w.mon} data-from={w.first} data-to={w.to} data-nv={m.nv} data-nv-set={nvSet}
       aria-labelledby={titleId} style={{ marginTop: SPACE(4) }}>
       <div data-ui-v2="weekly-hero" style={{ background: COLOR.primary, color: COLOR.onPrimary, borderRadius: RADIUS.lg + 2, padding: SPACE(4) + 2 }}>
         {many && <p data-ui-v2="weekly-name" style={tx(SIZE.xs, WEIGHT.bold, COLOR.onPrimary, { marginBottom: SPACE(1) })}>{shownName(block.deck.name)}</p>}
@@ -175,7 +189,9 @@ function WeeklyCard({ block, m, v, many, onClose }) {
 export function WeeklyCards({ blocks, load, ctx, disc, nv = WEEK_NV }) {
   const { preview } = useMode();
   const key = preview ? PREVIEW_WEEK_KEY : WEEK_KEY;
-  const models = useMemo(() => blocks.map((b) => ({ b, m: weeklyModel({ deck: b.deck, load, ctx, disc, nv }) })), [blocks, load, ctx, disc, nv]);
+  const mode = nvMode(nv);
+  if (mode !== nv) weeklySay("all", [`WEEK_NV "${nv}" without its footnote's words (C.weekly.nvNote): read as "${mode}"`]);
+  const models = useMemo(() => blocks.map((b) => ({ b, m: weeklyModel({ deck: b.deck, load, ctx, disc, nv: mode }) })), [blocks, load, ctx, disc, mode]);
   const discWait = !!disc && disc.status !== "ok" && disc.status !== "fail" && disc.status !== "none";
   const firstOk = models.find((x) => x.m.ok);
   const mon = firstOk ? firstOk.m.week.mon : null;
@@ -195,7 +211,7 @@ export function WeeklyCards({ blocks, load, ctx, disc, nv = WEEK_NV }) {
       setGone((g) => new Set([...g, m.week.mon + "|" + b.deck.id]));
       setBump((x) => x + 1);
     };
-    out.push(<WeeklyCard key={b.deck.id} block={b} m={m} v={v} many={many} onClose={close} />);
+    out.push(<WeeklyCard key={b.deck.id} block={b} m={m} v={v} many={many} onClose={close} nvSet={nv} />);
   }
   return out.length ? <div data-ui-v2="weekly-cards">{out}</div> : null;
 }
