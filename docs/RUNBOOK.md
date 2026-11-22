@@ -1607,6 +1607,58 @@ documents; the next run the remaining ~75 lookups and ~60–70 documents (about 
 about 25 list calls, 10–20 lookups and 3–5 documents a run. A full-DART run with an empty cache adds up to about 275 calls
 (logged separately from the pinned estimate).
 
+## 이번 주 정리 data (v19.6e, since #PR): data.json `c1w`, `wkFrom`, `usWkFrom`
+
+What the daily run writes (`fetch_data.py` `kr_week_closes`, `fetch_us`, `fetch_bonds` · `fetch_kr_funds`, then `c1w_fields` in
+`main`, after every step that drops rows and before the file is written). No new downloads and no DART calls.
+- **The week.** A market's current week is Monday–Sunday of the week holding its price date (`pxDate` for Korea, `usPxDate` for
+  the US). The week-start date is the last trading day before that Monday in the market's index bars (KOSPI, S&P 500): a Friday
+  holiday makes it Thursday, a Monday price date makes it the Friday before. `wkFrom` (Korean stocks, bonds, ETFs, gold) and
+  `usWkFrom` (US stocks) are those dates. The run checks them against `data/market_holidays.csv`: if that day is a holiday in
+  the table, or a weekday between it and the Monday is a trading day the index bars left out, or it is more than 12 days
+  (`C1W_FROM_MAX_DAYS`) before the price date, the date is written blank and every `c1w` of that market is blank (a wrong
+  week start would show a wrong weekly move). For Korea it is also blank when a final listing file exists for a day between
+  that date and the Monday.
+- **`c1w`** — each row's close on that date, from the same source as its `price`:
+  - Korean stocks: the official close (market cap ÷ listed shares) in that day's final listing file (`kr_recent_sessions`: the
+    commit after the close + 30 minutes, or the two-source rows of a backup day). The file is never an intraday or pre-market
+    one, so the week-start close is never a partial bar. When that file is missing, `wkFrom` is still written and Korean `c1w`
+    are all blank ("그날 최종본 목록 파일이 없음" in the log).
+  - US stocks: the bar of that date in the same Yahoo adjusted series `price` uses. Splits inside the week are already adjusted.
+    A dividend whose ex-date falls inside the week is adjusted too, so `price ÷ c1w − 1` includes that dividend (as `d1` does
+    on an ex-date).
+  - Bonds, ETFs and gold: the bar of `wkFrom` in the series their `price` comes from. Gold priced from the world gold price
+    (`est`) has no `c1w`.
+- **Blank (no `c1w` key)** when: the row is shown at its own older date (`pxd`, `pxc`: last confirmed close or halted; and `est`
+  gold) — `price ÷ c1w − 1` would then be a move up to that row's own date, not the week, so the screen leaves the stock out and
+  names it (Part E); the series or that day's listing has no row for that date (new listings; an earlier day is never used);
+  a Korean stock whose listed share count changed by more than 20% between that day's file and today (`C1W_SHR_PCT`, [Q9]:
+  Korean official closes are not split-adjusted; exactly 20% is kept; an unknown count also blanks); a Korean stock whose KRX
+  base price was reset between that day and the price date (`kr_ref_links` "break": split, merge, capital reduction, 권리락).
+  The last rule is stricter than the spec: in a 무상증자 the price drops on the 권리락 day but the new shares are listed weeks
+  later, so the share count alone does not catch that week (the same case `pin_why_not` already guards, 코나아이 1.5×). It is
+  one switch, `fetch_data.C1W_BASE_BLANK`.
+- **Log** (every run; "!!" when a market's week date or listing file could not be used, or fewer than 95% of the rows priced at the
+  market's date have `c1w`, or a bond/ETF/gold row lacks one):
+  - "c1w (이번 주 정리 · 그 시장의 이번 주 앞 마지막 거래일 종가): 국내 k / n (wkFrom …) · 미국 k / n (usWkFrom …) · 채권·ETF·금 k / n"
+  - "c1w 국내 빈 칸 b: {reason} {count} · …" (one line per market with blanks; reasons: week, own date, no close that day, KRX
+    base reset, share count, gold estimate, unreadable)
+  - "c1w 주식 수 20% 넘게 바뀌어 비움: n / N — code name (then → now주) …" and "c1w KRX 기준가가 그 사이 새로 정해져 비움 …: n / N — …"
+    (both printed every run, also with 0).
+  If this step crashes, every `c1w` is removed, both dates are written blank, the run logs "!! c1w 단계가 오류로 멈췄어요" and
+  publishes as usual.
+
+Gate row **이번 주 시작 종가 (c1w · wkFrom · usWkFrom · 경고만)** (`validate_data.check_v196e`, after the v19.6b rows). It only
+**warns** (Jack's yes is needed before any of it may stop a publish; to be asked with the screens PR), and a crash of the check
+itself is a warning too. It warns when: the file has none of the three fields (a file from before #PR, e.g. the live site right
+after the merge); `wkFrom` / `usWkFrom` is missing, blank, not a real date, not before the Monday of the price date's week, more
+than 12 days before the price date, on a weekend, or different from the gate's own count from the holiday table or from
+`macro.json` `idxHist`; a `c1w` is not a positive finite number, sits on a row shown at its own date, or has no market date;
+fewer than 95% (`C1W_COVER_MIN`) of the Korean or US rows priced at the market's date have `c1w`; a bond/ETF/gold row lacks it;
+`price ÷ c1w` is outside 0.5–2.0 (`C1W_RATIO_BAND`: down by more than half or up by more than double in a week — it can be real,
+the row names the stocks to check); a Korean ratio is outside the daily price limit compounded over the week's trading days
+(30%, KONEX 15% — impossible without a base reset, so the blanking above missed one).
+
 ## US stocks added by hand (EXTRA_US)
 
 The US list is the S&P 500 (FinanceDataReader's list), Nasdaq's first 400 and `EXTRA_US` in `fetch_data.py`, every ticker in
