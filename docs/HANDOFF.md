@@ -15,12 +15,13 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 확인했어요 writes the new store part `seen`, matched by stock, kind and numbers on the same filing or board date, so a correction with
 other numbers shows again; marks older than 120 days pruned on the next mark), 관심 종목 조건, 국민연금 (7 days, one decimal),
 다가오는 일정 (US `ed` · `xd`, today to +7 days, 5 rows). 지분 변동 cards (held + watched, 7 days, |q| × today's close ≥ 1억원)
-are built but off (`look.js` `ROLE_OF` null): their title needs `role`, and
-`tests/test_v196b_answers.py::test_the_role_field_is_not_read_by_either_app_yet` pins that no screen reads it. 홈 now
-loads disc.json when a Korean stock is held or watched. Not built, waiting for Jack: 공시 보기 (an existing test,
-`tests/test_v2_app.py::test_pages_never_load_fixtures_or_other_sites`, keeps DART links to the 공시 tab), cards for 유무상증자 (`bonus`),
-기타주식 (`cls` other) and two-class (`n2` · `p2`) rows, and the insider title for role 임원·주요주주 or blank (`look.insBoth`,
-proposed "임원·주요주주 지분 변동"); #145's open question 3 (old decisions corrected recently): until Jack answers, a correction filed 30 or more days after its
+were built off; **switched on 2026-11-22** (branch `claude/v19.6b-switch-on`, Jack's "1–5: all yes"): `look.js` `ROLE_OF` reads
+`role` (the only read #145's role test allows), titles 임원 / 주요주주 / `look.insBoth` "임원·주요주주 지분 변동" (both or blank), no card
+for a stock shown at its last confirmed close (`pxd`), and 공시 보기 on every 확인 필요 card (`routes.dartFilingUrl`, new tab,
+noopener; the DART-link test allows this one place besides the 공시 tab). 홈 now
+loads disc.json when a Korean stock is held or watched. Still left out and named in the console until the design chat words them:
+cards for 유무상증자 (`bonus`), 기타주식 (`cls` other) and two-class (`n2` · `p2`) rows and rights issues by other methods; #145's open
+question 3 (old decisions corrected recently), answered by Jack on 11-22 (keep them off): a correction filed 30 or more days after its
 board date, or one with no readable board date, is left out and named in the console (`look.js` `OLD_CORRECTIONS` false; 48 of
 the 116 rows of the last 30 days on the 11-21 file, e.g. MSDI's 2026-05-12 decision filed again on 11-20).
 
