@@ -2788,7 +2788,7 @@ def kr_own_close_final(kr, src, prev, days, krs=None, drop_out=None):
 # 날짜(pxd)로 · 없으면 빠져요. 이 단계의 어떤 오류도 발행을 멈추지 않아요 (그때는 예전 그대로).
 # 2026-11-22 (Jack): 새 종목(지난 발행본의 미국 종목에도 usSrc.own.aged 에도 없는 티커)은 이 단계 앞에서 빠져요 — 미국 기준일 종가가 확인될 때까지
 # 넣지 않아요 (us_new_wait_step · usSrc.newWait). 그래서 drop 'none' 은 기다리지 않는 새 티커에만 남아요: 지난 발행본이 일부러 뺀 티커
-# (usLeftOut — 우선주 · 한국 종목 상장분 · 깨진 봉) · 지난 발행본을 읽지 못했거나 미국 종목 행이 없는 날 · 그 단계가 오류로 멈춘 날.
+# (usLeftOut 의 우선주 · 한국 종목 상장분) · 지난 발행본을 읽지 못했거나 미국 종목 행이 없는 날 · 그 단계가 오류로 멈춘 날.
 from validate_data import US_OWN_CLOSE_MAX_DAYS, US_OWN_WHY, us_own_close_bad
 US_OWN_KEYS = ("price", "vol", "beta", "al", "betaSE", "betaN", "lo", "hi", "sh", "mdd", "hit", "mom")
 US_OWN_DROP_KO = {"none": "지난 발행본에 없음 (예전처럼 야후의 마지막 봉 · 없으면 빠짐)",
@@ -3239,7 +3239,7 @@ def us_own_close_drop_all(us, umeta, err):
 # 종가가 확인되는 첫 실행에 다른 종목처럼 들어와요. 기다리는 동안은 넣을 수 없어요 — 앞선 날에 그 종목을 가졌던 사람(티커가 하루 빠졌다 돌아온
 # 경우: LGND · SNDK 는 11-06 ~ 11-18 의 발행본에 모두 있었고 11-19 에 빠졌다가 (야후가 SNDK 이력을 3일만 줌) 11-20 에 돌아왔어요)은 지난
 # 발행본에서 이미 그 종목이 없는 것을 봤고, 오늘도 같은 줄('이 종목의 데이터를 찾지 못했어요.')만 보고 숫자는 보지 않아요 (틀린 숫자가 없어요).
-# - 지난 발행본이 일부러 뺀 티커 (data.json usLeftOut: 우선주 · 한국 종목의 미국 상장분 · 깨진 봉 …) 는 기다리지 않아요: 예전 길 그대로 가서 뒤 단계가
+# - 지난 발행본이 일부러 뺀 티커 중 우선주 · 한국 종목의 미국 상장분 (data.json usLeftOut.preferred · krListing) 은 기다리지 않아요: 예전 길 그대로 가서 뒤 단계가
 #   예전처럼 빼고 usLeftOut 에 적어요 (기다리게 하면 그날 usLeftOut 이 비고 다음 날 '새로 들어옴' 으로 적혀요 · 리뷰 2026-11-22).
 # - 야후가 가격을 하나도 주지 않은 새 티커(empty · err)와 이력 60일 미만 종목은 예전에도 넣지 않았어요 (그대로 · 까닭도 그대로 — usListSym.noPx 가
 #   그 글로 골라요).
@@ -3253,9 +3253,9 @@ def us_new_wait(prev, nocl, out=()):
     """새로 들어온 미국 종목 중 미국 기준일 종가를 기다릴 티커 (2026-11-22 · Jack · 순수 함수).
     prev: 지난 발행본 data.json · nocl: fetch_us 의 {티커: 'bar' · 'empty' · 'err'} (미국 기준일 종가가 야후에 없는 종목) · out: 오늘 미국 기록 (로그용).
     반환 {"wait": 기다릴 티커 (정렬) — nocl 이 'bar' 이고 지난 발행본의 미국 종목 행(cls us · 펀드 아님)에도 usSrc.own.aged 에도 usLeftOut 에도 없는 티커,
-          "left": nocl 이 'bar' 인데 지난 발행본이 일부러 뺀 티커 (usLeftOut 의 목록 칸 모두 — 우선주 · 한국 종목 상장분 · 깨진 봉 …: 기다리지 않고
+          "left": nocl 이 'bar' 인데 지난 발행본이 일부러 뺀 티커 (usLeftOut.preferred · krListing 만 — 우선주 · 한국 종목 상장분: 기다리지 않고
                   예전 길로 · 로그만),
-          "joined": 지난 발행본이 모르던 티커 중 미국 기준일 종가가 있어 오늘 들어가는 티커 (정렬 · 로그만 · usLeftOut 의 티커는 빼요:
+          "joined": 지난 발행본이 모르던 티커 중 미국 기준일 종가가 있어 오늘 들어가는 티커 (정렬 · 로그만 · usLeftOut.preferred · krListing 의 티커는 빼요:
                     우선주 · 한국 종목 상장분처럼 날마다 뒤에서 빠지는 티커가 날마다 '새로 들어옴' 으로 적히지 않게),
           "off": None 또는 지난 발행본을 쓸 수 없는 까닭 (그러면 나머지는 비어요 — 예전 그대로)}."""
     if not isinstance(prev, dict):

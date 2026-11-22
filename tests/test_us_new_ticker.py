@@ -220,7 +220,7 @@ def test_no_previous_publish_keeps_todays_behaviour(tmp_path, monkeypatch):
     assert out == out0 and meta == meta0
 
 
-def test_left_out_tickers_become_newwait_on_yahoo_blank(tmp_path, monkeypatch):
+def test_left_out_tickers_do_not_wait_on_yahoo_blank(tmp_path, monkeypatch):
     """리뷰 A (2026-11-22): 야후가 모든 종가를 비운 날, 지난 발행본이 일부러 뺀 티커 (SKHY 한국 종목 상장분 · GOOGM 우선주) 는 기다리지 않아요 —
     그날의 usLeftOut 이 예전처럼 채워지고, newWait 에도 '새로 들어온' 로그에도 없어요 (새 단계를 끈 결과와 같아요)."""
     syms = BASE + ["SKHY", "GOOGM"]
