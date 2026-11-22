@@ -3270,7 +3270,9 @@ def us_new_wait(prev, nocl, out=()):
     aged = own.get("aged") if isinstance(own, dict) else None
     known = have | ({str(a["t"]) for a in aged if isinstance(a, dict) and a.get("t")} if isinstance(aged, list) else set())
     lo = prev.get("usLeftOut") if isinstance(prev.get("usLeftOut"), dict) else {}
-    left = {str(t) for v in lo.values() if isinstance(v, list) for t in v if isinstance(t, (str, int))}
+    # 검증 리뷰 (11-22): clean_us_list 가 매일 빼는 목록 (우선주 · 국내 상장) 만 — badBar 는 이 실행에서 'bar' 가 될 수 없고, 앞으로 생길 목록이
+    # 저절로 예외가 되지 않게 이름을 적어요 (그 밖의 지난 발행본에 없는 종목은 Jack 의 규칙대로 기다려요)
+    left = {str(t) for k in ("preferred", "krListing") for t in (lo.get(k) if isinstance(lo.get(k), list) else []) if isinstance(t, (str, int))}
     nocl = nocl if isinstance(nocl, dict) else {}
     new = sorted(str(t) for t, w in nocl.items() if w == "bar" and str(t) not in known)
     joined = sorted({str(r["t"]) for r in out if isinstance(r, dict) and r.get("t") and str(r["t"]) not in known and r["t"] not in nocl

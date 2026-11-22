@@ -2512,7 +2512,8 @@ def check_us_new_wait(rep, data, pdata):
         rep.add(US_NEW_WAIT_ROW, True, "없음", rule)
         return
     pnw, _pok = us_new_wait_list(pdata) if isinstance(pdata, dict) else (None, True)
-    again = [t for t in nw if t in set(pnw or [])]
+    pset = set(pnw or [])
+    again = [t for t in nw if t in pset]
     listed = {s.get("t") for s in us_stocks(data)}
     inside = [t for t in nw if t in listed]
     parts = [f"{len(nw)}종목: " + ", ".join(nw[:US_OWN_SHOW]) + (f" 외 {len(nw) - US_OWN_SHOW}종목" if len(nw) > US_OWN_SHOW else "")]

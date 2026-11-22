@@ -738,7 +738,7 @@ publish, Korean data included.
   **"Nobody can hold it" is not always true (review, 2026-11-22):** a ticker can drop out of one publish and come back. LGND and SNDK
   were in every `main` publish from 11-06 to 11-18, missing on 11-19 (Yahoo sent SNDK only 2–3 days of history: `spGone` "가격 이력
   3일") and back on 11-20. Safety still holds: a waiting ticker was also missing from the previous publish, so anyone holding it from
-  an earlier day already saw it missing there and sees the same line again ("이 종목의 데이터를 찾지 못했어요.") and no number. It can't
+  an earlier day: the previous publish already showed it missing, and it shows the same line again ("이 종목의 데이터를 찾지 못했어요.") and no number. It can't
   be added while it waits.
   - **Rule (`fetch_data.us_new_wait`, step `us_new_wait_step` in `fetch_us`, right before the carry step):** a ticker on today's US list
     (S&P 500, NASDAQ top 400 and `EXTRA_US`, its ETFs included) that is in neither the previous publish's US stock rows (`cls` us, not a
@@ -748,13 +748,13 @@ publish, Korean data included.
     date. Recorded in `data.json` `usSrc.newWait` (sorted tickers; the key is there only when something waits, so a normal day's `usSrc` and US
     rows are unchanged; `units.usSrc` describes it), and its reason `새로 들어온 종목 · 확인된 종가를 기다려요 (…)` goes into `usExtraMissing` (a hand-added stock: the gate's
     EXTRA_US row warns, not fails), `usListSym.missing` (BF-B: warns) and `usListSym.spGone` (an S&P 500 ticker: named only).
-  - **Tickers the previous publish left out on purpose don't wait (review, 2026-11-22):** a ticker in any list of the previous
-    publish's `usLeftOut` (`preferred`, `krListing`, `badBar`, …; e.g. SKHY, GOOGM, GOOGN, STRC every day) takes its old path: the later
+  - **Tickers the previous publish left out on purpose don't wait (review, 2026-11-22):** a ticker in the previous publish's
+    `usLeftOut.preferred` or `usLeftOut.krListing` (the lists `clean_us_list` removes every day; e.g. SKHY, GOOGM, GOOGN, STRC) takes its old path: the later
     steps leave it out again and record it in that day's `usLeftOut` as before (if it waited, that day's `usLeftOut` would come out empty
     and the next day would log it as joining). Log: `· 지난 발행본이 일부러 뺀 티커(usLeftOut) 중 미국 기준일 {date} 종가가 야후에 없는
-    {n}: names — 기다리지 않고 예전 길 그대로 …`. A `badBar` ticker therefore goes out as before (Yahoo's own older bar, counted in
-    `미국 d1 채움` as on `main`).
-  - **Known effect:** "new" means "not in the previous publish's US rows, aged list or `usLeftOut`". A ticker that was missing from the
+    {n}: names — 기다리지 않고 예전 길 그대로 …`. Only these two lists: a ticker the previous publish left out as `badBar` (or in any
+    list added later) was not in that publish, so it waits like any new ticker (verification review, 2026-11-22).
+  - **Known effect:** "new" means "not in the previous publish's US rows, aged list or `usLeftOut.preferred` / `krListing`". A ticker that was missing from the
     previous publish for any one-day reason is new by this rule, and waits if Yahoo has no close for it today, where `main` would have
     published Yahoo's older bar with its own date: under 60 days of history that day (SNDK on 11-19), dropped by the carry check
     (`us_own_close_final`, `us_own_close_drop_all`) or the late split check (`us_own_split_late`), or Yahoo sending nothing for a ticker
@@ -851,7 +851,7 @@ publish, Korean data included.
   publish takes Yahoo's closes again. A wrong carry (not the previous publish's price or date) means the carry step broke: tell Jack.
 - **On a failure:** "마지막 확인 종가로 싣지 못한 종목 > 5" means many US stocks had no Yahoo close **and** no previous close to carry (a
   first run without a previous publish, halted stocks, splits after the carried close, tickers the previous publish left out on purpose
-  (`usLeftOut`, e.g. a `badBar`), or a broken carry step; since #? other new tickers wait instead of counting here). The previous publish stays live. Never raise N to get a publish out; a different N needs Jack's yes with
+  (`usLeftOut.preferred` / `krListing`), or a broken carry step; since #? other new tickers wait instead of counting here). The previous publish stays live. Never raise N to get a publish out; a different N needs Jack's yes with
   new evidence.
 - **Check on the site:** search a carried ticker (the log names them): its company page shows its date and Jack's line; a portfolio holding it
   shows "{티커}: 오늘 종가를 …". 005930 and 현대차 unchanged.

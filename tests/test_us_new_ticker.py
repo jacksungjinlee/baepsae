@@ -48,10 +48,11 @@ def test_the_rule_waits_only_for_tickers_the_previous_publish_did_not_know():
     out = [us("AAPL", d1=None, pxd=D18), us("NEW", d1=None, pxd=D18), us("OLD", d1=None, pxd=D18), us("JOIN"), us("PFD"), us("MSFT")]
     r = F.us_new_wait(prev, nocl, out)
     assert r == {"wait": ["NEW"], "left": [], "joined": ["JOIN"], "off": None}, r   # 지난 발행본의 종목 · 잠시 뺀 종목은 #165 · 가격이 없는 새 티커는 예전 그대로
-    # 리뷰 (2026-11-22): 지난 발행본이 일부러 뺀 티커 (usLeftOut 의 어느 목록이든) 는 기다리지 않아요 — 예전 길 그대로
+    # 리뷰 (2026-11-22): clean_us_list 가 매일 빼는 티커 (usLeftOut.preferred · krListing) 만 기다리지 않아요 — 예전 길 그대로.
+    # 검증 리뷰 (11-22): badBar 나 앞으로 생길 목록은 예외가 아니에요 (Jack 의 규칙대로 기다려요)
     lo = {**prev, "usLeftOut": {"preferred": ["PFD"], "krListing": ["SKHY"], "badBar": ["XBAD"], "later": ["ODD"]}}
     r2 = F.us_new_wait(lo, {"NEW": "bar", "PFD": "bar", "SKHY": "bar", "XBAD": "bar", "ODD": "bar"}, out)
-    assert r2["wait"] == ["NEW"] and r2["left"] == ["ODD", "PFD", "SKHY", "XBAD"], r2
+    assert r2["wait"] == ["NEW", "ODD", "XBAD"] and r2["left"] == ["PFD", "SKHY"], r2
     for bad in (None, [], {"stocks": None}, {"stocks": [{"t": "069500", "cls": "kr"}]}, {"stocks": [us("X", fund=True)]}):
         got = F.us_new_wait(bad, {"NEW": "bar"}, out)
         assert got["wait"] == [] and got["left"] == [] and got["joined"] == [] and got["off"], (bad, got)   # 무엇이 새로 들어왔는지 알 수 없어요 → 예전 그대로
@@ -234,16 +235,16 @@ def test_left_out_tickers_become_newwait_on_yahoo_blank(tmp_path, monkeypatch):
     assert json.dumps([out, meta], sort_keys=True) == json.dumps([out0, meta0], sort_keys=True)
 
 
-def test_badbar_yesterday_takes_its_old_path(tmp_path, monkeypatch):
-    """리뷰 A (2026-11-22): 지난 발행본이 깨진 봉으로 뺀 티커 (usLeftOut.badBar) 는 오늘 기준일 종가가 없어도 기다리지 않고 예전 길 (야후의 더 오래된
-    봉을 자기 날짜로) — main 과 같아요."""
+def test_badbar_yesterday_waits_like_any_new_ticker(tmp_path, monkeypatch):
+    """검증 리뷰 (2026-11-22): 지난 발행본이 깨진 봉으로 뺀 티커 (usLeftOut.badBar) 는 지난 발행본에 없었어요 — 오늘 기준일 종가가 없으면 다른 새 티커처럼
+    기다려요 (예전처럼 야후의 더 오래된 봉으로 실리면 '미국 d1 채움' 의 5 에 세어져 Jack 의 규칙과 어긋나요). 종가가 생기면 그날 들어와요."""
     syms = BASE + ["XBAD"]
     kw = dict(prev_t=BASE, blank={"XBAD"}, prev_extra={"usLeftOut": {"preferred": [], "krListing": [], "badBar": ["XBAD"]}})
     out, meta, _l, _p = _run(tmp_path, monkeypatch, syms, tag="a", **kw)
-    x = {r["t"]: r for r in out}["XBAD"]
-    assert x["pxd"] == D18 and "pxc" not in x and "newWait" not in meta["usSrc"]
-    out0, meta0, _l0, _p0 = _run(tmp_path, monkeypatch, syms, tag="b", step=False, **kw)
-    assert json.dumps([out, meta], sort_keys=True) == json.dumps([out0, meta0], sort_keys=True)
+    assert "XBAD" not in {r["t"] for r in out} and meta["usSrc"].get("newWait") == ["XBAD"]
+    out1, meta1, _l1, _p1 = _run(tmp_path, monkeypatch, syms, tag="c", prev_t=BASE,
+                                 prev_extra={"usLeftOut": {"preferred": [], "krListing": [], "badBar": ["XBAD"]}})
+    assert "XBAD" in {r["t"] for r in out1} and "newWait" not in meta1["usSrc"]
 
 
 def test_a_normal_day_is_the_same_as_before(tmp_path, monkeypatch):
