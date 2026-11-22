@@ -61,6 +61,7 @@ import math
 import os
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -13790,7 +13791,7 @@ C1W_WHY_KO = {"week": "그 주 날짜 · 그날 목록 파일을 쓸 수 없음 
               "div": "그 주의 배당락을 실제 종가로 되돌리지 못함", "est": "금현물 추정 가격", "bad": "값을 읽을 수 없음"}
 C1W_WEEK_KO = {"noPx": "기준일 없음", "noDay": "그 주 월요일 앞 거래일이 지수 일봉에 없음", "weekend": "지수 일봉의 그날이 주말",
                "far": f"지수 일봉의 그 주 앞 마지막 날이 기준일보다 {C1W_FROM_MAX_DAYS}일 넘게 앞 (거래일이 빠졌어요)",
-               "file": "그날 최종본 목록 파일도 그날 지난 발행본도 없음 (최종본이 아니었거나 받지 못함 · 한국 주식만 빈 칸)",
+               "file": "그날 최종본 목록 파일이 없음 (최종본이 아니었거나 받지 못함 · 한국 주식만 빈 칸)",
                "later": "그날과 그 주 월요일 사이에 최종본 목록 파일이 있음 (지수 일봉이 거래일을 빠뜨렸어요)",
                "table": "휴장일 표와 맞지 않음 (지수 일봉이 빠뜨린 거래일 · 휴장일의 봉)",
                "bars": f"그날과 그 주 월요일 사이에 봉이 있는 종목이 {C1W_US_BARS_MAX}개를 넘음 (S&P 500 일봉이 거래일을 빠뜨렸어요)",
@@ -13993,7 +13994,7 @@ def kr_c1w_rescue(px_date, wk, trade_days, sessions, listing, nonfinal=None, pre
     반환: {코드: (how, detail)} — how 'krx' · 'naver' (실어요 · naver 의 detail 은 중앙값 차이) · 'base' (그 사이 기준가 재설정 — 비워요) ·
     'blank' (detail = C1W_LINK_WHY_KO 의 키 — 비워요).
     5차 (Jack, 2026-11-22): pub — 지난 발행본 {날짜: c1w_pub_rows} (c1w_pub_step · None 이면 예전 그대로). 주면 (빈 dict 여도):
-    · 그날 발행본의 종가를 그날 종가로 (prev 도 지난 발행본으로 셈 · 그 기준일이 pub 에 없을 때만 더해요);
+    · 그날 발행본의 종가를 그날 종가로 (거래 없는 날 nt 의 종가도 · prev 도 지난 발행본으로 셈 · 그 기준일이 pub 에 없을 때만 더해요);
     · 그날 발행본이 없는 날 D 는 다음 거래일 N 발행본의 d1 (N 종가 ÷ D 종가 − 1 · 소수 둘째 자리 %) 로 D 종가의 범위 (±C1W_PUB_D1_HALF %p · 1원 더) —
       N 의 KRX 기준가가 그 안이면 'ok', 밖이면 'break'. D 종가를 다른 자료로도 알면 그 범위 안이어야 해요 (아니면 conflict);
     · 앞 거래일 종가가 지난 발행본에서만 온 날이 하나라도 있으면 how 'pub' (아니면 'krx');
@@ -14033,8 +14034,8 @@ def kr_c1w_rescue(px_date, wk, trade_days, sessions, listing, nonfinal=None, pre
         d = _c1w_day(iso)
         if d not in days or d >= px_date or not isinstance(p, dict):
             continue
-        for c, v in (p.get("close") or {}).items():
-            add(close, d, str(c), v, mine=True)
+        for c, v in list((p.get("close") or {}).items()) + list((p.get("nt") or {}).items()):
+            add(close, d, str(c), v, mine=True)                   # 2차 리뷰 S1: 거래 없는 날의 공식 종가 (= 그날 기준가) 도 연결 확인에
         dp = prevd.get(d)
         if dp is None:
             continue
@@ -14182,63 +14183,91 @@ def kr_c1w_rescue_step(kr_wk, px_date, trade_days, sessions, listing, nonfinal, 
 #    day. Every close we've published since the outage was confirmed by two sources. Use Naver only for a stock missing from our own data,
 #    and then with the (c) footnote … Leave a stock out only if neither exists."
 #    그 주에 최종본 목록 파일이 없는 날이 있을 때만 (그 주 앞 마지막 거래일 · 그 사이 거래일) data 브랜치의 지난 발행본들을 읽어요. 기준일(pxDate)
-#    마다 그날의 마지막 발행본 · 자기 가격 날짜(pxd) · 거래 없음(noTrade) 행은 빼고 · 가격 출처가 공식 종가 목록이 아닌 발행본은 쓰지 않아요
+#    마다 그날의 마지막 발행본 (되돌린 발행본은 빼요 — 아래) · 자기 가격 날짜(pxd) 행은 빼고 · 가격 출처가 공식 종가 목록이 아닌 발행본은 쓰지 않아요
 #    (kr_prev_pub_closes 와 같은 규칙). 그 발행본들의 종가는 모두 1차 출처 최종본이거나 두 출처 (다음 × 야후) 가 원 단위까지 같은 값이에요.
-#    - A (KRX 기준가로 날마다) 의 '앞 거래일 종가' 로 써요 (how 'pub' · 정확). 발행본이 없는 날 (11-17) 은 다음 거래일 발행본의 d1 (그날 종가 ÷
-#      앞 거래일 종가 − 1 · 소수 둘째 자리 %) 로 앞 날 종가의 범위를 알아요 (반올림 ±0.005%p · 그 위에 1원) — 실제 11-18 발행본: 2,431 / 2,431 종목의
-#      11-18 KRX 기준가 (장중 파일) 가 그 범위 안 · 범위 폭은 높은 값 종목도 0.01% 정도라 그보다 작은 재설정만 놓칠 수 있어요 (주간 움직임에 그만큼).
+#    - A (KRX 기준가로 날마다) 의 '앞 거래일 종가' 로 써요 (how 'pub' · 정확). 거래 없는 날 (noTrade) 의 공식 종가는 그날 KRX 기준가와 같아
+#      연결 확인에는 써요 (2차 리뷰 S1 · 금양 11-19) — 그 주 앞 마지막 거래일의 c1w 값으로는 쓰지 않아요.
+#    - 발행본이 없는 날 (11-17) 은 다음 거래일 발행본의 d1 (그날 종가 ÷ 앞 거래일 종가 − 1 · 소수 둘째 자리 %) 로 앞 날 종가의 범위를 알아요
+#      (반올림 ±0.005%p · 그 위에 1원) — 실제 11-18 발행본: 2,431 / 2,431 종목의 11-18 KRX 기준가 (장중 파일) 가 그 범위 안. 놓칠 수 있는 것: 그
+#      범위보다 작은 재설정 (0.01% 와 1 ~ 2원 중 큰 쪽) — 주간 움직임이 그만큼 틀려요. 그 d1 의 앞 날 종가는 다음 일봉 × 야후 (다음 일봉은 지난 날을
+#      재설정으로 고치지 않아요 — 실제 응답 tests/fixtures/kr_two_source/daum_days.json: 유니온머티리얼 11-16 의 5:1 병합 뒤 받은 일봉에서도 11-13
+#      까지 746원 그대로 · 야후는 3,730 으로 고쳐 둬서 두 출처가 달라 그날은 확인되지 않아요 · RUNBOOK).
 #    - 그 주 앞 마지막 거래일에 최종본 목록 파일이 없으면 그날 발행본의 종가 · 상장주식수가 c1w 재료예요 (예전엔 한국 주식 모두 빈 칸).
 #    - 같은 날 발행본의 종가 (· d1 범위) 와 최종본 목록 파일 · 다음 보관본의 종가가 1원 넘게 다르면 그 종목은 비워요 (conflict · pubDiff · 크게).
 #    - 네이버 (B) 는 지난 발행본에 없는 종목만 (그 종목의 앞 거래일 종가를 어디서도 모르는 날이 있을 때) · 그런 행은 c1wv 'nv' 그대로 (각주는 화면).
+#      기준일의 연결은 지금처럼 A 로만 (네이버는 가장 최근 날에 늦을 수 있어요 · pxLink) — 기준일 앞 날 발행본에 없는 종목은 비워요.
 #    읽는 법: 임시 빈 저장소 (작업 폴더의 .git 은 건드리지 않아요 · 끝나면 지워요) 에 data 브랜치의 커밋 · 트리만 받고 (--filter=blob:none
 #    --depth C1W_PUB_DEPTH · 수백 KB) data.json 은 필요한 커밋만 받아요 (하나 약 0.5MB · 새것부터 · 원하는 날을 다 찾거나 그보다 앞 기준일의
-#    발행본이 나오면 멈춰요). 공개 저장소라 토큰 없이 받아요 (already_published.py 와 같아요). 어떤 실패도 실행을 멈추지 않아요: 크게 남기고 오늘
-#    받은 자료만으로 (4차 그대로).
+#    발행본이 나오면 멈춰요). 공개 저장소라 토큰 없이 받아요 (already_published.py 와 같아요 · git 에는 최소한의 환경만 · 비밀 값은 넘기지 않아요).
+#    시간: 전체 C1W_PUB_DEADLINE 초 · git 한 번이라도 시간이 넘으면 거기서 통째로 멈춰요 (2차 리뷰 M1 · 프로세스 그룹째 끝내요). 어떤 실패도 실행을
+#    멈추지 않아요: 크게 남기고 오늘 받은 자료만으로 (4차 그대로 — pub None).
 C1W_PUB_BRANCH = "data"
 C1W_PUB_DEPTH = 150           # 받을 커밋 수 (그 주 앞 마지막 거래일 ~ 기준일은 많아야 C1W_FROM_MAX_DAYS 일 · 사고 날엔 하루 8번까지 발행했어요)
-C1W_PUB_MAX_READ = 40         # 읽을 발행본(data.json) 수 상한 (하나 약 0.5MB)
-C1W_PUB_TIMEOUT = 120         # git 한 번의 초
+C1W_PUB_MAX_READ = 80         # 읽을 발행본(data.json) 수 상한 (하나 약 0.5MB · 1초 안팎 — 전체 시간 상한 안) · 닿으면 로그에 크게
+C1W_PUB_TIMEOUT = 120         # git 한 번의 초 (남은 전체 시간보다 길지 않게)
+C1W_PUB_DEADLINE = 180        # 지난 발행본 읽기 전체의 초 — 넘으면 거기서 멈추고 오늘 받은 자료만으로 (아침 실행이 이만큼보다 늦어지지 않게)
+C1W_PUB_GIT_CFG = ("-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=30",     # 30초 동안 1KB/s 아래면 git 이 스스로 멈춰요
+                   "-c", "credential.helper=", "-c", "core.askPass=")                # 자격 증명을 찾거나 묻지 않아요
+C1W_PUB_ENV_KEEP = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY",
+                    "no_proxy", "SSL_CERT_FILE", "SSL_CERT_DIR", "GIT_SSL_CAINFO")    # git 에 넘기는 환경 (망 · 인증서 설정만 · API 키 없음)
 C1W_PUB_D1_HALF = 0.005 + 1e-9    # 발행한 d1 은 소수 둘째 자리 (%) 로 반올림 — 그 반 (부동소수점 끝자리만큼 더)
-C1W_PUB_FAIL_KO = {"url": "저장소 주소를 모름", "git": "git 을 실행하지 못함", "fetch": "data 브랜치를 받지 못함",
-                   "log": "커밋 목록을 읽지 못함", "err": "읽다가 멈춤"}
+C1W_PUB_FAIL_KO = {"url": "저장소 주소를 모름 (https 주소만 써요)", "git": "git 을 실행하지 못함", "fetch": "data 브랜치를 받지 못함",
+                   "log": "커밋 목록을 읽지 못함", "timeout": "시간 초과 — 거기서 멈춤", "err": "읽다가 멈춤"}
 C1W_PUB_BAD_KO = {"read": "data.json 을 받지 못함", "json": "data.json 을 읽을 수 없음", "none": "data.json 없음", "day": "pxDate 없음",
                   "src": "가격 출처가 공식 종가 목록이 아님 (지난 data.json 으로 만든 목록 등)"}
 C1W_PUB_NEED_KO = {"file": "그 주 앞 마지막 거래일에 최종본 목록 파일이 없어요", "gap": "그 주에 최종본 목록 파일이 없는 날이 있어요"}
+C1W_PUB_STOP_KO = {"all": "원하는 날을 다 찾음", "older": "그보다 앞 기준일의 발행본에 닿음", "time": "그 주 앞 날의 커밋에 닿음",
+                   "cap": f"읽는 수 상한 {C1W_PUB_MAX_READ}개에 닿음", "end": "받은 커밋 끝"}
+C1W_PUB_FILE_KO = {"none": "그날 지난 발행본도 없음", "unusable": "그날 지난 발행본은 쓸 수 없음 (가격 출처)",
+                   "fail": "지난 발행본을 읽지 못함 (위 줄)"}     # 그 주 앞 마지막 거래일에 최종본 목록 파일이 없을 때 (kr_wk['pubFile'])
+
+
+class C1wPubStop(Exception):
+    """지난 발행본 읽기를 통째로 멈춰요 (git 시간 초과 · 전체 시간 상한) — c1w_pub_pick 이 한 발행본의 잘못으로 삼키지 않아요."""
 
 
 def c1w_pub_rows(pub, day):
     """한 발행본 (data.json) → 그날(day · 그 발행본의 pxDate) 확인된 국내 종가 · 상장주식수 · d1 (순수 함수 · kr_prev_pub_closes 와 같은 규칙:
-    자기 가격 날짜 pxd · 거래 없음 noTrade · 같은 코드 두 번 · 펀드는 빼고, 가격 출처가 공식 종가 목록이 아니면 쓰지 않아요).
-    반환: ({"close": {코드: 원}, "shr": {코드: 주}, "d1": {코드: % — d1Why 가 없고 ±D1_MAX_KR 안}, "n", "skip"}, None) 또는 (None, 까닭)."""
+    자기 가격 날짜 pxd · 같은 코드 두 번 · 펀드는 빼고, 가격 출처가 공식 종가 목록이 아니면 쓰지 않아요). 거래 없음 (noTrade) 행의 종가는 따로
+    (nt — 그날 KRX 기준가와 같은 공식 종가라 연결 확인에만 써요 · c1w 값으로는 쓰지 않아요).
+    반환: ({"close": {코드: 원}, "nt": {코드: 원}, "shr": {코드: 주}, "d1": {코드: % — d1Why 가 없고 ±D1_MAX_KR 안}, "n", "skip"}, None) 또는
+    (None, 까닭)."""
     closes, skip, why = kr_prev_pub_closes(pub, day)
     if why:
         return None, why
-    shr, d1 = {}, {}
-    for x in pub["stocks"]:
-        if not isinstance(x, dict) or x.get("cls") != "kr" or x.get("fund") or not x.get("t"):
-            continue
+    rows = [x for x in pub["stocks"] if isinstance(x, dict) and x.get("cls") == "kr" and not x.get("fund") and x.get("t")]
+    seen = collections.Counter(str(x["t"]).strip() for x in rows)
+    shr, d1, nt = {}, {}, {}
+    for x in rows:
         t = str(x["t"]).strip()
-        if t not in closes:
-            continue
-        s, g = _fin(x.get("shr")), _fin(x.get("d1"))
-        if s is not None and s > 0:
-            shr[t] = s
-        if g is not None and not x.get("d1Why") and abs(g) <= D1_MAX_KR + D1_LIMIT_EPS:
-            d1[t] = g
-    return {"close": closes, "shr": shr, "d1": d1, "n": len(closes), "skip": len(skip)}, None
+        if t in closes:
+            s, g = _fin(x.get("shr")), _fin(x.get("d1"))
+            if s is not None and s > 0:
+                shr[t] = s
+            if g is not None and not x.get("d1Why") and abs(g) <= D1_MAX_KR + D1_LIMIT_EPS:
+                d1[t] = g
+        elif x.get("noTrade") is True and "pxd" not in x and seen[t] == 1:
+            p = _fin(x.get("price"))
+            if p is not None and p > 0:
+                nt[t] = p
+    return {"close": closes, "nt": nt, "shr": shr, "d1": d1, "n": len(closes), "skip": len(set(skip) - set(nt))}, None
 
 
 def c1w_pub_pick(commits, load, wk, px_date, trade_days, max_read=C1W_PUB_MAX_READ):
     """data 브랜치 커밋 → 그 주 앞 마지막 거래일(wk) ~ 기준일 앞 거래일의 기준일(pxDate)마다 마지막 발행본 (순수 함수 · 읽기만 load 로).
-    commits: 새것부터 [(sha, KST 커밋 시각 또는 None, data.json blob id 또는 None)] · load(sha, blob) → (data.json dict, 받은 바이트) · 못 읽으면 예외.
-    새것부터 읽어 그 기준일을 처음 본 발행본이 그날의 마지막 발행본이에요. 멈춤: 원하는 날을 다 찾음 ('all') · 커밋 날짜가 wk 보다 앞 ('time' —
-    발행본의 기준일은 커밋 날짜보다 늦지 않아요) · 읽은 발행본의 기준일이 아직 못 찾은 날들보다 모두 앞 ('older' — 발행은 날짜 순서라 더 앞 커밋에는
-    그날들이 없어요 · 순서가 어긋나 놓치는 날은 덜 채울 뿐 틀린 값이 되지 않아요) · max_read 개를 읽음 ('cap') · 커밋 끝 ('end').
-    같은 blob (내용이 같은 커밋) 은 한 번만 읽어요. 반환: {"days": {날짜: c1w_pub_rows + sha · at}, "unusable": {날짜: (sha7, 까닭)},
-    "bad": [(sha7, 까닭)], "want": [날짜], "read", "bytes", "dup", "stop"}."""
+    commits: 새것부터 [(sha, KST 커밋 시각 또는 None, data.json blob id 또는 None)] · load(sha, blob) → (data.json dict, 받은 바이트) · 못 읽으면 예외
+    (C1wPubStop 은 읽기를 통째로 멈춰요 — 그대로 올려 보내요).
+    새것부터 읽어 그 기준일을 처음 본 발행본이 그날의 마지막 발행본이에요. 되돌린 발행본 (2차 리뷰 S2 · RUNBOOK 의 되돌리기 = data 브랜치의 되돌리기
+    커밋): 더 새 커밋에 더 이른 기준일의 발행본이 있으면 그보다 늦은 기준일의 앞선 발행본은 되돌려진 것이라 쓰지 않아요 (rolled).
+    멈춤: 원하는 날을 다 찾음 ('all') · 커밋 날짜가 wk 보다 앞 ('time' — 발행본의 기준일은 커밋 날짜보다 늦지 않아요) · 읽은 발행본의 기준일이 아직
+    못 찾은 날들보다 모두 앞 ('older' — 발행은 날짜 순서라 더 앞 커밋에는 그날들이 없어요 · 순서가 어긋나 놓치는 날은 덜 채울 뿐 틀린 값이 되지
+    않아요) · max_read 개를 읽음 ('cap') · 커밋 끝 ('end'). 같은 blob (내용이 같은 커밋) 은 한 번만 읽어요.
+    반환: {"days": {날짜: c1w_pub_rows + sha · at}, "unusable": {날짜: (sha7, 까닭)}, "rolled": [(sha7, 기준일)], "bad": [(sha7, 까닭)],
+    "want": [날짜], "read", "bytes", "dup", "stop"}."""
     want = sorted({pd.Timestamp(x).date() for x in trade_days if wk <= pd.Timestamp(x).date() < px_date} | {wk})
-    out = {"days": {}, "unusable": {}, "bad": [], "want": [d.isoformat() for d in want], "read": 0, "bytes": 0, "dup": 0, "stop": "end"}
-    seen = set()
+    out = {"days": {}, "unusable": {}, "rolled": [], "bad": [], "want": [d.isoformat() for d in want], "read": 0, "bytes": 0, "dup": 0,
+           "stop": "end"}
+    seen, low = set(), None                      # low: 지금까지 읽은 발행본의 가장 이른 기준일 (새것부터라 그보다 늦은 앞선 발행본은 되돌려진 것)
 
     def missing():
         return [d for d in want if d.isoformat() not in out["days"] and d.isoformat() not in out["unusable"]]
@@ -14261,6 +14290,8 @@ def c1w_pub_pick(commits, load, wk, px_date, trade_days, max_read=C1W_PUB_MAX_RE
         try:
             js, nb = load(sha, blob)
             out["bytes"] += int(nb or 0)
+        except C1wPubStop:
+            raise
         except Exception as e:
             out["bad"].append((str(sha)[:7], "json" if isinstance(e, ValueError) else "read"))
             continue
@@ -14269,6 +14300,10 @@ def c1w_pub_pick(commits, load, wk, px_date, trade_days, max_read=C1W_PUB_MAX_RE
             out["bad"].append((str(sha)[:7], "day"))
             continue
         iso = day.isoformat()
+        if low is not None and day > low:
+            out["rolled"].append((str(sha)[:7], iso))         # 되돌린 발행본 — 쓰지 않아요 (그날은 그 앞 발행본이 있으면 그것으로)
+            continue
+        low = day
         if day in miss:
             rows, why = c1w_pub_rows(js, day)
             if rows is None:
@@ -14288,29 +14323,70 @@ def _c1w_redact(s):
     return re.sub(r"://[^/@\s]+@", "://***@", str(s or "")).strip()[:200]
 
 
-def c1w_pub_git(wk, px_date, trade_days, url=None, run=subprocess.run, depth=C1W_PUB_DEPTH, max_read=C1W_PUB_MAX_READ, tmp=None):
-    """data 브랜치의 지난 발행본을 임시 빈 저장소로 읽어요 (작업 폴더의 .git 은 건드리지 않아요 · 끝나면 지워요). url: 저장소 주소 (없으면 이 파일
-    폴더의 origin · 그다음 GITHUB_SERVER_URL/GITHUB_REPOSITORY). run: subprocess.run 과 같은 모양 (시험용).
-    반환: c1w_pub_pick 의 결과 + commits (받은 커밋 수) · sec · fail None — git 이 실패하면 {"fail": C1W_PUB_FAIL_KO 의 키, "err": 글} (예외 없음)."""
-    t0 = time.time()
-    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+def _c1w_git_env():
+    """git 에 넘기는 최소한의 환경 (2차 리뷰 · C1W_PUB_ENV_KEEP 만 · GIT_DIR · GIT_WORK_TREE · GIT_INDEX_FILE · GIT_CONFIG_* · API 키는 넘기지 않아요)."""
+    env = {k: os.environ[k] for k in C1W_PUB_ENV_KEEP if os.environ.get(k)}
+    env.update({"GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "", "SSH_ASKPASS": ""})
+    return env
+
+
+def _c1w_run(cmd, cwd=None, capture_output=True, text=True, timeout=None, env=None, stdin=None):
+    """subprocess.run 과 같은 모양 — 다만 새 프로세스 그룹으로 띄우고 (stdin 은 비워요), 시간이 넘으면 그룹째 (git-remote-https 같은 손자까지)
+    끝내고 TimeoutExpired 를 올려요 (2차 리뷰 M1)."""
+    p = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, env=env, text=text,
+                         start_new_session=True)
+    try:
+        out, err = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)                 # start_new_session → 그룹 번호 = 그 프로세스 번호
+        except (OSError, AttributeError):
+            p.kill()
+        try:
+            p.communicate(timeout=5)
+        except Exception:
+            pass
+        raise
+    return subprocess.CompletedProcess(cmd, p.returncode, out, err)
+
+
+def c1w_pub_git(wk, px_date, trade_days, url=None, run=None, depth=C1W_PUB_DEPTH, max_read=C1W_PUB_MAX_READ, tmp=None, clock=time.monotonic,
+                deadline=C1W_PUB_DEADLINE):
+    """data 브랜치의 지난 발행본을 임시 빈 저장소로 읽어요 (작업 폴더의 .git 은 건드리지 않아요 · 끝나면 지워요).
+    url: 저장소 주소 — 없으면 GITHUB_SERVER_URL/GITHUB_REPOSITORY (https), 그다음 이 파일 폴더의 origin (https · file 주소만 · ssh 는 쓰지 않아요).
+    run: subprocess.run 과 같은 모양 (기본 _c1w_run · 시험용). 시간: 전체 deadline 초 — git 을 부를 때마다 남은 시간을 보고 (git 한 번은 많아야
+    C1W_PUB_TIMEOUT 과 남은 시간 중 짧은 쪽), 어느 git 이든 시간이 넘으면 거기서 통째로 멈춰요 (fail 'timeout' · 어느 git 이었는지 적어요).
+    반환: c1w_pub_pick 의 결과 + commits (받은 커밋 수) · sec · fail None — 실패하면 {"fail": C1W_PUB_FAIL_KO 의 키, "err": 글, "sec"} (예외 없음)."""
+    run = run or _c1w_run
+    t0 = clock()
+    env = _c1w_git_env()
 
     def git(*a, cwd=None, text=True):
-        return run(["git", *a], cwd=cwd, capture_output=True, text=text, timeout=C1W_PUB_TIMEOUT, env=env)
+        left = t0 + deadline - clock()
+        if left < 1:
+            raise C1wPubStop(f"전체 {deadline:g}s 를 넘어 git {a[0]} 앞에서 멈춤")
+        lim = min(float(C1W_PUB_TIMEOUT), left)
+        try:
+            return run(["git", *C1W_PUB_GIT_CFG, *a], cwd=cwd, capture_output=True, text=text, timeout=lim, env=env, stdin=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired:
+            raise C1wPubStop(f"git {a[0]} 이 {lim:.0f}s 안에 끝나지 않음")
 
     def fail(key, r=None, err=None):
         msg = err if err is not None else (getattr(r, "stderr", "") or "")
         if isinstance(msg, bytes):
             msg = msg.decode("utf-8", "replace")
-        return {"fail": key, "err": _c1w_redact(msg), "sec": round(time.time() - t0, 1)}
+        return {"fail": key, "err": _c1w_redact(msg), "sec": round(clock() - t0, 1)}
     try:
+        if not url and os.environ.get("GITHUB_REPOSITORY"):
+            url = f"{(os.environ.get('GITHUB_SERVER_URL') or 'https://github.com').rstrip('/')}/{os.environ['GITHUB_REPOSITORY']}"
         if not url:
             r = git("remote", "get-url", "origin", cwd=os.path.dirname(os.path.abspath(__file__)))
-            url = (r.stdout or "").strip() if r.returncode == 0 else ""
-        if not url and os.environ.get("GITHUB_REPOSITORY"):
-            url = f"{os.environ.get('GITHUB_SERVER_URL') or 'https://github.com'}/{os.environ['GITHUB_REPOSITORY']}"
+            u = (r.stdout or "").strip() if r.returncode == 0 else ""
+            url = u if re.match(r"(https?|file)://", u) else ""
         if not url:
             return fail("url", err="")
+    except C1wPubStop as e:
+        return fail("timeout", err=str(e))
     except Exception as e:
         return fail("git", err=f"{type(e).__name__}: {e}")
     root = tmp or tempfile.mkdtemp(prefix="c1w-pub-")
@@ -14355,10 +14431,10 @@ def c1w_pub_git(wk, px_date, trade_days, url=None, run=subprocess.run, depth=C1W
                 raise RuntimeError(_c1w_redact(q.stderr.decode("utf-8", "replace") if isinstance(q.stderr, bytes) else q.stderr))
             return json.loads(q.stdout.decode("utf-8")), len(q.stdout)
         out = c1w_pub_pick(commits(), load, wk, px_date, trade_days, max_read)
-        out.update(commits=len(lines), sec=round(time.time() - t0, 1), fail=None)
+        out.update(commits=len(lines), sec=round(clock() - t0, 1), fail=None)
         return out
-    except subprocess.TimeoutExpired as e:
-        return fail("fetch", err=f"시간 초과 {C1W_PUB_TIMEOUT}s ({_c1w_redact(' '.join(map(str, (e.cmd or [])[1:3])))})")
+    except C1wPubStop as e:
+        return fail("timeout", err=str(e))
     except Exception as e:
         return fail("err", err=f"{type(e).__name__}: {e}")
     finally:
@@ -14385,11 +14461,12 @@ def c1w_pub_summary(need, res, trade_days, px_date):
     nxt = {a: b for a, b in zip(td, td[1:])}
     d1_for = {d: len((days.get(nxt.get(d)) or {}).get("d1") or {}) for d in (res.get("want") or []) if d not in days and nxt.get(d) in days}
     return {"need": need, "fail": res.get("fail"), "err": res.get("err"), "want": list(res.get("want") or []),
-            "days": {d: {"sha": v.get("sha"), "n": v.get("n", 0), "skip": v.get("skip", 0), "d1": len(v.get("d1") or {})}
-                     for d, v in sorted(days.items())},
+            "days": {d: {"sha": v.get("sha"), "n": v.get("n", 0), "nt": len(v.get("nt") or {}), "skip": v.get("skip", 0),
+                         "d1": len(v.get("d1") or {})} for d, v in sorted(days.items())},
             "d1For": d1_for, "unusable": {d: list(v) for d, v in sorted((res.get("unusable") or {}).items())},
-            "bad": [list(x) for x in res.get("bad") or []], "read": res.get("read", 0), "bytes": res.get("bytes", 0),
-            "commits": res.get("commits", 0), "dup": res.get("dup", 0), "stop": res.get("stop"), "sec": res.get("sec")}
+            "rolled": [list(x) for x in res.get("rolled") or []], "bad": [list(x) for x in res.get("bad") or []],
+            "read": res.get("read", 0), "bytes": res.get("bytes", 0), "commits": res.get("commits", 0), "dup": res.get("dup", 0),
+            "stop": res.get("stop"), "sec": res.get("sec")}
 
 
 def log_c1w_pub(h, gap=()):
@@ -14399,8 +14476,9 @@ def log_c1w_pub(h, gap=()):
     need = C1W_PUB_NEED_KO.get(h["need"], h["need"])
     if h.get("fail"):
         log(f"  !! c1w 지난 발행본 (data 브랜치) 을 읽지 못했어요 — {C1W_PUB_FAIL_KO.get(h['fail'], h['fail'])}"
-            + (f" ({_c1w_redact(h['err'])})" if h.get("err") else "") + f" · {need}" + (f" ({', '.join(gap)})" if gap else "")
-            + " → 오늘 받은 자료만으로 확인해요 (그날 종가를 모르는 종목은 네이버 수정주가로 확인하거나 비워요)")
+            + (f" ({_c1w_redact(h['err'])})" if h.get("err") else "") + (f" · {h['sec']:g}s" if isinstance(h.get("sec"), (int, float)) else "")
+            + f" · {need}" + (f" ({', '.join(gap)})" if gap else "")
+            + " → 오늘 받은 자료만으로 확인해요 (4차 그대로 · 그날 종가를 모르는 종목은 네이버 수정주가로 확인하거나 비워요)")
         return
     days, d1f, un = h.get("days") or {}, h.get("d1For") or {}, h.get("unusable") or {}
     parts, loud = [], bool(h.get("bad"))
@@ -14408,7 +14486,8 @@ def log_c1w_pub(h, gap=()):
     for d in want:
         if d in days:
             v = days[d]
-            parts.append(f"{d} {v['sha']} {v['n']:,}종목" + (f" (뺀 행 {v['skip']:,})" if v.get("skip") else ""))
+            parts.append(f"{d} {v['sha']} {v['n']:,}종목" + (f" · 거래 없음 {v['nt']:,}" if v.get("nt") else "")
+                         + (f" (뺀 행 {v['skip']:,})" if v.get("skip") else ""))
         elif h["need"] == "file" and d == want[0]:
             parts.append(f"{d} " + (f"{un[d][0]} 쓸 수 없음 ({C1W_PUB_BAD_KO.get(un[d][1], un[d][1])})" if d in un else "발행본 없음")
                          + " (그날 종가가 c1w 예요 · 한국 주식 c1w 모두 빈 칸)")
@@ -14421,26 +14500,33 @@ def log_c1w_pub(h, gap=()):
         else:
             parts.append(f"{d} 발행본 없음")
             loud = loud or d in gap
+    stop = h.get("stop")
+    loud = loud or (stop == "cap" and any(d not in days for d in want))
     mb = (h.get("bytes") or 0) / 1e6
     log(f"{'  !! ' if loud else '· '}c1w 지난 발행본 (data 브랜치 · 기준일마다 그날의 마지막 발행본 · {need}"
         + (f": {', '.join(gap)}" if gap else "") + "): " + (" · ".join(parts) or "없음")
-        + f" — 커밋 {h.get('commits', 0):,}개 · 읽은 발행본 {h.get('read', 0):,}개 (data.json {mb:.1f}MB · {h.get('sec') or 0:g}s · 멈춤 {h.get('stop')})"
+        + f" — 커밋 {h.get('commits', 0):,}개 · 읽은 발행본 {h.get('read', 0):,}개 (data.json 풀어서 {mb:.1f}MB · {h.get('sec') or 0:g}s · "
+        + f"{C1W_PUB_STOP_KO.get(stop, stop)})"
+        + (" · 되돌린 발행본이라 쓰지 않음 " + ", ".join(f"{s} ({d})" for s, d in h["rolled"][:5]) if h.get("rolled") else "")
         + (" · !! 읽지 못한 발행본 " + ", ".join(f"{s} ({C1W_PUB_BAD_KO.get(w, w)})" for s, w in h["bad"][:5]) if h.get("bad") else ""))
 
 
 def c1w_pub_step(kr_wk, px_date, trade_days, sessions, ref_by_day, known=None, reader=None):
     """fetch_korea 가 kr_week_closes 바로 뒤에 부르는 한 곳 (5차): 그 주에 최종본 목록 파일이 없는 날이 있을 때만 지난 발행본을 읽어요 (c1w_pub_need).
-    그 주 앞 마지막 거래일에 파일이 없고 그날 발행본이 있으면 kr_wk 를 그 발행본으로 다시 만들어요 (kr_week_closes 의 pub).
-    반환: (kr_wk — pubHist 요약을 달아요, pub {날짜: c1w_pub_rows} — 읽을 필요가 없었거나 읽지 못했으면 {} · 그 주 날짜를 정하지 못한 날은 None).
+    그 주 앞 마지막 거래일에 파일이 없고 그날 발행본이 있으면 kr_wk 를 그 발행본으로 다시 만들어요 (kr_week_closes 의 pub · 없으면 kr_wk['pubFile']
+    에 까닭).
+    반환: (kr_wk — 그 주 날짜를 정했으면 pubHist 요약을 달아요 (c1wSrc.pub 가 0 으로라도 나가요), pub {날짜: c1w_pub_rows} — 읽어서 하루라도 찾았을
+    때만 · 읽을 필요가 없었거나 · 읽지 못했거나 · 하나도 찾지 못했으면 None (2차 리뷰 S3: 그때 뒤 단계는 4차와 똑같아요)).
     reader(wk, px_date, trade_days) — 기본 c1w_pub_git (시험용). 어떤 오류도 실행을 멈추지 않아요 (크게 남기고 오늘 받은 자료만으로)."""
     try:
         return _c1w_pub_step(kr_wk, px_date, trade_days, sessions, ref_by_day, known, reader)
     except Exception as e:
         err = f"{type(e).__name__}: {str(e)[:160]}"
-        log(f"  !! c1w 지난 발행본 단계가 멈췄어요 ({err}) — 오늘 받은 자료만으로 확인해요 (발행은 이어가요)")
-        if isinstance(kr_wk, dict) and kr_wk.get("date") and not kr_wk.get("why"):
-            kr_wk["pubHist"] = {"need": "gap", "fail": "err", "err": err}
-            return kr_wk, {}
+        log(f"  !! c1w 지난 발행본 단계가 멈췄어요 ({err}) — 오늘 받은 자료만으로 확인해요 (4차 그대로 · 발행은 이어가요)")
+        if isinstance(kr_wk, dict) and kr_wk.get("date") and kr_wk.get("why") in (None, "file"):
+            kr_wk["pubHist"] = {"need": c1w_pub_need(kr_wk), "fail": "err", "err": err}
+            if kr_wk.get("why") == "file":
+                kr_wk["pubFile"] = "fail"
         return kr_wk, None
 
 
@@ -14452,7 +14538,6 @@ def _c1w_pub_step(kr_wk, px_date, trade_days, sessions, ref_by_day, known, reade
         if kr_wk.get("date") and not kr_wk.get("why"):
             kr_wk["pubHist"] = {"need": None}
             log("· c1w 지난 발행본: 읽지 않아요 (그 주 날마다 최종본 목록 파일이 있어요)")
-            return kr_wk, {}
         return kr_wk, None
     gap = list(kr_wk.get("gap") or []) if need == "gap" else [kr_wk["date"]] + list(kr_wk.get("gap") or [])
     try:
@@ -14461,23 +14546,22 @@ def _c1w_pub_step(kr_wk, px_date, trade_days, sessions, ref_by_day, known, reade
         res = res if isinstance(res, dict) else {"fail": "err", "err": f"읽은 값이 dict 가 아님 ({type(res).__name__})"}
     except Exception as e:
         res = {"fail": "err", "err": f"{type(e).__name__}: {str(e)[:160]}"}
-    pub = {} if res.get("fail") else dict(res.get("days") or {})
-    try:
-        if need == "file" and kr_wk["date"] in pub:
+    pub = None if res.get("fail") or not res.get("days") else dict(res["days"])
+    if need == "file":
+        if pub is not None and kr_wk["date"] in pub:
             kr2 = kr_week_closes_safe(px_date, trade_days, sessions, ref_by_day, known=known, pub=pub)
             if kr2.get("date") == kr_wk["date"] and not kr2.get("why"):
                 kr_wk = kr2
-        kr_wk["pubHist"] = c1w_pub_summary(need, res, trade_days, px_date)
-    except Exception as e:
-        kr_wk["pubHist"] = {"need": need, "fail": "err", "err": f"{type(e).__name__}: {str(e)[:160]}"}
-        pub = {}
+        if kr_wk.get("why") == "file":
+            kr_wk["pubFile"] = "fail" if res.get("fail") else ("unusable" if kr_wk["date"] in (res.get("unusable") or {}) else "none")
+    kr_wk["pubHist"] = c1w_pub_summary(need, res, trade_days, px_date)
     log_c1w_pub(kr_wk["pubHist"], gap)
     return kr_wk, pub
 
 
 def c1w_pub_diff(sessions, pub, wk, px_date, trade_days):
-    """지난 발행본의 그날 종가 · 다음 거래일 발행본의 d1 로 본 그날 종가 범위가 같은 날 최종본 목록 파일 (sessions · 두 출처로 확인한 2차 출처 행
-    포함) 의 공식 종가와 1원 넘게 다른 국내 종목 (순수 함수 · 모든 종목 · 그 주 앞 마지막 거래일 ~ 기준일 앞 날).
+    """지난 발행본의 그날 종가 (거래 없는 날의 종가 포함) · 다음 거래일 발행본의 d1 로 본 그날 종가 범위가 같은 날 최종본 목록 파일 (sessions · 두
+    출처로 확인한 2차 출처 행 포함) 의 공식 종가와 1원 넘게 다른 국내 종목 (순수 함수 · 모든 종목 · 그 주 앞 마지막 거래일 ~ 기준일 앞 날).
     반환: {코드: '날짜 발행 v · 파일 w' (첫 날)} — c1w_apply 가 비워요 (pubDiff)."""
     wk, px_date = _c1w_day(wk), _c1w_day(px_date)
     if wk is None or px_date is None or not pub:
@@ -14490,12 +14574,12 @@ def c1w_pub_diff(sessions, pub, wk, px_date, trade_days):
             continue
         n = nxt.get(d)
         p, q = pub.get(d.isoformat()) or {}, (pub.get(n.isoformat()) or {}) if n is not None and n < px_date else {}
-        pc, qc, qd = p.get("close") or {}, q.get("close") or {}, q.get("d1") or {}
+        pc, pn, qc, qd = p.get("close") or {}, p.get("nt") or {}, q.get("close") or {}, q.get("d1") or {}
         for c, o in _official_map(df).items():
             o = _fin(o)
             if o is None or o <= 0 or c in out:
                 continue
-            v = _fin(pc.get(c))
+            v = _fin(pc.get(c) if c in pc else pn.get(c))
             if v is not None and abs(v - o) > 1.0:
                 out[c] = f"{d.isoformat()} 발행 {v:,.0f} · 파일 {o:,.0f}"
                 continue
@@ -14788,7 +14872,8 @@ def c1w_apply(stocks, kr_wk, us_wk, hol=None, splits=None):
     info["table"] = bool(isinstance(hol, dict) and hol.get("end"))
     info["krSrc"], info["krRows"], info["krGap"] = kw.get("src"), kw.get("rows") or 0, list(kw.get("gap") or [])
     info["krRescueSrc"], info["krRescueErr"] = kw.get("rescueSrc") or {}, kw.get("rescueErr")
-    info["krPub"], info["krPubDiff"], info["krPubSha"] = kw.get("pubHist"), pdiff, kw.get("pubSha")
+    info["krPub"], info["krPubDiff"], info["krPubSha"] = kw.get("pubHist"), kw.get("pubDiff"), kw.get("pubSha")
+    info["krPubFile"] = kw.get("pubFile")
     kept_us = {str(s.get("t")) for s in stocks if c1w_group(s) == "us" and s.get("c1w") is not None}
     info["usAdj"] = {"unadj": sorted(t for t in (uw.get("unadj") or []) if t in kept_us),
                      "bad": dict(sorted((uw.get("bad") or {}).items())), "err": int(uw.get("err") or 0)}
@@ -14825,8 +14910,9 @@ def log_c1w(info):
 
     def head(g, key, how):
         x, (d, why, ex) = info[g], info["wk"][g]
+        pf = C1W_PUB_FILE_KO.get(info.get("krPubFile")) if g == "kr" and why == "file" else None     # 5차: 그날 지난 발행본은 왜 못 썼는지
         return (f"{C1W_GROUP_KO[g]} {x['ok']:,} / {x['px']:,} ({key} {d or '없음'}" + (f" · {how}" if d and how and not why else "")
-                + ((f" · {C1W_WEEK_KO.get(why, why)}" + (f": {', '.join(ex[:5])}" if ex else "")) if why else "")
+                + ((f" · {C1W_WEEK_KO.get(why, why)}" + (f" · {pf}" if pf else "") + (f": {', '.join(ex[:5])}" if ex else "")) if why else "")
                 + (f" · 자기 가격 날짜 {x['n'] - x['px']:,}종목은 빼고" if x["n"] > x["px"] else "") + ")")
     fx = info["fund"]
     log(f"{'  !! ' if any(loud.values()) else '· '}c1w (이번 주 정리 · 그 시장의 이번 주 앞 마지막 거래일 종가 · 기준일 종가 종목 중): "
@@ -14854,8 +14940,8 @@ def log_c1w(info):
         + f" · 다른 자료로 본 기준가 재설정 {kr['rescueBase']:,} · 비움 {len(lk):,}"
         + (" (" + " · ".join(f"{C1W_LINK_WHY_KO.get(k, k)} {v:,}" for k, v in kr["linkWhy"].most_common()) + ")" if lk else "")
         + (" — " + _c1w_names(lk, lambda r: f"{r[0]} {r[1]} ({r[2]})") if lk else ""))
-    if hist and info["krPub"].get("need"):
-        pdf = info.get("krPubDiff") or {}
+    if isinstance(info.get("krPubDiff"), dict):              # 지난 발행본을 읽어 하루라도 찾은 실행만 (맞춰 본 실행)
+        pdf = info["krPubDiff"]
         names = [(c, n) for c, n, _w in lk if c in pdf]
         log(f"{'  !! ' if pdf else '· '}c1w 지난 발행본 종가 ↔ 같은 날 최종본 목록 파일: 다른 종목 {len(pdf):,} (비움)"
             + (" — " + _c1w_names(names, lambda r: f"{r[0]} {r[1]} ({pdf[r[0]]})") if names else ""))
@@ -15020,12 +15106,13 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                  "금시장). 한국 주식은 그날 최종본 목록 파일이 없으면 그날의 마지막 지난 발행본 종가 (data 브랜치 · 5차). 그 주의 움직임 = price ÷ c1w − 1. 칸 없음 (빈 칸): 자기 가격 날짜 종목 (pxd · pxc · 금현물 추정 est) · 그날 종가가 없는 종목 (새로 "
                  "상장 · 그날 목록 · 시계열에 없음 — 더 앞 날의 값을 쓰지 않아요) · 한국: 그날과 기준일 사이 KRX 기준가 연결이 모두 확인되지 않은 종목 (기준가가 "
                  "새로 정해짐 — 분할 · 병합 · 감자 · 권리락 · 무상증자 · 코넥스 기준가 조정 등 — 또는 확인 못 함: 최종본 목록 파일이 없는 날은 장중 목록 파일의 "
-                 "기준가 · 지난 발행본 (data 브랜치의 그날 마지막 발행본 · 발행본이 없는 날은 다음 거래일 발행본의 d1 로 본 범위) · 다음 보관본으로 날마다, "
+                 "기준가 · 지난 발행본 (data 브랜치의 그날 마지막 발행본 · 되돌린 발행본은 빼요 · 거래 없는 날의 종가는 연결 확인에만 · 발행본이 없는 날은 "
+                 "다음 거래일 발행본의 d1 로 본 범위) · 다음 보관본으로 날마다, "
                  "그래도 앞 거래일 종가를 모르는 날이 있는 종목 (지난 발행본에 없는 종목) 은 네이버 수정주가가 그 앞까지 공식 종가와 같은 기준인지로 확인해요 — "
                  "그런 행은 c1wv 'nv' · 지난 발행본의 종가가 같은 날 최종본 목록 파일과 다른 종목도 비워요 · RUNBOOK) · "
                  f"상장주식수가 그날보다 {C1W_SHR_PCT}% 넘게 바뀐 종목 (정확히 {C1W_SHR_PCT}% 는 남겨요 · 그날 주식 수는 이 실행 안에서만 쓰고 싣지 않아요) · "
                  "미국: 그 주에 분할이 있는 종목 · 그 주의 배당락을 되돌릴 재료가 모자란 종목 · 그 시장의 그 주 날짜를 정하지 못한 날 (wkFrom · usWkFrom "
-                 "빈 값) 의 그 시장 모두 · 그날 최종본 목록 파일도 그날 지난 발행본도 없는 날의 한국 주식 모두"),
+                 "빈 값) 의 그 시장 모두 · 그날 최종본 목록 파일이 없고 그날 지난 발행본도 쓰지 못한 날 (없음 · 가격 출처 · 읽지 못함) 의 한국 주식 모두"),
          "wkFrom": ("v19.6e · 한국 주식 · 채권 · ETF · 금 c1w 의 날짜 (cls 가 us 이고 fund 가 아닌 행 말고 모두) = pxDate 가 든 주(월 ~ 일)의 월요일 앞 "
                     "마지막 한국 거래일 (금요일이 휴장이면 목요일 · KOSPI 일봉에서 · 휴장일 표 · 최종본 목록 파일과 맞춰 봐요). 정하지 못하면 빈 값 (그 시장의 "
                     "c1w 도 모두 빈 칸)"),
