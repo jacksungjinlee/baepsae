@@ -2848,6 +2848,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_kr_no_trade(rep, data, pdata, macro)    # 2026-11-14 (Jack, design chat 2026-11-08): 거래 없는 종목은 d1 빈 칸 + noTrade · 빈 d1 은 이유 (실패: 우리 값끼리 어긋날 때만)
     check_v196b(rep, data, disc, by, today)   # v19.6b (Part B.1): 주요사항 공시 · 내부자 역할 · 미국 일정 (모양 · 칸이 없는 예전 파일은 경고만)
     check_issue_bd(rep, disc)                 # v19.6b Q18 (Jack 2026-11-19): 유상증자 이사회 결의일 (공시일 뒤면 실패 · 빈 줄은 경고)
+    check_v196e(rep, data, macro)             # v19.6e (Part I.2): 이번 주 시작 종가 c1w · wkFrom · usWkFrom (경고만)
 
     # 경고만
     rep.add("공시 목록 조회", True, "성공" if disc.get("listOk") else "실패", "실패면 경고", warn=not disc.get("listOk"))
@@ -3809,6 +3810,217 @@ def check_issue_bd(rep, disc):
         _check_issue_bd(rep, disc if isinstance(disc, dict) else {})
     except Exception as e:
         rep.add(ISSUE_BD_ROW, False, f"검사가 오류로 멈췄어요: {type(e).__name__}: {str(e)[:120]}", "오류 없이 끝나야 함")
+
+
+# ── v19.6e (Part I.2): data.json c1w · wkFrom · usWkFrom — 이번 주 정리 (Part E) 가 쓰는 그 주 시작 종가 ──────────────────────────────────────
+#    파이프라인(fetch_data.c1w_fields)이 종목마다 '그 시장의 이번 주(기준일이 든 월 ~ 일) 앞 마지막 거래일' 종가를 c1w 로 실어요 — 한국 주식은 그날
+#    최종본 목록 파일의 공식 종가 (가격과 같은 출처) · 미국 주식은 가격과 같은 야후 수정 종가 · 채권 · ETF · 금은 가격과 같은 시계열. 그 날짜는
+#    wkFrom (한국 · 채권 · ETF · 금) · usWkFrom (미국 주식). 자기 가격 날짜(pxd · pxc · 금 추정)인 종목 · 그 사이 KRX 기준가가 새로 정해졌거나 상장
+#    주식 수가 20% 넘게 바뀐 한국 종목은 빈 칸이에요. 이 줄은 경고만 해요 (발행을 멈추는 줄은 Jack 의 답이 있어야 해요 · 화면 PR 에서 물어요).
+C1W_ROW = "이번 주 시작 종가 (c1w · wkFrom · usWkFrom · 경고만)"
+C1W_COVER_MIN = 95.0        # % — 그 시장 기준일 종가 종목 중 c1w 가 있는 비율이 이보다 낮으면 경고 (보통 주의 빈 칸은 새 상장 · 분할 · 권리락 ·
+#                             주식 수 변화로 국내 수십 종목 = 1 ~ 2% · 미국은 새 종목뿐). 파이프라인도 이 값 아래면 크게 남겨요
+C1W_FROM_MAX_DAYS = 12      # wkFrom · usWkFrom 은 기준일보다 이 날 수 안 (휴장일 표 2026 ~ 2027 의 가장 긴 사이 9일: 추석 2026-09-23 → 10-02 ·
+#                             연말 2026-12-30 → 2027-01-08 — 갑자기 정해지는 임시공휴일 몫으로 3일 더). 파이프라인도 넘으면 그 주 날짜를 쓰지 않아요
+C1W_RATIO_BAND = (0.5, 2.0) # price ÷ c1w 가 이 밖이면 (한 주에 반 넘게 내림 · 두 배 넘게 오름) 이름을 적어요 — 진짜 움직임일 수 있어요 (확인용).
+#                             미국 주식 · 채권 · ETF · 금은 경고. 한국 주식은 가격 제한폭(코스피 · 코스닥 30% · 코넥스 15%)을 그 주 거래일 수만큼 곱한
+#                             범위 안이면 이름만 (경고 아님 — 테마주의 진짜 움직임이 한 달에 몇 번 있어요 · 알림 소음), 그 범위 밖이면 '제한폭 밖'으로 경고
+#                             (제한폭이 없는 정리매매 날 말고는 보통 파이프라인이 놓친 기준가 재설정이에요)
+C1W_SHOW = 10               # 값 칸에 적는 종목 수 (나머지는 요약 목록에)
+C1W_GROUPS = ("kr", "us", "fund")
+C1W_GROUP_KO = {"kr": "국내", "us": "미국", "fund": "채권·ETF·금"}
+
+
+def c1w_group(s):
+    """c1w 의 시장 (파이프라인과 관문이 같은 함수 · 순수 함수): 'fund' 채권 · ETF · 금 (fund 표시 · cls bond — 한국 상장이라 wkFrom) ·
+    'us' 미국 주식 (usWkFrom) · 'kr' 한국 주식 (wkFrom) · 그 밖은 None (c1w 를 싣지 않아요)."""
+    if not isinstance(s, dict):
+        return None
+    if s.get("fund") or s.get("cls") == "bond":
+        return "fund"
+    return s.get("cls") if s.get("cls") in ("kr", "us") else None
+
+
+def c1w_own_date(s):
+    """그 종목의 가격이 그 시장 기준일의 종가가 아니면 True — 마지막 확인 종가 · 거래 정지(pxd · pxc) · 금현물 추정 가격(est). 이 종목들은 c1w 가 빈
+    칸이에요: price ÷ c1w − 1 이 그 주 전체가 아니라 그 종목 날짜까지의 움직임이 돼요 (Part E: 그 주 전체를 확인하지 않은 말은 하지 않아요). (순수 함수)"""
+    return isinstance(s, dict) and (s.get("pxd") is not None or bool(s.get("pxc")) or bool(s.get("est")))
+
+
+def c1w_week_expect(px, closed, start=None, end=None):
+    """휴장일 표로 본 '기준일(px)이 든 주의 월요일 앞 마지막 거래일' (주말 · 표의 휴장일 빼고 · 표가 덮지 않는 날은 평일 규칙). (순수 함수 · 관문의 따로 된 계산)"""
+    d = px - dt.timedelta(days=px.weekday() + 1)
+    for _ in range(40):
+        covered = (start is None or d >= start) and (end is None or d <= end)
+        if d.weekday() < 5 and not (covered and d in closed):
+            return d
+        d -= dt.timedelta(days=1)
+    return None
+
+
+def _c1w_idx_days(macro, name):
+    """macro.json idxHist[name] 의 거래일들 (YYYY-MM-DD · 정렬) — 어느 칸이든 모양이 틀리면 None (이 줄 전체가 멈추지 않게). (순수 함수)"""
+    ih = macro.get("idxHist") if isinstance(macro, dict) else None
+    one = ih.get(name) if isinstance(ih, dict) else None
+    rows = one.get("rows") if isinstance(one, dict) else None
+    if not isinstance(rows, list):
+        return None
+    ds = sorted({str(r[0]) for r in rows if isinstance(r, (list, tuple)) and r and is_day(r[0])})
+    return ds or None
+
+
+def _check_v196e(rep, data, macro):
+    th = (f"경고만 (발행을 막지 않아요) — wkFrom · usWkFrom: YYYY-MM-DD · 기준일(pxDate · usPxDate)이 든 주의 월요일 앞 · 기준일과 {C1W_FROM_MAX_DAYS}일 안 · "
+          "휴장일 표 · 지수 일봉(idxHist)으로 본 그 주 앞 마지막 거래일과 같음 · c1w: 빈 칸 또는 0 보다 큰 유한한 숫자 · 자기 가격 날짜(pxd · pxc · est) "
+          f"종목은 빈 칸 · 기준일 종가 종목 중 채움 ≥ {C1W_COVER_MIN:g}% (국내 · 미국) · 채권·ETF·금 모두 · price ÷ c1w 가 "
+          f"{C1W_RATIO_BAND[0]:g} ~ {C1W_RATIO_BAND[1]:g} 밖이면 이름 (미국 · 채권·ETF·금은 경고 · 한국은 그 주 거래일만큼 곱한 가격 제한폭 밖일 때만 경고 — 제한폭을 모르면 경고) · "
+          "c1wSrc (목록 + KRX + 네이버 = 국내 c1w 수 · 네이버 = c1wv nv 행 수) · c1wv 는 한국 주식 c1w 옆의 nv 만")
+    stocks = [s for s in data.get("stocks") or [] if isinstance(s, dict)] if isinstance(data.get("stocks"), list) else []
+    n_c1w = sum(1 for s in stocks if s.get("c1w") is not None)
+    if "wkFrom" not in data and "usWkFrom" not in data and not n_c1w:
+        rep.add(C1W_ROW, True, "없음 — v19.6e 전 파일 (이번 주 정리 화면은 아직 이 칸을 읽지 않아요)", th, warn=True)
+        return
+    warns = []
+    try:
+        hol, end = load_holidays()
+    except Exception as e:
+        hol, end = None, None
+        warns.append(f"휴장일 표를 읽지 못해 날짜를 표와 맞춰 보지 않았어요 ({type(e).__name__})")
+    dates = {}
+    kdays, udays = _c1w_idx_days(macro, "KOSPI"), _c1w_idx_days(macro, "SP500")
+    notes = [f"{n} 없어 지수 일봉 확인{' · 한국 제한폭 확인' if n == 'idxHist KOSPI' else ''} 건너뜀" for n, d in (("idxHist KOSPI", kdays), ("idxHist SP500", udays))
+             if d is None]
+    for g, key, pkey, mk, days in (("kr", "wkFrom", "pxDate", "KR", kdays), ("us", "usWkFrom", "usPxDate", "US", udays)):
+        dates[g] = None
+        raw = data.get(key)
+        if key not in data:
+            warns.append(f"{key} 칸 없음")
+            continue
+        if raw is None:
+            warns.append(f"{key} 빈 값 (파이프라인이 그 주 시작 날짜를 정하지 못했어요 · 실행 로그의 'c1w' 줄)")
+            continue
+        wk = _iso_day(raw)
+        if wk is None:
+            warns.append(f"{key} {_short(raw)} (YYYY-MM-DD 날짜가 아님)")
+            continue
+        dates[g] = wk
+        px = _iso_day(data.get(pkey))
+        if px is None:
+            warns.append(f"{pkey} 가 없어 {key} 를 맞춰 보지 못했어요")
+            continue
+        mon = px - dt.timedelta(days=px.weekday())
+        if wk >= mon:
+            warns.append(f"{key} {wk} 가 {pkey} {px} 의 주 월요일({mon}) 앞이 아님")
+        elif (px - wk).days > C1W_FROM_MAX_DAYS:
+            warns.append(f"{key} {wk} 가 {pkey} {px} 보다 {(px - wk).days}일 앞 (> {C1W_FROM_MAX_DAYS}일)")
+        if wk.weekday() >= 5:
+            warns.append(f"{key} {wk} 가 주말")
+        if hol is not None:
+            exp = c1w_week_expect(px, hol[mk], hol.get("start"), end)
+            if exp != wk:
+                warns.append(f"{key} {wk} ≠ 휴장일 표로 본 그 주 앞 마지막 거래일 {exp}")
+        before = [d for d in (days or []) if d < mon.isoformat()]
+        if before and before[-1] != wk.isoformat():
+            warns.append(f"{key} {wk} ≠ 지수 일봉(idxHist {'KOSPI' if g == 'kr' else 'SP500'})으로 본 {before[-1]}")
+    # 한국 주식의 제한폭 범위: 그 주 거래일 수 (wkFrom < 날 ≤ pxDate · 지수 일봉) — 모르면 이 범위는 보지 않아요 (값 칸에 적어요)
+    px_kr = _iso_day(data.get("pxDate"))
+    n_kr = (sum(1 for d in kdays if dates["kr"].isoformat() < d <= px_kr.isoformat())
+            if kdays and dates["kr"] is not None and px_kr is not None else 0)
+    knx = {s.get("t") for s in stocks if c1w_group(s) == "kr" and _KNX_TAIL.search(str(s.get("dk") or ""))}
+    cnt = {g: [0, 0] for g in C1W_GROUPS}          # [c1w 있음, 기준일 종가 종목]
+    bad, own, nodate, odd, far, lim, kr_far, badv = [], [], [], [], [], [], [], []
+    n_nv = 0
+    for s in stocks:
+        g = c1w_group(s)
+        t, nk = s.get("t"), s.get("nk")
+        nm = (f"{t if isinstance(t, str) else _short(t)} " + (nk[:12] if isinstance(nk, str) else "")).strip()
+        v0 = s.get("c1w")
+        if "c1wv" in s:                       # 4차 (S1): 네이버 수정주가로 확인한 한국 주식의 c1w 에만 "nv"
+            if s.get("c1wv") == "nv" and g == "kr" and json_num(v0) is not None and not c1w_own_date(s):
+                n_nv += 1
+            else:
+                badv.append(f"{nm} {_short(s.get('c1wv'))}")
+        if g is None:
+            if v0 is not None:
+                odd.append(nm)
+            continue
+        if not c1w_own_date(s):
+            cnt[g][1] += 1
+        if v0 is None:
+            continue
+        v = json_num(v0)
+        if v is None or v <= 0:
+            bad.append(f"{nm} {_short(v0)}")
+            continue
+        if c1w_own_date(s):
+            own.append(nm)
+            continue
+        if dates["us" if g == "us" else "kr"] is None:
+            nodate.append(nm)
+            continue
+        cnt[g][0] += 1
+        p = json_num(s.get("price"))
+        if p is None or p <= 0:
+            continue
+        r = p / v
+        if not math.isfinite(r):
+            bad.append(f"{nm} {_short(v0)} (price ÷ c1w 가 무한대)")
+            cnt[g][0] -= 1
+            continue
+        txt = f"{nm} {(r - 1) * 100:+.0f}%"
+        if g == "kr" and n_kr:
+            k = (KONEX_DAY_LIMIT if s.get("t") in knx else KR_DAY_LIMIT) / 100.0
+            if r < (1 - k) ** n_kr * (1 - 1e-9) or r > (1 + k) ** n_kr * (1 + 1e-9):
+                lim.append(txt)
+                continue
+        if not (C1W_RATIO_BAND[0] <= r <= C1W_RATIO_BAND[1]):     # 3차 (검증): 제한폭을 모르는 날 (idxHist KOSPI 없음) 은 한국도 경고
+            (kr_far if g == "kr" and n_kr else far).append(txt)
+    parts = []
+    src = data.get("c1wSrc")
+    src_ok = isinstance(src, dict) and all(isinstance(src.get(k), int) and not isinstance(src.get(k), bool) and src[k] >= 0
+                                            for k in ("listing", "krx", "naver"))
+    for g, key in (("kr", "wkFrom"), ("us", "usWkFrom")):
+        k, n = cnt[g]
+        how = (f" · 목록 {src['listing']:,} · KRX {src['krx']:,} · 네이버 {src['naver']:,}" if g == "kr" and src_ok else "")
+        parts.append(f"{C1W_GROUP_KO[g]} {k:,} / {n:,} ({key} {dates[g] or '없음'}{how})")
+        if dates[g] is not None and n and 100.0 * k / n < C1W_COVER_MIN:      # 내림으로 적어요 (94.96% 가 95.0% 로 보이지 않게)
+            warns.append(f"{C1W_GROUP_KO[g]} 채움 {math.floor(1000.0 * k / n) / 10:.1f}% (< {C1W_COVER_MIN:g}%)")
+    if not src_ok and src is not None:
+        warns.append(f"c1wSrc 모양이 틀림 ({_short(src, 40)})")
+    elif src is None and ("wkFrom" in data or n_c1w):
+        warns.append("c1wSrc 없음 (국내 c1w 를 어떻게 확인했는지 몰라요)")
+    elif src_ok and (src["listing"] + src["krx"] + src["naver"] != cnt["kr"][0] or src["naver"] != n_nv):
+        warns.append(f"c1wSrc (목록 {src['listing']:,} + KRX {src['krx']:,} + 네이버 {src['naver']:,}) 가 종목과 다름 (국내 c1w {cnt['kr'][0]:,} · "
+                     f"c1wv nv {n_nv:,})")
+    k, n = cnt["fund"]
+    parts.append(f"{C1W_GROUP_KO['fund']} {k} / {n}")
+    if dates["kr"] is not None and k < n:
+        warns.append(f"{C1W_GROUP_KO['fund']} 빈 칸 {n - k}")
+    for title, items, what in (("c1w 가 숫자가 아니거나 0 이하", bad, "숫자가 아님"), ("자기 가격 날짜 종목에 c1w", own, "자기 가격 날짜 종목에 있음"),
+                               ("c1wv 가 한국 주식 c1w 옆의 nv 가 아님", badv, "c1wv 이상"),
+                               ("그 시장 날짜(wkFrom · usWkFrom) 없이 c1w", nodate, "그 시장 날짜 없이 있음"),
+                               ("시장을 모르는 행에 c1w", odd, "시장을 모르는 행에 있음"),
+                               (f"price ÷ c1w 가 {C1W_RATIO_BAND[0]:g} ~ {C1W_RATIO_BAND[1]:g} 밖 (확인 · 미국 · 채권·ETF·금 · 제한폭을 모르는 날의 한국)", far,
+                                f"{C1W_RATIO_BAND[0]:g} ~ {C1W_RATIO_BAND[1]:g} 밖"),
+                               (f"한국 주식 price ÷ c1w 가 가격 제한폭 {n_kr}거래일 밖", lim, "제한폭 밖")):
+        if items:
+            rep.detail(title, items[:50])
+            warns.append(f"{what} {len(items):,} ({', '.join(items[:C1W_SHOW])}{' …' if len(items) > C1W_SHOW else ''})")
+    info = list(notes)
+    if kr_far:                                # 한국 주식 · 제한폭 안: 이름만 (경고 아님)
+        rep.detail(f"한국 주식 price ÷ c1w 가 {C1W_RATIO_BAND[0]:g} ~ {C1W_RATIO_BAND[1]:g} 밖 (제한폭 안 · 확인용)", kr_far[:50])
+        info.append(f"한국 {C1W_RATIO_BAND[0]:g} ~ {C1W_RATIO_BAND[1]:g} 밖 {len(kr_far):,} (경고 아님 · {', '.join(kr_far[:C1W_SHOW])}"
+                    f"{' …' if len(kr_far) > C1W_SHOW else ''})")
+    rep.add(C1W_ROW, True, (" · ".join(parts + warns + info))[:600], th, warn=bool(warns))
+
+
+def check_v196e(rep, data, macro):
+    """v19.6e (Part I.2): 한 줄 — 이번 주 시작 종가 (c1w · wkFrom · usWkFrom). 경고만: 검사 코드가 멈춰도 실패가 아니라 경고예요 (이 줄은 발행을
+    멈추지 않아요 — 멈추는 줄은 Jack 의 답을 받아서)."""
+    try:
+        _check_v196e(rep, data if isinstance(data, dict) else {}, macro if isinstance(macro, dict) else {})
+    except Exception as e:
+        rep.add(C1W_ROW, True, f"검사가 오류로 멈췄어요: {type(e).__name__}: {str(e)[:120]}", "오류 없이 끝나야 함 (경고만 · 발행을 막지 않아요)", warn=True)
 
 
 def check_v1751(rep, cur, kr, us, by, comps, px, today, hilo, us_own=frozenset()):
