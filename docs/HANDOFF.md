@@ -7,6 +7,18 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ## 0. Current state and next steps (updated 2026-11-21 KST — read this first)
 
+**v19.6b screens (branch `claude/v19.6b-screens`, PR pending), 2026-11-22:** Part B.2 on #145's data: the 오늘 볼 것 page
+(`#home/today`, `src/v2/todaylook.jsx`; pure rules in `src/v2/look.js`) and 홈's new compact rows (home2.jsx `Look`, today.jsx
+`WatchLook` on a first visit). Cards in Part B's order: 확인 필요 (held stocks' 유상증자 · CB · BW decisions filed in the last 30 days;
+확인했어요 writes the new store part `seen`, matched by stock, kind and numbers on the same filing or board date, so a correction with
+other numbers shows again; marks older than 120 days pruned on the next mark), 관심 종목 조건, 지분 변동 (held + watched, 7 days,
+|q| × today's close ≥ 1억원) and 국민연금 (7 days, one decimal), 다가오는 일정 (US `ed` · `xd`, today to +7 days, 5 rows). 홈 now
+loads disc.json when a Korean stock is held or watched. Not built, waiting for Jack: 공시 보기 (an existing test,
+`tests/test_v2_app.py::test_pages_never_load_fixtures_or_other_sites`, keeps DART links to the 공시 tab), cards for 유무상증자 (`bonus`),
+기타주식 (`cls` other) and two-class (`n2` · `p2`) rows, and the insider title for role 임원·주요주주 or blank (`look.insBoth`,
+proposed "임원·주요주주 지분 변동"); #145's open question 3 (old decisions corrected recently) follows the spec literally (the
+correction's own filing date counts) until Jack sets a rule.
+
 **#162 (hand-added US stocks), 2026-11-21:** Jack's 11-21 answer 2 ("Yes, warn."), applied under his standing rule for checks on our own processing (11-19; N = 5, 11-20). A hand-added US stock (`EXTRA_US`, 67) that Yahoo doesn't send already only warned: the run writes a reason for every one it leaves out (`us_extra_missing`), and #149's drop step never drops them. What changes is only a hand-added stock missing from data.json with no reason in `usExtraMissing` (our own code losing it after `fetch_us`; no such path today): 1 to 5 now warn, named ("이유 없이 빠짐 n: …"); more than 5 still fail (`US_EXTRA_QUIET_MAX`, new; the 11 publishes with the record, 11-14 to 11-20, had 0). Still failing as before: a listed row with no price (or not a US stock row) and no reason, and a reason that is not text. RUNBOOK "US stocks added by hand (EXTRA_US)".
 
 **Merged 2026-11-21:** **#154** (CLAUDE.md "decide, then report": Jack's rule of 11-20 with his 11-21 tweaks).

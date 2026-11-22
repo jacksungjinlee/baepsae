@@ -1243,6 +1243,38 @@ export const C = {
     },
   },
 
+  // v19.6b 오늘 볼 것 카드 (docs/tasks/v19.6-records-alerts-dark.md Part B.2, 보드 Today2) — Appendix 1 '오늘 볼 것' 그대로 (Jack, 2026-11-06).
+  // 페이지 제목은 home.look, 꼬리표 '확인 필요' 는 daily.check, '{name} · 관심 종목 조건' 과 그 문장은 watch.hitKind · hit · hitYe 를 그대로 써요.
+  // 카드 제목은 "{name} · {아래 제목}" 이에요 (watch.jsx hitTitle 과 같은 모양). 이/가 는 앞 말의 마지막 글자로 (track.subjectParticle).
+  look: {
+    open: "공시 보기",                                              // 버튼 — 그 공시의 DART 원문 (새 탭). 아직 화면에 없어요: DART 주소는 한 곳에만 둬요 (tests/test_v2_app.py) · 그 시험을 바꾸려면 Jack 의 yes
+    seen: "확인했어요",                                             // 버튼 — 카드를 닫아요 (store.js seen)
+    rights: "유상증자 결정",
+    cb: "전환사채 발행 결정",
+    bw: "신주인수권부사채 발행 결정",
+    insExec: "임원 지분 변동",                                       // role 임원
+    insMajor: "주요주주 지분 변동",                                   // role 주요주주
+    insBoth: null,                                                 // 제안 (Jack 승인 대기): "임원·주요주주 지분 변동" — role 이 '임원·주요주주'(둘 다)이거나 비었을 때. 그동안 그 카드는 빠져요
+    nps: "국민연금 지분",
+    rightsHolders: "회사가 새 주식 {n}주(지금 주식 수의 {p}%)를 발행하기로 했어요. 지금 주주에게 먼저 살 기회를 주는 방식이에요. 사지 않으면 내 지분 비율이 줄어들어요.",
+    rightsOthers: "회사가 새 주식 {n}주(지금 주식 수의 {p}%)를 발행하기로 했어요. 다른 투자자에게 파는 방식이라 내 지분 비율이 줄어들어요.",
+    cbBody: "회사가 나중에 주식으로 바꿀 수 있는 채권을 {amt}어치 발행하기로 했어요. 모두 주식으로 바뀌면 주식 수가 지금보다 {p}% 늘어나요.",
+    bwBody: "회사가 정해진 가격에 새 주식을 살 수 있는 권리가 붙은 채권을 {amt}어치 발행하기로 했어요. 그 권리를 모두 쓰면 주식 수가 지금보다 {p}% 늘어나요.",
+    unread: "공시에서 숫자를 읽지 못했어요. 공시를 직접 확인해 주세요.",
+    posAny: "임원·주요주주",                                         // Part B.2: 직위(pos)가 빈 보고 · Jack 2026-11-19 (7c): 둘 다인 사람의 role 도 이 글자 그대로 (look.js roleWords)
+    insUp: "{pos}이 지분을 늘린 보고가 있어요. 지금 주가로 약 {amt}이에요.",     // {pos} 의 마지막 글자에 받침이 있을 때
+    insUpGa: "{pos}가 지분을 늘린 보고가 있어요. 지금 주가로 약 {amt}이에요.",   // 그 밖에
+    insDown: "{pos}이 지분을 줄인 보고가 있어요. 지금 주가로 약 {amt}이에요.",
+    insDownGa: "{pos}가 지분을 줄인 보고가 있어요. 지금 주가로 약 {amt}이에요.",
+    npsUp: "국민연금 지분이 {a}%에서 {b}%로 늘었어요.",
+    npsDown: "국민연금 지분이 {a}%에서 {b}%로 줄었어요.",
+    dates: "다가오는 일정",
+    earn: "실적 발표",
+    exDiv: "배당락일",
+    usNote: "미국 종목은 미국 현지 날짜예요.",
+    noKr: "한국 종목 일정은 아직 보여 드리지 못해요.",
+  },
+
   // v19.7a 빼기 (Part B, 보드 PfRemove3) — chat (2026-11-07: v19.7 Appendix 1). 머리줄은 rec.head · rec.heldQty, 지분 없는 종목의 버튼은
   // rec.remove '빼기' 예요. 제목의 을/를 은 이름의 마지막 글자로 (track.objectParticle).
   rm: {
