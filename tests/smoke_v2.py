@@ -15757,6 +15757,345 @@ def scene_v196b_states(R, files, width=390):
     ctx.close()
     srv.shutdown()
 
+# ── v19.6e 이번 주 정리 (src/v2/weekly.js · weekly.jsx · weekcfg.js, board Weekly2 · Part E) ──
+# 커밋한 빌드는 스위치가 꺼져 있어요 (weekcfg.js WEEKLY_ON: 빠진 종목을 적는 줄 C.weekly.leftOut 이 Jack 의 승인을 기다려요). 장면은 스위치를
+# 켠 임시 빌드로 카드를 시험하고, 커밋한 빌드에는 카드가 없는지도 봐요. 지어낸 시험 데이터예요 (실제 회사 숫자가 아니에요).
+_WEEKLY = {}
+WK = C["weekly"]
+
+
+def weekly_on_app(nv="out"):
+    """app.html 을 이번 주 정리 스위치(WEEKLY_ON)를 켜고 WEEK_NV 를 nv 로 놓아 임시 폴더에 빌드해요 (커밋하지 않아요, 폴더는 바로 지워요)."""
+    if nv not in _WEEKLY:
+        tmp = tmpdirs.make("baepsae-weekly-on-")
+        try:
+            shutil.copytree(os.path.join(ROOT, "src"), os.path.join(tmp, "src"))
+            os.makedirs(os.path.join(tmp, "tools"))
+            for f in ("template.html", "build-app.sh", "package.json", "package-lock.json", os.path.join("tools", "build_tag.py")):
+                shutil.copy(os.path.join(ROOT, f), os.path.join(tmp, f))
+            os.symlink(os.path.join(ROOT, "node_modules"), os.path.join(tmp, "node_modules"))
+            p = os.path.join(tmp, "src", "v2", "weekcfg.js")
+            with open(p, encoding="utf-8") as fh:
+                src = fh.read()
+            on = re.findall(r"^export const WEEKLY_ON = (?:true|false);$", src, flags=re.M)
+            mode = re.findall(r'^export const WEEK_NV = "(?:out|use|note)";$', src, flags=re.M)
+            assert on == ["export const WEEKLY_ON = false;"] and len(mode) == 1, (on, mode)     # 커밋한 빌드는 꺼져 있어요
+            with open(p, "w", encoding="utf-8") as fh:
+                fh.write(src.replace(on[0], "export const WEEKLY_ON = true;").replace(mode[0], f'export const WEEK_NV = "{nv}";'))
+            out = os.path.join(tmp, "out")
+            r = subprocess.run(["bash", "build-app.sh", out], cwd=tmp, capture_output=True, text=True, encoding="utf-8")
+            assert r.returncode == 0, r.stdout + r.stderr
+            with open(os.path.join(out, "app.html"), encoding="utf-8") as a, open(os.path.join(ROOT, "app.html"), encoding="utf-8") as b:
+                html = a.read()
+                assert html != b.read(), "스위치를 켜서 빌드했는데 app.html 이 같아요"
+            _WEEKLY[nv] = html
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    return _WEEKLY[nv]
+
+
+def v196e_files(files, px="2026-11-13", wk_from="2026-11-06", pub="2026-11-14T06:45:00+09:00", nv=()):
+    """그 주(px 가 든 월 ~ 일)의 마지막 한국 종가 px 를 pub 에 발행한 파일. 종목마다 c1w (지난주 종가): 한국 반도체는 이번 주 −2%, SK하이닉스는
+    −8%, 나머지는 0% · 오늘 환율 1,450, fxHist 의 wk_from 1,400 · 코스피 4,000 → 4,100 · AAPL 다음 주 실적 발표 · disc.json: 이번 주 삼성전자
+    유상증자 결정과 SK하이닉스 지분 변동(1.418억원), 지난주 것은 하나씩 · nv: c1wv 'nv' 를 붙일 종목."""
+    f = clone(files)
+    for n in DATA_FILES:
+        f[n]["publishedAt"] = pub
+    for n in ("data.json", "corp.json"):
+        f[n]["pxDate"] = px
+    d = f["data.json"]
+    d.update(usPxDate=px, fxDate=px, fx=1450.0, wkFrom=wk_from, usWkFrom=wk_from)
+    by = {x["t"]: x for x in d["stocks"]}
+    for s in d["stocks"]:
+        if isinstance(s.get("price"), (int, float)) and s["price"] > 0 and not s.get("pxd"):
+            s["c1w"] = s["price"] / (0.98 if s["cls"] == "kr" and s.get("ind") == "semi" else 1.0)
+    by["000660"]["c1w"] = by["000660"]["price"] / 0.92
+    for t in nv:
+        by[t]["c1wv"] = "nv"
+    nxt = (dt.date.fromisoformat(px) + dt.timedelta(days=7 - dt.date.fromisoformat(px).weekday() + 2)).isoformat()    # 다음 주 수요일
+    by["AAPL"]["ed"] = nxt
+    ymd = lambda iso: iso.replace("-", "")                                                       # noqa: E731
+    mon = dt.date.fromisoformat(px) - dt.timedelta(days=dt.date.fromisoformat(px).weekday())
+    in_wk = lambda n: (mon + dt.timedelta(days=n)).isoformat()                                   # noqa: E731
+    disc = f["disc.json"]
+    disc.update(asOf=px, newest=px, issueOk=True, nps=[])
+    disc["issue"] = [{"rc": "20990000000001", "d": ymd(in_wk(3)), "t": "005930", "nk": "삼성전자", "kind": "rights", "bd": ymd(in_wk(3)), "how": "holders",
+                      "n": 12000000, "p": 18.0, "amt": None, "cor": False, "cls": "common"},
+                     {"rc": "20990000000002", "d": ymd(in_wk(-4)), "t": "005930", "nk": "삼성전자", "kind": "rights", "bd": ymd(in_wk(-4)), "how": "others",
+                      "n": 1000, "p": 1.0, "amt": None, "cor": False, "cls": "common"}]
+    disc["insider"] = [{"rc": "20980000000001", "d": ymd(in_wk(2)), "t": "000660", "nk": "SK하이닉스", "s": "semi", "cap": 1.0, "nm": "가나다", "pos": "대표이사",
+                        "role": "임원", "q": 100, "r": 0.0, "amt": 1.0},
+                       {"rc": "20980000000002", "d": ymd(in_wk(-3)), "t": "000660", "nk": "SK하이닉스", "s": "semi", "cap": 1.0, "nm": "라마바", "pos": "상무",
+                        "role": "임원", "q": -500, "r": 0.0, "amt": 1.0}] + disc["insider"]
+    m = f["macro.json"]
+    k = m["idxHist"]["KOSPI"]
+    k["rows"] = [r for r in k["rows"] if r[0] < wk_from] + [[wk_from, 4000.0], [px, 4100.0]]
+    k["asOf"] = px
+    m["fxHist"] = {"asOf": px, "final": True, "rows": [["2026-10-30", 1380.0], [wk_from, 1400.0], [px, 1450.0]]}
+    return f
+
+
+def v196e_store(by, more=None, extra=None):
+    """가진 종목 포트폴리오 하나: 삼성전자 10주 · SK하이닉스 3주 · AAPL 2주 (11월 1일에 넣음), 이번 주(11월 9일 주)에 삼성전자 2주를 22만원에
+    샀고 SK하이닉스 1주를 150만원에 팔았고 삼성전자 배당 3,610원을 받았어요."""
+    deck = e_imported(by, "2026-11-01", [("005930", 10, None), ("000660", 3, None), ("AAPL", 2, None)], did="dweek", name="이번 주 포트폴리오")
+    deck["purchases"] = [{"id": "pwk00001", "t": "005930", "date": "2026-11-11", "qty": 2, "price": 220000.0, "ccy": "KRW"}]
+    deck["sales"] = [{"id": "swk00001", "t": "000660", "date": "2026-11-12", "qty": 1, "price": 1500000.0, "ccy": "KRW"}]
+    deck["divs"] = [{"id": "vwk00001", "t": "005930", "amount": 3610, "ccy": "KRW", "date": "2026-11-10"}]
+    deck.update(more or {})
+    return {"v": 2, "decks": [deck] + (extra or [])}
+
+
+def v196e_expect(by, fx=1450.0, fx0=1400.0):
+    """위 포트폴리오의 그 주 (손으로 푼 식): 이득 = 지금 − 시작 − 산 돈 + 판 돈 · % = 이득 ÷ (시작 + 산 돈)."""
+    p, c = (lambda t: by[t]["price"]), (lambda t: by[t]["c1w"])
+    start = 10 * c("005930") + 3 * c("000660") + 2 * c("AAPL") * fx0
+    buys, sells = 2 * 220000.0, 1 * 1500000.0
+    end = 12 * p("005930") + 2 * p("000660") + 2 * p("AAPL") * fx
+    gain = end - start - buys + sells
+    return gain, gain / (start + buys) * 100
+
+
+def signed_won(v):
+    return ("+" if v > 0 else "−" if v < 0 and round(abs(v) / 10000 if abs(v) >= 10000 else abs(v)) > 0 else "") + won_text(v)
+
+
+WEEKLY_CARD = '[data-ui-v2="weekly"]'
+
+
+# the console lines the app writes, kept in the page from its first script on (an init script), so none is missed before a listener
+# could be attached
+WEEK_LOGS = ("(() => { const w = console.warn.bind(console); window.__wkLogs = [];"
+             " console.warn = (...a) => { try { window.__wkLogs.push(a.map(String).join(' ')); } catch (e) { /* keep going */ } w(...a); }; })();")
+
+
+def weekly_open(R, data, width, when, init, app, dark=False, drop=()):
+    """reread_open 으로 그 날짜(when, 한국 시간)에 맞춘 창을 열어요. dark: 화면 모드 어둡게(이 기기의 선택, theme.js THEME_KEY) · drop: 사이트에
+    두지 않을 데이터 파일. -> (srv, ctx, page, logs): logs() 는 앱이 지금까지 console 에 남긴 줄이에요."""
+    site = build_site(data, drop=drop, app=app)
+    mode = "(() => { try { localStorage.setItem('baepsae-theme', 'dark'); } catch (e) {} })();" if dark else ""
+    srv, ctx, page, base = reread_open(R, site, width, when, init=WEEK_LOGS + mode + (init or ""), path="/app.html?dev=1#home")
+    return srv, ctx, page, lambda: page.evaluate("() => window.__wkLogs || []")
+
+
+def weekly_tiles(page, card=WEEKLY_CARD):
+    return page.locator(card + ' [data-ui-v2="weekly-tile"]').evaluate_all(
+        "(ts) => ts.map((t) => [t.dataset.tile, t.querySelector('[data-ui-v2=\"weekly-label\"]').innerText, t.querySelector('[data-ui-v2=\"weekly-big\"]').innerText,"
+        " (t.querySelector('[data-ui-v2=\"weekly-sub\"]') || { innerText: '' }).innerText])")
+
+
+def scene_v196e(R, files, width, dark=False):
+    """v19.6e 이번 주 정리 (스위치를 켠 빌드 · 320 · 390 · 1280 · 어두운 화면): 토요일 아침, 11월 9일 주의 마지막 종가(13일)가 발행된 뒤 — 홈 맨 위
+    (날짜 줄 밑, 판정 띠와 포트폴리오보다 앞)에 카드 · 머리 '11월 9일 ~ 11월 13일 · 이번 주 정리 · 내 규칙 …'(홈 남색 띠와 같은 n · k) · 네 칸(내 포트폴리오:
+    손으로 푼 이득과 % · 코스피, 받은 배당, 공시: 이번 주 것만, 다음 주 미국 일정) · 가장 많이 움직인 종목(SK하이닉스 −8.0%, 같은 업종이 다 같이 빠진
+    한 주) → 회사 화면 · 닫기 → 그 주에는 다시 열어도 없음 (기록 파일에는 아무것도 쓰지 않아요) · 토큰 색 · 12px · 가로 스크롤 없음 · 뱁이 없음."""
+    S = f"v19.6e 이번 주 정리 {width}{' 어두운' if dark else ''}"
+    data = v196e_files(files)
+    by = {x["t"]: x for x in data["data.json"]["stocks"]}
+    when = dt.datetime(2026, 11, 14, 9, 0, tzinfo=KST)
+    srv, ctx, page, logs = weekly_open(R, data, width, when, e_store(v196e_store(by)["decks"]), weekly_on_app(), dark)
+    gain, pct = v196e_expect(by)
+
+    def card():
+        wait_ready(page)
+        c = page.locator(WEEKLY_CARD)
+        c.wait_for(state="visible")
+        assert c.count() == 1 and c.get_attribute("data-week") == "2026-11-09" and c.get_attribute("data-from") == "2026-11-09" and c.get_attribute("data-to") == "2026-11-13"
+        # 맨 위: 날짜 줄 다음, 판정 띠 · 포트폴리오 블록보다 앞
+        order = page.evaluate("""() => { const w = document.querySelector('[data-ui-v2="weekly"]'), b = document.querySelector('[data-ui-v2="home-block"]'),
+            d = document.querySelector('[data-ui-v2="home2"] [data-ui-v2="date-line"]');
+            return [!!(w.compareDocumentPosition(b) & 4), !!(d.compareDocumentPosition(w) & 4)]; }""")
+        assert order == [True, True], order
+        assert c.locator('[data-ui-v2="weekly-range"]').inner_text() == "11월 9일 ~ 11월 13일"
+        assert c.locator('[data-ui-v2="weekly-title"]').inner_text() == WK["title"] == "이번 주 정리"
+        hk, wk = page.locator('[data-ui-v2="home-kept"]'), c.locator('[data-ui-v2="weekly-kept"]')
+        assert wk.inner_text() == hk.inner_text() and wk.get_attribute("data-n") == page.locator('[data-ui-v2="home-rules"]').get_attribute("data-checked")
+        assert c.locator('[data-ui-v2="weekly-name"]').count() == 0                                # 포트폴리오 하나: 이름 없음
+        tiles = weekly_tiles(page)
+        assert tiles == [["pf", WK["pf"], signed_pct(pct), f"{signed_won(gain)} · {fillp(WK['kospi'], pct='+2.5%')}"],
+                         ["div", WK["div"], "3,610원", fillp(WK["count"], n=1)],
+                         ["disc", WK["disc"], fillp(WK["count"], n=2), f"{fillp(WK['kinds']['rights'], n=1)} · {fillp(WK['kinds']['ins'], n=1)}"],
+                         ["next", WK["nextUs"], fillp(WK["earn"], n=1), "Apple Inc."]], tiles
+        t = c.locator('[data-tile="pf"]')
+        assert abs(float(t.get_attribute("data-gain")) - gain) <= 1 and abs(float(t.get_attribute("data-pct")) - pct) < 0.001 and t.get_attribute("data-n") == "3"
+        mv = c.locator('[data-ui-v2="weekly-mover"]')
+        assert mv.get_attribute("data-t") == "000660" and mv.get_attribute("data-why") == "fell" and abs(float(mv.get_attribute("data-pct")) + 8.0) < 0.001
+        got = [mv.locator(f'[data-ui-v2="weekly-mover-{k}"]').inner_text() for k in ("label", "name", "why")]
+        assert got == [WK["mover"], "SK하이닉스 \u22128.0%", WK["fell"]], got
+        assert c.locator('[data-ui-v2^="weekly-note"]').count() == 0
+        icons = c.locator('[data-ui="icon-chip"]').evaluate_all("(cs) => cs.map((x) => x.dataset.icon + ':' + x.dataset.topic)")
+        assert icons == ["chart-pie-slice:earn", "coins:div", "file-text:disc", "calendar-dots:earn"], icons
+        # 토큰 색 (어두운 화면이면 Part D 의 어두운 값): 남색 바탕 · 칸 바탕 · 내림 파랑
+        cols = page.evaluate("""() => { const g = (s, p) => getComputedStyle(document.querySelector(s))[p];
+            return [g('[data-ui-v2="weekly-hero"]', 'backgroundColor'), g('[data-tile="pf"]', 'backgroundColor'), g('[data-tile="pf"] [data-ui-v2="weekly-big"]', 'color'),
+              g('[data-ui-v2="weekly-mover-pct"]', 'color'), g('[data-ui-v2="weekly-title"]', 'color')]; }""")
+        want = ["#31456B", "#1A2231", "#7AA2FF", "#7AA2FF", "#FFFFFF"] if dark else ["#1C2B45", "#FFFFFF", "#2563EB", "#2563EB", "#FFFFFF"]
+        assert cols == [rgb(x) for x in want], cols
+        if width >= 1024:
+            assert c.locator('[data-ui-v2="weekly-tiles"]').evaluate("(e) => getComputedStyle(e).gridTemplateColumns.split(' ').length") == 4
+        floor_ok(page, "이번 주 정리")
+        no_hscroll(page, width)
+        assert page.locator(MASCOT_IN_MAIN).count() == 0, "숫자가 있는 카드 옆에 뱁이"
+        assert not [x for x in logs() if "weekly" in x], [x for x in logs() if "weekly" in x]
+        R.collect(page)
+        if R.shots:
+            os.makedirs(R.shots, exist_ok=True)
+            page.screenshot(path=os.path.join(R.shots, f"v196e-home-{width}{'-dark' if dark else ''}.png"), full_page=True)
+    R.check(page, S, "토요일: 홈 맨 위 카드 · 머리 · 네 칸(손으로 푼 이득 · 코스피 · 배당 · 이번 주 공시 · 다음 주 미국 일정) · 움직인 종목 · 토큰 색", card)
+
+    def mover_and_close():
+        page.locator('[data-ui-v2="weekly-mover"]').click()
+        at(page, "stocks/000660")
+        page.go_back()
+        at(page, "home")
+        b = page.locator('[data-ui-v2="weekly-close"]')
+        b.wait_for(state="visible")
+        assert b.inner_text() == C["app"]["close"] and b.bounding_box()["height"] >= 44
+        b.click()
+        page.locator(WEEKLY_CARD).wait_for(state="detached")
+        assert page.locator('[data-ui-v2="home-block"]').count() == 1                             # 나머지 홈은 그대로
+        kept = page.evaluate("() => [localStorage.getItem('baepsae2.weekly.v1'), localStorage.getItem('baepsae2.v1')]")
+        assert json.loads(kept[0]) == {"w": "2026-11-09", "ids": ["dweek"]} and "weekly" not in kept[1]
+        page.reload(wait_until="domcontentloaded")
+        wait_ready(page)
+        page.locator('[data-ui-v2="home-block"]').wait_for(state="visible")
+        assert page.locator(WEEKLY_CARD).count() == 0
+        R.collect(page)
+    R.check(page, S, "움직인 종목 → 회사 화면 · 닫기 → 사라지고 다시 열어도 그 주에는 없음 (이 기기에만, 기록 밖)", mover_and_close)
+    ctx.close()
+    srv.shutdown()
+
+
+def scene_v196e_states(R, files, width=390):
+    """v19.6e 이번 주 정리의 때와 상태 (390): 커밋한 빌드(스위치 꺼짐)에는 카드 없음 · 금요일(그 주가 아직 끝나지 않음) 없음 · 다음 월요일 그대로 ·
+    다음 한국 종가가 나오면 없음 · 금요일 휴장 주(12월 21일 ~ 24일) · 닫기는 그 주만 (다음 주는 다시) · c1w 없는 종목: 빠진 종목 줄이 승인되기 전에는
+    내 포트폴리오 칸이 빠지고 console 이 말해요 · 멈춘 데이터 · 불러오기 실패에는 없음 · 포트폴리오 둘 (이름 · 만든 포트폴리오는 규칙 줄 없음 · 하나만
+    닫기) · nv 행: out (빠짐) · use (들어감) · note (들어가고 각주는 승인 전이라 없음)."""
+    S = f"v19.6e 이번 주 정리 상태 {width}"
+    base = v196e_files(files)
+    by = {x["t"]: x for x in base["data.json"]["stocks"]}
+    sat = dt.datetime(2026, 11, 14, 9, 0, tzinfo=KST)
+    init = e_store(v196e_store(by)["decks"])
+    on = weekly_on_app()
+
+    def one(label, data, when, check, init=init, app=on):
+        srv, ctx, page, logs = weekly_open(R, data, width, when, init, app)
+
+        def run():
+            wait_ready(page)
+            check(page, logs)
+            no_hscroll(page, width)
+            R.collect(page)
+        R.check(page, S, label, run)
+        ctx.close()
+        srv.shutdown()
+
+    def none_but_home(page, logs):
+        page.locator('[data-ui-v2="home-block"]').wait_for(state="visible")
+        assert page.locator(WEEKLY_CARD).count() == 0
+
+    def shows(rng):
+        def chk(page, logs):
+            page.locator(WEEKLY_CARD).wait_for(state="visible")
+            assert page.locator('[data-ui-v2="weekly-range"]').inner_text() == rng
+        return chk
+
+    one("커밋한 빌드 (스위치 꺼짐): 끝난 주라도 카드 없음", base, sat, none_but_home, app=None)
+    one("금요일 아침 (목요일 종가 발행 · 그 주가 아직 끝나지 않음): 카드 없음",
+        v196e_files(files, px="2026-11-12", pub="2026-11-13T06:45:00+09:00"), dt.datetime(2026, 11, 13, 9, 0, tzinfo=KST), none_but_home)
+    one("다음 월요일 (아직 새 발행 없음): 그대로", base, dt.datetime(2026, 11, 16, 9, 0, tzinfo=KST), shows("11월 9일 ~ 11월 13일"))
+    one("다음 한국 종가(월요일)가 발행된 화요일: 카드 없음",
+        v196e_files(files, px="2026-11-16", wk_from="2026-11-13", pub="2026-11-17T06:45:00+09:00"), dt.datetime(2026, 11, 17, 9, 0, tzinfo=KST), none_but_home)
+
+    def holiday(page, logs):
+        shows("12월 21일 ~ 12월 24일")(page, logs)
+        # 이 주에는 11월의 산 기록 · 판 기록 · 배당이 없어요 (받은 배당 칸 없음, 이득은 보유분만) · 공시는 이 주의 것(12월 23일 · 22일) ·
+        # 다음 주는 12월 30일 AAPL 실적 발표
+        tiles = weekly_tiles(page)
+        assert [t[0] for t in tiles] == ["pf", "disc", "next"] and tiles[2][1:] == [WK["nextUs"], fillp(WK["earn"], n=1), "Apple Inc."], tiles
+        assert page.locator('[data-tile="pf"]').get_attribute("data-n") == "3"
+        assert page.locator('[data-ui-v2="weekly-mover"]').get_attribute("data-t") == "000660"
+    one("금요일 휴장 주 (성탄절): 목요일 종가가 마지막 · 토요일 발행이면 카드 '12월 21일 ~ 12월 24일'",
+        v196e_files(files, px="2026-12-24", wk_from="2026-12-18", pub="2026-12-26T06:45:00+09:00"), dt.datetime(2026, 12, 26, 9, 0, tzinfo=KST), holiday)
+
+    closed = init + "(() => { try { localStorage.setItem('baepsae2.weekly.v1', JSON.stringify({ w: '2026-11-09', ids: ['dweek'] })); } catch (e) {} })();"
+    one("닫기는 그 주만: 11월 9일 주를 닫은 기기 — 그 주에는 없음", base, sat, none_but_home, init=closed)
+    one("닫기는 그 주만: 같은 기기, 다음 주(11월 16일 주)에는 다시",
+        v196e_files(files, px="2026-11-20", wk_from="2026-11-13", pub="2026-11-21T06:45:00+09:00"), dt.datetime(2026, 11, 21, 9, 0, tzinfo=KST),
+        shows("11월 16일 ~ 11월 20일"), init=closed)
+
+    no_c1w = clone(base)
+    for s in no_c1w["data.json"]["stocks"]:
+        if s["t"] == "005930":
+            s.pop("c1w")
+
+    def left_out(page, logs):
+        page.locator(WEEKLY_CARD).wait_for(state="visible")
+        assert [t[0] for t in weekly_tiles(page)] == ["div", "disc", "next"]                      # 내 포트폴리오 칸이 빠져요 (이름을 적을 줄이 승인 전)
+        assert page.locator('[data-ui-v2^="weekly-note"]').count() == 0 and WK["leftOut"] is None
+        got = logs()
+        assert any("weekly (dweek): left out of the week's gain: 005930 (none)" in x for x in got), got
+        assert any("C.weekly.leftOut" in x for x in got), got
+    one("c1w 없는 종목 (삼성전자): 빠진 종목 줄이 승인 전이라 내 포트폴리오 칸 없음 · console 이 이름과 까닭을 말해요", no_c1w, sat, left_out)
+
+    def stale(page, logs):
+        page.locator('[data-ui-v2="today-stale"]').wait_for(state="visible")
+        assert page.locator(WEEKLY_CARD).count() == 0 and page.locator('[data-ui-v2="home-block"]').count() == 0
+    one("멈춘 데이터 (토요일 발행을 다음 주 수요일에 · 5거래일 넘게 늦음): 멈춤 띠만, 카드 없음", base, dt.datetime(2026, 11, 25, 9, 0, tzinfo=KST), stale)
+
+    def fail(page, logs):
+        see(page, LOAD_FAIL)
+        assert page.locator(WEEKLY_CARD).count() == 0 and page.locator('[data-ui-v2="home-block"]').count() == 0
+    srv, ctx, page, logs = weekly_open(R, base, width, sat, init, on, drop=("data.json",))
+
+    def run_fail():
+        page.locator('[data-ui-v2="load-fail"]').first.wait_for(state="visible")
+        fail(page, logs)
+        R.collect(page)
+    R.check(page, S, "불러오기 실패 (data.json 없음): 실패 문구만, 카드 없음", run_fail)
+    ctx.close()
+    srv.shutdown()
+
+    built = {"id": "dbuilt", "name": "만든 포트폴리오", "createdAt": "2026-10-01", "planFx": 1300,
+             "holdings": [{"t": "005380", "nk": "현대차", "target": 1.0, "plannedQty": 5,
+                           "rules": [{"id": "band", "kind": "band", "check": "checked", "target": 1.0, "bands": [0.75, 1.25, 1.4]}]}],
+             "purchases": [{"id": "pbu00001", "t": "005380", "date": "2026-10-01", "qty": 5, "price": 250000, "ccy": "KRW"}]}
+    two = e_store(v196e_store(by, extra=[built])["decks"])
+
+    def two_cards(page, logs):
+        cards = page.locator(WEEKLY_CARD)
+        cards.first.wait_for(state="visible")
+        assert cards.count() == 2
+        assert cards.evaluate_all("(cs) => cs.map((c) => [c.dataset.deckId, c.querySelector('[data-ui-v2=\"weekly-name\"]').innerText, !!c.querySelector('[data-ui-v2=\"weekly-kept\"]')])") == [
+            ["dweek", "이번 주 포트폴리오", True], ["dbuilt", "만든 포트폴리오", False]]
+        # 현대차 0%: 0.0% 는 가장 많이 움직인 종목이 아니에요 · 만든 포트폴리오의 이득은 0
+        assert page.locator('[data-deck-id="dbuilt"] [data-ui-v2="weekly-mover"]').count() == 0
+        assert page.locator('[data-deck-id="dbuilt"] [data-tile="pf"]').get_attribute("data-gain") == "0"
+        page.locator('[data-deck-id="dweek"] [data-ui-v2="weekly-close"]').click()
+        page.locator(WEEKLY_CARD + '[data-deck-id="dweek"]').wait_for(state="detached")
+        assert cards.count() == 1 and cards.first.get_attribute("data-deck-id") == "dbuilt"
+        assert json.loads(page.evaluate("() => localStorage.getItem('baepsae2.weekly.v1')")) == {"w": "2026-11-09", "ids": ["dweek"]}
+    one("포트폴리오 둘: 카드 둘(이름 · 만든 포트폴리오는 규칙 줄 없음) · 하나만 닫기", base, sat, two_cards, init=two)
+
+    nvd = v196e_files(files, nv=("000660",))
+    for mode in ("out", "use", "note"):
+        def nv_check(page, logs, mode=mode):
+            c = page.locator(WEEKLY_CARD)
+            c.wait_for(state="visible")
+            assert c.get_attribute("data-nv") == mode
+            tiles = [t[0] for t in weekly_tiles(page)]
+            mv = page.locator('[data-ui-v2="weekly-mover"]')
+            if mode == "out":
+                # SK하이닉스는 양쪽에서 빠지고 (이름을 적을 줄이 승인 전이라 내 포트폴리오 칸 없음), 움직인 종목도 아니에요: 삼성전자 −2.0% (나머지 반도체도 모두 빠짐)
+                assert "pf" not in tiles and mv.get_attribute("data-t") == "005930" and mv.get_attribute("data-why") == "fell"
+                assert any("000660 (nv)" in x for x in logs()), logs()
+            else:
+                assert tiles[0] == "pf" and page.locator('[data-tile="pf"]').get_attribute("data-n") == "3" and mv.get_attribute("data-t") == "000660"
+                assert page.locator('[data-ui-v2="weekly-note-nv"]').count() == 0                  # 각주는 승인 전 (note 도)
+                assert any("C.weekly.nvNote" in x for x in logs()) == (mode == "note"), logs()
+        one(f"nv 행 (SK하이닉스 c1wv nv) · WEEK_NV {mode}", nvd, sat, nv_check, app=weekly_on_app(mode))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -15884,7 +16223,11 @@ def main():
                    lambda: scene_kr_own_close(R, files, 1280),                                              # 국내 마지막 확인 종가 · PC
                    lambda: scene_us_own_close(R, files, 390), lambda: scene_us_own_close(R, files, 1280),   # 미국 마지막 확인 종가 (Jack 2026-11-20)
                    lambda: scene_us_own_close_daily(R, files, 390),                                          # 리뷰 A: 오늘 확인할 일 · 추가로 넣을 돈
-                   lambda: scene_us_own_close_many(R, files, 390)):                                          # Jack 2026-11-21 (8 · 6): 외 n종목 · 미국 전체 한 줄
+                   lambda: scene_us_own_close_many(R, files, 390),                                           # Jack 2026-11-21 (8 · 6): 외 n종목 · 미국 전체 한 줄
+                   lambda: scene_v196e(R, files, 390), lambda: scene_v196e(R, files, 320),                  # v19.6e 이번 주 정리 (스위치를 켠 빌드)
+                   lambda: scene_v196e(R, files, 1280), lambda: scene_v196e(R, files, 390, dark=True),
+                   lambda: scene_v196e(R, files, 1280, dark=True),
+                   lambda: scene_v196e_states(R, files)):                                                   # v19.6e 때 · 닫기 · 빠진 종목 · 멈춤 · 실패 · 둘 · nv
             try:
                 fn()
             except Exception as e:

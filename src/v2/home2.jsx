@@ -32,6 +32,8 @@
 // v19.6b (Part B.2, board Today2): the 오늘 볼 것 cards join that list as compact rows (todaylook.jsx LookRows: 확인 필요 first, then the
 // 관심 종목 조건 rows, the filings, a watched stock's 지분 변동 and every 국민연금, then 다가오는 일정); each row, a 관심 종목 조건 row and
 // the heading open the 오늘 볼 것 page (#home/today). Any of them means "오늘은 할 일이 없어요" does not show.
+// v19.6e (Part E, board Weekly2): 이번 주 정리 at the top, one card per block, once the week's numbers are final (weekly.jsx, behind
+// weekcfg.js WEEKLY_ON).
 // 시장 한눈에 unchanged; 종목 순위 under it (v19.5b, rank.jsx: phone after 시장 한눈에, PC the right column). Stale data: the stale band only, nothing checked, never a ✓ (the daily check is not ok, so no block
 // exists). Late data whose closes are at most 5 trading days behind (rules.js checkState, Jack 2026-11-19) is not "stale" here:
 // everything shows as on a fresh day, under the date line's stale words, with the close's date in the band and the heroes, and
@@ -63,6 +65,8 @@ import { lateSay } from "./tradedays.js";
 import { WatchHitRows } from "./watch.jsx";
 import { lookModel, lookSay, coversKorean } from "./look.js";
 import { LookRows, lookRowCount, pageHas } from "./todaylook.jsx";
+import { WeeklyCards } from "./weekly.jsx";
+import { WEEKLY_ON } from "./weekcfg.js";
 
 const signedWon = (v) => (v > 0 ? "+" : "") + wonText(v);
 const tone = (v) => (v > 0 ? COLOR.up : v < 0 ? COLOR.down : COLOR.text2);
@@ -438,6 +442,9 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
         {store.restored && <Note tone="watch" data-ui-v2="store-merged">{C.store.merged}</Note>}
         {store.unmerged && C.store.locked && <Note tone="watch" data-ui-v2="store-unmerged">{C.store.locked}</Note>}
         {store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}
+        {/* v19.6e (Part E, board Weekly2): 이번 주 정리, one card per portfolio block, at the top (under the date line and the store
+            notes, which stay first), once the week's numbers are final; behind weekcfg.js WEEKLY_ON (weekly.jsx) */}
+        {WEEKLY_ON && ev.ok && blocks.length > 0 && <WeeklyCards blocks={blocks} load={load} ctx={ctx} disc={disc} />}
         <Hero load={load} ev={ev} held={held} decks={decks} onConfirm={onConfirm} onWhy={onWhy} quiet={look.quiet} />
         <Cols main={rankInMain ? [...main, rankCard] : main} side={ok && [<MarketGlance key="glance" load={load} go={go} />, !rankInMain && rankCard]} />
       </div>
