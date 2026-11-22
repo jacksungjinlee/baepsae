@@ -14154,6 +14154,145 @@ def tax_screen_common(page, width, today_iso):
     no_hscroll(page, width)
 
 
+# ── say-why N-01 · N-02 (2026-11-22): 숨긴 한국 배당수익률의 줄이 관심 종목 · 두 종목 비교에도 (회사 페이지와 같은 줄) ──
+DIV_LINE_KEYS = {"005380": "rightsHidden", "000660": "dataHidden", "035420": "missingHidden"}     # dvLine 2 · 3 · 4
+DIV_LINE_UI = {"rightsHidden": "div-rights-hidden", "dataHidden": "div-data-hidden", "missingHidden": "div-missing-hidden"}
+
+
+def div_lines_files(files):
+    """관심 종목 · 비교 장면의 데이터 (fixture 위에): divCheck 가 있는 파일(한국 배당수익률은 확인한 dyt 만) · 파이프라인이 숨긴 배당수익률에
+    단 표시 dvLine 2 (현대차) · 3 (SK하이닉스) · 4 (NAVER) · 보이는 배당수익률 (KB금융, dyt 2.81) · 재무제표가 하나도 없는 채비 (fix.js noStmtFor)."""
+    f = daily_files(files)
+    d = f["data.json"]
+    d["divCheck"] = {}
+    by = {x["t"]: x for x in d["stocks"]}
+    cb = {x["t"]: x for x in f["corp.json"]["companies"]}
+    for t, line in (("005380", 2), ("000660", 3), ("035420", 4)):
+        assert (by[t].get("dps") or 0) > 0, f"{t}: no dividend in the fixture, so the hidden-yield line could not show"
+        by[t].update(dyt=None, dvLine=line, fy=2025)
+    by["105560"].update(dyt=2.81, dps3a=[4367.0, 3174.0, 3060.0], dpsF=[1, 1, 1], divSt="same", fy=2025)
+    by["0011T0"]["fy"] = None
+    cb["0011T0"].update(fy=None, rev=[None] * 3, op=[None] * 3, ni=[None] * 3)
+    return f
+
+
+def scene_div_lines(R, files, width, dark=False):
+    """say-why N-01 · N-02 (Jack 의 이유 규칙 2026-11-08 · 2026-11-22): 회사 페이지가 숨긴 한국 배당수익률 밑에 두는 승인된 줄을 두 화면도 같은
+    자리 모양으로 — 관심 종목 (#stocks/watch): 배당수익률 조건 칩은 '정보 없음', 카드 밑에 그 줄 한 번 (dvLine 2 · 3 · 4), 재무제표가 없는 채비는
+    '공시된 재무제표가 아직 없어서 …' 한 번 (PBR 과 배당수익률이 다 비어도), 배당수익률이 보이는 KB금융은 줄 없음. 두 종목 비교: 배당수익률 칸은 '–'
+    와 그 밑의 줄 (후보 SK하이닉스 3 · 가진 종목 현대차 2 · NAVER 4), KB금융은 숫자만. 12px · 가로 스크롤 없음 · 뱁이 없음 · 화면 모드의 색."""
+    S = f"숨긴 배당수익률의 줄 {width}{' 어두운' if dark else ''}"
+    wide = width >= 1024
+    data = div_lines_files(files)
+    by = {x["t"]: x for x in data["data.json"]["stocks"]}
+    pxd = data["data.json"]["pxDate"]
+    CD = C["co"]["div"]
+    dy = [{"k": "dyAtLeast", "v": 1}]
+    watch = {"005380": {"at": "2026-11-05", "conds": dy}, "000660": {"at": "2026-11-04", "conds": dy}, "035420": {"at": "2026-11-03", "conds": dy},
+             "105560": {"at": "2026-11-02", "conds": dy}, "0011T0": {"at": "2026-11-01", "conds": [{"k": "pbrBelow", "v": 1}, *dy]}}
+    band = lambda t: [{"id": "band", "kind": "band", "check": "checked", "target": t, "bands": [0.75 * t, 1.25 * t, 1.4 * t]}]   # noqa: E731
+    hold = lambda t, w: {"t": t, "nk": by[t]["nk"], "cls": by[t]["cls"], "ind": by[t].get("ind"), "kind": "core", "target": w, "setAt": "2026-10-01",  # noqa: E731
+                         "plannedQty": 10, "planPx": by[t]["price"], "rules": [{"id": "audit", "kind": "sell", "check": "pending"}, *band(w)]}
+    deck = {"id": "ddiv", "name": "모양 포트폴리오", "createdAt": "2026-10-01", "planFx": 1300,
+            "settings": {"points": {"value": 3}, "strict": "loose", "maxPct": 40, "amountMan": 1000},
+            "holdings": [hold("005380", 0.4), hold("035420", 0.3), hold("105560", 0.3)], "purchases": []}
+    store = {"v": 2, "decks": [deck], "guideSeen": pxd, "watch": watch}
+    screen = pc_device(width) if wide else {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2}
+    srv, ctx, page, base = R.open(build_site(data), width, init=v196c_seed(store), path="/app.html?dev=1#stocks/watch",
+                                  device={**screen, "color_scheme": "dark" if dark else "light"})
+    tag = f"{width}{'-dark' if dark else ''}"
+
+    def check_page(where, name):
+        floor_ok(page, where)
+        no_hscroll(page, width)
+        assert page.locator(MASCOT_IN_MAIN).count() == 0, f"{where}: 뱁이가 있어요 (숫자가 있는 화면)"
+        assert page.evaluate("() => document.documentElement.dataset.theme || ''") in (("dark",) if dark else ("light", "")), where
+        R.collect(page)
+        if R.shots:
+            os.makedirs(R.shots, exist_ok=True)
+            page.screenshot(path=os.path.join(R.shots, f"divlines-{name}-{tag}.png"), full_page=True)
+
+    def view_shot(loc, name):
+        # the full page paints the fixed tab bar over the page's middle: also the screen as seen with this part in the middle
+        if R.shots:
+            loc.evaluate("(e) => e.scrollIntoView({ block: 'center' })")
+            page.screenshot(path=os.path.join(R.shots, f"divlines-{name}-view-{tag}.png"))
+
+    def line_colour_ok(el, against, where):
+        # the line is the screen's own small grey (COLOR.text2, a theme token: light or dark) and readable on its card
+        fg, bg = el.evaluate("(e, a) => [getComputedStyle(e).color, getComputedStyle(a).backgroundColor]", against.element_handle())
+        assert rgb_ratio(fg, bg) >= 4.5, (where, fg, bg)
+        return fg
+
+    def watch_lines():
+        page.locator('[data-ui-v2="watch"]').wait_for(state="visible")
+        card = lambda t: page.locator(f'[data-ui-v2="watch-card"][data-t="{t}"]')     # noqa: E731
+        ch = chips_of(page)
+        sub = page.locator('[data-ui-v2="watch-sub"]').evaluate("(e) => getComputedStyle(e).color")
+        for t, key in DIV_LINE_KEYS.items():
+            assert ch[t] == [["dyAtLeast", "blank", "배당수익률 1% 이상· " + C["watch"]["blank"]]], (t, ch[t])
+            note = card(t).locator(f'[data-ui-v2="{DIV_LINE_UI[key]}"]')
+            assert note.count() == 1 and note.inner_text() == CD[key], (t, note.count())
+            # under the card's chips, inside the card; no other stock's line, no other reason
+            assert note.bounding_box()["y"] > card(t).locator('[data-ui-v2="watch-chips"]').bounding_box()["y"], t
+            others = [CD[k] for k in ("shareHidden", "rightsHidden", "dataHidden", "missingHidden") if k != key] + [C["co"]["noStmt"]]
+            assert not any(o in card(t).inner_text() for o in others), t
+            assert line_colour_ok(note, card(t), t) == sub, (t, "the line is not the screen's text2 colour")
+        # 채비: no statements at all -> the company page's one line, once, for both blank conditions
+        assert [c[:2] for c in ch["0011T0"]] == [["pbrBelow", "blank"], ["dyAtLeast", "blank"]], ch["0011T0"]
+        ns = card("0011T0").locator('[data-ui-v2="no-stmt"]')
+        assert ns.count() == 1 and ns.inner_text() == C["co"]["noStmt"] and card("0011T0").inner_text().count(C["co"]["noStmt"]) == 1
+        line_colour_ok(ns, card("0011T0"), "0011T0")
+        # KB금융: its yield shows (2.8%), so no line under its card
+        assert ch["105560"][0][:2] in (["dyAtLeast", "met"], ["dyAtLeast", "not"], ["dyAtLeast", "stale"]) and ch["105560"][0][2].endswith("2.8%"), ch["105560"]
+        assert card("105560").locator('[data-ui-v2$="-hidden"], [data-ui-v2="no-stmt"]').count() == 0
+        assert page.locator('[data-ui-v2$="-hidden"]').count() == 3 and page.locator('[data-ui-v2="no-stmt"]').count() == 1
+        check_page("관심 종목", "watch")
+        view_shot(card("035420"), "watch")
+    R.check(page, S, "관심 종목: 숨긴 배당수익률(2 · 3 · 4)은 카드 밑에 회사 페이지의 그 줄 · 재무제표 없음은 한 번 · 보이는 배당수익률은 줄 없음", watch_lines)
+
+    def cell(rid, side):
+        c = page.locator(f'[data-cmp-row="{rid}"] [data-side="{side}"]')
+        n = c.locator('[data-ui-v2="cmp-note"]')
+        return c.locator("span").first.inner_text(), n.inner_text() if n.count() else None
+
+    def pick(hold_t):
+        page.locator('[data-ui-v2="cmp-pick-open"]').click()
+        page.locator(f'[data-ui-v2="cmp-picker"] [data-pick="{hold_t}"]').click()
+        page.wait_for_function("(h) => document.querySelector('[data-ui-v2=\"cmp\"]').dataset.hold === h", arg=hold_t)
+
+    def compare_lines():
+        page.goto(base + "/app.html?dev=1#portfolio/edit/ddiv/compare/000660", wait_until="domcontentloaded")
+        at(page, "portfolio/edit/ddiv/compare/000660")
+        page.locator('[data-ui-v2="cmp-table"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="cmp"]').get_attribute("data-cand") == "000660"
+        dy_head = page.locator('[data-cmp-row="dy"] th').inner_text()
+        assert dy_head == C["cmp"]["rows"]["dy"], dy_head
+        for hold_t in ("005380", "035420", "105560"):
+            pick(hold_t)
+            # the candidate (SK하이닉스, dvLine 3): "–" with the company page's line under it, the cell's data-blank its mark
+            assert cell("dy", "cand") == ("–", CD["dataHidden"]), cell("dy", "cand")
+            cand = page.locator('[data-cmp-row="dy"] [data-side="cand"]')
+            assert cand.get_attribute("data-blank") == DIV_LINE_UI["dataHidden"] and cand.get_attribute("data-y") == ""
+            note = cand.locator('[data-ui-v2="cmp-note"]')
+            assert note.bounding_box()["y"] > cand.locator("span").first.bounding_box()["y"]                  # under the "–"
+            line_colour_ok(note, page.locator('[data-ui-v2="cmp-table"]'), "cand")
+            hold_c = page.locator('[data-cmp-row="dy"] [data-side="hold"]')
+            if hold_t in DIV_LINE_KEYS:
+                key = DIV_LINE_KEYS[hold_t]
+                assert cell("dy", "hold") == ("–", CD[key]), (hold_t, cell("dy", "hold"))
+                assert hold_c.get_attribute("data-blank") == DIV_LINE_UI[key]
+            else:                                                                                            # KB금융: the number, no line
+                assert cell("dy", "hold") == ("2.8%", None), cell("dy", "hold")
+                assert hold_c.get_attribute("data-y") == "2.81" and hold_c.get_attribute("data-blank") is None
+            check_page(f"비교 · {hold_t}", f"compare-{hold_t}")
+            view_shot(page.locator('[data-cmp-row="dy"]'), f"compare-{hold_t}")
+        assert not R.errors, R.errors[:2]
+    R.check(page, S, "두 종목 비교: 숨긴 배당수익률은 – 와 회사 페이지의 그 줄 (후보 3 · 가진 종목 2 · 4) · 보이는 배당수익률은 숫자만", compare_lines)
+    ctx.close()
+    srv.shutdown()
+
+
 def scene_v196f(R, files, width, dark=False):
     """v19.6f (390 · 320 · 1280, 밝게 · 어둡게): 내 수익 → '연말에 확인할 숫자 ›' (기록 내려받기 위) → 세 상태를 손으로 계산한 값으로:
     below (공제보다 적어요 · 막대 · 판 날 환율 줄) · above (많아요 · 세금 약 · 막대 끝까지 · 빼고 더한 판 기록 1건) · loss (손실 · 막대 없음).
@@ -15371,6 +15510,9 @@ def main():
                    lambda: scene_v196c(R, files, 390), lambda: scene_v196c(R, files, 320),                  # v19.6c 관심 종목
                    lambda: scene_v196c(R, files, 1280, deck=True), lambda: scene_v196c(R, files, 390, dark=True, deck=True),
                    lambda: scene_v196c_stale(R, files),                                                     # v19.6c 멈춘 날 · 실패 · 불러오기 30개
+                   lambda: scene_div_lines(R, files, 390), lambda: scene_div_lines(R, files, 390, dark=True),   # say-why N-01 · N-02: 숨긴 배당수익률의 줄
+                   lambda: scene_div_lines(R, files, 1280), lambda: scene_div_lines(R, files, 1280, dark=True),
+                   lambda: scene_div_lines(R, files, 320), lambda: scene_div_lines(R, files, 320, dark=True),   # 리뷰: 320 도
                    lambda: scene_v196f(R, files, 390), lambda: scene_v196f(R, files, 320),
                    lambda: scene_v196f(R, files, 1280), lambda: scene_v196f(R, files, 390, dark=True),
                    lambda: scene_v196f(R, files, 1280, dark=True),                                          # v19.6f 연말에 확인할 숫자 (세 상태)

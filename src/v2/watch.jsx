@@ -22,7 +22,7 @@ import { closeLine } from "./cofmt.js";
 import { DayNote, FcurNote, PbrZeroNote, FgnCutNote, UnitChkNote, StmtCurNote, NoStmtNote, PrefNote, prefText } from "./fixnote.jsx";
 import { fcurBlank, fcurDyBlank, pbrZeroOf, fgnBlank } from "./fcur.js";
 import { unitHeldFor, stmtNotWonFor, noStmtFor } from "./fix.js";
-import { divShareHidden } from "./company.js";
+import { divHiddenLine, DIV_HIDDEN_UI } from "./company.js";
 import { WATCH_MAX, WATCH_KINDS, WATCH_DEC, okWatchValue, watchOf, watchOrder, withWatchAdd, withWatchRemove, withWatchConds, watchSaveTime } from "./store.js";
 import { watchFresh, condState, condsOf, condText, nowValue, hitText, watchValue } from "./watch.js";
 
@@ -63,8 +63,12 @@ function BlankWhy({ s, co, kinds }) {
     if (fg.length) out.push(<FgnCutNote key="fgn" s={s} fields={fg} style={style} />);
     if (pbr && unitHeldFor(s, co)) out.push(<UnitChkNote key="unit" s={s} co={co} style={style} />);
     else if (pbr && stmtNotWonFor(s, co)) out.push(<StmtCurNote key="cur" s={s} co={co} style={style} />);
-    else if (pbr && noStmtFor(s, co)) out.push(<NoStmtNote key="nostmt" s={s} co={co} style={style} />);
-    if (dy && !usOf(s) && divShareHidden(s, co) && C.co.div.shareHidden) out.push(<Note key="divh" data-ui-v2="div-share-hidden" style={style}>{C.co.div.shareHidden}</Note>);
+    // no statements at all (fix.js noStmtFor): the company page's one line for its 실적 · 가치 · 배당 blanks, once for PBR, 배당수익률 or both
+    else if ((pbr || dy) && noStmtFor(s, co)) out.push(<NoStmtNote key="nostmt" s={s} co={co} style={style} />);
+    // a hidden Korean yield (say-why N-01, 2026-11-22): the line the company page's 배당 tile puts in the number's place, by the same
+    // pipeline mark (company.js divHiddenLine: dvLine 1 share count · 2 rights issue · 3 dividend table · 4 missing filing data)
+    const hid = dy && !usOf(s) ? divHiddenLine(s, co) : null;
+    if (hid && C.co.div[hid]) out.push(<Note key="divh" data-ui-v2={DIV_HIDDEN_UI[hid]} style={style}>{C.co.div[hid]}</Note>);
   }
   return out.length ? <>{out}</> : null;
 }
