@@ -307,17 +307,24 @@ def test_the_guard_changes_nothing_when_it_stops_half_way(monkeypatch):
     assert [{k: v for k, v in s.items() if not k.startswith("_")} for s in ss] == before and "_divRaw" not in ss[0]
 
 
-def test_the_report_yield_is_not_compared_outside_its_52_week_window():
-    """리뷰 #179: dy 는 보고서 해 말 주가로 셌어요 — 그때가 오늘의 52주 창 밖이면 (1월 ~ 새 사업보고서 · 지난해 보고서를 쓰는 회사) 값은 견주지 않아요.
-    0 과의 어긋남은 그대로."""
+def test_the_report_yield_is_compared_with_a_wider_band_outside_its_52_week_window(capsys):
+    """리뷰 #179 2차: dy 는 보고서 해 말 주가로 셌어요 — 그때가 오늘의 52주 창 밖이면 (1월 ~ 새 사업보고서 · 지난해 보고서를 쓰는 회사) 끄지 않고 폭을
+    DY_FAR_OUT (4배) 으로 넓혀요. 흥국 56.0 은 그래도 비우고 · 3 ~ 4배 사이의 값은 남기되 로그와 관문의 경고 줄이 이름을 적어요."""
     assert V.dy_window_ok(2025, "2026-11-20") and not V.dy_window_ok(2025, "2027-02-15") and not V.dy_window_ok(2024, "2026-11-20")
     assert not V.dy_window_ok(None, "2026-11-20") and not V.dy_window_ok(2025, None)
-    assert V.dy_far(56.0, 280.0, 4880.0, 5960.0, 4815.0, window=False) is None
+    assert V.dy_far(56.0, 280.0, 4880.0, 5960.0, 4815.0, window=False) is True                   # 9.6배 > 4
     assert V.dy_far(0.0, 280.0, 4880.0, window=False) is True and V.dy_far(2.0, 0.0, 4880.0, window=False) is True
+    # 3.5배: 창 안이면 비우고, 창 밖이면 남겨요
+    y = 280.0 / 4815.0 * 100 * 3.5
+    assert V.dy_far(y, 280.0, 4880.0, 5960.0, 4815.0) is True and V.dy_far(y, 280.0, 4880.0, 5960.0, 4815.0, window=False) is False
     s = payer("010240", [280, 220, 240], [56.0, 44.0, 48.0], 4880.0, 5960.0, 4815.0)
     s["fy"] = 2024
-    by, counts = run([s])
-    assert by["010240"]["dy"] == 56.0 and counts["raw"]["dyBad"] == {} and counts["raw"]["dyNo"] == 1
+    w = payer("000050", [280, 220, 240], [round(y, 2), 44.0, 48.0], 4880.0, 5960.0, 4815.0)
+    w["fy"] = 2024
+    by, counts = run([s, w])
+    assert "dy" not in by["010240"] and counts["raw"]["dyBad"] == {"010240": 56.0}
+    assert by["000050"]["dy"] == round(y, 2) and counts["raw"]["dyOk"] == 1
+    assert "넓힌 폭이라서 남긴 값 1 (창 안이면 비웠을 값 · 관문 경고): 000050" in capsys.readouterr().out
 
 
 def thirty_dash(files, a, b, dy=2.0):
@@ -562,6 +569,122 @@ def test_crashed_guards_leave_the_old_values_and_no_record():
     s = stock("011760", HYUNDAI_CORP, 21750.0, 13228966)
     counts, _ = F.apply_div_basis([s], {}, {}, why=F.DivWhy(None, PX))
     assert s["dps"] == 0 and s["dyt"] == 0.0 and "dvLine" not in s and "raw" not in counts
+
+
+# ── 리뷰 #179 2차 ──────────────────────────────────────────────
+def test_a_zero_whose_total_will_not_reach_corp_json_is_left_as_before(capsys):
+    """S1: 관문은 nodps 줄 4 에 corp.json 의 cash3[0] > 0 을 바라요. 원화가 아닌 재무제표 (build_corp 가 cash3 를 비워요) · 0.00억원으로 반올림되는 총액
+    (50만원 아래) 의 회사는 비우지 않고 예전 그대로 두고 이름을 남겨요 — 그래서 파이프라인의 줄 검사 (own_blank_div_lines) 와 관문 (corp.json 을 보는
+    div_line_bad_rows) 이 같은 답을 내고, 관문이 받지 않을 줄이 나가지 않아요."""
+    a = stock("011760", HYUNDAI_CORP, 21750.0, 13228966, nk="현대코퍼레이션")
+    b = stock("000020", HYUNDAI_CORP, 21750.0, 13228966, nk="원화아님")
+    c = stock("000030", alot([None, 700, 600], cash=[0.4, 8408, 7207], dy=[3.1, 3.4, 3.2]), 21750.0, 13228966, nk="작은총액")
+    kr = [a, b, c]
+    fin = {"000020": {"cur": "USD"}}
+    before = copy.deepcopy([{k: x.get(k) for k in ("dps", "dps3", "dy")} for x in (b, c)])
+    rec = F.div_raw_guard(kr, {}, fin)
+    assert rec["contra"] == {"011760": [0]} and [{k: x.get(k) for k in ("dps", "dps3", "dy")} for x in (b, c)] == before
+    out = capsys.readouterr().out
+    assert "corp.json 에 그해 총액이 0 보다 크게 실리지 않을 회사 2곳은 예전 값 그대로" in out and "000020 원화아님 (원화가 아닌 재무제표)" in out
+    assert "000030 작은총액 (총액이 0.00억원으로 반올림)" in out
+    counts, extra = F.apply_div_basis(kr, fin, {}, why=F.DivWhy(None, PX))
+    counts["raw"] = rec
+    F.div_dy_guard(kr, rec, px=PX)
+    own = F.own_blank_div_lines(kr, counts)
+    corp = F.build_corp(kr, fin, "2026-11-21", extra=extra)
+    assert {x["t"]: (x.get("cash3") or [None])[0] for x in corp["companies"]} == {"011760": 84.08, "000020": None, "000030": 0.0}
+    rows, _, want, _ = V.div_line_bad_rows(V.kr_stocks({"stocks": kr}), counts, comps=corp["companies"])
+    assert own == {"n": 0, "rows": []} and rows == [] and want == {"011760": 4} and a["dvLine"] == 4
+    assert "dvLine" not in b and "dvLine" not in c and b["dps"] == 0 and c["dps"] == 0
+
+
+def test_without_the_standing_rule_record_a_nodps_line_fails_as_before(raw_pair):
+    """S2: ownDrop.divLine 이 없거나 모양이 틀린 파일 (예전 규칙의 길) 에서는 nodps 가 줄을 정하지 않아요 — #179 전처럼 그 줄 4 는 실패해요. 현대코퍼레이션
+    꼴: 주당 배당 700원이 있고 · contra 도 corp 총액도 없는데 줄 4."""
+    cur, prev, a, b = raw_pair
+    cur["data"].pop("ownDrop")
+    cby = {c["t"]: c for c in cur["corp"]["companies"]}
+    a.update(dps=700.0, dps3=[700.0] + a["dps3"][1:])
+    cur["data"]["divCheck"]["raw"]["contra"].pop(a["t"])
+    cur["data"]["divCheck"]["raw"]["pre"].pop(a["t"])
+    cby[a["t"]].pop("cash3", None)
+    rep = check(cur, prev)
+    assert SUB_ROW in {r[0] for r in rep.failed}, rep.table()
+    cur2, prev2, _ = good_pair()                                                        # 세 조건이 다 맞아도 예전 규칙의 길에서는 받지 않아요
+    files, a2, b2 = with_raw(cur2, own=False)
+    assert SUB_ROW in {r[0] for r in check(files, prev2).failed}
+    files["data"]["ownDrop"] = {"divLine": {"n": 0}}                                    # 모양이 틀린 기록 → 예전 규칙의 길
+    assert SUB_ROW in {r[0] for r in check(files, prev2).failed}
+
+
+def test_a_dash_yield_next_to_a_blanked_per_share_cell_is_blanked_too():
+    """N3: 주당 칸의 값이 주당 금액이 아니라 올해를 비운 종목 (와이엔텍 꼴) 의 dy 가 0 ('-') 이면 그 dy 도 비워요."""
+    c = _load("cases_1115.json")["cases"]["067900"]
+    s = {**copy.deepcopy(c["s"]), "cls": "kr", "t": "067900", "_bas": copy.deepcopy(c["bas"]), "dps": c["s"]["dps3"][0], "dy": 0.0}
+    by, counts = run([s])
+    assert "dy" not in by["067900"] and counts["raw"]["dyBad"] == {"067900": 0.0} and counts["raw"]["pre"] == {"067900": [1809965900.0, 0.0]}
+
+
+def test_the_line_count_is_taken_after_the_lines_are_attached(capsys):
+    """S4: 올해를 비운 종목 중 이유 줄을 단 수 · 못 단 수는 apply_div_basis 뒤에 세요 (글자 0 이 아니라 센 값)."""
+    ss = [stock("011760", HYUNDAI_CORP, 21750.0, 13228966)]
+    by, counts = run(ss)
+    capsys.readouterr()
+    assert F.div_raw_line_log(ss, counts["raw"]) == []
+    assert "올해를 비운 종목 1 — 이유 줄을 단 종목 1 · 이유 줄 없이 비운 종목 0" in capsys.readouterr().out
+    ss[0].pop("dvLine")
+    assert F.div_raw_line_log(ss, counts["raw"]) == ["011760"]
+    assert "  !! DART 배당 표 맞춤: 올해를 비운 종목 1 — 이유 줄을 단 종목 0 · 이유 줄 없이 비운 종목 1: 011760" in capsys.readouterr().out
+
+
+def test_the_odd_row_counts_the_pipelines_own_output_like_main(raw_pair):
+    """N5: 관문 픽스처의 배당 회사 30곳에 '-' + 총액 + DART 배당수익률 2.0% 인 DART 표를 주고 파이프라인을 그대로 돌려요 (div_raw_guard → apply_div_basis →
+    div_dy_guard · 기록을 파일에). '주당 배당금·배당수익률 맞음' 은 #179 전의 파일 (0원 · 2.0%) 과 같은 30 (1.2%) 으로 실패해요."""
+    cur, prev, a, b = raw_pair
+    data, corp = cur["data"], cur["corp"]
+    kr = [s for s in data["stocks"] if s.get("cls") == "kr" and not s.get("fund")]
+    cby = {c["t"]: c for c in corp["companies"]}
+    picks = [s for s in kr if (s.get("dps") or 0) > 0 and s["t"] not in V.MUST and s["t"] not in (a["t"], b["t"]) and "dvProof" not in s
+             and s.get("divSt") == "same" and s["t"] in cby][:30]
+    main_in = copy.deepcopy(cur)                                                       # #179 전의 파이프라인이 썼을 값: 0원 · 2.0%
+    mby = {s["t"]: s for s in main_in["data"]["stocks"]}
+    work = []
+    for s in picks:
+        d = s["dps3"]
+        mby[s["t"]].update(dps=0.0, dps3=[0.0, d[1], d[2]], dy=2.0)
+        w = {k: copy.deepcopy(s[k]) for k in ("t", "nk", "cls", "price", "fy", "hi", "lo") if k in s}
+        w.update(dps=0.0, dps3=[0.0, d[1], d[2]], dy=2.0, shr=1_000_000, _bas={"cash3": [1e8, 1e8, 1e8], "pdps": []})
+        work.append(w)
+    main_in["data"]["divCheck"].pop("raw")
+    rec = F.div_raw_guard(work, {}, {})
+    counts, _ = F.apply_div_basis(work, {}, {}, why=F.DivWhy(None, PX))
+    F.div_dy_guard(work, rec, px=PX)
+    assert len(rec["contra"]) == 30 and all(w.get("dvLine") == 4 and "dps" not in w for w in work)
+    by = {s["t"]: s for s in kr}
+    for w in work:                                                                     # 파이프라인이 쓴 그대로 파일에
+        s = by[w["t"]]
+        for k in ("dps", "dps3", "dy", "dps3a", "dpsF", "divSt", "dyt", "dz", "dvLine"):
+            if k in w:
+                s[k] = w[k]
+            else:
+                s.pop(k, None)
+        mirror(cur, s)
+    raw = data["divCheck"]["raw"]
+    for k in ("contra", "prefOnly", "dpsBad", "dyBad", "pre"):
+        raw[k].update(rec[k])
+    proof, sub = data["divCheck"]["proof"], data["divCheck"]["proofSub"]
+    sub["data"].update(counts["proofSub"]["data"])
+    proof["dataT"] = sorted(set(proof["dataT"]) | set(counts["proof"]["dataT"]))
+    proof["data"] = len(proof["dataT"])
+    keep = {k: data["divCheck"][k] for k in ("proof", "proofSub", "raw", "why")}
+    recount(cur)
+    data["divCheck"].update(keep)
+    rep = check(cur, prev)
+    row = rows_of(rep)[ODD_ROW]
+    assert row[3] == "FAIL" and row[1].startswith("어긋남 30 (1.2%)") and "비우기 전 값으로 센 30" in row[1], row
+    assert SUB_ROW not in {r[0] for r in rep.failed}, rep.table()                       # 줄 4 는 기록과 맞아요 (실패는 그 줄 하나)
+    row0 = rows_of(check(main_in, prev))[ODD_ROW]
+    assert row0[3] == "FAIL" and row0[1].startswith("어긋남 30 (1.2%)"), row0
 
 
 def test_no_new_korean_ui_text():

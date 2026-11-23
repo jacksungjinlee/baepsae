@@ -630,13 +630,15 @@ RAW_SUB = ("nodps",)               # 주당 배당을 비운 종목의 경우 �
 #    - 배당수익률(dy): 오늘 기준 주당 배당(dps3a[0] — 분할 배율을 확인한 해만) ÷ 52주 고가 ~ 저가 범위에서 DY_FAR 배 넘게 벗어나면 (2.0 의 예전
 #      1/3 ~ 3배 맞춤과 같은 폭을 52주 범위에 · 흥국 56.0 = 배당 ÷ 액면가 · 지투파워 33.7 = 배당성향 · 아비코전자 30.0 · 알피바이오 10.0) 비워요.
 #      주당 배당이 0 인데 dy > 0, 또는 주당 배당이 있는데 dy 0 도 어긋남이에요. 오늘 기준을 확인하지 못한 해(dpsF[0] 없음)는 견주지 않아요 (분할 뒤의
-#      dps ÷ 종가는 배율만큼 커요). 보고서 해의 말일(dy 를 센 때)이 52주 창 밖이면 (1월 ~ 새 사업보고서 · 지난해 사업보고서를 쓰는 회사) 값을
-#      견주지 않아요 (dy_window_ok · 0 과 어긋남은 그대로 봐요). 올해 주당 배당을 모름으로 비운 해(A)의 dy 0 도 비워요 ('-' 를 0 으로 읽은 값 · 리뷰 #179).
+#      dps ÷ 종가는 배율만큼 커요). 보고서 해의 말일(dy 를 센 때)이 52주 창 밖이면 (1월 ~ 새 사업보고서 · 지난해 사업보고서를 쓰는 회사) 폭을
+#      DY_FAR_OUT 으로 넓혀 견줘요 (dy_window_ok · 리뷰 #179 2차: 끄지 않아요). 올해 주당 배당을 비운 해의 dy 0 도 비워요 ('-' 를 0 으로 읽은 값).
 # 파이프라인(fetch_data.div_raw_guard · div_dy_guard)이 같은 함수로 그 값을 비우고 크게 남기고 data.json divCheck.raw 에 적어요 (DART 가 보낸 값을
 # 보는 검사라 상시 규칙의 N 은 없어요 · 발행을 막지 않아요). 관문의 두 줄(check_div_raw)은 남은 행과 기록이 맞지 않는 행을 이름과 함께 경고만 해요.
 PREF_ONLY_TOL = 0.15      # 우선주만 받은 총액: 오늘 상장 주식 수로 센 우선주 몫과 그해 총액의 차이 (자기주식 · 그 뒤 주식 수 변화)
 DPS_CASH_FAR = 1000.0     # 주당 배당 × 오늘 보통주 수 ÷ 그해 총액이 이보다 크면 주당 칸의 값이 아니에요 (2026-11-21: 맞는 값 최대 69.9 · 와이엔텍 1,820만)
 DY_FAR = 3.0              # DART 배당수익률 ÷ (오늘 기준 주당 배당 ÷ 52주 범위) 가 3배 넘게 벗어나면 믿지 않아요 (2026-11-21: 남긴 값 최대 2.38 · 비운 값 최소 5.1)
+DY_FAR_OUT = 4.0          # 보고서 해 말이 52주 창 밖일 때 (1월 ~ 새 사업보고서 · 지난해 보고서의 회사) 의 넓힌 폭 — 그때 주가를 창이 담지 못해서 (리뷰 #179 2차:
+#                           끄지 않고 넓혀요 · 5.1 아래라 2026-11-21 의 비운 값은 모두 그대로 비워요 · 3 ~ 4배 사이로 남긴 값은 관문의 경고 줄이 이름을 적어요)
 DIV_RAW_ROW = "DART 배당 표 0원인데 총액이 있는 해 (경고만)"
 DIV_PLAUS_ROW = "DART 주당 배당 · 배당수익률 그럴듯함 (경고만)"
 # ── Jack 의 상시 규칙 (2026-11-19 ~17:45 KST · 우리 처리를 보는 검사) ── Jack, verbatim: "Standing rule for checks on our own processing: a
@@ -6717,12 +6719,12 @@ def dy_window_ok(fy, px):
     return dt.date(fy, 12, 31) >= p - dt.timedelta(days=365)
 
 
-def dy_far(dy, a0, price, hi=None, lo=None, far=DY_FAR, window=True):
+def dy_far(dy, a0, price, hi=None, lo=None, far=DY_FAR, window=True, far_out=DY_FAR_OUT):
     """DART 배당수익률 dy (%) 가 그럴듯하지 않은지 (2026-11-23 · 위 B) → True (믿지 않음) · False (그럴듯함) · None (견줄 수 없음). (순수 함수)
     a0 = 오늘 주식 수 기준 올해 주당 배당 (dps3a[0] — 배율을 확인한 해만 · 배당 없음이면 0). 범위 = a0 ÷ (52주 고가 · 저가 · 오늘 종가 중 가장 큰
     값 ~ 가장 작은 값) × 100 — 지난해 사업보고서의 dy 는 그해 주가로 셌으니까요. dy 가 범위 위 끝의 far 배보다 크거나 아래 끝의 1/far 보다 작으면 True.
-    a0 = 0 이면 dy > 0 이 · a0 > 0 이면 dy ≤ 0 이 어긋남이에요 (값과 상관없어요). window False (dy_window_ok: dy 를 센 때가 52주 창 밖) 면 값은 견주지
-    않아요 → None."""
+    a0 = 0 이면 dy > 0 이 · a0 > 0 이면 dy ≤ 0 이 어긋남이에요 (값과 상관없어요). window False (dy_window_ok: dy 를 센 때가 52주 창 밖) 면 폭을
+    far_out 으로 넓혀요 (창이 그때 주가를 담지 못해서 · 리뷰 #179 2차: 끄지 않고 넓혀요)."""
     dy, a0 = num(dy), num(a0)
     if dy is None or a0 is None or a0 < 0:
         return None
@@ -6731,7 +6733,7 @@ def dy_far(dy, a0, price, hi=None, lo=None, far=DY_FAR, window=True):
     if dy <= 0:
         return True
     if not window:
-        return None
+        far = max(far, far_out)
     pxs = [p for p in (num(price), num(hi), num(lo)) if p is not None and p > 0]
     if not pxs:
         return None
@@ -6940,7 +6942,9 @@ def _div_lines_old(rep, name, dc, pf, kr, pdata):
         odd = [t for t, v in m.items() if v not in subs]
         if odd:
             bad.append(f"{k}: 모르는 경우 {m[odd[0]]!r} ({odd[0]})")
-        want.update({t: PROVE_SUB_LINE[k][v] for t, v in m.items() if v in PROVE_SUB_LINE[k]})
+        # 2026-11-23 (리뷰 #179 2차): 상시 규칙의 기록(ownDrop.divLine)이 없거나 틀린 파일에서는 nodps 가 줄을 정하지 않아요 — #179 전처럼 그 줄은
+        # 기록과 맞지 않아 실패해요 (nodps 의 세 조건은 상시 규칙의 길 div_line_bad_rows 만 봐요)
+        want.update({t: PROVE_SUB_LINE[k][v] for t, v in m.items() if v in PROVE_SUB_LINE[k] and v not in RAW_SUB})
     got = {s["t"]: s["dvLine"] for s in kr if s.get("dvLine") in (2, 3, 4) and not isinstance(s.get("dvLine"), bool)}
     if not bad and got != want:
         diff = sorted(set(got.items()) ^ set(want.items()))
@@ -7077,33 +7081,37 @@ def _check_div_raw(rep, data, kr, comps):
         rep.detail("DART 배당 표: divCheck.raw 기록은 비웠다는데 값이 있는 종목", bad_rec)
 
     # 2. 위 B — 그럴듯하지 않은 주당 배당 (총액과 1,000배 넘게 다름) · 배당수익률 (오늘 기준 주당 배당 ÷ 52주 범위에서 DY_FAR 배 넘게 · 0 과 어긋남)
-    far_d, far_y, ok_y, no_y = [], [], 0, 0
+    far_d, far_y, wide_y, ok_y, no_y = [], [], [], 0, 0
     for s in com:
         for i in dps_far_years(d3_of(s), cash_of(s), s.get("shr")):
             far_d.append(f"{nm(s)} {yr(s, i)} 주당 {num(d3_of(s)[i]):,.0f}원")
         if num(s.get("dy")) is None or is_foreign(s["t"]):
             continue                                       # 해외 기업은 파이프라인도 보지 않아요 (blank_foreign_dart 의 규칙 그대로 · 위 해외 기업 줄)
         a0 = dy_base(s)
-        res = (dy_far(s.get("dy"), a0, s.get("price"), s.get("hi"), s.get("lo"), window=dy_window_ok(s.get("fy"), data.get("pxDate")))
-               if a0 is not None else None)
+        win = dy_window_ok(s.get("fy"), data.get("pxDate"))
+        res = dy_far(s.get("dy"), a0, s.get("price"), s.get("hi"), s.get("lo"), window=win) if a0 is not None else None
         if res is None:
             no_y += 1
         elif res:
             far_y.append(f"{nm(s)} dy {num(s['dy']):g}% (오늘 기준 주당 {a0:,.0f}원)")
         else:
             ok_y += 1
+            if not win and dy_far(s.get("dy"), a0, s.get("price"), s.get("hi"), s.get("lo")):
+                wide_y.append(f"{nm(s)} dy {num(s['dy']):g}% (오늘 기준 주당 {a0:,.0f}원 · {DY_FAR:g} ~ {DY_FAR_OUT:g}배)")
     dyb = [t for t in ((rec or {}).get("dyBad") or {}) if t in by and by[t].get("dy") is not None]
     n_dpsbad = sum(len(v) for v in ((rec or {}).get("dpsBad") or {}).values())
     parts = ([f"주당 배당 {len(far_d)}: {_div_raw_names(far_d)}"] if far_d else []) \
         + ([f"배당수익률 {len(far_y)}: {_div_raw_names(far_y)}"] if far_y else []) \
         + ([] if far_d or far_y else ["벗어난 값 없음"]) \
-        + [f"맞춰 본 배당수익률 {ok_y:,} (그럴듯해서 남김) · 견주지 못함 {no_y:,} (올해 주당 배당이 없거나 오늘 기준을 확인하지 못했거나 보고서 해 말이 52주 창 밖)"] \
+        + ([f"보고서 해 말이 52주 창 밖이라 넓힌 폭으로 남긴 배당수익률 {len(wide_y)} (창 안이면 비웠을 값): {_div_raw_names(wide_y)}"] if wide_y else []) \
+        + [f"맞춰 본 배당수익률 {ok_y:,} (그럴듯해서 남김) · 견주지 못함 {no_y:,} (올해 주당 배당이 없거나 오늘 기준을 확인하지 못함)"] \
         + ([f"파이프라인이 비운 주당 배당 {n_dpsbad}해 · 배당수익률 {len((rec or {}).get('dyBad') or {})}"] if rec else []) \
         + ([f"기록은 비웠다는데 배당수익률이 있음 {len(dyb)}: {', '.join(dyb[:DIV_RAW_SHOW])}"] if dyb else []) + probs
     rep.add(DIV_PLAUS_ROW, True, " · ".join(parts),
             f"주당 배당 × 오늘 보통주 수 ≤ 그해 총액 × {DPS_CASH_FAR:g} · DART 배당수익률은 오늘 기준 주당 배당 ÷ 52주 범위의 1/{DY_FAR:g} ~ "
-            f"{DY_FAR:g}배 안 (보고서 해 말이 52주 창 안일 때) · 0 과 어긋남 없음 — 벗어난 값 · 기록과 다른 값 · 기록 문제는 경고 (발행을 막지 않아요)",
-            warn=bool(far_d or far_y or dyb or probs))
+            f"{DY_FAR:g}배 안 (보고서 해 말이 52주 창 밖이면 {DY_FAR_OUT:g}배) · 0 과 어긋남 없음 — 벗어난 값 · 넓힌 폭으로 남긴 값 · 기록과 다른 값 · "
+            "기록 문제는 경고 (발행을 막지 않아요)",
+            warn=bool(far_d or far_y or wide_y or dyb or probs))
     if len(far_d) > DIV_RAW_SHOW or len(far_y) > DIV_RAW_SHOW:
         rep.detail("DART 주당 배당 · 배당수익률: 그럴듯하지 않은 값", far_d + far_y)
 
