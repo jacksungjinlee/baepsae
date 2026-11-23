@@ -12939,18 +12939,6 @@ def load_us_fcur_stmts(path=None):
     return {}
 
 
-def save_us_fcur_stmts(d, path=None):
-    path = path or us_fcur_stmt_path()
-    try:
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        tmp = path + ".tmp"
-        with gzip.open(tmp, "wt", encoding="utf-8") as f:
-            json.dump(_json_safe(d, [0]), f, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
-        os.replace(tmp, path)
-    except Exception as e:
-        log(f"  !! 달러 아닌 재무제표 회사의 재무제표 보관본 저장 실패: {type(e).__name__}")
-
-
 def us_fcur_stmt_due(entry, mrq, today):
     """보관본 항목을 오늘 다시 받아야 하는지: 없음 · 모양이 틀림 · US_FCUR_STMT_FRESH_DAYS 일 이상 · 야후 mostRecentQuarter 가 그때와 다름
     (새 분기를 보고했어요). (순수 함수)"""
@@ -12997,8 +12985,8 @@ def us_fcur_stmts_cached(yf, firms, today, deadline=None, fetch=None, path=None)
         else:
             out[t] = st                          # 받지 못함 · 보관본도 없음 — 그 칸들은 빈 칸 (stmt · time)
             stats["failed"] += 1
-    if changed:
-        save_us_fcur_stmts(store, path)
+    if changed:              # 같은 꼴(gzip JSON · NaN 없음)이라 미국 상세 정보 보관본의 저장 함수를 그대로 써요 (json.dump 는 정해진 세 곳에만 · test_pipeline)
+        save_us_info(store, path)
     return out, stats
 
 
