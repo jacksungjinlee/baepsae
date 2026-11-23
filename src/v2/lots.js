@@ -359,6 +359,43 @@ export function openValue(L, px, fx) {
   return { value, cost, gain: value != null ? value - cost : null, unknown: null, usdOnly };
 }
 
+// ---------------- today's change of the open lots (홈's 오늘, 2026-11-24; audit 4.2) ----------------
+// The part of the open shares' value at the price date's close that is that day's change (the last two official closes, d1),
+// counting each share only from when it was held. By the open lots above (a sale takes the same fraction of every lot, so the
+// shares still held keep each lot's share of them):
+//   a 가진 종목 row (imported): held at the previous close, the whole change (its date, when it has one, is the close it was
+//     valued at, never a purchase: as before this, and as 이번 주 정리 reads it)
+//   a 샀어요 record dated before the price date: held at the previous close, the whole change
+//   one dated on the price date: from its own price to the close
+//   one dated after it: nothing (its value is the same at both ends)
+// Shares sold (on the price date or after it) are no longer held: they are not in the value, so not in 오늘 either; what they
+// made is in 내 수익 (판 종목). Korean listings only (L.ccy KRW): a US holding has no 오늘 (its change is in dollars on another
+// day). null when a lot cannot be placed (a 샀어요 record without a readable date, or one dated on the price date without a
+// price), never a guess. A holding with only lots held at the previous close gets d1 / (100 + d1), today's own number.
+// L: ledger(recs, t) · px: the close on the price date (won) · d1: that day's change in % · pxDate: YYYY-MM-DD.
+// -> the change as a part of today's value (0.05: +5% of today's value; 0: no change) | null
+export function dayShare(L, px, d1, pxDate) {
+  if (!L || L.ccy !== "KRW" || !pos(px) || !isNum(d1) || d1 <= -100 || typeof pxDate !== "string" || !DATE.test(pxDate)) return null;
+  const over = d1 / (100 + d1);                            // a share held at the previous close: 1 − previous close ÷ px
+  let u = 0, part = 0;
+  for (const l of L.lots) {
+    if (!(l.u > 0)) continue;
+    let c;
+    if (l.kind === "imp") c = over;
+    else if (typeof l.date !== "string" || !DATE.test(l.date)) return null;
+    else if (l.date < pxDate) c = over;
+    else if (l.date > pxDate) c = 0;
+    else {
+      const p = isNum(l.own) ? l.own / (l.u / UNIT) : null;   // its own price per share (today's share basis)
+      if (!pos(p)) return null;
+      c = 1 - p / px;
+    }
+    u += l.u;
+    part += l.u * c;
+  }
+  return u > 0 ? part / u : null;
+}
+
 // 미국 종목 수익, 어디서 왔나 (A.5): over the open lots that carry a rate (a purchase's own), 주가 = (today's price − the lot's
 // price) x quantity x lot rate; 환율 = today's price x quantity x (today's rate − lot rate). They add up exactly to those
 // lots' won gain. Dollar-only lots (no rate of their own) are left out and counted. -> { price, rate, gain, value, cost,

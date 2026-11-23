@@ -220,7 +220,7 @@ function DeckStrip({ de, deck, ctx, onWhy, go, load, late = false }) {
   if (m !== m0) lateSay(`${de.id}: the value and return are left out (${m0.absent.map((a) => a.t).join(", ")} missing from the data; the line that says so speaks of today's data)`);
   if (late) lateSay(`${de.id}: today's change and the rows' day's change are left out`);
   const gone = new Set(de.absent || []);
-  const day = late ? null : deckDayChange(de);
+  const day = late ? null : deckDayChange(de, deck, ctx.pxDate);   // 2026-11-24: only what was held over the change (track.deckDayMove)
   const items = m.ok ? [{ label: C.today.value, value: wonText(m.value) },
     ...(m.ret != null ? [{ label: C.today.ret, value: signedPct(m.ret * 100), tone: m.ret > 0 ? "up" : m.ret < 0 ? "down" : undefined }] : [])] : [];
   return (

@@ -9,7 +9,7 @@
 import { num, hasGroup, universe, priceWon, todayD1 } from "./engine.js";
 import { NO_NEW_MONEY } from "./rules.js";
 import { pfRows } from "./pf.js";
-import { ledger, recordSets, kospiMirror } from "./lots.js";
+import { ledger, recordSets, kospiMirror, dayShare } from "./lots.js";
 
 export const GROUP_MIN = 5;           // 같은 업종 점 띠: a real industry group with at least 5 members in the same market
 export const TOGETHER_SHARE = 0.8;    // "같은 업종이 다 같이 빠졌어요": the stock fell and at least 80% of its group fell
@@ -197,7 +197,14 @@ export function indexSince(deck, idx, pxDate, valueOf = null) {
 // From each held stock's d1 (change between official closes) and its value in the daily check. Left out (null) when
 // any held stock has no d1 or no value there, and for a deck with US stocks: their d1 is in dollars and yesterday's
 // exchange rate is not in the data. A held stock missing from today's data (v19.0c) is left out, as in deckMoney.
-export function deckDayChange(de) {
+// 2026-11-24 (audit 4.2: shares recorded on Saturday at Friday's close showed Friday's whole fall, "오늘 −17만원 (−4.3%)" above
+// "산 가격보다 0원 (0.0%)"): with the deck's records (deck; pxDate: the price date, de.pxDate by default) each held stock counts
+// only what was held over that change (lots.dayShare: a 샀어요 record dated before the price date the whole d1, one dated on it
+// from its own price to the close, one dated after it nothing; shares sold are no longer held and not counted). A stock whose
+// records cannot be placed (no readable date, no price on the price date) leaves 오늘 out (null), said once in the console,
+// never a guess. Without deck (hand-made evaluations, older callers) every share counts at its d1, as before.
+// -> { pct, amount (won) } | null
+export function deckDayMove(de, deck = null, pxDate = de ? de.pxDate : null) {
   if (!de || !de.ok || !de.weights || !(de.weights.ok || de.weights.paused) || !de.holdings.length) return null;
   const gone = new Set(de.absent || []);           // v19.0c: missing from today's data, left out like every other total
   // v19.6a (verification nit): a holding sold out and kept (0 shares, rules.SOLD_OUT_BANDS "spec" · "own") holds no money:
@@ -211,10 +218,25 @@ export function deckDayChange(de) {
     const d1 = num("dv" in x ? x.dv : x.d1);
     const v = num(x.value);                           // null >= 0 is true in JavaScript: test the value itself
     if (d1 == null || x.cls === "us" || v == null || v < 0 || d1 <= -100) return null;
-    now += x.value;
-    prev += x.value / (1 + d1 / 100);
+    let start = v / (1 + d1 / 100);
+    if (deck) {
+      const px = num(x.px) > 0 ? x.px : x.qty > 0 ? v / x.qty : null;
+      const part = dayShare(ledger(deck, x.t), px, d1, pxDate);
+      if (part == null) {
+        warnOnce(`[v2] ${de.id}: today's change left out: ${x.t}'s records could not be placed against the price date ${pxDate} (a record without a readable date or price)`);
+        return null;
+      }
+      start = v - v * part;
+    }
+    now += v;
+    prev += start;
   }
-  return prev > 0 ? (now / prev - 1) * 100 : null;
+  return prev > 0 ? { pct: (now / prev - 1) * 100, amount: now - prev } : null;
+}
+// The same move in % only (older callers and tests).
+export function deckDayChange(de, deck = null, pxDate = de ? de.pxDate : null) {
+  const m = deckDayMove(de, deck, pxDate);
+  return m ? m.pct : null;
 }
 
 // ---------------- 추가로 넣을 돈 ----------------

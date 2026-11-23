@@ -20,22 +20,34 @@
 //   any of them has no change, a holding is valued by a typed amount only (it does not move), or a US listing is held
 //   (its change is in dollars on another day and yesterday's rate is not in the data): the rule track.deckDayChange
 //   already keeps for built portfolios.
+//   2026-11-24 (audit 4.2: a portfolio recorded on Saturday 11-21 at Friday's closes showed "오늘 −17만원 (−4.3%)" right above
+//   "산 가격보다 0원 (0.0%)", a loss nobody had): 오늘 counts only what was held over that change, in both kinds of portfolio
+//   (lots.dayShare, by the open lots of the records): a 가진 종목 row and a 샀어요 record dated before the price date (pxDate)
+//   count the whole change, a 샀어요 record dated on it from its own price to the close, one dated after it nothing (its value
+//   is in both ends). Shares sold, on the price date or after it, are no longer held: not in the value, not in 오늘. A
+//   holding whose records cannot be placed (a 샀어요 record without a readable date, or one on the price date without a
+//   price) leaves 오늘 out (null), as above, said once in the console.
 import { num, todayD1, valueD1 } from "./engine.js";
 import { pfRows, pfState, isImported, CHIP_GROUP } from "./pf.js";
-import { deckMoney, deckDayChange } from "./track.js";
+import { deckMoney, deckDayMove } from "./track.js";
 import { heldQty } from "./held.js";
+import { ledger, dayShare } from "./lots.js";
 
 const EPS = 1e-9;
 
-// Today's change of a set of holdings: [{ value (won), d1 (%), usd, frozen }] -> { pct, amount } | null.
+// Today's change of a set of holdings: [{ value (won), d1 (%), usd, frozen, start? }] -> { pct, amount } | null.
+// start (2026-11-24): the holding's value at the start of that change (won; homeMoney: by its records, lots.dayShare), when
+// not all of it was held at the previous close; null = it could not be worked out (left out). Without it: value ÷ (1 + d1).
 export function dayMove(items) {
   if (!items || !items.length) return null;
   let now = 0, prev = 0;
   for (const x of items) {
     const v = num(x && x.value), d1 = num(x && x.d1);
     if (!x || x.frozen || x.usd || v == null || !(v >= 0) || d1 == null || d1 <= -100) return null;
+    const p = x.start === undefined ? v / (1 + d1 / 100) : num(x.start);
+    if (p == null || !(p >= 0)) return null;
     now += v;
-    prev += v / (1 + d1 / 100);
+    prev += p;
   }
   return prev > 0 ? { pct: (now / prev - 1) * 100, amount: now - prev } : null;
 }
@@ -64,13 +76,33 @@ export function homeMoney(deck, de, ctx) {
     const live = v.rows.filter((r) => !r.absent);
     // 2026-11-14: a stock with no trade today counts at its reference price's change (engine.valueD1, data.json ntD1), so a
     // halted holding never takes the portfolio's 오늘 away; its own row says why it shows no change (fixnote.jsx DayNote)
-    day = dayMove(live.map((r) => ({ value: r.value, d1: r.s ? valueD1(r.s) : null, usd: r.usd, frozen: r.frozen })));
+    day = dayMove(live.map((r) => ({ value: r.value, d1: r.s ? valueD1(r.s) : null, usd: r.usd, frozen: r.frozen, ...dayStart(deck, r, ctx) })));
   } else {
-    const pct = deckDayChange(de);
-    if (pct != null && Number.isFinite(pct) && pct > -100) day = { pct, amount: m.value - m.value / (1 + pct / 100) };
+    // a built portfolio: the same rule over its daily check's values (track.deckDayMove with its records)
+    const dm = deckDayMove(de, deck, ctx.pxDate);
+    if (dm && Number.isFinite(dm.pct) && dm.pct > -100 && Number.isFinite(dm.amount)) day = dm;
   }
   const gain = gainOf(m.per, isImported(deck) && m.usdToday && usdCounted(deck, m.per, ctx));
   return { ok: true, value: m.value, day, gain, absent: m.absent || [] };
+}
+
+// A 가진 종목 portfolio's row at the start of the price date's change (dayMove's start), by its records (lots.dayShare): {}
+// when the row is left to dayMove's own rules (no change today, a US listing, a row added by name, no value), { start: null }
+// when its records cannot be placed (dayMove then leaves 오늘 out; said once in the console).
+const dayWarned = new Set();
+function dayStart(deck, r, ctx) {
+  const d1 = r.s ? valueD1(r.s) : null;
+  if (!r.t || !r.s || r.usd || r.frozen || num(d1) == null || d1 <= -100 || num(r.value) == null || r.value < 0) return {};
+  const part = dayShare(ledger(deck, r.t), num(r.px), d1, ctx && ctx.pxDate);
+  if (part == null) {
+    const k = `${deck.id}|${r.t}`;
+    if (!dayWarned.has(k)) {
+      dayWarned.add(k);
+      console.warn(`[v2] ${deck.id}: today's change left out: ${r.t}'s records could not be placed against the price date ${ctx && ctx.pxDate} (a record without a readable date or price)`);
+    }
+    return { start: null };
+  }
+  return { start: r.value - r.value * part };
 }
 
 // usdToday only when a dollar 평균 단가 is among the holdings counted in 산 가격보다 (pf.avgOf in dollars).
