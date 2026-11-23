@@ -4027,11 +4027,12 @@ def check_v196e(rep, data, macro):
         rep.add(C1W_ROW, True, f"검사가 오류로 멈췄어요: {type(e).__name__}: {str(e)[:120]}", "오류 없이 끝나야 함 (경고만 · 발행을 막지 않아요)", warn=True)
 
 
-# 2026-11-24 (감사: 11-21 corp.json 의 bq 가 3Q 마감 닷새 뒤에도 2,244곳 모두 2026.2Q): 분기 판단. 파이프라인(fetch_data.enrich_with_dart)은
+# 2026-11-24 (#180 · 감사: 11-21 corp.json 의 bq 가 3Q 마감 닷새 뒤에도 2,244곳 모두 2026.2Q): 분기 판단. 파이프라인(fetch_data.enrich_with_dart)은
 # 시가총액 상위 100곳의 70% 가 낸 가장 최신 분기를 '현재'로 써서 TTM 을 만들고, 그 판단을 corp.json qPick 에 적어요 ({"v": 1, "cur": "2026.3Q" 또는
-# null, "top": 100, "filed": {"2026.3Q": 64, …}}). 올해 분기의 마감(다음 한국 거래일로 민 날 · 휴장일 표)이 Q_PICK_LATE_DAYS 일 넘게 지났는데 '현재'가
+# null, "top": 100, "filed": {"2026.3Q": 64, …}}). 올해 1Q · 2Q · 3Q 의 마감(다음 한국 거래일로 민 날 · 휴장일 표)이 Q_PICK_LATE_DAYS 일 넘게 지났는데 '현재'가
 # 아직 그 앞이면 그 분기를 낸 상위 회사 수와 함께 **경고만** 해요 — 발행 · 사이트 점검 모두, 검사가 오류로 멈춰도 (실패는 없어요). qPick 이 없는
-# 파일(이 기록 전 · DART 를 끈 실행)은 회사들의 bq 중 가장 최신을 '현재'로 봐요. 마감 계산은 fetch_data 를 쓰지 않고 따로 해요 (테스트가 맞춰 봐요).
+# 파일(이 기록 전 · DART 를 끈 실행)은 회사들의 bq 중 가장 최신을 '현재'로 봐요. 사업보고서는 보지 않고, 1월 1일 ~ 5월 말(1Q 마감 + 10일)은 볼 분기가
+# 없어요. 마감 계산은 fetch_data 를 쓰지 않고 따로 해요 (테스트가 맞춰 봐요).
 Q_PICK_ROW = "분기 판단 (corp.json qPick · 경고만)"
 Q_PICK_LATE_DAYS = 10
 Q_PICK_DEADLINE = {1: (5, 15), 2: (8, 14), 3: (11, 14)}    # 분기 · 반기 보고서 마감 (12월 결산 · fetch_data.report_deadline 과 같아요)
@@ -4084,8 +4085,8 @@ def check_q_pick(rep, corp, today):
 
 
 def _check_q_pick(rep, corp, today):
-    rule = (f"올해 분기 마감(휴장일이면 다음 거래일) + {Q_PICK_LATE_DAYS}일이 지나면 그 분기가 '현재'여야 해요 (상위 {Q_PICK_TOP}곳 "
-            f"{Q_PICK_SHARE}% 제출 · 아니면 경고만 · 실패 없음)")
+    rule = (f"올해 1Q · 2Q · 3Q 마감(휴장일이면 다음 거래일) + {Q_PICK_LATE_DAYS}일이 지나면 그 분기가 '현재'여야 해요 (상위 {Q_PICK_TOP}곳 "
+            f"{Q_PICK_SHARE}% 제출 · 사업보고서는 보지 않아요 · 아니면 경고만 · 실패 없음)")
     try:
         hol, end = load_holidays()
         closed, hol_note = hol["KR"], ""
@@ -4110,7 +4111,7 @@ def _check_q_pick(rep, corp, today):
         wait = (f" · {today.year}.{soon[0]}Q 마감 {soon[1]}" + (f" → {soon[2]}" if soon[2] != soon[1] else "")
                 + f" 뒤 {(today - soon[2]).days}일 (아직 앞 분기 · {Q_PICK_LATE_DAYS}일 넘으면 경고)")
     if due is None:
-        rep.add(Q_PICK_ROW, True, f"확인할 분기 없음 ({today.year}년 분기 마감 + {Q_PICK_LATE_DAYS}일 전) · 현재 {cur or '분기 없음'}"
+        rep.add(Q_PICK_ROW, True, f"확인할 분기 없음 ({today.year}년 1Q 마감 + {Q_PICK_LATE_DAYS}일 전) · 현재 {cur or '분기 없음'}"
                 + src + wait + hol_note, rule)
         return
     n, dl, rl = due

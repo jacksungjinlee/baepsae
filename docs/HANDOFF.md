@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-23 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-24 KST — read this first)
 
 **Now (2026-11-23):** merged and deployed 11-22: #166 (old-app English carry lines), #167 (div reason lines), #168 (v19.6b 오늘 볼 것
 page), #169 (new US tickers wait), #170 (v19.6e data: `c1w` · `wkFrom` · `usWkFrom` · `c1wv` · `c1wSrc`), #171 (v19.6e
@@ -24,15 +24,16 @@ links, "전무가" off the must-not-show list, labels) and a rename in `tests/te
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
 v19.6g, v19.6h.
 
-**DART quarter retry (#180, branch `claude/dart-quarter-retry`, 2026-11-24):** the 11-21 corp.json had every Korean TTM on
-2026.2Q (2,244 companies, 3Q none) five days after the 3Q deadline: "not filed yet" answers from the deadline days (11-14 was a
+**DART quarter retry (#180, branch `claude/dart-quarter-retry`, 2026-11-24, in review):** the 11-21 corp.json had every Korean TTM
+on 2026.2Q (2,244 companies, 3Q none) five days after the 3Q deadline: "not filed yet" answers from the deadline days (11-14 was a
 Saturday, legal deadline 11-16; DART's statement API lags filings) waited 7 days, so the top 100 never reached 70%. Now deadlines
-roll to the next KRX trading day, and still-missing statement entries are asked daily until rolled deadline + 2 days, and to + 21
-days while the run hasn't adopted the quarter (사업보고서: always to + 21); at most 300 extra calls a run, biggest companies first, the
-rest logged for the next run; cache runs only (not a full-DART run). corp.json gets `qPick` (the quarter choice; the app doesn't read
-it) and a warning-only gate row `분기 판단 (corp.json qPick · 경고만)` warns when the adopted quarter is still the previous one more
-than 10 days after a rolled deadline. The 11-24 morning run may already move to 3Q under the old 7-day rule. RUNBOOK "DART: asking
-again after a filing deadline".
+roll to the next KRX trading day, and still-missing statement entries are asked again daily to rolled deadline + 21 days, also
+after the quarter is in use (small companies never later than before), only the ones a run really asks; at most 300 extra calls a
+run, counted per call, biggest companies first, the rest logged for the next run; cache runs only (not a full-DART run). corp.json
+gets `qPick` (the quarter choice; the app doesn't read it) and a warning-only gate row `분기 판단 (corp.json qPick · 경고만)` warns
+when this year's 1Q–3Q in use is still an older quarter more than 10 days after its rolled deadline. Round-1 review fixes in. The
+11-24 morning run may already move to 3Q under the old 7-day rule; then a dry run only exercises the post-adoption re-asks. RUNBOOK
+"DART: asking again after a filing deadline".
 
 **CI checks the two PR rules (#175, 2026-11-23; Jack: "Automate the rules you missed"):** the last step of `ci.yml`'s `checks`
 job runs `tools/pr_rules.py`, so the required `ci` check goes red when either rule is missed. Run it yourself before pushing:
