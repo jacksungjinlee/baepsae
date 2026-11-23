@@ -2050,6 +2050,68 @@ is a real 8-for-9 share consolidation (shares and ADSs, the ADS stays one share)
 demerger, which Yahoo merged with the demerger adjustment; it is in `SPLIT_OVERRIDES` as 8:9 with its sources (Unilever
 RNS 2025-12-08, the shareholder circular, IRS Form 8937).
 
+## US companies not reporting in dollars: PER · PBR · yield from company totals (회사 합계, usFcurTot, since #?)
+
+Jack, 2026-11-13: "Next, within days: bring all three back for them, all 27 PBRs included, from whole-company totals: market value
+÷ equity (PBR) and ÷ net income (PER), with equity and income converted at that day's rate. That fixes currencies, share classes and
+ADR ratios together. Prove it against today's correct figures before showing anything." and "0% yield only where the source clearly
+shows no dividends in the last 12 months; a blank field stays hidden."
+
+**What the daily run does (`fetch_data.us_fcur_totals_step`, inside `fetch_us`).** For every US company with `fcur` (statements not in
+dollars; 38 on 2026-11-23, the "27" of 11-13 plus the foreign companies added on 11-14) except ETFs and stocks without Yahoo details:
+- **Market value (USD)** = Yahoo `marketCap` rescaled to today's close, the same number as the published 시가총액 (`cap`). Yahoo's
+  `marketCap` is price × `impliedSharesOutstanding`, which counts every share class in ADR units (checked 2026-11-23 for all 38:
+  Novo A+B 4.41B, Baidu A+B, Ericsson A+B, Futu, Kanzhun, Li Auto, XP). No number when the price is not the US date's own close
+  (`pxd` · `pxc`) or the cached details have no anchor price (`pxBad`).
+- **Equity** = the latest quarterly balance sheet's *Common Stock Equity* (parent's common shareholders: without preferred shares or
+  minority interests; *Stockholders Equity* when the first row is missing), and only if its period end is the latest reported period
+  (within 7 days of the newest of Yahoo's `mostRecentQuarter` and every statement column, empty ones included) and at most 280 days
+  before the US date. Santander, Vodafone, Coca-Cola Europacific and Ferrovial fail this on 11-23 (Yahoo lacks their newest balance sheet).
+- **Net income (TTM)** = the sum of the last four consecutive quarters of *Net Income Common Stockholders* ending at that latest period
+  (half-year reporters: Yahoo's TTM row of that date), confirmed by a second route within 10% (Yahoo's TTM row or `netIncomeToCommon`).
+  A loss leaves PER blank, as for every other US stock. On 11-23 Yahoo's routes disagreed for Unilever (TTM row 9.27B vs 5.60B), so its
+  PER is blank; for Futu the TTM row is wrong (3.80B; the quarters, `netIncomeToCommon` and stockanalysis.com all say 11.08B HKD).
+- **Rate** = Yahoo `{currency}=X` hourly bar: the last bar of the US date that started after 12:00 and ended by 16:00 New York time
+  (the moment of the stock's close; a bar that has not ended is never used), confirmed by the Bank of Korea's ECOS daily rate per US
+  dollar (table 731Y002; CNY through 731Y001 원/달러 ÷ 원/위안) for the same date, or the latest ECOS day up to 4 days before (Korean
+  holidays), within 2%. Otherwise that currency's PER and PBR stay blank ("환율을 두 출처로 확인하지 못함"). Yahoo's *daily* KZT bar was
+  3.3% off ECOS on 11-20; its hourly bar was 1.3% off and is used.
+- **PER** = market value ÷ (net income ÷ rate), kept for 0 < PER < 500; **PBR** = market value ÷ (equity ÷ rate), kept for
+  0.005 ≤ PBR < 100 (the same ranges as other US stocks).
+- **Yield** = dividends actually paid (Yahoo's dividend record: per ADR, in dollars, gross) over the last year ÷ today's close. The
+  run reads the payment rhythm from the last five gaps (quarterly 60–120 days, half-yearly 121–245, yearly 300–430) and adds the
+  last 4 / 2 / 1 payments; blank when the gaps are uneven (a payment missing from Yahoo's record: Royal Bank and TD miss one, Kaspi
+  several), the next payment is overdue, or the result is more than 10% from Yahoo's own `dividendYield`. 0% only by #114's rule
+  (`us_no_dividend_12m`).
+
+Everything goes into data.json `usFcurTot` (rows with the inputs, results, Yahoo's own numbers `y` and a reason for every blank) and
+the log ("· 달러 아닌 재무제표 38곳: PER n / PBR n / 배당 n 되살림 (배당 0% 그대로 m), 빈 칸 k (reasons with counts)", then the rates
+and one line per company). A crash in the step leaves every stock as it was and writes `usFcurTot.err`.
+
+**The switch (`validate_data.US_FCUR_TOT_ON`, now `False`).** While it is off, nothing users see changes: the stocks keep #114's
+blanks and the currency line. Turning it on puts the checked numbers on the stocks (`per` · `pbr` · `dy`, and `fcurTot` lists
+which); that needs Jack's yes and one PR that also (1) changes the #114 gate row "미국 재무제표 통화가 달러가 아닌 회사: … 빈 칸" and
+its tests (`tests/test_us_fcur.py`: `test_gate_fails_when_a_blanked_number_is_left`, `test_non_dollar_statements_blank_per_pbr_dy_and_keep_the_rest`,
+`test_fetch_us_refetches_old_cache_entries_and_blanks_the_published_rows`) to accept exactly the numbers in `usFcurTot` — a loosening,
+so Jack decides; (2) changes the app's currency-line rule (`src/v2/fcur.js` `fcurLeftover`: today one number back removes the line for
+all three, so a stock with PER back and PBR still blank would lose its reason); (3) adds the line Jack approves for a number
+converted from another currency, if he wants one. Turning the switch on alone makes that gate row fail the publish (on purpose: no
+number goes out without its gate and its line).
+
+**Gate row "달러 아닌 재무제표 회사: 회사 합계로 계산한 PER · PBR · 배당수익률 (usFcurTot · 경고만)".** Never fails. It names: a PER
+more than 1.5× from Yahoo's own PER (Yahoo's PBR is the very number #114 blanked, so it is not compared); a PER or PBR whose
+price-free part (value ÷ close) moved more than 1.5× from the previous publish (a new quarter, a unit or share-count change: look at
+the company's report); rows that don't match the stock list or its price; a broken record; a crashed step; a switch value different
+from the gate's. On 11-23 it names Futu and H World (Yahoo's own PER 24.1 and 33.8 against 8.2 and 20.0 from company totals;
+stockanalysis.com agrees with the company totals). A publish without the record warns; the site checks read older files quietly.
+
+**Proof, 2026-11-23 (US close 11-20).** PER and PBR from company totals against stockanalysis.com's statements in the reporting
+currency (TSMC, Novo, SAP, ASML, Toyota, JD, Ryanair) or its USD figures (Futu, H World, BAT, Kaspi), its share counts, our close and
+ECOS rates: all 11 within ±10% (largest Kaspi +6.9% PBR, from the KZT rate). Company releases agree with Yahoo's totals: TSMC Q3 net
+income NT$763.06B, ASML Q3 €4,960.4M, Novo nine-month net profit DKK 86,286M. Counts on that day: PER 29, PBR 33, yield 19 (and 10
+clear 0%), 23 blanks (6 losses, 6 uneven dividend records, 4 stale balance sheets, 2 unclear dividends, 1 yield mismatch, 1 negative
+equity, 1 unconfirmed income, 1 missing income, 1 stale income).
+
 ## US share-class tickers (주식 종류 티커, since #PR)
 
 Jack, 2026-11-15: "fix Brown-Forman B, then check every share-class ticker in the S&P 500 and NASDAQ sources (dots, missing

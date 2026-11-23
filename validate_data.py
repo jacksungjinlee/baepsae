@@ -510,6 +510,19 @@ US_FCUR_BLANK = ("per", "pbr", "dy", "vz")
 # (0 이 아닌 배당수익률은 언제나 실패). False 로 바꾸면 0% 도 늘 비우고 관문도 0 을 남은 칸으로 봐요.
 US_FCUR_KEEP_ZERO_DY = True
 US_FCUR_SHOW = 10        # 관문 값 칸에 적는 티커 수 (나머지는 rep.detail 에 모두)
+# Jack, 2026-11-13 ("Next, within days: bring all three back for them … from whole-company totals … Prove it against today's correct
+# figures before showing anything."): fetch_data.us_fcur_totals_step 이 fcur 회사의 PER · PBR · 배당수익률을 회사 합계로 계산해요 (시가총액 ÷
+# 최근 분기 자본 · ÷ 지난 4분기 순이익, 자본과 순이익은 그날 미국 종가 시각의 환율로 달러로 · 배당은 실제로 받은 배당 ÷ 종가). 결과는 늘
+# data.json usFcurTot 에 적고, 아래 줄(check_us_fcur_tot)이 경고만 해요. 이 스위치가 종목 칸에 싣을지를 정해요:
+#   False (지금) = 계산 · 기록 · 경고만. 종목의 per · pbr · dy · vz 는 #114 그대로 비어 있고 화면도 그대로예요.
+#   True = 확인된 숫자를 종목 칸에 싣고 rec["fcurTot"] 에 어느 칸인지 적어요. 켜려면 Jack 의 예가 필요해요 (안전 규칙 변경): 위 check_us_fcur
+#          줄(fcur 회사에 숫자가 있으면 실패)과 그 시험(tests/test_us_fcur.py), 앱의 통화 줄 규칙(src/v2/fcur.js: 한 칸만 남아도 세 칸의 줄을 모두
+#          거둬요 — 일부만 되살리면 빈 칸의 이유가 사라져요), 바꿔 계산한 숫자 밑의 새 줄(문구, 아직 없음)이 함께 바뀌어야 해요 (RUNBOOK).
+#          이 스위치만 켜면 check_us_fcur 가 발행을 막아요 — 틀린 숫자도, 이유 없는 빈 칸도 나가지 않아요.
+US_FCUR_TOT_ON = False
+US_FCUR_TOT_WARN = 1.5   # 경고: 회사 합계로 계산한 PER · PBR 이 야후 자기 숫자(그날 종가 기준)나 지난 발행본(가격을 뺀 값)과 이만큼 넘게 다르면 이름을 적어요
+US_FCUR_TOT_ROW = "달러 아닌 재무제표 회사: 회사 합계로 계산한 PER · PBR · 배당수익률 (usFcurTot · 경고만)"
+US_FCUR_TOT_FIELDS = ("per", "pbr", "dy")
 # v19.1b (새 줄 — Jack 의 승인이 있어야 머지해요 · PR 의 '안전 규칙 변경'): 분할에 안전한 국내 배당 · 베타 표준오차 · 재무 경고 검사 기록.
 # data.json 에 divCheck 가 있으면(v19.1b 파이프라인이 늘 써요) 아래 검사가 모두 돌아요. 없으면 v19.1b 전 데이터라 경고 한 줄만 —
 # 단, 직전 발행본에 있었는데 빠졌으면 실패. 기준은 첫 시험 실행의 숫자를 Jack 이 보고 승인한 뒤 고정돼요.
@@ -2826,6 +2839,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v1752(rep, data, kr, us, pdata)
     check_us_fcur(rep, us)                # Jack, 2026-11-12: 재무제표 통화가 달러가 아닌 미국 회사
     check_us_fcur_more(rep, data, us, pdata)   # #114 리뷰: 통화를 모르는 회사 (경고) · 어제 있던 통화가 사라짐
+    check_us_fcur_tot(rep, data, us, pdata, mode)   # 2026-11-23: 그 회사들의 회사 합계 숫자 기록 (usFcurTot · 경고만 · 실패 없음)
     check_us_extra(rep, data, us, mode)   # 2026-11-14: 손으로 더한 미국 종목이 있거나 빠진 이유가 있는지
     check_us_share_class(rep, data, us, mode)   # 2026-11-15: 주식 종류 티커 (BF-B) 가 있거나 빠진 이유 · 바꾸지 못한 티커 (경고)
     check_us_foreign(rep, data, us, mode) # 2026-11-14: 미국 상장 외국 회사의 PER·PBR·배당수익률은 회사 합계와 맞춘 것만
@@ -4286,6 +4300,93 @@ def check_us_fcur(rep, us):
             f"{n}곳" + (f" ({' · '.join(f'{c} {k}' for c, k in sorted(by.items(), key=lambda kv: (-kv[1], kv[0])))})" if by else "")
             + f" · 남은 칸 {len(bad)}" + (f" (예: {', '.join(bad[:4])})" if bad else ""),
             "fcur 가 있는 회사는 per·pbr·dy·vz 없음 (0 도 안 됨" + (", 배당 0% 는 됨" if US_FCUR_KEEP_ZERO_DY else "") + ") · fcur 는 USD 가 아닌 세 글자")
+
+
+def _tot_fold(a, b):
+    """큰 값 ÷ 작은 값 (둘 다 양수일 때만 · 아니면 None)."""
+    a, b = num(a), num(b)
+    return max(a / b, b / a) if a and b and a > 0 and b > 0 else None
+
+
+def check_us_fcur_tot(rep, data, us, pdata, mode="publish"):
+    """2026-11-23 (더하기만 · **경고만 — 실패하지 않아요**): 달러 아닌 재무제표 회사(fcur)의 회사 합계 숫자 기록(data.json usFcurTot ·
+    fetch_data.us_fcur_totals_step). 이름을 적는 것: 회사 합계로 계산한 PER · PBR 이 야후 자기 숫자(그날 종가 기준 · 줄의 y)와 US_FCUR_TOT_WARN 배
+    넘게 다름 (PER 만 · 야후 PBR 은 #114 가 비운 그 숫자라 늘 어긋나요) · 지난 발행본의 같은 회사 줄과 가격을 뺀 값(PER ÷ 종가 · PBR ÷ 종가)이 그만큼 넘게 바뀜 (새 분기 · 단위 · 주식 수가 바뀐 것일 수 있어요) ·
+    기록의 모양이 틀림 · 이 단계가 멈춤 (err) · 스위치(on)가 관문의 US_FCUR_TOT_ON 과 다름 · fcur 회사인데 줄이 없음 · 줄이 fcur 회사가 아님 · 줄의
+    종가가 종목 가격과 다름 · 스위치가 켜졌는데 종목 칸이 줄과 다름. 기록이 없는 파일: 발행이면 경고, 사이트 점검이면 통과 (예전 파일).
+    스위치가 꺼져 있는 동안(지금) 종목 칸은 위 check_us_fcur 가 비어 있는지 봐요 — 이 줄은 그 줄을 바꾸지 않아요."""
+    rule = (f"회사 합계로 계산한 PER 이 야후 PER 과 · PER · PBR 이 지난 발행본과 (가격 빼고) {US_FCUR_TOT_WARN:g}배 넘게 다르면 이름 · 기록 모양 · 스위치 "
+            f"(경고만 · 실패 없음 · 스위치 {'켜짐' if US_FCUR_TOT_ON else '꺼짐: 종목 칸은 #114 그대로 빈 칸'})")
+    rec = (data or {}).get("usFcurTot")
+    if rec is None:
+        rep.add(US_FCUR_TOT_ROW, True, "기록 없음" + (" — 이 파이프라인은 늘 적어요 (확인)" if mode == "publish" else " (이 기록 전의 파일)"), rule,
+                warn=mode == "publish")
+        return
+    if not isinstance(rec, dict) or not isinstance(rec.get("rows", {}), dict):
+        rep.add(US_FCUR_TOT_ROW, True, f"기록 모양이 틀림 ({str(rec)[:80]})", rule, warn=True)
+        return
+    if rec.get("err"):
+        rep.add(US_FCUR_TOT_ROW, True, f"계산이 멈춘 날 ({str(rec.get('err'))[:100]}) — 종목 칸은 그대로", rule, warn=True)
+        return
+    rows = rec.get("rows") or {}
+    by = {s.get("t"): s for s in us}
+    fc = {t for t, s in by.items() if s.get("fcur") and s.get("etf") is not True}
+    issues, shape, far_y, far_p, off = [], [], [], [], []
+    if bool(rec.get("on")) != bool(US_FCUR_TOT_ON):
+        issues.append(f"스위치 기록 {rec.get('on')!r} ≠ 관문 {US_FCUR_TOT_ON}")
+    prow = (((pdata or {}).get("usFcurTot") or {}).get("rows") or {}) if isinstance(pdata, dict) else {}
+    prow = prow if isinstance(prow, dict) else {}
+    n = {f: 0 for f in US_FCUR_TOT_FIELDS}
+    for t, r in sorted(rows.items()):
+        if not isinstance(r, dict) or not isinstance(r.get("why", {}), dict):
+            shape.append(str(t))
+            continue
+        vals = {f: r.get(f) for f in US_FCUR_TOT_FIELDS if f in r}
+        if any(num(v) is None or num(v) < 0 for v in vals.values()):
+            shape.append(f"{t} (숫자가 아닌 값)")
+            continue
+        for f, v in vals.items():
+            n[f] += not (f == "dy" and v == 0)
+        s = by.get(t)
+        if s is None or t not in fc:
+            off.append(f"{t} (fcur 회사가 아님)")
+        elif num(r.get("px")) != num(s.get("price")):
+            off.append(f"{t} (종가 {r.get('px')} ≠ 종목 {s.get('price')})")
+        elif rec.get("on") is True:
+            bad = [f for f in US_FCUR_TOT_FIELDS if f in vals and vals[f] != 0 and num(s.get(f)) != num(vals[f])]
+            if bad:
+                off.append(f"{t} (스위치 켜짐인데 종목 칸 {'·'.join(bad)} 이 기록과 다름)")
+        y = r.get("y") if isinstance(r.get("y"), list) and len(r.get("y")) == 3 else [None, None, None]
+        # 야후 자기 숫자는 PER 만 맞춰 봐요: 야후 PER 은 ADR 하나당 달러 주당순이익으로 나눈 값이라 대개 맞고 (2026-11-23 38곳 중 HTHT · FUTU 말고
+        # 1.15배 안), 야후 PBR 은 #114 가 비운 그 숫자 (TSMC 61 · ASML 1,087 · Kaspi 0.007) 라 늘 어긋나요 — PBR 은 지난 발행본과만 맞춰요
+        fy = _tot_fold(vals.get("per"), y[0])
+        if fy is not None and fy > US_FCUR_TOT_WARN:
+            far_y.append(f"{t} PER {vals['per']} ↔ 야후 {y[0]}")
+        for f in ("per", "pbr"):
+            p = prow.get(t) if isinstance(prow.get(t), dict) else None
+            if p is not None:
+                fp = _tot_fold(num(vals.get(f)) / num(r.get("px")) if num(vals.get(f)) and num(r.get("px")) else None,
+                               num(p.get(f)) / num(p.get("px")) if num(p.get(f)) and num(p.get("px")) else None)
+                if fp is not None and fp > US_FCUR_TOT_WARN:
+                    far_p.append(f"{t} {f.upper()} {p.get(f)} (종가 {p.get('px')}) → {vals[f]} (종가 {r.get('px')})")
+    miss = sorted(t for t in fc if t not in rows)
+    if miss and mode == "publish":
+        issues.append(f"줄이 없는 fcur 회사 {len(miss)}: {_tickers(miss)} (상세 정보가 없는 종목이면 정상)")
+    if shape:
+        issues.append(f"모양이 틀린 줄 {len(shape)}: {_tickers(shape)}")
+    if off:
+        issues.append(f"어긋난 줄 {len(off)}: {_tickers(off)}")
+    if far_y:
+        issues.append(f"야후 자기 숫자와 {US_FCUR_TOT_WARN:g}배 넘게 다름 {len(far_y)}: {_tickers(far_y)}")
+    if far_p:
+        issues.append(f"지난 발행본과 {US_FCUR_TOT_WARN:g}배 넘게 바뀜 (가격 빼고) {len(far_p)}: {_tickers(far_p)}")
+    blank = (rec.get("n") or {}).get("blank") if isinstance(rec.get("n"), dict) else None
+    head = (f"{len(rows)}곳 · PER {n['per']} · PBR {n['pbr']} · 배당 {n['dy']} 계산됨"
+            + (f" · 빈 칸 {sum(v for v in blank.values() if isinstance(v, int))}" if isinstance(blank, dict) else "")
+            + f" · 스위치 {'켜짐' if rec.get('on') is True else '꺼짐'}")
+    rep.add(US_FCUR_TOT_ROW, True, " · ".join([head] + issues), rule, warn=bool(issues))
+    if far_y or far_p or off:
+        rep.detail("달러 아닌 재무제표 회사: 회사 합계 숫자에서 이름이 적힌 곳", far_y + far_p + off)
 
 
 def _tickers(ts):

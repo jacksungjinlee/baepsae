@@ -46,6 +46,16 @@ push or manual run on a branch fails on purpose (its green would cover the PR's 
 can't read (event file, git) fails with a message. Replayed on past merges it flags #170, #171 and #172 (the misses of 11-22) and
 passes #173.
 
+**#? (non-dollar filers from company totals), 2026-11-23 — built, switch OFF, waiting for Jack:** Jack's 11-13 "Next, within days"
+for the `fcur` companies (38 now: the 27 plus 11 of the 11-14 additions). The daily run computes PER = market value ÷ TTM net income
+and PBR = market value ÷ latest-quarter common equity (Yahoo statements, both converted at the Yahoo hourly rate at the US close,
+confirmed by ECOS within 2%) and the yield from dividends actually paid (regular rhythm, within 10% of Yahoo's), and writes them to
+data.json `usFcurTot` with a reason for every blank; a new warning-only gate row names disagreements. `validate_data.US_FCUR_TOT_ON`
+is `False`, so users still see #114's blanks and line. Proof on 11-20 closes: 11 companies within ±10% of stockanalysis.com and the
+companies' own releases; counts PER 29 · PBR 33 · yield 19 (+10 clear 0%) · 23 blanks. To switch on (Jack's yes): the #114 gate row
+and three `tests/test_us_fcur.py` tests, `src/v2/fcur.js` (one number back removes the currency line for all three), and the line for
+a converted number. RUNBOOK "US companies not reporting in dollars: PER · PBR · yield from company totals".
+
 **#172 (published closes), 2026-11-22:** in a week with days lacking a final KRX list, the daily run reads our earlier publishes
 from the `data` branch (throw-away partial clone, no token, https, minimal env, 180 s total, process-group kill, gc off) and
 confirms each Korean `c1w` day by day against KRX's base; a day with no publish is pinned by the next day's published `d1`;
@@ -396,7 +406,7 @@ just stops blocking screen work.
     v19.7a → missing US stocks → v19.7b → v19.6f (in review by Dec 1, merged by Dec 10) → v19.6c, v19.6b, v19.6e,
     v19.6g → v19.4 → v19.6h.
   - Small follow-ups, none started: the CLAUDE.md "Choices I made" line; v19.5b's US 성장 line and US minimum sizes;
-    dark mode's six spots; PER, PBR and yield back for the 27 non-dollar filers from whole-company totals; Korean
+    dark mode's six spots; PER, PBR and yield back for the 27 non-dollar filers from whole-company totals (built behind a switch, #?, 11-23); Korean
     splits; the daily run split into a read-only job and a publishing job; the item 4 report and the
     dates-and-time-zones audit; the 3-year USD/KRW series' one-day lag; the 11-19 special-session row's source text
     (KRX confirmed 10:00–16:30 on 11-05).
