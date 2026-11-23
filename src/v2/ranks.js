@@ -49,8 +49,10 @@ const EPS = 1e-9;
 //   Only a known size under the minimum (negative equity included) leaves the list. A US stock whose figure is blank because the
 //   data cannot be had (statements in another currency, no quarterly table, not fetched yet: fetch_data.us_size_fields) stays
 //   in the list exactly as before, and the console names it with a count (review 2026-11-23: no new silent exclusion; the line
-//   is true of every stock it removes). A file without the figure for any stock of the US base (published before the pipeline
-//   carried qrev · qeq) or without fx keeps the list as before, with no minimum and no line, and the console says so (usMinOf).
+//   is true of every stock it removes). The minimum and its line wait until the pipeline has fetched every US size it can
+//   (data.json usSize.pending 0; it fetches 300 companies a run, so the first runs after a cache loss are pending): until then,
+//   and for a file without the figure for any stock of the US base (published before the pipeline carried qrev · qeq) or
+//   without fx, the list is as before, with no minimum and no line, and the console says which state it is in (usMinOf).
 // The pipeline's vz · lz · mz are rounded percentiles of exactly these fields (fetch_data.add_percentiles), so the order is the
 // card's and the ties are gone. A test keeps this table in step with engine.CARDS.
 // report: the card's number comes from the 사업보고서 (fy), so a Korean list of it may say "{year}년 사업보고서 기준" (rank.jsx).
@@ -158,27 +160,42 @@ export function surgeList(stocks, mk) {
 // 4. 기준별: one card of CRIT (see the table above). null for an unknown card. coByT (corp.json by code) is needed for the Korean
 //    성장 and 수익성 lists (their basis and minimum size); without it those lists have no row.
 const fin = (x) => typeof x === "number" && Number.isFinite(x);
-// The US minimum of card id (US_MIN) when it applies to this file and market, else null: under 미국 only, with its switch on, only
-// when the file carries the figure (some stock of the US base has it) and a day's rate (fx > 0) to convert it with. Otherwise the
-// list is as before (no minimum, no line: rank.jsx critBasis asks the same), and the console says why once per file and card.
+// The state of the US minimum of card id (US_MIN) for this file and market: "on" only when every condition holds; else the
+// reason it is off. file: the data file's own fields it reads (data.json fx and usSize; rankRows, chipState and rank.jsx pass
+// load.data). -> null (not a US list with a minimum: other market, other card, switch off) or one of
+//   "noFigure"  no stock of the US base has the figure (a file published before the pipeline added qrev · qeq)
+//   "noFx"      no day's rate (data.json fx) to convert it with
+//   "noPending" the file does not say whether every US size is fetched (usSize.pending missing or not a count)
+//   "pending"   US companies still wait to be fetched (usSize.pending > 0: 300 a run after a cache loss)
+//   "on"        apply it (usSize.pending 0)
 const usMinMemo = new WeakMap();
-export function usMinOf(stocks, mk, id, fx = null) {
+const pendingOf = (file) => {
+  const z = file && file.usSize && typeof file.usSize === "object" ? num(file.usSize.pending) : null;
+  return z != null && z >= 0 && Number.isInteger(z) ? z : null;
+};
+export function usMinState(stocks, mk, id, file = null) {
   const m = US_MIN[id];
   if (mk !== "us" || !m || !m.on || !Array.isArray(stocks)) return null;
   let memo = usMinMemo.get(stocks);
   if (!memo) { memo = {}; usMinMemo.set(stocks, memo); }
-  if (!(id in memo)) {
-    memo[id] = rankBase(stocks, "us").some((s) => num(s[m.field]) != null);
-    if (!memo[id]) console.warn(`[v2] rank lists (us): the ${id} list keeps no minimum size: no US stock of this file has ${m.field} (published before the pipeline added it)`);
+  if (!(id in memo)) memo[id] = rankBase(stocks, "us").some((s) => num(s[m.field]) != null);
+  const rate = num(file && file.fx), pending = pendingOf(file);
+  const state = !memo[id] ? "noFigure" : !(rate > 0) ? "noFx" : pending == null ? "noPending" : pending > 0 ? "pending" : "on";
+  const k = `${id}|${state}|${state === "pending" ? pending : ""}|${state === "on" ? rate : ""}`;
+  if (!memo[k]) {
+    memo[k] = true;
+    const off = `[v2] rank lists (us): the ${id} list keeps no minimum size (no line), as before: `;
+    if (state === "noFigure") console.warn(off + `no US stock of this file has ${m.field} (published before the pipeline added it)`);
+    else if (state === "noFx") console.warn(off + `no day's rate (data.json fx) to convert ${m.field} with`);
+    else if (state === "noPending") console.warn(off + "the file does not say whether every US size is fetched (no usSize.pending)");
+    else if (state === "pending") console.info(off + `${pending} US companies still wait to be fetched (usSize.pending; the pipeline fetches 300 a run)`);
+    else console.info(`[v2] rank lists (us): the ${id} list applies the US minimum (${m.eok} eok won of ${m.field} at fx ${rate}): every US size is fetched (usSize.pending 0)`);
   }
-  if (!memo[id]) return null;
-  const rate = num(fx);
-  if (!(rate > 0)) {
-    if (!memo[id + "|nofx"]) console.warn(`[v2] rank lists (us): the ${id} list keeps no minimum size: no day's rate (data.json fx) to convert ${m.field} with`);
-    memo[id + "|nofx"] = true;
-    return null;
-  }
-  return { ...m, fx: rate };
+  return state;
+}
+// The US minimum of card id when it applies (usMinState "on"), with the rate it converts with, else null (the list as before).
+export function usMinOf(stocks, mk, id, file = null) {
+  return usMinState(stocks, mk, id, file) === "on" ? { ...US_MIN[id], fx: num(file.fx) } : null;
 }
 // -> the reason a stock of the base is left out of card c's list, or null when it is in (critValue then is its number). um: the US
 // minimum that applies (usMinOf, with the day's won-per-dollar rate it converts with, data.json fx).
@@ -235,21 +252,21 @@ function noteCrit(stocks, mk, c, coByT, um = null) {
   if (unknown.length) console.info(`[v2] rank lists (${mk}): the ${c.id} list keeps ${unknown.length} stocks with no ${um.field} (size unknown: `
     + `statements in another currency, no quarterly figure or not fetched yet), as before: ${unknown.join(", ")}`);
 }
-// fx: data.json fx, for the US minimum sizes (usMinOf); without it the US list keeps no minimum (as before).
-export function critList(stocks, mk, id, coByT = null, fx = null) {
+// file: the data file (load.data: its fx and usSize), for the US minimum sizes (usMinOf); without it the US list keeps no minimum.
+export function critList(stocks, mk, id, coByT = null, file = null) {
   const c = critOf(id);
   if (!c) return null;
-  const um = usMinOf(stocks, mk, id, fx);
+  const um = usMinOf(stocks, mk, id, file);
   if (Array.isArray(stocks)) noteCrit(stocks, mk, c, coByT, um);
   return oneEach(ranked(rankBase(stocks, mk).map((s) => ({ s, v: critValue(c, s, mk, coByT, um) })), c.dir));
 }
 // "rows" (a row), "none" (the card's figure is there but no stock qualifies) or "nodata" (no stock of the base has the figure, or
 // a Korean 성장 · 수익성 list has no corp.json to check its basis and size against).
-export function critState(stocks, mk, id, coByT = null, fx = null) {
+export function critState(stocks, mk, id, coByT = null, file = null) {
   const c = critOf(id);
   if (!c) return null;
   const base = rankBase(stocks, mk);
-  const um = usMinOf(stocks, mk, id, fx);
+  const um = usMinOf(stocks, mk, id, file);
   if (base.some((s) => !critOut(c, s, mk, coByT, um))) return "rows";
   if (mk === "kr" && (id === "growth" || id === "profit") && !(coByT && coByT.size)) return "nodata";
   return base.some((s) => num(s[c.field]) != null) ? "none" : "nodata";
@@ -473,7 +490,7 @@ export function rankRows(load, mk, chip, crit, deck = null) {
     case "cap": return { kind: "stock", rows: capList(stocks, mk) };
     case "val": return { kind: "stock", rows: valList(stocks, mk) };
     case "surge": { const r = surgeList(stocks, mk); return r ? { kind: "stock", rows: r } : null; }
-    case "crit": { const r = critList(stocks, mk, crit, load.coByT || null, load.data.fx); return r ? { kind: "stock", rows: r } : null; }
+    case "crit": { const r = critList(stocks, mk, crit, load.coByT || null, load.data); return r ? { kind: "stock", rows: r } : null; }
     case "mine": { const r = deck ? mineList(stocks, mk, deck.settings) : null; return r ? { kind: "stock", rows: r } : null; }
     case "div": return { kind: "stock", rows: divList(stocks, mk, load.coByT) };
     case "ind": return { kind: "ind", rows: indGroups(stocks, mk) };
@@ -573,7 +590,7 @@ export function chipState(load, mk, deck = null) {
     val: has("val"),
     surge: ss ? ss.state : null,
     surgeOf: ss,
-    crit: Object.fromEntries(CRIT.map((c) => [c.id, critState(stocks, mk, c.id, load.coByT || null, load.data.fx)])),
+    crit: Object.fromEntries(CRIT.map((c) => [c.id, critState(stocks, mk, c.id, load.coByT || null, load.data)])),
     mine: deck ? mineState(stocks, mk, deck.settings) : null,
     div: divState(base, mk),
     ind,

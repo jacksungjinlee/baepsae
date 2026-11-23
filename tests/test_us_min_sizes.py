@@ -9,7 +9,8 @@ US minimum sizes (25억원 of quarterly revenue, 100억원 of equity, at the day
 - 분기 말이 미국 기준일보다 200일 넘게 앞이거나 뒤면 빈 칸 · 0 · 음수(자본잠식)는 그대로
 - 가격을 지키는 장치 (리뷰 2026-11-23): 한 실행에 많아야 300곳 (보관본에 없는 회사를 시가총액 큰 순으로 먼저, 그다음 받은 지 오래된 순) ·
   시간 상한 180초 · 429 는 첫 번에, 빈 답은 3번 이어지면 멈춤 (남은 회사는 다음 실행) · main 의 맨 끝 (가격에 쓰는 야후 요청이 모두 끝난 뒤)
-- 로그와 data.json usSize: 채운 수 · 이유별 수 · 크기를 몰라 앱이 목록에 두는 수 (noData) · 요청 수 · 멈춘 까닭 · 이름 (크게)
+- 로그와 data.json usSize: 채운 수 · 이유별 수 · 크기를 몰라 앱이 목록에 두는 수 (noData) · 아직 받지 않은 수 (pending · 0 이어야 앱이
+  최소 크기를 켜요 · 영영 모르는 회사는 들어가지 않아요) · 요청 수 · 멈춘 까닭 · 이름 (크게)
 - 설명 글(UNITS)과 기록에 관문의 nan · None · null 낱말이 없어요 · 야후 함수 자리 (yfinance 1.7.0 고정)
 - 관문: 경고만 (예전 파일은 통과 · 채움 90% 아래 (아직 차례가 오지 않은 회사 빼고) · 모양 · 달러가 아닌 회사의 칸 · 멈춤 · 거절 · 검사 오류도
   경고) — 실패 줄이 없어요
@@ -166,6 +167,7 @@ def test_step_fills_dollar_filers_and_names_every_blank(tmp_path):
     assert r["n"] == 7 and r["usd"] == 4 and r["qrev"] == 1 and r["qeq"] == 3, r
     assert r["why"] == {"qrev": {"fcur": 2, "cur": 1, "fail": 1, "noRow": 1, "old": 1}, "qeq": {"fcur": 2, "cur": 1, "fail": 1}}, r["why"]
     assert r["noData"] == {"qrev": 6, "qeq": 4}                                              # 크기를 몰라 앱이 목록에 두는 행
+    assert r["pending"] == 0                                    # 다 받으려 했어요: 오류(EEE) · 통화 모름(CCC) · 다른 통화는 영영 모름 (pending 아님)
     assert (r["asked"], r["req"], r["ok"], r["empty"], r["err"], r["time"], r["stop"], r["kept"]) == (4, 4, 3, 0, 1, 0, None, 0), r
     assert r["cached"] == 4 and r["perRun"] == F.US_SIZE_PER_RUN and r["unit"] == "USD" and "CommonStockEquity" in r["src"]
     head = [x for x in lines if "미국 회사 크기 (" in x]
@@ -203,9 +205,9 @@ def test_cap_per_run_fills_the_cache_over_several_runs(tmp_path):
     for day in range(4):
         out = [rec(t, cap=float(100 - i)) for i, t in enumerate(names)]
         r, lines, calls = step(tmp_path, out, curs, lambda t: stmt(), per_run=3, today=TODAY + dt.timedelta(days=day))
-        seen.append((sorted(calls), r["req"], r["qeq"], r["noData"]["qeq"], r["why"]["qeq"].get("wait", 0), r["cached"]))
+        seen.append((sorted(calls), r["req"], r["qeq"], r["noData"]["qeq"], r["why"]["qeq"].get("wait", 0), r["cached"], r["pending"]))
     assert [s[0] for s in seen] == [names[:3], names[3:6], names[6:], []], seen          # 큰 회사부터 3곳씩 · 다 차면 받지 않아요 (7일 안)
-    assert [s[1:] for s in seen] == [(3, 3, 4, 4, 3), (3, 6, 1, 1, 6), (1, 7, 0, 0, 7), (0, 7, 0, 0, 7)], seen
+    assert [s[1:] for s in seen] == [(3, 3, 4, 4, 3, 4), (3, 6, 1, 1, 6, 1), (1, 7, 0, 0, 7, 0), (0, 7, 0, 0, 7, 0)], seen   # pending 4 → 1 → 0
     assert any("아직 받지 않음" in x and "T006" in x for x in step(tmp_path / "x", [rec(t) for t in names], curs, lambda t: stmt(), per_run=6)[1])
 
 
@@ -219,7 +221,7 @@ def test_429_stops_the_step_at_once_and_leaves_the_rest_for_the_next_run(tmp_pat
     out = [rec(t, cap=float(10 - i)) for i, t in enumerate(names)]
     r, lines, calls = step(tmp_path, out, {t: "USD" for t in names}, fake, workers=1)
     assert calls == ["T0", "T1"] and r["req"] == 2 and r["stop"] == "429 (T1)", (calls, r)
-    assert r["qeq"] == 1 and r["why"]["qeq"] == {"fail": 1, "stop": 4} and r["noData"]["qeq"] == 5
+    assert r["qeq"] == 1 and r["why"]["qeq"] == {"fail": 1, "stop": 4} and r["noData"]["qeq"] == 5 and r["pending"] == 4   # 거절한 T1 은 받으려 했어요
     assert any(x.startswith("  !! 미국 회사 크기: 야후가 거절해서 이 단계를 멈췄어요 — 429 (T1)") and "영향 없음" in x for x in lines), lines
     r, lines, calls = step(tmp_path, [rec(t, cap=float(10 - i)) for i, t in enumerate(names)], {t: "USD" for t in names}, lambda t: stmt(), workers=1)
     assert calls == ["T1", "T2", "T3", "T4", "T5"] and r["qeq"] == 6                          # 다음 실행: 남은 곳부터
@@ -231,7 +233,7 @@ def test_empty_answers_in_a_row_stop_the_step_and_one_good_answer_resets(tmp_pat
     out = [rec(t, cap=float(10 - i)) for i, t in enumerate(names)]
     r, lines, calls = step(tmp_path, out, {t: "USD" for t in names}, lambda t: pd.DataFrame() if t in empty else stmt(), workers=1)
     assert calls == ["T0", "T1", "T2", "T3", "T4", "T5"] and r["stop"] == "빈 답 3번 이어짐 (마지막 T5)", (calls, r["stop"])
-    assert (r["ok"], r["empty"], r["why"]["qeq"]) == (1, 5, {"fail": 5, "stop": 2}), r
+    assert (r["ok"], r["empty"], r["why"]["qeq"], r["pending"]) == (1, 5, {"fail": 5, "stop": 2}, 2), r
 
 
 def test_time_limit_stops_the_step_loudly(tmp_path):
@@ -242,7 +244,7 @@ def test_time_limit_stops_the_step_loudly(tmp_path):
         return t0[0]
     names = ["AAA", "BBB", "CCC", "DDD"]
     r, lines, calls = step(tmp_path, [rec(t) for t in names], {t: "USD" for t in names}, lambda t: stmt(), clock=clock, budget_s=150, workers=1)
-    assert len(calls) == 1 and r["time"] == 3 and r["why"]["qeq"] == {"time": 3}, r
+    assert len(calls) == 1 and r["time"] == 3 and r["why"]["qeq"] == {"time": 3} and r["pending"] == 3, r
     assert any(x.startswith("  !! 미국 회사 크기: 시간 상한 150초") for x in lines) and any(x.startswith("  !! 미국 qeq") and "시간 상한" in x for x in lines)
 
 
@@ -331,7 +333,7 @@ def good(t, **kw):
     return rec(t, **{"qrev": 10, "qrevD": "2026-09-30", "qeq": 20, "qeqD": "2026-09-30", **kw})
 
 
-REC = {"v": 1, "unit": "USD", "n": 3, "usd": 2, "qrev": 2, "qeq": 2, "noData": {"qrev": 1, "qeq": 1}, "why": {"qrev": {"fcur": 1}, "qeq": {"fcur": 1}},
+REC = {"v": 1, "unit": "USD", "n": 3, "usd": 2, "qrev": 2, "qeq": 2, "noData": {"qrev": 1, "qeq": 1}, "pending": 0, "why": {"qrev": {"fcur": 1}, "qeq": {"fcur": 1}},
        "cached": 2, "perRun": 300, "asked": 2, "req": 2, "ok": 2, "empty": 0, "err": 0, "time": 0, "stop": None, "kept": 0}
 
 
@@ -339,9 +341,10 @@ def test_gate_passes_an_old_file_a_good_one_and_a_planned_staged_fill():
     assert gate(data_of([rec("AAA")])) == ("PASS", "칸 없음 (이 칸을 싣기 전의 파일 · 앱의 종목 순위는 미국 최소 크기 없이)")
     st, val = gate(data_of([good("AAA"), good("BBB"), rec("CCC", fcur="EUR"), rec("ETF", etf=True)], REC))
     assert st == "PASS" and val.startswith("매출 2 · 자본 2 / 달러 재무제표 회사 2 (아직 받지 않은 곳 빼고 100.0% · 100.0%)") and "fcur 1" in val, val
-    staged = dict(REC, why={"qrev": {"wait": 2}, "qeq": {"wait": 2}}, cached=2, usd=4)       # 첫 실행: 300곳씩 (아직 차례가 오지 않은 곳은 경고 아님)
+    assert "아직 받지 않음 0 (앱의 미국 최소 크기 켜짐)" in val, val
+    staged = dict(REC, why={"qrev": {"wait": 1, "time": 1}, "qeq": {"wait": 1, "time": 1}}, cached=2, usd=4, pending=2)   # 첫 실행: 300곳씩 (경고 아님)
     st, val = gate(data_of([good("AAA"), good("BBB"), rec("CCC"), rec("DDD")], staged))
-    assert st == "PASS" and "wait 2" in val, val
+    assert st == "PASS" and "wait 1" in val and "아직 받지 않음 2 (앱의 미국 최소 크기 꺼짐 · 다 받으면 켜져요)" in val, val
 
 
 @pytest.mark.parametrize("rows,rec_,word", [
@@ -357,6 +360,9 @@ def test_gate_passes_an_old_file_a_good_one_and_a_planned_staged_fill():
     ([rec("AAA")], {"v": 1, "unit": "USD", "stopped": "KeyError"}, "단계가 멈춤 (KeyError)"),
     ([rec("AAA")], {"v": 1, "unit": "USD", "stopped": "notRun"}, "단계가 멈춤 (notRun)"),
     ([good("AAA"), good("BBB")], dict(REC, stop="429 (T1)"), "야후 거절로 받기를 멈춤 (429 (T1))"),
+    ([good("AAA"), good("BBB")], {k: v for k, v in REC.items() if k != "pending"}, "usSize.pending 이 개수가 아님"),
+    ([good("AAA"), good("BBB")], dict(REC, pending=-1), "usSize.pending 이 개수가 아님 (-1)"),
+    ([good("AAA"), good("BBB")], dict(REC, pending=True), "usSize.pending 이 개수가 아님"),
 ])
 def test_gate_warns_and_never_fails(rows, rec_, word):
     st, val = gate(data_of(rows, rec_))

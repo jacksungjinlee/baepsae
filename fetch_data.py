@@ -12257,6 +12257,9 @@ def us_info_due(entry, today):
 #                  (75곳), 100억원 기준이 갈리는 곳은 PAA 하나 — 합자회사라 StockholdersEquity 가 0 이고 CommonStockEquity 는 94.6억 달러예요
 # 단위는 달러 (주가 price · lo · hi 와 같은 달러 · 정수). 원으로 바꾸는 것은 앱이 비교할 때 그날 환율(data.json fx)로 한 번만 해요.
 # 빈 칸은 '크기를 모름'이에요: 앱은 그 회사를 예전처럼 목록에 둬요 (빼지 않아요 · 리뷰 2026-11-23). 빼는 것은 크기를 알고 기준 아래인 회사뿐.
+# usSize.pending = 아직 받지 않은 달러 회사 수 (보관본에 항목이 없음: 한 실행 상한 · 시간 상한 · 거절로 차례가 오지 않은 곳). 앱은 이 값이 0 일
+# 때만 미국 최소 크기와 그 줄을 켜요 (리뷰 2026-11-23: 첫 발행들에서 줄이 받지 않은 회사 수백 곳에 맞지 않는 말이 되지 않게). 영영 모르는
+# 회사(달러가 아닌 재무제표 · 반기 보고 · 통화 모름 · 받으려 했는데 빈 답)는 pending 이 아니에요 — 보관본에 항목이 있거나 받을 대상이 아니에요.
 # 출처: 상세 정보(get_info)를 받는 그 야후의 분기 재무제표 — 회사마다 요청 한 번에 두 줄만 (yfinance 의 분기 재무제표 시계열 함수 ·
 # _us_size_yahoo). 새 출처가 아니에요. 통화를 섞지 않아요: 재무제표 통화(us_fin_currency)가 달러인 회사만 받아요. 달러가 아닌 회사(fcur)는
 # 그날 환율이 데이터에 없어(달러 · 원 환율뿐) 비우고, 통화를 모르면(cur) 비워요. ETF · 펀드는 회사가 아니라 받지 않아요.
@@ -12532,8 +12535,9 @@ def us_size_step(out, cur_of, us_px_date, today, fetch=None, path=None, clock=No
     st_n = collections.Counter(st for st, _e in res.values())
     kept = sum(1 for t, (st, _e) in res.items() if st in ("err", "empty") and (cache.get(t) or {}).get("old"))
     no_data = {key: sum(why_n[key].values()) for key, _r in US_SIZE_ROWS}
+    pending = sorted(t for t in want if not isinstance(cache.get(t), dict))      # 아직 받지 않음 (보관본 항목 없음) — 0 이어야 앱이 최소 크기를 켜요
     rec_out = {"v": 1, "unit": "USD", "src": "yahoo quarterly statements (TotalRevenue, CommonStockEquity)", "maxAge": US_SIZE_MAX_AGE_DAYS,
-               "n": len(rows), "usd": len(want), "qrev": filled["qrev"], "qeq": filled["qeq"], "noData": no_data,
+               "n": len(rows), "usd": len(want), "qrev": filled["qrev"], "qeq": filled["qeq"], "noData": no_data, "pending": len(pending),
                "why": {key: dict(why_n[key]) for key, _r in US_SIZE_ROWS},
                "cached": sum(1 for t in want if isinstance(cache.get(t), dict)), "perRun": per_run,
                "asked": len(ask), "req": run["req"], "ok": st_n["ok"], "empty": st_n["empty"], "err": st_n["err"],
@@ -12551,6 +12555,9 @@ def us_size_step(out, cur_of, us_px_date, today, fetch=None, path=None, clock=No
         log(f"  !! 미국 회사 크기: 시간 상한 {budget_s}초에 걸려 {st_n['time']:,}곳을 받지 못했어요 — 다음 실행이 받아요")
     log(f"{'  !! ' if any(no_data.values()) else '· '}미국 회사 크기를 몰라 앱이 예전처럼 종목 순위에 두는 회사 (빼지 않아요): 매출 {no_data['qrev']:,} · "
         f"자본 {no_data['qeq']:,} — 이유와 티커는 아래 줄")
+    log(f"{'  !! ' if pending else '· '}미국 회사 크기 다 받았는지 (usSize.pending): " + (
+        f"아직 받지 않은 달러 회사 {len(pending):,}곳 → 앱의 종목 순위는 미국 최소 크기와 그 줄 없이 예전처럼 (다 받으면 켜져요)" if pending
+        else "0 → 앱의 종목 순위가 미국 최소 크기와 그 줄을 켜요"))
     for key, row in US_SIZE_ROWS:
         for w, ts in sorted(why_t[key].items(), key=lambda x: -len(x[1])):
             log(f"{'  · ' if w in ('fcur', 'wait') else '  !! '}미국 {key} ({row}) 빈 칸 {len(ts):,}곳 — {US_SIZE_WHY_KO.get(w, w)}: "
@@ -15481,7 +15488,8 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                  "그대로) · qeqD = 그 분기 말 날짜 · 빈 칸 규칙은 qrev 와 같아요"),
          "usSize": ("미국 qrev · qeq 기록 (v19.5b 후속 · 실행의 맨 끝에서 채워 data.json 을 다시 써요): unit USD · src 출처 · maxAge 분기 말이 "
                     "usPxDate 보다 이만큼(일) 넘게 앞이면 빈 칸 · n 회사 행 (ETF · 펀드 빼고) · usd 그중 재무제표 통화가 달러 · qrev · qeq 채운 행 · "
-                    "noData 칸마다 빈 칸 행 (크기를 몰라 앱이 종목 순위에서 빼지 않고 예전처럼 두는 회사) · why 칸마다 빈 칸 이유별 수 (fcur 통화가 달러가 "
+                    "noData 칸마다 빈 칸 행 (크기를 몰라 앱이 종목 순위에서 빼지 않고 예전처럼 두는 회사) · pending 아직 받지 않은 달러 회사 (보관본 항목 없음 · "
+                    "0 일 때만 앱이 미국 최소 크기와 그 줄을 켜요) · why 칸마다 빈 칸 이유별 수 (fcur 통화가 달러가 "
                     "아님 · cur 통화를 모름 · wait 아직 받지 않음 (한 실행에 perRun 곳씩) · fail 야후가 빈 답을 줬고 보관본도 없음 · time 시간 상한 · "
                     "stop 야후 거절로 멈춰 받지 못함 · noRow 야후 표에 그 줄이 없음 (반기 보고 회사 등) · old 오래된 분기 · future 분기 말이 usPxDate 뒤) · "
                     "cached 보관본에 있는 달러 회사 · perRun 한 실행의 상한 · asked 오늘 받을 곳 · req 보낸 요청 (회사마다 한 번) · ok 받음 · empty 빈 답 · "

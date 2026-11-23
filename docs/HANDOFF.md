@@ -54,14 +54,16 @@ written; data.json is written again with the fields), one Yahoo request per comp
 first, largest first; then the oldest), 180 s, stopping at the first 429 or 3 empty answers in a row. The cache
 (`.dart-cache/us-size-v1.json.gz`, 7-day refresh) is complete after three runs (300 · 300 · 128). Non-dollar filers stay blank.
 2.0's 기준별 · 수익성 under 미국 removes only a company whose equity is known and under 100억원 at `fx` (negative included) and
-adds the approved "· 자본 100억원 이상"; a company of unknown size (another currency, half-yearly, not fetched yet) stays as
-before and the console names it (review 2026-11-23: no new silent exclusion). On 11-20's data with a full cache: 707 → 701
-(Gartner #2, Halozyme #6, Las Vegas Sands #8, DaVita, Coca-Cola Consolidated, FDXF; 37 non-dollar filers stay). After the first
-run only the 300 largest are known and none of the six is among them; they leave over the next two runs. The US 성장 minimum
+adds the approved "· 자본 100억원 이상"; a company of unknown size (another currency, half-yearly, failed fetch) stays as before and
+the console names it (review 2026-11-23: no new silent exclusion). The minimum and line switch on only when `usSize.pending`
+(dollar filers not fetched yet) is 0, so the first two publishes after the merge (pending 428, then 128) show the lists as
+today, and the third switches it on (review 2026-11-23). On 11-20's data with a full cache: 707 → 701 (Gartner #2, Halozyme #6,
+Las Vegas Sands #8, DaVita, Coca-Cola Consolidated, FDXF; 37 non-dollar filers stay). The US 성장 minimum
 (`qrev × fx` ≥ 25억원) is built but OFF (`ranks.US_MIN_GROWTH_ON`): **open question to Jack**, the line "분기 매출 25억원 이상"
 (`rank.p.floorGrowthUs`, pending doc). Until the first publish after the merge the app shows the US lists as before. Expect in
-that publish's log: `미국 회사 크기 … 달러 약 728곳 (보관본에 있음 300) … 요청 300`, the `wait` lines for the rest, and the
-warning-only gate row `미국 회사 크기 (qrev · qeq · 경고만)` passing. RUNBOOK "US company sizes for 종목 순위".
+that publish's log: `미국 회사 크기 … 달러 약 728곳 (보관본에 있음 300) … 요청 300`, the `wait` lines for the rest,
+`usSize.pending): 아직 받지 않은 달러 회사 428곳`, and the warning-only gate row `미국 회사 크기 (qrev · qeq · 경고만)` passing; the
+third publish logs `pending): 0` and is the first with the minimum on screen. RUNBOOK "US company sizes for 종목 순위".
 
 **#172 (published closes), 2026-11-22:** in a week with days lacking a final KRX list, the daily run reads our earlier publishes
 from the `data` branch (throw-away partial clone, no token, https, minimal env, 180 s total, process-group kill, gc off) and

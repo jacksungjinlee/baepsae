@@ -2534,6 +2534,7 @@ US_SIZE_FILL_WARN = 90.0     # 재무제표 통화가 달러인 회사 중 (아�
                              # 매출 99.5% · 자본 100%). 파이프라인은 한 실행에 300곳씩 받아요 — 처음 두세 번의 발행은 wait 가 많아요 (경고 아님)
 US_SIZE_MAX_AGE = 200        # fetch_data.US_SIZE_MAX_AGE_DAYS 와 같아요 (테스트가 맞춰 봐요): 분기 말이 usPxDate 보다 이만큼 넘게 앞이면 빈 칸이어야 해요
 US_SIZE_KEYS = ("qrev", "qeq")
+US_SIZE_PENDING = ("wait", "time", "stop")   # 아직 받지 않은 회사의 빈 칸 이유 (usSize.pending 에 들어가요 · 채움 비율에서 빼요)
 
 
 def us_size_num(x):
@@ -2572,9 +2573,9 @@ def check_us_size(rep, data):
 
 
 def _check_us_size(rep, data):
-    rule = (f"재무제표 통화가 달러인 미국 회사의 qrev · qeq 채움 (아직 받지 않은 wait 빼고) {US_SIZE_FILL_WARN:g}% 아래 · 모양이 틀린 칸 (숫자 · 날짜 · "
+    rule = (f"재무제표 통화가 달러인 미국 회사의 qrev · qeq 채움 (아직 받지 않은 wait · time · stop 빼고) {US_SIZE_FILL_WARN:g}% 아래 · 모양이 틀린 칸 (숫자 · 날짜 · "
             f"짝 · usPxDate 뒤이거나 {US_SIZE_MAX_AGE}일 넘게 앞) · 달러가 아닌 회사나 ETF 에 칸 · 기록(usSize)이 없거나 단계가 멈춤 · 야후 거절로 "
-            "멈춤 → 경고 (실패 없음)")
+            "멈춤 · pending 이 개수가 아님 → 경고 (실패 없음)")
     rec = data.get("usSize")
     us = [s for s in data.get("stocks") or [] if isinstance(s, dict) and s.get("cls") == "us"]
     keys = US_SIZE_KEYS + tuple(k + "D" for k in US_SIZE_KEYS)
@@ -2589,7 +2590,7 @@ def _check_us_size(rep, data):
     bad = [(s.get("t"), w) for s in usd for w in us_size_bad(s, us_px)]
     fill = {k: sum(1 for s in usd if us_size_num(s.get(k)) is not None) for k in US_SIZE_KEYS}
     why = (rec.get("why") if isinstance(rec, dict) and isinstance(rec.get("why"), dict) else None) or {}
-    wait = {k: int(num((why.get(k) if isinstance(why.get(k), dict) else {}).get("wait")) or 0) for k in US_SIZE_KEYS}
+    wait = {k: sum(int(num((why.get(k) if isinstance(why.get(k), dict) else {}).get(r)) or 0) for r in US_SIZE_PENDING) for k in US_SIZE_KEYS}
     base = {k: max(0, len(usd) - wait[k]) for k in US_SIZE_KEYS}
     pct = {k: (100.0 * fill[k] / base[k] if base[k] else 100.0) for k in US_SIZE_KEYS}
     warns, parts = [], [f"매출 {fill['qrev']:,} · 자본 {fill['qeq']:,} / 달러 재무제표 회사 {len(usd):,} (아직 받지 않은 곳 빼고 {pct['qrev']:.1f}% · "
@@ -2601,6 +2602,12 @@ def _check_us_size(rep, data):
             warns.append(f"단계가 멈춤 ({str(rec.get('stopped'))[:40]}) — 모든 행 빈 칸")
         if rec.get("stop"):
             warns.append(f"야후 거절로 받기를 멈춤 ({str(rec.get('stop'))[:60]}) — 다음 실행이 이어 받아요")
+        pend = rec.get("pending")
+        if not rec.get("stopped"):
+            if isinstance(pend, bool) or not isinstance(pend, int) or pend < 0:
+                warns.append(f"usSize.pending 이 개수가 아님 ({str(pend)[:20]}) — 앱은 미국 최소 크기를 켜지 않아요")
+            else:
+                parts.insert(1, f"아직 받지 않음 {pend:,}" + (" (앱의 미국 최소 크기 꺼짐 · 다 받으면 켜져요)" if pend else " (앱의 미국 최소 크기 켜짐)"))
         for k, ko in (("qrev", "매출"), ("qeq", "자본")):
             w = why.get(k) if isinstance(why.get(k), dict) else {}
             if w:
