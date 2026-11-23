@@ -1560,13 +1560,13 @@ uncounted 2, data 22, the 32.5% yield 1; lines: 1 → 0 stocks, 2 → 8, 3 → 1
   (since #PR): `divCheck.proofSub` is not v1 with exactly `rights`
   and `data`, its stocks differ from the proof's `rightsT` · `dataT`, a case is unknown, or the marks differ: `dvLine` 2 must be on
   exactly the `rights` stocks with case `sh`, `dvLine` 3 on exactly the `data` stocks with case `div`, `dvLine` 4 on exactly the `data`
-  stocks with case `nototal` · `nostk` · `pref0` · `nopfo` · `prefmix`, and since #PR `nodps` while the stock's `dps` and
+  stocks with case `nototal` · `nostk` · `pref0` · `nopfo` · `prefmix`, and since #179 `nodps` while the stock's `dps` and
   `dps3[0]` are blank (`PROVE_SUB_LINE`; section "Korean dividend tables that contradict themselves" below); a `data` stock with case `other` carries no
   line, and any `other` turns the row into a WARN (see `data` above). Our own bookkeeping only: look at the run's
   "숨긴 배당수익률의 줄" and "그대로 숨김" log lines. A file without `proofSub` (before #PR) is only a warning unless the previous publish
   had it; without it a `dvLine` 2, 3 or 4 fails the "배당 기준 증명 기록" row.
 
-## Korean dividend tables that contradict themselves (since #PR, 2026-11-23 audit of the 11-21 publish)
+## Korean dividend tables that contradict themselves (since #179, 2026-11-23 audit of the 11-21 publish)
 
 DART's 배당 table sometimes disagrees with itself. The daily run now checks the parsed table after the DART cache (the cached
 parse is unchanged, so no dividend entry is fetched again) and before the split check (`fetch_data.py` `div_raw_guard`, then

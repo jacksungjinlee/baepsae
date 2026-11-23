@@ -24,7 +24,7 @@ links, "전무가" off the must-not-show list, labels) and a rename in `tests/te
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
 v19.6g, v19.6h.
 
-**Korean dividend tables that contradict themselves (branch `claude/kr-div-contradictions`, PR pending, 2026-11-24):** audit of the
+**Korean dividend tables that contradict themselves (#179, branch `claude/kr-div-contradictions`, 2026-11-24):** audit of the
 11-21 publish. (A) 18 Korean payers showed "배당을 주지 않았어요" (dps 0, ranked last) although the same DART table gives a cash total
 (현대코퍼레이션 84.08억원, 케이프, 앱코, 동일산업, 한텍 …): a year whose common 주당 배당 is 0 ('-') next to a total above 0 is now unknown
 (blank), unless the preferred shares explain the whole total (±15%); never a figure made up from the total. (B) a per-share cell more
