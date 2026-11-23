@@ -46,24 +46,38 @@ push or manual run on a branch fails on purpose (its green would cover the PR's 
 can't read (event file, git) fails with a message. Replayed on past merges it flags #170, #171 and #172 (the misses of 11-22) and
 passes #173.
 
-**US minimum sizes (#185, 2026-11-23; Jack 11-13: "v19.5b's US minimum sizes (25억원 of quarterly revenue, 100억원 of equity, at
-the day's rate) need a small data PR first"):** the daily run adds, for each US company with statements in dollars, the latest
-quarter's revenue and common equity in whole dollars with their quarter-end dates (`qrev` · `qrevD` · `qeq` · `qeqD`) and a
-`usSize` record. It runs last in `main()` (after every Yahoo request the publish depends on and after data · corp · macro.json are
-written; data.json is written again with the fields), one Yahoo request per company, at most 300 companies per run (nothing cached
-first, largest first; then the oldest), 180 s, stopping at the first 429 or 3 empty answers in a row. The cache
-(`.dart-cache/us-size-v1.json.gz`, 7-day refresh) is complete after three runs (300 · 300 · 128). Non-dollar filers stay blank.
-2.0's 기준별 · 수익성 under 미국 removes only a company whose equity is known and under 100억원 at `fx` (negative included) and
-adds the approved "· 자본 100억원 이상"; a company of unknown size (another currency, half-yearly, failed fetch) stays as before and
-the console names it (review 2026-11-23: no new silent exclusion). The minimum and line switch on only when `usSize.pending`
-(dollar filers not fetched yet) is 0, so the first two publishes after the merge (pending 428, then 128) show the lists as
-today, and the third switches it on (review 2026-11-23). On 11-20's data with a full cache: 707 → 701 (Gartner #2, Halozyme #6,
-Las Vegas Sands #8, DaVita, Coca-Cola Consolidated, FDXF; 37 non-dollar filers stay). The US 성장 minimum
-(`qrev × fx` ≥ 25억원) is built but OFF (`ranks.US_MIN_GROWTH_ON`): **open question to Jack**, the line "분기 매출 25억원 이상"
-(`rank.p.floorGrowthUs`, pending doc). Until the first publish after the merge the app shows the US lists as before. Expect in
-that publish's log: `미국 회사 크기 … 달러 약 728곳 (보관본에 있음 300) … 요청 300`, the `wait` lines for the rest,
-`usSize.pending): 아직 받지 않은 달러 회사 428곳`, and the warning-only gate row `미국 회사 크기 (qrev · qeq · 경고만)` passing; the
-third publish logs `pending): 0` and is the first with the minimum on screen. RUNBOOK "US company sizes for 종목 순위".
+**US minimum sizes (#185, 2026-11-24; Jack 11-13: "v19.5b's US minimum sizes (25억원 of quarterly revenue, 100억원 of equity, at
+the day's rate) need a small data PR first"):**
+- **Data:** the daily run adds, for each US company with statements in dollars, the latest quarter's revenue and common equity
+  in whole dollars with their quarter-end dates (`qrev` · `qrevD` · `qeq` · `qeqD`), plus a `usSize` record. Non-dollar filers
+  stay blank.
+- **When it runs:** last in `main()`, inside `ph.run("미국 회사 크기")`, after every Yahoo request the publish depends on and
+  after data · corp · macro.json are written; data.json is then written again with the fields.
+- **How it fetches:** one Yahoo request per company, at most 300 per run, 180 s, stopping at the first 429.
+  - Order: nothing cached or failed, largest first; then entries older than 7 days; then companies with 3 failed tries, once a
+    week.
+  - 3 empty answers in a row stop it too, but only counting companies that had not failed before, so always-empty companies
+    can't stall it.
+  - The cache (`.dart-cache/us-size-v1.json.gz`) is complete after three runs (300 · 300 · 128), then refreshes in weekly lumps.
+- **`usSize.pending`:** companies still to learn — nothing cached, or no answer yet with fewer than 3 tries; a refused new
+  listing counts.
+- **App:** 2.0 applies the US 수익성 minimum and its approved line "· 자본 100억원 이상" only when `pending` is 0. The first two
+  publishes after the merge (pending 428, then 128) look like today; the third switches it on.
+- **Review decision of 11-24** (Fable S3; the coordinator decided, Jack is told and can reverse it): when on, a company leaves the
+  US list if its equity is known and under 100억원 at `fx`, or unknown. Unknown means another currency, unknown currency,
+  half-yearly, a quarter over 200 days old, or 3 failed tries. This matches the Korean list's rule under the same line. The
+  console names every company dropped, with its reason.
+- **On 11-20's data with a full cache:** 707 → 664.
+  - 6 leave for negative equity: Gartner #2, Halozyme #6, Las Vegas Sands #8, DaVita, Coca-Cola Consolidated, FDXF.
+  - 37 leave as other-currency filers: Ascendis #16, ASML, NVO, TSM …
+  - Follow-up: #181's non-dollar company totals could give those `qeq` in dollars.
+- **US 성장 minimum** (`qrev × fx` ≥ 25억원): built but OFF (`ranks.US_MIN_GROWTH_ON`). **Open question to Jack:** the line "분기
+  매출 25억원 이상" (`rank.p.floorGrowthUs`, pending doc).
+- **Expect in the first publish's log:** `미국 회사 크기 … 달러 약 728곳 (보관본에 있음 300) … 요청 300`, the `wait` lines,
+  `usSize.pending): 아직 차례가 남은 달러 회사 428곳`, `⏱ 미국 회사 크기`, and the warning-only gate row
+  `미국 회사 크기 (qrev · qeq · 경고만)` passing.
+- **Expect in the third publish's log:** `pending): 0`. That publish is the first with the minimum on screen.
+- RUNBOOK "US company sizes for 종목 순위".
 
 **#172 (published closes), 2026-11-22:** in a week with days lacking a final KRX list, the daily run reads our earlier publishes
 from the `data` branch (throw-away partial clone, no token, https, minimal env, 180 s total, process-group kill, gc off) and

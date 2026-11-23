@@ -46,13 +46,15 @@ const EPS = 1e-9;
 //            the one the app's "약 {won}" under a $ price uses, cofmt.js) at least US_MIN_EQ_EOK (100억원). Switch US_MIN_PROFIT_ON.
 //   성장 US: the latest quarter's revenue (qrev, dollars) × fx at least US_MIN_REV_EOK (25억원). Switch US_MIN_GROWTH_ON, OFF: the
 //            Korean line's words ("매출 100억원 이상") are not true of it, and its own line waits for Jack (copy rank.p.floorGrowthUs).
-//   Only a known size under the minimum (negative equity included) leaves the list. A US stock whose figure is blank because the
-//   data cannot be had (statements in another currency, no quarterly table, not fetched yet: fetch_data.us_size_fields) stays
-//   in the list exactly as before, and the console names it with a count (review 2026-11-23: no new silent exclusion; the line
-//   is true of every stock it removes). The minimum and its line wait until the pipeline has fetched every US size it can
-//   (data.json usSize.pending 0; it fetches 300 companies a run, so the first runs after a cache loss are pending): until then,
-//   and for a file without the figure for any stock of the US base (published before the pipeline carried qrev · qeq) or
-//   without fx, the list is as before, with no minimum and no line, and the console says which state it is in (usMinOf).
+//   When the minimum is on, a US stock leaves the list when its size is known and under the minimum (negative equity included)
+//   or unknown (blank: statements in another currency, unknown currency, half-yearly reports, a quarter older than 200 days,
+//   or never fetched after fetch_data.US_SIZE_TRIES tries), exactly as a Korean stock without corp.json eq leaves under the
+//   same approved line "자본 100억원 이상", so the line is true of every company shown (review 2026-11-24, Fable S3; Jack is told
+//   and may reverse it). The console names every stock it drops, with its reason (data.json usSize.blank) and a count.
+//   The minimum and its line wait until the pipeline has fetched every US size it can (data.json usSize.pending 0; it fetches
+//   300 companies a run, so the first runs after a cache loss are pending): until then, and for a file without the figure for
+//   any stock of the US base (published before the pipeline carried qrev · qeq) or without fx, the list is as before, with no
+//   minimum and no line, and the console says which state it is in (usMinState).
 // The pipeline's vz · lz · mz are rounded percentiles of exactly these fields (fetch_data.add_percentiles), so the order is the
 // card's and the ties are gone. A test keeps this table in step with engine.CARDS.
 // report: the card's number comes from the 사업보고서 (fy), so a Korean list of it may say "{year}년 사업보고서 기준" (rank.jsx).
@@ -84,8 +86,8 @@ export const US_MIN_REV_EOK = 25;      // 성장 US: the latest quarter's revenu
 export const US_MIN_PROFIT_ON = true;  // the US 수익성 minimum: on (its line is the approved rank.floor.profit "자본 100억원 이상")
 export const US_MIN_GROWTH_ON = false; // the US 성장 minimum: OFF until Jack approves its line (rank.p.floorGrowthUs; a test holds the pair)
 const US_MIN = {
-  profit: { on: US_MIN_PROFIT_ON, field: "qeq", eok: US_MIN_EQ_EOK, small: "smallEquity" },
-  growth: { on: US_MIN_GROWTH_ON, field: "qrev", eok: US_MIN_REV_EOK, small: "smallRevenue" },
+  profit: { on: US_MIN_PROFIT_ON, field: "qeq", eok: US_MIN_EQ_EOK, small: "smallEquity", blank: "noEquity" },
+  growth: { on: US_MIN_GROWTH_ON, field: "qrev", eok: US_MIN_REV_EOK, small: "smallRevenue", blank: "noRevenue" },
 };
 export const US_PBR_LOW = 4;           // the US 가치 guard: PBR under a quarter of PER × ROE ÷ 100
 export const KR_PBR_MIN = 0.005;       // the Korean 가치 guard: a PBR under this rounds to 0.00
@@ -195,7 +197,10 @@ export function usMinState(stocks, mk, id, file = null) {
 }
 // The US minimum of card id when it applies (usMinState "on"), with the rate it converts with, else null (the list as before).
 export function usMinOf(stocks, mk, id, file = null) {
-  return usMinState(stocks, mk, id, file) === "on" ? { ...US_MIN[id], fx: num(file.fx) } : null;
+  if (usMinState(stocks, mk, id, file) !== "on") return null;
+  const m = US_MIN[id], b = file.usSize.blank;
+  const why = b && typeof b === "object" && b[m.field] && typeof b[m.field] === "object" ? b[m.field] : {};   // 티커 -> 빈 칸 이유 (콘솔)
+  return { ...m, fx: num(file.fx), why };
 }
 // -> the reason a stock of the base is left out of card c's list, or null when it is in (critValue then is its number). um: the US
 // minimum that applies (usMinOf, with the day's won-per-dollar rate it converts with, data.json fx).
@@ -225,7 +230,8 @@ function critOut(c, s, mk, coByT, um = null) {
   }
   if (um) {
     const usd = num(s[um.field]);
-    if (usd != null && (usd * um.fx) / 1e8 < um.eok - EPS) return um.small;   // a blank size stays in (size unknown: noteCrit names it)
+    if (usd == null) return um.blank;                                      // size unknown: the line could not be checked (noteCrit names it)
+    if ((usd * um.fx) / 1e8 < um.eok - EPS) return um.small;
   }
   return null;
 }
@@ -239,18 +245,19 @@ function noteCrit(stocks, mk, c, coByT, um = null) {
   const k = mk + "|" + c.id + "|" + (coByT ? 1 : 0) + "|" + (um ? um.fx : "");
   if (m.has(k)) return;
   m.add(k);
-  const why = {}, unknown = [];
+  const why = {};
+  // the US minimum names every stock it drops (no cap): a known size under it, and an unknown one with its reason (usSize.blank;
+  // fcur another currency · cur unknown currency · noRow no quarterly line · old quarter over 200 days · gaveUp never fetched)
+  const usName = (s, r) => `${s.t} ${s.nk || ""}`.trim() + (r === um.blank ? ` (${um.why[s.t] || (s.fcur ? "fcur " + s.fcur : "blank")})` : "");
   for (const s of rankBase(stocks, mk)) {
     const r = critOut(c, s, mk, coByT, um);
-    if (r && r !== "blank" && r !== "fin") (why[r] = why[r] || []).push(r === "pbrRoundsTo0" || (um && r === um.small) ? `${s.t} ${s.nk || ""}`.trim() : s.t);
-    if (!r && um && num(s[um.field]) == null) unknown.push(s.t);
+    if (r && r !== "blank" && r !== "fin") {
+      (why[r] = why[r] || []).push(um && (r === um.small || r === um.blank) ? usName(s, r) : r === "pbrRoundsTo0" ? `${s.t} ${s.nk || ""}`.trim() : s.t);
+    }
   }
-  const named = (r) => c.id === "value" || (um && r === um.small);
+  const named = (r) => c.id === "value" || (um && (r === um.small || r === um.blank));
   const parts = Object.entries(why).map(([r, ts]) => (named(r) ? `${r} ${ts.length}: ${ts.join(", ")}` : `${r} ${ts.length}`));
   if (parts.length) console.info(`[v2] rank lists (${mk}): the ${c.id} list leaves out ${parts.join("; ")}`);
-  // the US minimum: stocks whose size is unknown stay in, as before, named with a count (no silent exclusion, no silent pass)
-  if (unknown.length) console.info(`[v2] rank lists (${mk}): the ${c.id} list keeps ${unknown.length} stocks with no ${um.field} (size unknown: `
-    + `statements in another currency, no quarterly figure or not fetched yet), as before: ${unknown.join(", ")}`);
 }
 // file: the data file (load.data: its fx and usSize), for the US minimum sizes (usMinOf); without it the US list keeps no minimum.
 export function critList(stocks, mk, id, coByT = null, file = null) {

@@ -205,8 +205,8 @@ function critNumber(id, s) {
 }
 // The {basis} of the 기준별 line: the card's basis line (build.cards), 성장 the market's own measure, and on the Korean 성장 and
 // 수익성 lists the minimum size they keep (" · 매출 100억원 이상" / " · 자본 100억원 이상": ranks.MIN_EOK). A US list names its
-// minimum exactly when ranks.usMinOf applies one (the same call the list makes): 수익성 the same approved words (a known equity under
-// 100억원 at the day's rate leaves, ranks.US_MIN_EQ_EOK; an unknown one stays in, as before), 성장 its own line once Jack approves it
+// minimum exactly when ranks.usMinOf applies one (the same call the list makes): 수익성 the same approved words (a company whose equity
+// at the day's rate is under 100억원 or unknown leaves, as a Korean one does: ranks.US_MIN_EQ_EOK), 성장 its own line once Jack approves it
 // (rank.p.floorGrowthUs; its switch ranks.US_MIN_GROWTH_ON stays off until then). A file without the US figures or fx, or whose
 // US sizes are not all fetched yet (usSize.pending above 0), names none: the list is as before (ranks.usMinState).
 const usFloor = (id) => (id === "profit" ? C.rank.floor.profit : id === "growth" ? C.rank.p.floorGrowthUs : null);

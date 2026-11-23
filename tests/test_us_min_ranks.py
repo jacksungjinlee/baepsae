@@ -3,10 +3,10 @@
 quarterly revenue, 100억원 of equity, at the day's rate) need a small data PR first."
 
 여기서 보는 것 (더한 시험만 · 예전 시험은 그대로):
-- 기준별 수익성 · 미국: 자본(data.json qeq, 달러) × 그날 환율(data.json fx)을 아는 회사 중 100억원 미만(음수 = 자본잠식 포함)만 빠져요 · 딱
-  100억원은 들어가요 · 줄은 승인된 그대로 " · 자본 100억원 이상" (빠지는 회사마다 맞는 말)
-- 크기를 모르는 회사 (qeq 빈 칸: 달러가 아닌 재무제표 · 분기 표 없음 · 아직 받지 않음)는 예전처럼 목록에 남아요 — 콘솔이 수와 이름을 말해요
-  (리뷰 2026-11-23: 새로 조용히 빼는 회사가 없어요)
+- 기준별 수익성 · 미국: 최소 크기가 켜지면 자본(data.json qeq, 달러) × 그날 환율(data.json fx)이 100억원 미만(음수 = 자본잠식 포함)이거나
+  자본을 모르는 회사(qeq 빈 칸: 달러가 아닌 재무제표 · 통화 모름 · 반기 보고 · 오래된 분기 · 3번 받지 못함)가 빠져요 — 한국 목록이 자본이 빈
+  회사를 빼는 것처럼, 그래야 승인된 줄 " · 자본 100억원 이상"이 보이는 모든 회사에 맞아요 (리뷰 2026-11-24 · Fable S3) · 딱 100억원은 들어가요 ·
+  콘솔이 빠지는 회사를 모두 이름과 이유로 말해요 (data.json usSize.blank)
 - 다 받았을 때만 (data.json usSize.pending 0) 켜져요: 아직 받지 않은 회사가 있으면 (첫 실행들 · 보관본을 잃은 뒤) 예전 그대로 · 줄도 없음 ·
   콘솔이 어느 상태인지 말해요 · 파이프라인을 세 번 돌려 세 번째에 켜지는 것까지 (리뷰 2026-11-23)
 - 이 칸을 싣기 전의 파일 (미국 종목 중 qeq 가 있는 곳이 없음) · 환율이 없는 파일 · pending 이 없는 파일: 예전 그대로 (최소 크기 없이 · 줄에도
@@ -49,10 +49,10 @@ STOCKS = [us("AAA", roe=90.0, qeq=50_000_000_000, qeqD="2026-09-30", cap=9.0),
           st("000010", roe=30.0, cap=2.0)]                                            # 한국: 이 규칙과 상관없어요
 CORP = [{"t": "000010", "roeIn": {"eq": 500.0}, "rev": [300.0, 200.0, 150.0]}]
 ALL_ROE = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"]                                # 예전 목록 (ROE 순 · 빈 ROE 만 빠져요)
-FILE = "const F = (fx, pending = 0) => ({ fx, usSize: { v: 1, pending } });\n"          # data.json 의 fx · usSize (load.data 처럼)
+FILE = "const F = (fx, pending = 0, blank = {}) => ({ fx, usSize: { v: 1, pending, blank } });\n"   # data.json 의 fx · usSize (load.data 처럼)
 
 
-def test_us_profit_leaves_out_only_a_known_equity_under_100_eok_at_the_days_rate():
+def test_us_profit_leaves_out_a_known_equity_under_100_eok_and_an_unknown_one_when_on():
     got = run(FILE + """const CO = new Map(CORP.map((c) => [c.t, c])); const logs = []; console.info = (m) => logs.push(String(m));
 out = { p: ts(K.critList(STOCKS, 'us', 'profit', CO, F(1000))), kr: ts(K.critList(STOCKS, 'kr', 'profit', CO, F(1000))),
   st: [K.critState(STOCKS, 'us', 'profit', CO, F(1000)), K.critState(STOCKS.slice(2, 4), 'us', 'profit', CO, F(1000))],
@@ -60,12 +60,15 @@ out = { p: ts(K.critList(STOCKS, 'us', 'profit', CO, F(1000))), kr: ts(K.critLis
   consts: [K.US_MIN_EQ_EOK, K.US_MIN_REV_EOK, K.US_MIN_PROFIT_ON, K.US_MIN_GROWTH_ON, K.MIN_EOK],
   logs: logs.filter((l) => l.includes('profit list') && l.includes('(us)')) };""", STOCKS=STOCKS, CORP=CORP)
     assert got["consts"] == [100, 25, True, False, 100]
-    assert got["p"] == ["AAA", "BBB", "EEE", "FFF"], got["p"]                 # CCC 100억 미만 · DDD 자본잠식만 빠져요 · EEE · FFF 크기를 몰라 남아요
-    assert got["big"] == ["AAA", "BBB", "CCC", "EEE", "FFF"] and got["small"] == ["AAA", "EEE", "FFF"], got   # 그날 환율로 (1,001원 CCC 100.1억 · 999원 BBB 99.9억)
+    assert got["p"] == ["AAA", "BBB"], got["p"]                               # CCC 100억 미만 · DDD 자본잠식 · EEE · FFF 자본을 몰라 빠져요
+    assert got["big"] == ["AAA", "BBB", "CCC"] and got["small"] == ["AAA"], got   # 그날 환율로 (1,001원 CCC 100.1억 · 999원 BBB 99.9억)
     assert got["kr"] == ["000010"]                                     # 한국은 예전 규칙 그대로 (corp.json 자본)
     assert got["st"] == ["rows", "none"], got                          # 둘 다 작으면 들어갈 종목 없음
-    assert any("leaves out smallEquity 2: CCC CCC, DDD DDD" in l for l in got["logs"]), got["logs"]                 # 빠진 회사는 티커와 이름으로
-    assert any("keeps 2 stocks with no qeq" in l and l.endswith(": EEE, FFF") for l in got["logs"]), got["logs"]   # 남긴 회사도 수와 이름으로
+    assert any(l.endswith("leaves out smallEquity 2: CCC CCC, DDD DDD; noEquity 2: EEE EEE (fcur EUR), FFF FFF (blank)") for l in got["logs"]), got["logs"]
+    assert not any("keeps" in l and "no qeq" in l for l in got["logs"]), got["logs"]   # 빠지는 회사는 모두 이름과 이유로 (상한 없음)
+    why = run(FILE + "const logs = []; console.info = (m) => logs.push(String(m)); K.critList(S, 'us', 'profit', null, F(1000, 0, { qeq: { FFF: 'noRow' } })); "
+              "out = logs.filter((l) => l.includes('noEquity'));", S=[dict(x) for x in STOCKS])
+    assert why and why[0].endswith("noEquity 2: EEE EEE (fcur EUR), FFF FFF (noRow)"), why   # 이유는 파이프라인의 usSize.blank 에서
     assert any("applies the US minimum (100 eok won of qeq at fx 1000): every US size is fetched (usSize.pending 0)" in l for l in got["logs"]), got["logs"]
 
 
@@ -79,7 +82,7 @@ out = { wait: ts(K.critList(STOCKS, 'us', 'profit', null, F(1000, 428))), on: ts
            K.usMinState(STOCKS, 'us', 'profit', F(0, 0)), K.usMinState(STOCKS, 'us', 'profit', null), K.usMinState(STOCKS, 'kr', 'profit', F(1000)),
            K.usMinState(STOCKS, 'us', 'growth', F(1000)), K.usMinState(STOCKS.map((x) => ({ ...x, qeq: undefined })), 'us', 'profit', F(1000))],
   logs: logs.filter((l) => l.includes('(us)') && l.includes('minimum')) };""", STOCKS=STOCKS)
-    assert got["wait"] == ALL_ROE and got["on"] == ["AAA", "BBB", "EEE", "FFF"], got     # 아직 받는 중: 예전 그대로 · 다 받으면 켜져요
+    assert got["wait"] == ALL_ROE and got["on"] == ["AAA", "BBB"], got                   # 아직 받는 중: 예전 그대로 · 다 받으면 켜져요
     assert got["odd"] == [",".join(ALL_ROE)] * 5, got["odd"]                            # pending 이 없거나 개수가 아니면 켜지 않아요
     assert got["states"] == ["pending", "on", "noPending", "noFx", "noFx", None, None, "noFigure"], got["states"]
     logs = got["logs"]
@@ -116,7 +119,7 @@ out = { rows: ts(K.rankRows(ld, 'us', 'crit', 'profit').rows), st: K.chipState(l
   wait: ts(K.rankRows(wait, 'us', 'crit', 'profit').rows),
   trend: [ts(K.rankRows(ld, 'us', 'crit', 'lowVol').rows), ts(K.rankRows(noFx, 'us', 'crit', 'lowVol').rows)] };""",
               DATA={"fx": 1000.0, "usSize": {"v": 1, "pending": 0}, "stocks": [dict(s, vol=10.0 + i) for i, s in enumerate(STOCKS)]}, CORP=CORP)
-    assert got["rows"] == ["AAA", "BBB", "EEE", "FFF"] and got["st"] == "rows", got
+    assert got["rows"] == ["AAA", "BBB"] and got["st"] == "rows", got
     assert got["noFx"] == [ALL_ROE, "rows"] and got["wait"] == ALL_ROE, got   # 환율 없는 파일 · 아직 받는 중인 파일: 예전 그대로
     assert got["trend"][0] == got["trend"][1] == ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF", "GGG"], got   # 다른 카드는 자본 · 환율을 보지 않아요
 
@@ -196,7 +199,7 @@ def test_the_us_profit_line_names_the_approved_minimum_only_when_it_applies(card
     assert before["lines"] == ["카드와 같은 순서(ROE 높은 순)예요."], before        # 예전 파일: 예전 줄 그대로
     assert after["lines"] == [f"카드와 같은 순서(ROE 높은 순 · {PROFIT_FLOOR})예요."], after["lines"]
     assert top not in after["rows"] and after["rows"][:9] == [t for t in before["rows"] if t != top][:9], (top, after["rows"][:3])   # 자본잠식 회사만 빠지고 줄이 그 까닭을 말해요
-    assert unknown["rows"] == before["rows"] and unknown["lines"] == after["lines"], unknown   # 크기를 모르는 회사는 예전 자리에 그대로
+    assert unknown["rows"] == after["rows"] and unknown["lines"] == after["lines"], unknown   # 자본을 모르는 회사도 빠져요 (줄이 맞게)
     assert waiting == before, waiting                                         # 아직 받는 중: 자본잠식 회사도 그대로 · 줄도 예전 그대로
     assert growth["lines"] and PROFIT_FLOOR not in growth["lines"][0] and "25억" not in growth["lines"][0], growth["lines"]   # 성장: 스위치 꺼짐
     assert kr["lines"] == [f"카드와 같은 순서(ROE 높은 순 · {PROFIT_FLOOR})예요."], kr["lines"]   # 한국은 예전 그대로
@@ -228,10 +231,20 @@ def test_the_minimum_turns_on_when_the_third_run_completes_the_fill(tmp_path):
     finally:
         F.log = old
     assert [(p, r) for p, r, _s, _r in out] == [(4, 3), (1, 3), (0, 1), (0, 0)]                # 3 · 3 · 1 곳 · 다 받으면 0 (7일 안에는 다시 받지 않아요)
+    F.log = lines.append
+    try:                                                                                       # 다섯째: 다 받은 뒤 새 상장 하나가 429 → pending 1
+        stocks = rows() + [us("NEW", roe=97.0, cap=0.1)]
+        rec = F.us_size_step([s for s in stocks if s["cls"] == "us"], lambda t: "EUR" if t == "EUR1" else "USD", dt.date(2026, 11, 20),
+                             dt.date(2026, 11, 28), fetch=lambda t: (_ for _ in ()).throw(RuntimeError("HTTP Error 429: Too Many Requests")),
+                             path=str(tmp_path / "size.json.gz"), per_run=3)
+        out.append((rec["pending"], rec["req"], stocks, rec))
+    finally:
+        F.log = old
     got = run("""out = RUNS.map((d) => ({ rows: ts(K.critList(d.stocks, 'us', 'profit', null, d)), st: K.usMinState(d.stocks, 'us', 'profit', d) }));""",
               RUNS=[{"fx": 1000.0, "usSize": rec, "stocks": stocks} for _p, _r, stocks, rec in out])
     before = ["NEG", "EUR1", "AAA", "BBB", "CCC", "DDD", "EEE", "FFF"]
-    assert [g["st"] for g in got] == ["pending", "pending", "on", "on"], got
+    assert [g["st"] for g in got] == ["pending", "pending", "on", "on", "pending"], got
     assert got[0]["rows"] == got[1]["rows"] == before, got                    # 첫 두 실행: 예전 그대로 (NEG 1등 · 줄 없음)
-    assert got[2]["rows"] == got[3]["rows"] == [t for t in before if t != "NEG"], got   # 세 번째: NEG 만 빠지고 EUR1 (크기 모름)은 그대로
-    assert any("다 받았는지 (usSize.pending): 아직 받지 않은 달러 회사 4곳" in x for x in lines) and any("pending): 0 →" in x for x in lines), lines
+    assert got[2]["rows"] == got[3]["rows"] == [t for t in before if t not in ("NEG", "EUR1")], got   # 세 번째: NEG (자본잠식) · EUR1 (자본 모름) 빠짐
+    assert out[4][0] == 1 and got[4]["rows"] == ["NEG", "EUR1", "NEW"] + before[2:], got   # 다 받은 뒤 새 상장이 거절되면 다시 꺼져요 (pending 1)
+    assert any("다 받았는지 (usSize.pending): 아직 차례가 남은 달러 회사 4곳" in x for x in lines) and any("pending): 0 →" in x for x in lines), lines

@@ -12256,17 +12256,21 @@ def us_info_due(entry, today):
 #                  그 분기 말 날짜. StockholdersEquity(우선주 포함)가 아니에요: 2026-11-20 달러 재무제표 728곳에서 두 줄은 우선주만큼만 달랐고
 #                  (75곳), 100억원 기준이 갈리는 곳은 PAA 하나 — 합자회사라 StockholdersEquity 가 0 이고 CommonStockEquity 는 94.6억 달러예요
 # 단위는 달러 (주가 price · lo · hi 와 같은 달러 · 정수). 원으로 바꾸는 것은 앱이 비교할 때 그날 환율(data.json fx)로 한 번만 해요.
-# 빈 칸은 '크기를 모름'이에요: 앱은 그 회사를 예전처럼 목록에 둬요 (빼지 않아요 · 리뷰 2026-11-23). 빼는 것은 크기를 알고 기준 아래인 회사뿐.
-# usSize.pending = 아직 받지 않은 달러 회사 수 (보관본에 항목이 없음: 한 실행 상한 · 시간 상한 · 거절로 차례가 오지 않은 곳). 앱은 이 값이 0 일
-# 때만 미국 최소 크기와 그 줄을 켜요 (리뷰 2026-11-23: 첫 발행들에서 줄이 받지 않은 회사 수백 곳에 맞지 않는 말이 되지 않게). 영영 모르는
-# 회사(달러가 아닌 재무제표 · 반기 보고 · 통화 모름 · 받으려 했는데 빈 답)는 pending 이 아니에요 — 보관본에 항목이 있거나 받을 대상이 아니에요.
+# 빈 칸은 '크기를 모름'이에요. usSize.pending = 아직 크기를 알아볼 차례가 남은 달러 회사 수: 보관본에 항목이 없거나 (한 실행 상한 · 시간 상한 ·
+# 거절로 차례가 오지 않음), 한 번도 답을 받지 못했는데 US_SIZE_TRIES 번이 아직 안 됨. 앱은 이 값이 0 일 때만 미국 최소 크기와 그 줄을 켜요
+# (리뷰 2026-11-23). 켜지면 크기를 아는 회사 중 기준 아래와 크기를 모르는 회사가 모두 빠져요 — 한국 목록이 자본이 빈 회사를 빼는 것처럼, 그래야
+# 승인된 줄 '자본 100억원 이상'이 목록의 모든 회사에 맞아요 (리뷰 2026-11-24 · Fable S3, Jack 에게 알림). 크기를 영영 모르는 회사(달러가 아닌
+# 재무제표 · 통화 모름 · 반기 보고 · 오래된 분기 · US_SIZE_TRIES 번 이어서 받지 못함)는 pending 이 아니에요. 빠지는 회사는 모두 로그와 앱 콘솔이
+# 이름과 이유로 말해요 (usSize.blank). 후속: #181 의 달러가 아닌 회사 회사 합계가 켜지면 그 회사들도 달러 자본(qeq)을 얻을 수 있어요.
 # 출처: 상세 정보(get_info)를 받는 그 야후의 분기 재무제표 — 회사마다 요청 한 번에 두 줄만 (yfinance 의 분기 재무제표 시계열 함수 ·
 # _us_size_yahoo). 새 출처가 아니에요. 통화를 섞지 않아요: 재무제표 통화(us_fin_currency)가 달러인 회사만 받아요. 달러가 아닌 회사(fcur)는
 # 그날 환율이 데이터에 없어(달러 · 원 환율뿐) 비우고, 통화를 모르면(cur) 비워요. ETF · 펀드는 회사가 아니라 받지 않아요.
 # 가격을 지키는 순서 (리뷰 2026-11-23): 이 단계는 main 의 맨 끝 — 가격에 쓰는 야후 요청(국내 2차 출처 · 미국 종가 · 상세 정보 · 분할 · 금 ·
 # 원자재 · 환율 이력)이 모두 끝나고 data.json · corp.json · macro.json 을 쓴 뒤에 돌아요 (그 뒤에는 DART 만). 한 실행에 많아야
 # US_SIZE_PER_RUN 곳 (보관본에 없는 회사를 시가총액 큰 순으로 먼저, 그다음 받은 지 오래된 순) · US_SIZE_BUDGET_S 초 · 동시에
-# US_SIZE_WORKERS 곳. 야후가 거절하는 첫 신호(429 · 빈 답이 US_SIZE_EMPTY_STOP 번 이어짐)에서 멈춰요 — 남은 회사는 다음 실행이 받아요.
+# US_SIZE_WORKERS 곳. 야후가 거절하는 첫 신호에서 멈춰요 — 429 는 첫 번에, 빈 답 · 오류는 그 전에 받지 못한 적 없는 회사에서 US_SIZE_EMPTY_STOP 번
+# 이어지면 (늘 빈 답인 회사 몇 곳이 매번 단계를 멈추지 않게 · 리뷰 2026-11-24 S1). 남은 회사는 다음 실행이 받아요. 한 번도 받지 못한 회사는
+# US_SIZE_TRIES 번까지 매 실행 앞쪽에서 다시 받고, 그 뒤로는 7일에 한 번 맨 뒤에서만 다시 받아요.
 # 분기 숫자는 분기마다 바뀌어서 보관본(us_size_path() · 미국 상세 정보 보관본과 같은 DART 캐시 폴더라 같이 보관돼요)에 두고
 # US_SIZE_FRESH_DAYS 일마다 다시 받아요. 오늘 받지 못하면 보관본의 값을 그대로 써요 — 값마다 분기 말 날짜가 있어 어느 분기인지 말해요. 분기 말이
 # 미국 기준일보다 US_SIZE_MAX_AGE_DAYS 일 넘게 앞이면 '최근 분기'가 아니라 비워요 (old). 빈 칸은 모두 이유와 수를 로그와 data.json usSize 에
@@ -12277,12 +12281,15 @@ US_SIZE_FRESH_DAYS = 7
 US_SIZE_PER_RUN = 300           # 한 실행에 받는 회사 수 상한 (요청도 회사마다 한 번 · 첫 실행 뒤 728곳이 다 차려면 실행 3번: 300 · 300 · 128)
 US_SIZE_WORKERS = 3             # 동시에 받는 수 (거절 신호를 바로 보게 적게)
 US_SIZE_BUDGET_S = 180          # 이 단계 전체의 시간 상한 (초) — 넘으면 남은 종목은 다음 실행 (크게 남겨요)
-US_SIZE_EMPTY_STOP = 3          # 빈 답(표 없음 · 오류)이 이만큼 이어지면 야후가 거절하는 것으로 보고 멈춰요 (429 는 첫 번에)
+US_SIZE_EMPTY_STOP = 3          # 처음 받지 못한 회사의 빈 답 · 오류가 이만큼 이어지면 야후가 막는 것으로 보고 멈춰요 (429 는 첫 번에)
+US_SIZE_TRIES = 3               # 이만큼 이어서 받지 못하면: 7일에 한 번 맨 뒤에서만 다시 · 빈 답 셈에서 빠짐 · 한 번도 받지 못한 회사는 영영 모름 (pending 아님)
 US_SIZE_MAX_AGE_DAYS = 200      # 11월에 9월 말 분기 (약 50일)가 보통 · 한 분기 늦은 6월 말 (약 145일)까지 · 3월 말 (약 235일)은 비워요
 US_SIZE_PRUNE_DAYS = 120        # 이만큼 받지 않은 보관본 항목은 지워요 (목록에서 빠진 티커)
 US_SIZE_WHY_KO = {"fcur": "재무제표 통화가 달러가 아님 (그날 환율이 데이터에 없어 비움)", "cur": "재무제표 통화를 모름 (상세 정보 없음 포함)",
                   "wait": f"아직 받지 않음 (한 실행에 {US_SIZE_PER_RUN}곳씩 · 다음 실행이 받아요)",
-                  "fail": "야후가 빈 답을 줌 (보관본도 없음 · 다음 실행이 다시 받아요)",
+                  "retry": f"받으려 했는데 받지 못함 (거절 · 오류 · 빈 답) · 다음 실행이 다시 받아요 ({US_SIZE_TRIES}번까지 · 그동안 pending)",
+                  "gaveUp": f"{US_SIZE_TRIES}번 이어서 받지 못함 (늘 빈 답 · 오류인 회사) · 영영 모름으로 보고 7일에 한 번만 다시",
+                  "fail": "답은 받은 적 있는데 이 줄의 값이 없음",
                   "time": f"시간 상한 {US_SIZE_BUDGET_S}초에 걸려 받지 못함 (보관본도 없음 · 다음 실행)",
                   "stop": "야후 거절로 이 단계를 멈춰 받지 못함 (보관본도 없음 · 다음 실행)",
                   "noRow": "야후 분기 재무제표에 그 줄이 없음 (반기마다 보고하는 회사 등)", "old": f"분기 말이 미국 기준일보다 {US_SIZE_MAX_AGE_DAYS}일 넘게 앞",
@@ -12361,13 +12368,18 @@ def us_size_pick(df, row):
 
 def us_size_entry(got, prev, today):
     """오늘 받은 표(got · 받다가 오류거나 빈 답이면 None)와 예전 보관본 항목(prev) → 새 항목 {"at": 오늘, "qrev": [날짜, 값] 또는 None,
-    "qeq": …, "no": {칸: "noRow"} (있을 때만), "old": [예전 값을 그대로 둔 칸] (있을 때만), "due": True (받지 못했을 때만)}. 받지 못하면 두 칸
+    "qeq": …, "no": {칸: "noRow"} (있을 때만), "old": [예전 값을 그대로 둔 칸] (있을 때만), "due": True · "tries": 이어서 받지 못한 수 (받지
+    못했을 때만), "seen": True (답을 받은 적 있을 때)}. 받지 못하면 두 칸
     모두 예전 항목의 값(과 줄 없음 표시)을 그대로 두고 다음 실행에서 다시 받아요. 표가 왔는데 그 줄이나 숫자가 없으면 그 칸은 None 이고 noRow.
     (순수 함수)"""
     old = prev if isinstance(prev, dict) else {}
     old_no = old.get("no") if isinstance(old.get("no"), dict) else {}
     came = got is not None and hasattr(got, "index") and not getattr(got, "empty", True)
     e, no, kept = {"at": today.isoformat()}, {}, []
+    if came or us_size_seen(old):
+        e["seen"] = True                        # 답을 받은 적 있음 (영영 pending 이 아니에요)
+    if not came:
+        e["tries"] = us_size_tries(old) + 1     # 이어서 받지 못한 수 (받으면 없어져요)
     for key, row in US_SIZE_ROWS:
         if not came:
             e[key] = list(old[key]) if us_size_val_ok(old.get(key)) else None
@@ -12388,42 +12400,59 @@ def us_size_entry(got, prev, today):
     return e
 
 
-def us_size_due(entry, today, fresh_days=US_SIZE_FRESH_DAYS):
-    """보관본 항목을 오늘 받을지: "new" (항목이 없거나 받은 날을 읽지 못함) · "retry" (지난번에 받지 못함) · "stale" (받은 지 fresh_days 일
-    이상) · None (그대로 써요). (순수 함수)"""
-    if not isinstance(entry, dict):
-        return "new"
-    d = gate_iso_day(entry.get("at"))
-    if d is None or d > today:
-        return "new"
-    if entry.get("due"):
-        return "retry"
-    return "stale" if (today - d).days >= fresh_days else None
+def us_size_seen(e):
+    """이 보관본 항목이 야후의 답을 받은 적 있는지 (값 · 줄 없음 표시 · seen). (순수 함수)"""
+    return isinstance(e, dict) and bool(e.get("seen") or e.get("no") or any(us_size_val_ok(e.get(k)) for k, _r in US_SIZE_ROWS))
 
 
-def us_size_order(want, cache, caps, today, per_run=US_SIZE_PER_RUN):
-    """오늘 받을 회사 (많아야 per_run 곳): ① 보관본에 값이 하나도 없는 회사 (처음 · 지난번에 빈 답) — 시가총액 큰 순 ② 값이 있는데 지난번에 받지
-    못했거나 받은 지 US_SIZE_FRESH_DAYS 일 지난 회사 — 받은 날 오래된 순 (같으면 시가총액 큰 순). caps: 티커 → 시가총액 (없으면 맨 뒤).
-    → (받을 티커 목록, ① 의 수, ② 의 수 — 상한 전). (순수 함수)"""
+def us_size_tries(e):
+    """이어서 받지 못한 수 (없거나 읽을 수 없으면 0). (순수 함수)"""
+    n = e.get("tries") if isinstance(e, dict) else None
+    return n if isinstance(n, int) and not isinstance(n, bool) and n > 0 else 0
+
+
+def us_size_pending(e, tries=US_SIZE_TRIES):
+    """아직 크기를 알아볼 차례가 남았는지: 항목이 없음 · 한 번도 답을 받지 못했는데 tries 번이 아직 안 됨. (순수 함수)"""
+    return not isinstance(e, dict) or (not us_size_seen(e) and us_size_tries(e) < tries)
+
+
+def us_size_order(want, cache, caps, today, per_run=US_SIZE_PER_RUN, tries=US_SIZE_TRIES, fresh_days=US_SIZE_FRESH_DAYS):
+    """오늘 받을 회사 (많아야 per_run 곳 · 어느 항목도 빠지지 않아요):
+    ① first — 항목이 없거나 받은 날을 읽을 수 없거나 오늘 뒤이거나, 지난번에 받지 못했거나(due) 답을 받은 적이 없는 회사 (tries 번 전까지) —
+       시가총액 큰 순
+    ② later — 그 밖에 받은 지 fresh_days 일 지난 회사 — 받은 날 오래된 순 (같으면 시가총액 큰 순)
+    ③ weekly — tries 번 이어서 받지 못한 회사, 받은 지 fresh_days 일 지났을 때만 — 맨 뒤 (받은 날 오래된 순)
+    caps: 티커 → 시가총액 (없으면 같은 무리의 맨 뒤). → (받을 티커 목록, ① · ② · ③ 의 수 — 상한 전). (순수 함수)"""
     def cap(t):
         c = _fin(caps.get(t))
         return -c if c is not None else float("inf")
-
-    def has_val(t):
+    first, later, weekly = [], [], []
+    for t in want:
         e = cache.get(t)
-        return isinstance(e, dict) and any(us_size_val_ok(e.get(k)) for k, _r in US_SIZE_ROWS)
-    due = {t: us_size_due(cache.get(t), today) for t in want}
-    first = sorted((t for t in want if due[t] in ("new", "retry") and not has_val(t)), key=lambda t: (cap(t), t))
-    later = sorted((t for t in want if due[t] in ("retry", "stale") and has_val(t)),
-                   key=lambda t: (str((cache.get(t) or {}).get("at")), cap(t), t))
-    return (first + later)[:max(0, per_run)], len(first), len(later)
+        d = gate_iso_day(e.get("at")) if isinstance(e, dict) else None
+        if d is None or d > today:
+            first.append(t)
+            continue
+        stale = (today - d).days >= fresh_days
+        if us_size_tries(e) >= tries:
+            if stale:
+                weekly.append(t)
+        elif e.get("due") or not us_size_seen(e):
+            first.append(t)
+        elif stale:
+            later.append(t)
+    first.sort(key=lambda t: (cap(t), t))
+    at = lambda t: str((cache.get(t) or {}).get("at"))   # noqa: E731
+    later.sort(key=lambda t: (at(t), cap(t), t))
+    weekly.sort(key=lambda t: (at(t), cap(t), t))
+    return (first + later + weekly)[:max(0, per_run)], len(first), len(later), len(weekly)
 
 
-def us_size_fields(entry, fc, us_px_date, max_age=US_SIZE_MAX_AGE_DAYS):
+def us_size_fields(entry, fc, us_px_date, max_age=US_SIZE_MAX_AGE_DAYS, tries=US_SIZE_TRIES):
     """회사 한 곳의 data.json 칸 → (칸: qrev · qrevD · qeq · qeqD 중 값이 있는 것, 이유: {"qrev": 이유 또는 None, "qeq": …}).
-    fc = 재무제표 통화 (us_fin_currency): 달러(US_QUOTE_CUR)만 실어요 · None = cur · 다른 통화 = fcur. 값이 없으면 보관본의 줄 없음 표시
-    (noRow), 보관본 항목이 없으면 wait (아직 받지 않음), 받으려 했는데 빈 답이면 fail. 분기 말이 미국 기준일 뒤면 future · 미국 기준일보다
-    max_age 일 넘게 앞이면 old. (순수 함수)"""
+    fc = 재무제표 통화 (us_fin_currency): 달러(US_QUOTE_CUR)만 실어요 · None = cur · 다른 통화 = fcur. 값이 없으면: 보관본의 줄 없음 표시
+    (noRow) · 보관본 항목이 없음 (wait) · 한 번도 답을 받지 못함 (tries 번 전 retry · 그 뒤 gaveUp) · 답은 받은 적 있는데 이 줄만 없음 (fail).
+    분기 말이 미국 기준일 뒤면 future · 미국 기준일보다 max_age 일 넘게 앞이면 old. (순수 함수)"""
     out, why = {}, {}
     no = (entry.get("no") if isinstance(entry, dict) and isinstance(entry.get("no"), dict) else None) or {}
     for key, _row in US_SIZE_ROWS:
@@ -12435,7 +12464,8 @@ def us_size_fields(entry, fc, us_px_date, max_age=US_SIZE_MAX_AGE_DAYS):
             continue
         v = entry.get(key) if isinstance(entry, dict) else None
         if not us_size_val_ok(v):
-            why[key] = "noRow" if no.get(key) == "noRow" else ("fail" if isinstance(entry, dict) else "wait")
+            why[key] = ("noRow" if no.get(key) == "noRow" else "wait" if not isinstance(entry, dict) else "fail" if us_size_seen(entry)
+                        else "gaveUp" if us_size_tries(entry) >= tries else "retry")
             continue
         d = gate_iso_day(v[0])
         if d > us_px_date:
@@ -12450,14 +12480,18 @@ def us_size_fields(entry, fc, us_px_date, max_age=US_SIZE_MAX_AGE_DAYS):
     return out, why
 
 
+US_SIZE_PENDING_WHY = ("wait", "time", "stop", "retry")   # 아직 차례가 남은 빈 칸 (pending · 이름은 앞 US_SIZE_SHOW 곳만 · 나머지는 모두 이름으로)
+
+
 def us_size_step(out, cur_of, us_px_date, today, fetch=None, path=None, clock=None, budget_s=US_SIZE_BUDGET_S,
-                 per_run=US_SIZE_PER_RUN, workers=US_SIZE_WORKERS, empty_stop=US_SIZE_EMPTY_STOP):
+                 per_run=US_SIZE_PER_RUN, workers=US_SIZE_WORKERS, empty_stop=US_SIZE_EMPTY_STOP, tries=US_SIZE_TRIES):
     """미국 행(out)에 qrev · qrevD · qeq · qeqD 를 붙여요 (회사 주식이고 재무제표 통화가 달러인 행만 · 다른 행의 같은 칸은 지워요).
     cur_of(티커) → 재무제표 통화 (us_fin_currency 값 · 모르면 None). fetch(티커) → 분기 표 (기본: 야후 _us_size_yahoo).
-    받을 곳은 us_size_order (많아야 per_run 곳). budget_s 초가 지나거나 야후가 거절하면(429 는 첫 번에 · 빈 답이 empty_stop 번 이어지면) 남은
-    회사는 받지 않고 크게 남겨요 — 다른 단계에는 아무 영향이 없어요 (이 단계는 main 의 맨 끝에서 돌아요).
-    → data.json usSize 기록 (v · unit · src · 회사 수 · 채운 수 · 빈 칸 이유별 수 · noData = 크기를 몰라 앱이 예전처럼 목록에 두는 행 ·
-    요청 수 · 멈춘 까닭). 로그에 수와 이유 · 티커를 남겨요."""
+    받을 곳은 us_size_order (많아야 per_run 곳). budget_s 초가 지나거나 야후가 거절하면 남은 회사는 받지 않고 크게 남겨요 — 429 는 첫 번에, 빈 답 ·
+    오류는 그 전에 받지 못한 적 없는 회사에서 empty_stop 번 이어지면 (늘 빈 답인 회사는 세지 않아요). 다른 단계에는 아무 영향이 없어요 (이 단계는
+    main 의 맨 끝에서 돌아요). 한 회사의 표를 읽다 멈추면 그 회사만 오류예요 (보관본은 그대로 저장해요).
+    → data.json usSize 기록 (v · unit · src · 회사 수 · 채운 수 · 빈 칸 이유별 수 · blank = 아직 차례가 남은 것 말고 빈 칸의 티커 → 이유 (앱
+    콘솔이 빠지는 회사를 이름과 이유로 말해요) · noData · pending · 요청 수 · 멈춘 까닭과 종류). 로그에 수와 이유 · 티커를 남겨요."""
     fetch, clock = fetch or _us_size_yahoo, clock or time.monotonic   # 부를 때 정해요
     path = path or us_size_path()
     cache = load_us_size(path)
@@ -12470,10 +12504,10 @@ def us_size_step(out, cur_of, us_px_date, today, fetch=None, path=None, clock=No
             continue
         rows.append((rec, cur_of(rec.get("t"))))
     want = sorted({rec["t"] for rec, fc in rows if fc == US_QUOTE_CUR})
-    ask, n_first, n_later = us_size_order(want, cache, {rec["t"]: rec.get("cap") for rec, _fc in rows}, today, per_run)
+    ask, n_first, n_later, n_weekly = us_size_order(want, cache, {rec["t"]: rec.get("cap") for rec, _fc in rows}, today, per_run, tries)
     deadline = clock() + budget_s
     lock = threading.Lock()
-    run = {"stop": None, "streak": 0, "req": 0}
+    run = {"stop": None, "kind": None, "streak": 0, "req": 0}
 
     def one(t):
         with lock:
@@ -12482,24 +12516,29 @@ def us_size_step(out, cur_of, us_px_date, today, fetch=None, path=None, clock=No
             if clock() > deadline:
                 return t, "time", None
             run["req"] += 1
+        prev = cache.get(t)
+        failed_before = us_size_tries(prev) > 0        # 지난번에도 받지 못한 회사 (빈 답 셈에서 빠져요 · 늘 빈 답인 회사가 단계를 멈추지 않게)
+        e, err = None, None
         try:
             g = fetch(t)
-            err = None
+            if g is not None and hasattr(g, "index") and not getattr(g, "empty", True):
+                e = us_size_entry(g, prev, today)       # 표를 읽다 멈추면 그 회사만 오류 (리뷰 2026-11-24 N2)
         except Exception as ex:
-            g, err = None, ex
-        came = g is not None and hasattr(g, "index") and not getattr(g, "empty", True)
+            e, err = None, ex
         with lock:
             if err is not None and us_size_refused(err):
-                run["stop"] = run["stop"] or f"429 ({t})"
-            elif came:
+                if not run["stop"]:
+                    run["stop"], run["kind"] = f"야후 거절 (429 · {t})", "429"
+            elif e is not None:
                 run["streak"] = 0
-            else:
+            elif not failed_before:
                 run["streak"] += 1
                 if run["streak"] >= empty_stop and not run["stop"]:
-                    run["stop"] = f"빈 답 {run['streak']}번 이어짐 (마지막 {t})"
-        if not came:
+                    run["stop"], run["kind"] = (f"처음 받지 못한 회사의 빈 답 · 오류가 {run['streak']}번 이어짐 (마지막 {t} · 야후가 막는 것일 수 "
+                                                "있어요)"), "empty"
+        if e is None:
             return t, ("err" if err is not None else "empty"), (type(err).__name__ if err is not None else None)
-        return t, "ok", us_size_entry(g, cache.get(t), today)
+        return t, "ok", e
 
     if ask:
         with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
@@ -12509,7 +12548,7 @@ def us_size_step(out, cur_of, us_px_date, today, fetch=None, path=None, clock=No
     errs = collections.Counter(e for st, e in res.values() if st == "err")
     for t, (st, e) in res.items():
         if st in ("err", "empty"):
-            cache[t] = us_size_entry(None, cache.get(t), today)     # 예전 값 그대로 · 다음 실행에서 다시
+            cache[t] = us_size_entry(None, cache.get(t), today)     # 예전 값 그대로 · 이어서 받지 못한 수 +1 · 다음 실행에서 다시
         elif st == "ok":
             cache[t] = e
     for t in [t for t, e in cache.items() if not (isinstance(e, dict) and gate_iso_day(e.get("at")) is not None
@@ -12520,9 +12559,10 @@ def us_size_step(out, cur_of, us_px_date, today, fetch=None, path=None, clock=No
     skipped = {t: st for t, (st, _e) in res.items() if st in ("time", "stop")}
     why_n = {key: collections.Counter() for key, _r in US_SIZE_ROWS}
     why_t = {key: collections.defaultdict(list) for key, _r in US_SIZE_ROWS}
+    blank = {key: {} for key, _r in US_SIZE_ROWS}
     filled = collections.Counter()
     for rec, fc in rows:
-        f, why = us_size_fields(cache.get(rec["t"]), fc, us_px_date)
+        f, why = us_size_fields(cache.get(rec["t"]), fc, us_px_date, tries=tries)
         rec.update(f)
         for key, w in why.items():
             if w is None:
@@ -12532,36 +12572,44 @@ def us_size_step(out, cur_of, us_px_date, today, fetch=None, path=None, clock=No
                 w = skipped[rec["t"]]                                # 오늘 차례였는데 시간 상한 · 거절로 받지 못함
             why_n[key][w] += 1
             why_t[key][w].append(rec["t"])
+            if w not in US_SIZE_PENDING_WHY:
+                blank[key][rec["t"]] = w
     st_n = collections.Counter(st for st, _e in res.values())
     kept = sum(1 for t, (st, _e) in res.items() if st in ("err", "empty") and (cache.get(t) or {}).get("old"))
     no_data = {key: sum(why_n[key].values()) for key, _r in US_SIZE_ROWS}
-    pending = sorted(t for t in want if not isinstance(cache.get(t), dict))      # 아직 받지 않음 (보관본 항목 없음) — 0 이어야 앱이 최소 크기를 켜요
+    pending = sorted(t for t in want if us_size_pending(cache.get(t), tries))     # 0 이어야 앱이 최소 크기를 켜요
+    gave_up = sorted(t for t in want if us_size_tries(cache.get(t)) >= tries)
     rec_out = {"v": 1, "unit": "USD", "src": "yahoo quarterly statements (TotalRevenue, CommonStockEquity)", "maxAge": US_SIZE_MAX_AGE_DAYS,
                "n": len(rows), "usd": len(want), "qrev": filled["qrev"], "qeq": filled["qeq"], "noData": no_data, "pending": len(pending),
-               "why": {key: dict(why_n[key]) for key, _r in US_SIZE_ROWS},
-               "cached": sum(1 for t in want if isinstance(cache.get(t), dict)), "perRun": per_run,
+               "why": {key: dict(why_n[key]) for key, _r in US_SIZE_ROWS}, "blank": blank,
+               "cached": sum(1 for t in want if isinstance(cache.get(t), dict)), "perRun": per_run, "tries": tries, "gaveUp": len(gave_up),
                "asked": len(ask), "req": run["req"], "ok": st_n["ok"], "empty": st_n["empty"], "err": st_n["err"],
-               "time": st_n["time"], "stop": run["stop"], "kept": kept}
+               "time": st_n["time"], "stop": run["stop"], "stopKind": run["kind"], "kept": kept}
     loud = bool(st_n["err"] or st_n["empty"] or st_n["time"] or run["stop"]) or any(w not in ("fcur", "wait") for key in why_n for w in why_n[key])
     log(f"{'  !! ' if loud else '· '}미국 회사 크기 (최근 분기 매출 qrev · 자본 qeq · 달러): 회사 {len(rows):,}곳 중 재무제표 통화가 달러 {len(want):,}곳 "
         f"(보관본에 있음 {rec_out['cached']:,}) · 매출 {filled['qrev']:,} · 자본 {filled['qeq']:,} 채움 · 오늘 받을 곳 {len(ask):,} / 상한 {per_run:,} "
-        f"(처음 · 빈 답 {n_first:,} + 다시 받을 때 {n_later:,}) → 요청 {run['req']:,} · 받음 {st_n['ok']:,} · 빈 답 {st_n['empty']:,} · 오류 {st_n['err']:,}"
+        f"(처음 · 지난번 실패 {n_first:,} + {US_SIZE_FRESH_DAYS}일 지남 {n_later:,} + {tries}번 이어서 받지 못해 7일에 한 번 {n_weekly:,}) → "
+        f"요청 {run['req']:,} · 받음 {st_n['ok']:,} · 빈 답 {st_n['empty']:,} · 오류 {st_n['err']:,}"
         + (f" ({', '.join(f'{k} {n}' for k, n in errs.most_common())})" if errs else "")
         + f" · 받지 못해 보관본 값 그대로 {kept:,}")
     if run["stop"]:
-        log(f"  !! 미국 회사 크기: 야후가 거절해서 이 단계를 멈췄어요 — {run['stop']} · 받지 못한 {st_n['stop']:,}곳은 다음 실행이 받아요 "
+        log(f"  !! 미국 회사 크기: 이 단계를 멈췄어요 — {run['stop']} · 받지 못한 {st_n['stop']:,}곳은 다음 실행이 받아요 "
             "(가격 · 다른 단계는 이미 끝났어요 · 영향 없음)")
     if st_n["time"]:
         log(f"  !! 미국 회사 크기: 시간 상한 {budget_s}초에 걸려 {st_n['time']:,}곳을 받지 못했어요 — 다음 실행이 받아요")
-    log(f"{'  !! ' if any(no_data.values()) else '· '}미국 회사 크기를 몰라 앱이 예전처럼 종목 순위에 두는 회사 (빼지 않아요): 매출 {no_data['qrev']:,} · "
-        f"자본 {no_data['qeq']:,} — 이유와 티커는 아래 줄")
+    if gave_up:
+        log(f"  !! 미국 회사 크기: {tries}번 이어서 받지 못한 회사 {len(gave_up):,}곳 (늘 빈 답 · 오류 · 7일에 한 번만 다시 · 빈 답 셈에서 빠짐): "
+            + ", ".join(gave_up))
     log(f"{'  !! ' if pending else '· '}미국 회사 크기 다 받았는지 (usSize.pending): " + (
-        f"아직 받지 않은 달러 회사 {len(pending):,}곳 → 앱의 종목 순위는 미국 최소 크기와 그 줄 없이 예전처럼 (다 받으면 켜져요)" if pending
-        else "0 → 앱의 종목 순위가 미국 최소 크기와 그 줄을 켜요"))
+        f"아직 차례가 남은 달러 회사 {len(pending):,}곳 → 앱의 종목 순위는 미국 최소 크기와 그 줄 없이 예전처럼 (다 받으면 켜져요)" if pending
+        else "0 → 앱의 종목 순위가 미국 최소 크기와 그 줄을 켜요 (크기를 모르는 회사와 기준 아래인 회사는 미국 수익성 목록에서 빠져요)"))
+    log(f"{'  !! ' if any(no_data.values()) else '· '}미국 회사 크기가 빈 회사: 매출 {no_data['qrev']:,} · 자본 {no_data['qeq']:,} — 앱의 미국 최소 크기가 "
+        "켜지면 수익성 목록에서 빠져요 (크기를 확인할 수 없어서) · 이유와 티커는 아래 줄")
     for key, row in US_SIZE_ROWS:
         for w, ts in sorted(why_t[key].items(), key=lambda x: -len(x[1])):
+            cap_n = US_SIZE_SHOW if w in US_SIZE_PENDING_WHY else len(ts)        # 빠질 수 있는 회사는 모두 이름으로 (아직 차례가 남은 곳만 줄여요)
             log(f"{'  · ' if w in ('fcur', 'wait') else '  !! '}미국 {key} ({row}) 빈 칸 {len(ts):,}곳 — {US_SIZE_WHY_KO.get(w, w)}: "
-                + ", ".join(ts[:US_SIZE_SHOW]) + (f" 외 {len(ts) - US_SIZE_SHOW}곳" if len(ts) > US_SIZE_SHOW else ""))
+                + ", ".join(ts[:cap_n]) + (f" 외 {len(ts) - cap_n}곳" if len(ts) > cap_n else ""))
     return rec_out
 
 
@@ -15488,13 +15536,17 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                  "그대로) · qeqD = 그 분기 말 날짜 · 빈 칸 규칙은 qrev 와 같아요"),
          "usSize": ("미국 qrev · qeq 기록 (v19.5b 후속 · 실행의 맨 끝에서 채워 data.json 을 다시 써요): unit USD · src 출처 · maxAge 분기 말이 "
                     "usPxDate 보다 이만큼(일) 넘게 앞이면 빈 칸 · n 회사 행 (ETF · 펀드 빼고) · usd 그중 재무제표 통화가 달러 · qrev · qeq 채운 행 · "
-                    "noData 칸마다 빈 칸 행 (크기를 몰라 앱이 종목 순위에서 빼지 않고 예전처럼 두는 회사) · pending 아직 받지 않은 달러 회사 (보관본 항목 없음 · "
-                    "0 일 때만 앱이 미국 최소 크기와 그 줄을 켜요) · why 칸마다 빈 칸 이유별 수 (fcur 통화가 달러가 "
-                    "아님 · cur 통화를 모름 · wait 아직 받지 않음 (한 실행에 perRun 곳씩) · fail 야후가 빈 답을 줬고 보관본도 없음 · time 시간 상한 · "
-                    "stop 야후 거절로 멈춰 받지 못함 · noRow 야후 표에 그 줄이 없음 (반기 보고 회사 등) · old 오래된 분기 · future 분기 말이 usPxDate 뒤) · "
-                    "cached 보관본에 있는 달러 회사 · perRun 한 실행의 상한 · asked 오늘 받을 곳 · req 보낸 요청 (회사마다 한 번) · ok 받음 · empty 빈 답 · "
-                    "err 오류 · time 시간 상한에 걸린 곳 · stop 야후 거절로 멈춘 까닭 (429 · 빈 답이 이어짐 · 없으면 빈 값) · kept 받지 못해 보관본 값 · "
-                    "stopped 이 단계가 오류로 멈추거나 돌지 못한 까닭 (notRun: 실행이 맨 끝까지 가지 못함 · 그날은 모든 행이 빈 칸)"),
+                    "noData 칸마다 빈 칸 행 · pending 아직 크기를 알아볼 차례가 남은 달러 회사 (보관본 항목 없음 · 한 번도 답을 받지 못했는데 tries 번 "
+                    "전 · 0 일 때만 앱이 미국 최소 크기와 그 줄을 켜고, 그러면 크기를 모르는 회사도 미국 수익성 목록에서 빠져요) · why 칸마다 빈 칸 "
+                    "이유별 수 (fcur 통화가 달러가 아님 · cur 통화를 모름 · wait 아직 받지 않음 (한 실행에 perRun 곳씩) · time 시간 상한 · stop 이 "
+                    "단계를 멈춰 받지 못함 · retry 받으려 했는데 받지 못함 (tries 번까지 pending) · gaveUp tries 번 이어서 받지 못함 (영영 모름 · "
+                    "7일에 한 번만 다시) · noRow 야후 표에 그 줄이 없음 (반기 보고 회사 등) · fail 답은 받은 적 있는데 그 줄 값이 없음 · old 오래된 "
+                    "분기 · future 분기 말이 usPxDate 뒤) · blank 칸마다 {티커: 이유} (아직 차례가 남은 wait · time · stop · retry 말고 — 앱 콘솔이 "
+                    "빠지는 회사를 이름과 이유로 말해요) · cached 보관본에 있는 달러 회사 · perRun 한 실행의 상한 · tries 이어서 받지 못해도 되는 수 · "
+                    "gaveUp 그만큼 이어서 받지 못한 회사 · asked 오늘 받을 곳 · req 보낸 요청 (회사마다 한 번 · 429 면 yfinance 가 몇 번 더) · ok 받음 · "
+                    "empty 빈 답 · err 오류 · time 시간 상한에 걸린 곳 · stop 멈춘 까닭 (없으면 빈 값) · stopKind 429 (야후 거절) · empty (처음 받지 "
+                    "못한 회사의 빈 답 · 오류가 이어짐) · kept 받지 못해 보관본 값 · stopped 이 단계가 오류로 멈추거나 돌지 못한 까닭 (notRun: 실행이 맨 "
+                    "끝까지 가지 못함 · 그날은 모든 행이 빈 칸)"),
          "usSrc": ("미국 종가의 출처 기록 (2026-11-20 · Jack: 야후 종가가 없는 미국 종목도 마지막 확인 종가로): own {v · max 나이 상한 (그 종가 뒤 미국 "
                    "거래일) · n 실은 수 · codes 마지막 확인 종가(pxc)로 실은 티커 · same 지난 발행본이 같은 usPxDate 라 그날 종가와 d1 을 그대로 실은 티커 "
                    "(pxd 없음) · from (머지 확인) codes · same 의 행마다 야후가 준 것 {티커: bar 시계열은 있고 기준일 봉만 없음 · empty 쓸 수 있는 가격이 "
@@ -16012,7 +16064,7 @@ def main():
     # 않게 · 이 뒤에는 DART 만). data.json 은 위에서 이 칸 없이 썼고 (usSize notRun), 칸을 붙여 다시 써요. 멈추거나 다시 쓰지 못해도 위의 파일이
     # 그대로예요 (앱은 미국 최소 크기 없이 예전처럼 · 관문 경고)
     try:
-        payload["usSize"] = us_size_step(us, (umeta.get("_usCur") or {}).get, dt.date.fromisoformat(umeta["usPxDate"]), today)
+        payload["usSize"] = ph.run("미국 회사 크기", us_size_step, us, (umeta.get("_usCur") or {}).get, dt.date.fromisoformat(umeta["usPxDate"]), today)
     except Exception as e:
         payload["usSize"] = us_size_stopped(us, e)
     try:
