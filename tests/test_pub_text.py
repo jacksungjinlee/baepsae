@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 """2026-11-24 (감사 aud5): 관문의 '글자에 nan·None·null·undefined 없음' 줄 (validate_data.BAD_WORD · 바꾸지 않는 안전 규칙) 은 네 파일의 모든
 글자를 봐요. 그런데 파이프라인이 스스로 그 낱말을 적어서, 오류 하나 · 나쁜 줄 하나가 발행을 멈출 수 있었어요:
-  a. "발행을 멈추지 않는" 단계의 오류 글 (pxSrc.own.err · usSrc.own.err · splitsInfo.err · ownDrop.krOwn · usExtraMissing 의 까닭)
+  a. "발행을 멈추지 않는" 단계의 오류 글 (pxSrc.own.err · usSrc.own.err · ownDrop.krOwn · usExtraMissing 의 까닭) 과 다른 우리 기록의 까닭
+     (usForeign.cut '… financialCurrency None …' · d1Base.ex '900001 nan' · 마지막 확인 종가(None) 까닭)
   b. Jack 의 상시 규칙의 기록 (ownDrop rows 의 까닭: 'd null' · 'role "None"' · '"NaN" (YYYY-MM-DD 날짜가 아님)')
   c. 출처의 글자 (DART 보고자가 직위에 'None' · 야후 설명의 'None of …')
-고친 것 (파이프라인만 · 관문은 그대로): 우리가 만드는 오류 · 까닭 글은 그 낱말을 '빈 값' 으로 바꿔 적고 원문은 로그에 (fetch_data.pub_text ·
-pub_err · own_drop_pub) · 출처 글자는 그 칸만 비우고 ownDrop.srcText 에 세요 (5칸을 넘으면 그대로 둬 관문의 그 줄이 막아요 — 새 관문 줄 없음).
+고친 것 (파이프라인만 · 관문은 그대로): 우리가 만드는 오류 · 까닭 글은 그 낱말을 '빈 값' 으로, 키 · 주소의 물음표 뒤는 '…' 로 바꿔 적고 원문은
+로그에 (fetch_data.pub_text · pub_err · own_drop_pub · 쓰기 바로 앞 pub_sweep) · 출처 글자 (de · pos — 이름 nm 은 아니에요) 는 그 칸만 비우고
+ownDrop.srcText 에 세요 (5칸을 넘으면 그대로 둬 관문의 그 줄이 막아요 — 새 관문 줄 없음). splitsInfo.err 는 로그에만 가요 (발행 파일에는 noCol 만).
 네트워크 없음."""
 import copy
 import datetime as dt
@@ -173,7 +175,7 @@ def test_split_guard_writes_a_clean_error(monkeypatch, capsys):
     assert splits is None and info["err"].startswith("KeyError: ") and "빈 값 of [Index" in info["err"] and gate_words(info) == []
     assert "원문: KeyError: \"None of [Index" in capsys.readouterr().out
 
-    def boom2(*a, **k):                                     # 리뷰: splitsInfo.err 도 다른 오류 칸처럼 자르고 가려요 (공개 data.json)
+    def boom2(*a, **k):                                     # 리뷰: 로그에만 가는 splitsInfo.err 도 다른 오류 칸처럼 자르고 가려요
         raise ConnectionError(DART_ERR + " None" + " x" * 600)
     monkeypatch.setattr(F, "us_splits", boom2)
     _s, info = F.us_splits_safe({}, ["AAPL"], TODAY)
@@ -185,23 +187,15 @@ def test_split_guard_writes_a_clean_error(monkeypatch, capsys):
 
 
 def test_the_whole_gate_passes_with_a_guard_error_in_the_files():
-    """관문 전체: 단계가 NaN 오류로 멈춘 날의 splitsInfo · ownDrop 기록 · 미국 일정 까닭을 실은 파일 — 낱말 줄은 통과해요 (예전: 실패)."""
+    """관문 전체: 단계가 NaN 오류로 멈춘 날의 usSrc.own · ownDrop 기록 · 미국 일정 까닭을 실은 파일 — 낱말 줄은 통과해요 (예전: 실패)."""
     cur, prev, final = good_pair()
-
-    def boom(*a, **k):
-        raise ValueError("cannot convert float NaN to integer")
-    us_splits = F.us_splits
-    try:
-        F.us_splits = boom
-        _s, info = F.us_splits_safe({}, ["AAPL"], TODAY)
-    finally:
-        F.us_splits = us_splits
-    cur["data"]["splitsInfo"] = info
+    cur["data"]["usSrc"] = {"v": 1, "own": F.us_own_close_err(ValueError("cannot convert float NaN to integer"))}
+    assert cur["data"]["usSrc"]["own"]["err"] == "ValueError: cannot convert float 빈 값 to integer"
     next(s for s in cur["data"]["stocks"] if s["t"] == "AAPL")["xd"] = "NaN"
     F.own_us_dates(cur["data"])
     assert cur["data"]["ownDrop"]["usDates"]["rows"] == [["AAPL xd", '"빈 값" (YYYY-MM-DD 날짜가 아님)']]
     assert row(gate(cur, prev, final), TEXT_ROW)[3] == "PASS"
-    cur["data"]["splitsInfo"] = {"err": "ValueError: cannot convert float NaN to integer"}       # 예전처럼 원문을 적으면 실패 (관문 그대로)
+    cur["data"]["usSrc"]["own"]["err"] = "ValueError: cannot convert float NaN to integer"       # 예전처럼 원문을 적으면 실패 (관문 그대로)
     assert row(gate(cur, prev, final), TEXT_ROW)[3] == "FAIL"
 
 
@@ -262,7 +256,7 @@ def test_a_dart_position_none_is_blanked_counted_and_logged(capsys):
     assert rec == {"n": 1, "rows": [["20261030000900 pos", "005930 삼성전자 · 출처 글자에 관문의 낱말 — 칸을 비움"]]}
     assert V.own_rows_get(cur["disc"], "srcText")[0] == "ok" and gate_words(cur["disc"]) == []
     log = capsys.readouterr().out
-    assert "  !! 출처 글자의 관문 낱말 (야후 설명 de · DART 보고자 이름 nm · 직위 pos): disc.json 1칸 비움 — 005930 삼성전자 pos (20261030000900: …None…)" in log
+    assert "  !! 출처 글자의 관문 낱말 (야후 설명 de · DART 직위 pos): disc.json 1칸 비움 — 005930 삼성전자 pos (20261030000900: …None…)" in log
     assert row(gate(cur, prev, final), TEXT_ROW)[3] == "PASS"
 
 
@@ -308,7 +302,7 @@ def test_a_clean_run_records_zero_and_other_fields_are_left_to_the_gate(capsys):
         if not cur[n]["ownDrop"] and "ownDrop" not in before[n]:
             cur[n].pop("ownDrop")
     assert cur == before
-    assert "· 출처 글자의 관문 낱말 (야후 설명 de · DART 보고자 이름 nm · 직위 pos): data.json 0칸 비움" in capsys.readouterr().out
+    assert "· 출처 글자의 관문 낱말 (야후 설명 de · DART 직위 pos): data.json 0칸 비움" in capsys.readouterr().out
     cur, prev, final = good_pair()
     s = next(x for x in cur["data"]["stocks"] if x["t"] == "000660")
     s["dk"] = "nan · 주요제품: 반도체 · KOSPI 상장"                  # 2026-10 열 밀림 사고의 칸 — 비우지 않아요 (관문이 막아요)
@@ -317,24 +311,145 @@ def test_a_clean_run_records_zero_and_other_fields_are_left_to_the_gate(capsys):
     assert row(gate(cur, prev, final), TEXT_ROW)[3] == "FAIL"
 
 
+# ── 4b. 리뷰 1차 (#178): 키 가리기 · 쓰기 바로 앞의 마지막 한 번 · 이름 nm ─────────────────────────
+KEY = "f00dfeedcafe0123456789abcdef0123456789ab"            # 가짜 키 (환경 변수로만 · 어디에도 적지 않아요)
+
+
+@pytest.mark.parametrize("raw, gone", [
+    ("crtfc_key='" + SECRET + "' x", "crtfc_key='…' x"),
+    ("crtfc_key = " + SECRET + " x", "crtfc_key = … x"),
+    ("crtfc_key: " + SECRET, "crtfc_key: …"),
+    ("params=[('crtfc_key', '" + SECRET + "'), ('page', '1')]", "params=[('crtfc_key', '…'), ('page', '1')]"),
+    ("X-Api-Key: " + SECRET + " sent", "X-Api-Key: … sent"),
+    ("token " + "Bearer " + SECRET, "token Bearer …"),
+    ("Cookie: sid=" + SECRET + "; a=b", "Cookie: …"),
+    ("ftp://u:" + SECRET + "@files.example.com/x", "ftp://…@files.example.com/x"),
+    ("/api/StatisticSearch/" + SECRET + "/json/kr/1/100/817Y002", "/api/StatisticSearch/…/json/kr/1/100/817Y002"),
+    ("{'crtfc_key': '" + SECRET[:20], "{'crtfc_key': '…"),                       # 잘린 뒤 반만 남은 키 (닫는 따옴표 없음)
+    ("fatal: https://x-access-token:" + SECRET[:20], "fatal: https://…"),           # '@' 앞에서 잘린 주소
+    ("GET /api/list.json crtfc_key " + SECRET, "GET /api/list.json crtfc_key …"),
+    ("/api/x?" + SECRET, "/api/x?…"),
+])
+def test_more_key_forms_are_hidden(raw, gone):
+    assert F.pub_text(raw, say=False) == gone and SECRET[:8] not in gone
+    assert F.pub_text(gone, say=False) == gone
+
+
+def test_the_env_keys_are_hidden_before_the_cut(monkeypatch, capsys):
+    """DART · ECOS 키 글자 그대로를 먼저 가리고 자르니, 자른 끝에 키가 반만 남지 않아요 (이름 없는 ECOS 경로 · 아무 글 속도)."""
+    monkeypatch.setenv("ECOS_API_KEY", KEY)
+    monkeypatch.setenv("DART_API_KEY", KEY[::-1])
+    raw = "x" * 290 + KEY + " and " + KEY[::-1]
+    for n in range(280, 340):
+        out = F.pub_text(raw, n, say=False)
+        assert KEY[:4] not in out and KEY[::-1][:4] not in out, n
+    ecos = f"HTTPSConnectionPool(host='ecos.bok.or.kr', port=443): Max retries exceeded with url: /api/Foo/{KEY}/json"
+    assert F.pub_err(ConnectionError(ecos)) == "ConnectionError: " + ecos.replace(KEY, "…")
+    assert KEY in capsys.readouterr().out                 # 원문은 로그에만 (GitHub 이 등록된 비밀은 가려요)
+
+
+def test_long_adversarial_text_is_quick_and_the_logged_raw_text_is_capped(capsys):
+    import time
+    for s in ("'" + "key" * 10000, "key" * 10000, ('"' + "akey" * 20 + '" ') * 330, "http://" + "a" * 30000, "?a=" * 10000,
+              "'" + "secretkey" * 3333 + "': '", "authorization: " * 2000):
+        t0 = time.time()
+        F.pub_text(s, say=False)
+        assert time.time() - t0 < 0.5, s[:20]
+    F.pub_text("None " + "y" * 20000)
+    log = capsys.readouterr().out
+    assert len(log) < F.PUB_LOG_MAX + 400 and "원문 20,005자" in log
+
+
+def test_reason_prefixes_the_gate_and_app_read_are_untouched():
+    """pub_text 는 낱말 · 키만 바꿔요 — 관문 · us_fgn_kind 가 읽는 까닭의 머리말과 정한 글은 그대로."""
+    for s in [F.US_FOREIGN_CUR_WHY, V.US_FGN_NOREC_WHY, *V.US_FGN_NOCMP_WHY.values(), *V.KR_OWN_WHY.values(), *F.US_OWN_WHY.values(),
+              *F.US_NOCL_KO.values()]:
+        assert F.pub_text(s, say=False) == s, s
+    why = F.us_foreign_cuts({"per": 10.0, "pbr": 1.0}, {"currency": "USD"}, None)["per"]     # 야후가 financialCurrency 를 주지 않은 날
+    assert V.BAD_WORD.search(why)
+    clean = F.pub_text(why, say=False)
+    assert clean.startswith(F.US_FOREIGN_CUR_WHY) and clean.startswith(V.US_FGN_CUR_WHY) and F.us_fgn_kind("per", clean) == "currency"
+
+
+def sweep_case():
+    """리뷰가 재현한 길 (빌더는 그대로 · 원문 글): 외국 회사 까닭 · d1 기준가 예의 이름 · 잠시 뺀 까닭 · 오류 · ownDrop."""
+    import numpy as np
+    import pandas as pd
+    cur, prev, final = good_pair()
+    d = cur["data"]
+    why = F.us_foreign_cuts({"per": 10.0}, {"currency": "USD"}, None)["per"]
+    d["usForeign"] = dict(d.get("usForeign") or {}, cut=[["TM", "per", why]], kept=[["SHEL", "pbr", "1.70배 ↔ nan배"]])
+    df = pd.DataFrame({"Code": ["900001"], "Name": [np.nan]})
+    names = dict(zip(df["Code"].astype(str).str.strip(), df["Name"].astype(str)))
+    d["d1Base"] = F.d1_base_record(None, None, None, {"900001": "noPub"}, {"noPub": [("900001", 1.0, 1.0)]}, names)
+    aged = f"마지막 확인 종가({None}) 뒤 미국 거래일 {F.US_OWN_CLOSE_MAX_DAYS}일이 지나 잠시 뺌 (usSrc.own.aged)"
+    d["usExtraMissing"] = {"SPY": aged}
+    d["usListSym"] = {"spGone": {"ABC": aged}, "unmapped": [["sp500", "XYZ", "KeyError: None"]]}
+    d["pxSrc"] = dict(d.get("pxSrc") or {}, own={"v": 1, "err": "KeyError: None", "dropEx": ["005930 nan"],
+                                                  "bad": {"n": 1, "rows": [f"https://opendart.fss.or.kr/x?crtfc_key={SECRET}"]}})
+    d["usSrc"] = {"v": 1, "newWait": ["NEW"], "own": {"v": 1, "err": "ValueError: NaN", "aged": [{"t": "OLD", "pxd": "2026-10-20", "why": aged}]}}
+    d["splitsInfo"] = {"noCol": [], "fixed": [["CBSH", "2016-11-30", 1.05, "주식배당 — 근거 None"]]}
+    d["ownDrop"] = {"usDates": {"n": 1, "rows": [["AAPL xd", '"NaN" (YYYY-MM-DD 날짜가 아님)']]}}
+    return cur, prev, final
+
+
+def test_the_final_sweep_cleans_every_own_record_path_and_leaves_stock_rows(capsys):
+    cur, prev, final = sweep_case()
+    d = cur["data"]
+    assert row(gate(cur, prev, final), TEXT_ROW)[3] == "FAIL"                     # 빌더 그대로 (리뷰의 재현)
+    stocks = copy.deepcopy(d["stocks"])
+    F.pub_sweep(d, "data.json")
+    assert gate_words({k: d[k] for k in F.PUB_SWEEP_KEYS if k in d}) == [] and SECRET not in json.dumps(d, ensure_ascii=False)
+    assert d["stocks"] == stocks                                                  # 종목 줄은 그대로
+    assert d["usForeign"]["cut"][0][2].startswith(F.US_FOREIGN_CUR_WHY) and F.us_fgn_kind("per", d["usForeign"]["cut"][0][2]) == "currency"
+    assert d["d1Base"]["ex"] == {"noPub": ["900001 빈 값"]} and d["usExtraMissing"]["SPY"].startswith("마지막 확인 종가(빈 값) 뒤")
+    assert d["splitsInfo"]["fixed"][0][:3] == ["CBSH", "2016-11-30", 1.05]
+    rep = gate(cur, prev, final)
+    assert row(rep, TEXT_ROW)[3] == "PASS", rep.table()
+    log = capsys.readouterr().out
+    assert "· data.json 우리 기록 글 " in log and "usForeign.cut[0][2] (원문: 재무제표 통화를 모름 (야후 financialCurrency None" in log
+    once = copy.deepcopy(d)
+    F.pub_sweep(d, "data.json")
+    assert d == once and "바꿀 것 없음" in capsys.readouterr().out
+    cur, prev, final = sweep_case()
+    next(s for s in cur["data"]["stocks"] if s["t"] == "MSFT")["nk"] = "None Corp"   # 종목의 글은 손대지 않아요 — 관문이 그대로 막아요
+    F.pub_sweep(cur["data"], "data.json")
+    assert row(gate(cur, prev, final), TEXT_ROW)[3] == "FAIL"
+
+
+def test_the_insider_name_is_never_blanked_and_the_gate_still_stops_it(capsys):
+    """리뷰 1차: 화면은 '{nm} · {pos}' — 이름을 비우면 숫자만 있고 이름도 이유도 없는 줄이 돼요 (Jack 의 say-why 규칙). 이름은 이 PR 전처럼 관문이 봐요."""
+    assert F.SRC_TEXT_FIELDS == (("stocks", "t", ("de",)), ("insider", "rc", ("pos",)))
+    cur, prev, final = T.good_files()
+    cur["disc"]["insider"][0]["nm"] = "None"
+    F.own_src_text(cur["disc"], "disc.json")
+    assert cur["disc"]["insider"][0]["nm"] == "None" and cur["disc"]["ownDrop"]["srcText"] == {"n": 0, "rows": []}
+    assert row(gate(cur, prev, final), TEXT_ROW)[3] == "FAIL"
+
+
 # ── 5. 배선 · 앱 ───────────────────────────────────────────────────────────
 def test_main_cleans_right_before_each_write_and_no_raw_error_is_written():
     src = inspect.getsource(F.main)
     a, b, c = src.index('payload["ownDrop"][KR_OWN_DROP_KEY] = own_drop_rec(kr_drop)'), src.index("own_src_text(payload, OUT)"), \
-        src.index("own_drop_pub(payload, OUT)")
+        src.index("pub_sweep(payload, OUT)")
     assert a < b < c < src.index("write_json(OUT, payload)")
-    d, e, f = src.index("own_check_disc(disc, today)"), src.index("own_src_text(disc, OUT_DISC)"), src.index("own_drop_pub(disc, OUT_DISC)")
+    d, e, f = src.index("own_check_disc(disc, today)"), src.index("own_src_text(disc, OUT_DISC)"), \
+        src.index('pub_sweep(disc, OUT_DISC, keys=("ownDrop",))')
     assert d < e < f < src.index("write_json(OUT_DISC, disc)")
     assert 'own_drop_pub(disc, "disc.json")' in inspect.getsource(F.own_check_disc)
     assert 'own_drop_pub(payload, "data.json")' in inspect.getsource(F.own_us_dates)
     whole = open(os.path.join(ROOT, "fetch_data.py"), encoding="utf-8").read()
     assert not re.search(r'"err": str\(err\)|"err": f"\{type\(e\)\.__name__\}: \{e\}"|f"err \{str\(err\)', whole)
+    assert 'f"{type(e).__name__}: {str(e)[:200]}"' not in whole            # 리뷰: 미리 자른 글이 아니라 예외째 (자르기 전에 키를 가려요)
+    for fn in (F.kr_own_close_step, F.us_own_close_step, F.main):
+        assert "str(e)[:200]" not in inspect.getsource(fn), fn.__name__
     assert "srcText" in F.UNITS["ownDrop"] and gate_words(F.UNITS) == []
 
 
 def test_the_app_never_reads_the_error_or_record_fields():
     """'빈 값' 은 로그 · 관문 · 기록의 글에만 나가요: 앱 (src/) 은 ownDrop · srcText · usExtraMissing · 오류 칸 (pxSrc.own.err · usSrc.own.err ·
-    splitsInfo.err) 을 읽지 않아요. 비운 출처 칸 (de · nm · pos) 은 원래 비어 있을 수 있는 칸이에요 (설명이 없는 종목 · DART 의 '-')."""
+    splitsInfo) 을 읽지 않아요 (splitsInfo 는 fixed 의 앞 세 칸만 — lots.js). 비운 출처 칸 (de · pos) 은 원래 비어 있을 수 있는 칸이에요 (설명이
+    없는 종목 · DART 의 '-')."""
     hits = []
     for base, _dirs, files in os.walk(os.path.join(ROOT, "src")):
         for name in files:

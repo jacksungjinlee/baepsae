@@ -318,20 +318,29 @@ probably broken for everyone, so nothing is published (users keep the last good 
 wrote a broken mapping record: fix the record code. Never raise N or skip the row to get a publish out;
 a different N needs Jack's yes with new evidence.
 
-**Our own text and the gate's word row (2026-11-24).** The row "글자에 nan·None·null·undefined 없음" (`validate_data.BAD_WORD`, frozen)
-reads every string in the four files. The pipeline used to write those words itself: a "never stop the publish" step stored its error
-text (`pxSrc.own.err`, `usSrc.own.err`, `splitsInfo.err`, the `ownDrop.krOwn` reason, the `usExtraMissing` reason), and the records
-above stored the bad value in the reason (`"칸 없음 d; d null"`, `role "None"`), so one caught error or one dropped row stopped the
-whole publish. Now every error or reason text we write goes through `fetch_data.pub_text` / `pub_err` / `own_drop_pub` (the gate's
-own pattern, imported): each whole-word match becomes "빈 값", and anything after `?` in a URL, a URL's user part and any `key=` /
-`token=` / `crtfc_key=` / `apikey=`-style value becomes "…" (`pub_redact`), so a DART-style URL with its key never reaches the public
-files; every error field is cut to 300 characters, `splitsInfo.err` included. The raw text stays in the run log only (GitHub masks
-registered secrets there). The app never reads these fields.
-Source text is not rewritten: when a Yahoo summary (`de`) or a DART filer's name or position (`nm`, `pos`) contains such a word,
-`own_src_text` blanks that one field right before the write (log: `!! 출처 글자의 관문 낱말 …: {file} n칸 비움 — {stock} {field} …`) and
-counts it in that file's `ownDrop.srcText`. More than 5 fields (`SRC_TEXT_MAX`, Jack's default N; every past publish has 0 because the
-row passed): nothing is blanked, the log says so, and the word row itself fails, so no new gate row exists. Other fields (names,
-`dk`, the field of the 2026-10 column-shift incident) are left to the row as before.
+**Our own text and the gate's word row (2026-11-24, #178).** The row "글자에 nan·None·null·undefined 없음" (`validate_data.BAD_WORD`,
+frozen) reads every string in the four files. The pipeline used to write those words itself: a "never stop the publish" step stored its
+error text (`pxSrc.own.err`, `usSrc.own.err`, the `ownDrop.krOwn` and `usExtraMissing` reasons), the records above stored the bad value
+in the reason (`"칸 없음 d; d null"`, `role "None"`), and other record reasons printed a missing value (`usForeign.cut` "야후
+financialCurrency None", a `d1Base.ex` name "nan", "마지막 확인 종가(None)"), so one caught error or one bad row stopped the whole
+publish. What is true now:
+- The guards and the own-check records clean their text where they write it (`fetch_data.pub_text` / `pub_err` / `own_drop_pub`).
+- Right before data.json is written, `pub_sweep` runs the same cleaning over every string in the pipeline's own record fields
+  (`PUB_SWEEP_KEYS`: `pxSrc`, `usSrc`, `splitsInfo`, `usForeign`, `usExtraMissing`, `usListSym`, `d1Base`, `ownDrop`; disc.json:
+  `ownDrop`). Stock, company and filing rows are not touched. The reason builders are unchanged.
+- The cleaning: first the literal values of the DART and ECOS keys (and `GITHUB_TOKEN`) from the environment become "…", then the text is
+  cut (300 characters for error fields), then anything after `?` in a URL, a URL's user part, the ECOS key in its URL path, and
+  key-like values (`key=`, `crtfc_key: …`, `('crtfc_key', '…')`, `X-Api-Key:`, `Bearer`, `Authorization`, `Cookie`) become "…", and
+  each whole-word match of the gate's own pattern (imported) becomes "빈 값". Only words change, so reason prefixes the gate and
+  `us_fgn_kind` read (`US_FOREIGN_CUR_WHY`) stay intact. The raw text (first 4,000 characters) stays in the run log only (GitHub masks
+  registered secrets there). The app never reads these fields. `splitsInfo.err` goes to the run log only (data.json carries `noCol`).
+- Source text is not rewritten: when a Yahoo summary (`de`) or a DART filer's position (`pos`) contains such a word, `own_src_text` blanks
+  that one field right before the write (log: `!! 출처 글자의 관문 낱말 …: {file} n칸 비움 — {stock} {field} …`) and counts it in that
+  file's `ownDrop.srcText`. More than 5 fields in one file (`SRC_TEXT_MAX`, Jack's default N; every past publish has 0 because the row
+  passed): nothing is blanked, the log says so, and the word row itself fails, so no new gate row exists. disc.json is rebuilt daily
+  from the whole 90-day insider window, so its count covers that window, not only the day's new filings. Insider names (`nm`: the screens
+  show `{nm} · {pos}`, so a blank name would leave numbers with no name and no reason), stock names and `dk` (the field of the 2026-10
+  column-shift incident) are left to the row as before.
 
 ## Checked low-PBR companies (gate warning "PBR 0.1 미만 국내 회사")
 

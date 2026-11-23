@@ -451,50 +451,140 @@ def write_json(path, obj):
 # 2026-11-24: 발행 파일에 쓰는 우리 글 (오류 · 까닭) 과 관문의 낱말 줄
 # ────────────────────────────────────────────────────────────
 # 관문의 '글자에 … 없음' 줄 (validate_data.BAD_WORD · 바꾸지 않는 안전 규칙) 은 네 파일의 모든 글자를 봐요. 그런데 "발행을 멈추지 않는" 단계가
-# 오류 글을 pxSrc.own.err · usSrc.own.err · splitsInfo.err 에 그대로 적고, Jack 의 상시 규칙의 기록 (ownDrop) 이 뺀 줄의 값을 까닭에 적어서
-# ('d null' · 'role "None"'), 오류 하나 · 나쁜 줄 하나가 발행을 멈출 수 있었어요 (감사 aud5). 우리가 만드는 오류 · 까닭 글만 그 낱말을 '빈 값' 으로
-# 바꿔 적고 원문은 실행 로그에만 남겨요. 출처의 글자 (설명 · 이름) 는 바꾸지 않아요 — own_src_text 가 그 칸을 비우고 세요 (N 을 넘으면 그대로 둬
-# 관문이 막아요). 관문은 그대로예요.
+# 오류 글을 pxSrc.own.err · usSrc.own.err 에 그대로 적고, Jack 의 상시 규칙의 기록 (ownDrop) 이 뺀 줄의 값을 까닭에 적어서 ('d null' ·
+# 'role "None"'), 오류 하나 · 나쁜 줄 하나가 발행을 멈출 수 있었어요 (감사 aud5). 우리가 만드는 오류 · 까닭 글은 그 낱말을 '빈 값' 으로 바꿔 적고
+# 원문은 실행 로그에만 남겨요 (pub_text · pub_err · own_drop_pub, 쓰기 바로 앞에는 우리 기록 칸 전체를 pub_sweep 이 한 번 더). 출처의 글자는 바꾸지
+# 않아요 — own_src_text 가 그 칸을 비우고 세요 (N 을 넘으면 그대로 둬 관문이 막아요). 관문은 그대로예요.
 PUB_BLANK = "빈 값"
-# 2026-11-24 (리뷰): 오류 글에는 주소 · 키가 들어갈 수 있어요 (requests 의 "… with url: /api/list.json?crtfc_key=…"). 발행 파일 (누구나 읽는
-# data.json) 에는 주소의 물음표 뒤 · 주소 안의 사용자 정보 · 키 같은 이름=값 의 값을 PUB_HIDE 로 적어요 (원문은 실행 로그에만 — GitHub 이 등록된
-# 비밀은 로그에서 가려요). 많이 가려도 괜찮아요 (오류 글은 앱이 읽지 않아요) — 덜 가리면 안 돼요.
+# 2026-11-24 (리뷰): 오류 글에는 주소 · 키가 들어갈 수 있어요 (requests 의 "… with url: /api/list.json?crtfc_key=…" · ECOS 는 주소 경로에 키).
+# 발행 파일 (누구나 읽는 data.json) 에는 (1) 환경의 DART · ECOS 키 (와 GITHUB_TOKEN) 글자 그대로를 먼저 PUB_HIDE 로 — 값은 어디에도 적지 않아요,
+# (2) 그다음 자르고, (3) 주소의 물음표 뒤 · 주소 안의 사용자 정보 · ECOS 경로의 키 · 키 같은 이름의 값 · Bearer · Authorization · Cookie 를
+# PUB_HIDE 로 (PUB_REDACT). 원문은 실행 로그에만 (앞 PUB_LOG_MAX 글자 · GitHub 이 등록된 비밀은 로그에서 가려요). 많이 가려도 괜찮아요 (오류
+# 글은 앱이 읽지 않아요) — 덜 가리면 안 돼요. 이름 칸은 길이를 묶어요 (아주 긴 글에서 몇 초씩 걸리지 않게).
 PUB_HIDE = "…"
-_PUB_SECRET_NAME = r"[A-Za-z0-9_.-]*(?:key|token|secret|passw(?:or)?d|pwd|auth|credential|signature)[A-Za-z0-9_.-]*"
+PUB_LOG_MAX = 4000
+PUB_SECRET_ENV = ("DART_API_KEY", "ECOS_API_KEY", "GITHUB_TOKEN")
+_PUB_KEYWORD = r"(?:api[_-]?key|key|token|secret|passw(?:or)?d|pwd|credential|signature|cookie|sessionid|session|auth)"
+_PUB_NAMECH = r"[A-Za-z0-9_.-]"
+
+
+def _pub_url_end(m):
+    """글 끝에서 잘린 주소 (사용자 정보의 '@' 앞에서 잘렸을 수 있어요): 호스트 꼴 (a.b[:포트]) 이 아니면 가려요."""
+    tail = m.group(2)
+    return m.group(0) if re.fullmatch(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?::\d+)?", tail) else m.group(1) + PUB_HIDE
+
+
+def _pub_quoted(m):
+    """{'crtfc_key': '…'} · ('crtfc_key', '…') — 닫는 따옴표가 잘려 없어도 가려요."""
+    return f"{m.group(1)}{m.group(2)}{m.group(1)}{m.group(3)}{m.group(4)}{PUB_HIDE}{m.group(5)}"
+
+
+def _pub_pair(m):
+    """키 같은 이름 = 값 · 이름: 값 — 따옴표 안의 값은 닫는 따옴표까지 (잘려 없으면 끝까지)."""
+    return f"{m.group(1)}{m.group(2)}{m.group(3) or ''}{PUB_HIDE}{m.group(4) or ''}"
+
+
 PUB_REDACT = (
-    (re.compile(r"(?i)(https?://)[^/\s@?#'\"<>]+@"), r"\1" + PUB_HIDE + "@"),                              # https://사용자:토큰@ → https://…@
-    (re.compile(r"(?i)(https?://[^\s?#'\"<>]*)\?[^\s'\"<>]*"), r"\1?" + PUB_HIDE),                         # http(s) 주소의 물음표 뒤 모두
-    (re.compile(r"\?[A-Za-z0-9_.-]+=[^\s'\"<>]*"), "?" + PUB_HIDE),                                         # 주소 앞부분이 없는 질의 (url: /a?b=c)
-    (re.compile(r"(?i)(?<![A-Za-z0-9_.-])(" + _PUB_SECRET_NAME + r")=[^\s&'\"<>]+"), r"\1=" + PUB_HIDE),      # key=… · crtfc_key=… · apikey=…
-    (re.compile(r"(?i)(['\"])(" + _PUB_SECRET_NAME + r")\1(\s*:\s*)(['\"])[^'\"]*\4"), r"\1\2\1\3\4" + PUB_HIDE + r"\4"),   # {'key': '…'}
-    (re.compile(r"(?i)(\bauthorization\s*[:=]\s*)(?:(?:bearer|token|basic)\s+)?[^\s'\",;]+"), r"\1" + PUB_HIDE),  # Authorization: Bearer …
+    (re.compile(r"(?i)((?:https?|ftp)://)[^/\s@?#'\"<>]+@"), r"\1" + PUB_HIDE + "@"),                       # https://사용자:토큰@ → https://…@
+    (re.compile(r"(?i)((?:https?|ftp)://)([^/\s@?#'\"<>]+)$"), _pub_url_end),                                # '@' 앞에서 잘린 주소
+    (re.compile(r"(?i)((?:https?|ftp)://[^\s?#'\"<>]{0,2048})\?[^\s'\"<>]*"), r"\1?" + PUB_HIDE),            # 주소의 물음표 뒤 모두
+    (re.compile(r"(?i)%3F[^\s'\"<>]*"), "%3F" + PUB_HIDE),                                                    # 주소를 인코딩한 물음표 뒤
+    (re.compile(r"\?" + _PUB_NAMECH + r"{1,64}=[^\s'\"<>]*"), "?" + PUB_HIDE),                                # 주소 앞부분이 없는 질의 (url: /a?b=c)
+    (re.compile(r"(?i)(/(?:StatisticSearch|KeyStatisticList|StatisticItemList|StatisticTableList|StatisticWord|StatisticMeta)/)"
+                r"[^/\s'\"<>]+"), r"\1" + PUB_HIDE),                                                           # ECOS: /StatisticSearch/{키}/json/…
+    (re.compile(r"(?i)(\bbearer\s+)[^\s'\",;]+"), r"\1" + PUB_HIDE),                                          # Bearer …
+    (re.compile(r"(?i)(\bauthorization\s*[:=]\s*)(?:(?:bearer|basic|token)\s+)?[^\s'\",;]+"), r"\1" + PUB_HIDE),   # Authorization: …
+    (re.compile(r"(?i)(\b(?:set-)?cookie\s*[:=]\s*)[^'\"\n]*"), r"\1" + PUB_HIDE),                            # Cookie: a=b; c=d
+    (re.compile(r"(?i)(['\"])(" + _PUB_NAMECH + r"{0,64}" + _PUB_KEYWORD + r")\1(\s*[:,]\s*)(['\"])[^'\"]*(\4|$)"),
+     _pub_quoted),                                                                                         # {'crtfc_key': '…'} · ('crtfc_key', '…')
+    (re.compile(r"(?i)(" + _PUB_KEYWORD + r")(?!" + _PUB_NAMECH + r")(\s*[=:]\s*)(?:(['\"])[^'\"]*(['\"]?)|[^\s&'\"<>,;)\]}]+)"),
+     _pub_pair),                                                                                           # key=… · crtfc_key: … · X-Api-Key: …
+    (re.compile(r"(?i)(" + _PUB_KEYWORD + r")(?!" + _PUB_NAMECH + r")(\s+)[A-Za-z0-9_-]{16,}"), r"\1\2" + PUB_HIDE),   # crtfc_key 0123…(16자 넘는 값)
+    (re.compile(r"\?[A-Za-z0-9_-]{16,}"), "?" + PUB_HIDE),                                                    # /api/x?0123…(이름 없는 긴 값)
 )
 
 
+def pub_hide_keys(text):
+    """글 → 환경의 키 (PUB_SECRET_ENV · 8 글자 넘는 값) 글자 그대로를 PUB_HIDE 로 (긴 값부터 · 값은 어디에도 적지 않아요)."""
+    vals = {(os.environ.get(k) or "").strip() for k in PUB_SECRET_ENV} | {DART_KEY, ECOS_KEY}
+    for v in sorted((v for v in vals if v and len(v) >= 8), key=len, reverse=True):
+        if v in text:
+            text = text.replace(v, PUB_HIDE)
+    return text
+
+
 def pub_redact(text):
-    """글 → 주소의 물음표 뒤 · 주소의 사용자 정보 · 키 같은 이름=값 의 값을 PUB_HIDE 로 (PUB_REDACT 차례대로 · 순수 함수)."""
+    """글 → 주소의 물음표 뒤 · 주소의 사용자 정보 · ECOS 경로의 키 · 키 같은 이름의 값 · Bearer · Authorization · Cookie 를 PUB_HIDE 로
+    (PUB_REDACT 차례대로 · 순수 함수 · 여러 번 해도 같아요)."""
     for rx, rep in PUB_REDACT:
         text = rx.sub(rep, text)
     return text
 
 
+def pub_raw(err):
+    """로그에 적을 원문 (예외면 '예외 이름: 메시지') — 앞 PUB_LOG_MAX 글자. 발행 파일에는 쓰지 않아요."""
+    s = f"{type(err).__name__}: {err}" if isinstance(err, BaseException) else (err if isinstance(err, str) else str(err))
+    return s if len(s) <= PUB_LOG_MAX else s[:PUB_LOG_MAX] + f" …(원문 {len(s):,}자)"
+
+
 def pub_text(text, n=None, say=True):
-    """우리가 만든 오류 · 까닭 글 → 발행 파일에 적을 글: 앞 n 글자로 자른 뒤 (자른 끝이 'nanometer' → 'nan' 이 돼도 잡히게 자른 다음에)
-    주소의 물음표 뒤 · 키 값을 가리고 (pub_redact), 관문이 찾는 낱말 (GATE_BAD_WORD = validate_data.BAD_WORD: 영문자에 붙지 않은 다섯 낱말) 을
-    PUB_BLANK 로. 한 번 바꾼 글에는 다시 바꿀 것이 없어요. say: 바꾼 것이 있으면 원문을 실행 로그에 남겨요 (원문을 이미 로그에 적은 곳만 False).
-    글자가 아니면 str. 출처의 글자에는 쓰지 않아요 (own_src_text)."""
+    """우리가 만든 오류 · 까닭 글 → 발행 파일에 적을 글: 환경의 키 글자를 가리고 (pub_hide_keys), 앞 n 글자로 자른 뒤 (자른 끝이 'nanometer' →
+    'nan' 이 되거나 키가 반만 남아도 잡히게 자른 다음에) 주소 · 키 값을 가리고 (pub_redact), 관문이 찾는 낱말 (GATE_BAD_WORD =
+    validate_data.BAD_WORD: 영문자에 붙지 않은 다섯 낱말) 을 PUB_BLANK 로. 한 번 바꾼 글에는 다시 바꿀 것이 없어요. say: 바꾼 것이 있으면 원문을
+    실행 로그에 남겨요 (원문을 이미 로그에 적은 곳만 False). 글자가 아니면 str. 출처의 글자에는 쓰지 않아요 (own_src_text)."""
     raw = text if isinstance(text, str) else str(text)
-    cut = raw if n is None else raw[:n]
+    hid = pub_hide_keys(raw)
+    cut = hid if n is None else hid[:n]
     out = GATE_BAD_WORD.sub(PUB_BLANK, pub_redact(cut))
-    if say and out != cut:
-        log(f"· 발행 파일에 적는 오류 · 까닭 글: 주소의 물음표 뒤 · 키 값은 '{PUB_HIDE}', 관문의 낱말 줄이 찾는 낱말은 '{PUB_BLANK}' 로 바꿔 적어요 "
-            f"— 원문: {raw}")
+    if say and out != (raw if n is None else raw[:n]):
+        log(f"· 발행 파일에 적는 오류 · 까닭 글: 키 · 주소의 물음표 뒤는 '{PUB_HIDE}', 관문의 낱말 줄이 찾는 낱말은 '{PUB_BLANK}' 로 바꿔 적어요 "
+            f"— 원문: {pub_raw(raw)}")
     return out
 
 
 def pub_err(err, n=300, say=True):
-    """'발행을 멈추지 않는' 단계의 오류 → 발행 파일의 오류 칸 글: 예외면 '예외 이름: 메시지', 이미 만든 오류 글이면 그 글 — 앞 n 글자 · pub_text."""
+    """'발행을 멈추지 않는' 단계의 오류 → 발행 파일의 오류 칸 글: 예외면 '예외 이름: 메시지', 이미 만든 오류 글이면 그 글 — pub_text (키를 가린 뒤
+    앞 n 글자). 미리 자른 글이 아니라 예외를 넘기세요 (자르기 전에 키를 가려요)."""
     return pub_text(f"{type(err).__name__}: {err}" if isinstance(err, BaseException) else err, n, say)
+
+
+PUB_SWEEP_KEYS = ("pxSrc", "usSrc", "splitsInfo", "usForeign", "usExtraMissing", "usListSym", "d1Base", "ownDrop")
+
+
+def _pub_walk(o, path, changed):
+    if isinstance(o, str):
+        c = pub_text(o, say=False)
+        if c != o:
+            changed.append((path, o))
+        return c
+    if isinstance(o, dict):
+        for k in list(o):
+            o[k] = _pub_walk(o[k], f"{path}.{k}", changed)
+        return o
+    if isinstance(o, list):
+        for i, v in enumerate(o):
+            o[i] = _pub_walk(v, f"{path}[{i}]", changed)
+        return o
+    if isinstance(o, tuple):
+        return tuple(_pub_walk(v, f"{path}[{i}]", changed) for i, v in enumerate(o))
+    return o
+
+
+def pub_sweep(doc, where, keys=PUB_SWEEP_KEYS):
+    """쓰기 바로 앞 마지막 한 번 (2026-11-24 리뷰): 파이프라인이 스스로 만든 기록 칸 (keys — 출처 · 마지막 확인 종가 · 분할 · 외국 회사 · 빠진
+    까닭 · 티커 바꾸기 · d1 기준가 · ownDrop) 의 모든 글을 pub_text 로 (관문의 낱말은 '빈 값' · 키 · 주소의 물음표 뒤는 '…'). 종목 · 회사 ·
+    공시 줄은 손대지 않아요 (출처의 글자는 관문이 그대로 봐요 · own_src_text). 사전의 열쇠는 그대로 · 낱말만 바꿔서 이유의 머리말
+    (US_FOREIGN_CUR_WHY 같은 — us_fgn_kind · 관문이 읽어요) 은 그대로예요. 바꾼 곳은 경로와 원문을 로그에 (앞 10곳). → doc."""
+    changed = []
+    for k in keys:
+        if isinstance(doc, dict) and k in doc:
+            doc[k] = _pub_walk(doc[k], k, changed)
+    if changed:
+        log(f"· {where} 우리 기록 글 {len(changed):,}곳: 키 · 주소의 물음표 뒤는 '{PUB_HIDE}', 관문의 낱말은 '{PUB_BLANK}' 로 바꿔 적어요 — "
+            + " · ".join(f"{p} (원문: {pub_raw(raw)[:500]})" for p, raw in changed[:10]) + (f" 외 {len(changed) - 10}곳" if len(changed) > 10 else ""))
+    else:
+        log(f"· {where} 우리 기록 글 ({' · '.join(k for k in keys if isinstance(doc, dict) and k in doc)}): 바꿀 것 없음")
+    return doc
 
 
 def own_drop_pub(doc, where):
@@ -2424,7 +2514,7 @@ def kr_own_close_err(err, unconf_n=None):
     """마지막 확인 종가 단계가 오류로 멈췄을 때의 pxSrc.own (실은 종목 0 · err 에 까닭 — 관문이 경고해요). unconf_n: 확인 못 한 종목 수 — 그 수를
     세기 전에 멈췄으면 None 이고 칸을 빼요 (관문이 '모름'으로 적어요 · 0 으로 보이지 않게)."""
     out = {"v": 1, "max": KR_OWN_CLOSE_MAX_DAYS, "n": 0, "codes": [], "drop": {}, "dropEx": [], "bad": {"n": 0, "rows": []},
-           "err": pub_err(err)}          # 2026-11-24: 관문의 낱말 줄이 찾는 낱말은 '빈 값' 으로 (원문은 로그 · 오류 하나가 발행을 멈추지 않게)
+           "err": pub_err(err, say=False)}   # 2026-11-24: 키 · 주소의 물음표 뒤는 '…', 관문의 낱말은 '빈 값' (부르는 곳이 모두 원문을 로그에 적어요)
     if isinstance(unconf_n, int):
         out["unconf"] = unconf_n
     return out
@@ -2793,10 +2883,9 @@ def kr_own_close_step(prev, full_list, conf_codes, px_src, px_date, trade_days, 
             prod_map.pop(t, None)
         if ni0 is not None:
             no_ind[:] = ni0
-        err = f"{type(e).__name__}: {str(e)[:200]}"
-        log(f"  !! 마지막 확인 종가 단계가 오류로 멈췄어요 ({err}) — 확인 못 한 국내 종목은 예전처럼 빼고 발행을 이어가요 (실은 종목 0 · "
+        log(f"  !! 마지막 확인 종가 단계가 오류로 멈췄어요 ({pub_raw(e)}) — 확인 못 한 국내 종목은 예전처럼 빼고 발행을 이어가요 (실은 종목 0 · "
             "pxSrc.own.err · 관문이 경고해요)")
-        px_src["own"] = kr_own_close_err(err, len(unconf) if isinstance(unconf, dict) else None)
+        px_src["own"] = kr_own_close_err(e, len(unconf) if isinstance(unconf, dict) else None)    # 2026-11-24: 예외째 (자르기 전에 키를 가려요)
         px_src["own"]["aged"] = kr_own_aged_kept(prev, {str(r.get("t")) for r in out})
         return 0
 
@@ -2826,7 +2915,7 @@ def kr_own_close_drop_all(kr, src, krs, err, drop_out=None):
     err · 뺀 수를 적어요 (관문이 경고해요). drop_out (2026-11-20): 주면 뺀 종목 (코드, 까닭) 을 더해요 (data.json ownDrop.krOwn).
     반환: 남은 국내 종목 목록."""
     gone = {s.get("t") for s in kr if s.get("cls") == "kr" and s.get("pxd") is not None}
-    log(f"  !! 마지막 확인 종가 점검이 오류로 멈췄어요 ({err}) — 마지막 확인 종가로 실은 {len(gone):,}종목을 모두 빼고 발행을 이어가요 (pxSrc.own.err)")
+    log(f"  !! 마지막 확인 종가 점검이 오류로 멈췄어요 ({pub_raw(err)}) — 마지막 확인 종가로 실은 {len(gone):,}종목을 모두 빼고 발행을 이어가요 (pxSrc.own.err)")
     if isinstance(drop_out, list):          # 2026-11-24: 발행 파일에는 관문의 낱말을 '빈 값' 으로 (원문은 바로 위 로그 줄)
         why = f"err {pub_err(err, 120, say=False)}"
         drop_out.extend((str(t), why) for t in sorted(gone, key=str))
@@ -3058,7 +3147,7 @@ def us_own_aged(prev, nocl, drop, old_pxd=None):
 def us_own_close_err(err, nocl_n=None):
     """마지막 확인 종가 단계(미국)가 오류로 멈췄을 때의 usSrc.own (실은 종목 0 · err — 관문이 경고해요 · 예전 그대로 야후의 마지막 봉으로 나가요)."""
     out = {"v": 1, "max": US_OWN_CLOSE_MAX_DAYS, "n": 0, "codes": [], "same": [], "from": {}, "newer": [], "split": [], "drop": {}, "dropEx": [],
-           "bad": {"n": 0, "rows": []}, "err": pub_err(err)}      # 2026-11-24: 관문의 낱말은 '빈 값' 으로 (원문은 로그)
+           "bad": {"n": 0, "rows": []}, "err": pub_err(err, say=False)}   # 2026-11-24: 키 · 관문의 낱말을 가려요 (부르는 곳이 원문을 로그에)
     if isinstance(nocl_n, int):
         out["unconf"] = nocl_n
     return out
@@ -3136,10 +3225,9 @@ def us_own_close_step(prev, nocl, out, us_px_date, trade_days, etfs=frozenset(),
                 "drop": {k: int(v) for k, v in sorted(dc.items())}, "dropEx": dn[:US_OWN_SHOW], "bad": {"n": 0, "rows": []}, "aged": aged}
     except Exception as e:
         out[:] = keep
-        err = f"{type(e).__name__}: {str(e)[:200]}"
-        log(f"  !! 마지막 확인 종가 단계(미국)가 오류로 멈췄어요 ({err}) — 야후 종가가 없는 미국 종목은 예전처럼 야후의 마지막 봉으로 내보내요 "
+        log(f"  !! 마지막 확인 종가 단계(미국)가 오류로 멈췄어요 ({pub_raw(e)}) — 야후 종가가 없는 미국 종목은 예전처럼 야후의 마지막 봉으로 내보내요 "
             "(실은 종목 0 · usSrc.own.err · 관문이 경고해요)")
-        rec = us_own_close_err(err, len(nocl) if isinstance(nocl, dict) else None)
+        rec = us_own_close_err(e, len(nocl) if isinstance(nocl, dict) else None)       # 2026-11-24: 예외째 (자르기 전에 키를 가려요)
         try:
             rec["aged"] = [dict(a) for a in (((prev or {}).get("usSrc") or {}).get("own") or {}).get("aged") or []
                            if isinstance(a, dict) and a.get("t") and a["t"] in (nocl or {})]
@@ -3316,7 +3404,7 @@ def us_own_close_drop_all(us, umeta, err):
     src = umeta.get("usSrc") if isinstance(umeta.get("usSrc"), dict) else {}
     own = src.get("own") if isinstance(src.get("own"), dict) else us_own_close_err(err)
     gone = {r.get("t") for r in us if r.get("pxc")} | set(own.get("same") or [])
-    log(f"  !! 마지막 확인 종가 점검(미국)이 오류로 멈췄어요 ({err}) — 마지막 확인 종가 · 같은 날 다시 쓴 {len(gone):,}종목을 모두 빼고 발행을 이어가요 (usSrc.own.err)")
+    log(f"  !! 마지막 확인 종가 점검(미국)이 오류로 멈췄어요 ({pub_raw(err)}) — 마지막 확인 종가 · 같은 날 다시 쓴 {len(gone):,}종목을 모두 빼고 발행을 이어가요 (usSrc.own.err)")
     own.update({"codes": [], "n": 0, "same": [], "from": {}, "newer": [], "err": pub_err(err, say=False),   # 2026-11-24: 원문은 바로 위 로그 줄
                 "bad": {"n": len(gone), "rows": sorted(gone)[:US_OWN_SHOW]}})
     src["own"] = own
@@ -7885,20 +7973,21 @@ def own_us_dates(payload):
     return payload
 
 
-# 2026-11-24 (Jack 의 상시 규칙 · "one stock missing from a source never holds the publish"): 출처가 보낸 글자 (야후 회사 설명 · DART 보고자 이름 ·
-# 직위) 에 관문의 낱말 줄이 찾는 낱말이 낱말로 들어 있으면 ("None of the segments …" · 직위 "None") 그 칸 하나만 비우고, 크게 남기고, 그 파일의
-# ownDrop.srcText 에 세요. 한 실행에 SRC_TEXT_MAX 칸을 넘으면 비우지 않고 그대로 둬요 — 한꺼번에 많으면 출처가 아니라 우리 처리 (열 밀림 같은) 의
-# 잘못일 수 있어서, 관문의 그 줄 (바꾸지 않아요) 이 실패해 발행하지 않아요 (새 관문 줄 없음). 이름 · 종목 설명 (dk) 같은 다른 칸은 보지 않아요 —
-# 관문이 그대로 막아요 (dk 는 그 줄을 만든 2026-10 열 밀림 사고의 칸이에요).
+# 2026-11-24 (Jack 의 상시 규칙 · "one stock missing from a source never holds the publish"): 출처가 보낸 글자 (야후 회사 설명 · DART 직위) 에
+# 관문의 낱말 줄이 찾는 낱말이 낱말로 들어 있으면 ("None of the segments …" · 직위 "None") 그 칸 하나만 비우고, 크게 남기고, 그 파일의
+# ownDrop.srcText 에 세요. 한 파일에서 SRC_TEXT_MAX 칸을 넘으면 비우지 않고 그대로 둬요 — 한꺼번에 많으면 출처가 아니라 우리 처리 (열 밀림 같은) 의
+# 잘못일 수 있어서, 관문의 그 줄 (바꾸지 않아요) 이 실패해 발행하지 않아요 (새 관문 줄 없음). disc.json 은 날마다 90일 내부자 창 전체로 다시
+# 만들어서 그 창 전체를 세요. 이름 (종목 · 보고자 nm — 화면이 '{nm} · {pos}' 로 써서 비우면 숫자만 남은 줄이 돼요) · 종목 설명 (dk) 같은 다른
+# 칸은 보지 않아요 — 관문이 그대로 막아요 (dk 는 그 줄을 만든 2026-10 열 밀림 사고의 칸이에요).
 SRC_TEXT_KEY = "srcText"
 SRC_TEXT_MAX = 5                 # Jack, 2026-11-20: "Yes to “more than 5 rows” as the default for the standing rule." (지난 발행본은 모두 0 — 관문이 막아요)
-SRC_TEXT_NAME = "출처 글자의 관문 낱말 (야후 설명 de · DART 보고자 이름 nm · 직위 pos)"
-SRC_TEXT_FIELDS = (("stocks", "t", ("de",)), ("insider", "rc", ("nm", "pos")))     # (목록 칸, 줄 열쇠, 글자 칸) — data.json · disc.json
+SRC_TEXT_NAME = "출처 글자의 관문 낱말 (야후 설명 de · DART 직위 pos)"
+SRC_TEXT_FIELDS = (("stocks", "t", ("de",)), ("insider", "rc", ("pos",)))     # (목록 칸, 줄 열쇠, 글자 칸) — data.json · disc.json · 이름 nm 은 보지 않아요
 
 
 def own_src_text(doc, where):
     """data.json · disc.json 을 쓰기 바로 앞 (다른 우리 처리 검사 뒤): SRC_TEXT_FIELDS 의 글자 칸에 관문의 낱말 (GATE_BAD_WORD) 이 있는 칸을 찾아
-    SRC_TEXT_MAX 칸 이하면 그 칸만 비워요 (de 는 빼요 — 설명이 없는 종목과 같아요 · nm · pos 는 '' — DART 의 '-' 와 같아요). 넘으면 하나도 비우지
+    SRC_TEXT_MAX 칸 이하면 그 칸만 비워요 (de 는 빼요 — 설명이 없는 종목과 같아요 · pos 는 '' — DART 의 '-' 와 같아요). 넘으면 하나도 비우지
     않아요 (관문의 낱말 줄이 실패해 발행하지 않아요). 줄마다 종목 · 칸 · 원문 둘레를 로그에 크게, doc["ownDrop"]["srcText"] = {n 찾은 칸 수, rows
     [열쇠, 까닭] 앞 30} (깨끗한 실행도 0). where: 로그에 적을 파일 이름. → doc."""
     if not isinstance(doc, dict):
@@ -13276,8 +13365,8 @@ def _split_col(data, t):
 
 def us_splits_safe(data, codes, today):
     """fetch_us 의 주식 분할 (v19.6a A.6): us_splits 가 멈추면 (None, {"err": 오류 글}) — 발행은 이어가요 (log_us_splits 가 크게 · 관문이 경고 ·
-    지난 발행본 · 시드의 줄 그대로). 오류 글은 pub_err (2026-11-24: 다른 오류 칸처럼 앞 300 글자 · 주소의 물음표 뒤 · 키 값은 '…' · 관문의 낱말은
-    '빈 값' · 바꾼 것이 있으면 원문은 로그에만)."""
+    지난 발행본 · 시드의 줄 그대로). 오류 글은 pub_err (2026-11-24: 다른 오류 칸처럼 키를 가리고 앞 300 글자 · 주소의 물음표 뒤 · 키 값은 '…' ·
+    관문의 낱말은 '빈 값' · 바꾼 것이 있으면 원문은 로그에). 이 err 는 log_us_splits 의 로그에만 가요 — data.json 에는 noCol 만 (splitsNoCol)."""
     try:
         return us_splits(data, codes, today)
     except Exception as e:
@@ -15320,7 +15409,7 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                      "되돌린 행 (DART 로 채운 보통주 · 보통주를 따른 우선주 — validate_data.ind_fill_bad · rows '종목 이름: 이유') · usDates = 틀린 미국 ed · "
                      "xd 를 비운 행 (v19.6b · validate_data.us_date_bad_rows · 그 칸만 비워요) · krOwn = 마지막 확인 종가(pxd)로 실었다가 관문과 같은 함수"
                      "(validate_data.kr_own_close_bad)로 뺀 국내 종목 (2026-11-20 · rows [코드, 까닭] · pxSrc.own.bad 와 같은 수 · 관문은 한 점검에서 "
-                     "5개를 넘으면 실패, 있으면 경고) · srcText = 출처 글자(야후 설명 de · disc.json 의 DART 보고자 이름 nm · 직위 pos)에 관문의 낱말 줄이 "
+                     "5개를 넘으면 실패, 있으면 경고) · srcText = 출처 글자(야후 설명 de · disc.json 의 DART 직위 pos)에 관문의 낱말 줄이 "
                      "찾는 낱말이 있어 비운 칸 (2026-11-24 · rows ['열쇠 칸', 까닭] · 5칸을 넘으면 비우지 않고 그대로 둬 그 줄이 발행을 막아요) · 모든 rows "
                      "의 글에서 그 낱말은 '빈 값' 으로 적어요 (원문은 실행 로그)"),
          "fgnCut": ("미국 상장 외국 회사의 종목 칸: 회사 합계와 맞지 않아 비운 칸 {per · pbr · dy: mismatch 맞춰 봤는데 맞지 않음 · currency 재무제표 "
@@ -15507,7 +15596,7 @@ def main():
                                 if kmeta.get("_index") is not None else None, krs=kmeta.get("krSeries"), drop_out=kr_drop)
     except Exception as e:                # 점검이 오류로 멈추면 확인할 수 없는 마지막 확인 종가는 싣지 않아요 (예전처럼 빠져요) — 발행은 이어가요
         kr_drop.clear()
-        kr = kr_own_close_drop_all(kr, kmeta.get("pxSrc"), kmeta.get("krSeries"), f"{type(e).__name__}: {str(e)[:200]}", drop_out=kr_drop)
+        kr = kr_own_close_drop_all(kr, kmeta.get("pxSrc"), kmeta.get("krSeries"), e, drop_out=kr_drop)    # 2026-11-24: 예외째 (키를 가린 뒤 잘라요)
     px_date = dt.date.fromisoformat(kmeta["pxDate"]) if kmeta["pxDate"] else today - dt.timedelta(days=1)
 
     fin_map, client, ksic = {}, None, {}
@@ -15599,7 +15688,7 @@ def main():
         us = us_own_close_final(us, umeta, prev, [pd.Timestamp(t).date().isoformat() for t in umeta["_index"].index]
                                 if umeta.get("_index") is not None else None)
     except Exception as e:
-        us = us_own_close_drop_all(us, umeta, f"{type(e).__name__}: {str(e)[:200]}")
+        us = us_own_close_drop_all(us, umeta, e)          # 2026-11-24: 예외째 (키를 가린 뒤 잘라요)
     # v19.6a (A.6): 주식 분할 (2016-01-01 부터 · 한 번 실은 분할은 빼지 않아요). 오늘 시세 다운로드가 읽은 분할(umeta) + 커밋한 시드 + 지난
     # 발행본의 줄 (splits_fields · merge_splits). 시드에도 지난 발행본에도 없는 종목만 2016년부터의 이력을 읽어요 (하루 몇 개 · 많아야 20).
     sp_fields = splits_fields(prev, [s["t"] for s in us], umeta.get("splits"), umeta.get("splitsNoCol") or [], start, today)
@@ -15762,7 +15851,7 @@ def main():
     # 2026-11-20 (#159): 마지막 확인 종가로 실었다가 관문과 같은 함수로 뺀 국내 종목 (pxSrc.own.bad 와 같은 수 · 관문이 맞춰 봐요 · 깨끗한 실행도 0)
     payload["ownDrop"][KR_OWN_DROP_KEY] = own_drop_rec(kr_drop)
     own_src_text(payload, OUT)               # 2026-11-24 (Jack 의 상시 규칙): 야후 설명(de)에 관문의 낱말 — 그 칸만 비워요 (ownDrop.srcText · 5칸 넘으면 그대로)
-    own_drop_pub(payload, OUT)               # 2026-11-24: ownDrop 까닭 글의 관문 낱말은 '빈 값' 으로 (원문은 각 검사의 로그 줄) — 쓰기 바로 앞
+    pub_sweep(payload, OUT)                  # 2026-11-24: 쓰기 바로 앞 · 우리 기록 칸 (PUB_SWEEP_KEYS · ownDrop 포함) 의 키 · 관문 낱말 — 종목 줄은 그대로
     log(kr_count_line(payload))
     write_json(OUT, payload)
     try:                                     # 2026-11-21 (#161 리뷰): 같은 기준일을 다시 돈 결과 (실제 실행만 · 다음 실행은 이 실행이 초록이었을 때만 믿어요)
@@ -15839,8 +15928,8 @@ def main():
         disc = empty_disc(today)
     disc["publishedAt"] = published_at
     own_check_disc(disc, today)              # 2026-11-19 (Jack 의 상시 규칙): 나쁜 공시 줄은 빼거나 비워요 (disc.json ownDrop · 관문과 같은 함수)
-    own_src_text(disc, OUT_DISC)             # 2026-11-24 (Jack 의 상시 규칙): DART 보고자 이름 · 직위에 관문의 낱말 — 그 칸만 비워요 (ownDrop.srcText)
-    own_drop_pub(disc, OUT_DISC)             # 2026-11-24: ownDrop 까닭 글의 관문 낱말은 '빈 값' 으로 — 쓰기 바로 앞
+    own_src_text(disc, OUT_DISC)             # 2026-11-24 (Jack 의 상시 규칙): DART 직위(pos)에 관문의 낱말 — 그 칸만 비워요 (ownDrop.srcText)
+    pub_sweep(disc, OUT_DISC, keys=("ownDrop",))   # 2026-11-24: 쓰기 바로 앞 · 우리 기록 글 (ownDrop) 의 키 · 관문 낱말
     write_json(OUT_DISC, disc)
     if "issueOk" not in disc:                # #161 리뷰 3차 nit: 다시 쓴 아침 disc.json 에 칸이 없어도 멈추지 않고 크게 (관문이 그 파일을 봐요)
         log(f"  !! {OUT_DISC} 에 issueOk 칸이 없어요 — 주요사항 공시 목록을 받았는지 몰라요 (관문이 봐요)")

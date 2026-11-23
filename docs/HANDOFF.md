@@ -24,14 +24,16 @@ links, "전무가" off the must-not-show list, labels) and a rename in `tests/te
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
 v19.6g, v19.6h.
 
-**Clean error text (branch `claude/clean-error-text`, for 11-24; pipeline only, the gate unchanged):** the gate's frozen word row
-("글자에 nan·None·null·undefined 없음") failed on text the pipeline wrote itself, so one caught error (`pxSrc.own.err`, `usSrc.own.err`,
-`splitsInfo.err`) or one dropped own-check row (`ownDrop` reason "d null") stopped the whole publish (audit aud5, reproduced). Now our
-error and reason text writes those words as "빈 값" and hides URL query strings and key values as "…", cut to 300 characters
-(raw text in the run log only; the app never reads these fields), and a Yahoo
-summary or DART name / position with such a word is blanked and counted in `ownDrop.srcText`; above 5 nothing is blanked and the word
-row fails as before (no new gate row). Live data 11-20: 0 matches before and after, all 190 gate rows unchanged. RUNBOOK "Our own text
-and the gate's word row".
+**Clean error text (#178, branch `claude/clean-error-text`, for 11-24; pipeline only, the gate unchanged):** the gate's frozen word row
+("글자에 nan·None·null·undefined 없음") failed on text the pipeline wrote itself, so one caught error (`pxSrc.own.err`, `usSrc.own.err`),
+one dropped own-check row (`ownDrop` reason "d null") or one record reason (`usForeign.cut` "financialCurrency None", a `d1Base.ex` name
+"nan", the "마지막 확인 종가(None)" reason) stopped the whole publish (audits aud5 and #178 round 1, reproduced). Now our error and
+reason text writes those words as "빈 값" and hides the DART / ECOS key values, URL query strings and key-like values as "…", cut to 300
+characters; a final `pub_sweep` right before each write covers every own-record field (raw text in the run log only; the app never
+reads these fields). A Yahoo summary (`de`) or DART position (`pos`) with such a word is blanked and counted in `ownDrop.srcText`
+(insider names are left to the gate as before); above 5 per file nothing is blanked and the word row fails as before (no new gate
+row). `splitsInfo.err` is log-only (data.json carries only `noCol` from it). Live data 11-20: 0 matches before and after, all 190
+gate rows unchanged. RUNBOOK "Our own text and the gate's word row".
 
 **CI checks the two PR rules (#175, 2026-11-23; Jack: "Automate the rules you missed"):** the last step of `ci.yml`'s `checks`
 job runs `tools/pr_rules.py`, so the required `ci` check goes red when either rule is missed. Run it yourself before pushing:
