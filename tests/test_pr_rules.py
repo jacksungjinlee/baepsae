@@ -154,6 +154,24 @@ def test_other_numbers_later_on_the_line_are_not_results(tail):
     assert ok, lines
 
 
+@pytest.mark.parametrize("line", ["- `python tests/smoke_app.py --data .` → 171 / 171",
+                                  "- smoke_app.py --data (copy of Nov. 20 publish): 171 / 171",
+                                  "- smoke_app.py --data, same as vs. main: 171 / 171",
+                                  "| `smoke_app.py --data DIR` | data 11/20 | 171 / 171 |"])
+def test_a_dot_or_a_date_before_the_result_does_not_hide_it(line):
+    """리뷰 2026-11-23 (Fable 2차): 결과 숫자 앞의 '. ' · 표의 '11/20' 칸에서 자르거나 읽지 않아요."""
+    body = GOOD_DIR.replace("- `python tests/smoke_app.py --data DIR` → **171 / 171 통과**", line)
+    ok, lines = rd(body)
+    assert ok and any("171 / 171" in ln for ln in lines), lines
+
+
+def test_a_bare_name_ends_the_previous_checks_part():
+    """'real_data_check 3 / 3, smoke_launch 22 / 22, smoke_app 175 / 176' (고정 데이터 실행)은 real_data_check 의 실패가 아니에요."""
+    body = GOOD_DIR + "\n- fixture run: real_data_check 3 / 3, smoke_launch 22 / 22, smoke_app 175 / 176"
+    ok, lines = rd(body)
+    assert ok, lines
+
+
 def test_a_table_row_with_a_failing_result_fails():
     body = ("pxDate 2026-11-20\n| `real_data_check.py --data` | 3 / 3 |\n| `smoke_launch.py --data` | 14 / 14 |\n"
             "| `smoke_app.py --data` | 170 / 171 |")

@@ -26,7 +26,8 @@ v19.6g, v19.6h.
 
 **CI checks the two PR rules (#175, 2026-11-23; Jack: "Automate the rules you missed"):** the last step of `ci.yml`'s `checks`
 job runs `tools/pr_rules.py`, so the required `ci` check goes red when either rule is missed. Run it yourself before pushing:
-`python tools/pr_rules.py --body-file BODY.md --base origin/main --head HEAD`. (1) A PR that changes what the site serves (deploy's
+`python tools/pr_rules.py --body-file BODY.md --base $(git merge-base origin/main HEAD) --head HEAD` (CI compares
+with GitHub's merge commit, which this approximates). (1) A PR that changes what the site serves (deploy's
 own file list `assemble_site.site_files`, `src/`, the build inputs incl. `build-styleguide.sh` and `deploy.yml`, the `tools/` files
 they call and import, e.g. `build_tag.py` and `logos/logo_index.py`, and the three real-data screen checks with the `tests/`
 helpers they import) needs `real_data_check.py` (with or without `--data`; it has no other mode), `smoke_launch.py --data` and

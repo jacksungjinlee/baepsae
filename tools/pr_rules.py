@@ -60,6 +60,7 @@ PIPELINE_WORKFLOWS = (".github/workflows/update-data.yml", ".github/workflows/de
 
 # real_data_check.py 는 --data 로만 돌아요 (필수 인자) → 이름만 적어도 그 결과예요. 나머지 둘은 --data 가 있어야 진짜 데이터 결과예요.
 RESULT_RE = re.compile(r"(?<!\w)(?:(real_data_check)(?:\.py)?(?:\s+--data\b)?|(smoke_launch|smoke_app)(?:\.py)?\s+--data\b)")
+NAME_RE = re.compile(r"(?<!\w)(?:real_data_check|smoke_launch|smoke_app)(?:\.py)?")   # 어느 이름이든 앞 검사의 결과 부분을 끝내요
 # 결과는 "171 / 171" (검사가 찍는 모양). 띄어 쓴 것을 모두 보고, 띄어 쓴 것이 없을 때만 "3/3" 하나 — "11/20" 같은 날짜를 결과로
 # 읽지 않게요.
 FRACTION_SPACED_RE = re.compile(r"(\d[\d,]*)\s+/\s+(\d[\d,]*)")
@@ -220,13 +221,23 @@ def today_kst():
     return dt.datetime.now(KST).date()
 
 
+def _first_fraction(s):
+    return FRACTION_SPACED_RE.search(s) or FRACTION_RE.search(s)
+
+
 def _result_part(seg):
-    """검사 이름 뒤의 글에서 그 검사의 결과를 담은 부분만: 표라면 숫자가 처음 나오는 칸, 아니면 첫 문장 (". " 앞까지) —
-    같은 줄 뒤의 다른 숫자(예: "… 171 / 171. 드라이런: 2,341 / 2,476")를 결과로 읽지 않게요 (리뷰 2026-11-23, Fable)."""
+    """검사 이름 뒤의 글에서 그 검사의 결과를 담은 부분만: 표라면 띄어 쓴 'N / M' 이 처음 나오는 칸(없으면 '3/3' 이 나오는 칸),
+    아니면 첫 결과 숫자 뒤의 첫 문장 끝(". ")까지 — 같은 줄 뒤의 다른 숫자(예: "… 171 / 171. 드라이런: 2,341 / 2,476")를 결과로
+    읽지 않게요. 결과 숫자 앞의 ". "(예: "Nov. 20", "vs. main")에서는 자르지 않아요 (리뷰 2026-11-23, Fable 2차)."""
     if "|" in seg:
         cells = seg.split("|")
-        seg = next((c for c in cells if FRACTION_SPACED_RE.search(c) or FRACTION_RE.search(c)), cells[0])
-    return re.split(r"\.\s", seg, maxsplit=1)[0]
+        seg = (next((c for c in cells if FRACTION_SPACED_RE.search(c)), None)
+               or next((c for c in cells if FRACTION_RE.search(c)), cells[0]))
+    f = _first_fraction(seg)
+    if not f:
+        return seg
+    m = re.search(r"\.\s", seg[f.end():])
+    return seg if not m else seg[: f.end() + m.start()]
 
 
 def real_data_results(body, today=None):
@@ -238,10 +249,13 @@ def real_data_results(body, today=None):
     found = {c: [] for c in CHECKS}                       # 검사 → [(줄 번호, 통과 수, 전체 수)]
     no_number = {c: [] for c in CHECKS}
     for i, ln in enumerate(clean):
-        hits = list(RESULT_RE.finditer(ln))
-        for k, m in enumerate(hits):
+        names = [m.start() for m in NAME_RE.finditer(ln)] + [len(ln)]
+        for k in range(len(names) - 1):
+            m = RESULT_RE.match(ln, names[k])
+            if not m:
+                continue                                  # 이름만 (smoke_app 을 --data 없이) — 결과가 아니지만 앞 검사의 부분은 끝내요
             name = m.group(1) or m.group(2)
-            seg = _result_part(ln[m.end(): hits[k + 1].start() if k + 1 < len(hits) else len(ln)])
+            seg = _result_part(ln[m.end(): names[k + 1]])
             fr = list(FRACTION_SPACED_RE.finditer(seg)) or list(FRACTION_RE.finditer(seg))[:1]
             if fr:
                 found[name] += [(i, _num(f.group(1)), _num(f.group(2))) for f in fr]
