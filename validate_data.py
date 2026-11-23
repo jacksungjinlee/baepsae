@@ -2527,6 +2527,94 @@ def check_us_new_wait(rep, data, pdata):
                [t + (" (지난 발행본부터 이어서)" if t in again else "") for t in nw])
 
 
+# ── v19.5b 후속 (Jack, 2026-11-13: "v19.5b's US minimum sizes (25억원 of quarterly revenue, 100억원 of equity, at the day's rate)
+# need a small data PR first") — 미국 회사의 최근 분기 매출 qrev · 자본 qeq (달러 · fetch_data.us_size_step). 경고만: 실패하지 않아요 ──
+US_SIZE_ROW = "미국 회사 크기 (qrev · qeq · 경고만)"
+US_SIZE_FILL_WARN = 90.0     # 재무제표 통화가 달러인 회사 중 이보다 적게 채우면 경고 (2026-11-20 발행본으로 돌려 봄: 매출 99.5% · 자본 100%)
+US_SIZE_MAX_AGE = 200        # fetch_data.US_SIZE_MAX_AGE_DAYS 와 같아요 (테스트가 맞춰 봐요): 분기 말이 usPxDate 보다 이만큼 넘게 앞이면 빈 칸이어야 해요
+US_SIZE_KEYS = ("qrev", "qeq")
+
+
+def us_size_num(x):
+    """qrev · qeq 값: JSON 숫자(정수 · 실수, 불 아님)이고 유한하면 그 값, 아니면 None (글자 '20' 도 None). (순수 함수)"""
+    return num(x) if isinstance(x, (int, float)) and not isinstance(x, bool) else None
+
+
+def us_size_bad(s, us_px):
+    """미국 행 하나의 qrev · qeq 모양에서 틀린 것 → 이유 목록 (빈 목록 = 맞음). 값은 유한한 숫자(불 아님) · 날짜(qrevD · qeqD)는 값과 짝 ·
+    YYYY-MM-DD · usPxDate(us_px: date) 뒤가 아니고 US_SIZE_MAX_AGE 일 넘게 앞이 아님. (순수 함수)"""
+    out = []
+    for k in US_SIZE_KEYS:
+        has_v, has_d = k in s, (k + "D") in s
+        if not has_v and not has_d:
+            continue
+        if has_v != has_d:
+            out.append(f"{k} 짝 없음")
+            continue
+        if us_size_num(s.get(k)) is None:
+            out.append(f"{k} 숫자 아님")
+        d = _iso_day(s.get(k + "D"))
+        if d is None:
+            out.append(f"{k}D 날짜 아님")
+        elif us_px is not None and (d > us_px or (us_px - d).days > US_SIZE_MAX_AGE):
+            out.append(f"{k}D {d} (usPxDate 뒤 · {US_SIZE_MAX_AGE}일 넘게 앞)")
+    return out
+
+
+def check_us_size(rep, data):
+    """v19.5b 후속: 한 줄 — 미국 회사 크기 (qrev · qeq). 경고만: 검사 코드가 멈춰도 실패가 아니라 경고예요 (이 줄은 발행을 멈추지 않아요 —
+    멈추는 줄은 Jack 의 답을 받아서 · CLAUDE.md 범주 2)."""
+    try:
+        _check_us_size(rep, data if isinstance(data, dict) else {})
+    except Exception as e:
+        rep.add(US_SIZE_ROW, True, f"검사가 오류로 멈췄어요: {type(e).__name__}", "오류 없이 끝나야 함 (경고만 · 발행을 막지 않아요)", warn=True)
+
+
+def _check_us_size(rep, data):
+    rule = (f"재무제표 통화가 달러인 미국 회사의 qrev · qeq 채움 {US_SIZE_FILL_WARN:g}% 아래 · 모양이 틀린 칸 (숫자 · 날짜 · 짝 · usPxDate 뒤이거나 "
+            f"{US_SIZE_MAX_AGE}일 넘게 앞) · 달러가 아닌 회사나 ETF 에 칸 · 기록(usSize)이 없거나 단계가 멈춤 → 경고 (실패 없음)")
+    rec = data.get("usSize")
+    us = [s for s in data.get("stocks") or [] if isinstance(s, dict) and s.get("cls") == "us"]
+    keys = US_SIZE_KEYS + tuple(k + "D" for k in US_SIZE_KEYS)
+    if rec is None and not any(k in s for s in us for k in keys):
+        rep.add(US_SIZE_ROW, True, "칸 없음 (이 칸을 싣기 전의 파일 · 앱의 종목 순위는 미국 최소 크기 없이)", rule)
+        return
+    unk = set(data.get("usFcurUnknown") or [])
+    usd = [s for s in us if not s.get("etf") and not s.get("fund") and not s.get("fcur") and s.get("t") not in unk]
+    usd_t = {id(s) for s in usd}
+    other = [s.get("t") for s in us if id(s) not in usd_t and any(k in s for k in keys)]
+    us_px = _iso_day(data.get("usPxDate"))
+    bad = [(s.get("t"), w) for s in usd for w in us_size_bad(s, us_px)]
+    fill = {k: sum(1 for s in usd if us_size_num(s.get(k)) is not None) for k in US_SIZE_KEYS}
+    pct = {k: (100.0 * fill[k] / len(usd) if usd else 0.0) for k in US_SIZE_KEYS}
+    warns, parts = [], [f"매출 {fill['qrev']:,} · 자본 {fill['qeq']:,} / 달러 재무제표 회사 {len(usd):,} ({pct['qrev']:.1f}% · {pct['qeq']:.1f}%)"]
+    if not isinstance(rec, dict):
+        warns.append("usSize 기록이 없거나 모양이 틀림")
+    else:
+        if rec.get("stopped"):
+            warns.append(f"단계가 멈춤 ({str(rec.get('stopped'))[:40]}) — 모든 행 빈 칸")
+        why = rec.get("why") if isinstance(rec.get("why"), dict) else {}
+        for k, ko in (("qrev", "매출"), ("qeq", "자본")):
+            w = why.get(k) if isinstance(why.get(k), dict) else {}
+            if w:
+                parts.append(f"{ko} 빈 칸 " + " · ".join(f"{r} {n}" for r, n in sorted(w.items(), key=lambda x: -(num(x[1]) or 0))))
+        if num(rec.get("asked")):
+            parts.append(f"오늘 받음 {rec.get('ok')} / {rec.get('asked')} (일부만 {rec.get('part')} · 오류 {rec.get('err')} · 시간 상한 {rec.get('time')} · "
+                         f"보관본 값 {rec.get('kept')})")
+    if usd and not rec_stopped(rec) and min(pct.values()) < US_SIZE_FILL_WARN:
+        warns.append(f"채움이 {US_SIZE_FILL_WARN:g}% 아래")
+    if bad:
+        warns.append(f"모양이 틀린 칸 {len(bad)}: " + ", ".join(f"{t} {w}" for t, w in bad[:10]) + (" …" if len(bad) > 10 else ""))
+        rep.detail("미국 qrev · qeq 모양이 틀린 칸 (경고)", [f"{t}: {w}" for t, w in bad])
+    if other:
+        warns.append(f"달러 재무제표 회사가 아닌 행에 칸 {len(other)}: {', '.join(map(str, other[:10]))}")
+    rep.add(US_SIZE_ROW, True, (" · ".join(warns + parts))[:600], rule, warn=bool(warns))
+
+
+def rec_stopped(rec):
+    return isinstance(rec, dict) and bool(rec.get("stopped"))
+
+
 def coverage(arr, key):
     if not arr:
         return 0.0
@@ -2839,6 +2927,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_kr_own_close(rep, data, macro, pdata)   # 2026-11-19 (Jack): 국내 종목의 마지막 확인 종가 (pxd · 미국 pxd 줄과 같은 실패 + 경고 줄)
     check_us_own_close(rep, data, macro, pdata)   # 2026-11-20 (Jack): 미국 종목의 마지막 확인 종가 (pxc · 날짜가 깨졌거나 d1 이 옆에 있으면 실패 · 나머지는 경고)
     check_us_new_wait(rep, data, pdata)   # 2026-11-22 (Jack): 미국 기준일 종가를 기다리는 새 미국 종목 (usSrc.newWait · 경고만 · 실패 없음)
+    check_us_size(rep, data)              # v19.5b 후속: 미국 회사 크기 qrev · qeq (종목 순위의 미국 최소 크기 · 경고만 · 실패 없음)
     check_v191f(rep, data, corp, kr, by, comps, pdata)
     check_eps_line_left(rep, corp, comps)   # 2026-11-14 (Jack Q3 · 리뷰 S4): 다시 읽은 뒤에도 날짜가 지난 '고치는 중' 줄이 남을 회사 (경고)
     check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=(prev or {}).get("macro") if rel else None)

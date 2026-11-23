@@ -46,6 +46,20 @@ push or manual run on a branch fails on purpose (its green would cover the PR's 
 can't read (event file, git) fails with a message. Replayed on past merges it flags #170, #171 and #172 (the misses of 11-22) and
 passes #173.
 
+**US minimum sizes (#?, 2026-11-23; Jack 11-13: "v19.5b's US minimum sizes (25억원 of quarterly revenue, 100억원 of equity, at
+the day's rate) need a small data PR first"):** the daily run adds, for each US company with statements in dollars, the latest
+quarter's revenue and common equity in whole dollars with their quarter-end dates (`qrev` · `qrevD` · `qeq` · `qeqD`, Yahoo
+quarterly statements, cached in `.dart-cache/us-size-v1.json.gz`, refetched after 7 days) and a `usSize` record; non-dollar
+filers stay blank (no rate for their currency in the data). 2.0's 기준별 · 수익성 under 미국 then keeps only companies with
+`qeq × fx` ≥ 100억원 and its line adds the approved "· 자본 100억원 이상" (`ranks.US_MIN_PROFIT_ON`). The US 성장 minimum
+(`qrev × fx` ≥ 25억원) is built but OFF (`ranks.US_MIN_GROWTH_ON`) until Jack approves its line: **open question to Jack**,
+proposed "분기 매출 25억원 이상" (`rank.p.floorGrowthUs`, pending doc). Until the first publish after the merge the app shows the
+US lists as before (a file without `qeq` gets no minimum and no line). Expect in that publish's log: `미국 회사 크기 … 회사 약
+767곳 중 … 달러 약 728곳` (all fetched once, about 1.5–2 minutes), blank lines for ~38 non-dollar filers and 4 half-yearly
+reporters, and the new warning-only gate row `미국 회사 크기 (qrev · qeq · 경고만)`. On 11-20's data the US 수익성 list loses 43 of
+707 (6 with negative common equity, incl. Gartner #2, Halozyme #6, Las Vegas Sands #8; 37 non-dollar filers). RUNBOOK "US company
+sizes for 종목 순위".
+
 **#172 (published closes), 2026-11-22:** in a week with days lacking a final KRX list, the daily run reads our earlier publishes
 from the `data` branch (throw-away partial clone, no token, https, minimal env, 180 s total, process-group kill, gc off) and
 confirms each Korean `c1w` day by day against KRX's base; a day with no publish is pinned by the next day's published `d1`;
