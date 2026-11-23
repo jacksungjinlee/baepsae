@@ -16200,17 +16200,17 @@ def scene_home_day_after(R, files, width):
         card = page.locator('[data-ui-v2="home-money"][data-deck-id="dmore"]')
         card.wait_for(state="visible")
         px, d1 = a["price"], a["d1"]
-        amount = 4 * (px - px / (1 + d1 / 100))                          # 가진 종목 줄 4주만: 다음 날 산 2주는 0
-        now = 6 * px
-        pct = amount / (now - amount) * 100
+        amount = 4 * (px - px / (1 + d1 / 100))                          # 가진 종목 줄 4주만: 다음 날 산 2주는 금액에도 %에도 없어요
+        pct = amount / (4 * px / (1 + d1 / 100)) * 100                   # = 그 종목의 하루 변화 (1차 리뷰 S1: 뒤에 산 주식이 %를 묽히지 않아요)
+        assert abs(pct - d1) < 1e-9, (pct, d1)
         day = card.locator('[data-ui-v2="home-day"]')
         assert abs(float(day.get_attribute("data-pct")) - pct) < 0.002, (day.get_attribute("data-pct"), pct)
         assert day.inner_text() == fillp(C["home"]["day"], amount=signed_won(amount), pct=signed_pct(pct)), (day.inner_text(), amount, pct)
-        old = d1                                                         # 예전 계산(6주 모두 하루 변화)의 % 와 달라요
-        assert abs(pct - old) > 0.1, (pct, old)
+        old = 6 * (px - px / (1 + d1 / 100))                             # 예전 계산: 6주 모두 하루 변화 — 금액이 달라요
+        assert signed_won(old) != signed_won(amount), (old, amount)
         no_hscroll(page, width)
         R.collect(page)
-    R.check(page, S, "가진 종목 줄 4주 + 다음 날 산 2주: '오늘'은 4주의 하루 변화만", bought_more)
+    R.check(page, S, "가진 종목 줄 4주 + 다음 날 산 2주: '오늘'은 4주의 하루 변화만 (%는 그 종목의 하루 변화)", bought_more)
     ctx.close()
     srv.shutdown()
 

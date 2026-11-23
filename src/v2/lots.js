@@ -359,41 +359,72 @@ export function openValue(L, px, fx) {
   return { value, cost, gain: value != null ? value - cost : null, unknown: null, usdOnly };
 }
 
-// ---------------- today's change of the open lots (홈's 오늘, 2026-11-24; audit 4.2) ----------------
-// The part of the open shares' value at the price date's close that is that day's change (the last two official closes, d1),
-// counting each share only from when it was held. By the open lots above (a sale takes the same fraction of every lot, so the
-// shares still held keep each lot's share of them):
-//   a 가진 종목 row (imported): held at the previous close, the whole change (its date, when it has one, is the close it was
-//     valued at, never a purchase: as before this, and as 이번 주 정리 reads it)
-//   a 샀어요 record dated before the price date: held at the previous close, the whole change
-//   one dated on the price date: from its own price to the close
-//   one dated after it: nothing (its value is the same at both ends)
-// Shares sold (on the price date or after it) are no longer held: they are not in the value, so not in 오늘 either; what they
-// made is in 내 수익 (판 종목). Korean listings only (L.ccy KRW): a US holding has no 오늘 (its change is in dollars on another
-// day). null when a lot cannot be placed (a 샀어요 record without a readable date, or one dated on the price date without a
-// price), never a guess. A holding with only lots held at the previous close gets d1 / (100 + d1), today's own number.
+// ---------------- today's change of the open lots (홈's 오늘, 2026-11-24; audit 4.2, PR #177) ----------------
+// Which part of the open shares was held over the price date's change (the last two official closes, d1), counting each share
+// only from when it was held. By the open lots above (a sale takes the same fraction of every lot, so the shares still held keep
+// each lot's share of them):
+//   held   a 가진 종목 row (imported), and a 샀어요 record dated before the price date: held at the previous close, the whole
+//          change. A 가진 종목 row's date, when it has one (금액으로 넣기), is the close it was valued at, never a purchase: it
+//          counts as held over the change, as before this (held.js counts such a row from its date; 이번 주 정리 leaves a row
+//          dated in the week out of its week, weekly.js "imp")
+//   on     a 샀어요 record dated on the price date: from its own price to the close (onCost: what those shares cost)
+//   after  a 샀어요 record dated after it: in neither end (no close after it is in the data)
+// Shares sold (on the price date or after it) are no longer held: not in the value, so not in 오늘 either; what they made is in
+// 내 수익 (판 종목). Known limit: a buy and a sale of one stock on the same date (on or after the price date) carry no time of
+// day, so the ledger's order decides (purchases before sales on one date: the sale takes its fraction of that day's buy too).
+// Korean listings only (L.ccy KRW): a US holding has no 오늘 (its change is in dollars on another day). Never a guess: a part
+// that cannot be placed returns its reason (DAY_WHY) instead.
 // L: ledger(recs, t) · px: the close on the price date (won) · d1: that day's change in % · pxDate: YYYY-MM-DD.
-// -> the change as a part of today's value (0.05: +5% of today's value; 0: no change) | null
+// -> { held, on, after, onCost } as parts of today's value of the open shares (held + on + after = 1; a holding with only lots
+//    held at the previous close gets held exactly 1, so it takes the arithmetic of before: value ÷ (1 + d1)) | { why }
+export const DAY_WHY = {
+  lots: "no open lots in its records", ccy: "its records are not in won", px: "no price today", d1: "no change today",
+  pxDate: "the price date is not a readable date", date: "a purchase record without a readable date",
+  price: "a purchase record on the price date without a price",
+};
 export function dayShare(L, px, d1, pxDate) {
-  if (!L || L.ccy !== "KRW" || !pos(px) || !isNum(d1) || d1 <= -100 || typeof pxDate !== "string" || !DATE.test(pxDate)) return null;
-  const over = d1 / (100 + d1);                            // a share held at the previous close: 1 − previous close ÷ px
-  let u = 0, part = 0;
-  for (const l of L.lots) {
-    if (!(l.u > 0)) continue;
-    let c;
-    if (l.kind === "imp") c = over;
-    else if (typeof l.date !== "string" || !DATE.test(l.date)) return null;
-    else if (l.date < pxDate) c = over;
-    else if (l.date > pxDate) c = 0;
+  const open = L && Array.isArray(L.lots) ? L.lots.filter((l) => l && l.u > 0) : [];
+  if (!open.length) return { why: "lots" };
+  if (L.ccy !== "KRW") return { why: "ccy" };
+  if (!pos(px)) return { why: "px" };
+  if (!isNum(d1) || d1 <= -100) return { why: "d1" };
+  if (typeof pxDate !== "string" || !DATE.test(pxDate)) return { why: "pxDate" };
+  let u = 0, uHeld = 0, uOn = 0, uAfter = 0, onOwn = 0;
+  for (const l of open) {
+    if (l.kind === "imp") uHeld += l.u;
+    else if (typeof l.date !== "string" || !DATE.test(l.date)) return { why: "date" };
+    else if (l.date < pxDate) uHeld += l.u;
+    else if (l.date > pxDate) uAfter += l.u;
     else {
-      const p = isNum(l.own) ? l.own / (l.u / UNIT) : null;   // its own price per share (today's share basis)
-      if (!pos(p)) return null;
-      c = 1 - p / px;
+      if (!pos(l.own)) return { why: "price" };             // its remaining cost (its own price x the shares left of it)
+      uOn += l.u;
+      onOwn += l.own;
     }
     u += l.u;
-    part += l.u * c;
   }
-  return u > 0 ? part / u : null;
+  // held is u / u = 1 exactly when every lot was held (the same additions in the same order)
+  return { held: uHeld / u, on: uOn / u, after: uAfter / u, onCost: onOwn / ((u / UNIT) * px) };
+}
+
+// A holding worth v won today, split by dayShare's parts (won): { held, on, onCost, after }.
+export const dayParts = (v, s) => ({ held: v * s.held, on: v * s.on, onCost: v * s.onCost, after: v * s.after });
+// The day's change of a set of holdings from their parts: [{ d1, held, on, onCost, after }] (won) -> { pct, amount, mixed } | null.
+//   amount = the held shares' whole change + (the value of the shares bought on the price date − what they cost)
+//   pct    = amount ÷ (the held shares' value at the previous close + what the shares bought on the price date cost) (round-1
+//            review S1: the shares bought after it are in neither, so they never dilute the %; held shares alone give their d1)
+// Nothing held over and nothing bought on the price date (all of it bought after): 0원 (0.0%). Parts that are all held are added
+// exactly as before this (now += value, prev += value ÷ (1 + d1), the same expressions in the same order: round-1 review S2, so an
+// unchanged holding never moves a rounding tie such as −3.95% → "−4.0%"). mixed: some part was bought on or after the price date.
+export function dayTotal(rows) {
+  let now = 0, prev = 0, after = 0, mixed = false;
+  for (const x of rows) {
+    now += x.held;
+    prev += x.held / (1 + x.d1 / 100);
+    if (x.on > 0) { now += x.on; prev += x.onCost; mixed = true; }
+    if (x.after > 0) { after += x.after; mixed = true; }
+  }
+  if (prev > 0) return { pct: (now / prev - 1) * 100, amount: now - prev, mixed };
+  return now === 0 && after > 0 ? { pct: 0, amount: 0, mixed } : null;
 }
 
 // 미국 종목 수익, 어디서 왔나 (A.5): over the open lots that carry a rate (a purchase's own), 주가 = (today's price − the lot's
