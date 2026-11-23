@@ -698,3 +698,76 @@ def test_gate_row_is_in_run_checks_and_matches_fetch_data_deadlines():
             assert D(y, *V.Q_PICK_DEADLINE[n]) == F.report_deadline(y, r)
             assert V.q_pick_rolled(F.report_deadline(y, r), hol["KR"], end) == F.report_deadline_rolled(y, r, KR, END)
     assert V.Q_PICK_SHARE == round(F.QUARTER_CURRENT_SHARE * 100)
+
+
+# ── 하루 DART 호출 수 (리뷰 3차 S1) ─────────────────────────────
+def test_dry_runs_get_only_the_300_cap(monkeypatch, tmp_path, capsys):
+    # 시험 실행은 '현재' 분기의 더한 호출 수를 쓰지 않아요 — 같은 날 발행할 몫을 쓰지 않게 (길은 그대로 지나요)
+    monkeypatch.setattr(F, "DART_LATE_PER_RUN", 5)
+    monkeypatch.setattr(F, "DART_LATE_INUSE_PER_RUN", N)
+    q3 = (lambda i: D(2026, 11, 14) if i < 100 else (D(2026, 11, 21) if i < 120 else None))   # 11-16 에 예전 규칙으로 '현재'
+    days = [D(2026, 11, 10), D(2026, 11, 16), D(2026, 11, 17)]
+    live = run_days(monkeypatch, tmp_path, days, q3)
+    assert live[D(2026, 11, 16)][1].q_pick["cur"] == "2026.3Q"
+    assert sum(live[D(2026, 11, 17)][1].late_n.values()) == 50          # 아직 없는 50곳 모두 (5 + 150 안)
+    capsys.readouterr()
+    monkeypatch.setenv("DRY_RUN", "true")
+    dry = run_days(monkeypatch, tmp_path, days, q3, name="dry.json.gz")
+    assert sum(dry[D(2026, 11, 17)][1].late_n.values()) == 5 and dry[D(2026, 11, 17)][1].late_dry
+    assert "시험 실행(DRY_RUN): '현재' 분기 2026.3Q 의 더한 호출" in capsys.readouterr().out
+
+
+def test_day_count_survives_save_and_load_and_restarts_after_midnight_kst(tmp_path, monkeypatch):
+    path = str(tmp_path / "c.json.gz")
+    days = iter([D(2026, 11, 24), D(2026, 11, 24), D(2026, 11, 25)])
+    c = F.DartClient("k", today=D(2026, 11, 24), path=path)
+    assert "dartDay" not in c.meta and c.day_calls() == {"d": "2026-11-24", "n": 0}   # 예전 보관본: 0 부터 (날짜 = 실행을 시작한 한국 날짜)
+    c.now_day = lambda: next(days)
+    c.status["000"] += 7
+    c.save()                                                       # 11-24: 7
+    c.status["013"] += 3
+    c.save()                                                       # 11-24: 7 + 3
+    assert c.meta["dartDay"] == {"d": "2026-11-24", "n": 10}
+    c2 = F.DartClient("k", today=D(2026, 11, 24), path=path)
+    c2.now_day = lambda: D(2026, 11, 24)
+    assert c2.day_calls() == {"d": "2026-11-24", "n": 10}          # 저장 · 읽기 뒤에도
+    c2.status["000"] += 4
+    assert c2.day_calls() == {"d": "2026-11-24", "n": 14}          # 이 실행의 아직 적지 않은 수까지
+    c.status["000"] += 5
+    c.save()                                                       # 한국 자정을 넘긴 저장: 새 날짜에서 0 부터 + 5
+    assert c.meta["dartDay"] == {"d": "2026-11-25", "n": 5}
+    c3 = F.DartClient("k", today=D(2026, 11, 26), path=path)
+    c3.now_day = lambda: D(2026, 11, 26)
+    assert c3.day_calls()["n"] == 0
+    for bad in ({"d": "2026-11-26", "n": -3}, {"d": "2026-11-26", "n": "9"}, {"d": "2026-11-26", "n": True}, "x"):
+        c3.meta["dartDay"] = bad
+        assert c3.day_calls()["n"] == 0                            # 읽지 못하는 기록은 0 부터 (많게 세지도 막지도 않아요)
+
+
+def test_a_busy_day_turns_late_asks_off_but_not_the_old_rule(tmp_path, monkeypatch, capsys):
+    ent = dict(plan_entries())
+    ent[f"C0|2026|{Q3}|CFS"] = e013("2026-11-12")                  # 예전 규칙이 오늘 물어요 (7일)
+    c, calls = client_with(tmp_path, monkeypatch, D(2026, 11, 19), ent)
+    c.now_day = lambda: D(2026, 11, 19)
+    c.meta["dartDay"] = {"d": "2026-11-19", "n": F.DART_LATE_DAY_STOP + 1}
+    assert F.dart_late_start(c, TARGETS, CMAP) is False and c.late_rank is None
+    assert "!! DART 마감 뒤 매일 다시 묻기를 이번 실행에서 쉬어요: 오늘(KST 2026-11-19) 이 보관본의 DART 호출이 벌써 10,001회" in capsys.readouterr().out
+    F.dart_quarter(c, "C0", 2026, Q3)
+    F.dart_quarter(c, "C1", 2026, Q3)
+    assert calls == [("C0", "CFS")] and not c.late_n                # 예전 규칙의 조회만
+    c.meta["dartDay"] = {"d": "2026-11-18", "n": 50_000}            # 어제의 수는 오늘을 막지 않아요
+    assert F.dart_late_start(c, TARGETS, CMAP) is True
+    c.meta["dartDay"] = {"d": "2026-11-19", "n": F.DART_LATE_DAY_STOP - 5}
+    c.status["013"] += 10                                           # 이 실행이 벌써 부른 수도 세요
+    assert F.dart_late_start(c, TARGETS, CMAP) is False
+
+
+def test_full_and_empty_cache_runs_still_count_the_day(monkeypatch, tmp_path):
+    # 빈 캐시 · full 실행은 늘어난 창을 쓰지 않아 기준이 필요 없지만, 그 호출은 그날의 수에 들어가요 (뒤의 실행이 봐요)
+    days = [D(2026, 11, 10), D(2026, 11, 16), D(2026, 11, 19)]
+    out = run_days(monkeypatch, tmp_path, days, modes={D(2026, 11, 19): "full"})
+    c = out[D(2026, 11, 19)][1]
+    assert c.late_rank is None and c.meta["dartDay"]["n"] == out[D(2026, 11, 19)][2] > 0
+    out = run_days(monkeypatch, tmp_path, [D(2026, 11, 19)], name="empty.json.gz")
+    c = out[D(2026, 11, 19)][1]
+    assert c.started_empty and c.late_rank is None and c.meta["dartDay"]["n"] == out[D(2026, 11, 19)][2] > 0

@@ -29,12 +29,13 @@ on 2026.2Q (2,244 companies, 3Q none) five days after the 3Q deadline: "not file
 Saturday, legal deadline 11-16; DART's statement API lags filings) waited 7 days, so the top 100 never reached 70%. Now deadlines
 roll to the next KRX trading day, and still-missing statement entries are asked again daily to rolled deadline + 21 days, also
 after the quarter is in use, only the ones a run really asks; the old 7-day rule keeps its own date (`at`; late asks write `lt`).
-At most 300 extra calls a run, plus up to 2,500 (one per company) while the quarter in use is in its window, counted per call,
-oldest-asked first; cache runs only (not a full-DART run). Offline, no company switches later than on `main`, except one known case
+At most 300 extra calls a run, plus up to 2,500 (one per company) while the quarter in use is in its window (dry runs: 300 only),
+counted per call, oldest-asked first; off for the run once that KST day's DART calls in the cache pass 10,000; cache runs only (not
+a full-DART run). Offline, no company switches later than on `main`, except one known case
 after rolled deadline + 21 (RUNBOOK). corp.json gets `qPick` (the quarter choice; the app doesn't read it) and a warning-only gate
 row `분기 판단 (corp.json qPick · 경고만)` warns when this year's 1Q–3Q in use is still an older quarter more than 10 days after its
-rolled deadline. Round-2 review fixes in. Dry run on 11-25 or later (a same-day dry run after the adopting publish makes 0 late
-calls). RUNBOOK "DART: asking again after a filing deadline".
+rolled deadline. Round-3 review fixes in. Dry run on 11-25 or later, after that day's publish, on a branch with no older DART
+cache. RUNBOOK "DART: asking again after a filing deadline".
 
 **CI checks the two PR rules (#175, 2026-11-23; Jack: "Automate the rules you missed"):** the last step of `ci.yml`'s `checks`
 job runs `tools/pr_rules.py`, so the required `ci` check goes red when either rule is missed. Run it yourself before pushing:

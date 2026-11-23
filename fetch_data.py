@@ -4701,7 +4701,9 @@ def dart_entry_due(entry, year, reprt, today, revalidate=False):
 #     더 묻는 것이라 전체 DART 실행(빈 캐시 · full)이 아니에요 (CLAUDE.md).
 DART_LATE_DAYS = 21
 DART_LATE_PER_RUN = 300
-DART_LATE_INUSE_PER_RUN = 2500    # '현재' 분기가 늘어난 창 안일 때 더하는 호출 수 — 회사마다 재무제표 하나 (상장사 약 2,500곳)
+DART_LATE_INUSE_PER_RUN = 2500    # '현재' 분기가 늘어난 창 안일 때 더하는 호출 수 — 회사마다 재무제표 하나 (2,500 + 300 > 상장사 2,474곳: 아직 없는
+#                                   회사를 실행마다 모두 한 번씩). 시험 실행(DRY_RUN)은 더하지 않아요 (리뷰 3차 S1)
+DART_LATE_DAY_STOP = 10000        # 그날(한국 날짜) 이 보관본의 DART 호출이 이만큼을 넘었으면 늘어난 창은 쉬어요 (하루 한도 약 20,000 · 발행 몫을 남겨요)
 DART_LATE_TAGS = ("CFS", "OFS")
 
 
@@ -4813,12 +4815,18 @@ class DartClient:
         # 2026-11-24 (#180): 마감 뒤 매일 다시 묻기 (dart_late_due) — enrich_with_dart 가 계획(late_keys)을 세우기 전에는 쓰지 않아요
         self.hol = None              # 휴장일 표 (load_market_holidays 꼴 · None 이면 dart_late_start 가 읽어요)
         self.kr_closed, self.hol_end = {}, None
-        self.late_keys = frozenset() # 지금 물을 수 있는 키 (dart_late_plan · 시가총액 큰 회사부터 남은 횟수만큼)
+        self.late_keys = frozenset() # 지금 물을 수 있는 키 (dart_late_plan · 가장 오래전에 물은 것부터, 같으면 시가총액 순 · 남은 횟수만큼)
         self.late_left = 0           # 이 실행에 남은 늘어난 창 호출 수 (report() 가 부를 때마다 줄여요 · 실패한 답도)
         self.late_asked = set()      # 이 실행에서 늘어난 창으로 물은 키 (답을 저장하지 못했어도 다시 묻지 않아요)
         self.late_n = collections.Counter()   # found 새로 냄 · still 아직 없음 · fail 연결 문제 등
         self.late_rank = None        # {기업코드: 시가총액 순위} (dart_late_start · 계획이 없으면 None)
         self.q_pick = None           # 분기 판단 기록 → corp.json qPick (관문 줄)
+        self.late_dry = False        # 시험 실행 (DRY_RUN) — '현재' 분기의 더한 호출 수를 쓰지 않아요
+        # 2026-11-24 (#180 리뷰 3차 S1): 한국 날짜 하루의 DART 호출 수 — 보관본 meta.dartDay {"d": KST 날짜, "n": 그날 이 보관본의 실행들이 부른 수}.
+        # save() 가 지난 저장 뒤 부른 수를 그때의 한국 날짜에 더해요. 늘어난 창만 이 수를 봐요 (DART_LATE_DAY_STOP) — 예전 규칙의 조회는 막지 않아요
+        self.day_counted = 0         # 이 실행에서 dartDay 에 이미 더한 호출 수
+        wall0 = today_kst()          # 지금의 한국 날짜 = 실행을 시작한 날(today) + 그 뒤 지난 날 수 (자정을 넘긴 실행 · 지난 날짜로 도는 시험도 맞게)
+        self.now_day = (lambda: self.today + (today_kst() - wall0))
         self.entries, self.meta = {}, {}
         self.carried = 0                     # v19.1f: 옛 버전 캐시에서 옮긴 업종 코드 항목 수 (adopt_carry)
         self.remove_after_save = []          # v19.1f: 새 캐시를 처음 저장한 뒤에 지울 옛 캐시 파일 (그 전에 멈추면 다시 실행이 또 옮겨 써요)
@@ -4842,6 +4850,20 @@ class DartClient:
         old = sum(1 for e in self.entries.values() if e["st"] == "000" and self._stale(e))
         if old:
             log(f"· DART 재확인 대상: 90일 지난 {old:,}건 — 이번 실행에서 쓰는 것 중 최대 {DART_REVALIDATE_PER_RUN}건 (정정공시 대비)")
+
+    def day_calls(self, advance=False):
+        """오늘(지금의 한국 날짜) 이 보관본의 실행들이 부른 DART 호출 수 → {"d": 날짜, "n": 수} — 보관본에 적힌 그날의 수 + 이 실행이 아직 더하지
+        않은 수. 날짜가 바뀌었거나 적힌 것이 없으면(예전 보관본) 0 부터. advance: save() 에서만 — 이 실행의 수를 적은 것으로 해요. 자정을 넘긴
+        실행의 자정 전 호출도 새 날짜에 들어가요 (많게 세는 쪽). self.lock 안에서 불러도 돼요 (lock 을 잡지 않아요)."""
+        day = self.now_day().isoformat()
+        total = sum(self.status.values())
+        dc = self.meta.get("dartDay")
+        n0 = dc.get("n") if isinstance(dc, dict) and dc.get("d") == day and isinstance(dc.get("n"), int) \
+            and not isinstance(dc.get("n"), bool) and dc.get("n") >= 0 else 0
+        out = {"d": day, "n": n0 + max(0, total - self.day_counted)}
+        if advance:
+            self.day_counted = total
+        return out
 
     def _stale(self, e):
         return (self.today - dt.date.fromisoformat(e["at"])).days > DART_REVALIDATE_DAYS
@@ -4870,6 +4892,7 @@ class DartClient:
         with self.save_lock:                  # 두 저장이 같은 임시 파일에 섞여 쓰이지 않게
             with self.lock:
                 self.meta["savedAt"] = dt.datetime.now(KST).isoformat(timespec="seconds")
+                self.meta["dartDay"] = self.day_calls(advance=True)
                 js = {"v": DART_CACHE_VERSION, "meta": dict(self.meta), "entries": dict(self.entries)}
             tmp = self.path + ".tmp"
             with gzip.open(tmp, "wt", encoding="utf-8") as f:
@@ -6271,7 +6294,15 @@ def dart_late_start(client, targets, cmap):
         log(f"  !! DART 마감 뒤 매일 다시 묻기를 준비하지 못했어요 ({type(e).__name__}: {str(e)[:160]}) — 이번 실행은 예전 규칙"
             f"(마감 2일 뒤부터 {DART_RETRY_DAYS}일마다)만 써요")
         return False
+    day = client.day_calls()
+    if day["n"] > DART_LATE_DAY_STOP:
+        # 2026-11-24 (#180 리뷰 3차 S1): 그날 DART 를 이미 많이 불렀으면 늘어난 창은 쉬어요 — 하루 한도(020)에 닿아 발행이 멈추지 않게. 예전
+        # 규칙의 조회는 그대로예요
+        log(f"  !! DART 마감 뒤 매일 다시 묻기를 이번 실행에서 쉬어요: 오늘(KST {day['d']}) 이 보관본의 DART 호출이 벌써 {day['n']:,}회 "
+            f"(기준 {DART_LATE_DAY_STOP:,} · 하루 한도 약 {DART_DAY_LIMIT:,}) — 예전 규칙의 조회는 그대로 · 다음 날 실행이 이어서 물어요")
+        return False
     client.late_rank, client.late_left = rank, DART_LATE_PER_RUN
+    client.late_dry = (os.environ.get("DRY_RUN") or "").strip().lower() == "true"
     for y, r, dl, rl in wins:
         name = f"{y}년 사업보고서" if r == "11011" else f"{y}.{REPRT_KO[r]}"
         log(f"· DART 마감 뒤 매일 다시 묻기 창: {name} 마감 {dl}" + (f" → 다음 거래일 {rl}" if rl != dl else "")
@@ -6281,7 +6312,8 @@ def dart_late_start(client, targets, cmap):
 
 
 def dart_late_set(client, want):
-    """계획을 세워 client.late_keys 로 — want 가 고른 항목 중 오늘 다시 물을 것을 시가총액 큰 회사부터 남은 호출 수(late_left)만큼 → (계획 수,
+    """계획을 세워 client.late_keys 로 — want 가 고른 항목 중 오늘 다시 물을 것을 가장 오래전에 물은 것부터 (같으면 시가총액 큰 회사부터) 남은
+    호출 수(late_left)만큼 → (계획 수,
     한도 밖 수). 멈추면 크게 남기고 늘어난 창을 닫아요 → (0, 0)."""
     if getattr(client, "late_rank", None) is None:
         return 0, 0
@@ -6461,7 +6493,11 @@ def enrich_with_dart(kr_stocks, client, pref_shares=None):
         # 2026-11-24 (#180): 분기 판단 뒤 — 사업보고서와 '현재' 분기(와 그 앞)에서 아직 없는 항목, 가장 오래전에 물은 것부터 남은 호출 수만큼.
         # 리뷰 2차 S1: '현재' 분기가 늘어난 창 안이면 그 분기는 회사마다 하나씩 모두 물을 수 있게 호출 수를 더해요 (DART_LATE_INUSE_PER_RUN) —
         # 예전 규칙은 그 분기를 '현재'로 쓰는 날 모든 회사를 처음 물어서, 300회로는 일찍 '현재'가 된 이 실행의 작은 회사가 뒤처질 수 있었어요
-        extra = DART_LATE_INUSE_PER_RUN if q_cur and dart_late_window(qy, q_cur, today, client.kr_closed, client.hol_end) else 0
+        inuse = bool(q_cur and dart_late_window(qy, q_cur, today, client.kr_closed, client.hol_end))
+        extra = DART_LATE_INUSE_PER_RUN if inuse and not client.late_dry else 0
+        if inuse and client.late_dry:     # 리뷰 3차 S1: 시험 실행은 실행당 300회만 — 같은 날 발행할 몫을 쓰지 않게 (길은 그대로 지나요)
+            log(f"· 시험 실행(DRY_RUN): '현재' 분기 {qy}.{REPRT_KO[q_cur]} 의 더한 호출 {DART_LATE_INUSE_PER_RUN:,}회를 쓰지 않아요 — 늘어난 창은 "
+                f"실행당 {DART_LATE_PER_RUN:,}회만")
         client.late_left += extra
         n_plan, n_rest = dart_late_set(client, dart_late_want(qy, order, (), top_codes, fs_of))
         if n_plan or n_rest:
