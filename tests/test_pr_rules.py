@@ -4,6 +4,7 @@
 규칙 1 — 사이트가 내보내는 것을 바꾸는 PR: 설명에 실제 데이터 화면 검사 세 결과(N / N)와 그 데이터의 날짜.
 규칙 2 — src/ 나 데이터 파이프라인을 바꾸는 PR: docs/HANDOFF.md § 0 수정.
 """
+import datetime as dt
 import json
 import os
 import shutil
@@ -16,6 +17,12 @@ import yaml
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 import pr_rules as PR  # noqa: E402
+
+TODAY = dt.date(2026, 11, 23)
+
+
+def rd(body, today=TODAY):
+    return PR.real_data_results(body, today)
 
 GOOD_INLINE = ("- Real data (copies of the latest publish on main, pxDate 2026-11-16): `real_data_check.py --data` → 3 / 3 · "
                "`smoke_launch.py --data` → 14 / 14 · `smoke_app.py --data` → 151 / 151.")
@@ -33,7 +40,7 @@ GOOD_DIR = ("Data branch copy at $S/livedata (pxDate 2026-11-20):\n"
 
 @pytest.mark.parametrize("body", [GOOD_INLINE, GOOD_LIST, GOOD_DIR, "## Test evidence\n" + GOOD_LIST + "\n\n## After merge\n없음"])
 def test_results_in_every_shape_we_write_them_pass(body):
-    ok, lines = PR.real_data_results(body)
+    ok, lines = rd(body)
     assert ok, lines
     assert any("데이터 날짜" in ln for ln in lines)
 
@@ -41,51 +48,85 @@ def test_results_in_every_shape_we_write_them_pass(body):
 @pytest.mark.parametrize("drop", PR.CHECKS)
 def test_a_missing_check_fails(drop):
     body = "\n".join(ln for ln in GOOD_DIR.split("\n") if drop + ".py" not in ln)
-    ok, lines = PR.real_data_results(body)
+    ok, lines = rd(body)
     assert not ok and any(drop in ln and "결과가 없어요" in ln for ln in lines), lines
 
 
 def test_a_failing_result_fails_even_beside_a_passing_one():
     body = GOOD_DIR + "\n- before the fix: `smoke_app.py --data` 170 / 171"
-    ok, lines = PR.real_data_results(body)
+    ok, lines = rd(body)
     assert not ok and any("170 / 171" in ln for ln in lines), lines
 
 
 @pytest.mark.parametrize("res", ["0 / 0", "13 / 14", "14/13"])
 def test_zero_or_unequal_counts_fail(res):
-    ok, _ = PR.real_data_results(GOOD_DIR.replace("14 / 14 통과", res + " 통과"))
+    ok, _ = rd(GOOD_DIR.replace("14 / 14 통과", res + " 통과"))
     assert not ok
 
 
 def test_a_name_without_a_number_is_not_a_result():
     body = "I will run `smoke_app.py --data DIR` after the merge.\n" + GOOD_DIR.replace("171 / 171 통과", "통과")
-    ok, lines = PR.real_data_results(body)
+    ok, lines = rd(body)
     assert not ok and any("smoke_app" in ln and "N / N" in ln for ln in lines), lines
 
 
 def test_a_date_like_slash_is_not_read_as_the_result():
     body = GOOD_DIR.replace("`python tests/smoke_app.py --data DIR` → **171 / 171 통과**",
                             "`python tests/smoke_app.py --data DIR` (data of 11/20) → **171 / 171 통과**")
-    ok, lines = PR.real_data_results(body)
+    ok, lines = rd(body)
     assert ok and any("171 / 171" in ln for ln in lines), lines
 
 
 def test_the_data_date_must_be_near_the_results():
     no_date = GOOD_DIR.replace(" (pxDate 2026-11-20)", "")
-    assert not PR.real_data_results(no_date)[0]
+    assert not rd(no_date)[0]
     far = "data of 2026-11-20\n\n\n\n" + no_date                 # 결과 줄보다 네 줄 넘게 위
-    assert not PR.real_data_results(far)[0]
-    assert PR.real_data_results("data of 2026-11-20\n" + no_date)[0]
+    assert not rd(far)[0]
+    assert rd("data of 2026-11-20\n" + no_date)[0]
 
 
 def test_empty_or_missing_body_fails():
-    assert not PR.real_data_results("")[0]
-    assert not PR.real_data_results(None)[0]
+    assert not rd("")[0]
+    assert not rd(None)[0]
 
 
 def test_other_script_names_do_not_count():
     body = GOOD_DIR.replace("tests/smoke_app.py", "tests/xsmoke_app.py")
-    assert not PR.real_data_results(body)[0]
+    assert not rd(body)[0]
+
+
+# 리뷰 2026-11-23 (Opus): 검사 이름 뒤의 결과를 모두 봐요 · 날짜를 진짜 날짜로 재요 · 주석 안의 글은 읽지 않아요
+
+@pytest.mark.parametrize("tail", ["171 / 171 first run; rerun 170 / 171", "142 / 142 (part 2/2: 70 / 71)", "171 / 171 · 0 / 0"])
+def test_every_result_after_a_check_name_must_pass(tail):
+    body = GOOD_DIR.replace("**171 / 171 통과**", tail)
+    ok, lines = rd(body)
+    assert not ok and any("통과하지 못한 결과" in ln for ln in lines), lines
+
+
+def test_an_unspaced_part_marker_beside_a_spaced_result_is_not_a_result():
+    body = GOOD_DIR.replace("**171 / 171 통과**", "**171 / 171 통과** (part 1/2 and 2/2)")
+    assert rd(body)[0]
+
+
+@pytest.mark.parametrize("date, ok", [("2026-11-20", True), ("2026-11-13", True), ("2026-11-12", False),
+                                      ("2019-01-01", False), ("2026-11-24", False), ("2026-19-39", False),
+                                      ("2026-02-30", False)])
+def test_the_data_date_must_be_a_real_date_within_ten_days(date, ok):
+    body = GOOD_DIR.replace("2026-11-20", date)
+    r, lines = rd(body)
+    assert r is ok, (date, lines)
+    if not ok:
+        assert any("10일 안" in ln for ln in lines), lines
+
+
+def test_results_inside_an_html_comment_do_not_count():
+    assert not rd("<!--\n" + GOOD_DIR + "\n-->")[0]
+    assert rd("<!-- note -->\n" + GOOD_DIR)[0]
+
+
+def test_a_failing_result_inside_a_comment_is_ignored():
+    assert rd(GOOD_DIR + "\n<!-- smoke_app.py --data 170 / 171 -->")[0]
 
 
 # ── 바뀐 파일 분류 ──
@@ -106,6 +147,19 @@ def test_site_changes(path):
     assert PR.site_changes([path]) == [path]
 
 
+def test_build_and_deploy_tools_are_followed_to_the_end():
+    b = PR.build_tools()
+    for need in ("tools/assemble_site.py", "tools/build_tag.py", "tools/logos/logo_index.py"):
+        assert need in b, (need, b)
+    for p in ("tools/build_tag.py", "tools/logos/logo_index.py", "build-styleguide.sh"):
+        assert PR.site_changes([p]) == [p], p
+
+
+def test_a_deleted_or_renamed_served_file_counts():
+    # git diff --no-renames lists both sides; a deleted path is no longer tracked but still names a served file
+    assert PR.site_changes(["baepi-9.png", "pictures/new-name.png"]) == ["baepi-9.png", "pictures/new-name.png"]
+
+
 @pytest.mark.parametrize("path", ["docs/HANDOFF.md", "docs/CHANGELOG.md", "CLAUDE.md", "tests/test_v2_app.py", "tests/smoke_v2.py",
                                   "fetch_data.py", "validate_data.py", ".github/workflows/ci.yml", "data.json", "README.md"])
 def test_not_site_changes(path):
@@ -117,6 +171,12 @@ def test_not_site_changes(path):
                                   ".github/workflows/deploy.yml", ".github/workflows/watchdog.yml",
                                   "tools/publish_hold.py", "tools/push_data_branch.sh", "tools/assemble_site.py"])
 def test_handoff_changes(path):
+    assert PR.handoff_changes([path]) == [path]
+
+
+@pytest.mark.parametrize("path", ["tests/smoke_app.py", "tests/real_data_check.py", "tests/testclock.py", "requirements-dev.txt",
+                                  "tests/fonts/install.sh"])
+def test_the_daily_runs_screen_checks_and_their_tools_need_section0(path):
     assert PR.handoff_changes([path]) == [path]
 
 
@@ -191,11 +251,12 @@ def _merge(r):
     _git(r, "merge", "-q", "--no-ff", "-m", "merge", "pr")
 
 
-def _run(r, body, event="pull_request"):
+def _run(r, body, event="pull_request", ref="refs/pull/7/merge"):
     ev = r.parent / "event.json"
     ev.write_text(json.dumps({"pull_request": {"number": 7, "body": body}}), encoding="utf-8")
-    env = {"PATH": os.environ["PATH"], "GITHUB_EVENT_NAME": event, "GITHUB_EVENT_PATH": str(ev), "HOME": str(r.parent)}
-    return subprocess.run([sys.executable, "tools/pr_rules.py"], cwd=r, capture_output=True, text=True, env=env)
+    env = {"PATH": os.environ["PATH"], "GITHUB_EVENT_NAME": event, "GITHUB_EVENT_PATH": str(ev), "HOME": str(r.parent),
+           "GITHUB_REF": ref}
+    return subprocess.run([sys.executable, "tools/pr_rules.py", "--today", TODAY.isoformat()], cwd=r, capture_output=True, text=True, env=env)
 
 
 def test_end_to_end_src_change_needs_both(repo):
@@ -226,9 +287,18 @@ def test_end_to_end_docs_only_passes_without_anything(repo):
     assert r.returncode == 0 and "해당 없음" in r.stdout, r.stdout
 
 
-def test_end_to_end_not_a_pr_passes(repo):
-    r = _run(repo, "", event="push")
-    assert r.returncode == 0 and "PR 이 아닌 실행" in r.stdout, r.stdout
+def test_end_to_end_push_to_main_and_dispatch_on_main_pass(repo):
+    for ev in ("push", "workflow_dispatch"):
+        r = _run(repo, "", event=ev, ref="refs/heads/main")
+        assert r.returncode == 0 and "PR 이 아닌 실행" in r.stdout, (ev, r.stdout)
+
+
+@pytest.mark.parametrize("event, ref", [("workflow_dispatch", "refs/heads/claude/x"), ("workflow_dispatch", ""),
+                                         ("pull_request_target", "refs/heads/main"), ("", "")])
+def test_end_to_end_a_manual_run_on_a_branch_fails(repo, event, ref):
+    """리뷰 2026-11-23: 브랜치에서 손으로 돌린 실행이 초록으로 끝나면 PR 의 빨강을 덮어요 → 실패."""
+    r = _run(repo, "", event=event, ref=ref)
+    assert r.returncode == 1 and "확인하지 못했어요" in r.stdout and "Traceback" not in r.stderr, (r.stdout, r.stderr)
 
 
 def test_end_to_end_missing_event_file_stops(repo):
@@ -238,7 +308,20 @@ def test_end_to_end_missing_event_file_stops(repo):
     env = {"PATH": os.environ["PATH"], "GITHUB_EVENT_NAME": "pull_request",
            "GITHUB_EVENT_PATH": str(repo.parent / "nope.json"), "HOME": str(repo.parent)}
     r = subprocess.run([sys.executable, "tools/pr_rules.py"], cwd=repo, capture_output=True, text=True, env=env)
-    assert r.returncode != 0                                         # 이벤트를 읽지 못하면 통과시키지 않아요
+    assert r.returncode == 1 and "읽지 못했어요" in r.stdout and "Traceback" not in r.stderr, (r.stdout, r.stderr)
+
+
+
+def test_end_to_end_a_bad_revision_is_a_clear_message_not_a_traceback(repo, tmp_path):
+    body = tmp_path / "b.md"
+    body.write_text(GOOD_LIST, encoding="utf-8")
+    env = {"PATH": os.environ["PATH"], "HOME": str(tmp_path)}
+    r = subprocess.run([sys.executable, "tools/pr_rules.py", "--body-file", str(body), "--base", "nope", "--head", "HEAD"],
+                       cwd=repo, capture_output=True, text=True, env=env)
+    assert r.returncode == 1 and "확인하지 못했어요" in r.stdout and "Traceback" not in r.stderr, (r.stdout, r.stderr)
+    r = subprocess.run([sys.executable, "tools/pr_rules.py", "--body-file", str(tmp_path / "missing.md")],
+                       cwd=repo, capture_output=True, text=True, env=env)
+    assert r.returncode == 1 and "읽지 못했어요" in r.stdout and "Traceback" not in r.stderr, (r.stdout, r.stderr)
 
 
 # ── ci.yml 에 걸려 있어요 ──
@@ -247,7 +330,7 @@ def test_ci_runs_the_rules_as_the_last_step_of_checks_with_two_commits_and_no_ke
     with open(os.path.join(ROOT, ".github", "workflows", "ci.yml"), encoding="utf-8") as f:
         wf = yaml.safe_load(f)
     st = wf["jobs"]["checks"]["steps"]
-    assert st[0]["uses"].startswith("actions/checkout") and st[0]["with"] == {"fetch-depth": 2}
+    assert st[0]["uses"].startswith("actions/checkout") and st[0]["with"]["fetch-depth"] == 2
     assert st[-1]["run"].strip() == "python tools/pr_rules.py" and set(st[-1]) == {"name", "run"}
     assert "checks" in wf["jobs"]["ci"]["needs"]
     with open(os.path.join(ROOT, "tools", "pr_rules.py"), encoding="utf-8") as f:

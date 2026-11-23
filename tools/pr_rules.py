@@ -1,52 +1,68 @@
 # -*- coding: utf-8 -*-
 """PR 규칙 두 가지를 CI 에서 확인해요 (Jack 2026-11-23: "Automate the rules you missed").
 
-  python tools/pr_rules.py                       # CI (ci.yml 의 pr_rules job): PR 설명은 GitHub 에서 지금 것을 읽어요
-  python tools/pr_rules.py --body-file F --base REV --head REV   # 시험 · 손으로 돌릴 때
+  python tools/pr_rules.py                       # CI: ci.yml 의 checks job 마지막 단계 (PR 설명은 이벤트에 실린 것)
+  python tools/pr_rules.py --body-file F --base REV --head REV [--today YYYY-MM-DD]   # 시험 · 손으로 돌릴 때
 
 규칙 1 — 사이트가 내보내는 것을 바꾸는 PR (CLAUDE.md § GitHub process):
   PR 설명에 매일 실행의 세 화면 검사를 지금 데이터(data 브랜치) 사본으로 돌린 결과가 있어야 해요:
   `tests/real_data_check.py --data DIR` · `tests/smoke_launch.py --data DIR` · `tests/smoke_app.py --data DIR`,
-  각각 "N / N" (모두 통과)으로, 그리고 그 데이터의 날짜(YYYY-MM-DD)를 결과 줄 가까이에.
-  셋 중 하나라도 없거나, 통과하지 못한 숫자(예: 13 / 14)가 적혀 있거나, 날짜가 없으면 실패해요.
+  각각 "N / N" (모두 통과)으로, 그리고 그 데이터의 날짜(YYYY-MM-DD, 오늘(KST)부터 DATE_MAX_AGE 일 안)를 결과 줄 가까이에.
+  셋 중 하나라도 없거나, 검사 이름 뒤에 통과하지 못한 숫자(예: 13 / 14)가 하나라도 적혀 있거나, 날짜가 없으면 실패해요.
+  HTML 주석(<!-- … -->) 안의 글은 읽지 않아요.
 규칙 2 — src/ 나 데이터 파이프라인을 바꾸는 PR (Jack 2026-11-13: "update § 0 in the same PR as every merge"):
   docs/HANDOFF.md 의 § 0 (`## 0.` 제목부터 다음 `## ` 제목 전까지)이 공백 말고도 바뀌어야 해요.
 
 비교: PR 의 merge 커밋(actions/checkout 의 기본, HEAD)과 그 첫 부모(base = main 의 끝, HEAD^1). main 이 앞서 나갔어도
 PR 이 실제로 바꾸는 것만 봐요. PR 설명은 이 실행을 시작한 이벤트에 실린 것이에요 (CI 에는 열쇠를 두지 않아요):
 설명만 고친 뒤에는 다음 커밋의 CI 가 새 설명으로 확인해요 ('다시 돌리기'는 처음 이벤트의 옛 설명을 그대로 봐요).
-PR 이 아닌 실행(main 에 push · 손으로 실행)은 확인할 것이 없어서 통과예요. 이 도구는 읽기만 해요.
+PR 이 아닌 실행: main 에 push · main 에서 손으로 실행만 통과예요. 다른 브랜치에서 손으로 실행(workflow_dispatch)하면
+PR 규칙을 확인하지 못하니 실패해요 — 그 초록이 PR 의 빨강을 덮지 못하게요 (리뷰 2026-11-23).
+읽지 못하는 것이 있으면(이벤트 파일 · git) 통과시키지 않고 이유를 찍고 실패해요. 이 도구는 읽기만 해요.
 """
 import argparse
+import datetime as dt
 import json
 import os
 import re
 import subprocess
 import sys
+from zoneinfo import ZoneInfo
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 import assemble_site  # noqa: E402  (사이트에 올라가는 파일의 기준은 배포가 쓰는 것과 같은 함수)
 
+KST = ZoneInfo("Asia/Seoul")
 HANDOFF = "docs/HANDOFF.md"
 CHECKS = ("real_data_check", "smoke_launch", "smoke_app")      # 매일 실행의 발행 전 화면 검사 (update-data.yml)
 
-# 사이트가 내보내는 것을 정하는 빌드 · 배포 입력 (그 자체는 사이트에 올라가지 않아요)
-BUILD_INPUTS = ("template.html", "build.sh", "build-app.sh", "package.json", "package-lock.json",
+# 사이트가 내보내는 것을 정하는 빌드 · 배포 입력 (그 자체는 사이트에 올라가지 않아요). 이 파일들이 부르는 tools/ 파일과
+# 그 파일들이 불러오는 tools/ 모듈은 build_tools() 가 끝까지 따라가 더해요 (build_tag.py · logos/logo_index.py …).
+BUILD_INPUTS = ("template.html", "build.sh", "build-app.sh", "build-styleguide.sh", "package.json", "package-lock.json",
                 "tools/assemble_site.py", ".github/workflows/deploy.yml")
 
-# 데이터 파이프라인: 매일 실행 · 발행 관문 · 배포 · 감시와 그 도구들. 아래 세 workflow 가 부르는 tools/ 파일은 자동으로 더해요.
-PIPELINE_FILES = ("fetch_data.py", "validate_data.py", "already_published.py", "watchdog.py", "requirements.txt")
+# 데이터 파이프라인: 매일 실행 · 발행 관문 · 배포 · 감시와 그 도구들. 아래 세 workflow 가 부르는 tools/ 파일(과 그 모듈)은 자동으로,
+# 매일 실행이 발행 전에 돌리는 세 화면 검사와 그 도우미도 (check_helpers) 더해요.
+PIPELINE_FILES = ("fetch_data.py", "validate_data.py", "already_published.py", "watchdog.py", "requirements.txt",
+                  "requirements-dev.txt", "tests/fonts/install.sh")
 PIPELINE_DIRS = ("data/",)
 PIPELINE_WORKFLOWS = (".github/workflows/update-data.yml", ".github/workflows/deploy.yml",
                       ".github/workflows/watchdog.yml")
 
 RESULT_RE = re.compile(r"(?<!\w)(" + "|".join(CHECKS) + r")(?:\.py)?\s+--data\b")
-# 결과는 "171 / 171" (검사가 찍는 모양). 띄어 쓴 것을 먼저 찾고, 없을 때만 "3/3" — "11/20" 같은 날짜를 결과로 읽지 않게요.
+# 결과는 "171 / 171" (검사가 찍는 모양). 띄어 쓴 것을 모두 보고, 띄어 쓴 것이 없을 때만 "3/3" 하나 — "11/20" 같은 날짜를 결과로
+# 읽지 않게요.
 FRACTION_SPACED_RE = re.compile(r"(\d[\d,]*)\s+/\s+(\d[\d,]*)")
 FRACTION_RE = re.compile(r"(\d[\d,]*)/(\d[\d,]*)")
-DATE_RE = re.compile(r"\b20\d\d-[01]\d-[0-3]\d\b")
+DATE_RE = re.compile(r"\b(20\d\d-\d\d-\d\d)\b")
 DATE_LOOKBACK = 3          # 결과 줄 위로 몇 줄까지 날짜를 찾을지 ("Real data (… pxDate 2026-11-20):" 아래에 결과를 적는 모양)
+DATE_MAX_AGE = 10          # 데이터 날짜는 오늘(KST)부터 이 날 수 안 (긴 연휴 · 주말을 넘어도 되게; 그보다 오래면 지금 데이터가 아니에요)
+COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
+
+
+class RuleError(Exception):
+    """확인에 필요한 것을 읽지 못함 — 통과시키지 않고 이유를 찍어요."""
 
 
 # ── 바뀐 파일 분류 ──
@@ -63,42 +79,79 @@ def check_helpers(root=ROOT):
         seen.add(name)
         with open(os.path.join(tdir, name), encoding="utf-8") as f:
             src = f.read()
-        for m in re.finditer(r"^\s*(?:from\s+(\w+)\s+import|import\s+([\w, ]+))", src, re.M):
-            mods = [m.group(1)] if m.group(1) else [x.strip().split(" as ")[0] for x in m.group(2).split(",")]
-            for mod in mods:
-                if mod and os.path.isfile(os.path.join(tdir, mod + ".py")):
-                    todo.append(mod + ".py")
+        for mod in _imports(src):
+            if os.path.isfile(os.path.join(tdir, mod + ".py")):
+                todo.append(mod + ".py")
     return sorted("tests/" + n for n in seen)
 
 
-def pipeline_tools(root=ROOT):
-    """파이프라인 workflow 셋이 부르는 tools/ 파일 (저장소에 있는 것만)."""
-    found = set()
-    for wf in PIPELINE_WORKFLOWS:
-        p = os.path.join(root, wf)
+def _imports(src):
+    out = []
+    for m in re.finditer(r"^\s*(?:from\s+([\w.]+)\s+import|import\s+([\w., ]+))", src, re.M):
+        mods = [m.group(1)] if m.group(1) else [x.strip().split(" as ")[0] for x in m.group(2).split(",")]
+        out += [x.split(".")[-1] for x in mods if x]
+    return out
+
+
+def _tool_closure(start, root=ROOT):
+    """tools/ 파일들과, 그 파이썬 파일이 불러오는 tools/ (한 단계 아래 폴더 포함) 모듈을 끝까지."""
+    tdir = os.path.join(root, "tools")
+    dirs = [tdir] + sorted(os.path.join(tdir, d) for d in os.listdir(tdir)
+                           if os.path.isdir(os.path.join(tdir, d))) if os.path.isdir(tdir) else []
+    todo, seen = list(start), set()
+    while todo:
+        rel = todo.pop()
+        if rel in seen or not os.path.isfile(os.path.join(root, rel)):
+            continue
+        seen.add(rel)
+        if not rel.endswith(".py"):
+            continue
+        with open(os.path.join(root, rel), encoding="utf-8") as f:
+            src = f.read()
+        for mod in _imports(src):
+            for d in dirs:
+                p = os.path.join(d, mod + ".py")
+                if os.path.isfile(p):
+                    todo.append(os.path.relpath(p, root).replace(os.sep, "/"))
+    return sorted(seen)
+
+
+def _referenced_tools(files, root=ROOT):
+    found = []
+    for rel in files:
+        p = os.path.join(root, rel)
         if not os.path.isfile(p):
             continue
         with open(p, encoding="utf-8") as f:
             for m in re.finditer(r"tools/[A-Za-z0-9_./-]+\.(?:py|sh)", f.read()):
                 if os.path.isfile(os.path.join(root, m.group(0))):
-                    found.add(m.group(0))
-    return sorted(found)
+                    found.append(m.group(0))
+    return found
+
+
+def build_tools(root=ROOT):
+    """빌드 · 배포 입력이 부르는 tools/ 파일과 그 모듈 (build_tag.py · assemble_site.py → logos/logo_index.py …)."""
+    start = [p for p in BUILD_INPUTS if p.startswith("tools/")] + _referenced_tools(BUILD_INPUTS, root)
+    return _tool_closure(start, root)
+
+
+def pipeline_tools(root=ROOT):
+    """파이프라인 workflow 셋이 부르는 tools/ 파일과 그 모듈 (저장소에 있는 것만)."""
+    return _tool_closure(_referenced_tools(PIPELINE_WORKFLOWS, root), root)
 
 
 def site_changes(changed, root=ROOT):
-    """사이트가 내보내는 것을 바꾸는 파일: 배포가 올리는 파일 · src/ · 빌드 · 배포 입력 · 세 화면 검사와 그 도우미."""
-    helpers = set(check_helpers(root))
+    """사이트가 내보내는 것을 바꾸는 파일: 배포가 올리는 파일 · src/ · 빌드 · 배포 입력과 그 도구 · 세 화면 검사와 그 도우미."""
+    extra = set(check_helpers(root)) | set(build_tools(root)) | set(BUILD_INPUTS)
     served = set(assemble_site.site_files(list(changed)))
-    return sorted(p for p in changed
-                  if p in served or p.startswith("src/") or p in BUILD_INPUTS or p in helpers)
+    return sorted(p for p in changed if p in served or p.startswith("src/") or p in extra)
 
 
 def handoff_changes(changed, root=ROOT):
-    """HANDOFF § 0 을 고쳐야 하는 파일: src/ 와 데이터 파이프라인."""
-    tools = set(pipeline_tools(root))
+    """HANDOFF § 0 을 고쳐야 하는 파일: src/ 와 데이터 파이프라인 (발행 전 화면 검사와 그 도우미 포함)."""
+    extra = set(pipeline_tools(root)) | set(check_helpers(root)) | set(PIPELINE_FILES) | set(PIPELINE_WORKFLOWS)
     return sorted(p for p in changed
-                  if p.startswith("src/") or p in PIPELINE_FILES or p in PIPELINE_WORKFLOWS or p in tools
-                  or any(p.startswith(d) for d in PIPELINE_DIRS))
+                  if p.startswith("src/") or p in extra or any(p.startswith(d) for d in PIPELINE_DIRS))
 
 
 # ── 규칙 1: PR 설명의 실제 데이터 검사 결과 ──
@@ -107,19 +160,32 @@ def _num(s):
     return int(s.replace(",", ""))
 
 
-def real_data_results(body):
-    """(ok, 줄들) — 줄은 화면에 찍을 설명. 세 검사마다 통과한 결과가 하나 이상, 통과하지 못한 결과는 없음, 날짜 있음."""
-    lines = (body or "").replace("\r\n", "\n").split("\n")
-    clean = [ln.replace("`", "").replace("**", "") for ln in lines]
+def _valid_date(s):
+    try:
+        return dt.date.fromisoformat(s)
+    except ValueError:
+        return None
+
+
+def today_kst():
+    return dt.datetime.now(KST).date()
+
+
+def real_data_results(body, today=None):
+    """(ok, 줄들) — 줄은 화면에 찍을 설명. 세 검사마다 통과한 결과가 하나 이상, 검사 이름 뒤에 통과하지 못한 결과는 하나도 없음,
+    결과 줄 가까이에 오늘(KST)부터 DATE_MAX_AGE 일 안의 날짜."""
+    today = today or today_kst()
+    text = COMMENT_RE.sub("", (body or "").replace("\r\n", "\n"))
+    clean = [ln.replace("`", "").replace("**", "") for ln in text.split("\n")]
     found = {c: [] for c in CHECKS}                       # 검사 → [(줄 번호, 통과 수, 전체 수)]
     no_number = {c: [] for c in CHECKS}
     for i, ln in enumerate(clean):
         hits = list(RESULT_RE.finditer(ln))
         for k, m in enumerate(hits):
             seg = ln[m.end(): hits[k + 1].start() if k + 1 < len(hits) else len(ln)]
-            f = FRACTION_SPACED_RE.search(seg) or FRACTION_RE.search(seg)
-            if f:
-                found[m.group(1)].append((i, _num(f.group(1)), _num(f.group(2))))
+            fr = list(FRACTION_SPACED_RE.finditer(seg)) or list(FRACTION_RE.finditer(seg))[:1]
+            if fr:
+                found[m.group(1)] += [(i, _num(f.group(1)), _num(f.group(2))) for f in fr]
             else:
                 no_number[m.group(1)].append(i)
     out, ok = [], True
@@ -130,7 +196,8 @@ def real_data_results(body):
         if bad:
             ok = False
             out.append(f"!! {c} --data: 통과하지 못한 결과가 적혀 있어요 — "
-                       + ", ".join(f"{x[1]} / {x[2]} ({x[0] + 1}번째 줄)" for x in bad))
+                       + ", ".join(f"{x[1]} / {x[2]} ({x[0] + 1}번째 줄)" for x in bad)
+                       + " (고친 뒤 다시 돌린 결과만 적어 주세요)")
         if good:
             out.append(f"· {c} --data: {good[0][1]} / {good[0][2]} ({good[0][0] + 1}번째 줄)")
             result_lines += [x[0] for x in good]
@@ -140,12 +207,16 @@ def real_data_results(body):
             out.append(f"!! {c} --data: 결과가 없어요{why}")
     if result_lines:
         lo, hi = max(0, min(result_lines) - DATE_LOOKBACK), max(result_lines)
-        dates = sorted({d for ln in clean[lo: hi + 1] for d in DATE_RE.findall(ln)})
-        if dates:
-            out.append(f"· 데이터 날짜: {', '.join(dates)}")
+        raw = sorted({d for ln in clean[lo: hi + 1] for d in DATE_RE.findall(ln)})
+        dates = [d for d in (_valid_date(x) for x in raw) if d is not None]
+        fresh = [d for d in dates if dt.timedelta(0) <= today - d <= dt.timedelta(days=DATE_MAX_AGE)]
+        if fresh:
+            out.append(f"· 데이터 날짜: {max(fresh).isoformat()}")
         else:
             ok = False
-            out.append(f"!! 데이터 날짜(YYYY-MM-DD)가 결과 줄 가까이({lo + 1}~{hi + 1}번째 줄)에 없어요")
+            seen = f" (적힌 날짜: {', '.join(raw)})" if raw else ""
+            out.append(f"!! 데이터 날짜(YYYY-MM-DD)가 결과 줄 가까이({lo + 1}~{hi + 1}번째 줄)에 없거나, 오늘({today.isoformat()})부터 "
+                       f"{DATE_MAX_AGE}일 안이 아니에요{seen} — 지금 data 브랜치 사본으로 다시 돌려 주세요")
     return ok, out
 
 
@@ -174,7 +245,10 @@ def section0_changed(before, after):
 # ── git · GitHub ──
 
 def git(*args, root=ROOT):
-    return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True).stdout
+    r = subprocess.run(["git", *args], cwd=root, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuleError(f"git {' '.join(args[:2])} … 실패: {(r.stderr or r.stdout).strip()[:300]}")
+    return r.stdout
 
 
 def changed_files(base, head, root=ROOT):
@@ -190,14 +264,18 @@ def show(rev, path, root=ROOT):
 def event_body():
     """(PR 번호, 설명) — 이 실행을 시작한 이벤트에 실린 것 (열쇠 없이 읽어요: CI 에는 토큰을 두지 않아요, test_screen_check.py).
     설명만 고친 뒤에는 '다시 돌리기'도 옛 설명을 봐요 (처음 이벤트를 그대로 써요) → 다음 커밋의 CI 가 새 설명으로 확인해요."""
-    with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as f:
-        pr = json.load(f)["pull_request"]
-    return pr["number"], pr.get("body") or ""
+    path = os.environ.get("GITHUB_EVENT_PATH")
+    try:
+        with open(path, encoding="utf-8") as f:
+            pr = json.load(f)["pull_request"]
+        return pr["number"], pr.get("body") or ""
+    except (TypeError, OSError, ValueError, KeyError) as e:
+        raise RuleError(f"PR 이벤트({path})를 읽지 못했어요: {type(e).__name__}") from None
 
 
 # ── 실행 ──
 
-def run(body, base, head, root=ROOT):
+def run(body, base, head, root=ROOT, today=None):
     """(ok, 줄들)."""
     changed = changed_files(base, head, root)
     lines = [f"· 이 PR 이 바꾼 파일 {len(changed)}개"]
@@ -206,7 +284,7 @@ def run(body, base, head, root=ROOT):
     if site:
         lines.append(f"규칙 1 — 사이트가 내보내는 것을 바꿔요 ({len(site)}개: {', '.join(site[:6])}"
                      + (" …" if len(site) > 6 else "") + ") → 실제 데이터 검사 결과가 PR 설명에 있어야 해요")
-        r_ok, r_lines = real_data_results(body)
+        r_ok, r_lines = real_data_results(body, today)
         ok &= r_ok
         lines += ["  " + x for x in r_lines]
     else:
@@ -223,22 +301,44 @@ def run(body, base, head, root=ROOT):
     return ok, lines
 
 
+def not_a_pr():
+    """PR 이 아닌 실행: (통과?, 줄). main 에 push 와 main 에서 손으로 실행만 통과예요."""
+    ev, ref = os.environ.get("GITHUB_EVENT_NAME") or "", os.environ.get("GITHUB_REF") or ""
+    if ev == "push" or (ev == "workflow_dispatch" and ref == "refs/heads/main"):
+        return True, f"· PR 이 아닌 실행({ev} · {ref or '?'})이라 확인할 것이 없어요"
+    return False, (f"!! PR 이 아닌 실행({ev or '?'} · {ref or '?'})이라 PR 규칙을 확인하지 못했어요 — 브랜치에서 손으로 돌린 실행은 "
+                   "PR 의 결과를 대신하지 못해요. PR 에 커밋을 하나 더 올려 PR 의 CI 로 확인해 주세요")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--body-file")
     ap.add_argument("--base", default="HEAD^1")
     ap.add_argument("--head", default="HEAD")
+    ap.add_argument("--today", help="데이터 날짜를 잴 오늘 (YYYY-MM-DD, 다시 돌려 볼 때) — 없으면 오늘(KST)")
     a = ap.parse_args(argv)
-    if a.body_file is not None:
-        with open(a.body_file, encoding="utf-8") as f:
-            body, label = f.read(), a.body_file
-    else:
-        if os.environ.get("GITHUB_EVENT_NAME") != "pull_request":
-            print(f"· PR 이 아닌 실행({os.environ.get('GITHUB_EVENT_NAME') or '손으로'})이라 확인할 것이 없어요")
-            return 0
-        number, body = event_body()
-        label = f"PR #{number}"
-    ok, lines = run(body, a.base, a.head)
+    try:
+        today = dt.date.fromisoformat(a.today) if a.today else None
+        if a.body_file is not None:
+            try:
+                with open(a.body_file, encoding="utf-8") as f:
+                    body, label = f.read(), a.body_file
+            except OSError as e:
+                raise RuleError(f"설명 파일({a.body_file})을 읽지 못했어요: {type(e).__name__}") from None
+        elif os.environ.get("GITHUB_EVENT_NAME") != "pull_request":
+            good, line = not_a_pr()
+            print(line)
+            if not good:
+                print("::error title=PR 규칙::" + line.lstrip("! "))
+            return 0 if good else 1
+        else:
+            number, body = event_body()
+            label = f"PR #{number}"
+        ok, lines = run(body, a.base, a.head, today=today)
+    except (RuleError, ValueError) as e:
+        print(f"!! PR 규칙을 확인하지 못했어요: {e}")
+        print("::error title=PR 규칙::PR 규칙을 확인하지 못했어요 — 위 줄을 보세요.")
+        return 1
     print(f"PR 규칙 확인 · {label}")
     for ln in lines:
         print(ln)

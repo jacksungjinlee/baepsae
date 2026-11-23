@@ -26,15 +26,19 @@ v19.6g, v19.6h.
 
 **CI checks the two PR rules (#175, 2026-11-23; Jack: "Automate the rules you missed"):** the last step of `ci.yml`'s `checks`
 job runs `tools/pr_rules.py`, so the required `ci` check goes red when either rule is missed. (1) A PR that changes what the site
-serves (deploy's own file list `assemble_site.site_files`, `src/`, the build inputs, `deploy.yml`, the three real-data screen checks
-and the `tests/` helpers they import) needs `real_data_check.py --data`, `smoke_launch.py --data` and `smoke_app.py --data` in its
-description, each with an all-pass `N / N`, no non-passing result anywhere, and the data's date (YYYY-MM-DD) on a result line or
-up to 3 lines above. (2) A PR that changes `src/` or the pipeline (`fetch_data.py`, `validate_data.py`, `already_published.py`,
-`watchdog.py`, `requirements.txt`, `data/`, the update-data / deploy / watchdog workflows and the `tools/` files they call) needs
-this § 0 changed beyond whitespace. It compares the PR's merge commit with its first parent (the PR's own changes only). The
-description is the one in the event that started the run (CI holds no token, `tests/test_screen_check.py`): after editing only
-the description, the next commit's CI sees it — a re-run still sees the old one. Replayed on past merges it flags #170, #171 and
-#172 (the misses of 11-22) and passes #104 and #173.
+serves (deploy's own file list `assemble_site.site_files`, `src/`, the build inputs incl. `build-styleguide.sh` and `deploy.yml`, the
+`tools/` files they call and import, e.g. `build_tag.py` and `logos/logo_index.py`, and the three real-data screen checks with the
+`tests/` helpers they import) needs `real_data_check.py --data`, `smoke_launch.py --data` and `smoke_app.py --data` in its
+description, each with an all-pass `N / N` and no non-passing `N / M` after any check name (an HTML comment is not read), and the
+data's date (a real YYYY-MM-DD, today KST or up to 10 days before) on a result line or up to 3 lines above. (2) A PR that changes
+`src/` or the pipeline (`fetch_data.py`, `validate_data.py`, `already_published.py`, `watchdog.py`, `requirements*.txt`, `data/`,
+`tests/fonts/install.sh`, the update-data / deploy / watchdog workflows and the `tools/` files they call, and the daily run's
+three screen checks with their helpers) needs this § 0 changed beyond whitespace. It compares the PR's merge commit with its
+first parent (the PR's own changes only). The description is the one in the event that started the run (CI holds no token,
+`tests/test_screen_check.py`): after editing only the description, push the next commit — a re-run still sees the old one, and a
+manual "Run workflow" on a branch now fails on purpose (its green would cover the PR's red); only push to `main` and a manual run
+on `main` pass without a PR. Anything it can't read (event file, git) fails with a message. Replayed on past merges it flags #170,
+#171 and #172 (the misses of 11-22) and passes #173.
 
 **#172 (published closes), 2026-11-22:** in a week with days lacking a final KRX list, the daily run reads our earlier publishes
 from the `data` branch (throw-away partial clone, no token, https, minimal env, 180 s total, process-group kill, gc off) and
