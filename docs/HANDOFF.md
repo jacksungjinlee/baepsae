@@ -27,13 +27,13 @@ v19.6g, v19.6h.
 **Clean error text (#178, branch `claude/clean-error-text`, for 11-24; pipeline only, the gate unchanged):** the gate's frozen word row
 ("글자에 nan·None·null·undefined 없음") failed on text the pipeline wrote itself, so one caught error (`pxSrc.own.err`, `usSrc.own.err`),
 one dropped own-check row (`ownDrop` reason "d null") or one record reason (`usForeign.cut` "financialCurrency None", a `d1Base.ex` name
-"nan", the "마지막 확인 종가(None)" reason) stopped the whole publish (audits aud5 and #178 round 1, reproduced). Now our error and
-reason text writes those words as "빈 값" and hides the DART / ECOS key values, URL query strings and key-like values as "…", cut to 300
-characters; a final `pub_sweep` right before each write covers every own-record field (raw text in the run log only; the app never
-reads these fields). A Yahoo summary (`de`) or DART position (`pos`) with such a word is blanked and counted in `ownDrop.srcText`
-(insider names are left to the gate as before); above 5 per file nothing is blanked and the word row fails as before (no new gate
-row). `splitsInfo.err` is log-only (data.json carries only `noCol` from it). Live data 11-20: 0 matches before and after, all 190
-gate rows unchanged. RUNBOOK "Our own text and the gate's word row".
+"nan", the "마지막 확인 종가(None)" reason) stopped the whole publish (audits aud5 and #178 rounds 1–2, reproduced). Now our error and
+reason text writes those words as "빈 값" and hides the DART / ECOS key values (in the run log too), URL query strings and key-like values
+as "…", cut to 300 characters. A final `pub_sweep` before each write cleans our own record fields, skipping what the app reads
+(`own.aged`, `splitsInfo.fixed`), capped at Jack's N: up to 5 per file cleaned with `!!` lines and counted in `ownDrop.sweep`; above 5
+nothing changes and the word row fails as before. A Yahoo summary (`de`) or DART position (`pos`) with such a word is blanked and counted
+in `ownDrop.srcText` (same cap; insider names are left to the gate). `splitsInfo.err` is log-only. Live data 11-20 (data branch, fetched
+11-23): 0 matches before and after, all 190 gate rows unchanged. RUNBOOK "Our own text and the gate's word row".
 
 **CI checks the two PR rules (#175, 2026-11-23; Jack: "Automate the rules you missed"):** the last step of `ci.yml`'s `checks`
 job runs `tools/pr_rules.py`, so the required `ci` check goes red when either rule is missed. Run it yourself before pushing:

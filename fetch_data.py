@@ -457,15 +457,18 @@ def write_json(path, obj):
 # 않아요 — own_src_text 가 그 칸을 비우고 세요 (N 을 넘으면 그대로 둬 관문이 막아요). 관문은 그대로예요.
 PUB_BLANK = "빈 값"
 # 2026-11-24 (리뷰): 오류 글에는 주소 · 키가 들어갈 수 있어요 (requests 의 "… with url: /api/list.json?crtfc_key=…" · ECOS 는 주소 경로에 키).
-# 발행 파일 (누구나 읽는 data.json) 에는 (1) 환경의 DART · ECOS 키 (와 GITHUB_TOKEN) 글자 그대로를 먼저 PUB_HIDE 로 — 값은 어디에도 적지 않아요,
-# (2) 그다음 자르고, (3) 주소의 물음표 뒤 · 주소 안의 사용자 정보 · ECOS 경로의 키 · 키 같은 이름의 값 · Bearer · Authorization · Cookie 를
-# PUB_HIDE 로 (PUB_REDACT). 원문은 실행 로그에만 (앞 PUB_LOG_MAX 글자 · GitHub 이 등록된 비밀은 로그에서 가려요). 많이 가려도 괜찮아요 (오류
-# 글은 앱이 읽지 않아요) — 덜 가리면 안 돼요. 이름 칸은 길이를 묶어요 (아주 긴 글에서 몇 초씩 걸리지 않게).
+# 발행 파일 (누구나 읽는 data.json) 에는 (1) 환경의 DART · ECOS 키 (와 GITHUB_TOKEN) 글자 그대로를 먼저 PUB_HIDE 로, (2) 그다음 자르고,
+# (3) 주소의 물음표 뒤 · 주소 안의 사용자 정보 · ECOS 경로의 키 · 키 같은 이름의 값 · Bearer · Authorization · Cookie 를 PUB_HIDE 로
+# (PUB_REDACT). 원문은 실행 로그에만 — 그 로그 글도 (1) 을 먼저 해요 (pub_raw: 키 값은 로그에도 적지 않아요 · 앞 PUB_LOG_MAX 글자). 많이 가려도
+# 괜찮아요 (오류 글은 앱이 읽지 않아요) — 덜 가리면 안 돼요. 이름 칸은 길이를 묶어요 (아주 긴 글에서 몇 초씩 걸리지 않게).
 PUB_HIDE = "…"
 PUB_LOG_MAX = 4000
 PUB_SECRET_ENV = ("DART_API_KEY", "ECOS_API_KEY", "GITHUB_TOKEN")
 _PUB_KEYWORD = r"(?:api[_-]?key|key|token|secret|passw(?:or)?d|pwd|credential|signature|cookie|sessionid|session|auth)"
 _PUB_NAMECH = r"[A-Za-z0-9_.-]"
+# 키 낱말 뒤에 이어지는 이름 (private_key_id · key1 · token_type · api_key_v2 · keyId) — 32 글자까지 · 예외 이름 (KeyError · TokenError ·
+# KeyboardInterrupt) 은 아니에요
+_PUB_NAMETAIL = r"(?:(?!error|exception|warning|interrupt|exit)" + _PUB_NAMECH + r"){0,32}"
 
 
 def _pub_url_end(m):
@@ -495,11 +498,11 @@ PUB_REDACT = (
     (re.compile(r"(?i)(\bbearer\s+)[^\s'\",;]+"), r"\1" + PUB_HIDE),                                          # Bearer …
     (re.compile(r"(?i)(\bauthorization\s*[:=]\s*)(?:(?:bearer|basic|token)\s+)?[^\s'\",;]+"), r"\1" + PUB_HIDE),   # Authorization: …
     (re.compile(r"(?i)(\b(?:set-)?cookie\s*[:=]\s*)[^'\"\n]*"), r"\1" + PUB_HIDE),                            # Cookie: a=b; c=d
-    (re.compile(r"(?i)(['\"])(" + _PUB_NAMECH + r"{0,64}" + _PUB_KEYWORD + r")\1(\s*[:,]\s*)(['\"])[^'\"]*(\4|$)"),
+    (re.compile(r"(?i)(['\"])(" + _PUB_NAMECH + r"{0,64}" + _PUB_KEYWORD + _PUB_NAMETAIL + r")\1(\s*[:,]\s*)(['\"])[^'\"]*(\4|$)"),
      _pub_quoted),                                                                                         # {'crtfc_key': '…'} · ('crtfc_key', '…')
-    (re.compile(r"(?i)(" + _PUB_KEYWORD + r")(?!" + _PUB_NAMECH + r")(\s*[=:]\s*)(?:(['\"])[^'\"]*(['\"]?)|[^\s&'\"<>,;)\]}]+)"),
+    (re.compile(r"(?i)(" + _PUB_KEYWORD + _PUB_NAMETAIL + r")(?!" + _PUB_NAMECH + r")(\s*[=:]\s*)(?:(['\"])[^'\"]*(['\"]?)|[^\s&'\"<>,;)\]}]+)"),
      _pub_pair),                                                                                           # key=… · crtfc_key: … · X-Api-Key: …
-    (re.compile(r"(?i)(" + _PUB_KEYWORD + r")(?!" + _PUB_NAMECH + r")(\s+)[A-Za-z0-9_-]{16,}"), r"\1\2" + PUB_HIDE),   # crtfc_key 0123…(16자 넘는 값)
+    (re.compile(r"(?i)(" + _PUB_KEYWORD + _PUB_NAMETAIL + r")(?!" + _PUB_NAMECH + r")(\s+)[A-Za-z0-9_-]{16,}"), r"\1\2" + PUB_HIDE),   # crtfc_key 0123…(16자 넘는 값)
     (re.compile(r"\?[A-Za-z0-9_-]{16,}"), "?" + PUB_HIDE),                                                    # /api/x?0123…(이름 없는 긴 값)
 )
 
@@ -515,22 +518,32 @@ def pub_hide_keys(text):
 
 def pub_redact(text):
     """글 → 주소의 물음표 뒤 · 주소의 사용자 정보 · ECOS 경로의 키 · 키 같은 이름의 값 · Bearer · Authorization · Cookie 를 PUB_HIDE 로
-    (PUB_REDACT 차례대로 · 순수 함수 · 여러 번 해도 같아요)."""
+    (PUB_REDACT 차례대로 · 순수 함수). 두 번째로 하면 더 가릴 수만 있어요 (덜 가리지는 않아요)."""
     for rx, rep in PUB_REDACT:
         text = rx.sub(rep, text)
     return text
 
 
+def _pub_str(err):
+    """예외면 '예외 이름: 메시지', 아니면 글 — 메시지를 읽다가 멈춰도 (예외의 __str__ 이 고장) 예외 없이 답해요."""
+    try:
+        return f"{type(err).__name__}: {err}" if isinstance(err, BaseException) else (err if isinstance(err, str) else str(err))
+    except Exception:
+        return f"{type(err).__name__}: (메시지를 읽지 못함)"
+
+
 def pub_raw(err):
-    """로그에 적을 원문 (예외면 '예외 이름: 메시지') — 앞 PUB_LOG_MAX 글자. 발행 파일에는 쓰지 않아요."""
-    s = f"{type(err).__name__}: {err}" if isinstance(err, BaseException) else (err if isinstance(err, str) else str(err))
+    """로그에 적을 원문 (예외면 '예외 이름: 메시지') — 환경의 키 글자는 먼저 가리고 (pub_hide_keys · 키 값은 로그에도 적지 않아요) 앞 PUB_LOG_MAX
+    글자. 발행 파일에는 쓰지 않아요."""
+    s = pub_hide_keys(_pub_str(err))
     return s if len(s) <= PUB_LOG_MAX else s[:PUB_LOG_MAX] + f" …(원문 {len(s):,}자)"
 
 
 def pub_text(text, n=None, say=True):
     """우리가 만든 오류 · 까닭 글 → 발행 파일에 적을 글: 환경의 키 글자를 가리고 (pub_hide_keys), 앞 n 글자로 자른 뒤 (자른 끝이 'nanometer' →
     'nan' 이 되거나 키가 반만 남아도 잡히게 자른 다음에) 주소 · 키 값을 가리고 (pub_redact), 관문이 찾는 낱말 (GATE_BAD_WORD =
-    validate_data.BAD_WORD: 영문자에 붙지 않은 다섯 낱말) 을 PUB_BLANK 로. 한 번 바꾼 글에는 다시 바꿀 것이 없어요. say: 바꾼 것이 있으면 원문을
+    validate_data.BAD_WORD: 영문자에 붙지 않은 다섯 낱말) 을 PUB_BLANK 로. 결과에는 그 낱말이 남지 않아요 · 두 번째로 하면 더 가릴 수만 있어요.
+    say: 바꾼 것이 있으면 원문 (키는 가린 · pub_raw) 을
     실행 로그에 남겨요 (원문을 이미 로그에 적은 곳만 False). 글자가 아니면 str. 출처의 글자에는 쓰지 않아요 (own_src_text)."""
     raw = text if isinstance(text, str) else str(text)
     hid = pub_hide_keys(raw)
@@ -545,10 +558,16 @@ def pub_text(text, n=None, say=True):
 def pub_err(err, n=300, say=True):
     """'발행을 멈추지 않는' 단계의 오류 → 발행 파일의 오류 칸 글: 예외면 '예외 이름: 메시지', 이미 만든 오류 글이면 그 글 — pub_text (키를 가린 뒤
     앞 n 글자). 미리 자른 글이 아니라 예외를 넘기세요 (자르기 전에 키를 가려요)."""
-    return pub_text(f"{type(err).__name__}: {err}" if isinstance(err, BaseException) else err, n, say)
+    return pub_text(_pub_str(err), n, say)
 
 
 PUB_SWEEP_KEYS = ("pxSrc", "usSrc", "splitsInfo", "usForeign", "usExtraMissing", "usListSym", "d1Base", "ownDrop")
+# 앱이 읽는 칸은 손대지 않아요 (리뷰 2차 S2): pxSrc.own.aged · usSrc.own.aged 의 nk 는 종목 이름으로 보여요 (src/data.js ownAgedOf) ·
+# splitsInfo.fixed 는 앱이 분할을 고쳐요 (src/v2/lots.js outSplits). 그 칸의 낱말은 이 PR 전처럼 관문이 막아요.
+PUB_SWEEP_SKIP_KEYS = frozenset({"aged"})
+PUB_SWEEP_SKIP_PATHS = frozenset({"splitsInfo.fixed"})
+PUB_SWEEP_MAX = 5                # Jack 의 상시 규칙의 N (2026-11-20: "more than 5 rows") — 파일마다 · 넘으면 하나도 바꾸지 않아요 (관문이 막아요)
+PUB_SWEEP_KEY = "sweep"          # ownDrop.sweep = {"n": 바꾼 (또는 찾은) 글 수, "paths": [경로] 앞 30}
 
 
 def _pub_walk(o, path, changed):
@@ -559,7 +578,10 @@ def _pub_walk(o, path, changed):
         return c
     if isinstance(o, dict):
         for k in list(o):
-            o[k] = _pub_walk(o[k], f"{path}.{k}", changed)
+            p = f"{path}.{k}"
+            if k in PUB_SWEEP_SKIP_KEYS or p in PUB_SWEEP_SKIP_PATHS:
+                continue
+            o[k] = _pub_walk(o[k], p, changed)
         return o
     if isinstance(o, list):
         for i, v in enumerate(o):
@@ -572,25 +594,53 @@ def _pub_walk(o, path, changed):
 
 def pub_sweep(doc, where, keys=PUB_SWEEP_KEYS):
     """쓰기 바로 앞 마지막 한 번 (2026-11-24 리뷰): 파이프라인이 스스로 만든 기록 칸 (keys — 출처 · 마지막 확인 종가 · 분할 · 외국 회사 · 빠진
-    까닭 · 티커 바꾸기 · d1 기준가 · ownDrop) 의 모든 글을 pub_text 로 (관문의 낱말은 '빈 값' · 키 · 주소의 물음표 뒤는 '…'). 종목 · 회사 ·
-    공시 줄은 손대지 않아요 (출처의 글자는 관문이 그대로 봐요 · own_src_text). 사전의 열쇠는 그대로 · 낱말만 바꿔서 이유의 머리말
-    (US_FOREIGN_CUR_WHY 같은 — us_fgn_kind · 관문이 읽어요) 은 그대로예요. 바꾼 곳은 경로와 원문을 로그에 (앞 10곳). → doc."""
+    까닭 · 티커 바꾸기 · d1 기준가 · ownDrop) 의 글을 pub_text 로 (관문의 낱말은 '빈 값' · 키 · 주소의 물음표 뒤는 '…'). 종목 · 회사 · 공시
+    줄과 앱이 읽는 칸 (PUB_SWEEP_SKIP_KEYS · PUB_SWEEP_SKIP_PATHS) 은 손대지 않아요 (그 글은 관문이 그대로 봐요). 사전의 열쇠는 그대로 · 낱말만
+    바꿔서 이유의 머리말 (US_FOREIGN_CUR_WHY 같은 — us_fgn_kind · 관문이 읽어요) 은 그대로예요.
+    Jack 의 상시 규칙 (리뷰 2차 S5): 바꿀 글이 PUB_SWEEP_MAX 개 이하면 바꾸고, 넘으면 이 파일에서 하나도 바꾸지 않아요 — 관문의 낱말 줄 (바꾸지
+    않는 안전 규칙) 이 예전처럼 막아요. 어느 쪽이든 경로마다 '  !! ' 한 줄 (원문은 pub_raw — 키는 가려요) · ownDrop.sweep = {n, paths} (깨끗한
+    실행도 0). 모두 한 벌의 사본에서 먼저 해 보고 끝까지 된 뒤에만 바꿔요. → doc."""
+    if not isinstance(doc, dict):
+        return doc
+    have = [k for k in keys if k in doc]
+    trial = copy.deepcopy({k: doc[k] for k in have})
     changed = []
-    for k in keys:
-        if isinstance(doc, dict) and k in doc:
-            doc[k] = _pub_walk(doc[k], k, changed)
+    for k in have:
+        trial[k] = _pub_walk(trial[k], k, changed)
+    over = len(changed) > PUB_SWEEP_MAX
+    if not over:
+        for k in have:
+            doc[k] = trial[k]
+    for p, raw in changed:
+        log(f"  !! {where} 우리 기록 글 {p}: " + ("관문의 낱말 · 키가 있어 그대로 둬요 (관문이 막아요)" if over
+                                                 else f"키 · 주소의 물음표 뒤는 '{PUB_HIDE}', 관문의 낱말은 '{PUB_BLANK}' 로 바꿔 적어요")
+            + f" — 원문: {pub_raw(raw)[:500]}")
     if changed:
-        log(f"· {where} 우리 기록 글 {len(changed):,}곳: 키 · 주소의 물음표 뒤는 '{PUB_HIDE}', 관문의 낱말은 '{PUB_BLANK}' 로 바꿔 적어요 — "
-            + " · ".join(f"{p} (원문: {pub_raw(raw)[:500]})" for p, raw in changed[:10]) + (f" 외 {len(changed) - 10}곳" if len(changed) > 10 else ""))
+        log(f"  !! {where} 우리 기록 글 {len(changed):,}곳 " + (f"— {PUB_SWEEP_MAX}곳을 넘어 하나도 바꾸지 않아요 (한꺼번에 많으면 우리 처리의 잘못일 수 "
+                                                          "있어요 · 관문 '글자에 nan·None·null·undefined 없음' 줄이 실패해 발행하지 않아요)" if over
+                                                          else f"바꿔 적음 (ownDrop.{PUB_SWEEP_KEY} · {PUB_SWEEP_MAX}곳을 넘으면 바꾸지 않아 관문이 막아요)"))
     else:
-        log(f"· {where} 우리 기록 글 ({' · '.join(k for k in keys if isinstance(doc, dict) and k in doc)}): 바꿀 것 없음")
+        log(f"· {where} 우리 기록 글 ({' · '.join(have)}): 바꿀 것 없음")
+    own = doc.get("ownDrop") if isinstance(doc.get("ownDrop"), dict) else {}
+    own[PUB_SWEEP_KEY] = {"n": len(changed), "paths": [GATE_BAD_WORD.sub(PUB_BLANK, pub_redact(p)) for p, _r in changed[:30]]}
+    doc["ownDrop"] = own
     return doc
+
+
+def pub_safe(what, fn, *a, **k):
+    """쓰기 바로 앞의 청소 단계 (own_src_text · own_drop_pub · pub_sweep) 를 불러요 — 멈추면 크게 남기고 그 단계 없이 그대로 써요 (관문이 정해요
+    · 리뷰 2차 N1). → fn 의 값 · 멈추면 None."""
+    try:
+        return fn(*a, **k)
+    except Exception as e:
+        log(f"  !! {what} 이 오류로 멈췄어요 ({pub_raw(e)[:500]}) — 그 단계 없이 그대로 써요 (관문이 정해요)")
+        return None
 
 
 def own_drop_pub(doc, where):
     """발행 파일 doc 의 ownDrop 기록마다 rows 의 글 (이름 · 까닭 · 줄 글) 을 pub_text 로 바꿔요 (모양 그대로 · 글자가 아닌 값은 그대로 — 모양은
     관문이 봐요). 원문은 각 검사의 로그 줄에 있어요 (_own_log · own_drop_text · 업종 · 마지막 확인 종가 · own_src_text). 바꾼 것이 있으면 한 줄.
-    여러 번 불러도 같아요. → doc."""
+    각 기록은 관문의 제 줄이 N 을 봐요 (그래서 pub_sweep 의 N 에는 들지 않아요). → doc."""
     own = doc.get("ownDrop") if isinstance(doc, dict) else None
     if not isinstance(own, dict):
         return doc
@@ -15411,7 +15461,9 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                      "(validate_data.kr_own_close_bad)로 뺀 국내 종목 (2026-11-20 · rows [코드, 까닭] · pxSrc.own.bad 와 같은 수 · 관문은 한 점검에서 "
                      "5개를 넘으면 실패, 있으면 경고) · srcText = 출처 글자(야후 설명 de · disc.json 의 DART 직위 pos)에 관문의 낱말 줄이 "
                      "찾는 낱말이 있어 비운 칸 (2026-11-24 · rows ['열쇠 칸', 까닭] · 5칸을 넘으면 비우지 않고 그대로 둬 그 줄이 발행을 막아요) · 모든 rows "
-                     "의 글에서 그 낱말은 '빈 값' 으로 적어요 (원문은 실행 로그)"),
+                     "의 글에서 그 낱말은 '빈 값' 으로 적어요 (원문은 실행 로그) · sweep = 쓰기 바로 앞에 우리 기록 칸 (pxSrc · usSrc · splitsInfo · "
+                     "usForeign · usExtraMissing · usListSym · d1Base · ownDrop — 앱이 읽는 own.aged · splitsInfo.fixed 는 빼고) 에서 고친 글 "
+                     "(2026-11-24 · {n 고친 · 찾은 글 수, paths 경로 앞 30} · 한 파일에서 5곳을 넘으면 고치지 않고 그대로 둬 그 줄이 발행을 막아요)"),
          "fgnCut": ("미국 상장 외국 회사의 종목 칸: 회사 합계와 맞지 않아 비운 칸 {per · pbr · dy: mismatch 맞춰 봤는데 맞지 않음 · currency 재무제표 "
                     "통화를 확인하지 못함 · norecord 배당 기록 · 가격을 읽지 못한 배당수익률 · nocompare 회사 숫자로 PER · PBR 을 맞춰 볼 수 없음 (적자 · ROE 없음) · "
                     "nocompare-own 같은 뜻, 스위치 own 일 때 (지금 · 앱 줄 co.fgnNoCmp) · stopped 검사가 멈춘 날 맞춰 보지 않고 비움 (앱 줄 co.fgnStopped)} "
@@ -15850,8 +15902,11 @@ def main():
     payload.setdefault("ownDrop", {})["indFill"] = ind_drop   # 2026-11-19 (Jack 의 상시 규칙): 업종 채운 값 중 되돌린 행 (관문 줄이 봐요)
     # 2026-11-20 (#159): 마지막 확인 종가로 실었다가 관문과 같은 함수로 뺀 국내 종목 (pxSrc.own.bad 와 같은 수 · 관문이 맞춰 봐요 · 깨끗한 실행도 0)
     payload["ownDrop"][KR_OWN_DROP_KEY] = own_drop_rec(kr_drop)
-    own_src_text(payload, OUT)               # 2026-11-24 (Jack 의 상시 규칙): 야후 설명(de)에 관문의 낱말 — 그 칸만 비워요 (ownDrop.srcText · 5칸 넘으면 그대로)
-    pub_sweep(payload, OUT)                  # 2026-11-24: 쓰기 바로 앞 · 우리 기록 칸 (PUB_SWEEP_KEYS · ownDrop 포함) 의 키 · 관문 낱말 — 종목 줄은 그대로
+    # 2026-11-24 (#178): 쓰기 바로 앞 — 멈추면 크게 남기고 그대로 써요 (관문이 정해요). 야후 설명(de)에 관문의 낱말 → 그 칸만 비워요 (ownDrop.srcText ·
+    # 5칸 넘으면 그대로) · ownDrop 까닭 글 · 우리 기록 칸 (PUB_SWEEP_KEYS · 앱이 읽는 칸과 종목 줄은 그대로 · 5곳 넘으면 그대로 · ownDrop.sweep)
+    pub_safe("출처 글자 확인 (own_src_text · data.json)", own_src_text, payload, OUT)
+    pub_safe("ownDrop 까닭 글 (own_drop_pub · data.json)", own_drop_pub, payload, OUT)
+    pub_safe("우리 기록 글 (pub_sweep · data.json)", pub_sweep, payload, OUT)
     log(kr_count_line(payload))
     write_json(OUT, payload)
     try:                                     # 2026-11-21 (#161 리뷰): 같은 기준일을 다시 돈 결과 (실제 실행만 · 다음 실행은 이 실행이 초록이었을 때만 믿어요)
@@ -15928,8 +15983,10 @@ def main():
         disc = empty_disc(today)
     disc["publishedAt"] = published_at
     own_check_disc(disc, today)              # 2026-11-19 (Jack 의 상시 규칙): 나쁜 공시 줄은 빼거나 비워요 (disc.json ownDrop · 관문과 같은 함수)
-    own_src_text(disc, OUT_DISC)             # 2026-11-24 (Jack 의 상시 규칙): DART 직위(pos)에 관문의 낱말 — 그 칸만 비워요 (ownDrop.srcText)
-    pub_sweep(disc, OUT_DISC, keys=("ownDrop",))   # 2026-11-24: 쓰기 바로 앞 · 우리 기록 글 (ownDrop) 의 키 · 관문 낱말
+    # 2026-11-24 (#178): DART 직위(pos)에 관문의 낱말 → 그 칸만 비워요 (ownDrop.srcText) · ownDrop 글 — 멈추면 크게 남기고 그대로 써요
+    pub_safe("출처 글자 확인 (own_src_text · disc.json)", own_src_text, disc, OUT_DISC)
+    pub_safe("ownDrop 까닭 글 (own_drop_pub · disc.json)", own_drop_pub, disc, OUT_DISC)
+    pub_safe("우리 기록 글 (pub_sweep · disc.json)", pub_sweep, disc, OUT_DISC, keys=("ownDrop",))
     write_json(OUT_DISC, disc)
     if "issueOk" not in disc:                # #161 리뷰 3차 nit: 다시 쓴 아침 disc.json 에 칸이 없어도 멈추지 않고 크게 (관문이 그 파일을 봐요)
         log(f"  !! {OUT_DISC} 에 issueOk 칸이 없어요 — 주요사항 공시 목록을 받았는지 몰라요 (관문이 봐요)")
