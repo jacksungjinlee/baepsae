@@ -3,9 +3,10 @@
 
 A. 한 해의 배당 표에 현금배당금총액은 있는데 보통주 주당 현금배당금이 0 ('-') 이면 그해 보통주 배당은 '모름' (빈 칸) 이에요 — 0 (배당 없음) 이
    아니에요. 우선주 · 종류주가 총액을 다 받은 해만 0 이 맞아요. 올해 것을 비운 배당 회사는 증명의 data (nodps) 에 적혀 줄 4 를 받아요.
-B. 주당 칸의 값이 주당 금액이 아닌 해 (총액의 1,000배 넘게 · 올해가 종가 이상 — 와이엔텍) 는 그해 주당 배당을 비우고 (올해면 baddps · 줄 4),
+B. 주당 칸의 값이 주당 금액이 아닌 해 (총액의 1,000배 넘게 · 올해가 종가 이상 — 와이엔텍) 는 그해 주당 배당을 비우고 (올해 것이 총액과 1,000배 넘게
+   다르면 예전 증명과 같은 div · 줄 3 — '회사가 공시한 배당 자료와 주식 수가 서로 맞지 않아서 …'),
    DART 배당수익률(dy)이 오늘 기준 주당 배당 ÷ 52주 범위에서 3배 넘게 벗어나면 비워요 (흥국 56.0 · 지투파워 33.7 · 아비코전자 30.0 · 알피바이오 10.0).
-관문: 새 줄 둘은 경고만 (검사가 멈춰도) · nodps · baddps 는 그 종목의 주당 배당이 정말 비었을 때만 줄 4 를 받아요.
+관문: 새 줄 둘은 경고만 (검사가 멈춰도) · nodps 는 그 종목의 주당 배당이 정말 비었을 때만 줄 4 를 받아요.
 
 실제 숫자: 2026-11-21 06:41 발행본 (pxDate 2026-11-20) 의 종목 · corp.json cash3 (억원) · 와이엔텍의 배당 표는 tests/fixtures/dvproof/cases_1115.json
 (2026-11-15 OpenDART 응답을 파이프라인의 해석 함수로 읽은 값)."""
@@ -156,14 +157,25 @@ def test_the_real_dart_samples_in_the_fixtures_are_unchanged():
 
 # ── B. 주당 칸의 값이 주당 금액이 아님 · 그럴듯하지 않은 배당수익률 ────────────
 def test_a_total_written_in_the_per_share_cell_is_blanked_with_line_four():
-    """와이엔텍 067900: 주당 칸에 총액 (1,809,965,900원 · 총액 18.09억원) → 세 해 모두 비우고 줄 4 (baddps). 예전에는 증명이 '배당 표가 주식 수와
-    어긋남'(줄 3)으로 숨겼어요 — 그 계산은 이제 주당 배당 없이는 돌지 않아요."""
+    """와이엔텍 067900: 주당 칸에 총액 (1,809,965,900원 · 총액 18.09억원) → 세 해 모두 비우고, 예전 증명과 같은 div · 줄 3 ('배당 표가 주식 수와
+    어긋남' — 총액 ÷ 주당 배당 = 1주 · 그대로 맞아요). 증명 계산은 이제 주당 배당 없이는 돌지 않아서 div_raw_guard 가 적어요."""
     c = _load("cases_1115.json")["cases"]["067900"]
     s = {**copy.deepcopy(c["s"]), "cls": "kr", "t": "067900", "_bas": copy.deepcopy(c["bas"]), "dps": c["s"]["dps3"][0]}
     by, counts = run([s])
     s = by["067900"]
-    assert "dps" not in s and "dps3" not in s and "divSt" not in s and s["dvLine"] == 4
-    assert counts["raw"]["dpsBad"] == {"067900": [0, 1, 2]} and counts["proofSub"]["data"] == {"067900": "baddps"}
+    assert "dps" not in s and "dps3" not in s and "divSt" not in s and s["dvLine"] == 3
+    assert counts["raw"]["dpsBad"] == {"067900": [0, 1, 2]} and counts["proofSub"]["data"] == {"067900": "div"}
+    assert counts["proof"]["dataT"] == ["067900"]
+
+
+def test_a_per_share_figure_at_or_above_the_close_only_gets_no_line():
+    """올해 주당 배당 ≥ 종가인데 총액 ÷ 주당 배당이 오늘 주식 수와 맞으면 (같은 기준 · 100% 넘는 수익률) 비우지만 두 줄 어느 쪽도 그대로 맞지 않아요 →
+    줄 없음 · 증명의 기록에도 없음 (로그에 크게)."""
+    rows = alot([6000, 500, 400], cash=[6000, 500, 400])                         # 1,000,000주 × 6,000원 = 60억원 · 종가 5,000원
+    by, counts = run([stock("000040", rows, 5000.0, 1_000_000)])
+    s = by["000040"]
+    assert "dps" not in s and s["dps3"] == [None, 500, 400] and "dvLine" not in s
+    assert counts["raw"]["dpsBad"] == {"000040": [0]} and counts["proofSub"]["data"] == {} and counts["proof"]["dataT"] == []
 
 
 def test_split_sized_ratios_and_pre_listing_dividends_are_kept():
@@ -239,7 +251,8 @@ def test_samsung_and_hyundai_motor_are_unchanged():
 
 # ── 관문: 줄 4 와 기록 · 새 경고 줄 ─────────────────────────────
 def with_raw(files, own=True):
-    """좋은 픽스처에 파이프라인이 한 일을 그대로: A 한 곳 (0 인데 총액 → 모름 · nodps) · B 한 곳 (픽스처에서 주당 배당 ≥ 종가인 종목 → baddps).
+    """좋은 픽스처에 파이프라인이 한 일을 그대로: A 한 곳 (0 인데 총액 → 모름 · nodps · 줄 4) · B 한 곳 (픽스처에서 주당 배당 ≥ 종가인 종목을
+    주당 칸에 총액을 적은 회사로 · div · 줄 3).
     픽스처는 모든 회사에 총액 1억원을 줘서, 배당 없는 회사의 총액은 0 으로 (진짜 표처럼)."""
     files, _ = with_proof(files)
     data, corp = files["data"], files["corp"]
@@ -252,10 +265,10 @@ def with_raw(files, own=True):
     a = next(s for s in kr if s.get("divSt") == "same" and s["t"] not in V.MUST and s.get("dyt") and "dvProof" not in s and s["t"] in cby)
     b = next(s for s in kr if (s.get("dps") or 0) >= s["price"])
     raw = {"v": 1, "contra": {a["t"]: [0]}, "prefOnly": {}, "dpsBad": {b["t"]: [0]}, "dyBad": {}, "dyOk": 0, "dyNo": 0}
-    for s in (a, b):
+    for s, ln in ((a, 4), (b, 3)):
         s.pop("dps")
         s["dps3"] = [None, s["dps3"][1], s["dps3"][2]]
-        s.update(dps3a=[None] * 3, dpsF=[None] * 3, divSt="nd", dvLine=4)
+        s.update(dps3a=[None] * 3, dpsF=[None] * 3, divSt="nd", dvLine=ln)
         s.pop("dyt", None), s.pop("dz", None)
         mirror(files, s)
         if s["t"] in cby:
@@ -264,7 +277,7 @@ def with_raw(files, own=True):
     recount(files)
     recount_why(files)
     proof.update(data=2, dataT=sorted([a["t"], b["t"]]))
-    data["divCheck"].update(proof=proof, proofSub={"v": 1, "rights": {}, "data": {a["t"]: "nodps", b["t"]: "baddps"}}, raw=raw)
+    data["divCheck"].update(proof=proof, proofSub={"v": 1, "rights": {}, "data": {a["t"]: "nodps", b["t"]: "div"}}, raw=raw)
     if own:
         data["ownDrop"] = {"divLine": {"n": 0, "rows": []}}
     return files, a, b
@@ -282,32 +295,49 @@ def test_line_four_for_a_blanked_per_share_dividend_is_accepted_by_the_record_ch
     rep = check(cur, prev)
     assert not rep.failed, rep.table()
     got = rows_of(rep)
-    assert got[SUB_ROW][3] == "PASS" and "빠진 자료 줄 2" in got[SUB_ROW][1], got[SUB_ROW]
+    assert got[SUB_ROW][3] == "PASS" and "배당 자료 줄 1 · 빠진 자료 줄 1 · 줄 없음 0" in got[SUB_ROW][1], got[SUB_ROW]
     assert got[ROWS[0]][3] == "PASS", got[ROWS[0]]
     assert got[RAW_ROW][3] == "PASS" and "남은 해 없음" in got[RAW_ROW][1], got[RAW_ROW]
     assert got[PLAUS_ROW][3] == "PASS" and "벗어난 값 없음" in got[PLAUS_ROW][1], got[PLAUS_ROW]
     # 파이프라인의 같은 검사(own_blank_div_lines)도 줄을 그대로 둬요
     kr = [s for s in cur["data"]["stocks"] if s.get("cls") == "kr"]
-    assert F.own_blank_div_lines(kr, cur["data"]["divCheck"]) == {"n": 0, "rows": []} and a["dvLine"] == 4 and b["dvLine"] == 4
+    assert F.own_blank_div_lines(kr, cur["data"]["divCheck"]) == {"n": 0, "rows": []} and a["dvLine"] == 4 and b["dvLine"] == 3
     assert not check(cur, None, mode="live").failed
 
 
 def test_line_four_on_a_stock_whose_per_share_dividend_still_shows_is_blanked_or_fails(raw_pair):
-    """nodps · baddps 는 그 종목의 주당 배당이 정말 비었을 때만 줄 4 — 값이 남아 있으면 줄의 말이 틀려요: 파이프라인이 줄을 비우고 (ownDrop.divLine),
+    """nodps 는 그 종목의 주당 배당이 정말 비었을 때만 줄 4 — 값이 남아 있으면 줄의 말이 틀려요: 파이프라인이 줄을 비우고 (ownDrop.divLine),
     파일에 남아 있으면 관문이 실패해요 (기존 상시 규칙 그대로)."""
     cur, prev, a, b = raw_pair
     a["dps"] = 500.0
     rows, _, want, _ = V.div_line_bad_rows([s for s in cur["data"]["stocks"] if s.get("cls") == "kr"], cur["data"]["divCheck"])
-    assert [(r[0], r[2]) for r in rows] == [(a["t"], "shown")] and a["t"] not in want and want[b["t"]] == 4
+    assert [(r[0], r[2]) for r in rows] == [(a["t"], "shown")] and a["t"] not in want and want[b["t"]] == 3
     assert "주당 배당을 비운 종목인데 주당 배당이 있어요" in rows[0][1]
     rep = check(cur, prev)
     assert SUB_ROW in {r[0] for r in rep.failed}, rep.table()
     kr = [s for s in cur["data"]["stocks"] if s.get("cls") == "kr"]
     own = F.own_blank_div_lines(kr, cur["data"]["divCheck"])
-    assert own["n"] == 1 and "dvLine" not in a and b["dvLine"] == 4
+    assert own["n"] == 1 and "dvLine" not in a and b["dvLine"] == 3
     cur["data"]["ownDrop"]["divLine"] = own
     rep = check(cur, prev)
     assert not rep.failed and rows_of(rep)[SUB_ROW][3] == "WARN", rep.table()
+
+
+@pytest.mark.parametrize("change", [
+    lambda d, a, b: d["divCheck"]["proofSub"]["data"].pop(a["t"]),                             # 기록 없이 줄 4 (dataT 와도 달라요)
+    lambda d, a, b: (d["divCheck"]["proofSub"]["data"].pop(b["t"]), d["divCheck"]["proof"]["dataT"].remove(b["t"]),
+                     d["divCheck"]["proof"].update(data=1)),                                      # 기록에서 빠진 B 에 줄 3
+    lambda d, a, b: d["divCheck"]["proofSub"]["data"].update({a["t"]: "div"}),                    # 기록은 줄 3 인데 줄 4
+    lambda d, a, b: d["divCheck"]["proofSub"]["data"].update({b["t"]: "nodps"}),                  # 기록은 줄 4 인데 줄 3
+    lambda d, a, b: a.update(dvLine=3),
+    lambda d, a, b: b.update(dvLine=4),
+])
+def test_a_line_on_a_blanked_per_share_dividend_that_no_record_backs_still_fails(raw_pair, change):
+    """주당 배당을 비운 종목에도 기록이 정하지 않은 줄은 예전처럼 관문이 막아요 (파일에 남으면 실패)."""
+    cur, prev, a, b = raw_pair
+    change(cur["data"], a, b)
+    rep = check(cur, prev)
+    assert {SUB_ROW, ROWS[0]} & {r[0] for r in rep.failed}, rep.table()
 
 
 def test_remaining_contradictions_and_unbelievable_values_only_warn(raw_pair):

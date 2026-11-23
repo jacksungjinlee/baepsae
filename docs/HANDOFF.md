@@ -24,6 +24,18 @@ links, "전무가" off the must-not-show list, labels) and a rename in `tests/te
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
 v19.6g, v19.6h.
 
+**Korean dividend tables that contradict themselves (branch `claude/kr-div-contradictions`, PR pending, 2026-11-24):** audit of the
+11-21 publish. (A) 18 Korean payers showed "배당을 주지 않았어요" (dps 0, ranked last) although the same DART table gives a cash total
+(현대코퍼레이션 84.08억원, 케이프, 앱코, 동일산업, 한텍 …): a year whose common 주당 배당 is 0 ('-') next to a total above 0 is now unknown
+(blank), unless the preferred shares explain the whole total (±15%); never a figure made up from the total. (B) a per-share cell more
+than 1,000 × off the total (와이엔텍's 1,809,965,900원) or at/above today's close is blanked; DART's `dy` more than 3 × off today's
+per-share dividend over the 52-week range is blanked (흥국 56.0 · 지투파워 33.7 · 아비코전자 30.0 · 알피바이오 10.0; the old app's
+배당수익률). 2.0: A shows 자료가 없어요 + line 4 (new proofSub case `nodps` — **needs Jack's yes, category 2: the gate accepts line 4 for
+one new record case, only while dps is blank**); 와이엔텍 keeps 배당을 줘요 + line 3 (existing case `div`, no gate change). Record
+`divCheck.raw`; two warning-only gate rows. On the 11-21 copy: 26 stocks / 44 years blanked (18 this year), 1 per-share figure, 14 `dy`;
+삼성전자, 현대차 and the 10 largest payers unchanged. The cached DART parse is unchanged (no refetch). RUNBOOK "Korean dividend tables
+that contradict themselves". Pipeline change: dry run before merge.
+
 **CI checks the two PR rules (#175, 2026-11-23; Jack: "Automate the rules you missed"):** the last step of `ci.yml`'s `checks`
 job runs `tools/pr_rules.py`, so the required `ci` check goes red when either rule is missed. Run it yourself before pushing:
 `python tools/pr_rules.py --body-file BODY.md --base $(git merge-base origin/main HEAD) --head HEAD` (CI compares

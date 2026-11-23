@@ -604,19 +604,20 @@ EXACT_TOL = 1e-6
 # 꼭 맞아요. fetch_data.py 와 같은 값을 따로 적어요. data 의 other (리뷰 2026-11-19) = 파이프라인이 이름을 붙이지 않은 배당 표 이유 — 줄이
 # 있으면 실패 (PROVE_SUB_LINE 에 없어요), 있기만 해도 그 줄이 경고 (새 이유 글에 이름을 붙일 때까지 이유를 말하지 않는 종목).
 PROVE_LINE = {"line": 1, "rights": 2, "data": 3, "missing": 4}
-# 2026-11-23 (DART 배당 표 안의 어긋남 · 아래 DPS_CASH_FAR 설명): nodps · baddps — 올해 보통주 주당 배당을 '모름'으로 비운 배당 회사 (div_raw_guard ·
-# 이 칸 둘만 새로 · 다른 경우와 줄은 그대로). 줄 4 의 말("회사 공시에 배당 계산에 필요한 자료가 빠져 있어서 …")이 그대로 맞아요: 공시에 쓸 수 있는
-# 주당 배당이 없어요. 관문은 그 종목의 주당 배당(dps · dps3[0])이 정말 비어 있을 때만 그 줄을 받아요 (div_line_bad_rows).
+# 2026-11-23 (DART 배당 표 안의 어긋남 · 아래 DPS_CASH_FAR 설명): nodps — 총액은 있는데 올해 보통주 주당 배당 칸이 0 · '-' 라 '모름'으로 비운 회사
+# (div_raw_guard · 이 경우 하나만 새로 · 다른 경우와 줄은 그대로). 줄 4 의 말("회사 공시에 배당 계산에 필요한 자료가 빠져 있어서 …")이 그대로 맞아요:
+# 공시에 쓸 수 있는 주당 배당이 없어요. 있던 다섯 경우(nototal 총액 없음 · nostk · pref0 · nopfo · prefmix)는 저마다 빠진 조각을 이름으로 말해서, 총액이
+# 있는 회사에 쓰면 기록이 틀린 말을 해요 (관문의 경고 상세가 '(총액 없음 · 줄)'로 적어요). 관문은 그 종목의 주당 배당(dps · dps3[0])이 정말 비어 있을
+# 때만 이 줄을 받아요 (div_line_bad_rows). 주당 칸에 총액을 적은 회사 (와이엔텍) 는 예전 증명과 같은 div (줄 3) 예요.
 PROVE_SUB = {"rights": ("sh", "shnew", "unk"),
-             "data": ("div", "pref0", "neg", "nototal", "prefmix", "nopfo", "nostk", "noshr", "other", "nodps", "baddps")}
+             "data": ("div", "pref0", "neg", "nototal", "prefmix", "nopfo", "nostk", "noshr", "other", "nodps")}
 PROVE_SUB_LINE = {"rights": {"sh": 2}, "data": {"div": 3, "nototal": 4, "nostk": 4, "pref0": 4, "nopfo": 4, "prefmix": 4,
-                                                "nodps": 4, "baddps": 4}}   # 경우 → 줄 (Jack 2026-11-19: 4)
+                                                "nodps": 4}}   # 경우 → 줄 (Jack 2026-11-19: 4)
 PROVE_SUB_KO = {"sh": "주주배정 (새 주식 상장됨)", "shnew": "주주배정 (새 주식이 아직 상장 전)", "unk": "방식을 모르는 결정만", "div": "총액 ÷ 주당 배당이 주식 수와 다름", "pref0": "우선주 배당 줄이 있는데 주식의 총수 현황에 우선주 수가 따로 없음",
                 "neg": "총액이 우선주 몫보다 작음", "nototal": "총액 없음", "prefmix": "주당 배당이 다른 종류주가 섞임", "nopfo": "우선주 주식 수 모름",
                 "nostk": "그해 말 주식의 총수 현황 없음", "noshr": "오늘 상장 주식 수 없음", "other": "이름을 붙이지 않은 배당 표 이유",
-                "nodps": "총액은 있는데 보통주 주당 배당 칸이 0 · '-' (모름으로 비움)",
-                "baddps": "주당 배당 칸의 값이 주당 금액이 아님 (총액과 크게 다르거나 종가 이상 · 비움)"}
-RAW_SUB = ("nodps", "baddps")      # 주당 배당을 비운 종목의 경우 — 그 종목의 dps · dps3[0] 이 비어 있어야 줄 4 가 맞아요
+                "nodps": "총액은 있는데 보통주 주당 배당 칸이 0 · '-' (모름으로 비움)"}
+RAW_SUB = ("nodps",)               # 주당 배당을 비운 종목의 경우 — 그 종목의 dps · dps3[0] 이 비어 있어야 줄 4 가 맞아요
 # ── 2026-11-23 (새 줄만 · 경고만 · 실패하는 줄 없음 · 늦추는 줄 없음): DART 배당 표 안의 어긋남과 그럴듯하지 않은 값 (2026-11-21 발행본 감사) ──
 # A. 한 해의 표에 현금배당금총액은 있는데 보통주 주당 현금배당금이 0 ('-') 이면 그해 보통주 배당은 '모름'이에요 (0 = 배당 없음이 아니에요: 현대코퍼레이션
 #    84.08억원 · 케이프 · 앱코 · 동일산업 · 한텍 … 18곳이 '배당을 주지 않았어요'로 보였어요). 0 이 맞는 때는 그해 우선주 · 종류주가 총액을 다 받았을
@@ -6733,7 +6734,7 @@ def dy_base(s):
 
 
 def raw_blank(s):
-    """그 종목의 올해 보통주 주당 배당이 비어 있는지 (dps 없음 · dps3 가 없거나 dps3[0] 이 빈 칸) — proofSub.data 의 nodps · baddps 가 줄 4 를 받는 조건."""
+    """그 종목의 올해 보통주 주당 배당이 비어 있는지 (dps 없음 · dps3 가 없거나 dps3[0] 이 빈 칸) — proofSub.data 의 nodps 가 줄 4 를 받는 조건."""
     d3 = s.get("dps3")
     return s.get("dps") is None and (not isinstance(d3, list) or not d3 or d3[0] is None)
 
@@ -6777,7 +6778,7 @@ def div_line_bad_rows(kr, dc):
             if top:
                 ok_k.add(k)
                 want.update({t: PROVE_SUB_LINE[k][v] for t, v in m.items() if isinstance(v, str) and v in PROVE_SUB_LINE[k]})
-    # 2026-11-23: 주당 배당을 비운 경우(nodps · baddps)는 그 종목의 주당 배당이 정말 비어 있을 때만 줄 4 를 정해요 (값이 있으면 줄 4 의 말이 틀려요 —
+    # 2026-11-23: 주당 배당을 비운 경우(nodps)는 그 종목의 주당 배당이 정말 비어 있을 때만 줄 4 를 정해요 (값이 있으면 줄 4 의 말이 틀려요 —
     # 이 두 경우에만 · 다른 경우는 그대로)
     by_t = {s.get("t"): s for s in kr}
     dsub = sub.get("data") if isinstance(sub, dict) and isinstance(sub.get("data"), dict) else {}
@@ -6808,7 +6809,7 @@ def check_v191j_lines(rep, dc, pf, kr, by, pdata, data=None, mode="publish"):
     """v19.1j 새 줄 (Jack 2026-11-15 답 11 · 13 · 2026-11-19): 숨긴 배당수익률의 줄 — divCheck.proofSub 와 종목의 dvLine 2 · 3 · 4 가 꼭 맞아요 (우리 기록끼리).
     proofSub: v1 · rights · data 마다 {코드: 경우} 이고, 그 코드들 = divCheck.proof 의 rightsT · dataT, 경우는 정해진 것 (PROVE_SUB) ·
     dvLine 2 = rights 중 주주배정(sh) · dvLine 3 = data 중 배당 표가 회사의 주식 수와 실제로 어긋남(div) · dvLine 4 = data 중 회사 공시에 조각이
-    빠짐(nototal · nostk · pref0 · nopfo · prefmix · 2026-11-23 주당 배당을 비운 nodps · baddps — 그 종목의 주당 배당이 정말 비었을 때만) — 그 종목엔 꼭,
+    빠짐(nototal · nostk · pref0 · nopfo · prefmix · 2026-11-23 주당 배당을 비운 nodps — 그 종목의 주당 배당이 정말 비었을 때만) — 그 종목엔 꼭,
     다른 종목엔 없음 (PROVE_SUB_LINE). data 의 other (파이프라인이 이름을
     붙이지 않은 배당 표 이유 · 리뷰 2026-11-19)는 줄이 없어야 하고, 하나라도 있으면 맞더라도 이 줄이 경고예요. 없으면 v19.1j 전
     데이터라 경고 한 줄만 — 직전 발행본에 있었는데 빠지면 실패 (줄 표시 2 · 3 · 4 는 위 '배당 기준 증명 기록' 줄이 이 기록 없이는 막아요).
@@ -6878,7 +6879,7 @@ def _div_lines_own(rep, name, own, dc, kr, pdata, mode):
             f"Jack 의 상시 규칙 (2026-11-19): 기록과 맞지 않는 줄은 파이프라인이 비우고 발행 (ownDrop.divLine) · 실패는 줄을 잃은 종목 > {DIV_LINE_BLANK_MAX} "
             "(비운 줄 · 기록이 없거나 틀려 확인할 수 없는 직전 발행본의 줄 · 사이트 점검은 경고) 또는 맞지 않는 줄이 남음 · 비운 줄 · 표시 없는 줄 · 기록 문제 · "
             "이름 없는 이유(other)는 경고 · dvLine 2 = 주주배정(sh) · "
-            "3 = 배당 표가 주식 수와 실제로 어긋남(div) · 4 = 회사 공시에 조각이 빠짐(nototal · nostk · pref0 · nopfo · prefmix · 주당 배당을 비운 nodps · baddps)",
+            "3 = 배당 표가 주식 수와 실제로 어긋남(div) · 4 = 회사 공시에 조각이 빠짐(nototal · nostk · pref0 · nopfo · prefmix · 주당 배당을 비운 nodps)",
             warn=bool(own["n"] or missing or probs or oth or many or lost))
     if own["n"]:
         rep.detail("파이프라인이 비운 숨긴 배당수익률의 줄 (ownDrop.divLine)", [f"{t}: {w}" for t, w in own["rows"]]
@@ -6919,7 +6920,7 @@ def _div_lines_old(rep, name, dc, pf, kr, pdata):
                             + (f" · 이름 없는 배당 표 이유 {len(oth)}곳 (줄 없음): {', '.join(oth[:4])}{'…' if len(oth) > 4 else ''}" if oth else ""))
             if not bad else " · ".join(bad[:3]),
             "v1 · rights · data 의 종목 = proof 의 rightsT · dataT · dvLine 2 = 주주배정(sh) · 3 = 배당 표가 주식 수와 실제로 어긋남(div) · "
-            "4 = 회사 공시에 조각이 빠짐(nototal · nostk · pref0 · nopfo · prefmix · nodps · baddps) — 그 종목에만 · 이름 없는 이유(other)는 경고",
+            "4 = 회사 공시에 조각이 빠짐(nototal · nostk · pref0 · nopfo · prefmix · nodps) — 그 종목에만 · 이름 없는 이유(other)는 경고",
             warn=bool(oth))
 
 

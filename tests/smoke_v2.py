@@ -14293,6 +14293,124 @@ def scene_div_lines(R, files, width, dark=False):
     srv.shutdown()
 
 
+# ── 2026-11-23: 파이프라인이 비운 보고서의 주당 배당 (DART 배당 표 안의 어긋남 · data.json dps 없음 + dvLine) ──
+# A: 총액은 있는데 보통주 주당 칸이 0 · '-' (proofSub nodps · 줄 4): 보통주가 받았는지 몰라요 → 자료가 없어요 + 줄 4 (배당을 줘요 아님)
+# B: 주당 칸의 값이 주당 금액이 아님 (와이엔텍 꼴 · proofSub div · 줄 3): 회사는 배당해요 → 배당을 줘요 + 줄 3 · 총액으로 센 배당성향은 그대로
+DIV_BLANK = {"066570": ("missingHidden", 4), "033780": ("dataHidden", 3)}           # fixture 의 배당 회사 둘 (오늘 데이터의 종목이 아니에요)
+
+
+def div_blank_files(files):
+    """fixture 위에: divCheck 가 있는 파일 · 두 배당 회사의 올해 주당 배당을 파이프라인처럼 비우고 (dps 없음 · dps3[0] 빈 칸 · 확인한 해 없음) 표시
+    dvLine 을 달아요 · 그 회사의 corp.json 총액(cash3 · 억원)."""
+    f = daily_files(files)
+    d = f["data.json"]
+    d["divCheck"] = {}
+    by = {x["t"]: x for x in d["stocks"]}
+    cb = {x["t"]: x for x in f["corp.json"]["companies"]}
+    for t, (_, line) in DIV_BLANK.items():
+        s = by[t]
+        assert (s.get("dps") or 0) > 0 and isinstance(s.get("dps3"), list), f"{t}: the fixture has no dividend to blank"
+        s.pop("dps")
+        s.update(dps3=[None] + list(s["dps3"][1:]), dps3a=[None] * 3, dpsF=[None] * 3, divSt="nd", dvLine=line, fy=2025)
+        s.pop("dyt", None), s.pop("dz", None)
+        cb[t].update(cash3=[100.0, 90.0, 80.0], fy=2025, dps3a=[None] * 3, dpsF=[None] * 3, divSt="nd")
+        cb[t].pop("dps", None), cb[t].pop("dyt", None), cb[t].pop("dz", None)
+    return f
+
+
+def scene_div_blank(R, files, width, dark=False):
+    """2026-11-23 (DART 배당 표 안의 어긋남): 파이프라인이 보고서의 주당 배당을 비운 두 회사 — 회사 페이지 (요약의 배당 칸 · 배당 탭) · 관심 종목 ·
+    두 종목 비교가 승인된 줄을 숫자 자리에: A (줄 4) 는 '자료가 없어요' (배당을 줘요 · 배당을 주지 않았어요가 아님 · 배당성향 없음), B (줄 3) 는
+    '배당을 줘요' (총액으로 센 배당성향은 그대로). 12px · 가로 스크롤 없음 · 뱁이 없음 · 화면 모드 · 오류 없음."""
+    S = f"비운 주당 배당의 줄 {width}{' 어두운' if dark else ''}"
+    wide = width >= 1024
+    data = div_blank_files(files)
+    by = {x["t"]: x for x in data["data.json"]["stocks"]}
+    pxd = data["data.json"]["pxDate"]
+    CD, T = C["co"]["div"], CO["tiles"]
+    (a_t, (a_key, _)), (b_t, (b_key, _)) = DIV_BLANK.items()
+    dy = [{"k": "dyAtLeast", "v": 1}]
+    watch = {a_t: {"at": "2026-11-05", "conds": dy}, b_t: {"at": "2026-11-04", "conds": dy}}
+    hold = {"t": b_t, "nk": by[b_t]["nk"], "cls": "kr", "ind": by[b_t].get("ind"), "kind": "core", "target": 1.0, "setAt": "2026-10-01",
+            "plannedQty": 10, "planPx": by[b_t]["price"], "rules": [{"id": "audit", "kind": "sell", "check": "pending"}]}
+    deck = {"id": "dblank", "name": "모양 포트폴리오", "createdAt": "2026-10-01", "planFx": 1300,
+            "settings": {"points": {"value": 3}, "strict": "loose", "maxPct": 100, "amountMan": 1000}, "holdings": [hold], "purchases": []}
+    store = {"v": 2, "decks": [deck], "guideSeen": pxd, "watch": watch}
+    screen = pc_device(width) if wide else {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2}
+    srv, ctx, page, base = R.open(build_site(data), width, init=v196c_seed(store), path="/app.html?dev=1#stocks",
+                                  device={**screen, "color_scheme": "dark" if dark else "light"})
+
+    def check_page(where):
+        floor_ok(page, where)
+        no_hscroll(page, width)
+        assert page.locator(MASCOT_IN_MAIN).count() == 0, f"{where}: 뱁이가 있어요 (숫자가 있는 화면)"
+        assert page.evaluate("() => document.documentElement.dataset.theme || ''") in (("dark",) if dark else ("light", "")), where
+        R.collect(page)
+        if R.shots:
+            os.makedirs(R.shots, exist_ok=True)
+            page.screenshot(path=os.path.join(R.shots, f"divblank-{where}-{width}{'-dark' if dark else ''}.png"), full_page=True)
+
+    def open_co(code):
+        co_hash(page, f"#stocks/{code}")
+        page.wait_for_function("(t) => { const e = document.querySelector('[data-ui-v2=\"co-head\"]'); return !!e && e.dataset.t === t; }", arg=code)
+
+    def tile():
+        t = page.locator('[data-ui-v2="co-tile"][data-topic="div"]')
+        t.first.wait_for(state="visible")
+        num = t.locator('[data-ui-v2="tile-number"]')
+        return t.get_attribute("data-rule"), t.locator('[data-ui-v2="tile-phrase"]').inner_text(), num.inner_text() if num.count() else None, t
+
+    def company():
+        wait_ready(page)
+        for code, key, rule, phrase in ((a_t, a_key, "na", T["na"]), (b_t, b_key, "pays", T["div"]["pays"])):
+            open_co(code)
+            got_rule, got_phrase, num, el = tile()
+            assert (got_rule, got_phrase, num) == (rule, phrase, None), (code, got_rule, got_phrase, num)
+            note = el.locator(f'[data-ui-v2="{DIV_LINE_UI[key]}"]')
+            assert note.count() == 1 and note.inner_text() == CD[key], (code, note.count())
+            check_page(f"{code}-summary")
+            co_open_tab(page, code, "div", "kr")
+            dv = page.locator('[data-ui-v2="co-div"]')
+            assert dv.get_attribute("data-rule") == rule, (code, dv.get_attribute("data-rule"))
+            head = page.locator('[data-ui-v2="co-div-head"]')
+            assert head.locator("h2, h3").first.inner_text() == phrase, (code, head.inner_text())
+            tn = page.locator(f'[data-ui-v2="co-{DIV_LINE_UI[key]}"]')
+            assert tn.count() == 1 and tn.inner_text() == CD[key], (code, tn.count())
+            text = page.locator('[data-ui-v2="co-div"]').inner_text()
+            assert CO["div"]["head"]["none"] not in text and page.locator('[data-ui-v2="co-dps"], [data-ui-v2="co-million"]').count() == 0, code
+            # 배당성향은 총액 ÷ 순이익: 회사가 배당한 B 만 (A 는 보통주가 받았는지 몰라요)
+            assert page.locator('[data-ui-v2="co-payout"]').count() == (1 if code == b_t else 0), code
+            check_page(f"{code}-div")
+    R.check(page, S, "회사 페이지: A 는 '자료가 없어요' + 줄 4 · B 는 '배당을 줘요' + 줄 3 (요약 칸 · 배당 탭) · 배당을 주지 않았어요 없음", company)
+
+    def watch_lines():
+        page.goto(base + "/app.html?dev=1#stocks/watch", wait_until="domcontentloaded")
+        page.locator('[data-ui-v2="watch"]').wait_for(state="visible")
+        ch = chips_of(page)
+        for t, key in ((a_t, a_key), (b_t, b_key)):
+            assert ch[t] == [["dyAtLeast", "blank", "배당수익률 1% 이상· " + C["watch"]["blank"]]], (t, ch[t])
+            card = page.locator(f'[data-ui-v2="watch-card"][data-t="{t}"]')
+            note = card.locator(f'[data-ui-v2="{DIV_LINE_UI[key]}"]')
+            assert note.count() == 1 and note.inner_text() == CD[key], (t, note.count())
+        check_page("watch")
+    R.check(page, S, "관심 종목: 배당수익률 조건은 '정보 없음' · 카드 밑에 그 회사의 줄 (A 4 · B 3)", watch_lines)
+
+    def compare_lines():
+        page.goto(base + f"/app.html?dev=1#portfolio/edit/dblank/compare/{a_t}", wait_until="domcontentloaded")
+        at(page, f"portfolio/edit/dblank/compare/{a_t}")
+        page.locator('[data-ui-v2="cmp-table"]').wait_for(state="visible")
+        for side, key in (("cand", a_key), ("hold", b_key)):
+            c = page.locator(f'[data-cmp-row="dy"] [data-side="{side}"]')
+            n = c.locator('[data-ui-v2="cmp-note"]')
+            assert (c.locator("span").first.inner_text(), n.inner_text() if n.count() else None) == ("–", CD[key]), side
+            assert c.get_attribute("data-blank") == DIV_LINE_UI[key] and c.get_attribute("data-y") == "", side
+        check_page("compare")
+        assert not R.errors, R.errors[:2]
+    R.check(page, S, "두 종목 비교: 두 칸 모두 '–' 와 그 회사의 줄 (후보 A 4 · 가진 종목 B 3)", compare_lines)
+    ctx.close()
+    srv.shutdown()
+
+
 def scene_v196f(R, files, width, dark=False):
     """v19.6f (390 · 320 · 1280, 밝게 · 어둡게): 내 수익 → '연말에 확인할 숫자 ›' (기록 내려받기 위) → 세 상태를 손으로 계산한 값으로:
     below (공제보다 적어요 · 막대 · 판 날 환율 줄) · above (많아요 · 세금 약 · 막대 끝까지 · 빼고 더한 판 기록 1건) · loss (손실 · 막대 없음).
@@ -16258,6 +16376,7 @@ def main():
                    lambda: scene_div_lines(R, files, 390), lambda: scene_div_lines(R, files, 390, dark=True),   # say-why N-01 · N-02: 숨긴 배당수익률의 줄
                    lambda: scene_div_lines(R, files, 1280), lambda: scene_div_lines(R, files, 1280, dark=True),
                    lambda: scene_div_lines(R, files, 320), lambda: scene_div_lines(R, files, 320, dark=True),   # 리뷰: 320 도
+                   lambda: scene_div_blank(R, files, 390), lambda: scene_div_blank(R, files, 1280, dark=True),  # 2026-11-23: 비운 주당 배당의 줄
                    lambda: scene_v196f(R, files, 390), lambda: scene_v196f(R, files, 320),
                    lambda: scene_v196f(R, files, 1280), lambda: scene_v196f(R, files, 390, dark=True),
                    lambda: scene_v196f(R, files, 1280, dark=True),                                          # v19.6f 연말에 확인할 숫자 (세 상태)
