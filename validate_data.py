@@ -2849,6 +2849,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v196b(rep, data, disc, by, today)   # v19.6b (Part B.1): 주요사항 공시 · 내부자 역할 · 미국 일정 (모양 · 칸이 없는 예전 파일은 경고만)
     check_issue_bd(rep, disc)                 # v19.6b Q18 (Jack 2026-11-19): 유상증자 이사회 결의일 (공시일 뒤면 실패 · 빈 줄은 경고)
     check_v196e(rep, data, macro)             # v19.6e (Part I.2): 이번 주 시작 종가 c1w · wkFrom · usWkFrom (경고만)
+    check_q_pick(rep, corp, today)            # 2026-11-24: 분기 판단 — 마감 + 10일이 지나도 '현재' 분기가 앞이면 (corp.json qPick · 경고만)
 
     # 경고만
     rep.add("공시 목록 조회", True, "성공" if disc.get("listOk") else "실패", "실패면 경고", warn=not disc.get("listOk"))
@@ -4024,6 +4025,109 @@ def check_v196e(rep, data, macro):
         _check_v196e(rep, data if isinstance(data, dict) else {}, macro if isinstance(macro, dict) else {})
     except Exception as e:
         rep.add(C1W_ROW, True, f"검사가 오류로 멈췄어요: {type(e).__name__}: {str(e)[:120]}", "오류 없이 끝나야 함 (경고만 · 발행을 막지 않아요)", warn=True)
+
+
+# 2026-11-24 (감사: 11-21 corp.json 의 bq 가 3Q 마감 닷새 뒤에도 2,244곳 모두 2026.2Q): 분기 판단. 파이프라인(fetch_data.enrich_with_dart)은
+# 시가총액 상위 100곳의 70% 가 낸 가장 최신 분기를 '현재'로 써서 TTM 을 만들고, 그 판단을 corp.json qPick 에 적어요 ({"v": 1, "cur": "2026.3Q" 또는
+# null, "top": 100, "filed": {"2026.3Q": 64, …}}). 올해 분기의 마감(다음 한국 거래일로 민 날 · 휴장일 표)이 Q_PICK_LATE_DAYS 일 넘게 지났는데 '현재'가
+# 아직 그 앞이면 그 분기를 낸 상위 회사 수와 함께 **경고만** 해요 — 발행 · 사이트 점검 모두, 검사가 오류로 멈춰도 (실패는 없어요). qPick 이 없는
+# 파일(이 기록 전 · DART 를 끈 실행)은 회사들의 bq 중 가장 최신을 '현재'로 봐요. 마감 계산은 fetch_data 를 쓰지 않고 따로 해요 (테스트가 맞춰 봐요).
+Q_PICK_ROW = "분기 판단 (corp.json qPick · 경고만)"
+Q_PICK_LATE_DAYS = 10
+Q_PICK_DEADLINE = {1: (5, 15), 2: (8, 14), 3: (11, 14)}    # 분기 · 반기 보고서 마감 (12월 결산 · fetch_data.report_deadline 과 같아요)
+Q_PICK_SHARE = 70                                          # fetch_data.QUARTER_CURRENT_SHARE (%) — 글자에만 써요
+Q_PICK_TOP = 100
+
+
+def q_pick_rolled(d, closed, end):
+    """d 가 한국 휴장일(주말 · closed — 표가 덮는 end 까지만)이면 다음 거래일. (순수 함수)"""
+    while d.weekday() >= 5 or (end is not None and d <= end and d in closed):
+        d += dt.timedelta(days=1)
+    return d
+
+
+def q_pick_due(today, closed=(), end=None, days=Q_PICK_LATE_DAYS):
+    """오늘 '현재'여야 할 가장 최신 분기: 올해 분기 중 밀린 마감 + days 일이 지난 것 → (분기 번호, 마감, 밀린 마감) 또는 None.
+    days=0 이면 밀린 마감이 지난 가장 최신 분기 (아직 경고 전인 분기를 글자로 보여 줄 때). (순수 함수)"""
+    for n in (3, 2, 1):
+        dl = dt.date(today.year, *Q_PICK_DEADLINE[n])
+        rl = q_pick_rolled(dl, closed, end)
+        if today > rl + dt.timedelta(days=days):
+            return n, dl, rl
+    return None
+
+
+def q_pick_key(label):
+    """'2026.3Q' → (2026, 3) · 사업보고서 '2026.4Q' → (2026, 4) · 아니면 None. (순수 함수)"""
+    m = re.fullmatch(r"(20\d\d)\.([1-4])Q", label) if isinstance(label, str) else None
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def q_pick_shape_ok(rec):
+    """corp.json qPick 모양: {"v": 1, "cur": 'YYYY.nQ' 또는 null, "top": 양의 정수, "filed": {'YYYY.nQ': 0 ~ top 정수}}. (순수 함수)"""
+    if not isinstance(rec, dict) or rec.get("v") != 1:
+        return False
+    top, filed = rec.get("top"), rec.get("filed")
+    if not (isinstance(top, int) and not isinstance(top, bool) and top > 0) or not isinstance(filed, dict):
+        return False
+    if rec.get("cur") is not None and q_pick_key(rec.get("cur")) is None:
+        return False
+    return all(q_pick_key(k) and isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= top for k, v in filed.items())
+
+
+def check_q_pick(rep, corp, today):
+    """한 줄 — 분기 판단 (위 설명). 경고만: 검사 코드가 멈춰도 실패가 아니라 경고예요."""
+    try:
+        _check_q_pick(rep, corp if isinstance(corp, dict) else {}, today)
+    except Exception as e:
+        rep.add(Q_PICK_ROW, True, f"검사가 오류로 멈췄어요: {type(e).__name__}: {str(e)[:120]}", "오류 없이 끝나야 함 (경고만 · 발행을 막지 않아요)", warn=True)
+
+
+def _check_q_pick(rep, corp, today):
+    rule = (f"올해 분기 마감(휴장일이면 다음 거래일) + {Q_PICK_LATE_DAYS}일이 지나면 그 분기가 '현재'여야 해요 (상위 {Q_PICK_TOP}곳 "
+            f"{Q_PICK_SHARE}% 제출 · 아니면 경고만 · 실패 없음)")
+    try:
+        hol, end = load_holidays()
+        closed, hol_note = hol["KR"], ""
+    except Exception as e:
+        closed, end, hol_note = (), None, f" · 휴장일 표를 읽지 못해 주말만 봤어요 ({type(e).__name__})"
+    rec = corp.get("qPick")
+    if rec is not None and not q_pick_shape_ok(rec):
+        rep.add(Q_PICK_ROW, True, f"qPick 모양이 잘못됨: {str(rec)[:100]}{hol_note}", rule, warn=True)
+        return
+    comps = [c for c in corp.get("companies") or [] if isinstance(c, dict)]
+    if rec is None:          # 이 기록 전 파일 · DART 를 끈 실행: 회사들의 bq 중 가장 최신
+        keys = [k for k in (q_pick_key(c.get("bq")) for c in comps) if k]
+        cur_k = max(keys) if keys else None
+        cur = f"{cur_k[0]}.{cur_k[1]}Q" if cur_k else None
+    else:
+        cur, cur_k = rec.get("cur"), q_pick_key(rec.get("cur"))
+    src = "" if rec is not None else " (qPick 없음 · bq 로 봄)"
+    due = q_pick_due(today, closed, end)
+    soon = q_pick_due(today, closed, end, days=0)       # 마감은 지났지만 아직 경고 전인 분기 (글자만)
+    wait = ""
+    if soon and soon != due and (cur_k is None or cur_k < (today.year, soon[0])):
+        wait = (f" · {today.year}.{soon[0]}Q 마감 {soon[1]}" + (f" → {soon[2]}" if soon[2] != soon[1] else "")
+                + f" 뒤 {(today - soon[2]).days}일 (아직 앞 분기 · {Q_PICK_LATE_DAYS}일 넘으면 경고)")
+    if due is None:
+        rep.add(Q_PICK_ROW, True, f"확인할 분기 없음 ({today.year}년 분기 마감 + {Q_PICK_LATE_DAYS}일 전) · 현재 {cur or '분기 없음'}"
+                + src + wait + hol_note, rule)
+        return
+    n, dl, rl = due
+    want, want_k = f"{today.year}.{n}Q", (today.year, n)
+    dl_txt = f"{dl}" + (f" → {rl}" if rl != dl else "")
+    since = (today - rl).days
+    if cur_k is not None and cur_k >= want_k:
+        rep.add(Q_PICK_ROW, True, f"현재 {cur} ({want} 마감 {dl_txt} 뒤 {since}일){src}{wait}{hol_note}", rule)
+        return
+    if rec is not None:
+        f, top = rec["filed"].get(want), rec["top"]
+        filed = (f"{want} 낸 상위 {top}곳: {f}곳 ({100.0 * f / top:.0f}%)" if f is not None else f"{want} 제출 수 기록 없음 (qPick.filed)")
+    else:
+        top = sorted(comps, key=lambda c: -(num(c.get("cap")) or 0))[:Q_PICK_TOP]
+        f = sum(1 for c in top if (q_pick_key(c.get("bq")) or (0, 0)) >= want_k)
+        filed = (f"bq 로 본 {want}: 상위 {len(top)}곳 중 {f}곳 (qPick 이 없는 파일이라 DART 에 낸 수는 몰라요)")
+    rep.add(Q_PICK_ROW, True, f"{want} 마감 {dl_txt} 뒤 {since}일인데 아직 {cur or '분기 없음'} 기준 · {filed}{hol_note}", rule, warn=True)
 
 
 def check_v1751(rep, cur, kr, us, by, comps, px, today, hilo, us_own=frozenset()):

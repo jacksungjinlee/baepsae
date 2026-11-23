@@ -2189,6 +2189,50 @@ longer holds `BFB`.
 **Rolling back #PR**: a revert PR. The reverted gate ignores `usListSym`; the next data run drops BF-B again (users who saved it
 see the existing "no longer in today's data" handling). No data run is needed for the site checks.
 
+## DART: asking again after a filing deadline (마감 뒤 매일 다시 묻기, since #PR)
+
+**Why.** The 11-21 corp.json had every Korean TTM on 2026.2Q (2,244 companies, 3Q none) five days after the 3Q deadline. A DART
+statement entry cached as "not filed yet" (013) is asked again daily only from deadline − 7 to deadline + 2 days, then every 7 days
+(`dart_entry_due`, unchanged). The coded 3Q deadline 11-14 was a Saturday (legal deadline Monday 11-16), and DART's statement API
+fills in days after the filing, so the top-100 entries answered "not yet" on 11-14 to 11-16 and waited until 11-23. Below 70% of
+the top 100, every company stays on the older quarter (`QUARTER_CURRENT_SHARE`).
+
+**Rule now** (`fetch_data.dart_late_due` · `dart_late_plan`, on top of the old rule):
+- The deadline rolls to the next KRX trading day (`data/market_holidays.csv`; past the table's last year, weekends only).
+- Statement entries (CFS · OFS) still "not filed" are asked once a day until rolled deadline + 2 days in every case, and until
+  rolled deadline + 21 days (`DART_LATE_DAYS`) while the run's quarter choice has not adopted that quarter. The 사업보고서 has no
+  market-wide choice, so its entries stay daily to + 21 days. After that, every 7 days as before.
+- The quarter choice first counts the top 100 with the old rule; only if that leaves the quarter under 70% does it ask the top
+  100's still-missing entries again (so a quarter the run adopts anyway costs no extra calls).
+- A report whose other statement was found (a company that files only separate statements) is not asked again for the missing one.
+- At most `DART_LATE_PER_RUN` = 300 extra calls a run, biggest companies first (a planned 별도 entry is asked only if the 연결 answer
+  is still empty, so a run usually asks fewer). The rest wait for the next run, which picks the next biggest.
+- Cache runs only: a dart=full run and an empty-cache run (a full-DART run) ask everything anyway and make no plan; a same-day
+  re-run that makes no DART calls asks nothing. 300 calls on a cache run is not a full-DART run.
+
+**Budget.** Before a quarter is adopted only the top 100 have entries for it: at most 100 × 2 = 200 keys a day. After adoption the
+extra days are the rolled-deadline days only. The 사업보고서 window asks the companies still without one (stragglers and the
+API's lag), capped at 300 a run. Each entry is asked at most once a KST day. A normal cache run makes low thousands of calls; with
++300 it stays far under `DART_FULL_TARGET` (16,000 a run) and, on a day with a full-DART run (≤ 16,000, which itself adds nothing
+here and refreshes every entry), one other run plus 300 stays under the 20,000 daily limit. A 020 (daily limit) or 30 network
+failures in a row stop these calls like every other DART call (`DART_FATAL` · `DART_DOWN_AFTER`).
+
+**Log lines** (DART step): `DART 마감 뒤 매일 다시 묻기 창: 2026.3Q 마감 2026-11-14 → 다음 거래일 2026-11-16 · 매일 … 까지`,
+`분기 판단: … 이 70% 가 안 돼 마감 뒤 매일 다시 묻기로 상위 회사 항목 N건을 다시 물었어요 — 제출 a곳 → b곳` (`!!` when nothing new
+came), `DART 마감 뒤 매일 다시 묻기 대상 (분기 판단 뒤): …` (`!!` when the cap leaves some), and at the end
+`DART 마감 뒤 매일 다시 묻기: 오늘 다시 물음 N건 → 새로 냄 F · 아직 없음 W · 다음 실행으로 남김 L건` (`!!` when L > 0 or calls failed).
+
+**Gate row `분기 판단 (corp.json qPick · 경고만)`** (`validate_data.check_q_pick`). The run writes its choice to corp.json
+`qPick` (`{"v": 1, "cur": "2026.3Q" or null, "top": 100, "filed": {"2026.3Q": 64, …}}`; the app does not read it). The row warns
+when the adopted quarter is still the previous one more than 10 days after this year's quarter deadline (rolled to the next KRX
+trading day), naming how many of the top 100 have filed it. It only warns, in every mode, also when its own check crashes. A file
+without `qPick` (before this change, or a DART-off run) is read from the newest `bq`. **If it warns:** check the DART step's log for
+the lines above. "제출 a곳 → a곳" day after day means DART's API still lacks the numbers (nothing to fix; the site shows the older
+quarter, which `bq` labels); 0 asked means the retry is not running (a bug: fix the code, never the gate row).
+
+**Rolling back #PR**: a revert PR. The old 7-day rule returns, the gate row goes with it, and the next publish's corp.json has no
+`qPick` (no data run needed).
+
 ## Roll back
 
 - **A bad code release** (the app looks broken after a merge): Claude opens the merged pull request, presses
