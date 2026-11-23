@@ -102,9 +102,10 @@ const scaled = (u, f) => (u == null ? null : f === 1 ? u : (okU(Math.round(u * f
 // count to exactly 0 while that count never went below 0 in it (the count that closed it is used for it; each-record when
 // both do). Everything held was sold, so the next record starts a new position from 0 (no 0.0001주 carried into a later
 // purchase). The open position uses each-record while it stays at or above 0 (what main showed), else the running count.
-// When that reading goes below 0 but main's own count (each-record over the whole history) does not, main's count is used
-// for the stock, so records saved and checked by main read back exactly as main read them. The store refuses only records
-// that go below 0 by both.
+// When that reading goes below 0, the running count over the whole history (no restart) is used if it stays at or above 0
+// (#184 round 2: 4 old DD shares sold as 3.9998 and 0.0002, exactly 0, where each-record closes early and leaves 2/3 of a
+// unit for the second sale), else main's own count (each-record over the whole history), so records saved and checked by
+// main read back exactly as main read them. The store refuses only records that go below 0 by all three.
 function count(list) {
   const main = list.map((e) => Math.round(e.x) || 0);        // || 0: never -0
   let m = 0, mainOk = true;
@@ -130,7 +131,14 @@ function count(list) {
   }
   let ok = true;
   if (start < list.length) { take(list.length, eachOk); if (!eachOk && !runOk) ok = false; }
-  const use = ok || !mainOk ? out : main;
+  let use = out;
+  if (!ok) {
+    // the running count over the whole history, then main's
+    const whole = [];
+    let wx = 0, wr = 0, wholeOk = true;
+    for (const e of list) { wx += e.x; const n = Math.round(wx) || 0; whole.push(n - wr); wr = n; if (wr < 0) wholeOk = false; }
+    use = wholeOk ? whole : mainOk ? main : out;
+  }
   list.forEach((e, i) => { e.u = use[i]; });
 }
 
@@ -194,16 +202,22 @@ export function sellAllUnits(recs, t, date) {
   // the nearest to the count in use (what the screens show; main searched from it), and, for a date before a split, first
   // to the open position's exact units on that date's basis (3 old DD shares, not the 0.9999 new ones shown x 3); either
   // way the other one next (#184 review round 1, N1: the count in use can be more than 2 units from the exact one)
+  // A quantity that leaves 0 but takes the holding below 0 on the way (a record after `date`) is the answer only when none
+  // leaves 0 without that (#184 round 2, N1); the store's check refuses it then, as main's did.
   const near = [Math.round(u / f), Math.round(open / f)];
+  let first = null;
   for (const q0 of f === 1 ? near : near.reverse()) {
     for (const d of [0, -1, 1, -2, 2]) {
       const q = q0 + d;
       if (!(q > 0) || tried.has(q)) continue;
       tried.add(q);
-      if ((heldUnits({ ...recs, sales: [...sales, { t, qty: q / UNIT, date }] }).get(t) || 0) === 0) return q;
+      const trial = { ...recs, sales: [...sales, { t, qty: q / UNIT, date }] };
+      if ((heldUnits(trial).get(t) || 0) !== 0) continue;
+      if (!belowZero(trial)) return q;
+      if (first == null) first = q;
     }
   }
-  return null;
+  return first;
 }
 
 // Shares held now per stock with more than 0 shares (Map t -> quantity as a number, units / UNIT).
@@ -214,11 +228,11 @@ export function heldQty(recs, date = null) {
 }
 
 // The first record at which main's own count (each record rounded on its own, over the whole history: held.js at 511fd6f)
-// takes a holding below 0, or null. An older tab, or main's code after a revert, refuses a portfolio this finds below 0 and
+// takes a holding below 0 (of stock t only, when given), or null. An older tab, or main's code after a revert, refuses a portfolio this finds below 0 and
 // sets it aside: the app stores a data.json split with the records only when this stays null too (app.jsx, review round 1).
-export function belowZeroEach(recs) {
+export function belowZeroEach(recs, t = null) {
   const m = new Map();
-  for (const e of events(recs, null)) {
+  for (const e of events(recs, t)) {
     const v = (m.get(e.t) || 0) + (Math.round(e.x) || 0);
     if (v < 0) return { t: e.t, date: e.date || null };
     m.set(e.t, v);

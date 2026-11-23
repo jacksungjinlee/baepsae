@@ -32,12 +32,14 @@ retried hundreds of times a second with "날짜·수량·가격을 다시 확인
 refused, and a full sale left a sliver (a −5원 '손실' on the tax screen with nothing held). Now one count everywhere (`held.js`
 `count()`, read by the ledger, the store's check, 팔고 빼기 and 금액으로 넣기 sales), position by position: a sale that takes either
 the per-record count (what main showed) or the running exact total to exactly 0 closes the position, and the next record starts
-from 0; an open position shows main's per-record count while it stays at or above 0. Records saved by main read as main read
-them. Records with no split or a whole-unit ratio count bit-identically to main (`tests/test_v2_split_round.py`, main's code
+from 0; an open position shows main's per-record count while it stays at or above 0; a reading that goes below 0 falls back to
+the running count over the whole history, then main's. Records saved by main read as main read them. Records with no split or a whole-unit ratio count bit-identically to main (`tests/test_v2_split_round.py`, main's code
 frozen in `tests/fixtures/count_before_split_round_511fd6f`). `app.jsx` stores a data.json split stock by stock, only when main's
 count reads the records too, tries each once per visit and says "stored" once it is in the records. A 금액으로 넣은 holding sold
 with a date before a split sells every share on that date's basis (it sold a fifth after AMCR's 1:5). **Don't plain-revert #184**
-(RUNBOOK § Roll back): a sale only #184 accepts sets that portfolio aside on main's code until the fix is back. No new Korean text.
+(RUNBOOK § Roll back): records only #184's count reads (a sale only it accepts, or any record saved for a stock whose earlier
+records main reads only without the split, which then stores the split) set that portfolio aside on main's code until the fix
+is back. No new Korean text.
 
 **CI checks the two PR rules (#175, 2026-11-23; Jack: "Automate the rules you missed"):** the last step of `ci.yml`'s `checks`
 job runs `tools/pr_rules.py`, so the required `ci` check goes red when either rule is missed. Run it yourself before pushing:

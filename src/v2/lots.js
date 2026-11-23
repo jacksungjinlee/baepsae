@@ -234,7 +234,7 @@ export function withStoredSplitsChecked(data, today, skip = () => false) {
       if (!mine.length || mine.some(skip)) continue;
       const trial = { ...next, splits: sp };
       const p = deckProblem(trial, today);
-      const old = p ? null : mainCountProblem(trial);
+      const old = p ? null : mainCountProblem(trial, t);
       if (p || old) { refused.push(...mine.map((x) => ({ ...x, why: p ? problemText(trial, p) : old }))); continue; }
       next = trial;
       added.push(...mine);
@@ -244,14 +244,15 @@ export function withStoredSplitsChecked(data, today, skip = () => false) {
   });
   return { data: changed ? { ...data, decks } : data, added, refused };
 }
-// Main's own count on a portfolio and each history entry (stored splits only). -> a reason for the console, or null
-function mainCountProblem(d) {
+// Main's own count of stock t on a portfolio and each history entry (stored splits only; another stock main cannot read is
+// not this split's doing, #184 round 2 N2). -> a reason for the console, or null
+function mainCountProblem(d, t) {
   const sets = [{ imported: d.imported || [], purchases: d.purchases || [], sales: d.sales || [], splits: d.splits, createdAt: d.createdAt }];
   for (const e of Array.isArray(d.history) ? d.history : []) {
     if (e) sets.push({ imported: e.imported ? [e.imported] : [], purchases: e.purchases || [], sales: e.sales || [], splits: d.splits, createdAt: d.createdAt });
   }
   for (const x of sets) {
-    const low = belowZeroEach(x);
+    const low = belowZeroEach(x, t);
     if (low) return `portfolio "${d.name}" (${d.id}): ${low.t}: main's count (an older tab, or main after a revert) would read it as sold more than held (${low.date || "undated"})`;
   }
   return null;
@@ -329,7 +330,12 @@ export function ledger(recs, t, ctx = {}) {
     const out = { rec: r, u: e.u, proceedsOwn: r.qty * r.price, rate: r.ccy === "USD" ? (pos(r.fx) ? r.fx : null) : 1,
       proceedsWon: null, removedWon: 0, removedUsdOwn: 0, removedOwn: 0, gain: null, why: null, usdOnly: false, over: false };
     out.proceedsWon = out.rate ? out.proceedsOwn * out.rate : null;
-    if (!(held > EPS_U)) { out.over = true; out.why = "noCost"; sales.push(out); removedKnown = false; continue; }
+    if (!(held > EPS_U)) {
+      // a sale the count reads as 0 units right after a sale that took every lot and its cost (#184 round 2: 3 old DD shares
+      // sold as 2.9999 and 0.0001): its gain is its money; nothing is left to take
+      if (e.u === 0) { out.why = out.proceedsWon == null ? "noRate" : null; out.gain = out.why ? null : out.proceedsWon; sales.push(out); continue; }
+      out.over = true; out.why = "noCost"; sales.push(out); removedKnown = false; continue;
+    }
     const frac = Math.min(1, e.u / held);
     if (e.u > held + 0.5) out.over = true;                 // more than held (the store refuses it; never counted)
     // a sale the count reads as 0 units (0.0001 old share before a 1:3 is 1/3 of a unit) takes no shares, but takes the cost
@@ -464,6 +470,8 @@ export function kospiMirror(sets, rows, end, valueOf, closeBefore) {
         if (start == null || e.date < start) start = e.date;
         continue;
       }
+      // a sale the count reads as 0 units after every share was sold (#184 round 2): its money, no KOSPI units
+      if (!(held > EPS_U) && e.u === 0 && e.proceedsWon != null) { soldMoney += e.proceedsWon; continue; }
       if (!(held > EPS_U)) return { ok: false, why: "sale" };
       if (e.proceedsWon == null) return { ok: false, why: "cost" };
       if (!DATE.test(e.date)) return { ok: false, why: "date" };

@@ -300,6 +300,61 @@ def test_sell_and_remove_after_a_position_main_closed_starts_from_the_count_in_u
     assert got == [30000, 3, 3]
 
 
+# ── #184 리뷰 2차 ──
+def test_a_zero_unit_sale_after_a_full_sale_counts_its_money_as_main_did():
+    # S1: 옛 3 주를 2.9999 와 0.0001 로 판 기록 (DD 1:3) · 옛 1 주를 0.9999 와 0.0001 로 (1:5): 두 번째 판매는 0 단위로 세어지고 남은 묶음도 없어요
+    got = run("""const SP3 = [DD], SP5 = [{ t: 'DD', date: '2026-01-15', r: 0.2 }];
+      const q = { pxOf: () => 100, fx: 1400, absent: new Set() };
+      const KOSPI = []; for (let i = 0; i < 700; i++) KOSPI.push([new Date(Date.parse('2025-01-02T00:00:00Z') + i * 864e5).toISOString().slice(0, 10), 2500 + (i % 30)]);
+      const one = (buys, sales, sp) => { const d = deckOf('DD', buys, sales);
+        const vn = view(d, sp), vo = view(d, sp, OL);
+        const a = L.returnsOf(vn, q), b = OL.returnsOf(vo, q);
+        const kn = L.kospiMirror(L.recordSets(vn), KOSPI, KOSPI[KOSPI.length - 1], () => 0, Tr.closeBefore);
+        return { held: units(H, vn, 'DD'), lots: lotsOf(L.ledger(vn, 'DD')), gains: L.ledger(vn, 'DD').sales.map((s) => s.gain), sold: [a.sold, b.sold], noAvg: a.noAvg, soldOut: a.soldOut,
+          year: [X.yearGains([vn]), OX.yearGains([vo])], kospi: kn.ok }; };
+      out = { dd: one([usd('p1aaaaaa', 'DD', 3, 80, '2026-03-02', 1400)], [usd('s1aaaaaa', 'DD', 2.9999, 85, '2026-04-01', 1400), usd('s2aaaaaa', 'DD', 0.0001, 85, '2026-04-02', 1400)], SP3),
+        five: one([usd('p1aaaaaa', 'DD', 1, 10, '2025-11-03', 1400)], [usd('s1aaaaaa', 'DD', 0.9999, 12, '2025-12-01', 1400), usd('s2aaaaaa', 'DD', 0.0001, 12, '2025-12-02', 1400)], SP5) };""")
+    dd, five = got["dd"], got["five"]
+    assert dd["held"] == 0 and dd["lots"] == [] and dd["noAvg"] == [] and dd["soldOut"] == 0 and dd["kospi"]
+    assert abs(dd["gains"][1] - 0.0001 * 85 * 1400) < 1e-9                  # 두 번째 판매: 판 금액 그대로 (원가는 첫 판매가 다 가져갔어요)
+    assert round(dd["sold"][0]) == round(dd["sold"][1]) == 21000             # 내 수익 판 종목: main 과 같아요
+    assert dd["year"][0]["n"] == 2 and dd["year"][0]["left"] == 0 and dd["year"][0]["gain"] == dd["year"][1]["gain"] == 21000   # 세금 화면
+    assert five["held"] == 0 and five["lots"] == [] and five["noAvg"] == [] and five["soldOut"] == 0 and five["kospi"]
+    assert round(five["sold"][0]) == round(five["sold"][1]) == 2800
+
+
+def test_four_old_shares_sold_as_3_9998_and_0_0002_read_as_sold_out():
+    # S2: 옛 4 주 = 정확히 0 이 남아요. 기록마다 반올림은 첫 판매에서 닫혀 둘째가 0 아래로 가요 → 처음부터 누적 반올림으로 읽어요
+    got = run("""const d = { ...deckOf('DD', [usd('p1aaaaaa', 'DD', 4, 80, '2026-03-02', 1400)], [usd('s1aaaaaa', 'DD', 3.9998, 85, '2026-04-01', 1400), usd('s2aaaaaa', 'DD', 0.0002, 85, '2026-04-02', 1400)]), splits: [DD] };
+      const v = view(d);
+      const r = L.returnsOf(v, { pxOf: () => 100, fx: 1400, absent: new Set() });
+      const c = Rc.checkPurchase(v, 'DD', { qty: '3', price: '140', date: T }, row('DD', 145.43), env);
+      out = { ok: S.deckProblem(d, T), held: units(H, v, 'DD'), lots: lotsOf(L.ledger(v, 'DD')), sold: Math.round(r.sold), noAvg: r.noAvg, buy: !!Rc.withRecord({ v: 2, decks: [v] }, 'd1', 'purchases', c.rec, T), main: OS.deckProblem(d, T) };""")
+    assert got["ok"] is None and got["held"] == 0 and got["lots"] == [] and got["noAvg"] == [] and got["sold"] == 28000 and got["buy"]
+    assert got["main"]["why"].startswith("sold more than held")             # main 은 이 기록을 읽지 못해요 (그래서 앱이 분할을 저장하지 않아요)
+
+
+def test_sell_and_remove_never_picks_a_quantity_that_goes_below_0_on_the_way():
+    # N1: 2:3 (3 옛 주 → 2 새 주) 10-29 · 04-22 에 2 주 · 06-21 에 3 + 2 주를 사고 4.9999 주를 팔았어요 · 06-01 날짜로 팔고 빼기 (main: 2)
+    got = run("""const SP = [{ t: 'AAA', date: '2026-10-29', r: 0.6666666666666666 }];
+      const d = deckOf('AAA', [usd('p1aaaaaa', 'AAA', 2, 50, '2026-04-22'), usd('p2aaaaaa', 'AAA', 3, 50, '2026-06-21'), usd('p3aaaaaa', 'AAA', 2, 50, '2026-06-21')], [usd('s1aaaaaa', 'AAA', 4.9999, 55, '2026-06-21')]);
+      const v = view(d, SP);
+      const q = E.sellAllQty(v, 'AAA', '2026-06-01');
+      out = { q, ok: Rc.checkSale(v, 'AAA', { qty: String(q), price: '60', date: '2026-06-01' }, row('AAA', 80), env).ok };""")
+    assert got == {"q": 2, "ok": True}
+
+
+def test_a_stock_main_already_cannot_read_never_holds_back_another_stocks_split():
+    # N2: NVDA 옛 1 + 1 주를 분할 전에 2 주로 판 기록 (분할 저장됨: main 은 이 포트폴리오를 읽지 못해요) · MSFT 는 분할 전에 3 주
+    got = run("""const SP = [{ t: 'NVDA', date: '2026-10-20', r: 1 / 3 }, { t: 'MSFT', date: '2026-10-20', r: 1 / 3 }];
+      const d = { id: 'd2', name: 'two', createdAt: '2026-08-01', planFx: 1300, holdings: [{ t: 'NVDA', nk: 'N', cls: 'us' }, { t: 'MSFT', nk: 'M', cls: 'us' }],
+        purchases: [usd('p7aaaaaa', 'NVDA', 1, 100, '2026-09-01'), usd('p8aaaaaa', 'NVDA', 1, 100, '2026-09-02'), usd('p9aaaaaa', 'MSFT', 3, 400, '2026-09-01')],
+        sales: [usd('s7aaaaaa', 'NVDA', 2, 120, '2026-10-01')], splits: [SP[0]] };
+      const r = L.withStoredSplitsChecked(L.withDataSplits({ v: 2, decks: [d] }, SP, T), T);
+      out = { added: r.added.map((x) => x.t), refused: r.refused.length, mainBefore: OS.deckProblem(d, T) != null };""")
+    assert got == {"added": ["MSFT"], "refused": 0, "mainBefore": True}
+
+
 # ── 분할이 없거나 단위가 맞는 분할: main 의 코드와 비트까지 같아요 ──
 COMPARE = """
 // mulberry32 (review round 1: the old LCG went past 2^53 and repeated after about 10,000 draws)
