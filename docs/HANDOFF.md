@@ -24,7 +24,7 @@ links, "전무가" off the must-not-show list, labels) and a rename in `tests/te
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
 v19.6g, v19.6h.
 
-**CI checks the two PR rules (this PR, 2026-11-23; Jack: "Automate the rules you missed"):** the last step of `ci.yml`'s `checks`
+**CI checks the two PR rules (#175, 2026-11-23; Jack: "Automate the rules you missed"):** the last step of `ci.yml`'s `checks`
 job runs `tools/pr_rules.py`, so the required `ci` check goes red when either rule is missed. (1) A PR that changes what the site
 serves (deploy's own file list `assemble_site.site_files`, `src/`, the build inputs, `deploy.yml`, the three real-data screen checks
 and the `tests/` helpers they import) needs `real_data_check.py --data`, `smoke_launch.py --data` and `smoke_app.py --data` in its
