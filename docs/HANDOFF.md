@@ -24,6 +24,28 @@ links, "전무가" off the must-not-show list, labels) and a rename in `tests/te
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
 v19.6g, v19.6h.
 
+**CI checks the two PR rules (#175, 2026-11-23; Jack: "Automate the rules you missed"):** the last step of `ci.yml`'s `checks`
+job runs `tools/pr_rules.py`, so the required `ci` check goes red when either rule is missed. Run it yourself before pushing:
+`python tools/pr_rules.py --body-file BODY.md --base $(git merge-base origin/main HEAD) --head HEAD` (CI compares
+with GitHub's merge commit, which this approximates). (1) A PR that changes what the site serves (deploy's
+own file list `assemble_site.site_files`, `src/`, the build inputs incl. `build-styleguide.sh` and `deploy.yml`, the `tools/` files
+they call and import, e.g. `build_tag.py` and `logos/logo_index.py`, and the three real-data screen checks with the `tests/`
+helpers they import) needs `real_data_check.py` (with or without `--data`; it has no other mode), `smoke_launch.py --data` and
+`smoke_app.py --data` in its description, each with an all-pass `N / N` and no non-passing `N / M` in the same sentence or table
+cell after any check name (HTML comments are not read), and the data's date (a real YYYY-MM-DD, today KST or up to 14 days
+before) on a result line or up to 3 non-blank lines above the first one (table `|---|` lines don't count). Example line:
+`- Real data (data branch copy, pxDate 2026-11-20): real_data_check.py --data 3 / 3 · smoke_launch.py --data 14 / 14 ·
+smoke_app.py --data 171 / 171`. (2) A PR that changes `src/`, anything under rule 1, or the pipeline (`fetch_data.py`,
+`validate_data.py`, `already_published.py`, `watchdog.py`, `requirements*.txt`, `data/`, `tests/fonts/install.sh`, the
+update-data / deploy / watchdog / logo-dev workflows and the `tools/` files they call, `tools/logos/`, `push_logos_branch.sh`,
+`ci.yml` and `pr_rules.py`) needs this § 0 changed beyond whitespace. Files are classified in both the PR's tree and `main`'s, so
+deleting a helper still counts. It compares the PR's merge commit with its first parent (the PR's own changes only) and stops if
+HEAD isn't GitHub's merge commit for the PR. The description is the one in the event that started the run (CI holds no token,
+`tests/test_screen_check.py`): after editing only the description, push the next commit — a re-run still sees the old one. A
+push or manual run on a branch fails on purpose (its green would cover the PR's red); only `main` passes without a PR. Anything it
+can't read (event file, git) fails with a message. Replayed on past merges it flags #170, #171 and #172 (the misses of 11-22) and
+passes #173.
+
 **#172 (published closes), 2026-11-22:** in a week with days lacking a final KRX list, the daily run reads our earlier publishes
 from the `data` branch (throw-away partial clone, no token, https, minimal env, 180 s total, process-group kill, gc off) and
 confirms each Korean `c1w` day by day against KRX's base; a day with no publish is pinned by the next day's published `d1`;

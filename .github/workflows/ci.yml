@@ -25,7 +25,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
+      # PR 규칙(맨 아래 단계)이 merge 커밋(HEAD)과 그 첫 부모(base = main 의 끝)를 비교해요 → 2 단계까지 받아요
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
 
       - uses: actions/setup-node@v7
         with:
@@ -69,6 +72,13 @@ jobs:
 
       - name: 글자 점검 (이모지 · 금지어 · JSON 의 NaN)
         run: python tests/check_text.py
+
+      # Jack 2026-11-23 ("Automate the rules you missed"): 머지 전에 지키기로 한 두 규칙을 사람 대신 확인해요 (tools/pr_rules.py).
+      # 사이트가 내보내는 것을 바꾸는 PR → 설명에 실제 데이터 화면 검사 세 결과(N / N)와 그 데이터의 날짜.
+      # src/ 나 데이터 파이프라인을 바꾸는 PR → docs/HANDOFF.md § 0 수정. 하나라도 빠지면 이 job 이 빨강 → 관문 'ci' 도 빨강 → 머지 못 해요.
+      # PR 설명은 이 실행을 시작한 이벤트에 실린 것이에요 (열쇠 없이). 설명만 고쳤다면 다음 커밋의 CI 가 새 설명으로 확인해요.
+      - name: PR 규칙 (실제 데이터 검사 결과 · HANDOFF § 0)
+        run: python tools/pr_rules.py
 
   # smoke_app 은 장면을 순서대로 몫으로 나눠 기계마다 한 몫씩 (tests/smoke_app.py --part N/M · 모든 장면이 정확히 한 몫에 — test_smoke_parts.py)
   smoke_app:
