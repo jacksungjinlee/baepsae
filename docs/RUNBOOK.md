@@ -507,7 +507,7 @@ yearly swing. On 2026-11-14, 9 of the 18 have their 52주 range blanked (a move 
 How long a mark lasts: while a bad bar is inside the series window (not 252 days). It clears by itself, and the numbers come
 back, when Naver fixes the bar or the bar ages out: 110790 크리스에프앤씨 (2023-10-20) around 11-28 and 121890 에스디시스템
 (2023-10-23) around 12-01, which takes the count from 18 to 16. A stock moves from "52주까지" to "52주는 보임" by itself about a
-year after its last bad day. Repairing the history: "Repairing the broken histories" below (#PR; built, switch OFF until Jack approves the
+year after its last bad day. Repairing the history: "Repairing the broken histories" below (#182; built, switch OFF until Jack approves the
 screen line). Gate rows:
 
 - **FAIL "과거 주가 기록 오류 종목의 숫자 비움 (pxBad)"**: a published stock named in `krSeries.jump` still has one of its
@@ -539,7 +539,7 @@ Standing daily warnings until the repair PR: "국내 시계열 하루 가격 제
 beta 채움" and "국내 vol 채움" at 96.8% (floor 95%, warning under 97%; 2,395 of 2,473: volatility and beta are whole-series,
 so every marked stock blanks them). 45 more marked stocks are still a pass; the 46th would fail both rows.
 
-### Repairing the broken histories (과거 주가 병합 보정 · `KR_PX_REPAIRS` · since #PR, switch OFF)
+### Repairing the broken histories (과거 주가 병합 보정 · `KR_PX_REPAIRS` · since #182, switch OFF)
 
 Jack's Track 1 item 4 (2026-11-24): "repair the broken price history for the 18 stocks (old share consolidations)". Most of the
 named moves are a share event Naver did not rescale. `fetch_data.py` `kr_px_repair` multiplies the bars before such an event by

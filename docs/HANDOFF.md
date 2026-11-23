@@ -24,7 +24,7 @@ links, "전무가" off the must-not-show list, labels) and a rename in `tests/te
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
 v19.6g, v19.6h.
 
-**#? (Korean price-history repair, Track 1 item 4), 2026-11-24 — built, switch OFF:** `fetch_data.py` `KR_PX_REPAIRS` · `kr_px_repair`
+**#182 (Korean price-history repair, Track 1 item 4), 2026-11-24 — built, switch OFF:** `fetch_data.py` `KR_PX_REPAIRS` · `kr_px_repair`
 rescale the bars before 13 old share events Naver never rescaled (12 of the 20 stocks in `krSeries.jump` on the 11-21 publish: 001465,
 003060, 007460, 009310, 012170 ×2, 012210, 110790, 227420, 311060, 331660, 425040, 472850), each factor confirmed by two sources
 (listed shares or the KRX 기준가, and Yahoo's split record). Repaired stocks leave `krSeries.jump`, so #128 stops blanking them. Every
