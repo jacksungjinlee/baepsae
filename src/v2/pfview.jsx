@@ -168,7 +168,7 @@ export function ImportedDeck({ deck, st, m: m0, openStock, byT, onRemove, onMore
       {items.length > 0 && <div style={{ marginTop: SPACE(2) }}><StatStrip items={items} /></div>}
       {moneyLine && (
         <div data-ui-v2="deck-money" style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2)}>
-          {fill(C.deck.money, { cost: wonText(m.cost), gain: (m.gain > 0 ? "+" : "") + wonText(m.gain), pct: signedPct(m.ret * 100) })}
+          {fill(C.deck.money, { cost: wonText(m.cost), gain: (Math.round(m.gain) > 0 ? "+" : "") + wonText(m.gain), pct: signedPct(m.ret * 100) })}
         </div>
       )}
       {moneyLine && m.usdToday && <Note data-ui-v2="usd-today">{C.pfr.usdToday}</Note>}

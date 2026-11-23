@@ -16146,6 +16146,76 @@ def scene_v196e_states(R, files, width=390):
         ny_fri, dt.datetime(2027, 1, 1, 9, 0, tzinfo=KST), new_year)
 
 
+# ── 2026-11-24 (감사 4.2): 홈 포트폴리오 카드의 '오늘'은 그 변화 동안 가지고 있던 주식만 (src/v2/lots.js dayShare · home.js · track.js) ──
+def scene_home_day_after(R, files, width):
+    """감사 4.2 (2026-11-24): 가격 날짜 다음 날(토요일)에 그 날짜의 종가로 산 기록만 있는 포트폴리오(매수 계획 → 샀어요, 가장 흔한 길)는
+    '오늘 0원 (0.0%)'이 '산 가격보다 0원 (0.0%)' 바로 위에 나와요 (예전에는 그날 하루의 움직임을 다 받아 '오늘 −17만원 (−4.3%)' 같은 손실을
+    보였어요). 같은 화면의 가진 종목 포트폴리오: 가진 종목 줄(날짜 없음)은 하루 변화 전부, 가격 날짜 다음 날 더 산 주식은 0 이라서 '오늘'은
+    가진 종목 줄의 주식만큼이에요. 종목은 시험 데이터에서 그날 움직인 한국 보통주 둘을 골라요 (특정 종목 · 날짜에 기대지 않아요).
+    12px 바닥 · 가로 스크롤 없음 · 뱁이 없음 (390 · 1280)."""
+    S = f"오늘은 가진 동안만 {width}"
+    wide = width >= 1024
+    f = daily_files(files)
+    d = f["data.json"]
+    pxd = d["pxDate"]
+    after = (dt.date.fromisoformat(pxd) + dt.timedelta(days=1)).isoformat()
+    assert after <= now_dt().date().isoformat(), (after, now_dt())        # 오늘(시험의 시계)보다 뒤의 기록은 저장되지 않아요
+    movers = [s for s in d["stocks"] if s.get("cls") == "kr" and not s.get("fund") and s.get("etf") is not True and str(s.get("t", "")).endswith("0")
+              and isinstance(s.get("d1"), (int, float)) and abs(s["d1"]) >= 0.5 and s.get("pxd") is None and not s.get("noTrade")
+              and isinstance(s.get("price"), (int, float)) and s["price"] > 0
+              and abs((abs(s["d1"]) * 10) % 1 - 0.5) > 0.02]            # x.x5 반올림 경계는 빼요 (2차 리뷰 N3: 앱과 시험의 계산 순서가 달라도 같은 글자)
+    assert len(movers) >= 2, len(movers)
+    a, b = movers[0], movers[1]                                          # 그날 움직였어요: 예전 계산이면 '오늘'이 0 이 아니에요
+    built = {"id": "dafter", "name": "토요일에 산 포트폴리오", "createdAt": after,
+             "holdings": [_holding(a["t"], a["nk"], 0.5, [], 2), _holding(b["t"], b["nk"], 0.5, [], 3)],
+             "purchases": [{"t": a["t"], "date": after, "qty": 2, "price": a["price"], "ccy": "KRW"},
+                           {"t": b["t"], "date": after, "qty": 3, "price": b["price"], "ccy": "KRW"}]}
+    by = {s["t"]: s for s in d["stocks"]}
+    imp = e_imported(by, pxd, [(a["t"], 4, None)], did="dmore", name="더 산 포트폴리오")
+    imp["purchases"] = [{"t": a["t"], "date": after, "qty": 2, "price": a["price"], "ccy": "KRW"}]
+    srv, ctx, page, base = R.open(build_site(f), width, init=e_store([built, imp]), path="/app.html?dev=1#home",
+                                  device=pc_device(width) if wide else None)
+
+    def audit_case():
+        wait_ready(page)
+        card = page.locator('[data-ui-v2="home-money"][data-deck-id="dafter"]')
+        card.wait_for(state="visible")
+        day, gain = card.locator('[data-ui-v2="home-day"]'), card.locator('[data-ui-v2="home-gain"]')
+        assert day.inner_text() == fillp(C["home"]["day"], amount=won_text(0), pct=signed_pct(0)), day.inner_text()       # 오늘 0원 (0.0%)
+        assert day.get_attribute("data-pct") == "0", day.get_attribute("data-pct")
+        want = fillp(C["home"]["gain"], amount=won_text(0), pct=signed_pct(0)) + " · " + fillp(C["home"]["gainBasis"], n=2)
+        assert gain.inner_text().replace("\n", " ") == want, (gain.inner_text(), want)                                   # 산 가격보다 0원 (0.0%)
+        # 바로 위: '오늘'이 있는 줄(평가 금액 줄) 다음이 '산 가격보다' 줄이에요
+        assert card.evaluate("(c) => { const d = c.querySelector('[data-ui-v2=\"home-day\"]'), g = c.querySelector('[data-ui-v2=\"home-gain\"]');"
+                             " return !!d && !!g && d.parentElement.nextElementSibling === g && d.getBoundingClientRect().bottom <= g.getBoundingClientRect().top + 1; }")
+        value = 2 * a["price"] + 3 * b["price"]
+        assert abs(int(card.locator('[data-ui-v2="home-value"]').get_attribute("data-v")) - value) <= 1
+        assert "\u2212" not in day.inner_text() and "+" not in day.inner_text() and "NaN" not in card.inner_text()
+        assert page.locator(MASCOT_IN_MAIN).count() == 0, "숫자가 있는 홈에 뱁이"
+        floor_ok(page, "오늘은 가진 동안만")
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, f"{after}(가격 날짜 다음 날)에 {pxd} 종가로 산 포트폴리오: '오늘 0원 (0.0%)' 바로 밑에 '산 가격보다 0원 (0.0%)'", audit_case)
+
+    def bought_more():
+        card = page.locator('[data-ui-v2="home-money"][data-deck-id="dmore"]')
+        card.wait_for(state="visible")
+        px, d1 = a["price"], a["d1"]
+        amount = 4 * (px - px / (1 + d1 / 100))                          # 가진 종목 줄 4주만: 다음 날 산 2주는 금액에도 %에도 없어요
+        pct = amount / (4 * px / (1 + d1 / 100)) * 100                   # = 그 종목의 하루 변화 (1차 리뷰 S1: 뒤에 산 주식이 %를 묽히지 않아요)
+        assert abs(pct - d1) < 1e-9, (pct, d1)
+        day = card.locator('[data-ui-v2="home-day"]')
+        assert abs(float(day.get_attribute("data-pct")) - pct) < 0.002, (day.get_attribute("data-pct"), pct)
+        assert day.inner_text() == fillp(C["home"]["day"], amount=signed_won(amount), pct=signed_pct(pct)), (day.inner_text(), amount, pct)
+        old = 6 * (px - px / (1 + d1 / 100))                             # 예전 계산: 6주 모두 하루 변화 — 금액이 달라요
+        assert signed_won(old) != signed_won(amount), (old, amount)
+        no_hscroll(page, width)
+        R.collect(page)
+    R.check(page, S, "가진 종목 줄 4주 + 다음 날 산 2주: '오늘'은 4주의 하루 변화만 (%는 그 종목의 하루 변화)", bought_more)
+    ctx.close()
+    srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -16277,7 +16347,8 @@ def main():
                    lambda: scene_v196e(R, files, 390), lambda: scene_v196e(R, files, 320),                  # v19.6e 이번 주 정리 (스위치를 켠 빌드)
                    lambda: scene_v196e(R, files, 1280), lambda: scene_v196e(R, files, 390, dark=True),
                    lambda: scene_v196e(R, files, 1280, dark=True),
-                   lambda: scene_v196e_states(R, files)):                                                   # v19.6e 때 · 닫기 · 빠진 종목 · 멈춤 · 실패 · 둘 · nv
+                   lambda: scene_v196e_states(R, files),                                                    # v19.6e 때 · 닫기 · 빠진 종목 · 멈춤 · 실패 · 둘 · nv
+                   lambda: scene_home_day_after(R, files, 390), lambda: scene_home_day_after(R, files, 1280)):   # 감사 4.2: '오늘'은 가진 동안만
             try:
                 fn()
             except Exception as e:

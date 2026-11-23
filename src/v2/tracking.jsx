@@ -11,7 +11,8 @@ import { ownCloseGroups } from "./stocklist.js";
 import { signedPct } from "./deckcalc.js";
 import { deckMoney, indexSince, addMoney, addMessage, bandOf, plainEdges, withoutAbsent } from "./track.js";
 
-const signedWon = (v) => (v > 0 ? "+" : "") + wonText(v);
+// "+" only when the amount shown is above 0 (2026-11-24, PR #177: a fraction of a won reads "0원", never "+0원", as on 홈)
+const signedWon = (v) => (Math.round(v) > 0 ? "+" : "") + wonText(v);
 // Each left-out number is logged once per page view (loudly, with the reason), not on every render.
 const warned = new Set();
 const warnOnce = (msg) => { if (!warned.has(msg)) { warned.add(msg); console.warn(msg); } };

@@ -20,24 +20,38 @@
 //   any of them has no change, a holding is valued by a typed amount only (it does not move), or a US listing is held
 //   (its change is in dollars on another day and yesterday's rate is not in the data): the rule track.deckDayChange
 //   already keeps for built portfolios.
+//   2026-11-24 (audit 4.2, PR #177: a portfolio recorded on Saturday 11-21 at Friday's closes showed "오늘 −17만원 (−4.3%)"
+//   right above "산 가격보다 0원 (0.0%)", a loss nobody had): 오늘 counts only what was held over that change, in both kinds of
+//   portfolio (lots.dayShare, by the open lots of the records): a 가진 종목 row and a 샀어요 record dated before the price date
+//   (pxDate) count the whole change, a 샀어요 record dated on it from its own price to the close, one dated after it nothing.
+//   The % is that amount over what was at stake in the change (lots.dayTotal: the held shares at the previous close and the
+//   cost of the shares bought on the price date; shares bought after it are in neither); everything bought after it: 0원
+//   (0.0%). Shares sold, on the price date or after it, are no longer held: not in the value, not in 오늘. A holding whose
+//   records cannot be placed (lots.DAY_WHY) leaves 오늘 out (null), as above, said once in the console with the reason. A
+//   holding with only shares held over the change takes exactly the arithmetic of before (no rounding tie moves).
 import { num, todayD1, valueD1 } from "./engine.js";
 import { pfRows, pfState, isImported, CHIP_GROUP } from "./pf.js";
-import { deckMoney, deckDayChange } from "./track.js";
+import { deckMoney, deckDayMove } from "./track.js";
 import { heldQty } from "./held.js";
+import { ledger, dayShare, dayParts, dayTotal, DAY_WHY } from "./lots.js";
 
 const EPS = 1e-9;
 
-// Today's change of a set of holdings: [{ value (won), d1 (%), usd, frozen }] -> { pct, amount } | null.
+// Today's change of a set of holdings: [{ value (won), d1 (%), usd, frozen, day? }] -> { pct, amount } | null.
+// day (2026-11-24): the holding's value split by its records (lots.dayParts: held · on · onCost · after, won); null = its
+// records could not be placed (left out). Without it all of it was held over the change. The sum: lots.dayTotal.
 export function dayMove(items) {
   if (!items || !items.length) return null;
-  let now = 0, prev = 0;
+  const rows = [];
   for (const x of items) {
     const v = num(x && x.value), d1 = num(x && x.d1);
     if (!x || x.frozen || x.usd || v == null || !(v >= 0) || d1 == null || d1 <= -100) return null;
-    now += v;
-    prev += v / (1 + d1 / 100);
+    const p = x.day === undefined ? { held: v, on: 0, onCost: 0, after: 0 } : x.day;
+    if (!p || ![p.held, p.on, p.onCost, p.after].every((y) => num(y) != null && y >= 0)) return null;
+    rows.push({ d1, held: p.held, on: p.on, onCost: p.onCost, after: p.after });
   }
-  return prev > 0 ? { pct: (now / prev - 1) * 100, amount: now - prev } : null;
+  const t = dayTotal(rows);
+  return t ? { pct: t.pct, amount: t.amount } : null;
 }
 
 // 산 가격보다: over the holdings whose money put in is known. per: deckMoney's per-stock { value, cost } (won).
@@ -64,13 +78,38 @@ export function homeMoney(deck, de, ctx) {
     const live = v.rows.filter((r) => !r.absent);
     // 2026-11-14: a stock with no trade today counts at its reference price's change (engine.valueD1, data.json ntD1), so a
     // halted holding never takes the portfolio's 오늘 away; its own row says why it shows no change (fixnote.jsx DayNote)
-    day = dayMove(live.map((r) => ({ value: r.value, d1: r.s ? valueD1(r.s) : null, usd: r.usd, frozen: r.frozen })));
+    day = dayMove(live.map((r) => ({ value: r.value, d1: r.s ? valueD1(r.s) : null, usd: r.usd, frozen: r.frozen, ...dayStart(deck, r, ctx) })));
   } else {
-    const pct = deckDayChange(de);
-    if (pct != null && Number.isFinite(pct) && pct > -100) day = { pct, amount: m.value - m.value / (1 + pct / 100) };
+    // a built portfolio: the same rule over its daily check's values (track.deckDayMove with its records). With every share held
+    // over the change, the amount is worked out exactly as before (from the % and the value), so no rounding tie moves.
+    const dm = deckDayMove(de, deck, ctx.pxDate);
+    if (dm && Number.isFinite(dm.pct) && dm.pct > -100) {
+      const amount = dm.mixed ? dm.amount : m.value - m.value / (1 + dm.pct / 100);
+      if (Number.isFinite(amount)) day = { pct: dm.pct, amount };
+    }
   }
   const gain = gainOf(m.per, isImported(deck) && m.usdToday && usdCounted(deck, m.per, ctx));
   return { ok: true, value: m.value, day, gain, absent: m.absent || [] };
+}
+
+// A 가진 종목 portfolio's row split by its records (dayMove's day: lots.dayShare · dayParts): {} when the row is left to dayMove's
+// own rules (no change today, a US listing, a row added by name, no value), { day: null } when its records cannot be placed
+// (dayMove then leaves 오늘 out; said once in the console, with the reason).
+const dayWarned = new Set();
+function dayStart(deck, r, ctx) {
+  const d1 = r.s ? valueD1(r.s) : null;
+  if (!r.t || !r.s || r.usd || r.frozen || num(d1) == null || d1 <= -100 || num(r.value) == null || r.value < 0) return {};
+  const pxDate = ctx ? ctx.pxDate : null;
+  const share = dayShare(ledger(deck, r.t), num(r.px), d1, pxDate);
+  if (share.why) {
+    const k = `${deck.id}|${r.t}|${share.why}`;
+    if (!dayWarned.has(k)) {
+      dayWarned.add(k);
+      console.warn(`[v2] ${deck.id}: today's change left out: ${r.t}: ${DAY_WHY[share.why] || share.why} (price date ${JSON.stringify(pxDate)})`);
+    }
+    return { day: null };
+  }
+  return { day: dayParts(r.value, share) };
 }
 
 // usdToday only when a dollar 평균 단가 is among the holdings counted in 산 가격보다 (pf.avgOf in dollars).

@@ -68,7 +68,9 @@ import { LookRows, lookRowCount, pageHas } from "./todaylook.jsx";
 import { WeeklyCards } from "./weekly.jsx";
 import { WEEKLY_ON } from "./weekcfg.js";
 
-const signedWon = (v) => (v > 0 ? "+" : "") + wonText(v);
+// "+" only when the amount shown is above 0 (2026-11-24: a change of a fraction of a won reads "0원", never "+0원"; wonText never
+// writes "−0원")
+export const signedWon = (v) => (Math.round(v) > 0 ? "+" : "") + wonText(v);
 const tone = (v) => (v > 0 ? COLOR.up : v < 0 ? COLOR.down : COLOR.text2);
 
 // ---------------- the hero: the four portfolio rules ----------------
