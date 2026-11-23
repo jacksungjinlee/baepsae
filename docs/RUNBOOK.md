@@ -2189,6 +2189,47 @@ longer holds `BFB`.
 **Rolling back #PR**: a revert PR. The reverted gate ignores `usListSym`; the next data run drops BF-B again (users who saved it
 see the existing "no longer in today's data" handling). No data run is needed for the site checks.
 
+## US stock splits and the Yahoo details copy (분할 뒤 보관본 맞춤 · gate warning "미국 분할 뒤 PBR ↔ PER × ROE", since #PR)
+
+Audit, 2026-11-23: SNDK split 8:1 on 2026-11-20; the 11-21 publish had PER 5.1, PBR 0.63, ROE 141.2%, 가치 99. Two different problems
+sit behind US numbers after a split:
+
+- **Ours (fixed here): a pre-split copy rescaled by price alone.** `fetch_us` keeps Yahoo's details (PER, PBR, 시가총액, 배당수익률,
+  평균 거래량) for up to 3 days (14 when Yahoo refuses) with the price they were fetched at (`px`), and rescales them by today's price ÷
+  that price (`us_rescale`). After an N:1 split that ratio is about 1/N, so PER, PBR and 시가총액 came out N times too small and
+  배당수익률 N times too big (audit: 8:1, no real move, PER 40 → 5.0, 134.6조원 → 16.8조원). Now:
+  - the split list is read before the details step from the same sources as the published `splits` (today's download, the previous
+    publish's `splits`, `SPLIT_OVERRIDES`; `us_info_split_map`), because `splits_fields` only runs in `main` after `fetch_us`;
+  - a copy older than a split for that ticker is fetched again that run (`us_info_due` · `us_info_split_due`), with the usual three
+    passes and pauses;
+  - if Yahoo refuses and the copy is used, the rescale is today's price × the split ratios ÷ that price (`us_info_split_k`; reverse
+    splits below 1, two splits multiply), and 평균 거래량 is multiplied too. A split counts when it is after the copy's anchor day (`pd`,
+    the run's US date, written since #PR; older copies: the day before `at`) and on or before the stock's price basis (its `pxd` for a
+    carried close, otherwise the US date);
+  - if multiplying moves the price ratio further from 1 (the copy may already be on the new share count), it is not applied and the
+    log says so (`곱하지 않음`);
+  - a carried row restored to Yahoo's bar after a late split (`us_own_split_late`) uses the same rule (`us_own_restore_split`).
+  - Log: `· 미국 분할 뒤 보관본 맞춤 (…): 0종목 · 분할 뒤라 다시 받기 0` on a normal day; `!!` with names when a copy was multiplied,
+    not multiplied, or could not be fetched again. `!! 미국 분할을 읽지 못해 …` when the split read failed: that run keeps the old
+    price-only rescale, with the number of stocks on a copy. `!! 오늘 다운로드에 분할 칸이 없는 미국 종목 …`: those tickers use the
+    previous publish's and the fixed table's splits only.
+- **Yahoo's (not fixed, warned): stale per-share numbers right after a split.** The 11-21 SNDK details were a fresh fetch after the
+  split (implied shares 142.3M → 1,138M, average volume 10.8M → 84.5M: ×8), so the copy fix above would not have changed them. Yahoo's
+  `priceToBook` still used the pre-split book value per share (79.24 ÷ 126 = 0.63; the 11-11 publish had 7.76 at $977.69); PER and
+  시가총액 were right. On 11-06 the ETFs that split 11-05 (MTUM, QUAL 4:1, SOXX 3:1) had 거래대금 3–4 times too small for one day the
+  same way (Yahoo's average volume not yet adjusted).
+- **Gate row `미국 분할 뒤 PBR ↔ PER × ROE (최근 30일 분할 · 경고만)` (`validate_data.check_us_split_pbr`), warning only, in every mode,
+  also when its own check stops:** for each US company (not ETF, fund or `fcur`) with a split in `splits` within 30 days up to
+  `usPxDate`, PBR should equal PER × ROE. It warns, naming the stock, when they differ by more than √(split ratio), at least 1.5
+  (`US_SPLIT_BAND_MIN`): the same idea as `US_FOREIGN_BAND` (a band narrower than √error puts every error of that size outside it),
+  with a floor from 11-21's 582 US companies (95% within 1.40×, 96% within 1.5×, 98% within 2×; SNDK before its split 1.42×). It cannot
+  see an error that moves PER and PBR together (the copy problem above). SKIP when the file has no `splits`.
+- **On a warning:** compare the named stock's PBR with the price ÷ book value per share in its latest filing. Yahoo usually corrects
+  itself within a few days, and the copy is fetched again every 3 days. If it stays wrong past a week, or a split ratio in the row
+  looks wrong, tell Jack. Blanking such a number on the site would need a new line on screen, so it is Jack's decision.
+
+**Rolling back #PR**: a revert PR. The copies written with `pd` are read by the old code as before (it ignores the key).
+
 ## Roll back
 
 - **A bad code release** (the app looks broken after a merge): Claude opens the merged pull request, presses

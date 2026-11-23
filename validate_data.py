@@ -2527,6 +2527,106 @@ def check_us_new_wait(rep, data, pdata):
                [t + (" (지난 발행본부터 이어서)" if t in again else "") for t in nw])
 
 
+# 2026-11-23 (감사 · SNDK 8:1 분할 2026-11-20 · 새 줄 · 경고만): 최근에 분할한 미국 회사의 PBR 이 PER × ROE 와 맞는지. PBR = 주가 ÷ 주당 장부가 ·
+# PER × ROE = (주가 ÷ 주당순이익) × (순이익 ÷ 자본) 이라 둘은 같은 회사 숫자여야 해요 (US_FOREIGN_BAND 의 pbr 줄과 같은 맞춰 보기). 11-21 발행본의
+# SNDK: PBR 0.63 ↔ PER 5.1 × ROE 141.2% = 7.20 (11.4배) — 야후의 PBR 이 분할 전 주당 장부가로 계산돼 8배 작았어요 (PER · 시가총액은 맞았어요 · 가치 99점).
+# 허용 폭: fetch_data.US_FOREIGN_BAND 와 같은 생각 — 폭이 √(틀린 배율)보다 좁아야 폭 안의 회사가 그 배율만큼 틀리면 늘 밖으로 나가요 (2 ÷ 1.35 > 1.35).
+# 분할로 틀린 숫자는 분할 배율만큼 틀려서 폭 = √배율 (8:1 → 2.83 · 2:1 → 1.41). 다만 맞는 회사도 흔들려요: 11-21 발행본의 미국 회사 582곳 중 1.40배
+# 안 95% · 1.5배 안 96% (558곳) · 2배 안 98% · 가장 큰 차이 5.2배 (CHYM) · SNDK 는 분할 전 11-11 에 1.42배 — 그래서 폭은 적어도 US_SPLIT_BAND_MIN
+# (1.5배: 5% 주식배당 · 3:2 분할 뒤에 보통 회사가 경고로 뜨지 않게). 경고만 — 실패하지 않아요 (발행을 멈추는 줄은 Jack 의 답이 있어야 해요). PER 과 PBR
+# 이 같은 배율로 함께 틀리면 (보관본을 분할 전 가격으로 맞춘 것 — 파이프라인이 고쳐요, fetch_data.us_info_split_k) 이 줄은 보지 못해요.
+US_SPLIT_PBR_ROW = "미국 분할 뒤 PBR ↔ PER × ROE (최근 30일 분할 · 경고만)"
+US_SPLIT_CHECK_DAYS = 30
+US_SPLIT_BAND_MIN = 1.5
+
+
+def us_split_band(ratios):
+    """그 종목의 최근 분할 배율들 → 허용 폭 (큰 값 ÷ 작은 값): √(가장 작은 배율 — 병합은 역수) 와 US_SPLIT_BAND_MIN 중 큰 값. (순수 함수)"""
+    fold = min(max(r, 1.0 / r) for r in ratios)
+    return max(US_SPLIT_BAND_MIN, math.sqrt(fold))
+
+
+def us_split_pbr_scan(data):
+    """data.json → {"n": 최근 분할 줄 수, "codes": 최근 분할 미국 회사 (ETF · 펀드 · fcur 제외 · 파일에 있는 것), "other": 그 밖의 티커 (ETF · 펀드 ·
+    fcur · 파일에 없음), "off": [(티커, 차이, 폭, per, pbr, roe, [(날짜, 배율)])], "ok": 맞춰 보고 폭 안인 수, "worst": 폭 안의 가장 큰 차이,
+    "nocmp": 맞춰 볼 수 없는 티커 (PER · PBR · ROE 중 빈 칸이거나 0 이하)}. 최근 = usPxDate 앞 US_SPLIT_CHECK_DAYS 일 안 · usPxDate 까지.
+    usPxDate 나 splits 를 읽지 못하면 ValueError (그 줄은 경고). (순수 함수)"""
+    upx = day(data.get("usPxDate")) if is_day(data.get("usPxDate")) else None
+    if upx is None:
+        raise ValueError(f"usPxDate 를 읽지 못함 ({str(data.get('usPxDate'))[:20]})")
+    rows = data.get("splits")
+    if not isinstance(rows, list):
+        raise ValueError("splits 가 목록이 아님" if "splits" in data else "splits 칸 없음")
+    lo = upx - dt.timedelta(days=US_SPLIT_CHECK_DAYS)
+    recent, n = collections.defaultdict(list), 0
+    for x in rows:
+        if not (isinstance(x, list) and len(x) == 3 and isinstance(x[0], str) and is_day(x[1])):
+            continue
+        r = num(x[2])
+        if r is None or r <= 0:
+            continue
+        d = day(x[1])
+        if lo < d <= upx:
+            recent[x[0]].append((x[1], r))
+            n += 1
+    by = {s.get("t"): s for s in us_stocks(data)}
+    out = {"n": n, "codes": [], "other": [], "off": [], "ok": 0, "worst": None, "nocmp": []}
+    for t in sorted(recent):
+        s = by.get(t)
+        if s is None or s.get("etf") or s.get("fcur"):
+            out["other"].append(t)
+            continue
+        out["codes"].append(t)
+        per, pbr, roe = num(s.get("per")), num(s.get("pbr")), num(s.get("roe"))
+        if not (per and per > 0 and pbr and pbr > 0 and roe and roe > 0):
+            out["nocmp"].append(t)
+            continue
+        imp = per * roe / 100.0
+        gap = max(pbr / imp, imp / pbr)
+        band = us_split_band([r for _d, r in recent[t]])
+        if gap > band:
+            out["off"].append((t, gap, band, per, pbr, roe, sorted(recent[t])))
+        else:
+            out["ok"] += 1
+            out["worst"] = gap if out["worst"] is None else max(out["worst"], gap)
+    return out
+
+
+def _split_txt(r):
+    return f"{r:g}:1 분할" if r > 1 else f"1:{1 / r:g} 병합"
+
+
+def check_us_split_pbr(rep, data):
+    """2026-11-23 (감사 · 새 줄 · 경고만): 최근 US_SPLIT_CHECK_DAYS 일 안에 분할한 미국 회사 주식(ETF · 펀드 · fcur 제외)의 PBR 이 PER × ROE 와
+    us_split_band 배 넘게 다르면 경고하고 이름을 적어요. 이 줄은 어떤 모드에서도 실패하지 않아요 (발행 · bootstrap · 사이트 점검 · 감시): 검사 코드가
+    멈추거나 splits · usPxDate 를 읽지 못해도 경고예요."""
+    rule = (f"최근 {US_SPLIT_CHECK_DAYS}일 안에 분할한 미국 회사(ETF · 펀드 · fcur 제외)의 PBR 이 PER × ROE 와 √(분할 배율)배 (적어도 "
+            f"{US_SPLIT_BAND_MIN:g}배) 넘게 다르면 경고 · 실패 없음")
+    try:
+        if isinstance(data, dict) and data.get("splits") is None:
+            rep.skip(US_SPLIT_PBR_ROW, "splits 칸 없음 (위 '주식 분할 목록 (splits)' 줄이 경고해요)")
+            return
+        sc = us_split_pbr_scan(data if isinstance(data, dict) else {})
+        parts = [f"최근 분할 {sc['n']}건 · 회사 주식 {len(sc['codes'])}종목"
+                 + (f" (ETF · 펀드 · fcur · 목록에 없음 {len(sc['other'])}종목은 보지 않음)" if sc["other"] else "")]
+        if sc["off"]:
+            parts.append(f"폭 밖 {len(sc['off'])}종목: " + "; ".join(
+                f"{t} {' · '.join(f'{_split_txt(r)} {d}' for d, r in evs)} — PBR {pbr:g} ↔ PER {per:g} × ROE {roe:g}% = {per * roe / 100:.2f} "
+                f"({gap:.1f}배 · 허용 {band:.2f}배)" for t, gap, band, per, pbr, roe, evs in sc["off"][:US_OWN_SHOW])
+                + (f" 외 {len(sc['off']) - US_OWN_SHOW}종목" if len(sc["off"]) > US_OWN_SHOW else ""))
+        if sc["ok"]:
+            parts.append(f"폭 안 {sc['ok']}종목 (가장 큰 차이 {sc['worst']:.2f}배)")
+        if sc["nocmp"]:
+            parts.append(f"PER · PBR · ROE 중 빈 칸이거나 0 이하라 맞춰 보지 않음 {len(sc['nocmp'])}: {', '.join(sc['nocmp'][:US_OWN_SHOW])}")
+        rep.add(US_SPLIT_PBR_ROW, True, " · ".join(parts)[:600], rule, warn=bool(sc["off"]))
+        if sc["off"]:
+            rep.detail("최근 분할 뒤 PBR 이 PER × ROE 와 다른 미국 회사 (야후의 주당 숫자가 분할 전 기준인지 확인)",
+                       [f"{t}: PBR {pbr:g} · PER {per:g} · ROE {roe:g}% → PER × ROE {per * roe / 100:.2f} ({gap:.2f}배 · 허용 {band:.2f}배) · "
+                        + ", ".join(f"{_split_txt(r)} {d}" for d, r in evs) for t, gap, band, per, pbr, roe, evs in sc["off"]])
+    except Exception as e:
+        rep.add(US_SPLIT_PBR_ROW, True, f"검사가 멈췄어요: {type(e).__name__}: {str(e)[:120]}", rule + " (멈춰도 경고만)", warn=True)
+
+
 def coverage(arr, key):
     if not arr:
         return 0.0
@@ -2839,6 +2939,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_kr_own_close(rep, data, macro, pdata)   # 2026-11-19 (Jack): 국내 종목의 마지막 확인 종가 (pxd · 미국 pxd 줄과 같은 실패 + 경고 줄)
     check_us_own_close(rep, data, macro, pdata)   # 2026-11-20 (Jack): 미국 종목의 마지막 확인 종가 (pxc · 날짜가 깨졌거나 d1 이 옆에 있으면 실패 · 나머지는 경고)
     check_us_new_wait(rep, data, pdata)   # 2026-11-22 (Jack): 미국 기준일 종가를 기다리는 새 미국 종목 (usSrc.newWait · 경고만 · 실패 없음)
+    check_us_split_pbr(rep, data)         # 2026-11-23 (감사): 최근 분할한 미국 회사의 PBR ↔ PER × ROE (경고만 · 실패 없음 · 멈춰도 경고)
     check_v191f(rep, data, corp, kr, by, comps, pdata)
     check_eps_line_left(rep, corp, comps)   # 2026-11-14 (Jack Q3 · 리뷰 S4): 다시 읽은 뒤에도 날짜가 지난 '고치는 중' 줄이 남을 회사 (경고)
     check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=(prev or {}).get("macro") if rel else None)
