@@ -2200,40 +2200,58 @@ the top 100, every company stays on the older quarter (`QUARTER_CURRENT_SHARE`).
 **Rule now** (`fetch_data.dart_late_due` · `dart_late_want` · `dart_late_plan`, on top of the old rule):
 - The deadline rolls to the next KRX trading day (`data/market_holidays.csv`; past the table's last year, weekends only).
 - Statement entries (CFS · OFS) still "not filed" (013) are asked again once a day from deadline − 7 until rolled deadline + 21
-  days (`DART_LATE_DAYS`), also after the quarter is in use, so a small company first asked on the adoption day is never later
-  than with the old 7-day rule. Then every 7 days as before. Same for the 사업보고서.
+  days (`DART_LATE_DAYS`), also after the quarter is in use, and for the 사업보고서. Then every 7 days as before.
+- The old rule is untouched: an entry keeps its old-rule date (`at`), and a late ask writes its own date (`lt`). So every old-rule
+  ask happens on the same day as on `main`, and the late asks come on top (an old cache without `lt` works as before; `lt` never
+  makes an answer look fresher to the old rule).
 - Only entries a run really asks (`dart_late_want`): the 사업보고서 for every company (consolidated, then separate); for the quarter
   in use (and older ones), only the statement the main loop asks for that company (the kind of its 사업보고서, `dart_fin_fs`); for a
-  newer quarter not yet in use, only the current top 100 (both statements), in the quarter choice's second count.
+  newer quarter not yet in use, only the current top 100 (both statements), in the quarter choice's second count, which asks only
+  those planned entries.
 - The quarter choice first counts the top 100 with the old rule; only if that leaves the quarter under 70% does it re-ask the top
-  100's still-missing entries. A quarter in use still has its missing entries re-asked after the choice (rule above).
+  100's planned entries. A quarter in use still has its missing entries re-asked after the choice (rule above).
 - A report whose other statement was found is skipped (a company that files only separate statements always answers "no data" for
   the consolidated one). The rare company whose consolidated statement shows up later than its separate one waits 7 days for it,
-  as before.
-- At most `DART_LATE_PER_RUN` = 300 extra calls a run, counted when `report()` calls (failed answers such as 800, which are not
-  saved, count too, and a key is asked at most once in a run). Plans take the biggest companies first, up to the calls left; the
-  rest wait for the next run, which picks the next biggest.
+  as on `main`.
+- Calls are counted when `report()` makes them (failed answers such as 800, which are not saved, count too; a key is asked at most
+  once in a run): `DART_LATE_PER_RUN` = 300 a run, plus `DART_LATE_INUSE_PER_RUN` = 2,500 while the quarter in use is inside its
+  window (one statement per company, so every company still missing it is asked every day). Plans take the entries asked longest
+  ago first, then the biggest companies, so under the cap every missing entry gets its turn within a few runs.
 - Cache runs only: a dart=full run and an empty-cache run (a full-DART run) ask everything anyway and make no plan; a same-day
   re-run that makes no DART calls asks nothing; a 020 (daily limit) or 30 network failures in a row stop these calls like every
-  other DART call (`DART_FATAL` · `DART_DOWN_AFTER`). At most 300 calls on a cache run is not a full-DART run.
+  other DART call (`DART_FATAL` · `DART_DOWN_AFTER`). A capped extra on a cache run is not a full-DART run.
 
-**Budget.** The extension adds at most 300 calls to whatever a cache run makes anyway. A stored answer is asked at most once a KST
-day per cache (the `at` date; a failed answer is not stored and can be asked again by the next run). The biggest cache runs are
-unchanged by this: the run that first adopts a quarter asks this year's and last year's same quarter for every company not yet
-asked, about 2 × 2,400 ≈ 4,800 calls (on `main` too), plus its usual calls (about 670 disclosure calls, up to 300 re-checks, up to
-800 re-reads, and any 7-day batch due that day: 3,300 in the offline replay below). That stays under `DART_FULL_TARGET` (16,000 a
-run). Such a run and a full-DART run (estimate up to 16,000) on the same KST day could pass the 20,000 daily limit, with or without
-this change: the second run then stops on 020 and publishes nothing (run the full-DART run on another day than a quarter's
-adoption day). Offline replay on the 11-21 company list (2,474 companies, 3Q showing up in DART's API from 11-10 to 11-25, 2% never):
-the quarter is in use from 11-17 (old rule: 11-23); late calls a run 69, 300, 300, 300, 248, 144, 80, 62 (11-17 to 11-25); every
-company whose 3Q had shown up was on 3Q by 11-21, and on every day at least as many companies were on 3Q as with the old rule.
+**Never later than the old rule, with one exception.** Inside the window every old-rule ask still happens, the quarter in use is
+asked every day and the rest rotate, so no company moves to the new quarter later than on `main`. The exception is after rolled
+deadline + 21: when this code put the quarter in use on a different weekday than the old rule would have, both then ask a
+still-missing company once a week on different weekdays, so a company whose numbers first show up in DART after rolled deadline + 21
+can switch up to 6 days later than on `main` (offline 2027-08 holiday case: 21 of 1,200 companies, one publish, 3 days). Offline
+comparisons with `main` on twelve cases (3Q adopted early, an 800 day, two runs skipped, 2Q 2026 window close, 사업보고서 2026 with and
+without an 800 day, top-100 churn with and without an 800 day, and three replays on the 11-21 company list) had no other day behind.
+
+**Budget.** At most 300 extra calls a run, plus up to 2,500 while the quarter in use is inside its window (in the offline cases at
+most 905 late calls a run for 1,200 companies and 886 for the 2,474 on the live list). Each company newly found for the quarter in
+use also makes one first-time call for last year's same quarter (the same call `main` makes when it finds it). A stored answer is
+asked at most once a KST day per cache (by `at` and `lt`); a failed answer is not stored, so a second start on the same day (after a
+failed publish) can ask it again, and can ask entries the first start left under the cap. The busiest cache runs are the same as on
+`main`: the run that first puts a quarter in use asks this year's and last year's same quarter for every company not yet asked,
+about 2 × 2,400 ≈ 4,800 calls, plus its usual calls (about 670 disclosure calls, up to 300 re-checks, up to 800 re-reads, and any
+7-day batch due that day: 3,300 in the offline replay). The day after an early adoption adds at most 2,800 late calls and their
+last-year calls. Busiest run in the offline cases after the seed run: about 8,000 on both (`main` 8,026; this code 7,591, where its
+switch fell on the same day as a 7-day batch). All stay under `DART_FULL_TARGET` (16,000 a run). A cache run like that and a full-DART run (estimate up to
+16,000) on the same KST day could pass the 20,000 daily limit, with or without this change: the second run then stops on 020 and
+publishes nothing, so avoid a full-DART run in the week after a quarter deadline. Offline replay on the 11-21 company list (2,474
+companies, 3Q showing up in DART's API from 11-10 to 11-25, 2% never): the quarter is in use from 11-17 (old rule: 11-23); late
+calls a run 69, 604, 424, 259, 209, 144, 0, 62 (11-17 to 11-25; 0 on 11-24, the old rule's 7-day day); every company whose 3Q had
+shown up was on 3Q the same day.
 
 **Log lines** (DART step): `DART 마감 뒤 매일 다시 묻기 창: 2026.3Q 마감 2026-11-14 → 다음 거래일 2026-11-16 · 아직 없는 재무제표
 항목을 2026-12-07 까지 매일 …`; `분기 판단: … 이 70% 가 안 돼 상위 회사의 아직 없는 항목을 다시 물어요 — 계획 P건 (한도 밖 R건) · 물음
 A회 · 제출 a곳 → b곳` (only when there is something to ask; `!!` when the cap left some, or A > 0 and nothing new came);
-`DART 마감 뒤 매일 다시 묻기 계획 (분기 판단 뒤): P건 (남은 호출 L회)` (`!!` when the cap leaves some); and at the end
-`DART 마감 뒤 매일 다시 묻기: 오늘 다시 물음 A회 → 새로 냄 F · 아직 없음 W · 다음 실행으로 남김 L건` (`!!` when L > 0 or calls failed;
-L counts only entries a later run will really ask).
+`DART 마감 뒤 매일 다시 묻기 계획 (분기 판단 뒤): P건 (남은 호출 L회 · '현재' 분기 … 2,500회 더)` (`!!` when the cap leaves some); and
+at the end `DART 마감 뒤 매일 다시 묻기: 오늘 다시 물음 A회 → 새로 냄 F · 아직 없음 W · 연결 문제 · 점검 · 읽지 못함 X · 다음 실행으로 남김
+L건 (why)` (`!!` when L > 0 or calls failed; L counts only entries a later run will really ask; the reason says whether DART
+stopped or the cap was reached). A 000 answer that can't be read counts as failed, not as 새로 냄.
 
 **Gate row `분기 판단 (corp.json qPick · 경고만)`** (`validate_data.check_q_pick`). The run writes its choice to corp.json
 `qPick` (`{"v": 1, "cur": "2026.3Q" or null, "top": 100, "filed": {"2026.3Q": 64, …}}`; the app does not read it). The row checks
@@ -2242,12 +2260,15 @@ quarter's deadline (rolled to the next KRX trading day), naming how many of the 
 May it has nothing to check, and it never checks the 사업보고서. It only warns, in every mode, also when its own check crashes. A file
 without `qPick` (before this change, or a DART-off run) is read from the newest `bq`. **If it warns:** check the DART step's log for
 the lines above. "제출 a곳 → a곳" day after day means DART's API still lacks the numbers (nothing to fix; the site shows the older
-quarter, which `bq` labels); no 분기 판단 re-ask line while under 70% inside the window means the retry is not running (a bug: fix
-the code, never the gate row).
+quarter, which `bq` labels). A missing re-ask line is normal from deadline − 7 to deadline + 2 (the old rule asks daily then) and on
+a second run of the same day (everything was asked that morning); after deadline + 2, a first run of the day under 70% with no
+re-ask line and no "다시 묻기 창" line is a bug (fix the code, never the gate row).
 
 **Dry runs.** A dry run on a new branch after 3Q is in use exercises only the post-adoption part (missing entries of the quarter in
-use, to 12-07); the first full use of the second count is the next quarter that sticks below 70% after its deadline, and of the
-사업보고서 window, April 2027. The offline replay (`fake get` on the live company list) covers the rest.
+use, to 12-07). A dry run on the same KST day as a publish that put a quarter in use makes 0 late calls: that morning's run already
+asked every missing entry, so run it on a later day (11-25 or later for #180). The first full use of the second count is the next
+quarter that sticks below 70% after its deadline, and of the 사업보고서 window, April 2027. The offline replays (`fake get`) cover the
+rest.
 
 **Rolling back #180**: a revert PR. The old 7-day rule returns, the gate row goes with it, and the next publish's corp.json has no
 `qPick` (no data run needed).

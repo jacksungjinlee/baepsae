@@ -28,12 +28,13 @@ v19.6g, v19.6h.
 on 2026.2Q (2,244 companies, 3Q none) five days after the 3Q deadline: "not filed yet" answers from the deadline days (11-14 was a
 Saturday, legal deadline 11-16; DART's statement API lags filings) waited 7 days, so the top 100 never reached 70%. Now deadlines
 roll to the next KRX trading day, and still-missing statement entries are asked again daily to rolled deadline + 21 days, also
-after the quarter is in use (small companies never later than before), only the ones a run really asks; at most 300 extra calls a
-run, counted per call, biggest companies first, the rest logged for the next run; cache runs only (not a full-DART run). corp.json
-gets `qPick` (the quarter choice; the app doesn't read it) and a warning-only gate row `분기 판단 (corp.json qPick · 경고만)` warns
-when this year's 1Q–3Q in use is still an older quarter more than 10 days after its rolled deadline. Round-1 review fixes in. The
-11-24 morning run may already move to 3Q under the old 7-day rule; then a dry run only exercises the post-adoption re-asks. RUNBOOK
-"DART: asking again after a filing deadline".
+after the quarter is in use, only the ones a run really asks; the old 7-day rule keeps its own date (`at`; late asks write `lt`).
+At most 300 extra calls a run, plus up to 2,500 (one per company) while the quarter in use is in its window, counted per call,
+oldest-asked first; cache runs only (not a full-DART run). Offline, no company switches later than on `main`, except one known case
+after rolled deadline + 21 (RUNBOOK). corp.json gets `qPick` (the quarter choice; the app doesn't read it) and a warning-only gate
+row `분기 판단 (corp.json qPick · 경고만)` warns when this year's 1Q–3Q in use is still an older quarter more than 10 days after its
+rolled deadline. Round-2 review fixes in. Dry run on 11-25 or later (a same-day dry run after the adopting publish makes 0 late
+calls). RUNBOOK "DART: asking again after a filing deadline".
 
 **CI checks the two PR rules (#175, 2026-11-23; Jack: "Automate the rules you missed"):** the last step of `ci.yml`'s `checks`
 job runs `tools/pr_rules.py`, so the required `ci` check goes red when either rule is missed. Run it yourself before pushing:

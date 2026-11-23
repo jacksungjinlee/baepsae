@@ -4613,7 +4613,7 @@ def add_percentiles(stocks):
 #   키: (기업, 사업연도, 보고서, 재무제표 구분)
 #   찾은 보고서(000)는 확정. 다만 90일 넘은 것은 하루 300건씩 다시 확인해요 (정정공시 대비).
 #   아직 없음(013)은 7일마다 다시 확인. 제출 마감 7일 전부터 마감 2일 뒤까지는 매일.
-#   (2026-11-24 · #180) 아직 없는 재무제표 항목은 마감(다음 거래일로 민 날) + 21일까지 매일 · 실행당 300회 · 시가총액 큰 회사부터 (dart_late_due).
+#   (2026-11-24 · #180) 아직 없는 재무제표 항목은 마감(다음 거래일로 민 날) + 21일까지 매일 · 실행당 300회 (+ '현재' 분기 2,500회) · 돌아가며 (dart_late_due).
 #   한도 초과(020)·키 오류는 저장하지 않고 실행을 실패로 끝냅니다.
 # v19.1b: v1 → v2. 배당 표(alotMatter)의 현금배당금총액·주당순이익·액면가와 재무제표의 3년 자본금을 새로 담아요.
 # 예전 항목에는 이 값이 없어서 캐시를 통째로 새로 받아요 (파일 이름도 바꿔서 v1 파일을 잘못 읽을 일이 없게 · 워크플로 키 dart-cache-v2-).
@@ -4688,16 +4688,20 @@ def dart_entry_due(entry, year, reprt, today, revalidate=False):
 # 11-14~16 에 '아직 없음'(013)으로 답한 상위 회사가 7일 뒤(11-23)에야 다시 물어져, 상위 100곳의 70% 가 모이지 않아 모든 회사가 2Q 에 남았어요.
 # 이제 위 규칙은 그대로 두고 '늘어난 창'을 더해요 (#180 · dart_late_due · DartClient.report):
 #   - 마감은 다음 한국 거래일로 밀어요 (data/market_holidays.csv · 주말 · 휴장일). 밀린 마감 + DART_LATE_DAYS 일까지 아직 없는 재무제표 항목을
-#     매일 다시 물어요 (그 분기를 '현재'로 쓴 뒤에도 — 작은 회사가 main 보다 늦지 않게 · 사업보고서도 · 그 뒤 7일마다).
+#     매일 다시 물어요 (그 분기를 '현재'로 쓴 뒤에도 · 사업보고서도 · 그 뒤 7일마다).
+#   - 예전 규칙의 날짜(at)는 그대로 두고 늘어난 창으로 물은 날은 lt 에 적어요 — 예전 규칙이 묻는 날은 main 과 같고, 늘어난 창은 그 위에 더 물을
+#     뿐이에요. 그래서 창 안에서는 main 보다 늦게 찾지 않아요 (예외: '현재'가 된 요일이 main 과 다르면, 창이 끝난 뒤 처음 뜨는 회사는 두 쪽의
+#     7일 주기가 달라 며칠 늦을 수 있어요).
 #   - 이번 실행이 정말 물을 항목만 (dart_late_want): 사업보고서는 모든 회사 · '현재'로 쓰는 분기는 그 회사의 사업보고서와 같은 재무제표 하나 ·
 #     아직 '현재'가 아닌 새 분기는 분기 판단의 둘째 셈으로 시가총액 상위 100곳만. 같은 보고서의 다른 재무제표를 찾은(000) 항목은 빼요
 #     (별도만 내는 회사의 연결 항목은 언제나 '없음'이에요 — 연결이 별도보다 늦게 뜨는 드문 회사는 main 처럼 7일마다).
-#   - 실행당 DART_LATE_PER_RUN 회까지 — 계획은 시가총액 큰 회사부터 남은 횟수만큼, report() 가 부를 때마다 세요 (실패한 답도 세요 · 한 실행에서
-#     같은 항목은 한 번만). 남은 것은 로그에 수 · 다음 실행이 이어서.
-#   - 빈 캐시 · dart=full 실행은 어차피 모두 물어서, DART 를 부르지 않는 같은 날 실행은 부르지 않아서 쓰지 않아요. 캐시로 도는 실행이 300회까지
+#   - 실행당 DART_LATE_PER_RUN 회 + ('현재' 분기가 창 안이면) DART_LATE_INUSE_PER_RUN 회 — report() 가 부를 때마다 세요 (실패한 답도 · 한 실행에서
+#     같은 항목은 한 번만). 계획은 가장 오래전에 물은 것부터, 같으면 시가총액 큰 회사부터 (돌아가며 · 남은 것은 다음 실행이 이어서).
+#   - 빈 캐시 · dart=full 실행은 어차피 모두 물어서, DART 를 부르지 않는 같은 날 실행은 부르지 않아서 쓰지 않아요. 캐시로 도는 실행이 정해진 횟수까지
 #     더 묻는 것이라 전체 DART 실행(빈 캐시 · full)이 아니에요 (CLAUDE.md).
 DART_LATE_DAYS = 21
 DART_LATE_PER_RUN = 300
+DART_LATE_INUSE_PER_RUN = 2500    # '현재' 분기가 늘어난 창 안일 때 더하는 호출 수 — 회사마다 재무제표 하나 (상장사 약 2,500곳)
 DART_LATE_TAGS = ("CFS", "OFS")
 
 
@@ -4714,13 +4718,19 @@ def dart_late_window(year, reprt, today, closed=None, end=None):
     return today <= report_deadline_rolled(year, reprt, closed, end) + dt.timedelta(days=DART_LATE_DAYS)
 
 
+def dart_late_asked_on(entry):
+    """그 항목을 마지막으로 물은 날 — 예전 규칙의 날짜(at)와 늘어난 창의 날짜(lt · 없으면 at) 중 늦은 날. (순수 함수)"""
+    at = dt.date.fromisoformat(entry["at"])
+    lt = entry.get("lt")
+    return max(at, dt.date.fromisoformat(lt)) if isinstance(lt, str) and lt else at
+
+
 def dart_late_due(entry, year, reprt, today, closed=None, end=None):
-    """예전 규칙(dart_entry_due)으로는 오늘 다시 묻지 않는 '아직 없음' 항목을 늘어난 창에서 오늘 다시 물을지 (저장된 답 기준 하루 한 번 · age ≥ 1).
-    (순수 함수)"""
+    """예전 규칙(dart_entry_due · at 만 봐요)으로는 오늘 다시 묻지 않는 '아직 없음' 항목을 늘어난 창에서 오늘 다시 물을지 (저장된 답 기준 하루 한 번 ·
+    마지막으로 물은 날(at · lt)에서 1일 이상). (순수 함수)"""
     if not entry or entry.get("st") == "000" or dart_entry_due(entry, year, reprt, today):
         return False
-    age = (today - dt.date.fromisoformat(entry["at"])).days
-    return age >= 1 and dart_late_window(year, reprt, today, closed, end)
+    return (today - dart_late_asked_on(entry)).days >= 1 and dart_late_window(year, reprt, today, closed, end)
 
 
 def dart_fin_fs(entries, corp, year):
@@ -4752,10 +4762,11 @@ def dart_late_want(qy, order, newer, top_codes, fs_of, annual=True):
 
 
 def dart_late_plan(entries, today, rank, want, closed=None, end=None, cap=None, asked=()):
-    """늘어난 창에서 오늘 다시 물을 재무제표 항목 → (물을 키 — 시가총액 큰 회사부터 cap 개 (None 이면 모두), 한도 밖에 남긴 키). (순수 함수)
+    """늘어난 창에서 오늘 다시 물을 재무제표 항목 → (물을 키 — 가장 오래전에 물은 것부터, 같으면 시가총액 큰 회사부터 cap 개 (None 이면 모두),
+    한도 밖에 남긴 키). 돌아가며 물어서 한도에 걸려도 아직 없는 항목이 모두 며칠 안에 차례가 와요 (리뷰 2차 S1). (순수 함수)
     entries: DART 캐시 {'기업|연도|보고서|재무제표': 항목} · rank: {기업코드: 시가총액 순위 (0 = 가장 큼)} — 순위가 없는 기업(오늘 조회하지 않는
     회사)은 빼요 · want: dart_late_want · asked: 이 실행에서 이미 물은 키 (답을 저장하지 못한 실패도 다시 묻지 않아요). 같은 보고서의 다른 재무제표를
-    이미 찾았으면(000) 빼요. 같은 순위면 연결(CFS) 먼저 — 조회도 연결을 먼저 해요."""
+    이미 찾았으면(000) 빼요. 같은 날 · 같은 순위면 연결(CFS) 먼저 — 조회도 연결을 먼저 해요."""
     found, cands = set(), []
     for k, e in entries.items():
         p = k.split("|")
@@ -4768,7 +4779,7 @@ def dart_late_plan(entries, today, rank, want, closed=None, end=None, cap=None, 
             continue
         y = int(p[1])
         if want(p[0], y, p[2], p[3]) and dart_late_due(e, y, p[2], today, closed, end):
-            cands.append((rank[p[0]], p[3] != "CFS", k))
+            cands.append((dart_late_asked_on(e), rank[p[0]], p[3] != "CFS", k))
     keys = [k for *_, k in sorted(cands)]
     return (keys, []) if cap is None else (keys[:cap], keys[cap:])
 
@@ -5002,10 +5013,9 @@ class DartClient:
                 self.cache_hits += 1
             return copy.deepcopy(e["d"]) if e and e["st"] == "000" else None
         j = self.get(endpoint, {"corp_code": corp, "bsns_year": str(year), "reprt_code": reprt, **(extra or {})})
-        if late:
-            st_l = str(j.get("status")) if j is not None else None
+        if late and (j is None or str(j.get("status")) not in ("000", "013")):
             with self.lock:
-                self.late_n[{"000": "found", "013": "still"}.get(st_l, "fail")] += 1
+                self.late_n["fail"] += 1          # 연결 문제 · 점검 중(800) 같은 답 (저장하지 않아요)
         if j is None:          # 네트워크 문제·한도 초과: 예전에 찾은 값이 있으면 그대로 (집계에 남아요)
             if rd:
                 with self.lock:
@@ -5023,6 +5033,8 @@ class DartClient:
             except Exception as ex:          # 이상한 응답 하나가 실행 전체를 멈추지 않게 (개수는 로그로)
                 with self.lock:
                     self.parse_errors[type(ex).__name__] += 1
+                    if late:
+                        self.late_n["fail"] += 1      # 000 이지만 읽지 못한 답은 '새로 냄'이 아니에요
                     if rd:
                         self.redo_failed += 1
                         self.entries[key] = {**e, "rpTry": self.today.isoformat()}
@@ -5032,7 +5044,15 @@ class DartClient:
         else:                  # 그 밖의 상태(점검 등)는 저장하지 않아요
             return copy.deepcopy(e["d"]) if e and e["st"] == "000" else None
         with self.lock:
-            self.entries[key] = {"st": st, "at": self.today.isoformat(), "d": d}
+            if late and st == "013":
+                # 2026-11-24 (#180 리뷰 2차 S2): 늘어난 창의 '아직 없음'은 at(예전 7일 규칙의 날짜)을 그대로 두고 lt 에 적어요 — 예전 규칙이 묻는
+                # 날은 main 과 같아요 (늘어난 창이 예전 규칙의 날을 뒤로 미루지 않게)
+                self.late_n["still"] += 1
+                self.entries[key] = {"st": st, "at": e["at"], "lt": self.today.isoformat(), "d": d}
+            else:
+                if late:
+                    self.late_n["found"] += 1
+                self.entries[key] = {"st": st, "at": self.today.isoformat(), "d": d}
             if redos and st == "000":
                 mark = next((t for t, _ in redos if t in RP_MARK_TAGS), None)
                 if mark:
@@ -6210,6 +6230,16 @@ def pick_current_quarter(shares):
     return None
 
 
+def dart_late_quarter(client, corp, year, reprt):
+    """분기 판단의 둘째 셈: 계획(late_keys)에 든 그 회사의 분기 항목만 물어요 (연결 → 별도 · 연결을 찾으면 별도는 묻지 않아요) → 찾았는지.
+    계획 밖 항목은 부르지 않아요 — 예전 규칙이 묻는 항목도 (첫 셈에서 이미 물었어요)."""
+    for fs in ("CFS", "OFS"):
+        if f"{corp}|{year}|{reprt}|{fs}" in client.late_keys:
+            if client.report("fnlttSinglAcntAll.json", corp, year, reprt, fs, parse_dart_quarter, {"fs_div": fs}):
+                return True
+    return False
+
+
 def dart_late_windows(today, closed=None, end=None):
     """오늘 매일 다시 묻는 창 안의 보고서 [(연도, 보고서, 마감, 밀린 마감)] — 로그용. (순수 함수)"""
     out = []
@@ -6246,7 +6276,7 @@ def dart_late_start(client, targets, cmap):
         name = f"{y}년 사업보고서" if r == "11011" else f"{y}.{REPRT_KO[r]}"
         log(f"· DART 마감 뒤 매일 다시 묻기 창: {name} 마감 {dl}" + (f" → 다음 거래일 {rl}" if rl != dl else "")
             + f" · 아직 없는 재무제표 항목을 {rl + dt.timedelta(days=DART_LATE_DAYS)} 까지 매일 (그 뒤 {DART_RETRY_DAYS}일마다 · 실행당 "
-            f"{DART_LATE_PER_RUN:,}회 · 시가총액 큰 회사부터)")
+            f"{DART_LATE_PER_RUN:,}회, '현재' 분기는 {DART_LATE_INUSE_PER_RUN:,}회 더 · 가장 오래전에 물은 것부터, 같으면 시가총액 큰 회사부터)")
     return True
 
 
@@ -6281,9 +6311,12 @@ def dart_late_end(client, want):
         left, loud = f"셀 수 없음 ({type(e).__name__})", True
     if not asked and not loud:
         return
+    why = ("DART 가 멈춰 묻지 못했어요" if client.down or client.fatal or client.no_call
+           else "호출 한도에 걸렸어요 · 다음 실행이 가장 오래전에 물은 것부터" if client.late_left <= 0
+           else "이번 실행이 묻지 않은 항목")
     log(f"{'  !! ' if loud or n['fail'] else '· '}DART 마감 뒤 매일 다시 묻기: 오늘 다시 물음 {asked:,}회 → 새로 냄 {n['found']:,} · 아직 없음 "
-        f"{n['still']:,}" + (f" · 연결 문제 등 {n['fail']:,}" if n["fail"] else "")
-        + f" · 다음 실행으로 남김 {left}건 (실행당 {DART_LATE_PER_RUN:,}회 · 시가총액 작은 회사부터 남겨요)")
+        f"{n['still']:,}" + (f" · 연결 문제 · 점검 · 읽지 못함 {n['fail']:,}" if n["fail"] else "")
+        + f" · 다음 실행으로 남김 {left}건" + (f" ({why})" if loud else ""))
 
 
 def dart_full_estimate(n_companies, ksic=True, divwhy=0):
@@ -6381,7 +6414,7 @@ def enrich_with_dart(kr_stocks, client, pref_shares=None):
             f"(상세 · 원문은 캐시에 없는 공시만 · 빈 캐시면 90일치를 한도까지 · 넘는 것은 다음 실행)")
     qy = year + 1
     cands = [r for r in Q_NEWEST_FIRST if report_period_end(qy, r) < today]
-    late_on = dart_late_start(client, targets, cmap)   # 2026-11-24 (#180): 마감 뒤 매일 다시 묻기 (시가총액 큰 회사부터 · 실행당 한도)
+    late_on = dart_late_start(client, targets, cmap)   # 2026-11-24 (#180): 마감 뒤 매일 다시 묻기 (가장 오래전에 물은 것부터 · 실행당 한도)
 
     # 1) '현재 분기': 시가총액 상위 100곳 중 70% 이상이 낸 가장 최신 분기
     top = sorted(targets, key=lambda s: -(_fin(s.get("cap")) or 0))[:100]
@@ -6390,17 +6423,23 @@ def enrich_with_dart(kr_stocks, client, pref_shares=None):
 
     def top_filed(r):
         with ThreadPoolExecutor(max_workers=5) as ex:
-            return sum(ex.map(lambda s: dart_quarter(client, cmap[s["t"]], qy, r) is not None, top))
+            return {cmap[s["t"]]: got for s, got in zip(top, ex.map(lambda s: dart_quarter(client, cmap[s["t"]], qy, r) is not None, top))}
 
     for r in cands:
-        n_got = top_filed(r)              # 예전 규칙으로 먼저 세요
+        got = top_filed(r)                # 예전 규칙으로 먼저 세요
+        n_got = sum(got.values())
         if late_on and n_got / max(len(top), 1) < QUARTER_CURRENT_SHARE:
-            # 2026-11-24 (#180): 70% 가 안 되면 상위 100곳의 아직 없는 항목(연결 → 별도 · 다른 재무제표를 찾은 보고서는 빼요)을 오늘 다시 물어요
+            # 2026-11-24 (#180): 70% 가 안 되면 상위 100곳의 아직 없는 항목(연결 → 별도 · 다른 재무제표를 찾은 보고서는 빼요)을 오늘 다시 물어요.
+            # 계획한 항목만 물어요 (리뷰 2차 S3: 첫 셈에서 답이 실패한 항목을 예전 규칙으로 또 묻지 않게 · 모두 한도로 세요)
             n_plan, n_rest = dart_late_set(client, dart_late_want(qy, (), (r,), top_codes, None, annual=False))
             if n_plan or n_rest:
                 k0, n0 = sum(client.late_n.values()), n_got
                 if n_plan:
-                    n_got = top_filed(r)
+                    corps = sorted({k.split("|")[0] for k in client.late_keys}, key=lambda c: client.late_rank.get(c, 1 << 30))
+                    with ThreadPoolExecutor(max_workers=5) as ex:
+                        for corp, ok in zip(corps, ex.map(lambda c: dart_late_quarter(client, c, qy, r), corps)):
+                            got[corp] = got.get(corp) or ok
+                    n_got = sum(got.values())
                 k = sum(client.late_n.values()) - k0
                 log(f"{'  !! ' if n_rest or (k and n_got == n0) else '· '}분기 판단: {qy}.{REPRT_KO[r]} 이 70% 가 안 돼 상위 회사의 아직 없는 항목을 "
                     f"다시 물어요 — 계획 {n_plan:,}건" + (f" (한도 밖 {n_rest:,}건)" if n_rest else "") + f" · 물음 {k:,}회 · 제출 {n0}곳 → {n_got}곳")
@@ -6419,11 +6458,16 @@ def enrich_with_dart(kr_stocks, client, pref_shares=None):
     newer = cands[:cands.index(q_cur)] if q_cur else cands
     fs_of = (lambda corp: dart_fin_fs(client.entries, corp, year))     # 분기를 물을 재무제표 = 그 회사의 사업보고서와 같은 것 (one_inner)
     if late_on:
-        # 2026-11-24 (#180): 분기 판단 뒤 — 사업보고서와 '현재' 분기(와 그 앞)에서 아직 없는 항목, 남은 호출 수만큼 시가총액 큰 회사부터
+        # 2026-11-24 (#180): 분기 판단 뒤 — 사업보고서와 '현재' 분기(와 그 앞)에서 아직 없는 항목, 가장 오래전에 물은 것부터 남은 호출 수만큼.
+        # 리뷰 2차 S1: '현재' 분기가 늘어난 창 안이면 그 분기는 회사마다 하나씩 모두 물을 수 있게 호출 수를 더해요 (DART_LATE_INUSE_PER_RUN) —
+        # 예전 규칙은 그 분기를 '현재'로 쓰는 날 모든 회사를 처음 물어서, 300회로는 일찍 '현재'가 된 이 실행의 작은 회사가 뒤처질 수 있었어요
+        extra = DART_LATE_INUSE_PER_RUN if q_cur and dart_late_window(qy, q_cur, today, client.kr_closed, client.hol_end) else 0
+        client.late_left += extra
         n_plan, n_rest = dart_late_set(client, dart_late_want(qy, order, (), top_codes, fs_of))
         if n_plan or n_rest:
-            log(f"{'  !! ' if n_rest else '· '}DART 마감 뒤 매일 다시 묻기 계획 (분기 판단 뒤): {n_plan:,}건 (남은 호출 {client.late_left:,}회)"
-                + (f" · 한도 밖 {n_rest:,}건은 다음 실행이 이어서 물어요" if n_rest else ""))
+            log(f"{'  !! ' if n_rest else '· '}DART 마감 뒤 매일 다시 묻기 계획 (분기 판단 뒤): {n_plan:,}건 (남은 호출 {client.late_left:,}회"
+                + (f" · '현재' 분기 {qy}.{REPRT_KO[q_cur]} 이 창 안이라 {extra:,}회 더" if extra else "") + ")"
+                + (f" · 한도 밖 {n_rest:,}건은 다음 실행에 (가장 오래전에 물은 것부터 차례로)" if n_rest else ""))
     # 2026-11-24: 분기 판단 기록 → corp.json qPick (관문의 '분기 판단' 줄이 마감 + 10일이 지나도 앞 분기면 경고해요)
     client.q_pick = {"v": 1, "cur": f"{qy}.{REPRT_KO[q_cur]}" if q_cur else None, "top": len(top), "filed": filed_n}
     log(f"· DART 재무지표 조회 {len(targets):,}곳 ({year}년 사업보고서, 없으면 {year - 1}년"

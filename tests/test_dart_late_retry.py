@@ -10,7 +10,9 @@
 - 실행당 한도는 부른 횟수로 (실패한 답도 · 한 실행에서 한 키는 한 번) · 계획은 시가총액 큰 회사부터 — dart_late_plan · DartClient.report
 - DART 를 부르지 않는 실행 · 연결 안 됨 · 020 · 빈 캐시 · full 실행 · 가짜 클라이언트: 늘어난 창으로 부르지 않아요 (전체 DART 실행에 더하지 않아요)
 - enrich_with_dart: DART 의 재무제표 API 가 마감 뒤에 채워져도 다음 날 실행이 그 분기를 '현재'로 써요 · '현재'로 쓴 뒤에도 작은 회사를 매일
-  다시 물어 main 보다 늦지 않아요 · 한도에 걸리면 다음 실행이 이어서 · 로그의 '!!' 와 '남김' 은 정말 물을 항목만 · corp.json qPick 기록
+  다시 물어요 · 한도에 걸리면 다음 실행이 가장 오래전에 물은 것부터 · 로그의 '!!' 와 '남김' 은 정말 물을 항목만 · corp.json qPick 기록
+- 예전 규칙(늘어난 창을 끈 실행 = main)과 나란히: 창 안에서는 어느 날에도 예전 규칙보다 늦게 찾지 않아요 (일찍 '현재' · 2Q 창이 끝날 때 ·
+  사업보고서 + 점검 중 · 휴장일 주) · lt 가 예전 규칙의 날짜를 밀지 않아요 · 둘째 셈은 계획한 항목만
 - 관문 줄 '분기 판단 (corp.json qPick · 경고만)': 마감 + 10일 경계 · 휴장일로 밀린 마감 · qPick 없는 예전 파일 · 모양이 틀린 기록 · 검사가 멈춰도
   경고만 (어느 경우에도 실패 없음) · 올해 1Q~3Q 만 · 관문의 마감 계산이 fetch_data 와 같아요
 """
@@ -220,7 +222,9 @@ def test_client_asks_only_planned_entries_once_and_counts(tmp_path, monkeypatch)
     assert calls == [("C0", "CFS"), ("C1", "CFS")] and c.late_left == 1
     assert c.late_n == {"found": 1, "still": 1}
     assert F.dart_quarter(c, "C1", 2026, Q3) is None and len(calls) == 2      # 하루 한 번
-    assert c.entries[f"C0|2026|{Q3}|CFS"]["st"] == "000" and c.entries[f"C1|2026|{Q3}|CFS"]["at"] == "2026-11-19"
+    assert c.entries[f"C0|2026|{Q3}|CFS"]["st"] == "000" and c.entries[f"C0|2026|{Q3}|CFS"]["at"] == "2026-11-19"
+    # 아직 없음: 예전 규칙의 날짜(at)는 그대로, 늘어난 창으로 물은 날은 lt (리뷰 2차 S2)
+    assert c.entries[f"C1|2026|{Q3}|CFS"]["at"] == "2026-11-16" and c.entries[f"C1|2026|{Q3}|CFS"]["lt"] == "2026-11-19"
 
 
 def test_failed_answers_use_the_cap_and_are_not_asked_again_in_the_run(tmp_path, monkeypatch):
@@ -360,7 +364,7 @@ def test_quarter_adopted_the_day_after_dart_fills_in(monkeypatch, tmp_path, caps
     assert "계획 200건 · 물음 100회 · 제출 0곳 → 100곳" in log
 
 
-def test_small_companies_are_never_later_than_the_old_rule(monkeypatch, tmp_path):
+def test_small_companies_found_the_day_their_numbers_show_up(monkeypatch, tmp_path):
     # 리뷰 (Opus S1 · Fable S2): 큰 회사로 일찍 '현재'가 되면 작은 회사는 그날 처음 묻고 '아직 없음' → 예전엔 7일 뒤. 이제 매일
     def q3(i):                     # 100~119: 작은 회사 20곳은 11-21 에 · 120 부터는 지난 분기도 없어 TTM 을 만들 수 없는 회사 (가짜 DART)
         if i < 100:
@@ -373,7 +377,190 @@ def test_small_companies_are_never_later_than_the_old_rule(monkeypatch, tmp_path
     for d in days[1:]:
         lag = on_3q(out[d][3], range(100, 120))
         assert lag == (20 if d >= D(2026, 11, 21) else 0), (d, lag)     # 숫자가 뜬 날의 실행에 바로 3Q (예전 규칙은 11-25)
-        assert sum(out[d][1].late_n.values()) <= F.DART_LATE_PER_RUN
+        assert sum(out[d][1].late_n.values()) <= F.DART_LATE_PER_RUN + F.DART_LATE_INUSE_PER_RUN
+
+
+# ── 예전 규칙과 나란히: 창 안에서는 어느 날에도 예전 규칙보다 늦게 찾지 않아요 (리뷰 2차) ──
+M = 240
+
+
+def hh(i, salt):
+    import hashlib
+    return int(hashlib.md5(f"{salt}:{i}".encode()).hexdigest(), 16) % 10000 / 10000.0
+
+
+def spread(i, salt, table):
+    u, lo = hh(i, salt), 0.0
+    for hi, d0, n in table:
+        if u < hi:
+            return d0 + dt.timedelta(days=int((u - lo) / (hi - lo) * n))
+        lo = hi
+    return None
+
+
+def window_dart(calls, target, appear, fail=None):
+    """가짜 DART (회사 M 곳): target (연도, 보고서) 의 숫자는 appear(i) 에 뜨고, 그보다 뒤 분기는 없고, 나머지는 마감 3일 전에 있어요. 60번째부터
+    셋에 하나는 별도만 내요. fail(오늘, i, 연도, 보고서) → '800' 이면 그 답은 점검 중."""
+    def get(self, endpoint, params, timeout=25):
+        i = int(params["corp_code"][1:])
+        y, r, fs = int(params["bsns_year"]), params["reprt_code"], params.get("fs_div")
+        calls[self.today.isoformat()] += 1
+        if fail and fail(self.today, i, y, r):
+            with self.lock:
+                self.status["800"] += 1
+            return {"status": "800", "list": []}
+        filed = False
+        if endpoint.startswith("fnltt") and fs == ("OFS" if i >= 60 and i % 3 == 0 else "CFS"):
+            if (y, r) == target:
+                d0 = appear(i)
+                filed = d0 is not None and self.today >= d0
+            elif r == ANN:
+                filed = self.today >= D(y + 1, 3, 25)
+            elif y == target[0] and r != ANN and F.report_period_end(y, r) > F.report_period_end(*target):
+                filed = False
+            else:
+                filed = self.today >= F.report_deadline(y, r) - dt.timedelta(days=3)
+        st = "000" if filed else "013"
+        with self.lock:
+            self.status[st] += 1
+        return {"status": st, "list": rows(1e11) if filed else []}
+    return get
+
+
+def tue_sat(a, b):
+    out, d = [], a
+    while d <= b:
+        if d.weekday() in (1, 2, 3, 4, 5):
+            out.append(d)
+        d += dt.timedelta(days=1)
+    return out
+
+
+def side_by_side(monkeypatch, tmp_path, target, label, days, appear, fail=None):
+    """같은 가짜 DART 로 이 PR 과 예전 규칙(늘어난 창을 끈 실행 = main)을 따로 돌려 → {날: (이 PR 의 회사 집합, 예전 규칙의 회사 집합, 늘어난 창 호출 수)}."""
+    monkeypatch.setattr(F, "dart_corp_map", lambda client: {f"{i:06d}": f"C{i}" for i in range(M)})
+    stocks = (lambda: [{"t": f"{i:06d}", "cls": "kr", "cap": float(M - i), "shr": 1_000_000, "price": 10000.0} for i in range(M)])
+    res = {}
+    start = F.dart_late_start
+    for name, on in (("pr", True), ("old", False)):
+        calls = collections.Counter()
+        monkeypatch.setattr(F.DartClient, "get", window_dart(calls, target, appear, fail))
+        monkeypatch.setattr(F, "dart_late_start", start if on else (lambda *a, **k: False))
+        for d in days:
+            c = F.DartClient("k", today=d, path=str(tmp_path / f"{name}.json.gz"))
+            _, fin = F.enrich_with_dart(stocks(), c)
+            res.setdefault(d, {})[name] = ({t for t, v in fin.items() if v.get("bq") == label}, sum(c.late_n.values()), calls[d.isoformat()])
+    monkeypatch.setattr(F, "dart_late_start", start)
+    return res
+
+
+def assert_never_behind(res, cap):
+    for d, r in res.items():
+        pr, old = r["pr"][0], r["old"][0]
+        assert old <= pr, (d, sorted(old - pr)[:10])
+        assert r["pr"][1] <= cap and r["old"][1] == 0
+
+
+@pytest.fixture
+def small_caps(monkeypatch):
+    # 실제 비율로 줄여요: 회사 2,474곳에 300 · 2,500 → 회사 240곳에 12 · 240 (한도가 늘 걸리는 쪽으로)
+    monkeypatch.setattr(F, "DART_LATE_PER_RUN", 12)
+    monkeypatch.setattr(F, "DART_LATE_INUSE_PER_RUN", M)
+    return 12 + M
+
+
+def test_never_behind_old_rule_when_adopted_early_with_slow_small_companies(monkeypatch, tmp_path, small_caps):
+    # 3Q 2026: 상위 100곳은 60% 가 11-14 까지, 나머지는 11-17~20 → 이 PR 은 11-17 쯤, 예전 규칙은 11-24 에 '현재' · 작은 회사는 12-05 까지 천천히
+    def appear(i):
+        if i < 100:
+            return D(2026, 11, 12) if hh(i, "t") < 0.6 else spread(i, "t2", [(1.0, D(2026, 11, 17), 4)])
+        return spread(i, "q", [(0.45, D(2026, 11, 12), 5), (0.80, D(2026, 11, 17), 6), (0.97, D(2026, 11, 23), 13)])
+    days = [D(2026, 11, 7)] + tue_sat(D(2026, 11, 10), D(2026, 12, 12))
+    res = side_by_side(monkeypatch, tmp_path, (2026, Q3), "2026.3Q", days, appear)
+    assert_never_behind(res, small_caps)
+    assert any(len(r["pr"][0]) > len(r["old"][0]) for r in res.values())
+
+
+def test_never_behind_old_rule_after_the_window_closes_2q(monkeypatch, tmp_path, small_caps):
+    # 2Q 2026 (마감 08-14 금 · 창은 09-04 까지): 창이 끝난 뒤에도 예전 규칙의 7일 주기가 그대로라 늦지 않아요 (at 을 그대로 두니까요)
+    def appear(i):
+        if i < 100:
+            return D(2026, 8, 11)
+        return spread(i, "q", [(0.40, D(2026, 8, 11), 5), (0.80, D(2026, 8, 18), 14), (0.95, D(2026, 9, 2), 10)])
+    days = [D(2026, 8, 1)] + tue_sat(D(2026, 8, 4), D(2026, 9, 19))
+    assert_never_behind(side_by_side(monkeypatch, tmp_path, (2026, Q2), "2026.2Q", days, appear), small_caps)
+
+
+def test_never_behind_old_rule_for_the_annual_report(monkeypatch, tmp_path, small_caps):
+    # 2026 사업보고서 (마감 2027-03-31 수 · 창은 04-21 까지) · 04-08 하루는 점검 중(800)
+    def appear(i):
+        return spread(i, "q", [(0.80, D(2027, 3, 15), 16), (0.90, D(2027, 4, 1), 7), (0.96, D(2027, 4, 8), 12), (0.99, D(2027, 4, 20), 8)])
+    days = [D(2027, 3, 13)] + tue_sat(D(2027, 3, 16), D(2027, 5, 8))
+    res = side_by_side(monkeypatch, tmp_path, (2026, ANN), "2026.4Q", days, appear,
+                       fail=lambda t, i, y, r: t == D(2027, 4, 8))
+    assert_never_behind(res, small_caps)
+
+
+def test_never_behind_old_rule_in_a_holiday_week(monkeypatch, tmp_path, small_caps):
+    # 2Q 2027: 08-14 토 → 08-16 광복절 대체 휴일 → 밀린 마감 08-17 (휴장일 표) · 숫자는 창이 끝나는 09-07 전에 모두 떠요. 창이 끝난 뒤 처음 뜨는
+    # 회사는 두 쪽의 7일 주기 요일이 다르면 며칠 늦을 수 있어요 (알려진 예외 · RUNBOOK)
+    def appear(i):
+        if i < 100:
+            return D(2027, 8, 12) if hh(i, "t") < 0.55 else spread(i, "t2", [(1.0, D(2027, 8, 17), 3)])
+        return spread(i, "q", [(0.50, D(2027, 8, 12), 6), (0.85, D(2027, 8, 18), 10), (0.96, D(2027, 8, 28), 10)])
+    days = [D(2027, 8, 3)] + tue_sat(D(2027, 8, 4), D(2027, 9, 18))
+    assert_never_behind(side_by_side(monkeypatch, tmp_path, (2027, Q2), "2027.2Q", days, appear), small_caps)
+
+
+def test_late_asks_never_move_the_old_rule_date(tmp_path, monkeypatch):
+    # 리뷰 2차 S2: lt 는 늘어난 창만 봐요. 예전 규칙(at)은 main 과 같은 날 물어요 · lt 가 없는 예전 캐시도 그대로
+    e = {"st": "013", "at": "2026-11-16", "lt": "2026-11-22", "d": None}
+    assert F.dart_entry_due(e, 2026, Q3, D(2026, 11, 23)) is True          # at + 7일 = main 과 같은 날
+    assert F.dart_late_due(e, 2026, Q3, D(2026, 11, 22), KR, END) is False   # 오늘 이미 늘어난 창으로 물었어요
+    assert F.dart_late_due(e, 2026, Q3, D(2026, 11, 23), KR, END) is False   # 예전 규칙이 물어요 (늘어난 창은 쓰지 않아요)
+    assert F.dart_late_asked_on(e) == D(2026, 11, 22) and F.dart_late_asked_on(e013("2026-11-16")) == D(2026, 11, 16)
+    assert F.dart_late_asked_on({"st": "013", "at": "2026-11-16", "lt": None}) == D(2026, 11, 16)
+    c, calls = client_with(tmp_path, monkeypatch, D(2026, 11, 23), {f"C0|2026|{Q3}|CFS": e})
+    assert F.dart_quarter(c, "C0", 2026, Q3, fs="CFS") is None and calls == [("C0", "CFS")]
+    assert c.entries[f"C0|2026|{Q3}|CFS"] == {"st": "013", "at": "2026-11-23", "d": None}   # 예전 규칙이 물으면 at 만 (lt 는 지나간 날)
+    assert not c.late_n
+
+
+def test_plan_rotates_oldest_first(tmp_path):
+    ent = {f"C{i}|2026|{Q3}|CFS": {"st": "013", "at": "2026-11-16", "lt": f"2026-11-{18 if i < 3 else 17}", "d": None} for i in range(6)}
+    rank = {f"C{i}": i for i in range(6)}
+    ask, rest = F.dart_late_plan(ent, D(2026, 11, 19), rank, every, KR, END, cap=3)
+    assert ask == [f"C{i}|2026|{Q3}|CFS" for i in (3, 4, 5)] and rest == [f"C{i}|2026|{Q3}|CFS" for i in (0, 1, 2)]
+
+
+def test_second_count_asks_only_planned_keys(monkeypatch, tmp_path):
+    # 리뷰 2차 S3 (exp_dbl): 상위 99곳은 예전 규칙이 묻는 날 (7일) · 1곳만 늘어난 창 · 3Q 가 모두 점검 중(800) → 예전엔 둘째 셈이 99곳을 또 물어
+    # 398회 (main 198). 이제 계획한 1곳의 2회만 더해요
+    import gzip
+    import json
+    out = run_days(monkeypatch, tmp_path, [D(2026, 11, 10), D(2026, 11, 16)], q3_from=lambda i: None)
+    path = str(tmp_path / "c.json.gz")
+    js = json.load(gzip.open(path, "rt"))
+    for k, e in js["entries"].items():
+        p = k.split("|")
+        if len(p) == 4 and p[1] == "2026" and p[2] == Q3 and e["st"] == "013" and int(p[0][1:]) < 99:
+            e["at"] = "2026-11-12"
+    json.dump(js, gzip.open(path, "wt"))
+    q3 = collections.Counter()
+
+    def get(self, endpoint, params, timeout=25):
+        st = "013"
+        if (int(params["bsns_year"]), params["reprt_code"]) == (2026, Q3):
+            q3["n"] += 1
+            st = "800"
+        with self.lock:
+            self.status[st] += 1
+        return {"status": st, "list": []}
+    monkeypatch.setattr(F.DartClient, "get", get)
+    stocks = [{"t": f"{i:06d}", "cls": "kr", "cap": float(N - i), "shr": 1_000_000, "price": 10000.0} for i in range(N)]
+    c = F.DartClient("k", today=D(2026, 11, 19), path=path)
+    F.enrich_with_dart(stocks, c)
+    assert q3["n"] == 198 + 2 and c.late_n == {"fail": 2} and len(c.late_asked) == 2
 
 
 def test_cap_counts_calls_and_leaves_the_rest_for_the_next_run(monkeypatch, tmp_path, capsys):
