@@ -2536,7 +2536,8 @@ Appendix 1 line for it (`split applied` / `merge applied`).
     `kr_ref_links`' breaks, in `fetch_korea`, logged `· 한국 주식 분할 후보 …`). A day with no list file hides the base reset,
     so a Korean stock whose listed shares moved more than 10% since the previous publish is also read from Daum's daily rows
     (`kr_split_daum_cands`: one call each, at most 30 stocks, stops after 3 failures in a row or 120 seconds, loud line; the
-    stocks not read are carried in `splitsKr.dq` and read on the next runs, for up to 50 days). 2016-01-01 → 2026-11-20 comes
+    stocks not read are carried in `splitsKr.dq` and read on the next runs, for up to 50 days). KONEX stocks are not sent to
+    Daum (Daum has no KONEX: HTTP 400), and a 4xx answer counts as read, not as a failure. 2016-01-01 → 2026-11-20 comes
     from the committed seed `data/kr_splits_seed.csv` (592 candidates: Daum's unadjusted daily rows, read once on 2026-11-23 for
     the 2,444 Korean stocks Daum has; the file is the same rule's output and its loader re-runs the rule on every line and
     refuses the whole file if one line disagrees).
@@ -2555,8 +2556,8 @@ Appendix 1 line for it (`split applied` / `merge applied`).
     2,125,000 ÷ 50; listed shares ×50.000; the DART list entry 20180316800856).
   - Everything else is left out and named by code in `splitsKr.out` (detail in the log only): `nodoc` no decision (company
     splits: 삼성바이오로직스 2025-11-24), `diff` decision ratio or date differs (동국홀딩스 001230 2026-05-29: DART 5:1, market
-    ÷ 4.48), `gone`, `unread`, `cr`, `nocorp` (no DART code: ETFs, some KONEX), `pages` (I001 list over 5 pages), `err` (our
-    reading failed on one document).
+    ÷ 4.48), `gone`, `unread` (also a listed 감자결정 that `crDecsn.json` does not give, 013), `cr`, `nocorp` (no DART code: ETFs,
+    some KONEX), `pages` (I001 list over 5 pages), `err` (our reading failed on one document).
 - **data.json carries codes, never text** (#186 review): the gate's text row fails on words like "None" or "nan" anywhere in
   the file, and a cached reason would repeat every day. `out`, `fail`, `held` and `late` keep the 30 most recent rows, with
   the full counts in `outN`, `failN`, `heldN`.
@@ -2568,7 +2569,9 @@ Appendix 1 line for it (`split applied` / `merge applied`).
 - **DART calls.** Only in DART-on runs that are not full-DART (`dart=cache`, a cache that was not empty at start, and not a
   rerun for the same price date that skips DART, `no_call`), at most `KR_SPLIT_DART_PER_RUN` = 50 new calls a run. Order:
   today's candidates (KRX lists, Daum), candidates carried from earlier runs (`splitsKr.pend`, so a new event is never lost
-  after the KRX list window or the one Daum look) and any event of the last 30 days first; then the seed, biggest market cap
+  after the KRX list window or the one Daum look: candidates with no verdict yet, held fraction rows so they publish when the
+  switch is turned on, and "no" verdicts under 120 days old so the 14-day re-ask still happens; at most 500, loud line if
+  more) and any event of the last 30 days first; then the seed, biggest market cap
   first. A candidate takes 2 calls (list + document), 3–4 for a 감자. Verdicts are cached under `{corp}|krsplit|v2|{date}` (a
   preferred share reuses its common's; v2 since #186, so v1 verdicts are asked again), so a candidate is asked once; a "no"
   is asked again after 14 days while the event is under 120 days old (a late correction). **Expected:** the first runs each
@@ -2591,7 +2594,9 @@ Appendix 1 line for it (`split applied` / `merge applied`).
   (`nocorp`); events whose two sources disagree or whose document DART does not serve (named in `out`; a person can add an
   override row with the evidence); merges and non-whole splits until Jack approves their line.
 - **To add or correct a Korean row:** a hand-checked row whose two sources a person confirmed (for example a decision whose
-  document DART does not serve) goes into `KR_SPLIT_OVERRIDES` (add only, with the evidence in its note). To remove a Korean
+  document DART does not serve) goes into `KR_SPLIT_OVERRIDES` (add only, with the evidence in its note; receipt
+  `KR_SPLIT_OVERRIDES`; it never changes the ratio of a row already published, which would stop the publish: the run keeps
+  the published row and logs a loud line). To remove a Korean
   row or change its ratio, use the US override table (`SPLIT_OVERRIDES`, which accepts Korean codes): an "out" row (ratio
   `None`) or a new ratio, published in `splitsInfo.fixed`, so the gate and the app (which removes a stored split on an "out"
   row) see it; `tests/test_v196a_fxhist_splits.py::test_override_table_pins` pins that table, so that PR updates the pin

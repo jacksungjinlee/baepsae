@@ -318,7 +318,7 @@ def test_b2_a_document_dart_does_not_serve_never_confirms_a_row(monkeypatch):
     c = FakeDart(lists=lists, said={"20180316800856": "014"})
     rows, info = F.kr_splits_fields(None, kr_rows("005930", "005935"), [], c, TODAY, seed=F.load_kr_split_seed())
     assert rows == [["005930", "2018-05-04", 50.0], ["005935", "2018-05-04", 50.0]] and c.calls == []      # 고정 표의 사건은 묻지 않아요
-    assert ["005930", "2018-05-04", 50.0, "fixed", "SPLIT_OVERRIDES", "fixed"] in info["rows"]
+    assert ["005930", "2018-05-04", 50.0, "fixed", "KR_SPLIT_OVERRIDES", "fixed"] in info["rows"]
     assert not any(x[:2] == ["005930", "2018-05-04"] for x in info["out"]) and info["fixed"] == [["005930", "2018-05-04", 50.0], ["005935", "2018-05-04", 50.0]]
 
 
@@ -366,7 +366,7 @@ def test_b1_the_lists_in_data_json_are_capped(monkeypatch):
 # ── 6. DART 가 실패해도 지난 발행본의 한국 줄은 그대로 · 이어 둔 후보는 잃지 않아요 ─────────────────────────────────────────
 
 PREV = {"splits": [["AAPL", "2020-08-31", 4.0], ["005930", "2018-05-04", 50.0], ["131090", "2025-05-20", 0.2]],
-        "splitsKr": {"rows": [["005930", "2018-05-04", 50.0, "fixed", "SPLIT_OVERRIDES", "fixed"],
+        "splitsKr": {"rows": [["005930", "2018-05-04", 50.0, "fixed", "KR_SPLIT_OVERRIDES", "fixed"],
                               ["131090", "2025-05-20", 0.2, "merge", "20250310901128", "doc"]]}}
 
 
@@ -421,13 +421,15 @@ def test_new_events_go_first_and_unasked_ones_are_carried_to_the_next_run(monkey
     _rows, info = F.kr_splits_fields(None, kr, [small, wait_too], c, TODAY, seed=big, cmap=cmap, per_run=F.KR_SPLIT_ONE_MAX)
     asked = [p["corp_code"] for _ep, p in c.calls]
     assert asked and set(asked) == {"00000020"}                                    # 오늘 찾은 두 후보 중 (시가총액 큰) 000020 먼저 · 시드는 뒤
-    assert info["out"] == [["000020", "2026-11-17", "nodoc"]] and info["pend"] == [["000010", "2026-11-18", 5000.0, 1000.0, 100.0, 500.0]]
-    # 다음 실행: 오늘 목록 파일에 없어도 (19거래일 창 밖) 이어 둔 후보를 먼저 물어요
+    assert info["out"] == [["000020", "2026-11-17", "nodoc"]]
+    assert info["pend"] == [["000010", "2026-11-18", 5000.0, 1000.0, 100.0, 500.0], ["000020", "2026-11-17", 5000.0, 1000.0, 100.0, 500.0]]
+    # 다음 실행: 오늘 목록 파일에 없어도 (19거래일 창 밖) 이어 둔 후보를 먼저 물어요 (000020 의 '맞지 않음'은 14일이 안 돼 다시 묻지 않아요)
     c2 = FakeDart()
-    _rows, info2 = F.kr_splits_fields({"splits": [], "splitsKr": info}, kr, [], c2, TODAY + dt.timedelta(days=30), seed=big, cmap=cmap,
+    c2.entries.update(c.entries)
+    _rows, info2 = F.kr_splits_fields({"splits": [], "splitsKr": info}, kr, [], c2, TODAY + dt.timedelta(days=10), seed=big, cmap=cmap,
                                       per_run=F.KR_SPLIT_ONE_MAX)
     assert {p["corp_code"] for _ep, p in c2.calls} == {"00000010"} and ["000010", "2026-11-18", "nodoc"] in info2["out"]
-    assert info2["pend"] == [] and info2["wait"] == 40
+    assert {x[0] for x in info2["pend"]} == {"000010", "000020"} and info2["wait"] == 40      # 120일 안의 '맞지 않음'은 이어 둬요
 
 
 def test_the_per_run_cap_biggest_seed_first_and_retrying_a_no(monkeypatch):
@@ -790,3 +792,80 @@ def test_2_0_a_merge_that_leaves_a_fraction_of_a_korean_share():
         two: Rc.checkSale(v0, '131090', { qty: '2', price: '5000', date: '2026-11-20' }, s, env).why };""")
     assert got["held"] == 1.4 and got["avg"] == pytest.approx(4500) and got["line"] == [{"date": "2025-05-20", "r": 0.2}]   # 7주 ÷ 5 = 1.4주
     assert got["one"] is True and got["frac"] == "input" and got["two"] == "tooMany"
+
+
+
+# ── 2차 리뷰 (#186 round 2) ──────────────────────────────────────────────────────────────────────────
+
+def test_r2_events_found_after_the_seed_are_kept_held_merges_publish_later_and_a_late_correction_is_asked(monkeypatch):
+    """목록 파일 · 다음에서 찾은 후보 (시드에 없음): 몫이 남아 싣지 않은 병합은 이어 둬서 스위치를 켜면 (40일 뒤 · 목록 파일 창 밖) 실려요 ·
+    '맞지 않음'은 120일 안이면 이어 둬서 14일 뒤 다시 물어요 (40일째 정정 공시)."""
+    Log(monkeypatch)
+    day0 = dt.date(2025, 5, 22)
+    merge = cand("131090", "krx")
+    c = FakeDart()
+    c.entries["00402110|krsplit|v2|2025-05-20"] = ok_verdict(0.2, "20250310901128", "merge", "2025-05-20")
+    rows, info = F.kr_splits_fields(None, kr_rows("131090"), [merge], c, day0, seed=[])
+    assert rows == [] and info["held"] == [["131090", "2025-05-20", 0.2]] and [x[:2] for x in info["pend"]] == [["131090", "2025-05-20"]]
+    monkeypatch.setattr(F, "KR_SPLIT_FRACTION_ROWS_ON", True)
+    rows, info = F.kr_splits_fields({"splits": [], "splitsKr": info}, kr_rows("131090"), [], c, day0 + dt.timedelta(days=40), seed=[])
+    assert rows == [["131090", "2025-05-20", 0.2]] and c.calls == []                                # 보관본의 판정으로 (호출 없이)
+    monkeypatch.setattr(F, "KR_SPLIT_FRACTION_ROWS_ON", False)
+    # '맞지 않음' (공시와 다름): 0일째 판정 → 40일째 목록 파일 창 밖에서도 다시 물어요 → 정정된 공시로 확인
+    kak = {**cand("035720", "krx")}
+    c2 = kakao_dart()
+    c2.entries["00258801|krsplit|v2|2021-04-15"] = {"st": "000", "at": "2021-04-16", "d": {"v": "no", "code": "diff", "note": "정정 전"}}
+    _rows, info = F.kr_splits_fields(None, kr_rows("035720"), [kak], c2, dt.date(2021, 4, 16), seed=[])
+    assert info["out"] == [["035720", "2021-04-15", "diff"]] and [x[:2] for x in info["pend"]] == [["035720", "2021-04-15"]] and c2.calls == []
+    rows, info = F.kr_splits_fields({"splits": [], "splitsKr": info}, kr_rows("035720"), [], c2, dt.date(2021, 5, 26), seed=[])
+    assert rows == [["035720", "2021-04-15", 5.0]] and [ep for ep, _ in c2.calls] == ["list.json", "document.xml"]
+    # 120일이 지난 '맞지 않음'은 더 이어 두지 않아요 · 시드의 후보는 이어 두지 않아요 (시드에 있어요)
+    c3 = FakeDart()
+    c3.entries["00258801|krsplit|v2|2021-04-15"] = {"st": "000", "at": "2021-04-16", "d": {"v": "no", "code": "nodoc", "note": "x"}}
+    _r, info = F.kr_splits_fields(None, kr_rows("035720"), [kak], c3, dt.date(2021, 9, 1), seed=[])
+    assert info["pend"] == []
+    _r, info = F.kr_splits_fields(None, kr_rows("035720"), [], c3, dt.date(2021, 4, 20), seed=[cand("035720")])
+    assert info["pend"] == []
+
+
+def test_r2_konex_is_not_sent_to_daum_and_4xx_answers_are_not_failures(monkeypatch):
+    log = Log(monkeypatch)
+    prev = {"pxDate": "2026-11-10", "stocks": [{"t": c, "cls": "kr", "shr": 100} for c in ("000010", "000020", "000030", "000040")], "splits": [],
+            "splitsKr": {"dq": [["000050", "2026-11-12"]]}}
+    kr = [{"t": "000010", "cls": "kr", "cap": 1.0, "shr": 500, "dk": "반도체 · KONEX 상장 · 시가총액 100억원"}] + \
+         [{"t": c, "cls": "kr", "cap": 1.0, "shr": 500, "dk": "반도체 · KOSDAQ 상장"} for c in ("000020", "000030", "000040", "000050")]
+    asked = []
+
+    def fetch(c, n):
+        asked.append(c)
+        raise RuntimeError("HTTP 400")
+    out = F.kr_splits_step({"splits": [], "splitsFrom": V.SPLITS_FROM}, prev, kr, None, TODAY, [], px_date="2026-11-20", daum=fetch)
+    assert asked == ["000020", "000030", "000040", "000050"]                               # 코넥스는 묻지 않아요 · 400 은 연달아 실패로 세지 않아요
+    assert out["splitsKr"]["dq"] == [] and log.has("4종목을 다음 일별 시세로 봤어요 → 후보 0") and not log.has("멈춤")
+
+
+def test_r2_bad_carried_dates_and_unhashable_receipts_do_not_stop_the_step(monkeypatch):
+    log = Log(monkeypatch)
+    prev = {"splits": [["005930", "2018-05-04", 50.0]],
+            "splitsKr": {"rows": [[["x"], "2018-05-04", 50.0, "a", "b", "c"], ["005930", "2018-05-04", 50.0, "fixed", "KR_SPLIT_OVERRIDES", "fixed"]],
+                         "pend": [["000020", "2026-13-45", 5000, 1000, 100, 500], ["000030", "2026-11-18", 5000, 1000, 100, 500]],
+                         "dq": [["000040", "2026-02-30"]]}}
+    rows, info = F.kr_splits_fields(prev, kr_rows("005930", "000030"), [], None, TODAY, seed=[])
+    assert rows == [["005930", "2018-05-04", 50.0]] and info["src"] == "off" and [x[:2] for x in info["pend"]] == [["000030", "2026-11-18"]]
+    assert log.has("모양이 틀린 2줄은 버렸어요")
+    assert F._kr_day("2026-11-18") and not F._kr_day("2026-13-45") and not F._kr_day("2026-02-30") and not F._kr_day(20261118)
+
+
+def test_r2_the_korean_override_table_never_changes_a_published_ratio(monkeypatch):
+    log = Log(monkeypatch)
+    monkeypatch.setattr(F, "KR_SPLIT_OVERRIDES", {**F.KR_SPLIT_OVERRIDES, ("035720", "2021-04-15"): (10.0, "시험: 틀리게 적은 고정 줄")})
+    prev = {"splits": [["035720", "2021-04-15", 5.0]], "splitsKr": {"rows": [["035720", "2021-04-15", 5.0, "split", "20210225800978", "doc"]]}}
+    rows, info = F.kr_splits_fields(prev, kr_rows("035720"), [], None, TODAY, seed=[])
+    assert rows == [["035720", "2021-04-15", 5.0]] and info["rows"] == [["035720", "2021-04-15", 5.0, "split", "20210225800978", "doc"]]
+    assert log.has("!! 한국 주식 분할: KR_SPLIT_OVERRIDES 의 035720 2021-04-15 ×10", "실은 줄을 그대로 둬요")
+
+
+def test_r2_a_listed_capital_reduction_crdecsn_does_not_give_is_unread_not_nodoc():
+    c = alpha_dart(cr={"status": "013", "message": "조회된 데이타가 없습니다."})
+    v, _ = F.kr_split_dart(c, "00605124", cand("117670"), TODAY)
+    assert v["v"] == "no" and v["code"] == "unread" and "013" in v["note"]
