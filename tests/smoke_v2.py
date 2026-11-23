@@ -16162,7 +16162,8 @@ def scene_home_day_after(R, files, width):
     assert after <= now_dt().date().isoformat(), (after, now_dt())        # 오늘(시험의 시계)보다 뒤의 기록은 저장되지 않아요
     movers = [s for s in d["stocks"] if s.get("cls") == "kr" and not s.get("fund") and s.get("etf") is not True and str(s.get("t", "")).endswith("0")
               and isinstance(s.get("d1"), (int, float)) and abs(s["d1"]) >= 0.5 and s.get("pxd") is None and not s.get("noTrade")
-              and isinstance(s.get("price"), (int, float)) and s["price"] > 0]
+              and isinstance(s.get("price"), (int, float)) and s["price"] > 0
+              and abs((abs(s["d1"]) * 10) % 1 - 0.5) > 0.02]            # x.x5 반올림 경계는 빼요 (2차 리뷰 N3: 앱과 시험의 계산 순서가 달라도 같은 글자)
     assert len(movers) >= 2, len(movers)
     a, b = movers[0], movers[1]                                          # 그날 움직였어요: 예전 계산이면 '오늘'이 0 이 아니에요
     built = {"id": "dafter", "name": "토요일에 산 포트폴리오", "createdAt": after,
