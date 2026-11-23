@@ -46,15 +46,20 @@ push or manual run on a branch fails on purpose (its green would cover the PR's 
 can't read (event file, git) fails with a message. Replayed on past merges it flags #170, #171 and #172 (the misses of 11-22) and
 passes #173.
 
-**#181 (non-dollar filers from company totals), 2026-11-24 — built, switch OFF, waiting for Jack:** Jack's 11-13 "Next, within days"
-for the `fcur` companies (38 now: the 27 plus 11 of the 11-14 additions). The daily run computes PER = market value ÷ TTM net income
-and PBR = market value ÷ latest-quarter common equity (Yahoo statements, both converted at the Yahoo hourly rate at the US close,
-confirmed by ECOS within 2%) and the yield from dividends actually paid (regular rhythm, within 10% of Yahoo's), and writes them to
-data.json `usFcurTot` with a reason for every blank; a new warning-only gate row names disagreements. `validate_data.US_FCUR_TOT_ON`
-is `False`, so users still see #114's blanks and line. Proof on 11-20 closes: 11 companies within ±10% of stockanalysis.com and the
-companies' own releases; counts PER 29 · PBR 33 · yield 19 (+10 clear 0%) · 23 blanks. To switch on (Jack's yes): the #114 gate row
-and three `tests/test_us_fcur.py` tests, `src/v2/fcur.js` (one number back removes the currency line for all three), and the line for
-a converted number. RUNBOOK "US companies not reporting in dollars: PER · PBR · yield from company totals".
+**#181 (non-dollar filers from company totals), 2026-11-24 — built, review round 1 fixed, switch OFF, waiting for Jack:** Jack's 11-13
+"Next, within days" for the `fcur` companies (38 now: the 27 plus 11 of the 11-14 additions). The daily run computes PER = market value
+÷ TTM net income and PBR = market value ÷ latest-quarter common equity (Yahoo statements, both converted at the Yahoo hourly rate at the
+US close, confirmed within 2% by ECOS's next Korean-morning row) and the yield from dividends actually paid (regular rhythm, within 10% of
+Yahoo's), and writes them to data.json `usFcurTot` with a reason for every blank; a new warning-only gate row (wrapped, never fails)
+names disagreements once (only names new since the previous publish warn). Statements are cached (3 days or a new quarter; 114 Yahoo
+requests on a refresh day, 0 between), an empty yfinance table counts as a failed fetch (retried after 20 s, logged, blank "stmt"),
+ECOS stops after its first failure, and the step stops at 180 s. A PER whose sign disagrees with Yahoo's PER is blank as unconfirmed
+(Sony: the Sony Financial spin-off's discontinued operations). `validate_data.US_FCUR_TOT_ON` is `False`, so users still see #114's
+blanks and line. Proof on 11-20 closes: 11 companies within ±3% of stockanalysis.com's statements and the companies' own releases
+(Kaspi +0.1%); counts PER 29 · PBR 33 · yield 19 (+10 clear 0%) · 23 blanks. To switch on (Jack's yes): the #114 gate row and three
+`tests/test_us_fcur.py` tests, `src/v2/fcur.js` (one number back removes the currency line for all three), the line for a converted
+number, and whether TTM income includes discontinued operations. RUNBOOK "US companies not reporting in dollars: PER · PBR · yield from
+company totals".
 
 **#172 (published closes), 2026-11-22:** in a week with days lacking a final KRX list, the daily run reads our earlier publishes
 from the `data` branch (throw-away partial clone, no token, https, minimal env, 180 s total, process-group kill, gc off) and

@@ -124,6 +124,23 @@ def test_net_income_sums_four_quarters_and_needs_a_second_route():
     assert why == "loss" and v < 0 and how == "q4"
 
 
+def test_net_income_sign_must_agree_with_yahoo_pe():
+    # Sony 2026-11-23: 4분기 합 · TTM 줄은 적자 (중단 사업 손실 · 소니 파이낸셜 분사) · info 는 계속 사업 +1,252B · 야후 PER 20.8 → 적자로 보지 않아요
+    sony = {"q": [["2025-12-31", -1008.61e9], ["2026-03-31", 82.87e9], ["2026-06-30", 342.16e9], ["2026-09-30", 449.60e9]],
+            "ttm": [["2026-09-30", -133.98e9]]}
+    v, d, how, why = F.us_fcur_net_income(sony, "2026-09-30", D, 1252.2e9, 20.8)
+    assert why == "niUnconfirmed" and v < 0
+    assert F.us_fcur_net_income(sony, "2026-09-30", D, 1252.2e9, None)[3] == "loss"   # 야후가 PER 을 주지 않으면 (적자 회사처럼) 부호는 보지 않아요
+    assert F.us_fcur_net_income(tsm_st(), "2026-09-30", D, 2527.57e9, -5.0)[3] == "niUnconfirmed"   # 반대 방향
+    assert F.us_fcur_net_income(tsm_st(), "2026-09-30", D, 2527.57e9, 20.66)[3] is None
+    st = dict(sony)
+    row = F.us_fcur_tot_row(dict(tsm_rec(), fcur="JPY", t="SONY", price=27.29),
+                            {"px": 27.29, "info": tsm_info(marketCap=159.05e9, netIncomeToCommon=1252.2e9, trailingPE=20.37,
+                                                           financialCurrency="JPY")},
+                            dict(st, eq=[["2026-09-30", 8550.37e9]]), {"r": 158.5}, None, D, TODAY)
+    assert row["why"]["per"] == "niUnconfirmed" and row["signY"] == 20.37 and "pbr" in row
+
+
 def test_net_income_gaps_and_stale_quarters():
     enb = {"q": [["2025-06-30", 2.18e9], ["2025-09-30", 0.68e9], ["2025-12-31", 1.95e9], ["2026-03-31", 1.67e9], ["2026-09-30", 1.29e9]],
            "ttm": [["2026-09-30", 6.307e9]]}                               # 2026-06-30 분기가 비었어요 → 넷이 이어지지 않아 TTM 줄
@@ -161,6 +178,17 @@ def test_fx_must_agree_with_ecos_on_the_same_day_or_just_before():
     e, ed, why = F.us_fcur_fx_check(434.68, [["2026-11-20", 449.62]], D)              # 야후 KZT 일봉 434.68 (3.3% 차이) 같은 값
     assert why and "ECOS" in why
     assert F.us_fcur_fx_check(1.0, [], D)[2]
+
+
+def test_fx_prefers_the_first_ecos_row_after_the_us_close():
+    # 리뷰 2026-11-23: ECOS 의 d 줄은 그 전 뉴욕 마감 무렵 값 — d 다음 첫 줄(뉴욕 마감 뒤 한국 아침)이 같은 때예요
+    jpy = [["2026-11-19", 159.37], ["2026-11-20", 159.62], ["2026-11-23", 158.645]]
+    assert F.us_fcur_fx_check(158.499, jpy, D) == (158.645, "2026-11-23", None)
+    kzt = [["2026-11-20", 449.62], ["2026-11-23", 455.705]]
+    e, ed, why = F.us_fcur_fx_check(455.33, kzt, D)
+    assert (e, ed, why) == (455.705, "2026-11-23", None) and abs(455.33 / e - 1) < 0.001
+    assert F.us_fcur_fx_check(158.499, jpy[:2], D)[1] == "2026-11-20"                 # 아침 발행 때는 그 줄이 아직 없어요 → d
+    assert F.us_fcur_fx_check(158.499, [["2026-11-25", 158.6]], D)[2]                 # 4일 넘게 뒤
 
 
 def test_ecos_rows_invert_and_cross_through_won_without_leaking_the_key(monkeypatch):
@@ -291,8 +319,10 @@ def test_row_loss_and_range():
     st = tsm_st()
     st["q"] = [[d, -abs(v)] for d, v in st["q"]]
     st["ttm"] = [["2026-09-30", -2527.57e9]]
-    row = F.us_fcur_tot_row(tsm_rec(), {"px": 318.71, "info": tsm_info(netIncomeToCommon=-2527.57e9)}, st, FX_TWD, None, D, TODAY)
+    row = F.us_fcur_tot_row(tsm_rec(), {"px": 318.71, "info": tsm_info(netIncomeToCommon=-2527.57e9, trailingPE=None)}, st, FX_TWD, None, D,
+                            TODAY)
     assert "per" not in row and row["why"]["per"] == "loss" and "pbr" in row          # 적자: PER 만 빈 칸 (다른 미국 종목처럼)
+    assert "signY" not in row
     tiny = tsm_st()
     tiny["eq"] = [["2026-09-30", 6997.90e15]]                                           # 0.005 아래 PBR
     row2 = F.us_fcur_tot_row(tsm_rec(), {"px": 318.71, "info": tsm_info()}, tiny, FX_TWD, None, D, TODAY)
@@ -402,7 +432,9 @@ def test_one_bad_company_does_not_stop_the_others(monkeypatch):
 ORIG_ROW = F.us_fcur_tot_row
 
 
-def test_statement_fetch_reads_three_tables_and_retries_once():
+def test_statement_fetch_reads_three_tables_and_retries_once(monkeypatch):
+    slept = []
+    monkeypatch.setattr(F.time, "sleep", slept.append)
     calls = []
 
     class Tk:
@@ -421,12 +453,136 @@ def test_statement_fetch_reads_three_tables_and_retries_once():
     got = F.us_fcur_stmts_fetch(types.SimpleNamespace(Ticker=Tk), ["TSM", "BAD"], workers=1)
     assert got["TSM"]["eq"] == [["2026-09-30", 5.0]] and got["TSM"]["ttm"] == [["2026-09-30", 4.0]] and "err" not in got["TSM"]
     assert got["BAD"]["eq"] == [["2026-09-30", 5.0]] and calls.count("BAD") == 2      # 한 번 더 받아요
+    assert slept == [F.US_FCUR_STMT_PAUSE]                                              # 쉬었다가
 
     class Old:                                          # 재무제표 칸이 없는 야후 (시험의 가짜 · 아주 옛 yfinance)
         def __init__(self, t):
             pass
     got2 = F.us_fcur_stmts_fetch(types.SimpleNamespace(Ticker=Old), ["X"])
     assert got2["X"]["eq"] == [] and got2["X"]["err"]
+
+
+class EmptyYahoo:
+    """진짜 yfinance 1.7 처럼 실패를 숨기고 빈 표를 돌려주는 가짜 (hide_exceptions). fail = 빈 표로 줄 표 이름들 · 두 번째부터 낫게 하려면 heal."""
+    def __init__(self, fail, heal=False, half=False):
+        self.fail, self.heal, self.half, self.calls = set(fail), heal, half, []
+        outer = self
+
+        class Tk:
+            def __init__(self, t):
+                self.t = t
+                outer.calls.append(t)
+
+            def _get(self, attr, frame):
+                if attr in outer.fail and not (outer.heal and outer.calls.count(self.t) > 1):
+                    return pd.DataFrame()
+                return frame
+
+            quarterly_balance_sheet = property(lambda self: self._get("quarterly_balance_sheet", stmt(
+                {"Common Stock Equity": ({"2025-12-31": 7.83e9, "2026-06-30": 8.0e9} if outer.half else {"2026-09-30": 5.0})})))
+            quarterly_income_stmt = property(lambda self: self._get("quarterly_income_stmt", stmt(
+                {"Net Income Common Stockholders": {"2026-09-30": 1.0}})))
+            ttm_income_stmt = property(lambda self: self._get("ttm_income_stmt", stmt({"Net Income Common Stockholders": {"2026-09-30": 4.0}})))
+        self.Ticker = Tk
+
+
+def test_an_empty_table_is_a_failed_fetch_retried_after_a_pause(monkeypatch):
+    slept = []
+    monkeypatch.setattr(F.time, "sleep", slept.append)
+    y = EmptyYahoo({"quarterly_balance_sheet", "ttm_income_stmt"})
+    got = F.us_fcur_stmts_fetch(y, ["TSM"], workers=1)
+    assert got["TSM"]["err"] == [["quarterly_balance_sheet", "empty"], ["ttm_income_stmt", "empty"]]
+    assert y.calls == ["TSM", "TSM"] and slept == [F.US_FCUR_STMT_PAUSE]               # 숨긴 실패도 쉬었다가 한 번 더
+    healed = EmptyYahoo({"quarterly_balance_sheet"}, heal=True)
+    assert "err" not in F.us_fcur_stmts_fetch(healed, ["TSM"], workers=1)["TSM"]
+    # 받지 못한 표를 '자본 없음 · 순이익 없음'으로 적지 않아요 (stmt)
+    row = F.us_fcur_tot_row(tsm_rec(), {"px": 318.71, "info": tsm_info()}, got["TSM"], FX_TWD, None, D, TODAY)
+    assert row["why"]["pbr"] == "stmt" and row["why"]["per"] == "stmt"
+    only_ttm = dict(tsm_st(), err=[["ttm_income_stmt", "empty"]])
+    row2 = F.us_fcur_tot_row(tsm_rec(), {"px": 318.71, "info": tsm_info()}, only_ttm, FX_TWD, None, D, TODAY)
+    assert row2["why"] == {"per": "stmt", "dy": "divNoRecord"} and row2["pbr"] == 7.79
+
+
+def test_a_half_year_reporters_empty_quarterly_income_is_normal(monkeypatch):
+    monkeypatch.setattr(F.time, "sleep", lambda s: None)
+    y = EmptyYahoo({"quarterly_income_stmt"}, half=True)                               # BTI · CCEP · UL · VOD: 분기 손익표가 없어요
+    got = F.us_fcur_stmts_fetch(y, ["BTI"], workers=1)
+    assert "err" not in got["BTI"] and y.calls == ["BTI"]
+    q = EmptyYahoo({"quarterly_income_stmt"})                                         # 분기 보고 회사의 빈 분기 손익표는 실패
+    assert F.us_fcur_stmts_fetch(q, ["TSM"], workers=1)["TSM"]["err"] == [["quarterly_income_stmt", "empty"]]
+    assert F.us_fcur_half_year(["2025-06-30", "2025-12-31", "2026-06-30"]) and not F.us_fcur_half_year(["2026-06-30", "2026-09-30"])
+
+
+def test_statement_fetch_stops_at_the_time_limit(monkeypatch):
+    monkeypatch.setattr(F.time, "sleep", lambda s: None)
+    y = EmptyYahoo(set())
+    got = F.us_fcur_stmts_fetch(y, ["A", "B"], workers=1, deadline=F.time.monotonic() - 1)
+    assert got["A"]["err"] == [["all", "time"]] and y.calls == []
+    row = F.us_fcur_tot_row(tsm_rec(), {"px": 318.71, "info": tsm_info()}, got["A"], FX_TWD, None, D, TODAY)
+    assert row["why"]["per"] == "time" and row["why"]["pbr"] == "time"
+
+
+def test_statements_are_cached_and_refetched_on_a_new_quarter(tmp_path, monkeypatch):
+    path = str(tmp_path / "st.json.gz")
+    asked = []
+
+    def fetch(ts_):
+        asked.append(list(ts_))
+        return {t: tsm_st() for t in ts_}
+    st, n = F.us_fcur_stmts_cached(None, [("TSM", 1790726400)], TODAY, fetch=fetch, path=path)
+    assert asked == [["TSM"]] and n["fetched"] == 1 and st["TSM"]["eq"][-1] == ["2026-09-30", 6997.90e9]
+    st, n = F.us_fcur_stmts_cached(None, [("TSM", 1790726400)], TODAY + dt.timedelta(days=2), fetch=fetch, path=path)
+    assert asked == [["TSM"]] and n["cache"] == 1                                       # 3일 안 · 같은 분기: 다시 받지 않아요
+    F.us_fcur_stmts_cached(None, [("TSM", 1798675200)], TODAY + dt.timedelta(days=2), fetch=fetch, path=path)   # 새 분기 (12-31)
+    F.us_fcur_stmts_cached(None, [("TSM", 1790726400)], TODAY + dt.timedelta(days=3), fetch=fetch, path=path)   # 3일
+    assert len(asked) == 3
+    # 받지 못한 날: 14일 안 보관본 · 보관본도 없으면 그 표 그대로 (빈 칸 stmt)
+    fail = lambda ts_: {t: dict(F._fcur_failed("ConnectionError")) for t in ts_}          # noqa: E731
+    st, n = F.us_fcur_stmts_cached(None, [("TSM", 1790726400), ("NEW", None)], TODAY + dt.timedelta(days=10), fetch=fail, path=path)
+    assert n["old"] == 1 and n["failed"] == 1 and "err" not in st["TSM"] and st["NEW"]["err"]
+    assert F.us_fcur_stmt_due(None, None, TODAY) and F.us_fcur_stmt_due({"at": "x", "st": {}}, None, TODAY)
+
+
+def test_ecos_stops_after_its_first_failure(monkeypatch):
+    raw = pd.concat({f"{c}=X": pd.DataFrame({"Close": hourly({"15:00": 1.0 + i})}) for i, c in enumerate(["EUR", "JPY", "TWD"])}, axis=1)
+    yf = types.SimpleNamespace(download=lambda *a, **kw: raw)
+    asked = []
+
+    def ecos(c, d):
+        asked.append(c)
+        raise RuntimeError("ECOS 응답 없음")
+    stats = {}
+    out = F.us_fcur_fx_rates(yf, ["EUR", "JPY", "TWD"], D, NOW, ecos=ecos, stats=stats)
+    assert asked == ["EUR"] and all(out[c]["r"] is None for c in out)                  # 한 번 실패하면 다시 묻지 않아요
+    assert "다시 묻지 않음" in out["JPY"]["why"] and stats["ecosFail"].startswith("EUR")
+    out2 = F.us_fcur_fx_rates(yf, ["EUR"], D, NOW, ecos=lambda c, d: [["2026-11-23", 1.0]], deadline=F.time.monotonic() - 1)
+    assert out2["EUR"]["r"] is None and "TimeoutError" in out2["EUR"]["why"]             # 시간 한도
+
+
+def test_half_days_are_flagged_in_the_log():
+    assert F.us_half_day_maybe(dt.date(2026, 11, 27)) and F.us_half_day_maybe(dt.date(2026, 12, 24))
+    assert not F.us_half_day_maybe(D) and not F.us_half_day_maybe(dt.date(2026, 7, 3))    # 2026-07-03 은 금요일 (휴장 · 7-4 대체)
+    lines = []
+    orig = F.log
+    try:
+        F.log = lines.append
+        F.log_us_fcur_tot({"rows": {"X": {"cur": "EUR", "px": 1.0, "why": {"per": "err", "pbr": "err", "dy": "err"}, "err": "ValueError: x"}},
+                           "fx": {}, "halfDay": True, "src": {"cache": 1, "req": 3, "limit": True, "sec": 180.2}})
+    finally:
+        F.log = orig
+    assert any("조기 폐장일" in x for x in lines)
+    assert any("X (EUR)" in x and "멈춤: ValueError: x" in x for x in lines), lines       # y 가 없는 줄도 (리뷰 2026-11-23)
+    assert any(x.startswith("  !! 재무제표: 보관본 1") and "시간 한도" in x for x in lines), lines
+
+
+def test_switch_off_leaves_the_stock_list_and_cache_exactly_as_they_were(monkeypatch):
+    import copy
+    out, cache, data, stmts = step_inputs()
+    before_out, before_cache = copy.deepcopy(out), copy.deepcopy(cache)
+    monkeypatch.setattr(F, "log", lambda *a: None)
+    F.us_fcur_totals_safe(None, out, cache, data, D, TODAY, frozenset({"NOINFO"}), now=NOW,
+                          stmts=lambda ts_: {t: stmts.get(t, {}) for t in ts_}, fx_rates=lambda c, d, n: {"TWD": dict(FX_TWD)}, on=False)
+    assert out == before_out and cache == before_cache
 
 
 def test_dropped_rows_leave_the_record_too():
@@ -518,7 +674,16 @@ def test_gate_passes_a_clean_record():
 
 @pytest.mark.parametrize("data, pdata, mode, want", [
     (gdata(rows={"TSM": {"cur": "TWD", "px": 318.71, "per": 21.6, "pbr": 7.79, "y": [40.0, 7.8, None], "why": {}}}), None, "publish",
-     "야후 자기 숫자와"),                                                       # PER 21.6 ↔ 야후 40 (1.85배)
+     "새로 이름이 적힌 곳 1: TSM PER 21.6 ↔ 야후 40.0"),                          # PER 21.6 ↔ 야후 40 (1.85배)
+    (gdata(rows={"TSM": {"cur": "TWD", "px": 318.71, "pbr": 2.95, "y": [20.37, 2.9, 0.7], "signY": 20.37,
+                         "why": {"per": "niUnconfirmed", "dy": "divUnclear"}}}), None, "publish", "부호 ↔ 야후 PER 20.37"),
+    (gdata(rows={"TSM": {"cur": "TWD", "px": 318.71, "dy": None, "y": [20.0, 7.0, 0.0], "why": {"dy": "divMismatch"}}}), None, "publish",
+     "모양이 틀린 줄"),
+    (gdata(rows={"TSM": {"cur": "TWD", "px": 318.71, "y": [20.0, 7.0, 0.0], "why": {"dy": "divMismatch"}}}), None, "publish",
+     "배당 기록은 있는데 야후는 배당 없음"),
+    (gdata(src={"limit": True, "sec": 180.3}), None, "publish", "시간 한도에 걸림"),
+    (gdata(rows={"TSM": {"cur": "TWD", "px": 318.71, "why": {"per": "stmt", "pbr": "stmt", "dy": "divNoRecord"}}}),
+     {"usFcurTot": {"rows": {f"T{i}": {"px": 1.0, "per": 10.0, "pbr": 1.0} for i in range(29)}}}, "publish", "PER 29 → 0"),
     (gdata(), {"usFcurTot": {"rows": {"TSM": {"px": 300.0, "pbr": 3.0, "per": 21.0}}}}, "publish", "지난 발행본과"),   # PBR ÷ 종가 2.4배 바뀜
     (gdata(rows={"AAPL": {"cur": "EUR", "px": 250.0, "why": {}}}), None, "publish", "fcur 회사가 아님"),
     (gdata(rows={"TSM": {"cur": "TWD", "px": 300.0, "why": {}}}), None, "publish", "종가 300.0 ≠ 종목 318.71"),
@@ -539,5 +704,32 @@ def test_gate_reads_old_files_quietly_on_site_checks():
     assert r[3] == "PASS" and "이 기록 전의 파일" in r[1]
 
 
+def test_gate_names_the_same_company_only_once():
+    far = {"TSM": {"cur": "TWD", "px": 318.71, "per": 21.6, "pbr": 7.79, "y": [40.0, 7.8, None], "why": {}}}
+    r = gate(gdata(rows=far), {"usFcurTot": {"rows": {"TSM": {"px": 300.0, "per": 20.3, "pbr": 7.33, "y": [38.0, 7.3, None], "why": {}}}}}).rows[0]
+    assert r[3] == "PASS" and "이름 1 (지난 발행본에도 있던 1 은 경고하지 않음)" in r[1]       # FUTU · HTHT 처럼 날마다 같은 이름
+    rep = V.Report()
+    V.check_us_fcur_tot(rep, gdata(rows=far), V.us_stocks(gdata()), None)
+    assert rep.details and "TSM PER 21.6 ↔ 야후 40.0" in rep.details[0][1]            # 이름은 늘 detail 에
+
+
+@pytest.mark.parametrize("prev", ["x", 1, [], {"rows": "x"}, {"rows": {"T": 5}}, {"rows": {"TSM": {"px": "a", "per": "b", "y": "c", "why": 3}}},
+                                  {"err": "x", "rows": {}}, {"rows": {5: {}}}])
+@pytest.mark.parametrize("rows", [{"TSM": {"y": "x", "why": {}}}, {"TSM": {"why": []}}, {"TSM": 5}, {"TSM": {"px": 318.71, "signY": "x", "y": [1, 2]}}])
+def test_gate_never_fails_or_crashes_on_odd_shapes(prev, rows):
+    data = gdata(rows=rows)
+    data["stocks"] += [{"cls": "us", "fcur": "EUR"}, {"t": None, "cls": "us", "fcur": "EUR"}]   # 티커 없는 fcur 종목
+    rep = V.Report()
+    V.check_us_fcur_tot_safe(rep, data, V.us_stocks(data), {"usFcurTot": prev}, "publish")
+    assert len(rep.rows) == 1 and rep.rows[0][3] in ("PASS", "WARN")
+
+
+def test_the_wrapper_turns_any_crash_into_a_warning(monkeypatch):
+    monkeypatch.setattr(V, "check_us_fcur_tot", lambda *a, **k: 1 / 0)
+    rep = V.Report()
+    V.check_us_fcur_tot_safe(rep, gdata(), [], None)
+    assert rep.rows[0][3] == "WARN" and "ZeroDivisionError" in rep.rows[0][1]
+
+
 def test_gate_row_runs_inside_run_checks():
-    assert "check_us_fcur_tot(rep, data, us, pdata, mode)" in inspect.getsource(V.run_checks)
+    assert "check_us_fcur_tot_safe(rep, data, us, pdata, mode)" in inspect.getsource(V.run_checks)

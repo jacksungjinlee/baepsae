@@ -2058,24 +2058,39 @@ ADR ratios together. Prove it against today's correct figures before showing any
 shows no dividends in the last 12 months; a blank field stays hidden."
 
 **What the daily run does (`fetch_data.us_fcur_totals_step`, inside `fetch_us`).** For every US company with `fcur` (statements not in
-dollars; 38 on 2026-11-23, the "27" of 11-13 plus the foreign companies added on 11-14) except ETFs and stocks without Yahoo details:
+dollars; 38 on 2026-11-23, the "27" of 11-13 plus 11 of the 11-14 additions) except ETFs and stocks without Yahoo details:
 - **Market value (USD)** = Yahoo `marketCap` rescaled to today's close, the same number as the published 시가총액 (`cap`). Yahoo's
   `marketCap` is price × `impliedSharesOutstanding`, which counts every share class in ADR units (checked 2026-11-23 for all 38:
   Novo A+B 4.41B, Baidu A+B, Ericsson A+B, Futu, Kanzhun, Li Auto, XP). No number when the price is not the US date's own close
   (`pxd` · `pxc`) or the cached details have no anchor price (`pxBad`).
 - **Equity** = the latest quarterly balance sheet's *Common Stock Equity* (parent's common shareholders: without preferred shares or
-  minority interests; *Stockholders Equity* when the first row is missing), and only if its period end is the latest reported period
-  (within 7 days of the newest of Yahoo's `mostRecentQuarter` and every statement column, empty ones included) and at most 280 days
-  before the US date. Santander, Vodafone, Coca-Cola Europacific and Ferrovial fail this on 11-23 (Yahoo lacks their newest balance sheet).
+  minority interests). The whole row is chosen once: *Stockholders Equity* only when the first row has no value at all, never mixed
+  column by column. The last column **with a value** must be the latest reported period (within 7 days of the newest of Yahoo's
+  `mostRecentQuarter` and every statement column, empty ones included) and at most 280 days before the US date; otherwise "자본이 최근
+  보고 분기 것이 아님" (`eqStale`). Santander, Vodafone, Coca-Cola Europacific and Ferrovial fail this on 11-23 (Yahoo lacks their newest
+  balance sheet).
 - **Net income (TTM)** = the sum of the last four consecutive quarters of *Net Income Common Stockholders* ending at that latest period
-  (half-year reporters: Yahoo's TTM row of that date), confirmed by a second route within 10% (Yahoo's TTM row or `netIncomeToCommon`).
-  A loss leaves PER blank, as for every other US stock. On 11-23 Yahoo's routes disagreed for Unilever (TTM row 9.27B vs 5.60B), so its
-  PER is blank; for Futu the TTM row is wrong (3.80B; the quarters, `netIncomeToCommon` and stockanalysis.com all say 11.08B HKD).
-- **Rate** = Yahoo `{currency}=X` hourly bar: the last bar of the US date that started after 12:00 and ended by 16:00 New York time
-  (the moment of the stock's close; a bar that has not ended is never used), confirmed by the Bank of Korea's ECOS daily rate per US
-  dollar (table 731Y002; CNY through 731Y001 원/달러 ÷ 원/위안) for the same date, or the latest ECOS day up to 4 days before (Korean
-  holidays), within 2%. Otherwise that currency's PER and PBR stay blank ("환율을 두 출처로 확인하지 못함"). Yahoo's *daily* KZT bar was
-  3.3% off ECOS on 11-20; its hourly bar was 1.3% off and is used.
+  (half-year reporters: Yahoo's TTM row of that date), confirmed by a second route within 10%: Yahoo's TTM row or `netIncomeToCommon`.
+  **The four-quarter sum and the TTM row usually come from the same quarters, so they are not independent** (they only catch a broken
+  TTM row, as Futu's 3.80B against 11.08B HKD on 11-23). The near-independent checks are `netIncomeToCommon` and Yahoo's own PER, and
+  Yahoo's figures can count continuing operations only. So the sign is also checked against Yahoo's PER: if we find a loss and Yahoo
+  shows a positive PER, or a profit and Yahoo a PER of 0 or below, PER is blank with "순이익 두 길이 맞지 않음 (또는 부호가 야후 PER 과
+  어긋남)" (`niUnconfirmed`, the row carries `signY`, the log and the gate row name it). A loss otherwise leaves PER blank, as for every
+  other US stock (Yahoo shows no PER for a loss, so no sign check then).
+- **Open measure question for Jack (before switching on):** whether TTM net income should include *discontinued operations*. Sony's
+  four quarters to 2026-09 include the Sony Financial spin-off (the 2025-12 quarter: −1,008.6B JPY, of which about −1,386B discontinued),
+  so the total is −134B JPY (a loss), while Yahoo's `netIncomeToCommon` (+1,252B, continuing operations) and Yahoo's PER 20.8 leave it
+  out. Unilever's TTM row (9.27B EUR) includes the Magnum demerger; `netIncomeToCommon` (5.60B) does not. Both are blank today.
+- **Rate** = Yahoo `{currency}=X` hourly bar: the last bar of the US date that started at or after 12:00 and ended by 16:00 New York time
+  (the moment of the stock's close; a bar that has not ended is never used). It is checked against the Bank of Korea's ECOS daily rate
+  per US dollar (table 731Y002; CNY through 731Y001 원/달러 ÷ 원/위안) within 2%. **An ECOS row dated d is that Seoul morning's rate,
+  i.e. the previous New York close**, so the check uses the first ECOS row *after* the US date (the Korean morning after that New York
+  close, up to 4 days later) and, when it is not there yet (usually at the 06:40 publish), the row of the US date or the latest up to
+  4 days before. Otherwise that currency's PER and PBR stay blank ("환율을 두 출처로 확인하지 못함"). On 11-20 (checked against the 11-23
+  row) the rates agree within 0.1–0.4% (JPY 158.499 ↔ 158.645, KZT 455.33 ↔ 455.705); against the same-dated row JPY was 0.70% and KZT
+  1.27% apart. Yahoo's *daily* KZT bar was 3.3% off and is not used. US early closes (13:00: the Friday after Thanksgiving, Christmas
+  Eve, some July 3rds) are not in `data/market_holidays.csv`; on a date that may be one, the rate stays the 16:00 bar of the same day and
+  the log says so (`usFcurTot.halfDay`).
 - **PER** = market value ÷ (net income ÷ rate), kept for 0 < PER < 500; **PBR** = market value ÷ (equity ÷ rate), kept for
   0.005 ≤ PBR < 100 (the same ranges as other US stocks).
 - **Yield** = dividends actually paid (Yahoo's dividend record: per ADR, in dollars, gross) over the last year ÷ today's close. The
@@ -2084,9 +2099,23 @@ dollars; 38 on 2026-11-23, the "27" of 11-13 plus the foreign companies added on
   several), the next payment is overdue, or the result is more than 10% from Yahoo's own `dividendYield`. 0% only by #114's rule
   (`us_no_dividend_12m`).
 
-Everything goes into data.json `usFcurTot` (rows with the inputs, results, Yahoo's own numbers `y` and a reason for every blank) and
-the log ("· 달러 아닌 재무제표 38곳: PER n / PBR n / 배당 n 되살림 (배당 0% 그대로 m), 빈 칸 k (reasons with counts)", then the rates
-and one line per company). A crash in the step leaves every stock as it was and writes `usFcurTot.err`.
+**Statements, load and time.** Yahoo (yfinance 1.7) hides a failed statement request and returns an empty table, so an empty table counts
+as a failed fetch (`err` "empty"), except a half-year reporter's empty quarterly income table (balance-sheet columns half a year apart:
+BAT, Coca-Cola Europacific, Unilever, Vodafone). Failed tables are asked once more after 20 s; a table that still fails makes that number
+blank with "재무제표를 받지 못함" (`stmt`), never "자본 없음" or "순이익 없음", and the log prints "!! 달러 아닌 재무제표 회사의 재무제표 표를
+다 받지 못한 곳 …" with each table and reason. Statements are cached next to the US info cache (`.dart-cache/us-fcur-stmt-v1.json.gz`,
+or `US_FCUR_STMT_CACHE`) and fetched again every 3 days or as soon as Yahoo's `mostRecentQuarter` changes; on a day they can't be fetched,
+a cached copy up to 14 days old is used (a newer quarter then shows as stale, blank). Requests per publish: before this cache, 114
+statement requests (38 × 3) every run; now 114 on the first run and every third day (or one company's 3 after a new quarter), 0 on the
+days between; plus about 12 hourly-FX and 13 ECOS requests. ECOS gets 2 tries per currency and, after its first failure in a run, is not
+asked again (those rates stay unconfirmed). The whole step stops at 180 s (like #172), leaving what is left blank with "시간 한도"
+(`time`), logged and recorded in `usFcurTot.src.limit`. The log line "재무제표: 보관본 n · 오늘 받음 n · … — 야후 요청 재무제표 n · 환율 봉 n ·
+ECOS n · s초" shows it every run. Local runs on 11-23: 38.8 s with an empty cache, 14.3 s with it.
+
+Everything goes into data.json `usFcurTot` (rows with the inputs, results, Yahoo's own numbers `y`, `signY`, and a reason for every blank;
+`n`; `src`; `halfDay`) and the log ("· 달러 아닌 재무제표 38곳: PER n / PBR n / 배당 n 되살림 (배당 0% 그대로 m), 빈 칸 k (reasons with
+counts)", then the statement line, the rates and one line per company). `units.usFcurTot` and `units.fcurTot` describe the fields. A crash
+in the step leaves every stock as it was and writes `usFcurTot.err`.
 
 **The switch (`validate_data.US_FCUR_TOT_ON`, now `False`).** While it is off, nothing users see changes: the stocks keep #114's
 blanks and the currency line. Turning it on puts the checked numbers on the stocks (`per` · `pbr` · `dy`, and `fcurTot` lists
@@ -2095,22 +2124,28 @@ its tests (`tests/test_us_fcur.py`: `test_gate_fails_when_a_blanked_number_is_le
 `test_fetch_us_refetches_old_cache_entries_and_blanks_the_published_rows`) to accept exactly the numbers in `usFcurTot` — a loosening,
 so Jack decides; (2) changes the app's currency-line rule (`src/v2/fcur.js` `fcurLeftover`: today one number back removes the line for
 all three, so a stock with PER back and PBR still blank would lose its reason); (3) adds the line Jack approves for a number
-converted from another currency, if he wants one. Turning the switch on alone makes that gate row fail the publish (on purpose: no
-number goes out without its gate and its line).
+converted from another currency, if he wants one; (4) settles the discontinued-operations question above. Turning the switch on alone
+makes that gate row fail the publish (on purpose: no number goes out without its gate and its line).
 
-**Gate row "달러 아닌 재무제표 회사: 회사 합계로 계산한 PER · PBR · 배당수익률 (usFcurTot · 경고만)".** Never fails. It names: a PER
-more than 1.5× from Yahoo's own PER (Yahoo's PBR is the very number #114 blanked, so it is not compared); a PER or PBR whose
-price-free part (value ÷ close) moved more than 1.5× from the previous publish (a new quarter, a unit or share-count change: look at
-the company's report); rows that don't match the stock list or its price; a broken record; a crashed step; a switch value different
-from the gate's. On 11-23 it names Futu and H World (Yahoo's own PER 24.1 and 33.8 against 8.2 and 20.0 from company totals;
-stockanalysis.com agrees with the company totals). A publish without the record warns; the site checks read older files quietly.
+**Gate row "달러 아닌 재무제표 회사: 회사 합계로 계산한 PER · PBR · 배당수익률 (usFcurTot · 경고만)".** Never fails: its call is wrapped
+(`check_us_fcur_tot_safe`), so any odd record shape becomes a WARN line. It names companies in three kinds and **warns only for names
+that were not in the previous publish's record** (every name stays in the row's detail): a PER more than 1.5× from Yahoo's own PER
+(Yahoo's PBR is the very number #114 blanked, so it is not compared; on 11-23: Futu 8.2 vs 24.06 and H World 20.0 vs 33.8, where
+stockanalysis.com agrees with the company totals, so they warn once, on the first publish); a PER blanked because its sign disagrees
+with Yahoo's PER (Sony); a yield record with payments while Yahoo says no dividend and the stock keeps #114's 0%. It always warns on: a
+PER or PBR whose price-free part (value ÷ close) moved more than 1.5× from the previous publish (a new quarter, a unit or share-count
+change: look at the company's report); computed PER or PBR counts below half of the previous publish's (from 5 or more: statements or
+rates not received that day — read the log's "재무제표:" line); the 180 s limit; rows that don't match the stock list or its price; a
+broken record; a crashed step; a switch value different from the gate's. A publish without the record warns; the site checks read
+older files quietly.
 
-**Proof, 2026-11-23 (US close 11-20).** PER and PBR from company totals against stockanalysis.com's statements in the reporting
-currency (TSMC, Novo, SAP, ASML, Toyota, JD, Ryanair) or its USD figures (Futu, H World, BAT, Kaspi), its share counts, our close and
-ECOS rates: all 11 within ±10% (largest Kaspi +6.9% PBR, from the KZT rate). Company releases agree with Yahoo's totals: TSMC Q3 net
-income NT$763.06B, ASML Q3 €4,960.4M, Novo nine-month net profit DKK 86,286M. Counts on that day: PER 29, PBR 33, yield 19 (and 10
-clear 0%), 23 blanks (6 losses, 6 uneven dividend records, 4 stale balance sheets, 2 unclear dividends, 1 yield mismatch, 1 negative
-equity, 1 unconfirmed income, 1 missing income, 1 stale income).
+**Proof, 2026-11-23 (US close 11-20; re-run after review round 1).** PER and PBR from company totals against stockanalysis.com's
+statements in the reporting currency and its share counts (TSMC, Novo, SAP, ASML, Toyota, JD, Ryanair, Futu, H World, BAT, Kaspi), our
+close and ECOS's next-morning rate: all 11 within ±3% (largest H World +2.9% PBR, from the share count; Kaspi +0.1%, was +6.9% against
+stockanalysis's own USD conversion). Company releases agree with Yahoo's totals: TSMC Q3 net income NT$763.06B, ASML Q3 €4,960.4M, Novo
+nine-month net profit DKK 86,286M. Counts on that day: PER 29, PBR 33, yield 19 (and 10 clear 0%), 23 blanks (6 uneven dividend
+records, 5 losses, 4 stale balance sheets, 2 unclear dividends, 2 unconfirmed income: Unilever and Sony, 1 yield mismatch, 1 negative
+equity, 1 missing income, 1 stale income).
 
 ## US share-class tickers (주식 종류 티커, since #PR)
 
