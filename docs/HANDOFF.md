@@ -7,14 +7,17 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ## 0. Current state and next steps (updated 2026-11-23 KST — read this first)
 
-**Now (2026-11-23):** live since 11-22: #166 (old-app English carry lines), #167 (div reason lines), #168 (v19.6b 오늘 볼 것
+**Now (2026-11-23):** merged and deployed 11-22: #166 (old-app English carry lines), #167 (div reason lines), #168 (v19.6b 오늘 볼 것
 page), #169 (new US tickers wait), #170 (v19.6e data: `c1w` · `wkFrom` · `usWkFrom` · `c1wv` · `c1wSrc`), #171 (v19.6e
 screens: 이번 주 정리 card, ON with Jack's lines of 11-22; first card possible from Saturday 11-28's publish), #172 (Korean
-last-week closes from our own publishes, Jack 11-22). No data publish since #169/#170/#172: the first is Tuesday 11-24's
-morning run — check its log (`새로 들어온 미국 종목`, the `c1w` lines, `c1wSrc.pub`) and the gate rows `미국 새 종목 확인 종가
-기다림` and `이번 주 시작 종가`. **Ready, waiting for Jack:** v19.6b switch-on (branch `claude/v19.6b-switch-on`, 66caa3f: 공시
+last-week closes from our own publishes, Jack 11-22). Their data effects reach the site with the first publish after them, Tuesday 11-24's morning run (none since 11-21 06:41). Expect in its
+log: the `새로 들어온 미국 종목` line, the `c1w` lines and the gate rows `미국 새 종목 확인 종가 기다림` and `이번 주 시작 종가`; Monday 11-23
+had a final KRX list (unless it turns out to be a backup-source day), so #172 reads no old publishes: expect `c1wSrc.pub` = 0 and the log
+line `c1w 지난 발행본: 읽지 않아요 …` — a 0 there is correct, not a failure, and #172's real-data proof is its dry run below. **Ready, waiting for Jack:** v19.6b switch-on (branch `claude/v19.6b-switch-on`, 66caa3f: 공시
 보기, 지분 변동 cards, `look.insBoth`; Jack said yes 11-22 to the two named test edits; #168's own "still off" checks need his yes
-to flip, edits prepared in the session scratchpad as `proposed_pin_edits.diff`). **Open questions to Jack:** the capped footnote
+to flip: about 30 lines that only change expected values from off to on — `tests/test_v196b_cards.py` (insBoth title, the heading/row
+count), `tests/smoke_v2.py` scene_v196b / scene_v196b_states (row order and icons with 지분 변동 rows, 5 insider cards, 4 공시 보기
+links, "전무가" off the must-not-show list, labels) and a rename in `tests/test_v196b_answers.py`; nothing removed or loosened). **Open questions to Jack:** the capped footnote
 `weekly.nvNoteMore` ("{names} 외 {n}종목의 지난주 종가는 다른 자료로 확인한 값이에요. 이번 주 움직임이 실제와 조금 다를 수
 있어요."; until then more than 5 Naver-checked stocks are left out and named), "건" on the older chips (유상증자 {n} · 지분 변동
 {n} · 실적 발표 {n}), one decimal on 지분 변동 amounts. Design chat has (sent 11-22): the say-why audit, the 10 dark-mode pairs,
@@ -25,8 +28,8 @@ v19.6g, v19.6h.
 from the `data` branch (throw-away partial clone, no token, https, minimal env, 180 s total, process-group kill, gc off) and
 confirms each Korean `c1w` day by day against KRX's base; a day with no publish is pinned by the next day's published `d1`;
 no-trade rows confirm links only; rolled-back publishes are skipped; a published close that disagrees with a final list blanks
-(`pubDiff`). Naver only for stocks we didn't publish (`c1wv` "nv", footnoted on the card). Stocks missing from the newest day's
-publish stay blank (`pxLink`, Naver may lag on the newest day). Dry run 45029231034 (week 11-16): 2,405 / 2,474 (2,363 exact,
+(`pubDiff`). Naver only for stocks we didn't publish (`c1wv` "nv", footnoted on the card). Stocks missing from the publish of the day before the
+price date stay blank (`pxLink`: Naver may lag on the newest day). Dry run 45029231034 (week 11-16): 2,405 / 2,474 (2,363 exact,
 42 Naver). RUNBOOK §이번 주 정리.
 
 **#171 (이번 주 정리 card), 2026-11-22:** `src/v2/weekly.js` / `weekly.jsx` / `weekcfg.js` (`WEEKLY_ON` true, `WEEK_NV` "note").
