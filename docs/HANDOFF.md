@@ -24,7 +24,7 @@ links, "전무가" off the must-not-show list, labels) and a rename in `tests/te
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
 v19.6g, v19.6h.
 
-**Track 2 audit, money display (#?, 2026-11-24; audit 1.2 · 1.5 · 1.6, minor):** app only, no new words. (1.2) 포트폴리오's held
+**Track 2 audit, money display (#187, 2026-11-24; audit 1.2 · 1.5 · 1.6, minor):** app only, no new words. (1.2) 포트폴리오's held
 row writes US fractional shares with up to 4 decimals (`pfview.qtyText`, as the records already did): 7.5주 / 0.4주 instead of "8주" /
 "0주"; whole shares unchanged. (1.5) 연말에 확인할 숫자: an estimate under 1,000원 is shown to the 원 (`tax.js shownEstimate` /
 `taxShown`): the dividend card without "약" (a 361원 dividend: 427원, was "약 0원"), the above line keeps its approved "약" (세금은 약
