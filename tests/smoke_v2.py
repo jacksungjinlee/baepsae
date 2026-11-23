@@ -10865,33 +10865,38 @@ def scene_v196a_split_price(R, files, width=390):
 
 
 def scene_split_round(R, files, width=390, app=None):
-    """Track 2 audit 1.1 (2026-11-24): a split whose ratio leaves a fraction of a 1/10,000 share (data.json's 듀폰 DD 1:3 · 유니레버
-    UL 8:9; here AMZN · MSFT · NVDA 1:3 on 10-20, test rows) with records saved before it.
-    dsa: AMZN 10 shares bought and 5 + 5 sold before it → the app stores the split once (one console line), no refused line
-    (store-refused) on 포트폴리오 or 홈, and nothing is tried again (before the fix: refused, retried hundreds of times a second,
-    "날짜·수량·가격을 다시 확인해 주세요" on every screen) · dsd: AMZN 3 bought before it and 2 sold after it (more than the 1 new
-    share) → not stored, said once in the console with the store's reason, never retried, no refused line · dsb: MSFT 1 + 1 bought before it → 팔았어요 2 dated before it is saved, no
-    "가진 수량보다 많이 팔 수는 없어요", and it asks 포트폴리오에서도 뺄까요? (exactly 0 left) · dsc: NVDA 10 bought before it → the
-    form shows 3.3333주, and 팔았어요 3.3333 after it is saved and leaves exactly 0. app: another build's app.html (main's, to see
-    the scene fail before the fix; never in the run)."""
+    """Track 2 audit 1.1 (2026-11-24) and #184 review round 1: a split whose ratio leaves a fraction of a 1/10,000 share
+    (data.json's 듀폰 DD 1:3 · 유니레버 UL 8:9; here AMZN · MSFT · NVDA · AAPL 1:3 on 10-20, test rows) with records saved
+    before it. The app stores a split with the records stock by stock, only where the portfolio reads back with it and main's
+    own count reads it too (an older tab, or main after a revert, never sets a portfolio aside):
+    dsa: AMZN 10 shares bought and 5 + 5 sold before it → main's count would read it below 0, so it is not stored (the screens
+    still apply it: sold out) · dsd: AMZN 3 bought before it and 2 sold after it (more than the 1 new share) → not stored,
+    and AAPL 3 bought before it in the same portfolio → stored (one stock never holds back another). Both refusals are said
+    in one console line, the stored splits in one line once they are in the records, no refused line (store-refused) on
+    포트폴리오 or 홈, nothing tried again (before the fix: refused, retried hundreds of times a second, "날짜·수량·가격을 다시 확인해
+    주세요" on every screen) · dsb: MSFT 1 + 1 bought before it → 팔았어요 2 dated before it is saved, no "가진 수량보다 많이 팔 수는
+    없어요", and it asks 포트폴리오에서도 뺄까요? (exactly 0 left) · dsc: NVDA 10 bought before it → the form shows 3.3333주, and
+    팔았어요 3.3333 after it is saved and leaves exactly 0. app: another build's app.html (main's, to see the scene fail before
+    the fix; never in the run)."""
     S = f"split rounding {width}"
     data = v196a_files(files)
     d = data["data.json"]
-    d["splits"] = d["splits"] + [[t, "2026-10-20", 1 / 3] for t in ("AMZN", "MSFT", "NVDA")]
+    d["splits"] = d["splits"] + [[t, "2026-10-20", 1 / 3] for t in ("AMZN", "MSFT", "NVDA", "AAPL")]
     pxd = d["pxDate"]
     by = {x["t"]: x for x in d["stocks"]}
     band = lambda t: [{"id": "band", "kind": "band", "check": "checked", "target": t, "bands": [0.75 * t, 1.25 * t, 1.4 * t]}]
     usd = lambda i, t, q, px, day: {"id": i, "t": t, "qty": q, "price": px, "date": day, "ccy": "USD", "fx": 1300}
-    deck = lambda i, t, buys, sells: {"id": i, "name": i, "createdAt": "2026-08-01", "planFx": 1300,
-                                      "holdings": [{"t": t, "nk": by[t]["nk"], "cls": "us", "target": 1, "rules": band(1)}],
-                                      "purchases": buys, **({"sales": sells} if sells else {})}
+    deck = lambda i, ts, buys, sells: {"id": i, "name": i, "createdAt": "2026-08-01", "planFx": 1300,
+                                       "holdings": [{"t": t, "nk": by[t]["nk"], "cls": "us", "target": 1 / len(ts), "rules": band(1 / len(ts))} for t in ts],
+                                       "purchases": buys, **({"sales": sells} if sells else {})}
     store = {"v": 2, "guideSeen": pxd, "decks": [
-        deck("dsa", "AMZN", [usd("p1aaaaaa", "AMZN", 10, 200.0, "2026-09-01")],
+        deck("dsa", ["AMZN"], [usd("p1aaaaaa", "AMZN", 10, 200.0, "2026-09-01")],
              [usd("s1aaaaaa", "AMZN", 5, 210.0, "2026-09-10"), usd("s2aaaaaa", "AMZN", 5, 215.0, "2026-09-15")]),
-        deck("dsb", "MSFT", [usd("p2aaaaaa", "MSFT", 1, 480.0, "2026-09-01"), usd("p3aaaaaa", "MSFT", 1, 470.0, "2026-09-02")], []),
-        deck("dsc", "NVDA", [usd("p4aaaaaa", "NVDA", 10, 150.0, "2026-09-01")], []),
-        # 3 old shares are 1 new one; a sale of 2 after the split reads back with it by no count: tried once, said once
-        deck("dsd", "AMZN", [usd("p5aaaaaa", "AMZN", 3, 200.0, "2026-09-01")], [usd("s5aaaaaa", "AMZN", 2, 230.0, "2026-10-26")])]}
+        deck("dsb", ["MSFT"], [usd("p2aaaaaa", "MSFT", 1, 480.0, "2026-09-01"), usd("p3aaaaaa", "MSFT", 1, 470.0, "2026-09-02")], []),
+        deck("dsc", ["NVDA"], [usd("p4aaaaaa", "NVDA", 10, 150.0, "2026-09-01")], []),
+        # AMZN: 3 old shares are 1 new one; a sale of 2 after the split reads back with it by no count · AAPL: buy and hold
+        deck("dsd", ["AMZN", "AAPL"], [usd("p5aaaaaa", "AMZN", 3, 200.0, "2026-09-01"), usd("p6aaaaaa", "AAPL", 3, 250.0, "2026-09-01")],
+             [usd("s5aaaaaa", "AMZN", 2, 230.0, "2026-10-26")])]}
     # every console.warn / info of the page from the first script on (the store effects run before a listener could be attached)
     seed = ("(() => { window.__logs = []; for (const k of ['warn', 'info']) { const f = console[k]; console[k] = function (...a) {"
             " try { window.__logs.push(a.join(' ')); } catch (e) {} return f.apply(this, a); }; }"
@@ -10927,9 +10932,10 @@ def scene_split_round(R, files, width=390, app=None):
 
     def stored_once():
         at(page, "portfolio")
-        page.wait_for_function("() => JSON.parse(localStorage.getItem('baepsae2.v1')).decks.every((x) => x.id === 'dsd' || (x.splits || []).length === 1)", timeout=4000)
-        assert all(x["splits"] == [{"t": x["holdings"][0]["t"], "date": "2026-10-20", "r": 1 / 3}] for x in stored()["decks"] if x["id"] != "dsd"), stored()["decks"]
-        assert "splits" not in [x for x in stored()["decks"] if x["id"] == "dsd"][0]
+        page.wait_for_function("() => JSON.parse(localStorage.getItem('baepsae2.v1')).decks.every((x) => x.id === 'dsa' || (x.splits || []).length === 1)", timeout=4000)
+        got = {x["id"]: x.get("splits") for x in stored()["decks"]}
+        sp = lambda t: [{"t": t, "date": "2026-10-20", "r": 1 / 3}]
+        assert got == {"dsa": None, "dsb": sp("MSFT"), "dsc": sp("NVDA"), "dsd": sp("AAPL")}, got
         page.locator('[data-deck-id="dsa"]').first.wait_for(state="visible")
         # the store's lines: a refused save ("change not saved", app.jsx setStoreData), the split saved, or not saved (once)
         mine = lambda: [x for x in logs() if "change not saved" in x or "stock splits stored with the records" in x or "not stored with the records" in x]
@@ -10937,8 +10943,11 @@ def scene_split_round(R, files, width=390, app=None):
         n = len(logs())
         page.wait_for_timeout(1000)
         assert len(logs()) == n, logs()[n:n + 3]                                             # 1 초 동안 아무것도 다시 하지 않아요
-        assert len(mine()) == 2 and "stock splits stored with the records" in mine()[1], mine()[:3]
-        assert mine()[0].startswith("[v2] stock splits not stored with the records") and "dsd AMZN 2026-10-20" in mine()[0] and "sold more than held" in mine()[0], mine()[0]
+        assert len(mine()) == 2, mine()[:3]
+        no, yes = mine()
+        assert no.startswith("[v2] stock splits not stored with the records") and "dsd AMZN 2026-10-20" in no and "sold more than held (2026-10-26)" in no, no
+        assert "dsa AMZN 2026-10-20" in no and "main's count" in no and "dsd AAPL" not in no, no
+        assert yes.startswith("[v2] stock splits stored with the records") and all(f"{k} {t} 2026-10-20" in yes for k, t in (("dsb", "MSFT"), ("dsc", "NVDA"), ("dsd", "AAPL"))), yes
         assert page.locator('[data-ui-v2="store-refused"]').count() == 0 and C["plan"]["badInput"] not in page.locator("body").inner_text()
         tab(page, TABS["home"])
         at(page, "home")
@@ -10947,7 +10956,7 @@ def scene_split_round(R, files, width=390, app=None):
         assert len(mine()) == 2, mine()[:3]                                                   # 홈에서도 다시 시도하지 않아요
         floor_ok(page, "홈 (분할 반올림)")
         R.collect(page)
-    R.check(page, S, "1:3 분할 전 판 기록: 앱이 분할을 한 번 저장하고(console 한 줄) · 못 쓰는 분할은 한 번만 말하고 · 거절 줄 없음(포트폴리오 · 홈) · 다시 시도하지 않아요", stored_once)
+    R.check(page, S, "1:3 분할 전 기록: 종목마다 (main 도 읽을 때만) 분할을 저장하고(console 한 줄) · 못 쓰는 분할은 한 번만 말하고 · 한 종목이 다른 종목을 막지 않고 · 거절 줄 없음(포트폴리오 · 홈) · 다시 시도하지 않아요", stored_once)
 
     def sale_before():
         open_sell("dsb", "MSFT")

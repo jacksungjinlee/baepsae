@@ -1,17 +1,21 @@
 # -*- coding: utf-8 -*-
 """뱁새 2.0 주식 분할의 1/10,000 주 반올림 (src/v2/held.js count · lots.js ledger · records.js · edit.js) — Node 로 돌려봐요.
 
-Track 2 audit 1.1 (2026-11-23): 비율이 1/10,000 주로 나누어떨어지지 않는 분할 (data.json 150 건 중 11 건, 예: 듀폰 DD 1:3 2026-06-24 ·
-유니레버 UL 8:9) 앞의 기록이 깨졌어요. held.js 는 기록마다 1/10,000 주로 반올림하고 lots.js 는 반올림하지 않아서:
+Track 2 audit 1.1 (2026-11-23): data.json 의 분할 150 건 중 47 건은 비율이 정수가 아니에요 (예: 듀폰 DD 1:3 2026-06-24 · 유니레버
+UL 8:9 · AMCR 1:5 · HON 1:2 · SNEX 3:2). 그 분할 앞의 기록이 1/10,000 주로 나누어떨어지지 않으면 (DD · UL 같은 11 건은 1 주도, 나머지는
+소수점 판매 · 금액으로 넣은 줄) held.js 는 기록마다 반올림하고 lots.js 는 반올림하지 않아서:
   (A) 앱이 분할을 저장하려다 "가진 것보다 많이 팔았어요"로 거절되고, 화면마다 끝없이 다시 시도했어요 (app.jsx: 이 파일 밖, smoke_v2)
   (B) 분할 전에 산 주식을 분할 전 날짜로 다 판 기록이 "가진 수량보다 많이 팔 수는 없어요"로 거절됐어요
   (C) 다 팔아도 0.0001 주가 남거나, 가진 것이 없는데 세금 화면에 −5원 '손실'이 나왔어요
 Audit 1.4: 금액으로 넣은 종목을 역분할 전 날짜로 팔면 수량이 두 번 나뉘었어요 (수익이 세 배쯤).
 
-고친 규칙 (held.js count): 분할로 1/10,000 주 단위가 안 맞을 때만, 정확한 누적 수량을 기록마다 반올림해서 세요 (running). 예전
-방식(each, 기록마다 반올림)으로 저장된 기록이 0 아래로 가지 않거나 정확히 0 으로 끝나면 그 방식을 그대로 써요. 가진 수량 · 묶음 ·
-가게의 검사 · 팔고 빼기가 모두 이 한 규칙이에요. 분할이 없거나 단위가 맞는 분할(2:1 · 4:1 …)이면 예전 main 의 코드와 비트까지 같아요
-(tests/fixtures/count_before_split_round_511fd6f 의 main 코드와 나란히 돌려 비교해요).
+고친 규칙 (held.js count, #184 리뷰 1차 반영): 기록마다 반올림(each, main 이 보여 준 수)과 정확한 누적을 반올림(running) 두 가지를
+포지션마다 봐요. 판매로 어느 한 쪽이 (0 아래로 간 적 없이) 정확히 0 이 되면 그 포지션은 닫히고, 다음 기록은 0 에서 새로 시작해요
+(다시 사도 0.0001 주가 붙지 않아요). 열린 포지션은 each 가 0 아래로 가지 않으면 each(main 과 같은 수), 아니면 running. 그래도
+0 아래로 가는데 main 의 수(전체 이력 each)가 괜찮으면 main 의 수를 그대로 써요 (main 이 저장한 기록은 main 이 읽던 그대로).
+가진 수량 · 묶음 · 가게의 검사 · 팔고 빼기가 모두 이 한 규칙이에요. 앱이 분할을 기록과 함께 저장하는 것은 종목마다, 그리고 main 의
+수로도 읽힐 때만이에요 (lots.withStoredSplitsChecked). 분할이 없거나 단위가 맞는 분할(2:1 · 4:1 …)이면 예전 main 의 코드와 비트까지
+같아요 (tests/fixtures/count_before_split_round_511fd6f 의 main 코드와 나란히 돌려 비교해요).
 """
 import json
 import os
@@ -100,7 +104,7 @@ def test_dd_a_sale_of_every_old_share_dated_before_the_split_is_accepted_and_lea
       const old = ORc.checkSale(view(deckOf('DD', deck.purchases), SPLITS, OL), 'DD', { qty: '2', price: '85', date: '2026-05-04' }, row('DD', 145.43), env);
       out = { before: units(H, deck, 'DD'), ok: s.ok, saved: s.saved, after: units(H, s.after, 'DD'), soldOut: Rc.soldOutNow(s.after, 'DD'),
         lots: lotsOf(Lg), held: Lg.held, gain: Lg.sales[0].gain, fx: s.rec.fx, stored: s.after.splits, old: old.why };""")
-    assert got["before"] == 6667                                   # 2/3 주 = 0.6667 (each 의 0.6666 이 아니에요)
+    assert got["before"] == 6666                                   # 보이는 수는 main 과 같아요 (0.6666)
     assert got["ok"] and got["saved"] and got["after"] == 0 and got["soldOut"]
     assert got["lots"] == [] and got["held"] == 0                  # 장부에도 남은 조각이 없어요
     assert abs(got["gain"] - (2 * 85 * got["fx"] - (80 + 82) * 1450)) < 1e-6   # 판 금액 − 산 금액 전체 (다 팔았으니 원가도 다)
@@ -108,16 +112,36 @@ def test_dd_a_sale_of_every_old_share_dated_before_the_split_is_accepted_and_lea
     assert got["old"] == "tooMany"                                 # 고치기 전: "가진 수량보다 많이 팔 수는 없어요"
 
 
-# ── DD 1:3: 분할 전 판 기록이 있는 포트폴리오에 앱이 분할을 저장해요 (A) ──
-def test_dd_the_app_can_store_the_split_with_records_sold_before_it():
+# ── DD 1:3: 분할 전 판 기록이 있는 포트폴리오 (A): 화면은 바르게 읽고, 앱은 main 이 못 읽을 분할 저장을 하지 않아요 ──
+def test_dd_records_sold_before_the_split_read_right_and_the_split_is_stored_only_where_mains_count_reads_it():
     got = run("""const plain = deckOf('DD', [usd('p1aaaaaa', 'DD', 10, 80, '2026-03-02')], [usd('s1aaaaaa', 'DD', 5, 85, '2026-04-01', 1440), usd('s2aaaaaa', 'DD', 5, 86, '2026-05-04', 1430)]);
-      const w = L.withStoredSplits(L.withDataSplits({ v: 2, decks: [plain] }, SPLITS, T));
-      const ow = OL.withStoredSplits(OL.withDataSplits({ v: 2, decks: [plain] }, SPLITS, T));
-      const d = w.data.decks[0];
-      out = { added: w.added.length, problem: S.deckProblem(d, T), check: S.checkStore({ v: 2, decks: [d] }, T).problems, held: units(H, d, 'DD'),
-        lots: lotsOf(L.ledger(d, 'DD')), old: OS.deckProblem(ow.data.decks[0], T) };""")
-    assert got["added"] == 1 and got["problem"] is None and got["check"] == [] and got["held"] == 0 and got["lots"] == []
-    assert got["old"]["why"].startswith("sold more than held")     # 고치기 전: 거절 → app.jsx 가 끝없이 다시 시도했어요
+      const v = L.withDataSplits({ v: 2, decks: [plain] }, SPLITS, T);
+      const c = L.withStoredSplitsChecked(v, T);
+      const withSplit = { ...plain, splits: [DD] };
+      // buy and hold: stored (main reads it too)
+      const hold = L.withStoredSplitsChecked(L.withDataSplits({ v: 2, decks: [deckOf('DD', [usd('p1aaaaaa', 'DD', 10, 80, '2026-03-02')])] }, SPLITS, T), T);
+      out = { held: units(H, v.decks[0], 'DD'), lots: lotsOf(L.ledger(v.decks[0], 'DD')), added: c.added, refused: c.refused, same: c.data === v,
+        newReads: S.deckProblem(withSplit, T), mainReads: OS.deckProblem(withSplit, T), hold: [hold.added.length, hold.refused.length, S.deckProblem(hold.data.decks[0], T), OS.deckProblem(hold.data.decks[0], T)] };""")
+    assert got["held"] == 0 and got["lots"] == []                  # 화면: 다 팔았어요 (main 은 −1 단위로 읽었어요)
+    assert got["added"] == [] and got["same"] and len(got["refused"]) == 1
+    assert "main's count" in got["refused"][0]["why"] and "sold more than held (2026-05-04)" in got["refused"][0]["why"]
+    assert got["newReads"] is None and got["mainReads"]["why"].startswith("sold more than held")   # 저장했다면 main 이 따로 두었을 거예요
+    assert got["hold"] == [1, 0, None, None]
+
+
+def test_the_split_store_goes_stock_by_stock_one_stock_never_holds_back_another():
+    got = run("""const SP = [{ t: 'AMZN', date: '2026-10-20', r: 1 / 3 }, { t: 'MSFT', date: '2026-10-20', r: 1 / 3 }];
+      const d = { id: 'dsd', name: 'dsd', createdAt: '2026-08-01', planFx: 1300, holdings: [{ t: 'AMZN', nk: 'A', cls: 'us' }, { t: 'MSFT', nk: 'M', cls: 'us' }],
+        purchases: [usd('p5aaaaaa', 'AMZN', 3, 200, '2026-09-01'), usd('p6aaaaaa', 'MSFT', 3, 400, '2026-09-01')], sales: [usd('s5aaaaaa', 'AMZN', 2, 230, '2026-10-26')] };
+      const v = L.withDataSplits({ v: 2, decks: [d] }, SP, T);
+      const a = L.withStoredSplitsChecked(v, T);
+      const again = L.withStoredSplitsChecked(v, T, (x) => x.t === 'AMZN');           // a refused one is skipped next time
+      out = { added: a.added.map((x) => x.t), refused: a.refused.map((x) => [x.t, x.why]), stored: a.data.decks[0].splits, ok: S.deckProblem(a.data.decks[0], T),
+        main: OS.deckProblem(a.data.decks[0], T), again: [again.added.map((x) => x.t), again.refused.length] };""")
+    assert got["added"] == ["MSFT"] and [t for t, _ in got["refused"]] == ["AMZN"]
+    assert "sold more than held (2026-10-26)" in got["refused"][0][1]
+    assert got["stored"] == [{"t": "MSFT", "date": "2026-10-20", "r": 1 / 3}] and got["ok"] is None and got["main"] is None
+    assert got["again"] == [["MSFT"], 0]
 
 
 # ── DD 1:3: 분할 뒤에 보이는 수량을 다 팔기 · 세금 화면 (C) ──
@@ -151,11 +175,13 @@ def test_dd_selling_part_keeps_the_count_and_the_ledger_together():
       const left = Rc.stockState(a.after, 'DD').qty;
       const b = sell(a.after, 'DD', { qty: String(left), price: '141', date: '2026-11-20' }, row('DD', 145.43));
       out = { before: units(H, deck, 'DD'), mid: units(H, a.after, 'DD'), ledgerMid: La.held, avg: La.avgOwn, avgBefore: L.ledger(deck, 'DD').avgOwn,
-        left, end: units(H, b.after, 'DD'), lots: lotsOf(L.ledger(b.after, 'DD')), soldOut: Rc.soldOutNow(b.after, 'DD') };""")
-    assert got["before"] == 36667                                   # 11/3 주 = 3.6667
-    assert got["mid"] == 21667 and abs(got["ledgerMid"] - 21667) < 1e-6   # 판 뒤에도 수량과 장부가 같아요
+        left, end: units(H, b.after, 'DD'), lots: lotsOf(L.ledger(b.after, 'DD')), soldOut: Rc.soldOutNow(b.after, 'DD'),
+        exact: [sell(deck, 'DD', { qty: '3.6667', price: '140', date: '2026-11-20' }, row('DD', 145.43))].map((x) => [x.ok, units(H, x.after, 'DD')])[0] };""")
+    assert got["before"] == 36666                                   # 3,3333 + 3,333 (main 과 같은 3.6666)
+    assert got["mid"] == 21666 and abs(got["ledgerMid"] - 21666) < 1e-6   # 판 뒤에도 수량과 장부가 같아요
     assert abs(got["avg"] - got["avgBefore"]) < 1e-9                # 이동평균: 판매는 평균 단가를 바꾸지 않아요
-    assert got["left"] == 2.1667 and got["end"] == 0 and got["lots"] == [] and got["soldOut"]
+    assert got["left"] == 2.1666 and got["end"] == 0 and got["lots"] == [] and got["soldOut"]
+    assert got["exact"] == [True, 0]                                # 정확한 11/3 = 3.6667 을 팔아도 0 (running 이 닫아요)
 
 
 # ── UL 8:9 ──
@@ -163,15 +189,15 @@ def test_ul_eight_for_nine_buys_before_and_sales_on_either_side_of_the_split():
     got = run("""const buys = [1, 2, 3, 4, 5].map((i) => usd('p' + i + 'aaaaaaa', 'UL', 1, 55 + i, '2025-0' + (i + 3) + '-01'));
       const deck = view(deckOf('UL', buys));
       const st = Rc.stockState(deck, 'UL');
-      const after = sell(deck, 'UL', { qty: String(st.qty), price: '63', date: '2026-11-20' }, row('UL', 63.82));
-      const before = sell(deck, 'UL', { qty: '5', price: '58', date: '2025-11-03' }, row('UL', 63.82));
-      const od = (rec) => view(deckOf('UL', buys, [rec]), SPLITS, OL);
-      out = { shown: st.qty, a: [after.ok, after.saved, units(H, after.after, 'UL'), lotsOf(L.ledger(after.after, 'UL'))],
-        b: [before.ok, before.saved, units(H, before.after, 'UL'), lotsOf(L.ledger(before.after, 'UL'))],
-        oldShown: ORc.stockState(view(deckOf('UL', buys), SPLITS, OL), 'UL').qty, oldB: units(OH, od(before.rec), 'UL') };""")
-    assert got["shown"] == 4.4444                                   # 40/9 주 (each 로는 4.4445)
-    assert got["a"] == [True, True, 0, []] and got["b"] == [True, True, 0, []]
-    assert got["oldShown"] == 4.4445 and got["oldB"] == 1           # 고치기 전: 분할 전에 5 주를 다 팔아도 0.0001 주가 남았어요
+      const res = [[String(st.qty), '2026-11-20'], ['4.4444', '2026-11-20'], ['5', '2025-11-03']].map(([qty, date]) => {
+        const x = sell(deck, 'UL', { qty, price: '63', date }, row('UL', 63.82));
+        return [qty, x.ok, x.saved, units(H, x.after, 'UL'), lotsOf(L.ledger(x.after, 'UL'))]; });
+      const od = view(deckOf('UL', buys, [usd('s1aaaaaa', 'UL', 5, 58, '2025-11-03')]), SPLITS, OL);
+      out = { shown: st.qty, res, oldShown: ORc.stockState(view(deckOf('UL', buys), SPLITS, OL), 'UL').qty, oldB: units(OH, od, 'UL') };""")
+    assert got["shown"] == 4.4445 == got["oldShown"]                 # 보이는 수: main 과 같아요 (5 x 8,889)
+    # 보이는 4.4445 · 증권사의 4.4444 (정확한 40/9) · 분할 전 날짜로 옛 5 주: 모두 저장되고 정확히 0
+    assert got["res"] == [["4.4445", True, True, 0, []], ["4.4444", True, True, 0, []], ["5", True, True, 0, []]]
+    assert got["oldB"] == 1                                         # 고치기 전: 분할 전에 5 주를 다 팔아도 0.0001 주가 남았어요
 
 
 # ── 예전 방식으로 저장된 기록은 저장된 그대로 ──
@@ -219,22 +245,66 @@ def test_sell_and_remove_takes_every_share_on_the_dates_basis_with_an_odd_ratio(
       out = ['2026-05-04', '2026-11-20'].map((date) => { const q = E.sellAllQty(deck, 'DD', date);
         const d2 = { ...deck, sales: [usd('s1aaaaaa', 'DD', q, 140, date)] };
         return [q, units(H, d2, 'DD'), H.belowZero(d2)]; });""")
-    assert got == [[3, 0, None], [1, 0, None]]                       # 분할 전 날짜: 옛 3 주 · 뒤: 새 1 주
+    assert got == [[3, 0, None], [0.9999, 0, None]]                  # 분할 전 날짜: 옛 3 주 · 오늘: 보이는 0.9999 주
 
 
-# ── 0.0001 주 판매가 0 단위로 세어질 때 (분할 전 1:3) ──
-def test_a_sale_that_counts_for_no_unit_never_makes_a_gain_nan():
+# ── 0.0001 주 판매가 0 단위로 세어질 때 (분할 전 1:3, review N4) ──
+def test_a_sale_that_counts_for_no_unit_takes_the_cost_of_what_it_sold():
     got = run("""const deck = view(deckOf('DD', [usd('p1aaaaaa', 'DD', 1, 80, '2026-03-02')], [usd('s1aaaaaa', 'DD', 0.0001, 85, '2026-04-01')]));
       const Lg = L.ledger(deck, 'DD');
-      out = { held: units(H, deck, 'DD'), lots: lotsOf(Lg), gain: Lg.sales[0].gain, ok: Number.isFinite(Lg.sales[0].gain) };""")
+      out = { held: units(H, deck, 'DD'), lots: lotsOf(Lg), gain: Lg.sales[0].gain, ok: Number.isFinite(Lg.sales[0].gain), left: Lg.lots[0].won, removed: Lg.sales[0].removedWon };""")
+    sold = 0.3333333333333333                                       # 0.0001 옛 주 = 1/3 단위
+    cost = 80 * 1450 * sold / 3333                                  # 그 몫의 원가 (3,333 단위에 116,000원)
     assert got["held"] == 3333 and got["lots"] == [3333] and got["ok"]
-    assert abs(got["gain"] - 0.0001 * 85 * 1450) < 1e-9
+    assert abs(got["removed"] - cost) < 1e-6 and abs(got["left"] - (80 * 1450 - cost)) < 1e-6
+    assert abs(got["gain"] - (0.0001 * 85 * 1450 - cost)) < 1e-9    # 판 금액 − 판 만큼의 원가 (판 금액 전부가 아니에요)
+
+
+# ── 다 판 뒤 다시 사기 (review round 1: 포지션마다 새로 세요) ──
+def test_sold_out_on_mains_count_then_bought_again_reads_as_main_did():
+    got = run("""// main 에서 저장된 기록: 옛 1 + 1 주, main 이 보여 준 0.6666 을 11-02 에 팔았어요 (분할도 저장)
+      const saved = { ...deckOf('DD', [usd('p1aaaaaa', 'DD', 1, 80, '2026-03-02'), usd('p2aaaaaa', 'DD', 1, 82, '2026-04-01')], [usd('s1aaaaaa', 'DD', 0.6666, 140, '2026-11-02')]), splits: [DD] };
+      const deck = view(saved);
+      const c = Rc.checkPurchase(deck, 'DD', { qty: '5', price: '140', date: T }, row('DD', 145.43), env);
+      const w = Rc.withRecord({ v: 2, decks: [deck] }, deck.id, 'purchases', c.rec, T);
+      const d2 = view(w.decks[0]), o2 = view(w.decks[0], SPLITS, OL);
+      const Lg = L.ledger(d2, 'DD');
+      out = { before: units(H, deck, 'DD'), qty: Rc.stockState(d2, 'DD').qty, avg: Lg.avgOwn, lots: lotsOf(Lg), main: [ORc.stockState(o2, 'DD').qty], ok: S.deckProblem(w.decks[0], T), mainOk: OS.deckProblem(w.decks[0], T) };""")
+    assert got["before"] == 0 and got["qty"] == 5 == got["main"][0]  # 5.0001 주가 아니에요
+    assert got["avg"] == 140 and got["lots"] == [50000] and got["ok"] is None and got["mainOk"] is None
+
+
+def test_case_b_selling_one_unit_more_than_shown_and_buying_the_same_day_reads_whole_shares():
+    got = run("""const deck = view(deckOf('DD', [usd('p1aaaaaa', 'DD', 2, 80, '2026-03-02'), usd('p2aaaaaa', 'DD', 2, 81, '2026-04-01')]));
+      const a = sell(deck, 'DD', { qty: '1.3334', price: '140', date: T }, row('DD', 145.43));
+      const c = Rc.checkPurchase(a.after, 'DD', { qty: '3', price: '140', date: T }, row('DD', 145.43), env);
+      const w = Rc.withRecord({ v: 2, decks: [a.after] }, 'd1', 'purchases', c.rec, T);
+      const d2 = view(w.decks[0]);
+      // on another day too: the sale closes the position, the next purchase starts from 0
+      const b = sell(deck, 'DD', { qty: '1.3334', price: '140', date: '2026-11-02' }, row('DD', 145.43));
+      const c2 = Rc.checkPurchase(b.after, 'DD', { qty: '3', price: '140', date: T }, row('DD', 145.43), env);
+      const d3 = view(Rc.withRecord({ v: 2, decks: [b.after] }, 'd1', 'purchases', c2.rec, T).decks[0]);
+      out = { shown: Rc.stockState(deck, 'DD').qty, sold: [a.ok, a.saved, units(H, a.after, 'DD')], sameDay: Rc.stockState(d2, 'DD').qty, sameDayLots: lotsOf(L.ledger(d2, 'DD')),
+        laterDay: [Rc.stockState(d3, 'DD').qty, L.ledger(d3, 'DD').avgOwn] };""")
+    assert got["shown"] == 1.3334 and got["sold"] == [True, True, 0]
+    assert got["sameDay"] == 3 and abs(sum(got["sameDayLots"]) - 30000) < 1e-6      # 2.9999 주가 아니에요
+    assert got["laterDay"] == [3, 140]
+
+
+def test_sell_and_remove_after_a_position_main_closed_starts_from_the_count_in_use():
+    # review N1: 옛 2 주를 8 번 사고 main 이 보여 준 5.3336 을 판 뒤 3 주를 샀어요 (main: 3)
+    got = run("""const buys = []; for (let i = 0; i < 8; i++) buys.push(usd('p' + i + 'aaaaaaa', 'DD', 2, 80, '2026-03-' + String(10 + i)));
+      const d = { ...deckOf('DD', [...buys, usd('pzaaaaaa', 'DD', 3, 140, '2026-11-10')], [usd('s1aaaaaa', 'DD', 5.3336, 140, '2026-11-02')]), splits: [DD] };
+      const v = view(d);
+      out = [units(H, v, 'DD'), E.sellAllQty(v, 'DD', T), E.sellAllQty(v, 'DD', '2026-11-10')];""")
+    assert got == [30000, 3, 3]
 
 
 # ── 분할이 없거나 단위가 맞는 분할: main 의 코드와 비트까지 같아요 ──
 COMPARE = """
+// mulberry32 (review round 1: the old LCG went past 2^53 and repeated after about 10,000 draws)
 let seed = 20261124;
-const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+const rnd = () => { seed = (seed + 0x6D2B79F5) | 0; let z = Math.imul(seed ^ (seed >>> 15), 1 | seed); z = (z + Math.imul(z ^ (z >>> 7), 61 | z)) ^ z; return ((z ^ (z >>> 14)) >>> 0) / 4294967296; };
 const ri = (a, b) => a + Math.floor(rnd() * (b - a + 1));
 const pick = (a) => a[Math.floor(rnd() * a.length)];
 const day = (n) => { const d = new Date(Date.parse('2025-01-02T00:00:00Z') + n * 864e5).toISOString().slice(0, 10); return d > T ? T : d; };
@@ -259,6 +329,8 @@ function make(mode) {
     for (let i = ri(0, 2); i > 0; i--) divs.push({ id: id(), t, amount: us ? ri(1, 50000) / 100 : ri(100, 500000), date: day(c0 + ri(0, 330)), ccy, ...(us && rnd() < 0.9 ? { fx: 1300 + ri(0, 200) } : {}) });
     if (us && mode === 'int') for (let i = ri(0, 2); i > 0; i--) { const s = { t, date: day(c0 + ri(-150, 320)), r: pick([2, 3, 4, 5, 10, 20, 8, 15]) }; (rnd() < 0.5 ? splits : vw).push(s); }
   }
+  // some records dated on a split's own day (already at the new count)
+  for (const s of [...splits, ...vw]) for (const r of [...deck.purchases, ...sales]) if (r.t === s.t && rnd() < 0.2) r.date = s.date;
   if (sales.length) deck.sales = sales;
   if (divs.length) deck.divs = divs;
   if (splits.length) deck.splits = splits;
@@ -334,9 +406,12 @@ def test_without_an_odd_split_every_count_and_amount_is_bit_identical_to_mains_c
     got = run(COMPARE + """
       const tally = {};
       for (const mode of ['none', 'int']) {
-        tally[mode] = { decks: 0, checks: 0, diffs: [] };
+        tally[mode] = { decks: 0, checks: 0, diffs: [], distinct: 0 };
+        const seen = new Set();
         for (let i = 0; i < 250; i++) {
           const { deck, vw } = make(mode);
+          seen.add(JSON.stringify([deck, vw]).replace(/"id":"r\\d{7}",?/g, ''));
+          tally[mode].distinct = seen.size;
           const a = results('old', deck, vw), b = results('new', deck, vw);
           tally[mode].decks++;
           for (const k of Object.keys(a)) { tally[mode].checks++; const d = diff(a[k], b[k], k); if (d && tally[mode].diffs.length < 5) tally[mode].diffs.push(d.slice(0, 200)); }
@@ -344,5 +419,5 @@ def test_without_an_odd_split_every_count_and_amount_is_bit_identical_to_mains_c
       }
       out = tally;""")
     for mode in ("none", "int"):
-        assert got[mode]["decks"] == 250 and got[mode]["checks"] > 10000, got[mode]
+        assert got[mode]["decks"] == 250 and got[mode]["distinct"] == 250 and got[mode]["checks"] > 10000, got[mode]
         assert got[mode]["diffs"] == [], (mode, got[mode]["diffs"])

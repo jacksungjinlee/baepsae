@@ -16,7 +16,7 @@
 //   a lot with no cost (an imported row without 평균 단가): no gain for a sale that touches it, never a guess
 //   a USD purchase without any rate (records from before Part C): no won cost (the existing noFx line)
 // No money here is rounded: the screens round once, and the rows they add up (내 수익) are rounded before they are added.
-import { UNIT, importedUnits, splitsOf, splitDateOf, VIEW_SPLITS, okSplit, sameSplit, heldUnits, unitEvents } from "./held.js";
+import { UNIT, importedUnits, splitsOf, splitDateOf, VIEW_SPLITS, okSplit, sameSplit, heldUnits, unitEvents, belowZeroEach } from "./held.js";
 import { deckProblem, problemText } from "./store.js";
 
 const isNum = (x) => typeof x === "number" && Number.isFinite(x);
@@ -213,6 +213,49 @@ export function withStoredSplits(data) {
   });
   return { data: changed ? { ...data, decks } : data, added };
 }
+// The store with the splits its records need stored (as withStoredSplits), stock by stock (#184 review round 1): a stock's
+// splits are stored only when its portfolio then reads back (store.deckProblem) and main's own count (held.belowZeroEach, on
+// the portfolio and each history entry, with the stored splits only, as main's store check reads them) stays at or above 0
+// too, so an older tab, or main's code after a revert, never sets the portfolio aside. A stock whose splits fail keeps its
+// records as they are (the screens still apply data.json's split) and never holds back another stock of the portfolio.
+// skip(x) -> true: a split not to try (refused earlier). -> { data, added: [{ id, t, date, r }], refused: [{ id, t, date, r,
+// why }] }
+export function withStoredSplitsChecked(data, today, skip = () => false) {
+  const added = [], refused = [];
+  if (!data || !Array.isArray(data.decks)) return { data, added, refused };
+  let changed = false;
+  const decks = data.decks.map((d) => {
+    if (!d || !Array.isArray(d[VIEW_SPLITS]) || !d[VIEW_SPLITS].length) return d;
+    let next = d;
+    for (const t of [...new Set(d[VIEW_SPLITS].map((s) => s.t))]) {
+      const sp = splitsToStore(next, t);
+      if (!sp) continue;
+      const mine = sp.slice((next.splits || []).length).map((s) => ({ id: d.id, t: s.t, date: s.date, r: s.r }));
+      if (!mine.length || mine.some(skip)) continue;
+      const trial = { ...next, splits: sp };
+      const p = deckProblem(trial, today);
+      const old = p ? null : mainCountProblem(trial);
+      if (p || old) { refused.push(...mine.map((x) => ({ ...x, why: p ? problemText(trial, p) : old }))); continue; }
+      next = trial;
+      added.push(...mine);
+    }
+    if (next !== d) changed = true;
+    return next;
+  });
+  return { data: changed ? { ...data, decks } : data, added, refused };
+}
+// Main's own count on a portfolio and each history entry (stored splits only). -> a reason for the console, or null
+function mainCountProblem(d) {
+  const sets = [{ imported: d.imported || [], purchases: d.purchases || [], sales: d.sales || [], splits: d.splits, createdAt: d.createdAt }];
+  for (const e of Array.isArray(d.history) ? d.history : []) {
+    if (e) sets.push({ imported: e.imported ? [e.imported] : [], purchases: e.purchases || [], sales: e.sales || [], splits: d.splits, createdAt: d.createdAt });
+  }
+  for (const x of sets) {
+    const low = belowZeroEach(x);
+    if (low) return `portfolio "${d.name}" (${d.id}): ${low.t}: main's count (an older tab, or main after a revert) would read it as sold more than held (${low.date || "undated"})`;
+  }
+  return null;
+}
 // The stored splits data.json does not list: said loudly once each (round-1 review). data.json lists every split since 2016
 // and carries a published row forward for good (#117), so a stored split it does not list is one the pipeline took out (an
 // "out" row: withoutOutSplits removes it where the records allow), or one stored from an older file. -> [{ id, t, date }]
@@ -253,7 +296,7 @@ export function ledger(recs, t, ctx = {}) {
   const planFx = ctx.planFx != null ? ctx.planFx : recs.planFx;
   // the units held.js counts each record for (one count for the share count and the lots, Track 2 audit 1.1): a record
   // dated before a split is read x r and rounded the way held.js rounds it, so a sale of every share held leaves exactly 0
-  const ev = unitsOf(recs, t, ctx).map((e) => ({ kind: e.kind, date: e.date, r: e.r, u: e.kind === 2 ? 0 - e.u : e.u }));
+  const ev = unitsOf(recs, t, ctx).map((e) => ({ kind: e.kind, date: e.date, r: e.r, u: e.kind === 2 ? 0 - e.u : e.u, x: e.kind === 2 ? 0 - e.x : e.x }));
   let ccy = null;
   const lots = [], sales = [];
   const putIn = { won: 0, own: 0, unknown: false, noRate: false, usdOnlyOwn: 0 };
@@ -289,13 +332,15 @@ export function ledger(recs, t, ctx = {}) {
     if (!(held > EPS_U)) { out.over = true; out.why = "noCost"; sales.push(out); removedKnown = false; continue; }
     const frac = Math.min(1, e.u / held);
     if (e.u > held + 0.5) out.over = true;                 // more than held (the store refuses it; never counted)
+    // a sale the count reads as 0 units (0.0001 old share before a 1:3 is 1/3 of a unit) takes no shares, but takes the cost
+    // of the exact units it sold (review round 1, N4): its gain is its money less that cost, never its whole money
+    const fc = e.u > 0 ? frac : Math.min(1, e.x / held);
     let gain = 0, why = null, lost = false;
     for (const l of lots) {
       if (!(l.u > EPS_U)) continue;
-      // this lot's part of the sale (a sale that counts for 0 units, 0.0001 old share before a 1:3, takes no shares and
-      // shares its money by the lots' sizes: never 0 / 0)
+      // this lot's part of the sale (a 0-unit sale shares its money by the lots' sizes: never 0 / 0)
       const du = l.u * frac, share = e.u > 0 ? du / e.u : l.u / held;
-      const dOwn = l.own != null ? l.own * frac : null, dWon = l.won != null ? l.won * frac : null;
+      const dOwn = l.own != null ? l.own * fc : null, dWon = l.won != null ? l.won * fc : null;
       if (l.own == null) { why = why || "noCost"; lost = true; }
       else if (l.usdOnly) {
         out.usdOnly = true;

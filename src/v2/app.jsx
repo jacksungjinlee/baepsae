@@ -13,7 +13,7 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { COLOR, SPACE } from "../ui/tokens.js";
 import { C, todayKst } from "./format.js";
-import { readStore, writeStore, validStore, askPersist, guideSeenIn, withGuideSeen, keepOwnText, keepMine, versionFor, deckProblem, problemText } from "./store.js";
+import { readStore, writeStore, validStore, askPersist, guideSeenIn, withGuideSeen, keepOwnText, keepMine, versionFor } from "./store.js";
 import { refreshFresh, nextFreshCheck, returnWatch, adoptLoad } from "./load.js";
 import { publishGate, discAfter, discFits, discRetryDue, heldOn, discBehind } from "./hold.js";
 import { Portfolio } from "./portfolio.jsx";
@@ -34,7 +34,7 @@ import { Editor } from "./editor.jsx";
 import { emptyDraft, pending as editPending } from "./edit.js";
 import { BottomSheet, Button } from "../ui/components.jsx";
 import { isImported } from "./pf.js";
-import { dataSplits, withDataSplits, storedNotInData, withStoredSplits, outSplits, withoutOutSplits } from "./lots.js";
+import { dataSplits, withDataSplits, storedNotInData, withStoredSplitsChecked, outSplits, withoutOutSplits } from "./lots.js";
 import { UNIT } from "./held.js";
 import { companySub, CO_MORE, editSub, parseHash, WATCH_SUB, TODAY_SUB } from "./routes.js";
 import { WatchScreen } from "./watch.jsx";
@@ -317,13 +317,19 @@ export function App({ source }) {
   // v19.3d: records that would not read back are never written or shown (store.js names the reason in the console); that is
   // not a storage failure, so the "can't save on this device" line stays off and refused says so instead (plan.badInput on
   // the screens, until the next change that saves).
+  // given: the new records, or (#184 review round 1) a function of the records as they are when the change applies, which
+  // returns the new records or null (nothing to save): so an automatic change composes with another made in the same render
+  // instead of writing over it.
   const setStoreData = useCallback((given, saved) => {
     // #87 (hotfix of #83): the records in memory carry the version tag writeStore gives them (a portfolio made with 가진
     // 종목 넣기 makes them version 2). Before, they kept the tag they had (1), so every later change in the same visit (a 메모,
     // an answer, 빼기, 내 규칙) failed the check below and was refused. A store already tagged is kept as it is (the same
     // object: a records file taken in keeps its mergeStores mark).
-    const data = given && Array.isArray(given.decks) && given.v !== versionFor(given) ? { ...given, v: versionFor(given) } : given;
+    const tag = (g) => (g && Array.isArray(g.decks) && g.v !== versionFor(g) ? { ...g, v: versionFor(g) } : g);
+    const fixed = typeof given === "function" ? null : tag(given);
     setStore((s) => {
+      let data = fixed;
+      if (typeof given === "function") { const g = given(s.data); if (g == null) return s; data = tag(g); }
       if (!saved && !validStore(data, todayKst())) { console.warn("[v2] change not saved: the records would not read back"); return { ...s, refused: true }; }
       if (!saved && !(s.writable && writeStore(data, s.key, todayKst()))) return { ...s, writable: false };
       return { ...s, data, locked: false, refused: false };
@@ -485,32 +491,45 @@ export function App({ source }) {
   // round-2 review: a data.json split that a saved record already lies before is stored with the records at once (not only
   // with the next record), so a buy-and-hold portfolio keeps it even after data.json stops listing it. Nothing a user sees
   // changes (the screens already read the records with it); only when the records can be written, and said once.
-  // Track 2 audit 1.1: each split is tried once per visit. A portfolio whose records would not read back with it (the store's
-  // own check, as setStoreData's) keeps its records as they are and the console says why, once; the others are saved. Before,
-  // a refused save came back on every render (hundreds of times a second) and showed the line meant for the user's own change.
-  const splitsTried = useRef(new Set());
+  // Track 2 audit 1.1 and #184 review round 1: stock by stock (lots.withStoredSplitsChecked), a stock's splits are stored only
+  // when its portfolio reads back with them and main's own count accepts it too (an older tab, or main after a revert, never
+  // sets it aside). A refused stock keeps its records as they are, is said once in the console and not tried again in this
+  // visit; it never holds back another stock. The save composes with any other change of the same render (a function of the
+  // records as they are then), and "stored" is said only once the split is seen in the records; a save another change wrote
+  // over is sent again on the next render. Before, a refused save came back on every render (hundreds of times a second)
+  // and showed the line meant for the user's own change.
+  const splitsTried = useRef(new Set());                 // refused: not tried again in this visit
+  const splitsSent = useRef(new Map());                  // sent, not yet seen in the records: key -> its console name
   useEffect(() => {
     if (load.status !== "ok" || !store.writable || store.locked) return;
-    const r = withStoredSplits(view.data);
     const key = (x) => `${x.id}|${x.t}|${x.date}|${x.r}`;
-    if (!r.added.some((x) => !splitsTried.current.has(key(x)))) return;
+    const name = (x) => `${x.id} ${x.t} ${x.date} x${x.r}`;
+    const tried = splitsTried.current, sent = splitsSent.current;
+    if (sent.size) {
+      const landed = [];
+      for (const d of store.data.decks) for (const x of (d && Array.isArray(d.splits) ? d.splits : [])) {
+        const k = key({ id: d.id, ...x });
+        if (sent.has(k)) { landed.push(sent.get(k)); sent.delete(k); }
+      }
+      if (landed.length) console.info("[v2] stock splits stored with the records they apply to: " + landed.join(", "));
+      if (sent.size && store.refused) {
+        console.warn("[v2] stock splits not stored with the records (the save was refused; tried once): " + [...sent.values()].join(", "));
+        for (const k of sent.keys()) tried.add(k);
+        sent.clear();
+      }
+    }
     const today = todayKst();
-    const ok = [], no = [];
-    const decks = r.data.decks.map((d, i) => {
-      const old = view.data.decks[i];
-      if (d === old) return d;
-      const p = deckProblem(d, today);
-      const mine = r.added.filter((x) => x.id === d.id);
-      const fresh = mine.filter((x) => !splitsTried.current.has(key(x)));
-      for (const x of mine) splitsTried.current.add(key(x));
-      if (!p) { ok.push(...mine); return d; }
-      if (fresh.length) no.push(`${fresh.map((x) => `${x.id} ${x.t} ${x.date} x${x.r}`).join(", ")} (${problemText(d, p)})`);
-      return old;
+    const skip = (x) => tried.has(key(x));
+    const r = withStoredSplitsChecked(view.data, today, skip);
+    for (const x of r.refused) tried.add(key(x));
+    if (r.refused.length) console.warn("[v2] stock splits not stored with the records (the records would not read back with them, or main's count "
+      + "would not; they keep the records as they are, the screens still apply the splits; tried once): " + r.refused.map((x) => `${name(x)} (${x.why})`).join("; "));
+    if (!r.added.length) return;
+    for (const x of r.added) sent.set(key(x), name(x));
+    setStoreData((cur) => {
+      const n = withStoredSplitsChecked(withDataSplits(cur, splitList, today), today, skip);
+      return n.added.length ? n.data : null;
     });
-    if (no.length) console.warn("[v2] stock splits not stored with the records (the records would not read back with them; the screens still apply them; tried once): " + no.join("; "));
-    if (!ok.length) return;
-    console.info("[v2] stock splits stored with the records they apply to: " + ok.map((x) => `${x.id} ${x.t} ${x.date} x${x.r}`).join(", "));
-    setStoreData({ ...r.data, decks });
   }, [view, load.status]);
   // #117: an "out" row of data.json splitsInfo.fixed (ratio null) says a split was wrong. Each stored split it names is taken
   // out when the records read back without it, moved to data.json's corrected date (same stock and ratio) when they read

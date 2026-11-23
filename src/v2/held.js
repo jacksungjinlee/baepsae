@@ -90,34 +90,48 @@ const scaled = (u, f) => (u == null ? null : f === 1 ? u : (okU(Math.round(u * f
 
 // ---------------- counting a split's odd units (Track 2 audit 1.1) ----------------
 // A record dated before a split is read x f. When that gives whole units (no split, a 4:1, a 1:10 of whole shares), the
-// record counts exactly that. When it does not (DD's 1:3, UL's 8:9: one old share is 3,333.33… or 8,888.89 units), the
-// units have to be rounded, and two counts are possible:
+// record counts exactly that. When it does not (DD's 1:3, UL's 8:9, HON's 1:2 on a 0.0001-share sale, a 금액으로 넣기 row:
+// one old DD share is 3,333.33… units), the units have to be rounded, and two counts are possible:
+//   each     every record rounded on its own (the only count before 2026-11-24, what main showed): 1 + 1 old DD shares are
+//            3,333 + 3,333, so a sale of the 2 old shares (6,667) went below 0 and was refused;
 //   running  the running total of the exact units, rounded after each record (a record counts for the change it makes):
-//            1 + 1 old DD shares are 3,333 + 3,334 units, and a sale of both (on either basis) leaves exactly 0;
-//   each     every record rounded on its own (the only count before 2026-11-24): 3,333 + 3,333, so a sale of the 2 old
-//            shares (6,667) went below 0 and was refused (and the ledger, which did not round, kept a sliver after a full sale).
+//            3,333 + 3,334, and that sale leaves exactly 0.
 // The two are the same whenever every record gives whole units, so records without such a split count exactly as before.
-// When they differ, one count is used for all of that stock's records (every screen, the ledger and the store's check, so
-// the share count, 평균 단가 and gains always agree): the running one, unless it goes below 0 somewhere where each-record
-// does not, or each-record ends at exactly 0 where the running one does not. So records saved and checked with the old
-// count read back as saved (never below 0, a holding sold to 0 stays at 0), and the store refuses only records that go
-// below 0 by both counts.
+// One count is used for all of a stock's records (every screen, the ledger and the store's check, so the share count,
+// 평균 단가 and gains always agree), position by position (review round 1): a position closes at a sale that takes either
+// count to exactly 0 while that count never went below 0 in it (the count that closed it is used for it; each-record when
+// both do). Everything held was sold, so the next record starts a new position from 0 (no 0.0001주 carried into a later
+// purchase). The open position uses each-record while it stays at or above 0 (what main showed), else the running count.
+// When that reading goes below 0 but main's own count (each-record over the whole history) does not, main's count is used
+// for the stock, so records saved and checked by main read back exactly as main read them. The store refuses only records
+// that go below 0 by both.
 function count(list) {
-  let x = 0, run = 0, each = 0, runOk = true, eachOk = true;
+  const main = list.map((e) => Math.round(e.x) || 0);        // || 0: never -0
+  let m = 0, mainOk = true;
+  for (const k of main) { m += k; if (m < 0) mainOk = false; }
+  const out = new Array(list.length);
+  let start = 0, x = 0, run = 0, each = 0, runOk = true, eachOk = true;
   const ru = [], eu = [];
-  for (const e of list) {
-    x += e.x;
-    const n = Math.round(x) || 0;                              // || 0: never -0
+  const take = (end, useEach) => { for (let i = start; i < end; i++) out[i] = useEach ? eu[i - start] : ru[i - start]; };
+  for (let i = 0; i < list.length; i++) {
+    x += list[i].x;
+    const n = Math.round(x) || 0;
     ru.push(n - run);
     run = n;
     if (run < 0) runOk = false;
-    const k = Math.round(e.x) || 0;
-    eu.push(k);
-    each += k;
+    eu.push(main[i]);
+    each += main[i];
     if (each < 0) eachOk = false;
+    if (list[i].kind === 2 && ((eachOk && each === 0) || (runOk && run === 0))) {
+      take(i + 1, eachOk && each === 0);                       // a position closed: everything held was sold
+      start = i + 1;
+      x = 0; run = 0; each = 0; runOk = true; eachOk = true; ru.length = 0; eu.length = 0;
+    }
   }
-  const useEach = eachOk && (!runOk || (each === 0 && run !== 0));
-  list.forEach((e, i) => { e.u = useEach ? eu[i] : ru[i]; });
+  let ok = true;
+  if (start < list.length) { take(list.length, eachOk); if (!eachOk && !runOk) ok = false; }
+  const use = ok || !mainOk ? out : main;
+  list.forEach((e, i) => { e.u = use[i]; });
 }
 
 // The events of one record set ({ imported, purchases, sales }: a portfolio or one history entry), oldest first:
@@ -148,8 +162,8 @@ function events(recs, t) {
 }
 
 // The events of stock t in a record set, as every count reads them (lots.js ledger: one count for the share count and the
-// lots): [{ kind, date, u, r }] oldest first, u in whole units (a sale's below 0).
-export const unitEvents = (recs, t) => events(recs, t).map(({ kind, date, u, r }) => ({ kind, date, u, r }));
+// lots): [{ kind, date, u, x, r }] oldest first, u in whole units and x exact (a sale's below 0).
+export const unitEvents = (recs, t) => events(recs, t).map(({ kind, date, u, x, r }) => ({ kind, date, u, x, r }));
 
 // Units held per stock on `date` (inclusive; null = after every record). Map t -> units (0 included: a stock sold down to
 // nothing is still listed, so a caller can tell "sold out" from "never held").
@@ -163,22 +177,31 @@ export function heldUnits(recs, date = null) {
 }
 
 // A sale of every share of t held now, dated `date`: its quantity in units on that date's share basis (a record dated before
-// a split is read x r, so a sale before HON's 1:2 sells 2 old shares for today's 1), the one that leaves exactly 0 by the
-// count above (the nearest such quantity). null: nothing held, no date, or no such quantity (an odd ratio the other way:
+// a split is read x r, so a sale before HON's 1:2 sells 2 old shares for today's 1), one that leaves exactly 0 by the
+// count above (searched as below). null: nothing held, no date, or no such quantity (an odd ratio the other way:
 // a 4:1 split cannot take 1 new share from a sale dated before it). edit.js 팔고 빼기 and records.js (a holding put in by
 // amount, sold all at once) both use it.
 export function sellAllUnits(recs, t, date) {
   if (!recs || typeof recs !== "object") return null;
   const evs = events(recs, t);
-  const u = evs.reduce((a, e) => a + e.u, 0);
+  // the count in use and the exact units of the open position (since the last sale that left exactly 0)
+  let u = 0, open = 0;
+  for (const e of evs) { u += e.u; open += e.x; if (e.kind === 2 && u === 0) open = 0; }
   if (!(u > 0) || typeof date !== "string" || !date) return null;
   const f = splitFactor(splitsOf(recs), t, date);
-  const q0 = Math.round(evs.reduce((a, e) => a + e.x, 0) / f);
   const sales = Array.isArray(recs.sales) ? recs.sales : [];
-  for (const d of [0, -1, 1, -2, 2]) {
-    const q = q0 + d;
-    if (!(q > 0)) continue;
-    if ((heldUnits({ ...recs, sales: [...sales, { t, qty: q / UNIT, date }] }).get(t) || 0) === 0) return q;
+  const tried = new Set();
+  // the nearest to the count in use (what the screens show; main searched from it), and, for a date before a split, first
+  // to the open position's exact units on that date's basis (3 old DD shares, not the 0.9999 new ones shown x 3); either
+  // way the other one next (#184 review round 1, N1: the count in use can be more than 2 units from the exact one)
+  const near = [Math.round(u / f), Math.round(open / f)];
+  for (const q0 of f === 1 ? near : near.reverse()) {
+    for (const d of [0, -1, 1, -2, 2]) {
+      const q = q0 + d;
+      if (!(q > 0) || tried.has(q)) continue;
+      tried.add(q);
+      if ((heldUnits({ ...recs, sales: [...sales, { t, qty: q / UNIT, date }] }).get(t) || 0) === 0) return q;
+    }
   }
   return null;
 }
@@ -188,6 +211,19 @@ export function heldQty(recs, date = null) {
   const out = new Map();
   for (const [t, u] of heldUnits(recs, date)) if (u > 0) out.set(t, u / UNIT);
   return out;
+}
+
+// The first record at which main's own count (each record rounded on its own, over the whole history: held.js at 511fd6f)
+// takes a holding below 0, or null. An older tab, or main's code after a revert, refuses a portfolio this finds below 0 and
+// sets it aside: the app stores a data.json split with the records only when this stays null too (app.jsx, review round 1).
+export function belowZeroEach(recs) {
+  const m = new Map();
+  for (const e of events(recs, null)) {
+    const v = (m.get(e.t) || 0) + (Math.round(e.x) || 0);
+    if (v < 0) return { t: e.t, date: e.date || null };
+    m.set(e.t, v);
+  }
+  return null;
 }
 
 // The first record at which a sale takes a holding below 0 (walking the events in order), or null when none does.
