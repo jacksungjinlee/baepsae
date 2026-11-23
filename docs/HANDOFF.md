@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-23 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-24 KST — read this first)
 
 **Now (2026-11-23):** merged and deployed 11-22: #166 (old-app English carry lines), #167 (div reason lines), #168 (v19.6b 오늘 볼 것
 page), #169 (new US tickers wait), #170 (v19.6e data: `c1w` · `wkFrom` · `usWkFrom` · `c1wv` · `c1wSrc`), #171 (v19.6e
@@ -45,6 +45,20 @@ HEAD isn't GitHub's merge commit for the PR. The description is the one in the e
 push or manual run on a branch fails on purpose (its green would cover the PR's red); only `main` passes without a PR. Anything it
 can't read (event file, git) fails with a message. Replayed on past merges it flags #170, #171 and #172 (the misses of 11-22) and
 passes #173.
+
+**#? (소액주주 yield for 차등배당 payers), 2026-11-24 — data on, screens off until Jack approves two lines:** Jack 11-19 Q6 ("labelled
+as the 소액주주 rate"), 11-23 Track 1 item 4. Of the payers hidden as `data` / `div` (dvLine 3), the daily run reads each 사업보고서's
+"배당에 관한 사항" once (cached, ≤ 30 reports a run, 2 DART calls each; about 30 calls on the first run) and keeps the table's own
+dividend per share as `dpsSmall` (+ `dytSmall` at today's close, data.json and corp.json, record `divSmall`) only when the report says
+차등배당 and ties that figure to the small shareholders, and today's share count is on that year-end basis. Checked by hand on 11-23 (10
+read-only DART calls): 교보증권 550원 ("기타주주(최대주주 외) 550원, 최대주주 무배당") and TPC로보틱스 10원 (paid on the 7,787,204 small-holder
+shares only) qualify; 엘앤씨바이오 and 블랙야크아이앤씨 (the other two suspected on 11-15) say nothing of 차등배당 and get nothing; 남성 and
+대동기어 are not differential (남성's API rows name 소액주주 and 최대주주 at the same 25원). `dps` · `dyt` · `dz` · `dvLine` unchanged: the
+dividend ranking keeps `dyt`. New gate row "소액주주 배당수익률 (… · 경고만)" (never fails). Expect in the first publish after it: the log line
+`소액주주 배당(차등배당 · dpsSmall · dytSmall)` naming 교보증권 and TPC로보틱스 (unless their year-end basis check stops them) and that row PASS
+with their figures. **Waiting for Jack:** the label "소액주주 기준" and the line "이 회사는 소액주주에게 배당을 더 줘요(차등배당). 소액주주가
+받는 1주 배당으로 계산했어요." (2.0 `src/v2/smallcfg.js` + `C.co.div.smallBasis` · `smallLine`; 예전 뱁새 `src/smallyield.js`); and whether
+관심 종목 conditions should use the 소액주주 yield (today they keep `dyt`). RUNBOOK "소액주주 yield for differential dividends".
 
 **#172 (published closes), 2026-11-22:** in a week with days lacking a final KRX list, the daily run reads our earlier publishes
 from the `data` branch (throw-away partial clone, no token, https, minimal env, 180 s total, process-group kill, gc off) and

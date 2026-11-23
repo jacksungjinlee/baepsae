@@ -11531,6 +11531,280 @@ def apply_div_basis(kr_stocks, fin_map, pref_shares, why=None):
     return counts, extra
 
 
+# ────────────────────────────────────────────────────────────
+# 소액주주 배당 (차등배당) — Jack 2026-11-19 Q6 ("The small-holder yield: a later PR, labelled as the 소액주주 rate") · 2026-11-23 (Track 1 4)
+# ────────────────────────────────────────────────────────────
+# 차등배당 회사는 최대주주보다 소액주주에게 1주에 더 줘요 (교보증권 2025: 기타주주 550원 · 최대주주 무배당 · TPC로보틱스 2025: 최대주주 및 특수관계자
+# 7,910,787주를 뺀 일반 및 소액주주 7,787,204주에만 10원). DART 배당 API(alotMatter)의 보통주 1주 배당은 그 소액주주 금액인데 API 줄에는 그 말이 없고
+# (사업보고서 원문의 표 밑 주석에만 있어요), 총액 ÷ 1주 배당이 주식 수와 맞지 않아 배당 기준 증명이 그 종목을 data/div 로 숨겨요 (dvLine 3).
+# 그래서 그 종목들만(divCheck.proofSub data div), 사업보고서 원문의 '배당에 관한 사항' 절을 한 번 읽어(캐시 · 실행당 SMALL_DIV_PER_RUN 곳) 그 절이
+#   (1) 차등배당이라고 적고 (글자 '차등'),
+#   (2) 소액주주 · 기타주주 · 일반주주 바로 뒤에 그 표의 1주 배당과 같은 'N원'을 적거나 (won · 교보증권 "기타주주(최대주주 외) 550원"), 그 낱말 뒤에
+#       받은 주식 수 'N주'를 적고 1주 배당 × N 이 표의 현금배당금총액과 맞을 때만 (cnt · TPC로보틱스 10원 × 7,787,204주 = 77,872,040원 ≈ 78백만원)
+# 그 1주 배당을 소액주주 몫으로 실어요: data.json 종목 dpsSmall (원 · 배당 표의 1주 배당 그대로 — 새로 셈한 숫자가 아니에요) · dytSmall (% · dpsSmall ÷
+# 오늘 종가) · corp.json 같은 두 칸 · data.json divSmall (기록 · 관문의 경고 줄이 봐요). 오늘 주식 수가 그해 말과 같은 기준일 때만 (small_div_basis:
+# 그해 말 뒤 분할 · 병합 · 무상증자 없음 · 유상증자 · 분할 · 주식배당 · 감자 · 교환 · 합병 결정 없음 · 오늘 상장 주식 수가 그해 말 유통 ~ 발행 주식 수 ±3%).
+# dps · dyt · dz · dvLine 은 그대로예요: 배당 순위(dz)는 지금처럼 dyt 로만 매겨서 이 종목들은 순위에 없어요. 앱은 스위치(src/v2/smallcfg.js · src/smallyield.js)
+# 와 Jack 이 승인한 말이 생길 때까지 이 칸을 보여 주지 않아요.
+SMALL_DIV_TAG = "sdiv1"           # 캐시 키 '{기업코드}|{사업연도}|11011|sdiv1' — 원문에서 읽은 사실 (해석이 바뀌면 sdiv2 로)
+SMALL_DIV_PER_RUN = 30            # 한 실행에서 새로 읽는 사업보고서 원문 수 상한 (곳마다 DART 2회: 목록 1 · 원문 1) — 넘으면 다음 실행에서
+SMALL_DIV_WORDS = ("소액주주", "기타주주", "일반주주")
+SMALL_DIV_WON_GAP = 40            # 낱말 뒤 이만큼(글자) 안의 첫 'N원'
+SMALL_DIV_CNT_GAP = 60            # 낱말 뒤 이만큼 안의 첫 'N주' (주당 · 주식 빼고)
+SMALL_DIV_CNT_TOL = 1.0e6         # 1주 배당 × 받은 주식 수 와 총액의 차 (원): 총액은 백만원 표에서 오고 corp 칸에서 1백만원으로 반올림돼요
+SMALL_DIV_CNT_REL = 1e-3          # … 또는 총액의 0.1% 중 큰 것
+SMALL_DIV_SEC_MAX = 60000         # 절 글자 상한 (원문의 절 끝을 찾지 못할 때)
+SMALL_DIV_BLOCK = ("rights", "spin", "stockdiv", "cr", "exchange", "merger")   # 그 사이에 있으면 주식 수 기준이 바뀌었을 수 있는 결정
+SMALL_DIV_KO = {"ev": "그해 말 뒤 분할 · 병합 · 무상증자", "blk": "그 사이 유상증자 · 분할 · 주식배당 · 감자 · 교환 · 합병 결정",
+                "nostk": "그해 말 주식의 총수 현황 없음", "shr": "오늘 상장 주식 수가 그해 말 유통 ~ 발행 주식 수 ±3% 밖",
+                "nodiff": "원문이 차등배당이라고 적지 않음", "nofig": "차등배당이지만 소액주주 몫을 표의 1주 배당과 맞춰 보지 못함",
+                "big": f"소액주주 기준 수익률이 {DYT_MAX:g}% 넘음 (믿지 않아요)", "nf": "사업보고서 원문 또는 '배당에 관한 사항' 절 없음",
+                "bad": "종목 칸이 모자람 (가격 · 1주 배당 · 사업연도 · 기업코드)"}
+
+
+def small_div_report_rc(rows, fy):
+    """list.json (정기공시 A001 · 최종본) 줄 → fy 사업보고서의 접수번호 (가장 늦은 것) 또는 None. 이름에 '사업보고서'와 '({fy}.'가 있어야 해요
+    (12월 결산 '사업보고서 (2025.12)' · 결산월이 다른 회사는 찾지 못해 '없음'으로 남아요). (순수 함수)"""
+    out = []
+    for r in rows or []:
+        nm = re.sub(r"\s+", "", str((r or {}).get("report_nm") or ""))
+        rc = str((r or {}).get("rcept_no") or "").strip()
+        if "사업보고서" in nm and f"({fy}." in nm and _RCPT.match(rc):
+            out.append(rc)
+    return max(out) if out else None
+
+
+def small_div_section(text):
+    """사업보고서 원문(document.xml 본 파일 글자) → '배당에 관한 사항' 절의 글자 (태그를 지우고 빈칸을 하나로) 또는 None. 절은 그 제목(TITLE)에서
+    같은 SECTION 단계가 닫힐 때까지 (못 찾으면 SMALL_DIV_SEC_MAX 글자까지) · 제목이 여럿이면 '주당'이 든 첫 절. (순수 함수)"""
+    if not text:
+        return None
+    for m in re.finditer(r"<TITLE[^>]*>([^<]*)</TITLE>", text):
+        if not re.search(r"배당\s*에\s*관한\s*사항", m.group(1)):
+            continue
+        lv = re.findall(r"<SECTION-(\d)", text[max(0, m.start() - 4000):m.start()])
+        e = text.find(f"</SECTION-{lv[-1]}>", m.end()) if lv else -1
+        body = text[m.end():(e if e > 0 else m.end() + SMALL_DIV_SEC_MAX)][:SMALL_DIV_SEC_MAX]
+        plain = re.sub(r"\s+", " ", html_unescape(re.sub(r"<[^>]+>", " ", body)).replace("&cr;", " ")).strip()
+        if "주당" in plain:
+            return plain
+    return None
+
+
+def small_div_facts(sec):
+    """'배당에 관한 사항' 절의 글자 → 캐시에 남길 사실 (순수 함수): c 차등배당이라고 적었는지 (글자 '차등') · won 소액주주 · 기타주주 · 일반주주
+    바로 뒤(SMALL_DIV_WON_GAP 글자 안)의 첫 'N원' · cnt 그 낱말 뒤(SMALL_DIV_CNT_GAP 안)의 첫 'N주' (주당 · 주식은 아니에요) · q '차등'이 나온 곳의
+    앞뒤 글 (근거 · 로그, 둘까지)."""
+    sec = sec or ""
+    won, cnt = set(), set()
+    for m in re.finditer("|".join(SMALL_DIV_WORDS), sec):
+        a = re.search(r"(\d[\d,]*)\s*원", sec[m.end():m.end() + SMALL_DIV_WON_GAP])
+        if a:
+            won.add(int(a.group(1).replace(",", "")))
+        b = re.search(r"(\d[\d,]*)\s*주(?![당식])", sec[m.end():m.end() + SMALL_DIV_CNT_GAP])
+        if b:
+            cnt.add(int(b.group(1).replace(",", "")))
+    q = [sec[max(0, m.start() - 80):m.end() + 120] for m in re.finditer("차등", sec)][:2]
+    return {"c": "차등" in sec, "won": sorted(won)[:20], "cnt": sorted(cnt)[:20], "q": q}
+
+
+def small_div_pick(facts, d0, cash0):
+    """원문의 사실 · 표의 1주 배당 d0 (원) · 현금배당금총액 cash0 (원) → (how, None) — won 소액주주 몫 'N원'이 d0 와 같음 · cnt 소액주주 몫 'N주' × d0
+    가 총액과 맞음 — 또는 (None, 이유): nodiff 원문이 차등배당이라고 적지 않음 · nofig 차등배당인데 소액주주 몫을 d0 와 맞춰 보지 못함. (순수 함수)"""
+    d0, cash0 = _fin(d0), _fin(cash0)
+    if not isinstance(facts, dict) or not facts.get("c"):
+        return None, "nodiff"
+    if not d0 or d0 <= 0:
+        return None, "nofig"
+    if any(_fin(x) is not None and abs(_fin(x) - d0) < 0.5 for x in facts.get("won") or []):
+        return "won", None
+    if cash0 and cash0 > 0:
+        tol = max(SMALL_DIV_CNT_TOL, cash0 * SMALL_DIV_CNT_REL)
+        if any((_fin(n) or 0) > 0 and abs(d0 * _fin(n) - cash0) <= tol for n in facts.get("cnt") or []):
+            return "cnt", None
+    return None, "nofig"
+
+
+def small_div_basis(look, fy, px, stk, shr, tol=PROVE_TOL):
+    """오늘 주식 수가 그해(fy) 배당의 기준 주식 수와 같은 기준인지 → None (같아요) 또는 이유 (SMALL_DIV_KO): ev 그해 말 뒤 ~ px 의 분할 · 병합 ·
+    무상증자 · blk 그해 말 반년 앞(DVWHY_OTHER_LOOKBACK_DAYS) ~ px 의 유상증자 · 회사분할 · 주식배당 · 감자 · 주식교환 · 합병 결정 (날짜를 모르면
+    그 사이로 봐요) · nostk 그해 말 주식의 총수 현황이 없음 · shr 오늘 상장 보통주 수가 그해 말 유통(cmo) −3% ~ 발행(cmi) +3% 밖. (순수 함수)"""
+    look = look if isinstance(look, dict) else {}
+    ev, blk = prove_window(look, f"{fy}-12-31", px)
+    if ev:
+        return "ev"
+    o0 = (dt.date(fy, 12, 31) - dt.timedelta(days=DVWHY_OTHER_LOOKBACK_DAYS)).isoformat()
+    inw = lambda x: not x.get("d") or o0 < x["d"] <= px                     # noqa: E731
+    if blk or any(o.get("k") in SMALL_DIV_BLOCK and inw(o) for o in look.get("oth") or []) or any(inw(x) for x in look.get("sd") or []):
+        return "blk"
+    cmo, cmi, shr = _fin((stk or {}).get("cmo")), _fin((stk or {}).get("cmi")), _fin(shr)
+    if not cmo or cmo <= 0 or not cmi or cmi < cmo * (1 - 1e-9):
+        return "nostk"
+    if not shr or shr < cmo * (1 - tol) or shr > cmi * (1 + tol):
+        return "shr"
+    return None
+
+
+def small_div_doc(client, corp, fy, budget):
+    """fy 사업보고서 원문의 '배당에 관한 사항' 사실 (small_div_facts + rc) — 캐시를 거쳐요 → (사실, 'cache' · 'fetched') 또는 (None, (종류, 이유)):
+    nf 사업보고서 · 그 절이 없음 (캐시에 013 으로 · DART_RETRY_DAYS 뒤 다시) · fail 조회 실패 · 이번 실행의 한도 (적지 않아요 · 다음 실행에 다시).
+    찾은 사실(000)은 DART_REVALIDATE_DAYS 뒤 다시 읽어요 (정정 공시). budget = [남은 원문 읽기 수] (실행 동안 같이 줄여요)."""
+    key = f"{corp}|{fy}|11011|{SMALL_DIV_TAG}"
+    with client.lock:
+        e = client.entries.get(key)
+    if e and e.get("st") in ("000", "013") and e.get("at"):
+        age = (client.today - dt.date.fromisoformat(e["at"])).days
+        fresh = age <= (DART_REVALIDATE_DAYS if e["st"] == "000" else DART_RETRY_DAYS)
+        if e.get("rpTry"):                        # 다시 읽기에서 원문을 찾지 못해 예전 사실을 둔 항목: DART_RETRY_DAYS 뒤에 다시
+            fresh = fresh or (client.today - dt.date.fromisoformat(e["rpTry"])).days <= DART_RETRY_DAYS
+        stuck = budget[0] <= 0 or client.no_call or client.down or client.fatal
+        if e["st"] == "000" and (fresh or stuck):
+            return copy.deepcopy(e["d"]), "cache"
+        if e["st"] == "013" and fresh:
+            return None, ("nf", (e.get("d") or {}).get("why") or SMALL_DIV_KO["nf"])
+    old = copy.deepcopy(e["d"]) if e and e.get("st") == "000" else None
+
+    def fail(why):                                # 다시 읽기가 실패하면 예전에 찾은 사실을 그대로 써요 (찾은 것을 '없음'으로 바꾸지 않게)
+        return (old, "cache") if old is not None else (None, ("fail", why))
+
+    if budget[0] <= 0:
+        return fail(f"이번 실행의 원문 읽기 한도({SMALL_DIV_PER_RUN}곳)에 닿음 — 다음 실행에서 읽어요")
+    budget[0] -= 1
+    today = client.today
+
+    def nf(why):
+        if old is not None:                       # 정정 뒤 목록 · 원문이 이상해도 찾은 사실은 지우지 않아요 (DART_RETRY_DAYS 뒤 다시)
+            with client.lock:
+                client.entries[key] = {**e, "rpTry": today.isoformat()}
+            return old, "cache"
+        with client.lock:
+            client.entries[key] = {"st": "013", "at": today.isoformat(), "d": {"why": why}}
+        return None, ("nf", why)
+
+    j = client.get("list.json", {"corp_code": corp, "bgn_de": f"{fy + 1}0101", "end_de": today.strftime("%Y%m%d"), "pblntf_ty": "A",
+                                 "pblntf_detail_ty": "A001", "last_reprt_at": "Y", "page_count": "100"})
+    if j is None:
+        return fail("정기공시 목록 조회 실패")
+    st = str(j.get("status"))
+    if st == "013":
+        return nf(f"{fy}년 사업보고서가 정기공시 목록에 없어요")
+    if st != "000":
+        return fail(f"정기공시 목록 상태 {st}")
+    rc = small_div_report_rc(j.get("list") or [], fy)
+    if not rc:
+        return nf(f"정기공시 목록에 '사업보고서 ({fy}.' 가 없어요 (결산월이 다를 수 있어요)")
+    files = client.get_zip("document.xml", {"rcept_no": rc})
+    if files is None:
+        return fail(f"사업보고서 원문 {rc} 조회 실패")
+    text, err = issue_doc_main(files, rc)
+    if err:
+        return nf(f"원문 {rc}: {err[1]}") if err[0] == "nf" else fail(f"원문 {rc}: {err[1]}")
+    sec = small_div_section(text)
+    if sec is None:
+        return nf(f"원문 {rc} 에 '배당에 관한 사항' 절이 없어요")
+    d = {**small_div_facts(sec), "rc": rc}
+    with client.lock:
+        client.entries[key] = {"st": "000", "at": today.isoformat(), "d": d}
+    return copy.deepcopy(d), "fetched"
+
+
+def small_holder_div(kr, why, client, px_date, corp_extra=None):
+    """차등배당 회사의 소액주주 1주 배당과 오늘 종가 기준 수익률 (위 설명) — apply_div_basis 뒤 (배당 기준 증명이 data/div 로 숨긴 종목만), 캐시 저장
+    앞에 불러요. 종목에 dpsSmall · dytSmall 을 달고 corp_extra 에도 같은 두 칸을 넣어요 → data.json divSmall 기록. 이 단계는 발행을 멈추지 않아요:
+    오류가 나면 모든 종목에서 두 칸을 지우고 크게 남겨요 (기록 err · 관문이 경고). (dps · dyt · dz · dvLine 은 건드리지 않아요)"""
+    for s in kr:                                  # 이번 실행에서 읽은 것만 (지난 발행본에서 이어 온 행에 남은 칸이 없게)
+        s.pop("dpsSmall", None)
+        s.pop("dytSmall", None)
+    rec = {"v": 1, "cand": 0, "on": {}, "no": {}, "fail": {}, "read": 0, "calls": 0}
+    c0 = sum(client.status.values()) if client else 0
+    try:
+        _small_holder_div(kr, why, client, px_date, corp_extra if corp_extra is not None else {}, rec)
+    except Exception as e:                        # 새 칸만의 단계 — 지우고 이어가요 (관문의 '소액주주 배당수익률' 줄이 경고)
+        for s in kr:
+            s.pop("dpsSmall", None)
+            s.pop("dytSmall", None)
+        for t in rec["on"]:
+            (corp_extra or {}).get(t, {}).pop("dpsSmall", None)
+            (corp_extra or {}).get(t, {}).pop("dytSmall", None)
+        rec.update(on={}, err=f"{type(e).__name__}: {str(e)[:160]}")
+        log(f"  !! 소액주주 배당(차등배당): 단계가 오류로 멈췄어요 ({rec['err']}) — 모든 종목에서 dpsSmall · dytSmall 을 비우고 이어가요 (관문이 경고해요)")
+    if client:
+        rec["calls"] = sum(client.status.values()) - c0
+    on = rec["on"]
+    by_no = collections.Counter(rec["no"].values())
+    loud = bool(rec["fail"]) or "err" in rec
+    log(f"{'  !! ' if loud else '· '}소액주주 배당(차등배당 · dpsSmall · dytSmall): 대상 {rec['cand']:,} (배당 표가 주식 수와 어긋나 숨긴 data/div) · "
+        f"실음 {len(on):,}" + (": " + ", ".join(f"{t} {v['nk']} {v['d']:,}원 {v['y']:.2f}% ({v['how']})" for t, v in sorted(on.items())) if on else "")
+        + f" · 그대로 {len(rec['no']):,}" + (" (" + " · ".join(f"{SMALL_DIV_KO.get(k, k)} {n}" for k, n in by_no.most_common()) + ")" if by_no else "")
+        + f" · 조회 실패 {len(rec['fail']):,}" + (": " + ", ".join(f"{t} {w}" for t, w in sorted(rec["fail"].items())[:5]) if rec["fail"] else "")
+        + f" · 원문 새로 읽음 {rec['read']:,} (실행당 최대 {SMALL_DIV_PER_RUN}) · DART 호출 {rec['calls']:,} — 배당 순위(dz)는 그대로 dyt 로만")
+    if rec["no"]:
+        log("    그대로 둔 종목: " + ", ".join(f"{t} {SMALL_DIV_KO.get(w, w)}" for t, w in sorted(rec["no"].items())[:20]))
+    return {k: v for k, v in rec.items() if k != "calls" or v}
+
+
+def _small_holder_div(kr, why, client, px_date, corp_extra, rec):
+    if why is None or not getattr(why, "prove_on", False):
+        rec["skip"] = "배당 기준 증명이 꺼졌어요"
+        return
+    sub = (getattr(why, "psub", None) or {}).get("data") or {}
+    cand = sorted(t for t, x in sub.items() if x == "div")
+    rec["cand"] = len(cand)
+    if not cand:
+        return
+    if client is None:
+        rec["fail"] = {t: "DART 꺼짐 · 키 없음" for t in cand}
+        return
+    by = {s.get("t"): s for s in kr}
+    px = px_date.isoformat() if isinstance(px_date, dt.date) else str(px_date)
+    budget = [SMALL_DIV_PER_RUN]
+    for t in cand:
+        s = by.get(t)
+        fy = (s or {}).get("fy")
+        d0 = _fin((_three((s or {}).get("dps3")) or [None])[0])
+        price = _fin((s or {}).get("price"))
+        corp = why.cmap.get(t)
+        if not s or s.get("cls") != "kr" or is_preferred(t) or is_foreign_issuer(t) or not isinstance(fy, int) or not d0 or d0 <= 0 \
+                or not price or price <= 0 or not corp or _fin(s.get("dyt")) is not None:
+            rec["no"][t] = "bad"
+            continue
+        got = (getattr(why, "seen", None) or {}).get(t)
+        look = got[0] if got else None
+        if not isinstance(look, dict):
+            rec["fail"][t] = "배당 기준 증명의 공시 조회가 없어요"
+            continue
+        stk, stk_fail = why._stk(corp, fy)
+        if stk_fail:
+            rec["fail"][t] = f"{fy}년 말 주식의 총수 현황을 받지 못함"
+            continue
+        why_b = small_div_basis(look, fy, px, stk, s.get("shr"))
+        if why_b:
+            rec["no"][t] = why_b
+            continue
+        facts, how_read = small_div_doc(client, corp, fy, budget)
+        if facts is None:
+            kind, msg = how_read
+            if kind == "nf":
+                rec["no"][t] = "nf"
+            else:
+                rec["fail"][t] = msg
+            continue
+        rec["read"] += how_read == "fetched"
+        cash0 = _fin(((corp_extra.get(t) or {}).get("cash3") or [None])[0])
+        how, why_p = small_div_pick(facts, d0, cash0 * 1e8 if cash0 is not None else None)
+        if not how:
+            rec["no"][t] = why_p
+            continue
+        y = d0 / price * 100
+        if y > DYT_MAX:
+            rec["no"][t] = "big"
+            continue
+        s["dpsSmall"] = int(round(d0))
+        s["dytSmall"] = round(y, 2)
+        corp_extra.setdefault(t, {}).update(dpsSmall=s["dpsSmall"], dytSmall=s["dytSmall"])
+        rec["on"][t] = {"nk": s.get("nk") or "", "d": s["dpsSmall"], "y": s["dytSmall"], "how": how, "rc": facts.get("rc") or ""}
+
+
 DIV_RANK_MUST = MUST_KR + ("035420", "012450")   # 관문의 필수 종목 중 국내 7개 (NAVER · 한화에어로스페이스 포함)
 
 
@@ -15022,6 +15296,13 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
          "dpsF": "배율 (오늘 주식 수 ÷ 그해 배당금의 기준 주식 수 · 1 = 그대로 · dps3a = dps3 ÷ dpsF · 배당 없는 해는 빈 칸)",
          "divSt": "same 그대로 · adj 분할·무상증자를 맞춤 · nc 비교 불가(어중간한 주식 수 변화) · nd 알 수 없음 · zero 3년 배당 없음",
          "dyt": "% (한국 · 오늘 종가 기준 배당수익률 = dps3a[0] ÷ price · 확인 못 한 종목은 빈 칸 · dz 는 이 값의 시장 내 백분위)",
+         "dpsSmall": ("원 (한국 · 2026-11-23 · 차등배당 회사만: 소액주주가 받는 1주 배당 = 사업보고서 배당 표의 보통주 1주 배당 그대로, 원문 '배당에 관한 "
+                      "사항'이 차등배당이라고 적고 그 금액(또는 받은 주식 수 × 그 금액 = 현금배당금총액)을 소액주주 · 기타주주 · 일반주주 몫이라고 적을 때만 · "
+                      "오늘 주식 수가 그해 말과 같은 기준일 때만 · 칸이 없으면 해당 없음) · corp.json 에도"),
+         "dytSmall": "% (한국 · dpsSmall ÷ price · 소액주주 기준 배당수익률 · dyt · dz 와 따로 — 배당 순위는 dyt 로만) · corp.json 에도",
+         "divSmall": ("소액주주 배당 단계의 기록 {v · cand 대상 (배당 기준 증명이 data/div 로 숨긴 종목 수) · on {코드: nk · d dpsSmall · y dytSmall · "
+                      "how won (원문이 소액주주 몫 'N원'을 적음) · cnt (원문의 소액주주 몫 'N주' × 1주 배당 = 총액) · rc 사업보고서 접수번호} · no {코드: 그대로 둔 "
+                      "까닭 ev · blk · nostk · shr · nodiff · nofig · big · nf · bad} · fail {코드: 조회 실패} · read 새로 읽은 원문 수 · calls DART 호출 · skip · err}"),
          "betaSE": "베타의 표준오차 (일별 수익률 회귀) · betaN 은 쓴 일별 수익률 수",
          "dvWhy": ("한국 · 주식 수가 바뀌어 배당을 다시 계산하려 한 종목의 결론 (DART 결정 공시) · st ok = 다시 계산, 사건 ev [k split 액면분할 · "
                    "merge 주식병합 · bonus 무상증자 · reduce 주식병합으로 한 감자, d 법적 날짜(효력발생일 · 신주배정기준일 · 감자기준일), "
@@ -15420,6 +15701,9 @@ def main():
     # v19.1h: 맞춘 해가 있는 종목은 DART 결정 공시로 이유를 확인해요 (dvWhy · 공시와 다른 해는 맞추지 않아요). DART 가 꺼졌으면 조회 실패로 세요
     why = DivWhy(client, px_date)
     div_counts, corp_extra = apply_div_basis(kr, fin_map, kmeta.get("_prefShares") or {}, why=why)
+    # 2026-11-23 (Jack, 11-19 Q6): 차등배당 회사의 소액주주 1주 배당 · 수익률 (dpsSmall · dytSmall · divSmall) — 증명이 data/div 로 숨긴 종목만,
+    # 사업보고서 원문이 그렇게 적을 때만. dps · dyt · dz 는 그대로 (캐시 저장 앞: 새로 읽은 원문 사실도 함께 저장돼요)
+    div_small = small_holder_div(kr, why, client, px_date, corp_extra)
     if client:
         try:
             client.save()                 # 새로 받은 공시 확인이 뒤 단계 실패로 사라지지 않게
@@ -15595,6 +15879,7 @@ def main():
         # 2026-11-19 (Jack 의 상시 규칙): 우리 처리 검사가 빼거나 비운 행 — 관문이 수(N)와 남은 값을 봐요 (이 칸이 없는 예전 파일은 예전 규칙)
         "ownDrop": {US_CLASS_DROP_KEY: own_us, DIV_LINE_DROP_KEY: own_div},
         "divCheck": div_counts,              # v19.1b: 배당 분할 확인 집계 (관문이 종목과 맞춰 봐요 · 이 칸이 있으면 새 검사가 다 돌아요)
+        "divSmall": div_small,               # 2026-11-23: 차등배당 회사의 소액주주 1주 배당 기록 (관문의 '소액주주 배당수익률' 경고 줄이 종목과 맞춰 봐요)
         "incCheck": inc_check,               # v19.1f: 손익 줄 집계 (관문이 corp.json 과 맞춰 봐요 · 이 칸이 있으면 손익 줄 검사가 다 돌아요)
         "epsBasis": eps_basis,               # v19.1f: EPS·PER 은 지배주주 몫 — 앱의 '계산 방법을 고치는 중' 줄이 이걸 보면 사라져요
         "unitChkCover": unit_cover,          # (2026-11-13) 공시 단위 확인이 몇 곳을 어떤 방법으로 봤는지 (관문 줄이 보여 줘요)

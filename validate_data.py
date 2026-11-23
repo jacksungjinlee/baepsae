@@ -2849,6 +2849,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v196b(rep, data, disc, by, today)   # v19.6b (Part B.1): 주요사항 공시 · 내부자 역할 · 미국 일정 (모양 · 칸이 없는 예전 파일은 경고만)
     check_issue_bd(rep, disc)                 # v19.6b Q18 (Jack 2026-11-19): 유상증자 이사회 결의일 (공시일 뒤면 실패 · 빈 줄은 경고)
     check_v196e(rep, data, macro)             # v19.6e (Part I.2): 이번 주 시작 종가 c1w · wkFrom · usWkFrom (경고만)
+    check_small_div(rep, data, corp)          # 2026-11-23 (Jack 11-19 Q6): 차등배당 회사의 소액주주 배당수익률 (경고만 · 실패 없음)
 
     # 경고만
     rep.add("공시 목록 조회", True, "성공" if disc.get("listOk") else "실패", "실패면 경고", warn=not disc.get("listOk"))
@@ -4024,6 +4025,89 @@ def check_v196e(rep, data, macro):
         _check_v196e(rep, data if isinstance(data, dict) else {}, macro if isinstance(macro, dict) else {})
     except Exception as e:
         rep.add(C1W_ROW, True, f"검사가 오류로 멈췄어요: {type(e).__name__}: {str(e)[:120]}", "오류 없이 끝나야 함 (경고만 · 발행을 막지 않아요)", warn=True)
+
+
+# ── 2026-11-23 (Jack, 11-19 Q6 · 11-23): 차등배당 회사의 소액주주 배당 — data.json 종목 dpsSmall · dytSmall · 기록 divSmall · corp.json 같은 두 칸 ──
+#    파이프라인(fetch_data.small_holder_div)이 배당 기준 증명이 data/div 로 숨긴 종목 중, 사업보고서 원문이 차등배당이라고 적고 그 1주 배당을 소액주주 몫이라고
+#    적는 종목에만 실어요 (dpsSmall = 배당 표의 1주 배당 그대로 · dytSmall = dpsSmall ÷ 오늘 종가). 이 줄은 경고만 해요 (발행을 멈추는 줄은 Jack 의 답이
+#    있어야 해요): 실은 회사와 숫자를 적고, 숫자끼리 · 기록과 어긋나거나 조회가 실패했으면 경고해요. 앱은 스위치와 승인한 말이 있을 때만 보여 줘요.
+SMALL_DIV_ROW = "소액주주 배당수익률 (dpsSmall · dytSmall · divSmall · 경고만)"
+SMALL_DIV_SHOW = 10
+
+
+def _check_small_div(rep, data, corp):
+    kr = [s for s in data.get("stocks") or [] if isinstance(s, dict)]
+    comps = {c.get("t"): c for c in (corp or {}).get("companies") or [] if isinstance(c, dict)}
+    rec = data.get("divSmall")
+    has = [s for s in kr if "dpsSmall" in s or "dytSmall" in s]
+    th = "숫자끼리 · 기록과 맞아야 함 (어긋나거나 조회 실패면 경고 · 발행을 막지 않아요)"
+    if rec is None:
+        if has:
+            rep.add(SMALL_DIV_ROW, True, f"기록(divSmall) 없이 칸이 있는 종목 {len(has):,}: "
+                    + ", ".join(str(s.get("t")) for s in has[:SMALL_DIV_SHOW]), th, warn=True)
+        else:
+            rep.add(SMALL_DIV_ROW, True, "기록 없음 (이 단계 전의 파일)", th)
+        return
+    if not isinstance(rec, dict) or rec.get("v") != 1 or not isinstance(rec.get("on"), dict):
+        rep.add(SMALL_DIV_ROW, True, f"기록(divSmall) 모양이 달라요: {str(rec)[:120]}", th, warn=True)
+        return
+    on = rec["on"]
+    bad = []
+    for s in has:
+        t = s.get("t")
+        d, y, p = num(s.get("dpsSmall")), num(s.get("dytSmall")), num(s.get("price"))
+        d3 = s.get("dps3") if isinstance(s.get("dps3"), list) and s.get("dps3") else [None]
+        why = []
+        if s.get("cls") != "kr" or is_pref(str(t)):
+            why.append("국내 보통주가 아님")
+        if d is None or d <= 0 or d != round(d):
+            why.append(f"dpsSmall {s.get('dpsSmall')!r}")
+        elif num(d3[0]) is None or abs(num(d3[0]) - d) >= 0.5:
+            why.append(f"dpsSmall {d:,.0f} ≠ 배당 표 {d3[0]!r}")
+        if y is None or not (0 < y <= DYT_MAX):
+            why.append(f"dytSmall {s.get('dytSmall')!r}")
+        elif d is not None and p and p > 0 and abs(round(d / p * 100, 2) - y) > 0.011:
+            why.append(f"dytSmall {y} ≠ {d:,.0f} ÷ {p:,.0f}")
+        if num(s.get("dyt")) is not None:
+            why.append("dyt 가 보이는 종목")
+        if s.get("dvLine") not in (None, 3):
+            why.append(f"dvLine {s.get('dvLine')!r}")
+        r = on.get(t)
+        if not isinstance(r, dict) or num(r.get("d")) != d or num(r.get("y")) != y:
+            why.append("기록(divSmall.on)과 다름")
+        c = comps.get(t)
+        if c is not None and (num(c.get("dpsSmall")) != d or num(c.get("dytSmall")) != y):
+            why.append("corp.json 과 다름")
+        if why:
+            bad.append(f"{t} {' · '.join(why)}")
+    seen = {s.get("t") for s in has}
+    bad += [f"{t} 기록에만 있음" for t in on if t not in seen]
+    bad += [f"{t} corp.json 에만 있음" for t, c in comps.items() if ("dpsSmall" in c or "dytSmall" in c) and t not in seen]
+    fail = rec.get("fail") if isinstance(rec.get("fail"), dict) else {}
+    names = [f"{t} {(r or {}).get('nk', '')} {num((r or {}).get('d')) or 0:,.0f}원 {num((r or {}).get('y')) or 0:.2f}%".replace("  ", " ")
+             for t, r in sorted(on.items())]
+    parts = [f"실음 {len(on):,}" + (": " + ", ".join(names[:SMALL_DIV_SHOW]) + (" …" if len(names) > SMALL_DIV_SHOW else "") if names else ""),
+             f"대상 {rec.get('cand', '?')} · 그대로 {len(rec.get('no') or {}):,}"]
+    warns = []
+    if bad:
+        warns.append(f"어긋남 {len(bad):,}: " + "; ".join(bad[:5]))
+        rep.detail("소액주주 배당수익률 어긋남", bad)
+    if fail:
+        warns.append(f"조회 실패 {len(fail):,}: " + ", ".join(f"{t} {w}" for t, w in sorted(fail.items())[:3]))
+    if rec.get("err"):
+        warns.append(f"단계 오류: {str(rec['err'])[:120]}")
+    if names:
+        rep.detail("소액주주 배당수익률 (차등배당 · 실은 회사)", names)
+    rep.add(SMALL_DIV_ROW, True, (" · ".join(parts + warns))[:600], th, warn=bool(warns))
+
+
+def check_small_div(rep, data, corp):
+    """2026-11-23: 한 줄 — 소액주주 배당수익률 (경고만: 검사 코드가 멈춰도 실패가 아니라 경고예요)."""
+    try:
+        _check_small_div(rep, data if isinstance(data, dict) else {}, corp if isinstance(corp, dict) else {})
+    except Exception as e:
+        rep.add(SMALL_DIV_ROW, True, f"검사가 오류로 멈췄어요: {type(e).__name__}: {str(e)[:120]}",
+                "오류 없이 끝나야 함 (경고만 · 발행을 막지 않아요)", warn=True)
 
 
 def check_v1751(rep, cur, kr, us, by, comps, px, today, hilo, us_own=frozenset()):

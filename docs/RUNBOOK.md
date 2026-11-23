@@ -1565,6 +1565,51 @@ uncounted 2, data 22, the 32.5% yield 1; lines: 1 → 0 stocks, 2 → 8, 3 → 1
   "숨긴 배당수익률의 줄" and "그대로 숨김" log lines. A file without `proofSub` (before #PR) is only a warning unless the previous publish
   had it; without it a `dvLine` 2, 3 or 4 fails the "배당 기준 증명 기록" row.
 
+## 소액주주 yield for differential dividends (차등배당, since #PR — Jack 2026-11-19 Q6, 2026-11-23)
+
+Some Korean companies pay a **차등배당**: the largest shareholder takes less (often nothing) and everyone else gets the per-share
+dividend in the 사업보고서's table. DART's dividend API (alotMatter) gives that figure as a plain 보통주 row; the note that says whose
+figure it is sits only under the table in the report itself. Because the total ÷ that figure is far below the share count, the
+dividend proof hides these yields as `data` / `div` (dvLine 3, "회사가 공시한 배당 자료와 주식 수가 서로 맞지 않아서 …"). An individual
+investor gets the 소액주주 figure, so Jack asked for that yield, "labelled as the 소액주주 rate".
+
+What the daily run does (`fetch_data.py` `small_holder_div`, right after `apply_div_basis`, before the DART cache is saved):
+- **Who:** only the payers the proof left as `data` / `div` this run (`divCheck.proofSub.data` case `div`; 15 on the 11-21 publish).
+- **Basis first** (`small_div_basis`, no DART call: the proof's own filings lookup and year-end share table): no split, merge or bonus
+  issue after the year end; no 유상증자, 회사분할, 주식배당, 감자, 주식교환 or 합병 decision from half a year before the year end to the
+  price date; today's listed common shares between the year-end outstanding −3% and the year-end issued +3%. Otherwise nothing
+  (`divSmall.no` ev · blk · nostk · shr).
+- **The report** (`small_div_doc`, cached under `{corp}|{fy}|11011|sdiv1`): `list.json` (정기공시 A001, last versions) finds the
+  "사업보고서 ({fy}.12)" receipt number, `document.xml` gives the report, `small_div_section` cuts the "배당에 관한 사항" section (its
+  TITLE to the end of that SECTION level) and `small_div_facts` keeps: whether it says 차등, the first "N원" within 40 characters after
+  소액주주 / 기타주주 / 일반주주, the first "N주" within 60 characters after them, and the sentences around 차등 (evidence). Two DART calls
+  per company the first time, at most `SMALL_DIV_PER_RUN` = 30 reports a run; read again after 90 days (a corrected report), a report
+  or section not found after 7 days; a failed re-read keeps the facts found before. Same-day re-runs (`no_call`) use the cache only.
+- **The figure** (`small_div_pick`): only when the section says 차등 **and** either the "N원" after a small-holder word equals the table's
+  dividend per share (`won`: 교보증권 2025 "기타주주(최대주주 외) 550원, 최대주주 무배당") or the table's dividend per share × the "N주" after a
+  small-holder word equals the table's total within max(1백만원, 0.1%) (`cnt`: TPC로보틱스 2025 10원 × "일반 및 소액주주 보유 주식
+  7,787,204주" = 77,872,040원 against 78백만원). The figure is always the table's own per-share number: nothing is computed but the yield.
+  No 차등 in the section → `nodiff` (엘앤씨바이오, 블랙야크아이앤씨 on 11-23); 차등 but no tie → `nofig`; above 30% → `big`.
+- **Written:** data.json stock `dpsSmall` (원) and `dytSmall` (dpsSmall ÷ today's close, %, 2 decimals), the same two in corp.json, and
+  data.json `divSmall` {v, cand, on {code: nk · d · y · how · rc}, no {code: reason}, fail {code: why}, read, calls, skip, err}. Fields
+  left from an earlier row are removed first. `dps`, `dyt`, `dz` and `dvLine` are not touched: **the dividend ranking keeps `dyt` only**,
+  so these companies stay out of it. The stage never stops the run: an error clears every `dpsSmall` · `dytSmall`, logs "!!" and writes
+  `divSmall.err`.
+- **Log line:** "소액주주 배당(차등배당 · dpsSmall · dytSmall): 대상 N · 실음 n: 030610 교보증권 550원 7.33% (won) … · 그대로 m (reasons) ·
+  조회 실패 k … · 원문 새로 읽음 r · DART 호출 c", with "!!" when something failed, then the names left as they are.
+
+Gate: **WARN "소액주주 배당수익률 (dpsSmall · dytSmall · divSmall · 경고만)"** — never fails (no Jack yes for a publish-stopping row). It
+names the companies and figures (PASS) and warns when a field disagrees with the table's dividend per share, with ÷ today's close, with
+the record or with corp.json, sits on a stock whose yield shows, on another mark, on a non-Korean or preferred row, when the record is
+missing or malformed, when a lookup failed, or when the stage errored. Look at the run's "소액주주 배당" log lines.
+
+App (both behind switches that are **off** until Jack approves the words, 「새 문구」 in the PR):
+- 2.0 `src/v2/smallcfg.js` `SMALL_YIELD.on` and the copy `C.co.div.smallBasis` · `smallLine` (null): the 요약 배당 tile shows "배당수익률
+  {y} · {smallBasis}" with `smallLine` in the hidden-yield line's place, the 배당 tab the 소액주주 dividend per share and yield labelled,
+  두 종목 비교 the yield labelled with the line (`company.js divSmallView`). 관심 종목, 종목 순위, 내 기준으로 찾기 and plans keep `dyt`.
+- 예전 뱁새 `src/smallyield.js` `SMALL_YIELD_OLD` {on, label}: the 기업 분석 tile's name becomes "배당수익률 · {label}" (its number is the
+  report's own yield, which a 차등배당 report works from the small-holder figure).
+
 ## 오늘 볼 것 data (v19.6b, since #PR): disc.json `issue`, insider `role`, US `ed` · `xd`
 
 What the daily run writes (`fetch_data.py` `fetch_issues`, `fill_issue_bd`, `insider_pos_role`, `us_event_dates`):
