@@ -46,7 +46,7 @@ push or manual run on a branch fails on purpose (its green would cover the PR's 
 can't read (event file, git) fails with a message. Replayed on past merges it flags #170, #171 and #172 (the misses of 11-22) and
 passes #173.
 
-**#? (소액주주 yield for 차등배당 payers), 2026-11-24 — data on, screens off until Jack approves two lines:** Jack 11-19 Q6 ("labelled
+**#183 (소액주주 yield for 차등배당 payers), 2026-11-24 — data on, screens off until Jack approves two lines:** Jack 11-19 Q6 ("labelled
 as the 소액주주 rate"), 11-23 Track 1 item 4. Of the payers hidden as `data` / `div` (dvLine 3), the daily run reads each 사업보고서's
 "배당에 관한 사항" once (cached, ≤ 30 reports a run, 2 DART calls each; about 30 calls on the first run) and keeps the table's own
 dividend per share as `dpsSmall` (+ `dytSmall` at today's close, data.json and corp.json, record `divSmall`) only when the report says

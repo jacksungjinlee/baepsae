@@ -1565,7 +1565,7 @@ uncounted 2, data 22, the 32.5% yield 1; lines: 1 → 0 stocks, 2 → 8, 3 → 1
   "숨긴 배당수익률의 줄" and "그대로 숨김" log lines. A file without `proofSub` (before #PR) is only a warning unless the previous publish
   had it; without it a `dvLine` 2, 3 or 4 fails the "배당 기준 증명 기록" row.
 
-## 소액주주 yield for differential dividends (차등배당, since #PR — Jack 2026-11-19 Q6, 2026-11-23)
+## 소액주주 yield for differential dividends (차등배당, since #183 — Jack 2026-11-19 Q6, 2026-11-23)
 
 Some Korean companies pay a **차등배당**: the largest shareholder takes less (often nothing) and everyone else gets the per-share
 dividend in the 사업보고서's table. DART's dividend API (alotMatter) gives that figure as a plain 보통주 row; the note that says whose
