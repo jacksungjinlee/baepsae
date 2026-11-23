@@ -7,15 +7,16 @@
 // rate, else the portfolio's planFx, as track.purchaseWon does); each imported row (가진 종목 넣기) is a lot with its typed
 // 평균 단가. A sale reduces EVERY open lot by the same fraction (sold ÷ held before the sale): quantity and cost carry
 // forward. Quantities are in 1/10,000-share units (held.js) at today's share basis (splits, held.js): a record dated
-// before a split is read as quantity x r, price / r, the same money.
+// before a split is read as quantity x r, price / r, the same money, counted in the whole units held.js counts it for (one
+// count for the share count and the lots, Track 2 audit 1.1: a sale of every share held leaves exactly 0 here too).
 //   realized gain (won) = sale qty x price x sale rate − the won cost the sale removed (Korea: rate 1)
 //   a lot whose cost is known only in dollars (an imported US row: a 평균 단가 and no rate of its own, "dollar-only"):
 //     its share of a sale gains (dollar proceeds − dollar cost removed) x the sale-date rate; held, it counts at today's
 //     rate (dollar 평균 단가 x quantity x today's rate, [Q11]), so its won return equals its dollar return
 //   a lot with no cost (an imported row without 평균 단가): no gain for a sale that touches it, never a guess
 //   a USD purchase without any rate (records from before Part C): no won cost (the existing noFx line)
-// Nothing here is rounded: the screens round once, and the rows they add up (내 수익) are rounded before they are added.
-import { UNIT, toUnits, okUnits, importedUnits, splitsOf, splitFactor, splitDateOf, VIEW_SPLITS, okSplit, sameSplit, heldUnits } from "./held.js";
+// No money here is rounded: the screens round once, and the rows they add up (내 수익) are rounded before they are added.
+import { UNIT, importedUnits, splitsOf, splitDateOf, VIEW_SPLITS, okSplit, sameSplit, heldUnits, unitEvents, belowZeroEach } from "./held.js";
 import { deckProblem, problemText } from "./store.js";
 
 const isNum = (x) => typeof x === "number" && Number.isFinite(x);
@@ -212,6 +213,50 @@ export function withStoredSplits(data) {
   });
   return { data: changed ? { ...data, decks } : data, added };
 }
+// The store with the splits its records need stored (as withStoredSplits), stock by stock (#184 review round 1): a stock's
+// splits are stored only when its portfolio then reads back (store.deckProblem) and main's own count (held.belowZeroEach, on
+// the portfolio and each history entry, with the stored splits only, as main's store check reads them) stays at or above 0
+// too, so an older tab, or main's code after a revert, never sets the portfolio aside. A stock whose splits fail keeps its
+// records as they are (the screens still apply data.json's split) and never holds back another stock of the portfolio.
+// skip(x) -> true: a split not to try (refused earlier). -> { data, added: [{ id, t, date, r }], refused: [{ id, t, date, r,
+// why }] }
+export function withStoredSplitsChecked(data, today, skip = () => false) {
+  const added = [], refused = [];
+  if (!data || !Array.isArray(data.decks)) return { data, added, refused };
+  let changed = false;
+  const decks = data.decks.map((d) => {
+    if (!d || !Array.isArray(d[VIEW_SPLITS]) || !d[VIEW_SPLITS].length) return d;
+    let next = d;
+    for (const t of [...new Set(d[VIEW_SPLITS].map((s) => s.t))]) {
+      const sp = splitsToStore(next, t);
+      if (!sp) continue;
+      const mine = sp.slice((next.splits || []).length).map((s) => ({ id: d.id, t: s.t, date: s.date, r: s.r }));
+      if (!mine.length || mine.some(skip)) continue;
+      const trial = { ...next, splits: sp };
+      const p = deckProblem(trial, today);
+      const old = p ? null : mainCountProblem(trial, t);
+      if (p || old) { refused.push(...mine.map((x) => ({ ...x, why: p ? problemText(trial, p) : old }))); continue; }
+      next = trial;
+      added.push(...mine);
+    }
+    if (next !== d) changed = true;
+    return next;
+  });
+  return { data: changed ? { ...data, decks } : data, added, refused };
+}
+// Main's own count of stock t on a portfolio and each history entry (stored splits only; another stock main cannot read is
+// not this split's doing, #184 round 2 N2). -> a reason for the console, or null
+function mainCountProblem(d, t) {
+  const sets = [{ imported: d.imported || [], purchases: d.purchases || [], sales: d.sales || [], splits: d.splits, createdAt: d.createdAt }];
+  for (const e of Array.isArray(d.history) ? d.history : []) {
+    if (e) sets.push({ imported: e.imported ? [e.imported] : [], purchases: e.purchases || [], sales: e.sales || [], splits: d.splits, createdAt: d.createdAt });
+  }
+  for (const x of sets) {
+    const low = belowZeroEach(x, t);
+    if (low) return `portfolio "${d.name}" (${d.id}): ${low.t}: main's count (an older tab, or main after a revert) would read it as sold more than held (${low.date || "undated"})`;
+  }
+  return null;
+}
 // The stored splits data.json does not list: said loudly once each (round-1 review). data.json lists every split since 2016
 // and carries a published row forward for good (#117), so a stored split it does not list is one the pipeline took out (an
 // "out" row: withoutOutSplits removes it where the records allow), or one stored from an older file. -> [{ id, t, date }]
@@ -233,6 +278,14 @@ export function splitsFor(deck, t) {
 }
 
 // ---------------- one stock's ledger ----------------
+// The record set as held.js reads it (a history entry's imported row is one object; its splits, data.json's and createdAt
+// come from ctx, its portfolio's), and stock t's events with the units held.js counts them for.
+function unitsOf(recs, t, ctx) {
+  const c = ctx || {};
+  return unitEvents({ imported: Array.isArray(recs.imported) ? recs.imported : recs.imported ? [recs.imported] : [], purchases: recs.purchases,
+    sales: recs.sales, splits: c.splits != null ? c.splits : recs.splits, [VIEW_SPLITS]: c.view != null ? c.view : recs[VIEW_SPLITS],
+    createdAt: c.createdAt != null ? c.createdAt : recs.createdAt }, t);
+}
 // recs: a record set ({ imported?, purchases?, sales?, divs?, splits?, createdAt? }: a portfolio or one history entry; a
 // history entry's imported row is one object, its splits and createdAt come from its portfolio: pass ctx).
 // -> { t, ccy, lots: [open lots], sales: [per sale], divs: [per dividend], putIn: { won, own, unknown, usdOnlyOwn },
@@ -241,27 +294,10 @@ export function splitsFor(deck, t) {
 //        won (won cost at the lot's rate, null = unknown), rate (won per unit of currency; 1 for KRW; null), usdOnly, date }
 // sale: { rec, u, proceedsOwn, rate, proceedsWon, removedWon, gain, why: null | "noCost" | "noRate", usdOnly, over }
 export function ledger(recs, t, ctx = {}) {
-  const sp = splitsOf({ splits: ctx.splits != null ? ctx.splits : recs.splits, [VIEW_SPLITS]: ctx.view != null ? ctx.view : recs[VIEW_SPLITS] });
-  const createdAt = ctx.createdAt != null ? ctx.createdAt : recs.createdAt;
   const planFx = ctx.planFx != null ? ctx.planFx : recs.planFx;
-  const f = (r) => splitFactor(sp, t, splitDateOf(r, { createdAt }));
-  const ev = [];
-  const imp = Array.isArray(recs.imported) ? recs.imported : recs.imported ? [recs.imported] : [];
-  for (const r of imp) {
-    if (!r || r.t !== t) continue;
-    const u0 = importedUnits(r);
-    if (u0 == null) continue;
-    ev.push({ kind: 0, date: typeof r.date === "string" ? r.date : "", r, u: u0 * f(r) });
-  }
-  for (const p of Array.isArray(recs.purchases) ? recs.purchases : []) {
-    if (!p || p.t !== t || !(Number.isInteger(p.qty) && p.qty > 0)) continue;
-    ev.push({ kind: 1, date: p.date || "", r: p, u: p.qty * UNIT * f(p) });
-  }
-  for (const s of Array.isArray(recs.sales) ? recs.sales : []) {
-    if (!s || s.t !== t || !okUnits(s.qty)) continue;
-    ev.push({ kind: 2, date: s.date || "", r: s, u: toUnits(s.qty) * f(s) });
-  }
-  ev.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.kind - b.kind));
+  // the units held.js counts each record for (one count for the share count and the lots, Track 2 audit 1.1): a record
+  // dated before a split is read x r and rounded the way held.js rounds it, so a sale of every share held leaves exactly 0
+  const ev = unitsOf(recs, t, ctx).map((e) => ({ kind: e.kind, date: e.date, r: e.r, u: e.kind === 2 ? 0 - e.u : e.u, x: e.kind === 2 ? 0 - e.x : e.x }));
   let ccy = null;
   const lots = [], sales = [];
   const putIn = { won: 0, own: 0, unknown: false, noRate: false, usdOnlyOwn: 0 };
@@ -294,14 +330,23 @@ export function ledger(recs, t, ctx = {}) {
     const out = { rec: r, u: e.u, proceedsOwn: r.qty * r.price, rate: r.ccy === "USD" ? (pos(r.fx) ? r.fx : null) : 1,
       proceedsWon: null, removedWon: 0, removedUsdOwn: 0, removedOwn: 0, gain: null, why: null, usdOnly: false, over: false };
     out.proceedsWon = out.rate ? out.proceedsOwn * out.rate : null;
-    if (!(held > EPS_U)) { out.over = true; out.why = "noCost"; sales.push(out); removedKnown = false; continue; }
+    if (!(held > EPS_U)) {
+      // a sale the count reads as 0 units right after a sale that took every lot and its cost (#184 round 2: 3 old DD shares
+      // sold as 2.9999 and 0.0001): its gain is its money; nothing is left to take
+      if (e.u === 0) { out.why = out.proceedsWon == null ? "noRate" : null; out.gain = out.why ? null : out.proceedsWon; sales.push(out); continue; }
+      out.over = true; out.why = "noCost"; sales.push(out); removedKnown = false; continue;
+    }
     const frac = Math.min(1, e.u / held);
     if (e.u > held + 0.5) out.over = true;                 // more than held (the store refuses it; never counted)
+    // a sale the count reads as 0 units (0.0001 old share before a 1:3 is 1/3 of a unit) takes no shares, but takes the cost
+    // of the exact units it sold (review round 1, N4): its gain is its money less that cost, never its whole money
+    const fc = e.u > 0 ? frac : Math.min(1, e.x / held);
     let gain = 0, why = null, lost = false;
     for (const l of lots) {
       if (!(l.u > EPS_U)) continue;
-      const du = l.u * frac, share = du / e.u;              // this lot's part of the sale
-      const dOwn = l.own != null ? l.own * frac : null, dWon = l.won != null ? l.won * frac : null;
+      // this lot's part of the sale (a 0-unit sale shares its money by the lots' sizes: never 0 / 0)
+      const du = l.u * frac, share = e.u > 0 ? du / e.u : l.u / held;
+      const dOwn = l.own != null ? l.own * fc : null, dWon = l.won != null ? l.won * fc : null;
       if (l.own == null) { why = why || "noCost"; lost = true; }
       else if (l.usdOnly) {
         out.usdOnly = true;
@@ -425,6 +470,8 @@ export function kospiMirror(sets, rows, end, valueOf, closeBefore) {
         if (start == null || e.date < start) start = e.date;
         continue;
       }
+      // a sale the count reads as 0 units after every share was sold (#184 round 2): its money, no KOSPI units
+      if (!(held > EPS_U) && e.u === 0 && e.proceedsWon != null) { soldMoney += e.proceedsWon; continue; }
       if (!(held > EPS_U)) return { ok: false, why: "sale" };
       if (e.proceedsWon == null) return { ok: false, why: "cost" };
       if (!DATE.test(e.date)) return { ok: false, why: "date" };
@@ -457,22 +504,20 @@ export function kospiMirror(sets, rows, end, valueOf, closeBefore) {
 // The ledger with its events in order (purchases with their won cost, sales with their won proceeds) for kospiMirror.
 function ledgerWithEvents(recs, t, ctx) {
   const L = ledger(recs, t, ctx);
-  const sp = splitsOf({ splits: ctx && ctx.splits != null ? ctx.splits : recs.splits, [VIEW_SPLITS]: ctx && ctx.view != null ? ctx.view : recs[VIEW_SPLITS] });
-  const createdAt = ctx && ctx.createdAt != null ? ctx.createdAt : recs.createdAt;
   const planFx = ctx && ctx.planFx != null ? ctx.planFx : recs.planFx;
-  const f = (r) => splitFactor(sp, t, splitDateOf(r, { createdAt }));
   const events = [];
   const imp = Array.isArray(recs.imported) ? recs.imported : recs.imported ? [recs.imported] : [];
   for (const r of imp) if (r && r.t === t) events.push({ kind: 0, date: r.date || "" });
-  for (const p of Array.isArray(recs.purchases) ? recs.purchases : []) {
-    if (!p || p.t !== t || !(Number.isInteger(p.qty) && p.qty > 0)) continue;
-    const rate = purchaseRate(p, planFx);
-    events.push({ kind: 1, date: p.date || "", u: p.qty * UNIT * f(p), won: rate ? p.qty * p.price * rate : null });
-  }
-  for (const s of Array.isArray(recs.sales) ? recs.sales : []) {
-    if (!s || s.t !== t || !okUnits(s.qty)) continue;
-    const rate = s.ccy === "USD" ? (pos(s.fx) ? s.fx : null) : 1;
-    events.push({ kind: 2, date: s.date || "", u: toUnits(s.qty) * f(s), proceedsWon: rate ? s.qty * s.price * rate : null });
+  // purchases and sales with the units held.js counts them for (the ledger's own, Track 2 audit 1.1)
+  for (const e of unitsOf(recs, t, ctx)) {
+    const r = e.r;
+    if (e.kind === 1) {
+      const rate = purchaseRate(r, planFx);
+      events.push({ kind: 1, date: r.date || "", u: e.u, won: rate ? r.qty * r.price * rate : null });
+    } else if (e.kind === 2) {
+      const rate = r.ccy === "USD" ? (pos(r.fx) ? r.fx : null) : 1;
+      events.push({ kind: 2, date: r.date || "", u: 0 - e.u, proceedsWon: rate ? r.qty * r.price * rate : null });
+    }
   }
   events.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.kind - b.kind));
   return { ...L, events };
