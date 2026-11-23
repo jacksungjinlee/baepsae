@@ -225,3 +225,31 @@ def test_the_console_says_what_happens_to_an_unknown_role_and_to_a_card_without_
     assert got["w1"] == ['[v2] today-look (odd): insider cards shown with the title for both or blank (look.insBoth), their role is none of the three: '
                          '000001 20260000000001 (role "감사" is not one of the three)'], got["w1"]
     assert got["w2"] == ["[v2] today-look (none): insider cards not shown, no title for them (none): A 20260000000009"], got["w2"]
+
+
+def test_the_insider_amount_has_one_decimal_under_10_eok_whole_eok_above_and_jo_as_elsewhere():
+    """Jack, 2026-11-23: "one decimal only under 10억원; whole 억원 above that; 조원 with one decimal, the same as other amounts".
+    The unit is chosen after rounding (9.96억 is "10억원", 999.6억 is "1,000억원", 9,999.6억 would be "1.0조원" as eokText does); a
+    trailing .0 is dropped under 10억원; tenths are whole numbers (1.05억 is 1.1, never 1.0 from floating-point noise). Only the
+    지분 변동 card changes: the 확인 필요 cards and the other screens keep cofmt.bigWon's whole 억."""
+    got = run("""
+      const w = Lk.insiderWon, e = (x) => Math.round(x * 1e8);
+      out = {
+        edges: [1, 1.04, 1.05, 1.41, 2, 2.82, 3.6, 9.94, 9.95, 9.96, 10, 14.18, 999.4, 999.6, 1234.4, 10000, 12500, 12340, 99999.6].map((x) => [x, w(e(x))]),
+        bad: [w(0), w(-1e8), w(NaN), w(Infinity), w('1e8'), w(null)],
+        text: [Tl.insiderText({ pos: '전무', up: false, won: 141000000 }), Tl.insiderText({ pos: '대표이사', up: false, won: 360000000 }),
+          Tl.insiderText({ pos: '부사장', up: true, won: 999600000 }), Tl.insiderText({ pos: 'CEO', up: true, won: 1.23e12 })],
+        issue: Tl.issueText({ body: 'cb', amt: 141000000, p: 1 }),
+        under: (() => { const m = Lk.lookModel(loadOf(STOCKS), STORE, discOf({ insider: [ins(1, '000001', 0, 1998, '임원')] }), T, NOW);
+          return [m.insider.length, 1998 * 50000]; })() };""")
+    assert got["edges"] == [[1, "1억원"], [1.04, "1억원"], [1.05, "1.1억원"], [1.41, "1.4억원"], [2, "2억원"], [2.82, "2.8억원"], [3.6, "3.6억원"],
+                            [9.94, "9.9억원"], [9.95, "10억원"], [9.96, "10억원"], [10, "10억원"], [14.18, "14억원"], [999.4, "999억원"],
+                            [999.6, "1,000억원"], [1234.4, "1,234억원"], [10000, "1.0조원"], [12500, "1.3조원"], [12340, "1.2조원"],
+                            [99999.6, "10.0조원"]], got["edges"]
+    assert got["bad"] == [None] * 6
+    assert got["text"] == ["전무가 지분을 줄인 보고가 있어요. 지금 주가로 약 1.4억원이에요.", "대표이사가 지분을 줄인 보고가 있어요. 지금 주가로 약 3.6억원이에요.",
+                           "부사장이 지분을 늘린 보고가 있어요. 지금 주가로 약 10억원이에요.", "CEO가 지분을 늘린 보고가 있어요. 지금 주가로 약 1.2조원이에요."]
+    # the 확인 필요 cards keep the whole 억 (cofmt.bigWon is unchanged)
+    assert got["issue"] == "회사가 나중에 주식으로 바꿀 수 있는 채권을 1억원어치 발행하기로 했어요. 모두 주식으로 바뀌면 주식 수가 지금보다 1% 늘어나요."
+    # 0.999억원 (1,998 × 50,000) never makes a card: the card needs 1억원 or more at today's close
+    assert got["under"] == [0, 99900000]

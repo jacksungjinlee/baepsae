@@ -28,7 +28,7 @@ import { subjectParticle } from "./track.js";
 import { withSeen } from "./store.js";
 import { watchHits } from "./watch.js";
 import { WatchHitRows } from "./watch.jsx";
-import { lookModel, lookSay, INS_TITLE } from "./look.js";
+import { lookModel, lookSay, INS_TITLE, insiderWon } from "./look.js";
 import { dartFilingUrl } from "./routes.js";
 
 const L = () => C.look;
@@ -53,7 +53,7 @@ export const insiderTitle = (c) => titled(c.nk, L()[INS_TITLE[c.title]]);
 export function insiderText(c) {
   const p = c.pos || L().posAny;
   const ga = subjectParticle(p) !== "i";
-  return fill(c.up ? (ga ? L().insUpGa : L().insUp) : (ga ? L().insDownGa : L().insDown), { pos: p, amt: bigWon(c.won) });
+  return fill(c.up ? (ga ? L().insUpGa : L().insUp) : (ga ? L().insDownGa : L().insDown), { pos: p, amt: insiderWon(c.won) || bigWon(c.won) });
 }
 export const npsTitle = (c) => titled(c.nk, L().nps);
 export const npsText = (c) => fill(c.up ? L().npsUp : L().npsDown, { a: p1(c.a), b: p1(c.b) });

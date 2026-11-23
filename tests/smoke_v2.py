@@ -15827,12 +15827,13 @@ def scene_v196b_on(R, files, width, dark=False):
             c.querySelector('[data-ui-v2="look-body"]').innerText, c.querySelector('[data-ui-v2="look-body"] b').innerText])""")
         dn, up = C["co"]["disc"]["sells"], C["co"]["disc"]["buys"]
         # |q| × 오늘 종가: 1,000 × 1,418,000 · 1,000 × 282,000 · 500 × 282,000 · 100 × 1,418,000 · 1,600 × 225,000 (모두 1억원 이상)
+        # Jack, 2026-11-23: 10억원 아래는 한 자리 (14.18억 → 14억원 · 2.82억 → 2.8억원 · 1.41억 · 1.418억 → 1.4억원 · 3.6억 → 3.6억원)
         assert got == [
             ["20990000000104", "major", f"{nm('000660')} · {LK['insMajor']}", md(ymd(0)), fillp(LK["insDownGa"], pos=LK["posAny"], amt="14억원"), dn],
-            ["20990000000102", "major", f"{nm('005380')} · {LK['insMajor']}", md(ymd(0)), fillp(LK["insUpGa"], pos="10%이상주주", amt="3억원"), up],
-            ["20990000000106", "both", f"{nm('005380')} · {LK['insBoth']}", md(ymd(1)), fillp(LK["insDownGa"], pos="전무", amt="1억원"), dn],
-            ["20990000000103", "exec", f"{nm('000660')} · {LK['insExec']}", md(ymd(1)), fillp(LK["insUp"], pos="부사장", amt="1억원"), up],
-            ["20990000000101", "exec", f"{nm('005930')} · {LK['insExec']}", md(ymd(1)), fillp(LK["insDownGa"], pos="대표이사", amt="4억원"), dn]], got
+            ["20990000000102", "major", f"{nm('005380')} · {LK['insMajor']}", md(ymd(0)), fillp(LK["insUpGa"], pos="10%이상주주", amt="2.8억원"), up],
+            ["20990000000106", "both", f"{nm('005380')} · {LK['insBoth']}", md(ymd(1)), fillp(LK["insDownGa"], pos="전무", amt="1.4억원"), dn],
+            ["20990000000103", "exec", f"{nm('000660')} · {LK['insExec']}", md(ymd(1)), fillp(LK["insUp"], pos="부사장", amt="1.4억원"), up],
+            ["20990000000101", "exec", f"{nm('005930')} · {LK['insExec']}", md(ymd(1)), fillp(LK["insDownGa"], pos="대표이사", amt="3.6억원"), dn]], got
         assert LK["insBoth"] == "임원·주요주주 지분 변동"
         body = scr.inner_text()
         for bad in ("상무가", "회장", nm("035420"), "팔아야", "위험해요"):                 # 1억원 아래 · 7일 밖 · 가지지도 지켜보지도 않는 종목 · 조언 없음

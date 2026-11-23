@@ -36,8 +36,9 @@
 //   dates    US 실적 발표 (data.json ed, Yahoo's confirmed date) and 배당락일 (xd) of held and watched US stocks from today to
 //            today + DATE_DAYS (KST; the dates are US local dates, said under the rows), earliest first, at most DATES_MAX.
 //            No Korean dates ([Q15]: no reliable source); when a Korean stock is held the card says they are not shown yet.
-import { C } from "./format.js";
+import { C, fill, nf } from "./format.js";
 import { num } from "./engine.js";
+import { eokText } from "./deckcalc.js";
 import { heldQty } from "./held.js";
 import { watchOf, isSeen } from "./store.js";
 import { dayState } from "./rules.js";
@@ -176,6 +177,18 @@ export function insiderCards(disc, cover, today, byT, roleOf = null) {
   }
   out.cards.sort(desc);
   return out;
+}
+
+// The amount on a 지분 변동 card ("지금 주가로 약 {amt}이에요"; Jack, 2026-11-23: "one decimal only under 10억원; whole 억원 above
+// that; 조원 with one decimal, the same as other amounts"): under 10억원 after rounding, one decimal in 억원 with a trailing .0
+// dropped ("1.4억원", "2억원"); from there deckcalc.eokText, the app's other 억 · 조 amounts ("14억원", "1,234억원", "1.3조원").
+// Worked in whole tenths of 억 (1,000만원), so 1.05억 is "1.1억원", never 1.0 from floating-point noise, and 9.96억 is "10억원".
+// Other amounts (cofmt.bigWon: the 확인 필요 cards, the company page) keep their whole 억. null without the unit words.
+export function insiderWon(won) {
+  if (!(typeof won === "number" && Number.isFinite(won) && won > 0) || !C.app.eok) return null;
+  const tenths = Math.round(won / 1e7);
+  if (tenths < 100) return fill(C.app.eok, { n: tenths % 10 ? nf(tenths / 10, 1) : nf(tenths / 10) });
+  return eokText(won / 1e8);
 }
 
 // ---------------- 국민연금 ----------------
