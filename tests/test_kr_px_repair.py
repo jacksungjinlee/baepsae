@@ -72,6 +72,14 @@ def days(px, i):
     return px.index[i].date().isoformat()
 
 
+# ── 0. 스위치 ─────────────────────────────────────────────────
+def test_switch_is_off_until_jack_approves_the_line():
+    """KR_PX_REPAIR_ON 은 꺼져 있어요 (#182 리뷰): 고친 과거 주가로 만든 숫자는 화면이 그 까닭을 말해야 하는데 승인된 줄이 없어요.
+    켜는 PR (Jack 이 줄을 승인한 뒤 · 화면 PR) 이 이 줄을 True 로 바꾸고 PR 의 '안전 규칙 변경' 에 적어요 — 그 PR 에는 되돌리는 방법도 Jack 과
+    정해 둬야 해요 (켠 뒤 끄면 고친 12종목이 한꺼번에 다시 숨겨져 '새로 생긴 과거 주가 기록 오류 종목 수' 줄 (10종목) 이 발행을 막아요 · RUNBOOK)."""
+    assert F.KR_PX_REPAIR_ON is False
+
+
 # ── 1. 표 ─────────────────────────────────────────────────────
 def test_table_entries_are_well_formed():
     """사건마다: 배율은 0 보다 크고 1 이 아닌 유한한 값 · 종류는 관문과 같은 목록 · 시작 봉은 사건 앞 · 근거가 있어요. 고치지 않는 표와 겹치지 않아요.
@@ -203,9 +211,24 @@ def test_partial_range_and_its_both_edges():
     # 네이버가 앞 봉도 고치지 않았으면 (시계열이 표를 적을 때와 달라졌어요) — 시작 경계는 이미 안이지만 곱하면 밖이라 'still' (크게)
     raw2 = bars([1000, 1010, 1020, 1030, 500, 495, 490])
     assert F.kr_px_repair(raw2, "X", PXD, 30.0, table=tab)[1:] == ([], [("2026-01-09", "still")])
-    # 시작 봉이 사건과 같거나 뒤 · 시계열에 없음 → nobar
-    for frm in ("2026-01-09", "2026-01-12", "2025-12-01"):
+    # 시작 봉이 사건과 같거나 뒤 · 시계열 안인데 그 봉이 없음 → nobar
+    for frm in ("2026-01-09", "2026-01-12"):
         assert F.kr_px_repair(raw, "X", PXD, 30.0, table={("X", "2026-01-09"): (0.5, frm, "bonus", "가상")})[2] == [("2026-01-09", "nobar")]
+    assert F.kr_px_repair(raw.drop(T("2026-01-07")), "X", PXD, 30.0,
+                          table={("X", "2026-01-09"): (0.5, "2026-01-07", "bonus", "가상")})[2] == [("2026-01-09", "nobar")]
+
+
+@pytest.mark.parametrize("cut", ["2026-01-08", "2026-01-09"])
+def test_partial_range_when_the_window_starts_at_or_after_the_first_bar(cut):
+    """#182 리뷰: 창이 시작 봉에서 (또는 그 뒤에서) 시작하면 시작 경계는 창 밖이에요 — 처음부터 사건 앞까지 곱하고 사건 경계만 봐요 (크게 남기지
+    않아요 · 425040 은 2027년 2월쯤 · 472850 은 2029년쯤 이렇게 돼요). 사건이 첫 봉이 되면 'old' (조용히)."""
+    raw = bars([500, 505, 510, 1030, 1040, 500, 495, 490])     # 2026-01-08 · 01-09 두 봉이 옛 기준, 사건 01-12
+    tab = {("X", "2026-01-12"): (0.5, "2026-01-08", "bonus", "가상 권리락")}
+    win = raw[raw.index >= T(cut)]
+    got, fx, sk = F.kr_px_repair(win, "X", PXD, 30.0, table=tab)
+    n = int((win.index < T("2026-01-12")).sum())
+    assert sk == [] and fx[0]["n"] == n and list(got.values[:n]) == [F._won(v * 0.5) for v in win.values[:n]] and F.kr_jumps(got, got, 30.0) == []
+    assert F.kr_px_repair(raw[raw.index >= T("2026-01-12")], "X", PXD, 30.0, table=tab)[2] == [("2026-01-12", "old")]
 
 
 def test_conflicting_events_change_nothing():
@@ -240,9 +263,15 @@ def rep_rows():
     return [tuple(r) for r in merged_rows.values()]
 
 
-JUMP_OFF = [["001465", "2024-04-17", -91.4, "halt"], ["007610", "2026-04-29", 116.7, "halt"], ["121890", "2023-10-23", 159.9, "halt"],
-            ["210120", "2026-10-12", 51.1, "other"], ["229500", "2024-05-29", -57.5, "halt"], ["304840", "2026-11-20", 182.7, "halt"],
-            ["999990", "2025-01-02", 60.0, "other"]]
+# 2026-11-21 발행본 (pxDate 2026-11-20) 의 krSeries.jump 그대로 (20종목 · 24줄) + 표 밖의 가상 종목 하나
+JUMP_OFF = [["001465", "2024-04-17", -91.4, "halt"], ["003060", "2026-05-08", 1286.5, "halt"], ["007460", "2026-05-08", 1446.1, "halt"],
+            ["007610", "2026-04-29", 116.7, "halt"], ["009310", "2026-05-11", 400.5, "halt"], ["012170", "2025-03-06", 797.8, "halt"],
+            ["012170", "2026-08-28", 395.3, "halt"], ["012210", "2025-04-24", 93.4, "halt"], ["107640", "2024-06-24", -38.2, "spike"],
+            ["110790", "2023-10-20", -50.2, "halt"], ["121890", "2023-10-23", 159.9, "halt"], ["206950", "2024-03-15", 21.5, "halt"],
+            ["206950", "2026-04-07", 38.2, "halt"], ["210120", "2026-10-12", 51.1, "other"], ["227420", "2024-01-19", 100.0, "halt"],
+            ["229500", "2024-05-29", -57.5, "halt"], ["250030", "2026-10-15", -48.7, "other"], ["304840", "2026-11-20", 182.7, "halt"],
+            ["311060", "2024-01-25", -42.5, "other"], ["331660", "2026-05-06", -79.4, "halt"], ["425040", "2023-12-28", 94.7, "spike"],
+            ["425040", "2024-01-02", -51.4, "spike"], ["472850", "2025-12-30", 79.4, "spike"], ["472850", "2026-01-02", -47.3, "spike"]]
 
 
 def test_record_when_off(capsys):
@@ -253,10 +282,14 @@ def test_record_when_off(capsys):
     assert adj["on"] is False and len(adj["fix"]) == 13 and adj["skip"] == []
     assert V.kr_px_adj_problems(adj, PXD) == [] and json.dumps(adj, allow_nan=False, ensure_ascii=False)
     assert out.startswith("· 과거 주가 병합 보정 (KR_PX_REPAIR_ON 꺼짐 — ") and "켜면 고칠 종목 12 (13건)" in out
-    assert "001465 이름001465 2024-04-17 ×0.1" in out and "켜도 숨긴 채 남는 종목 6" in out
-    for part in ("주식 수 사건이 아닌 진짜 움직임 2: 007610 선도전기, 121890", "네이버 봉 하나가 공식 종가와 다름 1: 210120",
-                 "배율을 말하는 출처가 하나뿐 1: 229500", "고쳐도 첫날이 하루 가격 제한폭 밖 1: 304840", "아직 확인하지 않은 움직임 1: 999990"):
+    # #182 리뷰: 425040 · 472850 의 시작 봉 움직임 (2023-12-28 · 2025-12-30) 도 그 사건이 고쳐요 — 남는 종목은 8 (10 이 아니에요)
+    assert "001465 이름001465 2024-04-17 ×0.1" in out and "켜도 숨긴 채 남는 종목 8 (" in out and "아직 확인하지 않은" not in out
+    for part in ("주식 수 사건이 아닌 진짜 움직임 5: 007610 선도전기, 107640, 121890, 206950, 250030", "네이버 봉 하나가 공식 종가와 다름 1: 210120",
+                 "배율을 말하는 출처가 하나뿐 1: 229500", "고쳐도 첫날이 하루 가격 제한폭 밖 1: 304840"):
         assert part in out, part
+    assert "표에 있는데" not in out                           # 표의 12종목 모두 보정 단계에 닿았어요
+    F.kr_px_adj_step(rows, pub | {"999990"}, JUMP_OFF + [["999990", "2025-01-02", 60.0, "other"]], on=False)
+    assert "켜도 숨긴 채 남는 종목 9 (" in (out := capsys.readouterr().out) and "아직 확인하지 않은 움직임 1: 999990" in out
     # 발행하지 않는 종목은 싣지 않아요
     assert F.kr_px_adj_step(rows, {"001465"}, [], on=False)["fix"] == [x for x in adj["fix"] if x["t"] == "001465"]
 
@@ -271,10 +304,61 @@ def test_record_when_on_and_loud_skips(capsys):
     # 표의 사건이 오늘 시계열과 맞지 않으면 크게 ('same' · 'after' · 'old' 는 조용히)
     quiet = F.kr_px_adj_step([("X", "가", [], [("2026-01-02", "same"), ("2026-01-03", "old")])], {"X"}, [], on=True)
     assert capsys.readouterr().out.startswith("· ") and quiet["skip"] == [["X", "2026-01-02", "same"], ["X", "2026-01-03", "old"]]
-    loud = F.kr_px_adj_step([("X", "가", [], [("2026-01-02", "still")])], {"X"}, [["X", "2026-01-02", 80.0, "halt"]], on=True)
+    tab = {("X", "2026-01-02"): (2.0, None, "merge", "가상")}
+    loud = F.kr_px_adj_step([("X", "가", [], [("2026-01-02", "still")])], {"X"}, [["X", "2026-01-02", 80.0, "halt"]], on=True, table=tab)
     out = capsys.readouterr().out
     assert out.startswith("  !! ") and "표의 사건을 건너뜀 1: X 가 2026-01-02 고쳐도 하루 가격 제한폭 밖" in out
-    assert V.kr_px_adj_problems(loud) == []
+    assert "숨긴 채 남는 종목 1 (고쳐도 첫날이 하루 가격 제한폭 밖 1: X 가)" in out and V.kr_px_adj_problems(loud) == []
+
+
+@pytest.mark.parametrize("on", [False, True])
+@pytest.mark.parametrize("why", ["nobar", "conflict"])
+def test_a_skipped_event_keeps_its_own_reason(why, on, capsys):
+    """#182 리뷰: 건너뛴 표의 사건 (nobar · conflict) 은 남는 까닭도 그 까닭이에요 ('고쳐도 제한폭 밖' 이 아니라) · 크게."""
+    tab = {("X", "2026-01-02"): (2.0, None, "merge", "가상")}
+    F.kr_px_adj_step([("X", "가", [], [("2026-01-02", why)])], {"X"}, [["X", "2026-01-02", 80.0, "halt"]], on=on, table=tab)
+    out = capsys.readouterr().out
+    assert out.startswith("  !! ") and f"(표의 사건을 고치지 못함 ({V.KR_PX_ADJ_SKIP[why]}) 1: X 가)" in out and "고쳐도 첫날이" not in out
+
+
+def test_a_table_stock_that_never_reached_the_repair_is_named(capsys):
+    """#182 리뷰: 표에 있는데 오늘 보정 단계에 닿지 않은 종목 (목록에 없음 · 시세를 받지 못함) 과 발행하지 않는 종목을 이름으로 (조용히)."""
+    tab = {("X", "2026-01-02"): (2.0, None, "merge", "가상"), ("Y", "2026-01-02"): (2.0, None, "merge", "가상"),
+           ("Z", "2026-01-02"): (2.0, None, "merge", "가상")}
+    F.kr_px_adj_step([("X", "가", [], []), ("Z", "다", [], [])], {"X"}, [], on=False, table=tab)
+    out = capsys.readouterr().out
+    assert out.startswith("· ") and "표에 있는데 오늘 보지 못한 종목 1 (목록에 없거나 시세를 받지 못함): Y" in out
+    assert "표에 있는데 발행하지 않는 종목 1: Z" in out
+
+
+def test_one_stocks_repair_error_rehides_only_that_stock(monkeypatch, capsys):
+    """#182 리뷰 (Fable S2): 켜졌을 때 한 종목의 보정이 오류로 멈추면 그 종목만 고치지 않은 시계열 (예전처럼 숨겨요) · 건너뜀 'err' · 크게 —
+    다른 종목은 그대로 고쳐요. kr_px_repair_step 이 fetch_korea.one() 이 종목마다 부르는 그 함수예요."""
+    real = F.kr_px_repair
+
+    def boom(px, code, *a, **k):
+        if code == "007460":
+            raise ValueError("가상 오류")
+        return real(px, code, *a, **k)
+    monkeypatch.setattr(F, "kr_px_repair", boom)
+    got = {}
+    for key in (("003060", "2026-05-08"), ("007460", "2026-05-08"), ("001465", "2024-04-17")):
+        raw = ser(REAL[key])
+        got[key[0]] = (raw, *F.kr_px_repair_step(raw, key[0], "이름", PXD, MARKET[key[0]], on=True))
+    out = capsys.readouterr().out
+    assert "  !! 과거 주가 보정 오류 007460 이름 (ValueError: 가상 오류) — 이 종목만 고치지 않아요" in out
+    raw, px, rec = got["007460"]
+    assert px is raw and rec == ("007460", "이름", [], [("", "err")]) and F.kr_jumps(px, px, 30.0)
+    for c in ("003060", "001465"):
+        raw, px, rec = got[c]
+        assert px is not raw and len(rec[2]) == 1 and F.kr_jumps(px, px, 30.0) == []
+    F.kr_px_adj_step([r for _, _, r in got.values()], {"003060", "007460", "001465"}, [["007460", "2026-05-08", 1446.1, "halt"]], on=True)
+    out = capsys.readouterr().out
+    assert out.startswith("  !! ") and "고친 종목 2 (2건 · 숨김에서 빠짐 2)" in out and "표의 사건을 고치지 못함 (보정 단계 오류) 1: 007460" in out
+    # 꺼져 있으면 오류가 없어도 받은 그대로, 표 밖의 종목은 기록 없이 그대로
+    raw = ser(REAL[("003060", "2026-05-08")])
+    assert F.kr_px_repair_step(raw, "003060", "이름", PXD, "KOSPI", on=False)[0] is raw
+    assert F.kr_px_repair_step(raw, "005930", "삼성전자", PXD, "KOSPI", on=True) == (raw, None)
 
 
 # ── 4. fetch_korea 안의 자리 ──────────────────────────────────
@@ -283,10 +367,11 @@ def test_fetch_korea_repairs_before_every_number_only_when_on():
     기록은 krSeries 를 만든 바로 뒤 · 숫자를 비우기(mark_px_bad) 전에 (오류가 나도 숫자는 그대로 · 기록만 비워요)."""
     src = inspect.getsource(F.fetch_korea)
     i_clean = src.index("px, glitch = naver_clean(px)")
-    i_rep = src.index('rpx, rfix, rskip = kr_px_repair(px, code, px_date, kr_day_limit(row.get("Market")))')
-    i_use = src.index("if rfix and KR_PX_REPAIR_ON:\n                    px = rpx")
-    assert i_clean < i_rep < i_use < src.index("raw = cut_at(px, px_date)") < src.index("px, how = pin_close(px, px_date, close)")
-    assert src.count("px = rpx") == 1 and src.count("kr_px_repair(") == 1
+    i_rep = src.index('px, rrec = kr_px_repair_step(px, code, str(row["Name"]), px_date, row.get("Market"))')
+    assert i_clean < i_rep < src.index("raw = cut_at(px, px_date)") < src.index("px, how = pin_close(px, px_date, close)")
+    assert src.count("kr_px_repair_step(") == 1 and "kr_px_repair(" not in src
+    step = inspect.getsource(F.kr_px_repair_step)
+    assert "return (rpx if (rfix and on) else px), (code, name, rfix, rskip)" in step and "except Exception" in step
     i_ks = src.index("krs = kr_series_check(")
     i_adj = src.index('krs["adj"] = kr_px_adj_step(px_rep, {r["t"] for r in out}, krs.get("jump"), {r["t"]: r.get("nk") for r in out})')
     assert i_ks < i_adj < src.index("mark_px_bad(out, krs, win_cut)")
@@ -358,15 +443,34 @@ def test_gate_row_passes_and_names_each_repair():
     {"on": True, "fix": [dict(FIX, d="2027-01-04")], "skip": []}, {"on": True, "fix": [dict(FIX, **{"from": "2024-04-17"})], "skip": []},
     {"on": True, "fix": [FIX, FIX], "skip": []}, {"on": True, "fix": [], "skip": [["005930", "2024-04-17", "naver"]]},
     {"on": True, "fix": [], "skip": [["005930", "2024-04-17"]]},
+    # #182 리뷰: 관문을 멈추던 모양 (TypeError · OverflowError) — 이제 모양 경고
+    {"on": True, "fix": [dict(FIX, k=["merge"])], "skip": []}, {"on": True, "fix": [dict(FIX, k={"merge": 1})], "skip": []},
+    {"on": True, "fix": [], "skip": [["005930", "2024-04-17", ["same"]]]}, {"on": True, "fix": [], "skip": [["005930", "2024-04-17", {"a": 1}]]},
+    {"on": True, "fix": [dict(FIX, f=10 ** 400)], "skip": []}, {"on": True, "fix": [dict(FIX, d=["2024-04-17"])], "skip": []},
+    {"on": True, "fix": [dict(FIX, t=["005930"])], "skip": []}, {"on": True, "fix": [dict(FIX, **{"from": ["2024-01-02"]})], "skip": []},
+    {"on": True, "fix": ["005930"], "skip": []},
 ])
 def test_gate_row_warns_never_fails_on_a_wrong_shape(adj):
     rep, r = gate(adj)
     assert r[3] == "WARN" and r[1].startswith("모양: ") and ROW not in {x[0] for x in rep.failed}
 
 
+def test_gate_row_never_stops_the_gate(monkeypatch):
+    """#182 리뷰: 경고만 하는 줄은 어떤 오류로도 관문을 멈추지 않아요 — run_checks 가 그 오류를 이 줄의 경고로 바꿔요."""
+    def boom(*a, **k):
+        raise RuntimeError("가상 오류")
+    monkeypatch.setattr(V, "check_kr_px_adj", boom)
+    rep, r = gate({"on": True, "fix": [FIX], "skip": []})
+    assert r[3] == "WARN" and r[1].startswith("확인하다 오류 (RuntimeError: 가상 오류)") and ROW not in {x[0] for x in rep.failed}
+    assert ROW == V.KR_PX_ADJ_ROW
+
+
 def test_gate_row_warns_when_a_repair_did_not_clear_or_a_verified_factor_no_longer_fits():
     rep, r = gate({"on": True, "fix": [FIX], "skip": []}, jump=[["005930", "2024-04-17", -91.4, "halt"]])
-    assert r[3] == "WARN" and "고쳤는데 그날 움직임이 남음 1: 005930 삼성전자 2024-04-17" in r[1] and ROW not in {x[0] for x in rep.failed}
+    assert r[3] == "WARN" and "고쳤는데 숨긴 채 남음 1: 005930 삼성전자 (2024-04-17)" in r[1] and ROW not in {x[0] for x in rep.failed}
+    # #182 리뷰: 다른 날짜의 움직임이어도 (네이버가 일부만 다시 고쳐 오래된 보정이 두 번 곱해진 봉) 경고
+    _, r = gate({"on": True, "fix": [FIX], "skip": []}, jump=[["005930", "2023-11-02", 99.0, "other"]])
+    assert r[3] == "WARN" and "고쳤는데 숨긴 채 남음 1: 005930 삼성전자 (2023-11-02)" in r[1]
     rep, r = gate({"on": True, "fix": [], "skip": [["005930", "2024-04-17", "still"], ["000660", "2025-01-02", "old"]]})
     assert r[3] == "WARN" and r[1].endswith("표의 사건을 건너뜀 1: 005930 삼성전자 2024-04-17 고쳐도 하루 가격 제한폭 밖")
     _, r = gate({"on": False, "fix": [FIX], "skip": []}, jump=[["005930", "2024-04-17", -91.4, "halt"]])

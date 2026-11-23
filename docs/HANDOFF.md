@@ -31,8 +31,9 @@ rescale the bars before 13 old share events Naver never rescaled (12 of the 20 s
 run re-checks each entry against the downloaded series and skips it if Naver has rescaled it (never twice) or if it no longer fits.
 `KR_PX_REPAIR_ON` is **False**: the numbers would be built on a history 뱁새 corrected, and the say-why line is not approved, so the run
 only logs and records what it would repair (`krSeries.adj`, new warning-only gate row "국내 과거 주가 병합 보정 (krSeries.adj ·
-경고만)"); nothing users see changes. **Waiting for Jack:** the screen line (draft in the PR), then a screens PR shows it and flips the
-switch. Still hidden either way: 007610, 107640, 121890, 206950, 210120, 229500, 250030 (real moves, transfer listings, one bad Naver
+경고만)"); nothing users see changes. **Waiting for Jack:** the two screen lines (drafts in the PR: share-count events, and 무상증자
+ex-dates for 311060 · 425040 · 472850), then a screens PR shows them and flips the switch (a test pins it OFF). That PR needs a rollback
+plan agreed with Jack: once ON, switching OFF re-hides all 12 at once and `PX_BAD_NEW_FAIL` (10) stops the publish (RUNBOOK). Still hidden either way: 007610, 107640, 121890, 206950, 210120, 229500, 250030 (real moves, transfer listings, one bad Naver
 bar, one source only) and 304840 (Naver rescaled it on 11-23; it should drop out by itself). RUNBOOK "Repairing the broken histories".
 
 **CI checks the two PR rules (#175, 2026-11-23; Jack: "Automate the rules you missed"):** the last step of `ci.yml`'s `checks`

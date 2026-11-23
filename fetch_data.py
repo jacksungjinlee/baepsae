@@ -3556,6 +3556,8 @@ def kr_jumps(final, raw, limit, tol=PIN_PX_TOL):
 KR_PX_REPAIR_ON = False     # 켜면 고친 시계열로 숫자를 만들어요. 꺼 두면 무엇을 고칠지만 계산해 로그 · krSeries.adj (on false) 에 남겨요.
 #                            꺼 둔 까닭 (CLAUDE.md "Every adjusted … number says what happened and why"): 뱁새가 고친 과거 주가로 만든 숫자는 화면이
 #                            그 까닭을 한 줄로 말해야 하는데, 승인된 줄이 아직 없어요. Jack 이 줄을 승인하면 화면 PR 과 함께 켜요.
+#                            켠 뒤 다시 끄면 고친 종목(12)이 한꺼번에 krSeries.jump 로 돌아와 관문의 PX_BAD_NEW_FAIL (10) 이 발행을 막아요 —
+#                            켜는 PR 은 되돌리는 방법을 Jack 과 정해 둬요 (RUNBOOK). tests/test_kr_px_repair.py 가 꺼진 것을 지켜요.
 KR_PX_REPAIRS = {
     ("001465", "2024-04-17"): (0.1, None, "split", "KRX 기준가 19,890 = 전날 종가 198,900 × 0.1 (다음 · 네이버 전일 대비) · 상장주식수 215,385 → "
                                                     "2,153,850 (다음) · 야후 1:10 분할 2024-04-17"),
@@ -3613,9 +3615,12 @@ def kr_px_repair(px, code, px_date, limit, tol=PIN_PX_TOL, table=None):
     날마다 받은 시계열에서 다시 확인해요 — 그 사건의 경계마다 (E 앞 봉 → E 봉 · S 가 있으면 S 앞 봉 → S 봉) 원래 움직임이 하루 가격 제한폭
     (jump_bounds · kr_jumps 와 같은 기준) 밖이고, 곱한 뒤에는 안이어야 고쳐요:
       after    E 가 기준일(px_date) 뒤 · old  E 가 시계열의 첫 봉이거나 그보다 앞 (창 밖으로 나갔어요 — 고칠 앞 봉이 없어요) ·
-      nobar  E 나 S 봉이 없거나 그 앞 봉이 없음 · same  모든 경계의 원래 움직임이 이미 안 (네이버가 고쳤어요 — 두 번
+      nobar  E 봉이 없음 · S 가 시계열 안인데 그 봉이 없거나 E 와 같거나 뒤 · same  모든 경계의 원래 움직임이 이미 안 (네이버가 고쳤어요 — 두 번
       곱하지 않아요) · still  곱한 뒤 어느 경계가 밖 (한 경계만 이미 안이었던 경우도: 시계열이 표를 적을 때와 달라졌어요) ·
       conflict  사건마다는 맞았는데 모두 곱한 뒤 다시 보니 어느 경계가 밖 (그 종목은 하나도 고치지 않아요).
+    S 가 시계열의 첫 봉이거나 그보다 앞이면 처음부터 곱하고 사건 경계만 봐요 (시작 경계는 창 밖). same · after · old 는 조용한 까닭이에요
+    (KR_PX_ADJ_QUIET · 로그 · 관문이 경고하지 않아요). 날마다의 확인은 그날 움직임이 제한폭 안인지만 보는 거친 확인이에요 (× 12 와 × 15 를 가르지
+    못해요) — 배율이 맞는지는 두 출처로 확인한 표가 지켜요.
     반환: (시계열 — 고친 것이 없으면 받은 그대로, 고친 사건 [{t, d, f, (from), k, n 곱한 봉 수, src}], 건너뛴 사건 [(날짜, 까닭)])."""
     table = KR_PX_REPAIRS if table is None else table
     evs = sorted((d, v) for (c, d), v in table.items() if c == code)
@@ -3641,11 +3646,13 @@ def kr_px_repair(px, code, px_date, limit, tol=PIN_PX_TOL, table=None):
         if e <= idx[0]:
             skips.append((d, "old"))                   # 시계열 창(약 3년) 밖으로 나갔어요 — 고칠 앞 봉이 없어요
             continue
-        ie, js = pos.get(e), (pos.get(s) if s is not None else 0)
-        if not ie or js is None or (s is not None and (not js or js >= ie)):
+        ie = pos.get(e)
+        # 시작 봉이 시계열의 첫 봉이거나 그보다 앞이면 (창 밖으로 나가는 중) 처음부터 곱하고 사건 경계만 봐요 — 시작 경계는 창 밖이에요
+        js = 0 if s is None or s <= idx[0] else pos.get(s)
+        if not ie or js is None or js >= ie:
             skips.append((d, "nobar"))
             continue
-        bounds = [(ie, True)] + ([(js, False)] if s is not None else [])   # (경계의 뒤 봉 자리, 앞 봉을 곱하는지)
+        bounds = [(ie, True)] + ([(js, False)] if js else [])   # (경계의 뒤 봉 자리, 앞 봉을 곱하는지)
         was, now = [], []                               # 경계마다: 원래 안인지 · 곱한 뒤 안인지
         for i, left in bounds:
             a, b = float(vals.iloc[i - 1]), float(vals.iloc[i])
@@ -3664,6 +3671,23 @@ def kr_px_repair(px, code, px_date, limit, tol=PIN_PX_TOL, table=None):
     if not all(inside(float(new.iloc[i - 1]), float(new.iloc[i])) for i in edges):
         return px, [], skips + [(x["d"], "conflict") for x in fixes]
     return new, fixes, skips
+
+
+def kr_px_repair_step(px, code, name, px_date, market, on=None, table=None):
+    """fetch_korea.one() 이 종목마다 부르는 한 곳 (2026-11-24): 표에 있는 종목이면 kr_px_repair 를 부르고, 켜졌고(on · None 이면
+    KR_PX_REPAIR_ON) 고친 사건이 있을 때만 고친 시계열을 돌려줘요. 오류는 그 종목 하나에서 멈춰요 — 그 종목만 고치지 않은 시계열 (예전처럼 움직임
+    검사가 숨겨요) · 건너뛴 사건 ('', 'err') · 크게 남겨요. 다른 종목의 보정은 그대로예요.
+    반환: (쓸 시계열, 기록 (코드, 이름, 고친 사건, 건너뛴 사건) 또는 None — 표에 없는 종목)."""
+    on = KR_PX_REPAIR_ON if on is None else bool(on)
+    table = KR_PX_REPAIRS if table is None else table
+    if not any(c == code for c, _ in table):
+        return px, None
+    try:
+        rpx, rfix, rskip = kr_px_repair(px, code, px_date, kr_day_limit(market), table=table)
+    except Exception as e:                     # 보정이 멈춰도 종목은 예전처럼 (움직임 검사가 숨겨요) — 크게 남겨요
+        log(f"  !! 과거 주가 보정 오류 {code} {name} ({type(e).__name__}: {str(e)[:120]}) — 이 종목만 고치지 않아요 (숫자는 예전처럼 숨겨요)")
+        return px, (code, name, [], [("", "err")])
+    return (rpx if (rfix and on) else px), (code, name, rfix, rskip)
 
 
 def _official_map(df):
@@ -8728,16 +8752,10 @@ def fetch_korea(start, today, rf, prev=None):
                     naver_bad.append((code, str(row["Name"]), glitch))
             # 2026-11-24 (Jack, Track 1 item 4): 네이버가 고치지 않은 옛 주식 수 사건의 앞 봉을 확인한 배율로 (KR_PX_REPAIRS · 표에 없는 종목은 그대로).
             # 켜져 있을 때만 그 시계열이 '네이버 시계열' 이 돼요 — 아래 고정 · 자기 점검 · c1w · 움직임 검사 · 모든 숫자가 같은 시계열을 써요
-            if any(c == code for c, _ in KR_PX_REPAIRS):
-                try:
-                    rpx, rfix, rskip = kr_px_repair(px, code, px_date, kr_day_limit(row.get("Market")))
-                except Exception as e:                 # 보정이 멈춰도 종목은 예전처럼 (움직임 검사가 숨겨요) — 크게 남겨요
-                    rpx, rfix, rskip = px, [], [("", "err")]
-                    log(f"  !! 과거 주가 보정 오류 {code} ({type(e).__name__}: {str(e)[:120]}) — 이 종목은 고치지 않아요")
+            px, rrec = kr_px_repair_step(px, code, str(row["Name"]), px_date, row.get("Market"))
+            if rrec is not None:
                 with lock:
-                    px_rep.append((code, str(row["Name"]), rfix, rskip))
-                if rfix and KR_PX_REPAIR_ON:
-                    px = rpx
+                    px_rep.append(rrec)
             if close is not None:
                 raw = cut_at(px, px_date)          # 네이버 원래 시계열 (자기 점검 · 움직임 이유에 써요)
                 px, how = pin_close(px, px_date, close)
@@ -9000,21 +9018,33 @@ def kr_series_check(pin, kept, kept_names, bad, jumps, published, days, ref=None
             "jump": [[c, t.date().isoformat(), float(p), w] for c, _, j in jm for t, p, w in j]}
 
 
-def kr_px_adj_step(rep, published, jump, names=None, on=None):
+def kr_px_adj_step(rep, published, jump, names=None, on=None, table=None):
     """과거 주가 보정 (kr_px_repair) 을 크게 남기고 data.json krSeries.adj 를 만들어요 (2026-11-24 · 관문이 읽어요).
-    rep: [(코드, 이름, 고친 사건들, 건너뛴 사건들)] (fetch_korea 의 종목마다 · 표에 있는 종목만) · published: 발행하는 종목 코드 (이 종목만 실어요) ·
-    jump: 오늘 krSeries.jump ([[코드, 날짜, %, 이유]…] — 켜졌으면 고친 시계열의 움직임) · names: {코드: 이름} · on: KR_PX_REPAIR_ON (None 이면 그 값).
-    로그 한 줄: 고친 (꺼졌으면 켜면 고칠) 종목과 배율 · 숨김에서 빠진 종목 수 · 못 함 (오늘 jump 에 남는 종목을 까닭별로 — KR_PX_NOFIX · 표에 없으면
-    '아직 확인하지 않은 움직임') · 표의 사건을 건너뛴 까닭. 'same' · 'after' 말고 건너뛴 사건이 있으면 크게 (확인한 배율이 오늘 시계열과 맞지 않아요).
+    rep: [(코드, 이름, 고친 사건들, 건너뛴 사건들)] (fetch_korea 의 종목마다 · 표에 있는 종목 중 보정 단계에 닿은 것) · published: 발행하는 종목 코드
+    (이 종목만 실어요) · jump: 오늘 krSeries.jump ([[코드, 날짜, %, 이유]…] — 켜졌으면 고친 시계열의 움직임) · names: {코드: 이름} ·
+    on: KR_PX_REPAIR_ON (None 이면 그 값) · table: KR_PX_REPAIRS (None 이면 그 표 · 시험용).
+    로그 한 줄: 고친 (꺼졌으면 켜면 고칠) 종목과 배율 · 숨김에서 빠진 종목 수 · 숨긴 채 남는 종목 (오늘 jump 에 남는 종목을 까닭별로: 표의 사건 날짜
+    또는 시작 봉(from)의 움직임이면 그 사건의 결과 — 꺼졌을 때 고칠 사건이면 남지 않아요 · 건너뛴 사건이면 그 까닭 · 표 밖이면 KR_PX_NOFIX, 없으면
+    '아직 확인하지 않은 움직임') · 표의 사건을 건너뛴 까닭 · 표에 있는데 오늘 보정 단계에 닿지 않았거나 (목록에 없음 · 시세를 받지 못함) 발행하지 않는
+    종목 (조용히). 'same' · 'after' · 'old' 말고 건너뛴 사건이 있으면 크게 (확인한 배율이 오늘 시계열과 맞지 않아요).
     krSeries.adj: {"on": 켜졌는지, "fix": [{t, d, f, (from), k, n, src}…] (켜졌으면 고친 사건 · 꺼졌으면 켜면 고칠 사건), "skip": [[코드, 날짜, 까닭]…]}."""
     on = KR_PX_REPAIR_ON if on is None else bool(on)
+    table = KR_PX_REPAIRS if table is None else table
     names = dict(names or {})
+    seen = {c for c, _, _, _ in rep}
     rows = sorted((c, nm, fx, sk) for c, nm, fx, sk in rep if c in published)
     for c, nm, _, _ in rows:
         names.setdefault(c, nm)
     fix = [x for _, _, fx, _ in rows for x in fx]
     skip = [[c, d, w] for c, _, _, sk in rows for d, w in sk]
     done = {(x["t"], x["d"]) for x in fix}
+    skip_by = {(c, d): w for c, d, w in skip}
+    err = {c for c, _, w in skip if w == "err"}
+    edge = {}                                                  # (종목, 움직임 날짜) → 표의 사건 키: 사건 날짜와 시작 봉(from) 둘 다
+    for (c, d), v in table.items():
+        edge[(c, d)] = (c, d)
+        if v[1]:
+            edge[(c, v[1])] = (c, d)
     fixed = sorted({x["t"] for x in fix})
     jcodes = {str(j[0]) for j in jump or [] if isinstance(j, list) and j}
     left = collections.defaultdict(list)                      # 오늘 jump 에 남는 (꺼졌으면 켜도 남을) 종목 → 까닭
@@ -9022,17 +9052,29 @@ def kr_px_adj_step(rep, published, jump, names=None, on=None):
         if not (isinstance(j, list) and len(j) >= 2):
             continue
         c, d = str(j[0]), str(j[1])
-        if (c, d) in KR_PX_REPAIRS:
-            why = None if (c, d) in done and not on else "still"   # 켜졌는데 남았으면 고쳐도 밖이에요 (kr_px_repair 가 막아서 생기면 안 돼요)
-        else:
+        ev = edge.get((c, d))
+        if ev is None:
             why = (KR_PX_NOFIX.get((c, d)) or ("new",))[0]
+        elif c in err:
+            why = "skip:err"
+        elif ev in done:
+            why = None if not on else "still"                 # 켜졌는데 남았으면 고쳐도 밖이에요 (kr_px_repair 가 막아서 생기면 안 돼요)
+        else:
+            w = skip_by.get(ev)
+            why = "still" if w in (None, "still") else f"skip:{w}"
         if why and c not in left[why]:
             left[why].append(c)
     keep = sorted({c for v in left.values() for c in v})
     loud = [s for s in skip if s[2] not in KR_PX_ADJ_QUIET]
+    tcodes = sorted({c for c, _ in table})
+    unseen = [c for c in tcodes if c not in seen]
+    unpub = [c for c in tcodes if c in seen and c not in published]
 
     def nm(c):
         return f"{c} {names.get(c) or ''}".strip()
+
+    def why_ko(w):
+        return KR_PX_NOFIX_KO[w] if w in KR_PX_NOFIX_KO else f"표의 사건을 고치지 못함 ({KR_PX_ADJ_SKIP.get(w[5:], w[5:])})"
 
     def fx_txt(x):
         return f"{nm(x['t'])} {x['d']} ×{x['f']:.4g}" + (f" ({x['from']}부터)" if x.get("from") else "")
@@ -9040,11 +9082,13 @@ def kr_px_adj_step(rep, published, jump, names=None, on=None):
             + (f"고친 종목 {len(fixed)} ({len(fix)}건 · 숨김에서 빠짐 {sum(1 for c in fixed if c not in jcodes)})" if on
                else f"켜면 고칠 종목 {len(fixed)} ({len(fix)}건)"))
     body = (", ".join(fx_txt(x) for x in fix[:JUMP_LOG_SHOW]) + (f" 외 {len(fix) - JUMP_LOG_SHOW}건" if len(fix) > JUMP_LOG_SHOW else "")) if fix else "없음"
-    why_txt = " · ".join(f"{KR_PX_NOFIX_KO[w]} {len(v)}: " + ", ".join(nm(c) for c in v[:JUMP_LOG_SHOW])
+    why_txt = " · ".join(f"{why_ko(w)} {len(v)}: " + ", ".join(nm(c) for c in v[:JUMP_LOG_SHOW])
                          + (f" 외 {len(v) - JUMP_LOG_SHOW}종목" if len(v) > JUMP_LOG_SHOW else "") for w, v in sorted(left.items()))
-    skip_txt = ", ".join(f"{nm(c)} {d} {KR_PX_ADJ_SKIP.get(w, w)}" for c, d, w in skip[:JUMP_LOG_SHOW])
+    skip_txt = ", ".join(f"{nm(c)} {d} {KR_PX_ADJ_SKIP.get(w, w)}".replace("  ", " ") for c, d, w in skip[:JUMP_LOG_SHOW])
+    gone_txt = (f" · 표에 있는데 오늘 보지 못한 종목 {len(unseen)} (목록에 없거나 시세를 받지 못함): {', '.join(unseen)}" if unseen else "") \
+        + (f" · 표에 있는데 발행하지 않는 종목 {len(unpub)}: {', '.join(unpub)}" if unpub else "")
     log(f"{'  !! ' if loud else '· '}{head} — {body} · {'숨긴 채 남는' if on else '켜도 숨긴 채 남는'} 종목 {len(keep)}"
-        + (f" ({why_txt})" if keep else "") + (f" · 표의 사건을 건너뜀 {len(skip)}: {skip_txt}" if skip else ""))
+        + (f" ({why_txt})" if keep else "") + (f" · 표의 사건을 건너뜀 {len(skip)}: {skip_txt}" if skip else "") + gone_txt)
     return {"on": on, "fix": fix, "skip": skip}
 
 

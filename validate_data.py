@@ -374,6 +374,7 @@ KR_JUMP_WHY = {"pin": "우리 고정이 만든 움직임", "halt": "거래정지
 KR_PX_ADJ_KIND = {"merge": "병합 · 감자 (주식 수가 줄어요)", "split": "분할 (주식 수가 늘어요)", "bonus": "무상증자 권리락"}
 KR_PX_ADJ_SKIP = {"after": "기준일 뒤 사건", "old": "시계열 창 밖으로 나간 사건", "nobar": "시계열에 그날 봉이 없음", "same": "이미 같은 기준 (네이버가 고쳤어요)",
                   "still": "고쳐도 하루 가격 제한폭 밖", "conflict": "같은 종목의 다른 보정과 어긋남", "err": "보정 단계 오류"}
+KR_PX_ADJ_ROW = "국내 과거 주가 병합 보정 (krSeries.adj · 경고만)"
 KR_PX_ADJ_QUIET = ("same", "after", "old")   # 이 까닭으로 건너뛴 사건은 경고하지 않아요 (네이버가 고쳤거나 · 아직 오지 않았거나 · 창 밖으로 나간 사건 — 표의 배율이 틀린 게 아니에요)
 # 2026-11-14 (Jack, Q2 (a) "this week" · 새 줄만, 늦추는 줄 없음): 하루 움직임이 가격 제한폭으로 설명되지 않는 종목(krSeries.jump)은 그 시계열로
 # 만든 숫자를 모두 비워요 — 파이프라인(fetch_data.mark_px_bad)이 이 목록을 읽어요. data.json: 52주 최고 · 최저, 변동성, 베타와 그 표준오차 ·
@@ -2851,7 +2852,10 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=(prev or {}).get("macro") if rel else None)
     check_unit(rep, data, kr, by, comps, pdata)
     check_kr_series(rep, data, kr, pdata)  # 2026-11-14 (Jack: "52주 숫자부터"): 다른 기준의 공식 종가 고정 (실패) · 제한폭 넘는 움직임 (경고)
-    check_kr_px_adj(rep, data, kr)         # 2026-11-24 (Jack, Track 1 item 4): 과거 주가 병합 보정 — 고친 종목과 배율 (경고만 · 실패하지 않아요)
+    try:                                   # 2026-11-24 (Jack, Track 1 item 4): 과거 주가 병합 보정 — 고친 종목과 배율 (경고만 · 실패하지 않아요)
+        check_kr_px_adj(rep, data, kr)
+    except Exception as e:                 # 경고만 하는 줄이 관문을 멈추지 않게 (#182 리뷰): 어떤 오류든 그 줄의 경고로
+        rep.add(KR_PX_ADJ_ROW, True, f"확인하다 오류 ({type(e).__name__}: {str(e)[:120]}) — krSeries.adj 를 보세요", "경고만", warn=True)
     check_px_bad(rep, data, comps, pdata)  # 2026-11-14 (Jack, Q2 (a)): 그 움직임이 있는 종목은 52주 · 출렁임 · 위험 숫자를 비워요 (실패) · 필수 종목 추세 · 저변동 순위 (실패)
     check_kr_no_trade(rep, data, pdata, macro)    # 2026-11-14 (Jack, design chat 2026-11-08): 거래 없는 종목은 d1 빈 칸 + noTrade · 빈 d1 은 이유 (실패: 우리 값끼리 어긋날 때만)
     check_v196b(rep, data, disc, by, today)   # v19.6b (Part B.1): 주요사항 공시 · 내부자 역할 · 미국 일정 (모양 · 칸이 없는 예전 파일은 경고만)
@@ -5709,10 +5713,16 @@ def kr_px_adj_problems(adj, px=None):
         seen = set()
         for x in fix:
             f = x.get("f") if isinstance(x, dict) and isinstance(x.get("f"), (int, float)) and not isinstance(x.get("f"), bool) else None
-            ok = (isinstance(x, dict) and isinstance(x.get("t"), str) and x["t"] and is_day(x.get("d")) and (px is None or day(x["d"]) <= px)
-                  and f is not None and math.isfinite(f) and f > 0 and abs(f - 1) > 1e-9 and x.get("k") in KR_PX_ADJ_KIND
+            try:
+                f = float(f) if f is not None else None          # 아주 큰 정수는 OverflowError — 모양 문제로 (#182 리뷰)
+            except (OverflowError, ValueError):
+                f = None
+            ok = (isinstance(x, dict) and isinstance(x.get("t"), str) and x["t"] and isinstance(x.get("d"), str) and is_day(x["d"])
+                  and (px is None or day(x["d"]) <= px)
+                  and f is not None and math.isfinite(f) and f > 0 and abs(f - 1) > 1e-9 and isinstance(x.get("k"), str) and x["k"] in KR_PX_ADJ_KIND
                   and _nonneg_int(x.get("n")) and x["n"] >= 1 and isinstance(x.get("src"), str) and x["src"].strip()
-                  and ("from" not in x or (is_day(x["from"]) and day(x["from"]) < day(x["d"]))) and (x["t"], x["d"]) not in seen)
+                  and ("from" not in x or (isinstance(x["from"], str) and is_day(x["from"]) and day(x["from"]) < day(x["d"])))
+                  and (x["t"], x["d"]) not in seen)
             if not ok:
                 out.append(f"fix {str(x)[:50]}")
                 break
@@ -5721,7 +5731,8 @@ def kr_px_adj_problems(adj, px=None):
         out.append("skip 목록 아님")
     else:
         for x in skip:
-            if not (isinstance(x, list) and len(x) == 3 and isinstance(x[0], str) and x[0] and isinstance(x[1], str) and x[2] in KR_PX_ADJ_SKIP):
+            if not (isinstance(x, list) and len(x) == 3 and isinstance(x[0], str) and x[0] and isinstance(x[1], str) and isinstance(x[2], str)
+                    and x[2] in KR_PX_ADJ_SKIP):
                 out.append(f"skip {str(x)[:40]}")
                 break
     return out
@@ -5731,11 +5742,12 @@ def check_kr_px_adj(rep, data, kr):
     """국내 과거 주가 병합 보정 (2026-11-24 · Jack, Track 1 item 4 · 경고만 — 이 줄은 발행을 막지 않아요). 네이버가 고치지 않은 옛 주식 수 사건
     (병합 · 감자 · 분할 · 무상증자)의 앞 봉을 확인한 배율로 고친 종목 (krSeries.adj · fetch_data.kr_px_repair) 과 배율을 적어요. 고친 종목은
     krSeries.jump 에서 빠져 숫자가 돌아와요 — 숨김 (과거 주가 기록 오류 종목의 숫자 비움 (pxBad)) 줄과 그 기준은 그대로예요.
-    경고: 모양이 틀림 · 켜졌는데 고친 사건의 날짜(또는 시작 봉)의 움직임이 krSeries.jump 에 남음 · 표의 사건을 'same' (네이버가 고침) · 'after'
-    말고 다른 까닭으로 건너뜀 (확인한 배율이 오늘 시계열과 맞지 않아요 — 로그의 '과거 주가 병합 보정' 줄을 보세요). adj 가 없는 파일 (그 전
-    형식) 은 통과. 꺼져 있으면 (on false) 켜면 고칠 종목을 적어요 (숫자는 예전처럼)."""
-    name = "국내 과거 주가 병합 보정 (krSeries.adj · 경고만)"
-    rule = ("경고만 (모양이 틀림 · 켜졌는데 고친 날의 움직임이 krSeries.jump 에 남음 · 표의 사건을 "
+    경고: 모양이 틀림 · 켜졌는데 고친 종목이 krSeries.jump 에 남음 (어느 날짜든 — 네이버가 일부만 다시 고쳐 두 번 곱해진 봉도 여기서 보여요) ·
+    표의 사건을 'same' (네이버가 고침) · 'after' (기준일 뒤) · 'old' (창 밖) 말고 다른 까닭으로 건너뜀 (확인한 배율이 오늘 시계열과 맞지 않아요 —
+    로그의 '과거 주가 병합 보정' 줄을 보세요). adj 가 없는 파일 (그 전 형식) 은 통과. 꺼져 있으면 (on false) 켜면 고칠 종목을 적어요 (숫자는
+    예전처럼). 이 줄은 실패하지 않아요 — 부르는 곳(run_checks)이 오류도 경고로 바꿔요."""
+    name = KR_PX_ADJ_ROW
+    rule = ("경고만 (모양이 틀림 · 켜졌는데 고친 종목이 krSeries.jump 에 남음 · 표의 사건을 "
             + " · ".join(KR_PX_ADJ_SKIP[k] for k in KR_PX_ADJ_QUIET) + " 말고 다른 까닭으로 건너뜀)")
     ks = data.get("krSeries")
     if not isinstance(ks, dict) or "adj" not in ks:
@@ -5751,14 +5763,19 @@ def check_kr_px_adj(rep, data, kr):
     def nm(c):
         return f"{c} {(by.get(c) or {}).get('nk', '')}".strip()
     fix = adj["fix"]
-    jm = {(str(j[0]), str(j[1])[:10]) for j in ks.get("jump") or [] if isinstance(j, list) and len(j) >= 2}
-    left = [x for x in fix if adj["on"] and ((x["t"], x["d"]) in jm or (x.get("from") and (x["t"], x["from"]) in jm))]
+    jl = ks.get("jump") if isinstance(ks.get("jump"), list) else []
+    jm = {}
+    for j in jl:
+        if isinstance(j, list) and len(j) >= 2:
+            jm.setdefault(str(j[0]), []).append(str(j[1])[:10])
+    left = sorted({x["t"] for x in fix if adj["on"] and x["t"] in jm})       # 어느 날짜든 (#182 리뷰: 남은 움직임은 오래된 보정일 수 있어요)
     odd = [x for x in adj["skip"] if x[2] not in KR_PX_ADJ_QUIET]
     items = [f"{nm(x['t'])} {x['d']} ×{num(x['f']):.4g}" + (f" ({x['from']}부터)" if x.get("from") else "") for x in fix]
     val = (("켜짐 · 고친 " if adj["on"] else "꺼짐 (숫자는 예전처럼 · 화면의 이유 줄을 기다려요) · 켜면 고칠 ")
            + f"{len({x['t'] for x in fix})}종목 {len(fix)}건"
            + (": " + ", ".join(items[:KR_SERIES_SHOW]) + (f" 외 {len(items) - KR_SERIES_SHOW}건" if len(items) > KR_SERIES_SHOW else "") if items else "")
-           + (f" · 고쳤는데 그날 움직임이 남음 {len(left)}: " + ", ".join(f"{nm(x['t'])} {x['d']}" for x in left[:KR_SERIES_SHOW]) if left else "")
+           + (f" · 고쳤는데 숨긴 채 남음 {len(left)}: " + ", ".join(f"{nm(t)} ({' · '.join(sorted(jm[t]))})" for t in left[:KR_SERIES_SHOW])
+              if left else "")
            + (f" · 표의 사건을 건너뜀 {len(odd)}: " + ", ".join(f"{nm(x[0])} {x[1]} {KR_PX_ADJ_SKIP[x[2]]}" for x in odd[:KR_SERIES_SHOW]) if odd else ""))
     rep.add(name, True, val, rule, warn=bool(left or odd))
     if adj["on"] and items:
