@@ -46,6 +46,20 @@ push or manual run on a branch fails on purpose (its green would cover the PR's 
 can't read (event file, git) fails with a message. Replayed on past merges it flags #170, #171 and #172 (the misses of 11-22) and
 passes #173.
 
+**#176 (US details after a stock split; audit 2026-11-23, SNDK 8:1 on 11-20):** after it merges, the daily run's US details step
+puts a Yahoo details copy (cached up to 3 days, 14 when Yahoo refuses) taken before a split on today's share count: today's price ×
+the split ratios ÷ the copy's price, for PER, PBR, 시가총액, 배당수익률 and 거래대금 (`fetch_data.us_info_split_view`; splits from today's
+download, the previous publish's `splits` and `SPLIT_OVERRIDES`, up to today KST; a split dated after `usPxDate` counts only if Yahoo's
+series already shows it). Such a copy is not fetched again just for the split: a normal refresh compares Yahoo's fresh numbers with
+copy × ratio and keeps the copy when they are more than √ratio apart (Yahoo's fresh per-share numbers can still be pre-split). It does
+fetch again when the ratio can't be trusted (`odd`) and when a copy's price moved more than 2× with no split known (`jump`, a split
+Yahoo reported late). Every path that can leave a number off by the ratio goes into `data.json usSrc.split` (only when there is
+something to say) and the new warning-only gate row `미국 분할 뒤 상세 숫자 (PBR ↔ PER × ROE · usSrc.split · 경고만)` names it, along
+with any US company split in the last 30 days whose PBR disagrees with PER × ROE beyond √ratio (at least 1.5). **SNDK itself stays
+wrong until Yahoo corrects it:** its 11-21 PBR 0.63 (really about 5, so 가치 99) came from a fresh Yahoo fetch after the split, with no
+older copy to compare, so this change does not fix it; the gate row names SNDK on every publish until then (expected, not a failure).
+Blanking such a number on screen needs a new say-why line, so it is Jack's call (not asked yet). RUNBOOK § US stock splits.
+
 **#172 (published closes), 2026-11-22:** in a week with days lacking a final KRX list, the daily run reads our earlier publishes
 from the `data` branch (throw-away partial clone, no token, https, minimal env, 180 s total, process-group kill, gc off) and
 confirms each Korean `c1w` day by day against KRX's base; a day with no publish is pinned by the next day's published `d1`;
