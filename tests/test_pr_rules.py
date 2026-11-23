@@ -7,6 +7,7 @@
 import datetime as dt
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -80,7 +81,7 @@ def test_a_date_like_slash_is_not_read_as_the_result():
 def test_the_data_date_must_be_near_the_results():
     no_date = GOOD_DIR.replace(" (pxDate 2026-11-20)", "")
     assert not rd(no_date)[0]
-    far = "data of 2026-11-20\n\n\n\n" + no_date                 # 결과 줄보다 네 줄 넘게 위
+    far = "data of 2026-11-20\nx\ny\nz\nw\n" + no_date           # 결과 줄보다 내용 있는 줄 넷 넘게 위
     assert not rd(far)[0]
     assert rd("data of 2026-11-20\n" + no_date)[0]
 
@@ -109,15 +110,15 @@ def test_an_unspaced_part_marker_beside_a_spaced_result_is_not_a_result():
     assert rd(body)[0]
 
 
-@pytest.mark.parametrize("date, ok", [("2026-11-20", True), ("2026-11-13", True), ("2026-11-12", False),
+@pytest.mark.parametrize("date, ok", [("2026-11-20", True), ("2026-11-09", True), ("2026-11-08", False),
                                       ("2019-01-01", False), ("2026-11-24", False), ("2026-19-39", False),
                                       ("2026-02-30", False)])
-def test_the_data_date_must_be_a_real_date_within_ten_days(date, ok):
+def test_the_data_date_must_be_a_real_date_within_fourteen_days(date, ok):
     body = GOOD_DIR.replace("2026-11-20", date)
     r, lines = rd(body)
     assert r is ok, (date, lines)
     if not ok:
-        assert any("10일 안" in ln for ln in lines), lines
+        assert any("14일 안" in ln for ln in lines) and any(ln.startswith("예:") for ln in lines), lines
 
 
 def test_results_inside_an_html_comment_do_not_count():
@@ -127,6 +128,36 @@ def test_results_inside_an_html_comment_do_not_count():
 
 def test_a_failing_result_inside_a_comment_is_ignored():
     assert rd(GOOD_DIR + "\n<!-- smoke_app.py --data 170 / 171 -->")[0]
+
+
+# 리뷰 2026-11-23 (Fable): 세션이 실제로 적는 모양을 받아요 · 같은 줄의 다른 숫자는 결과가 아니에요
+
+def test_real_data_check_without_data_flag_counts():
+    """real_data_check.py 는 --data 로만 돌아요 (#114–#133 · #142 · #159 가 이렇게 적었어요)."""
+    body = GOOD_INLINE.replace("`real_data_check.py --data` → 3 / 3", "`real_data_check` 3 / 3")
+    assert rd(body)[0]
+
+
+def test_a_table_under_an_intro_line_passes():
+    """#121 모양: 날짜 줄 · 빈 줄 · 머리 · |---| · 결과 줄들."""
+    body = ("Real data (data branch copy, pxDate 2026-11-20):\n\n| check | result |\n|---|---|\n"
+            "| `real_data_check.py --data` | 3 / 3 |\n| `smoke_launch.py --data` | 14 / 14 |\n| `smoke_app.py --data` | 171 / 171 |")
+    ok, lines = rd(body)
+    assert ok, lines
+
+
+@pytest.mark.parametrize("tail", ["171 / 171. Dry run: TTM 합성 성공 2,341 / 2,476",
+                                  "171 / 171 | 2 / 171 scenes had no company today |"])
+def test_other_numbers_later_on_the_line_are_not_results(tail):
+    body = GOOD_DIR.replace("**171 / 171 통과**", tail)
+    ok, lines = rd(body)
+    assert ok, lines
+
+
+def test_a_table_row_with_a_failing_result_fails():
+    body = ("pxDate 2026-11-20\n| `real_data_check.py --data` | 3 / 3 |\n| `smoke_launch.py --data` | 14 / 14 |\n"
+            "| `smoke_app.py --data` | 170 / 171 |")
+    assert not rd(body)[0]
 
 
 # ── 바뀐 파일 분류 ──
@@ -175,13 +206,15 @@ def test_handoff_changes(path):
 
 
 @pytest.mark.parametrize("path", ["tests/smoke_app.py", "tests/real_data_check.py", "tests/testclock.py", "requirements-dev.txt",
-                                  "tests/fonts/install.sh"])
+                                  "tests/fonts/install.sh", "app.html", "sw.js", "index.html", "build.sh", "template.html",
+                                  "package-lock.json", "tools/build_tag.py", ".github/workflows/ci.yml", "tools/pr_rules.py",
+                                  ".github/workflows/logo-dev-fetch.yml", "tools/logos/logodev_fetch.py", "tools/push_logos_branch.sh",
+                                  "tools/render_og.py"])
 def test_the_daily_runs_screen_checks_and_their_tools_need_section0(path):
     assert PR.handoff_changes([path]) == [path]
 
 
-@pytest.mark.parametrize("path", ["docs/CHANGELOG.md", "tests/test_x.py", "app.html", ".github/workflows/ci.yml", "CLAUDE.md",
-                                  "tools/render_og.py"])
+@pytest.mark.parametrize("path", ["docs/CHANGELOG.md", "tests/test_x.py", "CLAUDE.md", "README.md", "tools/vendor_phosphor.py"])
 def test_not_handoff_changes(path):
     assert PR.handoff_changes([path]) == []
 
@@ -251,9 +284,11 @@ def _merge(r):
     _git(r, "merge", "-q", "--no-ff", "-m", "merge", "pr")
 
 
-def _run(r, body, event="pull_request", ref="refs/pull/7/merge"):
+def _run(r, body, event="pull_request", ref="refs/pull/7/merge", head_sha=None):
     ev = r.parent / "event.json"
-    ev.write_text(json.dumps({"pull_request": {"number": 7, "body": body}}), encoding="utf-8")
+    if head_sha is None:
+        head_sha = _git(r, "rev-parse", "pr").strip()
+    ev.write_text(json.dumps({"pull_request": {"number": 7, "body": body, "head": {"sha": head_sha}}}), encoding="utf-8")
     env = {"PATH": os.environ["PATH"], "GITHUB_EVENT_NAME": event, "GITHUB_EVENT_PATH": str(ev), "HOME": str(r.parent),
            "GITHUB_REF": ref}
     return subprocess.run([sys.executable, "tools/pr_rules.py", "--today", TODAY.isoformat()], cwd=r, capture_output=True, text=True, env=env)
@@ -324,6 +359,38 @@ def test_end_to_end_a_bad_revision_is_a_clear_message_not_a_traceback(repo, tmp_
     assert r.returncode == 1 and "읽지 못했어요" in r.stdout and "Traceback" not in r.stderr, (r.stdout, r.stderr)
 
 
+
+def test_end_to_end_a_push_on_a_branch_fails(repo):
+    r = _run(repo, "", event="push", ref="refs/heads/claude/x")
+    assert r.returncode == 1 and "확인하지 못했어요" in r.stdout, r.stdout
+
+
+def test_end_to_end_head_must_be_the_prs_merge_commit(repo):
+    (repo / "docs" / "CHANGELOG.md").write_text("x\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "docs")
+    _merge(repo)
+    r = _run(repo, "", head_sha="0" * 40)
+    assert r.returncode == 1 and "merge 커밋이 아니에요" in r.stdout and "Traceback" not in r.stderr, (r.stdout, r.stderr)
+
+
+def test_a_deleted_helper_is_still_caught_through_the_base_tree(repo):
+    """리뷰 2026-11-23 (Fable): 지운 파일은 머리 트리에 없어요 — base 트리에서 찾아요."""
+    _git(repo, "checkout", "-q", "main")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "smoke_app.py").write_text("import helperx\n")
+    (repo / "tests" / "helperx.py").write_text("X = 1\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "checks")
+    _git(repo, "checkout", "-q", "-B", "pr")
+    (repo / "tests" / "smoke_app.py").write_text("X = 2\n")
+    _git(repo, "rm", "-q", "tests/helperx.py")
+    _git(repo, "commit", "-q", "-am", "drop helper")
+    _merge(repo)
+    ok, lines = PR.run("", "HEAD^1", "HEAD", root=str(repo), today=TODAY)
+    assert not ok and "tests/helperx.py" in "\n".join(lines), lines
+
+
 # ── ci.yml 에 걸려 있어요 ──
 
 def test_ci_runs_the_rules_as_the_last_step_of_checks_with_two_commits_and_no_key():
@@ -335,4 +402,4 @@ def test_ci_runs_the_rules_as_the_last_step_of_checks_with_two_commits_and_no_ke
     assert "checks" in wf["jobs"]["ci"]["needs"]
     with open(os.path.join(ROOT, "tools", "pr_rules.py"), encoding="utf-8") as f:
         src = f.read()
-    assert "GITHUB_TOKEN" not in src and "urllib" not in src and "requests" not in src   # 읽기만, 열쇠 없이
+    assert "GITHUB_TOKEN" not in src and not re.search(r"^\s*(import|from)\s+(urllib|requests|http)", src, re.M)   # 읽기만, 열쇠 없이
