@@ -318,6 +318,18 @@ probably broken for everyone, so nothing is published (users keep the last good 
 wrote a broken mapping record: fix the record code. Never raise N or skip the row to get a publish out;
 a different N needs Jack's yes with new evidence.
 
+**Our own text and the gate's word row (2026-11-24).** The row "글자에 nan·None·null·undefined 없음" (`validate_data.BAD_WORD`, frozen)
+reads every string in the four files. The pipeline used to write those words itself: a "never stop the publish" step stored its error
+text (`pxSrc.own.err`, `usSrc.own.err`, `splitsInfo.err`, the `ownDrop.krOwn` reason, the `usExtraMissing` reason), and the records
+above stored the bad value in the reason (`"칸 없음 d; d null"`, `role "None"`), so one caught error or one dropped row stopped the
+whole publish. Now every error or reason text we write goes through `fetch_data.pub_text` / `pub_err` / `own_drop_pub` (the gate's
+own pattern, imported): each whole-word match becomes "빈 값", the raw text stays in the run log only. The app never reads these fields.
+Source text is not rewritten: when a Yahoo summary (`de`) or a DART filer's name or position (`nm`, `pos`) contains such a word,
+`own_src_text` blanks that one field right before the write (log: `!! 출처 글자의 관문 낱말 …: {file} n칸 비움 — {stock} {field} …`) and
+counts it in that file's `ownDrop.srcText`. More than 5 fields (`SRC_TEXT_MAX`, Jack's default N; every past publish has 0 because the
+row passed): nothing is blanked, the log says so, and the word row itself fails, so no new gate row exists. Other fields (names,
+`dk`, the field of the 2026-10 column-shift incident) are left to the row as before.
+
 ## Checked low-PBR companies (gate warning "PBR 0.1 미만 국내 회사")
 
 The daily gate (`validate_data.py`) warns, by name, about every Korean company with a PBR under 0.1 that the unit check

@@ -111,6 +111,8 @@ from validate_data import (US_CLASS_DROP_KEY, US_CLASS_DROP_MAX, DIV_LINE_DROP_K
 from validate_data import load_ksic_names, IND_DART_DIGITS, IND_MISS_KO, IND_MISS_OK, IND_FUND_KSIC, kr_desc_parse, KR_DESC_TAIL
 from validate_data import (load_ksic_map_kr, IND_SECTOR_KR, IND_FILL_CHECK, ind_fill_bad, ind_fill_rows, ksic_map_kr_sha,
                            KSIC_LENS_MISFIT)
+# 2026-11-24: 관문의 낱말 줄이 찾는 패턴 그대로 (한 곳 · 베끼지 않아요) — 우리가 쓰는 오류 · 까닭 글은 그 낱말을 '빈 값' 으로 바꿔 적어요 (pub_text)
+from validate_data import BAD_WORD as GATE_BAD_WORD
 
 # ────────────────────────────────────────────────────────────
 # 설정
@@ -443,6 +445,62 @@ def write_json(path, obj):
     if bad[0]:
         log(f"  !! {path}: 숫자가 아닌 값(NaN·Infinity) {bad[0]:,}개를 빈 값(null)으로 바꿔 저장했어요")
     return bad[0]
+
+
+# ────────────────────────────────────────────────────────────
+# 2026-11-24: 발행 파일에 쓰는 우리 글 (오류 · 까닭) 과 관문의 낱말 줄
+# ────────────────────────────────────────────────────────────
+# 관문의 '글자에 … 없음' 줄 (validate_data.BAD_WORD · 바꾸지 않는 안전 규칙) 은 네 파일의 모든 글자를 봐요. 그런데 "발행을 멈추지 않는" 단계가
+# 오류 글을 pxSrc.own.err · usSrc.own.err · splitsInfo.err 에 그대로 적고, Jack 의 상시 규칙의 기록 (ownDrop) 이 뺀 줄의 값을 까닭에 적어서
+# ('d null' · 'role "None"'), 오류 하나 · 나쁜 줄 하나가 발행을 멈출 수 있었어요 (감사 aud5). 우리가 만드는 오류 · 까닭 글만 그 낱말을 '빈 값' 으로
+# 바꿔 적고 원문은 실행 로그에만 남겨요. 출처의 글자 (설명 · 이름) 는 바꾸지 않아요 — own_src_text 가 그 칸을 비우고 세요 (N 을 넘으면 그대로 둬
+# 관문이 막아요). 관문은 그대로예요.
+PUB_BLANK = "빈 값"
+
+
+def pub_text(text, n=None, say=True):
+    """우리가 만든 오류 · 까닭 글 → 발행 파일에 적을 글: 앞 n 글자로 자른 뒤 (자른 끝이 'nanometer' → 'nan' 이 돼도 잡히게 자른 다음에)
+    관문이 찾는 낱말 (GATE_BAD_WORD = validate_data.BAD_WORD: 영문자에 붙지 않은 다섯 낱말) 을 PUB_BLANK 로. 한 번 바꾼 글에는 다시 바꿀 것이
+    없어요 (바뀐 자리 둘레는 영문자가 아니에요). say: 바꾼 것이 있으면 원문을 실행 로그에 남겨요 (원문을 이미 로그에 적은 곳만 False).
+    글자가 아니면 str. 출처의 글자에는 쓰지 않아요 (own_src_text)."""
+    raw = text if isinstance(text, str) else str(text)
+    cut = raw if n is None else raw[:n]
+    out = GATE_BAD_WORD.sub(PUB_BLANK, cut)
+    if say and out != cut:
+        log(f"· 발행 파일에 적는 오류 · 까닭 글: 관문의 낱말 줄이 찾는 낱말을 '{PUB_BLANK}' 로 바꿔 적어요 — 원문: {raw}")
+    return out
+
+
+def pub_err(err, n=300, say=True):
+    """'발행을 멈추지 않는' 단계의 오류 → 발행 파일의 오류 칸 글: 예외면 '예외 이름: 메시지', 이미 만든 오류 글이면 그 글 — 앞 n 글자 · pub_text."""
+    return pub_text(f"{type(err).__name__}: {err}" if isinstance(err, BaseException) else err, n, say)
+
+
+def own_drop_pub(doc, where):
+    """발행 파일 doc 의 ownDrop 기록마다 rows 의 글 (이름 · 까닭 · 줄 글) 을 pub_text 로 바꿔요 (모양 그대로 · 글자가 아닌 값은 그대로 — 모양은
+    관문이 봐요). 원문은 각 검사의 로그 줄에 있어요 (_own_log · own_drop_text · 업종 · 마지막 확인 종가 · own_src_text). 바꾼 것이 있으면 한 줄.
+    여러 번 불러도 같아요. → doc."""
+    own = doc.get("ownDrop") if isinstance(doc, dict) else None
+    if not isinstance(own, dict):
+        return doc
+    for k, rec in own.items():
+        rows = rec.get("rows") if isinstance(rec, dict) else None
+        if not isinstance(rows, list):
+            continue
+        new, n = [], 0
+        for r in rows:
+            if isinstance(r, str):
+                c = pub_text(r, say=False)
+            elif isinstance(r, (list, tuple)):
+                c = [pub_text(x, say=False) if isinstance(x, str) else x for x in r]
+            else:
+                c = r
+            n += c != (list(r) if isinstance(r, tuple) else r)
+            new.append(c)
+        rec["rows"] = new
+        if n:
+            log(f"· {where} ownDrop.{k}: 까닭 글 {n}줄의 낱말 (관문의 낱말 줄) 을 '{PUB_BLANK}' 로 바꿔 적어요 (원문은 위 로그)")
+    return doc
 
 
 # ────────────────────────────────────────────────────────────
@@ -2344,7 +2402,8 @@ def kr_own_aged_kept(prev, keep_out):
 def kr_own_close_err(err, unconf_n=None):
     """마지막 확인 종가 단계가 오류로 멈췄을 때의 pxSrc.own (실은 종목 0 · err 에 까닭 — 관문이 경고해요). unconf_n: 확인 못 한 종목 수 — 그 수를
     세기 전에 멈췄으면 None 이고 칸을 빼요 (관문이 '모름'으로 적어요 · 0 으로 보이지 않게)."""
-    out = {"v": 1, "max": KR_OWN_CLOSE_MAX_DAYS, "n": 0, "codes": [], "drop": {}, "dropEx": [], "bad": {"n": 0, "rows": []}, "err": str(err)[:300]}
+    out = {"v": 1, "max": KR_OWN_CLOSE_MAX_DAYS, "n": 0, "codes": [], "drop": {}, "dropEx": [], "bad": {"n": 0, "rows": []},
+           "err": pub_err(err)}          # 2026-11-24: 관문의 낱말 줄이 찾는 낱말은 '빈 값' 으로 (원문은 로그 · 오류 하나가 발행을 멈추지 않게)
     if isinstance(unconf_n, int):
         out["unconf"] = unconf_n
     return out
@@ -2746,12 +2805,13 @@ def kr_own_close_drop_all(kr, src, krs, err, drop_out=None):
     err · 뺀 수를 적어요 (관문이 경고해요). drop_out (2026-11-20): 주면 뺀 종목 (코드, 까닭) 을 더해요 (data.json ownDrop.krOwn).
     반환: 남은 국내 종목 목록."""
     gone = {s.get("t") for s in kr if s.get("cls") == "kr" and s.get("pxd") is not None}
-    if isinstance(drop_out, list):
-        drop_out.extend((str(t), f"err {str(err)[:120]}") for t in sorted(gone, key=str))
     log(f"  !! 마지막 확인 종가 점검이 오류로 멈췄어요 ({err}) — 마지막 확인 종가로 실은 {len(gone):,}종목을 모두 빼고 발행을 이어가요 (pxSrc.own.err)")
+    if isinstance(drop_out, list):          # 2026-11-24: 발행 파일에는 관문의 낱말을 '빈 값' 으로 (원문은 바로 위 로그 줄)
+        why = f"err {pub_err(err, 120, say=False)}"
+        drop_out.extend((str(t), why) for t in sorted(gone, key=str))
     if isinstance(src, dict):
         own = src.get("own") if isinstance(src.get("own"), dict) else kr_own_close_err(err)
-        own.update({"codes": [], "n": 0, "err": str(err)[:300], "bad": {"n": len(gone), "rows": sorted(gone)[:KR_OWN_SHOW]}})
+        own.update({"codes": [], "n": 0, "err": pub_err(err, say=False), "bad": {"n": len(gone), "rows": sorted(gone)[:KR_OWN_SHOW]}})
         src["own"] = own
     kr_own_prune_series(krs, gone)
     return [s for s in kr if s.get("t") not in gone or s.get("cls") != "kr"]
@@ -2781,7 +2841,8 @@ def kr_own_close_final(kr, src, prev, days, krs=None, drop_out=None):
         own["codes"] = [c for c in own.get("codes") or [] if c not in gone]
         own["n"] = len(own["codes"])
         # 2026-11-20 (리뷰 4): 까닭(점검)마다 뺀 수 — 관문은 한 점검에서 5개를 넘을 때만 실패해요 (Jack 의 상시 규칙). 한 종목이 두 점검에 걸리면 둘 다 세요
-        own["bad"] = {"n": len(gone), "rows": rows[:KR_OWN_SHOW], "why": dict(sorted(collections.Counter(w for ws in gone.values() for w in set(ws)).items()))}
+        own["bad"] = {"n": len(gone), "rows": [pub_text(x, say=False) for x in rows[:KR_OWN_SHOW]],     # 2026-11-24: 원문은 바로 위 로그 줄
+                      "why": dict(sorted(collections.Counter(w for ws in gone.values() for w in set(ws)).items()))}
     if isinstance(drop_out, list):          # 2026-11-20: data.json ownDrop.krOwn (다른 우리 처리 검사와 같은 곳 · 같은 모양 {n, rows [코드, 까닭]})
         drop_out.extend((str(t), " · ".join(KR_OWN_WHY.get(w, w) for w in ws)) for t, ws in sorted(gone.items()))
     kr_own_prune_series(krs, gone)
@@ -2976,7 +3037,7 @@ def us_own_aged(prev, nocl, drop, old_pxd=None):
 def us_own_close_err(err, nocl_n=None):
     """마지막 확인 종가 단계(미국)가 오류로 멈췄을 때의 usSrc.own (실은 종목 0 · err — 관문이 경고해요 · 예전 그대로 야후의 마지막 봉으로 나가요)."""
     out = {"v": 1, "max": US_OWN_CLOSE_MAX_DAYS, "n": 0, "codes": [], "same": [], "from": {}, "newer": [], "split": [], "drop": {}, "dropEx": [],
-           "bad": {"n": 0, "rows": []}, "err": str(err)[:300]}
+           "bad": {"n": 0, "rows": []}, "err": pub_err(err)}      # 2026-11-24: 관문의 낱말은 '빈 값' 으로 (원문은 로그)
     if isinstance(nocl_n, int):
         out["unconf"] = nocl_n
     return out
@@ -3081,7 +3142,7 @@ def us_own_drop_rows(us, umeta, bad, why):
     for t in sorted(bad):
         if t in EXTRA_US:
             w = why.get(t) if isinstance(why, dict) else why
-            xm[t] = w if isinstance(w, str) and w.strip() else fallback
+            xm[t] = pub_text(w, say=False) if isinstance(w, str) and w.strip() else fallback   # 2026-11-24: 까닭 글 (원문은 부른 쪽 로그)
     return [r for r in us if r.get("t") not in bad]
 
 
@@ -3137,7 +3198,8 @@ def us_own_close_final(us, umeta, prev, days):
     own["same"] = [c for c in own["same"] if c not in gone]
     own["newer"] = [x for x in own["newer"] if x.get("t") not in gone]
     us_own_from_sync(own)
-    own["bad"] = {"n": len(gone), "rows": rows[:US_OWN_SHOW], "why": dict(sorted(collections.Counter(w for ws in gone.values() for w in set(ws)).items()))}
+    own["bad"] = {"n": len(gone), "rows": [pub_text(x, say=False) for x in rows[:US_OWN_SHOW]],     # 2026-11-24: 원문은 위 로그 줄
+                  "why": dict(sorted(collections.Counter(w for ws in gone.values() for w in set(ws)).items()))}
     return us_own_drop_rows(us, umeta, gone, {t: "마지막 확인 종가 점검(관문과 같은 함수)이 거름: " + " · ".join(US_OWN_WHY.get(w, w) for w in ws)
                                               + " (usSrc.own.bad)" for t, ws in gone.items()})
 
@@ -3234,10 +3296,11 @@ def us_own_close_drop_all(us, umeta, err):
     own = src.get("own") if isinstance(src.get("own"), dict) else us_own_close_err(err)
     gone = {r.get("t") for r in us if r.get("pxc")} | set(own.get("same") or [])
     log(f"  !! 마지막 확인 종가 점검(미국)이 오류로 멈췄어요 ({err}) — 마지막 확인 종가 · 같은 날 다시 쓴 {len(gone):,}종목을 모두 빼고 발행을 이어가요 (usSrc.own.err)")
-    own.update({"codes": [], "n": 0, "same": [], "from": {}, "newer": [], "err": str(err)[:300], "bad": {"n": len(gone), "rows": sorted(gone)[:US_OWN_SHOW]}})
+    own.update({"codes": [], "n": 0, "same": [], "from": {}, "newer": [], "err": pub_err(err, say=False),   # 2026-11-24: 원문은 바로 위 로그 줄
+                "bad": {"n": len(gone), "rows": sorted(gone)[:US_OWN_SHOW]}})
     src["own"] = own
     umeta["usSrc"] = src
-    return us_own_drop_rows(us, umeta, gone, f"마지막 확인 종가 점검이 오류로 멈춰 뺌 ({str(err)[:80]} · usSrc.own.err)")
+    return us_own_drop_rows(us, umeta, gone, f"마지막 확인 종가 점검이 오류로 멈춰 뺌 ({pub_err(err, 80, say=False)} · usSrc.own.err)")
 
 
 # ────────────────────────────────────────────────────────────
@@ -7781,6 +7844,7 @@ def own_check_disc(disc, today):
     own[INSIDER_ROLE_KEY] = own_rows_rec(bad)
     _own_log(OWN_INSIDER_ROLE_NAME, bad, INSIDER_ROLE_MAX, "빼거나 비움", f"disc.json ownDrop.{INSIDER_ROLE_KEY}")
     disc["ownDrop"] = own
+    own_drop_pub(disc, "disc.json")          # 2026-11-24: 까닭 글 ('d null' · 'role "None"') 의 관문 낱말은 '빈 값' 으로 (원문은 위 로그 줄)
     return disc
 
 
@@ -7796,7 +7860,60 @@ def own_us_dates(payload):
     own[US_DATE_KEY] = own_rows_rec(bad)
     payload["ownDrop"] = own
     _own_log(OWN_US_DATE_NAME, bad, US_DATE_MAX, "비움", f"data.json ownDrop.{US_DATE_KEY}")
+    own_drop_pub(payload, "data.json")       # 2026-11-24: 까닭 글 ('"NaN" (YYYY-MM-DD 날짜가 아님)') 의 관문 낱말은 '빈 값' 으로 (원문은 위 로그 줄)
     return payload
+
+
+# 2026-11-24 (Jack 의 상시 규칙 · "one stock missing from a source never holds the publish"): 출처가 보낸 글자 (야후 회사 설명 · DART 보고자 이름 ·
+# 직위) 에 관문의 낱말 줄이 찾는 낱말이 낱말로 들어 있으면 ("None of the segments …" · 직위 "None") 그 칸 하나만 비우고, 크게 남기고, 그 파일의
+# ownDrop.srcText 에 세요. 한 실행에 SRC_TEXT_MAX 칸을 넘으면 비우지 않고 그대로 둬요 — 한꺼번에 많으면 출처가 아니라 우리 처리 (열 밀림 같은) 의
+# 잘못일 수 있어서, 관문의 그 줄 (바꾸지 않아요) 이 실패해 발행하지 않아요 (새 관문 줄 없음). 이름 · 종목 설명 (dk) 같은 다른 칸은 보지 않아요 —
+# 관문이 그대로 막아요 (dk 는 그 줄을 만든 2026-10 열 밀림 사고의 칸이에요).
+SRC_TEXT_KEY = "srcText"
+SRC_TEXT_MAX = 5                 # Jack, 2026-11-20: "Yes to “more than 5 rows” as the default for the standing rule." (지난 발행본은 모두 0 — 관문이 막아요)
+SRC_TEXT_NAME = "출처 글자의 관문 낱말 (야후 설명 de · DART 보고자 이름 nm · 직위 pos)"
+SRC_TEXT_FIELDS = (("stocks", "t", ("de",)), ("insider", "rc", ("nm", "pos")))     # (목록 칸, 줄 열쇠, 글자 칸) — data.json · disc.json
+
+
+def own_src_text(doc, where):
+    """data.json · disc.json 을 쓰기 바로 앞 (다른 우리 처리 검사 뒤): SRC_TEXT_FIELDS 의 글자 칸에 관문의 낱말 (GATE_BAD_WORD) 이 있는 칸을 찾아
+    SRC_TEXT_MAX 칸 이하면 그 칸만 비워요 (de 는 빼요 — 설명이 없는 종목과 같아요 · nm · pos 는 '' — DART 의 '-' 와 같아요). 넘으면 하나도 비우지
+    않아요 (관문의 낱말 줄이 실패해 발행하지 않아요). 줄마다 종목 · 칸 · 원문 둘레를 로그에 크게, doc["ownDrop"]["srcText"] = {n 찾은 칸 수, rows
+    [열쇠, 까닭] 앞 30} (깨끗한 실행도 0). where: 로그에 적을 파일 이름. → doc."""
+    if not isinstance(doc, dict):
+        return doc
+    hits = []
+    for list_key, id_key, fields in SRC_TEXT_FIELDS:
+        rows = doc.get(list_key) if isinstance(doc.get(list_key), list) else []
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            for f in fields:
+                v = r.get(f)
+                m = GATE_BAD_WORD.search(v) if isinstance(v, str) else None
+                if m:
+                    hits.append((r, f, str(r.get(id_key)), str(r.get("t") or ""), str(r.get("nk") or ""), v[max(0, m.start() - 30):m.end() + 30]))
+    over = len(hits) > SRC_TEXT_MAX
+    if not over:
+        for r, f, *_ in hits:
+            if f == "de":
+                r.pop(f, None)
+            else:
+                r[f] = ""
+    done = "그대로 둠 (관문이 막아요)" if over else "칸을 비움"
+    rec = own_drop_rec([(f"{key} {f}", f"{(t + ' ' + nk).strip()} · 출처 글자에 관문의 낱말 — {done}") for _r, f, key, t, nk, _x in hits])
+    own = doc.get("ownDrop") if isinstance(doc.get("ownDrop"), dict) else {}
+    own[SRC_TEXT_KEY] = rec
+    doc["ownDrop"] = own
+    if hits:
+        gate = (f"{SRC_TEXT_MAX}칸을 넘어 비우지 않고 그대로 둬요 — 한꺼번에 많으면 우리 처리의 잘못일 수 있어요 · 관문 '글자에 nan·None·null·undefined "
+                "없음' 줄이 실패해 발행하지 않아요" if over else f"그 칸만 비우고 발행 · {SRC_TEXT_MAX}칸을 넘으면 비우지 않아 관문이 막아요")
+        log(f"  !! {SRC_TEXT_NAME}: {where} {len(hits):,}칸 {'찾음' if over else '비움'} — "
+            + " · ".join(f"{(t + ' ' + nk).strip() or key} {f} ({key}: …{x}…)" for _r, f, key, t, nk, x in hits[:30])
+            + (f" 외 {len(hits) - 30}칸" if len(hits) > 30 else "") + f" ({where} ownDrop.{SRC_TEXT_KEY} · {gate})")
+    else:
+        log(f"· {SRC_TEXT_NAME}: {where} 0칸 비움")
+    return doc
 
 
 # ────────────────────────────────────────────────────────────
@@ -13047,10 +13164,7 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
         log(f"  !! 미국 d1 없는 종목 {len(no_d1):,}개 (마지막 봉이 미국 기준일 {us_px_date} 이 아님 — 거래 정지이거나 야후가 봉을 "
             f"빠뜨림 · 가격은 괄호 날짜의 종가로 나가요): {', '.join(no_d1[:30])}" + (f" 외 {len(no_d1) - 30:,}개" if len(no_d1) > 30 else ""))
     # v19.6a (A.6): 주식 분할 — 위 다운로드의 분할 칸에서, 목록에 남은 종목만 (새 요청 없음)
-    try:
-        splits, sinfo = us_splits(data, [r["t"] for r in out], today)
-    except Exception as e:
-        splits, sinfo = None, {"err": f"{type(e).__name__}: {e}"}
+    splits, sinfo = us_splits_safe(data, [r["t"] for r in out], today)
     log_us_splits(splits, sinfo, len(out), today, what=f"미국 주식 분할 (오늘 시세 다운로드 · {start} 부터)")
     meta = {"usPxDate": us_px_date.isoformat(), "fxDate": fx_date.isoformat(), "usInfo": [n_ok, len(out)], "_index": spx,
             "usLeftOut": {**left_out, "badBar": bad_bar},   # v19.1c: 깨진 봉으로 뺀 종목도 관문이 경고로 이름을 남겨요
@@ -13137,6 +13251,15 @@ def _split_col(data, t):
                 return data[k]
         return None
     return data["Stock Splits"] if "Stock Splits" in cols else None
+
+
+def us_splits_safe(data, codes, today):
+    """fetch_us 의 주식 분할 (v19.6a A.6): us_splits 가 멈추면 (None, {"err": 오류 글}) — 발행은 이어가요 (log_us_splits 가 크게 · 관문이 경고 ·
+    지난 발행본 · 시드의 줄 그대로). 오류 글은 pub_err (2026-11-24: 관문의 낱말은 '빈 값' 으로 · 바꾼 것이 있으면 원문을 로그에 · 자르지 않아요)."""
+    try:
+        return us_splits(data, codes, today)
+    except Exception as e:
+        return None, {"err": pub_err(e, None)}
 
 
 def us_splits(data, codes, today, lo=None):
@@ -15175,7 +15298,9 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                      "되돌린 행 (DART 로 채운 보통주 · 보통주를 따른 우선주 — validate_data.ind_fill_bad · rows '종목 이름: 이유') · usDates = 틀린 미국 ed · "
                      "xd 를 비운 행 (v19.6b · validate_data.us_date_bad_rows · 그 칸만 비워요) · krOwn = 마지막 확인 종가(pxd)로 실었다가 관문과 같은 함수"
                      "(validate_data.kr_own_close_bad)로 뺀 국내 종목 (2026-11-20 · rows [코드, 까닭] · pxSrc.own.bad 와 같은 수 · 관문은 한 점검에서 "
-                     "5개를 넘으면 실패, 있으면 경고)"),
+                     "5개를 넘으면 실패, 있으면 경고) · srcText = 출처 글자(야후 설명 de · disc.json 의 DART 보고자 이름 nm · 직위 pos)에 관문의 낱말 줄이 "
+                     "찾는 낱말이 있어 비운 칸 (2026-11-24 · rows ['열쇠 칸', 까닭] · 5칸을 넘으면 비우지 않고 그대로 둬 그 줄이 발행을 막아요) · 모든 rows "
+                     "의 글에서 그 낱말은 '빈 값' 으로 적어요 (원문은 실행 로그)"),
          "fgnCut": ("미국 상장 외국 회사의 종목 칸: 회사 합계와 맞지 않아 비운 칸 {per · pbr · dy: mismatch 맞춰 봤는데 맞지 않음 · currency 재무제표 "
                     "통화를 확인하지 못함 · norecord 배당 기록 · 가격을 읽지 못한 배당수익률 · nocompare 회사 숫자로 PER · PBR 을 맞춰 볼 수 없음 (적자 · ROE 없음) · "
                     "nocompare-own 같은 뜻, 스위치 own 일 때 (지금 · 앱 줄 co.fgnNoCmp) · stopped 검사가 멈춘 날 맞춰 보지 않고 비움 (앱 줄 co.fgnStopped)} "
@@ -15614,6 +15739,8 @@ def main():
     payload.setdefault("ownDrop", {})["indFill"] = ind_drop   # 2026-11-19 (Jack 의 상시 규칙): 업종 채운 값 중 되돌린 행 (관문 줄이 봐요)
     # 2026-11-20 (#159): 마지막 확인 종가로 실었다가 관문과 같은 함수로 뺀 국내 종목 (pxSrc.own.bad 와 같은 수 · 관문이 맞춰 봐요 · 깨끗한 실행도 0)
     payload["ownDrop"][KR_OWN_DROP_KEY] = own_drop_rec(kr_drop)
+    own_src_text(payload, OUT)               # 2026-11-24 (Jack 의 상시 규칙): 야후 설명(de)에 관문의 낱말 — 그 칸만 비워요 (ownDrop.srcText · 5칸 넘으면 그대로)
+    own_drop_pub(payload, OUT)               # 2026-11-24: ownDrop 까닭 글의 관문 낱말은 '빈 값' 으로 (원문은 각 검사의 로그 줄) — 쓰기 바로 앞
     log(kr_count_line(payload))
     write_json(OUT, payload)
     try:                                     # 2026-11-21 (#161 리뷰): 같은 기준일을 다시 돈 결과 (실제 실행만 · 다음 실행은 이 실행이 초록이었을 때만 믿어요)
@@ -15690,6 +15817,8 @@ def main():
         disc = empty_disc(today)
     disc["publishedAt"] = published_at
     own_check_disc(disc, today)              # 2026-11-19 (Jack 의 상시 규칙): 나쁜 공시 줄은 빼거나 비워요 (disc.json ownDrop · 관문과 같은 함수)
+    own_src_text(disc, OUT_DISC)             # 2026-11-24 (Jack 의 상시 규칙): DART 보고자 이름 · 직위에 관문의 낱말 — 그 칸만 비워요 (ownDrop.srcText)
+    own_drop_pub(disc, OUT_DISC)             # 2026-11-24: ownDrop 까닭 글의 관문 낱말은 '빈 값' 으로 — 쓰기 바로 앞
     write_json(OUT_DISC, disc)
     if "issueOk" not in disc:                # #161 리뷰 3차 nit: 다시 쓴 아침 disc.json 에 칸이 없어도 멈추지 않고 크게 (관문이 그 파일을 봐요)
         log(f"  !! {OUT_DISC} 에 issueOk 칸이 없어요 — 주요사항 공시 목록을 받았는지 몰라요 (관문이 봐요)")
