@@ -238,3 +238,25 @@ def test_returns_us_only_in_a_file_without_a_us_date_shows_no_date_and_says_why(
     assert got["date"] is None and got["total"] is True     # 금액은 그대로, 한국 날짜를 미국 가격에 붙이지 않아요
     assert got["mixed"] == "11월 26일 종가 · 평균 단가를 넣은 종목 기준"
     assert len(got["logs"]) == 1 and "dus" in got["logs"][0], got["logs"]
+
+
+def test_returns_mixed_holdings_after_a_us_holiday_say_the_us_date_with_the_approved_line():
+    """한국 · 미국 종목이 함께 계산되고 미국 기준일이 한국 날짜와 다를 때 (미국 휴장일 다음 날): 날짜 줄은 한국 날짜 그대로, 그 밑에 포트폴리오와
+    같은 승인된 줄 app.usClose "미국 종목은 현지 기준 {md} 종가예요." (같은 조건: 미국 종목이 있고 usPxDate 가 있고 pxDate 와 다름).
+    미국 종목만이면 날짜 줄이 이미 미국 날짜라 이 줄은 없어요. 계산에서 빠진 미국 종목(평균 단가 없음)만 있으면 없어요."""
+    got = run(RET_DECKS + """
+      const note = (html) => text(part(html, 'ret-us-close'));
+      // 미국 종목이 평균 단가 없이 들어 있어요: 계산된 종목은 한국뿐
+      const usNoAvg = { ...krNoAvg, id: 'dimp2', imported: [{ t: 'AAPL', nk: 'Apple Inc.', ccy: 'USD', qty: 3 }, { t: '005930', nk: '삼성전자', ccy: 'KRW', qty: 10, avg: 60000 }] };
+      const pf = portfolio([mixed]);
+      out = { usClose: C.app.usClose, mixed: note(returns(mixed)), mixedDate: dateOf(returns(mixed)), us: note(returns(usOnly)), kr: note(returns(krOnly)),
+        usNoAvg: note(returns(usNoAvg)), usNoAvgDate: dateOf(returns(usNoAvg)), sameDay: note(returns(mixed, loadOf({ usPxDate: '2026-11-26' }))),
+        noUs: note(returns(mixed, loadOf({ usPxDate: undefined }))),
+        pf: lines(pf).find((x) => x.startsWith('미국 종목은')) || null };""")
+    assert got["usClose"] == "미국 종목은 현지 기준 {md} 종가예요."                 # 승인된 문장 그대로 (새 낱말 없음)
+    want = got["usClose"].replace("{md}", "11월 25일")
+    assert got["mixed"] == want and got["pf"] == want                                # 포트폴리오와 같은 줄
+    assert got["mixedDate"] == "11월 26일 종가 · 평균 단가를 넣은 종목 기준"        # 날짜 줄은 예전 그대로
+    assert got["us"] is None and got["kr"] is None                                   # 미국만: 날짜 줄이 이미 11월 25일 · 한국만: 미국 가격 없음
+    assert got["usNoAvg"] is None and got["usNoAvgDate"] == "11월 26일 종가 · 평균 단가를 넣은 종목 기준"
+    assert got["sameDay"] is None and got["noUs"] is None                            # 평소 (두 날짜가 같음) · 미국 날짜가 없는 파일

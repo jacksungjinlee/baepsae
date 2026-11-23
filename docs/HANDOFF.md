@@ -31,9 +31,9 @@ row writes US fractional shares with up to 4 decimals (`pfview.qtyText`, as the 
 361원이에요, was 약 0원); from 1,000원 up unchanged (1,000원 steps with 약). `taxState` / `yearDivs` values unchanged. (1.6) 내 수익's date
 line uses `usPxDate` when every held stock counted (in the data, priced, with 평균 단가 and rate) is a US stock (after the 11-26 US
 holiday: 11월 25일, as the tax screen's loss card); a Korean stock among them, or none held, keeps the Korean date; no `usPxDate` → no
-date line, said in the console. **Open (report, not changed):** with mixed Korean + US holdings after a US holiday, 내 수익 still says
-only the Korean date and no line names the US date; 포트폴리오 says it with the approved `app.usClose` ("미국 종목은 현지 기준 {md}
-종가예요.") — reusing that line on 내 수익 needs a yes. Next in the queue unchanged (v19.3 Part L).
+date line, said in the console. Mixed Korean + US holdings keep the Korean date and, when the US date differs, show the approved
+`app.usClose` ("미국 종목은 현지 기준 {md} 종가예요.") under the portfolio name, on 포트폴리오's condition (an approved line in a new
+place; the coordinator's decision 2026-11-24, as is keeping 약 in the tax line). Next in the queue unchanged (v19.3 Part L).
 
 **CI checks the two PR rules (#175, 2026-11-23; Jack: "Automate the rules you missed"):** the last step of `ci.yml`'s `checks`
 job runs `tools/pr_rules.py`, so the required `ci` check goes red when either rule is missed. Run it yourself before pushing:
