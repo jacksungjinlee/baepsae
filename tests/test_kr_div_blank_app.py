@@ -79,7 +79,7 @@ def run(body):
 
 def test_the_kind_comes_from_the_mark_only_when_the_per_share_dividend_is_blank():
     got = run(f"""
-      const k = (s) => K.divBlankKind(s);
+      const k = (s) => K.divBlankKind(s, O(s.t));
       out = {{ a: k(S('{A}')), b: k(S('{B}')), hasDps: k({{ ...S('005930'), dvLine: 4 }}),
         other: [1, 2, 5, true, '4'].map((v) => k({{ ...S('{A}'), dvLine: v }})), noMark: k({{ ...S('{A}'), dvLine: undefined }}),
         us: k({{ ...S('AAPL'), dvLine: 4, dps: undefined }}) }};
@@ -140,3 +140,20 @@ def test_stocks_with_a_per_share_dividend_are_unchanged():
       out = { sam: K.divKr(S('005930'), O('005930')).rule, hid: [K.divKr(s3, O('000660')).rule, K.divHiddenLine(s3, O('000660'))],
               zero: [K.divKr(z, O('005930')).rule, K.divHiddenLine(z, O('005930'))], kind: [K.divBlankKind(s3), K.divBlankKind(z)] };""")
     assert got["sam"] not in ("na", None) and got["hid"] == ["pays", "dataHidden"] and got["zero"] == ["none", None] and got["kind"] == [None, None]
+
+
+def test_line_three_says_it_pays_only_while_the_company_total_shows_it():
+    """리뷰 #179: B (줄 3 · 주당 배당 없음) 는 회사의 그해 총액(corp.json cash3[0])이 0 보다 클 때만 '배당을 줘요' (+ 총액으로 센 배당성향). 총액이 없거나
+    0 이면 (corp 행이 없음 포함) '자료가 없어요' 와 줄 3 — 앱은 보이는 숫자로만 '배당을 줘요' 라고 해요."""
+    got = run(f"""
+      const v = (s, c) => [K.divBlankKind(s, c), K.divKr(s, c).rule, K.divHiddenLine(s, c), K.payout(s, c)];
+      const c0 = {{ ...O('{B}'), cash3: [0, 90, 80] }}, cn = {{ ...O('{B}'), cash3: undefined }};
+      out = {{ pays: v(S('{B}'), O('{B}')).slice(0, 3), zero: v(S('{B}'), c0), none: v(S('{B}'), cn), noCo: v(S('{B}'), null),
+        a0: v(S('{A}'), {{ ...O('{A}'), cash3: [0, 0, 0] }}).slice(0, 3) }};
+      const t = (c) => text(renderToStaticMarkup(h(CT.DivTab, {{ load: {{ ...LOAD, coByT: new Map([...LOAD.coByT, ['{B}', c]]) }}, s: S('{B}') }})));
+      out.tab = t(c0).slice(0, 2); out.na = C2.co.tiles.na;""")
+    assert got["pays"] == ["pays", "pays", "dataHidden"]
+    for k in ("zero", "none", "noCo"):
+        assert got[k] == ["unknown", "na", "dataHidden", None], (k, got[k])
+    assert got["a0"] == ["unknown", "na", "missingHidden"]                                 # 줄 4 는 총액과 상관없이 '모름'
+    assert got["tab"] == [got["na"], L3]

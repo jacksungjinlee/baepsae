@@ -1561,7 +1561,7 @@ uncounted 2, data 22, the 32.5% yield 1; lines: 1 → 0 stocks, 2 → 8, 3 → 1
   and `data`, its stocks differ from the proof's `rightsT` · `dataT`, a case is unknown, or the marks differ: `dvLine` 2 must be on
   exactly the `rights` stocks with case `sh`, `dvLine` 3 on exactly the `data` stocks with case `div`, `dvLine` 4 on exactly the `data`
   stocks with case `nototal` · `nostk` · `pref0` · `nopfo` · `prefmix`, and since #179 `nodps` while the stock's `dps` and
-  `dps3[0]` are blank (`PROVE_SUB_LINE`; section "Korean dividend tables that contradict themselves" below); a `data` stock with case `other` carries no
+  `dps3[0]` are blank, `divCheck.raw.contra` lists this year and corp.json's `cash3[0]` is above 0 (`PROVE_SUB_LINE`; section "Korean dividend tables that contradict themselves" below); a `data` stock with case `other` carries no
   line, and any `other` turns the row into a WARN (see `data` above). Our own bookkeeping only: look at the run's
   "숨긴 배당수익률의 줄" and "그대로 숨김" log lines. A file without `proofSub` (before #PR) is only a warning unless the previous publish
   had it; without it a `dvLine` 2, 3 or 4 fails the "배당 기준 증명 기록" row.
@@ -1570,39 +1570,58 @@ uncounted 2, data 22, the 32.5% yield 1; lines: 1 → 0 stocks, 2 → 8, 3 → 1
 
 DART's 배당 table sometimes disagrees with itself. The daily run now checks the parsed table after the DART cache (the cached
 parse is unchanged, so no dividend entry is fetched again) and before the split check (`fetch_data.py` `div_raw_guard`, then
-`apply_div_basis`, then `div_dy_guard`). The rules live once in `validate_data.py` (`div_zero_contra`, `dps_far_years`, `dy_far`).
+`apply_div_basis`, then `div_dy_guard`). The rules live once in `validate_data.py` (`div_zero_contra`, `dps_far_years`, `dy_far`,
+`dy_window_ok`). Both steps are all-or-nothing: they look at every stock first and change values only at the end, so a crash
+blanks nothing (logged loudly; the run publishes the old values without the record). Foreign issuers (9…) are never blanked: the
+proof stage gives them no reason line, so they stay as before and the log names them.
+
+What the DART tables say (read on 2026-11-23, 2025 사업보고서, `alotMatter`): 현대코퍼레이션, 한텍, 에코프로머티 and 솔루스첨단소재 have
+one common 주당 현금배당금 row and its 2025 cell is "-" next to a cash total (현대코퍼레이션 also files a 3.10% common yield). There is
+no second common row: the per-share figure is missing from the filing, so line 4 is literally true. 티에스아이 is a preferred-only
+payer (common "-", 우선주 505원 for three years, total 23.60억원 = 4,673,989 preferred shares × 505원). 케이프 files its 700원 under
+a row labelled 우선주 while the total ÷ 700원 is exactly its common share count and its common yield row says 6.60%: the run treats it
+as unknown (line 4); taking such a mislabelled row would be a separate parser change.
 
 - **0 with a total → unknown.** A year whose common 주당 현금배당금 is 0 ("-") while that year's 현금배당금총액 is above 0 becomes
-  unknown (blank), never 0: 0 means "no dividend", and 2.0 said "배당을 주지 않았어요" and ranked those payers last (18 on 11-21:
-  현대코퍼레이션 84.08억원, 케이프, 앱코, 동일산업, 한텍 …). The 0 stays only when the preferred shares took the whole total: that year's
-  preferred 주당 배당 × today's listed preferred shares (or, when an unlisted class was paid, the year-end 주식의 총수 현황 count, this
-  year only) explains the total within ±15% (`PREF_ONLY_TOL`). Otherwise unknown. A per-share figure is never made up from the total.
+  unknown (blank), never 0: 0 means "no dividend", and 2.0 said "배당을 주지 않았어요" and ranked those payers last (up to 18 on
+  11-21; 17 with the real preferred rows). The 0 stays only when the preferred shares took the whole total: that year's preferred
+  주당 배당 × today's listed preferred shares (or, when an unlisted class was paid, the latest year-end 주식의 총수 현황 count, used for
+  the earlier years too) explains the total within ±15% (`PREF_ONLY_TOL`). Otherwise unknown. A per-share figure is never made up
+  from the total. When this year's figure goes unknown and DART's `dy` for it is 0 (a "-" read as 0), that `dy` is blanked too.
+  Blanking this year also removes the earlier bars in 2.0: the split check needs this year's dividend for its factor, so
+  `dps3a` becomes all blank and `divSt` nd (현대코퍼레이션: 700 · 600원 stay in `dps3` for the old app, no bars in 2.0).
 - **A per-share cell that is not a per-share amount → blank** that year: 주당 배당 × today's common shares above 1,000 × that year's
   total (`DPS_CASH_FAR`; 와이엔텍 wrote the total in the per-share cell, 18 million ×; sound values on 11-21 stay under 70 ×, including
-  splits and pre-listing years), or this year's 주당 배당 at or above today's close — unless that year's total says today's share
-  count is at least 2 × the shares that got it (`DPS_BASIS_MOVED`: a split, bonus issue or listing since; the split check puts
-  that figure on today's basis, as before).
-- When this year's figure is blanked for a payer (total above 0), the stock is recorded in the proof's `data` and gets a reason line:
+  splits and pre-listing years). A figure at or above today's close is not blanked: when the total confirms it, it is a real
+  figure; when there is no total, the proof stage gives its existing `nototal` line 4 as before.
+- When this year's figure is blanked (always with a total above 0), the stock is recorded in the proof's `data` and gets a line:
   - 0 with a total → new case `nodps`, `dvLine` 4, Jack's line of 2026-11-19 ("회사 공시에 배당 계산에 필요한 자료가 빠져 있어서
-    배당수익률은 비워 두었어요."). The gate accepts `nodps` only while the stock's `dps` and `dps3[0]` really are blank
-    (`div_line_bad_rows`); otherwise the run blanks the line (`ownDrop.divLine`) like any other unbacked line. None of the five
-    existing line-4 cases fits: each names the piece that is missing (`nototal` "총액 없음" …), and here the total is there.
+    배당수익률은 비워 두었어요."). The gate accepts `nodps` only while the stock's `dps` and `dps3[0]` are blank, `divCheck.raw.contra`
+    lists this year and corp.json's `cash3[0]` is above 0 (`div_line_bad_rows`); otherwise the run blanks the line
+    (`ownDrop.divLine`) like any other unbacked line. None of the five existing line-4 cases fits: each names the piece that is
+    missing (`nototal` "총액 없음" …), and here the total is there.
   - a per-share cell more than 1,000 × off the total → the existing case `div`, `dvLine` 3 ("회사가 공시한 배당 자료와 주식 수가 서로
-    맞지 않아서 배당수익률은 비워 두었어요.") — the same case and line the proof stage gave 와이엔텍 before; the total ÷ the per-share
-    figure really disagrees with the share count.
-  - this year's figure at or above today's close with a total that matches the share count → no line (neither line is literally
-    true; the run log says "!! 올해 주당 배당이 종가 이상이라서만 비운 회사 …" so someone reads the table). None on 11-21.
+    맞지 않아서 배당수익률은 비워 두었어요.") — the same case and line the proof stage gave 와이엔텍 before. No gate change for it.
+  - Every blanked year 0 gets one of these lines; nothing is blanked without a line.
 - **2.0** (`src/v2/company.js` `divBlankKind`): a Korean stock with no `dps` and `dvLine` 4 shows 자료가 없어요 with line 4 (whether the
   common shares were paid is not known, so never 배당을 줘요, and no 배당성향); with `dvLine` 3 it shows 배당을 줘요 with line 3 and the
-  배당성향 from the totals, as before. Same places as the other lines: the 배당 tile and tab, 관심 종목, 두 종목 비교.
+  배당성향 from the totals only while corp.json's `cash3[0]` is above 0 (else 자료가 없어요 with line 3). Same places as the other
+  lines: the 배당 tile and tab, 관심 종목, 두 종목 비교. corp.json keeps `cash3` · `eps3r` · `epsNi3` · `epsB` for every stock with a
+  배당 table, also when all three per-share years were blanked (와이엔텍's ring).
 - **DART 배당수익률 (`dy`, the old app's 배당수익률) → blank** when it is more than 3 × away (`DY_FAR`) from today's per-share
   dividend (`dps3a[0]`, only where the split check confirmed this year's basis) over the 52-week high–low range and today's close
   (흥국 56.0 = dividend ÷ par, 지투파워 33.7 = the payout ratio, 아비코전자 30.0, 알피바이오 10.0); a 0 with a payer, or a yield with a 0
-  dividend, too. 2.0 does not use `dy`. On 11-21: kept values stay under 2.4 ×, blanked ones start at 5.1 ×.
+  dividend, too. The value comparison runs only while the report year's 31 December lies inside the 52-week window
+  (`dy_window_ok`: from January to the new 사업보고서, and for companies still on an older report, it is skipped and counted). 2.0
+  does not use `dy`. On 11-21: kept values stay under 2.4 ×, blanked ones start at 5.1 ×.
 - **Record:** data.json `divCheck.raw` = `{v: 1, contra, prefOnly, dpsBad: {code: [year index 0 · 1 · 2]}, dyBad: {code: the
-  blanked dy}, dyOk, dyNo}`. Run log: "DART 배당 표 0원인데 그해 현금배당금총액이 있는 해", "DART 주당 배당이 주당 금액이 아닌 해", "DART
-  배당수익률(dy)이 … 벗어남" with counts and names. If either step crashes, the run says so loudly and publishes the old values
-  without the record.
+  blanked dy}, dyOk, dyNo, pre: {code: [this year's per-share dividend, dy] before blanking}}`, present whenever anything was
+  blanked. Run log: "DART 배당 표 0원인데 그해 현금배당금총액이 있는 해" (with the 우선주 · 종류주만 받아 0 그대로 count and names),
+  "DART 주당 배당이 주당 금액이 아닌 해", "DART 배당 표 맞춤", "DART 배당수익률(dy)이 … 벗어남".
+- **"주당 배당금·배당수익률 맞음" (existing FAIL row, kept at full strength):** blanking removes exactly the mismatches this row counts,
+  so the row adds back every stock that `pre` shows was mismatched before blanking (0 with a yield, or the reverse) — the same count
+  as before #179 on the same DART input, against the same `DPS_DY_ODD_MAX` (11-21: 21, 0.8%). A record that is present but
+  malformed fails the row (it can't count the blanked values).
 - **Gate (warning only, never fails, also when the check itself crashes):** "DART 배당 표 0원인데 총액이 있는 해 (경고만)" names any
   year still at 0 with a total (except `prefOnly`) and any year the record says was blanked but still has a value; "DART 주당 배당 ·
   배당수익률 그럴듯함 (경고만)" names any per-share figure or `dy` still outside the rules, with the count of yields checked and

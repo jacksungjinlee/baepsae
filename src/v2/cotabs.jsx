@@ -815,7 +815,7 @@ export function DivTab({ load, s }) {
         <NoStmtNote s={s} co={co} show={!us && r.rule === "na"} />
         {/* v19.1i (Jack's line, 2026-11-08) and v19.1j (Jack, 2026-11-15): why the yield is hidden, by the pipeline's mark (one line at most) */}
         {/* 2026-11-23: a report per-share figure the pipeline blanked (company.js divBlankKind) — 자료가 없어요 with line 4, or 배당을 줘요 with line 3 */}
-        {!us && (r.rule === "pays" || (r.rule === "na" && divBlankKind(s))) && hidLine && Dv[hidLine] && <Note data-ui-v2={HID_UI[hidLine]}>{Dv[hidLine]}</Note>}
+        {!us && (r.rule === "pays" || (r.rule === "na" && divBlankKind(s, co))) && hidLine && Dv[hidLine] && <Note data-ui-v2={HID_UI[hidLine]}>{Dv[hidLine]}</Note>}
         {showDps && Dv.dps && (
           <div data-ui-v2="co-dps" style={{ display: "flex", alignItems: "baseline", gap: SPACE(2), flexWrap: "wrap", marginTop: SPACE(3) }}>
             <span style={tx(SIZE.h1, WEIGHT.heavy, COLOR.ink)}><Amount text={fill(C.app.won, { n: nf(r.dps) })} /></span>
