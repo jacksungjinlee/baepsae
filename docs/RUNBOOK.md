@@ -2524,59 +2524,79 @@ Appendix 1 line for it (`split applied` / `merge applied`).
 
 - **The date is the first trading day on the new share count** (신주권상장예정일 = 매매거래 재개일), never the board date or
   the legal effective date (신주의 효력발생일). Checked on the 49 split/merge filings the dividend check (`dvWhy`) had already
-  read: the listing day is 1–32 days after the legal date (median about 18; merges about 3 weeks: 시큐브 131090 legal 2025-04-29,
-  listed 05-20). Using the legal date would count a record typed during the halt at the wrong basis.
-- **Two sources for every row** (the official-close rule's spirit). A row is added only when both say the same event:
-  - **Market (KRX):** on that day the KRX base price (`Close − Changes`) is the previous official close ÷ a clean ratio
-    (± 2%, tick rounding) and the listed share count moved by that ratio (± 10%: a same-day treasury cancellation, 영풍
-    2025-04-25 ×10 had shares ×10.37); or, for a merge or a capital reduction by merger (감자), the listed share count fell
-    by n:1 exactly (± 1%, n ≥ 2), because KRX sets that relisting day's base by an opening auction (알파칩스 117670
-    2025-07-09 10:1 감자: previous close 790, base 9,580). Share count changes of 10% or less are never events.
-    Daily candidates come from the recent final KRX lists (`kr_split_cands` on `kr_ref_links`' breaks, in `fetch_korea`,
-    logged `· 한국 주식 분할 후보 …`). A day with no list file hides the base reset, so a Korean stock whose listed shares
-    moved more than 10% since the previous publish is also read from Daum's daily rows (one call each, at most 30 stocks a
-    run, days after the previous publish's price date up to today's; `kr_split_daum_cands`). An event dated after the
-    stock's own price date (`pxDate`, or its `pxd` when it is shown at its last confirmed close) waits for the next publish
-    (`splitsKr.late`): the price would still be the old basis while the app already counts the new shares.
-    2016-01-01 → 2026-11-20 comes from the committed seed `data/kr_splits_seed.csv`
-    (589 candidates: Daum's unadjusted daily rows, read once on 2026-11-23 for the 2,444 Korean stocks Daum has; KONEX is
-    not in Daum, so KONEX before 2026-11-23 is not covered). The seed file is the same rule's output; its loader re-runs
-    the rule on every line and refuses the whole file if one line disagrees.
-  - **DART:** 거래소 수시공시 (I001) 주식분할결정 · 주식병합결정 (final corrected version, withdrawn ones dropped). There is
-    no structured API for them, so the original document is read (`parse_kr_split_doc`, the same fixed KRX form `dvWhy`
-    reads): ratio = 1주당 가액 before ÷ after, listing date = 신주권상장예정일. If none matches and the candidate is a merge,
-    주요사항보고서 (B001) 감자결정 with a 주식병합 method (`crDecsn.json`: shares before → after, 신주상장예정일). A
-    candidate is confirmed when the ratio is the same and the listing date is the market's day.
-  - DART does not serve some old corrected documents (status 014: 삼성전자's 2018 [기재정정]주식분할결정). Then, for a
-    base-price candidate only, the single same-direction decision in the list (filed before that day, not withdrawn) plus
-    the market's ratio and date confirm it; the receipt says `list`.
-  - An event only one side shows is left out and named with its reason in `splitsKr.out` and the log (`한 출처만 말해서
-    싣지 않은 사건`): spin-offs and mergers that move the base (삼성바이오로직스 2025-11-24, base × 2/3, no decision), or a
-    real split whose relisting base was not close ÷ ratio (동국홀딩스 001230 2026-05-29: DART 5:1, market ÷ 4.48 → left out).
-- **DART calls.** Only in DART-on runs that are not full-DART (`dart=cache`, a cache that was not empty at start, not a
-  same-day rerun that skips DART), at most `KR_SPLIT_DART_PER_RUN` = 50 new calls a run, biggest market cap first; a
-  candidate takes 2 calls (list + document), 3–4 for a 감자. Verdicts are cached under `{corp}|krsplit|v1|{date}` (a
-  preferred share reuses its common's), so a candidate is asked once; a "no" is asked again after 14 days while the event
-  is under 120 days old (a late correction). **Expected:** the first runs each use the full 50 (about 20 candidates);
-  the seed's 589 candidates need about 1,300 calls, so about 26 DART-on runs, biggest companies first (the 36 over 1조
-  in the first two runs). After that, 0 on most days and 2–4 when a new event appears.
-- **Never taken out, never blocks.** Every Korean row of yesterday's file is carried, whatever fails (DART down, an
-  error in this step, the stock leaving the list). A failed lookup is retried next run (`splitsKr.fail`). The step never
-  stops the run.
+  read: 48 match a market event with the same ratio, listed 1–32 days after the legal date (median about 18; merges about 3
+  weeks: 시큐브 131090 legal 2025-04-29, listed 05-20); the 49th (동국홀딩스) disagrees and is left out (below).
+- **Two sources for every row.** A row is added only when both say the same event:
+  - **Market (KRX):** the listed share count moved by more than 10% that day, and (`kr_split_event`, in this order) the share
+    count moved by exactly n:1 or 1:n (± 1%; a split must also have its KRX base price `Close − Changes` = the previous
+    official close ÷ n ± 1%, so a 무상증자 listing day is not one; a merge or a 감자 may not, because KRX sets that relisting
+    day's base by an opening auction: 알파칩스 117670 2025-07-09, previous close 790, base 9,580); otherwise the clean fraction
+    closest to previous close ÷ base (± 1%) with the share count within 10% of it (5:2 splits; 영풍 2025-04-25 ×10 had shares
+    ×10.37 from a same-day share issue). Daily candidates come from the recent final KRX lists (`kr_split_cands` on
+    `kr_ref_links`' breaks, in `fetch_korea`, logged `· 한국 주식 분할 후보 …`). A day with no list file hides the base reset,
+    so a Korean stock whose listed shares moved more than 10% since the previous publish is also read from Daum's daily rows
+    (`kr_split_daum_cands`: one call each, at most 30 stocks, stops after 3 failures in a row or 120 seconds, loud line; the
+    stocks not read are carried in `splitsKr.dq` and read on the next runs, for up to 50 days). 2016-01-01 → 2026-11-20 comes
+    from the committed seed `data/kr_splits_seed.csv` (592 candidates: Daum's unadjusted daily rows, read once on 2026-11-23 for
+    the 2,444 Korean stocks Daum has; the file is the same rule's output and its loader re-runs the rule on every line and
+    refuses the whole file if one line disagrees).
+  - **DART:** 거래소 수시공시 (I001) 주식분할결정 · 주식병합결정 (final corrected version, withdrawn ones dropped, the list
+    paged up to 5 × 100). There is no structured API for them, so the original document is read (`parse_kr_split_doc`, the
+    same fixed KRX form `dvWhy` reads): ratio = 1주당 가액 before ÷ after, listing date = 신주권상장예정일. If none matches and
+    the candidate is a merge, 주요사항보고서 (B001) 감자결정 (`crDecsn.json`): only a 감자 by merging shares, read as the
+    holder's ratio from the method text (`kr_split_cr_ratio`: exactly one "N주를 … M주로" / "N:M" ratio, equal to the 감자비율;
+    text with 차등 · 최대주주 · 소각 is refused, code `cr`), and its 신주상장예정일.
+  - **Confirmed** when the DART listing date is the market's day and DART's exact ratio fits the market's raw numbers (base
+    ratio ± 1% with shares ± 10%, or shares ± 1%: `kr_split_match`). The published ratio is DART's.
+  - **A document DART does not serve** (status 014, e.g. 삼성전자's 2018 [기재정정]주식분할결정) never confirms a row: the
+    event is left out with code `gone`. 800, 900 and any other status are retried next run (`fail`, nothing cached).
+    삼성전자 005930 and 삼성전자우 005935 2018-05-04 ×50 are hand-checked rows in the Korean override table
+    (`KR_SPLIT_OVERRIDES`, published as `splitsKr.fixed`) with their evidence (base 53,000 = 2,650,000 ÷ 50 and 42,500 =
+    2,125,000 ÷ 50; listed shares ×50.000; the DART list entry 20180316800856).
+  - Everything else is left out and named by code in `splitsKr.out` (detail in the log only): `nodoc` no decision (company
+    splits: 삼성바이오로직스 2025-11-24), `diff` decision ratio or date differs (동국홀딩스 001230 2026-05-29: DART 5:1, market
+    ÷ 4.48), `gone`, `unread`, `cr`, `nocorp` (no DART code: ETFs, some KONEX), `pages` (I001 list over 5 pages), `err` (our
+    reading failed on one document).
+- **data.json carries codes, never text** (#186 review): the gate's text row fails on words like "None" or "nan" anywhere in
+  the file, and a cached reason would repeat every day. `out`, `fail`, `held` and `late` keep the 30 most recent rows, with
+  the full counts in `outN`, `failN`, `heldN`.
+- **Rows that leave a fraction of a share wait for Jack** (`KR_SPLIT_FRACTION_ROWS_ON = False`): a merge (r < 1) or a
+  non-whole split (5:2) gives holders a fraction the company pays in cash, and 2.0 has no approved line for it yet. Those
+  events are confirmed and cached, logged (`확인했지만 싣지 않은 몫이 남는 사건`) and named in the gate row (`held`), but not
+  published until the switch is turned on with Jack's line. Whole splits (×2, ×5, ×10, ×50 …) publish now. Rows already
+  published are always carried.
+- **DART calls.** Only in DART-on runs that are not full-DART (`dart=cache`, a cache that was not empty at start, and not a
+  rerun for the same price date that skips DART, `no_call`), at most `KR_SPLIT_DART_PER_RUN` = 50 new calls a run. Order:
+  today's candidates (KRX lists, Daum), candidates carried from earlier runs (`splitsKr.pend`, so a new event is never lost
+  after the KRX list window or the one Daum look) and any event of the last 30 days first; then the seed, biggest market cap
+  first. A candidate takes 2 calls (list + document), 3–4 for a 감자. Verdicts are cached under `{corp}|krsplit|v2|{date}` (a
+  preferred share reuses its common's; v2 since #186, so v1 verdicts are asked again), so a candidate is asked once; a "no"
+  is asked again after 14 days while the event is under 120 days old (a late correction). **Expected:** the first runs each
+  use the full 50 (about 20 candidates); the seed's 592 candidates need about 1,300 calls, so about 26 DART-on runs. After
+  that, 0 on most days and 2–4 when a new event appears.
+- **Never taken out, never blocks.** Every Korean row of yesterday's file is carried, whatever fails (DART down, an error in
+  this step, the stock leaving the list). A failed lookup is retried next run. The step never stops the run. An event dated
+  after the stock's own price date (`pxDate`, or its `pxd` when it is shown at its last confirmed close) waits for the next
+  publish (`late`): the price would still be the old basis while the app already counts the new shares.
 - **Gate.** The two existing rows check Korean rows exactly as US rows (shape, clean ratio, a new row's stock must be in
-  today's list, a row may never disappear or change ratio); nothing was loosened. A new warning-only row,
-  **한국 주식 분할 (splitsKr · 경고만)**, names today's new Korean rows, events left out in the last 30 days, failed
-  lookups, candidates still waiting for the call budget, Korean rows without a receipt, and an error or DART-off run. It
-  never fails.
-- **`splitsKr`** in data.json: `src` (dart · cache · off · err), `n`, `prev`, `new`, `rows` (receipts: code, date, ratio,
-  kind split/merge/reduce, rcept_no, read from doc/cr/list), `wait`/`waitT`, `out`, `fail`, `calls`, `cap`, `seed`, `cand`.
-- **Not handled (known limits):** 무상증자 (bonus issues) and 주식배당: the share count changes but they are not splits, so
-  a record from before one still reads at the old count; KONEX before 2026-11-23; an event whose two sources disagree (named
-  in `out`). After a merge a Korean holding can show a fraction (7 shares through a 5:1 merge read as 1.4주, while the
-  company pays the 0.4 in cash, 단주 대금); 팔았어요 takes whole Korean shares only, so that fraction cannot be recorded as
-  sold yet (a question for Jack).
-- **To correct a Korean row:** the US override table (`SPLIT_OVERRIDES`) works the same way for a Korean code (an "out"
-  row removes it, also from users' stored splits).
+  today's list, a row may never disappear or change ratio); nothing was loosened. A new row,
+  **한국 주식 분할 (splitsKr · 경고만)**, never fails and warns only on a new problem: a failed lookup, a new `diff`, an event
+  of the last 30 days left out, an error or DART-off run, an unreadable seed, a Korean row without a receipt, or a count that
+  does not add up. While the backfill simply waits it passes, naming today's new rows, the waiting count and `held`.
+- **`splitsKr`** in data.json: `v` 2, `src` (dart · cache · off · err), `n`, `prev`, `new`, `rows` (receipts: code, date,
+  ratio, kind split/merge/reduce/fixed, rcept_no, read from doc/cr/fixed), `wait`/`waitT`, `out`/`outN`, `fail`/`failN`,
+  `held`/`heldN`, `diffNew`, `late`, `pend`, `dq`, `fixed` (the Korean override rows), `calls`, `cap`, `seed`, `cand`, `seedErr`.
+- **Not handled (known limits):** 무상증자 (bonus issues) and 주식배당 change the share count but are not splits, so a record
+  from before one still reads at the old count; KONEX before 2026-11-23 (not in Daum); ETFs and stocks with no DART code
+  (`nocorp`); events whose two sources disagree or whose document DART does not serve (named in `out`; a person can add an
+  override row with the evidence); merges and non-whole splits until Jack approves their line.
+- **To add or correct a Korean row:** a hand-checked row whose two sources a person confirmed (for example a decision whose
+  document DART does not serve) goes into `KR_SPLIT_OVERRIDES` (add only, with the evidence in its note). To remove a Korean
+  row or change its ratio, use the US override table (`SPLIT_OVERRIDES`, which accepts Korean codes): an "out" row (ratio
+  `None`) or a new ratio, published in `splitsInfo.fixed`, so the gate and the app (which removes a stored split on an "out"
+  row) see it; `tests/test_v196a_fxhist_splits.py::test_override_table_pins` pins that table, so that PR updates the pin
+  (listed under 안전 규칙 변경). Override notes go into `splitsInfo.fixed`, so never write "None", "nan", "null" or
+  "undefined" in them.
 
 ## Known limits: the date of a US record (v19.6a)
 

@@ -3328,9 +3328,10 @@ def check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=None):
 # ── 2026-11-23 (Jack, Track 1 "Korean stock splits" · 새 줄 하나 · 경고만): data.json splitsKr ──────────────────────────────────────────
 # 파이프라인(fetch_data.kr_splits_step)은 시세(KRX 기준가 · 상장주식수)와 DART 결정 공시(주식분할결정 · 주식병합결정 · 주식병합으로 하는 감자결정)가
 # 같은 배율 · 같은 상장일을 말한 한국 분할 · 병합만 splits 에 더해요 (미국 줄과 같은 모양 [코드, 날짜, 배율] — 위 '주식 분할 목록' 두 줄이 그대로 봐요:
-# 모양 · 깨끗한 배율 · 새 줄은 오늘 목록의 종목 · 한 번 실은 줄이 사라지면 실패). 이 줄은 오늘 새로 실은 한국 줄, 한 출처만 말해 싣지 않은 최근 사건,
-# 조회 실패, 아직 묻지 못한 후보, 영수증(splitsKr.rows)이 없는 한국 줄을 이름과 함께 **경고만** 해요 — 어떤 값이 와도 실패하지 않아요 (발행을 막는 줄은
-# Jack 의 범주 2 라 PR 에 제안만 했어요). 파이프라인과 따로 적어요.
+# 모양 · 깨끗한 배율 · 새 줄은 오늘 목록의 종목 · 한 번 실은 줄이 사라지면 실패). 이 줄은 **경고만** 해요 — 어떤 값이 와도 실패하지 않아요 (발행을 막는
+# 줄은 Jack 의 범주 2 라 PR 에 제안만 했어요). 리뷰 #186: 새 문제일 때만 노래요 — 조회 실패 · 이번에 새로 '공시와 다름' · 최근 30일 사건을 싣지 않음 ·
+# 오류 · DART 꺼짐 · 시드를 읽지 못함 · 영수증 없는 한국 줄 · 수가 맞지 않음. 확인을 기다리는 후보(실행당 DART 한도) · 오늘 새 줄 · 몫이 남아 싣지 않은
+# 줄(held)은 이름만 적고 통과해요. 파이프라인과 따로 적어요.
 KR_SPLITS_ROW = "한국 주식 분할 (splitsKr · 경고만)"
 KR_SPLIT_CODE_RE = re.compile(r"\d[0-9A-Z]{5}")      # 한국 종목 코드 (fetch_data.KR_SPLIT_CODE 와 같은 꼴 · 미국 티커는 글자로 시작해요)
 KR_SPLIT_RECENT_DAYS = 30           # 싣지 않은 사건 중 이 날수 안의 것만 경고 (그보다 오래된 것은 '확인할 것' 목록에만 — 매일 노랗지 않게)
@@ -3346,12 +3347,12 @@ def kr_split_rows(data):
 
 def check_kr_splits(rep, data, today):
     """2026-11-23: 한국 주식 분할 (splitsKr) — 경고만. 읽다 멈춰도 경고 한 줄 (실패하지 않아요)."""
-    rule = ("한국 분할 · 병합은 시세와 DART 결정 공시가 같은 배율 · 같은 상장일일 때만 실어요 (오늘 새 줄 · 한 출처만 말해 싣지 않은 최근 "
-            f"{KR_SPLIT_RECENT_DAYS}일 사건 · 조회 실패 · 묻지 못한 후보 · 영수증 없는 줄 · splitsKr 없음 · 오류는 경고 · 실패 없음)")
+    rule = ("한국 분할 · 병합은 시세와 DART 결정 공시가 같은 배율 · 같은 상장일일 때만 실어요 (조회 실패 · 새로 '공시와 다름' · 싣지 않은 최근 "
+            f"{KR_SPLIT_RECENT_DAYS}일 사건 · 영수증 없는 줄 · splitsKr 없음 · 오류 · DART 꺼짐은 경고 · 확인 기다림 · 몫이 남아 싣지 않은 줄은 통과 · 실패 없음)")
     try:
         _check_kr_splits(rep, data, today, rule)
     except Exception as e:
-        rep.add(KR_SPLITS_ROW, True, f"읽다 멈췄어요 ({type(e).__name__}: {str(e)[:80]})", rule, warn=True)
+        rep.add(KR_SPLITS_ROW, True, f"읽다 멈췄어요 ({type(e).__name__})", rule, warn=True)
 
 
 def _check_kr_splits(rep, data, today, rule):
@@ -3364,41 +3365,49 @@ def _check_kr_splits(rep, data, today, rule):
         rep.add(KR_SPLITS_ROW, True, f"splitsKr 없음 — 한국 줄 {len(rows):,}건 (한국 분할을 확인하지 않은 파일)", rule, warn=True)
         return
     lst = lambda k: [x for x in info.get(k) if isinstance(x, list)] if isinstance(info.get(k), list) else []     # noqa: E731
-    new, out, fail, rec = lst("new"), lst("out"), lst("fail"), lst("rows")
+    cnt = lambda k, xs: int(json_num(info.get(k)) or 0) if json_num(info.get(k)) is not None else len(xs)        # noqa: E731
+    new, out, fail, rec, held, diff_new = lst("new"), lst("out"), lst("fail"), lst("rows"), lst("held"), lst("diffNew")
+    n_out, n_fail, n_held = cnt("outN", out), cnt("failN", fail), cnt("heldN", held)
     wait = int(json_num(info.get("wait")) or 0)
     src = info.get("src")
     recent = [x for x in out if len(x) >= 2 and _iso_day(x[1]) and (today - _iso_day(x[1])).days <= KR_SPLIT_RECENT_DAYS]
     have = {(x[0], x[1]): json_num(x[2]) for x in rec if len(x) >= 3}
     no_rec = [f"{x[0]} {x[1]}" for x in rows if not same_ratio(have.get((x[0], x[1])), json_num(x[2]))]
     name = lambda x: " ".join(str(v) for v in x[:2])        # noqa: E731
-    warns = []
+    warns, notes = [], []
     if src not in ("dart", "cache", "off", "err"):
-        warns.append(f"출처 표시 {src!r}")
+        warns.append("출처 표시가 이상해요")
     if src == "err":
-        warns.append(f"!! 확인하다 오류로 멈춰 지난 줄만 이었어요 ({str(info.get('err'))[:80]})")
+        warns.append("!! 확인하다 오류로 멈춰 지난 줄만 이었어요 (로그를 보세요)")
     if src == "off":
         warns.append("DART 꺼짐 · 키 없음 (새 줄 없음)")
     if info.get("seedErr"):
-        warns.append(f"시드를 읽지 못함 ({str(info.get('seedErr'))[:60]})")
-    if new:
-        warns.append(f"오늘 새 한국 줄 {len(new)}: " + ", ".join(f"{name(x)} ×{json_num(x[2]) or 0:g}" for x in new[:KR_SPLIT_SHOW] if len(x) >= 3)
-                     + (" …" if len(new) > KR_SPLIT_SHOW else "") + " (한 번 보세요)")
+        warns.append("시드를 읽지 못함")
+    if fail or n_fail:
+        warns.append(f"조회 실패 {max(n_fail, len(fail))} (다음 실행에 다시)")
+    if diff_new:
+        warns.append(f"이번에 새로 '공시와 다름' {len(diff_new)}: " + ", ".join(name(x) for x in diff_new[:KR_SPLIT_SHOW]) + " (공시를 확인하세요)")
     if recent:
         warns.append(f"최근 {KR_SPLIT_RECENT_DAYS}일 싣지 않은 사건 {len(recent)}: " + ", ".join(name(x) for x in recent[:KR_SPLIT_SHOW])
-                     + (" …" if len(recent) > KR_SPLIT_SHOW else "") + " (시세만 움직였어요 — 공시를 확인하세요)")
-    if fail:
-        warns.append(f"조회 실패 {len(fail)} (다음 실행에 다시)")
-    if wait:
-        warns.append(f"아직 묻지 못한 후보 {wait:,} (실행당 DART 호출 한도 · 다음 실행)")
+                     + (" …" if len(recent) > KR_SPLIT_SHOW else "") + " (시세만 움직였거나 공시와 달라요 — 공시를 확인하세요)")
     if no_rec:
         warns.append(f"영수증 없는 한국 줄 {len(no_rec)}: " + ", ".join(no_rec[:KR_SPLIT_SHOW]))
     if json_num(info.get("n")) is not None and int(json_num(info.get("n"))) != len(rows):
-        warns.append(f"splitsKr.n {info.get('n')} ≠ 한국 줄 {len(rows)}")
-    val = (f"{len(rows):,}건 (새로 {len(new)} · 지난 발행본 {info.get('prev')}) · 싣지 않음 {len(out)} · 묻지 못함 {wait:,} · 조회 실패 {len(fail)} · "
-           f"DART 새 호출 {info.get('calls')}/{info.get('cap')} · 출처 {src}")
-    rep.add(KR_SPLITS_ROW, True, val + (" · " + " · ".join(warns) if warns else ""), rule, warn=bool(warns))
-    items = ([f"새 줄 {name(x)} ×{json_num(x[2]) or 0:g}" for x in new if len(x) >= 3] + [f"싣지 않음 {name(x)} ({x[2] if len(x) > 2 else ''})" for x in out]
-             + [f"조회 실패 {name(x)} ({x[2] if len(x) > 2 else ''})" for x in fail] + [f"영수증 없음 {x}" for x in no_rec])
+        warns.append(f"splitsKr.n {int(json_num(info.get('n')))} ≠ 한국 줄 {len(rows)}")
+    if new:
+        notes.append(f"오늘 새 한국 줄 {len(new)}: " + ", ".join(f"{name(x)} ×{json_num(x[2]) or 0:g}" for x in new[:KR_SPLIT_SHOW] if len(x) >= 3)
+                     + (" …" if len(new) > KR_SPLIT_SHOW else ""))
+    if n_held:
+        notes.append(f"확인했지만 몫이 남아 싣지 않음 {n_held} (Jack 의 줄을 기다려요)")
+    if wait:
+        notes.append(f"확인 기다림 {wait:,} (실행당 DART 한도)")
+    val = (f"{len(rows):,}건 (새로 {len(new)} · 지난 발행본 {json_num(info.get('prev')) or 0:g}) · 싣지 않음 {n_out} · 묻지 못함 {wait:,} · 조회 실패 {n_fail} · "
+           f"DART 새 호출 {json_num(info.get('calls')) or 0:g}/{json_num(info.get('cap')) or 0:g} · 출처 {src if isinstance(src, str) else '?'}")
+    rep.add(KR_SPLITS_ROW, True, " · ".join([val] + warns + notes), rule, warn=bool(warns))
+    items = ([f"새 줄 {name(x)} ×{json_num(x[2]) or 0:g}" for x in new if len(x) >= 3]
+             + [f"몫이 남아 싣지 않음 {name(x)} ×{json_num(x[2]) or 0:g}" for x in held if len(x) >= 3]
+             + [f"싣지 않음 {name(x)} ({x[2] if len(x) > 2 and isinstance(x[2], str) else '?'})" for x in out]
+             + [f"조회 실패 {name(x)} ({x[2] if len(x) > 2 and isinstance(x[2], str) else '?'})" for x in fail] + [f"영수증 없음 {x}" for x in no_rec])
     if items:
         rep.detail("한국 주식 분할 (splitsKr) 확인할 것", items)
 

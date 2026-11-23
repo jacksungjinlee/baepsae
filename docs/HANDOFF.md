@@ -24,14 +24,17 @@ links, "전무가" off the must-not-show list, labels) and a rename in `tests/te
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
 v19.6g, v19.6h.
 
-**Korean stock splits (#186, 2026-11-23; Jack's Track 1, spec v19.6 A.6):** `data.json` `splits` gets Korean 액면분할 · 주식병합
+**Korean stock splits (#186, 2026-11-23/24; Jack's Track 1, spec v19.6 A.6):** `data.json` `splits` gets Korean 액면분할 · 주식병합
 rows (same shape and meaning as the US rows; the app reads them unchanged), dated the first trading day on the new count
-(신주권상장예정일, not the legal date). A row needs two sources: the KRX base price + listed shares (daily from the final lists;
-2016 → 2026-11-20 from the committed seed `data/kr_splits_seed.csv`, 589 candidates) and the DART decision document (ratio from the
-par values, listing date) or a 감자결정 by merger. One-source events are left out and named (`splitsKr.out`). At most 50 new DART
-calls a run (cache runs only), biggest companies first: the backfill takes about 26 DART-on runs; Korean rows are never dropped.
-New warning-only gate row `한국 주식 분할 (splitsKr · 경고만)`. Open for Jack: a FAIL row (proposed in the PR), the fraction left by
-a merge (팔았어요 takes whole Korean shares only), 무상증자 not handled, a one-off higher call budget for the backfill. RUNBOOK
+(신주권상장예정일, not the legal date). A row needs two sources: the KRX market (listed shares exactly n:1 or 1:n, or the base price
+reset with matching shares; daily from the final lists, Daum for days without one, 2016 → 2026-11-20 from the committed seed
+`data/kr_splits_seed.csv`, 592 candidates) and the DART decision document (ratio from the par values, listing date) or a 감자결정 by
+merging shares read as the holder's ratio. A document DART does not serve never confirms (삼성전자 · 삼성전자우 2018 ×50 are hand-checked
+`KR_SPLIT_OVERRIDES` rows with evidence). One-source events are left out by code (`splitsKr.out`, text in the log only). **Held for Jack:** rows that leave
+a fraction of a share (merges, 5:2 splits) are confirmed but not published (`KR_SPLIT_FRACTION_ROWS_ON = False`) until he approves
+their line; whole splits publish. At most 50 new DART calls a run (cache runs only): new and recent events first, then the seed by
+market cap (about 26 DART-on runs); Korean rows are never dropped. New warning-only gate row `한국 주식 분할 (splitsKr · 경고만)` (yellow
+only on a new problem). Open for Jack: the fraction line, a FAIL row (proposed in the PR), 무상증자 not handled. RUNBOOK
 § Korean stock splits.
 
 **CI checks the two PR rules (#175, 2026-11-23; Jack: "Automate the rules you missed"):** the last step of `ci.yml`'s `checks`

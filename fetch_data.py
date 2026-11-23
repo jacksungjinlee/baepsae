@@ -13495,39 +13495,68 @@ def splits_fields(prev, us_codes, recent, recent_no_col, recent_from, today, see
 # 매매거래 재개일) — 이사회 결의일도, 신주의 효력발생일도 아니에요 (병합은 효력발생일과 3주 떨어지기도 해요: 131090 효력 2025-04-29 · 상장 05-20).
 # 앱(held.js splitFactor)은 이 날짜 앞의 기록을 새 기준으로 읽어요 — 그날 거래한 기록은 이미 새 주식 수예요.
 # 두 출처가 같은 사건을 말할 때만 실어요:
-#   시세 (KRX 기준가)  그날 KRX 기준가(Close − Changes)가 앞날 공식 종가 ÷ 배율로 새로 정해지고, 상장주식수가 그 배율만큼 (± 5%) 바뀐 날
-#                     (kr_split_event). 매일: 최근 거래일 목록 파일 (kr_ref_links 의 break → fetch_korea 가 meta _krSplitCand 로 넘겨요).
-#                     2016-01-01 ~ 2026-11-20: 한 번 읽어 커밋한 시드 data/kr_splits_seed.csv (다음 일별 시세 · 수정하지 않은 값 · 같은 규칙).
-#   DART 결정 공시    주식분할결정 · 주식병합결정 (거래소 수시공시 원문 — 구조화된 API 가 없어요 · dvWhy 와 같은 양식 읽기: 1주당 가액 전 → 후가
-#                     배율, 신주권상장예정일이 날짜) · 감자결정 중 주식병합으로 하는 것 (crDecsn · 감자 전 → 후 보통주 수 · 신주상장예정일).
-#                     배율이 같고 상장예정일 = 시세의 날이면 확인.
-# 한쪽에만 있는 사건은 싣지 않고 까닭과 함께 남겨요 (splitsKr.out · 로그) — 회사분할 · 합병 · 권리락처럼 시세만 움직인 날이 그래요 (삼성바이오로직스
-# 2025-11-24 인적분할: 기준가 × 2/3 · 주식 수 −2.4% — 분할 결정 공시가 없어요). 한 번 실은 줄은 빼지 않아요 (관문 '주식 분할 목록 변화'가 실패):
-# 지난 발행본의 한국 줄은 무엇이 실패해도 그대로 이어요. 미국 줄 · 미국 규칙은 그대로예요 (미국 단계가 이어 온 한국 줄은 여기서 다시 정해요).
-# DART: 캐시 항목 '{기업코드}|krsplit|v1|{날짜}' = 판정 (우선주도 보통주와 같은 항목) (ok 확인 · no 공시와 맞지 않음 — no 는 사건이 120일 안이면 14일 뒤 다시).
-# 새 조회는 DART 를 켠 보관본 실행(dart=cache · 빈 보관본 아님 · 같은 날 다시 하는 실행 아님)에서만, 실행당 KR_SPLIT_DART_PER_RUN 회까지
-# (시가총액이 큰 종목부터). 후보 하나에 보통 2회 (목록 1 + 원문 1) · 감자까지 보면 4회 · 많아야 KR_SPLIT_ONE_MAX 회.
+#   시세 (KRX)   그날 상장주식수가 SHARE_SAME(10%) 넘게 바뀌고 (kr_split_event): 주식 수가 정확히 n:1 · 1:n 이면 (± 1%) 그 배율 — 분할은 기준가
+#                (Close − Changes)도 앞날 공식 종가 ÷ n (± 1%) 이어야 해요 (무상증자 상장일이 아니게) · 병합 · 감자는 다시 상장하는 날 기준가를 동시호가로
+#                정해서 주식 수만으로; 아니면 앞날 종가 ÷ 기준가에 가장 가까운 깨끗한 배율 (± 1%) 과 주식 수 (± 10%). 매일: 최근 거래일 목록 파일
+#                (kr_ref_links 의 break → fetch_korea 의 meta _krSplitCand) · 목록 파일이 없던 날은 주식 수가 바뀐 종목의 다음 일별 시세 ·
+#                2016-01-01 ~ 2026-11-20: 한 번 읽어 커밋한 시드 data/kr_splits_seed.csv (다음 일별 시세 · 수정하지 않은 값 · 같은 규칙).
+#   DART 결정    주식분할결정 · 주식병합결정 (거래소 수시공시 원문 — 구조화된 API 가 없어요 · dvWhy 와 같은 양식 읽기: 1주당 가액 전 → 후가 배율,
+#                신주권상장예정일이 날짜) · 주식병합으로 하는 감자결정 (crDecsn: 감자 방법 글의 'N주를 … 1주로' 가 하나뿐이고 감자비율과 맞을 때 ·
+#                차등 · 최대주주 · 소각은 아니에요 · 신주상장예정일). 공시의 배율이 시세의 그 날 숫자(기준가 · 주식 수)와 맞고 상장예정일 = 시세의 날이면 확인.
+# 한쪽에만 있거나 둘이 다른 사건은 싣지 않고 까닭 부호를 남겨요 (splitsKr.out · 자세한 글은 로그에만 — data.json 에는 정해진 부호만: 관문의 글자 줄이
+# 'None' 같은 글자를 실패로 봐요). 원문을 DART 가 주지 않는 결정(014 · 삼성전자 2018 정정본)은 싣지 않아요 — 사람이 근거를 확인해 고정 표(SPLIT_OVERRIDES)로.
+# 한 번 실은 줄은 빼지 않아요 (관문 '주식 분할 목록 변화'가 실패): 지난 발행본의 한국 줄은 무엇이 실패해도 그대로 이어요. 미국 줄 · 미국 규칙은 그대로예요.
+# 1주가 안 되는 몫을 남기는 줄 (병합 r < 1 · 정수가 아닌 분할 5:2) 은 앱의 줄이 Jack 의 승인을 기다려서 KR_SPLIT_FRACTION_ROWS_ON 이 켜질 때까지 싣지 않아요
+# (확인 · 보관 · 로그 · 관문 줄에 이름은 남겨요 — splitsKr.held).
+# DART: 캐시 항목 '{기업코드}|krsplit|v2|{날짜}' = 판정 (ok · no 부호 · 우선주도 보통주와 같은 항목 · no 는 사건이 120일 안이면 14일 뒤 다시).
+# 새 조회는 DART 를 켠 보관본 실행(dart=cache · 빈 보관본으로 시작하지 않음 · 같은 기준일을 다시 도는 실행이 DART 를 쉬는 날(no_call) 아님)에서만,
+# 실행당 KR_SPLIT_DART_PER_RUN 회까지: 오늘 찾은 후보 · 이어 온 후보 · 30일 안의 사건 먼저, 그다음 시드를 시가총액 큰 종목부터.
+# 후보 하나에 보통 2회 (목록 1 + 원문 1) · 감자까지 보면 4회 · 많아야 KR_SPLIT_ONE_MAX 회.
 KR_SPLIT_CODE = re.compile(r"\d[0-9A-Z]{5}")      # 한국 종목 코드 (미국 티커는 글자로 시작해요)
 KR_SPLIT_SEED_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "kr_splits_seed.csv")
 KR_SPLIT_SEED_HEAD = "code,date,ratio,close,base,shares_before,shares_after"
-KR_SPLIT_PX_TOL = 0.02          # 앞날 종가 ÷ 기준가 와 깨끗한 배율의 차이 (기준가는 호가 단위로 반올림 · 많아야 0.5%)
-KR_SPLIT_SHR_TOL = SHARE_SAME   # 상장주식수의 비와 그 배율의 차이 (± 10% · 같은 날 자기주식 소각 · 신주: 영풍 2025-04-25 ×10 은 주식 수 ×10.37 ·
-#                                 티비씨 2026-07-03 5:1 병합은 ×0.189) — 기준가가 깨끗한 배율로 새로 정해진 날에만 보는 너비예요
-KR_SPLIT_DART_TOL = 1e-6        # 공시의 배율(액면가의 비 · 7자리로 반올림)을 깨끗한 분수로 맞출 때
-KR_SPLIT_CR_TOL = 0.01          # 감자 전 → 후 주식 수의 비를 깨끗한 분수로 맞출 때 (단주)
+KR_SPLIT_PX_TOL = 0.01          # 앞날 종가 ÷ 기준가 와 배율의 차이 (기준가는 호가 단위로 반올림: 100원대 주가에서 많아야 0.5%)
+KR_SPLIT_SHR_TOL = SHARE_SAME   # 기준가로 본 배율과 상장주식수의 비의 차이 (± 10% · 같은 날 자기주식 소각 · 신주: 영풍 2025-04-25 ×10 은 주식 수 ×10.37 ·
+#                                 티비씨 2026-07-03 5:1 병합은 ×0.189) — 기준가가 그 배율로 새로 정해진 날에만 보는 너비예요
+KR_SPLIT_EXACT_TOL = 0.01       # 상장주식수가 정확히 n:1 · 1:n 인지 (± 1% · 병합의 단주)
+KR_SPLIT_DART_TOL = 1e-6        # 공시의 배율(액면가의 비 · 감자 글의 비)을 깨끗한 분수로 맞출 때
+KR_SPLIT_CR_RT_TOL = 0.5        # 감자비율(%) 과 감자 글의 배율이 맞는지 (± 0.5%p)
 KR_SPLIT_DART_PER_RUN = 50      # 한 실행의 새 DART 호출 상한 (브리프 2026-11-23: "at most 50 a run")
-KR_SPLIT_ONE_MAX = 7            # 후보 하나가 쓸 수 있는 호출 수 (목록 2쪽 + 원문 3 + 감자 목록 1 + 감자 결정 1) — 남은 한도가 이보다 적으면 다음 실행
+KR_SPLIT_LIST_PAGES = 5         # 수시공시 목록 100건짜리 쪽 수 상한 — 넘으면 그 후보는 '목록이 너무 길어요'(pages)로 남겨요 (사람이 봐요)
 KR_SPLIT_DOCS_MAX = 3           # 목록의 분할 · 병합 결정 원문은 새것부터 이만큼
-KR_SPLIT_LIST_PAGES = 2         # 수시공시 목록 100건짜리 쪽 수 상한 (넘으면 다 보지 못해 조회 실패 — 다음 실행에 다시)
+KR_SPLIT_ONE_MAX = KR_SPLIT_LIST_PAGES + KR_SPLIT_DOCS_MAX + 3   # 후보 하나가 쓸 수 있는 호출 수 (+ 감자 목록 2쪽 + 감자 결정 1) — 남은 한도가 이보다 적으면 다음 실행
 KR_SPLIT_LIST_BACK = 200        # 시세의 날 앞 이 날수부터 공시를 봐요 (결의 → 상장: 분할 약 1~3달 · 병합은 주총을 거쳐 2~5달)
 KR_SPLIT_LIST_AFTER = 30        # 시세의 날 뒤 정정 공시까지 (최종 정정본만 · last_reprt_at=Y)
-KR_SPLIT_NO_RETRY_DAYS = 14     # 공시와 맞지 않은 판정(no)은 이만큼 지나면 다시 물어요 (늦은 정정 공시) — 사건이 KR_SPLIT_NO_RETRY_AGE 일 안일 때만
+KR_SPLIT_NO_RETRY_DAYS = 14     # 맞지 않은 판정(no)은 이만큼 지나면 다시 물어요 (늦은 정정 공시) — 사건이 KR_SPLIT_NO_RETRY_AGE 일 안일 때만
 KR_SPLIT_NO_RETRY_AGE = 120
-KR_SPLIT_TAG = "krsplit|v1"
+KR_SPLIT_RECENT_DAYS = 30       # 이 날수 안의 사건은 시드보다 먼저 물어요 · 관문이 싣지 않은 사건을 경고해요
+KR_SPLIT_TAG = "krsplit|v2"     # v2 (리뷰 #186): 주식 수가 정확한 배율 먼저 · 감자는 주주의 배율 · 014 만 끝난 판정 — v1 판정은 다시 물어요
 KR_SPLIT_SHOW = 10              # 로그 한 줄에 이름을 적는 수
-KR_SPLIT_DAUM_MAX = 30          # 상장주식수가 지난 발행본보다 10% 넘게 바뀐 종목 중 다음 일별 시세로 사건 날을 찾는 수 (한 실행 · 다음 1회씩)
+KR_SPLIT_KEEP = 30              # data.json splitsKr 의 목록(out · fail · held · late) 에 싣는 줄 수 (최근 것부터 · 전체 수는 따로) — 휴대폰이 받는 파일이에요
+KR_SPLIT_PEND_MAX = 200         # 이어 둘 후보 (오늘 찾았지만 아직 판정이 없는 것) 상한
+KR_SPLIT_DAUM_MAX = 30          # 상장주식수가 지난 발행본보다 10% 넘게 바뀐 종목 중 다음 일별 시세로 사건 날을 찾는 수 (한 실행)
 KR_SPLIT_DAUM_DAYS = 40         # 그 종목의 최근 거래일 수 (목록 파일이 없는 날 — 2차 출처 날 · 받지 못한 날 — 의 사건도 찾게)
+KR_SPLIT_DAUM_FAILS = 3         # 다음이 연달아 이만큼 실패하면 멈춰요 (나머지는 다음 실행에 · splitsKr.dq)
+KR_SPLIT_DAUM_SECS = 120        # 다음 일별 시세에 쓰는 시간 상한 (초)
+KR_SPLIT_DQ_DAYS = 50           # 다음으로 아직 보지 못한 종목을 이어 두는 날수 (다음 40거래일 창 안)
+# 1주가 안 되는 몫을 남기는 한국 줄 (병합 · 정수가 아닌 분할) 을 splits 에 싣는지 — Jack 이 그때의 앱 줄을 승인할 때까지 꺼 둬요 (#186 리뷰 · 조정자의 결정)
+KR_SPLIT_FRACTION_ROWS_ON = False
 KR_SPLIT_KIND_KO = {"split": "액면분할", "merge": "주식병합", "reduce": "감자(주식병합)"}
+# 한국 고정 줄 (#186 리뷰 · 조정자의 결정 2026-11-24): 원문을 DART 가 주지 않는 결정은 자동으로 싣지 않아요 — 사람이 두 출처(시세 · DART 목록)를 확인한
+# 줄만 여기에 (코드, 날짜) → (배율, 근거). 날짜 = 새 주식 수로 거래가 시작된 날 (신주권 상장일). 더하기만 해요 (배율이 있는 줄): 줄을 빼거나 고치는 'out' 줄은
+# 미국과 같은 SPLIT_OVERRIDES 로 (splitsInfo.fixed 로 실려 관문과 앱이 읽어요). 근거 글은 코드에만 두고 data.json 에는 [코드, 날짜, 배율]만 (splitsKr.fixed).
+KR_SPLIT_OVERRIDES = {
+    ("005930", "2018-05-04"): (50.0, "삼성전자 50:1 액면분할 (액면 5,000원 → 100원 · 2018-05-04 부터 새 주식 수로 거래): KRX 기준가 53,000원 = 5월 3일 "
+                                     "종가 2,650,000원 ÷ 50 · 상장주식수 128,386,494 → 6,419,324,700 = ×50.000 (다음 일별 시세) · DART 공시 목록의 "
+                                     "[기재정정]주식분할결정 접수 20180316800856 (원문은 DART 가 주지 않아요 · 014)"),
+    ("005935", "2018-05-04"): (50.0, "삼성전자우 50:1 액면분할 (보통주와 같은 결정 · 같은 날): KRX 기준가 42,500원 = 5월 3일 종가 2,125,000원 ÷ 50 · "
+                                     "상장주식수 18,072,580 → 903,629,000 = ×50.000 (다음 일별 시세) · DART [기재정정]주식분할결정 20180316800856"),
+}
+# data.json 에 싣는 까닭 부호 (글이 아니라 부호만 — 자세한 글은 로그에만)
+KR_SPLIT_OUT_WHY = {"nodoc": "분할 · 병합 · 감자(주식병합) 결정 공시 없음", "diff": "공시의 배율이나 상장예정일이 시세와 달라요",
+                    "gone": "결정 원문을 DART 가 주지 않아요 (014)", "unread": "결정 원문을 읽지 못함", "cr": "주주마다 같은 배율의 병합이 아닌 감자 (차등 · 최대주주 · 소각 · 배율이 하나가 아님)",
+                    "nocorp": "DART 기업코드 없음 (ETF · 코넥스 일부)", "pages": "공시 목록이 너무 길어요", "err": "공시를 읽다 오류"}
+KR_SPLIT_FAIL_WHY = {"net": "DART 조회 실패 (연결 · 한도)", "status": "DART 가 다시 해 보라는 상태 (800 · 900 · 013 …)"}
 
 
 def kr_split_code(t):
@@ -13536,39 +13565,84 @@ def kr_split_code(t):
 
 
 def kr_split_snap(x, tol, top=SPLIT_SIMPLE_MAX):
-    """x 가까이의 깨끗한 배율 p/q (분모 ≤ top · 1 보다 작으면 1/x 로 맞춰요) — 가장 간단한 분수, 없으면 None. 차이는 상대값 (± tol).
-    관문 simple_ratio (min(p, q) ≤ 20) 를 늘 지나는 값이에요. (순수 함수)"""
+    """x 에 가장 가까운 깨끗한 배율 p/q (분모 ≤ top · 1 보다 작으면 1/x 로 맞춰요 · 차이는 상대값 ± tol · 같으면 분모가 작은 것), 없으면 None.
+    관문 simple_ratio (min(p, q) ≤ 20) 를 늘 지나는 값이에요. (순수 함수 · 리뷰 #186: 처음 맞는 것이 아니라 가장 가까운 것 — 1.125 는 9/8)"""
     x = _fin(x)
     if x is None or x <= 0:
         return None
     inv = x < 1
     y = 1.0 / x if inv else x
+    best = None
     for q in range(1, top + 1):
         p = round(y * q)
-        if p >= q and abs(y - p / q) <= tol * y:
-            return q / p if inv else p / q
-    return None
+        err = abs(y - p / q)
+        if p >= q and err <= tol * y and (best is None or err < best[0] - 1e-15):
+            best = (err, p, q)
+    if best is None:
+        return None
+    _e, p, q = best
+    return q / p if inv else p / q
+
+
+def kr_split_whole(x, tol=KR_SPLIT_EXACT_TOL):
+    """x 가 정확히 n:1 (n) 이나 1:n (1/n) 인지 (n ≥ 2 정수 · ± tol) → 그 배율, 아니면 None. (순수 함수)"""
+    x = _fin(x)
+    if x is None or x <= 0:
+        return None
+    y = x if x >= 1 else 1.0 / x
+    n = round(y)
+    if n < 2 or abs(y / n - 1) > tol:
+        return None
+    return float(n) if x >= 1 else 1.0 / n
 
 
 def kr_split_event(close, base, shr_before, shr_after, px_tol=KR_SPLIT_PX_TOL, shr_tol=KR_SPLIT_SHR_TOL):
     """시세가 말하는 분할 · 병합 → (배율, 어떻게) 또는 (None, None). close 앞 거래일 공식 종가 · base 그날 KRX 기준가 · 앞 거래일 · 그날 상장주식수.
-    (순수 함수) 두 길 (모두 주식 수가 SHARE_SAME 넘게 바뀌어야 해요 — 권리락 · 배당락 같은 작은 기준가 변화는 아니에요):
-      px   배율 = 앞날 종가 ÷ 기준가를 깨끗한 분수로 (± px_tol: 호가 단위로 반올림한 기준가) · 상장주식수의 비가 그 배율 ± shr_tol (같은 날
-           자기주식 소각 · 신주 — 영풍 2025-04-25 ×10 은 주식 수 ×10.37). 액면분할은 늘 이 길이에요 (기준가 = 종가 × 옛 액면 ÷ 새 액면).
-      shr  줄어든 주식 수만 (n:1 병합 · n ≥ 2 · 주식 수의 비 ± KR_SPLIT_CR_TOL — 자기주식 소각 · 회사분할은 보통 그렇게 줄지 않아요): 감자 · 일부
-           병합은 다시 상장하는 날 기준가를 동시호가로 정해서
-           (알파칩스 2025-07-09 10:1 감자: 앞날 790원 · 그날 기준가 9,580원) 앞날 종가 ÷ 배율이 아니에요. DART 가 같은 배율 · 같은 상장일을 말해야 해요.
-    기준가만 바뀐 날 (권리락 · 무상증자 · 유상증자 — 새 주식은 몇 주 뒤에 상장해요)은 그날 주식 수가 그대로라 아니에요."""
+    (순수 함수) 상장주식수가 SHARE_SAME 넘게 바뀐 날만 (권리락 · 배당락 · 무상증자 권리락은 그날 주식 수가 그대로예요). 차례대로:
+      1. 주식 수가 정확히 n:1 · 1:n (± KR_SPLIT_EXACT_TOL) — 그 배율 (리뷰 #186: 기준가로 맞춘 분수보다 먼저 · 대한전선 HMM 2016-05-09 7:1 감자는
+         기준가로는 3/22 였어요). 분할(n)은 기준가도 앞날 종가 ÷ n (± px_tol) 이어야 해요 (무상증자 새 주식 상장일이 아니게) → 'px'. 병합(1/n)은
+         기준가가 맞으면 'px', 아니면 'shr' (다시 상장하는 날 기준가를 동시호가로 정해요: 알파칩스 2025-07-09 10:1 감자 790원 → 기준가 9,580원).
+      2. 아니면 앞날 종가 ÷ 기준가에 가장 가까운 깨끗한 분수 (± px_tol) 이고 주식 수의 비가 그 배율 ± shr_tol → 'px' (5:2 분할 · 영풍 ×10.37)."""
     c, b, sa, sb = (_fin(v) for v in (close, base, shr_before, shr_after))
     if not (sa and sb) or min(sa, sb) <= 0 or abs(sb / sa - 1) <= SHARE_SAME:
         return None, None
-    r = kr_split_snap(c / b, px_tol) if c and b and c > 0 and b > 0 else None
-    if r is not None and abs(r - 1) > SHARE_SAME and SPLIT_R[0] <= r <= SPLIT_R[1] and abs((sb / sa) / r - 1) <= shr_tol:
+    rs = sb / sa
+    rp = c / b if c and b and c > 0 and b > 0 else None
+    w = kr_split_whole(rs)
+    if w is not None and SPLIT_R[0] <= w <= SPLIT_R[1]:
+        px_ok = rp is not None and abs(rp / w - 1) <= px_tol
+        if px_ok:
+            return w, "px"
+        if w < 1:
+            return w, "shr"
+    r = kr_split_snap(rp, px_tol) if rp is not None else None
+    if r is not None and abs(r - 1) > SHARE_SAME and SPLIT_R[0] <= r <= SPLIT_R[1] and abs(rs / r - 1) <= shr_tol:
         return r, "px"
-    r = kr_split_snap(sb / sa, KR_SPLIT_CR_TOL)
-    if r is not None and r <= 0.5 and abs(1 / r - round(1 / r)) < 1e-9 and SPLIT_R[0] <= r:
-        return r, "shr"
     return None, None
+
+
+def kr_split_match(r, c, px_tol=KR_SPLIT_PX_TOL, shr_tol=KR_SPLIT_SHR_TOL):
+    """공시의 배율 r 이 그 후보의 시세 숫자와 맞는지 (맞춘 분수가 아니라 날 숫자와 — 리뷰 #186): 기준가 비 ± px_tol 이고 주식 수 비 ± shr_tol,
+    또는 주식 수 비 ± KR_SPLIT_EXACT_TOL (병합 · 감자는 기준가를 동시호가로 정해요). (순수 함수)"""
+    r = _fin(r)
+    if r is None or r <= 0 or not isinstance(c, dict):
+        return False
+    cl, b, sa, sb = (_fin(c.get(k)) for k in ("close", "base", "sa", "sb"))
+    if not (sa and sb) or sa <= 0 or sb <= 0:
+        return False
+    rs = sb / sa
+    rp = cl / b if cl and b and cl > 0 and b > 0 else None
+    if rp is not None and abs(rp / r - 1) <= px_tol and abs(rs / r - 1) <= shr_tol:
+        return True
+    return abs(rs / r - 1) <= KR_SPLIT_EXACT_TOL
+
+
+def _kr_cand(t, d, close, base, sa, sb, src):
+    """시세 숫자 → 후보 dict (규칙을 지나야 해요) 또는 None."""
+    r, how = kr_split_event(close, base, sa, sb)
+    if r is None:
+        return None
+    return {"t": str(t), "d": d, "r": r, "how": how, "close": _fin(close), "base": _fin(base), "sa": _fin(sa), "sb": _fin(sb), "src": src}
 
 
 def kr_split_cands(files, events):
@@ -13585,11 +13659,9 @@ def kr_split_cands(files, events):
         older = [d for d in days if d < e]
         if not older or e not in shr:
             continue
-        sa, sb = shr[older[-1]].get(str(c)), shr[e].get(str(c))
-        r, how = kr_split_event(pclose, base, sa, sb)
-        if r is not None:
-            out.append({"t": str(c), "d": e.isoformat(), "r": r, "how": how, "close": _fin(pclose), "base": _fin(base), "sa": sa, "sb": sb,
-                        "src": "krx"})
+        x = _kr_cand(c, e.isoformat(), pclose, base, shr[older[-1]].get(str(c)), shr[e].get(str(c)), "krx")
+        if x:
+            out.append(x)
     return out
 
 
@@ -13606,17 +13678,27 @@ def kr_split_shr_moved(prev, kr):
     return sorted(out)
 
 
-def kr_split_daum_cands(codes, since, until, fetch=None, n=KR_SPLIT_DAUM_DAYS):
-    """그 종목들의 다음 일별 시세 (수정하지 않은 값 · 최근 n 거래일) 에서 kr_split_event 로 찾은 후보 → (후보 [{… src: "daum"}], 못 받은 종목).
-    since < 날짜 ≤ until (지난 발행본의 기준일 뒤 ~ 오늘 기준일 · 장중의 오늘 줄은 빼요). 기준가 = 전일 종가 칸 (0 이면 종가 − 전일 대비)."""
+def kr_split_daum_cands(todo, until, fetch=None, n=KR_SPLIT_DAUM_DAYS, clock=time.monotonic, secs=KR_SPLIT_DAUM_SECS, fails=KR_SPLIT_DAUM_FAILS):
+    """[(종목, since)] 의 다음 일별 시세 (수정하지 않은 값 · 최근 n 거래일) 에서 찾은 후보 → (후보 [{… src: "daum"}], 본 종목, 못 받은 종목, 멈춘 까닭).
+    since < 날짜 ≤ until (지난 발행본의 기준일 뒤 ~ 오늘 기준일 · 장중의 오늘 줄은 빼요). 기준가 = 전일 종가 칸 (0 이면 종가 − 전일 대비).
+    리뷰 #186: 연달아 fails 번 실패하거나 secs 초가 지나면 멈춰요 (나머지는 부르는 쪽이 다음 실행에 이어 둬요)."""
     fetch = fetch or _fetch_daum_days
-    out, bad = [], []
-    for c in codes:
+    out, seen, bad, stop, streak, t0 = [], [], [], None, 0, clock()
+    for c, since in todo:
+        if streak >= fails:
+            stop = f"연달아 {fails}번 실패"
+            break
+        if clock() - t0 > secs:
+            stop = f"{secs}초 넘음"
+            break
         try:
             rows = daum_rows_by_day(fetch(c, n))
         except Exception as e:
             bad.append(f"{c} ({type(e).__name__}: {str(e)[:40]})")
+            streak += 1
             continue
+        streak = 0
+        seen.append(c)
         days = sorted(rows)
         for a, b in zip(days, days[1:]):
             if not (since < b.isoformat() <= until):
@@ -13624,11 +13706,10 @@ def kr_split_daum_cands(codes, since, until, fetch=None, n=KR_SPLIT_DAUM_DAYS):
             ra, rb = rows[a], rows[b]
             tp, ch = _fin(rb.get("tradePrice")), _fin(rb.get("changePrice"))
             base = _fin(rb.get("prevClosingPrice")) or (tp - ch if tp is not None and ch is not None else None)
-            r, how = kr_split_event(ra.get("tradePrice"), base, ra.get("listedSharesCount"), rb.get("listedSharesCount"))
-            if r is not None:
-                out.append({"t": c, "d": b.isoformat(), "r": r, "how": how, "close": _fin(ra.get("tradePrice")), "base": base,
-                            "sa": _fin(ra.get("listedSharesCount")), "sb": _fin(rb.get("listedSharesCount")), "src": "daum"})
-    return out, bad
+            x = _kr_cand(c, b.isoformat(), ra.get("tradePrice"), base, ra.get("listedSharesCount"), rb.get("listedSharesCount"), "daum")
+            if x:
+                out.append(x)
+    return out, seen, bad, stop
 
 
 def kr_split_ratio_text(r):
@@ -13656,16 +13737,16 @@ def load_kr_split_seed(path=None):
             r = p / q
         except (IndexError, ValueError, ZeroDivisionError):
             raise RuntimeError(f"{name} {i}번째 줄: {ln[:60]}")
-        got, how = kr_split_event(close, base, sa, sb)
-        if len(parts) != 7 or not kr_split_code(t) or d < SPLITS_FROM or (t, d) in seen or got is None or abs(got - r) > 1e-12:
+        x = _kr_cand(t, d, close, base, sa, sb, "seed")
+        if len(parts) != 7 or not kr_split_code(t) or d < SPLITS_FROM or (t, d) in seen or x is None or abs(x["r"] - r) > 1e-12:
             raise RuntimeError(f"{name} {i}번째 줄: {ln[:60]}")
         seen.add((t, d))
-        out.append({"t": t, "d": d, "r": got, "how": how, "close": close, "base": base, "sa": sa, "sb": sb, "src": "seed"})
+        out.append(x)
     return out
 
 
 def parse_kr_split_doc(text, kind, rc):
-    """주식분할결정 · 주식병합결정 원문 → ({k, r, de, dl, rc}, None) 또는 (None, 까닭). (순수 함수)
+    """주식분할결정 · 주식병합결정 원문 → ({k, r, de, dl, rc, src}, None) 또는 (None, 까닭 글 — 로그에만). (순수 함수)
     parse_dvwhy_doc 과 같은 읽기 (거래소의 정해진 양식 · 정정 공시는 맨 앞 정정 표 뒤에 고친 양식 전체가 와서 칸마다 마지막 것): 배율 = 1주당 가액 전 ÷ 후
     (분할 > 1 · 병합 < 1 · 깨끗한 분수로) · 발행주식총수(보통주)가 있으면 그 비가 배율 ± 10%. dl = 신주권상장예정일 (꼭 있어야 해요) · de = 신주의
     효력발생일 (있으면 · 2018년 양식에는 없어요: NAVER 2018-07-26)."""
@@ -13704,36 +13785,62 @@ def parse_kr_split_doc(text, kind, rc):
 
 
 KR_SPLIT_CR_LIST = ("crsc_nstklstprd",)      # crDecsn 의 신주상장예정일 칸
+KR_SPLIT_CR_REFUSE = ("차등", "최대주주", "소각")
+
+
+def kr_split_cr_ratio(row):
+    """감자결정 한 줄 → (주주 1명의 배율 r < 1, None) 또는 (None, 까닭 글) 또는 (None, None: 주식병합으로 하는 감자가 아님). (순수 함수)
+    리뷰 #186: 감자 전 → 후 주식 총수가 아니라 감자 방법 글의 'N주를 … M주로' (· 'N:M 주식병합') — 그 배율이 하나뿐이고 (M/N < 1) 감자비율(cr_rt_ostk,
+    %) 과 맞을 때만. 차등감자 · 최대주주 · 소각이 들어간 글은 주주마다 배율이 같지 않을 수 있어 받지 않아요."""
+    txt = re.sub(r"\s+", " ", str(row.get("cr_mth") or ""))
+    if "병합" not in txt:
+        return None, None
+    if any(w in txt for w in KR_SPLIT_CR_REFUSE):
+        return None, "차등 · 최대주주 · 소각이 들어간 감자"
+    pairs = re.findall(r"(\d+(?:\.\d+)?)\s*주를[^0-9]{0,40}?(\d+(?:\.\d+)?)\s*주로", txt) + re.findall(r"(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)", txt)
+    ratios = {round(float(m) / float(n), 9) for n, m in pairs if float(n) > 0 and float(m) > 0}
+    if len(ratios) != 1:
+        return None, f"감자 방법 글의 배율이 하나가 아니에요 ({len(ratios)}개)"
+    r = kr_split_snap(next(iter(ratios)), KR_SPLIT_DART_TOL)
+    if r is None or r >= 1:
+        return None, "감자 방법 글의 배율이 병합이 아니에요"
+    rt = _dash_none(row.get("cr_rt_ostk"))
+    if not isinstance(rt, float) or abs(rt - (1 - r) * 100) > KR_SPLIT_CR_RT_TOL:
+        return None, f"감자비율 {row.get('cr_rt_ostk')!s:.10} 이 배율 {r:g} 과 맞지 않아요"
+    return r, None
 
 
 def parse_kr_split_cr(rows):
-    """감자결정 (crDecsn) → ([{k: "reduce", r, de, dl, rc}], 읽지 못한 것). 감자 방법이 주식병합인 보통주 감자만 (소각 · 액면가 감액은 빼요).
-    r = 감자 뒤 ÷ 전 보통주 수를 깨끗한 분수로 (± 1% · 단주) · de 감자기준일 · dl 신주상장예정일. (순수 함수)"""
-    out, bad = [], []
+    """감자결정 (crDecsn) → ([{k: "reduce", r, de, dl, rc, src}], 읽지 못한 것 [글], 받지 않은 것 [글]). 주식병합으로 하는 보통주 감자만
+    (kr_split_cr_ratio) · de 감자기준일 · dl 신주상장예정일. (순수 함수)"""
+    out, bad, refused = [], [], []
     for row in rows or []:
         rc = str(row.get("rcept_no") or "").strip()
-        if "병합" not in re.sub(r"\s+", "", str(row.get("cr_mth") or "")):
+        r, why = kr_split_cr_ratio(row)
+        if r is None and why is None:
             continue
-        b, a = _dash_none(row.get("bfcr_tisstk_ostk")), _dash_none(row.get("atcr_tisstk_ostk"))
+        if r is None:
+            refused.append(f"{rc or '-'} {why}")
+            continue
         dl = next((_kdate(row.get(k)) for k in KR_SPLIT_CR_LIST if _kdate(row.get(k))), None)
-        r = kr_split_snap(a / b, KR_SPLIT_CR_TOL) if isinstance(a, float) and isinstance(b, float) and a > 0 and b > 0 else None
-        if not _RCPT.match(rc) or r is None or r >= 1 or dl is None:
-            bad.append(f"{rc or '-'} 감자 결정의 주식 수 · 신주상장예정일을 읽지 못함")
+        if not _RCPT.match(rc) or dl is None:
+            bad.append(f"{rc or '-'} 감자 결정의 신주상장예정일을 읽지 못함")
             continue
         out.append({"k": "reduce", "r": r, "de": _kdate(row.get("cr_std")), "dl": dl, "rc": rc, "src": "cr"})
-    return out, bad
+    return out, bad, refused
 
 
 def _kr_split_ev_text(e):
     return f"{KR_SPLIT_KIND_KO.get(e['k'], e['k'])} ×{e['r']:g} (상장 {e['dl']} · {e['rc']})"
 
 
-def kr_split_dart(client, corp, d, r, today, how="px"):
-    """후보 하나 (시세의 날 d · 시세의 배율 r) 를 DART 결정 공시로 확인 → (판정, None) 또는 (None, 실패 까닭 — 다음 실행에 다시).
-    판정 {"v": "ok", k, r, rc, dl, de} (같은 배율 · 신주권상장예정일 = d) · {"v": "no", "why"} (공시가 없거나 맞지 않음 — 시세에만 있는 사건).
-    거래소 수시공시(I001) 목록의 주식분할결정 · 주식병합결정 (최종 정정본 · 철회한 것은 빼요) 원문을 새것부터 KR_SPLIT_DOCS_MAX 개, 맞는 것이 없으면
-    주요사항보고서(B001) 목록에 감자결정이 있을 때 crDecsn. how: 시세의 길 (kr_split_event) — 'shr' (주식 수만) 후보는 원문 · 감자결정의 배율과 날짜로만
-    확인해요 (목록만으로는 아니에요)."""
+def kr_split_dart(client, corp, cand, today):
+    """후보 하나 (cand: 시세의 날 d · 시세 숫자) 를 DART 결정 공시로 확인 → (판정, None) 또는 (None, (부호, 글) — 다음 실행에 다시).
+    판정 {"v": "ok", k, r, rc, dl, de, src} (공시 배율이 시세 숫자와 맞고 · 상장예정일 = d) · {"v": "no", "code", "note"} (code 는 KR_SPLIT_OUT_WHY
+    의 부호 · note 는 로그용 글 · data.json 에는 code 만). 거래소 수시공시(I001) 목록의 주식분할결정 · 주식병합결정 (최종 정정본 · 철회한 것은 빼요)
+    원문을 새것부터 KR_SPLIT_DOCS_MAX 개, 맞는 것이 없고 병합이면 주요사항보고서(B001) 목록에 감자결정이 있을 때 crDecsn.
+    리뷰 #186: 원문은 014(파일 없음)만 끝난 대답이에요 — 그 결정은 확인에 쓰지 않아요 (목록만으로 확인하지 않아요). 800 · 900 · 그 밖의 상태는 다음 실행에 다시."""
+    d, r = cand["d"], cand["r"]
     e0 = dt.date.fromisoformat(d)
     bgn = (e0 - dt.timedelta(days=KR_SPLIT_LIST_BACK)).strftime("%Y%m%d")
     end = min(e0 + dt.timedelta(days=KR_SPLIT_LIST_AFTER), today).strftime("%Y%m%d")
@@ -13744,24 +13851,29 @@ def kr_split_dart(client, corp, d, r, today, how="px"):
             j = client.get("list.json", {"corp_code": corp, "bgn_de": bgn, "end_de": end, "pblntf_detail_ty": ty, "last_reprt_at": "Y",
                                          "page_count": "100", "page_no": str(page)})
             if j is None:
-                return None, f"공시 목록({ty}) 조회 실패"
+                return None, ("net", f"공시 목록({ty}) 조회 실패")
             st = str(j.get("status"))
             if st == "013":
                 break
             if st != "000":
-                return None, f"공시 목록({ty}) 상태 {st}"
+                return None, ("status", f"공시 목록({ty}) 상태 {st}")
             rows += j.get("list") or []
             if page >= int(_fin(j.get("total_page")) or 1):
                 break
             if page == pages:
-                return None, f"공시 목록({ty})이 {pages}쪽을 넘어요"
+                return "pages", ("pages", f"공시 목록({ty})이 {pages}쪽을 넘어요")
         return rows, None
 
     def hit(evs):
-        m = [x for x in evs if abs(x["r"] - r) <= 1e-12 * max(1.0, r) and x["dl"] == d]
+        m = [x for x in evs if x["dl"] == d and kr_split_match(x["r"], cand)]
         return max(m, key=lambda x: x["rc"]) if m else None
 
+    def no(code, note):
+        return {"v": "no", "code": code, "note": str(note)[:200]}, None
+
     rows, why = listing("I001", KR_SPLIT_LIST_PAGES)
+    if rows == "pages":
+        return no("pages", why[1])
     if rows is None:
         return None, why
     fl = dvwhy_filings(rows)
@@ -13769,13 +13881,12 @@ def kr_split_dart(client, corp, d, r, today, how="px"):
     for kind, rc in sorted(fl["docs"], key=lambda x: x[1], reverse=True)[:KR_SPLIT_DOCS_MAX]:
         st0 = dict(client.status)
         files = client.get_zip("document.xml", {"rcept_no": rc})
-        said = [k for k in client.status if client.status[k] > st0.get(k, 0) and k != "예외" and k not in DART_FATAL and k != "000"]
-        if files is None and said:
-            gone.append({"k": kind, "rc": rc})         # DART 가 원문을 주지 않아요 (014 파일 없음 · 삼성전자 2018 정정본) — 다시 물어도 같아요
-            bad.append(f"{rc} 원문이 없어요 (DART {said[0]})")
+        said = [k for k in client.status if client.status[k] > st0.get(k, 0)]
+        if files is None and "014" in said:
+            gone.append(rc)                           # DART 가 원문을 주지 않아요 (014 파일 없음) — 다시 물어도 같아요 · 확인에 쓰지 않아요
             continue
-        if files is None:                              # 연결 문제 · 한도 · 키 — 다음 실행에 다시
-            return None, f"공시 원문 {rc} 조회 실패"
+        if files is None:                             # 연결 문제 · 한도 · 800 · 900 · 그 밖의 상태 — 다음 실행에 다시
+            return None, ("status" if any(k != "예외" for k in said) else "net", f"공시 원문 {rc} 조회 실패 ({', '.join(said) or '응답 없음'})")
         e, why = parse_kr_split_doc(dvwhy_doc_text(files, rc), kind, rc)
         if e:
             evs.append(e)
@@ -13785,40 +13896,37 @@ def kr_split_dart(client, corp, d, r, today, how="px"):
     h = hit(evs)
     if h:
         return {"v": "ok", **h}, None
-    # 원문이 없는 결정 (014): 같은 방향의 결정(분할 r > 1 · 병합 r < 1)이 그것 하나뿐이고 (읽은 같은 종류 결정도 없고 · 철회되지 않음) 시세의 날 앞에
-    # 냈으면, 배율 · 날짜는 시세(KRX 기준가 · 상장주식수)로, 사건의 종류는 DART 목록으로 확인해요 (영수증 src "list")
-    want = "split" if r > 1 else "merge"
-    gone = [x for x in dvwhy_drop_withdrawn(gone, fl["wd"]) if x["k"] == want and x["rc"][:8] < e0.strftime("%Y%m%d")]
-    if how == "px" and len(gone) == 1 and not any(x["k"] == want for x in evs):
-        return {"v": "ok", "k": want, "r": r, "rc": gone[0]["rc"], "dl": None, "de": None, "src": "list"}, None
-    if r > 1:                                           # 감자는 주식 수를 늘리지 않아요 — 분할 후보는 감자결정을 찾지 않아요
-        return {"v": "no", "why": ("공시와 다름: " + " · ".join(_kr_split_ev_text(x) for x in evs[:3]) if evs else
-                                   "공시를 읽지 못함: " + " · ".join(bad[:2]) if bad else "액면분할 결정 공시 없음")[:200]}, None
-    rows_b, why = listing("B001", 1)
-    if rows_b is None:
-        return None, why
-    flb = dvwhy_filings(rows_b)
-    if "cr" in flb["api"]:
-        j = client.get("crDecsn.json", {"corp_code": corp, "bgn_de": bgn, "end_de": end})
-        if j is None:
-            return None, "crDecsn.json 조회 실패"
-        st = str(j.get("status"))
-        if st not in ("000", "013"):
-            return None, f"crDecsn.json 상태 {st}"
-        crs, b2 = parse_kr_split_cr(j.get("list") or [] if st == "000" else [])
-        crs = dvwhy_drop_withdrawn(crs, flb["wd"])
-        bad += b2
-        h = hit(crs)
-        if h:
-            return {"v": "ok", **h}, None
-        evs += crs
+    refused = []
+    if r < 1:                                         # 감자는 주식 수를 늘리지 않아요 — 분할 후보는 감자결정을 찾지 않아요
+        rows_b, why = listing("B001", 2)
+        if rows_b == "pages":
+            return no("pages", why[1])
+        if rows_b is None:
+            return None, why
+        flb = dvwhy_filings(rows_b)
+        if "cr" in flb["api"]:
+            j = client.get("crDecsn.json", {"corp_code": corp, "bgn_de": bgn, "end_de": end})
+            if j is None:
+                return None, ("net", "crDecsn.json 조회 실패")
+            st = str(j.get("status"))
+            if st not in ("000", "013"):
+                return None, ("status", f"crDecsn.json 상태 {st}")
+            crs, b2, refused = parse_kr_split_cr(j.get("list") or [] if st == "000" else [])
+            crs = dvwhy_drop_withdrawn(crs, flb["wd"])
+            bad += b2
+            h = hit(crs)
+            if h:
+                return {"v": "ok", **h}, None
+            evs += crs
     if evs:
-        why = "공시와 다름: " + " · ".join(_kr_split_ev_text(x) for x in evs[:3])
-    elif bad:
-        why = "공시를 읽지 못함: " + " · ".join(bad[:2])
-    else:
-        why = "분할 · 병합 · 감자(주식병합) 결정 공시 없음"
-    return {"v": "no", "why": why[:200]}, None
+        return no("diff", "공시와 다름: " + " · ".join(_kr_split_ev_text(x) for x in evs[:3]))
+    if refused:
+        return no("cr", "받지 않은 감자: " + " · ".join(refused[:2]))
+    if gone:
+        return no("gone", "원문을 DART 가 주지 않음 (014): " + ", ".join(gone[:3]))
+    if bad:
+        return no("unread", "공시를 읽지 못함: " + " · ".join(bad[:2]))
+    return no("nodoc", "분할 · 병합 · 감자(주식병합) 결정 공시 없음")
 
 
 def kr_prev_splits(prev):
@@ -13840,9 +13948,26 @@ def kr_prev_splits(prev):
     info = p.get("splitsKr") if isinstance(p.get("splitsKr"), dict) else {}
     rec = {}
     for x in info.get("rows") if isinstance(info.get("rows"), list) else []:
-        if isinstance(x, list) and len(x) == 6 and (x[0], x[1]) in keys:
+        if isinstance(x, list) and len(x) == 6 and (x[0], x[1]) in keys and all(isinstance(v, str) for v in x[3:]):
             rec[(x[0], x[1])] = list(x)
     return rows, rec
+
+
+def kr_prev_pend(prev):
+    """지난 발행본 splitsKr 의 이어 둔 후보 (pend [[코드, 날짜, 종가, 기준가, 주식 수 전, 후]]) · 다음으로 아직 보지 못한 종목 (dq [[코드, since]]) —
+    다시 규칙을 지난 것만. (순수 함수 · 리뷰 #186: 목록 파일의 19거래일 창 · 한 번뿐인 다음 일별 시세가 지나도 후보가 사라지지 않게)"""
+    p = prev if isinstance(prev, dict) else {}
+    info = p.get("splitsKr") if isinstance(p.get("splitsKr"), dict) else {}
+    pend, dq = [], []
+    for x in info.get("pend") if isinstance(info.get("pend"), list) else []:
+        if isinstance(x, list) and len(x) == 6 and kr_split_code(x[0]) and isinstance(x[1], str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", x[1]):
+            c = _kr_cand(x[0], x[1], x[2], x[3], x[4], x[5], "pend")
+            if c:
+                pend.append(c)
+    for x in info.get("dq") if isinstance(info.get("dq"), list) else []:
+        if isinstance(x, list) and len(x) == 2 and kr_split_code(x[0]) and isinstance(x[1], str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", x[1]):
+            dq.append((x[0], x[1]))
+    return pend, dq
 
 
 def _kr_split_same(a_t, a_d, a_r, b_t, b_d, b_r):
@@ -13852,23 +13977,41 @@ def _kr_split_same(a_t, a_d, a_r, b_t, b_d, b_r):
     return abs((dt.date.fromisoformat(a_d) - dt.date.fromisoformat(b_d)).days) <= SPLIT_SAME_EVENT_DAYS
 
 
-def kr_splits_fields(prev, kr, cands, client, today, seed=None, per_run=None, cmap=None, px_date=None):
+def kr_split_whole_row(r):
+    """1주가 안 되는 몫을 남기지 않는 배율인지 (정수 ≥ 2 인 분할). 병합(r < 1)과 5:2 같은 분할은 몫을 남겨요. (순수 함수)"""
+    r = _fin(r)
+    return r is not None and r >= 2 and abs(r - round(r)) < 1e-9
+
+
+def _kr_recent(rows, key=lambda x: x[1]):
+    """최근 것부터 KR_SPLIT_KEEP 줄 (data.json 에 싣는 몫)."""
+    return sorted(rows, key=key, reverse=True)[:KR_SPLIT_KEEP]
+
+
+def kr_splits_fields(prev, kr, cands, client, today, seed=None, per_run=None, cmap=None, px_date=None, dq=None):
     """한국 주식 분할 → (한국 줄 [[코드, 날짜, 배율]], data.json splitsKr). 멈추지 않아요: 무엇이 실패해도 지난 발행본의 한국 줄은 그대로 남고
-    (새 줄만 없음) 크게 남겨요. kr: 오늘 발행하는 국내 종목 · cands: 오늘 목록 파일의 후보 (kr_split_cands) · seed: load_kr_split_seed() 결과
+    (새 줄만 없음) 크게 남겨요. kr: 오늘 발행하는 국내 종목 · cands: 오늘 목록 파일 · 다음 일별 시세의 후보 · seed: load_kr_split_seed() 결과
     (None = 읽어요) · cmap: 종목 코드 → DART 기업코드 (None = client.meta corpMap) · px_date: 오늘 발행의 국내 기준일 (그 뒤 날짜의 사건은 싣지
-    않아요 — 가격은 그날 종가인데 앱이 주식 수를 바꿔요 · 종목이 자기 날짜 pxd 에 머물면 그 날짜까지)."""
+    않아요 — 가격은 그날 종가인데 앱이 주식 수를 바꿔요 · 종목이 자기 날짜 pxd 에 머물면 그 날짜까지) · dq: 다음으로 아직 보지 못한 종목 (이어 둬요).
+    data.json 에는 숫자 · 날짜 · 정해진 부호만 실어요 (리뷰 #186 B1)."""
     prev_rows, prev_rec = kr_prev_splits(prev)
     try:
-        return _kr_splits_fields(prev_rows, prev_rec, kr, cands, client, today, seed, per_run, cmap, px_date)
+        return _kr_splits_fields(prev, prev_rows, prev_rec, kr, cands, client, today, seed, per_run, cmap, px_date, dq)
     except Exception as e:
-        err = f"{type(e).__name__}: {str(e)[:160]}"
-        log(f"  !! 한국 주식 분할: 확인하다 오류로 멈췄어요 ({err}) → 지난 발행본의 한국 줄 {len(prev_rows):,}건을 그대로 둬요 (새 줄 없음 · 관문이 경고해요)")
-        return [list(x) for x in prev_rows], {"v": 1, "src": "err", "err": err, "n": len(prev_rows), "prev": len(prev_rows), "new": [],
-                                              "rows": [prev_rec[k] for k in sorted(prev_rec)], "wait": 0, "waitT": [], "out": [], "fail": [],
-                                              "calls": 0, "cap": KR_SPLIT_DART_PER_RUN if per_run is None else per_run}
+        log(f"  !! 한국 주식 분할: 확인하다 오류로 멈췄어요 ({type(e).__name__}: {str(e)[:160]}) → 지난 발행본의 한국 줄 {len(prev_rows):,}건을 그대로 둬요 (새 줄 없음 · 관문이 경고해요)")
+        info = {"v": 2, "src": "err", "n": len(prev_rows), "prev": len(prev_rows), "new": [], "rows": [prev_rec[k] for k in sorted(prev_rec)],
+                "wait": 0, "waitT": [], "out": [], "outN": 0, "fail": [], "failN": 0, "held": [], "heldN": 0, "diffNew": [],
+                "calls": 0, "cap": KR_SPLIT_DART_PER_RUN if per_run is None else per_run}
+        try:                                        # 이어 둔 후보는 잃지 않게 (그대로 다시 실어요 · 모양이 맞는 것만)
+            pp = (prev or {}).get("splitsKr") or {}
+            info["pend"] = [x for x in pp.get("pend") or [] if isinstance(x, list) and len(x) == 6 and kr_split_code(x[0])][:KR_SPLIT_PEND_MAX]
+            info["dq"] = [x for x in pp.get("dq") or [] if isinstance(x, list) and len(x) == 2 and kr_split_code(x[0])][:KR_SPLIT_PEND_MAX]
+        except Exception:
+            pass
+        return [list(x) for x in prev_rows], info
 
 
-def _kr_splits_fields(prev_rows, prev_rec, kr, cands, client, today, seed, per_run, cmap, px_date):
+def _kr_splits_fields(prev, prev_rows, prev_rec, kr, cands, client, today, seed, per_run, cmap, px_date, dq):
     per_run = KR_SPLIT_DART_PER_RUN if per_run is None else per_run
     cap_of = {s["t"]: _fin(s.get("cap")) or 0.0 for s in kr or [] if s.get("cls") == "kr" and isinstance(s.get("t"), str)}
     # 그 종목의 가격 날짜: 자기 날짜(pxd · 마지막 확인 종가)가 있으면 그날, 아니면 오늘 기준일 — 그 뒤의 사건은 다음 발행에 (late)
@@ -13879,118 +14022,164 @@ def _kr_splits_fields(prev_rows, prev_rec, kr, cands, client, today, seed, per_r
             seed = load_kr_split_seed()
         except Exception as e:
             seed, seed_err = [], f"{type(e).__name__}: {str(e)[:120]}"
-            log(f"  !! 한국 주식 분할 시드(data/kr_splits_seed.csv)를 읽지 못했어요 ({seed_err}) — 오늘 목록 파일의 후보만 봐요 (지난 줄은 그대로)")
+            log(f"  !! 한국 주식 분할 시드(data/kr_splits_seed.csv)를 읽지 못했어요 ({seed_err}) — 오늘 찾은 · 이어 둔 후보만 봐요 (지난 줄은 그대로)")
     cmap = cmap if cmap is not None else (((client.meta.get("corpMap") if client else None)) or {})
     if client is not None and not cmap:
         log("  !! 한국 주식 분할: DART 기업코드 목록(corpMap)이 없어 오늘은 새 후보를 묻지 않아요 (지난 줄은 그대로)")
-    # 후보: 시드 + 오늘 목록 파일 (같은 종목 · 날짜는 하나 · 오늘 발행하는 국내 종목만 — 관문: 새 줄은 오늘 목록의 종목)
+    pend0, _dq0 = kr_prev_pend(prev)
+    # 후보: 오늘 찾은 것 (목록 파일 · 다음) · 이어 둔 것 · 시드 (같은 종목 · 날짜는 하나 · 오늘 발행하는 국내 종목만 — 관문: 새 줄은 오늘 목록의 종목).
+    # 고정 표가 정한 사건 · 이미 실은 사건은 묻지 않아요.
     todo, seen = [], set()
-    for c in list(cands or []) + list(seed or []):
+    for c in list(cands or []) + pend0 + list(seed or []):
         if not isinstance(c, dict) or c.get("t") not in cap_of or (c["t"], c["d"]) in seen:
             continue
         seen.add((c["t"], c["d"]))
+        if (c["t"], c["d"]) in SPLIT_OVERRIDES or (c["t"], c["d"]) in KR_SPLIT_OVERRIDES:
+            continue
         if any(c["t"] == x[0] and (c["d"] == x[1] or _kr_split_same(c["t"], c["d"], c["r"], *x)) for x in prev_rows):
             continue                                            # 이미 실은 사건
         todo.append(c)
-    todo.sort(key=lambda c: (-cap_of.get(c["t"], 0.0), c["d"]), reverse=False)
+    # 차례 (리뷰 #186): 오늘 찾은 · 이어 둔 후보와 30일 안의 사건 먼저 (새 사건이 시드 뒤에서 몇 주씩 기다리지 않게), 그다음 시가총액 큰 종목부터
+    soon = (today - dt.timedelta(days=KR_SPLIT_RECENT_DAYS)).isoformat()
+    todo.sort(key=lambda c: (0 if c.get("src") != "seed" or c["d"] >= soon else 1, -cap_of.get(c["t"], 0.0), c["d"]))
     can_call = (client is not None and getattr(client, "mode", None) == "cache" and not getattr(client, "started_empty", True)
                 and not getattr(client, "no_call", None))
-    used, new, recs, wait, out, fail, cached, late = 0, [], [], [], [], [], 0, []
+    used, new, recs, wait, out, fail, cached, late, held, diff_new, pend = 0, [], [], [], [], [], 0, [], [], [], []
+    notes = {}
     for c in todo:
-        t, d, r = c["t"], c["d"], c["r"]
+        t, d = c["t"], c["d"]
+        keep_pend = c.get("src") != "seed"
         if d > upto.get(t, d):
             late.append([t, d])                              # 그 종목 가격 날짜 뒤의 사건 — 가격이 새 기준이 된 뒤에 실어요
+            if keep_pend:
+                pend.append(c)
             continue
         corp = cmap.get(t) or (cmap.get(t[:5] + "0") if is_preferred(t) else None)
         if client is None or not cmap:
             wait.append([t, d])
+            if keep_pend:
+                pend.append(c)
             continue
         if not corp:
-            out.append([t, d, "DART 기업코드 없음 (확인할 수 없어요)"])
+            out.append([t, d, "nocorp"])
             continue
         key = f"{corp}|{KR_SPLIT_TAG}|{d}"                 # 회사 · 날짜 하나 (우선주는 보통주와 같은 결정 · 같은 판정)
         with client.lock:
             e = client.entries.get(key)
         v = e["d"] if isinstance(e, dict) and e.get("st") == "000" and isinstance(e.get("d"), dict) else None
         if v is not None and v.get("v") == "no" and can_call:
-            age = (today - dt.date.fromisoformat(e["at"])).days
+            try:
+                age = (today - dt.date.fromisoformat(str(e.get("at")))).days
+            except ValueError:
+                age = KR_SPLIT_NO_RETRY_DAYS
             if age >= KR_SPLIT_NO_RETRY_DAYS and (today - dt.date.fromisoformat(d)).days <= KR_SPLIT_NO_RETRY_AGE and \
                     used + KR_SPLIT_ONE_MAX <= per_run:
                 v = None                                        # 늦은 정정 공시가 있을 수 있어요 — 다시 물어요
+        fresh = False
         if v is None:
             if not can_call or used + KR_SPLIT_ONE_MAX > per_run or client.fatal or client.down:
                 wait.append([t, d])
+                if keep_pend:
+                    pend.append(c)
                 continue
             n0 = sum(client.status.values())
             try:
-                v, why = kr_split_dart(client, corp, d, r, today, how=c.get("how") or "px")
+                v, why = kr_split_dart(client, corp, c, today)
             except Exception as ex:                     # 우리 읽기의 오류 (공시 하나의 모양) — 그 후보만 '맞지 않음'으로 남겨요 (매 실행 다시 멈추지 않게)
-                v, why = {"v": "no", "why": f"공시를 읽다 오류로 멈춤 ({type(ex).__name__}: {str(ex)[:80]})"}, None
+                v, why = {"v": "no", "code": "err", "note": f"{type(ex).__name__}: {str(ex)[:80]}"}, None
             used += sum(client.status.values()) - n0
             if v is None:
-                fail.append([t, d, why])
+                code = why[0] if why and why[0] in KR_SPLIT_FAIL_WHY else "net"
+                fail.append([t, d, code])
+                notes[(t, d)] = why[1] if why else ""
+                if keep_pend:
+                    pend.append(c)
                 continue
             with client.lock:
                 client.entries[key] = {"st": "000", "at": today.isoformat(), "d": v}
+            fresh = True
         else:
             cached += 1
         if v.get("v") != "ok":
-            out.append([t, d, str(v.get("why") or "공시와 맞지 않음")])
+            code = v.get("code") if v.get("code") in KR_SPLIT_OUT_WHY else "err"     # 보관본의 글은 data.json 에 싣지 않아요 (부호만)
+            out.append([t, d, code])
+            notes[(t, d)] = str(v.get("note") or "")
+            if fresh and code == "diff":
+                diff_new.append([t, d])
             continue
         rr = _fin(v.get("r"))
-        if rr is None or abs(rr - r) > 1e-12 * max(1.0, r) or not (SPLIT_R[0] <= rr <= SPLIT_R[1]) or kr_split_snap(rr, 1e-12) is None:
-            out.append([t, d, f"공시 배율 ×{v.get('r')} 이 시세의 배율 ×{r:g} 과 달라요"])
+        if rr is None or not kr_split_match(rr, c) or not (SPLIT_R[0] <= rr <= SPLIT_R[1]) or kr_split_snap(rr, 1e-12) is None:
+            out.append([t, d, "diff"])
+            notes[(t, d)] = f"공시 배율 ×{v.get('r')} 이 시세 숫자와 맞지 않아요"
+            if fresh:
+                diff_new.append([t, d])
             continue
-        if any(x[0] == t and _kr_split_same(t, d, rr, *x) for x in new):
+        if any(x[0] == t and _kr_split_same(t, d, rr, *x) for x in new + held):
+            continue
+        if not KR_SPLIT_FRACTION_ROWS_ON and not kr_split_whole_row(rr):
+            held.append([t, d, rr])                          # 1주가 안 되는 몫을 남겨요 — Jack 이 앱의 줄을 승인할 때까지 싣지 않아요
             continue
         new.append([t, d, rr])
-        recs.append([t, d, rr, str(v.get("k")), str(v.get("rc")), str(v.get("src") or "doc")])
+        kind, rc, how = (str(v.get(k) or "") for k in ("k", "rc", "src"))
+        recs.append([t, d, rr, kind if kind in KR_SPLIT_KIND_KO else "split", rc if _RCPT.match(rc) else "-", how if how in ("doc", "cr") else "doc"])
     # 고정 표 (SPLIT_OVERRIDES · 미국과 같은 표 · splitsInfo.fixed 로 실려요): 한국 코드의 줄도 같은 뜻 — 배율 None 은 그 줄을 빼요 (앱도 저장한 분할을
-    # 지워요) · 배율이 있으면 그 배율로 (줄이 있거나 오늘 목록의 종목일 때). 근거를 확인한 줄만 넣어요 (RUNBOOK '한국 주식 분할')
+    # 지워요) · 배율이 있으면 그 배율로 (줄이 있거나 오늘 목록의 종목일 때 · 몫을 남기는 배율은 스위치를 따라요). 근거를 확인한 줄만 넣어요
     keep = {(x[0], x[1]): list(x) for x in list(prev_rows) + new}
     rec_of = {(x[0], x[1]): x for x in [prev_rec[k] for k in prev_rec] + recs}
-    for (t, d), (fr, _why) in sorted(SPLIT_OVERRIDES.items()):
-        if not kr_split_code(t):
-            continue
+    table = [(k, v) for k, v in sorted(SPLIT_OVERRIDES.items()) if kr_split_code(k[0])]
+    table += [(k, v) for k, v in sorted(KR_SPLIT_OVERRIDES.items()) if v[0] is not None and k not in SPLIT_OVERRIDES]
+    for (t, d), (fr, _why) in table:
         if fr is None:
             keep.pop((t, d), None)
             rec_of.pop((t, d), None)
-        elif (t, d) in keep or t in cap_of:
+        elif (t, d) in keep or (t in cap_of and d <= upto.get(t, d) and (KR_SPLIT_FRACTION_ROWS_ON or kr_split_whole_row(fr))):
+            if (t, d) not in keep:
+                new.append([t, d, fr])
             keep[(t, d)] = [t, d, fr]
             rec_of[(t, d)] = [t, d, fr, "fixed", "SPLIT_OVERRIDES", "fixed"]
     new = [x for x in new if (x[0], x[1]) in keep and keep[(x[0], x[1])][2] == x[2]]
     rows = sorted(keep.values())
     src = "off" if client is None else ("dart" if can_call else "cache")
-    info = {"v": 1, "src": src, "n": len(rows), "prev": len(prev_rows), "new": sorted(new),
+    pend_rows = [[c["t"], c["d"], c["close"], c["base"], c["sa"], c["sb"]] for c in pend][:KR_SPLIT_PEND_MAX]
+    info = {"v": 2, "src": src, "n": len(rows), "prev": len(prev_rows), "new": sorted(new),
             "rows": sorted(v for k, v in rec_of.items() if k in keep), "wait": len(wait), "waitT": wait[:KR_SPLIT_SHOW],
-            "out": sorted(out), "fail": sorted(fail), "calls": used, "cap": per_run, "seed": len(seed or []), "cand": len(cands or [])}
+            "out": _kr_recent(out), "outN": len(out), "fail": _kr_recent(fail), "failN": len(fail),
+            "held": _kr_recent(held), "heldN": len(held), "diffNew": sorted(diff_new)[:KR_SPLIT_KEEP],
+            "calls": used, "cap": per_run, "seed": len(seed or []), "cand": len(cands or []), "pend": pend_rows,
+            "dq": [list(x) for x in (dq or [])][:KR_SPLIT_PEND_MAX],
+            "fixed": [[t, d, v[0]] for (t, d), v in sorted(KR_SPLIT_OVERRIDES.items()) if v[0] is not None]}
     if late:
-        info["late"] = sorted(late)
+        info["late"] = _kr_recent(late)
     if seed_err:
-        info["seedErr"] = seed_err
+        info["seedErr"] = True
     loud = bool(fail or seed_err or src == "off" or (wait and (src != "dart" or not cmap)))
     name = {s["t"]: s.get("nk") or "" for s in kr or [] if isinstance(s, dict)}
     show = lambda x: f"{x[0]} {name.get(x[0], '')} {x[1]}".replace("  ", " ")     # noqa: E731
     log(f"{'  !! ' if loud else '· '}한국 주식 분할: {len(rows):,}건 (새로 {len(new):,} · 지난 발행본 {len(prev_rows):,})"
         + (" · 새 줄: " + ", ".join(f"{show(x)} {split_ratio_text(x[2])}" for x in new[:KR_SPLIT_SHOW]) if new else "")
-        + f" · 후보 {len(todo):,} (시드 {len(seed or []):,} · 오늘 목록 파일 {len(cands or []):,}) · 판정 보관본 {cached:,}"
+        + f" · 후보 {len(todo):,} (시드 {len(seed or []):,} · 오늘 찾음 {len(cands or []):,} · 이어 둠 {len(pend0):,}) · 판정 보관본 {cached:,}"
         + f" · DART 새 호출 {used:,}회 (한도 {per_run:,}"
-        + {"dart": ")", "cache": " · 이번 실행은 새로 묻지 않아요: dart=full · 빈 보관본 · 같은 날 다시 하는 실행)",
+        + {"dart": ")", "cache": " · 이번 실행은 새로 묻지 않아요: dart=full · 빈 보관본으로 시작 · 같은 기준일을 다시 돌며 DART 를 쉬는 실행)",
            "off": " · DART 꺼짐 · 키 없음)"}[src]
         + (f" · 확인 기다림 {len(wait):,} (다음 실행에서): " + ", ".join(show(x) for x in wait[:5]) + ("…" if len(wait) > 5 else "") if wait else "")
         + (f" · 가격 날짜 뒤라 다음 발행에 {len(late):,}: " + ", ".join(show(x) for x in late[:5]) if late else ""))
+    if held:
+        log(f"· 한국 주식 분할 — 확인했지만 싣지 않은 몫이 남는 사건 {len(held):,} (병합 · 정수가 아닌 분할: KR_SPLIT_FRACTION_ROWS_ON 꺼짐 · Jack 이 앱의 줄을 "
+            "승인할 때까지): " + ", ".join(f"{show(x)} {split_ratio_text(x[2])}" for x in _kr_recent(held)[:KR_SPLIT_SHOW]))
     if out:
-        log(f"{'  !! ' if any((today - dt.date.fromisoformat(x[1])).days <= 30 for x in out) else '· '}한국 주식 분할 — 한 출처만 말해서 싣지 않은 "
-            f"사건 {len(out):,} (시세는 분할 · 병합처럼 움직였는데 DART 결정 공시가 없거나 맞지 않아요): "
-            + " · ".join(f"{show(x)} ({x[2]})" for x in sorted(out, key=lambda x: x[1], reverse=True)[:KR_SPLIT_SHOW])
+        recent = [x for x in out if x[1] >= soon]
+        log(f"{'  !! ' if recent or diff_new else '· '}한국 주식 분할 — 싣지 않은 사건 {len(out):,} (시세는 분할 · 병합처럼 움직였는데 DART 결정 공시가 없거나 "
+            f"맞지 않아요 · 최근 {KR_SPLIT_RECENT_DAYS}일 {len(recent):,} · 이번에 새로 '다름' {len(diff_new):,}): "
+            + " · ".join(f"{show(x)} ({KR_SPLIT_OUT_WHY.get(x[2], x[2])}{': ' + notes[(x[0], x[1])][:80] if notes.get((x[0], x[1])) else ''})"
+                         for x in _kr_recent(out)[:KR_SPLIT_SHOW])
             + ("…" if len(out) > KR_SPLIT_SHOW else ""))
     if fail:
         log(f"  !! 한국 주식 분할 — 조회 실패 {len(fail):,} (다음 실행에서 다시 · 지난 줄은 그대로): "
-            + " · ".join(f"{show(x)} ({x[2]})" for x in fail[:KR_SPLIT_SHOW]))
+            + " · ".join(f"{show(x)} ({notes.get((x[0], x[1])) or KR_SPLIT_FAIL_WHY.get(x[2], x[2])})" for x in fail[:KR_SPLIT_SHOW]))
     return rows, info
 
 
-def kr_splits_step(sp_fields, prev, kr, client, today, cands, px_date=None, daum=None):
+def kr_splits_step(sp_fields, prev, kr, client, today, cands, px_date=None, daum=None, clock=time.monotonic):
     """main: 미국 분할 칸(splits_fields · us_own_split_late 뒤)에 한국 줄을 더해요 → 같은 모양의 sp_fields (+ splitsKr). 미국 줄은 그대로예요 —
     미국 단계가 지난 발행본에서 이어 온 한국 줄은 빼고 kr_splits_fields 의 줄로 바꿔요 (그 줄도 지난 발행본의 한국 줄을 모두 이어요).
     splits 칸이 없는 날(첫 발행에 미국 분할을 읽지 못함)은 한국 줄도 싣지 않아요 (splitsFrom · splitsAsOf 없이 splits 를 쓰면 관문이 실패해요)."""
@@ -13999,20 +14188,32 @@ def kr_splits_step(sp_fields, prev, kr, client, today, cands, px_date=None, daum
         return sp_fields
     us_rows = [x for x in sp_fields["splits"] if not (isinstance(x, (list, tuple)) and x and kr_split_code(x[0]))]
     cands = list(cands or [])
-    # 목록 파일 사이에 빠진 날이 있어도: 지난 발행본보다 상장주식수가 10% 넘게 바뀐 종목은 다음 일별 시세로 사건 날을 찾아요 (실행당 KR_SPLIT_DAUM_MAX)
+    dq_next = []
+    # 목록 파일 사이에 빠진 날이 있어도: 지난 발행본보다 상장주식수가 10% 넘게 바뀐 종목 (+ 지난번에 보지 못하고 이어 둔 종목) 은 다음 일별 시세로 사건 날을
+    # 찾아요 (실행당 KR_SPLIT_DAUM_MAX 종목 · 연달아 실패하거나 시간이 넘으면 멈추고 나머지는 이어 둬요 — splitsKr.dq)
     try:
         p_px = str((prev or {}).get("pxDate") or "") if isinstance(prev, dict) else ""
-        moved = [t for t in kr_split_shr_moved(prev, kr) if not any(c.get("t") == t for c in cands)] if p_px and px_date else []
-        if moved:
-            got, bad = kr_split_daum_cands(moved[:KR_SPLIT_DAUM_MAX], p_px, str(px_date), fetch=daum)
+        _p, dq0 = kr_prev_pend(prev)
+        cut = (today - dt.timedelta(days=KR_SPLIT_DQ_DAYS)).isoformat()
+        have = {c.get("t") for c in cands}
+        todo = []
+        for t in kr_split_shr_moved(prev, kr) if p_px and px_date else []:
+            if t not in have:
+                todo.append((t, p_px))
+        for t, since in dq0:
+            if since >= cut and t not in have and all(t != x[0] for x in todo):
+                todo.append((t, since))
+        if todo:
+            got, seen, bad, stop = kr_split_daum_cands(todo[:KR_SPLIT_DAUM_MAX], str(px_date), fetch=daum, clock=clock)
             cands += got
-            log(f"{'  !! ' if bad or len(moved) > KR_SPLIT_DAUM_MAX else '· '}한국 주식 분할: 지난 발행본보다 상장주식수가 10% 넘게 바뀐 종목 "
-                f"{len(moved):,} 중 {min(len(moved), KR_SPLIT_DAUM_MAX):,}종목을 다음 일별 시세로 봤어요 → 후보 {len(got):,}"
-                + (f" · 받지 못함 {len(bad)}: {', '.join(bad[:5])}" if bad else "")
-                + (f" · 나머지 {len(moved) - KR_SPLIT_DAUM_MAX}종목은 다음 실행에" if len(moved) > KR_SPLIT_DAUM_MAX else ""))
+            dq_next = [[t, since] for t, since in todo if t not in seen]
+            log(f"{'  !! ' if bad or stop or len(todo) > KR_SPLIT_DAUM_MAX else '· '}한국 주식 분할: 상장주식수가 바뀐 종목 {len(todo):,} (이어 둔 것 포함) 중 "
+                f"{len(seen):,}종목을 다음 일별 시세로 봤어요 → 후보 {len(got):,}"
+                + (f" · 받지 못함 {len(bad)}: {', '.join(bad[:5])}" if bad else "") + (f" · 멈춤: {stop}" if stop else "")
+                + (f" · 다음 실행에 이어 봐요 {len(dq_next)}종목" if dq_next else ""))
     except Exception as e:
-        log(f"  !! 한국 주식 분할: 다음 일별 시세로 사건 날 찾기가 멈췄어요 ({type(e).__name__}: {str(e)[:120]}) — 목록 파일 · 시드의 후보만 봐요")
-    rows, info = kr_splits_fields(prev, kr, cands, client, today, px_date=str(px_date) if px_date else None)
+        log(f"  !! 한국 주식 분할: 다음 일별 시세로 사건 날 찾기가 멈췄어요 ({type(e).__name__}: {str(e)[:120]}) — 목록 파일 · 이어 둔 · 시드의 후보만 봐요")
+    rows, info = kr_splits_fields(prev, kr, cands, client, today, px_date=str(px_date) if px_date else None, dq=dq_next)
     return {**sp_fields, "splits": sorted(us_rows + rows), "splitsKr": info}
 
 
@@ -15728,15 +15929,20 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                     "읽지 못함 · kept 하나도 읽지 못해 지난 발행본 그대로 · splitsInfo: noCol 오늘 읽지 못한 종목 수 · gap 2016년부터를 아직 읽지 못한 "
                     "종목 · diff 야후가 빼거나 바꾸거나 날짜를 옮긴 분할 [코드, 날짜, 실은 배율, 야후 배율 또는 빈 값, (야후 날짜)] · fixed 고정 표 "
                     "[코드, 날짜, 배율 또는 빈 값(빼기), 근거] · fixedKept 코드에서 지웠지만 이어 둔 고정 줄"),
-         "splitsKr": ("한국 주식 분할 · 병합 (2026-11-23 · splits 의 한국 줄): 시세(KRX 기준가가 앞날 종가 ÷ 배율로 새로 정해지고 상장주식수도 그 배율만큼 "
-                      "바뀐 날)와 DART 결정 공시(주식분할결정 · 주식병합결정 원문의 1주당 가액 · 신주권상장예정일, 주식병합으로 하는 감자결정)가 같은 사건을 "
-                      "말할 때만 실어요 · 날짜 = 새 주식 수로 거래가 시작된 날 (결의일 · 효력발생일 아님) · 한 번 실은 줄은 빼지 않아요 · src dart 새로 물음 · "
-                      "cache 보관본 판정만 · off DART 꺼짐 · err 오류 (지난 줄 그대로) · n 한국 줄 수 · prev 지난 발행본에서 이은 수 · new 오늘 새 줄 "
-                      "[코드, 날짜, 배율] · rows 영수증 [코드, 날짜, 배율, 종류 split · merge · reduce(감자), 접수번호, 읽은 곳 doc 원문 · cr 감자결정 · "
-                      "list 원문이 없어 목록의 결정 + 시세] · wait 아직 묻지 못한 후보 수 (한도 · DART 꺼짐) · waitT 그 앞 10개 [코드, 날짜] · out 한 출처만 말해 "
-                      "싣지 않은 사건 [코드, 날짜, 까닭] · fail 조회 실패 [코드, 날짜, 까닭] (다음 실행에 다시) · calls 이번 실행의 새 DART 호출 · cap 한도 · "
-                      "seed 시드 후보 수 · cand 오늘 목록 파일 · 다음 일별 시세 후보 수 · late 그 종목 가격 날짜 뒤라 다음 발행에 실을 후보 [코드, 날짜] · "
-                      "seedErr 시드를 읽지 못한 까닭")}
+         "splitsKr": ("한국 주식 분할 · 병합 (2026-11-23 · #186 · splits 의 한국 줄): 시세(그날 상장주식수가 정확히 n:1 · 1:n 이거나 KRX 기준가가 앞날 "
+                      "종가 ÷ 배율로 새로 정해진 날)와 DART 결정 공시(주식분할결정 · 주식병합결정 원문의 1주당 가액 · 신주권상장예정일, 주식병합으로 하는 "
+                      "감자결정의 주주 배율)가 같은 사건을 말할 때만 실어요 · 날짜 = 새 주식 수로 거래가 시작된 날 (결의일 · 효력발생일 아님) · 한 번 실은 줄은 "
+                      "빼지 않아요 · 1주가 안 되는 몫을 남기는 줄(병합 · 5:2 분할)은 앱의 줄을 기다려 아직 싣지 않아요 (held) · 글이 아니라 정해진 부호만 실어요 · "
+                      "v 2 · src dart 새로 물음 · cache 보관본 판정만 · off DART 꺼짐 · err 오류 (지난 줄 그대로) · n 한국 줄 수 · prev 지난 발행본에서 이은 수 · "
+                      "new 오늘 새 줄 [코드, 날짜, 배율] · rows 영수증 [코드, 날짜, 배율, 종류 split · merge · reduce(감자) · fixed(고정 표), 접수번호, 읽은 곳 "
+                      "doc 원문 · cr 감자결정 · fixed 고정 표] · wait 아직 묻지 못한 후보 수 (한도 · DART 꺼짐) · waitT 그 앞 10개 [코드, 날짜] · out 싣지 않은 "
+                      "사건 최근 30개 [코드, 날짜, 부호 nodoc 결정 공시 없음 · diff 공시와 다름 · gone 원문을 DART 가 주지 않음 · unread 원문을 읽지 못함 · cr 주주마다 "
+                      "같은 배율이 아닌 감자 · nocorp DART 기업코드 없음 · pages 공시 목록이 너무 김 · err 읽다 오류] · outN 그 수 · fail 조회 실패 최근 30개 [코드, "
+                      "날짜, 부호 net · status] (다음 실행에 다시) · failN · held 확인했지만 몫이 남아 싣지 않은 줄 최근 30개 [코드, 날짜, 배율] · heldN · diffNew "
+                      "이번 실행에 새로 '공시와 다름'이 된 사건 · late 그 종목 가격 날짜 뒤라 다음 발행에 실을 후보 · pend 이어 둔 후보 [코드, 날짜, 앞날 종가, "
+                      "기준가, 주식 수 전, 후] · dq 다음 일별 시세로 아직 보지 못한 종목 [코드, 그 뒤부터] · calls 이번 실행의 새 DART 호출 · cap 한도 · seed "
+                      "시드 후보 수 · cand 오늘 찾은 후보 수 · fixed 사람이 두 출처를 확인한 한국 고정 줄 [코드, 날짜, 배율] (근거는 fetch_data.KR_SPLIT_OVERRIDES) · "
+                      "seedErr 시드를 읽지 못함")}
 IDX_YEARS = 3
 
 
