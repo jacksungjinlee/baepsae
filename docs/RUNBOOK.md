@@ -2195,6 +2195,20 @@ see the existing "no longer in today's data" handling). No data run is needed fo
   **Revert**, and merges the revert pull request. The deploy runs by itself after the merge. Ask: "뱁새 마지막 머지를
   되돌려 줘." The same applies to a merge whose deploy was blocked by the deploy check: the site is still fine, but
   `main` is ahead of it until the revert.
+- **#184 (the 기록 split count, 2026-11-24): fix forward, don't plain-revert.** After #184 a user's records can come to a state
+  only #184's count reads, around a split whose ratio leaves a fraction of a 1/10,000 share. Two ways: a sale only #184's count
+  accepts (e.g. 1 + 1 DD shares bought before 2026-06-24 and both sold with a date before it), or any record the user saves for
+  a stock whose earlier records main's count reads only without the split: the record stores data.json's split with it
+  (`records.withRecord`, so the store's check reads it on today's basis), e.g. 10 DD bought and 5 + 5 sold before 06-24, then a
+  DD purchase or dividend recorded today. Main's code before #184 reads such a portfolio as "sold more than held".
+  On a plain revert, or in a tab still open from before #184, it sets that portfolio aside: `store.js` readStore (:1710–1711)
+  leaves it off every screen, 포트폴리오 says "이전에 저장한 기록을 읽지 못해 따로 보관해 두었어요." (`portfolio.jsx` :244) and
+  recording waits for the next save. Nothing is lost: the stored text stays as it is, the first save copies it whole to
+  `baepsae2.v1.unreadable.<time>` (`store.js` :1792; main never removes that copy, `readCopy` :929 and `dropCovered` :1455, and
+  기록 내보내기 carries it, `setAsideCopies` :1465), and a build with #184's count merges it back on the next start (`restoreMoved`
+  :1325). So if #184 must be undone, keep `held.js`'s count (and `lots.withStoredSplitsChecked`) and revert or fix only the part
+  that is wrong; a plain revert hides those portfolios until the count is back. The app's automatic split save never stores
+  a split main's count would refuse; only a record the user saves (above) does.
 - **Bad data** (the numbers are wrong and the gate missed it): Claude reverts the last commit on the `data` branch
   (and, until v17.6 part 3b, the same data commit on `main`), then starts **Actions → Deploy → Run workflow**. Users get
   the previous day's data back within about 15 minutes (a deploy started by hand runs the deploy check). Ask: "뱁새 어제
@@ -2513,6 +2527,17 @@ it for good.
   stored split stays at the old date (the records need it) and data.json's corrected row is applied too, so those
   records can count the split twice; the console names both dates. Within 10 days (the pipeline's same-event window)
   the two are one split and only the stored one applies.
+
+- **Ratios that aren't whole numbers (#184).** 47 of data.json's 150 splits (DD 1:3, UL 8:9, AMCR 1:5, HON 1:2, SNEX 3:2 …).
+  A record dated before one is read x r, which may not be a whole 1/10,000 share (11 of them: one share; the rest: a
+  0.0001-share sale or a 금액으로 넣기 row). `held.js` `count()` rounds it two ways and uses one for every screen, the ledger and
+  the store's check, position by position: a sale that takes the per-record count (what main showed) or the running exact
+  total to exactly 0 closes the position and the next record starts from 0; an open position shows the per-record count while
+  it stays at or above 0, else the running one; when that reading goes below 0, the running count over the whole history is
+  used, else main's own count (records main saved read as main read them). A held count can
+  differ from the exact one by a unit or two (as on main): 3 x 1 old DD share shows 0.9999, and a sale of 0.9999 or 1 both
+  leave 0. The app stores such a split with a portfolio's records stock by stock, only where main's count reads them too;
+  otherwise the records stay as they are (the screens still apply the split) and the console says why, once per visit.
 
 ## Known limits: the date of a US record (v19.6a)
 

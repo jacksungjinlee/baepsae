@@ -35,6 +35,23 @@ date line, said in the console. Mixed Korean + US holdings keep the Korean date 
 `app.usClose` ("미국 종목은 현지 기준 {md} 종가예요.") under the portfolio name, on 포트폴리오's condition (an approved line in a new
 place; the coordinator's decision 2026-11-24, as is keeping 약 in the tax line). Next in the queue unchanged (v19.3 Part L).
 
+**Split rounding (#184, 2026-11-24; Track 2 audit 1.1, serious but rare, and 1.4):** 47 of data.json's 150 splits have a ratio
+that isn't a whole number (DD 1:3, UL 8:9, HON and AZN 1:2, AMCR 1:5, SNEX 3:2 …). Records dated before one broke when they didn't give
+whole 1/10,000 shares (for 11 of the 47, one share already doesn't; for the rest, a 0.0001-share sale or a 금액으로 넣기 row):
+`held.js` rounded each record on its own and `lots.js` didn't round, so the app's automatic save of the split was refused and
+retried hundreds of times a second with "날짜·수량·가격을 다시 확인해 주세요" on every screen, a valid sale of the old shares was
+refused, and a full sale left a sliver (a −5원 '손실' on the tax screen with nothing held). Now one count everywhere (`held.js`
+`count()`, read by the ledger, the store's check, 팔고 빼기 and 금액으로 넣기 sales), position by position: a sale that takes either
+the per-record count (what main showed) or the running exact total to exactly 0 closes the position, and the next record starts
+from 0; an open position shows main's per-record count while it stays at or above 0; a reading that goes below 0 falls back to
+the running count over the whole history, then main's. Records saved by main read as main read them. Records with no split or a whole-unit ratio count bit-identically to main (`tests/test_v2_split_round.py`, main's code
+frozen in `tests/fixtures/count_before_split_round_511fd6f`). `app.jsx` stores a data.json split stock by stock, only when main's
+count reads the records too, tries each once per visit and says "stored" once it is in the records. A 금액으로 넣은 holding sold
+with a date before a split sells every share on that date's basis (it sold a fifth after AMCR's 1:5). **Don't plain-revert #184**
+(RUNBOOK § Roll back): records only #184's count reads (a sale only it accepts, or any record saved for a stock whose earlier
+records main reads only without the split, which then stores the split) set that portfolio aside on main's code until the fix
+is back. No new Korean text.
+
 **CI checks the two PR rules (#175, 2026-11-23; Jack: "Automate the rules you missed"):** the last step of `ci.yml`'s `checks`
 job runs `tools/pr_rules.py`, so the required `ci` check goes red when either rule is missed. Run it yourself before pushing:
 `python tools/pr_rules.py --body-file BODY.md --base $(git merge-base origin/main HEAD) --head HEAD` (CI compares
