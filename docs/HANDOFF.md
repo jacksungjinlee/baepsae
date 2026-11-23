@@ -24,7 +24,7 @@ links, "전무가" off the must-not-show list, labels) and a rename in `tests/te
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
 v19.6g, v19.6h.
 
-**Split rounding (#?, 2026-11-24; Track 2 audit 1.1, serious but rare, and 1.4):** a stock split whose ratio doesn't give whole
+**Split rounding (#184, 2026-11-24; Track 2 audit 1.1, serious but rare, and 1.4):** a stock split whose ratio doesn't give whole
 1/10,000 shares (11 of data.json's 150, e.g. 듀폰 DD 1:3 on 2026-06-24, 유니레버 UL 8:9) broke records saved before it: `held.js`
 rounded each record on its own and `lots.js` didn't round at all, so the app's automatic save of the split was refused and retried
 hundreds of times a second with "날짜·수량·가격을 다시 확인해 주세요" on every screen, a valid sale of the old shares was refused, and a
