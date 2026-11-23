@@ -13,7 +13,7 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { COLOR, SPACE } from "../ui/tokens.js";
 import { C, todayKst } from "./format.js";
-import { readStore, writeStore, validStore, askPersist, guideSeenIn, withGuideSeen, keepOwnText, keepMine, versionFor } from "./store.js";
+import { readStore, writeStore, validStore, askPersist, guideSeenIn, withGuideSeen, keepOwnText, keepMine, versionFor, deckProblem, problemText } from "./store.js";
 import { refreshFresh, nextFreshCheck, returnWatch, adoptLoad } from "./load.js";
 import { publishGate, discAfter, discFits, discRetryDue, heldOn, discBehind } from "./hold.js";
 import { Portfolio } from "./portfolio.jsx";
@@ -485,12 +485,32 @@ export function App({ source }) {
   // round-2 review: a data.json split that a saved record already lies before is stored with the records at once (not only
   // with the next record), so a buy-and-hold portfolio keeps it even after data.json stops listing it. Nothing a user sees
   // changes (the screens already read the records with it); only when the records can be written, and said once.
+  // Track 2 audit 1.1: each split is tried once per visit. A portfolio whose records would not read back with it (the store's
+  // own check, as setStoreData's) keeps its records as they are and the console says why, once; the others are saved. Before,
+  // a refused save came back on every render (hundreds of times a second) and showed the line meant for the user's own change.
+  const splitsTried = useRef(new Set());
   useEffect(() => {
     if (load.status !== "ok" || !store.writable || store.locked) return;
     const r = withStoredSplits(view.data);
-    if (!r.added.length) return;
-    console.info("[v2] stock splits stored with the records they apply to: " + r.added.map((x) => `${x.id} ${x.t} ${x.date} x${x.r}`).join(", "));
-    setStoreData(r.data);
+    const key = (x) => `${x.id}|${x.t}|${x.date}|${x.r}`;
+    if (!r.added.some((x) => !splitsTried.current.has(key(x)))) return;
+    const today = todayKst();
+    const ok = [], no = [];
+    const decks = r.data.decks.map((d, i) => {
+      const old = view.data.decks[i];
+      if (d === old) return d;
+      const p = deckProblem(d, today);
+      const mine = r.added.filter((x) => x.id === d.id);
+      const fresh = mine.filter((x) => !splitsTried.current.has(key(x)));
+      for (const x of mine) splitsTried.current.add(key(x));
+      if (!p) { ok.push(...mine); return d; }
+      if (fresh.length) no.push(`${fresh.map((x) => `${x.id} ${x.t} ${x.date} x${x.r}`).join(", ")} (${problemText(d, p)})`);
+      return old;
+    });
+    if (no.length) console.warn("[v2] stock splits not stored with the records (the records would not read back with them; the screens still apply them; tried once): " + no.join("; "));
+    if (!ok.length) return;
+    console.info("[v2] stock splits stored with the records they apply to: " + ok.map((x) => `${x.id} ${x.t} ${x.date} x${x.r}`).join(", "));
+    setStoreData({ ...r.data, decks });
   }, [view, load.status]);
   // #117: an "out" row of data.json splitsInfo.fixed (ratio null) says a split was wrong. Each stored split it names is taken
   // out when the records read back without it, moved to data.json's corrected date (same stock and ratio) when they read

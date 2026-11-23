@@ -24,6 +24,18 @@ links, "전무가" off the must-not-show list, labels) and a rename in `tests/te
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
 v19.6g, v19.6h.
 
+**Split rounding (#?, 2026-11-24; Track 2 audit 1.1, serious but rare, and 1.4):** a stock split whose ratio doesn't give whole
+1/10,000 shares (11 of data.json's 150, e.g. 듀폰 DD 1:3 on 2026-06-24, 유니레버 UL 8:9) broke records saved before it: `held.js`
+rounded each record on its own and `lots.js` didn't round at all, so the app's automatic save of the split was refused and retried
+hundreds of times a second with "날짜·수량·가격을 다시 확인해 주세요" on every screen, a valid sale of the old shares was refused, and a
+full sale left a 1/3-unit sliver (a −5원 '손실' on the tax screen with nothing held). Now one count everywhere (`held.js` `count()`,
+read by the ledger, the store's check, 팔고 빼기 and 금액으로 넣기 sales): the running exact total rounded once per record, except that
+records saved and checked under the old per-record count keep it when only that one stays at or above 0 or ends at exactly 0 (no
+saved portfolio turns unreadable). Records with no split or a ratio that gives whole units count bit-identically to main
+(`tests/test_v2_split_round.py` runs main's code from `tests/fixtures/count_before_split_round_511fd6f`). `app.jsx` tries each split
+save once per visit; a portfolio that can't take it keeps its records and the console says why once. A 금액으로 넣은 holding sold
+with a date before a split now sells every share on that date's basis (it sold a fifth after AMCR's 1:5). No new Korean text.
+
 **CI checks the two PR rules (#175, 2026-11-23; Jack: "Automate the rules you missed"):** the last step of `ci.yml`'s `checks`
 job runs `tools/pr_rules.py`, so the required `ci` check goes red when either rule is missed. Run it yourself before pushing:
 `python tools/pr_rules.py --body-file BODY.md --base $(git merge-base origin/main HEAD) --head HEAD` (CI compares
