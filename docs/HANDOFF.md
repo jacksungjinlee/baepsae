@@ -24,7 +24,7 @@ links, "전무가" off the must-not-show list, labels) and a rename in `tests/te
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
 v19.6g, v19.6h.
 
-**DART quarter retry (branch `claude/dart-quarter-retry`, 2026-11-24, not merged yet):** the 11-21 corp.json had every Korean TTM on
+**DART quarter retry (#180, branch `claude/dart-quarter-retry`, 2026-11-24):** the 11-21 corp.json had every Korean TTM on
 2026.2Q (2,244 companies, 3Q none) five days after the 3Q deadline: "not filed yet" answers from the deadline days (11-14 was a
 Saturday, legal deadline 11-16; DART's statement API lags filings) waited 7 days, so the top 100 never reached 70%. Now deadlines
 roll to the next KRX trading day, and still-missing statement entries are asked daily until rolled deadline + 2 days, and to + 21

@@ -2189,7 +2189,7 @@ longer holds `BFB`.
 **Rolling back #PR**: a revert PR. The reverted gate ignores `usListSym`; the next data run drops BF-B again (users who saved it
 see the existing "no longer in today's data" handling). No data run is needed for the site checks.
 
-## DART: asking again after a filing deadline (마감 뒤 매일 다시 묻기, since #PR)
+## DART: asking again after a filing deadline (마감 뒤 매일 다시 묻기, since #180)
 
 **Why.** The 11-21 corp.json had every Korean TTM on 2026.2Q (2,244 companies, 3Q none) five days after the 3Q deadline. A DART
 statement entry cached as "not filed yet" (013) is asked again daily only from deadline − 7 to deadline + 2 days, then every 7 days
@@ -2230,7 +2230,7 @@ without `qPick` (before this change, or a DART-off run) is read from the newest 
 the lines above. "제출 a곳 → a곳" day after day means DART's API still lacks the numbers (nothing to fix; the site shows the older
 quarter, which `bq` labels); 0 asked means the retry is not running (a bug: fix the code, never the gate row).
 
-**Rolling back #PR**: a revert PR. The old 7-day rule returns, the gate row goes with it, and the next publish's corp.json has no
+**Rolling back #180**: a revert PR. The old 7-day rule returns, the gate row goes with it, and the next publish's corp.json has no
 `qPick` (no data run needed).
 
 ## Roll back
