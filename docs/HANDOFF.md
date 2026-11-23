@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-23 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-24 KST — read this first)
 
 **Now (2026-11-23):** merged and deployed 11-22: #166 (old-app English carry lines), #167 (div reason lines), #168 (v19.6b 오늘 볼 것
 page), #169 (new US tickers wait), #170 (v19.6e data: `c1w` · `wkFrom` · `usWkFrom` · `c1wv` · `c1wSrc`), #171 (v19.6e
@@ -23,6 +23,17 @@ links, "전무가" off the must-not-show list, labels) and a rename in `tests/te
 {n} · 실적 발표 {n}), one decimal on 지분 변동 amounts. Design chat has (sent 11-22): the say-why audit, the 10 dark-mode pairs,
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
 v19.6g, v19.6h.
+
+**#? (Korean price-history repair, Track 1 item 4), 2026-11-24 — built, switch OFF:** `fetch_data.py` `KR_PX_REPAIRS` · `kr_px_repair`
+rescale the bars before 13 old share events Naver never rescaled (12 of the 20 stocks in `krSeries.jump` on the 11-21 publish: 001465,
+003060, 007460, 009310, 012170 ×2, 012210, 110790, 227420, 311060, 331660, 425040, 472850), each factor confirmed by two sources
+(listed shares or the KRX 기준가, and Yahoo's split record). Repaired stocks leave `krSeries.jump`, so #128 stops blanking them. Every
+run re-checks each entry against the downloaded series and skips it if Naver has rescaled it (never twice) or if it no longer fits.
+`KR_PX_REPAIR_ON` is **False**: the numbers would be built on a history 뱁새 corrected, and the say-why line is not approved, so the run
+only logs and records what it would repair (`krSeries.adj`, new warning-only gate row "국내 과거 주가 병합 보정 (krSeries.adj ·
+경고만)"); nothing users see changes. **Waiting for Jack:** the screen line (draft in the PR), then a screens PR shows it and flips the
+switch. Still hidden either way: 007610, 107640, 121890, 206950, 210120, 229500, 250030 (real moves, transfer listings, one bad Naver
+bar, one source only) and 304840 (Naver rescaled it on 11-23; it should drop out by itself). RUNBOOK "Repairing the broken histories".
 
 **CI checks the two PR rules (#175, 2026-11-23; Jack: "Automate the rules you missed"):** the last step of `ci.yml`'s `checks`
 job runs `tools/pr_rules.py`, so the required `ci` check goes red when either rule is missed. Run it yourself before pushing:
