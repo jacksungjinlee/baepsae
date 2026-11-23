@@ -2195,59 +2195,87 @@ Jack, 2026-11-13: "v19.5b's US minimum sizes (25억원 of quarterly revenue, 100
 data PR first." The Korean 기준별 성장 and 수익성 lists keep only companies of 100억원 or more (`src/v2/ranks.js` `MIN_EOK`);
 this gives the US lists the figures to do the same.
 
-**What the daily run publishes** (`fetch_data.py` `us_size_step`, inside `fetch_us`): for every US company row (not an ETF or
-fund) whose statements are in dollars (`financialCurrency` USD), data.json carries
-- `qrev` · `qrevD`: the latest quarter's revenue (Yahoo quarterly income statement, `TotalRevenue`) and that quarter's end date;
-- `qeq` · `qeqD`: the latest quarter's common equity (Yahoo quarterly balance sheet, `CommonStockEquity`, the equity ROE is
-  computed on; negative = 자본잠식, kept as it is) and that quarter's end date.
+**What the daily run publishes** (`fetch_data.py` `us_size_step`): for every US company row (not an ETF or fund) whose statements
+are in dollars (`financialCurrency` USD), data.json carries
+- `qrev` · `qrevD`: the latest quarter's revenue (Yahoo quarterly statements, `TotalRevenue`) and that quarter's end date;
+- `qeq` · `qeqD`: the latest quarter's common equity (`CommonStockEquity`, the equity ROE is computed on; negative = 자본잠식,
+  kept as it is) and that quarter's end date.
 
 Whole dollars, like `price`. The app converts with the day's rate (`fx`). `CommonStockEquity`, not `StockholdersEquity`: on
 2026-11-20's 728 dollar filers the two differ only by preferred stock (75 companies), and only PAA (a partnership, whose
 `StockholdersEquity` is 0) lands on the other side of 100억원. `data.json` `usSize` records the counts: companies, dollar filers,
-fields filled, blank reasons per field, and what today's fetch did.
+fields filled, `noData` (rows whose size is unknown; the app keeps them in the lists as before), blank reasons per field, the
+cache size, today's requests and why the step stopped, if it did.
 
-**Source and cache.** The same Yahoo the run already asks for company details (yfinance `get_income_stmt` and
-`get_balance_sheet`, quarterly): two requests per company. Quarterly figures change four times a year, so they live in
-`.dart-cache/us-size-v1.json.gz` (next to `us-info-v1`, saved with the DART cache) and are fetched again after 7 days
-(`US_SIZE_FRESH_DAYS`), at most 250 old ones per run, oldest first (`US_SIZE_REFRESH_MAX`). Companies with no entry, or whose last
-fetch failed, are always fetched. Two passes (8 at a time, then 3 at a time after 20 seconds) and a 300-second limit
-(`US_SIZE_BUDGET_S`). A first run with an empty cache fetched all 728 in about 1.5 minutes from a test machine. When a fetch
-fails, the cached value stays, with its own quarter date, and the next run tries again.
+**Where it runs, and what protects the prices** (review 2026-11-23):
+- **Last in `main()`:** after every Yahoo request the publish depends on. That covers the Korean second source in `fetch_korea`,
+  the US closes, company details and split read in `fetch_us`, the split history, the gold price (`GC=F`), the funds,
+  `fetch_macro` and the exchange-rate history. It also runs after data.json, corp.json and macro.json are written; only the
+  DART disclosure phase follows. There is no separate US second source: a US stock without a Yahoo close carries our own last
+  confirmed close.
+- **data.json is written twice:** first without the fields (`usSize.stopped` "notRun"), then again with them. If the step
+  stops or the second write fails, the first file stands: the app shows the lists as before and the gate row warns.
+- **One request per company:** both lines in one call, yfinance's quarterly time-series function `_get_financials_time_series`.
+  Pinned with yfinance 1.7.0; `tests/test_us_min_sizes.py` checks it is there. Unlike the public `get_income_stmt` /
+  `get_balance_sheet` (two requests, about 150 lines each), it raises Yahoo's 429 instead of hiding it.
+- **At most 300 companies per run** (`US_SIZE_PER_RUN`). Order: companies with nothing cached, largest market cap first; then
+  the oldest cache entries. Entries are fetched again after 7 days (`US_SIZE_FRESH_DAYS`).
+- **Filling the cache:** the first runs after the merge fetch 300, 300, then 128, so it is complete after three runs. A
+  simulation on 2026-11-24 took 17 s, 20 s and 8 s, with no refusal. After that, about 100 companies a day.
+- **Limits:** 180 seconds (`US_SIZE_BUDGET_S`) and 3 at a time. The step stops at the first 429, or after 3 empty answers in a
+  row (`US_SIZE_EMPTY_STOP`). Either stop is logged with `!!`, and the next run continues from where it stopped.
+- **A failed fetch** keeps the cached value, with its own quarter date, and is retried next run.
 
-**Blanks** (each logged with count and tickers; `!!` except non-dollar filers, a known gap):
+**Blanks** (each logged with count and tickers). The app keeps every blank company in the lists, as before:
 
 | Reason (`usSize.why`) | What it means |
 |---|---|
-| `fcur` | Statements in another currency (38 on 2026-11-20: TSM, ASML, NVO, SONY, TM, SAP, BABA …). The data has no won rate for that currency, so the field is blank rather than mixed. Filling these needs the non-dollar rates of the "27 non-dollar filers" follow-up. |
-| `cur` | Statement currency unknown (no company details today, `usFcurUnknown`). |
-| `fail` | Yahoo's quarterly table came back empty and nothing is cached: a failed request, or a company that reports half-yearly (BHP, RIO, DEO, WSE had no quarterly income statement on 2026-11-23). Fetched again on every run. |
-| `time` | The 300-second limit stopped the fetch before this company; the next run fetches it. |
-| `noRow` | Yahoo's table came but without that line. |
+| `fcur` | Statements in another currency (38 on 2026-11-20: TSM, ASML, NVO, SONY, TM, SAP, BABA …). The data has no won rate for that currency, so the field stays blank rather than mixed. Filling these needs the non-dollar rates of the "27 non-dollar filers" follow-up. |
+| `cur` | Statement currency unknown (no company details today, `usFcurUnknown`: FISV on 2026-11-20). |
+| `wait` | Not fetched yet: the 300-per-run cap, during the first three runs or after a cache loss. |
+| `noRow` | Yahoo's answer had no such line: half-yearly reporters (BHP, RIO, DEO, WSE have no quarterly revenue). |
+| `fail` | Yahoo answered empty or with an error and nothing is cached; retried next run. |
+| `time` / `stop` | The 180-second limit or a Yahoo refusal stopped the step before this company; the next run fetches it. |
 | `old` | The newest quarter ends more than 200 days before the US price date (`US_SIZE_MAX_AGE_DAYS`). |
 | `future` | The quarter end is after the US price date (a broken value). |
 
-**The app** (`src/v2/ranks.js` `usMinOf`, `critOut`; `rank.jsx` `critBasis`):
-- 기준별 · 수익성 under 미국 keeps a company only when `qeq × fx ÷ 10⁸ ≥ 100` (억원, `US_MIN_EQ_EOK`); the line adds the approved
-  "· 자본 100억원 이상". A blank `qeq` leaves the company out, as a Korean company without equity in corp.json is. Switch
-  `US_MIN_PROFIT_ON` (on).
-- 기준별 · 성장 under 미국 would keep `qrev × fx ÷ 10⁸ ≥ 25` (`US_MIN_REV_EOK`), but its switch `US_MIN_GROWTH_ON` is **off**: the
-  Korean words "매출 100억원 이상" are not true of it, and its own line ("분기 매출 25억원 이상", `rank.p.floorGrowthUs`) waits
-  for Jack. To switch on after his yes: fill `rank.p.floorGrowthUs` in `src/copy/v2.js` and move the row to the approved file,
-  set `US_MIN_GROWTH_ON = true`, update `tests/test_us_min_ranks.py`'s two "off" checks, rebuild.
-- A data file in which no US stock has the figure (any file published before this PR, or a day the step stopped) shows the
-  lists as before, with no minimum and no floor in the line, and the console says so. A file without `fx` shows "필요한 데이터가
-  아직 없어 이 순위를 보여 드릴 수 없어요." on that list, never an unconverted ranking.
-- On 2026-11-20's data with the figures added (simulation, 2026-11-23): 수익성 under 미국 goes from 707 to 664 companies.
-  Leaving: 6 with negative common equity (Gartner #2, Halozyme #6, Las Vegas Sands #8, DaVita #24, Coca-Cola Consolidated #29,
-  FDXF) and 37 non-dollar filers (Ascendis #16 the highest). With the growth switch on, 성장 would lose 43: 38 non-dollar filers,
-  4 half-yearly reporters and CG Oncology (21.6억원 of quarterly revenue); the top 10 would not change.
+**The app** (`src/v2/ranks.js` `usMinOf`, `critOut`, `noteCrit`; `rank.jsx` `critBasis`):
+- **기준별 · 수익성 under 미국:** a company leaves only when its equity is known and under 100억원, that is
+  `qeq × fx ÷ 10⁸ < 100` (`US_MIN_EQ_EOK`); negative equity is included. The line adds the approved "· 자본 100억원 이상",
+  which is literally true of every company it removes. Switch: `US_MIN_PROFIT_ON` (on).
+- **Unknown size stays in.** A company whose `qeq` is blank (another currency, half-yearly, not fetched yet) stays exactly
+  where it was. The browser console names it: "the profit list keeps N stocks with no qeq (size unknown …): …". Companies that
+  leave are named too: "leaves out smallEquity N: …".
+- **기준별 · 성장 under 미국** would remove a known `qrev × fx ÷ 10⁸ < 25` (`US_MIN_REV_EOK`), but its switch
+  `US_MIN_GROWTH_ON` is **off**. The Korean words "매출 100억원 이상" are not true of it, and its own line ("분기 매출 25억원
+  이상", `rank.p.floorGrowthUs`) waits for Jack. To switch it on after his yes:
+  - fill `rank.p.floorGrowthUs` in `src/copy/v2.js` and move the row to the approved file;
+  - set `US_MIN_GROWTH_ON = true`;
+  - update the two "off" checks in `tests/test_us_min_ranks.py`;
+  - rebuild.
+- **No minimum and no line:** a data file in which no US stock has the figure (any file published before this PR, or a day the
+  step stopped) or one without `fx` shows the lists exactly as before, and the console says why.
+- **Effect on 2026-11-20's data**, with the figures added by running the step (2026-11-24):
+  - Full cache: 수익성 under 미국 goes from 707 to 701 companies. The 6 leaving have negative common equity: Gartner #2,
+    Halozyme #6, Las Vegas Sands #8, DaVita #24, Coca-Cola Consolidated #29 and FDXF. 37 non-dollar filers stay, size unknown.
+  - With the growth switch on, 성장 would lose 1 of 750: CG Oncology (21.6억원 of quarterly revenue).
+  - After the first run only (the 300 largest), no one leaves yet: all six have smaller market caps (ranks 416–626). The line
+    shows from that publish while about 430 companies are still `wait`. LVS and FDXF leave after the second run, the other
+    four after the third.
 
 **Gate row** `미국 회사 크기 (qrev · qeq · 경고만)` (`validate_data.check_us_size`): warning only, it never stops a publish.
-It warns when either field is filled for fewer than 90% of dollar filers (`US_SIZE_FILL_WARN`), when a field is malformed (not a number,
-no date, a date after the US price date or more than 200 days before it), when a non-dollar filer, ETF or fund carries one, when
-`usSize` is missing, or when the step stopped. A file from before this PR passes with "칸 없음". What to do on a warning: read the
-run log's `미국 회사 크기` lines (counts, reasons, tickers). A low fill with many `fail`/`time` is Yahoo refusing for a day; the
-cache fills it back on the next runs. A malformed field is our bug: fix forward.
+- **It warns when:**
+  - either field is filled for fewer than 90% of the dollar filers whose turn has come (`wait` is left out, so the planned
+    fill does not warn; `US_SIZE_FILL_WARN`);
+  - a field is malformed: not a number, no date, or a date after the US price date or more than 200 days before it;
+  - a non-dollar filer, ETF or fund carries a field;
+  - `usSize` is missing;
+  - the step stopped (including "notRun");
+  - Yahoo refused (`usSize.stop`).
+- A file from before this PR passes with "칸 없음".
+- **What to do on a warning:** read the run log's `미국 회사 크기` lines (counts, reasons, tickers).
+  - A refusal or many `fail`/`time`: Yahoo was refusing that day. The cache keeps yesterday's values and the next runs continue.
+  - A malformed field is our bug: fix forward.
 
 **Rolling back #?**: a revert PR. The app then ignores `qrev` · `qeq` (the lists are as before), the reverted pipeline stops
 writing them, and the cache file is left unused in `.dart-cache`. No data run needed.

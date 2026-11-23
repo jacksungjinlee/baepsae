@@ -2530,7 +2530,8 @@ def check_us_new_wait(rep, data, pdata):
 # ── v19.5b 후속 (Jack, 2026-11-13: "v19.5b's US minimum sizes (25억원 of quarterly revenue, 100억원 of equity, at the day's rate)
 # need a small data PR first") — 미국 회사의 최근 분기 매출 qrev · 자본 qeq (달러 · fetch_data.us_size_step). 경고만: 실패하지 않아요 ──
 US_SIZE_ROW = "미국 회사 크기 (qrev · qeq · 경고만)"
-US_SIZE_FILL_WARN = 90.0     # 재무제표 통화가 달러인 회사 중 이보다 적게 채우면 경고 (2026-11-20 발행본으로 돌려 봄: 매출 99.5% · 자본 100%)
+US_SIZE_FILL_WARN = 90.0     # 재무제표 통화가 달러인 회사 중 (아직 차례가 오지 않은 wait 빼고) 이보다 적게 채우면 경고 (2026-11-20 발행본으로 돌려 봄:
+                             # 매출 99.5% · 자본 100%). 파이프라인은 한 실행에 300곳씩 받아요 — 처음 두세 번의 발행은 wait 가 많아요 (경고 아님)
 US_SIZE_MAX_AGE = 200        # fetch_data.US_SIZE_MAX_AGE_DAYS 와 같아요 (테스트가 맞춰 봐요): 분기 말이 usPxDate 보다 이만큼 넘게 앞이면 빈 칸이어야 해요
 US_SIZE_KEYS = ("qrev", "qeq")
 
@@ -2571,8 +2572,9 @@ def check_us_size(rep, data):
 
 
 def _check_us_size(rep, data):
-    rule = (f"재무제표 통화가 달러인 미국 회사의 qrev · qeq 채움 {US_SIZE_FILL_WARN:g}% 아래 · 모양이 틀린 칸 (숫자 · 날짜 · 짝 · usPxDate 뒤이거나 "
-            f"{US_SIZE_MAX_AGE}일 넘게 앞) · 달러가 아닌 회사나 ETF 에 칸 · 기록(usSize)이 없거나 단계가 멈춤 → 경고 (실패 없음)")
+    rule = (f"재무제표 통화가 달러인 미국 회사의 qrev · qeq 채움 (아직 받지 않은 wait 빼고) {US_SIZE_FILL_WARN:g}% 아래 · 모양이 틀린 칸 (숫자 · 날짜 · "
+            f"짝 · usPxDate 뒤이거나 {US_SIZE_MAX_AGE}일 넘게 앞) · 달러가 아닌 회사나 ETF 에 칸 · 기록(usSize)이 없거나 단계가 멈춤 · 야후 거절로 "
+            "멈춤 → 경고 (실패 없음)")
     rec = data.get("usSize")
     us = [s for s in data.get("stocks") or [] if isinstance(s, dict) and s.get("cls") == "us"]
     keys = US_SIZE_KEYS + tuple(k + "D" for k in US_SIZE_KEYS)
@@ -2586,21 +2588,26 @@ def _check_us_size(rep, data):
     us_px = _iso_day(data.get("usPxDate"))
     bad = [(s.get("t"), w) for s in usd for w in us_size_bad(s, us_px)]
     fill = {k: sum(1 for s in usd if us_size_num(s.get(k)) is not None) for k in US_SIZE_KEYS}
-    pct = {k: (100.0 * fill[k] / len(usd) if usd else 0.0) for k in US_SIZE_KEYS}
-    warns, parts = [], [f"매출 {fill['qrev']:,} · 자본 {fill['qeq']:,} / 달러 재무제표 회사 {len(usd):,} ({pct['qrev']:.1f}% · {pct['qeq']:.1f}%)"]
+    why = (rec.get("why") if isinstance(rec, dict) and isinstance(rec.get("why"), dict) else None) or {}
+    wait = {k: int(num((why.get(k) if isinstance(why.get(k), dict) else {}).get("wait")) or 0) for k in US_SIZE_KEYS}
+    base = {k: max(0, len(usd) - wait[k]) for k in US_SIZE_KEYS}
+    pct = {k: (100.0 * fill[k] / base[k] if base[k] else 100.0) for k in US_SIZE_KEYS}
+    warns, parts = [], [f"매출 {fill['qrev']:,} · 자본 {fill['qeq']:,} / 달러 재무제표 회사 {len(usd):,} (아직 받지 않은 곳 빼고 {pct['qrev']:.1f}% · "
+                        f"{pct['qeq']:.1f}%)"]
     if not isinstance(rec, dict):
         warns.append("usSize 기록이 없거나 모양이 틀림")
     else:
         if rec.get("stopped"):
             warns.append(f"단계가 멈춤 ({str(rec.get('stopped'))[:40]}) — 모든 행 빈 칸")
-        why = rec.get("why") if isinstance(rec.get("why"), dict) else {}
+        if rec.get("stop"):
+            warns.append(f"야후 거절로 받기를 멈춤 ({str(rec.get('stop'))[:60]}) — 다음 실행이 이어 받아요")
         for k, ko in (("qrev", "매출"), ("qeq", "자본")):
             w = why.get(k) if isinstance(why.get(k), dict) else {}
             if w:
-                parts.append(f"{ko} 빈 칸 " + " · ".join(f"{r} {n}" for r, n in sorted(w.items(), key=lambda x: -(num(x[1]) or 0))))
-        if num(rec.get("asked")):
-            parts.append(f"오늘 받음 {rec.get('ok')} / {rec.get('asked')} (일부만 {rec.get('part')} · 오류 {rec.get('err')} · 시간 상한 {rec.get('time')} · "
-                         f"보관본 값 {rec.get('kept')})")
+                parts.append(f"{ko} 빈 칸 (앱은 크기를 몰라 목록에 둬요) " + " · ".join(f"{r} {n}" for r, n in sorted(w.items(), key=lambda x: -(num(x[1]) or 0))))
+        if num(rec.get("asked")) is not None:
+            parts.append(f"오늘 요청 {rec.get('req')} / 받을 곳 {rec.get('asked')} (상한 {rec.get('perRun')} · 받음 {rec.get('ok')} · 빈 답 {rec.get('empty')} · "
+                         f"오류 {rec.get('err')} · 시간 상한 {rec.get('time')} · 보관본 값 {rec.get('kept')}) · 보관본 {rec.get('cached')} / {rec.get('usd')}")
     if usd and not rec_stopped(rec) and min(pct.values()) < US_SIZE_FILL_WARN:
         warns.append(f"채움이 {US_SIZE_FILL_WARN:g}% 아래")
     if bad:
