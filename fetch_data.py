@@ -12570,6 +12570,181 @@ def prev_foreign_set(prev):
     return {t: v for t, v in st.items() if isinstance(t, str)} if isinstance(st, dict) else None
 
 
+# 2026-11-24 (SNDK): 주식 분할 뒤 30일 안의 미국 회사도 외국 회사와 같은 검사(us_foreign_cuts)로 PER · PBR · 배당수익률을 회사 합계와 맞춰 봐요.
+# 2026-11-20 8:1 분할 뒤 야후가 SNDK 의 주당순이익을 분할 전 기준으로 남겨(923.7달러) PER 0.1 이 나갔어요 (시가총액 ÷ 순이익 5.1). 같은 허용 폭
+# (US_FOREIGN_BAND) · 같은 종류 (mismatch · currency · norecord · nocompare-own · stopped) · 앱의 같은 줄 (co.fgnCut · co.fgnNoCmp · co.fgnStopped).
+# 표시는 종목의 splCut (fgnCut 과 같은 모양): 관문의 외국 회사 줄이 fgnCut 을 외국 회사에만 받아서 (그 줄은 바꾸지 않아요) 따로 적고, 앱이 둘을
+# 같게 읽어요 (src/v2/fcur.js). 새 야후 요청은 없어요: 외국 회사 검사와 같은 상세 정보 보관본(us-info-v1 · 3일마다 다시 받음)과 오늘 시세 다운로드의
+# 배당 칸을 써요. 분할 목록은 발행할 splits 와 같은 출처 (오늘 다운로드의 분할 칸 · 지난 발행본 splits · 고정 표 — us_carry_splits).
+US_SPLIT_CHECK_DAYS = 30      # 미국 기준일 이만큼 앞부터 오늘(KST)까지의 분할 (관문 validate_data.US_SPLIT_CHK_DAYS 와 같은 값)
+US_SPLIT_MARK = "splCut"      # 종목 표시 칸 (관문 validate_data.US_SPLIT_MARK · 앱 src/v2/fcur.js 와 같은 글자)
+US_SPLIT_SKIP = ("foreign", "fcur", "etf")   # 최근 분할인데 이 검사가 보지 않는 까닭: 외국 회사 검사가 봄 · 재무제표 통화가 달러가 아님(#114) · ETF · 펀드
+
+
+def us_recent_splits(carry, codes, end, today, days=US_SPLIT_CHECK_DAYS):
+    """최근 분할한 종목 (순수 함수): carry = us_carry_splits 의 {티커: {날짜 ISO}} · codes = 오늘 미국 목록의 티커 · end = 미국 기준일 ·
+    today = 오늘(KST). end − days ≤ 날짜 ≤ today 인 분할이 있는 codes 의 종목 → {티커: 그중 가장 늦은 날짜}. 읽을 수 없는 날짜는 보지 않아요."""
+    lo, out = end - dt.timedelta(days=days), {}
+    for t in codes:
+        hit = []
+        for d in (carry or {}).get(t) or ():
+            try:
+                x = dt.date.fromisoformat(d)
+            except (TypeError, ValueError):
+                continue
+            if lo <= x <= today:
+                hit.append(x.isoformat())
+        if hit:
+            out[t] = max(hit)
+    return dict(sorted(out.items()))
+
+
+def us_split_skip(rec, foreign):
+    """최근 분할 종목을 이 검사가 보지 않는 까닭 (US_SPLIT_SKIP 의 글자) 또는 None (봐요). (순수 함수)"""
+    if rec.get("etf") is True or rec.get("fund"):
+        return "etf"                       # 회사 합계(순이익 · ROE)가 없어요
+    if rec.get("t") in foreign:
+        return "foreign"                   # us_foreign_check 가 이미 같은 검사를 했어요 (표시 fgnCut 하나만)
+    if rec.get("fcur"):
+        return "fcur"                      # #114 가 PER · PBR · 배당수익률을 이미 비웠어요
+    return None
+
+
+def _split_why(why):
+    """기록에 남길 이유 글: 야후 값이 없을 때의 repr 'None' 을 '없음' 으로 (관문 '글자에 nan·None·null·undefined 없음' 줄). (순수 함수)"""
+    return re.sub(r"(?<![A-Za-z])None(?![A-Za-z])", "없음", str(why))
+
+
+def us_split_check(out, cache, data, us_px_date, recent, no_info=frozenset(), foreign=frozenset(), done=None, nocmp=None):
+    """최근 분할한 미국 회사(recent: us_recent_splits)의 PER · PBR · 배당수익률을 외국 회사와 같은 검사(us_foreign_cuts · us_fgn_kind · 같은
+    스위치 nocmp)로 맞춰 보고, 맞지 않거나 맞춰 볼 수 없는 칸을 비워요. 종목 표시는 rec["splCut"] = {칸: 종류} (fgnCut 과 같은 모양 · 같은 종류 ·
+    표시 먼저, 그다음 비우기). 외국 회사(foreign) · fcur · ETF · 펀드는 보지 않고 skip 에 적어요. 상세 정보가 없는 종목은 비울 칸이 없어 확인한 것으로
+    세요. done: us_foreign_check 처럼 가면서 담아요 (멈추면 us_split_stopped 가 써요).
+    반환 data.json usSplitChk = {checked, cut [[티커, 칸, 이유]], kind {티커: {칸: 종류}}, kept, nocmp, skip {까닭: [티커]}}."""
+    nocmp = US_FGN_NOCMP if nocmp is None else nocmp
+    done = {} if done is None else done
+    checked, cut, seen = done.setdefault("checked", []), done.setdefault("cut", []), done.setdefault("seen", set())
+    kind, kept = done.setdefault("kind", {}), done.setdefault("kept", [])
+    skip = done.setdefault("skip", {k: [] for k in US_SPLIT_SKIP})
+    for rec in out:
+        t = rec["t"]
+        rec.pop(US_SPLIT_MARK, None)
+        if t not in recent:
+            seen.add(t)
+            continue
+        why_not = us_split_skip(rec, foreign)
+        if why_not:
+            skip[why_not].append(t)
+            seen.add(t)
+            continue
+        e = cache.get(t) or {}
+        if t in no_info or not e:
+            checked.append(t)
+            seen.add(t)
+            continue
+        cuts = {f: _split_why(w) for f, w in us_foreign_cuts(rec, e.get("info"), us_div_12m(_div_col(data, t), us_px_date)).items()}
+        kinds = {f: us_fgn_kind(f, why, nocmp) for f, why in sorted(cuts.items())}
+        for f, why in sorted(cuts.items()):
+            if kinds[f] is None:                     # 스위치 keep: 맞춰 볼 값이 없는 칸은 비우지 않아요 (외국 회사와 같아요)
+                kept.append([t, f, why])
+        cuts = {f: why for f, why in cuts.items() if kinds[f] is not None}
+        if cuts:
+            rec[US_SPLIT_MARK] = {f: kinds[f] for f in sorted(cuts)}
+            kind[t] = dict(rec[US_SPLIT_MARK])
+        for f, why in sorted(cuts.items()):
+            rec.pop(f, None)
+            cut.append([t, f, why])
+        checked.append(t)
+        seen.add(t)
+    log_us_split_check(recent, checked, cut, kind, kept, skip, nocmp)
+    return {"checked": sorted(checked), "cut": cut, "kind": {t: dict(g) for t, g in sorted(kind.items())}, "kept": list(kept), "nocmp": nocmp,
+            "skip": {k: sorted(v) for k, v in skip.items()}}
+
+
+def log_us_split_check(recent, checked, cut, kind, kept, skip, nocmp):
+    """us_split_check 결과를 크게 남겨요 (CLAUDE.md: 수와 이름 · 비운 칸마다 한 줄)."""
+    names = {"per": "PER", "pbr": "PBR", "dy": "배당수익률"}
+    by_f = {f: [t for t, g, _ in cut if g == f] for f in names}
+    log(f"{'  !! ' if cut else '· '}최근 {US_SPLIT_CHECK_DAYS}일 안에 분할한 미국 회사의 주당 숫자 (회사 합계 · 실제 배당과 맞춤 · 외국 회사와 같은 검사): "
+        f"분할 종목 {len(recent)}곳 · 확인 {len(checked)}곳 · " + " · ".join(f"{names[f]} 비움 {len(ts)}곳" + (f" ({', '.join(ts)})" if ts else "")
+                                                                 for f, ts in by_f.items()))
+    for t, f, why in cut:
+        log(f"     {t} {names[f]}: {why} [{kind.get(t, {}).get(f, '?')}] (분할 {recent.get(t)})")
+    sk = {"foreign": "외국 회사라 위 검사가 봄", "fcur": "재무제표 통화가 달러가 아니라 이미 비움", "etf": "ETF · 펀드라 회사 합계가 없어 보지 않음"}
+    log("  · 분할 종목 중 이 검사가 보지 않은 곳: " + " · ".join(f"{sk[k]} {len(skip.get(k) or [])}곳" + (f" ({', '.join(skip[k])})" if skip.get(k) else "")
+                                                for k in US_SPLIT_SKIP))
+    if kept:
+        log(f"  !! 스위치 {nocmp}: 맞춰 볼 값이 없어 비우지 않은 칸 {len(kept)}칸 (야후 숫자 그대로 · 표시 없음): "
+            + ", ".join(f"{t} {names[f]}" for t, f, _w in kept))
+
+
+def us_split_stopped(out, done, err, recent, foreign=frozenset()):
+    """us_split_check 가 멈췄을 때 (us_foreign_stopped 와 같아요): 끝까지 본 종목의 비운 칸 · 표시는 그대로, 아직 보지 못한 최근 분할 회사(보지 않는
+    까닭이 없는 곳)의 PER · PBR · 배당수익률을 모두 비우고 표시 stopped (앱 줄 co.fgnStopped). → data.json usSplitChk"""
+    seen = set(done.get("seen") or ())
+    cut = [list(x) for x in done.get("cut") or []]
+    n0 = len(cut)
+    why = f"{US_FOREIGN_STOP_WHY} ({type(err).__name__})"
+    kind = {t: dict(g) for t, g in sorted((done.get("kind") or {}).items()) if t in seen}
+    skip = {k: sorted(t for t in (done.get("skip") or {}).get(k) or [] if t in seen) for k in US_SPLIT_SKIP}
+    checked = [t for t in done.get("checked") or [] if t in seen]
+    for r in out:
+        t = r.get("t")
+        if t not in recent or t in seen:
+            continue
+        why_not = us_split_skip(r, foreign)
+        if why_not:
+            skip[why_not] = sorted(skip[why_not] + [t])
+            continue
+        r.pop(US_SPLIT_MARK, None)
+        blank = [f for f in ("per", "pbr", "dy") if r.get(f) is not None]
+        if blank:
+            r[US_SPLIT_MARK] = {f: "stopped" for f in blank}
+            kind[t] = dict(r[US_SPLIT_MARK])
+        for f in blank:
+            r.pop(f, None)
+            cut.append([t, f, why])
+        checked.append(t)
+    kept = [list(x) for x in done.get("kept") or [] if x[0] in seen]
+    log(f"  !! 최근 분할한 미국 회사 검사가 멈췄어요 ({type(err).__name__}: {str(err)[:120]}) → 끝까지 본 곳의 비운 칸 {n0}칸은 그대로 · 나머지 "
+        f"{len(cut) - n0}칸을 맞춰 보지 않고 비웠어요 (표시 stopped · 앱 줄 '오늘은 확인하지 못함'): " + (", ".join(f"{t} {f}" for t, f, _w in cut[n0:]) or "없음"))
+    return {"checked": sorted(checked), "cut": cut, "kind": kind, "kept": kept, "nocmp": US_FGN_NOCMP, "skip": skip, "err": type(err).__name__}
+
+
+def us_split_step(out, cache, data, us_px_date, today, prev, no_info=frozenset(), foreign=frozenset()):
+    """fetch_us 의 분할 뒤 검사 한 단계 (외국 회사 검사 바로 다음). 최근 분할 종목을 정하고 (오늘 다운로드의 분할 칸 · 지난 발행본 splits · 고정 표)
+    us_split_check 를 해요. 분할 목록을 정하다 멈추면 어느 종목인지 몰라 아무것도 비우지 않고 크게 남겨요 (err · 관문 경고). 오늘 다운로드의 분할 칸을
+    읽지 못하면 지난 발행본 · 고정 표로만 정하고 크게 남겨요 (srcErr). 검사가 멈추면 us_split_stopped.
+    → data.json usSplitChk = us_split_check 의 반환 + days · recent {티커: 분할 날짜} (· srcErr · err)."""
+    codes = [r["t"] for r in out]
+    src_err = None
+    try:
+        try:
+            rows = us_splits(data, codes, today)[0]
+        except Exception as e:      # 오늘 다운로드의 분할 칸 — 지난 발행본 · 고정 표로는 정해요
+            rows, src_err = [], type(e).__name__
+            log(f"  !! 최근 분할 종목: 오늘 시세 다운로드의 분할 칸을 읽지 못했어요 ({type(e).__name__}: {str(e)[:120]}) → 지난 발행본 splits · 고정 표로만 정해요")
+        recent = us_recent_splits(us_carry_splits(rows, prev), codes, us_px_date, today)
+    except Exception as e:
+        for r in out:
+            r.pop(US_SPLIT_MARK, None)
+        log(f"  !! 최근 분할한 미국 종목을 정하다가 멈췄어요 ({type(e).__name__}: {str(e)[:120]}) → 어느 종목인지 몰라 분할 뒤 검사를 하지 못했어요 "
+            "(아무것도 비우지 않음 · 관문 경고)")
+        return {"days": US_SPLIT_CHECK_DAYS, "recent": None, "checked": [], "cut": [], "kind": {}, "kept": [], "nocmp": US_FGN_NOCMP,
+                "skip": {k: [] for k in US_SPLIT_SKIP}, "err": type(e).__name__}
+    log(f"· 최근 {US_SPLIT_CHECK_DAYS}일 안에 분할한 미국 종목 ({us_px_date - dt.timedelta(days=US_SPLIT_CHECK_DAYS)} ~ {today}): {len(recent)}곳"
+        + (": " + ", ".join(f"{t}({d})" for t, d in recent.items()) if recent else ""))
+    done = {}
+    try:
+        rec = us_split_check(out, cache, data, us_px_date, recent, no_info, foreign, done)
+    except Exception as e:
+        rec = us_split_stopped(out, done, e, recent, foreign)
+    rec = {"days": US_SPLIT_CHECK_DAYS, "recent": recent, **rec}
+    if src_err:
+        rec["srcErr"] = src_err
+    return rec
+
+
 def us_extra_missing(extra, kept, why):
     """EXTRA_US 중 오늘 발행 목록(kept)에 없는 종목 → {티커: 빠진 이유}. 이유를 적지 못한 종목은 그렇다고 적어요 (관문이 이름과 함께 경고 ·
     기록 자체가 없으면 발행 때 경고 · 목록에도 기록에도 없는 종목은 경고, 5곳 넘으면 실패 — validate_data.check_us_extra). (순수 함수)"""
@@ -13028,6 +13203,8 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
     ufor["set"] = fset["set"]               # 관문: 이 회사들(fcur 없음)의 숫자는 모두 checked 에 있어야 하고, 표시(fgnCut)는 이 회사들에만
     ufor["unknown"] = fset["unknown"]       # 관문: 나라를 몰라 외국 회사로 보지 않은 S&P 500 밖 회사 (경고만)
     ufor["sp500"] = sp_rec                  # 관문: S&P 500 목록 크기 · 오늘 목록과 겹침 · 믿었는지 (못 믿은 날은 경고)
+    # 2026-11-24 (SNDK): 최근 30일 안에 분할한 미국 회사도 같은 검사로 (외국 회사 · fcur · ETF 빼고 · 표시 splCut · 새 야후 요청 없음)
+    usplit = us_split_step(out, cache, data, us_px_date, today, prev, no_info, foreign=fgn)
     # 2026-11-14: EXTRA_US 중 오늘 목록에 없는 종목과 이유 (data.json usExtraMissing · 관문이 이름과 이유를 남겨요)
     for t in left_out.get("preferred") or []:
         extra_why[t] = "우선주 · 예탁증서로 보고 뺌 (usLeftOut.preferred)"
@@ -13057,6 +13234,7 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
             "usFcurUnknown": fsum["unknown"],               # #114 리뷰: 재무제표 통화를 모르는 회사 (관문이 경고로 이름을 남겨요)
             "usInfoPartial": sorted(t for t in sticky if t in {r["t"] for r in out}),   # #114 리뷰 2: 오늘 응답이 일부만 와 예전 설명 칸을 쓴 종목
             "usForeign": ufor,                              # 2026-11-14: 외국 회사 주당 숫자 검사 (확인한 종목 · 비운 칸과 이유)
+            "usSplitChk": usplit,                           # 2026-11-24: 최근 분할한 미국 회사의 같은 검사 (분할 종목 · 비운 칸과 이유)
             "usExtraMissing": xmiss,                        # 2026-11-14: EXTRA_US 중 오늘 없는 종목 → 이유 (관문)
             "usListSym": usym,                              # 2026-11-15: 출처 티커 → 야후 모양 · 바꾸지 못한 티커 · S&P 500 중 빠진 종목 (관문)
             # 2026-11-20 (Jack): 야후 종가가 없어 마지막 확인 종가로 실은 종목 (관문 · 앱) · 2026-11-22 (Jack): newWait 새로 들어왔는데 미국
@@ -15180,6 +15358,13 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                     "통화를 확인하지 못함 · norecord 배당 기록 · 가격을 읽지 못한 배당수익률 · nocompare 회사 숫자로 PER · PBR 을 맞춰 볼 수 없음 (적자 · ROE 없음) · "
                     "nocompare-own 같은 뜻, 스위치 own 일 때 (지금 · 앱 줄 co.fgnNoCmp) · stopped 검사가 멈춘 날 맞춰 보지 않고 비움 (앱 줄 co.fgnStopped)} "
                     "(usForeign.cut 과 같은 칸 · 앱이 그 칸 '–' 밑에 이유 줄을 붙여요 · 검사가 멈춘 날의 칸은 없어요)"),
+         "splCut": ("미국 회사의 종목 칸 (2026-11-24): 최근 30일 안 주식 분할 뒤 회사 합계와 맞지 않아 비운 칸 — fgnCut 과 같은 모양 · 같은 종류 · 앱의 "
+                    "같은 줄 (usSplitChk.cut 과 같은 칸 · 외국 회사 · fcur · ETF 에는 없어요)"),
+         "usSplitChk": ("최근 분할한 미국 회사의 주당 숫자 검사 (2026-11-24 · 외국 회사 검사 us_foreign_cuts 와 같은 허용 폭 · 같은 종류): days = 미국 "
+                        "기준일 앞 날 수 (30) · recent = {티커: 그 기간의 가장 늦은 분할 날짜} (오늘 다운로드의 분할 칸 · 지난 발행본 splits · 고정 표) · "
+                        "checked = 확인한 티커 · cut = 비운 칸 [티커, 칸, 이유] · kind = {티커: {칸: 종류}} (종목의 splCut 과 같아요) · kept · nocmp "
+                        "(usForeign 과 같아요) · skip = 보지 않은 최근 분할 종목 {foreign 외국 회사 검사가 봄 · fcur 재무제표 통화가 달러가 아님 · etf ETF · "
+                        "펀드} · srcErr 오늘 다운로드의 분할 칸을 읽지 못함 (지난 발행본 · 고정 표로만) · err 검사가 멈춤 (오류 종류 이름)"),
          "splits": ("2016-01-01 부터(splitsFrom)의 주식 분할 [종목 코드, 날짜, 배율] · 미국만 (야후 · 날짜는 미국 현지 날짜, 새 주식 수로 거래가 "
                     "시작된 날) · 배율 = 옛 1주가 새로 몇 주인지 (4:1 분할 4 · 1:10 병합 0.1) · 한 번 실은 분할은 빼지 않아요 (종목이 목록에서 빠져도) · "
                     "야후가 분할 칸에 적은 분사 조정(1253:1000 같은 배율)은 넣지 않고, 야후가 틀리게 적는 진짜 사건은 고정 표로 넣어요 (splitsInfo.fixed) · "
@@ -15218,6 +15403,18 @@ def us_meta_drop(umeta, us, bad):
     for k in ("splitsNoCol", "usInfoPartial", "usFcurUnknown"):
         if isinstance(umeta.get(k), list):
             umeta[k] = [t for t in umeta[k] if t not in bad]
+    usc = umeta.get("usSplitChk")
+    if isinstance(usc, dict):                      # 2026-11-24: 뺀 종목의 분할 뒤 검사 기록 (관문이 종목의 splCut 과 맞춰 봐요)
+        if isinstance(usc.get("checked"), list):
+            usc["checked"] = [t for t in usc["checked"] if t not in bad]
+        for k in ("cut", "kept"):
+            if isinstance(usc.get(k), list):
+                usc[k] = [x for x in usc[k] if not row0(x)]
+        for k in ("kind", "recent"):
+            if isinstance(usc.get(k), dict):
+                usc[k] = {t: v for t, v in usc[k].items() if t not in bad}
+        if isinstance(usc.get("skip"), dict):
+            usc["skip"] = {k: [t for t in v if t not in bad] if isinstance(v, list) else v for k, v in usc["skip"].items()}
     uf = umeta.get("usForeign")
     if isinstance(uf, dict):                       # 리뷰 1차 S1: 뺀 종목의 외국 회사 기록 (관문이 종목의 fgnCut 과 맞춰 봐요)
         for k in ("checked", "unknown"):
@@ -15589,6 +15786,7 @@ def main():
         "usFcurUnknown": umeta["usFcurUnknown"],   # #114: 재무제표 통화를 모르는 미국 회사 (비우지 않았어요 — 관문이 경고해요)
         "usInfoPartial": umeta["usInfoPartial"],   # #114 리뷰 2: 오늘 야후 응답이 일부만 와 예전 설명 칸을 쓴 미국 종목 (관문이 경고해요)
         "usForeign": umeta["usForeign"],           # 2026-11-14: 미국 상장 외국 회사 주당 숫자 검사 (관문이 비운 칸 · 빠짐없이 확인했는지 봐요)
+        **({"usSplitChk": umeta["usSplitChk"]} if "usSplitChk" in umeta else {}),   # 2026-11-24: 최근 분할한 미국 회사의 같은 검사 (관문 경고 줄)
         "usExtraMissing": umeta["usExtraMissing"], # 2026-11-14: EXTRA_US 중 오늘 없는 종목과 이유 (관문이 이름과 이유를 경고로 · 기록에도 없으면 경고, 5곳 넘으면 실패)
         "usListSym": umeta["usListSym"],           # 2026-11-15: 주식 종류 티커 (BRKB → BRK-B · BFB → BF-B) · 바꾸지 못한 티커 (관문)
         "usSrc": umeta.get("usSrc") or {"v": 1, "own": us_own_close_err("기록 없음")},   # 2026-11-20 (Jack): 마지막 확인 종가로 실은 미국 종목 (관문 · 앱)

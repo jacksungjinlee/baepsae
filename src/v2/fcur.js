@@ -87,9 +87,21 @@ export const pbrZeroRowsBlank = (s, rows) => pbrZeroOf(s) && (rows || []).some((
 // co.fgnCut, both reasons: the currency line needs a currency name) right under it, the same places as the currency line.
 // Never for a currency stock (its own line says why) and never beside a number: a field still carrying a value is not listed.
 export const FGN_FIELDS = ["per", "pbr", "dy"];
+// data.json splCut (2026-11-24, fetch_data.py us_split_check): the same check, kinds and lines on a US company within 30 days of a
+// stock split (SNDK's PER 0.1 after its 8:1 split: Yahoo kept the pre-split EPS). Its own field because the gate's foreign-company row
+// accepts fgnCut on foreign companies only; the screens read both marks alike (fgnCut first where a stock carried both).
+const markOk = (m) => !!m && typeof m === "object" && !Array.isArray(m);
+function fgnMarks(s) {
+  const a = markOk(s.fgnCut) ? s.fgnCut : null, b = markOk(s.splCut) ? s.splCut : null;
+  return a && b ? { ...b, ...a } : a || b;
+}
+// The kind of the mark on field k (undefined when none).
+export const fgnKindOf = (s, k) => { const m = s ? fgnMarks(s) : null; return m ? m[k] : undefined; };
 export function fgnCutOf(s) {
-  if (!s || s.cls !== "us" || fcurOf(s) || !s.fgnCut || typeof s.fgnCut !== "object" || Array.isArray(s.fgnCut)) return [];
-  return FGN_FIELDS.filter((k) => typeof s.fgnCut[k] === "string" && s.fgnCut[k] && num(s[k]) == null);
+  if (!s || s.cls !== "us" || fcurOf(s)) return [];
+  const m = fgnMarks(s);
+  if (!m) return [];
+  return FGN_FIELDS.filter((k) => typeof m[k] === "string" && m[k] && num(s[k]) == null);
 }
 export const fgnBlank = (s, k) => fgnCutOf(s).includes(k);
 // The kind of each blanked number (2026-11-14 Q5 review): "mismatch" (compared, did not agree), "currency" (statements not confirmed in
@@ -98,7 +110,7 @@ export const fgnBlank = (s, k) => fgnCutOf(s).includes(k);
 // switch (validate_data.US_FGN_NOCMP) is "own": those take the design chat's own line co.fgnNoCmp, and no line while that copy is missing
 // (a plain "–"; a test asks for the copy whenever the switch is "own"). The app follows the kind in the data, not the switch itself.
 export const FGN_OWN = "nocompare-own";
-export const fgnOwnOf = (s, fields) => fgnCutOf(s).filter((k) => (!fields || fields.includes(k)) && s.fgnCut[k] === FGN_OWN);
+export const fgnOwnOf = (s, fields) => fgnCutOf(s).filter((k) => (!fields || fields.includes(k)) && fgnKindOf(s, k) === FGN_OWN);
 // "stopped" (Jack, 2026-11-15): the pipeline's check stopped that day, so the number was blanked unchecked — co.fgnStopped.
 export const FGN_STOPPED = "stopped";
 // The copy key of the line under each kind; the order is the order the lines stand in when one section has several kinds.

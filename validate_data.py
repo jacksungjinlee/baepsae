@@ -2829,6 +2829,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_us_extra(rep, data, us, mode)   # 2026-11-14: 손으로 더한 미국 종목이 있거나 빠진 이유가 있는지
     check_us_share_class(rep, data, us, mode)   # 2026-11-15: 주식 종류 티커 (BF-B) 가 있거나 빠진 이유 · 바꾸지 못한 티커 (경고)
     check_us_foreign(rep, data, us, mode) # 2026-11-14: 미국 상장 외국 회사의 PER·PBR·배당수익률은 회사 합계와 맞춘 것만
+    check_us_split_cut(rep, data, us)     # 2026-11-24 (SNDK): 최근 분할한 미국 회사도 같은 검사 (splCut · usSplitChk · 경고만)
     check_foreign(rep, kr, comps)
     if rel:
         check_stmt_marks(rep, comps, prev)      # 경고가 많은 날에도 알림 10개 안에 들도록 앞쪽에 (외국 기업 줄 바로 다음)
@@ -4841,6 +4842,151 @@ def check_us_foreign(rep, data, us, mode):
             th, warn=bool(stopped) or fwarn)
     if rows:
         rep.detail("미국 상장 외국 회사: 회사 합계 · 실제 배당과 맞지 않아 비운 칸 (usForeign.cut)", [f"{t} {f}: {w}" for t, f, w in rows])
+
+
+# 2026-11-24 (SNDK · 더하기만 · 경고만): 최근 분할한 미국 회사의 주당 숫자 검사 (fetch_data.us_split_check — 외국 회사 줄과 같은 검사 · 같은 종류).
+# 종목 표시는 splCut (외국 회사 줄의 fgnCut 규칙은 그대로). 이 줄은 발행을 막지 않아요: 무엇이 어긋나도 경고 (멈춰도 경고).
+US_SPLIT_CHK_DAYS = 30            # = fetch_data.US_SPLIT_CHECK_DAYS (미국 기준일 앞 날 수 · 오늘(asOf)까지)
+US_SPLIT_MARK = "splCut"          # = fetch_data.US_SPLIT_MARK
+US_SPLIT_SKIP = ("foreign", "fcur", "etf")
+US_SPLIT_ROW = "미국 분할 뒤 주당 숫자: 회사 합계와 맞춤 (splCut · 경고만)"
+
+
+def us_split_recent(data):
+    """data.json splits 에서 usPxDate − US_SPLIT_CHK_DAYS 일부터 asOf(없으면 usPxDate)까지 분할이 있는 티커 → 가장 늦은 날짜. (순수 함수)"""
+    try:
+        end = dt.date.fromisoformat(str(data.get("usPxDate")))
+    except ValueError:
+        return {}
+    try:
+        hi = dt.date.fromisoformat(str(data.get("asOf")))
+    except ValueError:
+        hi = end
+    lo, out = end - dt.timedelta(days=US_SPLIT_CHK_DAYS), {}
+    for x in data.get("splits") or [] if isinstance(data.get("splits"), list) else []:
+        if not (isinstance(x, (list, tuple)) and len(x) >= 2 and isinstance(x[0], str) and isinstance(x[1], str)):
+            continue
+        try:
+            d = dt.date.fromisoformat(x[1])
+        except ValueError:
+            continue
+        if lo <= d <= max(hi, end):
+            out[x[0]] = max(out.get(x[0], ""), d.isoformat())
+    return out
+
+
+def check_us_split_cut(rep, data, us):
+    """2026-11-24 (경고만): 최근 분할한 미국 회사(외국 회사 · fcur · ETF · 펀드 빼고)의 PER · PBR · 배당수익률은 파이프라인이 회사 합계 · 실제 배당과
+    맞춰 본 뒤에만 나가요 (data.json usSplitChk · 종목 표시 splCut). 경고: 그런 종목에 숫자가 있는데 checked 에 없음 · cut 의 칸이 남아 있음 (pbr 이면
+    vz 도) · 표시 없는 cut 줄 · cut 줄 없는 표시 · 표시 모양 · 종류 · 외국 회사 · fcur · ETF 에 표시 · 최근 분할 목록(recent) 밖의 표시 · 기록 모양 ·
+    검사가 멈춘 날 (stopped · err) · 분할 칸을 읽지 못한 날 (srcErr). 기록이 없는 파일(이 칸 전 발행본): 표시가 있거나 맞춰 볼 숫자가 있으면 경고."""
+    try:
+        _check_us_split_cut(rep, data if isinstance(data, dict) else {}, [s for s in us or [] if isinstance(s, dict)])
+    except Exception as e:
+        rep.add(US_SPLIT_ROW, True, f"검사가 오류로 멈췄어요: {type(e).__name__}: {str(e)[:120]}", "오류 없이 끝나야 함 (경고만 · 발행을 막지 않아요)", warn=True)
+
+
+def _check_us_split_cut(rep, data, us):
+    th = ("최근 30일 안에 분할한 미국 회사(외국 회사 · fcur · ETF 빼고)의 숫자는 usSplitChk.checked 에 · cut 의 칸은 빈 칸 (pbr 이면 vz 도) · 그 칸마다 "
+          "종목의 splCut (경고만 · 발행을 막지 않아요)")
+    by = {s.get("t"): s for s in us}
+    uf = data.get("usForeign")
+    fset = uf.get("set") if isinstance(uf, dict) and isinstance(uf.get("set"), dict) else {}
+    foreign = set(US_FOREIGN_SET) | set(fset)
+
+    def skip_of(s):
+        if s.get("etf") is True or s.get("fund"):
+            return "etf"
+        return "foreign" if s.get("t") in foreign else "fcur" if s.get("fcur") else None
+    recent = us_split_recent(data)
+    want = sorted(t for t in recent if t in by and not skip_of(by[t]) and any(by[t].get(k) is not None for k in US_FOREIGN_KEYS))
+    marks = {str(s.get("t")): s.get(US_SPLIT_MARK) for s in us if US_SPLIT_MARK in s}
+    rec = data.get("usSplitChk")
+    if not isinstance(rec, dict):
+        probs = ([f"기록 없이 표시(splCut) {len(marks)}곳: {_tickers(sorted(marks))}"] if marks else []) \
+            + ([f"맞춰 보지 않은 숫자 {len(want)}곳: {_tickers(want)}"] if want else [])
+        rep.add(US_SPLIT_ROW, True, "기록 없음 (data.json usSplitChk)" + "".join(f" · {p}" for p in probs)
+                + ("" if probs else " · 맞춰 볼 최근 분할 회사 숫자 없음"), th, warn=bool(probs))
+        return
+    bad, notes = [], []
+    checked, cut = rec.get("checked"), rec.get("cut")
+    if not (isinstance(checked, list) and all(isinstance(t, str) for t in checked)):
+        bad.append("checked 모양")
+        checked = []
+    if not isinstance(cut, list):
+        bad.append("cut 모양")
+        cut = []
+    nmode = rec.get("nocmp")
+    nmode_ok = isinstance(nmode, str) and nmode in US_FGN_NOCMP_KIND
+    if not nmode_ok:
+        bad.append(f"nocmp {json.dumps(nmode, ensure_ascii=False)[:30]}")
+    nk = US_FGN_NOCMP_KIND.get(nmode) if nmode_ok else None
+    kinds_ok = set(US_FGN_WHY) | ({nk, US_FGN_NOREC, US_FGN_STOPPED_KIND} - {None})
+    rmap = rec.get("recent")
+    if rmap is not None and not (isinstance(rmap, dict) and all(isinstance(t, str) for t in rmap)):
+        bad.append("recent 모양")
+        rmap = {}
+    rows, left, nomark, kbad = [], [], [], []
+    for x in cut:
+        if not (isinstance(x, list) and len(x) == 3 and isinstance(x[0], str) and x[1] in US_FOREIGN_KEYS and isinstance(x[2], str) and x[2]):
+            bad.append(f"cut 줄 {json.dumps(x, ensure_ascii=False)[:30]}")
+            continue
+        rows.append(x)
+        s = by.get(x[0])
+        if s is None:
+            continue
+        left += [f"{x[0]}.{k}" for k in ((x[1], "vz") if x[1] == "pbr" else (x[1],)) if s.get(k) is not None]
+        g = marks.get(x[0])
+        if not (isinstance(g, dict) and x[1] in g):
+            nomark.append(f"{x[0]}.{x[1]}")
+            continue
+        want_k = (US_FGN_STOPPED_KIND if x[2].startswith(US_FGN_STOPPED) else "currency" if x[2].startswith(US_FGN_CUR_WHY) else
+                  US_FGN_NOREC if x[1] == "dy" and x[2] == US_FGN_NOREC_WHY else
+                  (nk or "비우면 안 됨 (keep)") if x[2] == US_FGN_NOCMP_WHY.get(x[1]) else "mismatch")
+        if g.get(x[1]) != want_k:
+            kbad.append(f"종류 {x[0]}.{x[1]} {g.get(x[1])} ≠ {want_k}")
+    cutset, nocut = {(x[0], x[1]) for x in rows}, []
+    for t, g in marks.items():
+        s = by.get(t) or {}
+        if not (isinstance(g, dict) and g and all(k in US_FOREIGN_KEYS and v in kinds_ok for k, v in g.items())):
+            bad.append(f"{t}.splCut {json.dumps(g, ensure_ascii=False)[:30]}")
+            continue
+        if s.get("cls") != "us" or skip_of(s):
+            bad.append(f"{t}.splCut ({skip_of(s) or '미국 종목이 아님'})")
+        if isinstance(rmap, dict) and t not in rmap:
+            bad.append(f"{t}.splCut (최근 분할 목록 recent 밖)")
+        left += [f"{t}.{k}" for f in g for k in ((f, "vz") if f == "pbr" else (f,)) if s.get(k) is not None]
+        nocut += [f"{t}.{f}" for f in g if (t, f) not in cutset]
+    kmap = rec.get("kind")
+    if not (isinstance(kmap, dict) and all(isinstance(v, dict) for v in kmap.values())):
+        bad.append("kind 모양")
+    elif kmap != marks:
+        diff = sorted(set(kmap) ^ set(marks) | {t for t in set(kmap) & set(marks) if kmap[t] != marks[t]})
+        bad.append(f"kind ≠ 종목 표시 {len(diff)}: {', '.join(diff[:4])}")
+    left = list(dict.fromkeys(left))
+    unchecked = [t for t in want if t not in set(checked)]
+    stopped = sorted({x[0] for x in rows if x[2].startswith(US_FGN_STOPPED)})
+    if rec.get("err"):
+        notes.append(f"검사가 멈춤 ({str(rec.get('err'))[:40]})")
+    if rec.get("srcErr"):
+        notes.append(f"오늘 다운로드의 분할 칸을 읽지 못해 지난 발행본 · 고정 표로만 정함 ({str(rec.get('srcErr'))[:40]})")
+    if stopped:
+        notes.append(f"검사가 멈춰 맞춰 보지 않고 비운 회사 {len(stopped)}곳: {_tickers(stopped)} (이유 줄: 오늘은 확인하지 못함 · co.fgnStopped)")
+    probs = ([f"맞춰 보지 않은 숫자 {len(unchecked)}곳: {_tickers(unchecked)}"] if unchecked else []) \
+        + ([f"이유 표시(splCut) 없음 {len(nomark)}: {', '.join(nomark[:6])}"] if nomark else []) \
+        + ([f"cut 줄 없는 표시 {len(nocut)}: {', '.join(nocut[:6])}"] if nocut else []) \
+        + ([f"남은 칸 {len(left)}: {', '.join(left[:6])}"] if left else []) + ([f"모양 {len(bad)}: {', '.join(bad[:3])}"] if bad else []) \
+        + ([f"종류 {len(kbad)}: {', '.join(kbad[:3])}"] if kbad else [])
+    n_by = collections.Counter(x[1] for x in rows)
+    sk = rec.get("skip") if isinstance(rec.get("skip"), dict) else {}
+    skipped = sorted(t for k in US_SPLIT_SKIP for t in (sk.get(k) or []) if isinstance(t, str))
+    rep.add(US_SPLIT_ROW, True, f"최근 분할 {len(rmap) if isinstance(rmap, dict) else '?'}곳 · 확인 {len(checked)}곳 · 비운 칸 PER {n_by['per']} · PBR "
+            f"{n_by['pbr']} · 배당 {n_by['dy']}" + (f" ({', '.join(f'{t}.{f}' for t, f, _w in rows[:8])})" if rows else "")
+            + (f" · 보지 않음(외국 회사 · fcur · ETF) {len(skipped)}곳: {_tickers(skipped)}" if skipped else "")
+            + "".join(f" · {p}" for p in probs) + "".join(f" · {n}" for n in notes),
+            th, warn=bool(probs or notes))
+    if rows:
+        rep.detail("미국 분할 뒤 회사 합계 · 실제 배당과 맞지 않아 비운 칸 (usSplitChk.cut)", [f"{t} {f}: {w}" for t, f, w in rows])
 
 
 def is_foreign(code):
