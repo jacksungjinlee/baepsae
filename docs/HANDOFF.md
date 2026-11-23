@@ -5,20 +5,57 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-22 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-23 KST — read this first)
+
+**Now (2026-11-23):** merged and deployed 11-22: #166 (old-app English carry lines), #167 (div reason lines), #168 (v19.6b 오늘 볼 것
+page), #169 (new US tickers wait), #170 (v19.6e data: `c1w` · `wkFrom` · `usWkFrom` · `c1wv` · `c1wSrc`), #171 (v19.6e
+screens: 이번 주 정리 card, ON with Jack's lines of 11-22; first card possible from Saturday 11-28's publish), #172 (Korean
+last-week closes from our own publishes, Jack 11-22). Their data effects reach the site with the first publish after them, Tuesday 11-24's morning run (none since 11-21 06:41). Expect in its
+log: the `새로 들어온 미국 종목` line, the `c1w` lines and the gate rows `미국 새 종목 확인 종가 기다림` and `이번 주 시작 종가`; Monday 11-23
+had a final KRX list (unless it turns out to be a backup-source day), so #172 reads no old publishes: expect `c1wSrc.pub` = 0 and the log
+line `c1w 지난 발행본: 읽지 않아요 …` — a 0 there is correct, not a failure, and #172's real-data proof is its dry run below. **v19.6b switch-on (this PR, branch `claude/v19.6b-switch-on`; live once it merges and deploys):** 공시 보기 on every 확인 필요
+card, the 임원 · 주요주주 지분 변동 cards (held and watched stocks, 7 days, at least 1억원 at today's close, none for a stock shown at
+its last confirmed close), `look.insBoth` "임원·주요주주 지분 변동", and 지분 변동 amounts with one decimal under 10억원 (Jack, 11-23:
+"one decimal only under 10억원; whole 억원 above that; 조원 with one decimal, the same as other amounts"). Jack said yes on 11-22 to
+the two named test edits and on 11-23 to flipping #168's own "still off" checks (expected values and labels only, nothing removed
+or loosened). **Open questions to Jack:** the capped footnote
+`weekly.nvNoteMore` ("{names} 외 {n}종목의 지난주 종가는 다른 자료로 확인한 값이에요. 이번 주 움직임이 실제와 조금 다를 수
+있어요."; until then more than 5 Naver-checked stocks are left out and named), "건" on the older chips (유상증자 {n} · 지분 변동
+{n} · 실적 발표 {n}) (one decimal on 지분 변동 amounts: answered 11-23, in the switch-on PR). Design chat has (sent 11-22): the say-why audit, the 10 dark-mode pairs,
+the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
+v19.6g, v19.6h.
+
+**#172 (published closes), 2026-11-22:** in a week with days lacking a final KRX list, the daily run reads our earlier publishes
+from the `data` branch (throw-away partial clone, no token, https, minimal env, 180 s total, process-group kill, gc off) and
+confirms each Korean `c1w` day by day against KRX's base; a day with no publish is pinned by the next day's published `d1`;
+no-trade rows confirm links only; rolled-back publishes are skipped; a published close that disagrees with a final list blanks
+(`pubDiff`). Naver only for stocks we didn't publish (`c1wv` "nv", footnoted on the card). Stocks missing from the publish of the day before the
+price date stay blank (`pxLink`: Naver may lag on the newest day). Dry run 45029231034 (week 11-16): 2,405 / 2,474 (2,363 exact,
+42 Naver). RUNBOOK §이번 주 정리.
+
+**#171 (이번 주 정리 card), 2026-11-22:** `src/v2/weekly.js` / `weekly.jsx` / `weekcfg.js` (`WEEKLY_ON` true, `WEEK_NV` "note").
+Final when no KR or US trading day remains after pxDate / usPxDate up to Sunday and the publish (KST) is after pxDate (covers
+Friday-holiday weeks, which get no Saturday publish); hidden on late data; US at ECOS `fxHist` at both ends. Left-out stocks are
+named with Jack's lines; more than 5 Naver-checked stocks fall back to "out" until `nvNoteMore` is approved.
+
+**#170 (v19.6e data), 2026-11-22:** `c1w` per stock (actual close before the week, price-only in both markets: US ex-dividend
+weeks undone), `wkFrom` / `usWkFrom`, `c1wSrc`, `c1wv`; blank wherever a weekly move could be wrong; warn-only gate row
+`이번 주 시작 종가 (c1w · wkFrom · usWkFrom · 경고만)`.
+
 
 **#169 (US new tickers wait), 2026-11-22:** Jack (verbatim): "2. No relaxation. Instead, a stock newly added to the S&P (or NASDAQ) list joins our list only once it has a confirmed close; until then it isn't added. Nobody can hold it in the app before it joins, so nothing is lost, and the check stays as it is." A US ticker that is in neither the previous publish's US rows nor its `usSrc.own.aged`, and has no Yahoo close for the US date, is left out of today's file (`fetch_data.us_new_wait_step`, log `!! 새로 들어온 미국 종목 …`, `data.json usSrc.newWait`, reason in `usExtraMissing` / `usListSym`) and joins on the first run with a confirmed close; tickers the previous publish left out on purpose (`usLeftOut`) and a run without a previous publish keep today's behaviour. No existing gate row changed (`미국 d1 채움` N = 5 stays); a new warning-only row `미국 새 종목 확인 종가 기다림 (usSrc.newWait · 경고만)` names waiting tickers (and those waiting two publishes or more) and never fails. Closes the 11-21 risk (trial run 44849045557: 796 carried + LGND, MKTX, SNDK, VRNS missing; 6+ new tickers on a full Yahoo blank would have stopped the whole publish). RUNBOOK "US stocks at their last confirmed close" → "New tickers wait for a confirmed close".
 
-**v19.6b screens (branch `claude/v19.6b-screens`, PR pending), 2026-11-22:** Part B.2 on #145's data: the 오늘 볼 것 page
+**v19.6b screens (#168, merged 2026-11-22; the held parts are switched on by branch `claude/v19.6b-switch-on`):** Part B.2 on #145's data: the 오늘 볼 것 page
 (`#home/today`, `src/v2/todaylook.jsx`; pure rules in `src/v2/look.js`) and 홈's new compact rows (home2.jsx `Look`, today.jsx
 `WatchLook` on a first visit). Cards in Part B's order: 확인 필요 (held stocks' 유상증자 · CB · BW decisions filed in the last 30 days;
 확인했어요 writes the new store part `seen`, matched by stock, kind and numbers on the same filing or board date, so a correction with
 other numbers shows again; marks older than 120 days pruned on the next mark), 관심 종목 조건, 국민연금 (7 days, one decimal),
 다가오는 일정 (US `ed` · `xd`, today to +7 days, 5 rows). 지분 변동 cards (held + watched, 7 days, |q| × today's close ≥ 1억원)
-were built off; **switched on 2026-11-22** (branch `claude/v19.6b-switch-on`, Jack's "1–5: all yes"): `look.js` `ROLE_OF` reads
+were built off; **switched on** (branch `claude/v19.6b-switch-on`; Jack's "1–5: all yes" of 11-22 and his 11-23 answers): `look.js` `ROLE_OF` reads
 `role` (the only read #145's role test allows), titles 임원 / 주요주주 / `look.insBoth` "임원·주요주주 지분 변동" (both or blank), no card
-for a stock shown at its last confirmed close (`pxd`), and 공시 보기 on every 확인 필요 card (`routes.dartFilingUrl`, new tab,
-noopener; the DART-link test allows this one place besides the 공시 tab). 홈 now
+for a stock shown at its last confirmed close (`pxd`), amounts with one decimal under 10억원 (`look.insiderWon`; other screens keep
+`cofmt.bigWon`), and 공시 보기 on every 확인 필요 card (`routes.dartFilingUrl`, new tab, noopener; the DART-link test allows this one
+place besides the 공시 tab). 홈 now
 loads disc.json when a Korean stock is held or watched. Still left out and named in the console until the design chat words them:
 cards for 유무상증자 (`bonus`), 기타주식 (`cls` other) and two-class (`n2` · `p2`) rows and rights issues by other methods; #145's open
 question 3 (old decisions corrected recently), answered by Jack on 11-22 (keep them off): a correction filed 30 or more days after its
