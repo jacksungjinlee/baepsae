@@ -6187,7 +6187,8 @@ def dart_late_start(client, targets, cmap):
     """enrich_with_dart 앞 (분기 판단 전): 마감 뒤 매일 다시 묻기의 첫 계획 (client.late_keys · 시가총액 큰 회사부터 DART_LATE_PER_RUN 건 ·
     분기 판단은 아직 몰라서 어느 분기도 '현재'가 아닌 것으로) 과 창 로그. 빈 캐시 · dart=full (어차피 모두 물어요) · DART 를 부르지 않는 실행에서는
     쓰지 않아요. 계획을 세우다 멈추면 크게 남기고 예전 규칙만 써요 (분기 판단 로그와 관문의 '분기 판단' 줄이 늦은 분기를 알려요)."""
-    if client.mode == "full" or client.started_empty or client.no_call or client.down or client.fatal:
+    if not isinstance(client, DartClient) or client.mode == "full" or client.started_empty or client.no_call or client.down \
+            or client.fatal:          # 시험용 가짜 클라이언트도 (report 가 늘어난 창을 모르니까요)
         return
     try:
         hol = client.hol if client.hol is not None else load_market_holidays()
@@ -6219,7 +6220,7 @@ def dart_late_open(client, year, reprt):
     """분기 판단의 둘째 셈을 할지: 계획(late_keys)에 그 분기의 항목이 남아 있고, '현재'로 쓰지 않는다면 오늘 다시 물을 수 있는지
     (첫 셈에서 이미 물은 항목은 빠져요 — 오늘 물었으니까요). (계획만 읽어요)"""
     want = (str(year), reprt)
-    return any(tuple(k.split("|")[1:3]) == want and dart_late_due(client.entries.get(k), year, reprt, client.today, False,
+    return isinstance(client, DartClient) and any(tuple(k.split("|")[1:3]) == want and dart_late_due(client.entries.get(k), year, reprt, client.today, False,
                                                                  client.kr_closed, client.hol_end)
                for k in client.late_keys)
 
@@ -6227,7 +6228,7 @@ def dart_late_open(client, year, reprt):
 def dart_late_replan(client):
     """분기 판단 뒤: 이번 실행이 '현재'로 쓰는 분기(client.late_cover)를 알고 다시 세운 계획 — 남은 한도 안에서 시가총액 큰 회사부터 — 와 로그.
     '현재'로 쓰는 분기의 항목은 밀린 마감 + 2일 뒤로는 빠져요. 멈추면 크게 남기고 이번 실행의 나머지는 예전 규칙만 써요."""
-    if client.late_rank is None:
+    if getattr(client, "late_rank", None) is None:
         return
     used = sum(client.late_n.values())
     try:
@@ -6248,7 +6249,7 @@ def dart_late_replan(client):
 def dart_late_end(client):
     """enrich_with_dart 끝: 마감 뒤 매일 다시 묻기의 결과 로그 — 다시 물음 · 새로 냄 · 아직 없음 · 다음 실행으로 남김 (이번 실행의 '현재' 분기 기준 ·
     오늘 묻지 않은 항목을 다시 세요)."""
-    if client.late_rank is None:
+    if getattr(client, "late_rank", None) is None:
         return
     n = client.late_n
     asked = n["found"] + n["still"] + n["fail"]
@@ -6372,7 +6373,8 @@ def enrich_with_dart(kr_stocks, client, pref_shares=None):
     for r in cands:
         # 2026-11-24: 먼저 예전 규칙(+ 밀린 마감 + 2일)으로 세고, 70% 가 안 되는데 늘어난 창 안이면 아직 없는 상위 회사를 오늘 다시 물어요
         # (이번 실행이 그 분기를 '현재'로 쓰게 되면 늘어난 창은 닫혀요 — dart_late_window)
-        client.late_cover.add((qy, r))
+        if isinstance(client, DartClient):
+            client.late_cover.add((qy, r))
         n_got = top_filed(r)
         if n_got / max(len(top), 1) < QUARTER_CURRENT_SHARE and dart_late_open(client, qy, r):
             client.late_cover.discard((qy, r))
