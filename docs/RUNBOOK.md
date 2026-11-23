@@ -2050,7 +2050,7 @@ is a real 8-for-9 share consolidation (shares and ADSs, the ADS stays one share)
 demerger, which Yahoo merged with the demerger adjustment; it is in `SPLIT_OVERRIDES` as 8:9 with its sources (Unilever
 RNS 2025-12-08, the shareholder circular, IRS Form 8937).
 
-## US companies not reporting in dollars: PER · PBR · yield from company totals (회사 합계, usFcurTot, since #?)
+## US companies not reporting in dollars: PER · PBR · yield from company totals (회사 합계, usFcurTot, since #181)
 
 Jack, 2026-11-13: "Next, within days: bring all three back for them, all 27 PBRs included, from whole-company totals: market value
 ÷ equity (PBR) and ÷ net income (PER), with equity and income converted at that day's rate. That fixes currencies, share classes and
