@@ -2189,7 +2189,7 @@ longer holds `BFB`.
 **Rolling back #PR**: a revert PR. The reverted gate ignores `usListSym`; the next data run drops BF-B again (users who saved it
 see the existing "no longer in today's data" handling). No data run is needed for the site checks.
 
-## US company sizes for 종목 순위 (미국 최소 크기, since #?)
+## US company sizes for 종목 순위 (미국 최소 크기, since #185)
 
 Jack, 2026-11-13: "v19.5b's US minimum sizes (25억원 of quarterly revenue, 100억원 of equity, at the day's rate) need a small
 data PR first." The Korean 기준별 성장 and 수익성 lists keep only companies of 100억원 or more (`src/v2/ranks.js` `MIN_EOK`);
@@ -2293,7 +2293,7 @@ and why the step stopped, if it did.
   - A refusal or many `fail`/`time`: Yahoo was refusing that day. The cache keeps yesterday's values and the next runs continue.
   - A malformed field is our bug: fix forward.
 
-**Rolling back #?**: a revert PR. The app then ignores `qrev` · `qeq` (the lists are as before), the reverted pipeline stops
+**Rolling back #185**: a revert PR. The app then ignores `qrev` · `qeq` (the lists are as before), the reverted pipeline stops
 writing them, and the cache file is left unused in `.dart-cache`. No data run needed.
 
 ## Roll back

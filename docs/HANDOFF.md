@@ -46,7 +46,7 @@ push or manual run on a branch fails on purpose (its green would cover the PR's 
 can't read (event file, git) fails with a message. Replayed on past merges it flags #170, #171 and #172 (the misses of 11-22) and
 passes #173.
 
-**US minimum sizes (#?, 2026-11-23; Jack 11-13: "v19.5b's US minimum sizes (25억원 of quarterly revenue, 100억원 of equity, at
+**US minimum sizes (#185, 2026-11-23; Jack 11-13: "v19.5b's US minimum sizes (25억원 of quarterly revenue, 100억원 of equity, at
 the day's rate) need a small data PR first"):** the daily run adds, for each US company with statements in dollars, the latest
 quarter's revenue and common equity in whole dollars with their quarter-end dates (`qrev` · `qrevD` · `qeq` · `qeqD`) and a
 `usSize` record. It runs last in `main()` (after every Yahoo request the publish depends on and after data · corp · macro.json are
