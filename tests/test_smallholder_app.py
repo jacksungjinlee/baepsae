@@ -9,7 +9,8 @@ hidden with dvLine 3. The screens show it only behind a switch that is OFF until
   the hidden-yield line's place, the 배당 tab shows the 소액주주 dividend per share and yield labelled, 두 종목 비교 the yield labelled with
   the line; 관심 종목 keeps today's line and its condition (the all-holder yield), and nothing shows beside a yield that is shown, on a
   US stock, an older file, numbers that disagree, or another mark.
-- 예전 뱁새: src/smallyield.js SMALL_YIELD_OLD off with no label -> the 기업 분석 tile keeps "배당수익률".
+- 예전 뱁새 shows no label in this PR (#183 review: its number is the report's own yield, never checked to be the 소액주주 rate).
+- Switch off (or on without the words): every screen renders byte for byte the same with and without the two fields.
 """
 import json
 import os
@@ -23,7 +24,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NODE = shutil.which("node")
 pytestmark = pytest.mark.skipif(NODE is None, reason="node 가 없어요")
 MODS = {"E": "src/v2/engine.js", "K": "src/v2/company.js", "CO": "src/v2/company.jsx", "CT": "src/v2/cotabs.jsx", "Cm": "src/v2/compare.jsx",
-        "Wx": "src/v2/watch.jsx", "Ed": "src/v2/edit.js", "SC": "src/v2/smallcfg.js", "OLD": "src/smallyield.js", "CP": "src/copy/v2.js"}
+        "Wx": "src/v2/watch.jsx", "Ed": "src/v2/edit.js", "SC": "src/v2/smallcfg.js", "CP": "src/copy/v2.js"}
 FIX = os.path.join(ROOT, "tests", "fixtures", "v2")
 L3 = "회사가 공시한 배당 자료와 주식 수가 서로 맞지 않아서 배당수익률은 비워 두었어요."          # Jack 2026-11-15 (13)
 _B = {}
@@ -58,7 +59,7 @@ def cleanup():
 def run(body):
     code = ("import * as B from './b.mjs'; import { renderToStaticMarkup } from 'react-dom/server'; import { createElement as h } from 'react';\n"
             "import fs from 'fs';\n"
-            "const { E, K, CO, CT, Cm, Wx, Ed, SC, OLD, CP } = B; const C2 = CP.C;\n"
+            "const { E, K, CO, CT, Cm, Wx, Ed, SC, CP } = B; const C2 = CP.C;\n"
             "console.warn = () => {}; console.info = () => {};\n"
             "const ent = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '\"').replace(/&#x27;/g, \"'\").replace(/&amp;/g, '&');\n"
             "const text = (html) => ent(html.replace(/<!--.*?-->/g, '').replace(/<[^>]+>/g, '\\n'));\n"
@@ -93,8 +94,9 @@ def run(body):
 
 
 def test_switches_are_off_and_the_words_wait_for_jack():
-    got = run("out = { on: SC.SMALL_YIELD.on, basis: C2.co.div.smallBasis, line: C2.co.div.smallLine, old: OLD.SMALL_YIELD_OLD };")
-    assert got == {"on": False, "basis": None, "line": None, "old": {"on": False, "label": None}}
+    got = run("out = { on: SC.SMALL_YIELD.on, basis: C2.co.div.smallBasis, line: C2.co.div.smallLine };")
+    assert got == {"on": False, "basis": None, "line": None}
+    assert not os.path.exists(os.path.join(ROOT, "src", "smallyield.js"))          # 예전 뱁새: no label in this PR
 
 
 def test_div_small_view_rules():
@@ -148,14 +150,28 @@ def test_on_the_company_page_and_compare_show_the_small_holder_yield_labelled():
     assert L3 in got["watch"] and "LINE" not in got["watch"] and "LBL" not in got["watch"]
 
 
-def test_old_app_label():
+def test_switch_off_renders_the_same_with_and_without_the_fields():
+    """#183 review: with the switch off, or on without the words, the company page (요약 · 배당 탭), 두 종목 비교 and 관심 종목 render the
+    same markup for a stock with dpsSmall · dytSmall as for the same stock without them."""
     got = run("""
-      const row = { t: '000660', dpsSmall: 3000, dytSmall: 0.21 };
-      out = { off: OLD.smallYieldLabel(row), on: OLD.smallYieldLabel(row, { on: true, label: 'L' }), noLabel: OLD.smallYieldLabel(row, { on: true, label: null }),
-              none: OLD.smallYieldLabel({ t: '005930' }, { on: true, label: 'L' }), zero: OLD.smallYieldLabel({ dpsSmall: 0, dytSmall: 0 }, { on: true, label: 'L' }) };""")
-    assert got == {"off": None, "on": "L", "noLabel": None, "none": None, "zero": None}
-    src = open(os.path.join(ROOT, "src", "corp.jsx"), encoding="utf-8").read()
-    assert 'label={smallYieldLabel(c) ? `배당수익률 · ${smallYieldLabel(c)}` : "배당수익률"}' in src
+      const s = LOAD.byT.get('000660');
+      const STORE = { data: { decks: [], notes: {}, assume: {} }, writable: false };
+      const page = () => renderToStaticMarkup(h(CO.Company, { load: LOAD, store: STORE, setStoreData() {}, pad: 0, code: '000660', ctab: null,
+        disc: { status: 'none' }, nav: { setTab() {}, more() {}, back() {}, onWhy() {} } }));
+      const snap = () => JSON.stringify({ page: page(), tile: CO.tileViews(LOAD, s), tab: tab('000660'), cmp: Cm.compareCells(s, C('000660'), ctx),
+        watch: watchHtml('000660') });
+      const states = {};
+      const both = (name) => { const a = snap(); const keep = [s.dpsSmall, s.dytSmall]; delete s.dpsSmall; delete s.dytSmall; const b = snap();
+        s.dpsSmall = keep[0]; s.dytSmall = keep[1]; states[name] = { same: a === b, len: a.length }; };
+      turnOff(); both('off');
+      SC.SMALL_YIELD.on = true; both('onNoWords');
+      SC.SMALL_YIELD.on = false; C2.co.div.smallBasis = 'LBL'; C2.co.div.smallLine = 'LINE'; both('wordsNoSwitch');
+      turnOff();
+      turnOn(); const a = snap(); turnOff(); const b = snap(); states.control = { same: a === b, len: a.length };
+      out = states;""")
+    for k in ("off", "onNoWords", "wordsNoSwitch"):
+        assert got[k]["same"] is True and got[k]["len"] > 1000, (k, got[k])
+    assert got["control"]["same"] is False                       # the comparison can see a difference when there is one
 
 
 def test_built_pages_carry_no_proposed_words():

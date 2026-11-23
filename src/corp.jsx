@@ -12,7 +12,6 @@ import { loadJson, krGrowthBasis, krGrowthDcfLine, krRevDcfText, krRevDcfNote, l
 // 재무 신호 밑에 한 줄 — DART 다시 읽기 전까지 (src/repair.js, src/fixnote.jsx)
 import { EpsFixLine, IcrOffLine, StmtCurLine, UnitChkLine, PxBadLine, PxBadOneLine, epsLineKind, KrOwnCloseLine, KrOwnCloseListLine, FIX_KR_AGED } from "./fixnote.jsx";
 import { epsBase, epsPeriod, stmtNotWon, stmtCurOf, unitHeld, pxBad, pxBadFull } from "./repair.js";
-import { smallYieldLabel } from "./smallyield.js";   // 2026-11-23: 차등배당 회사의 소액주주 기준 표시 (스위치 · Jack 승인 대기)
 
 const KEY_DCF = "baepsae_v12_dcf";
 
@@ -1284,7 +1283,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
           <MTile label="ROE" val={pc(c.roe)} onWhy={() => setExplain("roe")}
             band={<div style={{ height: 16, fontSize: 10.5, color: C.faint, display: "flex", alignItems: "center" }}>업종 중간 {pc(sec?.roe)}</div>}
             cap={c.roe == null ? (cur ? null : "데이터가 없어요") : `주주 돈 100원으로 연 ${c.roe}원${c.debt != null && c.debt > 200 ? " · 부채비율 " + c.debt + "% 감안" : ""}`} />
-          <MTile label={smallYieldLabel(c) ? `배당수익률 · ${smallYieldLabel(c)}` : "배당수익률"} val={pc(c.dy)} onWhy={() => setExplain("payout")}
+          <MTile label="배당수익률" val={pc(c.dy)} onWhy={() => setExplain("payout")}
             band={c.dps3 && c.dps3[0] != null ? (
               <div style={{ height: 20, display: "flex", alignItems: "flex-end", gap: 3 }}>
                 {[c.dps3[2], c.dps3[1], c.dps3[0]].map((v, i) => {
