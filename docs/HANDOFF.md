@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-23 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-24 KST — read this first)
 
 **Now (2026-11-23):** merged and deployed 11-22: #166 (old-app English carry lines), #167 (div reason lines), #168 (v19.6b 오늘 볼 것
 page), #169 (new US tickers wait), #170 (v19.6e data: `c1w` · `wkFrom` · `usWkFrom` · `c1wv` · `c1wSrc`), #171 (v19.6e
@@ -23,6 +23,17 @@ links, "전무가" off the must-not-show list, labels) and a rename in `tests/te
 {n} · 실적 발표 {n}), one decimal on 지분 변동 amounts. Design chat has (sent 11-22): the say-why audit, the 10 dark-mode pairs,
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
 v19.6g, v19.6h.
+
+**Track 2 audit, money display (#?, 2026-11-24; audit 1.2 · 1.5 · 1.6, minor):** app only, no new words. (1.2) 포트폴리오's held
+row writes US fractional shares with up to 4 decimals (`pfview.qtyText`, as the records already did): 7.5주 / 0.4주 instead of "8주" /
+"0주"; whole shares unchanged. (1.5) 연말에 확인할 숫자: an estimate under 1,000원 is shown to the 원 (`tax.js shownEstimate` /
+`taxShown`): the dividend card without "약" (a 361원 dividend: 427원, was "약 0원"), the above line keeps its approved "약" (세금은 약
+361원이에요, was 약 0원); from 1,000원 up unchanged (1,000원 steps with 약). `taxState` / `yearDivs` values unchanged. (1.6) 내 수익's date
+line uses `usPxDate` when every held stock counted (in the data, priced, with 평균 단가 and rate) is a US stock (after the 11-26 US
+holiday: 11월 25일, as the tax screen's loss card); a Korean stock among them, or none held, keeps the Korean date; no `usPxDate` → no
+date line, said in the console. **Open (report, not changed):** with mixed Korean + US holdings after a US holiday, 내 수익 still says
+only the Korean date and no line names the US date; 포트폴리오 says it with the approved `app.usClose` ("미국 종목은 현지 기준 {md}
+종가예요.") — reusing that line on 내 수익 needs a yes. Next in the queue unchanged (v19.3 Part L).
 
 **CI checks the two PR rules (#175, 2026-11-23; Jack: "Automate the rules you missed"):** the last step of `ci.yml`'s `checks`
 job runs `tools/pr_rules.py`, so the required `ci` check goes red when either rule is missed. Run it yourself before pushing:

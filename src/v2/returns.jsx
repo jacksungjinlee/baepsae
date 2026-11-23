@@ -158,7 +158,15 @@ export function Returns({ deck, load, store, pad, onBack, onTax }) {
   // ret.receiptFix ("… {cost}으로 …": {cost} always ends in 원), not the Appendix 1 "{cost}로".
   const pct = r ? returnsPct(r) : null;
   const exact = r ? r.held + r.sold + r.divs : 0;
-  const md = ok ? mdText(load.data.pxDate) : null;
+  // The prices' date on the line under the title (audit 1.6, 2026-11-23): when every held stock counted in the amounts (held,
+  // in today's data with a price, with its 평균 단가 and rate: the line says "평균 단가를 넣은 종목 기준") is a US stock, the US
+  // price date (usPxDate), as 연말에 확인할 숫자's loss card: after a US holiday the Korean date (pxDate) is a day the US prices
+  // are not from. A file without a US price date: no date line (a US price never takes the Korean date). With a Korean stock
+  // among them, or none held, the Korean date as before. A US stock at an earlier close is named by OwnCloseNote below.
+  const counted = r ? r.ledgers.filter((L) => L.held > 0 && !gone.has(L.t) && !r.noAvg.includes(L.t) && !r.noFx.includes(L.t)) : [];
+  const usOnly = counted.length > 0 && counted.every((L) => { const s = ctx.byT.get(L.t); return !!s && s.cls === "us"; });
+  if (ok && usOnly && !mdText(load.data.usPxDate)) warnOnce(`[v2] ${deck.id}: returns: every held stock counted is a US stock and data.json has no readable usPxDate (${JSON.stringify(load.data.usPxDate)}), so no date line (US prices never take the Korean pxDate)`);
+  const md = ok ? mdText(usOnly ? load.data.usPxDate : load.data.pxDate) : null;
   // held stocks left out today: missing from today's data (the approved missing-stock line names them); in it without a
   // price: ret.noPrice
   const missing = r ? r.absent : [];
