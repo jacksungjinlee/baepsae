@@ -2514,7 +2514,7 @@ it for good.
   records can count the split twice; the console names both dates. Within 10 days (the pipeline's same-event window)
   the two are one split and only the stored one applies.
 
-## Korean stock splits (한국 주식 분할, since #? — Jack 2026-11-23, Track 1)
+## Korean stock splits (한국 주식 분할, since #186 — Jack 2026-11-23, Track 1)
 
 `data.json` `splits` now also holds Korean 액면분할 · 주식병합 rows, in the same shape and meaning as the US rows
 (`[code, date, ratio]`: from that date one old share is `ratio` new shares; 10:1 split 10, 5:1 merge 0.2). Korean rows are

@@ -24,7 +24,7 @@ links, "전무가" off the must-not-show list, labels) and a rename in `tests/te
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
 v19.6g, v19.6h.
 
-**Korean stock splits (#?, 2026-11-23; Jack's Track 1, spec v19.6 A.6):** `data.json` `splits` gets Korean 액면분할 · 주식병합
+**Korean stock splits (#186, 2026-11-23; Jack's Track 1, spec v19.6 A.6):** `data.json` `splits` gets Korean 액면분할 · 주식병합
 rows (same shape and meaning as the US rows; the app reads them unchanged), dated the first trading day on the new count
 (신주권상장예정일, not the legal date). A row needs two sources: the KRX base price + listed shares (daily from the final lists;
 2016 → 2026-11-20 from the committed seed `data/kr_splits_seed.csv`, 589 candidates) and the DART decision document (ratio from the
