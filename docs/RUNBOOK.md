@@ -2202,27 +2202,35 @@ sit behind US numbers after a split:
   - the split list is read before the details step from the same sources as the published `splits` (today's download, the previous
     publish's `splits`, `SPLIT_OVERRIDES`; `us_info_split_map`), because `splits_fields` only runs in `main` after `fetch_us`. Dates up to
     today (KST). When Yahoo moved a split's date (same ratio within 10 days), the rescale uses Yahoo's current date, which its price series
-    follows (the published `splits` keep the earlier date as before);
+    follows (the published `splits` keep the earlier date as before); a fixed-table row is never moved, and a Yahoo row near it is the
+    same event (never multiplied twice). Ratios that are 0, negative or not a number are ignored;
   - each copy gets a decision (`us_info_split_view`): the splits after the copy's anchor day (`pd`, the run's US date, written since #176;
     older copies: the day before `at`) and up to the stock's price basis (its `pxd` for a carried close, otherwise the US date) are
     multiplied in: today's price × ratios ÷ the copy's price, and the average volume × ratios (reverse splits below 1, two splits multiply).
     A split dated after the US date counts only if Yahoo's series already shows it. Between "no factor", "the dated splits" and "also
     the later-dated ones", the one that puts the price ratio closest to 1 wins (ties go to the dates);
   - a copy whose factor is accepted is **not** fetched again for the split (Yahoo's fresh numbers right after a split can be the stale
-    ones). When the copy is refreshed the normal way, the fresh PER, PBR, 시가총액 and average volume are compared with copy × ratio; more
-    than √ratio apart → the copy is used and kept (`diff`), and the next refresh compares again (copies live 14 days);
+    ones), but it is logged with `!!` and the gate warns (`fit`): a factor chosen by dates and prices can be wrong (a copy already on the new
+    share count plus a real price fall). When the copy is refreshed the normal way, the fresh numbers are compared with copy × ratio
+    (`us_info_fresh_vs_copy`), one direction only: a fresh number counts as pre-split when it is within 1.25× (`US_SPLIT_STALE_TOL`) of the
+    copy **without** the ratio and at least 1.5× (`US_SPLIT_DIFF_MIN`) from copy × ratio (so an earnings change, or anything after a 3:2
+    split or a stock dividend, never counts). If the fresh 시가총액 is pre-split that way, the factor was wrong (Yahoo computes market cap
+    from today's price and today's share count): the fresh details are used and stored (`unfit`). If instead PER, PBR or average volume are
+    pre-split while 시가총액 agrees (or can't be compared), Yahoo is still on the old per-share numbers: the copy × ratio is used and kept
+    (`diff`), and the next refresh compares again (copies live 14 days; after that the fresh numbers go out);
   - fetched again that run (same three passes and pauses): a copy dated before a split whose factor would move the price ratio further
     from 1 (`odd`: it may already be on the new share count), and a copy whose price moved more than 2× (`US_INFO_JUMP`) with no split
     known (`jump`: a split Yahoo reported late). If Yahoo refuses, the copy is used as before, price ratio only (`left`);
   - a carried row put back on Yahoo's bar after a split found late (`us_own_split_late`) uses the same rule (`us_own_restore_split`),
     with the copy's anchor day from `fetch_us` (`_usOwnInfoPd`): ×N, no copy day known (factor 1, `rNoDay`) or rejected (`rOdd`).
-  - Log: `· 미국 분할 뒤 보관본 맞춤 (…): 곱함 0 · 그래서 다시 물음 0` on a normal day; `곱함 N (SNDK ×8 (…))` alone stays `·`; `!!` with
-    names for `odd`, `jump`, `left`, a split dated after the US date, `diff` or an error. `!! 미국 분할을 읽지 못해 …`: that run keeps the
+  - Log: `· 미국 분할 뒤 보관본 맞춤 (…): 곱함 0 · 그래서 다시 물음 0` on a normal day; `!!` with names for `fit`, `odd`, `jump`, `left`, a
+    split dated after the US date on a copy (not on details fetched today), `diff`, `unfit` or an error. `!! 미국 분할을 읽지 못해 …`: that run keeps the
     price-only rescale for every copy (count given). `!! 오늘 다운로드에 분할 칸이 없는 미국 종목 …`: those tickers use the previous
     publish's and the fixed table's splits only. `!! 야후 봉으로 되돌린 미국 종목 …의 상세 숫자 (분할 배율): …` for the late path.
   - `data.json usSrc.split` (only when there is something to say; `fetch_data.us_split_rec_keep`, rows of tickers no longer in the file
-    are dropped): `fit` [[ticker, ratio]] · `odd` · `jump` · `left` · `late` [[ticker, applied]] · `diff` [[ticker, "pbr 8.0배"]] ·
-    `bad` · `noCol` · `err` + `errN` · `rx` · `rNoDay` · `rOdd`.
+    are dropped): `fit` [[ticker, ratio]] · `odd` · `jump` · `left` · `late` [[ticker, applied]] · `diff` [[ticker, "pbr 8.00배"]] ·
+    `unfit` [[ticker, "cap 2.00배"]] · `bad` · `noCol` · `err` (the error's type name only: a pandas message such as "None of [Index…]"
+    would fail the gate's `글자에 nan·None·null·undefined 없음` row; the full text is in the log) + `errN` · `rx` · `rNoDay` · `rOdd`.
 - **Yahoo's (not fixed, warned): stale per-share numbers right after a split.** The 11-21 SNDK details were a fresh fetch after the split
   (implied shares 142.3M → 1,138M, average volume 10.8M → 84.5M: ×8), so the copy fix above would not have changed them, and there was
   no older copy to compare with. Yahoo's `priceToBook` still used the pre-split book value per share (79.24 ÷ 126 = 0.63; the 11-11
@@ -2239,13 +2247,16 @@ sit behind US numbers after a split:
     (95% within 1.40×, 96% within 1.5×, 98% within 2×; SNDK before its split 1.42×). **Blind spots:** an error from a split with a ratio
     of 1.5 or less (3:2, stock dividends) stays inside the floor, and an error that moves PER and PBR together (the copy problem above)
     cancels out. Only `YYYY-MM-DD` dates and ratios other than 1 are read (the `주식 분할 목록 (splits)` row judges the rest);
-  - it names every warning path recorded in `usSrc.split` (`fit` and `rx` are listed without a warning);
+  - it names every path recorded in `usSrc.split`, all as warnings (`fit` and `rx` too, since a chosen factor can be wrong); a record
+    with `errN` but no `err` still warns;
   - SKIP when the file has no `splits` (or `splits` is null) and no `usSrc.split`: the `주식 분할 목록 (splits)` row further down judges
     that (it fails when the previous publish had `splits`).
 - **On a warning:** for a named PBR, compare it with the price ÷ book value per share in the latest filing; Yahoo usually corrects
   itself within days, and the copy is fetched again every 3 days. For `left`, `odd` or `jump`, the next run asks Yahoo again; if a
   ticker stays there for more than two runs, look at its split history on Yahoo and add a fixed-table row if Yahoo has it wrong. For
-  `diff`, nothing to do while the copy lasts (14 days); if Yahoo is still stale after that, the fresh numbers go out, so tell Jack. Blanking
+  `diff`, nothing to do while the copy lasts (14 days); if Yahoo is still stale after that, the fresh numbers go out, so tell Jack. For
+  `fit`, check the named stock's split on Yahoo: right after a real split it is expected; a `fit` followed by `unfit` means the earlier
+  publishes carried that stock's PER, PBR, 시가총액 and 거래대금 off by the ratio, so tell Jack. Blanking
   such a number on the site needs a new line on screen, so it is Jack's decision.
 
 **Rolling back #176**: a revert PR. Copies written with `pd` are read by the old code as before (it ignores the key); `usSrc.split` is

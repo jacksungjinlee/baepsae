@@ -135,15 +135,31 @@ def test_refetch_rule_is_unchanged_a_split_alone_does_not_make_a_copy_due():
 
 def test_fresh_details_against_the_copy_times_the_ratio():
     copy = entry(US19, PX18)
-    stale = entry(US21, 79.24, SNDK_STALE, US20)                 # 11-21 의 모양: PBR 만 분할 전
-    assert F.us_info_fresh_vs_copy(stale, copy, 79.24, 8.0) == ["pbr 8.0배"]
-    assert F.us_info_fresh_vs_copy(entry(US21, 79.24, SNDK_POST, US20), copy, 79.24, 8.0) == []
+    stale = entry(US21, 79.24, SNDK_STALE, US20)                 # 11-21 의 모양: PBR 만 분할 전 (시가총액은 맞음)
+    assert F.us_info_fresh_vs_copy(stale, copy, 79.24, 8.0) == ("diff", ["pbr 8.00배"])
+    assert F.us_info_fresh_vs_copy(entry(US21, 79.24, SNDK_POST, US20), copy, 79.24, 8.0) == ("ok", [])
     vol = entry(US21, 79.24, dict(SNDK_POST, averageVolume=AV0), US20)                  # 평균 거래량이 아직 분할 전 주식 수
-    assert F.us_info_fresh_vs_copy(vol, copy, 79.24, 8.0) == ["vol 8.0배"]
+    assert F.us_info_fresh_vs_copy(vol, copy, 79.24, 8.0) == ("diff", ["vol 8.00배"])
     gone = entry(US21, 79.24, {k: v for k, v in SNDK_STALE.items() if k != "priceToBook"}, US20)
-    assert F.us_info_fresh_vs_copy(gone, copy, 79.24, 8.0) == []                         # 한쪽이 없는 칸은 보지 않아요
+    assert F.us_info_fresh_vs_copy(gone, copy, 79.24, 8.0) == ("ok", [])                 # 한쪽이 없는 칸은 보지 않아요
     near = entry(US21, 79.24, dict(SNDK_POST, trailingPE=SNDK_POST["trailingPE"] * 2.5), US20)
-    assert F.us_info_fresh_vs_copy(near, copy, 79.24, 8.0) == []                         # 2.5배 < √8 (실적 발표 같은 진짜 변화일 수 있어요)
+    assert F.us_info_fresh_vs_copy(near, copy, 79.24, 8.0) == ("ok", [])                 # 분할 전 방향이 아니에요 (실적 같은 진짜 변화)
+
+
+def test_fresh_vs_copy_flags_only_the_pre_split_direction_with_a_floor():
+    """리뷰 2차 S-C: 2:1 뒤 실적으로 PER 이 35% 내린 것 · 21:20 주식배당 뒤 평균 거래량이 4% 는 것은 '분할 전 같음'이 아니에요."""
+    info = {"trailingPE": 20.0, "priceToBook": 4.0, "marketCap": 1e10, "averageVolume": 1e6}
+    copy = {"at": US19, "px": 200.0, "info": info}               # 분할 전 $200
+    per35 = {"at": US21, "px": 100.0, "pd": US20, "info": dict(info, trailingPE=20.0 * 0.65, marketCap=2e10 / 2, averageVolume=2e6)}
+    assert F.us_info_fresh_vs_copy(per35, copy, 100.0, 2.0) == ("ok", [])
+    stale_per = dict(per35, info=dict(per35["info"], trailingPE=20.0 * 0.5))           # 정확히 분할 전 (×1/2) → 분할 전 같음
+    assert F.us_info_fresh_vs_copy(stale_per, copy, 100.0, 2.0) == ("diff", ["per 2.00배"])
+    vol4 = {"at": US21, "px": 100.0, "pd": US20, "info": dict(info, marketCap=1e10 * 100.0 / 105.0 * 1.05 / 1.05, averageVolume=1.05e6 * 1.04)}
+    assert F.us_info_fresh_vs_copy(vol4, {"at": US19, "px": 105.0, "info": info}, 100.0, 1.05) == ("ok", [])
+    stale_dv = dict(vol4, info=dict(vol4["info"], averageVolume=1e6))                    # 주식배당 뒤 분할 전 거래량이어도 (1.05배) 보지 않아요
+    assert F.us_info_fresh_vs_copy(stale_dv, {"at": US19, "px": 105.0, "info": info}, 100.0, 1.05) == ("ok", [])
+    up = dict(per35, info=dict(per35["info"], trailingPE=20.0 * 2.0))                    # 반대 방향 (× 2) 은 분할 전이 아니에요
+    assert F.us_info_fresh_vs_copy(up, copy, 100.0, 2.0) == ("ok", [])
 
 
 # ── 2. apply_us_info: 감사의 재현 · 병합 · 두 번 ──────────────────────────────────
@@ -279,12 +295,12 @@ def test_sndk_shape_a_correctable_copy_is_used_without_asking_yahoo_again(tmp_pa
     k_main = 79.24 / PX18                                                           # main: 가격 비율만
     assert round(PX18 / EPS0 * k_main, 1) == 0.6 and round(PX18 * SH0 * k_main * FX / 1e12, 1) == 15.2
     x = _log(lines)
-    assert x.startswith("· 미국 분할 뒤 보관본 맞춤") and "곱함 1 (SNDK ×8 (8:1 분할 2026-11-20 · 보관본 2026-11-19 · 기준 가격 755.12 → 오늘 79.24))" in x, x
-    assert x.endswith("· 그래서 다시 물음 0"), x
+    assert x.startswith("  !! 미국 분할 뒤 보관본 맞춤") and "곱함 1 (SNDK ×8 (8:1 분할 2026-11-20 · 보관본 2026-11-19 · 기준 가격 755.12 → 오늘 79.24))" in x, x
+    assert x.endswith("· 그래서 다시 물음 0"), x                                      # 리뷰 2차 S-B: 곱함도 크게
     assert _split_rec(meta) == {"v": 1, "fit": [["SNDK", 8.0]]}
     assert F.load_us_info(path)["SNDK"]["at"] == US19                                 # 보관본 그대로 (3일 되는 날 보통처럼 다시 받아요)
     (st, val), _r = _gate_of(by, meta)
-    assert st == "PASS" and "폭 안 1종목 (가장 큰 차이 1.43배)" in val and "보관본에 분할 배율을 곱함 1: SNDK ×8" in val, val
+    assert st == "WARN" and "폭 안 1종목 (가장 큰 차이 1.43배)" in val and "보관본에 분할 배율을 곱함 (날짜와 가격으로 고른 배율" in val and "1: SNDK ×8" in val, val
 
 
 def test_fresh_details_still_on_the_old_share_count_keep_the_copy(tmp_path, monkeypatch):
@@ -294,10 +310,11 @@ def test_fresh_details_still_on_the_old_share_count_keep_the_copy(tmp_path, monk
     assert calls.count("SNDK") == 1 and s["pbr"] == 5.03 and s["per"] == 5.1                   # 0.63 이 아니에요
     assert F.load_us_info(path)["SNDK"]["at"] == "2026-11-17"                                 # 보관본 그대로 (다음 실행이 또 맞춰 봐요)
     x = _log(lines)
-    assert x.startswith("  !! ") and "새로 받은 상세 정보가 보관본 × 배율과 √배율 넘게 달라 보관본을 씀 1 (야후의 주당 숫자가 아직 분할 전일 수 있어요: SNDK pbr 8.0배)" in x, x
-    assert _split_rec(meta) == {"v": 1, "fit": [["SNDK", 8.0]], "diff": [["SNDK", "pbr 8.0배"]]}
+    assert x.startswith("  !! ") and ("새로 받은 상세 정보의 주당 숫자가 분할 전 같아 (시가총액은 맞음) 보관본 × 배율을 씀 1 (야후가 아직 분할 전 주당 숫자일 수 "
+                                      "있어요: SNDK pbr 8.00배)") in x, x
+    assert _split_rec(meta) == {"v": 1, "fit": [["SNDK", 8.0]], "diff": [["SNDK", "pbr 8.00배"]]}
     (st, val), rep = _gate_of(by, meta)
-    assert st == "WARN" and "새 상세 정보가 보관본 × 배율과 달라 보관본을 씀 (야후의 주당 숫자가 아직 분할 전일 수 있어요) 1: SNDK pbr 8.0배" in val, val
+    assert st == "WARN" and "새 상세 정보의 주당 숫자가 분할 전 같아 (시가총액은 맞음) 보관본 × 배율을 씀" in val and "1: SNDK pbr 8.00배" in val, val
     assert "폭 안 1종목" in val                                                                # 발행하는 PBR 은 PER × ROE 와 맞아요
 
 
@@ -306,7 +323,7 @@ def test_fresh_details_that_agree_replace_the_copy(tmp_path, monkeypatch):
     e = F.load_us_info(path)["SNDK"]
     assert calls.count("SNDK") == 1 and e["at"] == US21 and e["pd"] == US20 and e["px"] == 79.24
     assert by["SNDK"]["per"] == round(SNDK_POST["trailingPE"], 1) and by["SNDK"]["pbr"] == round(SNDK_POST["priceToBook"], 2)
-    assert _log(lines).startswith("· ") and _split_rec(meta) is None                           # 적을 것 없음 → usSrc.split 칸이 없어요
+    assert _log(lines).startswith("· ") and _split_rec(meta) is None                           # 적을 것 없음 → usSrc.split 칸이 없어요 (오늘 받았으니 곱함 0)
     assert all(F.load_us_info(path)[t]["pd"] == US20 for t in ("AAPL", "MSFT", "NVDA"))
 
 
@@ -337,7 +354,7 @@ def test_s1_a_split_dated_after_the_us_date_that_yahoo_already_applied(tmp_path,
 def test_s1_a_split_dated_after_the_us_date_that_yahoo_has_not_applied(tmp_path, monkeypatch):
     by, meta, lines, calls, _p = _run(tmp_path, monkeypatch, cache={"SNDK": entry(US19, PX18)}, splits={"SNDK": [(US21, 8.0)]}, last=760.0)
     assert by["SNDK"]["per"] == round(PX18 / EPS0 * 760.0 / PX18, 1) and "SNDK" not in calls      # 가격도 보관본도 분할 전 · 곱하지 않아요
-    assert "미국 기준일 뒤 날짜의 분할 1 (SNDK 8:1 분할 2026-11-21 (아직 반영 안 됨 · 곱하지 않음))" in _log(lines)
+    assert "미국 기준일 뒤 날짜의 분할 1 (SNDK 8:1 분할 2026-11-21 (곱하지 않음 · 보관본과 오늘 가격이 같은 주식 수로 보여요))" in _log(lines)
     assert _split_rec(meta) == {"v": 1, "late": [["SNDK", False]]}
 
 
@@ -372,10 +389,10 @@ def test_an_unreadable_split_list_keeps_todays_behaviour_and_says_so(tmp_path, m
     assert by["SNDK"]["per"] == round(PX18 / EPS0 * 79.24 / PX18, 1) == 0.6          # 예전 그대로 (가격 비율만)
     x = _log(lines, "미국 분할을 읽지 못해")
     assert x.startswith("  !! 미국 분할을 읽지 못해 (RuntimeError: boom)") and "보관본을 쓴 1종목은 예전 그대로" in x, x
-    assert _split_rec(meta) == {"v": 1, "jump": ["SNDK"], "left": ["SNDK"], "err": "RuntimeError: boom", "errN": 1}
+    assert _split_rec(meta) == {"v": 1, "jump": ["SNDK"], "left": ["SNDK"], "err": "RuntimeError", "errN": 1}   # 종류 이름만 (리뷰 2차 S-A)
     assert meta["splits"] == [["SNDK", US20, 8.0]]                                  # 발행할 분할 목록은 그대로 읽어요
     (st, val), _r = _gate_of(by, meta)
-    assert st == "WARN" and "분할을 읽지 못해 (RuntimeError: boom) 보관본 맞춤을 하지 않음 — 그날 보관본을 쓴 1종목은 가격 비율만" in val, val
+    assert st == "WARN" and "분할을 읽지 못해 (RuntimeError) 보관본 맞춤을 하지 않음 — 그날 보관본을 쓴 1종목은 가격 비율만" in val, val
 
 
 def test_a_ticker_without_a_split_column_uses_the_previous_publish(tmp_path, monkeypatch):
@@ -417,6 +434,121 @@ def test_the_zero_pbr_counter_uses_the_split_factor(tmp_path, monkeypatch):
     by, meta, lines, _c, _p = _run(tmp_path, monkeypatch, cache={"SNDK": entry(US19, PX18, dict(SNDK_PRE, priceToBook=0.03))})
     assert by["SNDK"]["pbr"] == round(0.03 * K8, 2) and "pbrZero" not in by["SNDK"]
     assert "· 미국 PBR 이 0.00 으로 반올림돼(0.005 미만) 빈 칸 — 가치 점수도 없음: 0곳" in lines
+
+
+# ── 3b. 리뷰 2차 (#176) ───────────────────────────────────────────────────────
+@pytest.mark.parametrize("err", [KeyError("None of [Index(['Stock Splits'], dtype='object')] are in the [columns]"),
+                                 ValueError("cannot convert float NaN to integer"), TypeError("'NoneType' object is not subscriptable")])
+def test_s_a_the_split_record_never_carries_a_bad_word(tmp_path, monkeypatch, err):
+    """리뷰 2차 S-A: 판다스 오류 글이 data.json 에 들어가면 관문의 '글자에 nan·None·null·undefined 없음' 줄이 발행을 멈춰요 — 파일에는 종류 이름만."""
+    def boom(recent, prev):
+        raise err
+    monkeypatch.setattr(F, "us_info_split_map", boom)
+    by, meta, lines, calls, _p = _run(tmp_path, monkeypatch, cache={"SNDK": entry(US19, PX18)}, refuse={"SNDK"})
+    rec = _split_rec(meta)
+    assert rec["err"] == type(err).__name__
+    bad = [(p_, v) for p_, v in V.text_values({"usSrc": meta["usSrc"]}) if V.BAD_WORD.search(v)]
+    assert bad == [], bad
+    assert any(x.startswith(f"  !! 미국 분할을 읽지 못해 ({type(err).__name__}: ") for x in lines)       # 오류 글은 로그에
+
+
+def test_s_b_a_wrong_factor_is_loud_and_the_fresh_market_cap_undoes_it(tmp_path, monkeypatch):
+    """리뷰 2차 S-B: 예전 모양 보관본(11-20 · 기준 가격 115 — 이미 분할 뒤) · 2:1 분할 날짜 11-20 · 오늘 79.24 (실제로 31% 내림). 날짜와 가격으로는 × 2 를
+    골라요 (PER 이 2배로 나가요) — 그래서 곱함은 크게 남기고 관문이 경고해요. 다시 받는 날 새 시가총액이 배율 없이 맞으면 새 상세 정보를 써요."""
+    post = {"shortName": "Wrong Co", "longName": "Wrong Co", "quoteType": "EQUITY", "financialCurrency": "USD", "currency": "USD",
+            "trailingPE": 115 / 4.0, "priceToBook": 115 / 20.0, "returnOnEquity": 0.2, "marketCap": 115e9, "averageVolume": 5e6}
+    fresh = dict(post, trailingPE=79.24 / 4.0, priceToBook=79.24 / 20.0, marketCap=79.24e9)
+    by, meta, lines, calls, _p = _run(tmp_path, monkeypatch, cache={"SNDK": entry(US20, 115.0, post)}, splits={"SNDK": [(US20, 2.0)]})
+    assert "SNDK" not in calls and by["SNDK"]["per"] == round(115 / 4.0 * 79.24 * 2 / 115, 1) == 39.6      # 2배 (맞는 값 19.8)
+    assert _log(lines).startswith("  !! ") and _split_rec(meta) == {"v": 1, "fit": [["SNDK", 2.0]]}
+    (st, val), _r = _gate_of(by, meta, splits=[["SNDK", US20, 2.0]])
+    assert st == "WARN" and "1: SNDK ×2" in val
+    by2, meta2, lines2, calls2, path2 = _run(tmp_path / "day4", monkeypatch, cache={"SNDK": entry("2026-11-17", 115.0, post)},
+                                             splits={"SNDK": [(US20, 2.0)]}, sndk_info=fresh)
+    assert calls2.count("SNDK") == 1 and by2["SNDK"]["per"] == 19.8 and by2["SNDK"]["pbr"] == round(79.24 / 20.0, 2)
+    assert F.load_us_info(path2)["SNDK"]["at"] == US21                                         # 새 상세 정보를 보관해요 (틀린 보관본으로 돌아가지 않아요)
+    assert _split_rec(meta2) == {"v": 1, "unfit": [["SNDK", "cap 2.00배"]]}
+    x = _log(lines2)
+    assert x.startswith("  !! ") and "새 시가총액을 보니 보관본에 곱한 배율이 틀려 새 상세 정보를 씀 1 (보관본이 이미 분할 뒤 값이었어요: SNDK cap 2.00배)" in x, x
+    (st2, val2), _r = _gate_of(by2, meta2, splits=[["SNDK", US20, 2.0]])
+    assert st2 == "WARN" and "새 시가총액을 보니 보관본에 곱한 배율이 틀려 새 상세 정보를 씀" in val2
+
+
+def test_fixed_table_rows_are_never_counted_twice(monkeypatch):
+    monkeypatch.setattr(F, "SPLIT_OVERRIDES", {("Q", US18): (8.0, "고정"), ("R", US18): (8.0, "고정")})
+    m = F.us_info_split_map([["Q", US19, 8.0], ["R", US19, 8.0], ["R", US18, 8.0]], {"splits": [["Q", US18, 8.0]]})
+    assert m == {"Q": [(US18, 8.0)], "R": [(US18, 8.0)]}, m                                    # × 64 가 아니에요
+
+
+def test_split_view_drops_bad_ratios():
+    v = F.us_info_split_view({"at": US19, "px": 100.0}, 99.0, US20, [(US20, 0.0), (US20, float("nan")), (US20, -2.0), (US20, None), (US20, "x")])
+    assert v["hit"] == [] and v["f"] == 1.0 and not v["use"]
+
+
+def test_a_fresh_entry_with_a_later_dated_split_is_not_recorded(tmp_path, monkeypatch):
+    by, meta, lines, calls, _p = _run(tmp_path, monkeypatch, splits={"SNDK": [(US21, 8.0)]}, sndk_info=SNDK_POST)
+    assert "SNDK" in calls and _split_rec(meta) is None and _log(lines).startswith("· ")
+
+
+def test_us_meta_drop_cleans_the_split_record():
+    umeta = {"usSrc": {"v": 1, "own": {}, "split": {"v": 1, "fit": [["A", 8.0], ["B", 2.0]], "left": ["A"], "err": "KeyError", "errN": 2}}}
+    F.us_meta_drop(umeta, [{"t": "A"}, {"t": "B"}], {"A"})
+    assert umeta["usSrc"]["split"] == {"v": 1, "fit": [["B", 2.0]], "err": "KeyError", "errN": 2}
+    um2 = {"usSrc": {"v": 1, "own": {}, "split": {"v": 1, "fit": [["A", 8.0]]}}}
+    F.us_meta_drop(um2, [{"t": "A"}], {"A"})
+    assert "split" not in um2["usSrc"]
+
+
+def test_split_record_keeps_only_published_tickers():
+    rec = {"v": 1, "fit": [["A", 8.0], ["Z", 2.0]], "late": [["A", True]], "odd": ["Z"], "diff": [["Z", "pbr 2.00배"]], "err": "KeyError", "errN": 0}
+    assert F.us_split_rec_keep(rec, {"A"}) == {"split": {"v": 1, "fit": [["A", 8.0]], "late": [["A", True]], "err": "KeyError", "errN": 0}}
+    assert F.us_split_rec_keep({"v": 1, "odd": ["Z"]}, {"A"}) == {} and F.us_split_rec_keep({"v": 1}, {"A"}) == {} and F.us_split_rec_keep(None, {"A"}) == {}
+
+
+def test_bad_paths_keep_todays_behaviour_and_are_recorded(tmp_path, monkeypatch):
+    real_view, real_cmp = F.us_info_split_view, F.us_info_fresh_vs_copy
+
+    def view(e, price, basis, events):
+        if price == 79.24:
+            raise ValueError("boom")
+        return real_view(e, price, basis, events)
+    monkeypatch.setattr(F, "us_info_split_view", view)
+    by, meta, lines, calls, _p = _run(tmp_path, monkeypatch, cache={"SNDK": entry(US19, PX18)})
+    assert by["SNDK"]["per"] == 0.6 and _split_rec(meta) == {"v": 1, "bad": ["SNDK"]}          # 예전 그대로 (가격 비율만)
+    assert any(x.startswith("  !! 미국 분할 판단이 오류로 멈춘 종목 SNDK (ValueError: boom)") for x in lines)
+    monkeypatch.setattr(F, "us_info_split_view", real_view)
+
+    def cmp_(*a):
+        raise KeyError("x")
+    monkeypatch.setattr(F, "us_info_fresh_vs_copy", cmp_)
+    by2, meta2, lines2, _c, _p2 = _run(tmp_path / "b", monkeypatch, cache={"SNDK": entry("2026-11-17", PX18)}, sndk_info=SNDK_STALE)
+    assert by2["SNDK"]["pbr"] == round(SNDK_STALE["priceToBook"], 2) and _split_rec(meta2) == {"v": 1, "bad": ["SNDK"]}   # 새 상세 정보
+    assert any("새 상세 정보와 분할 전 보관본을 맞춰 보다 오류로 멈춘 종목 SNDK (KeyError)" in x for x in lines2)
+    monkeypatch.setattr(F, "us_info_fresh_vs_copy", real_cmp)
+
+
+@pytest.mark.parametrize("at, used", [("2026-11-07", True), ("2026-11-06", False)])
+def test_the_14_day_limit_applies_to_a_copy_with_a_split(tmp_path, monkeypatch, at, used):
+    by, meta, lines, calls, _p = _run(tmp_path, monkeypatch, cache={"SNDK": entry(at, PX18)}, refuse={"SNDK"})
+    assert calls.count("SNDK") == 3                                                           # 3일 넘어 보통처럼 다시 물었는데 거절
+    if used:                                                                                  # 14일 · 보관본 × 8
+        assert by["SNDK"]["per"] == 5.1 and _split_rec(meta) == {"v": 1, "fit": [["SNDK", 8.0]]}
+    else:                                                                                     # 15일 · 쓰지 않아요 (상세 정보 없음 · 예전 그대로)
+        assert "per" not in by["SNDK"] and _split_rec(meta) is None
+
+
+def test_a_carried_close_keeps_the_copy_when_fresh_details_are_pre_split(tmp_path, monkeypatch):
+    """마지막 확인 종가(pxd 11-19 · 94.39 · 8:1 분할 11-18 뒤) · 4일 된 분할 전 보관본 · 오늘 받은 상세 정보는 야후 시세 가격(79.24) 기준인데 PBR 이 분할 전."""
+    prev = {"usPxDate": US19, "stocks": [{"t": "SNDK", "nk": "Sandisk", "cls": "us", "ccy": "USD", "price": 94.39, "d1": -1.0, "vol": 90.0}]}
+    by, meta, lines, calls, path = _run(tmp_path, monkeypatch, cache={"SNDK": entry("2026-11-17", PX18, pd_="2026-11-16")},
+                                        splits={"SNDK": [(US18, 8.0)]}, prev=prev, blank={"SNDK"}, sndk_info=dict(SNDK_STALE, currentPrice=79.24))
+    s = by["SNDK"]
+    assert s["pxc"] is True and s["price"] == 94.39 and calls.count("SNDK") == 1
+    assert s["pbr"] == round(PX18 / BPS0 * 94.39 * 8 / PX18, 2) and s["per"] == round(PX18 / EPS0 * 94.39 * 8 / PX18, 1)
+    assert F.load_us_info(path)["SNDK"]["at"] == "2026-11-17"
+    assert _split_rec(meta) == {"v": 1, "fit": [["SNDK", 8.0]], "diff": [["SNDK", "pbr 8.00배"]]}
+    assert any("마지막 확인 종가 종목 1개의 상세 정보: 오늘 받아 야후 시세 가격에 맞춤 0 · 3일 안에 받은 보관본 (또는 오늘 받지 못해 보관본) 1" in x
+               for x in lines), [x for x in lines if "마지막 확인 종가 종목" in x]
 
 
 # ── 4. 나중에 분할이 나와 야후 봉으로 되돌리는 행 (us_own_split_late) ─────────────────────
@@ -531,17 +663,20 @@ def test_gate_row_skips_a_file_without_splits_and_says_which():
 def test_gate_row_reads_the_split_record():
     base = {"usPxDate": US20, "splits": [], "stocks": []}
     (st, val), _r = _gate({**base, "usSrc": {"split": {"v": 1, "fit": [["SNDK", 8.0]], "rx": [["TD", 2.0]]}}})
-    assert st == "PASS" and "보관본에 분할 배율을 곱함 1: SNDK ×8" in val and "야후 봉으로 되돌리며 분할 배율을 곱함 1: TD ×2" in val, val
-    rec = {"v": 1, "odd": ["A"], "jump": ["B"], "left": ["A", "B"], "late": [["C", False]], "diff": [["D", "pbr 8.0배"]], "bad": ["E"], "noCol": ["F"],
-           "rNoDay": ["G"], "rOdd": ["H"], "err": "RuntimeError: x", "errN": 3}
+    assert st == "WARN" and "1: SNDK ×8" in val and "야후 봉으로 되돌리며 분할 배율을 곱함 1: TD ×2" in val, val      # 리뷰 2차 S-B: 곱함도 경고
+    (st, val), _r = _gate({**base, "usSrc": {"split": {"v": 1, "errN": 4}}})
+    assert st == "WARN" and "분할을 읽지 못해 (까닭 모름) 보관본 맞춤을 하지 않음 — 그날 보관본을 쓴 4종목은 가격 비율만" in val, val
+    rec = {"v": 1, "odd": ["A"], "jump": ["B"], "left": ["A", "B"], "late": [["C", False]], "diff": [["D", "pbr 8.00배"]], "unfit": [["I", "cap 2.00배"]],
+           "bad": ["E"], "noCol": ["F"], "rNoDay": ["G"], "rOdd": ["H"], "err": "RuntimeError", "errN": 3}
     (st, val), rep = _gate({**base, "usSrc": {"split": rec}})
     assert st == "WARN"
     for k, (w, why) in V.US_SPLIT_REC_WHY.items():
         if k in rec:
-            assert why in val, k
-    assert "C (곱하지 않음)" in val and "D pbr 8.0배" in val and "그날 보관본을 쓴 3종목은 가격 비율만" in val
+            assert w and f"usSrc.split {k} — {why}" in {t for t, _x in rep.details}, k
+    assert "그날 보관본을 쓴 3종목은 가격 비율만" in val and len(val) <= 600                     # 값 칸이 잘려도 분할을 읽지 못함이 먼저
+    assert {x for _t, xs in rep.details for x in xs} >= {"C (곱하지 않음)", "D pbr 8.00배", "I cap 2.00배", "A", "G", "H"}
     assert {t for t, _x in rep.details} >= {f"usSrc.split {k} — {V.US_SPLIT_REC_WHY[k][1]}" for k in ("odd", "left", "diff")}
-    for bad in ("x", {"v": 1, "left": "SNDK"}, {"v": 1, "fit": [["SNDK"]]}, {"v": 1, "what": ["X"]}, {"v": 1, "err": 3}):
+    for bad in ("x", {"v": 1, "left": "SNDK"}, {"v": 1, "fit": [["SNDK"]]}, {"v": 1, "what": ["X"]}, {"v": 1, "err": 3}, {"v": 1, "errN": True}):
         (st, val), _r = _gate({**base, "usSrc": {"split": bad}})
         assert st == "WARN" and "usSrc.split 모양이 잘못" in val, (bad, val)
 
@@ -581,10 +716,10 @@ def test_gate_row_never_fails_in_any_mode(mode, monkeypatch):
         monkeypatch.setattr(V, "us_split_pbr_scan", REAL_SCAN)
         return rep
     good, bad, crashed = run(7.2), run(0.63), run(0.63, crash=True)
-    recd = run(7.2, rec={"v": 1, "left": ["U0001"], "diff": [["U0001", "pbr 8.0배"]], "err": "x", "errN": 2})
+    recd = run(7.2, rec={"v": 1, "left": ["U0001"], "diff": [["U0001", "pbr 8.00배"]], "err": "KeyError", "errN": 2})
     fails = lambda rep: sorted(r[0] for r in rep.failed)
     assert rows_of(good)[ROW][0] == "PASS" and rows_of(bad)[ROW][0] == "WARN" and rows_of(crashed)[ROW][0] == "WARN"
-    assert rows_of(recd)[ROW][0] == "WARN" and "U0001 pbr 8.0배" in rows_of(recd)[ROW][1]
+    assert rows_of(recd)[ROW][0] == "WARN" and "U0001 pbr 8.00배" in rows_of(recd)[ROW][1]
     assert "U0001 8:1 분할" in rows_of(bad)[ROW][1] and rows_of(crashed)[ROW][1].startswith("검사가 멈췄어요: ZeroDivisionError")
     assert fails(bad) == fails(good) == fails(crashed) == fails(recd) and ROW not in fails(bad), (mode, fails(bad))
 

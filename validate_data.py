@@ -2536,7 +2536,8 @@ def check_us_new_wait(rep, data, pdata):
 # 11-11 에 1.42배 — 그래서 폭은 적어도 US_SPLIT_BAND_MIN (1.5배: 5% 주식배당 · 3:2 분할 뒤에 보통 회사가 경고로 뜨지 않게). 그 대가로 배율이 1.5 이하인
 # 분할(3:2 · 주식배당)로 틀린 숫자는 이 줄이 보지 못해요 (폭 안에 남아요). PER 과 PBR 이 같은 배율로 함께 틀리면 (보관본을 분할 전 가격으로 맞춘 것) 이
 # 줄은 보지 못해요 — 파이프라인이 고치고 (fetch_data.us_info_split_view) ② 가 그 기록을 봐요.
-# ② data.json usSrc.split (fetch_data.us_split_rec_keep): 파이프라인이 숫자가 배율만큼 틀릴 수 있는 길로 간 종목 — 이름을 적고 경고 (리뷰 #176 S2).
+# ② data.json usSrc.split (fetch_data.us_split_rec_keep): 파이프라인이 숫자가 배율만큼 틀릴 수 있는 길로 간 종목 — 이름을 적고 경고 (리뷰 #176 S2 ·
+# 2차: 배율을 곱한 보관본(fit · rx)도 경고예요 — 날짜와 가격으로 고른 배율이 틀릴 수 있어요).
 # 경고만 — 어떤 모드에서도 실패하지 않아요 (발행을 멈추는 줄은 Jack 의 답이 있어야 해요) · 검사가 멈춰도 경고.
 US_SPLIT_PBR_ROW = "미국 분할 뒤 상세 숫자 (PBR ↔ PER × ROE · usSrc.split · 경고만)"
 US_SPLIT_CHECK_DAYS = 30
@@ -2547,13 +2548,14 @@ US_SPLIT_REC_WHY = {
     "jump": (True, "분할을 모르는데 가격이 2배 넘게 달라진 보관본 (늦게 알려진 분할일 수 있어요 · 다시 물음)"),
     "left": (True, "다시 물었는데 받지 못해 보관본 그대로 (숫자가 그 배율만큼 틀릴 수 있어요)"),
     "late": (True, "미국 기준일 뒤 날짜의 분할 (야후가 반영했으면 곱함)"),
-    "diff": (True, "새 상세 정보가 보관본 × 배율과 달라 보관본을 씀 (야후의 주당 숫자가 아직 분할 전일 수 있어요)"),
+    "diff": (True, "새 상세 정보의 주당 숫자가 분할 전 같아 (시가총액은 맞음) 보관본 × 배율을 씀 (야후가 아직 분할 전 주당 숫자일 수 있어요)"),
+    "unfit": (True, "새 시가총액을 보니 보관본에 곱한 배율이 틀려 새 상세 정보를 씀 (그 전 발행본의 숫자가 배율만큼 틀렸을 수 있어요)"),
     "bad": (True, "분할 판단이 오류로 멈춤 (예전 그대로 · 가격 비율만)"),
     "noCol": (True, "오늘 다운로드에 분할 칸 없음 (지난 발행본 · 고정 표의 분할만)"),
     "rNoDay": (True, "야후 봉으로 되돌린 행 · 보관본 날짜를 몰라 곱하지 않음"),
     "rOdd": (True, "야후 봉으로 되돌린 행 · 곱하면 가격 비율이 1 에서 더 멀어져 곱하지 않음"),
-    "fit": (False, "보관본에 분할 배율을 곱함"),
-    "rx": (False, "야후 봉으로 되돌리며 분할 배율을 곱함"),
+    "fit": (True, "보관본에 분할 배율을 곱함 (날짜와 가격으로 고른 배율 — 다시 받는 날 새 상세 정보와 맞춰 봐요)"),
+    "rx": (True, "야후 봉으로 되돌리며 분할 배율을 곱함"),
 }
 
 
@@ -2618,8 +2620,15 @@ def _gap_txt(g, nd=1):
 
 
 def us_split_rec_items(rec):
-    """data.json usSrc.split → ([(칸, 경고인지, 설명, [보여 줄 글 …])], 모양이 틀린 칸들). (순수 함수)"""
+    """data.json usSrc.split → ([(칸, 경고인지, 설명, [보여 줄 글 …])], 모양이 틀린 칸들). 분할을 읽지 못함(err · errN)이 맨 앞 (값 칸이 잘려도 보이게). (순수 함수)"""
     items, bad = [], []
+    if "err" in rec or "errN" in rec:                # 리뷰 2차: errN 만 있어도 경고 (까닭 모름)
+        e, n = rec.get("err"), rec.get("errN")
+        if (e is None or isinstance(e, str)) and (n is None or (isinstance(n, int) and not isinstance(n, bool))):
+            items.append(("err", True, f"분할을 읽지 못해 ({(e or '까닭 모름')[:80]}) 보관본 맞춤을 하지 않음 — 그날 보관본을 쓴 "
+                                       f"{'?' if n is None else n}종목은 가격 비율만", []))
+        else:
+            bad.append("err")
     for k, v in rec.items():
         if k in ("v", "err", "errN"):
             continue
@@ -2632,9 +2641,9 @@ def us_split_rec_items(rec):
                 txt.append(f"{x[0]} ×{num(x[1]):g}")
             elif k == "late" and isinstance(x, list) and len(x) == 2 and isinstance(x[0], str) and isinstance(x[1], bool):
                 txt.append(f"{x[0]} ({'곱함' if x[1] else '곱하지 않음'})")
-            elif k == "diff" and isinstance(x, list) and len(x) == 2 and isinstance(x[0], str) and isinstance(x[1], str):
+            elif k in ("diff", "unfit") and isinstance(x, list) and len(x) == 2 and isinstance(x[0], str) and isinstance(x[1], str):
                 txt.append(f"{x[0]} {x[1]}")
-            elif k not in ("fit", "rx", "late", "diff") and isinstance(x, str) and x:
+            elif k not in ("fit", "rx", "late", "diff", "unfit") and isinstance(x, str) and x:
                 txt.append(x)
             else:
                 bad.append(k)
@@ -2643,18 +2652,13 @@ def us_split_rec_items(rec):
             if txt:
                 warn, why = US_SPLIT_REC_WHY[k]
                 items.append((k, warn, why, txt))
-    if "err" in rec:
-        if isinstance(rec["err"], str) and (rec.get("errN") is None or isinstance(rec.get("errN"), int)):
-            items.append(("err", True, f"분할을 읽지 못해 ({rec['err'][:80]}) 보관본 맞춤을 하지 않음 — 그날 보관본을 쓴 {rec.get('errN', '?')}종목은 가격 비율만", []))
-        else:
-            bad.append("err")
     return items, bad
 
 
 def check_us_split_pbr(rep, data):
     """2026-11-23 (감사 · #176 · 새 줄 · 경고만): ① 최근 US_SPLIT_CHECK_DAYS 일 안에 분할한 미국 회사 주식(ETF · 펀드 · fcur 제외)의 PBR 이 PER × ROE 와
     us_split_band 배 넘게 다르면 경고하고 이름을 적어요. ② data.json usSrc.split 에 숫자가 배율만큼 틀릴 수 있는 길(US_SPLIT_REC_WHY 의 경고 칸)이
-    있으면 경고하고 이름을 적어요 (곱한 보관본은 이름만). 이 줄은 어떤 모드에서도 실패하지 않아요 (발행 · bootstrap · 사이트 점검 · 감시): 검사 코드가
+    있으면 경고하고 이름을 적어요 (리뷰 2차: 곱한 보관본 fit · rx 도 경고). 이 줄은 어떤 모드에서도 실패하지 않아요 (발행 · bootstrap · 사이트 점검 · 감시): 검사 코드가
     멈추거나 splits · usPxDate · usSrc.split 을 읽지 못해도 경고예요. splits 가 없거나 null 이고 usSrc.split 도 없으면 SKIP (아래 '주식 분할 목록' 줄이 봐요)."""
     rule = (f"최근 {US_SPLIT_CHECK_DAYS}일 안에 분할한 미국 회사(ETF · 펀드 · fcur 제외)의 PBR 이 PER × ROE 와 √(분할 배율)배 (적어도 "
             f"{US_SPLIT_BAND_MIN:g}배) 넘게 다르거나 usSrc.split 에 숫자가 배율만큼 틀릴 수 있는 길이 적혀 있으면 경고 · 실패 없음")

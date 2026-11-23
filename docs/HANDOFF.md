@@ -51,7 +51,9 @@ puts a Yahoo details copy (cached up to 3 days, 14 when Yahoo refuses) taken bef
 the split ratios ÷ the copy's price, for PER, PBR, 시가총액, 배당수익률 and 거래대금 (`fetch_data.us_info_split_view`; splits from today's
 download, the previous publish's `splits` and `SPLIT_OVERRIDES`, up to today KST; a split dated after `usPxDate` counts only if Yahoo's
 series already shows it). Such a copy is not fetched again just for the split: a normal refresh compares Yahoo's fresh numbers with
-copy × ratio and keeps the copy when they are more than √ratio apart (Yahoo's fresh per-share numbers can still be pre-split). It does
+copy × ratio: when PER, PBR or volume look pre-split (within 1.25× of the copy without the ratio, at least 1.5× from copy × ratio) while
+시가총액 agrees, it keeps the copy (`diff`: Yahoo's per-share numbers can still be pre-split); when 시가총액 itself looks pre-split, the
+ratio was wrong and the fresh details win (`unfit`). Every multiplied copy is logged `!!` and warned (`fit`). It does
 fetch again when the ratio can't be trusted (`odd`) and when a copy's price moved more than 2× with no split known (`jump`, a split
 Yahoo reported late). Every path that can leave a number off by the ratio goes into `data.json usSrc.split` (only when there is
 something to say) and the new warning-only gate row `미국 분할 뒤 상세 숫자 (PBR ↔ PER × ROE · usSrc.split · 경고만)` names it, along
