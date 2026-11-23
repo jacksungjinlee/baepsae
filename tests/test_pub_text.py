@@ -84,6 +84,48 @@ def test_cut_first_then_clean_and_non_text():
     assert F.pub_err("E: " + "a" * 400, None, say=False) == "E: " + "a" * 400
 
 
+SECRET = "0123456789abcdef0123456789abcdef01234567"          # 가짜 키 (DART crtfc_key 꼴 · 40자)
+DART_ERR = ("HTTPSConnectionPool(host='opendart.fss.or.kr', port=443): Max retries exceeded with url: /api/elestock.json?crtfc_key="
+            + SECRET + "&corp_code=00126380 (Caused by NewConnectionError('<urllib3.connection.HTTPSConnection>: Failed to establish'))")
+
+
+@pytest.mark.parametrize("raw, want", [
+    ("GET https://opendart.fss.or.kr/api/list.json?crtfc_key=" + SECRET + "&bgn_de=20261101 실패",
+     "GET https://opendart.fss.or.kr/api/list.json?… 실패"),
+    ("https://example.com/x?a=b", "https://example.com/x?…"),
+    ("HTTP 404 for http://ecos.bok.or.kr/api/x?y=1#frag (재시도)", "HTTP 404 for http://ecos.bok.or.kr/api/x?… (재시도)"),
+    ("with url: /api/list.json?crtfc_key=" + SECRET + "&page_no=1 (Caused by x)", "with url: /api/list.json?… (Caused by x)"),
+    ("apikey=" + SECRET + " token=" + SECRET + " key=" + SECRET + " crtfc_key=" + SECRET, "apikey=… token=… key=… crtfc_key=…"),
+    ("params {'crtfc_key': '" + SECRET + "', 'corp_code': '00126380'}", "params {'crtfc_key': '…', 'corp_code': '00126380'}"),
+    ("fatal: https://x-access-token:" + SECRET + "@github.com/o/r.git", "fatal: https://…@github.com/o/r.git"),
+    ("headers Authorization: Bearer " + SECRET + " sent", "headers Authorization: … sent"),
+])
+def test_urls_query_strings_and_keys_never_reach_the_published_text(raw, want, capsys):
+    assert F.pub_text(raw) == want and SECRET not in want
+    assert F.pub_text(want, say=False) == want                   # 한 번 가린 글은 그대로
+    assert "원문: " + raw in capsys.readouterr().out             # 원문은 실행 로그에만 (GitHub 이 등록된 비밀은 로그에서 가려요)
+
+
+def test_a_dart_style_exception_is_cut_and_hidden():
+    out = F.pub_err(ConnectionError(DART_ERR), say=False)
+    assert out.startswith("ConnectionError: HTTPSConnectionPool(host='opendart.fss.or.kr', port=443): Max retries exceeded with url: "
+                          "/api/elestock.json?… (Caused by")
+    assert SECRET not in out and "corp_code" not in out and len(out) <= 300 and not V.BAD_WORD.search(out)
+    assert SECRET not in F.pub_err(ConnectionError(DART_ERR), 120, say=False)     # 잘린 키도 (자른 뒤에 가려요)
+    for n in range(60, 200, 7):
+        assert SECRET[:6] not in F.pub_text(DART_ERR, n, say=False), n
+
+
+@pytest.mark.parametrize("s", ["TypeError: x", "KeyError: 'Close'", "ValueError: cannot convert float 빈 값 to integer", "err KeyError: 빈 값",
+                               'p "1.5%"', "bd 20261031 > d 20261030", "같은 접수번호가 2번", "role \"빈 값\"", "AAPL xd",
+                               "마지막 확인 종가 점검이 오류로 멈춰 뺌 (TypeError: x · usSrc.own.err)", "HTTP 503", "monkey business: 3 of 4",
+                               "Max retries exceeded (Caused by ReadTimeoutError('Read timed out. (read timeout=20)'))",
+                               "005930 삼성전자 · 출처 글자에 관문의 낱말 — 칸을 비움", "https://opendart.fss.or.kr/api/list.json"])
+def test_a_clean_message_is_unchanged(s, capsys):
+    assert F.pub_text(s) == s and F.pub_err(s) == s[:300]
+    assert capsys.readouterr().out == ""
+
+
 def test_the_raw_text_goes_to_the_log_only(capsys):
     assert F.pub_text("KeyError: None") == "KeyError: 빈 값"
     log = capsys.readouterr().out
@@ -130,6 +172,15 @@ def test_split_guard_writes_a_clean_error(monkeypatch, capsys):
     splits, info = F.us_splits_safe({}, ["AAPL"], TODAY)
     assert splits is None and info["err"].startswith("KeyError: ") and "빈 값 of [Index" in info["err"] and gate_words(info) == []
     assert "원문: KeyError: \"None of [Index" in capsys.readouterr().out
+
+    def boom2(*a, **k):                                     # 리뷰: splitsInfo.err 도 다른 오류 칸처럼 자르고 가려요 (공개 data.json)
+        raise ConnectionError(DART_ERR + " None" + " x" * 600)
+    monkeypatch.setattr(F, "us_splits", boom2)
+    _s, info = F.us_splits_safe({}, ["AAPL"], TODAY)
+    assert len(info["err"]) <= 300 and SECRET not in info["err"] and "?…" in info["err"] and gate_words(info) == []
+    assert info["err"] == F.pub_err(ConnectionError(DART_ERR + " None" + " x" * 600), 300, say=False)
+    log = capsys.readouterr().out
+    assert SECRET in log and "x x x" in log                        # 원문 (자르지 않은 글) 은 로그에만
     assert "splits, sinfo = us_splits_safe(data, [r[\"t\"] for r in out], today)" in inspect.getsource(F.fetch_us)
 
 

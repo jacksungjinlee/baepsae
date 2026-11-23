@@ -456,18 +456,39 @@ def write_json(path, obj):
 # 바꿔 적고 원문은 실행 로그에만 남겨요. 출처의 글자 (설명 · 이름) 는 바꾸지 않아요 — own_src_text 가 그 칸을 비우고 세요 (N 을 넘으면 그대로 둬
 # 관문이 막아요). 관문은 그대로예요.
 PUB_BLANK = "빈 값"
+# 2026-11-24 (리뷰): 오류 글에는 주소 · 키가 들어갈 수 있어요 (requests 의 "… with url: /api/list.json?crtfc_key=…"). 발행 파일 (누구나 읽는
+# data.json) 에는 주소의 물음표 뒤 · 주소 안의 사용자 정보 · 키 같은 이름=값 의 값을 PUB_HIDE 로 적어요 (원문은 실행 로그에만 — GitHub 이 등록된
+# 비밀은 로그에서 가려요). 많이 가려도 괜찮아요 (오류 글은 앱이 읽지 않아요) — 덜 가리면 안 돼요.
+PUB_HIDE = "…"
+_PUB_SECRET_NAME = r"[A-Za-z0-9_.-]*(?:key|token|secret|passw(?:or)?d|pwd|auth|credential|signature)[A-Za-z0-9_.-]*"
+PUB_REDACT = (
+    (re.compile(r"(?i)(https?://)[^/\s@?#'\"<>]+@"), r"\1" + PUB_HIDE + "@"),                              # https://사용자:토큰@ → https://…@
+    (re.compile(r"(?i)(https?://[^\s?#'\"<>]*)\?[^\s'\"<>]*"), r"\1?" + PUB_HIDE),                         # http(s) 주소의 물음표 뒤 모두
+    (re.compile(r"\?[A-Za-z0-9_.-]+=[^\s'\"<>]*"), "?" + PUB_HIDE),                                         # 주소 앞부분이 없는 질의 (url: /a?b=c)
+    (re.compile(r"(?i)(?<![A-Za-z0-9_.-])(" + _PUB_SECRET_NAME + r")=[^\s&'\"<>]+"), r"\1=" + PUB_HIDE),      # key=… · crtfc_key=… · apikey=…
+    (re.compile(r"(?i)(['\"])(" + _PUB_SECRET_NAME + r")\1(\s*:\s*)(['\"])[^'\"]*\4"), r"\1\2\1\3\4" + PUB_HIDE + r"\4"),   # {'key': '…'}
+    (re.compile(r"(?i)(\bauthorization\s*[:=]\s*)(?:(?:bearer|token|basic)\s+)?[^\s'\",;]+"), r"\1" + PUB_HIDE),  # Authorization: Bearer …
+)
+
+
+def pub_redact(text):
+    """글 → 주소의 물음표 뒤 · 주소의 사용자 정보 · 키 같은 이름=값 의 값을 PUB_HIDE 로 (PUB_REDACT 차례대로 · 순수 함수)."""
+    for rx, rep in PUB_REDACT:
+        text = rx.sub(rep, text)
+    return text
 
 
 def pub_text(text, n=None, say=True):
     """우리가 만든 오류 · 까닭 글 → 발행 파일에 적을 글: 앞 n 글자로 자른 뒤 (자른 끝이 'nanometer' → 'nan' 이 돼도 잡히게 자른 다음에)
-    관문이 찾는 낱말 (GATE_BAD_WORD = validate_data.BAD_WORD: 영문자에 붙지 않은 다섯 낱말) 을 PUB_BLANK 로. 한 번 바꾼 글에는 다시 바꿀 것이
-    없어요 (바뀐 자리 둘레는 영문자가 아니에요). say: 바꾼 것이 있으면 원문을 실행 로그에 남겨요 (원문을 이미 로그에 적은 곳만 False).
+    주소의 물음표 뒤 · 키 값을 가리고 (pub_redact), 관문이 찾는 낱말 (GATE_BAD_WORD = validate_data.BAD_WORD: 영문자에 붙지 않은 다섯 낱말) 을
+    PUB_BLANK 로. 한 번 바꾼 글에는 다시 바꿀 것이 없어요. say: 바꾼 것이 있으면 원문을 실행 로그에 남겨요 (원문을 이미 로그에 적은 곳만 False).
     글자가 아니면 str. 출처의 글자에는 쓰지 않아요 (own_src_text)."""
     raw = text if isinstance(text, str) else str(text)
     cut = raw if n is None else raw[:n]
-    out = GATE_BAD_WORD.sub(PUB_BLANK, cut)
+    out = GATE_BAD_WORD.sub(PUB_BLANK, pub_redact(cut))
     if say and out != cut:
-        log(f"· 발행 파일에 적는 오류 · 까닭 글: 관문의 낱말 줄이 찾는 낱말을 '{PUB_BLANK}' 로 바꿔 적어요 — 원문: {raw}")
+        log(f"· 발행 파일에 적는 오류 · 까닭 글: 주소의 물음표 뒤 · 키 값은 '{PUB_HIDE}', 관문의 낱말 줄이 찾는 낱말은 '{PUB_BLANK}' 로 바꿔 적어요 "
+            f"— 원문: {raw}")
     return out
 
 
@@ -13255,11 +13276,12 @@ def _split_col(data, t):
 
 def us_splits_safe(data, codes, today):
     """fetch_us 의 주식 분할 (v19.6a A.6): us_splits 가 멈추면 (None, {"err": 오류 글}) — 발행은 이어가요 (log_us_splits 가 크게 · 관문이 경고 ·
-    지난 발행본 · 시드의 줄 그대로). 오류 글은 pub_err (2026-11-24: 관문의 낱말은 '빈 값' 으로 · 바꾼 것이 있으면 원문을 로그에 · 자르지 않아요)."""
+    지난 발행본 · 시드의 줄 그대로). 오류 글은 pub_err (2026-11-24: 다른 오류 칸처럼 앞 300 글자 · 주소의 물음표 뒤 · 키 값은 '…' · 관문의 낱말은
+    '빈 값' · 바꾼 것이 있으면 원문은 로그에만)."""
     try:
         return us_splits(data, codes, today)
     except Exception as e:
-        return None, {"err": pub_err(e, None)}
+        return None, {"err": pub_err(e)}
 
 
 def us_splits(data, codes, today, lo=None):

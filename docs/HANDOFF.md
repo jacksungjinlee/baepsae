@@ -27,7 +27,8 @@ v19.6g, v19.6h.
 **Clean error text (branch `claude/clean-error-text`, for 11-24; pipeline only, the gate unchanged):** the gate's frozen word row
 ("글자에 nan·None·null·undefined 없음") failed on text the pipeline wrote itself, so one caught error (`pxSrc.own.err`, `usSrc.own.err`,
 `splitsInfo.err`) or one dropped own-check row (`ownDrop` reason "d null") stopped the whole publish (audit aud5, reproduced). Now our
-error and reason text writes those words as "빈 값" (raw text in the run log only; the app never reads these fields), and a Yahoo
+error and reason text writes those words as "빈 값" and hides URL query strings and key values as "…", cut to 300 characters
+(raw text in the run log only; the app never reads these fields), and a Yahoo
 summary or DART name / position with such a word is blanked and counted in `ownDrop.srcText`; above 5 nothing is blanked and the word
 row fails as before (no new gate row). Live data 11-20: 0 matches before and after, all 190 gate rows unchanged. RUNBOOK "Our own text
 and the gate's word row".
