@@ -2502,19 +2502,23 @@ ignored by the old gate and the app.
 `fetch_data.add_percentiles` ranks the six factor scores (규모 `pz`, 가치 `vz`, 추세 `mz`, 퀄리티 `qz`, 저변동 `lz`, 배당 `dz`, Korea
 only) within each market over company shares only (preferred shares included); a row with `etf` true or `fund`
 (`validate_data.factor_fund`, the 2.0 app's `isStockLike` rule) is not in the ranking. Such a fund still gets each score whose input it has,
-placed against that market's companies (`fund_percentile`): p = (companies whose value is at or below the fund's) ÷ (companies with a value)
-× 100, the score is p (추세, 퀄리티, 배당) or 100 − p (규모, 가치, 저변동), rounded with `round()` as the companies' are; with no tie, a fund equal
-to a company's value gets that company's score; a blank input means no score, as before. Why: the 11-24 publish ranked 33 US ETFs (23 with
+placed against that market's companies (`fund_percentile`): with b companies below the fund's value and e equal to it, out of n companies
+with a value, its rank is b + (e + 1) ÷ 2 when e > 0 (the tied companies' own average rank, so the same value always gets the same score,
+review S1) and b when e = 0; p = rank ÷ n × 100, the score is p (추세, 퀄리티, 배당) or 100 − p (규모, 가치, 저변동), rounded with `round()` as
+the companies' are, always 0–100; a blank input means no score, as before. Each score's input and direction is defined once,
+`validate_data.FACTOR_SRC`, for companies, funds and the gate. Why: the 11-24 publish ranked 33 US ETFs (23 with
 Yahoo's `priceToBook`, meaningless for a fund: SOXX 0.37, TLT 0.55, SPY 1.76 against a real P/B of about 5) and 3 Korean listed
 infrastructure funds (088980, 415640, 094800) with the companies, so 547 of 665 US companies' `vz` were off by up to 3 points (mean 1.2;
 JPM 67 → 70, TDY 62 → 65), US `mz` · `lz` by up to 2 · 3, Korean `pz` · `mz` · `lz` by 1. Funds keep their scores so that nothing disappears
-from the old app's 내 포트폴리오의 성향 card or 기업분석 strip (review #189 S1 · S2); theirs move by up to 3 (SPY `lz` 97 → 99, QQQ `vz` 77 → 79;
-SOXX and TLT stay 가치 100, because Yahoo's fund PBR is below every company's). The log line after the ranking is `· 팩터 점수 (국내|미국):
+from the old app's 내 포트폴리오의 성향 card or 기업분석 strip (review #189 S1 · S2); theirs move by up to 3 (SPY `lz` 97 → 99, QQQ `vz` 77 → 79,
+GLD `lz` 87 → 90; SOXX and TLT stay 가치 100, because Yahoo's fund PBR is below every company's). The log line after the ranking is `· 팩터 점수 (국내|미국):
 회사 주식 N종목 (우선주 n 포함)끼리 순위 (가치 vz … · 추세 mz … · 저변동 lz …) · 펀드 M곳은 순위에 넣지 않고 회사 분포에 견줘 매김 (점수 있는
 펀드 m) (names)`. The gate row `팩터 점수: 회사끼리 순위 · 펀드는 회사 분포에 견줌 (다시 매겨 맞춰 봄 · 경고만)` (`check_factor_pool`) re-scores
 the file from its own values without pandas (`factor_score_diffs`: average rank ÷ count × 100 for companies, the formula above for funds)
-and names every cell that differs, plus any score on a `fund` row, a bond, gold or another non-stock row; it warns, never fails, in every
-mode, and warns too when it can't read `stocks`. On a warning: a file published before #189 differs in about 2,000 cells (expected until
+and names every cell that differs (a blank as `빈 값`), plus any score on a `fund` row, a bond, gold or another non-stock row; its value says
+what it compared (`모두 같음 (다시 매겨 견준 것: 회사 3,275 · 펀드 36 · 칸 19,944 · 점수가 없어야 할 행 13)` on the re-scored 11-24 file); it
+warns, never fails, in every mode, and warns too when it can't read `stocks`. Until the first publish after #189 its warning takes one of
+the visible annotation slots (review note N5). On a warning: a file published before #189 differs in about 2,000 cells (expected until
 the first publish with this code); otherwise a fund ranked with the companies, a score input changed after the ranking, or a wrong `etf`
 mark (see the `etf 표시가 맞음` row). Not changed: a US fund's PER · PBR (and so its 가치 score) still come from Yahoo; the old app's 종목
 고르기 card shows them ("PER / PBR"), and a 2.0 두 종목 비교 with a held US ETF shows its PBR; blanking them needs a say-why line, so it is

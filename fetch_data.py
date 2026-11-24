@@ -4876,8 +4876,9 @@ def add_percentiles(stocks):
     (예전엔 섞여서 한국 899종목의 가치 점수가 10점 넘게 달라졌어요).
     2026-11-24 (#189): 순위는 회사 주식(우선주 포함)끼리만 매겨요. 펀드(etf 참 · fund — validate_data.factor_fund)는 순위에 들어가지 않고
     (11-24 발행본: 미국 ETF 33곳 · 국내 상장 인프라 펀드 3곳이 섞여 미국 회사의 가치 점수가 최대 3점 틀어졌어요), 같은 시장 회사들의 분포에
-    견줘 점수를 받아요 (fund_percentile — 화면에서 점수가 사라지지 않게): 회사 중 그 값 이하인 곳의 비율 × 100 (규모 · 가치 · 저변동은
-    100 에서 뺀 값), 회사와 같게 반올림. 입력이 빈 펀드는 예전처럼 그 점수가 없어요. 펀드 행에 있던 점수 칸은 먼저 지워요."""
+    견줘 점수를 받아요 (fund_percentile — 화면에서 점수가 사라지지 않게): 같은 값의 회사가 있으면 그 회사들과 같은 점수, 없으면 그 값보다 작은
+    회사의 비율 × 100 (규모 · 가치 · 저변동은 100 에서 뺀 값), 회사와 같게 반올림. 입력이 빈 펀드는 예전처럼 그 점수가 없어요. 펀드 행에 있던
+    점수 칸은 먼저 지워요."""
     mk = {s.get("cls") for s in stocks}
     if len(mk) > 1:
         raise ValueError(f"add_percentiles 에 여러 시장이 섞였어요: {sorted(map(str, mk))}")
@@ -4896,8 +4897,8 @@ def add_percentiles(stocks):
     # 저변동(lz)은 변동성이 낮을수록 높은 점수
     # v19.1b 배당(dz): 한국만 — 오늘 종가 기준 배당수익률(dyt)이 높을수록. dyt 는 분할을 확인한 주당 배당금으로만 만들어요
     # (확인 못 한 종목은 빈 칸이라 순위에서 빠져요). 미국은 dyt 가 없어 dz 도 없어요 (미국 배당은 그대로 야후 수익률 dy).
-    series = {"pz": 100 - pr("cap"), "vz": 100 - pr("pbr"), "mz": pr("mom"), "qz": pr("roe"), "lz": 100 - pr("vol"),
-              "dz": pr("dyt")}
+    # 방향은 validate_data.FACTOR_SRC 한 곳에서 (#189 리뷰 N4): pz 100 − pr(cap) · vz 100 − pr(pbr) · mz pr(mom) · qz pr(roe) · lz 100 − pr(vol) · dz pr(dyt)
+    series = {k: (100 - pr(col) if low_high else pr(col)) for k, (col, low_high) in FACTOR_SRC.items()}
     for i, s in enumerate(pool):
         for k, ser in series.items():
             v = ser.iloc[i]
@@ -4913,12 +4914,15 @@ def add_percentiles(stocks):
 
 
 def fund_percentile(ref, x, low_high):
-    """2026-11-24 (#189): 펀드 한 칸의 점수 — 회사 값(ref, 오름차순 · 빈 값 없음) 중 x 이하인 곳의 비율 × 100, low_high 면 100 에서 빼요
-    (낮을수록 높은 점수: 규모 · 가치 · 저변동). 회사 점수(pandas rank pct · 같은 값은 평균 순위)와 같은 자리: 같은 값이 없으면 x 와 같은 값의
-    회사와 같은 점수예요. x 가 없거나 회사 값이 하나도 없으면 None. 반올림은 회사와 같게 int(round(·)). (순수 함수)"""
+    """2026-11-24 (#189): 펀드 한 칸의 점수 — 회사 값(ref, 오름차순 · 빈 값 없음) 중 n 곳에 견준 순위 r ÷ n × 100, low_high 면 100 에서 빼요
+    (낮을수록 높은 점수: 규모 · 가치 · 저변동). r: x 와 같은 값의 회사가 있으면 그 회사들의 평균 순위 (아래 b곳 · 같은 값 e곳이면 b + (e + 1) ÷ 2
+    — 회사 점수 pandas rank(pct) 와 같은 셈이라 같은 값이면 늘 같은 점수 · Fable 리뷰 S1), 없으면 x 보다 작은 회사 수 b (그래서 0 ~ 100 안).
+    x 가 없거나 회사 값이 하나도 없으면 None. 반올림은 회사와 같게 int(round(·)). (순수 함수)"""
     if x is None or not len(ref):
         return None
-    p = np.searchsorted(ref, x, side="right") / len(ref) * 100
+    lo, hi = int(np.searchsorted(ref, x, side="left")) + 1, int(np.searchsorted(ref, x, side="right"))
+    r = (lo + hi) / 2 if hi >= lo else hi
+    p = r / len(ref) * 100
     return int(round(100 - p if low_high else p))
 
 

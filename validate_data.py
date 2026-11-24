@@ -2839,12 +2839,13 @@ def factor_fund(s):
     return isinstance(s, dict) and (s.get("etf") is True or bool(s.get("fund")))
 
 
-def factor_score_diffs(data):
+def factor_score_diffs(data, counts=None):
     """발행 파일의 팩터 점수를 그 파일의 값으로 다시 매겨, 다른 칸 → [(티커, 칸, 발행 값, 다시 매긴 값)]. (순수 함수 · pandas 없이)
     시장마다 (kr · us) 그 시장의 fund 아닌 행 (파이프라인이 add_percentiles 에 넘기는 행): 회사(etf 거짓)는 회사끼리 순위 — 같은 값은 평균
-    순위 ÷ 회사 수 × 100 (pandas rank(pct=True) 와 같은 셈) · 펀드(etf 참)는 회사 값 중 그 값 이하인 곳의 비율 × 100 · 규모 · 가치 · 저변동은
-    100 에서 빼요 · 반올림 round(). 값이 빈 행은 점수가 없어야 해요. fund 행 · 채권 · 금 · 그 밖의 행은 점수가 아예 없어야 해요.
-    펀드가 순위에 섞인 파일(#189 전)은 회사 점수가 다르게 나와요."""
+    순위 ÷ 회사 수 × 100 (pandas rank(pct=True) 와 같은 셈) · 펀드(etf 참)는 그 값과 같은 회사가 있으면 그 회사들의 평균 순위, 없으면 그 값보다
+    작은 회사 수 ÷ 회사 수 × 100 (같은 값이면 회사와 같은 점수 · 리뷰 S1) · 규모 · 가치 · 저변동은 100 에서 빼요 · 반올림 round(). 값이 빈 행은
+    점수가 없어야 해요. fund 행 · 채권 · 금 · 그 밖의 행은 점수가 아예 없어야 해요. 펀드가 순위에 섞인 파일(#189 전)은 회사 점수가 다르게 나와요.
+    counts (dict) 를 주면 견준 수를 채워요: 회사 · 펀드 · 칸 · 점수가 없어야 할 행 (리뷰 N1)."""
     import bisect
     rows = (data or {}).get("stocks") if isinstance(data, dict) else None
     if not isinstance(rows, list):
@@ -2878,13 +2879,21 @@ def factor_score_diffs(data):
                 if x is None or not n:
                     cmp(s, k, None)
                     continue
-                p = bisect.bisect_right(ref, x) / n * 100
+                lo, hi = bisect.bisect_left(ref, x) + 1, bisect.bisect_right(ref, x)
+                p = ((lo + hi) / 2 if hi >= lo else hi) / n * 100
                 cmp(s, k, int(round(100 - p if low else p)))
-    for s in rows:
-        if isinstance(s, dict) and id(s) not in seen:
-            for k in FACTOR_KEYS:
-                if s.get(k) is not None:
-                    out.append((str(s.get("t")), k, s.get(k), None))
+        if counts is not None:
+            counts["co"] = counts.get("co", 0) + len(cos)
+            counts["fd"] = counts.get("fd", 0) + len(fds)
+            counts["cells"] = counts.get("cells", 0) + (len(cos) + len(fds)) * len(FACTOR_SRC)
+    other = [s for s in rows if isinstance(s, dict) and id(s) not in seen]
+    for s in other:
+        for k in FACTOR_KEYS:
+            if s.get(k) is not None:
+                out.append((str(s.get("t")), k, s.get(k), None))
+    if counts is not None:
+        counts["other"] = len(other)
+        counts["cells"] = counts.get("cells", 0) + len(other) * len(FACTOR_KEYS)
     return out
 
 
@@ -2892,17 +2901,23 @@ def check_factor_pool(rep, data):
     """2026-11-24 (#189): 팩터 점수가 '회사끼리 순위 · 펀드는 회사 분포에 견줌' 그대로인지, 발행 파일의 값으로 다시 매겨 맞춰 봐요
     (factor_score_diffs). **경고만** — 어떤 모드에서도 실패하지 않아요 (발행을 멈추는 줄은 Jack 의 답이 있어야 해요) · 검사가 멈춰도 경고.
     다르면 다른 칸 수 · 종목 수와 처음 몇 칸(종목.칸 발행 값→다시 매긴 값)을 줄에 적어요 (펀드가 순위에 섞였거나, 순위 뒤에 값이 바뀌었다는 뜻)."""
-    rule = "회사 주식(우선주 포함)끼리 순위 · 펀드(etf 참)는 회사 값 중 그 값 이하 비율 · fund 행 · 채권 · 금은 점수 없음 (다르면 경고 · 실패 없음)"
+    rule = ("회사 주식(우선주 포함)끼리 순위 · 펀드(etf 참)는 회사 분포에 견준 자리 (같은 값이면 회사와 같은 점수) · fund 행 · 채권 · 금은 점수 없음 "
+            "(다르면 경고 · 실패 없음)")
+    cnt = {}
     try:
-        bad = factor_score_diffs(data)
+        bad = factor_score_diffs(data, cnt)
     except Exception as e:
         rep.add(FACTOR_POOL_ROW, True, f"검사가 멈췄어요: {type(e).__name__}: {str(e)[:120]}", rule + " (멈춰도 경고만)", warn=True)
         return
+    seen = (f"다시 매겨 견준 것: 회사 {cnt.get('co', 0):,} · 펀드 {cnt.get('fd', 0):,} · 칸 {cnt.get('cells', 0):,} · "
+            f"점수가 없어야 할 행 {cnt.get('other', 0):,}")
     if not bad:
-        rep.add(FACTOR_POOL_ROW, True, "모두 같음", rule)
+        rep.add(FACTOR_POOL_ROW, True, f"모두 같음 ({seen})", rule)
         return
     nt = len({t for t, *_ in bad})
-    rep.add(FACTOR_POOL_ROW, True, f"다른 칸 {len(bad)} ({nt}종목): " + ", ".join(f"{t}.{k} {a}→{b}" for t, k, a, b in bad[:US_OWN_SHOW])
+    sh = lambda v: "빈 값" if v is None else v   # noqa: E731 — 로그에 파이썬 None 을 쓰지 않아요 (#178 처럼 · 리뷰 N2)
+    rep.add(FACTOR_POOL_ROW, True, f"다른 칸 {len(bad)} ({nt}종목 · {seen}): "
+            + ", ".join(f"{t}.{k} {sh(a)}→{sh(b)}" for t, k, a, b in bad[:US_OWN_SHOW])
             + (f" 외 {len(bad) - US_OWN_SHOW}칸" if len(bad) > US_OWN_SHOW else "") + " (펀드가 순위에 섞였거나 순위 뒤에 값이 바뀌었어요)", rule, warn=True)
     # 칸 목록(rep.detail)은 따로 적지 않아요: 줄에 처음 몇 칸과 수가 있고, 다른 줄들의 목록 시험(rep.details 를 통째로 견주는 시험)을 흔들지 않게요
 

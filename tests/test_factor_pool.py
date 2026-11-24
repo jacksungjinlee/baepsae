@@ -54,14 +54,16 @@ def before(stocks):
 
 
 def fund_by_hand(cos, s):
-    """펀드 점수를 손으로: 회사 값 중 그 값 이하인 곳의 비율 × 100 (규모 · 가치 · 저변동은 100 에서 뺌) · 반올림. 입력이 빈 칸은 없음."""
+    """펀드 점수를 손으로: 같은 값의 회사가 있으면 그 회사들의 평균 순위, 없으면 그 값보다 작은 회사 수 — ÷ 회사 수 × 100 (규모 · 가치 ·
+    저변동은 100 에서 뺌) · 반올림. 입력이 빈 칸은 없음."""
     out = {}
     for k, (col, low) in {"pz": ("cap", 1), "vz": ("pbr", 1), "mz": ("mom", 0), "qz": ("roe", 0), "lz": ("vol", 1), "dz": ("dyt", 0)}.items():
         ref = sorted(c[col] for c in cos if F._fin(c.get(col)) is not None)
         x = F._fin(s.get(col))
         if x is None or not ref:
             continue
-        p = sum(1 for v in ref if v <= x) / len(ref) * 100
+        below, eq = sum(1 for v in ref if v < x), sum(1 for v in ref if v == x)
+        p = (below + (eq + 1) / 2 if eq else below) / len(ref) * 100
         out[k] = round(100 - p if low else p)
     return out
 
@@ -126,13 +128,28 @@ def test_company_scores_are_unchanged_when_there_are_no_funds(cls):
     assert "vz" not in rows[-2] and "qz" not in rows[-2] and "pz" not in rows[-2]    # 빈 값 · NaN · inf 는 예전처럼 점수 없음
 
 
-def test_ties_among_companies_and_a_fund_on_the_tie():
-    """회사 넷이 같은 값: 회사는 평균 순위 (pandas) · 펀드는 '그 값 이하' 라 그 묶음의 맨 위 자리예요 (문서의 식 그대로)."""
-    cos = [{"t": f"C{i}", "cls": "us", "etf": False, "mom": v} for i, v in enumerate([1.0, 2.0, 2.0, 2.0, 2.0, 3.0, 4.0, 5.0])]
-    fd = {"t": "E", "cls": "us", "etf": True, "mom": 2.0}
+@pytest.mark.parametrize("key, col", [("mz", "mom"), ("lz", "vol"), ("vz", "pbr"), ("dz", "dyt")])
+def test_a_fund_on_a_tie_gets_the_tied_companies_score_in_each_direction(key, col):
+    """리뷰 #189 Fable S1: 같은 값이면 펀드도 그 회사들과 같은 점수 (평균 순위). 높을수록 (mz · dz) · 낮을수록 (lz · vz) 두 방향 모두."""
+    vals = [1.0, 2.0, 2.0, 2.0, 2.0, 3.0, 4.0, 5.0]
+    cos = [{"t": f"C{i}", "cls": "kr", "etf": False, col: v} for i, v in enumerate(vals)]
+    fds = [{"t": f"E{x}", "cls": "kr", "etf": True, col: x} for x in (2.0, 1.0, 5.0, 0.5, 9.0, 2.5)]
+    F.add_percentiles(cos + fds)
+    high = key in ("mz", "dz")
+    want_co = [12, 44, 44, 44, 44, 75, 88, 100] if high else [88, 56, 56, 56, 56, 25, 12, 0]   # (2+5)/2 ÷ 8 = 43.75 · 1/8 = 12.5 → 12
+    assert [c[key] for c in cos] == want_co
+    by = {f["t"]: f[key] for f in fds}
+    assert by["E2.0"] == want_co[1] and by["E1.0"] == want_co[0] and by["E5.0"] == want_co[-1]       # 같은 값 = 같은 점수
+    assert (by["E0.5"], by["E9.0"]) == ((0, 100) if high else (100, 0))                          # 모든 회사 밖: 0 · 100 (넘지 않아요)
+    assert by["E2.5"] == (round(100 * 5 / 8) if high else round(100 - 100 * 5 / 8))             # 사이 값: 그보다 작은 회사 5곳
+
+
+def test_a_fund_with_dyt_0_gets_what_the_non_payers_get():
+    """잠재 사례 (Fable S1): 국내 회사 1,192곳이 dyt 0 → dz 25. dyt 0 인 펀드도 25 (예전 '이하' 셈이면 50)."""
+    cos = [{"t": f"C{i}", "cls": "kr", "etf": False, "dyt": 0.0 if i < 50 else 1.0 + i} for i in range(100)]
+    fd = {"t": "088980", "cls": "kr", "etf": True, "dyt": 0.0}
     F.add_percentiles(cos + [fd])
-    assert [c["mz"] for c in cos] == [12, 44, 44, 44, 44, 75, 88, 100]   # (2+5)/2 ÷ 8 = 43.75
-    assert fd["mz"] == round(100 * 5 / 8) == 62
+    assert cos[0]["dz"] == round((1 + 50) / 2 / 100 * 100) == fd["dz"] == 26
 
 
 def test_only_funds_or_nothing_does_not_break():
@@ -197,9 +214,14 @@ def test_us_scores_before_and_after_on_the_1124_publish():
     vz = {t: (by_old[t]["vz"], by_new[t]["vz"]) for t in ("AAPL", "MSFT", "JPM", "XOM", "INTC", "KO", "TDY", "PLD")}
     assert vz == {"AAPL": (1, 1), "MSFT": (24, 24), "JPM": (67, 70), "XOM": (69, 71), "INTC": (59, 61), "KO": (16, 17), "TDY": (62, 65),
                   "PLD": (72, 75)}
-    funds = {t: {k: (by_old[t][k], by_new[t].get(k)) for k in ("vz", "mz", "lz")} for t in ("SOXX", "TLT", "SPY", "QQQ")}
+    funds = {t: {k: (by_old[t][k], by_new[t].get(k)) for k in ("vz", "mz", "lz")} for t in ("SOXX", "TLT", "SPY", "QQQ", "GLD", "XLK", "VBR")}
     assert funds == {"SOXX": {"vz": (100, 100), "mz": (90, 90), "lz": (27, 28)}, "TLT": {"vz": (100, 100), "mz": (23, 24), "lz": (99, 100)},
-                     "SPY": {"vz": (82, 83), "mz": (46, 45), "lz": (97, 99)}, "QQQ": {"vz": (77, 79), "mz": (46, 45), "lz": (85, 87)}}
+                     "SPY": {"vz": (82, 83), "mz": (46, 45), "lz": (97, 99)}, "QQQ": {"vz": (77, 79), "mz": (46, 45), "lz": (85, 88)},
+                     "GLD": {"vz": (75, 77), "mz": (16, 17), "lz": (87, 90)}, "XLK": {"vz": (94, 95), "mz": (61, 60), "lz": (65, 68)},
+                     "VBR": {"vz": (68, 70), "mz": (59, 58), "lz": (94, 97)}}
+    for t, k, col in (("GLD", "lz", "vol"), ("QQQ", "lz", "vol"), ("XLK", "lz", "vol"), ("VBR", "mz", "mom")):   # Fable S1 의 같은 값 사례
+        tied = {by_new[c][k] for c in cos if by_old[c][col] == by_old[t][col]}
+        assert tied == {by_new[t][k]}, (t, tied)
     fshift = [abs(by_new[r["t"]][k] - r[k]) for r in rows if r["etf"] for k in KEYS if r[k] is not None]
     assert len(fshift) == 23 + 33 + 33 and max(fshift) == 3                              # 펀드도 가까운 값 (예전 셈은 회사와 섞인 자리)
     assert all(by_new[r["t"]][k] == F.fund_percentile(sorted(x[V.FACTOR_SRC[k][0]] for x in rows if not x["etf"]
@@ -260,11 +282,12 @@ def scored_file():
 
 def test_gate_row_passes_on_what_the_pipeline_writes():
     st, val, _r = gate(scored_file())                                  # pandas 로 매긴 값 = 관문이 pandas 없이 다시 매긴 값 (한 칸도 다르지 않아요)
-    assert (st, val) == ("PASS", "모두 같음")
+    assert (st, val) == ("PASS", "모두 같음 (다시 매겨 견준 것: 회사 779 · 펀드 36 · 칸 4,908 · 점수가 없어야 할 행 3)"), val
+    assert gate({"stocks": [1, "a", None, {"cls": "kr"}]})[:2] == ("PASS", "모두 같음 (다시 매겨 견준 것: 회사 1 · 펀드 0 · 칸 6 · 점수가 없어야 할 행 0)")
     t = {"stocks": [{"t": f"C{i}", "cls": "us", "etf": False, "mom": v} for i, v in enumerate([1.0, 2.0, 2.0, 2.0, 2.0, 3.0, 4.0, 5.0])]
          + [{"t": "E", "cls": "us", "etf": True, "mom": 2.0}]}
     F.add_percentiles(t["stocks"])
-    assert gate(t)[:2] == ("PASS", "모두 같음")                       # 같은 값 묶음도 똑같이
+    assert gate(t)[:2] == ("PASS", "모두 같음 (다시 매겨 견준 것: 회사 8 · 펀드 1 · 칸 54 · 점수가 없어야 할 행 0)")   # 같은 값 묶음도 똑같이
 
 
 def test_gate_row_warns_on_a_file_ranked_with_its_funds():
@@ -275,7 +298,8 @@ def test_gate_row_warns_on_a_file_ranked_with_its_funds():
     assert rep.details == []                                           # 다른 줄의 목록을 흔들지 않아요 (줄에 처음 10칸과 수)
     diffs = V.factor_score_diffs(data)
     assert ("JPM", "vz", 67, 70) in diffs and ("SPY", "lz", 97, 99) in diffs
-    assert val.startswith(f"다른 칸 {len(diffs)} ({len({d[0] for d in diffs})}종목): ")
+    assert val.startswith(f"다른 칸 {len(diffs)} ({len({d[0] for d in diffs})}종목 · 다시 매겨 견준 것: 회사 767 · 펀드 33 · 칸 4,800 · "
+                          "점수가 없어야 할 행 0): "), val
 
 
 @pytest.mark.parametrize("change, want", [
@@ -292,6 +316,7 @@ def test_gate_row_names_each_kind_of_difference(change, want):
     st, val, _r = gate(d)
     items = [f"{t}.{k} {a} → {b}" for t, k, a, b in V.factor_score_diffs(d)]
     assert st == "WARN" and any(x.startswith(want) for x in items), (val, items[:5])
+    assert "None" not in val and ("빈 값" in val) == any(a is None or b is None for _t, _k, a, b in V.factor_score_diffs(d))   # 리뷰 N2
 
 
 @pytest.mark.parametrize("data", [{"stocks": "x"}, {}, None, "not a dict"])
@@ -330,4 +355,5 @@ def test_a_published_file_before_and_after_in_both_markets(capsys):
     assert seen["kr"][0]["vz"] == 0 and max(seen["kr"][0].values()) <= 1      # 국내 펀드는 PBR · ROE · 배당이 없어 가치 · 퀄리티 · 배당은 그대로
     assert max(seen["us"][0].values()) <= 3 and max(seen["kr"][1], seen["us"][1]) <= 3
     rest = [s for s in d["stocks"] if not (s.get("cls") in ("kr", "us") and not s.get("fund"))]
-    assert gate({"stocks": after + rest})[:2] == ("PASS", "모두 같음")
+    st, val, _r = gate({"stocks": after + rest})
+    assert st == "PASS" and val.startswith("모두 같음 (다시 매겨 견준 것: 회사 "), val
