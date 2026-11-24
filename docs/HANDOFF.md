@@ -24,6 +24,14 @@ links, "전무가" off the must-not-show list, labels) and a rename in `tests/te
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
 v19.6g, v19.6h.
 
+**홈's US close line (#?, 2026-11-24; same class as #187's 포트폴리오 fix, minor):** app only, no new words. 홈 (`home2.jsx`) and the
+old 홈 behind the HOME2 switch (`today.jsx` Home) decided "a US stock is held" by `cls`, so a portfolio made with 포트폴리오 만들기
+holding 379800 KODEX 미국S&P500 (cls "us", a KRX listing priced in won at the Korean close) showed "미국 종목은 현지 기준 {md}
+종가예요." after a US holiday (next: 11-27's publish, pxDate 11-26 · usPxDate 11-25). Now by `pf.usdOf` (the data's currency), as
+`usHeld` and #187's 포트폴리오 line; 홈 still counts only shares held (`x.qty !== 0`). The one pinned string in
+`tests/test_v196a_approved.py::test_home_counts_only_shares_held` follows the new code; `tests/test_v2_home_usd.py` renders both 홈s.
+Next in the queue unchanged (v19.3 Part L).
+
 **Split rounding (#184, 2026-11-24; Track 2 audit 1.1, serious but rare, and 1.4):** 47 of data.json's 150 splits have a ratio
 that isn't a whole number (DD 1:3, UL 8:9, HON and AZN 1:2, AMCR 1:5, SNEX 3:2 …). Records dated before one broke when they didn't give
 whole 1/10,000 shares (for 11 of the 47, one share already doesn't; for the rest, a 0.0001-share sale or a 금액으로 넣기 row):
