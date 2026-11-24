@@ -2781,7 +2781,7 @@ def factor_score_diffs(data):
 def check_factor_pool(rep, data):
     """2026-11-24 (#189): 팩터 점수가 '회사끼리 순위 · 펀드는 회사 분포에 견줌' 그대로인지, 발행 파일의 값으로 다시 매겨 맞춰 봐요
     (factor_score_diffs). **경고만** — 어떤 모드에서도 실패하지 않아요 (발행을 멈추는 줄은 Jack 의 답이 있어야 해요) · 검사가 멈춰도 경고.
-    다르면 종목 · 칸 · 발행 값 → 다시 매긴 값을 적어요 (펀드가 순위에 섞였거나, 순위 뒤에 값이 바뀌었다는 뜻)."""
+    다르면 다른 칸 수 · 종목 수와 처음 몇 칸(종목.칸 발행 값→다시 매긴 값)을 줄에 적어요 (펀드가 순위에 섞였거나, 순위 뒤에 값이 바뀌었다는 뜻)."""
     rule = "회사 주식(우선주 포함)끼리 순위 · 펀드(etf 참)는 회사 값 중 그 값 이하 비율 · fund 행 · 채권 · 금은 점수 없음 (다르면 경고 · 실패 없음)"
     try:
         bad = factor_score_diffs(data)
@@ -2794,7 +2794,7 @@ def check_factor_pool(rep, data):
     nt = len({t for t, *_ in bad})
     rep.add(FACTOR_POOL_ROW, True, f"다른 칸 {len(bad)} ({nt}종목): " + ", ".join(f"{t}.{k} {a}→{b}" for t, k, a, b in bad[:US_OWN_SHOW])
             + (f" 외 {len(bad) - US_OWN_SHOW}칸" if len(bad) > US_OWN_SHOW else "") + " (펀드가 순위에 섞였거나 순위 뒤에 값이 바뀌었어요)", rule, warn=True)
-    rep.detail("다시 매긴 팩터 점수와 다른 칸 (종목.칸 발행 값 → 다시 매긴 값)", [f"{t}.{k} {a} → {b}" for t, k, a, b in bad])
+    # 칸 목록(rep.detail)은 따로 적지 않아요: 줄에 처음 몇 칸과 수가 있고, 다른 줄들의 목록 시험(rep.details 를 통째로 견주는 시험)을 흔들지 않게요
 
 
 def coverage(arr, key):

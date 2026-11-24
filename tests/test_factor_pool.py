@@ -269,11 +269,13 @@ def test_gate_row_passes_on_what_the_pipeline_writes():
 
 def test_gate_row_warns_on_a_file_ranked_with_its_funds():
     _f, rows = us_1124()                                               # #189 전에 발행된 점수 그대로
-    st, val, rep = gate({"stocks": [dict(r) for r in rows]})
-    assert st == "WARN" and val.startswith("다른 칸 ") and "(펀드가 순위에 섞였거나 순위 뒤에 값이 바뀌었어요)" in val, val
-    title, items = rep.details[-1]
-    assert title == "다시 매긴 팩터 점수와 다른 칸 (종목.칸 발행 값 → 다시 매긴 값)"
-    assert "JPM.vz 67 → 70" in items and "SPY.lz 97 → 99" in items
+    data = {"stocks": [dict(r) for r in rows]}
+    st, val, rep = gate(data)
+    assert st == "WARN" and val.startswith("다른 칸 ") and val.endswith("(펀드가 순위에 섞였거나 순위 뒤에 값이 바뀌었어요)"), val
+    assert rep.details == []                                           # 다른 줄의 목록을 흔들지 않아요 (줄에 처음 10칸과 수)
+    diffs = V.factor_score_diffs(data)
+    assert ("JPM", "vz", 67, 70) in diffs and ("SPY", "lz", 97, 99) in diffs
+    assert val.startswith(f"다른 칸 {len(diffs)} ({len({d[0] for d in diffs})}종목): ")
 
 
 @pytest.mark.parametrize("change, want", [
@@ -287,8 +289,9 @@ def test_gate_row_warns_on_a_file_ranked_with_its_funds():
 def test_gate_row_names_each_kind_of_difference(change, want):
     d = scored_file()
     change(d)
-    st, val, rep = gate(d)
-    assert st == "WARN" and any(x.startswith(want) for x in rep.details[-1][1]), (val, rep.details[-1][1][:5])
+    st, val, _r = gate(d)
+    items = [f"{t}.{k} {a} → {b}" for t, k, a, b in V.factor_score_diffs(d)]
+    assert st == "WARN" and any(x.startswith(want) for x in items), (val, items[:5])
 
 
 @pytest.mark.parametrize("data", [{"stocks": "x"}, {}, None, "not a dict"])
