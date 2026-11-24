@@ -28,6 +28,7 @@ import { C, fill, mdText, wonText, exactWon } from "./format.js";
 import { tx, tap, useLayout, useNav, useMode } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { signedPct } from "./deckcalc.js";
+import { shownPct } from "../ui/pct.js";
 import { isCompany } from "./stocklist.js";
 import { shownName } from "./legacy.js";
 import { weeklyModel, readClosed, closeWeek, WEEK_KEY, PREVIEW_WEEK_KEY, FILING_KINDS } from "./weekly.js";
@@ -56,7 +57,7 @@ export function cardModel(args, mode) {
     said: `${nvNames(m).length} Naver-confirmed stocks: the capped footnote waits for Jack (C.weekly.nvNoteMore), so they are left out as under "out"` };
 }
 const tone = (r) => (r > 0 ? COLOR.up : r < 0 ? COLOR.down : COLOR.text2);
-const r1 = (x) => Math.round(x * 10);                       // the sign as shown at one decimal
+const r1 = shownPct;                                        // the sign as shown at one decimal (the text's own rounding)
 
 // What a card shows, from the model and the approved words. -> { tiles, mover, notes, say: [console lines], show }
 export function weeklyView(m, opts = {}) {

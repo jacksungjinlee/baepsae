@@ -16,6 +16,7 @@ import { CARDS, NA, num, universe, liquidity, LIQ_FLOOR_EOK, isFin, hasGroup, to
   screen, percentileScores, cardRaw, activeCards, sameCompany, exclusionsHit, fyOf, growthBasis } from "./engine.js";
 import { peerGroup, GROUP_MIN } from "./track.js";
 import { warnings } from "./warn.js";
+import { shownPct } from "../ui/pct.js";
 
 export { GROUP_MIN };
 // The chips, in Jack's order (spec Part A).
@@ -438,7 +439,7 @@ export function indGroups(stocks, mk) {
 // (the 종목 tab's 전체 보기 shows every group, highest first: indGroups itself).
 export function indParts(groups, n = 5) {
   const gs = Array.isArray(groups) ? groups : [];
-  const r = (g) => Math.round(g.avg * 10);
+  const r = (g) => shownPct(g.avg);
   return { up: gs.filter((g) => r(g) > 0).slice(0, n), down: gs.filter((g) => r(g) < 0).reverse().slice(0, n) };
 }
 // The line under a group: "{n}개 중 {k}개 오름" when the average is 0 or up (k = companies up today), "{n}개 중 {k}개 내림"

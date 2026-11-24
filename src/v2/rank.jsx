@@ -30,6 +30,7 @@ import { useStockTap } from "./stocks.jsx";
 import { ownCloses } from "./stocklist.js";
 import { CARD_PICS } from "./pictures.js";
 import { eokText, signedPct } from "./deckcalc.js";
+import { shownPct } from "../ui/pct.js";
 import { yieldText } from "./cofmt.js";
 import { num, todayD1, sameCompany } from "./engine.js";
 import { RANK_TOP, RANK_FULL, CRIT, rankRows, pointsDeck, chipsFor, shownChip, groupWord, groupList, indParts,
@@ -50,7 +51,7 @@ const ROLL_CSS = "@keyframes v2-rank-roll { 0%, 7% { transform: translateY(0); }
 const CHIP_LINE = COLOR.chipEdge;        // board: the unselected chip's edge
 const WIN_LINE = COLOR.winEdge;          // board: the window's edge (v19.6d: the switch's background is its own token, COLOR.track)
 // Price red · blue from the value as shown (one decimal): a change that reads "0.0%" is neutral, never red or blue.
-const changeColor = (v) => { const r = Math.round(v * 10); return r > 0 ? COLOR.up : r < 0 ? COLOR.down : COLOR.text2; };
+const changeColor = (v) => { const r = shownPct(v); return r > 0 ? COLOR.up : r < 0 ? COLOR.down : COLOR.text2; };
 
 // ---------------- the choice, shared by 홈 and the 종목 tab and remembered on this device ----------------
 const shared = { key: null, pick: null, jump: false, listeners: new Set() };
@@ -615,7 +616,7 @@ function GroupHead({ g, backRef, onBack }) {
         <span style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { display: "block", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" })}>{g.name || g.ind}</span>
         <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block" })}>
           <span>{fill(w.up ? C.rank.up : C.rank.down, { n: g.n, k: w.k })}</span>{" · "}
-          <span data-ui-v2="rank-group-avg" style={{ color: Math.round(g.avg * 10) > 0 ? COLOR.upOnPage : Math.round(g.avg * 10) < 0 ? COLOR.down : COLOR.text2,
+          <span data-ui-v2="rank-group-avg" style={{ color: shownPct(g.avg) > 0 ? COLOR.upOnPage : shownPct(g.avg) < 0 ? COLOR.down : COLOR.text2,
             fontWeight: WEIGHT.bold }}>{signed(g.avg)}</span>
         </span>
       </span>

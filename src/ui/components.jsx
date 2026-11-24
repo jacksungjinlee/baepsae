@@ -5,6 +5,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { COLOR, OVERLAY, STATUS, FONT, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, SELECTED, SELECTED_ROW } from "./tokens.js";
 import { Icon } from "./icons.jsx";
+import { signedPct } from "./pct.js";
 
 // 모든 글자에 고정폭 숫자를 켜요 (숫자가 없는 글에는 영향 없음)
 const T = (size, weight, color, extra) => ({ fontFamily: FONT, fontSize: size, fontWeight: weight, color, lineHeight: 1.5,
@@ -14,11 +15,11 @@ const Section = ({ children, style }) => (
 );
 const tapReset = { WebkitTapHighlightColor: "transparent", cursor: "pointer", fontFamily: FONT, padding: 0 };   // 브라우저 기본 버튼 여백(1px 6px)을 지워요
 // 반올림한 뒤에 부호를 붙여요 (-0.04 가 "−0.0%" 로 보이지 않게). 숫자가 아니면 "–"
-const fmtPct = (v, d = 1) => {
+// 반올림은 2.0 의 다른 화면과 같은 하나 (pct.js signedPct · 감사 4.10): 예전 toFixed 는 0.15 를 +0.1% 로, 홈은 −3.95 를 −3.9% 로 보였어요
+const fmtPct = (v) => {
   const n = Number(v);
   if (v == null || !Number.isFinite(n)) return "–";
-  const r = Number(n.toFixed(d));
-  return `${r > 0 ? "+" : r < 0 ? "−" : ""}${Math.abs(r).toFixed(d)}%`;
+  return signedPct(n);
 };
 // "{pct}" 같은 자리 표시를 채워요 (Part 3 문구 파일과 같은 방식)
 export const fill = (tpl, vars) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (vars && vars[k] != null ? String(vars[k]) : m));

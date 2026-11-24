@@ -66,6 +66,7 @@ import { discDate } from "./company.js";
 import { rateFor, rateEnv } from "./records.js";
 import { kstDate } from "../data.js";
 import { WEEK_NV } from "./weekcfg.js";
+import { shownPct } from "../ui/pct.js";
 
 // The largest gap (days) between a market's week start and the price date the pipeline writes (fetch_data C1W_FROM_MAX_DAYS).
 export const FROM_MAX_DAYS = 12;
@@ -309,7 +310,7 @@ export function weekMover(held, byT, stocks, starts, nv = WEEK_NV, splits = null
     if (m == null) continue;
     if (!best || Math.abs(m) > Math.abs(best.pct) + 1e-12) best = { t, s, pct: m };
   }
-  if (!best || Math.round(Math.abs(best.pct) * 10) === 0) return null;
+  if (!best || shownPct(best.pct) === 0) return null;
   const g = peerGroup(best.s, stocks, (x) => weekPct(x, starts, nv, splits, today));
   const why = g.ok && g.together ? "fell" : g.ok && g.togetherUp ? "rose" : null;
   // nv: its last-week close was confirmed through Naver (the footnote names it under WEEK_NV "note")

@@ -52,6 +52,7 @@ import { MissingNote } from "./tracking.jsx";
 import { statusChips } from "./daily.jsx";
 import { isImported } from "./pf.js";
 import { signedPct } from "./deckcalc.js";
+import { shownPct } from "../ui/pct.js";
 import { ruleLabel, ruleDetail, brokenLine, limitPct, groupName } from "./pfview.jsx";
 import { usHeld, limitsOf } from "./pf.js";
 import { homeBlocks, concentration, barOf, quietBlock } from "./home.js";
@@ -162,7 +163,7 @@ function MoneyCard({ block, pxDate, load, late = false }) {
           <span data-ui-v2="home-value" data-v={Math.round(money.value)} style={tx(30, WEIGHT.heavy, COLOR.ink, { lineHeight: 1.15, letterSpacing: "-0.02em" })}>
             <Amount text={wonText(money.value)} /></span>
           {money.day && H.day && !late && (
-            <span data-ui-v2="home-day" data-pct={Math.round(money.day.pct * 1000) / 1000} style={tx(SIZE.sm, WEIGHT.heavy, tone(Math.round(money.day.pct * 10)))}>
+            <span data-ui-v2="home-day" data-pct={Math.round(money.day.pct * 1000) / 1000} style={tx(SIZE.sm, WEIGHT.heavy, tone(shownPct(money.day.pct)))}>
               {fill(H.day, { amount: signedWon(money.day.amount), pct: signedPct(money.day.pct) })}</span>
           )}
         </div>
@@ -170,7 +171,7 @@ function MoneyCard({ block, pxDate, load, late = false }) {
       {gainShown && H.gain && H.gainBasis && (
         <p data-ui-v2="home-gain" data-n={money.gain.n} data-ret={Math.round(money.gain.ret * 100000) / 1000} style={tx(SIZE.xs, WEIGHT.regular, COLOR.neutral, { marginTop: SPACE(1) })}>
           {/* the approved piece stays one text, coloured by its sign as "오늘 …" is (price red/blue only for up/down) */}
-          <b style={{ color: tone(Math.round(money.gain.ret * 1000)) }}>{fill(H.gain, { amount: signedWon(money.gain.gain), pct: signedPct(money.gain.ret * 100) })}</b>{" "}
+          <b style={{ color: tone(shownPct(money.gain.ret * 100)) }}>{fill(H.gain, { amount: signedWon(money.gain.gain), pct: signedPct(money.gain.ret * 100) })}</b>{" "}
           <span style={{ color: COLOR.text3 }}>{"· "}{fill(H.gainBasis, { n: money.gain.n })}</span>
         </p>
       )}
@@ -231,7 +232,7 @@ function HeldCard({ block, onWhy, md = null, late = false, aged = null }) {
               {/* 2026-11-20 (Jack, a): left out past the age limit of its last confirmed close */}
               {r.absent && <KrAgedLine aged={aged} t={r.t} style={{ marginTop: SPACE(1) }} />}
             </span>
-            <span data-ui-v2="home-change" style={tx(SIZE.sm, WEIGHT.heavy, r.d1 == null ? COLOR.text3 : tone(Math.round(r.d1 * 10)), { minWidth: 56, textAlign: "right", flexShrink: 0, whiteSpace: "nowrap" })}>
+            <span data-ui-v2="home-change" style={tx(SIZE.sm, WEIGHT.heavy, r.d1 == null ? COLOR.text3 : tone(shownPct(r.d1)), { minWidth: 56, textAlign: "right", flexShrink: 0, whiteSpace: "nowrap" })}>
               {r.d1 != null && !late ? signedPct(r.d1) : ""}</span>
           </div>
         );

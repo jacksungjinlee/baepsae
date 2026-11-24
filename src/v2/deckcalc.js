@@ -5,6 +5,7 @@ import {
   deckVol, num, liquidity, isStockLike, ruleBook, hasGroup, band2022, exactData,
 } from "./engine.js";
 import { C, fill, nf, p1, wonText, signed } from "./format.js";
+import { signedPct } from "../ui/pct.js";
 
 // Everything the builder needs for the current settings. blocked = 후보 고르기 could not be filled: a market has
 // fewer survivors than it must fill, or the industry limits leave too few pickable names (pre.blocked says which).
@@ -218,5 +219,6 @@ function fallPieces(t, vals) {
   const amount = fill(t.slice(i, j + glued.length), vals), verb = t.slice(j + glued.length).trim();
   return { text: fill(t, vals), pieces: [t.slice(0, i), amount, verb] };
 }
-// The sign follows the rounded value: −0.04 is "0.0%", never "−0.0%" (v19.1a review).
-export const signedPct = (v) => { const r = Math.round(v * 10) / 10; return `${r < 0 ? "\u2212" : r > 0 ? "+" : ""}${p1(Math.abs(r))}%`; };
+// The sign follows the rounded value: −0.04 is "0.0%", never "−0.0%" (v19.1a review). One rounding for every screen (audit 4.10):
+// src/ui/pct.js, which the list rows (src/ui/components.jsx fmtPct) read too.
+export { signedPct };

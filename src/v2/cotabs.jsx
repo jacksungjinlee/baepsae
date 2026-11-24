@@ -41,6 +41,7 @@ import { groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, growthVsInd
   divSmallView } from "./company.js";
 import { growthBasis, num, exactData } from "./engine.js";
 import { signedPct, eokText } from "./deckcalc.js";
+import { shownPct } from "../ui/pct.js";
 import { withAssume, assumeOf } from "./store.js";
 import { OLD_LINKS, dartFilingUrl } from "./routes.js";
 import { usOf, priceMd, priceDate, lineDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText, riskBandText, riskBandNote } from "./cofmt.js";
@@ -946,7 +947,7 @@ export function DiscTab({ load, s, disc }) {
       {v.nps && all(D.nps, D.npsNote) && (
         <Card data-ui-v2="co-nps" data-rt={v.nps.rt}>
           <CardHead icon="bank" tone="disc" title={fill(D.nps, { rt: p1(v.nps.rt) })} />
-          {v.nps.chg != null && Math.round(v.nps.chg * 10) !== 0 && <p style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { marginTop: SPACE(2) })}>{`${signedPct(v.nps.chg)}p`}</p>}
+          {v.nps.chg != null && shownPct(v.nps.chg) !== 0 && <p style={tx(SIZE.sm, WEIGHT.bold, COLOR.ink, { marginTop: SPACE(2) })}>{`${signedPct(v.nps.chg)}p`}</p>}
           <Note>{D.npsNote}</Note>
           <DateLine date={v.nps.date} />
         </Card>
