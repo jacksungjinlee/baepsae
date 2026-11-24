@@ -113,6 +113,8 @@ from validate_data import (US_CLASS_DROP_KEY, US_CLASS_DROP_MAX, DIV_LINE_DROP_K
 from validate_data import load_ksic_names, IND_DART_DIGITS, IND_MISS_KO, IND_MISS_OK, IND_FUND_KSIC, kr_desc_parse, KR_DESC_TAIL
 from validate_data import (load_ksic_map_kr, IND_SECTOR_KR, IND_FILL_CHECK, ind_fill_bad, ind_fill_rows, ksic_map_kr_sha,
                            KSIC_LENS_MISFIT)
+# 2026-11-24: 관문의 낱말 줄이 찾는 패턴 그대로 (한 곳 · 베끼지 않아요) — 우리가 쓰는 오류 · 까닭 글은 그 낱말을 '빈 값' 으로 바꿔 적어요 (pub_text)
+from validate_data import BAD_WORD as GATE_BAD_WORD
 
 # ────────────────────────────────────────────────────────────
 # 설정
@@ -445,6 +447,223 @@ def write_json(path, obj):
     if bad[0]:
         log(f"  !! {path}: 숫자가 아닌 값(NaN·Infinity) {bad[0]:,}개를 빈 값(null)으로 바꿔 저장했어요")
     return bad[0]
+
+
+# ────────────────────────────────────────────────────────────
+# 2026-11-24: 발행 파일에 쓰는 우리 글 (오류 · 까닭) 과 관문의 낱말 줄
+# ────────────────────────────────────────────────────────────
+# 관문의 '글자에 … 없음' 줄 (validate_data.BAD_WORD · 바꾸지 않는 안전 규칙) 은 네 파일의 모든 글자를 봐요. 그런데 "발행을 멈추지 않는" 단계가
+# 오류 글을 pxSrc.own.err · usSrc.own.err 에 그대로 적고, Jack 의 상시 규칙의 기록 (ownDrop) 이 뺀 줄의 값을 까닭에 적어서 ('d null' ·
+# 'role "None"'), 오류 하나 · 나쁜 줄 하나가 발행을 멈출 수 있었어요 (감사 aud5). 우리가 만드는 오류 · 까닭 글은 그 낱말을 '빈 값' 으로 바꿔 적고
+# 원문은 실행 로그에만 남겨요 (pub_text · pub_err · own_drop_pub, 쓰기 바로 앞에는 우리 기록 칸 전체를 pub_sweep 이 한 번 더). 출처의 글자는 바꾸지
+# 않아요 — own_src_text 가 그 칸을 비우고 세요 (N 을 넘으면 그대로 둬 관문이 막아요). 관문은 그대로예요.
+PUB_BLANK = "빈 값"
+# 2026-11-24 (리뷰): 오류 글에는 주소 · 키가 들어갈 수 있어요 (requests 의 "… with url: /api/list.json?crtfc_key=…" · ECOS 는 주소 경로에 키).
+# 발행 파일 (누구나 읽는 data.json) 에는 (1) 환경의 DART · ECOS 키 (와 GITHUB_TOKEN) 글자 그대로를 먼저 PUB_HIDE 로, (2) 그다음 자르고,
+# (3) 주소의 물음표 뒤 · 주소 안의 사용자 정보 · ECOS 경로의 키 · 키 같은 이름의 값 · Bearer · Authorization · Cookie 를 PUB_HIDE 로
+# (PUB_REDACT). 원문은 실행 로그에만 — 그 로그 글도 (1) 을 먼저 해요 (pub_raw: 키 값은 로그에도 적지 않아요 · 앞 PUB_LOG_MAX 글자). 많이 가려도
+# 괜찮아요 (오류 글은 앱이 읽지 않아요) — 덜 가리면 안 돼요. 이름 칸은 길이를 묶어요 (아주 긴 글에서 몇 초씩 걸리지 않게).
+PUB_HIDE = "…"
+PUB_LOG_MAX = 4000
+PUB_SECRET_ENV = ("DART_API_KEY", "ECOS_API_KEY", "GITHUB_TOKEN")
+_PUB_KEYWORD = r"(?:api[_-]?key|key|token|secret|passw(?:or)?d|pwd|credential|signature|cookie|sessionid|session|auth)"
+_PUB_NAMECH = r"[A-Za-z0-9_.-]"
+# 키 낱말 뒤에 이어지는 이름 (private_key_id · key1 · token_type · api_key_v2 · keyId) — 32 글자까지 · 예외 이름 (KeyError · TokenError ·
+# KeyboardInterrupt) 은 아니에요
+_PUB_NAMETAIL = r"(?:(?!error|exception|warning|interrupt|exit)" + _PUB_NAMECH + r"){0,32}"
+
+
+def _pub_url_end(m):
+    """글 끝에서 잘린 주소 (사용자 정보의 '@' 앞에서 잘렸을 수 있어요): 호스트 꼴 (a.b[:포트]) 이 아니면 가려요."""
+    tail = m.group(2)
+    return m.group(0) if re.fullmatch(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?::\d+)?", tail) else m.group(1) + PUB_HIDE
+
+
+def _pub_quoted(m):
+    """{'crtfc_key': '…'} · ('crtfc_key', '…') — 닫는 따옴표가 잘려 없어도 가려요."""
+    return f"{m.group(1)}{m.group(2)}{m.group(1)}{m.group(3)}{m.group(4)}{PUB_HIDE}{m.group(5)}"
+
+
+def _pub_pair(m):
+    """키 같은 이름 = 값 · 이름: 값 — 따옴표 안의 값은 닫는 따옴표까지 (잘려 없으면 끝까지)."""
+    return f"{m.group(1)}{m.group(2)}{m.group(3) or ''}{PUB_HIDE}{m.group(4) or ''}"
+
+
+PUB_REDACT = (
+    (re.compile(r"(?i)((?:https?|ftp)://)[^/\s@?#'\"<>]+@"), r"\1" + PUB_HIDE + "@"),                       # https://사용자:토큰@ → https://…@
+    (re.compile(r"(?i)((?:https?|ftp)://)([^/\s@?#'\"<>]+)$"), _pub_url_end),                                # '@' 앞에서 잘린 주소
+    (re.compile(r"(?i)((?:https?|ftp)://[^\s?#'\"<>]{0,2048})\?[^\s'\"<>]*"), r"\1?" + PUB_HIDE),            # 주소의 물음표 뒤 모두
+    (re.compile(r"(?i)%3F[^\s'\"<>]*"), "%3F" + PUB_HIDE),                                                    # 주소를 인코딩한 물음표 뒤
+    (re.compile(r"\?" + _PUB_NAMECH + r"{1,64}=[^\s'\"<>]*"), "?" + PUB_HIDE),                                # 주소 앞부분이 없는 질의 (url: /a?b=c)
+    (re.compile(r"(?i)(/(?:StatisticSearch|KeyStatisticList|StatisticItemList|StatisticTableList|StatisticWord|StatisticMeta)/)"
+                r"[^/\s'\"<>]+"), r"\1" + PUB_HIDE),                                                           # ECOS: /StatisticSearch/{키}/json/…
+    (re.compile(r"(?i)(\bbearer\s+)[^\s'\",;]+"), r"\1" + PUB_HIDE),                                          # Bearer …
+    (re.compile(r"(?i)(\bauthorization\s*[:=]\s*)(?:(?:bearer|basic|token)\s+)?[^\s'\",;]+"), r"\1" + PUB_HIDE),   # Authorization: …
+    (re.compile(r"(?i)(\b(?:set-)?cookie\s*[:=]\s*)[^'\"\n]*"), r"\1" + PUB_HIDE),                            # Cookie: a=b; c=d
+    (re.compile(r"(?i)(['\"])(" + _PUB_NAMECH + r"{0,64}" + _PUB_KEYWORD + _PUB_NAMETAIL + r")\1(\s*[:,]\s*)(['\"])[^'\"]*(\4|$)"),
+     _pub_quoted),                                                                                         # {'crtfc_key': '…'} · ('crtfc_key', '…')
+    (re.compile(r"(?i)(" + _PUB_KEYWORD + _PUB_NAMETAIL + r")(?!" + _PUB_NAMECH + r")(\s*[=:]\s*)(?:(['\"])[^'\"]*(['\"]?)|[^\s&'\"<>,;)\]}]+)"),
+     _pub_pair),                                                                                           # key=… · crtfc_key: … · X-Api-Key: …
+    (re.compile(r"(?i)(" + _PUB_KEYWORD + _PUB_NAMETAIL + r")(?!" + _PUB_NAMECH + r")(\s+)[A-Za-z0-9_-]{16,}"), r"\1\2" + PUB_HIDE),   # crtfc_key 0123…(16자 넘는 값)
+    (re.compile(r"\?[A-Za-z0-9_-]{16,}"), "?" + PUB_HIDE),                                                    # /api/x?0123…(이름 없는 긴 값)
+)
+
+
+def pub_hide_keys(text):
+    """글 → 환경의 키 (PUB_SECRET_ENV · 8 글자 넘는 값) 글자 그대로를 PUB_HIDE 로 (긴 값부터 · 값은 어디에도 적지 않아요)."""
+    vals = {(os.environ.get(k) or "").strip() for k in PUB_SECRET_ENV} | {DART_KEY, ECOS_KEY}
+    for v in sorted((v for v in vals if v and len(v) >= 8), key=len, reverse=True):
+        if v in text:
+            text = text.replace(v, PUB_HIDE)
+    return text
+
+
+def pub_redact(text):
+    """글 → 주소의 물음표 뒤 · 주소의 사용자 정보 · ECOS 경로의 키 · 키 같은 이름의 값 · Bearer · Authorization · Cookie 를 PUB_HIDE 로
+    (PUB_REDACT 차례대로 · 순수 함수). 두 번째로 하면 더 가릴 수만 있어요 (덜 가리지는 않아요)."""
+    for rx, rep in PUB_REDACT:
+        text = rx.sub(rep, text)
+    return text
+
+
+def _pub_str(err):
+    """예외면 '예외 이름: 메시지', 아니면 글 — 메시지를 읽다가 멈춰도 (예외의 __str__ 이 고장) 예외 없이 답해요."""
+    try:
+        return f"{type(err).__name__}: {err}" if isinstance(err, BaseException) else (err if isinstance(err, str) else str(err))
+    except Exception:
+        return f"{type(err).__name__}: (메시지를 읽지 못함)"
+
+
+def pub_raw(err):
+    """로그에 적을 원문 (예외면 '예외 이름: 메시지') — 환경의 키 글자는 먼저 가리고 (pub_hide_keys · 키 값은 로그에도 적지 않아요) 앞 PUB_LOG_MAX
+    글자. 발행 파일에는 쓰지 않아요."""
+    s = pub_hide_keys(_pub_str(err))
+    return s if len(s) <= PUB_LOG_MAX else s[:PUB_LOG_MAX] + f" …(원문 {len(s):,}자)"
+
+
+def pub_text(text, n=None, say=True):
+    """우리가 만든 오류 · 까닭 글 → 발행 파일에 적을 글: 환경의 키 글자를 가리고 (pub_hide_keys), 앞 n 글자로 자른 뒤 (자른 끝이 'nanometer' →
+    'nan' 이 되거나 키가 반만 남아도 잡히게 자른 다음에) 주소 · 키 값을 가리고 (pub_redact), 관문이 찾는 낱말 (GATE_BAD_WORD =
+    validate_data.BAD_WORD: 영문자에 붙지 않은 다섯 낱말) 을 PUB_BLANK 로. 결과에는 그 낱말이 남지 않아요 · 두 번째로 하면 더 가릴 수만 있어요.
+    say: 바꾼 것이 있으면 원문 (키는 가린 · pub_raw) 을
+    실행 로그에 남겨요 (원문을 이미 로그에 적은 곳만 False). 글자가 아니면 str. 출처의 글자에는 쓰지 않아요 (own_src_text)."""
+    raw = text if isinstance(text, str) else str(text)
+    hid = pub_hide_keys(raw)
+    cut = hid if n is None else hid[:n]
+    out = GATE_BAD_WORD.sub(PUB_BLANK, pub_redact(cut))
+    if say and out != (raw if n is None else raw[:n]):
+        log(f"· 발행 파일에 적는 오류 · 까닭 글: 키 · 주소의 물음표 뒤는 '{PUB_HIDE}', 관문의 낱말 줄이 찾는 낱말은 '{PUB_BLANK}' 로 바꿔 적어요 "
+            f"— 원문: {pub_raw(raw)}")
+    return out
+
+
+def pub_err(err, n=300, say=True):
+    """'발행을 멈추지 않는' 단계의 오류 → 발행 파일의 오류 칸 글: 예외면 '예외 이름: 메시지', 이미 만든 오류 글이면 그 글 — pub_text (키를 가린 뒤
+    앞 n 글자). 미리 자른 글이 아니라 예외를 넘기세요 (자르기 전에 키를 가려요)."""
+    return pub_text(_pub_str(err), n, say)
+
+
+PUB_SWEEP_KEYS = ("pxSrc", "usSrc", "splitsInfo", "usForeign", "usExtraMissing", "usListSym", "d1Base", "ownDrop")
+# 앱이 읽는 칸은 손대지 않아요 (리뷰 2차 S2): pxSrc.own.aged · usSrc.own.aged 의 nk 는 종목 이름으로 보여요 (src/data.js ownAgedOf) ·
+# splitsInfo.fixed 는 앱이 분할을 고쳐요 (src/v2/lots.js outSplits). 그 칸의 낱말은 이 PR 전처럼 관문이 막아요.
+PUB_SWEEP_SKIP_KEYS = frozenset({"aged"})
+PUB_SWEEP_SKIP_PATHS = frozenset({"splitsInfo.fixed"})
+PUB_SWEEP_MAX = 5                # Jack 의 상시 규칙의 N (2026-11-20: "more than 5 rows") — 파일마다 · 넘으면 하나도 바꾸지 않아요 (관문이 막아요)
+PUB_SWEEP_KEY = "sweep"          # ownDrop.sweep = {"n": 바꾼 (또는 찾은) 글 수, "paths": [경로] 앞 30}
+
+
+def _pub_walk(o, path, changed):
+    if isinstance(o, str):
+        c = pub_text(o, say=False)
+        if c != o:
+            changed.append((path, o))
+        return c
+    if isinstance(o, dict):
+        for k in list(o):
+            p = f"{path}.{k}"
+            if k in PUB_SWEEP_SKIP_KEYS or p in PUB_SWEEP_SKIP_PATHS:
+                continue
+            o[k] = _pub_walk(o[k], p, changed)
+        return o
+    if isinstance(o, list):
+        for i, v in enumerate(o):
+            o[i] = _pub_walk(v, f"{path}[{i}]", changed)
+        return o
+    if isinstance(o, tuple):
+        return tuple(_pub_walk(v, f"{path}[{i}]", changed) for i, v in enumerate(o))
+    return o
+
+
+def pub_sweep(doc, where, keys=PUB_SWEEP_KEYS):
+    """쓰기 바로 앞 마지막 한 번 (2026-11-24 리뷰): 파이프라인이 스스로 만든 기록 칸 (keys — 출처 · 마지막 확인 종가 · 분할 · 외국 회사 · 빠진
+    까닭 · 티커 바꾸기 · d1 기준가 · ownDrop) 의 글을 pub_text 로 (관문의 낱말은 '빈 값' · 키 · 주소의 물음표 뒤는 '…'). 종목 · 회사 · 공시
+    줄과 앱이 읽는 칸 (PUB_SWEEP_SKIP_KEYS · PUB_SWEEP_SKIP_PATHS) 은 손대지 않아요 (그 글은 관문이 그대로 봐요). 사전의 열쇠는 그대로 · 낱말만
+    바꿔서 이유의 머리말 (US_FOREIGN_CUR_WHY 같은 — us_fgn_kind · 관문이 읽어요) 은 그대로예요.
+    Jack 의 상시 규칙 (리뷰 2차 S5): 바꿀 글이 PUB_SWEEP_MAX 개 이하면 바꾸고, 넘으면 이 파일에서 하나도 바꾸지 않아요 — 관문의 낱말 줄 (바꾸지
+    않는 안전 규칙) 이 예전처럼 막아요. 어느 쪽이든 경로마다 '  !! ' 한 줄 (원문은 pub_raw — 키는 가려요) · ownDrop.sweep = {n, paths} (깨끗한
+    실행도 0). 모두 한 벌의 사본에서 먼저 해 보고 끝까지 된 뒤에만 바꿔요. → doc."""
+    if not isinstance(doc, dict):
+        return doc
+    have = [k for k in keys if k in doc]
+    trial = copy.deepcopy({k: doc[k] for k in have})
+    changed = []
+    for k in have:
+        trial[k] = _pub_walk(trial[k], k, changed)
+    over = len(changed) > PUB_SWEEP_MAX
+    if not over:
+        for k in have:
+            doc[k] = trial[k]
+    for p, raw in changed:
+        log(f"  !! {where} 우리 기록 글 {p}: " + ("관문의 낱말 · 키가 있어 그대로 둬요 (관문이 막아요)" if over
+                                                 else f"키 · 주소의 물음표 뒤는 '{PUB_HIDE}', 관문의 낱말은 '{PUB_BLANK}' 로 바꿔 적어요")
+            + f" — 원문: {pub_raw(raw)[:500]}")
+    if changed:
+        log(f"  !! {where} 우리 기록 글 {len(changed):,}곳 " + (f"— {PUB_SWEEP_MAX}곳을 넘어 하나도 바꾸지 않아요 (한꺼번에 많으면 우리 처리의 잘못일 수 "
+                                                          "있어요 · 관문 '글자에 nan·None·null·undefined 없음' 줄이 실패해 발행하지 않아요)" if over
+                                                          else f"바꿔 적음 (ownDrop.{PUB_SWEEP_KEY} · {PUB_SWEEP_MAX}곳을 넘으면 바꾸지 않아 관문이 막아요)"))
+    else:
+        log(f"· {where} 우리 기록 글 ({' · '.join(have)}): 바꿀 것 없음")
+    own = doc.get("ownDrop") if isinstance(doc.get("ownDrop"), dict) else {}
+    own[PUB_SWEEP_KEY] = {"n": len(changed), "paths": [GATE_BAD_WORD.sub(PUB_BLANK, pub_redact(p)) for p, _r in changed[:30]]}
+    doc["ownDrop"] = own
+    return doc
+
+
+def pub_safe(what, fn, *a, **k):
+    """쓰기 바로 앞의 청소 단계 (own_src_text · own_drop_pub · pub_sweep) 를 불러요 — 멈추면 크게 남기고 그 단계 없이 그대로 써요 (관문이 정해요
+    · 리뷰 2차 N1). → fn 의 값 · 멈추면 None."""
+    try:
+        return fn(*a, **k)
+    except Exception as e:
+        log(f"  !! {what} 이 오류로 멈췄어요 ({pub_raw(e)[:500]}) — 그 단계 없이 그대로 써요 (관문이 정해요)")
+        return None
+
+
+def own_drop_pub(doc, where):
+    """발행 파일 doc 의 ownDrop 기록마다 rows 의 글 (이름 · 까닭 · 줄 글) 을 pub_text 로 바꿔요 (모양 그대로 · 글자가 아닌 값은 그대로 — 모양은
+    관문이 봐요). 원문은 각 검사의 로그 줄에 있어요 (_own_log · own_drop_text · 업종 · 마지막 확인 종가 · own_src_text). 바꾼 것이 있으면 한 줄.
+    각 기록은 관문의 제 줄이 N 을 봐요 (그래서 pub_sweep 의 N 에는 들지 않아요). → doc."""
+    own = doc.get("ownDrop") if isinstance(doc, dict) else None
+    if not isinstance(own, dict):
+        return doc
+    for k, rec in own.items():
+        rows = rec.get("rows") if isinstance(rec, dict) else None
+        if not isinstance(rows, list):
+            continue
+        new, n = [], 0
+        for r in rows:
+            if isinstance(r, str):
+                c = pub_text(r, say=False)
+            elif isinstance(r, (list, tuple)):
+                c = [pub_text(x, say=False) if isinstance(x, str) else x for x in r]
+            else:
+                c = r
+            n += c != (list(r) if isinstance(r, tuple) else r)
+            new.append(c)
+        rec["rows"] = new
+        if n:
+            log(f"· {where} ownDrop.{k}: 까닭 글 {n}줄의 낱말 (관문의 낱말 줄) 을 '{PUB_BLANK}' 로 바꿔 적어요 (원문은 위 로그)")
+    return doc
 
 
 # ────────────────────────────────────────────────────────────
@@ -2346,7 +2565,8 @@ def kr_own_aged_kept(prev, keep_out):
 def kr_own_close_err(err, unconf_n=None):
     """마지막 확인 종가 단계가 오류로 멈췄을 때의 pxSrc.own (실은 종목 0 · err 에 까닭 — 관문이 경고해요). unconf_n: 확인 못 한 종목 수 — 그 수를
     세기 전에 멈췄으면 None 이고 칸을 빼요 (관문이 '모름'으로 적어요 · 0 으로 보이지 않게)."""
-    out = {"v": 1, "max": KR_OWN_CLOSE_MAX_DAYS, "n": 0, "codes": [], "drop": {}, "dropEx": [], "bad": {"n": 0, "rows": []}, "err": str(err)[:300]}
+    out = {"v": 1, "max": KR_OWN_CLOSE_MAX_DAYS, "n": 0, "codes": [], "drop": {}, "dropEx": [], "bad": {"n": 0, "rows": []},
+           "err": pub_err(err, say=False)}   # 2026-11-24: 키 · 주소의 물음표 뒤는 '…', 관문의 낱말은 '빈 값' (부르는 곳이 모두 원문을 로그에 적어요)
     if isinstance(unconf_n, int):
         out["unconf"] = unconf_n
     return out
@@ -2715,10 +2935,9 @@ def kr_own_close_step(prev, full_list, conf_codes, px_src, px_date, trade_days, 
             prod_map.pop(t, None)
         if ni0 is not None:
             no_ind[:] = ni0
-        err = f"{type(e).__name__}: {str(e)[:200]}"
-        log(f"  !! 마지막 확인 종가 단계가 오류로 멈췄어요 ({err}) — 확인 못 한 국내 종목은 예전처럼 빼고 발행을 이어가요 (실은 종목 0 · "
+        log(f"  !! 마지막 확인 종가 단계가 오류로 멈췄어요 ({pub_raw(e)}) — 확인 못 한 국내 종목은 예전처럼 빼고 발행을 이어가요 (실은 종목 0 · "
             "pxSrc.own.err · 관문이 경고해요)")
-        px_src["own"] = kr_own_close_err(err, len(unconf) if isinstance(unconf, dict) else None)
+        px_src["own"] = kr_own_close_err(e, len(unconf) if isinstance(unconf, dict) else None)    # 2026-11-24: 예외째 (자르기 전에 키를 가려요)
         px_src["own"]["aged"] = kr_own_aged_kept(prev, {str(r.get("t")) for r in out})
         return 0
 
@@ -2748,12 +2967,13 @@ def kr_own_close_drop_all(kr, src, krs, err, drop_out=None):
     err · 뺀 수를 적어요 (관문이 경고해요). drop_out (2026-11-20): 주면 뺀 종목 (코드, 까닭) 을 더해요 (data.json ownDrop.krOwn).
     반환: 남은 국내 종목 목록."""
     gone = {s.get("t") for s in kr if s.get("cls") == "kr" and s.get("pxd") is not None}
-    if isinstance(drop_out, list):
-        drop_out.extend((str(t), f"err {str(err)[:120]}") for t in sorted(gone, key=str))
-    log(f"  !! 마지막 확인 종가 점검이 오류로 멈췄어요 ({err}) — 마지막 확인 종가로 실은 {len(gone):,}종목을 모두 빼고 발행을 이어가요 (pxSrc.own.err)")
+    log(f"  !! 마지막 확인 종가 점검이 오류로 멈췄어요 ({pub_raw(err)}) — 마지막 확인 종가로 실은 {len(gone):,}종목을 모두 빼고 발행을 이어가요 (pxSrc.own.err)")
+    if isinstance(drop_out, list):          # 2026-11-24: 발행 파일에는 관문의 낱말을 '빈 값' 으로 (원문은 바로 위 로그 줄)
+        why = f"err {pub_err(err, 120, say=False)}"
+        drop_out.extend((str(t), why) for t in sorted(gone, key=str))
     if isinstance(src, dict):
         own = src.get("own") if isinstance(src.get("own"), dict) else kr_own_close_err(err)
-        own.update({"codes": [], "n": 0, "err": str(err)[:300], "bad": {"n": len(gone), "rows": sorted(gone)[:KR_OWN_SHOW]}})
+        own.update({"codes": [], "n": 0, "err": pub_err(err, say=False), "bad": {"n": len(gone), "rows": sorted(gone)[:KR_OWN_SHOW]}})
         src["own"] = own
     kr_own_prune_series(krs, gone)
     return [s for s in kr if s.get("t") not in gone or s.get("cls") != "kr"]
@@ -2783,7 +3003,8 @@ def kr_own_close_final(kr, src, prev, days, krs=None, drop_out=None):
         own["codes"] = [c for c in own.get("codes") or [] if c not in gone]
         own["n"] = len(own["codes"])
         # 2026-11-20 (리뷰 4): 까닭(점검)마다 뺀 수 — 관문은 한 점검에서 5개를 넘을 때만 실패해요 (Jack 의 상시 규칙). 한 종목이 두 점검에 걸리면 둘 다 세요
-        own["bad"] = {"n": len(gone), "rows": rows[:KR_OWN_SHOW], "why": dict(sorted(collections.Counter(w for ws in gone.values() for w in set(ws)).items()))}
+        own["bad"] = {"n": len(gone), "rows": [pub_text(x, say=False) for x in rows[:KR_OWN_SHOW]],     # 2026-11-24: 원문은 바로 위 로그 줄
+                      "why": dict(sorted(collections.Counter(w for ws in gone.values() for w in set(ws)).items()))}
     if isinstance(drop_out, list):          # 2026-11-20: data.json ownDrop.krOwn (다른 우리 처리 검사와 같은 곳 · 같은 모양 {n, rows [코드, 까닭]})
         drop_out.extend((str(t), " · ".join(KR_OWN_WHY.get(w, w) for w in ws)) for t, ws in sorted(gone.items()))
     kr_own_prune_series(krs, gone)
@@ -2978,7 +3199,7 @@ def us_own_aged(prev, nocl, drop, old_pxd=None):
 def us_own_close_err(err, nocl_n=None):
     """마지막 확인 종가 단계(미국)가 오류로 멈췄을 때의 usSrc.own (실은 종목 0 · err — 관문이 경고해요 · 예전 그대로 야후의 마지막 봉으로 나가요)."""
     out = {"v": 1, "max": US_OWN_CLOSE_MAX_DAYS, "n": 0, "codes": [], "same": [], "from": {}, "newer": [], "split": [], "drop": {}, "dropEx": [],
-           "bad": {"n": 0, "rows": []}, "err": str(err)[:300]}
+           "bad": {"n": 0, "rows": []}, "err": pub_err(err, say=False)}   # 2026-11-24: 키 · 관문의 낱말을 가려요 (부르는 곳이 원문을 로그에)
     if isinstance(nocl_n, int):
         out["unconf"] = nocl_n
     return out
@@ -3056,10 +3277,9 @@ def us_own_close_step(prev, nocl, out, us_px_date, trade_days, etfs=frozenset(),
                 "drop": {k: int(v) for k, v in sorted(dc.items())}, "dropEx": dn[:US_OWN_SHOW], "bad": {"n": 0, "rows": []}, "aged": aged}
     except Exception as e:
         out[:] = keep
-        err = f"{type(e).__name__}: {str(e)[:200]}"
-        log(f"  !! 마지막 확인 종가 단계(미국)가 오류로 멈췄어요 ({err}) — 야후 종가가 없는 미국 종목은 예전처럼 야후의 마지막 봉으로 내보내요 "
+        log(f"  !! 마지막 확인 종가 단계(미국)가 오류로 멈췄어요 ({pub_raw(e)}) — 야후 종가가 없는 미국 종목은 예전처럼 야후의 마지막 봉으로 내보내요 "
             "(실은 종목 0 · usSrc.own.err · 관문이 경고해요)")
-        rec = us_own_close_err(err, len(nocl) if isinstance(nocl, dict) else None)
+        rec = us_own_close_err(e, len(nocl) if isinstance(nocl, dict) else None)       # 2026-11-24: 예외째 (자르기 전에 키를 가려요)
         try:
             rec["aged"] = [dict(a) for a in (((prev or {}).get("usSrc") or {}).get("own") or {}).get("aged") or []
                            if isinstance(a, dict) and a.get("t") and a["t"] in (nocl or {})]
@@ -3083,7 +3303,7 @@ def us_own_drop_rows(us, umeta, bad, why):
     for t in sorted(bad):
         if t in EXTRA_US:
             w = why.get(t) if isinstance(why, dict) else why
-            xm[t] = w if isinstance(w, str) and w.strip() else fallback
+            xm[t] = pub_text(w, say=False) if isinstance(w, str) and w.strip() else fallback   # 2026-11-24: 까닭 글 (원문은 부른 쪽 로그)
     return [r for r in us if r.get("t") not in bad]
 
 
@@ -3139,7 +3359,8 @@ def us_own_close_final(us, umeta, prev, days):
     own["same"] = [c for c in own["same"] if c not in gone]
     own["newer"] = [x for x in own["newer"] if x.get("t") not in gone]
     us_own_from_sync(own)
-    own["bad"] = {"n": len(gone), "rows": rows[:US_OWN_SHOW], "why": dict(sorted(collections.Counter(w for ws in gone.values() for w in set(ws)).items()))}
+    own["bad"] = {"n": len(gone), "rows": [pub_text(x, say=False) for x in rows[:US_OWN_SHOW]],     # 2026-11-24: 원문은 위 로그 줄
+                  "why": dict(sorted(collections.Counter(w for ws in gone.values() for w in set(ws)).items()))}
     return us_own_drop_rows(us, umeta, gone, {t: "마지막 확인 종가 점검(관문과 같은 함수)이 거름: " + " · ".join(US_OWN_WHY.get(w, w) for w in ws)
                                               + " (usSrc.own.bad)" for t, ws in gone.items()})
 
@@ -3303,11 +3524,12 @@ def us_own_close_drop_all(us, umeta, err):
     src = umeta.get("usSrc") if isinstance(umeta.get("usSrc"), dict) else {}
     own = src.get("own") if isinstance(src.get("own"), dict) else us_own_close_err(err)
     gone = {r.get("t") for r in us if r.get("pxc")} | set(own.get("same") or [])
-    log(f"  !! 마지막 확인 종가 점검(미국)이 오류로 멈췄어요 ({err}) — 마지막 확인 종가 · 같은 날 다시 쓴 {len(gone):,}종목을 모두 빼고 발행을 이어가요 (usSrc.own.err)")
-    own.update({"codes": [], "n": 0, "same": [], "from": {}, "newer": [], "err": str(err)[:300], "bad": {"n": len(gone), "rows": sorted(gone)[:US_OWN_SHOW]}})
+    log(f"  !! 마지막 확인 종가 점검(미국)이 오류로 멈췄어요 ({pub_raw(err)}) — 마지막 확인 종가 · 같은 날 다시 쓴 {len(gone):,}종목을 모두 빼고 발행을 이어가요 (usSrc.own.err)")
+    own.update({"codes": [], "n": 0, "same": [], "from": {}, "newer": [], "err": pub_err(err, say=False),   # 2026-11-24: 원문은 바로 위 로그 줄
+                "bad": {"n": len(gone), "rows": sorted(gone)[:US_OWN_SHOW]}})
     src["own"] = own
     umeta["usSrc"] = src
-    return us_own_drop_rows(us, umeta, gone, f"마지막 확인 종가 점검이 오류로 멈춰 뺌 ({str(err)[:80]} · usSrc.own.err)")
+    return us_own_drop_rows(us, umeta, gone, f"마지막 확인 종가 점검이 오류로 멈춰 뺌 ({pub_err(err, 80, say=False)} · usSrc.own.err)")
 
 
 # ────────────────────────────────────────────────────────────
@@ -7851,6 +8073,7 @@ def own_check_disc(disc, today):
     own[INSIDER_ROLE_KEY] = own_rows_rec(bad)
     _own_log(OWN_INSIDER_ROLE_NAME, bad, INSIDER_ROLE_MAX, "빼거나 비움", f"disc.json ownDrop.{INSIDER_ROLE_KEY}")
     disc["ownDrop"] = own
+    own_drop_pub(disc, "disc.json")          # 2026-11-24: 까닭 글 ('d null' · 'role "None"') 의 관문 낱말은 '빈 값' 으로 (원문은 위 로그 줄)
     return disc
 
 
@@ -7866,7 +8089,61 @@ def own_us_dates(payload):
     own[US_DATE_KEY] = own_rows_rec(bad)
     payload["ownDrop"] = own
     _own_log(OWN_US_DATE_NAME, bad, US_DATE_MAX, "비움", f"data.json ownDrop.{US_DATE_KEY}")
+    own_drop_pub(payload, "data.json")       # 2026-11-24: 까닭 글 ('"NaN" (YYYY-MM-DD 날짜가 아님)') 의 관문 낱말은 '빈 값' 으로 (원문은 위 로그 줄)
     return payload
+
+
+# 2026-11-24 (Jack 의 상시 규칙 · "one stock missing from a source never holds the publish"): 출처가 보낸 글자 (야후 회사 설명 · DART 직위) 에
+# 관문의 낱말 줄이 찾는 낱말이 낱말로 들어 있으면 ("None of the segments …" · 직위 "None") 그 칸 하나만 비우고, 크게 남기고, 그 파일의
+# ownDrop.srcText 에 세요. 한 파일에서 SRC_TEXT_MAX 칸을 넘으면 비우지 않고 그대로 둬요 — 한꺼번에 많으면 출처가 아니라 우리 처리 (열 밀림 같은) 의
+# 잘못일 수 있어서, 관문의 그 줄 (바꾸지 않아요) 이 실패해 발행하지 않아요 (새 관문 줄 없음). disc.json 은 날마다 90일 내부자 창 전체로 다시
+# 만들어서 그 창 전체를 세요. 이름 (종목 · 보고자 nm — 화면이 '{nm} · {pos}' 로 써서 비우면 숫자만 남은 줄이 돼요) · 종목 설명 (dk) 같은 다른
+# 칸은 보지 않아요 — 관문이 그대로 막아요 (dk 는 그 줄을 만든 2026-10 열 밀림 사고의 칸이에요).
+SRC_TEXT_KEY = "srcText"
+SRC_TEXT_MAX = 5                 # Jack, 2026-11-20: "Yes to “more than 5 rows” as the default for the standing rule." (지난 발행본은 모두 0 — 관문이 막아요)
+SRC_TEXT_NAME = "출처 글자의 관문 낱말 (야후 설명 de · DART 직위 pos)"
+SRC_TEXT_FIELDS = (("stocks", "t", ("de",)), ("insider", "rc", ("pos",)))     # (목록 칸, 줄 열쇠, 글자 칸) — data.json · disc.json · 이름 nm 은 보지 않아요
+
+
+def own_src_text(doc, where):
+    """data.json · disc.json 을 쓰기 바로 앞 (다른 우리 처리 검사 뒤): SRC_TEXT_FIELDS 의 글자 칸에 관문의 낱말 (GATE_BAD_WORD) 이 있는 칸을 찾아
+    SRC_TEXT_MAX 칸 이하면 그 칸만 비워요 (de 는 빼요 — 설명이 없는 종목과 같아요 · pos 는 '' — DART 의 '-' 와 같아요). 넘으면 하나도 비우지
+    않아요 (관문의 낱말 줄이 실패해 발행하지 않아요). 줄마다 종목 · 칸 · 원문 둘레를 로그에 크게, doc["ownDrop"]["srcText"] = {n 찾은 칸 수, rows
+    [열쇠, 까닭] 앞 30} (깨끗한 실행도 0). where: 로그에 적을 파일 이름. → doc."""
+    if not isinstance(doc, dict):
+        return doc
+    hits = []
+    for list_key, id_key, fields in SRC_TEXT_FIELDS:
+        rows = doc.get(list_key) if isinstance(doc.get(list_key), list) else []
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            for f in fields:
+                v = r.get(f)
+                m = GATE_BAD_WORD.search(v) if isinstance(v, str) else None
+                if m:
+                    hits.append((r, f, str(r.get(id_key)), str(r.get("t") or ""), str(r.get("nk") or ""), v[max(0, m.start() - 30):m.end() + 30]))
+    over = len(hits) > SRC_TEXT_MAX
+    if not over:
+        for r, f, *_ in hits:
+            if f == "de":
+                r.pop(f, None)
+            else:
+                r[f] = ""
+    done = "그대로 둠 (관문이 막아요)" if over else "칸을 비움"
+    rec = own_drop_rec([(f"{key} {f}", f"{(t + ' ' + nk).strip()} · 출처 글자에 관문의 낱말 — {done}") for _r, f, key, t, nk, _x in hits])
+    own = doc.get("ownDrop") if isinstance(doc.get("ownDrop"), dict) else {}
+    own[SRC_TEXT_KEY] = rec
+    doc["ownDrop"] = own
+    if hits:
+        gate = (f"{SRC_TEXT_MAX}칸을 넘어 비우지 않고 그대로 둬요 — 한꺼번에 많으면 우리 처리의 잘못일 수 있어요 · 관문 '글자에 nan·None·null·undefined "
+                "없음' 줄이 실패해 발행하지 않아요" if over else f"그 칸만 비우고 발행 · {SRC_TEXT_MAX}칸을 넘으면 비우지 않아 관문이 막아요")
+        log(f"  !! {SRC_TEXT_NAME}: {where} {len(hits):,}칸 {'찾음' if over else '비움'} — "
+            + " · ".join(f"{(t + ' ' + nk).strip() or key} {f} ({key}: …{x}…)" for _r, f, key, t, nk, x in hits[:30])
+            + (f" 외 {len(hits) - 30}칸" if len(hits) > 30 else "") + f" ({where} ownDrop.{SRC_TEXT_KEY} · {gate})")
+    else:
+        log(f"· {SRC_TEXT_NAME}: {where} 0칸 비움")
+    return doc
 
 
 # ────────────────────────────────────────────────────────────
@@ -11601,6 +11878,376 @@ def apply_div_basis(kr_stocks, fin_map, pref_shares, why=None):
     return counts, extra
 
 
+# ────────────────────────────────────────────────────────────
+# 소액주주 배당 (차등배당) — Jack 2026-11-19 Q6 ("The small-holder yield: a later PR, labelled as the 소액주주 rate") · 2026-11-23 (Track 1 4)
+# ────────────────────────────────────────────────────────────
+# 차등배당 회사는 최대주주보다 소액주주에게 1주에 더 줘요 (교보증권 2025: 기타주주 550원 · 최대주주 무배당 · TPC로보틱스 2025: 최대주주 및 특수관계자
+# 7,910,787주를 뺀 일반 및 소액주주 7,787,204주에만 10원). DART 배당 API(alotMatter)의 보통주 1주 배당은 그 소액주주 금액인데 API 줄에는 그 말이 없고
+# (사업보고서 원문의 표 밑 주석에만 있어요), 총액 ÷ 1주 배당이 주식 수와 맞지 않아 배당 기준 증명이 그 종목을 data/div 로 숨겨요 (dvLine 3).
+# 그래서 그 종목들만(divCheck.proofSub data div · 2026-11-21 발행본에 16곳), 12월 결산 사업보고서 원문의 '배당에 관한 사항' 절을 한 번 읽어(캐시 ·
+# 실행당 SMALL_DIV_PER_RUN 곳) 그 1주 배당을 소액주주 몫으로 실어요 — 절의 한 문장(또는 같은 주석 '주N)')이 아래를 모두 만족할 때만 (small_div_facts ·
+# small_div_pick, #183 리뷰 1차로 좁혔어요):
+#   (1) '차등배당' · '차등 배당' 이라고 적고 (차등의결권 같은 다른 '차등'은 아니에요), 그 옆에 않 · 없 · 미실시 · 아니 가 없고, 전기 · 전전기 · 전년 ·
+#       작년 · 지난해 가 없고, 사업연도(fy)가 아닌 해(예: '2024년')를 적지 않아요;
+#   (2) 소액주주 · 기타주주 · 일반주주 뒤 SMALL_DIV_GAP 글자 안의 첫 'N원'(won) 또는 첫 'N주'(cnt) — 그 사이에 최대주주 · 대주주 · 특수관계 ·
+#       우선주 · 종류주 · 액면 · 전기 가 없어요 ('최대주주 외' · '최대주주를 제외한' 처럼 빼는 말은 괜찮아요);
+#   (3) 소액주주 몫으로 묶인 금액이 꼭 하나이고 표의 1주 배당과 같거나 (교보증권 "기타주주(최대주주 외) 550원"), 금액이 없을 때 묶인 주식 수가 꼭
+#       하나이고 1주 배당 × 그 수 가 표의 현금배당금총액과 맞아요 (TPC로보틱스 10원 × 7,787,204주 = 77,872,040원 ≈ 78백만원).
+# 실는 것: data.json 종목 dpsSmall (원 · 배당 표의 1주 배당 그대로 — 새로 셈한 숫자가 아니에요) · dytSmall (% · 같은 그 값 ÷ 오늘 종가, 0.005% 아래면 싣지
+# 않아요) · corp.json 같은 두 칸 · data.json divSmall (기록과 근거 문장 q · 관문의 경고 줄이 봐요). 오늘 주식 수가 그해 말과 같은 기준일 때만
+# (small_div_basis). dps · dyt · dz · dvLine 은 그대로예요: 배당 순위(dz)는 지금처럼 dyt 로만 매겨서 이 종목들은 순위에 없어요. 2.0 앱은 스위치
+# (src/v2/smallcfg.js)와 Jack 이 승인한 말이 생길 때까지 이 칸을 보여 주지 않아요 (예전 뱁새는 이 PR 에서 표시하지 않아요).
+SMALL_DIV_TAG = "sdiv2"           # 캐시 키 '{기업코드}|{사업연도}|11011|sdiv2' — 원문에서 읽은 사실 (#183 리뷰 1차: 해석을 좁혀 sdiv1 → sdiv2, 한 번 다시 읽어요)
+SMALL_DIV_PER_RUN = 30            # 한 실행에서 새로 읽는 사업보고서 원문 수 상한 (곳마다 DART 2회: 목록 1 · 원문 1) — 넘으면 다음 실행에서
+SMALL_DIV_WORDS = ("소액주주", "기타주주", "일반주주")
+SMALL_DIV_GAP = 120               # 낱말 뒤 이만큼(글자) 안의 첫 'N원' · 'N주'
+SMALL_DIV_CNT_TOL = 1.0e6         # 1주 배당 × 받은 주식 수 와 총액의 차 (원): 총액은 백만원 표에서 오고 corp 칸에서 1백만원으로 반올림돼요
+SMALL_DIV_CNT_REL = 1e-3          # … 또는 총액의 0.1% 중 큰 것
+SMALL_DIV_SEC_MAX = 60000         # 절 끝(같은 SECTION 단계가 닫히는 곳)을 찾지 못했을 때만 쓰는 원문 글자 상한
+SMALL_DIV_Q_MAX = 300             # 근거 문장 길이 상한 (로그 · divSmall.on q)
+SMALL_DIV_Y_MIN = 0.005           # 이보다 작은 수익률(%)은 싣지 않아요 (반올림하면 0.00%)
+SMALL_DIV_BLOCK = ("rights", "spin", "stockdiv", "cr", "exchange", "merger")   # 그 사이에 있으면 주식 수 기준이 바뀌었을 수 있는 결정
+SMALL_DIV_DIFF = re.compile(r"차등\s?배당")
+SMALL_DIV_NEG = re.compile(r"차등\s?배당[^.]{0,20}?(않|없|미실시|아니)|(미실시|없는|없이|않는|않은|아닌)\s*차등\s?배당")
+SMALL_DIV_PAST = re.compile(r"전기|전전기|전년|작년|지난해|전\s?사업연도")
+SMALL_DIV_YEAR = re.compile(r"(?<![\d,.])((?:19|20)\d{2})(?=\s*년|\.\d|\s*\)|\s*-\s*\d)")
+SMALL_DIV_EXCL = re.compile(r"(최대주주|대주주|특수관계인|특수관계자)(\s*(및|와|과|,)\s*(최대주주|대주주|특수관계인|특수관계자|자기주식|자사주))*"
+                            r"\s*(을|를)?\s*(제외한|제외|외)")
+SMALL_DIV_BETWEEN = re.compile(r"최대주주|대주주|특수관계|우선주|종류주|액면|전기|전전기|전년")
+SMALL_DIV_KO = {"ev": "그해 말 뒤 분할 · 병합 · 무상증자", "blk": "그 사이 유상증자 · 분할 · 주식배당 · 감자 · 교환 · 합병 결정",
+                "nostk": "그해 말 주식의 총수 현황 없음", "shr": "오늘 상장 주식 수가 그해 말 유통 ~ 발행 주식 수 ±3% 밖",
+                "nodiff": "원문이 차등배당이라고 적지 않음", "nofig": "차등배당이지만 소액주주 몫을 표의 1주 배당과 맞춰 보지 못함",
+                "many": "소액주주 몫으로 적힌 금액이나 주식 수가 둘 이상", "big": f"소액주주 기준 수익률이 {DYT_MAX:g}% 넘음 (믿지 않아요)",
+                "tiny": f"소액주주 기준 수익률이 {SMALL_DIV_Y_MIN:g}% 아래", "nf": "12월 결산 사업보고서 원문 또는 '배당에 관한 사항' 절 없음",
+                "nocall": "DART 를 부르지 않는 실행 (같은 기준일 다시 하기) — 읽은 적 없는 원문은 다음 실행에서",
+                "bad": "종목 칸이 모자람 (가격 · 1주 배당 · 사업연도 · 기업코드)"}
+
+
+def small_div_report_rc(rows, fy):
+    """list.json (정기공시 A001 · 최종본) 줄 → fy 12월 결산 사업보고서의 접수번호 (가장 늦은 것) 또는 None. 이름에 '사업보고서'와 '({fy}.12)'가
+    있어야 해요 (#183 리뷰: 결산월이 다른 회사 — 3월 결산 '사업보고서 (2025.03)' 은 앞 사업연도라 읽지 않아요 · '없음'으로 남아요). (순수 함수)"""
+    out = []
+    for r in rows or []:
+        nm = re.sub(r"\s+", "", str((r or {}).get("report_nm") or ""))
+        rc = str((r or {}).get("rcept_no") or "").strip()
+        if "사업보고서" in nm and f"({fy}.12)" in nm and _RCPT.match(rc):
+            out.append(rc)
+    return max(out) if out else None
+
+
+def small_div_section(text):
+    """사업보고서 원문(document.xml 본 파일 글자) → '배당에 관한 사항' 절의 글자 또는 None. 절은 그 제목(TITLE)에서 같은 SECTION 단계가 닫힐
+    때까지 (끝을 못 찾을 때만 SMALL_DIV_SEC_MAX 글자까지) · 제목이 여럿이면 '주당'이 든 첫 절. 문단(P) · 표의 칸과 줄이 끝나는 곳은 줄바꿈으로
+    남기고(표 머리의 '전기'가 그 밑 주석 문장과 섞이지 않게), 다른 태그는 지우고, 줄마다 빈칸을 하나로. (순수 함수)"""
+    if not text:
+        return None
+    for m in re.finditer(r"<TITLE[^>]*>([^<]*)</TITLE>", text):
+        if not re.search(r"배당\s*에\s*관한\s*사항", m.group(1)):
+            continue
+        lv = re.findall(r"<SECTION-(\d)", text[max(0, m.start() - 4000):m.start()])
+        e = text.find(f"</SECTION-{lv[-1]}>", m.end()) if lv else -1
+        body = text[m.end():e] if e > 0 else text[m.end():m.end() + SMALL_DIV_SEC_MAX]
+        body = re.sub(r"<\s*(/\s*(P|TD|TE|TU|TH|TR|TABLE|TITLE|LI)|BR)\b[^>]*>", "\n", body, flags=re.I)
+        body = html_unescape(re.sub(r"<[^>]+>", " ", body)).replace("&cr;", " ")
+        plain = "\n".join(x for x in (re.sub(r"[^\S\n]+", " ", ln).strip() for ln in body.split("\n")) if x)
+        if "주당" in plain:
+            return plain
+    return None
+
+
+def small_div_units(sec):
+    """절의 글자 → 문장 [(문장, 그 문장이 든 주석 또는 None)]. 줄(문단 · 표 칸)마다, 주석 표시(주N) · ※ · (*))와 마침표(숫자 사이의 점은 아니에요)
+    에서 잘라요. 주석은 '주N)' · '(*)' · '※' 로 시작하는 조각 전체예요. (순수 함수)"""
+    out = []
+    for ln in (sec or "").split("\n"):
+        for note in (x for x in re.split(r"(?=주\s?\d+\))|(?=※)|(?=\(\*\d*\))", ln) if x.strip()):
+            is_note = bool(re.match(r"\s*(주\s?\d+\)|※|\(\*\d*\))", note))
+            for s in (x for x in re.split(r"(?<=\.)(?!\d)", note) if x.strip()):
+                out.append((s.strip(), note.strip() if is_note else None))
+    return out
+
+
+def small_div_unit_ok(u, fy):
+    """차등배당 문장(또는 주석) u 를 소액주주 몫의 근거로 쓸 수 있는지 → None 또는 까닭: neg 부정 (실시하지 않음 · 없음 · 미실시) · past 전기 ·
+    전년 … · year 사업연도 fy 가 아닌 해. (순수 함수)"""
+    if SMALL_DIV_NEG.search(u):
+        return "neg"
+    if SMALL_DIV_PAST.search(u):
+        return "past"
+    if any(int(y) != fy for y in SMALL_DIV_YEAR.findall(u)):
+        return "year"
+    return None
+
+
+def small_div_tied(s, pat):
+    """문장 s 에서 소액주주 · 기타주주 · 일반주주 뒤 SMALL_DIV_GAP 글자 안의 첫 pat 숫자들 — 그 사이에 다른 주주 · 우선주 · 액면 · 전기가 끼지 않은
+    것만 ('최대주주 외' · '최대주주를 제외한' 은 빼는 말이라 괜찮아요). (순수 함수)"""
+    out = []
+    for m in re.finditer("|".join(SMALL_DIV_WORDS), s):
+        a = re.search(pat, s[m.end():m.end() + SMALL_DIV_GAP])
+        if not a:
+            continue
+        between = SMALL_DIV_EXCL.sub(" ", s[m.end():m.end() + a.start()])
+        if SMALL_DIV_BETWEEN.search(between) or any(w in between for w in SMALL_DIV_WORDS):
+            continue
+        v = float(a.group(1).replace(",", ""))
+        out.append(int(v) if v.is_integer() else v)
+    return out
+
+
+def small_div_facts(sec, fy):
+    """'배당에 관한 사항' 절의 글자 · 사업연도 fy → 캐시에 남길 사실 (순수 함수): c 부정 · 지난해 · 다른 해가 없는 차등배당 문장이 있는지 · won 소액주주
+    몫으로 묶인 'N원' (서로 다른 값) · cnt 묶인 'N주' · qw · qc 그 근거 문장 (둘까지) · q 차등배당 문장 (둘까지) · skip 근거로 쓰지 않은 차등배당
+    문장의 까닭별 수. 문장에 '차등배당'이 없으면 같은 주석(주N) …) 안에 있을 때만 그 주석 전체를 봐요."""
+    won, cnt, qw, qc, q = set(), set(), [], [], []
+    skip = collections.Counter()
+    c = False
+    for s, note in small_div_units(sec):
+        unit = s if SMALL_DIV_DIFF.search(s) else (note if note and SMALL_DIV_DIFF.search(note) else None)
+        if unit is None:
+            continue
+        bad = small_div_unit_ok(unit, fy)
+        if bad:
+            skip[bad] += 1
+            continue
+        c = True
+        if SMALL_DIV_DIFF.search(s) and len(q) < 2 and s[:SMALL_DIV_Q_MAX] not in q:
+            q.append(s[:SMALL_DIV_Q_MAX])
+        w = small_div_tied(s, r"(?<![\d.,])(\d[\d,]*(?:\.\d+)?)\s*원")         # 숫자 한가운데서 시작하지 않아요 ('550.5원' 의 '5원'이 아니에요)
+        n = small_div_tied(s, r"(?<![\d.,])(\d[\d,]*)\s*주(?![당식])")
+        won.update(w)
+        cnt.update(n)
+        if w and len(qw) < 2:
+            qw.append(s[:SMALL_DIV_Q_MAX])
+        if n and len(qc) < 2:
+            qc.append(s[:SMALL_DIV_Q_MAX])
+    return {"c": c, "won": sorted(won)[:20], "cnt": sorted(cnt)[:20], "qw": qw, "qc": qc, "q": q, "skip": dict(sorted(skip.items()))}
+
+
+def small_div_pick(facts, d0, cash0):
+    """원문의 사실 · 표의 1주 배당 d0 (원) · 현금배당금총액 cash0 (원) → (how, None) — won 소액주주 몫으로 묶인 금액이 꼭 하나이고 d0 와 같음 ·
+    cnt 묶인 금액이 없고 주식 수가 꼭 하나이고 × d0 가 총액과 맞음 — 또는 (None, 까닭): many 둘 이상 · nofig 맞지 않음 (차등배당 문장은 있음) ·
+    nodiff 근거로 쓸 차등배당 문장이 없음. (순수 함수)"""
+    d0, cash0 = _fin(d0), _fin(cash0)
+    if not isinstance(facts, dict):
+        return None, "nodiff"
+    won, cnt = facts.get("won") or [], facts.get("cnt") or []
+    if not won and not cnt:
+        return None, ("nofig" if facts.get("c") else "nodiff")
+    if not d0 or d0 <= 0:
+        return None, "nofig"
+    if won:
+        if len(won) > 1:
+            return None, "many"
+        return ("won", None) if _fin(won[0]) is not None and abs(_fin(won[0]) - d0) < 1e-6 else (None, "nofig")
+    if len(cnt) > 1:
+        return None, "many"
+    n = _fin(cnt[0])
+    if cash0 and cash0 > 0 and n and n > 0 and abs(d0 * n - cash0) <= max(SMALL_DIV_CNT_TOL, cash0 * SMALL_DIV_CNT_REL):
+        return "cnt", None
+    return None, "nofig"
+
+
+def small_div_quote(facts, how):
+    """고른 근거(how)의 문장 하나 (로그 · divSmall.on q). (순수 함수)"""
+    qs = (facts or {}).get("qw" if how == "won" else "qc") or []
+    return qs[0] if qs else ""
+
+
+def small_div_basis(look, fy, px, stk, shr, tol=PROVE_TOL):
+    """오늘 주식 수가 그해(fy) 배당의 기준 주식 수와 같은 기준인지 → None (같아요) 또는 까닭 (SMALL_DIV_KO): ev 그해 말 뒤 ~ px 의 분할 · 병합 ·
+    무상증자 (작은 것도 · #183 리뷰) · blk 그해 말 반년 앞(DVWHY_OTHER_LOOKBACK_DAYS) ~ px 의 유상증자 · 회사분할 · 주식배당 · 감자 · 주식교환 · 합병
+    결정 (날짜를 모르면 그 사이로 봐요) · nostk 그해 말 주식의 총수 현황이 없음 · shr 오늘 상장 보통주 수가 그해 말 유통(cmo) −3% ~ 발행(cmi) +3%
+    밖. (순수 함수)"""
+    look = look if isinstance(look, dict) else {}
+    ev, blk = prove_window(look, f"{fy}-12-31", px)
+    if ev or any(isinstance(e, dict) and f"{fy}-12-31" < str(e.get("d") or "") <= px for e in look.get("ev") or []):
+        return "ev"
+    o0 = (dt.date(fy, 12, 31) - dt.timedelta(days=DVWHY_OTHER_LOOKBACK_DAYS)).isoformat()
+    inw = lambda x: not x.get("d") or o0 < x["d"] <= px                     # noqa: E731
+    if blk or any(o.get("k") in SMALL_DIV_BLOCK and inw(o) for o in look.get("oth") or []) or any(inw(x) for x in look.get("sd") or []):
+        return "blk"
+    cmo, cmi, shr = _fin((stk or {}).get("cmo")), _fin((stk or {}).get("cmi")), _fin(shr)
+    if not cmo or cmo <= 0 or not cmi or cmi < cmo * (1 - 1e-9):
+        return "nostk"
+    if not shr or shr < cmo * (1 - tol) or shr > cmi * (1 + tol):
+        return "shr"
+    return None
+
+
+def small_div_doc(client, corp, fy, budget):
+    """fy 사업보고서 원문의 '배당에 관한 사항' 사실 (small_div_facts + rc) — 캐시를 거쳐요 → (사실, 'cache' · 'fetched') 또는 (None, (종류, 까닭)):
+    nf 12월 결산 사업보고서 · 그 절이 없음 (캐시에 013 으로 · DART_RETRY_DAYS 뒤 다시) · wait DART 를 부르지 않는 실행이고 읽은 적이 없음 · fail 조회
+    실패 · 이번 실행의 한도 (적지 않아요 · 다음 실행에 다시). 찾은 사실(000)은 DART_REVALIDATE_DAYS 뒤 다시 읽어요 (정정 공시). DART 를 부르지 않는
+    실행 (no_call · 멈춤)은 캐시에 있는 것을 날짜와 상관없이 그대로 쓰고 한도를 쓰지 않아요. budget = [남은 원문 읽기 수] (실제로 부를 때만 줄여요)."""
+    key = f"{corp}|{fy}|11011|{SMALL_DIV_TAG}"
+    with client.lock:
+        e = client.entries.get(key)
+    e = e if isinstance(e, dict) and e.get("st") in ("000", "013") and e.get("at") else None
+    old = copy.deepcopy(e["d"]) if e and e["st"] == "000" else None
+    stuck = bool(client.no_call or client.down or client.fatal)
+    if e:
+        age = (client.today - dt.date.fromisoformat(e["at"])).days
+        fresh = age <= (DART_REVALIDATE_DAYS if e["st"] == "000" else DART_RETRY_DAYS)
+        if e.get("rpTry"):                        # 다시 읽기에서 원문을 찾지 못해 예전 사실을 둔 항목: DART_RETRY_DAYS 뒤에 다시
+            fresh = fresh or (client.today - dt.date.fromisoformat(e["rpTry"])).days <= DART_RETRY_DAYS
+        if fresh or stuck:
+            return (old, "cache") if old is not None else (None, ("nf", (e.get("d") or {}).get("why") or SMALL_DIV_KO["nf"]))
+    if stuck:
+        return None, (("wait", SMALL_DIV_KO["nocall"]) if client.no_call and not (client.down or client.fatal)
+                      else ("fail", "DART 에 닿지 않아요 (멈춤 · 한도) — 다음 실행에서 읽어요"))
+
+    def fail(why):                                # 다시 읽기가 실패하면 예전에 찾은 사실을 그대로 써요 (찾은 것을 '없음'으로 바꾸지 않게)
+        return (old, "cache") if old is not None else (None, ("fail", why))
+
+    if budget[0] <= 0:
+        if e and e["st"] == "013":
+            return None, ("nf", (e.get("d") or {}).get("why") or SMALL_DIV_KO["nf"])
+        return fail(f"이번 실행의 원문 읽기 한도({SMALL_DIV_PER_RUN}곳)에 닿음 — 다음 실행에서 읽어요")
+    budget[0] -= 1
+    today = client.today
+
+    def nf(why):
+        if old is not None:                       # 정정 뒤 목록 · 원문이 이상해도 찾은 사실은 지우지 않아요 (DART_RETRY_DAYS 뒤 다시)
+            with client.lock:
+                client.entries[key] = {**e, "rpTry": today.isoformat()}
+            return old, "cache"
+        with client.lock:
+            client.entries[key] = {"st": "013", "at": today.isoformat(), "d": {"why": why}}
+        return None, ("nf", why)
+
+    j = client.get("list.json", {"corp_code": corp, "bgn_de": f"{fy + 1}0101", "end_de": today.strftime("%Y%m%d"), "pblntf_ty": "A",
+                                 "pblntf_detail_ty": "A001", "last_reprt_at": "Y", "page_count": "100"})
+    if j is None:
+        return fail("정기공시 목록 조회 실패")
+    st = str(j.get("status"))
+    if st == "013":
+        return nf(f"{fy}년 사업보고서가 정기공시 목록에 없어요")
+    if st != "000":
+        return fail(f"정기공시 목록 상태 {st}")
+    rc = small_div_report_rc(j.get("list") or [], fy)
+    if not rc:
+        return nf(f"정기공시 목록에 '사업보고서 ({fy}.12)' 가 없어요 (12월 결산만 읽어요)")
+    files = client.get_zip("document.xml", {"rcept_no": rc})
+    if files is None:
+        return fail(f"사업보고서 원문 {rc} 조회 실패")
+    text, err = issue_doc_main(files, rc)
+    if err:
+        return nf(f"원문 {rc}: {err[1]}") if err[0] == "nf" else fail(f"원문 {rc}: {err[1]}")
+    sec = small_div_section(text)
+    if sec is None:
+        return nf(f"원문 {rc} 에 '배당에 관한 사항' 절이 없어요")
+    d = {**small_div_facts(sec, fy), "rc": rc}
+    with client.lock:
+        client.entries[key] = {"st": "000", "at": today.isoformat(), "d": d}
+    return copy.deepcopy(d), "fetched"
+
+
+def small_holder_div(kr, why, client, px_date, corp_extra=None):
+    """차등배당 회사의 소액주주 1주 배당과 오늘 종가 기준 수익률 (위 설명) — apply_div_basis 뒤 (배당 기준 증명이 data/div 로 숨긴 종목만), 캐시 저장
+    앞에 불러요. 종목에 dpsSmall · dytSmall 을 달고 corp_extra 에도 같은 두 칸을 넣어요 → data.json divSmall 기록 (실은 종목마다 근거 문장 q).
+    이 단계는 발행을 멈추지 않아요: 오류가 나면 모든 종목에서 두 칸을 지우고 크게 남겨요 (기록 err · 관문이 경고). (dps · dyt · dz · dvLine 은 그대로)"""
+    for s in kr:                                  # 이번 실행에서 읽은 것만 (지난 발행본에서 이어 온 행에 남은 칸이 없게)
+        s.pop("dpsSmall", None)
+        s.pop("dytSmall", None)
+    rec = {"v": 1, "cand": 0, "on": {}, "no": {}, "fail": {}, "read": 0, "calls": 0}
+    c0 = sum(client.status.values()) if client else 0
+    try:
+        _small_holder_div(kr, why, client, px_date, corp_extra if corp_extra is not None else {}, rec)
+    except Exception as e:                        # 새 칸만의 단계 — 지우고 이어가요 (관문의 '소액주주 배당수익률' 줄이 경고)
+        for s in kr:
+            s.pop("dpsSmall", None)
+            s.pop("dytSmall", None)
+        for t in rec["on"]:
+            (corp_extra or {}).get(t, {}).pop("dpsSmall", None)
+            (corp_extra or {}).get(t, {}).pop("dytSmall", None)
+        rec.update(on={}, err=f"{type(e).__name__}: {str(e)[:160]}")
+        log(f"  !! 소액주주 배당(차등배당): 단계가 오류로 멈췄어요 ({rec['err']}) — 모든 종목에서 dpsSmall · dytSmall 을 비우고 이어가요 (관문이 경고해요)")
+    if client:
+        rec["calls"] = sum(client.status.values()) - c0
+    on = rec["on"]
+    by_no = collections.Counter(rec["no"].values())
+    loud = bool(rec["fail"]) or "err" in rec
+    log(f"{'  !! ' if loud else '· '}소액주주 배당(차등배당 · dpsSmall · dytSmall): 대상 {rec['cand']:,} (배당 표가 주식 수와 어긋나 숨긴 data/div) · "
+        f"실음 {len(on):,}" + (": " + ", ".join(f"{t} {v['nk']} {v['d']:,}원 {v['y']:.2f}% ({v['how']})" for t, v in sorted(on.items())) if on else "")
+        + f" · 그대로 {len(rec['no']):,}" + (" (" + " · ".join(f"{SMALL_DIV_KO.get(k, k)} {n}" for k, n in by_no.most_common()) + ")" if by_no else "")
+        + f" · 조회 실패 {len(rec['fail']):,}" + (": " + ", ".join(f"{t} {w}" for t, w in sorted(rec["fail"].items())[:5]) if rec["fail"] else "")
+        + (f" · 건너뜀: {rec['skip']}" if rec.get("skip") else "")
+        + f" · 원문 새로 읽음 {rec['read']:,} (실행당 최대 {SMALL_DIV_PER_RUN}) · DART 호출 {rec['calls']:,} — 배당 순위(dz)는 그대로 dyt 로만")
+    for t, v in sorted(on.items()):               # #183 리뷰 (Fable S2): 실은 종목마다 근거 문장 — 스위치를 켜기 전에 사람이 읽어요
+        log(f"    근거 {t} {v['nk']} ({v['how']} · 접수 {v['rc']}): {v.get('q') or '(문장 없음)'}")
+    if rec["no"]:
+        log("    그대로 둔 종목: " + ", ".join(f"{t} {SMALL_DIV_KO.get(w, w)}" for t, w in sorted(rec["no"].items())[:20]))
+    return {k: v for k, v in rec.items() if k != "calls" or v}
+
+
+def _small_holder_div(kr, why, client, px_date, corp_extra, rec):
+    if why is None or not getattr(why, "prove_on", False):
+        rec["skip"] = "배당 기준 증명이 꺼졌어요"
+        return
+    sub = (getattr(why, "psub", None) or {}).get("data") or {}
+    cand = sorted(t for t, x in sub.items() if x == "div")
+    rec["cand"] = len(cand)
+    if not cand:
+        return
+    if client is None:
+        rec["fail"] = {t: "DART 꺼짐 · 키 없음" for t in cand}
+        return
+    by = {s.get("t"): s for s in kr}
+    px = px_date.isoformat() if isinstance(px_date, dt.date) else str(px_date)
+    budget = [SMALL_DIV_PER_RUN]
+    for t in cand:
+        s = by.get(t)
+        fy = (s or {}).get("fy")
+        d0 = _fin((_three((s or {}).get("dps3")) or [None])[0])
+        price = _fin((s or {}).get("price"))
+        corp = why.cmap.get(t)
+        if not s or s.get("cls") != "kr" or is_preferred(t) or is_foreign_issuer(t) or not isinstance(fy, int) or not d0 or d0 <= 0 \
+                or not price or price <= 0 or not corp or _fin(s.get("dyt")) is not None:
+            rec["no"][t] = "bad"
+            continue
+        got = (getattr(why, "seen", None) or {}).get(t)
+        look = got[0] if got else None
+        if not isinstance(look, dict):
+            rec["fail"][t] = "배당 기준 증명의 공시 조회가 없어요"
+            continue
+        stk, stk_fail = why._stk(corp, fy)
+        if stk_fail:
+            rec["fail"][t] = f"{fy}년 말 주식의 총수 현황을 받지 못함"
+            continue
+        why_b = small_div_basis(look, fy, px, stk, s.get("shr"))
+        if why_b:
+            rec["no"][t] = why_b
+            continue
+        facts, how_read = small_div_doc(client, corp, fy, budget)
+        if facts is None:
+            kind, msg = how_read
+            if kind in ("nf", "wait"):
+                rec["no"][t] = "nf" if kind == "nf" else "nocall"
+            else:
+                rec["fail"][t] = msg
+            continue
+        rec["read"] += how_read == "fetched"
+        cash0 = _fin(((corp_extra.get(t) or {}).get("cash3") or [None])[0])
+        how, why_p = small_div_pick(facts, d0, cash0 * 1e8 if cash0 is not None else None)
+        if not how:
+            rec["no"][t] = why_p
+            continue
+        v = int(d0) if float(d0).is_integer() else d0      # 하나의 값: 실는 dpsSmall 과 dytSmall 을 셈한 값이 같아요 (#183 리뷰 Fable S4)
+        y = v / price * 100
+        if y > DYT_MAX:
+            rec["no"][t] = "big"
+            continue
+        if y < SMALL_DIV_Y_MIN:
+            rec["no"][t] = "tiny"
+            continue
+        s["dpsSmall"] = v
+        s["dytSmall"] = round(y, 2)
+        corp_extra.setdefault(t, {}).update(dpsSmall=v, dytSmall=s["dytSmall"])
+        rec["on"][t] = {"nk": s.get("nk") or "", "d": v, "y": s["dytSmall"], "how": how, "rc": facts.get("rc") or "",
+                        "q": small_div_quote(facts, how)}
+
+
 DIV_RANK_MUST = MUST_KR + ("035420", "012450")   # 관문의 필수 종목 중 국내 7개 (NAVER · 한화에어로스페이스 포함)
 
 
@@ -11840,7 +12487,8 @@ def load_us_info(path=None):
     return {}
 
 
-def save_us_info(d, path=None):
+def save_us_info(d, path=None, what="미국 상세 정보 보관본"):
+    """gzip JSON 보관본 쓰기 (NaN 없이 · 임시 파일 뒤 바꿔치기). 미국 회사 크기 보관본(save_us_size)도 이 함수로 써요 (what = 로그의 이름)."""
     path = path or US_INFO_PATH
     try:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -11849,7 +12497,7 @@ def save_us_info(d, path=None):
             json.dump(_json_safe(d, [0]), f, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
         os.replace(tmp, path)
     except Exception as e:
-        log(f"  !! 미국 상세 정보 보관본 저장 실패: {e}")
+        log(f"  !! {what} 저장 실패: {e}")
 
 
 # v19.1c (Jack, 2026-11-07): 다음 발행 예정일과 '늦음' 경고 시각. 앱은 이 시각이 지나도 새 파일이 오지 않으면 갱신이 멈췄다고
@@ -12512,6 +13160,384 @@ def us_info_due(entry, today):
     except Exception:
         return True
     return a >= US_INFO_FRESH_DAYS or entry.get("k") != US_INFO_SCHEMA or bool(entry.get("due"))
+
+
+# ── 미국 회사 크기: 최근 분기 매출 · 자본 (v19.5b 후속) ─────────────────────────────────────────────────────────────────────────
+# Jack, 2026-11-13: "v19.5b's US minimum sizes (25억원 of quarterly revenue, 100억원 of equity, at the day's rate) need a small data
+# PR first." 2.0 종목 순위의 한국 기준별 성장 · 수익성은 최소 크기를 봐요 (src/v2/ranks.js MIN_EOK). 미국에도 같은 일을 하려면 회사의 금액이
+# 있어야 해서, 미국 회사마다 가장 최근 분기의 매출과 자본을 그 분기 말 날짜와 함께 실어요 (data.json, 행마다 · 값이 있을 때만 칸이 있어요):
+#   qrev · qrevD — 최근 분기 매출 (야후 분기 손익계산서 TotalRevenue) · 그 분기 말 날짜
+#   qeq · qeqD   — 자본 (야후 분기 재무상태표 CommonStockEquity: 보통주 몫 자기자본 = ROE 를 계산하는 자본 · 음수 = 자본잠식도 그대로) ·
+#                  그 분기 말 날짜. StockholdersEquity(우선주 포함)가 아니에요: 2026-11-20 달러 재무제표 728곳에서 두 줄은 우선주만큼만 달랐고
+#                  (75곳), 100억원 기준이 갈리는 곳은 PAA 하나 — 합자회사라 StockholdersEquity 가 0 이고 CommonStockEquity 는 94.6억 달러예요
+# 단위는 달러 (주가 price · lo · hi 와 같은 달러 · 정수). 원으로 바꾸는 것은 앱이 비교할 때 그날 환율(data.json fx)로 한 번만 해요.
+# 빈 칸은 '크기를 모름'이에요. usSize.pending = 아직 크기를 알아볼 차례가 남은 달러 회사 수: 보관본에 항목이 없거나 (한 실행 상한 · 시간 상한 ·
+# 거절로 차례가 오지 않음), 한 번도 답을 받지 못했는데 US_SIZE_TRIES 번이 아직 안 됨. 앱은 이 값이 0 일 때만 미국 최소 크기와 그 줄을 켜요
+# (리뷰 2026-11-23). 켜지면 크기를 아는 회사 중 기준 아래와 크기를 모르는 회사가 모두 빠져요 — 한국 목록이 자본이 빈 회사를 빼는 것처럼, 그래야
+# 승인된 줄 '자본 100억원 이상'이 목록의 모든 회사에 맞아요 (리뷰 2026-11-24 · Fable S3, Jack 에게 알림). 크기를 영영 모르는 회사(달러가 아닌
+# 재무제표 · 통화 모름 · 반기 보고 · 오래된 분기 · US_SIZE_TRIES 번 이어서 받지 못함)는 pending 이 아니에요. 빠지는 회사는 모두 로그와 앱 콘솔이
+# 이름과 이유로 말해요 (usSize.blank). 후속: #181 의 달러가 아닌 회사 회사 합계가 켜지면 그 회사들도 달러 자본(qeq)을 얻을 수 있어요.
+# 출처: 상세 정보(get_info)를 받는 그 야후의 분기 재무제표 — 회사마다 요청 한 번에 두 줄만 (yfinance 의 분기 재무제표 시계열 함수 ·
+# _us_size_yahoo). 새 출처가 아니에요. 통화를 섞지 않아요: 재무제표 통화(us_fin_currency)가 달러인 회사만 받아요. 달러가 아닌 회사(fcur)는
+# 그날 환율이 데이터에 없어(달러 · 원 환율뿐) 비우고, 통화를 모르면(cur) 비워요. ETF · 펀드는 회사가 아니라 받지 않아요.
+# 가격을 지키는 순서 (리뷰 2026-11-23): 이 단계는 main 의 맨 끝 — 가격에 쓰는 야후 요청(국내 2차 출처 · 미국 종가 · 상세 정보 · 분할 · 금 ·
+# 원자재 · 환율 이력)이 모두 끝나고 data.json · corp.json · macro.json 을 쓴 뒤에 돌아요 (그 뒤에는 DART 만). 한 실행에 많아야
+# US_SIZE_PER_RUN 곳 (보관본에 없는 회사를 시가총액 큰 순으로 먼저, 그다음 받은 지 오래된 순) · US_SIZE_BUDGET_S 초 · 동시에
+# US_SIZE_WORKERS 곳. 야후가 거절하는 첫 신호에서 멈춰요 — 429 는 첫 번에, 빈 답 · 오류는 그 전에 받지 못한 적 없는 회사에서 US_SIZE_EMPTY_STOP 번
+# 이어지면 (늘 빈 답인 회사 몇 곳이 매번 단계를 멈추지 않게 · 리뷰 2026-11-24 S1). 남은 회사는 다음 실행이 받아요. 한 번도 받지 못한 회사는
+# US_SIZE_TRIES 번까지 매 실행 앞쪽에서 다시 받고, 그 뒤로는 7일에 한 번 맨 뒤에서만 다시 받아요.
+# 분기 숫자는 분기마다 바뀌어서 보관본(us_size_path() · 미국 상세 정보 보관본과 같은 DART 캐시 폴더라 같이 보관돼요)에 두고
+# US_SIZE_FRESH_DAYS 일마다 다시 받아요. 오늘 받지 못하면 보관본의 값을 그대로 써요 — 값마다 분기 말 날짜가 있어 어느 분기인지 말해요. 분기 말이
+# 미국 기준일보다 US_SIZE_MAX_AGE_DAYS 일 넘게 앞이면 '최근 분기'가 아니라 비워요 (old). 빈 칸은 모두 이유와 수를 로그와 data.json usSize 에
+# 남겨요 (관문은 경고만 · validate_data.check_us_size).
+US_SIZE_FILE = "us-size-v1.json.gz"
+US_SIZE_ROWS = (("qrev", "TotalRevenue"), ("qeq", "CommonStockEquity"))   # (data.json 칸, 야후 분기 줄 이름)
+US_SIZE_FRESH_DAYS = 7
+US_SIZE_PER_RUN = 300           # 한 실행에 받는 회사 수 상한 (요청도 회사마다 한 번 · 첫 실행 뒤 728곳이 다 차려면 실행 3번: 300 · 300 · 128)
+US_SIZE_WORKERS = 3             # 동시에 받는 수 (거절 신호를 바로 보게 적게)
+US_SIZE_BUDGET_S = 180          # 이 단계 전체의 시간 상한 (초) — 넘으면 남은 종목은 다음 실행 (크게 남겨요)
+US_SIZE_EMPTY_STOP = 3          # 처음 받지 못한 회사의 빈 답 · 오류가 이만큼 이어지면 야후가 막는 것으로 보고 멈춰요 (429 는 첫 번에)
+US_SIZE_TRIES = 3               # 이만큼 이어서 받지 못하면: 7일에 한 번 맨 뒤에서만 다시 · 빈 답 셈에서 빠짐 · 한 번도 받지 못한 회사는 영영 모름 (pending 아님)
+US_SIZE_MAX_AGE_DAYS = 200      # 11월에 9월 말 분기 (약 50일)가 보통 · 한 분기 늦은 6월 말 (약 145일)까지 · 3월 말 (약 235일)은 비워요
+US_SIZE_PRUNE_DAYS = 120        # 이만큼 받지 않은 보관본 항목은 지워요 (목록에서 빠진 티커)
+US_SIZE_WHY_KO = {"fcur": "재무제표 통화가 달러가 아님 (그날 환율이 데이터에 없어 비움)", "cur": "재무제표 통화를 모름 (상세 정보 없음 포함)",
+                  "wait": f"아직 받지 않음 (한 실행에 {US_SIZE_PER_RUN}곳씩 · 다음 실행이 받아요)",
+                  "retry": f"받으려 했는데 받지 못함 (거절 · 오류 · 빈 답) · 다음 실행이 다시 받아요 ({US_SIZE_TRIES}번까지 · 그동안 pending)",
+                  "gaveUp": f"{US_SIZE_TRIES}번 이어서 받지 못함 (늘 빈 답 · 오류인 회사) · 영영 모름으로 보고 7일에 한 번만 다시",
+                  "fail": "답은 받은 적 있는데 이 줄의 값이 없음",
+                  "time": f"시간 상한 {US_SIZE_BUDGET_S}초에 걸려 받지 못함 (보관본도 없음 · 다음 실행)",
+                  "stop": "야후 거절로 이 단계를 멈춰 받지 못함 (보관본도 없음 · 다음 실행)",
+                  "noRow": "야후 분기 재무제표에 그 줄이 없음 (반기마다 보고하는 회사 등)", "old": f"분기 말이 미국 기준일보다 {US_SIZE_MAX_AGE_DAYS}일 넘게 앞",
+                  "future": "분기 말이 미국 기준일 뒤 (값이 이상함)"}
+US_SIZE_SHOW = 30
+
+
+def us_size_path():
+    """보관본 자리: 환경 변수 US_SIZE_CACHE 가 있으면 그 자리, 아니면 미국 상세 정보 보관본(US_INFO_PATH)과 같은 폴더의 US_SIZE_FILE (부를 때 정해요
+    — 시험이 US_INFO_PATH 를 임시 폴더로 바꾸면 이 보관본도 거기로 가요)."""
+    return os.environ.get("US_SIZE_CACHE") or os.path.join(os.path.dirname(US_INFO_PATH) or ".", US_SIZE_FILE)
+
+
+def load_us_size(path=None):
+    path = path or us_size_path()
+    try:
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            d = json.load(f)
+        if not isinstance(d, dict):
+            raise ValueError("모양이 틀림")
+        log(f"· 미국 회사 크기 보관본 {len(d):,}곳")
+        return d
+    except FileNotFoundError:
+        log("· 미국 회사 크기 보관본 없음 → 처음부터 받아요 (한 실행에 많아야 " + f"{US_SIZE_PER_RUN}곳)")
+    except Exception as e:
+        log(f"  !! 미국 회사 크기 보관본을 읽지 못했어요 ({type(e).__name__}) → 처음부터 받아요 (한 실행에 많아야 {US_SIZE_PER_RUN}곳)")
+    return {}
+
+
+def save_us_size(d, path=None):
+    save_us_info(d, path or us_size_path(), what="미국 회사 크기 보관본 (다음 실행이 다시 받아요)")
+
+
+def _us_size_yahoo(sym):
+    """야후 분기 재무제표 시계열에서 TotalRevenue · CommonStockEquity 두 줄만 요청 한 번으로 → 표 (줄 = 항목, 칸 = 분기 말). yfinance 의 공개
+    get_income_stmt · get_balance_sheet 는 요청이 두 번 (줄 약 150개씩)이고, 429 를 빈 표로 숨겨요. 이 함수(1.7.0 에 고정 · 시험이 그 자리를
+    확인해요)는 429 를 YFRateLimitError 로 올려서 us_size_step 이 바로 멈출 수 있어요. 그 줄이 없는 회사는 그 줄만 빠진 표, 아무것도 없으면 빈 표."""
+    import yfinance as yf
+    return yf.Ticker(sym)._fundamentals.financials._get_financials_time_series("quarterly", [row for _k, row in US_SIZE_ROWS])
+
+
+def us_size_refused(err):
+    """오류가 야후의 거절(429 · Too Many Requests)인지. (순수 함수)"""
+    return type(err).__name__ == "YFRateLimitError" or "Too Many Requests" in str(err) or re.search(r"\b429\b", str(err)) is not None
+
+
+def us_size_val_ok(v):
+    """보관본의 값 모양 [분기 말 'YYYY-MM-DD', 유한한 숫자] 인지. (순수 함수)"""
+    return isinstance(v, (list, tuple)) and len(v) == 2 and gate_iso_day(v[0]) is not None and _fin(v[1]) is not None
+
+
+def us_size_pick(df, row):
+    """분기 재무제표 표(df: 줄 = 항목 이름, 칸 = 분기 말 날짜 · yfinance 모양)에서 row 줄의 가장 최근 분기 값 → [날짜 'YYYY-MM-DD', 정수(반올림)].
+    그 줄이 없거나 유한한 숫자가 하나도 없으면 None. (순수 함수)"""
+    if df is None or not hasattr(df, "index") or getattr(df, "empty", True) or row not in df.index:
+        return None
+    line = df.loc[row]
+    if isinstance(line, pd.DataFrame):      # 같은 이름의 줄이 둘이면 첫 줄 (yfinance 는 한 줄이에요)
+        line = line.iloc[0]
+    best = None
+    for col, v in line.items():
+        x = _fin(v)
+        if x is None:
+            continue
+        try:
+            ts = pd.Timestamp(col)
+        except (TypeError, ValueError):
+            continue
+        if pd.isna(ts):
+            continue
+        d = ts.date()
+        if best is None or d > best[0]:
+            best = (d, x)
+    return [best[0].isoformat(), int(round(best[1]))] if best else None
+
+
+def us_size_entry(got, prev, today):
+    """오늘 받은 표(got · 받다가 오류거나 빈 답이면 None)와 예전 보관본 항목(prev) → 새 항목 {"at": 오늘, "qrev": [날짜, 값] 또는 None,
+    "qeq": …, "no": {칸: "noRow"} (있을 때만), "old": [예전 값을 그대로 둔 칸] (있을 때만), "due": True · "tries": 이어서 받지 못한 수 (받지
+    못했을 때만), "seen": True (답을 받은 적 있을 때)}. 받지 못하면 두 칸
+    모두 예전 항목의 값(과 줄 없음 표시)을 그대로 두고 다음 실행에서 다시 받아요. 표가 왔는데 그 줄이나 숫자가 없으면 그 칸은 None 이고 noRow.
+    (순수 함수)"""
+    old = prev if isinstance(prev, dict) else {}
+    old_no = old.get("no") if isinstance(old.get("no"), dict) else {}
+    came = got is not None and hasattr(got, "index") and not getattr(got, "empty", True)
+    e, no, kept = {"at": today.isoformat()}, {}, []
+    if came or us_size_seen(old):
+        e["seen"] = True                        # 답을 받은 적 있음 (영영 pending 이 아니에요)
+    if not came:
+        e["tries"] = us_size_tries(old) + 1     # 이어서 받지 못한 수 (받으면 없어져요)
+    for key, row in US_SIZE_ROWS:
+        if not came:
+            e[key] = list(old[key]) if us_size_val_ok(old.get(key)) else None
+            if e[key] is not None:
+                kept.append(key)
+            elif old_no.get(key) == "noRow":
+                no[key] = "noRow"
+            continue
+        e[key] = us_size_pick(got, row)
+        if e[key] is None:
+            no[key] = "noRow"
+    if no:
+        e["no"] = no
+    if kept:
+        e["old"] = kept
+    if not came:
+        e["due"] = True
+    return e
+
+
+def us_size_seen(e):
+    """이 보관본 항목이 야후의 답을 받은 적 있는지 (값 · 줄 없음 표시 · seen). (순수 함수)"""
+    return isinstance(e, dict) and bool(e.get("seen") or e.get("no") or any(us_size_val_ok(e.get(k)) for k, _r in US_SIZE_ROWS))
+
+
+def us_size_tries(e):
+    """이어서 받지 못한 수 (없거나 읽을 수 없으면 0). (순수 함수)"""
+    n = e.get("tries") if isinstance(e, dict) else None
+    return n if isinstance(n, int) and not isinstance(n, bool) and n > 0 else 0
+
+
+def us_size_pending(e, tries=US_SIZE_TRIES):
+    """아직 크기를 알아볼 차례가 남았는지: 항목이 없음 · 한 번도 답을 받지 못했는데 tries 번이 아직 안 됨. (순수 함수)"""
+    return not isinstance(e, dict) or (not us_size_seen(e) and us_size_tries(e) < tries)
+
+
+def us_size_order(want, cache, caps, today, per_run=US_SIZE_PER_RUN, tries=US_SIZE_TRIES, fresh_days=US_SIZE_FRESH_DAYS):
+    """오늘 받을 회사 (많아야 per_run 곳 · 어느 항목도 빠지지 않아요):
+    ① first — 항목이 없거나 받은 날을 읽을 수 없거나 오늘 뒤이거나, 지난번에 받지 못했거나(due) 답을 받은 적이 없는 회사 (tries 번 전까지) —
+       시가총액 큰 순
+    ② later — 그 밖에 받은 지 fresh_days 일 지난 회사 — 받은 날 오래된 순 (같으면 시가총액 큰 순)
+    ③ weekly — tries 번 이어서 받지 못한 회사, 받은 지 fresh_days 일 지났을 때만 — 맨 뒤 (받은 날 오래된 순)
+    caps: 티커 → 시가총액 (없으면 같은 무리의 맨 뒤). → (받을 티커 목록, ① · ② · ③ 의 수 — 상한 전). (순수 함수)"""
+    def cap(t):
+        c = _fin(caps.get(t))
+        return -c if c is not None else float("inf")
+    first, later, weekly = [], [], []
+    for t in want:
+        e = cache.get(t)
+        d = gate_iso_day(e.get("at")) if isinstance(e, dict) else None
+        if d is None or d > today:
+            first.append(t)
+            continue
+        stale = (today - d).days >= fresh_days
+        if us_size_tries(e) >= tries:
+            if stale:
+                weekly.append(t)
+        elif e.get("due") or not us_size_seen(e):
+            first.append(t)
+        elif stale:
+            later.append(t)
+    first.sort(key=lambda t: (cap(t), t))
+    at = lambda t: str((cache.get(t) or {}).get("at"))   # noqa: E731
+    later.sort(key=lambda t: (at(t), cap(t), t))
+    weekly.sort(key=lambda t: (at(t), cap(t), t))
+    return (first + later + weekly)[:max(0, per_run)], len(first), len(later), len(weekly)
+
+
+def us_size_fields(entry, fc, us_px_date, max_age=US_SIZE_MAX_AGE_DAYS, tries=US_SIZE_TRIES):
+    """회사 한 곳의 data.json 칸 → (칸: qrev · qrevD · qeq · qeqD 중 값이 있는 것, 이유: {"qrev": 이유 또는 None, "qeq": …}).
+    fc = 재무제표 통화 (us_fin_currency): 달러(US_QUOTE_CUR)만 실어요 · None = cur · 다른 통화 = fcur. 값이 없으면: 보관본의 줄 없음 표시
+    (noRow) · 보관본 항목이 없음 (wait) · 한 번도 답을 받지 못함 (tries 번 전 retry · 그 뒤 gaveUp) · 답은 받은 적 있는데 이 줄만 없음 (fail).
+    분기 말이 미국 기준일 뒤면 future · 미국 기준일보다 max_age 일 넘게 앞이면 old. (순수 함수)"""
+    out, why = {}, {}
+    no = (entry.get("no") if isinstance(entry, dict) and isinstance(entry.get("no"), dict) else None) or {}
+    for key, _row in US_SIZE_ROWS:
+        if fc is None:
+            why[key] = "cur"
+            continue
+        if fc != US_QUOTE_CUR:
+            why[key] = "fcur"
+            continue
+        v = entry.get(key) if isinstance(entry, dict) else None
+        if not us_size_val_ok(v):
+            why[key] = ("noRow" if no.get(key) == "noRow" else "wait" if not isinstance(entry, dict) else "fail" if us_size_seen(entry)
+                        else "gaveUp" if us_size_tries(entry) >= tries else "retry")
+            continue
+        d = gate_iso_day(v[0])
+        if d > us_px_date:
+            why[key] = "future"
+            continue
+        if (us_px_date - d).days > max_age:
+            why[key] = "old"
+            continue
+        out[key] = int(round(_fin(v[1])))
+        out[key + "D"] = d.isoformat()
+        why[key] = None
+    return out, why
+
+
+US_SIZE_PENDING_WHY = ("wait", "time", "stop", "retry")   # 아직 차례가 남은 빈 칸 (pending · 이름은 앞 US_SIZE_SHOW 곳만 · 나머지는 모두 이름으로)
+
+
+def us_size_step(out, cur_of, us_px_date, today, fetch=None, path=None, clock=None, budget_s=US_SIZE_BUDGET_S,
+                 per_run=US_SIZE_PER_RUN, workers=US_SIZE_WORKERS, empty_stop=US_SIZE_EMPTY_STOP, tries=US_SIZE_TRIES):
+    """미국 행(out)에 qrev · qrevD · qeq · qeqD 를 붙여요 (회사 주식이고 재무제표 통화가 달러인 행만 · 다른 행의 같은 칸은 지워요).
+    cur_of(티커) → 재무제표 통화 (us_fin_currency 값 · 모르면 None). fetch(티커) → 분기 표 (기본: 야후 _us_size_yahoo).
+    받을 곳은 us_size_order (많아야 per_run 곳). budget_s 초가 지나거나 야후가 거절하면 남은 회사는 받지 않고 크게 남겨요 — 429 는 첫 번에, 빈 답 ·
+    오류는 그 전에 받지 못한 적 없는 회사에서 empty_stop 번 이어지면 (늘 빈 답인 회사는 세지 않아요). 다른 단계에는 아무 영향이 없어요 (이 단계는
+    main 의 맨 끝에서 돌아요). 한 회사의 표를 읽다 멈추면 그 회사만 오류예요 (보관본은 그대로 저장해요).
+    → data.json usSize 기록 (v · unit · src · 회사 수 · 채운 수 · 빈 칸 이유별 수 · blank = 아직 차례가 남은 것 말고 빈 칸의 티커 → 이유 (앱
+    콘솔이 빠지는 회사를 이름과 이유로 말해요) · noData · pending · 요청 수 · 멈춘 까닭과 종류). 로그에 수와 이유 · 티커를 남겨요."""
+    fetch, clock = fetch or _us_size_yahoo, clock or time.monotonic   # 부를 때 정해요
+    path = path or us_size_path()
+    cache = load_us_size(path)
+    rows = []
+    for rec in out:
+        for key, _row in US_SIZE_ROWS:
+            rec.pop(key, None)
+            rec.pop(key + "D", None)
+        if rec.get("etf") or rec.get("fund"):
+            continue
+        rows.append((rec, cur_of(rec.get("t"))))
+    want = sorted({rec["t"] for rec, fc in rows if fc == US_QUOTE_CUR})
+    ask, n_first, n_later, n_weekly = us_size_order(want, cache, {rec["t"]: rec.get("cap") for rec, _fc in rows}, today, per_run, tries)
+    deadline = clock() + budget_s
+    lock = threading.Lock()
+    run = {"stop": None, "kind": None, "streak": 0, "req": 0}
+
+    def one(t):
+        with lock:
+            if run["stop"]:
+                return t, "stop", None
+            if clock() > deadline:
+                return t, "time", None
+            run["req"] += 1
+        prev = cache.get(t)
+        failed_before = us_size_tries(prev) > 0        # 지난번에도 받지 못한 회사 (빈 답 셈에서 빠져요 · 늘 빈 답인 회사가 단계를 멈추지 않게)
+        e, err = None, None
+        try:
+            g = fetch(t)
+            if g is not None and hasattr(g, "index") and not getattr(g, "empty", True):
+                e = us_size_entry(g, prev, today)       # 표를 읽다 멈추면 그 회사만 오류 (리뷰 2026-11-24 N2)
+        except Exception as ex:
+            e, err = None, ex
+        with lock:
+            if err is not None and us_size_refused(err):
+                if not run["stop"]:
+                    run["stop"], run["kind"] = f"야후 거절 (429 · {t})", "429"
+            elif e is not None:
+                run["streak"] = 0
+            elif not failed_before:
+                run["streak"] += 1
+                if run["streak"] >= empty_stop and not run["stop"]:
+                    run["stop"], run["kind"] = (f"처음 받지 못한 회사의 빈 답 · 오류가 {run['streak']}번 이어짐 (마지막 {t} · 야후가 막는 것일 수 "
+                                                "있어요)"), "empty"
+        if e is None:
+            return t, ("err" if err is not None else "empty"), (type(err).__name__ if err is not None else None)
+        return t, "ok", e
+
+    if ask:
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
+            res = {t: (st, e) for t, st, e in ex.map(one, ask)}
+    else:
+        res = {}
+    errs = collections.Counter(e for st, e in res.values() if st == "err")
+    for t, (st, e) in res.items():
+        if st in ("err", "empty"):
+            cache[t] = us_size_entry(None, cache.get(t), today)     # 예전 값 그대로 · 이어서 받지 못한 수 +1 · 다음 실행에서 다시
+        elif st == "ok":
+            cache[t] = e
+    for t in [t for t, e in cache.items() if not (isinstance(e, dict) and gate_iso_day(e.get("at")) is not None
+                                                  and (today - gate_iso_day(e["at"])).days <= US_SIZE_PRUNE_DAYS)]:
+        del cache[t]
+    save_us_size(cache, path)
+
+    skipped = {t: st for t, (st, _e) in res.items() if st in ("time", "stop")}
+    why_n = {key: collections.Counter() for key, _r in US_SIZE_ROWS}
+    why_t = {key: collections.defaultdict(list) for key, _r in US_SIZE_ROWS}
+    blank = {key: {} for key, _r in US_SIZE_ROWS}
+    filled = collections.Counter()
+    for rec, fc in rows:
+        f, why = us_size_fields(cache.get(rec["t"]), fc, us_px_date, tries=tries)
+        rec.update(f)
+        for key, w in why.items():
+            if w is None:
+                filled[key] += 1
+                continue
+            if w == "wait" and rec["t"] in skipped:
+                w = skipped[rec["t"]]                                # 오늘 차례였는데 시간 상한 · 거절로 받지 못함
+            why_n[key][w] += 1
+            why_t[key][w].append(rec["t"])
+            if w not in US_SIZE_PENDING_WHY:
+                blank[key][rec["t"]] = w
+    st_n = collections.Counter(st for st, _e in res.values())
+    kept = sum(1 for t, (st, _e) in res.items() if st in ("err", "empty") and (cache.get(t) or {}).get("old"))
+    no_data = {key: sum(why_n[key].values()) for key, _r in US_SIZE_ROWS}
+    pending = sorted(t for t in want if us_size_pending(cache.get(t), tries))     # 0 이어야 앱이 최소 크기를 켜요
+    gave_up = sorted(t for t in want if us_size_tries(cache.get(t)) >= tries)
+    rec_out = {"v": 1, "unit": "USD", "src": "yahoo quarterly statements (TotalRevenue, CommonStockEquity)", "maxAge": US_SIZE_MAX_AGE_DAYS,
+               "n": len(rows), "usd": len(want), "qrev": filled["qrev"], "qeq": filled["qeq"], "noData": no_data, "pending": len(pending),
+               "why": {key: dict(why_n[key]) for key, _r in US_SIZE_ROWS}, "blank": blank,
+               "cached": sum(1 for t in want if isinstance(cache.get(t), dict)), "perRun": per_run, "tries": tries, "gaveUp": len(gave_up),
+               "asked": len(ask), "req": run["req"], "ok": st_n["ok"], "empty": st_n["empty"], "err": st_n["err"],
+               "time": st_n["time"], "stop": run["stop"], "stopKind": run["kind"], "kept": kept}
+    loud = bool(st_n["err"] or st_n["empty"] or st_n["time"] or run["stop"]) or any(w not in ("fcur", "wait") for key in why_n for w in why_n[key])
+    log(f"{'  !! ' if loud else '· '}미국 회사 크기 (최근 분기 매출 qrev · 자본 qeq · 달러): 회사 {len(rows):,}곳 중 재무제표 통화가 달러 {len(want):,}곳 "
+        f"(보관본에 있음 {rec_out['cached']:,}) · 매출 {filled['qrev']:,} · 자본 {filled['qeq']:,} 채움 · 오늘 받을 곳 {len(ask):,} / 상한 {per_run:,} "
+        f"(처음 · 지난번 실패 {n_first:,} + {US_SIZE_FRESH_DAYS}일 지남 {n_later:,} + {tries}번 이어서 받지 못해 7일에 한 번 {n_weekly:,}) → "
+        f"요청 {run['req']:,} · 받음 {st_n['ok']:,} · 빈 답 {st_n['empty']:,} · 오류 {st_n['err']:,}"
+        + (f" ({', '.join(f'{k} {n}' for k, n in errs.most_common())})" if errs else "")
+        + f" · 받지 못해 보관본 값 그대로 {kept:,}")
+    if run["stop"]:
+        log(f"  !! 미국 회사 크기: 이 단계를 멈췄어요 — {run['stop']} · 받지 못한 {st_n['stop']:,}곳은 다음 실행이 받아요 "
+            "(가격 · 다른 단계는 이미 끝났어요 · 영향 없음)")
+    if st_n["time"]:
+        log(f"  !! 미국 회사 크기: 시간 상한 {budget_s}초에 걸려 {st_n['time']:,}곳을 받지 못했어요 — 다음 실행이 받아요")
+    if gave_up:
+        log(f"  !! 미국 회사 크기: {tries}번 이어서 받지 못한 회사 {len(gave_up):,}곳 (늘 빈 답 · 오류 · 7일에 한 번만 다시 · 빈 답 셈에서 빠짐): "
+            + ", ".join(gave_up))
+    log(f"{'  !! ' if pending else '· '}미국 회사 크기 다 받았는지 (usSize.pending): " + (
+        f"아직 차례가 남은 달러 회사 {len(pending):,}곳 → 앱의 종목 순위는 미국 최소 크기와 그 줄 없이 예전처럼 (다 받으면 켜져요)" if pending
+        else "0 → 앱의 종목 순위가 미국 최소 크기와 그 줄을 켜요 (크기를 모르는 회사와 기준 아래인 회사는 미국 수익성 목록에서 빠져요)"))
+    log(f"{'  !! ' if any(no_data.values()) else '· '}미국 회사 크기가 빈 회사: 매출 {no_data['qrev']:,} · 자본 {no_data['qeq']:,} — 앱의 미국 최소 크기가 "
+        "켜지면 수익성 목록에서 빠져요 (크기를 확인할 수 없어서) · 이유와 티커는 아래 줄")
+    for key, row in US_SIZE_ROWS:
+        for w, ts in sorted(why_t[key].items(), key=lambda x: -len(x[1])):
+            cap_n = US_SIZE_SHOW if w in US_SIZE_PENDING_WHY else len(ts)        # 빠질 수 있는 회사는 모두 이름으로 (아직 차례가 남은 곳만 줄여요)
+            log(f"{'  · ' if w in ('fcur', 'wait') else '  !! '}미국 {key} ({row}) 빈 칸 {len(ts):,}곳 — {US_SIZE_WHY_KO.get(w, w)}: "
+                + ", ".join(ts[:cap_n]) + (f" 외 {len(ts) - cap_n}곳" if len(ts) > cap_n else ""))
+    return rec_out
+
+
+def us_size_stopped(out, err):
+    """us_size_step 이 멈췄을 때: 모든 미국 행의 qrev · qrevD · qeq · qeqD 를 지우고 → data.json usSize 기록 (stopped = 오류 이름 · 앱의 종목
+    순위는 미국 최소 크기 없이 예전처럼 · 관문 경고). (로그만)"""
+    for rec in out:
+        for key, _row in US_SIZE_ROWS:
+            rec.pop(key, None)
+            rec.pop(key + "D", None)
+    log(f"  !! 미국 회사 크기(최근 분기 매출 · 자본)를 붙이다가 멈췄어요 ({type(err).__name__}) → 미국 행의 qrev · qeq 를 모두 비워요 (앱의 종목 순위는 "
+        "미국 최소 크기 없이 예전처럼 · 관문 경고)")
+    return {"v": 1, "unit": "USD", "stopped": type(err).__name__}
 
 
 # 2026-11-14: 미국 상장 외국 회사(US_FOREIGN)의 주당 숫자를 회사 합계 · 실제 배당과 맞춰 봐요 (us_foreign_cuts). 허용 폭 = 큰 값 ÷ 작은 값.
@@ -13734,12 +14760,11 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
         log(f"  !! 미국 d1 없는 종목 {len(no_d1):,}개 (마지막 봉이 미국 기준일 {us_px_date} 이 아님 — 거래 정지이거나 야후가 봉을 "
             f"빠뜨림 · 가격은 괄호 날짜의 종가로 나가요): {', '.join(no_d1[:30])}" + (f" 외 {len(no_d1) - 30:,}개" if len(no_d1) > 30 else ""))
     # v19.6a (A.6): 주식 분할 — 위 다운로드의 분할 칸에서, 목록에 남은 종목만 (새 요청 없음)
-    try:
-        splits, sinfo = us_splits(data, [r["t"] for r in out], today)
-    except Exception as e:
-        splits, sinfo = None, {"err": f"{type(e).__name__}: {e}"}
+    splits, sinfo = us_splits_safe(data, [r["t"] for r in out], today)
     log_us_splits(splits, sinfo, len(out), today, what=f"미국 주식 분할 (오늘 시세 다운로드 · {start} 부터)")
     meta = {"usPxDate": us_px_date.isoformat(), "fxDate": fx_date.isoformat(), "usInfo": [n_ok, len(out)], "_index": spx,
+            # v19.5b 후속: 종목마다 재무제표 통화 (main 의 맨 끝 us_size_step 이 달러 회사만 받게 · 파일에 나가지 않아요 · 상세 정보 없으면 None)
+            "_usCur": {r["t"]: (None if r["t"] in no_info else us_fin_currency(infos.get(r["t"]) or {})) for r in out},
             "usLeftOut": {**left_out, "badBar": bad_bar},   # v19.1c: 깨진 봉으로 뺀 종목도 관문이 경고로 이름을 남겨요
             "usFcurUnknown": fsum["unknown"],               # #114 리뷰: 재무제표 통화를 모르는 회사 (관문이 경고로 이름을 남겨요)
             "usInfoPartial": sorted(t for t in sticky if t in {r["t"] for r in out}),   # #114 리뷰 2: 오늘 응답이 일부만 와 예전 설명 칸을 쓴 종목
@@ -13826,6 +14851,16 @@ def _split_col(data, t):
                 return data[k]
         return None
     return data["Stock Splits"] if "Stock Splits" in cols else None
+
+
+def us_splits_safe(data, codes, today):
+    """fetch_us 의 주식 분할 (v19.6a A.6): us_splits 가 멈추면 (None, {"err": 오류 글}) — 발행은 이어가요 (log_us_splits 가 크게 · 관문이 경고 ·
+    지난 발행본 · 시드의 줄 그대로). 오류 글은 pub_err (2026-11-24: 다른 오류 칸처럼 키를 가리고 앞 300 글자 · 주소의 물음표 뒤 · 키 값은 '…' ·
+    관문의 낱말은 '빈 값' · 바꾼 것이 있으면 원문은 로그에). 이 err 는 log_us_splits 의 로그에만 가요 — data.json 에는 noCol 만 (splitsNoCol)."""
+    try:
+        return us_splits(data, codes, today)
+    except Exception as e:
+        return None, {"err": pub_err(e)}
 
 
 def us_splits(data, codes, today, lo=None):
@@ -15711,6 +16746,15 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
          "dpsF": "배율 (오늘 주식 수 ÷ 그해 배당금의 기준 주식 수 · 1 = 그대로 · dps3a = dps3 ÷ dpsF · 배당 없는 해는 빈 칸)",
          "divSt": "same 그대로 · adj 분할·무상증자를 맞춤 · nc 비교 불가(어중간한 주식 수 변화) · nd 알 수 없음 · zero 3년 배당 없음",
          "dyt": "% (한국 · 오늘 종가 기준 배당수익률 = dps3a[0] ÷ price · 확인 못 한 종목은 빈 칸 · dz 는 이 값의 시장 내 백분위)",
+         "dpsSmall": ("원 (한국 · 2026-11-23 · 차등배당 회사만: 소액주주가 받는 1주 배당 = 사업보고서 배당 표의 보통주 1주 배당 그대로 (반올림하지 않아요), "
+                      "12월 결산 원문 '배당에 관한 사항'의 한 문장(또는 주석)이 차등배당이라고 적고 (부정 · 지난해 · 다른 해 없이) 그 금액 하나(또는 받은 주식 "
+                      "수 하나 × 그 금액 = 현금배당금총액)를 소액주주 · 기타주주 · 일반주주 몫이라고 적을 때만 · 오늘 주식 수가 그해 말과 같은 기준일 때만 · "
+                      "칸이 없으면 해당 없음) · corp.json 에도"),
+         "dytSmall": "% (한국 · dpsSmall 그 값 ÷ price · 0.005 아래는 싣지 않아요 · 소액주주 기준 배당수익률 · dyt · dz 와 따로 — 배당 순위는 dyt 로만) · corp.json 에도",
+         "divSmall": ("소액주주 배당 단계의 기록 {v · cand 대상 (배당 기준 증명이 data/div 로 숨긴 종목 수) · on {코드: nk · d dpsSmall · y dytSmall · "
+                      "how won (원문이 소액주주 몫 'N원'을 적음) · cnt (원문의 소액주주 몫 'N주' × 1주 배당 = 총액) · rc 사업보고서 접수번호 · q 근거 문장} · "
+                      "no {코드: 그대로 둔 까닭 ev · blk · nostk · shr · nodiff · nofig · many · big · tiny · nf · nocall · bad} · fail {코드: 조회 실패} · "
+                      "read 새로 읽은 원문 수 · calls DART 호출 · skip · err}"),
          "betaSE": "베타의 표준오차 (일별 수익률 회귀) · betaN 은 쓴 일별 수익률 수",
          "dvWhy": ("한국 · 주식 수가 바뀌어 배당을 다시 계산하려 한 종목의 결론 (DART 결정 공시) · st ok = 다시 계산, 사건 ev [k split 액면분할 · "
                    "merge 주식병합 · bonus 무상증자 · reduce 주식병합으로 한 감자, d 법적 날짜(효력발생일 · 신주배정기준일 · 감자기준일), "
@@ -15837,6 +16881,24 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                        "keep 비우지 않음 · own 비우고 새 줄) · kept = 스위치 keep 이라 비우지 않은 칸 [티커, 칸, 이유] · sp500 = {n S&P 500 목록 "
                        "크기, inList 오늘 미국 목록과 겹침, ok 믿었는지 (400곳 아래면 본사 나라 규칙을 쓰지 않은 날)}"),
          "usExtraMissing": "손으로 더한 미국 종목(EXTRA_US) 중 오늘 목록에 없는 티커 → 빠진 이유",
+         "qrev": ("미국 회사 · 달러 (정수) · 가장 최근 분기의 매출 (야후 분기 손익계산서 TotalRevenue) · qrevD = 그 분기 말 날짜 · 재무제표 통화가 "
+                  "달러인 회사만 (달러가 아니거나 모르면 빈 칸) · ETF · 펀드는 칸 없음 · 분기 말이 usPxDate 보다 200일 넘게 앞이면 빈 칸 · 원으로 "
+                  "바꾸는 것은 앱이 fx 로 (v19.5b 후속 · 종목 순위의 미국 최소 크기)"),
+         "qeq": ("미국 회사 · 달러 (정수) · 가장 최근 분기 말의 자본 (야후 분기 재무상태표 CommonStockEquity · 보통주 몫 · 음수 = 자본잠식도 "
+                 "그대로) · qeqD = 그 분기 말 날짜 · 빈 칸 규칙은 qrev 와 같아요"),
+         "usSize": ("미국 qrev · qeq 기록 (v19.5b 후속 · 실행의 맨 끝에서 채워 data.json 을 다시 써요): unit USD · src 출처 · maxAge 분기 말이 "
+                    "usPxDate 보다 이만큼(일) 넘게 앞이면 빈 칸 · n 회사 행 (ETF · 펀드 빼고) · usd 그중 재무제표 통화가 달러 · qrev · qeq 채운 행 · "
+                    "noData 칸마다 빈 칸 행 · pending 아직 크기를 알아볼 차례가 남은 달러 회사 (보관본 항목 없음 · 한 번도 답을 받지 못했는데 tries 번 "
+                    "전 · 0 일 때만 앱이 미국 최소 크기와 그 줄을 켜고, 그러면 크기를 모르는 회사도 미국 수익성 목록에서 빠져요) · why 칸마다 빈 칸 "
+                    "이유별 수 (fcur 통화가 달러가 아님 · cur 통화를 모름 · wait 아직 받지 않음 (한 실행에 perRun 곳씩) · time 시간 상한 · stop 이 "
+                    "단계를 멈춰 받지 못함 · retry 받으려 했는데 받지 못함 (tries 번까지 pending) · gaveUp tries 번 이어서 받지 못함 (영영 모름 · "
+                    "7일에 한 번만 다시) · noRow 야후 표에 그 줄이 없음 (반기 보고 회사 등) · fail 답은 받은 적 있는데 그 줄 값이 없음 · old 오래된 "
+                    "분기 · future 분기 말이 usPxDate 뒤) · blank 칸마다 {티커: 이유} (아직 차례가 남은 wait · time · stop · retry 말고 — 앱 콘솔이 "
+                    "빠지는 회사를 이름과 이유로 말해요) · cached 보관본에 있는 달러 회사 · perRun 한 실행의 상한 · tries 이어서 받지 못해도 되는 수 · "
+                    "gaveUp 그만큼 이어서 받지 못한 회사 · asked 오늘 받을 곳 · req 보낸 요청 (회사마다 한 번 · 429 면 yfinance 가 몇 번 더) · ok 받음 · "
+                    "empty 빈 답 · err 오류 · time 시간 상한에 걸린 곳 · stop 멈춘 까닭 (없으면 빈 값) · stopKind 429 (야후 거절) · empty (처음 받지 "
+                    "못한 회사의 빈 답 · 오류가 이어짐) · kept 받지 못해 보관본 값 · stopped 이 단계가 오류로 멈추거나 돌지 못한 까닭 (notRun: 실행이 맨 "
+                    "끝까지 가지 못함 · 그날은 모든 행이 빈 칸)"),
          "usSrc": ("미국 종가의 출처 기록 (2026-11-20 · Jack: 야후 종가가 없는 미국 종목도 마지막 확인 종가로): own {v · max 나이 상한 (그 종가 뒤 미국 "
                    "거래일) · n 실은 수 · codes 마지막 확인 종가(pxc)로 실은 티커 · same 지난 발행본이 같은 usPxDate 라 그날 종가와 d1 을 그대로 실은 티커 "
                    "(pxd 없음) · from (머지 확인) codes · same 의 행마다 야후가 준 것 {티커: bar 시계열은 있고 기준일 봉만 없음 · empty 쓸 수 있는 가격이 "
@@ -15869,7 +16931,11 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                      "되돌린 행 (DART 로 채운 보통주 · 보통주를 따른 우선주 — validate_data.ind_fill_bad · rows '종목 이름: 이유') · usDates = 틀린 미국 ed · "
                      "xd 를 비운 행 (v19.6b · validate_data.us_date_bad_rows · 그 칸만 비워요) · krOwn = 마지막 확인 종가(pxd)로 실었다가 관문과 같은 함수"
                      "(validate_data.kr_own_close_bad)로 뺀 국내 종목 (2026-11-20 · rows [코드, 까닭] · pxSrc.own.bad 와 같은 수 · 관문은 한 점검에서 "
-                     "5개를 넘으면 실패, 있으면 경고)"),
+                     "5개를 넘으면 실패, 있으면 경고) · srcText = 출처 글자(야후 설명 de · disc.json 의 DART 직위 pos)에 관문의 낱말 줄이 "
+                     "찾는 낱말이 있어 비운 칸 (2026-11-24 · rows ['열쇠 칸', 까닭] · 5칸을 넘으면 비우지 않고 그대로 둬 그 줄이 발행을 막아요) · 모든 rows "
+                     "의 글에서 그 낱말은 '빈 값' 으로 적어요 (원문은 실행 로그) · sweep = 쓰기 바로 앞에 우리 기록 칸 (pxSrc · usSrc · splitsInfo · "
+                     "usForeign · usExtraMissing · usListSym · d1Base · ownDrop — 앱이 읽는 own.aged · splitsInfo.fixed 는 빼고) 에서 고친 글 "
+                     "(2026-11-24 · {n 고친 · 찾은 글 수, paths 경로 앞 30} · 한 파일에서 5곳을 넘으면 고치지 않고 그대로 둬 그 줄이 발행을 막아요)"),
          "fgnCut": ("미국 상장 외국 회사의 종목 칸: 회사 합계와 맞지 않아 비운 칸 {per · pbr · dy: mismatch 맞춰 봤는데 맞지 않음 · currency 재무제표 "
                     "통화를 확인하지 못함 · norecord 배당 기록 · 가격을 읽지 못한 배당수익률 · nocompare 회사 숫자로 PER · PBR 을 맞춰 볼 수 없음 (적자 · ROE 없음) · "
                     "nocompare-own 같은 뜻, 스위치 own 일 때 (지금 · 앱 줄 co.fgnNoCmp) · stopped 검사가 멈춘 날 맞춰 보지 않고 비움 (앱 줄 co.fgnStopped)} "
@@ -16084,7 +17150,7 @@ def main():
                                 if kmeta.get("_index") is not None else None, krs=kmeta.get("krSeries"), drop_out=kr_drop)
     except Exception as e:                # 점검이 오류로 멈추면 확인할 수 없는 마지막 확인 종가는 싣지 않아요 (예전처럼 빠져요) — 발행은 이어가요
         kr_drop.clear()
-        kr = kr_own_close_drop_all(kr, kmeta.get("pxSrc"), kmeta.get("krSeries"), f"{type(e).__name__}: {str(e)[:200]}", drop_out=kr_drop)
+        kr = kr_own_close_drop_all(kr, kmeta.get("pxSrc"), kmeta.get("krSeries"), e, drop_out=kr_drop)    # 2026-11-24: 예외째 (키를 가린 뒤 잘라요)
     px_date = dt.date.fromisoformat(kmeta["pxDate"]) if kmeta["pxDate"] else today - dt.timedelta(days=1)
 
     fin_map, client, ksic = {}, None, {}
@@ -16144,6 +17210,9 @@ def main():
     # v19.1h: 맞춘 해가 있는 종목은 DART 결정 공시로 이유를 확인해요 (dvWhy · 공시와 다른 해는 맞추지 않아요). DART 가 꺼졌으면 조회 실패로 세요
     why = DivWhy(client, px_date)
     div_counts, corp_extra = apply_div_basis(kr, fin_map, kmeta.get("_prefShares") or {}, why=why)
+    # 2026-11-23 (Jack, 11-19 Q6): 차등배당 회사의 소액주주 1주 배당 · 수익률 (dpsSmall · dytSmall · divSmall) — 증명이 data/div 로 숨긴 종목만,
+    # 사업보고서 원문이 그렇게 적을 때만. dps · dyt · dz 는 그대로 (캐시 저장 앞: 새로 읽은 원문 사실도 함께 저장돼요)
+    div_small = small_holder_div(kr, why, client, px_date, corp_extra)
     if client:
         try:
             client.save()                 # 새로 받은 공시 확인이 뒤 단계 실패로 사라지지 않게
@@ -16176,7 +17245,7 @@ def main():
         us = us_own_close_final(us, umeta, prev, [pd.Timestamp(t).date().isoformat() for t in umeta["_index"].index]
                                 if umeta.get("_index") is not None else None)
     except Exception as e:
-        us = us_own_close_drop_all(us, umeta, f"{type(e).__name__}: {str(e)[:200]}")
+        us = us_own_close_drop_all(us, umeta, e)          # 2026-11-24: 예외째 (키를 가린 뒤 잘라요)
     # v19.6a (A.6): 주식 분할 (2016-01-01 부터 · 한 번 실은 분할은 빼지 않아요). 오늘 시세 다운로드가 읽은 분할(umeta) + 커밋한 시드 + 지난
     # 발행본의 줄 (splits_fields · merge_splits). 시드에도 지난 발행본에도 없는 종목만 2016년부터의 이력을 읽어요 (하루 몇 개 · 많아야 20).
     sp_fields = splits_fields(prev, [s["t"] for s in us], umeta.get("splits"), umeta.get("splitsNoCol") or [], start, today)
@@ -16317,9 +17386,12 @@ def main():
         "usExtraMissing": umeta["usExtraMissing"], # 2026-11-14: EXTRA_US 중 오늘 없는 종목과 이유 (관문이 이름과 이유를 경고로 · 기록에도 없으면 경고, 5곳 넘으면 실패)
         "usListSym": umeta["usListSym"],           # 2026-11-15: 주식 종류 티커 (BRKB → BRK-B · BFB → BF-B) · 바꾸지 못한 티커 (관문)
         "usSrc": umeta.get("usSrc") or {"v": 1, "own": us_own_close_err("기록 없음")},   # 2026-11-20 (Jack): 마지막 확인 종가로 실은 미국 종목 (관문 · 앱)
+        # v19.5b 후속: 미국 qrev · qeq 기록 — 이 칸 없이 먼저 쓰고 main 의 맨 끝에서 채워 다시 써요 (거기까지 가지 못하면 notRun 그대로 · 관문 경고)
+        "usSize": {"v": 1, "unit": "USD", "stopped": "notRun"},
         # 2026-11-19 (Jack 의 상시 규칙): 우리 처리 검사가 빼거나 비운 행 — 관문이 수(N)와 남은 값을 봐요 (이 칸이 없는 예전 파일은 예전 규칙)
         "ownDrop": {US_CLASS_DROP_KEY: own_us, DIV_LINE_DROP_KEY: own_div},
         "divCheck": div_counts,              # v19.1b: 배당 분할 확인 집계 (관문이 종목과 맞춰 봐요 · 이 칸이 있으면 새 검사가 다 돌아요)
+        "divSmall": div_small,               # 2026-11-23: 차등배당 회사의 소액주주 1주 배당 기록 (관문의 '소액주주 배당수익률' 경고 줄이 종목과 맞춰 봐요)
         "incCheck": inc_check,               # v19.1f: 손익 줄 집계 (관문이 corp.json 과 맞춰 봐요 · 이 칸이 있으면 손익 줄 검사가 다 돌아요)
         "epsBasis": eps_basis,               # v19.1f: EPS·PER 은 지배주주 몫 — 앱의 '계산 방법을 고치는 중' 줄이 이걸 보면 사라져요
         "unitChkCover": unit_cover,          # (2026-11-13) 공시 단위 확인이 몇 곳을 어떤 방법으로 봤는지 (관문 줄이 보여 줘요)
@@ -16339,6 +17411,11 @@ def main():
     payload.setdefault("ownDrop", {})["indFill"] = ind_drop   # 2026-11-19 (Jack 의 상시 규칙): 업종 채운 값 중 되돌린 행 (관문 줄이 봐요)
     # 2026-11-20 (#159): 마지막 확인 종가로 실었다가 관문과 같은 함수로 뺀 국내 종목 (pxSrc.own.bad 와 같은 수 · 관문이 맞춰 봐요 · 깨끗한 실행도 0)
     payload["ownDrop"][KR_OWN_DROP_KEY] = own_drop_rec(kr_drop)
+    # 2026-11-24 (#178): 쓰기 바로 앞 — 멈추면 크게 남기고 그대로 써요 (관문이 정해요). 야후 설명(de)에 관문의 낱말 → 그 칸만 비워요 (ownDrop.srcText ·
+    # 5칸 넘으면 그대로) · ownDrop 까닭 글 · 우리 기록 칸 (PUB_SWEEP_KEYS · 앱이 읽는 칸과 종목 줄은 그대로 · 5곳 넘으면 그대로 · ownDrop.sweep)
+    pub_safe("출처 글자 확인 (own_src_text · data.json)", own_src_text, payload, OUT)
+    pub_safe("ownDrop 까닭 글 (own_drop_pub · data.json)", own_drop_pub, payload, OUT)
+    pub_safe("우리 기록 글 (pub_sweep · data.json)", pub_sweep, payload, OUT)
     log(kr_count_line(payload))
     write_json(OUT, payload)
     try:                                     # 2026-11-21 (#161 리뷰): 같은 기준일을 다시 돈 결과 (실제 실행만 · 다음 실행은 이 실행이 초록이었을 때만 믿어요)
@@ -16383,6 +17460,20 @@ def main():
     write_json(OUT_MACRO, macro)
     log(f"✓ {OUT_MACRO} 저장 — 커브 {macro['curve']['date'] if macro.get('curve') else 'X'} · 원자재 {'O' if macro.get('gold') else 'X'}")
 
+    # v19.5b 후속 (Jack, 2026-11-13: 미국 최소 크기): 미국 회사의 최근 분기 매출 · 자본 — 가격에 쓰는 야후 요청(국내 2차 출처 · 미국 종가 ·
+    # 상세 정보 · 분할 · 금 · 원자재 · 환율 이력)이 모두 끝나고 data · corp · macro.json 을 쓴 뒤에만 (리뷰 2026-11-23: 새 요청이 가격 받기를 막지
+    # 않게 · 이 뒤에는 DART 만). data.json 은 위에서 이 칸 없이 썼고 (usSize notRun), 칸을 붙여 다시 써요. 멈추거나 다시 쓰지 못해도 위의 파일이
+    # 그대로예요 (앱은 미국 최소 크기 없이 예전처럼 · 관문 경고)
+    try:
+        payload["usSize"] = ph.run("미국 회사 크기", us_size_step, us, (umeta.get("_usCur") or {}).get, dt.date.fromisoformat(umeta["usPxDate"]), today)
+    except Exception as e:
+        payload["usSize"] = us_size_stopped(us, e)
+    try:
+        write_json(OUT, payload)
+        log(f"✓ {OUT} 다시 저장 (미국 회사 크기 칸) — {os.path.getsize(OUT) / 1e6:.1f}MB")
+    except Exception as e:
+        log(f"  !! {OUT} 을 미국 회사 크기 칸과 함께 다시 쓰지 못했어요 ({type(e).__name__}) — 앞서 쓴 파일(칸 없음 · usSize notRun)이 그대로예요")
+
     prev_disc = None
     if client is not None and client.no_call:
         if isinstance(prev, dict) and umeta.get("usPxDate") == prev.get("usPxDate"):
@@ -16415,6 +17506,10 @@ def main():
         disc = empty_disc(today)
     disc["publishedAt"] = published_at
     own_check_disc(disc, today)              # 2026-11-19 (Jack 의 상시 규칙): 나쁜 공시 줄은 빼거나 비워요 (disc.json ownDrop · 관문과 같은 함수)
+    # 2026-11-24 (#178): DART 직위(pos)에 관문의 낱말 → 그 칸만 비워요 (ownDrop.srcText) · ownDrop 글 — 멈추면 크게 남기고 그대로 써요
+    pub_safe("출처 글자 확인 (own_src_text · disc.json)", own_src_text, disc, OUT_DISC)
+    pub_safe("ownDrop 까닭 글 (own_drop_pub · disc.json)", own_drop_pub, disc, OUT_DISC)
+    pub_safe("우리 기록 글 (pub_sweep · disc.json)", pub_sweep, disc, OUT_DISC, keys=("ownDrop",))
     write_json(OUT_DISC, disc)
     if "issueOk" not in disc:                # #161 리뷰 3차 nit: 다시 쓴 아침 disc.json 에 칸이 없어도 멈추지 않고 크게 (관문이 그 파일을 봐요)
         log(f"  !! {OUT_DISC} 에 issueOk 칸이 없어요 — 주요사항 공시 목록을 받았는지 몰라요 (관문이 봐요)")
