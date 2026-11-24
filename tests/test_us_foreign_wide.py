@@ -327,7 +327,9 @@ def test_fetch_us_checks_the_wider_set_and_the_gate_passes(tmp_path, monkeypatch
 def test_a_cached_entry_without_a_country_is_asked_again(tmp_path, monkeypatch):
     """보관본 항목에 나라 칸이 없는 S&P 500 밖 회사는 받은 지 하루여도 다시 받아요 (그 회사들만 · S&P 500 회사는 아니에요)."""
     infos = {"AAPL": AAPL, "LIN": LIN, "SHOP": SHOP, "NBIS": NBIS, "TRI": TRI, "TSM": TSM, "BP": dict(BP, country="United Kingdom")}
-    old = {t: {"at": "2026-11-13", "px": 100.0, "k": F.US_INFO_SCHEMA, "info": {k: v for k, v in i.items() if k != "country"}}
+    # #176: 보관본의 기준 가격은 그 종목의 가격 (_fetch 의 prices) — 100 이면 분할을 모르는데 가격이 2배 넘게 달라진 보관본이라 다시 물어요 (us_info_split_view jump)
+    px0 = {"AAPL": 356.27, "LIN": 526.06, "SHOP": 147.09, "NBIS": 115.88, "TRI": 109.30, "TSM": 398.73, "BP": 45.70}
+    old = {t: {"at": "2026-11-13", "px": px0[t], "k": F.US_INFO_SCHEMA, "info": {k: v for k, v in i.items() if k != "country"}}
            for t, i in infos.items()}
     us, meta, lines, calls = _fetch(tmp_path, monkeypatch, pre=old)
     assert sorted(calls) == ["BP", "NBIS", "SHOP", "TRI", "TSM"]          # AAPL · LIN 은 S&P 500 (어제 받은 것 그대로)
