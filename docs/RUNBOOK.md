@@ -2262,6 +2262,23 @@ sit behind US numbers after a split:
 **Rolling back #176**: a revert PR. Copies written with `pd` are read by the old code as before (it ignores the key); `usSrc.split` is
 ignored by the old gate and the app.
 
+## Factor scores: companies only (팩터 점수 · gate warning "펀드 팩터 점수 없음", since #?)
+
+`fetch_data.add_percentiles` ranks the six factor scores (규모 `pz`, 가치 `vz`, 추세 `mz`, 퀄리티 `qz`, 저변동 `lz`, 배당 `dz`, Korea
+only) within each market over companies only: a row with `etf` true or `fund` (`validate_data.factor_fund`, the 2.0 app's `isStockLike`
+rule) is left out of every pool and has no score keys. Until then the 11-24 publish ranked 33 US ETFs (23 of them with Yahoo's
+`priceToBook`, meaningless for a fund: SOXX 0.37, TLT 0.55, SPY 1.76 against a real P/B of about 5) and 3 Korean listed infrastructure
+funds (088980, 415640, 094800) with the companies, so 547 of 665 US companies' `vz` were off by up to 3 points (mean 1.2; JPM 67 → 70,
+TDY 62 → 65), US `mz` · `lz` by up to 2 · 3, Korean `pz` · `mz` · `lz` by 1, and SOXX and TLT scored 가치 100. The log line after the
+ranking is `· 팩터 점수 (국내|미국): 회사 N곳끼리 매겨요 (가치 vz … · 추세 mz … · 저변동 lz …) · 펀드 M곳은 빼고 점수 없음 (names)`; `!!`
+with `그런데 점수가 남은 펀드` means a fund kept a score after the ranking (should never happen). The gate row `펀드 팩터 점수 없음 (pz · vz
+· mz · qz · lz · dz · 경고만)` (`check_fund_scores`) names every fund row (any market, bonds and gold included) that carries one of the six
+keys; it warns, never fails, in every mode, and warns too when it can't read `stocks`. On a warning, check that the publish ran this
+code (a file published before #? warns with 36 rows) and that the fund's `etf` mark is right (the `etf 표시가 맞음` row). Not changed:
+a US fund's PER · PBR still come from Yahoo, the old app's 종목 고르기 card shows them ("PER / PBR"), and a 2.0 두 종목 비교 with a
+held US ETF shows its PBR; blanking that needs a say-why line, so it is Jack's call. Rolling back: a plain revert PR (funds are ranked
+again from the next publish; the gate row goes with it; no stored data depends on it).
+
 ## Roll back
 
 - **A bad code release** (the app looks broken after a merge): Claude opens the merged pull request, presses

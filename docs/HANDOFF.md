@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-23 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-24 KST — read this first)
 
 **Now (2026-11-23):** merged and deployed 11-22: #166 (old-app English carry lines), #167 (div reason lines), #168 (v19.6b 오늘 볼 것
 page), #169 (new US tickers wait), #170 (v19.6e data: `c1w` · `wkFrom` · `usWkFrom` · `c1wv` · `c1wSrc`), #171 (v19.6e
@@ -23,6 +23,18 @@ links, "전무가" off the must-not-show list, labels) and a rename in `tests/te
 {n} · 실적 발표 {n}), one decimal on 지분 변동 amounts. Design chat has (sent 11-22): the say-why audit, the 10 dark-mode pairs,
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
 v19.6g, v19.6h.
+
+**Factor scores, companies only (#?, 2026-11-24; found on the 11-24 publish):** `add_percentiles` ranked 33 US ETFs (23 with Yahoo's
+`priceToBook`, meaningless for a fund: SPY 1.76, really about 5) and 3 Korean listed infrastructure funds together with companies, so
+547 US companies' 가치 (`vz`) were off by up to 3 points (mean 1.2) and SOXX · TLT scored 가치 100. After it merges, the next publish
+ranks companies only in each market (`validate_data.factor_fund`: `etf` true or `fund`, the 2.0 `isStockLike` rule); funds get no
+`pz vz mz qz lz dz`; US companies' `vz` · `mz` · `lz` move by up to 3, Korean `pz` · `mz` · `lz` by at most 1. Expect the log lines
+`· 팩터 점수 (국내): 회사 2,508곳끼리 …` and `· 팩터 점수 (미국): 회사 767곳끼리 … 펀드 33곳은 빼고 점수 없음` and the new warning-only gate
+row `펀드 팩터 점수 없음 (… · 경고만)` as PASS `없음` (the deploy gate on a file published before it warns with 36 rows). No screen text.
+Screen effects: the old app's 내 포트폴리오의 성향 no longer counts a held ETF (as for Korean ETFs already), and the 3 infrastructure funds'
+old 기업분석 pages lose their factor bars. **Open for Jack (not built):** a US fund's PBR still reaches two screens — the old app's
+종목 고르기 card ("PER / PBR", `src/detail.jsx` StockRow) and 2.0's 두 종목 비교 when a US ETF is held (`src/v2/compare.jsx` PBR row); blanking
+it needs a say-why line (none approved says why a fund has no PBR). RUNBOOK § Factor scores.
 
 **Split rounding (#184, 2026-11-24; Track 2 audit 1.1, serious but rare, and 1.4):** 47 of data.json's 150 splits have a ratio
 that isn't a whole number (DD 1:3, UL 8:9, HON and AZN 1:2, AMCR 1:5, SNEX 3:2 …). Records dated before one broke when they didn't give

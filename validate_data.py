@@ -2713,6 +2713,50 @@ def check_us_split_pbr(rep, data):
         rep.add(US_SPLIT_PBR_ROW, True, f"검사가 멈췄어요: {type(e).__name__}: {str(e)[:120]}", rule + " (멈춰도 경고만)", warn=True)
 
 
+# 2026-11-24 (#?, 11-24 발행본 점검): 팩터 점수(규모 pz · 가치 vz · 추세 mz · 퀄리티 qz · 저변동 lz · 배당 dz)는 시장마다 회사 주식끼리만 매겨요
+# (fetch_data.add_percentiles). 펀드 = etf 참 또는 fund (2.0 의 engine.js isStockLike 와 같은 기준). 11-24 발행본에는 미국 ETF 33곳 (그중 23곳은 야후의
+# priceToBook — 펀드에는 뜻이 없어요: SPY 1.76 · 실제 약 5) 과 국내 상장 인프라 펀드 3곳이 순위에 섞여, 미국 회사의 가치 점수가 최대 3점 (평균 1.2)
+# 틀어지고 SOXX · TLT 가 가치 100점이었어요. 파이프라인과 관문이 이 정의 하나를 같이 써요.
+FACTOR_KEYS = ("pz", "vz", "mz", "qz", "lz", "dz")
+FUND_SCORE_ROW = "펀드 팩터 점수 없음 (pz · vz · mz · qz · lz · dz · 경고만)"
+
+
+def factor_fund(s):
+    """팩터 점수를 받지 않는 행인지 — 펀드 (etf 가 참 또는 fund). (순수 함수)"""
+    return isinstance(s, dict) and (s.get("etf") is True or bool(s.get("fund")))
+
+
+def fund_score_rows(data):
+    """점수 칸이 남은 펀드 행 → [(티커, [칸])] (data.json 의 모든 행 · 채권 · 금 포함). (순수 함수)"""
+    rows = (data or {}).get("stocks") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        raise ValueError("stocks 가 목록이 아님")
+    out = []
+    for s in rows:
+        if factor_fund(s):
+            ks = [k for k in FACTOR_KEYS if s.get(k) is not None]
+            if ks:
+                out.append((str(s.get("t")), ks))
+    return out
+
+
+def check_fund_scores(rep, data):
+    """2026-11-24: 펀드 행에 팩터 점수가 남았는지. **경고만** — 어떤 모드에서도 실패하지 않아요 (발행을 멈추는 줄은 Jack 의 답이 있어야 해요) ·
+    검사가 멈춰도 경고. 있으면 종목과 칸을 적어요 (파이프라인이 펀드를 순위에서 빼지 않았다는 뜻: 회사 점수도 그만큼 틀어졌어요)."""
+    rule = "펀드(etf 참 · fund)는 팩터 점수 없음 — 점수는 시장마다 회사끼리만 매겨요 (남은 펀드는 경고 · 실패 없음)"
+    try:
+        bad = fund_score_rows(data)
+    except Exception as e:
+        rep.add(FUND_SCORE_ROW, True, f"검사가 멈췄어요: {type(e).__name__}: {str(e)[:120]}", rule + " (멈춰도 경고만)", warn=True)
+        return
+    if not bad:
+        rep.add(FUND_SCORE_ROW, True, "없음", rule)
+        return
+    rep.add(FUND_SCORE_ROW, True, f"{len(bad)}종목: " + ", ".join(f"{t}({'·'.join(ks)})" for t, ks in bad[:US_OWN_SHOW])
+            + (f" 외 {len(bad) - US_OWN_SHOW}종목" if len(bad) > US_OWN_SHOW else "") + " (회사 점수도 펀드와 함께 매겨졌어요)", rule, warn=True)
+    rep.detail("팩터 점수가 남은 펀드 (etf 참 · fund)", [f"{t}: {', '.join(ks)}" for t, ks in bad])
+
+
 def coverage(arr, key):
     if not arr:
         return 0.0
@@ -3026,6 +3070,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_us_own_close(rep, data, macro, pdata)   # 2026-11-20 (Jack): 미국 종목의 마지막 확인 종가 (pxc · 날짜가 깨졌거나 d1 이 옆에 있으면 실패 · 나머지는 경고)
     check_us_new_wait(rep, data, pdata)   # 2026-11-22 (Jack): 미국 기준일 종가를 기다리는 새 미국 종목 (usSrc.newWait · 경고만 · 실패 없음)
     check_us_split_pbr(rep, data)         # 2026-11-23 (감사 · #176): 최근 분할한 미국 회사의 PBR ↔ PER × ROE · usSrc.split (경고만 · 실패 없음 · 멈춰도 경고)
+    check_fund_scores(rep, data)          # 2026-11-24: 펀드(etf · fund)에 팩터 점수가 남았는지 (경고만 · 실패 없음 · 멈춰도 경고)
     check_v191f(rep, data, corp, kr, by, comps, pdata)
     check_eps_line_left(rep, corp, comps)   # 2026-11-14 (Jack Q3 · 리뷰 S4): 다시 읽은 뒤에도 날짜가 지난 '고치는 중' 줄이 남을 회사 (경고)
     check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=(prev or {}).get("macro") if rel else None)
