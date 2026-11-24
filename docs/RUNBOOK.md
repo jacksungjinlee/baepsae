@@ -2744,6 +2744,26 @@ ignored by the old gate and the app.
     that does not end on `fxDate`, a last value more than 10% from `fx` (the two come from different sources and times;
     unit or currency mistakes are caught by the 900–2,000 range), `final` not true/false, or `fxHistFresh` after the
     publish date. Every rate saved from it stays in users' records, so never loosen the row; ask Claude to find the cause.
+  - **Today's rate, `data.json` `fx` · `fxDate` · `fxSrc`** (2026-11-24, Track 2 audit 3.8). `fx` is the last row of the run's
+    `fxHist` and `fxDate` is that row's date, whenever the run read the history's source itself (`fxHistFresh` = the run's
+    date): under `ecos_close`, the Seoul 15:30 close of the last Korean business day ECOS has posted (normally the day before
+    the 06:40 publish; one business day earlier on the ~5% of mornings ECOS has not posted yet; on a late manual run it can be
+    that day's own close). So "today's rate" and a past date's rate come from one source, and the date shown under a won
+    figure ("원화는 {md} 환율 …", the 원/달러 tile) describes the number. US market values and 거래대금 in won, every "약 {won}"
+    under a $ price, 내 수익, 연말 and new US records dated today all use it; nothing in the app changed. Before this, `fx` was
+    Yahoo's last USD/KRW bar, still open at the 06:40 publish, under a past date: 11-21 showed 1,345.7 under 11-20 (that
+    day's close 1,336.2, −0.7%); 11-24 showed 1,340.7 under 11-23 (close 1,345.9: 10 AAPL at $349.08 read 4,680,116원, now
+    4,698,268원). How it is built: the US step builds `fxHist` first (Yahoo's value is the cross-check, ±10%, as before),
+    takes the rate from it, then prices US stocks in won; `main` puts the same history into `macro.json` (ECOS is asked once
+    a run, `ecos_fx_series_once`, failures included, so the two never differ). Yahoo is still used, and said, when the
+    history was not read this run (kept from an earlier publish, missing, its last row more than 14 days old, or the choice
+    crashed): `fxSrc` = `{src: "yahoo", why: noHist | kept | old | err, yahoo: {d, fx, final}}` and the log has a `!! 환율(data.json fx)`
+    line. Its `fxDate` is the bar's own date only once the bar has finished (London midnight, 08:00/09:00 KST); an unfinished
+    bar is dated the run's Korean date, never a past close. `fxSrc.yahoo` always records Yahoo's bar (date, value, finished)
+    for comparison. Gate row **환율 출처 (fx · 경고만)** (warning only, never fails): passes when `fx` equals the `fxHist`
+    row of `fxDate`; otherwise it warns and names the source and reason (Yahoo, no row for that date, a mismatch, or a file
+    without `fxSrc`, as the 11-24 file was). The 3-year Yahoo series still feeds US `vol` in won and the won gold and
+    silver series (history, not a day's rate); `fetch_data.fx_official`.
   - `data.json` `splits` lists every US stock split since 2016-01-01 (`splitsFrom`), `[code, date, ratio]` (ratio = new
     shares per old share; the date is the first US trading day on the new count, or the ex-date for a stock dividend).
     It is "Yahoo plus fixes", not guaranteed complete: a small stock dividend Yahoo leaves out is only there if someone
