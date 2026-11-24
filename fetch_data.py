@@ -4897,8 +4897,10 @@ def add_percentiles(stocks):
     # 저변동(lz)은 변동성이 낮을수록 높은 점수
     # v19.1b 배당(dz): 한국만 — 오늘 종가 기준 배당수익률(dyt)이 높을수록. dyt 는 분할을 확인한 주당 배당금으로만 만들어요
     # (확인 못 한 종목은 빈 칸이라 순위에서 빠져요). 미국은 dyt 가 없어 dz 도 없어요 (미국 배당은 그대로 야후 수익률 dy).
-    # 방향은 validate_data.FACTOR_SRC 한 곳에서 (#189 리뷰 N4): pz 100 − pr(cap) · vz 100 − pr(pbr) · mz pr(mom) · qz pr(roe) · lz 100 − pr(vol) · dz pr(dyt)
-    series = {k: (100 - pr(col) if low_high else pr(col)) for k, (col, low_high) in FACTOR_SRC.items()}
+    # 이 표는 validate_data.FACTOR_SRC (펀드 자리 · 관문이 쓰는 방향) 와 같아야 해요 — tests/test_factor_pool.py 가 글자 그대로 맞춰 봐요
+    # (#189 리뷰 N4 · 이 줄의 글자는 tests/test_v2_ranks.py 도 읽어요)
+    series = {"pz": 100 - pr("cap"), "vz": 100 - pr("pbr"), "mz": pr("mom"), "qz": pr("roe"), "lz": 100 - pr("vol"),
+              "dz": pr("dyt")}
     for i, s in enumerate(pool):
         for k, ser in series.items():
             v = ser.iloc[i]

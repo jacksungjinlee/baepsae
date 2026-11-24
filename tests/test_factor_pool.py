@@ -170,6 +170,10 @@ def test_the_fund_rule_is_the_2_0_apps():
     assert V.factor_fund({"etf": True}) and V.factor_fund({"fund": True}) and V.factor_fund({"etf": False, "fund": True})
     assert not V.factor_fund({"etf": False}) and not V.factor_fund({}) and not V.factor_fund({"etf": None, "fund": None})
     assert not V.factor_fund(None) and not V.factor_fund("x")
+    # 회사 순위의 방향 (add_percentiles 의 series 표) = FACTOR_SRC (펀드 자리 · 관문) — 한쪽만 바뀌면 여기서 멈춰요 (리뷰 N4)
+    body = inspect.getsource(F.add_percentiles)
+    for k, (col, low) in V.FACTOR_SRC.items():
+        assert f'"{k}": {"100 - " if low else ""}pr("{col}")' in body, k
     src = open(os.path.join(ROOT, "src", "v2", "engine.js"), encoding="utf-8").read()
     assert 'export const isStockLike = (s) => (s.cls === "kr" || s.cls === "us") && !s.fund && s.etf !== true;' in src
 
