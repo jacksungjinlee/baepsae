@@ -36,6 +36,16 @@ old 기업분석 pages lose their factor bars. **Open for Jack (not built):** a 
 종목 고르기 card ("PER / PBR", `src/detail.jsx` StockRow) and 2.0's 두 종목 비교 when a US ETF is held (`src/v2/compare.jsx` PBR row); blanking
 it needs a say-why line (none approved says why a fund has no PBR). RUNBOOK § Factor scores.
 
+**Clean error text (#178, branch `claude/clean-error-text`, for 11-24; pipeline only, the gate unchanged):** the gate's frozen word row
+("글자에 nan·None·null·undefined 없음") failed on text the pipeline wrote itself, so one caught error (`pxSrc.own.err`, `usSrc.own.err`),
+one dropped own-check row (`ownDrop` reason "d null") or one record reason (`usForeign.cut` "financialCurrency None", a `d1Base.ex` name
+"nan", the "마지막 확인 종가(None)" reason) stopped the whole publish (audits aud5 and #178 rounds 1–2, reproduced). Now our error and
+reason text writes those words as "빈 값" and hides the DART / ECOS key values (in the run log too), URL query strings and key-like values
+as "…", cut to 300 characters. A final `pub_sweep` before each write cleans our own record fields, skipping what the app reads
+(`own.aged`, `splitsInfo.fixed`), capped at Jack's N: up to 5 per file cleaned with `!!` lines and counted in `ownDrop.sweep`; above 5
+nothing changes and the word row fails as before. A Yahoo summary (`de`) or DART position (`pos`) with such a word is blanked and counted
+in `ownDrop.srcText` (same cap; insider names are left to the gate). `splitsInfo.err` is log-only. Live data 11-20 (data branch, fetched
+11-23): 0 matches before and after, all 190 gate rows unchanged. RUNBOOK "Our own text and the gate's word row".
 **Split rounding (#184, 2026-11-24; Track 2 audit 1.1, serious but rare, and 1.4):** 47 of data.json's 150 splits have a ratio
 that isn't a whole number (DD 1:3, UL 8:9, HON and AZN 1:2, AMCR 1:5, SNEX 3:2 …). Records dated before one broke when they didn't give
 whole 1/10,000 shares (for 11 of the 47, one share already doesn't; for the rest, a 0.0001-share sale or a 금액으로 넣기 row):
@@ -75,6 +85,23 @@ push or manual run on a branch fails on purpose (its green would cover the PR's 
 can't read (event file, git) fails with a message. Replayed on past merges it flags #170, #171 and #172 (the misses of 11-22) and
 passes #173.
 
+**#183 (소액주주 yield for 차등배당 payers), 2026-11-24 — data on, screens off until Jack approves two lines:** Jack 11-19 Q6 ("labelled
+as the 소액주주 rate"), 11-23 Track 1 item 4. Of the payers hidden as `data` / `div` (dvLine 3; **16** on the 11-21 publish), the daily run
+reads each December-year-end 사업보고서's "배당에 관한 사항" once (cached, ≤ 30 reports a run, 2 DART calls each; about 32 calls on the first
+run) and keeps the table's own dividend per share as `dpsSmall` (+ `dytSmall` at today's close, data.json and corp.json, record `divSmall`
+with the sentence relied on, `q`) only when one sentence or note says 차등배당 (not negated, no earlier year) and ties exactly that figure
+to the 소액주주 / 기타주주 / 일반주주, and today's share count is on that year-end basis (rules tightened after round 1 of the review: both
+reviewers fooled the first parser with crafted notes; all of them are tests now). Read by hand on 11-23 (10 read-only DART calls):
+교보증권 550원 and TPC로보틱스 10원 qualify; 엘앤씨바이오 and 블랙야크아이앤씨 say nothing of 차등배당. **The other 12 candidates have not been
+read by anyone, so the first run may publish more; before the switch PR, read each `divSmall.on` company's `q` against its filing.**
+남성 and 대동기어, named as examples in the 11-23 brief, are not differential (those were Jack's 11-19 Q4 and Q5 on other topics).
+`dps` · `dyt` · `dz` · `dvLine` unchanged: the dividend ranking keeps `dyt`. New gate row "소액주주 배당수익률 (… · 경고만)" (never fails;
+warns when a company joins that the previous publish lacked, listing its sentence). Expect in the first publish after it: the log line
+`소액주주 배당(차등배당 · dpsSmall · dytSmall)` with one "근거" line per company published (교보증권 and TPC로보틱스 at least, unless their
+basis check stops them) and that row WARN once, "새로 실은 회사". 예전 뱁새 gets no label (round 1: its yield is the report's own, never
+checked to be the 소액주주 rate). **Waiting for Jack:** the label "소액주주 기준" and the line "이 회사는 소액주주에게 배당을 더 줘요(차등배당).
+소액주주가 받는 1주 배당으로 계산했어요." (`src/v2/smallcfg.js` + `C.co.div.smallBasis` · `smallLine`); and whether 관심 종목 conditions
+should use the 소액주주 yield (today they keep `dyt`). RUNBOOK "소액주주 yield for differential dividends".
 **#176 (US details after a stock split; audit 2026-11-23, SNDK 8:1 on 11-20):** after it merges, the daily run's US details step
 puts a Yahoo details copy (cached up to 3 days, 14 when Yahoo refuses) taken before a split on today's share count: today's price ×
 the split ratios ÷ the copy's price, for PER, PBR, 시가총액, 배당수익률 and 거래대금 (`fetch_data.us_info_split_view`; splits from today's
