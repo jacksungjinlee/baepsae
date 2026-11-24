@@ -26,14 +26,16 @@ import { shownName } from "./legacy.js";
 import { IosHint } from "./hint.jsx";
 import { isCompany, ownCloses } from "./stocklist.js";
 import { heldQty } from "./held.js";
-import { pfState, isImported, usHeld, avgOf } from "./pf.js";
-import { ImportedDeck } from "./pfview.jsx";
+import { pfState, isImported, usHeld, avgOf, usdOf } from "./pf.js";
+import { ImportedDeck, qtyText } from "./pfview.jsx";
 import { EpsOwnersNote } from "./fixnote.jsx";
 import { RecordButton, RecordFlow, startFlow } from "./records.jsx";
 import { Icon } from "../ui/icons.jsx";
 
 // The held quantity (held.js: the one rule every screen uses) and the 평균 단가 (v19.6a: the moving average of the lots,
-// pf.avgOf, so a sale never changes it and a purchase after a sale averages with what is left).
+// pf.avgOf, so a sale never changes it and a purchase after a sale averages with what is left). The row writes the quantity
+// with pfview.qtyText, as the records and the 가진 종목 rows do: a fraction of a US share with up to 4 decimals (7.5주,
+// 0.4주), whole shares as before (audit 1.2, 2026-11-23: nf rounded 7.5 to "8주" and 0.4 to "0주").
 function avgCost(deck, t) {
   const held = heldQty(deck).get(t) || 0;
   const a = held > 0 ? avgOf(deck, t) : null;
@@ -90,8 +92,10 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
   const ev = useMemo(() => evaluateAll(decks, ctx), [decks, ctx]);
   const late = !!(ev.ok && ev.late);                     // the check ran on an older close (rules.js checkState, Jack 2026-11-19)
   // Part E: values use US prices at their own close date; say so when it differs from the Korean one.
-  // v19.3d: a 가진 종목 portfolio has no per-stock rows in the daily check, so its dollar holdings are looked up here
-  const us = ev.ok && (ev.decks.some((de) => de.ok && de.holdings.some((x) => x.cls === "us")) || decks.some((d) => usHeld(d, load)));
+  // v19.3d: a 가진 종목 portfolio has no per-stock rows in the daily check, so its dollar holdings are looked up here.
+  // A US stock is one priced in dollars (pf.usdOf, as usHeld; #187 review: x.cls "us" also took 379800 KODEX 미국S&P500, a KRX
+  // listing priced in won, and said its price was the US close)
+  const us = ev.ok && (ev.decks.some((de) => de.ok && de.holdings.some((x) => usdOf(load.byT.get(x.t)))) || decks.some((d) => usHeld(d, load)));
   const usDate = us && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
   // 포트폴리오에서 빼기: only the stock missing from today's data, only from this portfolio, only when tapped.
   const onRemove = (deckId, t) => {
@@ -192,7 +196,7 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
               const ret = m.ok && m.per[t] && m.per[t].ret != null ? m.per[t].ret * 100 : null;
               const gone = !!(x && x.absent);
               const rec = record(d.id, t, h.nk);
-              return <HoldingRow key={t} t={t} title={h.nk} sub={a ? fill(C.deck.holding, { qty: nf(a.qty), price: money(a.avg, a.ccy) }) : null}
+              return <HoldingRow key={t} t={t} title={h.nk} sub={a ? fill(C.deck.holding, { qty: qtyText(a.qty), price: money(a.avg, a.ccy) }) : null}
                 onOpen={!gone && openStock && load.status === "ok" && isCompany(load.byT.get(t)) ? () => openStock(t) : undefined}
                 x={x} names={names} onConfirm={(item, answer) => onConfirm(d.id, item, answer)} change={ret}
                 extra={!gone && m.ok && x ? <WeightLine x={x} /> : gone ? <KrAgedLine aged={ctx.aged} t={t} style={{ marginTop: SPACE(1) }} /> : null}

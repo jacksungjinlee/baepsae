@@ -24,6 +24,23 @@ links, "전무가" off the must-not-show list, labels) and a rename in `tests/te
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
 v19.6g, v19.6h.
 
+**Track 2 audit, money display (#187, 2026-11-24; audit 1.2 · 1.5 · 1.6, minor):** app only, no new words. (1.2) 포트폴리오's held
+row writes US fractional shares with up to 4 decimals (`pfview.qtyText`, as the records already did): 7.5주 / 0.4주 instead of "8주" /
+"0주"; whole shares unchanged. (1.5) 연말에 확인할 숫자: an estimate under 1,000원 is shown to the 원 (`tax.js shownEstimate` /
+`taxShown`), still in the approved "약" wording (estimates; v19.6 Part F): the dividend card "약 427원" for a 361원 dividend (was "약
+0원"), the above line "세금은 약 361원이에요" (was 약 0원; a tax under 0.5원, a gain 1–2원 over the deduction, still reads 약 0원, which
+is that tax to the 원); from 1,000원 up unchanged. `taxState` / `yearDivs` values unchanged. (1.6) 내 수익's date
+line uses `usPxDate` when every held stock counted (in the data, priced, with 평균 단가 and rate) is a US stock, i.e. priced in dollars
+(`pf.usdOf`, never `cls`: 379800 KODEX 미국S&P500 is cls "us" but a KRX listing in won) (after the 11-26 US
+holiday: 11월 25일, as the tax screen's loss card); a Korean stock among them, or none held, keeps the Korean date; no `usPxDate` → no
+date line, said in the console. Mixed Korean + US holdings keep the Korean date and, when the US date differs, show the approved
+`app.usClose` ("미국 종목은 현지 기준 {md} 종가예요.") under the portfolio name, on 포트폴리오's condition (an approved line in a new
+place; my decision under the rules, 2026-11-24, as is keeping 약 in the tax line and on the dividend card). Pre-existing bug fixed with it: 포트폴리오
+decided "a US stock is held" by `cls` and showed `app.usClose` for a portfolio holding only 379800; now by `pf.usdOf`, as `usHeld`.
+Same class, not fixed here: 홈 (`home2.jsx:405`, pinned word for word by `tests/test_v196a_approved.py::test_home_counts_only_shares_held`,
+and `today.jsx:358`).
+Next in the queue unchanged (v19.3 Part L).
+
 **Clean error text (#178, branch `claude/clean-error-text`, for 11-24; pipeline only, the gate unchanged):** the gate's frozen word row
 ("글자에 nan·None·null·undefined 없음") failed on text the pipeline wrote itself, so one caught error (`pxSrc.own.err`, `usSrc.own.err`),
 one dropped own-check row (`ownDrop` reason "d null") or one record reason (`usForeign.cut` "financialCurrency None", a `d1Base.ex` name
