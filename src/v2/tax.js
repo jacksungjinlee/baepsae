@@ -60,10 +60,11 @@ const DATE = /^(\d{4})-(\d{2}-\d{2})$/;
 export const roundWon = (x) => { const r = Math.sign(x) * Math.round(Math.abs(x)); return r === 0 ? 0 : r; };
 // To the nearest 1,000원, half up (the two estimates: the tax and the pre-tax dividends; always 0 or more).
 export const round1000 = (x) => { const r = Math.round(x / 1000) * 1000; return r === 0 ? 0 : r; };
-// What the screen shows for those two estimates (audit 1.5, 2026-11-23: a 361원 dividend or a tax under 1,000원 read "약 0원").
-// From 1,000원 up (to the 원), the amount to the nearest 1,000원 with its "약", as before (the same value as taxOf and
-// yearDivs' won); below that, the amount itself to the 원, so no small amount turns into 0. -> { won, about } · null (not a
-// number). The figures taxState and yearDivs return stay as they were: this only chooses what is written.
+// What the screen writes for those two estimates (audit 1.5, 2026-11-23: a 361원 dividend or a tax under 1,000원 read "약 0원").
+// From 1,000원 up (to the 원), the amount to the nearest 1,000원, as before (the same value as taxOf and yearDivs' won); below
+// that, the amount to the 원, so no small amount turns into 0 (only one under 0.5원 does: a tax of 0.22원 is "약 0원"). Both
+// are written in the approved "약" wording (tax.above, tax.divAmount): they are estimates either way. -> { won, about (true:
+// the 1,000원 rounding) } · null (not a number). The figures taxState and yearDivs return stay as they were.
 export const EXACT_BELOW = 1000;
 export function shownEstimate(exact) {
   if (!isNum(exact)) return null;

@@ -8,7 +8,7 @@
 //   지금 손실 중인 미국 종목  held US stocks at a loss today (unrealized; facts only, never a word about selling). Needs today's
 //                            data, fresh: on stale data the card says the data stopped and shows no number.
 //   올해 받은 배당 (세금 떼기 전)  this year's dividend records turned back into pre-tax amounts, 약, to 1,000원; under 1,000원
-//                            the amount itself to the 원, without 약 (tax.js shownEstimate; audit 1.5: never "약 0원").
+//                            to the 원, still with 약 (tax.js shownEstimate; audit 1.5: never "약 0원" for a dividend).
 // Never a sum that silently leaves records out: what is left out is named on the card with an approved line (Jack's yes to
 // M1-M4 on 2026-11-19), and said in the console with counts. Load failure: the approved message only. No 뱁이 (the
 // screen shows money). Tokens only (dark mode). No Korean here: src/copy/v2.js tax.*.
@@ -145,8 +145,9 @@ function LossCard({ ls, stale, load, byT, nameOf }) {
 
 // 올해 받은 배당 (세금 떼기 전): "약" small, the amount large (as on the board), then the note. No dividend counted (only US
 // ones without a rate: tax.js yearDivs won null): no amount, never "약 0원"; M1 says what was left out (review C).
-// Under 1,000원 (tax.js shownEstimate; audit 1.5, 2026-11-23): the amount itself to the 원, without "약" (a 361원 dividend,
-// 427원 before tax, read "약 0원"); from 1,000원 up exactly as before.
+// Under 1,000원 (tax.js shownEstimate; audit 1.5, 2026-11-23): the amount to the 원 in the same approved "약 {x}" (a 361원
+// dividend, 427원 before tax, read "약 0원", now "약 427원"): the pre-tax sum is an estimate either way (a flat 15.4% / 15%
+// gross-up; v19.6 Part F "shown with 약", #187 review). From 1,000원 up exactly as before.
 function DivCard({ dv }) {
   const [pre, post] = String(C.tax.divAmount).split("{x}");
   const v = dv.won != null ? shownEstimate(dv.exact) : null;
@@ -155,9 +156,9 @@ function DivCard({ dv }) {
       <Head icon="coins" tone="div">{C.tax.divTitle}</Head>
       {v && (
         <span data-ui="amount" data-ui-v2="tax-div-amount" style={{ display: "block" }}>
-          {v.about && <span style={tx(SIZE.body, WEIGHT.heavy, COLOR.text2)}>{pre}</span>}
+          <span style={tx(SIZE.body, WEIGHT.heavy, COLOR.text2)}>{pre}</span>
           <span style={tx(26, WEIGHT.heavy, COLOR.ink, { letterSpacing: "-0.02em" })}><Amount text={exactWon(v.won)} /></span>
-          {v.about && post ? <span style={tx(SIZE.body, WEIGHT.heavy, COLOR.text2)}>{post}</span> : null}
+          {post ? <span style={tx(SIZE.body, WEIGHT.heavy, COLOR.text2)}>{post}</span> : null}
         </span>
       )}
       {dv.noFx > 0 && <p data-ui-v2="tax-div-no-fx" style={small({ marginTop: v ? SPACE(1) + 2 : 0 })}>{fill(C.tax.divNoFx, { n: dv.noFx })}</p>}

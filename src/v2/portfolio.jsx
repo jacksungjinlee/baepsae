@@ -26,7 +26,7 @@ import { shownName } from "./legacy.js";
 import { IosHint } from "./hint.jsx";
 import { isCompany, ownCloses } from "./stocklist.js";
 import { heldQty } from "./held.js";
-import { pfState, isImported, usHeld, avgOf } from "./pf.js";
+import { pfState, isImported, usHeld, avgOf, usdOf } from "./pf.js";
 import { ImportedDeck, qtyText } from "./pfview.jsx";
 import { EpsOwnersNote } from "./fixnote.jsx";
 import { RecordButton, RecordFlow, startFlow } from "./records.jsx";
@@ -92,8 +92,10 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
   const ev = useMemo(() => evaluateAll(decks, ctx), [decks, ctx]);
   const late = !!(ev.ok && ev.late);                     // the check ran on an older close (rules.js checkState, Jack 2026-11-19)
   // Part E: values use US prices at their own close date; say so when it differs from the Korean one.
-  // v19.3d: a 가진 종목 portfolio has no per-stock rows in the daily check, so its dollar holdings are looked up here
-  const us = ev.ok && (ev.decks.some((de) => de.ok && de.holdings.some((x) => x.cls === "us")) || decks.some((d) => usHeld(d, load)));
+  // v19.3d: a 가진 종목 portfolio has no per-stock rows in the daily check, so its dollar holdings are looked up here.
+  // A US stock is one priced in dollars (pf.usdOf, as usHeld; #187 review: x.cls "us" also took 379800 KODEX 미국S&P500, a KRX
+  // listing priced in won, and said its price was the US close)
+  const us = ev.ok && (ev.decks.some((de) => de.ok && de.holdings.some((x) => usdOf(load.byT.get(x.t)))) || decks.some((d) => usHeld(d, load)));
   const usDate = us && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
   // 포트폴리오에서 빼기: only the stock missing from today's data, only from this portfolio, only when tapped.
   const onRemove = (deckId, t) => {

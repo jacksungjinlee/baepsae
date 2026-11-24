@@ -19,6 +19,7 @@ import { missingNames } from "./tracking.jsx";
 import { recordsCsv, csvName, downloadCsv } from "./csv.js";
 import { TaxLink } from "./tax.jsx";
 import { taxOpen } from "./tax.js";
+import { usdOf } from "./pf.js";
 
 const warned = new Set();
 const warnOnce = (m) => { if (!warned.has(m)) { warned.add(m); console.warn(m); } };
@@ -163,8 +164,10 @@ export function Returns({ deck, load, store, pad, onBack, onTax }) {
   // price date (usPxDate), as 연말에 확인할 숫자's loss card: after a US holiday the Korean date (pxDate) is a day the US prices
   // are not from. A file without a US price date: no date line (a US price never takes the Korean date). With a Korean stock
   // among them, or none held, the Korean date as before. A US stock at an earlier close is named by OwnCloseNote below.
+  // A US stock here is one priced in dollars (pf.usdOf: the data's own currency, never cls): 379800 KODEX 미국S&P500 has cls
+  // "us" but is a KRX listing priced in won at the Korean close (round-1 review of #187).
   const counted = r ? r.ledgers.filter((L) => L.held > 0 && !gone.has(L.t) && !r.noAvg.includes(L.t) && !r.noFx.includes(L.t)) : [];
-  const isUs = (L) => { const s = ctx.byT.get(L.t); return !!s && s.cls === "us"; };
+  const isUs = (L) => usdOf(ctx.byT.get(L.t));
   const usOnly = counted.length > 0 && counted.every(isUs);
   if (ok && usOnly && !mdText(load.data.usPxDate)) warnOnce(`[v2] ${deck.id}: returns: every held stock counted is a US stock and data.json has no readable usPxDate (${JSON.stringify(load.data.usPxDate)}), so no date line (US prices never take the Korean pxDate)`);
   const md = ok ? mdText(usOnly ? load.data.usPxDate : load.data.pxDate) : null;
@@ -179,7 +182,7 @@ export function Returns({ deck, load, store, pad, onBack, onTax }) {
   if (late && fx && !fx.empty) warnOnce(`[v2] ${deck.id}: late data: the exchange-rate card is left out (its line says today's rate)`);
   // Korean and US stocks counted together while the US price date differs from the Korean one the date line shows (after a
   // US holiday): the approved app.usClose line under the title, on 포트폴리오's condition (a US stock held, usPxDate set and
-  // not pxDate; coordinator's decision 2026-11-24 on audit 1.6). Only with the amounts on screen; US-only shows the US date.
+  // not pxDate; decided under the rules 2026-11-24, audit 1.6). Only with the amounts on screen; US-only shows the US date.
   const usMd = r && !lateHold && !usOnly && counted.some(isUs) && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
   return (
     <Page pad={pad}>

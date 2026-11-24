@@ -3,12 +3,14 @@
 
 - 1.2 포트폴리오의 가진 종목 줄: 미국 주식의 소수점 수량을 기록 화면처럼 소수 넷째 자리까지, 끝의 0 없이 써요 (pfview.qtyText):
   7.5주 · 0.4주 · 2.3456주. 예전에는 반올림해서 "8주" · "0주" 였어요. 한국 주식의 온주는 예전 그대로 (10주 · 1,234주).
-- 1.5 연말에 확인할 숫자: 1,000원이 안 되는 어림값은 그 금액 그대로 써요 (tax.js shownEstimate). 배당 카드는 "약" 없이 (361원 배당 →
-  세금 떼기 전 427원, 예전에는 "약 0원"), 양도차익 줄은 승인된 문장의 "약"을 그대로 둔 채 금액만 (세금은 약 361원이에요).
-  1,000원부터는 예전 그대로 1,000원 단위에 "약" (약 123만 5,000원). taxState · yearDivs 가 돌려주는 값은 그대로예요.
+- 1.5 연말에 확인할 숫자: 1,000원이 안 되는 어림값은 원 단위로 써요 (tax.js shownEstimate). 승인된 "약"은 그대로: 배당 카드
+  "약 {x}" (361원 배당 → 세금 떼기 전 약 427원, 예전에는 "약 0원") · 양도차익 줄 (세금은 약 361원이에요). 어림값이라서요 (v19.6 Part F,
+  #187 검토). 1,000원부터는 예전 그대로 1,000원 단위 (약 123만 5,000원). taxState · yearDivs 가 돌려주는 값은 그대로예요.
 - 1.6 내 수익의 날짜 줄: 계산에 들어간 가진 종목이 모두 미국 종목이면 미국 기준일(usPxDate)을 써요. 미국 휴장일 다음 날
   (2026-11-26 추수감사절: 한국 11월 26일 종가 · 미국 11월 25일 종가) "11월 25일 종가 · …" — 연말에 확인할 숫자의 손실 카드와 같은 날짜.
-  한국 종목이 하나라도 들어가면 (또는 가진 종목이 없으면) 예전처럼 한국 날짜. usPxDate 가 없는 파일이면 날짜 줄 없이, 콘솔에 이유.
+  한국 종목이 하나라도 들어가면 (또는 가진 종목이 없으면) 예전처럼 한국 날짜에, 미국 종목이 함께면 승인된 app.usClose 줄.
+  usPxDate 가 없는 파일이면 날짜 줄 없이, 콘솔에 이유. 미국 종목은 달러로 값이 매겨진 종목이에요 (pf.usdOf): cls 가 "us" 인
+  379800 KODEX 미국S&P500 은 한국 거래소에서 원으로, 한국 종가로 거래돼요 (#187 검토).
 기대값은 모두 손으로 계산했어요. 시험 데이터: tests/fixtures/v2 (fx 1,338원 · AAPL $344.63 · MSFT $521.91 · 삼성전자 225,000원).
 """
 import json
@@ -167,14 +169,15 @@ TAX_DECKS = """
 """
 
 
-def test_the_dividend_card_writes_an_amount_under_1000_won_without_yak():
-    got = run(TAX_DECKS + """out = Object.fromEntries([361, 305, 845, 846, 1000, 1044444].map((a) => [a, card(taxPage([divd('d' + a, a)]))]));""")
-    # 361 ÷ 0.846 = 426.71원 → 427원 (예전 "약 0원") · 305 ÷ 0.846 = 360.52원 → 361원 · 845 ÷ 0.846 = 998.82원 → 999원 (예전 "약 1,000원")
-    assert got["361"]["div"] == "427원" and got["361"]["v"] == "427"
-    assert got["305"]["div"] == "361원" and got["305"]["v"] == "361"
-    assert got["845"]["div"] == "999원" and got["845"]["v"] == "999"
-    for a in ("361", "305", "845"):                         # "약" 칸이 없어요: 1,000원부터의 카드보다 칸이 하나 적어요
-        assert "약" not in got[a]["div"] and got[a]["divHtml"].count("<span") + 1 == got["846"]["divHtml"].count("<span"), got[a]
+def test_the_dividend_card_writes_an_amount_under_1000_won_to_the_won_with_its_yak():
+    got = run(TAX_DECKS + """out = { C: C.tax.divAmount, ...Object.fromEntries([361, 305, 845, 846, 1000, 1044444].map((a) => [a, card(taxPage([divd('d' + a, a)]))])) };""")
+    assert got["C"] == "약 {x}"                              # 승인된 조각 그대로 (세금 떼기 전 금액은 어림값: 1,000원 아래도 "약")
+    # 361 ÷ 0.846 = 426.71원 → 약 427원 (예전 "약 0원") · 305 ÷ 0.846 = 360.52원 → 약 361원 · 845 ÷ 0.846 = 998.82원 → 약 999원 (예전 "약 1,000원")
+    assert got["361"]["div"] == "약 427원" and got["361"]["v"] == "427"
+    assert got["305"]["div"] == "약 361원" and got["305"]["v"] == "361"
+    assert got["845"]["div"] == "약 999원" and got["845"]["v"] == "999"
+    for a in ("361", "305", "845"):                         # 1,000원부터의 카드와 같은 칸 ("약" 칸 · 금액 칸)
+        assert got[a]["divHtml"].count("<span") == got["846"]["divHtml"].count("<span"), got[a]
     # 1,000원부터는 예전 그대로: 846 ÷ 0.846 = 1,000원 · 1,000 ÷ 0.846 = 1,182.03원 → 약 1,000원 · 1,044,444 ÷ 0.846 = 1,234,567.38원 → 약 123만 5,000원
     assert got["846"]["div"] == "약 1,000원" and got["846"]["v"] == "1000"
     assert got["1000"]["div"] == "약 1,000원" and got["1000"]["v"] == "1000"
@@ -260,3 +263,38 @@ def test_returns_mixed_holdings_after_a_us_holiday_say_the_us_date_with_the_appr
     assert got["us"] is None and got["kr"] is None                                   # 미국만: 날짜 줄이 이미 11월 25일 · 한국만: 미국 가격 없음
     assert got["usNoAvg"] is None and got["usNoAvgDate"] == "11월 26일 종가 · 평균 단가를 넣은 종목 기준"
     assert got["sameDay"] is None and got["noUs"] is None                            # 평소 (두 날짜가 같음) · 미국 날짜가 없는 파일
+
+
+# ── #187 검토 (1차): 379800 KODEX 미국S&P500 은 cls "us" 지만 한국 거래소 · 원 · 한국 종가 ──
+ETF_DECKS = RET_DECKS + """
+  const imp = (id, rows) => ({ id, name: id, createdAt: '2026-01-05', kind: 'imported', settings: { points: {} },
+    holdings: rows.map((r) => ({ t: r.t, nk: r.nk, cls: r.t === '379800' || r.ccy === 'USD' ? 'us' : 'kr' })), purchases: [], imported: rows });
+  const spx = { t: '379800', nk: 'KODEX 미국S&P500', ccy: 'KRW', qty: 10, avg: 20000 };
+  const sam = { t: '005930', nk: '삼성전자', ccy: 'KRW', qty: 10, avg: 60000 };
+  const aapl = { t: 'AAPL', nk: 'Apple Inc.', ccy: 'USD', qty: 3, avg: 200 };
+  // 포트폴리오 만들기로 만든 포트폴리오에 담긴 379800 (보유 종목의 cls 는 데이터 그대로 "us")
+  const built379 = { ...deck('db379', ['379800']), holdings: [{ t: '379800', nk: 'KODEX 미국S&P500', cls: 'us', target: 1 }],
+    purchases: [rec('p9', '379800', 10, 20000, '2026-03-02')] };
+  const note = (html) => text(part(html, 'ret-us-close'));
+  const usLine = (html) => lines(html).find((x) => x.startsWith('미국 종목은')) || null;
+"""
+
+
+def test_a_krx_fund_on_the_sp500_is_priced_at_the_korean_close_on_returns_and_portfolio():
+    got = run(ETF_DECKS + """
+      const D = loadOf().data; const s = D.stocks.find((x) => x.t === '379800');
+      const a = returns(imp('d379', [spx])), b = returns(imp('d379k', [sam, spx])), c = returns(imp('d379u', [aapl, spx])), e = returns(built379);
+      out = { data: [s.cls, s.ccy || null],
+        only379: [dateOf(a), note(a)], kr379: [dateOf(b), note(b)], us379: [dateOf(c), note(c)], built379: [dateOf(e), note(e)],
+        pfOnly379: usLine(portfolio([imp('d379', [spx])])), pfKr379: usLine(portfolio([imp('d379k', [sam, spx])])),
+        pfBuilt379: usLine(portfolio([built379])), pfUs379: usLine(portfolio([imp('d379u', [aapl, spx])])),
+        pfBuiltUs: usLine(portfolio([usOnly])) };""")
+    kr, us = "11월 26일 종가 · 평균 단가를 넣은 종목 기준", "11월 25일 종가 · 평균 단가를 넣은 종목 기준"
+    line = "미국 종목은 현지 기준 11월 25일 종가예요."
+    assert got["data"] == ["us", None]                       # 시험 데이터 그대로: cls "us", 통화 없음 (원)
+    assert got["only379"] == [kr, None]                      # 예전 (#187 처음) 11월 25일 — 원으로, 한국 종가로 거래돼요
+    assert got["built379"] == [kr, None]
+    assert got["kr379"] == [kr, None]                        # 잘못된 미국 날짜 줄 없음
+    assert got["us379"] == [kr, line]                        # 미국 종목과 함께: 한국 날짜 + 미국 날짜 줄
+    assert got["pfOnly379"] is None and got["pfKr379"] is None and got["pfBuilt379"] is None   # 포트폴리오도 (main 에서는 pfBuilt379 에 줄이 있었어요)
+    assert got["pfUs379"] == line and got["pfBuiltUs"] == line                                 # 진짜 미국 종목이 있으면 그대로
