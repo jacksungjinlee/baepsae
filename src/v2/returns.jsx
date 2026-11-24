@@ -19,6 +19,7 @@ import { missingNames } from "./tracking.jsx";
 import { recordsCsv, csvName, downloadCsv } from "./csv.js";
 import { TaxLink } from "./tax.jsx";
 import { taxOpen } from "./tax.js";
+import { usdOf } from "./pf.js";
 
 const warned = new Set();
 const warnOnce = (m) => { if (!warned.has(m)) { warned.add(m); console.warn(m); } };
@@ -158,7 +159,18 @@ export function Returns({ deck, load, store, pad, onBack, onTax }) {
   // ret.receiptFix ("… {cost}으로 …": {cost} always ends in 원), not the Appendix 1 "{cost}로".
   const pct = r ? returnsPct(r) : null;
   const exact = r ? r.held + r.sold + r.divs : 0;
-  const md = ok ? mdText(load.data.pxDate) : null;
+  // The prices' date on the line under the title (audit 1.6, 2026-11-23): when every held stock counted in the amounts (held,
+  // in today's data with a price, with its 평균 단가 and rate: the line says "평균 단가를 넣은 종목 기준") is a US stock, the US
+  // price date (usPxDate), as 연말에 확인할 숫자's loss card: after a US holiday the Korean date (pxDate) is a day the US prices
+  // are not from. A file without a US price date: no date line (a US price never takes the Korean date). With a Korean stock
+  // among them, or none held, the Korean date as before. A US stock at an earlier close is named by OwnCloseNote below.
+  // A US stock here is one priced in dollars (pf.usdOf: the data's own currency, never cls): 379800 KODEX 미국S&P500 has cls
+  // "us" but is a KRX listing priced in won at the Korean close (round-1 review of #187).
+  const counted = r ? r.ledgers.filter((L) => L.held > 0 && !gone.has(L.t) && !r.noAvg.includes(L.t) && !r.noFx.includes(L.t)) : [];
+  const isUs = (L) => usdOf(ctx.byT.get(L.t));
+  const usOnly = counted.length > 0 && counted.every(isUs);
+  if (ok && usOnly && !mdText(load.data.usPxDate)) warnOnce(`[v2] ${deck.id}: returns: every held stock counted is a US stock and data.json has no readable usPxDate (${JSON.stringify(load.data.usPxDate)}), so no date line (US prices never take the Korean pxDate)`);
+  const md = ok ? mdText(usOnly ? load.data.usPxDate : load.data.pxDate) : null;
   // held stocks left out today: missing from today's data (the approved missing-stock line names them); in it without a
   // price: ret.noPrice
   const missing = r ? r.absent : [];
@@ -168,6 +180,10 @@ export function Returns({ deck, load, store, pad, onBack, onTax }) {
   const lateHold = !!(late && r && (missing.length || r.noPrice.length || r.usdOnly));
   if (lateHold) warnOnce(`[v2] ${deck.id}: late data: returns not shown (their notes speak of today's data, price or rate)`);
   if (late && fx && !fx.empty) warnOnce(`[v2] ${deck.id}: late data: the exchange-rate card is left out (its line says today's rate)`);
+  // Korean and US stocks counted together while the US price date differs from the Korean one the date line shows (after a
+  // US holiday): the approved app.usClose line under the title, on 포트폴리오's condition (a US stock held, usPxDate set and
+  // not pxDate; decided under the rules 2026-11-24, audit 1.6). Only with the amounts on screen; US-only shows the US date.
+  const usMd = r && !lateHold && !usOnly && counted.some(isUs) && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
   return (
     <Page pad={pad}>
       <AppBar onBack={onBack} backLabel={C.app.tabs.portfolio} />
@@ -175,6 +191,7 @@ export function Returns({ deck, load, store, pad, onBack, onTax }) {
         {md && <p data-ui-v2="ret-date" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(2) })}>{fill(C.ret.date, { date: md })}</p>}
         <h2 style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(1) })}>{C.ret.title}</h2>
         <p data-ui-v2="ret-deck" style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2)}>{shownName(deck.name)}</p>
+        {usMd && <Note data-ui-v2="ret-us-close">{fill(C.app.usClose, { md: usMd })}</Note>}
         {load.status === "fail" && <LoadFail picture={false} />}
         {ok && !ctx.state.ok && <Note tone="watch" data-ui-v2="ret-stale">{todayStaleText(ctx.state.days)}</Note>}
         {late && <Note tone="watch" data-ui-v2="ret-late" data-n={late.n}>{staleText(late.days)}</Note>}
