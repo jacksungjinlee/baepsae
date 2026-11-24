@@ -24,6 +24,14 @@ links, "전무가" off the must-not-show list, labels) and a rename in `tests/te
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
 v19.6g, v19.6h.
 
+**US dates in 2.0 (#?, 2026-11-24; audit 2.1 and 2.2, minor):** a dollar record (샀어요 · 팔았어요 · 배당 받았어요 · 팔고 빼기 ·
+매수 계획's 샀어요, by currency: `pf.usdOf` / `records.recordCcy`, never cls) now opens on New York's date (`format.todayNy`), the US
+trading date its hint asks for; after Korean midnight (the US session, 23:30–06:00 KST in winter) that date is no longer refused
+with "이 날짜의 환율이 아직 없어요" but takes today's rate (data.json fx) until the history has that day; the morning after it takes
+that day's fxHist row, as before. Korea's date can still be typed (today's rate, as before); won records, the store's checks and
+the records-file import are unchanged (KST; New York's date is never later). 오늘 볼 것 · 다가오는 일정 keeps a US earnings or
+ex-dividend date until New York's midnight (13:00/14:00 KST), not Korean midnight. `tests/test_v2_us_dates.py`. No new Korean.
+
 **Split rounding (#184, 2026-11-24; Track 2 audit 1.1, serious but rare, and 1.4):** 47 of data.json's 150 splits have a ratio
 that isn't a whole number (DD 1:3, UL 8:9, HON and AZN 1:2, AMCR 1:5, SNEX 3:2 …). Records dated before one broke when they didn't give
 whole 1/10,000 shares (for 11 of the 47, one share already doesn't; for the rest, a 0.0001-share sale or a 금액으로 넣기 row):

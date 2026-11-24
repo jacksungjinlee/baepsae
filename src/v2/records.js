@@ -32,16 +32,26 @@ const realDate = (x) => typeof x === "string" && DATE.test(x) && new Date(x + "T
 //   - final not true (yahoo_next at the 06:40 publish says false: its last row is the run's live rate, not the day's; a
 //     missing or odd flag counts as not final, round-2 review): a date whose rate would be that last row is not saved yet
 //     either; the next publish has it final.
-// env: { today, fx, fxDate, fxHist, stale }.
+// New York's today (audit 2.1, 2026-11-24): a dollar record made during the US session after Korean midnight (23:30–06:00 KST
+// in winter, 22:30–05:00 in summer) is dated New York's date, the Korean date's day before, as the form's hint asks ("미국
+// 주식은 미국 현지 날짜로 적어 주세요."). That date is today in New York, so when the history does not have it yet it takes today's
+// rate, as a record dated the Korean today does (never "notYet"). When the history has it (the morning after, once the publish
+// has that day's Seoul close) it takes that row, as it did before: a record dated D keeps the rate of D whenever it is typed.
+// env: { today, usToday?, fx, fxDate, fxHist, stale } (usToday: format.todayNy, only from the screens that save dollar records).
 // -> { ok: true, fx } | { ok: true, fx: null, before: true } | { ok: false, why: "today" (today's rate: the approved
 //    past-date line does not fit) | "notYet" (a past date after the history's last day) | "past" (any other past date:
 //    "환율 정보를 불러오지 못해 … 지난 날짜의 …") | "date" }
 export const FX_FROM = "2016-01-01";
 export function rateFor(date, env) {
   const e = env || {};
+  const r = histRate(date, e);
+  return !r.ok && r.why !== "date" && typeof e.usToday === "string" && date === e.usToday ? todayRate(e) : r;
+}
+const todayRate = (e) => (pos(e.fx) && !e.stale ? { ok: true, fx: e.fx } : { ok: false, why: "today" });
+function histRate(date, e) {
   if (!realDate(date)) return { ok: false, why: "date" };
   if (date < FX_FROM) return { ok: true, fx: null, before: true };
-  if (date === e.today) return pos(e.fx) && !e.stale ? { ok: true, fx: e.fx } : { ok: false, why: "today" };
+  if (date === e.today) return todayRate(e);
   const rows = validRows(e.fxHist);
   if (!rows || typeof e.fxHist.asOf !== "string" || e.fxHist.asOf !== rows[rows.length - 1][0]) return { ok: false, why: "past" };
   if (date < rows[0][0]) return { ok: false, why: "past" };
@@ -59,12 +69,17 @@ export function rateFor(date, env) {
 export const rateRefusal = (why) => (why === "today" || why === "notYet" ? why : "past");
 // The rate part of a new USD record: { fx } or, before 2016, { noFx: true } (store.js: never costed at planFx).
 const ratePart = (r) => (pos(r.fx) ? { fx: r.fx } : r.before ? { noFx: true } : {});
-// The env rateFor reads, from the app's load state (data.json, macro.json) and today's date.
-export function rateEnv(load, today) {
+// The env rateFor reads, from the app's load state (data.json, macro.json) and today's date (KST); usToday: New York's
+// (format.todayNy), given by the screens that save dollar records (records.jsx, plan.jsx), left out elsewhere.
+export function rateEnv(load, today, usToday = null) {
   const ok = load && load.status === "ok";
   return { today, fx: ok ? load.data.fx : null, fxDate: ok ? load.data.fxDate || null : null, fxHist: ok && load.macro ? load.macro.fxHist || null : null,
-    stale: !!(ok && load.fresh && load.fresh.stale) };
+    stale: !!(ok && load.fresh && load.fresh.stale), ...(usToday ? { usToday } : {}) };
 }
+// The date a record made now gets (the forms open with it; a blank date takes it): a dollar record's is New York's today
+// (env.usToday, when given; audit 2.1: the US trading date the form's hint asks for), any other record's Korea's, as before.
+// The latest date a record can carry stays Korea's today for both (badDate): New York's is never later.
+export const recordToday = (env, usd) => (usd && typeof env.usToday === "string" ? env.usToday : env.today);
 
 // ---------------- the currency of a stock's records ----------------
 // One source for the form's label and the record it saves (review: a 원 form must never save dollars): the stock's own
@@ -130,7 +145,7 @@ export function checkSale(deck, t, input, s, env) {
   const st = stockState(deck, t);
   const usd = recordCcy(deck, t, s) === "USD";
   const ccy = usd ? "USD" : "KRW";
-  const date = input.date || env.today;
+  const date = input.date || recordToday(env, usd);
   if (badDate(date, env.today)) return { ok: false, why: "input", field: "date" };
   if (st.first && date < st.first) return { ok: false, why: "tooEarly", field: "date" };
   let qty, price;
@@ -169,7 +184,7 @@ export function checkSale(deck, t, input, s, env) {
 // falls between the purchase date and today: then the price is required, closeIsDefault).
 export function checkPurchase(deck, t, input, s, env) {
   const usd = recordCcy(deck, t, s) === "USD";
-  const date = input.date || env.today;
+  const date = input.date || recordToday(env, usd);
   if (badDate(date, env.today)) return { ok: false, why: "input", field: "date" };
   const q = typed(input.qty);
   if (!(pos(q) && q <= QTY_MAX && Number.isInteger(q))) return { ok: false, why: "input", field: "qty" };
@@ -186,7 +201,7 @@ export function checkPurchase(deck, t, input, s, env) {
 // Its currency is the stock's own records' (recordCcy: the same source as the form's label), also for a stock taken out.
 export function checkDiv(deck, t, input, s, env) {
   const usd = recordCcy(deck, t, s) === "USD";
-  const date = input.date || env.today;
+  const date = input.date || recordToday(env, usd);
   const a = typed(input.amount);
   if (!(pos(a) && (usd ? decimals(a, 2) : Number.isInteger(a)))) return { ok: false, why: "input", field: "amount" };
   if (badDate(date, env.today)) return { ok: false, why: "input", field: "date" };

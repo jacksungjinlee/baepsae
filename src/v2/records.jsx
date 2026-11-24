@@ -7,7 +7,7 @@
 import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { Button, BottomSheet, priceColor } from "../ui/components.jsx";
-import { C, fill, nf, mdText, todayKst, exactWon, plus, recDate } from "./format.js";
+import { C, fill, nf, mdText, todayKst, todayNy, exactWon, plus, recDate } from "./format.js";
 import { Note, TextInput, SampleLabel, KrOwnCloseLine, tx, useMode, useLayout, SIDE_W } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { shownName } from "./legacy.js";
@@ -18,7 +18,7 @@ import { signedPct } from "./deckcalc.js";
 import { splitsFor } from "./lots.js";
 import {
   stockState, checkSale, checkPurchase, checkDiv, withRecord, withoutRecord, recordsOf, salePreview, soldOutNow, rateEnv, typed, decksFor, recordCcy,
-  closeIsDefault, rateRefusal,
+  closeIsDefault, rateRefusal, recordToday,
 } from "./records.js";
 
 const usdText = (v) => "$" + nf(v, 2);
@@ -174,10 +174,14 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
   const s = ok ? load.byT.get(t) || null : null;
   const st = stockState(deck, t);
   const usd = recordCcy(deck, t, s) === "USD";              // the same source the saved record's currency comes from
-  const env = rateEnv(load, today);
+  const env = rateEnv(load, today, todayNy());
+  // the date the form opens with (records.recordToday): a dollar record's is New York's today, the US trading date the hint
+  // below asks for (audit 2.1: after Korean midnight the Korean date is New York's tomorrow); a won record's Korea's, as before.
+  // Any date up to Korea's today can still be typed (max), and either "today" takes today's rate (records.rateFor)
+  const day = recordToday(env, usd);
   // v19.7a 팔고 빼기: the sale form opens with every held share filled in (flow.prefill.qty; with flow.lockQty it then follows
   // the date, below)
-  const [v, setV] = useState({ qty: flow.prefill && flow.prefill.qty != null ? String(flow.prefill.qty) : "", price: "", date: today, amount: "" });
+  const [v, setV] = useState({ qty: flow.prefill && flow.prefill.qty != null ? String(flow.prefill.qty) : "", price: "", date: day, amount: "" });
   const [tried, setTried] = useState(false);
   const [fail, setFail] = useState(false);
   const set = (k) => (x) => setV((o) => ({ ...o, [k]: x }));
@@ -191,7 +195,7 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
     if (kind === "sell") return checkSale(deck, t, { qty, price: v.price, date: v.date, amountWon: v.amount }, s, env);
     if (kind === "buy") return checkPurchase(deck, t, v, s, env);
     return checkDiv(deck, t, v, s, env);
-  }, [kind, deck, t, v, qty, s, env.fx, env.fxHist, env.stale]);
+  }, [kind, deck, t, v, qty, s, env.fx, env.fxHist, env.stale, env.usToday]);
   // the result card (팔았어요): live from what is typed, before anything is saved
   const prev = kind === "sell" && check.ok ? salePreview(deck, check.rec) : null;
   const md = s ? mdText(priceDate(load, s)) : null;

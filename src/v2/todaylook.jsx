@@ -21,7 +21,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { StatusChip } from "../ui/components.jsx";
-import { C, fill, nf, p1, mdText, todayKst } from "./format.js";
+import { C, fill, nf, p1, mdText, todayKst, todayNy } from "./format.js";
 import { Page, Card, AppBar, DateLine, LoadFail, Footer, tx, tap } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { bigWon } from "./cofmt.js";
@@ -182,7 +182,8 @@ const filingsOf = (m) => [...shownInsider(m).map((c) => ({ c, k: "ins" })), ...m
 // onBack: back to 홈 · onLeave: the same, when there is nothing to show · onWatch: opens 관심 종목 (a 관심 종목 조건 card).
 export function TodayLook({ load, store, setStoreData, disc, pad, onBack, onLeave, onWatch }) {
   const today = todayKst();
-  const m = useMemo(() => lookModel(load, store, disc, today), [load, store, disc, today]);
+  const usToday = todayNy();                                   // the US dates' own day (다가오는 일정, look.lookModel)
+  const m = useMemo(() => lookModel(load, store, disc, today, undefined, usToday), [load, store, disc, today, usToday]);
   const canMark = !!(store.writable && !store.locked);
   const hits = useMemo(() => (m.fresh ? watchHits(store.data, load, undefined, canMark) : []), [m.fresh, store.data, load, canMark]);
   const filings = filingsOf(m);
