@@ -114,6 +114,8 @@ from validate_data import (load_ksic_map_kr, IND_SECTOR_KR, IND_FILL_CHECK, ind_
                            KSIC_LENS_MISFIT)
 # 2026-11-24: 관문의 낱말 줄이 찾는 패턴 그대로 (한 곳 · 베끼지 않아요) — 우리가 쓰는 오류 · 까닭 글은 그 낱말을 '빈 값' 으로 바꿔 적어요 (pub_text)
 from validate_data import BAD_WORD as GATE_BAD_WORD
+# 2026-11-24 (Track 2 감사 3.5): 시장 가정 10칸의 이름과 순서 (관문의 '시장 가정' 줄이 같은 목록으로 빠진 칸을 봐요)
+from validate_data import MKT_KEYS
 
 # ────────────────────────────────────────────────────────────
 # 설정
@@ -17008,6 +17010,89 @@ def own_blank_div_lines(kr, div_counts, prev=None):
     return own_drop_rec(rows)
 
 
+# ────────────────────────────────────────────────────────────
+# 시장 가정 (data.json settings 의 변동성 · 상관계수)
+# ────────────────────────────────────────────────────────────
+# 2026-11-24 (Track 2 감사 3.5): 예전에는 국제 금값(GC=F) 다운로드 하나가 실패하면 계산 조건에 금 열이 들어 있어서 금과 상관없는 한국 · 미국
+# 변동성과 한국 ↔ 미국 상관계수, 채권 값까지 10칸이 모두 빠졌고 (예전 뱁새는 기본값), 로그는 '날이 N일뿐' 이라는 틀린 이유를 적었어요. 이제 입력이 있는
+# 값은 모두 계산하고, 뺀 칸은 이름과 진짜 이유를 로그에 남겨요 (관문의 '시장 가정' 줄이 빠진 칸을 경고해요).
+MKT_NEEDS = {"mtVol": ("mt",), "rhoKrMt": ("mt",), "rhoUsMt": ("mt",),
+             "bdVol": ("bd",), "rhoKrBd": ("bd",), "rhoUsBd": ("bd",), "rhoMtBd": ("mt", "bd")}   # 나머지 셋은 한국 · 미국만
+MKT_PART = {"mt": "국제 금값(GC=F)", "bd": "채권 대표 시계열(148070)"}
+MKT_PART_KO = {"mt": "금", "bd": "채권"}
+MKT_LEFT_APPS = "(예전 뱁새는 그 칸에 기본값을 써요 · 2.0 은 기본값을 쓰지 않아요)"
+
+
+def market_assumptions(kr_bench, us_bench, fx, gold_usd, bd_ret, px_date, us_vol_krw=None):
+    """시장 가정 → (settings 에 더할 값 {칸: 숫자}, 로그 줄 목록). (순수 함수 · 로그는 부르는 쪽이 남겨요)
+    kr_bench: 한국(KOSPI) 일별 수익률 · us_bench: 미국(S&P 500) 일별 수익률(달러) · fx: 원/달러 환율 · gold_usd: 국제 금값(GC=F, 달러) 종가 ·
+    bd_ret: 채권 대표(148070) 일별 수익률 · us_vol_krw: fetch_us 가 원화 S&P 500 로 계산한 미국 변동성 (없으면 표에서).
+    gold_usd · bd_ret 가 None 이거나 비면 받지 못한 것: 그 열에 걸린 칸만 빼요. 모든 값은 한 표 — 쓰는 열이 모두 있는 날 (px_date 까지) — 에서
+    계산해요: 상관계수가 모두 같은 날들에서 나와야 앱의 분산 계산이 서로 맞아요. 예전에 계산하던 날 (금 열이 있고 그 표의 날이 MIN_DAYS 를 넘는
+    날 · 채권은 있든 없든) 은 예전과 같은 표 · 같은 식 · 같은 숫자 · 같은 칸 순서예요. 그 표의 날이 MIN_DAYS 를 넘지 않으면 날이 모자란 열(금 ·
+    채권)을 빼고 다시 봐요 (둘 다 되는데 넷이 함께 있는 날만 모자라면 날이 적은 쪽 하나). 한국 · 미국만으로도 모자라면 아무 칸도 더하지 않아요.
+    계산한 값이 숫자가 아니거나 (NaN) 범위 밖이라 None 이면 (ann_vol) 그 칸도 넣지 않고 이유를 적어요 (예전에는 null 로
+    썼어요 — 두 앱 모두 null 과 없는 칸을 똑같이 읽어요)."""
+    fxr = fx.pct_change()
+    us_krw = us_bench + fxr.reindex(us_bench.index).fillna(0)
+    base = [kr_bench.rename("kr"), us_krw.rename("us")]
+    part, why, n_one = {}, {}, {}
+
+    def table(ks):
+        return cut_at(pd.concat(base + [part[k] for k in ("mt", "bd") if k in ks], axis=1).dropna(), px_date)
+
+    n_base = len(table(()))
+    if n_base <= MIN_DAYS:
+        return {}, [f"  !! 시장 가정: 한국(KOSPI) · 미국(S&P 500) 수익률이 함께 있는 날이 {n_base:,}일뿐이라 ({MIN_DAYS}일 넘게 필요) "
+                    f"{len(MKT_KEYS)}칸 모두 빼요 {MKT_LEFT_APPS}"]
+    for k, raw in (("mt", gold_usd), ("bd", bd_ret)):
+        if raw is None or not len(raw):
+            why[k] = f"{MKT_PART[k]}을 받지 못해"
+            continue
+        try:                          # 금 · 채권 열 하나가 이상해도 (모양 · 날짜) 한국 · 미국 칸은 계산해요
+            part[k] = ((raw.pct_change() + fxr.reindex(raw.index).fillna(0)).dropna() if k == "mt" else raw).rename(k)
+            n_one[k] = len(table((k,)))
+        except Exception as e:
+            part.pop(k, None)
+            why[k] = f"{MKT_PART[k]}을 표에 넣다가 오류가 나 ({type(e).__name__}: {str(e)[:120]})"
+    for k in list(part):
+        if n_one[k] <= MIN_DAYS:
+            why[k] = f"{MKT_PART[k]}이 한국 · 미국과 함께 있는 날이 {n_one[k]:,}일뿐이라 ({MIN_DAYS}일 넘게 필요)"
+            del part[k]
+    j = table(tuple(part))
+    if len(j) <= MIN_DAYS:            # 금 · 채권 하나씩은 되는데 넷이 함께 있는 날만 모자라요: 날이 적은 쪽 하나를 빼요 (같으면 채권)
+        k = min(part, key=lambda x: (n_one[x], x != "bd"))
+        why[k] = (f"금 · 채권 · 한국 · 미국이 모두 함께 있는 날이 {len(j):,}일뿐이라 ({MIN_DAYS}일 넘게 필요) 날이 더 적은 "
+                  f"{MKT_PART[k]}({n_one[k]:,}일)을 빼서")
+        del part[k]
+        j = table(tuple(part))
+    c = j.corr()
+    rho = lambda a, b: round(float(c.loc[a, b]), 2)
+    val = {"mktVol": ann_vol(j["kr"].values), "usVol": us_vol_krw or ann_vol(j["us"].values), "rhoKrUs": rho("kr", "us")}
+    if "mt" in part:
+        val.update(mtVol=ann_vol(j["mt"].values), rhoKrMt=rho("kr", "mt"), rhoUsMt=rho("us", "mt"))
+    if "bd" in part:
+        val.update(bdVol=ann_vol(j["bd"].values), rhoKrBd=rho("kr", "bd"), rhoUsBd=rho("us", "bd"))
+        if "mt" in part:
+            val["rhoMtBd"] = rho("mt", "bd")
+    out = {k: val[k] for k in MKT_KEYS if k in val and _fin(val[k]) is not None}
+    left = {}                                      # 이유 → 뺀 칸 (MKT_KEYS 순서)
+    for k in MKT_KEYS:
+        if k in out:
+            continue
+        ps = [p for p in MKT_NEEDS.get(k, ()) if p in why]
+        r = (" · ".join(why[p] for p in ps) + " " + "·".join(MKT_PART_KO[p] for p in ps) + " 관련") if ps \
+            else "계산한 값이 숫자가 아니거나 범위를 벗어나"
+        left.setdefault(r, []).append(k)
+    head = f"({len(j):,}일, ~{px_date}): {len(out)} / {len(MKT_KEYS)}칸 — {out}"
+    if not left:
+        return out, [f"· 시장 가정 계산 완료 {head}"]
+    lines = [f"  !! 시장 가정 일부만 계산 {head}"]
+    for r, ks in left.items():
+        lines.append(f"  !! 시장 가정: {r} {len(ks)}칸({' · '.join(ks)})은 빼요 {MKT_LEFT_APPS}")
+    return out, lines
+
+
 def main():
     published_at = dt.datetime.now(KST).isoformat(timespec="seconds")
     today = today_kst()
@@ -17219,37 +17304,15 @@ def main():
         sys.exit(1)
 
     settings = {"rf": round(rf * 100, 2), "rfSrc": rf_src}
+    # 2026-11-24 (Track 2 감사 3.5): 입력이 있는 칸은 모두 계산 · 뺀 칸은 이름과 진짜 이유를 로그에 (금값 하나가 10칸을 모두 지우지 않게)
     try:
-        fxr = fx.pct_change()
-        us_krw = us_bench + fxr.reindex(us_bench.index).fillna(0)
-        cols = [kr_bench.rename("kr"), us_krw.rename("us")]
-        if gold_usd is not None:
-            cols.append((gold_usd.pct_change() + fxr.reindex(gold_usd.index).fillna(0)).dropna().rename("mt"))
-        if bd_ret is not None:
-            cols.append(bd_ret.rename("bd"))
-        j = cut_at(pd.concat(cols, axis=1).dropna(), px_date)
-        if len(j) > MIN_DAYS and "mt" in j.columns:
-            c = j.corr()
-            settings.update({
-                "mktVol": ann_vol(j["kr"].values),
-                "usVol": us_vol_krw or ann_vol(j["us"].values),
-                "mtVol": ann_vol(j["mt"].values),
-                "rhoKrUs": round(float(c.loc["kr", "us"]), 2),
-                "rhoKrMt": round(float(c.loc["kr", "mt"]), 2),
-                "rhoUsMt": round(float(c.loc["us", "mt"]), 2),
-            })
-            if "bd" in j.columns:
-                settings.update({
-                    "bdVol": ann_vol(j["bd"].values),
-                    "rhoKrBd": round(float(c.loc["kr", "bd"]), 2),
-                    "rhoUsBd": round(float(c.loc["us", "bd"]), 2),
-                    "rhoMtBd": round(float(c.loc["mt", "bd"]), 2),
-                })
-            log(f"· 시장 가정 계산 완료 ({len(j):,}일, ~{px_date}): {settings}")
-        else:
-            log(f"  !! 시장 가정 계산에 쓸 날이 {len(j)}일뿐 — 기본값을 써요")
+        mkt, mkt_lines = market_assumptions(kr_bench, us_bench, fx, gold_usd, bd_ret, px_date, us_vol_krw)
+        settings.update(mkt)
+        for line in mkt_lines:
+            log(line)
     except Exception as e:
-        log(f"  !! 상관계수 실패: {e}")
+        log(f"  !! 시장 가정 계산이 오류로 멈췄어요 ({type(e).__name__}: {str(e)[:160]}) — {len(MKT_KEYS)}칸 모두 빼요 {MKT_LEFT_APPS} "
+            "· 관문의 '시장 가정' 줄이 경고해요")
 
     # 팩터 백분위는 시장 안에서만 (한국은 한국끼리, 미국은 미국끼리)
     add_percentiles(kr)

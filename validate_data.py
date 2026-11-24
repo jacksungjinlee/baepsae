@@ -2863,6 +2863,46 @@ def check_us_risk_cover(rep, us, pdata):
             rep.add(f"미국 {k} 채움 변화", v >= pv - 10, f"{pv:.1f} → {v:.1f}", "10점 넘게 줄면 실패")
 
 
+# ── 2026-11-24 (Track 2 감사 3.5): 시장 가정 (data.json settings 의 변동성 · 상관계수). 파이프라인(fetch_data.market_assumptions)이 입력이 있는
+# 값은 모두 계산하고, 받지 못한 입력(국제 금값 GC=F · 채권 대표 시계열 148070)에 걸린 값만 빼요. 빠진 칸: 예전 뱁새는 기본값을 써요 (설정에는
+# '가정' 칩) · 2.0 은 기본값을 쓰지 않아요 (그 종류의 종목을 위험 계산에서 빼거나, 상관계수가 없으면 위험 줄을 계산하지 않아요). 경고만: 실패하지 않아요 (발행 · 사이트 점검 모두 · 검사 코드가 멈춰도 경고). 키의 목록과
+# 순서는 파이프라인이 여기서 읽어요 (data.json 에 쓰는 순서) ──
+MKT_KEYS = ("mktVol", "usVol", "mtVol", "rhoKrUs", "rhoKrMt", "rhoUsMt", "bdVol", "rhoKrBd", "rhoUsBd", "rhoMtBd")
+MKT_ROW = "시장 가정 (settings 변동성 · 상관계수 · 경고만)"
+
+
+def mkt_num(x):
+    """시장 가정 칸의 값: JSON 숫자(정수 · 실수, 불 아님)이고 유한하면 그 값, 아니면 None (글자 '36.8' · null · NaN 도 None — 예전 뱁새는
+    숫자인 칸만 자동 값으로 읽어요). (순수 함수)"""
+    return num(x) if isinstance(x, (int, float)) and not isinstance(x, bool) else None
+
+
+def check_mkt_settings(rep, data, pdata=None):
+    """한 줄 — 시장 가정 10칸 (MKT_KEYS). 숫자가 아니거나 없는 칸을 이름으로 적고 경고해요. 지난 발행본(pdata · 발행 모드에서만)에 숫자로 있던
+    칸은 따로 적어요 (오늘 새로 빠진 칸). 모두 있으면 통과. 경고만: 검사 코드가 멈춰도 실패가 아니라 경고예요 (이 줄은 발행을 멈추지 않아요 —
+    멈추는 줄은 Jack 의 답을 받아서 · CLAUDE.md 범주 2)."""
+    try:
+        _check_mkt_settings(rep, data if isinstance(data, dict) else {}, pdata if isinstance(pdata, dict) else None)
+    except Exception as e:
+        rep.add(MKT_ROW, True, f"검사가 오류로 멈췄어요: {type(e).__name__}", "오류 없이 끝나야 함 (경고만 · 발행을 막지 않아요)", warn=True)
+
+
+def _check_mkt_settings(rep, data, pdata=None):
+    rule = (f"시장 가정 {len(MKT_KEYS)}칸이 숫자로 있음 — 빠진 칸은 예전 뱁새가 기본값을 써요 (빠진 칸 · 지난 발행본에는 있던 칸을 적고 경고 · "
+            "실패 없음)")
+    st = data.get("settings")
+    st = st if isinstance(st, dict) else {}
+    miss = [k for k in MKT_KEYS if mkt_num(st.get(k)) is None]
+    if not miss:
+        rep.add(MKT_ROW, True, f"{len(MKT_KEYS)}칸 모두 있음", rule)
+        return
+    pst = pdata.get("settings") if isinstance(pdata, dict) else None
+    had = [k for k in miss if isinstance(pst, dict) and mkt_num(pst.get(k)) is not None]
+    rep.add(MKT_ROW, True, f"빠짐 {len(miss)} / {len(MKT_KEYS)}칸: {' · '.join(miss)}"
+            + (f" (지난 발행본에는 있던 칸 {len(had)}: {' · '.join(had)})" if had else "")
+            + " — 실행 로그의 '시장 가정' 줄에 이유", rule, warn=True)
+
+
 def run_checks(cur, prev, final, today, mode="publish", count_between=None, notes=None, sessions=None, now=None, hilo=None,
                special=None, alt=None):
     """cur/prev: {"data":…, "corp":…, "disc":…, "macro":…} (prev 는 None 가능).
@@ -3044,6 +3084,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
         rep.add("환율 변화", dfx <= FX_REL * 100, f"{dfx:.1f}%", f"≤ {FX_REL * 100:.0f}%")
     src = (data.get("settings") or {}).get("rfSrc")
     rep.add("무위험수익률 출처", bool(src) and src != "fallback", src or "없음", "기본값(fallback) 아님")
+    check_mkt_settings(rep, data, pdata)   # 2026-11-24 (Track 2 감사 3.5): 시장 가정 10칸 · 빠진 칸 이름 (경고만 · 실패 없음 · 멈춰도 경고)
     cdate = day((macro.get("curve") or {}).get("date"))
     rep.add("국고채 커브 날짜", cdate is not None and (today - cdate).days <= CURVE_STALE_DAYS, cdate or "없음",
             f"{CURVE_STALE_DAYS}일 이내")

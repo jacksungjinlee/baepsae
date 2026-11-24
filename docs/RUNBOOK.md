@@ -2595,6 +2595,37 @@ sit behind US numbers after a split:
 **Rolling back #176**: a revert PR. Copies written with `pd` are read by the old code as before (it ignores the key); `usSrc.split` is
 ignored by the old gate and the app.
 
+## Market assumptions (시장 가정, `settings` volatilities and correlations, gate warning "시장 가정", since #?)
+
+`data.json` `settings` carries 10 numbers both apps use for portfolio risk: `mktVol` · `usVol` · `rhoKrUs` (KOSPI and the S&P 500 in
+won), `mtVol` · `rhoKrMt` · `rhoUsMt` (gold, Yahoo `GC=F` in won), `bdVol` · `rhoKrBd` · `rhoUsBd` (the bond proxy 148070) and
+`rhoMtBd` (gold and bonds). `fetch_data.market_assumptions` computes them on one table: the days every input it uses has, up to
+`pxDate`, more than 250 of them.
+
+- **Before #? (Track 2 audit 3.5):** one failed `GC=F` download left out all 10, the Korean and US ones and the bond ones too, so the
+  old app used its built-in defaults (KOSPI volatility 18% instead of about 37%, Korea ↔ US +0.50 instead of about −0.04) and 2.0
+  could not show its yearly-swing line, and the log blamed too few days ("날이 728일뿐").
+- **Now:** every number whose inputs exist is computed. No gold: the 6 Korea, US and bond numbers, gold's 4 left out. No bond proxy:
+  the 6 Korea, US and gold numbers (as before). A gold or bond series too short to share 250 days with Korea and the US is left out
+  the same way; when each is long enough but the four together are not, the one with fewer days is left out. Only when Korea and
+  the US themselves share 250 days or fewer is nothing computed. A value that comes out NaN or out of range is left out (it used to
+  be written as null; both apps read null and a missing key the same way). With every input present the numbers, and their order,
+  are exactly as before (`tests/test_gold_corr.py` compares with main's old code).
+- **The log** says which were computed and which were left out, with the reason, e.g.
+  `!! 시장 가정 일부만 계산 (728일, ~2026-11-23): 6 / 10칸 — {...}` then
+  `!! 시장 가정: 국제 금값(GC=F)을 받지 못해 금 관련 4칸(mtVol · rhoKrMt · rhoUsMt · rhoMtBd)은 빼요 (예전 뱁새는 그 칸에 기본값을 써요 · 2.0 은 기본값을 쓰지 않아요)`.
+- **Gate row** `시장 가정 (settings 변동성 · 상관계수 · 경고만)` (`validate_data.check_mkt_settings`), in the publish gate and the site
+  check, warning only: it never stops a publish, and a crash in it is a warning too. It names every key that is missing or not a
+  number, and, in the publish gate, which of those the previous publish had. PASS: "10칸 모두 있음".
+- **What the apps do with a missing key** (key by key in both; nothing on screen says why):
+  - the old app (`src/detail.jsx`, loader `AUTO`) keeps its built-in default (`DEFAULT_SETTINGS`), or the value a saved portfolio
+    stored, in every risk number (σ, "보통 해 ±…", the KOSPI comparison row), and its 설정 sheet marks the key 가정 instead of 자동;
+  - 2.0 (`engine.deckVol`, only when the 2022 line cannot be shown) never uses a default: with a class's volatility missing it
+    leaves that class's holdings out and shows "일부 종목(비중 …%)은 베타·변동성 자료가 없어요…", with a needed correlation missing
+    it shows "담은 종목 모두 베타·변동성 자료가 없어…". Both lines name the holdings' data as the reason, which is not the case here.
+- **On a warning:** read the run log's `시장 가정` lines. A gold or bond download failure is usually Yahoo or Naver for one run;
+  the next run tries again. If the same keys stay missing for more than a day, tell Jack.
+
 ## Roll back
 
 - **A bad code release** (the app looks broken after a merge): Claude opens the merged pull request, presses

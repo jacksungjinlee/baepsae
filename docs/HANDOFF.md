@@ -35,6 +35,19 @@ only logs and records what it would repair (`krSeries.adj`, new warning-only gat
 ex-dates for 311060 · 425040 · 472850), then a screens PR shows them and flips the switch (a test pins it OFF). That PR needs a rollback
 plan agreed with Jack: once ON, switching OFF re-hides all 12 at once and `PX_BAD_NEW_FAIL` (10) stops the publish (RUNBOOK). Still hidden either way: 007610, 107640, 121890, 206950, 210120, 229500, 250030 (real moves, transfer listings, one bad Naver
 bar, one source only) and 304840 (Naver rescaled it on 11-23; it should drop out by itself). RUNBOOK "Repairing the broken histories".
+**Track 2 audit, market assumptions (#?, 2026-11-24; audit 3.5, minor; pipeline only, no screen or wording change):** a failed or
+empty Yahoo `GC=F` (gold) download used to leave out all 10 `data.json` `settings` volatilities and correlations (`if … "mt" in
+j.columns`), Korean, US and bond ones included, with the log blaming "too few days". `fetch_data.market_assumptions` now computes every
+key whose inputs exist on one table (the days all used inputs share, up to `pxDate`), leaves out only the keys of a missing or too-short
+gold or bond series, and logs which keys and why ("국제 금값(GC=F)을 받지 못해 금 관련 4칸(…)은 빼요 …"). With every input
+present the output is identical to main (same values and key order; `tests/test_gold_corr.py` runs main's old code beside it, and
+on Yahoo data of 11-23 both give the same 10 numbers). A NaN or out-of-range value is now left out rather than written as null (both
+apps read the two alike). New warning-only gate row `시장 가정 (settings 변동성 · 상관계수 · 경고만)` names missing keys and, when publishing, the
+ones the previous publish had; PASS on the live data of 11-24. **Open for Jack (not fixed here, needs wording):** with a key missing, the
+old app silently uses its default (or a saved portfolio's value) in its risk numbers, marked only 가정 in 설정; 2.0's risk lines
+(`plan.riskPartial` · `riskNone`) then blame the holdings' 베타·변동성 자료, which is not the reason. RUNBOOK "Market assumptions".
+Next in the queue unchanged (v19.3 Part L).
+
 **Track 2 audit, money display (#187, 2026-11-24; audit 1.2 · 1.5 · 1.6, minor):** app only, no new words. (1.2) 포트폴리오's held
 row writes US fractional shares with up to 4 decimals (`pfview.qtyText`, as the records already did): 7.5주 / 0.4주 instead of "8주" /
 "0주"; whole shares unchanged. (1.5) 연말에 확인할 숫자: an estimate under 1,000원 is shown to the 원 (`tax.js shownEstimate` /
