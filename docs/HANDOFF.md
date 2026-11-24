@@ -24,7 +24,7 @@ links, "전무가" off the must-not-show list, labels) and a rename in `tests/te
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
 v19.6g, v19.6h.
 
-**US dates in 2.0 (#?, 2026-11-24; audit 2.1 and 2.2, minor):** a dollar record (샀어요 · 팔았어요 · 배당 받았어요 · 팔고 빼기 ·
+**US dates in 2.0 (#191, 2026-11-24; audit 2.1 and 2.2, minor):** a dollar record (샀어요 · 팔았어요 · 배당 받았어요 · 팔고 빼기 ·
 매수 계획's 샀어요, by currency: `pf.usdOf` / `records.recordCcy`, never cls) now opens on New York's date (`format.todayNy`), the US
 trading date its hint asks for; after Korean midnight (the US session, 23:30–06:00 KST in winter) that date is no longer refused
 with "이 날짜의 환율이 아직 없어요" but takes today's rate (data.json fx) until the history has that day; the morning after it takes
