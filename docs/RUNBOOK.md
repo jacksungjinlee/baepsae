@@ -2074,7 +2074,7 @@ yield alike (`us_split_check_band`, the same function as #176's gate row, `valid
 average equity, APH's forward yield is 1.19× its trailing dividends after a raise, Up-C companies like IBKR fail all three. The foreign
 check keeps its own bands. Still possible false positives, which fail safe (blank plus the approved line): a split company whose
 forward yield is at least 1.5× its trailing dividends, an Up-C structure, and a company with no PER or ROE (its PBR is blanked as
-can't-compare for the 30 days). Foreign companies (already checked), `fcur` companies (already blank) and ETFs/funds (no company totals)
+can't-compare, then held after the 30 days until it can be compared and agrees). Foreign companies (already checked), `fcur` companies (already blank) and ETFs/funds (no company totals)
 are skipped by name. A number that agrees stays; one that does not, or cannot be compared, is blanked with the same kind (`mismatch`,
 `currency`, `norecord`, `nocompare-own`, `stopped` if the check crashes), and 2.0 shows an approved line under it: `co.fgnCut` for
 `mismatch`, `co.fgnNoCmp` ("회사 전체 숫자와 비교할 수 없어서 …") for `nocompare-own` **and, on a split company, for `currency` and
