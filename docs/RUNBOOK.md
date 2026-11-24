@@ -1961,7 +1961,7 @@ has PER, PBR and 배당수익률 blanked unchecked, each marked `stopped`, and 2
 (naming the companies; it never holds the publish). The next run checks again. A file from before #PR has no marks on such a day
 (the gate reads it as before). The old app shows "–" for these, as for the currency case.
 
-**Recently split US companies (since #?, 2026-11-24; SNDK).** After its 8:1 split on 2026-11-20, Yahoo kept Sandisk's pre-split
+**Recently split US companies (since #188, 2026-11-24; SNDK).** After its 8:1 split on 2026-11-20, Yahoo kept Sandisk's pre-split
 EPS (923.70 a share) and the 11-24 publish showed PER 0.1 (market cap ÷ net income 5.14). The run now puts every US company with a
 split dated from 30 days before `usPxDate` up to the run day (KST) through the same comparison (`us_split_step` → `us_split_check`
 in `fetch_data.py`, right after the foreign check): the split list comes from the same sources as the published `splits` (today's
