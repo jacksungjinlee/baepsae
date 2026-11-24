@@ -26,7 +26,7 @@ import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.
 import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, CardPic, KrOwnCloseLine, SIDE_W, tx, tap, useMode, useLayout } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { findCompany, groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, warnings, cardRanks, myCards, holdingsOf, RANK_CARDS,
-  splitGuardCount, SPLIT_GUARD, divCheckCount, warnChips, warnKind, uncheckedCount, divHiddenLine, DIV_HIDDEN_UI } from "./company.js";
+  splitGuardCount, SPLIT_GUARD, divCheckCount, warnChips, warnKind, uncheckedCount, divHiddenLine, DIV_HIDDEN_UI, divSmallView } from "./company.js";
 import { EarnBars, ValueScale, Coins, Waves } from "./coart.jsx";
 import { pfRows, isImported, limitsOf } from "./pf.js";
 import { limitPct } from "./pfview.jsx";
@@ -113,9 +113,13 @@ export function tileViews(load, s) {
   else {
     const r = usOf(s) ? divUs(s) : divKr(s, co);
     const phrase = r.rule === "na" ? na : r.rule === "streak" ? fill(T().div.streak, { n: r.n }) : T().div[r.rule];
-    const number = r.yieldPct != null ? `${C.pick.receipt.yield} ${yieldText(r.yieldPct)}` : null;
-    add("div", T().label.div, r, phrase, number, { dps3: r.d3 || null, dps: r.dps ?? null, y: r.yieldPct, dpsok: r.dpsOk ? "1" : "" },
-      divArt(r.rule));
+    // 2026-11-23 (Jack, 11-19 Q6): a 차등배당 company's 소액주주 yield in the number's place, labelled, with its line instead of the
+    // hidden-yield line (company.js divSmallView: switch src/v2/smallcfg.js, both lines approved). Never beside an all-holder yield.
+    const small = r.yieldPct == null && !usOf(s) && all(C.co.div.smallBasis, C.co.div.smallLine) ? divSmallView(s, co) : null;
+    const number = r.yieldPct != null ? `${C.pick.receipt.yield} ${yieldText(r.yieldPct)}`
+      : small ? `${C.pick.receipt.yield} ${yieldText(small.y)} · ${C.co.div.smallBasis}` : null;
+    add("div", T().label.div, r, phrase, number, { dps3: r.d3 || null, dps: r.dps ?? null, y: r.yieldPct, dpsok: r.dpsOk ? "1" : "",
+      ...(small ? { ysmall: small.y } : {}) }, divArt(r.rule));
     // v19.1i (Jack's line, 2026-11-08) and v19.1j (Jack, 2026-11-15, answers 11 and 13): a Korean payer whose yield is hidden says
     // why, in the number's place, when the pipeline marked the reason (data.json dvLine -> company.js divHiddenLine: 1 share count
     // changed with no filing, 2 a 주주배정 rights issue past its 권리락, 3 a dividend table that disagrees with the share counts,
@@ -123,7 +127,10 @@ export function tileViews(load, s) {
     // One line at most.
     const last = out[out.length - 1];
     const hid = last && last.topic === "div" && !number && !usOf(s) ? divHiddenLine(s, co) : null;
-    if (hid && C.co.div[hid]) {
+    if (small && last && last.topic === "div") {
+      last.note = C.co.div.smallLine;
+      last.noteUi = "div-small";
+    } else if (hid && C.co.div[hid]) {
       last.note = C.co.div[hid];
       last.noteUi = DIV_HIDDEN_UI[hid];
     }
