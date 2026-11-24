@@ -1565,6 +1565,72 @@ uncounted 2, data 22, the 32.5% yield 1; lines: 1 → 0 stocks, 2 → 8, 3 → 1
   "숨긴 배당수익률의 줄" and "그대로 숨김" log lines. A file without `proofSub` (before #PR) is only a warning unless the previous publish
   had it; without it a `dvLine` 2, 3 or 4 fails the "배당 기준 증명 기록" row.
 
+## 소액주주 yield for differential dividends (차등배당, since #183 — Jack 2026-11-19 Q6, 2026-11-23)
+
+Some Korean companies pay a **차등배당**: the largest shareholder takes less (often nothing) and everyone else gets the per-share
+dividend in the 사업보고서's table. DART's dividend API (alotMatter) gives that figure as a plain 보통주 row; the note that says whose
+figure it is sits only under the table in the report itself. Because the total ÷ that figure is far below the share count, the
+dividend proof hides these yields as `data` / `div` (dvLine 3, "회사가 공시한 배당 자료와 주식 수가 서로 맞지 않아서 …"). An individual
+investor gets the 소액주주 figure, so Jack asked for that yield, "labelled as the 소액주주 rate".
+
+What the daily run does (`fetch_data.py` `small_holder_div`, right after `apply_div_basis`, before the DART cache is saved):
+- **Who:** only the payers the proof left as `data` / `div` this run (`divCheck.proofSub.data` case `div`; **16** on the 11-21 publish).
+  Four were read by hand on 11-23: 교보증권 and TPC로보틱스 qualify; 엘앤씨바이오 and 블랙야크아이앤씨 do not mention 차등배당. The other
+  12 (CR홀딩스, 화천기공, 신영증권, 아세아제지, 와이엔텍, 지에이이노더스, 인화정공, 아이패밀리에스씨, 인터로조, 유니테크노, 젝시믹스, 조선내화)
+  have not been read by anyone: the first run may find more. **Before the switch PR, read the evidence sentence (`q`) of every company in
+  `divSmall.on` against the filing.** (남성 and 대동기어, named as examples in the 11-23 brief, are not differential: 남성's API rows say
+  보통주(소액주주) 25 and 보통주(최대주주) 25; 대동기어 has one 보통주 row.)
+- **Basis first** (`small_div_basis`, no DART call: the proof's own filings lookup and year-end share table): no split, merge or bonus
+  issue of any size after the year end; no 유상증자, 회사분할, 주식배당, 감자, 주식교환 or 합병 decision from half a year before the year end
+  to the price date; today's listed common shares between the year-end outstanding −3% and the year-end issued +3%. Otherwise nothing
+  (`divSmall.no` ev · blk · nostk · shr). Known limit: the filings lookup is cached (refetched when the share count moves 3%), so a
+  decision filed in the last few weeks whose shares are not listed yet may not be seen; the proof has the same limit.
+- **The report** (`small_div_doc`, cached under `{corp}|{fy}|11011|sdiv2`): `list.json` (정기공시 A001, last versions) finds the
+  "사업보고서 ({fy}.12)" receipt number — **December year-ends only** (a March year-end company would match an earlier year's report:
+  left as `nf`); `document.xml` gives the report; `small_div_section` cuts the "배당에 관한 사항" section (its TITLE to the end of that
+  SECTION level; the 60,000-character cap applies only when that end is missing) and keeps paragraph and table-cell ends as line breaks,
+  so a table header's 전기 never joins the note under it. Two DART calls per company the first time, at most `SMALL_DIV_PER_RUN` = 30
+  reports a run; read again after 90 days (a corrected report), a report or section not found after 7 days; a failed re-read keeps the
+  facts found before. A run that may not call DART (same-day re-run `no_call`) uses whatever is cached, whatever its age, spends no
+  limit, and leaves uncached companies as `nocall` (not a failure).
+- **The figure** (`small_div_facts` · `small_div_pick`, tightened after #183's first review; the cache tag went sdiv1 → sdiv2 so every
+  report is read once more, about 32 calls): a sentence, or the 주N) note it sits in, must
+  - say **차등배당** or **차등 배당** (not a bare 차등: 차등의결권 does not count), with no 않 · 없 · 미실시 · 아니 next to it, no 전기 · 전전기 ·
+    전년 · 작년 · 지난해, and no year other than the report's own (`2024년` in a 2025 report rejects it; so does a record date written as
+    `2026년 3월`, which costs a figure rather than risk one);
+  - tie a number to 소액주주 / 기타주주 / 일반주주: the first "N원" (`won`) or "N주" (`cnt`) within 120 characters after the word, with no
+    최대주주 · 대주주 · 특수관계 · 우선주 · 종류주 · 액면 · 전기 or another holder word in between ("최대주주 외", "최대주주를 제외한",
+    "최대주주 및 자기주식 외" are exclusions and fine; a number is never read from the middle of another, so "550.5원" is 550.5, not 5);
+  - and exactly one distinct amount must be tied to the small holders, equal to the table's dividend per share (`won`: 교보증권 2025
+    "기타주주(최대주주 외) 550원, 최대주주 무배당을 배당하는 차등배당입니다."), or, with no amount, exactly one share count whose × the table's
+    dividend per share equals the table's total within max(1백만원, 0.1%) (`cnt`: TPC로보틱스 2025 10원 × 7,787,204주 = 77,872,040원 against
+    78백만원). Two or more → `many`; one that does not match → `nofig`; no usable 차등배당 sentence → `nodiff`.
+  The figure is always the table's own per-share number, published as it is (a fractional figure is not rounded) with `dytSmall`
+  worked from that same value; nothing is computed but the yield. Above 30% → `big`; under 0.005% → `tiny`.
+  `tests/test_smallholder_div.py` holds both real notes and every note the first review built to fool the first version.
+- **Written:** data.json stock `dpsSmall` (원) and `dytSmall` (dpsSmall ÷ today's close, %, 2 decimals), the same two in corp.json, and
+  data.json `divSmall` {v, cand, on {code: nk · d · y · how · rc · q (the sentence relied on)}, no {code: reason}, fail {code: why},
+  read, calls, skip, err}; data.json `units` describes `dpsSmall`, `dytSmall` and `divSmall`. Fields left from an earlier row are removed
+  first. `dps`, `dyt`, `dz` and `dvLine` are not touched: **the dividend ranking keeps `dyt` only**, so these companies stay out of it.
+  The stage never stops the run: an error clears every `dpsSmall` · `dytSmall`, logs "!!" and writes `divSmall.err`.
+- **Log lines:** "소액주주 배당(차등배당 · dpsSmall · dytSmall): 대상 N · 실음 n: 030610 교보증권 550원 7.33% (won) … · 그대로 m (reasons) ·
+  조회 실패 k … · 건너뜀 … · 원문 새로 읽음 r · DART 호출 c", with "!!" when something failed; then one "근거 {code} …: {sentence}" line
+  per company published, then the names left as they are.
+
+Gate: **WARN "소액주주 배당수익률 (dpsSmall · dytSmall · divSmall · 경고만)"** — never fails (no Jack yes for a publish-stopping row). It
+names the companies and figures (PASS) and shows `divSmall.skip`. It warns when a company joins `on` that the previous publish did not
+have (its evidence sentence is listed under the table for a person to read — on the first publish with this stage, every company), when
+the previous publish had `divSmall` and this one does not, when a field disagrees with the table's dividend per share, with ÷ today's
+close or with the record, is not a number (text "550" counts as wrong), lacks its sentence, disagrees with corp.json, sits on a stock
+whose yield shows, on another mark, on a non-Korean or preferred row, when the record is missing or malformed, when a lookup failed, or
+when the stage errored. Look at the run's "소액주주 배당" log lines.
+
+App: 2.0 only, behind `src/v2/smallcfg.js` `SMALL_YIELD.on` (false) and the copy `C.co.div.smallBasis` · `smallLine` (null, waiting for
+Jack): the 요약 배당 tile shows "배당수익률 {y} · {smallBasis}" with `smallLine` in the hidden-yield line's place, the 배당 tab the 소액주주
+dividend per share and yield labelled, 두 종목 비교 the yield labelled with the line (`company.js divSmallView`). Switch off, or on without
+the words, every screen renders exactly as without the fields (test). 관심 종목, 종목 순위, 내 기준으로 찾기 and plans keep `dyt`. 예전 뱁새
+shows no label (#183 review: its 배당수익률 is the report's own yield, never checked to be the 소액주주 rate).
+
 ## 오늘 볼 것 data (v19.6b, since #PR): disc.json `issue`, insider `role`, US `ed` · `xd`
 
 What the daily run writes (`fetch_data.py` `fetch_issues`, `fill_issue_bd`, `insider_pos_role`, `us_event_dates`):
