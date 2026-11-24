@@ -84,8 +84,9 @@ import requests
 from validate_data import DIV_RANK_MISS_FAIL, DYT_COVER_BANDS, floor_1, rank_miss_reason, US_FCUR_KEEP_ZERO_DY
 # v19.6a: 환율 이력(fxHist)과 주식 분할(splits)의 기준도 관문 파일에 있어요 (검사 코드는 따로 · 같은 선만 읽어요)
 from validate_data import (FX_LO, FX_HI, FX_HIST_FROM, FX_HIST_FIRST_BY, FX_HIST_SOURCES, FX_HIST_ECOS, FX_HIST_GAP_MAX,
-                           FX_HIST_JUMP, FX_HIST_REL, FX_HIST_ECOS_TAIL, SPLITS_FROM, SPLIT_R, SPLIT_SIMPLE_MAX, SPLIT_CLEAN_TOL,
-                           MUST_SPLITS, FX_SRC_YAHOO, FX_SRC_WHY)   # 2026-11-24 (감사 3.8): data.json fxSrc 의 야후 이름 · 까닭
+                           FX_HIST_JUMP, FX_HIST_REL, SPLITS_FROM, SPLIT_R, SPLIT_SIMPLE_MAX, SPLIT_CLEAN_TOL,
+                           MUST_SPLITS, FX_SRC_YAHOO, FX_SRC_WHY, FX_SRC_GAP, fx_close_floor)
+# 2026-11-24 (감사 3.8 · #192): data.json fxSrc 의 야후 이름 · 까닭 · 야후와의 차이 경고 선 · 이력 마지막 줄의 가장 이른 날짜 (관문의 휴장일 표 기준)
 # 2026-11-14: 국내 시계열의 공식 종가 고정 기준과 하루 가격 제한폭도 관문 파일에 있어요 (관문은 파이프라인의 점검 결과 krSeries 를 봐요)
 from validate_data import PIN_PX_TOL, PIN_SHR_TOL, PIN_REF_TOL, KR_DAY_LIMIT, KONEX_DAY_LIMIT, KR_JUMP_WHY
 from validate_data import KR_PX_ADJ_KIND, KR_PX_ADJ_SKIP, KR_PX_ADJ_QUIET
@@ -15413,10 +15414,11 @@ def fx_hist_fields(fx, fx_last, today, prev_macro, **kw):
     return {"fxHist": hist, "fxHistSrc": src, "fxHistFresh": fresh} if hist is not None else {}
 
 
-# 2026-11-24 (감사 3.8 · Track 2): data.json fx · fxDate · fxSrc. 예전엔 야후 USDKRW=X 의 마지막 봉이었어요. 아침 발행(06:40) 때 그 봉(런던 날짜)은
+# 2026-11-24 (감사 3.8 · Track 2 · #192): data.json fx · fxDate · fxSrc. 예전엔 야후 USDKRW=X 의 마지막 봉이었어요. 아침 발행(06:40) 때 그 봉(런던 날짜)은
 # 아직 끝나지 않아, 11-21 발행은 '11-20' 날짜 밑에 그날 아침 값 1,345.7 을 냈고 같은 날짜의 ECOS 15:30 종가는 1,336.2 였어요 (미국 시가총액 · 원화
 # 값이 0.7% 어긋남). 이제 이 실행의 환율 = 환율 이력(fxHist)의 마지막 줄 = 그 날짜의 공식 종가 (fx 와 fxHist 가 같은 날짜에 같은 값 · 앱의 '오늘 환율'과
-# 지난 날짜 환율이 한 출처). 이력을 이번 실행에 새로 읽지 못했으면 (지난 발행본을 그대로 · 없음 · 마지막 줄이 FX_HIST_ECOS_TAIL 일 넘게 전 · 고르다 멈춤)
+# 지난 날짜 환율이 한 출처). 이력을 이번 실행에 새로 읽지 못했으면 (지난 발행본을 그대로 · 없음 · 마지막 줄이 fx_close_floor 앞 — 휴장일 표가 기대하는
+# 날보다 한국 영업일 하루 넘게 앞, 표 밖이면 FX_HIST_ECOS_TAIL 일 넘게 전 · 고르다 멈춤)
 # 야후 값 그대로: 날짜는 봉이 끝났으면 그 봉의 날짜, 아직이면 이 실행의 한국 날짜 (읽은 날의 값 — 끝나지 않은 봉을 지난 날짜의 종가로 적지 않아요).
 # 야후 출처 이름 FX_SRC_YAHOO · 야후로 간 까닭 FX_SRC_WHY (data.json fxSrc.why) 는 관문 파일에 있어요 (관문의 '환율 출처' 경고 줄이 같은 말로)
 
@@ -15437,7 +15439,7 @@ def fx_official(fields, y_fx, y_date, today, now):
     else:
         d, v = hist["rows"][-1]
         last = dt.date.fromisoformat(d)
-        if (today - last).days <= FX_HIST_ECOS_TAIL:
+        if last >= fx_close_floor(today, f.get("fxHistSrc")):      # #192: 관문의 휴장일 표 기준 (늦은 아침의 하루까지)
             return float(v), last, {"v": 1, "src": f.get("fxHistSrc"), "final": hist.get("final") is True, "yahoo": yrec}
         why = "old"
     return float(y_fx), (y_date if y_final else today), {"v": 1, "src": FX_SRC_YAHOO, "final": y_final, "yahoo": yrec, "why": why}
@@ -15446,18 +15448,26 @@ def fx_official(fields, y_fx, y_date, today, now):
 def fx_official_safe(fields, y_fx, y_date, today, now=None):
     """fetch_us 의 환율 고르기: fx_official + 크게 남겨요. fields: 환율 이력 칸, 또는 그것을 만드는 함수 (인자 없음 — 그 안에서 멈춰도 여기서 받아요).
     멈추면 야후 값 · 이 실행의 한국 날짜 (끝났는지 모르는 봉을 지난 날짜로 적지 않게) · why err — 발행은 이어가요 (관문이 경고해요)."""
+    now = now or dt.datetime.now(dt.timezone.utc)
     try:
-        fx, d, rec = fx_official(fields() if callable(fields) else fields, y_fx, y_date, today, now or dt.datetime.now(dt.timezone.utc))
+        fx, d, rec = fx_official(fields() if callable(fields) else fields, y_fx, y_date, today, now)
     except Exception as e:
         log(f"  !! 환율(data.json fx): 출처를 고르다 멈췄어요 ({type(e).__name__}: {str(e)[:120]}) → 야후 {float(y_fx):,.1f} 그대로 · 날짜는 이 "
             f"실행의 한국 날짜 {today} · fxSrc why err (관문이 경고해요)")
-        return float(y_fx), today, {"v": 1, "src": FX_SRC_YAHOO, "final": None, "yahoo": {"d": str(y_date), "fx": round(float(y_fx), 1)},
-                                    "why": "err"}
+        try:
+            y_final = bool(now >= london_midnight_after(y_date))
+        except Exception:
+            y_final = None                              # 끝났는지 모름 (칸은 그대로 — fxSrc.yahoo 는 늘 d · fx · final)
+        return float(y_fx), today, {"v": 1, "src": FX_SRC_YAHOO, "final": None,
+                                    "yahoo": {"d": str(y_date), "fx": round(float(y_fx), 1), "final": y_final}, "why": "err"}
     y = rec["yahoo"]
     if rec["src"] != FX_SRC_YAHOO:
-        log(f"· 환율(data.json fx): {fx:,.1f} — {d} 공식 종가 (환율 이력 {rec['src']} 의 마지막 줄{'' if rec['final'] else ' · 아직 끝나지 않은 값'}) · "
-            f"야후 {y['fx']:,.1f} ({y['d']} 봉 · {'끝남' if y['final'] else '아직 끝나지 않음'}) 과 "
-            + (f"{(fx / y['fx'] - 1) * 100:+.2f}%" if y["fx"] else "견줄 수 없음"))
+        gap = fx / y["fx"] - 1 if y["fx"] else None
+        big = gap is None or abs(gap) > FX_SRC_GAP       # #192 리뷰: 보통 날 차이 중앙값 0.25% · 99% 1.44%
+        log(f"{'  !! ' if big else '· '}환율(data.json fx): {fx:,.1f} — {d} 공식 종가 (환율 이력 {rec['src']} 의 마지막 줄"
+            f"{'' if rec['final'] else ' · 아직 끝나지 않은 값'}) · 야후 {y['fx']:,.1f} ({y['d']} 봉 · {'끝남' if y['final'] else '아직 끝나지 않음'}) 과 "
+            + (f"{gap * 100:+.2f}%" if gap is not None else "견줄 수 없음")
+            + (f" — {FX_SRC_GAP:.0%} 넘게 달라요 (관문이 경고해요)" if big else ""))
     else:
         log(f"  !! 환율(data.json fx): 환율 이력의 마지막 줄을 쓰지 않고 ({FX_SRC_WHY[rec['why']]}) 야후 {fx:,.1f} 를 써요 — 날짜 {d} "
             + ("(끝난 봉의 런던 날짜)" if rec["final"] else f"({y['d']} 봉이 아직 끝나지 않아 이 실행의 한국 날짜)")

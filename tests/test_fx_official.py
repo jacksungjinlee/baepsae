@@ -121,18 +121,81 @@ def test_summer_time_london_midnight_is_0800_kst():
     assert edge.astimezone(V.KST) == dt.datetime(2026, 7, 10, 8, 0, tzinfo=V.KST)
 
 
-def test_a_last_row_older_than_the_ecos_tail_limit_is_not_used():
-    """새로 읽었는데 마지막 줄이 FX_HIST_ECOS_TAIL(14)일 넘게 전 (ECOS 가 답은 하는데 멈춤): 야후 + why old. 14일째까지는 그 줄 (추석 같은 긴 연휴)."""
+def _at(day, hh=6, mm=40):
+    return dt.datetime.combine(day, dt.time(hh, mm), V.KST).astimezone(UTC)
+
+
+@pytest.mark.parametrize("last, used", [("2026-11-23", True), ("2026-11-20", True),      # 기대한 날 · 한국 영업일 하루 늦은 아침 (약 5%)
+                                        ("2026-11-19", False), ("2026-11-11", False)])  # 그보다 앞 · 리뷰 1차의 13일 전 줄
+def test_a_stale_ecos_row_is_measured_by_the_holiday_table(monkeypatch, last, used):
+    """#192 리뷰 1차 (S1): ECOS 가 답은 하는데 마지막 줄이 오래되면 (11-24 아침 발행 · 휴장일 표가 기대하는 날 11-23 · 하루 늦은 11-20 까지는 그 줄)
+    야후 + why old + !! 줄. 예전 기준(14일)이면 11-11 줄이 '오늘 환율'로 나갔어요."""
+    lg = Log(monkeypatch)
+    assert V._ecos_tail_min(D24, "ecos_close") == D23 and V.fx_close_floor(D24, "ecos_close") == D20
+    rows = ecos_rows(last, {k: v for k, v in TAIL_1124.items() if k <= last})
+    fx, d, rec = F.fx_official_safe(fields(rows, fresh="2026-11-24"), 1340.7, D23, D24, _at(D24))
+    if used:
+        assert (fx, d.isoformat(), rec["src"]) == (rows[-1][1], last, "ecos_close") and "why" not in rec
+    else:
+        assert (fx, d, rec["src"], rec["why"]) == (1340.7, D24, "yahoo", "old")
+        assert lg.has("  !! 환율(data.json fx)", "이력의 마지막 줄이 오래됨", "야후 1,340.7")
+
+
+def test_the_ecos_next_source_is_one_business_day_further_back():
+    assert V.fx_close_floor(D24, "ecos_next") == dt.date(2026, 11, 19)
+    ok = F.fx_official(fields(ecos_rows("2026-11-19"), src="ecos_next", fresh="2026-11-24"), 1340.7, D23, D24, _at(D24))
+    old = F.fx_official(fields(ecos_rows("2026-11-18"), src="ecos_next", fresh="2026-11-24"), 1340.7, D23, D24, _at(D24))
+    assert ok[2]["src"] == "ecos_next" and old[2]["why"] == "old"
+
+
+def test_a_korean_holiday_keeps_the_last_seoul_close_with_its_date():
+    """2026 추석 (9-24 · 9-25 휴장, 미국은 거래): 9-28 실행의 기대 날은 9-23 — 그 종가와 그 날짜 (이력에 그 뒤 줄이 없어요 · PR 의 Choices)."""
+    day = dt.date(2026, 9, 28)
+    assert V._ecos_tail_min(day, "ecos_close") == dt.date(2026, 9, 23)
+    fx, d, rec = F.fx_official(fields(ecos_rows("2026-09-23"), fresh="2026-09-28"), 1400.0, dt.date(2026, 9, 25), day, _at(day))
+    assert d == dt.date(2026, 9, 23) and rec["src"] == "ecos_close" and fx == ecos_rows("2026-09-23")[-1][1]
+
+
+def test_outside_the_holiday_table_the_14_day_rule_applies(monkeypatch):
+    """휴장일 표가 덮지 못하는 날 (2025 년 · 표는 2026 부터) 이나 표를 읽지 못하면: 발행일 − FX_HIST_ECOS_TAIL(14)일까지. yahoo_next 도 14일."""
     lim = V.FX_HIST_ECOS_TAIL
-    today = dt.date(2026, 11, 20) + dt.timedelta(days=lim)
-    at = dt.datetime.combine(today, dt.time(6, 40), V.KST).astimezone(UTC)
-    yd = today - dt.timedelta(days=1)
-    ok = F.fx_official(fields(ecos_rows("2026-11-20", TAIL_1121), fresh=today.isoformat()), 1350.0, yd, today, at)
-    assert ok[:2] == (1336.2, D20) and ok[2]["src"] == "ecos_close"
-    late = today + dt.timedelta(days=1)
-    old = F.fx_official(fields(ecos_rows("2026-11-20", TAIL_1121), fresh=late.isoformat()), 1350.0, late - dt.timedelta(days=1), late,
-                        at + dt.timedelta(days=1))
-    assert old[0] == 1350.0 and old[2]["src"] == "yahoo" and old[2]["why"] == "old"
+    day = dt.date(2025, 10, 10)
+    assert V._ecos_tail_min(day, "ecos_close") is None and V.fx_close_floor(day, "ecos_close") == day - dt.timedelta(days=lim)
+    edge = (day - dt.timedelta(days=lim)).isoformat()
+    ok = F.fx_official(fields(ecos_rows(edge), fresh=day.isoformat()), 1400.0, day - dt.timedelta(days=1), day, _at(day))
+    old = F.fx_official(fields(ecos_rows((day - dt.timedelta(days=lim + 1)).isoformat()), fresh=day.isoformat()), 1400.0,
+                        day - dt.timedelta(days=1), day, _at(day))
+    assert ok[1].isoformat() == edge and ok[2]["src"] == "ecos_close" and old[2]["why"] == "old"
+    assert V.fx_close_floor(D24, "yahoo_next") == D24 - dt.timedelta(days=lim)
+    monkeypatch.setattr(V, "_ecos_tail_min", lambda run_day, src: None)              # 표를 읽지 못한 날
+    assert V.fx_close_floor(D24, "ecos_close") == D24 - dt.timedelta(days=lim)
+
+
+def test_a_same_day_rerun_with_a_kept_history_counts_as_fresh(monkeypatch):
+    """#192 리뷰 1차 (Fable 잔글씨): 같은 날 다시 도는 실행에서 ECOS 가 멈추면 이력은 그날 앞 실행의 것 (fxHistFresh = 오늘) — 새로 읽은 것으로 봐요.
+    그 줄은 그날 아침 ECOS 에서 읽은 진짜 종가라 해가 없어요 (지난 발행본의 이력이 어제 것이면 kept → 야후)."""
+    Log(monkeypatch)
+    monkeypatch.setattr(F, "ECOS_KEY", "test-key")
+    monkeypatch.setattr(F, "_ECOS_FX_READ", {})
+    monkeypatch.setattr(F, "ecos_fx_series", lambda a, b, get=None, item=None: (_ for _ in ()).throw(RuntimeError("ECOS 응답 없음")))
+    monkeypatch.setattr(F, "FX_HIST_SOURCE", "ecos_close")
+    same_day = fields(ecos_rows("2026-11-23", TAIL_1124), fresh="2026-11-24")
+    got = F.fx_hist_fields(yahoo_fx("2026-11-23", 1340.7), 1340.7, D24, same_day)
+    assert got["fxHistFresh"] == "2026-11-24"
+    fx, d, rec = F.fx_official(got, 1340.7, D23, D24, _at(D24, 10, 53))
+    assert (fx, d, rec["src"]) == (1345.9, D23, "ecos_close") and "why" not in rec
+    monkeypatch.setattr(F, "_ECOS_FX_READ", {})
+    yday = F.fx_hist_fields(yahoo_fx("2026-11-23", 1340.7), 1340.7, D24, fields(ecos_rows("2026-11-23", TAIL_1124), fresh="2026-11-23"))
+    assert F.fx_official(yday, 1340.7, D23, D24, _at(D24))[2]["why"] == "kept"
+
+
+def test_the_log_line_is_loud_when_ecos_and_yahoo_differ_by_more_than_2_percent(monkeypatch):
+    """#192 리뷰 1차 (Fable S2): 보통 날 차이 중앙값 0.25% · 99% 1.44% — 2% 넘으면 !! (관문의 '환율 출처' 줄도 경고)."""
+    lg = Log(monkeypatch)
+    F.fx_official_safe(fields(ecos_rows("2026-11-20", TAIL_1121)), 1336.2 * 1.019, D20, D21, AT_1121)
+    assert lg.lines[-1].startswith("· 환율(data.json fx): 1,336.2")
+    F.fx_official_safe(fields(ecos_rows("2026-11-20", TAIL_1121)), 1235.0, D20, D21, AT_1121)
+    assert lg.lines[-1].startswith("  !! 환율(data.json fx): 1,336.2") and "+8.19%" in lg.lines[-1] and "2% 넘게 달라요" in lg.lines[-1]
 
 
 def test_fx_src_is_plain_json_and_carries_no_gate_word():
@@ -165,6 +228,7 @@ def test_safe_survives_a_broken_history(monkeypatch):
     bad = {"fxHist": {"asOf": "x", "final": True, "rows": [["2026-02-30", 1.0]]}, "fxHistSrc": "ecos_close", "fxHistFresh": "2026-11-21"}
     fx, d, rec = F.fx_official_safe(bad, 1345.7, D20, D21, AT_1121)
     assert (fx, d, rec["src"], rec["why"], rec["final"]) == (1345.7, D21, "yahoo", "err", None)
+    assert rec["yahoo"] == {"d": "2026-11-20", "fx": 1345.7, "final": False}                     # 다른 길과 같은 모양 (#192 잔글씨)
     assert lg.has("  !! 환율(data.json fx): 출처를 고르다 멈췄어요", "ValueError", "why err")
     json.dumps(rec, allow_nan=False)
     boom = F.fx_official_safe(lambda: (_ for _ in ()).throw(KeyError("x")), 1345.7, D20, D21, AT_1121)    # 이력을 만들다 멈춰도
@@ -352,6 +416,7 @@ def test_gate_row_without_a_readable_history_warns(macro):
 
 def test_gate_row_tolerance_is_rounding_only():
     assert _row(*_files(fx=1336.24))[0] == "PASS"
+    assert _row(*_files(fx=1336.25))[0] == "PASS"                     # #192 잔글씨: 소수 첫째 자리로 맞춘 뒤 (예전엔 0.0500000000000455 > 0.05)
     assert _row(*_files(fx=1336.3))[0] == "WARN"
 
 
@@ -372,3 +437,94 @@ def test_gate_row_in_the_full_gate_never_fails_and_a_crash_is_a_warning(monkeypa
     assert not rep.failed and row(rep, ROW)[3] == "WARN" and "확인하다 오류 (KeyError" in row(rep, ROW)[1]
     live = check(cur, None, final, mode="live")
     assert not live.failed
+
+
+# ── 6. #192 리뷰 1차: 관문 '환율 이력 (fxHist)' 의 10% 줄은 두 출처를 다시 견줘요 (같은 세기) ────────────
+FXH = "환율 이력 (fxHist)"
+
+
+def _probe(yahoo_ratio=1.12, fx_src="ecos_close", yahoo_fx=None, fx_shift=1.0):
+    """리뷰 1차의 시험 (gate_probe): 이력의 마지막 줄을 전날보다 4% 올리고 (하루 5% 줄은 통과) fx = 그 줄, 야후 값은 그 줄 ÷ yahoo_ratio."""
+    from test_v196a_fxhist_splits import pair
+    cur, prev, final = pair(src="ecos_close")
+    rows = cur["macro"]["fxHist"]["rows"]
+    bad = round(rows[-2][1] * 1.04, 1)
+    rows[-1][1] = bad
+    cur["data"].update(fx=round(bad * fx_shift, 1), fxDate=rows[-1][0])
+    if fx_src is not None:
+        y = round(bad / yahoo_ratio, 1) if yahoo_fx is None else yahoo_fx
+        cur["data"]["fxSrc"] = {"v": 1, "src": fx_src, "final": True, "yahoo": {"d": rows[-1][0], "fx": y, "final": True}}
+    return cur, prev, final
+
+
+def _fxh(cur, prev, final, mode="publish"):
+    from test_v196a_fxhist_splits import check, row
+    rep = check(cur, prev if mode == "publish" else None, final, mode=mode)
+    return row(rep, FXH), row(rep, ROW), rep
+
+
+@pytest.mark.parametrize("mode", ["publish", "live"])
+def test_the_reviewers_probe_fails_again(mode):
+    """이력의 마지막 줄이 야후 값과 12% 다른데 fx = 그 줄: 이 PR 의 첫 판은 자기 자신과 견줘 통과시켰어요 (main 에서는 실패) — 다시 실패."""
+    h, s, rep = _fxh(*_probe(), mode=mode)
+    assert h[3] == "FAIL" and "야후 환율 (fxSrc.yahoo.fx)" in h[1] and "10% 넘게" in h[1], h
+    assert s[3] == "WARN" and "+12.00% (2% 넘게)" in s[1], s
+
+
+@pytest.mark.parametrize("ratio, st", [(1.09, "PASS"), (1.004, "PASS"), (0.95, "PASS"), (0.89, "FAIL")])
+def test_the_same_10_percent_against_yahoo(ratio, st):
+    h, s, _rep = _fxh(*_probe(yahoo_ratio=ratio))
+    assert h[3] == st, (ratio, h)
+    assert s[3] == ("PASS" if abs(ratio - 1) <= V.FX_SRC_GAP else "WARN"), (ratio, s)
+
+
+def test_old_shape_files_are_judged_exactly_as_before():
+    """fxSrc 가 없는 파일 (지금까지의 모든 발행본): fx 와만 견줘요 — 같은 줄이면 통과, 10% 넘게 다르면 예전 글 그대로 실패."""
+    h, _s, _rep = _fxh(*_probe(fx_src=None))
+    assert h[3] == "PASS", h
+    h, _s, _rep = _fxh(*_probe(fx_src=None, fx_shift=1.15))
+    assert h[3] == "FAIL" and "이 data.json fx" in h[1] and "야후" not in h[1], h
+    from test_v196a_fxhist_splits import pair, check, row
+    cur, prev, final = pair(src="ecos_close")                          # 시험 파일 그대로 (fx 1,333.3 · 10-30 줄 1,330.0)
+    assert "fxSrc" not in cur["data"] and row(check(cur, prev, final), FXH)[3] == "PASS"
+
+
+@pytest.mark.parametrize("kw, st", [
+    (dict(fx_shift=1.15, yahoo_ratio=1.0), "FAIL"),      # fx 가 줄과 15% 다르면 (야후는 줄과 같아도) 예전 줄 그대로 실패
+    (dict(fx_src="yahoo"), "PASS"),                      # 출처가 야후면 fx 가 야후 값 — 예전처럼 fx 와만
+    (dict(yahoo_fx="1237.8"), "PASS"),                   # 야후 값을 읽지 못하면 예전처럼 fx 와만 (더 엄하지 않게)
+    (dict(yahoo_fx=0), "PASS"),
+    (dict(yahoo_fx=None, yahoo_ratio=1.12), "FAIL"),
+])
+def test_what_the_row_compares(kw, st):
+    h, _s, _rep = _fxh(*_probe(**kw))
+    assert h[3] == st, (kw, h)
+
+
+# ── 7. #192 리뷰 1차: '환율 출처' 경고 줄 — 야후와 2% · 끝나지 않은 값 · 늦은 ECOS 종가 ─────────────────
+def _src_row(fx=1336.2, fx_date="2026-11-20", last="2026-11-20", as_of="2026-11-24", src="ecos_close", final=True, yahoo=1345.7):
+    rows = ecos_rows(last, {k: v for k, v in TAIL_1124.items() if k <= last})
+    data = {"asOf": as_of, "fx": fx, "fxDate": fx_date,
+            "fxSrc": {"v": 1, "src": src, "final": final, "yahoo": {"d": fx_date, "fx": yahoo, "final": False}}}
+    return _row(data, {"fxHist": {"asOf": rows[-1][0], "final": True, "rows": rows}})
+
+
+def test_gate_row_warns_when_ecos_and_yahoo_differ_by_more_than_2_percent():
+    assert _src_row(yahoo=1315.0) == ("PASS", "fx 1,336.2 = fxHist 2026-11-20 줄 · 출처 ecos_close")            # 1.61%
+    st, val = _src_row(yahoo=1300.0)
+    assert st == "WARN" and val.endswith("· 야후 1,300.0 와 +2.78% (2% 넘게)"), val
+
+
+def test_gate_row_warns_on_an_unfinished_value():
+    st, val = _src_row(src="yahoo_next", final=False)
+    assert st == "WARN" and "끝나지 않은 값 (fxSrc.final 거짓)" in val, val
+
+
+@pytest.mark.parametrize("last, st", [("2026-11-23", "PASS"), ("2026-11-20", "PASS"), ("2026-11-19", "WARN"), ("2026-11-11", "WARN")])
+def test_gate_row_warns_on_a_stale_ecos_close(last, st):
+    """11-24 발행: 휴장일 표가 기대하는 날 11-23 · 하루 늦은 11-20 까지는 통과 · 그보다 앞이면 경고 (파이프라인은 그때 야후로 가요)."""
+    rows = ecos_rows(last, {k: v for k, v in TAIL_1124.items() if k <= last})
+    got_st, val = _src_row(fx=rows[-1][1], fx_date=last, last=last, yahoo=rows[-1][1])
+    assert got_st == st, val
+    if st == "WARN":
+        assert f"ECOS 종가 날짜 {last} 가 늦어요 (2026-11-20 앞)" in val, val
