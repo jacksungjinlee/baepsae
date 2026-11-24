@@ -563,7 +563,7 @@ def pub_err(err, n=300, say=True):
     return pub_text(_pub_str(err), n, say)
 
 
-PUB_SWEEP_KEYS = ("pxSrc", "usSrc", "splitsInfo", "usForeign", "usExtraMissing", "usListSym", "d1Base", "ownDrop")
+PUB_SWEEP_KEYS = ("pxSrc", "usSrc", "splitsInfo", "usForeign", "usSplitChk", "usExtraMissing", "usListSym", "d1Base", "ownDrop")
 # 앱이 읽는 칸은 손대지 않아요 (리뷰 2차 S2): pxSrc.own.aged · usSrc.own.aged 의 nk 는 종목 이름으로 보여요 (src/data.js ownAgedOf) ·
 # splitsInfo.fixed 는 앱이 분할을 고쳐요 (src/v2/lots.js outSplits). 그 칸의 낱말은 이 PR 전처럼 관문이 막아요.
 PUB_SWEEP_SKIP_KEYS = frozenset({"aged"})
@@ -13878,12 +13878,15 @@ def prev_foreign_set(prev):
 # 같은 상세 정보 보관본(us-info-v1 · 3일마다 다시 받음)과 오늘 시세 다운로드의 배당 칸을 써요. 분할 목록은 발행할 splits 와 같은 출처 (오늘
 # 다운로드의 분할 칸 · 지난 발행본 splits · 고정 표 — us_carry_splits). #176 의 보관본 맞춤(분할 배율 곱하기) 다음에 돌아요: 상세 정보 안의 비를
 # 맞춰 보니 배율과 상관없어요 (맞는 보관본 × 8 은 그대로 · #176 이 받아들인 야후의 틀린 새 주당순이익은 여기서 비워요).
-# 30일 끝 (리뷰 #188 1차 Fable S2): 지난 발행본에서 맞지 않아(mismatch) 비운 표시가 있는 종목은 30일이 지나도 숫자가 맞을 때까지 이어서 봐요 (held).
+# 30일 끝 (리뷰 #188 1차 S2 · 2차 S1): 지난 발행본에서 비운 칸(표시 splCut · 어떤 종류든)과 지난 발행본의 usSplitChk.held 칸은 30일이 지나도 이어서
+# 봐요 (held). 그 칸은 어느 실행이 실제로 맞춰 보고 맞았을 때만 놓아요 — 맞춰 볼 수 없음 · 검사가 멈춤 · 단계가 멈춤 · 값이 없음이면 잡아 둔 채
+# 비워요 (그 종류의 승인된 줄). 회사 구조상 주당 숫자가 회사 합계와 늘 다른 회사(Up-C 같은 IBKR)는 분할 뒤 맞을 때까지 계속 비어요 (관문 경고).
 US_SPLIT_CHECK_DAYS = 30      # 미국 기준일 이만큼 앞부터 오늘(KST)까지의 분할 (관문 validate_data.US_SPLIT_CHK_DAYS 와 같은 값)
 US_SPLIT_MARK = "splCut"      # 종목 표시 칸 (관문 validate_data.US_SPLIT_MARK · 앱 src/v2/fcur.js 와 같은 글자)
 US_SPLIT_SKIP = ("foreign", "fcur", "etf")   # 최근 분할인데 이 검사가 보지 않는 까닭: 외국 회사 검사가 봄 · 재무제표 통화가 달러가 아님(#114) · ETF · 펀드
-US_SPLIT_HOLD_KIND = "mismatch"   # 지난 발행본의 표시 중 이 종류가 있으면 30일이 지나도 이어서 봐요 (맞춰 보지 못한 종류는 영영 맞지 않아 잡아 두지 않아요)
-US_SPLIT_BAD_TEXT = re.compile(r"(?<![A-Za-z])(nan|NaN|None|null|undefined)(?![A-Za-z])")   # = 관문 validate_data.BAD_WORD
+US_SPLIT_FIELDS = ("per", "pbr", "dy")
+US_SPLIT_HOLD_OWN = "nocompare-own"          # 잡아 둔 칸이 스위치 keep 으로 '비우지 않음'이 될 때도 비우는 종류 (앱 줄 co.fgnNoCmp)
+_ISO = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 def us_split_check_band(ratios):
@@ -13899,8 +13902,7 @@ def us_split_ratio_map(rows, prev):
     out = collections.defaultdict(lambda: collections.defaultdict(list))
     pr = (prev or {}).get("splits") if isinstance(prev, dict) else None
     for x in list(rows or []) + list(pr if isinstance(pr, list) else []):
-        if isinstance(x, (list, tuple)) and len(x) >= 3 and isinstance(x[0], str) and isinstance(x[1], str) \
-                and re.fullmatch(r"\d{4}-\d{2}-\d{2}", x[1]):
+        if isinstance(x, (list, tuple)) and len(x) >= 3 and isinstance(x[0], str) and isinstance(x[1], str) and _ISO.fullmatch(x[1]):
             out[x[0]][x[1]].append(x[2])
     for (t, d), (r, _why) in SPLIT_OVERRIDES.items():
         if r is not None:
@@ -13909,8 +13911,8 @@ def us_split_ratio_map(rows, prev):
 
 
 def us_split_bands(rmap, targets, lo, hi):
-    """targets {티커: 분할 날짜} 마다 허용 폭: lo ≤ 날짜 ≤ hi 인 분할의 배율로 (us_split_check_band) · 그 기간에 없으면 (held) 그 종목의 가장 늦은 분할
-    날짜의 배율로 · 배율을 모르면 US_SPLIT_BAND_MIN. lo · hi 는 날짜 ISO 글자. (순수 함수)"""
+    """targets 의 티커마다 허용 폭: lo ≤ 날짜 ≤ hi 인 분할의 배율로 (us_split_check_band) · 그 기간에 없으면 (held) 그 종목의 가장 늦은 분할 날짜의
+    배율로 · 배율을 모르면 US_SPLIT_BAND_MIN. lo · hi 는 날짜 ISO 글자. (순수 함수)"""
     out = {}
     for t in targets:
         m = (rmap or {}).get(t) or {}
@@ -13939,19 +13941,44 @@ def us_recent_splits(carry, codes, end, today, days=US_SPLIT_CHECK_DAYS):
     return dict(sorted(out.items()))
 
 
-def us_split_held(prev, codes, recent, carry):
-    """30일이 지나도 이어서 볼 종목 (리뷰 #188 1차 Fable S2 · 순수 함수): 지난 발행본(prev)의 미국 종목 중 splCut 에 US_SPLIT_HOLD_KIND(맞춰 봤는데
-    다름)가 있고 오늘 목록(codes)에 있으며 recent 에 없는 종목 → {티커: 그 종목의 가장 늦은 분할 날짜 (carry · 모르면 '')}. 숫자가 맞는 날 표시가
-    없어지고 그다음 실행부터는 보지 않아요."""
-    have, out = set(codes), {}
+def _prev_split_marks(prev):
+    """지난 발행본의 미국 종목 → {티커: [splCut 의 칸 (어떤 종류든)]}. (순수 함수)"""
+    out = {}
     for s in (prev or {}).get("stocks") or [] if isinstance(prev, dict) else []:
-        if not isinstance(s, dict) or s.get("cls") != "us":
+        if isinstance(s, dict) and s.get("cls") == "us" and isinstance(s.get("t"), str) and isinstance(s.get(US_SPLIT_MARK), dict):
+            f = sorted(k for k in s[US_SPLIT_MARK] if k in US_SPLIT_FIELDS)
+            if f:
+                out[s["t"]] = f
+    return out
+
+
+def us_split_held(prev, codes, recent, carry, today):
+    """30일이 지나도 이어서 볼 종목과 칸 (리뷰 #188 1차 S2 · 2차 S1 · 순수 함수): 지난 발행본의 usSplitChk.held 칸 ∪ 지난 발행본 종목의 splCut 칸 (어떤
+    종류든 — 맞춰 보지 못한 칸도) 중 오늘 목록(codes)에 있고 recent 에 없는 종목 → {티커: {"d": 가장 늦은 분할 날짜 (carry · 지난 held · 모르면 ''),
+    "f": [칸], "since": 처음 잡아 둔 날 (지난 held 의 since · 없으면 today)}}. 칸은 어느 실행이 맞춰 보고 맞았을 때만 빠져요 (us_split_check)."""
+    have = set(codes)
+    chk = (prev or {}).get("usSplitChk") if isinstance(prev, dict) else None
+    ph = chk.get("held") if isinstance(chk, dict) and isinstance(chk.get("held"), dict) else {}
+    marks = _prev_split_marks(prev)
+    out = {}
+    for t in sorted({t for t in ph if isinstance(t, str)} | set(marks)):
+        if t not in have or t in (recent or {}):
             continue
-        t, g = s.get("t"), s.get(US_SPLIT_MARK)
-        if isinstance(t, str) and t in have and t not in recent and isinstance(g, dict) and US_SPLIT_HOLD_KIND in g.values():
-            ds = sorted(d for d in (carry or {}).get(t) or () if isinstance(d, str))
-            out[t] = ds[-1] if ds else ""
-    return dict(sorted(out.items()))
+        e = ph.get(t) if isinstance(ph.get(t), dict) else {}
+        f = sorted({x for x in (e.get("f") if isinstance(e.get("f"), list) else []) if x in US_SPLIT_FIELDS} | set(marks.get(t, [])))
+        if not f:
+            continue
+        ds = sorted(d for d in (carry or {}).get(t) or () if isinstance(d, str))
+        d = ds[-1] if ds else (e.get("d") if isinstance(e.get("d"), str) else "")
+        since = e.get("since") if isinstance(e.get("since"), str) and _ISO.fullmatch(e["since"]) else today.isoformat()
+        out[t] = {"d": d, "f": f, "since": since}
+    return out
+
+
+def us_split_held_min(prev, codes, today):
+    """us_split_held 가 멈췄을 때의 마지막 길: 지난 발행본 종목의 splCut 칸만으로 (날짜 · since 모름 → '' · today). (순수 함수)"""
+    have = set(codes)
+    return {t: {"d": "", "f": f, "since": today.isoformat()} for t, f in _prev_split_marks(prev).items() if t in have}
 
 
 def us_split_skip(rec, foreign):
@@ -13967,26 +13994,38 @@ def us_split_skip(rec, foreign):
 
 def _split_why(why):
     """기록에 남길 이유 글: 야후 값이 없거나 숫자가 아닐 때의 repr (None · nan …) 을 '없음' 으로 — 관문의 '글자에 nan·None·null·undefined 없음'
-    줄(실패)과 같은 글자들 (리뷰 #188 1차: financialCurrency 가 float('nan') 이면 'nan'). (순수 함수)"""
-    return US_SPLIT_BAD_TEXT.sub("없음", str(why))
+    줄(실패)과 같은 글자들 (GATE_BAD_WORD · 리뷰 #188 1차: financialCurrency 가 float('nan') 이면 'nan'). (순수 함수)"""
+    return GATE_BAD_WORD.sub("없음", str(why))
 
 
-def us_split_check(out, cache, data, us_px_date, recent, no_info=frozenset(), foreign=frozenset(), done=None, nocmp=None, bands=None):
-    """최근 분할한 미국 회사(recent: us_recent_splits · 이어서 보는 held 포함)의 PER · PBR · 배당수익률을 외국 회사와 같은 비교(us_foreign_cuts ·
-    us_fgn_kind · 같은 스위치 nocmp)로 맞춰 보고, 맞지 않거나 맞춰 볼 수 없는 칸을 비워요. 허용 폭은 bands {티커: 폭} (us_split_bands · 없으면
-    US_SPLIT_BAND_MIN) 을 세 칸에 같이. 종목 표시는 rec["splCut"] = {칸: 종류} (fgnCut 과 같은 모양 · 같은 종류 · 표시 먼저, 그다음 비우기).
-    외국 회사(foreign) · fcur · ETF · 펀드는 보지 않고 skip 에 적어요. 상세 정보가 없는 종목은 비울 칸이 없어 확인한 것으로 세요. done:
-    us_foreign_check 처럼 가면서 담아요 (멈추면 us_split_stopped 가 써요).
-    반환 data.json usSplitChk = {checked, cut [[티커, 칸, 이유]], kind {티커: {칸: 종류}}, kept, nocmp, skip {까닭: [티커]}}."""
+def _held_next(held, t, present, cut_f):
+    """잡아 둔 종목 t 의 다음 칸: 지난 칸 중 오늘 값이 있고(present) 비우지 않은 칸(맞춰 보고 맞음)만 놓고, 오늘 비운 칸(cut_f)을 더해요. (순수 함수)"""
+    h = held.get(t) or {}
+    keep = {f for f in h.get("f") or [] if f not in present or f in cut_f}
+    return {**h, "f": sorted(keep | set(cut_f))} if (keep | set(cut_f)) else None
+
+
+def us_split_check(out, cache, data, us_px_date, recent, no_info=frozenset(), foreign=frozenset(), done=None, nocmp=None, bands=None,
+                   held=None):
+    """최근 분할한 미국 회사(recent: us_recent_splits)와 잡아 둔 종목(held: us_split_held)의 PER · PBR · 배당수익률을 외국 회사와 같은 비교
+    (us_foreign_cuts · us_fgn_kind · 같은 스위치 nocmp)로 맞춰 보고, 맞지 않거나 맞춰 볼 수 없는 칸을 비워요. 허용 폭은 bands {티커: 폭}
+    (us_split_bands · 없으면 US_SPLIT_BAND_MIN) 을 세 칸에 같이. 종목 표시는 rec["splCut"] = {칸: 종류} (fgnCut 과 같은 모양 · 같은 종류 · 표시
+    먼저, 그다음 비우기). 잡아 둔 칸은 스위치 keep 이어도 비워요 (US_SPLIT_HOLD_OWN). 외국 회사(foreign) · fcur · ETF · 펀드는 보지 않고 skip 에
+    적어요. 상세 정보가 없는 종목은 비울 칸이 없어 확인한 것으로 세요 (잡아 둔 칸은 맞춰 보지 못해 그대로 잡아 둬요). done: us_foreign_check 처럼
+    가면서 담아요 (멈추면 us_split_stopped 가 써요) — done["held"] 는 다음 held (_held_next).
+    반환 data.json usSplitChk = {checked, cut [[티커, 칸, 이유]], kind {티커: {칸: 종류}}, kept, nocmp, skip {까닭: [티커]}, held}."""
     nocmp = US_FGN_NOCMP if nocmp is None else nocmp
+    held = held or {}
     done = {} if done is None else done
     checked, cut, seen = done.setdefault("checked", []), done.setdefault("cut", []), done.setdefault("seen", set())
     kind, kept = done.setdefault("kind", {}), done.setdefault("kept", [])
     skip = done.setdefault("skip", {k: [] for k in US_SPLIT_SKIP})
+    nheld = done.setdefault("held", {})
+    targets = {**(recent or {}), **{t: v.get("d", "") for t, v in held.items()}}
     for rec in out:
         t = rec["t"]
         rec.pop(US_SPLIT_MARK, None)
-        if t not in recent:
+        if t not in targets:
             seen.add(t)
             continue
         why_not = us_split_skip(rec, foreign)
@@ -13994,18 +14033,22 @@ def us_split_check(out, cache, data, us_px_date, recent, no_info=frozenset(), fo
             skip[why_not].append(t)
             seen.add(t)
             continue
+        present = {f for f in US_SPLIT_FIELDS if rec.get(f) is not None}
         e = cache.get(t) or {}
-        if t in no_info or not e:
-            checked.append(t)
-            seen.add(t)
-            continue
-        b = (bands or {}).get(t, US_SPLIT_BAND_MIN)
-        cuts = {f: _split_why(w) for f, w in us_foreign_cuts(rec, e.get("info"), us_div_12m(_div_col(data, t), us_px_date),
-                                                             band={"per": b, "pbr": b, "dy": b}).items()}
-        kinds = {f: us_fgn_kind(f, why, nocmp) for f, why in sorted(cuts.items())}
-        for f, why in sorted(cuts.items()):
-            if kinds[f] is None:                     # 스위치 keep: 맞춰 볼 값이 없는 칸은 비우지 않아요 (외국 회사와 같아요)
-                kept.append([t, f, why])
+        hf = set((held.get(t) or {}).get("f") or [])
+        cuts, compared = {}, t not in no_info and bool(e)
+        if compared:
+            b = (bands or {}).get(t, US_SPLIT_BAND_MIN)
+            cuts = {f: _split_why(w) for f, w in us_foreign_cuts(rec, e.get("info"), us_div_12m(_div_col(data, t), us_px_date),
+                                                                 band={"per": b, "pbr": b, "dy": b}).items()}
+        else:                                        # 맞춰 볼 상세 정보가 없는데 잡아 둔 칸에 값이 있으면 (보통은 값도 없어요) 확인하지 못한 것으로 비워요
+            cuts = {f: f"{US_FOREIGN_STOP_WHY} (상세 정보 없음)" for f in sorted(hf & present)}
+        kinds = {f: us_fgn_kind(f, why, nocmp) if compared else "stopped" for f, why in sorted(cuts.items())}
+        for f in sorted(cuts):
+            if kinds[f] is None and f in hf:
+                kinds[f] = US_SPLIT_HOLD_OWN         # 잡아 둔 칸: 맞춰 볼 수 없으면 스위치와 상관없이 비워요 (맞았다고 본 적이 없어요)
+            elif kinds[f] is None:                   # 스위치 keep: 맞춰 볼 값이 없는 칸은 비우지 않아요 (외국 회사와 같아요)
+                kept.append([t, f, cuts[f]])
         cuts = {f: why for f, why in cuts.items() if kinds[f] is not None}
         if cuts:
             rec[US_SPLIT_MARK] = {f: kinds[f] for f in sorted(cuts)}
@@ -14013,11 +14056,15 @@ def us_split_check(out, cache, data, us_px_date, recent, no_info=frozenset(), fo
         for f, why in sorted(cuts.items()):
             rec.pop(f, None)
             cut.append([t, f, why])
+        if t in held:
+            nxt = _held_next(held, t, present if compared else set(), set(cuts))
+            if nxt:
+                nheld[t] = nxt
         checked.append(t)
         seen.add(t)
-    log_us_split_check(recent, checked, cut, kind, kept, skip, nocmp, bands)
+    log_us_split_check(targets, checked, cut, kind, kept, skip, nocmp, bands)
     return {"checked": sorted(checked), "cut": cut, "kind": {t: dict(g) for t, g in sorted(kind.items())}, "kept": list(kept), "nocmp": nocmp,
-            "skip": {k: sorted(v) for k, v in skip.items()}}
+            "skip": {k: sorted(v) for k, v in skip.items()}, "held": dict(sorted(nheld.items()))}
 
 
 def log_us_split_check(recent, checked, cut, kind, kept, skip, nocmp, bands=None):
@@ -14039,10 +14086,12 @@ def log_us_split_check(recent, checked, cut, kind, kept, skip, nocmp, bands=None
             + ", ".join(f"{t} {names[f]}" for t, f, _w in kept))
 
 
-def us_split_stopped(out, done, err, recent, foreign=frozenset()):
-    """us_split_check 가 멈췄을 때 (us_foreign_stopped 와 같아요): 끝까지 본 종목의 비운 칸 · 표시는 그대로, 아직 보지 못한 최근 분할 회사(보지 않는
-    까닭이 없는 곳)의 PER · PBR · 배당수익률을 모두 비우고 표시 stopped (앱 줄 co.fgnStopped). 보지 못한 종목에 멈춘 실행이 이미 붙인 표시가 있으면
-    (그 칸은 이미 비었어요) 그 칸도 stopped 로 적어요 — 이유를 모르는 빈 칸이 없게 (us_split_guard). → data.json usSplitChk"""
+def us_split_stopped(out, done, err, recent, foreign=frozenset(), held=None):
+    """us_split_check 가 멈췄을 때 (us_foreign_stopped 와 같아요): 끝까지 본 종목의 비운 칸 · 표시는 그대로, 아직 보지 못한 최근 분할 회사와 잡아 둔
+    종목(held · 보지 않는 까닭이 없는 곳)의 PER · PBR · 배당수익률을 모두 비우고 표시 stopped (앱 줄 co.fgnStopped). 보지 못한 종목에 멈춘 실행이
+    이미 붙인 표시가 있으면 (그 칸은 이미 비었어요) 그 칸도 stopped 로 적어요 — 이유를 모르는 빈 칸이 없게 (us_split_guard). 잡아 둔 칸은 맞춰 보지
+    못했으니 모두 그대로 잡아 둬요. → data.json usSplitChk"""
+    held = held or {}
     seen = set(done.get("seen") or ())
     cut = [list(x) for x in done.get("cut") or [] if x[0] in seen]
     n0 = len(cut)
@@ -14050,100 +14099,123 @@ def us_split_stopped(out, done, err, recent, foreign=frozenset()):
     kind = {t: dict(g) for t, g in sorted((done.get("kind") or {}).items()) if t in seen}
     skip = {k: sorted(t for t in (done.get("skip") or {}).get(k) or [] if t in seen) for k in US_SPLIT_SKIP}
     checked = [t for t in done.get("checked") or [] if t in seen]
+    nheld = {t: v for t, v in (done.get("held") or {}).items() if t in seen}
+    targets = set(recent or {}) | set(held)
     for r in out:
         t = r.get("t")
-        if t not in recent or t in seen:
+        if t not in targets or t in seen:
             continue
         why_not = us_split_skip(r, foreign)
         if why_not:
             skip[why_not] = sorted(skip[why_not] + [t])
             continue
         old = r.pop(US_SPLIT_MARK, None)
-        blank = sorted(set(f for f in ("per", "pbr", "dy") if r.get(f) is not None)
-                       | set(f for f in (old if isinstance(old, dict) else {}) if f in ("per", "pbr", "dy")))
+        blank = sorted(set(f for f in US_SPLIT_FIELDS if r.get(f) is not None)
+                       | set(f for f in (old if isinstance(old, dict) else {}) if f in US_SPLIT_FIELDS))
         if blank:
             r[US_SPLIT_MARK] = {f: "stopped" for f in blank}
             kind[t] = dict(r[US_SPLIT_MARK])
         for f in blank:
             r.pop(f, None)
             cut.append([t, f, why])
+        if t in held:
+            nheld[t] = {**held[t], "f": sorted(set(held[t].get("f") or []) | set(blank))}
         checked.append(t)
     kept = [list(x) for x in done.get("kept") or [] if x[0] in seen]
-    log(f"  !! 최근 분할한 미국 회사 검사가 멈췄어요 ({type(err).__name__}: {str(err)[:120]}) → 끝까지 본 곳의 비운 칸 {n0}칸은 그대로 · 나머지 "
-        f"{len(cut) - n0}칸을 맞춰 보지 않고 비웠어요 (표시 stopped · 앱 줄 '오늘은 확인하지 못함'): " + (", ".join(f"{t} {f}" for t, f, _w in cut[n0:]) or "없음"))
-    return {"checked": sorted(checked), "cut": cut, "kind": kind, "kept": kept, "nocmp": US_FGN_NOCMP, "skip": skip, "err": type(err).__name__}
+    log(f"  !! 최근 분할한 미국 회사 검사가 멈췄어요 ({pub_raw(err)[:300]}) → 끝까지 본 곳의 비운 칸 {n0}칸은 그대로 · 나머지 "
+        f"{len(cut) - n0}칸을 맞춰 보지 않고 비웠어요 (표시 stopped · 앱 줄 '오늘은 확인하지 못함' · 잡아 둔 종목도): "
+        + (", ".join(f"{t} {f}" for t, f, _w in cut[n0:]) or "없음"))
+    return {"checked": sorted(checked), "cut": cut, "kind": kind, "kept": kept, "nocmp": US_FGN_NOCMP, "skip": skip,
+            "held": dict(sorted(nheld.items())), "err": type(err).__name__}
 
 
-def _split_empty(err):
-    return {"days": US_SPLIT_CHECK_DAYS, "recent": None, "held": {}, "band": {}, "checked": [], "cut": [], "kind": {}, "kept": [],
+def _split_empty(err, held=None):
+    return {"days": US_SPLIT_CHECK_DAYS, "recent": None, "held": held or {}, "band": {}, "checked": [], "cut": [], "kind": {}, "kept": [],
             "nocmp": US_FGN_NOCMP, "skip": {k: [] for k in US_SPLIT_SKIP}, "err": err}
 
 
+def _split_held_safe(prev, codes, recent, carry, today):
+    """us_split_held → (held, 오류 이름 | None). 멈추면 지난 발행본의 splCut 만으로 (us_split_held_min) · 그것도 멈추면 {} (크게 남겨요)."""
+    try:
+        return us_split_held(prev, codes, recent, carry, today), None
+    except Exception as e:
+        log(f"  !! 30일이 지나도 이어서 볼 분할 종목(지난 발행본의 held · splCut)을 정하다 멈췄어요 ({pub_raw(e)[:300]}) → 지난 발행본의 splCut 만으로 "
+            "정해요 (관문 경고)")
+        try:
+            return {t: v for t, v in us_split_held_min(prev, codes, today).items() if t not in (recent or {})}, type(e).__name__
+        except Exception as e2:
+            log(f"  !! 지난 발행본의 splCut 도 읽지 못했어요 ({pub_raw(e2)[:300]}) → 오늘은 잡아 둔 종목 없이 봐요 (관문 경고)")
+            return {}, type(e).__name__
+
+
 def us_split_step(out, cache, data, us_px_date, today, prev, no_info=frozenset(), foreign=frozenset()):
-    """fetch_us 의 분할 뒤 검사 한 단계 (외국 회사 검사 바로 다음). 최근 분할 종목을 정하고 (오늘 다운로드의 분할 칸 · 지난 발행본 splits · 고정 표)
-    30일이 지났어도 지난 발행본에서 맞지 않아 비운 종목을 더해 (held · us_split_held) 허용 폭(us_split_bands)으로 us_split_check 를 해요. 분할 목록을
-    정하다 멈추면 어느 종목인지 몰라 아무것도 비우지 않고 크게 남겨요 (err · 관문 경고). 오늘 다운로드의 분할 칸을 읽지 못하면 지난 발행본 · 고정
-    표로만 정하고 크게 남겨요 (srcErr). held · 허용 폭을 정하다 멈추면 그것만 빼고 (held 없음 · 폭은 가장 좁게) 크게 남겨요 (holdErr · bandErr).
-    검사가 멈추면 us_split_stopped. → data.json usSplitChk = us_split_check 의 반환 + days · recent {티커: 분할 날짜} · held {티커: 분할 날짜} ·
-    band {티커: 허용 폭} (· srcErr · holdErr · bandErr · err)."""
+    """fetch_us 의 분할 뒤 검사 한 단계 (외국 회사 검사 바로 다음). 최근 분할 종목(recent · 오늘 다운로드의 분할 칸 · 지난 발행본 splits · 고정 표)과
+    잡아 둔 종목(held · us_split_held — 지난 발행본의 held · splCut)을 정하고 허용 폭(us_split_bands)으로 us_split_check 를 해요. 오늘 다운로드의 분할
+    칸을 읽지 못하면 지난 발행본 · 고정 표로만 정하고 크게 남겨요 (srcErr). 최근 분할 목록을 정하다 멈추면 그 종목들은 오늘 보지 못하고 (err · 관문
+    경고) 잡아 둔 종목만 봐요. held · 허용 폭을 정하다 멈추면 마지막 길로 (held 는 지난 발행본의 splCut 만 · 폭은 가장 좁게) 크게 남겨요 (holdErr ·
+    bandErr). 검사가 멈추면 us_split_stopped (잡아 둔 종목도 비워요).
+    → data.json usSplitChk = us_split_check 의 반환 + days · recent {티커: 분할 날짜} · held {티커: {d, f, since}} · band {티커: 허용 폭}
+    (· srcErr · holdErr · bandErr · err)."""
     codes = [r["t"] for r in out]
-    src_err = hold_err = band_err = None
+    src_err = band_err = rec_err = None
+    rows, carry, recent = [], {}, {}
     try:
         try:
             rows = us_splits(data, codes, today)[0]
         except Exception as e:      # 오늘 다운로드의 분할 칸 — 지난 발행본 · 고정 표로는 정해요
             rows, src_err = [], type(e).__name__
-            log(f"  !! 최근 분할 종목: 오늘 시세 다운로드의 분할 칸을 읽지 못했어요 ({type(e).__name__}: {str(e)[:120]}) → 지난 발행본 splits · 고정 표로만 정해요")
+            log(f"  !! 최근 분할 종목: 오늘 시세 다운로드의 분할 칸을 읽지 못했어요 ({pub_raw(e)[:300]}) → 지난 발행본 splits · 고정 표로만 정해요")
         carry = us_carry_splits(rows, prev)
         recent = us_recent_splits(carry, codes, us_px_date, today)
-    except Exception as e:
-        for r in out:
-            r.pop(US_SPLIT_MARK, None)
-        log(f"  !! 최근 분할한 미국 종목을 정하다가 멈췄어요 ({type(e).__name__}: {str(e)[:120]}) → 어느 종목인지 몰라 분할 뒤 검사를 하지 못했어요 "
-            "(아무것도 비우지 않음 · 관문 경고)")
-        return _split_empty(type(e).__name__)
-    try:
-        held = us_split_held(prev, codes, recent, carry)
-    except Exception as e:          # 이어서 볼 종목만 못 정해요 — 30일 안의 분할 종목은 그대로 봐요
-        held, hold_err = {}, type(e).__name__
-        log(f"  !! 30일이 지나도 이어서 볼 분할 종목(지난 발행본의 splCut)을 정하다 멈췄어요 ({type(e).__name__}: {str(e)[:120]}) → 오늘은 30일 안의 "
-            "분할 종목만 봐요 (관문 경고)")
-    targets = {**recent, **held}
+    except Exception as e:          # 30일 안의 분할 종목은 오늘 보지 못해요 — 잡아 둔 종목(지난 발행본의 표시)은 그대로 봐요
+        recent, rec_err = {}, type(e).__name__
+        log(f"  !! 최근 분할한 미국 종목을 정하다가 멈췄어요 ({pub_raw(e)[:300]}) → 30일 안의 분할 종목은 오늘 보지 못해요 (관문 경고) · 지난 발행본에서 "
+            "비운 종목만 봐요")
+    held, hold_err = _split_held_safe(prev, codes, recent, carry, today)
+    targets = {**recent, **{t: v["d"] for t, v in held.items()}}
     lo = (us_px_date - dt.timedelta(days=US_SPLIT_CHECK_DAYS)).isoformat()
     try:
         bands = us_split_bands(us_split_ratio_map(rows, prev), targets, lo, today.isoformat())
     except Exception as e:          # 폭을 모르면 가장 좁은 폭 (더 많이 비워요 — 틀린 숫자보다 빈 칸)
         bands, band_err = {t: US_SPLIT_BAND_MIN for t in targets}, type(e).__name__
-        log(f"  !! 분할 배율로 허용 폭을 정하다 멈췄어요 ({type(e).__name__}: {str(e)[:120]}) → 오늘은 모든 분할 종목에 가장 좁은 폭 "
-            f"{US_SPLIT_BAND_MIN:g}배 (관문 경고)")
+        log(f"  !! 분할 배율로 허용 폭을 정하다 멈췄어요 ({pub_raw(e)[:300]}) → 오늘은 모든 분할 종목에 가장 좁은 폭 {US_SPLIT_BAND_MIN:g}배 (관문 경고)")
     log(f"· 최근 {US_SPLIT_CHECK_DAYS}일 안에 분할한 미국 종목 ({lo} ~ {today}): {len(recent)}곳"
         + (": " + ", ".join(f"{t}({d} · 폭 {bands.get(t, US_SPLIT_BAND_MIN):.2f}배)" for t, d in recent.items()) if recent else ""))
     if held:
-        log(f"  !! 30일이 지났지만 지난 발행본에서 숫자가 회사 합계와 맞지 않아 비운 종목 {len(held)}곳 → 맞을 때까지 이어서 봐요: "
-            + ", ".join(f"{t}(분할 {d or '날짜 모름'} · 폭 {bands.get(t, US_SPLIT_BAND_MIN):.2f}배)" for t, d in held.items()))
+        names = {"per": "PER", "pbr": "PBR", "dy": "배당수익률"}
+        log(f"  !! 30일이 지났지만 지난 발행본에서 비운 칸이 있는 종목 {len(held)}곳 → 맞춰 보고 맞을 때까지 이어서 봐요 (회사 구조상 늘 다르면 계속 "
+            "비어요 · 관문 경고): " + ", ".join(f"{t}({'·'.join(names[f] for f in v['f'])} · 분할 {v['d'] or '날짜 모름'} · {v['since']}부터 · "
+                                         f"폭 {bands.get(t, US_SPLIT_BAND_MIN):.2f}배)" for t, v in held.items()))
     done = {}
     try:
-        rec = us_split_check(out, cache, data, us_px_date, targets, no_info, foreign, done, bands=bands)
+        rec = us_split_check(out, cache, data, us_px_date, recent, no_info, foreign, done, bands=bands, held=held)
     except Exception as e:
-        rec = us_split_stopped(out, done, e, targets, foreign)
-    rec = {"days": US_SPLIT_CHECK_DAYS, "recent": recent, "held": held, "band": {t: bands[t] for t in sorted(bands)}, **rec}
+        rec = us_split_stopped(out, done, e, recent, foreign, held=held)
+    rec = {"days": US_SPLIT_CHECK_DAYS, "recent": None if rec_err else recent, "band": {t: bands[t] for t in sorted(bands)}, **rec}
     for k, v in (("srcErr", src_err), ("holdErr", hold_err), ("bandErr", band_err)):
         if v:
             rec[k] = v
+    if rec_err:
+        rec["err"] = rec.get("err") or rec_err
     return rec
 
 
 def us_split_guard(out, err, prev, us_px_date, today, foreign=frozenset()):
-    """fetch_us 의 마지막 안전망 (리뷰 #188 1차 Opus N3): us_split_step 이 그 안에서 받지 못한 오류로 멈추면 fetch_us 를 멈추지 않고 크게 남기고,
-    지난 발행본 splits · 고정 표로 정한 최근 분할 회사(보지 않는 까닭이 없는 곳)의 PER · PBR · 배당수익률을 맞춰 보지 않고 비워요 (표시 stopped ·
-    앱 줄 co.fgnStopped · us_split_stopped). 그것도 멈추면 아무것도 비우지 못한 채 err 만 적어요 (관문 경고)."""
-    log(f"  !! 최근 분할한 미국 회사 검사 단계가 오류로 멈췄어요 ({type(err).__name__}: {str(err)[:120]}) → 지난 발행본 splits · 고정 표로 정한 최근 "
-        "분할 회사의 숫자를 맞춰 보지 않고 비워요 (표시 stopped)")
+    """fetch_us 의 마지막 안전망 (리뷰 #188 1차 N3 · 2차 S1): us_split_step 이 그 안에서 받지 못한 오류로 멈추면 fetch_us 를 멈추지 않고 크게 남기고,
+    지난 발행본 splits · 고정 표로 정한 최근 분할 회사와 잡아 둔 종목(지난 발행본의 held · splCut · 보지 않는 까닭이 없는 곳)의 PER · PBR ·
+    배당수익률을 맞춰 보지 않고 비워요 (표시 stopped · 앱 줄 co.fgnStopped · us_split_stopped). 그것도 멈추면 아무것도 비우지 못한 채 err 만 적어요
+    (관문 경고)."""
     try:
-        recent = us_recent_splits(us_carry_splits([], prev), [r.get("t") for r in out], us_px_date, today)
-        return {"days": US_SPLIT_CHECK_DAYS, "recent": recent, "held": {}, "band": {}, **us_split_stopped(out, {}, err, recent, foreign)}
+        log(f"  !! 최근 분할한 미국 회사 검사 단계가 오류로 멈췄어요 ({pub_raw(err)[:300]}) → 지난 발행본 splits · 고정 표로 정한 최근 분할 회사와 "
+            "지난 발행본에서 비운 종목의 숫자를 맞춰 보지 않고 비워요 (표시 stopped)")
+        codes = [r.get("t") for r in out]
+        carry = us_carry_splits([], prev)
+        recent = us_recent_splits(carry, codes, us_px_date, today)
+        held, h_err = _split_held_safe(prev, codes, recent, carry, today)
+        rec = us_split_stopped(out, {}, err, recent, foreign, held=held)
+        return {"days": US_SPLIT_CHECK_DAYS, "recent": recent, "band": {}, **rec, **({"holdErr": h_err} if h_err else {})}
     except Exception as e2:
-        log(f"  !! 최근 분할한 미국 회사 검사의 안전망도 멈췄어요 ({type(e2).__name__}: {str(e2)[:120]}) → 오늘은 아무것도 비우지 못했어요 (관문 경고)")
+        log(f"  !! 최근 분할한 미국 회사 검사의 안전망도 멈췄어요 ({pub_raw(e2)[:300]}) → 오늘은 아무것도 비우지 못했어요 (관문 경고)")
         return _split_empty(type(err).__name__)
 
 
@@ -16942,10 +17014,11 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                     "(usForeign.cut 과 같은 칸 · 앱이 그 칸 '–' 밑에 이유 줄을 붙여요 · 검사가 멈춘 날의 칸은 없어요)"),
          "splCut": ("미국 회사의 종목 칸 (2026-11-24): 최근 30일 안 주식 분할 뒤 회사 합계와 맞지 않아 비운 칸 — fgnCut 과 같은 모양 · 같은 종류 · 앱의 "
                     "같은 줄 (맞춰 보지 못한 currency · norecord 는 '비교할 수 없어서' 줄) (usSplitChk.cut 과 같은 칸 · 외국 회사 · fcur · ETF 에는 없어요 · "
-                    "mismatch 가 있으면 30일이 지나도 맞을 때까지 이어서 봐요)"),
+                    "30일이 지나도 맞춰 보고 맞을 때까지 그 칸을 이어서 봐요 · usSplitChk.held)"),
          "usSplitChk": ("최근 분할한 미국 회사의 주당 숫자 검사 (2026-11-24 · 외국 회사 검사 us_foreign_cuts 와 같은 비교 · 같은 종류 · 허용 폭은 band): days = 미국 "
                         "기준일 앞 날 수 (30) · recent = {티커: 그 기간의 가장 늦은 분할 날짜} (오늘 다운로드의 분할 칸 · 지난 발행본 splits · 고정 표) · "
-                        "held = {티커: 가장 늦은 분할 날짜} 30일이 지났지만 지난 발행본의 splCut 에 mismatch 가 있어 이어서 본 종목 · band = {티커: 허용 폭 "
+                        "held = {티커: {d 가장 늦은 분할 날짜, f [칸], since 처음 잡아 둔 날}} 30일이 지났지만 지난 발행본에서 비운 칸(splCut · 지난 "
+                        "held)이 있어 이어서 본 종목 — 그 칸은 맞춰 보고 맞을 때만 빠져요 · band = {티커: 허용 폭 "
                         "(배 · max(1.5, √분할 배율) · 세 칸에 같이)} · "
                         "checked = 확인한 티커 · cut = 비운 칸 [티커, 칸, 이유] · kind = {티커: {칸: 종류}} (종목의 splCut 과 같아요) · kept · nocmp "
                         "(usForeign 과 같아요) · skip = 보지 않은 최근 분할 종목 {foreign 외국 회사 검사가 봄 · fcur 재무제표 통화가 달러가 아님 · etf ETF · "
