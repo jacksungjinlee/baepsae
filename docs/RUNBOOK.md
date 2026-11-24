@@ -1961,27 +1961,45 @@ has PER, PBR and 배당수익률 blanked unchecked, each marked `stopped`, and 2
 (naming the companies; it never holds the publish). The next run checks again. A file from before #PR has no marks on such a day
 (the gate reads it as before). The old app shows "–" for these, as for the currency case.
 
-**Recently split US companies (since #188, 2026-11-24; SNDK).** After its 8:1 split on 2026-11-20, Yahoo kept Sandisk's pre-split
-EPS (923.70 a share) and the 11-24 publish showed PER 0.1 (market cap ÷ net income 5.14). The run now puts every US company with a
-split dated from 30 days before `usPxDate` up to the run day (KST) through the same comparison (`us_split_step` → `us_split_check`
-in `fetch_data.py`, right after the foreign check): the split list comes from the same sources as the published `splits` (today's
-download, the previous publish's `splits`, `SPLIT_OVERRIDES`), the comparison is `us_foreign_cuts` with the same bands, kinds and
-switch, and the inputs are the same cached Yahoo details (`us-info-v1`, refreshed every 3 days) and the download's dividend column:
-**no extra Yahoo requests**. Foreign companies (already checked), `fcur` companies (already blank) and ETFs/funds (no company totals)
-are skipped by name. A number that agrees stays; one that does not, or cannot be compared, is blanked with the same kind
-(`mismatch`, `currency`, `norecord`, `nocompare-own`, `stopped` if the check crashes), and 2.0 shows the same approved line under
-it (`co.fgnCut` / `co.fgnNoCmp` / `co.fgnStopped`, in the 가치 tab and 가치 자세히 for PER; PBR and yield also in 한눈에, 비교 and 내 기준).
-The mark is the stock's `splCut` (same shape as `fgnCut`), not `fgnCut`, because the gate row above fails `fgnCut` on any stock
-outside the foreign set and that row stays as it is; `src/v2/fcur.js` reads both marks alike. Record: `data.json usSplitChk`
-(`days`, `recent` {ticker: split date}, `checked`, `cut`, `kind`, `kept`, `nocmp`, `skip` {foreign, fcur, etf}, `srcErr`, `err`).
-Run log: `· 최근 30일 안에 분할한 미국 종목 …` and `!! 최근 30일 안에 분할한 미국 회사의 주당 숫자 … PER 비움 N곳 (…)` with one line per
-blank. Gate row `미국 분할 뒤 주당 숫자: 회사 합계와 맞춤 (splCut · 경고만)` (`check_us_split_cut`) only ever warns: unchecked numbers
-of a recently split company, a blanked number back, a blank without a mark or a mark without a `cut` row, a mark on a foreign / `fcur`
-/ ETF stock or outside `recent`, a wrong kind, a crash, or the split column unread. Nothing to do by hand: Yahoo usually corrects
-itself, the cache is re-read every 3 days and the number comes back once it agrees; after 30 days the stock leaves the check. Known
-limits: an ETF that split is not checked (no company totals; 2026-11-23: SOXX PBR 0.37 after its 3:1 split, 가치 점수 100), and a
-pre-split cached copy rescaled by price alone (#176's subject) moves PER and market cap together, which this comparison cannot see.
-Rolling back: a revert PR; the old gate and app ignore `splCut` and `usSplitChk`, and the blanked number comes back with the next publish.
+**Recently split US companies (since #188, 2026-11-24; SNDK).** After its 8:1 split on 2026-11-20, Yahoo's trailing EPS for Sandisk
+read 923.70 a share and the 11-24 publish showed PER 0.1. That EPS is about 54 times the company's own figure (net income 19.42십억 달러
+÷ 1.138십억 shares ≈ 17.06 a share; about 136 even before the split), not off by the split ratio; market cap ÷ net income is 5.14.
+The run now puts every US company with a split dated from 30 days before `usPxDate` up to the run day (KST) through the foreign
+companies' comparison (`us_split_step` → `us_split_check` in `fetch_data.py`, right after the foreign check and after #176's rescale):
+the split list comes from the same sources as the published `splits` (today's download, the previous publish's `splits`,
+`SPLIT_OVERRIDES`), the comparison is `us_foreign_cuts` with the same kinds and switch, and the inputs are the same cached Yahoo details
+(`us-info-v1`, refreshed every 3 days) and the download's dividend column: **no extra Yahoo requests**. **The band is the split's size,
+not the foreign band** (#188 review 1): a number is cut only when it is off by more than max(1.5, √ratio), applied to PER, PBR and the
+yield alike (`us_split_check_band`, the same function as #176's gate row, `validate_data.us_split_band`; 8:1 → 2.83×, 2:1 → 1.5×, 1:10
+→ 3.16×). The foreign bands (1.10 · 1.35 · 1.10) blank correct numbers on ordinary US companies: NVDA's PBR is 1.39× off because ROE uses
+average equity, APH's forward yield is 1.19× its trailing dividends after a raise, Up-C companies like IBKR fail all three. The foreign
+check keeps its own bands. Still possible false positives, which fail safe (blank plus the approved line): a split company whose
+forward yield is at least 1.5× its trailing dividends, an Up-C structure, and a company with no PER or ROE (its PBR is blanked as
+can't-compare for the 30 days). Foreign companies (already checked), `fcur` companies (already blank) and ETFs/funds (no company totals)
+are skipped by name. A number that agrees stays; one that does not, or cannot be compared, is blanked with the same kind (`mismatch`,
+`currency`, `norecord`, `nocompare-own`, `stopped` if the check crashes), and 2.0 shows an approved line under it: `co.fgnCut` for
+`mismatch`, `co.fgnNoCmp` ("회사 전체 숫자와 비교할 수 없어서 …") for `nocompare-own` **and, on a split company, for `currency` and
+`norecord`** (nothing was compared, so "…맞지 않아서" would be untrue; a foreign company keeps its lines), `co.fgnStopped` for `stopped`
+(in the 가치 tab and 가치 자세히 for PER; PBR and yield also in 한눈에, 비교 and 내 기준). **After 30 days**, a stock whose previous publish
+carries `splCut` with a `mismatch` keeps being checked (`held`, with its last split's band) until its numbers agree; then the mark
+drops and the next run stops checking it. A mark that compared nothing does not hold a stock (it would never agree). The mark is the
+stock's `splCut` (same shape as `fgnCut`), not `fgnCut`, because the gate row above fails `fgnCut` on any stock outside the foreign set
+and that row stays as it is; `src/v2/fcur.js` reads both marks. Record: `data.json usSplitChk` (`days`, `recent` {ticker: split date},
+`held` {ticker: split date}, `band` {ticker: band}, `checked`, `cut`, `kind`, `kept`, `nocmp`, `skip` {foreign, fcur, etf}, `srcErr`,
+`holdErr`, `bandErr`, `err`). Reason text never carries nan/None/null/undefined (written "없음"). Run log: `· 최근 30일 안에 분할한 미국
+종목 … (… 폭 2.83배)`, `!! 30일이 지났지만 … 이어서 봐요` when a stock is held, and `!! 최근 30일 안에 분할한 미국 회사의 주당 숫자 … PER 비움
+N곳 (…)` with one line per blank and its band. If the step itself crashes, `fetch_us` carries on (`us_split_guard`): a loud `!!` line,
+and the recent-split companies from the previous publish's `splits` and the fixed table are blanked unchecked (`stopped`). Gate row
+`미국 분할 뒤 주당 숫자: 회사 합계와 맞춤 (splCut · 경고만)` (`check_us_split_cut`) only ever warns: unchecked numbers of a recently split or
+held company, a blanked number back, a blank without a mark or a mark without a `cut` row, a mark on a foreign / `fcur` / ETF stock or
+outside `recent` and `held`, a wrong kind, a bad `held` / `band`, a crash, the split column unread, or `holdErr` / `bandErr`. Nothing to
+do by hand: Yahoo usually corrects itself, the cache is re-read every 3 days and the number comes back once it agrees. Known limits: an
+ETF that split is not checked (no company totals; 2026-11-23: SOXX PBR 0.37 after its 3:1 split, 가치 점수 100), a split smaller than
+1.5:1 leaves its error inside the band, and a pre-split cached copy rescaled by price alone or by a wrong factor moves PER and market cap
+together, which this comparison cannot see (#176's record `usSrc.split` and its gate row name those). The check reads the same cache
+entry #176 chose, so a copy × split factor that agrees stays; Yahoo's fresh EPS that #176 accepts (SNDK 11-24, not a 1/8 pattern) is
+blanked here. Rolling back: a revert PR; the old gate and app ignore `splCut` and `usSplitChk`, and the blanked number comes back with
+the next publish.
 
 **Which companies count as foreign (since #PR; Jack, 2026-11-14 Q5: "widen it").** The run finds them by a rule every day
 (`us_foreign_set` in `fetch_data.py`, never a hand list), among company shares (not ETFs or funds):

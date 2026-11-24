@@ -87,16 +87,27 @@ export const pbrZeroRowsBlank = (s, rows) => pbrZeroOf(s) && (rows || []).some((
 // co.fgnCut, both reasons: the currency line needs a currency name) right under it, the same places as the currency line.
 // Never for a currency stock (its own line says why) and never beside a number: a field still carrying a value is not listed.
 export const FGN_FIELDS = ["per", "pbr", "dy"];
-// data.json splCut (2026-11-24, fetch_data.py us_split_check): the same check, kinds and lines on a US company within 30 days of a
-// stock split (SNDK's PER 0.1 after its 8:1 split: Yahoo kept the pre-split EPS). Its own field because the gate's foreign-company row
-// accepts fgnCut on foreign companies only; the screens read both marks alike (fgnCut first where a stock carried both).
+// data.json splCut (2026-11-24, fetch_data.py us_split_check): the same comparison, kinds and lines on a US company within 30 days of a
+// stock split (SNDK's PER 0.1 after its 8:1 split: Yahoo's trailing EPS read 923.7, about 54 times the company's own figure). Its own
+// field because the gate's foreign-company row accepts fgnCut on foreign companies only; the screens read both marks alike (fgnCut first
+// where a stock carried both).
 const markOk = (m) => !!m && typeof m === "object" && !Array.isArray(m);
 function fgnMarks(s) {
   const a = markOk(s.fgnCut) ? s.fgnCut : null, b = markOk(s.splCut) ? s.splCut : null;
   return a && b ? { ...b, ...a } : a || b;
 }
-// The kind of the mark on field k (undefined when none).
-export const fgnKindOf = (s, k) => { const m = s ? fgnMarks(s) : null; return m ? m[k] : undefined; };
+// A split company's kinds where nothing was compared (#188 review 1, N1): "currency" (statements not confirmed in dollars) and "norecord"
+// (no dividend record or price for the yield) take the approved can't-compare line co.fgnNoCmp, not co.fgnCut ("…맞지 않아서" would be
+// untrue). A foreign company's fgnCut keeps its approved lines as they are.
+const SPL_NOCMP = ["currency", "norecord"];
+// The kind whose line shows under field k (undefined when none).
+export const fgnKindOf = (s, k) => {
+  if (!s) return undefined;
+  const a = markOk(s.fgnCut) ? s.fgnCut[k] : undefined;
+  if (a) return a;
+  const b = markOk(s.splCut) ? s.splCut[k] : undefined;
+  return SPL_NOCMP.includes(b) ? FGN_OWN : b;
+};
 export function fgnCutOf(s) {
   if (!s || s.cls !== "us" || fcurOf(s)) return [];
   const m = fgnMarks(s);

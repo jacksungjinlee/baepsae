@@ -5065,8 +5065,9 @@ def us_split_recent(data):
 def check_us_split_cut(rep, data, us):
     """2026-11-24 (경고만): 최근 분할한 미국 회사(외국 회사 · fcur · ETF · 펀드 빼고)의 PER · PBR · 배당수익률은 파이프라인이 회사 합계 · 실제 배당과
     맞춰 본 뒤에만 나가요 (data.json usSplitChk · 종목 표시 splCut). 경고: 그런 종목에 숫자가 있는데 checked 에 없음 · cut 의 칸이 남아 있음 (pbr 이면
-    vz 도) · 표시 없는 cut 줄 · cut 줄 없는 표시 · 표시 모양 · 종류 · 외국 회사 · fcur · ETF 에 표시 · 최근 분할 목록(recent) 밖의 표시 · 기록 모양 ·
-    검사가 멈춘 날 (stopped · err) · 분할 칸을 읽지 못한 날 (srcErr). 기록이 없는 파일(이 칸 전 발행본): 표시가 있거나 맞춰 볼 숫자가 있으면 경고."""
+    vz 도) · 표시 없는 cut 줄 · cut 줄 없는 표시 · 표시 모양 · 종류 · 외국 회사 · fcur · ETF 에 표시 · 최근 분할 목록(recent)에도 이어서 본 목록(held ·
+    30일이 지났지만 지난 발행본에서 맞지 않아 비운 종목)에도 없는 표시 · 기록 모양 · 검사가 멈춘 날 (stopped · err) · 분할 칸을 읽지 못한 날 (srcErr) ·
+    이어서 볼 종목 · 허용 폭을 정하지 못한 날 (holdErr · bandErr). 기록이 없는 파일(이 칸 전 발행본): 표시가 있거나 맞춰 볼 숫자가 있으면 경고."""
     try:
         _check_us_split_cut(rep, data if isinstance(data, dict) else {}, [s for s in us or [] if isinstance(s, dict)])
     except Exception as e:
@@ -5113,6 +5114,14 @@ def _check_us_split_cut(rep, data, us):
     if rmap is not None and not (isinstance(rmap, dict) and all(isinstance(t, str) for t in rmap)):
         bad.append("recent 모양")
         rmap = {}
+    held = rec.get("held", {})          # 2026-11-24 (리뷰 1차 S2): 30일이 지났지만 지난 발행본에서 맞지 않아 비운 종목 (맞을 때까지 이어서 봐요)
+    if not (isinstance(held, dict) and all(isinstance(t, str) for t in held)):
+        bad.append("held 모양")
+        held = {}
+    bmap = rec.get("band", {})          # 종목마다 허용 폭 (max(1.5, √분할 배율))
+    if not (isinstance(bmap, dict) and all(isinstance(t, str) and isinstance(v, (int, float)) and not isinstance(v, bool) and v >= US_SPLIT_BAND_MIN
+                                           for t, v in bmap.items())):
+        bad.append("band 모양")
     rows, left, nomark, kbad = [], [], [], []
     for x in cut:
         if not (isinstance(x, list) and len(x) == 3 and isinstance(x[0], str) and x[1] in US_FOREIGN_KEYS and isinstance(x[2], str) and x[2]):
@@ -5140,8 +5149,8 @@ def _check_us_split_cut(rep, data, us):
             continue
         if s.get("cls") != "us" or skip_of(s):
             bad.append(f"{t}.splCut ({skip_of(s) or '미국 종목이 아님'})")
-        if isinstance(rmap, dict) and t not in rmap:
-            bad.append(f"{t}.splCut (최근 분할 목록 recent 밖)")
+        if isinstance(rmap, dict) and t not in rmap and t not in held:
+            bad.append(f"{t}.splCut (최근 분할 목록 recent · 이어서 본 목록 held 밖)")
         left += [f"{t}.{k}" for f in g for k in ((f, "vz") if f == "pbr" else (f,)) if s.get(k) is not None]
         nocut += [f"{t}.{f}" for f in g if (t, f) not in cutset]
     kmap = rec.get("kind")
@@ -5151,12 +5160,17 @@ def _check_us_split_cut(rep, data, us):
         diff = sorted(set(kmap) ^ set(marks) | {t for t in set(kmap) & set(marks) if kmap[t] != marks[t]})
         bad.append(f"kind ≠ 종목 표시 {len(diff)}: {', '.join(diff[:4])}")
     left = list(dict.fromkeys(left))
+    want = sorted(set(want) | {t for t in held if t in by and not skip_of(by[t]) and any(by[t].get(k) is not None for k in US_FOREIGN_KEYS)})
     unchecked = [t for t in want if t not in set(checked)]
     stopped = sorted({x[0] for x in rows if x[2].startswith(US_FGN_STOPPED)})
     if rec.get("err"):
         notes.append(f"검사가 멈춤 ({str(rec.get('err'))[:40]})")
     if rec.get("srcErr"):
         notes.append(f"오늘 다운로드의 분할 칸을 읽지 못해 지난 발행본 · 고정 표로만 정함 ({str(rec.get('srcErr'))[:40]})")
+    if rec.get("holdErr"):
+        notes.append(f"30일이 지난 종목 중 이어서 볼 곳을 정하지 못함 ({str(rec.get('holdErr'))[:40]})")
+    if rec.get("bandErr"):
+        notes.append(f"허용 폭을 정하지 못해 모두 {US_SPLIT_BAND_MIN:g}배 ({str(rec.get('bandErr'))[:40]})")
     if stopped:
         notes.append(f"검사가 멈춰 맞춰 보지 않고 비운 회사 {len(stopped)}곳: {_tickers(stopped)} (이유 줄: 오늘은 확인하지 못함 · co.fgnStopped)")
     probs = ([f"맞춰 보지 않은 숫자 {len(unchecked)}곳: {_tickers(unchecked)}"] if unchecked else []) \
@@ -5170,6 +5184,7 @@ def _check_us_split_cut(rep, data, us):
     rep.add(US_SPLIT_ROW, True, f"최근 분할 {len(rmap) if isinstance(rmap, dict) else '?'}곳 · 확인 {len(checked)}곳 · 비운 칸 PER {n_by['per']} · PBR "
             f"{n_by['pbr']} · 배당 {n_by['dy']}" + (f" ({', '.join(f'{t}.{f}' for t, f, _w in rows[:8])})" if rows else "")
             + (f" · 보지 않음(외국 회사 · fcur · ETF) {len(skipped)}곳: {_tickers(skipped)}" if skipped else "")
+            + (f" · 30일 지나 이어서 본 곳 {len(held)}: {_tickers(sorted(held))}" if held else "")
             + "".join(f" · {p}" for p in probs) + "".join(f" · {n}" for n in notes),
             th, warn=bool(probs or notes))
     if rows:
