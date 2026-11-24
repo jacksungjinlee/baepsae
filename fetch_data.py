@@ -26,7 +26,7 @@ validate_data.py 를 통과해야만 커밋(발행)돼요. 파일은 write_json(
   성과     al(3년 알파 %p) sh(3년 샤프) mom(12개월 수익률)
   가치·질  per pbr dy roe debt opm g3(매출성장) frn(외국인)
   분류     s(업종) dk(사업 개요)
-  팩터     pz(규모) vz(가치) mz(모멘텀) qz(퀄리티) lz(저변동) dz(배당, 한국만) — 같은 시장 안 회사끼리의 백분위 0~100 (펀드는 없음 · 2026-11-24)
+  팩터     pz(규모) vz(가치) mz(모멘텀) qz(퀄리티) lz(저변동) dz(배당, 한국만) — 같은 시장 안 회사끼리의 백분위 0~100 (펀드는 그 회사 분포에 견준 자리 · #189)
   v19.1b   betaSE·betaN(베타의 표준오차·쓴 수익률 수) · 한국 배당: dps3a(오늘 주식 수 기준으로 맞춘 주당 배당금 3년)
            dpsF(해마다 맞춘 배율) divSt(분할 확인 결과) dyt(오늘 종가 기준 배당수익률) · corp.json flRan(실제로 돌린 재무 경고 검사)
   v19.1h   dvWhy(배당을 다시 계산한 이유 — DART 결정 공시: st ok · nf · filed · nc-mismatch · nc-unexplained, ok 는 사건 ev) · divCheck.why
@@ -102,7 +102,7 @@ from validate_data import US_FGN_NOCMP, US_FGN_NOCMP_KIND, US_FGN_NOCMP_WHY, US_
 from validate_data import (ISSUE_SHAPE_KEY, ISSUE_BD_KEY, INSIDER_ROLE_KEY, US_DATE_KEY, ISSUE_SHAPE_MAX, ISSUE_BD_MAX, INSIDER_ROLE_MAX,
                            US_DATE_MAX, issue_bad_rows, issue_bd_bad_rows, insider_bad_rows, us_date_bad_rows, own_rows_rec, own_rows_text)
 from validate_data import _iso_day as gate_iso_day
-from validate_data import FACTOR_KEYS, factor_fund   # 2026-11-24: 팩터 점수를 받지 않는 펀드 (add_percentiles · 관문 줄 '펀드 팩터 점수 없음'과 같은 정의)
+from validate_data import FACTOR_KEYS, FACTOR_SRC, factor_fund   # 2026-11-24 (#189): 순위에 넣지 않는 펀드 · 점수마다 쓰는 값 (add_percentiles · 관문 줄과 같은 정의)
 # 2026-11-19 (Jack 의 상시 규칙 · 우리 처리를 보는 검사): 빼거나 비울 행을 고르는 함수는 관문 파일에 하나씩 — 파이프라인은 같은 함수를 메모리의
 # 데이터에 돌려 그 행을 빼거나 비우고 data.json ownDrop 에 적어요 (논리를 베끼지 않아요)
 from validate_data import (US_CLASS_DROP_KEY, US_CLASS_DROP_MAX, DIV_LINE_DROP_KEY, DIV_LINE_BLANK_MAX, US_CLASS_BLIND, us_class_bad_rows,
@@ -4874,17 +4874,18 @@ def add_percentiles(stocks):
     """규모·가치·모멘텀·퀄리티·저변동을 시장 내 백분위(0~100)로 환산.
     v17.5: 한 시장씩만 받아요. 한국·미국을 한데 섞으면 단위도 기준도 달라 점수가 틀어져요
     (예전엔 섞여서 한국 899종목의 가치 점수가 10점 넘게 달라졌어요).
-    2026-11-24: 회사 주식끼리만 매겨요. 펀드(etf 참 · fund — validate_data.factor_fund)는 순위에서 빼고 점수 칸(FACTOR_KEYS)을 지워요:
-    야후의 ETF priceToBook 은 회사 PBR 이 아니라서 (11-24 발행본 SPY 1.76 · 실제 약 5) 미국 회사의 가치 점수가 최대 3점 틀어졌고 SOXX · TLT 가
-    가치 100점이었어요. 추세 · 저변동 · 규모 순위에도 미국 ETF 33곳 · 국내 상장 인프라 펀드 3곳이 섞였어요."""
+    2026-11-24 (#189): 순위는 회사 주식(우선주 포함)끼리만 매겨요. 펀드(etf 참 · fund — validate_data.factor_fund)는 순위에 들어가지 않고
+    (11-24 발행본: 미국 ETF 33곳 · 국내 상장 인프라 펀드 3곳이 섞여 미국 회사의 가치 점수가 최대 3점 틀어졌어요), 같은 시장 회사들의 분포에
+    견줘 점수를 받아요 (fund_percentile — 화면에서 점수가 사라지지 않게): 회사 중 그 값 이하인 곳의 비율 × 100 (규모 · 가치 · 저변동은
+    100 에서 뺀 값), 회사와 같게 반올림. 입력이 빈 펀드는 예전처럼 그 점수가 없어요. 펀드 행에 있던 점수 칸은 먼저 지워요."""
     mk = {s.get("cls") for s in stocks}
     if len(mk) > 1:
         raise ValueError(f"add_percentiles 에 여러 시장이 섞였어요: {sorted(map(str, mk))}")
     pool = [s for s in stocks if not factor_fund(s)]
-    for s in stocks:
-        if factor_fund(s):
-            for k in FACTOR_KEYS:
-                s.pop(k, None)
+    funds = [s for s in stocks if factor_fund(s)]
+    for s in funds:
+        for k in FACTOR_KEYS:
+            s.pop(k, None)
     df = pd.DataFrame({k: pd.to_numeric(pd.Series([_fin(s.get(k)) for s in pool], dtype="object"), errors="coerce")
                        for k in ("cap", "pbr", "mom", "roe", "vol", "dyt")})
 
@@ -4902,21 +4903,38 @@ def add_percentiles(stocks):
             v = ser.iloc[i]
             if pd.notna(v):
                 s[k] = int(round(v))
+    for k, (col, low_high) in FACTOR_SRC.items():          # 펀드: 회사 분포에 견준 자리 (순위에 들어가지 않아요)
+        ref = np.sort(df[col].dropna().to_numpy(dtype=float))
+        for s in funds:
+            v = fund_percentile(ref, _fin(s.get(col)), low_high)
+            if v is not None:
+                s[k] = v
     return stocks
 
 
+def fund_percentile(ref, x, low_high):
+    """2026-11-24 (#189): 펀드 한 칸의 점수 — 회사 값(ref, 오름차순 · 빈 값 없음) 중 x 이하인 곳의 비율 × 100, low_high 면 100 에서 빼요
+    (낮을수록 높은 점수: 규모 · 가치 · 저변동). 회사 점수(pandas rank pct · 같은 값은 평균 순위)와 같은 자리: 같은 값이 없으면 x 와 같은 값의
+    회사와 같은 점수예요. x 가 없거나 회사 값이 하나도 없으면 None. 반올림은 회사와 같게 int(round(·)). (순수 함수)"""
+    if x is None or not len(ref):
+        return None
+    p = np.searchsorted(ref, x, side="right") / len(ref) * 100
+    return int(round(100 - p if low_high else p))
+
+
 def factor_pool_line(market, stocks, show=8):
-    """2026-11-24: add_percentiles 뒤 로그 한 줄 — 점수를 매긴 회사 수 · 뺀 펀드 수와 이름. 점수가 남은 펀드가 있으면 !! (없어야 해요). (순수 함수)"""
+    """2026-11-24 (#189): add_percentiles 뒤 로그 한 줄 — 순위를 매긴 회사 주식 수 (국내는 우선주 수도) · 회사 분포에 견줘 매긴 펀드 수와 이름.
+    (순수 함수)"""
     fd = [s for s in stocks if factor_fund(s)]
     co = len(stocks) - len(fd)
-    left = [str(s.get("t")) for s in fd if any(s.get(k) is not None for k in FACTOR_KEYS)]
+    npref = sum(1 for s in stocks if not factor_fund(s) and s.get("cls") == "kr" and is_preferred(str(s.get("t") or "")))
     n = {k: sum(1 for s in stocks if not factor_fund(s) and s.get(k) is not None) for k in ("vz", "mz", "lz")}
+    nf = sum(1 for s in fd if any(s.get(k) is not None for k in FACTOR_KEYS))
     names = ", ".join(str(s.get("t")) for s in fd[:show]) + (f" 외 {len(fd) - show}" if len(fd) > show else "")
     ko = {"kr": "국내", "us": "미국"}.get(market, market)
-    return (f"{'  !! ' if left else '· '}팩터 점수 ({ko}): 회사 {co:,}곳끼리 매겨요 "
-            f"(가치 vz {n['vz']:,} · 추세 mz {n['mz']:,} · 저변동 lz {n['lz']:,}) · 펀드 {len(fd)}곳은 빼고 점수 없음"
-            + (f" ({names})" if fd else "")
-            + (f" — 그런데 점수가 남은 펀드 {len(left)}: {', '.join(left[:show])} (관문이 경고해요)" if left else ""))
+    return (f"· 팩터 점수 ({ko}): 회사 주식 {co:,}종목" + (f" (우선주 {npref} 포함)" if npref else "")
+            + f"끼리 순위 (가치 vz {n['vz']:,} · 추세 mz {n['mz']:,} · 저변동 lz {n['lz']:,})"
+            f" · 펀드 {len(fd)}곳은 순위에 넣지 않고 회사 분포에 견줘 매김 (점수 있는 펀드 {nf})" + (f" ({names})" if fd else ""))
 
 
 # ────────────────────────────────────────────────────────────
@@ -16632,7 +16650,7 @@ def main():
     except Exception as e:
         log(f"  !! 상관계수 실패: {e}")
 
-    # 팩터 백분위는 시장 안에서만 (한국은 한국끼리, 미국은 미국끼리) · 2026-11-24: 회사끼리만 (펀드는 점수 없음 · 관문이 경고해요)
+    # 팩터 백분위는 시장 안에서만 (한국은 한국끼리, 미국은 미국끼리) · #189: 순위는 회사끼리만 · 펀드는 회사 분포에 견준 자리 (관문이 다시 매겨 맞춰 봐요)
     add_percentiles(kr)
     add_percentiles(us)
     log(factor_pool_line("kr", kr))

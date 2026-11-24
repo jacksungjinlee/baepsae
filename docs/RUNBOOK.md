@@ -2361,22 +2361,29 @@ sit behind US numbers after a split:
 **Rolling back #176**: a revert PR. Copies written with `pd` are read by the old code as before (it ignores the key); `usSrc.split` is
 ignored by the old gate and the app.
 
-## Factor scores: companies only (팩터 점수 · gate warning "펀드 팩터 점수 없음", since #189)
+## Factor scores: companies only (팩터 점수 · gate warning "팩터 점수: 회사끼리 순위", since #189)
 
 `fetch_data.add_percentiles` ranks the six factor scores (규모 `pz`, 가치 `vz`, 추세 `mz`, 퀄리티 `qz`, 저변동 `lz`, 배당 `dz`, Korea
-only) within each market over companies only: a row with `etf` true or `fund` (`validate_data.factor_fund`, the 2.0 app's `isStockLike`
-rule) is left out of every pool and has no score keys. Until then the 11-24 publish ranked 33 US ETFs (23 of them with Yahoo's
-`priceToBook`, meaningless for a fund: SOXX 0.37, TLT 0.55, SPY 1.76 against a real P/B of about 5) and 3 Korean listed infrastructure
-funds (088980, 415640, 094800) with the companies, so 547 of 665 US companies' `vz` were off by up to 3 points (mean 1.2; JPM 67 → 70,
-TDY 62 → 65), US `mz` · `lz` by up to 2 · 3, Korean `pz` · `mz` · `lz` by 1, and SOXX and TLT scored 가치 100. The log line after the
-ranking is `· 팩터 점수 (국내|미국): 회사 N곳끼리 매겨요 (가치 vz … · 추세 mz … · 저변동 lz …) · 펀드 M곳은 빼고 점수 없음 (names)`; `!!`
-with `그런데 점수가 남은 펀드` means a fund kept a score after the ranking (should never happen). The gate row `펀드 팩터 점수 없음 (pz · vz
-· mz · qz · lz · dz · 경고만)` (`check_fund_scores`) names every fund row (any market, bonds and gold included) that carries one of the six
-keys; it warns, never fails, in every mode, and warns too when it can't read `stocks`. On a warning, check that the publish ran this
-code (a file published before #189 warns with 36 rows) and that the fund's `etf` mark is right (the `etf 표시가 맞음` row). Not changed:
-a US fund's PER · PBR still come from Yahoo, the old app's 종목 고르기 card shows them ("PER / PBR"), and a 2.0 두 종목 비교 with a
-held US ETF shows its PBR; blanking that needs a say-why line, so it is Jack's call. Rolling back: a plain revert PR (funds are ranked
-again from the next publish; the gate row goes with it; no stored data depends on it).
+only) within each market over company shares only (preferred shares included); a row with `etf` true or `fund`
+(`validate_data.factor_fund`, the 2.0 app's `isStockLike` rule) is not in the ranking. Such a fund still gets each score whose input it has,
+placed against that market's companies (`fund_percentile`): p = (companies whose value is at or below the fund's) ÷ (companies with a value)
+× 100, the score is p (추세, 퀄리티, 배당) or 100 − p (규모, 가치, 저변동), rounded with `round()` as the companies' are; with no tie, a fund equal
+to a company's value gets that company's score; a blank input means no score, as before. Why: the 11-24 publish ranked 33 US ETFs (23 with
+Yahoo's `priceToBook`, meaningless for a fund: SOXX 0.37, TLT 0.55, SPY 1.76 against a real P/B of about 5) and 3 Korean listed
+infrastructure funds (088980, 415640, 094800) with the companies, so 547 of 665 US companies' `vz` were off by up to 3 points (mean 1.2;
+JPM 67 → 70, TDY 62 → 65), US `mz` · `lz` by up to 2 · 3, Korean `pz` · `mz` · `lz` by 1. Funds keep their scores so that nothing disappears
+from the old app's 내 포트폴리오의 성향 card or 기업분석 strip (review #189 S1 · S2); theirs move by up to 3 (SPY `lz` 97 → 99, QQQ `vz` 77 → 79;
+SOXX and TLT stay 가치 100, because Yahoo's fund PBR is below every company's). The log line after the ranking is `· 팩터 점수 (국내|미국):
+회사 주식 N종목 (우선주 n 포함)끼리 순위 (가치 vz … · 추세 mz … · 저변동 lz …) · 펀드 M곳은 순위에 넣지 않고 회사 분포에 견줘 매김 (점수 있는
+펀드 m) (names)`. The gate row `팩터 점수: 회사끼리 순위 · 펀드는 회사 분포에 견줌 (다시 매겨 맞춰 봄 · 경고만)` (`check_factor_pool`) re-scores
+the file from its own values without pandas (`factor_score_diffs`: average rank ÷ count × 100 for companies, the formula above for funds)
+and names every cell that differs, plus any score on a `fund` row, a bond, gold or another non-stock row; it warns, never fails, in every
+mode, and warns too when it can't read `stocks`. On a warning: a file published before #189 differs in about 2,000 cells (expected until
+the first publish with this code); otherwise a fund ranked with the companies, a score input changed after the ranking, or a wrong `etf`
+mark (see the `etf 표시가 맞음` row). Not changed: a US fund's PER · PBR (and so its 가치 score) still come from Yahoo; the old app's 종목
+고르기 card shows them ("PER / PBR"), and a 2.0 두 종목 비교 with a held US ETF shows its PBR; blanking them needs a say-why line, so it is
+Jack's call. Rolling back: a plain revert PR (funds are ranked with companies again from the next publish; the gate row goes with it; no
+stored data depends on it).
 
 ## Roll back
 

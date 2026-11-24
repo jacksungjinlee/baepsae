@@ -26,15 +26,18 @@ v19.6g, v19.6h.
 
 **Factor scores, companies only (#189, 2026-11-24; found on the 11-24 publish):** `add_percentiles` ranked 33 US ETFs (23 with Yahoo's
 `priceToBook`, meaningless for a fund: SPY 1.76, really about 5) and 3 Korean listed infrastructure funds together with companies, so
-547 US companies' 가치 (`vz`) were off by up to 3 points (mean 1.2) and SOXX · TLT scored 가치 100. After it merges, the next publish
-ranks companies only in each market (`validate_data.factor_fund`: `etf` true or `fund`, the 2.0 `isStockLike` rule); funds get no
-`pz vz mz qz lz dz`; US companies' `vz` · `mz` · `lz` move by up to 3, Korean `pz` · `mz` · `lz` by at most 1. Expect the log lines
-`· 팩터 점수 (국내): 회사 2,508곳끼리 …` and `· 팩터 점수 (미국): 회사 767곳끼리 … 펀드 33곳은 빼고 점수 없음` and the new warning-only gate
-row `펀드 팩터 점수 없음 (… · 경고만)` as PASS `없음` (the deploy gate on a file published before it warns with 36 rows). No screen text.
-Screen effects: the old app's 내 포트폴리오의 성향 no longer counts a held ETF (as for Korean ETFs already), and the 3 infrastructure funds'
-old 기업분석 pages lose their factor bars. **Open for Jack (not built):** a US fund's PBR still reaches two screens — the old app's
-종목 고르기 card ("PER / PBR", `src/detail.jsx` StockRow) and 2.0's 두 종목 비교 when a US ETF is held (`src/v2/compare.jsx` PBR row); blanking
-it needs a say-why line (none approved says why a fund has no PBR). RUNBOOK § Factor scores.
+547 US companies' 가치 (`vz`) were off by up to 3 points (mean 1.2). After it merges, the next publish ranks companies only in each market
+(`validate_data.factor_fund`: `etf` true or `fund`, the 2.0 `isStockLike` rule): US companies' `vz` · `mz` · `lz` move by up to 3, Korean
+`pz` · `mz` · `lz` by at most 1. Funds keep their scores (review S1 · S2: nothing may disappear from the old app's 성향 card or 기업분석
+strip without a line), placed against their market's companies without joining the ranking (`fetch_data.fund_percentile`: share of
+companies at or below the fund's value × 100; 규모 · 가치 · 저변동 100 minus that); they move by up to 3 (SPY `lz` 97 → 99, QQQ `vz` 77 → 79,
+088980 unchanged). Expect the log lines `· 팩터 점수 (국내): 회사 주식 2,508종목 (우선주 62 포함)끼리 순위 …` and `· 팩터 점수 (미국): 회사 주식
+767종목끼리 순위 … 펀드 33곳은 순위에 넣지 않고 회사 분포에 견줘 매김 (점수 있는 펀드 33)` and the new warning-only gate row
+`팩터 점수: 회사끼리 순위 · 펀드는 회사 분포에 견줌 (다시 매겨 맞춰 봄 · 경고만)` as PASS `모두 같음` (the deploy gate on a file published before
+it warns: about 2,000 cells differ). No screen text. **Open for Jack (not built):** a US fund's 가치 score still comes from Yahoo's
+meaningless fund PBR (SOXX · TLT 100, used by the old app's 성향 card), and its PBR reaches two screens — the old app's 종목 고르기 card
+("PER / PBR", `src/detail.jsx` StockRow) and 2.0's 두 종목 비교 when a US ETF is held (`src/v2/compare.jsx` PBR row); fixing either needs a
+say-why line. RUNBOOK § Factor scores.
 
 **Clean error text (#178, branch `claude/clean-error-text`, for 11-24; pipeline only, the gate unchanged):** the gate's frozen word row
 ("글자에 nan·None·null·undefined 없음") failed on text the pipeline wrote itself, so one caught error (`pxSrc.own.err`, `usSrc.own.err`),
