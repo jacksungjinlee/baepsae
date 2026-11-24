@@ -2,11 +2,12 @@
 """뱁새 2.0: 미국 종목의 '오늘'은 뉴욕 날짜예요 (audit 2.1 · 2.2, 2026-11-24) — Node 에서 시계를 고정해 돌려봐요.
 
 - 2.1 달러 기록 (샀어요 · 팔았어요 · 배당 받았어요 · 매수 계획의 샀어요): 한국 자정이 지난 미국 장(겨울 23:30~06:00 KST)에 적으면
-  한국 날짜는 뉴욕의 내일이에요. 양식은 뉴욕 날짜로 열리고, 그 날짜(안내 줄 "미국 주식은 미국 현지 날짜로 적어 주세요."가 묻는 날짜)는
+  한국 날짜는 뉴욕의 내일이에요. 양식은 그 거래가 잡히는 미국 날짜로 열리고 (format.usTradeDay: 뉴욕 날짜인데, 뉴욕 20:00 부터는
+  주간거래가 다음 거래일로 잡혀서 다음 날 — 겨울 10:00 KST, 여름 09:00 KST 에 넘어가요), 그 날짜(안내 줄 "미국 주식은 미국 현지 날짜로 적어 주세요."가 묻는 날짜)는
   환율 기록이 아직 그날을 모를 때 오늘 환율(data.json fx)로 저장돼요 (main 은 rateNotYet 으로 거절했어요). 환율 기록에 그날이 있으면
   (다음 날 아침) 그 줄 — main 과 같아요. 한국 날짜까지는 예전처럼 적을 수 있어요. 분할은 기록 날짜(미국 거래일)로 읽어요: 한국 날짜가
   분할일이면 뉴욕 날짜로 적은 매수는 분할 전이에요.
-- 원화 기록은 같은 시계에서 main 과 똑같아요 (usToday 가 없을 때와 결과가 같아요).
+- 원화 기록은 같은 시계에서 main 과 똑같아요 (usDay 가 없을 때와 결과가 같아요).
 - 2.2 오늘 볼 것 · 다가오는 일정: 미국 실적 발표 · 배당락일(미국 현지 날짜)은 뉴욕 자정까지 남아요 (main 은 한국 자정에 뺐어요).
 고정 시계: 겨울 평일 01:00 · 05:30 KST, 여름(서머타임) 01:00 · 05:30 KST, 미국 휴일(추수감사절), 한국 날짜에 분할이 있는 날.
 기대값은 손으로 (뉴욕 날짜는 Python zoneinfo 로도) 셌어요. 기기 시간대가 달라도 같아요 (TZ 여러 개로 돌려요).
@@ -72,8 +73,8 @@ const S5930 = { t: '005930', nk: '삼성전자', cls: 'kr', price: 225000 };
 const SAAPL = { t: 'AAPL', nk: 'Apple Inc.', cls: 'us', ccy: 'USD', price: 344.63 };
 // the app's load state for rateEnv: fresh data, today's fx, and the history as the last publish before the clock had it
 const loadOf = (asOf, { stale = false, fx = 1340.7 } = {}) => ({ status: 'ok', data: { fx, fxDate: asOf },
-  macro: { fxHist: { asOf, final: true, rows: [['2016-01-04', 1172.5], ['2026-06-30', 1380.0], ['2026-07-13', 1375.2], ['2026-11-19', 1330.0], ['2026-11-20', 1336.2],
-    ['2026-11-23', 1345.9], ['2026-11-25', 1351.5]].filter(([d]) => d <= asOf) } }, fresh: { stale } });
+  macro: { fxHist: { asOf, final: true, rows: [['2016-01-04', 1172.5], ['2026-06-30', 1380.0], ['2026-07-13', 1375.2], ['2026-07-14', 1371.0], ['2026-11-19', 1330.0], ['2026-11-20', 1336.2],
+    ['2026-11-23', 1345.9], ['2026-11-24', 1344.1], ['2026-11-25', 1351.5]].filter(([d]) => d <= asOf) } }, fresh: { stale } });
 const noId = (r) => { if (r && r.rec) { const { id, ...rest } = r.rec; return { ...r, rec: rest }; } return r; };
 """
 
@@ -110,12 +111,12 @@ def test_today_in_new_york_follows_daylight_saving_and_never_runs_ahead_of_korea
 
 def test_a_dollar_record_after_korean_midnight_opens_on_the_new_york_date_and_saves_with_todays_rate():
     """At each clock: the form's date (records.recordToday) is New York's; buying, selling and a dividend on that date (typed or left
-    blank) save with today's rate, data.json fx. main refused it ("notYet", rec.rateNotYet): the same call without usToday still does.
+    blank) save with today's rate, data.json fx. main refused it ("notYet", rec.rateNotYet): the same call without usDay still does.
     Korea's date can still be typed (today's rate, as before). Stale data: the today line (rec.noTodayRate), never "notYet"."""
     got = run(f"""
       out = {json.dumps(CLOCKS)}.map(([clock, asOf]) => {{
         const t = at(clock);
-        const today = Fm.todayKst(), us = Fm.todayNy();
+        const today = Fm.todayKst(), us = Fm.usTradeDay();
         const env = Rc.rateEnv(loadOf(asOf), today, us), mainEnv = Rc.rateEnv(loadOf(asOf), today);
         const deck = deckOf();
         const buy = (date, e = env) => noId(Rc.checkPurchase(deck, 'AAPL', {{ qty: '2', price: '', date }}, SAAPL, e));
@@ -146,12 +147,12 @@ def test_a_dollar_record_after_korean_midnight_opens_on_the_new_york_date_and_sa
 def test_the_morning_after_a_new_york_dated_record_keeps_the_rate_of_its_day_as_on_main():
     """09:00 KST: New York's date is still yesterday's in Korea and the 06:40 publish has that day's Seoul close in the history. A record
     on that date takes that row (as main does for the same typed date), not data.json fx. After New York's midnight (14:00 KST in
-    winter) both dates are the same day: today's rate, as on main. Every date from 2016 to Korea's today: the rate with usToday equals
+    winter) both dates are the same day: today's rate, as on main. Every date from 2016 to Korea's today: the rate with usDay equals
     main's except on New York's today when the history does not have it."""
     got = run("""
       const one = (clock, asOf) => {
         at(clock);
-        const today = Fm.todayKst(), us = Fm.todayNy();
+        const today = Fm.todayKst(), us = Fm.usTradeDay();
         const env = Rc.rateEnv(loadOf(asOf), today, us), mainEnv = Rc.rateEnv(loadOf(asOf), today);
         const days = [];
         for (let d = Date.parse('2015-12-25T00:00:00Z'); ; d += 86400000) { const x = new Date(d).toISOString().slice(0, 10); if (x > today) break; days.push(x); }
@@ -182,7 +183,7 @@ def test_a_split_on_the_korean_date_counts_the_new_york_dated_purchase_before_it
     applies to any date before a split). A split on New York's date itself: the record is already on the new count (factor 1)."""
     got = run("""
       at('2026-11-24T01:00:00+09:00');
-      const today = Fm.todayKst(), us = Fm.todayNy();
+      const today = Fm.todayKst(), us = Fm.usTradeDay();
       const env = Rc.rateEnv(loadOf('2026-11-20'), today, us), mainEnv = Rc.rateEnv(loadOf('2026-11-20'), today);
       const deck = deckOf({ holdings: [{ t: 'AAPL', nk: 'Apple Inc.', target: 1, rules: band(1) }], purchases: [] });
       const mine = noId(Rc.checkPurchase(deck, 'AAPL', { qty: '10', price: '250', date: '' }, SAAPL, env)).rec;
@@ -204,7 +205,7 @@ def test_a_split_on_the_korean_date_counts_the_new_york_dated_purchase_before_it
 
 def test_won_records_at_the_same_clocks_are_exactly_as_on_main():
     """Korean stocks (and 379800-like won listings with cls "us": the currency decides, never cls) at every clock: the form's date is
-    Korea's, and every check gives exactly what main's env (no usToday) gives, for a blank date, Korea's date, New York's date and a
+    Korea's, and every check gives exactly what main's env (no usDay) gives, for a blank date, Korea's date, New York's date and a
     past date. A dollar record's checks on a date that is not New York's today are unchanged too."""
     got = run(f"""
       const S379 = {{ t: '379800', nk: 'KODEX 미국S&P500', cls: 'us', price: 21000 }};
@@ -212,7 +213,7 @@ def test_won_records_at_the_same_clocks_are_exactly_as_on_main():
         purchases: [...deckOf().purchases, {{ id: 'p3aaaaaa', t: '379800', qty: 5, price: 20000, date: '2026-06-02', ccy: 'KRW' }}] }});
       out = {json.dumps(CLOCKS)}.map(([clock, asOf]) => {{
         at(clock);
-        const today = Fm.todayKst(), us = Fm.todayNy();
+        const today = Fm.todayKst(), us = Fm.usTradeDay();
         const env = Rc.rateEnv(loadOf(asOf), today, us), mainEnv = Rc.rateEnv(loadOf(asOf), today);
         const diffs = [];
         const same = (label, f) => {{ const a = JSON.stringify(noId(f(env))), b = JSON.stringify(noId(f(mainEnv))); if (a !== b) diffs.push([label, a, b]); return JSON.parse(a); }};
@@ -273,3 +274,85 @@ def test_today_look_keeps_a_us_event_until_new_york_midnight():
     assert s["2026-07-15T13:00:00+09:00"]["rows"] == [["AAPL", "xd", "2026-07-21"]]
     assert all(v["restSame"] for _, v in got["win"] + got["sum"])
     assert got["direct"] == [["NVDA", "earn", "2026-11-24"], ["AAPL", "earn", "2026-12-01"]]
+
+
+def test_the_record_date_rolls_over_at_20_00_new_york_when_the_overnight_session_books_the_next_day():
+    """#191 round 1: US overnight-session (주간거래) trades from 20:00 to 24:00 New York are booked on the next US trading day, so a
+    dollar record's date (format.usTradeDay) is New York's date 4 hours on: it turns at 10:00 KST in winter and 09:00 KST in summer,
+    while 오늘 볼 것 keeps New York's midnight (todayNy: 14:00 / 13:00 KST). Python's zoneinfo agrees at every hour of 2026 and 2027 in
+    five device time zones, and the date is never later than Korea's."""
+    start = dt.datetime(2026, 1, 1, 0, 30, tzinfo=dt.timezone.utc)
+    hours = [start + dt.timedelta(hours=h) for h in range(0, 2 * 365 * 24, 1)]
+    want = [(h + dt.timedelta(hours=4)).astimezone(NY).date().isoformat() for h in hours]
+    assert all(w <= h.astimezone(KST).date().isoformat() for w, h in zip(want, hours))
+    t0 = int(start.timestamp() * 1000)
+    for tz in ZONES:
+        got = run(f"out = []; for (let h = 0; h < {len(hours)}; h++) out.push(Fm.usTradeDay({t0} + h * 3600000));", tz=tz)
+        assert got == want, tz
+    edges = [("2026-11-24T09:59:00+09:00", "2026-11-23", "2026-11-23"), ("2026-11-24T10:00:00+09:00", "2026-11-24", "2026-11-23"),
+             ("2026-11-24T13:59:00+09:00", "2026-11-24", "2026-11-23"), ("2026-11-24T14:00:00+09:00", "2026-11-24", "2026-11-24"),
+             ("2026-07-15T08:59:00+09:00", "2026-07-14", "2026-07-14"), ("2026-07-15T09:00:00+09:00", "2026-07-15", "2026-07-14"),
+             ("2026-07-15T12:59:00+09:00", "2026-07-15", "2026-07-14"), ("2026-07-15T13:00:00+09:00", "2026-07-15", "2026-07-15"),
+             ("2026-11-01T08:59:00+09:00", "2026-10-31", "2026-10-31"), ("2026-11-01T09:00:00+09:00", "2026-11-01", "2026-10-31"),   # EDT
+             ("2026-11-02T09:59:00+09:00", "2026-11-01", "2026-11-01"), ("2026-11-02T10:00:00+09:00", "2026-11-02", "2026-11-01"),   # EST
+             ("2026-03-09T08:59:00+09:00", "2026-03-08", "2026-03-08"), ("2026-03-09T09:00:00+09:00", "2026-03-09", "2026-03-08")]   # EDT
+    got = run(f"out = {json.dumps([e[0] for e in edges])}.map((x) => {{ at(x); return [Fm.usTradeDay(), Fm.todayNy(), Fm.usTradeDay(new Date(Date.parse(x)))]; }});")
+    assert got == [[d, n, d] for _, d, n in edges], got
+
+
+def test_in_the_overnight_window_a_dollar_record_opens_on_the_korean_date_as_on_main():
+    """10:00–13:59 KST in winter (09:00–12:59 summer): the record's date is Korea's (the trade is booked on the next US day), so the form
+    opens on it and saves today's rate, exactly what main gave; a split starting that day leaves the record on the new count (factor 1).
+    09:59 KST: New York's date, which the 06:40 publish already has: that day's history row (1,344.1원 here), as main gives the same typed
+    date. Every check equals main's then (only the default date differs before 10:00)."""
+    got = run("""
+      const one = (clock, asOf) => {
+        at(clock);
+        const today = Fm.todayKst(), us = Fm.usTradeDay();
+        const env = Rc.rateEnv(loadOf(asOf), today, us), mainEnv = Rc.rateEnv(loadOf(asOf), today);
+        const deck = deckOf({ holdings: [{ t: 'AAPL', nk: 'Apple Inc.', target: 1, rules: band(1) }], purchases: [] });
+        const rec = noId(Rc.checkPurchase(deck, 'AAPL', { qty: '10', price: '250', date: '' }, SAAPL, env)).rec;
+        const typed = noId(Rc.checkPurchase(deck, 'AAPL', { qty: '10', price: '250', date: us }, SAAPL, env));
+        const mainTyped = noId(Rc.checkPurchase(deck, 'AAPL', { qty: '10', price: '250', date: us }, SAAPL, mainEnv));
+        const later = (date) => (H.heldUnits({ purchases: [{ id: 'p9aaaaaa', ...rec }], [H.VIEW_SPLITS]: [{ t: 'AAPL', date, r: 10 }] }).get('AAPL') || 0) / H.UNIT;
+        return { today, us, rec, same: JSON.stringify(typed) === JSON.stringify(mainTyped), onRolled: later(us), nextDay: later(new Date(Date.parse(us + 'T00:00:00Z') + 86400000).toISOString().slice(0, 10)) };
+      };
+      out = [one('2026-11-25T09:59:00+09:00', '2026-11-24'), one('2026-11-25T10:00:00+09:00', '2026-11-24'), one('2026-11-25T13:59:00+09:00', '2026-11-24'),
+        one('2026-07-15T08:59:00+09:00', '2026-07-14'), one('2026-07-15T09:00:00+09:00', '2026-07-14'), one('2026-07-15T12:59:00+09:00', '2026-07-14')];
+      Date.now = RealNow;""")
+    want = [("2026-11-25", "2026-11-24", 1344.1), ("2026-11-25", "2026-11-25", 1340.7), ("2026-11-25", "2026-11-25", 1340.7),
+            ("2026-07-15", "2026-07-14", 1371.0), ("2026-07-15", "2026-07-15", 1340.7), ("2026-07-15", "2026-07-15", 1340.7)]
+    for g, (kr, us, rate) in zip(got, want):
+        assert [g["today"], g["us"]] == [kr, us], g
+        assert g["rec"] == {"t": "AAPL", "date": us, "qty": 10, "price": 250, "ccy": "USD", "fx": rate}, g
+        assert g["same"] is True, g
+        assert g["onRolled"] == 10 and g["nextDay"] == 100, g          # a split starting on the record's own date: already the new count
+
+
+def test_monday_morning_in_korea_a_dollar_record_opens_on_sunday_in_new_york():
+    """Monday 00:00–09:59 KST (winter) is Sunday in New York and no session is open, so the record's date is Sunday: the calendar date,
+    not stepped back to Friday (simplest rule, no new words). It reads like Friday for splits (no split is ever dated on a weekend: a
+    split starting Monday counts it before, ×10), takes today's rate while the history ends on Friday, and once the history passes
+    Sunday the last row before it, Friday's (as any weekend date on main). From 10:00 KST it is Monday (the overnight session)."""
+    got = run("""
+      const one = (clock, asOf) => { at(clock); const today = Fm.todayKst(), us = Fm.usTradeDay(); const env = Rc.rateEnv(loadOf(asOf), today, us);
+        const r = noId(Rc.checkPurchase(deckOf(), 'AAPL', { qty: '10', price: '250', date: '' }, SAAPL, env)).rec;
+        return { today, us, date: r.date, fx: r.fx, split: (H.heldUnits({ purchases: [{ id: 'p9aaaaaa', ...r }], [H.VIEW_SPLITS]: [{ t: 'AAPL', date: '2026-11-23', r: 10 }] }).get('AAPL') || 0) / H.UNIT }; };
+      at('2026-11-23T09:00:00+09:00');
+      const later = Rc.rateFor('2026-11-22', Rc.rateEnv(loadOf('2026-11-23'), '2026-11-24', '2026-11-24'));
+      out = { mon9: one('2026-11-23T09:00:00+09:00', '2026-11-20'), mon10: one('2026-11-23T10:00:00+09:00', '2026-11-20'), later };
+      Date.now = RealNow;""")
+    assert got["mon9"] == {"today": "2026-11-23", "us": "2026-11-22", "date": "2026-11-22", "fx": 1340.7, "split": 100}, got
+    assert got["mon10"] == {"today": "2026-11-23", "us": "2026-11-23", "date": "2026-11-23", "fx": 1340.7, "split": 10}, got
+    assert got["later"] == {"ok": True, "fx": 1336.2}                        # the history's last row before Sunday: Friday 11-20
+
+
+def test_a_history_whose_last_row_is_not_final_gives_the_us_trade_date_todays_rate_as_korea_today_on_main():
+    """records.rateFor with fxHist final not true (never under ecos_close, the source in use): a date whose rate would be that
+    unfinished last row is refused "past" as on main, except the US trade date of now, which takes today's rate exactly as Korea's
+    today does on main (the unfinished last row is that run's live rate). Pinned here (#191 round-1 nit)."""
+    got = run("""
+      const LD = loadOf('2026-11-23'); LD.macro.fxHist.final = false;
+      const env = Rc.rateEnv(LD, '2026-11-24', '2026-11-23'), mainEnv = Rc.rateEnv(LD, '2026-11-24');
+      out = [Rc.rateFor('2026-11-23', env), Rc.rateFor('2026-11-23', mainEnv), Rc.rateFor('2026-11-24', mainEnv), Rc.rateFor('2026-11-20', env)];""")
+    assert got == [{"ok": True, "fx": 1340.7}, {"ok": False, "why": "past"}, {"ok": True, "fx": 1340.7}, {"ok": True, "fx": 1336.2}]

@@ -32,7 +32,7 @@
 import React, { useEffect, useMemo } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, TOUCH } from "../ui/tokens.js";
 import { HeroBand, StatStrip, ListRow, Button } from "../ui/components.jsx";
-import { C, fill, mdText, wonText, todayKst, todayStaleText } from "./format.js";
+import { C, fill, mdText, wonText, todayKst, todayNy, todayStaleText } from "./format.js";
 import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, OwnCloseNote, KrAgedLine, Cols, useLayout, useRoomy, useCol, useNav, tx, tap } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { isCompany, ownCloses, ownCloseGroups } from "./stocklist.js";
@@ -269,7 +269,7 @@ function ImportedStrip({ deck, de, ctx, load, go, late = false }) {
 function WatchLook({ load, store, onWatch, disc = null, onToday = null }) {
   const canMark = !!(store.writable && !store.locked);
   const hits = useMemo(() => watchHits(store.data, load, undefined, canMark), [store.data, load, canMark]);
-  const m = useMemo(() => lookModel(load, store, disc, todayKst()), [load, store, disc]);
+  const m = useMemo(() => lookModel(load, store, disc, todayKst()), [load, store, disc, todayKst(), todayNy()]);   // again when either date turns
   useEffect(() => { lookSay(m, "home"); }, [m]);
   const notes = m.discFail || m.discOld || m.issueFail;
   if ((!hits.length && !lookRowCount(m) && !notes) || !C.home.look) return null;

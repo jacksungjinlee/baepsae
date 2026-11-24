@@ -2605,9 +2605,17 @@ ignored by the old gate and the app.
     date: that date's row, or the last row before it (a weekend or Korean holiday uses the last row before). **Contract,
     for every source: rows speak only for dates on or before `asOf`. The app refuses any later date, except today, which
     uses `data.json` `fx` when the data is fresh.** A date with no row on or before it is refused too (under ECOS:
-    2016-01-01 to 01-03, before its first business day).
+    2016-01-01 to 01-03, before its first business day). "Today" is Korea's date and, for a dollar record, also the US trade
+    date of now (#191, audit 2.1; waits for Jack's yes, as it replaces his `rec.rateNotYet` refusal of 11-13 for this one
+    date): New York's date, rolled over at 20:00 New York when the overnight session (주간거래) starts booking the next
+    trading day (`format.usTradeDay`; it differs from Korea's date from 00:00 to 10:00 KST in winter, 09:00 in summer). That
+    date uses `data.json` `fx` only while the history does not have it yet (during the US session after Korean midnight,
+    before the 06:40 publish); once the history has it, its own row, as any past date. Stale data: the today line
+    (`rec.noTodayRate`). Any other date after `asOf` keeps `rec.rateNotYet`.
   - **Which date a record uses (for the app):** the US trading date of the purchase, sale or dividend, as the user typed
-    it. Row D of each source means:
+    it. The forms open on the US trade date of now for a dollar stock (`records.recordToday`; 매수 계획's 샀어요 dates its
+    dollar rows so when its date is left blank) and on Korea's date for every other stock; any date up to Korea's today
+    can be typed. Row D of each source means:
     - `ecos_close`: the Seoul 15:30 close on Korean business day D (ECOS 731Y003 · 0000003). ECOS posts it during the
       night (it was there by about 02:00 KST the next day; the exact time is not published). If the 06:40 run finds it
       missing, the history simply ends one business day earlier, the gate warns (holiday-table check below), and that

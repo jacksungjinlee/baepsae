@@ -43,7 +43,7 @@ import React, { useMemo } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, holdingShades, HOLDING_SHADES } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { Amount, Button } from "../ui/components.jsx";
-import { C, fill, p1, mdText, wonText, todayKst } from "./format.js";
+import { C, fill, p1, mdText, wonText, todayKst, todayNy } from "./format.js";
 import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, OwnCloseNote, KrAgedLine, Cols, useLayout, useRoomy, useNav, tx, tap } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { isCompany, ownCloses } from "./stocklist.js";
@@ -412,7 +412,7 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
   const canMark = !!(store.writable && !store.locked);
   const hits = useMemo(() => (ev.ok ? watchHits(store.data, load, undefined, canMark) : []), [store.data, load, ev.ok, canMark]);
   // v19.6b (Part B.2): the 오늘 볼 것 cards (fresh data only); the console names what they leave out
-  const lm = useMemo(() => lookModel(load, store, disc, todayKst()), [load, store, disc]);
+  const lm = useMemo(() => lookModel(load, store, disc, todayKst()), [load, store, disc, todayKst(), todayNy()]);   // again when either date turns
   React.useEffect(() => { lookSay(lm, "home"); }, [lm]);
   const look = lookOf(blocks, held, disc, kr, hits, lm);
   // late data within 5 trading days (rules.js checkState, Jack 2026-11-19): the date of the close the check ran on

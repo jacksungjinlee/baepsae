@@ -112,3 +112,10 @@ export function todayKst(now) {
 export function todayNy(now) {
   return todayIn("America/New_York", now);
 }
+// The US trading date a dollar trade made now is booked on: New York's date 4 hours from now. A trade from 20:00 New York time
+// (the overnight session, 주간거래: 10:00–14:00 KST in winter, 09:00–13:00 in summer) is booked on the next US trading day
+// (round-1 review of #191), so a dollar record's date rolls over at 20:00 New York, not at midnight. A weekend or a US holiday
+// is not skipped (the calendar date; no split is ever dated on one). Never later than todayKst (New York + 4 h is UTC or UTC−1).
+export function usTradeDay(now) {
+  return todayIn("America/New_York", new Date(now == null ? Date.now() : now).getTime() + 4 * 3600 * 1000);
+}

@@ -25,12 +25,17 @@ the approved 유상증자 card sentences with proposals for 유무상증자 and 
 v19.6g, v19.6h.
 
 **US dates in 2.0 (#191, 2026-11-24; audit 2.1 and 2.2, minor):** a dollar record (샀어요 · 팔았어요 · 배당 받았어요 · 팔고 빼기 ·
-매수 계획's 샀어요, by currency: `pf.usdOf` / `records.recordCcy`, never cls) now opens on New York's date (`format.todayNy`), the US
-trading date its hint asks for; after Korean midnight (the US session, 23:30–06:00 KST in winter) that date is no longer refused
-with "이 날짜의 환율이 아직 없어요" but takes today's rate (data.json fx) until the history has that day; the morning after it takes
-that day's fxHist row, as before. Korea's date can still be typed (today's rate, as before); won records, the store's checks and
-the records-file import are unchanged (KST; New York's date is never later). 오늘 볼 것 · 다가오는 일정 keeps a US earnings or
-ex-dividend date until New York's midnight (13:00/14:00 KST), not Korean midnight. `tests/test_v2_us_dates.py`. No new Korean.
+매수 계획's 샀어요 with a blank date, by currency: `pf.usdOf` / `records.recordCcy`, never cls) now opens on the US trade date of now
+(`format.usTradeDay`: New York's date, rolled over at 20:00 New York when the overnight session books the next day; it differs from
+Korea's date only from 00:00 to 10:00 KST in winter, 09:00 in summer), the date its hint asks for. Before the 06:40 publish that date
+takes today's rate (data.json fx) instead of main's "이 날짜의 환율이 아직 없어요" (**waits for Jack's yes**: it replaces his 11-13
+refusal for this one date; RUNBOOK updated); after it, that day's fxHist row (so a record made 06:40–10:00 shows a small rate
+effect on 내 수익, by design, #117). Korea's date can still be typed; won records, the store's checks and the records-file import are
+unchanged. 오늘 볼 것 · 다가오는 일정 keeps a US earnings or ex-dividend date until New York's midnight (13:00/14:00 KST). Follow-ups:
+a dollar record's 코스피 comparison starts from the close before its date (lots.js `closeBefore`), so a New York-dated record includes
+that day's 코스피 move (as typed US dates on main); undated 가진 종목 넣기 rows still count splits from `createdAt` (Korea's date);
+이번 주 정리's 다음 주 still starts at Korea's date (an existing test pins it). `tests/test_v2_us_dates.py`,
+`tests/test_v2_us_dates_screens.py`. No new Korean.
 
 **Track 2 audit, money display (#187, 2026-11-24; audit 1.2 · 1.5 · 1.6, minor):** app only, no new words. (1.2) 포트폴리오's held
 row writes US fractional shares with up to 4 decimals (`pfview.qtyText`, as the records already did): 7.5주 / 0.4주 instead of "8주" /
