@@ -3381,8 +3381,26 @@ def us_own_split_late(us, umeta, sp_fields, prev):
         return us, sp_fields
     stash = umeta.get("_usOwnYahoo") if isinstance(umeta.get("_usOwnYahoo"), dict) else {}
     cut = []
-    back = {r["t"]: us_own_restore(r, stash[r["t"]], cut) for r in hit if isinstance(stash.get(r["t"]), dict)}
-    back = {t: x for t, x in back.items() if x is not None}
+    # 2026-11-23 (감사): 되돌릴 야후 봉은 오늘 받은 분할 반영 시계열의 값이고 실은 종가는 그 분할 전 주식 수 기준이에요 — 붙인 보관본도 그 분할 전이면
+    # 그 배율을 곱해 맞춰요 (us_own_restore_split · 보관본의 기준 가격 날짜는 fetch_us 가 _usOwnInfoPd 에 적어요)
+    upx = str(umeta.get("usPxDate") or "")
+    rmap = collections.defaultdict(list)
+    for x in rows:
+        if isinstance(x, (list, tuple)) and len(x) >= 3 and isinstance(x[0], str) and isinstance(x[1], str) and _fin(x[2]) and _fin(x[2]) > 0:
+            rmap[x[0]].append((x[1], _fin(x[2])))
+    ipd = umeta.get("_usOwnInfoPd") if isinstance(umeta.get("_usOwnInfoPd"), dict) else {}
+    rsp = {"x": [], "noDay": [], "odd": []}          # 리뷰 (#176): 되돌린 행마다 곱한 배율 · 보관본 날짜를 몰라 곱하지 않음 · 곱하면 더 멀어져 곱하지 않음
+    back = {}
+    for r in hit:
+        y = stash.get(r["t"])
+        if not isinstance(y, dict):
+            continue
+        f, why = us_own_restore_split(r, y, rmap.get(r["t"]), upx, ipd.get(r["t"]))
+        x = us_own_restore(r, y, cut, split=f)
+        if x is not None:
+            back[r["t"]] = x
+            if why in rsp:
+                rsp[why].append((r["t"], f))
     bad = {r["t"] for r in hit} - set(back)
     pmap = {(x[0], x[1]) for x in ((prev or {}).get("splits") or []) if isinstance(x, (list, tuple)) and len(x) >= 2}
     sp_fields = {**sp_fields, "splits": [x for x in rows if not (x[0] in bad and (x[0], x[1]) not in pmap and (x[0], x[1]) not in SPLIT_OVERRIDES)]}
@@ -3407,18 +3425,68 @@ def us_own_split_late(us, umeta, sp_fields, prev):
     if cut:
         log(f"  !! 예전 길로 되돌린 미국 종목의 PER · PBR · 배당수익률 중 그 가격에 맞추자 범위(apply_us_info 와 같아요)를 벗어나 비운 칸 {len(cut):,}: "
             + ", ".join(cut[:US_OWN_SHOW]))
+    if back:                                  # 리뷰 (#176): 되돌린 행의 상세 숫자에 곱한 분할 배율 (us_own_restore_split) — 크게 · usSrc.split 에도
+        nm = lambda xs: ", ".join(xs[:US_OWN_SHOW]) + (" …" if len(xs) > US_OWN_SHOW else "")
+        log(f"  !! 야후 봉으로 되돌린 미국 종목 {len(back):,}의 상세 숫자 (분할 배율): 곱함 {len(rsp['x']):,}"
+            + (f" ({nm([f'{t} ×{f:g}' for t, f in rsp['x']])})" if rsp["x"] else "")
+            + f" · 보관본 날짜를 몰라 곱하지 않음 {len(rsp['noDay']):,}" + (f" ({nm([t for t, _f in rsp['noDay']])})" if rsp["noDay"] else "")
+            + f" · 곱하면 가격 비율이 1 에서 더 멀어져 곱하지 않음 {len(rsp['odd']):,}" + (f" ({nm([t for t, _f in rsp['odd']])})" if rsp["odd"] else "")
+            + f" · 보관본이 이미 분할 뒤라 곱할 것 없음 {len(back) - sum(len(v) for v in rsp.values()):,}")
+        src = umeta.get("usSrc") if isinstance(umeta.get("usSrc"), dict) else None
+        if src is not None and any(rsp.values()):
+            rec = dict(src.get("split") or {"v": 1}) if isinstance(src.get("split"), dict) else {"v": 1}
+            if rsp["x"]:
+                rec["rx"] = [[t, round(f, 6)] for t, f in rsp["x"]]
+            if rsp["noDay"]:
+                rec["rNoDay"] = [t for t, _f in rsp["noDay"]]
+            if rsp["odd"]:
+                rec["rOdd"] = [t for t, _f in rsp["odd"]]
+            src["split"] = rec
     return kept, sp_fields
 
 
-def us_own_restore(row, y, cut=None):
+def us_own_restore_split(row, y, events, us_px_date, info_day):
+    """2026-11-23 (감사 · #176): 마지막 확인 종가 행(row)을 야후 봉(y)으로 되돌릴 때 곱할 분할 배율 → (배율, 까닭). events = 그 종목의 [(날짜, 배율), …].
+    되돌릴 야후 봉의 가격은 오늘 받은 분할 반영 시계열 값이에요 (us_price_basis_day). 그 행의 상세 숫자는 붙인 보관본(info_day = 그 기준 가격 날짜,
+    us_info_anchor_day)에서 실은 종가로 맞춘 값이라, 곱할 분할은 실은 종가 날짜(pxd)와 info_day 중 늦은 날 뒤예요: 보관본이 그 분할 전이면 곱하고 (그
+    분할은 실은 종가에도 보관본에도 없어요), 분할 뒤 시세 가격으로 받은 보관본이면 곱하지 않아요 (그 숫자는 이미 새 주식 수 기준). 미국 기준일 뒤 날짜의
+    분할도 봐요 (야후 시계열이 벌써 반영했을 수 있어요). 고르기는 us_info_split_view 와 같아요 (리뷰 #176: 1 · 기준일까지의 곱 · 모두의 곱 중 야후 가격 ×
+    배율 ÷ 실은 종가가 1 에 가장 가까운 것 · 같으면 분할을 더 곱한 쪽). 까닭: x 곱함 · noDay 보관본 날짜를 몰라 1 (예전 그대로) · odd 곱하면 가격 비율이
+    1 에서 더 멀어져 1 · none 곱할 분할 없음. (순수 함수)"""
+    pxd = row.get("pxd") if isinstance(row.get("pxd"), str) else None
+    after = [(d, r) for d, r in events or [] if pxd is not None and d > pxd]
+    if not after:
+        return 1.0, "none"
+    if not isinstance(info_day, str):
+        return 1.0, "noDay"
+    lo, upx = max(pxd, info_day), str(us_px_date)
+    hit = [(d, r) for d, r in after if lo < d <= upx]
+    late = [(d, r) for d, r in after if d > lo and d > upx]
+    if not hit and not late:
+        return 1.0, "none"
+    yp, cp = _fin(y.get("price")), _fin(row.get("price"))
+    if not (yp and yp > 0 and cp and cp > 0):
+        return 1.0, "none"
+    fh = math.prod(r for _d, r in hit)
+    cands = ([fh] if hit else []) + ([fh * math.prod(r for _d, r in late)] if late else [])
+    pick, best, picked = 1.0, _logk(yp, cp), False
+    for c in cands:
+        v = _logk(yp, cp, c)
+        if v <= best:
+            pick, best, picked = c, v, True
+    return (pick, "x") if picked else (1.0, "odd")
+
+
+def us_own_restore(row, y, cut=None, split=1.0):
     """마지막 확인 종가 행(row · 상세 정보까지 붙은 것)을 예전 길의 행으로: 야후의 자기 날짜 봉 기록(y · fetch_us 의 시세 기록)의 가격 · 날짜 · 시계열
     숫자를 쓰고 pxc 를 빼요. 그 가격에 맞추는 상세 숫자(PER · PBR · 시가총액 · 배당수익률 · 거래대금)는 가격 비율로 다시 맞춰요 (apply_us_info 와 같은
     자리수 · 같은 범위: PER 0~500 · PBR 0~100 · 0.005 미만 PBR 은 빈 칸 · 배당수익률 0~30% — 벗어나면 그 칸을 비우고 cut 에 '티커 칸' 을 적어요).
-    쓸 수 없으면 None. (순수 함수)"""
+    2026-11-23 (감사): split = 실은 종가 날짜 뒤의 분할 배율 곱 (us_own_restore_split) — 비율은 야후 가격 × 배율 ÷ 실은 종가 (us_rescale 과 같아요 ·
+    분할 뒤 가격은 새 주식 1주의 값). 쓸 수 없으면 None. (순수 함수)"""
     yp, cp = _fin(y.get("price")), _fin(row.get("price"))
     if not (yp and yp > 0 and cp and cp > 0 and isinstance(y.get("pxd"), str)):
         return None
-    k = yp / cp
+    k = us_rescale(yp, cp, split)
     out = {key: v for key, v in row.items() if key not in ("pxc",) and key not in US_OWN_KEYS}
     out.update({key: y[key] for key in US_OWN_KEYS if key in y and y[key] is not None})
     out["pxd"] = y["pxd"]
@@ -12311,8 +12379,10 @@ def us_fin_currency(info):
     return norm_currency(x)
 
 
-def apply_us_info(rec, info, px_then, fx, today=None):
+def apply_us_info(rec, info, px_then, fx, today=None, split=1.0):
     """야후 상세 정보를 종목에 붙여요. 받은 날 이후 가격이 움직였으면 PER·PBR·시총·배당률을 오늘 가격에 맞춰요. (순수 함수)
+    2026-11-23 (감사): split = 보관본의 기준 가격 뒤 · 이 종목 가격까지의 분할 배율 곱 (us_info_split_view · 없으면 1) — 그 비율로 맞추고 (us_rescale),
+    평균 거래량(주식 수)도 오늘 주식 수 기준으로 곱해요 (거래대금 val). 1 이면 예전과 같아요.
     재무제표 통화가 달러가 아니면(us_fin_currency) rec["fcur"] 에 그 코드를 쓰고 PER · PBR · 배당수익률(US_FCUR_BLANK)을 비워요
     (배당수익률 0% 는 US_FCUR_KEEP_ZERO_DY 이고 us_no_dividend_12m(info, today) 일 때만 남겨요 · today 없으면 비워요). 0.00 으로 반올림되는
     PBR 과 매출이 없는 회사의 영업이익률 0 은 빈 칸이에요 (us_info_cuts, #114 리뷰). 그 PBR 은 rec["pbrZero"] = True 로 표시해요 (Jack,
@@ -12337,7 +12407,7 @@ def apply_us_info(rec, info, px_then, fx, today=None):
     if info.get("industry"):
         rec["_yind"] = str(info["industry"])     # 업종 그룹용 (assign_industries 가 쓰고 지워요)
     rec["dk"] = us_desc(rec["s"], info.get("industry") or info.get("sector") or "")
-    k = us_rescale(rec.get("price"), px_then)
+    k = us_rescale(rec.get("price"), px_then, split)
     cuts = us_info_cuts(info, k)
     if "pbr" in cuts and not rec.get("fcur"):
         rec["pbrZero"] = True
@@ -12362,8 +12432,10 @@ def apply_us_info(rec, info, px_then, fx, today=None):
     dyv = _fin(info.get("dividendYield"))
     if dyv is not None and 0 <= dyv / k < 30 and (not rec.get("fcur") or (US_FCUR_KEEP_ZERO_DY and dyv == 0 and us_no_dividend_12m(info, today))):
         rec["dy"] = round(dyv / k, 2)
-    mc = _fin(info.get("marketCap"))
-    cap, val = us_cap_val(mc * k if mc else None, info.get("averageVolume"), rec.get("price"), fx)
+    mc, av, sp = _fin(info.get("marketCap")), _fin(info.get("averageVolume")), _fin(split)
+    if av is not None and sp is not None and sp > 0:
+        av *= sp                                    # 2026-11-23: 분할 전 주식 수의 평균 거래량 → 오늘 주식 수 기준 (분할 없으면 1)
+    cap, val = us_cap_val(mc * k if mc else None, av, rec.get("price"), fx)
     if cap is not None:
         rec["cap"] = cap
     if val is not None:
@@ -12424,10 +12496,203 @@ def us_event_dates(info):
     return ed, xd, bad
 
 
-def us_rescale(price_now, px_then):
-    """받은 날 가격 대비 오늘 가격 배율 (PER · PBR · 시가총액 · 배당수익률을 오늘 가격에 맞춰요). 모르면 1. (순수 함수)"""
+def us_rescale(price_now, px_then, split=1.0):
+    """받은 날 가격 대비 오늘 가격 배율 (PER · PBR · 시가총액 · 배당수익률을 오늘 가격에 맞춰요). 모르면 1. (순수 함수)
+    2026-11-23 (감사 · SNDK 8:1 분할 2026-11-20): split = 보관본의 기준 가격 뒤 · 이 종목 가격까지 있었던 분할 배율의 곱 (us_info_split_view). 분할 뒤
+    가격은 새 주식 1주의 값이라 같은 회사를 비교하려면 오늘 가격 × 배율 ÷ 그때 가격이에요 (8:1 분할 · 움직임 없음 → 1 · 예전에는 1/8). 숫자가
+    아니거나 0 이하면 1 (분할 없음)."""
+    p0, p1, s = _fin(px_then), _fin(price_now), _fin(split)
+    s = s if s is not None and s > 0 else 1.0
+    return p1 * s / p0 if p0 and p1 and p0 > 0 else 1.0
+
+
+# 2026-11-23 (감사 · SNDK 8:1 분할 2026-11-20 · #176): 분할 뒤 보관본 맞춤. 보관본 항목의 기준 가격(px)은 그 실행의 야후 시계열 가격(마지막 확인 종가
+# 종목은 야후 시세 가격)이라 그때의 주식 수 기준이에요. 그 뒤 분할이 있으면 오늘 가격은 다른 주식 수 기준이라, 가격 비율만으로 맞추면 PER · PBR · 시가총액이
+# 배율만큼 작아지고 배당수익률이 커져요 (감사 재현: 분할 이틀 전 보관본 · 8:1 · 움직임 없음 → PER 40 → 5.0). 그래서 배율을 곱해요 (us_rescale ·
+# apply_us_info split). 리뷰 (#176 1차): 분할 바로 뒤 야후의 새 상세 정보가 오히려 분할 전 주당 숫자일 때가 있어요 (11-21 SNDK PBR 0.63 — 맞는 값
+# 약 5) — 곱할 수 있는 보관본을 그 때문에 버리지 않아요: 배율을 믿을 수 있으면 (us_info_split_view use) 따로 다시 받지 않고, 보통 때처럼 다시 받은 새
+# 상세 정보는 보관본 × 배율과 맞춰 봐요 (us_info_fresh_vs_copy · 다르면 보관본). 다시 받는 것은 배율을 믿을 수 없을 때(odd)와 분할을 모르는데 가격이
+# US_INFO_JUMP 배 넘게 달라졌을 때(jump · 늦게 알려진 분할일 수 있어요)뿐이에요.
+US_INFO_JUMP = 2.0
+
+
+def us_info_split_map(recent, prev):
+    """→ {티커: [(날짜 ISO, 배율), …] (날짜 순)} — 보관본 맞춤(us_info_split_view)이 보는 분할. (순수 함수)
+    발행할 splits(main 의 splits_fields → merge_splits)와 같은 출처를 같은 규칙으로 합쳐요: 바탕 = 지난 발행본의 data.json splits (splits_prev · 같은
+    종목 · 날짜면 바탕 값) + 오늘 시세 다운로드의 분할 칸(recent = us_splits 결과 [[티커, 날짜, 배율], …]) + 고정 표 SPLIT_OVERRIDES (배율 = 넣거나
+    바꿈 · None = 빼기 — 분사). 같은 종목 · 같은 배율인데 날짜가 SPLIT_SAME_EVENT_DAYS 안에서 다른 줄은 한 사건이라 한 번만 곱해요 — 날짜는 야후의
+    지금 날짜 (리뷰 #176: 오늘 가격의 야후 시계열은 그 날짜로 맞춰져 있어요 · 발행할 splits 는 merge_splits 대로 바탕 날짜를 둬요). 시드와 2016년부터
+    다시 읽는 이력은 보지 않아요: 시드는 오래된 이력이고, 다시 읽는 종목의 최근 분할은 오늘 다운로드에도 있어요 (보관본은 14일까지만)."""
+    base = splits_prev(prev)[0]
+    out = dict(base)
+    by_t = collections.defaultdict(list)
+    for (t, d), r in base.items():
+        by_t[t].append((d, r))
+    fixed = collections.defaultdict(list)            # 리뷰 #176 2차: 고정 표의 줄 (배율 있는 것) — 옮기지 않고, 그 근처의 야후 줄은 같은 사건 (두 번 곱하지 않게)
+    for (t, d), (r, _why) in SPLIT_OVERRIDES.items():
+        if r is not None:
+            fixed[t].append((d, r))
+    moved = set()
+    for x in recent or []:
+        if not (isinstance(x, (list, tuple)) and len(x) == 3 and isinstance(x[0], str) and isinstance(x[1], str)):
+            continue
+        t, d, r = x[0], x[1], _fin(x[2])
+        try:
+            dd = dt.date.fromisoformat(d)
+        except ValueError:
+            continue
+        if r is None or r <= 0 or (t, d) in base or (t, d) in out:
+            continue                                  # 같은 종목 · 날짜가 바탕에 있으면 바탕 값 (merge_splits 와 같아요)
+        if (t, d) in SPLIT_OVERRIDES or any(_same_r(fr, r) and abs((dt.date.fromisoformat(fd) - dd).days) <= SPLIT_SAME_EVENT_DAYS
+                                            for fd, fr in fixed.get(t, [])):
+            continue                                  # 고정 표가 정한 사건 (아래에서 고정 표 값으로)
+        near = [bd for bd, br in by_t.get(t, []) if _same_r(br, r) and abs((dt.date.fromisoformat(bd) - dd).days) <= SPLIT_SAME_EVENT_DAYS]
+        if near:                                      # 야후가 날짜를 옮긴 같은 사건 → 야후의 지금 날짜로 한 번 (두 번 곱하지 않게)
+            if (t, near[0]) not in moved:
+                out.pop((t, near[0]), None)
+                out[(t, d)] = r
+                moved.add((t, near[0]))
+            continue
+        out[(t, d)] = r
+    for (t, d), (r, _why) in SPLIT_OVERRIDES.items():
+        if r is None:
+            out.pop((t, d), None)
+        else:
+            out[(t, d)] = r
+    res = collections.defaultdict(list)
+    for (t, d), r in sorted(out.items()):
+        res[t].append((d, r))
+    return dict(res)
+
+
+def us_info_anchor_day(entry):
+    """보관본 항목의 기준 가격(px)이 어느 미국 날짜의 주식 수 기준인지 (ISO) — 읽지 못하면 None. (순수 함수)
+    2026-11-23 부터 받는 항목은 "pd" = 그 실행의 미국 기준일 (야후 시계열은 받는 때까지의 분할을 반영해요 · 마지막 확인 종가 종목의 기준 가격은 야후의
+    지금 시세 가격). 예전 항목(pd 없음)은 받은 날(at · 한국 날짜) 하루 전: 한국 날짜 D 의 실행이 가진 미국 종가는 늘 D−1 이하라, D 이후 날짜의 분할은
+    확실히 기준 가격 뒤예요 (D−1 이하의 분할은 그 전이라고 봐요 — 예전 그대로)."""
+    if not isinstance(entry, dict):
+        return None
+    p = entry.get("pd")
+    if isinstance(p, str):
+        try:
+            if dt.date.fromisoformat(p).isoformat() == p:
+                return p
+        except ValueError:
+            pass
+    try:
+        return (dt.date.fromisoformat(str(entry.get("at"))) - dt.timedelta(days=1)).isoformat()
+    except ValueError:
+        return None
+
+
+def us_price_basis_day(rec, us_px_date):
+    """이 종목 가격이 어느 미국 날짜의 주식 수 기준인지 (ISO). 마지막 확인 종가(pxc)는 그 종가 날짜(pxd — 지난 발행본의 가격 그대로라 그 뒤 분할을
+    반영하지 않아요 · 그런 분할이 있으면 싣지 않아요: us_own_close_carry) · 다른 행은 오늘 받은 야후 시계열의 값이라 미국 기준일 (자기 날짜 봉 pxd 도
+    오늘 받은 분할 반영 시계열의 값이에요). (순수 함수)"""
+    if rec.get("pxc") and isinstance(rec.get("pxd"), str):
+        return rec["pxd"]
+    return us_px_date.isoformat() if isinstance(us_px_date, dt.date) else str(us_px_date)
+
+
+def _logk(price_now, px_then, split=1.0):
+    return abs(math.log(us_rescale(price_now, px_then, split)))
+
+
+def us_info_split_ok(price_now, px_then, split):
+    """분할 배율을 곱해도 되는지 (순수 함수): 곱한 가격 비율이 곱하지 않은 것보다 1 에 가깝거나 같아야 해요 (로그 거리). 날짜로 고른 분할인데 곱하면
+    더 멀어지면 보관본이 이미 분할 뒤 값일 수 있어요 (뉴욕 자정 무렵 실행 · 야후가 분할을 미리 반영) — 그때는 곱하지 않고 크게 남겨요. 진짜 분할 전
+    보관본이면 곱한 비율은 그 사이 실제 움직임이라, 이 검사가 막는 것은 √배율 넘게 오른 (병합이면 내린) 때뿐이에요 (8:1 이면 2.83배). 가격을 모르면 False."""
     p0, p1 = _fin(px_then), _fin(price_now)
-    return p1 / p0 if p0 and p1 and p0 > 0 else 1.0
+    if not (p0 and p0 > 0 and p1 and p1 > 0):
+        return False
+    return _logk(p1, p0, split) <= _logk(p1, p0)
+
+
+def us_info_split_view(entry, price_now, basis_day, events):
+    """보관본 항목(entry) 하나를 오늘 가격(price_now · 그 주식 수 기준 날짜 basis_day, us_price_basis_day)에 맞출 때의 분할 판단. (순수 함수)
+    events = 그 종목의 us_info_split_map 목록 (오늘(KST)까지). → {"f": 곱할 배율, "use": 배율을 곱함, "hit": 기준 가격 날짜(us_info_anchor_day) 뒤 ·
+    basis_day 까지의 분할, "late": 기준 가격 날짜 뒤 · basis_day 뒤 날짜의 분할 (리뷰 #176 S1: 야후 시계열이 미국 기준일 뒤 날짜의 분할을 벌써 반영했을
+    수 있어요), "lateUse": late 까지 곱함, "odd": hit 이 있는데 곱하면 가격 비율이 1 에서 더 멀어져 곱하지 않음 (보관본이 이미 분할 뒤 값일 수 있어요 ·
+    오늘 다시 받아요), "jump": 분할이 없는데 가격 비율이 US_INFO_JUMP 배 밖 (리뷰 #176 S2: 야후가 늦게 알린 분할일 수 있어요 · 오늘 다시 받아요)}.
+    배율 고르기: 1 · hit 의 곱 · hit × late 의 곱 중 가격 비율(오늘 가격 × 배율 ÷ 그때 가격)이 1 에 가장 가까운 것 (같으면 분할을 더 곱한 쪽 — 날짜가
+    말하는 쪽). 기준 가격 · 날짜를 모르면 아무것도 하지 않아요 (f 1)."""
+    out = {"f": 1.0, "use": False, "hit": [], "late": [], "lateUse": False, "odd": False, "jump": False}
+    a = us_info_anchor_day(entry)
+    p0, p1 = _fin((entry or {}).get("px")), _fin(price_now)
+    if a is None or not (p0 and p0 > 0 and p1 and p1 > 0):
+        return out
+    b = str(basis_day)
+    evs = [(d, r) for d, r in events or [] if isinstance(d, str) and _fin(r) is not None and _fin(r) > 0]   # 리뷰 #176 2차: 0 이하 · NaN 배율은 버려요
+    hit = [(d, r) for d, r in evs if a < d <= b]
+    late = [(d, r) for d, r in evs if d > b and d > a]
+    out["hit"], out["late"] = hit, late
+    fh = math.prod(r for _d, r in hit)
+    cands = [("none", 1.0)] + ([("hit", fh)] if hit else []) + ([("all", fh * math.prod(r for _d, r in late))] if late else [])
+    pick, best = cands[0], _logk(p1, p0)
+    for c in cands[1:]:
+        v = _logk(p1, p0, c[1])
+        if v <= best:
+            pick, best = c, v
+    out["f"], out["use"], out["lateUse"] = pick[1], pick[0] != "none", pick[0] == "all"
+    out["odd"] = bool(hit) and pick[0] == "none"
+    out["jump"] = not hit and not late and _logk(p1, p0) > math.log(US_INFO_JUMP)
+    return out
+
+
+US_SPLIT_REC_LISTS = ("fit", "odd", "jump", "left", "late", "diff", "unfit", "bad", "noCol", "rx", "rNoDay", "rOdd")   # usSrc.split 의 목록 칸 (첫 칸 = 티커)
+
+
+def us_split_rec_keep(rec, codes):
+    """data.json usSrc.split (fetch_us · us_own_split_late) — 발행하는 미국 종목(codes)의 줄만 남겨요. 적을 것이 없으면 {} (칸이 없어요 · 보통 날의 파일은
+    예전과 같아요), 있으면 {"split": 기록}. 기록 = {v · fit [[티커, 배율]] 보관본에 곱함 · odd [티커] 날짜로는 분할 전인데 곱하면 더 멀어져 곱하지 않음
+    (다시 물음) · jump [티커] 분할을 모르는데 가격이 US_INFO_JUMP 배 밖 (다시 물음) · left [티커] 그렇게 다시 물었는데 받지 못해 보관본 그대로 · late
+    [[티커, 곱했는지]] 미국 기준일 뒤 날짜의 분할 · diff [[티커, 칸]] 새 상세 정보가 분할 전 주당 숫자 같아 보관본 × 배율을 씀 · unfit [[티커, 칸]] 새
+    시가총액을 보니 곱한 배율이 틀려 새 상세 정보를 씀 · bad [티커] 판단이 멈춤 · noCol [티커] 오늘 분할 칸 없음 · err 분할을 읽지 못한 오류의 종류 이름만
+    (리뷰 2차 S-A: 오류 글은 관문의 'nan · None …' 줄에 걸릴 수 있어 로그에만) · errN 그날 보관본을 쓴 종목 수 · rx [[티커, 배율]] · rNoDay · rOdd 나중에 찾은 분할로 야후
+    봉으로 되돌린 행 (us_own_split_late)}. (순수 함수)"""
+    out = {"v": 1}
+    for k, v in (rec or {}).items():
+        if k in US_SPLIT_REC_LISTS:
+            xs = [x for x in v if (x[0] if isinstance(x, (list, tuple)) else x) in codes]
+            if xs:
+                out[k] = xs
+        elif k != "v":
+            out[k] = v
+    return {"split": out} if len(out) > 1 else {}
+
+
+US_SPLIT_STALE_TOL = 1.25   # 새 숫자가 '배율 없이 맞춘 보관본'과 이만큼 안이면 분할 전 기준으로 봐요 (리뷰 #176 2차)
+US_SPLIT_DIFF_MIN = 1.5     # 그리고 보관본 × 배율과 이만큼 넘게 달라야 해요 (3:2 · 주식배당은 보지 않아요 — 진짜 변화와 가르지 못해요)
+
+
+def us_info_fresh_vs_copy(fresh, copy, price_now, f):
+    """리뷰 (#176): 오늘 새로 받은 상세 정보(fresh)를 분할 전 보관본(copy) × 배율 f 와 맞춰 봐요 → (종류, ['pbr 8.00배', …]). (순수 함수)
+    둘 다 오늘 가격에 맞춘 PER · PBR · 시가총액과 평균 거래량(보관본은 × f)의 비 r = 새 값 ÷ (보관본 × 배율) 을 봐요. 한쪽 방향만: r 이 1/f 에서
+    US_SPLIT_STALE_TOL 배 안 (새 값 ≈ 배율 없이 맞춘 보관본 — 분할 전 기준) 이고 1 에서 US_SPLIT_DIFF_MIN 배 넘게 멀 때만 '분할 전 같음' (리뷰 2차 S-C:
+    실적이 바뀐 PER · 거래량이 조금 는 것은 아니에요).
+    · "unfit": 시가총액이 분할 전 같음 — 야후 시가총액은 지금 가격 × 지금 주식 수라 믿을 수 있어서, 보관본에 곱한 배율이 틀렸던 것 (보관본이 이미 분할
+      뒤 값이었어요 · 리뷰 2차 S-B) → 새 상세 정보를 써요
+    · "diff": 시가총액은 맞는데 (또는 비교할 수 없는데) 주당 숫자 · 평균 거래량이 분할 전 같음 — 야후가 아직 분할 전 주당 숫자 (11-21 SNDK: PBR 0.63 ↔
+      보관본 × 8 이면 5.03) → 보관본 × 배율을 써요
+    · "ok": 그 밖 (새 상세 정보를 써요). 한쪽이라도 없거나 0 이하인 칸은 보지 않아요."""
+    kf, kc = us_rescale(price_now, fresh.get("px")), us_rescale(price_now, copy.get("px"), f)
+    fi, ci = fresh.get("info") or {}, copy.get("info") or {}
+
+    def stale(key, mf, mc):
+        x, y = _fin(fi.get(key)), _fin(ci.get(key))
+        if x is None or y is None or x <= 0 or y <= 0:
+            return None
+        r = x * mf / (y * mc)
+        if abs(math.log(r * f)) <= math.log(US_SPLIT_STALE_TOL) and abs(math.log(r)) >= math.log(US_SPLIT_DIFF_MIN) - 1e-9:
+            g = max(r, 1.0 / r)
+            return f"{g:.2f}배" if g < 1000 else "1000배 넘게"
+        return None
+    cap = stale("marketCap", kf, kc)
+    if cap:
+        return "unfit", [f"cap {cap}"]
+    out = [f"{name} {g}" for name, key, mf, mc in (("per", "trailingPE", kf, kc), ("pbr", "priceToBook", kf, kc), ("vol", "averageVolume", 1.0, f))
+           for g in [stale(key, mf, mc)] if g]
+    return ("diff", out) if out else ("ok", [])
 
 
 def us_info_cuts(info, k=1.0):
@@ -12513,7 +12778,8 @@ def us_info_partial(merged, kept, etf=False):
 
 def us_info_due(entry, today):
     """이 보관본 항목을 오늘 다시 받아야 하는지: 없음 · 받은 지 US_INFO_FRESH_DAYS 일 이상 · 예전 모양(k 가 US_INFO_SCHEMA 가 아님 —
-    financialCurrency 를 담기 전) · 지난번 응답이 일부만 왔음("due", us_info_partial). (순수 함수)"""
+    financialCurrency 를 담기 전) · 지난번 응답이 일부만 왔음("due", us_info_partial). (순수 함수) 분할 때문에 다시 받는 것은 fetch_us 가 따로
+    정해요 (us_info_split_view 의 odd · jump — 리뷰 #176)."""
     if not entry:
         return True
     try:
@@ -13102,6 +13368,19 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
     for a in us_own.get("aged") or []:      # EXTRA_US · 주식 종류 티커 줄이 빠진 까닭을 적어요
         extra_why[a["t"]] = f"마지막 확인 종가({a.get('pxd')}) 뒤 미국 거래일 {US_OWN_CLOSE_MAX_DAYS}일이 지나 잠시 뺌 (usSrc.own.aged)"
 
+    # 2026-11-23 (감사 · SNDK 8:1 분할 2026-11-20 · #176): 분할 뒤 보관본 맞춤에 쓰는 분할 — 발행할 splits 는 이 함수가 끝난 뒤 main 이 만들어요
+    # (splits_fields). 그래서 같은 출처(오늘 다운로드의 분할 칸 · 지난 발행본의 splits · 고정 표)로 여기서 먼저 모아요: 상세 정보를 붙이기 전에 맞춰야
+    # 외국 회사 맞춰 보기 · 0.00 PBR 빈 칸 · 로그가 모두 맞춘 숫자를 봐요. 오늘(KST)까지의 날짜를 모두 봐요 (리뷰 S1: 미국 기준일 뒤 날짜의 분할도 야후
+    # 시계열은 벌써 반영했을 수 있어요 — 곱할지는 us_info_split_view 가 가격으로 정해요). 읽지 못하면 예전 그대로 (가격 비율만) · 크게 남기고 기록해요
+    sp_err, sp_err_type, sp_nocol = None, None, []
+    try:
+        rsp, rinfo = us_splits(data, [r["t"] for r in out], today)
+        sp_map = us_info_split_map(rsp, prev)
+        sp_nocol = sorted(rinfo.get("noCol") or [])
+    except Exception as e:
+        sp_map, sp_err, sp_err_type = None, f"{type(e).__name__}: {str(e)[:120]}", type(e).__name__
+    sp_bad = []                      # 분할 판단을 하다 오류로 멈춘 종목 (그 종목은 예전 그대로 · 가격 비율만)
+
     # 상세 정보(이름·업종·설명·기초 지표)는 자주 바뀌지 않아요. 3일 안에 받은 것은 다시 쓰고,
     # 오늘 못 받으면 14일 안의 보관본을 (크게 알리고) 써요. 그보다 오래되면 비워 두고 검증이 잡아요.
     cache = load_us_info()
@@ -13141,7 +13420,8 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
         merged, kept, kage = us_info_merge(new, cache.get(rec["t"]), today)   # #114 리뷰: 시세만 담은 응답이 통화 · 업종 · 설명을 지우지 않게
         if kept:
             sticky[rec["t"]] = (kept, kage)
-        entry = {"at": tday, "px": anchor, "k": US_INFO_SCHEMA, "info": merged}
+        # 2026-11-23: pd = 기준 가격의 주식 수 기준 날짜 (그 실행의 미국 기준일 — 야후 시계열 · 마지막 확인 종가 종목의 시세 가격 모두 · us_info_anchor_day)
+        entry = {"at": tday, "px": anchor, "pd": us_px_date.isoformat(), "k": US_INFO_SCHEMA, "info": merged}
         if no_anchor:
             entry["pxBad"] = True       # 기준 가격을 몰라요: 이 항목의 PER · PBR · 시가총액 · 배당수익률은 쓰지 않아요 (다음 실행에서 다시 물어봐요)
             entry["due"] = True
@@ -13154,6 +13434,28 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
     sticky, partial = {}, set()
     pxc_info = {"quote": [], "kept": [], "blank": [], "far": []}
     need = [r for r in out if us_info_due(cache.get(r["t"]), today)]
+    # 리뷰 (#176): 받기 전 보관본마다 분할 판단 (us_info_split_view). 배율을 믿을 수 있는 보관본은 따로 다시 받지 않아요 (보관본 × 배율 · 보통 때처럼
+    # 다시 받는 날 새 상세 정보와 맞춰 봐요). 오늘 다시 받는 것은 배율을 믿을 수 없을 때(odd)와 분할을 모르는데 가격이 US_INFO_JUMP 배 밖일 때(jump)뿐 —
+    # 받는 방법 · 쉬는 시간은 같아요
+    rec_by = {r["t"]: r for r in out}
+    sp_view0, sp_pre = {}, {}        # 티커 → 받기 전 보관본의 분할 판단 · 그 보관본
+    for r in out:
+        e0 = cache.get(r["t"])
+        try:
+            a0 = age(r["t"])
+            if not e0 or a0 is None or a0 > US_INFO_MAX_AGE_DAYS or e0.get("pxBad"):
+                continue
+            sp_view0[r["t"]] = us_info_split_view(e0, r.get("price"), us_price_basis_day(r, us_px_date), (sp_map or {}).get(r["t"]))
+            sp_pre[r["t"]] = e0
+        except Exception as ex:      # 그 종목만 예전 그대로 (가격 비율만) · 크게 남겨요
+            sp_bad.append(r["t"])
+            sp_view0.pop(r["t"], None)
+            log(f"  !! 미국 분할 판단이 오류로 멈춘 종목 {r['t']} ({type(ex).__name__}: {str(ex)[:80]}) — 그 종목은 예전 그대로 (가격 비율만)")
+    sp_odd0 = sorted(t for t, v in sp_view0.items() if v["odd"])
+    sp_jump0 = sorted(t for t, v in sp_view0.items() if v["jump"])
+    due0 = {r["t"] for r in need}
+    sp_force = sorted((set(sp_odd0) | set(sp_jump0)) - due0)
+    need += [rec_by[t] for t in sp_force]
     # 2026-11-14 (Q5): 본사 나라(country)가 없는 S&P 500 밖 회사 항목도 오늘 다시 받아요 (외국 회사 판별 · 모양 표시는 그대로라 그 회사들만)
     # 2026-11-14 (리뷰 S2): S&P 500 목록은 오늘 가격을 받은 종목과 US_SP500_MIN 곳 넘게 겹칠 때만 믿어요 (목록 칸 이름이 바뀌어 티커 대신 다른
     # 글이 들어오거나 목록이 빈 날 · S&P 500 회사를 가려내지 못하면 미국 밖에 본사를 둔 미국 회사의 맞는 배당수익률이 비어요)
@@ -13186,13 +13488,59 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
             okr = list(ex.map(fetch_info, failed))
         failed = [r for r, k in zip(failed, okr) if not k]
     failed_t = {r["t"] for r in failed}
+    # 리뷰 (#176 1차): 분할 전 보관본 × 배율을 쓸 수 있었던 종목이 오늘 새 상세 정보를 받았으면 맞춰 봐요 — √배율 넘게 다르면 새 것이 분할 전 주당 숫자일
+    # 수 있어 (11-21 SNDK PBR) 보관본 × 배율을 쓰고 보관본을 그대로 둬요 (다음에 다시 받는 날 또 맞춰 봐요 · 보관본은 14일까지)
+    sp_diff, sp_unfit = [], []
+    for t, v in sp_view0.items():
+        e0, e1 = sp_pre[t], cache.get(t)
+        if not v["use"] or v["f"] == 1.0 or e1 is e0 or not isinstance(e1, dict) or e1.get("at") != tday or e1.get("pxBad"):
+            continue
+        try:
+            kind, why = us_info_fresh_vs_copy(e1, e0, rec_by[t].get("price"), v["f"])
+        except Exception as ex:
+            sp_bad.append(t)
+            log(f"  !! 미국 새 상세 정보와 분할 전 보관본을 맞춰 보다 오류로 멈춘 종목 {t} ({type(ex).__name__}) — 새 상세 정보를 써요")
+            continue
+        if kind == "unfit":                          # 리뷰 2차 S-B: 곱한 배율이 틀렸어요 (새 시가총액이 배율 없이 맞음) → 새 상세 정보
+            sp_unfit.append((t, why))
+        elif kind == "diff":
+            cache[t] = e0
+            sp_diff.append((t, why))
+            partial.discard(t)
+            sticky.pop(t, None)
+            for lst in pxc_info.values():
+                if t in lst:
+                    lst.remove(t)
     reused, fallback, missing, oldest = 0, 0, [], 0
     px_blank = []
+    sp_k = {}                    # 2026-11-23: 티커 → 보관본에 곱한 분할 배율 (아래 0.00 PBR 세기도 같은 배율로)
+    pxc_pd = {}                  # 2026-11-23: 마지막 확인 종가 종목 → 붙인 보관본의 기준 가격 날짜 (meta _usOwnInfoPd · us_own_split_late 만)
+    sp_fit, sp_late = [], []     # 곱한 보관본 (티커, 판단, 항목) · 미국 기준일 뒤 날짜의 분할 (티커, 판단)
     for rec in out:
         a = age(rec["t"])
-        if a is None or a > US_INFO_MAX_AGE_DAYS or not apply_us_info(rec, cache[rec["t"]]["info"], cache[rec["t"]].get("px"), fx_last, today=today):
+        e = cache.get(rec["t"]) or {}
+        sk, v = 1.0, None
+        if rec["t"] in sp_view0 and e is sp_pre.get(rec["t"]):
+            v = sp_view0[rec["t"]]                      # 받기 전 그 보관본 그대로
+        elif rec["t"] not in sp_bad and a is not None and a <= US_INFO_MAX_AGE_DAYS and not e.get("pxBad"):
+            try:                                        # 오늘 받은 항목 (보통 배율 1 · 미국 기준일 뒤 날짜의 분할만 가격으로 정해요)
+                v = us_info_split_view(e, rec.get("price"), us_price_basis_day(rec, us_px_date), (sp_map or {}).get(rec["t"]))
+            except Exception as ex:
+                sp_bad.append(rec["t"])
+                log(f"  !! 미국 분할 판단이 오류로 멈춘 종목 {rec['t']} ({type(ex).__name__}) — 그 종목은 예전 그대로 (가격 비율만)")
+        if v is not None and v["use"]:
+            sk = v["f"]
+        if a is None or a > US_INFO_MAX_AGE_DAYS or not apply_us_info(rec, cache[rec["t"]]["info"], cache[rec["t"]].get("px"), fx_last, today=today,
+                                                                       split=sk):
             missing.append(rec["t"])
             continue
+        if v is not None and v["use"] and v["f"] != 1.0:
+            sp_k[rec["t"]] = sk
+            sp_fit.append((rec["t"], v, e))
+        if v is not None and v["late"] and e.get("at") != tday:
+            sp_late.append((rec["t"], v))           # 오늘 받은 항목은 보관본과 오늘 가격이 같은 시계열이라 적지 않아요 (리뷰 2차)
+        if rec.get("pxc") and not e.get("pxBad"):
+            pxc_pd[rec["t"]] = us_info_anchor_day(e)   # 2026-11-23: 나중에 분할이 나와 야후 봉으로 되돌릴 때 (us_own_split_late) 맞출 기준
         if cache[rec["t"]].get("pxBad"):     # 리뷰 (2026-11-20): 기준 가격을 모르는 항목 — 가격에 맞출 수 없는 네 숫자는 비워요 (틀린 숫자 대신)
             for k in US_PX_ANCHORED:
                 rec.pop(k, None)
@@ -13203,6 +13551,55 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
         elif a > 0:
             reused += 1
     save_us_info(cache)
+    # 2026-11-23 (감사 · #176): 분할 뒤 보관본 맞춤 — 한 줄 (보통 날 '곱함 0 · 다시 물음 0') · 숫자가 배율만큼 틀릴 수 있는 길은 data.json usSrc.split 에도
+    # 적어요 (관문 '미국 분할 뒤 상세 숫자' 줄이 이름을 적어요 — 리뷰 S2)
+    sp_shown = set(rec_by) - set(missing)
+    sp_left = sorted(t for t in set(sp_odd0) | set(sp_jump0) if t in sp_shown and cache.get(t) is sp_pre.get(t))
+    names = lambda xs: ", ".join(xs[:US_OWN_SHOW]) + (" …" if len(xs) > US_OWN_SHOW else "")
+    evtxt = lambda evs: " · ".join(f"{split_ratio_text(r)} {d}" for d, r in evs)
+    fit_txt = [f"{t} ×{v['f']:g} ({evtxt(v['hit'] + (v['late'] if v['lateUse'] else []))} · 보관본 {e.get('at')} · 기준 가격 {_fin(e.get('px')):g} → "
+               f"오늘 {rec_by[t].get('price')})" for t, v, e in sp_fit]
+    late_txt = [f"{t} {evtxt(v['late'])} ({'곱함' if v['lateUse'] else '곱하지 않음 · 보관본과 오늘 가격이 같은 주식 수로 보여요'})" for t, v in sp_late]
+    jump_txt = [f"{t} ({_fin(sp_pre[t].get('px')):g} → {rec_by[t].get('price')})" for t in sp_jump0]
+    odd_txt = [f"{t} ({evtxt(sp_view0[t]['hit'])} · 보관본 {sp_pre[t].get('at')} · 기준 가격 {_fin(sp_pre[t].get('px')):g} → 오늘 "
+               f"{rec_by[t].get('price')})" for t in sp_odd0]
+    loud = bool(sp_fit or sp_odd0 or sp_jump0 or sp_left or sp_late or sp_diff or sp_unfit or sp_bad or sp_err or sp_nocol)   # 리뷰 2차 S-B: 곱함도 크게
+    if sp_map is None:
+        n_old = sum(1 for r in out if r["t"] not in missing and (age(r["t"]) or 0) > 0)
+        log(f"  !! 미국 분할을 읽지 못해 ({sp_err}) 분할 뒤 보관본 맞춤을 하지 않았어요 — 오늘 받지 않은 보관본을 쓴 {n_old:,}종목은 예전 그대로 "
+            "(가격 비율만 · 그 사이 분할이 있었다면 PER · PBR · 시가총액 · 배당수익률 · 거래대금이 그 배율만큼 틀려요 — 다음 실행이 다시 읽어요 · usSrc.split.err)")
+    log(f"{'  !! ' if loud else '· '}미국 분할 뒤 보관본 맞춤 (보관본의 기준 가격 뒤 분할 · 오늘 가격 × 배율 ÷ 그때 가격): 곱함 {len(sp_fit):,}"
+        + (f" ({'; '.join(fit_txt[:US_OWN_SHOW])}{' …' if len(fit_txt) > US_OWN_SHOW else ''})" if fit_txt else "")
+        + (f" · 날짜로는 분할 전 보관본인데 곱하면 가격 비율이 1 에서 더 멀어져 곱하지 않음 {len(sp_odd0):,} (보관본이 이미 분할 뒤 값일 수 있어요 · 다시 물음: "
+           f"{'; '.join(odd_txt[:US_OWN_SHOW])}{' …' if len(odd_txt) > US_OWN_SHOW else ''})" if sp_odd0 else "")
+        + (f" · 분할을 모르는데 가격이 {US_INFO_JUMP:g}배 넘게 달라진 보관본 {len(sp_jump0):,} (늦게 알려진 분할일 수 있어요 · 다시 물음: "
+           f"{'; '.join(jump_txt[:US_OWN_SHOW])}{' …' if len(jump_txt) > US_OWN_SHOW else ''})" if sp_jump0 else "")
+        + f" · 그래서 다시 물음 {len(sp_odd0) + len(sp_jump0):,}" + (f" (받지 못해 보관본 그대로 {len(sp_left):,}: {names(sp_left)})" if sp_left else "")
+        + (f" · 미국 기준일 뒤 날짜의 분할 {len(sp_late):,} ({'; '.join(late_txt[:US_OWN_SHOW])}{' …' if len(late_txt) > US_OWN_SHOW else ''})"
+           if sp_late else "")
+        + (f" · 새로 받은 상세 정보의 주당 숫자가 분할 전 같아 (시가총액은 맞음) 보관본 × 배율을 씀 {len(sp_diff):,} (야후가 아직 분할 전 주당 숫자일 수 "
+           "있어요: " + "; ".join(f"{t} {', '.join(w)}" for t, w in sp_diff[:US_OWN_SHOW]) + (" …" if len(sp_diff) > US_OWN_SHOW else "") + ")" if sp_diff else "")
+        + (f" · 새 시가총액을 보니 보관본에 곱한 배율이 틀려 새 상세 정보를 씀 {len(sp_unfit):,} (보관본이 이미 분할 뒤 값이었어요: "
+           + "; ".join(f"{t} {', '.join(w)}" for t, w in sp_unfit[:US_OWN_SHOW]) + (" …" if len(sp_unfit) > US_OWN_SHOW else "") + ")" if sp_unfit else "")
+        + (f" · 판단이 오류로 멈춤 {len(sp_bad):,}: {names(sorted(set(sp_bad)))}" if sp_bad else ""))
+    if sp_nocol:
+        log(f"  !! 오늘 다운로드에 분할 칸이 없는 미국 종목 {len(sp_nocol):,} — 이 종목들의 분할 뒤 보관본 맞춤은 지난 발행본 · 고정 표의 분할만 봐요: "
+            f"{names(sp_nocol)}")
+    split_rec = {"v": 1}                # data.json usSrc.split (무엇이든 있을 때만 · 보통 날의 파일은 예전과 같아요)
+    if sp_fit:
+        split_rec["fit"] = [[t, round(v["f"], 6)] for t, v, _e in sp_fit]
+    for key, xs in (("odd", sp_odd0), ("jump", sp_jump0), ("left", sp_left), ("bad", sorted(set(sp_bad))), ("noCol", sp_nocol)):
+        if xs:
+            split_rec[key] = list(xs)
+    if sp_late:
+        split_rec["late"] = [[t, bool(v["lateUse"])] for t, v in sp_late]
+    if sp_diff:
+        split_rec["diff"] = [[t, ", ".join(w)] for t, w in sp_diff]
+    if sp_unfit:
+        split_rec["unfit"] = [[t, ", ".join(w)] for t, w in sp_unfit]
+    if sp_map is None:
+        split_rec["err"] = sp_err_type                # 리뷰 2차 S-A: 종류 이름만 (오류 글은 위 로그에)
+        split_rec["errN"] = sum(1 for r in out if r["t"] not in missing and (age(r["t"]) or 0) > 0)
     # 리뷰 (2026-11-20, 잔 지적): 마지막 확인 종가 종목마다 한 가지로 세요 (더하면 그 종목 수)
     pcs = [r["t"] for r in out if r.get("pxc")]
     cat = collections.Counter()
@@ -13249,7 +13646,7 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
         e = cache.get(rec["t"])
         if rec["t"] in missing or not e:
             continue
-        for f in us_info_cuts(e["info"], us_rescale(rec.get("price"), e.get("px"))):
+        for f in us_info_cuts(e["info"], us_rescale(rec.get("price"), e.get("px"), sp_k.get(rec["t"], 1.0))):
             if not (f in US_FCUR_BLANK and rec.get("fcur")):                  # fcur 회사의 PBR 은 이미 비었어요 (아래 줄이 세요)
                 cut_t.setdefault(f, []).append(rec["t"])
     for f, why in (("pbr", "PBR 이 0.00 으로 반올림돼(0.005 미만) 빈 칸 — 가치 점수도 없음"),
@@ -13335,8 +13732,9 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
             "usListSym": usym,                              # 2026-11-15: 출처 티커 → 야후 모양 · 바꾸지 못한 티커 · S&P 500 중 빠진 종목 (관문)
             # 2026-11-20 (Jack): 야후 종가가 없어 마지막 확인 종가로 실은 종목 (관문 · 앱) · 2026-11-22 (Jack): newWait 새로 들어왔는데 미국
             # 기준일 종가가 없어 오늘 넣지 않은 티커 (있을 때만 — 보통 날의 파일은 예전과 같아요)
-            "usSrc": {"v": 1, "own": us_own, **({"newWait": new_wait} if new_wait else {})},
+            "usSrc": {"v": 1, "own": us_own, **({"newWait": new_wait} if new_wait else {}), **us_split_rec_keep(split_rec, {r["t"] for r in out})},
             "_usOwnYahoo": us_own_yahoo,                    # 2차 확인: 실은 종목의 야후 자기 날짜 봉 (us_own_split_late 만 써요 · 파일에 나가지 않아요)
+            "_usOwnInfoPd": pxc_pd,                         # 2026-11-23: 실은 종목에 붙인 보관본의 기준 가격 날짜 (us_own_split_late 만 · 파일에 나가지 않아요)
             # v19.6a: None = 분할을 읽다 멈춤 · splitsNoCol = 분할 칸이 없던 종목 (둘 다 main 이 지난 발행본으로 이어요)
             "splits": splits, "splitsNoCol": list(sinfo.get("noCol") or [])}
     meta["_c1wUs"] = us_c1w_finish_safe(us_wk)   # v19.6e: c1w 재료 (파일에 나가지 않아요 · main 의 c1w_step · 멈춰도 미국 시세는 그대로)
@@ -15443,7 +15841,12 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                    "aged 나이 상한을 넘어 잠시 뺀 종목 [{t · nk · pxd}] (앱은 '며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요.') · err 이 단계가 "
                    "오류로 멈춘 까닭 (실은 종목 0)} · newWait (2026-11-22 · Jack) 지난 발행본의 미국 종목에도 aged 에도 없던(새로 들어온) 티커 중 미국 "
                    "기준일 종가가 야후에 없어 오늘 넣지 않은 티커 (정렬 · 있을 때만 · 종가가 확인되는 날 들어와요 · 지난 발행본이 일부러 뺀 티커(usLeftOut)는 "
-                   "기다리지 않아요 · 그래서 drop none 은 그런 티커와 지난 발행본을 쓸 수 없던 날 · 이 단계가 멈춘 날만)"),
+                   "기다리지 않아요 · 그래서 drop none 은 그런 티커와 지난 발행본을 쓸 수 없던 날 · 이 단계가 멈춘 날만) · split (#176 · 있을 때만) 분할 뒤 "
+                   "상세 정보 보관본 맞춤 {v · fit [[티커, 배율]] 보관본 × 배율 · odd · jump 다시 물은 티커 (배율을 믿을 수 없음 · 분할을 모르는데 가격 2배 밖) · "
+                   "left 그렇게 물었는데 받지 못해 보관본 그대로 · late [[티커, 곱했는지]] 미국 기준일 뒤 날짜의 분할 · diff [[티커, 칸]] 새 주당 숫자가 분할 전 "
+                   "같아 보관본 × 배율 · unfit [[티커, 칸]] 새 시가총액을 보니 곱한 배율이 틀려 새 상세 정보 · bad · noCol · err 오류 종류 이름 · errN · rx · "
+                   "rNoDay · rOdd 야후 봉으로 되돌린 행} (fetch_data.us_split_rec_keep · 관문 '미국 분할 뒤 "
+                   "상세 숫자' 줄이 이름을 적어요)"),
          "pxc": ("미국 · true = 미국 기준일 종가가 야후에 없어 지난 발행본의 마지막 확인 종가로 실은 종목 (2026-11-20 · usSrc.own.codes · pxd = 그 "
                  "종가의 날짜 · d1 빈 칸 · 앱은 '오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요.' — pxc 없는 pxd 는 예전처럼 야후의 마지막 봉 날짜)"),
          "usListSym": ("미국 목록 출처의 티커를 야후 모양으로 바꾼 기록 (2026-11-15): mapped = [출처, 출처 티커, 야후 티커] (S&P 500 목록의 BRKB → "
@@ -15517,6 +15920,13 @@ def us_meta_drop(umeta, us, bad):
         for k in ("kind", "set"):
             if isinstance(uf.get(k), dict):
                 uf[k] = {t: v for t, v in uf[k].items() if t not in bad}
+    src = umeta.get("usSrc") if isinstance(umeta.get("usSrc"), dict) else None
+    if src is not None and isinstance(src.get("split"), dict):    # #176: 분할 뒤 보관본 맞춤 기록 (usSrc.split) — 뺀 종목의 줄은 빼요
+        kept = us_split_rec_keep(src["split"], {s.get("t") for s in us if s.get("t") not in bad})
+        if kept:
+            src["split"] = kept["split"]
+        else:
+            src.pop("split")
     if isinstance(umeta.get("usInfo"), list) and len(umeta["usInfo"]) == 2:   # [상세 정보를 붙인 종목, 종목] — 뺀 행만큼 줄여요
         info = sum(1 for s in us if s.get("t") in bad and "dk" in s)     # dk 는 상세 정보를 붙인 행에만 (apply_us_info · n_ok 와 같은 행)
         umeta["usInfo"] = [max(0, umeta["usInfo"][0] - info), sum(1 for s in us if s.get("t") not in bad)]

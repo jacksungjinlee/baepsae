@@ -2222,12 +2222,99 @@ longer holds `BFB`.
 **Rolling back #PR**: a revert PR. The reverted gate ignores `usListSym`; the next data run drops BF-B again (users who saved it
 see the existing "no longer in today's data" handling). No data run is needed for the site checks.
 
+## US stock splits and the Yahoo details copy (분할 뒤 보관본 맞춤 · usSrc.split · gate warning "미국 분할 뒤 상세 숫자", since #176)
+
+Audit, 2026-11-23: SNDK split 8:1 on 2026-11-20; the 11-21 publish had PER 5.1, PBR 0.63, ROE 141.2%, 가치 99. Two different problems
+sit behind US numbers after a split:
+
+- **Ours (fixed here): a pre-split copy rescaled by price alone.** `fetch_us` keeps Yahoo's details (PER, PBR, 시가총액, 배당수익률,
+  평균 거래량) for up to 3 days (14 when Yahoo refuses) with the price they were fetched at (`px`), and rescales them by today's price ÷
+  that price (`us_rescale`). After an N:1 split that ratio is about 1/N, so PER, PBR and 시가총액 came out N times too small, 배당수익률
+  N times too big, and 거래대금 (average volume × today's price, never rescaled) N times too small (audit: 8:1, no real move, PER 40 →
+  5.0, 134.6조원 → 16.8조원). Now:
+  - the split list is read before the details step from the same sources as the published `splits` (today's download, the previous
+    publish's `splits`, `SPLIT_OVERRIDES`; `us_info_split_map`), because `splits_fields` only runs in `main` after `fetch_us`. Dates up to
+    today (KST). When Yahoo moved a split's date (same ratio within 10 days), the rescale uses Yahoo's current date, which its price series
+    follows (the published `splits` keep the earlier date as before); a fixed-table row is never moved, and a Yahoo row near it is the
+    same event (never multiplied twice). Ratios that are 0, negative or not a number are ignored;
+  - each copy gets a decision (`us_info_split_view`): the splits after the copy's anchor day (`pd`, the run's US date, written since #176;
+    older copies: the day before `at`) and up to the stock's price basis (its `pxd` for a carried close, otherwise the US date) are
+    multiplied in: today's price × ratios ÷ the copy's price, and the average volume × ratios (reverse splits below 1, two splits multiply).
+    A split dated after the US date counts only if Yahoo's series already shows it. Between "no factor", "the dated splits" and "also
+    the later-dated ones", the one that puts the price ratio closest to 1 wins (ties go to the dates);
+  - a copy whose factor is accepted is **not** fetched again for the split (Yahoo's fresh numbers right after a split can be the stale
+    ones), but it is logged with `!!` and the gate warns (`fit`): a factor chosen by dates and prices can be wrong (a copy already on the new
+    share count plus a real price fall). When the copy is refreshed the normal way, the fresh numbers are compared with copy × ratio
+    (`us_info_fresh_vs_copy`), one direction only: a fresh number counts as pre-split when it is within 1.25× (`US_SPLIT_STALE_TOL`) of the
+    copy **without** the ratio and at least 1.5× (`US_SPLIT_DIFF_MIN`) from copy × ratio (so an earnings change, or anything after a 3:2
+    split or a stock dividend, never counts). If the fresh 시가총액 is pre-split that way, the factor was wrong (Yahoo computes market cap
+    from today's price and today's share count): the fresh details are used and stored (`unfit`). If instead PER, PBR or average volume are
+    pre-split while 시가총액 agrees (or can't be compared), Yahoo is still on the old per-share numbers: the copy × ratio is used and kept
+    (`diff`), and the next refresh compares again (copies live 14 days; after that the fresh numbers go out);
+  - fetched again that run (same three passes and pauses): a copy dated before a split whose factor would move the price ratio further
+    from 1 (`odd`: it may already be on the new share count), and a copy whose price moved more than 2× (`US_INFO_JUMP`) with no split
+    known (`jump`: a split Yahoo reported late). If Yahoo refuses, the copy is used as before, price ratio only (`left`);
+  - a carried row put back on Yahoo's bar after a split found late (`us_own_split_late`) uses the same rule (`us_own_restore_split`),
+    with the copy's anchor day from `fetch_us` (`_usOwnInfoPd`): ×N, no copy day known (factor 1, `rNoDay`) or rejected (`rOdd`).
+  - Log: `· 미국 분할 뒤 보관본 맞춤 (…): 곱함 0 · 그래서 다시 물음 0` on a normal day; `!!` with names for `fit`, `odd`, `jump`, `left`, a
+    split dated after the US date on a copy (not on details fetched today), `diff`, `unfit` or an error. `!! 미국 분할을 읽지 못해 …`: that run keeps the
+    price-only rescale for every copy (count given). `!! 오늘 다운로드에 분할 칸이 없는 미국 종목 …`: those tickers use the previous
+    publish's and the fixed table's splits only. `!! 야후 봉으로 되돌린 미국 종목 …의 상세 숫자 (분할 배율): …` for the late path.
+  - `data.json usSrc.split` (only when there is something to say; `fetch_data.us_split_rec_keep`, rows of tickers no longer in the file
+    are dropped): `fit` [[ticker, ratio]] · `odd` · `jump` · `left` · `late` [[ticker, applied]] · `diff` [[ticker, "pbr 8.00배"]] ·
+    `unfit` [[ticker, "cap 2.00배"]] · `bad` · `noCol` · `err` (the error's type name only: a pandas message such as "None of [Index…]"
+    would fail the gate's `글자에 nan·None·null·undefined 없음` row; the full text is in the log) + `errN` · `rx` · `rNoDay` · `rOdd`.
+- **Yahoo's (not fixed, warned): stale per-share numbers right after a split.** The 11-21 SNDK details were a fresh fetch after the split
+  (implied shares 142.3M → 1,138M, average volume 10.8M → 84.5M: ×8), so the copy fix above would not have changed them, and there was
+  no older copy to compare with. Yahoo's `priceToBook` still used the pre-split book value per share (79.24 ÷ 126 = 0.63; the 11-11
+  publish had 7.76 at $977.69); PER and 시가총액 were right. On 11-06 the ETFs that split 11-05 (MTUM, QUAL 4:1, SOXX 3:1) had 거래대금
+  3–4 times too small for one day. The old code never rescaled average volume, so a pre-split copy would give exactly that; but the
+  same day's 배당수익률, which the old code did rescale by the same price ratio, was normal (MTUM 0.64% vs 0.65% on 11-09, QUAL 0.85% vs
+  0.85%, SOXX 0.26% vs 0.27%), and a pre-split copy would have shown it 3–4 times too high. So those details were most likely fetched
+  after the split, with Yahoo's average volume not yet adjusted. The file can't prove it either way.
+- **Gate row `미국 분할 뒤 상세 숫자 (PBR ↔ PER × ROE · usSrc.split · 경고만)` (`validate_data.check_us_split_pbr`), warning only, in every
+  mode, also when its own check stops:**
+  - for each US company (not ETF, fund or `fcur`) with a split in `splits` within 30 days up to `usPxDate`, PBR should equal PER × ROE.
+    It warns, naming the stock, when they differ by more than √(split ratio), at least 1.5 (`US_SPLIT_BAND_MIN`): the same idea as
+    `US_FOREIGN_BAND` (a band narrower than √error puts every error of that size outside it), with a floor from 11-21's 582 US companies
+    (95% within 1.40×, 96% within 1.5×, 98% within 2×; SNDK before its split 1.42×). **Blind spots:** an error from a split with a ratio
+    of 1.5 or less (3:2, stock dividends) stays inside the floor, and an error that moves PER and PBR together (the copy problem above)
+    cancels out. Only `YYYY-MM-DD` dates and ratios other than 1 are read (the `주식 분할 목록 (splits)` row judges the rest);
+  - it names every path recorded in `usSrc.split`, all as warnings (`fit` and `rx` too, since a chosen factor can be wrong); a record
+    with `errN` but no `err` still warns;
+  - SKIP when the file has no `splits` (or `splits` is null) and no `usSrc.split`: the `주식 분할 목록 (splits)` row further down judges
+    that (it fails when the previous publish had `splits`).
+- **On a warning:** for a named PBR, compare it with the price ÷ book value per share in the latest filing; Yahoo usually corrects
+  itself within days, and the copy is fetched again every 3 days. For `left`, `odd` or `jump`, the next run asks Yahoo again; if a
+  ticker stays there for more than two runs, look at its split history on Yahoo and add a fixed-table row if Yahoo has it wrong. For
+  `diff`, nothing to do while the copy lasts (14 days); if Yahoo is still stale after that, the fresh numbers go out, so tell Jack. For
+  `fit`, check the named stock's split on Yahoo: right after a real split it is expected; a `fit` followed by `unfit` means the earlier
+  publishes carried that stock's PER, PBR, 시가총액 and 거래대금 off by the ratio, so tell Jack. Blanking
+  such a number on the site needs a new line on screen, so it is Jack's decision.
+
+**Rolling back #176**: a revert PR. Copies written with `pd` are read by the old code as before (it ignores the key); `usSrc.split` is
+ignored by the old gate and the app.
+
 ## Roll back
 
 - **A bad code release** (the app looks broken after a merge): Claude opens the merged pull request, presses
   **Revert**, and merges the revert pull request. The deploy runs by itself after the merge. Ask: "뱁새 마지막 머지를
   되돌려 줘." The same applies to a merge whose deploy was blocked by the deploy check: the site is still fine, but
   `main` is ahead of it until the revert.
+- **#184 (the 기록 split count, 2026-11-24): fix forward, don't plain-revert.** After #184 a user's records can come to a state
+  only #184's count reads, around a split whose ratio leaves a fraction of a 1/10,000 share. Two ways: a sale only #184's count
+  accepts (e.g. 1 + 1 DD shares bought before 2026-06-24 and both sold with a date before it), or any record the user saves for
+  a stock whose earlier records main's count reads only without the split: the record stores data.json's split with it
+  (`records.withRecord`, so the store's check reads it on today's basis), e.g. 10 DD bought and 5 + 5 sold before 06-24, then a
+  DD purchase or dividend recorded today. Main's code before #184 reads such a portfolio as "sold more than held".
+  On a plain revert, or in a tab still open from before #184, it sets that portfolio aside: `store.js` readStore (:1710–1711)
+  leaves it off every screen, 포트폴리오 says "이전에 저장한 기록을 읽지 못해 따로 보관해 두었어요." (`portfolio.jsx` :244) and
+  recording waits for the next save. Nothing is lost: the stored text stays as it is, the first save copies it whole to
+  `baepsae2.v1.unreadable.<time>` (`store.js` :1792; main never removes that copy, `readCopy` :929 and `dropCovered` :1455, and
+  기록 내보내기 carries it, `setAsideCopies` :1465), and a build with #184's count merges it back on the next start (`restoreMoved`
+  :1325). So if #184 must be undone, keep `held.js`'s count (and `lots.withStoredSplitsChecked`) and revert or fix only the part
+  that is wrong; a plain revert hides those portfolios until the count is back. The app's automatic split save never stores
+  a split main's count would refuse; only a record the user saves (above) does.
 - **Bad data** (the numbers are wrong and the gate missed it): Claude reverts the last commit on the `data` branch
   (and, until v17.6 part 3b, the same data commit on `main`), then starts **Actions → Deploy → Run workflow**. Users get
   the previous day's data back within about 15 minutes (a deploy started by hand runs the deploy check). Ask: "뱁새 어제
@@ -2546,6 +2633,17 @@ it for good.
   stored split stays at the old date (the records need it) and data.json's corrected row is applied too, so those
   records can count the split twice; the console names both dates. Within 10 days (the pipeline's same-event window)
   the two are one split and only the stored one applies.
+
+- **Ratios that aren't whole numbers (#184).** 47 of data.json's 150 splits (DD 1:3, UL 8:9, AMCR 1:5, HON 1:2, SNEX 3:2 …).
+  A record dated before one is read x r, which may not be a whole 1/10,000 share (11 of them: one share; the rest: a
+  0.0001-share sale or a 금액으로 넣기 row). `held.js` `count()` rounds it two ways and uses one for every screen, the ledger and
+  the store's check, position by position: a sale that takes the per-record count (what main showed) or the running exact
+  total to exactly 0 closes the position and the next record starts from 0; an open position shows the per-record count while
+  it stays at or above 0, else the running one; when that reading goes below 0, the running count over the whole history is
+  used, else main's own count (records main saved read as main read them). A held count can
+  differ from the exact one by a unit or two (as on main): 3 x 1 old DD share shows 0.9999, and a sale of 0.9999 or 1 both
+  leave 0. The app stores such a split with a portfolio's records stock by stock, only where main's count reads them too;
+  otherwise the records stay as they are (the screens still apply the split) and the console says why, once per visit.
 
 ## Known limits: the date of a US record (v19.6a)
 
