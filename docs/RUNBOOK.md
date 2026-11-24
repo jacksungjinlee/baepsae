@@ -540,7 +540,8 @@ yearly swing. On 2026-11-14, 9 of the 18 have their 52주 range blanked (a move 
 How long a mark lasts: while a bad bar is inside the series window (not 252 days). It clears by itself, and the numbers come
 back, when Naver fixes the bar or the bar ages out: 110790 크리스에프앤씨 (2023-10-20) around 11-28 and 121890 에스디시스템
 (2023-10-23) around 12-01, which takes the count from 18 to 16. A stock moves from "52주까지" to "52주는 보임" by itself about a
-year after its last bad day. Repairing the history is a later PR. Gate rows:
+year after its last bad day. Repairing the history: "Repairing the broken histories" below (#182; built, switch OFF until Jack approves the
+screen line). Gate rows:
 
 - **FAIL "과거 주가 기록 오류 종목의 숫자 비움 (pxBad)"**: a published stock named in `krSeries.jump` still has one of its
   `pxBadF` numbers (data.json or corp.json), or its 52주 range is missing although not in `pxBadF`; or `pxBadF` breaks the window
@@ -570,6 +571,103 @@ year after its last bad day. Repairing the history is a later PR. Gate rows:
 Standing daily warnings until the repair PR: "국내 시계열 하루 가격 제한폭 넘는 움직임 (경고만)" (the 18 names), and "국내
 beta 채움" and "국내 vol 채움" at 96.8% (floor 95%, warning under 97%; 2,395 of 2,473: volatility and beta are whole-series,
 so every marked stock blanks them). 45 more marked stocks are still a pass; the 46th would fail both rows.
+
+### Repairing the broken histories (과거 주가 병합 보정 · `KR_PX_REPAIRS` · since #182, switch OFF)
+
+Jack's Track 1 item 4 (2026-11-24): "repair the broken price history for the 18 stocks (old share consolidations)". Most of the
+named moves are a share event Naver did not rescale. `fetch_data.py` `kr_px_repair` multiplies the bars before such an event by
+the event's factor, right after `naver_clean` and before everything else in `one()` (official-close pinning, `pin_audit`, the
+`c1w` Naver pick, `kr_jumps`, every number). A repaired stock simply leaves `krSeries.jump`, so `mark_px_bad` no longer blanks it
+and its numbers come back. No gate rule changed: the pxBad FAIL row, `PX_BAD_NEW_FAIL` and the must-have rows are as before.
+
+**Switch `KR_PX_REPAIR_ON` (False).** A number built on a history 뱁새 itself corrected must say so on screen (CLAUDE.md
+say-why), and no line is approved yet. While OFF the run computes the repair, logs it and records it (`krSeries.adj.on` false),
+but every number is made from Naver's series as before. Switch it on together with the screens PR that shows Jack's line
+(`tests/test_kr_px_repair.py` pins it OFF; that PR flips the pin and lists it under 안전 규칙 변경).
+
+**Rollback trap — the switch-on PR needs a rollback plan agreed with Jack (#182 review, Fable S2).** Once ON, the repaired stocks
+are out of `krSeries.jump`. Turning the switch OFF again (or a bug that makes the repair raise for every table stock in one run)
+puts all of them (12 today) back into `krSeries.jump` at once, and the FAIL row "새로 생긴 과거 주가 기록 오류 종목 수 (10종목 이상이면
+실패)" (`PX_BAD_NEW_FAIL`) then stops the publish: the site keeps the previous day's data. The gate is not changed for this; the plan
+has to be agreed with Jack before switching on (for example: switch off only together with a one-time, named exception Jack approves,
+or remove table entries in batches of fewer than 10 a day). A failure inside one stock's repair is contained:
+`kr_px_repair_step` catches it, that stock alone keeps Naver's series (hidden as before, skip `err`, loud log line), and every other
+table stock is still repaired (tested).
+
+**Which events, which factor.** Only events whose factor two independent sources agree on are in the table `KR_PX_REPAIRS`
+(stock, date of the first bar on the new basis as `krSeries.jump` names it) → (factor, optional first bar, kind, sources). Factor
+= new basis ÷ old basis (10 → 1 consolidation: 10; 1 → 10 split: 0.1).
+- 병합 · 감자 · 분할: the listed-share ratio (= the filed ratio, what a holder actually had). The KRX 기준가 on a 감자 re-listing day
+  is the opening auction price (50–200% range), so it can differ from the ratio by the day's real move (에이프로젠 5,070 vs 293 × 15 =
+  4,395). Naver's own rescale (where it did one) uses 기준가 ÷ previous close instead, e.g. 003060's 2024 10:1 감자 at 9.568 and 304840's
+  2026-11-20 2:1 at 2.175; those stocks are not in `krSeries.jump` and are left as Naver has them.
+- 무상증자 권리락: KRX 기준가 ÷ the previous close (the new shares list weeks later, so the share count does not move that day).
+- An exact ×2 or ×0.5 after a halt is not enough on its own: 121890's re-listing auction hit exactly 200% (739 → 1,478) with no share
+  event, and 229500's base is exactly half with nothing else to confirm it.
+Sources read on 2026-11-24 (no DART calls): KRX listing files in `fdr_krx_data_cache` (2026 dates only: `Stocks`, `Close − Changes`),
+Daum daily quotes (KRX official close, change, listed shares), Naver daily quotes (equal to KRX before Nextrade started in 2025-03;
+KONEX is not on Nextrade) and Yahoo's split records (yfinance `Stock Splits`).
+
+| Stock | Event (first new bar) | Factor | Kind | Agreeing sources |
+|---|---|---|---|---|
+| 001465 BYC우 | 2024-04-17 | ×0.1 | 1 → 10 split | KRX 기준가 19,890 = 198,900 × 0.1 · shares 215,385 → 2,153,850 · Yahoo 1:10 |
+| 003060 에이프로젠바이오로직스 | 2026-05-08 | ×15 | 15 → 1 감자 | shares 198,407,845 → 13,227,189 (KRX file, Daum) · Yahoo 15:1 |
+| 007460 에이프로젠 | 2026-05-08 | ×15 | 15 → 1 감자 | shares 329,305,030 → 21,953,668 (KRX file, Daum) · Yahoo 15:1 |
+| 009310 참엔지니어링 | 2026-05-11 | ×5 | 5 → 1 (halted) | shares 21,885,074 → 4,377,014 (KRX file, Daum) · price 1,065 → 5,330 at the same cap · Yahoo 5:1 |
+| 012170 아센디오 | 2025-03-06 | ×10 | 10 → 1 감자 | shares 103,569,488 → 10,356,948 (Daum) · Yahoo 10:1 |
+| 012170 아센디오 | 2026-08-28 | ×5 | 5 → 1 | KRX 기준가 3,740 = 748 × 5 · shares 20,250,194 → 4,050,038 · Yahoo 5:1 |
+| 012210 삼미금속 | 2025-04-24 | ×2 | 2 → 1 (KONEX then) | Yahoo 2:1 · KRX 기준가 4,000 vs 1,998 × 2 = 3,996 |
+| 110790 크리스에프앤씨 | 2023-10-20 | ×0.5 | 1 → 2 split | KRX 기준가 9,480 = 18,960 × 0.5 · shares × 2 · Yahoo 1:2 |
+| 227420 도부 | 2024-01-19 | ×2 | 2 → 1 (KONEX, halted) | KRX 기준가 1,808 = 904 × 2 · Yahoo 2:1 |
+| 311060 엘에이티 | 2024-01-25 | ×0.5 | 1:1 무상증자 권리락 (KONEX) | KRX 기준가 4,135 = 8,270 × 0.5 · Yahoo 1:2 |
+| 331660 한국미라클피플사 | 2026-05-06 | ×0.2 | 1 → 5 split (KONEX) | KRX 기준가 3,290 = 16,450 × 0.2 · shares 1,100,000 → 5,500,000 · Yahoo 1:5 |
+| 425040 티이엠씨 | 2024-01-02, from 2023-12-28 | ×0.5 | 1:1 무상증자 권리락 | KRX 기준가 25,800 = 51,600 × 0.5 · Naver rescaled every earlier bar by 0.5 but missed 12-28 · Yahoo 1:2 |
+| 472850 폰드그룹 | 2026-01-02, from 2025-12-30 | ×5,660/10,060 | 무상증자 권리락 | KRX 기준가 5,660 = 10,060 × 0.5626 · Naver rescaled every earlier bar by 0.5626 but missed 12-30 (Yahoo 1:1.780175, 0.15% off) |
+
+Not repaired (still hidden, reason in the log from `KR_PX_NOFIX`): 007610 선도전기, 121890 에스디시스템, 206950 볼빅 (real moves after a
+halt, no share event), 107640 한중엔시에스 and 250030 진코스텍 (KONEX → KOSDAQ transfer listings), 210120 빅텐츠 (one Naver bar, 1,552 on
+2026-10-08, is not the official close 2,345 — not a share event; replacing that bar is a different fix), 229500 노브메타파마 (one source
+only), 304840 타임X AI (2:1 감자, but ×2 still leaves +41% on the re-listing day; Naver has since rescaled it by 기준가 ÷ close, so it
+should leave `krSeries.jump` by itself).
+
+**Every run re-checks each entry** on the series it just downloaded (`kr_px_repair`). For each boundary of the event (the bar before
+the event date → the event bar; with a first bar, also the bar before it → it, unless the window now starts at or after that first
+bar: then the repair runs from the window's first bar and only the event boundary is checked), the raw move must be outside the
+daily-limit bounds (`jump_bounds`, the same as `kr_jumps`) and inside them after the factor. This check is coarse: it only proves the
+event day's move is within ±30% (KONEX ±15%), so ×12 instead of ×15 would pass for 007460. The table's two sources are the real guard;
+the daily check only stops a factor from being applied to a series that has changed shape. Otherwise the entry is skipped with a reason
+(`KR_PX_ADJ_SKIP`): `same` (Naver has rescaled it: never applied twice), `after` (after `pxDate`), `old` (the event left the
+three-year window), `nobar`, `still` (the factor no longer fits), `conflict` (all of one stock's entries together break a boundary:
+none applied), `err`. Rescaled bars are rounded to whole won, as Naver's are. Bars after the event, volume and `c1w` (official closes
+from listing files) are untouched.
+
+**Log** (every run): "과거 주가 병합 보정 (KR_PX_REPAIR_ON 켜짐 | 꺼짐 …): 고친 종목 n (m건 · 숨김에서 빠짐 x) | 켜면 고칠 종목 n (m건) —
+code name date ×factor … · 숨긴 채 남는 종목 k (reason n: names …) · 표의 사건을 건너뜀 s: … · 표에 있는데 오늘 보지 못한 종목 … ·
+표에 있는데 발행하지 않는 종목 …". A move on a table event's date or on its first bar counts as that event (fixed, or its skip reason);
+other moves take their `KR_PX_NOFIX` reason, or "아직 확인하지 않은 움직임". With the 11-21 list the OFF line says 12 to repair (13
+events) and 8 to stay hidden. Loud (`!!`) only when an entry is skipped for something other than `same`, `after` or `old`: a verified
+factor no longer fits today's Naver series. Then compare Naver's chart with the table's sources; fix the table in a PR, never the
+bounds.
+
+**Record** data.json `krSeries.adj` = `{on, fix: [{t, d, f, from?, k, n, src}], skip: [[code, date, reason]]}` (published stocks
+only; with the switch off, `fix` lists what turning it on would repair). **Gate** (new, warning only, never fails): "국내 과거 주가 병합
+보정 (krSeries.adj · 경고만)" names each repaired stock and factor (and adds them to the summary when on); it warns on a malformed
+record, on a repaired stock still in `krSeries.jump` on any date (when ON: for example a stale repair after Naver rescaled part of the
+history), and on a skip other than `same` · `after` · `old`. A file without `adj` passes. Any error inside the row becomes a warning of
+that row (`run_checks` wraps it), so it can never stop the gate.
+
+**Adding an event** (a new stock in `krSeries.jump`, or the `new` reason in the log): read the event day in two independent sources
+(listed shares before/after and the KRX 기준가 from the listing file or Daum, Yahoo's split record; DART's decision if the run's cache
+has it). Add it only when two agree on the factor, and run `tests/test_kr_px_repair.py` (add the real bars around the event to
+`REAL`). Never add an entry from the jump size alone.
+
+**On the live copy of 2026-11-21 (pxDate 11-20), simulated with the switch on:** the 12 stocks above leave `krSeries.jump` (20 → 8
+names); the gate's other rows are unchanged except "국내 beta · vol 채움" (96.6% → 97.0%, both now PASS) and the mz · lz coverage, and
+230 other stocks' 추세 · 저변동 percentiles move by the re-ranking. Against Yahoo's split-adjusted closes over the same dates: for the
+events inside the last year, the 52주 range and 1-year return match for 003060, 007460, 012170 and 472850 (Yahoo rounds 1/15 as
+0.0667, so 003060's high is 9,660 vs 9,655); for the older events only whole-series numbers come back, and the 3-year return and
+largest drop match for 001465, 227420, 311060 and 425040. Yahoo's own series is not usable for 009310, 331660 and 012210 (it applies
+its split record only to the last few bars), and for 110790 it also adjusts a 2.9% stock dividend that Naver and KRX did not.
 
 ## Korean stocks with no trade or no change today (국내 거래 없는 종목 · 빈 d1)
 

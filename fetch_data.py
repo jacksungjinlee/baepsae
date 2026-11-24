@@ -87,6 +87,7 @@ from validate_data import (FX_LO, FX_HI, FX_HIST_FROM, FX_HIST_FIRST_BY, FX_HIST
                            FX_HIST_JUMP, FX_HIST_REL, SPLITS_FROM, SPLIT_R, SPLIT_SIMPLE_MAX, SPLIT_CLEAN_TOL, MUST_SPLITS)
 # 2026-11-14: 국내 시계열의 공식 종가 고정 기준과 하루 가격 제한폭도 관문 파일에 있어요 (관문은 파이프라인의 점검 결과 krSeries 를 봐요)
 from validate_data import PIN_PX_TOL, PIN_SHR_TOL, PIN_REF_TOL, KR_DAY_LIMIT, KONEX_DAY_LIMIT, KR_JUMP_WHY
+from validate_data import KR_PX_ADJ_KIND, KR_PX_ADJ_SKIP, KR_PX_ADJ_QUIET
 # 2026-11-14: 빈 d1 의 이유 목록도 관문 파일에 있어요 (관문이 같은 목록으로 noTrade · d1Why 를 봐요)
 from validate_data import D1_WHY, MUST as GATE_MUST
 # 2026-11-19 (Jack 규칙 3): 공식 종가의 두 출처 — 출처 이름 · 야후 접미어 · 1차 출처 표본 (관문 파일에 있어요 · 따로 바뀌지 않게)
@@ -3826,6 +3827,157 @@ def kr_jumps(final, raw, limit, tol=PIN_PX_TOL):
             why = "other"
         out.append((t1, round((p1 / p0 - 1) * 100, 1), why))
     return out
+
+
+# ────────────────────────────────────────────────────────────
+# 2026-11-24 (Jack, Track 1 item 4: "repair the broken price history for the 18 stocks (old share consolidations)"):
+# 네이버 수정주가는 주식 수 사건(분할 · 병합 · 감자 · 무상증자)이 있으면 그 앞 봉을 모두 새 기준으로 고쳐 두는데, 몇 종목은 고치지 않았어요
+# (krSeries.jump · #128 이 그 숫자를 비워요). 그 사건의 배율을 두 출처 이상으로 확인한 것만 이 표에 적고, 날마다 받은 네이버 시계열의 그 앞 봉에
+# 곱해요 (kr_px_repair). 배율 f = 새 기준 ÷ 옛 기준 (10주 → 1주 병합이면 10 · 1주 → 10주 분할이면 0.1). 병합 · 감자 · 분할은 상장주식수의 비
+# (= 공시한 비율 · 주주가 실제로 가진 값): 감자 뒤 재상장 첫날의 KRX 기준가는 시초가라서 (호가 범위 50~200%) 비율과 달라요 — 그 차이는 그날의 진짜
+# 움직임이에요. 무상증자 권리락은 KRX 기준가 ÷ 전날 종가 (새 주식은 몇 주 뒤에 상장해서 그날 주식 수는 그대로예요).
+# 근거로 쓴 출처 (2026-11-24 읽음 · DART 는 부르지 않았어요): KRX 목록 파일 (fdr_krx_data_cache · 2026년 날짜만 있어요) 의 상장주식수 · 기준가
+# (Close − Changes) · 다음 일별 시세 (KRX 공식 종가 · 전일 대비 · 상장주식수) · 네이버 일별 시세 (2025-03 넥스트레이드 전에는 KRX 와 같아요 ·
+# 코넥스는 넥스트레이드에 없어요) · 야후 분할 기록 (yfinance Stock Splits). 받아들인 것: 두 출처 이상이 같은 배율을 말하고, 고친 뒤 그날
+# 움직임이 하루 가격 제한폭 안 (kr_px_repair 가 날마다 다시 봐요).
+# 키 (종목, 날짜): 날짜 = 네이버 시계열에서 새 기준이 시작되는 봉 (krSeries.jump 에 적힌 그 날). 값 (f, 시작 봉, 종류 KR_PX_ADJ_KIND, 근거):
+# 시작 봉 None = 시계열 처음부터 그 날짜 앞까지 · 날짜를 주면 그 봉부터 (네이버가 앞 봉은 이미 고쳤는데 몇 봉만 빠뜨린 경우).
+# 표에서 지우지 마세요 — 네이버가 나중에 고치면 kr_px_repair 가 'same' 으로 건너뛰어요 (두 번 곱하지 않아요).
+KR_PX_REPAIR_ON = False     # 켜면 고친 시계열로 숫자를 만들어요. 꺼 두면 무엇을 고칠지만 계산해 로그 · krSeries.adj (on false) 에 남겨요.
+#                            꺼 둔 까닭 (CLAUDE.md "Every adjusted … number says what happened and why"): 뱁새가 고친 과거 주가로 만든 숫자는 화면이
+#                            그 까닭을 한 줄로 말해야 하는데, 승인된 줄이 아직 없어요. Jack 이 줄을 승인하면 화면 PR 과 함께 켜요.
+#                            켠 뒤 다시 끄면 고친 종목(12)이 한꺼번에 krSeries.jump 로 돌아와 관문의 PX_BAD_NEW_FAIL (10) 이 발행을 막아요 —
+#                            켜는 PR 은 되돌리는 방법을 Jack 과 정해 둬요 (RUNBOOK). tests/test_kr_px_repair.py 가 꺼진 것을 지켜요.
+KR_PX_REPAIRS = {
+    ("001465", "2024-04-17"): (0.1, None, "split", "KRX 기준가 19,890 = 전날 종가 198,900 × 0.1 (다음 · 네이버 전일 대비) · 상장주식수 215,385 → "
+                                                    "2,153,850 (다음) · 야후 1:10 분할 2024-04-17"),
+    ("003060", "2026-05-08"): (15.0, None, "merge", "상장주식수 198,407,845 → 13,227,189 (÷15 · KRX 목록 파일 · 다음) · 야후 15:1 2026-04-13 · 재상장 "
+                                                    "첫날 KRX 기준가 4,000 은 시초가 (251 × 15 = 3,765 의 106%)"),
+    ("007460", "2026-05-08"): (15.0, None, "merge", "상장주식수 329,305,030 → 21,953,668 (÷15 · KRX 목록 파일 · 다음) · 야후 15:1 2026-04-14 · 재상장 "
+                                                    "첫날 KRX 기준가 5,070 은 시초가 (293 × 15 = 4,395 의 115%)"),
+    ("009310", "2026-05-11"): (5.0, None, "merge", "상장주식수 21,885,074 → 4,377,014 (÷5 · KRX 목록 파일 · 다음) · KRX 가격 1,065 → 5,330 (거래정지 중 · "
+                                                   "시가총액 그대로) · 야후 5:1 2026-04-09"),
+    ("012170", "2025-03-06"): (10.0, None, "merge", "상장주식수 103,569,488 → 10,356,948 (÷10 · 다음) · 야후 10:1 2025-02-14 · 재상장 첫날 KRX 기준가 "
+                                                    "2,000 은 시초가 (230 × 10 = 2,300 의 87%)"),
+    ("012170", "2026-08-28"): (5.0, None, "merge", "KRX 기준가 3,740 = 전날 종가 748 × 5 (KRX 목록 파일 · 다음) · 상장주식수 20,250,194 → 4,050,038 (÷5) · "
+                                                   "야후 5:1 2026-08-28"),
+    ("012210", "2025-04-24"): (2.0, None, "merge", "야후 2:1 병합 2025-04-21 · KRX 기준가 4,000 (전날 1,998 × 2 = 3,996 · 코넥스 때 · 네이버 전일 대비)"),
+    ("110790", "2023-10-20"): (0.5, None, "split", "KRX 기준가 9,480 = 전날 종가 18,960 × 0.5 (다음 · 네이버 전일 대비) · 상장주식수 11,715,480 → "
+                                                   "23,430,960 (다음) · 야후 1:2 2023-10-20"),
+    ("227420", "2024-01-19"): (2.0, None, "merge", "KRX 기준가 1,808 = 전날 904 × 2 (코넥스 · 거래정지 중 · 네이버 전일 대비) · 야후 2:1 병합 2023-12-21"),
+    ("311060", "2024-01-25"): (0.5, None, "bonus", "KRX 기준가 4,135 = 전날 종가 8,270 × 0.5 (권리락 · 코넥스 · 네이버 전일 대비) · 야후 1:2 2024-01-25"),
+    ("331660", "2026-05-06"): (0.2, None, "split", "KRX 기준가 3,290 = 전날 16,450 × 0.2 (KRX 목록 파일 · 네이버) · 상장주식수 1,100,000 → 5,500,000 "
+                                                   "(KRX 목록 파일) · 야후 1:5 2026-05-06"),
+    ("425040", "2024-01-02"): (0.5, "2023-12-28", "bonus", "KRX 기준가 25,800 = 전날 종가 51,600 × 0.5 (권리락 · 다음 · 네이버 전일 대비) · 네이버는 "
+                                                           "2023-12-27 까지의 봉을 모두 × 0.5 로 고쳤고 12-28 봉만 빠뜨렸어요 · 야후 1:2 2024-01-02"),
+    ("472850", "2026-01-02"): (5660 / 10060, "2025-12-30", "bonus", "KRX 기준가 5,660 = 전날 종가 10,060 × 0.5626 (권리락 · 다음 · 네이버 전일 대비) · "
+                                                                    "네이버는 2025-12-29 까지의 봉을 모두 같은 배율 (0.5626) 로 고쳤고 12-30 봉만 빠뜨렸어요 · "
+                                                                    "야후 1:1.780175 (주식 수로 셈 · 0.15% 다름)"),
+}
+# 확인했지만 고치지 않는 움직임 (로그에 까닭을 적을 뿐 — 숨김은 #128 그대로): (종목, krSeries.jump 의 날짜) → (까닭, 설명).
+# move 주식 수 사건이 아닌 진짜 움직임 (거래 재개 시초가 · 코넥스 → 코스닥 이전 상장) · bar 네이버 봉 하나가 공식 종가와 달라요 (사건 아님) ·
+# one 배율을 말하는 출처가 하나뿐 · still 배율은 확인했지만 고쳐도 첫날이 제한폭 밖. 표에 없는 움직임은 'new' (아직 보지 않음).
+KR_PX_NOFIX_KO = {"move": "주식 수 사건이 아닌 진짜 움직임", "bar": "네이버 봉 하나가 공식 종가와 다름", "one": "배율을 말하는 출처가 하나뿐",
+                  "still": "고쳐도 첫날이 하루 가격 제한폭 밖", "new": "아직 확인하지 않은 움직임"}
+KR_PX_NOFIX = {
+    ("007610", "2026-04-29"): ("move", "상장주식수 18,000,000 그대로 · 거래 재개 시초가 5,000 (3,000 의 167%) 뒤 상한가"),
+    ("107640", "2024-06-24"): ("move", "코넥스 → 코스닥 이전 상장 (기준가 30,000 · 상장주식수 7,118,113 → 8,751,446)"),
+    ("121890", "2023-10-23"): ("move", "상장주식수 12,686,120 그대로 · 거래 재개 시초가 1,478 (739 의 200%) 뒤 상한가 · 야후 기록 없음"),
+    ("206950", "2024-03-15"): ("move", "코넥스 · 거래 재개 기준가 2,260 뒤 상한가 · 야후 기록 없음"),
+    ("206950", "2026-04-07"): ("move", "코넥스 · 거래정지 뒤 1주 거래 2,480 · 상장주식수 14,077,265 그대로"),
+    ("210120", "2026-10-12"): ("bar", "네이버 2026-10-08 봉 1,552 ↔ 공식 종가 2,345 (KRX 목록 파일 · 다음) — 그 뒤 거래정지"),
+    ("229500", "2024-05-29"): ("one", "KRX 기준가 10,250 = 전날 20,500 의 절반이지만 야후 기록 없음 · 코넥스라 다음 · 상장주식수 없음 (시초가 하한 50% 와 "
+                                      "구별 못 해요)"),
+    ("250030", "2026-10-15"): ("move", "코넥스 → 코스닥 이전 상장 (기준가 23,850 · 상장주식수 2,891,933 → 3,786,533)"),
+    ("304840", "2026-11-20"): ("still", "감자 2주 → 1주 (상장주식수 25,094,080 → 12,547,040 · 야후 2:1) 이지만 × 2 로 고쳐도 첫날 +41% (재상장 시초가 "
+                                        "1,220) — 네이버가 2026-11-23 에 기준가 비율 (1,220 ÷ 561) 로 고쳐 다음 실행에서 빠져요"),
+}
+
+
+def _won(x):
+    """원 단위 반올림 (0.5 는 올려요 · 네이버 수정주가처럼 원 단위). (순수 함수)"""
+    return float(math.floor(x + 0.5))
+
+
+def kr_px_repair(px, code, px_date, limit, tol=PIN_PX_TOL, table=None):
+    """표(KR_PX_REPAIRS)에 있는 그 종목의 주식 수 사건마다, 네이버 시계열(naver_clean 뒤)의 앞 봉에 배율을 곱해요 (2026-11-24 · 순수 함수).
+    한 사건 (날짜 E, 배율 f, 시작 봉 S): S(없으면 처음) ≤ 날짜 < E 인 봉 × f (원 단위 반올림). 같은 봉에 사건이 여럿이면 곱해요 (012170: 10 × 5).
+    날마다 받은 시계열에서 다시 확인해요 — 그 사건의 경계마다 (E 앞 봉 → E 봉 · S 가 있으면 S 앞 봉 → S 봉) 원래 움직임이 하루 가격 제한폭
+    (jump_bounds · kr_jumps 와 같은 기준) 밖이고, 곱한 뒤에는 안이어야 고쳐요:
+      after    E 가 기준일(px_date) 뒤 · old  E 가 시계열의 첫 봉이거나 그보다 앞 (창 밖으로 나갔어요 — 고칠 앞 봉이 없어요) ·
+      nobar  E 봉이 없음 · S 가 시계열 안인데 그 봉이 없거나 E 와 같거나 뒤 · same  모든 경계의 원래 움직임이 이미 안 (네이버가 고쳤어요 — 두 번
+      곱하지 않아요) · still  곱한 뒤 어느 경계가 밖 (한 경계만 이미 안이었던 경우도: 시계열이 표를 적을 때와 달라졌어요) ·
+      conflict  사건마다는 맞았는데 모두 곱한 뒤 다시 보니 어느 경계가 밖 (그 종목은 하나도 고치지 않아요).
+    S 가 시계열의 첫 봉이거나 그보다 앞이면 처음부터 곱하고 사건 경계만 봐요 (시작 경계는 창 밖). same · after · old 는 조용한 까닭이에요
+    (KR_PX_ADJ_QUIET · 로그 · 관문이 경고하지 않아요). 날마다의 확인은 그날 움직임이 제한폭 안인지만 보는 거친 확인이에요 (× 12 와 × 15 를 가르지
+    못해요) — 배율이 맞는지는 두 출처로 확인한 표가 지켜요.
+    반환: (시계열 — 고친 것이 없으면 받은 그대로, 고친 사건 [{t, d, f, (from), k, n 곱한 봉 수, src}], 건너뛴 사건 [(날짜, 까닭)])."""
+    table = KR_PX_REPAIRS if table is None else table
+    evs = sorted((d, v) for (c, d), v in table.items() if c == code)
+    if not evs:
+        return px, [], []
+    if px is None or len(px) < 2:
+        return px, [], [(d, "nobar") for d, _ in evs]
+    lo, hi = jump_bounds(limit, tol)
+
+    def inside(a, b):
+        return a > 0 and b > 0 and lo <= b / a - 1 <= hi
+    vals = px.astype(float)
+    idx = vals.index
+    pos = {t: i for i, t in enumerate(idx)}
+    mult = np.ones(len(vals))
+    fixes, skips, edges = [], [], []
+    for d, (f, frm, kind, src) in evs:
+        e = pd.Timestamp(d)
+        s = pd.Timestamp(frm) if frm else None
+        if px_date is not None and e > pd.Timestamp(px_date):
+            skips.append((d, "after"))
+            continue
+        if e <= idx[0]:
+            skips.append((d, "old"))                   # 시계열 창(약 3년) 밖으로 나갔어요 — 고칠 앞 봉이 없어요
+            continue
+        ie = pos.get(e)
+        # 시작 봉이 시계열의 첫 봉이거나 그보다 앞이면 (창 밖으로 나가는 중) 처음부터 곱하고 사건 경계만 봐요 — 시작 경계는 창 밖이에요
+        js = 0 if s is None or s <= idx[0] else pos.get(s)
+        if not ie or js is None or js >= ie:
+            skips.append((d, "nobar"))
+            continue
+        bounds = [(ie, True)] + ([(js, False)] if js else [])   # (경계의 뒤 봉 자리, 앞 봉을 곱하는지)
+        was, now = [], []                               # 경계마다: 원래 안인지 · 곱한 뒤 안인지
+        for i, left in bounds:
+            a, b = float(vals.iloc[i - 1]), float(vals.iloc[i])
+            was.append(inside(a, b))
+            now.append(inside(a * f if left else a, b if left else b * f))
+        why = "same" if all(was) else ("still" if not all(now) else None)
+        if why:
+            skips.append((d, why))
+            continue
+        mult[js:ie] *= f
+        edges += [i for i, _ in bounds]
+        fixes.append({"t": code, "d": d, "f": float(f), **({"from": frm} if frm else {}), "k": kind, "n": int(ie - js), "src": src})
+    if not fixes:
+        return px, [], skips
+    new = pd.Series([_won(v * m) if m != 1.0 else v for v, m in zip(vals.values, mult)], index=idx, name=px.name)
+    if not all(inside(float(new.iloc[i - 1]), float(new.iloc[i])) for i in edges):
+        return px, [], skips + [(x["d"], "conflict") for x in fixes]
+    return new, fixes, skips
+
+
+def kr_px_repair_step(px, code, name, px_date, market, on=None, table=None):
+    """fetch_korea.one() 이 종목마다 부르는 한 곳 (2026-11-24): 표에 있는 종목이면 kr_px_repair 를 부르고, 켜졌고(on · None 이면
+    KR_PX_REPAIR_ON) 고친 사건이 있을 때만 고친 시계열을 돌려줘요. 오류는 그 종목 하나에서 멈춰요 — 그 종목만 고치지 않은 시계열 (예전처럼 움직임
+    검사가 숨겨요) · 건너뛴 사건 ('', 'err') · 크게 남겨요. 다른 종목의 보정은 그대로예요.
+    반환: (쓸 시계열, 기록 (코드, 이름, 고친 사건, 건너뛴 사건) 또는 None — 표에 없는 종목)."""
+    on = KR_PX_REPAIR_ON if on is None else bool(on)
+    table = KR_PX_REPAIRS if table is None else table
+    if not any(c == code for c, _ in table):
+        return px, None
+    try:
+        rpx, rfix, rskip = kr_px_repair(px, code, px_date, kr_day_limit(market), table=table)
+    except Exception as e:                     # 보정이 멈춰도 종목은 예전처럼 (움직임 검사가 숨겨요) — 크게 남겨요
+        log(f"  !! 과거 주가 보정 오류 {code} {name} ({type(e).__name__}: {str(e)[:120]}) — 이 종목만 고치지 않아요 (숫자는 예전처럼 숨겨요)")
+        return px, (code, name, [], [("", "err")])
+    return (rpx if (rfix and on) else px), (code, name, rfix, rskip)
 
 
 def _official_map(df):
@@ -8880,6 +9032,7 @@ def fetch_korea(start, today, rf, prev=None):
     pin_kept, kept_names, pin_bad, jumps = collections.Counter(), {}, [], []    # 2026-11-14: 고치지 않은 봉 · 자기 점검 · 제한폭 넘는 움직임
     win_cut = {}                # 2026-11-14 저녁: 움직임이 있는 종목의 창마다 첫 봉 날짜 (mark_px_bad 가 그 창에 움직임이 드는지 봐요)
     naver_bad = []                                                              # 2026-11-14 (리뷰 S2): 네이버 시계열의 같은 날짜 · 잘못된 값
+    px_rep = []                 # 2026-11-24 (Jack, Track 1 item 4): 과거 주가 보정 [(코드, 이름, 고친 사건, 건너뛴 사건)] (표에 있는 종목만 · kr_px_repair)
     # v19.6e 3차: c1w 의 기준가 연결 확인용 네이버 원래 일봉 — 가장 앞 최종본 날 ~ 기준일 거래일 (KOSPI 일봉) 의 값만 {코드: {날짜: 원}}
     c1w_nv, c1w_nv_err = {}, []
     c1w_nv_days = ({pd.Timestamp(t).date().isoformat() for t in ks_all.index
@@ -8942,6 +9095,12 @@ def fetch_korea(start, today, rf, prev=None):
             if glitch:
                 with lock:
                     naver_bad.append((code, str(row["Name"]), glitch))
+            # 2026-11-24 (Jack, Track 1 item 4): 네이버가 고치지 않은 옛 주식 수 사건의 앞 봉을 확인한 배율로 (KR_PX_REPAIRS · 표에 없는 종목은 그대로).
+            # 켜져 있을 때만 그 시계열이 '네이버 시계열' 이 돼요 — 아래 고정 · 자기 점검 · c1w · 움직임 검사 · 모든 숫자가 같은 시계열을 써요
+            px, rrec = kr_px_repair_step(px, code, str(row["Name"]), px_date, row.get("Market"))
+            if rrec is not None:
+                with lock:
+                    px_rep.append(rrec)
             if close is not None:
                 raw = cut_at(px, px_date)          # 네이버 원래 시계열 (자기 점검 · 움직임 이유에 써요)
                 px, how = pin_close(px, px_date, close)
@@ -9071,6 +9230,12 @@ def fetch_korea(start, today, rf, prev=None):
     log_naver_clean(naver_bad)
     krs = kr_series_check(pin, pin_kept, kept_names, pin_bad, jumps, {r["t"] for r in out}, len(off_by_day),
                           ref=ref_sum)
+    # 2026-11-24 (Jack, Track 1 item 4): 과거 주가 보정 한 줄 · krSeries.adj (관문 '국내 과거 주가 병합 보정 (krSeries.adj · 경고만)')
+    try:
+        krs["adj"] = kr_px_adj_step(px_rep, {r["t"] for r in out}, krs.get("jump"), {r["t"]: r.get("nk") for r in out})
+    except Exception as e:                     # 기록만 못 해요 — 숫자는 위에서 이미 만들었어요 (관문이 모양을 경고해요)
+        krs["adj"] = None
+        log(f"  !! 과거 주가 보정 기록 오류 ({type(e).__name__}: {str(e)[:160]}) — krSeries.adj 비움 (관문 경고)")
     mark_px_bad(out, krs, win_cut)           # 2026-11-14 (Jack): 그 움직임이 계산 창에 든 숫자를 비워요 (점수 · corp.json 보다 먼저)
     # 2026-11-19 (Jack): 확인 못 한 종목은 지난 발행본의 마지막 확인 종가로 (pxd · d1 없음) — 오늘 만든 종목 뒤에 더해요 (그 시세 숫자는 그 종가의
     # 것이라 오늘 시계열 점검 · 비우기를 다시 하지 않아요 · 과거 주가 기록 오류 표시는 지난 움직임과 함께 krSeries 에 옮겨요). 재무 · 배당 · 점수는
@@ -9196,6 +9361,80 @@ def kr_series_check(pin, kept, kept_names, bad, jumps, published, days, ref=None
             "bad": int(nbad), "badStocks": sorted(c for c, _, _ in bad),
             "ref": {k: int((ref or {}).get(k, 0)) for k in ("breakStocks", "unknownStocks", "newStocks")},
             "jump": [[c, t.date().isoformat(), float(p), w] for c, _, j in jm for t, p, w in j]}
+
+
+def kr_px_adj_step(rep, published, jump, names=None, on=None, table=None):
+    """과거 주가 보정 (kr_px_repair) 을 크게 남기고 data.json krSeries.adj 를 만들어요 (2026-11-24 · 관문이 읽어요).
+    rep: [(코드, 이름, 고친 사건들, 건너뛴 사건들)] (fetch_korea 의 종목마다 · 표에 있는 종목 중 보정 단계에 닿은 것) · published: 발행하는 종목 코드
+    (이 종목만 실어요) · jump: 오늘 krSeries.jump ([[코드, 날짜, %, 이유]…] — 켜졌으면 고친 시계열의 움직임) · names: {코드: 이름} ·
+    on: KR_PX_REPAIR_ON (None 이면 그 값) · table: KR_PX_REPAIRS (None 이면 그 표 · 시험용).
+    로그 한 줄: 고친 (꺼졌으면 켜면 고칠) 종목과 배율 · 숨김에서 빠진 종목 수 · 숨긴 채 남는 종목 (오늘 jump 에 남는 종목을 까닭별로: 표의 사건 날짜
+    또는 시작 봉(from)의 움직임이면 그 사건의 결과 — 꺼졌을 때 고칠 사건이면 남지 않아요 · 건너뛴 사건이면 그 까닭 · 표 밖이면 KR_PX_NOFIX, 없으면
+    '아직 확인하지 않은 움직임') · 표의 사건을 건너뛴 까닭 · 표에 있는데 오늘 보정 단계에 닿지 않았거나 (목록에 없음 · 시세를 받지 못함) 발행하지 않는
+    종목 (조용히). 'same' · 'after' · 'old' 말고 건너뛴 사건이 있으면 크게 (확인한 배율이 오늘 시계열과 맞지 않아요).
+    krSeries.adj: {"on": 켜졌는지, "fix": [{t, d, f, (from), k, n, src}…] (켜졌으면 고친 사건 · 꺼졌으면 켜면 고칠 사건), "skip": [[코드, 날짜, 까닭]…]}."""
+    on = KR_PX_REPAIR_ON if on is None else bool(on)
+    table = KR_PX_REPAIRS if table is None else table
+    names = dict(names or {})
+    seen = {c for c, _, _, _ in rep}
+    rows = sorted((c, nm, fx, sk) for c, nm, fx, sk in rep if c in published)
+    for c, nm, _, _ in rows:
+        names.setdefault(c, nm)
+    fix = [x for _, _, fx, _ in rows for x in fx]
+    skip = [[c, d, w] for c, _, _, sk in rows for d, w in sk]
+    done = {(x["t"], x["d"]) for x in fix}
+    skip_by = {(c, d): w for c, d, w in skip}
+    err = {c for c, _, w in skip if w == "err"}
+    edge = {}                                                  # (종목, 움직임 날짜) → 표의 사건 키: 사건 날짜와 시작 봉(from) 둘 다
+    for (c, d), v in table.items():
+        edge[(c, d)] = (c, d)
+        if v[1]:
+            edge[(c, v[1])] = (c, d)
+    fixed = sorted({x["t"] for x in fix})
+    jcodes = {str(j[0]) for j in jump or [] if isinstance(j, list) and j}
+    left = collections.defaultdict(list)                      # 오늘 jump 에 남는 (꺼졌으면 켜도 남을) 종목 → 까닭
+    for j in jump or []:
+        if not (isinstance(j, list) and len(j) >= 2):
+            continue
+        c, d = str(j[0]), str(j[1])
+        ev = edge.get((c, d))
+        if ev is None:
+            why = (KR_PX_NOFIX.get((c, d)) or ("new",))[0]
+        elif c in err:
+            why = "skip:err"
+        elif ev in done:
+            why = None if not on else "still"                 # 켜졌는데 남았으면 고쳐도 밖이에요 (kr_px_repair 가 막아서 생기면 안 돼요)
+        else:
+            w = skip_by.get(ev)
+            why = "still" if w in (None, "still") else f"skip:{w}"
+        if why and c not in left[why]:
+            left[why].append(c)
+    keep = sorted({c for v in left.values() for c in v})
+    loud = [s for s in skip if s[2] not in KR_PX_ADJ_QUIET]
+    tcodes = sorted({c for c, _ in table})
+    unseen = [c for c in tcodes if c not in seen]
+    unpub = [c for c in tcodes if c in seen and c not in published]
+
+    def nm(c):
+        return f"{c} {names.get(c) or ''}".strip()
+
+    def why_ko(w):
+        return KR_PX_NOFIX_KO[w] if w in KR_PX_NOFIX_KO else f"표의 사건을 고치지 못함 ({KR_PX_ADJ_SKIP.get(w[5:], w[5:])})"
+
+    def fx_txt(x):
+        return f"{nm(x['t'])} {x['d']} ×{x['f']:.4g}" + (f" ({x['from']}부터)" if x.get("from") else "")
+    head = ("과거 주가 병합 보정 (KR_PX_REPAIR_ON " + ("켜짐" if on else "꺼짐 — 화면의 이유 줄을 Jack 이 승인하면 켜요 · 숫자는 예전처럼") + "): "
+            + (f"고친 종목 {len(fixed)} ({len(fix)}건 · 숨김에서 빠짐 {sum(1 for c in fixed if c not in jcodes)})" if on
+               else f"켜면 고칠 종목 {len(fixed)} ({len(fix)}건)"))
+    body = (", ".join(fx_txt(x) for x in fix[:JUMP_LOG_SHOW]) + (f" 외 {len(fix) - JUMP_LOG_SHOW}건" if len(fix) > JUMP_LOG_SHOW else "")) if fix else "없음"
+    why_txt = " · ".join(f"{why_ko(w)} {len(v)}: " + ", ".join(nm(c) for c in v[:JUMP_LOG_SHOW])
+                         + (f" 외 {len(v) - JUMP_LOG_SHOW}종목" if len(v) > JUMP_LOG_SHOW else "") for w, v in sorted(left.items()))
+    skip_txt = ", ".join(f"{nm(c)} {d} {KR_PX_ADJ_SKIP.get(w, w)}".replace("  ", " ") for c, d, w in skip[:JUMP_LOG_SHOW])
+    gone_txt = (f" · 표에 있는데 오늘 보지 못한 종목 {len(unseen)} (목록에 없거나 시세를 받지 못함): {', '.join(unseen)}" if unseen else "") \
+        + (f" · 표에 있는데 발행하지 않는 종목 {len(unpub)}: {', '.join(unpub)}" if unpub else "")
+    log(f"{'  !! ' if loud else '· '}{head} — {body} · {'숨긴 채 남는' if on else '켜도 숨긴 채 남는'} 종목 {len(keep)}"
+        + (f" ({why_txt})" if keep else "") + (f" · 표의 사건을 건너뜀 {len(skip)}: {skip_txt}" if skip else "") + gone_txt)
+    return {"on": on, "fix": fix, "skip": skip}
 
 
 # 2026-11-14 (Jack, Q2 (a) "this week"): "For those 18 stocks, hide every number built on the broken price history: the 52-week range,
@@ -16521,7 +16760,11 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                       "shr 주식 수 모름) · keptStocks · bad 자기 점검에 걸린 봉 (0 이어야 해요 · 관문 실패) · badStocks · jump [[종목코드, 날짜, %, "
                       f"이유]] 하루 움직임이 가격 제한폭(코스피 · 코스닥 {KR_DAY_LIMIT:g}% · 코넥스 {KONEX_DAY_LIMIT:g}%)과 넥스트레이드 차이로 "
                       "설명되지 않는 봉 — 이유 " + " · ".join(f"{k} {v}" for k, v in KR_JUMP_WHY.items())
-                      + " · hidden [종목코드…] 그 움직임이 있어서 시계열로 만든 숫자를 비운 종목 (2026-11-14 · jump 의 발행 종목과 같아요 · 종목의 pxBad)"),
+                      + " · hidden [종목코드…] 그 움직임이 있어서 시계열로 만든 숫자를 비운 종목 (2026-11-14 · jump 의 발행 종목과 같아요 · 종목의 pxBad)"
+                      " · adj (2026-11-24) 네이버가 고치지 않은 옛 주식 수 사건의 보정: on 켜졌는지 (꺼졌으면 숫자는 예전처럼) · fix [{t 종목코드, d 새 기준 "
+                      "첫 봉 날짜, f 앞 봉에 곱한 배율, from 그 봉부터 (없으면 시계열 처음부터), k 종류 (" + " · ".join(f"{k} {v}" for k, v in KR_PX_ADJ_KIND.items())
+                      + "), n 곱한 봉 수, src 확인한 출처}] (꺼졌으면 켜면 고칠 사건) · skip [[종목코드, 날짜, 까닭]] 표의 사건을 고치지 않은 까닭 ("
+                      + " · ".join(f"{k} {v}" for k, v in KR_PX_ADJ_SKIP.items()) + ")"),
          "pxBad": ("한국 · 과거 주가 기록 오류 (2026-11-14): 시계열에 가격 제한폭으로 설명되지 않는 하루 움직임이 있는 종목(krSeries.jump)의 가장 "
                    "최근 움직임 날짜 (YYYY-MM-DD). 비운 칸은 pxBadF"),
          "pxBadF": ("한국 · pxBad 종목에서 비운 칸 목록 (2026-11-14 · Jack: 계산 창에 그 움직임이 든 칸만): 시계열 전체 칸 "
