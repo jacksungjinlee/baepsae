@@ -24,6 +24,23 @@ links, "전무가" off the must-not-show list, labels) and a rename in `tests/te
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
 v19.6g, v19.6h.
 
+**Split rounding (#184, 2026-11-24; Track 2 audit 1.1, serious but rare, and 1.4):** 47 of data.json's 150 splits have a ratio
+that isn't a whole number (DD 1:3, UL 8:9, HON and AZN 1:2, AMCR 1:5, SNEX 3:2 …). Records dated before one broke when they didn't give
+whole 1/10,000 shares (for 11 of the 47, one share already doesn't; for the rest, a 0.0001-share sale or a 금액으로 넣기 row):
+`held.js` rounded each record on its own and `lots.js` didn't round, so the app's automatic save of the split was refused and
+retried hundreds of times a second with "날짜·수량·가격을 다시 확인해 주세요" on every screen, a valid sale of the old shares was
+refused, and a full sale left a sliver (a −5원 '손실' on the tax screen with nothing held). Now one count everywhere (`held.js`
+`count()`, read by the ledger, the store's check, 팔고 빼기 and 금액으로 넣기 sales), position by position: a sale that takes either
+the per-record count (what main showed) or the running exact total to exactly 0 closes the position, and the next record starts
+from 0; an open position shows main's per-record count while it stays at or above 0; a reading that goes below 0 falls back to
+the running count over the whole history, then main's. Records saved by main read as main read them. Records with no split or a whole-unit ratio count bit-identically to main (`tests/test_v2_split_round.py`, main's code
+frozen in `tests/fixtures/count_before_split_round_511fd6f`). `app.jsx` stores a data.json split stock by stock, only when main's
+count reads the records too, tries each once per visit and says "stored" once it is in the records. A 금액으로 넣은 holding sold
+with a date before a split sells every share on that date's basis (it sold a fifth after AMCR's 1:5). **Don't plain-revert #184**
+(RUNBOOK § Roll back): records only #184's count reads (a sale only it accepts, or any record saved for a stock whose earlier
+records main reads only without the split, which then stores the split) set that portfolio aside on main's code until the fix
+is back. No new Korean text.
+
 **CI checks the two PR rules (#175, 2026-11-23; Jack: "Automate the rules you missed"):** the last step of `ci.yml`'s `checks`
 job runs `tools/pr_rules.py`, so the required `ci` check goes red when either rule is missed. Run it yourself before pushing:
 `python tools/pr_rules.py --body-file BODY.md --base $(git merge-base origin/main HEAD) --head HEAD` (CI compares
@@ -78,6 +95,21 @@ the day's rate) need a small data PR first"):**
   `미국 회사 크기 (qrev · qeq · 경고만)` passing.
 - **Expect in the third publish's log:** `pending): 0`. That publish is the first with the minimum on screen.
 - RUNBOOK "US company sizes for 종목 순위".
+**#176 (US details after a stock split; audit 2026-11-23, SNDK 8:1 on 11-20):** after it merges, the daily run's US details step
+puts a Yahoo details copy (cached up to 3 days, 14 when Yahoo refuses) taken before a split on today's share count: today's price ×
+the split ratios ÷ the copy's price, for PER, PBR, 시가총액, 배당수익률 and 거래대금 (`fetch_data.us_info_split_view`; splits from today's
+download, the previous publish's `splits` and `SPLIT_OVERRIDES`, up to today KST; a split dated after `usPxDate` counts only if Yahoo's
+series already shows it). Such a copy is not fetched again just for the split: a normal refresh compares Yahoo's fresh numbers with
+copy × ratio: when PER, PBR or volume look pre-split (within 1.25× of the copy without the ratio, at least 1.5× from copy × ratio) while
+시가총액 agrees, it keeps the copy (`diff`: Yahoo's per-share numbers can still be pre-split); when 시가총액 itself looks pre-split, the
+ratio was wrong and the fresh details win (`unfit`). Every multiplied copy is logged `!!` and warned (`fit`). It does
+fetch again when the ratio can't be trusted (`odd`) and when a copy's price moved more than 2× with no split known (`jump`, a split
+Yahoo reported late). Every path that can leave a number off by the ratio goes into `data.json usSrc.split` (only when there is
+something to say) and the new warning-only gate row `미국 분할 뒤 상세 숫자 (PBR ↔ PER × ROE · usSrc.split · 경고만)` names it, along
+with any US company split in the last 30 days whose PBR disagrees with PER × ROE beyond √ratio (at least 1.5). **SNDK itself stays
+wrong until Yahoo corrects it:** its 11-21 PBR 0.63 (really about 5, so 가치 99) came from a fresh Yahoo fetch after the split, with no
+older copy to compare, so this change does not fix it; the gate row names SNDK on every publish until then (expected, not a failure).
+Blanking such a number on screen needs a new say-why line, so it is Jack's call (not asked yet). RUNBOOK § US stock splits.
 
 **#172 (published closes), 2026-11-22:** in a week with days lacking a final KRX list, the daily run reads our earlier publishes
 from the `data` branch (throw-away partial clone, no token, https, minimal env, 180 s total, process-group kill, gc off) and

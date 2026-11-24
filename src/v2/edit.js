@@ -42,7 +42,7 @@ import { BANDS, num, hasGroup } from "./engine.js";
 import { usdOf, marketKey } from "./pf.js";
 import { rulesFor } from "./deckcalc.js";
 import { withoutHolding, deckProblem, problemText, versionFor, recordId, CHANGES_MAX, planWLimit, planWOk, PLANW_MAX_X } from "./store.js";
-import { heldUnits, UNIT, VIEW_SPLITS, splitsOf, splitFactor } from "./held.js";
+import { heldUnits, UNIT, VIEW_SPLITS, sellAllUnits } from "./held.js";
 import { planWeights, bandRuleOf, heldQty } from "./rules.js";
 
 export const MIN_PCT = 1;                        // a holding stays at 1% or more (빼기 is how a holding leaves)
@@ -323,18 +323,12 @@ export const heldShares = (deck, t) => (heldUnits(deck).get(t) || 0) / UNIT;
 // 팔고 빼기's locked quantity for a sale dated `date` (round-2 B-2): every share held, counted on that date's share basis —
 // a record dated before a split is read × r (held.js splitFactor, stored splits and data.json's), so a sale before HON's
 // 1:2 of 2026-06-29 sells 2 old shares for today's 1, and one before NVDA's 10:1 sells 1/10 of today's count. The quantity
-// is the one whose units, read the way held.js reads a sale, are exactly the holding (the nearest unit that does). null:
-// nothing held, no date, or no such quantity (an odd ratio): 팔고 빼기 then refuses rather than leave a share behind.
+// is the one that, counted the way held.js counts a sale, leaves exactly 0 (held.sellAllUnits: the nearest that does; one
+// count for every screen, Track 2 audit 1.1). null: nothing held, no date, or no such quantity (an odd ratio): 팔고 빼기 then
+// refuses rather than leave a share behind.
 export function sellAllQty(deck, t, date) {
-  const u = heldUnits(deck).get(t) || 0;
-  if (!(u > 0) || typeof date !== "string" || !date) return null;
-  const f = splitFactor(splitsOf(deck), t, date);
-  const q0 = Math.round(u / f);
-  for (const d of [0, -1, 1, -2, 2]) {
-    const q = q0 + d;
-    if (q > 0 && Math.round(-q * f) === -u) return q / UNIT;
-  }
-  return null;
+  const q = sellAllUnits(deck || {}, t, date);
+  return q == null ? null : q / UNIT;
 }
 
 // ---------------- saving ----------------
