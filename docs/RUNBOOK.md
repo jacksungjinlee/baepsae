@@ -318,6 +318,39 @@ probably broken for everyone, so nothing is published (users keep the last good 
 wrote a broken mapping record: fix the record code. Never raise N or skip the row to get a publish out;
 a different N needs Jack's yes with new evidence.
 
+**Our own text and the gate's word row (2026-11-24, #178).** The row "글자에 nan·None·null·undefined 없음" (`validate_data.BAD_WORD`,
+frozen) reads every string in the four files. The pipeline used to write those words itself: a "never stop the publish" step stored its
+error text (`pxSrc.own.err`, `usSrc.own.err`, the `ownDrop.krOwn` and `usExtraMissing` reasons), the records above stored the bad value
+in the reason (`"칸 없음 d; d null"`, `role "None"`), and other record reasons printed a missing value (`usForeign.cut` "야후
+financialCurrency None", a `d1Base.ex` name "nan", "마지막 확인 종가(None)"), so one caught error or one bad row stopped the whole
+publish. What is true now:
+- The guards and the own-check records clean their text where they write it (`fetch_data.pub_text` / `pub_err` / `own_drop_pub`). The
+  `ownDrop` rows are cleaned without a cap: each record already has its own N in its own gate row.
+- Right before data.json is written, `pub_sweep` runs the same cleaning over the strings in the pipeline's own record fields
+  (`PUB_SWEEP_KEYS`: `pxSrc`, `usSrc`, `splitsInfo`, `usForeign`, `usExtraMissing`, `usListSym`, `d1Base`, `ownDrop`; disc.json:
+  `ownDrop`). It skips what the app reads: `pxSrc.own.aged` / `usSrc.own.aged` (`nk` is shown as the stock's name, `src/data.js`) and
+  `splitsInfo.fixed` (`src/v2/lots.js`). Stock, company and filing rows are not touched. The reason builders are unchanged.
+- **The cap (Jack's standing rule, N = 5 per file):** up to 5 changed strings in a file are cleaned, each one logged on its own
+  `  !! … 우리 기록 글 {path}: … — 원문: …` line, and counted in that file's `ownDrop.sweep` (`{n, paths}`, first 30 paths; 0 on a
+  clean run). Above 5, nothing in that file is changed: every path is logged with `  !!` ("그대로 둬요"), the count is recorded, and the
+  word row fails as before, because many at once means our processing broke. If the step itself crashes, `pub_safe` logs `  !!` and the
+  file is written as it was (the gate decides).
+- The cleaning: first the literal values of the DART and ECOS keys (and `GITHUB_TOKEN`) from the environment become "…", then the text is
+  cut (300 characters for error fields), then anything after `?` in a URL, a URL's user part, the ECOS key in its URL path, and
+  key-like values become "…" (`key=`, `crtfc_key: …`, `('crtfc_key', '…')`, `X-Api-Key:`, `Bearer`, `Authorization`, `Cookie`, and names
+  that continue after the key word such as `private_key_id=`, `key1=`, `token_type=`, `keyId=`; not exception names like `KeyError`), and
+  each whole-word match of the gate's own pattern (imported) becomes "빈 값". A second pass can only hide more. Only words change, so
+  reason prefixes the gate and `us_fgn_kind` read (`US_FOREIGN_CUR_WHY`) stay intact.
+- The raw text goes to the run log only, with the environment's key values hidden there too (`pub_raw`, first 4,000 characters). The
+  app never reads the cleaned fields. `splitsInfo.err` goes to the run log only (data.json carries `noCol`).
+- Source text is not rewritten: when a Yahoo summary (`de`) or a DART filer's position (`pos`) contains such a word, `own_src_text` blanks
+  that one field right before the write (log: `!! 출처 글자의 관문 낱말 …: {file} n칸 비움 — {stock} {field} …`) and counts it in that
+  file's `ownDrop.srcText`. More than 5 fields in one file (`SRC_TEXT_MAX`, Jack's default N; every past publish has 0 because the row
+  passed): nothing is blanked, the log says so, and the word row itself fails, so no new gate row exists. disc.json is rebuilt daily
+  from the whole 90-day insider window, so its count covers that window, not only the day's new filings. Insider names (`nm`: the screens
+  show `{nm} · {pos}`, so a blank name would leave numbers with no name and no reason), stock names and `dk` (the field of the 2026-10
+  column-shift incident) are left to the row as before.
+
 ## Checked low-PBR companies (gate warning "PBR 0.1 미만 국내 회사")
 
 The daily gate (`validate_data.py`) warns, by name, about every Korean company with a PBR under 0.1 that the unit check
@@ -2255,6 +2288,142 @@ longer holds `BFB`.
 **Rolling back #PR**: a revert PR. The reverted gate ignores `usListSym`; the next data run drops BF-B again (users who saved it
 see the existing "no longer in today's data" handling). No data run is needed for the site checks.
 
+## US company sizes for 종목 순위 (미국 최소 크기, since #185)
+
+Jack, 2026-11-13: "v19.5b's US minimum sizes (25억원 of quarterly revenue, 100억원 of equity, at the day's rate) need a small
+data PR first." The Korean 기준별 성장 and 수익성 lists keep only companies of 100억원 or more (`src/v2/ranks.js` `MIN_EOK`);
+this gives the US lists the figures to do the same.
+
+**What the daily run publishes** (`fetch_data.py` `us_size_step`): for every US company row (not an ETF or fund) whose statements
+are in dollars (`financialCurrency` USD), data.json carries
+- `qrev` · `qrevD`: the latest quarter's revenue (Yahoo quarterly statements, `TotalRevenue`) and that quarter's end date;
+- `qeq` · `qeqD`: the latest quarter's common equity (`CommonStockEquity`, the equity ROE is computed on; negative = 자본잠식,
+  kept as it is) and that quarter's end date.
+
+Whole dollars, like `price`. The app converts with the day's rate (`fx`). Why `CommonStockEquity` rather than
+`StockholdersEquity`: on 2026-11-20's 728 dollar filers the two differ only by preferred stock (75 companies), and only one
+company lands on the other side of 100억원 — PAA, a partnership whose `StockholdersEquity` is 0.
+
+`data.json` `usSize` records the counts:
+- companies, dollar filers and fields filled;
+- `noData`, the rows whose size is blank;
+- `pending`, described below;
+- blank reasons per field (`why`), and `blank`, each blank row's ticker with its reason (pending reasons left out);
+- the cache size, today's requests, and the companies given up on (`gaveUp`);
+- why the step stopped and what kind of stop it was (`stop`, `stopKind`: `429` or `empty`).
+
+**Where it runs, and what protects the prices** (reviews 2026-11-23 and 11-24):
+- **Last in `main()`:** after every Yahoo request the publish depends on. That covers the Korean second source in
+  `fetch_korea`, the US closes, company details and split read in `fetch_us`, the split history, the gold price (`GC=F`), the
+  funds, `fetch_macro` and the exchange-rate history. It also runs after data.json, corp.json and macro.json are written; only
+  the DART disclosure phase follows.
+  - There is no separate US second source: a US stock without a Yahoo close carries our own last confirmed close.
+  - It runs inside `ph.run("미국 회사 크기", …)`, so its time shows in the run summary (`⏱`).
+- **data.json is written twice:** first without the fields (`usSize.stopped` "notRun"), then again with them.
+  - If the step stops or the second write fails, the first file stands: the app shows the lists as before and the gate row warns.
+  - `write_json` writes a temporary file and swaps it in with `os.replace`, so a failed write never leaves a half-written
+    data.json.
+  - A leftover `data.json.tmp` is never published: the workflow's publish step adds only the four named data files.
+- **One request per company:** both lines in one call, yfinance's quarterly time-series function `_get_financials_time_series`.
+  - Pinned with yfinance 1.7.0; `tests/test_us_min_sizes.py` checks it is there.
+  - Unlike the public `get_income_stmt` / `get_balance_sheet` (two requests, about 150 lines each), it raises Yahoo's 429 instead
+    of hiding it.
+  - A 429 costs more than one request: yfinance retries with a new cookie and then tries the chunked form, so each ticker in
+    flight at a 429 sends about 4 requests. At most 3 are in flight, and the step stops at the first 429.
+- **At most 300 companies per run** (`US_SIZE_PER_RUN`), in three queues so no cache entry falls out (`us_size_order`):
+  1. companies with nothing cached, a broken date, or a last fetch that failed, while they have fewer than 3 failed tries in a
+     row (`US_SIZE_TRIES`) — largest market cap first;
+  2. every other entry older than 7 days (`US_SIZE_FRESH_DAYS`) — oldest first;
+  3. companies that failed 3 times in a row — at most once per 7 days, after the others.
+- **Filling the cache:** the first three runs after the merge fetch 300, 300, then 128, so it is complete after the third. A
+  simulation on 2026-11-24 took 18 s, 18 s and 7 s, with no refusal.
+  - Refreshes then come in weekly lumps, not daily. Seven days later the same 300 / 300 / 128 come due on three days in a row,
+    oldest first, then nothing for the rest of the week.
+- **Limits:** 180 seconds (`US_SIZE_BUDGET_S`) and 3 at a time. Either stop below is logged with `!!` naming its real cause, and
+  the next run continues from where it stopped.
+  - The step stops at the first 429 (`stopKind` `429`).
+  - It also stops after 3 empty answers or errors in a row (`US_SIZE_EMPTY_STOP`, `stopKind` `empty`), but only counting
+    companies that had not failed before. A few companies that always answer empty can no longer stop the step on every run
+    (review 2026-11-24, S1).
+- **A failed fetch** keeps the cached value, with its own quarter date, adds one to that entry's `tries`, and is retried by the
+  next run.
+
+**`pending` and when the app's minimum is on.** `usSize.pending` counts dollar filers whose size can still be learned: nothing
+cached yet, or no successful answer yet with fewer than 3 tries. A refused or failed new listing counts as pending (review
+2026-11-24, S2).
+- Permanently unknown companies don't count: another currency, unknown currency, half-yearly reporters, a quarter older than 200
+  days, and companies with 3 failed tries.
+- The app applies the minimum only when `pending` is 0.
+- A cache loss, or a new listing that hasn't answered yet, turns it off again until the cache is complete. The gate warns when
+  `pending` rises from 0.
+
+**Blanks** (each logged with count and tickers; every name is listed except for the still-pending reasons):
+
+| Reason (`usSize.why`) | What it means |
+|---|---|
+| `fcur` | Statements in another currency (38 on 2026-11-20: TSM, ASML, NVO, SONY, TM, SAP, BABA …). The data has no won rate for that currency, so the field stays blank rather than mixed. Follow-up: once #181's non-dollar company totals are switched on, these companies could get `qeq` in dollars. |
+| `cur` | Statement currency unknown (no company details today, `usFcurUnknown`: FISV on 2026-11-20). |
+| `wait` | Not fetched yet: the 300-per-run cap. Pending. |
+| `time` / `stop` | The 180-second limit or a stop came before this company. Pending. |
+| `retry` | Asked, but no answer yet (refused, error or empty), fewer than 3 tries. Pending. |
+| `gaveUp` | 3 failed tries in a row with no answer ever. Permanently unknown; retried once a week. |
+| `noRow` | Yahoo's answer had no such line: half-yearly reporters (BHP, RIO, DEO, WSE have no quarterly revenue). |
+| `fail` | An earlier answer came, but this line has no value. |
+| `old` | The newest quarter ends more than 200 days before the US price date (`US_SIZE_MAX_AGE_DAYS`). |
+| `future` | The quarter end is after the US price date (a broken value). |
+
+**The app** (`src/v2/ranks.js` `usMinState`, `usMinOf`, `critOut`, `noteCrit`; `rank.jsx` `critBasis`):
+- **On only when the fill is complete** (`usSize.pending` 0). While companies are pending, or for a file without the figures, `fx`
+  or a valid `pending`, the US lists are exactly as today with no minimum and no line. The console names the state:
+  - `pending`: "keeps no minimum size (no line), as before: N US companies still wait to be fetched";
+  - `on`: "applies the US minimum …";
+  - `noFigure`, `noFx` or `noPending`: off, with the reason.
+- **기준별 · 수익성 under 미국, when on** (review 2026-11-24, Fable S3; decided by the coordinator, Jack told and can reverse it):
+  - A company leaves when its equity is known and under 100억원 (`qeq × fx ÷ 10⁸ < 100`, `US_MIN_EQ_EOK`; negative included,
+    reason `smallEquity`).
+  - It also leaves when its equity is unknown (`noEquity`): another currency, unknown currency, half-yearly, older quarter, or
+    given up. This matches the Korean list, which drops a company without equity in corp.json under the same approved line.
+  - The approved "· 자본 100억원 이상" is then true of every company shown. Before this, the line would have stated something we
+    never checked: Ascendis sat around #13 with negative common equity until 2025-12-31.
+  - The browser console names every company dropped, with its reason (from `usSize.blank`) and a count, no cap.
+  - Switch: `US_MIN_PROFIT_ON` (on).
+- **기준별 · 성장 under 미국** would apply the same rule with `qrev × fx ÷ 10⁸ < 25` (`US_MIN_REV_EOK`), but its switch
+  `US_MIN_GROWTH_ON` is **off**. The Korean words "매출 100억원 이상" are not true of it, and its own line ("분기 매출 25억원
+  이상", `rank.p.floorGrowthUs`) waits for Jack. To switch it on after his yes:
+  - fill `rank.p.floorGrowthUs` in `src/copy/v2.js` and move the row to the approved file;
+  - set `US_MIN_GROWTH_ON = true`;
+  - update the two "off" checks in `tests/test_us_min_ranks.py`;
+  - rebuild.
+- **Effect on 2026-11-20's data**, with the figures added by running the step three times (simulation on 2026-11-24):
+  - After runs 1 and 2 (`pending` 428, then 128) the lists are as today.
+  - After run 3 (`pending` 0), 수익성 under 미국 goes from 707 to 664 companies.
+    - 6 leave for negative common equity: Gartner #2, Halozyme #6, Las Vegas Sands #8, DaVita #24, Coca-Cola Consolidated #29,
+      FDXF.
+    - 37 leave because their equity is unknown, all other-currency filers (Ascendis #16, ASML, NVO, TSM, SAP, SONY …).
+  - Top 10 before: TPR, IT, STX, CL, MA, HALO, APP, LVS, LYFT, FTAI. After: TPR, STX, CL, MA, APP, LYFT, FTAI, FTNT, AAPL, SNDK.
+
+**Gate row** `미국 회사 크기 (qrev · qeq · 경고만)` (`validate_data.check_us_size`): warning only, it never stops a publish.
+- **It warns when:**
+  - either field is filled for fewer than 90% of the dollar filers that are not pending (`wait` · `time` · `stop` · `retry` are
+    left out, so the planned fill does not warn; `US_SIZE_FILL_WARN`);
+  - `usSize.pending` is not a count;
+  - `pending` rose from 0 in the previous publish (a cache loss);
+  - a field is malformed: not a number, no date, or a date after the US price date or more than 200 days before it;
+  - a non-dollar filer, ETF or fund carries a field;
+  - `usSize` is missing;
+  - the step crashed or never ran (`usSize.stopped`, including "notRun");
+  - the step stopped fetching early. The row names which kind: "야후 거절(429)로 받기를 멈춤" or "빈 답이 이어지는 회사가 있어 받기를
+    멈춤".
+- The value shows "아직 받지 않음 N" with whether the app's minimum is on, and the number of companies given up on.
+- A file from before this PR passes with "칸 없음".
+- **What to do on a warning:** read the run log's `미국 회사 크기` lines (counts, reasons, tickers).
+  - A 429 or many `retry`/`time`: Yahoo was refusing that day. The cache keeps earlier values and the next runs continue.
+  - A run of empty answers that keeps naming the same companies after their third try is not a refusal: they move to the
+    weekly queue (`gaveUp`).
+  - A malformed field is our bug: fix forward.
+
+**Rolling back #185**: a revert PR. The app then ignores `qrev` · `qeq` (the lists are as before), the reverted pipeline stops
+writing them, and the cache file is left unused in `.dart-cache`. No data run needed.
 ## US stock splits and the Yahoo details copy (분할 뒤 보관본 맞춤 · usSrc.split · gate warning "미국 분할 뒤 상세 숫자", since #176)
 
 Audit, 2026-11-23: SNDK split 8:1 on 2026-11-20; the 11-21 publish had PER 5.1, PBR 0.63, ROE 141.2%, 가치 99. Two different problems

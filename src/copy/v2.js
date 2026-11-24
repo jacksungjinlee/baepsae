@@ -172,7 +172,8 @@ export const C = {
       g3Kr: "2년 매출 연평균 증가율 높은 순",
       g3Us: "분기 매출 증가율 높은 순 (전년 동기 대비)",
     },
-    // 최소 크기: 그 {basis} 끝에 ' · ' 로 붙여요 (Jack, 2026-11-12). 한국만: 미국 데이터에는 매출 · 자본 금액이 아직 없어요
+    // 최소 크기: 그 {basis} 끝에 ' · ' 로 붙여요 (Jack, 2026-11-12). 미국 수익성도 profit 그대로 (자본 100억원 이상: 그날 환율로 바꾼 qeq ·
+    // ranks.US_MIN_EQ_EOK — 같은 말이 맞아요). 미국 성장의 줄은 p.floorGrowthUs (Jack 승인 대기 · 그동안 ranks.US_MIN_GROWTH_ON 은 꺼져 있어요)
     floor: {
       growth: "매출 100억원 이상",                                   // 성장률의 바탕이 되는 앞 해 매출 (ranks.MIN_EOK)
       profit: "자본 100억원 이상",                                   // ROE 를 계산한 자본 (ranks.MIN_EOK)
@@ -192,6 +193,7 @@ export const C = {
     // v19.5b 리뷰 3차 제안 (Jack 승인 대기) — docs/tasks/v18.3-new-strings-pending.md § v19.5b. null 인 동안은 승인된 basis.g3Us 그대로
     p: {
       basisG3Us: null,   // 제안: "전년 동기 대비 분기 매출 증가율 높은 순" — 미국 성장 줄의 {basis} (지금 문구는 괄호가 겹쳐요: "…순서(… (전년 동기 대비))예요.")
+      floorGrowthUs: null,   // 제안: "분기 매출 25억원 이상" — 미국 성장 목록의 최소 크기 (최근 분기 매출 qrev × 그날 환율 ≥ 25억원 · ranks.US_MIN_REV_EOK)
     },
   },
 

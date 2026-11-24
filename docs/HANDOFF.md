@@ -32,6 +32,16 @@ holding 379800 KODEX 미국S&P500 (cls "us", a KRX listing priced in won at the 
 `tests/test_v196a_approved.py::test_home_counts_only_shares_held` follows the new code; `tests/test_v2_home_usd.py` renders both 홈s.
 Next in the queue unchanged (v19.3 Part L).
 
+**Clean error text (#178, branch `claude/clean-error-text`, for 11-24; pipeline only, the gate unchanged):** the gate's frozen word row
+("글자에 nan·None·null·undefined 없음") failed on text the pipeline wrote itself, so one caught error (`pxSrc.own.err`, `usSrc.own.err`),
+one dropped own-check row (`ownDrop` reason "d null") or one record reason (`usForeign.cut` "financialCurrency None", a `d1Base.ex` name
+"nan", the "마지막 확인 종가(None)" reason) stopped the whole publish (audits aud5 and #178 rounds 1–2, reproduced). Now our error and
+reason text writes those words as "빈 값" and hides the DART / ECOS key values (in the run log too), URL query strings and key-like values
+as "…", cut to 300 characters. A final `pub_sweep` before each write cleans our own record fields, skipping what the app reads
+(`own.aged`, `splitsInfo.fixed`), capped at Jack's N: up to 5 per file cleaned with `!!` lines and counted in `ownDrop.sweep`; above 5
+nothing changes and the word row fails as before. A Yahoo summary (`de`) or DART position (`pos`) with such a word is blanked and counted
+in `ownDrop.srcText` (same cap; insider names are left to the gate). `splitsInfo.err` is log-only. Live data 11-20 (data branch, fetched
+11-23): 0 matches before and after, all 190 gate rows unchanged. RUNBOOK "Our own text and the gate's word row".
 **Split rounding (#184, 2026-11-24; Track 2 audit 1.1, serious but rare, and 1.4):** 47 of data.json's 150 splits have a ratio
 that isn't a whole number (DD 1:3, UL 8:9, HON and AZN 1:2, AMCR 1:5, SNEX 3:2 …). Records dated before one broke when they didn't give
 whole 1/10,000 shares (for 11 of the 47, one share already doesn't; for the rest, a 0.0001-share sale or a 금액으로 넣기 row):
@@ -71,6 +81,38 @@ push or manual run on a branch fails on purpose (its green would cover the PR's 
 can't read (event file, git) fails with a message. Replayed on past merges it flags #170, #171 and #172 (the misses of 11-22) and
 passes #173.
 
+**US minimum sizes (#185, 2026-11-24; Jack 11-13: "v19.5b's US minimum sizes (25억원 of quarterly revenue, 100억원 of equity, at
+the day's rate) need a small data PR first"):**
+- **Data:** the daily run adds, for each US company with statements in dollars, the latest quarter's revenue and common equity
+  in whole dollars with their quarter-end dates (`qrev` · `qrevD` · `qeq` · `qeqD`), plus a `usSize` record. Non-dollar filers
+  stay blank.
+- **When it runs:** last in `main()`, inside `ph.run("미국 회사 크기")`, after every Yahoo request the publish depends on and
+  after data · corp · macro.json are written; data.json is then written again with the fields.
+- **How it fetches:** one Yahoo request per company, at most 300 per run, 180 s, stopping at the first 429.
+  - Order: nothing cached or failed, largest first; then entries older than 7 days; then companies with 3 failed tries, once a
+    week.
+  - 3 empty answers in a row stop it too, but only counting companies that had not failed before, so always-empty companies
+    can't stall it.
+  - The cache (`.dart-cache/us-size-v1.json.gz`) is complete after three runs (300 · 300 · 128), then refreshes in weekly lumps.
+- **`usSize.pending`:** companies still to learn — nothing cached, or no answer yet with fewer than 3 tries; a refused new
+  listing counts.
+- **App:** 2.0 applies the US 수익성 minimum and its approved line "· 자본 100억원 이상" only when `pending` is 0. The first two
+  publishes after the merge (pending 428, then 128) look like today; the third switches it on.
+- **Review decision of 11-24** (Fable S3; the coordinator decided, Jack is told and can reverse it): when on, a company leaves the
+  US list if its equity is known and under 100억원 at `fx`, or unknown. Unknown means another currency, unknown currency,
+  half-yearly, a quarter over 200 days old, or 3 failed tries. This matches the Korean list's rule under the same line. The
+  console names every company dropped, with its reason.
+- **On 11-20's data with a full cache:** 707 → 664.
+  - 6 leave for negative equity: Gartner #2, Halozyme #6, Las Vegas Sands #8, DaVita, Coca-Cola Consolidated, FDXF.
+  - 37 leave as other-currency filers: Ascendis #16, ASML, NVO, TSM …
+  - Follow-up: #181's non-dollar company totals could give those `qeq` in dollars.
+- **US 성장 minimum** (`qrev × fx` ≥ 25억원): built but OFF (`ranks.US_MIN_GROWTH_ON`). **Open question to Jack:** the line "분기
+  매출 25억원 이상" (`rank.p.floorGrowthUs`, pending doc).
+- **Expect in the first publish's log:** `미국 회사 크기 … 달러 약 728곳 (보관본에 있음 300) … 요청 300`, the `wait` lines,
+  `usSize.pending): 아직 차례가 남은 달러 회사 428곳`, `⏱ 미국 회사 크기`, and the warning-only gate row
+  `미국 회사 크기 (qrev · qeq · 경고만)` passing.
+- **Expect in the third publish's log:** `pending): 0`. That publish is the first with the minimum on screen.
+- RUNBOOK "US company sizes for 종목 순위".
 **#183 (소액주주 yield for 차등배당 payers), 2026-11-24 — data on, screens off until Jack approves two lines:** Jack 11-19 Q6 ("labelled
 as the 소액주주 rate"), 11-23 Track 1 item 4. Of the payers hidden as `data` / `div` (dvLine 3; **16** on the 11-21 publish), the daily run
 reads each December-year-end 사업보고서's "배당에 관한 사항" once (cached, ≤ 30 reports a run, 2 DART calls each; about 32 calls on the first
