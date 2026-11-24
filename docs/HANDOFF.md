@@ -24,7 +24,7 @@ links, "전무가" off the must-not-show list, labels) and a rename in `tests/te
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
 v19.6g, v19.6h.
 
-**Factor scores, companies only (#?, 2026-11-24; found on the 11-24 publish):** `add_percentiles` ranked 33 US ETFs (23 with Yahoo's
+**Factor scores, companies only (#189, 2026-11-24; found on the 11-24 publish):** `add_percentiles` ranked 33 US ETFs (23 with Yahoo's
 `priceToBook`, meaningless for a fund: SPY 1.76, really about 5) and 3 Korean listed infrastructure funds together with companies, so
 547 US companies' 가치 (`vz`) were off by up to 3 points (mean 1.2) and SOXX · TLT scored 가치 100. After it merges, the next publish
 ranks companies only in each market (`validate_data.factor_fund`: `etf` true or `fund`, the 2.0 `isStockLike` rule); funds get no
