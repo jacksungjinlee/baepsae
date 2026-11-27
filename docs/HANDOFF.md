@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-24 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-28 KST — read this first)
 
 **Now (2026-11-23):** merged and deployed 11-22: #166 (old-app English carry lines), #167 (div reason lines), #168 (v19.6b 오늘 볼 것
 page), #169 (new US tickers wait), #170 (v19.6e data: `c1w` · `wkFrom` · `usWkFrom` · `c1wv` · `c1wSrc`), #171 (v19.6e
@@ -13,17 +13,28 @@ screens: 이번 주 정리 card, ON with Jack's lines of 11-22; first card possi
 last-week closes from our own publishes, Jack 11-22). Their data effects reach the site with the first publish after them, Tuesday 11-24's morning run (none since 11-21 06:41). Expect in its
 log: the `새로 들어온 미국 종목` line, the `c1w` lines and the gate rows `미국 새 종목 확인 종가 기다림` and `이번 주 시작 종가`; Monday 11-23
 had a final KRX list (unless it turns out to be a backup-source day), so #172 reads no old publishes: expect `c1wSrc.pub` = 0 and the log
-line `c1w 지난 발행본: 읽지 않아요 …` — a 0 there is correct, not a failure, and #172's real-data proof is its dry run below. **v19.6b switch-on (this PR, branch `claude/v19.6b-switch-on`; live once it merges and deploys):** 공시 보기 on every 확인 필요
-card, the 임원 · 주요주주 지분 변동 cards (held and watched stocks, 7 days, at least 1억원 at today's close, none for a stock shown at
-its last confirmed close), `look.insBoth` "임원·주요주주 지분 변동", and 지분 변동 amounts with one decimal under 10억원 (Jack, 11-23:
-"one decimal only under 10억원; whole 억원 above that; 조원 with one decimal, the same as other amounts"). Jack said yes on 11-22 to
-the two named test edits and on 11-23 to flipping #168's own "still off" checks (expected values and labels only, nothing removed
-or loosened). **Open questions to Jack:** the capped footnote
+line `c1w 지난 발행본: 읽지 않아요 …` — a 0 there is correct, not a failure, and #172's real-data proof is its dry run below. The
+v19.6b switch-on is its own paragraph below (#?). **Open questions to Jack:** the capped footnote
 `weekly.nvNoteMore` ("{names} 외 {n}종목의 지난주 종가는 다른 자료로 확인한 값이에요. 이번 주 움직임이 실제와 조금 다를 수
 있어요."; until then more than 5 Naver-checked stocks are left out and named), "건" on the older chips (유상증자 {n} · 지분 변동
 {n} · 실적 발표 {n}) (one decimal on 지분 변동 amounts: answered 11-23, in the switch-on PR). Design chat has (sent 11-22): the say-why audit, the 10 dark-mode pairs,
-the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
-v19.6g, v19.6h.
+the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L is skipped (Jack,
+11-27: "Yes, skip Part L"; the v19.3 spec's Status line says what covered each item), so Track 1's data follow-ups and Jack's
+other 11-27 answers come next. On hold: v19.4, v19.6g, v19.6h.
+
+**v19.6b switch-on (#?, branch `claude/v19.6b-switch-on`, 2026-11-28; live once it merges and deploys):** the parts #168 shipped off.
+공시 보기 on every 확인 필요 card (`routes.dartFilingUrl`: that one filing in DART's viewer by its exact receipt number, else no button;
+new tab, noopener; nothing fetched). The 임원 · 주요주주 지분 변동 cards on 오늘 볼 것: held and watched stocks, filed in the last 7
+days, |q| × today's official close ≥ 1억원, none for a stock shown at its last confirmed close (`pxd`, named in the console); on 홈 a
+held stock's reports stay the v19.3e 공시 row and only a watched stock's card gets a row. Titles by `role` (`look.js` `ROLE_OF`, the
+one read #145's role test allows): 임원 / 주요주주 / `look.insBoth` "임원·주요주주 지분 변동" for both or blank. Amounts with one
+decimal under 10억원, whole 억원 from 10억원, 조원 with one decimal (`look.insiderWon`; Jack 11-23); other screens keep `cofmt.bigWon`.
+#171's 이번 주 정리 counts what 오늘 볼 것 shows, so its 공시 tile now also counts the week's 지분 변동 reports (approved chip "지분 변동
+{n}"). Test edits: Jack's yes of 11-22 (the DART-link test, the role test) and of 11-27 (#168's and #171's own "still off" checks
+now expect "on": `tests/test_v196b_cards.py`, `tests/test_v196b_answers.py` (a rename), `tests/smoke_v2.py` scene_v196b ·
+scene_v196b_states · scene_v196e, `tests/test_v196e_weekly.py`; expected values and labels only, nothing removed or loosened; listed
+in the PR's 안전 규칙 변경). Still off: corrections of old decisions (`OLD_CORRECTIONS` false) and 유무상증자 · 기타주식 · two-class rows ·
+rights issues by other methods (wording from the design chat).
 
 **Factor scores, companies only (#189, 2026-11-24; found on the 11-24 publish):** `add_percentiles` ranked 33 US ETFs (23 with Yahoo's
 `priceToBook`, meaningless for a fund: SPY 1.76, really about 5) and 3 Korean listed infrastructure funds together with companies, so
