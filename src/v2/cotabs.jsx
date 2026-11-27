@@ -38,7 +38,7 @@ import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.
 import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, KrOwnCloseLine, tx, tap, useMode } from "./ui.jsx";
 import { groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, growthVsInd, annualRows, yoy, decompose, pbrStrip, indMedian,
   roePbrMap, impliedGrowth, receipt, discFor, discDate, perMillionView, perMillionKr, payout, DCF, round, pastNiGrowth, dcfVs, divHiddenLine,
-  divBlankKind } from "./company.js";
+  divBlankKind, divSmallView } from "./company.js";
 import { growthBasis, num, exactData } from "./engine.js";
 import { signedPct, eokText } from "./deckcalc.js";
 import { withAssume, assumeOf } from "./store.js";
@@ -771,6 +771,9 @@ export function DivTab({ load, s }) {
   const us = usOf(s);
   const r = us ? divUs(s) : divKr(s, co);
   const hidLine = us ? null : divHiddenLine(s, co);         // v19.1j: the hidden-yield reason line's copy key (company.js), or null
+  // 2026-11-23 (Jack, 11-19 Q6): a 차등배당 company's 소액주주 dividend and yield, labelled, with its line in the hidden-yield line's place
+  // (company.js divSmallView: the switch in smallcfg.js and both lines approved; never beside an all-holder yield)
+  const small = us || r.yieldPct != null || !all(Dv.smallBasis, Dv.smallLine) ? null : divSmallView(s, co);
   // US statements not in dollars (data.json fcur): the yield was not computed — 배당수익률 – with the reason under it, never
   // 자료가 없어요 (keyed on the data, src/v2/fcur.js)
   const fc = us && fcurDyBlank(s);
@@ -809,13 +812,21 @@ export function DivTab({ load, s }) {
   const ring = po && po.pct != null && all(Dv.payoutQ, Dv.payoutOf, Dv.payoutRest) ? payoutWon(po.pct) : null;
   return (
     <div data-ui-v2="co-div" data-cls={s.cls} data-rule={r.rule}>
-      {(head || (showDps && Dv.dps) || us) && <Card data-ui-v2="co-div-head">
+      {(head || (showDps && Dv.dps) || us || small) && <Card data-ui-v2="co-div-head">
         {head && <H>{head}</H>}
         {/* 자료가 없어요 for a company with no statements at all (fix.js noStmtFor, Jack 2026-11-14): why, under it */}
         <NoStmtNote s={s} co={co} show={!us && r.rule === "na"} />
         {/* v19.1i (Jack's line, 2026-11-08) and v19.1j (Jack, 2026-11-15): why the yield is hidden, by the pipeline's mark (one line at most) */}
         {/* 2026-11-23: a report per-share figure the pipeline blanked (company.js divBlankKind) — 자료가 없어요 with line 4, or 배당을 줘요 with line 3 */}
-        {!us && (r.rule === "pays" || (r.rule === "na" && divBlankKind(s, co))) && hidLine && Dv[hidLine] && <Note data-ui-v2={HID_UI[hidLine]}>{Dv[hidLine]}</Note>}
+        {!us && (r.rule === "pays" || (r.rule === "na" && divBlankKind(s, co))) && !small && hidLine && Dv[hidLine] && <Note data-ui-v2={HID_UI[hidLine]}>{Dv[hidLine]}</Note>}
+        {small && <Note data-ui-v2="co-div-small">{Dv.smallLine}</Note>}
+        {small && Dv.dps && (
+          <div data-ui-v2="co-dps-small" data-dps={small.dps} style={{ display: "flex", alignItems: "baseline", gap: SPACE(2), flexWrap: "wrap", marginTop: SPACE(3) }}>
+            <span style={tx(SIZE.h1, WEIGHT.heavy, COLOR.ink)}><Amount text={fill(C.app.won, { n: nf(small.dps) })} /></span>
+            <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{`${Dv.dps} · ${Dv.smallBasis}`}</span>
+          </div>
+        )}
+        {small && Dv.dps && <Src>{yearText(fy)}</Src>}
         {showDps && Dv.dps && (
           <div data-ui-v2="co-dps" style={{ display: "flex", alignItems: "baseline", gap: SPACE(2), flexWrap: "wrap", marginTop: SPACE(3) }}>
             <span style={tx(SIZE.h1, WEIGHT.heavy, COLOR.ink)}><Amount text={fill(C.app.won, { n: nf(r.dps) })} /></span>
@@ -860,10 +871,12 @@ export function DivTab({ load, s }) {
       {!us && r.rule !== "none" && r.rule !== "na" && unitChkText(s, co) && (
         <Card data-ui-v2="co-payout-unit"><UnitChkNote s={s} co={co} style={{ marginTop: 0 }} /></Card>
       )}
-      {(r.yieldPct != null || fc || fg || (!ring && po && po.pct != null && all(Dv.payout, Dv.payoutSub))) && <Card data-ui-v2="co-div-stats">
+      {(r.yieldPct != null || small || fc || fg || (!ring && po && po.pct != null && all(Dv.payout, Dv.payoutSub))) && <Card data-ui-v2="co-div-stats">
         <Stats>
           {r.yieldPct != null && <Stat data-ui-v2="co-yield" data-y={r.yieldPct} label={C.pick.receipt.yield} value={yieldText(r.yieldPct)}
             sub={us ? Dv.yieldSubUs : fy ? fill(Dv.basisKr, { fy }) : null} />}
+          {small && <Stat data-ui-v2="co-yield-small" data-y={small.y} label={`${C.pick.receipt.yield} · ${Dv.smallBasis}`} value={yieldText(small.y)}
+            sub={fy ? fill(Dv.basisKr, { fy }) : null} />}
           {fc && <Stat data-ui-v2="co-yield" data-blank="fcur" label={C.pick.receipt.yield} value="–" />}
           {fg && <Stat data-ui-v2="co-yield" data-blank="fgn" label={C.pick.receipt.yield} value="–" />}
           {!ring && po && po.pct != null && all(Dv.payout, Dv.payoutSub) && <Stat data-ui-v2="co-payout" data-pct={po.pct} label={Dv.payout} value={pctText(po.pct)} sub={Dv.payoutSub} />}

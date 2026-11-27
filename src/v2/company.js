@@ -13,6 +13,7 @@ import { GROUP_MIN } from "./track.js";
 import { DCF, reverseDcf } from "./dcf.js";
 import { okCode } from "./routes.js";
 import { epsBase, epsNiSeries } from "../repair.js";
+import { SMALL_YIELD } from "./smallcfg.js";
 
 export { DCF, dcfPerShare, reverseDcf, okAssume } from "./dcf.js";
 
@@ -266,6 +267,23 @@ export function divBlankKind(s, co = null) {
   if (s.dvLine !== 3) return null;
   const cash = co && Array.isArray(co.cash3) ? num(co.cash3[0]) : null;
   return cash != null && cash > 0 ? "pays" : "unknown";
+}
+
+// 2026-11-23 (Jack, 2026-11-19 Q6 "labelled as the 소액주주 rate"): a 차등배당 company's 소액주주 yield, where the screens would otherwise
+// say why the yield is hidden (company.jsx tile · cotabs.jsx DivTab · compare.jsx). The pipeline (fetch_data.small_holder_div) puts
+// data.json dpsSmall (the 사업보고서's dividend per share, which the report's own note says the small shareholders get) and dytSmall
+// (dpsSmall ÷ today's close, %) only on a payer its proof hid for a dividend table that disagrees with the share counts (dvLine 3),
+// when today's share count is on that year-end's basis. -> { y, dps } or null: the switch off (smallcfg.js), an older file, a US stock,
+// a yield that shows (dyt, krDivState y), no or a zero dividend, a mark other than 3, or numbers that do not agree (dytSmall must be
+// dpsSmall ÷ price rounded to 0.01%p, at least 0.01 and at most DY_MAX). The ranking, 관심 종목 and plans keep dyt.
+export function divSmallView(s, co = null, on = SMALL_YIELD.on) {
+  if (!on || !exactData() || !s || s.cls !== "kr") return null;
+  const y = num(s.dytSmall), d = num(s.dpsSmall), p = num(s.price);
+  if (y == null || d == null || !(y >= 0.01) || y > DY_MAX || !(d > 0) || !(p > 0)) return null;
+  if (Math.abs(round((d / p) * 100, 2) - y) > 0.006) return null;
+  if (s.dvLine != null && s.dvLine !== 3) return null;
+  const st = krDivState(s, co);
+  return st && !st.zero && st.y == null ? { y, dps: d } : null;
 }
 
 // US until v19.2: data.json has no US dividend per share, only Yahoo's yield. Missing is not "no dividend".

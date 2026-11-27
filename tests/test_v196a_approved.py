@@ -243,6 +243,6 @@ def test_home_counts_only_shares_held():
     """Final review N3: 홈 counts a portfolio, a US holding (the US close-date line) and its verdict band only for shares held;
     a sold-out kept holding (0 shares) is never one of them (tests/test_v2_lots.py checks heldDecks behaviourally)."""
     h2, hm = read("src/v2/home2.jsx"), read("src/v2/home.js")
-    assert 'b.de.holdings.some((x) => x.cls === "us" && x.qty !== 0)' in h2
+    assert 'b.de.holdings.some((x) => usdOf(load.byT.get(x.t)) && x.qty !== 0)' in h2
     assert "ev.decks.filter((d) => d.ok && !d.imported && d.holdings.some((x) => x.qty !== 0))" in h2
     assert "de.holdings.some((x) => x.qty !== 0)) out.push({ deck: d, de });" in hm
