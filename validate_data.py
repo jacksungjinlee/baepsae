@@ -3856,17 +3856,20 @@ KR_SPLIT_RC_AUCTION = (0.5, 2.0)    # 병합: 앞날 종가 ÷ 기준가 가 배
 # 필수 종목: Jack 이 이름을 댄 셋 + 관문의 필수 종목 (MUST · 카카오는 그 목록에 없고, MUST 의 다른 다섯 종목은 비우면 '필수 종목 추세 · 저변동
 # 순위' 줄이 어차피 발행을 막아요 — 같은 까닭을 이 줄이 바로 말하게).
 KR_SPLIT_MUST = tuple(dict.fromkeys(("005930", "035420", "035720") + MUST))
-# 하루에 새로 생긴 공시로 확인하지 못한 분할: 이만큼 이상이면 실패. 고른 까닭 (시드 data/kr_splits_seed.csv 579줄 · 2016-01-01 ~ 2026-11-20 · 공시가
-# 있든 없든 시세가 분할 · 병합처럼 움직인 모든 사건 — 공시 없는 사건 수의 위 끝): 사건이 있던 373일 중 274일 1건 · 59일 2건 · 13일 3건 · 12일 4건
-# (96% 가 4건 이하) · 5건 이상은 15일뿐 (삼성전자 50:1 의 2018-05-04 와 2026년 4 ~ 8월 동전주 병합 몰림 · 많아야 11건, 그 사건들은 공시가 있어요).
-# 보통 날은 0 ~ 1건이라 공시로 확인하지 못한 사건이 한 날에 5건이면 우리 읽기나 출처가 한꺼번에 깨졌을 가능성이 커요. 오늘 판정에서 처음 나온 것만
-# 세요 (직전 발행본의 nofile 에 없던 것 · 최근 KR_SPLIT_NOFILE_RECENT_DAYS 일 — 시드를 채우는 동안 오래된 사건으로 막히지 않게).
-KR_SPLIT_NOFILE_DAY_FAIL = 5
-KR_SPLIT_NOFILE_RECENT_DAYS = 30
+# 한 실행에 새로 생긴 공시로 확인하지 못한 분할 (1차 리뷰 Fable S1 · Opus S5 · 조정자 5, 2026-11-28 — Jack 의 말 그대로 "when many appear in one run"):
+# 오늘 nofile 의 줄 중 직전 발행본의 nofile 에 없던 것 (사건 날짜와 상관없이) 이 이만큼 이상이면 실패. 고른 까닭 (모의 채우기 · DART 호출 없음 ·
+# 시드 586 사건 · 실행당 DART 한도 50 · 사건마다 고정된 무작위로 '공시 없음' 비율 p · 첫 실행은 직전 발행본에 splitsKr 이 없어요): 한 실행에 새로 생긴
+# 수의 가장 큰 값 — p 0 · 0.1 · 0.2 · 0.3 · 0.5 에서 1 · 6 · 9 · 12 · 15 (첫 실행 1 · 3 · 6 · 8 · 12), 모든 조회가 '없음' 이면 실행마다 16 ~ 30 (첫 실행 26).
+# 16 이면 공시의 절반이 확인되지 않아도 채우는 동안 막히지 않고, 읽기가 통째로 깨지면 그 첫 실행에서 막혀요. 11-21 ~ 11-27 의 KRX 목록에서 주식 수가
+# 10% 넘게 바뀐 3종목 (코나아이 ×1.50 · 삼성FN리츠 ×1.21 · 풍전약품 ×1.12) 은 기준가가 그대로라 후보가 아니에요.
+KR_SPLIT_NOFILE_RUN_FAIL = 16
 KR_SPLIT_NOFILE_SERIES_DAYS = 3 * 365   # 이 날수 안의 사건이면 시계열 안이라 그 종목에 spNo 표시가 있어야 해요 (경고 줄 · 시계열은 약 3년 40일)
 KR_NOFILE_MUST_ROW = "필수 종목의 공시로 확인하지 못한 분할 (splitsKr.nofile)"
-KR_NOFILE_DAY_ROW = f"하루에 새로 생긴 공시로 확인하지 못한 분할 ({KR_SPLIT_NOFILE_DAY_FAIL}건 이상이면 실패)"
+KR_NOFILE_RUN_ROW = f"한 실행에 새로 생긴 공시로 확인하지 못한 분할 ({KR_SPLIT_NOFILE_RUN_FAIL}건 이상이면 실패)"
 KR_NOFILE_HIDE_ROW = "공시로 확인하지 못한 분할의 숫자 비움 (spNo · 경고만)"
+KR_NOFILE_SUM_ROW = "공시로 확인하지 못한 분할 · 이번 실행 (경고만)"
+KR_NOFILE_KEEP_ROW = "공시로 확인하지 못한 분할 기록 이어짐 (경고만)"
+KR_NOFILE_KEEP_DAYS = int(365.25 * 3) + 40   # 파이프라인의 KR_SPLIT_NOFILE_KEEP_DAYS 와 같은 날수 (시계열이 닿는 날 · 그보다 오래되면 빠져도 돼요)
 
 
 def kr_split_rows(data):
@@ -3960,6 +3963,11 @@ def kr_split_receipt_ok(x):
     shr, px = json_num(c.get("shr")), json_num(c.get("px"))
     if shr is None or px is None or shr <= 0 or px <= 0:
         return False
+    if "dPx" in c or "dShr" in c:            # 두 날로 짝지은 사건 (1차 리뷰 S1): 공시의 날은 둘 중 하나 · 기준가의 날이 뒤
+        ds, dp = _iso_day(c.get("dShr")), _iso_day(c.get("dPx"))
+        if ds is None or dp is None or dp <= ds or (dp - ds).days > 14 or x[1] not in (c.get("dShr"), c.get("dPx")) \
+                or c.get("dlOn") != ("shr" if x[1] == c.get("dShr") else "px"):
+            return False
     if r > 1:
         return c.get("rule") == "split" and abs(px / r - 1) <= KR_SPLIT_RC_PX_TOL and abs(shr / r - 1) <= KR_SPLIT_RC_SHR_TOL
     lo, hi = KR_SPLIT_RC_AUCTION
@@ -3978,17 +3986,19 @@ def _nofile_rows(info):
 
 
 def check_kr_split_nofile(rep, data, comps, today, pdata):
-    """2026-11-27 (Jack 답 11): 공시로 확인하지 못한 분할 — 필수 종목 (실패) · 하루에 새로 KR_SPLIT_NOFILE_DAY_FAIL 건 이상 (실패) · 그 밖의 종목의 숫자를
-    비웠는지 (경고만). splitsKr 이 없거나 nofile 칸이 없는 파일(이 PR 전 · 감시 --live 가 보는 사이트 파일)은 통과 (확인할 목록이 없어요)."""
+    """2026-11-27 (Jack 답 11): 공시로 확인하지 못한 분할 — 필수 종목 (실패) · 한 실행에 새로 KR_SPLIT_NOFILE_RUN_FAIL 건 이상 (실패 · 1차 리뷰 뒤) ·
+    그 밖의 종목의 숫자를 비웠는지 · 이번 실행의 수 · 직전 발행본의 줄이 까닭 없이 사라졌는지 (셋 다 경고만). splitsKr 이 없거나 nofile 칸이 없는
+    파일(이 PR 전 · 감시 --live 가 보는 사이트 파일)은 실패 줄 둘이 통과해요 (확인할 목록이 없어요) — 직전 발행본에 줄이 있었으면 '이어짐' 줄이 경고해요."""
     info = data.get("splitsKr") if isinstance(data, dict) else None
     rule_m = (f"0 ({'·'.join(KR_SPLIT_MUST)} — Jack 2026-11-27: 공시로 확인하지 못한 분할이 필수 종목에 있으면 발행하지 않아요 · 고치는 길: 공시를 "
               "확인해 KR_SPLIT_OVERRIDES 에 근거와 함께, 또는 공시 읽기를 고쳐요 · RUNBOOK '한국 주식 분할')")
-    rule_d = (f"{KR_SPLIT_NOFILE_DAY_FAIL}건 미만 (같은 날짜 · 최근 {KR_SPLIT_NOFILE_RECENT_DAYS}일 · 직전 발행본의 nofile 에 없던 것 — 시드 2016 ~ 2026 의 "
-              "사건이 있던 날 96% 가 모든 사건 4건 이하 · 보통 날은 0 ~ 1건)")
+    rule_r = (f"{KR_SPLIT_NOFILE_RUN_FAIL}건 미만 (오늘 nofile 중 직전 발행본의 nofile 에 없던 줄 · 사건 날짜와 상관없이 — Jack: \"when many appear in "
+              "one run\" · 모의 채우기에서 공시의 절반이 확인되지 않아도 한 실행에 많아야 15)")
     if not isinstance(info, dict) or "nofile" not in info:
         why = "splitsKr 없음" if not isinstance(info, dict) else "splitsKr.nofile 없음 (2026-11-27 전 형식)"
         rep.add(KR_NOFILE_MUST_ROW, True, f"{why} — 확인할 목록이 없어요", rule_m)
-        rep.add(KR_NOFILE_DAY_ROW, True, f"{why} — 확인할 목록이 없어요", rule_d)
+        rep.add(KR_NOFILE_RUN_ROW, True, f"{why} — 확인할 목록이 없어요", rule_r)
+        _check_kr_split_keep(rep, data, today, pdata, None)
         return
     rows, odd = _nofile_rows(info)
     if odd and not rows and not isinstance(info.get("nofile"), list):
@@ -3999,25 +4009,54 @@ def check_kr_split_nofile(rep, data, comps, today, pdata):
         txt = [f"{x[0]} {(by.get(x[0]) or {}).get('nk', '')} {x[1] if len(x) > 1 else '?'}".replace("  ", " ") for x in must]
         rep.add(KR_NOFILE_MUST_ROW, not must, (f"{len(must)}건: {', '.join(txt[:KR_SPLIT_SHOW])}" if must else "없음")
                 + (" · 모양이 틀린 줄이 있어요" if odd else "") + f" (전체 {len(rows)}건)", rule_m)
+    new = None
     if not isinstance(pdata, dict):
-        rep.add(KR_NOFILE_DAY_ROW, True, "직전 발행본 없음 (비교 안 함)", rule_d)
+        rep.add(KR_NOFILE_RUN_ROW, True, "직전 발행본 없음 (비교 안 함)", rule_r)
     else:
         pinfo = pdata.get("splitsKr") if isinstance(pdata.get("splitsKr"), dict) else {}
         old = {(x[0], x[1]) for x in _nofile_rows(pinfo)[0] if len(x) > 1 and isinstance(x[1], str)}
-        cnt = collections.Counter()
-        for x in rows:
-            d = _iso_day(x[1]) if len(x) > 1 and isinstance(x[1], str) else None
-            if d is not None and 0 <= (today - d).days <= KR_SPLIT_NOFILE_RECENT_DAYS and (x[0], x[1]) not in old:
-                cnt[x[1]] += 1
-        top = cnt.most_common(3)
-        n = top[0][1] if top else 0
-        rep.add(KR_NOFILE_DAY_ROW, n < KR_SPLIT_NOFILE_DAY_FAIL,
-                (f"가장 많은 날 {top[0][0]} {n}건" + (" · " + ", ".join(f"{d} {k}건" for d, k in top[1:]) if len(top) > 1 else "")
-                 + f" (새로 {sum(cnt.values())}건)" if top else "새로 생긴 사건 없음"), rule_d)
+        new = [x for x in rows if not (len(x) > 1 and isinstance(x[1], str) and (x[0], x[1]) in old)]
+        names = ", ".join(f"{x[0]} {x[1] if len(x) > 1 else '?'}" for x in new[:KR_SPLIT_SHOW]) + (" …" if len(new) > KR_SPLIT_SHOW else "")
+        rep.add(KR_NOFILE_RUN_ROW, len(new) < KR_SPLIT_NOFILE_RUN_FAIL, f"새로 {len(new)}건" + (f": {names}" if new else "")
+                + ("" if pinfo.get("nofile") is not None else " (직전 발행본에 목록이 없어 모두 새로)"), rule_r)
+    spn = sum(1 for s in data.get("stocks", []) if isinstance(s, dict) and s.get("cls") == "kr" and "spNo" in s)
+    rep.add(KR_NOFILE_SUM_ROW, True, f"이번 실행에 새로 {'?' if new is None else len(new)}건 · 전체 {len(rows)}건 · 숫자를 비운 종목 {spn}",
+            "경고만 — 새로 생긴 줄이 있으면 노랗게 (공시를 확인하세요 · 실패는 위 두 줄)", warn=bool(new))
+    _check_kr_split_keep(rep, data, today, pdata, rows)
     try:
         _check_kr_split_hide(rep, data, comps, rows)
     except Exception as e:
         rep.add(KR_NOFILE_HIDE_ROW, True, f"읽다 멈췄어요 ({type(e).__name__})", "경고만", warn=True)
+
+
+def _check_kr_split_keep(rep, data, today, pdata, rows):
+    """직전 발행본의 nofile 줄이 오늘 까닭 없이 사라졌는지 (1차 리뷰 Fable S2 · 조정자 6 · 경고만): 까닭 = 오래됨 (KR_NOFILE_KEEP_DAYS) · 확인됨
+    (오늘 splits 에 그 종목의 그 날 · 기준가의 날 · 10일 안의 한국 줄). rows None = 오늘 파일에 목록이 없어요."""
+    rule = (f"직전 발행본의 nofile 줄은 {KR_NOFILE_KEEP_DAYS}일이 지나거나 확인돼 splits 에 실릴 때만 빠져요 (경고만 — 사라진 줄의 종목은 숫자가 다시 보일 수 "
+            "있어요 · 실패 줄로 할지는 Jack 이 정해요)")
+    try:
+        pinfo = pdata.get("splitsKr") if isinstance(pdata, dict) and isinstance(pdata.get("splitsKr"), dict) else {}
+        prev_rows = [x for x in _nofile_rows(pinfo)[0] if len(x) > 1 and isinstance(x[1], str) and _iso_day(x[1])]
+        if not prev_rows:
+            rep.add(KR_NOFILE_KEEP_ROW, True, "직전 발행본에 줄이 없어요", rule)
+            return
+        have = {(x[0], x[1]) for x in rows or [] if len(x) > 1}
+        kr_rows = kr_split_rows(data)
+        lost = []
+        for x in prev_rows:
+            if (x[0], x[1]) in have or (today - _iso_day(x[1])).days > KR_NOFILE_KEEP_DAYS:
+                continue
+            dates = {x[1]} | ({x[4]} if len(x) > 4 and isinstance(x[4], str) else set())
+            if any(y[0] == x[0] and (y[1] in dates or abs((_iso_day(y[1]) - _iso_day(x[1])).days) <= 10) for y in kr_rows):
+                continue
+            lost.append(f"{x[0]} {x[1]}")
+        why = "오늘 파일에 splitsKr.nofile 이 없어요 · " if rows is None else ""
+        rep.add(KR_NOFILE_KEEP_ROW, True, why + (f"까닭 없이 사라진 줄 {len(lost)}: {', '.join(lost[:KR_SPLIT_SHOW])}" + (" …" if len(lost) > KR_SPLIT_SHOW else "")
+                                                 if lost else f"직전 발행본의 {len(prev_rows)}줄 모두 이어졌거나 까닭이 있어요"), rule, warn=bool(lost))
+        if lost:
+            rep.detail("공시로 확인하지 못한 분할 — 까닭 없이 사라진 줄", lost)
+    except Exception as e:
+        rep.add(KR_NOFILE_KEEP_ROW, True, f"읽다 멈췄어요 ({type(e).__name__})", rule, warn=True)
 
 
 def _check_kr_split_hide(rep, data, comps, rows):
@@ -4031,6 +4070,8 @@ def _check_kr_split_hide(rep, data, comps, rows):
     for x in rows:
         if len(x) > 1 and isinstance(x[1], str) and is_day(x[1]):
             dates[x[0]].add(x[1])
+            if len(x) > 4 and isinstance(x[4], str) and is_day(x[4]):
+                dates[x[0]].add(x[4])            # 두 날로 짝지은 사건: 표시는 기준가의 날 (1차 리뷰 S1)
     probs = []
     for t, s in sorted(by.items(), key=lambda kv: str(kv[0])):
         if "spNo" not in s and "spNoF" not in s:
@@ -4040,7 +4081,8 @@ def _check_kr_split_hide(rep, data, comps, rows):
             probs.append(f"{t} 필수 종목인데 spNo")
         if not (isinstance(d, str) and is_day(d)) or d not in dates.get(t, ()):
             probs.append(f"{t} spNo {d!r} 가 nofile 의 날짜가 아니에요")
-        fp = px_bad_fields_problems(t, f, d if isinstance(d, str) else None, None)
+        # 1차 리뷰 N5: 기준일(px)로 창도 봐요 — 최근 사건인데 1개월 · 3개월 칸을 비우지 않았으면 경고
+        fp = px_bad_fields_problems(t, f, d if isinstance(d, str) and is_day(d) else None, px)
         probs += [p.replace("pxBadF", "spNoF") for p in fp]
         hide = set(f) if isinstance(f, list) and not fp else set(PX_BAD_DATA)
         left = [k for k in PX_BAD_DATA if k in hide and s.get(k) is not None]

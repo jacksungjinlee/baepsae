@@ -6,7 +6,7 @@
 // Every edit returns the whole store (the caller saves it with store.writeStore, which checks it again) or a refusal
 // { ok: false, why } the screen turns into an approved line. Nothing is saved that the store's own check would refuse.
 import { recordId, deckProblem, problemText } from "./store.js";
-import { belowZero, heldUnits, UNIT, okUnits, byAmount, VIEW_SPLITS, sellAllUnits, fracHeld } from "./held.js";
+import { belowZero, heldUnits, UNIT, okUnits, byAmount, VIEW_SPLITS, sellAllUnits, fracHeld, fracSalesOk } from "./held.js";
 import { ledger, splitsToStore, purchaseRate, splitSince } from "./lots.js";
 import { validRows } from "./track.js";
 
@@ -247,6 +247,9 @@ export function checkSale(deck, t, input, s, env) {
   }
   const rec = { id: recordId(), t, qty, price, date, ccy, ...(usd ? ratePart(r) : {}) };
   const next = { ...deck, sales: [...(deck.sales || []), rec] };
+  // review #186 round 1 (Fable): a Korean part-share sale dated before an existing one may not take the part that one sold (the store would
+  // refuse the portfolio): refused here with the same check and the quantity line, as a part on a whole holding is
+  if (!usd && !fracSalesOk({ ...next, splits: splitsToStore(next, t) || deck.splits }, t)) return { ok: false, why: "input", field: "qty" };
   if (belowZero({ ...next, splits: splitsToStore(next, t) || deck.splits })) return { ok: false, why: "tooMany", field: "qty" };
   return { ok: true, rec };
 }

@@ -264,7 +264,7 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
         ) : (
           <>
             {/* 2026-11-27 (Jack, 답 11): a Korean holding a split left with part of a share sells it in 1/10,000 shares (records.js fracSaleOk) */}
-            <TextInput label={C.plan.qty} inputMode={kind === "sell" && (usd || fracSaleOk(deck, t, v.date)) ? "decimal" : "numeric"} value={qty} onChange={flow.lockQty ? () => {} : set("qty")}
+            <TextInput label={C.plan.qty} inputMode={kind === "sell" && (usd || fracSaleOk(deck, t, v.date || today)) ? "decimal" : "numeric"} value={qty} onChange={flow.lockQty ? () => {} : set("qty")}
               invalid={bad("qty")} readOnly={!!flow.lockQty} />
             <TextInput label={kind === "sell" ? (usd ? C.rec.sellPriceUsd : C.rec.sellPriceWon) : (usd ? C.plan.priceUsd : C.plan.priceWon)} inputMode="decimal"
               placeholder={s && s.price > 0 && closeOk ? (usd ? nf(s.price, 2) : nf(s.price)) : undefined} value={v.price} onChange={set("price")} invalid={bad("price")} />

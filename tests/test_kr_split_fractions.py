@@ -166,13 +166,64 @@ def test_the_record_round_trips_through_the_store_and_its_check_matches_held_js(
     assert got["all"] == 1.4                                                       # 팔고 빼기: 가진 1.4주를 모두
 
 
-def test_the_store_spells_frac_held_with_the_parts_main_s_held_js_has():
-    """store.js 는 held.js 의 fracHeld 를 v19.6a 부터 있던 부분(heldUnits · splitsOf · splitFactor)으로 다시 적어요 (tests/test_v2_split_round.py 가
-    store.js 를 main 의 511fd6f held.js 와 함께 읽어요). 두 글이 같은 규칙인지 봐요."""
+def test_the_store_and_held_js_agree_and_main_s_held_js_has_the_parts():
+    """store.js 는 held.js 의 fracHeld 를 v19.6a 부터 있던 부분으로 다시 적어요 (tests/test_v2_split_round.py 가 store.js 를 main 의 511fd6f held.js 와
+    함께 읽어요). 같은 답인지 많은 경우로 봐요: 가게가 몫 판매를 받는지 = held.fracSalesOk."""
+    got = node("""
+      const cases = [];
+      for (const r of [0.1, 0.2, 1 / 3, 1 / 6, 1 / 7, 0.4, 2.5]) for (const qty of [5, 7, 10, 11]) for (const sq of ['0.1', '0.3333', '0.5', '1', '1.5'])
+        for (const sd of ['2025-12-20', '2026-02-01']) {
+          const sp = [{ t: '000020', date: '2026-01-05', r }];
+          const d = deckOf('000020', 'x', [{ id: 'p3aaaaaa', t: '000020', date: '2025-12-01', qty, price: 1000, ccy: 'KRW' }],
+            [{ id: 's3aaaaaa', t: '000020', qty: Number(sq), price: 1000, date: sd, ccy: 'KRW' }], { splits: sp });
+          const store = S.deckProblem(d, '2026-11-23');
+          const held = H.fracSalesOk(d, '000020');
+          const below = !!H.belowZero(d);
+          cases.push([r, qty, sq, sd, !store, held, below]);
+        }
+      out = cases;""")
+    bad = [c for c in got if not c[6] and c[4] != (c[5] or float(c[2]).is_integer())]
+    assert not bad, bad[:5]
+    assert any(c[4] and not float(c[2]).is_integer() for c in got) and any(not c[4] for c in got)
     src = open(os.path.join(ROOT, "src", "v2", "store.js"), encoding="utf-8").read()
-    held = open(os.path.join(ROOT, "src", "v2", "held.js"), encoding="utf-8").read()
     assert "fracHeld" not in src.split('from "./held.js"')[0].rsplit("import", 1)[1]
-    assert "x % UNIT !== 0" in src and "x % UNIT !== 0" in held
     old = open(os.path.join(ROOT, "tests", "fixtures", "count_before_split_round_511fd6f", "held.js"), encoding="utf-8").read()
-    for name in ("heldUnits", "splitsOf", "splitFactor", "UNIT"):
+    for name in ("splitsOf", "splitFactor", "splitDateOf", "toUnits", "okUnits", "importedUnits", "UNIT"):
         assert f"export function {name}" in old or f"export const {name}" in old
+
+
+@pytest.mark.parametrize("r", [1 / 3, 1 / 6, 1 / 7])
+def test_no_part_before_the_merge_a_part_after_it(r):
+    """1차 리뷰 (Opus S4): 10주를 산 뒤 1:3 · 1:6 · 1:7 병합 — 병합 전 날짜의 판매는 온 주만 (예전: 오늘의 반올림한 수를 배율로 되돌려 9.9999주처럼
+    보여 2.5주를 받았어요) · 병합 뒤에는 몫 (1/10,000주) · 몫이 없는 한국 종목은 예전처럼 1.5주를 받지 않아요."""
+    got = node("""
+      const sp = [['000020', '2026-01-05', R]];
+      const v = L.withDataSplits({ v: 2, decks: [deckOf('000020', 'x', [{ id: 'p3aaaaaa', t: '000020', date: '2025-12-01', qty: 10, price: 1000, ccy: 'KRW' }])] },
+        L.dataSplits({ splits: sp }).list, '2026-11-23').decks[0];
+      const w = view(deckOf('005930', '삼성', [{ id: 'p2aaaaaa', t: '005930', date: '2026-01-05', qty: 10, price: 100000, ccy: 'KRW' }]));
+      const r = (x) => (x.ok ? 'ok' : x.why);
+      out = { before: [H.fracHeld(v, '000020', '2025-12-20'), r(sell(v, '2.5', '1000', '2025-12-20')), r(sell(v, '0.0001', '1000', '2025-12-20')),
+          r(sell(v, '3', '1000', '2025-12-20'))],
+        after: [H.fracHeld(v, '000020', '2026-02-01'), r(sell(v, '0.' + '1'.repeat(4), '1000', '2026-02-01'))],
+        whole: r(sell(w, '1.5', '100000', '2026-11-20')) };""".replace("R]", repr(r) + "]"))
+    assert got["before"] == [False, "input", "input", "ok"]
+    assert got["after"] == [True, "ok"] and got["whole"] == "input"
+
+
+def test_a_part_sale_dated_before_an_existing_one_is_refused_by_the_form_as_the_store_would():
+    """1차 리뷰 (Fable): 27주 → 5:1 병합 뒤 5.4주. 0.4주를 11-20 에 판 뒤, 11-10 날짜로 또 0.4주 — 양식이 받고 가게가 거절했어요 (일반 실패 줄). 이제 양식이
+    같은 검사로 거절해요 (수량 칸 · 기존 줄 '날짜·수량·가격을 다시 확인해 주세요')."""
+    got = node("""
+      const v = view(deckOf('131090', '시큐브', [{ ...buy, qty: 27 }]));
+      const a = sell(v, '0.4', '5000', '2026-11-20');
+      const d1 = saved(v, a.rec);
+      const b = sell(view(d1), '0.4', '5000', '2026-11-10');
+      const c = sell(view(d1), '1', '5000', '2026-11-10');
+      const forced = { ...d1, sales: [...d1.sales, { id: 's9aaaaaa', t: '131090', qty: 0.4, price: 5000, date: '2026-11-10', ccy: 'KRW' }] };
+      out = { a: a.ok, b: b.ok ? 'ok' : [b.why, b.field], c: c.ok, store: S.deckProblem(forced, '2026-11-23') ? 'refused' : 'ok' };""")
+    assert got == {"a": True, "b": ["input", "qty"], "c": True, "store": "refused"}
+
+
+def test_the_keypad_follows_a_cleared_date_as_today():
+    src = open(os.path.join(ROOT, "src", "v2", "records.jsx"), encoding="utf-8").read()
+    assert 'fracSaleOk(deck, t, v.date || today)' in src

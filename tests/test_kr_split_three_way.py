@@ -33,6 +33,14 @@ TODAY = K.TODAY
 JACK_LINE = "주식 수가 크게 바뀌었는데, 공시로 확인하지 못해서 이 숫자는 비워 두었어요."
 
 
+@pytest.fixture(autouse=True)
+def _dart_path_for_naver_and_kakao(monkeypatch):
+    """2026-11-28 (1차 리뷰 Fable S4 · 조정자 8): NAVER 2018-10-12 · 카카오 2021-04-15 는 고정 줄이 됐어요 (KR_SPLIT_OVERRIDES · 2026-11-23 에 읽은
+    원문의 숫자를 적어 둠). 이 파일의 시험은 그 두 사건의 진짜 원문 픽스처로 DART 길을 보니, 시험 안에서는 그 두 고정 줄을 빼요 (고정 줄 자체는
+    tests/test_kr_split_round1.py 가 봐요)."""
+    monkeypatch.setattr(F, "KR_SPLIT_OVERRIDES", {k: v for k, v in F.KR_SPLIT_OVERRIDES.items() if k[0] not in ("035420", "035720")})
+
+
 def naver_dart(**kw):
     return K.FakeDart(lists={("00266961", "I001"): K.fx("list_00266961_I001.json")}, docs={"20180726800004": K.raw("doc_20180726800004.xml")}, **kw)
 
@@ -114,10 +122,12 @@ def test_a_market_candidate_needs_both_market_signals():
     assert F.kr_split_event(790, 9580, 61394681, 6139468) == (0.1, "auc")
     assert F.kr_split_event(1000, 5000, 100, 20) == (0.2, "px")                        # 병합도 기준가가 정확히 앞날 ÷ 배율이면 'px'
     assert F.kr_split_event(1000, 1000, 100, 200) == (None, None)                      # 무상증자 새 주식 상장일 (기준가 그대로)
-    # 시드: 모든 줄이 오늘의 규칙을 지나요 (불러올 때 다시 해요) · 뺀 13줄은 없어요
+    # 시드: 모든 줄이 오늘의 규칙을 지나요 (불러올 때 다시 해요) · 11-27 에 뺀 13줄 중 7줄은 여전히 없어요 (6줄은 두 날 규칙으로 돌아왔어요:
+    # tests/test_kr_split_round1.py)
     seed = F.load_kr_split_seed()
-    assert len(seed) == 579 and {x["how"] for x in seed} == {"px", "auc"}
-    gone = {("043220", "2025-12-09"), ("009310", "2026-05-11"), ("101140", "2023-10-23"), ("007700", "2021-05-21"), ("001230", "2023-06-16")}
+    assert len(seed) == 586 and {x["how"] for x in seed} == {"px", "auc", "pair"}
+    gone = {("101140", "2023-10-23"), ("007700", "2021-05-21"), ("001230", "2023-06-16"), ("017650", "2020-07-08"), ("036630", "2025-04-04"),
+            ("036630", "2025-11-12"), ("900260", "2022-12-29")}
     assert not gone & {(x["t"], x["d"]) for x in seed}
     for x in seed:
         if x["r"] < 1 and F.kr_split_whole(x["sb"] / x["sa"]) is not None:
@@ -136,7 +146,7 @@ def test_the_samsung_2018_fixed_rows_carry_their_market_evidence_and_pass_the_sa
         assert ev["dl"] == "2018-05-04" and ev["rc"] == "20180316800856"
         chk, bad = F.kr_split_checks(50.0, {"d": "2018-05-04", **ev}, ev["dl"])
         assert bad is None and chk == {"dl": "2018-05-04", "shr": 50.0, "px": 50.0, "rule": "split"}
-    assert set(F.KR_SPLIT_OVERRIDE_EVIDENCE) == {k for k, v in F.KR_SPLIT_OVERRIDES.items() if v[0] is not None}
+    assert {k for k, v in F.KR_SPLIT_OVERRIDES.items() if v[0] is not None} <= set(F.KR_SPLIT_OVERRIDE_EVIDENCE)
     rows, info = F.kr_splits_fields(None, K.kr_rows("005930", "005935"), [], None, TODAY, seed=[])
     assert rows == [["005930", "2018-05-04", 50.0], ["005935", "2018-05-04", 50.0]]
     assert all(V.kr_split_receipt_ok(r) and r[6]["doc"] == "list" for r in info["rows"])
@@ -191,20 +201,20 @@ def test_the_list_is_carried_while_the_event_is_not_judged_and_leaves_when_it_is
     prev = {"splits": [], "splitsKr": {"nofile": [["000010", "2026-11-02", 5.0, "nodoc"], ["000020", "2016-03-02", 5.0, "nodoc"],
                                                   ["000099", "2026-11-02", 5.0, "nodoc"], ["000030", "2026-11-03", 5.0, "bad code"], "x"]}}
     kr = K.kr_rows("000010", "000020", "000030")
-    # DART 꺼짐 (판정을 읽지 못함): 지난 발행본의 줄을 그대로 — 오늘 목록에 없는 종목 · 시계열보다 오래된 사건 · 모양이 틀린 줄은 빼요
+    # DART 꺼짐 (판정을 읽지 못함): 지난 발행본의 줄을 그대로 — 오늘 목록에 없는 종목의 줄도 (1차 리뷰 B1) · 시계열보다 오래된 사건 · 모양이 틀린 줄은 빼요
     _rows, info = F.kr_splits_fields(prev, kr, [], None, TODAY, seed=[seed_split("000010", "2026-11-02")])
-    assert info["nofile"] == [["000010", "2026-11-02", 5.0, "nodoc"]]
+    assert info["nofile"] == [["000099", "2026-11-02", 5.0, "nodoc"], ["000010", "2026-11-02", 5.0, "nodoc"]]
     # 단계 전체가 멈춰도 (src err) 그대로
     monkeypatch.setattr(F, "_kr_splits_fields", lambda *a: 1 / 0)
     _rows, info = F.kr_splits_fields(prev, kr, [], None, TODAY, seed=[])
-    assert info["src"] == "err" and info["nofile"] == [["000010", "2026-11-02", 5.0, "nodoc"]]
+    assert info["src"] == "err" and info["nofile"] == [["000010", "2026-11-02", 5.0, "nodoc"], ["000099", "2026-11-02", 5.0, "nodoc"]]
     monkeypatch.undo()
     K.Log(monkeypatch)
     # 정정 공시로 확인되면 빠져요 (오늘 판정: ok)
     c = K.FakeDart()
     c.entries["C1|krsplit|v2|2026-11-02"] = K.ok_verdict(5.0, "20261001000001", "split", "2026-11-02")
     rows, info = F.kr_splits_fields(prev, kr, [], c, TODAY, seed=[seed_split("000010", "2026-11-02")], cmap={"000010": "C1"})
-    assert rows == [["000010", "2026-11-02", 5.0]] and info["nofile"] == []
+    assert rows == [["000010", "2026-11-02", 5.0]] and info["nofile"] == [["000099", "2026-11-02", 5.0, "nodoc"]]   # 오늘 목록에 없는 종목의 줄은 그대로
 
 
 def test_mark_split_nofile_blanks_the_numbers_of_the_windows_that_hold_the_event(monkeypatch):
@@ -289,23 +299,23 @@ def test_gate_fails_for_a_must_have_stock(t):
     assert [r[0] for r in rep.failed] == [V.KR_NOFILE_MUST_ROW]
 
 
-def test_gate_fails_when_many_appear_on_one_day_in_one_run():
-    t = a_kr_stock()
-    day = "2026-10-27"
-    five = [[f"9{i:04d}0", day, 0.2, "nodoc"] for i in range(V.KR_SPLIT_NOFILE_DAY_FAIL)]
-    rep = gate_with(five)
-    assert [r[0] for r in rep.failed] == [V.KR_NOFILE_DAY_ROW], rep.table()
-    assert f"{day} {V.KR_SPLIT_NOFILE_DAY_FAIL}건" in T196.row(rep, V.KR_NOFILE_DAY_ROW)[1]
-    assert not gate_with(five[:-1]).failed                                                     # 4건: 통과
-    assert not gate_with(five, prev_nofile=five[:1]).failed                                     # 하나는 지난 발행본에도 있었어요 → 새로 4건
-    assert not gate_with([[x[0], f"2026-10-{20 + i}", x[2], x[3]] for i, x in enumerate(five)]).failed   # 날짜가 달라요
-    assert not gate_with([[x[0], "2026-09-01", x[2], x[3]] for x in five]).failed               # 30일보다 오래된 사건 (시드를 채우는 동안)
+def test_gate_fails_when_many_appear_in_one_run():
+    """1차 리뷰 뒤 (조정자 5 · Jack 의 말 "when many appear in one run"): 오늘 nofile 중 직전 발행본에 없던 줄이 KR_SPLIT_NOFILE_RUN_FAIL 건 이상이면
+    실패 — 사건 날짜와 상관없이 (오래된 날짜 · 여러 날짜도 세요). 직전 발행본에 있던 줄은 세지 않아요."""
+    n = V.KR_SPLIT_NOFILE_RUN_FAIL
+    many = [[f"9{i:04d}0", f"20{16 + i % 10}-0{1 + i % 9}-1{i % 9}", 0.2, "nodoc"] for i in range(n)]
+    rep = gate_with(many)
+    assert [r[0] for r in rep.failed] == [V.KR_NOFILE_RUN_ROW], rep.table()
+    assert T196.row(rep, V.KR_NOFILE_RUN_ROW)[1].startswith(f"새로 {n}건")
+    assert T196.row(rep, V.KR_NOFILE_SUM_ROW)[3] == "WARN" and f"이번 실행에 새로 {n}건" in T196.row(rep, V.KR_NOFILE_SUM_ROW)[1]
+    assert not gate_with(many[:-1]).failed                                                   # 한 건 모자라면 통과 (경고만)
+    assert not gate_with(many, prev_nofile=many[:1]).failed                                   # 하나는 지난 발행본에도 있었어요 → 새로 n − 1
     cur, prev, final = K.gate_pair()                                                          # 직전 발행본이 없으면 비교하지 않아요
-    cur["data"]["splitsKr"]["nofile"] = five
+    cur["data"]["splitsKr"]["nofile"] = many
     rep = V.run_checks(cur, None, final, T196.TODAY, mode="publish", count_between=lambda a, b: 1, sessions=T196.SESSIONS, now=T196.NOW,
                        hilo=T196.hilo_of(cur, V.MUST))
-    assert T196.row(rep, V.KR_NOFILE_DAY_ROW)[3] == "PASS"
-    assert t
+    assert T196.row(rep, V.KR_NOFILE_RUN_ROW)[3] == "PASS"
+    assert V.KR_SPLIT_NOFILE_RUN_FAIL == 16
 
 
 def test_gate_passes_a_blanked_non_must_have_stock_and_warns_when_a_number_is_left():
@@ -314,7 +324,7 @@ def test_gate_passes_a_blanked_non_must_have_stock_and_warns_when_a_number_is_le
     rep = gate_with([[t, "2026-10-27", 5.0, "nodoc"]], mark=[(t, "2026-10-27", fl)])
     assert not rep.failed, rep.table()
     assert T196.row(rep, V.KR_NOFILE_HIDE_ROW)[3] == "PASS" and T196.row(rep, V.KR_NOFILE_MUST_ROW)[3] == "PASS"
-    assert T196.row(rep, V.KR_NOFILE_DAY_ROW)[3] == "PASS"
+    assert T196.row(rep, V.KR_NOFILE_RUN_ROW)[3] == "PASS"
     # 비우지 않았거나 · 한 칸이 남았거나 · 표시만 있으면: 경고 (실패 줄로 할지는 Jack 이 정해요)
     for nofile, mark, said in (([[t, "2026-10-27", 5.0, "nodoc"]], None, "비우지 않음"),
                                ([[t, "2026-10-27", 5.0, "nodoc"]], [(t, "2026-10-27", [k for k in fl if k != "vol"])], "spNoF 에 시계열 전체 칸이 빠짐"),
@@ -327,7 +337,7 @@ def test_gate_passes_a_blanked_non_must_have_stock_and_warns_when_a_number_is_le
 def test_gate_rows_on_files_without_the_list_and_on_odd_values():
     cur, prev, final = K.gate_pair(info=False)                                     # 이 PR 전 파일 (사이트의 --live): 확인할 목록이 없어요
     rep = T196.check(cur, prev, final)
-    assert not rep.failed and T196.row(rep, V.KR_NOFILE_MUST_ROW)[3] == "PASS" and T196.row(rep, V.KR_NOFILE_DAY_ROW)[3] == "PASS"
+    assert not rep.failed and T196.row(rep, V.KR_NOFILE_MUST_ROW)[3] == "PASS" and T196.row(rep, V.KR_NOFILE_RUN_ROW)[3] == "PASS"
     for odd in ([None, [1, 2], ["005930"], "x", [["000010", 5, None, None]]], "not a list"):
         rep = gate_with(odd) if isinstance(odd, list) else None
         if rep is not None:
@@ -340,8 +350,8 @@ def test_gate_rows_on_files_without_the_list_and_on_odd_values():
     assert [r[0] for r in rep.failed] == [V.KR_NOFILE_MUST_ROW] and "모양이 잘못됐어요" in T196.row(rep, V.KR_NOFILE_MUST_ROW)[1]
 
 
-def test_the_pipeline_and_the_gate_use_the_same_must_have_list_and_day_limit():
-    assert F.KR_SPLIT_MUST is V.KR_SPLIT_MUST and F.KR_SPLIT_NOFILE_DAY_FAIL == V.KR_SPLIT_NOFILE_DAY_FAIL == 5
+def test_the_pipeline_and_the_gate_use_the_same_must_have_list_and_run_limit():
+    assert F.KR_SPLIT_MUST is V.KR_SPLIT_MUST and F.KR_SPLIT_NOFILE_RUN_FAIL == V.KR_SPLIT_NOFILE_RUN_FAIL == 16
     assert V.KR_SPLIT_MUST[:3] == ("005930", "035420", "035720")
     assert V.KR_SPLIT_RC_AUCTION == F.KR_SPLIT_AUCTION_BAND and V.KR_SPLIT_RC_PX_TOL == F.KR_SPLIT_PX_TOL
     assert V.KR_SPLIT_RC_SHR_TOL == F.KR_SPLIT_SHR_TOL and V.KR_SPLIT_RC_EXACT_TOL == F.KR_SPLIT_EXACT_TOL
@@ -349,14 +359,20 @@ def test_the_pipeline_and_the_gate_use_the_same_must_have_list_and_day_limit():
     assert f'spNo: "{JACK_LINE}"' in approved
 
 
-def test_the_day_limit_is_well_above_the_seeds_busiest_days():
-    """하루 한도를 고른 까닭이 시드 숫자와 같아요 (validate_data 의 주석): 공시가 있든 없든 모든 사건의 하루 수."""
-    import collections
-    per = collections.Counter(x["d"] for x in F.load_kr_split_seed())
-    dist = collections.Counter(per.values())
-    assert len(per) == 373 and dist[1] == 274 and dist[2] == 59 and dist[3] == 13 and dist[4] == 12
-    assert sum(v for k, v in dist.items() if k >= V.KR_SPLIT_NOFILE_DAY_FAIL) == 15 and max(per.values()) == 11
-    assert sum(v for k, v in dist.items() if k < V.KR_SPLIT_NOFILE_DAY_FAIL) / len(per) > 0.95
+def test_one_run_of_all_no_answers_trips_the_run_limit_and_a_normal_run_does_not(monkeypatch):
+    """한 실행의 DART 한도 안에서 모든 조회가 '결정 없음' 이면 (읽기가 깨진 날) 그 실행에 새로 생긴 줄이 한도를 넘어 관문이 막아요 (모의 채우기의 첫
+    실행 26 과 같은 모양) · 확인되는 실행은 0."""
+    K.Log(monkeypatch)
+    seed = [seed_split(f"0{i:04d}0", f"2025-0{1 + i % 9}-1{i % 9}") for i in range(40)]
+    kr = K.kr_rows(*[x["t"] for x in seed])
+    cmap = {x["t"]: f"C{x['t']}" for x in seed}
+    _rows, info = F.kr_splits_fields(None, kr, [], nodoc_dart(), TODAY, seed=seed, cmap=cmap)
+    assert info["calls"] <= F.KR_SPLIT_DART_PER_RUN and info["nofileN"] >= V.KR_SPLIT_NOFILE_RUN_FAIL
+    c = K.FakeDart()
+    for x in seed:
+        c.entries[f"C{x['t']}|krsplit|v2|{x['d']}"] = K.ok_verdict(5.0, "20260101000001", "split", x["d"])
+    _rows, info2 = F.kr_splits_fields(None, kr, [], c, TODAY, seed=seed, cmap=cmap)
+    assert info2["nofileN"] == 0 and len(info2["new"]) == 40
 
 
 # ── 4. 한 번 실은 줄은 빼지 않아요 · 미국 줄은 그대로 ───────────────────────────────────────────────────────

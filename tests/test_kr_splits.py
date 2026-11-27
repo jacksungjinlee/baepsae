@@ -42,6 +42,14 @@ KRS = "한국 주식 분할 (splitsKr · 경고만)"
 WORD = "글자에 nan·None·null·undefined 없음"
 
 
+@pytest.fixture(autouse=True)
+def _dart_path_for_naver_and_kakao(monkeypatch):
+    """2026-11-28 (1차 리뷰 Fable S4 · 조정자 8): NAVER 2018-10-12 · 카카오 2021-04-15 는 고정 줄이 됐어요 (KR_SPLIT_OVERRIDES · 2026-11-23 에 읽은
+    원문의 숫자를 적어 둠). 이 파일의 시험은 그 두 사건의 진짜 원문 픽스처로 DART 길을 보니, 시험 안에서는 그 두 고정 줄을 빼요 (고정 줄 자체는
+    tests/test_kr_split_round1.py 가 봐요)."""
+    monkeypatch.setattr(F, "KR_SPLIT_OVERRIDES", {k: v for k, v in F.KR_SPLIT_OVERRIDES.items() if k[0] not in ("035420", "035720")})
+
+
 def fx(name):
     with open(os.path.join(FIX, name), encoding="utf-8") as f:
         return json.load(f)
@@ -335,11 +343,11 @@ def test_b1_free_text_never_reaches_data_json_and_the_whole_gate_passes(monkeypa
     _r1, i1 = F.kr_splits_fields(None, kr_rows("035720"), [], c1, TODAY, seed=[cand("035720")])
     assert i1["fail"] == [["035720", "2021-04-15", "status"]]
     _r2, i2 = F.kr_splits_fields(None, kr_rows("035720"), [], kakao_dart(boom=True), TODAY, seed=[cand("035720")])
-    assert i2["out"] == [["035720", "2021-04-15", "err"]]
+    assert i2["out"] == [] and i2["fail"] == [["035720", "2021-04-15", "err"]] and i2["nofile"] == []   # 1차 리뷰: 오류는 판정이 아니에요 (다음 실행에 다시)
     c3 = kakao_dart()
     c3.entries["00258801|krsplit|v2|2021-04-15"] = {"st": "000", "at": "2026-11-20", "d": {"v": "no", "code": "None", "note": "cannot convert float NaN"}}
     _r3, i3 = F.kr_splits_fields(None, kr_rows("035720"), [], c3, TODAY, seed=[cand("035720")])
-    assert i3["out"] == [["035720", "2021-04-15", "err"]]
+    assert i3["out"] == [] and i3["new"] == [["035720", "2021-04-15", 5.0]]                     # 보관본의 모르는 부호: 다시 물어 확인해요
     for info in (i1, i2, i3):
         assert not [p for p, v in V.text_values(info) if V.BAD_WORD.search(v)], info
     # 그 값들을 data.json 에 실어 관문을 통째로: 글자 줄 · 분할 줄 모두 실패 없음
@@ -350,9 +358,8 @@ def test_b1_free_text_never_reaches_data_json_and_the_whole_gate_passes(monkeypa
     info["n"], info["prev"] = 1, 1
     cur["data"]["splitsKr"] = info
     rep = T196.check(cur, prev, final)
-    # 2026-11-27 (Jack 답 11): 카카오(필수 종목)의 '공시로 확인하지 못한 분할' (읽다 오류 err) 은 그 줄이 발행을 막아요 — 그 밖에는 실패 없음
-    assert [r[0] for r in rep.failed] == [V.KR_NOFILE_MUST_ROW], rep.table()
-    assert info["nofile"] == [["035720", "2021-04-15", 5.0, "err"]]
+    assert not rep.failed, rep.table()                       # 1차 리뷰 뒤: 오류는 '공시로 확인하지 못한 분할' 이 아니라서 필수 종목 줄도 통과
+    assert info["nofile"] == []
     assert T196.row(rep, WORD)[3] == "PASS" and T196.row(rep, KRS)[3] == "WARN"
 
 
@@ -496,11 +503,12 @@ def test_the_override_table_corrects_a_korean_row_like_a_us_row(monkeypatch):
     table = dict(F.SPLIT_OVERRIDES)
     table[("131090", "2025-05-20")] = (None, "시험: 틀린 줄")
     table[("035720", "2021-04-15")] = (5.0, "시험: 손으로 확인한 줄")
-    table[("035420", "2018-10-12")] = (2.5, "시험: 몫이 남는 배율 (스위치가 켜져 있어 실어요)")
+    table[("035420", "2018-10-12")] = (2.5, "시험: 근거(KR_SPLIT_OVERRIDE_EVIDENCE · 원문 ×5)와 다른 배율 — 1차 리뷰 N3: 세 확인을 지나지 못해 싣지 않아요")
     monkeypatch.setattr(F, "SPLIT_OVERRIDES", table)
     rows, info = F.kr_splits_fields(PREV, kr_rows("005930", "035720", "035420"), [], None, TODAY, seed=[])
-    assert rows == [["005930", "2018-05-04", 50.0], ["035420", "2018-10-12", 2.5], ["035720", "2021-04-15", 5.0]]
-    assert ["035720", "2021-04-15", 5.0, "fixed", "SPLIT_OVERRIDES", "fixed"] in info["rows"] and not any(x[0] == "131090" for x in info["rows"])
+    assert rows == [["005930", "2018-05-04", 50.0], ["035720", "2021-04-15", 5.0]]                # 카카오 ×5: 근거가 있어 세 확인을 지나요
+    assert ["035720", "2021-04-15", 5.0, "fixed", "SPLIT_OVERRIDES", "fixed"] == info["rows"][-1][:6] and not any(x[0] == "131090" for x in info["rows"])
+    assert info["rows"][-1][6]["doc"] == "copy" and V.kr_split_receipt_ok(info["rows"][-1])
     sp = F.merge_splits(PREV, None, ["AAPL"], [], {"noCol": []}, dt.date(2023, 11, 1), [], {"noCol": []}, [], TODAY)
     assert ["131090", "2025-05-20", None, "시험: 틀린 줄"] in sp["info"]["fixed"]                     # 관문 · 앱이 읽는 'out' 줄
 
