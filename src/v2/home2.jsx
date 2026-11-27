@@ -53,7 +53,7 @@ import { statusChips } from "./daily.jsx";
 import { isImported } from "./pf.js";
 import { signedPct } from "./deckcalc.js";
 import { ruleLabel, ruleDetail, brokenLine, limitPct, groupName } from "./pfview.jsx";
-import { usHeld, limitsOf } from "./pf.js";
+import { usHeld, limitsOf, usdOf } from "./pf.js";
 import { homeBlocks, concentration, barOf, quietBlock } from "./home.js";
 import { MarketGlance, Hero, calmLine } from "./today.jsx";
 import { RankCard } from "./rank.jsx";
@@ -401,8 +401,10 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
   const rankInMain = wide && !roomy;
   const rankCard = ok && <RankCard key="rank" load={load} store={store} go={go} />;
   const blocks = useMemo(() => (ev.ok ? homeBlocks(decks, ev, ctx, ok ? load.data.stocks : []).map((b) => ({ ...b, byT: ctx.byT })) : []), [decks, ev, ctx, load, ok]);
-  // a US stock held today (a sold-out kept one, 0 shares, does not count: final review N3)
-  const us = ev.ok && (blocks.some((b) => b.de && b.de.holdings.some((x) => x.cls === "us" && x.qty !== 0)) || decks.some((d) => usHeld(d, load)));
+  // a US stock held today (a sold-out kept one, 0 shares, does not count: final review N3). A US stock is one priced in
+  // dollars (pf.usdOf, as usHeld and 포트폴리오, #187): x.cls "us" also took 379800 KODEX 미국S&P500, a KRX listing priced in
+  // won at the Korean close, and said its price was the US close
+  const us = ev.ok && (blocks.some((b) => b.de && b.de.holdings.some((x) => usdOf(load.byT.get(x.t)) && x.qty !== 0)) || decks.some((d) => usHeld(d, load)));
   const usDate = ok && us && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
   // The verdict band of the portfolios made with 포트폴리오 만들기 (their per-stock rules and bands), exactly as before; also
   // the stale band and the load-failure message.
