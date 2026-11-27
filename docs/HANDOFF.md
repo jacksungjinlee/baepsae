@@ -179,7 +179,7 @@ with a date before a split sells every share on that date's basis (it sold a fif
 records main reads only without the split, which then stores the split) set that portfolio aside on main's code until the fix
 is back. No new Korean text.
 
-**DART quarter retry (#180, branch `claude/dart-quarter-retry`, 2026-11-24, in review):** the 11-21 corp.json had every Korean TTM
+**DART quarter retry (#180, branch `claude/dart-quarter-retry`, 2026-11-24; `main` merged in 11-28, reviews done, waiting for its dry run):** the 11-21 corp.json had every Korean TTM
 on 2026.2Q (2,244 companies, 3Q none) five days after the 3Q deadline: "not filed yet" answers from the deadline days (11-14 was a
 Saturday, legal deadline 11-16; DART's statement API lags filings) waited 7 days, so the top 100 never reached 70%. Now deadlines
 roll to the next KRX trading day, and still-missing statement entries are asked again daily to rolled deadline + 21 days, also
@@ -189,8 +189,10 @@ counted per call, oldest-asked first; off for the run once that KST day's DART c
 a full-DART run). Offline, no company switches later than on `main`, except one known case
 after rolled deadline + 21 (RUNBOOK). corp.json gets `qPick` (the quarter choice; the app doesn't read it) and a warning-only gate
 row `분기 판단 (corp.json qPick · 경고만)` warns when this year's 1Q–3Q in use is still an older quarter more than 10 days after its
-rolled deadline. Round-3 review fixes in. Dry run on 11-25 or later, after that day's publish, on a branch with no older DART
-cache. RUNBOOK "DART: asking again after a filing deadline".
+rolled deadline. Round-3 review fixes in. The 11-24 publish moved to 3Q under the old rule (data branch 11-28: 2,265 companies on
+2026.3Q, 45 still on 2Q, 4 on 1Q), so this is for the next deadlines; 3Q's window stays open to 12-07. Dry run on the merged head,
+after that KST day's publish (the branch has had no data runs, so it has no older DART cache of its own). RUNBOOK "DART: asking
+again after a filing deadline".
 
 **CI checks the two PR rules (#175, 2026-11-23; Jack: "Automate the rules you missed"):** the last step of `ci.yml`'s `checks`
 job runs `tools/pr_rules.py`, so the required `ci` check goes red when either rule is missed. Run it yourself before pushing:
