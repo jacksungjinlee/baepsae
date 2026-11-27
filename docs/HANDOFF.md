@@ -64,8 +64,8 @@ place; my decision under the rules, 2026-11-24, as is keeping 약 in the tax lin
 decided "a US stock is held" by `cls` and showed `app.usClose` for a portfolio holding only 379800; now by `pf.usdOf`, as `usHeld`.
 Same class, not fixed here: 홈 (`home2.jsx:405`, pinned word for word by `tests/test_v196a_approved.py::test_home_counts_only_shares_held`,
 and `today.jsx:358`).
-**Today's rate = the official close (#192, 2026-11-24; Track 2 audit 3.8, minor):** pipeline and gate, no app or wording
-change. `data.json` `fx` is now `fxHist`'s last row (ECOS 15:30 close) and `fxDate` its date whenever the run read ECOS and
+**Today's rate = the official close (#192, 2026-11-24; Track 2 audit 3.8, minor):** pipeline and gate; the only screen change is
+one approved line on 데이터 출처. `data.json` `fx` is now `fxHist`'s last row (ECOS 15:30 close) and `fxDate` its date whenever the run read ECOS and
 that row is not stale by the gate's holiday table (`validate_data.fx_close_floor`: at most one Korean business day behind the
 expected day; 14 days outside the table) (`fetch_data.fx_official`; the US step builds the history first, `main` puts the same one
 in `macro.json`, ECOS asked once a run). Before: Yahoo's bar, still open at 06:40, under a past date (11-21: 1,345.7 under 11-20,
@@ -75,7 +75,8 @@ Seoul close with its date (추석 2025: 1.5% over 8 days). Gate: the existing �
 with `fxSrc.yahoo.fx` when `fx` is that row (same strength; files without `fxSrc` judged as before); new warning-only row "환율 출처
 (fx · 경고만)": PASS when `fx` = the `fxHist` row of `fxDate`, warns on Yahoo, a gap over 2% to Yahoo, an unfinished value or a
 stale ECOS date; expect WARN on the live site until the first publish after merge (the 11-24 file has no `fxSrc`), then PASS.
-Follow-up for Jack: 데이터 출처 (`src/info.jsx`) still names FinanceDataReader for 환율 (new wording needed).
+데이터 출처 (`src/info.jsx`, also 2.0's ☰ 데이터 출처) now lists "환율: 한국은행 경제통계시스템(ECOS)" (Jack, 2026-11-27) as a row
+`한국은행 경제통계시스템(ECOS) · 환율`, and 환율 is out of the FinanceDataReader row (baepsae.html rebuilt; app.html unchanged).
 RUNBOOK "Today's rate". Next in the queue unchanged (v19.3 Part L).
 
 **Clean error text (#178, branch `claude/clean-error-text`, for 11-24; pipeline only, the gate unchanged):** the gate's frozen word row

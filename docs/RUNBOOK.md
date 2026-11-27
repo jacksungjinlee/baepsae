@@ -2802,7 +2802,8 @@ stored data depends on it).
     or a file without `fxSrc`, as the 11-24 file was). It also warns when `fx` is more than 2% from `fxSrc.yahoo.fx`, when
     the value is unfinished (`fxSrc.final` false, only possible under `yahoo_next`), and when an ECOS close's date is stale as
     above. The 3-year Yahoo series still feeds US `vol` in won and the won gold and
-    silver series (history, not a day's rate); `fetch_data.fx_official`.
+    silver series (history, not a day's rate); `fetch_data.fx_official`. The 데이터 출처 page names the source as "환율: 한국은행
+    경제통계시스템(ECOS)" (Jack, 2026-11-27; `src/info.jsx`).
   - `data.json` `splits` lists every US stock split since 2016-01-01 (`splitsFrom`), `[code, date, ratio]` (ratio = new
     shares per old share; the date is the first US trading day on the new count, or the ex-date for a stock dividend).
     It is "Yahoo plus fixes", not guaranteed complete: a small stock dividend Yahoo leaves out is only there if someone
