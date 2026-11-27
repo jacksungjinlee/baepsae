@@ -4905,7 +4905,7 @@ def _real(x):
     return float(x) if isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) else None
 
 
-def us_fcur_tot_ok(s, tot, px_date=None, fx_won=None):
+def us_fcur_tot_ok(s, tot, px_date=None, fx_won=None, on=None):
     """Jack, 2026-11-27 ("#181: yes" — 켜기): 스위치 US_FCUR_TOT_ON 이 켜져 있을 때 fcur 회사 s 의 칸 중 받아 주는 칸 (set). 회사 합계 기록
     (tot = data.json usFcurTot, fetch_data.us_fcur_totals_step)과 똑같은 숫자만이에요. 모두 맞아야 해요: 스위치 켜짐 · 기록이 dict 이고 on 이
     True · err 없음 · 그 회사 줄(rows[t])이 dict 이고 why 가 dict · 줄의 종가(px)가 종목 가격과 같음 · 종목의 fcurTot 가 칸 이름 목록(per · pbr ·
@@ -4922,8 +4922,10 @@ def us_fcur_tot_ok(s, tot, px_date=None, fx_won=None):
     못함 · ECOS 표에 없는 통화 · 읽지 못한 통화 XXX)이나 시가총액이 없거나 cap 과 맞지 않는 날, 단계는 PER · PBR 을 까닭과 함께 비우고 배당수익률만
     실어요. 그 배당수익률은 여기서 받아요 (예전처럼 발행을 막지 않아요). 배당수익률은 d265e14 의 확인을 모두 (켜짐 · err 없음 · 줄 · why · 표시 ·
     같은 값 > 0 · 같은 종가) 그리고 리뷰 1차 뒤의 확인 중 환율과 상관없는 것을 모두 (날짜 · pxd · pxc · ETF · 펀드 · 세 글자 통화 = 줄의 cur ·
-    진짜 숫자 · 범위) 그대로 받아요 — 더 느슨해진 것은 없어요. PER · PBR 표시가 하나라도 있으면 예전 그대로 모두 요구해요 (XXX 도 안 됨)."""
-    if not US_FCUR_TOT_ON or not isinstance(tot, dict) or tot.get("on") is not True or tot.get("err"):
+    진짜 숫자 · 범위) 그대로 받아요 — 더 느슨해진 것은 없어요. PER · PBR 표시가 하나라도 있으면 예전 그대로 모두 요구해요 (XXX 도 안 됨).
+    2026-11-28 (리뷰 3차 nit): on = 스위치 대신 (기본: 관문의 US_FCUR_TOT_ON). 파이프라인의 회사 합계 단계만 on=True 로 불러, 실을 숫자를 관문과
+    똑같이 먼저 봐요 (fetch_data.us_fcur_tot_self_check). 관문 줄(check_us_fcur)은 늘 기본으로 불러요 — 관문은 그대로예요."""
+    if not (US_FCUR_TOT_ON if on is None else on) or not isinstance(tot, dict) or tot.get("on") is not True or tot.get("err"):
         return set()
     if not isinstance(px_date, str) or tot.get("d") != px_date:
         return set()

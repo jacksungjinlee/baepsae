@@ -2438,6 +2438,17 @@ asked again (those rates stay unconfirmed). The whole step stops at 180 s (like 
 (`time`), logged and recorded in `usFcurTot.src.limit`. The log line "재무제표: 보관본 n · 오늘 받음 n · … — 야후 요청 재무제표 n · 환율 봉 n ·
 ECOS n · s초" shows it every run. Local runs on 11-23: 38.8 s with an empty cache, 14.3 s with it.
 
+**The step checks itself with the gate's rule (review round 3, 2026-11-28).** After marking, the step passes exactly what it will
+publish (the stock row, the record row, the file's `usPxDate` and the file's rounded won rate) to the gate's own `us_fcur_tot_ok`
+(`on=True`); any number it would refuse goes back to what #114 left (blank), leaves the record row, and gets the reason
+"실을 숫자를 관문의 확인(us_fcur_tot_ok)이 받지 않음" (`selfChk`), logged loudly with the count. Before, a very small company (market
+value under about $140M with a PER near the edge) could be marked from unrounded inputs and fail the gate (the reviewer's fuzz: 158 of 120,000 runs; 0 after the fix).
+
+**Error texts.** Exception messages written into the record (`rows[t].err`, the step's `err`, a currency's `fx[c].why` when ECOS fails)
+go through `pub_err` (keys hidden, the gate's banned words "nan · None · null · undefined" written as "빈 값", the original in the log),
+and `usFcurTot` is in `PUB_SWEEP_KEYS`, so the last sweep before writing covers it too. Before review round 3 one "KeyError: None of …"
+in the record would have failed the gate's 글자 row and stopped everyone's publish, switch off or on.
+
 Everything goes into data.json `usFcurTot` (rows with the inputs, results, Yahoo's own numbers `y`, `signY`, and a reason for every blank;
 `n`; `src`; `halfDay`) and the log ("· 달러 아닌 재무제표 38곳: PER n / PBR n / 배당 n 되살림 (배당 0% 그대로 m), 빈 칸 k (reasons with
 counts)", then the statement line, the rates and one line per company). `units.usFcurTot`, `units.fcurTot` and `units.fcurNi` describe the fields. A crash
@@ -2467,7 +2478,8 @@ everything it needs is built:
   converted line (`co.fcurTot`) once per section, in the places of the currency line (요약's 가치 칸, 내 기준과 맞는 정도 card and sheet,
   가치 tab, 가치 자세히, 두 종목 비교's PBR cell, 관심 종목's PBR condition and, since review round 1, 종목 고르기's 근거 and 홈 · 오늘 볼 것's 관심 종목 rows); Sony's PER "–" with `co.fcurNi`; any other blank keeps "–"
   with #114's currency line. The yield takes no line (Yahoo's dollars ÷ dollars). Lists (종목 순위, 주의할 점) show the numbers without a
-  line, as they do for Korean PER on total profit (`fix.total`).
+  line: a list row leaves its reason line to the company page, and the only line a list carries is the one for stocks priced at an
+  earlier close (`rank.jsx` `OwnCloseNote`). Whether these lists get one line under them is part of Jack's `co.fcurTot` question.
 - **예전 뱁새:** shows these companies as #114 left them ("–"), whatever the data says (`src/repair.js` `fcurTotStrip` at load): it has
   no place for the converted line.
 - **Splits (review round 1 of the switch-on, 2026-11-28, blocker B1):** when `fetch_us` keeps a details entry taken before a split
@@ -2475,7 +2487,11 @@ everything it needs is built:
   value matches `cap`; before the fix a 4:1 split left TSMC at a quarter of its market value (PER 21.6 → 5.4) with every check passing.
   A company whose split ratio is unknown is blank as "분할 배율을 확인하지 못함" (`split`): its split judgement stopped (`sp_bad`), or
   (review round 2, S2) #176 asked Yahoo again for its details and did not get them (`sp_left`), or the split record could not be read
-  that run and its details entry is not today's (`sp_map` None). In those cases `cap` is off by the same ratio, so the `cap` check
+  that run and its details entry is not today's (`sp_map` None), or (review round 3, S1) today's download has no split column for it
+  and its details entry is not today's (`sp_nocol`), or Yahoo wrote a split event the run did not take (an unclean ratio `spin`, an odd
+  ratio `bad`, a date after today `future`) after the details entry's anchor day, unless `SPLIT_OVERRIDES` decides that event (Unilever
+  2025-12-09 8:9 is such an override; a 3:2 or 8:9 is inside #176's 2× re-ask band, so it would otherwise count as 1 until the details
+  are fetched again). In those cases `cap` is off by the same ratio, so the `cap` check
   can't catch it. `fetch_us` logs the count every time there is one ("!! 분할 배율을 모르는 미국 종목 오늘 n곳 (…) … 그중 달러 아닌
   재무제표 회사 m곳은 … 비워요 (split)"); other US stocks keep #176's behaviour (price ratio only). Any company whose market value
   does not match its `cap` at the day's won rate (0.5%) is blank as "시가총액이 종목의 시가총액(cap)과 맞지 않음" (`cap`). #188's split check

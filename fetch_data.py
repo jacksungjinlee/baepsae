@@ -87,6 +87,8 @@ from validate_data import US_FCUR_TOT_ON, US_FCUR_TOT_FIELDS
 # 2026-11-28 (#181 켜기 리뷰 2차 S1): 회사 합계 단계는 반올림한 값을 관문(us_fcur_tot_ok)과 같은 범위로 봐요 — 범위 끝의 회사는 빈 칸(range)이지
 # 발행을 막지 않아요
 from validate_data import US_FCUR_TOT_PER_MAX, US_FCUR_TOT_PBR_RANGE, US_FCUR_TOT_DY_MAX
+# 2026-11-28 (#181 켜기 리뷰 3차 nit): 실을 숫자를 관문의 바로 그 함수로 먼저 봐요 (us_fcur_tot_self_check) — 단계와 관문이 다르게 볼 수 없게
+from validate_data import us_fcur_tot_ok as gate_us_fcur_tot_ok
 # v19.6a: 환율 이력(fxHist)과 주식 분할(splits)의 기준도 관문 파일에 있어요 (검사 코드는 따로 · 같은 선만 읽어요)
 from validate_data import (FX_LO, FX_HI, FX_HIST_FROM, FX_HIST_FIRST_BY, FX_HIST_SOURCES, FX_HIST_ECOS, FX_HIST_GAP_MAX,
                            FX_HIST_JUMP, FX_HIST_REL, SPLITS_FROM, SPLIT_R, SPLIT_SIMPLE_MAX, SPLIT_CLEAN_TOL,
@@ -572,7 +574,8 @@ def pub_err(err, n=300, say=True):
     return pub_text(_pub_str(err), n, say)
 
 
-PUB_SWEEP_KEYS = ("pxSrc", "usSrc", "splitsInfo", "usForeign", "usSplitChk", "usExtraMissing", "usListSym", "d1Base", "ownDrop")
+# 2026-11-28 (#181 켜기 리뷰 3차 S2): usFcurTot (회사 합계 기록 · 오류 · 까닭 글이 있어요 — 앱은 읽지 않아요)도 쓸어요
+PUB_SWEEP_KEYS = ("pxSrc", "usSrc", "splitsInfo", "usForeign", "usSplitChk", "usExtraMissing", "usListSym", "d1Base", "ownDrop", "usFcurTot")
 # 앱이 읽는 칸은 손대지 않아요 (리뷰 2차 S2): pxSrc.own.aged · usSrc.own.aged 의 nk 는 종목 이름으로 보여요 (src/data.js ownAgedOf) ·
 # splitsInfo.fixed 는 앱이 분할을 고쳐요 (src/v2/lots.js outSplits). 그 칸의 낱말은 이 PR 전처럼 관문이 막아요.
 PUB_SWEEP_SKIP_KEYS = frozenset({"aged"})
@@ -14942,7 +14945,8 @@ US_FCUR_TOT_WHY = {"px": "종가가 미국 기준일 것이 아니거나 기준 
                    "divUnclear": "지난 12개월 배당 기록이 없는데 배당 없음이 분명하지 않음", "divIrregular": "배당 간격이 고르지 않음 (빠진 배당일 수 있어요)",
                    "divLate": "다음 배당이 기록에 없음", "divMismatch": "야후 배당수익률과 10% 넘게 다름", "err": "계산하다 멈춤",
                    "time": "시간 한도", "split": "분할 배율을 확인하지 못함 (#176 의 분할 판단이 멈췄거나 · 다시 물었지만 받지 못했거나 · 분할을 읽지 못한 날의 보관본)",
-                   "cap": "시가총액이 종목의 시가총액(cap)과 맞지 않음"}
+                   "cap": "시가총액이 종목의 시가총액(cap)과 맞지 않음",
+                   "selfChk": "실을 숫자를 관문의 확인(us_fcur_tot_ok)이 받지 않음 (반올림 · 리뷰 3차)"}
 
 
 def _iso_d(x):
@@ -15364,7 +15368,7 @@ def us_fcur_fx_rates(yf, curs, d, now, ecos=None, deadline=None, stats=None):
             stats["ecosReq"] = stats.get("ecosReq", 0) + (2 if US_FCUR_ECOS[c][2] == "krw" else 1)
             e, ed, why = us_fcur_fx_check(r, _fcur_call(lambda c=c: ecos(c, d), deadline), d)
         except Exception as ex:
-            e, ed, why = None, None, f"ECOS 를 받지 못함 ({type(ex).__name__}: {str(ex)[:60]})"
+            e, ed, why = None, None, f"ECOS 를 받지 못함 ({pub_err(ex, 80)})"     # 리뷰 3차 S2: 발행 파일의 글 (키 · 관문의 낱말을 가려요)
             broken = f"{c} 실패: {type(ex).__name__}"
             stats["ecosFail"] = broken
         out[c].update({"e": e, "eD": ed})
@@ -15611,15 +15615,17 @@ def us_fcur_totals_step(yf, out, cache, data, us_px_date, today, no_info=frozens
                                       split=split.get(t, 1.0), fx_won=fx_won, split_bad=t in split_bad)
         except Exception as e:               # 이 종목만: 세 칸 모두 빈 칸 · 크게 남겨요
             rows[t] = {"cur": r.get("fcur"), "px": _fin(r.get("price")), "why": {f: "err" for f in US_FCUR_TOT_FIELDS},
-                       "err": f"{type(e).__name__}: {str(e)[:80]}"}
+                       "err": pub_err(e, 120)}           # 리뷰 3차 S2: 예외 글은 pub_err ("KeyError: None of …" 가 관문의 낱말 줄을 막지 않게 · 원문은 로그에)
     stmt_err = sorted(t for t in rows if (st.get(t) or {}).get("err"))
     if stmt_err:              # 리뷰 2026-11-23: 빈 표(yfinance 가 숨긴 실패)도 여기 · 표마다 까닭 (empty · time · 예외 이름)
         log(f"  !! 달러 아닌 재무제표 회사의 재무제표 표를 다 받지 못한 곳 {len(stmt_err)}곳: "
             + ", ".join(f"{t}({'/'.join(str(x[0]) + ':' + str(x[1]) for x in st[t]['err'] if isinstance(x, (list, tuple)) and len(x) > 1)})"
                         for t in stmt_err[:20]) + (f" 외 {len(stmt_err) - 20}곳" if len(stmt_err) > 20 else ""))
+    before = {}                              # 리뷰 3차 nit: 싣기 전 종목 칸 (관문이 받지 않는 칸은 이 값으로 되돌려요 · #114 그대로)
     if on:
         for r in firms:
             got = [f for f in US_FCUR_TOT_FIELDS if f in rows[r["t"]] and not (f == "dy" and rows[r["t"]][f] == 0)]
+            before[r["t"]] = {f: r.get(f) for f in got}
             for f in got:
                 r[f] = rows[r["t"]][f]
             if got:
@@ -15629,6 +15635,8 @@ def us_fcur_totals_step(yf, out, cache, data, us_px_date, today, no_info=frozens
             if (rows[r["t"]].get("why") or {}).get("per") == "niUnconfirmed" and r.get("per") is None:
                 r["fcurNi"] = True
     fx_out = {c: {k: v for k, v in x.items() if v is not None} for c, x in sorted(fx.items())}
+    if on:
+        us_fcur_tot_self_check(firms, rows, fx_out, us_px_date, fx_won, before)
     src = {**src, **fxs, "sec": round(time.monotonic() - t0, 1)}
     src["limit"] = bool(time.monotonic() > deadline or any(w == "time" for r in rows.values() for w in (r.get("why") or {}).values())
                         or any("시간 한도" in str(x.get("why") or "") for x in fx.values()))
@@ -15637,6 +15645,54 @@ def us_fcur_totals_step(yf, out, cache, data, us_px_date, today, no_info=frozens
     if us_half_day_maybe(us_px_date):
         rec["halfDay"] = True
     return rec
+
+
+def us_fcur_tot_self_check(firms, rows, fx_out, us_px_date, fx_won, before):
+    """2026-11-28 (#181 켜기 리뷰 3차 nit · stepgate.py 158/120,000): 단계는 반올림 전 값으로 · 관문은 실린(반올림한) 값으로 계산해 아주 작은 회사에서
+    서로 다르게 볼 수 있었어요. 그래서 실은 그대로 (종목 칸 · 기록 줄 · 파일에 나갈 날짜 usPxDate · 원/달러 round(fx_won, 1) = data.json fx) 관문의
+    바로 그 함수(validate_data.us_fcur_tot_ok, 스위치는 켜진 것으로)에 넣어 봐요. 받지 않는 칸은 칸마다 따로 넣어 봐 가려서, 그 칸을 싣기 전 값으로
+    되돌리고 (#114 그대로) 기록 줄에서도 빼고 까닭 selfChk 를 적어요 · 크게 남겨요. 그 PBR 을 비우면 가치 점수도 없어요 (순위는 뒤에서 매겨요).
+    → [(티커, 칸)] 비운 것. 종목 · 기록을 그 자리에서 바꿔요."""
+    pd_ = us_px_date.isoformat()
+    fw = round(fx_won, 1) if isinstance(fx_won, (int, float)) and not isinstance(fx_won, bool) and math.isfinite(fx_won) else None
+    probe = {"v": 1, "on": True, "d": pd_, "fx": fx_out, "rows": rows}
+    cut = []
+    for r in firms:
+        got = list(r.get("fcurTot") or [])
+        if not got or gate_us_fcur_tot_ok(r, probe, pd_, fw, on=True) >= set(got):
+            continue
+        keep = []
+        for f in got:                          # 칸마다 따로 (다른 칸은 싣기 전 값으로) — 하나씩 받는 칸만 남겨요
+            one = {k: v for k, v in r.items() if k not in got or k == f}
+            one.update({k: before.get(r["t"], {}).get(k) for k in got if k != f and before.get(r["t"], {}).get(k) is not None})
+            one["fcurTot"] = [f]
+            if f in gate_us_fcur_tot_ok(one, probe, pd_, fw, on=True):
+                keep.append(f)
+        trial = dict(r, fcurTot=keep)
+        if keep and not gate_us_fcur_tot_ok(trial, probe, pd_, fw, on=True) >= set(keep):
+            keep = []                          # 함께 넣어도 받지 않으면 (생기면 안 돼요) 모두 비워요
+        row = rows[r["t"]]
+        for f in got:
+            if f in keep:
+                continue
+            old = before.get(r["t"], {}).get(f)
+            if old is None:
+                r.pop(f, None)
+            else:
+                r[f] = old
+            row.pop(f, None)
+            row.setdefault("why", {})[f] = "selfChk"
+            cut.append((r["t"], f))
+        row["why"] = {f: row["why"][f] for f in US_FCUR_TOT_FIELDS if f in row["why"]}
+        if keep:
+            r["fcurTot"] = keep
+        else:
+            r.pop("fcurTot", None)
+    if cut:
+        log(f"  !! 회사 합계 숫자 중 관문의 확인(us_fcur_tot_ok)이 받지 않을 칸 {len(cut)}칸을 싣지 않고 비웠어요 (selfChk · 단계와 관문이 다르게 본 것 — "
+            "보통 아주 작은 회사의 반올림): " + ", ".join(f"{t} {f.upper() if f != 'dy' else '배당'}" for t, f in cut[:20])
+            + (f" 외 {len(cut) - 20}칸" if len(cut) > 20 else ""))
+    return cut
 
 
 def us_fcur_totals_safe(yf, out, cache, data, us_px_date, today, no_info=frozenset(), **kw):
@@ -15648,8 +15704,9 @@ def us_fcur_totals_safe(yf, out, cache, data, us_px_date, today, no_info=frozens
             for f in r.pop("fcurTot", None) or []:
                 r.pop(f, None)
             r.pop("fcurNi", None)
-        log(f"  !! 달러 아닌 재무제표 회사의 회사 합계 계산이 멈췄어요 ({type(e).__name__}: {str(e)[:120]}) → 종목 칸은 #114 그대로 빈 칸 (관문 경고)")
-        return {"v": 1, "on": bool(US_FCUR_TOT_ON if kw.get("on") is None else kw.get("on")), "err": f"{type(e).__name__}: {str(e)[:120]}"}
+        log(f"  !! 달러 아닌 재무제표 회사의 회사 합계 계산이 멈췄어요 ({pub_raw(e)[:300]}) → 종목 칸은 #114 그대로 빈 칸 (관문 경고)")
+        # 리뷰 3차 S2: 발행 파일의 오류 글은 pub_err (원문은 위 로그 줄 · 키는 가려요)
+        return {"v": 1, "on": bool(US_FCUR_TOT_ON if kw.get("on") is None else kw.get("on")), "err": pub_err(e, 160, say=False)}
     try:
         log_us_fcur_tot(rec)
     except Exception as e:
@@ -15789,11 +15846,13 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
     # (splits_fields). 그래서 같은 출처(오늘 다운로드의 분할 칸 · 지난 발행본의 splits · 고정 표)로 여기서 먼저 모아요: 상세 정보를 붙이기 전에 맞춰야
     # 외국 회사 맞춰 보기 · 0.00 PBR 빈 칸 · 로그가 모두 맞춘 숫자를 봐요. 오늘(KST)까지의 날짜를 모두 봐요 (리뷰 S1: 미국 기준일 뒤 날짜의 분할도 야후
     # 시계열은 벌써 반영했을 수 있어요 — 곱할지는 us_info_split_view 가 가격으로 정해요). 읽지 못하면 예전 그대로 (가격 비율만) · 크게 남기고 기록해요
-    sp_err, sp_err_type, sp_nocol = None, None, []
+    sp_err, sp_err_type, sp_nocol, sp_dropped = None, None, [], []
     try:
         rsp, rinfo = us_splits(data, [r["t"] for r in out], today)
         sp_map = us_info_split_map(rsp, prev)
         sp_nocol = sorted(rinfo.get("noCol") or [])
+        # 리뷰 3차 S1 (#181): us_splits 가 넣지 않은 사건 (깨끗하지 않은 배율 spin · 이상한 배율 bad · 오늘 뒤 날짜 future) — 배율을 몰라요
+        sp_dropped = us_split_dropped(rinfo)
     except Exception as e:
         sp_map, sp_err, sp_err_type = None, f"{type(e).__name__}: {str(e)[:120]}", type(e).__name__
     sp_bad = []                      # 분할 판단을 하다 오류로 멈춘 종목 (그 종목은 예전 그대로 · 가격 비율만)
@@ -16009,11 +16068,16 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
     # 배율만큼 틀려요 (cap 도 같은 배율로 틀려 회사 합계 단계의 cap 확인이 잡지 못해요). 달러 아닌 재무제표 회사는 회사 합계 PER · PBR · 배당수익률을
     # 비워요 (split · us_fcur_tot_row) — 다른 미국 종목은 예전 그대로 (#176). 수를 늘 크게 남겨요 (있을 때)
     sp_old = sorted(r["t"] for r in out if r["t"] not in missing and (age(r["t"]) or 0) > 0) if sp_map is None else []
-    sp_unknown = frozenset(sp_bad) | frozenset(sp_left) | frozenset(sp_old)
+    # 리뷰 3차 S1 (#181): 오늘 분할 칸이 없는 종목(sp_nocol)의 오늘 받지 않은 보관본 · 보관본의 기준 가격 날짜 뒤에 넣지 않은 사건(spin · bad · future)이
+    # 있는 종목도 배율을 몰라요 (3:2 · 8:9 처럼 #176 의 다시 묻기(2배 밖)에 걸리지 않는 배율은 다음에 상세 정보를 받을 때까지 배율 1 로 틀려요)
+    sp_nocol_old = sorted(t for t in sp_nocol if t in rec_by and t not in missing and (age(t) or 0) > 0)
+    sp_drop = us_split_dropped_after(sp_dropped, cache, frozenset(rec_by) - set(missing))
+    sp_unknown = frozenset(sp_bad) | frozenset(sp_left) | frozenset(sp_old) | frozenset(sp_nocol_old) | frozenset(sp_drop)
     if sp_unknown:
         fc_unknown = sorted(r["t"] for r in out if r["t"] in sp_unknown and r.get("fcur"))
         log(f"  !! 분할 배율을 모르는 미국 종목 오늘 {len(sp_unknown):,}곳 (판단이 오류로 멈춤 {len(set(sp_bad)):,} · 다시 물었지만 받지 못해 보관본 그대로 "
-            f"{len(sp_left):,} · 분할을 읽지 못한 날 오늘 받지 않은 보관본 {len(sp_old):,}) — 보관본을 배율 1 (가격 비율만)로 써요 · 그 사이 분할이 "
+            f"{len(sp_left):,} · 분할을 읽지 못한 날 오늘 받지 않은 보관본 {len(sp_old):,} · 분할 칸이 없는 날 오늘 받지 않은 보관본 {len(sp_nocol_old):,} · "
+            f"보관본 뒤에 넣지 않은 분할 사건 {len(sp_drop):,}) — 보관본을 배율 1 (가격 비율만)로 써요 · 그 사이 분할이 "
             f"있었다면 PER · PBR · 시가총액 · 배당수익률이 그 배율만큼 틀려요: {names(sorted(sp_unknown))}"
             + (f" · 그중 달러 아닌 재무제표 회사 {len(fc_unknown):,}곳은 회사 합계 PER · PBR · 배당수익률을 비워요 (split): {names(fc_unknown)}"
                if fc_unknown else ""))
@@ -16302,6 +16366,40 @@ def us_splits(data, codes, today, lo=None):
                 got[d.isoformat()] = float(r)
         out += [[t, d, r] for d, r in sorted(got.items())]
     return sorted(out), info
+
+
+def us_split_dropped(info):
+    """us_splits 의 info 에서 넣지 않은 사건 (spin · bad · future 의 'TICKER YYYY-MM-DD ×r' 글) → [(티커, 날짜 ISO)] (읽지 못한 글은 빼요). (순수 함수)"""
+    out = []
+    for k in ("spin", "bad", "future"):
+        for x in (info or {}).get(k) or []:
+            parts = str(x).split(" ")
+            if len(parts) >= 2:
+                try:
+                    out.append((parts[0], dt.date.fromisoformat(parts[1]).isoformat()))
+                except ValueError:
+                    continue
+    return sorted(set(out))
+
+
+def us_split_dropped_after(dropped, cache, shown):
+    """리뷰 3차 S1 (#181): 넣지 않은 사건(us_split_dropped)이 그 종목 보관본의 기준 가격 날짜(us_info_anchor_day) 뒤인 종목 — 배율을 몰라요 (기준 가격
+    날짜를 읽지 못해도 그래요). 고정 표(SPLIT_OVERRIDES)가 SPLIT_SAME_EVENT_DAYS 안에서 정한 사건은 빼요 (배율을 알아요 · 예: UL 2025-12-09 8:9). shown =
+    상세 정보를 붙인 종목. → 티커 목록. (순수 함수)"""
+    fixed = collections.defaultdict(list)
+    for (t, d) in SPLIT_OVERRIDES:
+        fixed[t].append(dt.date.fromisoformat(d))
+    out = set()
+    for t, d in dropped or []:
+        if t not in shown:
+            continue
+        dd = dt.date.fromisoformat(d)
+        if any(abs((fd - dd).days) <= SPLIT_SAME_EVENT_DAYS for fd in fixed.get(t, [])):
+            continue
+        a = us_info_anchor_day((cache or {}).get(t))
+        if a is None or d > a:
+            out.add(t)
+    return sorted(out)
 
 
 def split_ratio_text(r):

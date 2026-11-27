@@ -972,9 +972,18 @@ def test_a_pre_split_details_entry_takes_the_split_factor(monkeypatch):
     out2 = [dict(rec)]
     st2 = F.us_fcur_totals_step(None, out2, {"TSM": pre}, None, D, TODAY, stmts=lambda ts: {"TSM": tsm_st()}, fx_rates=lambda cs, d, n: {"TWD": FX_TWD},
                                 on=True, now=NOW)                                       # 배율 · 원/달러 없이 (리뷰가 찾은 길)
-    assert out2[0]["per"] == 5.4
+    # 리뷰 3차 nit: 이제 단계가 실기 전에 관문의 함수로 먼저 봐요 (원/달러가 없으면 cap 을 맞춰 볼 수 없어 받지 않아요) → 싣지 않음 (selfChk)
+    assert "per" not in out2[0] and "fcurTot" not in out2[0] and st2["rows"]["TSM"]["why"] == {"per": "selfChk", "pbr": "selfChk", "dy": "divNoRecord"}
     rep = V.Report()
     V.check_us_fcur(rep, out2, st2, PD, FXW)
+    assert rep.rows[0][3] == "PASS", rep.rows
+    # 그 숫자를 손으로 실어도 (예전 단계가 하던 것) 관문은 받지 않아요
+    bad_row = F.us_fcur_tot_row(dict(rec), pre, tsm_st(), FX_TWD, None, D, TODAY)
+    assert bad_row["per"] == 5.4
+    st3 = dict(st2, rows={"TSM": bad_row})
+    s3 = dict(out2[0], per=bad_row["per"], pbr=bad_row["pbr"], fcurTot=["per", "pbr"])
+    rep = V.Report()
+    V.check_us_fcur(rep, [s3], st3, PD, FXW)
     assert rep.rows[0][3] == "FAIL" and "TSM.per" in rep.rows[0][1]
 
 
@@ -984,7 +993,7 @@ def test_fetch_us_passes_the_split_factor_and_the_won_rate_to_the_step():
     (sp_unknown — 아래 test_fetch_us_blanks_a_non_dollar_filer_whose_split_ratio_is_unknown 이 실제로 돌려 봐요)."""
     src = inspect.getsource(F.fetch_us)
     assert "us_fcur_totals_safe(yf, out, cache, data, us_px_date, today, no_info, split=dict(sp_k), split_bad=sp_unknown, fx_won=fx_last)" in src
-    assert "sp_unknown = frozenset(sp_bad) | frozenset(sp_left) | frozenset(sp_old)" in src
+    assert "sp_unknown = frozenset(sp_bad) | frozenset(sp_left) | frozenset(sp_old) | frozenset(sp_nocol_old) | frozenset(sp_drop)" in src   # 리뷰 3차 S1
     assert src.index("sp_k = {}") < src.index("sp_left = sorted(") < src.index("sp_unknown = ") < src.index("us_fcur_totals_safe(")
 
 
@@ -1110,8 +1119,9 @@ def test_an_unknown_split_ratio_blanks_the_company_totals():
     assert row["why"] == {"per": "split", "pbr": "split", "dy": "split"} and not any(f in row for f in ("per", "pbr", "dy", "mc"))
 
 
-def fake_us(monkeypatch, tmp_path, today, fail_info=()):
-    """test_fetch_us_writes_the_record_and_keeps_114_blanks 의 가짜 야후 (AAPL · TSM) — fail_info 의 종목은 상세 정보를 받지 못해요."""
+def fake_us(monkeypatch, tmp_path, today, fail_info=(), splits_col=None):
+    """test_fetch_us_writes_the_record_and_keeps_114_blanks 의 가짜 야후 (AAPL · TSM) — fail_info 의 종목은 상세 정보를 받지 못해요.
+    splits_col (리뷰 3차 · scratchpad rv181on_r3 split3.py): {티커: {날짜: 배율}} → 모든 종목에 'Stock Splits' 칸 (그 밖은 0) · None 이면 칸이 없어요 (noCol)."""
     days = pd.bdate_range(today - dt.timedelta(days=500), today)
 
     def series(seed):
@@ -1125,7 +1135,14 @@ def fake_us(monkeypatch, tmp_path, today, fail_info=()):
             return pd.concat({t: pd.DataFrame({"Close": [32.99]}, index=idx) for t in tickers}, axis=1)
         if isinstance(tickers, str):
             return pd.DataFrame({"Close": series(len(tickers))})
-        return pd.DataFrame({(t, "Close"): series(i + 3) for i, t in enumerate(tickers)})
+        cols = {(t, "Close"): series(i + 3) for i, t in enumerate(tickers)}
+        if splits_col is not None:
+            for t in tickers:
+                sc = pd.Series(0.0, index=days)
+                for d, r in (splits_col.get(t) or {}).items():
+                    sc[pd.Timestamp(d)] = r
+                cols[(t, "Stock Splits")] = sc
+        return pd.DataFrame(cols)
 
     class Ticker:
         def __init__(self, t):
@@ -1157,27 +1174,39 @@ def fake_us(monkeypatch, tmp_path, today, fail_info=()):
     return lines
 
 
-@pytest.mark.parametrize("case", ["left", "nomap", "control"])
+@pytest.mark.parametrize("case", ["left", "nomap", "nocol", "spin", "future", "control"])
 def test_fetch_us_blanks_a_non_dollar_filer_whose_split_ratio_is_unknown(case, tmp_path, monkeypatch):
-    """#181 켜기 리뷰 2차 S2: fetch_us 가 분할 배율을 모르는 종목을 모두 회사 합계 단계에 split_bad 로 넘기고 그 수를 크게 남겨요.
-    left: 어제 받은 TSM 보관본의 기준 가격이 오늘의 4배 (분할을 모름 · #176 jump) → 다시 묻지만 받지 못해 보관본 그대로 (sp_left).
-    nomap: 분할 기록을 읽지 못한 날 (sp_map None) · 오늘 받지 않은 보관본. control: 같은 보관본 · 분할을 읽음 → 숫자가 실려요 (빈 칸은 배율 때문)."""
+    """#181 켜기 리뷰 2차 S2 · 3차 S1: fetch_us 가 분할 배율을 모르는 종목을 모두 회사 합계 단계에 split_bad 로 넘기고 그 수를 크게 남겨요.
+    어제 받은 TSM 보관본 (그 전날 미국 기준일 · 분할 전 가격). left: 기준 가격이 오늘의 4배 (분할을 모름 · #176 jump) → 다시 묻지만 받지 못해 보관본
+    그대로 (sp_left). nomap: 분할 기록을 읽지 못한 날 (sp_map None). 3차 (scratchpad rv181on_r3 split3.py): nocol: 오늘 분할 칸이 없고 진짜는 3:2 (2배
+    안이라 다시 묻지 않아요) · spin: 야후가 깨끗하지 않은 배율 ×0.888 (UL 2025-12-09 의 모양 · 8:9) 을 적어 넣지 않음 · future: 오늘 뒤 날짜의 3:2.
+    control: 같은 보관본 (가격은 그대로) · 분할 칸 있음 · 사건 없음 → 숫자가 실려요 (빈 칸은 배율 때문). 달러 회사(AAPL)의 숫자는 어느 경우에도
+    분할 칸이 있는 같은 날과 같아요 (회사 합계 단계만 비워요)."""
     today = dt.date(2026, 11, 12)
-    fake_us(monkeypatch, tmp_path, today)
-    F.fetch_us(today - dt.timedelta(days=500), today, 0.03)                           # 첫 실행: 상세 정보 보관본을 채워요
-    cache = F.load_us_info()
-    cache["TSM"]["at"] = (today - dt.timedelta(days=1)).isoformat()                  # 어제 받은 보관본 (오늘 다시 받지 않아요)
-    if case == "left":
-        cache["TSM"]["px"] = cache["TSM"]["px"] * 4
-    F.save_us_info(cache)
-    lines = fake_us(monkeypatch, tmp_path, today, fail_info=("TSM",) if case == "left" else ())
-    if case == "nomap":
-        def boom(*a, **k):
-            raise RuntimeError("splits down")
-        monkeypatch.setattr(F, "us_splits", boom)
-    monkeypatch.setattr(F, "US_FCUR_TOT_ON", True)
-    us, *_rest, meta = F.fetch_us(today - dt.timedelta(days=500), today, 0.03)
-    tsm = {r["t"]: r for r in us}["TSM"]
+    ev = (today - dt.timedelta(days=1)).isoformat()                                    # 분할 날짜: 미국 기준일 (보관본의 기준 날짜 뒤)
+    ratio = {"left": 4.0, "nocol": 1.5, "spin": 8 / 9, "future": 1.5}.get(case, 1.0)
+    col = {"nocol": None, "spin": {"TSM": {ev: 0.888}}, "future": {"TSM": {(today + dt.timedelta(days=1)).isoformat(): 1.5}}}.get(case, {})
+
+    def run(splits_col, fail_info=(), boom=False):
+        fake_us(monkeypatch, tmp_path, today, splits_col={})
+        F.fetch_us(today - dt.timedelta(days=500), today, 0.03)                       # 첫 실행: 상세 정보 보관본을 채워요
+        cache = F.load_us_info()
+        cache["TSM"]["at"] = (today - dt.timedelta(days=1)).isoformat()              # 어제 받은 보관본 (오늘 다시 받지 않아요)
+        cache["TSM"]["pd"] = (today - dt.timedelta(days=2)).isoformat()              # 그 실행의 미국 기준일
+        cache["TSM"]["px"] = cache["TSM"]["px"] * ratio                               # 분할 전 1주 가격
+        F.save_us_info(cache)
+        lines = fake_us(monkeypatch, tmp_path, today, fail_info=fail_info, splits_col=splits_col)
+        if boom:
+            def boom_(*a, **k):
+                raise RuntimeError("splits down")
+            monkeypatch.setattr(F, "us_splits", boom_)
+        monkeypatch.setattr(F, "US_FCUR_TOT_ON", True)
+        us, *_rest, meta = F.fetch_us(today - dt.timedelta(days=500), today, 0.03)
+        monkeypatch.setattr(F, "US_FCUR_TOT_ON", False)
+        return {r["t"]: r for r in us}, meta, lines
+
+    by, meta, lines = run(col, fail_info=("TSM",) if case == "left" else (), boom=case == "nomap")
+    tsm, aapl = by["TSM"], by["AAPL"]
     row = meta["usFcurTot"]["rows"]["TSM"]
     loud = [x for x in lines if x.startswith("  !! 분할 배율을 모르는 미국 종목 오늘 ")]
     if case == "control":
@@ -1188,11 +1217,161 @@ def test_fetch_us_blanks_a_non_dollar_filer_whose_split_ratio_is_unknown(case, t
     assert row["why"] == {"per": "split", "pbr": "split", "dy": "split"} and not any(f in row for f in ("per", "pbr", "dy"))
     assert not any(k in tsm for k in ("per", "pbr", "dy", "vz", "fcurTot", "fcurNi")), tsm
     assert len(loud) == 1 and "TSM" in loud[0] and "그중 달러 아닌 재무제표 회사 1곳은 회사 합계 PER · PBR · 배당수익률을 비워요 (split): TSM" in loud[0]
-    want = "다시 물었지만 받지 못해 보관본 그대로 1 · 분할을 읽지 못한 날 오늘 받지 않은 보관본 0" if case == "left" else \
-        "다시 물었지만 받지 못해 보관본 그대로 0 · 분할을 읽지 못한 날 오늘 받지 않은 보관본 1"
-    assert loud[0].startswith("  !! 분할 배율을 모르는 미국 종목 오늘 1곳 (판단이 오류로 멈춤 0 · " + want + ")"), loud
+    n = {"left": (1, 0, 0, 0), "nomap": (0, 1, 0, 0), "nocol": (0, 0, 1, 0), "spin": (0, 0, 0, 1), "future": (0, 0, 0, 1)}[case]
+    want = (f"다시 물었지만 받지 못해 보관본 그대로 {n[0]} · 분할을 읽지 못한 날 오늘 받지 않은 보관본 {n[1]} · 분할 칸이 없는 날 오늘 받지 않은 보관본 "
+            f"{n[2]} · 보관본 뒤에 넣지 않은 분할 사건 {n[3]})")
+    assert loud[0].startswith("  !! 분할 배율을 모르는 미국 종목 오늘 1곳 (판단이 오류로 멈춤 0 · " + want), loud
     assert any("분할 배율을 확인하지 못함" in x for x in lines if x.startswith("· 달러 아닌 재무제표 1곳"))
     json.dumps(meta["usFcurTot"], allow_nan=False)
+    if case in ("nocol", "spin", "future"):                                            # 달러 회사는 그대로 (분할 칸이 있고 사건이 없는 같은 날과)
+        by0, _m, _l = run({})
+        keys = ("price", "cap", "per", "pbr", "dy", "vz", "val")
+        assert {k: aapl.get(k) for k in keys} == {k: by0["AAPL"].get(k) for k in keys} and aapl.get("per") is not None
+
+
+def test_dropped_split_events_count_only_after_the_details_anchor_day():
+    """리뷰 3차 S1: 넣지 않은 사건(spin · bad · future)이 보관본의 기준 가격 날짜 뒤일 때만 배율을 몰라요 · 고정 표가 정한 사건(UL 2025-12-09)은 알아요."""
+    info = {"spin": ["TSM 2026-11-11 ×0.888", "UL 2025-12-09 ×0.888", "OLD 2026-10-01 ×0.9"], "bad": ["BAD 2026-11-11 ×1"],
+            "future": ["FUT 2026-11-13 ×1.5"], "noCol": ["X"]}
+    dropped = F.us_split_dropped(info)
+    assert dropped == [("BAD", "2026-11-11"), ("FUT", "2026-11-13"), ("OLD", "2026-10-01"), ("TSM", "2026-11-11"), ("UL", "2025-12-09")]
+    entry = {"at": "2026-11-11", "pd": "2026-11-10", "px": 1.0}
+    cache = {t: dict(entry) for t in ("TSM", "UL", "OLD", "BAD", "FUT")}
+    cache["UL"] = {"at": "2025-12-08", "pd": "2025-12-05", "px": 1.0}                 # 고정 표 8:9 의 사건 앞 보관본이라도 배율을 알아요
+    assert F.us_split_dropped_after(dropped, cache, {"TSM", "UL", "OLD", "BAD", "FUT"}) == ["BAD", "FUT", "TSM"]
+    assert F.us_split_dropped_after(dropped, cache, {"OLD"}) == []                    # 기준 날짜 앞의 사건 · 상세 정보를 붙이지 않은 종목은 아니에요
+    assert F.us_split_dropped_after([("NEW", "2026-11-11")], {"NEW": {"at": "x"}}, {"NEW"}) == ["NEW"]   # 기준 날짜를 모르면 모름
+    assert F.us_split_dropped({"spin": ["?"], "bad": [5]}) == []
+
+
+def stepgate_inputs():
+    """scratchpad rv181on_r3 stepgate.py 가 c3c460a 에서 찾은 첫 실패 (씨앗 1): 아주 작은 회사 (시가총액 343만 달러) · PER 499.94 — 단계는 반올림 전
+    재료로, 관문은 실린 (반올림한) 재료와 파일의 원/달러(소수 첫째 자리)로 계산해 둘이 다르게 봐요."""
+    mcap, r, fxw, px = 3431328.943399208, 0.9108, 1345.0, 29.31
+    ni, eq = 6251.258954370523, 980892.5883062494
+    st = tsm_st()
+    st["q"] = [[d, ni / 4] for d, _ in st["q"]]
+    st["ttm"] = [["2026-09-30", ni]]
+    st["eq"] = [["2026-06-30", eq], ["2026-09-30", eq]]
+    info = tsm_info(marketCap=mcap, netIncomeToCommon=ni, trailingPE=499.94, dividendYield=None, shortName="X", quoteType="EQUITY")
+    rec = {"t": "TSM", "cls": "us", "price": px, "etf": False}
+    assert F.apply_us_info(rec, info, px_then=px, fx=fxw, today=TODAY)
+    return rec, info, st, {"r": r, "at": "x", "e": r, "eD": PD, "why": None}, fxw
+
+
+def test_the_step_never_marks_what_the_gate_would_refuse(monkeypatch):
+    """#181 켜기 리뷰 3차 nit: 단계가 실은 그대로 관문의 함수(us_fcur_tot_ok, 스위치 켜짐으로)에 먼저 넣어 보고, 받지 않는 칸은 싣기 전 값으로 되돌리고
+    기록 줄에서도 빼요 (selfChk · 크게 남김) — 그래서 #114 줄이 발행을 막지 않아요. 받는 칸은 그대로 실어요."""
+    lines = []
+    monkeypatch.setattr(F, "log", lines.append)
+    rec, info, st, fxr, fxw = stepgate_inputs()
+    entry = {"px": rec["price"], "info": info}
+    # 고치기 전 (c3c460a): 단계의 줄이 PER · PBR 을 계산했고 그대로 실었으면 관문이 받지 않았어요
+    row0 = F.us_fcur_tot_row(dict(rec), entry, st, fxr, None, D, TODAY, fx_won=fxw)
+    assert "per" in row0 and "pbr" in row0
+    probe = {"v": 1, "on": True, "d": PD, "fx": {"TWD": {"r": fxr["r"]}}, "rows": {"TSM": row0}}
+    assert V.us_fcur_tot_ok(dict(rec, per=row0["per"], pbr=row0["pbr"], fcurTot=["per", "pbr"]), probe, PD, round(fxw, 1), on=True) == set()
+    out = [dict(rec)]
+    tot = F.us_fcur_totals_step(None, out, {"TSM": entry}, None, D, TODAY, stmts=lambda ts_: {"TSM": st},
+                                fx_rates=lambda cs, d, n: {"TWD": dict(fxr)}, on=True, now=NOW, fx_won=fxw)
+    s, row = out[0], tot["rows"]["TSM"]
+    assert row["why"]["per"] == "selfChk" and "per" not in row and s.get("per") is None, (row, s)
+    assert s["fcurTot"] == ["pbr"] and s["pbr"] == row["pbr"]                         # PBR 은 관문이 받아요 → 그대로
+    assert tot["n"]["blank"].get("selfChk") == 1
+    assert any(x.startswith("  !! 회사 합계 숫자 중 관문의 확인(us_fcur_tot_ok)이 받지 않을 칸 1칸을 싣지 않고 비웠어요") and "TSM PER" in x for x in lines), lines
+    data = json.loads(json.dumps({"stocks": out, "usFcurTot": tot, "usPxDate": PD, "fx": round(fxw, 1)}, allow_nan=False))
+    monkeypatch.setattr(V, "US_FCUR_TOT_ON", True)
+    rep = V.Report()
+    V.check_us_fcur(rep, data["stocks"], data["usFcurTot"], data["usPxDate"], data["fx"])
+    assert rep.rows[0][3] == "PASS" and "회사 합계 숫자를 실은 곳 1" in rep.rows[0][1], rep.rows
+    # 보통 회사(TSM 그대로)는 아무것도 비우지 않아요 · 관문의 함수는 스위치가 꺼져 있어도 단계가 on=True 로 불러요 (관문 줄은 늘 스위치대로)
+    monkeypatch.setattr(V, "US_FCUR_TOT_ON", False)
+    out2, rec2, _l, _a = run_step(True, monkeypatch)
+    assert {r["t"]: r for r in out2}["TSM"]["fcurTot"] == ["per", "pbr", "dy"] and "selfChk" not in rec2["n"]["blank"]
+    rec_, s_ = on_pair()
+    assert V.us_fcur_tot_ok(s_, rec_, PD, FXW) == set() and V.us_fcur_tot_ok(s_, rec_, PD, FXW, on=True) == {"per", "pbr", "dy", "vz"}
+
+
+def test_the_stepgate_fuzz_finds_no_gate_failure(monkeypatch):
+    """scratchpad rv181on_r3 stepgate.py 를 줄인 것 (2,000번 · 씨앗 고정): 단계(켜짐) → JSON → 관문 — 실은 숫자는 #114 줄을 늘 지나요."""
+    import math
+    import random
+    monkeypatch.setattr(F, "log", lambda *a: None)
+    monkeypatch.setattr(V, "US_FCUR_TOT_ON", True)
+    rnd = random.Random(3)
+
+    def lg(lo, hi):
+        return math.exp(rnd.uniform(math.log(lo), math.log(hi)))
+    fails = 0
+    for _ in range(2000):
+        fxw, r, px = lg(900, 2000), lg(0.5, 30000), round(lg(0.5, 3000), 2)
+        mcap = lg(1e6, 5e9)
+        ni, eq = mcap * r / lg(0.02, 600), mcap * r / lg(0.003, 120)
+        st = tsm_st()
+        st["q"] = [[d, ni / 4] for d, _ in st["q"]]
+        st["ttm"] = [["2026-09-30", ni]]
+        st["eq"] = [["2026-06-30", eq], ["2026-09-30", eq]]
+        info = tsm_info(marketCap=mcap, netIncomeToCommon=ni, trailingPE=None, dividendYield=None, shortName="X", quoteType="EQUITY")
+        rec = {"t": "TSM", "cls": "us", "price": px, "etf": False}
+        if not F.apply_us_info(rec, info, px_then=px, fx=fxw, today=TODAY):
+            continue
+        out = [dict(rec)]
+        tot = F.us_fcur_totals_step(None, out, {"TSM": {"px": px, "info": info}}, None, D, TODAY, stmts=lambda ts_: {"TSM": st},
+                                    fx_rates=lambda cs, d, n: {"TWD": {"r": r, "at": "x", "e": r, "eD": PD, "why": None}}, on=True, now=NOW, fx_won=fxw)
+        data = json.loads(json.dumps({"stocks": out, "usFcurTot": tot, "usPxDate": PD, "fx": round(fxw, 1)}, allow_nan=False))
+        rep = V.Report()
+        V.check_us_fcur(rep, data["stocks"], data["usFcurTot"], data["usPxDate"], data["fx"])
+        fails += rep.rows[0][3] != "PASS"
+    assert fails == 0
+
+
+# ── 리뷰 3차 S2 (2026-11-28): 기록의 오류 글이 관문의 낱말 줄을 막지 않게 ─────────────────
+BAD_TEXT = "None of [Index(['Close'], dtype='object')] are in the [columns] · nan · null · undefined"
+
+
+def test_error_texts_in_the_record_are_clean_and_the_text_row_passes(monkeypatch):
+    """scratchpad rv181on_r3 gate_badword.log: 회사 하나의 예외 글 "KeyError: None of …" 가 usFcurTot.rows[t].err 에 그대로 들어가 관문의 '글자에
+    nan·None·null·undefined 없음' 줄이 발행 전체를 막았어요 (스위치가 꺼져 있어도). 이제 예외 글은 pub_err (원문은 로그에) · usFcurTot 도 마지막
+    쓸기(pub_sweep · PUB_SWEEP_KEYS)가 봐요."""
+    from fixture_data import good_pair
+    lines = []
+    monkeypatch.setattr(F, "log", lines.append)
+    assert "usFcurTot" in F.PUB_SWEEP_KEYS
+    words = lambda o: [f"{p}={v[:40]}" for p, v in V.text_values(o) if V.BAD_WORD.search(v)]
+
+    def boom_row(*a, **k):
+        raise KeyError(BAD_TEXT)
+    out, cache, data, stmts = step_inputs()
+    monkeypatch.setattr(F, "us_fcur_tot_row", boom_row)
+    rec = F.us_fcur_totals_safe(None, out, cache, data, D, TODAY, frozenset({"NOINFO"}), now=NOW,
+                                stmts=lambda ts_: {t: stmts.get(t, {}) for t in ts_}, fx_rates=lambda c, d, n: {"TWD": dict(FX_TWD)}, on=False, fx_won=FXW)
+    assert rec["rows"]["TSM"]["err"].startswith("KeyError: ") and words(rec) == [], rec["rows"]["TSM"]
+    assert any("원문" in x and "None of" in x for x in lines)                         # 원문은 로그에
+    monkeypatch.setattr(F, "us_fcur_tot_row", ORIG_ROW)
+
+    def boom_stmts(ts_):
+        raise RuntimeError(BAD_TEXT)
+    out, cache, data, _st = step_inputs()
+    rec2 = F.us_fcur_totals_safe(None, out, cache, data, D, TODAY, frozenset({"NOINFO"}), now=NOW, stmts=boom_stmts, on=False)
+    assert rec2["err"].startswith("RuntimeError: ") and words(rec2) == [], rec2
+
+    def ecos(c, d):
+        raise ValueError(BAD_TEXT)
+    hour = types.SimpleNamespace(download=lambda *a, **k: pd.concat({"TWD=X": pd.DataFrame(
+        {"Close": [32.99]}, index=pd.DatetimeIndex([pd.Timestamp("2026-11-20 15:00", tz="America/New_York").tz_convert("Europe/London")]))}, axis=1))
+    fx = F.us_fcur_fx_rates(hour, ["TWD"], D, NOW, ecos=ecos)
+    assert fx["TWD"]["r"] is None and fx["TWD"]["why"].startswith("ECOS 를 받지 못함 (ValueError: ") and words(fx) == [], fx
+    # 마지막 쓸기가 남은 글도 비워요 · 관문의 그 줄이 통과해요
+    cur, _prev, _final = good_pair()
+    d = cur["data"]
+    d["usFcurTot"] = {"v": 1, "on": False, "d": PD, "fx": {"TWD": {"why": "x " + BAD_TEXT}}, "rows": {"FER": {"why": {"per": "err"}, "err": "KeyError: " + BAD_TEXT}}}
+    assert words({"data": d}) != []
+    F.pub_sweep(d, "data.json")
+    assert words({"data": d}) == [] and d["usFcurTot"]["rows"]["FER"]["why"] == {"per": "err"}
+    rep = V.Report()
+    V.check_v1751(rep, cur, [], [], {}, [], {}, TODAY, None)
+    r = next(x for x in rep.rows if x[0] == "글자에 nan·None·null·undefined 없음")
+    assert r[3] == "PASS", r
 
 
 @pytest.mark.parametrize("key, val", [("ni", [5e-324, "2026-09-30", "q4"]), ("eq", [5e-324, "2026-09-30"])])
