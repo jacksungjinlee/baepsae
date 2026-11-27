@@ -2079,7 +2079,7 @@ Korean ratio outside 0.5–2.0 then warns (the limit is unknown).
 The gate cannot see the base-price link itself (data.json carries only counts in `krSeries.ref`), so a Korean row the pipeline
 should have blanked for an unconfirmed link is caught by the gate only if its move breaks the compounded limit.
 
-## When the S&P 500 list can't be read (S&P 500 목록 이어 쓰기, since #?)
+## When the S&P 500 list can't be read (S&P 500 목록 이어 쓰기, since #199)
 
 **What happened.** FinanceDataReader reads the S&P 500 list from Wikipedia ("List of S&P 500 companies"). On 2026-11-28 at
 00:35 KST (run 46026291142 on `main`) Wikipedia answered 429 ("We suspect this request is automated: if so, please respect our
@@ -2421,7 +2421,7 @@ ticker, reason]] · `spTickers` the day's S&P 500 tickers in Yahoo form (null wh
 tickers missing from the day's list → reason (null on a day the list was not trusted, #133) · `noPx` those Yahoo gave no price at
 all · `spErr` those whose processing stopped on an error (a different problem: not a sign of a dotted class) · `missing` stocks
 this rule added (`BF-B`) that are not in the day's list → reason · `read` whether the run left a ticker record · `spCarried`
-(since #?, only on a day the list could not be read and the last publish's list was used: `{from, why}`; `spTickers` is then that
+(since #199, only on a day the list could not be read and the last publish's list was used: `{from, why}`; `spTickers` is then that
 list; see "When the S&P 500 list can't be read" above).
 
 **Gate rows** (`check_us_share_class`; added as stricter-only rows in #139, and since #149 a missing BF-B warns instead of failing):

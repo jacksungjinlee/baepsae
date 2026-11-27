@@ -40,7 +40,7 @@ rights issues by other methods (wording from the design chat). Spec Acceptance 2
 #196). Known gap, for the design chat's say-why list: a 지분 변동 card left out because its stock is shown at an older close is named
 only in the console, and 이번 주 정리's 공시 tile skips it without a line (a screen line needs new wording).
 
-**S&P 500 list fallback (#?, branch `claude/sp500-fallback`, 2026-11-28; pipeline + one warning-only gate row; live once it merges):**
+**S&P 500 list fallback (#199, branch `claude/sp500-fallback`, 2026-11-28; pipeline + one warning-only gate row; live once it merges):**
 the 11-28 00:35 run on `main` (46026291142) held its publish because Wikipedia refused FinanceDataReader's S&P 500 list request (429,
 "please respect our robot policy"): 465 tickers, gate "미국 종목 수 458" and "800 → 458". We respect the policy (no User-Agent
 tricks, no proxies). Now `us_tickers` waits 5 s and asks once more; if that fails too it uses the last publish's
