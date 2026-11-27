@@ -58,6 +58,22 @@ temporary rate, read as ordinary rates, until #191 is redeployed. 오늘 볼 것
 Follow-ups: a dollar record's 코스피 comparison (lots.js `closeBefore`); undated 가진 종목 넣기 rows count splits from `createdAt`; 이번 주
 정리's 다음 주 starts at Korea's date (an existing test pins it). Tests: `tests/test_v2_us_dates.py`, `test_v2_us_dates_screens.py`,
 `test_v2_rate_temp.py`, `test_v2_rate_temp_screens.py`, smoke_v2 `scene_v191_rate_temp`. RUNBOOK "Temporary rates".
+**S&P 500 list fallback (#199, branch `claude/sp500-fallback`, 2026-11-28; pipeline + one warning-only gate row; live once it merges):**
+the 11-28 00:35 run on `main` (46026291142) held its publish because Wikipedia refused FinanceDataReader's S&P 500 list request (429,
+"please respect our robot policy"): 465 tickers, gate "미국 종목 수 458" and "800 → 458". We respect the policy (no User-Agent
+tricks, no proxies). Now `us_tickers` waits 5 s and asks once more; if that fails too it uses the last publish's
+`usListSym.spTickers` as the S&P 500 part (plausible: Yahoo form, ≤ 550, overlap ≥ 400 with that publish's US list), logs `!! S&P
+500 목록을 읽지 못해 (1차: … · 2차: …) 지난 발행본의 목록(… 읽음 · N종목 · N일 전)을 썼어요` (head `읽었지만 쓸 수 없어` when the list came
+back unusable, with rows received, unconvertible rows and their first three values) and records `usListSym.spCarried` = {from:
+first-read day (KST), why: both reads' reasons}. A carried list carried again keeps its first-read day; one first read more than 7
+calendar days ago is not used (the US count then holds the publish, as before). Downstream treats it as that day's list (`spGone`,
+#133's country rule via the same overlap check, BF-B); `read` keeps its meaning. New row "미국 S&P 500 목록 이어 씀
+(usListSym.spCarried · 경고만)": PASS on a normal day, WARN naming the list's date and the reasons, and on a publish also checking
+that date against the previous publish (later → "날짜가 새로 매겨졌을 수 있어요"); `spCarried: null` warns as malformed; never FAIL;
+no existing gate row changed (live data 11-27: 171 rows, only the new one added, PASS). Review round 1 (Opus, Fable): no blocker.
+Because the gate's annotations stop at 10 warnings a step, the data step prints its own `::warning title=S&P 500 목록 이어 씀 (지난
+발행본)::…` (or `S&P 500 목록 없음 (이어 쓰지 못함)`) for the 09:13 check. No screen change. If it warns several days running, tell
+Jack before day 7 (a second S&P list source would be an outside-service decision). RUNBOOK "When the S&P 500 list can't be read".
 
 **홈's US close line (#190, 2026-11-24; same class as #187's 포트폴리오 fix, minor):** app only, no new words. 홈 (`home2.jsx`) and the
 old 홈 behind the HOME2 switch (`today.jsx` Home) decided "a US stock is held" by `cls`. A holding of 379800 KODEX 미국S&P500 (cls "us",
@@ -1015,7 +1031,9 @@ JSON files to `main` as `baepsae-bot`, with `git pull --rebase` before push (avo
      from 1 November** while it is missing (Jack, 2026-11-04). Its `--live` mode runs the same row, so v17.6's live
      check will fail too. Gate warnings and failures are also GitHub annotations, which the 09:13 KST daily check reads.
 3. `fetch_us` — S&P 500 (Wikipedia) + NASDAQ (Naver listing, first 400) + `EXTRA_US`; yfinance prices (10 threads);
-   auto Korean descriptions via `us_desc()`.
+   auto Korean descriptions via `us_desc()`. If the S&P 500 list can't be read or used, the run asks once more after 5 s, then
+   uses the last publish's list (`usListSym.spCarried`, at most 7 days after it was first read; #199, RUNBOOK "When the S&P 500
+   list can't be read").
 4. `fetch_bonds` — 8 bond ETFs configured (`153130 114260 148070 439870 273130 305080 453850 304660`), verified by
    name keywords and vol < 30%. **Only 7 have ever been published:** 304660's real name fails its keyword check.
 5. Block correlations/vols → `settings`. `add_percentiles` (factors). → **`data.json`**
