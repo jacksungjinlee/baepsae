@@ -1031,6 +1031,33 @@ const inEntry = (e, r) => ["purchases", "sales", "divs"].some((k) => (e[k] || []
 const recKey = (r) => (hasId(r) ? { id: r.id } : r);
 const entryKey = (e) => canon({ t: e.t, imported: e.imported || null, purchases: (e.purchases || []).map(recKey), sales: (e.sales || []).map(recKey),
   divs: (e.divs || []).map(recKey) });
+// #191 review (two tabs of different builds): a build before #191 compared every field of an entry's records, so its merge of a
+// copy holding a temporary record with a copy where that record's rate had been replaced kept two entries of the same records,
+// which this build's replacement (records.withOfficialRates) then makes identical: the sale would count twice in 내 수익 and on
+// 연말에 확인할 숫자. An entry whose entryKey (records by id) equals an earlier entry's in the same portfolio holds the same
+// records and goes (the earlier one stays). Only entries with a record that carries an id: entries without ids compare by
+// content, and two equal ones of those may be two real removals. Run on load (app.jsx), said in the console with counts.
+// -> { data (the same object when nothing goes), dropped: [{ id, t }] }
+export function withoutTwinEntries(data) {
+  const dropped = [];
+  if (!data || !Array.isArray(data.decks)) return { data, dropped };
+  let changed = false;
+  const decks = data.decks.map((d) => {
+    if (!plainObj(d) || !Array.isArray(d.history) || d.history.length < 2) return d;
+    const seen = new Set();
+    const keep = d.history.filter((e) => {
+      if (!plainObj(e) || !["purchases", "sales", "divs"].some((k) => Array.isArray(e[k]) && e[k].some(hasId))) return true;
+      const k = entryKey(e);
+      if (!seen.has(k)) { seen.add(k); return true; }
+      dropped.push({ id: d.id, t: e.t });
+      return false;
+    });
+    if (keep.length === d.history.length) return d;
+    changed = true;
+    return { ...d, history: keep };
+  });
+  return { data: changed ? { ...data, decks } : data, dropped };
+}
 
 // v19.7a: a holding's stored plan weight (planW) when it can be used (final review N2). It is on the scale of the plan's
 // own values (won), and it must be a number that adds up: finite, 0 or more (0 is a real weight: a stock that takes no

@@ -10,6 +10,7 @@ official rate automatically when the morning data arrives." 그 날짜의 환율
 - 금액으로 넣은 종목을 판 금액(원)으로 판 기록은 원화 금액이 그대로 남아요 (달러 가격이 환율 따라 움직여요).
 - 포트폴리오에서 뺀 종목(history)의 기록도 바꿔요. 지운 기록은 남지 않아요. 기록 파일로 내보냈다 불러와도 표시가 남아 바뀌어요.
 - 두 창: 한 창이 바꾼 뒤 다른 창(예전 기록을 든)이 저장해도 같은 기록이 두 번 세지지 않아요 (history 의 같은 기록 id 는 같은 항목).
+  #191 전 빌드(남은 캐시 · 되돌림)가 합쳐 둔 같은 기록의 두 항목도 불러올 때 하나로 (store.withoutTwinEntries).
 - 멈춘 데이터 · 이 PR 전에 저장된 기록(표시 없음)은 그대로예요. 저장 기록 검사(store.js): rateTemp 는 true, 환율이 있는 달러 기록에만.
 기대값은 손으로 셌어요.
 """
@@ -32,8 +33,10 @@ def bundle_dir():
         tmp = tempfile.mkdtemp(prefix="baepsae-ratetemp-")
         entry = os.path.join(tmp, "entry.js")
         with open(entry, "w", encoding="utf-8") as f:
-            for name, mod in (("S", "store.js"), ("Rc", "records.js"), ("L", "lots.js"), ("H", "held.js")):
+            for name, mod in (("S", "store.js"), ("Rc", "records.js"), ("L", "lots.js"), ("H", "held.js"), ("Tx", "tax.js")):
                 f.write(f"export * as {name} from {json.dumps(os.path.join(ROOT, 'src', 'v2', mod))};\n")
+            # main's store.js before #191 (2760844, frozen in tests/fixtures: CI's shallow clone has no history to show it from)
+            f.write(f"export * as OS from {json.dumps(os.path.join(ROOT, 'tests', 'fixtures', 'store_before_191_2760844', 'store.js'))};\n")
         exe = os.path.join(ROOT, "node_modules", ".bin", "esbuild")
         r = subprocess.run([exe, entry, "--bundle", "--format=esm", "--platform=node", f"--outfile={tmp}/w.mjs", "--log-level=error",
                             "--loader:.js=jsx", "--jsx=automatic", "--charset=utf8"], cwd=ROOT, capture_output=True, text=True)
@@ -71,7 +74,7 @@ const pick = (data, id) => recs(data.decks[0]).find((r) => r.id === id);
 
 def run(body):
     d = bundle_dir()
-    code = "import { S, Rc, L, H } from './w.mjs';\n" + FAKE + "let out;\n" + body + "\nprocess.stdout.write(JSON.stringify(out));"
+    code = "import { S, Rc, L, H, Tx, OS } from './w.mjs';\n" + FAKE + "let out;\n" + body + "\nprocess.stdout.write(JSON.stringify(out));"
     r = subprocess.run([NODE, "--input-type=module", "-e", code], cwd=d, capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
@@ -216,3 +219,31 @@ def test_records_saved_before_this_release_are_left_as_they_are():
       const f = Rc.withOfficialRates(st, hist('2027-01-04'));
       out = [f.data === st, f.fixed.length, f.waiting.length, Rc.hasTempRate(st.decks[0])];""")
     assert got == [True, 0, 0, False]
+
+
+def test_a_merge_by_a_build_before_191_never_doubles_a_sale():
+    """#191 review (Opus S1): a tab of the build before #191 (a stale cached copy, or #191 reverted) merges its copy (a sale of a stock
+    taken out, still at the temporary rate) with a copy whose rate was replaced. That build compares every field, so it keeps two
+    history entries of the same sale; this build's replacement makes them identical and the sale would count twice (내 수익 판 종목
+    and 연말 yearGains doubled). On load (app.jsx) store.withoutTwinEntries keeps one entry of the same records (ids), then the rate is
+    replaced: the numbers equal the single sale's. Entries without ids are left alone (two equal ones may be two real removals)."""
+    got = run("""
+      const sale = tmp('s1aaaaaa', 'AAPL', '2026-11-24', { qty: 3, price: 320, fx: 1338.0 });
+      const base = () => deckOf({ holdings: [deckOf().holdings[0]], purchases: [deckOf().purchases[0]], removed: [{ t: 'AAPL', at: '2026-11-25', ts: 1764000000000 }],
+        history: [{ t: 'AAPL', nk: 'Apple Inc.', out: '2026-11-25', ts: 1764000000000, cls: 'us', purchases: [deckOf().purchases[1]], sales: [sale], divs: [] }] });
+      const temp = storeOf(base()), fh = hist('2026-11-24');
+      const repl = Rc.withOfficialRates(temp, fh).data;
+      const old = OS.mergeTabs(repl, temp, '2026-11-25');                     // the old build: its temporary copy merged with the replaced one
+      const tw = S.withoutTwinEntries(old), after = Rc.withOfficialRates(tw.data, fh).data;
+      const dup = Rc.withOfficialRates(old, fh).data;                          // without the clean-up
+      const q = { pxOf: () => 300, fx: 1340, absent: new Set() };
+      const sold = (d) => L.returnsOf(d.decks[0], q).sold, gains = (d) => Tx.yearGains(d.decks).exact;
+      const noIds = storeOf(deckOf({ history: [0, 1].map(() => ({ t: 'MSFT', nk: 'MSFT', out: '2026-11-20', imported: { t: 'MSFT', nk: 'MSFT', ccy: 'USD', qty: 2 } })) }));
+      const again = S.withoutTwinEntries(tw.data);
+      out = { oldEntries: old.decks[0].history.length, dropped: tw.dropped, entries: after.decks[0].history.length,
+        sold: [sold(repl), sold(after), sold(dup)], gains: [gains(repl), gains(after), gains(dup)], valid: S.validStore(after, '2026-11-25'),
+        noIds: [S.withoutTwinEntries(noIds).dropped.length, S.withoutTwinEntries(noIds).data === noIds], again: [again.dropped.length, again.data === tw.data] };""")
+    assert got["oldEntries"] == 2 and got["dropped"] == [{"id": "d1", "t": "AAPL"}] and got["entries"] == 1, got
+    assert got["sold"][0] == got["sold"][1] and got["sold"][2] == 2 * got["sold"][0] and got["sold"][0] != 0, got["sold"]
+    assert got["gains"][0] == got["gains"][1] and got["gains"][2] == 2 * got["gains"][0] and got["gains"][0] != 0, got["gains"]
+    assert got["valid"] is True and got["noIds"] == [0, True] and got["again"] == [0, True]

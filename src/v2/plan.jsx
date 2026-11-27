@@ -26,6 +26,7 @@ export function Plan({ load, builder, setBuilder, store, setStoreData, goToday, 
   const items = pickItems(ds, builder.picks);
   const r = useMemo(() => (st.amountMan > 0 ? computePlan(load, st, items, ds.pinned) : null), [load, st, ds, builder.picks]);
   const [sheet, setSheet] = useState(null);       // null | "form" | "done"
+  const [tempSaved, setTempSaved] = useState(false); // #191: a US row was saved at the latest rate (rateTemp): 기록했어요 says so once
   const s4 = C.build.s4;
   const back = () => { setBuilder((b) => ({ ...b, stage: "pick" })); try { window.scrollTo(0, 0); } catch (e) { /* ignore */ } };
   const setAmount = (v) => setBuilder((b) => ({ ...b, settings: { ...b.settings, amountMan: v } }));
@@ -74,7 +75,8 @@ export function Plan({ load, builder, setBuilder, store, setStoreData, goToday, 
           // new portfolio and the next 포트폴리오 만들기 starts fresh (app.jsx doneToPortfolio), so 샀어요 never records the same plan
           // twice. The 샀어요 form itself still closes back to the plan.
           onClose={() => { if (sheet === "done") { setSheet(null); goPortfolio(); } else setSheet(null); }}
-          store={store} setStoreData={setStoreData} onDone={() => { setBuilder((b) => ({ ...b, recorded: true })); setSheet("done"); }}
+          store={store} setStoreData={setStoreData} tempSaved={tempSaved}
+          onDone={(saved) => { setTempSaved(!!(saved && saved.temp)); setBuilder((b) => ({ ...b, recorded: true })); setSheet("done"); }}
           goToday={() => { setSheet(null); goToday(); }} />
       )}
     </Page>
@@ -323,7 +325,8 @@ function RecordClose({ load, s }) {
 }
 
 // exported for tests/test_v2_us_dates_screens.py (rendered in Node); the app opens it from Plan only
-export function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStoreData, onDone, goToday }) {
+// tempSaved: a US row of the purchases saved was at the latest rate, marked temporary (onDone({ temp }) says so; Plan keeps it)
+export function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStoreData, onDone, goToday, tempSaved = false }) {
   const rows = plan.rows.filter((x) => x.shares > 0);
   const [date, setDate] = useState("");
   const [vals, setVals] = useState({});
@@ -331,7 +334,6 @@ export function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, s
   const [tried, setTried] = useState(false);
   const [noRate, setNoRate] = useState(null);     // v19.6a: no exchange rate for the date yet (US rows): "past" | "today" | null
   const [savedN, setSavedN] = useState(0);        // distinct stocks actually recorded (quantity > 0): 기록했어요's {n}
-  const [savedTemp, setSavedTemp] = useState(false); // #191: a US row saved at the latest rate (rateTemp): 기록했어요 says so once
   const setV = (t, k, v) => setVals((m) => ({ ...m, [t]: { ...(m[t] || {}), [k]: v } }));
   const today = todayKst();
   const env = rateEnv(load, today, usTradeDay());
@@ -380,9 +382,8 @@ export function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, s
     if (!store.writable || !writeStore(next, store.key, today)) { setFail(true); return; }
     setFail(false);
     setSavedN(new Set(purchases.map((p) => p.t)).size);
-    setSavedTemp(purchases.some((p) => p.rateTemp === true));
     setStoreData(next, true);
-    onDone();
+    onDone({ temp: purchases.some((p) => p.rateTemp === true) });
   };
   const P = C.plan;
   const { preview } = useMode();
@@ -396,7 +397,7 @@ export function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, s
           <Mascot src={IMG.happy} alt={P.doneAlt} size={64} />
           {P.doneBody && savedN > 0 && <p data-ui-v2="done-body" style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2)}>{fill(P.doneBody, { n: savedN })}</p>}
         </div>
-        {savedTemp && C.rec.rateTemp && <Note data-ui-v2="rec-rate-temp">{C.rec.rateTemp}</Note>}
+        {tempSaved && C.rec.rateTemp && <Note data-ui-v2="rec-rate-temp">{C.rec.rateTemp}</Note>}
         <div style={{ marginTop: SPACE(4) }}><Button kind="secondary" onClick={goToday}>{P.doneLink || C.app.tabs.home}</Button></div>
       </BottomSheet>
     );

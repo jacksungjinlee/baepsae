@@ -119,11 +119,15 @@ const sheet = (clock, asOf) => {
   at(clock);
   const load = loadOf(asOf), st = { ...E.defaultSettings(), points: { value: 3 } };
   const row = (t, w) => ({ t, s: load.byT.get(t), shares: 2, kind: 'core', targetW: w, reasons: [] });
-  let saved = null;
-  const html = press(h(PJ.RecordSheet, { open: true, stage: 'form', onClose: () => {}, load, st, plan: { rows: [row('005930', 0.5), row('AAPL', 0.5)] },
-    ds: { pinned: [], cands: {} }, store: storeOf([]), setStoreData: (d) => { saved = d; }, onDone: () => {}, goToday: () => {} }), C.plan.save);
+  let saved = null, done = null;
+  const props = { open: true, stage: 'form', onClose: () => {}, load, st, plan: { rows: [row('005930', 0.5), row('AAPL', 0.5)] },
+    ds: { pinned: [], cands: {} }, store: storeOf([]), setStoreData: (d) => { saved = d; }, onDone: (x) => { done = x; }, goToday: () => {} };
+  const html = press(h(PJ.RecordSheet, props), C.plan.save);
   const ps = saved ? saved.decks[0].purchases.map(({ id, ...p }) => p) : null;
-  return { input: dateInput(html), purchases: ps, createdAt: saved ? saved.decks[0].createdAt : null, logs: logs.splice(0) };
+  // 기록했어요 as Plan then shows it (Plan keeps onDone's temp and hands it back as tempSaved)
+  const doneHtml = renderToStaticMarkup(h(PJ.RecordSheet, { ...props, stage: 'done', store: storeOf(saved ? saved.decks : []), tempSaved: !!(done && done.temp) }));
+  return { input: dateInput(html), purchases: ps, createdAt: saved ? saved.decks[0].createdAt : null, done, doneLine: doneHtml.split(C.rec.rateTemp).length - 1,
+    doneShown: doneHtml.includes('data-ui-v2="record-done"'), logs: logs.splice(0) };
 };
 """
 
@@ -194,6 +198,8 @@ def test_the_plan_sheet_dates_each_row_in_its_own_market_and_saves_each_us_row_w
         assert g["purchases"] == [{"t": "005930", "date": kr, "qty": 2, "price": 225000, "ccy": "KRW"},
                                   {"t": "AAPL", "date": us, "qty": 2, "price": 344.63, "ccy": "USD", "fx": fx, **(TEMP if temp else {})}], (clock, g)
         assert g["createdAt"] == kr and not g["logs"], (clock, g)
+        # 기록했어요 (Fable S4): onDone says whether a US row was saved temporary; the done stage then shows the line once, else none
+        assert g["done"] == {"temp": temp} and g["doneShown"] is True and g["doneLine"] == (1 if temp else 0), (clock, g)
 
 
 # the records as saved at 01:00 KST 11-24 (AAPL bought on 11-23 at the latest rate, marked temporary), and as the morning replaced them

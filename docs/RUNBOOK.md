@@ -2791,17 +2791,25 @@ stored data depends on it).
   - **Temporary rates (Jack, 2026-11-27, #191):** "not at today's rate. Save it right away at the latest available rate,
     marked temporary, and replace it with that date's official rate automatically when the morning data arrives." A dollar
     record dated "today" (either date above) that the history does not have yet is saved at once at `data.json` `fx` (the
-    latest rate the app has; since #192 the last ECOS row when the run read ECOS) and marked `rateTemp: true` on the record
-    (`records.rateFor` · `ratePart`). Each start of the app, and each change of the records, `records.withOfficialRates`
-    (app.jsx, only when the records can be written, said in the console with counts) replaces the rate of every marked record
-    whose date the loaded history covers and drops the mark: its own row; a date that never gets one (a weekend, a Korean
-    holiday) once a later row exists, then the last row before it (as above); never while the history ends before the date
-    or ends on it with a last row not marked final. A sale of a holding put in by amount keeps its won amount (its dollar
-    price moves with the rate). While a record is marked, its stock's record sheet, the sheet after a full sale, 매수 계획's
-    기록했어요 and 내 수익 say "지금은 최근 환율로 저장했어요. 이 날짜의 환율이 들어오면 자동으로 바꿔요." once (`rec.rateTemp`). Stale
-    data still refuses a "today" record (`rec.noTodayRate`); any other date after `asOf` keeps `rec.rateNotYet`. Records saved
-    before #191 carry no mark and are never touched. Two tabs: a history entry is the same entry when its records carry the
-    same ids (store.js `entryKey`), so a replaced record is never counted twice.
+    newest rate the data carries, whichever source the run took it from; `fxSrc` says which when present) and marked
+    `rateTemp: true` on the record (`records.rateFor` · `ratePart`). From 10:00 to 24:00 KST (09:00 in summer) that is every
+    new US record: it stays marked until the next morning's publish. Each start of the app, and each change of the records,
+    `records.withOfficialRates` (app.jsx, only when the records can be written, said in the console with counts) replaces the
+    rate of every marked record whose date the loaded history covers and drops the mark: its own row; a date that never gets
+    one (a weekend, a Korean holiday) once a later row exists, then the last row before it (as above; a Sunday record waits
+    until Tuesday morning's publish, which has Monday's row); never while the history ends before the date or ends on it with
+    a last row not marked final. A sale of a holding put in by amount keeps its won amount (its dollar price moves with the
+    rate). While a record is marked, each screen that counts it says "지금은 최근 환율로 저장했어요. 이 날짜의 환율이 들어오면
+    자동으로 바꿔요." once (`rec.rateTemp`): the stock's record sheet (also right after 저장), the sheet after a full sale, 매수
+    계획's 기록했어요, 내 수익, 홈 (above the money cards and 이번 주 정리), 포트폴리오, 연말에 확인할 숫자 and 종목 바꾸기 (where 팔고
+    빼기 · 팔고 바꾸기 return). Not on 팔았어요's result card before 저장, and the CSV export carries the temporary rate without a
+    mark (it leaves the app; a known limit). Stale data still refuses a "today" record (`rec.noTodayRate`); any other date
+    after `asOf` keeps `rec.rateNotYet`. Records saved before #191 carry no mark and are never touched. Two tabs: a history
+    entry is the same entry when its records carry the same ids (store.js `entryKey`), so a replaced record is never counted
+    twice; entries of the same records that a build before #191 merged into two are made one on load
+    (`store.withoutTwinEntries`, console count). **If #191 is reverted**, marked records keep their temporary rate, the
+    older build reads them as ordinary rates (no line, no replacement); once #191 is deployed again it replaces the ones still
+    marked.
   - **Which date a record uses (for the app):** the US trading date of the purchase, sale or dividend, as the user typed
     it. The forms open on the US trade date of now for a dollar stock (`records.recordToday`; 매수 계획's 샀어요 dates its
     dollar rows so when its date is left blank) and on Korea's date for every other stock; any date up to Korea's today
