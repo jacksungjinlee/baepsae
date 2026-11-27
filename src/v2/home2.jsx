@@ -43,7 +43,7 @@ import React, { useMemo } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, holdingShades, HOLDING_SHADES } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { Amount, Button } from "../ui/components.jsx";
-import { C, fill, p1, mdText, wonText, todayKst } from "./format.js";
+import { C, fill, p1, mdText, wonText, todayKst, todayNy } from "./format.js";
 import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, OwnCloseNote, KrAgedLine, Cols, useLayout, useRoomy, useNav, tx, tap } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { isCompany, ownCloses } from "./stocklist.js";
@@ -67,6 +67,7 @@ import { lookModel, lookSay, coversKorean } from "./look.js";
 import { LookRows, lookRowCount, pageHas } from "./todaylook.jsx";
 import { WeeklyCards } from "./weekly.jsx";
 import { WEEKLY_ON } from "./weekcfg.js";
+import { hasTempRate } from "./records.js";
 
 const signedWon = (v) => (v > 0 ? "+" : "") + wonText(v);
 const tone = (v) => (v > 0 ? COLOR.up : v < 0 ? COLOR.down : COLOR.text2);
@@ -414,7 +415,7 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
   const canMark = !!(store.writable && !store.locked);
   const hits = useMemo(() => (ev.ok ? watchHits(store.data, load, undefined, canMark) : []), [store.data, load, ev.ok, canMark]);
   // v19.6b (Part B.2): the 오늘 볼 것 cards (fresh data only); the console names what they leave out
-  const lm = useMemo(() => lookModel(load, store, disc, todayKst()), [load, store, disc]);
+  const lm = useMemo(() => lookModel(load, store, disc, todayKst()), [load, store, disc, todayKst(), todayNy()]);   // again when either date turns
   React.useEffect(() => { lookSay(lm, "home"); }, [lm]);
   const look = lookOf(blocks, held, disc, kr, hits, lm);
   // late data within 5 trading days (rules.js checkState, Jack 2026-11-19): the date of the close the check ran on
@@ -444,6 +445,8 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
         {store.restored && <Note tone="watch" data-ui-v2="store-merged">{C.store.merged}</Note>}
         {store.unmerged && C.store.locked && <Note tone="watch" data-ui-v2="store-unmerged">{C.store.locked}</Note>}
         {store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}
+        {/* #191 (Jack, 2026-11-27): a US record saved at the latest rate (its date's rate not in yet) counts here at that rate: once per screen, for the money cards and 이번 주 정리 below */}
+        {ok && decks.some((d) => hasTempRate(d)) && C.rec.rateTemp && <Note data-ui-v2="home-rate-temp">{C.rec.rateTemp}</Note>}
         {/* v19.6e (Part E, board Weekly2): 이번 주 정리, one card per portfolio block, at the top (under the date line and the store
             notes, which stay first), once the week's numbers are final; never on late data (round 2: the week it would call 이번 주
             is already the week before); behind weekcfg.js WEEKLY_ON (weekly.jsx) */}

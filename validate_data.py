@@ -3243,6 +3243,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_us_fcur_more(rep, data, us, pdata)   # #114 리뷰: 통화를 모르는 회사 (경고) · 어제 있던 통화가 사라짐
     check_us_extra(rep, data, us, mode)   # 2026-11-14: 손으로 더한 미국 종목이 있거나 빠진 이유가 있는지
     check_us_share_class(rep, data, us, mode)   # 2026-11-15: 주식 종류 티커 (BF-B) 가 있거나 빠진 이유 · 바꾸지 못한 티커 (경고)
+    check_us_sp_carry(rep, data, pdata)   # 2026-11-28: 지난 발행본에서 이어 쓴 S&P 500 목록 (usListSym.spCarried · 경고만 · 실패 없음 · 멈춰도 경고)
     check_us_foreign(rep, data, us, mode) # 2026-11-14: 미국 상장 외국 회사의 PER·PBR·배당수익률은 회사 합계와 맞춘 것만
     check_us_split_cut(rep, data, us)     # 2026-11-24 (SNDK): 최근 분할한 미국 회사도 같은 검사 (splCut · usSplitChk · 경고만)
     check_foreign(rep, kr, comps)
@@ -5488,6 +5489,90 @@ def check_us_share_class(rep, data, us, mode):
         rep.detail("야후 모양으로 바꾸지 못해 요청하지 않은 미국 목록 티커 (usListSym.unmapped)", [f"{s0} '{a}': {w}" for s0, a, w in unmapped])
     if sp_gone:
         rep.detail("S&P 500 목록 종목 중 오늘 미국 목록에 없는 종목 (usListSym.spGone)", [f"{t}: {w}" for t, w in sp_gone.items()])
+
+
+# 2026-11-28 (run 46026291142 · 위키백과가 S&P 500 목록 요청을 429 로 거절): 파이프라인(fetch_data.us_tickers)은 다시 한 번 읽어도 안 되면 지난
+# 발행본의 S&P 500 목록(usListSym.spTickers)을 이어 쓰고 usListSym.spCarried = {"from": 처음 읽은 날, "why": 까닭} 을 적어요 (처음 읽은 날부터
+# US_SP_CARRY_DAYS 달력 날까지). 이 줄은 그 목록과 날짜를 적고 경고만 해요 — 어떤 모드에서도 실패하지 않아요 (검사가 멈춰도 경고). 다른 줄은 그대로예요.
+US_SP_CARRY_ROW = "미국 S&P 500 목록 이어 씀 (usListSym.spCarried · 경고만)"
+US_SP_CARRY_DAYS = 7     # fetch_data.US_SP500_CARRY_DAYS 와 같아요 (시험이 맞춰 봐요)
+US_SP_CARRY_RULE = (f"S&P 500 목록을 읽지 못한 날 지난 발행본의 목록을 이어 쓰면 (처음 읽은 날부터 {US_SP_CARRY_DAYS}일까지) 그 목록의 날짜 · 까닭을 "
+                    "적고 경고 · 실패 없음 (검사가 멈춰도 경고)")
+
+
+def _kst_pub_day(data):
+    """data.json 의 publishedAt → 한국 날짜 (시간대가 없으면 한국 시각) · 읽지 못하면 None. (순수 함수)"""
+    try:
+        t = dt.datetime.fromisoformat(str(data.get("publishedAt")).replace("Z", "+00:00"))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return (t.replace(tzinfo=KST) if t.tzinfo is None else t.astimezone(KST)).date()
+
+
+def us_sp_carry_prev_day(pdata):
+    """직전 발행본(pdata)이 정할 수 있는 '처음 읽은 날' — 파이프라인(fetch_data.us_sp500_prev)과 같은 규칙: 그 발행본이 이어 쓴 목록이면 그
+    spCarried.from, 아니면 그 publishedAt 의 한국 날짜. → (date 또는 None, 출처 글). (순수 함수)"""
+    u = pdata.get("usListSym") if isinstance(pdata, dict) else None
+    if not isinstance(u, dict):
+        return None, "직전 발행본에 usListSym 이 없음"
+    if "spCarried" in u:
+        c = u.get("spCarried")
+        d = _iso_day(c.get("from")) if isinstance(c, dict) else None
+        return d, ("직전 발행본의 spCarried.from" if d else "직전 발행본의 spCarried 모양이 잘못됨")
+    d = _kst_pub_day(pdata)
+    return d, ("직전 발행본의 발행일" if d else "직전 발행본의 publishedAt 을 읽지 못함")
+
+
+def check_us_sp_carry(rep, data, pdata=None):
+    """2026-11-28 (새 줄 · 경고만): data.json usListSym.spCarried 가 있으면 경고로 이어 쓴 S&P 500 목록의 처음 읽은 날 · 발행일까지 며칠 · 종목 수 ·
+    오늘의 목록을 쓰지 못한 까닭을 적어요. 처음 읽은 날이 발행일보다 US_SP_CARRY_DAYS 넘게 앞이거나 뒤 · 모양이 틀린 기록 (spCarried: null 도 — 파이프라인도
+    그런 기록은 이어 쓰지 않아요)도 경고 (이름을 적어요). 칸이 없으면 통과 · usListSym 이 없는 발행본은 건너뜀.
+    리뷰 #199 (Opus): pdata (발행 때의 직전 발행본) 가 있으면 처음 읽은 날을 그 발행본과 따로 맞춰 봐요 — 직전 발행본이 이어 쓴 목록이면 그
+    spCarried.from, 아니면 그 발행일(한국 날짜)보다 뒤면 '날짜가 새로 매겨졌을 수 있음' (파이프라인만 지키는 7일 한도를 관문이 따로 봐요 · 경고만).
+    실패하지 않아요 (발행 · 사이트 점검 · 감시 모두) — 검사 코드가 멈춰도 경고예요."""
+    try:
+        u = data.get("usListSym") if isinstance(data, dict) else None
+        if not isinstance(u, dict):
+            rep.skip(US_SP_CARRY_ROW, "기록 없음 (data.json usListSym 이 없는 발행본)")
+            return
+        if "spCarried" not in u:
+            rep.add(US_SP_CARRY_ROW, True, "이어 쓰지 않음" + (" (그날 읽은 목록)" if u.get("spTickers") is not None
+                                                          else " (그날 S&P 500 목록 없음 — 미국 종목 수 줄들이 봐요)"), US_SP_CARRY_RULE)
+            return
+        c = u.get("spCarried")
+        if not isinstance(c, dict):
+            rep.add(US_SP_CARRY_ROW, True, f"spCarried 모양이 잘못됨 ({'null' if c is None else str(c)[:80]})", US_SP_CARRY_RULE, warn=True)
+            return
+        d0, why = _iso_day(c.get("from")), c.get("why")
+        sp = u.get("spTickers")
+        pub = _kst_pub_day(data)
+        age = (pub - d0).days if d0 and pub else None
+        head = "지난 발행본의 S&P 500 목록을 이어 씀: " + (f"{d0.isoformat()} 읽음" if d0 else f"처음 읽은 날을 읽을 수 없음 ({str(c.get('from'))[:40]})")
+        if age is not None:
+            head += f" (발행일 {pub.isoformat()} 까지 {age}일)"
+        parts = [head + (f" · {len(sp):,}종목" if isinstance(sp, list) else " · spTickers 가 목록이 아님")]
+        if isinstance(why, str) and why.strip():
+            parts.append(f"오늘의 목록을 쓰지 못한 까닭: {why.strip()[:200]}")
+        else:
+            parts.append("까닭(why)이 적혀 있지 않음")
+        if age is not None and age > US_SP_CARRY_DAYS:
+            parts.append(f"{US_SP_CARRY_DAYS}일 넘은 목록 (파이프라인은 이어 쓰지 않아야 해요 — 확인 필요)")
+        elif age is not None and age < 0:
+            parts.append("처음 읽은 날이 발행일보다 뒤 (확인 필요)")
+        if pdata is not None:
+            try:
+                pd0, src = us_sp_carry_prev_day(pdata)
+                if pd0 is None:
+                    parts.append(f"직전 발행본과 맞춰 보지 못함 ({src})")
+                elif d0 is not None and d0 > pd0:
+                    parts.append(f"처음 읽은 날 {d0.isoformat()} 이 {src} {pd0.isoformat()} 보다 뒤 — 날짜가 새로 매겨졌을 수 있어요 (7일 한도 확인 필요)")
+                elif d0 is not None:
+                    parts.append(f"{src} {pd0.isoformat()} 와 맞춰 봄" + (" (같음)" if d0 == pd0 else " (그보다 앞)"))
+            except Exception as e:
+                parts.append(f"직전 발행본과 맞춰 보다가 멈췄어요 ({type(e).__name__}: {str(e)[:80]})")
+        rep.add(US_SP_CARRY_ROW, True, " · ".join(parts), US_SP_CARRY_RULE, warn=True)
+    except Exception as e:
+        rep.add(US_SP_CARRY_ROW, True, f"검사가 멈췄어요: {type(e).__name__}: {str(e)[:120]}", US_SP_CARRY_RULE, warn=True)
 
 
 def check_us_foreign(rep, data, us, mode):

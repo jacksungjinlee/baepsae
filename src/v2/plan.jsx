@@ -7,13 +7,14 @@ import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { MoneyInput, WeightBar, Collapsible, BottomSheet, Button, Amount, amountParts } from "../ui/components.jsx";
-import { C, fill, nf, p1, mdText, wonText, todayKst } from "./format.js";
+import { C, fill, nf, p1, mdText, wonText, todayKst, usTradeDay } from "./format.js";
 import { Page, AppBar, ScreenTitle, DateLine, Footer, Note, OwnCloseNote, Card, Label, ActionBar, RuleLine, TextInput, SampleLabel, Mascot, IMG, CardScores, useMode, useLayout, SIDE_W, tx } from "./ui.jsx";
 import { ownCloses } from "./stocklist.js";
 import { usOf, priceDate, krOwnCloseText } from "./cofmt.js";
 import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashView, aboutWon, missingPct, rulesFor, deckRecord, opAmounts, y2022View, divDropBody } from "./deckcalc.js";
 import { writeStore, recordId } from "./store.js";
-import { rateFor, rateEnv, rateRefusal, DATE_FROM } from "./records.js";
+import { usdOf } from "./pf.js";
+import { rateFor, rateEnv, rateRefusal, recordToday, ratePart, DATE_FROM } from "./records.js";
 import { dataSplits, splitSince } from "./lots.js";
 import { KR_DIV_TREND, exactData, usDividendCounted } from "./engine.js";
 import { epsFixFor } from "./fix.js";
@@ -25,6 +26,7 @@ export function Plan({ load, builder, setBuilder, store, setStoreData, goToday, 
   const items = pickItems(ds, builder.picks);
   const r = useMemo(() => (st.amountMan > 0 ? computePlan(load, st, items, ds.pinned) : null), [load, st, ds, builder.picks]);
   const [sheet, setSheet] = useState(null);       // null | "form" | "done"
+  const [tempSaved, setTempSaved] = useState(false); // #191: a US row was saved at the latest rate (rateTemp): 기록했어요 says so once
   const s4 = C.build.s4;
   const back = () => { setBuilder((b) => ({ ...b, stage: "pick" })); try { window.scrollTo(0, 0); } catch (e) { /* ignore */ } };
   const setAmount = (v) => setBuilder((b) => ({ ...b, settings: { ...b.settings, amountMan: v } }));
@@ -73,7 +75,8 @@ export function Plan({ load, builder, setBuilder, store, setStoreData, goToday, 
           // new portfolio and the next 포트폴리오 만들기 starts fresh (app.jsx doneToPortfolio), so 샀어요 never records the same plan
           // twice. The 샀어요 form itself still closes back to the plan.
           onClose={() => { if (sheet === "done") { setSheet(null); goPortfolio(); } else setSheet(null); }}
-          store={store} setStoreData={setStoreData} onDone={() => { setBuilder((b) => ({ ...b, recorded: true })); setSheet("done"); }}
+          store={store} setStoreData={setStoreData} tempSaved={tempSaved}
+          onDone={(saved) => { setTempSaved(!!(saved && saved.temp)); setBuilder((b) => ({ ...b, recorded: true })); setSheet("done"); }}
           goToday={() => { setSheet(null); goToday(); }} />
       )}
     </Page>
@@ -321,7 +324,9 @@ function RecordClose({ load, s }) {
   return <div data-ui-v2="record-close" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2)}>{fill(C.co.usClose, { md })}</div>;
 }
 
-function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStoreData, onDone, goToday }) {
+// exported for tests/test_v2_us_dates_screens.py (rendered in Node); the app opens it from Plan only
+// tempSaved: a US row of the purchases saved was at the latest rate, marked temporary (onDone({ temp }) says so; Plan keeps it)
+export function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStoreData, onDone, goToday, tempSaved = false }) {
   const rows = plan.rows.filter((x) => x.shares > 0);
   const [date, setDate] = useState("");
   const [vals, setVals] = useState({});
@@ -331,38 +336,46 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
   const [savedN, setSavedN] = useState(0);        // distinct stocks actually recorded (quantity > 0): 기록했어요's {n}
   const setV = (t, k, v) => setVals((m) => ({ ...m, [t]: { ...(m[t] || {}), [k]: v } }));
   const today = todayKst();
+  const env = rateEnv(load, today, usTradeDay());
+  // audit 2.1: a blank date dates each row today in its own market, as records.jsx's forms do (records.recordToday): a
+  // dollar-priced stock (pf.usdOf) the US trade date of now (format.usTradeDay: after Korean midnight the Korean date is New
+  // York's tomorrow, until 20:00 New York), every other row Korea's, as before. A typed date dates every row (up to Korea's
+  // today, as before). One rule (usdOf) decides a row's date, its rate, its saved currency and its price label (#191 review).
+  const dayOf = (s) => date || recordToday(env, usdOf(s));
   // round-3: a data.json split between the chosen date and today puts today's close on another share basis: that row's price
   // must be typed (no default, no close as the placeholder; the sheet's "비워 두면 … 종가로 기록돼요" line is hidden then)
   const splits = useMemo(() => dataSplits(load.data).list, [load]);
-  const needP = (t) => splitSince(splits, t, date || today, today);
+  const needP = (x) => splitSince(splits, x.t, dayOf(x.s), today);
   const parsed = rows.map((x) => {
     const v = vals[x.t] || {};
     const qs = v.qty != null ? String(v.qty).replace(/,/g, "").trim() : "";
     const ps = v.price != null ? String(v.price).replace(/,/g, "").trim() : "";
     const q = qs === "" ? x.shares : /^\d+$/.test(qs) ? Number(qs) : NaN;          // whole shares only
-    const p = ps === "" ? (needP(x.t) ? null : x.s.price) : /^\d+(\.\d+)?$/.test(ps) ? Number(ps) : NaN;
+    const p = ps === "" ? (needP(x) ? null : x.s.price) : /^\d+(\.\d+)?$/.test(ps) ? Number(ps) : NaN;
     // a row not bought (0 shares) needs no price; a typed one must still be a price
     const badP = q === 0 && ps === "" ? false : !(Number.isFinite(p) && p > 0);
     return { x, q, p, badQ: !(Number.isInteger(q) && q >= 0), badP };
   });
-  const anyNeedP = rows.some((x) => needP(x.t));
+  const anyNeedP = rows.some((x) => needP(x));
   // v19.6a round-2 review: a year before 2000 is a typo (records.js DATE_FROM): refused with the same line
   const badDate = date !== "" && !(/^\d{4}-\d{2}-\d{2}$/.test(date) && date <= today && date >= DATE_FROM);
   const save = () => {
     if (badDate || parsed.some((r) => r.badQ || r.badP)) { setTried(true); return; }
-    const day = date || today;
     // A US purchase keeps the exchange rate of its own date (v19.6a A.1: today's data.json fx, as before, or a past date's
     // close from macro.json fxHist), so 포트폴리오 can show 원금 in won (Part E). A past date whose rate the data does not
     // have yet is not saved (never another day's rate): the approved "환율 정보를 불러오지 못해 …" line says so (today on stale
     // data: records.jsx's today line). A date before 2016 is saved without a rate and marked noFx (never costed at planFx).
-    const usRows = parsed.filter((r) => r.q > 0 && r.x.s.cls === "us");
-    const rate = usRows.length ? rateFor(day, rateEnv(load, today)) : { ok: true, fx: null };
+    // (each US row's own date: dayOf; a "today" the history does not have yet is saved at the latest rate, marked temporary:
+    // records.rateFor and ratePart, Jack 2026-11-27)
+    const usRows = parsed.filter((r) => r.q > 0 && usdOf(r.x.s));
+    const rates = new Map();
+    for (const r of usRows) { const d = dayOf(r.x.s); if (!rates.has(d)) rates.set(d, rateFor(d, env)); }
+    const [day, rate] = [...rates].find(([, x]) => !x.ok) || [null, { ok: true }];
     if (!rate.ok) { console.warn(`[v2] purchase not saved: no exchange rate for ${day} (${rate.why})`); setNoRate(rateRefusal(rate.why)); setTried(true); return; }
     setNoRate(null);
-    const fx = usRows.length && typeof rate.fx === "number" && rate.fx > 0 ? rate.fx : null;
-    const purchases = parsed.filter((r) => r.q > 0).map((r) => (r.x.s.cls === "us"
-      ? { id: recordId(), t: r.x.t, date: day, qty: r.q, price: r.p, ccy: "USD", ...(fx ? { fx } : rate.before ? { noFx: true } : {}) }
-      : { id: recordId(), t: r.x.t, date: day, qty: r.q, price: r.p, ccy: "KRW" }));   // id: two tabs' copies merge by it
+    const purchases = parsed.filter((r) => r.q > 0).map((r) => (usdOf(r.x.s)
+      ? { id: recordId(), t: r.x.t, date: dayOf(r.x.s), qty: r.q, price: r.p, ccy: "USD", ...ratePart(rates.get(dayOf(r.x.s))) }
+      : { id: recordId(), t: r.x.t, date: dayOf(r.x.s), qty: r.q, price: r.p, ccy: "KRW" }));   // id: two tabs' copies merge by it
     const id = `d${Date.now().toString(36)}`;
     const deck = deckRecord({ load, st, plan, purchases, id, today: todayKst() });
     const next = { ...store.data, decks: [...store.data.decks, deck] };
@@ -370,7 +383,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
     setFail(false);
     setSavedN(new Set(purchases.map((p) => p.t)).size);
     setStoreData(next, true);
-    onDone();
+    onDone({ temp: purchases.some((p) => p.rateTemp === true) });
   };
   const P = C.plan;
   const { preview } = useMode();
@@ -384,6 +397,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
           <Mascot src={IMG.happy} alt={P.doneAlt} size={64} />
           {P.doneBody && savedN > 0 && <p data-ui-v2="done-body" style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2)}>{fill(P.doneBody, { n: savedN })}</p>}
         </div>
+        {tempSaved && C.rec.rateTemp && <Note data-ui-v2="rec-rate-temp">{C.rec.rateTemp}</Note>}
         <div style={{ marginTop: SPACE(4) }}><Button kind="secondary" onClick={goToday}>{P.doneLink || C.app.tabs.home}</Button></div>
       </BottomSheet>
     );
@@ -401,7 +415,7 @@ function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, setStore
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: SPACE(2) }}>
               <TextInput label={P.qty} inputMode="numeric" placeholder={nf(x.shares)} value={(vals[x.t] || {}).qty || ""} onChange={(v) => setV(x.t, "qty", v)}
                 invalid={tried && parsed.find((r) => r.x.t === x.t).badQ} />
-              <TextInput label={x.s.cls === "us" ? P.priceUsd : P.priceWon} inputMode="decimal" placeholder={needP(x.t) ? undefined : x.s.cls === "us" ? nf(x.s.price, 2) : nf(x.s.price)}
+              <TextInput label={usdOf(x.s) ? P.priceUsd : P.priceWon} inputMode="decimal" placeholder={needP(x) ? undefined : usdOf(x.s) ? nf(x.s.price, 2) : nf(x.s.price)}
                 value={(vals[x.t] || {}).price || ""} onChange={(v) => setV(x.t, "price", v)} invalid={tried && parsed.find((r) => r.x.t === x.t).badP} />
             </div>
           </div>
