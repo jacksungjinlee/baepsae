@@ -9,6 +9,8 @@ import { lateDays } from "./tradedays.js";
 import { detectFeatures, missingForBuild, CUSHION_ASSETS, setDataShape } from "./engine.js";
 import { R2022 } from "./y2022.js";
 import { setEpsBasis } from "./fix.js";
+import { C } from "./format.js";
+import { fcurTotStrip } from "../repair.js";
 
 // publishedAt must be a time we can read: without it we cannot tell whether the data is fresh, so the file is refused
 // like any other format problem (the load-failure message), never treated as fresh.
@@ -355,6 +357,14 @@ export function resolveLoad({ data, corp, macro }, now, opts = {}) {
   }
   if (!macro.ok) console.warn("[v2] macro.json not loaded: " + macro.error + " (features that need it stay hidden)");
   const d = data.data, c = corp.data, m = macro.ok ? macro.data : null;
+  // #181 (Jack, 2026-11-27): no converted number without its line. While co.fcurTot waits for Jack (null), a file that carries PER ·
+  // PBR · 배당수익률 from whole-company totals (data.json fcurTot: the pipeline's switch on) is read as #114 left it ("–" with the
+  // currency line): src/repair.js fcurTotStrip. Said once per load with the count.
+  if (!C.co.fcurTot && Array.isArray(d.stocks)) {
+    const cut = fcurTotStrip(d.stocks);
+    if (cut.length) console.warn(`[v2] ${cut.length} US companies carry numbers from whole-company totals (data.json fcurTot) but the line `
+      + `for converted numbers (co.fcurTot) is not approved yet, so they show as before (PR 114: "–"): ${cut.slice(0, 30).join(", ")}`);
+  }
   // v19.1b: data.json with divCheck carries the exact dividend fields and the beta error band (engine.setDataShape). The
   // whole app reads this one file one way; a file without it keeps the earlier behaviour. The console line with the
   // counts is company.jsx logSplitGuard (once per load, in the browser).

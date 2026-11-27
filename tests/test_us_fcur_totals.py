@@ -4,9 +4,11 @@ us_fcur_* 와 validate_data.py check_us_fcur_tot. (네트워크 없음 · 야후
 
 - PER = 시가총액 ÷ 지난 4분기 순이익 · PBR = 시가총액 ÷ 최근 분기 자본 (둘 다 그 통화 금액을 미국 종가 시각의 환율로 달러로)
 - 순이익은 두 길이 맞아야 · 자본 · 순이익은 최근 보고 분기 것이어야 · 환율은 야후(미국 종가 시각 1시간 봉) × ECOS 가 맞아야 · 아니면 빈 칸과 까닭
-- 배당수익률은 실제 배당의 주기가 고르고 야후 배당수익률과 맞을 때만 · 0% 는 #114 규칙 그대로
+- 배당수익률은 실제 배당의 주기가 고르고 야후 배당수익률과 맞을 때만, 싣는 값은 야후의 것 (2026-11-27) · 0% 는 #114 규칙 그대로
 - 스위치 validate_data.US_FCUR_TOT_ON 이 꺼져 있으면(지금) 종목 칸은 #114 그대로 빈 칸 · 기록(usFcurTot)과 관문 경고만
-- 관문 줄은 경고만 (실패하지 않아요)
+- 켜면 (Jack 2026-11-27 "#181: yes" · 바꿔 계산한 줄 co.fcurTot 이 승인되면): 숫자를 종목에 싣고 fcurTot · Sony 는 fcurNi, #114 줄은 기록과
+  똑같은 숫자만 받아요 (us_fcur_tot_ok)
+- 회사 합계 기록의 관문 줄은 경고만 (실패하지 않아요)
 """
 import datetime as dt
 import inspect
@@ -234,10 +236,13 @@ def test_fx_rates_join_yahoo_and_ecos(monkeypatch):
 def test_dividend_yield_from_payments_actually_received():
     info = tsm_info()
     dy, why = F.us_fcur_div(divs(TSM_DIVS), D, 318.71, info, 1.0, TODAY)
-    assert why is None and dy == pytest.approx(round(100 * (0.835 + 0.956 + 0.955 + 1.107) / 318.71, 2))   # 마지막 네 분기 배당
-    # 반기 (Novo: 3월 · 8월 · 간격 140 / 225일) · 연 (SAP)
+    # 마지막 네 분기 배당 (0.835 + 0.956 + 0.955 + 1.107) ÷ 318.71 = 1.21% 가 야후 1.18% 와 10% 안이라 확인됨 → 싣는 값은 야후의 1.18%
+    # (2026-11-27: 다른 미국 종목 · 외국 회사 검사와 같은 숫자 · 화면의 "야후 파이낸스 기준" 줄이 그대로 맞아요)
+    assert why is None and dy == 1.18
+    assert F.us_fcur_div(divs(TSM_DIVS), D, 318.71, tsm_info(dividendYield=2.36), 2.0, TODAY) == (1.18, None)   # 야후 값 ÷ 가격 배율
+    # 반기 (Novo: 3월 · 8월 · 간격 140 / 225일 · 실제 4.90%) · 연 (SAP)
     nvo = divs([("2025-03-31", 1.099), ("2025-08-18", 0.584), ("2026-03-30", 1.275), ("2026-08-17", 0.579)])
-    assert F.us_fcur_div(nvo, D, 37.82, {"dividendYield": 4.75}, 1.0, TODAY) == (pytest.approx(4.9, abs=0.01), None)
+    assert F.us_fcur_div(nvo, D, 37.82, {"dividendYield": 4.75}, 1.0, TODAY) == (4.75, None)
     sap = divs([("2025-05-13", 2.63), ("2026-05-05", 2.929)])
     assert F.us_fcur_div(sap, D, 198.93, {"dividendYield": 1.47}, 1.0, TODAY) == (1.47, None)
 
@@ -278,7 +283,7 @@ def test_row_computes_per_and_pbr_from_whole_company_totals():
     assert row["mc"] == round(mc) and row["cur"] == "TWD" and row["px"] == 318.71 and row["fx"] == 32.988
     assert row["pbr"] == round(mc / (6997.90e9 / 32.988), 2) == 7.79                  # 2026-11-23 PR 표: 7.79
     assert row["per"] == round(mc / (2527.57e9 / 32.988), 1) == 21.6
-    assert row["dy"] == 1.21 and row["why"] == {}
+    assert row["dy"] == 1.18 and row["why"] == {}                                     # 실제 배당 1.21% 로 확인한 야후 1.18%
     assert row["eq"] == [6997900000000, "2026-09-30"] and row["ni"][1:] == ["2026-09-30", "q4"]
     assert row["y"][0] == 20.66 and row["y"][2] == 1.18
     json.dumps(row, allow_nan=False)
@@ -369,7 +374,7 @@ def test_switch_off_records_but_leaves_every_published_number_blank(monkeypatch)
     assert by["TCOM"]["dy"] == 0.0 and "fcurTot" not in by["TCOM"]
     assert by["AAPL"] == {"t": "AAPL", "cls": "us", "price": 250.0, "per": 30.0, "pbr": 40.0, "dy": 0.4}
     assert rec["on"] is False and sorted(rec["rows"]) == ["TCOM", "TSM"]                # ETF · 상세 정보 없는 종목은 빼요
-    assert rec["rows"]["TSM"]["pbr"] == 7.79 and rec["rows"]["TSM"]["per"] == 21.6 and rec["rows"]["TSM"]["dy"] == 1.21
+    assert rec["rows"]["TSM"]["pbr"] == 7.79 and rec["rows"]["TSM"]["per"] == 21.6 and rec["rows"]["TSM"]["dy"] == 1.18
     assert rec["rows"]["TCOM"]["why"] == {"per": "stmt", "pbr": "stmt"} and rec["rows"]["TCOM"]["dy"] == 0.0
     assert asked["curs"] == ["TWD"]                                                     # 재무제표가 있는 회사의 통화만 물어요
     assert rec["n"] == {"per": 1, "pbr": 1, "dy": 1, "dy0": 1, "blank": {"stmt": 2}}
@@ -389,12 +394,25 @@ def test_switch_off_records_but_leaves_every_published_number_blank(monkeypatch)
 def test_switch_on_puts_checked_numbers_on_the_stock_and_marks_them(monkeypatch):
     out, rec, _lines, _a = run_step(True, monkeypatch)
     by = {r["t"]: r for r in out}
-    assert (by["TSM"]["per"], by["TSM"]["pbr"], by["TSM"]["dy"]) == (21.6, 7.79, 1.21) and by["TSM"]["fcurTot"] == ["per", "pbr", "dy"]
+    assert (by["TSM"]["per"], by["TSM"]["pbr"], by["TSM"]["dy"]) == (21.6, 7.79, 1.18) and by["TSM"]["fcurTot"] == ["per", "pbr", "dy"]
     assert "fcurTot" not in by["TCOM"] and by["TCOM"]["dy"] == 0.0                     # 0% 는 #114 가 이미 실어요
+    assert "fcurNi" not in by["TSM"] and "fcurNi" not in by["TCOM"]
     assert rec["on"] is True
+    # Jack, 2026-11-27 ("#181: yes"): 켜진 관문의 #114 줄은 기록과 똑같은 숫자를 받아요 (가치 점수는 그 PBR 의 것)
+    monkeypatch.setattr(V, "US_FCUR_TOT_ON", True)
+    by["TSM"]["vz"] = 12
+    rep = V.Report()
+    V.check_us_fcur(rep, out, rec)
+    assert rep.rows[0][3] == "PASS" and "남은 칸 0 · 회사 합계 숫자를 실은 곳 1 (usFcurTot 과 같음)" in rep.rows[0][1], rep.rows
+    # 기록 없이는 (예: 기록을 빼고 넘김) 예전처럼 실패해요
     rep = V.Report()
     V.check_us_fcur(rep, out)
-    assert rep.rows[0][3] == "FAIL"        # 스위치만 켜면 #114 줄이 발행을 막아요 (켜려면 Jack 의 예 · 그 줄과 앱을 함께 바꿔요 — RUNBOOK)
+    assert rep.rows[0][3] == "FAIL" and "TSM.per" in rep.rows[0][1]
+    # 관문의 스위치가 꺼져 있으면 기록이 있어도 예전처럼 실패해요 (파이프라인만 켜진 날)
+    monkeypatch.setattr(V, "US_FCUR_TOT_ON", False)
+    rep = V.Report()
+    V.check_us_fcur(rep, out, rec)
+    assert rep.rows[0][3] == "FAIL" and rep.rows[0][1].startswith("4곳 (EUR 2 · CNY 1 · TWD 1) · 남은 칸 4 (예: TSM.per, TSM.pbr, TSM.dy, TSM.vz)") and "회사 합계" not in rep.rows[0][1]
 
 
 def test_shipped_switch_is_off_and_shared():
@@ -733,3 +751,116 @@ def test_the_wrapper_turns_any_crash_into_a_warning(monkeypatch):
 
 def test_gate_row_runs_inside_run_checks():
     assert "check_us_fcur_tot_safe(rep, data, us, pdata, mode)" in inspect.getsource(V.run_checks)
+
+
+# ── 켜기 (Jack, 2026-11-27 "#181: yes") ───────────────────────────
+def on_pair():
+    """켜진 기록과 그 숫자를 실은 종목 하나 (TSM)."""
+    rec = {"v": 1, "on": True, "rows": {"TSM": {"cur": "TWD", "px": 318.71, "per": 21.6, "pbr": 7.79, "dy": 1.18, "why": {}}}}
+    s = {"t": "TSM", "cls": "us", "fcur": "TWD", "price": 318.71, "per": 21.6, "pbr": 7.79, "dy": 1.18, "vz": 12,
+         "fcurTot": ["per", "pbr", "dy"]}
+    return rec, s
+
+
+def test_the_114_row_takes_exactly_the_record_numbers_when_on(monkeypatch):
+    monkeypatch.setattr(V, "US_FCUR_TOT_ON", True)
+    rec, s = on_pair()
+    assert V.us_fcur_tot_ok(s, rec) == {"per", "pbr", "dy", "vz"}
+    s2 = dict(s, fcurTot=["dy"])
+    s2.pop("per"), s2.pop("pbr"), s2.pop("vz")
+    assert V.us_fcur_tot_ok(s2, rec) == {"dy"}                                       # PBR 을 받지 않으면 가치 점수도 없어요
+    rep = V.Report()
+    V.check_us_fcur(rep, [dict(s2, vz=40)], rec)
+    assert rep.rows[0][3] == "FAIL" and "TSM.vz" in rep.rows[0][1]
+
+
+@pytest.mark.parametrize("change", [
+    {"rec": {"on": False}}, {"rec": {"err": "x"}}, {"rec": {"rows": {}}}, {"rec": "x"}, {"row": {"px": 318.7}}, {"row": {"why": {"per": "loss"}}},
+    {"row": {"why": None}}, {"row": {"per": 21.7}}, {"row": {"per": None}}, {"s": {"per": 21.7}}, {"s": {"per": 0.0}}, {"s": {"price": 318.0}},
+    {"s": {"fcurTot": ["per", "pbr", "dy", "vz"]}}, {"s": {"fcurTot": ["per", "per"]}}, {"s": {"fcurTot": "per"}}, {"s": {"fcurTot": []}},
+    {"s": {"fcurTot": None}}, {"s": {"per": True}}, {"s": {"t": None}},
+])
+def test_anything_off_the_record_still_fails_the_114_row(change, monkeypatch):
+    monkeypatch.setattr(V, "US_FCUR_TOT_ON", True)
+    rec, s = on_pair()
+    if isinstance(change.get("rec"), dict):
+        rec.update(change["rec"])
+    elif "rec" in change:
+        rec = change["rec"]
+    rec_row = rec["rows"].get("TSM") if isinstance(rec, dict) and isinstance(rec.get("rows"), dict) else None
+    if rec_row is not None:
+        rec_row.update(change.get("row", {}))
+    s.update(change.get("s", {}))
+    assert V.us_fcur_tot_ok(s, rec) == set()                                          # 하나라도 어긋나면 아무 칸도 받지 않아요
+    rep = V.Report()
+    V.check_us_fcur(rep, [s], rec)
+    assert rep.rows[0][3] == "FAIL"
+
+
+def test_the_114_row_is_unchanged_while_the_switch_is_off():
+    assert V.US_FCUR_TOT_ON is False
+    rec, s = on_pair()
+    assert V.us_fcur_tot_ok(s, rec) == set()
+    rep = V.Report()
+    V.check_us_fcur(rep, [s], rec)
+    assert rep.rows[0][3] == "FAIL" and rep.rows[0][1] == "1곳 (TWD 1) · 남은 칸 4 (예: TSM.per, TSM.pbr, TSM.dy, TSM.vz)"
+    assert "스위치 켜짐" not in rep.rows[0][2]
+    rep = V.Report()
+    V.check_us_fcur(rep, [{"t": "TSM", "cls": "us", "fcur": "TWD", "price": 318.71}], rec)
+    assert rep.rows[0][3] == "PASS" and rep.rows[0][1] == "1곳 (TWD 1) · 남은 칸 0"
+
+
+def sony_inputs():
+    out, cache, data, stmts = step_inputs()
+    out.append({"t": "SONY", "cls": "us", "fcur": "JPY", "price": 27.29})
+    cache["SONY"] = {"px": 27.29, "info": tsm_info(financialCurrency="JPY", marketCap=159.05e9, trailingPE=20.37, netIncomeToCommon=1252e9,
+                                                   dividendYield=0.69)}
+    st = tsm_st()
+    st["q"] = [["2025-09-30", 300e9], ["2025-12-31", -1008.6e9], ["2026-03-31", 250e9], ["2026-06-30", 260e9], ["2026-09-30", 364.6e9]]
+    st["ttm"] = [["2026-09-30", -134e9]]
+    st["eq"] = [["2026-09-30", 8550.37e9]]
+    stmts["SONY"] = st
+    return out, cache, data, stmts
+
+
+def test_switch_on_marks_the_sony_case_and_nothing_else(monkeypatch):
+    out, cache, data, stmts = sony_inputs()
+    monkeypatch.setattr(F, "log", lambda *a: None)
+    fx = {"TWD": dict(FX_TWD), "JPY": {"r": 158.499, "at": "2026-11-20T15:00:00-05:00", "e": 158.645, "eD": "2026-11-23", "why": None}}
+    rec = F.us_fcur_totals_safe(None, out, cache, data, D, TODAY, frozenset({"NOINFO"}), now=NOW,
+                                stmts=lambda ts_: {t: stmts.get(t, {}) for t in ts_}, fx_rates=lambda c, d, n: fx, on=True)
+    by = {r["t"]: r for r in out}
+    assert rec["rows"]["SONY"]["why"]["per"] == "niUnconfirmed" and rec["rows"]["SONY"]["signY"] == 20.37
+    assert by["SONY"]["fcurNi"] is True and "per" not in by["SONY"] and by["SONY"]["fcurTot"] == ["pbr"]
+    assert "fcurNi" not in by["TSM"]
+    # 관문: 켜진 #114 줄은 통과 · 경고 줄은 표시가 기록과 맞아 '어긋난 줄' 이 없어요
+    monkeypatch.setattr(V, "US_FCUR_TOT_ON", True)
+    data_json = {"stocks": out, "usFcurTot": rec}
+    rep = V.Report()
+    V.check_us_fcur(rep, V.us_stocks(data_json), rec)
+    assert rep.rows[0][3] == "PASS", rep.rows
+    r = gate(data_json).rows[0]
+    assert "어긋난 줄" not in r[1] and "SONY 회사 합계 순이익 부호" in r[1], r
+    # 표시가 기록과 다르면 (빠짐 · 남음) 경고 — 실패는 아니에요
+    by["SONY"].pop("fcurNi")
+    by["TSM"]["fcurNi"] = True
+    r = gate(data_json).rows[0]
+    assert r[3] == "WARN" and "어긋난 줄 2" in r[1], r
+    # 파이프라인이 멈추면 반쯤 실은 칸과 표시를 모두 거둬요
+    out2, cache2, data2, _st = sony_inputs()
+
+    def boom(ts_):
+        raise RuntimeError("down")
+    for r_ in out2:
+        if r_["t"] == "SONY":
+            r_.update(fcurTot=["pbr"], pbr=2.95, fcurNi=True)
+    F.us_fcur_totals_safe(None, out2, cache2, data2, D, TODAY, frozenset(), now=NOW, stmts=boom, on=True)
+    sony = {r_["t"]: r_ for r_ in out2}["SONY"]
+    assert not any(k in sony for k in ("pbr", "fcurTot", "fcurNi"))
+
+
+def test_marks_left_on_a_switched_off_day_warn():
+    data = gdata()
+    data["stocks"][0]["fcurTot"] = ["pbr"]
+    r = gate(data).rows[0]
+    assert r[3] == "WARN" and "표시만 남은 종목 1: TSM" in r[1], r

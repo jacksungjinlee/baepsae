@@ -19,7 +19,7 @@ import { SHOW_VERDICTS, SHOW_SCORE, SHOW_ER } from "./flags.js";
 import { ABOUT_URL } from "./links.js";
 // 2026-11-08 (Jack): 한국 PER · ROE 가 보이는 칸마다 한 줄 — DART 다시 읽기 전까지 (src/repair.js, src/fixnote.jsx)
 import { EpsFixLineLoaded, PxBadLine, PxBadOneLine, krOwnCloseListLine, usOwnCloseAllLine } from "./fixnote.jsx";
-import { pxBadFull, pxBadHides } from "./repair.js";   // 2026-11-14 저녁: 52주는 보이는 종목의 비운 칸
+import { pxBadFull, pxBadHides, fcurTotStrip } from "./repair.js";   // 2026-11-14 저녁: 52주는 보이는 종목의 비운 칸
 
 // 오늘 날짜 (YYYY-MM-DD) — 한국 날짜예요. 2026-11-12 (Jack): 예전에는 new Date().toISOString() 의 UTC 날짜를 써서, 한국 시간 00:00~09:00 에는
 // 공유 카드 · 점검 기록 · 주문 메모와 내보낸 파일 · 저장 목록에 어제 날짜가 찍혔어요. CLAUDE.md: 날짜는 모두 한국 시간.
@@ -338,6 +338,10 @@ async function loadLiveData() {
   const r = await loadJson("./data.json", (j) => j && Array.isArray(j.stocks) && j.stocks.length > 0);
   if (!r.ok) { console.warn("[뱁새] data.json: " + r.error); return null; }
   const j = r.data;
+  // #181 (Jack, 2026-11-27): the old app has no place for the line that says a non-dollar filer's PER · PBR were converted from
+  // whole-company totals, so it shows those companies as #114 left them ("–", as before): src/repair.js fcurTotStrip
+  const fcut = fcurTotStrip(j.stocks);
+  if (fcut.length) console.warn("[뱁새] 회사 합계로 계산한 미국 회사 숫자(fcurTot) " + fcut.length + "곳은 예전 뱁새에서 예전처럼 비워 둬요: " + fcut.slice(0, 30).join(", "));
   // v19.1c: staleAfter (다음 발행이 와 있어야 하는 시각) — 지나면 '늦음' 경고 (없거나 못 읽으면 예전 4일 규칙: data.js freshness)
   // nextPub (발행 예정일): 늦음 경고의 n 을 그 예정일 아침부터 세요 (data.js freshness)
   // 대체하는 경우는 조용히 넘기지 않아요: 두 칸을 못 읽으면 · pxd 를 못 읽는 미국 종목이 있으면 console 에 개수와 함께 남겨요.

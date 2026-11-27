@@ -18,7 +18,7 @@ import { COLOR, SIZE, WEIGHT } from "../ui/tokens.js";
 import { C, fill, mdText, todayKst } from "./format.js";
 import { Note, tx } from "./ui.jsx";
 import { EPS_FIX_DATE, fixNotesHidden, epsNoticeShown, stmtCurFor, epsLineKind, unitHeldFor, noStmtFor, pxBadFullFor, pxBadPartFor, pxBadHidesFor } from "./fix.js";
-import { fcurOf, fcurText, pbrZeroOf, fgnCutOf, FGN_LINE_KEYS } from "./fcur.js";
+import { fcurOf, fcurText, fcurTotText, fcurNiOf, pbrZeroOf, fgnCutOf, FGN_LINE_KEYS } from "./fcur.js";
 import { isPreferred, noTradeOf, d1MissingOf } from "./engine.js";
 
 // The line with its date ("11월 10일"), or null when a word or the date is missing (never a line with an empty slot).
@@ -138,6 +138,24 @@ export const fcurNoteText = (s) => fcurText(s, C.co.fcur, C.co.curName);
 export function FcurNote({ s, style }) {
   const text = fcurNoteText(s);
   return text ? <Note data-ui-v2="fcur" data-cur={fcurOf(s)} style={style}>{text}</Note> : null;
+}
+
+// FcurTotNote (#181 switch-on, Jack 2026-11-27; the words wait for his yes): "재무제표가 {currency} 기준이라 {md} 미국 장 마감 환율로 달러로
+// 바꿔 계산했어요." once under a section that shows a PER or PBR the pipeline computed from whole-company totals (data.json fcurTot,
+// src/v2/fcur.js fcurTotText). md: the US close date of the price and the rate (cofmt.priceMd). fields: the numbers the section shows
+// (default PER and PBR). Nothing while co.fcurTot is null (and then the app has dropped those numbers: src/repair.js fcurTotStrip).
+export const fcurTotNoteText = (s, md, fields) => fcurTotText(s, C.co.fcurTot, C.co.curName, md, fields);
+export function FcurTotNote({ s, md, fields, style }) {
+  const text = fcurTotNoteText(s, md, fields);
+  return text ? <Note data-ui-v2="fcur-tot" data-cur={fcurOf(s)} style={style}>{text}</Note> : null;
+}
+
+// FcurNiNote (Jack, 2026-11-27, the Sony case): "자료의 숫자가 회사 전체 재무제표와 맞지 않아서 비워 두었어요." right under the PER "–" of a
+// company whose statements are not in dollars and whose two net-income figures disagree (data.json fcurNi, fcur.js fcurNiOf).
+export const fcurNiText = (s) => (fcurNiOf(s) && C.co.fcurNi ? C.co.fcurNi : null);
+export function FcurNiNote({ s, style }) {
+  const text = fcurNiText(s);
+  return text ? <Note data-ui-v2="fcur-ni" style={style}>{text}</Note> : null;
 }
 
 // PbrZeroNote (Jack, 2026-11-13): "자료상 PBR이 0에 가깝게 나와서 확인하는 동안 비워 두었어요." right under a US stock's PBR "–" when the

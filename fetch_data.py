@@ -13055,7 +13055,7 @@ def apply_us_info(rec, info, px_then, fx, today=None, split=1.0):
     if not nm:
         return False
     fc = us_fin_currency(info)
-    for k in ("fcur", "pbrZero", "roe", "opm", "g3", "debt", "ed", "xd") + US_FCUR_BLANK:   # 같은 rec 에 두 번 붙여도 예전 값이 남지 않게
+    for k in ("fcur", "pbrZero", "roe", "opm", "g3", "debt", "ed", "xd", "fcurTot", "fcurNi") + US_FCUR_BLANK:   # 같은 rec 에 두 번 붙여도 예전 값이 남지 않게
         rec.pop(k, None)
     ed, xd, _ = us_event_dates(info)          # v19.6b: 다음 실적 발표일(확정) · 배당락일 — 미국 현지 날짜, 모르면 칸 없음
     if ed:
@@ -14797,7 +14797,10 @@ def us_fcur_div(col, end, close, info, k, today):
       지난 365일 배당 기록이 없을 때. 아니면 기록 칸이 없으면 divNoRecord · 지난 365일 배당 기록이 없으면 divUnclear.
     · 마지막 다섯 배당의 간격 가운데 값으로 주기(US_FCUR_DIV_N: 분기 · 반기 · 연)를 정하고, 마지막 n 번(연 배당은 그 앞 배당과의 간격도)의 간격이 그
       주기 안 · 마지막 배당이 US_FCUR_DIV_LAST 안 · 가장 앞 것이 US_FCUR_DIV_SPAN 안이어야 해요 (아니면 divIrregular · divLate).
-    · 그 합 ÷ 종가 × 100 이 야후 dividendYield ÷ k 와 US_FCUR_DIV_AGREE 안이어야 해요 (divMismatch)."""
+    · 그 합 ÷ 종가 × 100 이 야후 dividendYield ÷ k 와 US_FCUR_DIV_AGREE 안이어야 해요 (divMismatch).
+    · 2026-11-27 (#181 켜기): 맞으면 싣는 값은 야후 dividendYield ÷ k 예요 (apply_us_info 처럼 소수 둘째 자리) — 실제 배당은 그 숫자를 확인하는
+      데만 써요. 다른 미국 종목 · 외국 회사 검사(us_foreign_check: 실제 배당과 맞으면 야후 값을 그대로)와 같은 숫자이고, 화면의 승인된 줄
+      ("야후 파이낸스 기준" · "야후 파이낸스의 배당수익률로 계산했어요.")이 그대로 맞아요."""
     zero = US_FCUR_KEEP_ZERO_DY and us_no_dividend_12m(info, today)     # #114 의 0% 규칙 (자료가 배당 없음을 분명히 말함)
     if col is None:
         return (0.0, None) if zero else (None, "divNoRecord")
@@ -14839,7 +14842,7 @@ def us_fcur_div(col, end, close, info, k, today):
     f = _fold(dy, yk)
     if f is None or f > US_FCUR_DIV_AGREE:
         return None, "divMismatch"
-    return round(dy, 2), None
+    return round(yk, 2), None
 
 
 def us_fcur_tot_row(rec, entry, st, fxr, div_col, us_px_date, today):
@@ -15013,6 +15016,10 @@ def us_fcur_totals_step(yf, out, cache, data, us_px_date, today, no_info=frozens
                 r[f] = rows[r["t"]][f]
             if got:
                 r["fcurTot"] = got
+            # Jack, 2026-11-27: 두 순이익이 맞지 않아 비운 PER (Sony: 중단 사업 · 크기가 10% 넘게 다른 Unilever 도) — 앱이 그 빈 칸 밑에 Jack 의 줄
+            # "자료의 숫자가 회사 전체 재무제표와 맞지 않아서 비워 두었어요." (co.fcurNi) 를 붙여요. 다른 빈 칸은 #114 의 통화 줄 그대로예요
+            if (rows[r["t"]].get("why") or {}).get("per") == "niUnconfirmed" and r.get("per") is None:
+                r["fcurNi"] = True
     fx_out = {c: {k: v for k, v in x.items() if v is not None} for c, x in sorted(fx.items())}
     src = {**src, **fxs, "sec": round(time.monotonic() - t0, 1)}
     src["limit"] = bool(time.monotonic() > deadline or any(w == "time" for r in rows.values() for w in (r.get("why") or {}).values())
@@ -15028,9 +15035,10 @@ def us_fcur_totals_safe(yf, out, cache, data, us_px_date, today, no_info=frozens
     try:
         rec = us_fcur_totals_step(yf, out, cache, data, us_px_date, today, no_info, **kw)
     except Exception as e:
-        for r in out:                        # 켜진 스위치로 반쯤 실은 칸이 남지 않게
+        for r in out:                        # 켜진 스위치로 반쯤 실은 칸이 남지 않게 (PBR 을 실었으면 vz 는 아직 없어요: 순위는 뒤에서 매겨요)
             for f in r.pop("fcurTot", None) or []:
                 r.pop(f, None)
+            r.pop("fcurNi", None)
         log(f"  !! 달러 아닌 재무제표 회사의 회사 합계 계산이 멈췄어요 ({type(e).__name__}: {str(e)[:120]}) → 종목 칸은 #114 그대로 빈 칸 (관문 경고)")
         return {"v": 1, "on": bool(US_FCUR_TOT_ON if kw.get("on") is None else kw.get("on")), "err": f"{type(e).__name__}: {str(e)[:120]}"}
     try:
@@ -17627,7 +17635,7 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
          "staleAfter": "이 시각(한국 시간)이 지나도 새 파일이 없으면 앱이 '갱신이 멈췄어요'를 보여요 (예정일 마지막 정해진 실행 + 2시간)",
          "usLeftOut": "미국 목록에서 뺀 티커: preferred = 우선주·예탁증서(티커·이름·야후 종류로 판단), krListing = 한국 종목의 미국 상장분",
          "fcur": "미국 종목의 재무제표 통화 (ISO 코드, 달러가 아닐 때만 · 야후 financialCurrency). 이 종목은 per · pbr · vz 가 빈 칸이고, dy 는 "
-                 "지난 12개월 배당이 없다고 야후가 분명히 말할 때만 0 이에요",
+                 "지난 12개월 배당이 없다고 야후가 분명히 말할 때만 0 이에요 (스위치 US_FCUR_TOT_ON 이 켜진 날은 fcurTot 의 칸만 회사 합계 숫자)",
          "pbrZero": "true = 미국 종목의 PBR 이 0.00 으로 반올림돼(0.005 미만) 빈 칸 (vz 도 없음 · 재무제표 통화 문제가 아니에요)",
          "usFcurTot": ("2026-11-23 · 달러 아닌 재무제표 미국 회사(fcur)의 PER · PBR · 배당수익률을 회사 합계로 계산한 기록 (Jack 2026-11-13): "
                        "v · on = 종목 칸에 실었는지 (스위치 validate_data.US_FCUR_TOT_ON · 꺼져 있으면 종목의 per · pbr · dy 는 #114 그대로 빈 칸) · "
@@ -17642,7 +17650,10 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                        "dy0 · blank {까닭: 칸 수}} · src {cache 보관본 · fetched 오늘 받음 · old 받지 못해 14일 안 보관본 · failed 받지 못함 · req 야후 재무제표 "
                        "요청 · fxReq 환율 봉 · ecosReq ECOS 요청 · ecosFail ECOS 가 멈춘 까닭 · sec 걸린 초 · limit 시간 한도 180초에 걸렸는지} · halfDay 미국 "
                        "기준일이 조기 폐장일일 수 있음 (휴장일 표가 몰라요) · err 이 단계가 멈춘 까닭 (그날 rows 없음)"),
-         "fcurTot": "스위치 US_FCUR_TOT_ON 이 켜진 날만: 회사 합계로 계산해 실은 칸 [per · pbr · dy] (usFcurTot.rows 와 같은 값)",
+         "fcurTot": "스위치 US_FCUR_TOT_ON 이 켜진 날만: 회사 합계로 계산해 실은 칸 [per · pbr · dy] (usFcurTot.rows 와 같은 값 · pbr 이 있으면 vz 도 "
+                    "그 PBR 로 매겨요). 앱은 per · pbr 밑에 바꿔 계산한 줄을 붙여요 (src/v2/fcur.js)",
+         "fcurNi": "스위치 US_FCUR_TOT_ON 이 켜진 날만: true = 두 순이익(4분기 합 · 야후의 다른 길 또는 야후 PER 의 부호)이 맞지 않아 PER 을 비움 "
+                   "(Sony: 중단 사업 · Jack 2026-11-27 — 앱은 \"자료의 숫자가 회사 전체 재무제표와 맞지 않아서 …\" 줄)",
          "usFcurUnknown": "재무제표 통화를 모르는 미국 회사 주식의 티커 (야후가 financialCurrency 를 주지 않음 · 비우지 않았어요)",
          "usInfoPartial": "오늘 야후 응답이 일부만 와서 이름 · 업종 · 설명 · 재무제표 통화 같은 설명 칸을 예전 값으로 채운 미국 종목의 티커 (다음 실행이 다시 물어요)",
          "usForeign": ("미국에 상장된 외국 회사(ADR · 외국 보통주) 중 재무제표 통화 표시(fcur)가 없는 종목의 주당 숫자 검사: "

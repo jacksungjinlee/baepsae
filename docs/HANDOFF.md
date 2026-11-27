@@ -115,20 +115,23 @@ push or manual run on a branch fails on purpose (its green would cover the PR's 
 can't read (event file, git) fails with a message. Replayed on past merges it flags #170, #171 and #172 (the misses of 11-22) and
 passes #173.
 
-**#181 (non-dollar filers from company totals), 2026-11-24 — built, review round 1 fixed, switch OFF, waiting for Jack:** Jack's 11-13
-"Next, within days" for the `fcur` companies (38 now: the 27 plus 11 of the 11-14 additions). The daily run computes PER = market value
-÷ TTM net income and PBR = market value ÷ latest-quarter common equity (Yahoo statements, both converted at the Yahoo hourly rate at the
-US close, confirmed within 2% by ECOS's next Korean-morning row) and the yield from dividends actually paid (regular rhythm, within 10% of
-Yahoo's), and writes them to data.json `usFcurTot` with a reason for every blank; a new warning-only gate row (wrapped, never fails)
-names disagreements once (only names new since the previous publish warn). Statements are cached (3 days or a new quarter; 114 Yahoo
-requests on a refresh day, 0 between), an empty yfinance table counts as a failed fetch (retried after 20 s, logged, blank "stmt"),
-ECOS stops after its first failure, and the step stops at 180 s. A PER whose sign disagrees with Yahoo's PER is blank as unconfirmed
-(Sony: the Sony Financial spin-off's discontinued operations). `validate_data.US_FCUR_TOT_ON` is `False`, so users still see #114's
-blanks and line. Proof on 11-20 closes: 11 companies within ±3% of stockanalysis.com's statements and the companies' own releases
-(Kaspi +0.1%); counts PER 29 · PBR 33 · yield 19 (+10 clear 0%) · 23 blanks. To switch on (Jack's yes): the #114 gate row and three
-`tests/test_us_fcur.py` tests, `src/v2/fcur.js` (one number back removes the currency line for all three), the line for a converted
-number, and whether TTM income includes discontinued operations. RUNBOOK "US companies not reporting in dollars: PER · PBR · yield from
-company totals".
+**#181 (non-dollar filers from company totals), 2026-11-24, switch-on built 2026-11-27 — switch still OFF, waiting for one line from
+Jack:** Jack's 11-13 "Next, within days" for the `fcur` companies (38: the 27 plus 11 of the 11-14 additions). The daily run computes
+PER = market value ÷ TTM net income and PBR = market value ÷ latest-quarter common equity (Yahoo statements, both converted at the Yahoo
+hourly rate at the US close, confirmed within 2% by ECOS's next Korean-morning row) and checks Yahoo's yield against dividends actually
+paid (published: Yahoo's figure, within 10%), writing everything to data.json `usFcurTot` with a reason for every blank; a warning-only
+gate row names disagreements once. Jack, 11-27: "#181: yes" (the #114 gate row, three tests and the app) and "Sony case: PER stays blank
+with "자료의 숫자가 회사 전체 재무제표와 맞지 않아서 비워 두었어요."". Built on the branch: the #114 row accepts, only with the switch on,
+numbers exactly equal to the record (`validate_data.us_fcur_tot_ok`, plus `vz` from an accepted PBR); `tests/test_us_fcur.py`'s three
+tests now cover the switch on too; the pipeline marks restored fields (`fcurTot`) and Sony-type PERs (`fcurNi`, any `niUnconfirmed`:
+Sony, Unilever); 2.0 handles each number on its own (`src/v2/fcur.js` `fcurBlankOf`): converted PER · PBR with the converted line once
+per section in the #114 places, Sony's PER "–" with `co.fcurNi`, other blanks with #114's line; 예전 뱁새 keeps #114's "–"
+(`src/repair.js` `fcurTotStrip`). **Waiting for Jack:** the converted line `co.fcurTot` "재무제표가 {currency} 기준이라 {md} 미국 장 마감
+환율로 달러로 바꿔 계산했어요." (pending doc). Without it the numbers would break the say-why rule, so `US_FCUR_TOT_ON` stays `False`
+and 2.0 drops such numbers while the line is `null`; after his yes, fill the line and flip the switch together (a test holds the pair).
+Sample against SEC filings (11-25 close): Yahoo's totals equal the companies' own (13 of 14 to 0%), our method on their own totals
+matches their per-share figures within 3% for most (Toyota −10%: buyback; Alibaba +7%: share count, not verified), Enbridge (quarterly
+10-Qs) equal to the million. RUNBOOK "US companies not reporting in dollars: PER · PBR · yield from company totals".
 **US minimum sizes (#185, 2026-11-24; Jack 11-13: "v19.5b's US minimum sizes (25억원 of quarterly revenue, 100억원 of equity, at
 the day's rate) need a small data PR first"):**
 - **Data:** the daily run adds, for each US company with statements in dollars, the latest quarter's revenue and common equity

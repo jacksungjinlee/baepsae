@@ -24,16 +24,41 @@ export function fcurOf(s) {
   return typeof c === "string" && ISO.test(c) && c !== "USD" ? c : null;
 }
 
+// ---------------- #181 switch-on (Jack, 2026-11-27: "#181: yes"; the pipeline's switch validate_data.US_FCUR_TOT_ON) ----------------
+// data.json fcurTot (fetch_data.us_fcur_totals_step): the numbers of FCUR_FIELDS the pipeline put back for this company, computed from
+// whole-company totals (PER = market value ÷ the last four quarters' net income, PBR = market value ÷ the latest quarter's equity,
+// both converted at the exchange rate of the US close; the yield is Yahoo's, checked against the dividends actually paid), checked
+// by the gate against data.json usFcurTot (validate_data.us_fcur_tot_ok). Only a number that is there counts (never 0 or below).
+// The PER and PBR are converted numbers: wherever one shows, the line co.fcurTot ("재무제표가 {currency} 기준이라 {md} 미국 장 마감
+// 환율로 달러로 바꿔 계산했어요.", waiting for Jack) sits under it once per section, in the places of the #114 line. The yield is
+// dollars ÷ dollars and Yahoo's own figure, so it takes no line. While co.fcurTot is missing the app never sees these numbers at all
+// (src/repair.js fcurTotStrip, from src/v2/load.js): no converted number without its line.
+export const FCUR_TOT_CONV = ["per", "pbr"];
+export function fcurTotOf(s) {
+  if (!fcurOf(s) || !Array.isArray(s.fcurTot)) return [];
+  return FCUR_FIELDS.filter((k) => s.fcurTot.includes(k) && num(s[k]) != null && num(s[k]) > 0);
+}
+// data.json fcurNi (Jack, 2026-11-27, the Sony case): the PER was left blank because the company's two net-income figures disagree
+// (Sony: the four quarters include the Sony Financial spin-off's discontinued operations, Yahoo's other figure and PER do not).
+// The PER shows "–" with Jack's line co.fcurNi ("자료의 숫자가 회사 전체 재무제표와 맞지 않아서 비워 두었어요.") instead of the
+// currency line, in the same places.
+export const fcurNiOf = (s) => !!fcurOf(s) && s.fcurNi === true && num(s.per) == null;
+
 // Does this stock carry one of the blanked numbers anyway? (The pipeline and the gate make sure it does not; a stock that
 // did would show it, so the screens never put the reason line next to a number.) A 0% yield is not one: it means "no
 // dividend" in any currency (the pipeline keeps it only when its switch US_FCUR_KEEP_ZERO_DY says so, and the gate agrees).
-export const fcurLeftover = (s) => !!fcurOf(s) && FCUR_FIELDS.some((k) => num(s[k]) != null && !(k === "dy" && s[k] === 0));
+// Nor is a number the pipeline put back from whole-company totals (fcurTot, above).
+export const fcurLeftover = (s) => !!fcurOf(s) && FCUR_FIELDS.some((k) => num(s[k]) != null && !(k === "dy" && s[k] === 0) && !fcurTotOf(s).includes(k));
+// Each number on its own (2026-11-27): was this one blanked because the statements are not in dollars (#114)? Then it shows as "–"
+// under its label with the currency line under it. Not when it is there (put back or 0%), and not the Sony case's PER (fcurNiOf).
+export const fcurBlankOf = (s, k) => !!fcurOf(s) && !fcurLeftover(s) && num(s[k]) == null && !(k === "per" && fcurNiOf(s));
 // The screens' one question (#114 review: keyed on the data, never on whether the reason line has words): were this stock's
 // PER and PBR blanked because its statements are not in dollars? Then its PBR · PER show as "–" under their labels, with no
-// date line or 자세히 link for them, and the reason line right under them when the currency has a Korean name.
-export const fcurBlank = (s) => !!fcurOf(s) && !fcurLeftover(s);
+// date line or 자세히 link for them, and the reason line right under them when the currency has a Korean name. (#114's shape: both
+// of them. With the switch on, one can be back while the other is not: the screens then ask fcurBlankOf for each.)
+export const fcurBlank = (s) => fcurBlankOf(s, "pbr") && fcurBlankOf(s, "per");
 // The same for the dividend yield: blanked (no 0% kept), so 배당수익률 shows "–" with the line under it.
-export const fcurDyBlank = (s) => fcurBlank(s) && num(s.dy) == null;
+export const fcurDyBlank = (s) => fcurBlankOf(s, "dy");
 
 const warned = new Set();
 // The Korean name of an ISO code from names (the copy's co.curName), else null with one console warning per code.
@@ -67,8 +92,24 @@ export function fcurText(s, line, names) {
 }
 
 // A section of 내 기준과 맞는 정도 shows the line when one of its rows is blank because of this (a 가치 or 배당 row, no rank).
-// rows: company.cardRanks(...).rows (or the ones on screen).
-export const fcurRowsBlank = (s, rows) => !!fcurOf(s) && (rows || []).some((r) => r && FCUR_CARDS.includes(r.id) && r.blank);
+// rows: company.cardRanks(...).rows (or the ones on screen). 2026-11-27: the 가치 row's number is the PBR, the 배당 row's the yield,
+// each blanked this way (fcurBlankOf) — a row ranked by a number put back is not blank.
+export const fcurRowsBlank = (s, rows) => !!fcurOf(s) && (rows || []).some((r) => r && FCUR_CARDS.includes(r.id) && r.blank
+  && fcurBlankOf(s, r.id === "value" ? "pbr" : "dy"));
+
+// The converted-number line (#181 switch-on) for this stock, or null: line = the copy's co.fcurTot ("…{currency}…{md}…", null while it
+// waits for Jack), names = co.curName, md = the US close date the price and the rate are from ("11월 20일"), fields = the numbers this
+// section shows (default PER and PBR). Only when one of them is a converted number (fcurTotOf ∩ FCUR_TOT_CONV); never without the
+// currency's Korean name or the date (no line with an empty slot or a raw code).
+export function fcurTotText(s, line, names, md, fields = FCUR_TOT_CONV) {
+  const code = fcurOf(s);
+  if (!code || typeof line !== "string" || !line.includes("{currency}") || !line.includes("{md}") || typeof md !== "string" || !md) return null;
+  if (!fcurTotOf(s).some((k) => FCUR_TOT_CONV.includes(k) && (fields || FCUR_TOT_CONV).includes(k))) return null;
+  const name = curNameOf(code, names);
+  return name ? line.split("{currency}").join(name).split("{md}").join(md) : null;
+}
+// 내 기준과 맞는 정도: its 가치 row is ranked by a converted PBR (the pipeline's vz from it) -> the converted line once under the rows.
+export const fcurTotRowsShown = (s, rows) => fcurTotOf(s).includes("pbr") && (rows || []).some((r) => r && r.id === "value" && !r.blank);
 
 // ---------------- PBR that rounds to 0.00 (Jack, 2026-11-13) ----------------
 // data.json pbrZero (fetch_data.py us_info_cuts): Yahoo's PBR for a US stock rounds to 0.00 (BRK-B 0.0011: share classes, not a
