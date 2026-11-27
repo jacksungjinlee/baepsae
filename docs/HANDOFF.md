@@ -163,7 +163,7 @@ numbers exactly equal to the record (`validate_data.us_fcur_tot_ok`, plus `vz` f
 tests now cover the switch on too; the pipeline marks restored fields (`fcurTot`) and Sony-type PERs (`fcurNi`, any `niUnconfirmed`:
 Sony, Unilever); 2.0 handles each number on its own (`src/v2/fcur.js` `fcurBlankOf`): converted PER · PBR with the converted line once
 per section in the #114 places, Sony's PER "–" with `co.fcurNi`, other blanks with #114's line; 예전 뱁새 keeps #114's "–"
-(`src/repair.js` `fcurTotStrip`); #188's split check skips these companies, so it never touches their rebuilt numbers (tested). **Waiting for Jack:** the converted line `co.fcurTot` "재무제표가 {currency} 기준이라 {md} 미국 장 마감
+(`src/repair.js` `fcurTotStrip`). Review round 1 of the switch-on (11-28, Opus + Fable): blocker fixed — the totals step now uses #176's split factor (a 4:1 split had left PER and PBR at a quarter, unnoticed); the switched-on gate row checks more (date, stale closes, currency, inputs, recomputed PER/PBR, market value = `cap`); FX on early-close days uses the 13:00 bar; Futu and H World checked against their filings. Round 2 next. **Waiting for Jack:** the converted line `co.fcurTot` "재무제표가 {currency} 기준이라 {md} 미국 장 마감
 환율로 달러로 바꿔 계산했어요." (pending doc). Without it the numbers would break the say-why rule, so `US_FCUR_TOT_ON` stays `False`
 and 2.0 drops such numbers while the line is `null`; after his yes, fill the line and flip the switch together (a test holds the pair).
 Sample against SEC filings (11-25 close): Yahoo's totals equal the companies' own (13 of 14 to 0%), our method on their own totals

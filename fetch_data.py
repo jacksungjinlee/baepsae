@@ -14667,7 +14667,8 @@ def log_us_fcur(sm):
 #   · 환율 = 야후 {통화}=X 1시간 봉 중 usPxDate 뉴욕 12:00 이후에 시작해 16:00 까지 끝난 마지막 봉의 종가 (주식 종가와 같은 때 · 끝나지 않은 봉은
 #     쓰지 않아요)를 한국은행 ECOS 대미달러 환율과 2% 안에서 맞춰요. ECOS 의 날짜 d 줄은 그 전 뉴욕 장 마감 무렵 값이라 (리뷰 2026-11-23) d 다음의 첫
 #     줄(뉴욕 마감 뒤 한국 아침)을 먼저 보고, 아직 없으면 d · 그 앞 줄 (4일 안) — 두 출처가 맞지 않으면 그 통화의 PER · PBR 은 빈 칸.
-#     조기 폐장일(오후 1시 마감)은 휴장일 표가 몰라서 16:00 기준 그대로이고, 그런 날일 수 있으면 크게 남겨요 (us_half_day_maybe).
+#     조기 폐장일(오후 1시 마감 · 휴장일 표는 몰라요)일 수 있는 날(us_half_day_maybe)은 13:00 까지 끝난 봉을 써요 (리뷰 1차 nit · 2026-11-28: 11-27 처럼
+#     13:00 종가에 16:00 환율을 쓰지 않게) — 크게 남겨요.
 #   · 재무제표는 보관본(us-fcur-stmt-v1 · 미국 상세 정보 보관본 옆)에 두고 3일마다 또는 야후 mostRecentQuarter 가 바뀌면 다시 받아요. 야후(yfinance
 #     1.7)는 받지 못한 표를 빈 표로 돌려줘요 — 빈 표는 받지 못한 것으로 세요 (반기 보고 회사의 빈 분기 손익표만 빼고). 이 단계 전체는
 #     US_FCUR_TIME_LIMIT 초 안에 끝내요 (넘으면 남은 회사는 빈 칸 · 크게 남겨요 · ECOS 는 한 번 실패하면 이 실행에서 다시 묻지 않아요).
@@ -14684,11 +14685,13 @@ US_FCUR_FX_AGREE = 1.02       # 야후 미국 종가 시각 환율 ↔ ECOS 대�
 US_FCUR_FX_ECOS_DAYS = 4      # ECOS 는 d 다음 이만큼 안의 첫 줄 (뉴욕 마감 뒤 한국 아침), 없으면 d 와 그 앞 이만큼 안의 마지막 줄 (한국 휴일)
 US_FCUR_FX_FROM = dt.time(12, 0)    # 환율 봉: usPxDate 뉴욕 이 시각 이후에 시작해 …
 US_FCUR_FX_TO = dt.time(16, 0)      # … 이 시각(미국 정규장 끝)까지 끝난 봉
+US_FCUR_FX_HALF_TO = dt.time(13, 0) # … 조기 폐장일일 수 있는 날(us_half_day_maybe)은 이 시각(오후 1시 마감)까지 끝난 봉
 US_FCUR_DIV_N = ((4, 60, 120), (2, 121, 245), (1, 300, 430))   # (한 해 배당 횟수, 배당 사이 날짜 수 하한, 상한)
 US_FCUR_DIV_LAST = {4: 120, 2: 245, 1: 365}   # 마지막 배당이 usPxDate 보다 이만큼 넘게 앞이면 다음 배당이 기록에 없는 것
 US_FCUR_DIV_SPAN = 380        # 더하는 배당 중 가장 앞 것이 이만큼 안 (지난 한 해치 · 배당일이 며칠 밀려도)
 US_FCUR_DIV_AGREE = 1.10      # 야후 배당수익률(그날 종가 기준)과의 차이 상한 (US_FOREIGN_BAND["dy"] 와 같아요)
 US_FCUR_PER_MAX, US_FCUR_PBR_MAX = 500.0, 100.0   # apply_us_info 와 같은 범위 (PER 0 < x < 500 · PBR US_PBR_MIN ≤ x < 100)
+US_FCUR_CAP_TOL, US_FCUR_CAP_ABS = 0.005, 0.0006   # 시가총액(달러 × 그날 원/달러) ↔ 종목 cap(조원): 0.5% 또는 반올림(0.0005조) 안 (관문과 같아요)
 US_FCUR_STMT_FRESH_DAYS = 3   # 재무제표 보관본을 다시 받는 주기 (야후 mostRecentQuarter 가 바뀌면 바로)
 US_FCUR_STMT_MAX_AGE = 14     # 오늘 받지 못하면 이만큼 안의 보관본을 써요 (최근 분기가 바뀌었으면 낡은 숫자로 빈 칸이 돼요)
 US_FCUR_STMT_PAUSE = 20       # 받지 못한 표는 이만큼 쉬었다가 하나씩 한 번 더 (야후가 잠깐 막을 때가 많아요)
@@ -14717,7 +14720,8 @@ US_FCUR_TOT_WHY = {"px": "종가가 미국 기준일 것이 아니거나 기준 
                    "loss": "적자 (순이익 0 이하)", "range": "범위 밖", "divNoRecord": "배당 기록 칸 없음",
                    "divUnclear": "지난 12개월 배당 기록이 없는데 배당 없음이 분명하지 않음", "divIrregular": "배당 간격이 고르지 않음 (빠진 배당일 수 있어요)",
                    "divLate": "다음 배당이 기록에 없음", "divMismatch": "야후 배당수익률과 10% 넘게 다름", "err": "계산하다 멈춤",
-                   "time": "시간 한도"}
+                   "time": "시간 한도", "split": "분할 배율을 확인하지 못함 (#176 의 분할 판단이 멈춘 종목)",
+                   "cap": "시가총액이 종목의 시가총액(cap)과 맞지 않음"}
 
 
 def _iso_d(x):
@@ -15006,8 +15010,9 @@ def us_fcur_fx_pick(close, d, now):
     if not isinstance(idx, pd.DatetimeIndex):
         return None, None, "야후 시간 봉의 시각을 읽지 못함"
     idx = (idx.tz_localize("UTC") if idx.tz is None else idx).tz_convert(US_NY)
+    to = US_FCUR_FX_HALF_TO if us_half_day_maybe(d) else US_FCUR_FX_TO     # 조기 폐장일: 그 마감(13:00)까지 끝난 봉 (리뷰 1차)
     lo = dt.datetime.combine(d, US_FCUR_FX_FROM, US_NY)
-    hi = dt.datetime.combine(d, US_FCUR_FX_TO, US_NY)
+    hi = dt.datetime.combine(d, to, US_NY)
     now_ny = (now if now.tzinfo else now.replace(tzinfo=dt.timezone.utc)).astimezone(US_NY)
     best = None
     for ts, v in zip(idx, s.values):
@@ -15017,7 +15022,7 @@ def us_fcur_fx_pick(close, d, now):
             if best is None or ts > best[0]:
                 best = (ts, x)
     if best is None:
-        return None, None, f"야후 시간 봉 중 {d} 뉴욕 {US_FCUR_FX_FROM:%H:%M} 이후에 시작해 {US_FCUR_FX_TO:%H:%M} 까지 끝난 봉 없음"
+        return None, None, f"야후 시간 봉 중 {d} 뉴욕 {US_FCUR_FX_FROM:%H:%M} 이후에 시작해 {to:%H:%M} 까지 끝난 봉 없음"
     return best[1], best[0].isoformat(), None
 
 
@@ -15078,7 +15083,7 @@ def _yf_close_col(data, tk):
 
 def us_half_day_maybe(d):
     """미국 거래소가 오후 1시에 닫는 날일 수 있는지 (휴장일 표 data/market_holidays.csv 는 조기 폐장을 몰라요): 추수감사절 다음 금요일 (11월 23~29일의
-    금요일) · 평일인 12월 24일 · 월~목인 7월 3일. 그날의 환율 봉은 16:00 기준 그대로예요 (같은 날 · 2% 확인) — 크게 남기기만 해요. (순수 함수)"""
+    금요일) · 평일인 12월 24일 · 월~목인 7월 3일. 그날의 환율 봉은 13:00 까지 끝난 봉이에요 (us_fcur_fx_pick · 2026-11-28 · ECOS 와 2% 확인) — 크게 남겨요. (순수 함수)"""
     return ((d.month == 11 and d.weekday() == 4 and 23 <= d.day <= 29) or (d.month == 12 and d.day == 24 and d.weekday() < 5)
             or (d.month == 7 and d.day == 3 and d.weekday() < 4))
 
@@ -15204,12 +15209,16 @@ def us_fcur_div(col, end, close, info, k, today):
     return round(yk, 2), None
 
 
-def us_fcur_tot_row(rec, entry, st, fxr, div_col, us_px_date, today):
+def us_fcur_tot_row(rec, entry, st, fxr, div_col, us_px_date, today, split=1.0, fx_won=None, split_bad=False):
     """fcur 회사 하나 → data.json usFcurTot.rows 의 한 줄. (순수 함수)
     {"cur", "px" 종가, "mc" 시가총액(달러), "eq" [자본, 기간 끝] · "ni" [순이익, 기간 끝, 길] (그 통화 · 값이 있을 때), "fx" 1달러당 그 통화,
-     "per" · "pbr" · "dy" (계산된 것만), "y" [야후 PER, PBR, 배당수익률] (그날 종가 기준 · 관문 경고용), "why" {칸: 까닭 (US_FCUR_TOT_WHY)}}"""
+     "per" · "pbr" · "dy" (계산된 것만), "y" [야후 PER, PBR, 배당수익률] (그날 종가 기준 · 관문 경고용), "why" {칸: 까닭 (US_FCUR_TOT_WHY)}}
+    2026-11-28 (#181 켜기 리뷰 1차 B1 · 두 리뷰어): split = fetch_us 가 이 종목의 상세 정보 보관본에 곱한 분할 배율 (#176 sp_k · apply_us_info 와 같은
+    배율) — 분할 전 보관본의 야후 시가총액을 오늘 주식 수에 맞춰요 (빼면 4:1 분할 뒤 시가총액 · PER · PBR 이 1/4). split_bad = 그 종목의 분할 판단이
+    멈춤 (#176 sp_bad: 배율을 몰라요) → PER · PBR · 배당수익률은 빈 칸 (split). fx_won = 그날 원/달러 (apply_us_info 의 fx): 시가총액이 종목의
+    cap 과 반올림 안에서 같아야 해요 (아니면 PER · PBR 빈 칸 cap — 관문 us_fcur_tot_ok 와 같은 확인)."""
     info = (entry or {}).get("info") or {}
-    k = us_rescale(rec.get("price"), (entry or {}).get("px"))
+    k = us_rescale(rec.get("price"), (entry or {}).get("px"), split)
     px = _fin(rec.get("price"))
     row = {"cur": rec.get("fcur"), "px": px}
     y = [_fin(info.get("trailingPE")), _fin(info.get("priceToBook")), _fin(info.get("dividendYield"))]
@@ -15220,11 +15229,16 @@ def us_fcur_tot_row(rec, entry, st, fxr, div_col, us_px_date, today):
     own = rec.get("pxd") or rec.get("pxc") or (entry or {}).get("pxBad") or not (px and px > 0)
     if own:
         why["per"] = why["pbr"] = "px"
+    elif split_bad:
+        why["per"] = why["pbr"] = why["dy"] = "split"
     elif not (mc and mc > 0):
         why["per"] = why["pbr"] = "mc"
     else:
         mc = mc * k
         row["mc"] = round(mc)
+        cap, fw = _fin(rec.get("cap")), _fin(fx_won)
+        if fx_won is not None and not (cap and fw and fw > 0 and abs(mc * fw / 1e12 - cap) <= max(US_FCUR_CAP_ABS, cap * US_FCUR_CAP_TOL)):
+            why["per"] = why["pbr"] = "cap"
     newest = us_fcur_newest(st, info.get("mostRecentQuarter"))
     failed = {x[0] for x in (st or {}).get("err") or [] if isinstance(x, (list, tuple)) and x}
     timed = any(isinstance(x, (list, tuple)) and len(x) > 1 and x[1] == "time" for x in (st or {}).get("err") or [])
@@ -15259,19 +15273,21 @@ def us_fcur_tot_row(rec, entry, st, fxr, div_col, us_px_date, today):
                 why.setdefault(f, "fx")
         if "pbr" not in why and eq is not None:
             v = mc / (eq / r)
-            if US_PBR_MIN <= v < US_FCUR_PBR_MAX:
+            if US_PBR_MIN <= v < US_FCUR_PBR_MAX and round(v, 2) > 0:
                 row["pbr"] = round(v, 2)
             else:
                 why["pbr"] = "range"
         if "per" not in why and ni is not None:
             v = mc / (ni / r)
-            if 0 < v < US_FCUR_PER_MAX:
+            if 0 < v < US_FCUR_PER_MAX and round(v, 1) > 0:     # 리뷰 1차 nit: 0.05 아래는 0.0 으로 반올림돼요 — 빈 칸(range)으로
                 row["per"] = round(v, 1)
             else:
                 why["per"] = "range"
     dy, dw = us_fcur_div(div_col, us_px_date, px if not own else None, info, k, today)
     if own:
         dy, dw = None, "px"
+    elif split_bad:
+        dy, dw = None, "split"
     if dw:
         why["dy"] = dw
     else:
@@ -15313,8 +15329,8 @@ def log_us_fcur_tot(rec):
             f"{c} {v['r']:g} ({str(v.get('at') or '')[11:16]} 뉴욕 · ECOS {_fin(v.get('e')) or 0:.6g} {v.get('eD')})" if v.get("r")
             else f"{c} 확인 못 함 ({v.get('why')})" for c, v in sorted(fx.items())))
     if rec.get("halfDay"):
-        log("  !! 미국 기준일이 조기 폐장일(오후 1시 마감)일 수 있어요 — 휴장일 표가 조기 폐장을 몰라 환율은 16:00 뉴욕까지 끝난 봉 그대로예요 "
-            "(같은 날 · ECOS 와 2% 확인)")
+        log("  !! 미국 기준일이 조기 폐장일(오후 1시 마감)일 수 있어요 — 휴장일 표가 조기 폐장을 몰라 날짜 규칙(us_half_day_maybe)으로 환율은 13:00 "
+            "뉴욕까지 끝난 봉을 썼어요 (같은 날 · ECOS 와 2% 확인)")
     bad_fx = sorted(c for c, v in fx.items() if not v.get("r"))
     if bad_fx:
         log(f"  !! 두 출처로 확인하지 못한 환율 {len(bad_fx)}개: {', '.join(bad_fx)} → 그 통화 회사의 PER · PBR 은 빈 칸")
@@ -15334,19 +15350,23 @@ def log_us_fcur_tot(rec):
             + f" | 야후 PER {y[0]} · PBR {y[1]} · 배당 {y[2]}" + (f" | 멈춤: {r['err']}" if r.get("err") else ""))
 
 
-def us_fcur_totals_step(yf, out, cache, data, us_px_date, today, no_info=frozenset(), now=None, stmts=None, fx_rates=None, on=None, limit=None):
+def us_fcur_totals_step(yf, out, cache, data, us_px_date, today, no_info=frozenset(), now=None, stmts=None, fx_rates=None, on=None, limit=None,
+                        split=None, split_bad=frozenset(), fx_won=None):
     """fetch_us 의 단계: fcur 회사(ETF · 펀드 · 상세 정보 없는 종목 빼고)마다 us_fcur_tot_row → data.json usFcurTot
     {"v": 1, "on", "fx" {통화: us_fcur_fx_rates 한 줄}, "rows" {티커: 줄}, "n" us_fcur_tot_counts, "src" {재무제표 보관본 · 받음 · 요청 수 · 초 ·
     limit 시간 한도에 걸렸는지}, "halfDay" (조기 폐장일일 수 있는 날만)}. 스위치(on · 기본 US_FCUR_TOT_ON)가 켜져 있으면 계산된 칸을 종목에 싣고
     rec["fcurTot"] = [칸] (0% 는 #114 가 이미 실어요). 꺼져 있으면 종목은 그대로예요. 전체 시간 한도 limit 초 (기본 US_FCUR_TIME_LIMIT).
-    stmts(티커 목록) · fx_rates(통화 목록, 날짜, 시각) 는 시험용 (기본: 재무제표 보관본 + 야후 · 야후 시간 봉 × ECOS)."""
+    stmts(티커 목록) · fx_rates(통화 목록, 날짜, 시각) 는 시험용 (기본: 재무제표 보관본 + 야후 · 야후 시간 봉 × ECOS).
+    split {티커: 배율} · split_bad (티커) · fx_won: fetch_us 의 sp_k · sp_bad · fx_last (us_fcur_tot_row · 리뷰 1차 B1). 기록에 미국 기준일 "d" 를 적어요
+    (관문이 data.json usPxDate 와 같은지 봐요)."""
     on = US_FCUR_TOT_ON if on is None else on
+    split = split or {}
     now = now or dt.datetime.now(dt.timezone.utc)
     t0 = time.monotonic()
     deadline = t0 + (US_FCUR_TIME_LIMIT if limit is None else limit)
     firms = [r for r in out if r.get("fcur") and r.get("etf") is not True and not r.get("fund") and r["t"] not in no_info and cache.get(r["t"])]
     if not firms:
-        return {"v": 1, "on": bool(on), "fx": {}, "rows": {}, "n": us_fcur_tot_counts({}), "src": {}}
+        return {"v": 1, "on": bool(on), "d": us_px_date.isoformat(), "fx": {}, "rows": {}, "n": us_fcur_tot_counts({}), "src": {}}
     if stmts:
         st, src = stmts([r["t"] for r in firms]), {}
     else:
@@ -15359,7 +15379,8 @@ def us_fcur_totals_step(yf, out, cache, data, us_px_date, today, no_info=frozens
     for r in firms:
         t = r["t"]
         try:
-            rows[t] = us_fcur_tot_row(r, cache.get(t), st.get(t), fx.get(r["fcur"]), _div_col(data, t), us_px_date, today)
+            rows[t] = us_fcur_tot_row(r, cache.get(t), st.get(t), fx.get(r["fcur"]), _div_col(data, t), us_px_date, today,
+                                      split=split.get(t, 1.0), fx_won=fx_won, split_bad=t in split_bad)
         except Exception as e:               # 이 종목만: 세 칸 모두 빈 칸 · 크게 남겨요
             rows[t] = {"cur": r.get("fcur"), "px": _fin(r.get("price")), "why": {f: "err" for f in US_FCUR_TOT_FIELDS},
                        "err": f"{type(e).__name__}: {str(e)[:80]}"}
@@ -15383,7 +15404,8 @@ def us_fcur_totals_step(yf, out, cache, data, us_px_date, today, no_info=frozens
     src = {**src, **fxs, "sec": round(time.monotonic() - t0, 1)}
     src["limit"] = bool(time.monotonic() > deadline or any(w == "time" for r in rows.values() for w in (r.get("why") or {}).values())
                         or any("시간 한도" in str(x.get("why") or "") for x in fx.values()))
-    rec = {"v": 1, "on": bool(on), "fx": fx_out, "rows": dict(sorted(rows.items())), "n": us_fcur_tot_counts(rows), "src": src}
+    rec = {"v": 1, "on": bool(on), "d": us_px_date.isoformat(), "fx": fx_out, "rows": dict(sorted(rows.items())), "n": us_fcur_tot_counts(rows),
+           "src": src}
     if us_half_day_maybe(us_px_date):
         rec["halfDay"] = True
     return rec
@@ -15869,7 +15891,8 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
     # 2026-11-23 (Jack 2026-11-13 "Next"): 달러 아닌 재무제표 회사(fcur)의 PER · PBR · 배당수익률을 회사 합계로 계산해 data.json usFcurTot 에 적어요
     # (시가총액 ÷ 최근 분기 자본 · 지난 4분기 순이익, 그날 미국 종가 시각의 환율 · 실제 배당 ÷ 종가). 스위치 validate_data.US_FCUR_TOT_ON 이 꺼져
     # 있으면(지금) 종목 칸은 #114 그대로 비어 있어요. 멈춰도 발행은 이어가요 (종목은 그대로 · 관문 경고)
-    ufcur_tot = us_fcur_totals_safe(yf, out, cache, data, us_px_date, today, no_info)
+    # 리뷰 1차 B1 (2026-11-28): 상세 정보 보관본에 곱한 분할 배율(sp_k) · 분할 판단이 멈춘 종목(sp_bad) · 그날 원/달러(cap 과 맞춰 봐요)를 넘겨요
+    ufcur_tot = us_fcur_totals_safe(yf, out, cache, data, us_px_date, today, no_info, split=dict(sp_k), split_bad=frozenset(sp_bad), fx_won=fx_last)
     # 2026-11-24 (SNDK): 최근 30일 안에 분할한 미국 회사도 같은 검사로 (외국 회사 · fcur · ETF 빼고 · 표시 splCut · 새 야후 요청 없음)
     try:
         usplit = us_split_step(out, cache, data, us_px_date, today, prev, no_info, foreign=fgn)
@@ -18096,10 +18119,11 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
          "pbrZero": "true = 미국 종목의 PBR 이 0.00 으로 반올림돼(0.005 미만) 빈 칸 (vz 도 없음 · 재무제표 통화 문제가 아니에요)",
          "usFcurTot": ("2026-11-23 · 달러 아닌 재무제표 미국 회사(fcur)의 PER · PBR · 배당수익률을 회사 합계로 계산한 기록 (Jack 2026-11-13): "
                        "v · on = 종목 칸에 실었는지 (스위치 validate_data.US_FCUR_TOT_ON · 꺼져 있으면 종목의 per · pbr · dy 는 #114 그대로 빈 칸) · "
+                       "d = 미국 기준일 (usPxDate 와 같아야 해요 · 2026-11-28) · "
                        "fx {통화: r 1달러당 그 통화 (야후 {통화}=X 1시간 봉 중 usPxDate 뉴욕 12:00 이후에 시작해 16:00 까지 끝난 마지막 봉 · ECOS 대미달러 "
                        "환율 — usPxDate 다음 첫 줄 (뉴욕 마감 뒤 한국 아침), 없으면 그날 · 그 앞 줄 — 과 2% 안일 때만) · at 그 봉의 시작 시각 (뉴욕) · e · eD "
                        "ECOS 값과 날짜 · why 확인하지 못한 까닭} · rows {티커: cur 재무제표 통화 · px 종가 · "
-                       "mc 시가총액 (달러, 야후 marketCap 을 종가에 맞춤 = cap 과 같은 값) · eq [자본 (보통주 몫, 그 통화), 기간 끝] · ni [지난 4분기 "
+                       "mc 시가총액 (달러, 야후 marketCap 을 종가 · 보관본에 곱한 분할 배율에 맞춤 = cap 과 같은 값 · 아니면 PER · PBR 빈 칸 cap) · eq [자본 (보통주 몫, 그 통화), 기간 끝] · ni [지난 4분기 "
                        "순이익 (보통주 몫, 그 통화), 기간 끝, 길 q4 분기 넷의 합 · ttm 야후 TTM 줄] · fx · per = mc ÷ (ni ÷ fx) · pbr = mc ÷ (eq ÷ fx) · "
                        "dy = 지난 한 해 실제 배당 (ADR 하나당 달러) ÷ 종가 × 100 (0 = 배당 없음이 분명할 때만) · y [야후 PER, PBR, 배당수익률] (그날 종가 "
                        "기준 · 관문 경고용) · signY 우리 순이익의 부호가 야후 PER 과 어긋나 PER 을 비운 줄의 야후 PER · why {칸: 빈 칸의 까닭 "

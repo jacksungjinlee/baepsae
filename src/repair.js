@@ -254,11 +254,13 @@ export const pxBadFull = (row) => pxBadHides(row, "hi");
 // - the old app (예전 뱁새) always reads such a stock as #114 left it ("–", as it shows today): it has no place for the line;
 // - 2.0 does the same while the line's copy is missing (src/v2/load.js resolveLoad).
 // fcurTotStrip removes the marked numbers (and vz when the PBR was one) from each stock in place -> the tickers it changed.
+// keep(s) (2.0, #181 review round 1 nit): true for a stock whose line can be said (the words, its currency's Korean name and the US close
+// date are there); such a stock keeps its numbers. Default: none (the old app).
 export const FCUR_TOT_FIELDS = ["per", "pbr", "dy"];
-export function fcurTotStrip(stocks) {
+export function fcurTotStrip(stocks, keep = () => false) {
   const out = [];
   for (const s of Array.isArray(stocks) ? stocks : []) {
-    if (!s || typeof s !== "object" || s.fcurTot === undefined) continue;
+    if (!s || typeof s !== "object" || s.fcurTot === undefined || keep(s)) continue;
     const marks = Array.isArray(s.fcurTot) ? s.fcurTot.filter((k) => FCUR_TOT_FIELDS.includes(k)) : FCUR_TOT_FIELDS;
     for (const k of marks) delete s[k];
     if (!Array.isArray(s.fcurTot) || marks.includes("pbr")) delete s.vz;

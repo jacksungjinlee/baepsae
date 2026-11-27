@@ -27,7 +27,7 @@ import validate_data as V  # noqa: E402
 NODE = shutil.which("node")
 pytestmark = pytest.mark.skipif(NODE is None, reason="node 가 없어요")
 MODS = {"R": "src/repair.js", "FC": "src/v2/fcur.js", "FN": "src/v2/fixnote.jsx", "CO": "src/v2/company.jsx", "CP": "src/copy/v2.js",
-        "L": "src/v2/load.js", "CM": "src/v2/compare.jsx"}
+        "L": "src/v2/load.js", "CM": "src/v2/compare.jsx", "PK": "src/v2/pick.jsx", "WJ": "src/v2/watch.jsx"}
 FIX = os.path.join(ROOT, "tests", "fixtures", "v2")
 # Jack 이 아직 승인하지 않은 줄 (2026-11-27 설계 채팅 초안 그대로 · docs/tasks/v18.3-new-strings-pending.md) — 시험 안에서만 넣어 봐요
 DRAFT = "재무제표가 {currency} 기준이라 {md} 미국 장 마감 환율로 달러로 바꿔 계산했어요."
@@ -89,7 +89,7 @@ def run(body, **data):
     decl = "".join(f"const {k} = {json.dumps(v, ensure_ascii=False)};\n" for k, v in data.items())
     code = ("import * as B from './b.mjs'; import { renderToStaticMarkup } from 'react-dom/server'; import { createElement as h } from 'react';\n"
             "import fs from 'fs';\n"
-            "const { R, FC, FN, CO, CP, L, CM } = B; const C2 = CP.C;\n"
+            "const { R, FC, FN, CO, CP, L, CM, PK, WJ } = B; const C2 = CP.C;\n"
             "const warns = []; console.warn = (m) => warns.push(String(m)); console.info = () => {};\n"
             "const ent = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '\"').replace(/&#x27;/g, \"'\").replace(/&amp;/g, '&');\n"
             "const text = (html) => ent(html.replace(/<!--.*?-->/g, '').replace(/<[^>]+>/g, '\\n'));\n"
@@ -287,3 +287,44 @@ def test_a_split_mark_never_takes_over_a_non_dollar_filer():
     assert got["cut"] == [[], []] and got["blank"] == [False, False, False] and got["note"] == ["", ""]
     assert got["tot"] == filled(DRAFT, "대만 달러") and got["ni"] is True and got["dy"] is True
     assert got["dollar"] == ["per"]                                                  # 달러 회사의 splCut 은 그대로 읽어요 (#188)
+
+
+def test_no_number_without_a_sayable_line():
+    """리뷰 1차 nit (2026-11-28): 줄을 말할 수 없으면 숫자도 없어요 — 통화의 한국어 이름이 없거나 (MYR 은 바꿀 수 있지만 이름이 없어요) 파일에 미국
+    종가 날짜({md})가 없으면 resolveLoad 가 그 종목의 되살린 숫자를 빼요 (#114 그대로). 이름 · 날짜 · 문구가 있으면 그대로예요."""
+    got = run("""
+      const files = (mut) => { const d = JSON.parse(JSON.stringify(DATA)); mut(d); return { data: { ok: true, data: d }, corp: { ok: true, data: CORP }, macro: { ok: false, error: 'x' } }; };
+      const keep = C2.co.fcurTot;
+      C2.co.fcurTot = DRAFT;
+      const pick = (l, t) => { const s = l.byT.get(t); return [s.per ?? null, s.pbr ?? null, s.fcurTot ?? null]; };
+      const myr = L.resolveLoad(files((d) => { d.stocks.find((x) => x.t === 'TSM').fcur = 'MYR'; }), Date.parse('2026-10-31T12:00:00+09:00'));
+      const nodate = L.resolveLoad(files((d) => { delete d.usPxDate; }), Date.parse('2026-10-31T12:00:00+09:00'));
+      const ok = L.resolveLoad(files(() => {}), Date.parse('2026-10-31T12:00:00+09:00'));
+      C2.co.fcurTot = keep;
+      out = { myr: [pick(myr, 'TSM'), pick(myr, 'ASML')], nodate: [pick(nodate, 'TSM'), pick(nodate, 'ASML')], ok: pick(ok, 'TSM') };""")
+    assert got["myr"] == [[None, None, None], [33.0, None, ["per"]]], got["myr"]            # MYR 회사만 빼요
+    assert got["nodate"] == [[None, None, None], [None, None, None]], got["nodate"]
+    assert got["ok"] == [21.6, 7.79, ["per", "pbr", "dy"]]
+
+
+def test_the_two_more_places_say_the_line_once():
+    """리뷰 1차 S2 (2026-11-28): 종목 고르기의 근거 (pick.jsx Receipts) 와 홈 · 오늘 볼 것의 관심 종목 조건 줄 (watch.jsx WatchHitRows) 도 바꿔 계산한
+    PBR 옆에 그 줄을 한 번 (문구가 승인되면 · 지금은 null 이라 없어요)."""
+    got = run("""
+      const keep = C2.co.fcurTot;
+      const conv = DRAFT.split('{currency}').join('대만 달러').split('{md}').join('10월 30일');
+      const draw = () => ({
+        pick: renderToStaticMarkup(h(PK.Receipts, { s: LOAD.byT.get('TSM'), co: null, c: { total: null, scores: {} }, st: { points: {} }, load: LOAD })),
+        pickAsml: renderToStaticMarkup(h(PK.Receipts, { s: LOAD.byT.get('ASML'), co: null, c: { total: null, scores: {} }, st: { points: {} }, load: LOAD })),
+        hit: renderToStaticMarkup(h('div', null, WJ.WatchHitRows({ hits: [{ t: 'TSM', k: 'pbrBelow', s: LOAD.byT.get('TSM'), v: 10, val: 7.79, date: '2026-10-30' },
+          { t: 'TSM', k: 'dyAtLeast', s: LOAD.byT.get('TSM'), v: 1, val: 1.18, date: '2026-10-30' }], load: LOAD, onOpen() {} }))),
+      });
+      C2.co.fcurTot = DRAFT;
+      const on = draw();
+      C2.co.fcurTot = null;
+      const off = draw();
+      C2.co.fcurTot = keep;
+      out = { on: { pick: count(on.pick, conv), asml: count(on.pickAsml, conv), hit: count(on.hit, conv) },
+        off: { pick: count(off.pick, '미국 장 마감 환율로'), hit: count(off.hit, '미국 장 마감 환율로') } };""")
+    assert got["on"] == {"pick": 1, "asml": 0, "hit": 1}, got["on"]                        # ASML: PBR 이 빈 칸 · 배당 조건 줄에는 없어요
+    assert got["off"] == {"pick": 0, "hit": 0}

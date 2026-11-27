@@ -150,6 +150,12 @@ export function FcurTotNote({ s, md, fields, style }) {
   return text ? <Note data-ui-v2="fcur-tot" data-cur={fcurOf(s)} style={style}>{text}</Note> : null;
 }
 
+// Inside a button (phrasing content only, review round 1 S2: 홈 / 오늘 볼 것's 관심 종목 condition rows): the same line as a block span.
+export function FcurTotLine({ s, md, fields, style }) {
+  const text = fcurTotNoteText(s, md, fields);
+  return text ? <span data-ui-v2="fcur-tot" data-cur={fcurOf(s)} style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2, ...style })}>{text}</span> : null;
+}
+
 // FcurNiNote (Jack, 2026-11-27, the Sony case): "자료의 숫자가 회사 전체 재무제표와 맞지 않아서 비워 두었어요." right under the PER "–" of a
 // company whose statements are not in dollars and whose two net-income figures disagree (data.json fcurNi, fcur.js fcurNiOf).
 export const fcurNiText = (s) => (fcurNiOf(s) && C.co.fcurNi ? C.co.fcurNi : null);

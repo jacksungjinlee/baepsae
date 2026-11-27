@@ -2343,8 +2343,8 @@ dollars; 38 on 2026-11-23, the "27" of 11-13 plus 11 of the 11-14 additions) exc
   4 days before. Otherwise that currency's PER and PBR stay blank ("환율을 두 출처로 확인하지 못함"). On 11-20 (checked against the 11-23
   row) the rates agree within 0.1–0.4% (JPY 158.499 ↔ 158.645, KZT 455.33 ↔ 455.705); against the same-dated row JPY was 0.70% and KZT
   1.27% apart. Yahoo's *daily* KZT bar was 3.3% off and is not used. US early closes (13:00: the Friday after Thanksgiving, Christmas
-  Eve, some July 3rds) are not in `data/market_holidays.csv`; on a date that may be one, the rate stays the 16:00 bar of the same day and
-  the log says so (`usFcurTot.halfDay`).
+  Eve, some July 3rds) are not in `data/market_holidays.csv`; on a date that may be one (`us_half_day_maybe`), the rate is the last bar
+  that ended by 13:00 New York (since 2026-11-28; 11-27 was such a day) and the log says so (`usFcurTot.halfDay`).
 - **PER** = market value ÷ (net income ÷ rate), kept for 0 < PER < 500; **PBR** = market value ÷ (equity ÷ rate), kept for
   0.005 ≤ PBR < 100 (the same ranges as other US stocks).
 - **Yield**: dividends actually paid (Yahoo's dividend record: per ADR, in dollars, gross) over the last year ÷ today's close confirm
@@ -2381,19 +2381,27 @@ everything it needs is built:
 - **Gate:** the #114 row "미국 재무제표 통화가 달러가 아닌 회사: PER·PBR·배당수익률·가치 점수 빈 칸" (`check_us_fcur`) accepts, only while
   the gate's switch is on, a number on an `fcur` stock that is exactly the `usFcurTot` record's (`us_fcur_tot_ok`: the record is on and
   has no `err`, the company's row has the same close as the stock, the stock's `fcurTot` names the field, the values are equal and above
-  0, the row has no reason for that field), plus `vz` when the PBR was accepted. Anything else fails as before, and with the switch off
-  the row is exactly #114's. The warning-only row below also names marks that don't match the record.
+  0, the row has no reason for that field), plus `vz` when the PBR was accepted. Since review round 1 (2026-11-28, stricter only) it also
+  needs: the record's date `d` = the file's `usPxDate`; no `pxd` / `pxc` on the stock; not an ETF or fund; a known `fcur` (not `XXX`)
+  equal to the row's `cur`; the record's rate for that currency = the row's `fx`; real numbers only (no text, bool or infinity); the
+  row's market value at the file's `fx` equal to the stock's `cap` within 0.5% (this catches a missing split factor); PER under 500 and
+  PBR 0.005–100 recomputed from `mc`, `ni`, `eq` and `fx` within rounding; a yield under 30%; a `vz` of 0–100. Anything else fails as
+  before, and with the switch off the row is exactly #114's (20,000 fuzzed stock lists give the same rows as `main`). The warning-only
+  row below also names marks that don't match the record.
 - **2.0:** each of PER, PBR and the yield on its own (`src/v2/fcur.js` `fcurBlankOf`): a converted PER or PBR shows as usual with the
   converted line (`co.fcurTot`) once per section, in the places of the currency line (요약's 가치 칸, 내 기준과 맞는 정도 card and sheet,
-  가치 tab, 가치 자세히, 두 종목 비교's PBR cell, 관심 종목's PBR condition); Sony's PER "–" with `co.fcurNi`; any other blank keeps "–"
+  가치 tab, 가치 자세히, 두 종목 비교's PBR cell, 관심 종목's PBR condition and, since review round 1, 종목 고르기's 근거 and 홈 · 오늘 볼 것's 관심 종목 rows); Sony's PER "–" with `co.fcurNi`; any other blank keeps "–"
   with #114's currency line. The yield takes no line (Yahoo's dollars ÷ dollars). Lists (종목 순위, 주의할 점) show the numbers without a
   line, as they do for Korean PER on total profit (`fix.total`).
 - **예전 뱁새:** shows these companies as #114 left them ("–"), whatever the data says (`src/repair.js` `fcurTotStrip` at load): it has
   no place for the converted line.
-- **With #188 (recently split US companies):** its check and its stopped path skip `fcur` companies (`us_split_skip` "fcur"), so they
-  never blank or mark a number rebuilt from whole-company totals (market value ÷ totals does not depend on the share count); both split
-  gate rows skip them too, and a stray `splCut` on an `fcur` stock is never read by the app (`tests/test_us_fcur_totals.py`,
-  `tests/test_us_fcur_tot_app.py`).
+- **Splits (review round 1 of the switch-on, 2026-11-28, blocker B1):** when `fetch_us` keeps a details entry taken before a split
+  (#176), it multiplies it by the split factor (`sp_k`) for 시가총액. The totals step now gets the same factor (`split=`), so its market
+  value matches `cap`; before the fix a 4:1 split left TSMC at a quarter of its market value (PER 21.6 → 5.4) with every check passing.
+  A company whose split judgement stopped (`sp_bad`) is blank as "분할 배율을 확인하지 못함" (`split`), and any company whose market value
+  does not match its `cap` at the day's won rate (0.5%) is blank as "시가총액이 종목의 시가총액(cap)과 맞지 않음" (`cap`). #188's split check
+  and its stopped path skip `fcur` companies (`us_split_skip` "fcur"); both split gate rows skip them too, and a stray `splCut` on an
+  `fcur` stock is never read by the app (`tests/test_us_fcur_totals.py`, `tests/test_us_fcur_tot_app.py`).
 - **Why it is still off:** the converted line "재무제표가 {currency} 기준이라 {md} 미국 장 마감 환율로 달러로 바꿔 계산했어요." waits for
   Jack (`co.fcurTot` is `null`, `docs/tasks/v18.3-new-strings-pending.md`). A converted number without it would break the say-why rule,
   so the numbers stay off too, and 2.0 drops any such numbers while the line is `null` (`src/v2/load.js`). **To switch on after his
@@ -2424,15 +2432,20 @@ records, 5 losses, 4 stale balance sheets, 2 unclear dividends, 2 unconfirmed in
 equity, 1 missing income, 1 stale income).
 
 **Against the companies' own reports (2026-11-27, Jack: "Show in the PR how a sample of the 38 compares with each company's own reported
-figures").** The step was run with the switch on (in memory) on the 11-27 publish (US close 11-25), and 15 companies were compared with
+figures").** The step was run with the switch on (in memory) on the 11-27 publish (US close 11-25), and 15 companies (17 since review round 1: Futu and H World) were compared with
 their SEC filings (tagged figures of the annual report: 20-F, 40-F, 10-K; Enbridge also its 2026 10-Qs), converted at the same rate:
 - Yahoo's statement totals equal the companies' own: net income to common = the report's profit to owners, common equity = the report's
   equity to owners, for the same year (0% for 13 of 14; BAT −1% / +4%; Royal Bank's equity −8%: its figure includes preferred shares).
-- Our method on the company's own totals for the report's year gives the same PER and PBR as the report's per-share figures, within 3%
-  for most. Toyota −10%: its share count fell after March 2026 (repurchases and a tender offer for its own shares, 6-Ks of 2026-10-05,
-  11-04 and 11-05; Yahoo counts 11.74B shares, the report 13.03B). Alibaba +7%: Yahoo counts 19.9B shares, the report 18.58B (not
-  verified). The PBR of SAP, GSK, BAT and Sony is 5–7% lower than one from the report's cover share count, which can include treasury
-  shares (their PER checks agree within 3%).
+- Our method on the company's own totals for the report's year gives the report's per-share PER within 3% for 13 of 16 (Sony has no
+  PER) and its PBR within 3% for 9 of 17 (Futu and H World were added in review round 1). The gaps are share counts: our market value
+  uses Yahoo's current count, the report's EPS a year's weighted average and its BPS here the year-end count. Toyota −10%: its count fell
+  after March 2026 (repurchases and a tender offer for its own shares, 6-Ks of 2026-10-05, 11-04 and 11-05; Yahoo 11.74B, report 13.03B).
+  Alibaba +7%: Yahoo 19.9B, report 18.58B (not verified). XP −6% / −5%: Yahoo 496M, report 520M (weighted 527M; not verified). PBR only:
+  SAP, GSK, BAT, Sony and Ericsson −4 to −7%: Yahoo counts fewer shares than the report's year-end figure (SAP 1,154M vs 1,229M, GSK
+  4,031M vs 4,315M, BAT 2,147M vs 2,312M, Sony 5,828M vs 6,150M, Ericsson 3,238M vs 3,371M), close to their weighted averages.
+- Futu and H World, where our PER is far from Yahoo's (8.7 vs 25.49; 20.3 vs 34.26): the companies' own 2025 reports give 8.5 and 20.9
+  at our price and rate (Futu EPS 10.17 HKD per share, 8 per ADS; H World 1.65 CNY, 10 per ADS), so ours agree and Yahoo's PER does not
+  (its source not traced).
 - Enbridge files quarterly figures, so it is a true same-period check: our net income (6,307M CAD) and common equity (60,754M CAD) equal
   the company's own to the million; PER 23.6 vs 23.1 from its EPS (market value uses today's shares), PBR 2.45 vs 2.45.
 - The published PER and PBR use the last four quarters and the latest balance sheet, the annual reports an earlier year, so they differ
