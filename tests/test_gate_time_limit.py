@@ -38,7 +38,7 @@ NOW = dt.datetime(2026, 10, 31, 11, 0, tzinfo=V.KST)
 SESSIONS = {"dates": [dt.date(2026, 10, d) for d in (13, 14, 15, 16, 17, 20, 21, 22, 23, 26, 27, 28, 29, 30)], "src": "시험"}
 REAL_HTTP_PX_ALT = V.http_px_alt
 REAL_RUN_CHECKS = V.run_checks
-GATE_KEYS = ("tries", "timeouts", "firstCut")
+GATE_KEYS = ("tries", "timeouts", "firstCut", "kept", "keptEx", "xdis", "xdisEx")
 
 
 class Clock:
@@ -171,7 +171,7 @@ def test_first_timeout_then_a_retry_that_finishes_passes_with_a_loud_note():
     # 크게: 그 순간 (http_px_alt) · 넘긴 뒤 (몇 번째 · 대상 / 끝까지 물은 / 남은) · 다시 물은 확인이 끝난 뒤
     assert "!! 관문의 두 출처 확인 시간 한도 600초 (발행 관문): 다음 · 야후에 더 묻지 않아요 (확인 59 / 대상 207)" in lines[1]
     assert said[0] == ("!! 관문의 두 출처 확인이 시간 한도 600초를 넘겼어요 (발행 관문 · 1/2번째 · Jack 2026-11-27): 대상 207종목 · "
-                       "끝까지 물은 59 (확인 59) · 남은 148 · 걸린 시간 600초 — 처음부터 한 번 더 물어요 (새 한도 600초 · 받은 답은 다시 쓰지 않아요)")
+                       "끝까지 물은 59 (확인 59) · 남은 148 · 걸린 시간 600초 — 처음부터 한 번 더 물어요 (새 한도 600초 · 모든 종목을 다시 물어요 · 이번에 다르거나 받지 못한 종목은 그대로 세요)")
     assert said[1].startswith("!! 관문의 두 출처 확인: 다시 물은 확인은 시간 한도 안에 끝났어요 (2/2번째") and len(said) == 2
     rep = check(cur, alt, final=old, prev=prev)
     assert not rep.failed, rep.table()
@@ -356,8 +356,8 @@ def test_main_publish_ignores_the_deploy_limit_but_keeps_its_own(monkeypatch, ca
     """배포의 한도 값(건너뜀)을 받아도 발행 관문은 쓰지 않고 자기 한도(넘으면 한 번 더 · 또 넘으면 실패)만 써요."""
     code, out, _, gates = run_main(monkeypatch, capsys, tmp_path, [3.0], env_limit="900")
     assert gates == [600.0, 600.0] and code == 1
-    assert ("· 다음 확인 시간 한도(900)는 사이트 점검(--live)에서만 써요 — 이 실행(publish)은 한도 없이 예전 그대로 묻지 않고, 이 값 대신 "
-            "발행 관문의 한도 600초를 써요 (넘으면 바로 한 번 더, 또 넘으면 실패 · 건너뛰지 않아요 · Jack 2026-11-27)") in out
+    assert ("· 다음 확인 시간 한도(900)는 사이트 점검(--live)에서만 써요 — 이 실행(publish)은 한도 없이 예전 그대로 묻는 대신, 이 값이 아닌 "
+            "발행 관문의 한도 600초 안에서 물어요 (넘으면 바로 한 번 더, 또 넘으면 실패 · 건너뛰지 않아요 · Jack 2026-11-27)") in out
 
 
 # ── 5. 배포 · 감시 (--live) 는 예전 그대로 ───────────────────────────────────────────────
@@ -697,13 +697,14 @@ def test_live_with_the_same_sources_is_as_before(budget):
 
 def test_a_gated_check_with_nothing_left_equals_the_unlimited_check():
     """남은 종목(cut)이 0 인 발행 관문의 확인은 한도 없이 물었을 때 (main 과 같은 길) 와 결과가 똑같아요 — 무작위 출처 (느림 · 연결 오류 · 시간
-    초과 · JSON 이 아님 · 야후 404 · 그날 행 없음 · 다른 종가) 로. 남은 종목이 있으면 그 확인은 쓰지 않아요 (px_alt_confirms)."""
+    초과 · JSON 이 아님 · 야후 404 · 그날 행 없음 · 다른 종가) 로. 묻는 차례와 쉬는 시간까지 같아요 (쉬면 가짜 시계가 그만큼 가요 · 리뷰 #198
+    2차 nit). 남은 종목이 있으면 그 확인은 쓰지 않아요 (px_alt_confirms)."""
     import random
     cur, prev, old = fb_files()
     px = prices(cur)
     keep = ("closes", "asked", "got", "meta", "disagree", "mustMissing", "err", "no", "noMust", "noEx", "net", "netMust")
 
-    def sources(seed, clk):
+    def sources(seed, clk, trace):
         rnd, plan, cnt = random.Random(seed), {}, {}
         p_err = rnd.choice([0.0, 0.05, 0.3]); p_wrong = rnd.choice([0.0, 0.02]); scale = rnd.choice([0.1, 0.3, 1.0, 3.0])
 
@@ -712,6 +713,7 @@ def test_a_gated_check_with_nothing_left_equals_the_unlimited_check():
             key = (kind, code, cnt[(kind, code)])
             if key not in plan:
                 plan[key] = (rnd.random(), scale * rnd.choice([0.0, 0.5, 1.0, 3.0, 10.0]))
+            trace.append((kind, code, clk.t))
             return plan[key]
 
         def fd(code, d):
@@ -735,24 +737,363 @@ def test_a_gated_check_with_nothing_left_equals_the_unlimited_check():
             if r < p_err:
                 raise non_json()
             return px[sym.split(".")[0]], "bar"
-        return fd, fy
-    both = 0
+
+        def sleep(sec):
+            trace.append(("sleep", sec, clk.t))
+            clk.t += sec
+        return fd, fy, sleep
+    both = slept = 0
     for seed in range(120):
-        res = []
+        res, traces = [], []
         for gated in (False, True):
-            clk = Clock()
-            fd, fy = sources(seed, clk)
+            clk, trace = Clock(), []
+            fd, fy, sleep = sources(seed, clk, trace)
             tok = V._PX_ALT_GATE_S.set(600.0) if gated else None
             try:
-                res.append(V.http_px_alt(cur["data"], PX, fetch=fy, fetch_daum=fd, workers=1, clock=clk, sleep=lambda s: None,
-                                         say=lambda s: None))
+                res.append(V.http_px_alt(cur["data"], PX, fetch=fy, fetch_daum=fd, workers=1, clock=clk, sleep=sleep, say=lambda s: None))
             finally:
                 if tok is not None:
                     V._PX_ALT_GATE_S.reset(tok)
+            traces.append(trace)
         plain, gated = res
         if gated["cut"] == 0:
             both += 1
             assert {k: gated[k] for k in keep} == {k: plain[k] for k in keep}, seed
+            assert traces[0] == traces[1], seed                         # 같은 차례 · 같은 쉬는 시간 · 같은 시각
+            slept += sum(1 for t in traces[0] if t[0] == "sleep")
         else:
             assert not V.px_alt_confirms(cur["data"], gated, PX, old, "publish", today=TODAY, now=NOW, special={})[0], seed
-    assert 20 <= both < 120                                            # 두 길 모두 시험했어요
+    assert 20 <= both < 120 and slept > 20                             # 두 길 모두 · 쉬는 시간도 시험했어요
+
+
+# ── 8. 리뷰 #198 2차 (Fable · 막는 문제): 다시 물은 확인이 첫 확인이 본 것을 덮으면 안 돼요 ──────────────────────────────
+# 예전 (1차까지): 다시 물은 확인의 기록이 첫 확인의 기록을 그냥 바꿨어요 — 첫 10분에 본 다른 종가 (005930 다음 ≠ 야후) 가 조용히 사라지고, 깨끗한
+# 다시 물은 확인이 통과했어요 (main 은 그 실행을 실패시켜요 · Fable probeC). 이제 종목마다 합쳐요 (px_alt_gate_merge · px_alt_gate_fold).
+import random  # noqa: E402
+import zlib  # noqa: E402
+
+KIND = {"no": "그날 행 0개"}
+
+
+def world_ask(cur, odd, until=600.0, step_slow=600.0 / 204, shared=None):
+    """Fable probeC 꼴의 세계: 답이 시각에만 달려요 (두 확인이 한 시계를 같이 써요 — 실행 안의 진짜 시간처럼). until 초 전에는 한 번 묻는 데
+    step_slow 초 (느린 아침) 이고 odd(code) 가 (값, 까닭) 이면 다음이 그렇게 답해요. 그 뒤에는 바로 · 깨끗하게. 반환: (ask, main 처럼 한도 없이
+    한 번 묻는 함수, 시계)."""
+    px = prices(cur)
+    w = shared or {"t": 0.0}
+
+    def fd(code, d):
+        early = w["t"] < until
+        if early:
+            w["t"] += step_slow
+            o = odd(code)
+            if o is not None:
+                return o
+        return px[code], "daum"
+
+    def fy(sym, d, close_time=None):
+        return px[sym.split(".")[0]], "bar"
+    lines = []
+
+    def ask():
+        return V.http_px_alt(cur["data"], PX, fetch=fy, fetch_daum=fd, workers=1, clock=lambda: w["t"], sleep=lambda s: None, say=lines.append)
+    return ask, w, lines
+
+
+@pytest.mark.parametrize("variant", ["A", "B"])
+def test_review2_probeC_a_first_try_problem_is_not_forgotten(variant):
+    """Fable probeC: 첫 10분 동안 005930 이 다음 ≠ 야후 (A) 이거나 다음이 그날 행이 없다고 답해요 (B). 한도는 마지막 4종목에 걸리고, 다시 물은
+    확인은 빠르고 깨끗해요. main: 005930 · 날짜 · 가격 줄 실패. 첫 판: 통과 (날짜 줄 경고 · 005930 이름 없음). 이제 main 과 같은 줄이 실패하고
+    005930 이 날짜 줄 · 로그에 나와요."""
+    cur, prev, old = fb_files()
+    px = prices(cur)
+    odd = (lambda c: (px[c] + 100, "daum") if c == "005930" else None) if variant == "A" else \
+        (lambda c: (None, "그날 행 0개") if c == "005930" else None)
+    main_ask, _, _ = world_ask(cur, odd)
+    main_like = main_ask()                                             # 한도 없이 한 번 (main 과 같은 길)
+    rm = check(cur, main_like, final=old, prev=prev)
+    assert failed(rm) == {"005930 = 공식 종가", "pxDate = 최종본 날짜", "한국 가격 = 공식 종가"}
+    ask, _, lines = world_ask(cur, odd)
+    said = []
+    alt = V.px_alt_publish_gate(ask, say=said.append)
+    assert alt["tries"] == 2 and alt["timeouts"] == 1 and alt["firstCut"]["cut"] == 4 and alt["cut"] == 0
+    assert alt["mustMissing"] == ["005930"] and alt["got"] == main_like["got"] == 206 and alt["kept"] == 1
+    assert alt["disagree"] == main_like["disagree"] and alt["closes"] == main_like["closes"]
+    rb = check(cur, alt, final=old, prev=prev)
+    assert failed(rb) == failed(rm), rb.table()                        # main 과 같은 줄이 실패해요
+    r = rows(rb)["pxDate = 최종본 날짜"]
+    assert "필수 종목을 확인하지 못했어요: 005930" in r[2] and "첫 확인에서 다르거나 받지 못한 종목 1개는 그대로 셌어요 (보기: 005930 " in r[2]
+    why = f"005930 다음 {px['005930'] + 100:,.0f} · 야후 {px['005930']:,.2f}" if variant == "A" else "005930 다음: 그날 행 0개"
+    assert [x for x in said if x.startswith("!! 관문의 두 출처 확인: 첫 확인에서 다르거나 받지 못한 종목 1: ")] == \
+        [f"!! 관문의 두 출처 확인: 첫 확인에서 다르거나 받지 못한 종목 1: {why} — 다시 물은 확인에서도 그대로 세요 (확인으로 치지 않아요 · 리뷰 #198 2차)"]
+
+
+def asker_by_try(cur, steps, daum_by_try=None, yahoo_by_try=None):
+    """부를 때마다 새 가짜 시계 · 동시 1. n번째 확인의 다음 · 야후 답을 daum_by_try[n](code) · yahoo_by_try[n](code) 가 정해요 (None 이면 발행 가격)."""
+    px = prices(cur)
+    n = {"i": -1}
+
+    def ask():
+        n["i"] += 1
+        i, clk = n["i"], Clock()
+
+        def fd(code, d):
+            clk.t += steps[min(i, len(steps) - 1)]
+            f = (daum_by_try or {}).get(i)
+            o = f(code) if f else None
+            return o if o is not None else (px[code], "daum")
+
+        def fy(sym, d, close_time=None):
+            code = sym.split(".")[0]
+            f = (yahoo_by_try or {}).get(i)
+            o = f(code) if f else None
+            return o if o is not None else (px[code], "bar")
+        return V.http_px_alt(cur["data"], PX, fetch=fy, fetch_daum=fd, workers=1, clock=clk, sleep=lambda s: None, say=lambda s: None)
+    return ask
+
+
+def test_review2_first_try_disagreements_stay_after_a_clean_retry():
+    """첫 확인 (한도 전) 에 표본 세 종목에서 다음 ≠ 야후 — 다시 물은 확인은 깨끗해요. 세 종목은 그대로 다름이고 (가격 줄에서 다른 종가 · 확인 아님),
+    가격 줄은 main (첫 확인과 같은 답을 한도 없이) 과 같이 실패해요 (204/207 = 98.6%)."""
+    cur, prev, old = fb_files()
+    px = prices(cur)
+    order = sorted(V.px_alt_pick(cur["data"]))
+    bad = [c for c in order if c not in V.MUST][5:8]                   # 한도 전에 묻는 종목
+    first = (lambda c: (px[c] + 1, "daum") if c in bad else None)
+    main_like = asker_by_try(cur, [0.0], {0: first})()
+    alt = V.px_alt_publish_gate(asker_by_try(cur, [10.0, 0.0], {0: first}), say=lambda s: None)
+    assert alt["timeouts"] == 1 and alt["kept"] == 3 and alt["xdis"] == 0
+    assert alt["disagree"] == main_like["disagree"] and len(alt["disagree"]) == 3 and alt["closes"] == main_like["closes"]
+    rb, rm = check(cur, alt, final=old, prev=prev), check(cur, main_like, final=old, prev=prev)
+    assert "한국 가격 = 공식 종가" in failed(rb) and failed(rb) == failed(rm)
+    assert rows(rb)["한국 가격 = 공식 종가"][1] == rows(rm)["한국 가격 = 공식 종가"][1] == "98.6%"
+
+
+def test_review2_a_must_have_without_a_close_in_the_first_try_stays_missing():
+    """첫 확인에 다음이 005930 의 그날 행이 없다고 답해요 — 다시 물은 확인은 받아요. 그래도 확인 못 함 (main 처럼): 필수 종목이 빠져 실패."""
+    cur, prev, old = fb_files()
+    first = (lambda c: (None, "그날 행 0개") if c == "005930" else None)
+    main_like = asker_by_try(cur, [0.0], {0: first})()
+    alt = V.px_alt_publish_gate(asker_by_try(cur, [10.0, 0.0], {0: first}), say=lambda s: None)
+    assert alt["mustMissing"] == main_like["mustMissing"] == ["005930"] and alt["noMust"] == ["005930"] and "005930" not in alt["closes"]
+    assert alt["noEx"] == main_like["noEx"] and alt["got"] == main_like["got"]
+    rb, rm = check(cur, alt, final=old, prev=prev), check(cur, main_like, final=old, prev=prev)
+    assert failed(rb) == failed(rm) and "pxDate = 최종본 날짜" in failed(rb)
+    assert "필수 종목을 확인하지 못했어요: 005930" in rows(rb)["pxDate = 최종본 날짜"][2]
+
+
+@pytest.mark.parametrize("how", ["dis", "other_close", "no_row", "yahoo_404"])
+def test_review2_a_first_try_close_the_retry_does_not_repeat_is_not_confirmed(how):
+    """첫 확인이 확인한 종목 X (한도 전) 를 다시 물은 확인이 다르게 봐요:
+    - 두 출처가 다름 → 그 다름 그대로 (다시 물은 확인의 발견) · 다른 종가를 두 출처가 함께 줌 → '두 확인이 다름' (다른 종가);
+    - 다음이 그날 행 없음 · 야후 404 → 확인 아님 · 가격 줄에서는 첫 확인의 종가로 (main 과 같은 비교)."""
+    cur, prev, old = fb_files()
+    px = prices(cur)
+    order = sorted(V.px_alt_pick(cur["data"]))
+    x = [c for c in order if c not in V.MUST][3]
+    daum2 = {"dis": lambda c: (px[c] + 1, "daum") if c == x else None, "other_close": lambda c: (px[c] + 3, "daum") if c == x else None,
+             "no_row": lambda c: (None, "그날 행 0개") if c == x else None, "yahoo_404": None}[how]
+    yahoo2 = {"other_close": lambda c: (px[c] + 3, "bar") if c == x else None,
+              "yahoo_404": (lambda c: (_ for _ in ()).throw(yahoo_404()) if c == x else None)}.get(how)
+    said = []
+    alt = V.px_alt_publish_gate(asker_by_try(cur, [10.0, 0.0], {1: daum2} if daum2 else None, {1: yahoo2} if yahoo2 else None),
+                                say=said.append)
+    assert alt["timeouts"] == 1 and alt["got"] == 206 and x not in alt["mustMissing"]
+    assert x in alt["closes"]                                          # 가격 줄에서 비교해요
+    if how == "dis":
+        assert alt["closes"][x] == px[x] + 1.5 and alt["xdis"] == 0 and any(d.startswith(f"{x} 다음 ") for d in alt["disagree"])
+    elif how == "other_close":
+        assert alt["closes"][x] == px[x] + 0.5 and alt["xdis"] == 1 and alt["xdisEx"] == [f"{x} 첫 확인 {px[x]:,.0f} · 다시 물은 확인 다음 {px[x] + 3:,.0f}"]
+        assert any("첫 확인과 다시 물은 확인이 다른 종목 1: " in ln for ln in said)
+    else:
+        assert alt["closes"][x] == px[x] and alt["xdis"] == 1 and x not in " ".join(alt["disagree"])
+        assert alt["xdisEx"][0].startswith(f"{x} 첫 확인 {px[x]:,.0f} · 다시 물은 확인: " + ("다음 그날 행 0개" if how == "no_row" else "야후 404"))
+    rb = check(cur, alt, final=old, prev=prev)
+    assert "첫 확인과 다시 물은 확인이 다른 종목" in rows(rb)["pxDate = 최종본 날짜"][2] or how == "dis"
+
+
+def test_review2_a_different_close_either_try_saw_is_never_dropped():
+    """첫 확인에 다음이 X 의 그날 행이 없다고 답했고 (확인 못 함), 다시 물은 확인에서는 X 의 두 출처가 달라요. X 는 확인 못 함 (첫 확인의 까닭이 로그에)
+    이고, 가격 줄에서는 다른 종가로 세요 — 어느 확인이 본 다른 종가든 버리지 않아요 (다시 물은 확인만의 기록보다도 느슨하지 않게)."""
+    cur, _, _ = fb_files()
+    px = prices(cur)
+    x = [c for c in sorted(V.px_alt_pick(cur["data"])) if c not in V.MUST][4]
+    said = []
+    alt = V.px_alt_publish_gate(asker_by_try(cur, [10.0, 0.0], {0: lambda c: (None, "그날 행 0개") if c == x else None,
+                                                                1: lambda c: (px[c] + 1, "daum") if c == x else None}), say=said.append)
+    assert alt["timeouts"] == 1 and alt["kept"] == 1 and alt["keptEx"] == [f"{x} 다음: 그날 행 0개"]
+    assert alt["closes"][x] == px[x] + 1.5 and alt["got"] == 206 and alt["disagree"] == [f"{x} 다음 {px[x] + 1:,.0f} · 야후 {px[x]:,.2f}"]
+    assert any(ln.startswith(f"!! 관문의 두 출처 확인: 첫 확인에서 다르거나 받지 못한 종목 1: {x} 다음: 그날 행 0개") for ln in said)
+
+
+def test_review2_a_first_try_daum_close_cut_before_yahoo_must_match_the_retry():
+    """첫 확인이 X 의 다음 값만 받고 야후를 묻다 한도에 걸렸어요 ('cutY'). 다시 물은 확인이 같은 값으로 확인하면 확인 · 다른 값으로 확인하면
+    '두 확인이 다름' (main 은 첫 다음 값과 그 뒤의 야후를 맞춰 봤을 거예요 — 모르니 확인으로 치지 않아요)."""
+    cur, prev, old = fb_files()
+    px = prices(cur)
+    order = sorted(V.px_alt_pick(cur["data"]))
+    x = order[-1]
+
+    def ask_factory(first_daum, second):
+        n = {"i": -1}
+
+        def ask():
+            n["i"] += 1
+            i, clk = n["i"], Clock()
+
+            def fd(code, d):
+                if i == 0 and code == x:
+                    clk.t = 600.0                                      # 다음이 답한 순간 한도 — 야후는 묻지 못해요
+                    return first_daum, "daum"
+                return (second if (i == 1 and code == x) else px[code]), "daum"
+
+            def fy(sym, d, close_time=None):
+                code = sym.split(".")[0]
+                return (second if (i == 1 and code == x) else px[code]), "bar"
+            return V.http_px_alt(cur["data"], PX, fetch=fy, fetch_daum=fd, workers=1, clock=clk, sleep=lambda s: None, say=lambda s: None)
+        return ask
+    same = V.px_alt_publish_gate(ask_factory(px[x], px[x]), say=lambda s: None)
+    assert same["firstCut"]["cut"] == 1 and same["got"] == 207 and same["xdis"] == 0 and same["closes"][x] == px[x]
+    diff = V.px_alt_publish_gate(ask_factory(px[x] + 7, px[x]), say=lambda s: None)
+    assert diff["got"] == 206 and diff["xdis"] == 1 and diff["closes"][x] == px[x] + 7.5
+    assert diff["xdisEx"] == [f"{x} 첫 확인 {px[x] + 7:,.0f} · 다시 물은 확인 다음 {px[x]:,.0f}"]
+
+
+def test_review2_merge_without_history_rebuilds_the_same_record():
+    """px_alt_gate_merge 가 다시 세는 칸은 앞선 확인이 없을 때 http_px_alt 의 기록과 똑같아요 (무작위 출처 120 · 다름 · 그날 행 없음 · 오류 ·
+    야후 확인 못 함 · meta) — 합치는 코드가 기록의 꼴에서 벗어나지 않게."""
+    cur, _, _ = fb_files()
+    px = prices(cur)
+    fields = ("closes", "got", "meta", "disagree", "mustMissing", "no", "noMust", "noEx", "net", "netMust")
+    for seed in range(120):
+        rnd = random.Random(seed)
+        p = rnd.choice([0.0, 0.05, 0.3])
+
+        def fd(code, d, rnd=rnd, p=p):
+            r = rnd.random()
+            if r < p / 4:
+                raise requests.ConnectionError("conn")
+            if r < p / 2:
+                raise non_json()
+            if r < p:
+                return None, "그날 행 0개"
+            return px[code] + (1 if rnd.random() < p / 3 else 0), "daum"
+
+        def fy(sym, d, close_time=None, rnd=rnd, p=p):
+            r = rnd.random()
+            if r < p / 3:
+                raise yahoo_404()
+            if r < p / 2:
+                return None, "그날 일봉 없음"
+            return px[sym.split(".")[0]], ("meta" if rnd.random() < 0.1 else "bar")
+        sink = {}
+        tok, tok2 = V._PX_ALT_GATE_S.set(600.0), V._PX_ALT_GATE_SINK.set(sink)
+        try:
+            alt = V.http_px_alt(cur["data"], PX, fetch=fy, fetch_daum=fd, workers=1, clock=Clock(), sleep=lambda s: None, say=lambda s: None)
+        finally:
+            V._PX_ALT_GATE_SINK.reset(tok2)
+            V._PX_ALT_GATE_S.reset(tok)
+        assert len(sink) == alt["asked"] and alt["cut"] == 0
+        rebuilt = dict(alt)
+        assert V.px_alt_gate_merge(rebuilt, [], sink) == ({}, {})
+        assert {k: rebuilt[k] for k in fields} == {k: alt[k] for k in fields}, seed
+    bad = dict(alt)
+    V.px_alt_gate_merge(bad, [], dict(list(sink.items())[:5]))         # 기록이 모자라면 쓰지 않아요 (필수 종목 모두 · 확인 0)
+    assert bad["mustMissing"] == list(V.MUST) and bad["got"] == 0 and bad["gateMergeErr"] == f"기록 5 / 대상 {alt['asked']}"
+
+
+def settled_world(seed, cur, clk, trace=None):
+    """시각에 달린 세계 (리뷰 #198 2차 · Fable probeA · probeC 꼴): 600초 전에는 느리고 (한 번에 평균 mean 초), settle 초 전에는 가끔 이상한 답
+    (다른 종가 · 그날 행 없음 · 연결 오류 · JSON 이 아님 · 야후 404 · 시간 초과). settle 뒤 (≤ 600초) 에는 종목마다 정해진 답 (대개 맞음 · 가끔
+    다름 · 그날 행 없음 · 야후 404 · 다음 연결 오류) 이고 빨라요. 답은 (종목 · 출처 · 시각) 에만 달려요 — 같은 시각에 물으면 같은 답.
+    쉬면 그만큼 시계가 가요."""
+    px = prices(cur)
+    rnd = random.Random(seed)
+    settle = rnd.choice([0.0, 300.0, 600.0])
+    mean = rnd.choice([0.5, 1.6, 2.5, 4.0])
+    p_odd = rnd.choice([0.0, 0.02, 0.1])
+    w = rnd.choice([(100, 0, 0, 0, 0), (97, 1, 1, 1, 0), (94, 2, 2, 1, 1)])
+    fixed = {c: rnd.choices(["ok", "dis", "norow", "yfail", "dnet"], weights=w)[0] for c in sorted(V.px_alt_pick(cur["data"]))}
+
+    def r_at(kind, code):
+        """(종목 · 출처 · 시각) 에서 정해지는 0 ~ 1 값 셋 (같은 시각에 물으면 같은 답)."""
+        h = zlib.crc32(f"{seed}|{kind}|{code}|{clk.t:.4f}".encode())
+        return (h & 0x3FF) / 1024, ((h >> 10) & 0x3FF) / 1024, (h >> 20) & 0x3
+
+    def fd(code, d):
+        t, (u_step, u_odd, k) = clk.t, r_at("d", code)
+        clk.t += (mean if t < 600.0 else 0.05) * (0.0, 0.5, 1.0, 1.5)[int(u_step * 4)]
+        if trace is not None:
+            trace.append(("d", code, t))
+        if t < settle and u_odd < p_odd:
+            if k == 0:
+                return px[code] + 1, "daum"
+            if k == 1:
+                return None, "그날 행 0개"
+            if k == 2:
+                raise requests.ConnectionError("conn")
+            raise non_json()
+        f = fixed[code]
+        if f == "dis":
+            return px[code] + 1, "daum"
+        if f == "norow":
+            return None, "그날 행 0개"
+        if f == "dnet":
+            raise requests.ConnectionError("conn")
+        return px[code], "daum"
+
+    def fy(sym, d, close_time=None):
+        code = sym.split(".")[0]
+        t, (u_step, u_odd, k) = clk.t, r_at("y", code)
+        clk.t += (mean if t < 600.0 else 0.05) * (0.0, 0.5, 1.0, 1.5)[int(u_step * 4)]
+        if trace is not None:
+            trace.append(("y", code, t))
+        if t < settle and u_odd < p_odd:
+            if k == 0:
+                return px[code] + 2, "bar"
+            if k == 1:
+                raise yahoo_404()
+            if k == 2:
+                raise requests.Timeout("to")
+            raise non_json()
+        if fixed[code] == "yfail":
+            raise yahoo_404()
+        return px[code], "bar"
+
+    def sleep(sec):
+        if trace is not None:
+            trace.append(("sleep", sec, clk.t))
+        clk.t += sec
+    return fd, fy, sleep
+
+
+def test_review2_randomized_whenever_the_gate_passes_main_passes_too():
+    """무작위 세계 160개 (시각에 달린 답 · 진짜로 쉬는 시간): 다시 묻기까지 하는 발행 관문이 통과하면, 같은 세계에서 한도 없이 한 번 묻는 main 도
+    반드시 통과해요 — 느슨해지지 않아요. 다시 물은 확인이 끝까지 간 경우: 확인 수는 main 보다 많지 않고, main 이 빠뜨린 필수 종목은 관문도 빠뜨려요.
+    한 번에 끝난 확인은 main 과 묻는 차례 · 쉬는 시간 · 기록이 똑같아요 (한도 값 · 걸린 시간만 빼고)."""
+    cur, prev, old = fb_files()
+    stats = {"once": 0, "retry_pass": 0, "retry_fail": 0, "retry_main_fail": 0, "twice": 0}
+    for seed in range(160):
+        clk_m, tr_m = Clock(), []
+        fd, fy, sleep = settled_world(seed, cur, clk_m, tr_m)
+        main_like = V.http_px_alt(cur["data"], PX, fetch=fy, fetch_daum=fd, workers=1, clock=clk_m, sleep=sleep, say=lambda s: None)
+        clk_g, tr_g = Clock(), []
+        fd, fy, sleep = settled_world(seed, cur, clk_g, tr_g)
+        alt = V.px_alt_publish_gate(lambda: V.http_px_alt(cur["data"], PX, fetch=fy, fetch_daum=fd, workers=1, clock=clk_g, sleep=sleep,
+                                                          say=lambda s: None), say=lambda s: None)
+        if "tries" not in alt:                                         # 한 번에 끝나면 main 과 똑같아요 (줄도 같은 기록에서 나와요)
+            stats["once"] += 1
+            assert tr_g == tr_m and {k: v for k, v in alt.items() if k not in ("limit", "secs")} == \
+                {k: v for k, v in main_like.items() if k not in ("limit", "secs")}, seed
+            continue
+        if alt["cut"]:
+            stats["twice"] += 1
+            assert V.px_alt_confirms(cur["data"], alt, PX, old, "publish", today=TODAY, now=NOW, special={})[0] is False
+            continue
+        rb, rm = check(cur, alt, final=old, prev=prev), check(cur, main_like, final=old, prev=prev)
+        if not rb.failed:
+            assert not rm.failed, (seed, sorted(failed(rm)))           # 관문이 통과하면 main 도 통과
+        stats["retry_pass" if not rb.failed else "retry_fail"] += 1
+        stats["retry_main_fail"] += bool(rm.failed)
+        assert alt["got"] <= main_like["got"] and set(main_like["mustMissing"]) <= set(alt["mustMissing"]), seed
+    assert stats["once"] >= 20 and stats["retry_pass"] >= 15 and stats["retry_main_fail"] >= 8, stats

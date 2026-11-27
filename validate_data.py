@@ -162,8 +162,11 @@ PX_ALT_REFUSE_ENV = "BAEPSAE_DAUM_REFUSE_SKIP"   # deploy.yml 관문 단계: 코
 # 발행하지 않고, 다음 예정 실행이 다시 해요). 한도에 걸린 확인은 받은 종목 수가 기준을 채웠어도 통과 · 건너뜀이 되지 않아요
 # (px_alt_confirms · 받지 못한 종목의 다른 종가를 놓칠 수 있어요). '한도에 걸림' = 한도 때문에 묻지 못했거나 다시 묻지 못한 종목(cut)이
 # 하나라도 있음 — 마지막 오류 종류와 상관없이 (리뷰 #198 1차: 네트워크 오류가 아닌 답 뒤 다시 묻지 못한 종목도). 그래서 cut 이 0 인 확인은
-# 한도 없이 물었을 때와 똑같이 다 물은 확인이고 (같은 횟수 · 같은 쉬는 시간), 예전 기준 그대로 판단해요. 다시 물었으면 날짜 줄이 경고로
-# 알려요. 최악 약 2 × (600 + 40)초 ≈ 21분 (매일 실행 job 한도 300분 안). 배포의 관문(한도를 받은 --live · 위)과 감시(한도 없는 --live)는
+# 한도 없이 물었을 때와 똑같이 다 물은 확인이고 (같은 횟수 · 같은 쉬는 시간), 예전 기준 그대로 판단해요. 다시 물어 끝까지 갔으면 앞선 확인이
+# 본 것을 종목마다 합쳐요 (리뷰 #198 2차 · px_alt_gate_merge): 앞선 확인이 끝까지 물었는데 확인하지 못한 종목 (다름 · 그날 종가 없음 · 오류)
+# 은 그대로 확인 못 함 · 앞선 확인이 확인한 종목은 다시 물은 확인도 같은 종가로 확인해야 확인 — 앞선 확인은 한도까지 main 과 똑같이 물으니, 그
+# 종목들에서 합친 결과는 main 보다 느슨하지 않아요 (앞선 확인이 끝내지 못한 종목만 다시 물은 확인의 답으로 — main 의 다음 실행처럼). 그 판단은 예전
+# 기준 그대로이고, 다시 물었으면 날짜 줄이 경고로 알려요 (앞선 확인에서 본 문제는 이름과 함께). 최악 약 2 × (600 + 40)초 ≈ 21분 (매일 실행 job 한도 300분 안). 배포의 관문(한도를 받은 --live · 위)과 감시(한도 없는 --live)는
 # 예전 그대로예요.
 PX_ALT_GATE_BUDGET_S = 600
 PX_ALT_GATE_TRIES = 2                     # 첫 확인 + 바로 다시 한 번 (Jack: "one immediate retry")
@@ -171,6 +174,9 @@ PX_ALT_GATE_TRIES = 2                     # 첫 확인 + 바로 다시 한 번 (
 # (시험들이 그 꼴을 맞춰 봐요: test_kr_two_source · test_live_gate_daum_limit · test_live_gate_daum_refusal), 따로 부르는 http_px_alt(발행) 는
 # 예전 그대로 한도 없이 돌아요.
 _PX_ALT_GATE_S = contextvars.ContextVar("px_alt_gate_s", default=None)
+# 리뷰 #198 2차 (Fable): 다시 물은 확인이 첫 확인을 그냥 덮으면, 첫 확인이 이미 본 다른 종가 · 받지 못한 종가가 조용히 사라져요 (main 은 그 실행을
+# 실패시켜요). 그래서 발행 관문이 확인마다 종목별로 어떻게 끝났는지 이 기록에 적고 (http_px_alt · keep), px_alt_gate_merge 가 합쳐요.
+_PX_ALT_GATE_SINK = contextvars.ContextVar("px_alt_gate_sink", default=None)
 IND_CARRY_WARN_DAYS = 14                  # 지난 발행본에서 이어 쓴 국내 업종 글자가 이보다 오래되면 경고 (fetch_data 와 같은 값)
 # 2026-11-19 (Jack, verbatim): "The 129 unconfirmed stocks: stop showing "이 종목의 데이터를 찾지 못했어요." Show each stock's last confirmed
 # close with its own date (the existing own-close mechanism), plus "오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요." It must never sit
@@ -1217,8 +1223,10 @@ def px_alt_was_cut(alt):
 def px_alt_gate_note(alt):
     """발행 관문(publish · bootstrap) 확인의 시간 한도 기록 → 날짜 줄 · 알림에 붙이는 한 줄 (2026-11-27 Jack · 순수 함수). 매일 아침 점검이
     읽어요. 수: 대상 · 끝까지 물은 (대상 − 남은: 두 출처가 같음 · 다름 · 그날 종가 없음 · 세 번 모두 오류로 끝난 종목) · 확인 (두 출처가
-    같은 종목) · 남은 (한도로 묻지 못했거나 다시 묻지 못한 종목 = cut). 한도에 걸린 확인 (cut 이 0 이 아님 — 실패): '시간 한도 600초를 두 번 넘김 …'. 첫 확인만 걸리고 다시 물은 확인이 끝까지 감 (통과할 수
-    있어요 · 경고): '첫 확인이 시간 한도 600초를 넘겨 처음부터 다시 물었어요 …'. 그 밖에는 None (사이트 점검 기록 · 걸리지 않은 확인)."""
+    같은 종목) · 남은 (한도로 묻지 못했거나 다시 묻지 못한 종목 = cut). 한도에 걸린 확인 (cut 이 0 이 아님 — 실패): '시간 한도 600초를
+    두 번 넘김 …'. 첫 확인만 걸리고 다시 물은 확인이 끝까지 감 (통과할 수 있어요 · 경고): '첫 확인이 시간 한도 600초를 넘겨 처음부터 다시
+    물었어요 …' — 첫 확인에서 다르거나 받지 못한 종목 · 두 확인의 종가가 다른 종목이 있으면 그 수와 보기도 (리뷰 #198 2차 · px_alt_gate_merge).
+    그 밖에는 None (사이트 점검 기록 · 걸리지 않은 확인)."""
     if not isinstance(alt, dict) or alt.get("mode", "publish") != "publish":
         return None
     n = _count(alt.get("timeouts"))
@@ -1231,8 +1239,13 @@ def px_alt_gate_note(alt):
     if n >= 1:
         f = alt.get("firstCut") if isinstance(alt.get("firstCut"), dict) else {}
         fa, fc, fg = _count(f.get("asked")), _count(f.get("cut")), _count(f.get("got"))
+        kept, xd = _count(alt.get("kept")), _count(alt.get("xdis"))
         return (f"첫 확인이 {lim_s}를 넘겨 처음부터 다시 물었어요 (Jack 2026-11-27 · 첫 확인: 대상 {fa}종목 · 끝까지 물은 {max(fa - fc, 0)} "
-                f"(확인 {fg}) · 남은 {fc}) — 다시 물은 확인은 끝까지 가서 예전 기준 그대로 판단해요")
+                f"(확인 {fg}) · 남은 {fc}) — 다시 물은 확인은 끝까지 가서 예전 기준 그대로 판단해요"
+                + (f" · 첫 확인에서 다르거나 받지 못한 종목 {kept}개는 그대로 셌어요 (보기: {'; '.join(map(str, (alt.get('keptEx') or [])[:3]))})"
+                   if kept else "")
+                + (f" · 첫 확인과 다시 물은 확인이 다른 종목 {xd}개는 확인으로 치지 않았어요 (보기: {'; '.join(map(str, (alt.get('xdisEx') or [])[:3]))})"
+                   if xd else ""))
     return None
 
 
@@ -1425,6 +1438,7 @@ def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, s
     gate = _PX_ALT_GATE_S.get() if mode == "publish" else None   # 2026-11-27: 발행 관문의 한도 (px_alt_publish_gate 가 켠 동안만)
     if gate is not None:
         limit = float(gate)
+    sink = _PX_ALT_GATE_SINK.get() if gate is not None else None   # 리뷰 #198 2차: 종목마다 어떻게 끝났는지 (px_alt_publish_gate 가 합쳐요)
     # 2026-11-21 (Jack "3. Yes."): 다음이 아예 거절하는지 — 코드 배포만 (한도를 받은 live + refuse_skip). 그 밖에는 need 가 None 이라 예전 그대로예요.
     need = px_alt_refuse_need(len(pick)) if limit is not None and mode == "live" and refuse_skip is True else None
     t0 = clock()
@@ -1524,6 +1538,14 @@ def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, s
             return None, px_refusal_name(last_e), "ref"
         return None, last, ("net" if last_net else "no")
 
+    def keep(code, *state):
+        """발행 관문만 (2026-11-27 · 리뷰 #198 2차): 종목마다 이 확인이 어떻게 끝났는지 px_alt_publish_gate 의 기록(sink)에 적어요 —
+        ('ok', 다음 값, 'bar'·'meta') · ('dis', 다음 값, 야후 값) · ('no', 까닭) · ('net', 까닭) · ('yfail', 다음 값, 까닭) ·
+        ('cutY', 다음 값 — 야후를 묻다 한도) · ('cut',). 그 밖에는 (sink 없음) 아무것도 하지 않아요."""
+        if sink is not None:
+            with lock:
+                sink[code] = state
+
     def one(item):
         code, sym = item
         dv, dwhy, dhow = get(fetch_daum, code, code, px)
@@ -1534,22 +1556,33 @@ def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, s
         if dv is None or not math.isfinite(dv) or dv <= 0:
             if dhow in ("ans", "no"):
                 no[code] = str(dwhy)[:40]
+                keep(code, "no", no[code])
+            elif dhow in ("net", "ref"):
+                keep(code, "net", str(dwhy)[:60])
+            else:
+                keep(code, "cut")
             return
         if mode == "live":
             closes[code] = dv
             ok.add(code)
             return
-        yv, how, _ = get(fetch, code, sym, px, close_time=close_time)
+        yv, how, yhow = get(fetch, code, sym, px, close_time=close_time)
         if yv is None or not math.isfinite(yv) or yv <= 0:
+            if yhow == "cut":
+                keep(code, "cutY", dv)
+            else:
+                keep(code, "yfail", dv, str(how)[:40])
             return
         if abs(dv - yv) <= PX_ALT_TOL:
             closes[code] = dv
             ok.add(code)
             if how == "meta":
                 meta.append(code)
+            keep(code, "ok", dv, how)
         else:
             closes[code] = dv + 0.5                  # 두 출처가 다르면 어느 발행 가격과도 같지 않아요 (확인 못 함)
             dis.append(f"{code} 다음 {dv:,.0f} · 야후 {yv:,.2f}")
+            keep(code, "dis", dv, yv)
     try:
         with ThreadPoolExecutor(max_workers=workers) as ex:     # with: 묻는 중인 요청이 끝날 때까지 기다려요 (남는 스레드 없음)
             list(ex.map(one, order))
@@ -1569,23 +1602,143 @@ def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, s
             "rskip": len(rskip), "refNeed": need}
 
 
+PX_ALT_FAIL_STATES = ("dis", "no", "net", "yfail")      # 끝까지 물었는데 확인하지 못한 종목 (다름 · 다음이 그날 종가 없음 · 다음 오류 · 야후 확인 못 함)
+
+
+def px_alt_gate_fold(early, late):
+    """한 종목의 두 확인 결과를 합쳐요 (리뷰 #198 2차 · 순수 함수). early: 앞선 (시간 한도에 걸린) 확인의 결과 · late: 뒤 확인의 결과
+    (http_px_alt.keep 의 꼴 · 없으면 None). 예전 규칙 (한도 없는 한 번의 확인 · main) 보다 느슨해지지 않게:
+    - 앞선 확인이 끝까지 물었는데 확인하지 못했으면 (다름 · 그날 종가 없음 · 오류 · 야후 확인 못 함) 그 결과 그대로 — main 도 그 종목을 똑같이 물어
+      같은 결과를 봤어요 (뒤 확인에서 두 출처가 달랐으면 그 다름도 다른 종가로 세요 — 어느 확인이 본 다른 종가든 버리지 않아요);
+    - 앞선 확인이 확인한 종가 v: 뒤 확인도 같은 v 로 확인하면 확인 · 뒤 확인에서 두 출처가 다르면 그 다름 그대로 (다시 물은 확인의 발견) · 뒤
+      확인이 다른 종가를 확인했거나 다른 다음 값에 야후를 확인하지 못했으면 '두 확인이 다름' ('xdis' — 확인 아님 · 가격 줄에서 다른 종가로 세요) ·
+      뒤 확인이 다음 종가를 받지 못했거나 (그날 종가 없음 · 오류) 같은 다음 값에 야후만 확인하지 못했으면 '다시 물은 확인이 받지 못함' ('lost' —
+      확인 아님 · 가격 줄에서는 앞선 확인의 종가 v 로 main 과 똑같이 비교해요: 빼면 다른 종가 하나가 빠질 수 있어요);
+    - 앞선 확인이 다음 값 d 만 받고 야후를 묻다 한도 ('cutY'): 뒤 확인이 같은 d 로 확인하면 확인 · 뒤 확인에서 두 출처가 다르면 그 다름 그대로 ·
+      그 밖에는 '두 확인이 다름' (main 은 d 와 뒤의 야후를 맞춰 봤을 거예요 — 모르니 확인으로 치지 않고 다른 종가로 세요);
+    - 앞선 확인이 묻지 못했으면 ('cut' · 없음): 뒤 확인 그대로 (main 의 다음 실행처럼).
+    반환: 합친 결과 (같은 꼴 · ('xdis', 앞선 값, 뒤 다음 값 또는 None, 뒤 결과의 종류) · ('lost', 앞선 종가, 뒤 결과의 종류, 까닭))."""
+    if early is None or early[0] == "cut":
+        return late
+    kind = early[0]
+    if late is not None and late[0] == "dis" and kind not in ("dis", "xdis"):
+        return late                              # 뒤 확인에서 두 출처가 달라요 — 어느 확인이 본 다른 종가든 다른 종가로 세요 (확인 아님)
+    if kind in PX_ALT_FAIL_STATES or kind in ("xdis", "lost"):
+        return early
+    v = early[1]
+    if late is None or late[0] == "cut":
+        return early
+    lk = late[0]
+    lv = late[1] if lk in ("ok", "yfail", "cutY") else None             # 뒤 확인이 받은 다음 값 (없으면 None)
+    same = lk in ("ok", "cutY") and abs(lv - v) <= PX_ALT_TOL
+    if kind == "ok":
+        if lk in ("no", "net") or (lk == "yfail" and abs(lv - v) <= PX_ALT_TOL):
+            return ("lost", v, lk, str(late[2] if lk == "yfail" else late[1])[:40])
+        if same:
+            return early if lk == "cutY" else late
+        return ("xdis", v, lv, lk)
+    # kind == "cutY": 앞선 확인은 다음 값 d (= v) 만 봤어요
+    if same:
+        return late
+    return ("xdis", v, lv, lk)
+
+
+def _px_alt_state_why(code, st):
+    """합친 결과 → 로그 · 표에 쓰는 짧은 보기 (순수 함수)."""
+    k = st[0]
+    if k == "dis":
+        return f"{code} 다음 {st[1]:,.0f} · 야후 {st[2]:,.2f}"
+    if k == "no":
+        return f"{code} 다음: {st[1]}"
+    if k == "net":
+        return f"{code} 다음: {str(st[1])[:40]}"
+    if k == "yfail":
+        return f"{code} 야후: {str(st[2])[:40]}"
+    if k == "xdis":
+        later = f"다음 {st[2]:,.0f}" if isinstance(st[2], (int, float)) else "받지 못함"
+        return f"{code} 첫 확인 {st[1]:,.0f} · 다시 물은 확인 {later}" + (" (야후 확인 못 함)" if st[3] == "yfail" else "")
+    if k == "lost":
+        return f"{code} 첫 확인 {st[1]:,.0f} · 다시 물은 확인: {'야후' if st[2] == 'yfail' else '다음'} {st[3]}"
+    return f"{code} {k}"
+
+
+def px_alt_gate_merge(alt, earlier, final):
+    """리뷰 #198 2차 (Fable): 다시 물은 확인(alt · 끝까지 감)의 기록에 앞선 (시간 한도에 걸린) 확인들이 본 것을 합쳐요 — 종목마다
+    px_alt_gate_fold. 앞선 확인이 끝까지 물었는데 확인하지 못한 종목은 그대로 확인 못 함 (그 까닭과 함께), 두 확인의 종가가 다르면 다른 종가로 세요.
+    받은 종가 · 확인 수 · 필수 종목 · 다름 · 그날 종가 없음 · 네트워크 오류 · 야후 meta 수를 합친 결과로 다시 세요 (http_px_alt 와 같은 꼴 ·
+    시험이 앞선 확인이 없을 때 http_px_alt 의 기록과 똑같은지 맞춰 봐요). 그 밖의 칸 (asked · err · secs · limit …) 은 다시 물은 확인 그대로.
+    final 에 모든 종목의 결과가 없으면 (asked 와 수가 다름) 합칠 수 없으니 이 확인은 쓰지 않아요 (필수 종목 모두 · 확인 0 · 크게 남겨요).
+    반환: (kept, xdis) — 앞선 확인에서 끝까지 물었는데 확인하지 못한 종목 · 두 확인의 종가가 다른 종목 (코드 → 보기). alt 를 고쳐요."""
+    asked = _count(alt.get("asked"))
+    if not final or len(final) != asked:
+        alt.update(closes={}, got=0, meta=0, mustMissing=list(MUST), gateMergeErr=f"기록 {len(final or {})} / 대상 {asked}")
+        return {}, {}
+    states, kept, xdis = {}, {}, {}
+    for code, st in final.items():
+        acc = None
+        for e in earlier:                        # 앞선 확인부터 차례로 접어요 (앞선 것 → 뒤의 것 → 마지막)
+            es = e.get(code)
+            if es is not None and es[0] in PX_ALT_FAIL_STATES and code not in kept:
+                kept[code] = _px_alt_state_why(code, es)
+            acc = px_alt_gate_fold(acc, es)
+        merged = px_alt_gate_fold(acc, st)
+        if merged and merged[0] in ("xdis", "lost"):
+            xdis[code] = _px_alt_state_why(code, merged)
+        states[code] = merged
+    closes, ok, meta, dis, no, net = {}, set(), 0, [], {}, set()
+    for code, st in states.items():
+        k = st[0]
+        if k == "ok":
+            closes[code] = st[1]
+            ok.add(code)
+            meta += st[2] == "meta"
+        elif k == "dis":
+            closes[code] = st[1] + 0.5               # http_px_alt 와 같이: 어느 발행 가격과도 같지 않아요
+            dis.append(f"{code} 다음 {st[1]:,.0f} · 야후 {st[2]:,.2f}")
+        elif k == "xdis":
+            closes[code] = st[1] + 0.5               # 두 확인이 다름: 확인 아님 · 가격 줄에서 다른 종가로 세요
+            dis.append(_px_alt_state_why(code, st))
+        elif k == "lost":
+            closes[code] = st[1]                     # 다시 물은 확인이 받지 못함: 확인 아님 · 가격 줄에서는 앞선 확인의 종가로 (main 과 같은 비교)
+        elif k == "no":
+            no[code] = st[1]
+        elif k == "net":
+            net.add(code)
+    alt.update(closes=closes, got=len(ok), meta=meta, disagree=sorted(dis), mustMissing=[c for c in MUST if c not in ok],
+               no=len(no), noMust=[c for c in MUST if c in no],
+               noEx=[f"{c} {no[c]}" for c in ([c for c in MUST if c in no] + sorted(c for c in no if c not in MUST))[:5]],
+               net=len(net), netMust=[c for c in MUST if c in net])
+    return kept, xdis
+
+
+def _px_alt_ex(d, n=5):
+    """보기 다섯 (필수 종목 먼저 · 코드 순 · 순수 함수)."""
+    return [d[c] for c in ([c for c in MUST if c in d] + sorted(c for c in d if c not in MUST))[:n]]
+
+
 def px_alt_publish_gate(ask, say=None):
     """발행 관문(publish · bootstrap)의 두 출처 확인에 시간 한도 + 바로 한 번 더 (2026-11-27 Jack: "Yes, with one immediate retry inside the
     same run before giving up."). ask(): http_px_alt 를 예전과 같은 꼴로 한 번 부르는 함수 (main) — 그동안 _PX_ALT_GATE_S 를 켜서 확인 전체에
     PX_ALT_GATE_BUDGET_S 초 한도를 줘요 (부를 때 모듈 값을 읽어요 · 시험이 줄여요). 한도에 걸리면 (cut 이 0 이 아님) 크게 남기고 처음부터 다시
-    (새 한도 · 첫 확인의 답은 쓰지 않아요), 모두 PX_ALT_GATE_TRIES 번까지. 반환: 마지막 확인의 기록 그대로 — 끝까지 간 확인은 예전과 같은 기록
-    (한 번에 끝났으면 손대지 않아요), 다시 물었으면 더해요: tries (부른 횟수) · timeouts (한도에 걸린 횟수) · firstCut (첫 확인: asked · got ·
-    cut · secs). 마지막 확인도 걸렸으면 cut 이 0 이 아닌 채로 돌려줘요 → px_alt_confirms 가 실패로 (통과 · 건너뜀이 되지 않아요).
-    일하는 스레드는 확인마다 모두 끝난 뒤 돌아와요 (http_px_alt). 예외는 삼키지 않아요 (main 이 '확인 못 함'으로 실패시켜요)."""
+    (새 한도 · 모든 종목을 다시 물어요), 모두 PX_ALT_GATE_TRIES 번까지. 반환: 마지막 확인의 기록 — 한 번에 끝났으면 손대지 않아요.
+    다시 물어 끝까지 갔으면 (리뷰 #198 2차) 앞선 확인이 본 것을 합쳐요 (px_alt_gate_merge): 앞선 확인에서 다르거나 받지 못한 종목은 그대로 확인
+    못 함, 두 확인의 종가가 다르면 다른 종가 — 그래서 받은 답을 확인으로 다시 쓰지는 않지만, 본 문제는 하나도 버리지 않아요 (크게 남겨요).
+    더하는 칸: tries (부른 횟수) · timeouts (한도에 걸린 횟수) · firstCut (첫 확인: asked · got · cut · secs) · kept · keptEx (앞선 확인에서
+    다르거나 받지 못한 종목 수 · 보기) · xdis · xdisEx (두 확인의 종가가 다른 종목 수 · 보기). 마지막 확인도 걸렸으면 cut 이 0 이 아닌 채로
+    돌려줘요 → px_alt_confirms 가 실패로 (통과 · 건너뜀이 되지 않아요). 일하는 스레드는 확인마다 모두 끝난 뒤 돌아와요 (http_px_alt).
+    예외는 삼키지 않아요 (main 이 '확인 못 함'으로 실패시켜요)."""
     say = say or (lambda line: print(line, flush=True))
     limit, tries = float(PX_ALT_GATE_BUDGET_S), max(1, int(PX_ALT_GATE_TRIES))
-    first, alt, n = None, None, 0
+    first, alt, n, sinks = None, None, 0, []
     for n in range(1, tries + 1):
-        tok = _PX_ALT_GATE_S.set(limit)
+        sink = {}
+        tok, tok_sink = _PX_ALT_GATE_S.set(limit), _PX_ALT_GATE_SINK.set(sink)
         try:
             alt = ask()
         finally:
+            _PX_ALT_GATE_SINK.reset(tok_sink)
             _PX_ALT_GATE_S.reset(tok)
+        sinks.append(sink)
         if not (isinstance(alt, dict) and alt.get("cut")):
             break
         asked, cut, got = _count(alt.get("asked")), _count(alt.get("cut")), _count(alt.get("got"))
@@ -1596,16 +1749,35 @@ def px_alt_publish_gate(ask, say=None):
             first = {"asked": asked, "got": got, "cut": cut, "secs": secs}
         if n < tries:
             say(f"!! 관문의 두 출처 확인이 시간 한도 {px_alt_secs(limit)}초를 넘겼어요 (발행 관문 · {n}/{tries}번째 · Jack 2026-11-27): {counts} — "
-                f"처음부터 한 번 더 물어요 (새 한도 {px_alt_secs(limit)}초 · 받은 답은 다시 쓰지 않아요)")
+                f"처음부터 한 번 더 물어요 (새 한도 {px_alt_secs(limit)}초 · 모든 종목을 다시 물어요 · 이번에 다르거나 받지 못한 종목은 그대로 세요)")
         else:
             say(f"!! 관문의 두 출처 확인이 시간 한도 {px_alt_secs(limit)}초를 {'두 번' if tries == 2 else f'{tries}번'} 넘겼어요 (발행 관문 · "
                 f"{n}/{tries}번째 · Jack 2026-11-27): {counts} — 이번 실행은 발행하지 않아요 (관문 실패 · 다음 예정 실행이 다시 해요)")
     if first is not None and isinstance(alt, dict):
-        alt.update(tries=n, timeouts=n if alt.get("cut") else n - 1, firstCut=first)
-        if not alt.get("cut"):
+        done = not alt.get("cut")
+        alt.update(tries=n, timeouts=n - 1 if done else n, firstCut=first)
+        if done:                                 # 다시 물은 확인이 끝까지 갔어요 — 앞선 확인이 본 것을 합쳐요 (리뷰 #198 2차)
+            kept, xdis = px_alt_gate_merge(alt, sinks[:-1], sinks[-1])
+            if alt.get("gateMergeErr"):
+                say(f"!! 관문의 두 출처 확인: 종목별 기록을 합칠 수 없어요 ({alt['gateMergeErr']}) — 이 확인은 쓰지 않아요 (필수 종목을 확인하지 못한 것으로 세요)")
+        else:                                    # 다시 물은 확인도 걸렸어요 (실패) — 앞선 확인에서 본 문제는 그래도 이름으로 남겨요
+            kept = {}
+            for e in sinks[:-1]:
+                for code, es in e.items():
+                    if es[0] in PX_ALT_FAIL_STATES and code not in kept:
+                        kept[code] = _px_alt_state_why(code, es)
+            xdis = {}
+        alt.update(kept=len(kept), keptEx=_px_alt_ex(kept), xdis=len(xdis), xdisEx=_px_alt_ex(xdis))
+        if kept:
+            say(f"!! 관문의 두 출처 확인: 첫 확인에서 다르거나 받지 못한 종목 {len(kept)}: {'; '.join(_px_alt_ex(kept))}"
+                + (" — 다시 물은 확인에서도 그대로 세요 (확인으로 치지 않아요 · 리뷰 #198 2차)" if done else " — 다시 물은 확인도 시간 한도를 넘겨 어차피 실패해요"))
+        if xdis:
+            say(f"!! 관문의 두 출처 확인: 첫 확인과 다시 물은 확인이 다른 종목 {len(xdis)}: {'; '.join(_px_alt_ex(xdis))} — 확인으로 치지 않아요 "
+                "(리뷰 #198 2차)")
+        if done:
             say(f"!! 관문의 두 출처 확인: 다시 물은 확인은 시간 한도 안에 끝났어요 ({n}/{tries}번째"
                 + (f" · 걸린 시간 {alt['secs']:.0f}초" if isinstance(alt.get("secs"), (int, float)) and not isinstance(alt.get("secs"), bool) else "")
-                + ") — 예전 기준 그대로 판단해요 (첫 확인이 한도를 넘긴 것은 날짜 줄의 경고로 남겨요)")
+                + ") — 예전 기준 그대로 판단해요 (첫 확인에서 본 문제는 그대로 세고, 첫 확인이 한도를 넘긴 것은 날짜 줄의 경고로 남겨요)")
     return alt
 
 
@@ -7862,8 +8034,9 @@ def _main(argv=None):
     raw_limit = a.daum_limit if a.daum_limit is not None else (os.environ.get(PX_ALT_LIMIT_ENV) or "").strip() or None
     daum_limit = None
     if raw_limit is not None and mode != "live":
-        print(f"· 다음 확인 시간 한도({raw_limit})는 사이트 점검(--live)에서만 써요 — 이 실행({mode})은 한도 없이 예전 그대로 묻지 않고, 이 값 대신 "
-              f"발행 관문의 한도 {px_alt_secs(PX_ALT_GATE_BUDGET_S)}초를 써요 (넘으면 바로 한 번 더, 또 넘으면 실패 · 건너뛰지 않아요 · Jack 2026-11-27)")
+        print(f"· 다음 확인 시간 한도({raw_limit})는 사이트 점검(--live)에서만 써요 — 이 실행({mode})은 한도 없이 예전 그대로 묻는 대신, 이 값이 "
+              f"아닌 발행 관문의 한도 {px_alt_secs(PX_ALT_GATE_BUDGET_S)}초 안에서 물어요 (넘으면 바로 한 번 더, 또 넘으면 실패 · 건너뛰지 않아요 · "
+              "Jack 2026-11-27)")
     elif raw_limit is not None:
         try:
             daum_limit = float(raw_limit)
