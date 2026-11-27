@@ -22,20 +22,23 @@
 //            numbers, worked out on that time's share count, as news of 11-20); the console names them. When the day's 주요사항 list failed (issueOk false) there is no issue card and the page says the list did not
 //            load (issueFail); a file without the section at all (from before #145) has none, said in the console.
 //   insider  disc.json insider, held and watched stocks, filed within the last INSIDER_DAYS days, |q| × today's official close at
-//            least INSIDER_MIN_WON (1억원; disc.json amt used that run's price, so the amount is recomputed). Title by role
-//            (임원 · 주요주주; someone who is both, or a row without a role, waits for Jack's title: left out, said in the
-//            console); the body names the position (pos, blank: 임원·주요주주) with 이/가 by its last syllable.
-//            NOT ON YET: the screens do not read the role field (ROLE_OF null below), so no insider card shows (title "none",
-//            said in the console). #145's test tests/test_v196b_answers.py test_the_role_field_is_not_read_by_either_app_yet pins
-//            that no screen reads it; changing that test needs Jack's yes (CLAUDE.md). With his yes: set ROLE_OF to the function
-//            that returns the row's role field, and let that test allow this one read in look.js.
+//            least INSIDER_MIN_WON (1억원; disc.json amt used that run's price, so the amount is recomputed). A stock shown at
+//            its last confirmed close (data.json pxd) gets no card: that close is not today's, so "지금 주가로 약 …" under today's
+//            date line would be wrong (as watch.js never judges it); the console names it. Title by role: 임원 · 주요주주, and for
+//            someone who is both or a row without a role C.look.insBoth (Jack, 2026-11-22); a role that is none of the three (the
+//            pipeline and its gate allow only those three or blank) reads as blank and the console says so. The body names the
+//            position (pos with its spaces and line breaks made single spaces; blank: 임원·주요주주) with 이/가 by its last
+//            syllable. The role is read only here, by ROLE_OF
+//            below (Jack's yes of 2026-11-22: tests/test_v196b_answers.py allows this one read). On 홈 a held stock's report
+//            stays the v19.3e 공시 row (todaylook.jsx LookRows), so only a watched stock's card gets a row of its own there.
 //   nps      disc.json nps, held and watched stocks, filed within the last NPS_DAYS days: "{a}%에서 {b}%로" with b = rt and
 //            a = rt − chg, one decimal; left out when chg is blank or a and b round to the same number.
 //   dates    US 실적 발표 (data.json ed, Yahoo's confirmed date) and 배당락일 (xd) of held and watched US stocks from today to
 //            today + DATE_DAYS (KST; the dates are US local dates, said under the rows), earliest first, at most DATES_MAX.
 //            No Korean dates ([Q15]: no reliable source); when a Korean stock is held the card says they are not shown yet.
-import { C } from "./format.js";
+import { C, fill, nf } from "./format.js";
 import { num } from "./engine.js";
+import { eokText } from "./deckcalc.js";
 import { heldQty } from "./held.js";
 import { watchOf, isSeen } from "./store.js";
 import { dayState } from "./rules.js";
@@ -50,8 +53,10 @@ export const DATES_MAX = 5;
 export const INSIDER_MIN_WON = 1e8;
 // Corrections of old decisions (see the top of this file): false = left out until Jack answers #145's question 3.
 export const OLD_CORRECTIONS = false;
-// How lookModel reads an insider row's role (see the top of this file): null = not read yet, so the insider cards stay off.
-export const ROLE_OF = null;
+// How lookModel reads an insider row's role (see the top of this file; Jack, 2026-11-22: the insider cards are on).
+export const ROLE_OF = (x) => x.role;
+// The C.look key of each insider title (todaylook.jsx insiderTitle; lookSay names the cards whose title has no words).
+export const INS_TITLE = { exec: "insExec", major: "insMajor", both: "insBoth" };
 
 const ymdOf = (d) => (typeof d === "string" && /^\d{8}$/.test(d) ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}` : null);
 const isIso = (x) => typeof x === "string" && /^\d{4}-\d{2}-\d{2}$/.test(x) && !Number.isNaN(Date.parse(x + "T00:00:00Z"))
@@ -141,8 +146,9 @@ export function issueCards(disc, held, today, data, byT = null, oldCorrections =
 }
 
 // ---------------- 임원 · 주요주주 지분 변동 ----------------
-// byT: today's data rows. roleOf: reads a row's role (lookModel passes ROLE_OF; null: not read, every title "none").
+// byT: today's data rows. roleOf: reads a row's role (lookModel passes ROLE_OF; null: not read, every title "none", no card shown).
 // -> { cards: [{ rc, t, nk, date, role, title ("exec" | "major" | "both" | "none"), pos, q, won, up, s }], skipped }
+//   skipped: [{ t, rc, why, shown }]: the rows left out, and (shown true) a card whose role is none of the three, shown as blank.
 export function insiderCards(disc, cover, today, byT, roleOf = null) {
   const out = { cards: [], skipped: [] };
   if (!disc || !disc.data || !Array.isArray(disc.data.insider)) return out;
@@ -156,15 +162,33 @@ export function insiderCards(disc, cover, today, byT, roleOf = null) {
     if (!(px > 0)) { out.skipped.push({ t: x.t, rc: x.rc, why: "no official close in today's data" }); continue; }
     const won = Math.abs(x.q) * px;
     if (won < INSIDER_MIN_WON) continue;
+    if (s.pxd != null) {
+      out.skipped.push({ t: x.t, rc: x.rc, why: `shown at its last confirmed close (pxd ${JSON.stringify(s.pxd)}), not today's` });
+      continue;
+    }
     const r0 = roleOf ? roleOf(x) : null;
     const role = typeof r0 === "string" ? r0 : null;
     const title = !roleOf ? "none" : role != null && role === R.exec ? "exec" : role != null && role === R.major ? "major" : "both";
-    if (role != null && role !== R.exec && role !== R.major && role !== R.both) out.skipped.push({ t: x.t, rc: x.rc, why: `role ${JSON.stringify(role)} is not one of the three` });
-    const p = typeof x.pos === "string" ? x.pos.trim() : "";
+    if (role != null && role !== R.exec && role !== R.major && role !== R.both) {
+      out.skipped.push({ t: x.t, rc: x.rc, why: `role ${JSON.stringify(role)} is not one of the three`, shown: true });
+    }
+    const p = typeof x.pos === "string" ? x.pos.replace(/\s+/g, " ").trim() : "";
     out.cards.push({ rc: x.rc, t: x.t, nk: (s && s.nk) || x.nk || x.t, date, role, title, pos: p && p !== "-" ? p : null, q: x.q, won, up: x.q > 0, s });
   }
   out.cards.sort(desc);
   return out;
+}
+
+// The amount on a 지분 변동 card ("지금 주가로 약 {amt}이에요"; Jack, 2026-11-23: "one decimal only under 10억원; whole 억원 above
+// that; 조원 with one decimal, the same as other amounts"): under 10억원 after rounding, one decimal in 억원 with a trailing .0
+// dropped ("1.4억원", "2억원"); from there deckcalc.eokText, the app's other 억 · 조 amounts ("14억원", "1,234억원", "1.3조원").
+// Worked in whole tenths of 억 (1,000만원), so 1.05억 is "1.1억원", never 1.0 from floating-point noise, and 9.96억 is "10억원".
+// Other amounts (cofmt.bigWon: the 확인 필요 cards, the company page) keep their whole 억. null without the unit words.
+export function insiderWon(won) {
+  if (!(typeof won === "number" && Number.isFinite(won) && won > 0) || !C.app.eok) return null;
+  const tenths = Math.round(won / 1e7);
+  if (tenths < 100) return fill(C.app.eok, { n: tenths % 10 ? nf(tenths / 10, 1) : nf(tenths / 10) });
+  return eokText(won / 1e8);
 }
 
 // ---------------- 국민연금 ----------------
@@ -209,12 +233,13 @@ export function dateRows(byT, cover, today, last = null, max = DATES_MAX) {
 
 // ---------------- everything for one screen ----------------
 // load: the data · store: { data } (the in-memory view) · disc: app.jsx's · today: KST · now (tests).
-// -> { fresh, kr, krHeld, ds, issue, insider, nps, dates, noKr, issueFail, discFail, discOld, any, skipped }
+// -> { fresh, kr, krHeld, ds, issue, insider, nps, dates, noKr, issueFail, discFail, discOld, any, skipped, oddRole }
+//   skipped: the rows left out (lookSay names them) · oddRole: the insider cards shown although their role is none of the three.
 //   ds: the filings state (home2.jsx discState): skip (no Korean stock covered) · wait · ok · stale · fail · none.
-//   any: a card of any kind (an insider card whose title waits for Jack is counted here; todaylook.jsx pageHas leaves it out).
+//   any: a card of any kind (an insider card without a title is counted here; todaylook.jsx pageHas leaves it out).
 export function lookModel(load, store, disc, today, now) {
   const empty = { fresh: false, kr: false, krHeld: false, ds: "skip", issue: [], insider: [], nps: [], dates: [], noKr: false,
-    issueFail: false, discFail: false, discOld: null, any: false, skipped: [], missing: false };
+    issueFail: false, discFail: false, discOld: null, any: false, skipped: [], oddRole: [], missing: false };
   if (!load || load.status !== "ok" || !dayState(load, now).ok) return empty;
   const data = store && store.data;
   const decks = (data && data.decks) || [];
@@ -232,7 +257,8 @@ export function lookModel(load, store, disc, today, now) {
   const issueFail = checked && iss.fail && [...cover.held].some((t) => { const s = load.byT.get(t); return s ? s.cls === "kr" : /^\d{6}$/.test(t); });
   const any = iss.cards.length > 0 || ins.cards.length > 0 || nps.length > 0 || dates.length > 0;
   return { fresh: true, kr, krHeld, ds, issue: iss.cards, insider: ins.cards, nps, dates, noKr: krHeld, issueFail,
-    discFail: ds === "fail" || (ds === "stale" && !discOld), discOld, any, skipped: [...iss.skipped, ...ins.skipped], missing: iss.missing };
+    discFail: ds === "fail" || (ds === "stale" && !discOld), discOld, any, skipped: [...iss.skipped, ...ins.skipped.filter((x) => !x.shown)],
+    oddRole: ins.skipped.filter((x) => x.shown), missing: iss.missing };
 }
 
 // The console lines for what the cards leave out (no silent hiding), once per load and list.
@@ -240,11 +266,12 @@ const said = new Set();
 export function lookSay(m, where) {
   if (!m || !m.fresh) return;
   const lines = [];
-  if (m.skipped.length) lines.push(`left out ${m.skipped.length} (an old decision's correction, no approved wording yet, or no close to size it): ${m.skipped.map((x) => `${x.t} ${x.rc || ""} (${x.why})`).join("; ")}`);
-  const both = m.insider.filter((c) => c.title === "both");
-  if (both.length && !(C.look && C.look.insBoth)) lines.push(`insider cards waiting for Jack's title (role both or blank): ${both.map((c) => `${c.t} ${c.rc}`).join(", ")}`);
-  const none = m.insider.filter((c) => c.title === "none");
-  if (none.length) lines.push(`insider cards not shown, the role field is not read yet (waits for Jack's yes to a test edit): ${none.map((c) => `${c.t} ${c.rc}`).join(", ")}`);
+  if (m.skipped.length) lines.push(`left out ${m.skipped.length} (an old decision's correction, no approved wording yet, no close to size it, or a stock shown at an older close): ${m.skipped.map((x) => `${x.t} ${x.rc || ""} (${x.why})`).join("; ")}`);
+  const odd = m.oddRole || [];
+  if (odd.length) lines.push(`insider cards shown with the title for both or blank (look.insBoth), their role is none of the three: ${odd.map((x) => `${x.t} ${x.rc || ""} (${x.why})`).join("; ")}`);
+  // what todaylook.jsx shownInsider leaves out: a card whose title has no words (the role not read, or a title key without text)
+  const untitled = m.insider.filter((c) => !(C.look && C.look[INS_TITLE[c.title]]));
+  if (untitled.length) lines.push(`insider cards not shown, no title for them (${[...new Set(untitled.map((c) => c.title))].join(", ")}): ${untitled.map((c) => `${c.t} ${c.rc}`).join(", ")}`);
   if (m.missing) lines.push("disc.json has no issue section (a file from before PR 145): no rights, CB or BW cards");
   for (const l of lines) {
     const k = where + "|" + l;

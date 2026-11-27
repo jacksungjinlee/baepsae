@@ -10,7 +10,7 @@ docs/tasks/v19.6-records-alerts-dark.md Part E · Part I.2 (adds only; every exp
   c1w 없는 종목은 양쪽에서 빠지고 이름이 남아요 · 이번 주에 뺀 종목 (기록 없이 · 종목 바꾸기) · 그 주 날짜의 가진 종목 줄 (금액으로 넣기) ·
   c1w 뒤 분할 · 한 종목은 세거나 이름을 남기거나 둘 중 하나 · nv 행은 스위치마다 (out · use · note, note 는 각주 말이 생길 때까지 out)
 - 코스피: idxHist 의 wkFrom 종가 → pxDate 종가 · 받은 배당 (센 기록이 있을 때만 칸) · 공시 (v19.6b 카드 그대로, 이번 주 것만, 오늘 볼 것이
-  보여 줄 수 있는 것만: 지분 변동은 ROLE_OF 가 켜질 때까지 0) · 다음 주 일정 · 0원은 부호 없이
+  보여 줄 수 있는 것만: 지분 변동도 그 카드가 나오면 셈, Jack 2026-11-22 켜짐) · 다음 주 일정 · 0원은 부호 없이
 - 가장 많이 움직인 종목: 같은 업종 규칙 (GROUP_MIN · TOGETHER_SHARE) 을 그 주의 움직임에: 빠진 한 주 · 오른 한 주 ([Q12], 따로 시험)
 - 닫기: 그 주 그 포트폴리오만, 이 기기에만 (다른 주는 다시 보여요 · 저장이 막혀도 오류 없음)
 - 승인되지 않은 말이 필요한 칸은 빠지고 console 이 말해요 · WEEKLY_ON 은 꺼져 있어요 (빠진 종목 줄이 승인되면 켜요)
@@ -350,18 +350,18 @@ def test_filings_tile_counts_this_weeks_part_b_cards_of_held_stocks():
           return v.tiles.filter((t) => t.id === 'disc').map((t) => [t.label, t.big, t.sub]); })() };""")
     # this week: the 11-17 rights issue and the 11-20 CB (held 005930); not 11-13 (last week), not 005380 (not held), not the withdrawal, not
     # the 유무상증자 (no approved shape, v19.6b leaves it out); the 11-18 report of 1억원 (1,000 × 100,000); not 9,990만원; not last week's;
-    # the 국민연금 change of 11-19. The insider card comes back as a list without a title (look.js ROLE_OF is null)
-    assert got["ok"] == {"ok": True, "kinds": {"rights": 1, "cb": 1, "bw": 0, "nps": 1}, "ins": [["005930", "2026-11-18", "none"]],
+    # the 국민연금 change of 11-19. The insider card comes back as a list; its blank role reads as both or blank (look.js ROLE_OF, Jack 2026-11-22)
+    assert got["ok"] == {"ok": True, "kinds": {"rights": 1, "cb": 1, "bw": 0, "nps": 1}, "ins": [["005930", "2026-11-18", "both"]],
                          "skipped": [{"t": "005930", "rc": "20990000000006", "why": "bonus: a rights and bonus issue"}]}
     assert got["seenData"] == [{"rights": 1, "cb": 1, "bw": 0, "nps": 1}, 1]
     assert (got["stale"], got["fail"], got["wait"], got["none"], got["issueFail"], got["noIssue"], got["usOnly"]) == (
         "stale", "disc", "disc", "disc", "issue", "issue", "noKr")
     # a kind without a tile word (as before Jack's answer of 2026-11-22): the tile is left out that week and the console says which; the
-    # insider report is not counted while 오늘 볼 것 cannot show it (round 2), said in the console
-    assert got["view"] == [0, 1, 1]
-    assert got["rightsOnly"] == [["1건", "유상증자 1"]] and got["insOnly"] == 0              # only a report it cannot show: no 공시 tile
+    # insider report 오늘 볼 것 shows is counted (Jack 2026-11-22), so no console line about it
+    assert got["view"] == [0, 1, 0]
+    assert got["rightsOnly"] == [["2건", "유상증자 1 · 지분 변동 1"]] and got["insOnly"] == 1          # a report alone makes the 공시 tile
     # Jack's chips (2026-11-22), with the tile's own " · "
-    assert got["viewWorded"] == [["공시", "3건", "유상증자 1 · 전환사채 1건 · 국민연금 지분 변동 1건"]]
+    assert got["viewWorded"] == [["공시", "4건", "유상증자 1 · 전환사채 1건 · 지분 변동 1 · 국민연금 지분 변동 1건"]]
 
 
 def test_next_week_dates_count_and_first_name():
