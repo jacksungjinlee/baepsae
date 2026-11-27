@@ -309,6 +309,9 @@ def none_today(R, scene, what, hint=""):
 # ── 오늘 데이터 때문에 '예시 가격 · 금 환산' 배너가 떠야 하는 날 (리뷰 2026-11-12) ─────────────────
 # 예전 뱁새에는 내장 종목 75개가 있어요 (src/detail.jsx BASE_STOCKS). 그 가운데 하나라도 오늘 데이터에 없거나 가격 · 베타 · 변동성이
 # 비었으면 앱은 "일부 종목은 최신 시세가 아니라 예시 가격이에요" 배너를 보여 줘요 (src/data.js mergeStocks) — 그게 맞는 화면이에요.
+# 다만 과거 주가 기록 오류 표시(pxBad) 종목은 가격이 오늘 것이면 베타 · 변동성이 비어도 예시 가격이 아니에요: 앱은 그 빈 칸을 내장 값으로
+# 메우지 않고 위험 계산에서 빼요 (2026-11-14 #128). 이 검사도 앱과 같아요 (Jack 2026-11-27, 답 7: 내장 종목 하나의 그 표시가 모두의 발행을
+# 멈추지 않게) — tests/test_screen_check.py 가 앱의 코드를 node 로 돌려 같은 답인지 봐요.
 # 금현물을 국제 금값으로 환산한 날(est)에는 "금현물은 … 추정치예요" 줄이 떠요. 발행 관문이 '목록에 있음'을 보장하는 것은 75개 가운데
 # 17개뿐이고(나머지 58개는 보장 없음), 그 17개도 베타 · 변동성까지 보장하지는 않아요.
 # 그래서 '배너가 없어야 해요'라고만 보면 상장폐지 한 건 · 베타가 빈 하루 · 금 환산 하루에 모두의 데이터 발행이 멈춰요.
@@ -331,9 +334,62 @@ assert len(BASE_TICKERS) == len(set(BASE_TICKERS)) == len(re.findall(r"\bnk:\s*\
 GOLD_SPOT = "04020000"          # 금현물: 국제 금값 환산(est)은 이 종목에만 붙어요 (fetch_data.py)
 
 
+def px_bad(L):
+    """src/repair.js pxBad 와 같은 규칙: 과거 주가 기록 오류 표시(pxBad)가 빈 글자가 아닌 문자열이면 표시된 종목이에요."""
+    v = L.get("pxBad") if isinstance(L, dict) else None
+    return isinstance(v, str) and len(v) > 0
+
+
+def _num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and v not in (float("inf"), float("-inf"))
+
+
+def risk_ready(L):
+    """앱(src/data.js mergeStocks)이 담은 종목의 오늘 가격 · 베타 · 변동성을 그대로 위험 계산에 쓰는 종목: 가격이 0 보다 크고, 베타와 변동성이
+    숫자이고, 과거 주가 기록 오류 표시(pxBad)도 금 환산(est)도 없어요. 그 밖의 종목은 앱이 베타 · 변동성을 '–'로 두고 위험 계산에서 빼거나
+    (pxBad · 내장 목록 밖), 내장 예시 값으로 메워 '예시 가격'으로 보여요 — 위험 숫자를 보려는 장면이 담을 종목이 아니에요."""
+    return (isinstance(L, dict) and _num(L.get("price")) and L["price"] > 0 and _num(L.get("beta")) and _num(L.get("vol"))
+            and not px_bad(L) and not L.get("est"))
+
+
+def pick_ready(R, scene, stocks, want, n, need=(), secs=0):
+    """장면이 담을 한국 종목 n 개 (Jack 2026-11-27, 답 7: 어느 한 종목의 데이터도 모두의 발행을 멈추지 않게). want 순서대로, 오늘 데이터에서
+    risk_ready 이고 need 칸이 숫자인 종목을 먼저 담고 (평소에는 예전과 같은 종목), 모자라면 같은 조건의 다른 한국 종목을 시가총액 큰 순으로
+    채워요. 채우는 종목은 보통주(코드 끝 0)만이고, 시가총액이 빈 종목 · 펀드 · ETF · 마지막 확인 종가(pxd)로 실린 종목(배너에 줄이 하나 더
+    생겨요)은 고르지 않아요. secs > 0 이면 업종이 secs 곳 이상 되게 새 업종을 먼저 골라요.
+    바꿔 담은 날은 실행 기록에 크게 남겨요 (어느 종목이 왜 빠졌는지). 돌려줌: 종목코드 목록 (모자라면 n 보다 짧아요 — 장면이 실패로 알려요)."""
+    ok = lambda s: risk_ready(s) and all(_num(s.get(k)) for k in need)   # noqa: E731
+    out = [t for t in want if t in stocks and ok(stocks[t])][:n]
+    rest = sorted((s for s in stocks.values() if s.get("t") not in out and s.get("cls") == "kr" and str(s.get("t"))[-1:] == "0"
+                   and not s.get("fund") and not s.get("etf") and s.get("pxd") is None and _num(s.get("cap")) and ok(s)),
+                  key=lambda s: (-s["cap"], str(s.get("t"))))
+    for s in rest:
+        if len(out) >= n:
+            break
+        have = {stocks[t].get("s") for t in out}
+        new = bool(s.get("s")) and s.get("s") not in have
+        if new or n - len(out) > max(secs - len(have), 0):
+            out.append(s["t"])
+    swapped = [t for t in want[:n] if t not in out]
+    if swapped:
+        why = "; ".join(f"{t} " + ("오늘 데이터에 없음" if t not in stocks else "과거 주가 기록 오류 표시(pxBad)" if px_bad(stocks[t])
+                                   else "베타 · 변동성 · 가격이 위험 계산에 쓸 값이 아님" if not risk_ready(stocks[t])
+                                   else "필요한 칸(" + "·".join(k for k in need if not _num(stocks[t].get(k))) + ")이 빔") for t in swapped)
+        msg = (f"평소 담는 종목 가운데 {why} → 오늘 데이터의 다른 종목 {', '.join(t for t in out if t not in want) or '(없음)'} 로 바꿔 담아 "
+               "같은 것을 확인해요")
+        if f"{scene}: {msg}" not in R.notes:
+            R.notes.append(f"{scene}: {msg}")
+            print(f"\n!! 알림  [{scene}] {msg}\n", flush=True)
+            if os.environ.get("GITHUB_ACTIONS") == "true":
+                print(f"::warning title=발행 전 화면 검사 · 바꿔 담은 종목::{msg}", flush=True)
+    return out
+
+
 def example_price_stocks(f):
     """앱의 mergeStocks 와 같은 규칙. 돌려줌 (examples, est):
-    examples = 내장 종목 가운데 오늘 데이터에 없는 것 + 데이터에 있지만 가격 · 베타 · 변동성이 빈 것 (금 환산은 빼고) → '예시 가격' 줄
+    examples = 내장 종목 가운데 오늘 데이터에 없는 것 + 데이터에 있지만 가격이 빈 것 + 가격은 있지만 베타 · 변동성이 빈 것 (금 환산은 빼고)
+               → '예시 가격' 줄. 다만 과거 주가 기록 오류 표시(pxBad) 종목의 빈 베타 · 변동성은 앱이 내장 값으로 메우지 않아요 (위험 계산에서
+               빼요 · 2026-11-14 #128) — 가격이 오늘 것이면 예시 가격 종목이 아니에요. 그 종목도 가격이 비면 예시 가격이에요 (앱과 같아요).
     est = 국제 금값 환산 표시(est)가 붙은 내장 종목 → '금현물은 … 추정치예요' 줄.  (미국 티커는 점 · 하이픈을 무시하고 맞춰요: BRK.B = BRK-B)"""
     norm = lambda x: re.sub(r"[.\-]", "", str(x or "").upper())
     by_t = {t: t for t in BASE_TICKERS}
@@ -343,7 +399,8 @@ def example_price_stocks(f):
         b = by_t.get(L.get("t")) or by_norm.get(norm(L.get("t")))
         price = L.get("price")
         if b:
-            partial = price is None or L.get("beta") is None or L.get("vol") is None
+            # src/data.js mergeStocks: partial = L.price == null || (!bad && (L.beta == null || L.vol == null)) — bad = pxBad(L)
+            partial = price is None or (not px_bad(L) and (L.get("beta") is None or L.get("vol") is None))
             if L.get("est"):
                 est.append(b)
             elif partial:
@@ -832,8 +889,11 @@ def scene_option_b(R, files):
     B안에서는 위험 수치(보통 해 ±…)만 보이고, 나머지는 첫 화면·②③④ 어디에도, 한국어·영어 어느 쪽에도 없어야 해요."""
     files = json.loads(json.dumps(files))      # 아래에서 배당만 지워요 (다른 장면에 번지지 않게 복사본에서)
     stocks = {s.get("t"): s for s in files["data.json"]["stocks"]}
-    want = [("000660", 400), ("005930", 150), ("005380", 100), ("105560", 100)]
-    hold = [(t, mw) for t, mw in want if t in stocks and isinstance(stocks[t].get("vol"), (int, float))]
+    # 평소에는 이 네 종목 (SK하이닉스 · 삼성전자 · 현대차 · KB금융). 그 가운데 오늘 위험 계산에 쓸 수 없는 종목(과거 주가 기록 오류 표시 · 빈 베타나
+    # 변동성 · 빠짐)이 있으면 같은 조건의 다른 한국 종목으로 바꿔 담아요 (Jack 2026-11-27, 답 7 — 한 종목이 모두의 발행을 멈추지 않게).
+    # 장면이 읽는 3년 최대낙폭(mdd) · 과거 알파(al)도 숫자인 종목만. 비중은 자리 순서대로 400 · 150 · 100 · 100 만원.
+    want = ["000660", "005930", "005380", "105560"]
+    hold = list(zip(pick_ready(R, "B안", stocks, want, 4, need=("mdd", "al"), secs=3), (400, 150, 100, 100)))
     secs = {stocks[t].get("s") for t, _ in hold}
     assert len(hold) == 4 and len(secs) >= 3, f"시험할 종목이 모자라요: {hold} · 업종 {secs}"
     stocks[hold[0][0]]["dy"] = None     # 배당 정보 없음 → '배당 정보가 없는 종목 1개는 0원으로 계산했어요.' 가 보여야 해요

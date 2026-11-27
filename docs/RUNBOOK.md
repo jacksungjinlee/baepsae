@@ -93,7 +93,12 @@ run log starts "5xx 다시 물음", and the count ("· 5xx 다시 물음: N곳")
       it only when more than 15% of US stocks go missing, and a smaller outage shows in no gate row. When a built-in stock is missing from
       the day's data, or has a blank price, beta or volatility, or when the gold price is an estimate, the old app
       correctly shows its "예시 가격" or "금현물은 … 추정치예요" notice. The check then requires exactly that notice
-      (not "no notice") and says so: `!! 알림` in the log, a warning, the step summary.
+      (not "no notice") and says so: `!! 알림` in the log, a warning, the step summary. A built-in stock marked for a
+      broken price history (`pxBad`, since #128) with today's price is not an example price, whatever its blank beta and
+      volatility: the app leaves them out of the risk numbers and shows no notice, so the check expects none and does not
+      count it (since #?, Jack 11-27 answer 7; `smoke_app.example_price_stocks` follows `mergeStocks`, and
+      `tests/test_screen_check.py` runs the app's own code to prove it). Too many marks at once is the gate's job (row
+      "새로 생긴 과거 주가 기록 오류 종목 수": 10 new in one run fail; two marked must-have stocks fail).
       **Up to 3 such stocks; with more the check fails and nothing is published** (one clear line at the top of the
       result: "내장 종목 N개가 …"), because many at once is the pipeline (for example every US beta blank), not the
       market. The number counts every built-in stock that is missing today, not only new ones, so:
@@ -102,9 +107,17 @@ run log starts "5xx 다시 물음", and the count ("· 5xx 다시 물음: N곳")
         one of the three;
       - if the check fails, first look at the names: long-gone companies mean the list needs that PR; several fresh
         blanks at once mean the pipeline. Do not raise the number.
-    - One scene needs three must-have stocks (005930, 005380, 105560) to have a dividend yield; the gate lets one
-      must-have stock without dividend data through with a warning (Jack, 11-05), so the scene fills a blank one in
-      its own copy and says so in the log.
+    - One scene (B안) holds four Korean stocks, normally 000660, 005930, 005380 and 105560, and needs their beta and
+      volatility. Since #? (Jack 11-27, answer 7) any of them the app can't use for the risk numbers today (a `pxBad`
+      mark, a blank beta or volatility, missing from the data, or a blank 3-year drawdown or alpha, which the scene
+      reads) is swapped for the next Korean common stock by market cap that it can use, keeping three or more
+      sectors; the run says so (`!! 알림 [B안] …`, a warning, the step summary). The scene also needs three of them to
+      have a dividend yield; the gate lets one must-have stock without dividend data through with a warning (Jack,
+      11-05), so the scene fills a blank one in its own copy and says so in the log.
+    - **Not yet covered: 005930 itself.** About a dozen other scenes hold 삼성전자 as their ordinary stock and need its
+      beta and volatility (위험값 없음, 빠진 종목, 베타→수익률, 자동 설정, 한국 날짜, 주가기록 and others). If the gate ever
+      marks 005930 `pxBad` (one marked must-have only warns), those scenes fail and the publish is held (a 11-27 copy
+      with the mark: 127 / 166). Don't skip the check: tell Jack, and fix those scenes the way B안 picks its stocks.
     - `!! 확인 못 함` and `!! 알림` lines are on a green run, where nobody looks by default. The 09:13 morning check
       must report them to Jack: its instructions are extended for the warnings titled "발행 전 화면 검사 …" as an
       after-merge step of #106 (until that is done, nothing reads them).

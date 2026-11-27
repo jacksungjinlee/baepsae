@@ -22,6 +22,16 @@ the approved 유상증자 card sentences with proposals for 유무상증자 and 
 11-27: "Yes, skip Part L"; the v19.3 spec's Status line says what covered each item), so Track 1's data follow-ups and Jack's
 other 11-27 answers come next. On hold: v19.4, v19.6g, v19.6h.
 
+**Screen check and `pxBad` built-ins (#?, branch `claude/smoke-pxbad`, 2026-11-28; tests only):** Track 2 audit 5.1, Jack's 11-27
+answer 7 ("Yes, under the standing rule"). `tests/smoke_app.py --data` (the third pre-publish screen check) counted a built-in
+stock with a blank beta or volatility as an "example price" and expected the 예시 가격 notice, but since #128 the app shows none for a
+stock marked `pxBad` with today's price: one such mark on any of the 42 Korean built-ins other than 삼성전자 would have held
+everyone's publish (none so far: built-ins rank ≤ 204 by market cap, marks ≥ 611). `example_price_stocks` now follows
+`mergeStocks` exactly (proved against the app's code by node in `tests/test_screen_check.py`), and the B안 scene swaps any of its
+four stocks the app can't use today (`pick_ready`: same rule, next Korean common stock by market cap, 3+ sectors, `!! 알림`).
+**Still open:** a mark on 005930 itself fails about a dozen scenes that hold 삼성전자 as their ordinary stock (on an 11-27 copy with
+the mark: main 127 / 166); fixing those scenes the same way is a follow-up for Jack's queue (RUNBOOK, screen check).
+
 **v19.6b switch-on (#196, branch `claude/v19.6b-switch-on`, 2026-11-28; live once it merges and deploys):** the parts #168 shipped off.
 공시 보기 on every 확인 필요 card (`routes.dartFilingUrl`: that one filing in DART's viewer by its exact receipt number, else no button;
 new tab, noopener; nothing fetched). The 임원 · 주요주주 지분 변동 cards on 오늘 볼 것: held and watched stocks, filed in the last 7

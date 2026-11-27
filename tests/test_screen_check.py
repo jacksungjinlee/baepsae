@@ -574,7 +574,18 @@ def banner_cases(SA):
             [s for s in full if s["t"] != "BRK.B"] + [ok("BRK-B")],                       # 표기만 다른 티커는 같은 종목
             full + [ok("999990")], full + [ok("999991", beta=None)],                      # 내장 목록 밖 종목은 안내와 무관
             full + [ok("999992", est=True)], full + [{"t": "999993", "price": None, "est": True}],
-            drop("247540") + [ok("04020000", est=True)]]                                  # (중복 줄: 앱과 같은 순서로 맞추는지)
+            drop("247540") + [ok("04020000", est=True)],                                  # (중복 줄: 앱과 같은 순서로 맞추는지)
+            # 2026-11-27 (Jack, 답 7): 과거 주가 기록 오류 표시(pxBad) — 가격이 오늘 것이면 빈 베타 · 변동성이어도 예시 가격이 아니에요 (#128).
+            # 가격이 비면 예시 가격 · 빈 글자나 문자열이 아닌 표시는 표시가 아니에요 · 표시가 있어도 다른 종목의 빈 값은 그대로 예시 가격
+            swap("042700", beta=None, vol=None, pxBad="2024-06-24"),                      # [14] 내장 종목 · 실제 가격 → 안내 없음
+            swap("000660", vol=None, pxBad="2024-06-24"),                                 # [15] 필수 종목도 같아요
+            swap("042700", price=None, beta=None, vol=None, pxBad="2024-06-24"),          # [16] 가격이 비면 예시 가격
+            swap("042700", beta=None, vol=None, pxBad=""),                                # [17] 빈 글자 표시 → 표시 아님 → 예시 가격
+            swap("042700", beta=None, vol=None, pxBad=20240624),                          # [18] 문자열이 아닌 표시 → 예시 가격
+            [ok(t, beta=None, vol=None, pxBad="2024-06-24") if t == "042700" else ok(t, beta=None) if t == "TSLA" else s
+             for t, s in ((x["t"], x) for x in full)],                                    # [19] 표시 종목은 빼고 TSLA 만
+            swap("04020000", est=True, beta=None, pxBad="2024-06-24"),                    # [20] 금 환산은 금 환산 줄 그대로
+            full + [ok("999994", beta=None, vol=None, pxBad="2024-06-24")]]               # [21] 내장 목록 밖 표시 종목: 안내와 무관
 
 
 @pytest.mark.skipif(NODE is None, reason="node 가 없어요")
@@ -591,6 +602,10 @@ def test_example_price_rule_is_the_apps_own(SA, tmp_path):
     assert mine == app
     assert app[0] == {"examples": [], "est": []} and app[1]["examples"] == ["247540"] and app[3]["examples"] == ["TSLA"] and app[6]["est"] == ["04020000"]
     assert app[11] == {"examples": ["999992"], "est": []}                     # 내장 목록 밖 종목의 est 는 '예시 가격' 쪽 (앱이 그래요)
+    # pxBad (Jack 2026-11-27, 답 7): 가격이 오늘 것이면 안내 없음 · 가격이 비거나 표시가 표시가 아니면 예시 가격 · 금 환산은 그대로
+    assert app[14] == app[15] == app[21] == {"examples": [], "est": []}
+    assert app[16]["examples"] == app[17]["examples"] == app[18]["examples"] == ["042700"] and app[19]["examples"] == ["TSLA"]
+    assert app[20] == {"examples": [], "est": ["04020000"]}
     assert len(SA.BASE_TICKERS) == len(set(SA.BASE_TICKERS)) >= 60
 
 
@@ -678,6 +693,83 @@ def test_dividend_count_scene_does_not_depend_on_other_stocks_dividend_data(SA):
     assert i < j < body.index("profile = {")
     assert 'if not isinstance(stocks[t].get("dy"), (int, float)):' in body[j:j + 400] and 'stocks[t]["dy"] = 1.0' in body[j:j + 400]
     assert "files = json.loads(json.dumps(files))" in body[:i]                # 복사본에서만 (다른 장면 · 원본 데이터는 그대로)
+
+
+# ── 2026-11-27 (Jack, 답 7): 과거 주가 기록 오류 표시(pxBad)가 붙은 종목 하나가 모두의 발행을 멈추지 않게 ──
+READY_JS = r"""
+import fs from 'fs';
+import { pathToFileURL } from 'url';
+const { mergeStocks } = await import(pathToFileURL(process.argv[3]).href);
+const { base, cases } = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const out = cases.map((L) => {
+  const r = mergeStocks(base.map((t) => ({ t, nk: t, price: 1, beta: 1, vol: 1 })), [L]).find((s) => s.t === L.t);
+  return !!r && r.live !== false && !r.noRisk && r.beta != null && r.vol != null;
+});
+console.log(JSON.stringify(out));
+"""
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_risk_ready_is_the_apps_own_rule(SA, tmp_path):
+    """smoke_app.risk_ready (장면이 위험 숫자를 보려고 담는 종목) = 앱의 mergeStocks 가 오늘 가격 · 베타 · 변동성을 그대로 위험 계산에 쓰는 종목
+    (실시간이고 noRisk 가 아님). 관문이 지키는 모양의 데이터(pxBad 종목은 베타 · 변동성이 비어요)로 앱의 코드를 node 로 돌려 비교해요."""
+    ok = lambda t, **kw: {"t": t, "price": 10.0, "beta": 1.0, "vol": 20.0, **kw}   # noqa: E731
+    bad = dict(beta=None, vol=None, pxBad="2024-06-24")
+    cases = [ok("005930"), ok("005930", beta=None), ok("005930", vol=None), ok("005930", price=None), ok("005930", **bad),
+             ok("042700", **bad), ok("04020000", est=True), ok("999990"), ok("999991", beta=None), ok("999992", **bad),
+             ok("999993", price=None), ok("999994", price=0), ok("999995", est=True)]
+    (tmp_path / "in.json").write_text(json.dumps({"base": SA.BASE_TICKERS, "cases": cases}), encoding="utf-8")
+    (tmp_path / "probe.mjs").write_text(READY_JS, encoding="utf-8")
+    r = subprocess.run([NODE, str(tmp_path / "probe.mjs"), str(tmp_path / "in.json"), os.path.join(ROOT, "src", "data.js")],
+                       cwd=ROOT, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-600:]
+    app = json.loads(r.stdout)
+    assert [SA.risk_ready(L) for L in cases] == app
+    assert app == [True, False, False, False, False, False, False, True, False, False, False, False, False]
+
+
+def test_option_b_scene_picks_any_stocks_the_app_can_use(SA, monkeypatch, capsys):
+    """B안 장면은 평소의 네 종목(SK하이닉스 · 삼성전자 · 현대차 · KB금융)을 담고, 그 가운데 오늘 위험 계산에 쓸 수 없는 종목(pxBad · 빈 베타나 변동성 ·
+    빠짐)이 있으면 같은 조건의 다른 한국 보통주로 바꿔 담아요 (시가총액 순 · 업종 3곳 이상 · 크게 알림). 2026-11-23 감사: SK하이닉스에 표시가 붙으면
+    '시험할 종목이 모자라요'로 모두의 발행이 멈췄어요."""
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    mk = lambda t, s, cap, **kw: {"t": t, "cls": "kr", "s": s, "price": 1000.0, "beta": 1.0 + cap / 1000, "vol": 30.0,   # noqa: E731
+                                  "mdd": -30.0, "al": 1.0, "cap": cap, **kw}
+    rows = [mk("000660", "semi", 700), mk("005930", "semi", 1000), mk("005380", "auto", 50), mk("105560", "holding", 49),
+            mk("069500", "index", 950, fund=True), mk("005935", "semi", 900), mk("042700", "semi", 85), mk("373220", "battery", 80),
+            mk("000270", "auto", 75, pxd="2026-11-25"), dict(mk("068270", "bio", 70), cap=None), mk("207940", "bio", 60),
+            mk("035420", "platform", 55, al=None), mk("012450", "defense", 40)]
+    stocks = {s["t"]: s for s in rows}
+    want = ["000660", "005930", "005380", "105560"]
+    pick = lambda st: SA.pick_ready(R, "B안", st, want, 4, need=("mdd", "al"), secs=3)   # noqa: E731
+    marked = lambda *ts: {t: (dict(s, beta=None, vol=None, al=None, mdd=None, pxBad="2024-06-24") if t in ts else s)   # noqa: E731
+                          for t, s in stocks.items()}
+    R = FakeRunner()
+    assert pick(stocks) == want and not R.notes and capsys.readouterr().out == ""        # 평소: 예전과 같은 네 종목, 알림 없음
+    # SK하이닉스 표시 → 남은 셋이 이미 업종 3곳이라 시가총액 순 첫 보통주: 펀드(069500) · 우선주(005935)는 건너뛰고 042700 (업종은 상관없어요)
+    assert pick(marked("000660")) == ["005930", "005380", "105560", "042700"]
+    out = capsys.readouterr().out
+    assert len(R.notes) == 1 and "000660 과거 주가 기록 오류 표시(pxBad)" in R.notes[0] and "042700" in R.notes[0]
+    assert out.count("!! 알림  [B안]") == 1 and out.count("::warning title=발행 전 화면 검사 · 바꿔 담은 종목::") == 1
+    # 현대차 · KB금융 표시 → 반도체 둘만 남아요: 업종 3곳이 되게 새 업종 먼저 (042700 은 반도체라 건너뛰고, 000270 은 마지막 확인 종가,
+    # 068270 은 시가총액이 비어 건너뛰어요)
+    assert pick(marked("005380", "105560")) == ["000660", "005930", "373220", "207940"]
+    # 빈 베타(내장 값으로 메움 = 예시 가격) · 오늘 데이터에 없음 · 장면이 읽는 칸(al)이 빔 → 바꿔 담아요
+    assert pick(dict(stocks, **{"000660": dict(stocks["000660"], beta=None)}))[3] == "042700"
+    assert pick({t: s for t, s in stocks.items() if t != "105560"})[:3] == ["000660", "005930", "005380"]
+    assert pick(dict(stocks, **{"005380": dict(stocks["005380"], al=None)}))[:3] == ["000660", "005930", "105560"]
+    assert "필요한 칸(al)이 빔" in R.notes[-1] and any("105560 오늘 데이터에 없음" in n for n in R.notes)
+    # 쓸 종목이 모자라면 짧은 목록 → 장면이 '시험할 종목이 모자라요'로 실패해요 (지어낸 종목을 담지 않아요)
+    few = {t: s for t, s in marked(*[t for t in stocks if t not in ("005930", "005380")]).items()}
+    assert pick(few) == ["005930", "005380"]
+    # 장면은 이 규칙으로 담고, 업종 · 개수 확인은 그대로예요
+    src = open(os.path.join(ROOT, "tests", "smoke_app.py"), encoding="utf-8").read()
+    a = src.index("def scene_option_b(")
+    body = src[a:src.index("\ndef ", a + 1)]
+    assert 'want = ["000660", "005930", "005380", "105560"]' in body
+    assert 'hold = list(zip(pick_ready(R, "B안", stocks, want, 4, need=("mdd", "al"), secs=3), (400, 150, 100, 100)))' in body
+    assert 'assert len(hold) == 4 and len(secs) >= 3, f"시험할 종목이 모자라요: {hold} · 업종 {secs}"' in body
+    assert "isinstance(stocks[t].get(\"vol\")" not in body                     # 예전 규칙(변동성만)은 이제 risk_ready 안에
 
 
 def test_screen_step_puts_an_unseen_scene_in_the_summary_and_still_publishes(tmp_path):
