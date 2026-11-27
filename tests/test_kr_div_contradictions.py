@@ -736,7 +736,7 @@ def test_one_newly_unknown_dividend_only_warns_and_is_named(raw_pair):
     rep = check(cur, prev)
     assert not rep.failed, rep.table()
     row = rows_of(rep)[NEW_ROW]
-    assert row[3] == "WARN" and row[1].startswith(f"새로 1종목: {a['t']}") and "직전 발행본 0종목" in row[1], row
+    assert row[3] == "WARN" and row[1].startswith(f"새로 1종목: {a['t']}") and "직전 발행본 기록 없음 → 행으로 셈 0종목" in row[1], row
     listed = [items for title, items in rep.details if title.startswith("DART 배당 표로 새로 모름이 된 종목")]
     assert len(listed) == 1 and [x.split()[0] for x in listed[0]] == [a["t"]], rep.details
 
@@ -745,7 +745,7 @@ def test_a_stock_already_unknown_in_the_previous_publish_is_not_new(raw_pair):
     cur, prev, a, b = raw_pair
     prev["data"].setdefault("divCheck", {})["raw"] = copy.deepcopy(cur["data"]["divCheck"]["raw"])
     row = rows_of(check(cur, prev))[NEW_ROW]
-    assert row[3] == "PASS" and row[1].startswith("새로 0종목 · 오늘 모름 1종목 · 직전 발행본 1종목"), row
+    assert row[3] == "PASS" and row[1].startswith("새로 0종목 · 오늘 모름 1종목 · 직전 발행본 기록 1종목"), row
 
 
 def test_nineteen_newly_unknown_dividends_warn_and_twenty_fail(raw_pair):
@@ -801,3 +801,131 @@ def test_without_a_record_or_a_previous_publish_nothing_is_counted(raw_pair):
     cur["data"]["divCheck"].pop("raw")
     row = rows_of(check(cur, prev))[NEW_ROW]
     assert row[3] == "PASS" and row[1].startswith("새로 0종목"), row
+
+
+# ── 리뷰 #179 3차 S1: 직전 발행본에 기록이 없으면 그 발행본의 행으로 '전'을 세요 (기록 하나가 빠졌다고 같은 회사들을 날마다 다시 세지 않게) ──
+def prev_rows_zero_with_total(prev, codes, cash=1.0):
+    """직전 발행본(#179 전 꼴)에서 그 종목들이 '0원인데 그해 총액이 있음' 으로 보이게: dps 0 · dps3[0] 0 · corp.json cash3[0] > 0 (억원)."""
+    by = {s["t"]: s for s in prev["data"]["stocks"]}
+    cby = {c["t"]: c for c in prev["corp"]["companies"]}
+    for t in codes:
+        s = by[t]
+        d3 = s.get("dps3") if isinstance(s.get("dps3"), list) else [None, None, None]
+        s.update(dps=0.0, dps3=[0.0] + list(d3[1:3]))
+        cby[t]["cash3"] = [cash, cash, cash]
+
+
+def unknown_today(cur):
+    return sorted(t for t, ys in cur["data"]["divCheck"]["raw"]["contra"].items() if 0 in ys)
+
+
+def test_without_a_previous_record_the_same_companies_shown_as_zero_with_a_total_are_not_new(raw_pair):
+    """첫 실행 꼴: 오늘 17곳이 모름 · 직전 발행본(#179 전 파일, 기록 없음)은 그 17곳을 0원 · 총액 있음으로 보였어요 → 새로 0 (통과 · 경고 없음)."""
+    cur, prev, a, b = raw_pair
+    dash_n(cur, a, b, 16)
+    codes = unknown_today(cur)
+    assert len(codes) == 17 and "raw" not in (prev["data"].get("divCheck") or {})
+    prev_rows_zero_with_total(prev, codes)
+    rep = check(cur, prev)
+    row = rows_of(rep)[NEW_ROW]
+    assert not rep.failed, rep.table()
+    assert row[3] == "PASS" and row[1].startswith("새로 0종목 · 오늘 모름 17종목 · 직전 발행본 기록 없음 → 행으로 셈 17종목"), row
+    before, how = V.div_unknown_before(prev["data"], prev["corp"]["companies"])
+    assert set(codes) <= before and how.startswith("직전 발행본 기록 없음")
+
+
+def test_without_a_previous_record_twenty_truly_new_still_fail(raw_pair):
+    """기록 없는 직전 발행본에서 그 20곳이 배당을 줬으면 (0 이 아님) 정말 새로 생긴 것 → 실패. 그중 3곳만 0원 · 총액 있음이었으면 새로 17 → 경고."""
+    cur, prev, a, b = raw_pair
+    dash_n(cur, a, b, 19)
+    codes = unknown_today(cur)
+    assert len(codes) == 20
+    cby = {c["t"]: c for c in prev["corp"]["companies"]}
+    for t in codes:
+        cby[t]["cash3"] = [1.0, 1.0, 1.0]                                      # 총액은 있지만 주당 배당도 있어요 (그때는 맞는 표)
+    rep = check(cur, prev)
+    row = rows_of(rep)[NEW_ROW]
+    assert [r[0] for r in rep.failed] == [NEW_ROW] and row[1].startswith("새로 20종목: "), rep.table()
+    prev_rows_zero_with_total(prev, codes[:3])
+    rep = check(cur, prev)
+    row = rows_of(rep)[NEW_ROW]
+    assert not rep.failed and row[3] == "WARN" and row[1].startswith("새로 17종목: ") and "행으로 셈 3종목" in row[1], rep.table()
+
+
+def test_a_company_with_a_zero_but_no_total_in_the_previous_publish_is_still_new(raw_pair):
+    """0 인데 그해 총액이 없던 종목 (정말 배당 없음) 은 '전'에 들지 않아요 — 오늘 모름이면 새로 세요."""
+    cur, prev, a, b = raw_pair
+    by = {s["t"]: s for s in prev["data"]["stocks"]}
+    by[a["t"]].update(dps=0.0, dps3=[0.0, 0.0, 0.0])                         # corp.json 총액 없음 (픽스처 그대로)
+    row = rows_of(check(cur, prev))[NEW_ROW]
+    assert row[3] == "WARN" and row[1].startswith(f"새로 1종목: {a['t']}"), row
+
+
+@pytest.mark.parametrize("bad", [{"v": 2}, [], None, {"v": 1, "contra": {"005930": [[0]]}}])
+def test_a_malformed_previous_record_falls_back_to_the_rows(raw_pair, bad):
+    cur, prev, a, b = raw_pair
+    prev["data"].setdefault("divCheck", {})["raw"] = bad
+    row = rows_of(check(cur, prev))[NEW_ROW]
+    assert row[3] == "WARN" and "직전 발행본 기록 모양이 틀림 → 행으로 셈 0종목" in row[1], row
+    prev_rows_zero_with_total(prev, [a["t"]])
+    row = rows_of(check(cur, prev))[NEW_ROW]
+    assert row[3] == "PASS" and row[1].startswith("새로 0종목") and "기록 모양이 틀림 → 행으로 셈 1종목" in row[1], row
+
+
+def test_rows_fallback_also_takes_the_previous_nodps_marks(raw_pair):
+    """기록만 틀리고 proofSub 는 맞는 직전 발행본: 그 발행본이 이미 모름 (nodps · 줄 4) 으로 보인 종목은 새로가 아니에요."""
+    cur, prev, a, b = raw_pair
+    pdc = prev["data"].setdefault("divCheck", {})
+    pdc["raw"] = {"v": 2}
+    pdc["proofSub"] = {"v": 1, "rights": {}, "data": {a["t"]: "nodps"}}
+    before, how = V.div_unknown_before(prev["data"], prev["corp"]["companies"])
+    assert a["t"] in before and "nodps 1" in how
+    assert rows_of(check(cur, prev))[NEW_ROW][3] == "PASS"
+
+
+def test_a_record_holding_a_list_for_a_year_fails_cleanly(raw_pair):
+    """리뷰 #179 3차: 해 목록 안의 목록이 관문을 멈추지 않아요 — 모양이 틀린 기록으로 실패 줄 (오류 없이)."""
+    cur, prev, a, b = raw_pair
+    cur["data"]["divCheck"]["raw"]["contra"][a["t"]] = [[0]]
+    assert V.div_raw_rec(cur["data"]) == (None, False)
+    rep = check(cur, prev)
+    failed = {r[0] for r in rep.failed}
+    assert NEW_ROW in failed and ODD_ROW in failed, rep.table()
+    assert "divCheck.raw 모양이 틀려 셀 수 없어요" in rows_of(rep)[NEW_ROW][1]
+
+
+# ── 리뷰 #179 3차 S3: nodps 는 기록 자신이 그 칸을 0 으로 읽었고 우선주만 받은 해가 아닐 때만 ──
+@pytest.mark.parametrize("change, why", [
+    (lambda raw, t: raw["pre"].update({t: [500.0, 3.1]}), "divCheck.raw.pre 의 비우기 전 올해 주당 배당이 0 이 아니에요"),
+    (lambda raw, t: raw["pre"].update({t: [None, 3.1]}), "divCheck.raw.pre 의 비우기 전 올해 주당 배당이 0 이 아니에요"),
+    (lambda raw, t: raw["prefOnly"].update({t: [0]}), "divCheck.raw.prefOnly 가 올해를 우선주 · 종류주만 받은 해라고 해요"),
+])
+def test_line_four_needs_the_record_to_say_the_cell_read_zero_and_not_preferred_only(raw_pair, change, why):
+    cur, prev, a, b = raw_pair
+    change(cur["data"]["divCheck"]["raw"], a["t"])
+    rows, _, want, _ = V.div_line_bad_rows([s for s in cur["data"]["stocks"] if s.get("cls") == "kr"], cur["data"]["divCheck"],
+                                           comps=cur["corp"]["companies"])
+    assert [(r[0], r[2]) for r in rows] == [(a["t"], "shown")] and why in rows[0][1] and a["t"] not in want and want[b["t"]] == 3
+    rep = check(cur, prev)
+    assert SUB_ROW in {r[0] for r in rep.failed}, rep.table()
+    # 파이프라인의 같은 검사는 그 줄을 비워요 (기록과 맞지 않는 줄 · 상시 규칙)
+    kr = [s for s in cur["data"]["stocks"] if s.get("cls") == "kr"]
+    own = F.own_blank_div_lines(kr, cur["data"]["divCheck"])
+    assert own["n"] == 1 and "dvLine" not in a
+
+
+# ── 리뷰 #179 3차 N2: 소액주주 단계는 #179 로 올해 주당 배당을 비운 종목을 그 이유로 그대로 둬요 (로그 · 기록의 이유만) ──
+def test_the_small_holder_step_names_the_blanked_stocks_reason():
+    from test_smallholder_div import scene
+    kr, why, c, extra = scene()
+    by = {s["t"]: s for s in kr}
+    s = by["030610"]
+    s.pop("dps", None)
+    s["dps3"] = [None] + s["dps3"][1:]
+    why.div_raw = {"v": 1, "contra": {}, "prefOnly": {}, "dpsBad": {"030610": [0]}, "dyBad": {}, "dyOk": 0, "dyNo": 0, "pre": {}}
+    rec = F.small_holder_div(kr, why, c, dt.date(2026, 11, 20), extra)
+    assert rec["no"]["030610"] == "raw" and "dpsSmall" not in s and F.SMALL_DIV_KO["raw"].startswith("DART 배당 표의 올해 주당 배당을 비운 종목")
+    kr, why, c, extra = scene()                                                    # 기록이 없으면 예전처럼 ('종목 칸이 모자람')
+    by = {s["t"]: s for s in kr}
+    by["030610"]["dps3"] = [None] + by["030610"]["dps3"][1:]
+    assert F.small_holder_div(kr, why, c, dt.date(2026, 11, 20), extra)["no"]["030610"] == "bad"

@@ -12400,7 +12400,8 @@ SMALL_DIV_KO = {"ev": "그해 말 뒤 분할 · 병합 · 무상증자", "blk": 
                 "many": "소액주주 몫으로 적힌 금액이나 주식 수가 둘 이상", "big": f"소액주주 기준 수익률이 {DYT_MAX:g}% 넘음 (믿지 않아요)",
                 "tiny": f"소액주주 기준 수익률이 {SMALL_DIV_Y_MIN:g}% 아래", "nf": "12월 결산 사업보고서 원문 또는 '배당에 관한 사항' 절 없음",
                 "nocall": "DART 를 부르지 않는 실행 (같은 기준일 다시 하기) — 읽은 적 없는 원문은 다음 실행에서",
-                "bad": "종목 칸이 모자람 (가격 · 1주 배당 · 사업연도 · 기업코드)"}
+                "bad": "종목 칸이 모자람 (가격 · 1주 배당 · 사업연도 · 기업코드)",
+                "raw": "DART 배당 표의 올해 주당 배당을 비운 종목 (표 안의 어긋남 · divCheck.raw)"}
 
 
 def small_div_report_rc(rows, fy):
@@ -12676,8 +12677,16 @@ def _small_holder_div(kr, why, client, px_date, corp_extra, rec):
     by = {s.get("t"): s for s in kr}
     px = px_date.isoformat() if isinstance(px_date, dt.date) else str(px_date)
     budget = [SMALL_DIV_PER_RUN]
+    # #179 (리뷰 3차 N2): 올해 주당 배당을 비운 종목 (divCheck.raw 의 contra · dpsBad 올해 — 와이엔텍 · main 이 why.div_raw 에 둬요) 은 볼 1주 배당이
+    # 없어요 → '종목 칸이 모자람' 이 아니라 그 이유로 그대로 (로그 · 기록의 이유만 · 실은 종목은 같아요)
+    raw = getattr(why, "div_raw", None)
+    raw_y0 = {c for k in ("contra", "dpsBad") for c, ys in (((raw or {}).get(k) if isinstance(raw, dict) else None) or {}).items()
+              if isinstance(ys, list) and 0 in ys}
     for t in cand:
         s = by.get(t)
+        if t in raw_y0:
+            rec["no"][t] = "raw"
+            continue
         fy = (s or {}).get("fy")
         d0 = _fin((_three((s or {}).get("dps3")) or [None])[0])
         price = _fin((s or {}).get("price"))
@@ -17870,7 +17879,11 @@ def main():
     div_counts, corp_extra = apply_div_basis(kr, fin_map, kmeta.get("_prefShares") or {}, why=why)
     if div_raw is not None:
         div_counts["raw"] = div_raw          # 비운 값이 있으면 기록은 늘 함께 (아래 dy 맞춤이 멈춰도)
-        div_raw_line_log(kr, div_raw)        # 올해를 비운 종목 중 이유 줄을 단 수 · 못 단 수 (리뷰 #179 2차)
+        try:      # 올해를 비운 종목 중 이유 줄을 단 수 · 못 단 수 (리뷰 #179 2차 · 3차: 세는 줄이 멈춰도 발행은 이어가요 — 크게 남겨요)
+            div_raw_line_log(kr, div_raw)
+        except Exception as e:
+            log(f"  !! DART 배당 표 맞춤: 이유 줄 세기(div_raw_line_log)가 오류로 멈췄어요 ({type(e).__name__}: {str(e)[:160]}) — 줄 수를 남기지 "
+                "못했어요 (값과 기록은 그대로 · 관문의 '숨긴 배당수익률의 줄' 줄이 따로 맞춰 봐요)")
         try:      # DART 배당수익률(dy)이 그럴듯한지 (dps3a · dpsF 를 써서 apply_div_basis 뒤 · 다 하거나 아무것도 안 해요)
             div_dy_guard(kr, div_raw, px=px_date)
         except Exception as e:
@@ -17878,6 +17891,7 @@ def main():
                 "기록은 주당 배당 맞춤까지만 (관문 경고)")
     # 2026-11-23 (Jack, 11-19 Q6): 차등배당 회사의 소액주주 1주 배당 · 수익률 (dpsSmall · dytSmall · divSmall) — 증명이 data/div 로 숨긴 종목만,
     # 사업보고서 원문이 그렇게 적을 때만. dps · dyt · dz 는 그대로 (캐시 저장 앞: 새로 읽은 원문 사실도 함께 저장돼요)
+    why.div_raw = div_raw                # #179 (리뷰 3차 N2 · 로그만): 소액주주 단계가 올해 주당 배당을 비운 종목의 이유를 알게
     div_small = small_holder_div(kr, why, client, px_date, corp_extra)
     if client:
         try:

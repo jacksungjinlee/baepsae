@@ -48,15 +48,19 @@ unknown (blank), unless the preferred shares explain the whole total (±15%); ne
 preferred-only and stays 0; 케이프 files its common 700원 under a 우선주 label (stays unknown; a parser follow-up could take it). (B) a
 per-share cell more than 1,000 × off the total (와이엔텍) is blanked; DART's `dy` more than 3 × off today's per-share dividend over the
 52-week range (4 × outside that window) is blanked, and so is a `dy` 0 next to a blanked year. 2.0: A shows 자료가 없어요 + line 4 in its
-four places (배당 tile, 배당 tab, 관심 종목, 두 종목 비교); 와이엔텍 keeps 배당을 줘요 + line 3 + its 배당성향 ring. The old app is unchanged
-(its own DART `dy`, "—" where blanked). **Jack, 2026-11-27:** "#179: yes. The dividend shows as unknown with the existing line "회사 공시에
+four places (배당 tile, 배당 tab, 관심 종목, 두 종목 비교); 와이엔텍 keeps 배당을 줘요 + line 3 + its 배당성향 ring. The old app gets no line:
+its 배당수익률 is DART's own `dy` ("—" where blanked), and its company card shows its existing "3년 추이 데이터 없음" instead of the
+per-share bars and 감소 (현대코퍼레이션's "600 · 700 · 0", the other 16 and 와이엔텍). **Jack, 2026-11-27:** "#179: yes. The dividend shows as unknown with the existing line "회사 공시에
 배당 계산에 필요한 자료가 빠져 있어서 배당수익률은 비워 두었어요." Block only if many appear in one run." So the gate accepts line 4 for the new
 case `nodps` (only while dps is blank, `divCheck.raw.contra` lists the year and corp `cash3[0]` > 0), and a new FAIL row "DART 배당 표로
-새로 모름이 된 종목 수 (20종목 이상이면 실패)" stops the publish when 20 or more stocks become unknown in one run (1–19 warn with names).
+새로 모름이 된 종목 수 (20종목 이상이면 실패)" stops the publish when 20 or more stocks become unknown in one run (1–19 warn with names);
+"new" means not already unknown, or 0 with a total, in the previous publish (its record, or its rows when it has no record — review
+round 3, so one recordless publish can't make every later run fail).
 The existing FAIL row "주당 배당금·배당수익률 맞음" keeps its full strength (21, 0.8% on 11-21, as on `main`). On the 11-27 copy (pxDate
 11-26): 17 this-year unknowns (line 4) + 와이엔텍 (line 3), 18 `dy` values blanked, 삼성전자 · 현대차 · the 10 largest payers unchanged.
-**After it merges:** the first publish counts all 17 as new (the previous publish has no record) → the new row WARNs with their names,
-not a FAIL; check 현대코퍼레이션 (011760) → 배당 shows 자료가 없어요 + line 4. RUNBOOK "Korean dividend tables that contradict themselves".
+**After it merges:** the first publish should read "새로 0종목" (the previous publish shows the 17 as 0 with a total; 11-27 copies:
+0); check 현대코퍼레이션 (011760) → 배당 shows 자료가 없어요 + line 4. Known limit (told to Jack in the PR): many line-3 blanks of 와이엔텍's
+kind would only warn. RUNBOOK "Korean dividend tables that contradict themselves".
 
 **홈's US close line (#190, 2026-11-24; same class as #187's 포트폴리오 fix, minor):** app only, no new words. 홈 (`home2.jsx`) and the
 old 홈 behind the HOME2 switch (`today.jsx` Home) decided "a US stock is held" by `cls`. A holding of 379800 KODEX 미국S&P500 (cls "us",

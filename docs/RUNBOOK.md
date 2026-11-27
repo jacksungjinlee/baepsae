@@ -1747,11 +1747,13 @@ as unknown (line 4); taking such a mislabelled row would be a separate parser ch
   배당성향 from the totals only while corp.json's `cash3[0]` is above 0 (else 자료가 없어요 with line 3). Same places as the other
   lines: the 배당 tile and tab, 관심 종목, 두 종목 비교 (each shows the line once; `tests/test_kr_div_unknown_lines.py`). corp.json keeps
   `cash3` · `eps3r` · `epsNi3` · `epsB` for every stock with a 배당 table, also when all three per-share years were blanked (와이엔텍's ring).
-- **The old app (예전 뱁새) is unchanged** and shows no reason line: its 배당수익률 is DART's own `dy` (data.json, and corp.json for the
-  company card), so a company keeps the yield it filed (현대코퍼레이션 3.1%; the check below has no per-share figure to compare it
-  with) and shows "—" where `dy` was blanked (a 0 next to the blanked year: HL D&I, 한텍, 에코프로머티 showed 0.0% before); it reads
-  no `dps`, the company card draws no per-share bars when `dps3[0]` is blank and no 배당성향 without `dps`; a holding with no `dy` is
-  counted in its existing note ("배당 정보가 없는 종목 {n}개는 0원으로 계산했어요.").
+- **The old app (예전 뱁새)** gets no reason line and no new wording, but its company card changes where `dps3[0]` is blank: the
+  per-share bars and their 증가 · 감소 · 유지 word give way to its existing "3년 추이 데이터 없음" (현대코퍼레이션 loses "600 · 700 · 0"
+  and "감소"; so do the other 16 and 와이엔텍). Its 배당수익률 is DART's own `dy` (data.json, and corp.json for the company card), so a
+  company keeps the yield it filed (현대코퍼레이션 3.1%; the check below has no per-share figure to compare it with) and shows "—" where
+  `dy` was blanked (a 0 next to the blanked year: HL D&I, 한텍, 에코프로머티 showed 0.0% before). It reads no `dps` for the yield; no
+  배당성향 without `dps` (as before for a 0); a holding with no `dy` is counted in its existing note ("배당 정보가 없는 종목 {n}개는
+  0원으로 계산했어요.").
 - **DART 배당수익률 (`dy`, the old app's 배당수익률) → blank** when it is more than 3 × away (`DY_FAR`) from today's per-share
   dividend (`dps3a[0]`, only where the split check confirmed this year's basis) over the 52-week high–low range and today's close
   (흥국 56.0 = dividend ÷ par, 지투파워 33.7 = the payout ratio, 아비코전자 30.0, 알피바이오 10.0); a 0 with a payer, or a yield with a 0
@@ -1776,13 +1778,22 @@ as unknown (line 4); taking such a mislabelled row would be a separate parser ch
   on DART; if the rule caught something sound, the threshold is a safety rule — ask Jack with the evidence, never loosen it.
 - **Gate (FAIL, Jack 2026-11-27: "Block only if many appear in one run"):** "DART 배당 표로 새로 모름이 된 종목 수 (20종목 이상이면
   실패)" (`check_div_unknown_new`, `DIV_UNKNOWN_NEW_FAIL` = 20) counts the stocks whose this-year dividend the run left unknown
-  (`divCheck.raw.contra` lists year 0) and the previous publish's record did not. 1–19 warns and names them (all in the summary
-  list); 20 or more fails the publish. No previous publish (not publish mode) → not compared. A previous publish without the record
-  (from before #179) counts as none, so the first run after #179 counts every unknown stock as new: 17 on the 11-21 and 11-27 copies,
-  a warning. Later, new ones come only with a new or corrected 사업보고서. A record that is present but malformed fails this row too,
-  the same condition that fails "주당 배당금·배당수익률 맞음". What to do when it fails: read the run log's "DART 배당 표" lines and two
-  or three of the named companies' 배당 tables on DART. If our parse broke, fix the parser; if the tables really say so (a new
-  annual-report season), ask Jack with the evidence — never raise the number on your own.
+  (`divCheck.raw.contra` lists year 0) and that were not already like that in the previous publish. 1–19 warns and names them (all
+  in the summary list); 20 or more fails the publish. No previous publish (not publish mode) → not compared.
+  - "Already like that" (`div_unknown_before`): with a well-formed record, the previous publish's `contra` year 0. Without one (a file
+    from before #179, a day `div_raw_guard` crashed, a revert, a data-branch rollback) or with a malformed one, the previous publish's
+    own rows: this year's common 주당 배당 0 with that year's total above 0 in its corp.json (`div_zero_contra`, the same count as the
+    warning row above), plus its `proofSub.data` `nodps` stocks. A preferred-only 0 can't be told from rows, so it counts as "already".
+    So one publish without the record does not make every later run count the same companies again (review #179 round 3, S1).
+  - On the 11-27 copies: today 17 unknown; the previous publish (made by `main`'s code) shows 18 as 0 with a total (the 17 + 티에스아이)
+    → "새로 0종목". The first run after #179 should read about 0. New ones come only with a new or corrected 사업보고서 (about 9 in a
+    whole March season, spread over the filing days).
+  - A record that is present but malformed fails this row too, the same condition that fails "주당 배당금·배당수익률 맞음".
+  - Known limit: a per-share cell blanked as "not a per-share amount" (`dpsBad`, line 3, 와이엔텍's kind) is not counted here; many of
+    those at once would only warn in "DART 주당 배당 · 배당수익률 그럴듯함 (경고만)" (the nearest stop is the dividend coverage drop).
+  - What to do when it fails: read the run log's "DART 배당 표" lines and two or three of the named companies' 배당 tables on DART. If
+    our parse broke, fix the parser; if the tables really say so (a new annual-report season), ask Jack with the evidence — never
+    raise the number on your own.
 
 ## 소액주주 yield for differential dividends (차등배당, since #183 — Jack 2026-11-19 Q6, 2026-11-23)
 
