@@ -6891,6 +6891,19 @@ SEEN_JS = ("() => { try { const d = JSON.parse(localStorage.getItem('baepsae2.v1
            " catch (e) { return null; } }")
 
 
+def seen_saved(page, what):
+    """Leaving the guide's 기준 step by a way the overlay does not cover (다음, 이전 단계, 다시 시작) ends the guide one render
+    late: the bubble goes at once, with the step it sits on, and only then app.jsx's effect (offStep -> endGuide(true))
+    writes '본 적 있음' (guideSeen) into the store. Reading the store as soon as the bubble is gone can come before that
+    write (2026-11-28: v19.3c 안내 밖 단계 이동 on PR #191's ci; measured here about 5 ms after the bubble, 30-40 ms
+    with the browser 10x slower). Waits up to WAIT for the write; else fails saying it never came. (The bubble's own buttons and
+    Esc end the guide and write the flag in the same render: they need no wait.)"""
+    try:
+        page.wait_for_function(f"() => ({SEEN_JS})() === '1'", timeout=WAIT)
+    except PWTimeout:
+        raise AssertionError(f"{what}: the guide ended, but '본 적 있음' (guideSeen) was not in the store after {WAIT // 1000} s") from None
+
+
 def forget_guide(page):
     """처음 안내를 본 표시를 저장 기록에서 지우고 페이지를 다시 열어요 (앱이 기억한 표시도 새로 읽게)."""
     page.evaluate("() => { const k = 'baepsae2.v1'; try { const d = JSON.parse(localStorage.getItem(k)); if (d) { delete d.guideSeen;"
@@ -7392,9 +7405,11 @@ def scene_v193c_offstep(R, files, width=390):
         page.locator('[data-card="div"] [data-ui-v2="card-inc"]').click()
         bubble(page, 2).click()
         bubble(page, 3)
+        assert seen() is None, "다음 (3/3): '본 적 있음' is already in the store before the click"
         page.evaluate("() => document.querySelector('[data-ui-v2=\"action-bar\"] button:not([disabled])').click()")   # 3/3 에서 아래 띠의 다음
         see(page, C["build"]["s3"]["title"])
         guide_gone(page)
+        seen_saved(page, "다음 (3/3)")                                      # written one render after the bubble goes
         assert seen() == "1"
         page.locator('[data-ui-v2="app-bar"]').get_by_role("button", name=C["build"]["prevStep"]).click()
         see(page, C["build"]["s1"]["title"])
@@ -7403,9 +7418,11 @@ def scene_v193c_offstep(R, files, width=390):
         for name in (C["build"]["restart"], C["build"]["prevStep"]):        # 1/3 에서 다시 시작 · 이전 단계 (말풍선 밖의 단추)
             unseen()
             guide_step1(page, False)
+            assert seen() is None, f"{name}: '본 적 있음' is already in the store before the click"
             page.evaluate("(n) => [...document.querySelectorAll('[data-ui-v2=\"app-bar\"] button, main button')].find((b) => (b.getAttribute('aria-label') || b.textContent.trim()) === n).click()", name)
             see(page, C["build"]["s0"]["title"])
             guide_gone(page)
+            seen_saved(page, name)
             assert seen() == "1", name
             page.locator('[data-deck="income"]').click()                   # 템플릿을 골라도 2/3 이 저절로 뜨지 않아요
             see(page, C["build"]["s1"]["title"])
@@ -13894,6 +13911,20 @@ def chips_of(page):
       [...c.querySelectorAll('[data-ui-v2="watch-chip"]')].map((x) => [x.dataset.k, x.dataset.state, x.textContent])]))""")
 
 
+def watch_cards_shown(page, ts):
+    """관심 종목 (#stocks/watch) draws its title and sub line at once, and its cards only once today's data has loaded
+    (watch.jsx: `ok && order.map(...)`, all in one render). Opened straight at #stocks/watch, the screen can be visible
+    before data.json is in, and chips_of then reads no card (2026-11-28: KeyError '005380' on PR #179's branch, a full run
+    under load). Waits up to WAIT until every code in ts has its card; else fails naming the codes with no card."""
+    try:
+        page.wait_for_function("(ts) => ts.every((t) => !!document.querySelector(`[data-ui-v2=\"watch-card\"][data-t=\"${t}\"]`))",
+                               arg=list(ts), timeout=WAIT)
+    except PWTimeout:
+        have = page.locator('[data-ui-v2="watch-card"]').evaluate_all("(cs) => cs.map((c) => c.dataset.t)")
+        raise AssertionError(f"관심 종목: no card after {WAIT // 1000} s for {[t for t in ts if t not in have]} (cards shown: {have}); "
+                             "the data did not load, or those cards are missing") from None
+
+
 def scene_v196c(R, files, width, dark=False, deck=False):
     """v19.6c 관심 종목 (390 · 320 · 1280 · 어두운 화면): 종목 탭 맨 위 관심 종목 칸(목록이 있을 때만, 5개 · 전체 보기 ›) → 관심 종목 화면
     (#stocks/watch: 제목 · + 추가 · 날짜 줄 · 설명 줄 · 카드 = 마크 · 이름 · 가격 · 오늘 · 조건 칩 · 종 모양 단추 · 아래 줄) · 맞은 조건은 초록 칩과
@@ -14352,6 +14383,19 @@ def tax_screen_common(page, width, today_iso):
     no_hscroll(page, width)
 
 
+def tax_data_in(page):
+    """연말에 확인할 숫자 with today's data in. Its link on 내 수익 shows whatever the data (returns.jsx: it reads the user's own
+    records), so the screen can open before data.json has loaded: its head shows at once, its cards and the footer line only
+    once the data is in (tax.jsx: g · dv · ls and the footer all need load ok, drawn in one render). Counting the cards
+    before that counts none (2026-11-28: v19.6f 상태 div-nofx, a full run under load). Waits up to WAIT for the footer line;
+    else fails saying the data never came in. After it, a card that is absent is absent with the data in."""
+    try:
+        page.locator('[data-ui-v2="tax-footer"]').wait_for(state="visible", timeout=WAIT)
+    except PWTimeout:
+        raise AssertionError(f"연말에 확인할 숫자: no footer line after {WAIT // 1000} s, so the screen never had today's data "
+                             "(its cards are not drawn without it)") from None
+
+
 # ── say-why N-01 · N-02 (2026-11-22): 숨긴 한국 배당수익률의 줄이 관심 종목 · 두 종목 비교에도 (회사 페이지와 같은 줄) ──
 DIV_LINE_KEYS = {"005380": "rightsHidden", "000660": "dataHidden", "035420": "missingHidden"}     # dvLine 2 · 3 · 4
 DIV_LINE_UI = {"rightsHidden": "div-rights-hidden", "dataHidden": "div-data-hidden", "missingHidden": "div-missing-hidden"}
@@ -14424,6 +14468,7 @@ def scene_div_lines(R, files, width, dark=False):
 
     def watch_lines():
         page.locator('[data-ui-v2="watch"]').wait_for(state="visible")
+        watch_cards_shown(page, list(watch))                     # the cards come with the data, after the screen itself
         card = lambda t: page.locator(f'[data-ui-v2="watch-card"][data-t="{t}"]')     # noqa: E731
         ch = chips_of(page)
         sub = page.locator('[data-ui-v2="watch-sub"]').evaluate("(e) => getComputedStyle(e).color")
@@ -14884,6 +14929,7 @@ def scene_v196f_states(R, files, width=390):
             elif case == "div-nofx":
                 # a Korean dividend and a US one without a rate (Jack, 2026-11-19: M1): the link opens; the card names the US one
                 go_tax()
+                tax_data_in(page)                                                                  # the cards come with the data
                 assert page.locator('[data-ui-v2="tax-gain"]').count() == 0 and page.locator('[data-ui-v2="tax-loss"]').count() == 0
                 dc = page.locator('[data-ui-v2="tax-div"]')
                 # 84,600 ÷ 0.846 = 100,000원; KO $4.25 (환율 없음) 은 빠지고 M1 줄이 1건이라고 말해요
@@ -14893,6 +14939,7 @@ def scene_v196f_states(R, files, width=390):
                 assert any("1 US dividend(s) dated 2026 have no exchange rate: left out of the pre-tax sum (1 counted)" in m for m in logs), logs
             elif case == "kr-div":
                 go_tax()
+                tax_data_in(page)                                                                  # the same race as div-nofx
                 assert page.locator('[data-ui-v2="tax-gain"]').count() == 0 and page.locator('[data-ui-v2="tax-loss"]').count() == 0
                 dc = page.locator('[data-ui-v2="tax-div"]')
                 # 84,600 ÷ 0.846 = 100,000원
@@ -14984,6 +15031,7 @@ def scene_v196f_gaps(R, files, width=390):
             link.wait_for(state="visible")
             link.locator("button").click()
             tax_screen_common(page, width, today)
+            tax_data_in(page)                                                                      # the cards (and their console lines) come with the data
             said = [m for m in logs if m.startswith("[v2] tax: ")]
             lc, dc = page.locator('[data-ui-v2="tax-loss"]'), page.locator('[data-ui-v2="tax-div"]')
             if case in ("all-left", "mixed-left"):
