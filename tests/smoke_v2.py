@@ -14504,6 +14504,8 @@ def scene_div_blank(R, files, width, dark=False):
     def watch_lines():
         page.goto(base + "/app.html?dev=1#stocks/watch", wait_until="domcontentloaded")
         page.locator('[data-ui-v2="watch"]').wait_for(state="visible")
+        for t in (a_t, b_t):            # the cards come only once the data has loaded (the list's frame shows before)
+            page.locator(f'[data-ui-v2="watch-card"][data-t="{t}"]').wait_for(state="visible")
         ch = chips_of(page)
         for t, key in ((a_t, a_key), (b_t, b_key)):
             assert ch[t] == [["dyAtLeast", "blank", "배당수익률 1% 이상· " + C["watch"]["blank"]]], (t, ch[t])
