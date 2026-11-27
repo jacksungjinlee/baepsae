@@ -14,7 +14,7 @@ last-week closes from our own publishes, Jack 11-22). Their data effects reach t
 log: the `새로 들어온 미국 종목` line, the `c1w` lines and the gate rows `미국 새 종목 확인 종가 기다림` and `이번 주 시작 종가`; Monday 11-23
 had a final KRX list (unless it turns out to be a backup-source day), so #172 reads no old publishes: expect `c1wSrc.pub` = 0 and the log
 line `c1w 지난 발행본: 읽지 않아요 …` — a 0 there is correct, not a failure, and #172's real-data proof is its dry run below. The
-v19.6b switch-on is its own paragraph below (#?). **Open questions to Jack:** the capped footnote
+v19.6b switch-on is its own paragraph below (#196). **Open questions to Jack:** the capped footnote
 `weekly.nvNoteMore` ("{names} 외 {n}종목의 지난주 종가는 다른 자료로 확인한 값이에요. 이번 주 움직임이 실제와 조금 다를 수
 있어요."; until then more than 5 Naver-checked stocks are left out and named), "건" on the older chips (유상증자 {n} · 지분 변동
 {n} · 실적 발표 {n}) (one decimal on 지분 변동 amounts: answered 11-23, in the switch-on PR). Design chat has (sent 11-22): the say-why audit, the 10 dark-mode pairs,
@@ -22,7 +22,7 @@ the approved 유상증자 card sentences with proposals for 유무상증자 and 
 11-27: "Yes, skip Part L"; the v19.3 spec's Status line says what covered each item), so Track 1's data follow-ups and Jack's
 other 11-27 answers come next. On hold: v19.4, v19.6g, v19.6h.
 
-**v19.6b switch-on (#?, branch `claude/v19.6b-switch-on`, 2026-11-28; live once it merges and deploys):** the parts #168 shipped off.
+**v19.6b switch-on (#196, branch `claude/v19.6b-switch-on`, 2026-11-28; live once it merges and deploys):** the parts #168 shipped off.
 공시 보기 on every 확인 필요 card (`routes.dartFilingUrl`: that one filing in DART's viewer by its exact receipt number, else no button;
 new tab, noopener; nothing fetched). The 임원 · 주요주주 지분 변동 cards on 오늘 볼 것: held and watched stocks, filed in the last 7
 days, |q| × today's official close ≥ 1억원, none for a stock shown at its last confirmed close (`pxd`, named in the console); on 홈 a
