@@ -26,6 +26,20 @@ v19.6g, v19.6h.
 
 **Split cross-check (#188, 2026-11-24; live data fix):** the 11-24 publish showed SNDK (8:1 split 11-20) with PER 0.1 — Yahoo's trailing EPS read 923.70, about 54× the company's own figure (net income ÷ shares ≈ 17.06); market cap ÷ net income is 5.14. US companies with a split in the last 30 days (up to the run day) now go through the foreign companies' comparison (`us_split_step` / `us_split_check`, same kinds and switch, no extra Yahoo requests) with a band sized to the split: a number is blanked only when it is off by more than max(1.5, √ratio) (#176's gate-row function; the foreign check keeps its 1.10 · 1.35 · 1.10). 2.0 shows an approved line under each blank (`co.fgnCut` for a mismatch; `co.fgnNoCmp` for can't-compare and, on a split company, for `currency` / `norecord`; `co.fgnStopped`). After the 30 days, every field blanked in the previous publish stays checked (`held`) until a run compares it and it agrees; can't-compare, a crash or missing details keep it blank, and the gate row warns while anything is held (an Up-C company like IBKR could stay blanked for good; RUNBOOK). A crash in the step no longer stops `fetch_us` (`us_split_guard`). Mark `splCut`, record `usSplitChk`, warning-only gate row `미국 분할 뒤 주당 숫자`; the foreign row is unchanged. Simulated on the 11-24 file with Yahoo's current details: only SNDK's PER is blanked (PBR 1.30×, 0% yield stay); MTUM, QUAL and SOXX are ETFs, skipped by name. It runs after #176's rescale (merged 11-24) on the same cache entry; the two never handle a number twice (#176 records `usSrc.split`, this check blanks with `splCut`). RUNBOOK § "Recently split US companies".
 
+**Factor scores, companies only (#189, 2026-11-24; found on the 11-24 publish):** `add_percentiles` ranked 33 US ETFs (23 with Yahoo's
+`priceToBook`, meaningless for a fund: SPY 1.76, really about 5) and 3 Korean listed infrastructure funds together with companies, so
+547 US companies' 가치 (`vz`) were off by up to 3 points (mean 1.2). After it merges, the next publish ranks companies only in each market
+(`validate_data.factor_fund`: `etf` true or `fund`, the 2.0 `isStockLike` rule): US companies' `vz` · `mz` · `lz` move by up to 3, Korean
+`pz` · `mz` · `lz` by at most 1. Funds keep their scores (review S1 · S2: nothing may disappear from the old app's 성향 card or 기업분석
+strip without a line), placed against their market's companies without joining the ranking (`fetch_data.fund_percentile`: the tied
+companies' average rank when a company has the same value, else the companies below it, ÷ n × 100; 규모 · 가치 · 저변동 100 minus that);
+they move by up to 3 (SPY `lz` 97 → 99, QQQ `vz` 77 → 79, 088980 unchanged). Expect the log lines `· 팩터 점수 (국내): 회사 주식 2,508종목 (우선주 62 포함)끼리 순위 …` and `· 팩터 점수 (미국): 회사 주식
+767종목끼리 순위 … 펀드 33곳은 순위에 넣지 않고 회사 분포에 견줘 매김 (점수 있는 펀드 33)` and the new warning-only gate row
+`팩터 점수: 회사끼리 순위 · 펀드는 회사 분포에 견줌 (다시 매겨 맞춰 봄 · 경고만)` as PASS `모두 같음 (…)` (the deploy gate on a file published before
+it warns: about 2,000 cells differ). No screen text. **Open for Jack (not built):** a US fund's 가치 score still comes from Yahoo's
+meaningless fund PBR (SOXX · TLT 100, used by the old app's 성향 card), and its PBR reaches two screens — the old app's 종목 고르기 card
+("PER / PBR", `src/detail.jsx` StockRow) and 2.0's 두 종목 비교 when a US ETF is held (`src/v2/compare.jsx` PBR row); fixing either needs a
+say-why line. RUNBOOK § Factor scores.
 **#182 (Korean price-history repair, Track 1 item 4), 2026-11-24 — built, switch OFF:** `fetch_data.py` `KR_PX_REPAIRS` · `kr_px_repair`
 rescale the bars before 13 old share events Naver never rescaled (12 of the 20 stocks in `krSeries.jump` on the 11-21 publish: 001465,
 003060, 007460, 009310, 012170 ×2, 012210, 110790, 227420, 311060, 331660, 425040, 472850), each factor confirmed by two sources

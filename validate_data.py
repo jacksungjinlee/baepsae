@@ -2831,6 +2831,105 @@ def check_us_split_pbr(rep, data):
         rep.add(US_SPLIT_PBR_ROW, True, f"검사가 멈췄어요: {type(e).__name__}: {str(e)[:120]}", rule + " (멈춰도 경고만)", warn=True)
 
 
+# 2026-11-24 (#189, 11-24 발행본 점검): 팩터 점수(규모 pz · 가치 vz · 추세 mz · 퀄리티 qz · 저변동 lz · 배당 dz)의 순위는 시장마다 회사 주식(우선주
+# 포함)끼리만 매겨요 (fetch_data.add_percentiles). 펀드 = etf 참 또는 fund (2.0 의 engine.js isStockLike 와 같은 기준). 11-24 발행본에는 미국 ETF
+# 33곳 (그중 23곳은 야후의 priceToBook — 펀드에는 뜻이 없어요: SPY 1.76 · 실제 약 5) 과 국내 상장 인프라 펀드 3곳이 순위에 섞여, 미국 회사의 가치
+# 점수가 최대 3점 (평균 1.2) 틀어지고 SOXX · TLT 가 가치 100점이었어요. 펀드는 순위에 들어가지 않고 같은 시장 회사들의 분포에 견준 자리를 받아요
+# (화면에서 점수가 사라지지 않게 · 리뷰 #189 S1 · S2). 파이프라인과 관문이 이 정의 하나를 같이 써요.
+FACTOR_KEYS = ("pz", "vz", "mz", "qz", "lz", "dz")
+# 점수 → (쓰는 값, 낮을수록 높은 점수인지)
+FACTOR_SRC = {"pz": ("cap", True), "vz": ("pbr", True), "mz": ("mom", False), "qz": ("roe", False), "lz": ("vol", True), "dz": ("dyt", False)}
+FACTOR_POOL_ROW = "팩터 점수: 회사끼리 순위 · 펀드는 회사 분포에 견줌 (다시 매겨 맞춰 봄 · 경고만)"
+
+
+def factor_fund(s):
+    """순위에 넣지 않는 행인지 — 펀드 (etf 가 참 또는 fund). (순수 함수)"""
+    return isinstance(s, dict) and (s.get("etf") is True or bool(s.get("fund")))
+
+
+def factor_score_diffs(data, counts=None):
+    """발행 파일의 팩터 점수를 그 파일의 값으로 다시 매겨, 다른 칸 → [(티커, 칸, 발행 값, 다시 매긴 값)]. (순수 함수 · pandas 없이)
+    시장마다 (kr · us) 그 시장의 fund 아닌 행 (파이프라인이 add_percentiles 에 넘기는 행): 회사(etf 거짓)는 회사끼리 순위 — 같은 값은 평균
+    순위 ÷ 회사 수 × 100 (pandas rank(pct=True) 와 같은 셈) · 펀드(etf 참)는 그 값과 같은 회사가 있으면 그 회사들의 평균 순위, 없으면 그 값보다
+    작은 회사 수 ÷ 회사 수 × 100 (같은 값이면 회사와 같은 점수 · 리뷰 S1) · 규모 · 가치 · 저변동은 100 에서 빼요 · 반올림 round(). 값이 빈 행은
+    점수가 없어야 해요. fund 행 · 채권 · 금 · 그 밖의 행은 점수가 아예 없어야 해요. 펀드가 순위에 섞인 파일(#189 전)은 회사 점수가 다르게 나와요.
+    counts (dict) 를 주면 견준 수를 채워요: 회사 · 펀드 · 칸 · 점수가 없어야 할 행 (리뷰 N1)."""
+    import bisect
+    rows = (data or {}).get("stocks") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        raise ValueError("stocks 가 목록이 아님")
+    out = []
+
+    def cmp(s, k, want):
+        got = s.get(k)
+        if (got is None) != (want is None) or (got is not None and (isinstance(got, bool) or not isinstance(got, int) or got != want)):
+            out.append((str(s.get("t")), k, got, want))
+
+    seen = set()
+    for m in ("kr", "us"):
+        grp = [s for s in rows if isinstance(s, dict) and s.get("cls") == m and not s.get("fund")]
+        seen.update(id(s) for s in grp)
+        cos = [s for s in grp if not factor_fund(s)]
+        fds = [s for s in grp if factor_fund(s)]
+        for k, (col, low) in FACTOR_SRC.items():
+            vals = [num(s.get(col)) for s in cos]
+            ref = sorted(v for v in vals if v is not None)
+            n = len(ref)
+            for s, x in zip(cos, vals):
+                if x is None:
+                    cmp(s, k, None)
+                    continue
+                lo, hi = bisect.bisect_left(ref, x) + 1, bisect.bisect_right(ref, x)
+                p = (lo + hi) / 2 / n * 100
+                cmp(s, k, int(round(100 - p if low else p)))
+            for s in fds:
+                x = num(s.get(col))
+                if x is None or not n:
+                    cmp(s, k, None)
+                    continue
+                lo, hi = bisect.bisect_left(ref, x) + 1, bisect.bisect_right(ref, x)
+                p = ((lo + hi) / 2 if hi >= lo else hi) / n * 100
+                cmp(s, k, int(round(100 - p if low else p)))
+        if counts is not None:
+            counts["co"] = counts.get("co", 0) + len(cos)
+            counts["fd"] = counts.get("fd", 0) + len(fds)
+            counts["cells"] = counts.get("cells", 0) + (len(cos) + len(fds)) * len(FACTOR_SRC)
+    other = [s for s in rows if isinstance(s, dict) and id(s) not in seen]
+    for s in other:
+        for k in FACTOR_KEYS:
+            if s.get(k) is not None:
+                out.append((str(s.get("t")), k, s.get(k), None))
+    if counts is not None:
+        counts["other"] = len(other)
+        counts["cells"] = counts.get("cells", 0) + len(other) * len(FACTOR_KEYS)
+    return out
+
+
+def check_factor_pool(rep, data):
+    """2026-11-24 (#189): 팩터 점수가 '회사끼리 순위 · 펀드는 회사 분포에 견줌' 그대로인지, 발행 파일의 값으로 다시 매겨 맞춰 봐요
+    (factor_score_diffs). **경고만** — 어떤 모드에서도 실패하지 않아요 (발행을 멈추는 줄은 Jack 의 답이 있어야 해요) · 검사가 멈춰도 경고.
+    다르면 다른 칸 수 · 종목 수와 처음 몇 칸(종목.칸 발행 값→다시 매긴 값)을 줄에 적어요 (펀드가 순위에 섞였거나, 순위 뒤에 값이 바뀌었다는 뜻)."""
+    rule = ("회사 주식(우선주 포함)끼리 순위 · 펀드(etf 참)는 회사 분포에 견준 자리 (같은 값이면 회사와 같은 점수) · fund 행 · 채권 · 금은 점수 없음 "
+            "(다르면 경고 · 실패 없음)")
+    cnt = {}
+    try:
+        bad = factor_score_diffs(data, cnt)
+    except Exception as e:
+        rep.add(FACTOR_POOL_ROW, True, f"검사가 멈췄어요: {type(e).__name__}: {str(e)[:120]}", rule + " (멈춰도 경고만)", warn=True)
+        return
+    seen = (f"다시 매겨 견준 것: 회사 {cnt.get('co', 0):,} · 펀드 {cnt.get('fd', 0):,} · 칸 {cnt.get('cells', 0):,} · "
+            f"점수가 없어야 할 행 {cnt.get('other', 0):,}")
+    if not bad:
+        rep.add(FACTOR_POOL_ROW, True, f"모두 같음 ({seen})", rule)
+        return
+    nt = len({t for t, *_ in bad})
+    sh = lambda v: "빈 값" if v is None else v   # noqa: E731 — 로그에 파이썬 None 을 쓰지 않아요 (#178 처럼 · 리뷰 N2)
+    rep.add(FACTOR_POOL_ROW, True, f"다른 칸 {len(bad)} ({nt}종목 · {seen}): "
+            + ", ".join(f"{t}.{k} {sh(a)}→{sh(b)}" for t, k, a, b in bad[:US_OWN_SHOW])
+            + (f" 외 {len(bad) - US_OWN_SHOW}칸" if len(bad) > US_OWN_SHOW else "") + " (펀드가 순위에 섞였거나 순위 뒤에 값이 바뀌었어요)", rule, warn=True)
+    # 칸 목록(rep.detail)은 따로 적지 않아요: 줄에 처음 몇 칸과 수가 있고, 다른 줄들의 목록 시험(rep.details 를 통째로 견주는 시험)을 흔들지 않게요
+
+
 def coverage(arr, key):
     if not arr:
         return 0.0
@@ -3146,6 +3245,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_us_new_wait(rep, data, pdata)   # 2026-11-22 (Jack): 미국 기준일 종가를 기다리는 새 미국 종목 (usSrc.newWait · 경고만 · 실패 없음)
     check_us_size(rep, data, pdata)       # v19.5b 후속: 미국 회사 크기 qrev · qeq (종목 순위의 미국 최소 크기 · 경고만 · 실패 없음)
     check_us_split_pbr(rep, data)         # 2026-11-23 (감사 · #176): 최근 분할한 미국 회사의 PBR ↔ PER × ROE · usSrc.split (경고만 · 실패 없음 · 멈춰도 경고)
+    check_factor_pool(rep, data)          # 2026-11-24 (#189): 팩터 점수를 다시 매겨 맞춰 봐요 — 회사끼리 순위 · 펀드는 회사 분포에 견줌 (경고만 · 실패 없음 · 멈춰도 경고)
     check_v191f(rep, data, corp, kr, by, comps, pdata)
     check_eps_line_left(rep, corp, comps)   # 2026-11-14 (Jack Q3 · 리뷰 S4): 다시 읽은 뒤에도 날짜가 지난 '고치는 중' 줄이 남을 회사 (경고)
     check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=(prev or {}).get("macro") if rel else None)
