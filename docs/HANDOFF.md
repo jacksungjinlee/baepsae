@@ -37,6 +37,20 @@ that day's 코스피 move (as typed US dates on main); undated 가진 종목 넣
 이번 주 정리's 다음 주 still starts at Korea's date (an existing test pins it). `tests/test_v2_us_dates.py`,
 `tests/test_v2_us_dates_screens.py`. No new Korean.
 
+**Factor scores, companies only (#189, 2026-11-24; found on the 11-24 publish):** `add_percentiles` ranked 33 US ETFs (23 with Yahoo's
+`priceToBook`, meaningless for a fund: SPY 1.76, really about 5) and 3 Korean listed infrastructure funds together with companies, so
+547 US companies' 가치 (`vz`) were off by up to 3 points (mean 1.2). After it merges, the next publish ranks companies only in each market
+(`validate_data.factor_fund`: `etf` true or `fund`, the 2.0 `isStockLike` rule): US companies' `vz` · `mz` · `lz` move by up to 3, Korean
+`pz` · `mz` · `lz` by at most 1. Funds keep their scores (review S1 · S2: nothing may disappear from the old app's 성향 card or 기업분석
+strip without a line), placed against their market's companies without joining the ranking (`fetch_data.fund_percentile`: the tied
+companies' average rank when a company has the same value, else the companies below it, ÷ n × 100; 규모 · 가치 · 저변동 100 minus that);
+they move by up to 3 (SPY `lz` 97 → 99, QQQ `vz` 77 → 79, 088980 unchanged). Expect the log lines `· 팩터 점수 (국내): 회사 주식 2,508종목 (우선주 62 포함)끼리 순위 …` and `· 팩터 점수 (미국): 회사 주식
+767종목끼리 순위 … 펀드 33곳은 순위에 넣지 않고 회사 분포에 견줘 매김 (점수 있는 펀드 33)` and the new warning-only gate row
+`팩터 점수: 회사끼리 순위 · 펀드는 회사 분포에 견줌 (다시 매겨 맞춰 봄 · 경고만)` as PASS `모두 같음 (…)` (the deploy gate on a file published before
+it warns: about 2,000 cells differ). No screen text. **Open for Jack (not built):** a US fund's 가치 score still comes from Yahoo's
+meaningless fund PBR (SOXX · TLT 100, used by the old app's 성향 card), and its PBR reaches two screens — the old app's 종목 고르기 card
+("PER / PBR", `src/detail.jsx` StockRow) and 2.0's 두 종목 비교 when a US ETF is held (`src/v2/compare.jsx` PBR row); fixing either needs a
+say-why line. RUNBOOK § Factor scores.
 **#182 (Korean price-history repair, Track 1 item 4), 2026-11-24 — built, switch OFF:** `fetch_data.py` `KR_PX_REPAIRS` · `kr_px_repair`
 rescale the bars before 13 old share events Naver never rescaled (12 of the 20 stocks in `krSeries.jump` on the 11-21 publish: 001465,
 003060, 007460, 009310, 012170 ×2, 012210, 110790, 227420, 311060, 331660, 425040, 472850), each factor confirmed by two sources
