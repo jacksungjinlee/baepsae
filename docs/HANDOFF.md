@@ -31,9 +31,10 @@ cap; the Korean built-ins rank up to 216). `example_price_stocks` now follows `m
 by node in `tests/test_screen_check.py`); the limit of 3 built-ins with blank values keeps main's count (`example_cap_stocks`:
 marked ones count, so 4 or more at once still stop the publish), and 1–3 marked ones are named in the run (`!! 알림`). The B안 scene
 swaps any of its four stocks the app can't use today (`pick_ready`: never looser than the app's rule, next Korean common stock by
-market cap, 3+ sectors, `!! 알림`) and checks its premise (portfolio volatility on screen above the profile's 24% ceiling). **Still
-open:** a mark on 005930 itself fails about a dozen scenes that hold 삼성전자 as their ordinary stock (on an 11-27 copy with the mark:
-main 127 / 166); fixing those scenes the same way is a follow-up for Jack's queue (RUNBOOK, screen check).
+market cap, 3+ sectors, `!! 알림`) and notes loudly, never failing, when its premise is not met that day (portfolio volatility on
+screen not above the profile's 24% ceiling). **Still open:** a mark on 005930 itself fails about a dozen scenes that hold 삼성전자 as
+their ordinary stock (on an 11-27 copy with the mark: main 127 / 166); fixing those scenes the same way is a follow-up for Jack's
+queue (RUNBOOK, screen check).
 
 **v19.6b switch-on (#196, branch `claude/v19.6b-switch-on`, 2026-11-28; live once it merges and deploys):** the parts #168 shipped off.
 공시 보기 on every 확인 필요 card (`routes.dartFilingUrl`: that one filing in DART's viewer by its exact receipt number, else no button;

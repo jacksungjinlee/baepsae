@@ -113,8 +113,9 @@ run log starts "5xx 다시 물음", and the count ("· 5xx 다시 물음: N곳")
       volatility. Since #200 (Jack 11-27, answer 7) any of them the app can't use for the risk numbers today (a `pxBad`
       mark, a blank beta or volatility, missing from the data, or a blank 3-year drawdown or alpha, which the scene
       reads) is swapped for the next Korean common stock by market cap that it can use, keeping three or more
-      sectors; the run says so (`!! 알림 [B안] …`, a warning, the step summary). It then checks its own premise: the
-      portfolio volatility on screen is above the profile's 24% ceiling (it fails if not). The scene also needs three of them to
+      sectors; the run says so (`!! 알림 [B안] …`, a warning, the step summary). It also looks at its own premise: if the
+      portfolio volatility on screen is not above the profile's 24% ceiling, it says so the same way (a note, never a
+      failure: market volatility is the day's data). The scene also needs three of them to
       have a dividend yield; the gate lets one must-have stock without dividend data through with a warning (Jack,
       11-05), so the scene fills a blank one in its own copy and says so in the log.
     - **Not yet covered: 005930 itself.** About a dozen other scenes hold 삼성전자 as their ordinary stock and need its

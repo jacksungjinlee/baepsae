@@ -984,11 +984,19 @@ def scene_option_b(R, files):
             return c.height === '9px' && c.borderTopColor === teal && c.backgroundColor === soft; }).length""", [TEAL, TEAL_SOFT])
         assert zones == 2, f"초록 목표 구간 {zones}개 (분산·업종 2개여야 해요)"
         # 이 장면의 전제 (리뷰 #200): 예전 계산이면 '변동성이 상한을 넘어요'가 떴을 포트폴리오 — 계기판의 연 변동성이 프로필 상한보다 커야
-        # 위의 '보이면 안 되는 문구' 확인이 무언가를 봐요 (바꿔 담은 날에도)
+        # 위의 '보이면 안 되는 문구' 확인이 무언가를 봐요 (바꿔 담은 날에도). 시장의 출렁임에 달린 일이라 실패가 아니라 크게 알리기만 해요
+        # (Jack 2026-11-21: 화면 검사의 장면은 그날의 데이터에 매이지 않아요)
         shown_vol = page.evaluate(VOL_SHOWN)
         vol_num = re.sub(r"[^0-9.]", "", shown_vol or "")
-        assert vol_num and float(vol_num) > profile["targetVolMaxPct"], \
-            f"이 장면의 전제가 맞지 않아요: 계기판의 연 변동성 {shown_vol!r} 이 프로필 상한 {profile['targetVolMaxPct']}% 를 넘지 않아요 (담은 종목 {hold})"
+        if not (vol_num and float(vol_num) > profile["targetVolMaxPct"]):
+            msg = (f"이 장면의 전제가 오늘 데이터에서 맞지 않아요: 계기판의 연 변동성 {shown_vol or '(못 읽음)'} 이 프로필 상한 "
+                   f"{profile['targetVolMaxPct']}% 를 넘지 않아요 (담은 종목 {', '.join(t for t, _ in hold)}) → 숨김 확인은 그대로 하지만, "
+                   "예전 계산이라도 '변동성이 상한을 넘어요'가 뜨지 않았을 포트폴리오예요")
+            if f"B안: {msg}" not in R.notes:
+                R.notes.append(f"B안: {msg}")
+                print(f"\n!! 알림  [B안] {msg}\n", flush=True)
+                if os.environ.get("GITHUB_ACTIONS") == "true":
+                    print(f"::warning title=발행 전 화면 검사 · B안 장면의 전제::[B안] {msg}", flush=True)
     R.check(page, "B안", "② 구성: '보통 해 ±…' 만, β·σ 초록 구간·판정·조언·기대수익·건강 점수 없음", build)
 
     def open_all(titles, detail):
