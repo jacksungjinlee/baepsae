@@ -33,10 +33,13 @@ US21, US20, US19, US18 = "2026-11-21", "2026-11-20", "2026-11-19", "2026-11-18"
 # 2026-11-11 발행본의 SNDK (분할 전): 가격 977.69 · PER 7.8 · PBR 7.76 · 주식 수 142.3백만 · 평균 거래량 10.78백만 → 주당순이익 125.3 · 주당 장부가 126.0
 EPS0, BPS0, SH0, AV0 = 977.69 / 7.8, 977.69 / 7.76, 142.3e6, 10.78e6
 PX18 = 755.12                       # 2026-11-18 종가 (분할 전 · 11-20 의 79.24 는 11-19 의 94.39 에서 −16.05%)
+# #188 (2026-11-24): 회사 합계 — 보통주 몫 순이익은 야후가 2026-11-24 SNDK 에 준 값 (netIncomeToCommon 19.422십억 달러). 최근 분할한 회사의 주당 숫자 검사
+# (fetch_data.us_split_check)가 이 합계와 맞춰 봐요: 시가총액 ÷ 순이익 5.53 ↔ PER 6.02 (1.09배 · 폭 1.10) · × ROE 7.81 ↔ PBR 5.99 (1.30배 · 폭 1.35) — 맞음
+SNDK_NI = 19.422e9
 SNDK_PRE = {"shortName": "Sandisk Corporation", "longName": "Sandisk Corporation", "quoteType": "EQUITY", "sector": "Technology",
             "industry": "Computer Hardware", "financialCurrency": "USD", "currency": "USD", "country": "United States",
             "trailingPE": PX18 / EPS0, "priceToBook": PX18 / BPS0, "returnOnEquity": 1.412, "marketCap": PX18 * SH0,
-            "averageVolume": AV0, "dividendYield": 0.0, "totalRevenue": 1e10, "operatingMargins": 0.3}
+            "averageVolume": AV0, "dividendYield": 0.0, "totalRevenue": 1e10, "operatingMargins": 0.3, "netIncomeToCommon": SNDK_NI}
 # 11-21 에 실제로 받은 모양: 분할 뒤 새로 받았는데 PBR 만 분할 전 주당 장부가 (79.24 ÷ 126 = 0.63) · PER · 시가총액 · 평균 거래량은 분할 뒤 값
 SNDK_STALE = dict(SNDK_PRE, trailingPE=79.24 / (EPS0 / 8), priceToBook=79.24 / BPS0, marketCap=79.24 * SH0 * 8, averageVolume=AV0 * 8)
 SNDK_POST = dict(SNDK_STALE, priceToBook=79.24 / (BPS0 / 8))
@@ -431,7 +434,9 @@ def test_etf_turnover_after_a_split_via_fetch_us(tmp_path, monkeypatch):
 
 def test_the_zero_pbr_counter_uses_the_split_factor(tmp_path, monkeypatch):
     """보관본 PBR 0.03 · 8:1 — 가격 비율만이면 0.0037 (0.005 미만이라 빈 칸으로 셌어요) · 배율을 곱하면 0.025 그대로."""
-    by, meta, lines, _c, _p = _run(tmp_path, monkeypatch, cache={"SNDK": entry(US19, PX18, dict(SNDK_PRE, priceToBook=0.03))})
+    by, meta, lines, _c, _p = _run(tmp_path, monkeypatch, cache={"SNDK": entry(US19, PX18, dict(SNDK_PRE, priceToBook=0.03,
+                                                                                  returnOnEquity=0.03 * EPS0 / PX18))})
+    # #188: ROE = PBR ÷ PER (회사 합계가 PBR 0.03 과 맞게 · 분할 뒤 주당 숫자 검사가 이 PBR 을 비우지 않아요)
     assert by["SNDK"]["pbr"] == round(0.03 * K8, 2) and "pbrZero" not in by["SNDK"]
     assert "· 미국 PBR 이 0.00 으로 반올림돼(0.005 미만) 빈 칸 — 가치 점수도 없음: 0곳" in lines
 
@@ -456,7 +461,8 @@ def test_s_b_a_wrong_factor_is_loud_and_the_fresh_market_cap_undoes_it(tmp_path,
     """리뷰 2차 S-B: 예전 모양 보관본(11-20 · 기준 가격 115 — 이미 분할 뒤) · 2:1 분할 날짜 11-20 · 오늘 79.24 (실제로 31% 내림). 날짜와 가격으로는 × 2 를
     골라요 (PER 이 2배로 나가요) — 그래서 곱함은 크게 남기고 관문이 경고해요. 다시 받는 날 새 시가총액이 배율 없이 맞으면 새 상세 정보를 써요."""
     post = {"shortName": "Wrong Co", "longName": "Wrong Co", "quoteType": "EQUITY", "financialCurrency": "USD", "currency": "USD",
-            "trailingPE": 115 / 4.0, "priceToBook": 115 / 20.0, "returnOnEquity": 0.2, "marketCap": 115e9, "averageVolume": 5e6}
+            "trailingPE": 115 / 4.0, "priceToBook": 115 / 20.0, "returnOnEquity": 0.2, "marketCap": 115e9, "averageVolume": 5e6,
+            "netIncomeToCommon": 4e9}          # #188: 회사 합계 (10억 주 × 주당순이익 4 · ROE 0.2 = 4 ÷ 주당 장부가 20) — 주당 숫자와 맞아요
     fresh = dict(post, trailingPE=79.24 / 4.0, priceToBook=79.24 / 20.0, marketCap=79.24e9)
     by, meta, lines, calls, _p = _run(tmp_path, monkeypatch, cache={"SNDK": entry(US20, 115.0, post)}, splits={"SNDK": [(US20, 2.0)]})
     assert "SNDK" not in calls and by["SNDK"]["per"] == round(115 / 4.0 * 79.24 * 2 / 115, 1) == 39.6      # 2배 (맞는 값 19.8)
@@ -522,7 +528,10 @@ def test_bad_paths_keep_todays_behaviour_and_are_recorded(tmp_path, monkeypatch)
         raise KeyError("x")
     monkeypatch.setattr(F, "us_info_fresh_vs_copy", cmp_)
     by2, meta2, lines2, _c, _p2 = _run(tmp_path / "b", monkeypatch, cache={"SNDK": entry("2026-11-17", PX18)}, sndk_info=SNDK_STALE)
-    assert by2["SNDK"]["pbr"] == round(SNDK_STALE["priceToBook"], 2) and _split_rec(meta2) == {"v": 1, "bad": ["SNDK"]}   # 새 상세 정보
+    # #188 (Jack 확인 뒤): 새 상세 정보를 써요 (그 PBR 0.63 이 분할 뒤 주당 숫자 검사에 들어가요) — 회사 합계와 10배 넘게 달라 비우고 splCut 을 붙여요
+    cut2 = {(t, f): w for t, f, w in meta2["usSplitChk"]["cut"]}
+    assert "pbr" not in by2["SNDK"] and by2["SNDK"]["splCut"] == {"pbr": "mismatch"} and _split_rec(meta2) == {"v": 1, "bad": ["SNDK"]}
+    assert cut2[("SNDK", "pbr")].startswith(f"주가 ÷ 주당 장부가 {SNDK_STALE['priceToBook']:.2f} ↔ "), cut2       # 새 상세 정보의 PBR (0.63)
     assert any("새 상세 정보와 분할 전 보관본을 맞춰 보다 오류로 멈춘 종목 SNDK (KeyError)" in x for x in lines2)
     monkeypatch.setattr(F, "us_info_fresh_vs_copy", real_cmp)
 
