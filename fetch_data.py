@@ -84,6 +84,9 @@ import requests
 from validate_data import DIV_RANK_MISS_FAIL, DYT_COVER_BANDS, floor_1, rank_miss_reason, US_FCUR_KEEP_ZERO_DY
 # 2026-11-23 (Jack 2026-11-13 "Next"): 달러 아닌 재무제표 회사의 회사 합계 숫자를 종목 칸에 싣을지 — 스위치는 관문 파일에 하나 (지금 꺼짐)
 from validate_data import US_FCUR_TOT_ON, US_FCUR_TOT_FIELDS
+# 2026-11-28 (#181 켜기 리뷰 2차 S1): 회사 합계 단계는 반올림한 값을 관문(us_fcur_tot_ok)과 같은 범위로 봐요 — 범위 끝의 회사는 빈 칸(range)이지
+# 발행을 막지 않아요
+from validate_data import US_FCUR_TOT_PER_MAX, US_FCUR_TOT_PBR_RANGE, US_FCUR_TOT_DY_MAX
 # v19.6a: 환율 이력(fxHist)과 주식 분할(splits)의 기준도 관문 파일에 있어요 (검사 코드는 따로 · 같은 선만 읽어요)
 from validate_data import (FX_LO, FX_HI, FX_HIST_FROM, FX_HIST_FIRST_BY, FX_HIST_SOURCES, FX_HIST_ECOS, FX_HIST_GAP_MAX,
                            FX_HIST_JUMP, FX_HIST_REL, SPLITS_FROM, SPLIT_R, SPLIT_SIMPLE_MAX, SPLIT_CLEAN_TOL,
@@ -14490,7 +14493,7 @@ def us_split_skip(rec, foreign):
     if rec.get("t") in foreign:
         return "foreign"                   # us_foreign_check 가 이미 같은 검사를 했어요 (표시 fgnCut 하나만)
     if rec.get("fcur"):
-        return "fcur"                      # #114 가 PER · PBR · 배당수익률을 비웠어요 — #181 스위치가 켜지면 회사 합계 숫자만 (분할과 상관없는 시가총액 ÷ 합계)
+        return "fcur"                      # #114 가 PER · PBR · 배당수익률을 비웠어요 — #181 스위치가 켜지면 회사 합계 숫자만 (시가총액을 #176 의 분할 배율로 맞춘 뒤 ÷ 합계 · 배율을 모르면 빈 칸 split · 리뷰 2차 nit)
     return None
 
 
@@ -14580,7 +14583,7 @@ def log_us_split_check(recent, checked, cut, kind, kept, skip, nocmp, bands=None
         b = (bands or {}).get(t)
         log(f"     {t} {names[f]}: {why} [{kind.get(t, {}).get(f, '?')}] (분할 {recent.get(t) or '날짜 모름'}"
             + (f" · 허용 폭 {b:.2f}배)" if b else ")"))
-    sk = {"foreign": "외국 회사라 위 검사가 봄", "fcur": "재무제표 통화가 달러가 아님 (#114 빈 칸 · #181 스위치가 켜지면 분할과 상관없는 회사 합계 숫자)", "etf": "ETF · 펀드라 회사 합계가 없어 보지 않음"}
+    sk = {"foreign": "외국 회사라 위 검사가 봄", "fcur": "재무제표 통화가 달러가 아님 (#114 빈 칸 · #181 스위치가 켜지면 분할 배율로 맞춘 시가총액 ÷ 회사 합계 숫자 · 배율을 모르면 빈 칸)", "etf": "ETF · 펀드라 회사 합계가 없어 보지 않음"}
     log("  · 분할 종목 중 이 검사가 보지 않은 곳: " + " · ".join(f"{sk[k]} {len(skip.get(k) or [])}곳" + (f" ({', '.join(skip[k])})" if skip.get(k) else "")
                                                 for k in US_SPLIT_SKIP))
     if kept:
@@ -14938,7 +14941,7 @@ US_FCUR_TOT_WHY = {"px": "종가가 미국 기준일 것이 아니거나 기준 
                    "loss": "적자 (순이익 0 이하)", "range": "범위 밖", "divNoRecord": "배당 기록 칸 없음",
                    "divUnclear": "지난 12개월 배당 기록이 없는데 배당 없음이 분명하지 않음", "divIrregular": "배당 간격이 고르지 않음 (빠진 배당일 수 있어요)",
                    "divLate": "다음 배당이 기록에 없음", "divMismatch": "야후 배당수익률과 10% 넘게 다름", "err": "계산하다 멈춤",
-                   "time": "시간 한도", "split": "분할 배율을 확인하지 못함 (#176 의 분할 판단이 멈춘 종목)",
+                   "time": "시간 한도", "split": "분할 배율을 확인하지 못함 (#176 의 분할 판단이 멈췄거나 · 다시 물었지만 받지 못했거나 · 분할을 읽지 못한 날의 보관본)",
                    "cap": "시가총액이 종목의 시가총액(cap)과 맞지 않음"}
 
 
@@ -15424,7 +15427,10 @@ def us_fcur_div(col, end, close, info, k, today):
     f = _fold(dy, yk)
     if f is None or f > US_FCUR_DIV_AGREE:
         return None, "divMismatch"
-    return round(yk, 2), None
+    v = round(yk, 2)
+    if not 0 < v < US_FCUR_TOT_DY_MAX:      # 리뷰 2차 S1: 싣는 값을 관문(us_fcur_tot_ok)과 같은 범위로 — 30% 이상 · 0.00 으로 반올림되는 배당은 빈 칸
+        return None, "range"
+    return v, None
 
 
 def us_fcur_tot_row(rec, entry, st, fxr, div_col, us_px_date, today, split=1.0, fx_won=None, split_bad=False):
@@ -15432,8 +15438,8 @@ def us_fcur_tot_row(rec, entry, st, fxr, div_col, us_px_date, today, split=1.0, 
     {"cur", "px" 종가, "mc" 시가총액(달러), "eq" [자본, 기간 끝] · "ni" [순이익, 기간 끝, 길] (그 통화 · 값이 있을 때), "fx" 1달러당 그 통화,
      "per" · "pbr" · "dy" (계산된 것만), "y" [야후 PER, PBR, 배당수익률] (그날 종가 기준 · 관문 경고용), "why" {칸: 까닭 (US_FCUR_TOT_WHY)}}
     2026-11-28 (#181 켜기 리뷰 1차 B1 · 두 리뷰어): split = fetch_us 가 이 종목의 상세 정보 보관본에 곱한 분할 배율 (#176 sp_k · apply_us_info 와 같은
-    배율) — 분할 전 보관본의 야후 시가총액을 오늘 주식 수에 맞춰요 (빼면 4:1 분할 뒤 시가총액 · PER · PBR 이 1/4). split_bad = 그 종목의 분할 판단이
-    멈춤 (#176 sp_bad: 배율을 몰라요) → PER · PBR · 배당수익률은 빈 칸 (split). fx_won = 그날 원/달러 (apply_us_info 의 fx): 시가총액이 종목의
+    배율) — 분할 전 보관본의 야후 시가총액을 오늘 주식 수에 맞춰요 (빼면 4:1 분할 뒤 시가총액 · PER · PBR 이 1/4). split_bad = 그 종목의 분할 배율을
+    몰라요 (#176 의 판단이 멈춤 sp_bad · 다시 물었지만 받지 못함 sp_left · 분할을 읽지 못한 날의 보관본 — 리뷰 2차 S2) → PER · PBR · 배당수익률은 빈 칸 (split). fx_won = 그날 원/달러 (apply_us_info 의 fx): 시가총액이 종목의
     cap 과 반올림 안에서 같아야 해요 (아니면 PER · PBR 빈 칸 cap — 관문 us_fcur_tot_ok 와 같은 확인)."""
     info = (entry or {}).get("info") or {}
     k = us_rescale(rec.get("price"), (entry or {}).get("px"), split)
@@ -15489,16 +15495,20 @@ def us_fcur_tot_row(rec, entry, st, fxr, div_col, us_px_date, today, split=1.0, 
         elif "per" not in why or "pbr" not in why:
             for f in ("per", "pbr"):
                 why.setdefault(f, "fx")
+        # 리뷰 2차 S1 (2026-11-28): 범위는 싣는 값(반올림 뒤)으로도 관문과 같은 선으로 봐요 — 99.996 은 100.0 · 499.96 은 500.0 으로 반올림돼
+        # 관문 범위 밖이라, 반올림 전 값만 보면 표시된 채 #114 줄이 발행을 막았어요. 이제 그 회사만 빈 칸(range)
         if "pbr" not in why and eq is not None:
             v = mc / (eq / r)
-            if US_PBR_MIN <= v < US_FCUR_PBR_MAX and round(v, 2) > 0:
-                row["pbr"] = round(v, 2)
+            rv = round(v, 2)
+            if US_PBR_MIN <= v < US_FCUR_PBR_MAX and US_FCUR_TOT_PBR_RANGE[0] <= rv < US_FCUR_TOT_PBR_RANGE[1]:
+                row["pbr"] = rv
             else:
                 why["pbr"] = "range"
         if "per" not in why and ni is not None:
             v = mc / (ni / r)
-            if 0 < v < US_FCUR_PER_MAX and round(v, 1) > 0:     # 리뷰 1차 nit: 0.05 아래는 0.0 으로 반올림돼요 — 빈 칸(range)으로
-                row["per"] = round(v, 1)
+            rv = round(v, 1)
+            if 0 < v < US_FCUR_PER_MAX and 0 < rv < US_FCUR_TOT_PER_MAX:     # 리뷰 1차 nit: 0.05 아래는 0.0 으로 반올림돼요 — 빈 칸(range)으로
+                row["per"] = rv
             else:
                 why["per"] = "range"
     dy, dw = us_fcur_div(div_col, us_px_date, px if not own else None, info, k, today)
@@ -15575,7 +15585,7 @@ def us_fcur_totals_step(yf, out, cache, data, us_px_date, today, no_info=frozens
     limit 시간 한도에 걸렸는지}, "halfDay" (조기 폐장일일 수 있는 날만)}. 스위치(on · 기본 US_FCUR_TOT_ON)가 켜져 있으면 계산된 칸을 종목에 싣고
     rec["fcurTot"] = [칸] (0% 는 #114 가 이미 실어요). 꺼져 있으면 종목은 그대로예요. 전체 시간 한도 limit 초 (기본 US_FCUR_TIME_LIMIT).
     stmts(티커 목록) · fx_rates(통화 목록, 날짜, 시각) 는 시험용 (기본: 재무제표 보관본 + 야후 · 야후 시간 봉 × ECOS).
-    split {티커: 배율} · split_bad (티커) · fx_won: fetch_us 의 sp_k · sp_bad · fx_last (us_fcur_tot_row · 리뷰 1차 B1). 기록에 미국 기준일 "d" 를 적어요
+    split {티커: 배율} · split_bad (티커) · fx_won: fetch_us 의 sp_k · sp_unknown (sp_bad · sp_left · 분할을 읽지 못한 날의 보관본) · fx_last (us_fcur_tot_row · 리뷰 1차 B1). 기록에 미국 기준일 "d" 를 적어요
     (관문이 data.json usPxDate 와 같은지 봐요)."""
     on = US_FCUR_TOT_ON if on is None else on
     split = split or {}
@@ -15994,6 +16004,19 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
     if sp_nocol:
         log(f"  !! 오늘 다운로드에 분할 칸이 없는 미국 종목 {len(sp_nocol):,} — 이 종목들의 분할 뒤 보관본 맞춤은 지난 발행본 · 고정 표의 분할만 봐요: "
             f"{names(sp_nocol)}")
+    # 2026-11-28 (#181 켜기 리뷰 2차 S2): 분할 배율을 모르는 종목 — 판단이 멈춤(sp_bad) · 다시 물었지만 받지 못해 보관본 그대로(sp_left) · 분할을
+    # 읽지 못한 날 오늘 받지 않은 보관본(sp_map None · 위 로그의 그 종목들). 이 보관본은 배율 1 (가격 비율만)로 쓰여, 그 사이 분할이 있었다면 숫자가
+    # 배율만큼 틀려요 (cap 도 같은 배율로 틀려 회사 합계 단계의 cap 확인이 잡지 못해요). 달러 아닌 재무제표 회사는 회사 합계 PER · PBR · 배당수익률을
+    # 비워요 (split · us_fcur_tot_row) — 다른 미국 종목은 예전 그대로 (#176). 수를 늘 크게 남겨요 (있을 때)
+    sp_old = sorted(r["t"] for r in out if r["t"] not in missing and (age(r["t"]) or 0) > 0) if sp_map is None else []
+    sp_unknown = frozenset(sp_bad) | frozenset(sp_left) | frozenset(sp_old)
+    if sp_unknown:
+        fc_unknown = sorted(r["t"] for r in out if r["t"] in sp_unknown and r.get("fcur"))
+        log(f"  !! 분할 배율을 모르는 미국 종목 오늘 {len(sp_unknown):,}곳 (판단이 오류로 멈춤 {len(set(sp_bad)):,} · 다시 물었지만 받지 못해 보관본 그대로 "
+            f"{len(sp_left):,} · 분할을 읽지 못한 날 오늘 받지 않은 보관본 {len(sp_old):,}) — 보관본을 배율 1 (가격 비율만)로 써요 · 그 사이 분할이 "
+            f"있었다면 PER · PBR · 시가총액 · 배당수익률이 그 배율만큼 틀려요: {names(sorted(sp_unknown))}"
+            + (f" · 그중 달러 아닌 재무제표 회사 {len(fc_unknown):,}곳은 회사 합계 PER · PBR · 배당수익률을 비워요 (split): {names(fc_unknown)}"
+               if fc_unknown else ""))
     split_rec = {"v": 1}                # data.json usSrc.split (무엇이든 있을 때만 · 보통 날의 파일은 예전과 같아요)
     if sp_fit:
         split_rec["fit"] = [[t, round(v["f"], 6)] for t, v, _e in sp_fit]
@@ -16115,7 +16138,8 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
     # (시가총액 ÷ 최근 분기 자본 · 지난 4분기 순이익, 그날 미국 종가 시각의 환율 · 실제 배당 ÷ 종가). 스위치 validate_data.US_FCUR_TOT_ON 이 꺼져
     # 있으면(지금) 종목 칸은 #114 그대로 비어 있어요. 멈춰도 발행은 이어가요 (종목은 그대로 · 관문 경고)
     # 리뷰 1차 B1 (2026-11-28): 상세 정보 보관본에 곱한 분할 배율(sp_k) · 분할 판단이 멈춘 종목(sp_bad) · 그날 원/달러(cap 과 맞춰 봐요)를 넘겨요
-    ufcur_tot = us_fcur_totals_safe(yf, out, cache, data, us_px_date, today, no_info, split=dict(sp_k), split_bad=frozenset(sp_bad), fx_won=fx_last)
+    # 리뷰 2차 S2: 분할 배율을 모르는 종목은 sp_bad 만이 아니라 sp_left · 분할을 읽지 못한 날의 보관본도 (sp_unknown · 위 로그) — 모두 빈 칸(split)
+    ufcur_tot = us_fcur_totals_safe(yf, out, cache, data, us_px_date, today, no_info, split=dict(sp_k), split_bad=sp_unknown, fx_won=fx_last)
     # 2026-11-24 (SNDK): 최근 30일 안에 분할한 미국 회사도 같은 검사로 (외국 회사 · fcur · ETF 빼고 · 표시 splCut · 새 야후 요청 없음)
     try:
         usplit = us_split_step(out, cache, data, us_px_date, today, prev, no_info, foreign=fgn)

@@ -263,20 +263,37 @@ def test_gate_passes_blanked_companies_and_shows_the_count():
 
 
 # Jack, 2026-11-27 ("#181: yes"): 스위치가 켜진 관문도 회사 합계 기록(usFcurTot)과 똑같은 숫자만 받아요. 여기 남은 숫자는 기록과 다르거나
-# (26.1 ≠ 21.6 · 78.88 ≠ 7.79 · 0.94 ≠ 1.18 · 0 이하) 표시가 없어서(marked False) 켜져 있어도 예전처럼 실패해요
+# (26.1 ≠ 21.6 · 78.88 ≠ 7.79 · 0.94 ≠ 1.18 · 0 이하) 표시가 없어서(marked False) 켜져 있어도 예전처럼 실패해요.
+# 2026-11-28 (#181 켜기 리뷰 2차 nit · 더 엄격하게만): 켜진 두 경우가 의도한 까닭(숫자가 다름)으로 실패하는지 봐요 — 기록에 날짜 · 환율 · 재료 ·
+# cap 과 맞는 시가총액을 모두 넣고 관문에 파일의 날짜와 원/달러를 넘겨요. 그 기록의 바로 그 숫자(표시 있음)는 받는다는 것을 먼저 확인해요 (대조)
+TOT_D, TOT_FXW, TOT_R = "2026-11-20", 1345.0, 32.988
+TOT_MC = round(1.0 * 1e12 / TOT_FXW)                    # us_row 의 cap 1.0 조원 = 이 달러 시가총액 × 그날 원/달러
+TOT_ROW = {"cur": "TWD", "px": 10.0, "mc": TOT_MC, "eq": [round(TOT_MC * TOT_R / 7.79), "2026-09-30"],
+           "ni": [round(TOT_MC * TOT_R / 21.6), "2026-09-30", "q4"], "fx": TOT_R, "per": 21.6, "pbr": 7.79, "dy": 1.18, "why": {}}
+
+
 @pytest.mark.parametrize("on, marked", [(False, False), (True, False), (True, True)])
 @pytest.mark.parametrize("k,v", [("per", 26.1), ("pbr", 78.88), ("dy", 0.94), ("dy", 0.01), ("vz", 0), ("pbr", 0)])   # 0% 는 스위치 시험이 봐요
 def test_gate_fails_when_a_blanked_number_is_left(k, v, on, marked, monkeypatch):
     monkeypatch.setattr(V, "US_FCUR_TOT_ON", on)
-    tot = {"v": 1, "on": True, "rows": {"TSM": {"cur": "TWD", "px": 10.0, "per": 21.6, "pbr": 7.79, "dy": 1.18, "why": {}}}}
+    tot = {"v": 1, "on": True, "d": TOT_D, "fx": {"TWD": {"r": TOT_R}}, "rows": {"TSM": dict(TOT_ROW)}}
+    # 대조: 같은 기록 · 날짜 · 원/달러로, 기록의 그 숫자를 표시와 함께 실은 종목은 켜진 관문이 받아요 (꺼진 관문은 받지 않아요)
+    good = us_row("TSM", fcur="TWD", fcurTot=[k if k != "vz" else "pbr"], **({"pbr": 7.79, "vz": v} if k == "vz" else {k: TOT_ROW[k]}))
+    want = ({"pbr", "vz"} if k in ("pbr", "vz") else {k}) if on else set()
+    assert V.us_fcur_tot_ok(good, tot, TOT_D, TOT_FXW) == want
+    rep = V.Report()
+    V.check_us_fcur(rep, [good, us_row("KSPI", fcur="KZT")], tot, TOT_D, TOT_FXW)
+    assert rep.rows[0][3] == ("PASS" if on else "FAIL"), rep.rows
     s = us_row("TSM", fcur="TWD", **{k: v})
     if marked:
         s["fcurTot"] = [k if k != "vz" else "pbr"]
+    assert V.us_fcur_tot_ok(s, tot, TOT_D, TOT_FXW) == set()
     rep = V.Report()
-    V.check_us_fcur(rep, [s, us_row("KSPI", fcur="KZT")], tot)
+    V.check_us_fcur(rep, [s, us_row("KSPI", fcur="KZT")], tot, TOT_D, TOT_FXW)
     assert len(rep.rows) == 1
     name, value, _, st = rep.rows[0]
     assert st == "FAIL" and f"TSM.{k}" in value and value.startswith("2곳 (KZT 1 · TWD 1) · 남은 칸 1"), value
+    assert value.endswith(" · 회사 합계 숫자를 실은 곳 0 (usFcurTot 과 같음)") if on else value == f"2곳 (KZT 1 · TWD 1) · 남은 칸 1 (예: TSM.{k})"
 
 
 @pytest.mark.parametrize("fc", ["USD", "twd", "TW", "", None, 7])

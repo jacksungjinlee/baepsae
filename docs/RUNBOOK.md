@@ -2413,7 +2413,10 @@ dollars; 38 on 2026-11-23, the "27" of 11-13 plus 11 of the 11-14 additions) exc
   Eve, some July 3rds) are not in `data/market_holidays.csv`; on a date that may be one (`us_half_day_maybe`), the rate is the last bar
   that ended by 13:00 New York (since 2026-11-28; 11-27 was such a day) and the log says so (`usFcurTot.halfDay`).
 - **PER** = market value ÷ (net income ÷ rate), kept for 0 < PER < 500; **PBR** = market value ÷ (equity ÷ rate), kept for
-  0.005 ≤ PBR < 100 (the same ranges as other US stocks).
+  0.005 ≤ PBR < 100 (the same ranges as other US stocks). Since review round 2 (2026-11-28) the ranges are also checked on the published,
+  rounded value with the gate's own constants (`validate_data.US_FCUR_TOT_PER_MAX` · `US_FCUR_TOT_PBR_RANGE` · `US_FCUR_TOT_DY_MAX`, a
+  yield under 30%, imported by the pipeline): PER 499.96 rounds to 500.0 and PBR 99.996 to 100.0, so they are blank as "범위 밖"
+  (`range`) instead of being marked and failing the publish; so is a confirmed yield of 30% or more, or one that rounds to 0.00.
 - **Yield**: dividends actually paid (Yahoo's dividend record: per ADR, in dollars, gross) over the last year ÷ today's close confirm
   Yahoo's own `dividendYield` (÷ the price ratio, like `apply_us_info`), and **the published yield is Yahoo's** (since the switch-on
   PR, 2026-11-27: the same figure as every other US stock and the foreign-company check, so the approved lines "야후 파이낸스 기준" and
@@ -2449,11 +2452,16 @@ everything it needs is built:
   the gate's switch is on, a number on an `fcur` stock that is exactly the `usFcurTot` record's (`us_fcur_tot_ok`: the record is on and
   has no `err`, the company's row has the same close as the stock, the stock's `fcurTot` names the field, the values are equal and above
   0, the row has no reason for that field), plus `vz` when the PBR was accepted. Since review round 1 (2026-11-28, stricter only) it also
-  needs: the record's date `d` = the file's `usPxDate`; no `pxd` / `pxc` on the stock; not an ETF or fund; a known `fcur` (not `XXX`)
-  equal to the row's `cur`; the record's rate for that currency = the row's `fx`; real numbers only (no text, bool or infinity); the
-  row's market value at the file's `fx` equal to the stock's `cap` within 0.5% (this catches a missing split factor); PER under 500 and
-  PBR 0.005–100 recomputed from `mc`, `ni`, `eq` and `fx` within rounding; a yield under 30%; a `vz` of 0–100. Anything else fails as
-  before, and with the switch off the row is exactly #114's (20,000 fuzzed stock lists give the same rows as `main`). The warning-only
+  needs: the record's date `d` = the file's `usPxDate`; no `pxd` / `pxc` on the stock; not an ETF or fund; a three-letter `fcur`
+  equal to the row's `cur`; real numbers only (no text, bool or infinity); a yield under 30%; a `vz` of 0–100; and, **for a PER or PBR
+  mark only** (review round 2, 2026-11-28): a known `fcur` (not `XXX`), the record's rate for that currency = the row's `fx`, the row's
+  market value at the file's `fx` equal to the stock's `cap` within 0.5% (this catches a missing split factor), and PER under 500 and
+  PBR 0.005–100 recomputed from `mc`, `ni`, `eq` and `fx` within rounding. The yield is Yahoo's dollar figure confirmed by the
+  dividends paid and uses none of rate, market value or `cap`: on a day without a confirmed rate (ECOS down, no Yahoo FX bar, no
+  statements for a currency's only company, a currency outside ECOS's table or unreadable), or with `mc` missing or not matching `cap`,
+  the step blanks PER and PBR with that reason and still puts the yield back, and the row accepts it (before round 2 such a day failed
+  the whole publish). The yield keeps every other check, so it is no looser than before round 1. Anything else fails as before, and
+  with the switch off the row is exactly #114's (20,000 and 40,000 fuzzed stock lists give the same rows as `main`). The warning-only
   row below also names marks that don't match the record.
 - **2.0:** each of PER, PBR and the yield on its own (`src/v2/fcur.js` `fcurBlankOf`): a converted PER or PBR shows as usual with the
   converted line (`co.fcurTot`) once per section, in the places of the currency line (요약's 가치 칸, 내 기준과 맞는 정도 card and sheet,
@@ -2465,7 +2473,11 @@ everything it needs is built:
 - **Splits (review round 1 of the switch-on, 2026-11-28, blocker B1):** when `fetch_us` keeps a details entry taken before a split
   (#176), it multiplies it by the split factor (`sp_k`) for 시가총액. The totals step now gets the same factor (`split=`), so its market
   value matches `cap`; before the fix a 4:1 split left TSMC at a quarter of its market value (PER 21.6 → 5.4) with every check passing.
-  A company whose split judgement stopped (`sp_bad`) is blank as "분할 배율을 확인하지 못함" (`split`), and any company whose market value
+  A company whose split ratio is unknown is blank as "분할 배율을 확인하지 못함" (`split`): its split judgement stopped (`sp_bad`), or
+  (review round 2, S2) #176 asked Yahoo again for its details and did not get them (`sp_left`), or the split record could not be read
+  that run and its details entry is not today's (`sp_map` None). In those cases `cap` is off by the same ratio, so the `cap` check
+  can't catch it. `fetch_us` logs the count every time there is one ("!! 분할 배율을 모르는 미국 종목 오늘 n곳 (…) … 그중 달러 아닌
+  재무제표 회사 m곳은 … 비워요 (split)"); other US stocks keep #176's behaviour (price ratio only). Any company whose market value
   does not match its `cap` at the day's won rate (0.5%) is blank as "시가총액이 종목의 시가총액(cap)과 맞지 않음" (`cap`). #188's split check
   and its stopped path skip `fcur` companies (`us_split_skip` "fcur"); both split gate rows skip them too, and a stray `splCut` on an
   `fcur` stock is never read by the app (`tests/test_us_fcur_totals.py`, `tests/test_us_fcur_tot_app.py`).

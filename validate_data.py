@@ -4916,7 +4916,13 @@ def us_fcur_tot_ok(s, tot, px_date=None, fx_won=None):
     = 줄의 fx · 모든 값이 진짜 숫자 (글자 · bool · 무한 아님) · 줄의 시가총액 mc 를 그날 원/달러(fx_won = 파일의 fx)로 바꾸면 종목의 cap(조원)과
     US_FCUR_TOT_CAP_TOL 안 (분할 배율이 빠진 시가총액을 잡아요) · PER 은 줄의 ni [순이익 > 0, …] 가 있고 0 < PER < US_FCUR_TOT_PER_MAX 이고
     mc ÷ (ni ÷ fx) 와 반올림 안에서 같음 · PBR 은 eq [자본 > 0, …] 가 있고 범위 안이고 mc ÷ (eq ÷ fx) 와 반올림 안에서 같음 · 배당수익률은 0 < dy <
-    US_FCUR_TOT_DY_MAX · 가치 점수는 없거나 0~100 숫자."""
+    US_FCUR_TOT_DY_MAX · 가치 점수는 없거나 0~100 숫자.
+    2026-11-28 (#181 켜기 리뷰 2차 B1): 환율 · 시가총액 · cap · 재료(eq · ni)는 PER · PBR 표시에만 요구해요 — 배당수익률은 야후의 달러 숫자를
+    실제 배당으로 확인한 것이라 셋 다 쓰지 않아요. 환율을 확인하지 못한 날(ECOS 가 멈춤 · 야후 환율 봉 없음 · 그 통화 회사의 재무제표를 받지
+    못함 · ECOS 표에 없는 통화 · 읽지 못한 통화 XXX)이나 시가총액이 없거나 cap 과 맞지 않는 날, 단계는 PER · PBR 을 까닭과 함께 비우고 배당수익률만
+    실어요. 그 배당수익률은 여기서 받아요 (예전처럼 발행을 막지 않아요). 배당수익률은 d265e14 의 확인을 모두 (켜짐 · err 없음 · 줄 · why · 표시 ·
+    같은 값 > 0 · 같은 종가) 그리고 리뷰 1차 뒤의 확인 중 환율과 상관없는 것을 모두 (날짜 · pxd · pxc · ETF · 펀드 · 세 글자 통화 = 줄의 cur ·
+    진짜 숫자 · 범위) 그대로 받아요 — 더 느슨해진 것은 없어요. PER · PBR 표시가 하나라도 있으면 예전 그대로 모두 요구해요 (XXX 도 안 됨)."""
     if not US_FCUR_TOT_ON or not isinstance(tot, dict) or tot.get("on") is not True or tot.get("err"):
         return set()
     if not isinstance(px_date, str) or tot.get("d") != px_date:
@@ -4924,7 +4930,7 @@ def us_fcur_tot_ok(s, tot, px_date=None, fx_won=None):
     if s.get("pxd") or s.get("pxc") or s.get("etf") is True or s.get("fund"):
         return set()
     fc = s.get("fcur")
-    if not (isinstance(fc, str) and re.fullmatch(r"[A-Z]{3}", fc) and fc not in ("USD", "XXX")):
+    if not (isinstance(fc, str) and re.fullmatch(r"[A-Z]{3}", fc) and fc != "USD"):
         return set()
     rows = tot.get("rows")
     row = rows.get(s.get("t")) if isinstance(rows, dict) and isinstance(s.get("t"), str) else None
@@ -4933,16 +4939,20 @@ def us_fcur_tot_ok(s, tot, px_date=None, fx_won=None):
         return set()
     if row.get("cur") != fc:
         return set()
-    fxe = tot.get("fx").get(fc) if isinstance(tot.get("fx"), dict) else None
-    r = _real(row.get("fx"))
-    if r is None or r <= 0 or not isinstance(fxe, dict) or _real(fxe.get("r")) != r:
-        return set()
     px = _real(row.get("px"))
     if px is None or px <= 0 or px != _real(s.get("price")):
         return set()
-    mc, cap, fw = _real(row.get("mc")), _real(s.get("cap")), _real(fx_won)
-    if not (mc and mc > 0 and cap and cap > 0 and fw and fw > 0) or abs(mc * fw / 1e12 - cap) > max(US_FCUR_TOT_CAP_ABS, cap * US_FCUR_TOT_CAP_TOL):
-        return set()
+    r = mc = None
+    if any(f in ("per", "pbr") for f in marks if isinstance(f, str)):   # 리뷰 2차 B1: 환율 · 시가총액 · cap 은 PER · PBR 에만
+        if fc == "XXX":
+            return set()
+        fxe = tot.get("fx").get(fc) if isinstance(tot.get("fx"), dict) else None
+        r = _real(row.get("fx"))
+        if r is None or r <= 0 or not isinstance(fxe, dict) or _real(fxe.get("r")) != r:
+            return set()
+        mc, cap, fw = _real(row.get("mc")), _real(s.get("cap")), _real(fx_won)
+        if not (mc and mc > 0 and cap and cap > 0 and fw and fw > 0) or abs(mc * fw / 1e12 - cap) > max(US_FCUR_TOT_CAP_ABS, cap * US_FCUR_TOT_CAP_TOL):
+            return set()
 
     def base(key):                               # 줄의 eq · ni 의 첫 값 (그 통화 · 0 보다 큰 진짜 숫자만)
         x = row.get(key)
@@ -4955,13 +4965,16 @@ def us_fcur_tot_ok(s, tot, px_date=None, fx_won=None):
         v, w = _real(s.get(f)), _real(row.get(f))
         if v is None or w is None or v <= 0 or v != w:
             return set()
+        # 리뷰 2차 (on2.py 'tiny ni'): 0 에 가까운 재료(5e-324 ÷ 환율 = 0.0)로 나누다 관문이 멈추지 않게 — 나눗수가 0 보다 커야 해요 (아니면 받지 않음)
         if f == "per":
             ni = base("ni")
-            if not v < US_FCUR_TOT_PER_MAX or ni is None or abs(mc / (ni / r) - v) > 0.05 + 1e-6 * v:
+            dn = ni / r if ni is not None else 0.0
+            if not v < US_FCUR_TOT_PER_MAX or not dn > 0 or abs(mc / dn - v) > 0.05 + 1e-6 * v:
                 return set()
         elif f == "pbr":
             eq = base("eq")
-            if not US_FCUR_TOT_PBR_RANGE[0] <= v < US_FCUR_TOT_PBR_RANGE[1] or eq is None or abs(mc / (eq / r) - v) > 0.005 + 1e-6 * v:
+            dn = eq / r if eq is not None else 0.0
+            if not US_FCUR_TOT_PBR_RANGE[0] <= v < US_FCUR_TOT_PBR_RANGE[1] or not dn > 0 or abs(mc / dn - v) > 0.005 + 1e-6 * v:
                 return set()
         elif not v < US_FCUR_TOT_DY_MAX:
             return set()

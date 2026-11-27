@@ -979,7 +979,230 @@ def test_a_pre_split_details_entry_takes_the_split_factor(monkeypatch):
 
 
 def test_fetch_us_passes_the_split_factor_and_the_won_rate_to_the_step():
-    """fetch_us 가 회사 합계 단계에 #176 의 분할 배율(sp_k) · 분할 판단이 멈춘 종목(sp_bad) · 그날 원/달러(fx_last)를 넘겨요 (리뷰 1차 B1)."""
+    """fetch_us 가 회사 합계 단계에 #176 의 분할 배율(sp_k) · 분할 배율을 모르는 종목 · 그날 원/달러(fx_last)를 넘겨요 (리뷰 1차 B1).
+    리뷰 2차 S2: 배율을 모르는 종목은 판단이 멈춘 종목(sp_bad)만이 아니라 다시 물었지만 받지 못한 종목(sp_left)과 분할을 읽지 못한 날의 보관본(sp_old)도
+    (sp_unknown — 아래 test_fetch_us_blanks_a_non_dollar_filer_whose_split_ratio_is_unknown 이 실제로 돌려 봐요)."""
     src = inspect.getsource(F.fetch_us)
-    assert "us_fcur_totals_safe(yf, out, cache, data, us_px_date, today, no_info, split=dict(sp_k), split_bad=frozenset(sp_bad), fx_won=fx_last)" in src
-    assert src.index("sp_k = {}") < src.index("us_fcur_totals_safe(")
+    assert "us_fcur_totals_safe(yf, out, cache, data, us_px_date, today, no_info, split=dict(sp_k), split_bad=sp_unknown, fx_won=fx_last)" in src
+    assert "sp_unknown = frozenset(sp_bad) | frozenset(sp_left) | frozenset(sp_old)" in src
+    assert src.index("sp_k = {}") < src.index("sp_left = sorted(") < src.index("sp_unknown = ") < src.index("us_fcur_totals_safe(")
+
+
+# ── 리뷰 2차 (2026-11-28): 환율 없이 배당수익률만 · 범위 끝 · 분할 배율을 모르는 종목 ─────────────────
+def dy_only_run(monkeypatch, info_kw=None, capmul=1.0, fcur=None, st=None, fx_rates=None):
+    """scratchpad rv181on_r2 dyonly.py 그대로: TSM 하나 · 그날 종가 상세 정보 · 배당 기록 있음 · 스위치 켜짐 → (종목, 기록, #114 줄)."""
+    monkeypatch.setattr(F, "log", lambda *a: None)
+    info = tsm_info(shortName="Taiwan Semi", quoteType="EQUITY", **(info_kw or {}))
+    rec = {"t": "TSM", "cls": "us", "price": 318.71, "etf": False}
+    assert F.apply_us_info(rec, info, px_then=318.71, fx=FXW, today=TODAY)
+    if "cap" in rec:
+        rec["cap"] = round(rec["cap"] * capmul, 3)
+    if fcur:
+        rec["fcur"] = fcur
+    out = [dict(rec)]
+    monkeypatch.setattr(F, "_div_col", lambda d, t: divs(TSM_DIVS))
+    tot = F.us_fcur_totals_step(None, out, {"TSM": {"px": 318.71, "info": info}}, None, D, TODAY, stmts=lambda ts_: {"TSM": st or tsm_st()},
+                                fx_rates=fx_rates or (lambda cs, d, n: {out[0]["fcur"]: dict(FX_TWD)}), on=True, now=NOW, fx_won=FXW)
+    monkeypatch.setattr(V, "US_FCUR_TOT_ON", True)
+    rep = V.Report()
+    V.check_us_fcur(rep, out, tot, PD, FXW)
+    return out[0], tot, rep.rows[0]
+
+
+NO_RATE = {"r": None, "at": "2026-11-20T15:00:00-05:00", "e": None, "eD": None, "why": "ECOS 를 받지 못함"}
+
+
+@pytest.mark.parametrize("kw, why", [
+    ({"fx_rates": lambda cs, d, n: {"TWD": dict(NO_RATE)}}, "fx"),                    # ECOS 가 멈춘 날 (환율을 두 출처로 확인하지 못함)
+    ({"fx_rates": lambda cs, d, n: {}}, "fx"),                                         # 야후 환율 봉이 없음 (그 통화 줄이 없음)
+    ({"capmul": 1.01}, "cap"),                                                         # 시가총액이 종목 cap 과 1% 다름
+    ({"info_kw": {"marketCap": None}}, "mc"),                                          # 상세 정보에 시가총액이 없음
+    ({"fcur": "XXX", "fx_rates": lambda cs, d, n: {"XXX": {"r": None, "why": "야후 시간 봉 없음"}}}, "fx"),   # 읽지 못한 통화
+    ({"fcur": "PEN", "fx_rates": lambda cs, d, n: {"PEN": {"r": None, "why": "ECOS 표에 없는 통화"}}}, "fx"),  # ECOS 표(US_FCUR_ECOS) 밖의 통화
+    ({"st": F._fcur_failed("empty")}, "stmt"),                                         # 그 통화의 하나뿐인 회사의 재무제표를 받지 못함 (환율을 묻지 않아요)
+    ({"st": F._fcur_failed("time")}, "time"),                                          # 시간 한도
+])
+def test_a_day_without_a_confirmed_rate_keeps_the_yield_and_publishes(kw, why, monkeypatch):
+    """#181 켜기 리뷰 2차 B1 (2026-11-28): 환율 · 시가총액 · cap 을 확인하지 못한 날, 단계는 PER · PBR 을 까닭과 함께 비우고 배당수익률(야후의 달러
+    숫자 · 실제 배당으로 확인)만 실어요. 켜진 #114 줄은 그 배당수익률을 받아요 — 예전(cfb1c32)에는 환율 · 시가총액 · cap 을 모든 표시에 요구해
+    발행 전체를 막았어요 (scratchpad rv181on_r2 dyonly.py)."""
+    s, tot, row = dy_only_run(monkeypatch, **kw)
+    assert "PEN" not in F.US_FCUR_ECOS
+    assert tot["rows"]["TSM"]["why"] == {"per": why, "pbr": why}
+    assert s.get("per") is None and s.get("pbr") is None and s["dy"] == 1.18 and s["fcurTot"] == ["dy"]
+    assert row[3] == "PASS" and row[1].endswith("남은 칸 0 · 회사 합계 숫자를 실은 곳 1 (usFcurTot 과 같음)"), row
+    assert V.us_fcur_tot_ok(s, tot, PD, FXW) == {"dy"}
+    # 배당수익률은 그 밖의 확인을 모두 그대로 받아요 (d265e14 보다 느슨하지 않아요): 다른 값 · 다른 날 · 다른 종가 · 자기 날짜 종가 · 까닭이 있는 칸 ·
+    # 범위 밖 · 글자 숫자 · 줄의 통화가 다름 · 기록이 멈춤 · 스위치가 꺼진 관문
+    for bad_s, bad_tot, pd_ in [({"dy": 1.19}, {}, PD), ({}, {}, "2026-11-19"), ({"price": 318.72}, {}, PD), ({"pxd": "2026-11-19"}, {}, PD),
+                                ({}, {"why": {"dy": "divLate"}}, PD), ({"dy": 30.0}, {"dy": 30.0}, PD), ({"dy": "1.18"}, {"dy": "1.18"}, PD),
+                                ({}, {"cur": "EUR"}, PD), ({}, {"px": None}, PD), ({"etf": True}, {}, PD), ({"fcurTot": ["dy", "dy"]}, {}, PD)]:
+        s2, tot2 = dict(s, **bad_s), json.loads(json.dumps(tot))
+        tot2["rows"]["TSM"].update(bad_tot)
+        assert V.us_fcur_tot_ok(s2, tot2, pd_, FXW) == set(), (bad_s, bad_tot, pd_)
+        rep = V.Report()
+        V.check_us_fcur(rep, [s2], tot2, pd_, FXW)
+        assert rep.rows[0][3] == "FAIL" and "TSM.dy" in rep.rows[0][1], (bad_s, bad_tot, rep.rows)
+    assert V.us_fcur_tot_ok(s, dict(tot, err="x"), PD, FXW) == set()
+    # PER · PBR 표시가 하나라도 있으면 환율 · 시가총액 · cap 을 예전 그대로 모두 요구해요 (그 숫자가 기록과 같아도)
+    s3, tot3 = dict(s, per=21.6, fcurTot=["per", "dy"]), json.loads(json.dumps(tot))
+    tot3["rows"]["TSM"].update(per=21.6, why={"pbr": why})
+    assert V.us_fcur_tot_ok(s3, tot3, PD, FXW) == set()
+    monkeypatch.setattr(V, "US_FCUR_TOT_ON", False)
+    assert V.us_fcur_tot_ok(s, tot, PD, FXW) == set()
+
+
+def test_range_edges_blank_one_company_instead_of_failing_the_publish(monkeypatch):
+    """#181 켜기 리뷰 2차 S1: 단계가 범위를 반올림 전 값으로만 봐서 PER 499.96 은 500.0 · PBR 99.996 은 100.0 으로 실리고, 배당수익률은 위 끝이
+    없어 37.65% 가 실린 뒤 관문(us_fcur_tot_ok: PER < 500 · PBR < 100 · 배당 < 30)이 발행을 막았어요 (scratchpad rv181on_r2 edge.py). 이제 단계가
+    싣는 값(반올림 뒤)을 관문과 같은 범위(validate_data 의 같은 상수)로 봐 그 칸만 빈 칸(range) · 관문 범위는 그대로예요."""
+    assert (F.US_FCUR_TOT_PER_MAX, F.US_FCUR_TOT_PBR_RANGE, F.US_FCUR_TOT_DY_MAX) == (500.0, (0.005, 100.0), 30.0)
+    assert F.US_FCUR_TOT_PER_MAX is V.US_FCUR_TOT_PER_MAX and F.US_FCUR_TOT_DY_MAX is V.US_FCUR_TOT_DY_MAX
+    r = FX_TWD["r"]
+    ni = TSM_MC * r / 499.96                                                          # PER 499.96 → 500.0 으로 반올림
+    st = tsm_st()
+    st["q"] = [[d, ni / 4] for d, _ in st["q"]]
+    st["ttm"] = [["2026-09-30", ni]]
+    s, tot, row = dy_only_run(monkeypatch, st=st, info_kw={"netIncomeToCommon": ni, "trailingPE": 499.0})
+    assert tot["rows"]["TSM"]["why"]["per"] == "range" and "per" not in tot["rows"]["TSM"] and s.get("per") is None
+    assert s["pbr"] == 7.79 and "per" not in s["fcurTot"] and row[3] == "PASS", row
+    eq = TSM_MC * r / 99.996                                                          # PBR 99.996 → 100.0
+    st = tsm_st()
+    st["eq"] = [["2026-06-30", eq], ["2026-09-30", eq]]
+    s, tot, row = dy_only_run(monkeypatch, st=st)
+    assert tot["rows"]["TSM"]["why"]["pbr"] == "range" and s.get("pbr") is None and s.get("vz") is None
+    assert s["per"] == 21.6 and "pbr" not in s["fcurTot"] and row[3] == "PASS", row
+    # 배당수익률 37.65% (실제 배당 분기 30 × 4 ÷ 318.71 · 야후도 37.65 로 확인됨) → 관문의 30% 선 밖이라 빈 칸
+    monkeypatch.setattr(F, "log", lambda *a: None)
+    big = divs([(d, 30.0) for d, _ in TSM_DIVS])
+    assert F.us_fcur_div(big, D, 318.71, tsm_info(dividendYield=37.65), 1.0, TODAY) == (None, "range")
+    assert F.us_fcur_div(big, D, 318.71, tsm_info(dividendYield=29.99 * 1.0), 1.0, TODAY) == (None, "divMismatch")
+    assert F.us_fcur_div(divs([(d, 23.9) for d, _ in TSM_DIVS]), D, 318.71, tsm_info(dividendYield=29.99), 1.0, TODAY) == (29.99, None)
+    assert F.us_fcur_div(divs([(d, 0.003) for d, _ in TSM_DIVS]), D, 318.71, tsm_info(dividendYield=0.004), 1.0, TODAY) == (None, "range")
+    out = [dict(tsm_rec())]
+    monkeypatch.setattr(F, "_div_col", lambda d, t: big)
+    tot = F.us_fcur_totals_step(None, out, {"TSM": {"px": 318.71, "info": tsm_info(dividendYield=37.65)}}, None, D, TODAY,
+                                stmts=lambda ts_: {"TSM": tsm_st()}, fx_rates=lambda cs, d, n: {"TWD": dict(FX_TWD)}, on=True, now=NOW, fx_won=FXW)
+    assert tot["rows"]["TSM"]["why"] == {"dy": "range"} and out[0]["fcurTot"] == ["per", "pbr"] and out[0].get("dy") is None
+    monkeypatch.setattr(V, "US_FCUR_TOT_ON", True)
+    rep = V.Report()
+    V.check_us_fcur(rep, out, tot, PD, FXW)
+    assert rep.rows[0][3] == "PASS", rep.rows
+    # 관문의 범위는 그대로예요 (넓히지 않았어요): 반올림된 500.0 · 100.0 · 30.0 은 여전히 받지 않아요
+    rec_, s_ = on_pair()
+    for f, v in (("per", 500.0), ("pbr", 100.0), ("dy", 30.0)):
+        s2, rec2 = dict(s_, **{f: v}), json.loads(json.dumps(rec_))
+        rec2["rows"]["TSM"][f] = v
+        assert V.us_fcur_tot_ok(s2, rec2, PD, FXW) == set(), f
+
+
+def test_an_unknown_split_ratio_blanks_the_company_totals():
+    """#181 켜기 리뷰 2차 S2 (scratchpad rv181on_r2 split2.py 'LEFT path'): 분할 전 보관본(그때 가격 1274.84)을 배율 1 로 쓴 종목 — #176 이 다시
+    물었지만 받지 못했거나(sp_left) 분할을 읽지 못한 날(sp_map None)의 보관본. cap 도 같은 1/4 이라 cap 확인이 잡지 못해 PER 5.4 · PBR 1.95 가
+    실렸어요. fetch_us 가 이 종목들을 split_bad 로 넘겨 (아래 fetch_us 시험) PER · PBR · 배당수익률은 빈 칸(split)."""
+    info = tsm_info(marketCap=TSM_MC, shortName="Taiwan Semi", quoteType="EQUITY")
+    pre = {"px": 1274.84, "info": info}
+    rec = {"t": "TSM", "cls": "us", "price": 318.71, "etf": False}
+    assert F.apply_us_info(rec, info, px_then=1274.84, fx=FXW, today=TODAY, split=1.0)
+    left = F.us_fcur_tot_row(dict(rec), pre, tsm_st(), FX_TWD, divs(TSM_DIVS), D, TODAY, fx_won=FXW)
+    assert (left["per"], left["pbr"]) == (5.4, 1.95) and "per" not in left["why"] and "pbr" not in left["why"]   # 리뷰가 찾은 길 (cap 확인을 지나요)
+    row = F.us_fcur_tot_row(dict(rec), pre, tsm_st(), FX_TWD, divs(TSM_DIVS), D, TODAY, fx_won=FXW, split_bad=True)
+    assert row["why"] == {"per": "split", "pbr": "split", "dy": "split"} and not any(f in row for f in ("per", "pbr", "dy", "mc"))
+
+
+def fake_us(monkeypatch, tmp_path, today, fail_info=()):
+    """test_fetch_us_writes_the_record_and_keeps_114_blanks 의 가짜 야후 (AAPL · TSM) — fail_info 의 종목은 상세 정보를 받지 못해요."""
+    days = pd.bdate_range(today - dt.timedelta(days=500), today)
+
+    def series(seed):
+        rnd = np.random.default_rng(seed)
+        return pd.Series(100 * np.exp(np.cumsum(rnd.normal(0, 0.01, len(days)))), index=days)
+
+    def download(tickers, **kw):
+        if kw.get("interval") == "1h":
+            d0 = kw["end"] - dt.timedelta(days=2)
+            idx = pd.DatetimeIndex([pd.Timestamp(f"{d0} 15:00", tz="America/New_York").tz_convert("Europe/London")])
+            return pd.concat({t: pd.DataFrame({"Close": [32.99]}, index=idx) for t in tickers}, axis=1)
+        if isinstance(tickers, str):
+            return pd.DataFrame({"Close": series(len(tickers))})
+        return pd.DataFrame({(t, "Close"): series(i + 3) for i, t in enumerate(tickers)})
+
+    class Ticker:
+        def __init__(self, t):
+            self.t = t
+
+        def get_info(self):
+            if self.t in fail_info:
+                raise RuntimeError("429")
+            base = {"shortName": self.t, "sector": "Technology", "industry": "Semiconductors", "marketCap": 1.6e12, "currency": "USD",
+                    "trailingPE": 25.0, "priceToBook": 70.0, "dividendYield": 1.2, "averageVolume": 1e7, "returnOnEquity": 0.4}
+            if self.t == "TSM":
+                base.update(financialCurrency="TWD", netIncomeToCommon=2527.57e9, mostRecentQuarter=1790726400)
+            else:
+                base.update(financialCurrency="USD")
+            return base
+
+        quarterly_balance_sheet = property(lambda self: stmt({"Common Stock Equity": {"2026-09-30": 6997.9e9}}))
+        quarterly_income_stmt = property(lambda self: stmt({"Net Income Common Stockholders": {
+            "2025-12-31": 485.47e9, "2026-03-31": 572.48e9, "2026-06-30": 706.56e9, "2026-09-30": 763.06e9}}))
+        ttm_income_stmt = property(lambda self: stmt({"Net Income Common Stockholders": {"2026-09-30": 2527.57e9}}))
+    monkeypatch.setitem(sys.modules, "yfinance", types.SimpleNamespace(download=download, Ticker=Ticker))
+    monkeypatch.setattr(F, "us_tickers", lambda names: ["AAPL", "TSM"])
+    monkeypatch.setattr(F, "us_last_complete_day", lambda now=None: today - dt.timedelta(days=1))
+    monkeypatch.setattr(F.time, "sleep", lambda s: None)
+    monkeypatch.setattr(F, "US_INFO_PATH", str(tmp_path / "us-info.json.gz"))
+    monkeypatch.setattr(F, "us_fcur_ecos_rows", lambda c, d: [[d.isoformat(), 33.0]])
+    lines = []
+    monkeypatch.setattr(F, "log", lines.append)
+    return lines
+
+
+@pytest.mark.parametrize("case", ["left", "nomap", "control"])
+def test_fetch_us_blanks_a_non_dollar_filer_whose_split_ratio_is_unknown(case, tmp_path, monkeypatch):
+    """#181 켜기 리뷰 2차 S2: fetch_us 가 분할 배율을 모르는 종목을 모두 회사 합계 단계에 split_bad 로 넘기고 그 수를 크게 남겨요.
+    left: 어제 받은 TSM 보관본의 기준 가격이 오늘의 4배 (분할을 모름 · #176 jump) → 다시 묻지만 받지 못해 보관본 그대로 (sp_left).
+    nomap: 분할 기록을 읽지 못한 날 (sp_map None) · 오늘 받지 않은 보관본. control: 같은 보관본 · 분할을 읽음 → 숫자가 실려요 (빈 칸은 배율 때문)."""
+    today = dt.date(2026, 11, 12)
+    fake_us(monkeypatch, tmp_path, today)
+    F.fetch_us(today - dt.timedelta(days=500), today, 0.03)                           # 첫 실행: 상세 정보 보관본을 채워요
+    cache = F.load_us_info()
+    cache["TSM"]["at"] = (today - dt.timedelta(days=1)).isoformat()                  # 어제 받은 보관본 (오늘 다시 받지 않아요)
+    if case == "left":
+        cache["TSM"]["px"] = cache["TSM"]["px"] * 4
+    F.save_us_info(cache)
+    lines = fake_us(monkeypatch, tmp_path, today, fail_info=("TSM",) if case == "left" else ())
+    if case == "nomap":
+        def boom(*a, **k):
+            raise RuntimeError("splits down")
+        monkeypatch.setattr(F, "us_splits", boom)
+    monkeypatch.setattr(F, "US_FCUR_TOT_ON", True)
+    us, *_rest, meta = F.fetch_us(today - dt.timedelta(days=500), today, 0.03)
+    tsm = {r["t"]: r for r in us}["TSM"]
+    row = meta["usFcurTot"]["rows"]["TSM"]
+    loud = [x for x in lines if x.startswith("  !! 분할 배율을 모르는 미국 종목 오늘 ")]
+    if case == "control":
+        assert "per" in row and "pbr" in row and row["why"] == {"dy": "divNoRecord"}
+        assert tsm["fcurTot"] == ["per", "pbr"] and (tsm["per"], tsm["pbr"]) == (row["per"], row["pbr"])
+        assert not loud
+        return
+    assert row["why"] == {"per": "split", "pbr": "split", "dy": "split"} and not any(f in row for f in ("per", "pbr", "dy"))
+    assert not any(k in tsm for k in ("per", "pbr", "dy", "vz", "fcurTot", "fcurNi")), tsm
+    assert len(loud) == 1 and "TSM" in loud[0] and "그중 달러 아닌 재무제표 회사 1곳은 회사 합계 PER · PBR · 배당수익률을 비워요 (split): TSM" in loud[0]
+    want = "다시 물었지만 받지 못해 보관본 그대로 1 · 분할을 읽지 못한 날 오늘 받지 않은 보관본 0" if case == "left" else \
+        "다시 물었지만 받지 못해 보관본 그대로 0 · 분할을 읽지 못한 날 오늘 받지 않은 보관본 1"
+    assert loud[0].startswith("  !! 분할 배율을 모르는 미국 종목 오늘 1곳 (판단이 오류로 멈춤 0 · " + want + ")"), loud
+    assert any("분할 배율을 확인하지 못함" in x for x in lines if x.startswith("· 달러 아닌 재무제표 1곳"))
+    json.dumps(meta["usFcurTot"], allow_nan=False)
+
+
+@pytest.mark.parametrize("key, val", [("ni", [5e-324, "2026-09-30", "q4"]), ("eq", [5e-324, "2026-09-30"])])
+def test_inputs_too_small_to_divide_by_are_refused_not_a_crash(key, val, monkeypatch):
+    """리뷰 2차 (scratchpad rv181on_r2 on2.py 'tiny ni'): 재료가 0 에 가까워 환율로 나누면 0.0 이 되는 기록에서 관문이 ZeroDivisionError 로 멈췄어요
+    (cfb1c32 부터). 이제 그 종목의 칸을 받지 않아요 (#114 줄 실패 · 관문은 끝까지 돌아요)."""
+    monkeypatch.setattr(V, "US_FCUR_TOT_ON", True)
+    rec, s = on_pair()
+    rec["rows"]["TSM"][key] = val
+    assert V.us_fcur_tot_ok(s, rec, PD, FXW) == set()
+    rep = V.Report()
+    V.check_us_fcur(rep, [s], rec, PD, FXW)
+    assert rep.rows[0][3] == "FAIL" and "TSM.per" in rep.rows[0][1]
