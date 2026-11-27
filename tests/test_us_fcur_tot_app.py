@@ -270,3 +270,20 @@ def test_the_old_app_keeps_the_114_blanks():
     load = src.split("async function loadLiveData()", 1)[1].split("\n}\n", 1)[0]
     assert "fcurTotStrip(j.stocks)" in load and load.index("fcurTotStrip(j.stocks)") < load.index("warnStaleFields(j")
     assert "fcurTot" not in src.replace("fcurTotStrip", "") .replace("(fcurTot)", "")
+
+
+def test_a_split_mark_never_takes_over_a_non_dollar_filer():
+    """#188 (splCut: 최근 분할한 달러 회사의 숫자를 맞춰 보고 비운 칸)는 fcur 회사에 붙지 않아요 (파이프라인 · 관문이 건너뛰어요). 남은 표시가 있어도
+    앱은 fcur 회사의 줄만 말해요: 바꿔 계산한 숫자에는 바꾼 줄, 빈 칸에는 #114 · Sony 줄 — fgnCut 류의 줄은 없어요."""
+    got = run("""
+      const s = { ...LOAD.byT.get('TSM'), splCut: { per: 'mismatch', pbr: 'currency' } };
+      const b = { ...LOAD.byT.get('BABA'), splCut: { per: 'mismatch', dy: 'norecord' } };
+      out = {
+        cut: [FC.fgnCutOf(s), FC.fgnCutOf(b)], blank: [FC.fgnBlank(s, 'per'), FC.fgnBlank(b, 'per'), FC.fgnBlank(b, 'dy')],
+        tot: FC.fcurTotText(s, DRAFT, C2.co.curName, '10월 30일'), ni: FC.fcurNiOf(b), dy: FC.fcurBlankOf(b, 'dy'),
+        note: [renderToStaticMarkup(h(FN.FgnCutNote, { s })), renderToStaticMarkup(h(FN.FgnCutNote, { s: b }))],
+        dollar: FC.fgnCutOf({ t: 'DOLL', cls: 'us', splCut: { per: 'mismatch' } }),
+      };""")
+    assert got["cut"] == [[], []] and got["blank"] == [False, False, False] and got["note"] == ["", ""]
+    assert got["tot"] == filled(DRAFT, "대만 달러") and got["ni"] is True and got["dy"] is True
+    assert got["dollar"] == ["per"]                                                  # 달러 회사의 splCut 은 그대로 읽어요 (#188)

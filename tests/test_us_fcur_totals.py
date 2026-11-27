@@ -864,3 +864,39 @@ def test_marks_left_on_a_switched_off_day_warn():
     data["stocks"][0]["fcurTot"] = ["pbr"]
     r = gate(data).rows[0]
     assert r[3] == "WARN" and "표시만 남은 종목 1: TSM" in r[1], r
+
+
+# ── #188 (최근 분할한 미국 회사 검사) 와 함께: 달러 아닌 재무제표 회사가 막 분할했을 때 ─────────────────
+def split_fcur_rows():
+    """켜진 날 회사 합계 숫자를 실은 TSM (TWD) 이 엿새 전에 분할 · 함께 분할한 달러 회사 하나 (상세 정보 없음: 비울 칸 없음)."""
+    rec, s = on_pair()
+    return rec, [s, {"t": "DOLL", "cls": "us", "price": 50.0, "etf": False}]
+
+
+def test_a_split_non_dollar_filer_keeps_its_company_total_numbers(monkeypatch):
+    """#188 의 검사(us_split_check)와 그 안전망(us_split_stopped · 멈춘 날)은 fcur 회사를 보지 않아요 (us_split_skip "fcur"). 회사 합계 숫자는
+    시가총액 ÷ 회사 합계라 분할과 상관없으니 그대로 두고, 표시(splCut)도 붙이지 않아요 — 반쯤 비워 fcurTot 과 어긋나면 #114 줄이 발행을 막을 테니까요."""
+    monkeypatch.setattr(F, "log", lambda *a: None)
+    rec, out = split_fcur_rows()
+    keep = {k: out[0][k] for k in ("per", "pbr", "dy", "vz", "fcurTot")}
+    recent = {"TSM": "2026-11-14", "DOLL": "2026-11-14"}
+    got = F.us_split_check(out, {}, None, D, recent)
+    assert {k: out[0][k] for k in keep} == keep and F.US_SPLIT_MARK not in out[0]
+    assert got["skip"]["fcur"] == ["TSM"] and "TSM" not in got["checked"] and not [x for x in got["cut"] if x[0] == "TSM"]
+    # 검사가 멈춘 날 (안전망): 최근 분할 회사 · 잡아 둔 종목도 fcur 는 건너뛰어요
+    rec, out = split_fcur_rows()
+    held = {"TSM": {"d": "2026-10-01", "f": ["pbr"], "since": "2026-11-01"}}
+    got = F.us_split_stopped(out, {}, RuntimeError("x"), recent, held=held)
+    assert {k: out[0][k] for k in keep} == keep and F.US_SPLIT_MARK not in out[0]
+    assert "TSM" in got["skip"]["fcur"] and "TSM" not in got["checked"] and "TSM" not in got["held"]
+    # 관문: 켜진 #114 줄은 그 숫자를 받아요 · #188 줄(경고만)은 fcur 회사를 맞춰 볼 대상에 넣지 않아요
+    monkeypatch.setattr(V, "US_FCUR_TOT_ON", True)
+    rep = V.Report()
+    V.check_us_fcur(rep, out, rec)
+    assert rep.rows[0][3] == "PASS" and "회사 합계 숫자를 실은 곳 1" in rep.rows[0][1], rep.rows
+    out[1]["per"] = 12.0                                                             # 달러 회사는 맞춰 볼 숫자가 있어요 (기록 없음 → 이름)
+    sp = {"splits": [["TSM", "2026-11-14", 4.0], ["DOLL", "2026-11-14", 2.0]], "usPxDate": D.isoformat(), "usSplitChk": None}
+    assert set(V.us_split_recent(sp)) == {"TSM", "DOLL"}
+    rep = V.Report()
+    V.check_us_split_cut(rep, sp, out)
+    assert len(rep.rows) == 1 and "DOLL" in rep.rows[0][1] and "TSM" not in rep.rows[0][1], rep.rows
