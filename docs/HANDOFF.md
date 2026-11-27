@@ -40,6 +40,19 @@ rights issues by other methods (wording from the design chat). Spec Acceptance 2
 #196). Known gap, for the design chat's say-why list: a 지분 변동 card left out because its stock is shown at an older close is named
 only in the console, and 이번 주 정리's 공시 tile skips it without a line (a screen line needs new wording).
 
+**S&P 500 list fallback (#?, branch `claude/sp500-fallback`, 2026-11-28; pipeline + one warning-only gate row; live once it merges):**
+the 11-28 00:35 run on `main` (46026291142) held its publish because Wikipedia refused FinanceDataReader's S&P 500 list request (429,
+"please respect our robot policy"): 465 tickers, gate "미국 종목 수 458" and "800 → 458". We respect the policy (no User-Agent
+tricks, no proxies). Now `us_tickers` waits 5 s and asks once more; if that fails too it uses the last publish's
+`usListSym.spTickers` as the S&P 500 part (plausible: Yahoo form, ≤ 550, overlap ≥ 400 with that publish's US list), logs `!! S&P
+500 목록을 읽지 못해 (…) 지난 발행본의 목록(… 읽음 · N종목 · N일 전)을 썼어요` and records `usListSym.spCarried` = {from: first-read day
+(KST), why}. A carried list carried again keeps its first-read day; one first read more than 7 calendar days ago is not used (the
+US count then holds the publish, as before). Downstream treats it as that day's list (`spGone`, #133's country rule via the same
+overlap check, BF-B); `read` keeps its meaning. New row "미국 S&P 500 목록 이어 씀 (usListSym.spCarried · 경고만)": PASS on a
+normal day, WARN naming the list's date and the error, never FAIL; no existing gate row changed (live data 11-27: 171 rows, only
+the new one added, PASS). No screen change. If it warns several days running, tell Jack before day 7 (a second S&P list source
+would be an outside-service decision). RUNBOOK "When the S&P 500 list can't be read".
+
 **홈's US close line (#190, 2026-11-24; same class as #187's 포트폴리오 fix, minor):** app only, no new words. 홈 (`home2.jsx`) and the
 old 홈 behind the HOME2 switch (`today.jsx` Home) decided "a US stock is held" by `cls`. A holding of 379800 KODEX 미국S&P500 (cls "us",
 a KRX listing priced in won at the Korean close) saved with cls "us" or none (an older save or a restored backup; today's 포트폴리오

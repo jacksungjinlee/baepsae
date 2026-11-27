@@ -2079,6 +2079,51 @@ Korean ratio outside 0.5–2.0 then warns (the limit is unknown).
 The gate cannot see the base-price link itself (data.json carries only counts in `krSeries.ref`), so a Korean row the pipeline
 should have blanked for an unconfirmed link is caught by the gate only if its move breaks the compounded limit.
 
+## When the S&P 500 list can't be read (S&P 500 목록 이어 쓰기, since #?)
+
+**What happened.** FinanceDataReader reads the S&P 500 list from Wikipedia ("List of S&P 500 companies"). On 2026-11-28 at
+00:35 KST (run 46026291142 on `main`) Wikipedia answered 429 ("We suspect this request is automated: if so, please respect our
+robot policy"). The run logged "(S&P500 목록 실패: …)", went on with Nasdaq's first 400 and `EXTRA_US` only (465 tickers), and the
+gate correctly failed "미국 종목 수 458 (기준 ≥ 500)" and "미국 종목 수 변화 800 → 458". Nothing was published. Earlier runs read the
+list fine (different runner addresses), so it may be intermittent, but one refusal at 06:40 would hold the morning publish. We
+respect Wikipedia's policy: no changed or rotated User-Agent, no proxy, no other route to the same page.
+
+**What the run does now** (`fetch_data.us_tickers`, `us_sp500_prev`, `us_sp500_odd`):
+1. If the read raises, or returns a list it can't trust, the run waits `US_SP500_RETRY_PAUSE_S` (5) seconds and sends the same
+   request once more (`US_SP500_TRIES` = 2; never more). "Can't trust" uses the two numbers the run already uses after the price
+   download (`US_SP500_MIN` 400 overlap, `US_SP500_MAX` 550 tickers); at read time today's prices aren't there yet, so the overlap
+   is with the last publish's US list. With no last publish only an empty or over-550 list counts. The later check on today's
+   priced list (`sp_ok`, below under "When the S&P 500 list can't be trusted") is unchanged.
+2. If that fails too, and the last publish's `usListSym.spTickers` is a plausible list (Yahoo-form tickers, no repeats, at most
+   550, overlapping that publish's US list by at least 400), those tickers become the S&P 500 part of today's list and the S&P 500
+   set every later step uses. Log: `!! S&P 500 목록을 읽지 못해 (…) 지난 발행본의 목록(2026-11-27 읽음 · 503종목 · 1일 전)을 썼어요 …`.
+   The tickers read that day (an untrustworthy list) are not used.
+3. The record: `data.json` `usListSym.spCarried` = `{"from": the day the list was first read (KST), "why": the error text}`, only on
+   such a day (normal days' files are unchanged). "First read" is the last publish's `publishedAt` date (KST), or, if that publish
+   had itself carried the list, its `spCarried.from`: carrying a carried list never resets the date.
+4. A list first read more than `US_SP500_CARRY_DAYS` (7) calendar days (KST) before today is not used, nor one whose date can't be
+   read. Then the run behaves exactly as before: no S&P 500 part, BF-B named as missing, and the gate's US count rows hold the publish.
+
+**How the carried list is treated downstream (same as a list read that day):** `spTickers` is the carried list, `spGone` · `noPx` ·
+`spErr` are measured against it, `usForeign.sp500` records its overlap with today's priced list and the country rule (#133) uses it
+when that overlap passes, BF-B comes through the carried list (it has `BF-B` in Yahoo form), and `read` keeps its meaning ("the run
+left a source-ticker record"; it did). Within 7 days the index changes by a handful of companies at most: one that joined since is
+missing unless it is in Nasdaq's first 400 (its absence is not named); one that left stays in our list for those days. A carried
+ticker Yahoo has no price for (delisted since) warns in the share-class row's `noPx`, and the log says the list was carried. US
+companies get no list name from the S&P list that day (`listName`); Yahoo's names are still used for the preferred-share rule.
+
+**Gate row "미국 S&P 500 목록 이어 씀 (usListSym.spCarried · 경고만)"** (`check_us_sp_carry`, warning only, never fails in any
+mode, also when its own check crashes): PASS "이어 쓰지 않음 (그날 읽은 목록)" on a normal day (or "… 그날 S&P 500 목록 없음 — 미국 종목 수
+줄들이 봐요" when there was none); WARN naming the list's first-read day, the days to the file's publish date, the count and today's
+error, e.g. "지난 발행본의 S&P 500 목록을 이어 씀: 2026-11-27 읽음 (발행일 2026-11-28 까지 1일) · 503종목 · 오늘 읽지 못한 까닭: HTTPError:
+429 …"; it also warns on a malformed record or a list older than 7 days (the pipeline should never write one). SKIP for a file
+without `usListSym`. No other gate row changed.
+
+**What to do.** One carried day: nothing; the next run reads the list again. Several days in a row (the warning repeats with the
+same first-read date): Wikipedia is refusing the runner's requests; tell Jack before day 7, because on day 8 the publish stops
+on the US count. Do not work around the block; a second, independent source for the S&P 500 list is Jack's decision (outside
+services). Rolling back: a revert PR; the old code ignores `spCarried` and the old gate has no such row.
+
 ## US stocks added by hand (EXTRA_US)
 
 The US list is the S&P 500 (FinanceDataReader's list), Nasdaq's first 400 and `EXTRA_US` in `fetch_data.py`, every ticker in
@@ -2375,7 +2420,9 @@ gate warns once on that first publish: "주식 분할 목록 변화 … 새 줄 
 ticker, reason]] · `spTickers` the day's S&P 500 tickers in Yahoo form (null when the list could not be read) · `spGone` S&P 500
 tickers missing from the day's list → reason (null on a day the list was not trusted, #133) · `noPx` those Yahoo gave no price at
 all · `spErr` those whose processing stopped on an error (a different problem: not a sign of a dotted class) · `missing` stocks
-this rule added (`BF-B`) that are not in the day's list → reason · `read` whether the run left a ticker record.
+this rule added (`BF-B`) that are not in the day's list → reason · `read` whether the run left a ticker record · `spCarried`
+(since #?, only on a day the list could not be read and the last publish's list was used: `{from, why}`; `spTickers` is then that
+list; see "When the S&P 500 list can't be read" above).
 
 **Gate rows** (`check_us_share_class`; added as stricter-only rows in #139, and since #149 a missing BF-B warns instead of failing):
 - "주식 종류 티커로 들어온 미국 종목 (BF-B): 목록에 있거나 빠진 이유" — #126's rule for the stocks this rule added
