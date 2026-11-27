@@ -3,7 +3,7 @@
 // 실패하면 { ok:false } 를 돌려주고, 화면은 '불러오지 못했어요'를 보여줘요.
 // 빈 결과나 내장 예시 데이터를 실제 시세처럼 보여주지 않기 위해서예요.
 
-import { pxBad } from "./repair.js";   // 2026-11-14: 과거 주가 기록 오류 표시 (mergeStocks)
+import { pxBad, spNo } from "./repair.js";   // 2026-11-14: 과거 주가 기록 오류 표시 (mergeStocks) · 2026-11-27: 공시로 확인하지 못한 분할 (spNo)
 
 // JSON 에 NaN·Infinity 가 끼면 브라우저는 파일 전체를 거부해요. 따옴표 밖에 있는 것만 null 로 고쳐요
 // (미국 기업 설명 글에는 'NaN' 같은 낱말이 들어갈 수 있어서 따옴표 안은 건드리지 않아요).
@@ -342,10 +342,13 @@ export function mergeStocks(base, live) {
       // 2026-11-14 (Jack): 과거 주가 기록 오류로 비운 종목(pxBad · repair.js)은 내장 값도 쓰지 않아요 — 베타·변동성 없음(noRisk: '–', 위험 계산에서 빼요).
       // 그 종목의 비운 베타·변동성은 내장 값을 쓴 게 아니라서 '실시간 아님'(예시 가격 안내)이 되지 않아요 — 가격은 오늘 것이에요.
       const bad = pxBad(L);
-      const partial = L.price == null || (!bad && (L.beta == null || L.vol == null));
+      // 2026-11-27 (Jack, 답 11): 공시로 확인하지 못한 분할로 비운 종목(spNo)도 내장 값을 쓰지 않아요 — 베타·변동성 '–' (noRisk). 예전 뱁새에는 그 줄이
+      // 없어요 ('–' 만 · Jack: 다른 줄처럼) · 표시도 옮기지 않아요 (과거 주가 기록 오류 줄이 나오지 않게)
+      const sp = !bad && spNo(L);
+      const partial = L.price == null || (!bad && !sp && (L.beta == null || L.vol == null));
       const v = (k) => (L[k] != null ? L[k] : null);
-      out.push({ ...b, price: L.price != null ? L.price : b.price, beta: bad ? null : L.beta != null ? L.beta : b.beta,
-        vol: bad ? null : L.vol != null ? L.vol : b.vol, ...(bad ? { noRisk: true, pxBad: L.pxBad, pxBadF: L.pxBadF } : {}), per: v("per"), pbr: v("pbr"), dy: v("dy"), al: v("al"),
+      out.push({ ...b, price: L.price != null ? L.price : b.price, beta: bad || sp ? null : L.beta != null ? L.beta : b.beta,
+        vol: bad || sp ? null : L.vol != null ? L.vol : b.vol, ...(bad ? { noRisk: true, pxBad: L.pxBad, pxBadF: L.pxBadF } : sp ? { noRisk: true } : {}), per: v("per"), pbr: v("pbr"), dy: v("dy"), al: v("al"),
         sh: L.sh, mdd: L.mdd, hit: L.hit, mom: L.mom, cap: L.cap, val: L.val,
         pz: L.pz, vz: L.vz, mz: L.mz, qz: L.qz,
         x: { ...(b.x || {}), roe: v("roe"), debt: v("debt"), opm: v("opm"), g3: v("g3"), frn: v("frn"),

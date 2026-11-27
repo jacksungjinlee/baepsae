@@ -5,7 +5,9 @@
 신주권상장예정일 · 주식병합으로 하는 감자결정의 주주 배율)가 같은 배율 · 같은 상장일을 말한 사건만 실어요. 날짜는 새 주식 수로 거래가 시작된 날
 (결의일 · 효력발생일 아님). 한 출처만 말하거나 둘이 다르면 싣지 않고 까닭 부호를 남겨요 (data.json 에는 부호만). 원문을 DART 가 주지 않는 결정(014)은
 확인에 쓰지 않아요 (삼성전자 2018 은 고정 표). 800 · 900 은 다음 실행에 다시. DART 가 실패해도 지난 발행본의 한국 줄은 그대로. 미국 줄은 그대로.
-1주가 안 되는 몫을 남기는 줄(병합 · 5:2 분할)은 KR_SPLIT_FRACTION_ROWS_ON 이 꺼져 있어 싣지 않아요 (확인 · 이름은 남겨요).
+1주가 안 되는 몫을 남기는 줄(병합 · 5:2 분할)도 실어요 (KR_SPLIT_FRACTION_ROWS_ON 켜짐 · Jack 2026-11-27 답 11 — 끄면 확인 · 이름만 남겨요).
+2026-11-27 (Jack 답 4) 뒤 이 파일을 고친 곳: 영수증의 일곱째 칸 (세 확인) · 병합 후보의 'shr' → 'auc' (기준가도 봐요) · 공시와 다른 까닭 부호
+(shr · px) · 스위치 켜짐 · 필수 종목(카카오)의 '공시로 확인하지 못한 분할' 은 관문이 막아요. 새 규칙의 시험은 tests/test_kr_split_three_way.py.
 관문 (validate_data.check_kr_splits): 경고만 · 기존 '주식 분할 목록' 두 줄은 한국 줄을 그대로 받아요 (느슨해진 곳 없음).
 2.0 (src/v2 그대로): 분할 전 기록은 수량 × r · 가격 ÷ r · 원화 금액 그대로, 기록 시트의 Appendix 1 줄.
 
@@ -163,7 +165,8 @@ def test_a_real_split_end_to_end_kakao(monkeypatch):
     c = kakao_dart()
     rows, info = F.kr_splits_fields(None, kr_rows("035720"), [], c, TODAY, seed=[cand("035720")])
     assert rows == [["035720", "2021-04-15", 5.0]] and info["new"] == rows
-    assert info["rows"] == [["035720", "2021-04-15", 5.0, "split", "20210225800978", "doc"]]          # 영수증: 접수번호 · 원문
+    assert info["rows"] == [["035720", "2021-04-15", 5.0, "split", "20210225800978", "doc",                # 영수증: 접수번호 · 원문 · 세 확인
+                              {"dl": "2021-04-15", "shr": 5.0, "px": 4.982143, "rule": "split"}]]
     assert info["src"] == "dart" and info["calls"] == 2 and info["out"] == [] and info["fail"] == [] and info["wait"] == 0
     assert [ep for ep, _ in c.calls] == ["list.json", "document.xml"]                                  # 목록 1 + 원문 1 (분할은 감자결정을 찾지 않아요)
     assert c.calls[0][1]["pblntf_detail_ty"] == "I001" and c.calls[0][1]["last_reprt_at"] == "Y"
@@ -185,7 +188,7 @@ def test_the_committed_seed_is_the_pipelines_own_rule_on_real_daum_rows():
     assert len(key) == len(seed) > 500 and all(F.kr_split_code(x["t"]) and x["d"] >= V.SPLITS_FROM for x in seed)
     assert all(x["d"] <= "2026-11-20" for x in seed)                                                  # 2026-11-21 발행본의 기준일까지
     for t, d, r, how in (("005930", "2018-05-04", 50.0, "px"), ("035720", "2021-04-15", 5.0, "px"), ("035420", "2018-10-12", 5.0, "px"),
-                         ("001460", "2024-04-17", 10.0, "px"), ("131090", "2025-05-20", 0.2, "px"), ("117670", "2025-07-09", 0.1, "shr"),
+                         ("001460", "2024-04-17", 10.0, "px"), ("131090", "2025-05-20", 0.2, "px"), ("117670", "2025-07-09", 0.1, "auc"),
                          ("000670", "2025-04-25", 10.0, "px")):
         assert key[(t, d)]["r"] == r and key[(t, d)]["how"] == how, (t, d)
         assert daum_events(t) == [(d, r, how)]                                                        # 픽스처의 진짜 줄과 같은 규칙 · 같은 답
@@ -227,15 +230,15 @@ def test_the_date_is_the_first_day_on_the_new_count_not_the_board_or_legal_date(
     v, _ = F.kr_split_dart(kakao_dart(), "00258801", cand("035720"), TODAY)
     assert v["v"] == "ok" and v["dl"] == "2021-04-15" and v["de"] == "2021-04-14" and v["rc"] == "20210225800978"
     v, _ = F.kr_split_dart(kakao_dart(), "00258801", {**cand("035720"), "sb": 88761861 * 2.0, "base": 279000.0}, TODAY)   # 시세가 ×2 라고 하면
-    assert v["v"] == "no" and v["code"] == "diff" and "액면분할 ×5" in v["note"]
+    assert v["v"] == "no" and v["code"] == "shr" and "액면분할 ×5" in v["note"]                    # 같은 날 결정의 ×5 가 주식 수 ×2 와 달라요
 
 
 # ── 3. 감자: 주주 1명의 배율 (감자 방법 글) · 차등 · 최대주주 · 소각은 받지 않아요 ─────────────────────────────────────────
 
 def test_capital_reduction_by_merger_reads_the_holders_ratio_and_its_listing_date(monkeypatch):
-    # 알파칩스 2025-07-09 10:1 감자: 다시 상장하는 날 기준가는 동시호가 (앞날 790원 · 기준가 9,580원) → 주식 수만으로 후보 ('shr')
+    # 알파칩스 2025-07-09 10:1 감자: 다시 상장하는 날 기준가는 동시호가 (앞날 790원 · 기준가 9,580원 = 앞날 ÷ 10 의 1.21배) → 'auc'
     Log(monkeypatch)
-    assert daum_events("117670") == [("2025-07-09", 0.1, "shr")]
+    assert daum_events("117670") == [("2025-07-09", 0.1, "auc")]
     row0 = fx("crDecsn_00605124.json")["list"][0]
     assert F.kr_split_cr_ratio(row0) == (0.1, None)                                                  # '10주를 … 1주로' · '(10:1 주식병합)' · 감자비율 90
     got, bad, refused = F.parse_kr_split_cr([row0])
@@ -243,10 +246,11 @@ def test_capital_reduction_by_merger_reads_the_holders_ratio_and_its_listing_dat
     c = alpha_dart()
     rows, info = F.kr_splits_fields(None, kr_rows("117670"), [], c, TODAY, seed=[cand("117670")])
     assert [p.get("pblntf_detail_ty", ep) for ep, p in c.calls] == ["I001", "B001", "crDecsn.json"]
-    assert rows == [] and info["held"] == [["117670", "2025-07-09", 0.1]] and info["heldN"] == 1       # 몫이 남는 줄은 스위치가 꺼져 있어 싣지 않아요
-    monkeypatch.setattr(F, "KR_SPLIT_FRACTION_ROWS_ON", True)
+    assert rows == [["117670", "2025-07-09", 0.1]] and info["rows"] == [["117670", "2025-07-09", 0.1, "reduce", "20250415000092", "cr",
+                                                                         {"dl": "2025-07-09", "shr": 0.1, "px": 0.082463, "rule": "auction"}]]
+    monkeypatch.setattr(F, "KR_SPLIT_FRACTION_ROWS_ON", False)                                         # 스위치를 끄면 확인만 하고 싣지 않아요
     rows, info = F.kr_splits_fields(None, kr_rows("117670"), [], c, TODAY, seed=[cand("117670")])
-    assert rows == [["117670", "2025-07-09", 0.1]] and info["rows"] == [["117670", "2025-07-09", 0.1, "reduce", "20250415000092", "cr"]]
+    assert rows == [] and info["held"] == [["117670", "2025-07-09", 0.1]] and info["heldN"] == 1
 
 
 @pytest.mark.parametrize("change, why", [
@@ -289,7 +293,7 @@ def test_when_the_two_sources_disagree_on_the_ratio_the_event_is_left_out(monkey
     Log(monkeypatch)
     c = kakao_dart()
     rows, info = F.kr_splits_fields(None, kr_rows("035720"), [], c, TODAY, seed=[{**cand("035720"), "sb": 88761861 * 2.0, "base": 279000.0}])
-    assert rows == [] and info["out"] == [["035720", "2021-04-15", "diff"]] and info["diffNew"] == [["035720", "2021-04-15"]]
+    assert rows == [] and info["out"] == [["035720", "2021-04-15", "shr"]] and info["diffNew"] == [["035720", "2021-04-15"]]
     # 티비씨 2026-07-03 5:1 병합은 주식 수가 ×0.189 (단주 · 소각) 여도 기준가가 정확히 ×5 라 후보예요 (± 10%)
     assert daum_events("033830") == [("2026-07-03", 0.2, "px")]
 
@@ -318,7 +322,7 @@ def test_b2_a_document_dart_does_not_serve_never_confirms_a_row(monkeypatch):
     c = FakeDart(lists=lists, said={"20180316800856": "014"})
     rows, info = F.kr_splits_fields(None, kr_rows("005930", "005935"), [], c, TODAY, seed=F.load_kr_split_seed())
     assert rows == [["005930", "2018-05-04", 50.0], ["005935", "2018-05-04", 50.0]] and c.calls == []      # 고정 표의 사건은 묻지 않아요
-    assert ["005930", "2018-05-04", 50.0, "fixed", "KR_SPLIT_OVERRIDES", "fixed"] in info["rows"]
+    assert ["005930", "2018-05-04", 50.0, "fixed", "KR_SPLIT_OVERRIDES", "fixed", {"dl": "2018-05-04", "shr": 50.0, "px": 50.0, "rule": "split", "doc": "list", "rc": "20180316800856"}] in info["rows"]
     assert not any(x[:2] == ["005930", "2018-05-04"] for x in info["out"]) and info["fixed"] == [["005930", "2018-05-04", 50.0], ["005935", "2018-05-04", 50.0]]
 
 
@@ -346,7 +350,9 @@ def test_b1_free_text_never_reaches_data_json_and_the_whole_gate_passes(monkeypa
     info["n"], info["prev"] = 1, 1
     cur["data"]["splitsKr"] = info
     rep = T196.check(cur, prev, final)
-    assert not rep.failed, rep.table()
+    # 2026-11-27 (Jack 답 11): 카카오(필수 종목)의 '공시로 확인하지 못한 분할' (읽다 오류 err) 은 그 줄이 발행을 막아요 — 그 밖에는 실패 없음
+    assert [r[0] for r in rep.failed] == [V.KR_NOFILE_MUST_ROW], rep.table()
+    assert info["nofile"] == [["035720", "2021-04-15", 5.0, "err"]]
     assert T196.row(rep, WORD)[3] == "PASS" and T196.row(rep, KRS)[3] == "WARN"
 
 
@@ -375,7 +381,9 @@ def test_a_dart_failure_keeps_last_publishs_korean_rows_and_says_so(monkeypatch)
     c = kakao_dart(fail=True)
     rows, info = F.kr_splits_fields(PREV, kr_rows("005930", "131090", "035720"), [], c, TODAY, seed=[cand("035720")])
     assert rows == [["005930", "2018-05-04", 50.0], ["131090", "2025-05-20", 0.2]] and info["new"] == []
-    assert info["fail"] == [["035720", "2021-04-15", "net"]] and info["rows"] == sorted(PREV["splitsKr"]["rows"])
+    assert info["fail"] == [["035720", "2021-04-15", "net"]]
+    assert info["rows"] == [["005930", "2018-05-04", 50.0, "fixed", "KR_SPLIT_OVERRIDES", "fixed", {"dl": "2018-05-04", "shr": 50.0, "px": 50.0, "rule": "split", "doc": "list", "rc": "20180316800856"}],   # 고정 줄의 영수증에 세 확인
+                            PREV["splitsKr"]["rows"][1]]
     assert "00258801|krsplit|v2|2021-04-15" not in c.entries                                           # 실패는 남기지 않아요 (다음 실행에 다시)
     assert log.has("!! 한국 주식 분할 — 조회 실패 1", "035720", "공시 목록(I001) 조회 실패")
     # 단계 전체의 뜻밖의 오류: 멈추지 않고 지난 줄 · 이어 둔 후보 그대로 (src err · 글은 로그에만)
@@ -462,16 +470,19 @@ def test_the_per_run_cap_biggest_seed_first_and_retrying_a_no(monkeypatch):
     assert c4.calls and F.KR_SPLIT_TAG == "krsplit|v2"
 
 
-# ── 7. 몫이 남는 줄은 Jack 의 줄을 기다려요 (스위치 꺼짐) ─────────────────────────────────────────────────────────
+# ── 7. 몫이 남는 줄 (Jack 2026-11-27 답 11: 팔았어요가 몫을 받아요 → 스위치 켜짐 · 끄면 예전처럼 기다려요) ──────────────────────────
 
-def test_fraction_rows_wait_behind_the_switch_which_is_off(monkeypatch):
-    assert F.KR_SPLIT_FRACTION_ROWS_ON is False
+def test_fraction_rows_publish_with_the_switch_on_and_wait_when_it_is_off(monkeypatch):
+    assert F.KR_SPLIT_FRACTION_ROWS_ON is True
     assert [F.kr_split_whole_row(r) for r in (2.0, 5.0, 50.0, 2.5, 0.2, 0.1, 1 / 3, 1.0)] == [True, True, True, False, False, False, False, False]
     Log(monkeypatch)
     c = FakeDart()
     c.entries["00402110|krsplit|v2|2025-05-20"] = ok_verdict(0.2, "20250310901128", "merge", "2025-05-20")
     c.entries["00258801|krsplit|v2|2021-04-15"] = ok_verdict(5.0)
     kr = kr_rows("131090", "035720")
+    rows, info = F.kr_splits_fields(None, kr, [], c, TODAY, seed=[cand("131090"), cand("035720")])
+    assert rows == [["035720", "2021-04-15", 5.0], ["131090", "2025-05-20", 0.2]] and info["held"] == [] and info["heldN"] == 0
+    monkeypatch.setattr(F, "KR_SPLIT_FRACTION_ROWS_ON", False)
     rows, info = F.kr_splits_fields(None, kr, [], c, TODAY, seed=[cand("131090"), cand("035720")])
     assert rows == [["035720", "2021-04-15", 5.0]] and info["held"] == [["131090", "2025-05-20", 0.2]] and info["heldN"] == 1
     # 이미 실은 몫이 남는 줄(그런 줄은 아직 없지만)은 늘 이어요 — 스위치는 새 줄만 막아요
@@ -485,10 +496,10 @@ def test_the_override_table_corrects_a_korean_row_like_a_us_row(monkeypatch):
     table = dict(F.SPLIT_OVERRIDES)
     table[("131090", "2025-05-20")] = (None, "시험: 틀린 줄")
     table[("035720", "2021-04-15")] = (5.0, "시험: 손으로 확인한 줄")
-    table[("035420", "2018-10-12")] = (2.5, "시험: 몫이 남는 배율 (스위치가 꺼져 있어 싣지 않아요)")
+    table[("035420", "2018-10-12")] = (2.5, "시험: 몫이 남는 배율 (스위치가 켜져 있어 실어요)")
     monkeypatch.setattr(F, "SPLIT_OVERRIDES", table)
     rows, info = F.kr_splits_fields(PREV, kr_rows("005930", "035720", "035420"), [], None, TODAY, seed=[])
-    assert rows == [["005930", "2018-05-04", 50.0], ["035720", "2021-04-15", 5.0]]
+    assert rows == [["005930", "2018-05-04", 50.0], ["035420", "2018-10-12", 2.5], ["035720", "2021-04-15", 5.0]]
     assert ["035720", "2021-04-15", 5.0, "fixed", "SPLIT_OVERRIDES", "fixed"] in info["rows"] and not any(x[0] == "131090" for x in info["rows"])
     sp = F.merge_splits(PREV, None, ["AAPL"], [], {"noCol": []}, dt.date(2023, 11, 1), [], {"noCol": []}, [], TODAY)
     assert ["131090", "2025-05-20", None, "시험: 틀린 줄"] in sp["info"]["fixed"]                     # 관문 · 앱이 읽는 'out' 줄
@@ -555,14 +566,16 @@ def test_listing_file_candidates_from_kr_ref_links_breaks():
     ((2650000, 53000, 128386494, 6419324700), (50.0, "px")),
     ((489500, 48950, 624615, 6246150), (10.0, "px")),
     ((414000, 401000, 1842040, 1842040), (None, None)),          # 영풍 2024-12-27 배당락: 주식 수 그대로
-    ((790, 9580, 61394681, 6139468), (0.1, "shr")),              # 감자: 기준가는 동시호가 · 주식 수가 정확히 1:10
-    ((2000, 14450, 229492265, 32784609), (1 / 7, "shr")),        # HMM 2016-05-09 7:1 감자 (기준가로는 3/22 였어요 — 리뷰 #186)
-    ((619, 3300, 71248501, 14249700), (0.2, "shr")),             # 057680 2026-04-30 5:1 병합 (기준가로는 3/16)
+    ((790, 9580, 61394681, 6139468), (0.1, "auc")),              # 감자: 기준가는 동시호가 (÷ 10 의 1.21배) · 주식 수가 정확히 1:10
+    ((2000, 14450, 229492265, 32784609), (1 / 7, "auc")),        # HMM 2016-05-09 7:1 감자 (기준가로는 3/22 였어요 — 리뷰 #186)
+    ((619, 3300, 71248501, 14249700), (0.2, "auc")),             # 057680 2026-04-30 5:1 병합 (기준가로는 3/16)
     ((1000, 1000, 100, 87), (None, None)),                       # 자기주식 소각 13%: n:1 이 아니에요
     ((1000, 500, 100, 200), (2.0, "px")),
     ((1000, 1000, 100, 200), (None, None)),                      # 무상증자 새 주식 상장일: 주식 수 ×2 지만 기준가 그대로
     ((1000, 2000, 100, 100), (None, None)),                      # 무상증자 권리락 (주식은 몇 주 뒤에 상장)
-    ((None, 2000, 100, 50), (0.5, "shr")), ((1000, 2000, 0, 50), (None, None)), ((float("nan"), 1, 1, 2), (None, None)),
+    ((None, 2000, 100, 50), (None, None)),                       # 2026-11-27 (답 4): 기준가 움직임을 모르면 병합도 후보가 아니에요
+    ((1000, 1000, 100, 50), (None, None)),                       # 주식 수는 1:2 인데 기준가 그대로 (거래정지 날 줄)
+    ((1000, 2000, 0, 50), (None, None)), ((float("nan"), 1, 1, 2), (None, None)),
     ((54400, 21800, 20545310, 51363275), (2.5, "px")),           # 코미코 2026-08-21 5:2 분할 (기준가)
 ])
 def test_market_event_rule(args, want):
@@ -780,18 +793,18 @@ def test_2_0_reads_a_korean_record_bought_before_the_split_held_and_sold():
 @pytest.mark.skipif(NODE is None or not os.path.exists(os.path.join(ROOT, "node_modules", ".bin", "esbuild")), reason="node · esbuild 가 없어요")
 def test_2_0_a_merge_that_leaves_a_fraction_of_a_korean_share():
     """10:1 같은 병합으로 1주가 안 되는 몫이 남으면 (실제로는 회사가 현금으로 줘요 · 단주 대금), 화면은 그 몫을 그대로 들고 있다고 봐요.
-    팔았어요는 한국 종목을 온 주로만 받아서 그 몫은 팔았어요로 지울 수 없어요 — 그래서 그런 줄은 Jack 의 줄이 올 때까지 싣지 않아요
-    (KR_SPLIT_FRACTION_ROWS_ON 꺼짐 · 이 시험은 그 줄이 실렸을 때 앱이 하는 일을 적어 둬요)."""
+    2026-11-27 (Jack 답 11): 팔았어요가 그 몫을 1/10,000주 단위로 받아요 (records.js fracSaleOk) — 몫까지 다 팔 수 있어요.
+    자세한 시험은 tests/test_kr_split_fractions.py."""
     got = node(DECK + """
       const d0 = deckOf('131090', '시큐브', [{ id: 'p1aaaaaa', t: '131090', date: '2025-03-04', qty: 7, price: 900, ccy: 'KRW' }]);
       const v0 = view(d0, '2026-11-23');
       const s = { t: '131090', cls: 'kr', price: 5000 };
       out = { held: H.heldQty(v0).get('131090'), avg: L.ledger(v0, '131090').avgOwn, line: L.splitsFor(v0, '131090'),
         one: Rc.checkSale(v0, '131090', { qty: '1', price: '5000', date: '2026-11-20' }, s, env).ok,
-        frac: Rc.checkSale(v0, '131090', { qty: '1.4', price: '5000', date: '2026-11-20' }, s, env).why,
+        frac: Rc.checkSale(v0, '131090', { qty: '1.4', price: '5000', date: '2026-11-20' }, s, env).why || null,
         two: Rc.checkSale(v0, '131090', { qty: '2', price: '5000', date: '2026-11-20' }, s, env).why };""")
     assert got["held"] == 1.4 and got["avg"] == pytest.approx(4500) and got["line"] == [{"date": "2025-05-20", "r": 0.2}]   # 7주 ÷ 5 = 1.4주
-    assert got["one"] is True and got["frac"] == "input" and got["two"] == "tooMany"
+    assert got["one"] is True and got["frac"] is None and got["two"] == "tooMany"                        # 1.4주 모두: 받아요 (예전 'input')
 
 
 
@@ -805,6 +818,7 @@ def test_r2_events_found_after_the_seed_are_kept_held_merges_publish_later_and_a
     merge = cand("131090", "krx")
     c = FakeDart()
     c.entries["00402110|krsplit|v2|2025-05-20"] = ok_verdict(0.2, "20250310901128", "merge", "2025-05-20")
+    monkeypatch.setattr(F, "KR_SPLIT_FRACTION_ROWS_ON", False)                                       # (2026-11-27 부터 켜져 있어요 — 꺼진 때의 이어 두기)
     rows, info = F.kr_splits_fields(None, kr_rows("131090"), [merge], c, day0, seed=[])
     assert rows == [] and info["held"] == [["131090", "2025-05-20", 0.2]] and [x[:2] for x in info["pend"]] == [["131090", "2025-05-20"]]
     monkeypatch.setattr(F, "KR_SPLIT_FRACTION_ROWS_ON", True)

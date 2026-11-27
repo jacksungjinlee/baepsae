@@ -22,18 +22,23 @@ the approved 유상증자 card sentences with proposals for 유무상증자 and 
 11-27: "Yes, skip Part L"; the v19.3 spec's Status line says what covered each item), so Track 1's data follow-ups and Jack's
 other 11-27 answers come next. On hold: v19.4, v19.6g, v19.6h.
 
-**Korean stock splits (#186, 2026-11-23/24; Jack's Track 1, spec v19.6 A.6):** `data.json` `splits` gets Korean 액면분할 · 주식병합
-rows (same shape and meaning as the US rows; the app reads them unchanged), dated the first trading day on the new count
-(신주권상장예정일, not the legal date). A row needs two sources: the KRX market (listed shares exactly n:1 or 1:n, or the base price
-reset with matching shares; daily from the final lists, Daum for days without one, 2016 → 2026-11-20 from the committed seed
-`data/kr_splits_seed.csv`, 592 candidates) and the DART decision document (ratio from the par values, listing date) or a 감자결정 by
-merging shares read as the holder's ratio. A document DART does not serve never confirms (삼성전자 · 삼성전자우 2018 ×50 are hand-checked
-`KR_SPLIT_OVERRIDES` rows with evidence). One-source events are left out by code (`splitsKr.out`, text in the log only). **Held for Jack:** rows that leave
-a fraction of a share (merges, 5:2 splits) are confirmed but not published (`KR_SPLIT_FRACTION_ROWS_ON = False`) until he approves
-their line; whole splits publish. At most 50 new DART calls a run (cache runs only): new and recent events first, then the seed by
-market cap (about 26 DART-on runs); Korean rows are never dropped. New warning-only gate row `한국 주식 분할 (splitsKr · 경고만)` (yellow
-only on a new problem). Open for Jack: the fraction line, a FAIL row (proposed in the PR), 무상증자 not handled. RUNBOOK
-§ Korean stock splits.
+**Korean stock splits (#186, 2026-11-23/24, reworked 11-28 for Jack's answers of 11-27; Track 1, spec v19.6 A.6):** `data.json` `splits`
+gets Korean 액면분할 · 주식병합 rows (same shape and meaning as the US rows; the app reads them unchanged), dated the first trading day on
+the new count (신주권상장예정일). A row needs three checks to agree (answer 4): the DART decision (document's par values and listing date,
+or a 감자결정 by merging shares read as the holder's ratio), that day's listed-share change (split ± 10%, merge exact) and that day's
+base-price jump (split close ÷ ratio ± 1%; merge, set by auction, ½–2× of it and a real move); the receipt `splitsKr.rows` names them
+`{dl, shr, px, rule}`. Candidates: final KRX lists daily, Daum for days without one, 2016 → 2026-11-20 from the seed
+`data/kr_splits_seed.csv` (579; 13 halted-day lines removed 11-27). 삼성전자 · 삼성전자우 2018 ×50 are `KR_SPLIT_OVERRIDES` rows whose
+written market evidence (`KR_SPLIT_OVERRIDE_EVIDENCE`) passes the same checks. **Split without a filing** (answer 11; `splitsKr.nofile`):
+must-have stock (Jack's 삼성전자 · NAVER · 카카오 + the gate's must-have list) → new FAIL row; 5+ new on one day → new FAIL row
+(threshold from the seed: 96% of event days have ≤ 4 events of any kind); any other stock → `mark_split_nofile` blanks the numbers
+computed across it (same fields and windows as `pxBad`) and marks `spNo` · `spNoF`; 2.0 shows Jack's line "주식 수가 크게 바뀌었는데,
+공시로 확인하지 못해서 이 숫자는 비워 두었어요." where the price-history lines go; old app "–". **Fractions** (answer 11): merges and
+5:2 splits publish (`KR_SPLIT_FRACTION_ROWS_ON = True`); 팔았어요 takes a part of a share in 1/10,000 when a split left one
+(`held.js` `fracHeld`). At most 50 new DART calls a run (cache runs only); Korean rows are never dropped. Gate rows: two FAIL (Jack's
+yes), `한국 주식 분할 (splitsKr · 경고만)` and `공시로 확인하지 못한 분할의 숫자 비움 (spNo · 경고만)`. **Next: 무상증자 (Jack, 11-27:
+"the next PR right after #186")**; RUNBOOK § Korean stock splits says where it plugs in. Open for Jack (in the PR): the must-have list
+used, making the blanking check a FAIL row, holdings bought before an unconfirmed split.
 
 **v19.6b switch-on (#196, branch `claude/v19.6b-switch-on`, 2026-11-28; live once it merges and deploys):** the parts #168 shipped off.
 공시 보기 on every 확인 필요 card (`routes.dartFilingUrl`: that one filing in DART's viewer by its exact receipt number, else no button;

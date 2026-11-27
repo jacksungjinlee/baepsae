@@ -3262,6 +3262,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_eps_line_left(rep, corp, comps)   # 2026-11-14 (Jack Q3 · 리뷰 S4): 다시 읽은 뒤에도 날짜가 지난 '고치는 중' 줄이 남을 회사 (경고)
     check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=(prev or {}).get("macro") if rel else None)
     check_kr_splits(rep, data, today)     # 2026-11-23 (Jack, Track 1): 한국 주식 분할 (splitsKr · 경고만 · 실패 없음)
+    check_kr_split_nofile(rep, data, comps, today, pdata)   # 2026-11-27 (Jack 답 11): 공시로 확인하지 못한 분할 (필수 종목 · 하루 수는 실패 · 비움은 경고)
     try:                                   # 2026-11-24 (감사 3.8): fx = fxHist 의 fxDate 줄인지 · 아니면 출처 (경고만 · 실패하지 않아요)
         check_fx_src(rep, data, macro)
     except Exception as e:                 # 경고만 하는 줄이 관문을 멈추지 않게: 어떤 오류든 그 줄의 경고로
@@ -3842,6 +3843,29 @@ KR_SPLITS_ROW = "한국 주식 분할 (splitsKr · 경고만)"
 KR_SPLIT_CODE_RE = re.compile(r"\d[0-9A-Z]{5}")      # 한국 종목 코드 (fetch_data.KR_SPLIT_CODE 와 같은 꼴 · 미국 티커는 글자로 시작해요)
 KR_SPLIT_RECENT_DAYS = 30           # 싣지 않은 사건 중 이 날수 안의 것만 경고 (그보다 오래된 것은 '확인할 것' 목록에만 — 매일 노랗지 않게)
 KR_SPLIT_SHOW = 5
+# 영수증의 세 확인 (2026-11-27 Jack 답 4 · 경고만): 파이프라인(fetch_data.kr_split_checks)과 같은 선 · 검사 코드는 따로
+KR_SPLIT_RC_PX_TOL = 0.01           # 분할: 앞날 종가 ÷ 기준가 = 배율 ± 1%
+KR_SPLIT_RC_SHR_TOL = 0.10          # 분할: 상장주식수의 비 = 배율 ± 10% (같은 날 자기주식 소각 · 신주)
+KR_SPLIT_RC_EXACT_TOL = 0.01        # 병합: 상장주식수의 비 = 배율 ± 1% (단주)
+KR_SPLIT_RC_AUCTION = (0.5, 2.0)    # 병합: 앞날 종가 ÷ 기준가 가 배율의 ½ ~ 2배 (동시호가) 이고 1 에서 10% 넘게
+# ── 2026-11-27 (Jack 답 11, 그대로: "A split without a filing stops the publish only for a must-have stock (삼성전자, NAVER, 카카오) or when many
+# appear in one run. Any other stock gets its affected numbers blanked with '주식 수가 크게 바뀌었는데, 공시로 확인하지 못해서 이 숫자는 비워
+# 두었어요.'") — 발행을 막는 새 줄 둘 (Jack 이 승인한 범주 2) + 비움이 맞는지 보는 경고 줄 하나. data.json splitsKr.nofile = 주식 수가 정확히 n:1 ·
+# 1:n 이고 기준가도 그 배율로 움직였는데 확인해 주는 공시가 없는 사건 [코드, 날짜, 배율, 부호].
+# 필수 종목: Jack 이 이름을 댄 셋 + 관문의 필수 종목 (MUST · 카카오는 그 목록에 없고, MUST 의 다른 다섯 종목은 비우면 '필수 종목 추세 · 저변동
+# 순위' 줄이 어차피 발행을 막아요 — 같은 까닭을 이 줄이 바로 말하게).
+KR_SPLIT_MUST = tuple(dict.fromkeys(("005930", "035420", "035720") + MUST))
+# 하루에 새로 생긴 공시로 확인하지 못한 분할: 이만큼 이상이면 실패. 고른 까닭 (시드 data/kr_splits_seed.csv 579줄 · 2016-01-01 ~ 2026-11-20 · 공시가
+# 있든 없든 시세가 분할 · 병합처럼 움직인 모든 사건 — 공시 없는 사건 수의 위 끝): 사건이 있던 373일 중 274일 1건 · 59일 2건 · 13일 3건 · 12일 4건
+# (96% 가 4건 이하) · 5건 이상은 15일뿐 (삼성전자 50:1 의 2018-05-04 와 2026년 4 ~ 8월 동전주 병합 몰림 · 많아야 11건, 그 사건들은 공시가 있어요).
+# 보통 날은 0 ~ 1건이라 공시로 확인하지 못한 사건이 한 날에 5건이면 우리 읽기나 출처가 한꺼번에 깨졌을 가능성이 커요. 오늘 판정에서 처음 나온 것만
+# 세요 (직전 발행본의 nofile 에 없던 것 · 최근 KR_SPLIT_NOFILE_RECENT_DAYS 일 — 시드를 채우는 동안 오래된 사건으로 막히지 않게).
+KR_SPLIT_NOFILE_DAY_FAIL = 5
+KR_SPLIT_NOFILE_RECENT_DAYS = 30
+KR_SPLIT_NOFILE_SERIES_DAYS = 3 * 365   # 이 날수 안의 사건이면 시계열 안이라 그 종목에 spNo 표시가 있어야 해요 (경고 줄 · 시계열은 약 3년 40일)
+KR_NOFILE_MUST_ROW = "필수 종목의 공시로 확인하지 못한 분할 (splitsKr.nofile)"
+KR_NOFILE_DAY_ROW = f"하루에 새로 생긴 공시로 확인하지 못한 분할 ({KR_SPLIT_NOFILE_DAY_FAIL}건 이상이면 실패)"
+KR_NOFILE_HIDE_ROW = "공시로 확인하지 못한 분할의 숫자 비움 (spNo · 경고만)"
 
 
 def kr_split_rows(data):
@@ -3879,6 +3903,7 @@ def _check_kr_splits(rep, data, today, rule):
     recent = [x for x in out if len(x) >= 2 and _iso_day(x[1]) and (today - _iso_day(x[1])).days <= KR_SPLIT_RECENT_DAYS]
     have = {(x[0], x[1]): json_num(x[2]) for x in rec if len(x) >= 3}
     no_rec = [f"{x[0]} {x[1]}" for x in rows if not same_ratio(have.get((x[0], x[1])), json_num(x[2]))]
+    bad_chk = [f"{x[0]} {x[1]}" for x in rec if len(x) >= 3 and isinstance(x[0], str) and not kr_split_receipt_ok(x)]
     name = lambda x: " ".join(str(v) for v in x[:2])        # noqa: E731
     warns, notes = [], []
     if src not in ("dart", "cache", "off", "err"):
@@ -3898,6 +3923,8 @@ def _check_kr_splits(rep, data, today, rule):
                      + (" …" if len(recent) > KR_SPLIT_SHOW else "") + " (시세만 움직였거나 공시와 달라요 — 공시를 확인하세요)")
     if no_rec:
         warns.append(f"영수증 없는 한국 줄 {len(no_rec)}: " + ", ".join(no_rec[:KR_SPLIT_SHOW]))
+    if bad_chk:
+        warns.append(f"세 확인(공시 상장일 · 주식 수 · 기준가)이 없거나 맞지 않는 영수증 {len(bad_chk)}: " + ", ".join(bad_chk[:KR_SPLIT_SHOW]))
     if json_num(info.get("n")) is not None and int(json_num(info.get("n"))) != len(rows):
         warns.append(f"splitsKr.n {int(json_num(info.get('n')))} ≠ 한국 줄 {len(rows)}")
     if new:
@@ -3913,9 +3940,131 @@ def _check_kr_splits(rep, data, today, rule):
     items = ([f"새 줄 {name(x)} ×{json_num(x[2]) or 0:g}" for x in new if len(x) >= 3]
              + [f"몫이 남아 싣지 않음 {name(x)} ×{json_num(x[2]) or 0:g}" for x in held if len(x) >= 3]
              + [f"싣지 않음 {name(x)} ({x[2] if len(x) > 2 and isinstance(x[2], str) else '?'})" for x in out]
-             + [f"조회 실패 {name(x)} ({x[2] if len(x) > 2 and isinstance(x[2], str) else '?'})" for x in fail] + [f"영수증 없음 {x}" for x in no_rec])
+             + [f"조회 실패 {name(x)} ({x[2] if len(x) > 2 and isinstance(x[2], str) else '?'})" for x in fail] + [f"영수증 없음 {x}" for x in no_rec]
+             + [f"세 확인이 맞지 않는 영수증 {x}" for x in bad_chk])
     if items:
         rep.detail("한국 주식 분할 (splitsKr) 확인할 것", items)
+
+
+def kr_split_receipt_ok(x):
+    """영수증 한 줄의 세 확인이 맞는지 (2026-11-27 Jack 답 4 · 순수 함수 · 경고에만 써요): SPLIT_OVERRIDES 로 고친 줄(여섯 칸)은 그대로 통과 · 그 밖은
+    일곱째 칸 {dl, shr, px, rule}: dl = 줄의 날짜 · 분할(배율 > 1)은 rule split, |px ÷ 배율 − 1| ≤ 1%, |shr ÷ 배율 − 1| ≤ 10% · 병합(배율 < 1)은 rule
+    auction, |shr ÷ 배율 − 1| ≤ 1%, px ÷ 배율이 ½ ~ 2배이고 |px − 1| > 10%."""
+    if len(x) == 6 and x[4] == "SPLIT_OVERRIDES":
+        return True
+    r = json_num(x[2])
+    c = x[6] if len(x) == 7 and isinstance(x[6], dict) else None
+    if r is None or r <= 0 or c is None or c.get("dl") != x[1]:
+        return False
+    shr, px = json_num(c.get("shr")), json_num(c.get("px"))
+    if shr is None or px is None or shr <= 0 or px <= 0:
+        return False
+    if r > 1:
+        return c.get("rule") == "split" and abs(px / r - 1) <= KR_SPLIT_RC_PX_TOL and abs(shr / r - 1) <= KR_SPLIT_RC_SHR_TOL
+    lo, hi = KR_SPLIT_RC_AUCTION
+    return c.get("rule") == "auction" and abs(shr / r - 1) <= KR_SPLIT_RC_EXACT_TOL and lo <= px / r <= hi and abs(px - 1) > 0.10
+
+
+def _nofile_rows(info):
+    """splitsKr.nofile → (줄 [[코드, 날짜, …]], 모양이 틀렸는지). 줄마다 코드 · 날짜만 봐요 (필수 종목은 모양이 틀려도 코드로 잡아요)."""
+    nf = info.get("nofile") if isinstance(info, dict) else None
+    if nf is None:
+        return [], False
+    if not isinstance(nf, list):
+        return [], True
+    rows = [x for x in nf if isinstance(x, list) and len(x) >= 1 and isinstance(x[0], str)]
+    return rows, len(rows) != len(nf) or any(len(x) < 4 for x in rows)
+
+
+def check_kr_split_nofile(rep, data, comps, today, pdata):
+    """2026-11-27 (Jack 답 11): 공시로 확인하지 못한 분할 — 필수 종목 (실패) · 하루에 새로 KR_SPLIT_NOFILE_DAY_FAIL 건 이상 (실패) · 그 밖의 종목의 숫자를
+    비웠는지 (경고만). splitsKr 이 없거나 nofile 칸이 없는 파일(이 PR 전 · 감시 --live 가 보는 사이트 파일)은 통과 (확인할 목록이 없어요)."""
+    info = data.get("splitsKr") if isinstance(data, dict) else None
+    rule_m = (f"0 ({'·'.join(KR_SPLIT_MUST)} — Jack 2026-11-27: 공시로 확인하지 못한 분할이 필수 종목에 있으면 발행하지 않아요 · 고치는 길: 공시를 "
+              "확인해 KR_SPLIT_OVERRIDES 에 근거와 함께, 또는 공시 읽기를 고쳐요 · RUNBOOK '한국 주식 분할')")
+    rule_d = (f"{KR_SPLIT_NOFILE_DAY_FAIL}건 미만 (같은 날짜 · 최근 {KR_SPLIT_NOFILE_RECENT_DAYS}일 · 직전 발행본의 nofile 에 없던 것 — 시드 2016 ~ 2026 의 "
+              "사건이 있던 날 96% 가 모든 사건 4건 이하 · 보통 날은 0 ~ 1건)")
+    if not isinstance(info, dict) or "nofile" not in info:
+        why = "splitsKr 없음" if not isinstance(info, dict) else "splitsKr.nofile 없음 (2026-11-27 전 형식)"
+        rep.add(KR_NOFILE_MUST_ROW, True, f"{why} — 확인할 목록이 없어요", rule_m)
+        rep.add(KR_NOFILE_DAY_ROW, True, f"{why} — 확인할 목록이 없어요", rule_d)
+        return
+    rows, odd = _nofile_rows(info)
+    if odd and not rows and not isinstance(info.get("nofile"), list):
+        rep.add(KR_NOFILE_MUST_ROW, False, "splitsKr.nofile 모양이 잘못됐어요 (목록이 아니에요 — 필수 종목을 확인할 수 없어요)", rule_m)
+    else:
+        must = [x for x in rows if x[0] in KR_SPLIT_MUST]
+        by = {s.get("t"): s for s in data.get("stocks", []) if isinstance(s, dict)}
+        txt = [f"{x[0]} {(by.get(x[0]) or {}).get('nk', '')} {x[1] if len(x) > 1 else '?'}".replace("  ", " ") for x in must]
+        rep.add(KR_NOFILE_MUST_ROW, not must, (f"{len(must)}건: {', '.join(txt[:KR_SPLIT_SHOW])}" if must else "없음")
+                + (" · 모양이 틀린 줄이 있어요" if odd else "") + f" (전체 {len(rows)}건)", rule_m)
+    if not isinstance(pdata, dict):
+        rep.add(KR_NOFILE_DAY_ROW, True, "직전 발행본 없음 (비교 안 함)", rule_d)
+    else:
+        pinfo = pdata.get("splitsKr") if isinstance(pdata.get("splitsKr"), dict) else {}
+        old = {(x[0], x[1]) for x in _nofile_rows(pinfo)[0] if len(x) > 1 and isinstance(x[1], str)}
+        cnt = collections.Counter()
+        for x in rows:
+            d = _iso_day(x[1]) if len(x) > 1 and isinstance(x[1], str) else None
+            if d is not None and 0 <= (today - d).days <= KR_SPLIT_NOFILE_RECENT_DAYS and (x[0], x[1]) not in old:
+                cnt[x[1]] += 1
+        top = cnt.most_common(3)
+        n = top[0][1] if top else 0
+        rep.add(KR_NOFILE_DAY_ROW, n < KR_SPLIT_NOFILE_DAY_FAIL,
+                (f"가장 많은 날 {top[0][0]} {n}건" + (" · " + ", ".join(f"{d} {k}건" for d, k in top[1:]) if len(top) > 1 else "")
+                 + f" (새로 {sum(cnt.values())}건)" if top else "새로 생긴 사건 없음"), rule_d)
+    try:
+        _check_kr_split_hide(rep, data, comps, rows)
+    except Exception as e:
+        rep.add(KR_NOFILE_HIDE_ROW, True, f"읽다 멈췄어요 ({type(e).__name__})", "경고만", warn=True)
+
+
+def _check_kr_split_hide(rep, data, comps, rows):
+    rule = (f"필수 종목이 아닌 종목의 nofile 사건이 {KR_SPLIT_NOFILE_SERIES_DAYS}일 안이면 spNo 표시 · spNoF 칸(과거 주가 기록 오류와 같은 칸 · 같은 창)이 "
+            "data.json · corp.json 모두 빈 칸 · 표시는 nofile 의 날짜 · 필수 종목에는 표시 없음 (경고만 — 실패 줄로 할지는 Jack 이 정해요)")
+    px = day(data.get("pxDate")) if is_day(data.get("pxDate")) else None
+    stocks = [s for s in data.get("stocks", []) if isinstance(s, dict) and s.get("cls") == "kr"]
+    by = {s.get("t"): s for s in stocks}
+    cby = {c.get("t"): c for c in comps if isinstance(c, dict)}
+    dates = collections.defaultdict(set)
+    for x in rows:
+        if len(x) > 1 and isinstance(x[1], str) and is_day(x[1]):
+            dates[x[0]].add(x[1])
+    probs = []
+    for t, s in sorted(by.items(), key=lambda kv: str(kv[0])):
+        if "spNo" not in s and "spNoF" not in s:
+            continue
+        d, f = s.get("spNo"), s.get("spNoF")
+        if t in KR_SPLIT_MUST:
+            probs.append(f"{t} 필수 종목인데 spNo")
+        if not (isinstance(d, str) and is_day(d)) or d not in dates.get(t, ()):
+            probs.append(f"{t} spNo {d!r} 가 nofile 의 날짜가 아니에요")
+        fp = px_bad_fields_problems(t, f, d if isinstance(d, str) else None, None)
+        probs += [p.replace("pxBadF", "spNoF") for p in fp]
+        hide = set(f) if isinstance(f, list) and not fp else set(PX_BAD_DATA)
+        left = [k for k in PX_BAD_DATA if k in hide and s.get(k) is not None]
+        if left:
+            probs.append(f"{t} 남은 칸 {'·'.join(left)}")
+        c = cby.get(t)
+        if c is not None:
+            if c.get("spNo") != d or c.get("spNoF") != f:
+                probs.append(f"corp {t} spNo · spNoF 가 data.json 과 달라요")
+            leftc = [k for k in PX_BAD_CORP if k in hide and c.get(k) is not None]
+            if leftc:
+                probs.append(f"corp {t} 남은 칸 {'·'.join(leftc)}")
+    for t, ds in sorted(dates.items()):
+        s = by.get(t)
+        if s is None or t in KR_SPLIT_MUST or px is None:
+            continue
+        near = [d for d in ds if 0 <= (px - day(d)).days <= KR_SPLIT_NOFILE_SERIES_DAYS]
+        if near and not (isinstance(s.get("spNo"), str) and s["spNo"] >= max(near)):
+            probs.append(f"{t} {max(near)} 비우지 않음 (spNo {s.get('spNo')!r})")
+    probs += [f"corp {c.get('t')} 에만 spNo" for c in comps if isinstance(c, dict) and "spNo" in c and "spNo" not in (by.get(c.get("t")) or {})]
+    n = sum(1 for s in stocks if "spNo" in s)
+    rep.add(KR_NOFILE_HIDE_ROW, True, f"{n}종목 · 문제 {len(probs)}" + (f" ({', '.join(probs[:3])}{' …' if len(probs) > 3 else ''})" if probs else ""),
+            rule, warn=bool(probs))
+    if probs:
+        rep.detail("공시로 확인하지 못한 분할의 숫자 비움 — 문제", probs)
 
 
 # ── v19.6b (Part B.1 · 오늘 볼 것 데이터): disc.json issue · insider role · data.json 미국 ed · xd — 새 줄 셋 (v19.6 스펙 'Test changes',

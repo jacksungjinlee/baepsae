@@ -23,7 +23,8 @@
 //            avg = 평균 단가 as typed, in the stock's currency (never filled in by the app). unscored = the 기준 could not
 //            score it when it was added (a display mark; the report always decides from today's data).
 //   sales    [{ t, qty, price, date, ccy, fx? }] 팔았어요 (v19.6a). qty in 1/10,000 units; a Korean sale is whole shares
-//            unless the stock was imported by amount (then it can only be sold all at once, v19.6 A.2).
+//            unless the stock was imported by amount (then it can only be sold all at once, v19.6 A.2) or a stored split left the
+//            holding with part of a share on the sale date (held.js fracHeld, Jack 2026-11-27: the part the company pays out in cash).
 //   divs     [{ t, amount, ccy, date, fx? }] 배당 받았어요 (v19.6a), after tax, in the stock's currency.
 //   history  [{ t, nk, out, cls?, imported?, purchases?, sales?, divs? }] records of a stock taken out of the portfolio
 //            (v19.6 A.3): they need no matching holding, and a later dividend of that stock goes into its entry.
@@ -98,7 +99,16 @@
 // aside with a console message naming it (portfolio, part, row, stock, reason), the other portfolios stay readable, and
 // the first write keeps the stored text under a backup key, so nothing is ever lost.
 import { okAssume } from "./dcf.js";
-import { okUnits, belowZero, importedUnits, UNIT, okSplit } from "./held.js";
+import { okUnits, belowZero, importedUnits, UNIT, okSplit, heldUnits, splitsOf, splitFactor } from "./held.js";
+// held.js fracHeld, spelled with the parts held.js has had since v19.6a: tests/test_v2_split_round.py reads this file with main's held.js of
+// 511fd6f, which has no fracHeld (tests/test_kr_split_fractions.py checks the two give the same answer).
+const fracHeld = (recs, t, date) => {
+  if (!recs || typeof recs !== "object" || typeof t !== "string" || typeof date !== "string" || !date) return false;
+  const u = heldUnits(recs, date).get(t) || 0;
+  if (!(u > 0)) return false;
+  const x = Math.round(u / splitFactor(splitsOf(recs), t, date));
+  return Number.isSafeInteger(x) && x % UNIT !== 0;
+};
 
 export const STORE_KEY = "baepsae2.v1";
 export const PREVIEW_STORE_KEY = "baepsae2.preview.v1";
@@ -192,10 +202,10 @@ function importedProblem(r, i, today, holds, part = "imported") {
   return null;
 }
 
-function saleProblem(s, i, today, holds, byAmountT, part = "sales") {
+function saleProblem(s, i, today, holds, byAmountT, part = "sales", partOk = null) {
   if (!plainObj(s) || !isStr(s.t, 20)) return bad(part, i, null, "not a record with a stock code");
   if (!okUnits(s.qty)) return bad(part, i, s.t, "quantity must be above 0 with at most 4 decimals");
-  if (s.ccy === "KRW" && !Number.isInteger(s.qty) && !byAmountT(s.t)) return bad(part, i, s.t, "a Korean sale is whole shares");
+  if (s.ccy === "KRW" && !Number.isInteger(s.qty) && !byAmountT(s.t) && !(partOk && partOk(s))) return bad(part, i, s.t, "a Korean sale is whole shares");
   if (!isPos(s.price)) return bad(part, i, s.t, "price must be a number above 0");
   if (!pastDate(s.date, today)) return bad(part, i, s.t, "date must be a real date, not after today");
   if (!CCY.includes(s.ccy)) return bad(part, i, s.t, "currency must be KRW or USD");
@@ -258,7 +268,11 @@ function recordsProblem(x, today, holds, prefix = "") {
       seen.add(imp[i].t);
     }
   }
-  for (let i = 0; i < (lists.sales || []).length; i++) { const p = saleProblem(lists.sales[i], i, today, holds, byAmountT, prefix + "sales"); if (p) return p; }
+  // 2026-11-27 (Jack, answer 11): a Korean sale of part of a share, when the stored splits left the holding with that part on the sale date
+  // (held.js fracHeld, read without this sale: what was held when it was made)
+  const partOk = (s) => fracHeld({ imported: imp, purchases: lists.purchases || [], sales: (lists.sales || []).filter((y) => y !== s),
+    splits: x.splits, createdAt: x.createdAt }, s.t, s.date);
+  for (let i = 0; i < (lists.sales || []).length; i++) { const p = saleProblem(lists.sales[i], i, today, holds, byAmountT, prefix + "sales", partOk); if (p) return p; }
   for (let i = 0; i < (lists.divs || []).length; i++) { const p = divProblem(lists.divs[i], i, today, holds, prefix + "divs"); if (p) return p; }
   const ip = idsProblem(lists, prefix);
   if (ip) return ip;

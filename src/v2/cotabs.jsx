@@ -46,7 +46,7 @@ import { OLD_LINKS, dartFilingUrl } from "./routes.js";
 import { usOf, priceMd, priceDate, lineDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText, riskBandText, riskBandNote } from "./cofmt.js";
 import { epsFixFor, epsBasisCardGone, stmtNotWonFor, unitHeldFor, pxBadFor, pxBadFullFor, pxBadPartFor } from "./fix.js";
 import { epsPeriod, bpsPeriod } from "../repair.js";
-import { EpsFixNote, StmtCurNote, FcurNote, PbrZeroNote, FgnCutNote, UnitChkNote, unitChkText, NoStmtNote, PxBadOneNote } from "./fixnote.jsx";
+import { EpsFixNote, StmtCurNote, FcurNote, PbrZeroNote, FgnCutNote, UnitChkNote, unitChkText, NoStmtNote, PxBadOneNote, pxBadOneText } from "./fixnote.jsx";
 import { fcurBlank, fcurDyBlank, pbrZeroOf, fgnBlank } from "./fcur.js";
 import { CoinFlow, PayoutRing } from "./coart.jsx";
 
@@ -556,7 +556,7 @@ export function ValueTab({ load, s, store, onMore }) {
       {!usOf(s) && <Dcf load={load} s={s} co={co} a={a} onTry={onMore} />}
       {/* 과거 주가 기록 오류 (pxBad): the beta was blanked; no 출렁임 card even if a beta came through (the header says why) */}
       {/* 2026-11-14 evening (Jack): the 52주 range shows, so the blanked beta says so where the 출렁임 card would be, under its label */}
-      {pxBadPartFor(s, co) && C.co.tiles.label.risk && C.co.pxBadOne && (
+      {pxBadPartFor(s, co) && C.co.tiles.label.risk && pxBadOneText(s, co, "beta") && (
         <Card data-ui-v2="co-risk" data-rule="pxbad">
           <CardHead icon="umbrella" tone="risk" title={C.co.tiles.label.risk} />
           <p data-ui-v2="co-risk-px" style={tx(SIZE.h3, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(2) })}>–</p>

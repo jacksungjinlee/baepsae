@@ -220,6 +220,19 @@ export function sellAllUnits(recs, t, date) {
   return first;
 }
 
+// A holding of t left with part of a share by a split on `date` (Jack, 2026-11-27, answer 11: "팔았어요 accepts fractions (same unit as the
+// spec, 1/10,000 share)"): the units held on that date (records dated on or before it), read on that date's share basis (today's basis ÷
+// the splits after the date), are not a whole number of shares. A Korean 주식병합 or a 5:2 split leaves such a part (15 shares through a 1:10
+// merge are 1.5); the company pays it out in cash, and the user records that as a sale of it. Korean records are whole shares otherwise.
+export function fracHeld(recs, t, date) {
+  if (!recs || typeof recs !== "object" || typeof t !== "string" || typeof date !== "string" || !date) return false;
+  const u = heldUnits(recs, date).get(t) || 0;
+  if (!(u > 0)) return false;
+  const f = splitFactor(splitsOf(recs), t, date);
+  const x = Math.round(u / f);
+  return Number.isSafeInteger(x) && x % UNIT !== 0;
+}
+
 // Shares held now per stock with more than 0 shares (Map t -> quantity as a number, units / UNIT).
 export function heldQty(recs, date = null) {
   const out = new Map();
