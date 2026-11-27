@@ -7405,6 +7405,7 @@ def scene_v193c_offstep(R, files, width=390):
         page.locator('[data-card="div"] [data-ui-v2="card-inc"]').click()
         bubble(page, 2).click()
         bubble(page, 3)
+        assert seen() is None, "다음 (3/3): '본 적 있음' is already in the store before the click"
         page.evaluate("() => document.querySelector('[data-ui-v2=\"action-bar\"] button:not([disabled])').click()")   # 3/3 에서 아래 띠의 다음
         see(page, C["build"]["s3"]["title"])
         guide_gone(page)
@@ -7417,6 +7418,7 @@ def scene_v193c_offstep(R, files, width=390):
         for name in (C["build"]["restart"], C["build"]["prevStep"]):        # 1/3 에서 다시 시작 · 이전 단계 (말풍선 밖의 단추)
             unseen()
             guide_step1(page, False)
+            assert seen() is None, f"{name}: '본 적 있음' is already in the store before the click"
             page.evaluate("(n) => [...document.querySelectorAll('[data-ui-v2=\"app-bar\"] button, main button')].find((b) => (b.getAttribute('aria-label') || b.textContent.trim()) === n).click()", name)
             see(page, C["build"]["s0"]["title"])
             guide_gone(page)
@@ -14909,6 +14911,7 @@ def scene_v196f_gaps(R, files, width=390):
             link.wait_for(state="visible")
             link.locator("button").click()
             tax_screen_common(page, width, today)
+            tax_data_in(page)                                                                      # the cards (and their console lines) come with the data
             said = [m for m in logs if m.startswith("[v2] tax: ")]
             lc, dc = page.locator('[data-ui-v2="tax-loss"]'), page.locator('[data-ui-v2="tax-div"]')
             if case in ("all-left", "mixed-left"):
