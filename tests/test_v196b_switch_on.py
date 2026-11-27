@@ -253,3 +253,14 @@ def test_the_insider_amount_has_one_decimal_under_10_eok_whole_eok_above_and_jo_
     assert got["issue"] == "회사가 나중에 주식으로 바꿀 수 있는 채권을 1억원어치 발행하기로 했어요. 모두 주식으로 바뀌면 주식 수가 지금보다 1% 늘어나요."
     # 0.999억원 (1,998 × 50,000) never makes a card: the card needs 1억원 or more at today's close
     assert got["under"] == [0, 99900000]
+
+
+def test_home_row_count_skips_an_insider_card_without_a_title():
+    """홈의 오늘 볼 것 줄 수(lookRowCount)는 제목이 없는 지분 변동 카드(title "none": 역할을 읽지 않은 카드)를 세지 않아요 —
+    그 카드는 줄로도 페이지에서도 보이지 않으니, 세면 홈이 '볼 것이 있다'고 잘못 말해요. 제목이 있는 카드는 그대로 세요 (리뷰 2026-11-28)."""
+    got = run("""
+      const base = { fresh: true, issue: [], insider: [], nps: [], dates: [] };
+      const ic = (title) => ({ t: 'A', nk: 'A', title, rc: '20260000000001', date: T, up: true, won: 1e8, pos: null });
+      out = [Tl.lookRowCount({ ...base, insider: [ic('none'), ic('exec')] }), Tl.lookRowCount({ ...base, insider: [ic('none')] }),
+        Tl.lookRowCount({ ...base, insider: [ic('exec'), ic('both')] })];""")
+    assert got == [1, 0, 2], got

@@ -32,9 +32,13 @@ decimal under 10억원, whole 억원 from 10억원, 조원 with one decimal (`lo
 #171's 이번 주 정리 counts what 오늘 볼 것 shows, so its 공시 tile now also counts the week's 지분 변동 reports (approved chip "지분 변동
 {n}"). Test edits: Jack's yes of 11-22 (the DART-link test, the role test) and of 11-27 (#168's and #171's own "still off" checks
 now expect "on": `tests/test_v196b_cards.py`, `tests/test_v196b_answers.py` (a rename), `tests/smoke_v2.py` scene_v196b ·
-scene_v196b_states · scene_v196e, `tests/test_v196e_weekly.py`; expected values and labels only, nothing removed or loosened; listed
-in the PR's 안전 규칙 변경). Still off: corrections of old decisions (`OLD_CORRECTIONS` false) and 유무상증자 · 기타주식 · two-class rows ·
-rights issues by other methods (wording from the design chat).
+scene_v196b_states · scene_v196e, `tests/test_v196e_weekly.py`; expected values, the amount format and labels; nothing loosened;
+one word left a must-not-show list, "전무가", from the both-role card that now shows (scene_v196b_on pins its exact sentence);
+listed in the PR's 안전 규칙 변경). Still off: corrections of old decisions (`OLD_CORRECTIONS` false) and 유무상증자 · 기타주식 · two-class rows ·
+rights issues by other methods (wording from the design chat). Spec Acceptance 2 on the 11-27 data: a test portfolio's 13 cards
+(6 확인 필요, 7 지분 변동) matched their DART filings one by one, and the 2 old corrections left out are real corrections (table in
+#196). Known gap, for the design chat's say-why list: a 지분 변동 card left out because its stock is shown at an older close is named
+only in the console, and 이번 주 정리's 공시 tile skips it without a line (a screen line needs new wording).
 
 **홈's US close line (#190, 2026-11-24; same class as #187's 포트폴리오 fix, minor):** app only, no new words. 홈 (`home2.jsx`) and the
 old 홈 behind the HOME2 switch (`today.jsx` Home) decided "a US stock is held" by `cls`. A holding of 379800 KODEX 미국S&P500 (cls "us",
