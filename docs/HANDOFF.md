@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-23 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-24 KST — read this first)
 
 **Now (2026-11-23):** merged and deployed 11-22: #166 (old-app English carry lines), #167 (div reason lines), #168 (v19.6b 오늘 볼 것
 page), #169 (new US tickers wait), #170 (v19.6e data: `c1w` · `wkFrom` · `usWkFrom` · `c1wv` · `c1wSrc`), #171 (v19.6e
@@ -24,6 +24,162 @@ or loosened). **Open questions to Jack:** the capped footnote
 {n} · 실적 발표 {n}) (one decimal on 지분 변동 amounts: answered 11-23, in the switch-on PR). Design chat has (sent 11-22): the say-why audit, the 10 dark-mode pairs,
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
 v19.6g, v19.6h.
+
+**Factor scores, companies only (#189, 2026-11-24; found on the 11-24 publish):** `add_percentiles` ranked 33 US ETFs (23 with Yahoo's
+`priceToBook`, meaningless for a fund: SPY 1.76, really about 5) and 3 Korean listed infrastructure funds together with companies, so
+547 US companies' 가치 (`vz`) were off by up to 3 points (mean 1.2). After it merges, the next publish ranks companies only in each market
+(`validate_data.factor_fund`: `etf` true or `fund`, the 2.0 `isStockLike` rule): US companies' `vz` · `mz` · `lz` move by up to 3, Korean
+`pz` · `mz` · `lz` by at most 1. Funds keep their scores (review S1 · S2: nothing may disappear from the old app's 성향 card or 기업분석
+strip without a line), placed against their market's companies without joining the ranking (`fetch_data.fund_percentile`: the tied
+companies' average rank when a company has the same value, else the companies below it, ÷ n × 100; 규모 · 가치 · 저변동 100 minus that);
+they move by up to 3 (SPY `lz` 97 → 99, QQQ `vz` 77 → 79, 088980 unchanged). Expect the log lines `· 팩터 점수 (국내): 회사 주식 2,508종목 (우선주 62 포함)끼리 순위 …` and `· 팩터 점수 (미국): 회사 주식
+767종목끼리 순위 … 펀드 33곳은 순위에 넣지 않고 회사 분포에 견줘 매김 (점수 있는 펀드 33)` and the new warning-only gate row
+`팩터 점수: 회사끼리 순위 · 펀드는 회사 분포에 견줌 (다시 매겨 맞춰 봄 · 경고만)` as PASS `모두 같음 (…)` (the deploy gate on a file published before
+it warns: about 2,000 cells differ). No screen text. **Open for Jack (not built):** a US fund's 가치 score still comes from Yahoo's
+meaningless fund PBR (SOXX · TLT 100, used by the old app's 성향 card), and its PBR reaches two screens — the old app's 종목 고르기 card
+("PER / PBR", `src/detail.jsx` StockRow) and 2.0's 두 종목 비교 when a US ETF is held (`src/v2/compare.jsx` PBR row); fixing either needs a
+say-why line. RUNBOOK § Factor scores.
+**#182 (Korean price-history repair, Track 1 item 4), 2026-11-24 — built, switch OFF:** `fetch_data.py` `KR_PX_REPAIRS` · `kr_px_repair`
+rescale the bars before 13 old share events Naver never rescaled (12 of the 20 stocks in `krSeries.jump` on the 11-21 publish: 001465,
+003060, 007460, 009310, 012170 ×2, 012210, 110790, 227420, 311060, 331660, 425040, 472850), each factor confirmed by two sources
+(listed shares or the KRX 기준가, and Yahoo's split record). Repaired stocks leave `krSeries.jump`, so #128 stops blanking them. Every
+run re-checks each entry against the downloaded series and skips it if Naver has rescaled it (never twice) or if it no longer fits.
+`KR_PX_REPAIR_ON` is **False**: the numbers would be built on a history 뱁새 corrected, and the say-why line is not approved, so the run
+only logs and records what it would repair (`krSeries.adj`, new warning-only gate row "국내 과거 주가 병합 보정 (krSeries.adj ·
+경고만)"); nothing users see changes. **Waiting for Jack:** the two screen lines (drafts in the PR: share-count events, and 무상증자
+ex-dates for 311060 · 425040 · 472850), then a screens PR shows them and flips the switch (a test pins it OFF). That PR needs a rollback
+plan agreed with Jack: once ON, switching OFF re-hides all 12 at once and `PX_BAD_NEW_FAIL` (10) stops the publish (RUNBOOK). Still hidden either way: 007610, 107640, 121890, 206950, 210120, 229500, 250030 (real moves, transfer listings, one bad Naver
+bar, one source only) and 304840 (Naver rescaled it on 11-23; it should drop out by itself). RUNBOOK "Repairing the broken histories".
+**Track 2 audit, money display (#187, 2026-11-24; audit 1.2 · 1.5 · 1.6, minor):** app only, no new words. (1.2) 포트폴리오's held
+row writes US fractional shares with up to 4 decimals (`pfview.qtyText`, as the records already did): 7.5주 / 0.4주 instead of "8주" /
+"0주"; whole shares unchanged. (1.5) 연말에 확인할 숫자: an estimate under 1,000원 is shown to the 원 (`tax.js shownEstimate` /
+`taxShown`), still in the approved "약" wording (estimates; v19.6 Part F): the dividend card "약 427원" for a 361원 dividend (was "약
+0원"), the above line "세금은 약 361원이에요" (was 약 0원; a tax under 0.5원, a gain 1–2원 over the deduction, still reads 약 0원, which
+is that tax to the 원); from 1,000원 up unchanged. `taxState` / `yearDivs` values unchanged. (1.6) 내 수익's date
+line uses `usPxDate` when every held stock counted (in the data, priced, with 평균 단가 and rate) is a US stock, i.e. priced in dollars
+(`pf.usdOf`, never `cls`: 379800 KODEX 미국S&P500 is cls "us" but a KRX listing in won) (after the 11-26 US
+holiday: 11월 25일, as the tax screen's loss card); a Korean stock among them, or none held, keeps the Korean date; no `usPxDate` → no
+date line, said in the console. Mixed Korean + US holdings keep the Korean date and, when the US date differs, show the approved
+`app.usClose` ("미국 종목은 현지 기준 {md} 종가예요.") under the portfolio name, on 포트폴리오's condition (an approved line in a new
+place; my decision under the rules, 2026-11-24, as is keeping 약 in the tax line and on the dividend card). Pre-existing bug fixed with it: 포트폴리오
+decided "a US stock is held" by `cls` and showed `app.usClose` for a portfolio holding only 379800; now by `pf.usdOf`, as `usHeld`.
+Same class, not fixed here: 홈 (`home2.jsx:405`, pinned word for word by `tests/test_v196a_approved.py::test_home_counts_only_shares_held`,
+and `today.jsx:358`).
+Next in the queue unchanged (v19.3 Part L).
+
+**Clean error text (#178, branch `claude/clean-error-text`, for 11-24; pipeline only, the gate unchanged):** the gate's frozen word row
+("글자에 nan·None·null·undefined 없음") failed on text the pipeline wrote itself, so one caught error (`pxSrc.own.err`, `usSrc.own.err`),
+one dropped own-check row (`ownDrop` reason "d null") or one record reason (`usForeign.cut` "financialCurrency None", a `d1Base.ex` name
+"nan", the "마지막 확인 종가(None)" reason) stopped the whole publish (audits aud5 and #178 rounds 1–2, reproduced). Now our error and
+reason text writes those words as "빈 값" and hides the DART / ECOS key values (in the run log too), URL query strings and key-like values
+as "…", cut to 300 characters. A final `pub_sweep` before each write cleans our own record fields, skipping what the app reads
+(`own.aged`, `splitsInfo.fixed`), capped at Jack's N: up to 5 per file cleaned with `!!` lines and counted in `ownDrop.sweep`; above 5
+nothing changes and the word row fails as before. A Yahoo summary (`de`) or DART position (`pos`) with such a word is blanked and counted
+in `ownDrop.srcText` (same cap; insider names are left to the gate). `splitsInfo.err` is log-only. Live data 11-20 (data branch, fetched
+11-23): 0 matches before and after, all 190 gate rows unchanged. RUNBOOK "Our own text and the gate's word row".
+**Split rounding (#184, 2026-11-24; Track 2 audit 1.1, serious but rare, and 1.4):** 47 of data.json's 150 splits have a ratio
+that isn't a whole number (DD 1:3, UL 8:9, HON and AZN 1:2, AMCR 1:5, SNEX 3:2 …). Records dated before one broke when they didn't give
+whole 1/10,000 shares (for 11 of the 47, one share already doesn't; for the rest, a 0.0001-share sale or a 금액으로 넣기 row):
+`held.js` rounded each record on its own and `lots.js` didn't round, so the app's automatic save of the split was refused and
+retried hundreds of times a second with "날짜·수량·가격을 다시 확인해 주세요" on every screen, a valid sale of the old shares was
+refused, and a full sale left a sliver (a −5원 '손실' on the tax screen with nothing held). Now one count everywhere (`held.js`
+`count()`, read by the ledger, the store's check, 팔고 빼기 and 금액으로 넣기 sales), position by position: a sale that takes either
+the per-record count (what main showed) or the running exact total to exactly 0 closes the position, and the next record starts
+from 0; an open position shows main's per-record count while it stays at or above 0; a reading that goes below 0 falls back to
+the running count over the whole history, then main's. Records saved by main read as main read them. Records with no split or a whole-unit ratio count bit-identically to main (`tests/test_v2_split_round.py`, main's code
+frozen in `tests/fixtures/count_before_split_round_511fd6f`). `app.jsx` stores a data.json split stock by stock, only when main's
+count reads the records too, tries each once per visit and says "stored" once it is in the records. A 금액으로 넣은 holding sold
+with a date before a split sells every share on that date's basis (it sold a fifth after AMCR's 1:5). **Don't plain-revert #184**
+(RUNBOOK § Roll back): records only #184's count reads (a sale only it accepts, or any record saved for a stock whose earlier
+records main reads only without the split, which then stores the split) set that portfolio aside on main's code until the fix
+is back. No new Korean text.
+
+**CI checks the two PR rules (#175, 2026-11-23; Jack: "Automate the rules you missed"):** the last step of `ci.yml`'s `checks`
+job runs `tools/pr_rules.py`, so the required `ci` check goes red when either rule is missed. Run it yourself before pushing:
+`python tools/pr_rules.py --body-file BODY.md --base $(git merge-base origin/main HEAD) --head HEAD` (CI compares
+with GitHub's merge commit, which this approximates). (1) A PR that changes what the site serves (deploy's
+own file list `assemble_site.site_files`, `src/`, the build inputs incl. `build-styleguide.sh` and `deploy.yml`, the `tools/` files
+they call and import, e.g. `build_tag.py` and `logos/logo_index.py`, and the three real-data screen checks with the `tests/`
+helpers they import) needs `real_data_check.py` (with or without `--data`; it has no other mode), `smoke_launch.py --data` and
+`smoke_app.py --data` in its description, each with an all-pass `N / N` and no non-passing `N / M` in the same sentence or table
+cell after any check name (HTML comments are not read), and the data's date (a real YYYY-MM-DD, today KST or up to 14 days
+before) on a result line or up to 3 non-blank lines above the first one (table `|---|` lines don't count). Example line:
+`- Real data (data branch copy, pxDate 2026-11-20): real_data_check.py --data 3 / 3 · smoke_launch.py --data 14 / 14 ·
+smoke_app.py --data 171 / 171`. (2) A PR that changes `src/`, anything under rule 1, or the pipeline (`fetch_data.py`,
+`validate_data.py`, `already_published.py`, `watchdog.py`, `requirements*.txt`, `data/`, `tests/fonts/install.sh`, the
+update-data / deploy / watchdog / logo-dev workflows and the `tools/` files they call, `tools/logos/`, `push_logos_branch.sh`,
+`ci.yml` and `pr_rules.py`) needs this § 0 changed beyond whitespace. Files are classified in both the PR's tree and `main`'s, so
+deleting a helper still counts. It compares the PR's merge commit with its first parent (the PR's own changes only) and stops if
+HEAD isn't GitHub's merge commit for the PR. The description is the one in the event that started the run (CI holds no token,
+`tests/test_screen_check.py`): after editing only the description, push the next commit — a re-run still sees the old one. A
+push or manual run on a branch fails on purpose (its green would cover the PR's red); only `main` passes without a PR. Anything it
+can't read (event file, git) fails with a message. Replayed on past merges it flags #170, #171 and #172 (the misses of 11-22) and
+passes #173.
+
+**US minimum sizes (#185, 2026-11-24; Jack 11-13: "v19.5b's US minimum sizes (25억원 of quarterly revenue, 100억원 of equity, at
+the day's rate) need a small data PR first"):**
+- **Data:** the daily run adds, for each US company with statements in dollars, the latest quarter's revenue and common equity
+  in whole dollars with their quarter-end dates (`qrev` · `qrevD` · `qeq` · `qeqD`), plus a `usSize` record. Non-dollar filers
+  stay blank.
+- **When it runs:** last in `main()`, inside `ph.run("미국 회사 크기")`, after every Yahoo request the publish depends on and
+  after data · corp · macro.json are written; data.json is then written again with the fields.
+- **How it fetches:** one Yahoo request per company, at most 300 per run, 180 s, stopping at the first 429.
+  - Order: nothing cached or failed, largest first; then entries older than 7 days; then companies with 3 failed tries, once a
+    week.
+  - 3 empty answers in a row stop it too, but only counting companies that had not failed before, so always-empty companies
+    can't stall it.
+  - The cache (`.dart-cache/us-size-v1.json.gz`) is complete after three runs (300 · 300 · 128), then refreshes in weekly lumps.
+- **`usSize.pending`:** companies still to learn — nothing cached, or no answer yet with fewer than 3 tries; a refused new
+  listing counts.
+- **App:** 2.0 applies the US 수익성 minimum and its approved line "· 자본 100억원 이상" only when `pending` is 0. The first two
+  publishes after the merge (pending 428, then 128) look like today; the third switches it on.
+- **Review decision of 11-24** (Fable S3; the coordinator decided, Jack is told and can reverse it): when on, a company leaves the
+  US list if its equity is known and under 100억원 at `fx`, or unknown. Unknown means another currency, unknown currency,
+  half-yearly, a quarter over 200 days old, or 3 failed tries. This matches the Korean list's rule under the same line. The
+  console names every company dropped, with its reason.
+- **On 11-20's data with a full cache:** 707 → 664.
+  - 6 leave for negative equity: Gartner #2, Halozyme #6, Las Vegas Sands #8, DaVita, Coca-Cola Consolidated, FDXF.
+  - 37 leave as other-currency filers: Ascendis #16, ASML, NVO, TSM …
+  - Follow-up: #181's non-dollar company totals could give those `qeq` in dollars.
+- **US 성장 minimum** (`qrev × fx` ≥ 25억원): built but OFF (`ranks.US_MIN_GROWTH_ON`). **Open question to Jack:** the line "분기
+  매출 25억원 이상" (`rank.p.floorGrowthUs`, pending doc).
+- **Expect in the first publish's log:** `미국 회사 크기 … 달러 약 728곳 (보관본에 있음 300) … 요청 300`, the `wait` lines,
+  `usSize.pending): 아직 차례가 남은 달러 회사 428곳`, `⏱ 미국 회사 크기`, and the warning-only gate row
+  `미국 회사 크기 (qrev · qeq · 경고만)` passing.
+- **Expect in the third publish's log:** `pending): 0`. That publish is the first with the minimum on screen.
+- RUNBOOK "US company sizes for 종목 순위".
+**#183 (소액주주 yield for 차등배당 payers), 2026-11-24 — data on, screens off until Jack approves two lines:** Jack 11-19 Q6 ("labelled
+as the 소액주주 rate"), 11-23 Track 1 item 4. Of the payers hidden as `data` / `div` (dvLine 3; **16** on the 11-21 publish), the daily run
+reads each December-year-end 사업보고서's "배당에 관한 사항" once (cached, ≤ 30 reports a run, 2 DART calls each; about 32 calls on the first
+run) and keeps the table's own dividend per share as `dpsSmall` (+ `dytSmall` at today's close, data.json and corp.json, record `divSmall`
+with the sentence relied on, `q`) only when one sentence or note says 차등배당 (not negated, no earlier year) and ties exactly that figure
+to the 소액주주 / 기타주주 / 일반주주, and today's share count is on that year-end basis (rules tightened after round 1 of the review: both
+reviewers fooled the first parser with crafted notes; all of them are tests now). Read by hand on 11-23 (10 read-only DART calls):
+교보증권 550원 and TPC로보틱스 10원 qualify; 엘앤씨바이오 and 블랙야크아이앤씨 say nothing of 차등배당. **The other 12 candidates have not been
+read by anyone, so the first run may publish more; before the switch PR, read each `divSmall.on` company's `q` against its filing.**
+남성 and 대동기어, named as examples in the 11-23 brief, are not differential (those were Jack's 11-19 Q4 and Q5 on other topics).
+`dps` · `dyt` · `dz` · `dvLine` unchanged: the dividend ranking keeps `dyt`. New gate row "소액주주 배당수익률 (… · 경고만)" (never fails;
+warns when a company joins that the previous publish lacked, listing its sentence). Expect in the first publish after it: the log line
+`소액주주 배당(차등배당 · dpsSmall · dytSmall)` with one "근거" line per company published (교보증권 and TPC로보틱스 at least, unless their
+basis check stops them) and that row WARN once, "새로 실은 회사". 예전 뱁새 gets no label (round 1: its yield is the report's own, never
+checked to be the 소액주주 rate). **Waiting for Jack:** the label "소액주주 기준" and the line "이 회사는 소액주주에게 배당을 더 줘요(차등배당).
+소액주주가 받는 1주 배당으로 계산했어요." (`src/v2/smallcfg.js` + `C.co.div.smallBasis` · `smallLine`); and whether 관심 종목 conditions
+should use the 소액주주 yield (today they keep `dyt`). RUNBOOK "소액주주 yield for differential dividends".
+**#176 (US details after a stock split; audit 2026-11-23, SNDK 8:1 on 11-20):** after it merges, the daily run's US details step
+puts a Yahoo details copy (cached up to 3 days, 14 when Yahoo refuses) taken before a split on today's share count: today's price ×
+the split ratios ÷ the copy's price, for PER, PBR, 시가총액, 배당수익률 and 거래대금 (`fetch_data.us_info_split_view`; splits from today's
+download, the previous publish's `splits` and `SPLIT_OVERRIDES`, up to today KST; a split dated after `usPxDate` counts only if Yahoo's
+series already shows it). Such a copy is not fetched again just for the split: a normal refresh compares Yahoo's fresh numbers with
+copy × ratio: when PER, PBR or volume look pre-split (within 1.25× of the copy without the ratio, at least 1.5× from copy × ratio) while
+시가총액 agrees, it keeps the copy (`diff`: Yahoo's per-share numbers can still be pre-split); when 시가총액 itself looks pre-split, the
+ratio was wrong and the fresh details win (`unfit`). Every multiplied copy is logged `!!` and warned (`fit`). It does
+fetch again when the ratio can't be trusted (`odd`) and when a copy's price moved more than 2× with no split known (`jump`, a split
+Yahoo reported late). Every path that can leave a number off by the ratio goes into `data.json usSrc.split` (only when there is
+something to say) and the new warning-only gate row `미국 분할 뒤 상세 숫자 (PBR ↔ PER × ROE · usSrc.split · 경고만)` names it, along
+with any US company split in the last 30 days whose PBR disagrees with PER × ROE beyond √ratio (at least 1.5). **SNDK itself stays
+wrong until Yahoo corrects it:** its 11-21 PBR 0.63 (really about 5, so 가치 99) came from a fresh Yahoo fetch after the split, with no
+older copy to compare, so this change does not fix it; the gate row names SNDK on every publish until then (expected, not a failure).
+Blanking such a number on screen needs a new say-why line, so it is Jack's call (not asked yet). RUNBOOK § US stock splits.
 
 **#172 (published closes), 2026-11-22:** in a week with days lacking a final KRX list, the daily run reads our earlier publishes
 from the `data` branch (throw-away partial clone, no token, https, minimal env, 180 s total, process-group kill, gc off) and

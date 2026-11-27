@@ -3,10 +3,12 @@
 // TaxLink) when the user has a US sale this year, a US holding or a dividend this year (tax.taxOpen: the same rule for the
 // link and the address; app.jsx turns a closed #portfolio/tax into #portfolio).
 //   올해 해외 주식 양도차익   this year's US realized gains in won, exact to the 원; the bar to the 250만원 deduction; below ·
-//                            above (with the estimate, 약, to 1,000원) · loss. Shown with a US sale this year or a US holding.
+//                            above (with the estimate, 약, to 1,000원; under 1,000원 to the 원: tax.js shownEstimate) · loss.
+//                            Shown with a US sale this year or a US holding.
 //   지금 손실 중인 미국 종목  held US stocks at a loss today (unrealized; facts only, never a word about selling). Needs today's
 //                            data, fresh: on stale data the card says the data stopped and shows no number.
-//   올해 받은 배당 (세금 떼기 전)  this year's dividend records turned back into pre-tax amounts, 약, to 1,000원.
+//   올해 받은 배당 (세금 떼기 전)  this year's dividend records turned back into pre-tax amounts, 약, to 1,000원; under 1,000원
+//                            to the 원, still with 약 (tax.js shownEstimate; audit 1.5: never "약 0원" for a dividend).
 // Never a sum that silently leaves records out: what is left out is named on the card with an approved line (Jack's yes to
 // M1-M4 on 2026-11-19), and said in the console with counts. Load failure: the approved message only. No 뱁이 (the
 // screen shows money). Tokens only (dark mode). No Korean here: src/copy/v2.js tax.*.
@@ -20,7 +22,7 @@ import { ownCloses } from "./stocklist.js";
 import { todayCtx } from "./rules.js";
 import { missingNames } from "./tracking.jsx";
 import { CoMark } from "./logo.jsx";
-import { TAX_YEAR, taxWindow, taxRecords, yearGains, yearDivs, heldLosses, taxState } from "./tax.js";
+import { TAX_YEAR, taxWindow, taxRecords, yearGains, yearDivs, heldLosses, taxState, taxShown, shownEstimate } from "./tax.js";
 
 const said = new Set();
 const say = (m) => { if (!said.has(m)) { said.add(m); console.info("[v2] tax: " + m); } };
@@ -55,14 +57,17 @@ function Head({ icon, tone, sub, children }) {
 // 올해 해외 주식 양도차익: the sum, the bar to 250만원 (not in the loss state), the state line, then the notes.
 function GainCard({ g, win }) {
   const st = taxState(g.gain);
+  // the tax the above line writes (tax.js taxShown): st.t from 1,000원 up; under it the amount to the 원 (audit 1.5: a tax of
+  // 220원 read "약 0원"). The approved line keeps its own "약" (the tax is an estimate either way)
+  const tw = st.kind === "above" ? taxShown(st.x) : null;
   // exactly 250만원 has its own line (M4, Jack 2026-11-19): "…보다 0원 적어요." is not something a person says (review B)
   const line = st.kind === "loss" ? fill(C.tax.loss, { x: exactWon(st.x) })
-    : st.kind === "above" ? fill(C.tax.above, { x: exactWon(st.x), t: exactWon(st.t) })
+    : st.kind === "above" ? fill(C.tax.above, { x: exactWon(st.x), t: exactWon(tw.won) })
     : st.kind === "equal" ? C.tax.equal
     : fill(C.tax.below, { x: exactWon(st.x) });
   const both = [C.tax.allDecks, win.ria ? C.tax.ria : null].filter(Boolean).join(" ");
   return (
-    <Card data-ui-v2="tax-gain" data-state={st.kind} data-g={g.gain} data-x={st.x} data-t={st.t == null ? undefined : st.t} style={{ padding: `${SPACE(4)}px ${SPACE(4) + 2}px` }}>
+    <Card data-ui-v2="tax-gain" data-state={st.kind} data-g={g.gain} data-x={st.x} data-t={tw ? tw.won : st.t == null ? undefined : st.t} style={{ padding: `${SPACE(4)}px ${SPACE(4) + 2}px` }}>
       <Head icon="receipt" tone="earn">{C.tax.gainTitle}</Head>
       <span data-ui-v2="tax-g" style={tx(30, WEIGHT.heavy, COLOR.ink, { letterSpacing: "-0.02em", lineHeight: 1.25, display: "block" })}><Amount text={exactWon(g.gain)} /></span>
       {st.bar != null && (
@@ -140,19 +145,23 @@ function LossCard({ ls, stale, load, byT, nameOf }) {
 
 // 올해 받은 배당 (세금 떼기 전): "약" small, the amount large (as on the board), then the note. No dividend counted (only US
 // ones without a rate: tax.js yearDivs won null): no amount, never "약 0원"; M1 says what was left out (review C).
+// Under 1,000원 (tax.js shownEstimate; audit 1.5, 2026-11-23): the amount to the 원 in the same approved "약 {x}" (a 361원
+// dividend, 427원 before tax, read "약 0원", now "약 427원"): the pre-tax sum is an estimate either way (a flat 15.4% / 15%
+// gross-up; v19.6 Part F "shown with 약", #187 review). From 1,000원 up exactly as before.
 function DivCard({ dv }) {
   const [pre, post] = String(C.tax.divAmount).split("{x}");
+  const v = dv.won != null ? shownEstimate(dv.exact) : null;
   return (
-    <Card data-ui-v2="tax-div" data-v={dv.won} data-n={dv.n} style={{ padding: `${SPACE(4)}px ${SPACE(4) + 2}px` }}>
+    <Card data-ui-v2="tax-div" data-v={v ? v.won : dv.won} data-n={dv.n} style={{ padding: `${SPACE(4)}px ${SPACE(4) + 2}px` }}>
       <Head icon="coins" tone="div">{C.tax.divTitle}</Head>
-      {dv.won != null && (
+      {v && (
         <span data-ui="amount" data-ui-v2="tax-div-amount" style={{ display: "block" }}>
           <span style={tx(SIZE.body, WEIGHT.heavy, COLOR.text2)}>{pre}</span>
-          <span style={tx(26, WEIGHT.heavy, COLOR.ink, { letterSpacing: "-0.02em" })}><Amount text={exactWon(dv.won)} /></span>
+          <span style={tx(26, WEIGHT.heavy, COLOR.ink, { letterSpacing: "-0.02em" })}><Amount text={exactWon(v.won)} /></span>
           {post ? <span style={tx(SIZE.body, WEIGHT.heavy, COLOR.text2)}>{post}</span> : null}
         </span>
       )}
-      {dv.noFx > 0 && <p data-ui-v2="tax-div-no-fx" style={small({ marginTop: dv.won != null ? SPACE(1) + 2 : 0 })}>{fill(C.tax.divNoFx, { n: dv.noFx })}</p>}
+      {dv.noFx > 0 && <p data-ui-v2="tax-div-no-fx" style={small({ marginTop: v ? SPACE(1) + 2 : 0 })}>{fill(C.tax.divNoFx, { n: dv.noFx })}</p>}
       <p data-ui-v2="tax-div-note" style={small({ marginTop: SPACE(1) + 2 })}>{C.tax.divNote}</p>
     </Card>
   );

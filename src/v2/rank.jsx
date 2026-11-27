@@ -33,7 +33,7 @@ import { eokText, signedPct } from "./deckcalc.js";
 import { yieldText } from "./cofmt.js";
 import { num, todayD1, sameCompany } from "./engine.js";
 import { RANK_TOP, RANK_FULL, CRIT, rankRows, pointsDeck, chipsFor, shownChip, groupWord, groupList, indParts,
-  chipState, dateBasis, oneReportYear, quarterBasis, readPick, savePick, RANK_KEY, PREVIEW_RANK_KEY } from "./ranks.js";
+  chipState, dateBasis, oneReportYear, quarterBasis, readPick, savePick, RANK_KEY, PREVIEW_RANK_KEY, usMinOf } from "./ranks.js";
 
 export const ROW_H = 58;                 // px per row (board)
 const PART_H = 34;                       // px: the label over each part of 업종별 등락 (많이 오른 업종 · 많이 내린 업종)
@@ -204,12 +204,16 @@ function critNumber(id, s) {
   }
 }
 // The {basis} of the 기준별 line: the card's basis line (build.cards), 성장 the market's own measure, and on the Korean 성장 and
-// 수익성 lists the minimum size they keep (" · 매출 100억원 이상" / " · 자본 100억원 이상": ranks.MIN_EOK). The US lists have
-// no minimum yet (no US revenue or equity figure in the data), so their line names none.
-function critBasis(id, mk) {
+// 수익성 lists the minimum size they keep (" · 매출 100억원 이상" / " · 자본 100억원 이상": ranks.MIN_EOK). A US list names its
+// minimum exactly when ranks.usMinOf applies one (the same call the list makes): 수익성 the same approved words (a company whose equity
+// at the day's rate is under 100억원 or unknown leaves, as a Korean one does: ranks.US_MIN_EQ_EOK), 성장 its own line once Jack approves it
+// (rank.p.floorGrowthUs; its switch ranks.US_MIN_GROWTH_ON stays off until then). A file without the US figures or fx, or whose
+// US sizes are not all fetched yet (usSize.pending above 0), names none: the list is as before (ranks.usMinState).
+const usFloor = (id) => (id === "profit" ? C.rank.floor.profit : id === "growth" ? C.rank.p.floorGrowthUs : null);
+function critBasis(id, mk, stocks, file) {
   // US 성장: the approved basis until the owner approves the proposal without nested brackets (rank.p.basisG3Us, pending doc)
   const b = id === "growth" ? (mk === "kr" ? C.rank.basis.g3Kr : C.rank.p.basisG3Us || C.rank.basis.g3Us) : C.build.cards[id].basis;
-  const f = mk === "kr" && (id === "growth" || id === "profit") ? C.rank.floor[id] : null;
+  const f = mk === "kr" && (id === "growth" || id === "profit") ? C.rank.floor[id] : mk === "us" && usMinOf(stocks, mk, id, file) ? usFloor(id) : null;
   return f ? `${b} · ${f}` : b;
 }
 // The number on a stock row: cap and trading value in 억원 · 조원 (the approved units, deckcalc.eokText; cap is 조원 in
@@ -446,7 +450,7 @@ export function RankCard({ load, store, full = false, go = null, tapper = null }
   const md = dated ? mdText(dateIso) : null;
   const lines = !chip ? [] : opened ? [C.rank.groupLine]
     : chip === "val" ? [mk === "us" ? C.rank.line.valUs : C.rank.line.val]
-      : chip === "crit" ? [fill(C.rank.line.crit, { card: C.build.cards[crit].name, basis: critBasis(crit, mk) })]
+      : chip === "crit" ? [fill(C.rank.line.crit, { card: C.build.cards[crit].name, basis: critBasis(crit, mk, load.data.stocks, load.data) })]
         : chip === "div" ? [C.rank.line.div, mk === "us" ? C.rpt.divUs : null].filter(Boolean)
           : [C.rank.line[chip]].filter(Boolean);
   // the line in place of an empty list (Jack, 2026-11-12): the data is missing, or nothing qualifies (거래 급증: its own approved
