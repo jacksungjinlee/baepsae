@@ -675,8 +675,20 @@ FX_HIST_JUMP = 10.0             # 줄 사이 변화 상한 (%) — 2016-01 ~ 202
 FX_HIST_REL = 0.10              # 마지막 줄 값 ↔ data.json fx 차이 상한 (10%). 출처·시각이 달라 같지 않아요 (ECOS ↔ 야후 미국 하루 끝: 중앙값
 #                                 0.25~0.42% · 가장 큰 날 4.35%). 이 줄은 엉뚱한 시계열(다른 통화 · 오래 멈춘 값)을 잡는 줄이고, 단위가 틀린 값
 #                                 (100엔 · 위안 · 역수)은 범위 900~2,000 이 잡아요 — 5% 로 두면 큰 날 하나에 발행 전체가 막힐 수 있어요 (#117 리뷰 2)
+#                                 #192 (같은 세기 · 두 출처를 다시 견줘요): fx 가 이력의 마지막 줄이면(fxSrc.src 가 야후가 아님) 그 줄은 fx 와 늘 같아,
+#                                 그 파일은 같은 10% 를 야후 값(fxSrc.yahoo.fx)과도 봐요. fxSrc 가 없는 파일(예전 발행본)은 예전 그대로 fx 와만
 FX_HIST_ECOS_TAIL = 14          # 휴장일 표가 덮지 못하는 날: ECOS 이력의 마지막 날이 발행일보다 이만큼 넘게 오래면 경고. 표가 덮으면 영업일로 봐요
 #                                 (ecos · ecos_close: 발행일 전 마지막 한국 영업일 · ecos_next: 그 전 영업일 — 그보다 앞이면 경고)
+# 2026-11-24 (감사 3.8 · 경고만 · 발행을 막지 않아요): data.json fx 의 출처 (fxSrc). 파이프라인(fetch_data.fx_official)은 환율 이력을 이번 실행에 새로
+# 읽었으면 fx = 그 마지막 줄 (그 날짜 = fxDate · ECOS 15:30 종가), 아니면 야후 값 (src "yahoo" · why = 아래 까닭). 관문의 '환율 출처' 줄은 fx 가
+# fxHist 의 fxDate 줄과 같은지 보고, 아니면 출처를 적어 경고해요 (예전 11-21 발행: fx 1,345.7 · 같은 날짜 11-20 의 종가 1,336.2).
+FX_SRC_YAHOO = "yahoo"
+FX_SRC_WHY = {"noHist": "환율 이력 없음", "kept": "지난 발행본의 이력을 그대로 둠",
+              "old": f"이력의 마지막 줄이 오래됨 (휴장일 표가 기대하는 날보다 한국 영업일 하루 넘게 앞 · 표 밖이면 {FX_HIST_ECOS_TAIL}일 넘게 전)",
+              "err": "고르다 멈춤"}
+FX_SRC_ROW = "환율 출처 (fx · 경고만)"
+FX_SRC_TOL = 0.05               # fx 와 fxHist 줄을 소수 첫째 자리로 맞춘 뒤 견줘요 — 같은 값이면 통과 (1,336.25 같은 소수 끝 차이는 같은 값)
+FX_SRC_GAP = 0.02               # fx ↔ 야후 값(fxSrc.yahoo.fx) 차이가 이보다 크면 경고 (#192 리뷰: 보통 날 중앙값 0.25% · 99% 1.44%) · 로그도 !!
 SPLITS_FROM = "2016-01-01"      # splits 는 2016-01-01 부터 (fxHist 와 같은 첫날 · data.json splitsFrom) — 앱은 그 전 날짜의 기록을 맞추지 못해요
 SPLIT_R = (0.001, 1000.0)       # 앱(src/v2/held.js okSplit)이 읽는 배율 범위 — 밖이면 앱이 그 줄을 버려요 (배율 1 도)
 SPLIT_SIMPLE_MAX = 20           # 배율은 기약분수 p/q 에서 min(p, q) ≤ 20 인 '깨끗한' 값만 (10:1 · 1:15 · 3:2 · 105:100 = 21:20 주식배당).
@@ -3362,6 +3374,10 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v191f(rep, data, corp, kr, by, comps, pdata)
     check_eps_line_left(rep, corp, comps)   # 2026-11-14 (Jack Q3 · 리뷰 S4): 다시 읽은 뒤에도 날짜가 지난 '고치는 중' 줄이 남을 회사 (경고)
     check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=(prev or {}).get("macro") if rel else None)
+    try:                                   # 2026-11-24 (감사 3.8): fx = fxHist 의 fxDate 줄인지 · 아니면 출처 (경고만 · 실패하지 않아요)
+        check_fx_src(rep, data, macro)
+    except Exception as e:                 # 경고만 하는 줄이 관문을 멈추지 않게: 어떤 오류든 그 줄의 경고로
+        rep.add(FX_SRC_ROW, True, f"확인하다 오류 ({type(e).__name__}: {str(e)[:120]}) — data.json fxSrc 를 보세요", "경고만", warn=True)
     check_unit(rep, data, kr, by, comps, pdata)
     check_kr_series(rep, data, kr, pdata)  # 2026-11-14 (Jack: "52주 숫자부터"): 다른 기준의 공식 종가 고정 (실패) · 제한폭 넘는 움직임 (경고)
     try:                                   # 2026-11-24 (Jack, Track 1 item 4): 과거 주가 병합 보정 — 고친 종목과 배율 (경고만 · 실패하지 않아요)
@@ -3606,6 +3622,76 @@ def _ecos_tail_min(run_day, src):
     return prev_bd(m) if src == "ecos_next" else m
 
 
+def fx_close_floor(run_day, src):
+    """#192: 이 실행의 환율로 쓸 수 있는 이력 마지막 줄의 가장 이른 날짜 (파이프라인 fetch_data.fx_official · 관문 check_fx_src 가 같이 써요).
+    ECOS 출처: 휴장일 표가 기대하는 마지막 날(_ecos_tail_min)보다 한국 영업일 하루 앞까지 (ECOS 가 아직 올리지 않은 아침 — 약 5%). 표가 덮지
+    못하거나(앞뒤 해) 다른 출처(yahoo_next)면 발행일 − FX_HIST_ECOS_TAIL 일. (순수 함수 · 휴장일 표를 읽어요)"""
+    if src in FX_HIST_ECOS:
+        want = _ecos_tail_min(run_day, src)
+        back = _ecos_tail_min(want, "ecos_close") if want is not None else None     # want 의 앞 한국 영업일
+        if back is not None:
+            return back
+    return run_day - dt.timedelta(days=FX_HIST_ECOS_TAIL)
+
+
+def fx_src_yahoo(fs):
+    """fxSrc.yahoo.fx — 0 보다 큰 숫자면 그 값, 아니면 None."""
+    y = fs.get("yahoo") if isinstance(fs, dict) else None
+    v = json_num(y.get("fx")) if isinstance(y, dict) else None
+    return v if v is not None and v > 0 else None
+
+
+def check_fx_src(rep, data, macro):
+    """2026-11-24 (감사 3.8 · 경고만 · 실패 없음): data.json fx 가 macro.json fxHist 의 fxDate 줄과 같은 값인지 (앱의 '오늘 환율'과 지난 날짜 환율이
+    한 출처 · 날짜가 숫자를 말하는지). 같지 않거나, 그 날짜 줄이 없거나, 출처가 야후이거나 출처 표시(fxSrc)가 없으면 출처 · 까닭을 적어 경고.
+    #192 리뷰: 야후 값(fxSrc.yahoo.fx)과 FX_SRC_GAP 넘게 다르거나, 끝나지 않은 값(final 거짓)이거나, ECOS 종가 날짜가 fx_close_floor 앞이어도 경고.
+    #192 리뷰 2회차: 출처 이름이 없거나 모르는 이름이거나, 이력 출처인데 야후 값이 없어 두 출처를 견주지 못했어도 경고."""
+    th = (f"경고만 — data.json fx = macro.json fxHist 의 fxDate 줄 (소수 첫째 자리로 같은 값) · 야후 값과 {FX_SRC_GAP:.0%} 안 · 끝난 값 · ECOS 종가는 "
+          "휴장일 표의 기대 날짜보다 영업일 하루 넘게 앞이 아님 · 아니면 출처(fxSrc)를 적어요")
+    fx, fxd = num(data.get("fx")), _iso_day(data.get("fxDate"))
+    fs = data.get("fxSrc") if isinstance(data.get("fxSrc"), dict) else None
+    src = str(fs.get("src")) if fs and fs.get("src") else "표시 없음 (fxSrc)"
+    why = (fs or {}).get("why")
+    notes = [f"야후로 간 까닭: {FX_SRC_WHY.get(why, why)}"] if why else []
+    fh = (macro or {}).get("fxHist")
+    row = None
+    if fxd is not None and isinstance(fh, dict) and isinstance(fh.get("rows"), list):
+        for r in fh["rows"]:
+            if isinstance(r, list) and len(r) == 2 and _iso_day(r[0]) == fxd and (json_num(r[1]) or 0) > 0:
+                row = json_num(r[1])
+    warn = fs is None or src == FX_SRC_YAHOO
+    if fx is None or fxd is None:
+        head, warn = f"fx {data.get('fx')!r} · fxDate {data.get('fxDate')!r} 를 읽지 못해요 ·", True
+    elif row is None:
+        head, warn = f"fxHist 에 {fxd} 줄이 없어요 — fx {fx:,.1f} ·", True
+    elif abs(round(row, 1) - round(fx, 1)) > FX_SRC_TOL:
+        head, warn = f"fx {fx:,.1f} ≠ fxHist {fxd} 줄 {row:,.1f} ({(fx / row - 1) * 100:+.2f}%) —", True
+    else:
+        head = f"fx {fx:,.1f} = fxHist {fxd} 줄 ·"
+    yfx = fx_src_yahoo(fs)
+    # #192 리뷰 2회차 S1: 두 출처를 견주지 못한 경우도 조용히 넘기지 않아요 — 출처 이름이 없거나 모르는 이름이면, 또는 이력(ECOS) 출처인데
+    # 야후 값을 읽지 못하면 (위 10% 실패 줄도 그때는 야후와 견주지 못해요) 경고만
+    if fs is not None and (not fs.get("src") or str(fs.get("src")) not in set(FX_HIST_SOURCES) | {FX_SRC_YAHOO}):
+        notes.append("출처를 알 수 없어요")
+        warn = True
+    elif fs is not None and str(fs.get("src")) in FX_HIST_SOURCES and yfx is None:
+        notes.append("야후 값이 없어 두 출처를 견주지 못했어요")
+        warn = True
+    if fx is not None and yfx is not None and abs(fx / yfx - 1) > FX_SRC_GAP:
+        notes.append(f"야후 {yfx:,.1f} 와 {(fx / yfx - 1) * 100:+.2f}% ({FX_SRC_GAP:.0%} 넘게)")
+        warn = True
+    if fs is not None and fs.get("final") is False:
+        notes.append("끝나지 않은 값 (fxSrc.final 거짓)")
+        warn = True
+    run_day = _iso_day(data.get("asOf"))
+    if fs is not None and src in FX_HIST_ECOS and fxd is not None and run_day is not None:
+        floor = fx_close_floor(run_day, src)
+        if fxd < floor:
+            notes.append(f"ECOS 종가 날짜 {fxd} 가 늦어요 ({floor} 앞)")
+            warn = True
+    rep.add(FX_SRC_ROW, True, f"{head} 출처 {src}" + "".join(f" · {n}" for n in notes), th, warn=warn)
+
+
 def check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=None):
     """v19.6a (Part I.1 · A.6): macro.json fxHist 와 data.json splits. 세 줄."""
     run_day = _iso_day(data.get("asOf")) or today          # 발행일 (이 실행의 한국 날짜)
@@ -3616,7 +3702,8 @@ def check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=None):
     name = "환율 이력 (fxHist)"
     th = (f"{FX_HIST_FROM} 부터 (첫 줄 ≤ {FX_HIST_FIRST_BY}) · 날짜 차례대로 · 줄 사이 ≤ {FX_HIST_GAP_MAX['ecos_next']}일(ECOS)/"
           f"{FX_HIST_GAP_MAX['yahoo_next']}일(야후) · 줄 사이 변화 ≤ {FX_HIST_JUMP:g}% · {FX_LO}~{FX_HI} · asOf = 마지막 날 ≤ 오늘(ecos · ecos_close)"
-          f"/< 오늘(ecos_next · 야후) · 야후는 = fxDate · 마지막 값 = data.json fx ± {FX_HIST_REL:.0%} · final 참/거짓 · fxHistFresh ≤ 발행일 "
+          f"/< 오늘(ecos_next · 야후) · 야후는 = fxDate · 마지막 값 = data.json fx ± {FX_HIST_REL:.0%} (fx 가 이력의 줄이면 야후 값 fxSrc.yahoo.fx 와도) · "
+          "final 참/거짓 · fxHistFresh ≤ 발행일 "
           "(없거나 · 출처 표시가 없거나 · 지난 발행본을 그대로 뒀거나 · ECOS 마지막 날이 늦으면 경고)")
     fh = macro.get("fxHist")
     src = macro.get("fxHistSrc")
@@ -3670,6 +3757,13 @@ def check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=None):
             fx = num(data.get("fx"))
             if fx is None or abs(vs[-1] / fx - 1) > FX_HIST_REL:
                 probs.append(f"마지막 값 {vs[-1]:g} 이 data.json fx {data.get('fx')} 와 {FX_HIST_REL:.0%} 넘게 달라요")
+            else:
+                # #192 (같은 세기 · 두 출처를 다시 견줘요): fx 가 이력의 마지막 줄이면 위 비교는 자기 자신과의 비교라, 같은 10% 를 그 실행의 야후 값과
+                # 봐요. fxSrc 가 없거나 출처가 야후인 파일은 위 줄만 (예전과 똑같이)
+                fsx = data.get("fxSrc") if isinstance(data.get("fxSrc"), dict) else None
+                yfx = fx_src_yahoo(fsx) if fsx is not None and fsx.get("src") != FX_SRC_YAHOO else None
+                if yfx is not None and abs(vs[-1] / yfx - 1) > FX_HIST_REL:
+                    probs.append(f"마지막 값 {vs[-1]:g} 이 야후 환율 (fxSrc.yahoo.fx) {yfx:g} 와 {FX_HIST_REL:.0%} 넘게 달라요")
             if fresh is None:
                 warns.append(f"fxHistFresh {macro.get('fxHistFresh')!r}")
             elif fresh > run_day:
