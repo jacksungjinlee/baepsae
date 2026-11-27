@@ -40,6 +40,9 @@ class HTTPError(Exception):
     pass
 
 
+WHY_2X429 = f"1차: HTTPError: {WIKI_429}"[:284] + " · 2차: 1차와 같음"     # 두 번 다 같은 429 (리뷰 #199: 두 번의 까닭을 함께)
+
+
 # ── 가짜 목록 (영문 4글자 티커 · 우선주 꼴(다섯째 글자 M·N·O·P)이 아니에요) ──────────────────────────
 def _letters(head, n, avoid):
     out, ab = [], "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -230,12 +233,12 @@ def test_two_failed_reads_carry_the_last_list_loudly(monkeypatch):
     assert len(sp_calls(fdr)) == 2 and slept == [F.US_SP500_RETRY_PAUSE_S]           # 한 번만 다시 · 잠깐 쉬고
     assert all(c == (("S&P500",), {}) for c in sp_calls(fdr))                          # 같은 요청 그대로 (다른 인자 · 다른 길 없음)
     assert names.sp500 == frozenset(sp) and set(sp) <= set(syms) and "BF-B" in syms and "BRK-B" in syms
-    assert names.spCarried == {"from": "2026-11-27", "why": f"HTTPError: {WIKI_429}"[:300]}
+    assert names.spCarried == {"from": "2026-11-27", "why": WHY_2X429}
     assert sum("S&P500 목록 실패: 429 Client Error" in x for x in lines) == 2           # 예전 줄 그대로 (두 번)
-    loud = [x for x in lines if x.startswith("  !! S&P 500 목록을 읽지 못해 (HTTPError: 429 Client Error")]
+    loud = [x for x in lines if x.startswith("  !! S&P 500 목록을 읽지 못해 (1차: HTTPError: 429 Client Error")]
     assert len(loud) == 1 and "지난 발행본의 목록(2026-11-27 읽음 · 503종목 · 1일 전)을 썼어요" in loud[0], lines
-    assert "data.json usListSym.spCarried · 관문 경고" in loud[0]
-    assert any(x.startswith("  !! S&P 500 목록을 쓸 수 없어요 (HTTPError: 429") and "초 쉬고 같은 요청으로 한 번만 다시 읽어요" in x for x in lines)
+    assert "data.json usListSym.spCarried · 관문 경고" in loud[0] and "· 2차: 1차와 같음)" in loud[0]
+    assert any(x.startswith("  !! S&P 500 목록을 읽지 못했어요 (HTTPError: 429") and "초 쉬고 같은 요청으로 한 번만 다시 읽어요" in x for x in lines)
     assert names.sym["mapped"] == []                                                  # 오늘 S&P 목록에서 바꾼 티커는 없어요 (이어 쓴 티커는 이미 야후 모양)
     assert len(syms) == len(set(syms))                                                # 겹치지 않게 한 번씩
 
@@ -255,9 +258,14 @@ def test_an_implausible_list_is_read_again_then_carried(monkeypatch):
     names_only = pd.DataFrame({"Security": ["Apple Inc.", "Visa", "Linde plc"] * 5})   # 'Symbol' 칸이 없어 첫 칸(회사 이름)을 읽어요
     syms, names, fdr, slept, lines, sp = _tickers(monkeypatch, [names_only, names_only])
     assert len(sp_calls(fdr)) == 2 and slept == [F.US_SP500_RETRY_PAUSE_S]
-    assert names.spCarried["from"] == "2026-11-27" and names.spCarried["why"].startswith("목록 1곳 · 지난 발행본의 미국 목록과 겹침 0곳")
+    one = ("받은 목록 15행 · 쓸 수 있는 티커 1곳 · 야후 모양으로 바꾸지 못한 행 10 (앞: 'APPLE INC.', 'LINDE PLC', 'APPLE INC.') — "
+           "목록 1곳 · 지난 발행본의 미국 목록과 겹침 0곳 (400곳 이상이어야 해요)")
+    assert names.spCarried == {"from": "2026-11-27", "why": f"1차: {one} · 2차: 1차와 같음"}          # 리뷰 #199 Fable S1: 받은 행 · 바꾸지 못한 행 · 앞 값
     assert "VISA" not in syms and names.sp500 == frozenset(sp)
-    assert any("오늘 읽은 목록 1곳은 쓰지 않았어요" in x for x in lines)
+    loud = [x for x in lines if x.startswith("  !! S&P 500 목록을 읽었지만 쓸 수 없어 (1차: 받은 목록 15행")]
+    assert len(loud) == 1 and "오늘 받은 목록 1곳은 쓰지 않았어요" in loud[0] and "지난 발행본의 목록(2026-11-27 읽음" in loud[0], lines
+    assert any(x.startswith("  !! S&P 500 목록을 읽었지만 쓸 수 없어요 (받은 목록 15행") and "5초 쉬고" in x for x in lines)
+    assert names.sym["unmapped"] == []                  # 쓰지 않은 목록의 행은 기록(unmapped)에 넣지 않고 · 까닭(why)과 로그에 수와 앞 값을 남겨요
 
 
 def test_an_old_list_is_not_carried_and_the_run_behaves_as_before(monkeypatch):
@@ -272,7 +280,7 @@ def test_an_old_list_is_not_carried_and_the_run_behaves_as_before(monkeypatch):
             syms, names, fdr, slept, lines, sp = _tickers(monkeypatch, [err, err], prev=prev)
         assert names.sp500 is None and names.spCarried is None and "BF-B" not in syms and not set(sp) - {"BRK-B"} <= set(syms)
         assert len(sp_calls(fdr)) == 2 and slept == [F.US_SP500_RETRY_PAUSE_S]        # 다시 읽기는 이어 쓸 목록과 상관없이 해요
-        loud = [x for x in lines if x.startswith("  !! S&P 500 목록을 다시 읽어도 쓸 수 없고")]
+        loud = [x for x in lines if x.startswith("  !! S&P 500 목록을 다시 읽어도 읽지 못해 (1차: HTTPError: 429")]
         assert len(loud) == 1 and f"지난 발행본의 목록도 이어 쓸 수 없어요 ({why})" in loud[0] and "S&P 500 이 빠져요" in loud[0], lines
 
 
@@ -286,8 +294,10 @@ def test_without_a_carry_an_untrusted_list_is_used_as_before(monkeypatch):
         syms, names, fdr, slept, lines, sp = _tickers(monkeypatch, seq, prev=prev)
         assert names.sp500 == frozenset(sp_yahoo(rows[:30])) and names.spCarried is None and set(names.sp500) <= set(syms)
         assert len(sp_calls(fdr)) == 2 and slept == [F.US_SP500_RETRY_PAUSE_S]
-        loud = [x for x in lines if x.startswith("  !! S&P 500 목록을 다시 읽어도 쓸 수 없고")]
-        assert len(loud) == 1 and "읽은 목록 30곳을 예전처럼 그대로 써요" in loud[0], lines
+        head = "읽었지만 쓸 수 없어" if isinstance(seq[1], pd.DataFrame) else "한 번은 읽지 못하고 한 번은 읽었지만 쓸 수 없어"
+        loud = [x for x in lines if x.startswith(f"  !! S&P 500 목록을 다시 읽어도 {head} (1차: 받은 목록 30행 · 쓸 수 있는 티커 30곳 · "
+                                                 "야후 모양으로 바꾸지 못한 행 0 — 목록 30곳 · 지난 발행본의 미국 목록과 겹침 30곳")]
+        assert len(loud) == 1 and "받은 목록 30곳을 예전처럼 그대로 써요" in loud[0], lines
 
 
 def test_the_old_calling_shapes_still_retry_without_a_carry(monkeypatch):
@@ -381,7 +391,7 @@ def test_fetch_us_on_a_carry_day_records_it_and_the_gate_warns_with_the_date(tmp
     prev = _prev_from(good_out, good_meta, PUB_1127)
     out, meta, lines, sp, fdr = _fetch(tmp_path, monkeypatch, [err, err], prev, tag="c")
     u = meta["usListSym"]
-    assert u["spCarried"] == {"from": "2026-11-27", "why": f"HTTPError: {WIKI_429}"[:300]}
+    assert u["spCarried"] == {"from": "2026-11-27", "why": WHY_2X429}
     assert u["spTickers"] == sp and u["read"] is True and u["mapped"] == [] and u["missing"] == {}
     assert {k: v for k, v in u.items() if k not in ("spCarried", "mapped")} == {k: v for k, v in good_meta["usListSym"].items() if k != "mapped"}
     assert meta["usForeign"]["sp500"] == good_meta["usForeign"]["sp500"] and meta["usForeign"]["sp500"]["ok"] is True
@@ -394,7 +404,7 @@ def test_fetch_us_on_a_carry_day_records_it_and_the_gate_warns_with_the_date(tmp
     assert doc["usListSym"] == u and doc["ownDrop"]["sweep"]["n"] == 0
     rows = gate_rows(meta, out)
     assert rows[ROW][3] == "WARN" and rows[ROW][1].startswith("지난 발행본의 S&P 500 목록을 이어 씀: 2026-11-27 읽음 (발행일 2026-11-28 까지 1일) · 503종목")
-    assert "오늘 읽지 못한 까닭: HTTPError: 429 Client Error" in rows[ROW][1]
+    assert "오늘의 목록을 쓰지 못한 까닭: 1차: HTTPError: 429 Client Error" in rows[ROW][1]
     assert rows[SHARE1][3] == "PASS" and rows[SHARE2][3] == "PASS"                    # 다른 줄은 보통 날처럼
     assert gate_rows(meta, out, "live")[ROW][3] == "WARN"
     # 보통 날의 기록에는 칸이 없어요 · 관문 줄은 통과
@@ -437,6 +447,80 @@ def test_a_missing_bf_b_on_a_carry_day_names_the_carried_list():
     assert u["missing"]["BF-B"] == "이어 쓴 S&P 500 목록(2026-11-27 읽음)에 없음 (지수에서 빠졌는지 확인)"
     assert u["spCarried"] == {"from": "2026-11-27", "why": "HTTPError: 429"}
     assert "spCarried" not in F.us_list_sym({"mapped": [], "unmapped": []}, None, False, set(), set(), {}, carried={"from": "2026-11-27", "why": "x"})
+
+
+def test_a_carried_list_that_fails_the_priced_overlap_is_recorded_and_not_trusted(tmp_path, monkeypatch):
+    """리뷰 #199: 이어 쓴 목록이 오늘 가격을 받은 미국 목록과 US_SP500_MIN 곳 아래로 겹치면 (sp_ok 거짓) 예전의 '믿지 못한 날' 그대로예요 —
+    spCarried · spTickers 는 적고, spGone · noPx · spErr 는 빈 값, usForeign.sp500.ok 거짓, 로그가 이어 쓴 목록이라고 말해요. 이어 쓸 목록은
+    us_sp500_prev_safe 를 바꿔 넣어 만들어요 (오늘 가격이 있는 티커 3곳 + 가격이 없는 티커 30곳)."""
+    err = HTTPError(WIKI_429)
+    carried = sorted(["SAAA", "SAAB", "SAAC"] + _letters("Z", 30, AVOID))
+    monkeypatch.setattr(F, "us_sp500_prev_safe", lambda prev, today: {"tickers": carried, "from": "2026-11-27", "age": 1, "ref": None})
+    out, meta, lines, sp, _f = _fetch(tmp_path, monkeypatch, [err, err], None, tag="o1", **SMALL)
+    u = meta["usListSym"]
+    assert u["spCarried"] == {"from": "2026-11-27", "why": WHY_2X429} and u["spTickers"] == carried
+    assert u["spGone"] is None and u["noPx"] is None and u["spErr"] is None
+    assert meta["usForeign"]["sp500"] == {"n": 33, "inList": 3, "ok": False}
+    assert u["missing"] == {"BF-B": "이어 쓴 S&P 500 목록(2026-11-27 읽음)에 없음 (지수에서 빠졌는지 확인)"}
+    assert any(x.startswith("  !! S&P 500 목록을 쓸 수 없어요 (목록 33곳 · 오늘 미국 목록과 겹침 3곳 · 지난 발행본에서 이어 쓴 2026-11-27 목록 — 겹침 5곳 이상")
+               for x in lines), [x for x in lines if "S&P 500 목록" in x]
+    rows = gate_rows(meta, out)
+    assert rows[ROW][3] == "WARN" and rows[ROW][1].startswith("지난 발행본의 S&P 500 목록을 이어 씀: 2026-11-27 읽음 (발행일 2026-11-28 까지 1일) · 33종목")
+    assert rows[SHARE2][3] != "FAIL" and "S&P 500 목록을 믿지 못한 날 (빠진 종목을 세지 않음)" in rows[SHARE2][1]
+    assert rows[SHARE1][3] == "WARN"                                                 # BF-B 가 빠짐 (이유와 함께 · 경고만)
+
+
+def test_a_same_day_rerun_carries_a_list_read_that_day(monkeypatch):
+    """나이 0 (같은 날 다시 도는 실행이 그날 아침 발행본의 목록을 이어 씀) 도 써요."""
+    sp = sp_yahoo(sp_rows(501))
+    us = set(sp) | set(_letters("Q", NQ_ONLY, AVOID)) | set(F.EXTRA_US)
+    p = prev_of(sp, us, published="2026-11-28T06:41:00+09:00")
+    assert F.us_sp500_prev(p, TODAY)["age"] == 0
+    err = HTTPError(WIKI_429)
+    syms, names, fdr, slept, lines, sp2 = _tickers(monkeypatch, [err, err], prev=p)
+    assert names.spCarried["from"] == "2026-11-28" and names.sp500 == frozenset(sp)
+    assert any("지난 발행본의 목록(2026-11-28 읽음 · 503종목 · 0일 전)을 썼어요" in x for x in lines)
+
+
+def test_one_failed_and_one_unusable_read_say_both(monkeypatch):
+    """리뷰 #199 (Opus): 두 번의 까닭을 모두 적어요 · 머리말이 사실대로 ('한 번은 읽지 못하고 한 번은 읽었지만 쓸 수 없어')."""
+    names_only = pd.DataFrame({"Security": ["Apple Inc.", "Visa"]})
+    syms, names, fdr, slept, lines, sp = _tickers(monkeypatch, [HTTPError(WIKI_429), names_only])
+    why = names.spCarried["why"]
+    second = " · 2차: 받은 목록 2행 · 쓸 수 있는 티커 1곳 · 야후 모양으로 바꾸지 못한 행 1 (앞: 'APPLE INC.') — 목록 1곳"
+    assert why.startswith("1차: HTTPError: 429 Client Error") and second in why, why
+    assert len(why) <= F.US_SP500_WHY_MAX
+    assert any(x.startswith("  !! S&P 500 목록을 한 번은 읽지 못하고 한 번은 읽었지만 쓸 수 없어 (1차: HTTPError") for x in lines), lines
+    # 이어 쓴 기록의 글은 관문의 낱말 줄을 지나요 ('nan' 같은 원래 값이 와도)
+    bad = pd.DataFrame({"Security": ["nan", "None Corp", "null"]})
+    syms, names, *_r = _tickers(monkeypatch, [bad, bad])
+    assert not V.BAD_WORD.search(names.spCarried["why"]), names.spCarried["why"]
+
+
+@pytest.mark.parametrize("seq, title", [("carry", F.US_SP500_CARRY_TITLE), ("none", F.US_SP500_NONE_TITLE), ("ok", None)])
+def test_a_github_warning_of_its_own_reaches_the_morning_check(monkeypatch, capsys, seq, title):
+    """리뷰 #199 (둘 다): 관문의 알림은 종류마다 10개까지라 관문 줄이 밀려날 수 있어요. 데이터 수집 단계가 GitHub Actions 에서만 따로 한 줄을 내요 —
+    이어 쓴 날 · 이어 쓰지 못한 날 한 줄씩, 보통 날은 없음. 메시지의 % 는 %25 로."""
+    err = HTTPError(WIKI_429)
+    prev = ... if seq != "none" else None
+    for env in (None, "true"):
+        if env:
+            monkeypatch.setenv("GITHUB_ACTIONS", env)
+        else:
+            monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        capsys.readouterr()
+        _tickers(monkeypatch, ["ok"] if seq == "ok" else [err, err], prev=prev)
+        out = [x for x in capsys.readouterr().out.splitlines() if x.startswith("::")]
+        if env is None or title is None:
+            assert out == [], out
+            continue
+        lead = "S&P 500 목록을 읽지 못해" if seq == "carry" else "S&P 500 목록을 다시 읽어도 읽지 못해"
+        assert len(out) == 1 and out[0].startswith(f"::warning title={title}::{lead}"), out
+        assert "%0A" not in out[0] and "List_of_S%2526P_500_" in out[0] and "%26P" not in out[0].replace("%2526P", "")
+        if seq == "carry":
+            assert "2026-11-27 에 읽은 지난 발행본의 목록 503종목을 썼어요 (1일 전 · 7일까지만 이어 써요" in out[0]
+        else:
+            assert "지난 발행본의 목록도 이어 쓸 수 없어요 (지난 발행본을 읽지 못함)" in out[0]
 
 
 # ── 4. 미국 종목 수: 이어 쓰면 보통 날처럼 800 곁으로 ───────────────────────────────
@@ -484,7 +568,7 @@ def _data(**u):
 def test_the_gate_row_names_the_list_and_its_date():
     r = _row(_data(spCarried=CARRIED))
     assert r[0] == ROW and r[3] == "WARN" and r[2] == V.US_SP_CARRY_RULE
-    assert r[1].startswith("지난 발행본의 S&P 500 목록을 이어 씀: 2026-11-27 읽음 (발행일 2026-11-28 까지 1일) · 503종목 · 오늘 읽지 못한 까닭: "
+    assert r[1].startswith("지난 발행본의 S&P 500 목록을 이어 씀: 2026-11-27 읽음 (발행일 2026-11-28 까지 1일) · 503종목 · 오늘의 목록을 쓰지 못한 까닭: "
                            "HTTPError: 429 Client Error")
     assert _row(_data())[1:] == ("이어 쓰지 않음 (그날 읽은 목록)", V.US_SP_CARRY_RULE, "PASS")
     assert _row(_data(spTickers=None))[3] == "PASS"
@@ -538,3 +622,78 @@ def test_the_row_runs_in_the_gate_and_changes_no_other_row():
             plain["data"]["usListSym"] = {k: v for k, v in u.items() if k != "spCarried"}
             other = run(plain)
             assert {k: v for k, v in rows.items() if k != ROW} == {k: v for k, v in other.items() if k != ROW}
+
+
+# ── 6. 관문 줄: 직전 발행본과 따로 맞춰 봄 (리뷰 #199 Opus) · spCarried: null ──────────────────────────
+def _prow(data, pdata):
+    rep = V.Report()
+    V.check_us_sp_carry(rep, data, pdata)
+    assert len(rep.rows) == 1 and not rep.failed
+    return rep.rows[0]
+
+
+def _pdata(published="2026-11-27T06:41:04+09:00", carried=...):
+    p = {"publishedAt": published, "usListSym": {"spTickers": ["AAPL"]}}
+    if carried is not ...:
+        p["usListSym"]["spCarried"] = carried
+    return p
+
+
+@pytest.mark.parametrize("cur_from, pdata, part", [
+    ("2026-11-27", _pdata(), "직전 발행본의 발행일 2026-11-27 와 맞춰 봄 (같음)"),
+    ("2026-11-26", _pdata(), "직전 발행본의 발행일 2026-11-27 와 맞춰 봄 (그보다 앞)"),
+    ("2026-11-28", _pdata(), "처음 읽은 날 2026-11-28 이 직전 발행본의 발행일 2026-11-27 보다 뒤 — 날짜가 새로 매겨졌을 수 있어요 (7일 한도 확인 필요)"),
+    ("2026-11-23", _pdata(carried={"from": "2026-11-23", "why": "x"}), "직전 발행본의 spCarried.from 2026-11-23 와 맞춰 봄 (같음)"),
+    ("2026-11-27", _pdata(carried={"from": "2026-11-23", "why": "x"}),
+     "처음 읽은 날 2026-11-27 이 직전 발행본의 spCarried.from 2026-11-23 보다 뒤 — 날짜가 새로 매겨졌을 수 있어요"),
+    ("2026-11-27", _pdata(published="2026-11-26T22:00:00Z"), "직전 발행본의 발행일 2026-11-27 와 맞춰 봄 (같음)"),
+    ("2026-11-27", _pdata(carried=None), "직전 발행본과 맞춰 보지 못함 (직전 발행본의 spCarried 모양이 잘못됨)"),
+    ("2026-11-27", _pdata(published="어제"), "직전 발행본과 맞춰 보지 못함 (직전 발행본의 publishedAt 을 읽지 못함)"),
+    ("2026-11-27", {"publishedAt": "2026-11-27T06:41:04+09:00"}, "직전 발행본과 맞춰 보지 못함 (직전 발행본에 usListSym 이 없음)"),
+    ("2026-11-27", None, None),                                                       # 사이트 점검 (직전 발행본 없이): 맞춰 보지 않아요
+])
+def test_the_gate_row_cross_checks_the_first_read_day_with_the_previous_publish(cur_from, pdata, part):
+    r = _prow(_data(spCarried={"from": cur_from, "why": "HTTPError: 429"}), pdata)
+    assert r[3] == "WARN", r
+    if part is None:
+        assert "직전 발행본" not in r[1], r[1]
+    else:
+        assert part in r[1], r[1]
+
+
+def test_the_cross_check_never_fails_even_when_it_crashes(monkeypatch):
+    monkeypatch.setattr(V, "us_sp_carry_prev_day", lambda p: 1 / 0)
+    r = _prow(_data(spCarried=CARRIED), _pdata())
+    assert r[3] == "WARN" and "직전 발행본과 맞춰 보다가 멈췄어요 (ZeroDivisionError" in r[1] and r[1].startswith("지난 발행본의 S&P 500 목록을 이어 씀: 2026-11-27")
+    assert _prow(_data(), _pdata())[3] == "PASS"                                       # 이어 쓰지 않은 날은 맞춰 보지 않아요
+    for bad in (None, [], "x", {"usListSym": "x"}, {"usListSym": {"spCarried": "2026"}}):
+        assert _prow(_data(spCarried=CARRIED), bad)[3] == "WARN"
+
+
+def test_an_explicit_null_is_malformed_in_the_gate_as_in_the_pipeline():
+    """리뷰 #199 (Opus): spCarried: null 은 파이프라인이 이어 쓰지 않는 모양 (test_a_carried_list_keeps_its_first_read_day) — 관문도 통과가 아니라
+    '모양이 잘못됨' 경고예요. 칸이 아예 없으면 통과 그대로."""
+    r = _row(_data(spCarried=None))
+    assert r[1:] == ("spCarried 모양이 잘못됨 (null)", V.US_SP_CARRY_RULE, "WARN")
+    assert _row(_data())[3] == "PASS"
+    sp = sp_yahoo(sp_rows(501))
+    p = prev_of(sp, set(sp))
+    p["usListSym"]["spCarried"] = None
+    w = F.us_sp500_prev(p, TODAY)
+    assert "tickers" not in w and "spCarried.from" in w["why"]
+
+
+def test_run_checks_passes_the_previous_publish_to_the_cross_check():
+    cur, prev, final = good_pair()
+    us = [s["t"] for s in cur["data"]["stocks"] if s.get("cls") == "us"]
+    rec = {"read": True, "mapped": [], "unmapped": [], "spTickers": sorted(us[:450]), "spGone": {}, "noPx": [], "spErr": [], "missing": {}}
+    prev = copy.deepcopy(prev)
+    prev["data"]["usListSym"] = copy.deepcopy(rec)                                   # 직전 발행본: 그날 읽은 목록 (10-31 발행)
+    c = copy.deepcopy(cur)
+    c["data"]["usListSym"] = {**rec, "spCarried": {"from": "2026-11-01", "why": "HTTPError: 429"}}   # 직전 발행일보다 뒤 → 새로 매겨졌을 수 있음
+    for mode, seen in (("publish", True), ("live", False)):
+        rep = V.run_checks(c, prev, final, dt.date(2026, 10, 31), mode=mode, count_between=lambda a, b: 1,
+                           sessions={"dates": [dt.date(2026, 10, d) for d in (27, 28, 29, 30)], "src": "시험"},
+                           now=dt.datetime(2026, 10, 31, 11, 0, tzinfo=V.KST), hilo=None)
+        row = {r[0]: r for r in rep.rows}[ROW]
+        assert row[3] == "WARN" and ("날짜가 새로 매겨졌을 수 있어요" in row[1]) is seen, (mode, row)

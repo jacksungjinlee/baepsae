@@ -12564,7 +12564,7 @@ class UsListNames(dict):
         self.sp500 = None
         self.sym = None     # 2026-11-15: us_tickers 가 채우는 출처 티커 기록 {"mapped": [[출처, 원래 티커, 야후 티커]], "unmapped": [[출처, 원래 티커, 이유]]}
         # 2026-11-28 (run 46026291142 · 위키백과 429): fetch_us 가 넣는 지난 발행본의 S&P 500 목록 (us_sp500_prev 의 결과 · 없으면 None) ·
-        # us_tickers 가 그 목록을 이어 썼으면 {"from": 처음 읽은 날, "why": 오늘 읽지 못한 까닭} (data.json usListSym.spCarried)
+        # us_tickers 가 그 목록을 이어 썼으면 {"from": 처음 읽은 날, "why": 두 번 읽기의 까닭 (us_sp500_why)} (data.json usListSym.spCarried)
         self.carry = None
         self.spCarried = None
 
@@ -12601,6 +12601,51 @@ def us_sp500_odd(tickers, ref=None):
         if inl < US_SP500_MIN:
             return f"목록 {len(have):,}곳 · 지난 발행본의 미국 목록과 겹침 {inl:,}곳 ({US_SP500_MIN}곳 이상이어야 해요)"
     return None
+
+
+US_SP500_WHY_MAX = 600          # spCarried.why 글자 수 상한 (두 번의 까닭을 함께 · 발행 파일 글로 다듬은 뒤)
+# 리뷰 #199 (Opus · Fable): 관문의 GitHub 알림은 한 단계에 종류마다 10개까지만 보여서 (validate_data.annotations · 넘치면 '외 N개 더') 관문의
+# 경고 줄이 그 밖으로 밀릴 수 있어요. 09:13 아침 점검이 읽는 알림에 늘 남도록 데이터 수집 단계가 따로 한 줄씩 내요 (이 단계의 알림은 이것뿐이에요).
+US_SP500_CARRY_TITLE = "S&P 500 목록 이어 씀 (지난 발행본)"
+US_SP500_NONE_TITLE = "S&P 500 목록 없음 (이어 쓰지 못함)"
+
+
+def gh_warning(title, text):
+    """GitHub Actions 에서만 (GITHUB_ACTIONS=true) 경고 알림 한 줄 — 실행 화면과 check-run 알림에 남아 매일 아침 점검이 읽어요 (smoke_app 과 같은 꼴).
+    메시지의 % · 줄바꿈과 제목의 , · : 은 GitHub 꼴로 바꿔요."""
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        return
+    esc = lambda x: str(x).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")   # noqa: E731
+    print(f"::warning title={esc(title).replace(':', '%3A').replace(',', '%2C')}::{esc(text)}", flush=True)
+
+
+def us_sp500_unusable(n_rows, stage, odd):
+    """받았지만 쓸 수 없는 S&P 500 목록 한 번의 까닭 (리뷰 #199 Fable S1 · 조용히 버리지 않게): 받은 행 수 · 쓸 수 있는 티커 수 · 야후 모양으로 바꾸지
+    못한 행 수와 앞 3개의 원래 값 · us_sp500_odd 의 까닭. (순수 함수)"""
+    ys, _mp, um, _nms = stage
+    first = [f"'{str(a)[:24]}'" for _s, a, _w in um[:3]]
+    return (f"받은 목록 {n_rows:,}행 · 쓸 수 있는 티커 {len(set(ys)):,}곳 · 야후 모양으로 바꾸지 못한 행 {len(um):,}"
+            + (f" (앞: {', '.join(first)})" if first else "") + f" — {odd}")
+
+
+def us_sp500_why(tries):
+    """읽기마다의 까닭 [(받았는지, 까닭)] → spCarried.why 와 로그에 적을 한 줄 ('1차: … · 2차: …' · 둘째가 첫째와 같으면 '1차와 같음'). 발행 파일
+    글로 다듬어요 (pub_text · 관문의 낱말 · 키 · 주소의 물음표 뒤 · US_SP500_WHY_MAX 글자). (순수 함수)"""
+    parts = []
+    for i, (_got, r) in enumerate(tries, 1):
+        r = str(r)
+        parts.append(f"{i}차: 1차와 같음" if i > 1 and r == str(tries[0][1]) else f"{i}차: {r[:280]}")
+    return pub_text(" · ".join(parts), US_SP500_WHY_MAX, say=False)
+
+
+def us_sp500_head(tries):
+    """로그 · 알림의 머리말: 모두 멈춤 '읽지 못해' · 모두 받았지만 쓸 수 없음 '읽었지만 쓸 수 없어' · 섞임. (순수 함수)"""
+    got = [g for g, _r in tries]
+    if not any(got):
+        return "읽지 못해"
+    if all(got):
+        return "읽었지만 쓸 수 없어"
+    return "한 번은 읽지 못하고 한 번은 읽었지만 쓸 수 없어"
 
 
 def _kst_day_of(ts):
@@ -12778,33 +12823,45 @@ def us_tickers(names_out=None):
             except Exception as e:
                 log(f"  ({name} 목록 실패: {e})")
             continue
-        stage, why = None, None          # stage: 마지막으로 받은 목록 (멈춘 읽기는 앞서 받은 목록을 지우지 않아요 — 이어 쓸 목록이 없으면 예전처럼 그것을 써요)
-        for k in range(US_SP500_TRIES):
+        stage, tries = None, []          # stage: 마지막으로 받은 목록 (멈춘 읽기는 앞서 받은 목록을 지우지 않아요 — 이어 쓸 목록이 없으면 예전처럼 그것을 써요)
+        for k in range(US_SP500_TRIES):  # tries: 읽기마다 (받았는지, 까닭) — 까닭이 None 이면 쓸 수 있는 목록
             try:
-                got = conv(rows_of(name), name)
-                stage, why = got, us_sp500_odd(got[0], carry.get("ref"))
+                rows = rows_of(name)
+                got = conv(rows, name)
+                odd = us_sp500_odd(got[0], carry.get("ref"))
+                stage = got
+                tries.append((True, None if odd is None else us_sp500_unusable(len(rows), got, odd)))
             except Exception as e:
                 log(f"  ({name} 목록 실패: {e})")
-                why = pub_err(e, 300, say=False)
-            if why is None:
+                tries.append((False, pub_err(e, 300, say=False)))
+            if tries[-1][1] is None:
                 break
             if k + 1 < US_SP500_TRIES:
-                log(f"  !! S&P 500 목록을 쓸 수 없어요 ({why[:200]}) → {US_SP500_RETRY_PAUSE_S}초 쉬고 같은 요청으로 한 번만 다시 읽어요")
+                log(f"  !! S&P 500 목록을 {'읽었지만 쓸 수 없어요' if tries[-1][0] else '읽지 못했어요'} ({tries[-1][1][:300]}) → "
+                    f"{US_SP500_RETRY_PAUSE_S}초 쉬고 같은 요청으로 한 번만 다시 읽어요")
                 time.sleep(US_SP500_RETRY_PAUSE_S)
-        if why is not None and carry.get("tickers"):
+        bad = tries[-1][1] is not None
+        why = us_sp500_why(tries) if bad else None
+        head = us_sp500_head(tries) if bad else None
+        if bad and carry.get("tickers"):
             ys = commit((list(carry["tickers"]), [], [], {}))
             names_out.sp500 = frozenset(ys)
             names_out.spCarried = {"from": carry["from"], "why": why}
-            log(f"  !! S&P 500 목록을 읽지 못해 ({why[:200]}) 지난 발행본의 목록({carry['from']} 읽음 · {len(ys):,}종목 · {carry['age']}일 전)을 썼어요 "
+            log(f"  !! S&P 500 목록을 {head} ({why}) 지난 발행본의 목록({carry['from']} 읽음 · {len(ys):,}종목 · {carry['age']}일 전)을 썼어요 "
                 f"— 처음 읽은 날부터 {US_SP500_CARRY_DAYS}일까지만 이어 써요 (data.json usListSym.spCarried · 관문 경고)"
-                + (f" · 오늘 읽은 목록 {len(set(stage[0])):,}곳은 쓰지 않았어요" if stage and stage[0] else ""))
+                + (f" · 오늘 받은 목록 {len(set(stage[0])):,}곳은 쓰지 않았어요" if stage and stage[0] else ""))
+            gh_warning(US_SP500_CARRY_TITLE, f"S&P 500 목록을 {head}: {carry['from']} 에 읽은 지난 발행본의 목록 {len(ys):,}종목을 썼어요 "
+                       f"({carry['age']}일 전 · {US_SP500_CARRY_DAYS}일까지만 이어 써요 · 같은 날짜로 며칠 이어지면 {US_SP500_CARRY_DAYS}일이 되기 전에 확인) "
+                       f"— 까닭: {why}")
             continue
-        if why is not None:
-            log(f"  !! S&P 500 목록을 다시 읽어도 쓸 수 없고 ({why[:200]}) 지난 발행본의 목록도 이어 쓸 수 없어요 "
+        if bad:
+            log(f"  !! S&P 500 목록을 다시 읽어도 {head} ({why}) 지난 발행본의 목록도 이어 쓸 수 없어요 "
                 f"({carry.get('why') or '이어 쓸 목록을 받지 않음'}) → "
                 + ("오늘 미국 목록에 S&P 500 이 빠져요 (관문의 미국 종목 수 줄이 발행을 막아요)" if not stage or not stage[0]
-                   else f"읽은 목록 {len(set(stage[0])):,}곳을 예전처럼 그대로 써요 (가격을 받은 뒤 겹침으로 다시 봐요)"))
-        elif k:
+                   else f"받은 목록 {len(set(stage[0])):,}곳을 예전처럼 그대로 써요 (가격을 받은 뒤 겹침으로 다시 봐요)"))
+            gh_warning(US_SP500_NONE_TITLE, f"S&P 500 목록을 다시 읽어도 {head} 지난 발행본의 목록도 이어 쓸 수 없어요 "
+                       f"({carry.get('why') or '이어 쓸 목록을 받지 않음'}) — 까닭: {why}")
+        elif len(tries) > 1:
             log(f"· S&P 500 목록을 다시 읽어 받았어요 ({len(set(stage[0])):,}곳) — 지난 발행본의 목록은 쓰지 않아요")
         if stage is None:
             continue
@@ -15029,6 +15086,7 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
     sp_rec = {"n": len(sp500) if sp500 is not None else None, "inList": sp_in, "ok": sp_ok}
     if not sp_ok:
         log(f"  !! S&P 500 목록을 쓸 수 없어요 (" + ("읽지 못함" if sp500 is None else f"목록 {len(sp500):,}곳 · 오늘 미국 목록과 겹침 {sp_in:,}곳")
+            + (f" · 지난 발행본에서 이어 쓴 {sp_carried['from']} 목록" if sp_carried else "")
             + f" — 겹침 {US_SP500_MIN}곳 이상 · 목록 {US_SP500_MAX}곳 이하여야 해요) → 오늘은 본사 나라 규칙을 쓰지 않고 손으로 정한 21곳 · 재무제표 통화가 달러가 아닌 회사 · 어제 발행한 "
             f"외국 회사 목록({len(prev_fgn) if isinstance(prev_fgn, dict) else 0}곳)만 맞춰 봐요 (관문 경고)")
     else:
@@ -17545,7 +17603,8 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                        "날은 빈 값) · noPx = 그중 야후가 가격을 하나도 주지 않은 티커 (점이 지워진 새 주식 종류 티커일 수 있어요) · spErr = 그중 "
                        "처리하다 오류로 멈춘 티커 · spTickers = 그날 S&P 500 목록의 티커 (야후 모양 · 못 읽은 날 빈 값) · missing = 이 "
                        "바꾸기로 들어온 종목(BF-B) 중 오늘 없는 티커 → 빠진 이유 · read = 출처 티커 기록이 있었는지 · spCarried (2026-11-28) = "
-                       "{from 처음 읽은 날, why 오늘 읽지 못한 까닭}: 오늘 S&P 500 목록을 다시 읽어도 읽지 못해 지난 발행본의 spTickers 를 이어 쓴 날만 "
+                       "{from 처음 읽은 날, why 두 번 읽기의 까닭 '1차: … · 2차: …' (받았지만 쓸 수 없던 목록은 받은 행 · 바꾸지 못한 행 수와 앞 값)}: 오늘 S&P 500 "
+                       "목록을 다시 읽어도 쓰지 못해 지난 발행본의 spTickers 를 이어 쓴 날만 "
                        "있어요 (그날 spTickers 는 이어 쓴 목록 · 이어 쓴 목록을 다시 이어 써도 from 은 그대로 · 처음 읽은 날부터 7일까지 · 관문 경고)"),
          "ownDrop": ("우리 처리 검사가 빼거나 비우거나 되돌린 행 (Jack 의 상시 규칙 2026-11-19): {검사 열쇠: {n 행 수, rows 앞 30개}} · usClass = "
                      "미국 목록에서 뺀 행 (S&P 500 의 점이 지워진 꼴이 바뀌지 않고 실림 · 관문 표와 다르게 바꾼 티커 · rows [열쇠, 이유]) · divLine = "
