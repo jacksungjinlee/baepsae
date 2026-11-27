@@ -30,6 +30,7 @@ import { pfState, isImported, usHeld, avgOf, usdOf } from "./pf.js";
 import { ImportedDeck, qtyText } from "./pfview.jsx";
 import { EpsOwnersNote } from "./fixnote.jsx";
 import { RecordButton, RecordFlow, startFlow } from "./records.jsx";
+import { hasTempRate } from "./records.js";
 import { Icon } from "../ui/icons.jsx";
 
 // The held quantity (held.js: the one rule every screen uses) and the 평균 단가 (v19.6a: the moving average of the lots,
@@ -159,6 +160,8 @@ export function Portfolio({ load, store, setStoreData, pad, go, onImport: openIm
       {ev.ok && ev.late && decks.some((d) => !isImported(d)) && (
         <Note tone="watch" data-ui-v2="deck-late" data-n={ev.late.n}>{fill(C.pfr.checked, { date: mdText(load.data.pxDate) })}</Note>
       )}
+      {/* #191 (Jack, 2026-11-27): a US record saved at the latest rate (its date's rate not in yet) counts here at that rate: once per screen, above the cards */}
+      {load.status === "ok" && decks.some((d) => hasTempRate(d)) && C.rec.rateTemp && <Note data-ui-v2="pf-rate-temp">{C.rec.rateTemp}</Note>}
       {decks.map((d) => {
         if (isImported(d)) return <ImportedCard key={d.id} deck={d} ev={ev} ctx={ctx} load={load} openStock={openStock} onRemove={(t) => onRemove(d.id, t)} onRules={onRules ? () => onRules(d.id) : null} late={late}
           onRecord={canRecord ? (t, nk) => setFlow(startFlow([d.id], t, nk)) : null} onReturns={onReturns && hasRecords(d) ? () => onReturns(d.id) : null} />;
