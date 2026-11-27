@@ -1259,14 +1259,14 @@ export const C = {
   // 페이지 제목은 home.look, 꼬리표 '확인 필요' 는 daily.check, '{name} · 관심 종목 조건' 과 그 문장은 watch.hitKind · hit · hitYe 를 그대로 써요.
   // 카드 제목은 "{name} · {아래 제목}" 이에요 (watch.jsx hitTitle 과 같은 모양). 이/가 는 앞 말의 마지막 글자로 (track.subjectParticle).
   look: {
-    open: "공시 보기",                                              // 버튼 — 그 공시의 DART 원문 (새 탭). 아직 화면에 없어요: DART 주소는 한 곳에만 둬요 (tests/test_v2_app.py) · 그 시험을 바꾸려면 Jack 의 yes
+    open: "공시 보기",                                              // 버튼 — 그 공시의 DART 원문 (새 탭 · 정확한 접수번호만). 확인 필요 카드의 왼쪽 (Jack 2026-11-22 yes)
     seen: "확인했어요",                                             // 버튼 — 카드를 닫아요 (store.js seen)
     rights: "유상증자 결정",
     cb: "전환사채 발행 결정",
     bw: "신주인수권부사채 발행 결정",
     insExec: "임원 지분 변동",                                       // role 임원
     insMajor: "주요주주 지분 변동",                                   // role 주요주주
-    insBoth: null,                                                 // 제안 (Jack 승인 대기): "임원·주요주주 지분 변동" — role 이 '임원·주요주주'(둘 다)이거나 비었을 때. 그동안 그 카드는 빠져요
+    insBoth: "임원·주요주주 지분 변동",                                // role 이 '임원·주요주주'(둘 다)이거나 비었을 때 (Jack, 2026-11-22)
     nps: "국민연금 지분",
     rightsHolders: "회사가 새 주식 {n}주(지금 주식 수의 {p}%)를 발행하기로 했어요. 지금 주주에게 먼저 살 기회를 주는 방식이에요. 사지 않으면 내 지분 비율이 줄어들어요.",
     rightsOthers: "회사가 새 주식 {n}주(지금 주식 수의 {p}%)를 발행하기로 했어요. 다른 투자자에게 파는 방식이라 내 지분 비율이 줄어들어요.",
