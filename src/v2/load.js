@@ -24,7 +24,7 @@ export const CHECKS = {
     && typeof d.asOf === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d.asOf) && typeof d.publishedAt === "string" && Number.isFinite(Date.parse(d.publishedAt))),
 };
 
-// opts.signal: stops the requests (refetchNewer's timeout, when a page whose first load failed comes back into view).
+// opts.signal: stops the requests (loadFirst's time limit; refetchNewer's, when a page whose first load failed comes back into view).
 export async function loadAll(now, opts) {
   const o = opts && opts.signal ? { signal: opts.signal } : undefined;
   const [data, corp, macro] = await Promise.all([
@@ -33,6 +33,27 @@ export async function loadAll(now, opts) {
     loadJson("./macro.json", CHECKS.macro, o),
   ]);
   return resolveLoad({ data, corp, macro }, now);
+}
+
+// The live page's first load (main.jsx): loadAll with a time limit, FIRST_LOAD_TIMEOUT_MS (60 s, the same limit as disc.json's
+// and a return's fetch). PR #201 review, 2026-11-28: before it, a connection that never answered and never failed kept every
+// screen on the loading state (titles only, no cards and no message) for as long as the browser kept the request open.
+// One budget for the whole load, as refetchNewer's: once it passes, every request still out is stopped (AbortController),
+// so its answer can never arrive later. A stopped data.json or corp.json is a plain load failure (resolveLoad: the
+// load-failure message on every screen, the reason "no answer in 60 s" in the console, one more try on a return to view:
+// returnWatch), exactly as a network error; a stopped macro.json alone goes on without it, as when it fails to load.
+// A load that finishes inside the limit is unchanged (the timer is cleared). opts.timeoutMs: for tests. Without
+// AbortController there is no limit, as loadWithin (every browser that runs app.html has it).
+export async function loadFirst(now, opts = {}) {
+  const ms = opts.timeoutMs == null ? FIRST_LOAD_TIMEOUT_MS : opts.timeoutMs;
+  const ctrl = typeof AbortController === "function" ? new AbortController() : null;
+  if (!ctrl) return loadAll(now);
+  const timer = setTimeout(() => ctrl.abort(new Error("no answer in " + Math.round(ms / 1000) + " s")), ms);
+  try {
+    return await loadAll(now, { signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // v19.1a: disc.json, only when a company page opens or (v19.3e) 홈 opens with a Korean stock held (the live page; app.jsx
@@ -161,8 +182,11 @@ const nOf = (a) => (Array.isArray(a) ? a.length : 0);
 const errText = (e) => String((e && e.message) || e);
 // A fetch made when a page comes back into view gives up after this long: one budget for the whole fetch (every file it
 // asks for, data.json first and then the others), not per request. A hung connection would otherwise keep every later
-// return from fetching. The first load has no such limit.
+// return from fetching. The first load has the same limit (FIRST_LOAD_TIMEOUT_MS, loadFirst; since 2026-11-28).
 export const REFETCH_TIMEOUT_MS = 60000;
+// The first load's limit (loadFirst): the same 60 s. Its own name so a test build can set it alone (tests/smoke_v2.py
+// load_limit_app); the shipped value is REFETCH_TIMEOUT_MS (tests/test_load_limit.py).
+export const FIRST_LOAD_TIMEOUT_MS = REFETCH_TIMEOUT_MS;
 // After a return's fetch that put nothing on screen (it failed, found no later publish, or found files from different
 // publishes), the next return does not fetch for this long: GitHub Pages lets data.json be cached for 10 minutes
 // (max-age=600), so a sooner fetch almost always gets the same copy.

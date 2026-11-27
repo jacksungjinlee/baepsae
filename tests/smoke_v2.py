@@ -16489,6 +16489,198 @@ def scene_v196e_states(R, files, width=390):
         ny_fri, dt.datetime(2027, 1, 1, 9, 0, tzinfo=KST), new_year)
 
 
+# ── 2026-11-28 (PR #201 review): the first load gives up after 60 s (src/v2/load.js loadFirst · FIRST_LOAD_TIMEOUT_MS) ──
+# Before, a data.json that never answered kept every screen on the loading state (관심 종목, 연말에 확인할 숫자 …: titles only,
+# no cards, no message). The scenes run a test build whose limit is LOAD_LIMIT_MS (the shipped 60 s is pinned by
+# tests/test_load_limit.py), with the smoke server's ".delay-data.json" hook holding back the first data.json answer.
+LOAD_LIMIT_MS = 5000
+_LOAD_LIMIT = {}
+CLOSED = {"BrokenPipeError", "ConnectionResetError", "ConnectionAbortedError"}
+
+
+def load_limit_app(ms=LOAD_LIMIT_MS):
+    """app.html with the first load's limit (load.js FIRST_LOAD_TIMEOUT_MS) set to ms, built in a temporary folder (not
+    committed; the folder is removed at once)."""
+    if ms not in _LOAD_LIMIT:
+        tmp = tmpdirs.make("baepsae-load-limit-")
+        try:
+            shutil.copytree(os.path.join(ROOT, "src"), os.path.join(tmp, "src"))
+            os.makedirs(os.path.join(tmp, "tools"))
+            for f in ("template.html", "build-app.sh", "package.json", "package-lock.json", os.path.join("tools", "build_tag.py")):
+                shutil.copy(os.path.join(ROOT, f), os.path.join(tmp, f))
+            os.symlink(os.path.join(ROOT, "node_modules"), os.path.join(tmp, "node_modules"))
+            p = os.path.join(tmp, "src", "v2", "load.js")
+            with open(p, encoding="utf-8") as fh:
+                src = fh.read()
+            old = "export const FIRST_LOAD_TIMEOUT_MS = REFETCH_TIMEOUT_MS;"
+            assert src.count(old) == 1, old
+            with open(p, "w", encoding="utf-8") as fh:
+                fh.write(src.replace(old, f"export const FIRST_LOAD_TIMEOUT_MS = {int(ms)};"))
+            out = os.path.join(tmp, "out")
+            r = subprocess.run(["bash", "build-app.sh", out], cwd=tmp, capture_output=True, text=True, encoding="utf-8")
+            assert r.returncode == 0, r.stdout + r.stderr
+            with open(os.path.join(out, "app.html"), encoding="utf-8") as a, open(os.path.join(ROOT, "app.html"), encoding="utf-8") as b:
+                html = a.read()
+                assert html != b.read(), "한도를 바꿔 빌드했는데 app.html 이 같아요"
+            _LOAD_LIMIT[ms] = html
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    return _LOAD_LIMIT[ms]
+
+
+# Every fetch of the page, recorded in the page from its first moment (an init script; a listener added after page.goto could
+# miss the first load's requests): the file, when it was asked for and settled (performance.now), and how it ended.
+FETCH_LOG_JS = """(() => { const f = window.fetch; window.__fx = [];
+  window.fetch = function (u, o) { const rec = { f: String(u).split('?')[0].split('/').pop(), t0: performance.now() }; window.__fx.push(rec);
+    return f.apply(this, arguments).then((r) => { rec.t1 = performance.now(); rec.ok = true; return r; },
+      (e) => { rec.t1 = performance.now(); rec.err = String((e && e.message) || e); throw e; }); }; })();"""
+FX_JS = "(n) => window.__fx.filter((x) => x.f === n)"
+
+
+def late_errors(srv):
+    """The errors of answers the server sent after the browser stopped the request (its connection was closed), kept instead of
+    printed (the smoke server's .delay-<name> hook writes its answer after the wait); the scene checks every one is of that kind."""
+    late = []
+    srv.handle_error = lambda request, client_address: late.append(sys.exc_info()[0].__name__)
+    return late
+
+
+def load_fail_screens(R, page, width):
+    """On a failed first load, from 관심 종목: every tab and 연말에 확인할 숫자 show the load-failure message, no date line, tile,
+    amount or 종목 순위 (종목 still lists the saved portfolio's names, from the records), then back to 관심 종목.
+    -> {screen: its text}, to compare word for word with another way of failing."""
+    out = {"stocks/watch": page.locator('[data-ui-v2="screen"]').inner_text()}
+    R.collect(page)
+    for key in ("home", "stocks", "market", "portfolio"):
+        tab(page, TABS[key])
+        at(page, key)
+        see(page, LOAD_FAIL)
+        disc_settled(page)
+        assert page.locator('[data-ui-v2="date-line"], [data-ui-v2="market-tile"], [data-ui-v2="popular"], [data-ui="amount"]').count() == 0, key
+        out[key] = page.locator('[data-ui-v2="screen"]').inner_text()
+        R.collect(page)
+    page.evaluate("(h) => { location.hash = h; }", "#portfolio/returns/dtaxa")
+    at(page, "portfolio/returns/dtaxa")
+    page.locator('[data-ui-v2="load-fail"]').first.wait_for(state="visible")
+    out["portfolio/returns/dtaxa"] = page.locator('[data-ui-v2="screen"]').inner_text()
+    page.locator('[data-ui-v2="tax-link"] button').click()
+    tax_screen_common(page, width, now_dt().date().isoformat())                   # 연말에 확인할 숫자: the message only
+    lf = page.locator('[data-ui-v2="tax"] [data-ui-v2="load-fail"]')
+    assert lf.count() == 1 and lf.get_attribute("data-picture") == "0" and lf.inner_text() == LOAD_FAIL
+    for k in ("tax-gain", "tax-loss", "tax-div", "tax-footer"):
+        assert page.locator(f'[data-ui-v2="{k}"]').count() == 0, k
+    out["portfolio/tax"] = page.locator('[data-ui-v2="screen"]').inner_text()
+    R.collect(page)
+    page.evaluate("(h) => { location.hash = h; }", "#stocks/watch")
+    at(page, "stocks/watch")
+    page.locator('[data-ui-v2="watch"] [data-ui-v2="load-fail"]').wait_for(state="visible")
+    return out
+
+
+def scene_load_limit(R, files, width, how):
+    """첫 불러오기의 시간 한도 (PR #201 리뷰, 2026-11-28). 시험 빌드의 한도는 LOAD_LIMIT_MS (실제는 60초).
+    stall  data.json 이 한도보다 오래 답하지 않음 (서버가 9초 붙잡음): 한도 전에는 불러오는 화면(관심 종목 제목만 · 실패 문구 없음),
+           한도에 이르면 불러오기 실패 문구 (관심 종목 · 홈 · 종목 · 시장 · 포트폴리오 · 연말에 확인할 숫자), 카드 · 숫자 · 날짜 줄 없음 ·
+           console 에 이유 ('no answer in 5 s') · 그 요청은 페이지가 멈췄어요 (fetch 가 그 이유로 끝남 · requestfailed · 서버의 늦은 답은
+           닫힌 연결에 씀) · 서버의 늦은 답이 나갈 때가 지나도 실패 문구 그대로 · 다시 보이면 한 번 더 받아(네트워크 오류 때와 같은 다시
+           받기) 관심 종목 카드와 새 날짜 줄 · 화면마다 글이 data.json 을 받지 못할 때(404)와 한 글자도 다르지 않아요.
+    under  data.json 이 한도 1.5초 전에 답함: 여느 때처럼 열려요 (카드 · 날짜 줄), 한도가 지난 뒤에도 그대로 · 실패 · 멈춤 줄 없음."""
+    S = f"첫 불러오기 한도 {width}"
+    limit = LOAD_LIMIT_MS / 1000
+    hold = limit + 4 if how == "stall" else limit - 1.5          # (1.5 s to spare under a busy machine)
+    data = v196c_files(files)
+    site = build_site(data, app=load_limit_app())
+    with open(os.path.join(site, ".delay-data.json"), "w", encoding="utf-8") as fh:
+        fh.write(str(hold))
+    seed = v196c_seed({"v": 2, "decks": tax_store("below")["decks"], "watch": v196c_watch()})
+    srv, ctx, page, _ = R.open(site, width, init=FETCH_LOG_JS + "\n" + seed, path="/app.html?dev=1#stocks/watch")
+    late = late_errors(srv)
+    failed, logs = [], []
+    page.on("requestfailed", lambda r: failed.append((r.url.rsplit("/", 1)[-1], r.failure)) if DATA_FILE_RX.search(r.url) else None)
+    page.on("console", lambda m: logs.append(m.text))       # the first load's own lines come at the limit, after this
+    cards = page.locator('[data-ui-v2="watch-card"]')
+    fail = page.locator('[data-ui-v2="load-fail"]')
+    got = {}
+
+    def fx(name):
+        return page.evaluate(FX_JS, name)
+
+    def since_first(name):
+        """ms since the page first asked for that file (page time), waiting for the request if need be."""
+        page.wait_for_function("(n) => window.__fx.some((x) => x.f === n)", arg=name)
+        return page.evaluate("(n) => performance.now() - window.__fx.find((x) => x.f === n).t0", name)
+
+    def wait_since_first(name, ms):
+        page.wait_for_function("([n, ms]) => performance.now() - window.__fx.find((x) => x.f === n).t0 >= ms", arg=[name, ms],
+                               timeout=ms + WAIT)
+
+    def stall():
+        el = since_first("data.json")
+        if el < LOAD_LIMIT_MS / 2:
+            page.wait_for_timeout(int(LOAD_LIMIT_MS / 2 - el))
+        # the loading state while the limit has not passed: the title, no message, no card, no date line (one look, in page time)
+        now = page.evaluate("""() => ({ el: performance.now() - window.__fx.find((x) => x.f === 'data.json').t0,
+            watch: !!document.querySelector('[data-ui-v2="watch"]'), fail: document.querySelectorAll('[data-ui-v2="load-fail"]').length,
+            cards: document.querySelectorAll('[data-ui-v2="watch-card"]').length, dl: document.querySelectorAll('[data-ui-v2="date-line"]').length })""")
+        assert now["el"] < LOAD_LIMIT_MS and now["watch"] and now["fail"] == now["cards"] == now["dl"] == 0, now
+        fail.first.wait_for(state="visible", timeout=LOAD_LIMIT_MS + WAIT)
+        first = fx("data.json")
+        assert len(first) == 1 and first[0].get("err") == f"no answer in {round(limit)} s" and not first[0].get("ok"), first
+        took = (first[0]["t1"] - first[0]["t0"]) / 1000
+        assert limit - 0.25 <= took <= limit + 3, f"data.json 을 {took:.2f}초 만에 멈췄어요 (한도 {limit:g}초)"
+        w = page.locator('[data-ui-v2="watch"]')
+        assert w.locator('[data-ui-v2="load-fail"]').inner_text() == LOAD_FAIL and fail.first.get_attribute("data-picture") == "0"
+        assert cards.count() == 0 and page.locator('[data-ui-v2="date-line"], [data-ui="amount"]').count() == 0
+        assert not re.search(r"\d", w.inner_text()), w.inner_text()                     # no number on the screen
+        assert any(f"[v2] load failed: data.json: no answer in {round(limit)} s" in x for x in logs), [x for x in logs if "[v2]" in x][-4:]
+        assert [n for n, _ in failed] == ["data.json"], failed                         # the browser stopped that request
+        got["stall"] = load_fail_screens(R, page, width)
+        # past the moment the server sends its late answer: it never reaches the page (the request was stopped)
+        wait_since_first("data.json", int((hold + 1.5) * 1000))
+        assert fail.count() >= 1 and cards.count() == 0 and page.locator('[data-ui-v2="date-line"]').count() == 0
+        assert len(fx("data.json")) == 1 and set(late) <= CLOSED, (fx("data.json"), late)   # only answers the browser no longer took
+        # the retry of a network error, unchanged: back in view after a failed load, the files are fetched once more
+        page.evaluate(HIDE_JS)
+        page.evaluate(SHOW_JS)
+        cards.first.wait_for(state="visible")
+        assert fail.count() == 0 and page.locator(SCREEN_DL).first.get_attribute("data-stale") == "0"
+        assert [len(fx(n)) for n in ("data.json", "corp.json", "macro.json")] == [2, 2, 2], [fx(n) for n in ("data.json", "corp.json", "macro.json")]
+        assert fx("data.json")[1].get("ok") is True, fx("data.json")
+        assert wait_log(logs, "replaces the load-failure message", page)
+        R.collect(page)
+        no_hscroll(page, width)
+        # the same screens, word for word, as when data.json cannot be fetched at all (404: a network error's path)
+        srv2, ctx2, page2, _ = R.open(build_site(data, drop=("data.json",), app=load_limit_app()), width, init=seed,
+                                      path="/app.html?dev=1#stocks/watch")
+        try:
+            page2.locator('[data-ui-v2="watch"] [data-ui-v2="load-fail"]').wait_for(state="visible")
+            other = load_fail_screens(R, page2, width)
+        finally:
+            ctx2.close()
+            srv2.shutdown()
+        assert got["stall"] == other, [(k, got["stall"][k], other[k]) for k in other if got["stall"].get(k) != other[k]][:2]
+
+    def under():
+        cards.first.wait_for(state="visible", timeout=LOAD_LIMIT_MS + WAIT)
+        first = fx("data.json")
+        assert len(first) == 1 and first[0].get("ok") is True, first
+        took = (first[0]["t1"] - first[0]["t0"]) / 1000
+        assert hold - 0.1 <= took < limit, f"data.json 이 {took:.2f}초 만에 (붙잡은 {hold:g}초 · 한도 {limit:g}초)"   # really late: just under
+        assert fail.count() == 0 and page.locator(SCREEN_DL).first.get_attribute("data-stale") == "0"
+        shown = cards.count()
+        wait_since_first("data.json", int((limit + 1.5) * 1000))                      # past the limit: nothing changes
+        assert fail.count() == 0 and cards.count() == shown and shown > 0, (fail.count(), cards.count(), shown)
+        assert not [x for x in logs if "load failed" in x or "no answer" in x], [x for x in logs if "[v2]" in x][-4:]
+        assert not failed and len(fx("data.json")) == 1 and not late, (failed, fx("data.json"), late)
+        R.collect(page)
+        no_hscroll(page, width)
+    R.check(page, S, {"stall": f"data.json 이 {hold:g}초 동안 답하지 않음: 한도({limit:g}초)에 불러오기 실패 문구, 카드 · 숫자 없음 · 늦은 답 없음 · 다시 보이면 다시 받음",
+                      "under": f"data.json 이 {hold:g}초 늦게 답함 (한도 {limit:g}초): 여느 때처럼 열리고 한도가 지나도 그대로"}[how],
+            stall if how == "stall" else under)
+    ctx.close()
+    srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -16625,7 +16817,9 @@ def main():
                    lambda: scene_v196e(R, files, 390), lambda: scene_v196e(R, files, 320),                  # v19.6e 이번 주 정리 (스위치를 켠 빌드)
                    lambda: scene_v196e(R, files, 1280), lambda: scene_v196e(R, files, 390, dark=True),
                    lambda: scene_v196e(R, files, 1280, dark=True),
-                   lambda: scene_v196e_states(R, files)):                                                   # v19.6e 때 · 닫기 · 빠진 종목 · 멈춤 · 실패 · 둘 · nv
+                   lambda: scene_v196e_states(R, files),                                                    # v19.6e 때 · 닫기 · 빠진 종목 · 멈춤 · 실패 · 둘 · nv
+                   lambda: scene_load_limit(R, files, 390, "stall"),                                        # 2026-11-28 첫 불러오기 한도: 답 없음 → 실패 문구
+                   lambda: scene_load_limit(R, files, 390, "under")):                                       # 한도 바로 전의 답 → 여느 때처럼
             try:
                 fn()
             except Exception as e:
