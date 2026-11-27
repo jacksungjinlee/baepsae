@@ -41,6 +41,22 @@ rights issues by other methods (wording from the design chat). Spec Acceptance 2
 only in the console, and 이번 주 정리's 공시 tile skips it without a line (a screen line needs new wording).
 
 **Publish gate time limit (#198, 2026-11-27; Jack's yes 11-27, answer 8: "Yes, with one immediate retry inside the same run before giving up."):** the daily gate's own Daum × Yahoo spot check (backup days only: `pxSrc.px` = `daum+yahoo` and no volunteer final file for pxDate; 7 must-haves + 200 sample, `http_px_alt`) had no overall limit in publish · bootstrap mode; a branch dry run on 11-24 hung 46 minutes there with no output (rerun 52 s). Now `validate_data.px_alt_publish_gate` gives the whole check 600 s (`PX_ALT_GATE_BUDGET_S`, `PX_ALT_GATE_TRIES` = 2; no switch): after 600 s no new request, in-flight requests end under their own 20 s + 20 s, every worker thread ends before the gate goes on. Over the limit (any stock left, `cut` > 0, whatever its last error: review round 1, both reviewers found the first version counted a stock whose re-ask the limit stopped after a non-network error, such as a non-JSON reply or a Yahoo 404, as "no close", so the check looked finished and could pass what `main` stops or fail after one try; now a check with nothing left was asked exactly as `main` asks it): loud `!!` lines (대상 · 끝까지 물은 · 남은 · 걸린 시간) and the whole check again at once, every stock asked again. Retry finishes → the two tries are merged stock by stock (review round 2, Fable: the first version let a clean retry replace the first try, so a wrong 005930 close seen in the first 10 minutes was forgotten and the run passed where `main` fails; `px_alt_gate_merge` / `px_alt_gate_fold`): a stock the first try asked to the end without confirming stays unconfirmed with its reason, and a different close either try saw always counts; a first-try close counts only if the retry confirms the same close (otherwise a different close, or, if the retry got no close, unconfirmed but still compared in the price rows as `main` would); stocks the first try never finished take the retry's answer. Up to the limit the first try asks exactly what `main` asks, so for every stock it finished the merged check is never kinder than `main`. The gate names them ("!! … 첫 확인에서 다르거나 받지 못한 종목 n: … — 다시 물은 확인에서도 그대로 세요"), then judges the merged record by the old rows and thresholds, and "pxDate = 최종본 날짜" WARNs "첫 확인이 시간 한도 600초를 넘겨 처음부터 다시 물었어요 …" with those counts. Retry over too → that row (or "최종본 날짜 계산") FAILs "… 시간 한도 600초를 두 번 넘김 (Jack 2026-11-27) …", no publish this run, the next scheduled start tries again. A timed-out check never passes or skips in the publish gate, even with enough closes (`px_alt_confirms`). The limit reaches `http_px_alt` through a context variable (`_PX_ALT_GATE_S`), not an argument, so main's call and every direct call stay as they were (existing tests pin both). Deploy (600 s skip with warning, #157/#164) and watchdog (no limit) unchanged. Worst case about 21 more minutes in the gate step (job limit 300). Tests: `tests/test_gate_time_limit.py` (new only; 50, including a randomized "whenever the gate passes, `main` in the same time-dependent world passes too"). RUNBOOK § "Publish gate: spot-check time limit". Not touched: `deploy.yml`'s comment above its gate step still says the daily gate has no limit (comment only).
+**S&P 500 list fallback (#199, branch `claude/sp500-fallback`, 2026-11-28; pipeline + one warning-only gate row; live once it merges):**
+the 11-28 00:35 run on `main` (46026291142) held its publish because Wikipedia refused FinanceDataReader's S&P 500 list request (429,
+"please respect our robot policy"): 465 tickers, gate "미국 종목 수 458" and "800 → 458". We respect the policy (no User-Agent
+tricks, no proxies). Now `us_tickers` waits 5 s and asks once more; if that fails too it uses the last publish's
+`usListSym.spTickers` as the S&P 500 part (plausible: Yahoo form, ≤ 550, overlap ≥ 400 with that publish's US list), logs `!! S&P
+500 목록을 읽지 못해 (1차: … · 2차: …) 지난 발행본의 목록(… 읽음 · N종목 · N일 전)을 썼어요` (head `읽었지만 쓸 수 없어` when the list came
+back unusable, with rows received, unconvertible rows and their first three values) and records `usListSym.spCarried` = {from:
+first-read day (KST), why: both reads' reasons}. A carried list carried again keeps its first-read day; one first read more than 7
+calendar days ago is not used (the US count then holds the publish, as before). Downstream treats it as that day's list (`spGone`,
+#133's country rule via the same overlap check, BF-B); `read` keeps its meaning. New row "미국 S&P 500 목록 이어 씀
+(usListSym.spCarried · 경고만)": PASS on a normal day, WARN naming the list's date and the reasons, and on a publish also checking
+that date against the previous publish (later → "날짜가 새로 매겨졌을 수 있어요"); `spCarried: null` warns as malformed; never FAIL;
+no existing gate row changed (live data 11-27: 171 rows, only the new one added, PASS). Review round 1 (Opus, Fable): no blocker.
+Because the gate's annotations stop at 10 warnings a step, the data step prints its own `::warning title=S&P 500 목록 이어 씀 (지난
+발행본)::…` (or `S&P 500 목록 없음 (이어 쓰지 못함)`) for the 09:13 check. No screen change. If it warns several days running, tell
+Jack before day 7 (a second S&P list source would be an outside-service decision). RUNBOOK "When the S&P 500 list can't be read".
 
 **홈's US close line (#190, 2026-11-24; same class as #187's 포트폴리오 fix, minor):** app only, no new words. 홈 (`home2.jsx`) and the
 old 홈 behind the HOME2 switch (`today.jsx` Home) decided "a US stock is held" by `cls`. A holding of 379800 KODEX 미국S&P500 (cls "us",
@@ -998,7 +1014,9 @@ JSON files to `main` as `baepsae-bot`, with `git pull --rebase` before push (avo
      from 1 November** while it is missing (Jack, 2026-11-04). Its `--live` mode runs the same row, so v17.6's live
      check will fail too. Gate warnings and failures are also GitHub annotations, which the 09:13 KST daily check reads.
 3. `fetch_us` — S&P 500 (Wikipedia) + NASDAQ (Naver listing, first 400) + `EXTRA_US`; yfinance prices (10 threads);
-   auto Korean descriptions via `us_desc()`.
+   auto Korean descriptions via `us_desc()`. If the S&P 500 list can't be read or used, the run asks once more after 5 s, then
+   uses the last publish's list (`usListSym.spCarried`, at most 7 days after it was first read; #199, RUNBOOK "When the S&P 500
+   list can't be read").
 4. `fetch_bonds` — 8 bond ETFs configured (`153130 114260 148070 439870 273130 305080 453850 304660`), verified by
    name keywords and vol < 30%. **Only 7 have ever been published:** 304660's real name fails its keyword check.
 5. Block correlations/vols → `settings`. `add_percentiles` (factors). → **`data.json`**
