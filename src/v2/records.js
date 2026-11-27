@@ -6,7 +6,7 @@
 // Every edit returns the whole store (the caller saves it with store.writeStore, which checks it again) or a refusal
 // { ok: false, why } the screen turns into an approved line. Nothing is saved that the store's own check would refuse.
 import { recordId, deckProblem, problemText } from "./store.js";
-import { belowZero, heldUnits, UNIT, toUnits, okUnits, byAmount, VIEW_SPLITS } from "./held.js";
+import { belowZero, heldUnits, UNIT, okUnits, byAmount, VIEW_SPLITS, sellAllUnits } from "./held.js";
 import { ledger, splitsToStore, purchaseRate, splitSince } from "./lots.js";
 import { validRows } from "./track.js";
 
@@ -142,7 +142,12 @@ export function checkSale(deck, t, input, s, env) {
     if (!(st.held > 0)) return { ok: false, why: "tooMany", field: "amount" };
     // the won amount becomes a dollar price at the sale date's rate: without one (also before 2016) it cannot be saved
     if (!r.ok || (usd && !pos(r.fx))) return { ok: false, why: "rate", field: "date", rate: r.ok ? "past" : r.why };
-    qty = st.held / UNIT;
+    // every share held, on the sale date's share basis (Track 2 audit 1.4: a sale dated before a split is read x r, so
+    // today's count saved as is was scaled twice, a 1:10 reverse split selling a tenth); with no split in between, that is
+    // the count held now. When no quantity on that basis sells exactly every share (a 4:1 after the sale date), today's
+    // count, as before: the check below refuses it (tooMany).
+    const u = sellAllUnits(deck, t, date);
+    qty = (u != null ? u : st.held) / UNIT;
     price = usd ? amt / r.fx / qty : amt / qty;
   } else {
     const q = typed(input.qty);
