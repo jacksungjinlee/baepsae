@@ -253,9 +253,10 @@ def test_fix_roles_keeps_the_both_role_and_the_gate_accepts_only_the_exact_text(
         assert T.rows_of(cur)[0][T.ROLE_ROW][3] == "FAIL", bad
 
 
-def test_the_role_field_is_not_read_by_either_app_yet():
-    """insider 의 role 은 아직 어느 화면도 읽지 않아요 (B.2 카드가 읽어요) — 그래서 이 PR 의 「새 문구」에는 화면 글자가 없어요. ('임원·주요주주'
-    라는 말 자체는 이미 승인된 공시 탭 · 내부자 거래 제목에 있어요 — role 과 상관없어요.) 소개 페이지의 m.role (만든 사람의 역할)만 있어요."""
+def test_the_role_field_is_read_only_by_the_insider_cards():
+    """insider 의 role 은 오늘 볼 것의 지분 변동 카드만 읽어요 (look.js ROLE_OF 한 곳, Jack 2026-11-22 yes). 예전 앱과 다른 화면은 읽지 않아요.
+    ('임원·주요주주' 라는 말 자체는 이미 승인된 공시 탭 · 내부자 거래 제목에도 있어요 — role 과 상관없어요.) 소개 페이지의 m.role 은 만든 사람의
+    역할이에요."""
     import re
     hits = []
     for base, _dirs, files in os.walk(os.path.join(ROOT, "src")):
@@ -264,7 +265,7 @@ def test_the_role_field_is_not_read_by_either_app_yet():
                 with open(os.path.join(base, name), encoding="utf-8") as f:
                     text = f.read()
                 hits += [(name, m) for m in re.findall(r"[A-Za-z_$]+\.role\b|\[[\'\"]role[\'\"]\]", text)]
-    assert hits == [("about.jsx", "m.role")], hits
+    assert sorted(hits) == [("about.jsx", "m.role"), ("look.js", "x.role")], hits    # Jack, 2026-11-22 yes: 지분 변동 카드 (look.js ROLE_OF) 한 곳만
 
 
 def test_the_cache_tag_moved_so_old_rows_are_read_again(tmp_path, monkeypatch):

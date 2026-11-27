@@ -242,11 +242,15 @@ def test_pages_never_load_fixtures_or_other_sites():
     cotabs = read("src/v2/cotabs.jsx")
     assert cotabs.count("dartFilingUrl(") == 1 and "const href = dartFilingUrl(x.rc);" in cotabs
     assert cotabs.count("href={href}") == 1 and 'href={href} target="_blank" rel="noopener"' in cotabs
+    # v19.6b (Jack, 2026-11-22 yes): 오늘 볼 것 확인 필요 카드의 공시 보기 버튼 하나도 같은 링크 (새 탭 · noopener)
+    look = read("src/v2/todaylook.jsx")
+    assert look.count("dartFilingUrl(") == 1 and "const href = dartFilingUrl(c.rc);" in look
+    assert look.count("href={href}") == 1 and 'href={href} target="_blank" rel="noopener"' in look
     for f in v2_files():
         body = read(f)
         if not f.endswith("routes.js"):
             assert "dart.fss" not in body and "DART_VIEWER" not in body, f
-        if not f.endswith(("routes.js", "cotabs.jsx")):
+        if not f.endswith(("routes.js", "cotabs.jsx", "todaylook.jsx")):
             assert "dartFilingUrl" not in body, f
     disc_tab = cotabs.split("export function DiscTab(", 1)[1].split("\nexport function ", 1)[0]          # 공시 탭: 링크 말고는 바깥과 닿지 않아요
     assert "dartFilingUrl(x.rc)" in disc_tab

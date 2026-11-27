@@ -191,7 +191,7 @@ def test_insider_cards_last_7_days_from_100m_won_at_todays_close_with_role_title
                             ["02", "major", "10%이상주주", 100000000, False]], got["cards"]
     assert got["skipped"] == [["07", "no official close in today's data"], ["11", 'role "감사" is not one of the three']], got["skipped"]
     assert got["roles"] == {"both": "임원·주요주주", "exec": "임원", "major": "주요주주"}
-    # the screens do not read the role yet (#145's test_the_role_field_is_not_read_by_either_app_yet; Jack's yes needed): no title
+    # without a reader (roleOf left out) no card has a title; the screens pass look.js ROLE_OF (Jack's yes, 2026-11-22)
     assert got["off"] == [None, ["none"] * 5]
 
 
@@ -222,12 +222,12 @@ def test_card_words_fill_the_approved_lines():
     assert got["bw"] == "회사가 정해진 가격에 새 주식을 살 수 있는 권리가 붙은 채권을 15억원어치 발행하기로 했어요. 그 권리를 모두 쓰면 주식 수가 지금보다 0.5% 늘어나요."
     assert got["unread"] == "공시에서 숫자를 읽지 못했어요. 공시를 직접 확인해 주세요."
     assert got["title"] == "솔담정밀 · 유상증자 결정" and got["titleBw"] == "A · 신주인수권부사채 발행 결정"
-    assert got["insI"] == "부사장이 지분을 늘린 보고가 있어요. 지금 주가로 약 1억원이에요."
-    assert got["insGa"] == "대표이사가 지분을 줄인 보고가 있어요. 지금 주가로 약 4억원이에요."
+    assert got["insI"] == "부사장이 지분을 늘린 보고가 있어요. 지금 주가로 약 1.4억원이에요."
+    assert got["insGa"] == "대표이사가 지분을 줄인 보고가 있어요. 지금 주가로 약 3.6억원이에요."
     assert got["insBlank"] == "임원·주요주주가 지분을 줄인 보고가 있어요. 지금 주가로 약 14억원이에요."
     assert got["insJo"] == "CEO가 지분을 늘린 보고가 있어요. 지금 주가로 약 1.2조원이에요."
-    # 둘 다인 역할 · 빈 역할의 제목은 Jack 의 승인을 기다려요 (null: 그 카드는 빠져요)
-    assert got["insTitle"] == ["A · 임원 지분 변동", "A · 주요주주 지분 변동", None] and L["insBoth"] is None
+    # 둘 다인 역할 · 빈 역할의 제목 (Jack, 2026-11-22)
+    assert got["insTitle"] == ["A · 임원 지분 변동", "A · 주요주주 지분 변동", "A · 임원·주요주주 지분 변동"] and L["insBoth"] == "임원·주요주주 지분 변동"
     assert got["nps"] == ["국민연금 지분이 9.9%에서 8.8%로 줄었어요.", "국민연금 지분이 5.0%에서 6.1%로 늘었어요."]
     assert got["npsTitle"] == "마루식품 · 국민연금 지분"
 
@@ -281,15 +281,15 @@ def test_the_model_needs_fresh_data_and_the_days_filings_and_says_why_otherwise(
 
 
 def test_the_heading_opens_the_page_only_when_it_shows_a_card():
-    """An insider card whose title waits for Jack (role 임원·주요주주 or blank: look.insBoth null) is not shown, so on its own it does not
-    make the 오늘 볼 것 heading a link (the page would be empty and go straight back to 홈)."""
+    """An insider card without a title (the role not read: title "none") is not shown, so on its own it does not make the 오늘 볼 것
+    heading a link (the page would be empty and go straight back to 홈). Role 임원·주요주주 or blank has look.insBoth (Jack, 2026-11-22)."""
     got = run("""
       const base = { fresh: true, issue: [], insider: [], nps: [], dates: [] };
       const ins = (title) => ({ t: 'A', nk: 'A', title, rc: '20260000000001', date: T, up: true, won: 1e8, pos: null });
       out = [Tl.pageHas({ ...base, insider: [ins('both')] }), Tl.pageHas({ ...base, insider: [ins('both'), ins('exec')] }),
         Tl.pageHas({ ...base, dates: [{}] }), Tl.pageHas({ ...base, nps: [{}] }), Tl.pageHas({ ...base, issue: [{}] }), Tl.pageHas(base),
         Tl.pageHas({ ...base, fresh: false, issue: [{}] }), Tl.lookRowCount({ ...base, insider: [ins('both'), ins('exec')] })];""")
-    assert got == [False, True, True, True, True, False, False, 1]
+    assert got == [True, True, True, True, True, False, False, 2]
     got = run("out = [Tl.insiderTitle({ nk: 'A', title: 'none' }), Tl.pageHas({ fresh: true, issue: [], nps: [], dates: [], insider: [{ title: 'none' }] })];")
     assert got == [None, False]                                                     # while the role is not read, no insider card
 
