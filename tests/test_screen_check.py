@@ -711,21 +711,28 @@ console.log(JSON.stringify(out));
 
 @pytest.mark.skipif(NODE is None, reason="node 가 없어요")
 def test_risk_ready_is_the_apps_own_rule(SA, tmp_path):
-    """smoke_app.risk_ready (장면이 위험 숫자를 보려고 담는 종목) = 앱의 mergeStocks 가 오늘 가격 · 베타 · 변동성을 그대로 위험 계산에 쓰는 종목
-    (실시간이고 noRisk 가 아님). 관문이 지키는 모양의 데이터(pxBad 종목은 베타 · 변동성이 비어요)로 앱의 코드를 node 로 돌려 비교해요."""
+    """smoke_app.risk_ready (장면이 위험 숫자를 보려고 담는 종목)는 앱의 mergeStocks 가 오늘 가격 · 베타 · 변동성을 그대로 위험 계산에 쓰는 종목
+    (실시간이고 noRisk 가 아님)보다 느슨하지 않아요: 앱의 코드를 node 로 돌려 비교해요. 관문이 지키는 모양의 데이터에서는 같고, 몇 곳은 더
+    엄격해요 (리뷰 #200 — 아래 stricter). 베타 · 변동성이 남은 pxBad 내장 종목은 앱도 쓰지 않아요 (그 표시 하나로 가려요)."""
     ok = lambda t, **kw: {"t": t, "price": 10.0, "beta": 1.0, "vol": 20.0, **kw}   # noqa: E731
     bad = dict(beta=None, vol=None, pxBad="2024-06-24")
     cases = [ok("005930"), ok("005930", beta=None), ok("005930", vol=None), ok("005930", price=None), ok("005930", **bad),
              ok("042700", **bad), ok("04020000", est=True), ok("999990"), ok("999991", beta=None), ok("999992", **bad),
-             ok("999993", price=None), ok("999994", price=0), ok("999995", est=True)]
+             ok("999993", price=None), ok("999994", price=0), ok("999995", est=True),
+             ok("005930", pxBad="2024-06-24")]                                    # 표시만 있고 베타 · 변동성은 남음: 앱도 쓰지 않아요
+    stricter = [ok("005930", price=0), ok("999996", pxBad="2024-06-24"), ok("005930", beta=True), ok("005930", vol="20")]   # 앱은 써요
+    cases += stricter
     (tmp_path / "in.json").write_text(json.dumps({"base": SA.BASE_TICKERS, "cases": cases}), encoding="utf-8")
     (tmp_path / "probe.mjs").write_text(READY_JS, encoding="utf-8")
     r = subprocess.run([NODE, str(tmp_path / "probe.mjs"), str(tmp_path / "in.json"), os.path.join(ROOT, "src", "data.js")],
                        cwd=ROOT, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-600:]
     app = json.loads(r.stdout)
-    assert [SA.risk_ready(L) for L in cases] == app
-    assert app == [True, False, False, False, False, False, False, True, False, False, False, False, False]
+    mine = [SA.risk_ready(L) for L in cases]
+    n = len(cases) - len(stricter)
+    assert all(a or not m for a, m in zip(app, mine))                         # 앱보다 느슨한 곳은 없어요
+    assert mine[:n] == app[:n] == [True, False, False, False, False, False, False, True, False, False, False, False, False, False]
+    assert app[n:] == [True] * len(stricter) and mine[n:] == [False] * len(stricter)
 
 
 def test_option_b_scene_picks_any_stocks_the_app_can_use(SA, monkeypatch, capsys):
@@ -750,7 +757,7 @@ def test_option_b_scene_picks_any_stocks_the_app_can_use(SA, monkeypatch, capsys
     assert pick(marked("000660")) == ["005930", "005380", "105560", "042700"]
     out = capsys.readouterr().out
     assert len(R.notes) == 1 and "000660 과거 주가 기록 오류 표시(pxBad)" in R.notes[0] and "042700" in R.notes[0]
-    assert out.count("!! 알림  [B안]") == 1 and out.count("::warning title=발행 전 화면 검사 · 바꿔 담은 종목::") == 1
+    assert out.count("!! 알림  [B안]") == 1 and out.count("::warning title=발행 전 화면 검사 · 바꿔 담은 종목::[B안] ") == 1
     # 현대차 · KB금융 표시 → 반도체 둘만 남아요: 업종 3곳이 되게 새 업종 먼저 (042700 은 반도체라 건너뛰고, 000270 은 마지막 확인 종가,
     # 068270 은 시가총액이 비어 건너뛰어요)
     assert pick(marked("005380", "105560")) == ["000660", "005930", "373220", "207940"]
@@ -770,6 +777,40 @@ def test_option_b_scene_picks_any_stocks_the_app_can_use(SA, monkeypatch, capsys
     assert 'hold = list(zip(pick_ready(R, "B안", stocks, want, 4, need=("mdd", "al"), secs=3), (400, 150, 100, 100)))' in body
     assert 'assert len(hold) == 4 and len(secs) >= 3, f"시험할 종목이 모자라요: {hold} · 업종 {secs}"' in body
     assert "isinstance(stocks[t].get(\"vol\")" not in body                     # 예전 규칙(변동성만)은 이제 risk_ready 안에
+
+
+def test_example_limit_still_counts_marked_built_ins(SA, monkeypatch, capsys):
+    """리뷰 #200 (Opus B1 · Fable S1): '예시 가격' 안내는 앱의 규칙을 따르지만 (pxBad 내장 종목은 안내 없음), 내장 종목 한도(EXAMPLE_MAX)는 예전
+    그대로 그 종목도 세요 — 표시가 한꺼번에 많이 붙는 날은 여전히 발행하지 않아요. 한도 안이면 실행 기록 · 경고에 이름을 크게 남겨요."""
+    ok = lambda t, **kw: {"t": t, "price": 10.0, "beta": 1.0, "vol": 20.0, **kw}   # noqa: E731
+    full = [ok(t) for t in SA.BASE_TICKERS]
+    kr = [t for t in SA.BASE_TICKERS if t.isdigit() and len(t) == 6][:4]
+    mark = lambda ts, **kw: {"data.json": {"stocks": [ok(s["t"], beta=None, vol=None, pxBad="2024-06-24", **kw) if s["t"] in ts else s   # noqa: E731
+                                                      for s in full]}}
+    blank = lambda ts: {"data.json": {"stocks": [ok(s["t"], beta=None) if s["t"] in ts else s for s in full]}}   # noqa: E731
+    SA.within_example_cap(mark(kr[:3]))                                       # 표시 3개: 한도 안
+    for four in (mark(kr), mark(kr, price=None), blank(kr)):                  # 표시 4개 · 가격도 빈 표시 4개 · 표시 없는 빈 베타 4개
+        with pytest.raises(AssertionError, match="내장 종목 4개가 오늘 데이터에 없거나 가격 · 베타 · 변동성이 비었어요"):
+            SA.within_example_cap(four)
+    assert SA.example_cap_stocks(mark(kr[:3]))[0] == sorted(kr[:3]) and SA.example_price_stocks(mark(kr[:3]))[0] == []
+    # 한도 검사는 예전 규칙(example_cap_stocks), 안내는 앱의 규칙(example_price_stocks)
+    src = open(os.path.join(ROOT, "tests", "smoke_app.py"), encoding="utf-8").read()
+    body = src[src.index("def within_example_cap("):src.index("\ndef ", src.index("def within_example_cap(") + 1)]
+    assert "examples, est = example_cap_stocks(f)" in body and "example_price_stocks" not in body
+    # 실제 데이터: 표시된 내장 종목은 안내 없음 (due []) + 이름을 한 번 크게 · 진짜 예시 가격 옆이면 안내도
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setattr(SA, "REAL_DATA", True)
+    R = FakeRunner()
+    assert SA.banner_due(R, "정상", mark(kr[:3])) == [] and SA.banner_due(R, "미국 자기 날짜", mark(kr[:3])) == []
+    out = capsys.readouterr().out
+    assert len(R.notes) == 1 and all(t in R.notes[0] for t in kr[:3]) and "내장 종목 한도에는 세어요" in R.notes[0]
+    assert out.count("!! 알림  [정상]") == 1 and out.count("::warning title=발행 전 화면 검사 · 과거 주가 기록 오류 내장 종목::[정상] ") == 1
+    both = {"data.json": {"stocks": [ok(s["t"], beta=None) if s["t"] == kr[3] else s for s in mark(kr[:1])["data.json"]["stocks"]]}}
+    assert SA.banner_due(FakeRunner(), "정상", both) == [SA.NONLIVE]
+    # CI (고정 데이터): 안내 규칙은 앱과 같아요 — 표시된 내장 종목만 있으면 '배너 없음' 그대로, 알림 없음
+    monkeypatch.setattr(SA, "REAL_DATA", False)
+    R = FakeRunner()
+    assert SA.banner_due(R, "정상", mark(kr[:1])) == [] and not R.notes
 
 
 def test_screen_step_puts_an_unseen_scene_in_the_summary_and_still_publishes(tmp_path):

@@ -95,10 +95,12 @@ run log starts "5xx 다시 물음", and the count ("· 5xx 다시 물음: N곳")
       correctly shows its "예시 가격" or "금현물은 … 추정치예요" notice. The check then requires exactly that notice
       (not "no notice") and says so: `!! 알림` in the log, a warning, the step summary. A built-in stock marked for a
       broken price history (`pxBad`, since #128) with today's price is not an example price, whatever its blank beta and
-      volatility: the app leaves them out of the risk numbers and shows no notice, so the check expects none and does not
-      count it (since #?, Jack 11-27 answer 7; `smoke_app.example_price_stocks` follows `mergeStocks`, and
-      `tests/test_screen_check.py` runs the app's own code to prove it). Too many marks at once is the gate's job (row
-      "새로 생긴 과거 주가 기록 오류 종목 수": 10 new in one run fail; two marked must-have stocks fail).
+      volatility: the app leaves them out of the risk numbers and shows no notice, so the check expects none (since #200,
+      Jack 11-27 answer 7; `smoke_app.example_price_stocks` follows `mergeStocks`, and `tests/test_screen_check.py` runs
+      the app's own code to prove it). It still counts toward the limit of 3 below, as before (`example_cap_stocks`), and
+      the run names it: `!! 알림` "과거 주가 기록 오류 표시(pxBad)가 붙은 내장 종목 …", a warning, the step summary. On
+      the gate side, 10 new marks in one run fail (row "새로 생긴 과거 주가 기록 오류 종목 수") and two marked must-have
+      stocks fail; the gate checks marks against the pipeline's own `krSeries.jump` list, not against fresh prices.
       **Up to 3 such stocks; with more the check fails and nothing is published** (one clear line at the top of the
       result: "내장 종목 N개가 …"), because many at once is the pipeline (for example every US beta blank), not the
       market. The number counts every built-in stock that is missing today, not only new ones, so:
@@ -108,10 +110,11 @@ run log starts "5xx 다시 물음", and the count ("· 5xx 다시 물음: N곳")
       - if the check fails, first look at the names: long-gone companies mean the list needs that PR; several fresh
         blanks at once mean the pipeline. Do not raise the number.
     - One scene (B안) holds four Korean stocks, normally 000660, 005930, 005380 and 105560, and needs their beta and
-      volatility. Since #? (Jack 11-27, answer 7) any of them the app can't use for the risk numbers today (a `pxBad`
+      volatility. Since #200 (Jack 11-27, answer 7) any of them the app can't use for the risk numbers today (a `pxBad`
       mark, a blank beta or volatility, missing from the data, or a blank 3-year drawdown or alpha, which the scene
       reads) is swapped for the next Korean common stock by market cap that it can use, keeping three or more
-      sectors; the run says so (`!! 알림 [B안] …`, a warning, the step summary). The scene also needs three of them to
+      sectors; the run says so (`!! 알림 [B안] …`, a warning, the step summary). It then checks its own premise: the
+      portfolio volatility on screen is above the profile's 24% ceiling (it fails if not). The scene also needs three of them to
       have a dividend yield; the gate lets one must-have stock without dividend data through with a warning (Jack,
       11-05), so the scene fills a blank one in its own copy and says so in the log.
     - **Not yet covered: 005930 itself.** About a dozen other scenes hold 삼성전자 as their ordinary stock and need its

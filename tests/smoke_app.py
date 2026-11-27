@@ -311,7 +311,8 @@ def none_today(R, scene, what, hint=""):
 # 비었으면 앱은 "일부 종목은 최신 시세가 아니라 예시 가격이에요" 배너를 보여 줘요 (src/data.js mergeStocks) — 그게 맞는 화면이에요.
 # 다만 과거 주가 기록 오류 표시(pxBad) 종목은 가격이 오늘 것이면 베타 · 변동성이 비어도 예시 가격이 아니에요: 앱은 그 빈 칸을 내장 값으로
 # 메우지 않고 위험 계산에서 빼요 (2026-11-14 #128). 이 검사도 앱과 같아요 (Jack 2026-11-27, 답 7: 내장 종목 하나의 그 표시가 모두의 발행을
-# 멈추지 않게) — tests/test_screen_check.py 가 앱의 코드를 node 로 돌려 같은 답인지 봐요.
+# 멈추지 않게) — tests/test_screen_check.py 가 앱의 코드를 node 로 돌려 같은 답인지 봐요. 아래 한도(EXAMPLE_MAX)는 예전 그대로 그 종목도
+# 세어요 (example_cap_stocks · 리뷰 #200: 표시가 한꺼번에 많이 붙는 날은 막아요) — 한도 안이면 실행 기록에 크게 알려요 (banner_due).
 # 금현물을 국제 금값으로 환산한 날(est)에는 "금현물은 … 추정치예요" 줄이 떠요. 발행 관문이 '목록에 있음'을 보장하는 것은 75개 가운데
 # 17개뿐이고(나머지 58개는 보장 없음), 그 17개도 베타 · 변동성까지 보장하지는 않아요.
 # 그래서 '배너가 없어야 해요'라고만 보면 상장폐지 한 건 · 베타가 빈 하루 · 금 환산 하루에 모두의 데이터 발행이 멈춰요.
@@ -347,7 +348,9 @@ def _num(v):
 def risk_ready(L):
     """앱(src/data.js mergeStocks)이 담은 종목의 오늘 가격 · 베타 · 변동성을 그대로 위험 계산에 쓰는 종목: 가격이 0 보다 크고, 베타와 변동성이
     숫자이고, 과거 주가 기록 오류 표시(pxBad)도 금 환산(est)도 없어요. 그 밖의 종목은 앱이 베타 · 변동성을 '–'로 두고 위험 계산에서 빼거나
-    (pxBad · 내장 목록 밖), 내장 예시 값으로 메워 '예시 가격'으로 보여요 — 위험 숫자를 보려는 장면이 담을 종목이 아니에요."""
+    (pxBad · 내장 목록 밖), 내장 예시 값으로 메워 '예시 가격'으로 보여요 — 위험 숫자를 보려는 장면이 담을 종목이 아니에요.
+    앱보다 느슨한 곳은 없고, 몇 곳은 더 엄격해요 (리뷰 #200): 가격이 0 이하인 내장 종목, 베타 · 변동성이 남은 내장 목록 밖 pxBad 종목 (관문이
+    막는 모양), 숫자가 아닌 베타 · 변동성 (참 · 글자) — 앱은 이것들도 쓰지만 이 장면들은 담지 않아요 (tests/test_screen_check.py)."""
     return (isinstance(L, dict) and _num(L.get("price")) and L["price"] > 0 and _num(L.get("beta")) and _num(L.get("vol"))
             and not px_bad(L) and not L.get("est"))
 
@@ -381,7 +384,7 @@ def pick_ready(R, scene, stocks, want, n, need=(), secs=0):
             R.notes.append(f"{scene}: {msg}")
             print(f"\n!! 알림  [{scene}] {msg}\n", flush=True)
             if os.environ.get("GITHUB_ACTIONS") == "true":
-                print(f"::warning title=발행 전 화면 검사 · 바꿔 담은 종목::{msg}", flush=True)
+                print(f"::warning title=발행 전 화면 검사 · 바꿔 담은 종목::[{scene}] {msg}", flush=True)
     return out
 
 
@@ -411,10 +414,33 @@ def example_price_stocks(f):
     return sorted(set(examples) | set(by_t)), sorted(est)
 
 
+def example_cap_stocks(f):
+    """한도(within_example_cap)가 세는 내장 종목 — 예전 그대로의 규칙 (리뷰 #200): 오늘 데이터에 없거나 가격 · 베타 · 변동성이 빈 내장 종목
+    (금 환산은 빼고). 과거 주가 기록 오류 표시(pxBad)로 베타 · 변동성을 비운 내장 종목도 세어요 — 앱은 그 종목에 '예시 가격' 안내를 보여 주지
+    않지만 (example_price_stocks), 한꺼번에 많이 비면 여전히 파이프라인을 의심할 날이에요. 돌려줌 (세는 종목, est) — est 는 example_price_stocks 와 같아요."""
+    norm = lambda x: re.sub(r"[.\-]", "", str(x or "").upper())
+    by_t = {t: t for t in BASE_TICKERS}
+    by_norm = {norm(t): t for t in BASE_TICKERS}
+    examples, est = [], []
+    for L in f["data.json"]["stocks"]:
+        b = by_t.get(L.get("t")) or by_norm.get(norm(L.get("t")))
+        price = L.get("price")
+        if b:
+            partial = price is None or L.get("beta") is None or L.get("vol") is None
+            if L.get("est"):
+                est.append(b)
+            elif partial:
+                examples.append(b)
+            by_t.pop(b, None); by_norm.pop(norm(b), None)
+        elif isinstance(price, (int, float)) and price > 0 and L.get("est"):
+            examples.append(str(L.get("t")))
+    return sorted(set(examples) | set(by_t)), sorted(est)
+
+
 def within_example_cap(f):
     """실제 데이터로 돌 때 장면들 앞에서 한 번: 예시 가격으로 보이는 내장 종목이 EXAMPLE_MAX 개 이하이고, 금 환산 표시는 금현물에만 있어요.
     넘으면 실패 → 발행하지 않아요 (여러 종목이 한꺼번에 = 파이프라인 고장으로 봐요)."""
-    examples, est = example_price_stocks(f)
+    examples, est = example_cap_stocks(f)
     names = f"{', '.join(examples[:12])}{' …' if len(examples) > 12 else ''}"
     assert len(examples) <= EXAMPLE_MAX, (f"내장 종목 {len(examples)}개가 오늘 데이터에 없거나 가격 · 베타 · 변동성이 비었어요 ({names}) — {EXAMPLE_MAX}개를 넘으면 "
                                           "종목 사정이 아니라 파이프라인 고장으로 봐요 (예: 미국 종목 베타가 통째로 빔) → 발행하지 않아요. "
@@ -434,6 +460,16 @@ def banner_due(R, scene, f):
                                           "고정 데이터에는 없어야 해요. 없는데도 이 말이 나오면 내장 종목 목록(BASE_TICKERS)을 잘못 읽은 거예요")
         return []
     due = ([NONLIVE] if examples else []) + ([GOLD_EST] if est else [])
+    marked = sorted(set(example_cap_stocks(f)[0]) - set(examples))   # pxBad 로 베타 · 변동성을 비운 내장 종목 (가격은 오늘 것)
+    if marked:
+        msg = (f"오늘 데이터: 과거 주가 기록 오류 표시(pxBad)가 붙은 내장 종목 {len(marked)}개 ({', '.join(marked[:8])}{' …' if len(marked) > 8 else ''}) — "
+               f"가격은 오늘 것이라 예전 뱁새는 이 종목에 '예시 가격' 안내를 보여 주지 않아요 (안내 없음을 확인해요). 내장 종목 한도에는 세어요 "
+               f"({EXAMPLE_MAX}개를 넘으면 발행하지 않아요 — 관문의 과거 주가 기록 오류 줄도 보세요)")
+        if msg not in R.notes:
+            R.notes.append(msg)
+            print(f"\n!! 알림  [{scene}] {msg}\n", flush=True)
+            if os.environ.get("GITHUB_ACTIONS") == "true":
+                print(f"::warning title=발행 전 화면 검사 · 과거 주가 기록 오류 내장 종목::[{scene}] {msg}", flush=True)
     if due:
         why = "; ".join(x for x in (f"내장 종목 {len(examples)}개가 오늘 데이터에 없거나 가격 · 베타 · 변동성이 비었어요 ({names})" if examples else "",
                                     f"금 환산 추정 {', '.join(est)}" if est else "") if x)
@@ -871,6 +907,9 @@ HIDDEN_B_EN = ["expected +", "Expected return", "E(r)", "CAGR", "After-tax retur
                "CAPM Sharpe", "goal, aim for beta", "is hard to expect from the risk you can carry", "goal only needs about beta",   # v18.5
                "If you held to the end", "What holding was worth", "pays you back as expected return",                          # v18.5
                "NaN"]
+# 계기판의 '변동성 (연)' 칸의 값 (src/detail.jsx 지표 카드 · t("mVol")) — 예: "38.4%"
+VOL_SHOWN = """() => { const b = [...document.querySelectorAll('button')].find((x) => x.children.length === 2
+  && x.children[0].textContent.startsWith('변동성 (연)')); return b ? b.children[1].textContent.trim() : null; }"""
 TEAL, TEAL_SOFT, INK = "rgb(46, 158, 143)", "rgb(228, 244, 241)", "rgb(28, 43, 69)"   # src/tokens.js (C.teal, C.tealSoft, C.ink)
 
 
@@ -944,6 +983,12 @@ def scene_option_b(R, files):
         zones = page.evaluate("""([teal, soft]) => [...document.querySelectorAll('div')].filter((d) => { const c = getComputedStyle(d);
             return c.height === '9px' && c.borderTopColor === teal && c.backgroundColor === soft; }).length""", [TEAL, TEAL_SOFT])
         assert zones == 2, f"초록 목표 구간 {zones}개 (분산·업종 2개여야 해요)"
+        # 이 장면의 전제 (리뷰 #200): 예전 계산이면 '변동성이 상한을 넘어요'가 떴을 포트폴리오 — 계기판의 연 변동성이 프로필 상한보다 커야
+        # 위의 '보이면 안 되는 문구' 확인이 무언가를 봐요 (바꿔 담은 날에도)
+        shown_vol = page.evaluate(VOL_SHOWN)
+        vol_num = re.sub(r"[^0-9.]", "", shown_vol or "")
+        assert vol_num and float(vol_num) > profile["targetVolMaxPct"], \
+            f"이 장면의 전제가 맞지 않아요: 계기판의 연 변동성 {shown_vol!r} 이 프로필 상한 {profile['targetVolMaxPct']}% 를 넘지 않아요 (담은 종목 {hold})"
     R.check(page, "B안", "② 구성: '보통 해 ±…' 만, β·σ 초록 구간·판정·조언·기대수익·건강 점수 없음", build)
 
     def open_all(titles, detail):
