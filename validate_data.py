@@ -3531,7 +3531,8 @@ def fx_src_yahoo(fs):
 def check_fx_src(rep, data, macro):
     """2026-11-24 (감사 3.8 · 경고만 · 실패 없음): data.json fx 가 macro.json fxHist 의 fxDate 줄과 같은 값인지 (앱의 '오늘 환율'과 지난 날짜 환율이
     한 출처 · 날짜가 숫자를 말하는지). 같지 않거나, 그 날짜 줄이 없거나, 출처가 야후이거나 출처 표시(fxSrc)가 없으면 출처 · 까닭을 적어 경고.
-    #192 리뷰: 야후 값(fxSrc.yahoo.fx)과 FX_SRC_GAP 넘게 다르거나, 끝나지 않은 값(final 거짓)이거나, ECOS 종가 날짜가 fx_close_floor 앞이어도 경고."""
+    #192 리뷰: 야후 값(fxSrc.yahoo.fx)과 FX_SRC_GAP 넘게 다르거나, 끝나지 않은 값(final 거짓)이거나, ECOS 종가 날짜가 fx_close_floor 앞이어도 경고.
+    #192 리뷰 2회차: 출처 이름이 없거나 모르는 이름이거나, 이력 출처인데 야후 값이 없어 두 출처를 견주지 못했어도 경고."""
     th = (f"경고만 — data.json fx = macro.json fxHist 의 fxDate 줄 (소수 첫째 자리로 같은 값) · 야후 값과 {FX_SRC_GAP:.0%} 안 · 끝난 값 · ECOS 종가는 "
           "휴장일 표의 기대 날짜보다 영업일 하루 넘게 앞이 아님 · 아니면 출처(fxSrc)를 적어요")
     fx, fxd = num(data.get("fx")), _iso_day(data.get("fxDate"))
@@ -3555,6 +3556,14 @@ def check_fx_src(rep, data, macro):
     else:
         head = f"fx {fx:,.1f} = fxHist {fxd} 줄 ·"
     yfx = fx_src_yahoo(fs)
+    # #192 리뷰 2회차 S1: 두 출처를 견주지 못한 경우도 조용히 넘기지 않아요 — 출처 이름이 없거나 모르는 이름이면, 또는 이력(ECOS) 출처인데
+    # 야후 값을 읽지 못하면 (위 10% 실패 줄도 그때는 야후와 견주지 못해요) 경고만
+    if fs is not None and (not fs.get("src") or str(fs.get("src")) not in set(FX_HIST_SOURCES) | {FX_SRC_YAHOO}):
+        notes.append("출처를 알 수 없어요")
+        warn = True
+    elif fs is not None and str(fs.get("src")) in FX_HIST_SOURCES and yfx is None:
+        notes.append("야후 값이 없어 두 출처를 견주지 못했어요")
+        warn = True
     if fx is not None and yfx is not None and abs(fx / yfx - 1) > FX_SRC_GAP:
         notes.append(f"야후 {yfx:,.1f} 와 {(fx / yfx - 1) * 100:+.2f}% ({FX_SRC_GAP:.0%} 넘게)")
         warn = True

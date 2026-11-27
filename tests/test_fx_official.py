@@ -408,6 +408,28 @@ def test_gate_row_warns_and_names_the_source_otherwise(kw, said):
     assert st == "WARN" and said in val, val
 
 
+@pytest.mark.parametrize("fs, said", [
+    ({"v": 1, "src": "ecos_close", "final": True}, "야후 값이 없어 두 출처를 견주지 못했어요"),                       # 야후 값 없음
+    ({"v": 1, "src": "ecos_close", "final": True, "yahoo": {"d": "2026-11-20", "fx": 0, "final": True}}, "야후 값이 없어 두 출처를 견주지 못했어요"),
+    ({"v": 1, "src": "ecos_close", "final": True, "yahoo": {"d": "2026-11-20", "fx": "x", "final": True}}, "야후 값이 없어 두 출처를 견주지 못했어요"),
+    ({}, "출처를 알 수 없어요"),
+    ({"v": 1, "src": None, "final": True}, "출처를 알 수 없어요"),
+    ({"v": 1, "src": "mystery", "final": True, "yahoo": {"d": "2026-11-20", "fx": 1345.7, "final": True}}, "출처를 알 수 없어요"),
+])
+def test_gate_row_warns_when_the_two_sources_were_not_compared(fs, said):
+    """#192 리뷰 2회차 S1: 출처 이름이 없거나 모르는 이름이거나, ECOS 출처인데 야후 값이 없으면 (두 출처를 견주지 못함) 경고만 — 값이 같아도."""
+    st, val = _row(*_files(fx_src=fs))
+    assert st == "WARN" and said in val, val
+
+
+def test_gate_row_rounding_pins_the_one_decimal_comparison():
+    """#192 리뷰 2회차 잔글씨: 줄 1,345.85 · fx 1,345.8 — 소수 첫째 자리로 맞추면 같아 PASS (그대로 빼면 0.05 를 넘어 WARN 이었어요)."""
+    rows = ecos_rows("2026-11-20", TAIL_1121)
+    rows[-1] = [rows[-1][0], 1345.85]
+    st, val = _row(*_files(fx=1345.8, rows=rows))
+    assert st == "PASS", val
+
+
 @pytest.mark.parametrize("macro", [{}, {"fxHist": None}, {"fxHist": {"rows": "x"}}, {"fxHist": {"rows": [["2026-11-20", "1336.2"], [1], None]}}])
 def test_gate_row_without_a_readable_history_warns(macro):
     st, val = _row(_files()[0], macro)
