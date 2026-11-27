@@ -32,7 +32,7 @@
 import React, { useEffect, useMemo } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, TOUCH } from "../ui/tokens.js";
 import { HeroBand, StatStrip, ListRow, Button } from "../ui/components.jsx";
-import { C, fill, mdText, wonText, todayKst, todayStaleText } from "./format.js";
+import { C, fill, mdText, wonText, todayKst, todayNy, todayStaleText } from "./format.js";
 import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, OwnCloseNote, KrAgedLine, Cols, useLayout, useRoomy, useCol, useNav, tx, tap } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { isCompany, ownCloses, ownCloseGroups } from "./stocklist.js";
@@ -57,6 +57,7 @@ import { WatchHitRows } from "./watch.jsx";
 import { lookModel, lookSay } from "./look.js";
 import { LookRows, LookNotes, lookRowCount, pageHas } from "./todaylook.jsx";
 import { LookHead } from "./home2.jsx";
+import { hasTempRate } from "./records.js";
 
 // v19.3e (v19.3 Part H, board Home2): the new 홈 for returning visitors (home2.jsx). On since Jack's yes (2026-11-08): the
 // verdict band of portfolios made with 포트폴리오 만들기 stays at the top as before (Hero below), portfolios made with 가진
@@ -269,7 +270,7 @@ function ImportedStrip({ deck, de, ctx, load, go, late = false }) {
 function WatchLook({ load, store, onWatch, disc = null, onToday = null }) {
   const canMark = !!(store.writable && !store.locked);
   const hits = useMemo(() => watchHits(store.data, load, undefined, canMark), [store.data, load, canMark]);
-  const m = useMemo(() => lookModel(load, store, disc, todayKst()), [load, store, disc]);
+  const m = useMemo(() => lookModel(load, store, disc, todayKst()), [load, store, disc, todayKst(), todayNy()]);   // again when either date turns
   useEffect(() => { lookSay(m, "home"); }, [m]);
   const notes = m.discFail || m.discOld || m.issueFail;
   if ((!hits.length && !lookRowCount(m) && !notes) || !C.home.look) return null;
@@ -392,6 +393,8 @@ export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null
       {store.restored && <Note tone="watch" data-ui-v2="store-merged">{C.store.merged}</Note>}
       {store.unmerged && C.store.locked && <Note tone="watch" data-ui-v2="store-unmerged">{C.store.locked}</Note>}
       {store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}
+      {/* #191 (Jack, 2026-11-27): a US record saved at the latest rate (its date's rate not in yet) counts here at that rate: once per screen */}
+      {ok && decks.some((d) => hasTempRate(d)) && C.rec.rateTemp && <Note data-ui-v2="home-rate-temp">{C.rec.rateTemp}</Note>}
       <Hero load={load} ev={ev} held={held} decks={decks} onConfirm={onConfirm} onWhy={onWhy} />
       <WatchLook load={load} store={store} onWatch={onWatch} disc={disc} onToday={onToday} />
       <Cols main={[

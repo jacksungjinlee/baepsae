@@ -148,6 +148,7 @@ function purchaseProblem(p, i, today, holds, part = "purchases") {
   // still read; when present it must be a positive number on a USD purchase.
   if (p.fx != null && !(p.ccy === "USD" && isPos(p.fx))) return bad(part, i, p.t, "exchange rate only on a USD record, above 0");
   if (noFxProblem(p)) return bad(part, i, p.t, noFxProblem(p));
+  if (rateTempProblem(p)) return bad(part, i, p.t, rateTempProblem(p));
   if (!holds(p.t)) return bad(part, i, p.t, "no holding with this code");
   return null;
 }
@@ -157,6 +158,12 @@ function purchaseProblem(p, i, today, holds, part = "purchases") {
 function noFxProblem(r) {
   if (r.noFx == null) return null;
   return r.noFx === true && r.ccy === "USD" && r.fx == null ? null : "noFx is true, on a USD record without a rate, only";
+}
+// #191 (Jack, 2026-11-27): rateTemp: true marks a USD record saved at the latest rate before its date's rate was published
+// (records.js rateFor); records.withOfficialRates replaces the rate and drops the mark once loaded data has that date.
+function rateTempProblem(r) {
+  if (r.rateTemp == null) return null;
+  return r.rateTemp === true && r.ccy === "USD" && isPos(r.fx) ? null : "rateTemp is true, on a USD record with a rate, only";
 }
 
 // 평균 단가 (optional): as typed, in the stock's currency, above 0.
@@ -201,6 +208,7 @@ function saleProblem(s, i, today, holds, byAmountT, part = "sales") {
   if (!CCY.includes(s.ccy)) return bad(part, i, s.t, "currency must be KRW or USD");
   if (s.fx != null && !(s.ccy === "USD" && isPos(s.fx))) return bad(part, i, s.t, "exchange rate only on a USD record, above 0");
   if (noFxProblem(s)) return bad(part, i, s.t, noFxProblem(s));
+  if (rateTempProblem(s)) return bad(part, i, s.t, rateTempProblem(s));
   if (!holds(s.t)) return bad(part, i, s.t, "no holding with this code");
   return null;
 }
@@ -212,6 +220,7 @@ function divProblem(x, i, today, holds, part = "divs") {
   if (!pastDate(x.date, today)) return bad(part, i, x.t, "date must be a real date, not after today");
   if (x.fx != null && !(x.ccy === "USD" && isPos(x.fx))) return bad(part, i, x.t, "exchange rate only on a USD record, above 0");
   if (noFxProblem(x)) return bad(part, i, x.t, noFxProblem(x));
+  if (rateTempProblem(x)) return bad(part, i, x.t, rateTempProblem(x));
   if (!holds(x.t)) return bad(part, i, x.t, "no holding with this code");
   return null;
 }
@@ -1016,7 +1025,39 @@ export function unionRecords(a, b, where = "") {
 // Is record r one of the records of history entry e (by id, or as the same record)?
 const inEntry = (e, r) => ["purchases", "sales", "divs"].some((k) => (e[k] || []).some((x) => sameRec(x, r))) || (!!e.imported && same(e.imported, r));
 // A history entry by its records (the day it was taken out aside: two tabs may take the same stock out on two days).
-const entryKey = (e) => canon({ t: e.t, imported: e.imported || null, purchases: e.purchases || [], sales: e.sales || [], divs: e.divs || [] });
+// #191 (two tabs): a record with an id stands for itself by its id, as in a portfolio's own lists (sameRec: the current copy's
+// fields are kept), so an entry whose dollar record one copy moved from a temporary rate to its date's rate (records.
+// withOfficialRates) is still the same entry, never two entries counting the record twice. Records without an id: as before.
+const recKey = (r) => (hasId(r) ? { id: r.id } : r);
+const entryKey = (e) => canon({ t: e.t, imported: e.imported || null, purchases: (e.purchases || []).map(recKey), sales: (e.sales || []).map(recKey),
+  divs: (e.divs || []).map(recKey) });
+// #191 review (two tabs of different builds): a build before #191 compared every field of an entry's records, so its merge of a
+// copy holding a temporary record with a copy where that record's rate had been replaced kept two entries of the same records,
+// which this build's replacement (records.withOfficialRates) then makes identical: the sale would count twice in 내 수익 and on
+// 연말에 확인할 숫자. An entry whose entryKey (records by id) equals an earlier entry's in the same portfolio holds the same
+// records and goes (the earlier one stays). Only entries with a record that carries an id: entries without ids compare by
+// content, and two equal ones of those may be two real removals. Run on load (app.jsx), said in the console with counts.
+// -> { data (the same object when nothing goes), dropped: [{ id, t }] }
+export function withoutTwinEntries(data) {
+  const dropped = [];
+  if (!data || !Array.isArray(data.decks)) return { data, dropped };
+  let changed = false;
+  const decks = data.decks.map((d) => {
+    if (!plainObj(d) || !Array.isArray(d.history) || d.history.length < 2) return d;
+    const seen = new Set();
+    const keep = d.history.filter((e) => {
+      if (!plainObj(e) || !["purchases", "sales", "divs"].some((k) => Array.isArray(e[k]) && e[k].some(hasId))) return true;
+      const k = entryKey(e);
+      if (!seen.has(k)) { seen.add(k); return true; }
+      dropped.push({ id: d.id, t: e.t });
+      return false;
+    });
+    if (keep.length === d.history.length) return d;
+    changed = true;
+    return { ...d, history: keep };
+  });
+  return { data: changed ? { ...data, decks } : data, dropped };
+}
 
 // v19.7a: a holding's stored plan weight (planW) when it can be used (final review N2). It is on the scale of the plan's
 // own values (won), and it must be a number that adds up: finite, 0 or more (0 is a real weight: a stock that takes no
