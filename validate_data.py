@@ -653,8 +653,20 @@ FX_HIST_JUMP = 10.0             # 줄 사이 변화 상한 (%) — 2016-01 ~ 202
 FX_HIST_REL = 0.10              # 마지막 줄 값 ↔ data.json fx 차이 상한 (10%). 출처·시각이 달라 같지 않아요 (ECOS ↔ 야후 미국 하루 끝: 중앙값
 #                                 0.25~0.42% · 가장 큰 날 4.35%). 이 줄은 엉뚱한 시계열(다른 통화 · 오래 멈춘 값)을 잡는 줄이고, 단위가 틀린 값
 #                                 (100엔 · 위안 · 역수)은 범위 900~2,000 이 잡아요 — 5% 로 두면 큰 날 하나에 발행 전체가 막힐 수 있어요 (#117 리뷰 2)
+#                                 #192 (같은 세기 · 두 출처를 다시 견줘요): fx 가 이력의 마지막 줄이면(fxSrc.src 가 야후가 아님) 그 줄은 fx 와 늘 같아,
+#                                 그 파일은 같은 10% 를 야후 값(fxSrc.yahoo.fx)과도 봐요. fxSrc 가 없는 파일(예전 발행본)은 예전 그대로 fx 와만
 FX_HIST_ECOS_TAIL = 14          # 휴장일 표가 덮지 못하는 날: ECOS 이력의 마지막 날이 발행일보다 이만큼 넘게 오래면 경고. 표가 덮으면 영업일로 봐요
 #                                 (ecos · ecos_close: 발행일 전 마지막 한국 영업일 · ecos_next: 그 전 영업일 — 그보다 앞이면 경고)
+# 2026-11-24 (감사 3.8 · 경고만 · 발행을 막지 않아요): data.json fx 의 출처 (fxSrc). 파이프라인(fetch_data.fx_official)은 환율 이력을 이번 실행에 새로
+# 읽었으면 fx = 그 마지막 줄 (그 날짜 = fxDate · ECOS 15:30 종가), 아니면 야후 값 (src "yahoo" · why = 아래 까닭). 관문의 '환율 출처' 줄은 fx 가
+# fxHist 의 fxDate 줄과 같은지 보고, 아니면 출처를 적어 경고해요 (예전 11-21 발행: fx 1,345.7 · 같은 날짜 11-20 의 종가 1,336.2).
+FX_SRC_YAHOO = "yahoo"
+FX_SRC_WHY = {"noHist": "환율 이력 없음", "kept": "지난 발행본의 이력을 그대로 둠",
+              "old": f"이력의 마지막 줄이 오래됨 (휴장일 표가 기대하는 날보다 한국 영업일 하루 넘게 앞 · 표 밖이면 {FX_HIST_ECOS_TAIL}일 넘게 전)",
+              "err": "고르다 멈춤"}
+FX_SRC_ROW = "환율 출처 (fx · 경고만)"
+FX_SRC_TOL = 0.05               # fx 와 fxHist 줄을 소수 첫째 자리로 맞춘 뒤 견줘요 — 같은 값이면 통과 (1,336.25 같은 소수 끝 차이는 같은 값)
+FX_SRC_GAP = 0.02               # fx ↔ 야후 값(fxSrc.yahoo.fx) 차이가 이보다 크면 경고 (#192 리뷰: 보통 날 중앙값 0.25% · 99% 1.44%) · 로그도 !!
 SPLITS_FROM = "2016-01-01"      # splits 는 2016-01-01 부터 (fxHist 와 같은 첫날 · data.json splitsFrom) — 앱은 그 전 날짜의 기록을 맞추지 못해요
 SPLIT_R = (0.001, 1000.0)       # 앱(src/v2/held.js okSplit)이 읽는 배율 범위 — 밖이면 앱이 그 줄을 버려요 (배율 1 도)
 SPLIT_SIMPLE_MAX = 20           # 배율은 기약분수 p/q 에서 min(p, q) ≤ 20 인 '깨끗한' 값만 (10:1 · 1:15 · 3:2 · 105:100 = 21:20 주식배당).
@@ -2831,6 +2843,105 @@ def check_us_split_pbr(rep, data):
         rep.add(US_SPLIT_PBR_ROW, True, f"검사가 멈췄어요: {type(e).__name__}: {str(e)[:120]}", rule + " (멈춰도 경고만)", warn=True)
 
 
+# 2026-11-24 (#189, 11-24 발행본 점검): 팩터 점수(규모 pz · 가치 vz · 추세 mz · 퀄리티 qz · 저변동 lz · 배당 dz)의 순위는 시장마다 회사 주식(우선주
+# 포함)끼리만 매겨요 (fetch_data.add_percentiles). 펀드 = etf 참 또는 fund (2.0 의 engine.js isStockLike 와 같은 기준). 11-24 발행본에는 미국 ETF
+# 33곳 (그중 23곳은 야후의 priceToBook — 펀드에는 뜻이 없어요: SPY 1.76 · 실제 약 5) 과 국내 상장 인프라 펀드 3곳이 순위에 섞여, 미국 회사의 가치
+# 점수가 최대 3점 (평균 1.2) 틀어지고 SOXX · TLT 가 가치 100점이었어요. 펀드는 순위에 들어가지 않고 같은 시장 회사들의 분포에 견준 자리를 받아요
+# (화면에서 점수가 사라지지 않게 · 리뷰 #189 S1 · S2). 파이프라인과 관문이 이 정의 하나를 같이 써요.
+FACTOR_KEYS = ("pz", "vz", "mz", "qz", "lz", "dz")
+# 점수 → (쓰는 값, 낮을수록 높은 점수인지)
+FACTOR_SRC = {"pz": ("cap", True), "vz": ("pbr", True), "mz": ("mom", False), "qz": ("roe", False), "lz": ("vol", True), "dz": ("dyt", False)}
+FACTOR_POOL_ROW = "팩터 점수: 회사끼리 순위 · 펀드는 회사 분포에 견줌 (다시 매겨 맞춰 봄 · 경고만)"
+
+
+def factor_fund(s):
+    """순위에 넣지 않는 행인지 — 펀드 (etf 가 참 또는 fund). (순수 함수)"""
+    return isinstance(s, dict) and (s.get("etf") is True or bool(s.get("fund")))
+
+
+def factor_score_diffs(data, counts=None):
+    """발행 파일의 팩터 점수를 그 파일의 값으로 다시 매겨, 다른 칸 → [(티커, 칸, 발행 값, 다시 매긴 값)]. (순수 함수 · pandas 없이)
+    시장마다 (kr · us) 그 시장의 fund 아닌 행 (파이프라인이 add_percentiles 에 넘기는 행): 회사(etf 거짓)는 회사끼리 순위 — 같은 값은 평균
+    순위 ÷ 회사 수 × 100 (pandas rank(pct=True) 와 같은 셈) · 펀드(etf 참)는 그 값과 같은 회사가 있으면 그 회사들의 평균 순위, 없으면 그 값보다
+    작은 회사 수 ÷ 회사 수 × 100 (같은 값이면 회사와 같은 점수 · 리뷰 S1) · 규모 · 가치 · 저변동은 100 에서 빼요 · 반올림 round(). 값이 빈 행은
+    점수가 없어야 해요. fund 행 · 채권 · 금 · 그 밖의 행은 점수가 아예 없어야 해요. 펀드가 순위에 섞인 파일(#189 전)은 회사 점수가 다르게 나와요.
+    counts (dict) 를 주면 견준 수를 채워요: 회사 · 펀드 · 칸 · 점수가 없어야 할 행 (리뷰 N1)."""
+    import bisect
+    rows = (data or {}).get("stocks") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        raise ValueError("stocks 가 목록이 아님")
+    out = []
+
+    def cmp(s, k, want):
+        got = s.get(k)
+        if (got is None) != (want is None) or (got is not None and (isinstance(got, bool) or not isinstance(got, int) or got != want)):
+            out.append((str(s.get("t")), k, got, want))
+
+    seen = set()
+    for m in ("kr", "us"):
+        grp = [s for s in rows if isinstance(s, dict) and s.get("cls") == m and not s.get("fund")]
+        seen.update(id(s) for s in grp)
+        cos = [s for s in grp if not factor_fund(s)]
+        fds = [s for s in grp if factor_fund(s)]
+        for k, (col, low) in FACTOR_SRC.items():
+            vals = [num(s.get(col)) for s in cos]
+            ref = sorted(v for v in vals if v is not None)
+            n = len(ref)
+            for s, x in zip(cos, vals):
+                if x is None:
+                    cmp(s, k, None)
+                    continue
+                lo, hi = bisect.bisect_left(ref, x) + 1, bisect.bisect_right(ref, x)
+                p = (lo + hi) / 2 / n * 100
+                cmp(s, k, int(round(100 - p if low else p)))
+            for s in fds:
+                x = num(s.get(col))
+                if x is None or not n:
+                    cmp(s, k, None)
+                    continue
+                lo, hi = bisect.bisect_left(ref, x) + 1, bisect.bisect_right(ref, x)
+                p = ((lo + hi) / 2 if hi >= lo else hi) / n * 100
+                cmp(s, k, int(round(100 - p if low else p)))
+        if counts is not None:
+            counts["co"] = counts.get("co", 0) + len(cos)
+            counts["fd"] = counts.get("fd", 0) + len(fds)
+            counts["cells"] = counts.get("cells", 0) + (len(cos) + len(fds)) * len(FACTOR_SRC)
+    other = [s for s in rows if isinstance(s, dict) and id(s) not in seen]
+    for s in other:
+        for k in FACTOR_KEYS:
+            if s.get(k) is not None:
+                out.append((str(s.get("t")), k, s.get(k), None))
+    if counts is not None:
+        counts["other"] = len(other)
+        counts["cells"] = counts.get("cells", 0) + len(other) * len(FACTOR_KEYS)
+    return out
+
+
+def check_factor_pool(rep, data):
+    """2026-11-24 (#189): 팩터 점수가 '회사끼리 순위 · 펀드는 회사 분포에 견줌' 그대로인지, 발행 파일의 값으로 다시 매겨 맞춰 봐요
+    (factor_score_diffs). **경고만** — 어떤 모드에서도 실패하지 않아요 (발행을 멈추는 줄은 Jack 의 답이 있어야 해요) · 검사가 멈춰도 경고.
+    다르면 다른 칸 수 · 종목 수와 처음 몇 칸(종목.칸 발행 값→다시 매긴 값)을 줄에 적어요 (펀드가 순위에 섞였거나, 순위 뒤에 값이 바뀌었다는 뜻)."""
+    rule = ("회사 주식(우선주 포함)끼리 순위 · 펀드(etf 참)는 회사 분포에 견준 자리 (같은 값이면 회사와 같은 점수) · fund 행 · 채권 · 금은 점수 없음 "
+            "(다르면 경고 · 실패 없음)")
+    cnt = {}
+    try:
+        bad = factor_score_diffs(data, cnt)
+    except Exception as e:
+        rep.add(FACTOR_POOL_ROW, True, f"검사가 멈췄어요: {type(e).__name__}: {str(e)[:120]}", rule + " (멈춰도 경고만)", warn=True)
+        return
+    seen = (f"다시 매겨 견준 것: 회사 {cnt.get('co', 0):,} · 펀드 {cnt.get('fd', 0):,} · 칸 {cnt.get('cells', 0):,} · "
+            f"점수가 없어야 할 행 {cnt.get('other', 0):,}")
+    if not bad:
+        rep.add(FACTOR_POOL_ROW, True, f"모두 같음 ({seen})", rule)
+        return
+    nt = len({t for t, *_ in bad})
+    sh = lambda v: "빈 값" if v is None else v   # noqa: E731 — 로그에 파이썬 None 을 쓰지 않아요 (#178 처럼 · 리뷰 N2)
+    rep.add(FACTOR_POOL_ROW, True, f"다른 칸 {len(bad)} ({nt}종목 · {seen}): "
+            + ", ".join(f"{t}.{k} {sh(a)}→{sh(b)}" for t, k, a, b in bad[:US_OWN_SHOW])
+            + (f" 외 {len(bad) - US_OWN_SHOW}칸" if len(bad) > US_OWN_SHOW else "") + " (펀드가 순위에 섞였거나 순위 뒤에 값이 바뀌었어요)", rule, warn=True)
+    # 칸 목록(rep.detail)은 따로 적지 않아요: 줄에 처음 몇 칸과 수가 있고, 다른 줄들의 목록 시험(rep.details 를 통째로 견주는 시험)을 흔들지 않게요
+
+
 def coverage(arr, key):
     if not arr:
         return 0.0
@@ -3133,6 +3244,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_us_extra(rep, data, us, mode)   # 2026-11-14: 손으로 더한 미국 종목이 있거나 빠진 이유가 있는지
     check_us_share_class(rep, data, us, mode)   # 2026-11-15: 주식 종류 티커 (BF-B) 가 있거나 빠진 이유 · 바꾸지 못한 티커 (경고)
     check_us_foreign(rep, data, us, mode) # 2026-11-14: 미국 상장 외국 회사의 PER·PBR·배당수익률은 회사 합계와 맞춘 것만
+    check_us_split_cut(rep, data, us)     # 2026-11-24 (SNDK): 최근 분할한 미국 회사도 같은 검사 (splCut · usSplitChk · 경고만)
     check_foreign(rep, kr, comps)
     if rel:
         check_stmt_marks(rep, comps, prev)      # 경고가 많은 날에도 알림 10개 안에 들도록 앞쪽에 (외국 기업 줄 바로 다음)
@@ -3145,10 +3257,15 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_us_new_wait(rep, data, pdata)   # 2026-11-22 (Jack): 미국 기준일 종가를 기다리는 새 미국 종목 (usSrc.newWait · 경고만 · 실패 없음)
     check_us_size(rep, data, pdata)       # v19.5b 후속: 미국 회사 크기 qrev · qeq (종목 순위의 미국 최소 크기 · 경고만 · 실패 없음)
     check_us_split_pbr(rep, data)         # 2026-11-23 (감사 · #176): 최근 분할한 미국 회사의 PBR ↔ PER × ROE · usSrc.split (경고만 · 실패 없음 · 멈춰도 경고)
+    check_factor_pool(rep, data)          # 2026-11-24 (#189): 팩터 점수를 다시 매겨 맞춰 봐요 — 회사끼리 순위 · 펀드는 회사 분포에 견줌 (경고만 · 실패 없음 · 멈춰도 경고)
     check_v191f(rep, data, corp, kr, by, comps, pdata)
     check_eps_line_left(rep, corp, comps)   # 2026-11-14 (Jack Q3 · 리뷰 S4): 다시 읽은 뒤에도 날짜가 지난 '고치는 중' 줄이 남을 회사 (경고)
     check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=(prev or {}).get("macro") if rel else None)
     check_kr_splits(rep, data, today)     # 2026-11-23 (Jack, Track 1): 한국 주식 분할 (splitsKr · 경고만 · 실패 없음)
+    try:                                   # 2026-11-24 (감사 3.8): fx = fxHist 의 fxDate 줄인지 · 아니면 출처 (경고만 · 실패하지 않아요)
+        check_fx_src(rep, data, macro)
+    except Exception as e:                 # 경고만 하는 줄이 관문을 멈추지 않게: 어떤 오류든 그 줄의 경고로
+        rep.add(FX_SRC_ROW, True, f"확인하다 오류 ({type(e).__name__}: {str(e)[:120]}) — data.json fxSrc 를 보세요", "경고만", warn=True)
     check_unit(rep, data, kr, by, comps, pdata)
     check_kr_series(rep, data, kr, pdata)  # 2026-11-14 (Jack: "52주 숫자부터"): 다른 기준의 공식 종가 고정 (실패) · 제한폭 넘는 움직임 (경고)
     try:                                   # 2026-11-24 (Jack, Track 1 item 4): 과거 주가 병합 보정 — 고친 종목과 배율 (경고만 · 실패하지 않아요)
@@ -3393,6 +3510,76 @@ def _ecos_tail_min(run_day, src):
     return prev_bd(m) if src == "ecos_next" else m
 
 
+def fx_close_floor(run_day, src):
+    """#192: 이 실행의 환율로 쓸 수 있는 이력 마지막 줄의 가장 이른 날짜 (파이프라인 fetch_data.fx_official · 관문 check_fx_src 가 같이 써요).
+    ECOS 출처: 휴장일 표가 기대하는 마지막 날(_ecos_tail_min)보다 한국 영업일 하루 앞까지 (ECOS 가 아직 올리지 않은 아침 — 약 5%). 표가 덮지
+    못하거나(앞뒤 해) 다른 출처(yahoo_next)면 발행일 − FX_HIST_ECOS_TAIL 일. (순수 함수 · 휴장일 표를 읽어요)"""
+    if src in FX_HIST_ECOS:
+        want = _ecos_tail_min(run_day, src)
+        back = _ecos_tail_min(want, "ecos_close") if want is not None else None     # want 의 앞 한국 영업일
+        if back is not None:
+            return back
+    return run_day - dt.timedelta(days=FX_HIST_ECOS_TAIL)
+
+
+def fx_src_yahoo(fs):
+    """fxSrc.yahoo.fx — 0 보다 큰 숫자면 그 값, 아니면 None."""
+    y = fs.get("yahoo") if isinstance(fs, dict) else None
+    v = json_num(y.get("fx")) if isinstance(y, dict) else None
+    return v if v is not None and v > 0 else None
+
+
+def check_fx_src(rep, data, macro):
+    """2026-11-24 (감사 3.8 · 경고만 · 실패 없음): data.json fx 가 macro.json fxHist 의 fxDate 줄과 같은 값인지 (앱의 '오늘 환율'과 지난 날짜 환율이
+    한 출처 · 날짜가 숫자를 말하는지). 같지 않거나, 그 날짜 줄이 없거나, 출처가 야후이거나 출처 표시(fxSrc)가 없으면 출처 · 까닭을 적어 경고.
+    #192 리뷰: 야후 값(fxSrc.yahoo.fx)과 FX_SRC_GAP 넘게 다르거나, 끝나지 않은 값(final 거짓)이거나, ECOS 종가 날짜가 fx_close_floor 앞이어도 경고.
+    #192 리뷰 2회차: 출처 이름이 없거나 모르는 이름이거나, 이력 출처인데 야후 값이 없어 두 출처를 견주지 못했어도 경고."""
+    th = (f"경고만 — data.json fx = macro.json fxHist 의 fxDate 줄 (소수 첫째 자리로 같은 값) · 야후 값과 {FX_SRC_GAP:.0%} 안 · 끝난 값 · ECOS 종가는 "
+          "휴장일 표의 기대 날짜보다 영업일 하루 넘게 앞이 아님 · 아니면 출처(fxSrc)를 적어요")
+    fx, fxd = num(data.get("fx")), _iso_day(data.get("fxDate"))
+    fs = data.get("fxSrc") if isinstance(data.get("fxSrc"), dict) else None
+    src = str(fs.get("src")) if fs and fs.get("src") else "표시 없음 (fxSrc)"
+    why = (fs or {}).get("why")
+    notes = [f"야후로 간 까닭: {FX_SRC_WHY.get(why, why)}"] if why else []
+    fh = (macro or {}).get("fxHist")
+    row = None
+    if fxd is not None and isinstance(fh, dict) and isinstance(fh.get("rows"), list):
+        for r in fh["rows"]:
+            if isinstance(r, list) and len(r) == 2 and _iso_day(r[0]) == fxd and (json_num(r[1]) or 0) > 0:
+                row = json_num(r[1])
+    warn = fs is None or src == FX_SRC_YAHOO
+    if fx is None or fxd is None:
+        head, warn = f"fx {data.get('fx')!r} · fxDate {data.get('fxDate')!r} 를 읽지 못해요 ·", True
+    elif row is None:
+        head, warn = f"fxHist 에 {fxd} 줄이 없어요 — fx {fx:,.1f} ·", True
+    elif abs(round(row, 1) - round(fx, 1)) > FX_SRC_TOL:
+        head, warn = f"fx {fx:,.1f} ≠ fxHist {fxd} 줄 {row:,.1f} ({(fx / row - 1) * 100:+.2f}%) —", True
+    else:
+        head = f"fx {fx:,.1f} = fxHist {fxd} 줄 ·"
+    yfx = fx_src_yahoo(fs)
+    # #192 리뷰 2회차 S1: 두 출처를 견주지 못한 경우도 조용히 넘기지 않아요 — 출처 이름이 없거나 모르는 이름이면, 또는 이력(ECOS) 출처인데
+    # 야후 값을 읽지 못하면 (위 10% 실패 줄도 그때는 야후와 견주지 못해요) 경고만
+    if fs is not None and (not fs.get("src") or str(fs.get("src")) not in set(FX_HIST_SOURCES) | {FX_SRC_YAHOO}):
+        notes.append("출처를 알 수 없어요")
+        warn = True
+    elif fs is not None and str(fs.get("src")) in FX_HIST_SOURCES and yfx is None:
+        notes.append("야후 값이 없어 두 출처를 견주지 못했어요")
+        warn = True
+    if fx is not None and yfx is not None and abs(fx / yfx - 1) > FX_SRC_GAP:
+        notes.append(f"야후 {yfx:,.1f} 와 {(fx / yfx - 1) * 100:+.2f}% ({FX_SRC_GAP:.0%} 넘게)")
+        warn = True
+    if fs is not None and fs.get("final") is False:
+        notes.append("끝나지 않은 값 (fxSrc.final 거짓)")
+        warn = True
+    run_day = _iso_day(data.get("asOf"))
+    if fs is not None and src in FX_HIST_ECOS and fxd is not None and run_day is not None:
+        floor = fx_close_floor(run_day, src)
+        if fxd < floor:
+            notes.append(f"ECOS 종가 날짜 {fxd} 가 늦어요 ({floor} 앞)")
+            warn = True
+    rep.add(FX_SRC_ROW, True, f"{head} 출처 {src}" + "".join(f" · {n}" for n in notes), th, warn=warn)
+
+
 def check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=None):
     """v19.6a (Part I.1 · A.6): macro.json fxHist 와 data.json splits. 세 줄."""
     run_day = _iso_day(data.get("asOf")) or today          # 발행일 (이 실행의 한국 날짜)
@@ -3403,7 +3590,8 @@ def check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=None):
     name = "환율 이력 (fxHist)"
     th = (f"{FX_HIST_FROM} 부터 (첫 줄 ≤ {FX_HIST_FIRST_BY}) · 날짜 차례대로 · 줄 사이 ≤ {FX_HIST_GAP_MAX['ecos_next']}일(ECOS)/"
           f"{FX_HIST_GAP_MAX['yahoo_next']}일(야후) · 줄 사이 변화 ≤ {FX_HIST_JUMP:g}% · {FX_LO}~{FX_HI} · asOf = 마지막 날 ≤ 오늘(ecos · ecos_close)"
-          f"/< 오늘(ecos_next · 야후) · 야후는 = fxDate · 마지막 값 = data.json fx ± {FX_HIST_REL:.0%} · final 참/거짓 · fxHistFresh ≤ 발행일 "
+          f"/< 오늘(ecos_next · 야후) · 야후는 = fxDate · 마지막 값 = data.json fx ± {FX_HIST_REL:.0%} (fx 가 이력의 줄이면 야후 값 fxSrc.yahoo.fx 와도) · "
+          "final 참/거짓 · fxHistFresh ≤ 발행일 "
           "(없거나 · 출처 표시가 없거나 · 지난 발행본을 그대로 뒀거나 · ECOS 마지막 날이 늦으면 경고)")
     fh = macro.get("fxHist")
     src = macro.get("fxHistSrc")
@@ -3457,6 +3645,13 @@ def check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=None):
             fx = num(data.get("fx"))
             if fx is None or abs(vs[-1] / fx - 1) > FX_HIST_REL:
                 probs.append(f"마지막 값 {vs[-1]:g} 이 data.json fx {data.get('fx')} 와 {FX_HIST_REL:.0%} 넘게 달라요")
+            else:
+                # #192 (같은 세기 · 두 출처를 다시 견줘요): fx 가 이력의 마지막 줄이면 위 비교는 자기 자신과의 비교라, 같은 10% 를 그 실행의 야후 값과
+                # 봐요. fxSrc 가 없거나 출처가 야후인 파일은 위 줄만 (예전과 똑같이)
+                fsx = data.get("fxSrc") if isinstance(data.get("fxSrc"), dict) else None
+                yfx = fx_src_yahoo(fsx) if fsx is not None and fsx.get("src") != FX_SRC_YAHOO else None
+                if yfx is not None and abs(vs[-1] / yfx - 1) > FX_HIST_REL:
+                    probs.append(f"마지막 값 {vs[-1]:g} 이 야후 환율 (fxSrc.yahoo.fx) {yfx:g} 와 {FX_HIST_REL:.0%} 넘게 달라요")
             if fresh is None:
                 warns.append(f"fxHistFresh {macro.get('fxHistFresh')!r}")
             elif fresh > run_day:
@@ -5341,6 +5536,183 @@ def check_us_foreign(rep, data, us, mode):
             th, warn=bool(stopped) or fwarn)
     if rows:
         rep.detail("미국 상장 외국 회사: 회사 합계 · 실제 배당과 맞지 않아 비운 칸 (usForeign.cut)", [f"{t} {f}: {w}" for t, f, w in rows])
+
+
+# 2026-11-24 (SNDK · 더하기만 · 경고만): 최근 분할한 미국 회사의 주당 숫자 검사 (fetch_data.us_split_check — 외국 회사 줄과 같은 검사 · 같은 종류).
+# 종목 표시는 splCut (외국 회사 줄의 fgnCut 규칙은 그대로). 이 줄은 발행을 막지 않아요: 무엇이 어긋나도 경고 (멈춰도 경고).
+US_SPLIT_CHK_DAYS = 30            # = fetch_data.US_SPLIT_CHECK_DAYS (미국 기준일 앞 날 수 · 오늘(asOf)까지)
+US_SPLIT_MARK = "splCut"          # = fetch_data.US_SPLIT_MARK
+US_SPLIT_SKIP = ("foreign", "fcur", "etf")
+US_SPLIT_ROW = "미국 분할 뒤 주당 숫자: 회사 합계와 맞춤 (splCut · 경고만)"
+
+
+def us_split_recent(data):
+    """data.json splits 에서 usPxDate − US_SPLIT_CHK_DAYS 일부터 asOf(없으면 usPxDate)까지 분할이 있는 티커 → 가장 늦은 날짜. (순수 함수)"""
+    try:
+        end = dt.date.fromisoformat(str(data.get("usPxDate")))
+    except ValueError:
+        return {}
+    try:
+        hi = dt.date.fromisoformat(str(data.get("asOf")))
+    except ValueError:
+        hi = end
+    lo, out = end - dt.timedelta(days=US_SPLIT_CHK_DAYS), {}
+    for x in data.get("splits") or [] if isinstance(data.get("splits"), list) else []:
+        if not (isinstance(x, (list, tuple)) and len(x) >= 2 and isinstance(x[0], str) and isinstance(x[1], str)):
+            continue
+        try:
+            d = dt.date.fromisoformat(x[1])
+        except ValueError:
+            continue
+        if lo <= d <= max(hi, end):
+            out[x[0]] = max(out.get(x[0], ""), d.isoformat())
+    return out
+
+
+def check_us_split_cut(rep, data, us):
+    """2026-11-24 (경고만): 최근 분할한 미국 회사(외국 회사 · fcur · ETF · 펀드 빼고)의 PER · PBR · 배당수익률은 파이프라인이 회사 합계 · 실제 배당과
+    맞춰 본 뒤에만 나가요 (data.json usSplitChk · 종목 표시 splCut). 경고: 그런 종목에 숫자가 있는데 checked 에 없음 · cut 의 칸이 남아 있음 (pbr 이면
+    vz 도) · 표시 없는 cut 줄 · cut 줄 없는 표시 · 표시 모양 · 종류 · 외국 회사 · fcur · ETF 에 표시 · 최근 분할 목록(recent)에도 이어서 본 목록(held ·
+    30일이 지났지만 지난 발행본에서 맞지 않아 비운 종목)에도 없는 표시 · 기록 모양 · 검사가 멈춘 날 (stopped · err) · 분할 칸을 읽지 못한 날 (srcErr) ·
+    이어서 볼 종목 · 허용 폭을 정하지 못한 날 (holdErr · bandErr). 기록이 없는 파일(이 칸 전 발행본): 표시가 있거나 맞춰 볼 숫자가 있으면 경고."""
+    try:
+        _check_us_split_cut(rep, data if isinstance(data, dict) else {}, [s for s in us or [] if isinstance(s, dict)])
+    except Exception as e:
+        rep.add(US_SPLIT_ROW, True, f"검사가 오류로 멈췄어요: {type(e).__name__}: {str(e)[:120]}", "오류 없이 끝나야 함 (경고만 · 발행을 막지 않아요)", warn=True)
+
+
+def _check_us_split_cut(rep, data, us):
+    th = ("최근 30일 안에 분할한 미국 회사(외국 회사 · fcur · ETF 빼고)의 숫자는 usSplitChk.checked 에 · cut 의 칸은 빈 칸 (pbr 이면 vz 도) · 그 칸마다 "
+          "종목의 splCut (경고만 · 발행을 막지 않아요)")
+    by = {s.get("t"): s for s in us}
+    uf = data.get("usForeign")
+    fset = uf.get("set") if isinstance(uf, dict) and isinstance(uf.get("set"), dict) else {}
+    foreign = set(US_FOREIGN_SET) | set(fset)
+
+    def skip_of(s):
+        if s.get("etf") is True or s.get("fund"):
+            return "etf"
+        return "foreign" if s.get("t") in foreign else "fcur" if s.get("fcur") else None
+    recent = us_split_recent(data)
+    want = sorted(t for t in recent if t in by and not skip_of(by[t]) and any(by[t].get(k) is not None for k in US_FOREIGN_KEYS))
+    marks = {str(s.get("t")): s.get(US_SPLIT_MARK) for s in us if US_SPLIT_MARK in s}
+    rec = data.get("usSplitChk")
+    if not isinstance(rec, dict):
+        probs = ([f"기록 없이 표시(splCut) {len(marks)}곳: {_tickers(sorted(marks))}"] if marks else []) \
+            + ([f"맞춰 보지 않은 숫자 {len(want)}곳: {_tickers(want)}"] if want else [])
+        rep.add(US_SPLIT_ROW, True, "기록 없음 (data.json usSplitChk)" + "".join(f" · {p}" for p in probs)
+                + ("" if probs else " · 맞춰 볼 최근 분할 회사 숫자 없음"), th, warn=bool(probs))
+        return
+    bad, notes = [], []
+    checked, cut = rec.get("checked"), rec.get("cut")
+    if not (isinstance(checked, list) and all(isinstance(t, str) for t in checked)):
+        bad.append("checked 모양")
+        checked = []
+    if not isinstance(cut, list):
+        bad.append("cut 모양")
+        cut = []
+    nmode = rec.get("nocmp")
+    nmode_ok = isinstance(nmode, str) and nmode in US_FGN_NOCMP_KIND
+    if not nmode_ok:
+        bad.append(f"nocmp {json.dumps(nmode, ensure_ascii=False)[:30]}")
+    nk = US_FGN_NOCMP_KIND.get(nmode) if nmode_ok else None
+    kinds_ok = set(US_FGN_WHY) | ({nk, US_FGN_NOREC, US_FGN_STOPPED_KIND} - {None})
+    rmap = rec.get("recent")
+    if rmap is not None and not (isinstance(rmap, dict) and all(isinstance(t, str) for t in rmap)):
+        bad.append("recent 모양")
+        rmap = {}
+    # 2026-11-24 (리뷰 1차 S2 · 2차 S1 · S2): 30일이 지났지만 지난 발행본에서 비운 칸이 있어 이어서 본 종목 {티커: {d 분할 날짜, f [칸], since 처음
+    # 잡아 둔 날}} — 맞춰 보고 맞을 때까지 비어요 (회사 구조상 늘 다른 회사는 계속) · 잡아 둔 종목이 있으면 이름 · 칸 · 며칠째를 적고 경고
+    held = rec.get("held", {})
+    if not (isinstance(held, dict) and all(isinstance(t, str) and isinstance(v, dict) and isinstance(v.get("f"), list) and v["f"]
+                                           and all(f in US_FOREIGN_KEYS for f in v["f"]) and _iso_day(v.get("since")) is not None
+                                           for t, v in held.items())):
+        bad.append("held 모양")
+        held = {t: v for t, v in held.items() if isinstance(t, str) and isinstance(v, dict)} if isinstance(held, dict) else {}
+    bmap = rec.get("band", {})          # 종목마다 허용 폭 (max(1.5, √분할 배율))
+    if not (isinstance(bmap, dict) and all(isinstance(t, str) and isinstance(v, (int, float)) and not isinstance(v, bool) and v >= US_SPLIT_BAND_MIN
+                                           for t, v in bmap.items())):
+        bad.append("band 모양")
+    rows, left, nomark, kbad = [], [], [], []
+    for x in cut:
+        if not (isinstance(x, list) and len(x) == 3 and isinstance(x[0], str) and x[1] in US_FOREIGN_KEYS and isinstance(x[2], str) and x[2]):
+            bad.append(f"cut 줄 {json.dumps(x, ensure_ascii=False)[:30]}")
+            continue
+        rows.append(x)
+        s = by.get(x[0])
+        if s is None:
+            continue
+        left += [f"{x[0]}.{k}" for k in ((x[1], "vz") if x[1] == "pbr" else (x[1],)) if s.get(k) is not None]
+        g = marks.get(x[0])
+        if not (isinstance(g, dict) and x[1] in g):
+            nomark.append(f"{x[0]}.{x[1]}")
+            continue
+        want_k = (US_FGN_STOPPED_KIND if x[2].startswith(US_FGN_STOPPED) else "currency" if x[2].startswith(US_FGN_CUR_WHY) else
+                  US_FGN_NOREC if x[1] == "dy" and x[2] == US_FGN_NOREC_WHY else
+                  (nk or "비우면 안 됨 (keep)") if x[2] == US_FGN_NOCMP_WHY.get(x[1]) else "mismatch")
+        if want_k == "비우면 안 됨 (keep)" and g.get(x[1]) == US_FGN_NOCMP_KIND["own"] and x[1] in ((held.get(x[0]) or {}).get("f") or []):
+            want_k = g.get(x[1])               # 잡아 둔 칸은 스위치 keep 이어도 비워요 (fetch_data.US_SPLIT_HOLD_OWN)
+        if g.get(x[1]) != want_k:
+            kbad.append(f"종류 {x[0]}.{x[1]} {g.get(x[1])} ≠ {want_k}")
+    cutset, nocut = {(x[0], x[1]) for x in rows}, []
+    for t, g in marks.items():
+        s = by.get(t) or {}
+        if not (isinstance(g, dict) and g and all(k in US_FOREIGN_KEYS and v in kinds_ok for k, v in g.items())):
+            bad.append(f"{t}.splCut {json.dumps(g, ensure_ascii=False)[:30]}")
+            continue
+        if s.get("cls") != "us" or skip_of(s):
+            bad.append(f"{t}.splCut ({skip_of(s) or '미국 종목이 아님'})")
+        if isinstance(rmap, dict) and t not in rmap and t not in held:
+            bad.append(f"{t}.splCut (최근 분할 목록 recent · 이어서 본 목록 held 밖)")
+        left += [f"{t}.{k}" for f in g for k in ((f, "vz") if f == "pbr" else (f,)) if s.get(k) is not None]
+        nocut += [f"{t}.{f}" for f in g if (t, f) not in cutset]
+    kmap = rec.get("kind")
+    if not (isinstance(kmap, dict) and all(isinstance(v, dict) for v in kmap.values())):
+        bad.append("kind 모양")
+    elif kmap != marks:
+        diff = sorted(set(kmap) ^ set(marks) | {t for t in set(kmap) & set(marks) if kmap[t] != marks[t]})
+        bad.append(f"kind ≠ 종목 표시 {len(diff)}: {', '.join(diff[:4])}")
+    for t, v in held.items():                  # 잡아 둔 칸은 빈 칸이어야 해요 (맞춰 보고 맞으면 held 에서 빠져요)
+        left += [f"{t}.{f}" for f in v.get("f") or [] if isinstance(f, str) and (by.get(t) or {}).get(f) is not None]
+    left = list(dict.fromkeys(left))
+    want = sorted(set(want) | {t for t in held if t in by and not skip_of(by[t]) and any(by[t].get(k) is not None for k in US_FOREIGN_KEYS)})
+    unchecked = [t for t in want if t not in set(checked)]
+    stopped = sorted({x[0] for x in rows if x[2].startswith(US_FGN_STOPPED)})
+    if rec.get("err"):
+        notes.append(f"검사가 멈춤 ({str(rec.get('err'))[:40]})")
+    if rec.get("srcErr"):
+        notes.append(f"오늘 다운로드의 분할 칸을 읽지 못해 지난 발행본 · 고정 표로만 정함 ({str(rec.get('srcErr'))[:40]})")
+    if rec.get("holdErr"):
+        notes.append(f"30일이 지난 종목 중 이어서 볼 곳을 정하지 못함 ({str(rec.get('holdErr'))[:40]})")
+    if rec.get("bandErr"):
+        notes.append(f"허용 폭을 정하지 못해 모두 {US_SPLIT_BAND_MIN:g}배 ({str(rec.get('bandErr'))[:40]})")
+    if stopped:
+        notes.append(f"검사가 멈춰 맞춰 보지 않고 비운 회사 {len(stopped)}곳: {_tickers(stopped)} (이유 줄: 오늘은 확인하지 못함 · co.fgnStopped)")
+    if held:
+        fname = {"per": "PER", "pbr": "PBR", "dy": "배당"}
+        asof = _iso_day(data.get("asOf")) or _iso_day(data.get("usPxDate"))
+
+        def days_of(v):
+            d0 = _iso_day(v.get("since"))
+            return f"{(asof - d0).days + 1}일째" if asof and d0 else "며칠째인지 모름"
+        notes.append(f"30일이 지나도 비운 칸을 잡아 둔 종목 {len(held)}곳 (맞춰 보고 맞을 때까지 · 회사 구조상 늘 다르면 계속 비어요): "
+                     + ", ".join(f"{t} {'·'.join(fname.get(f, str(f)) for f in v.get('f') or [])} ({v.get('since')}부터 {days_of(v)})"
+                                 for t, v in sorted(held.items())[:8]) + (f" 외 {len(held) - 8}곳" if len(held) > 8 else ""))
+    probs = ([f"맞춰 보지 않은 숫자 {len(unchecked)}곳: {_tickers(unchecked)}"] if unchecked else []) \
+        + ([f"이유 표시(splCut) 없음 {len(nomark)}: {', '.join(nomark[:6])}"] if nomark else []) \
+        + ([f"cut 줄 없는 표시 {len(nocut)}: {', '.join(nocut[:6])}"] if nocut else []) \
+        + ([f"남은 칸 {len(left)}: {', '.join(left[:6])}"] if left else []) + ([f"모양 {len(bad)}: {', '.join(bad[:3])}"] if bad else []) \
+        + ([f"종류 {len(kbad)}: {', '.join(kbad[:3])}"] if kbad else [])
+    n_by = collections.Counter(x[1] for x in rows)
+    sk = rec.get("skip") if isinstance(rec.get("skip"), dict) else {}
+    skipped = sorted(t for k in US_SPLIT_SKIP for t in (sk.get(k) or []) if isinstance(t, str))
+    rep.add(US_SPLIT_ROW, True, f"최근 분할 {len(rmap) if isinstance(rmap, dict) else '?'}곳 · 확인 {len(checked)}곳 · 비운 칸 PER {n_by['per']} · PBR "
+            f"{n_by['pbr']} · 배당 {n_by['dy']}" + (f" ({', '.join(f'{t}.{f}' for t, f, _w in rows[:8])})" if rows else "")
+            + (f" · 보지 않음(외국 회사 · fcur · ETF) {len(skipped)}곳: {_tickers(skipped)}" if skipped else "")
+            + "".join(f" · {p}" for p in probs) + "".join(f" · {n}" for n in notes),
+            th, warn=bool(probs or notes))
+    if rows:
+        rep.detail("미국 분할 뒤 회사 합계 · 실제 배당과 맞지 않아 비운 칸 (usSplitChk.cut)", [f"{t} {f}: {w}" for t, f, w in rows])
 
 
 def is_foreign(code):

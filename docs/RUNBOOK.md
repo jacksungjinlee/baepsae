@@ -2158,6 +2158,59 @@ has PER, PBR and 배당수익률 blanked unchecked, each marked `stopped`, and 2
 (naming the companies; it never holds the publish). The next run checks again. A file from before #PR has no marks on such a day
 (the gate reads it as before). The old app shows "–" for these, as for the currency case.
 
+**Recently split US companies (since #188, 2026-11-24; SNDK).** After its 8:1 split on 2026-11-20, Yahoo's trailing EPS for Sandisk
+read 923.70 a share and the 11-24 publish showed PER 0.1. That EPS is about 54 times the company's own figure (net income 19.42십억 달러
+÷ 1.138십억 shares ≈ 17.06 a share; about 136 even before the split), not off by the split ratio; market cap ÷ net income is 5.14.
+The run now puts every US company with a split dated from 30 days before `usPxDate` up to the run day (KST) through the foreign
+companies' comparison (`us_split_step` → `us_split_check` in `fetch_data.py`, right after the foreign check and after #176's rescale):
+the split list comes from the same sources as the published `splits` (today's download, the previous publish's `splits`,
+`SPLIT_OVERRIDES`), the comparison is `us_foreign_cuts` with the same kinds and switch, and the inputs are the same cached Yahoo details
+(`us-info-v1`, refreshed every 3 days) and the download's dividend column: **no extra Yahoo requests**. **The band is the split's size,
+not the foreign band** (#188 review 1): a number is cut only when it is off by more than max(1.5, √ratio), applied to PER, PBR and the
+yield alike (`us_split_check_band`, the same function as #176's gate row, `validate_data.us_split_band`; 8:1 → 2.83×, 2:1 → 1.5×, 1:10
+→ 3.16×). The foreign bands (1.10 · 1.35 · 1.10) blank correct numbers on ordinary US companies: NVDA's PBR is 1.39× off because ROE uses
+average equity, APH's forward yield is 1.19× its trailing dividends after a raise, Up-C companies like IBKR fail all three. The foreign
+check keeps its own bands. Still possible false positives, which fail safe (blank plus the approved line): a split company whose
+forward yield is at least 1.5× its trailing dividends, an Up-C structure, and a company with no PER or ROE (its PBR is blanked as
+can't-compare, then held after the 30 days until it can be compared and agrees). Foreign companies (already checked), `fcur` companies (already blank) and ETFs/funds (no company totals)
+are skipped by name. A number that agrees stays; one that does not, or cannot be compared, is blanked with the same kind (`mismatch`,
+`currency`, `norecord`, `nocompare-own`, `stopped` if the check crashes), and 2.0 shows an approved line under it: `co.fgnCut` for
+`mismatch`, `co.fgnNoCmp` ("회사 전체 숫자와 비교할 수 없어서 …") for `nocompare-own` **and, on a split company, for `currency` and
+`norecord`** (nothing was compared, so "…맞지 않아서" would be untrue; a foreign company keeps its lines), `co.fgnStopped` for `stopped`
+(in the 가치 tab and 가치 자세히 for PER; PBR and yield also in 한눈에, 비교 and 내 기준). `co.fgnNoCmp` under `norecord` (and a yield under
+`currency`) is truer than "…맞지 않아서" but not literal: what is missing there is the dividend record or the price, not company totals.
+**After 30 days (the hold, #188 review 2 S1)**, every field blanked in the previous publish (`splCut`, any kind) and every field in the
+previous `usSplitChk.held` stays checked (`held` {ticker: {d split date, f fields, since first held day}}, with its last split's band).
+A held field is released only when a run actually compared it and it agreed; can't-compare, a stopped check, a crashed step (the
+guard blanks held stocks too), a missing value or missing details keep it held and blank, with the approved line for that kind. The
+next run after the release stops checking the stock. **Permanent holds:** a company whose per-share numbers structurally disagree with
+its totals (an Up-C like IBKR, PER 29.2 against market cap ÷ net income 110.7; in the 11-24 file 22 of 581 US companies are beyond
+1.5× on PBR ↔ PER × ROE) stays blanked after a split until they agree, which may be never. The line stays true, and the gate row warns
+every day while anything is held, naming each stock, its fields and since when. If a held stock is truly fine, a person decides (there
+is no switch for it yet; ask Jack). The mark is the
+stock's `splCut` (same shape as `fgnCut`), not `fgnCut`, because the gate row above fails `fgnCut` on any stock outside the foreign set
+and that row stays as it is; `src/v2/fcur.js` reads both marks. Record: `data.json usSplitChk` (`days`, `recent` {ticker: split date},
+`held` {ticker: {d, f, since}}, `band` {ticker: band}, `checked`, `cut`, `kind`, `kept`, `nocmp`, `skip` {foreign, fcur, etf}, `srcErr`,
+`holdErr`, `bandErr`, `err`). Reason text never carries nan/None/null/undefined (written "없음"). Run log: `· 최근 30일 안에 분할한 미국
+종목 … (… 폭 2.83배)`, `!! 30일이 지났지만 … 이어서 봐요` when a stock is held, and `!! 최근 30일 안에 분할한 미국 회사의 주당 숫자 … PER 비움
+N곳 (…)` with one line per blank and its band. If the step itself crashes, `fetch_us` carries on (`us_split_guard`): a loud `!!` line,
+and the recent-split companies from the previous publish's `splits` and the fixed table, and the held stocks, are blanked unchecked
+(`stopped`). If the recent-split list can't be worked out, the held stocks are still checked. Reason text also goes through #178's last
+cleaning pass (`usSplitChk` is in `PUB_SWEEP_KEYS`). Gate row
+`미국 분할 뒤 주당 숫자: 회사 합계와 맞춤 (splCut · 경고만)` (`check_us_split_cut`) only ever warns: any held stock (named with its fields,
+since when and for how many days), unchecked numbers of a recently split or held company, a blanked or held number back, a blank
+without a mark or a mark without a `cut` row, a mark on a foreign / `fcur` / ETF stock or outside `recent` and `held`, a wrong kind, a
+bad `held` / `band`, a crash, the split column unread, or `holdErr` / `bandErr`. Usually nothing to do by hand: Yahoo usually corrects
+itself, the cache is re-read every 3 days and the number comes back once it agrees. A hold that lasts weeks is the structural case
+above. Known limits: an
+ETF that split is not checked (no company totals; 2026-11-23: SOXX PBR 0.37 after its 3:1 split, 가치 점수 100), a split smaller than
+1.5:1, or a 3:2 split's full 1.5× error, leaves its error inside the band (the test is "more than"), a halved PBR after a 2:1 split
+on an NVDA-like company reads 1.44× and stays, and a pre-split cached copy rescaled by price alone or by a wrong factor moves PER and market cap
+together, which this comparison cannot see (#176's record `usSrc.split` and its gate row name those). The check reads the same cache
+entry #176 chose, so a copy × split factor that agrees stays; Yahoo's fresh EPS that #176 accepts (SNDK 11-24, not a 1/8 pattern) is
+blanked here. Rolling back: a revert PR; the old gate and app ignore `splCut` and `usSplitChk`, and the blanked number comes back with
+the next publish.
+
 **Which companies count as foreign (since #PR; Jack, 2026-11-14 Q5: "widen it").** The run finds them by a rule every day
 (`us_foreign_set` in `fetch_data.py`, never a hand list), among company shares (not ETFs or funds):
 1. statements not in dollars (`fcur`, #114): their PER, PBR and yield are already blank with the currency line; this check skips
@@ -2595,6 +2648,34 @@ sit behind US numbers after a split:
 **Rolling back #176**: a revert PR. Copies written with `pd` are read by the old code as before (it ignores the key); `usSrc.split` is
 ignored by the old gate and the app.
 
+## Factor scores: companies only (팩터 점수 · gate warning "팩터 점수: 회사끼리 순위", since #189)
+
+`fetch_data.add_percentiles` ranks the six factor scores (규모 `pz`, 가치 `vz`, 추세 `mz`, 퀄리티 `qz`, 저변동 `lz`, 배당 `dz`, Korea
+only) within each market over company shares only (preferred shares included); a row with `etf` true or `fund`
+(`validate_data.factor_fund`, the 2.0 app's `isStockLike` rule) is not in the ranking. Such a fund still gets each score whose input it has,
+placed against that market's companies (`fund_percentile`): with b companies below the fund's value and e equal to it, out of n companies
+with a value, its rank is b + (e + 1) ÷ 2 when e > 0 (the tied companies' own average rank, so the same value always gets the same score,
+review S1) and b when e = 0; p = rank ÷ n × 100, the score is p (추세, 퀄리티, 배당) or 100 − p (규모, 가치, 저변동), rounded with `round()` as
+the companies' are, always 0–100; a blank input means no score, as before. Each score's input and direction is defined once,
+`validate_data.FACTOR_SRC`, for companies, funds and the gate. Why: the 11-24 publish ranked 33 US ETFs (23 with
+Yahoo's `priceToBook`, meaningless for a fund: SOXX 0.37, TLT 0.55, SPY 1.76 against a real P/B of about 5) and 3 Korean listed
+infrastructure funds (088980, 415640, 094800) with the companies, so 547 of 665 US companies' `vz` were off by up to 3 points (mean 1.2;
+JPM 67 → 70, TDY 62 → 65), US `mz` · `lz` by up to 2 · 3, Korean `pz` · `mz` · `lz` by 1. Funds keep their scores so that nothing disappears
+from the old app's 내 포트폴리오의 성향 card or 기업분석 strip (review #189 S1 · S2); theirs move by up to 3 (SPY `lz` 97 → 99, QQQ `vz` 77 → 79,
+GLD `lz` 87 → 90; SOXX and TLT stay 가치 100, because Yahoo's fund PBR is below every company's). The log line after the ranking is `· 팩터 점수 (국내|미국):
+회사 주식 N종목 (우선주 n 포함)끼리 순위 (가치 vz … · 추세 mz … · 저변동 lz …) · 펀드 M곳은 순위에 넣지 않고 회사 분포에 견줘 매김 (점수 있는
+펀드 m) (names)`. The gate row `팩터 점수: 회사끼리 순위 · 펀드는 회사 분포에 견줌 (다시 매겨 맞춰 봄 · 경고만)` (`check_factor_pool`) re-scores
+the file from its own values without pandas (`factor_score_diffs`: average rank ÷ count × 100 for companies, the formula above for funds)
+and names every cell that differs (a blank as `빈 값`), plus any score on a `fund` row, a bond, gold or another non-stock row; its value says
+what it compared (`모두 같음 (다시 매겨 견준 것: 회사 3,275 · 펀드 36 · 칸 19,944 · 점수가 없어야 할 행 13)` on the re-scored 11-24 file); it
+warns, never fails, in every mode, and warns too when it can't read `stocks`. Until the first publish after #189 its warning takes one of
+the visible annotation slots (review note N5). On a warning: a file published before #189 differs in about 2,000 cells (expected until
+the first publish with this code); otherwise a fund ranked with the companies, a score input changed after the ranking, or a wrong `etf`
+mark (see the `etf 표시가 맞음` row). Not changed: a US fund's PER · PBR (and so its 가치 score) still come from Yahoo; the old app's 종목
+고르기 card shows them ("PER / PBR"), and a 2.0 두 종목 비교 with a held US ETF shows its PBR; blanking them needs a say-why line, so it is
+Jack's call. Rolling back: a plain revert PR (funds are ranked with companies again from the next publish; the gate row goes with it; no
+stored data depends on it).
+
 ## Roll back
 
 - **A bad code release** (the app looks broken after a merge): Claude opens the merged pull request, presses
@@ -2742,8 +2823,40 @@ ignored by the old gate and the app.
     for ECOS or 7 for Yahoo, a jump of more than 10% between two rows, a value outside 900–2,000, not starting in the first
     week of 2016, `asOf` not the last row, a last row after today (or on today for `ecos_next` and Yahoo), a Yahoo history
     that does not end on `fxDate`, a last value more than 10% from `fx` (the two come from different sources and times;
-    unit or currency mistakes are caught by the 900–2,000 range), `final` not true/false, or `fxHistFresh` after the
-    publish date. Every rate saved from it stays in users' records, so never loosen the row; ask Claude to find the cause.
+    unit or currency mistakes are caught by the 900–2,000 range) or, when `fx` is the history's own last row (#192:
+    `fxSrc.src` is not `yahoo`), more than 10% from that run's Yahoo value `fxSrc.yahoo.fx` (the same check, comparing the
+    two sources again; a file without `fxSrc`, like every publish before #192, is judged exactly as before), `final` not
+    true/false, or `fxHistFresh` after the publish date. Every rate saved from it stays in users' records, so never loosen the row; ask Claude to find the cause.
+  - **Today's rate, `data.json` `fx` · `fxDate` · `fxSrc`** (2026-11-24, Track 2 audit 3.8, #192). `fx` is the last row of the
+    run's `fxHist` and `fxDate` is that row's date, whenever the run read the history's source itself (`fxHistFresh` = the
+    run's date; a same-day re-run whose ECOS read failed keeps that day's earlier history, which counts too: its rows are the
+    real closes read that morning) and that row is not stale: under `ecos_close`, the Seoul 15:30 close of the last Korean
+    business day ECOS has posted (normally the day before the 06:40 publish; one business day earlier on the ~5% of mornings
+    ECOS has not posted yet; on a late manual run it can be that day's own close). "Stale" uses the gate's holiday table
+    (`validate_data.fx_close_floor`): more than one Korean business day before the day the table expects
+    (`_ecos_tail_min`); outside the table's years, more than 14 days before the publish. On a Korean holiday the Seoul market
+    is closed and ECOS has no row, so the rate stays at the last Seoul close, with its date shown (추석 2025: 1,400.0 → 1,421.0,
+    1.5% over 8 days; the largest 4-day gap since 2016 was 1.8%; the first publish after a long holiday takes the whole move,
+    well inside the 5% `환율 변화` row). So "today's rate" and a past date's rate come from one source, and the date shown under a won
+    figure ("원화는 {md} 환율 …", the 원/달러 tile) describes the number. US market values and 거래대금 in won, every "약 {won}"
+    under a $ price, 내 수익, 연말 and new US records dated today all use it; nothing in the app changed. Before this, `fx` was
+    Yahoo's last USD/KRW bar, still open at the 06:40 publish, under a past date: 11-21 showed 1,345.7 under 11-20 (that
+    day's close 1,336.2, −0.7%); 11-24 showed 1,340.7 under 11-23 (close 1,345.9: 10 AAPL at $349.08 read 4,680,116원, now
+    4,698,268원). How it is built: the US step builds `fxHist` first (Yahoo's value is the cross-check, ±10%, as before),
+    takes the rate from it, then prices US stocks in won; `main` puts the same history into `macro.json` (ECOS is asked once
+    a run, `ecos_fx_series_once`, failures included, so the two never differ). Yahoo is still used, and said, when the
+    history was not read this run (kept from an earlier publish, missing, its last row stale as above, or the choice
+    crashed): `fxSrc` = `{src: "yahoo", why: noHist | kept | old | err, yahoo: {d, fx, final}}` and the log has a `!! 환율(data.json fx)`
+    line. Its `fxDate` is the bar's own date only once the bar has finished (London midnight, 08:00/09:00 KST); an unfinished
+    bar is dated the run's Korean date, never a past close. `fxSrc.yahoo` always records Yahoo's bar (date, value, finished)
+    for comparison; when `fx` and Yahoo's value differ by more than 2% (normal days: median 0.25%, 99% 1.44%) the log line
+    is `!!`. Gate row **환율 출처 (fx · 경고만)** (warning only, never fails): passes when `fx` equals the `fxHist` row of
+    `fxDate` (to one decimal); otherwise it warns and names the source and reason (Yahoo, no row for that date, a mismatch,
+    or a file without `fxSrc`, as the 11-24 file was). It also warns when `fx` is more than 2% from `fxSrc.yahoo.fx`, when
+    the value is unfinished (`fxSrc.final` false, only possible under `yahoo_next`), and when an ECOS close's date is stale as
+    above. The 3-year Yahoo series still feeds US `vol` in won and the won gold and
+    silver series (history, not a day's rate); `fetch_data.fx_official`. The 데이터 출처 page names the source as "환율: 한국은행
+    경제통계시스템(ECOS)" (Jack, 2026-11-27; `src/info.jsx`).
   - `data.json` `splits` lists every US stock split since 2016-01-01 (`splitsFrom`), `[code, date, ratio]` (ratio = new
     shares per old share; the date is the first US trading day on the new count, or the ex-date for a stock dividend).
     It is "Yahoo plus fixes", not guaranteed complete: a small stock dividend Yahoo leaves out is only there if someone

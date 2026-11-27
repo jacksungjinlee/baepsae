@@ -48,7 +48,7 @@ import { withConfirm } from "./store.js";
 import { reasonView, statusChips, DividendAnswers, Line } from "./daily.jsx";
 import { signedPct } from "./deckcalc.js";
 import { deckMoney, deckDayChange, peerGroup, subjectParticle, todayCounts } from "./track.js";
-import { pfState, isImported, usHeld } from "./pf.js";
+import { pfState, isImported, usHeld, usdOf } from "./pf.js";
 import { ImportedDeck } from "./pfview.jsx";
 import { Home2 } from "./home2.jsx";
 import { EpsOwnersNote } from "./fixnote.jsx";
@@ -355,7 +355,9 @@ export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null
   // v19.3d (v19.3 F.1): portfolios made with 가진 종목 넣기 have no per-stock rules: their own strip shows the four
   // portfolio rules (pf.js), never 확인 필요 for every stock, and they take no part in the verdict above.
   const imported = ev.ok ? decks.filter(isImported) : [];
-  const us = held.some((de) => de.holdings.some((x) => x.cls === "us")) || (ev.ok && decks.some((d) => usHeld(d, load)));   // v19.3d: 가진 종목 too
+  // v19.3d: 가진 종목 too. A US stock is one priced in dollars (pf.usdOf, as usHeld and 포트폴리오, #187): x.cls "us" also took
+  // 379800 KODEX 미국S&P500, a KRX listing priced in won at the Korean close
+  const us = held.some((de) => de.holdings.some((x) => usdOf(load.byT.get(x.t)))) || (ev.ok && decks.some((d) => usHeld(d, load)));
   const usDate = ok && us && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
   // 종목 순위: PC from 1200 px in the right column under 시장 한눈에; from 1024 to 1199 px at the end of the main column (Jack, 2026-11-12)
   const { wide } = useLayout();
