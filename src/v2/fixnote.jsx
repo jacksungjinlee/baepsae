@@ -18,7 +18,7 @@ import { COLOR, SIZE, WEIGHT } from "../ui/tokens.js";
 import { C, fill, mdText, todayKst } from "./format.js";
 import { Note, tx } from "./ui.jsx";
 import { EPS_FIX_DATE, fixNotesHidden, epsNoticeShown, stmtCurFor, epsLineKind, unitHeldFor, noStmtFor, pxBadFullFor, pxBadPartFor, pxBadHidesFor } from "./fix.js";
-import { fcurOf, fcurText, pbrZeroOf, fgnCutOf, FGN_LINE_KEYS } from "./fcur.js";
+import { fcurOf, fcurText, pbrZeroOf, fgnCutOf, fgnKindOf, FGN_LINE_KEYS } from "./fcur.js";
 import { isPreferred, noTradeOf, d1MissingOf } from "./engine.js";
 
 // The line with its date ("11월 10일"), or null when a word or the date is missing (never a line with an empty slot).
@@ -156,7 +156,7 @@ export function PbrZeroNote({ s, style }) {
 export function FgnCutNote({ s, fields, style }) {
   const cut = fgnCutOf(s).filter((k) => !fields || fields.includes(k));
   if (!cut.length) return null;
-  const notes = FGN_LINE_KEYS.map(([key, has]) => [key, cut.filter((k) => has(s.fgnCut[k]))])
+  const notes = FGN_LINE_KEYS.map(([key, has]) => [key, cut.filter((k) => has(fgnKindOf(s, k)))])
     .filter(([key, ks]) => ks.length && C.co[key])
     .map(([key, ks]) => <Note key={key} data-ui-v2="fgn-cut" data-kind={key === "fgnCut" ? undefined : key === "fgnNoCmp" ? "own" : "stopped"}
       data-fields={ks.join(",")} style={style}>{C.co[key]}</Note>);
