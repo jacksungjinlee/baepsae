@@ -7,7 +7,7 @@
 import React, { useMemo, useState } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH } from "../ui/tokens.js";
 import { Button, BottomSheet, priceColor } from "../ui/components.jsx";
-import { C, fill, nf, mdText, todayKst, exactWon, plus, recDate } from "./format.js";
+import { C, fill, nf, mdText, todayKst, usTradeDay, exactWon, plus, recDate } from "./format.js";
 import { Note, TextInput, SampleLabel, KrOwnCloseLine, tx, useMode, useLayout, SIDE_W } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { shownName } from "./legacy.js";
@@ -18,7 +18,7 @@ import { signedPct } from "./deckcalc.js";
 import { splitsFor } from "./lots.js";
 import {
   stockState, checkSale, checkPurchase, checkDiv, withRecord, withoutRecord, recordsOf, salePreview, soldOutNow, rateEnv, typed, decksFor, recordCcy,
-  closeIsDefault, rateRefusal,
+  closeIsDefault, rateRefusal, recordToday, hasTempRate,
 } from "./records.js";
 
 const usdText = (v) => "$" + nf(v, 2);
@@ -112,6 +112,8 @@ function RecordList({ flow, setFlow, store, setStoreData, deck, close, shift, sa
           {(st.inHoldings || st.inHistory) && <Button kind="secondary" onClick={() => go("div")} style={{ padding: `0 ${SPACE(2)}px`, wordBreak: "keep-all" }}>{C.rec.div}</Button>}
         </div>
         {flow.saved && <Note data-ui-v2="rec-saved">{C.plan.done}</Note>}
+        {/* #191 (Jack, 2026-11-27): a record of this stock here saved at the latest rate, its date's rate not in yet: once */}
+        {hasTempRate(deck, t) && C.rec.rateTemp && <Note data-ui-v2="rec-rate-temp">{C.rec.rateTemp}</Note>}
         {fail && <Note tone="watch" data-ui-v2="store-fail">{C.store.unavailable}</Note>}
         {/* a split correction in data.json changed this stock's share count during this visit (app.jsx: an "out" row took a
             stored split out or moved it to the corrected date) */}
@@ -174,10 +176,16 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
   const s = ok ? load.byT.get(t) || null : null;
   const st = stockState(deck, t);
   const usd = recordCcy(deck, t, s) === "USD";              // the same source the saved record's currency comes from
-  const env = rateEnv(load, today);
+  const env = rateEnv(load, today, usTradeDay());
+  // the date the form opens with (records.recordToday): a dollar record's is the US trade date of now, the US trading date the
+  // hint below asks for (audit 2.1: after Korean midnight the Korean date is New York's tomorrow; from 20:00 New York the
+  // overnight session books the next day: format.usTradeDay); a won record's Korea's, as before.
+  // Any date up to Korea's today can still be typed (max); either "today" that the history does not have yet is saved at the latest
+  // rate, marked temporary (records.rateFor, Jack 2026-11-27), and replaced by its date's rate when the data has it (app.jsx)
+  const day = recordToday(env, usd);
   // v19.7a 팔고 빼기: the sale form opens with every held share filled in (flow.prefill.qty; with flow.lockQty it then follows
   // the date, below)
-  const [v, setV] = useState({ qty: flow.prefill && flow.prefill.qty != null ? String(flow.prefill.qty) : "", price: "", date: today, amount: "" });
+  const [v, setV] = useState({ qty: flow.prefill && flow.prefill.qty != null ? String(flow.prefill.qty) : "", price: "", date: day, amount: "" });
   const [tried, setTried] = useState(false);
   const [fail, setFail] = useState(false);
   const set = (k) => (x) => setV((o) => ({ ...o, [k]: x }));
@@ -191,7 +199,7 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
     if (kind === "sell") return checkSale(deck, t, { qty, price: v.price, date: v.date, amountWon: v.amount }, s, env);
     if (kind === "buy") return checkPurchase(deck, t, v, s, env);
     return checkDiv(deck, t, v, s, env);
-  }, [kind, deck, t, v, qty, s, env.fx, env.fxHist, env.stale]);
+  }, [kind, deck, t, v, qty, s, env.fx, env.fxHist, env.stale, env.usDay]);
   // the result card (팔았어요): live from what is typed, before anything is saved
   const prev = kind === "sell" && check.ok ? salePreview(deck, check.rec) : null;
   const md = s ? mdText(priceDate(load, s)) : null;
@@ -266,6 +274,9 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
         {/* a US record's date is the US trading date (#117 RUNBOOK), which can be the day before the Korean date */}
         {usd && <p data-ui-v2="rec-us-date" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1), wordBreak: "keep-all" })}>{C.rec.usDateHint}</p>}
         {kind === "sell" && prev && <SaleResult prev={prev} usd={usd} />}
+        {/* #191 round 2: 산 가격보다 above counts a purchase already saved at the latest rate (its date's rate not in yet): the line,
+            once (that record is saved, so "저장했어요" holds); none while nothing of this stock is temporary */}
+        {kind === "sell" && hasTempRate(deck, t) && C.rec.rateTemp && <Note data-ui-v2="rec-rate-temp">{C.rec.rateTemp}</Note>}
         {rateLine && <Note tone="watch" data-ui-v2="rec-no-rate" data-why={rateNo}>{rateLine}</Note>}
         {why === "tooMany" && <Note tone="watch" data-ui-v2="rec-too-many">{C.rec.tooMany}</Note>}
         {why === "tooEarly" && <Note tone="watch" data-ui-v2="rec-too-early">{C.rec.tooEarly}</Note>}
@@ -324,6 +335,7 @@ function FullSale({ flow, setFlow, store, setStoreData, deck, close, shift, samp
       {sample}
       <div data-ui-v2="rec-full">
         {body && <p style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2, { wordBreak: "keep-all" })}>{body}</p>}
+        {hasTempRate(deck, flow.t) && C.rec.rateTemp && <Note data-ui-v2="rec-rate-temp">{C.rec.rateTemp}</Note>}
         {fail && <Note tone="watch" data-ui-v2="store-fail">{C.store.unavailable}</Note>}
         {only && <Note data-ui-v2="rec-full-last">{C.rm.last}</Note>}
         <div style={{ display: "flex", gap: SPACE(2), marginTop: SPACE(4) }}>

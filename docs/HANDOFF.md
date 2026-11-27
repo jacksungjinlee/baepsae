@@ -40,6 +40,24 @@ rights issues by other methods (wording from the design chat). Spec Acceptance 2
 #196). Known gap, for the design chat's say-why list: a 지분 변동 card left out because its stock is shown at an older close is named
 only in the console, and 이번 주 정리's 공시 tile skips it without a line (a screen line needs new wording).
 
+**US dates in 2.0 and temporary rates (#191, merging now; audit 2.1 and 2.2, Jack's answer of 11-27; live once it merges and deploys):** a dollar record (샀어요 · 팔았어요 ·
+배당 받았어요 · 팔고 빼기 · 매수 계획's 샀어요 with a blank date, by currency: `pf.usdOf` / `records.recordCcy`, never cls) opens on the US
+trade date of now (`format.usTradeDay`: New York's date, rolled over at 20:00 New York when the overnight session books the next day;
+it differs from Korea's date only from 00:00 to 10:00 KST in winter, 09:00 in summer). Jack, 11-27: "not at today's rate. Save it right
+away at the latest available rate, marked temporary, and replace it with that date's official rate automatically when the morning
+data arrives." A dollar record dated "today" (that date or Korea's) the history does not have yet is saved at data.json fx with
+`rateTemp: true` (from 10:00 to 24:00 KST that is every new US record, until the next morning); `records.withOfficialRates` (app.jsx,
+on load and on every change, console counts) puts that date's fxHist row in and drops the mark (a weekend or Korean holiday: the last
+row before it, once a later row shows it gets none; a Sunday record waits until Tuesday morning). Until then every screen that counts
+it says "지금은 최근 환율로 저장했어요. 이 날짜의 환율이 들어오면 자동으로 바꿔요." once (`rec.rateTemp`, Jack 11-27): the record sheet,
+팔았어요's form (산 가격보다), the sheet after a full sale, 매수 계획's 기록했어요, 내 수익, 홈, 포트폴리오, 연말에 확인할 숫자, 종목 바꾸기; not the CSV export (known limit).
+Stale data still refuses; other dates after the history keep `rec.rateNotYet`; records saved before are untouched. store.js: `rateTemp`
+checked; a history entry is the same entry when its records carry the same ids, and `withoutTwinEntries` makes one of the two entries a
+build before #191 can leave after a two-tab merge (else the sale counts twice). A revert of #191 leaves marked records at their
+temporary rate, read as ordinary rates, until #191 is redeployed. 오늘 볼 것 · 다가오는 일정 keeps a US date until New York's midnight.
+Follow-ups: a dollar record's 코스피 comparison (lots.js `closeBefore`); undated 가진 종목 넣기 rows count splits from `createdAt`; 이번 주
+정리's 다음 주 starts at Korea's date (an existing test pins it). Tests: `tests/test_v2_us_dates.py`, `test_v2_us_dates_screens.py`,
+`test_v2_rate_temp.py`, `test_v2_rate_temp_screens.py`, smoke_v2 `scene_v191_rate_temp`. RUNBOOK "Temporary rates".
 **S&P 500 list fallback (#199, branch `claude/sp500-fallback`, 2026-11-28; pipeline + one warning-only gate row; live once it merges):**
 the 11-28 00:35 run on `main` (46026291142) held its publish because Wikipedia refused FinanceDataReader's S&P 500 list request (429,
 "please respect our robot policy"): 465 tickers, gate "미국 종목 수 458" and "800 → 458". We respect the policy (no User-Agent

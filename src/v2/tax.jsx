@@ -22,6 +22,7 @@ import { ownCloses } from "./stocklist.js";
 import { todayCtx } from "./rules.js";
 import { missingNames } from "./tracking.jsx";
 import { CoMark } from "./logo.jsx";
+import { hasTempRate } from "./records.js";
 import { TAX_YEAR, taxWindow, taxRecords, yearGains, yearDivs, heldLosses, taxState, taxShown, shownEstimate } from "./tax.js";
 
 const said = new Set();
@@ -223,6 +224,8 @@ export function Tax({ load, store, pad, onBack }) {
         </p>
         <h2 style={tx(SIZE.h2, WEIGHT.heavy, COLOR.ink, { marginTop: SPACE(1) })}>{C.tax.title}</h2>
         {load.status === "fail" && <LoadFail picture={false} />}
+        {/* #191 (Jack, 2026-11-27): a US record saved at the latest rate (its date's rate not in yet) counts here at that rate: once per screen, over the cards */}
+        {ok && (g || showLoss || showDiv) && decks.some((d) => hasTempRate(d)) && C.rec.rateTemp && <Note data-ui-v2="tax-rate-temp">{C.rec.rateTemp}</Note>}
         {g && <GainCard g={g} win={win} />}
         {(stale || (showLoss && ls)) && <LossCard ls={ls} stale={stale} load={load} byT={ctx.byT} nameOf={nameOf} />}
         {showDiv && <DivCard dv={dv} />}

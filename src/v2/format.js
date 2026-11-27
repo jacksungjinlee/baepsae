@@ -95,10 +95,27 @@ export function priceText(s) {
   return fill(C.app.won, { n: nf(Math.round(s.price)) });
 }
 
-// Today in Korea (YYYY-MM-DD), whatever the device clock's zone.
-export function todayKst(now) {
+// Today in one time zone (YYYY-MM-DD), whatever the device clock's zone.
+function todayIn(zone, now) {
   const d = new Date(now == null ? Date.now() : now);
-  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(d);
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(d);
   const g = (t) => parts.find((p) => p.type === t).value;
   return `${g("year")}-${g("month")}-${g("day")}`;
+}
+// Today in Korea (YYYY-MM-DD), whatever the device clock's zone.
+export function todayKst(now) {
+  return todayIn("Asia/Seoul", now);
+}
+// Today in New York (YYYY-MM-DD), daylight saving time included: the date of a US trade made now (a dollar record's date is the
+// US trading date, #117 RUNBOOK) and the day US earnings and ex-dividend dates (data.json ed · xd, US local dates) are read
+// against. Never later than todayKst: from Korean midnight until New York's (13:00 or 14:00 KST) it is the Korean date's day before.
+export function todayNy(now) {
+  return todayIn("America/New_York", now);
+}
+// The US trading date a dollar trade made now is booked on: New York's date 4 hours from now. A trade from 20:00 New York time
+// (the overnight session, 주간거래: 10:00–14:00 KST in winter, 09:00–13:00 in summer) is booked on the next US trading day
+// (round-1 review of #191), so a dollar record's date rolls over at 20:00 New York, not at midnight. A weekend or a US holiday
+// is not skipped (the calendar date; no split is ever dated on one). Never later than todayKst (New York + 4 h is UTC or UTC−1).
+export function usTradeDay(now) {
+  return todayIn("America/New_York", new Date(now == null ? Date.now() : now).getTime() + 4 * 3600 * 1000);
 }

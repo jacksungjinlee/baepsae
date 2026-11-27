@@ -11068,6 +11068,86 @@ def scene_v196a_outs(R, files, width=390):
     srv.shutdown()
 
 
+def scene_v191_rate_temp(R, files, width=390):
+    """#191 (Jack, 2026-11-27): the app's wiring of temporary rates (app.jsx · records.withOfficialRates · store.withoutTwinEntries).
+    dtemp: AAPL bought 2026-10-20 at a temporary rate (1,338원, rateTemp) — the fixture's history (macro.json fxHist) has that day's row
+    (1,350원), so on load the rate is replaced and the mark dropped (console line with the count); and AAPL bought 2026-11-10, after the
+    history's last day (10-30): it stays temporary, its record sheet and 포트폴리오 say "지금은 최근 환율로 저장했어요. 이 날짜의 환율이
+    들어오면 자동으로 바꿔요." once. dtwin: two history entries of the same taken-out sale (what a build before #191 left after merging
+    two tabs) → one entry (console line). Reloading changes nothing more."""
+    S = f"#191 임시 환율 {width}"
+    data = v196a_files(files)
+    asof = data["macro.json"]["fxHist"]["asOf"]
+    assert asof < "2026-11-10" and ["2026-10-20", 1350.0] in data["macro.json"]["fxHist"]["rows"], data["macro.json"]["fxHist"]
+    band = lambda t: [{"id": "band", "kind": "band", "check": "checked", "target": t, "bands": [0.75 * t, 1.25 * t, 1.4 * t]}]
+    usd = lambda i, q, px, day, **more: {"id": i, "t": "AAPL", "qty": q, "price": px, "date": day, "ccy": "USD", "fx": 1338.0, **more}
+    sale = usd("s9aaaaaa", 1, 330.0, "2026-10-20", rateTemp=True)
+    store = {"v": 2, "guideSeen": data["data.json"]["pxDate"], "decks": [
+        {"id": "dtemp", "name": "dtemp", "createdAt": "2026-09-01", "planFx": 1300,
+         "holdings": [{"t": "AAPL", "nk": "Apple Inc.", "cls": "us", "target": 1, "rules": band(1)}],
+         "purchases": [usd("p1aaaaaa", 3, 300.0, "2026-09-02", fx=1300), usd("p8aaaaaa", 2, 320.0, "2026-10-20", rateTemp=True),
+                       usd("p9aaaaaa", 1, 330.0, "2026-11-10", rateTemp=True)]},
+        {"id": "dtwin", "name": "dtwin", "createdAt": "2026-09-01", "planFx": 1300,
+         "holdings": [{"t": "005930", "nk": "삼성전자", "cls": "kr", "target": 1, "rules": band(1)}],
+         "purchases": [{"id": "k1aaaaaa", "t": "005930", "qty": 1, "price": 200000, "date": "2026-09-02", "ccy": "KRW"}],
+         "removed": [{"t": "AAPL", "at": "2026-10-21", "ts": 1792500000000}],
+         # the old build's two entries of the same sale: one still temporary, one replaced (1,350원, no mark)
+         "history": [{"t": "AAPL", "nk": "Apple Inc.", "out": "2026-10-21", "ts": 1792500000000, "cls": "us",
+                      "purchases": [usd("p7aaaaaa", 1, 300.0, "2026-09-02", fx=1300)], "sales": [s]}
+                     for s in (sale, usd("s9aaaaaa", 1, 330.0, "2026-10-20", fx=1350.0))]}]}
+    seed = ("(() => { const keep = (f) => function (...a) { try { const l = JSON.parse(sessionStorage.getItem('logs') || '[]'); l.push(a.join(' '));"
+            " sessionStorage.setItem('logs', JSON.stringify(l)); } catch (e) {} return f.apply(this, a); };"
+            " console.warn = keep(console.warn); console.info = keep(console.info);"
+            " if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');"
+            f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(store, ensure_ascii=False))}); }})();")
+    srv, ctx, page, base = R.open(build_site(data), width, init=seed, path="/app.html?dev=1#portfolio")
+    stored = lambda: page.evaluate(STORED_JS)
+    logs = lambda: page.evaluate("() => JSON.parse(sessionStorage.getItem('logs') || '[]')")
+    line = C["rec"]["rateTemp"]
+
+    def temp_rates():
+        at(page, "portfolio")
+        page.wait_for_function("() => { const s = JSON.parse(localStorage.getItem('baepsae2.v1')); const d = s.decks.find((x) => x.id === 'dtemp');"
+                               " return !!d && d.purchases.some((p) => p.id === 'p8aaaaaa' && p.rateTemp !== true); }", timeout=WAIT)
+        st = stored()
+        ps = {p["id"]: p for p in next(d for d in st["decks"] if d["id"] == "dtemp")["purchases"]}
+        assert ps["p8aaaaaa"]["fx"] == 1350.0 and "rateTemp" not in ps["p8aaaaaa"], ps["p8aaaaaa"]     # the history's row of 10-20
+        assert ps["p9aaaaaa"]["fx"] == 1338.0 and ps["p9aaaaaa"]["rateTemp"] is True, ps["p9aaaaaa"]  # after the history: still temporary
+        assert ps["p1aaaaaa"]["fx"] == 1300 and "rateTemp" not in ps["p1aaaaaa"]                       # an earlier record: untouched
+        twin = next(d for d in st["decks"] if d["id"] == "dtwin")
+        assert len(twin["history"]) == 1 and twin["history"][0]["sales"][0]["fx"] == 1350.0 and "rateTemp" not in twin["history"][0]["sales"][0], twin
+        L = logs()
+        # the purchase, and the taken-out sale the clean-up kept (still temporary in that entry): two records, one line
+        assert any("temporary exchange rates replaced by their dates' rates: 2 record(s): " in l and "dtemp AAPL buy 2026-10-20 1338 -> 1350" in l
+                   and "dtwin AAPL sell 2026-10-20 1338 -> 1350" in l for l in L), L
+        assert any("history entries with the same record ids as an earlier entry of their portfolio: 1 taken out: dtwin AAPL" in l for l in L), L
+        assert any("temporary exchange rates: 1 record(s) wait" in l and "dtemp AAPL buy 2026-11-10" in l for l in L), L
+        page.locator('[data-ui-v2="pf-rate-temp"]').wait_for(state="visible")
+        assert page.locator(f'text="{line}"').count() == 1                                              # 포트폴리오: once
+        page.locator('[data-deck-id="dtemp"] [data-holding="AAPL"] [data-ui-v2="row-actions"] button').first.click()
+        page.locator('[data-ui-v2="rec-sheet"][data-deck-id="dtemp"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="rec-sheet"] [data-ui-v2="rec-rate-temp"]').inner_text() == line == "지금은 최근 환율로 저장했어요. 이 날짜의 환율이 들어오면 자동으로 바꿔요."
+        floor_ok(page, "기록 시트 (임시 환율)")
+        no_hscroll(page, width)
+        R.collect(page)
+        if R.shots:
+            os.makedirs(R.shots, exist_ok=True)
+            page.screenshot(path=os.path.join(R.shots, f"v191-rate-temp-{width}.png"))
+        page.keyboard.press("Escape")
+        page.locator('[data-ui="bottom-sheet"]').wait_for(state="detached")
+        n = len([l for l in logs() if "replaced by their dates' rates" in l or "the same record ids as an earlier entry" in l])
+        page.reload(wait_until="domcontentloaded")
+        at(page, "portfolio")
+        page.locator('[data-ui-v2="pf-rate-temp"]').wait_for(state="visible")
+        page.wait_for_timeout(300)
+        assert len([l for l in logs() if "replaced by their dates' rates" in l or "the same record ids as an earlier entry" in l]) == n    # nothing more on reload
+        floor_ok(page, "포트폴리오 (임시 환율)")
+        R.collect(page)
+    R.check(page, S, "임시 환율: 그날 환율이 들어온 기록은 불러올 때 바뀌고(1,338 → 1,350원, 표시 지움, console 한 줄 두 건) · 아직인 기록은 그대로 · 같은 기록의 두 history 항목은 하나로 · 기록 시트와 포트폴리오에 승인된 줄 한 번 · 다시 열어도 그대로", temp_rates)
+    ctx.close()
+    srv.shutdown()
+
+
 def scene_v196a_sold_out(R, files, width=390):
     """v19.6a final review S1 (rules.SOLD_OUT_BANDS "own", Jack's choice on 11-13): three stocks at a third each, one sold out
     and kept (남겨 두기). The two left keep their reading (할 일 없음: nobody is told 일부 팔아요 or 더 안 사요 because of the sale),
@@ -16502,6 +16582,7 @@ def main():
                    lambda: scene_v196a(R, files, 390), lambda: scene_v196a(R, files, 320),
                    lambda: scene_v196a(R, files, 1280),                                                     # v19.6a 팔았어요 · 배당 받았어요 · 내 수익
                    lambda: scene_v196a_outs(R, files, 390),                                                 # v19.6a 리뷰 2차: splitsInfo.fixed out 줄
+                   lambda: scene_v191_rate_temp(R, files, 390),                                             # #191 임시 환율 (Jack 11-27): 불러올 때 바꾸기 · 줄
                    lambda: scene_v196a_sold_out(R, files, 390),                                             # v19.6a 마지막 리뷰 S1: 다 팔고 남겨 둔 종목 ("own")
                    lambda: scene_v196a_sold_out(R, files, 1280),                                            # 같은 장면, PC (Jack 11-13: 다 판 종목 줄)
                    lambda: scene_v196a_split_price(R, files, 390),                                          # v19.6a 리뷰 3차: 분할 사이의 빈 가격
