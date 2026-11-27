@@ -251,6 +251,14 @@ export const C = {
     fgnNoCmp: "회사 전체 숫자와 비교할 수 없어서 이 숫자는 비워 두었어요.",   // chat (Jack, 2026-11-15: 그대로)
     // Jack, 2026-11-15 (Q10): 외국 회사 검사가 멈춘 날 맞춰 보지 못하고 비운 숫자 (data.json fgnCut "stopped"). 위 줄과 같은 자리 ('자료가 없어요' 대신).
     fgnStopped: "오늘은 이 숫자를 확인하지 못해서 비워 두었어요.",   // chat (Jack, 2026-11-15: 그대로)
+    // #181 켜기 (Jack, 2026-11-27 "#181: yes"): 재무제표 통화가 달러가 아닌 미국 회사(data.json fcur)의 PER · PBR 을 회사 합계로 다시 계산해
+    // 실은 날 (data.json fcurTot · 스위치 validate_data.US_FCUR_TOT_ON). 바꿔 계산한 PER · PBR 이 보이는 곳마다 한 번, 위 통화 줄과 같은 자리 규칙.
+    // {currency} = 아래 curName 의 한국어 이름 · {md} = 가격과 환율의 미국 종가 날짜 ("11월 20일"). Jack 의 승인을 기다려요 (null): 그동안 앱은 그 숫자를
+    // 보이지 않아요 (src/repair.js fcurTotStrip) — 제안: docs/tasks/v18.3-new-strings-pending.md
+    fcurTot: null,
+    // Jack, 2026-11-27 (Sony): 그 회사들 중 두 순이익(4분기 합 · 야후의 다른 길 또는 야후 PER 의 부호)이 맞지 않아 PER 을 비운 곳 (data.json fcurNi —
+    // Sony: 중단 사업). PER 이 빈 곳에 한 번, 위 통화 줄과 같은 자리 규칙 (가치 탭 · 가치 자세히). 문장은 fgnCut 과 같아요.
+    fcurNi: "자료의 숫자가 회사 전체 재무제표와 맞지 않아서 비워 두었어요.",   // chat (Jack, 2026-11-27: "Sony case: PER stays blank with …")
     // 통화 코드(ISO 4217) → 한국어 이름 (src/v2/fcur.js 가 읽어요). Jack, 2026-11-13: 제안대로 승인, 일본 엔화 · 중국 위안화 · 남아공 랜드만
     // 그의 말로. 여기 없는 코드는 줄 없이 '–' 만 (console 에 코드). 2026-11-12 에 나온 통화: BRL CAD CNY DKK EUR HKD JPY KZT SEK TWD VND
     // (미국 773종목 중 27곳).

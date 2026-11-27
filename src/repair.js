@@ -243,3 +243,29 @@ export const pxBadHides = (row, k) => pxBadFields(row).includes(k);
 // 베타, 낙폭, 3년 수익률) always are, so then every number of Jack's list on the company screens is blank. Otherwise (a bad day over
 // 252 bars back) each blanked number gets the short line ("…이 숫자는 비워 두었어요.") in its own place.
 export const pxBadFull = (row) => pxBadHides(row, "hi");
+
+// ================= 7. 달러 아닌 재무제표 회사의 회사 합계 숫자 (#181, Jack 2026-11-13 · switch-on yes 2026-11-27) =================
+// With the pipeline's switch validate_data.US_FCUR_TOT_ON on, a US-listed company whose statements are not in dollars (data.json
+// fcur) can carry PER, PBR and 배당수익률 again: computed from whole-company totals (market value ÷ net income · equity, both converted
+// at the exchange rate of the US close; the yield is Yahoo's, checked against the dividends actually paid), listed in its fcurTot
+// mark, with the 가치 score vz from that PBR. Those PER · PBR are converted numbers, so they need their own line ("재무제표가
+// {currency} 기준이라 {md} 미국 장 마감 환율로 달러로 바꿔 계산했어요." — 2.0 co.fcurTot, waiting for Jack's yes). A screen that
+// cannot say that line must not show the numbers either (CLAUDE.md: every adjusted number says what happened and why), so:
+// - the old app (예전 뱁새) always reads such a stock as #114 left it ("–", as it shows today): it has no place for the line;
+// - 2.0 does the same while the line's copy is missing (src/v2/load.js resolveLoad).
+// fcurTotStrip removes the marked numbers (and vz when the PBR was one) from each stock in place -> the tickers it changed.
+// keep(s) (2.0, #181 review round 1 nit): true for a stock whose line can be said (the words, its currency's Korean name and the US close
+// date are there); such a stock keeps its numbers. Default: none (the old app).
+export const FCUR_TOT_FIELDS = ["per", "pbr", "dy"];
+export function fcurTotStrip(stocks, keep = () => false) {
+  const out = [];
+  for (const s of Array.isArray(stocks) ? stocks : []) {
+    if (!s || typeof s !== "object" || s.fcurTot === undefined || keep(s)) continue;
+    const marks = Array.isArray(s.fcurTot) ? s.fcurTot.filter((k) => FCUR_TOT_FIELDS.includes(k)) : FCUR_TOT_FIELDS;
+    for (const k of marks) delete s[k];
+    if (!Array.isArray(s.fcurTot) || marks.includes("pbr")) delete s.vz;
+    delete s.fcurTot;
+    out.push(s.t);
+  }
+  return out;
+}

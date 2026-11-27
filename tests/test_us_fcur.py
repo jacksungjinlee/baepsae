@@ -9,6 +9,9 @@ us_fcur_summary · fetch_us(보관본 다시 받기) 와 validate_data.py check_
 - 보관본 항목에 새 모양 표시(k)가 없으면 받은 지 3일이 안 됐어도 한 번 다시 받아요
 - 관문: fcur 가 있는 미국 회사에 per · pbr · dy · vz 가 남아 있으면(0 도) 실패 · fcur 가 USD 거나 세 글자 대문자가 아니면 실패 ·
   fcur 가 없는 회사는 이 줄이 보지 않아요 (야후가 financialCurrency 를 주지 않아도 실패하지 않아요)
+- Jack, 2026-11-27 ("#181: yes"): 스위치 validate_data.US_FCUR_TOT_ON 이 켜지면 #181 의 회사 합계 숫자만 그 칸에 다시 실려요 (fetch_data
+  us_fcur_totals_step · 관문은 data.json usFcurTot 과 똑같은 숫자만 받아요: tests/test_us_fcur_totals.py). apply_us_info 는 늘 비워요.
+  아래 세 시험은 켜진 날에도 그 밖의 숫자는 예전 그대로 비거나 실패하는지 봐요
 """
 import copy
 import datetime as dt
@@ -65,6 +68,11 @@ def test_non_dollar_statements_blank_per_pbr_dy_and_keep_the_rest():
     assert r["cap"] == round(2.084e12 * FX / 1e12, 3) and r["val"] == round(1.3e7 * 401.98 * FX / 1e8, 1)
     assert r["nk"] == "Taiwan Semiconductor Manufactur" and r["de"] == "Makes chips."
     json.dumps(r, allow_nan=False)
+    # Jack, 2026-11-27 (#181 켜기): 회사 합계 숫자는 apply_us_info 뒤에 us_fcur_totals_step 만 실어요. 켜진 날의 숫자 · 표시(fcurTot · fcurNi)가
+    # 붙은 행에 다시 붙여도 apply_us_info 는 #114 그대로 비우고 표시도 남기지 않아요
+    r2 = dict(rec(), per=21.6, pbr=7.79, dy=1.18, fcurTot=["per", "pbr", "dy"], fcurNi=True)
+    assert F.apply_us_info(r2, info("TWD"), px_then=401.98, fx=FX) is True
+    assert not any(k in r2 for k in ("per", "pbr", "dy", "fcurTot", "fcurNi")), r2
 
 
 def test_dollar_or_unknown_statements_are_unchanged():
@@ -186,7 +194,9 @@ def _fake_yf(syms, infos, calls, start, end):
     return types.SimpleNamespace(download=download, Ticker=Ticker)
 
 
-def test_fetch_us_refetches_old_cache_entries_and_blanks_the_published_rows(tmp_path, monkeypatch):
+@pytest.mark.parametrize("on", [False, True])   # Jack, 2026-11-27 (#181 켜기): 켜져 있어도 회사 합계를 확인하지 못한 회사는 빈 칸 그대로
+def test_fetch_us_refetches_old_cache_entries_and_blanks_the_published_rows(tmp_path, monkeypatch, on):
+    monkeypatch.setattr(F, "US_FCUR_TOT_ON", on)
     today = dt.date(2026, 11, 12)
     syms = ["AAPL", "TSM", "KSPI", "FISV"]
     infos = {"AAPL": info("USD", shortName="Apple Inc."), "TSM": info("TWD"), "KSPI": info("KZT", shortName="Kaspi.kz"),
@@ -211,8 +221,12 @@ def test_fetch_us_refetches_old_cache_entries_and_blanks_the_published_rows(tmp_
     by = {r["t"]: r for r in us}
     assert by["TSM"]["fcur"] == "TWD" and by["KSPI"]["fcur"] == "KZT"
     for t in ("TSM", "KSPI"):
-        assert not any(k in by[t] for k in ("per", "pbr", "dy")), by[t]
+        assert not any(k in by[t] for k in ("per", "pbr", "dy", "fcurTot", "fcurNi")), by[t]
         assert by[t]["cap"] > 0 and by[t]["roe"] > 0
+    # 회사 합계 기록 (#181): 이 가짜 야후에는 재무제표가 없어서 두 회사의 PER · PBR 은 '재무제표를 받지 못함' 으로 빈 칸 — 켜져 있어도 싣지 않아요
+    tot = meta["usFcurTot"]
+    assert tot["on"] is on and set(tot["rows"]) == {"TSM", "KSPI"}
+    assert all(tot["rows"][t]["why"]["per"] == "stmt" and tot["rows"][t]["why"]["pbr"] == "stmt" for t in ("TSM", "KSPI")), tot["rows"]
     assert "fcur" not in by["AAPL"] and by["AAPL"]["pbr"] > 0
     assert "fcur" not in by["FISV"] and by["FISV"]["pbr"] > 0             # 모름: 비우지 않아요 (로그에 남아요)
     assert any(x.startswith("· 미국 재무제표 통화가 달러가 아닌 회사: 2곳") for x in lines), lines
@@ -248,10 +262,38 @@ def test_gate_passes_blanked_companies_and_shows_the_count():
     assert value == "4곳 (EUR 2 · KZT 1 · TWD 1) · 남은 칸 0"
 
 
+# Jack, 2026-11-27 ("#181: yes"): 스위치가 켜진 관문도 회사 합계 기록(usFcurTot)과 똑같은 숫자만 받아요. 여기 남은 숫자는 기록과 다르거나
+# (26.1 ≠ 21.6 · 78.88 ≠ 7.79 · 0.94 ≠ 1.18 · 0 이하) 표시가 없어서(marked False) 켜져 있어도 예전처럼 실패해요.
+# 2026-11-28 (#181 켜기 리뷰 2차 nit · 더 엄격하게만): 켜진 두 경우가 의도한 까닭(숫자가 다름)으로 실패하는지 봐요 — 기록에 날짜 · 환율 · 재료 ·
+# cap 과 맞는 시가총액을 모두 넣고 관문에 파일의 날짜와 원/달러를 넘겨요. 그 기록의 바로 그 숫자(표시 있음)는 받는다는 것을 먼저 확인해요 (대조)
+TOT_D, TOT_FXW, TOT_R = "2026-11-20", 1345.0, 32.988
+TOT_MC = round(1.0 * 1e12 / TOT_FXW)                    # us_row 의 cap 1.0 조원 = 이 달러 시가총액 × 그날 원/달러
+TOT_ROW = {"cur": "TWD", "px": 10.0, "mc": TOT_MC, "eq": [round(TOT_MC * TOT_R / 7.79), "2026-09-30"],
+           "ni": [round(TOT_MC * TOT_R / 21.6), "2026-09-30", "q4"], "fx": TOT_R, "per": 21.6, "pbr": 7.79, "dy": 1.18, "why": {}}
+
+
+@pytest.mark.parametrize("on, marked", [(False, False), (True, False), (True, True)])
 @pytest.mark.parametrize("k,v", [("per", 26.1), ("pbr", 78.88), ("dy", 0.94), ("dy", 0.01), ("vz", 0), ("pbr", 0)])   # 0% 는 스위치 시험이 봐요
-def test_gate_fails_when_a_blanked_number_is_left(k, v):
-    name, value, _, st = gate_row([us_row("TSM", fcur="TWD", **{k: v}), us_row("KSPI", fcur="KZT")])
+def test_gate_fails_when_a_blanked_number_is_left(k, v, on, marked, monkeypatch):
+    monkeypatch.setattr(V, "US_FCUR_TOT_ON", on)
+    tot = {"v": 1, "on": True, "d": TOT_D, "fx": {"TWD": {"r": TOT_R}}, "rows": {"TSM": dict(TOT_ROW)}}
+    # 대조: 같은 기록 · 날짜 · 원/달러로, 기록의 그 숫자를 표시와 함께 실은 종목은 켜진 관문이 받아요 (꺼진 관문은 받지 않아요)
+    good = us_row("TSM", fcur="TWD", fcurTot=[k if k != "vz" else "pbr"], **({"pbr": 7.79, "vz": v} if k == "vz" else {k: TOT_ROW[k]}))
+    want = ({"pbr", "vz"} if k in ("pbr", "vz") else {k}) if on else set()
+    assert V.us_fcur_tot_ok(good, tot, TOT_D, TOT_FXW) == want
+    rep = V.Report()
+    V.check_us_fcur(rep, [good, us_row("KSPI", fcur="KZT")], tot, TOT_D, TOT_FXW)
+    assert rep.rows[0][3] == ("PASS" if on else "FAIL"), rep.rows
+    s = us_row("TSM", fcur="TWD", **{k: v})
+    if marked:
+        s["fcurTot"] = [k if k != "vz" else "pbr"]
+    assert V.us_fcur_tot_ok(s, tot, TOT_D, TOT_FXW) == set()
+    rep = V.Report()
+    V.check_us_fcur(rep, [s, us_row("KSPI", fcur="KZT")], tot, TOT_D, TOT_FXW)
+    assert len(rep.rows) == 1
+    name, value, _, st = rep.rows[0]
     assert st == "FAIL" and f"TSM.{k}" in value and value.startswith("2곳 (KZT 1 · TWD 1) · 남은 칸 1"), value
+    assert value.endswith(" · 회사 합계 숫자를 실은 곳 0 (usFcurTot 과 같음)") if on else value == f"2곳 (KZT 1 · TWD 1) · 남은 칸 1 (예: TSM.{k})"
 
 
 @pytest.mark.parametrize("fc", ["USD", "twd", "TW", "", None, 7])

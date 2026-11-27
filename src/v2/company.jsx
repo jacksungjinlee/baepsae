@@ -42,9 +42,9 @@ import { isCompany } from "./stocklist.js";
 import { todayD1, isPreferred } from "./engine.js";
 import { EarnTab, ValueTab, DivTab, DiscTab, ValueMore, EarnMore } from "./cotabs.jsx";
 import { icrOffShown, stmtNotWonFor, unitHeldFor, unitRowsBlank, pxBadFor, pxBadFullFor, pxBadRowsBlank } from "./fix.js";
-import { IcrOffNote, IcrOffLine, StmtCurNote, FcurNote, PbrZeroNote, FgnCutNote, UnitChkNote, NoStmtNote, PxBadNote, PxBadOneNote, pxBadOneText,
+import { IcrOffNote, IcrOffLine, StmtCurNote, FcurNote, FcurTotNote, PbrZeroNote, FgnCutNote, UnitChkNote, NoStmtNote, PxBadNote, PxBadOneNote, pxBadOneText,
   DayNote, PrefNote, PrefFitNote } from "./fixnote.jsx";
-import { fcurRowsBlank, fcurBlank, fcurDyBlank, pbrZeroOf, pbrZeroRowsBlank, fgnBlank, fgnRowsBlank } from "./fcur.js";
+import { fcurRowsBlank, fcurBlankOf, fcurDyBlank, fcurTotOf, fcurTotRowsShown, pbrZeroOf, pbrZeroRowsBlank, fgnBlank, fgnRowsBlank } from "./fcur.js";
 import { RecordButton, RecordFlow, companyFlow } from "./records.jsx";
 import { WatchButton } from "./watch.jsx";
 import { decksFor } from "./records.js";
@@ -99,7 +99,9 @@ export function tileViews(load, s) {
   // A PBR that rounds to 0.00 (data.json pbrZero, Jack 2026-11-13): the 가치 tile the same way, rule "pbr0" and its own line.
   // A foreign company's PBR or yield that did not match its own totals (data.json fgnCut, Jack 2026-11-14): rule "fgn", its line.
   const blankTile = (topic, label, rule = "fcur") => out.push({ topic, label: T().label[topic], phrase: "–", number: `${label} –`, rule, data: {}, basis: null, art: null });
-  if (fcurBlank(s) && T().label.value) blankTile("value", "PBR");
+  // #181 switch-on (2026-11-27): the 가치 tile's number is the PBR alone, so the tile asks about the PBR (with the switch off it is
+  // blank exactly when PER is too: the same tiles as before)
+  if (fcurBlankOf(s, "pbr") && T().label.value) blankTile("value", "PBR");
   else if (pbrZeroOf(s) && T().label.value) blankTile("value", "PBR", "pbr0");
   else if (fgnBlank(s, "pbr") && T().label.value) blankTile("value", "PBR", "fgn");
   else {
@@ -107,6 +109,9 @@ export function tileViews(load, s) {
     const number = r.med != null && T().pbr ? fill(T().pbr, { x: nf(r.pbr, 2), y: nf(r.med, 2) }) : r.pbr != null ? `PBR ${timesText(r.pbr, 2)}` : null;
     add("value", T().label.value, r, r.rule === "na" ? na : T().value[r.rule], number, { pbr: r.pbr, med: r.med, n: r.n },
       r.med != null ? { kind: "scale", pbr: r.pbr, med: r.med, ends: !!(number && T().pbr && number === fill(T().pbr, { x: nf(r.pbr, 2), y: nf(r.med, 2) })) } : null);
+    // #181 switch-on: a PBR converted from whole-company totals (data.json fcurTot) -> Tiles puts the converted line under the tiles
+    const vt = out.find((x) => x.topic === "value");
+    if (vt && vt.number && fcurTotOf(s).includes("pbr")) vt.conv = true;
   }
   if (fcurDyBlank(s) && T().label.div && C.pick.receipt.yield) blankTile("div", C.pick.receipt.yield);
   else if (fgnBlank(s, "dy") && T().label.div && C.pick.receipt.yield) blankTile("div", C.pick.receipt.yield, "fgn");
@@ -253,6 +258,8 @@ function Tiles({ load, s, onTab, tabsOn }) {
       </div>
       {/* US statements not in dollars (data.json fcur): the reason once, right under the 가치 · 배당 tiles showing – */}
       {views.some((v) => v.rule === "fcur") && <FcurNote s={s} style={{ margin: `${SPACE(2)}px ${SPACE(1)}px 0` }} />}
+      {/* #181 switch-on: a PBR converted from whole-company totals (data.json fcurTot): its line once, under the tiles */}
+      {views.some((v) => v.conv) && <FcurTotNote s={s} md={md} fields={["pbr"]} style={{ margin: `${SPACE(2)}px ${SPACE(1)}px 0` }} />}
       {/* a PBR that rounds to 0.00 (data.json pbrZero): its own line, right under the 가치 tile showing – */}
       {views.some((v) => v.rule === "pbr0") && <PbrZeroNote s={s} style={{ margin: `${SPACE(2)}px ${SPACE(1)}px 0` }} />}
       {/* a foreign company's PBR or yield that did not match its own totals (data.json fgnCut): the line once, under those tiles */}
@@ -562,6 +569,8 @@ function Fit({ load, s, store, wide }) {
       {pref && <PrefFitNote s={s} />}
       {/* a 가치 or 배당 row with no rank because its number was not computed (data.json fcur): the reason once, under the rows */}
       {fcurRowsBlank(s, mine.ids.map((id) => m.get(id))) && <FcurNote s={s} />}
+      {/* #181 switch-on: the 가치 row ranked by a PBR converted from whole-company totals: that line once, under the rows */}
+      {fcurTotRowsShown(s, mine.ids.map((id) => m.get(id))) && <FcurTotNote s={s} md={priceMd(load, s)} fields={["pbr"]} />}
       {pbrZeroRowsBlank(s, mine.ids.map((id) => m.get(id))) && <PbrZeroNote s={s} />}
       {fgnRowsBlank(s, mine.ids.map((id) => m.get(id))) && <FgnCutNote s={s} fields={["pbr", "dy"]} />}
       {!pref && unitRowsBlank(s, co, mine.ids.map((id) => m.get(id))) && <UnitChkNote s={s} co={co} />}
@@ -579,6 +588,7 @@ function Fit({ load, s, store, wide }) {
           <div style={{ marginTop: SPACE(2) }}>{RANK_CARDS.map((id) => <RankRow key={id} id={id} r={cm.get(id)} mine={mine.picked && mine.ids.includes(id)} basis />)}</div>
           {pref && <PrefFitNote s={s} />}
           {fcurRowsBlank(s, cur.rows) && <FcurNote s={s} />}
+          {fcurTotRowsShown(s, cur.rows) && <FcurTotNote s={s} md={priceMd(load, s)} fields={["pbr"]} />}
           {pbrZeroRowsBlank(s, cur.rows) && <PbrZeroNote s={s} />}
           {fgnRowsBlank(s, cur.rows) && <FgnCutNote s={s} fields={["pbr", "dy"]} />}
           {!pref && unitRowsBlank(s, co, cur.rows) && <UnitChkNote s={s} co={co} />}

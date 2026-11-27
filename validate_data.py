@@ -518,6 +518,29 @@ US_FCUR_BLANK = ("per", "pbr", "dy", "vz")
 # (0 이 아닌 배당수익률은 언제나 실패). False 로 바꾸면 0% 도 늘 비우고 관문도 0 을 남은 칸으로 봐요.
 US_FCUR_KEEP_ZERO_DY = True
 US_FCUR_SHOW = 10        # 관문 값 칸에 적는 티커 수 (나머지는 rep.detail 에 모두)
+# Jack, 2026-11-13 ("Next, within days: bring all three back for them … from whole-company totals … Prove it against today's correct
+# figures before showing anything."): fetch_data.us_fcur_totals_step 이 fcur 회사의 PER · PBR · 배당수익률을 회사 합계로 계산해요 (시가총액 ÷
+# 최근 분기 자본 · ÷ 지난 4분기 순이익, 자본과 순이익은 그날 미국 종가 시각의 환율로 달러로 · 배당은 실제로 받은 배당 ÷ 종가). 결과는 늘
+# data.json usFcurTot 에 적고, 아래 줄(check_us_fcur_tot)이 경고만 해요. 이 스위치가 종목 칸에 싣을지를 정해요:
+#   False (지금) = 계산 · 기록 · 경고만. 종목의 per · pbr · dy · vz 는 #114 그대로 비어 있고 화면도 그대로예요.
+#   True = 확인된 숫자를 종목 칸에 싣고 rec["fcurTot"] 에 어느 칸인지, 두 순이익이 맞지 않아 PER 을 비운 회사(Sony)에 rec["fcurNi"] 를 적어요.
+# Jack, 2026-11-27 ("#181: yes" — #114 의 관문 줄 · 시험 셋 · 앱을 바꿔 켜기): 켜는 데 필요한 것은 모두 있어요 — check_us_fcur 는 켜져 있으면
+#   기록과 똑같은 숫자만 받고 (us_fcur_tot_ok), 앱은 칸마다 이유를 말해요 (src/v2/fcur.js: 되살린 숫자 밑에 바꿔 계산한 줄 co.fcurTot · Sony 의
+#   PER 은 Jack 의 줄 co.fcurNi · 남은 빈 칸은 #114 의 줄). 그래도 아직 False 예요: 바꿔 계산한 숫자의 줄 co.fcurTot ("재무제표가 {currency} 기준이라
+#   {md} 미국 장 마감 환율로 달러로 바꿔 계산했어요.") 을 Jack 이 승인하지 않았고, 그 줄 없이 숫자를 보이면 "고치거나 추정한 숫자는 무슨 일인지
+#   말한다" 는 규칙을 어겨요. 승인되면 그 문구를 넣고 이 한 줄을 True 로 바꿔요 (tests/test_us_fcur_tot_app.py 가 둘이 함께인지 봐요).
+US_FCUR_TOT_ON = False
+US_FCUR_TOT_WARN = 1.5   # 경고: 회사 합계로 계산한 PER 이 야후 PER(그날 종가 기준)과, PER · PBR 이 지난 발행본(가격을 뺀 값)과 이만큼 넘게 다르면 이름을 적어요
+US_FCUR_TOT_DROP = 0.5   # 경고: 계산된 PER · PBR 수가 지난 발행본의 이 비율 아래로 줄면 (재무제표를 받지 못한 날 · 지난 발행본에 5곳 이상일 때)
+US_FCUR_TOT_DROP_MIN = 5
+US_FCUR_TOT_ROW = "달러 아닌 재무제표 회사: 회사 합계로 계산한 PER · PBR · 배당수익률 (usFcurTot · 경고만)"
+US_FCUR_TOT_FIELDS = ("per", "pbr", "dy")
+# 2026-11-28 (#181 켜기 리뷰 1차 · us_fcur_tot_ok): 스위치가 켜진 #114 줄이 받는 숫자의 범위 (다른 미국 종목과 같아요: fetch_data US_FCUR_PER_MAX ·
+# US_PBR_MIN · US_FCUR_PBR_MAX · 배당수익률 30% 아래) · 시가총액(달러 × 파일의 fx) ↔ 종목 cap(조원) 차이 상한 (반올림 0.0005조 · 원/달러 0.1원 반올림 넘게)
+US_FCUR_TOT_PER_MAX = 500.0
+US_FCUR_TOT_PBR_RANGE = (0.005, 100.0)
+US_FCUR_TOT_DY_MAX = 30.0
+US_FCUR_TOT_CAP_TOL, US_FCUR_TOT_CAP_ABS = 0.005, 0.0006
 # v19.1b (새 줄 — Jack 의 승인이 있어야 머지해요 · PR 의 '안전 규칙 변경'): 분할에 안전한 국내 배당 · 베타 표준오차 · 재무 경고 검사 기록.
 # data.json 에 divCheck 가 있으면(v19.1b 파이프라인이 늘 써요) 아래 검사가 모두 돌아요. 없으면 v19.1b 전 데이터라 경고 한 줄만 —
 # 단, 직전 발행본에 있었는데 빠졌으면 실패. 기준은 첫 시험 실행의 숫자를 Jack 이 보고 승인한 뒤 고정돼요.
@@ -3239,8 +3262,9 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     # ── v17.5.1 (v18.0 Part A + 추가 4–9) ──
     check_v1751(rep, cur, kr, us, by, comps, px, today, hilo, us_own=us_own)
     check_v1752(rep, data, kr, us, pdata)
-    check_us_fcur(rep, us)                # Jack, 2026-11-12: 재무제표 통화가 달러가 아닌 미국 회사
+    check_us_fcur(rep, us, *((data.get("usFcurTot"), data.get("usPxDate"), data.get("fx")) if isinstance(data, dict) else (None, None, None)))   # Jack, 2026-11-12: 재무제표 통화가 달러가 아닌 미국 회사 (11-27: 켜면 회사 합계 숫자만)
     check_us_fcur_more(rep, data, us, pdata)   # #114 리뷰: 통화를 모르는 회사 (경고) · 어제 있던 통화가 사라짐
+    check_us_fcur_tot_safe(rep, data, us, pdata, mode)   # 2026-11-23: 그 회사들의 회사 합계 숫자 기록 (usFcurTot · 경고만 · 실패 없음 · 멈춰도 경고)
     check_us_extra(rep, data, us, mode)   # 2026-11-14: 손으로 더한 미국 종목이 있거나 빠진 이유가 있는지
     check_us_share_class(rep, data, us, mode)   # 2026-11-15: 주식 종류 티커 (BF-B) 가 있거나 빠진 이유 · 바꾸지 못한 티커 (경고)
     check_us_sp_carry(rep, data, pdata)   # 2026-11-28: 지난 발행본에서 이어 쓴 S&P 500 목록 (usListSym.spCarried · 경고만 · 실패 없음 · 멈춰도 경고)
@@ -4876,10 +4900,101 @@ def check_v1752(rep, data, kr, us, pdata):
             rep.add(f"국내 {k} 채움 변화", v >= pv - DIV_COVER_DROP, f"{pv:.1f} → {v:.1f}", f"{DIV_COVER_DROP:g}점 넘게 줄면 실패")
 
 
-def check_us_fcur(rep, us):
+def _real(x):
+    """진짜 숫자만 (int · float, bool 아님, 유한) → float, 아니면 None. 글자로 된 숫자("21.6")는 숫자가 아니에요 (us_fcur_tot_ok · 리뷰 1차)."""
+    return float(x) if isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) else None
+
+
+def us_fcur_tot_ok(s, tot, px_date=None, fx_won=None, on=None):
+    """Jack, 2026-11-27 ("#181: yes" — 켜기): 스위치 US_FCUR_TOT_ON 이 켜져 있을 때 fcur 회사 s 의 칸 중 받아 주는 칸 (set). 회사 합계 기록
+    (tot = data.json usFcurTot, fetch_data.us_fcur_totals_step)과 똑같은 숫자만이에요. 모두 맞아야 해요: 스위치 켜짐 · 기록이 dict 이고 on 이
+    True · err 없음 · 그 회사 줄(rows[t])이 dict 이고 why 가 dict · 줄의 종가(px)가 종목 가격과 같음 · 종목의 fcurTot 가 칸 이름 목록(per · pbr ·
+    dy 만, 겹침 없음) · 목록의 칸마다 종목 값 = 줄 값 (0 보다 큰 숫자) 이고 줄의 why 에 그 칸이 없음. 가치 점수 vz 는 PBR 을 받은 회사만 (그 PBR 의
+    순위 — #114 는 PBR 이 비어 vz 도 비웠어요). 하나라도 어긋나거나 스위치가 꺼져 있으면 빈 set: #114 그대로 (숫자가 있으면 실패).
+    2026-11-28 (#181 켜기 리뷰 1차 B1 · S1 — 더 엄격하게만, 스위치가 켜진 길에서만): 기록의 날짜 d = 파일의 usPxDate (px_date) · 종목에 자기 날짜
+    종가(pxd) · 마지막 확인 종가(pxc) 표시 없음 · ETF · 펀드 아님 · fcur 가 알려진 통화(XXX 아님)이고 줄의 cur 와 같음 · 기록의 그 통화 환율 fx[cur].r
+    = 줄의 fx · 모든 값이 진짜 숫자 (글자 · bool · 무한 아님) · 줄의 시가총액 mc 를 그날 원/달러(fx_won = 파일의 fx)로 바꾸면 종목의 cap(조원)과
+    US_FCUR_TOT_CAP_TOL 안 (분할 배율이 빠진 시가총액을 잡아요) · PER 은 줄의 ni [순이익 > 0, …] 가 있고 0 < PER < US_FCUR_TOT_PER_MAX 이고
+    mc ÷ (ni ÷ fx) 와 반올림 안에서 같음 · PBR 은 eq [자본 > 0, …] 가 있고 범위 안이고 mc ÷ (eq ÷ fx) 와 반올림 안에서 같음 · 배당수익률은 0 < dy <
+    US_FCUR_TOT_DY_MAX · 가치 점수는 없거나 0~100 숫자.
+    2026-11-28 (#181 켜기 리뷰 2차 B1): 환율 · 시가총액 · cap · 재료(eq · ni)는 PER · PBR 표시에만 요구해요 — 배당수익률은 야후의 달러 숫자를
+    실제 배당으로 확인한 것이라 셋 다 쓰지 않아요. 환율을 확인하지 못한 날(ECOS 가 멈춤 · 야후 환율 봉 없음 · 그 통화 회사의 재무제표를 받지
+    못함 · ECOS 표에 없는 통화 · 읽지 못한 통화 XXX)이나 시가총액이 없거나 cap 과 맞지 않는 날, 단계는 PER · PBR 을 까닭과 함께 비우고 배당수익률만
+    실어요. 그 배당수익률은 여기서 받아요 (예전처럼 발행을 막지 않아요). 배당수익률은 d265e14 의 확인을 모두 (켜짐 · err 없음 · 줄 · why · 표시 ·
+    같은 값 > 0 · 같은 종가) 그리고 리뷰 1차 뒤의 확인 중 환율과 상관없는 것을 모두 (날짜 · pxd · pxc · ETF · 펀드 · 세 글자 통화 = 줄의 cur ·
+    진짜 숫자 · 범위) 그대로 받아요 — 더 느슨해진 것은 없어요. PER · PBR 표시가 하나라도 있으면 예전 그대로 모두 요구해요 (XXX 도 안 됨).
+    2026-11-28 (리뷰 3차 nit): on = 스위치 대신 (기본: 관문의 US_FCUR_TOT_ON). 파이프라인의 회사 합계 단계만 on=True 로 불러, 실을 숫자를 관문과
+    똑같이 먼저 봐요 (fetch_data.us_fcur_tot_self_check). 관문 줄(check_us_fcur)은 늘 기본으로 불러요 — 관문은 그대로예요."""
+    if not (US_FCUR_TOT_ON if on is None else on) or not isinstance(tot, dict) or tot.get("on") is not True or tot.get("err"):
+        return set()
+    if not isinstance(px_date, str) or tot.get("d") != px_date:
+        return set()
+    if s.get("pxd") or s.get("pxc") or s.get("etf") is True or s.get("fund"):
+        return set()
+    fc = s.get("fcur")
+    if not (isinstance(fc, str) and re.fullmatch(r"[A-Z]{3}", fc) and fc != "USD"):
+        return set()
+    rows = tot.get("rows")
+    row = rows.get(s.get("t")) if isinstance(rows, dict) and isinstance(s.get("t"), str) else None
+    marks = s.get("fcurTot")
+    if not isinstance(row, dict) or not isinstance(row.get("why"), dict) or not isinstance(marks, list) or not marks:
+        return set()
+    if row.get("cur") != fc:
+        return set()
+    px = _real(row.get("px"))
+    if px is None or px <= 0 or px != _real(s.get("price")):
+        return set()
+    r = mc = None
+    if any(f in ("per", "pbr") for f in marks if isinstance(f, str)):   # 리뷰 2차 B1: 환율 · 시가총액 · cap 은 PER · PBR 에만
+        if fc == "XXX":
+            return set()
+        fxe = tot.get("fx").get(fc) if isinstance(tot.get("fx"), dict) else None
+        r = _real(row.get("fx"))
+        if r is None or r <= 0 or not isinstance(fxe, dict) or _real(fxe.get("r")) != r:
+            return set()
+        mc, cap, fw = _real(row.get("mc")), _real(s.get("cap")), _real(fx_won)
+        if not (mc and mc > 0 and cap and cap > 0 and fw and fw > 0) or abs(mc * fw / 1e12 - cap) > max(US_FCUR_TOT_CAP_ABS, cap * US_FCUR_TOT_CAP_TOL):
+            return set()
+
+    def base(key):                               # 줄의 eq · ni 의 첫 값 (그 통화 · 0 보다 큰 진짜 숫자만)
+        x = row.get(key)
+        v = _real(x[0]) if isinstance(x, list) and x else None
+        return v if v is not None and v > 0 else None
+    ok = set()
+    for f in marks:
+        if not isinstance(f, str) or f not in US_FCUR_TOT_FIELDS or f in ok or f in row["why"]:
+            return set()
+        v, w = _real(s.get(f)), _real(row.get(f))
+        if v is None or w is None or v <= 0 or v != w:
+            return set()
+        # 리뷰 2차 (on2.py 'tiny ni'): 0 에 가까운 재료(5e-324 ÷ 환율 = 0.0)로 나누다 관문이 멈추지 않게 — 나눗수가 0 보다 커야 해요 (아니면 받지 않음)
+        if f == "per":
+            ni = base("ni")
+            dn = ni / r if ni is not None else 0.0
+            if not v < US_FCUR_TOT_PER_MAX or not dn > 0 or abs(mc / dn - v) > 0.05 + 1e-6 * v:
+                return set()
+        elif f == "pbr":
+            eq = base("eq")
+            dn = eq / r if eq is not None else 0.0
+            if not US_FCUR_TOT_PBR_RANGE[0] <= v < US_FCUR_TOT_PBR_RANGE[1] or not dn > 0 or abs(mc / dn - v) > 0.005 + 1e-6 * v:
+                return set()
+        elif not v < US_FCUR_TOT_DY_MAX:
+            return set()
+        ok.add(f)
+    if "pbr" in ok:
+        vz = s.get("vz")
+        if vz is not None and not (_real(vz) is not None and 0 <= vz <= 100):
+            return set()
+        ok.add("vz")
+    return ok
+
+
+def check_us_fcur(rep, us, tot=None, px_date=None, fx_won=None):
     """Jack, 2026-11-12: 재무제표 통화가 달러가 아닌 미국 회사(fcur)는 PER · PBR · 배당수익률 · 가치 점수가 비어 있어야 해요. fcur 는 세 글자
-    대문자이고 USD 가 아니어야 해요 (XXX = 파이프라인이 읽지 못한 통화 · 그래도 비워요). 값: fcur 회사 수 (통화별) · 남은 칸."""
-    bad, by = [], collections.Counter()
+    대문자이고 USD 가 아니어야 해요 (XXX = 파이프라인이 읽지 못한 통화 · 그래도 비워요). 값: fcur 회사 수 (통화별) · 남은 칸.
+    Jack, 2026-11-27 ("#181: yes"): 스위치 US_FCUR_TOT_ON 이 켜져 있으면 회사 합계로 계산한 숫자만 받아요 — us_fcur_tot_ok 가 tot (data.json
+    usFcurTot) 과 똑같다고 한 칸 (과 그 PBR 의 가치 점수). 그 밖의 숫자는 예전처럼 실패해요. 스위치가 꺼져 있으면 예전과 한 글자도 다르지 않아요."""
+    bad, by, back = [], collections.Counter(), 0
     for s in us:
         if "fcur" not in s:
             continue
@@ -4888,12 +5003,158 @@ def check_us_fcur(rep, us):
             bad.append(f"{t}.fcur {fc!r}")
             continue
         by[fc] += 1
-        bad += [f"{t}.{k}" for k in US_FCUR_BLANK if s.get(k) is not None and not (k == "dy" and US_FCUR_KEEP_ZERO_DY and s.get(k) == 0)]
+        ok = us_fcur_tot_ok(s, tot, px_date, fx_won)
+        back += bool(ok)
+        bad += [f"{t}.{k}" for k in US_FCUR_BLANK if s.get(k) is not None and not (k == "dy" and US_FCUR_KEEP_ZERO_DY and s.get(k) == 0)
+                and k not in ok]
     n = sum(by.values())
     rep.add("미국 재무제표 통화가 달러가 아닌 회사: PER·PBR·배당수익률·가치 점수 빈 칸", not bad,
             f"{n}곳" + (f" ({' · '.join(f'{c} {k}' for c, k in sorted(by.items(), key=lambda kv: (-kv[1], kv[0])))})" if by else "")
-            + f" · 남은 칸 {len(bad)}" + (f" (예: {', '.join(bad[:4])})" if bad else ""),
-            "fcur 가 있는 회사는 per·pbr·dy·vz 없음 (0 도 안 됨" + (", 배당 0% 는 됨" if US_FCUR_KEEP_ZERO_DY else "") + ") · fcur 는 USD 가 아닌 세 글자")
+            + f" · 남은 칸 {len(bad)}" + (f" (예: {', '.join(bad[:4])})" if bad else "")
+            + (f" · 회사 합계 숫자를 실은 곳 {back} (usFcurTot 과 같음)" if US_FCUR_TOT_ON else ""),
+            "fcur 가 있는 회사는 per·pbr·dy·vz 없음 (0 도 안 됨" + (", 배당 0% 는 됨" if US_FCUR_KEEP_ZERO_DY else "") + ") · fcur 는 USD 가 아닌 세 글자"
+            + (" · 스위치 켜짐: 회사 합계 기록(usFcurTot)과 똑같은 숫자(fcurTot 표시 · 그날 종가)와 그 PBR 의 가치 점수만 됨" if US_FCUR_TOT_ON else ""))
+
+
+def _tot_fold(a, b):
+    """큰 값 ÷ 작은 값 (둘 다 양수일 때만 · 아니면 None)."""
+    a, b = num(a), num(b)
+    return max(a / b, b / a) if a and b and a > 0 and b > 0 else None
+
+
+def _tot_rows(rec):
+    """usFcurTot 의 rows 중 모양이 맞는 줄만 {티커(글자): 줄(dict)} (기록이 dict 가 아니거나 rows 가 dict 가 아니면 {})."""
+    rows = rec.get("rows") if isinstance(rec, dict) else None
+    return {t: r for t, r in rows.items() if isinstance(t, str) and isinstance(r, dict)} if isinstance(rows, dict) else {}
+
+
+def _tot_names(rows):
+    """이름을 적을 회사들 {이름 열쇠: 글} — 야후 PER 과 US_FCUR_TOT_WARN 배 넘게 다름 (pe) · 우리 순이익의 부호가 야후 PER 과 어긋나 비움 (sign) ·
+    기록은 배당이 있다는데 야후는 배당 없음 (종목은 #114 의 0% · zero). 지난 발행본과 같은 열쇠는 경고하지 않아요 (리뷰 2026-11-23: 날마다 같은 이름이
+    경고 자리를 차지하지 않게 — 모든 이름은 detail 에)."""
+    out = {}
+    for t, r in rows.items():
+        y = r.get("y") if isinstance(r.get("y"), list) and len(r.get("y")) == 3 else [None, None, None]
+        fy = _tot_fold(r.get("per"), y[0])
+        if fy is not None and fy > US_FCUR_TOT_WARN:
+            out[f"pe:{t}"] = f"{t} PER {r.get('per')} ↔ 야후 {y[0]}"
+        why = r.get("why") if isinstance(r.get("why"), dict) else {}
+        if why.get("per") == "niUnconfirmed" and r.get("signY") is not None:
+            out[f"sign:{t}"] = f"{t} 회사 합계 순이익 부호 ↔ 야후 PER {r.get('signY')} (PER 비움)"
+        if why.get("dy") == "divMismatch" and num(y[2]) == 0:
+            out[f"zero:{t}"] = f"{t} 배당 기록은 있는데 야후는 배당 없음 (종목은 #114 의 0%)"
+    return out
+
+
+def check_us_fcur_tot(rep, data, us, pdata, mode="publish"):
+    """2026-11-23 (더하기만 · **경고만 — 실패하지 않아요**, 부를 때도 감싸요): 달러 아닌 재무제표 회사(fcur)의 회사 합계 숫자 기록(data.json
+    usFcurTot · fetch_data.us_fcur_totals_step). 이름을 적는 것 (_tot_names: 지난 발행본에 없던 이름만 경고 · 모두 detail 에): 회사 합계로 계산한 PER 이
+    야후 PER 과 US_FCUR_TOT_WARN 배 넘게 다름 (PER 만 · 야후 PBR 은 #114 가 비운 그 숫자라 늘 어긋나요) · 우리 순이익의 부호가 야후 PER 과 어긋나
+    비운 곳 · 기록은 배당이 있는데 종목은 #114 의 0%. 늘 경고: 지난 발행본의 같은 회사 줄과 가격을 뺀 값(PER ÷ 종가 · PBR ÷ 종가)이 그만큼 넘게
+    바뀜 (새 분기 · 단위 · 주식 수가 바뀐 것일 수 있어요) · 계산된 PER · PBR 수가 지난 발행본의 절반 아래 (재무제표를 받지 못한 날) · 시간 한도 ·
+    기록의 모양이 틀림 · 이 단계가 멈춤 (err) · 스위치(on)가 관문의 US_FCUR_TOT_ON 과 다름 · fcur 회사인데 줄이 없음 · 줄이 fcur 회사가 아님 · 줄의
+    종가가 종목 가격과 다름 · 스위치가 켜졌는데 종목 칸이 줄과 다름 · (2026-11-27) Sony 줄 표시 fcurNi 가 기록(PER 의 niUnconfirmed)과 다름 · 스위치가
+    켜진 기록의 줄 없이 남은 표시(fcurTot · fcurNi). 기록이 없는 파일: 발행이면 경고, 사이트 점검이면 통과 (예전 파일).
+    종목 칸의 숫자는 위 check_us_fcur 가 봐요 (꺼져 있으면 비어 있는지 · 켜져 있으면 이 기록과 똑같은지 — 그 줄은 실패해요). 이 줄은 경고만이에요."""
+    rule = (f"회사 합계로 계산한 PER 이 야후 PER 과 · PER · PBR 이 지난 발행본과 (가격 빼고) {US_FCUR_TOT_WARN:g}배 넘게 다르면 이름 (새 이름만 경고) · "
+            f"계산된 수가 절반 아래로 · 기록 모양 · 스위치 (경고만 · 실패 없음 · 스위치 {'켜짐' if US_FCUR_TOT_ON else '꺼짐: 종목 칸은 #114 그대로 빈 칸'})")
+    rec = (data or {}).get("usFcurTot") if isinstance(data, dict) else None
+    if rec is None:
+        rep.add(US_FCUR_TOT_ROW, True, "기록 없음" + (" — 이 파이프라인은 늘 적어요 (확인)" if mode == "publish" else " (이 기록 전의 파일)"), rule,
+                warn=mode == "publish")
+        return
+    if not isinstance(rec, dict) or not isinstance(rec.get("rows", {}), dict):
+        rep.add(US_FCUR_TOT_ROW, True, f"기록 모양이 틀림 ({str(rec)[:80]})", rule, warn=True)
+        return
+    if rec.get("err"):
+        rep.add(US_FCUR_TOT_ROW, True, f"계산이 멈춘 날 ({str(rec.get('err'))[:100]}) — 종목 칸은 그대로", rule, warn=True)
+        return
+    raw_rows = rec.get("rows") or {}
+    rows = _tot_rows(rec)
+    by = {s.get("t"): s for s in us or [] if isinstance(s, dict) and isinstance(s.get("t"), str)}
+    fc = {t for t, s in by.items() if s.get("fcur") and s.get("etf") is not True}
+    issues, shape, far_p, off = [], [], [], []
+    if bool(rec.get("on")) != bool(US_FCUR_TOT_ON):
+        issues.append(f"스위치 기록 {rec.get('on')!r} ≠ 관문 {US_FCUR_TOT_ON}")
+    prec = (pdata or {}).get("usFcurTot") if isinstance(pdata, dict) else None
+    prow = _tot_rows(prec) if isinstance(prec, dict) and not prec.get("err") else {}
+    shape += [str(t) for t in raw_rows if t not in rows]
+    n = {f: 0 for f in US_FCUR_TOT_FIELDS}
+    good = {}
+    for t, r in sorted(rows.items()):
+        if not isinstance(r.get("why", {}), dict):
+            shape.append(t)
+            continue
+        vals = {f: r.get(f) for f in US_FCUR_TOT_FIELDS if f in r}
+        if any(num(v) is None or num(v) < 0 for v in vals.values()):
+            shape.append(f"{t} (숫자가 아닌 값)")
+            continue
+        good[t] = r
+        for f, v in vals.items():
+            n[f] += not (f == "dy" and v == 0)
+        s = by.get(t)
+        if s is None or t not in fc:
+            off.append(f"{t} (fcur 회사가 아님)")
+        elif num(r.get("px")) != num(s.get("price")):
+            off.append(f"{t} (종가 {r.get('px')} ≠ 종목 {s.get('price')})")
+        elif rec.get("on") is True:
+            bad = [f for f in US_FCUR_TOT_FIELDS if f in vals and vals[f] != 0 and num(s.get(f)) != num(vals[f])]
+            if bad:
+                off.append(f"{t} (스위치 켜짐인데 종목 칸 {'·'.join(bad)} 이 기록과 다름)")
+            # 2026-11-27 (Jack: Sony 의 PER 은 빈 칸에 "자료의 숫자가 …" 줄): 두 순이익이 맞지 않아 비운 PER 에만 fcurNi 표시 (앱이 그 줄을 골라요)
+            ni = (r.get("why") or {}).get("per") == "niUnconfirmed"
+            if (s.get("fcurNi") is True) != (ni and s.get("per") is None):
+                off.append(f"{t} (Sony 줄 표시 fcurNi {s.get('fcurNi')!r} ≠ 기록 PER {(r.get('why') or {}).get('per')})")
+        p = prow.get(t)
+        if p is not None:
+            for f in ("per", "pbr"):
+                a, b = num(vals.get(f)), num(p.get(f))
+                fp = _tot_fold(a / num(r.get("px")) if a and num(r.get("px")) else None, b / num(p.get("px")) if b and num(p.get("px")) else None)
+                if fp is not None and fp > US_FCUR_TOT_WARN:
+                    far_p.append(f"{t} {f.upper()} {p.get(f)} (종가 {p.get('px')}) → {vals[f]} (종가 {r.get('px')})")
+    names = _tot_names(good)
+    pnames = _tot_names({t: r for t, r in prow.items() if isinstance(r.get("why", {}), dict)}) if prow else {}
+    fresh = [v for k, v in names.items() if k not in pnames]
+    miss = sorted(t for t in fc if t not in rows)
+    if miss and mode == "publish":
+        issues.append(f"줄이 없는 fcur 회사 {len(miss)}: {_tickers(miss)} (상세 정보가 없는 종목이면 정상)")
+    # 2026-11-27: 표시(fcurTot · fcurNi)는 스위치가 켜진 기록과 그 회사 줄이 있을 때만 (꺼진 날 남은 표시는 앱이 이유 줄을 잘못 고르게 해요)
+    marked = sorted(t for t, s in by.items() if (s.get("fcurTot") is not None or s.get("fcurNi") is not None)
+                    and (rec.get("on") is not True or t not in good))
+    if marked:
+        off.append(f"표시만 남은 종목 {len(marked)}: {_tickers(marked)} (fcurTot · fcurNi — 스위치 켜진 기록의 줄이 없음)")
+    if shape:
+        issues.append(f"모양이 틀린 줄 {len(shape)}: {_tickers(shape)}")
+    if off:
+        issues.append(f"어긋난 줄 {len(off)}: {_tickers(off)}")
+    if fresh:
+        issues.append(f"새로 이름이 적힌 곳 {len(fresh)}: {_tickers(fresh)}")
+    if far_p:
+        issues.append(f"지난 발행본과 {US_FCUR_TOT_WARN:g}배 넘게 바뀜 (가격 빼고) {len(far_p)}: {_tickers(far_p)}")
+    if prow:
+        pn = {f: sum(1 for r in prow.values() if num(r.get(f)) is not None and num(r.get(f)) > 0) for f in ("per", "pbr")}
+        drop = [f"{f.upper()} {pn[f]} → {n[f]}" for f in ("per", "pbr") if pn[f] >= US_FCUR_TOT_DROP_MIN and n[f] < pn[f] * US_FCUR_TOT_DROP]
+        if drop:
+            issues.append(f"계산된 수가 지난 발행본의 절반 아래: {' · '.join(drop)} (재무제표 · 환율을 받지 못한 날일 수 있어요 — 로그의 '재무제표:' 줄)")
+    src = rec.get("src") if isinstance(rec.get("src"), dict) else {}
+    if src.get("limit"):
+        issues.append(f"시간 한도에 걸림 ({src.get('sec')}초 · 남은 회사는 빈 칸)")
+    blank = (rec.get("n") or {}).get("blank") if isinstance(rec.get("n"), dict) else None
+    head = (f"{len(rows)}곳 · PER {n['per']} · PBR {n['pbr']} · 배당 {n['dy']} 계산됨"
+            + (f" · 빈 칸 {sum(v for v in blank.values() if isinstance(v, int))}" if isinstance(blank, dict) else "")
+            + f" · 스위치 {'켜짐' if rec.get('on') is True else '꺼짐'}"
+            + (f" · 이름 {len(names)} (지난 발행본에도 있던 {len(names) - len(fresh)} 은 경고하지 않음)" if names else ""))
+    rep.add(US_FCUR_TOT_ROW, True, " · ".join([head] + issues), rule, warn=bool(issues))
+    if names or far_p or off:
+        rep.detail("달러 아닌 재무제표 회사: 회사 합계 숫자에서 이름이 적힌 곳", list(names.values()) + far_p + off)
+
+
+def check_us_fcur_tot_safe(rep, data, us, pdata, mode="publish"):
+    """check_us_fcur_tot 를 감싸요 (리뷰 2026-11-23): 이 줄은 어떤 기록 모양에서도 발행을 막지 않아요 — 멈추면 경고 한 줄."""
+    try:
+        check_us_fcur_tot(rep, data, us, pdata, mode)
+    except Exception as e:
+        rep.add(US_FCUR_TOT_ROW, True, f"검사하다 멈춤 ({type(e).__name__}: {str(e)[:80]}) — 기록 모양을 확인", "경고만 · 실패 없음", warn=True)
 
 
 def _tickers(ts):

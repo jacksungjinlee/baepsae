@@ -46,8 +46,8 @@ import { OLD_LINKS, dartFilingUrl } from "./routes.js";
 import { usOf, priceMd, priceDate, lineDate, timesText, pctText, yieldText, manWon, bigWon, usGrowthText, dcfHeadText, riskBandText, riskBandNote } from "./cofmt.js";
 import { epsFixFor, epsBasisCardGone, stmtNotWonFor, unitHeldFor, pxBadFor, pxBadFullFor, pxBadPartFor } from "./fix.js";
 import { epsPeriod, bpsPeriod } from "../repair.js";
-import { EpsFixNote, StmtCurNote, FcurNote, PbrZeroNote, FgnCutNote, UnitChkNote, unitChkText, NoStmtNote, PxBadOneNote } from "./fixnote.jsx";
-import { fcurBlank, fcurDyBlank, pbrZeroOf, fgnBlank } from "./fcur.js";
+import { EpsFixNote, StmtCurNote, FcurNote, FcurTotNote, FcurNiNote, PbrZeroNote, FgnCutNote, UnitChkNote, unitChkText, NoStmtNote, PxBadOneNote } from "./fixnote.jsx";
+import { fcurBlank, fcurBlankOf, fcurDyBlank, fcurNiOf, fcurTotOf, FCUR_TOT_CONV, pbrZeroOf, fgnBlank } from "./fcur.js";
 import { CoinFlow, PayoutRing } from "./coart.jsx";
 
 const all = (...xs) => xs.every((x) => x != null && x !== "");
@@ -494,6 +494,13 @@ export function ValueTab({ load, s, store, onMore }) {
   // the line once under them; no date line when neither number is left
   const gP = fgnBlank(s, "pbr"), gE = fgnBlank(s, "per");
   const gAll = (gP || gE) && (gP || r.pbr == null) && (gE || per == null) && !p0;
+  // #181 switch-on (Jack, 2026-11-27): with the pipeline's switch on, one of PBR · PER can be back from whole-company totals
+  // (data.json fcurTot) while the other is not. Each blank one keeps its "–" with its own line: the currency line (cP · cE) or, for
+  // a PER whose two net-income figures disagree (Sony, data.json fcurNi), Jack's line co.fcurNi (nE). A converted one shows as
+  // usual with the converted line under the card it is in (conv). With the switch off none of these is ever true (fc as before).
+  const cP = !fc && fcurBlankOf(s, "pbr"), cE = !fc && fcurBlankOf(s, "per"), nE = fcurNiOf(s);
+  const cAll = (cP || cE || nE) && (cP || r.pbr == null) && (cE || nE || per == null);
+  const conv = fcurTotOf(s).some((k) => FCUR_TOT_CONV.includes(k));
   const perMed = useMemo(() => indMedian(group, (x) => num(x.per)), [group]);
   const head = r.rule === "na" ? null : V.head[r.rule];
   const sub = V.sub[r.rule] || null;
@@ -521,14 +528,21 @@ export function ValueTab({ load, s, store, onMore }) {
             {r.pbr != null && <Stat data-ui-v2="co-pbr" label="PBR" value={timesText(r.pbr, 2)} sub={pbrSub} />}
             {p0 && <Stat data-ui-v2="co-pbr" data-blank="pbr0" label="PBR" value="–" />}
             {gP && <Stat data-ui-v2="co-pbr" data-blank="fgn" label="PBR" value="–" />}
+            {cP && <Stat data-ui-v2="co-pbr" data-blank="fcur" label="PBR" value="–" />}
             {per != null && <Stat data-ui-v2="co-per" label="PER" value={timesText(per, 1)} sub={perSub} />}
             {gE && <Stat data-ui-v2="co-per" data-blank="fgn" label="PER" value="–" />}
+            {(cE || nE) && <Stat data-ui-v2="co-per" data-blank={nE ? "fcurNi" : "fcur"} label="PER" value="–" />}
           </Stats>
         )}
         {!compare && p0 && <PbrZeroNote s={s} />}
         {/* with an industry to compare, PER sits in the compare card; when it was blanked, its "–" stays here */}
         {compare && gE && <Stats><Stat data-ui-v2="co-per" data-blank="fgn" label="PER" value="–" /></Stats>}
+        {compare && (cE || nE) && <Stats><Stat data-ui-v2="co-per" data-blank={nE ? "fcurNi" : "fcur"} label="PER" value="–" /></Stats>}
         {(gP || gE) && !cur && <FgnCutNote s={s} fields={["pbr", "per"]} />}
+        {/* #181 switch-on: the blank one's own line (currency · Sony), and the converted line when no compare card holds the numbers */}
+        {(cP || cE) && <FcurNote s={s} />}
+        {nE && <FcurNiNote s={s} />}
+        {conv && !compare && <FcurTotNote s={s} md={priceMd(load, s)} />}
         {/* US statements not in dollars (data.json fcur): PBR · PER keep their labels with –, the reason right under them */}
         {fc && (
           <>
@@ -541,7 +555,7 @@ export function ValueTab({ load, s, store, onMore }) {
         )}
         {!usOf(s) && !cur && valueBasis(co) && <Src data-ui-v2="co-value-basis">{valueBasis(co)}</Src>}
         <EpsFixNote s={s} show={epsFixFor(s) && per != null && !compare} />
-        {!cur && !fc && !gAll && <DateLine date={lineDate(load, s)} fresh={load.fresh} />}
+        {!cur && !fc && !gAll && !cAll && <DateLine date={lineDate(load, s)} fresh={load.fresh} />}
       </Card>
       {compare && (
         <Card data-ui-v2="co-compare" data-n={compareN(st.co, per != null ? perCo(perMed) : null)}>
@@ -551,6 +565,8 @@ export function ValueTab({ load, s, store, onMore }) {
           <Strip s={s} group={group} inCard />
           {/* 2026-11-08 (Jack): PER sits in this card when there is an industry to compare (v19.3e) */}
           <EpsFixNote s={s} show={epsFixFor(s) && per != null} />
+          {/* #181 switch-on: PBR · PER converted from whole-company totals sit in this card: their line once, here */}
+          {conv && <FcurTotNote s={s} md={priceMd(load, s)} />}
         </Card>
       )}
       {!usOf(s) && <Dcf load={load} s={s} co={co} a={a} onTry={onMore} />}
@@ -699,14 +715,20 @@ export function ValueMore({ load, s, store, setStoreData, pad, onBack, backLabel
   // a foreign company's PBR · PER that did not match its own totals (data.json fgnCut): their rows –, the line under the rows
   const gP = fgnBlank(s, "pbr"), gE = fgnBlank(s, "per");
   const gAll = (gP || gE) && (gP || r.pbr == null) && (gE || per == null) && !p0;
+  // #181 switch-on (2026-11-27): each of PBR · PER on its own, as on the 가치 tab (ValueTab: cP · cE currency, nE Sony, conv converted)
+  const cP = !fc && fcurBlankOf(s, "pbr"), cE = !fc && fcurBlankOf(s, "per"), nE = fcurNiOf(s);
+  const cAll = (cP || cE || nE) && (cP || r.pbr == null) && (cE || nE || per == null);
+  const conv = fcurTotOf(s).some((k) => FCUR_TOT_CONV.includes(k));
   const rows = fc ? [V.mean.pbr ? { label: "PBR", mean: V.mean.pbr, value: "–" } : null, V.mean.per ? { label: "PER", mean: V.mean.per, value: "–" } : null].filter(Boolean) : [
     p0 && V.mean.pbr ? { label: "PBR", mean: V.mean.pbr, value: "–" } : null,
     gP && V.mean.pbr ? { label: "PBR", mean: V.mean.pbr, value: "–" } : null,
+    cP && V.mean.pbr ? { label: "PBR", mean: V.mean.pbr, value: "–" } : null,
     r.pbr != null && V.mean.pbr ? { label: "PBR", mean: V.mean.pbr, value: timesText(r.pbr, 2), med: r.med != null && V.med ? fill(V.med, { x: nf(r.med, 2) }) : null,
       calc: pbrR && V.calcPbr ? fill(V.calcPbr, { p: won(pbrR.price), b: won(pbrR.per), x: nf(pbrR.value, 2) }) : null } : null,
     per != null && V.mean.per ? { label: "PER", mean: V.mean.per, value: timesText(per, 1), med: med(perMed),
       calc: perR && V.calcPer ? fill(V.calcPer, { p: won(perR.price), e: won(perR.per), x: nf(perR.value, 1) }) : null } : null,
     gE && V.mean.per ? { label: "PER", mean: V.mean.per, value: "–" } : null,
+    (cE || nE) && V.mean.per ? { label: "PER", mean: V.mean.per, value: "–" } : null,
     kr && co && num(co.evE) != null && V.mean.evE ? { label: "EV/EBITDA", mean: V.mean.evE, value: timesText(co.evE, 1), med: med(evMed) } : null,
     kr && co && num(co.pcf) != null && all(V.mean.pcf, V.pcf) ? { label: V.pcf, mean: V.mean.pcf, value: timesText(co.pcf, 1), med: med(pcfMed) } : null,
   ].filter(Boolean);
@@ -732,7 +754,10 @@ export function ValueMore({ load, s, store, setStoreData, pad, onBack, backLabel
             <EpsFixNote s={s} show={epsFixFor(s) && rows.some((x) => x.label === "PER")} />
             {p0 && <PbrZeroNote s={s} />}
             {(gP || gE) && <FgnCutNote s={s} fields={["pbr", "per"]} />}
-            {fc ? <FcurNote s={s} /> : gAll ? null : <DateLine date={lineDate(load, s)} fresh={load.fresh} />}
+            {(cP || cE) && <FcurNote s={s} />}
+            {nE && <FcurNiNote s={s} />}
+            {conv && <FcurTotNote s={s} md={priceMd(load, s)} />}
+            {fc ? <FcurNote s={s} /> : gAll || cAll ? null : <DateLine date={lineDate(load, s)} fresh={load.fresh} />}
           </Card>
         )}
         <Scatter s={s} group={group} />

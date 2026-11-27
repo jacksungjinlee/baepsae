@@ -9,6 +9,8 @@ import { lateDays } from "./tradedays.js";
 import { detectFeatures, missingForBuild, CUSHION_ASSETS, setDataShape } from "./engine.js";
 import { R2022 } from "./y2022.js";
 import { setEpsBasis } from "./fix.js";
+import { C, mdText } from "./format.js";
+import { fcurTotStrip } from "../repair.js";
 
 // publishedAt must be a time we can read: without it we cannot tell whether the data is fresh, so the file is refused
 // like any other format problem (the load-failure message), never treated as fresh.
@@ -355,6 +357,22 @@ export function resolveLoad({ data, corp, macro }, now, opts = {}) {
   }
   if (!macro.ok) console.warn("[v2] macro.json not loaded: " + macro.error + " (features that need it stay hidden)");
   const d = data.data, c = corp.data, m = macro.ok ? macro.data : null;
+  // #181 (Jack, 2026-11-27): no converted number without its line. While co.fcurTot waits for Jack (null), a file that carries PER ·
+  // PBR · 배당수익률 from whole-company totals (data.json fcurTot: the pipeline's switch on) is read as #114 left it ("–" with the
+  // currency line): src/repair.js fcurTotStrip. Said once per load with the count.
+  // Review round 1 nit (2026-11-28): the same when the line could not be said for a stock: its currency has no Korean name (MYR is
+  // convertible but unnamed) or the file has no readable US close date ({md}).
+  if (Array.isArray(d.stocks)) {
+    const names = C.co.curName || {};
+    const named = (s) => typeof s.fcur === "string" && Object.prototype.hasOwnProperty.call(names, s.fcur) && typeof names[s.fcur] === "string"
+      && names[s.fcur].trim() !== "";
+    const sayable = !!C.co.fcurTot && !!mdText(d.usPxDate);
+    const cut = fcurTotStrip(d.stocks, (s) => sayable && named(s));
+    if (cut.length) console.warn(`[v2] ${cut.length} US companies carry numbers from whole-company totals (data.json fcurTot) but the line `
+      + `for converted numbers can't be said (co.fcurTot ${C.co.fcurTot ? "approved" : "not approved yet"}, US close date `
+      + `${mdText(d.usPxDate) ? "read" : "unreadable"}, or no Korean name for the currency), so they show as before (PR 114: "–"): `
+      + cut.slice(0, 30).join(", "));
+  }
   // v19.1b: data.json with divCheck carries the exact dividend fields and the beta error band (engine.setDataShape). The
   // whole app reads this one file one way; a file without it keeps the earlier behaviour. The console line with the
   // counts is company.jsx logSplitGuard (once per load, in the browser).

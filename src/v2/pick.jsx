@@ -10,7 +10,9 @@ import { ownCloses } from "./stocklist.js";
 import { deckState, deckDisplayName, cautionTexts } from "./deckcalc.js";
 import { objectParticle } from "./track.js";
 import { epsFixFor } from "./fix.js";
-import { EpsFixNote, UnitChkNote } from "./fixnote.jsx";
+import { EpsFixNote, UnitChkNote, FcurTotNote } from "./fixnote.jsx";
+import { fcurTotOf } from "./fcur.js";
+import { priceMd } from "./cofmt.js";
 
 export function Pick({ load, builder, setBuilder }) {
   const st = builder.settings;
@@ -120,7 +122,7 @@ function Candidate({ c, picked, onToggle, load, st, ctx, pinned }) {
       <div style={{ marginTop: SPACE(2) }}>
         <Collapsible title={C.pick.receipts}>
           {pinned && <div data-ui-v2="manual-note" style={tx(SIZE.xs, WEIGHT.semi, COLOR.text2, { marginBottom: SPACE(1) })}>{C.pick.manualNote}</div>}
-          <Receipts s={s} co={co} c={c} st={st} />
+          <Receipts s={s} co={co} c={c} st={st} load={load} />
         </Collapsible>
       </div>
     </Card>
@@ -150,7 +152,7 @@ function Row({ k, v, id, basis, card }) {
   );
 }
 
-function Receipts({ s, co, c, st }) {
+export function Receipts({ s, co, c, st, load }) {
   const R = C.pick.receipt;
   const pbr = num(s.pbr), roe = num(s.roe), debt = num(s.debt);
   // KR: dps / close, only when it agrees with the report's yield and passes the interim split guard (engine.js krYieldToday;
@@ -176,6 +178,8 @@ function Receipts({ s, co, c, st }) {
       <EpsFixNote s={s} show={epsFixFor(s) && roe != null && fy != null} />
       {/* 공시 단위 확인 (Jack, 2026-11-13): PBR · ROE · 부채비율 · 매출 증가율 were blanked (unitChk); the reason once */}
       <UnitChkNote s={s} co={co} />
+      {/* #181 switch-on (review round 1 S2): a PBR converted from whole-company totals (data.json fcurTot) shown above: its line once */}
+      {pbr != null && load && fcurTotOf(s).includes("pbr") && <FcurTotNote s={s} md={priceMd(load, s)} fields={["pbr"]} />}
     </div>
   );
 }

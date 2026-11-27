@@ -18,9 +18,9 @@ import { CoMark } from "./logo.jsx";
 import { isCompany, ownCloses } from "./stocklist.js";
 import { todayD1 } from "./engine.js";
 import { signedPct } from "./deckcalc.js";
-import { closeLine } from "./cofmt.js";
-import { DayNote, FcurNote, PbrZeroNote, FgnCutNote, UnitChkNote, StmtCurNote, NoStmtNote, PrefNote, prefText } from "./fixnote.jsx";
-import { fcurBlank, fcurDyBlank, pbrZeroOf, fgnBlank } from "./fcur.js";
+import { closeLine, priceMd } from "./cofmt.js";
+import { DayNote, FcurNote, FcurTotNote, FcurTotLine, PbrZeroNote, FgnCutNote, UnitChkNote, StmtCurNote, NoStmtNote, PrefNote, prefText } from "./fixnote.jsx";
+import { fcurBlankOf, fcurDyBlank, fcurTotOf, pbrZeroOf, fgnBlank } from "./fcur.js";
 import { unitHeldFor, stmtNotWonFor, noStmtFor } from "./fix.js";
 import { divHiddenLine, DIV_HIDDEN_UI } from "./company.js";
 import { WATCH_MAX, WATCH_KINDS, WATCH_DEC, okWatchValue, watchOf, watchOrder, withWatchAdd, withWatchRemove, withWatchConds, watchSaveTime } from "./store.js";
@@ -57,7 +57,7 @@ function BlankWhy({ s, co, kinds }) {
   const out = [];
   if (prefText(s)) out.push(<PrefNote key="pref" s={s} style={style} />);
   else {
-    if ((pbr && fcurBlank(s)) || (dy && fcurDyBlank(s))) out.push(<FcurNote key="fcur" s={s} style={style} />);
+    if ((pbr && fcurBlankOf(s, "pbr")) || (dy && fcurDyBlank(s))) out.push(<FcurNote key="fcur" s={s} style={style} />);
     if (pbr && pbrZeroOf(s)) out.push(<PbrZeroNote key="pbr0" s={s} style={style} />);
     const fg = [...(pbr && fgnBlank(s, "pbr") ? ["pbr"] : []), ...(dy && fgnBlank(s, "dy") ? ["dy"] : [])];
     if (fg.length) out.push(<FgnCutNote key="fgn" s={s} fields={fg} style={style} />);
@@ -123,6 +123,9 @@ function WatchCard({ t, e, load, fresh, onCond, canEdit }) {
         </div>
       )}
       <BlankWhy s={s} co={co} kinds={sts.filter((x) => x.state === "blank").map((x) => x.k)} />
+      {/* #181 switch-on (2026-11-27): a PBR condition read on a PBR converted from whole-company totals: that line once */}
+      {s && sts.some((x) => x.k === "pbrBelow" && x.state !== "blank") && fcurTotOf(s).includes("pbr")
+        && <FcurTotNote s={s} md={priceMd(load, s)} fields={["pbr"]} style={{ marginTop: SPACE(2) }} />}
     </section>
   );
 }
@@ -320,6 +323,8 @@ export function WatchHitRows({ hits, load, onOpen }) {
         <span style={{ flex: 1, minWidth: 0 }}>
           <span style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { display: "block" })}>{hitTitle(h.s.nk || h.t)}</span>
           <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2, wordBreak: "keep-all" })}>{hitText(h.k, h.v, h.val, usOf(h.s))}</span>
+          {/* #181 switch-on (review round 1 S2): a PBR condition hit on a PBR converted from whole-company totals: that line */}
+          {h.k === "pbrBelow" && fcurTotOf(h.s).includes("pbr") && <FcurTotLine s={h.s} md={priceMd(load, h.s)} fields={["pbr"]} />}
           {date && <span data-ui-v2="home-watch-date" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { display: "block" })}>{date}</span>}
         </span>
         <Icon name="chevronRight" size={18} tone="on" />

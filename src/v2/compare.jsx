@@ -24,11 +24,11 @@ import { CoMark } from "./logo.jsx";
 import { num } from "./engine.js";
 import { riskTile, impliedGrowth, divKr, divUs, divHiddenLine, DIV_HIDDEN_UI, divSmallView, round } from "./company.js";
 import { criteriaPct } from "./fitpct.js";
-import { riskBandText, riskBandNote, timesText, yieldText, usOf } from "./cofmt.js";
+import { riskBandText, riskBandNote, timesText, yieldText, usOf, priceMd } from "./cofmt.js";
 import { subjectParticle } from "./track.js";
 import { stmtNotWonFor, unitHeldFor, pxBadFor, pxBadHidesFor, noStmtFor, fixNotesHidden, epsLineKind, epsBasisCardGone } from "./fix.js";
-import { pxBadText, pxBadOneText, unitChkText, stmtCurText, fcurNoteText, prefText, prefFitText, epsFixText } from "./fixnote.jsx";
-import { fcurBlank, fcurDyBlank, pbrZeroOf, fgnBlank, fgnKindOf, FGN_LINE_KEYS } from "./fcur.js";
+import { pxBadText, pxBadOneText, unitChkText, stmtCurText, fcurNoteText, fcurTotNoteText, prefText, prefFitText, epsFixText } from "./fixnote.jsx";
+import { fcurBlankOf, fcurDyBlank, fcurTotOf, pbrZeroOf, fgnBlank, fgnKindOf, FGN_LINE_KEYS } from "./fcur.js";
 import { IndBar, pctText, addWarnView } from "./editparts.jsx";
 import { indText, listDate } from "./finder.jsx";
 import * as E from "./edit.js";
@@ -97,13 +97,15 @@ export function compareCells(s, co, ctx) {
   // PBR: the company page's order of blanks (Tiles: statements not in won or the unit check; then the US lines); else the PBR
   // with two decimals, or 자료가 없어요 for none (and the no-statements line where it explains it)
   if (stmtNotWonFor(s, co) || unitHeldFor(s, co)) out.pbr = cell(DASH, unitChkText(s, co) || stmtCurText(s, co), { blank: "cur" });
-  else if (fcurBlank(s)) out.pbr = cell(DASH, fcurNoteText(s), { blank: "fcur" });
+  else if (fcurBlankOf(s, "pbr")) out.pbr = cell(DASH, fcurNoteText(s), { blank: "fcur" });
   else if (pbrZeroOf(s)) out.pbr = cell(DASH, C.co.pbrZero || null, { blank: "pbr0" });
   else if (fgnBlank(s, "pbr")) out.pbr = cell(DASH, fgnLine(s, "pbr"), { blank: "fgn" });
   else {
     const pbr = num(s.pbr);
     // none: 자료가 없어요, with the company page's reason when it has one (no statements yet; a 우선주: its header line)
-    out.pbr = pbr > 0 ? cell(timesText(pbr, 2), null, { pbr })
+    // #181 switch-on (2026-11-27): a PBR converted from whole-company totals (data.json fcurTot) carries its line in the cell
+    const conv = pbr > 0 && fcurTotOf(s).includes("pbr") ? fcurTotNoteText(s, ctx.load ? priceMd(ctx.load, s) : null, ["pbr"]) : null;
+    out.pbr = pbr > 0 ? cell(timesText(pbr, 2), conv, conv ? { pbr, conv: "1" } : { pbr })
       : cell(C.co.tiles.na, noStmtFor(s, co) ? C.co.noStmt || null : prefText(s), { pbr: "" });
   }
   // 배당수익률: verified only (divKr / divUs, the 배당 tile's yield), else "–" with the line the company page gives that blank
