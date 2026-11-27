@@ -528,7 +528,10 @@ def test_bad_paths_keep_todays_behaviour_and_are_recorded(tmp_path, monkeypatch)
         raise KeyError("x")
     monkeypatch.setattr(F, "us_info_fresh_vs_copy", cmp_)
     by2, meta2, lines2, _c, _p2 = _run(tmp_path / "b", monkeypatch, cache={"SNDK": entry("2026-11-17", PX18)}, sndk_info=SNDK_STALE)
-    assert by2["SNDK"]["pbr"] == round(SNDK_STALE["priceToBook"], 2) and _split_rec(meta2) == {"v": 1, "bad": ["SNDK"]}   # 새 상세 정보
+    # #188 (Jack 확인 뒤): 새 상세 정보를 써요 (그 PBR 0.63 이 분할 뒤 주당 숫자 검사에 들어가요) — 회사 합계와 10배 넘게 달라 비우고 splCut 을 붙여요
+    cut2 = {(t, f): w for t, f, w in meta2["usSplitChk"]["cut"]}
+    assert "pbr" not in by2["SNDK"] and by2["SNDK"]["splCut"] == {"pbr": "mismatch"} and _split_rec(meta2) == {"v": 1, "bad": ["SNDK"]}
+    assert cut2[("SNDK", "pbr")].startswith(f"주가 ÷ 주당 장부가 {SNDK_STALE['priceToBook']:.2f} ↔ "), cut2       # 새 상세 정보의 PBR (0.63)
     assert any("새 상세 정보와 분할 전 보관본을 맞춰 보다 오류로 멈춘 종목 SNDK (KeyError)" in x for x in lines2)
     monkeypatch.setattr(F, "us_info_fresh_vs_copy", real_cmp)
 
