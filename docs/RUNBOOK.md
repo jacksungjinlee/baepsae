@@ -1637,7 +1637,11 @@ Unchanged: the deploy's gate (its own 600 s limit that skips with a warning, pre
     price rows still compare the first try's close, as the old rules would;
   - a stock the first try had only Daum's close for (the limit hit while asking Yahoo): confirmed only if the retry confirms that same
     close; a retry where the two sources differ keeps that difference; anything else counts as a different close;
-  - a stock the first try never finished: the retry's result.
+  - a stock the first try never finished: the retry's result;
+  - if any try's per-stock record is missing a stock (the worker itself crashed on it, which today's sources can't cause), nothing is
+    merged and the check is not used: "!! 관문의 두 출처 확인: 종목별 기록을 합칠 수 없어요 (종목별 기록 1번째 206 · 2번째 207 / 대상 207) — 이
+    확인은 쓰지 않아요 …", and the date row FAILs with "… 다시 물었지만 종목별 기록을 합칠 수 없어 이 확인은 쓰지 않았어요 (…)". A stock the first
+    try crashed on is never read as "not asked" (review round 3 of #198: that would have let the retry confirm a stock `main` could not).
   The gate logs them by name: "!! 관문의 두 출처 확인: 첫 확인에서 다르거나 받지 못한 종목 n: 005930 다음 … · 야후 …; … — 다시 물은 확인에서도
   그대로 세요" and "… 첫 확인과 다시 물은 확인이 다른 종목 m: … — 확인으로 치지 않아요", and the date row's note repeats the counts with
   examples. Up to the limit the first try asks exactly what the old rules ask, so a stock it finished got the same answer the old
@@ -1645,8 +1649,9 @@ Unchanged: the deploy's gate (its own 600 s limit that skips with a warning, pre
   same close. It fails every such stock the old rules fail, and its price rows count every different close the old rules count for
   those stocks.
 - **The second try finishes in time:** it is judged by the same rows and thresholds as before, on the merged record above (a wrong
-  close or a missing must-have fails as before, including one only the first try saw). The log says "!! 관문의 두 출처 확인: 다시 물은 확인은 시간 한도 안에 끝났어요 (2/2번째 …)", and the row
-  **"pxDate = 최종본 날짜" turns WARN** with "첫 확인이 시간 한도 600초를 넘겨 처음부터 다시 물었어요 (Jack 2026-11-27 · 첫 확인: 대상 m종목
+  close or a missing must-have fails as before, including one only the first try saw). The log says "!! 관문의 두 출처 확인: 다시 물은
+  확인은 시간 한도 안에 끝났어요 (2/2번째 …) — 예전 기준 그대로 판단해요 (… 첫 확인이 한도를 넘긴 것은 날짜 줄에 적혀요: 다른 까닭이 없으면 경고,
+  있으면 그 실패와 함께)". If nothing else fails, the row **"pxDate = 최종본 날짜" turns WARN** with "첫 확인이 시간 한도 600초를 넘겨 처음부터 다시 물었어요 (Jack 2026-11-27 · 첫 확인: 대상 m종목
   · 끝까지 물은 a (확인 n) · 남은 k) …". The run publishes (if everything else passes); the 09:13 check sees the warning.
 - **The second try is over too: FAIL, no publish this run.** The log: "!! 관문의 두 출처 확인이 시간 한도 600초를 두 번 넘겼어요 (발행 관문 ·
   2/2번째 · Jack 2026-11-27): … — 이번 실행은 발행하지 않아요 (관문 실패 · 다음 예정 실행이 다시 해요)". The row "pxDate = 최종본 날짜" (or

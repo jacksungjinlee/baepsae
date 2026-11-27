@@ -158,7 +158,8 @@ PX_ALT_REFUSE_ENV = "BAEPSAE_DAUM_REFUSE_SKIP"   # deploy.yml 관문 단계: 코
 # 남기지 않고 멈췄어요 (다시 돌리니 52초). 06:40 발행에서 그러면 발행이 몇 시간이고 조용히 늦어져요 (요청마다 20초 · 세 번 한도뿐이었어요).
 # 발행 관문(publish · bootstrap)만: 확인 전체에 PX_ALT_GATE_BUDGET_S 초 — 지나면 새 요청(다시 묻기도)을 하지 않고, 묻는 중인 요청은 자기
 # 시간 한도(연결 20초 + 바이트 사이 20초)까지 · 일하는 스레드는 모두 끝난 뒤 돌아와요 (배포의 한도와 같은 꼴). 넘으면 크게 남기고 같은 실행에서
-# 바로 처음부터 한 번 더 (새 한도 · 첫 확인의 답은 다시 쓰지 않아요 — 판단이 달라질 일이 없게). 다시 물은 확인도 넘으면 실패해요 (이번 실행은
+# 바로 처음부터 한 번 더 (새 한도 · 모든 종목을 다시 물어요 — 첫 확인의 답만으로 확인하지는 않지만, 첫 확인이 본 문제 · 종가는 그대로 세요:
+# 아래 px_alt_gate_merge · 리뷰 #198 2차). 다시 물은 확인도 넘으면 실패해요 (이번 실행은
 # 발행하지 않고, 다음 예정 실행이 다시 해요). 한도에 걸린 확인은 받은 종목 수가 기준을 채웠어도 통과 · 건너뜀이 되지 않아요
 # (px_alt_confirms · 받지 못한 종목의 다른 종가를 놓칠 수 있어요). '한도에 걸림' = 한도 때문에 묻지 못했거나 다시 묻지 못한 종목(cut)이
 # 하나라도 있음 — 마지막 오류 종류와 상관없이 (리뷰 #198 1차: 네트워크 오류가 아닌 답 뒤 다시 묻지 못한 종목도). 그래서 cut 이 0 인 확인은
@@ -1236,6 +1237,9 @@ def px_alt_gate_note(alt):
         asked, cut, got = _count(alt.get("asked")), _count(alt.get("cut")), _count(alt.get("got"))
         return (f"{lim_s}를 {'두 번 ' if n >= 2 else ''}넘김 (Jack 2026-11-27) — {'다시 물은 확인: ' if n >= 2 else ''}대상 {asked}종목 · "
                 f"끝까지 물은 {max(asked - cut, 0)} (확인 {got}) · 남은 {cut} · 이번 실행은 발행하지 않아요 (다음 예정 실행이 다시 해요)")
+    if n >= 1 and alt.get("gateMergeErr"):     # 리뷰 #198 3차: 합치지 못한 확인은 쓰지 않아요 — 날짜 줄에도 그 까닭을
+        return (f"첫 확인이 {lim_s}를 넘겨 처음부터 다시 물었지만 종목별 기록을 합칠 수 없어 이 확인은 쓰지 않았어요 ({alt['gateMergeErr']} · "
+                "Jack 2026-11-27 · 리뷰 #198 3차) — 필수 종목을 확인하지 못한 것으로 셌어요")
     if n >= 1:
         f = alt.get("firstCut") if isinstance(alt.get("firstCut"), dict) else {}
         fa, fc, fg = _count(f.get("asked")), _count(f.get("cut")), _count(f.get("got"))
@@ -1667,11 +1671,15 @@ def px_alt_gate_merge(alt, earlier, final):
     px_alt_gate_fold. 앞선 확인이 끝까지 물었는데 확인하지 못한 종목은 그대로 확인 못 함 (그 까닭과 함께), 두 확인의 종가가 다르면 다른 종가로 세요.
     받은 종가 · 확인 수 · 필수 종목 · 다름 · 그날 종가 없음 · 네트워크 오류 · 야후 meta 수를 합친 결과로 다시 세요 (http_px_alt 와 같은 꼴 ·
     시험이 앞선 확인이 없을 때 http_px_alt 의 기록과 똑같은지 맞춰 봐요). 그 밖의 칸 (asked · err · secs · limit …) 은 다시 물은 확인 그대로.
-    final 에 모든 종목의 결과가 없으면 (asked 와 수가 다름) 합칠 수 없으니 이 확인은 쓰지 않아요 (필수 종목 모두 · 확인 0 · 크게 남겨요).
+    어느 확인의 기록이든 모든 종목의 결과가 없으면 (asked 와 수가 다름 — 일하는 함수가 그 종목에서 멈췄어요) 합칠 수 없으니 이 확인은 쓰지 않아요
+    (필수 종목 모두 · 확인 0 · gateMergeErr · 크게 남겨요). 리뷰 #198 3차: 앞선 확인에서 멈춘 종목이 '묻지 못함' 으로 읽혀 다시 물은 확인의 답을
+    받으면 안 돼요 (main 은 그 종목을 확인하지 못했어요).
     반환: (kept, xdis) — 앞선 확인에서 끝까지 물었는데 확인하지 못한 종목 · 두 확인의 종가가 다른 종목 (코드 → 보기). alt 를 고쳐요."""
     asked = _count(alt.get("asked"))
-    if not final or len(final) != asked:
-        alt.update(closes={}, got=0, meta=0, mustMissing=list(MUST), gateMergeErr=f"기록 {len(final or {})} / 대상 {asked}")
+    records = list(earlier) + [final]
+    if not final or any(len(r or {}) != asked for r in records):
+        alt.update(closes={}, got=0, meta=0, mustMissing=list(MUST),
+                   gateMergeErr="종목별 기록 " + " · ".join(f"{i + 1}번째 {len(r or {})}" for i, r in enumerate(records)) + f" / 대상 {asked}")
         return {}, {}
     states, kept, xdis = {}, {}, {}
     for code, st in final.items():
@@ -1756,28 +1764,34 @@ def px_alt_publish_gate(ask, say=None):
     if first is not None and isinstance(alt, dict):
         done = not alt.get("cut")
         alt.update(tries=n, timeouts=n - 1 if done else n, firstCut=first)
+        kept_early = {}                          # 앞선 확인에서 끝까지 물었는데 확인하지 못한 종목 (이름으로 남겨요)
+        for e in sinks[:-1]:
+            for code, es in e.items():
+                if es[0] in PX_ALT_FAIL_STATES and code not in kept_early:
+                    kept_early[code] = _px_alt_state_why(code, es)
+        refused = False
         if done:                                 # 다시 물은 확인이 끝까지 갔어요 — 앞선 확인이 본 것을 합쳐요 (리뷰 #198 2차)
             kept, xdis = px_alt_gate_merge(alt, sinks[:-1], sinks[-1])
             if alt.get("gateMergeErr"):
+                refused, kept = True, kept_early
                 say(f"!! 관문의 두 출처 확인: 종목별 기록을 합칠 수 없어요 ({alt['gateMergeErr']}) — 이 확인은 쓰지 않아요 (필수 종목을 확인하지 못한 것으로 세요)")
         else:                                    # 다시 물은 확인도 걸렸어요 (실패) — 앞선 확인에서 본 문제는 그래도 이름으로 남겨요
-            kept = {}
-            for e in sinks[:-1]:
-                for code, es in e.items():
-                    if es[0] in PX_ALT_FAIL_STATES and code not in kept:
-                        kept[code] = _px_alt_state_why(code, es)
-            xdis = {}
+            kept, xdis = kept_early, {}
         alt.update(kept=len(kept), keptEx=_px_alt_ex(kept), xdis=len(xdis), xdisEx=_px_alt_ex(xdis))
         if kept:
             say(f"!! 관문의 두 출처 확인: 첫 확인에서 다르거나 받지 못한 종목 {len(kept)}: {'; '.join(_px_alt_ex(kept))}"
-                + (" — 다시 물은 확인에서도 그대로 세요 (확인으로 치지 않아요 · 리뷰 #198 2차)" if done else " — 다시 물은 확인도 시간 한도를 넘겨 어차피 실패해요"))
+                + (" — 다시 물은 확인도 시간 한도를 넘겨 어차피 실패해요" if not done
+                   else (" — 기록을 합칠 수 없어 이 확인은 어차피 쓰지 않아요" if refused
+                         else " — 다시 물은 확인에서도 그대로 세요 (확인으로 치지 않아요 · 리뷰 #198 2차)")))
         if xdis:
             say(f"!! 관문의 두 출처 확인: 첫 확인과 다시 물은 확인이 다른 종목 {len(xdis)}: {'; '.join(_px_alt_ex(xdis))} — 확인으로 치지 않아요 "
                 "(리뷰 #198 2차)")
-        if done:
+        if done:                                 # 리뷰 #198 3차 nit: 날짜 줄이 통과할지는 아직 몰라요 — 어느 쪽이든 맞는 말만
             say(f"!! 관문의 두 출처 확인: 다시 물은 확인은 시간 한도 안에 끝났어요 ({n}/{tries}번째"
                 + (f" · 걸린 시간 {alt['secs']:.0f}초" if isinstance(alt.get("secs"), (int, float)) and not isinstance(alt.get("secs"), bool) else "")
-                + ") — 예전 기준 그대로 판단해요 (첫 확인에서 본 문제는 그대로 세고, 첫 확인이 한도를 넘긴 것은 날짜 줄의 경고로 남겨요)")
+                + (") — 하지만 종목별 기록을 합칠 수 없어 이 확인은 쓰지 않아요 (날짜 줄이 실패해요 · 그 까닭이 날짜 줄에 적혀요)" if refused
+                   else ") — 예전 기준 그대로 판단해요 (첫 확인에서 본 문제도 그대로 세요 · 첫 확인이 한도를 넘긴 것은 날짜 줄에 적혀요: 다른 까닭이 "
+                        "없으면 경고, 있으면 그 실패와 함께)"))
     return alt
 
 
@@ -1856,6 +1870,8 @@ def px_alt_confirms(data, alt, px, final, mode="publish", today=None, now=None, 
     # 않아요 — 받지 못한 종목의 다른 종가를 놓칠 수 있어요. 통과도 건너뜀도 아니에요 (실패 · 다음 예정 실행이 다시 해요).
     if want == "publish" and alt.get("cut"):
         return False, f"관문의 두 출처 확인({how})이 " + (px_alt_gate_note(alt) or "시간 한도에 걸렸어요 (Jack 2026-11-27)")
+    if want == "publish" and alt.get("gateMergeErr"):   # 리뷰 #198 3차: 다시 물은 확인과 앞선 확인을 합치지 못했어요 — 쓰지 않아요
+        return False, f"관문의 두 출처 확인({how}): " + (px_alt_gate_note(alt) or f"종목별 기록을 합칠 수 없어요 ({alt['gateMergeErr']})")
     if alt.get("mustMissing"):
         return False, f"관문이 두 출처({how})로 필수 종목을 확인하지 못했어요: {', '.join(alt['mustMissing'])}" + (f" ({alt['err'][0]})" if alt.get("err") else "")
     asked, got = alt.get("asked") or 0, alt.get("got") or 0

@@ -999,7 +999,7 @@ def test_review2_merge_without_history_rebuilds_the_same_record():
         assert {k: rebuilt[k] for k in fields} == {k: alt[k] for k in fields}, seed
     bad = dict(alt)
     V.px_alt_gate_merge(bad, [], dict(list(sink.items())[:5]))         # 기록이 모자라면 쓰지 않아요 (필수 종목 모두 · 확인 0)
-    assert bad["mustMissing"] == list(V.MUST) and bad["got"] == 0 and bad["gateMergeErr"] == f"기록 5 / 대상 {alt['asked']}"
+    assert bad["mustMissing"] == list(V.MUST) and bad["got"] == 0 and bad["gateMergeErr"] == f"종목별 기록 1번째 5 / 대상 {alt['asked']}"
 
 
 def settled_world(seed, cur, clk, trace=None):
@@ -1097,3 +1097,89 @@ def test_review2_randomized_whenever_the_gate_passes_main_passes_too():
         stats["retry_main_fail"] += bool(rm.failed)
         assert alt["got"] <= main_like["got"] and set(main_like["mustMissing"]) <= set(alt["mustMissing"]), seed
     assert stats["once"] >= 20 and stats["retry_pass"] >= 15 and stats["retry_main_fail"] >= 8, stats
+
+
+# ── 9. 리뷰 #198 3차 (Fable · 고칠 것) ────────────────────────────────────────────────────────────
+def test_review3_a_first_try_net_error_or_yahoo_failure_keeps_its_outcome_after_a_clean_retry():
+    """첫 확인에서 005930 이 끝까지 물었는데 확인 못 함 — 다음 연결 오류 세 번 ('net') · 야후 시간 초과 세 번 ('yfail') · 다음이 HTTP 403 으로 답함
+    ('no'). 다시 물은 확인은 깨끗해요. 그래도 확인 못 함 (main 과 같은 줄 실패 · 같은 받은 종가) — Fable netkeep.py · 3차 때 살아남은 돌연변이
+    ('net' 이면 뒤 확인 그대로) 를 잡아요."""
+    cur, prev, old = fb_files()
+
+    def conn(c):
+        if c == "005930":
+            raise requests.ConnectionError("conn")
+
+    def slow_yahoo(c):
+        if c == "005930":
+            raise requests.Timeout("to")
+    cases = [("net", {0: conn}, None, "005930 다음: conn"), ("yfail", None, {0: slow_yahoo}, "005930 야후: to"),
+             ("no", {0: lambda c: (None, "HTTP 403") if c == "005930" else None}, None, "005930 다음: HTTP 403")]
+    for kind, d0, y0, why in cases:
+        main_like = asker_by_try(cur, [0.0], d0, y0)()
+        said = []
+        alt = V.px_alt_publish_gate(asker_by_try(cur, [10.0, 0.0], d0, y0), say=said.append)
+        assert alt["tries"] == 2 and alt["timeouts"] == 1 and alt["keptEx"] == [why], (kind, alt["keptEx"])
+        assert alt["mustMissing"] == main_like["mustMissing"] == ["005930"] and alt["closes"] == main_like["closes"], kind
+        assert (alt["net"], alt["netMust"]) == (main_like["net"], main_like["netMust"]) and alt["noMust"] == main_like["noMust"], kind
+        rb, rm = check(cur, alt, final=old, prev=prev), check(cur, main_like, final=old, prev=prev)
+        assert failed(rb) == failed(rm) and "pxDate = 최종본 날짜" in failed(rb), kind
+        assert any(ln.startswith(f"!! 관문의 두 출처 확인: 첫 확인에서 다르거나 받지 못한 종목 1: {why}") for ln in said), kind
+    assert V.px_alt_gate_fold(("net", "conn"), ("ok", 1000.0, "bar")) == ("net", "conn")
+    assert V.px_alt_gate_fold(("yfail", 1000.0, "to"), ("ok", 1000.0, "bar")) == ("yfail", 1000.0, "to")
+
+
+def crash_ask(cur, crash_try, victim, step0=10.0):
+    """동시 1 · 가짜 시계. crash_try 번째 확인에서 victim 의 다음 답이 (값, 까닭, 덤) 세 칸이라 일하는 함수(one) 자체가 멈춰요 (출처 오류가
+    아니에요 — Fable crash.py). 첫 확인은 한 번에 step0 초 (한도에 걸려요), 다시 물은 확인은 바로."""
+    px = prices(cur)
+    n = {"i": -1}
+
+    def ask():
+        n["i"] += 1
+        i, clk = n["i"], Clock()
+
+        def fd(code, d):
+            clk.t += step0 if i == 0 else 0.0
+            if i == crash_try and code == victim:
+                return px[code], "daum", "extra"
+            return px[code], "daum"
+        return V.http_px_alt(cur["data"], PX, fetch=lambda sym, d, close_time=None: (px[sym.split(".")[0]], "bar"), fetch_daum=fd, workers=1,
+                             clock=clk, sleep=lambda s: None, say=lambda s: None)
+    return ask
+
+
+@pytest.mark.parametrize("crash_try", [0, 1])
+def test_review3_a_stock_where_the_worker_crashed_is_never_read_as_not_asked(crash_try):
+    """Fable crash.py: 첫 확인 (또는 다시 물은 확인) 에서 005930 을 묻던 일하는 함수 자체가 멈췄어요. 첫 판 (3차 전): 첫 확인의 기록에 005930 이
+    없으면 '묻지 못함' 으로 읽어 다시 물은 확인의 답으로 확인했어요 — main 은 그 종목을 확인하지 못해 실패하는데 관문은 통과. 이제 어느 확인의
+    기록이든 모자라면 합치지 않고 이 확인을 쓰지 않아요 (크게 남기고 · 날짜 줄에 그 까닭)."""
+    cur, prev, old = fb_files()
+    main_like = crash_ask(cur, 0, "005930", step0=0.0)()               # main: 한도 없이 한 번 (첫 확인과 같은 답)
+    assert main_like["mustMissing"] == ["005930"] and any("ValueError" in e for e in main_like["err"])
+    said = []
+    alt = V.px_alt_publish_gate(crash_ask(cur, crash_try, "005930"), say=said.append)
+    assert alt["tries"] == 2 and alt["timeouts"] == 1 and alt["cut"] == 0
+    want = f"종목별 기록 1번째 {206 if crash_try == 0 else 207} · 2번째 {207 if crash_try == 0 else 206} / 대상 207"
+    assert alt["gateMergeErr"] == want and alt["mustMissing"] == list(V.MUST) and alt["got"] == 0 and alt["closes"] == {}
+    assert f"!! 관문의 두 출처 확인: 종목별 기록을 합칠 수 없어요 ({want}) — 이 확인은 쓰지 않아요 (필수 종목을 확인하지 못한 것으로 세요)" in said
+    last = said[-1]
+    assert last.startswith("!! 관문의 두 출처 확인: 다시 물은 확인은 시간 한도 안에 끝났어요 (2/2번째") and "하지만 종목별 기록을 합칠 수 없어" in last
+    assert "경고로 남겨요" not in " ".join(said)
+    ok, why = V.px_alt_confirms(cur["data"], alt, PX, old, "publish", today=TODAY, now=NOW, special={})
+    assert not ok and "종목별 기록을 합칠 수 없어 이 확인은 쓰지 않았어요" in why and want in why
+    rb, rm = check(cur, alt, final=old, prev=prev), check(cur, main_like, final=old, prev=prev)
+    assert rb.failed and failed(rm) <= failed(rb) and "pxDate = 최종본 날짜" in failed(rb)
+    r = rows(rb)["pxDate = 최종본 날짜"]
+    assert r[3] == "FAIL" and "종목별 기록을 합칠 수 없어 이 확인은 쓰지 않았어요" in r[2] and "다시 물은 확인은 끝까지 가서" not in r[2]
+
+
+def test_review3_the_finished_retry_line_never_promises_a_warning():
+    """다시 물은 확인이 끝까지 간 뒤의 줄은 날짜 줄이 경고일지 실패일지 모르는 때라 둘 다에 맞는 말만 해요 (3차 nit)."""
+    cur, prev, old = fb_files()
+    said = []
+    alt = V.px_alt_publish_gate(asker_by_try(cur, [10.0, 0.0], {0: lambda c: (None, "그날 행 0개") if c == "005930" else None}),
+                                say=said.append)
+    assert "pxDate = 최종본 날짜" in failed(check(cur, alt, final=old, prev=prev))
+    assert said[-1].endswith("— 예전 기준 그대로 판단해요 (첫 확인에서 본 문제도 그대로 세요 · 첫 확인이 한도를 넘긴 것은 날짜 줄에 적혀요: 다른 까닭이 "
+                             "없으면 경고, 있으면 그 실패와 함께)")
