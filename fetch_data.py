@@ -86,7 +86,9 @@ import requests
 from validate_data import DIV_RANK_MISS_FAIL, DYT_COVER_BANDS, floor_1, rank_miss_reason, US_FCUR_KEEP_ZERO_DY
 # v19.6a: 환율 이력(fxHist)과 주식 분할(splits)의 기준도 관문 파일에 있어요 (검사 코드는 따로 · 같은 선만 읽어요)
 from validate_data import (FX_LO, FX_HI, FX_HIST_FROM, FX_HIST_FIRST_BY, FX_HIST_SOURCES, FX_HIST_ECOS, FX_HIST_GAP_MAX,
-                           FX_HIST_JUMP, FX_HIST_REL, SPLITS_FROM, SPLIT_R, SPLIT_SIMPLE_MAX, SPLIT_CLEAN_TOL, MUST_SPLITS)
+                           FX_HIST_JUMP, FX_HIST_REL, SPLITS_FROM, SPLIT_R, SPLIT_SIMPLE_MAX, SPLIT_CLEAN_TOL,
+                           MUST_SPLITS, FX_SRC_YAHOO, FX_SRC_WHY, FX_SRC_GAP, fx_close_floor)
+# 2026-11-24 (감사 3.8 · #192): data.json fxSrc 의 야후 이름 · 까닭 · 야후와의 차이 경고 선 · 이력 마지막 줄의 가장 이른 날짜 (관문의 휴장일 표 기준)
 # 2026-11-14: 국내 시계열의 공식 종가 고정 기준과 하루 가격 제한폭도 관문 파일에 있어요 (관문은 파이프라인의 점검 결과 krSeries 를 봐요)
 from validate_data import PIN_PX_TOL, PIN_SHR_TOL, PIN_REF_TOL, KR_DAY_LIMIT, KONEX_DAY_LIMIT, KR_JUMP_WHY
 from validate_data import KR_PX_ADJ_KIND, KR_PX_ADJ_SKIP, KR_PX_ADJ_QUIET
@@ -14833,13 +14835,16 @@ def log_us_fcur(sm):
             + ", ".join(f"{t}({c})" for t, c in q[:20]) + (f" 외 {len(q) - 20}곳" if len(q) > 20 else ""))
 
 
-def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, prev=None):
+def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, prev=None, fx_hist=None):
     """미국 주식 (yfinance). v17.5.2: 우선주·예탁증서와 한국 종목의 미국 상장분(kr_codes · dups)은 빼요 (clean_us_list). v17.5:
     · end 는 그날을 빼므로 오늘(KST)+1일까지 요청하고, 장이 안 끝난 봉은 버려요 (예전엔 하루 늦었어요).
     · 시가총액(cap)은 조원, 거래대금(val)은 억원 — 한국과 같은 단위 (그날 환율로 환산).
     · 상세 정보(이름·업종·설명)를 못 받은 종목 수를 남기고, 실패분은 한 번 더 천천히 시도해요.
     prev_fgn (2026-11-14 Q5 리뷰 S2): 어제 발행한 data.json usForeign.set — S&P 500 목록을 쓸 수 없는 날 외국 회사 판별이 이어 써요.
-    prev (2026-11-20 · Jack): 지난 발행본 data.json — 미국 기준일 종가가 야후에 없는 종목을 그 발행본의 마지막 확인 종가로 실어요 (us_own_close_step)."""
+    prev (2026-11-20 · Jack): 지난 발행본 data.json — 미국 기준일 종가가 야후에 없는 종목을 그 발행본의 마지막 확인 종가로 실어요 (us_own_close_step).
+    fx_hist (2026-11-24 · 감사 3.8): (야후 환율 시계열, 야후 환율) → 환율 이력 칸 (main 이 fx_hist_fields 로). 이 실행의 환율(fx_last ·
+    fxDate · fxSrc)은 그 이력의 마지막 줄이에요 — 이번 실행에 출처에서 새로 읽었을 때 (fx_official). 시가총액 · 거래대금(원)도 그 환율로.
+    없으면 (시험) 야후 값 그대로 · fxSrc why noHist."""
     import yfinance as yf
 
     list_names = UsListNames()
@@ -14855,7 +14860,10 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
     us_px_date = us_data_date(spx, last_ok)
     fx = cut_at(fx, max(us_px_date, last_ok))
     fx_last, fx_date = float(fx.iloc[-1]), fx.index[-1].date()
-    log(f"· 미국 기준일(S&P500 마지막 봉) {us_px_date} · 환율 {fx_last:,.1f} ({fx_date})")
+    log(f"· 미국 기준일(S&P500 마지막 봉) {us_px_date} · 야후 환율 {fx_last:,.1f} ({fx_date} 봉)")
+    # 2026-11-24 (감사 3.8): 이 실행의 환율 = 환율 이력(ECOS 15:30 종가)의 마지막 줄과 그 날짜 — 야후 봉은 아침 발행 때 아직 끝나지 않았어요.
+    # 이력은 야후 값을 2차 확인으로 써요 (10% 안 · fx_hist_ecos). 이력을 새로 읽지 못하면 야후 값 그대로 (fxSrc 에 출처 · 크게 남겨요)
+    fx_last, fx_date, fx_src = fx_official_safe((lambda: fx_hist(fx, fx_last)) if fx_hist is not None else {}, fx_last, fx_date, today)
     # v19.6e (Part I.2): 미국의 이번 주 앞 마지막 거래일 (S&P 500 일봉) — 종목마다 가격과 같은 시계열의 그날 봉을 실제 종가 기준으로 c1w 재료에
     # (us_c1w_add · main 의 c1w_step). 멈춰도 발행은 이어가요
     try:
@@ -15313,6 +15321,7 @@ def fetch_us(start, today, rf, kr_codes=frozenset(), dups=None, prev_fgn=None, p
     splits, sinfo = us_splits_safe(data, [r["t"] for r in out], today)
     log_us_splits(splits, sinfo, len(out), today, what=f"미국 주식 분할 (오늘 시세 다운로드 · {start} 부터)")
     meta = {"usPxDate": us_px_date.isoformat(), "fxDate": fx_date.isoformat(), "usInfo": [n_ok, len(out)], "_index": spx,
+            "fxSrc": fx_src,                                # 2026-11-24 (감사 3.8): 이 실행의 환율의 출처 (data.json fxSrc)
             # v19.5b 후속: 종목마다 재무제표 통화 (main 의 맨 끝 us_size_step 이 달러 회사만 받게 · 파일에 나가지 않아요 · 상세 정보 없으면 None)
             "_usCur": {r["t"]: (None if r["t"] in no_info else us_fin_currency(infos.get(r["t"]) or {})) for r in out},
             "usLeftOut": {**left_out, "badBar": bad_bar},   # v19.1c: 깨진 봉으로 뺀 종목도 관문이 경고로 이름을 남겨요
@@ -15813,6 +15822,30 @@ def ecos_fx_series(start, end, get=None, item=None):
                      index=pd.to_datetime([x["TIME"] for x in rows], format="%Y%m%d"), dtype="float64")
 
 
+_ECOS_FX_READ = {}   # 2026-11-24 (감사 3.8): 이 실행에서 읽은 ECOS 환율 시계열 — (시작, 끝, (통계표, 항목)) → 시계열 또는 멈춘 오류
+
+
+def ecos_fx_series_once(start, end, item):
+    """fetch_fx_hist 의 ECOS 읽기 — 한 실행에 한 번 (2026-11-24 · 감사 3.8). 환율 이력은 미국 단계가 먼저 만들고 (data.json fx = 그 마지막 줄)
+    main 이 macro.json 에 실을 때 같은 함수로 다시 만들어요: 두 번째는 새 요청 없이 같은 시계열이라 두 이력이 같아요. 멈춘 오류도 그대로 다시
+    내요 (ECOS 에 한 실행 한 번 — ecos_get 이 세 번까지 · 예전과 같아요 · 한쪽만 새로 읽는 일이 없어요)."""
+    key = (start, end, tuple(item))
+    if key in _ECOS_FX_READ:
+        got = _ECOS_FX_READ[key]
+        log(f"· ECOS 환율 시계열 {item[0]}/{item[1]}: 이 실행에서 앞서 읽은 것을 그대로 써요 (새 요청 없음 · "
+            + (f"그때 멈춤: {type(got).__name__})" if isinstance(got, Exception) else f"{len(got):,}줄)"))
+        if isinstance(got, Exception):
+            raise got
+        return got.copy()
+    try:
+        got = ecos_fx_series(start, end, item=item)
+    except Exception as e:
+        _ECOS_FX_READ[key] = e
+        raise
+    _ECOS_FX_READ[key] = got
+    return got.copy()
+
+
 def fx_hist_ecos(ser, fx_last, today, src="ecos"):
     """ECOS 시계열 → fxHist (끝난 값이라 final 참). 오늘(KST)까지. (순수 함수)
       ecos       : 줄 D = D 에 고시된 매매기준율 (전 영업일 서울 거래의 평균 — 미국 D 의 끝보다 하루 반쯤 늦어요)
@@ -15934,7 +15967,7 @@ def fetch_fx_hist(fx, fx_last, today, prev_macro, source=None, now=None, downloa
         else:
             item = ECOS_FX_ITEMS["close" if source == "ecos_close" else "mbr"]
             try:
-                ser = (ecos or (lambda a, b, it: ecos_fx_series(a, b, item=it)))(dt.date.fromisoformat(FX_HIST_FROM), today, item)
+                ser = (ecos or ecos_fx_series_once)(dt.date.fromisoformat(FX_HIST_FROM), today, item)   # 2026-11-24: 한 실행에 한 번
                 hist, how = fx_hist_ecos(ser, fx_last, today, source)
             except Exception as e:
                 how = f"{type(e).__name__}: {str(e)[:120]}"
@@ -15960,7 +15993,7 @@ def fetch_fx_hist(fx, fx_last, today, prev_macro, source=None, now=None, downloa
             hist, how = fx_hist_yahoo_next(raw, fx, fx_last, now)
     if hist:
         log(f"· 환율 이력(fxHist, {source}): {hist['rows'][0][0]} ~ {hist['asOf']} · {len(hist['rows']):,}일 · {how} · 마지막 "
-            f"{hist['rows'][-1][1]:,.1f}{'' if hist['final'] else ' (아직 끝나지 않은 값 · final 거짓)'} · data.json fx {fx_last:,.1f} · "
+            f"{hist['rows'][-1][1]:,.1f}{'' if hist['final'] else ' (아직 끝나지 않은 값 · final 거짓)'} · 견준 환율 {fx_last:,.1f} (미국 단계: 야후 · main: data.json fx) · "
             f"약 {len(json.dumps(hist, separators=(',', ':'))) / 1024:.0f}KB")
         return hist, source, today.isoformat()
     kept, why = kept_fx_hist(prev_macro, source, fx, fx_last, today)
@@ -15981,6 +16014,67 @@ def fx_hist_fields(fx, fx_last, today, prev_macro, **kw):
         log(f"  !! 환율 이력(fxHist)을 만들다 멈췄어요 ({type(e).__name__}: {str(e)[:120]}) → macro.json 에 싣지 않아요 (관문이 경고해요)")
         return {}
     return {"fxHist": hist, "fxHistSrc": src, "fxHistFresh": fresh} if hist is not None else {}
+
+
+# 2026-11-24 (감사 3.8 · Track 2 · #192): data.json fx · fxDate · fxSrc. 예전엔 야후 USDKRW=X 의 마지막 봉이었어요. 아침 발행(06:40) 때 그 봉(런던 날짜)은
+# 아직 끝나지 않아, 11-21 발행은 '11-20' 날짜 밑에 그날 아침 값 1,345.7 을 냈고 같은 날짜의 ECOS 15:30 종가는 1,336.2 였어요 (미국 시가총액 · 원화
+# 값이 0.7% 어긋남). 이제 이 실행의 환율 = 환율 이력(fxHist)의 마지막 줄 = 그 날짜의 공식 종가 (fx 와 fxHist 가 같은 날짜에 같은 값 · 앱의 '오늘 환율'과
+# 지난 날짜 환율이 한 출처). 이력을 이번 실행에 새로 읽지 못했으면 (지난 발행본을 그대로 · 없음 · 마지막 줄이 fx_close_floor 앞 — 휴장일 표가 기대하는
+# 날보다 한국 영업일 하루 넘게 앞, 표 밖이면 FX_HIST_ECOS_TAIL 일 넘게 전 · 고르다 멈춤)
+# 야후 값 그대로: 날짜는 봉이 끝났으면 그 봉의 날짜, 아직이면 이 실행의 한국 날짜 (읽은 날의 값 — 끝나지 않은 봉을 지난 날짜의 종가로 적지 않아요).
+# 야후 출처 이름 FX_SRC_YAHOO · 야후로 간 까닭 FX_SRC_WHY (data.json fxSrc.why) 는 관문 파일에 있어요 (관문의 '환율 출처' 경고 줄이 같은 말로)
+
+
+def fx_official(fields, y_fx, y_date, today, now):
+    """이 실행의 환율 (data.json fx · fxDate · fxSrc). fields: fx_hist_fields 의 칸 ({} 면 이력 없음). y_fx · y_date: 야후 USDKRW=X 의 마지막 봉
+    (값 · 런던 날짜 date). today: 한국 날짜. now: UTC 시각 (야후 봉이 끝났는지 — london_midnight_after). -> (환율, 날짜 date, fxSrc). (순수 함수)
+    fxSrc = {"v": 1, "src": fxHistSrc (이력의 마지막 줄) 또는 "yahoo", "final": 끝난 값인지, "yahoo": {"d", "fx", "final"} (야후 봉 · 2차 확인),
+    "why": 야후로 간 까닭 (FX_SRC_WHY · 야후일 때만)}"""
+    y_final = bool(now >= london_midnight_after(y_date))
+    yrec = {"d": y_date.isoformat(), "fx": round(float(y_fx), 1), "final": y_final}
+    f = fields if isinstance(fields, dict) else {}
+    hist = f.get("fxHist")
+    if not isinstance(hist, dict) or not hist.get("rows"):
+        why = "noHist"
+    elif f.get("fxHistFresh") != today.isoformat():
+        why = "kept"
+    else:
+        d, v = hist["rows"][-1]
+        last = dt.date.fromisoformat(d)
+        if last >= fx_close_floor(today, f.get("fxHistSrc")):      # #192: 관문의 휴장일 표 기준 (늦은 아침의 하루까지)
+            return float(v), last, {"v": 1, "src": f.get("fxHistSrc"), "final": hist.get("final") is True, "yahoo": yrec}
+        why = "old"
+    return float(y_fx), (y_date if y_final else today), {"v": 1, "src": FX_SRC_YAHOO, "final": y_final, "yahoo": yrec, "why": why}
+
+
+def fx_official_safe(fields, y_fx, y_date, today, now=None):
+    """fetch_us 의 환율 고르기: fx_official + 크게 남겨요. fields: 환율 이력 칸, 또는 그것을 만드는 함수 (인자 없음 — 그 안에서 멈춰도 여기서 받아요).
+    멈추면 야후 값 · 이 실행의 한국 날짜 (끝났는지 모르는 봉을 지난 날짜로 적지 않게) · why err — 발행은 이어가요 (관문이 경고해요)."""
+    now = now or dt.datetime.now(dt.timezone.utc)
+    try:
+        fx, d, rec = fx_official(fields() if callable(fields) else fields, y_fx, y_date, today, now)
+    except Exception as e:
+        log(f"  !! 환율(data.json fx): 출처를 고르다 멈췄어요 ({type(e).__name__}: {str(e)[:120]}) → 야후 {float(y_fx):,.1f} 그대로 · 날짜는 이 "
+            f"실행의 한국 날짜 {today} · fxSrc why err (관문이 경고해요)")
+        try:
+            y_final = bool(now >= london_midnight_after(y_date))
+        except Exception:
+            y_final = None                              # 끝났는지 모름 (칸은 그대로 — fxSrc.yahoo 는 늘 d · fx · final)
+        return float(y_fx), today, {"v": 1, "src": FX_SRC_YAHOO, "final": None,
+                                    "yahoo": {"d": str(y_date), "fx": round(float(y_fx), 1), "final": y_final}, "why": "err"}
+    y = rec["yahoo"]
+    if rec["src"] != FX_SRC_YAHOO:
+        gap = fx / y["fx"] - 1 if y["fx"] else None
+        big = gap is None or abs(gap) > FX_SRC_GAP       # #192 리뷰: 보통 날 차이 중앙값 0.25% · 99% 1.44%
+        log(f"{'  !! ' if big else '· '}환율(data.json fx): {fx:,.1f} — {d} 공식 종가 (환율 이력 {rec['src']} 의 마지막 줄"
+            f"{'' if rec['final'] else ' · 아직 끝나지 않은 값'}) · 야후 {y['fx']:,.1f} ({y['d']} 봉 · {'끝남' if y['final'] else '아직 끝나지 않음'}) 과 "
+            + (f"{gap * 100:+.2f}%" if gap is not None else "견줄 수 없음")
+            + (f" — {FX_SRC_GAP:.0%} 넘게 달라요 (관문이 경고해요)" if big else ""))
+    else:
+        log(f"  !! 환율(data.json fx): 환율 이력의 마지막 줄을 쓰지 않고 ({FX_SRC_WHY[rec['why']]}) 야후 {fx:,.1f} 를 써요 — 날짜 {d} "
+            + ("(끝난 봉의 런던 날짜)" if rec["final"] else f"({y['d']} 봉이 아직 끝나지 않아 이 실행의 한국 날짜)")
+            + " · data.json fxSrc 에 남겨요 (관문이 경고해요)")
+    return fx, d, rec
 
 
 # ────────────────────────────────────────────────────────────
@@ -17804,10 +17898,15 @@ def main():
     fy_c = collections.Counter(s.get("fy") for s in kr if s.get("fy"))
     log(f"· 주당 배당금 아는 종목: {n_dps:,} / {len(kr):,} (그중 0원 = 배당 없음 {n_dps0:,}) · 사업보고서 연도 {dict(sorted(fy_c.items()))}")
 
+    # 2026-11-24 (감사 3.8): 환율 이력(fxHist)을 미국 단계 안에서 먼저 만들어요 — 이 실행의 환율(data.json fx · fxDate)과 미국 시가총액 ·
+    # 거래대금(원)이 그 마지막 줄(ECOS 종가)을 써요. macro.json 에 싣는 것은 아래 그대로 (같은 시계열). 지난 발행본의 macro.json 은 아래에서
+    # 덮어쓰기 전이라 여기서 읽어도 같아요
+    prev_macro = read_prev_data(OUT_MACRO)       # v19.6a: 지난 발행본의 fxHist
     us, us_bench, fx, fx_last, us_vol_krw, umeta = ph.run("미국", fetch_us, start, today, rf,
                                                           kr_codes=frozenset(s["t"] for s in kr), dups=dups,
                                                           prev_fgn=prev_foreign_set(prev),   # 리뷰 S2: 어제 발행한 외국 회사 목록
-                                                          prev=prev)   # 2026-11-20 (Jack): 야후 종가가 없는 종목은 지난 발행본의 마지막 확인 종가로
+                                                          prev=prev,   # 2026-11-20 (Jack): 야후 종가가 없는 종목은 지난 발행본의 마지막 확인 종가로
+                                                          fx_hist=lambda fx_y, fl_y: ph.run("환율 이력", fx_hist_fields, fx_y, fl_y, today, prev_macro))
     # 2026-11-19 (Jack 의 상시 규칙): #139 의 검사가 잡는 미국 행(점이 지워진 꼴 · 관문 표와 다른 바꾸기)은 여기서 빼요 — 미국 목록이 정해진
     # 바로 뒤라 아래 분할 · 업종 · 순위 · 인기 목록 · 종목 수에도 들어가지 않아요 (data.json ownDrop.usClass)
     us, own_us = own_drop_us_class(us, umeta)
@@ -17950,6 +18049,7 @@ def main():
         "nextPub": next_pub.isoformat() if next_pub else None,               # v19.1c: 앱의 '늦음' 판단 (고정 4일 대신)
         "staleAfter": stale_after(next_pub) if next_pub else None,
         "listSrc": kmeta["listSrc"], "fx": round(fx_last, 1), "units": UNITS, "settings": settings,
+        "fxSrc": umeta.get("fxSrc"),          # 2026-11-24 (감사 3.8): fx 의 출처 — 환율 이력의 마지막 줄(ECOS 종가) 또는 야후 (관문 경고 줄이 봐요)
         "popular": popular_list(kr, us),
         "count": {"kr": len(kr), "us": len(us), "bond": len(bonds), "fund": len(funds), "usInfo": umeta["usInfo"]},
         "usLeftOut": umeta["usLeftOut"],     # v17.5.2: 미국 목록에서 뺀 티커 (우선주·예탁증서 · 한국 종목의 미국 상장분) — 검증이 세요
@@ -18013,11 +18113,11 @@ def main():
     dcf_n = sum(1 for c in corp["companies"] if c["dcfReady"])
     log(f"✓ {OUT_CORP} 저장 — 기업 {len(corp['companies']):,} · 업종 {len(corp['sectors'])} · DCF 자동채움 {dcf_n:,}건 · {os.path.getsize(OUT_CORP) / 1e6:.1f}MB")
 
-    prev_macro = read_prev_data(OUT_MACRO)       # v19.6a: 지난 발행본의 fxHist (아래에서 덮어쓰기 전에)
     macro = ph.run("금리·원자재", fetch_macro, start, today, fx)
     macro["publishedAt"] = published_at
     # v19.6a Part I.1: 원/달러 일별 환율 2016 ~ (FX_HIST_SOURCE · fxHistSrc 출처 · fxHistFresh 출처에서 마지막으로 새로 읽은 날).
-    # 못 만들면 싣지 않아요 (관문 경고). data.json fx 는 이 PR 에서 바꾸지 않아요.
+    # 못 만들면 싣지 않아요 (관문 경고). 2026-11-24 (감사 3.8): 미국 단계가 같은 함수로 먼저 만들었어요 (data.json fx = 그 마지막 줄). 여기서는
+    # ECOS 를 다시 부르지 않고 그 실행에서 읽은 시계열 그대로라 (ecos_fx_series_once) 같은 이력이에요 — 관문의 '환율 출처' 줄이 맞춰 봐요
     macro.update(ph.run("환율 이력", fx_hist_fields, fx, fx_last, today, prev_macro))
     # v17.5.1: KOSPI·S&P500 일별 종가 3년 (각자 기준일까지) — 2.0 의 '내 덱 vs KOSPI'
     ih = {}
