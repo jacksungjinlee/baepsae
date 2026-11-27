@@ -160,7 +160,9 @@ PX_ALT_REFUSE_ENV = "BAEPSAE_DAUM_REFUSE_SKIP"   # deploy.yml 관문 단계: 코
 # 시간 한도(연결 20초 + 바이트 사이 20초)까지 · 일하는 스레드는 모두 끝난 뒤 돌아와요 (배포의 한도와 같은 꼴). 넘으면 크게 남기고 같은 실행에서
 # 바로 처음부터 한 번 더 (새 한도 · 첫 확인의 답은 다시 쓰지 않아요 — 판단이 달라질 일이 없게). 다시 물은 확인도 넘으면 실패해요 (이번 실행은
 # 발행하지 않고, 다음 예정 실행이 다시 해요). 한도에 걸린 확인은 받은 종목 수가 기준을 채웠어도 통과 · 건너뜀이 되지 않아요
-# (px_alt_confirms · 받지 못한 종목의 다른 종가를 놓칠 수 있어요). 끝까지 간 확인은 예전 기준 그대로 판단하고, 다시 물었으면 날짜 줄이 경고로
+# (px_alt_confirms · 받지 못한 종목의 다른 종가를 놓칠 수 있어요). '한도에 걸림' = 한도 때문에 묻지 못했거나 다시 묻지 못한 종목(cut)이
+# 하나라도 있음 — 마지막 오류 종류와 상관없이 (리뷰 #198 1차: 네트워크 오류가 아닌 답 뒤 다시 묻지 못한 종목도). 그래서 cut 이 0 인 확인은
+# 한도 없이 물었을 때와 똑같이 다 물은 확인이고 (같은 횟수 · 같은 쉬는 시간), 예전 기준 그대로 판단해요. 다시 물었으면 날짜 줄이 경고로
 # 알려요. 최악 약 2 × (600 + 40)초 ≈ 21분 (매일 실행 job 한도 300분 안). 배포의 관문(한도를 받은 --live · 위)과 감시(한도 없는 --live)는
 # 예전 그대로예요.
 PX_ALT_GATE_BUDGET_S = 600
@@ -1214,7 +1216,8 @@ def px_alt_was_cut(alt):
 
 def px_alt_gate_note(alt):
     """발행 관문(publish · bootstrap) 확인의 시간 한도 기록 → 날짜 줄 · 알림에 붙이는 한 줄 (2026-11-27 Jack · 순수 함수). 매일 아침 점검이
-    읽어요. 한도에 걸린 확인 (cut 이 0 이 아님 — 실패): '시간 한도 600초를 두 번 넘김 …'. 첫 확인만 걸리고 다시 물은 확인이 끝까지 감 (통과할 수
+    읽어요. 수: 대상 · 끝까지 물은 (대상 − 남은: 두 출처가 같음 · 다름 · 그날 종가 없음 · 세 번 모두 오류로 끝난 종목) · 확인 (두 출처가
+    같은 종목) · 남은 (한도로 묻지 못했거나 다시 묻지 못한 종목 = cut). 한도에 걸린 확인 (cut 이 0 이 아님 — 실패): '시간 한도 600초를 두 번 넘김 …'. 첫 확인만 걸리고 다시 물은 확인이 끝까지 감 (통과할 수
     있어요 · 경고): '첫 확인이 시간 한도 600초를 넘겨 처음부터 다시 물었어요 …'. 그 밖에는 None (사이트 점검 기록 · 걸리지 않은 확인)."""
     if not isinstance(alt, dict) or alt.get("mode", "publish") != "publish":
         return None
@@ -1224,11 +1227,11 @@ def px_alt_gate_note(alt):
     if alt.get("cut"):
         asked, cut, got = _count(alt.get("asked")), _count(alt.get("cut")), _count(alt.get("got"))
         return (f"{lim_s}를 {'두 번 ' if n >= 2 else ''}넘김 (Jack 2026-11-27) — {'다시 물은 확인: ' if n >= 2 else ''}대상 {asked}종목 · "
-                f"답을 받은 {max(asked - cut, 0)} (확인 {got}) · 남은 {cut} · 이번 실행은 발행하지 않아요 (다음 예정 실행이 다시 해요)")
+                f"끝까지 물은 {max(asked - cut, 0)} (확인 {got}) · 남은 {cut} · 이번 실행은 발행하지 않아요 (다음 예정 실행이 다시 해요)")
     if n >= 1:
         f = alt.get("firstCut") if isinstance(alt.get("firstCut"), dict) else {}
         fa, fc, fg = _count(f.get("asked")), _count(f.get("cut")), _count(f.get("got"))
-        return (f"첫 확인이 {lim_s}를 넘겨 처음부터 다시 물었어요 (Jack 2026-11-27 · 첫 확인: 대상 {fa}종목 · 답을 받은 {max(fa - fc, 0)} "
+        return (f"첫 확인이 {lim_s}를 넘겨 처음부터 다시 물었어요 (Jack 2026-11-27 · 첫 확인: 대상 {fa}종목 · 끝까지 물은 {max(fa - fc, 0)} "
                 f"(확인 {fg}) · 남은 {fc}) — 다시 물은 확인은 끝까지 가서 예전 기준 그대로 판단해요")
     return None
 
@@ -1407,8 +1410,9 @@ def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, s
     (HTTP 403 · ConnectionRefusedError · SSLEOFError … — px_refusal_name). 종목마다 got · cut · no · net · ref · rskip 하나로만 세요.
     2026-11-27 (Jack "Yes, with one immediate retry inside the same run before giving up."): 발행 관문(publish)은 px_alt_publish_gate 가
     _PX_ALT_GATE_S 를 켠 동안만 확인 전체에 그 한도 — 지나면 배포와 같이 새 요청(다시 묻기도)을 하지 않고, 묻는 중인 요청은 자기 시간 한도까지,
-    일하는 스레드는 모두 끝난 뒤 돌아와요 (limit · cut 에 남아요 · 순서 · 판단은 예전 그대로). 켜지 않았으면 (따로 부를 때) 예전 그대로 한도 없이.
-    사이트 점검(live)은 그 값을 읽지 않아요.
+    일하는 스레드는 모두 끝난 뒤 돌아와요 (limit · cut 에 남아요 · 순서 · 판단은 예전 그대로). 배포와 달리 한도 때문에 다시 묻지 못한 종목은 마지막
+    오류 종류와 상관없이 cut 으로 세요 (리뷰 #198 1차) — 그래서 cut 이 0 인 확인은 한도 없이 물었을 때와 똑같이 다 물은 확인이에요 (같은 횟수 ·
+    같은 쉬는 시간). 켜지 않았으면 (따로 부를 때) 예전 그대로 한도 없이. 사이트 점검(live)은 그 값을 읽지 않아요.
     예외를 내지 않아요 — 못 받은 종목은 확인 못 함."""
     from concurrent.futures import ThreadPoolExecutor
     say = say or (lambda line: print(line, flush=True))
@@ -1481,7 +1485,8 @@ def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, s
     def get(fn, code, *a, **k):
         """(값, 까닭, 어떻게): 어떻게 = 'ans' (출처가 답했어요 — 값이 None 이면 분명히 답하지 않음) · 'no' (마지막 오류가 네트워크 오류가
         아니에요 — px_net_error · 분명히 답하지 않음) · 'net' (마지막 오류가 네트워크 오류로 세 번을 다 썼어요) · 'cut' (시간 한도).
-        다시 묻는 횟수와 쉬는 시간은 오류 종류와 상관없이 예전 그대로예요.
+        다시 묻는 횟수와 쉬는 시간은 오류 종류와 상관없이 예전 그대로예요. 발행 관문(gate)에서는 한도 때문에 다시 묻지 못하면 마지막 오류가
+        무엇이든 'cut' 이에요 (2026-11-27 · 리뷰 #198 1차 — 배포 · 감시는 예전 그대로 'no').
         2026-11-21: 'ref' (세 번 모두 거절 쪽 네트워크 오류 — px_refusal_error · net 의 한 갈래) · 'rskip' (다음이 거절해 멈춘 뒤라 묻지 않음)."""
         last, last_net, all_ref, last_e = None, True, True, None
         for i in range(3):
@@ -1490,9 +1495,12 @@ def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, s
                 if last is not None:             # 오류 뒤 다시 묻기 전에 한도가 지났어요 — 왜 못 받았는지 (시간 초과 · 거절 · 차단 쪽) 남겨요
                     note = f"{a[0]}: {last} ({'시간 한도로' if stop == 'cut' else '다음이 거절해'} 다시 묻지 않음)"
                     errs.append(note)
-                    if not last_net:             # 네트워크 오류가 아닌 답 (차단 쪽 · JSON 이 아님) 이었어요 — 시간 한도 탓이 아니에요
+                    # 배포 · 감시 (예전 그대로): 네트워크 오류가 아닌 답 (차단 쪽 · JSON 이 아님) 이었어요 — 시간 한도 탓이 아니에요.
+                    # 발행 관문 (2026-11-27 · 리뷰 #198 1차): 한도 때문에 다시 묻지 못했으니 오류 종류와 상관없이 '시간 한도로 건너뜀' (cut) 이에요 —
+                    # 예전 규칙은 그 종목을 다시 물어요 (그 답으로 통과 · 실패가 갈릴 수 있어요). 그래서 이 확인은 끝난 것이 아니고, 한 번 더 묻거나 실패해요.
+                    if not last_net and gate is None:
                         return None, last, "no"
-                    if stop == "cut":
+                    if stop == "cut" and last_net:
                         cut_errs.append(note)
                 if stop == "rskip":              # 다음이 거절해 멈췄어요 (2026-11-21) — 시간 한도와 따로 세요
                     with lock:
@@ -1582,7 +1590,7 @@ def px_alt_publish_gate(ask, say=None):
             break
         asked, cut, got = _count(alt.get("asked")), _count(alt.get("cut")), _count(alt.get("got"))
         secs = alt.get("secs")
-        counts = (f"대상 {asked}종목 · 답을 받은 {max(asked - cut, 0)} (확인 {got}) · 남은 {cut}"
+        counts = (f"대상 {asked}종목 · 끝까지 물은 {max(asked - cut, 0)} (확인 {got}) · 남은 {cut}"
                   + (f" · 걸린 시간 {secs:.0f}초" if isinstance(secs, (int, float)) and not isinstance(secs, bool) else ""))
         if first is None:
             first = {"asked": asked, "got": got, "cut": cut, "secs": secs}
@@ -7854,8 +7862,8 @@ def _main(argv=None):
     raw_limit = a.daum_limit if a.daum_limit is not None else (os.environ.get(PX_ALT_LIMIT_ENV) or "").strip() or None
     daum_limit = None
     if raw_limit is not None and mode != "live":
-        print(f"· 다음 확인 시간 한도({raw_limit})는 사이트 점검(--live)에서만 써요 — 이 실행({mode})은 한도 없이 예전 그대로 건너뛰지 않아요 "
-              f"(이 값은 쓰지 않고 발행 관문의 한도 {px_alt_secs(PX_ALT_GATE_BUDGET_S)}초만 — 넘으면 한 번 더, 또 넘으면 실패 · Jack 2026-11-27)")
+        print(f"· 다음 확인 시간 한도({raw_limit})는 사이트 점검(--live)에서만 써요 — 이 실행({mode})은 한도 없이 예전 그대로 묻지 않고, 이 값 대신 "
+              f"발행 관문의 한도 {px_alt_secs(PX_ALT_GATE_BUDGET_S)}초를 써요 (넘으면 바로 한 번 더, 또 넘으면 실패 · 건너뛰지 않아요 · Jack 2026-11-27)")
     elif raw_limit is not None:
         try:
             daum_limit = float(raw_limit)

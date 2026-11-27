@@ -10,7 +10,10 @@ before giving up." (네트워크 없음)
 - 다시 물은 확인도 넘으면 실패 (publish · bootstrap 모두 · main 끝 코드 1 · '발행 관문 실패' 알림에 까닭) — 받은 종목 수가 기준을 채웠어도
   통과 · 건너뜀이 되지 않아요 (느슨해지지 않아요) · 세 번째는 없어요;
 - 배포(--live + 한도)와 감시(--live · 한도 없음)는 예전 그대로 (한 번만 · 같은 인자 · 같은 결과와 로그 · 발행 관문의 한도를 읽지 않아요);
-- 묻는 중인 요청은 끝까지 기다리고, 돌아온 뒤 남는 스레드가 없고, 따로 띄운 파이썬이 바로 끝나요 (진짜 시계 · 한도를 0.2초로 줄여요).
+- 묻는 중인 요청은 끝까지 기다리고, 돌아온 뒤 남는 스레드가 없고, 따로 띄운 파이썬이 바로 끝나요 (진짜 시계 · 한도를 0.2초로 줄여요);
+- 리뷰 #198 1차 (두 리뷰어 모두): 한도 때문에 다시 묻지 못한 종목은 마지막 오류가 네트워크 오류가 아니어도 (JSON 이 아닌 200 · 야후 404)
+  '남은' 종목이에요 — 그래서 그 확인은 끝난 것이 아니고 한 번 더 물어요 (예전 규칙이 막는 것을 통과시키지 않고, 한 번 만에 실패하지도 않아요) ·
+  남은 종목이 없는 확인은 한도 없이 물었을 때와 똑같아요 · 배포 · 감시는 예전 그대로 ('그날 종가를 주지 않음').
 """
 import datetime as dt
 import inspect
@@ -165,15 +168,15 @@ def test_first_timeout_then_a_retry_that_finishes_passes_with_a_loud_note():
     assert calls[1] == sorted(V.px_alt_pick(cur["data"]))                # 예전 순서 그대로 (코드 순)
     assert alt["cut"] == 0 and alt["got"] == 207 and alt["tries"] == 2 and alt["timeouts"] == 1
     assert alt["firstCut"] == {"asked": 207, "got": 59, "cut": 148, "secs": 600.0}
-    # 크게: 그 순간 (http_px_alt) · 넘긴 뒤 (몇 번째 · 대상 / 답을 받은 / 남은) · 다시 물은 확인이 끝난 뒤
+    # 크게: 그 순간 (http_px_alt) · 넘긴 뒤 (몇 번째 · 대상 / 끝까지 물은 / 남은) · 다시 물은 확인이 끝난 뒤
     assert "!! 관문의 두 출처 확인 시간 한도 600초 (발행 관문): 다음 · 야후에 더 묻지 않아요 (확인 59 / 대상 207)" in lines[1]
     assert said[0] == ("!! 관문의 두 출처 확인이 시간 한도 600초를 넘겼어요 (발행 관문 · 1/2번째 · Jack 2026-11-27): 대상 207종목 · "
-                       "답을 받은 59 (확인 59) · 남은 148 · 걸린 시간 600초 — 처음부터 한 번 더 물어요 (새 한도 600초 · 받은 답은 다시 쓰지 않아요)")
+                       "끝까지 물은 59 (확인 59) · 남은 148 · 걸린 시간 600초 — 처음부터 한 번 더 물어요 (새 한도 600초 · 받은 답은 다시 쓰지 않아요)")
     assert said[1].startswith("!! 관문의 두 출처 확인: 다시 물은 확인은 시간 한도 안에 끝났어요 (2/2번째") and len(said) == 2
     rep = check(cur, alt, final=old, prev=prev)
     assert not rep.failed, rep.table()
     r = rows(rep)["pxDate = 최종본 날짜"]
-    assert r[3] == "WARN" and "첫 확인이 시간 한도 600초를 넘겨 처음부터 다시 물었어요 (Jack 2026-11-27 · 첫 확인: 대상 207종목 · 답을 받은 59 " \
+    assert r[3] == "WARN" and "첫 확인이 시간 한도 600초를 넘겨 처음부터 다시 물었어요 (Jack 2026-11-27 · 첫 확인: 대상 207종목 · 끝까지 물은 59 " \
         "(확인 59) · 남은 148)" in r[2]
     assert rows(rep)["한국 가격 = 공식 종가"][3] == "PASS" and rows(rep)["005930 = 공식 종가"][3] == "PASS"
     # 나머지 줄은 다시 묻지 않은 같은 확인과 똑같아요 (예전 기준 그대로)
@@ -219,11 +222,11 @@ def test_two_timeouts_fail_even_when_enough_closes_came_in():
     assert alt["got"] == 199 and alt["cut"] == 8 and not alt["mustMissing"] and alt["got"] >= V.PX_ALT_MIN_SHARE * alt["asked"]
     assert alt["tries"] == 2 and alt["timeouts"] == 2 and alt["firstCut"]["cut"] == 8
     assert said[1] == ("!! 관문의 두 출처 확인이 시간 한도 600초를 두 번 넘겼어요 (발행 관문 · 2/2번째 · Jack 2026-11-27): 대상 207종목 · "
-                       "답을 받은 199 (확인 199) · 남은 8 · 걸린 시간 600초 — 이번 실행은 발행하지 않아요 (관문 실패 · 다음 예정 실행이 다시 해요)")
+                       "끝까지 물은 199 (확인 199) · 남은 8 · 걸린 시간 600초 — 이번 실행은 발행하지 않아요 (관문 실패 · 다음 예정 실행이 다시 해요)")
     for mode in ("publish", "bootstrap"):
         ok, why = V.px_alt_confirms(cur["data"], alt, PX, old, mode, today=TODAY, now=NOW, special={})
         assert not ok and why == ("관문의 두 출처 확인(다음 × 야후)이 시간 한도 600초를 두 번 넘김 (Jack 2026-11-27) — 다시 물은 확인: 대상 207종목 · "
-                                  "답을 받은 199 (확인 199) · 남은 8 · 이번 실행은 발행하지 않아요 (다음 예정 실행이 다시 해요)"), mode
+                                  "끝까지 물은 199 (확인 199) · 남은 8 · 이번 실행은 발행하지 않아요 (다음 예정 실행이 다시 해요)"), mode
         rep = check(cur, alt, mode=mode, final=old, prev=prev if mode == "publish" else None)
         r = rows(rep)["pxDate = 최종본 날짜"]
         assert r[3] == "FAIL" and why.split("이 ", 1)[1] in r[2] and r[2].count("두 번 넘김") == 1, (mode, r)
@@ -322,7 +325,7 @@ def test_main_publish_retry_that_finishes_exits_0_with_a_warning(monkeypatch, ca
     code, out, summ, gates = run_main(monkeypatch, capsys, tmp_path, [10.0, 0.0])
     assert gates == [600.0, 600.0] and code == 0, out
     assert "!! 관문의 두 출처 확인 시간 한도 600초 (발행 관문): 다음 · 야후에 더 묻지 않아요 (확인 59 / 대상 207)" in out    # 그 순간
-    assert ("!! 관문의 두 출처 확인이 시간 한도 600초를 넘겼어요 (발행 관문 · 1/2번째 · Jack 2026-11-27): 대상 207종목 · 답을 받은 59 (확인 59) · "
+    assert ("!! 관문의 두 출처 확인이 시간 한도 600초를 넘겼어요 (발행 관문 · 1/2번째 · Jack 2026-11-27): 대상 207종목 · 끝까지 물은 59 (확인 59) · "
             "남은 148 · 걸린 시간 600초 — 처음부터 한 번 더 물어요") in out
     assert "!! 관문의 두 출처 확인: 다시 물은 확인은 시간 한도 안에 끝났어요 (2/2번째" in out
     assert "· 관문의 두 출처 공식 종가 (2026-10-30 · 다음 × 야후): 확인 207 / 207종목" in out
@@ -339,7 +342,7 @@ def test_main_two_timeouts_fail_in_publish_and_bootstrap(monkeypatch, capsys, tm
     mode = "bootstrap" if argv else "publish"
     assert gates == [600.0, 600.0] and code == 1, out                                   # 세 번째는 없어요
     assert "1/2번째" in out and ("!! 관문의 두 출처 확인이 시간 한도 600초를 두 번 넘겼어요 (발행 관문 · 2/2번째 · Jack 2026-11-27): 대상 207종목 · "
-                                 "답을 받은 199 (확인 199) · 남은 8 · 걸린 시간 600초 — 이번 실행은 발행하지 않아요") in out
+                                 "끝까지 물은 199 (확인 199) · 남은 8 · 걸린 시간 600초 — 이번 실행은 발행하지 않아요") in out
     assert "!! 관문의 두 출처 공식 종가 (2026-10-30 · 다음 × 야후): 확인 199 / 207종목" in out    # 받은 수가 기준을 넘어도 조용히 쓰지 않아요
     assert "시간 한도에 걸렸어요 (Jack 2026-11-20)" not in out and "건너뛰고 경고" not in out    # 배포처럼 건너뛰지 않아요
     assert "결과: FAIL" in out and "!! FAIL  pxDate = 최종본 날짜: 2026-10-30" in out
@@ -353,8 +356,8 @@ def test_main_publish_ignores_the_deploy_limit_but_keeps_its_own(monkeypatch, ca
     """배포의 한도 값(건너뜀)을 받아도 발행 관문은 쓰지 않고 자기 한도(넘으면 한 번 더 · 또 넘으면 실패)만 써요."""
     code, out, _, gates = run_main(monkeypatch, capsys, tmp_path, [3.0], env_limit="900")
     assert gates == [600.0, 600.0] and code == 1
-    assert ("· 다음 확인 시간 한도(900)는 사이트 점검(--live)에서만 써요 — 이 실행(publish)은 한도 없이 예전 그대로 건너뛰지 않아요 (이 값은 쓰지 않고 "
-            "발행 관문의 한도 600초만 — 넘으면 한 번 더, 또 넘으면 실패 · Jack 2026-11-27)") in out
+    assert ("· 다음 확인 시간 한도(900)는 사이트 점검(--live)에서만 써요 — 이 실행(publish)은 한도 없이 예전 그대로 묻지 않고, 이 값 대신 "
+            "발행 관문의 한도 600초를 써요 (넘으면 바로 한 번 더, 또 넘으면 실패 · 건너뛰지 않아요 · Jack 2026-11-27)") in out
 
 
 # ── 5. 배포 · 감시 (--live) 는 예전 그대로 ───────────────────────────────────────────────
@@ -504,3 +507,252 @@ def test_a_gate_that_times_out_twice_does_not_keep_the_process_alive(tmp_path):
     assert r.stdout.count("· 관문의 두 출처 확인 시작") == 2 and "시간 한도 0.2초 (발행 관문" in r.stdout
     assert "!! 관문의 두 출처 확인이 시간 한도 0.2초를 두 번 넘겼어요" in r.stdout
     assert took < 20, took                                                     # 파이썬 시작 + 2 × (0.2 + 0.2초) — 붙잡히면 훨씬 길어요
+
+
+# ── 7. 리뷰 #198 1차 (두 리뷰어 모두 · 막는 문제): 네트워크 오류가 아닌 답 뒤 한도가 지나 다시 묻지 못한 종목 ───────────────────────
+# 예전 (이 PR 첫 판): 그 종목은 '그날 종가를 주지 않음'(no) 으로 세져 남은 종목(cut)이 0 — 확인이 끝난 것으로 보여 다시 묻지 않고, 예전 규칙
+# (한도 없음)이 다시 물어 막았을 확인을 통과시키거나 (리뷰 Fable probe1), 한 번 만에 실패했어요 (Fable probe2 · Opus edge_no). 이제 발행 관문에서는
+# 오류 종류와 상관없이 남은 종목이에요. 배포 · 감시는 예전 그대로예요.
+import requests  # noqa: E402
+
+
+def non_json():
+    """200 인데 JSON 이 아닌 답 (차단 · 확인 쪽 화면) — 네트워크 오류가 아니에요 (px_net_error)."""
+    return requests.exceptions.JSONDecodeError("Expecting value", "<html>", 0)
+
+
+def yahoo_404():
+    r = requests.Response()
+    r.status_code = 404
+    return requests.HTTPError("404 Client Error: Not Found", response=r)
+
+
+EDGE_ERRS = [("daum", non_json), ("yahoo", yahoo_404), ("yahoo", non_json)]
+
+
+def edge_ask(cur, stage, err, victim=None, norow=(), wrong=None, again=None, once=True, calls=None, step=601.0, mode="publish", **kw):
+    """한 번 부를 때마다 새 가짜 시계 · 동시 1 (코드 순). victim (기본: 마지막 종목) 의 첫 답 (stage: daum · yahoo) 이 느리고 (가짜 시계가 step 초 —
+    한도를 넘겨요) 네트워크 오류가 아닌 오류예요. 다시 물으면 again 만큼 다른 종가 (없으면 발행 가격). once: 그 실패가 실행 전체에서 한 번만
+    (False 면 부를 때마다 처음 한 번). norow: 다음이 '그날 행 0개' 라고 답하는 종목 · wrong: 두 출처가 다른 종목 (다음만 그만큼 다르게).
+    calls: 부를 때마다 victim 을 물은 횟수를 남겨요."""
+    px = prices(cur)
+    victim = victim or sorted(V.px_alt_pick(cur["data"]))[-1]
+    hit = {"n": 0}
+
+    def ask():
+        clk, tries = Clock(), {}
+
+        def bad_first(code):
+            tries[code] = tries.get(code, 0) + 1
+            if code == victim and tries[code] == 1 and not (once and hit["n"]):
+                hit["n"] += 1
+                clk.t += step
+                raise err()
+
+        def fd(code, d):
+            if stage == "daum":
+                bad_first(code)
+            if code in norow:
+                return None, "그날 행 0개"
+            return px.get(code, 1000.0) + (wrong or {}).get(code, 0) + ((again or 0) if code == victim else 0), "daum"
+
+        def fy(sym, d, close_time=None):
+            code = sym.split(".")[0]
+            if stage == "yahoo":
+                bad_first(code)
+            return px.get(code, 1000.0), "bar"
+        alt = V.http_px_alt(cur["data"], PX, fetch=fy, fetch_daum=fd, workers=1, clock=clk, sleep=lambda s: None, say=lambda s: None,
+                            mode=mode, **kw)
+        if calls is not None:
+            calls.append(tries.get(victim, 0))
+        return alt
+    return ask, victim
+
+
+@pytest.mark.parametrize("stage,err", EDGE_ERRS)
+def test_a_reask_stopped_by_the_limit_is_cut_whatever_the_error(stage, err):
+    cur, _, _ = fb_files()
+    ask, victim = edge_ask(cur, stage, err, once=False)
+    tok = V._PX_ALT_GATE_S.set(600.0)
+    try:
+        alt = ask()
+    finally:
+        V._PX_ALT_GATE_S.reset(tok)
+    assert alt["cut"] == 1 and alt["got"] == 206 and alt["no"] == 0, (alt["cut"], alt["got"], alt["no"])
+    assert any(e.startswith(victim if stage == "daum" else f"{victim}.") and e.endswith("(시간 한도로 다시 묻지 않음)") for e in alt["err"]), alt["err"]
+    assert alt["cutErrN"] == 0                                         # '네트워크 오류 뒤 다시 묻지 못한 종목' 은 그대로 네트워크 오류만 세요
+
+
+@pytest.mark.parametrize("stage,err", EDGE_ERRS)
+def test_review_probe1_a_check_main_stops_is_not_passed(stage, err):
+    """Fable probe1 꼴: 표본 두 종목이 다르고, 마지막 종목의 첫 답이 느리고 네트워크 오류가 아니에요 — 다시 물으면 세 번째로 다른 종가.
+    예전 규칙 (한도 없이 다시 물음): 다름 3 → '한국 가격 = 공식 종가' 실패. 발행 관문: 그 종목은 남은 종목 → 바로 한 번 더 → 같은 실패
+    (첫 판은 한 번에 끝난 것으로 보고 99.0% 로 통과시켰어요)."""
+    cur, prev, old = fb_files()
+    order = sorted(V.px_alt_pick(cur["data"]))
+    wrong = {c: 1 for c in order[10:12]}
+    plain, _ = edge_ask(cur, stage, err, wrong=wrong, again=5)
+    main_like = plain()                                                # 한도 없이 (예전 규칙 · main 과 같은 길)
+    assert main_like["cut"] == 0 and len(main_like["disagree"]) == 3
+    assert "한국 가격 = 공식 종가" in failed(check(cur, main_like, final=old, prev=prev))
+    for once in (True, False):                                         # 실패가 한 번뿐 (다시 물은 확인은 깨끗) · 부를 때마다 (두 번 모두 넘김)
+        calls, said = [], []
+        ask, _ = edge_ask(cur, stage, err, wrong=wrong, again=5, once=once, calls=calls)
+        alt = V.px_alt_publish_gate(ask, say=said.append)
+        assert len(calls) == 2 and alt["tries"] == 2, once                # 한 번 만에 끝난 것으로 보지 않아요
+        assert said[0].startswith("!! 관문의 두 출처 확인이 시간 한도 600초를 넘겼어요 (발행 관문 · 1/2번째") and "남은 1" in said[0]
+        rep = check(cur, alt, final=old, prev=prev)
+        assert rep.failed, (once, rep.table())                           # 예전 규칙이 막는 확인을 통과시키지 않아요
+        if once:
+            assert alt["cut"] == 0 and len(alt["disagree"]) == 3 and "한국 가격 = 공식 종가" in failed(rep)   # 다시 물어 예전과 같은 판단
+            assert {k: alt[k] for k in ("closes", "got", "disagree", "mustMissing")} == \
+                {k: main_like[k] for k in ("closes", "got", "disagree", "mustMissing")}
+        else:
+            assert alt["cut"] == 1 and alt["timeouts"] == 2 and "시간 한도 600초를 두 번 넘김" in rows(rep)["pxDate = 최종본 날짜"][2]
+
+
+@pytest.mark.parametrize("stage,err", EDGE_ERRS)
+def test_review_probe2_one_slow_odd_answer_retries_instead_of_failing_at_once(stage, err):
+    """Fable probe2 꼴: 표본 20종목에 다음이 그날 행이 없다고 답해요 (187 / 207 — 90% 를 겨우 넘어요). 마지막 종목의 첫 답이 느리고 네트워크
+    오류가 아니에요 (다시 물으면 맞아요). 예전 규칙: 187 / 207 통과. 첫 판: 한 번 만에 186 / 207 로 실패 ('두 번 넘김' 없이). 이제: 남은 종목 1 →
+    바로 한 번 더 → 187 / 207 통과 (날짜 줄 경고)."""
+    cur, prev, old = fb_files()
+    order = sorted(V.px_alt_pick(cur["data"]))
+    norow = set([c for c in order if c not in V.MUST][:20])
+    plain, _ = edge_ask(cur, stage, err, norow=norow)
+    main_like = plain()
+    assert main_like["got"] == 187 and not check(cur, main_like, final=old, prev=prev).failed
+    calls, said = [], []
+    ask, _ = edge_ask(cur, stage, err, norow=norow, calls=calls)
+    alt = V.px_alt_publish_gate(ask, say=said.append)
+    assert len(calls) == 2 and alt["tries"] == 2 and alt["timeouts"] == 1 and alt["firstCut"]["cut"] == 1
+    assert alt["got"] == 187 and alt["cut"] == 0
+    rep = check(cur, alt, final=old, prev=prev)
+    assert not rep.failed, rep.table()
+    r = rows(rep)["pxDate = 최종본 날짜"]
+    assert r[3] == "WARN" and "첫 확인이 시간 한도 600초를 넘겨 처음부터 다시 물었어요" in r[2] and "남은 1)" in r[2]
+    a, b = rows(rep), rows(check(cur, main_like, final=old, prev=prev))
+    assert all(a[k] == b[k] for k in a if k != "pxDate = 최종본 날짜")      # 나머지 줄은 예전 규칙과 똑같아요
+
+
+@pytest.mark.parametrize("stage,err,victim", [("daum", non_json, "005930"), ("yahoo", yahoo_404, "000660")])
+def test_review_opus_edge_a_must_have_with_a_slow_odd_answer_retries(monkeypatch, stage, err, victim):
+    """Opus edge_no · edge_no_yahoo 꼴 (진짜 시계 · 동시 4 · 한도 0.3초): 필수 종목의 첫 답이 0.5초 걸리고 네트워크 오류가 아니에요 (다른 종목은
+    바로 답해요). 첫 판: 남은 종목 0 → 다시 묻지 않고 필수 종목이 빠져 실패. 이제: 다시 물어 (그 실패는 한 번뿐) 모두 받고 통과 (경고)."""
+    cur, prev, old = fb_files()
+    monkeypatch.setattr(V, "PX_ALT_GATE_BUDGET_S", 0.3)
+    px = prices(cur)
+    tries, lock = {}, threading.Lock()
+
+    def first_bad(code):
+        with lock:
+            tries[code] = tries.get(code, 0) + 1
+            n = tries[code]
+        if code == victim and n == 1:
+            time.sleep(0.5)
+            raise err()
+
+    def fd(code, d):
+        if stage == "daum":
+            first_bad(code)
+        return px[code], "daum"
+
+    def fy(sym, d, close_time=None):
+        if stage == "yahoo":
+            first_bad(sym.split(".")[0])
+        return px.get(sym.split(".")[0], 1000.0), "bar"
+    said = []
+    alt = V.px_alt_publish_gate(lambda: V.http_px_alt(cur["data"], PX, fetch=fy, fetch_daum=fd, sleep=lambda s: None, say=lambda s: None),
+                                say=said.append)
+    assert alt["tries"] == 2 and alt["timeouts"] == 1 and alt["cut"] == 0 and alt["mustMissing"] == [] and tries[victim] == 2
+    assert said[0].startswith("!! 관문의 두 출처 확인이 시간 한도 0.3초를 넘겼어요 (발행 관문 · 1/2번째")
+    rep = check(cur, alt, final=old, prev=prev)
+    assert not rep.failed and rows(rep)["pxDate = 최종본 날짜"][3] == "WARN", rep.table()
+
+
+@pytest.mark.parametrize("budget", [600.0, None])
+def test_live_with_the_same_sources_is_as_before(budget):
+    """배포 (한도 600) · 감시 (한도 없음): 같은 출처 (다음의 첫 답이 느리고 JSON 이 아님) 로 예전 그대로 — 한도가 지나 다시 묻지 못한 그 종목은
+    '다음이 그날 종가를 주지 않음' (no) 이고 남은 종목은 0 · 발행 관문의 값이 켜져 있어도 같아요 (main 과 같은 길: 이 갈래는 gate 가 없을 때
+    예전 줄을 그대로 타요)."""
+    cur, _, _ = fb_files()
+    outs = []
+    for on in (False, True):
+        ask, victim = edge_ask(cur, "daum", non_json, mode="live", once=False, **({"budget_s": budget} if budget else {}))
+        tok = V._PX_ALT_GATE_S.set(0.001) if on else None
+        try:
+            alt = ask()
+        finally:
+            if tok is not None:
+                V._PX_ALT_GATE_S.reset(tok)
+        outs.append((alt, check(cur, alt, mode="live").rows))
+    assert outs[0] == outs[1]
+    alt = outs[0][0]
+    if budget:                                                         # 배포: 한도가 지나 다시 묻지 못함 → 예전 그대로 no (남은 종목 0)
+        assert alt["cut"] == 0 and alt["no"] == 1 and alt["noEx"] == [f"{victim} " + "Expecting value: line 1 column 1 (char 0)"[:40]]   # 까닭은 40자까지 (예전 그대로)
+        assert alt["err"] == [f"{victim}: Expecting value: line 1 column 1 (char 0) (시간 한도로 다시 묻지 않음)"] and alt["got"] == 206
+    else:                                                              # 감시: 한도 없이 다시 물어 받아요
+        assert alt["cut"] == 0 and alt["no"] == 0 and alt["got"] == 207 and alt["limit"] is None
+
+
+def test_a_gated_check_with_nothing_left_equals_the_unlimited_check():
+    """남은 종목(cut)이 0 인 발행 관문의 확인은 한도 없이 물었을 때 (main 과 같은 길) 와 결과가 똑같아요 — 무작위 출처 (느림 · 연결 오류 · 시간
+    초과 · JSON 이 아님 · 야후 404 · 그날 행 없음 · 다른 종가) 로. 남은 종목이 있으면 그 확인은 쓰지 않아요 (px_alt_confirms)."""
+    import random
+    cur, prev, old = fb_files()
+    px = prices(cur)
+    keep = ("closes", "asked", "got", "meta", "disagree", "mustMissing", "err", "no", "noMust", "noEx", "net", "netMust")
+
+    def sources(seed, clk):
+        rnd, plan, cnt = random.Random(seed), {}, {}
+        p_err = rnd.choice([0.0, 0.05, 0.3]); p_wrong = rnd.choice([0.0, 0.02]); scale = rnd.choice([0.1, 0.3, 1.0, 3.0])
+
+        def pick(kind, code):
+            cnt[(kind, code)] = cnt.get((kind, code), 0) + 1
+            key = (kind, code, cnt[(kind, code)])
+            if key not in plan:
+                plan[key] = (rnd.random(), scale * rnd.choice([0.0, 0.5, 1.0, 3.0, 10.0]))
+            return plan[key]
+
+        def fd(code, d):
+            r, step = pick("d", code)
+            clk.t += step
+            if r < p_err / 4:
+                raise requests.ConnectionError("conn")
+            if r < p_err / 2:
+                raise non_json()
+            if r < p_err:
+                return None, "그날 행 0개"
+            return px[code] + (1 if r > 1 - p_wrong else 0), "daum"
+
+        def fy(sym, d, close_time=None):
+            r, step = pick("y", sym.split(".")[0])
+            clk.t += step
+            if r < p_err / 3:
+                raise requests.Timeout("to")
+            if r < 2 * p_err / 3:
+                raise yahoo_404()
+            if r < p_err:
+                raise non_json()
+            return px[sym.split(".")[0]], "bar"
+        return fd, fy
+    both = 0
+    for seed in range(120):
+        res = []
+        for gated in (False, True):
+            clk = Clock()
+            fd, fy = sources(seed, clk)
+            tok = V._PX_ALT_GATE_S.set(600.0) if gated else None
+            try:
+                res.append(V.http_px_alt(cur["data"], PX, fetch=fy, fetch_daum=fd, workers=1, clock=clk, sleep=lambda s: None,
+                                         say=lambda s: None))
+            finally:
+                if tok is not None:
+                    V._PX_ALT_GATE_S.reset(tok)
+        plain, gated = res
+        if gated["cut"] == 0:
+            both += 1
+            assert {k: gated[k] for k in keep} == {k: plain[k] for k in keep}, seed
+        else:
+            assert not V.px_alt_confirms(cur["data"], gated, PX, old, "publish", today=TODAY, now=NOW, special={})[0], seed
+    assert 20 <= both < 120                                            # 두 길 모두 시험했어요

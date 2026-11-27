@@ -1477,12 +1477,12 @@ number, stops the gate with FAIL before anything is fetched (a shorter limit wou
   slow-Daum watchdog run into a quiet pass. If Daum hangs there, the watchdog job's own 30-minute limit ends it, as before;
 - the **daily run's gate** (publish mode) and `--bootstrap`: never this limit or its skip, even if one is given ("· 다음 확인 시간
   한도(…)는 사이트 점검(--live)에서만 써요 — 이 실행(publish)은 한도 없이 예전 그대로 건너뛰지 않아요 (…)"), coverage short means FAIL.
-  Since #? they have their own 600 s limit that never skips: over it, the check is asked again once, and a second time over is a
+  Since #198 they have their own 600 s limit that never skips: over it, the check is asked again once, and a second time over is a
   FAIL (next section, "Publish gate: spot-check time limit").
 
 In the deploy, the whole spot check has a 600 s limit:
 - it logs a start line: "· 관문의 두 출처 확인 시작 (… · 다음 일별 시세 + 발행 기록): 206종목 · 동시 4 · 시간 한도 600초 (배포 — …)"
-  (the watchdog says "시간 한도 없음 (예전 그대로)", the daily gate since #? "시간 한도 600초 (발행 관문 — …)"), and the result line
+  (the watchdog says "시간 한도 없음 (예전 그대로)", the daily gate since #198 "시간 한도 600초 (발행 관문 — …)"), and the result line
   "관문의 두 출처 공식 종가 …" ends with "걸린 시간 n초";
 - the must-haves are asked first; after 600 s no new request is sent, retries included. A request already in flight finishes under
   its own limits (20 s to connect + 20 s between bytes, so about 40 s; a DNS lookup or a server dribbling bytes is outside that,
@@ -1590,7 +1590,7 @@ If the WARN shows:
      code deploys then check prices only against the daily run's two-source record. Do not change the refusal definition, the alert
      list or the count to make a run pass.
 
-## Publish gate: spot-check time limit (발행 관문 두 출처 확인 시간 한도, since #?)
+## Publish gate: spot-check time limit (발행 관문 두 출처 확인 시간 한도, since #198)
 
 Jack, 2026-11-27, answer 8, verbatim. The question: "May I add a 10-minute limit? If the limit is hit, that run doesn't publish and
 the next scheduled run tries again. That adds a way to stop the publish, so it needs your yes." Jack: "Yes, with one immediate retry
@@ -1613,20 +1613,27 @@ Unchanged: the deploy's gate (its own 600 s limit that skips with a warning, pre
   20 s between bytes, about 40 s), and every worker thread has ended before the gate goes on. So one try ends by about 10 min 40 s.
 - **First time over:** the log says so at the moment ("!! 관문의 두 출처 확인 시간 한도 600초 (발행 관문): 다음 · 야후에 더 묻지 않아요
   (확인 n / 대상 m) …") and after ("!! 관문의 두 출처 확인이 시간 한도 600초를 넘겼어요 (발행 관문 · 1/2번째 · Jack 2026-11-27): 대상 m종목 ·
-  답을 받은 a (확인 n) · 남은 k · 걸린 시간 s초 — 처음부터 한 번 더 물어요 …"), and the whole check starts again at once with a fresh
-  600 s. Nothing from the first try is reused: every stock is asked again.
+  끝까지 물은 a (확인 n) · 남은 k · 걸린 시간 s초 — 처음부터 한 번 더 물어요 …"), and the whole check starts again at once with a fresh
+  600 s. Nothing from the first try is reused: every stock is asked again. The counts: 대상 = stocks to ask; 남은 (left) = stocks the
+  limit stopped from being asked, or from being asked again; 끝까지 물은 = 대상 − 남은, every stock whose asking ended on its own (same
+  close, different close, no close that day, or three failed tries); 확인 = stocks where Daum and Yahoo agree.
+- **"Over the limit" means at least one stock was left (`cut`), whatever its last error.** Unlike the deploy's gate, a stock whose
+  re-ask the limit stopped counts as left even when its last answer was not a network error (a reply that is not JSON, a Yahoo 404).
+  Both round-1 reviewers of #198 found that the first version counted such a stock as "no close that day": the check then looked
+  finished, so it was not asked again, and it could pass what the old rules stop or fail after one try. So a check with nothing left
+  was asked exactly as the old rules ask (same tries, same pauses) and is judged exactly as they judge it.
 - **The second try finishes in time:** it is judged exactly as before (same rows, same thresholds; a wrong close or a missing
   must-have fails as before). The log says "!! 관문의 두 출처 확인: 다시 물은 확인은 시간 한도 안에 끝났어요 (2/2번째 …)", and the row
   **"pxDate = 최종본 날짜" turns WARN** with "첫 확인이 시간 한도 600초를 넘겨 처음부터 다시 물었어요 (Jack 2026-11-27 · 첫 확인: 대상 m종목
-  · 답을 받은 a (확인 n) · 남은 k) …". The run publishes (if everything else passes); the 09:13 check sees the warning.
+  · 끝까지 물은 a (확인 n) · 남은 k) …". The run publishes (if everything else passes); the 09:13 check sees the warning.
 - **The second try is over too: FAIL, no publish this run.** The log: "!! 관문의 두 출처 확인이 시간 한도 600초를 두 번 넘겼어요 (발행 관문 ·
   2/2번째 · Jack 2026-11-27): … — 이번 실행은 발행하지 않아요 (관문 실패 · 다음 예정 실행이 다시 해요)". The row "pxDate = 최종본 날짜" (or
   "최종본 날짜 계산" when the cache has no final file at all) **FAILs** with "관문의 두 출처 확인(다음 × 야후)이 시간 한도 600초를 두 번 넘김
-  (Jack 2026-11-27) — 다시 물은 확인: 대상 m종목 · 답을 받은 a (확인 n) · 남은 k · 이번 실행은 발행하지 않아요 (다음 예정 실행이 다시 해요)". It
+  (Jack 2026-11-27) — 다시 물은 확인: 대상 m종목 · 끝까지 물은 a (확인 n) · 남은 k · 이번 실행은 발행하지 않아요 (다음 예정 실행이 다시 해요)". It
   is a GitHub error annotation "발행 관문 실패", which the 09:13 check reads, and the run ends red, so the watchdog raises its alert as
   for any failed daily run.
-- A check that ran out of time is never a pass and never a skip, even when the closes received before the limit would have met the
-  usual bar (all must-haves, 90% of the sample): the stocks it never received could have had a different close.
+- A check that ran out of time (anything left) is never a pass and never a skip, even when the closes received before the limit would
+  have met the usual bar (all must-haves, 90% of the sample): the stocks it never received could have had a different close.
 - Worst case the gate step takes about 21 minutes longer (2 × 10 min 40 s); the job's limit is 300 minutes.
 
 **What a FAIL here means:** Daum or Yahoo (or the runner's network) was too slow for 10 minutes, twice in a row. Nothing wrong was
@@ -1635,8 +1642,9 @@ published: the site keeps the last publish, labelled with its own date.
 **What to do:**
 1. One FAIL: nothing. The next scheduled start of the daily run (see `update-data.yml`) checks again from the start. If the volunteer
    KRX list gets its final file for pxDate in the meantime, the gate compares against that file instead and does not ask Daum or Yahoo.
-2. Read the "!!" lines in the gate log: "걸린 시간", how many were answered and left, and "오류 예" on the line "관문의 두 출처 공식 종가 …"
-   (time-outs, HTTP 429 or 5xx say which side was slow).
+2. Read the "!!" lines in the gate log: "걸린 시간", how many were asked to the end ("끝까지 물은") and left ("남은"), and "오류 예" on the
+   line "관문의 두 출처 공식 종가 …" (time-outs, HTTP 429 or 5xx say which side was slow; "(시간 한도로 다시 묻지 않음)" marks a stock the
+   limit stopped from being asked again).
 3. If the next start fails the same way and the data is now more than one trading day late, it is an emergency (CLAUDE.md): find out
    which source is slow from GitHub's runners (the deploy's and the watchdog's own spot checks ask Daum too) and tell Jack in plain
    words. Do not raise the limit, skip the check, reuse the first try's answers, or count a partial check as passed to get a publish:
