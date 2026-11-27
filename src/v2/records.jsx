@@ -274,6 +274,9 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
         {/* a US record's date is the US trading date (#117 RUNBOOK), which can be the day before the Korean date */}
         {usd && <p data-ui-v2="rec-us-date" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1), wordBreak: "keep-all" })}>{C.rec.usDateHint}</p>}
         {kind === "sell" && prev && <SaleResult prev={prev} usd={usd} />}
+        {/* #191 round 2: 산 가격보다 above counts a purchase already saved at the latest rate (its date's rate not in yet): the line,
+            once (that record is saved, so "저장했어요" holds); none while nothing of this stock is temporary */}
+        {kind === "sell" && hasTempRate(deck, t) && C.rec.rateTemp && <Note data-ui-v2="rec-rate-temp">{C.rec.rateTemp}</Note>}
         {rateLine && <Note tone="watch" data-ui-v2="rec-no-rate" data-why={rateNo}>{rateLine}</Note>}
         {why === "tooMany" && <Note tone="watch" data-ui-v2="rec-too-many">{C.rec.tooMany}</Note>}
         {why === "tooEarly" && <Note tone="watch" data-ui-v2="rec-too-early">{C.rec.tooEarly}</Note>}

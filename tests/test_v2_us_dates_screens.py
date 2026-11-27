@@ -236,3 +236,24 @@ def test_the_approved_line_shows_once_where_a_temporary_rate_is_shown_and_nowher
     assert [got["afterSave"], got["list"], got["full"], got["returns"], got["returnsSale"]] == [1, 1, 1, 1, 1], got
     assert [got["otherStock"], got["replaced"], got["fullNone"], got["returnsNone"]] == [0, 0, 0, 0], got
     assert got["notYet"] is False and got["errors"] == [], got
+
+
+def test_the_sale_form_says_so_when_its_gain_counts_a_temporary_purchase():
+    """#191 round 2: 팔았어요's 산 가격보다 counts the purchase's rate. When a saved purchase of that stock is temporary, the form shows
+    the approved line once (that record is saved, so "저장했어요" holds); with nothing temporary, none. The other forms (샀어요,
+    배당 받았어요) show no won amount and no line."""
+    got = run(f"""
+      at('2026-11-24T15:00:00+09:00');
+      const TB = {json.dumps(TEMP_BUY)};
+      const fixedBuy = {{ ...TB, fx: 1345.9 }}; delete fixedBuy.rateTemp;
+      const withRecs = (purchases) => ({{ ...deckOf(), purchases: [...deckOf().purchases, ...purchases] }});
+      const formOf = (deck, stage, t = 'AAPL', nk = 'Apple Inc.') => renderToStaticMarkup(h(RJ.RecordFlow, {{ flow: {{ stage, deckId: 'd1', t, nk, prefill: {{ qty: 1 }} }},
+        setFlow: () => {{}}, load: loadOf('2026-11-23'), store: storeOf([deck]), setStoreData: () => {{}} }}));
+      const look = (html) => ({{ line: html.split(C.rec.rateTemp).length - 1, gain: html.includes('data-ui-v2="rec-gain"') }});
+      out = {{ temp: look(formOf(withRecs([TB]), 'sell')), none: look(formOf(deckOf(), 'sell')), replaced: look(formOf(withRecs([fixedBuy]), 'sell')),
+        buyForm: look(formOf(withRecs([TB]), 'buy')), divForm: look(formOf(withRecs([TB]), 'div')), other: look(formOf(withRecs([TB]), 'sell', '005930', '삼성전자')),
+        errors: logs.filter((m) => m.startsWith('error')) }};""")
+    assert got["temp"] == {"line": 1, "gain": True}, got          # 산 가격보다 shown, and the line once
+    assert got["none"] == {"line": 0, "gain": True} and got["replaced"] == {"line": 0, "gain": True}, got
+    assert got["buyForm"]["line"] == 0 and got["divForm"]["line"] == 0 and got["other"]["line"] == 0, got
+    assert got["errors"] == [], got

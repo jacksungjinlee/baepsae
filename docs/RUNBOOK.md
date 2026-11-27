@@ -2800,9 +2800,10 @@ stored data depends on it).
     until Tuesday morning's publish, which has Monday's row); never while the history ends before the date or ends on it with
     a last row not marked final. A sale of a holding put in by amount keeps its won amount (its dollar price moves with the
     rate). While a record is marked, each screen that counts it says "지금은 최근 환율로 저장했어요. 이 날짜의 환율이 들어오면
-    자동으로 바꿔요." once (`rec.rateTemp`): the stock's record sheet (also right after 저장), the sheet after a full sale, 매수
-    계획's 기록했어요, 내 수익, 홈 (above the money cards and 이번 주 정리), 포트폴리오, 연말에 확인할 숫자 and 종목 바꾸기 (where 팔고
-    빼기 · 팔고 바꾸기 return). Not on 팔았어요's result card before 저장, and the CSV export carries the temporary rate without a
+    자동으로 바꿔요." once (`rec.rateTemp`): the stock's record sheet (also right after 저장), 팔았어요's form (its 산 가격보다
+    counts a saved temporary purchase), the sheet after a full sale, 매수 계획's 기록했어요, 내 수익, 홈 (above the money cards and
+    이번 주 정리), 포트폴리오, 연말에 확인할 숫자 and 종목 바꾸기 (where 팔고 빼기 · 팔고 바꾸기 return). Not for the sale being typed
+    before 저장 (nothing of it is saved yet), and the CSV export carries the temporary rate without a
     mark (it leaves the app; a known limit). Stale data still refuses a "today" record (`rec.noTodayRate`); any other date
     after `asOf` keeps `rec.rateNotYet`. Records saved before #191 carry no mark and are never touched. Two tabs: a history
     entry is the same entry when its records carry the same ids (store.js `entryKey`), so a replaced record is never counted

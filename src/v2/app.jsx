@@ -578,7 +578,7 @@ export function App({ source }) {
     if (load.status !== "ok" || !store.writable || store.locked) return;
     const fh = load.macro ? load.macro.fxHist || null : null;
     const tw = withoutTwinEntries(store.data);
-    if (tw.dropped.length) console.warn(`[v2] history entries holding the same records twice (two tabs of different builds merged them): ${tw.dropped.length} taken out: `
+    if (tw.dropped.length) console.warn(`[v2] history entries with the same record ids as an earlier entry of their portfolio: ${tw.dropped.length} taken out: `
       + tw.dropped.map((x) => `${x.id} ${x.t}`).join(", "));
     const r = withOfficialRates(tw.data, fh);
     const wait = r.waiting.filter((x) => !tempSaid.current.has(`${x.id}|${x.t}|${x.date}|${x.kind}`));

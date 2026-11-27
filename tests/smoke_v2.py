@@ -11075,7 +11075,7 @@ def scene_v191_rate_temp(R, files, width=390):
     history's last day (10-30): it stays temporary, its record sheet and 포트폴리오 say "지금은 최근 환율로 저장했어요. 이 날짜의 환율이
     들어오면 자동으로 바꿔요." once. dtwin: two history entries of the same taken-out sale (what a build before #191 left after merging
     two tabs) → one entry (console line). Reloading changes nothing more."""
-    S = f"v19.1 임시 환율 {width}"
+    S = f"#191 임시 환율 {width}"
     data = v196a_files(files)
     asof = data["macro.json"]["fxHist"]["asOf"]
     assert asof < "2026-11-10" and ["2026-10-20", 1350.0] in data["macro.json"]["fxHist"]["rows"], data["macro.json"]["fxHist"]
@@ -11120,7 +11120,7 @@ def scene_v191_rate_temp(R, files, width=390):
         # the purchase, and the taken-out sale the clean-up kept (still temporary in that entry): two records, one line
         assert any("temporary exchange rates replaced by their dates' rates: 2 record(s): " in l and "dtemp AAPL buy 2026-10-20 1338 -> 1350" in l
                    and "dtwin AAPL sell 2026-10-20 1338 -> 1350" in l for l in L), L
-        assert any("history entries holding the same records twice" in l and ": 1 taken out: dtwin AAPL" in l for l in L), L
+        assert any("history entries with the same record ids as an earlier entry of their portfolio: 1 taken out: dtwin AAPL" in l for l in L), L
         assert any("temporary exchange rates: 1 record(s) wait" in l and "dtemp AAPL buy 2026-11-10" in l for l in L), L
         page.locator('[data-ui-v2="pf-rate-temp"]').wait_for(state="visible")
         assert page.locator(f'text="{line}"').count() == 1                                              # 포트폴리오: once
@@ -11135,12 +11135,12 @@ def scene_v191_rate_temp(R, files, width=390):
             page.screenshot(path=os.path.join(R.shots, f"v191-rate-temp-{width}.png"))
         page.keyboard.press("Escape")
         page.locator('[data-ui="bottom-sheet"]').wait_for(state="detached")
-        n = len([l for l in logs() if "replaced by their dates' rates" in l or "holding the same records twice" in l])
+        n = len([l for l in logs() if "replaced by their dates' rates" in l or "the same record ids as an earlier entry" in l])
         page.reload(wait_until="domcontentloaded")
         at(page, "portfolio")
         page.locator('[data-ui-v2="pf-rate-temp"]').wait_for(state="visible")
         page.wait_for_timeout(300)
-        assert len([l for l in logs() if "replaced by their dates' rates" in l or "holding the same records twice" in l]) == n    # nothing more on reload
+        assert len([l for l in logs() if "replaced by their dates' rates" in l or "the same record ids as an earlier entry" in l]) == n    # nothing more on reload
         floor_ok(page, "포트폴리오 (임시 환율)")
         R.collect(page)
     R.check(page, S, "임시 환율: 그날 환율이 들어온 기록은 불러올 때 바뀌고(1,338 → 1,350원, 표시 지움, console 한 줄 두 건) · 아직인 기록은 그대로 · 같은 기록의 두 history 항목은 하나로 · 기록 시트와 포트폴리오에 승인된 줄 한 번 · 다시 열어도 그대로", temp_rates)

@@ -40,7 +40,7 @@ rights issues by other methods (wording from the design chat). Spec Acceptance 2
 #196). Known gap, for the design chat's say-why list: a 지분 변동 card left out because its stock is shown at an older close is named
 only in the console, and 이번 주 정리's 공시 tile skips it without a line (a screen line needs new wording).
 
-**US dates in 2.0 and temporary rates (#191, open; audit 2.1 and 2.2, Jack's answer of 11-27):** a dollar record (샀어요 · 팔았어요 ·
+**US dates in 2.0 and temporary rates (#191, merging now; audit 2.1 and 2.2, Jack's answer of 11-27; live once it merges and deploys):** a dollar record (샀어요 · 팔았어요 ·
 배당 받았어요 · 팔고 빼기 · 매수 계획's 샀어요 with a blank date, by currency: `pf.usdOf` / `records.recordCcy`, never cls) opens on the US
 trade date of now (`format.usTradeDay`: New York's date, rolled over at 20:00 New York when the overnight session books the next day;
 it differs from Korea's date only from 00:00 to 10:00 KST in winter, 09:00 in summer). Jack, 11-27: "not at today's rate. Save it right
@@ -49,8 +49,8 @@ data arrives." A dollar record dated "today" (that date or Korea's) the history 
 `rateTemp: true` (from 10:00 to 24:00 KST that is every new US record, until the next morning); `records.withOfficialRates` (app.jsx,
 on load and on every change, console counts) puts that date's fxHist row in and drops the mark (a weekend or Korean holiday: the last
 row before it, once a later row shows it gets none; a Sunday record waits until Tuesday morning). Until then every screen that counts
-it says "지금은 최근 환율로 저장했어요. 이 날짜의 환율이 들어오면 자동으로 바꿔요." once (`rec.rateTemp`, Jack 11-27): the record sheet, the
-sheet after a full sale, 매수 계획's 기록했어요, 내 수익, 홈, 포트폴리오, 연말에 확인할 숫자, 종목 바꾸기; not the CSV export (known limit).
+it says "지금은 최근 환율로 저장했어요. 이 날짜의 환율이 들어오면 자동으로 바꿔요." once (`rec.rateTemp`, Jack 11-27): the record sheet,
+팔았어요's form (산 가격보다), the sheet after a full sale, 매수 계획's 기록했어요, 내 수익, 홈, 포트폴리오, 연말에 확인할 숫자, 종목 바꾸기; not the CSV export (known limit).
 Stale data still refuses; other dates after the history keep `rec.rateNotYet`; records saved before are untouched. store.js: `rateTemp`
 checked; a history entry is the same entry when its records carry the same ids, and `withoutTwinEntries` makes one of the two entries a
 build before #191 can leave after a two-tab merge (else the sale counts twice). A revert of #191 leaves marked records at their
@@ -58,6 +58,14 @@ temporary rate, read as ordinary rates, until #191 is redeployed. 오늘 볼 것
 Follow-ups: a dollar record's 코스피 comparison (lots.js `closeBefore`); undated 가진 종목 넣기 rows count splits from `createdAt`; 이번 주
 정리's 다음 주 starts at Korea's date (an existing test pins it). Tests: `tests/test_v2_us_dates.py`, `test_v2_us_dates_screens.py`,
 `test_v2_rate_temp.py`, `test_v2_rate_temp_screens.py`, smoke_v2 `scene_v191_rate_temp`. RUNBOOK "Temporary rates".
+
+**홈's US close line (#190, 2026-11-24; same class as #187's 포트폴리오 fix, minor):** app only, no new words. 홈 (`home2.jsx`) and the
+old 홈 behind the HOME2 switch (`today.jsx` Home) decided "a US stock is held" by `cls`. A holding of 379800 KODEX 미국S&P500 (cls "us",
+a KRX listing priced in won at the Korean close) saved with cls "us" or none (an older save or a restored backup; today's 포트폴리오
+만들기 can't add it, 종목 바꾸기 saves it as "kr") would show "미국 종목은 현지 기준 {md} 종가예요." after a US holiday. Defensive. Now by `pf.usdOf` (the data's currency), as
+`usHeld` and #187's 포트폴리오 line; 홈 still counts only shares held (`x.qty !== 0`). The one pinned string in
+`tests/test_v196a_approved.py::test_home_counts_only_shares_held` follows the new code; `tests/test_v2_home_usd.py` renders both 홈s.
+**Split cross-check (#188, 2026-11-24; live data fix):** the 11-24 publish showed SNDK (8:1 split 11-20) with PER 0.1 — Yahoo's trailing EPS read 923.70, about 54× the company's own figure (net income ÷ shares ≈ 17.06); market cap ÷ net income is 5.14. US companies with a split in the last 30 days (up to the run day) now go through the foreign companies' comparison (`us_split_step` / `us_split_check`, same kinds and switch, no extra Yahoo requests) with a band sized to the split: a number is blanked only when it is off by more than max(1.5, √ratio) (#176's gate-row function; the foreign check keeps its 1.10 · 1.35 · 1.10). 2.0 shows an approved line under each blank (`co.fgnCut` for a mismatch; `co.fgnNoCmp` for can't-compare and, on a split company, for `currency` / `norecord`; `co.fgnStopped`). After the 30 days, every field blanked in the previous publish stays checked (`held`) until a run compares it and it agrees; can't-compare, a crash or missing details keep it blank, and the gate row warns while anything is held (an Up-C company like IBKR could stay blanked for good; RUNBOOK). A crash in the step no longer stops `fetch_us` (`us_split_guard`). Mark `splCut`, record `usSplitChk`, warning-only gate row `미국 분할 뒤 주당 숫자`; the foreign row is unchanged. Simulated on the 11-24 file with Yahoo's current details: only SNDK's PER is blanked (PBR 1.30×, 0% yield stay); MTUM, QUAL and SOXX are ETFs, skipped by name. It runs after #176's rescale (merged 11-24) on the same cache entry; the two never handle a number twice (#176 records `usSrc.split`, this check blanks with `splCut`). RUNBOOK § "Recently split US companies".
 
 **Factor scores, companies only (#189, 2026-11-24; found on the 11-24 publish):** `add_percentiles` ranked 33 US ETFs (23 with Yahoo's
 `priceToBook`, meaningless for a fund: SPY 1.76, really about 5) and 3 Korean listed infrastructure funds together with companies, so
