@@ -13,7 +13,7 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { COLOR, SPACE } from "../ui/tokens.js";
 import { C, todayKst } from "./format.js";
-import { readStore, writeStore, validStore, askPersist, guideSeenIn, withGuideSeen, keepOwnText, keepMine, versionFor } from "./store.js";
+import { readStore, writeStore, validStore, askPersist, guideSeenIn, withGuideSeen, keepOwnText, keepMine, versionFor, withoutTwinEntries } from "./store.js";
 import { refreshFresh, nextFreshCheck, returnWatch, adoptLoad } from "./load.js";
 import { publishGate, discAfter, discFits, discRetryDue, heldOn, discBehind } from "./hold.js";
 import { Portfolio } from "./portfolio.jsx";
@@ -35,6 +35,7 @@ import { emptyDraft, pending as editPending } from "./edit.js";
 import { BottomSheet, Button } from "../ui/components.jsx";
 import { isImported } from "./pf.js";
 import { dataSplits, withDataSplits, storedNotInData, withStoredSplitsChecked, outSplits, withoutOutSplits } from "./lots.js";
+import { withOfficialRates } from "./records.js";
 import { UNIT } from "./held.js";
 import { companySub, CO_MORE, editSub, parseHash, WATCH_SUB, TODAY_SUB } from "./routes.js";
 import { WatchScreen } from "./watch.jsx";
@@ -566,6 +567,28 @@ export function App({ source }) {
     if (!store.writable || store.locked) return;
     const next = withWatchHits(store.data, load);
     if (next) setStoreData(next);
+  }, [store.data, load]);
+  // #191 (Jack, 2026-11-27): a dollar record saved at the latest rate before its date's rate was published (rateTemp) gets that
+  // date's rate as soon as loaded data has it (records.withOfficialRates: its own row; a weekend or Korean holiday once a later
+  // row shows it never gets one). On load and after every change of the records, only when they can be written; idempotent
+  // (nothing marked, nothing written). Said in the console with counts; the records still waiting are said once per date.
+  // First, history entries holding the same records twice (a merge by a build before #191: store.withoutTwinEntries) go.
+  const tempSaid = useRef(new Set());
+  useEffect(() => {
+    if (load.status !== "ok" || !store.writable || store.locked) return;
+    const fh = load.macro ? load.macro.fxHist || null : null;
+    const tw = withoutTwinEntries(store.data);
+    if (tw.dropped.length) console.warn(`[v2] history entries with the same record ids as an earlier entry of their portfolio: ${tw.dropped.length} taken out: `
+      + tw.dropped.map((x) => `${x.id} ${x.t}`).join(", "));
+    const r = withOfficialRates(tw.data, fh);
+    const wait = r.waiting.filter((x) => !tempSaid.current.has(`${x.id}|${x.t}|${x.date}|${x.kind}`));
+    for (const x of wait) tempSaid.current.add(`${x.id}|${x.t}|${x.date}|${x.kind}`);
+    if (wait.length) console.info(`[v2] temporary exchange rates: ${r.waiting.length} record(s) wait for their dates' rates (the history ends ${fh && fh.asOf ? fh.asOf : "nowhere"}): `
+      + wait.map((x) => `${x.id} ${x.t} ${x.kind} ${x.date}`).join(", "));
+    if (!r.fixed.length && !tw.dropped.length) return;
+    if (r.fixed.length) console.info(`[v2] temporary exchange rates replaced by their dates' rates: ${r.fixed.length} record(s): `
+      + r.fixed.map((x) => `${x.id} ${x.t} ${x.kind} ${x.date} ${x.from} -> ${x.to}`).join(", "));
+    setStoreData((cur) => { const a = withoutTwinEntries(cur), n = withOfficialRates(a.data, fh); return n.fixed.length || a.dropped.length ? n.data : null; });
   }, [store.data, load]);
   const openWatch = useCallback(() => router.go("stocks", WATCH_SUB), [router.go]);
   // v19.6b: the 오늘 볼 것 page (#home/today), from 홈's 오늘 볼 것 header and its new rows

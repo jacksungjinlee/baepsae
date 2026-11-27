@@ -34,9 +34,11 @@
 //   nps      disc.json nps, held and watched stocks, filed within the last NPS_DAYS days: "{a}%에서 {b}%로" with b = rt and
 //            a = rt − chg, one decimal; left out when chg is blank or a and b round to the same number.
 //   dates    US 실적 발표 (data.json ed, Yahoo's confirmed date) and 배당락일 (xd) of held and watched US stocks from today to
-//            today + DATE_DAYS (KST; the dates are US local dates, said under the rows), earliest first, at most DATES_MAX.
+//            today + DATE_DAYS, earliest first, at most DATES_MAX. The dates are US local dates (said under the rows), so "today" is
+//            New York's (format.todayNy; audit 2.2: read against the Korean date, an earnings date left the card at Korean midnight,
+//            hours before its release after the US close).
 //            No Korean dates ([Q15]: no reliable source); when a Korean stock is held the card says they are not shown yet.
-import { C, fill, nf } from "./format.js";
+import { C, fill, nf, todayNy } from "./format.js";
 import { num } from "./engine.js";
 import { eokText } from "./deckcalc.js";
 import { heldQty } from "./held.js";
@@ -232,12 +234,13 @@ export function dateRows(byT, cover, today, last = null, max = DATES_MAX) {
 }
 
 // ---------------- everything for one screen ----------------
-// load: the data · store: { data } (the in-memory view) · disc: app.jsx's · today: KST · now (tests).
+// load: the data · store: { data } (the in-memory view) · disc: app.jsx's · today: KST · now (tests) · usToday: New York's today
+// (format.todayNy at now), the day the US dates (다가오는 일정) are read against.
 // -> { fresh, kr, krHeld, ds, issue, insider, nps, dates, noKr, issueFail, discFail, discOld, any, skipped, oddRole }
 //   skipped: the rows left out (lookSay names them) · oddRole: the insider cards shown although their role is none of the three.
 //   ds: the filings state (home2.jsx discState): skip (no Korean stock covered) · wait · ok · stale · fail · none.
 //   any: a card of any kind (an insider card without a title is counted here; todaylook.jsx pageHas leaves it out).
-export function lookModel(load, store, disc, today, now) {
+export function lookModel(load, store, disc, today, now, usToday = todayNy(now)) {
   const empty = { fresh: false, kr: false, krHeld: false, ds: "skip", issue: [], insider: [], nps: [], dates: [], noKr: false,
     issueFail: false, discFail: false, discOld: null, any: false, skipped: [], oddRole: [], missing: false };
   if (!load || load.status !== "ok" || !dayState(load, now).ok) return empty;
@@ -252,7 +255,7 @@ export function lookModel(load, store, disc, today, now) {
   const iss = checked ? issueCards(disc, cover.held, today, data, load.byT) : { cards: [], skipped: [], fail: false, missing: false };
   const ins = checked ? insiderCards(disc, cover, today, load.byT, ROLE_OF) : { cards: [], skipped: [] };
   const nps = checked ? npsCards(disc, cover, today, load.byT) : [];
-  const dates = dateRows(load.byT, cover, today);
+  const dates = dateRows(load.byT, cover, usToday);
   const discOld = ds === "stale" && dd && dd.date ? dd : null;
   const issueFail = checked && iss.fail && [...cover.held].some((t) => { const s = load.byT.get(t); return s ? s.cls === "kr" : /^\d{6}$/.test(t); });
   const any = iss.cards.length > 0 || ins.cards.length > 0 || nps.length > 0 || dates.length > 0;

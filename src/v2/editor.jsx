@@ -21,7 +21,7 @@ import { searchStocks } from "./stocklist.js";
 import { activeCards } from "./engine.js";
 import { criteriaPct } from "./fitpct.js";
 import { RecordFlow } from "./records.jsx";
-import { stockState } from "./records.js";
+import { stockState, hasTempRate } from "./records.js";
 import * as E from "./edit.js";
 import * as F from "./find.js";
 import { Finder } from "./finder.jsx";
@@ -297,6 +297,9 @@ export function Editor({ deck, load, store, setStoreData, draft: raw, setDraft, 
           <ScreenTitle sub={C.edit.sub}>{C.edit.title}</ScreenTitle>
           {!store.writable && <Note tone="watch">{C.store.unavailable}</Note>}
           {store.locked && <Note tone="watch">{C.store.locked}</Note>}
+          {/* #191 (Jack, 2026-11-27): after 팔고 빼기 · 팔고 바꾸기 saved a sale at the latest rate (its date's rate not in yet), the flow
+              comes back here: the line, once, while any record of this portfolio is temporary */}
+          {hasTempRate(deck) && C.rec.rateTemp && <Note data-ui-v2="edit-rate-temp">{C.rec.rateTemp}</Note>}
           <Card data-ui-v2="edit-ind" style={{ padding: `${SPACE(3) + 2}px ${SPACE(4)}px` }}>
             <h3 style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { marginBottom: SPACE(2) })}>{C.edit.ind}</h3>
             <IndBar parts={bar} />

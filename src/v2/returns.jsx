@@ -17,6 +17,7 @@ import { signedPct } from "./deckcalc.js";
 import { returnsOf, roundRows, fxSplit, returnsPct } from "./lots.js";
 import { missingNames } from "./tracking.jsx";
 import { recordsCsv, csvName, downloadCsv } from "./csv.js";
+import { hasTempRate } from "./records.js";
 import { TaxLink } from "./tax.jsx";
 import { taxOpen } from "./tax.js";
 import { usdOf } from "./pf.js";
@@ -212,6 +213,8 @@ export function Returns({ deck, load, store, pad, onBack, onTax }) {
             )}
             {r.soldOut > 0 && <Note data-ui-v2="ret-sold-left">{fill(C.ret.soldLeftOut, { n: r.soldOut })}</Note>}
             {r.noFx.length > 0 && C.deck.noFx && <Note data-ui-v2="ret-no-fx">{C.deck.noFx}</Note>}
+            {/* #191 (Jack, 2026-11-27): a US record saved at the latest rate (its date's rate not in yet) counts here at that rate: once */}
+            {hasTempRate(deck) && C.rec.rateTemp && <Note data-ui-v2="ret-rate-temp">{C.rec.rateTemp}</Note>}
             {r.noAvg.length > 0 && <Note data-ui-v2="ret-no-avg">{fill(C.ret.noAvg, { n: r.noAvg.length, names: names(r.noAvg).join(", ") })}</Note>}
             {missing.length > 0 && <Note tone="watch" data-ui-v2="ret-missing">{fill(C.missing.line, { n: missing.length, names: missingNames(missing.map((t) => ({ t, nk: names([t])[0], cls: (holdingOf(t) || {}).cls, cost: null }))) })}</Note>}
             {r.noPrice.length > 0 && <Note tone="watch" data-ui-v2="ret-no-price">{C.ret.noPrice}</Note>}
