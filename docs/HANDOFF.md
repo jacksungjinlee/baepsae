@@ -75,6 +75,20 @@ Because the gate's annotations stop at 10 warnings a step, the data step prints 
 발행본)::…` (or `S&P 500 목록 없음 (이어 쓰지 못함)`) for the 09:13 check. No screen change. If it warns several days running, tell
 Jack before day 7 (a second S&P list source would be an outside-service decision). RUNBOOK "When the S&P 500 list can't be read".
 
+**Smoke timing flakes (#201, branch `claude/smoke-flakes`, 2026-11-28; `tests/smoke_v2.py` only, nothing users see):** three
+smoke_v2 checks failed once each under load and passed alone, because they read the screen before the event they check. 관심
+종목 (`scene_div_lines`) opens straight at #stocks/watch, whose cards come only with the data: it now waits for every seeded
+card (`watch_cards_shown`). 연말에 확인할 숫자 (`scene_v196f_states` div-nofx; kr-div and `scene_v196f_gaps` have the same race) opens from a link
+that shows before the data: it now waits for the footer line, drawn with the cards once the data is in (`tax_data_in`). 안내
+밖 단계 이동 (`scene_v193c_offstep`): leaving the guide's step removes the bubble one render before app.jsx's effect writes
+'본 적 있음': it now waits for that write (`seen_saved`), as `scene_v193c` already did for the phone's back, and
+first checks the flag is not there before each off-step click (added, stricter). Each wait is bounded
+(WAIT, 15 s) and fails naming what never came; every existing assertion is unchanged. The races are not app bugs (data loads after the
+first paint; the flag is written a few ms after the bubble goes). Follow-up, its own PR (review round 1): 2.0's first data
+load has no time limit (`src/v2/load.js:28` `loadAll`; disc.json has 60 s), so a stalled connection never shows the
+load-failure message. CI runs smoke_v2 on every PR; the daily run does not, so the
+publish is unaffected.
+
 **홈's US close line (#190, 2026-11-24; same class as #187's 포트폴리오 fix, minor):** app only, no new words. 홈 (`home2.jsx`) and the
 old 홈 behind the HOME2 switch (`today.jsx` Home) decided "a US stock is held" by `cls`. A holding of 379800 KODEX 미국S&P500 (cls "us",
 a KRX listing priced in won at the Korean close) saved with cls "us" or none (an older save or a restored backup; today's 포트폴리오
