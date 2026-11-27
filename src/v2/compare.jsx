@@ -22,13 +22,13 @@ import { C, fill, p1 } from "./format.js";
 import { Page, Card, AppBar, ScreenTitle, DateLine, Footer, Note, SIDE_W, tx, tap, useLayout, useHeld } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { num } from "./engine.js";
-import { riskTile, impliedGrowth, divKr, divUs, divHiddenLine, DIV_HIDDEN_UI, round } from "./company.js";
+import { riskTile, impliedGrowth, divKr, divUs, divHiddenLine, DIV_HIDDEN_UI, divSmallView, round } from "./company.js";
 import { criteriaPct } from "./fitpct.js";
 import { riskBandText, riskBandNote, timesText, yieldText, usOf } from "./cofmt.js";
 import { subjectParticle } from "./track.js";
 import { stmtNotWonFor, unitHeldFor, pxBadFor, pxBadHidesFor, noStmtFor, fixNotesHidden, epsLineKind, epsBasisCardGone } from "./fix.js";
 import { pxBadText, pxBadOneText, unitChkText, stmtCurText, fcurNoteText, prefText, prefFitText, epsFixText } from "./fixnote.jsx";
-import { fcurBlank, fcurDyBlank, pbrZeroOf, fgnBlank, FGN_LINE_KEYS } from "./fcur.js";
+import { fcurBlank, fcurDyBlank, pbrZeroOf, fgnBlank, fgnKindOf, FGN_LINE_KEYS } from "./fcur.js";
 import { IndBar, pctText, addWarnView } from "./editparts.jsx";
 import { indText, listDate } from "./finder.jsx";
 import * as E from "./edit.js";
@@ -52,7 +52,7 @@ function betaText(s, r, shortOk = false) {
 // The line under a foreign company's number blanked for its kind (fixnote.jsx FgnCutNote, #133: co.fgnCut, co.fgnNoCmp for
 // "nocompare-own", co.fgnStopped for a day the check stopped); null while that kind's copy is missing (a plain "–").
 function fgnLine(s, k) {
-  const hit = FGN_LINE_KEYS.find(([, has]) => has(s.fgnCut[k]));
+  const hit = FGN_LINE_KEYS.find(([, has]) => has(fgnKindOf(s, k)));
   return hit && C.co[hit[0]] ? C.co[hit[0]] : null;
 }
 // The company page's PER/EPS line where its 지금 가격이 가정하는 것 card has no numbers (impliedGrowth "basis"; cotabs Dcf).
@@ -115,7 +115,12 @@ export function compareCells(s, co, ctx) {
     // (company.js divHiddenLine: dvLine 1 share count · 2 rights issue · 3 dividend table · 4 missing filing data); else no statements
     const hid = r.yieldPct == null && !usOf(s) ? divHiddenLine(s, co) : null;
     const hidText = hid && C.co.div[hid] ? C.co.div[hid] : null;
+    // 2026-11-23 (Jack, 11-19 Q6): a 차등배당 company's 소액주주 yield, labelled, with the company page's line (company.js divSmallView:
+    // the switch in smallcfg.js and both lines approved) in the hidden-yield line's place
+    const Dv = C.co.div;
+    const small = r.yieldPct == null && !usOf(s) && Dv.smallBasis && Dv.smallLine ? divSmallView(s, co) : null;
     out.dy = r.yieldPct != null ? cell(yieldText(r.yieldPct), null, { y: r.yieldPct })
+      : small ? cell(`${yieldText(small.y)} · ${Dv.smallBasis}`, Dv.smallLine, { y: "", ysmall: small.y, long: "1" })
       : cell(DASH, hidText || (noStmtFor(s, co) ? C.co.noStmt || null : null), { y: "", ...(hidText ? { blank: DIV_HIDDEN_UI[hid] } : {}) });
   }
   // 오늘 주가가 가정하는 성장: impliedGrowth, the company page's number ("첫해 {g}%") or its edge line; US and no data -> "–"

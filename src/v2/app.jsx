@@ -13,7 +13,7 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { COLOR, SPACE } from "../ui/tokens.js";
 import { C, todayKst } from "./format.js";
-import { readStore, writeStore, validStore, askPersist, guideSeenIn, withGuideSeen, keepOwnText, keepMine, versionFor } from "./store.js";
+import { readStore, writeStore, validStore, askPersist, guideSeenIn, withGuideSeen, keepOwnText, keepMine, versionFor, withoutTwinEntries } from "./store.js";
 import { refreshFresh, nextFreshCheck, returnWatch, adoptLoad } from "./load.js";
 import { publishGate, discAfter, discFits, discRetryDue, heldOn, discBehind } from "./hold.js";
 import { Portfolio } from "./portfolio.jsx";
@@ -34,7 +34,8 @@ import { Editor } from "./editor.jsx";
 import { emptyDraft, pending as editPending } from "./edit.js";
 import { BottomSheet, Button } from "../ui/components.jsx";
 import { isImported } from "./pf.js";
-import { dataSplits, withDataSplits, storedNotInData, withStoredSplits, outSplits, withoutOutSplits } from "./lots.js";
+import { dataSplits, withDataSplits, storedNotInData, withStoredSplitsChecked, outSplits, withoutOutSplits } from "./lots.js";
+import { withOfficialRates } from "./records.js";
 import { UNIT } from "./held.js";
 import { companySub, CO_MORE, editSub, parseHash, WATCH_SUB, TODAY_SUB } from "./routes.js";
 import { WatchScreen } from "./watch.jsx";
@@ -317,13 +318,19 @@ export function App({ source }) {
   // v19.3d: records that would not read back are never written or shown (store.js names the reason in the console); that is
   // not a storage failure, so the "can't save on this device" line stays off and refused says so instead (plan.badInput on
   // the screens, until the next change that saves).
+  // given: the new records, or (#184 review round 1) a function of the records as they are when the change applies, which
+  // returns the new records or null (nothing to save): so an automatic change composes with another made in the same render
+  // instead of writing over it.
   const setStoreData = useCallback((given, saved) => {
     // #87 (hotfix of #83): the records in memory carry the version tag writeStore gives them (a portfolio made with 가진
     // 종목 넣기 makes them version 2). Before, they kept the tag they had (1), so every later change in the same visit (a 메모,
     // an answer, 빼기, 내 규칙) failed the check below and was refused. A store already tagged is kept as it is (the same
     // object: a records file taken in keeps its mergeStores mark).
-    const data = given && Array.isArray(given.decks) && given.v !== versionFor(given) ? { ...given, v: versionFor(given) } : given;
+    const tag = (g) => (g && Array.isArray(g.decks) && g.v !== versionFor(g) ? { ...g, v: versionFor(g) } : g);
+    const fixed = typeof given === "function" ? null : tag(given);
     setStore((s) => {
+      let data = fixed;
+      if (typeof given === "function") { const g = given(s.data); if (g == null) return s; data = tag(g); }
       if (!saved && !validStore(data, todayKst())) { console.warn("[v2] change not saved: the records would not read back"); return { ...s, refused: true }; }
       if (!saved && !(s.writable && writeStore(data, s.key, todayKst()))) return { ...s, writable: false };
       return { ...s, data, locked: false, refused: false };
@@ -485,12 +492,45 @@ export function App({ source }) {
   // round-2 review: a data.json split that a saved record already lies before is stored with the records at once (not only
   // with the next record), so a buy-and-hold portfolio keeps it even after data.json stops listing it. Nothing a user sees
   // changes (the screens already read the records with it); only when the records can be written, and said once.
+  // Track 2 audit 1.1 and #184 review round 1: stock by stock (lots.withStoredSplitsChecked), a stock's splits are stored only
+  // when its portfolio reads back with them and main's own count accepts it too (an older tab, or main after a revert, never
+  // sets it aside). A refused stock keeps its records as they are, is said once in the console and not tried again in this
+  // visit; it never holds back another stock. The save composes with any other change of the same render (a function of the
+  // records as they are then), and "stored" is said only once the split is seen in the records; a save another change wrote
+  // over is sent again on the next render. Before, a refused save came back on every render (hundreds of times a second)
+  // and showed the line meant for the user's own change.
+  const splitsTried = useRef(new Set());                 // refused: not tried again in this visit
+  const splitsSent = useRef(new Map());                  // sent, not yet seen in the records: key -> its console name
   useEffect(() => {
     if (load.status !== "ok" || !store.writable || store.locked) return;
-    const r = withStoredSplits(view.data);
+    const key = (x) => `${x.id}|${x.t}|${x.date}|${x.r}`;
+    const name = (x) => `${x.id} ${x.t} ${x.date} x${x.r}`;
+    const tried = splitsTried.current, sent = splitsSent.current;
+    if (sent.size) {
+      const landed = [];
+      for (const d of store.data.decks) for (const x of (d && Array.isArray(d.splits) ? d.splits : [])) {
+        const k = key({ id: d.id, ...x });
+        if (sent.has(k)) { landed.push(sent.get(k)); sent.delete(k); }
+      }
+      if (landed.length) console.info("[v2] stock splits stored with the records they apply to: " + landed.join(", "));
+      if (sent.size && store.refused) {
+        console.warn("[v2] stock splits not stored with the records (the save was refused; tried once): " + [...sent.values()].join(", "));
+        for (const k of sent.keys()) tried.add(k);
+        sent.clear();
+      }
+    }
+    const today = todayKst();
+    const skip = (x) => tried.has(key(x));
+    const r = withStoredSplitsChecked(view.data, today, skip);
+    for (const x of r.refused) tried.add(key(x));
+    if (r.refused.length) console.warn("[v2] stock splits not stored with the records (the records would not read back with them, or main's count "
+      + "would not; they keep the records as they are, the screens still apply the splits; tried once): " + r.refused.map((x) => `${name(x)} (${x.why})`).join("; "));
     if (!r.added.length) return;
-    console.info("[v2] stock splits stored with the records they apply to: " + r.added.map((x) => `${x.id} ${x.t} ${x.date} x${x.r}`).join(", "));
-    setStoreData(r.data);
+    for (const x of r.added) sent.set(key(x), name(x));
+    setStoreData((cur) => {
+      const n = withStoredSplitsChecked(withDataSplits(cur, splitList, today), today, skip);
+      return n.added.length ? n.data : null;
+    });
   }, [view, load.status]);
   // #117: an "out" row of data.json splitsInfo.fixed (ratio null) says a split was wrong. Each stored split it names is taken
   // out when the records read back without it, moved to data.json's corrected date (same stock and ratio) when they read
@@ -527,6 +567,28 @@ export function App({ source }) {
     if (!store.writable || store.locked) return;
     const next = withWatchHits(store.data, load);
     if (next) setStoreData(next);
+  }, [store.data, load]);
+  // #191 (Jack, 2026-11-27): a dollar record saved at the latest rate before its date's rate was published (rateTemp) gets that
+  // date's rate as soon as loaded data has it (records.withOfficialRates: its own row; a weekend or Korean holiday once a later
+  // row shows it never gets one). On load and after every change of the records, only when they can be written; idempotent
+  // (nothing marked, nothing written). Said in the console with counts; the records still waiting are said once per date.
+  // First, history entries holding the same records twice (a merge by a build before #191: store.withoutTwinEntries) go.
+  const tempSaid = useRef(new Set());
+  useEffect(() => {
+    if (load.status !== "ok" || !store.writable || store.locked) return;
+    const fh = load.macro ? load.macro.fxHist || null : null;
+    const tw = withoutTwinEntries(store.data);
+    if (tw.dropped.length) console.warn(`[v2] history entries with the same record ids as an earlier entry of their portfolio: ${tw.dropped.length} taken out: `
+      + tw.dropped.map((x) => `${x.id} ${x.t}`).join(", "));
+    const r = withOfficialRates(tw.data, fh);
+    const wait = r.waiting.filter((x) => !tempSaid.current.has(`${x.id}|${x.t}|${x.date}|${x.kind}`));
+    for (const x of wait) tempSaid.current.add(`${x.id}|${x.t}|${x.date}|${x.kind}`);
+    if (wait.length) console.info(`[v2] temporary exchange rates: ${r.waiting.length} record(s) wait for their dates' rates (the history ends ${fh && fh.asOf ? fh.asOf : "nowhere"}): `
+      + wait.map((x) => `${x.id} ${x.t} ${x.kind} ${x.date}`).join(", "));
+    if (!r.fixed.length && !tw.dropped.length) return;
+    if (r.fixed.length) console.info(`[v2] temporary exchange rates replaced by their dates' rates: ${r.fixed.length} record(s): `
+      + r.fixed.map((x) => `${x.id} ${x.t} ${x.kind} ${x.date} ${x.from} -> ${x.to}`).join(", "));
+    setStoreData((cur) => { const a = withoutTwinEntries(cur), n = withOfficialRates(a.data, fh); return n.fixed.length || a.dropped.length ? n.data : null; });
   }, [store.data, load]);
   const openWatch = useCallback(() => router.go("stocks", WATCH_SUB), [router.go]);
   // v19.6b: the 오늘 볼 것 page (#home/today), from 홈's 오늘 볼 것 header and its new rows

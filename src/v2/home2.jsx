@@ -43,7 +43,7 @@ import React, { useMemo } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, RADIUS, TOUCH, holdingShades, HOLDING_SHADES } from "../ui/tokens.js";
 import { Icon, IconChip } from "../ui/icons.jsx";
 import { Amount, Button } from "../ui/components.jsx";
-import { C, fill, p1, mdText, wonText, todayKst } from "./format.js";
+import { C, fill, p1, mdText, wonText, todayKst, todayNy } from "./format.js";
 import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, OwnCloseNote, KrAgedLine, Cols, useLayout, useRoomy, useNav, tx, tap } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { isCompany, ownCloses } from "./stocklist.js";
@@ -53,7 +53,7 @@ import { statusChips } from "./daily.jsx";
 import { isImported } from "./pf.js";
 import { signedPct } from "./deckcalc.js";
 import { ruleLabel, ruleDetail, brokenLine, limitPct, groupName } from "./pfview.jsx";
-import { usHeld, limitsOf } from "./pf.js";
+import { usHeld, limitsOf, usdOf } from "./pf.js";
 import { homeBlocks, concentration, barOf, quietBlock } from "./home.js";
 import { MarketGlance, Hero, calmLine } from "./today.jsx";
 import { RankCard } from "./rank.jsx";
@@ -67,6 +67,7 @@ import { lookModel, lookSay, coversKorean } from "./look.js";
 import { LookRows, lookRowCount, pageHas } from "./todaylook.jsx";
 import { WeeklyCards } from "./weekly.jsx";
 import { WEEKLY_ON } from "./weekcfg.js";
+import { hasTempRate } from "./records.js";
 
 const signedWon = (v) => (v > 0 ? "+" : "") + wonText(v);
 const tone = (v) => (v > 0 ? COLOR.up : v < 0 ? COLOR.down : COLOR.text2);
@@ -401,8 +402,10 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
   const rankInMain = wide && !roomy;
   const rankCard = ok && <RankCard key="rank" load={load} store={store} go={go} />;
   const blocks = useMemo(() => (ev.ok ? homeBlocks(decks, ev, ctx, ok ? load.data.stocks : []).map((b) => ({ ...b, byT: ctx.byT })) : []), [decks, ev, ctx, load, ok]);
-  // a US stock held today (a sold-out kept one, 0 shares, does not count: final review N3)
-  const us = ev.ok && (blocks.some((b) => b.de && b.de.holdings.some((x) => x.cls === "us" && x.qty !== 0)) || decks.some((d) => usHeld(d, load)));
+  // a US stock held today (a sold-out kept one, 0 shares, does not count: final review N3). A US stock is one priced in
+  // dollars (pf.usdOf, as usHeld and 포트폴리오, #187): x.cls "us" also took 379800 KODEX 미국S&P500, a KRX listing priced in
+  // won at the Korean close, and said its price was the US close
+  const us = ev.ok && (blocks.some((b) => b.de && b.de.holdings.some((x) => usdOf(load.byT.get(x.t)) && x.qty !== 0)) || decks.some((d) => usHeld(d, load)));
   const usDate = ok && us && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
   // The verdict band of the portfolios made with 포트폴리오 만들기 (their per-stock rules and bands), exactly as before; also
   // the stale band and the load-failure message.
@@ -412,7 +415,7 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
   const canMark = !!(store.writable && !store.locked);
   const hits = useMemo(() => (ev.ok ? watchHits(store.data, load, undefined, canMark) : []), [store.data, load, ev.ok, canMark]);
   // v19.6b (Part B.2): the 오늘 볼 것 cards (fresh data only); the console names what they leave out
-  const lm = useMemo(() => lookModel(load, store, disc, todayKst()), [load, store, disc]);
+  const lm = useMemo(() => lookModel(load, store, disc, todayKst()), [load, store, disc, todayKst(), todayNy()]);   // again when either date turns
   React.useEffect(() => { lookSay(lm, "home"); }, [lm]);
   const look = lookOf(blocks, held, disc, kr, hits, lm);
   // late data within 5 trading days (rules.js checkState, Jack 2026-11-19): the date of the close the check ran on
@@ -442,6 +445,8 @@ export function Home2({ load, store, ev, ctx, onConfirm, pad, onWhy, go, disc = 
         {store.restored && <Note tone="watch" data-ui-v2="store-merged">{C.store.merged}</Note>}
         {store.unmerged && C.store.locked && <Note tone="watch" data-ui-v2="store-unmerged">{C.store.locked}</Note>}
         {store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}
+        {/* #191 (Jack, 2026-11-27): a US record saved at the latest rate (its date's rate not in yet) counts here at that rate: once per screen, for the money cards and 이번 주 정리 below */}
+        {ok && decks.some((d) => hasTempRate(d)) && C.rec.rateTemp && <Note data-ui-v2="home-rate-temp">{C.rec.rateTemp}</Note>}
         {/* v19.6e (Part E, board Weekly2): 이번 주 정리, one card per portfolio block, at the top (under the date line and the store
             notes, which stay first), once the week's numbers are final; never on late data (round 2: the week it would call 이번 주
             is already the week before); behind weekcfg.js WEEKLY_ON (weekly.jsx) */}

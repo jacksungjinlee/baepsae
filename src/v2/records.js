@@ -6,7 +6,7 @@
 // Every edit returns the whole store (the caller saves it with store.writeStore, which checks it again) or a refusal
 // { ok: false, why } the screen turns into an approved line. Nothing is saved that the store's own check would refuse.
 import { recordId, deckProblem, problemText } from "./store.js";
-import { belowZero, heldUnits, UNIT, toUnits, okUnits, byAmount, VIEW_SPLITS } from "./held.js";
+import { belowZero, heldUnits, UNIT, okUnits, byAmount, VIEW_SPLITS, sellAllUnits } from "./held.js";
 import { ledger, splitsToStore, purchaseRate, splitSince } from "./lots.js";
 import { validRows } from "./track.js";
 
@@ -32,16 +32,34 @@ const realDate = (x) => typeof x === "string" && DATE.test(x) && new Date(x + "T
 //   - final not true (yahoo_next at the 06:40 publish says false: its last row is the run's live rate, not the day's; a
 //     missing or odd flag counts as not final, round-2 review): a date whose rate would be that last row is not saved yet
 //     either; the next publish has it final.
-// env: { today, fx, fxDate, fxHist, stale }.
-// -> { ok: true, fx } | { ok: true, fx: null, before: true } | { ok: false, why: "today" (today's rate: the approved
+// The US trade date of now (audit 2.1, 2026-11-24): a dollar record made during the US session after Korean midnight (23:30–06:00
+// KST in winter, 22:30–05:00 in summer) is dated New York's date, the Korean date's day before, as the form's hint asks ("미국
+// 주식은 미국 현지 날짜로 적어 주세요."); the date rolls over at 20:00 New York, when the overnight session starts booking the next
+// trading day (format.usTradeDay, env.usDay).
+// A temporary rate (Jack, 2026-11-27: "not at today's rate. Save it right away at the latest available rate, marked temporary,
+// and replace it with that date's official rate automatically when the morning data arrives"): with the screens' env (usDay
+// given), a dollar record dated "today" — the US trade date of now or Korea's today — whose date the history does not have yet
+// is saved at the latest rate the app has (data.json fx) and marked temporary ({ temp: true } here, rateTemp on the record);
+// withOfficialRates puts that date's rate in its place once loaded data has it. Never while the data is stale (the today line,
+// rec.noTodayRate, as before). A date the history has takes its row, as before (the morning after: the US trade date of the
+// night). Any other date after the history keeps "notYet" (rec.rateNotYet). Without usDay (tests of main's rule, weekly.js),
+// main's answers: Korea's today takes data.json fx unmarked.
+// env: { today, usDay?, fx, fxDate, fxHist, stale } (usDay: format.usTradeDay, only from the screens that save dollar records).
+// -> { ok: true, fx, temp? } | { ok: true, fx: null, before: true } | { ok: false, why: "today" (today's rate: the approved
 //    past-date line does not fit) | "notYet" (a past date after the history's last day) | "past" (any other past date:
 //    "환율 정보를 불러오지 못해 … 지난 날짜의 …") | "date" }
 export const FX_FROM = "2016-01-01";
 export function rateFor(date, env) {
   const e = env || {};
+  if (typeof e.usDay !== "string" || !realDate(date) || (date !== e.today && date !== e.usDay)) return histRate(date, e);
+  const h = histRate(date, { ...e, today: null });
+  return h.ok ? h : pos(e.fx) && !e.stale ? { ok: true, fx: e.fx, temp: true } : { ok: false, why: "today" };
+}
+const todayRate = (e) => (pos(e.fx) && !e.stale ? { ok: true, fx: e.fx } : { ok: false, why: "today" });
+function histRate(date, e) {
   if (!realDate(date)) return { ok: false, why: "date" };
   if (date < FX_FROM) return { ok: true, fx: null, before: true };
-  if (date === e.today) return pos(e.fx) && !e.stale ? { ok: true, fx: e.fx } : { ok: false, why: "today" };
+  if (date === e.today) return todayRate(e);
   const rows = validRows(e.fxHist);
   if (!rows || typeof e.fxHist.asOf !== "string" || e.fxHist.asOf !== rows[rows.length - 1][0]) return { ok: false, why: "past" };
   if (date < rows[0][0]) return { ok: false, why: "past" };
@@ -57,14 +75,81 @@ export function rateFor(date, env) {
 // The line a refused rate gets (records.jsx's forms and 매수 계획's 샀어요, plan.jsx): "today" (rec.noTodayRate), "notYet"
 // (rec.rateNotYet, Jack 2026-11-13), else "past" (rec.noPastRate).
 export const rateRefusal = (why) => (why === "today" || why === "notYet" ? why : "past");
-// The rate part of a new USD record: { fx } or, before 2016, { noFx: true } (store.js: never costed at planFx).
-const ratePart = (r) => (pos(r.fx) ? { fx: r.fx } : r.before ? { noFx: true } : {});
-// The env rateFor reads, from the app's load state (data.json, macro.json) and today's date.
-export function rateEnv(load, today) {
+// The rate part of a new USD record: { fx } (with rateTemp: true when it is the temporary rate, rateFor's temp), or, before
+// 2016, { noFx: true } (store.js: never costed at planFx). plan.jsx's 샀어요 builds the same part.
+export const ratePart = (r) => (pos(r.fx) ? { fx: r.fx, ...(r.temp === true ? { rateTemp: true } : {}) } : r.before ? { noFx: true } : {});
+
+// ---------------- temporary rates replaced by their dates' rates (Jack, 2026-11-27) ----------------
+// Every dollar record marked rateTemp (in a portfolio's lists and in its history entries) whose date the history now covers
+// gets that date's rate: the history's row of its date, the rate a record of that date typed now saves (rateFor without a
+// today: fxHist only). Its own row once it exists; a date that never gets one (a weekend, a Korean holiday: ECOS has no Seoul
+// close then) is covered once the history has a later row (rows come in date order, so its own row will never come), and
+// then takes the last row before it, as every record of such a date does (#117 RUNBOOK). Never before: while the history
+// ends before the date (or ends on it with a last row not marked final) the record stays temporary. A sale of a holding put
+// in by amount (판 금액 in won) keeps its won amount: its dollar price moves with the rate (price × old / new), so qty × price
+// × fx stays what was typed. Idempotent (nothing marked: the same object). -> { data, fixed: [{ id, t, date, kind, from, to }],
+// waiting: [{ id, t, date, kind }] }
+const TEMP_LISTS = [["purchases", "buy"], ["sales", "sell"], ["divs", "div"]];
+export function withOfficialRates(data, fxHist) {
+  const fixed = [], waiting = [];
+  if (!data || !Array.isArray(data.decks)) return { data, fixed, waiting };
+  const env = { today: null, fxHist };
+  const fixList = (deckId, list, kind, wonSale) => {
+    if (!Array.isArray(list) || !list.some((r) => r && r.rateTemp === true)) return list;
+    return list.map((r) => {
+      if (!r || r.rateTemp !== true || r.ccy !== "USD") return r;
+      const x = rateFor(r.date, env);
+      if (!(x.ok && pos(x.fx))) { waiting.push({ id: deckId, t: r.t, date: r.date, kind }); return r; }
+      const { rateTemp: _t, ...rest } = r;
+      const out = { ...rest, fx: x.fx };
+      if (kind === "sell" && wonSale(r.t) && pos(r.fx) && pos(r.price)) out.price = (r.price * r.fx) / x.fx;
+      fixed.push({ id: deckId, t: r.t, date: r.date, kind, from: r.fx, to: x.fx });
+      return out;
+    });
+  };
+  const byAmt = (rows) => (t) => (rows || []).some((r) => r && r.t === t && byAmount(r));
+  let changed = false;
+  const decks = data.decks.map((d) => {
+    if (!d || typeof d !== "object") return d;
+    let next = d;
+    for (const [k, kind] of TEMP_LISTS) {
+      const l = fixList(d.id, d[k], kind, byAmt(d.imported));
+      if (l !== d[k]) next = { ...next, [k]: l };
+    }
+    if (Array.isArray(d.history) && d.history.some((e) => e && TEMP_LISTS.some(([k]) => Array.isArray(e[k]) && e[k].some((r) => r && r.rateTemp === true)))) {
+      next = { ...next, history: d.history.map((e) => {
+        if (!e || typeof e !== "object") return e;
+        let ne = e;
+        for (const [k, kind] of TEMP_LISTS) {
+          const l = fixList(d.id, e[k], kind, byAmt(e.imported ? [e.imported] : []));
+          if (l !== e[k]) ne = { ...ne, [k]: l };
+        }
+        return ne;
+      }) };
+    }
+    if (next !== d) changed = true;
+    return next;
+  });
+  return { data: changed && fixed.length ? { ...data, decks } : data, fixed, waiting };
+}
+// Does any record of stock t (or of every stock, t null) in this portfolio, its history included, carry a temporary rate?
+// (the record sheet, 내 수익: the approved line rec.rateTemp)
+export function hasTempRate(deck, t = null) {
+  const any = (list) => Array.isArray(list) && list.some((r) => r && r.rateTemp === true && (t == null || r.t === t));
+  if (!deck) return false;
+  return TEMP_LISTS.some(([k]) => any(deck[k])) || (deck.history || []).some((e) => e && TEMP_LISTS.some(([k]) => any(e[k])));
+}
+// The env rateFor reads, from the app's load state (data.json, macro.json) and today's date (KST); usDay: the US trade date of
+// now (format.usTradeDay), given by the screens that save dollar records (records.jsx, plan.jsx), left out elsewhere.
+export function rateEnv(load, today, usDay = null) {
   const ok = load && load.status === "ok";
   return { today, fx: ok ? load.data.fx : null, fxDate: ok ? load.data.fxDate || null : null, fxHist: ok && load.macro ? load.macro.fxHist || null : null,
-    stale: !!(ok && load.fresh && load.fresh.stale) };
+    stale: !!(ok && load.fresh && load.fresh.stale), ...(usDay ? { usDay } : {}) };
 }
+// The date a record made now gets (the forms open with it; a blank date takes it): a dollar record's is the US trade date of now
+// (env.usDay, when given; audit 2.1: the US trading date the form's hint asks for), any other record's Korea's, as before.
+// The latest date a record can carry stays Korea's today for both (badDate): the US trade date is never later.
+export const recordToday = (env, usd) => (usd && typeof env.usDay === "string" ? env.usDay : env.today);
 
 // ---------------- the currency of a stock's records ----------------
 // One source for the form's label and the record it saves (review: a 원 form must never save dollars): the stock's own
@@ -130,7 +215,7 @@ export function checkSale(deck, t, input, s, env) {
   const st = stockState(deck, t);
   const usd = recordCcy(deck, t, s) === "USD";
   const ccy = usd ? "USD" : "KRW";
-  const date = input.date || env.today;
+  const date = input.date || recordToday(env, usd);
   if (badDate(date, env.today)) return { ok: false, why: "input", field: "date" };
   if (st.first && date < st.first) return { ok: false, why: "tooEarly", field: "date" };
   let qty, price;
@@ -142,7 +227,12 @@ export function checkSale(deck, t, input, s, env) {
     if (!(st.held > 0)) return { ok: false, why: "tooMany", field: "amount" };
     // the won amount becomes a dollar price at the sale date's rate: without one (also before 2016) it cannot be saved
     if (!r.ok || (usd && !pos(r.fx))) return { ok: false, why: "rate", field: "date", rate: r.ok ? "past" : r.why };
-    qty = st.held / UNIT;
+    // every share held, on the sale date's share basis (Track 2 audit 1.4: a sale dated before a split is read x r, so
+    // today's count saved as is was scaled twice, a 1:10 reverse split selling a tenth); with no split in between, that is
+    // the count held now. When no quantity on that basis sells exactly every share (a 4:1 after the sale date), today's
+    // count, as before: the check below refuses it (tooMany).
+    const u = sellAllUnits(deck, t, date);
+    qty = (u != null ? u : st.held) / UNIT;
     price = usd ? amt / r.fx / qty : amt / qty;
   } else {
     const q = typed(input.qty);
@@ -164,7 +254,7 @@ export function checkSale(deck, t, input, s, env) {
 // falls between the purchase date and today: then the price is required, closeIsDefault).
 export function checkPurchase(deck, t, input, s, env) {
   const usd = recordCcy(deck, t, s) === "USD";
-  const date = input.date || env.today;
+  const date = input.date || recordToday(env, usd);
   if (badDate(date, env.today)) return { ok: false, why: "input", field: "date" };
   const q = typed(input.qty);
   if (!(pos(q) && q <= QTY_MAX && Number.isInteger(q))) return { ok: false, why: "input", field: "qty" };
@@ -181,7 +271,7 @@ export function checkPurchase(deck, t, input, s, env) {
 // Its currency is the stock's own records' (recordCcy: the same source as the form's label), also for a stock taken out.
 export function checkDiv(deck, t, input, s, env) {
   const usd = recordCcy(deck, t, s) === "USD";
-  const date = input.date || env.today;
+  const date = input.date || recordToday(env, usd);
   const a = typed(input.amount);
   if (!(pos(a) && (usd ? decimals(a, 2) : Number.isInteger(a)))) return { ok: false, why: "input", field: "amount" };
   if (badDate(date, env.today)) return { ok: false, why: "input", field: "date" };

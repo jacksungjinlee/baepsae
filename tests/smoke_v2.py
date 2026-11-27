@@ -6891,6 +6891,19 @@ SEEN_JS = ("() => { try { const d = JSON.parse(localStorage.getItem('baepsae2.v1
            " catch (e) { return null; } }")
 
 
+def seen_saved(page, what):
+    """Leaving the guide's 기준 step by a way the overlay does not cover (다음, 이전 단계, 다시 시작) ends the guide one render
+    late: the bubble goes at once, with the step it sits on, and only then app.jsx's effect (offStep -> endGuide(true))
+    writes '본 적 있음' (guideSeen) into the store. Reading the store as soon as the bubble is gone can come before that
+    write (2026-11-28: v19.3c 안내 밖 단계 이동 on PR #191's ci; measured here about 5 ms after the bubble, 30-40 ms
+    with the browser 10x slower). Waits up to WAIT for the write; else fails saying it never came. (The bubble's own buttons and
+    Esc end the guide and write the flag in the same render: they need no wait.)"""
+    try:
+        page.wait_for_function(f"() => ({SEEN_JS})() === '1'", timeout=WAIT)
+    except PWTimeout:
+        raise AssertionError(f"{what}: the guide ended, but '본 적 있음' (guideSeen) was not in the store after {WAIT // 1000} s") from None
+
+
 def forget_guide(page):
     """처음 안내를 본 표시를 저장 기록에서 지우고 페이지를 다시 열어요 (앱이 기억한 표시도 새로 읽게)."""
     page.evaluate("() => { const k = 'baepsae2.v1'; try { const d = JSON.parse(localStorage.getItem(k)); if (d) { delete d.guideSeen;"
@@ -7392,9 +7405,11 @@ def scene_v193c_offstep(R, files, width=390):
         page.locator('[data-card="div"] [data-ui-v2="card-inc"]').click()
         bubble(page, 2).click()
         bubble(page, 3)
+        assert seen() is None, "다음 (3/3): '본 적 있음' is already in the store before the click"
         page.evaluate("() => document.querySelector('[data-ui-v2=\"action-bar\"] button:not([disabled])').click()")   # 3/3 에서 아래 띠의 다음
         see(page, C["build"]["s3"]["title"])
         guide_gone(page)
+        seen_saved(page, "다음 (3/3)")                                      # written one render after the bubble goes
         assert seen() == "1"
         page.locator('[data-ui-v2="app-bar"]').get_by_role("button", name=C["build"]["prevStep"]).click()
         see(page, C["build"]["s1"]["title"])
@@ -7403,9 +7418,11 @@ def scene_v193c_offstep(R, files, width=390):
         for name in (C["build"]["restart"], C["build"]["prevStep"]):        # 1/3 에서 다시 시작 · 이전 단계 (말풍선 밖의 단추)
             unseen()
             guide_step1(page, False)
+            assert seen() is None, f"{name}: '본 적 있음' is already in the store before the click"
             page.evaluate("(n) => [...document.querySelectorAll('[data-ui-v2=\"app-bar\"] button, main button')].find((b) => (b.getAttribute('aria-label') || b.textContent.trim()) === n).click()", name)
             see(page, C["build"]["s0"]["title"])
             guide_gone(page)
+            seen_saved(page, name)
             assert seen() == "1", name
             page.locator('[data-deck="income"]').click()                   # 템플릿을 골라도 2/3 이 저절로 뜨지 않아요
             see(page, C["build"]["s1"]["title"])
@@ -10864,6 +10881,124 @@ def scene_v196a_split_price(R, files, width=390):
     srv.shutdown()
 
 
+def scene_split_round(R, files, width=390, app=None):
+    """Track 2 audit 1.1 (2026-11-24) and #184 review round 1: a split whose ratio leaves a fraction of a 1/10,000 share
+    (data.json's 듀폰 DD 1:3 · 유니레버 UL 8:9; here AMZN · MSFT · NVDA · AAPL 1:3 on 10-20, test rows) with records saved
+    before it. The app stores a split with the records stock by stock, only where the portfolio reads back with it and main's
+    own count reads it too (an older tab, or main after a revert, never sets a portfolio aside):
+    dsa: AMZN 10 shares bought and 5 + 5 sold before it → main's count would read it below 0, so it is not stored (the screens
+    still apply it: sold out) · dsd: AMZN 3 bought before it and 2 sold after it (more than the 1 new share) → not stored,
+    and AAPL 3 bought before it in the same portfolio → stored (one stock never holds back another). Both refusals are said
+    in one console line, the stored splits in one line once they are in the records, no refused line (store-refused) on
+    포트폴리오 or 홈, nothing tried again (before the fix: refused, retried hundreds of times a second, "날짜·수량·가격을 다시 확인해
+    주세요" on every screen) · dsb: MSFT 1 + 1 bought before it → 팔았어요 2 dated before it is saved, no "가진 수량보다 많이 팔 수는
+    없어요", and it asks 포트폴리오에서도 뺄까요? (exactly 0 left) · dsc: NVDA 10 bought before it → the form shows 3.3333주, and
+    팔았어요 3.3333 after it is saved and leaves exactly 0. app: another build's app.html (main's, to see the scene fail before
+    the fix; never in the run)."""
+    S = f"split rounding {width}"
+    data = v196a_files(files)
+    d = data["data.json"]
+    d["splits"] = d["splits"] + [[t, "2026-10-20", 1 / 3] for t in ("AMZN", "MSFT", "NVDA", "AAPL")]
+    pxd = d["pxDate"]
+    by = {x["t"]: x for x in d["stocks"]}
+    band = lambda t: [{"id": "band", "kind": "band", "check": "checked", "target": t, "bands": [0.75 * t, 1.25 * t, 1.4 * t]}]
+    usd = lambda i, t, q, px, day: {"id": i, "t": t, "qty": q, "price": px, "date": day, "ccy": "USD", "fx": 1300}
+    deck = lambda i, ts, buys, sells: {"id": i, "name": i, "createdAt": "2026-08-01", "planFx": 1300,
+                                       "holdings": [{"t": t, "nk": by[t]["nk"], "cls": "us", "target": 1 / len(ts), "rules": band(1 / len(ts))} for t in ts],
+                                       "purchases": buys, **({"sales": sells} if sells else {})}
+    store = {"v": 2, "guideSeen": pxd, "decks": [
+        deck("dsa", ["AMZN"], [usd("p1aaaaaa", "AMZN", 10, 200.0, "2026-09-01")],
+             [usd("s1aaaaaa", "AMZN", 5, 210.0, "2026-09-10"), usd("s2aaaaaa", "AMZN", 5, 215.0, "2026-09-15")]),
+        deck("dsb", ["MSFT"], [usd("p2aaaaaa", "MSFT", 1, 480.0, "2026-09-01"), usd("p3aaaaaa", "MSFT", 1, 470.0, "2026-09-02")], []),
+        deck("dsc", ["NVDA"], [usd("p4aaaaaa", "NVDA", 10, 150.0, "2026-09-01")], []),
+        # AMZN: 3 old shares are 1 new one; a sale of 2 after the split reads back with it by no count · AAPL: buy and hold
+        deck("dsd", ["AMZN", "AAPL"], [usd("p5aaaaaa", "AMZN", 3, 200.0, "2026-09-01"), usd("p6aaaaaa", "AAPL", 3, 250.0, "2026-09-01")],
+             [usd("s5aaaaaa", "AMZN", 2, 230.0, "2026-10-26")])]}
+    # every console.warn / info of the page from the first script on (the store effects run before a listener could be attached)
+    seed = ("(() => { window.__logs = []; for (const k of ['warn', 'info']) { const f = console[k]; console[k] = function (...a) {"
+            " try { window.__logs.push(a.join(' ')); } catch (e) {} return f.apply(this, a); }; }"
+            " if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');"
+            f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(store, ensure_ascii=False))}); }})();")
+    srv, ctx, page, base = R.open(build_site(data, app=app), width, init=seed, path="/app.html?dev=1#portfolio")
+    stored = lambda: page.evaluate(STORED_JS)
+    logs = lambda: page.evaluate("() => window.__logs.slice()")
+    R_ = C["rec"]
+    form = lambda: page.locator('[data-ui-v2="rec-form"]')
+
+    def open_sell(dk, t):
+        if route(page) != "portfolio":
+            tab(page, TABS["portfolio"])
+        at(page, "portfolio")
+        page.locator(f'[data-deck-id="{dk}"] [data-holding="{t}"] [data-ui-v2="row-actions"] button').first.click()
+        page.locator(f'[data-ui-v2="rec-sheet"][data-deck-id="{dk}"]').wait_for(state="visible")
+        page.locator('[data-ui-v2="rec-actions"] button', has_text=R_["sell"]).click()
+        form().wait_for(state="visible")
+
+    def sell(dk, t, qty, price, date):
+        form().locator('input[type="date"]').fill(date)
+        form().locator("input").first.fill(qty)
+        form().locator("input").nth(1).fill(price)
+        form().locator("button", has_text=C["plan"]["save"]).click()
+        page.wait_for_function("([dk]) => ((JSON.parse(localStorage.getItem('baepsae2.v1')).decks.find((x) => x.id === dk) || {}).sales || []).length === 1",
+                               arg=[dk], timeout=4000)
+        page.locator('[data-ui-v2="rec-full"]').wait_for(state="visible", timeout=4000)    # 다 팔았어요: 정확히 0 주
+        assert page.locator('[data-ui-v2="rec-too-many"]').count() == 0
+        page.locator('[data-ui-v2="rec-full"] button', has_text=R_["keep"]).click()
+        page.locator('[data-ui="bottom-sheet"]').get_by_role("button", name=C["app"]["close"]).first.click()
+        page.locator('[data-ui="bottom-sheet"]').wait_for(state="detached")
+
+    def stored_once():
+        at(page, "portfolio")
+        page.wait_for_function("() => JSON.parse(localStorage.getItem('baepsae2.v1')).decks.every((x) => x.id === 'dsa' || (x.splits || []).length === 1)", timeout=4000)
+        got = {x["id"]: x.get("splits") for x in stored()["decks"]}
+        sp = lambda t: [{"t": t, "date": "2026-10-20", "r": 1 / 3}]
+        assert got == {"dsa": None, "dsb": sp("MSFT"), "dsc": sp("NVDA"), "dsd": sp("AAPL")}, got
+        page.locator('[data-deck-id="dsa"]').first.wait_for(state="visible")
+        # the store's lines: a refused save ("change not saved", app.jsx setStoreData), the split saved, or not saved (once)
+        mine = lambda: [x for x in logs() if "change not saved" in x or "stock splits stored with the records" in x or "not stored with the records" in x]
+        page.wait_for_timeout(500)
+        n = len(logs())
+        page.wait_for_timeout(1000)
+        assert len(logs()) == n, logs()[n:n + 3]                                             # 1 초 동안 아무것도 다시 하지 않아요
+        assert len(mine()) == 2, mine()[:3]
+        no, yes = mine()
+        assert no.startswith("[v2] stock splits not stored with the records") and "dsd AMZN 2026-10-20" in no and "sold more than held (2026-10-26)" in no, no
+        assert "dsa AMZN 2026-10-20" in no and "main's count" in no and "dsd AAPL" not in no, no
+        assert yes.startswith("[v2] stock splits stored with the records") and all(f"{k} {t} 2026-10-20" in yes for k, t in (("dsb", "MSFT"), ("dsc", "NVDA"), ("dsd", "AAPL"))), yes
+        assert page.locator('[data-ui-v2="store-refused"]').count() == 0 and C["plan"]["badInput"] not in page.locator("body").inner_text()
+        tab(page, TABS["home"])
+        at(page, "home")
+        page.wait_for_timeout(1000)
+        assert page.locator('[data-ui-v2="store-refused"]').count() == 0 and C["plan"]["badInput"] not in page.locator("body").inner_text()
+        assert len(mine()) == 2, mine()[:3]                                                   # 홈에서도 다시 시도하지 않아요
+        floor_ok(page, "홈 (분할 반올림)")
+        R.collect(page)
+    R.check(page, S, "1:3 분할 전 기록: 종목마다 (main 도 읽을 때만) 분할을 저장하고(console 한 줄) · 못 쓰는 분할은 한 번만 말하고 · 한 종목이 다른 종목을 막지 않고 · 거절 줄 없음(포트폴리오 · 홈) · 다시 시도하지 않아요", stored_once)
+
+    def sale_before():
+        open_sell("dsb", "MSFT")
+        sell("dsb", "MSFT", "2", "490", "2026-10-01")
+        s = [x for x in stored()["decks"] if x["id"] == "dsb"][0]["sales"][0]
+        assert s["qty"] == 2 and s["date"] == "2026-10-01", s
+    R.check(page, S, "분할 전에 산 1 + 1 주를 분할 전 날짜로 2 주 팔기: 저장 · '가진 수량보다 많이 …' 없음 · 다 팔았어요", sale_before)
+
+    def sale_after():
+        open_sell("dsc", "NVDA")
+        head = form().locator('[data-ui-v2="rec-head"]').inner_text()
+        assert "3.3333주" in head, head                                                     # 10 주 ÷ 3
+        sell("dsc", "NVDA", "3.3333", "200", pxd)
+        floor_ok(page, "포트폴리오 (분할 뒤 다 팔기)")
+        no_hscroll(page, width)
+        R.collect(page)
+        if R.shots:
+            os.makedirs(R.shots, exist_ok=True)
+            page.screenshot(path=os.path.join(R.shots, f"split-round-{width}.png"))
+        assert page.locator('[data-ui-v2="store-refused"]').count() == 0
+    R.check(page, S, "분할 전에 산 10 주: 3.3333주로 보이고 · 분할 뒤 3.3333 주를 팔면 저장되고 정확히 0 주 (다 팔았어요)", sale_after)
+    ctx.close()
+    srv.shutdown()
+
+
 def scene_v196a_outs(R, files, width=390):
     """v19.6a round 2 (A3): the app's wiring of data.json splitsInfo.fixed "out" rows (app.jsx · lots.withoutOutSplits).
     dfree: NVDA 4 shares and a stored 2:1 split the data marks out → taken out: 8 → 4, one console line, nothing again on
@@ -10946,6 +11081,86 @@ def scene_v196a_outs(R, files, width=390):
         floor_ok(page, "포트폴리오 (분할 고침)")
         R.collect(page)
     R.check(page, S, "out 줄: 필요 없는 저장 분할은 빠지고(8 → 4, console 한 줄, 다시 열어도 한 번) · 판 기록이 필요하면 남고(경고) · 바른 날짜로 옮겨요(210 → 10) · 수가 바뀐 종목의 기록 위에 '주식 분할 정보가 바뀌어서 …'", outs)
+    ctx.close()
+    srv.shutdown()
+
+
+def scene_v191_rate_temp(R, files, width=390):
+    """#191 (Jack, 2026-11-27): the app's wiring of temporary rates (app.jsx · records.withOfficialRates · store.withoutTwinEntries).
+    dtemp: AAPL bought 2026-10-20 at a temporary rate (1,338원, rateTemp) — the fixture's history (macro.json fxHist) has that day's row
+    (1,350원), so on load the rate is replaced and the mark dropped (console line with the count); and AAPL bought 2026-11-10, after the
+    history's last day (10-30): it stays temporary, its record sheet and 포트폴리오 say "지금은 최근 환율로 저장했어요. 이 날짜의 환율이
+    들어오면 자동으로 바꿔요." once. dtwin: two history entries of the same taken-out sale (what a build before #191 left after merging
+    two tabs) → one entry (console line). Reloading changes nothing more."""
+    S = f"#191 임시 환율 {width}"
+    data = v196a_files(files)
+    asof = data["macro.json"]["fxHist"]["asOf"]
+    assert asof < "2026-11-10" and ["2026-10-20", 1350.0] in data["macro.json"]["fxHist"]["rows"], data["macro.json"]["fxHist"]
+    band = lambda t: [{"id": "band", "kind": "band", "check": "checked", "target": t, "bands": [0.75 * t, 1.25 * t, 1.4 * t]}]
+    usd = lambda i, q, px, day, **more: {"id": i, "t": "AAPL", "qty": q, "price": px, "date": day, "ccy": "USD", "fx": 1338.0, **more}
+    sale = usd("s9aaaaaa", 1, 330.0, "2026-10-20", rateTemp=True)
+    store = {"v": 2, "guideSeen": data["data.json"]["pxDate"], "decks": [
+        {"id": "dtemp", "name": "dtemp", "createdAt": "2026-09-01", "planFx": 1300,
+         "holdings": [{"t": "AAPL", "nk": "Apple Inc.", "cls": "us", "target": 1, "rules": band(1)}],
+         "purchases": [usd("p1aaaaaa", 3, 300.0, "2026-09-02", fx=1300), usd("p8aaaaaa", 2, 320.0, "2026-10-20", rateTemp=True),
+                       usd("p9aaaaaa", 1, 330.0, "2026-11-10", rateTemp=True)]},
+        {"id": "dtwin", "name": "dtwin", "createdAt": "2026-09-01", "planFx": 1300,
+         "holdings": [{"t": "005930", "nk": "삼성전자", "cls": "kr", "target": 1, "rules": band(1)}],
+         "purchases": [{"id": "k1aaaaaa", "t": "005930", "qty": 1, "price": 200000, "date": "2026-09-02", "ccy": "KRW"}],
+         "removed": [{"t": "AAPL", "at": "2026-10-21", "ts": 1792500000000}],
+         # the old build's two entries of the same sale: one still temporary, one replaced (1,350원, no mark)
+         "history": [{"t": "AAPL", "nk": "Apple Inc.", "out": "2026-10-21", "ts": 1792500000000, "cls": "us",
+                      "purchases": [usd("p7aaaaaa", 1, 300.0, "2026-09-02", fx=1300)], "sales": [s]}
+                     for s in (sale, usd("s9aaaaaa", 1, 330.0, "2026-10-20", fx=1350.0))]}]}
+    seed = ("(() => { const keep = (f) => function (...a) { try { const l = JSON.parse(sessionStorage.getItem('logs') || '[]'); l.push(a.join(' '));"
+            " sessionStorage.setItem('logs', JSON.stringify(l)); } catch (e) {} return f.apply(this, a); };"
+            " console.warn = keep(console.warn); console.info = keep(console.info);"
+            " if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');"
+            f" localStorage.setItem('baepsae2.v1', {json.dumps(json.dumps(store, ensure_ascii=False))}); }})();")
+    srv, ctx, page, base = R.open(build_site(data), width, init=seed, path="/app.html?dev=1#portfolio")
+    stored = lambda: page.evaluate(STORED_JS)
+    logs = lambda: page.evaluate("() => JSON.parse(sessionStorage.getItem('logs') || '[]')")
+    line = C["rec"]["rateTemp"]
+
+    def temp_rates():
+        at(page, "portfolio")
+        page.wait_for_function("() => { const s = JSON.parse(localStorage.getItem('baepsae2.v1')); const d = s.decks.find((x) => x.id === 'dtemp');"
+                               " return !!d && d.purchases.some((p) => p.id === 'p8aaaaaa' && p.rateTemp !== true); }", timeout=WAIT)
+        st = stored()
+        ps = {p["id"]: p for p in next(d for d in st["decks"] if d["id"] == "dtemp")["purchases"]}
+        assert ps["p8aaaaaa"]["fx"] == 1350.0 and "rateTemp" not in ps["p8aaaaaa"], ps["p8aaaaaa"]     # the history's row of 10-20
+        assert ps["p9aaaaaa"]["fx"] == 1338.0 and ps["p9aaaaaa"]["rateTemp"] is True, ps["p9aaaaaa"]  # after the history: still temporary
+        assert ps["p1aaaaaa"]["fx"] == 1300 and "rateTemp" not in ps["p1aaaaaa"]                       # an earlier record: untouched
+        twin = next(d for d in st["decks"] if d["id"] == "dtwin")
+        assert len(twin["history"]) == 1 and twin["history"][0]["sales"][0]["fx"] == 1350.0 and "rateTemp" not in twin["history"][0]["sales"][0], twin
+        L = logs()
+        # the purchase, and the taken-out sale the clean-up kept (still temporary in that entry): two records, one line
+        assert any("temporary exchange rates replaced by their dates' rates: 2 record(s): " in l and "dtemp AAPL buy 2026-10-20 1338 -> 1350" in l
+                   and "dtwin AAPL sell 2026-10-20 1338 -> 1350" in l for l in L), L
+        assert any("history entries with the same record ids as an earlier entry of their portfolio: 1 taken out: dtwin AAPL" in l for l in L), L
+        assert any("temporary exchange rates: 1 record(s) wait" in l and "dtemp AAPL buy 2026-11-10" in l for l in L), L
+        page.locator('[data-ui-v2="pf-rate-temp"]').wait_for(state="visible")
+        assert page.locator(f'text="{line}"').count() == 1                                              # 포트폴리오: once
+        page.locator('[data-deck-id="dtemp"] [data-holding="AAPL"] [data-ui-v2="row-actions"] button').first.click()
+        page.locator('[data-ui-v2="rec-sheet"][data-deck-id="dtemp"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="rec-sheet"] [data-ui-v2="rec-rate-temp"]').inner_text() == line == "지금은 최근 환율로 저장했어요. 이 날짜의 환율이 들어오면 자동으로 바꿔요."
+        floor_ok(page, "기록 시트 (임시 환율)")
+        no_hscroll(page, width)
+        R.collect(page)
+        if R.shots:
+            os.makedirs(R.shots, exist_ok=True)
+            page.screenshot(path=os.path.join(R.shots, f"v191-rate-temp-{width}.png"))
+        page.keyboard.press("Escape")
+        page.locator('[data-ui="bottom-sheet"]').wait_for(state="detached")
+        n = len([l for l in logs() if "replaced by their dates' rates" in l or "the same record ids as an earlier entry" in l])
+        page.reload(wait_until="domcontentloaded")
+        at(page, "portfolio")
+        page.locator('[data-ui-v2="pf-rate-temp"]').wait_for(state="visible")
+        page.wait_for_timeout(300)
+        assert len([l for l in logs() if "replaced by their dates' rates" in l or "the same record ids as an earlier entry" in l]) == n    # nothing more on reload
+        floor_ok(page, "포트폴리오 (임시 환율)")
+        R.collect(page)
+    R.check(page, S, "임시 환율: 그날 환율이 들어온 기록은 불러올 때 바뀌고(1,338 → 1,350원, 표시 지움, console 한 줄 두 건) · 아직인 기록은 그대로 · 같은 기록의 두 history 항목은 하나로 · 기록 시트와 포트폴리오에 승인된 줄 한 번 · 다시 열어도 그대로", temp_rates)
     ctx.close()
     srv.shutdown()
 
@@ -13696,6 +13911,20 @@ def chips_of(page):
       [...c.querySelectorAll('[data-ui-v2="watch-chip"]')].map((x) => [x.dataset.k, x.dataset.state, x.textContent])]))""")
 
 
+def watch_cards_shown(page, ts):
+    """관심 종목 (#stocks/watch) draws its title and sub line at once, and its cards only once today's data has loaded
+    (watch.jsx: `ok && order.map(...)`, all in one render). Opened straight at #stocks/watch, the screen can be visible
+    before data.json is in, and chips_of then reads no card (2026-11-28: KeyError '005380' on PR #179's branch, a full run
+    under load). Waits up to WAIT until every code in ts has its card; else fails naming the codes with no card."""
+    try:
+        page.wait_for_function("(ts) => ts.every((t) => !!document.querySelector(`[data-ui-v2=\"watch-card\"][data-t=\"${t}\"]`))",
+                               arg=list(ts), timeout=WAIT)
+    except PWTimeout:
+        have = page.locator('[data-ui-v2="watch-card"]').evaluate_all("(cs) => cs.map((c) => c.dataset.t)")
+        raise AssertionError(f"관심 종목: no card after {WAIT // 1000} s for {[t for t in ts if t not in have]} (cards shown: {have}); "
+                             "the data did not load, or those cards are missing") from None
+
+
 def scene_v196c(R, files, width, dark=False, deck=False):
     """v19.6c 관심 종목 (390 · 320 · 1280 · 어두운 화면): 종목 탭 맨 위 관심 종목 칸(목록이 있을 때만, 5개 · 전체 보기 ›) → 관심 종목 화면
     (#stocks/watch: 제목 · + 추가 · 날짜 줄 · 설명 줄 · 카드 = 마크 · 이름 · 가격 · 오늘 · 조건 칩 · 종 모양 단추 · 아래 줄) · 맞은 조건은 초록 칩과
@@ -14154,6 +14383,19 @@ def tax_screen_common(page, width, today_iso):
     no_hscroll(page, width)
 
 
+def tax_data_in(page):
+    """연말에 확인할 숫자 with today's data in. Its link on 내 수익 shows whatever the data (returns.jsx: it reads the user's own
+    records), so the screen can open before data.json has loaded: its head shows at once, its cards and the footer line only
+    once the data is in (tax.jsx: g · dv · ls and the footer all need load ok, drawn in one render). Counting the cards
+    before that counts none (2026-11-28: v19.6f 상태 div-nofx, a full run under load). Waits up to WAIT for the footer line;
+    else fails saying the data never came in. After it, a card that is absent is absent with the data in."""
+    try:
+        page.locator('[data-ui-v2="tax-footer"]').wait_for(state="visible", timeout=WAIT)
+    except PWTimeout:
+        raise AssertionError(f"연말에 확인할 숫자: no footer line after {WAIT // 1000} s, so the screen never had today's data "
+                             "(its cards are not drawn without it)") from None
+
+
 # ── say-why N-01 · N-02 (2026-11-22): 숨긴 한국 배당수익률의 줄이 관심 종목 · 두 종목 비교에도 (회사 페이지와 같은 줄) ──
 DIV_LINE_KEYS = {"005380": "rightsHidden", "000660": "dataHidden", "035420": "missingHidden"}     # dvLine 2 · 3 · 4
 DIV_LINE_UI = {"rightsHidden": "div-rights-hidden", "dataHidden": "div-data-hidden", "missingHidden": "div-missing-hidden"}
@@ -14226,6 +14468,7 @@ def scene_div_lines(R, files, width, dark=False):
 
     def watch_lines():
         page.locator('[data-ui-v2="watch"]').wait_for(state="visible")
+        watch_cards_shown(page, list(watch))                     # the cards come with the data, after the screen itself
         card = lambda t: page.locator(f'[data-ui-v2="watch-card"][data-t="{t}"]')     # noqa: E731
         ch = chips_of(page)
         sub = page.locator('[data-ui-v2="watch-sub"]').evaluate("(e) => getComputedStyle(e).color")
@@ -14566,6 +14809,7 @@ def scene_v196f_states(R, files, width=390):
             elif case == "div-nofx":
                 # a Korean dividend and a US one without a rate (Jack, 2026-11-19: M1): the link opens; the card names the US one
                 go_tax()
+                tax_data_in(page)                                                                  # the cards come with the data
                 assert page.locator('[data-ui-v2="tax-gain"]').count() == 0 and page.locator('[data-ui-v2="tax-loss"]').count() == 0
                 dc = page.locator('[data-ui-v2="tax-div"]')
                 # 84,600 ÷ 0.846 = 100,000원; KO $4.25 (환율 없음) 은 빠지고 M1 줄이 1건이라고 말해요
@@ -14575,6 +14819,7 @@ def scene_v196f_states(R, files, width=390):
                 assert any("1 US dividend(s) dated 2026 have no exchange rate: left out of the pre-tax sum (1 counted)" in m for m in logs), logs
             elif case == "kr-div":
                 go_tax()
+                tax_data_in(page)                                                                  # the same race as div-nofx
                 assert page.locator('[data-ui-v2="tax-gain"]').count() == 0 and page.locator('[data-ui-v2="tax-loss"]').count() == 0
                 dc = page.locator('[data-ui-v2="tax-div"]')
                 # 84,600 ÷ 0.846 = 100,000원
@@ -14666,6 +14911,7 @@ def scene_v196f_gaps(R, files, width=390):
             link.wait_for(state="visible")
             link.locator("button").click()
             tax_screen_common(page, width, today)
+            tax_data_in(page)                                                                      # the cards (and their console lines) come with the data
             said = [m for m in logs if m.startswith("[v2] tax: ")]
             lc, dc = page.locator('[data-ui-v2="tax-loss"]'), page.locator('[data-ui-v2="tax-div"]')
             if case in ("all-left", "mixed-left"):
@@ -15461,7 +15707,7 @@ def v196b_files(files, issue_ok=True):
         ins(3, "000660", 1, 100, "임원", "부사장"),                 # 관심 종목 · 1.418억원 · 받침 있는 직위 (이)
         ins(4, "000660", 0, -1000, "주요주주", ""),                 # 직위 빈칸 → 임원·주요주주
         ins(5, "005930", 1, 100, "임원", "상무"),                   # 2,250만원: 1억원 아래
-        ins(6, "005380", 1, -500, "임원·주요주주", "전무"),          # 둘 다: 제목이 Jack 의 승인을 기다려요
+        ins(6, "005380", 1, -500, "임원·주요주주", "전무"),          # 둘 다: 제목 '임원·주요주주 지분 변동' (Jack, 2026-11-22)
         ins(7, "005930", 10, -100000, "임원", "회장"),              # 7일 밖
         ins(8, "035420", 0, -100000, "임원", "회장"),               # 가지지도 지켜보지도 않는 종목
     ] + d["insider"]
@@ -15488,9 +15734,9 @@ def v196b_store(by, pxd, seen=None):
 def scene_v196b(R, files, width, dark=False):
     """v19.6b 오늘 볼 것 (390 · 320 · 1280 · 어두운 화면, 지어낸 시험 데이터): 홈의 오늘 볼 것에 새 줄(확인 필요 → 관심 종목 조건 → 지분 변동 ·
     국민연금 → 다가오는 일정, 제목과 날짜) · 머리와 줄을 누르면 오늘 볼 것 페이지(#home/today) · 카드(확인 필요 꼬리표 · 몸말 ·
-    확인했어요 · 자기 공시 날짜) · 숫자를 읽지 못한 공시 · 지분 변동 카드는 role 을 읽을 때까지 없음(look.js ROLE_OF) · 국민연금 한 자리 · 일정 5개까지와
-    미국 날짜 줄 · 한국 종목 일정 줄 · 승인 문장이 없는 모양(유무상증자 · 기타주식 · 둘 다인 역할)은 빠져요 · 확인했어요 → 사라지고 새로
-    고쳐도 그대로 · 공시 보기는 아직 없음(DART 주소 한 곳 규칙) · 뱁이 없음 · 12px · 가로 스크롤 없음."""
+    확인했어요 · 자기 공시 날짜) · 숫자를 읽지 못한 공시 · 지분 변동 카드 다섯(Jack, 2026-11-22 켜짐: 홈에는 관심 종목의 것만 줄로) · 국민연금 한
+    자리 · 일정 5개까지와 미국 날짜 줄 · 한국 종목 일정 줄 · 승인 문장이 없는 모양(유무상증자 · 기타주식)은 빠져요 · 확인했어요 → 사라지고
+    새로 고쳐도 그대로 · 확인 필요마다 공시 보기 (자세한 검사는 scene_v196b_on) · 뱁이 없음 · 12px · 가로 스크롤 없음."""
     S = f"v19.6b 오늘 볼 것 {width}{' 어두운' if dark else ''}"
     wide = width >= 1024
     data = v196b_files(files)
@@ -15526,10 +15772,9 @@ def scene_v196b(R, files, width, dark=False):
         order = sec.locator('[data-ui-v2="home-issue"], [data-ui-v2="home-watch"], [data-ui-v2="home-filing"], [data-ui-v2="home-insider"], '
                             '[data-ui-v2="home-nps"], [data-ui-v2="home-dates"]').evaluate_all("(rs) => rs.map((r) => r.dataset.uiV2)")
         # Part B.2 의 순서: 확인 필요 → 관심 종목 조건 → 지분 변동 · 국민연금 (가진 종목은 v19.3e 공시 줄, 그다음 최근 공시부터) → 일정
-        # 지분 변동 카드는 아직 없어요: 화면이 역할(role)을 읽으려면 #145 의 시험을 바꿔야 하고, 그건 Jack 의 yes (look.js ROLE_OF).
-        # 가진 종목의 지분 변동은 v19.3e 공시 줄 그대로예요
-        assert order == ["home-issue"] * 4 + ["home-watch"] + ["home-filing"] * 2 + ["home-nps"] * 2 + ["home-dates"], order
-        assert page.locator('[data-ui-v2="home-insider"]').count() == 0
+        # 지분 변동 카드 (Jack, 2026-11-22 켜짐): 관심 종목(SK하이닉스)의 것은 자기 줄 둘, 가진 종목의 것은 v19.3e 공시 줄 그대로예요
+        assert order == ["home-issue"] * 4 + ["home-watch"] + ["home-filing"] * 2 + ["home-insider", "home-nps"] * 2 + ["home-dates"], order
+        assert page.locator('[data-ui-v2="home-insider"]').count() == 2
         nps = page.locator('[data-ui-v2="home-nps"]').evaluate_all("(rs) => rs.map((r) => [r.dataset.t, r.innerText.split('\\n')])")
         assert nps == [["000660", [f"{nm('000660')} · {LK['nps']}", md(ymd(0))]], ["005930", [f"{nm('005930')} · {LK['nps']}", md(ymd(1))]]], nps
         dates = page.locator('[data-ui-v2="home-dates"]')
@@ -15537,7 +15782,7 @@ def scene_v196b(R, files, width, dark=False):
         icons = sec.locator('[data-ui-v2="home-issue"] [data-ui="icon-chip"], [data-ui-v2="home-insider"] [data-ui="icon-chip"], '
                             '[data-ui-v2="home-nps"] [data-ui="icon-chip"], [data-ui-v2="home-dates"] [data-ui="icon-chip"]'
                             ).evaluate_all("(cs) => cs.map((c) => c.dataset.icon + ':' + (c.dataset.topic || ''))")
-        assert icons == ["warning:risk"] * 4 + ["bank:disc"] * 2 + ["calendar-dots:earn"], icons
+        assert icons == ["warning:risk"] * 4 + ["identification-badge:disc", "bank:disc"] * 2 + ["calendar-dots:earn"], icons
         assert page.locator('[data-ui-v2="home-calm"]').count() == 0                     # 볼 것이 있으면 '할 일이 없어요' 없음
         assert sec.locator("h3").first.inner_text() == C["home"]["look"] and page.locator('[data-ui-v2="home-look-open"]').count() == 1
         box = page.locator('[data-ui-v2="home-look-open"]').bounding_box()
@@ -15545,7 +15790,7 @@ def scene_v196b(R, files, width, dark=False):
         check_page("홈 · 오늘 볼 것", "home")
         page.locator('[data-ui-v2="home-look-open"]').click()
         at(page, "home/today")
-    R.check(page, S, "홈: 새 줄(제목 · 날짜)이 Part B 순서로 · 국민연금 · 일정 한 줄 · 지분 변동 카드는 아직 없음 · 머리 → 오늘 볼 것", home_rows)
+    R.check(page, S, "홈: 새 줄(제목 · 날짜)이 Part B 순서로 · 관심 종목의 지분 변동 줄 둘 · 국민연금 · 일정 한 줄 · 머리 → 오늘 볼 것", home_rows)
 
     def page_cards():
         scr = page.locator('[data-ui-v2="today-look"]')
@@ -15555,7 +15800,8 @@ def scene_v196b(R, files, width, dark=False):
         cards = scr.locator('[data-ui-v2="look-issue"], [data-ui-v2="home-watch"], [data-ui-v2="look-insider"], [data-ui-v2="look-nps"], [data-ui-v2="look-dates"]')
         kinds = cards.evaluate_all("(cs) => cs.map((c) => c.dataset.uiV2 + ':' + (c.dataset.t || ''))")
         assert kinds == ["look-issue:005930", "look-issue:005930", "look-issue:005380", "look-issue:005380", "home-watch:000660",
-                         "look-nps:000660", "look-nps:005930", "look-dates:"], kinds
+                         "look-insider:000660", "look-insider:005380", "look-nps:000660", "look-insider:005380", "look-insider:000660",
+                         "look-insider:005930", "look-nps:005930", "look-dates:"], kinds
         iss = scr.locator('[data-ui-v2="look-issue"]').evaluate_all("""(cs) => cs.map((c) => [c.dataset.body, c.querySelector('[data-ui-v2="look-title"]').innerText,
             c.querySelector('[data-ui-v2="look-date"]').innerText, c.querySelector('[data-ui-v2="look-body"]').innerText,
             c.querySelector('[data-ui-v2="look-tag"]').innerText, c.querySelector('[data-ui-v2="look-seen"]').innerText])""")
@@ -15564,10 +15810,10 @@ def scene_v196b(R, files, width, dark=False):
         assert iss[1] == ["holders", f"{nm('005930')} · {LK['rights']}", md(ymd(1)), fillp(LK["rightsHolders"], n="12,000,000", p="18"), *tail], iss[1]
         assert iss[2] == ["cb", f"{nm('005380')} · {LK['cb']}", md(ymd(5)), fillp(LK["cbBody"], amt="300억원", p="7.04"), *tail], iss[2]
         assert iss[3] == ["others", f"{nm('005380')} · {LK['rights']}", md(ymd(20)), fillp(LK["rightsOthers"], n="1,428,571", p="5.57"), *tail], iss[3]
-        # 공시 보기 (Part B.2) 는 아직 없어요: DART 주소는 회사 페이지 공시 탭 한 곳에만 (tests/test_v2_app.py, 바꾸려면 Jack 의 yes)
-        assert scr.locator('[data-ui-v2="look-open"], a[href*="dart"]').count() == 0
-        # 지분 변동 카드는 역할(role)을 읽을 때까지 없어요 (look.js ROLE_OF · Jack 의 yes): 데이터에 1억원 넘는 보고가 있어도
-        assert scr.locator('[data-ui-v2="look-insider"]').count() == 0 and "대표이사" not in scr.inner_text() and LK["posAny"] not in scr.inner_text()
+        # 공시 보기 (Part B.2, Jack 2026-11-22 yes): 확인 필요 카드마다 하나 (주소 · 새 탭 · 자리는 scene_v196b_on)
+        assert scr.locator('[data-ui-v2="look-open"]').count() == 4 and scr.locator('a[href*="dart"]').count() == 4
+        # 지분 변동 카드 다섯 (Jack, 2026-11-22 켜짐): 7일 안 · 1억원 이상 · 가진 종목과 관심 종목 (글은 scene_v196b_on)
+        assert scr.locator('[data-ui-v2="look-insider"]').count() == 5 and "대표이사" in scr.inner_text() and LK["posAny"] in scr.inner_text()
         nps = scr.locator('[data-ui-v2="look-nps"]').evaluate_all("""(cs) => cs.map((c) => [c.dataset.t, c.querySelector('[data-ui-v2="look-title"]').innerText,
             c.querySelector('[data-ui-v2="look-date"]').innerText, c.querySelector('[data-ui-v2="look-body"]').innerText])""")
         assert nps == [["000660", f"{nm('000660')} · {LK['nps']}", md(ymd(0)), fillp(LK["npsUp"], a="8.9", b="9.9")],
@@ -15579,9 +15825,9 @@ def scene_v196b(R, files, width, dark=False):
         dc = scr.locator('[data-ui-v2="look-dates"]')
         assert dc.locator('[data-ui-v2="look-title"]').inner_text() == LK["dates"]
         assert dc.locator('[data-ui-v2="look-us-note"]').inner_text() == LK["usNote"] and dc.locator('[data-ui-v2="look-no-kr"]').inner_text() == LK["noKr"]
-        # 승인 문장이 없는 모양은 빠져요: 유무상증자 · 기타주식 · 둘 다인 역할 · 철회 · 1억원 아래 · 7일 · 30일 밖 · 가지지 않은 종목의 증자
+        # 승인 문장이 없는 모양은 빠져요: 유무상증자 · 기타주식 · 철회 · 1억원 아래 · 7일 · 30일 밖 · 가지지 않은 종목의 증자
         body = scr.inner_text()
-        for bad in ("13.72", "1,150,000", "전무가", "상무가", "회장", "KB금융", nm("035420"), "55.24", "11,166,945", "12.65", "700억원"):
+        for bad in ("13.72", "1,150,000", "상무가", "회장", "KB금융", nm("035420"), "55.24", "11,166,945", "12.65", "700억원"):
             assert bad not in body, bad
         assert scr.locator('[data-ui-v2="look-issue"][data-t="000660"]').count() == 0
         # 확인 필요 꼬리표 · 버튼은 토큰 색 · 44px · 공시 보기는 새 탭 아이콘
@@ -15594,11 +15840,11 @@ def scene_v196b(R, files, width, dark=False):
             "(cs) => cs.map((c) => [c.querySelector('[data-ui-v2=\"look-seen\"]').getAttribute('aria-describedby'), c.querySelector('[data-ui-v2=\"look-title\"]').id])")
         assert all(a == t and t for a, t in desc), desc
         icons = scr.locator('[data-ui="icon-chip"]').evaluate_all("(cs) => cs.map((c) => c.dataset.icon + ':' + (c.dataset.topic || ''))")
-        assert icons == ["warning:risk"] * 4 + ["bell:", "bank:disc", "bank:disc", "calendar-dots:earn"], icons
+        assert icons == ["warning:risk"] * 4 + ["bell:", "identification-badge:disc", "identification-badge:disc", "bank:disc"] + ["identification-badge:disc"] * 3 + ["bank:disc", "calendar-dots:earn"], icons
         for bad in ("팔아야", "위험해요"):
             assert bad not in body
         check_page("오늘 볼 것", "page")
-    R.check(page, S, "오늘 볼 것 페이지: 카드 순서 · 확인 필요 몸말 넷 · 국민연금 · 일정 다섯 · 날짜 줄 · 빠지는 모양 (지분 변동은 role 을 읽을 때까지 없음)", page_cards)
+    R.check(page, S, "오늘 볼 것 페이지: 카드 순서 · 확인 필요 몸말 넷과 공시 보기 · 지분 변동 다섯 · 국민연금 · 일정 다섯 · 날짜 줄 · 빠지는 모양", page_cards)
 
     def seen():
         scr = page.locator('[data-ui-v2="today-look"]')
@@ -15740,7 +15986,7 @@ def scene_v196b_states(R, files, width=390):
         assert sec.get_attribute("data-watch-only") == "1"
         kinds = sec.locator('[data-ui-v2="home-issue"], [data-ui-v2="home-watch"], [data-ui-v2="home-insider"], [data-ui-v2="home-nps"], [data-ui-v2="home-dates"]'
                             ).evaluate_all("(rs) => rs.map((r) => r.dataset.uiV2 + ':' + (r.dataset.t || ''))")
-        assert kinds == ["home-watch:000660", "home-nps:000660", "home-dates:"], kinds        # 지분 변동 줄은 역할을 읽을 때까지 없어요
+        assert kinds == ["home-watch:000660", "home-insider:000660", "home-nps:000660", "home-insider:000660", "home-dates:"], kinds   # 관심 종목의 지분 변동 줄 둘
         page.locator('[data-ui-v2="home-watch"]').click()                              # 관심 종목 조건 줄도 오늘 볼 것으로
         at(page, "home/today")
         page.locator('[data-ui-v2="today-look"]').wait_for(state="visible")
@@ -15753,9 +15999,154 @@ def scene_v196b_states(R, files, width=390):
         R.collect(page)
         page.locator('[data-ui-v2="today-look"] [data-ui-v2="home-watch"]').click()      # 페이지의 관심 종목 조건 카드는 관심 종목으로
         at(page, "stocks/watch")
-    R.check(page, S, "첫 방문 · 관심 종목만: 국민연금 · 일정 줄 → 페이지 (증자 카드 · 지분 변동 카드 · 한국 일정 줄 없음)", first_visit)
+    R.check(page, S, "첫 방문 · 관심 종목만: 지분 변동 · 국민연금 · 일정 줄 → 페이지 (증자 카드 · 한국 일정 줄 없음)", first_visit)
     ctx.close()
     srv.shutdown()
+
+# ── v19.6b 켜기 (Jack, 2026-11-22: PR #168 의 질문 1–5 "all yes"): 공시 보기 · 임원 · 주요주주 지분 변동 카드 ──
+DART_VIEW = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo="                   # Part B.2 의 주소 그대로
+
+
+def scene_v196b_on(R, files, width, dark=False):
+    """v19.6b 켜기 (390 · 320 · 1280 · 어두운 화면, scene_v196b 와 같은 지어낸 데이터): 홈은 관심 종목(SK하이닉스)의 지분 변동만 자기 줄
+    (가진 종목의 것은 v19.3e 공시 줄 하나로만, 같은 공시가 두 번 나오지 않아요) · 오늘 볼 것 페이지의 지분 변동 카드 다섯(1억원 이상 ·
+    7일 안 · 가진 종목과 관심 종목, 역할별 제목 · 둘 다인 역할은 look.insBoth · 직위 빈칸은 임원·주요주주 · 이/가) · 확인 필요 카드마다
+    공시 보기(그 공시의 DART 원문 주소 · 새 탭 · noopener · 왼쪽 절반 · 44px) · 눌러 보면 새 탭이 그 주소로 열리고 opener 가 없어요
+    (그 주소는 시험 안에서 가짜 응답, 바깥 요청 없음) · 뱁이 없음 · 12px · 가로 스크롤 없음."""
+    S = f"v19.6b 켜기 {width}{' 어두운' if dark else ''}"
+    wide = width >= 1024
+    data = v196b_files(files)
+    d = data["data.json"]
+    pxd = d["pxDate"]
+    by = {x["t"]: x for x in d["stocks"]}
+    today, ymd, iso = v196b_days()
+    md = lambda s: f"{int(s[4:6])}월 {int(s[6:8])}일"                                             # noqa: E731
+    nm = lambda t: by[t]["nk"]                                                                        # noqa: E731
+    screen = pc_device(width) if wide else {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2}
+    srv, ctx, page, base = R.open(build_site(data), width, init=v196c_seed(v196b_store(by, pxd)), path="/app.html?dev=1#home",
+                                  device={**screen, "color_scheme": "dark" if dark else "light"})
+    shot = lambda name: (R.shots and (os.makedirs(R.shots, exist_ok=True) or True)                    # noqa: E731
+                         and page.screenshot(path=os.path.join(R.shots, f"v196b-on-{name}-{width}{'-dark' if dark else ''}.png"), full_page=True))
+
+    def check_page(where):
+        floor_ok(page, where)
+        no_hscroll(page, width)
+        assert page.locator(MASCOT_IN_MAIN).count() == 0, f"{where}: 뱁이가 있어요 (숫자가 있는 화면)"
+        R.collect(page)
+
+    def home():
+        wait_ready(page)
+        sec = page.locator('[data-ui-v2="home-look"]')
+        page.locator('[data-ui-v2="home-insider"]').first.wait_for(state="visible")
+        order = sec.locator('[data-ui-v2="home-issue"], [data-ui-v2="home-watch"], [data-ui-v2="home-filing"], [data-ui-v2="home-insider"], '
+                            '[data-ui-v2="home-nps"], [data-ui-v2="home-dates"]').evaluate_all("(rs) => rs.map((r) => r.dataset.uiV2 + ':' + (r.dataset.t || ''))")
+        # Part B.2 의 순서: 확인 필요 → 관심 종목 조건 → 가진 종목의 v19.3e 공시 줄 → 관심 종목의 지분 변동 · 국민연금 (최근부터) → 일정
+        assert order == ["home-issue:005930", "home-issue:005930", "home-issue:005380", "home-issue:005380", "home-watch:000660",
+                         "home-filing:005380", "home-filing:005930", "home-insider:000660", "home-nps:000660", "home-insider:000660",
+                         "home-nps:005930", "home-dates:"], order
+        ins = page.locator('[data-ui-v2="home-insider"]').evaluate_all("(rs) => rs.map((r) => [r.dataset.t, r.dataset.rc, r.innerText.split('\\n')])")
+        assert ins == [["000660", "20990000000104", [f"{nm('000660')} · {LK['insMajor']}", md(ymd(0))]],
+                       ["000660", "20990000000103", [f"{nm('000660')} · {LK['insExec']}", md(ymd(1))]]], ins
+        # 같은 공시가 홈에 두 번 나오지 않아요: 지분 변동 줄의 종목은 공시 줄에 없고, 가진 종목의 보고는 공시 줄 하나로만
+        filing_ts = page.locator('[data-ui-v2="home-filing"]').evaluate_all("(rs) => rs.map((r) => r.dataset.t)")
+        assert not set(filing_ts) & {t for t, _, _ in ins}, (filing_ts, ins)
+        icons = sec.locator('[data-ui-v2="home-insider"] [data-ui="icon-chip"]').evaluate_all("(cs) => cs.map((c) => c.dataset.icon + ':' + (c.dataset.topic || ''))")
+        assert icons == ["identification-badge:disc"] * 2, icons
+        assert page.locator('[data-ui-v2="home-look"] a[href*="dart"]').count() == 0              # 홈의 줄은 페이지로만 가요
+        check_page("홈 · 오늘 볼 것 (켜기)")
+        shot("home")
+        page.locator('[data-ui-v2="home-insider"]').first.click()
+        at(page, "home/today")
+    R.check(page, S, "홈: 관심 종목의 지분 변동 줄 둘 (제목 · 날짜) · 가진 종목은 공시 줄 하나로만 · 줄 → 오늘 볼 것", home)
+
+    def cards():
+        scr = page.locator('[data-ui-v2="today-look"]')
+        scr.wait_for(state="visible")
+        page.wait_for_function("() => document.querySelector('[data-ui-v2=\"today-look\"]').dataset.disc === 'ok'")
+        kinds = scr.locator('[data-ui-v2="look-issue"], [data-ui-v2="home-watch"], [data-ui-v2="look-insider"], [data-ui-v2="look-nps"], [data-ui-v2="look-dates"]'
+                            ).evaluate_all("(cs) => cs.map((c) => c.dataset.uiV2 + ':' + (c.dataset.t || ''))")
+        assert kinds == ["look-issue:005930", "look-issue:005930", "look-issue:005380", "look-issue:005380", "home-watch:000660",
+                         "look-insider:000660", "look-insider:005380", "look-nps:000660",
+                         "look-insider:005380", "look-insider:000660", "look-insider:005930", "look-nps:005930", "look-dates:"], kinds
+        got = scr.locator('[data-ui-v2="look-insider"]').evaluate_all("""(cs) => cs.map((c) => [c.dataset.rc, c.dataset.role,
+            c.querySelector('[data-ui-v2="look-title"]').innerText, c.querySelector('[data-ui-v2="look-date"]').innerText,
+            c.querySelector('[data-ui-v2="look-body"]').innerText, c.querySelector('[data-ui-v2="look-body"] b').innerText])""")
+        dn, up = C["co"]["disc"]["sells"], C["co"]["disc"]["buys"]
+        # |q| × 오늘 종가: 1,000 × 1,418,000 · 1,000 × 282,000 · 500 × 282,000 · 100 × 1,418,000 · 1,600 × 225,000 (모두 1억원 이상)
+        # Jack, 2026-11-23: 10억원 아래는 한 자리 (14.18억 → 14억원 · 2.82억 → 2.8억원 · 1.41억 · 1.418억 → 1.4억원 · 3.6억 → 3.6억원)
+        assert got == [
+            ["20990000000104", "major", f"{nm('000660')} · {LK['insMajor']}", md(ymd(0)), fillp(LK["insDownGa"], pos=LK["posAny"], amt="14억원"), dn],
+            ["20990000000102", "major", f"{nm('005380')} · {LK['insMajor']}", md(ymd(0)), fillp(LK["insUpGa"], pos="10%이상주주", amt="2.8억원"), up],
+            ["20990000000106", "both", f"{nm('005380')} · {LK['insBoth']}", md(ymd(1)), fillp(LK["insDownGa"], pos="전무", amt="1.4억원"), dn],
+            ["20990000000103", "exec", f"{nm('000660')} · {LK['insExec']}", md(ymd(1)), fillp(LK["insUp"], pos="부사장", amt="1.4억원"), up],
+            ["20990000000101", "exec", f"{nm('005930')} · {LK['insExec']}", md(ymd(1)), fillp(LK["insDownGa"], pos="대표이사", amt="3.6억원"), dn]], got
+        assert LK["insBoth"] == "임원·주요주주 지분 변동"
+        body = scr.inner_text()
+        for bad in ("상무가", "회장", nm("035420"), "팔아야", "위험해요"):                 # 1억원 아래 · 7일 밖 · 가지지도 지켜보지도 않는 종목 · 조언 없음
+            assert bad not in body, bad
+        icons = scr.locator('[data-ui-v2="look-insider"] [data-ui="icon-chip"]').evaluate_all("(cs) => cs.map((c) => c.dataset.icon + ':' + (c.dataset.topic || ''))")
+        assert icons == ["identification-badge:disc"] * 5, icons
+        assert scr.locator('[data-ui-v2="look-insider"] a, [data-ui-v2="look-insider"] button').count() == 0   # 보드 Today2: 지분 변동 카드에는 버튼이 없어요
+        # 공시 보기: 확인 필요 카드마다 하나, 그 공시의 DART 원문 (정확한 접수번호) · 새 탭 · noopener · 왼쪽 절반 · 44px 이상
+        links = scr.locator('[data-ui-v2="look-issue"]').evaluate_all("""(cs) => cs.map((c) => { const a = c.querySelector('[data-ui-v2="look-open"]');
+            const b = c.querySelector('[data-ui-v2="look-seen"]'); const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect(), rc = c.getBoundingClientRect();
+            return [c.dataset.rc, a.tagName, a.getAttribute('href'), a.getAttribute('target'), a.getAttribute('rel'), a.innerText.trim(),
+              a.getAttribute('aria-describedby') === c.querySelector('[data-ui-v2="look-title"]').id, !!a.querySelector('[data-icon="arrow-square-out"], svg'),
+              Math.round(ra.height), ra.right <= rb.left, Math.abs(ra.top - rb.top) < 1, ra.left - rc.left < rc.width / 2, rb.right > rc.left + rc.width / 2,
+              getComputedStyle(a).fontSize]; })""")
+        assert len(links) == 4, links
+        for rc, tag, href, target, rel, text, desc, icon, h, left_of, same_row, left_half, right_half, fs in links:
+            assert tag == "A" and href == DART_VIEW + rc and target == "_blank" and "noopener" in rel.split(), (rc, href, target, rel)
+            assert text == LK["open"] and desc and icon, (rc, text, desc, icon)
+            assert h >= 44 and left_of and same_row and left_half and right_half, (rc, h, left_of, same_row, left_half, right_half)
+            assert float(fs.rstrip("px")) >= 12, fs
+        assert scr.locator('a[href*="dart"]').count() == 4                                # 다른 곳에는 DART 링크가 없어요
+        check_page("오늘 볼 것 (켜기)")
+        shot("page")
+    R.check(page, S, "오늘 볼 것: 지분 변동 카드 다섯 (역할별 제목 · 둘 다는 insBoth · 직위 빈칸 · 이/가 · 오늘 종가 금액) · 확인 필요마다 공시 보기", cards)
+
+    def opens():
+        # 공시 보기를 누르면 새 탭이 그 주소로 열려요. DART 는 시험 안에서 가짜 응답이에요 (나중에 넣은 길이 먼저: 바깥으로 나가지 않아요)
+        ctx.route("https://dart.fss.or.kr/**", lambda r: r.fulfill(status=200, content_type="text/html", body="<!doctype html><title>dart</title>"))
+        a = page.locator('[data-ui-v2="look-issue"][data-rc="20990000000002"] [data-ui-v2="look-open"]')
+        with ctx.expect_page() as pi:
+            a.click()
+        tab = pi.value
+        tab.wait_for_load_state("domcontentloaded")
+        assert tab.url == DART_VIEW + "20990000000002", tab.url
+        assert tab.evaluate("() => window.opener") is None                                 # rel=noopener
+        tab.close()
+        assert page.url.endswith("#home/today") and page.locator('[data-ui-v2="look-issue"]').count() == 4   # 이 화면은 그대로 (카드도 그대로)
+        assert len(ctx.pages) == 1
+    if not wide and not dark:
+        R.check(page, S, "공시 보기를 누르면: 새 탭에 그 공시의 DART 원문 · opener 없음 · 이 화면은 그대로", opens)
+    ctx.close()
+    srv.shutdown()
+
+    if width != 390 or dark:
+        return
+    # 관심 종목만 (포트폴리오 없음): 그 종목의 지분 변동이 홈에 자기 줄로, 페이지에 카드로 (확인 필요 카드는 가진 종목만이라 없음)
+    srv, ctx, page, base = R.open(build_site(data), width, init=v196c_seed({"v": 1, "decks": [], "watch": v196b_store(by, pxd)["watch"]}),
+                                  path="/app.html?dev=1#home")
+
+    def watch_only():
+        sec = page.locator('[data-ui-v2="home-look"]')
+        page.locator('[data-ui-v2="home-insider"]').first.wait_for(state="visible")
+        kinds = sec.locator('[data-ui-v2="home-issue"], [data-ui-v2="home-watch"], [data-ui-v2="home-filing"], [data-ui-v2="home-insider"], '
+                            '[data-ui-v2="home-nps"], [data-ui-v2="home-dates"]').evaluate_all("(rs) => rs.map((r) => r.dataset.uiV2 + ':' + (r.dataset.t || ''))")
+        assert kinds == ["home-watch:000660", "home-insider:000660", "home-nps:000660", "home-insider:000660", "home-dates:"], kinds
+        page.locator('[data-ui-v2="home-insider"]').first.click()
+        at(page, "home/today")
+        page.locator('[data-ui-v2="today-look"]').wait_for(state="visible")
+        page.wait_for_function("() => document.querySelector('[data-ui-v2=\"today-look\"]').dataset.disc === 'ok'")
+        rcs = page.locator('[data-ui-v2="look-insider"]').evaluate_all("(cs) => cs.map((c) => c.dataset.t + ':' + c.dataset.rc.slice(-3))")
+        assert rcs == ["000660:104", "000660:103"], rcs                                          # 가진 종목이 없으니 삼성전자 · 현대차 카드는 없어요
+        assert page.locator('[data-ui-v2="look-issue"], [data-ui-v2="look-open"]').count() == 0
+        check_page("관심 종목만 · 오늘 볼 것 (켜기)")
+    R.check(page, S, "관심 종목만: 홈에 지분 변동 줄 둘 · 페이지에 그 카드 둘 (증자 카드 · 공시 보기 없음)", watch_only)
+    ctx.close()
+    srv.shutdown()
+
 
 # ── v19.6e 이번 주 정리 (src/v2/weekly.js · weekly.jsx · weekcfg.js, board Weekly2 · Part E) ──
 # 커밋한 빌드는 켜져 있어요 (weekcfg.js WEEKLY_ON true · WEEK_NV "note": Jack 이 2026-11-22 에 빠진 종목 두 줄과 네이버 각주를 승인했어요).
@@ -15920,8 +16311,8 @@ def scene_v196e(R, files, width, dark=False):
         tiles = weekly_tiles(page)
         assert tiles == [["pf", WK["pf"], signed_pct(pct), f"{signed_won(gain)} · {fillp(WK['kospi'], pct='+2.5%')}"],
                          ["div", WK["div"], "3,610원", fillp(WK["count"], n=1)],
-                         # 이번 주 SK하이닉스 지분 변동(1.418억원)은 세지 않아요: 오늘 볼 것이 아직 보여 주지 못해요 (look.js ROLE_OF, 2차)
-                         ["disc", WK["disc"], fillp(WK["count"], n=1), fillp(WK["kinds"]["rights"], n=1)],
+                         # 이번 주 SK하이닉스 지분 변동(1.418억원)도 세요: 오늘 볼 것이 보여 줘요 (look.js ROLE_OF, Jack 2026-11-22)
+                         ["disc", WK["disc"], fillp(WK["count"], n=2), f"{fillp(WK['kinds']['rights'], n=1)} · {fillp(WK['kinds']['ins'], n=1)}"],
                          ["next", WK["nextUs"], fillp(WK["earn"], n=1), "Apple Inc."]], tiles
         t = c.locator('[data-tile="pf"]')
         assert abs(float(t.get_attribute("data-gain")) - gain) <= 1 and abs(float(t.get_attribute("data-pct")) - pct) < 0.001 and t.get_attribute("data-n") == "3"
@@ -15943,9 +16334,9 @@ def scene_v196e(R, files, width, dark=False):
         floor_ok(page, "이번 주 정리")
         no_hscroll(page, width)
         assert page.locator(MASCOT_IN_MAIN).count() == 0, "숫자가 있는 카드 옆에 뱁이"
-        # console: only the insider report the tile does not count yet (nothing else left out, unchecked or waiting for words)
+        # console: nothing (nothing left out, unchecked or waiting for words; the insider report is counted since Jack's yes of 2026-11-22)
         wk = [x for x in logs() if "weekly" in x]
-        assert wk == ["[v2] weekly (dweek): 1 insider report(s) of the week not counted: the today-look page cannot show them yet (look.js ROLE_OF)"], wk
+        assert wk == [], wk
         R.collect(page)
         if R.shots:
             os.makedirs(R.shots, exist_ok=True)
@@ -16239,9 +16630,11 @@ def main():
                    lambda: scene_v196a(R, files, 390), lambda: scene_v196a(R, files, 320),
                    lambda: scene_v196a(R, files, 1280),                                                     # v19.6a 팔았어요 · 배당 받았어요 · 내 수익
                    lambda: scene_v196a_outs(R, files, 390),                                                 # v19.6a 리뷰 2차: splitsInfo.fixed out 줄
+                   lambda: scene_v191_rate_temp(R, files, 390),                                             # #191 임시 환율 (Jack 11-27): 불러올 때 바꾸기 · 줄
                    lambda: scene_v196a_sold_out(R, files, 390),                                             # v19.6a 마지막 리뷰 S1: 다 팔고 남겨 둔 종목 ("own")
                    lambda: scene_v196a_sold_out(R, files, 1280),                                            # 같은 장면, PC (Jack 11-13: 다 판 종목 줄)
                    lambda: scene_v196a_split_price(R, files, 390),                                          # v19.6a 리뷰 3차: 분할 사이의 빈 가격
+                   lambda: scene_split_round(R, files, 390),                                                # audit 1.1: 1/10,000 주로 안 나뉘는 분할
                    lambda: scene_v197a(R, files, 390), lambda: scene_v197a(R, files, 320),
                    lambda: scene_v197a(R, files, 1280),                                                     # v19.7a 종목 바꾸기 · 빼기 · 이름으로 찾기
                    lambda: scene_v197b(R, files, 390), lambda: scene_v197b(R, files, 1280),             # v19.7b 내 기준으로 찾기 · 두 종목 비교 · 바꾸기
@@ -16255,6 +16648,9 @@ def main():
                    lambda: scene_v196b(R, files, 1280), lambda: scene_v196b(R, files, 390, dark=True),
                    lambda: scene_v196b(R, files, 1280, dark=True),
                    lambda: scene_v196b_states(R, files),                                                    # v19.6b 정정 · 목록 실패 · 공시 실패 · 멈춘 날 · 빈 날 · 첫 방문
+                   lambda: scene_v196b_on(R, files, 390), lambda: scene_v196b_on(R, files, 320),            # v19.6b 켜기 (Jack 2026-11-22): 공시 보기 ·
+                   lambda: scene_v196b_on(R, files, 1280), lambda: scene_v196b_on(R, files, 390, dark=True),   # 임원 · 주요주주 지분 변동 카드
+                   lambda: scene_v196b_on(R, files, 1280, dark=True),
                    lambda: scene_div_lines(R, files, 390), lambda: scene_div_lines(R, files, 390, dark=True),   # say-why N-01 · N-02: 숨긴 배당수익률의 줄
                    lambda: scene_div_lines(R, files, 1280), lambda: scene_div_lines(R, files, 1280, dark=True),
                    lambda: scene_div_lines(R, files, 320), lambda: scene_div_lines(R, files, 320, dark=True),   # 리뷰: 320 도

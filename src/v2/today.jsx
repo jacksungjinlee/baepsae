@@ -32,7 +32,7 @@
 import React, { useEffect, useMemo } from "react";
 import { COLOR, SIZE, WEIGHT, SPACE, TOUCH } from "../ui/tokens.js";
 import { HeroBand, StatStrip, ListRow, Button } from "../ui/components.jsx";
-import { C, fill, mdText, wonText, todayKst, todayStaleText } from "./format.js";
+import { C, fill, mdText, wonText, todayKst, todayNy, todayStaleText } from "./format.js";
 import { Page, Card, AppBar, DateLine, LoadFail, Footer, Note, OwnCloseNote, KrAgedLine, Cols, useLayout, useRoomy, useCol, useNav, tx, tap } from "./ui.jsx";
 import { CoMark } from "./logo.jsx";
 import { isCompany, ownCloses, ownCloseGroups } from "./stocklist.js";
@@ -48,7 +48,7 @@ import { withConfirm } from "./store.js";
 import { reasonView, statusChips, DividendAnswers, Line } from "./daily.jsx";
 import { signedPct } from "./deckcalc.js";
 import { deckMoney, deckDayChange, peerGroup, subjectParticle, todayCounts } from "./track.js";
-import { pfState, isImported, usHeld } from "./pf.js";
+import { pfState, isImported, usHeld, usdOf } from "./pf.js";
 import { ImportedDeck } from "./pfview.jsx";
 import { Home2 } from "./home2.jsx";
 import { EpsOwnersNote } from "./fixnote.jsx";
@@ -57,6 +57,7 @@ import { WatchHitRows } from "./watch.jsx";
 import { lookModel, lookSay } from "./look.js";
 import { LookRows, LookNotes, lookRowCount, pageHas } from "./todaylook.jsx";
 import { LookHead } from "./home2.jsx";
+import { hasTempRate } from "./records.js";
 
 // v19.3e (v19.3 Part H, board Home2): the new 홈 for returning visitors (home2.jsx). On since Jack's yes (2026-11-08): the
 // verdict band of portfolios made with 포트폴리오 만들기 stays at the top as before (Hero below), portfolios made with 가진
@@ -269,7 +270,7 @@ function ImportedStrip({ deck, de, ctx, load, go, late = false }) {
 function WatchLook({ load, store, onWatch, disc = null, onToday = null }) {
   const canMark = !!(store.writable && !store.locked);
   const hits = useMemo(() => watchHits(store.data, load, undefined, canMark), [store.data, load, canMark]);
-  const m = useMemo(() => lookModel(load, store, disc, todayKst()), [load, store, disc]);
+  const m = useMemo(() => lookModel(load, store, disc, todayKst()), [load, store, disc, todayKst(), todayNy()]);   // again when either date turns
   useEffect(() => { lookSay(m, "home"); }, [m]);
   const notes = m.discFail || m.discOld || m.issueFail;
   if ((!hits.length && !lookRowCount(m) && !notes) || !C.home.look) return null;
@@ -355,7 +356,9 @@ export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null
   // v19.3d (v19.3 F.1): portfolios made with 가진 종목 넣기 have no per-stock rules: their own strip shows the four
   // portfolio rules (pf.js), never 확인 필요 for every stock, and they take no part in the verdict above.
   const imported = ev.ok ? decks.filter(isImported) : [];
-  const us = held.some((de) => de.holdings.some((x) => x.cls === "us")) || (ev.ok && decks.some((d) => usHeld(d, load)));   // v19.3d: 가진 종목 too
+  // v19.3d: 가진 종목 too. A US stock is one priced in dollars (pf.usdOf, as usHeld and 포트폴리오, #187): x.cls "us" also took
+  // 379800 KODEX 미국S&P500, a KRX listing priced in won at the Korean close
+  const us = held.some((de) => de.holdings.some((x) => usdOf(load.byT.get(x.t)))) || (ev.ok && decks.some((d) => usHeld(d, load)));
   const usDate = ok && us && load.data.usPxDate && load.data.usPxDate !== load.data.pxDate ? mdText(load.data.usPxDate) : null;
   // 종목 순위: PC from 1200 px in the right column under 시장 한눈에; from 1024 to 1199 px at the end of the main column (Jack, 2026-11-12)
   const { wide } = useLayout();
@@ -390,6 +393,8 @@ export function Home({ load, store, setStoreData, pad, onWhy, go, welcome = null
       {store.restored && <Note tone="watch" data-ui-v2="store-merged">{C.store.merged}</Note>}
       {store.unmerged && C.store.locked && <Note tone="watch" data-ui-v2="store-unmerged">{C.store.locked}</Note>}
       {store.refused && <Note tone="watch" data-ui-v2="store-refused">{C.plan.badInput}</Note>}
+      {/* #191 (Jack, 2026-11-27): a US record saved at the latest rate (its date's rate not in yet) counts here at that rate: once per screen */}
+      {ok && decks.some((d) => hasTempRate(d)) && C.rec.rateTemp && <Note data-ui-v2="home-rate-temp">{C.rec.rateTemp}</Note>}
       <Hero load={load} ev={ev} held={held} decks={decks} onConfirm={onConfirm} onWhy={onWhy} />
       <WatchLook load={load} store={store} onWatch={onWatch} disc={disc} onToday={onToday} />
       <Cols main={[

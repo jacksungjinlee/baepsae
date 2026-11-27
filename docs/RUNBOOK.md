@@ -318,6 +318,39 @@ probably broken for everyone, so nothing is published (users keep the last good 
 wrote a broken mapping record: fix the record code. Never raise N or skip the row to get a publish out;
 a different N needs Jack's yes with new evidence.
 
+**Our own text and the gate's word row (2026-11-24, #178).** The row "글자에 nan·None·null·undefined 없음" (`validate_data.BAD_WORD`,
+frozen) reads every string in the four files. The pipeline used to write those words itself: a "never stop the publish" step stored its
+error text (`pxSrc.own.err`, `usSrc.own.err`, the `ownDrop.krOwn` and `usExtraMissing` reasons), the records above stored the bad value
+in the reason (`"칸 없음 d; d null"`, `role "None"`), and other record reasons printed a missing value (`usForeign.cut` "야후
+financialCurrency None", a `d1Base.ex` name "nan", "마지막 확인 종가(None)"), so one caught error or one bad row stopped the whole
+publish. What is true now:
+- The guards and the own-check records clean their text where they write it (`fetch_data.pub_text` / `pub_err` / `own_drop_pub`). The
+  `ownDrop` rows are cleaned without a cap: each record already has its own N in its own gate row.
+- Right before data.json is written, `pub_sweep` runs the same cleaning over the strings in the pipeline's own record fields
+  (`PUB_SWEEP_KEYS`: `pxSrc`, `usSrc`, `splitsInfo`, `usForeign`, `usExtraMissing`, `usListSym`, `d1Base`, `ownDrop`; disc.json:
+  `ownDrop`). It skips what the app reads: `pxSrc.own.aged` / `usSrc.own.aged` (`nk` is shown as the stock's name, `src/data.js`) and
+  `splitsInfo.fixed` (`src/v2/lots.js`). Stock, company and filing rows are not touched. The reason builders are unchanged.
+- **The cap (Jack's standing rule, N = 5 per file):** up to 5 changed strings in a file are cleaned, each one logged on its own
+  `  !! … 우리 기록 글 {path}: … — 원문: …` line, and counted in that file's `ownDrop.sweep` (`{n, paths}`, first 30 paths; 0 on a
+  clean run). Above 5, nothing in that file is changed: every path is logged with `  !!` ("그대로 둬요"), the count is recorded, and the
+  word row fails as before, because many at once means our processing broke. If the step itself crashes, `pub_safe` logs `  !!` and the
+  file is written as it was (the gate decides).
+- The cleaning: first the literal values of the DART and ECOS keys (and `GITHUB_TOKEN`) from the environment become "…", then the text is
+  cut (300 characters for error fields), then anything after `?` in a URL, a URL's user part, the ECOS key in its URL path, and
+  key-like values become "…" (`key=`, `crtfc_key: …`, `('crtfc_key', '…')`, `X-Api-Key:`, `Bearer`, `Authorization`, `Cookie`, and names
+  that continue after the key word such as `private_key_id=`, `key1=`, `token_type=`, `keyId=`; not exception names like `KeyError`), and
+  each whole-word match of the gate's own pattern (imported) becomes "빈 값". A second pass can only hide more. Only words change, so
+  reason prefixes the gate and `us_fgn_kind` read (`US_FOREIGN_CUR_WHY`) stay intact.
+- The raw text goes to the run log only, with the environment's key values hidden there too (`pub_raw`, first 4,000 characters). The
+  app never reads the cleaned fields. `splitsInfo.err` goes to the run log only (data.json carries `noCol`).
+- Source text is not rewritten: when a Yahoo summary (`de`) or a DART filer's position (`pos`) contains such a word, `own_src_text` blanks
+  that one field right before the write (log: `!! 출처 글자의 관문 낱말 …: {file} n칸 비움 — {stock} {field} …`) and counts it in that
+  file's `ownDrop.srcText`. More than 5 fields in one file (`SRC_TEXT_MAX`, Jack's default N; every past publish has 0 because the row
+  passed): nothing is blanked, the log says so, and the word row itself fails, so no new gate row exists. disc.json is rebuilt daily
+  from the whole 90-day insider window, so its count covers that window, not only the day's new filings. Insider names (`nm`: the screens
+  show `{nm} · {pos}`, so a blank name would leave numbers with no name and no reason), stock names and `dk` (the field of the 2026-10
+  column-shift incident) are left to the row as before.
+
 ## Checked low-PBR companies (gate warning "PBR 0.1 미만 국내 회사")
 
 The daily gate (`validate_data.py`) warns, by name, about every Korean company with a PBR under 0.1 that the unit check
@@ -507,7 +540,8 @@ yearly swing. On 2026-11-14, 9 of the 18 have their 52주 range blanked (a move 
 How long a mark lasts: while a bad bar is inside the series window (not 252 days). It clears by itself, and the numbers come
 back, when Naver fixes the bar or the bar ages out: 110790 크리스에프앤씨 (2023-10-20) around 11-28 and 121890 에스디시스템
 (2023-10-23) around 12-01, which takes the count from 18 to 16. A stock moves from "52주까지" to "52주는 보임" by itself about a
-year after its last bad day. Repairing the history is a later PR. Gate rows:
+year after its last bad day. Repairing the history: "Repairing the broken histories" below (#182; built, switch OFF until Jack approves the
+screen line). Gate rows:
 
 - **FAIL "과거 주가 기록 오류 종목의 숫자 비움 (pxBad)"**: a published stock named in `krSeries.jump` still has one of its
   `pxBadF` numbers (data.json or corp.json), or its 52주 range is missing although not in `pxBadF`; or `pxBadF` breaks the window
@@ -537,6 +571,103 @@ year after its last bad day. Repairing the history is a later PR. Gate rows:
 Standing daily warnings until the repair PR: "국내 시계열 하루 가격 제한폭 넘는 움직임 (경고만)" (the 18 names), and "국내
 beta 채움" and "국내 vol 채움" at 96.8% (floor 95%, warning under 97%; 2,395 of 2,473: volatility and beta are whole-series,
 so every marked stock blanks them). 45 more marked stocks are still a pass; the 46th would fail both rows.
+
+### Repairing the broken histories (과거 주가 병합 보정 · `KR_PX_REPAIRS` · since #182, switch OFF)
+
+Jack's Track 1 item 4 (2026-11-24): "repair the broken price history for the 18 stocks (old share consolidations)". Most of the
+named moves are a share event Naver did not rescale. `fetch_data.py` `kr_px_repair` multiplies the bars before such an event by
+the event's factor, right after `naver_clean` and before everything else in `one()` (official-close pinning, `pin_audit`, the
+`c1w` Naver pick, `kr_jumps`, every number). A repaired stock simply leaves `krSeries.jump`, so `mark_px_bad` no longer blanks it
+and its numbers come back. No gate rule changed: the pxBad FAIL row, `PX_BAD_NEW_FAIL` and the must-have rows are as before.
+
+**Switch `KR_PX_REPAIR_ON` (False).** A number built on a history 뱁새 itself corrected must say so on screen (CLAUDE.md
+say-why), and no line is approved yet. While OFF the run computes the repair, logs it and records it (`krSeries.adj.on` false),
+but every number is made from Naver's series as before. Switch it on together with the screens PR that shows Jack's line
+(`tests/test_kr_px_repair.py` pins it OFF; that PR flips the pin and lists it under 안전 규칙 변경).
+
+**Rollback trap — the switch-on PR needs a rollback plan agreed with Jack (#182 review, Fable S2).** Once ON, the repaired stocks
+are out of `krSeries.jump`. Turning the switch OFF again (or a bug that makes the repair raise for every table stock in one run)
+puts all of them (12 today) back into `krSeries.jump` at once, and the FAIL row "새로 생긴 과거 주가 기록 오류 종목 수 (10종목 이상이면
+실패)" (`PX_BAD_NEW_FAIL`) then stops the publish: the site keeps the previous day's data. The gate is not changed for this; the plan
+has to be agreed with Jack before switching on (for example: switch off only together with a one-time, named exception Jack approves,
+or remove table entries in batches of fewer than 10 a day). A failure inside one stock's repair is contained:
+`kr_px_repair_step` catches it, that stock alone keeps Naver's series (hidden as before, skip `err`, loud log line), and every other
+table stock is still repaired (tested).
+
+**Which events, which factor.** Only events whose factor two independent sources agree on are in the table `KR_PX_REPAIRS`
+(stock, date of the first bar on the new basis as `krSeries.jump` names it) → (factor, optional first bar, kind, sources). Factor
+= new basis ÷ old basis (10 → 1 consolidation: 10; 1 → 10 split: 0.1).
+- 병합 · 감자 · 분할: the listed-share ratio (= the filed ratio, what a holder actually had). The KRX 기준가 on a 감자 re-listing day
+  is the opening auction price (50–200% range), so it can differ from the ratio by the day's real move (에이프로젠 5,070 vs 293 × 15 =
+  4,395). Naver's own rescale (where it did one) uses 기준가 ÷ previous close instead, e.g. 003060's 2024 10:1 감자 at 9.568 and 304840's
+  2026-11-20 2:1 at 2.175; those stocks are not in `krSeries.jump` and are left as Naver has them.
+- 무상증자 권리락: KRX 기준가 ÷ the previous close (the new shares list weeks later, so the share count does not move that day).
+- An exact ×2 or ×0.5 after a halt is not enough on its own: 121890's re-listing auction hit exactly 200% (739 → 1,478) with no share
+  event, and 229500's base is exactly half with nothing else to confirm it.
+Sources read on 2026-11-24 (no DART calls): KRX listing files in `fdr_krx_data_cache` (2026 dates only: `Stocks`, `Close − Changes`),
+Daum daily quotes (KRX official close, change, listed shares), Naver daily quotes (equal to KRX before Nextrade started in 2025-03;
+KONEX is not on Nextrade) and Yahoo's split records (yfinance `Stock Splits`).
+
+| Stock | Event (first new bar) | Factor | Kind | Agreeing sources |
+|---|---|---|---|---|
+| 001465 BYC우 | 2024-04-17 | ×0.1 | 1 → 10 split | KRX 기준가 19,890 = 198,900 × 0.1 · shares 215,385 → 2,153,850 · Yahoo 1:10 |
+| 003060 에이프로젠바이오로직스 | 2026-05-08 | ×15 | 15 → 1 감자 | shares 198,407,845 → 13,227,189 (KRX file, Daum) · Yahoo 15:1 |
+| 007460 에이프로젠 | 2026-05-08 | ×15 | 15 → 1 감자 | shares 329,305,030 → 21,953,668 (KRX file, Daum) · Yahoo 15:1 |
+| 009310 참엔지니어링 | 2026-05-11 | ×5 | 5 → 1 (halted) | shares 21,885,074 → 4,377,014 (KRX file, Daum) · price 1,065 → 5,330 at the same cap · Yahoo 5:1 |
+| 012170 아센디오 | 2025-03-06 | ×10 | 10 → 1 감자 | shares 103,569,488 → 10,356,948 (Daum) · Yahoo 10:1 |
+| 012170 아센디오 | 2026-08-28 | ×5 | 5 → 1 | KRX 기준가 3,740 = 748 × 5 · shares 20,250,194 → 4,050,038 · Yahoo 5:1 |
+| 012210 삼미금속 | 2025-04-24 | ×2 | 2 → 1 (KONEX then) | Yahoo 2:1 · KRX 기준가 4,000 vs 1,998 × 2 = 3,996 |
+| 110790 크리스에프앤씨 | 2023-10-20 | ×0.5 | 1 → 2 split | KRX 기준가 9,480 = 18,960 × 0.5 · shares × 2 · Yahoo 1:2 |
+| 227420 도부 | 2024-01-19 | ×2 | 2 → 1 (KONEX, halted) | KRX 기준가 1,808 = 904 × 2 · Yahoo 2:1 |
+| 311060 엘에이티 | 2024-01-25 | ×0.5 | 1:1 무상증자 권리락 (KONEX) | KRX 기준가 4,135 = 8,270 × 0.5 · Yahoo 1:2 |
+| 331660 한국미라클피플사 | 2026-05-06 | ×0.2 | 1 → 5 split (KONEX) | KRX 기준가 3,290 = 16,450 × 0.2 · shares 1,100,000 → 5,500,000 · Yahoo 1:5 |
+| 425040 티이엠씨 | 2024-01-02, from 2023-12-28 | ×0.5 | 1:1 무상증자 권리락 | KRX 기준가 25,800 = 51,600 × 0.5 · Naver rescaled every earlier bar by 0.5 but missed 12-28 · Yahoo 1:2 |
+| 472850 폰드그룹 | 2026-01-02, from 2025-12-30 | ×5,660/10,060 | 무상증자 권리락 | KRX 기준가 5,660 = 10,060 × 0.5626 · Naver rescaled every earlier bar by 0.5626 but missed 12-30 (Yahoo 1:1.780175, 0.15% off) |
+
+Not repaired (still hidden, reason in the log from `KR_PX_NOFIX`): 007610 선도전기, 121890 에스디시스템, 206950 볼빅 (real moves after a
+halt, no share event), 107640 한중엔시에스 and 250030 진코스텍 (KONEX → KOSDAQ transfer listings), 210120 빅텐츠 (one Naver bar, 1,552 on
+2026-10-08, is not the official close 2,345 — not a share event; replacing that bar is a different fix), 229500 노브메타파마 (one source
+only), 304840 타임X AI (2:1 감자, but ×2 still leaves +41% on the re-listing day; Naver has since rescaled it by 기준가 ÷ close, so it
+should leave `krSeries.jump` by itself).
+
+**Every run re-checks each entry** on the series it just downloaded (`kr_px_repair`). For each boundary of the event (the bar before
+the event date → the event bar; with a first bar, also the bar before it → it, unless the window now starts at or after that first
+bar: then the repair runs from the window's first bar and only the event boundary is checked), the raw move must be outside the
+daily-limit bounds (`jump_bounds`, the same as `kr_jumps`) and inside them after the factor. This check is coarse: it only proves the
+event day's move is within ±30% (KONEX ±15%), so ×12 instead of ×15 would pass for 007460. The table's two sources are the real guard;
+the daily check only stops a factor from being applied to a series that has changed shape. Otherwise the entry is skipped with a reason
+(`KR_PX_ADJ_SKIP`): `same` (Naver has rescaled it: never applied twice), `after` (after `pxDate`), `old` (the event left the
+three-year window), `nobar`, `still` (the factor no longer fits), `conflict` (all of one stock's entries together break a boundary:
+none applied), `err`. Rescaled bars are rounded to whole won, as Naver's are. Bars after the event, volume and `c1w` (official closes
+from listing files) are untouched.
+
+**Log** (every run): "과거 주가 병합 보정 (KR_PX_REPAIR_ON 켜짐 | 꺼짐 …): 고친 종목 n (m건 · 숨김에서 빠짐 x) | 켜면 고칠 종목 n (m건) —
+code name date ×factor … · 숨긴 채 남는 종목 k (reason n: names …) · 표의 사건을 건너뜀 s: … · 표에 있는데 오늘 보지 못한 종목 … ·
+표에 있는데 발행하지 않는 종목 …". A move on a table event's date or on its first bar counts as that event (fixed, or its skip reason);
+other moves take their `KR_PX_NOFIX` reason, or "아직 확인하지 않은 움직임". With the 11-21 list the OFF line says 12 to repair (13
+events) and 8 to stay hidden. Loud (`!!`) only when an entry is skipped for something other than `same`, `after` or `old`: a verified
+factor no longer fits today's Naver series. Then compare Naver's chart with the table's sources; fix the table in a PR, never the
+bounds.
+
+**Record** data.json `krSeries.adj` = `{on, fix: [{t, d, f, from?, k, n, src}], skip: [[code, date, reason]]}` (published stocks
+only; with the switch off, `fix` lists what turning it on would repair). **Gate** (new, warning only, never fails): "국내 과거 주가 병합
+보정 (krSeries.adj · 경고만)" names each repaired stock and factor (and adds them to the summary when on); it warns on a malformed
+record, on a repaired stock still in `krSeries.jump` on any date (when ON: for example a stale repair after Naver rescaled part of the
+history), and on a skip other than `same` · `after` · `old`. A file without `adj` passes. Any error inside the row becomes a warning of
+that row (`run_checks` wraps it), so it can never stop the gate.
+
+**Adding an event** (a new stock in `krSeries.jump`, or the `new` reason in the log): read the event day in two independent sources
+(listed shares before/after and the KRX 기준가 from the listing file or Daum, Yahoo's split record; DART's decision if the run's cache
+has it). Add it only when two agree on the factor, and run `tests/test_kr_px_repair.py` (add the real bars around the event to
+`REAL`). Never add an entry from the jump size alone.
+
+**On the live copy of 2026-11-21 (pxDate 11-20), simulated with the switch on:** the 12 stocks above leave `krSeries.jump` (20 → 8
+names); the gate's other rows are unchanged except "국내 beta · vol 채움" (96.6% → 97.0%, both now PASS) and the mz · lz coverage, and
+230 other stocks' 추세 · 저변동 percentiles move by the re-ranking. Against Yahoo's split-adjusted closes over the same dates: for the
+events inside the last year, the 52주 range and 1-year return match for 003060, 007460, 012170 and 472850 (Yahoo rounds 1/15 as
+0.0667, so 003060's high is 9,660 vs 9,655); for the older events only whole-series numbers come back, and the 3-year return and
+largest drop match for 001465, 227420, 311060 and 425040. Yahoo's own series is not usable for 009310, 331660 and 012210 (it applies
+its split record only to the last few bars), and for 110790 it also adjusts a 2.9% stock dividend that Naver and KRX did not.
 
 ## Korean stocks with no trade or no change today (국내 거래 없는 종목 · 빈 d1)
 
@@ -1565,6 +1696,72 @@ uncounted 2, data 22, the 32.5% yield 1; lines: 1 → 0 stocks, 2 → 8, 3 → 1
   "숨긴 배당수익률의 줄" and "그대로 숨김" log lines. A file without `proofSub` (before #PR) is only a warning unless the previous publish
   had it; without it a `dvLine` 2, 3 or 4 fails the "배당 기준 증명 기록" row.
 
+## 소액주주 yield for differential dividends (차등배당, since #183 — Jack 2026-11-19 Q6, 2026-11-23)
+
+Some Korean companies pay a **차등배당**: the largest shareholder takes less (often nothing) and everyone else gets the per-share
+dividend in the 사업보고서's table. DART's dividend API (alotMatter) gives that figure as a plain 보통주 row; the note that says whose
+figure it is sits only under the table in the report itself. Because the total ÷ that figure is far below the share count, the
+dividend proof hides these yields as `data` / `div` (dvLine 3, "회사가 공시한 배당 자료와 주식 수가 서로 맞지 않아서 …"). An individual
+investor gets the 소액주주 figure, so Jack asked for that yield, "labelled as the 소액주주 rate".
+
+What the daily run does (`fetch_data.py` `small_holder_div`, right after `apply_div_basis`, before the DART cache is saved):
+- **Who:** only the payers the proof left as `data` / `div` this run (`divCheck.proofSub.data` case `div`; **16** on the 11-21 publish).
+  Four were read by hand on 11-23: 교보증권 and TPC로보틱스 qualify; 엘앤씨바이오 and 블랙야크아이앤씨 do not mention 차등배당. The other
+  12 (CR홀딩스, 화천기공, 신영증권, 아세아제지, 와이엔텍, 지에이이노더스, 인화정공, 아이패밀리에스씨, 인터로조, 유니테크노, 젝시믹스, 조선내화)
+  have not been read by anyone: the first run may find more. **Before the switch PR, read the evidence sentence (`q`) of every company in
+  `divSmall.on` against the filing.** (남성 and 대동기어, named as examples in the 11-23 brief, are not differential: 남성's API rows say
+  보통주(소액주주) 25 and 보통주(최대주주) 25; 대동기어 has one 보통주 row.)
+- **Basis first** (`small_div_basis`, no DART call: the proof's own filings lookup and year-end share table): no split, merge or bonus
+  issue of any size after the year end; no 유상증자, 회사분할, 주식배당, 감자, 주식교환 or 합병 decision from half a year before the year end
+  to the price date; today's listed common shares between the year-end outstanding −3% and the year-end issued +3%. Otherwise nothing
+  (`divSmall.no` ev · blk · nostk · shr). Known limit: the filings lookup is cached (refetched when the share count moves 3%), so a
+  decision filed in the last few weeks whose shares are not listed yet may not be seen; the proof has the same limit.
+- **The report** (`small_div_doc`, cached under `{corp}|{fy}|11011|sdiv2`): `list.json` (정기공시 A001, last versions) finds the
+  "사업보고서 ({fy}.12)" receipt number — **December year-ends only** (a March year-end company would match an earlier year's report:
+  left as `nf`); `document.xml` gives the report; `small_div_section` cuts the "배당에 관한 사항" section (its TITLE to the end of that
+  SECTION level; the 60,000-character cap applies only when that end is missing) and keeps paragraph and table-cell ends as line breaks,
+  so a table header's 전기 never joins the note under it. Two DART calls per company the first time, at most `SMALL_DIV_PER_RUN` = 30
+  reports a run; read again after 90 days (a corrected report), a report or section not found after 7 days; a failed re-read keeps the
+  facts found before. A run that may not call DART (same-day re-run `no_call`) uses whatever is cached, whatever its age, spends no
+  limit, and leaves uncached companies as `nocall` (not a failure).
+- **The figure** (`small_div_facts` · `small_div_pick`, tightened after #183's first review; the cache tag went sdiv1 → sdiv2 so every
+  report is read once more, about 32 calls): a sentence, or the 주N) note it sits in, must
+  - say **차등배당** or **차등 배당** (not a bare 차등: 차등의결권 does not count), with no 않 · 없 · 미실시 · 아니 next to it, no 전기 · 전전기 ·
+    전년 · 작년 · 지난해, and no year other than the report's own (`2024년` in a 2025 report rejects it; so does a record date written as
+    `2026년 3월`, which costs a figure rather than risk one);
+  - tie a number to 소액주주 / 기타주주 / 일반주주: the first "N원" (`won`) or "N주" (`cnt`) within 120 characters after the word, with no
+    최대주주 · 대주주 · 특수관계 · 우선주 · 종류주 · 액면 · 전기 or another holder word in between ("최대주주 외", "최대주주를 제외한",
+    "최대주주 및 자기주식 외" are exclusions and fine; a number is never read from the middle of another, so "550.5원" is 550.5, not 5);
+  - and exactly one distinct amount must be tied to the small holders, equal to the table's dividend per share (`won`: 교보증권 2025
+    "기타주주(최대주주 외) 550원, 최대주주 무배당을 배당하는 차등배당입니다."), or, with no amount, exactly one share count whose × the table's
+    dividend per share equals the table's total within max(1백만원, 0.1%) (`cnt`: TPC로보틱스 2025 10원 × 7,787,204주 = 77,872,040원 against
+    78백만원). Two or more → `many`; one that does not match → `nofig`; no usable 차등배당 sentence → `nodiff`.
+  The figure is always the table's own per-share number, published as it is (a fractional figure is not rounded) with `dytSmall`
+  worked from that same value; nothing is computed but the yield. Above 30% → `big`; under 0.005% → `tiny`.
+  `tests/test_smallholder_div.py` holds both real notes and every note the first review built to fool the first version.
+- **Written:** data.json stock `dpsSmall` (원) and `dytSmall` (dpsSmall ÷ today's close, %, 2 decimals), the same two in corp.json, and
+  data.json `divSmall` {v, cand, on {code: nk · d · y · how · rc · q (the sentence relied on)}, no {code: reason}, fail {code: why},
+  read, calls, skip, err}; data.json `units` describes `dpsSmall`, `dytSmall` and `divSmall`. Fields left from an earlier row are removed
+  first. `dps`, `dyt`, `dz` and `dvLine` are not touched: **the dividend ranking keeps `dyt` only**, so these companies stay out of it.
+  The stage never stops the run: an error clears every `dpsSmall` · `dytSmall`, logs "!!" and writes `divSmall.err`.
+- **Log lines:** "소액주주 배당(차등배당 · dpsSmall · dytSmall): 대상 N · 실음 n: 030610 교보증권 550원 7.33% (won) … · 그대로 m (reasons) ·
+  조회 실패 k … · 건너뜀 … · 원문 새로 읽음 r · DART 호출 c", with "!!" when something failed; then one "근거 {code} …: {sentence}" line
+  per company published, then the names left as they are.
+
+Gate: **WARN "소액주주 배당수익률 (dpsSmall · dytSmall · divSmall · 경고만)"** — never fails (no Jack yes for a publish-stopping row). It
+names the companies and figures (PASS) and shows `divSmall.skip`. It warns when a company joins `on` that the previous publish did not
+have (its evidence sentence is listed under the table for a person to read — on the first publish with this stage, every company), when
+the previous publish had `divSmall` and this one does not, when a field disagrees with the table's dividend per share, with ÷ today's
+close or with the record, is not a number (text "550" counts as wrong), lacks its sentence, disagrees with corp.json, sits on a stock
+whose yield shows, on another mark, on a non-Korean or preferred row, when the record is missing or malformed, when a lookup failed, or
+when the stage errored. Look at the run's "소액주주 배당" log lines.
+
+App: 2.0 only, behind `src/v2/smallcfg.js` `SMALL_YIELD.on` (false) and the copy `C.co.div.smallBasis` · `smallLine` (null, waiting for
+Jack): the 요약 배당 tile shows "배당수익률 {y} · {smallBasis}" with `smallLine` in the hidden-yield line's place, the 배당 tab the 소액주주
+dividend per share and yield labelled, 두 종목 비교 the yield labelled with the line (`company.js divSmallView`). Switch off, or on without
+the words, every screen renders exactly as without the fields (test). 관심 종목, 종목 순위, 내 기준으로 찾기 and plans keep `dyt`. 예전 뱁새
+shows no label (#183 review: its 배당수익률 is the report's own yield, never checked to be the 소액주주 rate).
+
 ## 오늘 볼 것 data (v19.6b, since #PR): disc.json `issue`, insider `role`, US `ed` · `xd`
 
 What the daily run writes (`fetch_data.py` `fetch_issues`, `fill_issue_bd`, `insider_pos_role`, `us_event_dates`):
@@ -1882,6 +2079,73 @@ Korean ratio outside 0.5–2.0 then warns (the limit is unknown).
 The gate cannot see the base-price link itself (data.json carries only counts in `krSeries.ref`), so a Korean row the pipeline
 should have blanked for an unconfirmed link is caught by the gate only if its move breaks the compounded limit.
 
+## When the S&P 500 list can't be read (S&P 500 목록 이어 쓰기, since #199)
+
+**What happened.** FinanceDataReader reads the S&P 500 list from Wikipedia ("List of S&P 500 companies"). On 2026-11-28 at
+00:35 KST (run 46026291142 on `main`) Wikipedia answered 429 ("We suspect this request is automated: if so, please respect our
+robot policy"). The run logged "(S&P500 목록 실패: …)", went on with Nasdaq's first 400 and `EXTRA_US` only (465 tickers), and the
+gate correctly failed "미국 종목 수 458 (기준 ≥ 500)" and "미국 종목 수 변화 800 → 458". Nothing was published. Earlier runs read the
+list fine (different runner addresses), so it may be intermittent, but one refusal at 06:40 would hold the morning publish. We
+respect Wikipedia's policy: no changed or rotated User-Agent, no proxy, no other route to the same page.
+
+**What the run does now** (`fetch_data.us_tickers`, `us_sp500_prev`, `us_sp500_odd`):
+1. If the read raises, or returns a list it can't trust, the run waits `US_SP500_RETRY_PAUSE_S` (5) seconds and sends the same
+   request once more (`US_SP500_TRIES` = 2; never more). "Can't trust" uses the two numbers the run already uses after the price
+   download (`US_SP500_MIN` 400 overlap, `US_SP500_MAX` 550 tickers); at read time today's prices aren't there yet, so the overlap
+   is with the last publish's US list. With no last publish only an empty or over-550 list counts. The later check on today's
+   priced list (`sp_ok`, below under "When the S&P 500 list can't be trusted") is unchanged.
+2. If that fails too, and the last publish's `usListSym.spTickers` is a plausible list (Yahoo-form tickers, no repeats, at most
+   550, overlapping that publish's US list by at least 400), those tickers become the S&P 500 part of today's list and the S&P 500
+   set every later step uses. Log: `!! S&P 500 목록을 읽지 못해 (1차: … · 2차: …) 지난 발행본의 목록(2026-11-27 읽음 · 503종목 · 1일 전)을
+   썼어요 …`. The head says what happened: `읽지 못해` (both reads stopped, e.g. the 429), `읽었지만 쓸 수 없어` (both returned a list that
+   can't be trusted) or `한 번은 읽지 못하고 한 번은 읽었지만 쓸 수 없어`. For a list that came back unusable each reason gives the rows
+   received, the usable tickers, the rows that could not become a Yahoo ticker with the first three raw values, and the plausibility
+   reason, e.g. `받은 목록 503행 · 쓸 수 있는 티커 12곳 · 야후 모양으로 바꾸지 못한 행 491 (앞: 'APPLE INC.', …) — 목록 12곳 · …` (a
+   renamed ticker column looks like this; a 429 looks like `HTTPError: 429 Client Error …`). The tickers read that day are not used.
+3. The record: `data.json` `usListSym.spCarried` = `{"from": the day the list was first read (KST), "why": both reads' reasons
+   ("1차: … · 2차: …", "1차와 같음" when the same; at most 600 characters)}`, only on such a day (normal days' files are unchanged).
+   "First read" is the last publish's `publishedAt` date (KST), or, if that publish had itself carried the list, its
+   `spCarried.from`: carrying a carried list never resets the date. A `spCarried` that is present but unreadable (including
+   `null`) is not carried, and the gate row warns on it.
+4. A list first read more than `US_SP500_CARRY_DAYS` (7) calendar days (KST) before today is not used, nor one whose date can't be
+   read. Then the run behaves exactly as before: no S&P 500 part, BF-B named as missing, and the gate's US count rows hold the publish.
+
+**How the carried list is treated downstream (same as a list read that day):** `spTickers` is the carried list, `spGone` · `noPx` ·
+`spErr` are measured against it, `usForeign.sp500` records its overlap with today's priced list and the country rule (#133) uses it
+when that overlap passes, BF-B comes through the carried list (it has `BF-B` in Yahoo form), and `read` keeps its meaning ("the run
+left a source-ticker record"; it did). Within 7 days the index changes by a handful of companies at most: one that joined since is
+missing unless it is in Nasdaq's first 400 (its absence is not named); one that left stays in our list for those days. A carried
+ticker Yahoo has no price for (delisted since) warns in the share-class row's `noPx`, and the log says the list was carried. US
+companies get no list name from the S&P list that day (`listName`); Yahoo's names are still used for the preferred-share rule.
+
+On a carried day `mapped` has no S&P 500 rows (nothing was read from the S&P list, and the carried tickers are already in Yahoo
+form), so the share-class row "미국 목록 출처 티커" reads "바꿈 0" and its "관문 표와 다르게 바꿈" check has nothing to compare for BRK-B
+and BF-B that day. Harmless: the carried list is the one a gated publish used, and the next day's read is checked as usual.
+
+**Gate row "미국 S&P 500 목록 이어 씀 (usListSym.spCarried · 경고만)"** (`check_us_sp_carry`, warning only, never fails in any
+mode, also when its own check crashes): PASS "이어 쓰지 않음 (그날 읽은 목록)" on a normal day (or "… 그날 S&P 500 목록 없음 — 미국 종목 수
+줄들이 봐요" when there was none); WARN naming the list's first-read day, the days to the file's publish date, the count and the
+reasons, e.g. "지난 발행본의 S&P 500 목록을 이어 씀: 2026-11-27 읽음 (발행일 2026-11-28 까지 1일) · 503종목 · 오늘의 목록을 쓰지 못한 까닭:
+1차: HTTPError: 429 …"; it also warns on a malformed record (`spCarried: null` included) or a list older than 7 days (the pipeline
+should never write one). On a publish it also checks the first-read day against the previous publish on its own (the same rule as
+the pipeline: that publish's `spCarried.from` if it carried, else its `publishedAt` day) and adds "처음 읽은 날 … 이 … 보다 뒤 — 날짜가
+새로 매겨졌을 수 있어요 (7일 한도 확인 필요)" when it is later (or "… 와 맞춰 봄 (같음)"); the 7-day limit itself is enforced by the
+pipeline only (making the gate fail on it would need Jack's yes). SKIP for a file without `usListSym`. No other gate row changed.
+
+**Where it shows.** The gate's GitHub annotations show at most 10 warnings per step (`validate_data.annotations`, then "외 N개 더"),
+so this row can be pushed out of them. The data step ("데이터 수집") therefore prints its own annotation, which the 09:13 KST check
+reads like the gate's: `::warning title=S&P 500 목록 이어 씀 (지난 발행본)::S&P 500 목록을 읽지 못해: 2026-11-27 에 읽은 지난 발행본의
+목록 503종목을 썼어요 (…) — 까닭: …` on a carried day, and `::warning title=S&P 500 목록 없음 (이어 쓰지 못함)::…` on a day nothing could
+be carried (the US count rows then fail). It is the only annotation that step prints. In the run: the log line `!! S&P 500 목록을
+읽지 못해 …` / `읽었지만 쓸 수 없어 …` in "데이터 수집", the gate's `!! 경고  미국 S&P 500 목록 이어 씀 …` line, and the row
+"미국 S&P 500 목록 이어 씀 (usListSym.spCarried · 경고만)" in the run summary's "뱁새 발행 관문" table.
+
+**What to do.** One carried day: nothing; the next run reads the list again. Several days in a row (the warning repeats with the
+same first-read date): Wikipedia is refusing the runner's requests, or the list's format changed (the reasons say which: `HTTPError:
+429` vs `받은 목록 … 바꾸지 못한 행 …`); tell Jack before day 7, because on day 8 the publish stops on the US count. Do not work around
+the block; a second, independent source for the S&P 500 list is Jack's decision (outside services). A format change needs a code
+fix in `us_tickers` (with a test). Rolling back: a revert PR; the old code ignores `spCarried` and the old gate has no such row.
+
 ## US stocks added by hand (EXTRA_US)
 
 The US list is the S&P 500 (FinanceDataReader's list), Nasdaq's first 400 and `EXTRA_US` in `fetch_data.py`, every ticker in
@@ -1960,6 +2224,59 @@ has PER, PBR and 배당수익률 blanked unchecked, each marked `stopped`, and 2
 못해서 비워 두었어요." (`co.fgnStopped`, Jack 2026-11-15) in the same places — no longer "자료가 없어요". The gate row warns that day
 (naming the companies; it never holds the publish). The next run checks again. A file from before #PR has no marks on such a day
 (the gate reads it as before). The old app shows "–" for these, as for the currency case.
+
+**Recently split US companies (since #188, 2026-11-24; SNDK).** After its 8:1 split on 2026-11-20, Yahoo's trailing EPS for Sandisk
+read 923.70 a share and the 11-24 publish showed PER 0.1. That EPS is about 54 times the company's own figure (net income 19.42십억 달러
+÷ 1.138십억 shares ≈ 17.06 a share; about 136 even before the split), not off by the split ratio; market cap ÷ net income is 5.14.
+The run now puts every US company with a split dated from 30 days before `usPxDate` up to the run day (KST) through the foreign
+companies' comparison (`us_split_step` → `us_split_check` in `fetch_data.py`, right after the foreign check and after #176's rescale):
+the split list comes from the same sources as the published `splits` (today's download, the previous publish's `splits`,
+`SPLIT_OVERRIDES`), the comparison is `us_foreign_cuts` with the same kinds and switch, and the inputs are the same cached Yahoo details
+(`us-info-v1`, refreshed every 3 days) and the download's dividend column: **no extra Yahoo requests**. **The band is the split's size,
+not the foreign band** (#188 review 1): a number is cut only when it is off by more than max(1.5, √ratio), applied to PER, PBR and the
+yield alike (`us_split_check_band`, the same function as #176's gate row, `validate_data.us_split_band`; 8:1 → 2.83×, 2:1 → 1.5×, 1:10
+→ 3.16×). The foreign bands (1.10 · 1.35 · 1.10) blank correct numbers on ordinary US companies: NVDA's PBR is 1.39× off because ROE uses
+average equity, APH's forward yield is 1.19× its trailing dividends after a raise, Up-C companies like IBKR fail all three. The foreign
+check keeps its own bands. Still possible false positives, which fail safe (blank plus the approved line): a split company whose
+forward yield is at least 1.5× its trailing dividends, an Up-C structure, and a company with no PER or ROE (its PBR is blanked as
+can't-compare, then held after the 30 days until it can be compared and agrees). Foreign companies (already checked), `fcur` companies (already blank) and ETFs/funds (no company totals)
+are skipped by name. A number that agrees stays; one that does not, or cannot be compared, is blanked with the same kind (`mismatch`,
+`currency`, `norecord`, `nocompare-own`, `stopped` if the check crashes), and 2.0 shows an approved line under it: `co.fgnCut` for
+`mismatch`, `co.fgnNoCmp` ("회사 전체 숫자와 비교할 수 없어서 …") for `nocompare-own` **and, on a split company, for `currency` and
+`norecord`** (nothing was compared, so "…맞지 않아서" would be untrue; a foreign company keeps its lines), `co.fgnStopped` for `stopped`
+(in the 가치 tab and 가치 자세히 for PER; PBR and yield also in 한눈에, 비교 and 내 기준). `co.fgnNoCmp` under `norecord` (and a yield under
+`currency`) is truer than "…맞지 않아서" but not literal: what is missing there is the dividend record or the price, not company totals.
+**After 30 days (the hold, #188 review 2 S1)**, every field blanked in the previous publish (`splCut`, any kind) and every field in the
+previous `usSplitChk.held` stays checked (`held` {ticker: {d split date, f fields, since first held day}}, with its last split's band).
+A held field is released only when a run actually compared it and it agreed; can't-compare, a stopped check, a crashed step (the
+guard blanks held stocks too), a missing value or missing details keep it held and blank, with the approved line for that kind. The
+next run after the release stops checking the stock. **Permanent holds:** a company whose per-share numbers structurally disagree with
+its totals (an Up-C like IBKR, PER 29.2 against market cap ÷ net income 110.7; in the 11-24 file 22 of 581 US companies are beyond
+1.5× on PBR ↔ PER × ROE) stays blanked after a split until they agree, which may be never. The line stays true, and the gate row warns
+every day while anything is held, naming each stock, its fields and since when. If a held stock is truly fine, a person decides (there
+is no switch for it yet; ask Jack). The mark is the
+stock's `splCut` (same shape as `fgnCut`), not `fgnCut`, because the gate row above fails `fgnCut` on any stock outside the foreign set
+and that row stays as it is; `src/v2/fcur.js` reads both marks. Record: `data.json usSplitChk` (`days`, `recent` {ticker: split date},
+`held` {ticker: {d, f, since}}, `band` {ticker: band}, `checked`, `cut`, `kind`, `kept`, `nocmp`, `skip` {foreign, fcur, etf}, `srcErr`,
+`holdErr`, `bandErr`, `err`). Reason text never carries nan/None/null/undefined (written "없음"). Run log: `· 최근 30일 안에 분할한 미국
+종목 … (… 폭 2.83배)`, `!! 30일이 지났지만 … 이어서 봐요` when a stock is held, and `!! 최근 30일 안에 분할한 미국 회사의 주당 숫자 … PER 비움
+N곳 (…)` with one line per blank and its band. If the step itself crashes, `fetch_us` carries on (`us_split_guard`): a loud `!!` line,
+and the recent-split companies from the previous publish's `splits` and the fixed table, and the held stocks, are blanked unchecked
+(`stopped`). If the recent-split list can't be worked out, the held stocks are still checked. Reason text also goes through #178's last
+cleaning pass (`usSplitChk` is in `PUB_SWEEP_KEYS`). Gate row
+`미국 분할 뒤 주당 숫자: 회사 합계와 맞춤 (splCut · 경고만)` (`check_us_split_cut`) only ever warns: any held stock (named with its fields,
+since when and for how many days), unchecked numbers of a recently split or held company, a blanked or held number back, a blank
+without a mark or a mark without a `cut` row, a mark on a foreign / `fcur` / ETF stock or outside `recent` and `held`, a wrong kind, a
+bad `held` / `band`, a crash, the split column unread, or `holdErr` / `bandErr`. Usually nothing to do by hand: Yahoo usually corrects
+itself, the cache is re-read every 3 days and the number comes back once it agrees. A hold that lasts weeks is the structural case
+above. Known limits: an
+ETF that split is not checked (no company totals; 2026-11-23: SOXX PBR 0.37 after its 3:1 split, 가치 점수 100), a split smaller than
+1.5:1, or a 3:2 split's full 1.5× error, leaves its error inside the band (the test is "more than"), a halved PBR after a 2:1 split
+on an NVDA-like company reads 1.44× and stays, and a pre-split cached copy rescaled by price alone or by a wrong factor moves PER and market cap
+together, which this comparison cannot see (#176's record `usSrc.split` and its gate row name those). The check reads the same cache
+entry #176 chose, so a copy × split factor that agrees stays; Yahoo's fresh EPS that #176 accepts (SNDK 11-24, not a 1/8 pattern) is
+blanked here. Rolling back: a revert PR; the old gate and app ignore `splCut` and `usSplitChk`, and the blanked number comes back with
+the next publish.
 
 **Which companies count as foreign (since #PR; Jack, 2026-11-14 Q5: "widen it").** The run finds them by a rule every day
 (`us_foreign_set` in `fetch_data.py`, never a hand list), among company shares (not ETFs or funds):
@@ -2125,7 +2442,9 @@ gate warns once on that first publish: "주식 분할 목록 변화 … 새 줄 
 ticker, reason]] · `spTickers` the day's S&P 500 tickers in Yahoo form (null when the list could not be read) · `spGone` S&P 500
 tickers missing from the day's list → reason (null on a day the list was not trusted, #133) · `noPx` those Yahoo gave no price at
 all · `spErr` those whose processing stopped on an error (a different problem: not a sign of a dotted class) · `missing` stocks
-this rule added (`BF-B`) that are not in the day's list → reason · `read` whether the run left a ticker record.
+this rule added (`BF-B`) that are not in the day's list → reason · `read` whether the run left a ticker record · `spCarried`
+(since #199, only on a day the list could not be read and the last publish's list was used: `{from, why}`; `spTickers` is then that
+list; see "When the S&P 500 list can't be read" above).
 
 **Gate rows** (`check_us_share_class`; added as stricter-only rows in #139, and since #149 a missing BF-B warns instead of failing):
 - "주식 종류 티커로 들어온 미국 종목 (BF-B): 목록에 있거나 빠진 이유" — #126's rule for the stocks this rule added
@@ -2188,6 +2507,243 @@ longer holds `BFB`.
 
 **Rolling back #PR**: a revert PR. The reverted gate ignores `usListSym`; the next data run drops BF-B again (users who saved it
 see the existing "no longer in today's data" handling). No data run is needed for the site checks.
+
+## US company sizes for 종목 순위 (미국 최소 크기, since #185)
+
+Jack, 2026-11-13: "v19.5b's US minimum sizes (25억원 of quarterly revenue, 100억원 of equity, at the day's rate) need a small
+data PR first." The Korean 기준별 성장 and 수익성 lists keep only companies of 100억원 or more (`src/v2/ranks.js` `MIN_EOK`);
+this gives the US lists the figures to do the same.
+
+**What the daily run publishes** (`fetch_data.py` `us_size_step`): for every US company row (not an ETF or fund) whose statements
+are in dollars (`financialCurrency` USD), data.json carries
+- `qrev` · `qrevD`: the latest quarter's revenue (Yahoo quarterly statements, `TotalRevenue`) and that quarter's end date;
+- `qeq` · `qeqD`: the latest quarter's common equity (`CommonStockEquity`, the equity ROE is computed on; negative = 자본잠식,
+  kept as it is) and that quarter's end date.
+
+Whole dollars, like `price`. The app converts with the day's rate (`fx`). Why `CommonStockEquity` rather than
+`StockholdersEquity`: on 2026-11-20's 728 dollar filers the two differ only by preferred stock (75 companies), and only one
+company lands on the other side of 100억원 — PAA, a partnership whose `StockholdersEquity` is 0.
+
+`data.json` `usSize` records the counts:
+- companies, dollar filers and fields filled;
+- `noData`, the rows whose size is blank;
+- `pending`, described below;
+- blank reasons per field (`why`), and `blank`, each blank row's ticker with its reason (pending reasons left out);
+- the cache size, today's requests, and the companies given up on (`gaveUp`);
+- why the step stopped and what kind of stop it was (`stop`, `stopKind`: `429` or `empty`).
+
+**Where it runs, and what protects the prices** (reviews 2026-11-23 and 11-24):
+- **Last in `main()`:** after every Yahoo request the publish depends on. That covers the Korean second source in
+  `fetch_korea`, the US closes, company details and split read in `fetch_us`, the split history, the gold price (`GC=F`), the
+  funds, `fetch_macro` and the exchange-rate history. It also runs after data.json, corp.json and macro.json are written; only
+  the DART disclosure phase follows.
+  - There is no separate US second source: a US stock without a Yahoo close carries our own last confirmed close.
+  - It runs inside `ph.run("미국 회사 크기", …)`, so its time shows in the run summary (`⏱`).
+- **data.json is written twice:** first without the fields (`usSize.stopped` "notRun"), then again with them.
+  - If the step stops or the second write fails, the first file stands: the app shows the lists as before and the gate row warns.
+  - `write_json` writes a temporary file and swaps it in with `os.replace`, so a failed write never leaves a half-written
+    data.json.
+  - A leftover `data.json.tmp` is never published: the workflow's publish step adds only the four named data files.
+- **One request per company:** both lines in one call, yfinance's quarterly time-series function `_get_financials_time_series`.
+  - Pinned with yfinance 1.7.0; `tests/test_us_min_sizes.py` checks it is there.
+  - Unlike the public `get_income_stmt` / `get_balance_sheet` (two requests, about 150 lines each), it raises Yahoo's 429 instead
+    of hiding it.
+  - A 429 costs more than one request: yfinance retries with a new cookie and then tries the chunked form, so each ticker in
+    flight at a 429 sends about 4 requests. At most 3 are in flight, and the step stops at the first 429.
+- **At most 300 companies per run** (`US_SIZE_PER_RUN`), in three queues so no cache entry falls out (`us_size_order`):
+  1. companies with nothing cached, a broken date, or a last fetch that failed, while they have fewer than 3 failed tries in a
+     row (`US_SIZE_TRIES`) — largest market cap first;
+  2. every other entry older than 7 days (`US_SIZE_FRESH_DAYS`) — oldest first;
+  3. companies that failed 3 times in a row — at most once per 7 days, after the others.
+- **Filling the cache:** the first three runs after the merge fetch 300, 300, then 128, so it is complete after the third. A
+  simulation on 2026-11-24 took 18 s, 18 s and 7 s, with no refusal.
+  - Refreshes then come in weekly lumps, not daily. Seven days later the same 300 / 300 / 128 come due on three days in a row,
+    oldest first, then nothing for the rest of the week.
+- **Limits:** 180 seconds (`US_SIZE_BUDGET_S`) and 3 at a time. Either stop below is logged with `!!` naming its real cause, and
+  the next run continues from where it stopped.
+  - The step stops at the first 429 (`stopKind` `429`).
+  - It also stops after 3 empty answers or errors in a row (`US_SIZE_EMPTY_STOP`, `stopKind` `empty`), but only counting
+    companies that had not failed before. A few companies that always answer empty can no longer stop the step on every run
+    (review 2026-11-24, S1).
+- **A failed fetch** keeps the cached value, with its own quarter date, adds one to that entry's `tries`, and is retried by the
+  next run.
+
+**`pending` and when the app's minimum is on.** `usSize.pending` counts dollar filers whose size can still be learned: nothing
+cached yet, or no successful answer yet with fewer than 3 tries. A refused or failed new listing counts as pending (review
+2026-11-24, S2).
+- Permanently unknown companies don't count: another currency, unknown currency, half-yearly reporters, a quarter older than 200
+  days, and companies with 3 failed tries.
+- The app applies the minimum only when `pending` is 0.
+- A cache loss, or a new listing that hasn't answered yet, turns it off again until the cache is complete. The gate warns when
+  `pending` rises from 0.
+
+**Blanks** (each logged with count and tickers; every name is listed except for the still-pending reasons):
+
+| Reason (`usSize.why`) | What it means |
+|---|---|
+| `fcur` | Statements in another currency (38 on 2026-11-20: TSM, ASML, NVO, SONY, TM, SAP, BABA …). The data has no won rate for that currency, so the field stays blank rather than mixed. Follow-up: once #181's non-dollar company totals are switched on, these companies could get `qeq` in dollars. |
+| `cur` | Statement currency unknown (no company details today, `usFcurUnknown`: FISV on 2026-11-20). |
+| `wait` | Not fetched yet: the 300-per-run cap. Pending. |
+| `time` / `stop` | The 180-second limit or a stop came before this company. Pending. |
+| `retry` | Asked, but no answer yet (refused, error or empty), fewer than 3 tries. Pending. |
+| `gaveUp` | 3 failed tries in a row with no answer ever. Permanently unknown; retried once a week. |
+| `noRow` | Yahoo's answer had no such line: half-yearly reporters (BHP, RIO, DEO, WSE have no quarterly revenue). |
+| `fail` | An earlier answer came, but this line has no value. |
+| `old` | The newest quarter ends more than 200 days before the US price date (`US_SIZE_MAX_AGE_DAYS`). |
+| `future` | The quarter end is after the US price date (a broken value). |
+
+**The app** (`src/v2/ranks.js` `usMinState`, `usMinOf`, `critOut`, `noteCrit`; `rank.jsx` `critBasis`):
+- **On only when the fill is complete** (`usSize.pending` 0). While companies are pending, or for a file without the figures, `fx`
+  or a valid `pending`, the US lists are exactly as today with no minimum and no line. The console names the state:
+  - `pending`: "keeps no minimum size (no line), as before: N US companies still wait to be fetched";
+  - `on`: "applies the US minimum …";
+  - `noFigure`, `noFx` or `noPending`: off, with the reason.
+- **기준별 · 수익성 under 미국, when on** (review 2026-11-24, Fable S3; decided by the coordinator, Jack told and can reverse it):
+  - A company leaves when its equity is known and under 100억원 (`qeq × fx ÷ 10⁸ < 100`, `US_MIN_EQ_EOK`; negative included,
+    reason `smallEquity`).
+  - It also leaves when its equity is unknown (`noEquity`): another currency, unknown currency, half-yearly, older quarter, or
+    given up. This matches the Korean list, which drops a company without equity in corp.json under the same approved line.
+  - The approved "· 자본 100억원 이상" is then true of every company shown. Before this, the line would have stated something we
+    never checked: Ascendis sat around #13 with negative common equity until 2025-12-31.
+  - The browser console names every company dropped, with its reason (from `usSize.blank`) and a count, no cap.
+  - Switch: `US_MIN_PROFIT_ON` (on).
+- **기준별 · 성장 under 미국** would apply the same rule with `qrev × fx ÷ 10⁸ < 25` (`US_MIN_REV_EOK`), but its switch
+  `US_MIN_GROWTH_ON` is **off**. The Korean words "매출 100억원 이상" are not true of it, and its own line ("분기 매출 25억원
+  이상", `rank.p.floorGrowthUs`) waits for Jack. To switch it on after his yes:
+  - fill `rank.p.floorGrowthUs` in `src/copy/v2.js` and move the row to the approved file;
+  - set `US_MIN_GROWTH_ON = true`;
+  - update the two "off" checks in `tests/test_us_min_ranks.py`;
+  - rebuild.
+- **Effect on 2026-11-20's data**, with the figures added by running the step three times (simulation on 2026-11-24):
+  - After runs 1 and 2 (`pending` 428, then 128) the lists are as today.
+  - After run 3 (`pending` 0), 수익성 under 미국 goes from 707 to 664 companies.
+    - 6 leave for negative common equity: Gartner #2, Halozyme #6, Las Vegas Sands #8, DaVita #24, Coca-Cola Consolidated #29,
+      FDXF.
+    - 37 leave because their equity is unknown, all other-currency filers (Ascendis #16, ASML, NVO, TSM, SAP, SONY …).
+  - Top 10 before: TPR, IT, STX, CL, MA, HALO, APP, LVS, LYFT, FTAI. After: TPR, STX, CL, MA, APP, LYFT, FTAI, FTNT, AAPL, SNDK.
+
+**Gate row** `미국 회사 크기 (qrev · qeq · 경고만)` (`validate_data.check_us_size`): warning only, it never stops a publish.
+- **It warns when:**
+  - either field is filled for fewer than 90% of the dollar filers that are not pending (`wait` · `time` · `stop` · `retry` are
+    left out, so the planned fill does not warn; `US_SIZE_FILL_WARN`);
+  - `usSize.pending` is not a count;
+  - `pending` rose from 0 in the previous publish (a cache loss);
+  - a field is malformed: not a number, no date, or a date after the US price date or more than 200 days before it;
+  - a non-dollar filer, ETF or fund carries a field;
+  - `usSize` is missing;
+  - the step crashed or never ran (`usSize.stopped`, including "notRun");
+  - the step stopped fetching early. The row names which kind: "야후 거절(429)로 받기를 멈춤" or "빈 답이 이어지는 회사가 있어 받기를
+    멈춤".
+- The value shows "아직 받지 않음 N" with whether the app's minimum is on, and the number of companies given up on.
+- A file from before this PR passes with "칸 없음".
+- **What to do on a warning:** read the run log's `미국 회사 크기` lines (counts, reasons, tickers).
+  - A 429 or many `retry`/`time`: Yahoo was refusing that day. The cache keeps earlier values and the next runs continue.
+  - A run of empty answers that keeps naming the same companies after their third try is not a refusal: they move to the
+    weekly queue (`gaveUp`).
+  - A malformed field is our bug: fix forward.
+
+**Rolling back #185**: a revert PR. The app then ignores `qrev` · `qeq` (the lists are as before), the reverted pipeline stops
+writing them, and the cache file is left unused in `.dart-cache`. No data run needed.
+## US stock splits and the Yahoo details copy (분할 뒤 보관본 맞춤 · usSrc.split · gate warning "미국 분할 뒤 상세 숫자", since #176)
+
+Audit, 2026-11-23: SNDK split 8:1 on 2026-11-20; the 11-21 publish had PER 5.1, PBR 0.63, ROE 141.2%, 가치 99. Two different problems
+sit behind US numbers after a split:
+
+- **Ours (fixed here): a pre-split copy rescaled by price alone.** `fetch_us` keeps Yahoo's details (PER, PBR, 시가총액, 배당수익률,
+  평균 거래량) for up to 3 days (14 when Yahoo refuses) with the price they were fetched at (`px`), and rescales them by today's price ÷
+  that price (`us_rescale`). After an N:1 split that ratio is about 1/N, so PER, PBR and 시가총액 came out N times too small, 배당수익률
+  N times too big, and 거래대금 (average volume × today's price, never rescaled) N times too small (audit: 8:1, no real move, PER 40 →
+  5.0, 134.6조원 → 16.8조원). Now:
+  - the split list is read before the details step from the same sources as the published `splits` (today's download, the previous
+    publish's `splits`, `SPLIT_OVERRIDES`; `us_info_split_map`), because `splits_fields` only runs in `main` after `fetch_us`. Dates up to
+    today (KST). When Yahoo moved a split's date (same ratio within 10 days), the rescale uses Yahoo's current date, which its price series
+    follows (the published `splits` keep the earlier date as before); a fixed-table row is never moved, and a Yahoo row near it is the
+    same event (never multiplied twice). Ratios that are 0, negative or not a number are ignored;
+  - each copy gets a decision (`us_info_split_view`): the splits after the copy's anchor day (`pd`, the run's US date, written since #176;
+    older copies: the day before `at`) and up to the stock's price basis (its `pxd` for a carried close, otherwise the US date) are
+    multiplied in: today's price × ratios ÷ the copy's price, and the average volume × ratios (reverse splits below 1, two splits multiply).
+    A split dated after the US date counts only if Yahoo's series already shows it. Between "no factor", "the dated splits" and "also
+    the later-dated ones", the one that puts the price ratio closest to 1 wins (ties go to the dates);
+  - a copy whose factor is accepted is **not** fetched again for the split (Yahoo's fresh numbers right after a split can be the stale
+    ones), but it is logged with `!!` and the gate warns (`fit`): a factor chosen by dates and prices can be wrong (a copy already on the new
+    share count plus a real price fall). When the copy is refreshed the normal way, the fresh numbers are compared with copy × ratio
+    (`us_info_fresh_vs_copy`), one direction only: a fresh number counts as pre-split when it is within 1.25× (`US_SPLIT_STALE_TOL`) of the
+    copy **without** the ratio and at least 1.5× (`US_SPLIT_DIFF_MIN`) from copy × ratio (so an earnings change, or anything after a 3:2
+    split or a stock dividend, never counts). If the fresh 시가총액 is pre-split that way, the factor was wrong (Yahoo computes market cap
+    from today's price and today's share count): the fresh details are used and stored (`unfit`). If instead PER, PBR or average volume are
+    pre-split while 시가총액 agrees (or can't be compared), Yahoo is still on the old per-share numbers: the copy × ratio is used and kept
+    (`diff`), and the next refresh compares again (copies live 14 days; after that the fresh numbers go out);
+  - fetched again that run (same three passes and pauses): a copy dated before a split whose factor would move the price ratio further
+    from 1 (`odd`: it may already be on the new share count), and a copy whose price moved more than 2× (`US_INFO_JUMP`) with no split
+    known (`jump`: a split Yahoo reported late). If Yahoo refuses, the copy is used as before, price ratio only (`left`);
+  - a carried row put back on Yahoo's bar after a split found late (`us_own_split_late`) uses the same rule (`us_own_restore_split`),
+    with the copy's anchor day from `fetch_us` (`_usOwnInfoPd`): ×N, no copy day known (factor 1, `rNoDay`) or rejected (`rOdd`).
+  - Log: `· 미국 분할 뒤 보관본 맞춤 (…): 곱함 0 · 그래서 다시 물음 0` on a normal day; `!!` with names for `fit`, `odd`, `jump`, `left`, a
+    split dated after the US date on a copy (not on details fetched today), `diff`, `unfit` or an error. `!! 미국 분할을 읽지 못해 …`: that run keeps the
+    price-only rescale for every copy (count given). `!! 오늘 다운로드에 분할 칸이 없는 미국 종목 …`: those tickers use the previous
+    publish's and the fixed table's splits only. `!! 야후 봉으로 되돌린 미국 종목 …의 상세 숫자 (분할 배율): …` for the late path.
+  - `data.json usSrc.split` (only when there is something to say; `fetch_data.us_split_rec_keep`, rows of tickers no longer in the file
+    are dropped): `fit` [[ticker, ratio]] · `odd` · `jump` · `left` · `late` [[ticker, applied]] · `diff` [[ticker, "pbr 8.00배"]] ·
+    `unfit` [[ticker, "cap 2.00배"]] · `bad` · `noCol` · `err` (the error's type name only: a pandas message such as "None of [Index…]"
+    would fail the gate's `글자에 nan·None·null·undefined 없음` row; the full text is in the log) + `errN` · `rx` · `rNoDay` · `rOdd`.
+- **Yahoo's (not fixed, warned): stale per-share numbers right after a split.** The 11-21 SNDK details were a fresh fetch after the split
+  (implied shares 142.3M → 1,138M, average volume 10.8M → 84.5M: ×8), so the copy fix above would not have changed them, and there was
+  no older copy to compare with. Yahoo's `priceToBook` still used the pre-split book value per share (79.24 ÷ 126 = 0.63; the 11-11
+  publish had 7.76 at $977.69); PER and 시가총액 were right. On 11-06 the ETFs that split 11-05 (MTUM, QUAL 4:1, SOXX 3:1) had 거래대금
+  3–4 times too small for one day. The old code never rescaled average volume, so a pre-split copy would give exactly that; but the
+  same day's 배당수익률, which the old code did rescale by the same price ratio, was normal (MTUM 0.64% vs 0.65% on 11-09, QUAL 0.85% vs
+  0.85%, SOXX 0.26% vs 0.27%), and a pre-split copy would have shown it 3–4 times too high. So those details were most likely fetched
+  after the split, with Yahoo's average volume not yet adjusted. The file can't prove it either way.
+- **Gate row `미국 분할 뒤 상세 숫자 (PBR ↔ PER × ROE · usSrc.split · 경고만)` (`validate_data.check_us_split_pbr`), warning only, in every
+  mode, also when its own check stops:**
+  - for each US company (not ETF, fund or `fcur`) with a split in `splits` within 30 days up to `usPxDate`, PBR should equal PER × ROE.
+    It warns, naming the stock, when they differ by more than √(split ratio), at least 1.5 (`US_SPLIT_BAND_MIN`): the same idea as
+    `US_FOREIGN_BAND` (a band narrower than √error puts every error of that size outside it), with a floor from 11-21's 582 US companies
+    (95% within 1.40×, 96% within 1.5×, 98% within 2×; SNDK before its split 1.42×). **Blind spots:** an error from a split with a ratio
+    of 1.5 or less (3:2, stock dividends) stays inside the floor, and an error that moves PER and PBR together (the copy problem above)
+    cancels out. Only `YYYY-MM-DD` dates and ratios other than 1 are read (the `주식 분할 목록 (splits)` row judges the rest);
+  - it names every path recorded in `usSrc.split`, all as warnings (`fit` and `rx` too, since a chosen factor can be wrong); a record
+    with `errN` but no `err` still warns;
+  - SKIP when the file has no `splits` (or `splits` is null) and no `usSrc.split`: the `주식 분할 목록 (splits)` row further down judges
+    that (it fails when the previous publish had `splits`).
+- **On a warning:** for a named PBR, compare it with the price ÷ book value per share in the latest filing; Yahoo usually corrects
+  itself within days, and the copy is fetched again every 3 days. For `left`, `odd` or `jump`, the next run asks Yahoo again; if a
+  ticker stays there for more than two runs, look at its split history on Yahoo and add a fixed-table row if Yahoo has it wrong. For
+  `diff`, nothing to do while the copy lasts (14 days); if Yahoo is still stale after that, the fresh numbers go out, so tell Jack. For
+  `fit`, check the named stock's split on Yahoo: right after a real split it is expected; a `fit` followed by `unfit` means the earlier
+  publishes carried that stock's PER, PBR, 시가총액 and 거래대금 off by the ratio, so tell Jack. Blanking
+  such a number on the site needs a new line on screen, so it is Jack's decision.
+
+**Rolling back #176**: a revert PR. Copies written with `pd` are read by the old code as before (it ignores the key); `usSrc.split` is
+ignored by the old gate and the app.
+
+## Factor scores: companies only (팩터 점수 · gate warning "팩터 점수: 회사끼리 순위", since #189)
+
+`fetch_data.add_percentiles` ranks the six factor scores (규모 `pz`, 가치 `vz`, 추세 `mz`, 퀄리티 `qz`, 저변동 `lz`, 배당 `dz`, Korea
+only) within each market over company shares only (preferred shares included); a row with `etf` true or `fund`
+(`validate_data.factor_fund`, the 2.0 app's `isStockLike` rule) is not in the ranking. Such a fund still gets each score whose input it has,
+placed against that market's companies (`fund_percentile`): with b companies below the fund's value and e equal to it, out of n companies
+with a value, its rank is b + (e + 1) ÷ 2 when e > 0 (the tied companies' own average rank, so the same value always gets the same score,
+review S1) and b when e = 0; p = rank ÷ n × 100, the score is p (추세, 퀄리티, 배당) or 100 − p (규모, 가치, 저변동), rounded with `round()` as
+the companies' are, always 0–100; a blank input means no score, as before. Each score's input and direction is defined once,
+`validate_data.FACTOR_SRC`, for companies, funds and the gate. Why: the 11-24 publish ranked 33 US ETFs (23 with
+Yahoo's `priceToBook`, meaningless for a fund: SOXX 0.37, TLT 0.55, SPY 1.76 against a real P/B of about 5) and 3 Korean listed
+infrastructure funds (088980, 415640, 094800) with the companies, so 547 of 665 US companies' `vz` were off by up to 3 points (mean 1.2;
+JPM 67 → 70, TDY 62 → 65), US `mz` · `lz` by up to 2 · 3, Korean `pz` · `mz` · `lz` by 1. Funds keep their scores so that nothing disappears
+from the old app's 내 포트폴리오의 성향 card or 기업분석 strip (review #189 S1 · S2); theirs move by up to 3 (SPY `lz` 97 → 99, QQQ `vz` 77 → 79,
+GLD `lz` 87 → 90; SOXX and TLT stay 가치 100, because Yahoo's fund PBR is below every company's). The log line after the ranking is `· 팩터 점수 (국내|미국):
+회사 주식 N종목 (우선주 n 포함)끼리 순위 (가치 vz … · 추세 mz … · 저변동 lz …) · 펀드 M곳은 순위에 넣지 않고 회사 분포에 견줘 매김 (점수 있는
+펀드 m) (names)`. The gate row `팩터 점수: 회사끼리 순위 · 펀드는 회사 분포에 견줌 (다시 매겨 맞춰 봄 · 경고만)` (`check_factor_pool`) re-scores
+the file from its own values without pandas (`factor_score_diffs`: average rank ÷ count × 100 for companies, the formula above for funds)
+and names every cell that differs (a blank as `빈 값`), plus any score on a `fund` row, a bond, gold or another non-stock row; its value says
+what it compared (`모두 같음 (다시 매겨 견준 것: 회사 3,275 · 펀드 36 · 칸 19,944 · 점수가 없어야 할 행 13)` on the re-scored 11-24 file); it
+warns, never fails, in every mode, and warns too when it can't read `stocks`. Until the first publish after #189 its warning takes one of
+the visible annotation slots (review note N5). On a warning: a file published before #189 differs in about 2,000 cells (expected until
+the first publish with this code); otherwise a fund ranked with the companies, a score input changed after the ranking, or a wrong `etf`
+mark (see the `etf 표시가 맞음` row). Not changed: a US fund's PER · PBR (and so its 가치 score) still come from Yahoo; the old app's 종목
+고르기 card shows them ("PER / PBR"), and a 2.0 두 종목 비교 with a held US ETF shows its PBR; blanking them needs a say-why line, so it is
+Jack's call. Rolling back: a plain revert PR (funds are ranked with companies again from the next publish; the gate row goes with it; no
+stored data depends on it).
 
 ## DART: asking again after a filing deadline (마감 뒤 매일 다시 묻기, since #180)
 
@@ -2292,6 +2848,20 @@ replays (`fake get`) cover the rest.
   **Revert**, and merges the revert pull request. The deploy runs by itself after the merge. Ask: "뱁새 마지막 머지를
   되돌려 줘." The same applies to a merge whose deploy was blocked by the deploy check: the site is still fine, but
   `main` is ahead of it until the revert.
+- **#184 (the 기록 split count, 2026-11-24): fix forward, don't plain-revert.** After #184 a user's records can come to a state
+  only #184's count reads, around a split whose ratio leaves a fraction of a 1/10,000 share. Two ways: a sale only #184's count
+  accepts (e.g. 1 + 1 DD shares bought before 2026-06-24 and both sold with a date before it), or any record the user saves for
+  a stock whose earlier records main's count reads only without the split: the record stores data.json's split with it
+  (`records.withRecord`, so the store's check reads it on today's basis), e.g. 10 DD bought and 5 + 5 sold before 06-24, then a
+  DD purchase or dividend recorded today. Main's code before #184 reads such a portfolio as "sold more than held".
+  On a plain revert, or in a tab still open from before #184, it sets that portfolio aside: `store.js` readStore (:1710–1711)
+  leaves it off every screen, 포트폴리오 says "이전에 저장한 기록을 읽지 못해 따로 보관해 두었어요." (`portfolio.jsx` :244) and
+  recording waits for the next save. Nothing is lost: the stored text stays as it is, the first save copies it whole to
+  `baepsae2.v1.unreadable.<time>` (`store.js` :1792; main never removes that copy, `readCopy` :929 and `dropCovered` :1455, and
+  기록 내보내기 carries it, `setAsideCopies` :1465), and a build with #184's count merges it back on the next start (`restoreMoved`
+  :1325). So if #184 must be undone, keep `held.js`'s count (and `lots.withStoredSplitsChecked`) and revert or fix only the part
+  that is wrong; a plain revert hides those portfolios until the count is back. The app's automatic split save never stores
+  a split main's count would refuse; only a record the user saves (above) does.
 - **Bad data** (the numbers are wrong and the gate missed it): Claude reverts the last commit on the `data` branch
   (and, until v17.6 part 3b, the same data commit on `main`), then starts **Actions → Deploy → Run workflow**. Users get
   the previous day's data back within about 15 minutes (a deploy started by hand runs the deploy check). Ask: "뱁새 어제
@@ -2380,9 +2950,37 @@ replays (`fake get`) cover the rest.
     date: that date's row, or the last row before it (a weekend or Korean holiday uses the last row before). **Contract,
     for every source: rows speak only for dates on or before `asOf`. The app refuses any later date, except today, which
     uses `data.json` `fx` when the data is fresh.** A date with no row on or before it is refused too (under ECOS:
-    2016-01-01 to 01-03, before its first business day).
+    2016-01-01 to 01-03, before its first business day). "Today" is Korea's date and, for a dollar record, also the US trade
+    date of now (#191, audit 2.1): New York's date, rolled over at 20:00 New York when the overnight session (주간거래) starts
+    booking the next trading day (`format.usTradeDay`; it differs from Korea's date from 00:00 to 10:00 KST in winter, 09:00
+    in summer).
+  - **Temporary rates (Jack, 2026-11-27, #191):** "not at today's rate. Save it right away at the latest available rate,
+    marked temporary, and replace it with that date's official rate automatically when the morning data arrives." A dollar
+    record dated "today" (either date above) that the history does not have yet is saved at once at `data.json` `fx` (the
+    newest rate the data carries, whichever source the run took it from; `fxSrc` says which when present) and marked
+    `rateTemp: true` on the record (`records.rateFor` · `ratePart`). From 10:00 to 24:00 KST (09:00 in summer) that is every
+    new US record: it stays marked until the next morning's publish. Each start of the app, and each change of the records,
+    `records.withOfficialRates` (app.jsx, only when the records can be written, said in the console with counts) replaces the
+    rate of every marked record whose date the loaded history covers and drops the mark: its own row; a date that never gets
+    one (a weekend, a Korean holiday) once a later row exists, then the last row before it (as above; a Sunday record waits
+    until Tuesday morning's publish, which has Monday's row); never while the history ends before the date or ends on it with
+    a last row not marked final. A sale of a holding put in by amount keeps its won amount (its dollar price moves with the
+    rate). While a record is marked, each screen that counts it says "지금은 최근 환율로 저장했어요. 이 날짜의 환율이 들어오면
+    자동으로 바꿔요." once (`rec.rateTemp`): the stock's record sheet (also right after 저장), 팔았어요's form (its 산 가격보다
+    counts a saved temporary purchase), the sheet after a full sale, 매수 계획's 기록했어요, 내 수익, 홈 (above the money cards and
+    이번 주 정리), 포트폴리오, 연말에 확인할 숫자 and 종목 바꾸기 (where 팔고 빼기 · 팔고 바꾸기 return). Not for the sale being typed
+    before 저장 (nothing of it is saved yet), and the CSV export carries the temporary rate without a
+    mark (it leaves the app; a known limit). Stale data still refuses a "today" record (`rec.noTodayRate`); any other date
+    after `asOf` keeps `rec.rateNotYet`. Records saved before #191 carry no mark and are never touched. Two tabs: a history
+    entry is the same entry when its records carry the same ids (store.js `entryKey`), so a replaced record is never counted
+    twice; entries of the same records that a build before #191 merged into two are made one on load
+    (`store.withoutTwinEntries`, console count). **If #191 is reverted**, marked records keep their temporary rate, the
+    older build reads them as ordinary rates (no line, no replacement); once #191 is deployed again it replaces the ones still
+    marked.
   - **Which date a record uses (for the app):** the US trading date of the purchase, sale or dividend, as the user typed
-    it. Row D of each source means:
+    it. The forms open on the US trade date of now for a dollar stock (`records.recordToday`; 매수 계획's 샀어요 dates its
+    dollar rows so when its date is left blank) and on Korea's date for every other stock; any date up to Korea's today
+    can be typed. Row D of each source means:
     - `ecos_close`: the Seoul 15:30 close on Korean business day D (ECOS 731Y003 · 0000003). ECOS posts it during the
       night (it was there by about 02:00 KST the next day; the exact time is not published). If the 06:40 run finds it
       missing, the history simply ends one business day earlier, the gate warns (holiday-table check below), and that
@@ -2419,8 +3017,40 @@ replays (`fake get`) cover the rest.
     for ECOS or 7 for Yahoo, a jump of more than 10% between two rows, a value outside 900–2,000, not starting in the first
     week of 2016, `asOf` not the last row, a last row after today (or on today for `ecos_next` and Yahoo), a Yahoo history
     that does not end on `fxDate`, a last value more than 10% from `fx` (the two come from different sources and times;
-    unit or currency mistakes are caught by the 900–2,000 range), `final` not true/false, or `fxHistFresh` after the
-    publish date. Every rate saved from it stays in users' records, so never loosen the row; ask Claude to find the cause.
+    unit or currency mistakes are caught by the 900–2,000 range) or, when `fx` is the history's own last row (#192:
+    `fxSrc.src` is not `yahoo`), more than 10% from that run's Yahoo value `fxSrc.yahoo.fx` (the same check, comparing the
+    two sources again; a file without `fxSrc`, like every publish before #192, is judged exactly as before), `final` not
+    true/false, or `fxHistFresh` after the publish date. Every rate saved from it stays in users' records, so never loosen the row; ask Claude to find the cause.
+  - **Today's rate, `data.json` `fx` · `fxDate` · `fxSrc`** (2026-11-24, Track 2 audit 3.8, #192). `fx` is the last row of the
+    run's `fxHist` and `fxDate` is that row's date, whenever the run read the history's source itself (`fxHistFresh` = the
+    run's date; a same-day re-run whose ECOS read failed keeps that day's earlier history, which counts too: its rows are the
+    real closes read that morning) and that row is not stale: under `ecos_close`, the Seoul 15:30 close of the last Korean
+    business day ECOS has posted (normally the day before the 06:40 publish; one business day earlier on the ~5% of mornings
+    ECOS has not posted yet; on a late manual run it can be that day's own close). "Stale" uses the gate's holiday table
+    (`validate_data.fx_close_floor`): more than one Korean business day before the day the table expects
+    (`_ecos_tail_min`); outside the table's years, more than 14 days before the publish. On a Korean holiday the Seoul market
+    is closed and ECOS has no row, so the rate stays at the last Seoul close, with its date shown (추석 2025: 1,400.0 → 1,421.0,
+    1.5% over 8 days; the largest 4-day gap since 2016 was 1.8%; the first publish after a long holiday takes the whole move,
+    well inside the 5% `환율 변화` row). So "today's rate" and a past date's rate come from one source, and the date shown under a won
+    figure ("원화는 {md} 환율 …", the 원/달러 tile) describes the number. US market values and 거래대금 in won, every "약 {won}"
+    under a $ price, 내 수익, 연말 and new US records dated today all use it; nothing in the app changed. Before this, `fx` was
+    Yahoo's last USD/KRW bar, still open at the 06:40 publish, under a past date: 11-21 showed 1,345.7 under 11-20 (that
+    day's close 1,336.2, −0.7%); 11-24 showed 1,340.7 under 11-23 (close 1,345.9: 10 AAPL at $349.08 read 4,680,116원, now
+    4,698,268원). How it is built: the US step builds `fxHist` first (Yahoo's value is the cross-check, ±10%, as before),
+    takes the rate from it, then prices US stocks in won; `main` puts the same history into `macro.json` (ECOS is asked once
+    a run, `ecos_fx_series_once`, failures included, so the two never differ). Yahoo is still used, and said, when the
+    history was not read this run (kept from an earlier publish, missing, its last row stale as above, or the choice
+    crashed): `fxSrc` = `{src: "yahoo", why: noHist | kept | old | err, yahoo: {d, fx, final}}` and the log has a `!! 환율(data.json fx)`
+    line. Its `fxDate` is the bar's own date only once the bar has finished (London midnight, 08:00/09:00 KST); an unfinished
+    bar is dated the run's Korean date, never a past close. `fxSrc.yahoo` always records Yahoo's bar (date, value, finished)
+    for comparison; when `fx` and Yahoo's value differ by more than 2% (normal days: median 0.25%, 99% 1.44%) the log line
+    is `!!`. Gate row **환율 출처 (fx · 경고만)** (warning only, never fails): passes when `fx` equals the `fxHist` row of
+    `fxDate` (to one decimal); otherwise it warns and names the source and reason (Yahoo, no row for that date, a mismatch,
+    or a file without `fxSrc`, as the 11-24 file was). It also warns when `fx` is more than 2% from `fxSrc.yahoo.fx`, when
+    the value is unfinished (`fxSrc.final` false, only possible under `yahoo_next`), and when an ECOS close's date is stale as
+    above. The 3-year Yahoo series still feeds US `vol` in won and the won gold and
+    silver series (history, not a day's rate); `fetch_data.fx_official`. The 데이터 출처 page names the source as "환율: 한국은행
+    경제통계시스템(ECOS)" (Jack, 2026-11-27; `src/info.jsx`).
   - `data.json` `splits` lists every US stock split since 2016-01-01 (`splitsFrom`), `[code, date, ratio]` (ratio = new
     shares per old share; the date is the first US trading day on the new count, or the ex-date for a stock dividend).
     It is "Yahoo plus fixes", not guaranteed complete: a small stock dividend Yahoo leaves out is only there if someone
@@ -2610,6 +3240,17 @@ it for good.
   stored split stays at the old date (the records need it) and data.json's corrected row is applied too, so those
   records can count the split twice; the console names both dates. Within 10 days (the pipeline's same-event window)
   the two are one split and only the stored one applies.
+
+- **Ratios that aren't whole numbers (#184).** 47 of data.json's 150 splits (DD 1:3, UL 8:9, AMCR 1:5, HON 1:2, SNEX 3:2 …).
+  A record dated before one is read x r, which may not be a whole 1/10,000 share (11 of them: one share; the rest: a
+  0.0001-share sale or a 금액으로 넣기 row). `held.js` `count()` rounds it two ways and uses one for every screen, the ledger and
+  the store's check, position by position: a sale that takes the per-record count (what main showed) or the running exact
+  total to exactly 0 closes the position and the next record starts from 0; an open position shows the per-record count while
+  it stays at or above 0, else the running one; when that reading goes below 0, the running count over the whole history is
+  used, else main's own count (records main saved read as main read them). A held count can
+  differ from the exact one by a unit or two (as on main): 3 x 1 old DD share shows 0.9999, and a sale of 0.9999 or 1 both
+  leave 0. The app stores such a split with a portfolio's records stock by stock, only where main's count reads them too;
+  otherwise the records stay as they are (the screens still apply the split) and the console says why, once per visit.
 
 ## Known limits: the date of a US record (v19.6a)
 
