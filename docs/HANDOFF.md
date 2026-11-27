@@ -24,18 +24,21 @@ links, "전무가" off the must-not-show list, labels) and a rename in `tests/te
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
 v19.6g, v19.6h.
 
-**US dates in 2.0 (#191, 2026-11-24; audit 2.1 and 2.2, minor):** a dollar record (샀어요 · 팔았어요 · 배당 받았어요 · 팔고 빼기 ·
-매수 계획's 샀어요 with a blank date, by currency: `pf.usdOf` / `records.recordCcy`, never cls) now opens on the US trade date of now
-(`format.usTradeDay`: New York's date, rolled over at 20:00 New York when the overnight session books the next day; it differs from
-Korea's date only from 00:00 to 10:00 KST in winter, 09:00 in summer), the date its hint asks for. Before the 06:40 publish that date
-takes today's rate (data.json fx) instead of main's "이 날짜의 환율이 아직 없어요" (**waits for Jack's yes**: it replaces his 11-13
-refusal for this one date; RUNBOOK updated); after it, that day's fxHist row (so a record made 06:40–10:00 shows a small rate
-effect on 내 수익, by design, #117). Korea's date can still be typed; won records, the store's checks and the records-file import are
-unchanged. 오늘 볼 것 · 다가오는 일정 keeps a US earnings or ex-dividend date until New York's midnight (13:00/14:00 KST). Follow-ups:
-a dollar record's 코스피 comparison starts from the close before its date (lots.js `closeBefore`), so a New York-dated record includes
-that day's 코스피 move (as typed US dates on main); undated 가진 종목 넣기 rows still count splits from `createdAt` (Korea's date);
-이번 주 정리's 다음 주 still starts at Korea's date (an existing test pins it). `tests/test_v2_us_dates.py`,
-`tests/test_v2_us_dates_screens.py`. No new Korean.
+**US dates in 2.0 and temporary rates (#191, open; audit 2.1 and 2.2, Jack's answer of 11-27):** a dollar record (샀어요 · 팔았어요 ·
+배당 받았어요 · 팔고 빼기 · 매수 계획's 샀어요 with a blank date, by currency: `pf.usdOf` / `records.recordCcy`, never cls) opens on the US
+trade date of now (`format.usTradeDay`: New York's date, rolled over at 20:00 New York when the overnight session books the next day;
+it differs from Korea's date only from 00:00 to 10:00 KST in winter, 09:00 in summer). Jack, 11-27: "not at today's rate. Save it right
+away at the latest available rate, marked temporary, and replace it with that date's official rate automatically when the morning
+data arrives." A dollar record dated "today" (that date or Korea's) the history does not have yet is saved at data.json fx with
+`rateTemp: true`; `records.withOfficialRates` (app.jsx, on load and on every change, console counts) puts that date's fxHist row in
+and drops the mark (a weekend or Korean holiday: the last row before it, once a later row shows it gets none); until then the record
+sheet, the sheet after a full sale, 매수 계획's 기록했어요 and 내 수익 say "지금은 최근 환율로 저장했어요. 이 날짜의 환율이 들어오면 자동으로
+바꿔요." (`rec.rateTemp`, Jack 11-27). Stale data still refuses; other dates after the history keep `rec.rateNotYet`; records saved before
+are untouched. store.js: `rateTemp` checked; a history entry is the same entry when its records carry the same ids (two tabs never
+count a replaced record twice). 오늘 볼 것 · 다가오는 일정 keeps a US date until New York's midnight. Follow-ups: a dollar record's 코스피
+comparison (lots.js `closeBefore`); undated 가진 종목 넣기 rows count splits from `createdAt`; 이번 주 정리's 다음 주 starts at Korea's date
+(an existing test pins it). Tests: `tests/test_v2_us_dates.py`, `test_v2_us_dates_screens.py`, `test_v2_rate_temp.py`. RUNBOOK
+"Temporary rates".
 
 **Factor scores, companies only (#189, 2026-11-24; found on the 11-24 publish):** `add_percentiles` ranked 33 US ETFs (23 with Yahoo's
 `priceToBook`, meaningless for a fund: SPY 1.76, really about 5) and 3 Korean listed infrastructure funds together with companies, so

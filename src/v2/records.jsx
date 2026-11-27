@@ -18,7 +18,7 @@ import { signedPct } from "./deckcalc.js";
 import { splitsFor } from "./lots.js";
 import {
   stockState, checkSale, checkPurchase, checkDiv, withRecord, withoutRecord, recordsOf, salePreview, soldOutNow, rateEnv, typed, decksFor, recordCcy,
-  closeIsDefault, rateRefusal, recordToday,
+  closeIsDefault, rateRefusal, recordToday, hasTempRate,
 } from "./records.js";
 
 const usdText = (v) => "$" + nf(v, 2);
@@ -112,6 +112,8 @@ function RecordList({ flow, setFlow, store, setStoreData, deck, close, shift, sa
           {(st.inHoldings || st.inHistory) && <Button kind="secondary" onClick={() => go("div")} style={{ padding: `0 ${SPACE(2)}px`, wordBreak: "keep-all" }}>{C.rec.div}</Button>}
         </div>
         {flow.saved && <Note data-ui-v2="rec-saved">{C.plan.done}</Note>}
+        {/* #191 (Jack, 2026-11-27): a record of this stock here saved at the latest rate, its date's rate not in yet: once */}
+        {hasTempRate(deck, t) && C.rec.rateTemp && <Note data-ui-v2="rec-rate-temp">{C.rec.rateTemp}</Note>}
         {fail && <Note tone="watch" data-ui-v2="store-fail">{C.store.unavailable}</Note>}
         {/* a split correction in data.json changed this stock's share count during this visit (app.jsx: an "out" row took a
             stored split out or moved it to the corrected date) */}
@@ -178,7 +180,8 @@ function RecordForm({ flow, setFlow, load, store, setStoreData, deck, close, shi
   // the date the form opens with (records.recordToday): a dollar record's is the US trade date of now, the US trading date the
   // hint below asks for (audit 2.1: after Korean midnight the Korean date is New York's tomorrow; from 20:00 New York the
   // overnight session books the next day: format.usTradeDay); a won record's Korea's, as before.
-  // Any date up to Korea's today can still be typed (max), and either "today" takes today's rate (records.rateFor)
+  // Any date up to Korea's today can still be typed (max); either "today" that the history does not have yet is saved at the latest
+  // rate, marked temporary (records.rateFor, Jack 2026-11-27), and replaced by its date's rate when the data has it (app.jsx)
   const day = recordToday(env, usd);
   // v19.7a 팔고 빼기: the sale form opens with every held share filled in (flow.prefill.qty; with flow.lockQty it then follows
   // the date, below)
@@ -329,6 +332,7 @@ function FullSale({ flow, setFlow, store, setStoreData, deck, close, shift, samp
       {sample}
       <div data-ui-v2="rec-full">
         {body && <p style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2, { wordBreak: "keep-all" })}>{body}</p>}
+        {hasTempRate(deck, flow.t) && C.rec.rateTemp && <Note data-ui-v2="rec-rate-temp">{C.rec.rateTemp}</Note>}
         {fail && <Note tone="watch" data-ui-v2="store-fail">{C.store.unavailable}</Note>}
         {only && <Note data-ui-v2="rec-full-last">{C.rm.last}</Note>}
         <div style={{ display: "flex", gap: SPACE(2), marginTop: SPACE(4) }}>

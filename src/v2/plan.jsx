@@ -14,7 +14,7 @@ import { usOf, priceDate, krOwnCloseText } from "./cofmt.js";
 import { deckState, pickItems, computePlan, deckDisplayName, reasonsLine, clashView, aboutWon, missingPct, rulesFor, deckRecord, opAmounts, y2022View, divDropBody } from "./deckcalc.js";
 import { writeStore, recordId } from "./store.js";
 import { usdOf } from "./pf.js";
-import { rateFor, rateEnv, rateRefusal, recordToday, DATE_FROM } from "./records.js";
+import { rateFor, rateEnv, rateRefusal, recordToday, ratePart, DATE_FROM } from "./records.js";
 import { dataSplits, splitSince } from "./lots.js";
 import { KR_DIV_TREND, exactData, usDividendCounted } from "./engine.js";
 import { epsFixFor } from "./fix.js";
@@ -331,6 +331,7 @@ export function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, s
   const [tried, setTried] = useState(false);
   const [noRate, setNoRate] = useState(null);     // v19.6a: no exchange rate for the date yet (US rows): "past" | "today" | null
   const [savedN, setSavedN] = useState(0);        // distinct stocks actually recorded (quantity > 0): 기록했어요's {n}
+  const [savedTemp, setSavedTemp] = useState(false); // #191: a US row saved at the latest rate (rateTemp): 기록했어요 says so once
   const setV = (t, k, v) => setVals((m) => ({ ...m, [t]: { ...(m[t] || {}), [k]: v } }));
   const today = todayKst();
   const env = rateEnv(load, today, usTradeDay());
@@ -362,16 +363,16 @@ export function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, s
     // close from macro.json fxHist), so 포트폴리오 can show 원금 in won (Part E). A past date whose rate the data does not
     // have yet is not saved (never another day's rate): the approved "환율 정보를 불러오지 못해 …" line says so (today on stale
     // data: records.jsx's today line). A date before 2016 is saved without a rate and marked noFx (never costed at planFx).
-    // (each US row's own date: dayOf; the US trade date of now takes today's rate until the history has that day, records.rateFor)
+    // (each US row's own date: dayOf; a "today" the history does not have yet is saved at the latest rate, marked temporary:
+    // records.rateFor and ratePart, Jack 2026-11-27)
     const usRows = parsed.filter((r) => r.q > 0 && usdOf(r.x.s));
     const rates = new Map();
     for (const r of usRows) { const d = dayOf(r.x.s); if (!rates.has(d)) rates.set(d, rateFor(d, env)); }
     const [day, rate] = [...rates].find(([, x]) => !x.ok) || [null, { ok: true }];
     if (!rate.ok) { console.warn(`[v2] purchase not saved: no exchange rate for ${day} (${rate.why})`); setNoRate(rateRefusal(rate.why)); setTried(true); return; }
     setNoRate(null);
-    const ratePart = (d) => { const x = rates.get(d); return typeof x.fx === "number" && x.fx > 0 ? { fx: x.fx } : x.before ? { noFx: true } : {}; };
     const purchases = parsed.filter((r) => r.q > 0).map((r) => (usdOf(r.x.s)
-      ? { id: recordId(), t: r.x.t, date: dayOf(r.x.s), qty: r.q, price: r.p, ccy: "USD", ...ratePart(dayOf(r.x.s)) }
+      ? { id: recordId(), t: r.x.t, date: dayOf(r.x.s), qty: r.q, price: r.p, ccy: "USD", ...ratePart(rates.get(dayOf(r.x.s))) }
       : { id: recordId(), t: r.x.t, date: dayOf(r.x.s), qty: r.q, price: r.p, ccy: "KRW" }));   // id: two tabs' copies merge by it
     const id = `d${Date.now().toString(36)}`;
     const deck = deckRecord({ load, st, plan, purchases, id, today: todayKst() });
@@ -379,6 +380,7 @@ export function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, s
     if (!store.writable || !writeStore(next, store.key, today)) { setFail(true); return; }
     setFail(false);
     setSavedN(new Set(purchases.map((p) => p.t)).size);
+    setSavedTemp(purchases.some((p) => p.rateTemp === true));
     setStoreData(next, true);
     onDone();
   };
@@ -394,6 +396,7 @@ export function RecordSheet({ open, stage, onClose, load, st, plan, ds, store, s
           <Mascot src={IMG.happy} alt={P.doneAlt} size={64} />
           {P.doneBody && savedN > 0 && <p data-ui-v2="done-body" style={tx(SIZE.sm, WEIGHT.regular, COLOR.text2)}>{fill(P.doneBody, { n: savedN })}</p>}
         </div>
+        {savedTemp && C.rec.rateTemp && <Note data-ui-v2="rec-rate-temp">{C.rec.rateTemp}</Note>}
         <div style={{ marginTop: SPACE(4) }}><Button kind="secondary" onClick={goToday}>{P.doneLink || C.app.tabs.home}</Button></div>
       </BottomSheet>
     );

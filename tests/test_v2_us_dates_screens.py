@@ -6,7 +6,10 @@ react-dom/server 로 기록 양식(records.jsx RecordFlow: 샀어요 · 팔았�
 감싸 onClick 을 모아 둬요: tests 의 shim). 확인하는 것:
 - 날짜 칸이 열릴 때의 값과 max (max 는 늘 한국 날짜): 달러 종목은 그 거래가 잡히는 미국 날짜 (format.usTradeDay: 뉴욕 날짜, 뉴욕 20:00 부터는
   다음 날 — 겨울 10:00 KST), 한국 종목은 한국 날짜 (main 과 같아요)
-- 저장되는 기록의 날짜와 환율: 환율 기록에 그날이 없으면 오늘 환율(data.json fx 1,338원), 있으면 그날 줄 (아침 발행 뒤)
+- 저장되는 기록의 날짜와 환율: 환율 기록에 그날이 없으면 앱이 가진 최근 환율(data.json fx 1,338원)에 임시 표시(rateTemp), 있으면 그날 줄
+  (아침 발행 뒤, 표시 없음) — Jack, 2026-11-27
+- 임시 환율 기록이 있으면 승인된 줄 "지금은 최근 환율로 저장했어요. 이 날짜의 환율이 들어오면 자동으로 바꿔요." 이 한 번: 그 종목의 기록 목록 ·
+  다 판 뒤의 시트 · 내 수익. 없으면 없어요. 그 줄이 있는 화면에 '이 날짜의 환율이 아직 없어요' 줄은 없어요
 - 매수 계획의 샀어요: 날짜를 비워 두면 줄마다 자기 시장의 날짜 · 환율, 한국 줄은 main 과 같아요 (한국 날짜 · 원 · 환율 없음)
 기대값은 손으로 셌어요. 시험 데이터: tests/fixtures/v2 (AAPL $344.63 · 삼성전자 225,000원 · fx 1,338원).
 """
@@ -22,7 +25,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NODE = shutil.which("node")
 pytestmark = pytest.mark.skipif(NODE is None, reason="node 가 없어요")
 FIX = os.path.join(ROOT, "tests", "fixtures", "v2")
-MODS = {"RJ": "src/v2/records.jsx", "PJ": "src/v2/plan.jsx", "E": "src/v2/engine.js", "UI": "src/ui/components.jsx", "CP": "src/copy/v2.js"}
+MODS = {"RJ": "src/v2/records.jsx", "PJ": "src/v2/plan.jsx", "RT": "src/v2/returns.jsx", "E": "src/v2/engine.js", "UI": "src/ui/components.jsx",
+        "CP": "src/copy/v2.js"}
 _B = {}
 
 # JSX through one function that keeps every onClick it is given (the "저장" button's handler is then called after the render)
@@ -127,20 +131,21 @@ const sheet = (clock, asOf) => {
 def run(body):
     d = bundle_dir()
     code = ("import fs from 'fs'; import React from 'react'; import { renderToStaticMarkup } from 'react-dom/server';\n"
-            "import { RJ, PJ, E, UI, CP, CLICKS } from './b.mjs';\n" + f"const FIX = {json.dumps(FIX)};\n" + HELP + "let out;\n" + body
+            "import { RJ, PJ, RT, E, UI, CP, CLICKS } from './b.mjs';\n" + f"const FIX = {json.dumps(FIX)};\n" + HELP + "let out;\n" + body
             + "\nprocess.stdout.write(JSON.stringify(out));")
     r = subprocess.run([NODE, "--input-type=module", "-e", code], cwd=d, capture_output=True, text=True, timeout=120, env={**os.environ, "TZ": "UTC"})
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
 
 
-# (clock, the history's last day then, the US trade date, Korea's date, the rate a US record of that date saves)
+# (clock, the history's last day then, the US trade date, Korea's date, the rate a US record of that date saves, the temporary mark)
 CLOCKS = [
-    ("2026-11-24T01:00:00+09:00", "2026-11-20", "2026-11-23", "2026-11-24", 1338.0),   # US session after Korean midnight: today's rate
-    ("2026-11-24T09:00:00+09:00", "2026-11-23", "2026-11-23", "2026-11-24", 1345.9),   # the morning after: the history's row of 11-23
-    ("2026-11-24T11:00:00+09:00", "2026-11-23", "2026-11-24", "2026-11-24", 1338.0),   # overnight session (주간거래): booked 11-24, as main
-    ("2026-11-24T15:00:00+09:00", "2026-11-23", "2026-11-24", "2026-11-24", 1338.0),   # afternoon: both dates the same, as main
+    ("2026-11-24T01:00:00+09:00", "2026-11-20", "2026-11-23", "2026-11-24", 1338.0, True),    # US session after Korean midnight: the latest rate, temporary
+    ("2026-11-24T09:00:00+09:00", "2026-11-23", "2026-11-23", "2026-11-24", 1345.9, False),   # the morning after: the history's row of 11-23
+    ("2026-11-24T11:00:00+09:00", "2026-11-23", "2026-11-24", "2026-11-24", 1338.0, True),    # overnight session (주간거래): booked 11-24, main's date
+    ("2026-11-24T15:00:00+09:00", "2026-11-23", "2026-11-24", "2026-11-24", 1338.0, True),    # afternoon: both dates the same, main's date
 ]
+TEMP = {"rateTemp": True}
 
 
 def test_the_record_form_opens_on_the_us_trade_date_for_a_dollar_stock_and_saves_it_with_that_dates_rate():
@@ -148,7 +153,7 @@ def test_the_record_form_opens_on_the_us_trade_date_for_a_dollar_stock_and_saves
       out = {json.dumps(CLOCKS)}.map(([clock, asOf]) => ({{ clock,
         buy: form(clock, asOf, 'buy', 'AAPL', 'Apple Inc.'), sell: form(clock, asOf, 'sell', 'AAPL', 'Apple Inc.'), div: form(clock, asOf, 'div', 'AAPL', 'Apple Inc.'),
         krBuy: form(clock, asOf, 'buy', '005930', '삼성전자'), krSell: form(clock, asOf, 'sell', '005930', '삼성전자'), krDiv: form(clock, asOf, 'div', '005930', '삼성전자') }}));""")
-    for (clock, _, us, kr, fx), g in zip(CLOCKS, got):
+    for (clock, _, us, kr, fx, temp), g in zip(CLOCKS, got):
         for k in ("buy", "sell", "div", "krBuy", "krSell", "krDiv"):
             assert g[k]["input"]["max"] == kr, (clock, k, g[k]["input"])                 # the latest date that can be typed: Korea's, as on main
         assert g["buy"]["input"]["value"] == us and g["sell"]["input"]["value"] == us and g["div"]["input"]["value"] == us, (clock, g["buy"]["input"])
@@ -161,7 +166,8 @@ def test_the_record_form_opens_on_the_us_trade_date_for_a_dollar_stock_and_saves
 
 def test_the_record_form_saves_the_date_it_opened_on_with_that_dates_rate():
     """The same forms with the quantity in from the start (flow.prefill, as 팔고 빼기 opens the sale form with every share held): pressing
-    저장 saves the date the form opened on and that date's rate; Korean records: Korea's date, no rate, as on main."""
+    저장 saves the date the form opened on and that date's rate (the latest rate marked temporary while the history does not have the
+    date); Korean records: Korea's date, no rate, as on main."""
     got = run(f"""
       const typedForm = (clock, asOf, stage, t, nk, prefill) => {{
         at(clock); let saved = null;
@@ -173,17 +179,54 @@ def test_the_record_form_saves_the_date_it_opened_on_with_that_dates_rate():
       out = {json.dumps(CLOCKS)}.map(([clock, asOf]) => [typedForm(clock, asOf, 'buy', 'AAPL', 'Apple Inc.', {{ qty: 2 }}),
         typedForm(clock, asOf, 'sell', 'AAPL', 'Apple Inc.', {{ qty: 1 }}), typedForm(clock, asOf, 'buy', '005930', '삼성전자', {{ qty: 3 }}),
         typedForm(clock, asOf, 'sell', '005930', '삼성전자', {{ qty: 2 }})]);""")
-    for (clock, _, us, kr, fx), (buy, sell, krBuy, krSell) in zip(CLOCKS, got):
-        assert buy == {"t": "AAPL", "date": us, "qty": 2, "price": 344.63, "ccy": "USD", "fx": fx}, (clock, buy)
-        assert sell == {"t": "AAPL", "qty": 1, "price": 344.63, "date": us, "ccy": "USD", "fx": fx}, (clock, sell)
+    for (clock, _, us, kr, fx, temp), (buy, sell, krBuy, krSell) in zip(CLOCKS, got):
+        mark = TEMP if temp else {}
+        assert buy == {"t": "AAPL", "date": us, "qty": 2, "price": 344.63, "ccy": "USD", "fx": fx, **mark}, (clock, buy)
+        assert sell == {"t": "AAPL", "qty": 1, "price": 344.63, "date": us, "ccy": "USD", "fx": fx, **mark}, (clock, sell)
         assert krBuy == {"t": "005930", "date": kr, "qty": 3, "price": 225000, "ccy": "KRW"}, (clock, krBuy)
         assert krSell == {"t": "005930", "qty": 2, "price": 225000, "date": kr, "ccy": "KRW"}, (clock, krSell)
 
 
 def test_the_plan_sheet_dates_each_row_in_its_own_market_and_saves_each_us_row_with_its_dates_rate():
     got = run(f"out = {json.dumps(CLOCKS)}.map(([clock, asOf]) => sheet(clock, asOf));")
-    for (clock, _, us, kr, fx), g in zip(CLOCKS, got):
+    for (clock, _, us, kr, fx, temp), g in zip(CLOCKS, got):
         assert g["input"] == {"value": "", "max": kr}, (clock, g["input"])              # the sheet's date field stays blank, max Korea's
         assert g["purchases"] == [{"t": "005930", "date": kr, "qty": 2, "price": 225000, "ccy": "KRW"},
-                                  {"t": "AAPL", "date": us, "qty": 2, "price": 344.63, "ccy": "USD", "fx": fx}], (clock, g)
+                                  {"t": "AAPL", "date": us, "qty": 2, "price": 344.63, "ccy": "USD", "fx": fx, **(TEMP if temp else {})}], (clock, g)
         assert g["createdAt"] == kr and not g["logs"], (clock, g)
+
+
+# the records as saved at 01:00 KST 11-24 (AAPL bought on 11-23 at the latest rate, marked temporary), and as the morning replaced them
+TEMP_BUY = {"id": "p9aaaaaa", "t": "AAPL", "qty": 2, "price": 344.63, "date": "2026-11-23", "ccy": "USD", "fx": 1338.0, "rateTemp": True}
+TEMP_SALE = {"id": "s9aaaaaa", "t": "AAPL", "qty": 3, "price": 350, "date": "2026-11-23", "ccy": "USD", "fx": 1338.0, "rateTemp": True}
+
+
+def test_the_approved_line_shows_once_where_a_temporary_rate_is_shown_and_nowhere_else():
+    """Jack, 2026-11-27: while a record's rate is temporary, the screens that show it or its won amounts say so once, word for word:
+    the stock's record sheet (also right after saving), the sheet after a full sale, and 내 수익. Not for another stock's sheet, not
+    once the rate is replaced, and never with the 'not yet' refusal line (that one is for a date that is not today)."""
+    got = run(f"""
+      at('2026-11-24T09:30:00+09:00');
+      const TB = {json.dumps(TEMP_BUY)}, TS = {json.dumps(TEMP_SALE)};
+      const L = (() => {{ const l = loadOf('2026-11-23'); l.data = {{ ...l.data, pxDate: '2026-11-23', usPxDate: '2026-11-23', fxDate: '2026-11-23',
+        publishedAt: '2026-11-24T06:40:00+09:00' }}; l.corp = {{ ...l.corp, publishedAt: '2026-11-24T06:40:00+09:00' }}; return l; }})();
+      const withRecs = (purchases, sales = []) => ({{ ...deckOf(), purchases: [...deckOf().purchases, ...purchases], sales }});
+      const sheetOf = (deck, t, nk, stage = 'list', saved = false) => renderToStaticMarkup(h(RJ.RecordFlow, {{ flow: {{ stage, deckId: 'd1', t, nk, saved }},
+        setFlow: () => {{}}, load: L, store: storeOf([deck]), setStoreData: () => {{}} }}));
+      const ret = (deck) => renderToStaticMarkup(h(RT.Returns, {{ deck, load: L, store: storeOf([deck]), pad: 16, onBack: () => {{}}, onTax: null }}));
+      const count = (html) => html.split(C.rec.rateTemp).length - 1;
+      const soldOut = {{ ...deckOf(), sales: [{{ ...TS }}] }};                       // 3 AAPL held, 3 sold at a temporary rate: sold out
+      const fixedBuy = {{ ...TB, fx: 1345.9 }}; delete fixedBuy.rateTemp;
+      out = {{
+        line: C.rec.rateTemp,
+        afterSave: count(sheetOf(withRecs([TB]), 'AAPL', 'Apple Inc.', 'list', true)), list: count(sheetOf(withRecs([TB]), 'AAPL', 'Apple Inc.')),
+        otherStock: count(sheetOf(withRecs([TB]), '005930', '삼성전자')), replaced: count(sheetOf(withRecs([fixedBuy]), 'AAPL', 'Apple Inc.')),
+        full: count(sheetOf(soldOut, 'AAPL', 'Apple Inc.', 'full')), fullNone: count(sheetOf(deckOf(), 'AAPL', 'Apple Inc.', 'full')),
+        returns: count(ret(withRecs([TB]))), returnsSale: count(ret(soldOut)), returnsNone: count(ret(withRecs([fixedBuy]))),
+        notYet: [sheetOf(withRecs([TB]), 'AAPL', 'Apple Inc.'), ret(withRecs([TB]))].some((x) => x.includes(C.rec.rateNotYet)),
+        errors: logs.filter((m) => m.startsWith('error')),
+      }};""")
+    assert got["line"] == "지금은 최근 환율로 저장했어요. 이 날짜의 환율이 들어오면 자동으로 바꿔요."
+    assert [got["afterSave"], got["list"], got["full"], got["returns"], got["returnsSale"]] == [1, 1, 1, 1, 1], got
+    assert [got["otherStock"], got["replaced"], got["fullNone"], got["returnsNone"]] == [0, 0, 0, 0], got
+    assert got["notYet"] is False and got["errors"] == [], got

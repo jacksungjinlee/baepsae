@@ -2732,12 +2732,23 @@ stored data depends on it).
     for every source: rows speak only for dates on or before `asOf`. The app refuses any later date, except today, which
     uses `data.json` `fx` when the data is fresh.** A date with no row on or before it is refused too (under ECOS:
     2016-01-01 to 01-03, before its first business day). "Today" is Korea's date and, for a dollar record, also the US trade
-    date of now (#191, audit 2.1; waits for Jack's yes, as it replaces his `rec.rateNotYet` refusal of 11-13 for this one
-    date): New York's date, rolled over at 20:00 New York when the overnight session (주간거래) starts booking the next
-    trading day (`format.usTradeDay`; it differs from Korea's date from 00:00 to 10:00 KST in winter, 09:00 in summer). That
-    date uses `data.json` `fx` only while the history does not have it yet (during the US session after Korean midnight,
-    before the 06:40 publish); once the history has it, its own row, as any past date. Stale data: the today line
-    (`rec.noTodayRate`). Any other date after `asOf` keeps `rec.rateNotYet`.
+    date of now (#191, audit 2.1): New York's date, rolled over at 20:00 New York when the overnight session (주간거래) starts
+    booking the next trading day (`format.usTradeDay`; it differs from Korea's date from 00:00 to 10:00 KST in winter, 09:00
+    in summer).
+  - **Temporary rates (Jack, 2026-11-27, #191):** "not at today's rate. Save it right away at the latest available rate,
+    marked temporary, and replace it with that date's official rate automatically when the morning data arrives." A dollar
+    record dated "today" (either date above) that the history does not have yet is saved at once at `data.json` `fx` (the
+    latest rate the app has; since #192 the last ECOS row when the run read ECOS) and marked `rateTemp: true` on the record
+    (`records.rateFor` · `ratePart`). Each start of the app, and each change of the records, `records.withOfficialRates`
+    (app.jsx, only when the records can be written, said in the console with counts) replaces the rate of every marked record
+    whose date the loaded history covers and drops the mark: its own row; a date that never gets one (a weekend, a Korean
+    holiday) once a later row exists, then the last row before it (as above); never while the history ends before the date
+    or ends on it with a last row not marked final. A sale of a holding put in by amount keeps its won amount (its dollar
+    price moves with the rate). While a record is marked, its stock's record sheet, the sheet after a full sale, 매수 계획's
+    기록했어요 and 내 수익 say "지금은 최근 환율로 저장했어요. 이 날짜의 환율이 들어오면 자동으로 바꿔요." once (`rec.rateTemp`). Stale
+    data still refuses a "today" record (`rec.noTodayRate`); any other date after `asOf` keeps `rec.rateNotYet`. Records saved
+    before #191 carry no mark and are never touched. Two tabs: a history entry is the same entry when its records carry the
+    same ids (store.js `entryKey`), so a replaced record is never counted twice.
   - **Which date a record uses (for the app):** the US trading date of the purchase, sale or dividend, as the user typed
     it. The forms open on the US trade date of now for a dollar stock (`records.recordToday`; 매수 계획's 샀어요 dates its
     dollar rows so when its date is left blank) and on Korea's date for every other stock; any date up to Korea's today

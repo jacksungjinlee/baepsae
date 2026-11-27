@@ -35,19 +35,25 @@ const realDate = (x) => typeof x === "string" && DATE.test(x) && new Date(x + "T
 // The US trade date of now (audit 2.1, 2026-11-24): a dollar record made during the US session after Korean midnight (23:30–06:00
 // KST in winter, 22:30–05:00 in summer) is dated New York's date, the Korean date's day before, as the form's hint asks ("미국
 // 주식은 미국 현지 날짜로 적어 주세요."); the date rolls over at 20:00 New York, when the overnight session starts booking the next
-// trading day (format.usTradeDay, env.usDay). That date is the trade date of now, so when the history does not have it yet it
-// takes today's rate, as a record dated the Korean today does (never "notYet"; waits for Jack's yes, #191: it replaces his
-// rec.rateNotYet refusal of 11-13 for this one date). When the history has it (the morning after, once the publish has that
-// day's Seoul close) it takes that row, as it did before: a record dated D keeps the rate of D whenever it is typed.
+// trading day (format.usTradeDay, env.usDay).
+// A temporary rate (Jack, 2026-11-27: "not at today's rate. Save it right away at the latest available rate, marked temporary,
+// and replace it with that date's official rate automatically when the morning data arrives"): with the screens' env (usDay
+// given), a dollar record dated "today" — the US trade date of now or Korea's today — whose date the history does not have yet
+// is saved at the latest rate the app has (data.json fx) and marked temporary ({ temp: true } here, rateTemp on the record);
+// withOfficialRates puts that date's rate in its place once loaded data has it. Never while the data is stale (the today line,
+// rec.noTodayRate, as before). A date the history has takes its row, as before (the morning after: the US trade date of the
+// night). Any other date after the history keeps "notYet" (rec.rateNotYet). Without usDay (tests of main's rule, weekly.js),
+// main's answers: Korea's today takes data.json fx unmarked.
 // env: { today, usDay?, fx, fxDate, fxHist, stale } (usDay: format.usTradeDay, only from the screens that save dollar records).
-// -> { ok: true, fx } | { ok: true, fx: null, before: true } | { ok: false, why: "today" (today's rate: the approved
+// -> { ok: true, fx, temp? } | { ok: true, fx: null, before: true } | { ok: false, why: "today" (today's rate: the approved
 //    past-date line does not fit) | "notYet" (a past date after the history's last day) | "past" (any other past date:
 //    "환율 정보를 불러오지 못해 … 지난 날짜의 …") | "date" }
 export const FX_FROM = "2016-01-01";
 export function rateFor(date, env) {
   const e = env || {};
-  const r = histRate(date, e);
-  return !r.ok && r.why !== "date" && typeof e.usDay === "string" && date === e.usDay ? todayRate(e) : r;
+  if (typeof e.usDay !== "string" || !realDate(date) || (date !== e.today && date !== e.usDay)) return histRate(date, e);
+  const h = histRate(date, { ...e, today: null });
+  return h.ok ? h : pos(e.fx) && !e.stale ? { ok: true, fx: e.fx, temp: true } : { ok: false, why: "today" };
 }
 const todayRate = (e) => (pos(e.fx) && !e.stale ? { ok: true, fx: e.fx } : { ok: false, why: "today" });
 function histRate(date, e) {
@@ -69,8 +75,70 @@ function histRate(date, e) {
 // The line a refused rate gets (records.jsx's forms and 매수 계획's 샀어요, plan.jsx): "today" (rec.noTodayRate), "notYet"
 // (rec.rateNotYet, Jack 2026-11-13), else "past" (rec.noPastRate).
 export const rateRefusal = (why) => (why === "today" || why === "notYet" ? why : "past");
-// The rate part of a new USD record: { fx } or, before 2016, { noFx: true } (store.js: never costed at planFx).
-const ratePart = (r) => (pos(r.fx) ? { fx: r.fx } : r.before ? { noFx: true } : {});
+// The rate part of a new USD record: { fx } (with rateTemp: true when it is the temporary rate, rateFor's temp), or, before
+// 2016, { noFx: true } (store.js: never costed at planFx). plan.jsx's 샀어요 builds the same part.
+export const ratePart = (r) => (pos(r.fx) ? { fx: r.fx, ...(r.temp === true ? { rateTemp: true } : {}) } : r.before ? { noFx: true } : {});
+
+// ---------------- temporary rates replaced by their dates' rates (Jack, 2026-11-27) ----------------
+// Every dollar record marked rateTemp (in a portfolio's lists and in its history entries) whose date the history now covers
+// gets that date's rate: the history's row of its date, the rate a record of that date typed now saves (rateFor without a
+// today: fxHist only). Its own row once it exists; a date that never gets one (a weekend, a Korean holiday: ECOS has no Seoul
+// close then) is covered once the history has a later row (rows come in date order, so its own row will never come), and
+// then takes the last row before it, as every record of such a date does (#117 RUNBOOK). Never before: while the history
+// ends before the date (or ends on it with a last row not marked final) the record stays temporary. A sale of a holding put
+// in by amount (판 금액 in won) keeps its won amount: its dollar price moves with the rate (price × old / new), so qty × price
+// × fx stays what was typed. Idempotent (nothing marked: the same object). -> { data, fixed: [{ id, t, date, kind, from, to }],
+// waiting: [{ id, t, date, kind }] }
+const TEMP_LISTS = [["purchases", "buy"], ["sales", "sell"], ["divs", "div"]];
+export function withOfficialRates(data, fxHist) {
+  const fixed = [], waiting = [];
+  if (!data || !Array.isArray(data.decks)) return { data, fixed, waiting };
+  const env = { today: null, fxHist };
+  const fixList = (deckId, list, kind, wonSale) => {
+    if (!Array.isArray(list) || !list.some((r) => r && r.rateTemp === true)) return list;
+    return list.map((r) => {
+      if (!r || r.rateTemp !== true || r.ccy !== "USD") return r;
+      const x = rateFor(r.date, env);
+      if (!(x.ok && pos(x.fx))) { waiting.push({ id: deckId, t: r.t, date: r.date, kind }); return r; }
+      const { rateTemp: _t, ...rest } = r;
+      const out = { ...rest, fx: x.fx };
+      if (kind === "sell" && wonSale(r.t) && pos(r.fx) && pos(r.price)) out.price = (r.price * r.fx) / x.fx;
+      fixed.push({ id: deckId, t: r.t, date: r.date, kind, from: r.fx, to: x.fx });
+      return out;
+    });
+  };
+  const byAmt = (rows) => (t) => (rows || []).some((r) => r && r.t === t && byAmount(r));
+  let changed = false;
+  const decks = data.decks.map((d) => {
+    if (!d || typeof d !== "object") return d;
+    let next = d;
+    for (const [k, kind] of TEMP_LISTS) {
+      const l = fixList(d.id, d[k], kind, byAmt(d.imported));
+      if (l !== d[k]) next = { ...next, [k]: l };
+    }
+    if (Array.isArray(d.history) && d.history.some((e) => e && TEMP_LISTS.some(([k]) => Array.isArray(e[k]) && e[k].some((r) => r && r.rateTemp === true)))) {
+      next = { ...next, history: d.history.map((e) => {
+        if (!e || typeof e !== "object") return e;
+        let ne = e;
+        for (const [k, kind] of TEMP_LISTS) {
+          const l = fixList(d.id, e[k], kind, byAmt(e.imported ? [e.imported] : []));
+          if (l !== e[k]) ne = { ...ne, [k]: l };
+        }
+        return ne;
+      }) };
+    }
+    if (next !== d) changed = true;
+    return next;
+  });
+  return { data: changed && fixed.length ? { ...data, decks } : data, fixed, waiting };
+}
+// Does any record of stock t (or of every stock, t null) in this portfolio, its history included, carry a temporary rate?
+// (the record sheet, 내 수익: the approved line rec.rateTemp)
+export function hasTempRate(deck, t = null) {
+  const any = (list) => Array.isArray(list) && list.some((r) => r && r.rateTemp === true && (t == null || r.t === t));
+  if (!deck) return false;
+  return TEMP_LISTS.some(([k]) => any(deck[k])) || (deck.history || []).some((e) => e && TEMP_LISTS.some(([k]) => any(e[k])));
+}
 // The env rateFor reads, from the app's load state (data.json, macro.json) and today's date (KST); usDay: the US trade date of
 // now (format.usTradeDay), given by the screens that save dollar records (records.jsx, plan.jsx), left out elsewhere.
 export function rateEnv(load, today, usDay = null) {
