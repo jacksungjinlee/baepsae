@@ -692,3 +692,112 @@ def test_no_new_korean_ui_text():
     with open(os.path.join(ROOT, "src", "copy", "v2.js"), encoding="utf-8") as f:
         src = f.read()
     assert src.count("회사 공시에 배당 계산에 필요한 자료가 빠져 있어서 배당수익률은 비워 두었어요.") == 1
+
+
+# ── 관문: 한 실행에 새로 모름이 된 배당 (Jack 2026-11-27 · 새 실패 줄: "Block only if many appear in one run") ──────────
+NEW_ROW = V.DIV_UNKNOWN_NEW_ROW
+
+
+def dash_n(files, a, b, n):
+    """thirty_dash 와 같은 꼴로 배당 회사 n 곳을 더 '모름'으로 (주당 배당 없음 · 줄 4 · 기록 contra 올해) — DART dy 0 ('-') 도 파이프라인처럼
+    비워서 '주당 배당금·배당수익률 맞음' 줄은 어긋남 0 이에요 (이 줄만 보게)."""
+    data, corp = files["data"], files["corp"]
+    kr = [s for s in data["stocks"] if s.get("cls") == "kr" and not s.get("fund")]
+    cby = {c["t"]: c for c in corp["companies"]}
+    picks = [s for s in kr if (s.get("dps") or 0) > 0 and s["t"] not in V.MUST and s["t"] not in (a["t"], b["t"]) and "dvProof" not in s
+             and s.get("divSt") == "same" and s["t"] in cby][:n]
+    assert len(picks) == n
+    raw, proof, sub = data["divCheck"]["raw"], data["divCheck"]["proof"], data["divCheck"]["proofSub"]
+    for s in picks:
+        s.pop("dps")
+        s.pop("dy", None)
+        s.update(dps3=[None] + s["dps3"][1:], dps3a=[None] * 3, dpsF=[None] * 3, divSt="nd", dvLine=4)
+        s.pop("dyt", None), s.pop("dz", None)
+        mirror(files, s)
+        raw["contra"][s["t"]] = [0]
+        raw["pre"][s["t"]] = [0.0, 0.0]
+        sub["data"][s["t"]] = "nodps"
+    proof["dataT"] = sorted(set(proof["dataT"]) | {s["t"] for s in picks})
+    proof["data"] = len(proof["dataT"])
+    keep = {k: data["divCheck"][k] for k in ("proof", "proofSub", "raw", "why")}
+    recount(files)
+    data["divCheck"].update(keep)
+    return picks
+
+
+def test_the_new_unknown_row_fails_at_twenty_by_a_named_constant():
+    assert V.DIV_UNKNOWN_NEW_FAIL == 20
+    assert NEW_ROW == "DART 배당 표로 새로 모름이 된 종목 수 (20종목 이상이면 실패)"
+
+
+def test_one_newly_unknown_dividend_only_warns_and_is_named(raw_pair):
+    """직전 발행본에 기록이 없으면 (#179 전 파일 · 이 줄이 처음 도는 실행) 오늘 모름인 종목이 다 새로 — 1종목은 경고만 · 이름을 적어요."""
+    cur, prev, a, b = raw_pair
+    rep = check(cur, prev)
+    assert not rep.failed, rep.table()
+    row = rows_of(rep)[NEW_ROW]
+    assert row[3] == "WARN" and row[1].startswith(f"새로 1종목: {a['t']}") and "직전 발행본 0종목" in row[1], row
+    listed = [items for title, items in rep.details if title.startswith("DART 배당 표로 새로 모름이 된 종목")]
+    assert len(listed) == 1 and [x.split()[0] for x in listed[0]] == [a["t"]], rep.details
+
+
+def test_a_stock_already_unknown_in_the_previous_publish_is_not_new(raw_pair):
+    cur, prev, a, b = raw_pair
+    prev["data"].setdefault("divCheck", {})["raw"] = copy.deepcopy(cur["data"]["divCheck"]["raw"])
+    row = rows_of(check(cur, prev))[NEW_ROW]
+    assert row[3] == "PASS" and row[1].startswith("새로 0종목 · 오늘 모름 1종목 · 직전 발행본 1종목"), row
+
+
+def test_nineteen_newly_unknown_dividends_warn_and_twenty_fail(raw_pair):
+    """A 한 곳 + 18곳 = 19 → 경고 (발행은 이어가요) · + 19곳 = 20 → 이 줄 하나만 실패 (DIV_UNKNOWN_NEW_FAIL)."""
+    cur, prev, a, b = raw_pair
+    twenty = copy.deepcopy(cur)
+    dash_n(cur, a, b, 18)
+    rep = check(cur, prev)
+    row = rows_of(rep)[NEW_ROW]
+    assert not rep.failed, rep.table()
+    assert row[3] == "WARN" and row[1].startswith("새로 19종목: ") and " 외 9종목" in row[1], row
+    a2 = next(s for s in twenty["data"]["stocks"] if s["t"] == a["t"])
+    b2 = next(s for s in twenty["data"]["stocks"] if s["t"] == b["t"])
+    dash_n(twenty, a2, b2, 19)
+    rep = check(twenty, prev)
+    row = rows_of(rep)[NEW_ROW]
+    assert [r[0] for r in rep.failed] == [NEW_ROW], rep.table()
+    assert row[1].startswith("새로 20종목: ") and row[2].startswith("20종목 미만"), row
+    # 직전 발행본도 그 20곳을 모름으로 적었으면 새로가 아니에요 → 통과
+    prev["data"].setdefault("divCheck", {})["raw"] = copy.deepcopy(twenty["data"]["divCheck"]["raw"])
+    rep = check(twenty, prev)
+    assert not rep.failed and rows_of(rep)[NEW_ROW][3] == "PASS", rep.table()
+
+
+def test_an_earlier_year_or_a_preferred_only_zero_is_not_counted():
+    """모름으로 센 것은 올해(0)를 비운 종목만 — 지난해만 비운 종목 (막대 하나만 빠져요) 과 우선주만 받은 0 (prefOnly) 은 세지 않아요."""
+    raw = {"v": 1, "contra": {"000001": [0], "000002": [1, 2], "000003": [0, 2]}, "prefOnly": {"000004": [0]}, "dpsBad": {"000005": [0]},
+           "dyBad": {}, "dyOk": 0, "dyNo": 0, "pre": {"000001": [0.0, None], "000003": [0.0, None], "000005": [5e9, None]}}
+    assert V.div_unknown_codes({"divCheck": {"raw": raw}}) == ({"000001", "000003"}, None)
+    assert V.div_unknown_codes({"divCheck": {}}) == (set(), None) and V.div_unknown_codes({}) == (set(), None)
+
+
+@pytest.mark.parametrize("change", [
+    lambda d: d["divCheck"].update(raw={"v": 2}),
+    lambda d: d["divCheck"].update(raw=[]),
+    lambda d: d["divCheck"].update(raw=None),
+    lambda d: d["divCheck"]["raw"].pop("pre"),
+])
+def test_a_malformed_record_still_fails(raw_pair, change):
+    """기록이 있는데 모양이 틀리면 '주당 배당금·배당수익률 맞음' 은 예전처럼 실패하고, 새 줄도 셀 수 없어 실패해요 (같은 조건 · 새로 막는 경우가 아니에요)."""
+    cur, prev, a, b = raw_pair
+    change(cur["data"])
+    rep = check(cur, prev)
+    failed = {r[0] for r in rep.failed}
+    assert ODD_ROW in failed and NEW_ROW in failed, rep.table()
+    assert "divCheck.raw 모양이 틀려 셀 수 없어요" in rows_of(rep)[NEW_ROW][1]
+
+
+def test_without_a_record_or_a_previous_publish_nothing_is_counted(raw_pair):
+    cur, prev, a, b = raw_pair
+    row = rows_of(check(cur, None, mode="live"))[NEW_ROW]
+    assert row[3] == "PASS" and row[1] == "직전 발행본 없음 (비교 안 함) · 오늘 모름 1종목", row
+    cur["data"]["divCheck"].pop("raw")
+    row = rows_of(check(cur, prev))[NEW_ROW]
+    assert row[3] == "PASS" and row[1].startswith("새로 0종목"), row

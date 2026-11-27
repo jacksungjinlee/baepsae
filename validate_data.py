@@ -626,7 +626,7 @@ PROVE_SUB_KO = {"sh": "주주배정 (새 주식 상장됨)", "shnew": "주주배
                 "nostk": "그해 말 주식의 총수 현황 없음", "noshr": "오늘 상장 주식 수 없음", "other": "이름을 붙이지 않은 배당 표 이유",
                 "nodps": "총액은 있는데 보통주 주당 배당 칸이 0 · '-' (모름으로 비움)"}
 RAW_SUB = ("nodps",)               # 주당 배당을 비운 종목의 경우 — 그 종목의 dps · dps3[0] 이 비어 있어야 줄 4 가 맞아요
-# ── 2026-11-23 (새 줄만 · 경고만 · 실패하는 줄 없음 · 늦추는 줄 없음): DART 배당 표 안의 어긋남과 그럴듯하지 않은 값 (2026-11-21 발행본 감사) ──
+# ── 2026-11-23 (새 줄만 · 경고 줄 둘 + 실패 줄 하나 (Jack 2026-11-27) · 줄 4 의 새 경우 nodps 는 Jack 의 yes 2026-11-27): DART 배당 표 안의 어긋남과 그럴듯하지 않은 값 (2026-11-21 발행본 감사) ──
 # A. 한 해의 표에 현금배당금총액은 있는데 보통주 주당 현금배당금이 0 ('-') 이면 그해 보통주 배당은 '모름'이에요 (0 = 배당 없음이 아니에요: 현대코퍼레이션
 #    84.08억원 · 케이프 · 앱코 · 동일산업 · 한텍 … 18곳이 '배당을 주지 않았어요'로 보였어요). 0 이 맞는 때는 그해 우선주 · 종류주가 총액을 다 받았을
 #    때뿐이에요: 그해 받은 종류의 주당 배당 × 오늘 상장 우선주 주식 수 (상장되지 않은 종류가 받았으면 그해 말 주식의 총수 현황의 우선주 · 종류주 수 ·
@@ -641,7 +641,8 @@ RAW_SUB = ("nodps",)               # 주당 배당을 비운 종목의 경우 �
 #      dps ÷ 종가는 배율만큼 커요). 보고서 해의 말일(dy 를 센 때)이 52주 창 밖이면 (1월 ~ 새 사업보고서 · 지난해 사업보고서를 쓰는 회사) 폭을
 #      DY_FAR_OUT 으로 넓혀 견줘요 (dy_window_ok · 리뷰 #179 2차: 끄지 않아요). 올해 주당 배당을 비운 해의 dy 0 도 비워요 ('-' 를 0 으로 읽은 값).
 # 파이프라인(fetch_data.div_raw_guard · div_dy_guard)이 같은 함수로 그 값을 비우고 크게 남기고 data.json divCheck.raw 에 적어요 (DART 가 보낸 값을
-# 보는 검사라 상시 규칙의 N 은 없어요 · 발행을 막지 않아요). 관문의 두 줄(check_div_raw)은 남은 행과 기록이 맞지 않는 행을 이름과 함께 경고만 해요.
+# 보는 검사라 상시 규칙의 N 은 없어요). 관문의 두 줄(check_div_raw)은 남은 행과 기록이 맞지 않는 행을 이름과 함께 경고만 해요. 한 실행에 새로 모름이 된
+# 종목 수만 실패할 수 있어요 (check_div_unknown_new · DIV_UNKNOWN_NEW_FAIL · Jack 2026-11-27: "Block only if many appear in one run").
 PREF_ONLY_TOL = 0.15      # 우선주만 받은 총액: 오늘 상장 주식 수로 센 우선주 몫과 그해 총액의 차이 (자기주식 · 그 뒤 주식 수 변화)
 DPS_CASH_FAR = 1000.0     # 주당 배당 × 오늘 보통주 수 ÷ 그해 총액이 이보다 크면 주당 칸의 값이 아니에요 (2026-11-21: 맞는 값 최대 69.9 · 와이엔텍 1,820만)
 DY_FAR = 3.0              # DART 배당수익률 ÷ (오늘 기준 주당 배당 ÷ 52주 범위) 가 3배 넘게 벗어나면 믿지 않아요 (2026-11-21: 남긴 값 최대 2.38 · 비운 값 최소 5.1)
@@ -649,6 +650,13 @@ DY_FAR_OUT = 4.0          # 보고서 해 말이 52주 창 밖일 때 (1월 ~ �
 #                           끄지 않고 넓혀요 · 5.1 아래라 2026-11-21 의 비운 값은 모두 그대로 비워요 · 3 ~ 4배 사이로 남긴 값은 관문의 경고 줄이 이름을 적어요)
 DIV_RAW_ROW = "DART 배당 표 0원인데 총액이 있는 해 (경고만)"
 DIV_PLAUS_ROW = "DART 주당 배당 · 배당수익률 그럴듯함 (경고만)"
+# 한 실행에 새로 '모름'이 된 배당 (Jack, 2026-11-27, #179: "Block only if many appear in one run"): 오늘 divCheck.raw.contra 에 올해(0)가 있고 (총액은
+# 있는데 보통주 주당 칸이 0 · '-' 라 올해 배당을 모름으로 비운 종목) 직전 발행본의 기록에는 없던 종목이 이만큼이면 실패 · 그 아래는 이름과 함께 경고.
+# 근거: 2026-11-21 · 11-27 발행본에 같은 함수를 돌리면 둘 다 17종목 — 이 줄이 처음 도는 실행은 직전 발행본에 기록이 없어서 17종목이 다 '새로'예요
+# (경고 · 통과). 그 뒤로는 새 사업보고서나 정정 보고서가 들어올 때만 생겨요 (한 날에 0 ~ 몇 곳). 20 은 공시 단위 확인의 같은 줄 (UNIT_NEW_FLAGS_FAIL ·
+# Jack 2026-11-13) 과 같은 수예요. 그보다 많으면 우리 DART 배당 표 읽기가 깨졌을 수 있어요.
+DIV_UNKNOWN_NEW_FAIL = 20
+DIV_UNKNOWN_NEW_ROW = f"DART 배당 표로 새로 모름이 된 종목 수 ({DIV_UNKNOWN_NEW_FAIL}종목 이상이면 실패)"
 # ── Jack 의 상시 규칙 (2026-11-19 ~17:45 KST · 우리 처리를 보는 검사) ── Jack, verbatim: "Standing rule for checks on our own processing: a
 # single bad row is dropped or blanked with a loud warning and the rest publishes. Block only when many rows fail in one run (set the number
 # from recent runs and show it in the PR) or when a value would show a wrong number."
@@ -3271,6 +3279,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v191h(rep, data, kr, by, comps, pdata, today)
     check_v191i(rep, data, kr, by, comps, pdata, today, mode)   # Jack 2026-11-14 (item 5): 되살린 배당수익률 = 배당 총액 ÷ 시가총액
     check_div_raw(rep, data, kr, comps)   # 2026-11-23: DART 배당 표 0원인데 총액이 있는 해 · 그럴듯하지 않은 주당 배당 · 배당수익률 (경고만 · 실패 없음)
+    check_div_unknown_new(rep, data, pdata)   # Jack 2026-11-27 (#179): 한 실행에 새로 모름이 된 배당이 DIV_UNKNOWN_NEW_FAIL 이상이면 실패 (그 아래는 경고)
     check_v191c(rep, cur, us, mode, today)
     check_kr_own_close(rep, data, macro, pdata)   # 2026-11-19 (Jack): 국내 종목의 마지막 확인 종가 (pxd · 미국 pxd 줄과 같은 실패 + 경고 줄)
     check_us_own_close(rep, data, macro, pdata)   # 2026-11-20 (Jack): 미국 종목의 마지막 확인 종가 (pxc · 날짜가 깨졌거나 d1 이 옆에 있으면 실패 · 나머지는 경고)
@@ -7887,6 +7896,44 @@ def _check_div_raw(rep, data, kr, comps):
             warn=bool(far_d or far_y or wide_y or dyb or probs))
     if len(far_d) > DIV_RAW_SHOW or len(far_y) > DIV_RAW_SHOW:
         rep.detail("DART 주당 배당 · 배당수익률: 그럴듯하지 않은 값", far_d + far_y)
+
+
+def div_unknown_codes(data):
+    """올해 배당을 '모름'으로 비운 종목 (divCheck.raw.contra 에 올해 0 이 있는 종목 · 총액은 있는데 보통주 주당 칸이 0 · '-') → (코드 집합, 문제 또는 None).
+    기록이 없으면 비운 것도 없어요 (div_raw_guard 는 다 하거나 아무것도 안 해요) → (빈 집합, None). 기록이 있는데 모양이 틀리면 → (빈 집합, 문제):
+    '주당 배당금·배당수익률 맞음' 줄 (div_raw_odd_back) 과 같은 조건이에요. (순수 함수)"""
+    dc = data.get("divCheck") if isinstance(data, dict) else None
+    if not isinstance(dc, dict) or "raw" not in dc:
+        return set(), None
+    rec, ok = div_raw_rec(data)
+    if not ok or rec is None:
+        return set(), "divCheck.raw 모양이 틀려 셀 수 없어요"
+    return {t for t, ys in rec["contra"].items() if 0 in ys}, None
+
+
+def check_div_unknown_new(rep, data, pdata):
+    """Jack, 2026-11-27 (#179 · 새 실패 줄): "#179: yes. … Block only if many appear in one run." 오늘 올해 배당을 모름으로 비운 종목 중 직전
+    발행본의 기록(divCheck.raw.contra 의 올해)에 없던 종목이 DIV_UNKNOWN_NEW_FAIL 이상이면 실패 · 1 이상이면 이름과 함께 경고. 직전 발행본이 없으면
+    (발행 모드가 아님 · 읽지 못함) 비교하지 않아요. 직전 발행본에 기록이 없거나 (#179 전 파일) 모양이 틀리면 그 종목이 하나도 없던 것으로 쳐요 (그래서 더
+    많이 세요). 오늘 기록의 모양이 틀리면 셀 수 없어서 실패해요 ('주당 배당금·배당수익률 맞음' 줄과 같은 조건 — 새로 막는 경우가 아니에요)."""
+    name = DIV_UNKNOWN_NEW_ROW
+    rule = (f"{DIV_UNKNOWN_NEW_FAIL}종목 미만 (오늘 divCheck.raw.contra 에 올해가 있고 직전 발행본의 기록에는 없던 종목 · 1종목 이상이면 이름과 함께 경고 · "
+            "Jack 2026-11-27 — 그 이상이면 우리 DART 배당 표 읽기가 깨졌을 수 있어요 · 실행 로그의 'DART 배당 표' 줄을 보세요)")
+    now, why = div_unknown_codes(data)
+    if why:
+        rep.add(name, False, why, rule)
+        return
+    if not isinstance(pdata, dict):
+        rep.add(name, True, f"직전 발행본 없음 (비교 안 함) · 오늘 모름 {len(now)}종목", rule)
+        return
+    before, _ = div_unknown_codes(pdata)
+    by = {s.get("t"): s for s in (data.get("stocks") or []) if isinstance(s, dict)}
+    new = [f"{t} {(by.get(t) or {}).get('nk') or ''}".strip() for t in sorted(now - before, key=str)]
+    names = (": " + ", ".join(new[:DIV_RAW_SHOW]) + (f" 외 {len(new) - DIV_RAW_SHOW}종목" if len(new) > DIV_RAW_SHOW else "")) if new else ""
+    rep.add(name, len(new) < DIV_UNKNOWN_NEW_FAIL, f"새로 {len(new)}종목{names} · 오늘 모름 {len(now)}종목 · 직전 발행본 {len(before)}종목", rule,
+            warn=bool(new))
+    if new:
+        rep.detail("DART 배당 표로 새로 모름이 된 종목 (총액은 있는데 보통주 주당 배당이 0 · '-' · 직전 발행본의 기록에 없음)", new)
 
 
 # ── 파일 읽기 ───────────────────────────────────────────────

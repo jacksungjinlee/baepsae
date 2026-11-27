@@ -5,7 +5,7 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ---
 
-## 0. Current state and next steps (updated 2026-11-24 KST — read this first)
+## 0. Current state and next steps (updated 2026-11-27 KST — read this first)
 
 **Now (2026-11-23):** merged and deployed 11-22: #166 (old-app English carry lines), #167 (div reason lines), #168 (v19.6b 오늘 볼 것
 page), #169 (new US tickers wait), #170 (v19.6e data: `c1w` · `wkFrom` · `usWkFrom` · `c1wv` · `c1wSrc`), #171 (v19.6e
@@ -24,24 +24,23 @@ links, "전무가" off the must-not-show list, labels) and a rename in `tests/te
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L. On hold: v19.4,
 v19.6g, v19.6h.
 
-**Korean dividend tables that contradict themselves (#179, branch `claude/kr-div-contradictions`, 2026-11-24, round-1 and round-2
-review fixes in):** audit of the 11-21 publish. (A) Korean payers showed "배당을 주지 않았어요" (dps 0, ranked last) although the same
-DART table gives a cash total: a year whose common 주당 배당 is 0 ('-') next to a total above 0 is now unknown (blank), unless the
-preferred shares explain the whole total (±15%, listed counts or the latest share report); never a figure made up from the total.
-DART tables read 11-23: 현대코퍼레이션, 한텍, 에코프로머티, 솔루스첨단소재 really file "-" in their only common row (line 4 is true);
-티에스아이 is preferred-only and stays 0; 케이프 files its common 700원 under a 우선주 label (stays unknown; a parser follow-up could
-take it). (B) a per-share cell more than 1,000 × off the total (와이엔텍) is blanked; DART's `dy` more than 3 × off today's per-share
-dividend over the 52-week range (4 × when the report year-end is outside that window) is blanked, and so is a `dy` 0 next to a
-blanked year (흥국 56.0 · 지투파워 33.7 · 아비코전자 30.0 · 알피바이오 10.0 · 한텍 0.0 …). 2.0: A shows 자료가 없어요 + line 4 (new proofSub
-case `nodps`, accepted only on the standing-rule path while dps is blank, `divCheck.raw.contra` lists the year and corp `cash3[0]` >
-0 — **needs Jack's yes, category 2**); 와이엔텍 keeps 배당을 줘요 + line 3 + its 배당성향 ring (existing case `div`, no gate change).
-Left exactly as before and named in the log: foreign issuers, and companies whose total won't reach corp.json above 0 (statements
-not in won, totals under 50만원). The existing FAIL row "주당 배당금·배당수익률 맞음" keeps its full strength (adds back the pre-blank
-mismatches from `divCheck.raw.pre`: 21, 0.8% on 11-21, as before; a malformed record fails it). One run on the 11-21 copy with the real
-preferred rows for 8 companies: 18 this-year blanks (17 line 4, 1 line 3), 25 companies / 41 years of 0-with-a-total, 17 `dy`
-values; 16 line-4 if the real run's share report shows HL D&I's preferred count (then it stays 0); 삼성전자, 현대차 and the 10 largest
-payers unchanged. The cached DART parse is unchanged (no refetch). RUNBOOK "Korean dividend tables that contradict themselves".
-Pipeline change: dry run before merge (its log gives the real `prefOnly` count with names).
+**Korean dividend tables that contradict themselves (#179, branch `claude/kr-div-contradictions`, updated 2026-11-27 with Jack's yes;
+waits for its dry run and review, then merges):** audit of the 11-21 publish. (A) Korean payers showed "배당을 주지 않았어요" (dps 0,
+ranked last) although the same DART table gives a cash total: a year whose common 주당 배당 is 0 ('-') next to a total above 0 is now
+unknown (blank), unless the preferred shares explain the whole total (±15%); never a figure made up from the total. DART tables read
+11-23: 현대코퍼레이션, 한텍, 에코프로머티, 솔루스첨단소재 really file "-" in their only common row (line 4 is true); 티에스아이 is
+preferred-only and stays 0; 케이프 files its common 700원 under a 우선주 label (stays unknown; a parser follow-up could take it). (B) a
+per-share cell more than 1,000 × off the total (와이엔텍) is blanked; DART's `dy` more than 3 × off today's per-share dividend over the
+52-week range (4 × outside that window) is blanked, and so is a `dy` 0 next to a blanked year. 2.0: A shows 자료가 없어요 + line 4 in its
+four places (배당 tile, 배당 tab, 관심 종목, 두 종목 비교); 와이엔텍 keeps 배당을 줘요 + line 3 + its 배당성향 ring. The old app is unchanged
+(its own DART `dy`, "—" where blanked). **Jack, 2026-11-27:** "#179: yes. The dividend shows as unknown with the existing line "회사 공시에
+배당 계산에 필요한 자료가 빠져 있어서 배당수익률은 비워 두었어요." Block only if many appear in one run." So the gate accepts line 4 for the new
+case `nodps` (only while dps is blank, `divCheck.raw.contra` lists the year and corp `cash3[0]` > 0), and a new FAIL row "DART 배당 표로
+새로 모름이 된 종목 수 (20종목 이상이면 실패)" stops the publish when 20 or more stocks become unknown in one run (1–19 warn with names).
+The existing FAIL row "주당 배당금·배당수익률 맞음" keeps its full strength (21, 0.8% on 11-21, as on `main`). On the 11-27 copy (pxDate
+11-26): 17 this-year unknowns (line 4) + 와이엔텍 (line 3), 18 `dy` values blanked, 삼성전자 · 현대차 · the 10 largest payers unchanged.
+**After it merges:** the first publish counts all 17 as new (the previous publish has no record) → the new row WARNs with their names,
+not a FAIL; check 현대코퍼레이션 (011760) → 배당 shows 자료가 없어요 + line 4. RUNBOOK "Korean dividend tables that contradict themselves".
 
 **홈's US close line (#190, 2026-11-24; same class as #187's 포트폴리오 fix, minor):** app only, no new words. 홈 (`home2.jsx`) and the
 old 홈 behind the HOME2 switch (`today.jsx` Home) decided "a US stock is held" by `cls`. A holding of 379800 KODEX 미국S&P500 (cls "us",
