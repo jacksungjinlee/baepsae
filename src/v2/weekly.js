@@ -22,7 +22,8 @@
 //   value now = shares held at the week's end (records dated up to its Sunday) × today's official close.
 //   A USD price takes macro.json fxHist at both ends (coordinator, round 2: one source for the week): the rate of usWkFrom at the
 //   start and the rate of usPxDate now, each "the close on that date, or the last close before it" (Part I.1, records.rateFor; never
-//   data.json fx, Yahoo's rate, which 홈's other numbers keep using). A date fxHist does not reach leaves the stock out ("fx"), unless
+//   data.json fx, which 홈's other numbers keep using: since 2026-11-24 it is fxHist's last row when the run read ECOS, else Yahoo's
+//   rate, data.json fxSrc says which). A date fxHist does not reach leaves the stock out ("fx"), unless
 //   only Korean non-trading days lie between fxHist's last row (marked final) and that date: that row is then its rate (weekRate,
 //   round 3: ECOS has no row on a Korean holiday such as 2026-12-31, when the US trades).
 //   buys = 샀어요 records of the week at their own rate (lots.purchaseRate); sales = 팔았어요 records of the week at their own rate.
