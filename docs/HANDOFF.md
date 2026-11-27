@@ -22,7 +22,7 @@ the approved 유상증자 card sentences with proposals for 유무상증자 and 
 11-27: "Yes, skip Part L"; the v19.3 spec's Status line says what covered each item), so Track 1's data follow-ups and Jack's
 other 11-27 answers come next. On hold: v19.4, v19.6g, v19.6h.
 
-**Korean stock splits (#186, 2026-11-23/24, reworked 11-28 for Jack's answers of 11-27 and review round 1; Track 1, spec v19.6 A.6):**
+**Korean stock splits (#186, 2026-11-23/24, reworked 11-28 for Jack's answers of 11-27 and review rounds 1–2; Track 1, spec v19.6 A.6):**
 `data.json` `splits` gets Korean 액면분할 · 주식병합 rows (same shape and meaning as the US rows; the app reads them unchanged), dated the
 first trading day on the new count (신주권상장예정일). A row needs three checks to agree (answer 4): the DART decision (document's par
 values and listing date, or a 감자결정 by merging shares read as the holder's ratio), that day's listed-share change (split ± 10%,
@@ -32,11 +32,13 @@ the receipt `splitsKr.rows` names the checks `{dl, shr, px, rule}` (+ `dShr · d
 586 (7 paired lines). Fixed rows with typed evidence (`KR_SPLIT_OVERRIDE_EVIDENCE`, same three checks): 삼성전자 · 우 2018 (DART list
 only), NAVER 2018 · 카카오 2021 (numbers from the documents DART served on 11-23). DART errors, timeouts and throttling are never a
 "no" (pending). **Split without a filing** (answer 11; `splitsKr.nofile`, carried for 3 years 40 days even while a stock is out of
-the list): must-have stock → FAIL row; 16+ new in one run → FAIL row (threshold from a backfill simulation); any other stock →
+the list): must-have stock → FAIL row; 16+ that this run judged itself (`splitsKr.runNew`, never cached verdicts: a run that
+does not publish still saves the DART cache) → FAIL row (threshold from a backfill simulation; RUNBOOK has the way out); any other stock →
 `mark_split_nofile` blanks the numbers computed across it (same fields and windows as `pxBad`) and marks `spNo` · `spNoF`; 2.0 shows
 Jack's line "주식 수가 크게 바뀌었는데, 공시로 확인하지 못해서 이 숫자는 비워 두었어요." where the price-history lines go; old app "–".
 **Fractions** (answer 11): merges and 5:2 splits publish; 팔았어요 takes a part of a share in 1/10,000 where a split left one
-(`held.js` `fracHeld`, exact per-record units). Warning rows: `splitsKr`, the blanking check, this run's count, records carried.
+(`held.js` `fracHeld`, exact per-record units; a Korean holding's shown count is the exact holding rounded once, so 1+1+1
+through a 1:3 merge shows and sells 1주). A halted merge whose two days fall in two runs stays in `splitsKr.dq`. Warning rows: `splitsKr`, the blanking check, this run's count, records carried.
 **Open (in the PR, STOP):** a holding bought before an unconfirmed split still shows its value at the old count — blanking it needs
 a new totals line (draft in the PR). One question to Jack: should a failed receipt check, a stock not blanked and a vanished `nofile`
 record fail the publish? **Next: 무상증자 (Jack, 11-27: "the next PR right after #186")**; RUNBOOK § Korean stock splits says where

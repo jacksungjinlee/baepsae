@@ -106,7 +106,12 @@ const scaled = (u, f) => (u == null ? null : f === 1 ? u : (okU(Math.round(u * f
 // (#184 round 2: 4 old DD shares sold as 3.9998 and 0.0002, exactly 0, where each-record closes early and leaves 2/3 of a
 // unit for the second sale), else main's own count (each-record over the whole history), so records saved and checked by
 // main read back exactly as main read them. The store refuses only records that go below 0 by all three.
+// Korean stocks (every record in won, review #186 round 2): the open position uses the running count while it stays at or above 0, so
+// the share count shown is the exact holding rounded once (three lots of 1 share through a 1:3 주식병합 are 1주, not 0.9999주) and is a
+// quantity 팔았어요 and the store accept (a Korean sale is whole shares unless a split left a part: fracHeld counts the exact units too).
+// main had no Korean split, so every Korean record there gives whole units and both counts are the same.
 function count(list) {
+  const kr = list.length > 0 && list.every((e) => e.r && e.r.ccy === "KRW");
   const main = list.map((e) => Math.round(e.x) || 0);        // || 0: never -0
   let m = 0, mainOk = true;
   for (const k of main) { m += k; if (m < 0) mainOk = false; }
@@ -130,7 +135,7 @@ function count(list) {
     }
   }
   let ok = true;
-  if (start < list.length) { take(list.length, eachOk); if (!eachOk && !runOk) ok = false; }
+  if (start < list.length) { take(list.length, kr ? eachOk && !runOk : eachOk); if (!eachOk && !runOk) ok = false; }
   let use = out;
   if (!ok) {
     // the running count over the whole history, then main's

@@ -227,3 +227,64 @@ def test_a_part_sale_dated_before_an_existing_one_is_refused_by_the_form_as_the_
 def test_the_keypad_follows_a_cleared_date_as_today():
     src = open(os.path.join(ROOT, "src", "v2", "records.jsx"), encoding="utf-8").read()
     assert 'fracSaleOk(deck, t, v.date || today)' in src
+
+
+# ── 2차 리뷰 S2: 팔고 빼기의 잠긴 수량 = 정확한 보유 (반올림해 보이는 수가 아니에요) ─────────────────────────────────────
+
+def test_sell_and_remove_takes_the_exact_holding_after_a_merge():
+    """1:3 병합 전에 1주씩 세 번 산 기록은 정확히 1주예요. 예전에는 0.9999주로 보이고 팔고 빼기가 그 수를 채운 뒤 양식이 거절했어요 (고칠 수 없는 칸).
+    이제 보이는 수 · 팔고 빼기의 수 · 양식 · 가게가 같은 수를 받아요 (몫이 정말 남은 1+1+1+1 은 1.3333주 그대로) · 판 원가 = 넣은 돈."""
+    got = node("""
+      const P = (i, q) => ({ id: 'p' + i + 'aaaaaa', t: '000020', date: '2025-0' + (i + 1) + '-02', qty: q, price: 1000 + i, ccy: 'KRW' });
+      const one = (qs) => {
+        const v0 = view(deckOf('000020', 'x', qs.map((q, i) => P(i, q))));
+        const all = E.sellAllQty(v0, '000020', '2026-02-02');
+        const c = sell(v0, String(all), '7000', '2026-02-02');
+        const d1 = c.ok ? saved(v0, c.rec) : null;
+        const put = qs.reduce((a, q, i) => a + q * (1000 + i), 0);
+        const Lg = d1 ? L.ledger(view(d1), '000020') : null;
+        return { shown: H.heldQty(v0).get('000020'), all, ok: c.ok, saved: !!d1, left: d1 ? (H.heldQty(view(d1)).get('000020') ?? 0) : null,
+          moneyOk: !!Lg && Math.abs(Lg.sales.reduce((a, s) => a + s.removedWon, 0) - put) < 1e-6 };
+      };
+      out = [[1, 1, 1], [2, 2, 2], [4, 4, 4], [1, 1, 1, 1, 1, 1], [1, 2], [1, 1, 1, 1]].map(one);""")
+    want = [1, 2, 4, 2, 1, 1.3333]
+    assert [g["shown"] for g in got] == want and [g["all"] for g in got] == want
+    assert all(g["ok"] and g["saved"] and g["left"] == 0 and g["moneyOk"] for g in got), got
+
+
+def test_a_shown_korean_count_is_always_a_quantity_the_form_and_the_store_take():
+    """시험 삼아 섞은 한국 기록 (1:3 · 1:6 · 1:7 · 2:5 병합 · 5:2 분할 · 산 날 · 수량 무작위) 에서: 보이는 수 = 팔고 빼기의 수 · 그 수를 팔았어요에
+    넣으면 받고 저장해요 · 남는 것 0 · 판 원가 = 넣은 돈 (원 단위 오차 없음). 분할 전 날짜의 팔고 빼기도 받고 저장해요."""
+    got = node("""
+      const SP = { '000040': 1 / 3, '000050': 1 / 6, '000060': 1 / 7, '000070': 0.4, '000080': 2.5 };
+      const sp = Object.entries(SP).map(([t, r]) => [t, '2026-01-05', r]);
+      const vw = (d) => L.withDataSplits({ v: 2, decks: [d] }, L.dataSplits({ splits: sp }).list, '2026-11-23').decks[0];
+      let seed = 7;
+      const rnd = () => { seed = (seed + 0x6D2B79F5) | 0; let x = Math.imul(seed ^ (seed >>> 15), 1 | seed); x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x; return ((x ^ (x >>> 14)) >>> 0) / 4294967296; };
+      const bad = [];
+      let n = 0;
+      for (let k = 0; k < 400; k++) {
+        const t = Object.keys(SP)[k % 5];
+        const lots = 1 + Math.floor(rnd() * 6);
+        const buys = [];
+        for (let i = 0; i < lots; i++) buys.push({ id: 'p' + i + 'aaaaaa', t, date: '2025-0' + (1 + i) + '-1' + Math.floor(rnd() * 9), qty: 1 + Math.floor(rnd() * 9), price: 1000 + Math.floor(rnd() * 5000), ccy: 'KRW' });
+        const d = { id: 'd', name: 'p', createdAt: '2017-03-02', planFx: 1300, holdings: [{ t, nk: 'x', cls: 'kr', target: 1, rules: [] }], purchases: buys, sales: [] };
+        const v0 = vw(d);
+        const put = buys.reduce((a, p) => a + p.qty * p.price, 0);
+        for (const date of ['2026-02-02', '2025-12-01']) {
+          n++;
+          const shown = H.heldQty(v0).get(t);
+          const all = E.sellAllQty(v0, t, date);
+          const c = Rc.checkSale(v0, t, { qty: String(date === '2026-02-02' ? shown : all), price: '7000', date }, { t, cls: 'kr', price: 7000 }, { today: '2026-11-23' });
+          const w = c.ok ? Rc.withRecord({ v: 2, decks: [v0] }, 'd', 'sales', c.rec, '2026-11-23') : null;
+          const d1 = w ? w.decks[0] : null;
+          const left = d1 ? (H.heldQty(vw(d1)).get(t) ?? 0) : null;
+          const Lg = d1 ? L.ledger(vw(d1), t) : null;
+          const removed = Lg ? Lg.sales.reduce((a, s) => a + s.removedWon, 0) : NaN;
+          const same = date !== '2026-02-02' || all === shown;
+          if (!(c.ok && d1 && left === 0 && Math.abs(removed - put) < 1e-6 && same && S.deckProblem(d1, '2026-11-23') == null))
+            bad.push({ t, qtys: buys.map((p) => p.qty), date, shown, all, ok: c.ok ? 'ok' : c.why, saved: !!d1, left, removed, put });
+        }
+      }
+      out = { n, bad: bad.slice(0, 5), nBad: bad.length };""")
+    assert got["n"] == 800 and got["nBad"] == 0, got["bad"]

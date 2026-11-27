@@ -3190,10 +3190,21 @@ Appendix 1 line for it (`split applied` / `merge applied`).
     dated A (`d`) with `dp` = B; the filing's listing date must be A or B, the row is dated that day, and the receipt adds
     `{dShr: A, dPx: B, dlOn: "shr" | "px"}`. A `nofile` entry adds B as a fifth field (blanking reads the windows from B);
     `pend` carries B as a seventh field. Of the 13 lines removed on 11-27, 6 pass as pairs and are back (000300 · 009310 ·
-    011000 · 041590 · 043220 · 074610) and a scan of every stock's Daum history adds 1 (182400 2025-07-22, 5:6); 7 stay out:
+    011000 · 041590 · 043220 · 074610) and a scan of every stock's Daum history adds 1 candidate, 182400 엔케이젠바이오텍코리아
+    2025-07-22 (review round 2, S3: it is **not** a 5:6 merge — shares ×0.8347 on 07-22, base ×1.359 on 07-23, most likely a
+    capital reduction plus new shares the same day; the rule's share check snaps ×0.8347 to 5/6 within 1% and the merge band
+    lets ×1.359 through). It stays in the seed as a market candidate, not as a split: it can only publish if a filing says
+    ×0.8347 (± 1%) with listing day 07-22 or 07-23, which a capital reduction of about 26% does not; otherwise it ends as a
+    split without a filing and the stock's numbers across it are blanked with Jack's line, which is right. Taking the line out
+    would leave the event unseen (no live path reads a 2025 event), so the stock would show numbers computed across the jump;
+    7 stay out:
     4 had no base reset by the ratio within 5 days (001230, 007700, 036630 twice: company splits or cancellations), and for 3
     Daum's row has no previous-close field and its change is against the old close, so the base cannot be read (017650,
     101140, 900260). All 12 stocks are live.
+    **Two days in two runs** (review round 2, S1): when Daum shows A's share change and B has not come yet, the stock is not
+    counted as read: it stays in `splitsKr.dq` (loud `· 한국 주식 분할: {code} 상장주식수가 {A} 에 …` line,
+    `kr_split_pair_open`) and Daum is read again on the next runs until the pair completes or 5 trading days pass without a
+    reset (B's run would not read Daum otherwise: the share count no longer differs from the previous publish).
   - **DART:** 거래소 수시공시 (I001) 주식분할결정 · 주식병합결정 (final corrected version, withdrawn ones dropped, the list
     paged up to 5 × 100). There is no structured API for them, so the original document is read (`parse_kr_split_doc`, the
     same fixed KRX form `dvWhy` reads): ratio = 1주당 가액 before ÷ after, listing date = 신주권상장예정일. If none matches and
@@ -3220,9 +3231,13 @@ Appendix 1 line for it (`split applied` / `merge applied`).
     splits: 삼성바이오로직스 2025-11-24), `diff` no decision lists that day (동국홀딩스 001230 2026-05-29: DART 5:1, market
     ÷ 4.48), `shr` a decision for that day whose ratio the share count does not fit, `px` one whose ratio the base price does
     not fit, `gone`, `unread` (also a listed 감자결정 that `crDecsn.json` does not give, 013), `cr`, `nocorp` (no DART code: ETFs,
-    some KONEX), `pages` (I001 list over 5 pages).
+    some KONEX), `pages` (I001 list over 5 pages). A `nocorp` candidate found today is kept in `pend` (round 2), so it is
+    asked once a DART code appears. `unread`, `gone` and `pages` are about our reading, not the company: they are asked again
+    every `KR_SPLIT_DOC_RETRY_DAYS` = 30 days whatever the event's age, within the 50-call budget, and every run logs their
+    count loudly (`!! 한국 주식 분할 — 원문을 읽지 못한 판정 …`, with how many were asked again).
   - **Only a real DART answer is a verdict** (review round 1, Fable S4). A connection failure, timeout or empty reply (`net`),
-    a throttling or maintenance status (020, 800, 900, a reply without a status: `status`) and an exception in our code
+    a throttling or maintenance status (020, 800, 900, a reply without a status, and since round 2 a list or `crDecsn.json`
+    reply with status 000 but no list or an empty one — DART says "nothing" with 013: `status`) and an exception in our code
     (`err`) are `fail`: nothing is cached, the candidate waits for the next run, and it never enters `nofile` (so a must-have
     stock can fail the publish only on a real answer without the filing). A cached "no" with an unknown or `err` code is
     asked again. A preferred share's verdict is cached under its own key (`…|{date}|{code}`), since a "no" depends on that
@@ -3230,7 +3245,9 @@ Appendix 1 line for it (`split applied` / `merge applied`).
 - **A split without a filing** (Jack, 2026-11-27, answer 11: "A split without a filing stops the publish only for a must-have
   stock (삼성전자, NAVER, 카카오) or when many appear in one run. Any other stock gets its affected numbers blanked with
   '주식 수가 크게 바뀌었는데, 공시로 확인하지 못해서 이 숫자는 비워 두었어요.'"): a market event whose share count moved by a
-  clean ratio (n:1, 1:n, and since round 1 also 2:5 · 5:2 and others with both terms ≤ 10, `kr_split_share_clean`) with the
+  clean ratio (n:1, 1:n, and since round 1 also 2:5 · 5:2 and others with both terms ≤ 10, `kr_split_share_clean`: 32 seed
+  events have such a non-whole ratio — 3/4, 4/5, 5/2, 2/5, 9/8, 7/6, 5/6 … — among them 한화 000880 2026-08-25 ×3/4, so a
+  large stock can show blanks after its lookup; several are likely 무상증자, which the next PR handles) with the
   matching price check (`kr_split_market_whole`) and no decision that confirms it (any `out` code, `nocorp` included) is
   listed in `splitsKr.nofile` `[code, date, ratio, code(, price day)]` (all of them, newest first). An entry not judged today
   (DART off, waiting, a failed lookup, the step stopped, or the stock missing from today's list: review round 1, B1) keeps
@@ -3245,17 +3262,35 @@ Appendix 1 line for it (`split applied` / `merge applied`).
     beyond Jack's three make this row stricter than his words only for an event older than the price series (about 3 years
     40 days); inside the series, blanking their 추세 · 저변동 scores would fail `필수 종목 추세 · 저변동 순위` anyway. None of the
     five has a seed event today.
-  - **Many in one run** (review round 1: Jack's words "when many appear in one run"): gate row **한 실행에 새로 생긴 공시로
-    확인하지 못한 분할 (16건 이상이면 실패)** counts today's entries not in the previous publish's `nofile`, whatever their date.
+  - **Many in one run** (review round 1: Jack's words "when many appear in one run"; review round 2, B1): gate row **한 실행에
+    새로 생긴 공시로 확인하지 못한 분할 (16건 이상이면 실패)** counts `splitsKr.runNew`: the entries this run judged itself and
+    that are new (a fresh DART "no" or a fresh decision that fails the three checks, plus `nocorp`, not in the previous publish's
+    `nofile`), whatever their date. A cached verdict never counts: a run that does not publish still saves the DART cache
+    (`update-data.yml` `DART 캐시 저장`, `if: always()`), so counting "new since the last publish" added up the verdicts of runs
+    that did not publish and, after one FAIL, failed every run after it. A file with `nofile` but no `runNew` list FAILs (the
+    count is unknown); a carried `splitsKr` (`kr_splits_carry`) has `runNew: []`.
     The threshold comes from an offline backfill simulation (no DART calls; the 586 seed events, 50 calls a run, each event
     given a fixed random "no filing" with probability p; the first run with no `splitsKr` in the previous publish): the most new
     entries in one run were 1 · 6 · 9 · 12 · 15 for p = 0 · 0.1 · 0.2 · 0.3 · 0.5 (first run 1 · 3 · 6 · 8 · 12), and 16–30 per
     run (first run 26) when every lookup answers "no". So half the filings missing does not stop the backfill, and a reading
-    that breaks outright stops its first run. The KRX lists of 11-21 to 11-27 add no candidate (3 share changes over 10% —
-    코나아이 ×1.50, 삼성FN리츠 ×1.21, 풍전약품 ×1.12 — with the base unchanged). Warning-only row **공시로 확인하지 못한 분할 ·
-    이번 실행 (경고만)** shows the run's new entries, the total and the number of blanked stocks (yellow when new ones appear).
-    Warning-only row **공시로 확인하지 못한 분할 기록 이어짐 (경고만)** names previous-publish entries that disappeared without
-    an age or confirmation reason, including a day whose file has no `splitsKr`.
+    that breaks outright stops its first run; a partly broken reading can blank up to 15 stocks a run with yellow rows only. The
+    KRX lists of 11-21 to 11-27 add no candidate (3 share changes over 10% — 코나아이 ×1.50, 삼성FN리츠 ×1.21, 풍전약품 ×1.12 —
+    with the base unchanged).
+    **When it FAILs (the way out):** the run log's `!! 한국 주식 분할 — 공시로 확인하지 못한 분할 …` line and the row list the
+    entries (`runNew`). Open three or four of them on DART: (a) if the companies really have no split decision (a wave of
+    company splits or 무상증자, a market-wide event), nothing is wrong — the next run clears the row by itself, because those
+    verdicts are now cached and no longer this run's own, and it publishes them (their stocks are blanked with Jack's line);
+    (b) if the decisions exist and our reading missed them (a changed DART form, the 감자 path broken), fix the reading in a PR
+    and bump `KR_SPLIT_TAG` in it, so the cached wrong verdicts are asked again with the fixed code (still at most 50 calls a
+    run, so it is not a full-DART run; the backfill simply restarts). Until that PR merges,
+    the next run would publish the wrong verdicts as blanks (numbers hidden with Jack's line, never wrong numbers shown); to
+    keep them out, merge the fix before the next scheduled start. Never raise `KR_SPLIT_NOFILE_RUN_FAIL` or clear the cache by
+    hand to get past the row.
+    Warning-only row **공시로 확인하지 못한 분할 · 이번 실행 (경고만)** shows this run's own count, the entries new since the
+    previous publish (verdicts of runs that did not publish land here) and the number of blanked stocks; yellow when there
+    are new ones since the previous publish. Warning-only row **공시로 확인하지 못한 분할 기록 이어짐 (경고만)** names
+    previous-publish entries that disappeared without an age or confirmation reason, including a day whose file has no
+    `splitsKr`.
   - **Any other stock:** `mark_split_nofile` (in `main`, right after the Korean split step, before the scores and corp.json)
     blanks the numbers whose calculation window holds the event, with the same fields and windows as the price-history hide
     (`pxBad`, #128: the whole-series fields always, 52주 · 1년 · 추세 when the event is in the last 252 bars, 3개월 in 64, 1개월

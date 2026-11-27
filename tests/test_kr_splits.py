@@ -668,7 +668,7 @@ def gate_pair(new_kr=(("005930", "2018-05-04", 50.0),), prev_kr=(("005930", "201
     if info:
         cur["data"]["splitsKr"] = {"v": 2, "src": "dart", "n": len(new_kr), "prev": len(prev_kr), "new": [], "wait": 0, "waitT": [], "out": [],
                                    "outN": 0, "fail": [], "failN": 0, "held": [], "heldN": 0, "diffNew": [], "calls": 0, "cap": 50, "pend": [], "dq": [],
-                                   "rows": [[t, d, r, "fixed", "SPLIT_OVERRIDES", "fixed"] for t, d, r in new_kr]}
+                                   "rows": [[t, d, r, "fixed", "SPLIT_OVERRIDES", "fixed"] for t, d, r in new_kr], "runNew": []}
     return cur, prev, final
 
 

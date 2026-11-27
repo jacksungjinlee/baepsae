@@ -3857,7 +3857,10 @@ KR_SPLIT_RC_AUCTION = (0.5, 2.0)    # 병합: 앞날 종가 ÷ 기준가 가 배
 # 순위' 줄이 어차피 발행을 막아요 — 같은 까닭을 이 줄이 바로 말하게).
 KR_SPLIT_MUST = tuple(dict.fromkeys(("005930", "035420", "035720") + MUST))
 # 한 실행에 새로 생긴 공시로 확인하지 못한 분할 (1차 리뷰 Fable S1 · Opus S5 · 조정자 5, 2026-11-28 — Jack 의 말 그대로 "when many appear in one run"):
-# 오늘 nofile 의 줄 중 직전 발행본의 nofile 에 없던 것 (사건 날짜와 상관없이) 이 이만큼 이상이면 실패. 고른 까닭 (모의 채우기 · DART 호출 없음 ·
+# 이 실행이 스스로 판정해 (DART 에 새로 물은 '없음' · 맞지 않음 · 오늘 DART 코드가 없음) 처음 생긴 nofile 줄 (splitsKr.runNew · 사건 날짜와 상관없이) 이
+# 이만큼 이상이면 실패. 2차 리뷰 B1: '직전 발행본 뒤 새로' 를 세면 발행하지 못한 실행의 판정 (DART 보관본은 발행하지 못해도 저장돼요) 이 다음 실행에 쌓여
+# 한 번 실패하면 다시 통과하지 못했어요 — 그 수는 경고 줄에만 보여요. 실패한 실행의 판정은 보관돼 다음 실행에는 '이 실행의 것' 이 아니라서, 고치지 않으면
+# 다음 실행이 그 줄들을 실어 그 종목들을 비워요 (RUNBOOK '한국 주식 분할' 의 나가는 길). 고른 까닭 (모의 채우기 · DART 호출 없음 ·
 # 시드 586 사건 · 실행당 DART 한도 50 · 사건마다 고정된 무작위로 '공시 없음' 비율 p · 첫 실행은 직전 발행본에 splitsKr 이 없어요): 한 실행에 새로 생긴
 # 수의 가장 큰 값 — p 0 · 0.1 · 0.2 · 0.3 · 0.5 에서 1 · 6 · 9 · 12 · 15 (첫 실행 1 · 3 · 6 · 8 · 12), 모든 조회가 '없음' 이면 실행마다 16 ~ 30 (첫 실행 26).
 # 16 이면 공시의 절반이 확인되지 않아도 채우는 동안 막히지 않고, 읽기가 통째로 깨지면 그 첫 실행에서 막혀요. 11-21 ~ 11-27 의 KRX 목록에서 주식 수가
@@ -3992,8 +3995,8 @@ def check_kr_split_nofile(rep, data, comps, today, pdata):
     info = data.get("splitsKr") if isinstance(data, dict) else None
     rule_m = (f"0 ({'·'.join(KR_SPLIT_MUST)} — Jack 2026-11-27: 공시로 확인하지 못한 분할이 필수 종목에 있으면 발행하지 않아요 · 고치는 길: 공시를 "
               "확인해 KR_SPLIT_OVERRIDES 에 근거와 함께, 또는 공시 읽기를 고쳐요 · RUNBOOK '한국 주식 분할')")
-    rule_r = (f"{KR_SPLIT_NOFILE_RUN_FAIL}건 미만 (오늘 nofile 중 직전 발행본의 nofile 에 없던 줄 · 사건 날짜와 상관없이 — Jack: \"when many appear in "
-              "one run\" · 모의 채우기에서 공시의 절반이 확인되지 않아도 한 실행에 많아야 15)")
+    rule_r = (f"{KR_SPLIT_NOFILE_RUN_FAIL}건 미만 (splitsKr.runNew: 이 실행이 새로 판정해 처음 생긴 nofile 줄 · 사건 날짜와 상관없이 — Jack: \"when many "
+              "appear in one run\" · 모의 채우기에서 공시의 절반이 확인되지 않아도 한 실행에 많아야 15 · 나가는 길: RUNBOOK '한국 주식 분할')")
     if not isinstance(info, dict) or "nofile" not in info:
         why = "splitsKr 없음" if not isinstance(info, dict) else "splitsKr.nofile 없음 (2026-11-27 전 형식)"
         rep.add(KR_NOFILE_MUST_ROW, True, f"{why} — 확인할 목록이 없어요", rule_m)
@@ -4009,19 +4012,26 @@ def check_kr_split_nofile(rep, data, comps, today, pdata):
         txt = [f"{x[0]} {(by.get(x[0]) or {}).get('nk', '')} {x[1] if len(x) > 1 else '?'}".replace("  ", " ") for x in must]
         rep.add(KR_NOFILE_MUST_ROW, not must, (f"{len(must)}건: {', '.join(txt[:KR_SPLIT_SHOW])}" if must else "없음")
                 + (" · 모양이 틀린 줄이 있어요" if odd else "") + f" (전체 {len(rows)}건)", rule_m)
-    new = None
-    if not isinstance(pdata, dict):
-        rep.add(KR_NOFILE_RUN_ROW, True, "직전 발행본 없음 (비교 안 함)", rule_r)
+    # 2차 리뷰 B1: 실패 줄은 이 실행이 스스로 판정한 줄 (runNew) 만 세요. 없거나 모양이 틀리면 실패 (이 실행의 수를 몰라요 — 파이프라인은 nofile 과
+    # 같이 늘 써요 · 이은 날은 빈 목록)
+    run_new = info.get("runNew")
+    if not isinstance(run_new, list):
+        rep.add(KR_NOFILE_RUN_ROW, False, "splitsKr.runNew " + ("없음" if run_new is None else "모양이 잘못됐어요") + " — 이 실행이 새로 판정한 수를 몰라요", rule_r)
     else:
+        mine = [x for x in run_new if isinstance(x, list) and len(x) >= 2 and isinstance(x[0], str) and isinstance(x[1], str)]
+        names = ", ".join(f"{x[0]} {x[1]}" for x in mine[:KR_SPLIT_SHOW]) + (" …" if len(mine) > KR_SPLIT_SHOW else "")
+        odd_n = len(run_new) - len(mine)
+        rep.add(KR_NOFILE_RUN_ROW, len(run_new) < KR_SPLIT_NOFILE_RUN_FAIL, f"이 실행이 새로 판정 {len(run_new)}건" + (f": {names}" if mine else "")
+                + (f" · 모양이 틀린 줄 {odd_n}" if odd_n else ""), rule_r)
+    new = None
+    if isinstance(pdata, dict):
         pinfo = pdata.get("splitsKr") if isinstance(pdata.get("splitsKr"), dict) else {}
         old = {(x[0], x[1]) for x in _nofile_rows(pinfo)[0] if len(x) > 1 and isinstance(x[1], str)}
         new = [x for x in rows if not (len(x) > 1 and isinstance(x[1], str) and (x[0], x[1]) in old)]
-        names = ", ".join(f"{x[0]} {x[1] if len(x) > 1 else '?'}" for x in new[:KR_SPLIT_SHOW]) + (" …" if len(new) > KR_SPLIT_SHOW else "")
-        rep.add(KR_NOFILE_RUN_ROW, len(new) < KR_SPLIT_NOFILE_RUN_FAIL, f"새로 {len(new)}건" + (f": {names}" if new else "")
-                + ("" if pinfo.get("nofile") is not None else " (직전 발행본에 목록이 없어 모두 새로)"), rule_r)
     spn = sum(1 for s in data.get("stocks", []) if isinstance(s, dict) and s.get("cls") == "kr" and "spNo" in s)
-    rep.add(KR_NOFILE_SUM_ROW, True, f"이번 실행에 새로 {'?' if new is None else len(new)}건 · 전체 {len(rows)}건 · 숫자를 비운 종목 {spn}",
-            "경고만 — 새로 생긴 줄이 있으면 노랗게 (공시를 확인하세요 · 실패는 위 두 줄)", warn=bool(new))
+    rep.add(KR_NOFILE_SUM_ROW, True, f"이 실행이 새로 판정 {len(run_new) if isinstance(run_new, list) else '?'}건 · 직전 발행본 뒤 새로 "
+            f"{'?' if new is None else len(new)}건 · 전체 {len(rows)}건 · 숫자를 비운 종목 {spn}",
+            "경고만 — 직전 발행본 뒤 새로 생긴 줄이 있으면 노랗게 (공시를 확인하세요 · 발행하지 못한 실행의 판정도 여기 들어요 · 실패는 위 두 줄)", warn=bool(new))
     _check_kr_split_keep(rep, data, today, pdata, rows)
     try:
         _check_kr_split_hide(rep, data, comps, rows)

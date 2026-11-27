@@ -275,6 +275,6 @@ def test_the_gate_warns_when_a_record_vanishes_without_a_reason():
 def test_the_run_row_shows_the_new_total_and_the_blanked_count():
     rep = keep_gate([["000660", "2026-10-01", 5.0, "nodoc"], ["000020", "2026-10-02", 5.0, "nodoc"]], [["000660", "2026-10-01", 5.0, "nodoc"]])
     row = T196.row(rep, V.KR_NOFILE_SUM_ROW)
-    assert row[3] == "WARN" and row[1].startswith("이번 실행에 새로 1건 · 전체 2건 · 숫자를 비운 종목 0")
+    assert row[3] == "WARN" and row[1].startswith("이 실행이 새로 판정 0건 · 직전 발행본 뒤 새로 1건 · 전체 2건 · 숫자를 비운 종목 0")
     rep = keep_gate([["000660", "2026-10-01", 5.0, "nodoc"]], [["000660", "2026-10-01", 5.0, "nodoc"]])
     assert T196.row(rep, V.KR_NOFILE_SUM_ROW)[3] == "PASS"

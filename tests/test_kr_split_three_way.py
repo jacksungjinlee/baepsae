@@ -265,10 +265,11 @@ def test_build_corp_carries_the_mark_with_the_blanked_numbers():
 
 # ── 3b. 관문: 필수 종목 · 하루에 많이 (실패) · 비움 (경고) ─────────────────────────────────────────────────
 
-def gate_with(nofile, prev_nofile=None, mark=None, prev_info=True):
+def gate_with(nofile, prev_nofile=None, mark=None, prev_info=True, run_new=()):
     cur, prev, final = K.gate_pair()
     cur["data"]["splitsKr"]["nofile"] = nofile
     cur["data"]["splitsKr"]["nofileN"] = len(nofile)
+    cur["data"]["splitsKr"]["runNew"] = [list(x[:2]) for x in run_new]
     if prev_info:
         prev["data"]["splitsKr"] = {"nofile": prev_nofile or []}
     for t, d, fl in mark or []:
@@ -300,21 +301,37 @@ def test_gate_fails_for_a_must_have_stock(t):
 
 
 def test_gate_fails_when_many_appear_in_one_run():
-    """1차 리뷰 뒤 (조정자 5 · Jack 의 말 "when many appear in one run"): 오늘 nofile 중 직전 발행본에 없던 줄이 KR_SPLIT_NOFILE_RUN_FAIL 건 이상이면
-    실패 — 사건 날짜와 상관없이 (오래된 날짜 · 여러 날짜도 세요). 직전 발행본에 있던 줄은 세지 않아요."""
+    """1차 리뷰 뒤 (조정자 5 · Jack 의 말 "when many appear in one run") · 2차 리뷰 B1: 이 실행이 스스로 판정해 처음 생긴 nofile 줄 (splitsKr.runNew) 이
+    KR_SPLIT_NOFILE_RUN_FAIL 건 이상이면 실패 — 사건 날짜와 상관없이. 직전 발행본 뒤 새로 생긴 줄 (발행하지 못한 실행의 판정이 보관본에서 다시 실린 것도)
+    은 경고 줄에만 보여요."""
     n = V.KR_SPLIT_NOFILE_RUN_FAIL
     many = [[f"9{i:04d}0", f"20{16 + i % 10}-0{1 + i % 9}-1{i % 9}", 0.2, "nodoc"] for i in range(n)]
-    rep = gate_with(many)
+    rep = gate_with(many, run_new=many)
     assert [r[0] for r in rep.failed] == [V.KR_NOFILE_RUN_ROW], rep.table()
-    assert T196.row(rep, V.KR_NOFILE_RUN_ROW)[1].startswith(f"새로 {n}건")
-    assert T196.row(rep, V.KR_NOFILE_SUM_ROW)[3] == "WARN" and f"이번 실행에 새로 {n}건" in T196.row(rep, V.KR_NOFILE_SUM_ROW)[1]
-    assert not gate_with(many[:-1]).failed                                                   # 한 건 모자라면 통과 (경고만)
-    assert not gate_with(many, prev_nofile=many[:1]).failed                                   # 하나는 지난 발행본에도 있었어요 → 새로 n − 1
-    cur, prev, final = K.gate_pair()                                                          # 직전 발행본이 없으면 비교하지 않아요
-    cur["data"]["splitsKr"]["nofile"] = many
+    assert T196.row(rep, V.KR_NOFILE_RUN_ROW)[1].startswith(f"이 실행이 새로 판정 {n}건")
+    assert T196.row(rep, V.KR_NOFILE_SUM_ROW)[3] == "WARN" and f"이 실행이 새로 판정 {n}건 · 직전 발행본 뒤 새로 {n}건" in T196.row(rep, V.KR_NOFILE_SUM_ROW)[1]
+    assert not gate_with(many, run_new=many[:-1]).failed                                     # 한 건 모자라면 통과
+    # 2차 리뷰 B1: 직전 발행본 뒤 새로 n 건이어도 이 실행이 판정한 것이 아니면 (발행하지 못한 실행들의 판정 · 다시 실은 발행본) 통과하고 경고만
+    rep = gate_with(many)
+    assert not rep.failed and T196.row(rep, V.KR_NOFILE_RUN_ROW)[1] == "이 실행이 새로 판정 0건", rep.table()
+    assert T196.row(rep, V.KR_NOFILE_SUM_ROW)[3] == "WARN" and f"직전 발행본 뒤 새로 {n}건" in T196.row(rep, V.KR_NOFILE_SUM_ROW)[1]
+    rep = gate_with(many, prev_info=False)                                                  # 직전 발행본에 splitsKr 이 없어도 (되돌린 뒤 다시 들어온 날)
+    assert not rep.failed, rep.table()
+    # runNew 가 없거나 모양이 틀리면 실패 (이 실행의 수를 몰라요)
+    for bad in (None, "x", {"a": 1}):
+        cur, prev, final = K.gate_pair()
+        cur["data"]["splitsKr"].update(nofile=many[:1], nofileN=1)
+        if bad is None:
+            cur["data"]["splitsKr"].pop("runNew")
+        else:
+            cur["data"]["splitsKr"]["runNew"] = bad
+        rep = T196.check(cur, prev, final)
+        assert [r[0] for r in rep.failed] == [V.KR_NOFILE_RUN_ROW] and "splitsKr.runNew" in T196.row(rep, V.KR_NOFILE_RUN_ROW)[1], rep.table()
+    cur, prev, final = K.gate_pair()                                                          # 직전 발행본이 없어도 이 실행의 수로 봐요
+    cur["data"]["splitsKr"].update(nofile=many, runNew=[x[:2] for x in many])
     rep = V.run_checks(cur, None, final, T196.TODAY, mode="publish", count_between=lambda a, b: 1, sessions=T196.SESSIONS, now=T196.NOW,
                        hilo=T196.hilo_of(cur, V.MUST))
-    assert T196.row(rep, V.KR_NOFILE_RUN_ROW)[3] == "PASS"
+    assert T196.row(rep, V.KR_NOFILE_RUN_ROW)[3] == "FAIL"
     assert V.KR_SPLIT_NOFILE_RUN_FAIL == 16
 
 
@@ -368,11 +385,12 @@ def test_one_run_of_all_no_answers_trips_the_run_limit_and_a_normal_run_does_not
     cmap = {x["t"]: f"C{x['t']}" for x in seed}
     _rows, info = F.kr_splits_fields(None, kr, [], nodoc_dart(), TODAY, seed=seed, cmap=cmap)
     assert info["calls"] <= F.KR_SPLIT_DART_PER_RUN and info["nofileN"] >= V.KR_SPLIT_NOFILE_RUN_FAIL
+    assert len(info["runNew"]) == info["nofileN"]                                                # 모두 이 실행이 새로 판정했어요
     c = K.FakeDart()
     for x in seed:
         c.entries[f"C{x['t']}|krsplit|v2|{x['d']}"] = K.ok_verdict(5.0, "20260101000001", "split", x["d"])
     _rows, info2 = F.kr_splits_fields(None, kr, [], c, TODAY, seed=seed, cmap=cmap)
-    assert info2["nofileN"] == 0 and len(info2["new"]) == 40
+    assert info2["nofileN"] == 0 and len(info2["new"]) == 40 and info2["runNew"] == []
 
 
 # ── 4. 한 번 실은 줄은 빼지 않아요 · 미국 줄은 그대로 ───────────────────────────────────────────────────────
