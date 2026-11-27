@@ -38,8 +38,10 @@ validate_data.py 를 통과해야만 커밋(발행)돼요. 파일은 write_json(
            4 '회사 공시에 배당 계산에 필요한 자료가 빠져 있어서…')
            · divCheck.proof(결과마다 수 · 되살리지 않은 이유 line · ratio · basis · rights · uncounted · data · fail 마다 종목 이름)
            · v19.1j divCheck.proofSub(rights · data 로 숨긴 종목마다 그 안의 경우 — rights sh · shnew · unk, data div · pref0 · neg · nototal ·
-           prefmix · nopfo · nostk · noshr · other: 줄은 sh → 2 · div → 3 · nototal · nostk · pref0 · nopfo · prefmix → 4 · other(이름을 붙이지
-           않은 배당 표 이유)는 줄 없음 · 로그 !! · 관문 경고)
+           prefmix · nopfo · nostk · noshr · other · nodps: 줄은 sh → 2 · div → 3 · nototal · nostk · pref0 · nopfo · prefmix · nodps → 4 ·
+           other(이름을 붙이지 않은 배당 표 이유)는 줄 없음 · 로그 !! · 관문 경고)
+           · 2026-11-23 divCheck.raw(DART 배당 표 맞춤: contra 0원인데 총액이 있어 모름으로 비운 해 · prefOnly 우선주만 받아 0 으로 둔 해 ·
+           dpsBad 주당 금액이 아니라 비운 해 {코드: [해 0 · 1 · 2]} · dyBad 비운 DART 배당수익률 {코드: 값} · dyOk 견줘 보고 남긴 수 · dyNo 견주지 못한 수)
 
 시장 가정(도구의 기본값으로 자동 반영)
   rf 국고채 10년(ECOS, 출처는 settings.rfSrc) · mktVol/usVol/mtVol · rhoKrUs/rhoKrMt/rhoUsMt …
@@ -112,6 +114,10 @@ from validate_data import FACTOR_KEYS, FACTOR_SRC, factor_fund   # 2026-11-24 (#
 # 데이터에 돌려 그 행을 빼거나 비우고 data.json ownDrop 에 적어요 (논리를 베끼지 않아요)
 from validate_data import (US_CLASS_DROP_KEY, US_CLASS_DROP_MAX, DIV_LINE_DROP_KEY, DIV_LINE_BLANK_MAX, US_CLASS_BLIND, us_class_bad_rows,
                            div_line_bad_rows, div_lines_lost, own_drop_rec, own_drop_text, kr_stocks as gate_kr_stocks, us_stocks as gate_us_stocks)
+# 2026-11-23: DART 배당 표 안의 어긋남 · 그럴듯하지 않은 주당 배당 · 배당수익률을 고르는 함수도 관문 파일에 하나씩 (관문의 경고 줄이 같은 함수로
+# 남은 행을 봐요 · div_raw_guard · div_dy_guard)
+from validate_data import (div_zero_contra, dps_far_years, dy_far, dy_base, dy_window_ok, PREF_ONLY_TOL, DPS_CASH_FAR, DY_FAR,
+                           DY_FAR_OUT)
 # 2026-11-19 (Jack: "new listings take their industry from DART's company records"): 한국표준산업분류 11차 표를 읽는 코드와 쓰는 단계(소분류)도
 # 관문 파일에 있어요 (관문이 같은 표로 채운 값을 확인해요)
 from validate_data import load_ksic_names, IND_DART_DIGITS, IND_MISS_KO, IND_MISS_OK, IND_FUND_KSIC, kr_desc_parse, KR_DESC_TAIL
@@ -11320,22 +11326,25 @@ PROVE_SHR_MOVE = 0.03             # 조회 뒤 오늘 상장 주식 수가 이�
 #              어느 줄이 맞는지 몰라요 — 리뷰 2026-11-19) → 줄 없음 · 로그에 '!!' 와 수 · 관문의 '숨긴 배당수익률의 줄' 줄이 경고.
 PROVE_EXACT_TOL = 1e-6            # 답 12 (나): 정확한 무상증자 배율의 곱(1 + x)과 발행하는 배율(dpsF)의 차이 상한
 PROVE_LINE = {"line": 1, "rights": 2, "data": 3, "missing": 4}         # dvLine 값 (앱이 줄을 고르는 표시)
+# 2026-11-23: nodps — 총액은 있는데 올해 보통주 주당 배당 칸이 0 · '-' 라 '모름'으로 비운 회사 (div_raw_guard). 줄 4 의 말이 그대로 맞아요 (공시에
+# 쓸 수 있는 주당 배당이 없어요) · 관문은 그 종목의 주당 배당이 정말 비었을 때만 받아요. 주당 칸에 총액을 적은 회사 (와이엔텍) 는 예전처럼 div (줄 3).
 PROVE_SUB = {"rights": ("sh", "shnew", "unk"),
-             "data": ("div", "pref0", "neg", "nototal", "prefmix", "nopfo", "nostk", "noshr", "other")}
+             "data": ("div", "pref0", "neg", "nototal", "prefmix", "nopfo", "nostk", "noshr", "other", "nodps")}
 PROVE_SUB_LINE = {"rights": {"sh": 2},                                 # 경우 → 줄 (말이 그대로 맞을 때만 · 없으면 줄 없음)
-                  "data": {"div": 3, "nototal": 4, "nostk": 4, "pref0": 4, "nopfo": 4, "prefmix": 4}}
+                  "data": {"div": 3, "nototal": 4, "nostk": 4, "pref0": 4, "nopfo": 4, "prefmix": 4, "nodps": 4}}
 PROVE_DATA_WHY = {"현금배당금총액 없음": "nototal", "주당 배당이 다른 우선주·종류주가 섞여 있어요": "prefmix",
                   "우선주·종류주 주식 수를 몰라요": "nopfo", "우선주·종류주 배당 줄이 있는데 그해 말 우선주·종류주가 없어요": "pref0",
                   "우선주 몫을 빼면 0 이하": "neg"}
 PROVE_SUB_KO = {"sh": "주주배정 (새 주식 상장됨)", "shnew": "주주배정 (새 주식이 아직 상장 전)", "unk": "방식을 모르는 결정만", "div": "총액 ÷ 주당 배당이 주식 수와 다름", "pref0": "우선주 배당 줄이 있는데 주식의 총수 현황에 우선주 수가 따로 없음",
                 "neg": "총액이 우선주 몫보다 작음", "nototal": "총액 없음", "prefmix": "주당 배당이 다른 종류주가 섞임", "nopfo": "우선주 주식 수 모름",
-                "nostk": "그해 말 주식의 총수 현황 없음", "noshr": "오늘 상장 주식 수 없음", "other": "이름을 붙이지 않은 배당 표 이유"}
+                "nostk": "그해 말 주식의 총수 현황 없음", "noshr": "오늘 상장 주식 수 없음", "other": "이름을 붙이지 않은 배당 표 이유",
+                "nodps": "총액은 있는데 보통주 주당 배당 칸이 0 · '-' (모름으로 비움)"}
 
 
 def prove_line(reason, sub=None):
     """숨긴 이유(reason)와 그 안의 경우(sub) → 앱이 보여 줄 줄의 표시(dvLine 1 · 2 · 3 · 4) 또는 None (줄 없음). 줄은 그 말이 그대로 맞을 때만:
     line 은 늘(1), rights 는 주주배정이라고 읽은 결정이 있을 때(sh → 2), data 는 배당 표가 회사의 주식 수와 실제로 어긋날 때(div → 3) ·
-    회사 공시에 계산에 필요한 조각이 빠졌을 때(nototal · nostk · pref0 · nopfo · prefmix → 4, Jack 2026-11-19). 그 밖(shnew · unk · neg · noshr ·
+    회사 공시에 계산에 필요한 조각이 빠졌을 때(nototal · nostk · pref0 · nopfo · prefmix → 4, Jack 2026-11-19 · 2026-11-23 총액은 있는데 주당 칸이 0 · '-' 인 nodps → 4). 그 밖(shnew · unk · neg · noshr ·
     other — 이름을 붙이지 않은 배당 표 이유)은 None. (순수 함수)"""
     if reason == "line":
         return PROVE_LINE["line"]
@@ -12026,6 +12035,25 @@ class DivWhy:
         종목의 dvLine 과 맞춰 봐요 (prove_line: rights sh → 2 · data div → 3 · 빠진 자료 → 4 · 나머지는 줄 없음)."""
         return {"v": 1, **{k: dict(sorted(self.psub[k].items())) for k in PROVE_SUB}}
 
+    def raw_hidden(self, s, sub):
+        """2026-11-23: div_raw_guard 가 올해 보통주 주당 배당을 '모름'으로 비운 배당 회사 (그해 총액이 있어요) — 올해 배당수익률이 없는 이유를 증명의
+        data 에 적어요 (sub: nodps 총액은 있는데 주당 칸이 0 · '-' → 줄 4 '회사 공시에 배당 계산에 필요한 자료가 빠져 있어서 …' · div 주당 칸에 총액처럼
+        주당 금액이 아닌 값 (총액 ÷ 주당 배당이 주식 수와 1,000배 넘게 다름) → 줄 3 '회사가 공시한 배당 자료와 주식 수가 서로 맞지 않아서 …' — 예전 증명과
+        같은 경우 · prove_line 이 정해요). 증명(_prove)은 올해 주당 배당이 없는 종목을 보지 않아서
+        한 종목이 두 이유 목록에 들지 않아요. 증명이 꺼졌으면 (기록이 없으면) 줄도 없어요 (관문은 기록 없는 줄에 실패해요)."""
+        if not self.prove_on or sub not in PROVE_SUB["data"]:
+            return
+        t = s["t"]
+        if any(t in v for v in self.pv.values()):
+            return                                     # 생길 수 없어요 (위) — 생기면 먼저 정한 이유를 그대로 둬요
+        self.pv["data"].append(t)
+        self.psub["data"][t] = sub
+        ln = prove_line("data", sub)
+        if ln:
+            s["dvLine"] = ln
+        self.pnotes.append(f"그대로 숨김(data) {t} {s.get('nk', '')}".rstrip() + ": DART 배당 표에서 올해 보통주 주당 배당을 모름으로 비웠어요 → "
+                           + (f"줄 dvLine {ln}" if ln else "줄 없음") + f" ({sub} · {PROVE_SUB_KO[sub]})")
+
     def proof_summary(self):
         c = self.proof_counts()
         yrs = {k.split(":", 1)[1]: v for k, v in self.n.items() if k.startswith("pYear:")}
@@ -12055,6 +12083,165 @@ class DivWhy:
         return [line, calls, ln] + unk + ex + [f"  !! {x}" for x in self.pnotes]
 
 
+# ────────────────────────────────────────────────────────────
+# 2026-11-23: DART 배당 표 안의 어긋남 · 그럴듯하지 않은 주당 배당 · 배당수익률 (2026-11-21 발행본 감사 · 규칙과 기준값은 validate_data.py 의
+# PREF_ONLY_TOL · DPS_CASH_FAR · DY_FAR 설명 — 관문의 경고 줄 둘이 같은 함수로 남은 행을 봐요)
+# ────────────────────────────────────────────────────────────
+# A (div_raw_guard): 보통주 주당 배당이 0 ('-') 인데 그해 현금배당금총액이 있으면 그해 주당 배당은 '모름' (빈 칸) — 0 은 '배당 없음'이라 2.0 이
+#   '배당을 주지 않았어요'라고 하고 배당 순위의 맨 아래에 놓았어요 (현대코퍼레이션 84.08억원 등 18곳). 우선주 · 종류주가 총액을 다 받은 해만 0 그대로.
+# B (div_raw_guard): 주당 칸의 값이 주당 금액이 아닌 해 (총액과 1,000배 넘게 다름 — 와이엔텍) 는 그해 주당 배당을 비워요 (종가 이상만으로는 아니에요).
+#   올해 것을 비운 배당 회사(총액 > 0)는 증명의 data 에 적어 줄 4 (DivWhy.raw_hidden). 주당 배당을 총액으로 만들어 내지 않아요.
+# B (div_dy_guard · apply_div_basis 뒤): DART 배당수익률(dy)이 오늘 기준 주당 배당 ÷ 52주 범위에서 3배 넘게 벗어나면 비워요 (예전 뱁새의 배당수익률 ·
+#   2.0 은 dy 를 쓰지 않아요). DART 가 보낸 값을 보는 검사라 발행을 막지 않고, 크게 남기고 data.json divCheck.raw 에 적어요.
+# DART 캐시는 해석된 값(parse_dart_dividend)을 담아서, 해석을 바꾸지 않고 캐시 뒤 여기서 걸러요 (g3_usable 과 같은 생각 · 배당 항목을 다시 받지 않아요).
+def corp_cash3_of(bas):
+    """corp.json 에 싣는 현금배당금총액 3년 (억원 · 백만원 단위까지 · 음수는 잘못 적은 값이라 빈 칸) — apply_div_basis 의 corp 칸과 div_raw_guard 가
+    같은 값을 봐요 (리뷰 #179 2차: 관문이 nodps 줄 4 에 corp.json 의 cash3[0] > 0 을 바라서). 배당 표에 총액이 없으면 None. (순수 함수)"""
+    if not isinstance((bas or {}).get("cash3"), list):
+        return None
+    return [round(v / 1e8, 2) if _fin(v) is not None and v >= 0 else None for v in bas["cash3"]]
+
+
+def div_raw_guard(kr_stocks, pref_shares, fin_map=None):
+    """A · B (주당 배당): 국내 보통주의 dps3 (그리고 올해면 dps) 중 모르는 해 · 주당 금액이 아닌 해를 빈 칸으로 → divCheck.raw (contra · prefOnly ·
+    dpsBad: 코드 → [해 0 · 1 · 2] · dyBad · dyOk · dyNo · pre: 비우기 전 dps 와 dy). 다 하거나 아무것도 안 해요 (리뷰 #179): 먼저 모든 종목을 보고
+    로그와 기록을 다 만든 뒤 끝에서 한 번에 바꿔요 — 도중에 멈추면 아무것도 바뀌지 않고 기록도 없어요 (main 이 크게 남겨요).
+    - 세 해가 모두 비면 dps3 를 지워요 (관문: dps3 가 있는 보통주는 divSt 가 있어야 해요).
+    - 올해 것을 비우면 늘 이유 줄이 있어요 (_divRaw → apply_div_basis): 0 인데 총액 → nodps (줄 4) · 총액과 1,000배 넘게 다른 주당 칸 → div (줄 3 ·
+      총액 ÷ 주당 배당이 주식 수와 다름이 그대로 맞아요). 올해 것을 비운 종목의 dy 가 0 이면 ('-' 를 0 으로 읽은 값) 그 dy 도 비워요 (dyBad).
+    - 그대로 두는 종목 (이유 없는 빈칸 · 관문이 받지 않을 줄이 생기지 않게 · 이름을 크게 남겨요): 해외 기업 (9…: 증명 단계가 이유 줄을 달지 않아요) ·
+      올해가 0 인데 corp.json 에 그해 총액이 0 보다 크게 실리지 않을 회사 (원화가 아닌 재무제표 — build_corp 가 cash3 를 비워요 · 총액이 0.00억원으로
+      반올림돼요: corp_cash3_of) — 관문은 nodps 줄 4 에 corp.json 의 cash3[0] > 0 을 바라요 (리뷰 #179 2차).
+    apply_div_basis 앞에 불러요 (_bas · _stk 를 써요 · fin_map 은 원화가 아닌 재무제표를 알려 줘요)."""
+    fin_map = fin_map or {}
+    rec = {"v": 1, "contra": {}, "prefOnly": {}, "dpsBad": {}, "dyBad": {}, "dyOk": 0, "dyNo": 0, "pre": {}}
+    ex = {"contra": [], "prefOnly": [], "dpsBad": []}
+    plan, fgn, nocorp = [], [], []                 # plan: (종목, 새 dps3 또는 None(지움), 올해를 비움, 이유 경우, dy 를 비움)
+    for s in kr_stocks:
+        t = s.get("t")
+        if s.get("cls") != "kr" or not isinstance(t, str) or is_preferred(t) or not isinstance(s.get("dps3"), list):
+            continue
+        bas = s.get("_bas") or {}
+        d3 = (list(s["dps3"]) + [None] * 3)[:3]
+        cash = _three(bas.get("cash3"))
+        contra, pref_only = div_zero_contra(d3, cash, bas.get("pdps") or (), pref_shares.get(t[:5], ()),
+                                            pfo=(s.get("_stk") or {}).get("pfo"))
+        bad = [i for i in dps_far_years(d3, cash, s.get("shr")) if i not in contra]
+        tag = f"{t} {s.get('nk', '')}".strip()
+        yr = lambda i: str(s["fy"] - i) if isinstance(s.get("fy"), int) else ("당기", "전기", "전전기")[i]   # noqa: E731
+        if (contra or bad) and is_foreign_issuer(t):
+            fgn.append(f"{tag} (" + "·".join(yr(i) for i in sorted(contra + bad)) + ")")
+            continue
+        if 0 in contra:
+            c0 = None if not_won(s, fin_map.get(t)) else (corp_cash3_of(bas) or [None])[0]
+            if not (c0 and c0 > 0):
+                nocorp.append(f"{tag} ({'원화가 아닌 재무제표' if c0 is None and not_won(s, fin_map.get(t)) else '총액이 0.00억원으로 반올림'})")
+                continue
+        for k, ys in (("contra", contra), ("prefOnly", pref_only), ("dpsBad", bad)):
+            if ys:
+                rec[k][t] = sorted(ys)
+                ex[k].append(f"{tag} " + "·".join(yr(i) for i in sorted(ys)) + (f" ({d3[ys[0]]:,.0f}원)" if k == "dpsBad" else ""))
+        if not contra and not bad:
+            continue
+        new = list(d3)
+        for i in contra + bad:
+            new[i] = None
+        y0 = 0 in contra or 0 in bad
+        dy_blank = y0 and _fin(s.get("dy")) == 0
+        if y0:
+            rec["pre"][t] = [_fin(s.get("dps")), _fin(s.get("dy"))]
+        if dy_blank:
+            rec["dyBad"][t] = _fin(s.get("dy"))
+        plan.append((s, new if any(x is not None for x in new) else None, y0, ("nodps" if 0 in contra else "div") if y0 else None, dy_blank))
+    n = {k: sum(len(v) for v in rec[k].values()) for k in ex}
+
+    def few(arr):
+        return f": {', '.join(sorted(arr)[:20])}{f' 외 {len(arr) - 20}곳' if len(arr) > 20 else ''}" if arr else ""
+    lines = [
+        f"{'  !! ' if rec['contra'] else '· '}DART 배당 표 0원인데 그해 현금배당금총액이 있는 해 → 모름(빈 칸): {len(rec['contra'])}종목 {n['contra']}해"
+        + few(ex["contra"]) + f" · 우선주 · 종류주만 받아 0 그대로 {len(rec['prefOnly'])}종목 {n['prefOnly']}해" + few(ex["prefOnly"])
+        + f" (우선주 몫 ± {PREF_ONLY_TOL:.0%} · 총액으로 주당 배당을 만들지 않아요) · 올해를 비운 종목의 dy 0 ('-') 도 비움 {len(rec['dyBad'])}",
+        f"{'  !! ' if rec['dpsBad'] else '· '}DART 주당 배당이 주당 금액이 아닌 해 (× 오늘 보통주 수 > 그해 총액 × {DPS_CASH_FAR:g}) → "
+        f"빈 칸: {len(rec['dpsBad'])}종목 {n['dpsBad']}해" + few(ex["dpsBad"])]
+    if fgn:
+        lines.append(f"  !! DART 배당 표 맞춤: 해외 기업 {len(fgn)}곳은 예전 값 그대로 (증명 단계가 해외 기업에 이유 줄을 달지 않아요 · 0 이 '배당 없음'으로 "
+                     f"남을 수 있어요){few(fgn)}")
+    if nocorp:
+        lines.append(f"  !! DART 배당 표 맞춤: 올해 0 인데 corp.json 에 그해 총액이 0 보다 크게 실리지 않을 회사 {len(nocorp)}곳은 예전 값 그대로 (관문이 그런 "
+                     f"회사의 줄 4 를 받지 않아요 · 0 이 '배당 없음'으로 남아요){few(nocorp)}")
+    # 여기까지 아무것도 바꾸지 않았어요 (로그 글과 기록도 다 만들었어요) — 이제 한 번에 (멈출 일이 없는 칸 바꾸기만)
+    for s, new, y0, why, dy_blank in plan:
+        if new is None:
+            s.pop("dps3", None)
+        else:
+            s["dps3"] = new
+        if y0:
+            s.pop("dps", None)                     # dps = 올해 dps3[0] (같은 줄) — 2.0 은 dps 가 없으면 '배당을 아는지'도 모름으로 봐요
+            s["_divRaw"] = why                     # 올해 것을 비우면 늘 이유 줄 (A: contra 는 총액 > 0 · B: 1,000배 규칙은 총액 > 0 일 때만)
+        if dy_blank:
+            s.pop("dy", None)
+    for line in lines:
+        log(line)
+    return rec
+
+
+def div_raw_line_log(kr_stocks, rec):
+    """apply_div_basis 뒤 (리뷰 #179 2차): div_raw_guard 가 올해를 비운 종목 중 이유 줄(dvLine)이 붙은 수와 붙지 않은 수를 세어 남겨요 — 붙지 않은
+    종목이 있으면 '!!' 와 이름 (생기면 안 돼요). → 붙지 않은 종목 [코드]."""
+    y0 = sorted({t for k in ("contra", "dpsBad") for t, ys in ((rec or {}).get(k) or {}).items() if 0 in ys})
+    by = {s.get("t"): s for s in kr_stocks}
+    with_line = [t for t in y0 if isinstance((by.get(t) or {}).get("dvLine"), int)]
+    without = [t for t in y0 if t not in with_line]
+    log(f"{'  !! ' if without else '· '}DART 배당 표 맞춤: 올해를 비운 종목 {len(y0)} — 이유 줄을 단 종목 {len(with_line)} · 이유 줄 없이 비운 종목 {len(without)}"
+        + (f": {', '.join(without[:20])}" if without else ""))
+    return without
+
+
+def div_dy_guard(kr_stocks, rec=None, px=None):
+    """B (배당수익률): DART 배당수익률(dy)을 오늘 기준 올해 주당 배당(dy_base: dps3a[0] — 배율을 확인한 해만 · 배당 없음이면 0) ÷ 52주 고가 ~ 저가와
+    견줘 DY_FAR 배 넘게 벗어나면 비워요 (dy_far · 관문과 같은 함수). 보고서 해의 말일이 오늘(px)의 52주 창 밖이면 폭을 DY_FAR_OUT 으로 넓혀요
+    (dy_window_ok · 리뷰 #179 2차: 끄지 않고 넓혀요 · 창 안이면 비웠을 값을 남기면 이름을 남겨요). 해외 기업 (9…) 은 보지 않아요 (예전 그대로).
+    apply_div_basis 뒤에 불러요 (dps3a · dpsF). 다 하거나 아무것도 안 해요 (로그 글과 기록을 다 만든 뒤 끝에서 비움). → rec (divCheck.raw) 의 dyBad
+    {코드: 비운 값} · pre (비우기 전 dps · dy) · dyOk (견줘 보고 남긴 수) · dyNo (견주지 못한 수) 를 고쳐요."""
+    rec = rec if isinstance(rec, dict) else {"v": 1, "contra": {}, "prefOnly": {}, "dpsBad": {}, "dyBad": {}, "dyOk": 0, "dyNo": 0, "pre": {}}
+    bad, ex, ok, no, out, wide = {}, [], 0, 0, 0, []
+    for s in kr_stocks:
+        t = s.get("t")
+        if s.get("cls") != "kr" or not isinstance(t, str) or is_preferred(t) or _fin(s.get("dy")) is None or is_foreign_issuer(t):
+            continue                                   # 해외 기업은 예전 그대로 (blank_foreign_dart 가 0 이 아닌 값을 이미 비워요)
+        a0 = dy_base(s)
+        win = dy_window_ok(s.get("fy"), px)
+        res = dy_far(s["dy"], a0, s.get("price"), s.get("hi"), s.get("lo"), window=win) if a0 is not None else None
+        out += a0 is not None and not win
+        if res is None:
+            no += 1
+        elif res:
+            bad[t] = _fin(s["dy"])
+            ex.append(f"{t} {s.get('nk', '')} {bad[t]:g}% (오늘 기준 주당 {a0:,.0f}원 · 종가 {_fin(s.get('price')) or 0:,.0f}원)")
+        else:
+            ok += 1
+            if not win and dy_far(s["dy"], a0, s.get("price"), s.get("hi"), s.get("lo")):
+                wide.append(f"{t} {s.get('nk', '')} {_fin(s['dy']):g}%")
+    by = {s.get("t"): s for s in kr_stocks}
+    pre = dict(rec.get("pre") or {})
+    for t, v in bad.items():
+        pre.setdefault(t, [_fin(by[t].get("dps")), v])
+    upd = {"dyBad": dict(sorted({**(rec.get("dyBad") or {}), **bad}.items())), "dyOk": ok, "dyNo": no, "pre": dict(sorted(pre.items()))}
+    line = (f"{'  !! ' if bad else '· '}DART 배당수익률(dy)이 오늘 기준 주당 배당 ÷ 52주 범위에서 {DY_FAR:g}배 넘게 벗어남 → 빈 칸 {len(bad)}"
+            + (f": {', '.join(ex[:20])}{f' 외 {len(ex) - 20}곳' if len(ex) > 20 else ''}" if ex else "")
+            + f" · 맞춰 보고 남김 {ok:,} · 견주지 못함 {no:,} (올해 주당 배당이 없거나 오늘 주식 수 기준을 확인하지 못한 해 — 예전 뱁새에 그대로)"
+            + (f" · 보고서 해 말이 52주 창 밖이라 {DY_FAR_OUT:g}배로 넓혀 견줌 {out:,}" if out else ""))
+    wline = (f"  !! DART 배당수익률(dy): 넓힌 폭이라서 남긴 값 {len(wide)} (창 안이면 비웠을 값 · 관문 경고): {', '.join(wide[:20])}" if wide else None)
+    # 여기까지 아무것도 바꾸지 않았어요 — 이제 한 번에
+    for t in bad:
+        by[t].pop("dy", None)
+    rec.update(upd)
+    log(line)
+    if wline:
+        log(wline)
+    return rec
+
+
 def apply_div_basis(kr_stocks, fin_map, pref_shares, why=None):
     """v19.1b: 국내 종목마다 dps3a·dpsF·divSt·dyt 를 붙이고, corp.json 에 실을 원값(총액·주당순이익)을 돌려줘요.
     분할 확인용 임시 칸(_bas)은 여기서 지워요 (파일에 나가지 않게). 반환: (집계 dict, {코드: corp.json 추가 칸}).
@@ -12067,6 +12254,7 @@ def apply_div_basis(kr_stocks, fin_map, pref_shares, why=None):
         bas = s.pop("_bas", None)
         cap = s.pop("_cap", None)
         stk = s.pop("_stk", None)
+        raw = s.pop("_divRaw", None)  # 2026-11-23: div_raw_guard 가 올해 주당 배당을 비운 배당 회사 (nodps 줄 4 · div 줄 3)
         s.pop("dvWhy", None)          # v19.1h: 이번 실행에서 확인한 것만
         s.pop("dvProof", None)        # v19.1i: 이번 실행에서 증명한 것만 (건너뛰는 종목도 — 관문은 기록 없는 dvProof · dvLine 에 실패해요)
         s.pop("dvLine", None)         # v19.1i: Jack 의 줄도 이번 실행에서 정한 것만
@@ -12076,6 +12264,25 @@ def apply_div_basis(kr_stocks, fin_map, pref_shares, why=None):
         if is_preferred(t):
             cnt["pref"] += 1          # 우선주 종목에는 DART 배당 표가 따로 없어요 (보통주의 표에 우선주 줄로 있어요)
             continue
+        if raw and why is not None and not is_foreign_issuer(t):
+            why.raw_hidden(s, raw)    # 올해 배당수익률이 없는 이유 (증명의 data · 줄 3 · 4) — 아래 계산은 그대로 (올해 주당 배당이 없어 dyt 도 없어요)
+        # corp.json 에 실을 원값 (총액 · 주당순이익) — 배당 표가 있으면 늘 (리뷰 #179: 세 해의 주당 배당을 모두 비운 회사도 총액이 남아야 2.0 의 배당성향 ·
+        # 관문의 '0원인데 총액' 줄이 그 숫자를 봐요 · 그래서 아래 '주당 배당 없음' 건너뛰기 앞에서)
+        if bas and not is_foreign_issuer(t):      # 해외 기업 금액은 원화가 아닐 수 있어 싣지 않아요 (blank_foreign_dart 참고)
+            ek2 = lambda v: round(v / 1e8, 2) if _fin(v) is not None else None       # 원 → 억원 (백만원 단위까지)   # noqa: E731
+            e = {}
+            if isinstance(bas.get("cash3"), list):
+                e["cash3"] = corp_cash3_of(bas)     # 음수 총액은 잘못 적은 값 — 비워요 (div_raw_guard 가 같은 값을 봐요)
+                if any(_fin(v) is not None and v < 0 for v in bas["cash3"]):
+                    cnt["negCash"] += 1
+                    big.append(f"{t} 음수 현금배당금총액")
+            if isinstance(bas.get("eps3"), list):
+                e["eps3r"] = [round(v, 0) if _fin(v) is not None else None for v in bas["eps3"]]
+                e["epsNi3"] = [ek2(v) for v in bas.get("ni3") or [None] * 3]
+                if bas.get("epsB"):
+                    e["epsB"] = bas["epsB"]
+            if e:
+                extra[t] = e
         if not isinstance(s.get("dps3"), list):
             cnt["noDps"] += 1
             continue
@@ -12122,21 +12329,6 @@ def apply_div_basis(kr_stocks, fin_map, pref_shares, why=None):
             nc_ex.append(tag)
         elif r["divSt"] == "nd":
             nd_ex.append(tag)
-        if bas and not is_foreign_issuer(t):      # 해외 기업 금액은 원화가 아닐 수 있어 싣지 않아요 (blank_foreign_dart 참고)
-            ek2 = lambda v: round(v / 1e8, 2) if _fin(v) is not None else None       # 원 → 억원 (백만원 단위까지)
-            e = {}
-            if isinstance(bas.get("cash3"), list):
-                e["cash3"] = [ek2(v) if (_fin(v) or 0) >= 0 else None for v in bas["cash3"]]   # 음수 총액은 잘못 적은 값 — 비워요
-                if any(_fin(v) is not None and v < 0 for v in bas["cash3"]):
-                    cnt["negCash"] += 1
-                    big.append(f"{t} 음수 현금배당금총액")
-            if isinstance(bas.get("eps3"), list):
-                e["eps3r"] = [round(v, 0) if _fin(v) is not None else None for v in bas["eps3"]]
-                e["epsNi3"] = [ek2(v) for v in bas.get("ni3") or [None] * 3]
-                if bas.get("epsB"):
-                    e["epsB"] = bas["epsB"]
-            if e:
-                extra[t] = e
 
     def ex(arr):
         return f": {', '.join(sorted(arr)[:8])}{'…' if len(arr) > 8 else ''}" if arr else ""
@@ -12208,7 +12400,8 @@ SMALL_DIV_KO = {"ev": "그해 말 뒤 분할 · 병합 · 무상증자", "blk": 
                 "many": "소액주주 몫으로 적힌 금액이나 주식 수가 둘 이상", "big": f"소액주주 기준 수익률이 {DYT_MAX:g}% 넘음 (믿지 않아요)",
                 "tiny": f"소액주주 기준 수익률이 {SMALL_DIV_Y_MIN:g}% 아래", "nf": "12월 결산 사업보고서 원문 또는 '배당에 관한 사항' 절 없음",
                 "nocall": "DART 를 부르지 않는 실행 (같은 기준일 다시 하기) — 읽은 적 없는 원문은 다음 실행에서",
-                "bad": "종목 칸이 모자람 (가격 · 1주 배당 · 사업연도 · 기업코드)"}
+                "bad": "종목 칸이 모자람 (가격 · 1주 배당 · 사업연도 · 기업코드)",
+                "raw": "DART 배당 표의 올해 주당 배당을 비운 종목 (표 안의 어긋남 · divCheck.raw)"}
 
 
 def small_div_report_rc(rows, fy):
@@ -12484,8 +12677,16 @@ def _small_holder_div(kr, why, client, px_date, corp_extra, rec):
     by = {s.get("t"): s for s in kr}
     px = px_date.isoformat() if isinstance(px_date, dt.date) else str(px_date)
     budget = [SMALL_DIV_PER_RUN]
+    # #179 (리뷰 3차 N2): 올해 주당 배당을 비운 종목 (divCheck.raw 의 contra · dpsBad 올해 — 와이엔텍 · main 이 why.div_raw 에 둬요) 은 볼 1주 배당이
+    # 없어요 → '종목 칸이 모자람' 이 아니라 그 이유로 그대로 (로그 · 기록의 이유만 · 실은 종목은 같아요)
+    raw = getattr(why, "div_raw", None)
+    raw_y0 = {c for k in ("contra", "dpsBad") for c, ys in (((raw or {}).get(k) if isinstance(raw, dict) else None) or {}).items()
+              if isinstance(ys, list) and 0 in ys}
     for t in cand:
         s = by.get(t)
+        if t in raw_y0:
+            rec["no"][t] = "raw"
+            continue
         fy = (s or {}).get("fy")
         d0 = _fin((_three((s or {}).get("dps3")) or [None])[0])
         price = _fin((s or {}).get("price"))
@@ -17891,10 +18092,32 @@ def main():
     unit_cover = unit_guard(kr, fin_map, mult_extra, kmeta.get("_prefShares") or {})["cover"]   # (2026-11-13) 공시 단위 확인 (점수·incCheck·corp.json 보다 먼저)
     # v19.1b: 분할에 안전한 배당 (dps3a·dpsF·divSt·dyt) — 해외 기업 비우기 뒤, 점수(dz)·corp.json 보다 먼저
     # v19.1h: 맞춘 해가 있는 종목은 DART 결정 공시로 이유를 확인해요 (dvWhy · 공시와 다른 해는 맞추지 않아요). DART 가 꺼졌으면 조회 실패로 세요
+    # 2026-11-23: DART 배당 표 안의 어긋남 (0원인데 총액이 있는 해 → 모름) · 주당 금액이 아닌 주당 배당 → 빈 칸 (apply_div_basis 앞 · _bas 를 써요).
+    # 다 하거나 아무것도 안 해요: 멈추면 아무것도 비우지 않았어요 → 크게 남기고 예전 값 그대로 · 기록 divCheck.raw 없이 발행 (관문의 두 경고 줄이 남은
+    # 행을 이름과 함께 알려요). 하나라도 비웠으면 기록이 늘 있어요 (관문의 '주당 배당금·배당수익률 맞음' 줄이 비우기 전 값으로 세요 — 리뷰 #179 B1)
+    try:
+        div_raw = div_raw_guard(kr, kmeta.get("_prefShares") or {}, fin_map)
+    except Exception as e:
+        div_raw = None
+        log(f"  !! DART 배당 표 맞춤(div_raw_guard)이 오류로 멈췄어요 ({type(e).__name__}: {str(e)[:160]}) — 아무것도 비우지 않고 예전 값 그대로 · "
+            "divCheck.raw 없이 발행해요 (관문 경고)")
     why = DivWhy(client, px_date)
     div_counts, corp_extra = apply_div_basis(kr, fin_map, kmeta.get("_prefShares") or {}, why=why)
+    if div_raw is not None:
+        div_counts["raw"] = div_raw          # 비운 값이 있으면 기록은 늘 함께 (아래 dy 맞춤이 멈춰도)
+        try:      # 올해를 비운 종목 중 이유 줄을 단 수 · 못 단 수 (리뷰 #179 2차 · 3차: 세는 줄이 멈춰도 발행은 이어가요 — 크게 남겨요)
+            div_raw_line_log(kr, div_raw)
+        except Exception as e:
+            log(f"  !! DART 배당 표 맞춤: 이유 줄 세기(div_raw_line_log)가 오류로 멈췄어요 ({type(e).__name__}: {str(e)[:160]}) — 줄 수를 남기지 "
+                "못했어요 (값과 기록은 그대로 · 관문의 '숨긴 배당수익률의 줄' 줄이 따로 맞춰 봐요)")
+        try:      # DART 배당수익률(dy)이 그럴듯한지 (dps3a · dpsF 를 써서 apply_div_basis 뒤 · 다 하거나 아무것도 안 해요)
+            div_dy_guard(kr, div_raw, px=px_date)
+        except Exception as e:
+            log(f"  !! DART 배당수익률 맞춤(div_dy_guard)이 오류로 멈췄어요 ({type(e).__name__}: {str(e)[:160]}) — dy 는 하나도 비우지 않고 그대로 · "
+                "기록은 주당 배당 맞춤까지만 (관문 경고)")
     # 2026-11-23 (Jack, 11-19 Q6): 차등배당 회사의 소액주주 1주 배당 · 수익률 (dpsSmall · dytSmall · divSmall) — 증명이 data/div 로 숨긴 종목만,
     # 사업보고서 원문이 그렇게 적을 때만. dps · dyt · dz 는 그대로 (캐시 저장 앞: 새로 읽은 원문 사실도 함께 저장돼요)
+    why.div_raw = div_raw                # #179 (리뷰 3차 N2 · 로그만): 소액주주 단계가 올해 주당 배당을 비운 종목의 이유를 알게
     div_small = small_holder_div(kr, why, client, px_date, corp_extra)
     if client:
         try:

@@ -190,7 +190,9 @@ export function divKr(s, co, trend = KR_DIV_TREND) {
 function divKrExact(s, co) {
   const fy = num(s && s.fy) ?? (co ? num(co.fy) : null);
   const st = krDivState(s, co);
-  if (!st) return { rule: "na", dps: null, yieldPct: null, fy, dpsOk: false };
+  // no dps: nothing known (na), except a payer whose report's per-share cell was not a per-share figure (divBlankKind "pays",
+  // dvLine 3): 배당을 줘요 with no yield and no amount, and its reason line where the tile and tab put it
+  if (!st) return { rule: divBlankKind(s, co) === "pays" ? "pays" : "na", dps: null, yieldPct: null, fy, dpsOk: false };
   const yieldPct = fy != null ? st.y : null;
   if (st.zero) return { rule: "none", dps: 0, yieldPct, fy, dpsOk: true };
   // adjFrom (Jack, PR #68 B3): the report's own figure (won) when the per-share figure shown was recalculated for a share
@@ -244,7 +246,27 @@ export function divHiddenLine(s, co = null) {
   const key = DIV_HIDDEN_LINE[s.dvLine];
   if (!key) return null;
   const st = krDivState(s, co);
-  return st && !st.zero && st.y == null ? key : null;
+  if (!st) return divBlankKind(s, co) ? key : null;          // 2026-11-23: no dps, but the pipeline said why (divBlankKind)
+  return !st.zero && st.y == null ? key : null;
+}
+
+// 2026-11-23 (DART 배당 표 안의 어긋남): a Korean stock whose report's per-share dividend the pipeline left blank (data.json dps
+// missing; fetch_data.div_raw_guard) while the same table shows a cash dividend total, with the pipeline's reason mark (dvLine,
+// checked by the gate against divCheck.proofSub):
+//   dvLine 4 (proofSub.data nodps): the common per-share cell was 0 or "-" next to a total above 0, so whether the common shares
+//     were paid is not known -> "unknown": the tile and tab keep 자료가 없어요 (never 배당을 줘요) and add line 4 under it.
+//   dvLine 3 (proofSub.data div): the cell held a figure that is not a per-share amount (와이엔텍: the total itself, so the total ÷
+//     the per-share figure disagrees with the share count) -> "pays" only while the company's own total for that year is above 0
+//     (corp.json cash3[0]; review #179: the app says 배당을 줘요 only on a number it can see), so 배당을 줘요 with line 3 and the
+//     배당성향 from the totals, as before the figure was blanked; without that total (no corp row, or 0) -> "unknown" (자료가 없어요
+//     with line 3).
+// Any other mark, a dps on file, an older file or a US stock -> null (nothing changes: krDivState and divHiddenLine as before).
+export function divBlankKind(s, co = null) {
+  if (!exactData() || !s || s.cls !== "kr" || num(s.dps) != null || typeof s.dvLine !== "number") return null;
+  if (s.dvLine === 4) return "unknown";
+  if (s.dvLine !== 3) return null;
+  const cash = co && Array.isArray(co.cash3) ? num(co.cash3[0]) : null;
+  return cash != null && cash > 0 ? "pays" : "unknown";
 }
 
 // 2026-11-23 (Jack, 2026-11-19 Q6 "labelled as the 소액주주 rate"): a 차등배당 company's 소액주주 yield, where the screens would otherwise
@@ -325,7 +347,9 @@ export function payout(s, co) {
     const src = basis === "o" || basis === "s" ? epsNiSeries(co, e) : co.ni;    // repair.js: "s" with hybrid payouts reads nio3 too
     const ni0 = Array.isArray(src) ? num(src[0]) : null;
     const fy0 = num(co.fy) ?? num(s.fy);
-    if (!st || st.zero || !(cash > 0) || !(ni0 > 0) || fy0 == null) return null;
+    // 2026-11-23: a payer whose per-share cell was not a per-share figure (divBlankKind "pays") keeps its 배당성향 — it uses the totals only
+    const pays = st ? !st.zero : divBlankKind(s, co) === "pays";
+    if (!pays || !(cash > 0) || !(ni0 > 0) || fy0 == null) return null;
     const p = (cash / ni0) * 100;
     const b = e ? { basis } : {};                  // files before the re-read: the same result as before, nothing added
     return p > 0 && p <= 100 ? { pct: p, fy: fy0, ...b } : { out: p, fy: fy0, ...b };
