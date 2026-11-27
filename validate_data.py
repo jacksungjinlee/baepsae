@@ -368,6 +368,14 @@ D1_WHY = ("noTrade", "range", "new", "prev")
 NO_TRADE_SHOW = 12       # 값 칸에 적는 종목 수 (나머지는 수만 · 전체는 요약 목록에)
 KONEX_DAY_LIMIT = 15.0   # 코넥스 하루 가격 제한폭 (%)
 KR_JUMP_WHY = {"pin": "우리 고정이 만든 움직임", "halt": "거래정지 뒤 재개", "spike": "하루만 튄 봉", "other": "그 밖"}
+# 2026-11-24 (Jack, Track 1 item 4 "repair the broken price history for the 18 stocks (old share consolidations)"): 네이버가 고치지 않은
+# 옛 주식 수 사건의 앞 봉을 확인한 배율로 고쳐요 (fetch_data.kr_px_repair · 표 KR_PX_REPAIRS · data.json krSeries.adj). 사건 종류 k ·
+# 표의 사건을 고치지 않은 까닭 (skip) — 관문 줄 '국내 과거 주가 병합 보정 (krSeries.adj · 경고만)' 이 같은 값을 읽어요.
+KR_PX_ADJ_KIND = {"merge": "병합 · 감자 (주식 수가 줄어요)", "split": "분할 (주식 수가 늘어요)", "bonus": "무상증자 권리락"}
+KR_PX_ADJ_SKIP = {"after": "기준일 뒤 사건", "old": "시계열 창 밖으로 나간 사건", "nobar": "시계열에 그날 봉이 없음", "same": "이미 같은 기준 (네이버가 고쳤어요)",
+                  "still": "고쳐도 하루 가격 제한폭 밖", "conflict": "같은 종목의 다른 보정과 어긋남", "err": "보정 단계 오류"}
+KR_PX_ADJ_ROW = "국내 과거 주가 병합 보정 (krSeries.adj · 경고만)"
+KR_PX_ADJ_QUIET = ("same", "after", "old")   # 이 까닭으로 건너뛴 사건은 경고하지 않아요 (네이버가 고쳤거나 · 아직 오지 않았거나 · 창 밖으로 나간 사건 — 표의 배율이 틀린 게 아니에요)
 # 2026-11-14 (Jack, Q2 (a) "this week" · 새 줄만, 늦추는 줄 없음): 하루 움직임이 가격 제한폭으로 설명되지 않는 종목(krSeries.jump)은 그 시계열로
 # 만든 숫자를 모두 비워요 — 파이프라인(fetch_data.mark_px_bad)이 이 목록을 읽어요. data.json: 52주 최고 · 최저, 변동성, 베타와 그 표준오차 ·
 # 쓴 날 수 · 알파, 1 · 3개월 · 3년 수익률, 1년 수익률(모멘텀), 샤프, 최대 낙폭, 상승 월 비율, 그리고 그 숫자로 매기는 추세(mz) · 저변동(lz) 점수.
@@ -2823,6 +2831,105 @@ def check_us_split_pbr(rep, data):
         rep.add(US_SPLIT_PBR_ROW, True, f"검사가 멈췄어요: {type(e).__name__}: {str(e)[:120]}", rule + " (멈춰도 경고만)", warn=True)
 
 
+# 2026-11-24 (#189, 11-24 발행본 점검): 팩터 점수(규모 pz · 가치 vz · 추세 mz · 퀄리티 qz · 저변동 lz · 배당 dz)의 순위는 시장마다 회사 주식(우선주
+# 포함)끼리만 매겨요 (fetch_data.add_percentiles). 펀드 = etf 참 또는 fund (2.0 의 engine.js isStockLike 와 같은 기준). 11-24 발행본에는 미국 ETF
+# 33곳 (그중 23곳은 야후의 priceToBook — 펀드에는 뜻이 없어요: SPY 1.76 · 실제 약 5) 과 국내 상장 인프라 펀드 3곳이 순위에 섞여, 미국 회사의 가치
+# 점수가 최대 3점 (평균 1.2) 틀어지고 SOXX · TLT 가 가치 100점이었어요. 펀드는 순위에 들어가지 않고 같은 시장 회사들의 분포에 견준 자리를 받아요
+# (화면에서 점수가 사라지지 않게 · 리뷰 #189 S1 · S2). 파이프라인과 관문이 이 정의 하나를 같이 써요.
+FACTOR_KEYS = ("pz", "vz", "mz", "qz", "lz", "dz")
+# 점수 → (쓰는 값, 낮을수록 높은 점수인지)
+FACTOR_SRC = {"pz": ("cap", True), "vz": ("pbr", True), "mz": ("mom", False), "qz": ("roe", False), "lz": ("vol", True), "dz": ("dyt", False)}
+FACTOR_POOL_ROW = "팩터 점수: 회사끼리 순위 · 펀드는 회사 분포에 견줌 (다시 매겨 맞춰 봄 · 경고만)"
+
+
+def factor_fund(s):
+    """순위에 넣지 않는 행인지 — 펀드 (etf 가 참 또는 fund). (순수 함수)"""
+    return isinstance(s, dict) and (s.get("etf") is True or bool(s.get("fund")))
+
+
+def factor_score_diffs(data, counts=None):
+    """발행 파일의 팩터 점수를 그 파일의 값으로 다시 매겨, 다른 칸 → [(티커, 칸, 발행 값, 다시 매긴 값)]. (순수 함수 · pandas 없이)
+    시장마다 (kr · us) 그 시장의 fund 아닌 행 (파이프라인이 add_percentiles 에 넘기는 행): 회사(etf 거짓)는 회사끼리 순위 — 같은 값은 평균
+    순위 ÷ 회사 수 × 100 (pandas rank(pct=True) 와 같은 셈) · 펀드(etf 참)는 그 값과 같은 회사가 있으면 그 회사들의 평균 순위, 없으면 그 값보다
+    작은 회사 수 ÷ 회사 수 × 100 (같은 값이면 회사와 같은 점수 · 리뷰 S1) · 규모 · 가치 · 저변동은 100 에서 빼요 · 반올림 round(). 값이 빈 행은
+    점수가 없어야 해요. fund 행 · 채권 · 금 · 그 밖의 행은 점수가 아예 없어야 해요. 펀드가 순위에 섞인 파일(#189 전)은 회사 점수가 다르게 나와요.
+    counts (dict) 를 주면 견준 수를 채워요: 회사 · 펀드 · 칸 · 점수가 없어야 할 행 (리뷰 N1)."""
+    import bisect
+    rows = (data or {}).get("stocks") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        raise ValueError("stocks 가 목록이 아님")
+    out = []
+
+    def cmp(s, k, want):
+        got = s.get(k)
+        if (got is None) != (want is None) or (got is not None and (isinstance(got, bool) or not isinstance(got, int) or got != want)):
+            out.append((str(s.get("t")), k, got, want))
+
+    seen = set()
+    for m in ("kr", "us"):
+        grp = [s for s in rows if isinstance(s, dict) and s.get("cls") == m and not s.get("fund")]
+        seen.update(id(s) for s in grp)
+        cos = [s for s in grp if not factor_fund(s)]
+        fds = [s for s in grp if factor_fund(s)]
+        for k, (col, low) in FACTOR_SRC.items():
+            vals = [num(s.get(col)) for s in cos]
+            ref = sorted(v for v in vals if v is not None)
+            n = len(ref)
+            for s, x in zip(cos, vals):
+                if x is None:
+                    cmp(s, k, None)
+                    continue
+                lo, hi = bisect.bisect_left(ref, x) + 1, bisect.bisect_right(ref, x)
+                p = (lo + hi) / 2 / n * 100
+                cmp(s, k, int(round(100 - p if low else p)))
+            for s in fds:
+                x = num(s.get(col))
+                if x is None or not n:
+                    cmp(s, k, None)
+                    continue
+                lo, hi = bisect.bisect_left(ref, x) + 1, bisect.bisect_right(ref, x)
+                p = ((lo + hi) / 2 if hi >= lo else hi) / n * 100
+                cmp(s, k, int(round(100 - p if low else p)))
+        if counts is not None:
+            counts["co"] = counts.get("co", 0) + len(cos)
+            counts["fd"] = counts.get("fd", 0) + len(fds)
+            counts["cells"] = counts.get("cells", 0) + (len(cos) + len(fds)) * len(FACTOR_SRC)
+    other = [s for s in rows if isinstance(s, dict) and id(s) not in seen]
+    for s in other:
+        for k in FACTOR_KEYS:
+            if s.get(k) is not None:
+                out.append((str(s.get("t")), k, s.get(k), None))
+    if counts is not None:
+        counts["other"] = len(other)
+        counts["cells"] = counts.get("cells", 0) + len(other) * len(FACTOR_KEYS)
+    return out
+
+
+def check_factor_pool(rep, data):
+    """2026-11-24 (#189): 팩터 점수가 '회사끼리 순위 · 펀드는 회사 분포에 견줌' 그대로인지, 발행 파일의 값으로 다시 매겨 맞춰 봐요
+    (factor_score_diffs). **경고만** — 어떤 모드에서도 실패하지 않아요 (발행을 멈추는 줄은 Jack 의 답이 있어야 해요) · 검사가 멈춰도 경고.
+    다르면 다른 칸 수 · 종목 수와 처음 몇 칸(종목.칸 발행 값→다시 매긴 값)을 줄에 적어요 (펀드가 순위에 섞였거나, 순위 뒤에 값이 바뀌었다는 뜻)."""
+    rule = ("회사 주식(우선주 포함)끼리 순위 · 펀드(etf 참)는 회사 분포에 견준 자리 (같은 값이면 회사와 같은 점수) · fund 행 · 채권 · 금은 점수 없음 "
+            "(다르면 경고 · 실패 없음)")
+    cnt = {}
+    try:
+        bad = factor_score_diffs(data, cnt)
+    except Exception as e:
+        rep.add(FACTOR_POOL_ROW, True, f"검사가 멈췄어요: {type(e).__name__}: {str(e)[:120]}", rule + " (멈춰도 경고만)", warn=True)
+        return
+    seen = (f"다시 매겨 견준 것: 회사 {cnt.get('co', 0):,} · 펀드 {cnt.get('fd', 0):,} · 칸 {cnt.get('cells', 0):,} · "
+            f"점수가 없어야 할 행 {cnt.get('other', 0):,}")
+    if not bad:
+        rep.add(FACTOR_POOL_ROW, True, f"모두 같음 ({seen})", rule)
+        return
+    nt = len({t for t, *_ in bad})
+    sh = lambda v: "빈 값" if v is None else v   # noqa: E731 — 로그에 파이썬 None 을 쓰지 않아요 (#178 처럼 · 리뷰 N2)
+    rep.add(FACTOR_POOL_ROW, True, f"다른 칸 {len(bad)} ({nt}종목 · {seen}): "
+            + ", ".join(f"{t}.{k} {sh(a)}→{sh(b)}" for t, k, a, b in bad[:US_OWN_SHOW])
+            + (f" 외 {len(bad) - US_OWN_SHOW}칸" if len(bad) > US_OWN_SHOW else "") + " (펀드가 순위에 섞였거나 순위 뒤에 값이 바뀌었어요)", rule, warn=True)
+    # 칸 목록(rep.detail)은 따로 적지 않아요: 줄에 처음 몇 칸과 수가 있고, 다른 줄들의 목록 시험(rep.details 를 통째로 견주는 시험)을 흔들지 않게요
+
+
 def coverage(arr, key):
     if not arr:
         return 0.0
@@ -3137,11 +3244,16 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_us_new_wait(rep, data, pdata)   # 2026-11-22 (Jack): 미국 기준일 종가를 기다리는 새 미국 종목 (usSrc.newWait · 경고만 · 실패 없음)
     check_us_size(rep, data, pdata)       # v19.5b 후속: 미국 회사 크기 qrev · qeq (종목 순위의 미국 최소 크기 · 경고만 · 실패 없음)
     check_us_split_pbr(rep, data)         # 2026-11-23 (감사 · #176): 최근 분할한 미국 회사의 PBR ↔ PER × ROE · usSrc.split (경고만 · 실패 없음 · 멈춰도 경고)
+    check_factor_pool(rep, data)          # 2026-11-24 (#189): 팩터 점수를 다시 매겨 맞춰 봐요 — 회사끼리 순위 · 펀드는 회사 분포에 견줌 (경고만 · 실패 없음 · 멈춰도 경고)
     check_v191f(rep, data, corp, kr, by, comps, pdata)
     check_eps_line_left(rep, corp, comps)   # 2026-11-14 (Jack Q3 · 리뷰 S4): 다시 읽은 뒤에도 날짜가 지난 '고치는 중' 줄이 남을 회사 (경고)
     check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=(prev or {}).get("macro") if rel else None)
     check_unit(rep, data, kr, by, comps, pdata)
     check_kr_series(rep, data, kr, pdata)  # 2026-11-14 (Jack: "52주 숫자부터"): 다른 기준의 공식 종가 고정 (실패) · 제한폭 넘는 움직임 (경고)
+    try:                                   # 2026-11-24 (Jack, Track 1 item 4): 과거 주가 병합 보정 — 고친 종목과 배율 (경고만 · 실패하지 않아요)
+        check_kr_px_adj(rep, data, kr)
+    except Exception as e:                 # 경고만 하는 줄이 관문을 멈추지 않게 (#182 리뷰): 어떤 오류든 그 줄의 경고로
+        rep.add(KR_PX_ADJ_ROW, True, f"확인하다 오류 ({type(e).__name__}: {str(e)[:120]}) — krSeries.adj 를 보세요", "경고만", warn=True)
     check_px_bad(rep, data, comps, pdata)  # 2026-11-14 (Jack, Q2 (a)): 그 움직임이 있는 종목은 52주 · 출렁임 · 위험 숫자를 비워요 (실패) · 필수 종목 추세 · 저변동 순위 (실패)
     check_kr_no_trade(rep, data, pdata, macro)    # 2026-11-14 (Jack, design chat 2026-11-08): 거래 없는 종목은 d1 빈 칸 + noTrade · 빈 d1 은 이유 (실패: 우리 값끼리 어긋날 때만)
     check_v196b(rep, data, disc, by, today)   # v19.6b (Part B.1): 주요사항 공시 · 내부자 역할 · 미국 일정 (모양 · 칸이 없는 예전 파일은 경고만)
@@ -6085,6 +6197,89 @@ def check_kr_series(rep, data, kr, pdata):
                                                  if len(items) > KR_SERIES_SHOW else "") if items else ""), jrule, warn=bool(items))
     if items:
         rep.detail("하루 가격 제한폭으로 설명되지 않는 움직임이 시계열에 있는 국내 종목 (날짜 · 움직임 · 이유)", items)
+
+
+def kr_px_adj_problems(adj, px=None):
+    """data.json krSeries.adj 의 모양 문제 목록 (빈 목록 = 정상 · 2026-11-24). 파이프라인(fetch_data.kr_px_adj_step)이 쓰는 모양과 따로 적어요.
+    {"on": bool, "fix": [{t, d (pxDate 이전), f (0 보다 크고 1 이 아닌 유한한 값), from (있으면 d 보다 앞), k (KR_PX_ADJ_KIND), n (1 이상), src}…]
+    (같은 (t, d) 두 번 없음), "skip": [[코드, 날짜, 까닭 (KR_PX_ADJ_SKIP)]…]}."""
+    if not isinstance(adj, dict) or not isinstance(adj.get("on"), bool):
+        return [f"모양 {str(adj)[:40]}"]
+    out = []
+    fix, skip = adj.get("fix"), adj.get("skip")
+    if not isinstance(fix, list):
+        out.append("fix 목록 아님")
+    else:
+        seen = set()
+        for x in fix:
+            f = x.get("f") if isinstance(x, dict) and isinstance(x.get("f"), (int, float)) and not isinstance(x.get("f"), bool) else None
+            try:
+                f = float(f) if f is not None else None          # 아주 큰 정수는 OverflowError — 모양 문제로 (#182 리뷰)
+            except (OverflowError, ValueError):
+                f = None
+            ok = (isinstance(x, dict) and isinstance(x.get("t"), str) and x["t"] and isinstance(x.get("d"), str) and is_day(x["d"])
+                  and (px is None or day(x["d"]) <= px)
+                  and f is not None and math.isfinite(f) and f > 0 and abs(f - 1) > 1e-9 and isinstance(x.get("k"), str) and x["k"] in KR_PX_ADJ_KIND
+                  and _nonneg_int(x.get("n")) and x["n"] >= 1 and isinstance(x.get("src"), str) and x["src"].strip()
+                  and ("from" not in x or (isinstance(x["from"], str) and is_day(x["from"]) and day(x["from"]) < day(x["d"])))
+                  and (x["t"], x["d"]) not in seen)
+            if not ok:
+                out.append(f"fix {str(x)[:50]}")
+                break
+            seen.add((x["t"], x["d"]))
+    if not isinstance(skip, list):
+        out.append("skip 목록 아님")
+    else:
+        for x in skip:
+            if not (isinstance(x, list) and len(x) == 3 and isinstance(x[0], str) and x[0] and isinstance(x[1], str) and isinstance(x[2], str)
+                    and x[2] in KR_PX_ADJ_SKIP):
+                out.append(f"skip {str(x)[:40]}")
+                break
+    return out
+
+
+def check_kr_px_adj(rep, data, kr):
+    """국내 과거 주가 병합 보정 (2026-11-24 · Jack, Track 1 item 4 · 경고만 — 이 줄은 발행을 막지 않아요). 네이버가 고치지 않은 옛 주식 수 사건
+    (병합 · 감자 · 분할 · 무상증자)의 앞 봉을 확인한 배율로 고친 종목 (krSeries.adj · fetch_data.kr_px_repair) 과 배율을 적어요. 고친 종목은
+    krSeries.jump 에서 빠져 숫자가 돌아와요 — 숨김 (과거 주가 기록 오류 종목의 숫자 비움 (pxBad)) 줄과 그 기준은 그대로예요.
+    경고: 모양이 틀림 · 켜졌는데 고친 종목이 krSeries.jump 에 남음 (어느 날짜든 — 네이버가 일부만 다시 고쳐 두 번 곱해진 봉도 여기서 보여요) ·
+    표의 사건을 'same' (네이버가 고침) · 'after' (기준일 뒤) · 'old' (창 밖) 말고 다른 까닭으로 건너뜀 (확인한 배율이 오늘 시계열과 맞지 않아요 —
+    로그의 '과거 주가 병합 보정' 줄을 보세요). adj 가 없는 파일 (그 전 형식) 은 통과. 꺼져 있으면 (on false) 켜면 고칠 종목을 적어요 (숫자는
+    예전처럼). 이 줄은 실패하지 않아요 — 부르는 곳(run_checks)이 오류도 경고로 바꿔요."""
+    name = KR_PX_ADJ_ROW
+    rule = ("경고만 (모양이 틀림 · 켜졌는데 고친 종목이 krSeries.jump 에 남음 · 표의 사건을 "
+            + " · ".join(KR_PX_ADJ_SKIP[k] for k in KR_PX_ADJ_QUIET) + " 말고 다른 까닭으로 건너뜀)")
+    ks = data.get("krSeries")
+    if not isinstance(ks, dict) or "adj" not in ks:
+        rep.add(name, True, "krSeries.adj 없음 (2026-11-24 전 형식)", rule)
+        return
+    adj = ks["adj"]
+    probs = kr_px_adj_problems(adj, day(data.get("pxDate")))
+    if probs:
+        rep.add(name, True, "모양: " + ", ".join(probs[:3]), rule, warn=True)
+        return
+    by = {s.get("t"): s for s in kr}
+
+    def nm(c):
+        return f"{c} {(by.get(c) or {}).get('nk', '')}".strip()
+    fix = adj["fix"]
+    jl = ks.get("jump") if isinstance(ks.get("jump"), list) else []
+    jm = {}
+    for j in jl:
+        if isinstance(j, list) and len(j) >= 2:
+            jm.setdefault(str(j[0]), []).append(str(j[1])[:10])
+    left = sorted({x["t"] for x in fix if adj["on"] and x["t"] in jm})       # 어느 날짜든 (#182 리뷰: 남은 움직임은 오래된 보정일 수 있어요)
+    odd = [x for x in adj["skip"] if x[2] not in KR_PX_ADJ_QUIET]
+    items = [f"{nm(x['t'])} {x['d']} ×{num(x['f']):.4g}" + (f" ({x['from']}부터)" if x.get("from") else "") for x in fix]
+    val = (("켜짐 · 고친 " if adj["on"] else "꺼짐 (숫자는 예전처럼 · 화면의 이유 줄을 기다려요) · 켜면 고칠 ")
+           + f"{len({x['t'] for x in fix})}종목 {len(fix)}건"
+           + (": " + ", ".join(items[:KR_SERIES_SHOW]) + (f" 외 {len(items) - KR_SERIES_SHOW}건" if len(items) > KR_SERIES_SHOW else "") if items else "")
+           + (f" · 고쳤는데 숨긴 채 남음 {len(left)}: " + ", ".join(f"{nm(t)} ({' · '.join(sorted(jm[t]))})" for t in left[:KR_SERIES_SHOW])
+              if left else "")
+           + (f" · 표의 사건을 건너뜀 {len(odd)}: " + ", ".join(f"{nm(x[0])} {x[1]} {KR_PX_ADJ_SKIP[x[2]]}" for x in odd[:KR_SERIES_SHOW]) if odd else ""))
+    rep.add(name, True, val, rule, warn=bool(left or odd))
+    if adj["on"] and items:
+        rep.detail("과거 주가를 고친 국내 종목 (새 기준 첫 날 · 앞 봉에 곱한 배율)", items)
 
 
 def px_bad_fields_problems(t, f, d, px):

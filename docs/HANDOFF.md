@@ -30,6 +30,46 @@ a KRX listing priced in won at the Korean close) saved with cls "us" or none (an
 만들기 can't add it, 종목 바꾸기 saves it as "kr") would show "미국 종목은 현지 기준 {md} 종가예요." after a US holiday. Defensive. Now by `pf.usdOf` (the data's currency), as
 `usHeld` and #187's 포트폴리오 line; 홈 still counts only shares held (`x.qty !== 0`). The one pinned string in
 `tests/test_v196a_approved.py::test_home_counts_only_shares_held` follows the new code; `tests/test_v2_home_usd.py` renders both 홈s.
+**Factor scores, companies only (#189, 2026-11-24; found on the 11-24 publish):** `add_percentiles` ranked 33 US ETFs (23 with Yahoo's
+`priceToBook`, meaningless for a fund: SPY 1.76, really about 5) and 3 Korean listed infrastructure funds together with companies, so
+547 US companies' 가치 (`vz`) were off by up to 3 points (mean 1.2). After it merges, the next publish ranks companies only in each market
+(`validate_data.factor_fund`: `etf` true or `fund`, the 2.0 `isStockLike` rule): US companies' `vz` · `mz` · `lz` move by up to 3, Korean
+`pz` · `mz` · `lz` by at most 1. Funds keep their scores (review S1 · S2: nothing may disappear from the old app's 성향 card or 기업분석
+strip without a line), placed against their market's companies without joining the ranking (`fetch_data.fund_percentile`: the tied
+companies' average rank when a company has the same value, else the companies below it, ÷ n × 100; 규모 · 가치 · 저변동 100 minus that);
+they move by up to 3 (SPY `lz` 97 → 99, QQQ `vz` 77 → 79, 088980 unchanged). Expect the log lines `· 팩터 점수 (국내): 회사 주식 2,508종목 (우선주 62 포함)끼리 순위 …` and `· 팩터 점수 (미국): 회사 주식
+767종목끼리 순위 … 펀드 33곳은 순위에 넣지 않고 회사 분포에 견줘 매김 (점수 있는 펀드 33)` and the new warning-only gate row
+`팩터 점수: 회사끼리 순위 · 펀드는 회사 분포에 견줌 (다시 매겨 맞춰 봄 · 경고만)` as PASS `모두 같음 (…)` (the deploy gate on a file published before
+it warns: about 2,000 cells differ). No screen text. **Open for Jack (not built):** a US fund's 가치 score still comes from Yahoo's
+meaningless fund PBR (SOXX · TLT 100, used by the old app's 성향 card), and its PBR reaches two screens — the old app's 종목 고르기 card
+("PER / PBR", `src/detail.jsx` StockRow) and 2.0's 두 종목 비교 when a US ETF is held (`src/v2/compare.jsx` PBR row); fixing either needs a
+say-why line. RUNBOOK § Factor scores.
+**#182 (Korean price-history repair, Track 1 item 4), 2026-11-24 — built, switch OFF:** `fetch_data.py` `KR_PX_REPAIRS` · `kr_px_repair`
+rescale the bars before 13 old share events Naver never rescaled (12 of the 20 stocks in `krSeries.jump` on the 11-21 publish: 001465,
+003060, 007460, 009310, 012170 ×2, 012210, 110790, 227420, 311060, 331660, 425040, 472850), each factor confirmed by two sources
+(listed shares or the KRX 기준가, and Yahoo's split record). Repaired stocks leave `krSeries.jump`, so #128 stops blanking them. Every
+run re-checks each entry against the downloaded series and skips it if Naver has rescaled it (never twice) or if it no longer fits.
+`KR_PX_REPAIR_ON` is **False**: the numbers would be built on a history 뱁새 corrected, and the say-why line is not approved, so the run
+only logs and records what it would repair (`krSeries.adj`, new warning-only gate row "국내 과거 주가 병합 보정 (krSeries.adj ·
+경고만)"); nothing users see changes. **Waiting for Jack:** the two screen lines (drafts in the PR: share-count events, and 무상증자
+ex-dates for 311060 · 425040 · 472850), then a screens PR shows them and flips the switch (a test pins it OFF). That PR needs a rollback
+plan agreed with Jack: once ON, switching OFF re-hides all 12 at once and `PX_BAD_NEW_FAIL` (10) stops the publish (RUNBOOK). Still hidden either way: 007610, 107640, 121890, 206950, 210120, 229500, 250030 (real moves, transfer listings, one bad Naver
+bar, one source only) and 304840 (Naver rescaled it on 11-23; it should drop out by itself). RUNBOOK "Repairing the broken histories".
+**Track 2 audit, money display (#187, 2026-11-24; audit 1.2 · 1.5 · 1.6, minor):** app only, no new words. (1.2) 포트폴리오's held
+row writes US fractional shares with up to 4 decimals (`pfview.qtyText`, as the records already did): 7.5주 / 0.4주 instead of "8주" /
+"0주"; whole shares unchanged. (1.5) 연말에 확인할 숫자: an estimate under 1,000원 is shown to the 원 (`tax.js shownEstimate` /
+`taxShown`), still in the approved "약" wording (estimates; v19.6 Part F): the dividend card "약 427원" for a 361원 dividend (was "약
+0원"), the above line "세금은 약 361원이에요" (was 약 0원; a tax under 0.5원, a gain 1–2원 over the deduction, still reads 약 0원, which
+is that tax to the 원); from 1,000원 up unchanged. `taxState` / `yearDivs` values unchanged. (1.6) 내 수익's date
+line uses `usPxDate` when every held stock counted (in the data, priced, with 평균 단가 and rate) is a US stock, i.e. priced in dollars
+(`pf.usdOf`, never `cls`: 379800 KODEX 미국S&P500 is cls "us" but a KRX listing in won) (after the 11-26 US
+holiday: 11월 25일, as the tax screen's loss card); a Korean stock among them, or none held, keeps the Korean date; no `usPxDate` → no
+date line, said in the console. Mixed Korean + US holdings keep the Korean date and, when the US date differs, show the approved
+`app.usClose` ("미국 종목은 현지 기준 {md} 종가예요.") under the portfolio name, on 포트폴리오's condition (an approved line in a new
+place; my decision under the rules, 2026-11-24, as is keeping 약 in the tax line and on the dividend card). Pre-existing bug fixed with it: 포트폴리오
+decided "a US stock is held" by `cls` and showed `app.usClose` for a portfolio holding only 379800; now by `pf.usdOf`, as `usHeld`.
+Same class, not fixed here: 홈 (`home2.jsx:405`, pinned word for word by `tests/test_v196a_approved.py::test_home_counts_only_shares_held`,
+and `today.jsx:358`).
 Next in the queue unchanged (v19.3 Part L).
 
 **Clean error text (#178, branch `claude/clean-error-text`, for 11-24; pipeline only, the gate unchanged):** the gate's frozen word row
