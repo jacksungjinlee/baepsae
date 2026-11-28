@@ -157,6 +157,31 @@ export function App({ source }) {
   // waits, and goes on screen when nothing holds it any more (the effect after inBuild and inImport below).
   // Focus alone is not a return. Live page only (the preview has no refetch).
   const watchable = !!source.refetch && !load.preview && (load.status === "ok" || load.status === "fail");
+  // #202 review (2026-11-28, S1): a return to view while the first load is still out (visibilitychange to visible after the
+  // page was hidden, or pageshow from the back-forward cache) is noted here, because the return watch below starts only once
+  // that load has ended. When it ends in the load-failure message while the page is in view (a phone that froze the page
+  // fires the return first and the overdue 60 s limit after it: load.js loadFirst), that return gets the one fetch it was
+  // owed, once, when the watch starts. The limit itself never pauses while the page is hidden.
+  const firstLoading = !!source.refetch && load.status === "loading";
+  const returnedWhileLoading = useRef(false);
+  useEffect(() => {
+    if (!firstLoading) return undefined;
+    let away = document.visibilityState === "hidden";
+    const onLoadVis = () => {
+      if (document.visibilityState === "hidden") away = true;
+      else if (away) { away = false; returnedWhileLoading.current = true; }
+    };
+    const onLoadHide = () => { away = true; };
+    const onLoadBack = (e) => { if (e && e.persisted && away) { away = false; returnedWhileLoading.current = true; } };
+    document.addEventListener("visibilitychange", onLoadVis);
+    window.addEventListener("pagehide", onLoadHide);
+    window.addEventListener("pageshow", onLoadBack);
+    return () => {
+      document.removeEventListener("visibilitychange", onLoadVis);
+      window.removeEventListener("pagehide", onLoadHide);
+      window.removeEventListener("pageshow", onLoadBack);
+    };
+  }, [firstLoading]);
   const holdCtxRef = useRef({});
   const gateRef = useRef(null);
   if (!gateRef.current) {
@@ -204,6 +229,13 @@ export function App({ source }) {
     document.addEventListener("visibilitychange", onVis);
     window.addEventListener("pagehide", onHide);
     window.addEventListener("pageshow", onBack);
+    // the return that came while the first load was still out (S1 above): its one fetch, now that the load failed
+    if (returnedWhileLoading.current && loadRef.current.status === "fail" && document.visibilityState !== "hidden") {
+      console.info("[v2] back in view while the first load was still out, and it failed: the return's one fetch happens now");
+      w.hide();
+      w.show();
+    }
+    returnedWhileLoading.current = false;
     return () => {
       w.stop();
       document.removeEventListener("visibilitychange", onVis);

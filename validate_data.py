@@ -3675,6 +3675,8 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v191f(rep, data, corp, kr, by, comps, pdata)
     check_eps_line_left(rep, corp, comps)   # 2026-11-14 (Jack Q3 · 리뷰 S4): 다시 읽은 뒤에도 날짜가 지난 '고치는 중' 줄이 남을 회사 (경고)
     check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=(prev or {}).get("macro") if rel else None)
+    check_kr_splits(rep, data, today)     # 2026-11-23 (Jack, Track 1): 한국 주식 분할 (splitsKr · 경고만 · 실패 없음)
+    check_kr_split_nofile(rep, data, comps, today, pdata)   # 2026-11-27 (Jack 답 11): 공시로 확인하지 못한 분할 (필수 종목 · 한 실행이 새로 판정한 수는 실패 · 비움은 경고)
     try:                                   # 2026-11-24 (감사 3.8): fx = fxHist 의 fxDate 줄인지 · 아니면 출처 (경고만 · 실패하지 않아요)
         check_fx_src(rep, data, macro)
     except Exception as e:                 # 경고만 하는 줄이 관문을 멈추지 않게: 어떤 오류든 그 줄의 경고로
@@ -4242,6 +4244,329 @@ def check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=None):
         rep.detail("주식 분할 목록 변화 (직전 발행본과)", [f"사라짐 {x}" for x in dropped] + [f"배율 바뀜 {x}" for x in changed]
                    + [f"고정 표가 뺌 {x}" for x in dropped_ok] + [f"고정 표가 고침 {x}" for x in changed_ok]
                    + [f"새 줄 정수 아닌 배율 {x}" for x in odd] + [f"지난 날짜로 새로 {x}" for x in old_new])
+
+
+# ── 2026-11-23 (Jack, Track 1 "Korean stock splits" · 새 줄 하나 · 경고만): data.json splitsKr ──────────────────────────────────────────
+# 파이프라인(fetch_data.kr_splits_step)은 시세(KRX 기준가 · 상장주식수)와 DART 결정 공시(주식분할결정 · 주식병합결정 · 주식병합으로 하는 감자결정)가
+# 같은 배율 · 같은 상장일을 말한 한국 분할 · 병합만 splits 에 더해요 (미국 줄과 같은 모양 [코드, 날짜, 배율] — 위 '주식 분할 목록' 두 줄이 그대로 봐요:
+# 모양 · 깨끗한 배율 · 새 줄은 오늘 목록의 종목 · 한 번 실은 줄이 사라지면 실패). 이 줄은 **경고만** 해요 — 어떤 값이 와도 실패하지 않아요 (발행을 막는
+# 줄은 Jack 의 범주 2 라 PR 에 제안만 했어요). 리뷰 #186: 새 문제일 때만 노래요 — 조회 실패 · 이번에 새로 '공시와 다름' · 최근 30일 사건을 싣지 않음 ·
+# 오류 · DART 꺼짐 · 시드를 읽지 못함 · 영수증 없는 한국 줄 · 수가 맞지 않음. 확인을 기다리는 후보(실행당 DART 한도) · 오늘 새 줄 · 몫이 남아 싣지 않은
+# 줄(held)은 이름만 적고 통과해요. 파이프라인과 따로 적어요.
+KR_SPLITS_ROW = "한국 주식 분할 (splitsKr · 경고만)"
+KR_SPLIT_CODE_RE = re.compile(r"\d[0-9A-Z]{5}")      # 한국 종목 코드 (fetch_data.KR_SPLIT_CODE 와 같은 꼴 · 미국 티커는 글자로 시작해요)
+KR_SPLIT_RECENT_DAYS = 30           # 싣지 않은 사건 중 이 날수 안의 것만 경고 (그보다 오래된 것은 '확인할 것' 목록에만 — 매일 노랗지 않게)
+KR_SPLIT_SHOW = 5
+# 영수증의 세 확인 (2026-11-27 Jack 답 4 · 경고만): 파이프라인(fetch_data.kr_split_checks)과 같은 선 · 검사 코드는 따로
+KR_SPLIT_RC_PX_TOL = 0.01           # 분할: 앞날 종가 ÷ 기준가 = 배율 ± 1%
+KR_SPLIT_RC_SHR_TOL = 0.10          # 분할: 상장주식수의 비 = 배율 ± 10% (같은 날 자기주식 소각 · 신주)
+KR_SPLIT_RC_EXACT_TOL = 0.01        # 병합: 상장주식수의 비 = 배율 ± 1% (단주)
+KR_SPLIT_RC_AUCTION = (0.5, 2.0)    # 병합: 앞날 종가 ÷ 기준가 가 배율의 ½ ~ 2배 (동시호가) 이고 1 에서 10% 넘게
+# ── 2026-11-27 (Jack 답 11, 그대로: "A split without a filing stops the publish only for a must-have stock (삼성전자, NAVER, 카카오) or when many
+# appear in one run. Any other stock gets its affected numbers blanked with '주식 수가 크게 바뀌었는데, 공시로 확인하지 못해서 이 숫자는 비워
+# 두었어요.'") — 발행을 막는 새 줄 둘 (Jack 이 승인한 범주 2) + 비움이 맞는지 보는 경고 줄 하나. data.json splitsKr.nofile = 주식 수가 정확히 n:1 ·
+# 1:n 이고 기준가도 그 배율로 움직였는데 확인해 주는 공시가 없는 사건 [코드, 날짜, 배율, 부호].
+# 필수 종목: Jack 이 이름을 댄 셋 + 관문의 필수 종목 (MUST · 카카오는 그 목록에 없고, MUST 의 다른 다섯 종목은 비우면 '필수 종목 추세 · 저변동
+# 순위' 줄이 어차피 발행을 막아요 — 같은 까닭을 이 줄이 바로 말하게).
+KR_SPLIT_MUST = tuple(dict.fromkeys(("005930", "035420", "035720") + MUST))
+# 한 실행에 새로 생긴 공시로 확인하지 못한 분할 (1차 리뷰 Fable S1 · Opus S5 · 조정자 5, 2026-11-28 — Jack 의 말 그대로 "when many appear in one run"):
+# 이 실행이 스스로 판정해 (DART 에 새로 물은 '없음' · 맞지 않음 · 오늘 DART 코드가 없음) 처음 생긴 nofile 줄 (splitsKr.runNew · 사건 날짜와 상관없이) 이
+# 이만큼 이상이면 실패. 2차 리뷰 B1: '직전 발행본 뒤 새로' 를 세면 발행하지 못한 실행의 판정 (DART 보관본은 발행하지 못해도 저장돼요) 이 다음 실행에 쌓여
+# 한 번 실패하면 다시 통과하지 못했어요 — 그 수는 경고 줄에만 보여요. 실패한 실행의 판정은 보관돼 다음 실행에는 '이 실행의 것' 이 아니라서, 고치지 않으면
+# 다음 실행이 그 줄들을 실어 그 종목들을 비워요 (RUNBOOK '한국 주식 분할' 의 나가는 길). 고른 까닭 (모의 채우기 · DART 호출 없음 ·
+# 시드 586 사건 · 실행당 DART 한도 50 · 사건마다 고정된 무작위로 '공시 없음' 비율 p · 첫 실행은 직전 발행본에 splitsKr 이 없어요): 한 실행에 새로 생긴
+# 수의 가장 큰 값 — p 0 · 0.1 · 0.2 · 0.3 · 0.5 에서 1 · 6 · 9 · 12 · 15 (첫 실행 1 · 3 · 6 · 8 · 12), 모든 조회가 '없음' 이면 실행마다 16 ~ 30 (첫 실행 26).
+# 16 이면 공시의 절반이 확인되지 않아도 채우는 동안 막히지 않고, 읽기가 통째로 깨지면 그 첫 실행에서 막혀요. 11-21 ~ 11-27 의 KRX 목록에서 주식 수가
+# 10% 넘게 바뀐 3종목 (코나아이 ×1.50 · 삼성FN리츠 ×1.21 · 풍전약품 ×1.12) 은 기준가가 그대로라 후보가 아니에요.
+KR_SPLIT_NOFILE_RUN_FAIL = 16
+KR_SPLIT_NOFILE_SERIES_DAYS = 3 * 365   # 이 날수 안의 사건이면 시계열 안이라 그 종목에 spNo 표시가 있어야 해요 (경고 줄 · 시계열은 약 3년 40일)
+KR_NOFILE_MUST_ROW = "필수 종목의 공시로 확인하지 못한 분할 (splitsKr.nofile)"
+KR_NOFILE_RUN_ROW = f"한 실행에 새로 생긴 공시로 확인하지 못한 분할 ({KR_SPLIT_NOFILE_RUN_FAIL}건 이상이면 실패)"
+KR_NOFILE_HIDE_ROW = "공시로 확인하지 못한 분할의 숫자 비움 (spNo · 경고만)"
+KR_NOFILE_SUM_ROW = "공시로 확인하지 못한 분할 · 이번 실행 (경고만)"
+KR_NOFILE_KEEP_ROW = "공시로 확인하지 못한 분할 기록 이어짐 (경고만)"
+# 3차 리뷰 S1 (경고만 — 발행을 막는 줄은 Jack 이 정해요): 이 실행에 새로 물은 DART 판정이 KR_SPLIT_READ_MIN 건 이상이고 그 KR_SPLIT_READ_SHARE 이상이
+# 분할을 확인하지 못했으면 (결정 없음 · 원문을 읽지 못함 · DART 가 주지 않음 · 목록이 너무 김 · 공시와 다름) 공시를 읽는 코드가 깨졌을 수 있어요. 한
+# 실행 한도 (16) 는 이런 날을 잡지 못해요: 결정 공시가 있는데 읽지 못하면 사건 하나에 호출 2 ~ 4 번이라 한 실행에 13 ~ 20 사건만 물어요
+# (splitsKr.read · 파이프라인은 실행 기록의 !! 줄과 GitHub 경고로도 남겨요)
+KR_SPLIT_READ_MIN = 8
+KR_SPLIT_READ_SHARE = 0.8
+KR_READ_ROW = f"이 실행에 새로 물은 DART 판정 대부분이 분할을 확인하지 못함 ({KR_SPLIT_READ_MIN}건 이상 · {KR_SPLIT_READ_SHARE:.0%} 이상 · 경고만)"
+KR_NOFILE_KEEP_DAYS = int(365.25 * 3) + 40   # 파이프라인의 KR_SPLIT_NOFILE_KEEP_DAYS 와 같은 날수 (시계열이 닿는 날 · 그보다 오래되면 빠져도 돼요)
+
+
+def kr_split_rows(data):
+    """data.json splits 의 한국 줄 [[코드, 날짜, 배율]] (모양이 맞는 것만 · 순수 함수)."""
+    sp = (data or {}).get("splits")
+    return [x for x in sp if isinstance(x, list) and len(x) == 3 and isinstance(x[0], str) and KR_SPLIT_CODE_RE.fullmatch(x[0])
+            and _iso_day(x[1]) and json_num(x[2])] if isinstance(sp, list) else []
+
+
+def check_kr_splits(rep, data, today):
+    """2026-11-23: 한국 주식 분할 (splitsKr) — 경고만. 읽다 멈춰도 경고 한 줄 (실패하지 않아요)."""
+    rule = ("한국 분할 · 병합은 시세와 DART 결정 공시가 같은 배율 · 같은 상장일일 때만 실어요 (조회 실패 · 새로 '공시와 다름' · 싣지 않은 최근 "
+            f"{KR_SPLIT_RECENT_DAYS}일 사건 · 영수증 없는 줄 · splitsKr 없음 · 오류 · DART 꺼짐은 경고 · 확인 기다림 · 몫이 남아 싣지 않은 줄은 통과 · 실패 없음)")
+    try:
+        _check_kr_splits(rep, data, today, rule)
+    except Exception as e:
+        rep.add(KR_SPLITS_ROW, True, f"읽다 멈췄어요 ({type(e).__name__})", rule, warn=True)
+
+
+def _check_kr_splits(rep, data, today, rule):
+    if not isinstance((data or {}).get("splits"), list):
+        rep.skip(KR_SPLITS_ROW, "splits 목록이 없어요 (위 '주식 분할 목록' 줄)")
+        return
+    rows = kr_split_rows(data)
+    info = data.get("splitsKr")
+    if not isinstance(info, dict):
+        rep.add(KR_SPLITS_ROW, True, f"splitsKr 없음 — 한국 줄 {len(rows):,}건 (한국 분할을 확인하지 않은 파일)", rule, warn=True)
+        return
+    lst = lambda k: [x for x in info.get(k) if isinstance(x, list)] if isinstance(info.get(k), list) else []     # noqa: E731
+    cnt = lambda k, xs: int(json_num(info.get(k)) or 0) if json_num(info.get(k)) is not None else len(xs)        # noqa: E731
+    new, out, fail, rec, held, diff_new = lst("new"), lst("out"), lst("fail"), lst("rows"), lst("held"), lst("diffNew")
+    n_out, n_fail, n_held = cnt("outN", out), cnt("failN", fail), cnt("heldN", held)
+    wait = int(json_num(info.get("wait")) or 0)
+    src = info.get("src")
+    recent = [x for x in out if len(x) >= 2 and _iso_day(x[1]) and (today - _iso_day(x[1])).days <= KR_SPLIT_RECENT_DAYS]
+    have = {(x[0], x[1]): json_num(x[2]) for x in rec if len(x) >= 3}
+    no_rec = [f"{x[0]} {x[1]}" for x in rows if not same_ratio(have.get((x[0], x[1])), json_num(x[2]))]
+    bad_chk = [f"{x[0]} {x[1]}" for x in rec if len(x) >= 3 and isinstance(x[0], str) and not kr_split_receipt_ok(x)]
+    name = lambda x: " ".join(str(v) for v in x[:2])        # noqa: E731
+    warns, notes = [], []
+    if src not in ("dart", "cache", "off", "err"):
+        warns.append("출처 표시가 이상해요")
+    if src == "err":
+        warns.append("!! 확인하다 오류로 멈춰 지난 줄만 이었어요 (로그를 보세요)")
+    if src == "off":
+        warns.append("DART 꺼짐 · 키 없음 (새 줄 없음)")
+    if info.get("seedErr"):
+        warns.append("시드를 읽지 못함")
+    if fail or n_fail:
+        warns.append(f"조회 실패 {max(n_fail, len(fail))} (다음 실행에 다시)")
+    if diff_new:
+        warns.append(f"이번에 새로 '공시와 다름' {len(diff_new)}: " + ", ".join(name(x) for x in diff_new[:KR_SPLIT_SHOW]) + " (공시를 확인하세요)")
+    if recent:
+        warns.append(f"최근 {KR_SPLIT_RECENT_DAYS}일 싣지 않은 사건 {len(recent)}: " + ", ".join(name(x) for x in recent[:KR_SPLIT_SHOW])
+                     + (" …" if len(recent) > KR_SPLIT_SHOW else "") + " (시세만 움직였거나 공시와 달라요 — 공시를 확인하세요)")
+    if no_rec:
+        warns.append(f"영수증 없는 한국 줄 {len(no_rec)}: " + ", ".join(no_rec[:KR_SPLIT_SHOW]))
+    if bad_chk:
+        warns.append(f"세 확인(공시 상장일 · 주식 수 · 기준가)이 없거나 맞지 않는 영수증 {len(bad_chk)}: " + ", ".join(bad_chk[:KR_SPLIT_SHOW]))
+    if json_num(info.get("n")) is not None and int(json_num(info.get("n"))) != len(rows):
+        warns.append(f"splitsKr.n {int(json_num(info.get('n')))} ≠ 한국 줄 {len(rows)}")
+    if new:
+        notes.append(f"오늘 새 한국 줄 {len(new)}: " + ", ".join(f"{name(x)} ×{json_num(x[2]) or 0:g}" for x in new[:KR_SPLIT_SHOW] if len(x) >= 3)
+                     + (" …" if len(new) > KR_SPLIT_SHOW else ""))
+    if n_held:
+        notes.append(f"확인했지만 몫이 남아 싣지 않음 {n_held} (Jack 의 줄을 기다려요)")
+    if wait:
+        notes.append(f"확인 기다림 {wait:,} (실행당 DART 한도)")
+    val = (f"{len(rows):,}건 (새로 {len(new)} · 지난 발행본 {json_num(info.get('prev')) or 0:g}) · 싣지 않음 {n_out} · 묻지 못함 {wait:,} · 조회 실패 {n_fail} · "
+           f"DART 새 호출 {json_num(info.get('calls')) or 0:g}/{json_num(info.get('cap')) or 0:g} · 출처 {src if isinstance(src, str) else '?'}")
+    rep.add(KR_SPLITS_ROW, True, " · ".join([val] + warns + notes), rule, warn=bool(warns))
+    items = ([f"새 줄 {name(x)} ×{json_num(x[2]) or 0:g}" for x in new if len(x) >= 3]
+             + [f"몫이 남아 싣지 않음 {name(x)} ×{json_num(x[2]) or 0:g}" for x in held if len(x) >= 3]
+             + [f"싣지 않음 {name(x)} ({x[2] if len(x) > 2 and isinstance(x[2], str) else '?'})" for x in out]
+             + [f"조회 실패 {name(x)} ({x[2] if len(x) > 2 and isinstance(x[2], str) else '?'})" for x in fail] + [f"영수증 없음 {x}" for x in no_rec]
+             + [f"세 확인이 맞지 않는 영수증 {x}" for x in bad_chk])
+    if items:
+        rep.detail("한국 주식 분할 (splitsKr) 확인할 것", items)
+
+
+def kr_split_receipt_ok(x):
+    """영수증 한 줄의 세 확인이 맞는지 (2026-11-27 Jack 답 4 · 순수 함수 · 경고에만 써요): SPLIT_OVERRIDES 로 고친 줄(여섯 칸)은 그대로 통과 · 그 밖은
+    일곱째 칸 {dl, shr, px, rule}: dl = 줄의 날짜 · 분할(배율 > 1)은 rule split, |px ÷ 배율 − 1| ≤ 1%, |shr ÷ 배율 − 1| ≤ 10% · 병합(배율 < 1)은 rule
+    auction, |shr ÷ 배율 − 1| ≤ 1%, px ÷ 배율이 ½ ~ 2배이고 |px − 1| > 10%."""
+    if len(x) == 6 and x[4] == "SPLIT_OVERRIDES":
+        return True
+    r = json_num(x[2])
+    c = x[6] if len(x) == 7 and isinstance(x[6], dict) else None
+    if r is None or r <= 0 or c is None or c.get("dl") != x[1]:
+        return False
+    shr, px = json_num(c.get("shr")), json_num(c.get("px"))
+    if shr is None or px is None or shr <= 0 or px <= 0:
+        return False
+    if "dPx" in c or "dShr" in c:            # 두 날로 짝지은 사건 (1차 리뷰 S1): 공시의 날은 둘 중 하나 · 기준가의 날이 뒤
+        ds, dp = _iso_day(c.get("dShr")), _iso_day(c.get("dPx"))
+        if ds is None or dp is None or dp <= ds or (dp - ds).days > 14 or x[1] not in (c.get("dShr"), c.get("dPx")) \
+                or c.get("dlOn") != ("shr" if x[1] == c.get("dShr") else "px"):
+            return False
+    if r > 1:
+        return c.get("rule") == "split" and abs(px / r - 1) <= KR_SPLIT_RC_PX_TOL and abs(shr / r - 1) <= KR_SPLIT_RC_SHR_TOL
+    lo, hi = KR_SPLIT_RC_AUCTION
+    return c.get("rule") == "auction" and abs(shr / r - 1) <= KR_SPLIT_RC_EXACT_TOL and lo <= px / r <= hi and abs(px - 1) > 0.10
+
+
+def _nofile_rows(info):
+    """splitsKr.nofile → (줄 [[코드, 날짜, …]], 모양이 틀렸는지). 줄마다 코드 · 날짜만 봐요 (필수 종목은 모양이 틀려도 코드로 잡아요)."""
+    nf = info.get("nofile") if isinstance(info, dict) else None
+    if nf is None:
+        return [], False
+    if not isinstance(nf, list):
+        return [], True
+    rows = [x for x in nf if isinstance(x, list) and len(x) >= 1 and isinstance(x[0], str)]
+    return rows, len(rows) != len(nf) or any(len(x) < 4 for x in rows)
+
+
+def check_kr_split_nofile(rep, data, comps, today, pdata):
+    """2026-11-27 (Jack 답 11): 공시로 확인하지 못한 분할 — 필수 종목 (실패) · 한 실행에 새로 KR_SPLIT_NOFILE_RUN_FAIL 건 이상 (실패 · 1차 리뷰 뒤) ·
+    그 밖의 종목의 숫자를 비웠는지 · 이번 실행의 수 · 직전 발행본의 줄이 까닭 없이 사라졌는지 (셋 다 경고만). splitsKr 이 없거나 nofile 칸이 없는
+    파일(이 PR 전 · 감시 --live 가 보는 사이트 파일)은 실패 줄 둘이 통과해요 (확인할 목록이 없어요) — 직전 발행본에 줄이 있었으면 '이어짐' 줄이 경고해요."""
+    info = data.get("splitsKr") if isinstance(data, dict) else None
+    rule_m = (f"0 ({'·'.join(KR_SPLIT_MUST)} — Jack 2026-11-27: 공시로 확인하지 못한 분할이 필수 종목에 있으면 발행하지 않아요 · 고치는 길: 공시를 "
+              "확인해 KR_SPLIT_OVERRIDES 에 근거와 함께, 또는 공시 읽기를 고쳐요 · RUNBOOK '한국 주식 분할')")
+    rule_r = (f"{KR_SPLIT_NOFILE_RUN_FAIL}건 미만 (splitsKr.runNew: 이 실행이 새로 판정해 처음 생긴 nofile 줄 · 사건 날짜와 상관없이 — Jack: \"when many "
+              "appear in one run\" · 모의 채우기에서 공시의 절반이 확인되지 않아도 한 실행에 많아야 15 · 나가는 길: RUNBOOK '한국 주식 분할')")
+    if not isinstance(info, dict) or "nofile" not in info:
+        why = "splitsKr 없음" if not isinstance(info, dict) else "splitsKr.nofile 없음 (2026-11-27 전 형식)"
+        rep.add(KR_NOFILE_MUST_ROW, True, f"{why} — 확인할 목록이 없어요", rule_m)
+        rep.add(KR_NOFILE_RUN_ROW, True, f"{why} — 확인할 목록이 없어요", rule_r)
+        _check_kr_split_keep(rep, data, today, pdata, None)
+        return
+    rows, odd = _nofile_rows(info)
+    if odd and not rows and not isinstance(info.get("nofile"), list):
+        rep.add(KR_NOFILE_MUST_ROW, False, "splitsKr.nofile 모양이 잘못됐어요 (목록이 아니에요 — 필수 종목을 확인할 수 없어요)", rule_m)
+    else:
+        must = [x for x in rows if x[0] in KR_SPLIT_MUST]
+        by = {s.get("t"): s for s in data.get("stocks", []) if isinstance(s, dict)}
+        txt = [f"{x[0]} {(by.get(x[0]) or {}).get('nk', '')} {x[1] if len(x) > 1 else '?'}".replace("  ", " ") for x in must]
+        rep.add(KR_NOFILE_MUST_ROW, not must, (f"{len(must)}건: {', '.join(txt[:KR_SPLIT_SHOW])}" if must else "없음")
+                + (" · 모양이 틀린 줄이 있어요" if odd else "") + f" (전체 {len(rows)}건)", rule_m)
+    # 2차 리뷰 B1: 실패 줄은 이 실행이 스스로 판정한 줄 (runNew) 만 세요. 없거나 모양이 틀리면 실패 (이 실행의 수를 몰라요 — 파이프라인은 nofile 과
+    # 같이 늘 써요 · 이은 날은 빈 목록)
+    run_new = info.get("runNew")
+    if not isinstance(run_new, list):
+        rep.add(KR_NOFILE_RUN_ROW, False, "splitsKr.runNew " + ("없음" if run_new is None else "모양이 잘못됐어요") + " — 이 실행이 새로 판정한 수를 몰라요", rule_r)
+    else:
+        mine = [x for x in run_new if isinstance(x, list) and len(x) >= 2 and isinstance(x[0], str) and isinstance(x[1], str)]
+        names = ", ".join(f"{x[0]} {x[1]}" for x in mine[:KR_SPLIT_SHOW]) + (" …" if len(mine) > KR_SPLIT_SHOW else "")
+        odd_n = len(run_new) - len(mine)
+        rep.add(KR_NOFILE_RUN_ROW, len(run_new) < KR_SPLIT_NOFILE_RUN_FAIL, f"이 실행이 새로 판정 {len(run_new)}건" + (f": {names}" if mine else "")
+                + (f" · 모양이 틀린 줄 {odd_n}" if odd_n else ""), rule_r)
+    new = None
+    if isinstance(pdata, dict):
+        pinfo = pdata.get("splitsKr") if isinstance(pdata.get("splitsKr"), dict) else {}
+        old = {(x[0], x[1]) for x in _nofile_rows(pinfo)[0] if len(x) > 1 and isinstance(x[1], str)}
+        new = [x for x in rows if not (len(x) > 1 and isinstance(x[1], str) and (x[0], x[1]) in old)]
+    spn = sum(1 for s in data.get("stocks", []) if isinstance(s, dict) and s.get("cls") == "kr" and "spNo" in s)
+    why_n = {}
+    for x in rows:
+        k = x[3] if len(x) > 3 and isinstance(x[3], str) else "?"
+        why_n[k] = why_n.get(k, 0) + 1
+    why_t = " · ".join(f"{KR_NOFILE_WHY_KO.get(k, k)} {n}" for k, n in sorted(why_n.items(), key=lambda kv: -kv[1]))
+    rep.add(KR_NOFILE_SUM_ROW, True, f"이 실행이 새로 판정 {len(run_new) if isinstance(run_new, list) else '?'}건 · 직전 발행본 뒤 새로 "
+            f"{'?' if new is None else len(new)}건 · 전체 {len(rows)}건" + (f" ({why_t})" if why_t else "") + f" · 숫자를 비운 종목 {spn}",
+            "경고만 — 직전 발행본 뒤 새로 생긴 줄이 있으면 노랗게 (공시를 확인하세요 · 발행하지 못한 실행의 판정도 여기 들어요 · 실패는 위 두 줄)", warn=bool(new))
+    _check_kr_split_read(rep, info)
+    _check_kr_split_keep(rep, data, today, pdata, rows)
+    try:
+        _check_kr_split_hide(rep, data, comps, rows)
+    except Exception as e:
+        rep.add(KR_NOFILE_HIDE_ROW, True, f"읽다 멈췄어요 ({type(e).__name__})", "경고만", warn=True)
+
+
+# 3차 리뷰 S1: nofile 의 까닭 — '공시 없음' 과 '공시는 있는데 읽지 못함' 을 나눠 보여요 (둘 다 비우는 것은 같아요 · 안전한 쪽)
+KR_NOFILE_WHY_KO = {"nodoc": "결정 공시 없음", "unread": "공시를 읽지 못함", "pages": "공시 목록이 너무 김", "gone": "원문을 DART 가 주지 않음",
+                    "diff": "공시와 다름", "shr": "공시와 주식 수가 다름", "px": "공시와 기준가가 다름", "cr": "받지 않는 감자", "nocorp": "DART 코드 없음",
+                    "err": "읽다 오류"}
+
+
+def _check_kr_split_read(rep, info):
+    """3차 리뷰 S1 (경고만): splitsKr.read {n 이 실행에 새로 물은 판정, no 그중 분할을 확인하지 못한 것, doc 원문을 읽지 못한 것}."""
+    rule = (f"경고만 — 새로 물은 판정 {KR_SPLIT_READ_MIN}건 이상 중 {KR_SPLIT_READ_SHARE:.0%} 이상이 확인되지 않으면 노랗게 (공시를 읽는 코드가 깨졌을 수 "
+            "있어요 · 몇 건을 DART 에서 직접 보세요 · 발행을 막을지는 Jack 이 정해요)")
+    rd = info.get("read") if isinstance(info, dict) else None
+    if not isinstance(rd, dict):
+        rep.add(KR_READ_ROW, True, "splitsKr.read 없음 (2026-11-28 전 형식)", rule)
+        return
+    n, no, doc = (rd.get(k) if isinstance(rd.get(k), int) and not isinstance(rd.get(k), bool) else None for k in ("n", "no", "doc"))
+    if n is None or no is None:
+        rep.add(KR_READ_ROW, True, "splitsKr.read 모양이 잘못됐어요", rule, warn=True)
+        return
+    bad = n >= KR_SPLIT_READ_MIN and no >= KR_SPLIT_READ_SHARE * n
+    rep.add(KR_READ_ROW, True, f"새로 물은 판정 {n}건 · 확인되지 않음 {no}건" + (f" ({no / n:.0%})" if n else "")
+            + (f" · 그중 원문 문제 (읽지 못함 · DART 가 주지 않음 · 목록이 너무 김) {doc}" if doc else ""), rule, warn=bad)
+
+
+def _check_kr_split_keep(rep, data, today, pdata, rows):
+    """직전 발행본의 nofile 줄이 오늘 까닭 없이 사라졌는지 (1차 리뷰 Fable S2 · 조정자 6 · 경고만): 까닭 = 오래됨 (KR_NOFILE_KEEP_DAYS) · 확인됨
+    (오늘 splits 에 그 종목의 그 날 · 기준가의 날 · 10일 안의 한국 줄). rows None = 오늘 파일에 목록이 없어요."""
+    rule = (f"직전 발행본의 nofile 줄은 {KR_NOFILE_KEEP_DAYS}일이 지나거나 확인돼 splits 에 실릴 때만 빠져요 (경고만 — 사라진 줄의 종목은 숫자가 다시 보일 수 "
+            "있어요 · 실패 줄로 할지는 Jack 이 정해요)")
+    try:
+        pinfo = pdata.get("splitsKr") if isinstance(pdata, dict) and isinstance(pdata.get("splitsKr"), dict) else {}
+        prev_rows = [x for x in _nofile_rows(pinfo)[0] if len(x) > 1 and isinstance(x[1], str) and _iso_day(x[1])]
+        if not prev_rows:
+            rep.add(KR_NOFILE_KEEP_ROW, True, "직전 발행본에 줄이 없어요", rule)
+            return
+        have = {(x[0], x[1]) for x in rows or [] if len(x) > 1}
+        kr_rows = kr_split_rows(data)
+        lost = []
+        for x in prev_rows:
+            if (x[0], x[1]) in have or (today - _iso_day(x[1])).days > KR_NOFILE_KEEP_DAYS:
+                continue
+            dates = {x[1]} | ({x[4]} if len(x) > 4 and isinstance(x[4], str) else set())
+            if any(y[0] == x[0] and (y[1] in dates or abs((_iso_day(y[1]) - _iso_day(x[1])).days) <= 10) for y in kr_rows):
+                continue
+            lost.append(f"{x[0]} {x[1]}")
+        why = "오늘 파일에 splitsKr.nofile 이 없어요 · " if rows is None else ""
+        rep.add(KR_NOFILE_KEEP_ROW, True, why + (f"까닭 없이 사라진 줄 {len(lost)}: {', '.join(lost[:KR_SPLIT_SHOW])}" + (" …" if len(lost) > KR_SPLIT_SHOW else "")
+                                                 if lost else f"직전 발행본의 {len(prev_rows)}줄 모두 이어졌거나 까닭이 있어요"), rule, warn=bool(lost))
+        if lost:
+            rep.detail("공시로 확인하지 못한 분할 — 까닭 없이 사라진 줄", lost)
+    except Exception as e:
+        rep.add(KR_NOFILE_KEEP_ROW, True, f"읽다 멈췄어요 ({type(e).__name__})", rule, warn=True)
+
+
+def _check_kr_split_hide(rep, data, comps, rows):
+    rule = (f"필수 종목이 아닌 종목의 nofile 사건이 {KR_SPLIT_NOFILE_SERIES_DAYS}일 안이면 spNo 표시 · spNoF 칸(과거 주가 기록 오류와 같은 칸 · 같은 창)이 "
+            "data.json · corp.json 모두 빈 칸 · 표시는 nofile 의 날짜 · 필수 종목에는 표시 없음 (경고만 — 실패 줄로 할지는 Jack 이 정해요)")
+    px = day(data.get("pxDate")) if is_day(data.get("pxDate")) else None
+    stocks = [s for s in data.get("stocks", []) if isinstance(s, dict) and s.get("cls") == "kr"]
+    by = {s.get("t"): s for s in stocks}
+    cby = {c.get("t"): c for c in comps if isinstance(c, dict)}
+    dates = collections.defaultdict(set)
+    for x in rows:
+        if len(x) > 1 and isinstance(x[1], str) and is_day(x[1]):
+            dates[x[0]].add(x[1])
+            if len(x) > 4 and isinstance(x[4], str) and is_day(x[4]):
+                dates[x[0]].add(x[4])            # 두 날로 짝지은 사건: 표시는 기준가의 날 (1차 리뷰 S1)
+    probs = []
+    for t, s in sorted(by.items(), key=lambda kv: str(kv[0])):
+        if "spNo" not in s and "spNoF" not in s:
+            continue
+        d, f = s.get("spNo"), s.get("spNoF")
+        if t in KR_SPLIT_MUST:
+            probs.append(f"{t} 필수 종목인데 spNo")
+        if not (isinstance(d, str) and is_day(d)) or d not in dates.get(t, ()):
+            probs.append(f"{t} spNo {d!r} 가 nofile 의 날짜가 아니에요")
+        # 1차 리뷰 N5: 기준일(px)로 창도 봐요 — 최근 사건인데 1개월 · 3개월 칸을 비우지 않았으면 경고
+        fp = px_bad_fields_problems(t, f, d if isinstance(d, str) and is_day(d) else None, px)
+        probs += [p.replace("pxBadF", "spNoF") for p in fp]
+        hide = set(f) if isinstance(f, list) and not fp else set(PX_BAD_DATA)
+        left = [k for k in PX_BAD_DATA if k in hide and s.get(k) is not None]
+        if left:
+            probs.append(f"{t} 남은 칸 {'·'.join(left)}")
+        c = cby.get(t)
+        if c is not None:
+            if c.get("spNo") != d or c.get("spNoF") != f:
+                probs.append(f"corp {t} spNo · spNoF 가 data.json 과 달라요")
+            leftc = [k for k in PX_BAD_CORP if k in hide and c.get(k) is not None]
+            if leftc:
+                probs.append(f"corp {t} 남은 칸 {'·'.join(leftc)}")
+    for t, ds in sorted(dates.items()):
+        s = by.get(t)
+        if s is None or t in KR_SPLIT_MUST or px is None:
+            continue
+        near = [d for d in ds if 0 <= (px - day(d)).days <= KR_SPLIT_NOFILE_SERIES_DAYS]
+        if near and not (isinstance(s.get("spNo"), str) and s["spNo"] >= max(near)):
+            probs.append(f"{t} {max(near)} 비우지 않음 (spNo {s.get('spNo')!r})")
+    probs += [f"corp {c.get('t')} 에만 spNo" for c in comps if isinstance(c, dict) and "spNo" in c and "spNo" not in (by.get(c.get("t")) or {})]
+    n = sum(1 for s in stocks if "spNo" in s)
+    rep.add(KR_NOFILE_HIDE_ROW, True, f"{n}종목 · 문제 {len(probs)}" + (f" ({', '.join(probs[:3])}{' …' if len(probs) > 3 else ''})" if probs else ""),
+            rule, warn=bool(probs))
+    if probs:
+        rep.detail("공시로 확인하지 못한 분할의 숫자 비움 — 문제", probs)
 
 
 # ── v19.6b (Part B.1 · 오늘 볼 것 데이터): disc.json issue · insider role · data.json 미국 ed · xd — 새 줄 셋 (v19.6 스펙 'Test changes',

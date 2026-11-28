@@ -6,7 +6,7 @@
 // Every edit returns the whole store (the caller saves it with store.writeStore, which checks it again) or a refusal
 // { ok: false, why } the screen turns into an approved line. Nothing is saved that the store's own check would refuse.
 import { recordId, deckProblem, problemText } from "./store.js";
-import { belowZero, heldUnits, UNIT, okUnits, byAmount, VIEW_SPLITS, sellAllUnits } from "./held.js";
+import { belowZero, heldUnits, UNIT, okUnits, byAmount, VIEW_SPLITS, sellAllUnits, fracHeld, fracSalesOk } from "./held.js";
 import { ledger, splitsToStore, purchaseRate, splitSince } from "./lots.js";
 import { validRows } from "./track.js";
 
@@ -206,7 +206,8 @@ const badDate = (date, today) => !realDate(date) || date < DATE_FROM || date > t
 export const closeIsDefault = (deck, t, date, today) =>
   !splitSince([...((deck && deck.splits) || []), ...((deck && deck[VIEW_SPLITS]) || [])], t, date || today, today);
 
-// A sale of stock t (in the stock's currency; Korea whole shares unless imported by amount).
+// A sale of stock t (in the stock's currency; Korea whole shares unless imported by amount, or part of a share when a split left the
+// holding with one on the sale date: fracSaleOk).
 // input: { qty, price, date, amountWon (by amount only) } as typed; s: the stock's data row (its close is the default price,
 // unless a split falls between the sale date and today: closeIsDefault).
 // -> { ok: true, rec } | { ok: false, why: "input" | "tooMany" | "tooEarly" | "rate" | "noPrice", field?, rate? }
@@ -236,7 +237,7 @@ export function checkSale(deck, t, input, s, env) {
     price = usd ? amt / r.fx / qty : amt / qty;
   } else {
     const q = typed(input.qty);
-    if (!(pos(q) && q <= QTY_MAX && (usd ? okUnits(q) : Number.isInteger(q)))) return { ok: false, why: "input", field: "qty" };
+    if (!(pos(q) && q <= QTY_MAX && (usd || fracSaleOk(deck, t, date) ? okUnits(q) : Number.isInteger(q)))) return { ok: false, why: "input", field: "qty" };
     const p = typed(input.price);
     if (Number.isNaN(p) || (p != null && !pos(p)) || (usd && p != null && !decimals(p, 4))) return { ok: false, why: "input", field: "price" };
     price = p == null ? (s && pos(s.price) && closeIsDefault(deck, t, date, env.today) ? s.price : null) : p;
@@ -246,9 +247,18 @@ export function checkSale(deck, t, input, s, env) {
   }
   const rec = { id: recordId(), t, qty, price, date, ccy, ...(usd ? ratePart(r) : {}) };
   const next = { ...deck, sales: [...(deck.sales || []), rec] };
+  // review #186 round 1 (Fable): a Korean part-share sale dated before an existing one may not take the part that one sold (the store would
+  // refuse the portfolio): refused here with the same check and the quantity line, as a part on a whole holding is
+  if (!usd && !fracSalesOk({ ...next, splits: splitsToStore(next, t) || deck.splits }, t)) return { ok: false, why: "input", field: "qty" };
   if (belowZero({ ...next, splits: splitsToStore(next, t) || deck.splits })) return { ok: false, why: "tooMany", field: "qty" };
   return { ok: true, rec };
 }
+
+// Part of a Korean share in 팔았어요 (Jack, 2026-11-27, answer 11: "팔았어요 accepts fractions (same unit as the spec, 1/10,000 share)"): when a
+// split (stored, or data.json's on the view copy) left the holding of t with part of a share on the sale date (held.js fracHeld: a 주식병합
+// or a 5:2 split; the company pays that part out in cash), the quantity may have up to 4 decimals (1/10,000 share, A.1), as a US sale;
+// otherwise a Korean sale is whole shares, as before. The store checks the same with the split it saves with the record (store.js).
+export const fracSaleOk = (deck, t, date) => fracHeld(deck, t, date || "");
 
 // One more purchase (샀어요 on an existing portfolio): whole shares (required), price blank -> the latest close (unless a split
 // falls between the purchase date and today: then the price is required, closeIsDefault).

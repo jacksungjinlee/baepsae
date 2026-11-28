@@ -17,7 +17,7 @@ import React from "react";
 import { COLOR, SIZE, WEIGHT } from "../ui/tokens.js";
 import { C, fill, mdText, todayKst } from "./format.js";
 import { Note, tx } from "./ui.jsx";
-import { EPS_FIX_DATE, fixNotesHidden, epsNoticeShown, stmtCurFor, epsLineKind, unitHeldFor, noStmtFor, pxBadFullFor, pxBadPartFor, pxBadHidesFor } from "./fix.js";
+import { EPS_FIX_DATE, fixNotesHidden, epsNoticeShown, stmtCurFor, epsLineKind, unitHeldFor, noStmtFor, pxBadFullFor, pxBadPartFor, pxBadHidesFor, spNoFullFor, spNoHidesFor } from "./fix.js";
 import { fcurOf, fcurText, pbrZeroOf, fgnCutOf, fgnKindOf, FGN_LINE_KEYS, fundPbrOf } from "./fcur.js";
 import { isPreferred, noTradeOf, d1MissingOf } from "./engine.js";
 
@@ -63,18 +63,23 @@ export function UnitChkNote({ s, co, show = true, style }) {
 // corp.json pxBad · pxBadF; never for US stocks): the company page header, in the 52주 bar's place, on every tab. The same quiet note
 // (ui.jsx Note, 13 px). Shown on the example page too: it is about the data, not a fix.
 // -> the line for this stock, or null (not marked, only some numbers blanked, a US stock, or the words not there).
-export const pxBadText = (s, co) => (pxBadFullFor(s, co) && C.co.pxBad ? C.co.pxBad : null);
+// 2026-11-27 (Jack, answer 11): a stock whose 52주 range was blanked for a split no DART filing confirms (fix.js spNoFullFor) gets Jack's line
+// for that, "주식 수가 크게 바뀌었는데, 공시로 확인하지 못해서 이 숫자는 비워 두었어요.", in the same place (data-ui-v2 sp-no).
+export const pxBadText = (s, co) => (spNoFullFor(s, co) ? C.co.spNo || null : pxBadFullFor(s, co) && C.co.pxBad ? C.co.pxBad : null);
 export function PxBadNote({ s, co, style }) {
   const text = pxBadText(s, co);
-  return text ? <Note data-ui-v2="px-bad" style={style}>{text}</Note> : null;
+  return text ? <Note data-ui-v2={spNoFullFor(s, co) ? "sp-no" : "px-bad"} style={style}>{text}</Note> : null;
 }
 // 2026-11-14 evening (Jack): a stock whose bad day is over 252 bars back keeps its 52주 range; each blanked number says
 // "과거 주가 기록 일부에 오류가 있어서 이 숫자는 비워 두었어요." in its own place (fix.js pxBadPartFor). field: the data.json field that
 // number is (e.g. "beta", "r36", "lz"); the line shows only when that field was blanked. -> the line, or null.
-export const pxBadOneText = (s, co, field) => (pxBadPartFor(s, co) && pxBadHidesFor(s, co, field) && C.co.pxBadOne ? C.co.pxBadOne : null);
+// 2026-11-27 (Jack, answer 11): a number blanked for a split no DART filing confirms (fix.js spNoHidesFor) gets his line for that instead.
+const spOne = (s, co, field) => pxBadPartFor(s, co) && spNoHidesFor(s, co, field);
+export const pxBadOneText = (s, co, field) => (spOne(s, co, field) ? C.co.spNo || null
+  : pxBadPartFor(s, co) && pxBadHidesFor(s, co, field) && C.co.pxBadOne ? C.co.pxBadOne : null);
 export function PxBadOneNote({ s, co, field, show = true, style }) {
   const text = show ? pxBadOneText(s, co, field) : null;
-  return text ? <Note data-ui-v2="px-bad-one" style={style}>{text}</Note> : null;
+  return text ? <Note data-ui-v2={spOne(s, co, field) ? "sp-no-one" : "px-bad-one"} style={style}>{text}</Note> : null;
 }
 
 // The unit-check line inside a rule tile (phrasing content): the reason 재무 경고 0개 could not be checked for a holding the

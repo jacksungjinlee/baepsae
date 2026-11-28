@@ -244,6 +244,24 @@ export const pxBadHides = (row, k) => pxBadFields(row).includes(k);
 // 252 bars back) each blanked number gets the short line ("…이 숫자는 비워 두었어요.") in its own place.
 export const pxBadFull = (row) => pxBadHides(row, "hi");
 
+// ================= 7. 공시로 확인하지 못한 분할 (Jack, 2026-11-27, answer 11) =================
+// A Korean stock whose listed share count changed by exactly n:1 or 1:n on a day its KRX base price moved by that ratio too, with no DART
+// decision that confirms it (data.json splitsKr.nofile; not a must-have stock: those stop the publish). The pipeline (fetch_data.py
+// mark_split_nofile) blanks the same numbers as for pxBad, by the same calculation windows, and marks the stock spNo (the date) with
+// spNoF (the blanked fields), in data.json and corp.json. 2.0 says Jack's line "주식 수가 크게 바뀌었는데, 공시로 확인하지 못해서 이 숫자는 비워
+// 두었어요." in the places the pxBad lines go (src/v2/fix.js spNoFor · src/v2/fixnote.jsx); the old app shows "–" only (no line). A mark
+// that is not a non-empty string is no mark; one without a readable list counts as everything blanked.
+export function spNo(row) {
+  return !!row && typeof row === "object" && typeof row.spNo === "string" && row.spNo.length > 0;
+}
+export function spNoFields(row) {
+  if (!spNo(row)) return [];
+  const f = row.spNoF;
+  return Array.isArray(f) && f.every((k) => typeof k === "string") ? f : PX_BAD_ALL;
+}
+export const spNoHides = (row, k) => spNoFields(row).includes(k);
+export const spNoFull = (row) => spNoHides(row, "hi");
+
 // ================= ETF and fund PBR (Jack, 2026-11-27, answer 12: "Yes, hide them") =================
 // A fund has no book value in the company sense, so Yahoo's fund-level PBR (SPY 1.70 against a real P/B of about 5) and the 가치 score
 // vz made from it are never shown, in either app. The pipeline blanks both on every fund row (fetch_data.py fund_book_blank, data.json
