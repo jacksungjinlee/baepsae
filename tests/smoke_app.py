@@ -313,6 +313,8 @@ def none_today(R, scene, what, hint=""):
 # 메우지 않고 위험 계산에서 빼요 (2026-11-14 #128). 이 검사도 앱과 같아요 (Jack 2026-11-27, 답 7: 내장 종목 하나의 그 표시가 모두의 발행을
 # 멈추지 않게) — tests/test_screen_check.py 가 앱의 코드를 node 로 돌려 같은 답인지 봐요. 아래 한도(EXAMPLE_MAX)는 예전 그대로 그 종목도
 # 세어요 (example_cap_stocks · 리뷰 #200: 표시가 한꺼번에 많이 붙는 날은 막아요) — 한도 안이면 실행 기록에 크게 알려요 (banner_due).
+# 공시로 확인하지 못한 분할 표시(spNo · #186 mark_split_nofile)도 앱은 똑같이 다뤄요 (내장 값을 쓰지 않고 베타 · 변동성 '–', 예시 가격 안내
+# 없음 · src/data.js mergeStocks) — 이 검사도 같아요 (2026-11-28, 같은 답 7: 숫자를 비우는 내장 종목의 표시 하나가 모두의 발행을 멈추지 않게).
 # 금현물을 국제 금값으로 환산한 날(est)에는 "금현물은 … 추정치예요" 줄이 떠요. 발행 관문이 '목록에 있음'을 보장하는 것은 75개 가운데
 # 17개뿐이고(나머지 58개는 보장 없음), 그 17개도 베타 · 변동성까지 보장하지는 않아요.
 # 그래서 '배너가 없어야 해요'라고만 보면 상장폐지 한 건 · 베타가 빈 하루 · 금 환산 하루에 모두의 데이터 발행이 멈춰요.
@@ -332,6 +334,9 @@ _block = _src[_src.index("const BASE_STOCKS = ["):_src.index("\n];", _src.index(
 # 목록을 덜 읽거나 더 읽지 않았는지: 종목마다 한글 이름(nk)이 하나씩 있어요 — 그 수와 같아야 해요
 assert len(BASE_TICKERS) == len(set(BASE_TICKERS)) == len(re.findall(r"\bnk:\s*\"", _block)) >= 60 and "005930" in BASE_TICKERS, \
     "src/detail.jsx 의 내장 종목 목록을 읽지 못했어요 (종목코드 수와 이름 수가 달라요)"
+# 내장 종목의 한국어 이름: 앱은 내장 종목을 이 이름으로 보여 주고 저장해요 (src/data.js mergeStocks 의 { ...b } · detail.jsx withSavedName)
+BASE_NK = dict(re.findall(r'\{\s*t:\s*"([^"]+)",\s*nk:\s*"([^"]+)"', _block))
+assert sorted(BASE_NK) == sorted(BASE_TICKERS) and BASE_NK["005930"] == "삼성전자", "src/detail.jsx 의 내장 종목 이름을 읽지 못했어요"
 GOLD_SPOT = "04020000"          # 금현물: 국제 금값 환산(est)은 이 종목에만 붙어요 (fetch_data.py)
 
 
@@ -341,29 +346,44 @@ def px_bad(L):
     return isinstance(v, str) and len(v) > 0
 
 
+def sp_no(L):
+    """src/repair.js spNo 와 같은 규칙 (#186): 공시로 확인하지 못한 분할 표시(spNo)가 빈 글자가 아닌 문자열이면 표시된 종목이에요."""
+    v = L.get("spNo") if isinstance(L, dict) else None
+    return isinstance(v, str) and len(v) > 0
+
+
+def mark_why(L):
+    """앱이 베타 · 변동성을 비우는 표시의 이름 (실행 기록에 쓰는 말) — 없으면 None. 둘 다 있으면 앱처럼 과거 주가 기록 오류가 먼저예요 (mergeStocks)."""
+    return "과거 주가 기록 오류 표시(pxBad)" if px_bad(L) else "공시로 확인하지 못한 분할 표시(spNo)" if sp_no(L) else None
+
+
 def _num(v):
     return isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and v not in (float("inf"), float("-inf"))
 
 
 def risk_ready(L):
     """앱(src/data.js mergeStocks)이 담은 종목의 오늘 가격 · 베타 · 변동성을 그대로 위험 계산에 쓰는 종목: 가격이 0 보다 크고, 베타와 변동성이
-    숫자이고, 과거 주가 기록 오류 표시(pxBad)도 금 환산(est)도 없어요. 그 밖의 종목은 앱이 베타 · 변동성을 '–'로 두고 위험 계산에서 빼거나
-    (pxBad · 내장 목록 밖), 내장 예시 값으로 메워 '예시 가격'으로 보여요 — 위험 숫자를 보려는 장면이 담을 종목이 아니에요.
-    앱보다 느슨한 곳은 없고, 몇 곳은 더 엄격해요 (리뷰 #200): 가격이 0 이하인 내장 종목, 베타 · 변동성이 남은 내장 목록 밖 pxBad 종목 (관문이
-    막는 모양), 숫자가 아닌 베타 · 변동성 (참 · 글자) — 앱은 이것들도 쓰지만 이 장면들은 담지 않아요 (tests/test_screen_check.py)."""
+    숫자이고, 과거 주가 기록 오류 표시(pxBad)도 공시로 확인하지 못한 분할 표시(spNo · #186)도 금 환산(est)도 없어요. 그 밖의 종목은 앱이 베타 ·
+    변동성을 '–'로 두고 위험 계산에서 빼거나 (pxBad · spNo · 내장 목록 밖), 내장 예시 값으로 메워 '예시 가격'으로 보여요 — 위험 숫자를 보려는
+    장면이 담을 종목이 아니에요.
+    앱보다 느슨한 곳은 없고, 몇 곳은 더 엄격해요 (리뷰 #200): 가격이 0 이하인 내장 종목, 베타 · 변동성이 남은 내장 목록 밖 pxBad · spNo 종목
+    (파이프라인은 그 칸을 비워요), 숫자가 아닌 베타 · 변동성 (참 · 글자) — 앱은 이것들도 쓰지만 이 장면들은 담지 않아요 (tests/test_screen_check.py)."""
     return (isinstance(L, dict) and _num(L.get("price")) and L["price"] > 0 and _num(L.get("beta")) and _num(L.get("vol"))
-            and not px_bad(L) and not L.get("est"))
+            and not px_bad(L) and not sp_no(L) and not L.get("est"))
 
 
-def pick_ready(R, scene, stocks, want, n, need=(), secs=0):
+def pick_ready(R, scene, stocks, want, n, need=(), secs=0, avoid=(), pool=None, also=None):
     """장면이 담을 한국 종목 n 개 (Jack 2026-11-27, 답 7: 어느 한 종목의 데이터도 모두의 발행을 멈추지 않게). want 순서대로, 오늘 데이터에서
     risk_ready 이고 need 칸이 숫자인 종목을 먼저 담고 (평소에는 예전과 같은 종목), 모자라면 같은 조건의 다른 한국 종목을 시가총액 큰 순으로
     채워요. 채우는 종목은 보통주(코드 끝 0)만이고, 시가총액이 빈 종목 · 펀드 · ETF · 마지막 확인 종가(pxd)로 실린 종목(배너에 줄이 하나 더
     생겨요)은 고르지 않아요. secs > 0 이면 업종이 secs 곳 이상 되게 새 업종을 먼저 골라요.
+    avoid: 장면이 따로 담는 종목 (채우는 종목으로 고르지 않아요) · pool: 채우는 종목을 이 코드들 안에서만 (pick_plain: 내장 종목) ·
+    also: 종목마다 더 볼 조건 (장면이 읽는 다른 숫자를 앱이 보여 주는지).
     바꿔 담은 날은 실행 기록에 크게 남겨요 (어느 종목이 왜 빠졌는지). 돌려줌: 종목코드 목록 (모자라면 n 보다 짧아요 — 장면이 실패로 알려요)."""
-    ok = lambda s: risk_ready(s) and all(_num(s.get(k)) for k in need)   # noqa: E731
+    ok = lambda s: risk_ready(s) and all(_num(s.get(k)) for k in need) and (also is None or bool(also(s)))   # noqa: E731
     out = [t for t in want if t in stocks and ok(stocks[t])][:n]
-    rest = sorted((s for s in stocks.values() if s.get("t") not in out and s.get("cls") == "kr" and str(s.get("t"))[-1:] == "0"
+    rest = sorted((s for s in stocks.values() if s.get("t") not in out and s.get("t") not in avoid and (pool is None or s.get("t") in pool)
+                   and s.get("cls") == "kr" and str(s.get("t"))[-1:] == "0"
                    and not s.get("fund") and not s.get("etf") and s.get("pxd") is None and _num(s.get("cap")) and ok(s)),
                   key=lambda s: (-s["cap"], str(s.get("t"))))
     for s in rest:
@@ -375,9 +395,11 @@ def pick_ready(R, scene, stocks, want, n, need=(), secs=0):
             out.append(s["t"])
     swapped = [t for t in want[:n] if t not in out]
     if swapped:
-        why = "; ".join(f"{t} " + ("오늘 데이터에 없음" if t not in stocks else "과거 주가 기록 오류 표시(pxBad)" if px_bad(stocks[t])
+        gap = lambda t: [k for k in need if not _num(stocks[t].get(k))]   # noqa: E731
+        why = "; ".join(f"{t} " + ("오늘 데이터에 없음" if t not in stocks else mark_why(stocks[t]) if mark_why(stocks[t])
                                    else "베타 · 변동성 · 가격이 위험 계산에 쓸 값이 아님" if not risk_ready(stocks[t])
-                                   else "필요한 칸(" + "·".join(k for k in need if not _num(stocks[t].get(k))) + ")이 빔") for t in swapped)
+                                   else "필요한 칸(" + "·".join(gap(t)) + ")이 빔" if gap(t)
+                                   else "장면이 읽는 다른 숫자를 앱이 보여 주지 않음") for t in swapped)
         msg = (f"평소 담는 종목 가운데 {why} → 오늘 데이터의 다른 종목 {', '.join(t for t in out if t not in want) or '(없음)'} 로 바꿔 담아 "
                "같은 것을 확인해요")
         if f"{scene}: {msg}" not in R.notes:
@@ -388,11 +410,33 @@ def pick_ready(R, scene, stocks, want, n, need=(), secs=0):
     return out
 
 
+def pick_plain(R, scene, stocks, avoid=(), need=(), want="005930", also=None):
+    """장면이 '보통 종목'으로 담는 한국 종목 하나 — 평소에는 삼성전자(005930) (Jack 2026-11-27, 답 7: 내장 종목 하나의 과거 주가 기록 오류 표시가
+    모두의 발행을 멈추지 않게 · 삼성전자도 내장 종목이에요). 그 장면이 그 종목의 위험 숫자(베타 · 변동성, 또는 앱이 pxBad 종목에서 비우는 다른
+    숫자)를 읽어요. want 는 risk_ready 이면 (앱이 그 종목의 오늘 가격 · 베타 · 변동성을 위험 계산에 쓰면) 언제나 그대로 담아요 — 그날은 예전과
+    똑같아요 (need · also 는 보지 않아요: 예전 장면이 그 종목에서 실패했을 날은 지금도 실패해요). risk_ready 가 아니면 (과거 주가 기록 오류 표시 ·
+    빈 베타나 변동성 · 오늘 데이터에 없음) B안과 같은 규칙(pick_ready)으로 다른 종목을 담아요: risk_ready 이고 need 칸이 숫자이고 also 인, 예전
+    뱁새의 내장 종목(BASE_STOCKS) 한국 보통주 (코드 끝 0 · 펀드 · ETF · 마지막 확인 종가 아님 · 시가총액 있음 — 앱이 삼성전자처럼 내장 종목으로
+    다루는 종목), 시가총액 큰 순, avoid(장면이 같이 담는 종목)는 빼고. 같은 데이터면 언제나 같은 종목이에요. 바꿔 담은 날은 크게 알려요
+    (pick_ready: 실행 기록의 '!! 알림' · GitHub 경고 · 끝의 '다르게 확인한 것').
+    쓸 종목이 하나도 없으면 그 자리에서 실패해요 (지어낸 종목을 담지 않아요 — 그날은 내장 종목 한도 검사도 먼저 실패해요).
+    돌려줌: (종목코드, 앱이 보여 주는 한국어 이름)."""
+    assert want not in avoid, (want, avoid)
+    if want in stocks and risk_ready(stocks[want]):
+        return want, BASE_NK.get(want) or stocks[want].get("nk")
+    got = pick_ready(R, scene, stocks, [want], 1, need=need, avoid=avoid, pool=set(BASE_TICKERS), also=also)
+    assert got, (f"[{scene}] 시험할 종목이 모자라요: {want} 도, 그 대신 담을 내장 한국 보통주도 오늘 앱이 위험 숫자를 계산할 수 있는 것이 "
+                 f"없어요 (함께 담는 종목 {', '.join(avoid) or '없음'} · 필요한 칸 {', '.join(need) or '없음'})")
+    t = got[0]
+    return t, BASE_NK.get(t) or stocks[t].get("nk")
+
+
 def example_price_stocks(f):
     """앱의 mergeStocks 와 같은 규칙. 돌려줌 (examples, est):
     examples = 내장 종목 가운데 오늘 데이터에 없는 것 + 데이터에 있지만 가격이 빈 것 + 가격은 있지만 베타 · 변동성이 빈 것 (금 환산은 빼고)
                → '예시 가격' 줄. 다만 과거 주가 기록 오류 표시(pxBad) 종목의 빈 베타 · 변동성은 앱이 내장 값으로 메우지 않아요 (위험 계산에서
                빼요 · 2026-11-14 #128) — 가격이 오늘 것이면 예시 가격 종목이 아니에요. 그 종목도 가격이 비면 예시 가격이에요 (앱과 같아요).
+               공시로 확인하지 못한 분할 표시(spNo · #186) 종목도 똑같아요 (앱이 pxBad 와 같이 다뤄요).
     est = 국제 금값 환산 표시(est)가 붙은 내장 종목 → '금현물은 … 추정치예요' 줄.  (미국 티커는 점 · 하이픈을 무시하고 맞춰요: BRK.B = BRK-B)"""
     norm = lambda x: re.sub(r"[.\-]", "", str(x or "").upper())
     by_t = {t: t for t in BASE_TICKERS}
@@ -402,8 +446,9 @@ def example_price_stocks(f):
         b = by_t.get(L.get("t")) or by_norm.get(norm(L.get("t")))
         price = L.get("price")
         if b:
-            # src/data.js mergeStocks: partial = L.price == null || (!bad && (L.beta == null || L.vol == null)) — bad = pxBad(L)
-            partial = price is None or (not px_bad(L) and (L.get("beta") is None or L.get("vol") is None))
+            # src/data.js mergeStocks: partial = L.price == null || (!bad && !sp && (L.beta == null || L.vol == null)) — bad = pxBad(L) ·
+            # sp = !bad && spNo(L) (#186)
+            partial = price is None or (not px_bad(L) and not sp_no(L) and (L.get("beta") is None or L.get("vol") is None))
             if L.get("est"):
                 est.append(b)
             elif partial:
@@ -416,7 +461,7 @@ def example_price_stocks(f):
 
 def example_cap_stocks(f):
     """한도(within_example_cap)가 세는 내장 종목 — 예전 그대로의 규칙 (리뷰 #200): 오늘 데이터에 없거나 가격 · 베타 · 변동성이 빈 내장 종목
-    (금 환산은 빼고). 과거 주가 기록 오류 표시(pxBad)로 베타 · 변동성을 비운 내장 종목도 세어요 — 앱은 그 종목에 '예시 가격' 안내를 보여 주지
+    (금 환산은 빼고). 과거 주가 기록 오류 표시(pxBad) · 공시로 확인하지 못한 분할 표시(spNo)로 베타 · 변동성을 비운 내장 종목도 세어요 — 앱은 그 종목에 '예시 가격' 안내를 보여 주지
     않지만 (example_price_stocks), 한꺼번에 많이 비면 여전히 파이프라인을 의심할 날이에요. 돌려줌 (세는 종목, est) — est 는 example_price_stocks 와 같아요."""
     norm = lambda x: re.sub(r"[.\-]", "", str(x or "").upper())
     by_t = {t: t for t in BASE_TICKERS}
@@ -460,16 +505,26 @@ def banner_due(R, scene, f):
                                           "고정 데이터에는 없어야 해요. 없는데도 이 말이 나오면 내장 종목 목록(BASE_TICKERS)을 잘못 읽은 거예요")
         return []
     due = ([NONLIVE] if examples else []) + ([GOLD_EST] if est else [])
-    marked = sorted(set(example_cap_stocks(f)[0]) - set(examples))   # pxBad 로 베타 · 변동성을 비운 내장 종목 (가격은 오늘 것)
+    marked = sorted(set(example_cap_stocks(f)[0]) - set(examples))   # pxBad · spNo 로 베타 · 변동성을 비운 내장 종목 (가격은 오늘 것)
     if marked:
-        msg = (f"오늘 데이터: 과거 주가 기록 오류 표시(pxBad)가 붙은 내장 종목 {len(marked)}개 ({', '.join(marked[:8])}{' …' if len(marked) > 8 else ''}) — "
+        # 표시마다 따로 (#186 spNo · 2026-11-28): pxBad 만이면 예전과 같은 글이에요. 그 종목의 첫 줄로 봐요 (example_cap_stocks 처럼)
+        norm = lambda x: re.sub(r"[.\-]", "", str(x or "").upper())   # noqa: E731
+        first = {}
+        for L in f["data.json"]["stocks"]:
+            first.setdefault(norm(L.get("t")), L)
+        kinds = (("과거 주가 기록 오류 표시(pxBad)", "과거 주가 기록 오류"), ("공시로 확인하지 못한 분할 표시(spNo)", "공시로 확인하지 못한 분할"))
+        groups = [(k, row, [t for t in marked if (mark_why(first.get(norm(t))) or kinds[0][0]) == k]) for k, row in kinds]
+        groups = [g for g in groups if g[2]]
+        names = lambda ts: f"{', '.join(ts[:8])}{' …' if len(ts) > 8 else ''}"   # noqa: E731
+        msg = (f"오늘 데이터: {' · '.join(f'{k}가 붙은 내장 종목 {len(ts)}개 ({names(ts)})' for k, _, ts in groups)} — "
                f"가격은 오늘 것이라 예전 뱁새는 이 종목에 '예시 가격' 안내를 보여 주지 않아요 (안내 없음을 확인해요). 내장 종목 한도에는 세어요 "
-               f"({EXAMPLE_MAX}개를 넘으면 발행하지 않아요 — 관문의 과거 주가 기록 오류 줄도 보세요)")
+               f"({EXAMPLE_MAX}개를 넘으면 발행하지 않아요 — 관문의 {' · '.join(row for _, row, _ in groups)} 줄도 보세요)")
+        title = " · ".join(row for _, row, _ in groups)
         if msg not in R.notes:
             R.notes.append(msg)
             print(f"\n!! 알림  [{scene}] {msg}\n", flush=True)
             if os.environ.get("GITHUB_ACTIONS") == "true":
-                print(f"::warning title=발행 전 화면 검사 · 과거 주가 기록 오류 내장 종목::[{scene}] {msg}", flush=True)
+                print(f"::warning title=발행 전 화면 검사 · {title} 내장 종목::[{scene}] {msg}", flush=True)
     if due:
         why = "; ".join(x for x in (f"내장 종목 {len(examples)}개가 오늘 데이터에 없거나 가격 · 베타 · 변동성이 비었어요 ({names})" if examples else "",
                                     f"금 환산 추정 {', '.join(est)}" if est else "") if x)
@@ -782,19 +837,21 @@ def scene_gold_estimate(R, files):
 
 
 def scene_no_risk_holding(R, files):
-    """내장 목록에 없고 베타·변동성이 빈 종목을 담은 포트폴리오: 사라지지 않고, β 는 '–', 위험 숫자에 NaN 없음, 배너 안내."""
+    """내장 목록에 없고 베타·변동성이 빈 종목을 담은 포트폴리오: 사라지지 않고, β 는 '–', 위험 숫자에 NaN 없음, 배너 안내.
+    함께 담는 보통 종목은 위험 숫자가 있어야 해요: 평소에는 삼성전자, 오늘 앱이 그 위험 숫자를 계산하지 못하면 바꿔 담아요 (pick_plain)."""
     f = json.loads(json.dumps(files, allow_nan=True))
+    P, PN = pick_plain(R, "위험값 없음", {s.get("t"): s for s in files["data.json"]["stocks"]})
     f["data.json"]["stocks"].append({"t": "999990", "nk": "시험새종목", "ne": "Test New Co", "cls": "kr", "s": "bank",
                                      "price": 12000, "beta": None, "vol": None, "per": None, "pbr": None, "dy": None,
                                      "cap": 3.1, "val": 120.0})
     slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000,
-            "holdings": [{"t": "999990", "mw": 200}, {"t": "005930", "mw": 300}]}
+            "holdings": [{"t": "999990", "mw": 200}, {"t": P, "mw": 300}]}
     blind = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": "999990", "mw": 300}]}
-    half = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": "999990", "mw": 200}, {"t": "005930", "mw": 100}]}
-    ref = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": "005930", "mw": 500}]}
+    half = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": "999990", "mw": 200}, {"t": P, "mw": 100}]}
+    ref = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": P, "mw": 500}]}
     local = {"baepsae_v9_seen": "1",
              "baepsae_v10_slots": json.dumps([{"id": "snr", "name": "위험값 없음 시험"}, {"id": "sbl", "name": "위험값 전부 없음"},
-                                              {"id": "shf", "name": "위험값 절반 넘게 없음"}, {"id": "srf", "name": "삼성전자만 비교"}],
+                                              {"id": "shf", "name": "위험값 절반 넘게 없음"}, {"id": "srf", "name": f"{PN}만 비교"}],
                                              ensure_ascii=False),
              "baepsae_v10_slot_snr": json.dumps(slot, ensure_ascii=False), "baepsae_v10_slot_sbl": json.dumps(blind, ensure_ascii=False),
              "baepsae_v10_slot_shf": json.dumps(half, ensure_ascii=False), "baepsae_v10_slot_srf": json.dumps(ref, ensure_ascii=False)}
@@ -820,11 +877,11 @@ def scene_no_risk_holding(R, files):
 
     def same_as_reference():
         page.get_by_text("차근차근 만들기", exact=True).click()
-        page.get_by_text("삼성전자만 비교", exact=False).first.click()
+        page.get_by_text(f"{PN}만 비교", exact=False).first.click()
         see(page, "보통 해 ±")
         ref_line = page.evaluate(SMALLEST, ["보통 해 ±", None])
         assert risk_line.get("partial") and ref_line == risk_line["partial"], f"{risk_line.get('partial')!r} ≠ {ref_line!r}"
-    R.check(page, "위험값 없음", "자료 없는 200만원 + 삼성전자 300만원 = 삼성전자 500만원과 같은 위험 수치", same_as_reference)
+    R.check(page, "위험값 없음", f"자료 없는 200만원 + {PN} 300만원 = {PN} 500만원과 같은 위험 수치", same_as_reference)
     ctx.close(); srv.shutdown()
 
     srv, ctx, page, _ = R.open(build_site(f), local=local)
@@ -860,7 +917,7 @@ def scene_no_risk_holding(R, files):
     # 모든 자산군(한국·미국·채권·금)을 담은 보통 포트폴리오: 위험 숫자에 NaN 이 없어야 해요
     # (v15.3 부터 채권 칸이 빠져 모든 포트폴리오가 '±NaN만원'으로 보였어요 — v17.5 에서 발견)
     have = {s.get("t") for s in files["data.json"]["stocks"]}
-    pick = [t for t in ("005930", "AAPL", "153130", "114260", "132030") if t in have]
+    pick = [t for t in (P, "AAPL", "153130", "114260", "132030") if t in have]     # 한국 칸도 위험 계산에 드는 종목으로 (P)
     slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": t, "mw": 150} for t in pick]}
     local = {"baepsae_v9_seen": "1", "baepsae_v10_slots": json.dumps([{"id": "sall", "name": "자산군 모두 시험"}], ensure_ascii=False),
              "baepsae_v10_slot_sall": json.dumps(slot, ensure_ascii=False)}
@@ -1126,9 +1183,11 @@ def scene_missing_holding(R, files):
         "t": "STRC", "nk": "Strategy Inc 시험", "ne": "Strategy Inc test", "cls": "us", "s": "platform", "ccy": "USD",
         "price": 99.0, "beta": 0.5, "vol": 20.0}
     have = {s.get("t") for s in stocks}
-    assert {"005930", "000660"} <= have, "시험할 종목(삼성전자·SK하이닉스)이 데이터에 없어요"
+    # 위험 줄(보통 해 ±)을 만드는 보통 종목: 평소에는 삼성전자, 오늘 앱이 그 위험 숫자를 계산하지 못하면 바꿔 담아요 (pick_plain)
+    P, PN = pick_plain(R, "빠진 종목", {s.get("t"): s for s in stocks}, avoid=("000660",))
+    assert {P, "000660"} <= have, f"시험할 종목({PN}·SK하이닉스)이 데이터에 없어요"
     f["data.json"]["stocks"] = [s for s in stocks if s.get("t") not in ("STRC", "04020000")]   # STRC 는 빠지고, 금현물은 내장 예시로
-    hold = [{"t": "STRC", "mw": 200}, {"t": "005930", "mw": 300}, {"t": "000660", "mw": 100}, {"t": "04020000", "mw": 100}]
+    hold = [{"t": "STRC", "mw": 200}, {"t": P, "mw": 300}, {"t": "000660", "mw": 100}, {"t": "04020000", "mw": 100}]
     slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": hold}
     # 비교: STRC 없이 같은 종목, 예산은 STRC 200만원을 뺀 800만원 → 위험 줄·현금이 똑같아야 해요 (빠진 돈은 현금이 아니에요)
     ref = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 800, "holdings": hold[1:]}
@@ -1234,7 +1293,7 @@ def scene_missing_holding(R, files):
         assert {"t": "STRC", "mw": 200} in st["holdings"] and len(st["holdings"]) == 4, st["holdings"]
         # 저장할 때 이름이 붙어요 (나중에 빠지면 코드 대신 이름이 나오게). 미국 종목·빠진 종목은 코드 그대로
         named = {h["t"]: h.get("nk") for h in st["holdings"]}
-        assert named["005930"] == "삼성전자" and named["STRC"] is None, named
+        assert named[P] == PN and named["STRC"] is None, named
         # 영어 장면이 ② 구성·한국어로 돌아온 것도 저장될 때까지 기다려요 (자동 저장은 마지막 변경 0.8초 뒤). 그 전에 다시 불러오면
         # ④ 내보내기(또는 영어)로 열려, 아래 'STRC 가 돌아오면' 확인이 ②의 '보통 해 ±' 를 끝내 못 찾았어요 (바쁜 기계에서 가끔 실패한 이유)
         poll(page, "localStorage.getItem('baepsae_v10_slot_smiss')",
@@ -1296,14 +1355,16 @@ def scene_missing_all(R, files):
     f = json.loads(json.dumps(files, allow_nan=True))
     f["data.json"]["stocks"] = [s for s in f["data.json"]["stocks"] if s.get("t") not in ("STRC", "999991")]
     have = {s.get("t") for s in f["data.json"]["stocks"]}
-    assert {"005930", "000660", "105560"} <= have, "시험할 종목이 데이터에 없어요"
+    # 고치기 카드(한 종목 상한)를 띄우는 보통 종목: 평소에는 삼성전자, 오늘 앱이 그 위험 숫자를 계산하지 못하면 바꿔 담아요 (pick_plain)
+    P, _ = pick_plain(R, "빠진 종목 전부", {s.get("t"): s for s in f["data.json"]["stocks"]}, avoid=("000660", "105560"))
+    assert {P, "000660", "105560"} <= have, "시험할 종목이 데이터에 없어요"
     gone = [{"t": "STRC", "mw": 200}, {"t": "999991", "mw": 100, "nk": "시험빠진종목", "ne": "Test Gone Co"}]   # 이름이 저장된 국내 종목
     allm = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": gone}
     profile = {"ready": True, "targetBetaMin": 0.7, "targetBetaMax": 1.1, "targetVolMaxPct": 24, "stocksMin": 2, "stocksMax": 15,
                "maxPositionPct": 40, "maxSectorPct": 100, "cashFloorPct": 0, "riskNeedPct": 7, "riskCapacity": 6, "riskTolerance": 6}
     fix = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "profile": profile,
-           "holdings": [{"t": "STRC", "mw": 200}, {"t": "005930", "mw": 300}, {"t": "000660", "mw": 100}, {"t": "105560", "mw": 100}]}
-    readd = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": "STRC", "mw": 200}, {"t": "005930", "mw": 300}]}
+           "holdings": [{"t": "STRC", "mw": 200}, {"t": P, "mw": 300}, {"t": "000660", "mw": 100}, {"t": "105560", "mw": 100}]}
+    readd = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": "STRC", "mw": 200}, {"t": P, "mw": 300}]}
     local = slot_local([("sall", "전부 빠짐 시험", allm), ("sfix", "빠진 종목 고치기 시험", fix), ("sadd", "직접 다시 담기 시험", readd)])
     srv, ctx, page, _ = R.open(build_site(f), local=local, once=True)
     S = "빠진 종목 전부"
@@ -1348,10 +1409,10 @@ def scene_missing_all(R, files):
         page.locator('button[title="저장하고 나가기"]').first.click()
         page.get_by_text("빠진 종목 고치기 시험", exact=False).first.click()
         see(page, MISSING.format(n=1, names="STRC 200만원"))
-        page.get_by_text("이렇게 하면 맞춰져요", exact=False).first.click()        # 한 종목 상한 40% (삼성전자 60%) 고치기
+        page.get_by_text("이렇게 하면 맞춰져요", exact=False).first.click()        # 한 종목 상한 40% (보통 종목 P 60%) 고치기
         page.get_by_role("button", name="이대로 적용하기").first.click()   # 고칠 게 없어지면 알림 상자째 사라져요 (저장본으로 확인)
         st = poll(page, "localStorage.getItem('baepsae_v10_slot_sfix')", lambda v: v and '"settings"' in v
-                  and next(h for h in json.loads(v)["holdings"] if h["t"] == "005930")["mw"] < 300, "고치기를 적용한 저장본이 없어요")
+                  and next(h for h in json.loads(v)["holdings"] if h["t"] == P)["mw"] < 300, "고치기를 적용한 저장본이 없어요")
         hs = json.loads(st)["holdings"]
         assert {"t": "STRC", "mw": 200} in hs, f"고치기 카드를 적용했더니 빠진 종목이 저장본에서 사라졌어요: {hs}"
         assert page.evaluate(CART_REMOVE, "SK하이닉스"), "카트에서 SK하이닉스 줄의 삭제 버튼을 못 찾았어요"
@@ -1360,7 +1421,7 @@ def scene_missing_all(R, files):
         assert {"t": "STRC", "mw": 200} in hs and len(hs) == 3, f"다른 줄을 지웠더니 빠진 종목도 사라졌어요: {hs}"
         page.locator(".missingRemove", has_text=MISSING_REMOVE).first.click()
         st = poll(page, "localStorage.getItem('baepsae_v10_slot_sfix')", lambda v: v and "STRC" not in v, "'포트폴리오에서 빼기'가 저장되지 않았어요")
-        assert sorted(h["t"] for h in json.loads(st)["holdings"]) == ["005930", "105560"], st
+        assert sorted(h["t"] for h in json.loads(st)["holdings"]) == sorted([P, "105560"]), st
     R.check(page, S, "빠진 종목이 있는 채로 고치기 카드 적용 · 카트 줄 삭제 → 빠진 종목은 남음, '빼기'로만 지워짐", fix_and_delete)
 
     def re_add_by_hand():
@@ -1416,8 +1477,11 @@ TM_END_X = 412
 def scene_beta_return(R, files):
     """B안 (v18.5, Jack 2026-11-03): 베타를 수익률로 바꾸는 줄은 SHOW_ER 를 켤 때만.
     ② 종목 줄을 펼쳐 '이론 샤프'(β × 프리미엄 ÷ σ)가 없고 과거 값 '샤프(3y)'·'3y α'·'최대낙폭'은 보이는지,
-    ① 프로필(새로 만든 것 KO·EN, 예전에 저장된 것)에 '목표 → 베타'·'β → 기대 수익' 문장이 없고 나머지 문장은 남는지 봐요."""
-    hold = [{"t": "005930", "mw": 300}, {"t": "000660", "mw": 200}]
+    ① 프로필(새로 만든 것 KO·EN, 예전에 저장된 것)에 '목표 → 베타'·'β → 기대 수익' 문장이 없고 나머지 문장은 남는지 봐요.
+    위험 줄 · 타임머신을 만들고 펼쳐 보는 보통 종목: 평소에는 삼성전자, 오늘 앱이 그 위험 숫자를 계산하지 못하면 펼친 줄의 샤프(3y) · 3y α ·
+    최대낙폭 값도 있는 다른 내장 종목으로 바꿔 담아요 (pick_plain)."""
+    P, _ = pick_plain(R, "베타→수익률", {s.get("t"): s for s in files["data.json"]["stocks"]}, avoid=("000660",), need=("sh", "al", "mdd"))
+    hold = [{"t": P, "mw": 300}, {"t": "000660", "mw": 200}]
     slots = [("srow", "종목 줄 시험", {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": hold})]
     srv, ctx, page, _ = R.open(build_site(files), local=slot_local(slots))
     S = "베타→수익률"
@@ -1431,7 +1495,7 @@ def scene_beta_return(R, files):
         page.get_by_text("차근차근 만들기", exact=True).click()
         page.get_by_text("종목 줄 시험", exact=False).first.click()
         see(page, "보통 해 ±")
-        row("종목명·코드 검색", "005930")
+        row("종목명·코드 검색", P)
         for keep in ("샤프(3y)", "3y α", "최대낙폭", "12개월"):     # 과거 가격으로만 만든 값은 그대로
             see(page, keep)
         shown = hidden_shown(page.locator("body").inner_text(), HIDDEN_B)
@@ -1726,7 +1790,10 @@ def scene_json_import(R, files):
 def _json_import(R, files, tmp):
     S = "파일 불러오기"
     have = {s.get("t") for s in files["data.json"]["stocks"]}
-    pick = [t for t in ("005930", "000660", "AAPL") if t in have]
+    # 첫 종목 (300 → 450만원, 가장 큰 몫): 평소에는 삼성전자, 오늘 앱이 그 위험 숫자를 계산하지 못하면 바꿔 담아요 (pick_plain — 위험 수치가 없는
+    # 종목이 투자금의 절반을 넘으면 ④ 내보내기에 'JSON 저장' 이 없어요: 삼성전자에 표시가 붙은 날은 꼭 절반, SK하이닉스도 붙으면 넘었어요)
+    P, PN = pick_plain(R, S, {s.get("t"): s for s in files["data.json"]["stocks"]}, avoid=("000660",))
+    pick = [t for t in (P, "000660", "AAPL") if t in have]
     gone = next(t for t in ("999999", "999998", "999997") if t not in have)      # 지금 목록에 없는 종목코드
     slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000,
             "profile": {"ready": True, "source": "preset", "targetBetaMin": 0.6, "targetBetaMax": 1.0, "targetVolMaxPct": 22,
@@ -1921,7 +1988,7 @@ def _json_import(R, files, tmp):
         go_home()
         page.wait_for_timeout(1000)
         f = write("with-gone.json", json.dumps({**export_head, "holdings": [
-            {"ticker": pick[0], "name": "삼성전자", "amountWon": 3000000}, {"ticker": gone, "name": "없는 회사", "amountWon": 2000000}]},
+            {"ticker": pick[0], "name": PN, "amountWon": 3000000}, {"ticker": gone, "name": "없는 회사", "amountWon": 2000000}]},
             ensure_ascii=False))
         n = len(dialogs)
         file_box.set_input_files(f)
@@ -1949,7 +2016,7 @@ def _json_import(R, files, tmp):
         go_home()
         page.wait_for_timeout(1000)
         f = write("nameless.json", json.dumps({**export_head, "customStocks": [nameless], "holdings": [
-            {"ticker": pick[0], "name": "삼성전자", "amountWon": 3000000}, {"ticker": "NONK1", "name": "이름 없는 회사", "amountWon": 1000000}]},
+            {"ticker": pick[0], "name": PN, "amountWon": 3000000}, {"ticker": "NONK1", "name": "이름 없는 회사", "amountWon": 1000000}]},
             ensure_ascii=False))
         n, errs = len(dialogs), len(R.errors)
         file_box.set_input_files(f)
@@ -1975,13 +2042,16 @@ def _json_import(R, files, tmp):
 
 def scene_ghost_holding(R, files):
     """오늘 종목 목록에 없는 종목(저장본에만 남은 종목)은 합계 · 목록 어디에서나 빠져요 (Jack 의 규칙, v18.4.1):
-    담기 화면 · 공유 카드(종목 TOP · 현금 비율) · 첫 화면의 저장 목록('n종목'). 공유 카드를 만들 때는 console 에 뺐다고 남겨요."""
+    담기 화면 · 공유 카드(종목 TOP · 현금 비율) · 첫 화면의 저장 목록('n종목'). 공유 카드를 만들 때는 console 에 뺐다고 남겨요.
+    목록에 있는 국내 종목 하나: 평소에는 삼성전자, 오늘 앱이 그 위험 숫자를 계산하지 못하면 바꿔 담아요 (pick_plain — 위험 수치가 없으면 공유 카드 ·
+    내보내기의 숫자가 없어요)."""
     have = {s.get("t") for s in files["data.json"]["stocks"]}
     gone = next(t for t in ("999999", "999998", "999997") if t not in have)
+    P, PN = pick_plain(R, "없는 종목", {s.get("t"): s for s in files["data.json"]["stocks"]})
     slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000,
             "profile": {"ready": True, "source": "preset", "targetBetaMin": 0.6, "targetBetaMax": 1.2, "targetVolMaxPct": 40,
                         "stocksMin": 1, "stocksMax": 10, "maxPositionPct": 100, "maxSectorPct": 100, "cashFloorPct": 0},
-            "holdings": [{"t": "005930", "mw": 300}, {"t": gone, "mw": 200, "nk": "없어진 회사"}]}
+            "holdings": [{"t": P, "mw": 300}, {"t": gone, "mw": 200, "nk": "없어진 회사"}]}
     local = {"baepsae_v9_seen": "1", "baepsae_v10_slots": json.dumps([{"id": "sgh", "name": "없는 종목 시험"}], ensure_ascii=False),
              "baepsae_v10_slot_sgh": json.dumps(slot, ensure_ascii=False)}
     site = build_site(files)
@@ -1991,21 +2061,21 @@ def scene_ghost_holding(R, files):
     def card():
         page.get_by_text("차근차근 만들기", exact=True).click()
         page.get_by_text("없는 종목 시험", exact=False).first.click()
-        poll(page, CART_ROWS, lambda v: v == [["삼성전자", "300"]], "담기 화면에 삼성전자만 보여야 해요")
+        poll(page, CART_ROWS, lambda v: v == [[PN, "300"]], f"담기 화면에 {PN}만 보여야 해요")
         page.evaluate("""() => { window.__drawn = []; const f = CanvasRenderingContext2D.prototype.fillText;
             CanvasRenderingContext2D.prototype.fillText = function (t, ...a) { window.__drawn.push(String(t)); return f.call(this, t, ...a); }; }""")
         n = len(R.console)
         page.get_by_role("button", name="포트폴리오 카드 만들기", exact=True).click()
         see(page, "이렇게 저장돼요")
         drawn = page.evaluate("window.__drawn")
-        assert "담은 종목 TOP 1" in drawn and "삼성전자" in drawn, drawn                   # 없는 종목은 TOP 에 없어요
+        assert "담은 종목 TOP 1" in drawn and PN in drawn, drawn                          # 없는 종목은 TOP 에 없어요
         assert gone not in drawn and "없어진 회사" not in drawn, drawn
         # v18.5 (Jack 2026-11-04): 없는 종목의 돈은 현금도 아니에요 → 국내 300 · 현금 500 (= 1,000 − 200 − 300) 으로 38% · 63%, 아래에 안내 줄
         assert "38%" in drawn and "63%" in drawn and "70%" not in drawn and "20%" not in drawn, drawn
         assert any(x.startswith("※ 오늘 데이터에 없는 종목 1개(없어진 회사 200만원)") for x in drawn), drawn
         assert any("공유 카드: 오늘 종목 목록에 없는 종목 1개는 빼고 만들었어요" in t for _, t in R.console[n:]), R.console[n:]
         page.get_by_role("button", name="닫기", exact=True).first.click()
-    R.check(page, S, "삼성전자 300만원 + 없는 종목 200만원 → 공유 카드는 TOP 1 · 국내 38% · 현금 63% · 안내 줄, console 에 뺐다고 남김", card)
+    R.check(page, S, f"{PN} 300만원 + 없는 종목 200만원 → 공유 카드는 TOP 1 · 국내 38% · 현금 63% · 안내 줄, console 에 뺐다고 남김", card)
 
     def launch_count():
         page.wait_for_timeout(1200)                                    # 자동 저장(0.8초 뒤)이 목록의 'n종목'을 써요
@@ -2034,7 +2104,7 @@ def scene_ghost_holding(R, files):
         text = open(got["json"], encoding="utf-8").read()
         j = json.loads(text)
         assert "NaN" not in text and "Infinity" not in text, "백업 파일에 NaN"
-        assert [h["ticker"] for h in j["holdings"]] == ["005930", gone] and j["holdings"][1] == ghost_row, j["holdings"]
+        assert [h["ticker"] for h in j["holdings"]] == [P, gone] and j["holdings"][1] == ghost_row, j["holdings"]
         assert j["holdings"][0]["weightPct"] == 100.0, j["holdings"][0]              # 비중 · 위험 수치는 목록에 있는 종목만으로
         assert all(isinstance(v, (int, float)) for v in j["metrics"].values()), j["metrics"]
         with page.expect_download() as dl:
@@ -2042,7 +2112,7 @@ def scene_ghost_holding(R, files):
         csv = os.path.join(tmp, "ghost.csv")
         dl.value.save_as(csv)
         lines = open(csv, encoding="utf-8-sig").read().splitlines()
-        assert lines[1].startswith("005930,") and lines[2].startswith("CASH,") and not any(gone in ln for ln in lines), lines   # 주문표는 목록에 있는 종목만
+        assert lines[1].startswith(P + ",") and lines[2].startswith("CASH,") and not any(gone in ln for ln in lines), lines   # 주문표는 목록에 있는 종목만
     R.check(page, S, "JSON 저장: 없는 종목도 백업에 (종목코드 · 이름 · 금액 · notInData, 나머지 null) · CSV 주문표에는 없음 · NaN 없음", backup)
     ctx.close()
 
@@ -2062,13 +2132,13 @@ def scene_ghost_holding(R, files):
         see(page, "어떻게 시작할까요?")
         page.locator('input[type=file][accept="application/json,.json"]').set_input_files(got["json"])
         page.get_by_role("button", name="② 구성", exact=False).first.click()
-        poll(page, CART_ROWS, lambda v: v == [["삼성전자", "300"]], "불러온 뒤 담기 화면에 삼성전자만 보여야 해요")
+        poll(page, CART_ROWS, lambda v: v == [[PN, "300"]], f"불러온 뒤 담기 화면에 {PN}만 보여야 해요")
         assert not dialogs, dialogs
         st = poll(page, """() => { const l = JSON.parse(localStorage.getItem('baepsae_v10_slots') || '[]');
             return l.length ? JSON.parse(localStorage.getItem('baepsae_v10_slot_' + l[0].id) || 'null') : null; }""",
                   lambda v: bool(v), "불러온 포트폴리오가 저장되지 않았어요")
         # 둘 다 남아요 (v18.5: 저장할 때 목록에 있는 국내 종목에는 이름이 붙어요)
-        assert [(h["t"], h["mw"], h.get("nk")) for h in st["holdings"]] == [("005930", 300, "삼성전자"), (gone, 200, "없어진 회사")], st["holdings"]
+        assert [(h["t"], h["mw"], h.get("nk")) for h in st["holdings"]] == [(P, 300, PN), (gone, 200, "없어진 회사")], st["holdings"]
         assert "NaN" not in page.locator("body").inner_text()
         page.evaluate("""() => { window.__drawn = []; const f = CanvasRenderingContext2D.prototype.fillText;
             CanvasRenderingContext2D.prototype.fillText = function (t, ...a) { window.__drawn.push(String(t)); return f.call(this, t, ...a); }; }""")
@@ -2094,7 +2164,7 @@ def scene_ghost_holding(R, files):
         st = poll(page, """() => { const l = JSON.parse(localStorage.getItem('baepsae_v10_slots') || '[]');
             const s = l.find((x) => x.name === '불러온 포트폴리오'); return s ? localStorage.getItem('baepsae_v10_slot_' + s.id) : null; }""",
                   lambda v: v and gone not in v, "'포트폴리오에서 빼기' 뒤에도 저장본에 없는 종목이 남아 있어요")
-        assert [h["t"] for h in json.loads(st)["holdings"]] == ["005930"], st
+        assert [h["t"] for h in json.loads(st)["holdings"]] == [P], st
         assert page.get_by_text("빼고 계산했어요").count() == 0, "뺐는데 안내가 남아 있어요"
     R.check(page, S, "불러온 백업의 없는 종목: 안내 '없어진 회사 200만원' · 머리말 300 + 200 / 1,000 → '포트폴리오에서 빼기' → 저장본에서 빠짐", restored_notice)
     ctx.close(); srv.shutdown()
@@ -2233,7 +2303,10 @@ def _auto_settings(R, files, tmp):
     data = json.loads(json.dumps(files, allow_nan=True))
     data["data.json"]["fx"] = today
     rf = (data["data.json"].get("settings") or {}).get("rf")
-    hold = [{"t": "005930", "mw": 300}]
+    # 담는 종목 하나: 평소에는 삼성전자, 오늘 앱이 그 위험 숫자를 계산하지 못하면 바꿔 담아요 (pick_plain — 위험 수치가 없으면 ④ 내보내기의
+    # 'JSON 저장' 이 없어요)
+    P, _ = pick_plain(R, S, {s.get("t"): s for s in data["data.json"]["stocks"]})
+    hold = [{"t": P, "mw": 300}]
     body = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": hold}
     slots = [("sauto", "자동 환율 시험", {**body, "settings": {"fx": old, "rf": 9.9}, "typedKeys": []}),
              ("slegacy", "예전 저장본 시험", {**body, "settings": {"fx": old, "rf": 9.9}})]
@@ -2347,7 +2420,7 @@ def _auto_settings(R, files, tmp):
     oldfile = os.path.join(tmp, "old.json")
     with open(oldfile, "w", encoding="utf-8") as fh:
         json.dump({"app": "Baepsae 뱁새 v12", "budgetWon": 10000000, "settings": {"fx": old},
-                   "holdings": [{"ticker": "005930", "amountWon": 3000000}]}, fh, ensure_ascii=False)
+                   "holdings": [{"ticker": P, "amountWon": 3000000}]}, fh, ensure_ascii=False)
 
     def import_typed():
         assert "json" in got, "앞 단계에서 파일을 받지 못했어요"
@@ -2367,7 +2440,7 @@ def _auto_settings(R, files, tmp):
     nosettings = os.path.join(tmp, "nosettings.json")
     with open(nosettings, "w", encoding="utf-8") as fh:                  # 설정 칸이 있지만 읽을 수 없어요 (숫자가 아님)
         json.dump({"app": "Baepsae 뱁새 v12", "budgetWon": 10000000, "settings": {"fx": "1300"}, "typedKeys": ["fx"],
-                   "holdings": [{"ticker": "005930", "amountWon": 3000000}]}, fh, ensure_ascii=False)
+                   "holdings": [{"ticker": P, "amountWon": 3000000}]}, fh, ensure_ascii=False)
 
     def import_no_settings():
         # v18.6.1: 읽을 설정이 없는 파일 → 앞 포트폴리오(직접 입력 1,234.5)의 설정 · 기록을 잇지 않고 기본값 + 오늘 값
@@ -2794,22 +2867,24 @@ def _plant_kr_carries(f, day):
 def scene_own_close(R, files):
     """v19.1c (Jack 승인 2026-11-07): 미국 종목이 앞선 종가(data.json pxd)일 때 — 열린 포트폴리오의 배너에 '{티커} 가격은 {날짜} 종가예요.'
     (날짜마다 한 줄, 새 날짜 먼저, 영어 '{티커}: priced at the {날짜} close.') · 종목 고르기 목록 위 같은 안내 · 주문 메모 · CSV 맨 아래
-    '※ …' · JSON 의 그 종목 줄에 priceDate. 그 날짜가 없는 종목(삼성전자 · 다른 미국 종목)은 안내도 priceDate 도 없어요."""
+    '※ …' · JSON 의 그 종목 줄에 priceDate. 그 날짜가 없는 종목(삼성전자 · 다른 미국 종목)은 안내도 priceDate 도 없어요.
+    한국 종목: 평소에는 삼성전자, 오늘 앱이 그 위험 숫자를 계산하지 못하면 바꿔 담아요 (pick_plain — '한국만 시험'의 위험 줄이 그 종목 하나로 나와요)."""
+    S = "미국 자기 날짜"
     f = strip_kr_carries(json.loads(json.dumps(files, allow_nan=True)))   # 2026-11-19: 진짜 데이터의 국내 마지막 확인 종가와 상관없이 (리뷰 M-A)
     d = f["data.json"]
     usd = d.get("usPxDate") or d["pxDate"]
     own = {"AAPL": _iso_minus(usd, 1), "NVDA": _iso_minus(usd, 1), "MSFT": _iso_minus(usd, 2)}
     by = {s.get("t"): s for s in d["stocks"]}
-    assert set(own) <= set(by) and "005930" in by, "시험할 미국 종목이 데이터에 없어요"
+    P, PN = pick_plain(R, S, by)
+    assert set(own) <= set(by) and P in by, "시험할 미국 종목이 데이터에 없어요"
     for t, x in own.items():
         by[t]["pxd"] = x
         by[t].pop("d1", None)
     slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000,
-            "holdings": [{"t": "005930", "mw": 300}, {"t": "MSFT", "mw": 200}, {"t": "AAPL", "mw": 200}, {"t": "NVDA", "mw": 100}]}
-    plain = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": "005930", "mw": 300}]}
+            "holdings": [{"t": P, "mw": 300}, {"t": "MSFT", "mw": 200}, {"t": "AAPL", "mw": 200}, {"t": "NVDA", "mw": 100}]}
+    plain = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": P, "mw": 300}]}
     local = slot_local([("sown", "미국 날짜 시험", slot), ("splain", "한국만 시험", plain)])
     srv, ctx, page, _ = R.open(build_site(f), local=local, once=True)
-    S = "미국 자기 날짜"
     want = {"ko": [f"AAPL, NVDA 가격은 {_md(own['AAPL'], 'ko')} 종가예요.", f"MSFT 가격은 {_md(own['MSFT'], 'ko')} 종가예요."],
             "en": [f"AAPL, NVDA: priced at the {_md(own['AAPL'], 'en')} close.", f"MSFT: priced at the {_md(own['MSFT'], 'en')} close."]}
 
@@ -2829,7 +2904,7 @@ def scene_own_close(R, files):
         page.get_by_text("차근차근 만들기", exact=True).click()
         page.get_by_text("미국 날짜 시험", exact=False).first.click()
         see(page, "보통 해 ±")
-        assert banner_lines() == want["ko"], banner_lines()                   # 보유(삼성전자 · MSFT · AAPL · NVDA) 중 앞선 종가의 미국 종목
+        assert banner_lines() == want["ko"], banner_lines()                   # 보유(P · MSFT · AAPL · NVDA) 중 앞선 종가의 미국 종목
         assert page.get_by_text(NONLIVE).count() == (1 if NONLIVE in due else 0), "실시간 데이터인데 '예시 가격' 배너 문장"
         assert banner_is(page, due, extra=len(want["ko"])), "배너에 미국 종목의 날짜 줄 말고 다른 줄이 있어요"
         box = page.get_by_placeholder("종목명·코드 검색")
@@ -2837,7 +2912,7 @@ def scene_own_close(R, files):
         note = page.locator(".ownCloseNote")
         note.wait_for(state="visible", timeout=WAIT)
         assert note.inner_text().strip() == f"AAPL 가격은 {_md(own['AAPL'], 'ko')} 종가예요.", note.inner_text()
-        box.fill("삼성전자")
+        box.fill(PN)
         page.wait_for_timeout(300)
         assert page.locator(".ownCloseNote").count() == 0, "한국 종목만 보이는데 안내가 있어요"
         box.fill("")
@@ -2851,7 +2926,7 @@ def scene_own_close(R, files):
         with open(dl.value.path(), encoding="utf-8") as fh:
             j = json.load(fh)
         dates = {x["ticker"]: x.get("priceDate") for x in j["holdings"]}
-        assert dates == {"005930": None, "MSFT": own["MSFT"], "AAPL": own["AAPL"], "NVDA": own["NVDA"]}, dates
+        assert dates == {P: None, "MSFT": own["MSFT"], "AAPL": own["AAPL"], "NVDA": own["NVDA"]}, dates
         with page.expect_download() as dl:
             page.get_by_role("button", name="CSV 저장 (주문표)").click()
         with open(dl.value.path(), encoding="utf-8-sig") as fh:
@@ -2865,7 +2940,7 @@ def scene_own_close(R, files):
         memo = poll(page, "window.__memo", bool, "주문 메모가 복사되지 않았어요")
         for x in want["ko"]:
             assert "※ " + x in memo, memo
-    R.check(page, S, "④ 내보내기: JSON 의 그 종목 줄에 priceDate (삼성전자 없음) · CSV 맨 아래 '※ …' 두 줄 · 주문 메모 '※ …'", export)
+    R.check(page, S, f"④ 내보내기: JSON 의 그 종목 줄에 priceDate ({PN} 없음) · CSV 맨 아래 '※ …' 두 줄 · 주문 메모 '※ …'", export)
 
     def english():
         page.get_by_role("button", name="EN", exact=True).first.click()
@@ -3143,16 +3218,50 @@ FIX_LINES = """(kind) => [...document.querySelectorAll('[data-fix="' + kind + '"
   .map((e) => [e.innerText.trim(), parseFloat(getComputedStyle(e).fontSize)])"""
 
 
+def decomp_numbers(c):
+    """기업분석의 '주가는 무엇으로 움직였나'가 그 회사에 숫자(이익(EPS) 변화 '… 원 → … 원')를 보여 주는지 — src/corp.jsx DecompCard ·
+    decomposeReturn 과 같은 규칙에서, 더 엄격하게 (tests/test_screen_check.py 가 앱의 코드를 node 로 돌려 느슨한 곳이 없는지 봐요): 과거 주가 기록 오류
+    표시(pxBad)도 공시로 확인하지 못한 분할 표시(spNo · #186, DecompCard 의 px = pxBad(c) || spNo(c))도 없고 3년 주가 변화(r36)가 있고, 지금 EPS 와
+    같은 기준의 3년 전 순이익 · 주식 수가 0 보다 커요. 기준은 이 장면이 3년 전 EPS 를
+    셈하는 두 길만: 영수증이 없으면 총 순이익 ÷ 보통주 (ni · shm), 영수증 "o" 면 지배주주 순이익 ÷ 영수증 주식 수 (nio3 · epsIn.sh). 주식 수(shm)도
+    있어야 해요 ('끝' 장면이 그것으로 지어낸 영수증을 만들어요)."""
+    if not isinstance(c, dict) or px_bad(c) or sp_no(c) or not _num(c.get("r36")) or 1 + c["r36"] / 100 <= 0:
+        return False
+    if not (_num(c.get("eps")) and c["eps"] > 0 and _num(c.get("shm")) and c["shm"] > 0):
+        return False
+    e = c.get("epsIn")
+    at2 = lambda k: c[k][2] if isinstance(c.get(k), list) and len(c[k]) > 2 else None   # noqa: E731
+    if e is None:
+        ni, sh_m = at2("ni"), c["shm"]
+    elif isinstance(e, dict) and e.get("b") == "o" and _num(e.get("sh")) and e["sh"] > 0:
+        ni, sh_m = at2("nio3"), e["sh"] / 1e6
+    else:
+        return False
+    return _num(ni) and ni > 0 and sh_m > 0
+
+
 def scene_fix_notes(R, files, live=False):
     """예전 뱁새: 기업분석 · 첫 화면 성적표의 한국 PER · EPS (와 같은 순이익으로 계산한 숫자) 칸마다
     'PER과 EPS는 계산 방법을 고치는 중이라 {date}에 바뀔 수 있어요.' (12px 이상; 첫 화면 성적표의 영어 화면은 영어 줄), 이자보상배율이 꺼진 회사의 재무 신호
     밑에 '이자보상배율은 계산 방법을 고치는 중이라 지금은 확인하지 않아요.'. live: corp.json 에 epsBasis "owners" 가 있고
-    그 회사의 epsIn.b 가 "o" 이며 이자보상배율이 다시 돌면 그 회사에는 없어요 (총 순이익 "t" 인 회사에는 남아요)."""
+    그 회사의 epsIn.b 가 "o" 이며 이자보상배율이 다시 돌면 그 회사에는 없어요 (총 순이익 "t" 인 회사에는 남아요).
+    주가 분해 확인(split_basis): 평소에는 삼성전자, 앱이 그 종목으로 계산하지 못하는 날 (과거 주가 기록 오류 표시 — 3년 주가 변화도 비워요 · 빈 베타나
+    변동성) 은 주가 분해 숫자를 보여 주는 다른 회사로 봐요 (pick_plain · decomp_numbers). 다른 확인은 삼성전자 그대로 (고치는 중 줄은 위험 숫자와
+    상관없어요)."""
     S = "고치는 중 안내 " + ("끝" if live else "지금")
     f = json.loads(json.dumps(files, allow_nan=True))
     corp = f["corp.json"]
     co = next(c for c in corp["companies"] if c.get("t") == "005930")
     hd = next(c for c in corp["companies"] if c.get("t") == "005380")
+    cby = {c.get("t"): c for c in corp["companies"]}
+    SP, _ = pick_plain(R, S, {s.get("t"): s for s in f["data.json"]["stocks"]}, avoid=("005380",),
+                       also=lambda s: decomp_numbers(cby.get(s.get("t"))))
+    sp = cby[SP]
+
+    def owners_receipt(c):
+        """다시 읽은 발행의 모양 (지어낸 값): 지배주주 순이익("o") 영수증 — 주가 분해의 두 끝이 이 영수증의 기준이에요."""
+        sh = round(c["shm"] * 1e6) + 815974664
+        c.update(epsIn={"ni": 450000.0, "b": "o", "p": "2026.2Q", "sh": sh}, nio3=[442609.56, 336213.63, 144734.01], eps=round(450000.0 * 1e8 / sh))
     if live:
         # 다시 읽은 발행의 모양 (지어낸 값): 삼성전자는 지배주주 순이익("o"), 현대차는 지배주주 줄이 없는 총 순이익("t")
         corp["epsBasis"] = "owners"
@@ -3161,8 +3270,8 @@ def scene_fix_notes(R, files, live=False):
                 c.pop("flWhy")
                 c["flRan"] = sorted(set(c.get("flRan") or []) | {"icr"})
         co["fl"] = {"cr": 85}
-        sh = round(co["shm"] * 1e6) + 815974664
-        co.update(epsIn={"ni": 450000.0, "b": "o", "p": "2026.2Q", "sh": sh}, nio3=[442609.56, 336213.63, 144734.01], eps=round(450000.0 * 1e8 / sh))
+        for c in {id(co): co, id(sp): sp}.values():            # 주가 분해를 보는 회사(sp)가 삼성전자가 아닌 날에는 그 회사도 같은 영수증으로
+            owners_receipt(c)
         hd.update(epsIn={"ni": 100000.0, "b": "t", "p": "2026.2Q", "sh": round(hd["shm"] * 1e6), "how": "total", "nci": True})   # 소수주주 있음 (2026-11-08)
     else:
         corp.pop("epsBasis", None)
@@ -3194,13 +3303,13 @@ def scene_fix_notes(R, files, live=False):
         """주가는 무엇으로 움직였나: 3년 전 EPS 도 지금 EPS 와 같은 기준 (영수증 없는 예전 데이터: 총 순이익 ÷ 보통주 · 영수증(epsIn "o")이 있으면: 지배주주 순이익 ÷ 보통주 +
         우선주). 현대차가 다시 읽은 뒤 총 순이익("t")이면 숫자 대신 그 줄."""
         page.goto("about:blank")
-        page.goto(base + "/baepsae.html?dev=1&from=app#corp=005930", wait_until="domcontentloaded")
+        page.goto(base + f"/baepsae.html?dev=1&from=app#corp={SP}", wait_until="domcontentloaded")
         see(page, "이익(EPS) 변화")
         # 3년 전 EPS 의 기준은 데이터의 영수증을 따라요 (2026-11-10): 다시 읽은 데이터(epsIn "o")면 지배주주 순이익 ÷ 영수증 주식 수 —
         # 표지(epsBasis)를 뺀 '지금' 장면도 앱은 같은 기준으로 두 끝을 맞춰요. 영수증이 없는 예전 데이터만 총 순이익 ÷ 보통주예요.
-        own = live or (isinstance(co.get("epsIn"), dict) and co["epsIn"].get("b") == "o")
-        then = co["nio3"][2] * 1e8 / co["epsIn"]["sh"] if own else co["ni"][2] * 100 / co["shm"]
-        see(page, f"{round(then):,}원 → {round(co['eps']):,}원")
+        own = live or (isinstance(sp.get("epsIn"), dict) and sp["epsIn"].get("b") == "o")
+        then = sp["nio3"][2] * 1e8 / sp["epsIn"]["sh"] if own else sp["ni"][2] * 100 / sp["shm"]
+        see(page, f"{round(then):,}원 → {round(sp['eps']):,}원")
         page.goto("about:blank")
         page.goto(base + "/baepsae.html?dev=1&from=app#corp=005380", wait_until="domcontentloaded")
         see(page, "밸류에이션 멀티플 · 업종 사분위 대비")
@@ -3213,7 +3322,7 @@ def scene_fix_notes(R, files, live=False):
             assert not eps and len(tot) >= 3 and all(t == FIX_TOTAL for t, _ in tot), (eps, tot)   # 투자지표 · 주가 분해 · DCF (+ 업종 내 위치)
         else:
             assert len(eps) >= 3, eps
-    R.check(page, S, "주가 분해: 두 끝이 같은 기준 (005930)" + (" · 현대차 't'는 숫자 대신 그 줄" if live else ""), split_basis)
+    R.check(page, S, f"주가 분해: 두 끝이 같은 기준 ({SP})" + (" · 현대차 't'는 숫자 대신 그 줄" if live else ""), split_basis)
 
     def gate_card(lang):
         def run():
@@ -3254,11 +3363,24 @@ STMT_UNTRUE_LINES = ["적자이거나 데이터가 없어요", "데이터가 없
 STMT_UNTRUE_PARTS = ["파이프라인이 사업보고서를 못 찾은 종목이에요", "적자 구간이 있어서"]
 
 
+def won_control(R, scene, f):
+    """다시 읽은 뒤 장면의 '그대로' 비교 회사 (원화로 공시해서 통화 줄 없이 3개년 실적 흐름 · 주가 분해가 보이는 회사): 평소에는 삼성전자, 앱이 그
+    종목으로 계산하지 못하는 날 (과거 주가 기록 오류 표시 — 52주까지 비운 회사는 주가 분해 칸이 아예 없어요 · 빈 베타나 변동성) 은 주가 분해 숫자를
+    보여 주는 다른 회사로 봐요 (pick_plain · decomp_numbers, 크게 알려요). 검사 안에서 불러요 (회사를 그 자리에서 골라요). 돌려줌: 종목코드."""
+    cby = {c.get("t"): c for c in f["corp.json"]["companies"]}
+
+    def shows(s):
+        c = cby.get(s.get("t"))
+        return decomp_numbers(c) and not stmt_cur_of(c)
+    return pick_plain(R, scene, {s.get("t"): s for s in f["data.json"]["stocks"]}, also=shows)[0]
+
+
 def scene_stmt_cur(R, files):
     """기업분석, 데이터가 '원화가 아닌 통화로 공시'라고 표시한 회사 (어느 회사든 — non_won_companies 의 첫 회사. 2026-11-12 까지는 두산밥캣
     241560 을 이름으로 골랐어요): 다시 읽은 발행처럼 금액 · PER · PBR · EPS 를 비워요 (표시된 통화는 그대로). 투자지표 제목 밑에 통화 줄
     한 번 (12px 이상), 맞지 않는 이유('적자이거나 데이터가 없어요' …) · 보이지 않는 PER 의 기간 · 숫자 없는 3개년 실적 흐름과 주가 분해는
-    없어요. 업종 내 위치 · 가정으로 계산하는 가치는 그대로. 삼성전자는 예전 그대로."""
+    없어요. 업종 내 위치 · 가정으로 계산하는 가치는 그대로. 삼성전자는 예전 그대로 (그 주가 분해를 앱이 보여 주지 못하는 날은 won_control 이
+    고른 회사로 — 크게 알려요)."""
     S = "다시 읽은 뒤"
     f = json.loads(json.dumps(files, allow_nan=True))
     cands = non_won_companies(f)
@@ -3276,7 +3398,7 @@ def scene_stmt_cur(R, files):
 
         def samsung_only():
             page.goto("about:blank")
-            page.goto(base + "/baepsae.html?dev=1&from=app#corp=005930", wait_until="domcontentloaded")
+            page.goto(base + f"/baepsae.html?dev=1&from=app#corp={won_control(R, S, f)}", wait_until="domcontentloaded")
             see(page, "3개년 실적 흐름")
             see(page, "주가는 무엇으로 움직였나")
             assert page.locator('[data-fix="stmt-cur"]').count() == 0
@@ -3307,7 +3429,7 @@ def scene_stmt_cur(R, files):
         assert at < body.index(LINE, at) < body.index("PER", at), "통화 줄이 투자지표 제목과 PER 사이에 있지 않아요"
         assert "업종 내 위치" in body and "가정으로 계산하는 가치" in body
         page.goto("about:blank")
-        page.goto(base + "/baepsae.html?dev=1&from=app#corp=005930", wait_until="domcontentloaded")
+        page.goto(base + f"/baepsae.html?dev=1&from=app#corp={won_control(R, S, f)}", wait_until="domcontentloaded")
         see(page, "3개년 실적 흐름")
         see(page, "주가는 무엇으로 움직였나")
         assert page.locator('[data-fix="stmt-cur"]').count() == 0
@@ -3418,13 +3540,21 @@ def scene_px_bad(R, files):
     """과거 주가 기록 오류 (Jack, 2026-11-14 · 저녁: 계산 창에 그 날이 든 숫자만). 52주까지 비운 회사: 기업분석의 베타 · 연 변동성 줄 자리(회사 이름 밑)에
     그 줄 한 번 (12px 이상), 52주 주가 위치 · 주가 분해 없음, '적자 구간이 있어서…' 같은 틀린 이유 없음 · 기업 비교 표 밑에 한 번 · 종목 고르기에서 펼친
     줄의 52주 막대 자리에 한 번. 52주는 보이는 회사: 52주 주가 위치 · 3개월 % · 52주 막대 그대로, 베타 줄 자리와 주가 분해 안 · 비교 표 밑 · 고르기의
-    칸 밑에 '… 이 숫자는 비워 두었어요.' (한국어 화면만, 영어 화면은 줄 없이). 삼성전자는 그대로."""
+    칸 밑에 '… 이 숫자는 비워 두었어요.' (한국어 화면만, 영어 화면은 줄 없이). 표시 없는 비교 종목(평소 삼성전자)은 그대로."""
     S = "주가기록"
     f = json.loads(json.dumps(files, allow_nan=True))
     FULL, PART, real = px_bad_targets(f)
     if real:
         R.notes.append(f"주가기록: 오늘 데이터가 표시한 회사 {', '.join(sorted(real))} 로 봤어요 (pxBad)")
-    hold = [{"t": "005930", "mw": 300}]
+    # 표시 없는 비교 종목 ('그대로'): 평소에는 삼성전자, 앱이 그 종목으로 계산하지 못하는 날 (표시가 붙음 · 빈 베타나 변동성) 은 위험 숫자 · 52주
+    # 범위 · 기업분석의 연 변동성과 52주 위치가 다 있는 다른 내장 종목으로 봐요 (pick_plain — 표시가 붙은 회사는 고르지 않아요)
+    cby = {c.get("t"): c for c in f["corp.json"]["companies"]}
+
+    def corp_shows(s):
+        c = cby.get(s.get("t"))
+        return isinstance(c, dict) and not px_bad(c) and all(_num(c.get(k)) for k in ("vol", "hi", "lo"))
+    C, _ = pick_plain(R, S, {s.get("t"): s for s in f["data.json"]["stocks"]}, need=("hi", "lo"), also=corp_shows)
+    hold = [{"t": C, "mw": 300}]
     slots = [("spx", "주가 기록 시험", {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": hold})]
     srv, ctx, page, base = R.open(build_site(f), local=slot_local(slots))
 
@@ -3452,11 +3582,11 @@ def scene_px_bad(R, files):
         see(page, "지표별 나란히 보기")
         got = shown()
         assert len(got) == 1 and got[0][0] == PX_BAD_LINE and got[0][1] >= 12, got
-        body = corp("005930")
+        body = corp(C)
         see(page, "연 변동성")
         see(page, "52주 주가 위치")
         assert shown() == [] and shown("px-bad-one") == []
-    R.check(page, S, f"기업분석 {FULL} (52주까지): 베타 줄 자리에 그 줄 한 번 · 52주 위치 · 주가 분해 없음 · 기업 비교 밑에 한 번 · 005930 은 그대로", corp_full)
+    R.check(page, S, f"기업분석 {FULL} (52주까지): 베타 줄 자리에 그 줄 한 번 · 52주 위치 · 주가 분해 없음 · 기업 비교 밑에 한 번 · {C} 은 그대로", corp_full)
 
     def above(sel, one_i):
         """sel 의 보이는 칸이 i 번째 보이는 짧은 줄 바로 위 (사이에 다른 것 없이 · 20px 안)에 있는지."""
@@ -3517,8 +3647,8 @@ def scene_px_bad(R, files):
         page.get_by_text("주가 기록 시험", exact=False).first.click()
         see(page, "보통 해 ±")
         box = page.get_by_placeholder("종목명·코드 검색")
-        box.fill("005930")
-        page.get_by_text("005930", exact=True).first.click()
+        box.fill(C)
+        page.get_by_text(C, exact=True).first.click()
         see(page, "52주 범위:")                                                 # 다른 종목: 52주 막대 그대로 ('52주 범위: ₩…')
         assert shown() == [] and shown("px-bad-one") == [] and page.locator('[data-px="tiles"]').count() == 0
         box.fill(FULL)
@@ -3555,7 +3685,7 @@ def scene_px_bad(R, files):
         assert shown() == [] and shown("px-bad-one") == [], (shown(), shown("px-bad-one"))
         assert "52w range" not in page.locator("body").inner_text(), "영어 화면에 52주 막대가 남아 있어요"   # pxBad 리뷰 2차: 되살린 확인
     R.check(page, S, f"종목 고르기: {FULL} 은 52주 막대 자리에 그 줄 · {PART} 는 52주 막대 그대로 + 비운 칸만 모은 줄 바로 밑에 짧은 줄 · 영어 화면은"
-            " 줄 없이 (52주까지 비운 종목은 막대도 없이) · 005930 그대로", stock_row)
+            f" 줄 없이 (52주까지 비운 종목은 막대도 없이) · {C} 그대로", stock_row)
     ctx.close(); srv.shutdown()
 
 
@@ -3566,8 +3696,10 @@ def scene_kst_dates(R, files):
     (UTC 로는 전날 22:00) 에서 시작해서, UTC 날짜를 쓰면 이 장면이 실패해요. 실제 데이터(--data, 진짜 시계)에서도 같은 것을 봐요
     (그때는 두 날짜가 같은 시각일 수 있어 구별은 못 하지만, 한국 날짜와 다르면 실패해요)."""
     stocks = {s.get("t") for s in files["data.json"]["stocks"]}
-    hold = [("005930", 300), ("000660", 100)]
-    assert {t for t, _ in hold} <= stocks, "시험할 종목(삼성전자 · SK하이닉스)이 데이터에 없어요"
+    # 위험 줄 · 공유 카드를 만드는 보통 종목: 평소에는 삼성전자, 오늘 앱이 그 위험 숫자를 계산하지 못하면 바꿔 담아요 (pick_plain)
+    P, PN = pick_plain(R, "한국 날짜", {s.get("t"): s for s in files["data.json"]["stocks"]}, avoid=("000660",))
+    hold = [(P, 300), ("000660", 100)]
+    assert {t for t, _ in hold} <= stocks, f"시험할 종목({PN} · SK하이닉스)이 데이터에 없어요"
     profile = {"ready": True, "targetBetaMin": 0.7, "targetBetaMax": 1.1, "targetVolMaxPct": 24, "stocksMin": 8, "stocksMax": 15,
                "maxPositionPct": 100, "maxSectorPct": 100, "cashFloorPct": 0, "riskNeedPct": 7, "riskCapacity": 6, "riskTolerance": 6}
     slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "profile": profile, "checkins": [],
@@ -3712,6 +3844,10 @@ def scene_kr_own_close(R, files, slow=False):
     cby = {c.get("t"): c for c in f["corp.json"]["companies"]}
     assert t in by and t in cby and by[t].get("cls") == "kr" and plain in by and plain in cby, "시험할 국내 종목이 데이터에 없어요"
     plain_nk = by[plain]["nk"]
+    S = "국내 마지막 확인 종가" + (" · 느린 화면" if slow else "")
+    # 포트폴리오에 함께 담는 국내 종목 (위험 줄 '보통 해 ±'를 만들어요): 평소에는 plain, 오늘 앱이 그 위험 숫자를 계산하지 못하면 바꿔 담아요
+    # (pick_plain). 그 밖의 확인(이름 검색 · 기업분석 · 시장 지도)은 plain 그대로
+    H, _ = pick_plain(R, S, by, avoid=(t,), want=plain)
     nowhere = next(c for c in (f"{n:06d}" for n in range(999990, 900000, -10)) if c not in by and c not in cby)   # 데이터에 없는 코드
     by[t]["pxd"] = day
     for k in ("d1", "d1Why", "noTrade", "ntD1"):                          # 파이프라인이 싣는 모양 그대로 (오늘 변화 · 그 이유 없음)
@@ -3725,7 +3861,7 @@ def scene_kr_own_close(R, files, slow=False):
     # Jack, 2026-11-20 (a): 나이 상한을 넘어 잠시 뺀 종목 하나 (data.json · corp.json 에서 빼고 pxSrc.own.aged 에 이름과 함께)
     aged_line = "며칠째 종가를 확인하지 못해서 이 종목은 잠시 빼 두었어요."
     with open(REAL_KR_CARRIES, encoding="utf-8") as fh:
-        taken = {plain, t, "005935", "009150"} | {x["t"] for x in json.load(fh)["stocks"]}    # 다른 확인종가 장면이 심는 종목은 빼고
+        taken = {plain, t, H, "005935", "009150"} | {x["t"] for x in json.load(fh)["stocks"]}    # 다른 확인종가 장면이 심는 종목 · 담는 종목은 빼고
     gone = next(c for c in f["corp.json"]["companies"] if c.get("t") not in taken and by.get(c.get("t"), {}).get("cls") == "kr")["t"]
     d["stocks"] = [x for x in d["stocks"] if x.get("t") != gone]
     f["corp.json"]["companies"] = [c for c in f["corp.json"]["companies"] if c.get("t") != gone]
@@ -3733,9 +3869,8 @@ def scene_kr_own_close(R, files, slow=False):
     d["pxSrc"]["own"] = {**(d["pxSrc"].get("own") if isinstance(d["pxSrc"].get("own"), dict) else {"v": 1, "max": 5, "drop": {}, "dropEx": [],
                                                                                                   "bad": {"n": 0, "rows": []}}),
                          "codes": [t], "n": 1, "aged": [{"t": gone, "nk": by[gone].get("nk") or gone, "pxd": _iso_minus(d["pxDate"], 9)}]}
-    slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": plain, "mw": 300}, {"t": t, "mw": 200}]}
+    slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": [{"t": H, "mw": 300}, {"t": t, "mw": 200}]}
     srv, ctx, page, base = R.open(build_site(f), local=slot_local([("skrown", "국내 확인 종가 시험", slot)]), once=True)
-    S = "국내 마지막 확인 종가" + (" · 느린 화면" if slow else "")
     if slow:
         slow_screen(ctx, page)
     BANNER = "() => [...document.querySelectorAll('.nonLiveBanner [data-own-close]')].map((e) => e.innerText)"
