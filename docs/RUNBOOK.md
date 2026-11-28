@@ -997,7 +997,7 @@ publish, Korean data included.
   must-have rows stop the publish.
 - **App late cap:** counts NYSE days up to the KST date (one day stricter than the pipeline's count, the safe side).
 - **Popular list:** keeps US carries (`val` is from average volume, not one day's).
-- **Long lists (Jack, 2026-11-21, answers 8 and 6; market-wide lists only, the coordinator's decision the same day):** on a market-wide
+- **Long lists (Jack, 2026-11-21, answers 8 and 6; market-wide lists only, the build session's decision the same day):** on a market-wide
   list (2.0 종목 순위, 종목 찾기 results, 내 기준으로 찾기, 후보 고르기, the 포트폴리오 만들기 preview; old app 종목 고르기 and the 기업분석
   lists; `ownCloseGroups(…, { compact: true })`) a line names at most 5 carried stocks, then "외 {n}종목" (Korean screens, US and Korean
   carries). When more than half of the US stocks in the file are carried (`data.js` `US_CARRY_WIDE`; history: partial Yahoo gaps ~200 of
@@ -1466,7 +1466,7 @@ What the other pieces see:
   and the dates equal the live file's): that step is skipped and the run counts like a successful run, so **an alarm opened by a red
   later run closes at the next healthy run** ("정상화됐어요"). Runs from before this marker count as neutral.
 - **Deploy:** deploys only after "data 브랜치에 올리기" succeeded, so a run that did not publish deploys nothing.
-- **09:13 check:** it finds publishes by "커밋 & 푸시". Its prompt will be updated by the coordinator after this merges; until then it
+- **09:13 check:** it finds publishes by "커밋 & 푸시". Its prompt will be updated in the build session after this merges; until then it
   does not know about holds (it may report "data not in" on a held morning without saying why). After the update it reports the
   floor, dates-back and lost-stock warnings; the same-day and quiet notices are normal.
 - **Gate:** the rows that compare with the last publish pass a same-day republish unchanged (pxDate is not earlier; the KR count change
@@ -2826,7 +2826,7 @@ cached yet, or no successful answer yet with fewer than 3 tries. A refused or fa
   - `pending`: "keeps no minimum size (no line), as before: N US companies still wait to be fetched";
   - `on`: "applies the US minimum …";
   - `noFigure`, `noFx` or `noPending`: off, with the reason.
-- **기준별 · 수익성 under 미국, when on** (review 2026-11-24, Fable S3; decided by the coordinator, Jack told and can reverse it):
+- **기준별 · 수익성 under 미국, when on** (review 2026-11-24, Fable S3; decided in the build session, Jack told and can reverse it):
   - A company leaves when its equity is known and under 100억원 (`qeq × fx ÷ 10⁸ < 100`, `US_MIN_EQ_EOK`; negative included,
     reason `smallEquity`).
   - It also leaves when its equity is unknown (`noEquity`): another currency, unknown currency, half-yearly, older quarter, or
@@ -3557,7 +3557,7 @@ Appendix 1 line for it (`split applied` / `merge applied`).
     split (`unread` · `gone` · `pages` · any other "no"). In the same simulation it is yellow on every run when the whole reader
     is broken (41 of 41; 52 of 52 when every merge also asks `crDecsn.json`) and on 21 of 41 runs when only the merge reading is
     broken (the first runs ask mostly splits). Whether it should stop the publish is
-    Jack's call (asked by the coordinator). When it is yellow, open three or four of the run's lookups on DART: if decisions
+    Jack's call (asked in the build session). When it is yellow, open three or four of the run's lookups on DART: if decisions
     exist that we did not read, fix the reader and bump `KR_SPLIT_TAG` (the way out below). The
     KRX lists of 11-21 to 11-27 add no candidate (3 share changes over 10% — 코나아이 ×1.50, 삼성FN리츠 ×1.21, 풍전약품 ×1.12 —
     with the base unchanged).
