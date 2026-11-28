@@ -114,6 +114,7 @@ from validate_data import (ISSUE_SHAPE_KEY, ISSUE_BD_KEY, INSIDER_ROLE_KEY, US_D
                            US_DATE_MAX, issue_bad_rows, issue_bd_bad_rows, insider_bad_rows, us_date_bad_rows, own_rows_rec, own_rows_text)
 from validate_data import _iso_day as gate_iso_day
 from validate_data import FACTOR_KEYS, FACTOR_SRC, factor_fund   # 2026-11-24 (#189): 순위에 넣지 않는 펀드 · 점수마다 쓰는 값 (add_percentiles · 관문 줄과 같은 정의)
+from validate_data import FUND_BOOK_KEYS, FUND_BOOK_REC   # 2026-11-27 (Jack, answer 12): 펀드의 PBR · 가치 점수 — 관문 줄과 같은 칸 · 기록 이름
 # 2026-11-19 (Jack 의 상시 규칙 · 우리 처리를 보는 검사): 빼거나 비울 행을 고르는 함수는 관문 파일에 하나씩 — 파이프라인은 같은 함수를 메모리의
 # 데이터에 돌려 그 행을 빼거나 비우고 data.json ownDrop 에 적어요 (논리를 베끼지 않아요)
 from validate_data import (US_CLASS_DROP_KEY, US_CLASS_DROP_MAX, DIV_LINE_DROP_KEY, DIV_LINE_BLANK_MAX, US_CLASS_BLIND, us_class_bad_rows,
@@ -5107,6 +5108,33 @@ def factor_pool_line(market, stocks, show=8):
     return (f"· 팩터 점수 ({ko}): 회사 주식 {co:,}종목" + (f" (우선주 {npref} 포함)" if npref else "")
             + f"끼리 순위 (가치 vz {n['vz']:,} · 추세 mz {n['mz']:,} · 저변동 lz {n['lz']:,})"
             f" · 펀드 {len(fd)}곳은 순위에 넣지 않고 회사 분포에 견줘 매김 (점수 있는 펀드 {nf})" + (f" ({names})" if fd else ""))
+
+
+def fund_book_blank(stocks):
+    """2026-11-27 (Jack, answer 12, 그대로: "Yes, hide them: "ETF는 회사가 아니어서 PBR과 가치 점수를 계산하지 않아요.""): 펀드 (factor_fund ·
+    etf 참 또는 fund) 에는 회사의 장부가가 없어서, 야후의 펀드 PBR (SPY 1.70 · 실제 P/B 는 약 5 · SOXX 0.32) 과 그 PBR 로 매긴 가치 점수 vz 는
+    뜻이 없어요. 펀드 행의 pbr · vz (FUND_BOOK_KEYS) 값을 지워요 (빈 값 None 인 칸은 그대로 · 회사 행은 손대지 않아요). add_percentiles 앞에
+    부르면 펀드는 가치 점수를 받지 않아요 (fund_percentile 이 빈 PBR 에 점수를 주지 않아요 · 회사의 가치 순위는 #189 부터 펀드 없이 매겨서 그대로).
+    corp.json 의 펀드 줄 (국내 상장 인프라 펀드) 은 이 행을 베껴서 같이 비어요 (build_corp). 반환: data.json fundPb 기록
+    {"v": 1, "n": 비운 펀드 수, "t": [그 종목 (정렬)]}. (행을 그 자리에서 바꿔요)"""
+    out = set()
+    for s in stocks:
+        if not factor_fund(s):
+            continue
+        for k in FUND_BOOK_KEYS:
+            if s.get(k) is not None:
+                s.pop(k)
+                out.add(str(s.get("t")))
+    return {"v": 1, "n": len(out), "t": sorted(out)}
+
+
+def fund_book_line(rec, stocks, show=8):
+    """fund_book_blank 뒤 로그 한 줄 — 비운 펀드 수 (시장별) 와 이름. (순수 함수)"""
+    by = {str(s.get("t")): s.get("cls") for s in stocks}
+    kr = sum(1 for t in rec["t"] if by.get(t) != "us")
+    names = ", ".join(rec["t"][:show]) + (f" 외 {rec['n'] - show}" if rec["n"] > show else "")
+    return (f"· 펀드의 PBR · 가치 점수 비움 (Jack 2026-11-27): {rec['n']}곳 (미국 {rec['n'] - kr} · 그 밖 {kr}) — 펀드에는 회사의 장부가가 없어요"
+            + (f" ({names})" if rec["n"] else "") + f" · 펀드 행 {sum(1 for s in stocks if factor_fund(s))}곳")
 
 
 # ────────────────────────────────────────────────────────────
@@ -19608,6 +19636,9 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                      "(1000 · 1000000, 나누지 않은 표는 칸 없음)}] — 표마다 그 보고서의 지난해 칸이 사업보고서 · 지난해 같은 분기 보고서 값의 정확히 "
                      "k 배이고, 나눈 뒤 기본주당이익 또는 자본금 ÷ 액면가가 오늘 주식 수와 맞을 때만 · 공시 단위 확인에 걸린 회사(unitChk)에는 없어요"),
          "etf": "true = ETF·펀드·금현물 (회사 주식이 아님)",
+         "fundPb": ("2026-11-27 (Jack): 이번 실행이 PBR (pbr) · 가치 점수 (vz) 를 비운 펀드 (etf 참 또는 fund 인 행 — 펀드에는 회사의 장부가가 없어 "
+                    "야후의 펀드 PBR 은 뜻이 없어요) {v 1, n 펀드 수, t [종목]} · 펀드 행에는 pbr · vz 가 없어요 (corp.json 의 그 펀드 줄도) · "
+                    "앱은 미국 펀드의 PBR 자리에 Jack 의 줄을 보여요"),
          "price": "한국 원 · 미국 달러 · 금현물 원/g", "pct": "% (vol·mdd·r1·r3·r36·mom·al·dy·roe 등)",
          "pxDate": "한국 가격의 공식 종가 날짜", "usPxDate": "미국 가격의 마지막 완성 봉 날짜",
          "pxd": ("그 종목의 자기 가격 날짜 · 미국: 그 종목의 마지막 봉이 usPxDate 가 아닐 때만 (2026-11-20: pxc 가 있으면 usPxDate 종가가 야후에 없어 "
@@ -20178,6 +20209,9 @@ def main():
     except Exception as e:
         log(f"  !! 상관계수 실패: {e}")
 
+    # 2026-11-27 (Jack, answer 12): 펀드의 PBR 과 그 PBR 로 매긴 가치 점수는 싣지 않아요 — 점수를 매기기 앞에 비워요 (data.json fundPb · 관문 경고 줄)
+    fund_pb = fund_book_blank(kr + us + bonds + funds)
+    log(fund_book_line(fund_pb, kr + us + bonds + funds))
     # 팩터 백분위는 시장 안에서만 (한국은 한국끼리, 미국은 미국끼리) · #189: 순위는 회사끼리만 · 펀드는 회사 분포에 견준 자리 (관문이 다시 매겨 맞춰 봐요)
     add_percentiles(kr)
     add_percentiles(us)
@@ -20237,6 +20271,7 @@ def main():
         "fxSrc": umeta.get("fxSrc"),          # 2026-11-24 (감사 3.8): fx 의 출처 — 환율 이력의 마지막 줄(ECOS 종가) 또는 야후 (관문 경고 줄이 봐요)
         "popular": popular_list(kr, us),
         "count": {"kr": len(kr), "us": len(us), "bond": len(bonds), "fund": len(funds), "usInfo": umeta["usInfo"]},
+        FUND_BOOK_REC: fund_pb,              # 2026-11-27 (Jack, answer 12): PBR · 가치 점수를 비운 펀드 (관문 경고 줄 '펀드에 PBR · 가치 점수 없음')
         "usLeftOut": umeta["usLeftOut"],     # v17.5.2: 미국 목록에서 뺀 티커 (우선주·예탁증서 · 한국 종목의 미국 상장분) — 검증이 세요
         "usFcurUnknown": umeta["usFcurUnknown"],   # #114: 재무제표 통화를 모르는 미국 회사 (비우지 않았어요 — 관문이 경고해요)
         "usInfoPartial": umeta["usInfoPartial"],   # #114 리뷰 2: 오늘 야후 응답이 일부만 와 예전 설명 칸을 쓴 미국 종목 (관문이 경고해요)
