@@ -309,6 +309,10 @@ def none_today(R, scene, what, hint=""):
 # ── 오늘 데이터 때문에 '예시 가격 · 금 환산' 배너가 떠야 하는 날 (리뷰 2026-11-12) ─────────────────
 # 예전 뱁새에는 내장 종목 75개가 있어요 (src/detail.jsx BASE_STOCKS). 그 가운데 하나라도 오늘 데이터에 없거나 가격 · 베타 · 변동성이
 # 비었으면 앱은 "일부 종목은 최신 시세가 아니라 예시 가격이에요" 배너를 보여 줘요 (src/data.js mergeStocks) — 그게 맞는 화면이에요.
+# 다만 과거 주가 기록 오류 표시(pxBad) 종목은 가격이 오늘 것이면 베타 · 변동성이 비어도 예시 가격이 아니에요: 앱은 그 빈 칸을 내장 값으로
+# 메우지 않고 위험 계산에서 빼요 (2026-11-14 #128). 이 검사도 앱과 같아요 (Jack 2026-11-27, 답 7: 내장 종목 하나의 그 표시가 모두의 발행을
+# 멈추지 않게) — tests/test_screen_check.py 가 앱의 코드를 node 로 돌려 같은 답인지 봐요. 아래 한도(EXAMPLE_MAX)는 예전 그대로 그 종목도
+# 세어요 (example_cap_stocks · 리뷰 #200: 표시가 한꺼번에 많이 붙는 날은 막아요) — 한도 안이면 실행 기록에 크게 알려요 (banner_due).
 # 금현물을 국제 금값으로 환산한 날(est)에는 "금현물은 … 추정치예요" 줄이 떠요. 발행 관문이 '목록에 있음'을 보장하는 것은 75개 가운데
 # 17개뿐이고(나머지 58개는 보장 없음), 그 17개도 베타 · 변동성까지 보장하지는 않아요.
 # 그래서 '배너가 없어야 해요'라고만 보면 상장폐지 한 건 · 베타가 빈 하루 · 금 환산 하루에 모두의 데이터 발행이 멈춰요.
@@ -331,10 +335,89 @@ assert len(BASE_TICKERS) == len(set(BASE_TICKERS)) == len(re.findall(r"\bnk:\s*\
 GOLD_SPOT = "04020000"          # 금현물: 국제 금값 환산(est)은 이 종목에만 붙어요 (fetch_data.py)
 
 
+def px_bad(L):
+    """src/repair.js pxBad 와 같은 규칙: 과거 주가 기록 오류 표시(pxBad)가 빈 글자가 아닌 문자열이면 표시된 종목이에요."""
+    v = L.get("pxBad") if isinstance(L, dict) else None
+    return isinstance(v, str) and len(v) > 0
+
+
+def _num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and v not in (float("inf"), float("-inf"))
+
+
+def risk_ready(L):
+    """앱(src/data.js mergeStocks)이 담은 종목의 오늘 가격 · 베타 · 변동성을 그대로 위험 계산에 쓰는 종목: 가격이 0 보다 크고, 베타와 변동성이
+    숫자이고, 과거 주가 기록 오류 표시(pxBad)도 금 환산(est)도 없어요. 그 밖의 종목은 앱이 베타 · 변동성을 '–'로 두고 위험 계산에서 빼거나
+    (pxBad · 내장 목록 밖), 내장 예시 값으로 메워 '예시 가격'으로 보여요 — 위험 숫자를 보려는 장면이 담을 종목이 아니에요.
+    앱보다 느슨한 곳은 없고, 몇 곳은 더 엄격해요 (리뷰 #200): 가격이 0 이하인 내장 종목, 베타 · 변동성이 남은 내장 목록 밖 pxBad 종목 (관문이
+    막는 모양), 숫자가 아닌 베타 · 변동성 (참 · 글자) — 앱은 이것들도 쓰지만 이 장면들은 담지 않아요 (tests/test_screen_check.py)."""
+    return (isinstance(L, dict) and _num(L.get("price")) and L["price"] > 0 and _num(L.get("beta")) and _num(L.get("vol"))
+            and not px_bad(L) and not L.get("est"))
+
+
+def pick_ready(R, scene, stocks, want, n, need=(), secs=0):
+    """장면이 담을 한국 종목 n 개 (Jack 2026-11-27, 답 7: 어느 한 종목의 데이터도 모두의 발행을 멈추지 않게). want 순서대로, 오늘 데이터에서
+    risk_ready 이고 need 칸이 숫자인 종목을 먼저 담고 (평소에는 예전과 같은 종목), 모자라면 같은 조건의 다른 한국 종목을 시가총액 큰 순으로
+    채워요. 채우는 종목은 보통주(코드 끝 0)만이고, 시가총액이 빈 종목 · 펀드 · ETF · 마지막 확인 종가(pxd)로 실린 종목(배너에 줄이 하나 더
+    생겨요)은 고르지 않아요. secs > 0 이면 업종이 secs 곳 이상 되게 새 업종을 먼저 골라요.
+    바꿔 담은 날은 실행 기록에 크게 남겨요 (어느 종목이 왜 빠졌는지). 돌려줌: 종목코드 목록 (모자라면 n 보다 짧아요 — 장면이 실패로 알려요)."""
+    ok = lambda s: risk_ready(s) and all(_num(s.get(k)) for k in need)   # noqa: E731
+    out = [t for t in want if t in stocks and ok(stocks[t])][:n]
+    rest = sorted((s for s in stocks.values() if s.get("t") not in out and s.get("cls") == "kr" and str(s.get("t"))[-1:] == "0"
+                   and not s.get("fund") and not s.get("etf") and s.get("pxd") is None and _num(s.get("cap")) and ok(s)),
+                  key=lambda s: (-s["cap"], str(s.get("t"))))
+    for s in rest:
+        if len(out) >= n:
+            break
+        have = {stocks[t].get("s") for t in out}
+        new = bool(s.get("s")) and s.get("s") not in have
+        if new or n - len(out) > max(secs - len(have), 0):
+            out.append(s["t"])
+    swapped = [t for t in want[:n] if t not in out]
+    if swapped:
+        why = "; ".join(f"{t} " + ("오늘 데이터에 없음" if t not in stocks else "과거 주가 기록 오류 표시(pxBad)" if px_bad(stocks[t])
+                                   else "베타 · 변동성 · 가격이 위험 계산에 쓸 값이 아님" if not risk_ready(stocks[t])
+                                   else "필요한 칸(" + "·".join(k for k in need if not _num(stocks[t].get(k))) + ")이 빔") for t in swapped)
+        msg = (f"평소 담는 종목 가운데 {why} → 오늘 데이터의 다른 종목 {', '.join(t for t in out if t not in want) or '(없음)'} 로 바꿔 담아 "
+               "같은 것을 확인해요")
+        if f"{scene}: {msg}" not in R.notes:
+            R.notes.append(f"{scene}: {msg}")
+            print(f"\n!! 알림  [{scene}] {msg}\n", flush=True)
+            if os.environ.get("GITHUB_ACTIONS") == "true":
+                print(f"::warning title=발행 전 화면 검사 · 바꿔 담은 종목::[{scene}] {msg}", flush=True)
+    return out
+
+
 def example_price_stocks(f):
     """앱의 mergeStocks 와 같은 규칙. 돌려줌 (examples, est):
-    examples = 내장 종목 가운데 오늘 데이터에 없는 것 + 데이터에 있지만 가격 · 베타 · 변동성이 빈 것 (금 환산은 빼고) → '예시 가격' 줄
+    examples = 내장 종목 가운데 오늘 데이터에 없는 것 + 데이터에 있지만 가격이 빈 것 + 가격은 있지만 베타 · 변동성이 빈 것 (금 환산은 빼고)
+               → '예시 가격' 줄. 다만 과거 주가 기록 오류 표시(pxBad) 종목의 빈 베타 · 변동성은 앱이 내장 값으로 메우지 않아요 (위험 계산에서
+               빼요 · 2026-11-14 #128) — 가격이 오늘 것이면 예시 가격 종목이 아니에요. 그 종목도 가격이 비면 예시 가격이에요 (앱과 같아요).
     est = 국제 금값 환산 표시(est)가 붙은 내장 종목 → '금현물은 … 추정치예요' 줄.  (미국 티커는 점 · 하이픈을 무시하고 맞춰요: BRK.B = BRK-B)"""
+    norm = lambda x: re.sub(r"[.\-]", "", str(x or "").upper())
+    by_t = {t: t for t in BASE_TICKERS}
+    by_norm = {norm(t): t for t in BASE_TICKERS}
+    examples, est = [], []
+    for L in f["data.json"]["stocks"]:
+        b = by_t.get(L.get("t")) or by_norm.get(norm(L.get("t")))
+        price = L.get("price")
+        if b:
+            # src/data.js mergeStocks: partial = L.price == null || (!bad && (L.beta == null || L.vol == null)) — bad = pxBad(L)
+            partial = price is None or (not px_bad(L) and (L.get("beta") is None or L.get("vol") is None))
+            if L.get("est"):
+                est.append(b)
+            elif partial:
+                examples.append(b)
+            by_t.pop(b, None); by_norm.pop(norm(b), None)
+        elif isinstance(price, (int, float)) and price > 0 and L.get("est"):
+            examples.append(str(L.get("t")))       # 내장 목록 밖 종목의 est: 앱은 '실시간 아님'으로만 표시해요 (금 환산 줄이 아니라 예시 가격 줄)
+    return sorted(set(examples) | set(by_t)), sorted(est)
+
+
+def example_cap_stocks(f):
+    """한도(within_example_cap)가 세는 내장 종목 — 예전 그대로의 규칙 (리뷰 #200): 오늘 데이터에 없거나 가격 · 베타 · 변동성이 빈 내장 종목
+    (금 환산은 빼고). 과거 주가 기록 오류 표시(pxBad)로 베타 · 변동성을 비운 내장 종목도 세어요 — 앱은 그 종목에 '예시 가격' 안내를 보여 주지
+    않지만 (example_price_stocks), 한꺼번에 많이 비면 여전히 파이프라인을 의심할 날이에요. 돌려줌 (세는 종목, est) — est 는 example_price_stocks 와 같아요."""
     norm = lambda x: re.sub(r"[.\-]", "", str(x or "").upper())
     by_t = {t: t for t in BASE_TICKERS}
     by_norm = {norm(t): t for t in BASE_TICKERS}
@@ -350,14 +433,14 @@ def example_price_stocks(f):
                 examples.append(b)
             by_t.pop(b, None); by_norm.pop(norm(b), None)
         elif isinstance(price, (int, float)) and price > 0 and L.get("est"):
-            examples.append(str(L.get("t")))       # 내장 목록 밖 종목의 est: 앱은 '실시간 아님'으로만 표시해요 (금 환산 줄이 아니라 예시 가격 줄)
+            examples.append(str(L.get("t")))
     return sorted(set(examples) | set(by_t)), sorted(est)
 
 
 def within_example_cap(f):
     """실제 데이터로 돌 때 장면들 앞에서 한 번: 예시 가격으로 보이는 내장 종목이 EXAMPLE_MAX 개 이하이고, 금 환산 표시는 금현물에만 있어요.
     넘으면 실패 → 발행하지 않아요 (여러 종목이 한꺼번에 = 파이프라인 고장으로 봐요)."""
-    examples, est = example_price_stocks(f)
+    examples, est = example_cap_stocks(f)
     names = f"{', '.join(examples[:12])}{' …' if len(examples) > 12 else ''}"
     assert len(examples) <= EXAMPLE_MAX, (f"내장 종목 {len(examples)}개가 오늘 데이터에 없거나 가격 · 베타 · 변동성이 비었어요 ({names}) — {EXAMPLE_MAX}개를 넘으면 "
                                           "종목 사정이 아니라 파이프라인 고장으로 봐요 (예: 미국 종목 베타가 통째로 빔) → 발행하지 않아요. "
@@ -377,6 +460,16 @@ def banner_due(R, scene, f):
                                           "고정 데이터에는 없어야 해요. 없는데도 이 말이 나오면 내장 종목 목록(BASE_TICKERS)을 잘못 읽은 거예요")
         return []
     due = ([NONLIVE] if examples else []) + ([GOLD_EST] if est else [])
+    marked = sorted(set(example_cap_stocks(f)[0]) - set(examples))   # pxBad 로 베타 · 변동성을 비운 내장 종목 (가격은 오늘 것)
+    if marked:
+        msg = (f"오늘 데이터: 과거 주가 기록 오류 표시(pxBad)가 붙은 내장 종목 {len(marked)}개 ({', '.join(marked[:8])}{' …' if len(marked) > 8 else ''}) — "
+               f"가격은 오늘 것이라 예전 뱁새는 이 종목에 '예시 가격' 안내를 보여 주지 않아요 (안내 없음을 확인해요). 내장 종목 한도에는 세어요 "
+               f"({EXAMPLE_MAX}개를 넘으면 발행하지 않아요 — 관문의 과거 주가 기록 오류 줄도 보세요)")
+        if msg not in R.notes:
+            R.notes.append(msg)
+            print(f"\n!! 알림  [{scene}] {msg}\n", flush=True)
+            if os.environ.get("GITHUB_ACTIONS") == "true":
+                print(f"::warning title=발행 전 화면 검사 · 과거 주가 기록 오류 내장 종목::[{scene}] {msg}", flush=True)
     if due:
         why = "; ".join(x for x in (f"내장 종목 {len(examples)}개가 오늘 데이터에 없거나 가격 · 베타 · 변동성이 비었어요 ({names})" if examples else "",
                                     f"금 환산 추정 {', '.join(est)}" if est else "") if x)
@@ -814,6 +907,9 @@ HIDDEN_B_EN = ["expected +", "Expected return", "E(r)", "CAGR", "After-tax retur
                "CAPM Sharpe", "goal, aim for beta", "is hard to expect from the risk you can carry", "goal only needs about beta",   # v18.5
                "If you held to the end", "What holding was worth", "pays you back as expected return",                          # v18.5
                "NaN"]
+# 계기판의 '변동성 (연)' 칸의 값 (src/detail.jsx 지표 카드 · t("mVol")) — 예: "38.4%"
+VOL_SHOWN = """() => { const b = [...document.querySelectorAll('button')].find((x) => x.children.length === 2
+  && x.children[0].textContent.startsWith('변동성 (연)')); return b ? b.children[1].textContent.trim() : null; }"""
 TEAL, TEAL_SOFT, INK = "rgb(46, 158, 143)", "rgb(228, 244, 241)", "rgb(28, 43, 69)"   # src/tokens.js (C.teal, C.tealSoft, C.ink)
 
 
@@ -832,8 +928,11 @@ def scene_option_b(R, files):
     B안에서는 위험 수치(보통 해 ±…)만 보이고, 나머지는 첫 화면·②③④ 어디에도, 한국어·영어 어느 쪽에도 없어야 해요."""
     files = json.loads(json.dumps(files))      # 아래에서 배당만 지워요 (다른 장면에 번지지 않게 복사본에서)
     stocks = {s.get("t"): s for s in files["data.json"]["stocks"]}
-    want = [("000660", 400), ("005930", 150), ("005380", 100), ("105560", 100)]
-    hold = [(t, mw) for t, mw in want if t in stocks and isinstance(stocks[t].get("vol"), (int, float))]
+    # 평소에는 이 네 종목 (SK하이닉스 · 삼성전자 · 현대차 · KB금융). 그 가운데 오늘 위험 계산에 쓸 수 없는 종목(과거 주가 기록 오류 표시 · 빈 베타나
+    # 변동성 · 빠짐)이 있으면 같은 조건의 다른 한국 종목으로 바꿔 담아요 (Jack 2026-11-27, 답 7 — 한 종목이 모두의 발행을 멈추지 않게).
+    # 장면이 읽는 3년 최대낙폭(mdd) · 과거 알파(al)도 숫자인 종목만. 비중은 자리 순서대로 400 · 150 · 100 · 100 만원.
+    want = ["000660", "005930", "005380", "105560"]
+    hold = list(zip(pick_ready(R, "B안", stocks, want, 4, need=("mdd", "al"), secs=3), (400, 150, 100, 100)))
     secs = {stocks[t].get("s") for t, _ in hold}
     assert len(hold) == 4 and len(secs) >= 3, f"시험할 종목이 모자라요: {hold} · 업종 {secs}"
     stocks[hold[0][0]]["dy"] = None     # 배당 정보 없음 → '배당 정보가 없는 종목 1개는 0원으로 계산했어요.' 가 보여야 해요
@@ -884,6 +983,20 @@ def scene_option_b(R, files):
         zones = page.evaluate("""([teal, soft]) => [...document.querySelectorAll('div')].filter((d) => { const c = getComputedStyle(d);
             return c.height === '9px' && c.borderTopColor === teal && c.backgroundColor === soft; }).length""", [TEAL, TEAL_SOFT])
         assert zones == 2, f"초록 목표 구간 {zones}개 (분산·업종 2개여야 해요)"
+        # 이 장면의 전제 (리뷰 #200): 예전 계산이면 '변동성이 상한을 넘어요'가 떴을 포트폴리오 — 계기판의 연 변동성이 프로필 상한보다 커야
+        # 위의 '보이면 안 되는 문구' 확인이 무언가를 봐요 (바꿔 담은 날에도). 시장의 출렁임에 달린 일이라 실패가 아니라 크게 알리기만 해요
+        # (Jack 2026-11-21: 화면 검사의 장면은 그날의 데이터에 매이지 않아요)
+        shown_vol = page.evaluate(VOL_SHOWN)
+        vol_num = re.sub(r"[^0-9.]", "", shown_vol or "")
+        if not (vol_num and float(vol_num) > profile["targetVolMaxPct"]):
+            msg = (f"이 장면의 전제가 오늘 데이터에서 맞지 않아요: 계기판의 연 변동성 {shown_vol or '(못 읽음)'} 이 프로필 상한 "
+                   f"{profile['targetVolMaxPct']}% 를 넘지 않아요 (담은 종목 {', '.join(t for t, _ in hold)}) → 숨김 확인은 그대로 하지만, "
+                   "예전 계산이라도 '변동성이 상한을 넘어요'가 뜨지 않았을 포트폴리오예요")
+            if f"B안: {msg}" not in R.notes:
+                R.notes.append(f"B안: {msg}")
+                print(f"\n!! 알림  [B안] {msg}\n", flush=True)
+                if os.environ.get("GITHUB_ACTIONS") == "true":
+                    print(f"::warning title=발행 전 화면 검사 · B안 장면의 전제::[B안] {msg}", flush=True)
     R.check(page, "B안", "② 구성: '보통 해 ±…' 만, β·σ 초록 구간·판정·조언·기대수익·건강 점수 없음", build)
 
     def open_all(titles, detail):
