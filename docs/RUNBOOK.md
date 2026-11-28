@@ -118,7 +118,7 @@ run log starts "5xx 다시 물음", and the count ("· 5xx 다시 물음: N곳")
       failure: market volatility is the day's data). The scene also needs three of them to
       have a dividend yield; the gate lets one must-have stock without dividend data through with a warning (Jack,
       11-05), so the scene fills a blank one in its own copy and says so in the log.
-    - **005930 too (since #?, the same yes).** Other scenes hold 삼성전자 as their ordinary stock and read its beta and
+    - **005930 too (since #208, the same yes).** Other scenes hold 삼성전자 as their ordinary stock and read its beta and
       volatility, or another number the app blanks for a marked stock (위험값 없음, 빠진 종목, 빠진 종목 전부, 베타→수익률, 없는 종목,
       자동 설정, 미국 자기 날짜, 한국 날짜, 파일 불러오기's first stock, 국내 마지막 확인 종가's portfolio, 주가기록's unmarked comparison
       stock, 고치는 중 안내's 주가 분해 check, 다시 읽은 뒤's comparison company). Each uses 005930 whenever `risk_ready` says the app uses its price,
@@ -130,7 +130,7 @@ run log starts "5xx 다시 물음", and the count ("· 5xx 다시 물음: N곳")
       trips) stay on it. A marked 005930 still counts toward the limit of 3. On a day with that note, read the reason it gives: a `pxBad` mark means the gate's mark
       rows apply (a second marked must-have fails the gate); a blank beta or volatility on 005930 without a mark is the
       pipeline, not the market.
-    - **An unconfirmed-split mark (`spNo`, #186) on a built-in (since #?, the same yes).** The old app treats it like
+    - **An unconfirmed-split mark (`spNo`, #186) on a built-in (since #208, the same yes).** The old app treats it like
       `pxBad`: no built-in values, beta and volatility left out, no 예시 가격 notice (`src/data.js` `mergeStocks`). The check
       follows it: `example_price_stocks` expects no notice for such a stock while its price is today's, `risk_ready` never
       picks it (so B안 and `pick_plain` swap it out, the note saying "공시로 확인하지 못한 분할 표시(spNo)"), and

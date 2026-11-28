@@ -65,7 +65,7 @@ swaps any of its four stocks the app can't use today (`pick_ready`: never looser
 market cap, 3+ sectors, `!! 알림`) and notes loudly, never failing, when its premise is not met that day (portfolio volatility on
 screen not above the profile's 24% ceiling). A mark on 005930 itself: covered by the follow-up below.
 
-**Screen check: a `pxBad` mark on 삼성전자, and a `spNo` mark on any built-in (#?, branch `claude/smoke-005930`, 2026-11-28; tests
+**Screen check: a `pxBad` mark on 삼성전자, and a `spNo` mark on any built-in (#208, branch `claude/smoke-005930`, 2026-11-28; tests
 only):** the follow-up #200 named, under the same yes (Jack 11-27, answer 7: "Yes, under the standing rule"; 삼성전자 is a built-in). Scenes of `tests/smoke_app.py
 --data` that hold 005930 as their ordinary stock and read its beta and volatility, or a number the app blanks for a marked
 stock, failed on a copy of the 11-28 publish (pxDate 11-27) with 005930 marked the way the pipeline marks: main 134 / 171 (37 checks in 12
