@@ -853,8 +853,9 @@ def marked(stocks, *ts, **kw):
 
 
 def test_plain_pick_keeps_005930_and_swaps_only_to_a_stock_the_app_computes_for(SA, monkeypatch, capsys):
-    """pick_plain: 평소에는 005930 (알림 없음). 앱이 그 위험 숫자를 계산하지 못하는 날만 (pxBad · 빈 베타 · 데이터에 없음 · 장면이 읽는 칸이 빔 ·
-    장면의 다른 조건) 내장 한국 보통주를 시가총액 큰 순으로 — avoid 는 빼고. 바꾸면 세 곳에 크게 (실행 기록 · GitHub 경고 · 다르게 확인한 것)."""
+    """pick_plain: 005930 이 risk_ready 이면 언제나 005930 (알림 없음 · 장면이 읽는 다른 칸은 보지 않아요: 예전 장면과 같은 날 같은 종목). 앱이 그
+    위험 숫자를 계산하지 못하는 날만 (pxBad · 빈 베타 · 데이터에 없음) 내장 한국 보통주를 시가총액 큰 순으로 — avoid 는 빼고, 장면이 읽는 칸(need)과
+    다른 조건(also)을 갖춘 것만. 바꾸면 세 곳에 크게 (실행 기록 · GitHub 경고 · 다르게 확인한 것)."""
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     st = plain_rows()
     R = FakeRunner()
@@ -867,14 +868,19 @@ def test_plain_pick_keeps_005930_and_swaps_only_to_a_stock_the_app_computes_for(
     # 장면이 함께 담는 종목(avoid)은 고르지 않아요 · 마지막 확인 종가(000270) · 시가총액이 빈 종목(068270)도
     assert SA.pick_plain(FakeRunner(), "시험", marked(st, "005930"), avoid=("000660",))[0] == "373220"
     assert SA.pick_plain(FakeRunner(), "시험", marked(st, "005930", "000660", "373220", "207940"), avoid=("105560",))[0] == "005380"
-    # 이유마다: 표시 없는 빈 베타(앱은 내장 예시 값 · 예시 가격) · 데이터에 없음 · 장면이 읽는 칸(need)이 빔 · 장면의 다른 조건(also)
-    for rows, kw, why in ((dict(st, **{"005930": dict(st["005930"], beta=None)}), {}, "베타 · 변동성 · 가격이 위험 계산에 쓸 값이 아님"),
-                          ({t: s for t, s in st.items() if t != "005930"}, {}, "오늘 데이터에 없음"),
-                          (dict(st, **{"005930": dict(st["005930"], sh=None)}), {"need": ("sh", "mdd")}, "필요한 칸(sh)이 빔"),
-                          (st, {"also": lambda s: s["t"] != "005930", "also_why": "주가 분해 숫자 없음"}, "주가 분해 숫자 없음")):
+    # 이유마다: 표시 없는 빈 베타(앱은 내장 예시 값 · 예시 가격) · 데이터에 없음
+    for rows, why in ((dict(st, **{"005930": dict(st["005930"], beta=None)}), "베타 · 변동성 · 가격이 위험 계산에 쓸 값이 아님"),
+                      ({t: s for t, s in st.items() if t != "005930"}, "오늘 데이터에 없음")):
         R = FakeRunner()
-        assert SA.pick_plain(R, "시험", rows, **kw)[0] == "000660", why
+        assert SA.pick_plain(R, "시험", rows)[0] == "000660", why
         assert len(R.notes) == 1 and f"005930 {why}" in R.notes[0], (why, R.notes)
+    # risk_ready 인 005930 은 장면이 읽는 다른 칸 · 조건이 비어도 그대로 (예전과 같은 날 같은 종목 · 알림 없음) — 그 칸은 바꿔 담는 종목에만
+    R = FakeRunner()
+    assert SA.pick_plain(R, "시험", dict(st, **{"005930": dict(st["005930"], sh=None)}), need=("sh",))[0] == "005930"
+    assert SA.pick_plain(R, "시험", st, also=lambda s: s["t"] != "005930")[0] == "005930" and not R.notes
+    no_sh = dict(marked(st, "005930"), **{"000660": dict(st["000660"], sh=None)})
+    assert SA.pick_plain(R, "시험", no_sh, need=("sh",))[0] == "373220"                 # 000660 은 sh 가 비어 건너뛰어요
+    assert SA.pick_plain(R, "시험", marked(st, "005930"), also=lambda s: s["t"] not in ("000660", "373220"))[0] == "207940"
     # 같은 장면 · 같은 바꿈은 한 번만 알려요 (한 장면이 여러 번 골라도) · 다른 장면은 따로
     R = FakeRunner()
     for scene in ("가", "가", "나"):
@@ -889,8 +895,8 @@ def test_plain_pick_keeps_005930_and_swaps_only_to_a_stock_the_app_computes_for(
 
 
 def test_plain_pick_is_never_looser_than_risk_ready_and_is_deterministic(SA):
-    """무작위 데이터 3,000 개: 고른 종목은 언제나 risk_ready · need 칸 숫자 · also · avoid 밖 · (005930 이 아니면) 내장 한국 보통주 · 펀드 · ETF ·
-    마지막 확인 종가 아님 · 시가총액 있음이고, 그런 종목 가운데 시가총액이 가장 커요. 005930 이 쓸 수 있으면 언제나 005930. 데이터 순서를 섞어도 같은 답."""
+    """무작위 데이터 3,000 개: 고른 종목은 언제나 risk_ready · avoid 밖이에요. 005930 이 risk_ready 이면 언제나 005930. 아니면 need 칸 숫자 · also ·
+    내장 한국 보통주 · 펀드 · ETF · 마지막 확인 종가 아님 · 시가총액 있음인 종목 가운데 시가총액이 가장 큰 것 (없으면 실패). 데이터 순서를 섞어도 같은 답."""
     import random
     rnd = random.Random(20261128)
     base = plain_rows()
@@ -913,14 +919,14 @@ def test_plain_pick_is_never_looser_than_risk_ready_and_is_deterministic(SA):
         cands = sorted((s for s in st.values() if s["t"] in pool and s["t"] not in avoid and s.get("cls") == "kr" and s["t"].endswith("0")
                         and not s.get("fund") and not s.get("etf") and s.get("pxd") is None and SA._num(s.get("cap")) and ok(s)),
                        key=lambda s: (-s["cap"], s["t"]))
-        want = "005930" if "005930" in st and ok(st["005930"]) else (cands[0]["t"] if cands else None)
+        want = "005930" if "005930" in st and SA.risk_ready(st["005930"]) else (cands[0]["t"] if cands else None)
         try:
             got = SA.pick_plain(FakeRunner(), "무작위", st, avoid=avoid, need=need, also=also)[0]
         except AssertionError:
             got = None
         assert got == want, (got, want, avoid, need)
         if got:
-            assert ok(st[got]) and got not in avoid
+            assert SA.risk_ready(st[got]) and got not in avoid and (got == "005930" or ok(st[got]))
         items = list(st.items())
         rnd.shuffle(items)
         again = None
@@ -1095,7 +1101,8 @@ def test_every_plain_swap_is_loud_and_goes_through_one_picker():
     for loud in ('R.notes.append(f"{scene}: {msg}")', 'print(f"\\n!! 알림  [{scene}] {msg}\\n", flush=True)',
                  'print(f"::warning title=발행 전 화면 검사 · 바꿔 담은 종목::[{scene}] {msg}", flush=True)'):
         assert pr.count(loud) == 1, loud
-    assert "got = pick_ready(R, scene, stocks, [want], 1, need=need, avoid=avoid, pool=set(BASE_TICKERS), also=also, also_why=also_why)" in pp
+    assert "got = pick_ready(R, scene, stocks, [want], 1, need=need, avoid=avoid, pool=set(BASE_TICKERS), also=also)" in pp
+    assert "if want in stocks and risk_ready(stocks[want]):" in pp                      # want 는 risk_ready 이면 그대로 (알림 없이 · 예전과 같은 날)
     assert "assert got, " in pp and "return t, BASE_NK.get(t) or stocks[t].get(\"nk\")" in pp
     # 고르는 곳은 이 둘뿐이고, 언제나 그 장면의 이름(R, 장면)과 함께 불러요 · 바꿈 문장은 pick_ready 에만
     calls = re.findall(r"\bpick_(?:ready|plain)\(([^,]+),", src)

@@ -358,13 +358,13 @@ def risk_ready(L):
             and not px_bad(L) and not L.get("est"))
 
 
-def pick_ready(R, scene, stocks, want, n, need=(), secs=0, avoid=(), pool=None, also=None, also_why=""):
+def pick_ready(R, scene, stocks, want, n, need=(), secs=0, avoid=(), pool=None, also=None):
     """장면이 담을 한국 종목 n 개 (Jack 2026-11-27, 답 7: 어느 한 종목의 데이터도 모두의 발행을 멈추지 않게). want 순서대로, 오늘 데이터에서
     risk_ready 이고 need 칸이 숫자인 종목을 먼저 담고 (평소에는 예전과 같은 종목), 모자라면 같은 조건의 다른 한국 종목을 시가총액 큰 순으로
     채워요. 채우는 종목은 보통주(코드 끝 0)만이고, 시가총액이 빈 종목 · 펀드 · ETF · 마지막 확인 종가(pxd)로 실린 종목(배너에 줄이 하나 더
     생겨요)은 고르지 않아요. secs > 0 이면 업종이 secs 곳 이상 되게 새 업종을 먼저 골라요.
     avoid: 장면이 따로 담는 종목 (채우는 종목으로 고르지 않아요) · pool: 채우는 종목을 이 코드들 안에서만 (pick_plain: 내장 종목) ·
-    also: 종목마다 더 볼 조건 (장면이 읽는 다른 숫자를 앱이 보여 주는지) · also_why: also 때문에 바꿀 때 알림에 적는 이유.
+    also: 종목마다 더 볼 조건 (장면이 읽는 다른 숫자를 앱이 보여 주는지).
     바꿔 담은 날은 실행 기록에 크게 남겨요 (어느 종목이 왜 빠졌는지). 돌려줌: 종목코드 목록 (모자라면 n 보다 짧아요 — 장면이 실패로 알려요)."""
     ok = lambda s: risk_ready(s) and all(_num(s.get(k)) for k in need) and (also is None or bool(also(s)))   # noqa: E731
     out = [t for t in want if t in stocks and ok(stocks[t])][:n]
@@ -385,7 +385,7 @@ def pick_ready(R, scene, stocks, want, n, need=(), secs=0, avoid=(), pool=None, 
         why = "; ".join(f"{t} " + ("오늘 데이터에 없음" if t not in stocks else "과거 주가 기록 오류 표시(pxBad)" if px_bad(stocks[t])
                                    else "베타 · 변동성 · 가격이 위험 계산에 쓸 값이 아님" if not risk_ready(stocks[t])
                                    else "필요한 칸(" + "·".join(gap(t)) + ")이 빔" if gap(t)
-                                   else (also_why or "장면이 읽는 다른 숫자를 앱이 보여 주지 않음")) for t in swapped)
+                                   else "장면이 읽는 다른 숫자를 앱이 보여 주지 않음") for t in swapped)
         msg = (f"평소 담는 종목 가운데 {why} → 오늘 데이터의 다른 종목 {', '.join(t for t in out if t not in want) or '(없음)'} 로 바꿔 담아 "
                "같은 것을 확인해요")
         if f"{scene}: {msg}" not in R.notes:
@@ -396,17 +396,21 @@ def pick_ready(R, scene, stocks, want, n, need=(), secs=0, avoid=(), pool=None, 
     return out
 
 
-def pick_plain(R, scene, stocks, avoid=(), need=(), want="005930", also=None, also_why=""):
+def pick_plain(R, scene, stocks, avoid=(), need=(), want="005930", also=None):
     """장면이 '보통 종목'으로 담는 한국 종목 하나 — 평소에는 삼성전자(005930) (Jack 2026-11-27, 답 7: 내장 종목 하나의 과거 주가 기록 오류 표시가
     모두의 발행을 멈추지 않게 · 삼성전자도 내장 종목이에요). 그 장면이 그 종목의 위험 숫자(베타 · 변동성, 또는 앱이 pxBad 종목에서 비우는 다른
-    숫자)를 읽어요. 오늘 앱이 want 로 그 숫자를 계산하지 못하면 (risk_ready 가 아님 · need 칸이 빔 · also 가 아님 · 오늘 데이터에 없음) B안과 같은
-    규칙(pick_ready)으로 다른 종목을 담아요: 예전 뱁새의 내장 종목(BASE_STOCKS)인 한국 보통주 (코드 끝 0 · 펀드 · ETF · 마지막 확인 종가 아님 ·
-    시가총액 있음 — 앱이 삼성전자처럼 내장 종목으로 다루는 종목), 시가총액 큰 순, avoid(장면이 같이 담는 종목)는 빼고. 같은 데이터면 언제나 같은
-    종목이에요. 바꿔 담은 날은 크게 알려요 (pick_ready: 실행 기록의 '!! 알림' · GitHub 경고 · 끝의 '다르게 확인한 것').
+    숫자)를 읽어요. want 는 risk_ready 이면 (앱이 그 종목의 오늘 가격 · 베타 · 변동성을 위험 계산에 쓰면) 언제나 그대로 담아요 — 그날은 예전과
+    똑같아요 (need · also 는 보지 않아요: 예전 장면이 그 종목에서 실패했을 날은 지금도 실패해요). risk_ready 가 아니면 (과거 주가 기록 오류 표시 ·
+    빈 베타나 변동성 · 오늘 데이터에 없음) B안과 같은 규칙(pick_ready)으로 다른 종목을 담아요: risk_ready 이고 need 칸이 숫자이고 also 인, 예전
+    뱁새의 내장 종목(BASE_STOCKS) 한국 보통주 (코드 끝 0 · 펀드 · ETF · 마지막 확인 종가 아님 · 시가총액 있음 — 앱이 삼성전자처럼 내장 종목으로
+    다루는 종목), 시가총액 큰 순, avoid(장면이 같이 담는 종목)는 빼고. 같은 데이터면 언제나 같은 종목이에요. 바꿔 담은 날은 크게 알려요
+    (pick_ready: 실행 기록의 '!! 알림' · GitHub 경고 · 끝의 '다르게 확인한 것').
     쓸 종목이 하나도 없으면 그 자리에서 실패해요 (지어낸 종목을 담지 않아요 — 그날은 내장 종목 한도 검사도 먼저 실패해요).
     돌려줌: (종목코드, 앱이 보여 주는 한국어 이름)."""
     assert want not in avoid, (want, avoid)
-    got = pick_ready(R, scene, stocks, [want], 1, need=need, avoid=avoid, pool=set(BASE_TICKERS), also=also, also_why=also_why)
+    if want in stocks and risk_ready(stocks[want]):
+        return want, BASE_NK.get(want) or stocks[want].get("nk")
+    got = pick_ready(R, scene, stocks, [want], 1, need=need, avoid=avoid, pool=set(BASE_TICKERS), also=also)
     assert got, (f"[{scene}] 시험할 종목이 모자라요: {want} 도, 그 대신 담을 내장 한국 보통주도 오늘 앱이 위험 숫자를 계산할 수 있는 것이 "
                  f"없어요 (함께 담는 종목 {', '.join(avoid) or '없음'} · 필요한 칸 {', '.join(need) or '없음'})")
     t = got[0]
@@ -1448,8 +1452,8 @@ def scene_beta_return(R, files):
     """B안 (v18.5, Jack 2026-11-03): 베타를 수익률로 바꾸는 줄은 SHOW_ER 를 켤 때만.
     ② 종목 줄을 펼쳐 '이론 샤프'(β × 프리미엄 ÷ σ)가 없고 과거 값 '샤프(3y)'·'3y α'·'최대낙폭'은 보이는지,
     ① 프로필(새로 만든 것 KO·EN, 예전에 저장된 것)에 '목표 → 베타'·'β → 기대 수익' 문장이 없고 나머지 문장은 남는지 봐요.
-    위험 줄 · 타임머신을 만들고 펼쳐 보는 보통 종목: 평소에는 삼성전자, 오늘 앱이 그 위험 숫자(펼친 줄의 샤프(3y) · 3y α · 최대낙폭까지)를
-    계산하지 못하면 바꿔 담아요 (pick_plain)."""
+    위험 줄 · 타임머신을 만들고 펼쳐 보는 보통 종목: 평소에는 삼성전자, 오늘 앱이 그 위험 숫자를 계산하지 못하면 펼친 줄의 샤프(3y) · 3y α ·
+    최대낙폭 값도 있는 다른 내장 종목으로 바꿔 담아요 (pick_plain)."""
     P, _ = pick_plain(R, "베타→수익률", {s.get("t"): s for s in files["data.json"]["stocks"]}, avoid=("000660",), need=("sh", "al", "mdd"))
     hold = [{"t": P, "mw": 300}, {"t": "000660", "mw": 200}]
     slots = [("srow", "종목 줄 시험", {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": hold})]
@@ -3211,8 +3215,9 @@ def scene_fix_notes(R, files, live=False):
     'PER과 EPS는 계산 방법을 고치는 중이라 {date}에 바뀔 수 있어요.' (12px 이상; 첫 화면 성적표의 영어 화면은 영어 줄), 이자보상배율이 꺼진 회사의 재무 신호
     밑에 '이자보상배율은 계산 방법을 고치는 중이라 지금은 확인하지 않아요.'. live: corp.json 에 epsBasis "owners" 가 있고
     그 회사의 epsIn.b 가 "o" 이며 이자보상배율이 다시 돌면 그 회사에는 없어요 (총 순이익 "t" 인 회사에는 남아요).
-    주가 분해 확인(split_basis)은 그 숫자를 보여 주는 회사로: 평소에는 삼성전자, 오늘 앱이 그 숫자를 보여 주지 못하면 (과거 주가 기록 오류 표시 ·
-    3년 주가 변화가 빔 …) 바꿔 봐요 (pick_plain · decomp_numbers). 다른 확인은 삼성전자 그대로 (고치는 중 줄은 위험 숫자와 상관없어요)."""
+    주가 분해 확인(split_basis): 평소에는 삼성전자, 앱이 그 종목으로 계산하지 못하는 날 (과거 주가 기록 오류 표시 — 3년 주가 변화도 비워요 · 빈 베타나
+    변동성) 은 주가 분해 숫자를 보여 주는 다른 회사로 봐요 (pick_plain · decomp_numbers). 다른 확인은 삼성전자 그대로 (고치는 중 줄은 위험 숫자와
+    상관없어요)."""
     S = "고치는 중 안내 " + ("끝" if live else "지금")
     f = json.loads(json.dumps(files, allow_nan=True))
     corp = f["corp.json"]
@@ -3220,7 +3225,7 @@ def scene_fix_notes(R, files, live=False):
     hd = next(c for c in corp["companies"] if c.get("t") == "005380")
     cby = {c.get("t"): c for c in corp["companies"]}
     SP, _ = pick_plain(R, S, {s.get("t"): s for s in f["data.json"]["stocks"]}, avoid=("005380",),
-                       also=lambda s: decomp_numbers(cby.get(s.get("t"))), also_why="기업분석의 주가 분해가 숫자를 보이지 않음 (decomp_numbers)")
+                       also=lambda s: decomp_numbers(cby.get(s.get("t"))))
     sp = cby[SP]
 
     def owners_receipt(c):
@@ -3329,16 +3334,15 @@ STMT_UNTRUE_PARTS = ["파이프라인이 사업보고서를 못 찾은 종목이
 
 
 def won_control(R, scene, f):
-    """다시 읽은 뒤 장면의 '그대로' 비교 회사 (원화로 공시해서 통화 줄 없이 3개년 실적 흐름 · 주가 분해가 보이는 회사): 평소에는 삼성전자, 오늘 앱이
-    그 회사의 주가 분해 숫자를 보여 주지 못하면 (과거 주가 기록 오류 표시 — 52주까지 비운 회사는 그 칸이 아예 없어요 · 3년 주가 변화가 빔 …)
-    바꿔 봐요 (pick_plain · decomp_numbers, 크게 알려요). 검사 안에서 불러요 (회사를 그 자리에서 골라요). 돌려줌: 종목코드."""
+    """다시 읽은 뒤 장면의 '그대로' 비교 회사 (원화로 공시해서 통화 줄 없이 3개년 실적 흐름 · 주가 분해가 보이는 회사): 평소에는 삼성전자, 앱이 그
+    종목으로 계산하지 못하는 날 (과거 주가 기록 오류 표시 — 52주까지 비운 회사는 주가 분해 칸이 아예 없어요 · 빈 베타나 변동성) 은 주가 분해 숫자를
+    보여 주는 다른 회사로 봐요 (pick_plain · decomp_numbers, 크게 알려요). 검사 안에서 불러요 (회사를 그 자리에서 골라요). 돌려줌: 종목코드."""
     cby = {c.get("t"): c for c in f["corp.json"]["companies"]}
 
     def shows(s):
         c = cby.get(s.get("t"))
         return decomp_numbers(c) and not stmt_cur_of(c)
-    return pick_plain(R, scene, {s.get("t"): s for s in f["data.json"]["stocks"]}, also=shows,
-                      also_why="기업분석의 주가 분해가 숫자를 보이지 않음 (decomp_numbers)")[0]
+    return pick_plain(R, scene, {s.get("t"): s for s in f["data.json"]["stocks"]}, also=shows)[0]
 
 
 def scene_stmt_cur(R, files):
@@ -3512,15 +3516,14 @@ def scene_px_bad(R, files):
     FULL, PART, real = px_bad_targets(f)
     if real:
         R.notes.append(f"주가기록: 오늘 데이터가 표시한 회사 {', '.join(sorted(real))} 로 봤어요 (pxBad)")
-    # 표시 없는 비교 종목 ('그대로'): 평소에는 삼성전자, 오늘 그 종목에 표시가 붙었거나 앱이 그 위험 숫자 · 52주 범위 · 기업분석의 연 변동성과
-    # 52주 위치를 보여 주지 못하면 바꿔 봐요 (pick_plain — 표시가 붙은 회사는 고르지 않아요)
+    # 표시 없는 비교 종목 ('그대로'): 평소에는 삼성전자, 앱이 그 종목으로 계산하지 못하는 날 (표시가 붙음 · 빈 베타나 변동성) 은 위험 숫자 · 52주
+    # 범위 · 기업분석의 연 변동성과 52주 위치가 다 있는 다른 내장 종목으로 봐요 (pick_plain — 표시가 붙은 회사는 고르지 않아요)
     cby = {c.get("t"): c for c in f["corp.json"]["companies"]}
 
     def corp_shows(s):
         c = cby.get(s.get("t"))
         return isinstance(c, dict) and not px_bad(c) and all(_num(c.get(k)) for k in ("vol", "hi", "lo"))
-    C, _ = pick_plain(R, S, {s.get("t"): s for s in f["data.json"]["stocks"]}, need=("hi", "lo"), also=corp_shows,
-                      also_why="기업분석의 연 변동성 · 52주 주가 위치에 쓸 숫자가 없음")
+    C, _ = pick_plain(R, S, {s.get("t"): s for s in f["data.json"]["stocks"]}, need=("hi", "lo"), also=corp_shows)
     hold = [{"t": C, "mw": 300}]
     slots = [("spx", "주가 기록 시험", {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "holdings": hold})]
     srv, ctx, page, base = R.open(build_site(f), local=slot_local(slots))
