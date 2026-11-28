@@ -44,6 +44,20 @@ a new totals line (draft in the PR). One question to Jack: should a failed recei
 record fail the publish? **Next: 무상증자 (Jack, 11-27: "the next PR right after #186")**; RUNBOOK § Korean stock splits says where
 it plugs in.
 
+**Screen check and `pxBad` built-ins (#200, branch `claude/smoke-pxbad`, 2026-11-28; tests only):** Track 2 audit 5.1, Jack's
+11-27 answer 7 ("Yes, under the standing rule"). `tests/smoke_app.py --data` (the third pre-publish screen check) counted a
+built-in stock with a blank beta or volatility as an "example price" and expected the 예시 가격 notice, but since #128 the app shows
+none for a stock marked `pxBad` with today's price: one such mark on any of the 42 Korean built-ins other than 삼성전자 would have
+held everyone's publish (none so far: on the 11-28 publish, pxDate 11-27, 18 stocks carry a mark, the first at rank 629 by market
+cap; the Korean built-ins rank up to 216). `example_price_stocks` now follows `mergeStocks` exactly (proved against the app's code
+by node in `tests/test_screen_check.py`); the limit of 3 built-ins with blank values keeps main's count (`example_cap_stocks`:
+marked ones count, so 4 or more at once still stop the publish), and 1–3 marked ones are named in the run (`!! 알림`). The B안 scene
+swaps any of its four stocks the app can't use today (`pick_ready`: never looser than the app's rule, next Korean common stock by
+market cap, 3+ sectors, `!! 알림`) and notes loudly, never failing, when its premise is not met that day (portfolio volatility on
+screen not above the profile's 24% ceiling). **Still open:** a mark on 005930 itself fails about a dozen scenes that hold 삼성전자 as
+their ordinary stock (on an 11-27 copy with the mark: main 127 / 166); fixing those scenes the same way is a follow-up for Jack's
+queue (RUNBOOK, screen check).
+
 **v19.6b switch-on (#196, branch `claude/v19.6b-switch-on`, 2026-11-28; live once it merges and deploys):** the parts #168 shipped off.
 공시 보기 on every 확인 필요 card (`routes.dartFilingUrl`: that one filing in DART's viewer by its exact receipt number, else no button;
 new tab, noopener; nothing fetched). The 임원 · 주요주주 지분 변동 cards on 오늘 볼 것: held and watched stocks, filed in the last 7
