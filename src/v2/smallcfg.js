@@ -9,8 +9,8 @@
 //                  (company.js divSmallView · the screens check both). 관심 종목 follows this switch too (Jack, 2026-11-27, answer 14:
 //                  "Yes, use the 소액주주 yield where it exists (관심 종목 배당수익률 condition), labelled as such."): its 배당수익률
 //                  condition reads the 소액주주 yield where the all-holder yield is blank and the company page would show it, labelled
-//                  on the chip, in the condition sheet and on 홈's 관심 종목 조건 row, with the line once under the card (watch.js
-//                  watchSmall). 종목 순위, 내 기준으로 찾기 and plans keep the all-shareholder yield (dyt) whatever this says. 예전 뱁새
+//                  on the chip, in the condition sheet and on 홈's 관심 종목 조건 row, with the line once under the card and once
+//                  under the sheet's 배당수익률 field (watch.js watchSmall). 종목 순위, 내 기준으로 찾기 and plans keep the all-shareholder yield (dyt) whatever this says. 예전 뱁새
 //                  shows no label (#183 review: its 배당수익률 is the report's own yield, which nobody checked to be the 소액주주 rate).
 // An object, so the tests can build both states from one bundle; the app never writes to it.
 export const SMALL_YIELD = { on: false };

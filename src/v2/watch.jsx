@@ -4,8 +4,9 @@
 //               green with a check; blank: "정보 없음" and, under the card, the company page's own line for why it is blank;
 //               stale data: the values beside the stale date line, never a check. No 뱁이 (numbers); the empty state is its line.
 //               A 소액주주 yield (watch.js watchSmall: switch smallcfg.js and both lines set; Jack 2026-11-27, answer 14) reads
-//               "지금 {y} · {C.co.div.smallBasis}" on its chip, in the sheet and on 홈's row, and the card shows
-//               C.co.div.smallLine once, where the blank-value lines go (the company page puts it in the hidden-yield line's place).
+//               "지금 {y} · {C.co.div.smallBasis}" on its chip, in the sheet and on 홈's row; the card shows C.co.div.smallLine
+//               once, where the blank-value lines go (the company page puts it in the hidden-yield line's place), and the sheet
+//               once under the 배당수익률 field. 홈's row is a one-line notice whose tap opens the card: the label only there.
 // WatchSection  the 종목 tab's 관심 종목 section (at the top, only when the list is not empty) with 전체 보기 ›.
 // WatchButton   the company page: 관심 종목에 추가 / 관심 종목에서 빼기 (and the 30-stock line when the list is full).
 // CondSheet     the conditions of one stock (no board: its hint, labels and bad-number line are Jack's of 2026-11-19, Q15).
@@ -215,6 +216,8 @@ export function CondSheet({ open, store, setStoreData, onClose }) {
               {/* a US ETF or fund (Jack, 2026-11-27, answer 12): its PBR is never shown (fcur.js fundPbrOf), so the PBR field reads
                   정보 없음 (empty) or a 정보 없음 chip (typed); his line under it, once in the sheet (#203 reviews) */}
               {k === "pbrBelow" && <FundPbrNote s={open.s} style={{ marginTop: SPACE(1) }} />}
+              {/* a 소액주주 yield (watch.js watchSmall; #206 review S2): the card's line, once, under the 배당수익률 field */}
+              {small && C.co.div.smallLine && <Note data-ui-v2="div-small" style={{ marginTop: SPACE(1) }}>{C.co.div.smallLine}</Note>}
               {Number.isNaN(v) && <Note tone="watch" data-ui-v2="watch-bad">{W().form.bad}</Note>}
             </div>
           );

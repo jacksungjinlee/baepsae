@@ -17120,7 +17120,7 @@ def scene_watch_small(R, files, width):
     """관심 종목의 배당수익률 조건과 소액주주 배당수익률 (Jack 2026-11-27, answer 14: "Yes, use the 소액주주 yield where it exists (관심 종목
     배당수익률 condition), labelled as such."). 켠 빌드 (스위치와 두 줄의 제안을 넣은 임시 빌드, 커밋하지 않아요): 배당수익률이 비고
     소액주주 배당수익률이 있는 SK하이닉스의 칩은 '배당수익률 1% 이상 · 지금 {y} · 소액주주 기준' (맞음 · data-small) · 카드 밑에 그 줄 한 번 ·
-    '회사가 공시한 … 비워 두었어요' 줄 없음 · 조건 시트의 칩도 같은 이름표 · 홈의 관심 종목 조건 줄은 '… 지금 {y} · 소액주주 기준이에요.'
+    '회사가 공시한 … 비워 두었어요' 줄 없음 · 조건 시트의 칩도 같은 이름표, 배당수익률 칸 밑에 그 줄 한 번 · 홈의 관심 종목 조건 줄은 '… 지금 {y} · 소액주주 기준이에요.'
     (이름표만, 줄 없음) · 배당수익률이 보이는 KB금융은 소액주주 숫자가 있어도 2.8% 만 · 현대차는 그대로 그 이유 줄. 켠 빌드의 화면은 승인 전
     제안이라 '보이는 한국어' 출처 검사에 모으지 않아요. 커밋한 빌드: 같은 데이터에서 SK하이닉스는 오늘처럼 '정보 없음' 과 dataHidden 줄 ·
     이름표 · 그 줄 · data-small 없음 · 홈에 SK하이닉스 줄 없음. 12px · 가로 스크롤 없음 · 뱁이 없음."""
@@ -17196,15 +17196,20 @@ def scene_watch_small(R, files, width):
             sh = page.locator('[data-ui-v2="watch-sheet"]')
             sh.wait_for(state="visible")
             prev = sh.locator('[data-ui-v2="watch-field"][data-k="dyAtLeast"] [data-ui-v2="watch-preview"]').inner_text().replace("\n", "")
+            dy_field = sh.locator('[data-ui-v2="watch-field"][data-k="dyAtLeast"]')
             if on:
                 assert prev == "배당수익률 1% 이상· " + fillp(W_["now"], now=f"{y_text} · {P['smallBasis']}"), prev
-                assert P["smallLine"] not in sh.inner_text()
+                # the card's line, once, under the 배당수익률 field (#206 review S2, as the fund line sits under PBR)
+                line = dy_field.locator('[data-ui-v2="div-small"]')
+                assert line.count() == 1 and line.inner_text() == P["smallLine"] and sh.inner_text().count(P["smallLine"]) == 1
+                assert line.bounding_box()["y"] > dy_field.locator('[data-ui-v2="watch-preview"]').bounding_box()["y"]
             else:
                 assert prev == "배당수익률 1% 이상· " + W_["blank"] and P["smallBasis"] not in sh.inner_text(), prev
+                assert sh.locator('[data-ui-v2="div-small"]').count() == 0
             common(page, f"조건 시트 · {tag}", collect=not on)
             page.keyboard.press("Escape")
             sh.wait_for(state="detached")
-        R.check(page, S, f"{tag}: 조건 시트의 칩", sheet)
+        R.check(page, S, f"{tag}: 조건 시트의 칩" + (" · 배당수익률 칸 밑의 그 줄" if on else ""), sheet)
 
         def home():
             got = home_rows(page)

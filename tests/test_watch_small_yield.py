@@ -143,7 +143,8 @@ def data_sets():
 @pytest.mark.parametrize("name,folder", data_sets(), ids=[n for n, _ in data_sets()])
 def test_off_or_without_both_lines_everything_is_as_on_main_for_every_stock(name, folder):
     """Switch off (shipped), on with either line null, or the lines without the switch: today's watch.js / watch.jsx give exactly
-    main's values, condition states (fresh and stale), marks, 홈 rows and their lines, sheets, screens and console lines for every
+    main's values, condition states (fresh and stale), marks, 홈 rows and their lines, sheets (typed, and with the 배당수익률 field empty for
+    TPC and stocks whose yield shows: #206 review S1), screens and console lines for every
     stock in the file (plus a TPC로보틱스-shaped row, so a 소액주주 candidate is always there; the screens hold every Korean stock with a
     blank all-holder yield, a reason mark or a 소액주주 field, and 300 others). Control: on with both lines, the only
     values that change are the 배당수익률 of the stocks divSmallView gives a 소액주주 yield, and the screen shows it."""
@@ -163,6 +164,9 @@ def test_off_or_without_both_lines_everything_is_as_on_main_for_every_stock(name
       const odd = (s) => s.cls === 'kr' && (s.dyt == null || s.dvLine != null || s.dytSmall != null || s.dpsSmall != null);
       const shown = new Set([...stocks.filter(odd), ...stocks.filter((s) => !odd(s)).slice(0, 300)].map((s) => s.t));
       const onScreen = Object.fromEntries(Object.entries(watch).filter(([t]) => shown.has(t)));
+      // sheets with the 배당수익률 field empty (#206 review S1: its "지금 …" line): TPC, 30 Korean and 10 US stocks whose yield shows
+      const yShown = [...stocks.filter((s) => s.cls === 'kr' && E.dytOf(s) != null).slice(0, 30), ...stocks.filter((s) => s.cls === 'us' && E.okDy(s) != null).slice(0, 10)];
+      const emptyDy = Object.fromEntries(['048770', ...yShown.map((s) => s.t)].map((t, i) => [t, {{ at: '2026-11-01', ts: i + 1, conds: [{{ k: 'pxBelow', v: 1e12 }}] }}]));
       const snap = (W, X, rowsOf) => {{
         logs.length = 0;
         const vals = stocks.map((s) => KINDS.map((k) => W.watchValue(s, k)));
@@ -172,7 +176,8 @@ def test_off_or_without_both_lines_everything_is_as_on_main_for_every_stock(name
         const lines = hits.map((x) => W.hitText(x.k, x.v, x.val, x.s.cls === 'us'));
         W.watchGuardNote({{ watch }}, loadOf(D, CO, true));
         const html = {{ screen: rowsOf.screen(fresh, onScreen), staleScreen: rowsOf.screen(stale, onScreen), rows: rows(X, hits, fresh),
-          sheets: someSmall.map((t) => sheet(X, fresh, watch, t)) }};
+          sheets: someSmall.map((t) => sheet(X, fresh, watch, t)), emptySheets: Object.keys(emptyDy).map((t) => sheet(X, fresh, emptyDy, t)),
+          typedSheets: yShown.slice(0, 10).map((s) => sheet(X, fresh, watch, s.t)) }};
         // the watch list's own console lines (other modules say some things once per run: not this change's)
         const said = logs.filter((m) => m.startsWith('[v2] watch list'));
         return JSON.stringify({{ vals, st, hits: hits.map(hitRow), marks, lines, said, html }});
@@ -191,12 +196,12 @@ def test_off_or_without_both_lines_everything_is_as_on_main_for_every_stock(name
       const on = screen(fresh, {{ '048770': watch['048770'] }});
       set(false, null, null);
       res.control = {{ changed, want, label: text(on).includes('지금 0.2% · ' + P.smallBasis), line: text(on).split(P.smallLine).length - 1,
-        n: stocks.length, small: someSmall.length }};
+        n: stocks.length, small: someSmall.length, yShown: yShown.length }};
       out = res;""")
     for k in ("off", "onNoBasis", "onNoLine", "wordsOff", "onNoWords"):
         assert got[k]["same"] is True and got[k]["len"] > 10000, (name, k, got[k])
     c = got["control"]
-    assert c["n"] > 100 and c["small"] >= 1, c
+    assert c["n"] > 100 and c["small"] >= 1 and c["yShown"] >= 10, c
     assert c["changed"] == c["want"] and "048770|dyAtLeast" in c["want"], c
     assert c["label"] is True and c["line"] == 1, c
 
@@ -229,9 +234,13 @@ def test_on_a_tpc_shaped_row_reads_the_small_holder_yield_rounded_judged_and_lab
       res.card2 = { text: text(card('900001')), line: (card('900001').match(/data-ui-v2="div-small"/g) || []).length };
       res.lineTotal = text(html).split(P.smallLine).length - 1;
       const sh = sheet(Wx, L, watch, '048770');
-      res.sheet = { text: text(sh), small: (sh.match(/data-small="1"/g) || []).length };
+      const dyField = (html) => html.split('data-ui-v2="watch-field"').find((x) => x.includes('data-k="dyAtLeast"')) || '';
+      res.sheet = { text: text(sh), small: (sh.match(/data-small="1"/g) || []).length, line: (sh.match(/data-ui-v2="div-small"/g) || []).length,
+        lineInDy: (dyField(sh).match(/data-ui-v2="div-small"/g) || []).length };
       const empty = { '048770': { at: '2026-11-02', conds: [{ k: 'pxBelow', v: 5000 }] } };
-      res.sheetEmpty = text(sheet(Wx, L, empty, '048770'));
+      const she = sheet(Wx, L, empty, '048770');
+      res.sheetEmpty = text(she);
+      res.sheetEmptyLine = [(she.match(/data-ui-v2="div-small"/g) || []).length, (dyField(she).match(/data-ui-v2="div-small"/g) || []).length];
       logs.length = 0; Wt.watchGuardNote({ watch }, loadOf(D, { companies: [] }, true)); res.logs = [...logs];
       set(false, null, null);
       out = res;""")
@@ -254,9 +263,11 @@ def test_on_a_tpc_shaped_row_reads_the_small_holder_yield_rounded_judged_and_lab
     assert got["card"]["line"] == 1 and got["card"]["smallChips"] == 1 and got["card"]["hidden"] is False
     assert got["card"]["text"].count(LINE) == 1 and "주가 5,000원 이하" in got["card"]["text"]
     assert f"지금 0.3% · {B}" in got["card2"]["text"] and got["card2"]["line"] == 1 and got["lineTotal"] == 2
-    # the sheet: the preview chip labelled; an empty field's today's value labelled too; no line in the sheet
-    assert f"지금 0.2% · {B}" in got["sheet"]["text"] and got["sheet"]["small"] == 1 and LINE not in got["sheet"]["text"]
-    assert f"지금 0.2% · {B}" in got["sheetEmpty"], got["sheetEmpty"]
+    # the sheet: the preview chip labelled; an empty field's today's value labelled too; the line once, under the 배당수익률 field
+    # (#206 review S2, as the fund line sits under PBR)
+    assert f"지금 0.2% · {B}" in got["sheet"]["text"] and got["sheet"]["small"] == 1, got["sheet"]
+    assert got["sheet"]["text"].count(LINE) == 1 and got["sheet"]["line"] == 1 and got["sheet"]["lineInDy"] == 1, got["sheet"]
+    assert f"지금 0.2% · {B}" in got["sheetEmpty"] and got["sheetEmpty"].count(LINE) == 1 and got["sheetEmptyLine"] == [1, 1], got["sheetEmpty"]
     assert got["logs"] == ["[v2] watch list: dividend yield on the small-shareholder basis (dytSmall, labelled) for 2 stock(s): 900001 (0.25%), 048770 (0.23%)"], got["logs"]
 
 
@@ -289,6 +300,11 @@ def test_never_beside_an_all_holder_yield_never_us_never_without_exact_data_and_
       // a stock shown at an earlier close than its market's (pxd): shown, never judged, as the all-holder yield
       res.pxd = Wt.condState(L, L.byT.get('900007'), { k: 'dyAtLeast', v: 0.1 }, true);
       res.hits = Wt.watchHits({ watch }, L).map((x) => [x.t, x.small || false]);
+      // 900003's sheet (#206 review S1): the 배당수익률 field empty ("지금 1.5%") and typed (the chip): never the label or the line
+      const pxOnly = { '900003': { at: '2026-11-01', conds: [{ k: 'pxBelow', v: 5000 }] } };
+      const typed = { '900003': { at: '2026-11-01', conds: [{ k: 'dyAtLeast', v: 1 }] } };
+      res.shownSheets = [sheet(Wx, L, pxOnly, '900003'), sheet(Wx, L, typed, '900003')].map((x) => ({ text: text(x),
+        small: /data-small|div-small/.test(x) }));
       // an older file (no divCheck): blank, as today's Korean yield; the screen keeps 정보 없음 and no label or line
       E.setDataShape({});
       res.older = [Wt.watchValue(L.byT.get('048770'), 'dyAtLeast'), Wt.condState(L, L.byT.get('048770'), { k: 'dyAtLeast', v: 0.1 }, true).state];
@@ -298,6 +314,11 @@ def test_never_beside_an_all_holder_yield_never_us_never_without_exact_data_and_
       set(false, null, null);
       out = res;""")
     assert got["shown"] == [1.5, False] and got["shownLabel"] is False, got["shown"]       # the all-holder yield shows: never dytSmall
+    P = proposals()
+    empty_, typed_ = got["shownSheets"]
+    assert "지금 1.5%" in empty_["text"] and "배당수익률 1% 이상\n· 지금 1.5%" in typed_["text"], got["shownSheets"]
+    for x in got["shownSheets"]:
+        assert P["smallBasis"] not in x["text"] and P["smallLine"] not in x["text"] and x["small"] is False, x
     assert got["zero"] == [0, False] and got["us"] == [None, False]
     assert got["bad"] == [None, False] and got["mark2"] == [None, False]                    # numbers that disagree · another mark
     assert got["lines"] == 2, got["lines"]

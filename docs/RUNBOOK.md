@@ -1982,9 +1982,10 @@ dvLine 3 or none) and both lines are set (`watchSmall`); rounded as the chip sho
 marked (`hitAt`) and dated exactly like the all-holder yield: met / not on fresh data, shown but never judged on stale data or an
 earlier close (`pxd`), blank without exact data. `condState` and `watchHits` add `small: true` only then, and the screens label it
 "{y} · {smallBasis}": the chip ("지금 0.2% · 소액주주 기준"), the condition sheet, and 홈's 관심 종목 조건 row ("… 조건에 맞아요. 지금 0.2% ·
-소액주주 기준이에요."; the label, no line); the card shows `smallLine` once where its blank-value reason lines go (`div-small`), instead
-of the dataHidden line. The console names those stocks once per load ("[v2] watch list: dividend yield on the small-shareholder
-basis (dytSmall, labelled) …"). Switch off, or either line null: identical to main 5bcea90 for every stock
+소액주주 기준이에요."; the label only: a one-line notice whose tap opens the card); the card shows `smallLine` once where its
+blank-value reason lines go (`div-small`), instead of the dataHidden line, and the condition sheet once under the 배당수익률 field (as
+#203's fund line sits under PBR). The console names those stocks once per load ("[v2] watch list: dividend yield on the small-shareholder
+basis (dytSmall, labelled) …"). Switch off, or either line null: identical to main 5d12ef1 for every stock
 (`tests/test_watch_small_yield.py`, against a copy of main's watch.js · watch.jsx in `tests/fixtures/watch_before_small_5d12ef1`;
 `BAEPSAE_WATCH_DATA=DIR` adds a data copy), and smoke_v2 `scene_watch_small` (390 · 1280: a throwaway build with the switch on and the
 proposed lines, and the shipped build). **When the switch-on PR flips it:** `tests/test_v196c_watch.py`
