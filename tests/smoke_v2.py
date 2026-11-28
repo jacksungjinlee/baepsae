@@ -6891,6 +6891,19 @@ SEEN_JS = ("() => { try { const d = JSON.parse(localStorage.getItem('baepsae2.v1
            " catch (e) { return null; } }")
 
 
+def seen_saved(page, what):
+    """Leaving the guide's 기준 step by a way the overlay does not cover (다음, 이전 단계, 다시 시작) ends the guide one render
+    late: the bubble goes at once, with the step it sits on, and only then app.jsx's effect (offStep -> endGuide(true))
+    writes '본 적 있음' (guideSeen) into the store. Reading the store as soon as the bubble is gone can come before that
+    write (2026-11-28: v19.3c 안내 밖 단계 이동 on PR #191's ci; measured here about 5 ms after the bubble, 30-40 ms
+    with the browser 10x slower). Waits up to WAIT for the write; else fails saying it never came. (The bubble's own buttons and
+    Esc end the guide and write the flag in the same render: they need no wait.)"""
+    try:
+        page.wait_for_function(f"() => ({SEEN_JS})() === '1'", timeout=WAIT)
+    except PWTimeout:
+        raise AssertionError(f"{what}: the guide ended, but '본 적 있음' (guideSeen) was not in the store after {WAIT // 1000} s") from None
+
+
 def forget_guide(page):
     """처음 안내를 본 표시를 저장 기록에서 지우고 페이지를 다시 열어요 (앱이 기억한 표시도 새로 읽게)."""
     page.evaluate("() => { const k = 'baepsae2.v1'; try { const d = JSON.parse(localStorage.getItem(k)); if (d) { delete d.guideSeen;"
@@ -7392,9 +7405,11 @@ def scene_v193c_offstep(R, files, width=390):
         page.locator('[data-card="div"] [data-ui-v2="card-inc"]').click()
         bubble(page, 2).click()
         bubble(page, 3)
+        assert seen() is None, "다음 (3/3): '본 적 있음' is already in the store before the click"
         page.evaluate("() => document.querySelector('[data-ui-v2=\"action-bar\"] button:not([disabled])').click()")   # 3/3 에서 아래 띠의 다음
         see(page, C["build"]["s3"]["title"])
         guide_gone(page)
+        seen_saved(page, "다음 (3/3)")                                      # written one render after the bubble goes
         assert seen() == "1"
         page.locator('[data-ui-v2="app-bar"]').get_by_role("button", name=C["build"]["prevStep"]).click()
         see(page, C["build"]["s1"]["title"])
@@ -7403,9 +7418,11 @@ def scene_v193c_offstep(R, files, width=390):
         for name in (C["build"]["restart"], C["build"]["prevStep"]):        # 1/3 에서 다시 시작 · 이전 단계 (말풍선 밖의 단추)
             unseen()
             guide_step1(page, False)
+            assert seen() is None, f"{name}: '본 적 있음' is already in the store before the click"
             page.evaluate("(n) => [...document.querySelectorAll('[data-ui-v2=\"app-bar\"] button, main button')].find((b) => (b.getAttribute('aria-label') || b.textContent.trim()) === n).click()", name)
             see(page, C["build"]["s0"]["title"])
             guide_gone(page)
+            seen_saved(page, name)
             assert seen() == "1", name
             page.locator('[data-deck="income"]').click()                   # 템플릿을 골라도 2/3 이 저절로 뜨지 않아요
             see(page, C["build"]["s1"]["title"])
@@ -13894,6 +13911,20 @@ def chips_of(page):
       [...c.querySelectorAll('[data-ui-v2="watch-chip"]')].map((x) => [x.dataset.k, x.dataset.state, x.textContent])]))""")
 
 
+def watch_cards_shown(page, ts):
+    """관심 종목 (#stocks/watch) draws its title and sub line at once, and its cards only once today's data has loaded
+    (watch.jsx: `ok && order.map(...)`, all in one render). Opened straight at #stocks/watch, the screen can be visible
+    before data.json is in, and chips_of then reads no card (2026-11-28: KeyError '005380' on PR #179's branch, a full run
+    under load). Waits up to WAIT until every code in ts has its card; else fails naming the codes with no card."""
+    try:
+        page.wait_for_function("(ts) => ts.every((t) => !!document.querySelector(`[data-ui-v2=\"watch-card\"][data-t=\"${t}\"]`))",
+                               arg=list(ts), timeout=WAIT)
+    except PWTimeout:
+        have = page.locator('[data-ui-v2="watch-card"]').evaluate_all("(cs) => cs.map((c) => c.dataset.t)")
+        raise AssertionError(f"관심 종목: no card after {WAIT // 1000} s for {[t for t in ts if t not in have]} (cards shown: {have}); "
+                             "the data did not load, or those cards are missing") from None
+
+
 def scene_v196c(R, files, width, dark=False, deck=False):
     """v19.6c 관심 종목 (390 · 320 · 1280 · 어두운 화면): 종목 탭 맨 위 관심 종목 칸(목록이 있을 때만, 5개 · 전체 보기 ›) → 관심 종목 화면
     (#stocks/watch: 제목 · + 추가 · 날짜 줄 · 설명 줄 · 카드 = 마크 · 이름 · 가격 · 오늘 · 조건 칩 · 종 모양 단추 · 아래 줄) · 맞은 조건은 초록 칩과
@@ -14352,6 +14383,19 @@ def tax_screen_common(page, width, today_iso):
     no_hscroll(page, width)
 
 
+def tax_data_in(page):
+    """연말에 확인할 숫자 with today's data in. Its link on 내 수익 shows whatever the data (returns.jsx: it reads the user's own
+    records), so the screen can open before data.json has loaded: its head shows at once, its cards and the footer line only
+    once the data is in (tax.jsx: g · dv · ls and the footer all need load ok, drawn in one render). Counting the cards
+    before that counts none (2026-11-28: v19.6f 상태 div-nofx, a full run under load). Waits up to WAIT for the footer line;
+    else fails saying the data never came in. After it, a card that is absent is absent with the data in."""
+    try:
+        page.locator('[data-ui-v2="tax-footer"]').wait_for(state="visible", timeout=WAIT)
+    except PWTimeout:
+        raise AssertionError(f"연말에 확인할 숫자: no footer line after {WAIT // 1000} s, so the screen never had today's data "
+                             "(its cards are not drawn without it)") from None
+
+
 # ── say-why N-01 · N-02 (2026-11-22): 숨긴 한국 배당수익률의 줄이 관심 종목 · 두 종목 비교에도 (회사 페이지와 같은 줄) ──
 DIV_LINE_KEYS = {"005380": "rightsHidden", "000660": "dataHidden", "035420": "missingHidden"}     # dvLine 2 · 3 · 4
 DIV_LINE_UI = {"rightsHidden": "div-rights-hidden", "dataHidden": "div-data-hidden", "missingHidden": "div-missing-hidden"}
@@ -14424,6 +14468,7 @@ def scene_div_lines(R, files, width, dark=False):
 
     def watch_lines():
         page.locator('[data-ui-v2="watch"]').wait_for(state="visible")
+        watch_cards_shown(page, list(watch))                     # the cards come with the data, after the screen itself
         card = lambda t: page.locator(f'[data-ui-v2="watch-card"][data-t="{t}"]')     # noqa: E731
         ch = chips_of(page)
         sub = page.locator('[data-ui-v2="watch-sub"]').evaluate("(e) => getComputedStyle(e).color")
@@ -14487,6 +14532,126 @@ def scene_div_lines(R, files, width, dark=False):
             view_shot(page.locator('[data-cmp-row="dy"]'), f"compare-{hold_t}")
         assert not R.errors, R.errors[:2]
     R.check(page, S, "두 종목 비교: 숨긴 배당수익률은 – 와 회사 페이지의 그 줄 (후보 3 · 가진 종목 2 · 4) · 보이는 배당수익률은 숫자만", compare_lines)
+    ctx.close()
+    srv.shutdown()
+
+
+# ── 2026-11-23: 파이프라인이 비운 보고서의 주당 배당 (DART 배당 표 안의 어긋남 · data.json dps 없음 + dvLine) ──
+# A: 총액은 있는데 보통주 주당 칸이 0 · '-' (proofSub nodps · 줄 4): 보통주가 받았는지 몰라요 → 자료가 없어요 + 줄 4 (배당을 줘요 아님)
+# B: 주당 칸의 값이 주당 금액이 아님 (와이엔텍 꼴 · proofSub div · 줄 3): 회사는 배당해요 → 배당을 줘요 + 줄 3 · 총액으로 센 배당성향은 그대로
+DIV_BLANK = {"066570": ("missingHidden", 4), "033780": ("dataHidden", 3)}           # fixture 의 배당 회사 둘 (오늘 데이터의 종목이 아니에요)
+
+
+def div_blank_files(files):
+    """fixture 위에: divCheck 가 있는 파일 · 두 배당 회사의 올해 주당 배당을 파이프라인처럼 비우고 (dps 없음 · dps3[0] 빈 칸 · 확인한 해 없음) 표시
+    dvLine 을 달아요 · 그 회사의 corp.json 총액(cash3 · 억원)."""
+    f = daily_files(files)
+    d = f["data.json"]
+    d["divCheck"] = {}
+    by = {x["t"]: x for x in d["stocks"]}
+    cb = {x["t"]: x for x in f["corp.json"]["companies"]}
+    for t, (_, line) in DIV_BLANK.items():
+        s = by[t]
+        assert (s.get("dps") or 0) > 0 and isinstance(s.get("dps3"), list), f"{t}: the fixture has no dividend to blank"
+        s.pop("dps")
+        s.update(dps3=[None] + list(s["dps3"][1:]), dps3a=[None] * 3, dpsF=[None] * 3, divSt="nd", dvLine=line, fy=2025)
+        s.pop("dyt", None), s.pop("dz", None)
+        cb[t].update(cash3=[100.0, 90.0, 80.0], fy=2025, dps3a=[None] * 3, dpsF=[None] * 3, divSt="nd")
+        cb[t].pop("dps", None), cb[t].pop("dyt", None), cb[t].pop("dz", None)
+    return f
+
+
+def scene_div_blank(R, files, width, dark=False):
+    """2026-11-23 (DART 배당 표 안의 어긋남): 파이프라인이 보고서의 주당 배당을 비운 두 회사 — 회사 페이지 (요약의 배당 칸 · 배당 탭) · 관심 종목 ·
+    두 종목 비교가 승인된 줄을 숫자 자리에: A (줄 4) 는 '자료가 없어요' (배당을 줘요 · 배당을 주지 않았어요가 아님 · 배당성향 없음), B (줄 3) 는
+    '배당을 줘요' (총액으로 센 배당성향은 그대로). 12px · 가로 스크롤 없음 · 뱁이 없음 · 화면 모드 · 오류 없음."""
+    S = f"비운 주당 배당의 줄 {width}{' 어두운' if dark else ''}"
+    wide = width >= 1024
+    data = div_blank_files(files)
+    by = {x["t"]: x for x in data["data.json"]["stocks"]}
+    pxd = data["data.json"]["pxDate"]
+    CD, T = C["co"]["div"], CO["tiles"]
+    (a_t, (a_key, _)), (b_t, (b_key, _)) = DIV_BLANK.items()
+    dy = [{"k": "dyAtLeast", "v": 1}]
+    watch = {a_t: {"at": "2026-11-05", "conds": dy}, b_t: {"at": "2026-11-04", "conds": dy}}
+    hold = {"t": b_t, "nk": by[b_t]["nk"], "cls": "kr", "ind": by[b_t].get("ind"), "kind": "core", "target": 1.0, "setAt": "2026-10-01",
+            "plannedQty": 10, "planPx": by[b_t]["price"], "rules": [{"id": "audit", "kind": "sell", "check": "pending"}]}
+    deck = {"id": "dblank", "name": "모양 포트폴리오", "createdAt": "2026-10-01", "planFx": 1300,
+            "settings": {"points": {"value": 3}, "strict": "loose", "maxPct": 100, "amountMan": 1000}, "holdings": [hold], "purchases": []}
+    store = {"v": 2, "decks": [deck], "guideSeen": pxd, "watch": watch}
+    screen = pc_device(width) if wide else {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2}
+    srv, ctx, page, base = R.open(build_site(data), width, init=v196c_seed(store), path="/app.html?dev=1#stocks",
+                                  device={**screen, "color_scheme": "dark" if dark else "light"})
+
+    def check_page(where):
+        floor_ok(page, where)
+        no_hscroll(page, width)
+        assert page.locator(MASCOT_IN_MAIN).count() == 0, f"{where}: 뱁이가 있어요 (숫자가 있는 화면)"
+        assert page.evaluate("() => document.documentElement.dataset.theme || ''") in (("dark",) if dark else ("light", "")), where
+        R.collect(page)
+        if R.shots:
+            os.makedirs(R.shots, exist_ok=True)
+            page.screenshot(path=os.path.join(R.shots, f"divblank-{where}-{width}{'-dark' if dark else ''}.png"), full_page=True)
+
+    def open_co(code):
+        co_hash(page, f"#stocks/{code}")
+        page.wait_for_function("(t) => { const e = document.querySelector('[data-ui-v2=\"co-head\"]'); return !!e && e.dataset.t === t; }", arg=code)
+
+    def tile():
+        t = page.locator('[data-ui-v2="co-tile"][data-topic="div"]')
+        t.first.wait_for(state="visible")
+        num = t.locator('[data-ui-v2="tile-number"]')
+        return t.get_attribute("data-rule"), t.locator('[data-ui-v2="tile-phrase"]').inner_text(), num.inner_text() if num.count() else None, t
+
+    def company():
+        wait_ready(page)
+        for code, key, rule, phrase in ((a_t, a_key, "na", T["na"]), (b_t, b_key, "pays", T["div"]["pays"])):
+            open_co(code)
+            got_rule, got_phrase, num, el = tile()
+            assert (got_rule, got_phrase, num) == (rule, phrase, None), (code, got_rule, got_phrase, num)
+            note = el.locator(f'[data-ui-v2="{DIV_LINE_UI[key]}"]')
+            assert note.count() == 1 and note.inner_text() == CD[key], (code, note.count())
+            check_page(f"{code}-summary")
+            co_open_tab(page, code, "div", "kr")
+            dv = page.locator('[data-ui-v2="co-div"]')
+            assert dv.get_attribute("data-rule") == rule, (code, dv.get_attribute("data-rule"))
+            head = page.locator('[data-ui-v2="co-div-head"]')
+            assert head.locator("h2, h3").first.inner_text() == phrase, (code, head.inner_text())
+            tn = page.locator(f'[data-ui-v2="co-{DIV_LINE_UI[key]}"]')
+            assert tn.count() == 1 and tn.inner_text() == CD[key], (code, tn.count())
+            text = page.locator('[data-ui-v2="co-div"]').inner_text()
+            assert CO["div"]["head"]["none"] not in text and page.locator('[data-ui-v2="co-dps"], [data-ui-v2="co-million"]').count() == 0, code
+            # 배당성향은 총액 ÷ 순이익: 회사가 배당한 B 만 (A 는 보통주가 받았는지 몰라요)
+            assert page.locator('[data-ui-v2="co-payout"]').count() == (1 if code == b_t else 0), code
+            check_page(f"{code}-div")
+    R.check(page, S, "회사 페이지: A 는 '자료가 없어요' + 줄 4 · B 는 '배당을 줘요' + 줄 3 (요약 칸 · 배당 탭) · 배당을 주지 않았어요 없음", company)
+
+    def watch_lines():
+        page.goto(base + "/app.html?dev=1#stocks/watch", wait_until="domcontentloaded")
+        page.locator('[data-ui-v2="watch"]').wait_for(state="visible")
+        for t in (a_t, b_t):            # the cards come only once the data has loaded (the list's frame shows before)
+            page.locator(f'[data-ui-v2="watch-card"][data-t="{t}"]').wait_for(state="visible")
+        ch = chips_of(page)
+        for t, key in ((a_t, a_key), (b_t, b_key)):
+            assert ch[t] == [["dyAtLeast", "blank", "배당수익률 1% 이상· " + C["watch"]["blank"]]], (t, ch[t])
+            card = page.locator(f'[data-ui-v2="watch-card"][data-t="{t}"]')
+            note = card.locator(f'[data-ui-v2="{DIV_LINE_UI[key]}"]')
+            assert note.count() == 1 and note.inner_text() == CD[key], (t, note.count())
+        check_page("watch")
+    R.check(page, S, "관심 종목: 배당수익률 조건은 '정보 없음' · 카드 밑에 그 회사의 줄 (A 4 · B 3)", watch_lines)
+
+    def compare_lines():
+        page.goto(base + f"/app.html?dev=1#portfolio/edit/dblank/compare/{a_t}", wait_until="domcontentloaded")
+        at(page, f"portfolio/edit/dblank/compare/{a_t}")
+        page.locator('[data-ui-v2="cmp-table"]').wait_for(state="visible")
+        for side, key in (("cand", a_key), ("hold", b_key)):
+            c = page.locator(f'[data-cmp-row="dy"] [data-side="{side}"]')
+            n = c.locator('[data-ui-v2="cmp-note"]')
+            assert (c.locator("span").first.inner_text(), n.inner_text() if n.count() else None) == ("–", CD[key]), side
+            assert c.get_attribute("data-blank") == DIV_LINE_UI[key] and c.get_attribute("data-y") == "", side
+        check_page("compare")
+        assert not R.errors, R.errors[:2]
+    R.check(page, S, "두 종목 비교: 두 칸 모두 '–' 와 그 회사의 줄 (후보 A 4 · 가진 종목 B 3)", compare_lines)
     ctx.close()
     srv.shutdown()
 
@@ -14764,6 +14929,7 @@ def scene_v196f_states(R, files, width=390):
             elif case == "div-nofx":
                 # a Korean dividend and a US one without a rate (Jack, 2026-11-19: M1): the link opens; the card names the US one
                 go_tax()
+                tax_data_in(page)                                                                  # the cards come with the data
                 assert page.locator('[data-ui-v2="tax-gain"]').count() == 0 and page.locator('[data-ui-v2="tax-loss"]').count() == 0
                 dc = page.locator('[data-ui-v2="tax-div"]')
                 # 84,600 ÷ 0.846 = 100,000원; KO $4.25 (환율 없음) 은 빠지고 M1 줄이 1건이라고 말해요
@@ -14773,6 +14939,7 @@ def scene_v196f_states(R, files, width=390):
                 assert any("1 US dividend(s) dated 2026 have no exchange rate: left out of the pre-tax sum (1 counted)" in m for m in logs), logs
             elif case == "kr-div":
                 go_tax()
+                tax_data_in(page)                                                                  # the same race as div-nofx
                 assert page.locator('[data-ui-v2="tax-gain"]').count() == 0 and page.locator('[data-ui-v2="tax-loss"]').count() == 0
                 dc = page.locator('[data-ui-v2="tax-div"]')
                 # 84,600 ÷ 0.846 = 100,000원
@@ -14864,6 +15031,7 @@ def scene_v196f_gaps(R, files, width=390):
             link.wait_for(state="visible")
             link.locator("button").click()
             tax_screen_common(page, width, today)
+            tax_data_in(page)                                                                      # the cards (and their console lines) come with the data
             said = [m for m in logs if m.startswith("[v2] tax: ")]
             lc, dc = page.locator('[data-ui-v2="tax-loss"]'), page.locator('[data-ui-v2="tax-div"]')
             if case in ("all-left", "mixed-left"):
@@ -16606,6 +16774,7 @@ def main():
                    lambda: scene_div_lines(R, files, 390), lambda: scene_div_lines(R, files, 390, dark=True),   # say-why N-01 · N-02: 숨긴 배당수익률의 줄
                    lambda: scene_div_lines(R, files, 1280), lambda: scene_div_lines(R, files, 1280, dark=True),
                    lambda: scene_div_lines(R, files, 320), lambda: scene_div_lines(R, files, 320, dark=True),   # 리뷰: 320 도
+                   lambda: scene_div_blank(R, files, 390), lambda: scene_div_blank(R, files, 1280, dark=True),  # 2026-11-23: 비운 주당 배당의 줄
                    lambda: scene_v196f(R, files, 390), lambda: scene_v196f(R, files, 320),
                    lambda: scene_v196f(R, files, 1280), lambda: scene_v196f(R, files, 390, dark=True),
                    lambda: scene_v196f(R, files, 1280, dark=True),                                          # v19.6f 연말에 확인할 숫자 (세 상태)

@@ -14,6 +14,7 @@ fetch_data.py 가 만든 네 파일을 검사해요. 하나라도 FAIL 이면 ex
   python validate_data.py --live --daum-limit 600 --dir DIR             # 손으로 같은 한도 (600초 이상만 받아요)
   BAEPSAE_DAUM_LIMIT_S=600 BAEPSAE_DAUM_REFUSE_SKIP=1 python validate_data.py --live --dir _site   # 코드 배포 — 다음이 아예 거절하면 경고로 건너뜀
   python validate_data.py --live --daum-limit 600 --daum-refuse-skip --dir DIR   # 손으로 같은 꼴 (Jack 2026-11-21 · PX_ALT_REFUSE_ENV 옆 설명)
+  (발행 · bootstrap 의 두 출처 확인에는 늘 600초 한도 — 넘으면 처음부터 한 번 더, 또 넘으면 실패 · Jack 2026-11-27 · PX_ALT_GATE_BUDGET_S 옆 설명)
 
 '최종본 날짜'는 fetch_data.py 를 쓰지 않고 이 파일의 코드로 따로 계산해요 (같은 실수를 같이 하지 않게).
 규칙: 오늘(KST) 이전, 시가총액 90% 이상, 마지막 커밋이 그날 KRX 정규장 마감 + 30분 이후 (보통 15:30 → 16:00 KST).
@@ -27,6 +28,7 @@ fetch_data.py 가 만든 네 파일을 검사해요. 하나라도 FAIL 이면 ex
 """
 import argparse
 import collections
+import contextvars
 import csv
 import datetime as dt
 import hashlib
@@ -121,8 +123,9 @@ PX_ALT_TOL = 0.01                         # 두 종가 차이 (원) — 부동�
 # 필수 7 + 표본 200, 동시 4)가 느렸던 것으로 보여요. 요청마다 시간 한도(20초 · 세 번)는 있었지만 확인 전체에는 없었어요 (작업 한도 80분만).
 # 배포의 관문만 (Jack 의 yes 는 배포만이에요): deploy.yml 의 관문 단계가 환경 변수 PX_ALT_LIMIT_ENV = 이 값을 줘요 (또는 손으로 --daum-limit 초).
 # 감시(watchdog.py)는 예전 그대로 한도 없이 불러요 — 감시는 관문이 실패할 때만 경보를 여는데, 경고로 바꾸면 느린 다음이 조용한 통과가 돼요
-# (멈추면 감시 job 의 30분 한도가 예전처럼 끝내요). 발행 관문(publish · bootstrap, 매일 실행)도 한도를 받지 않아요 — 발행을 거르는 검사를
-# 느슨하게 하는 일이라 Jack 의 yes 가 따로 필요해요. 이 값보다 짧은 한도는 받지 않아요 (더 자주 건너뛰어 느슨해져요 · _main).
+# (멈추면 감시 job 의 30분 한도가 예전처럼 끝내요). 발행 관문(publish · bootstrap, 매일 실행)은 이 한도와 건너뛰기를 받지 않아요 — 발행을
+# 거르는 검사를 느슨하게 하는 일이라서요. 발행 관문의 한도는 따로예요 (PX_ALT_GATE_BUDGET_S · 2026-11-27: 넘으면 한 번 더, 또 넘으면 실패 —
+# 건너뛰지 않아요). 이 값보다 짧은 한도는 받지 않아요 (더 자주 건너뛰어 느슨해져요 · _main).
 # 확인 전체에 600초 (fetch_data.KR_FB_PHASE_BUDGET_S 와 같은 꼴 · #151). 지나면 새 요청을 하지 않아요 (다시 묻기도) — 묻는 중인 요청은
 # 자기 시간 한도까지 (연결 20초 + 바이트 사이 20초 ≈ 40초 · DNS 찾기와 바이트를 아주 천천히 흘리는 서버는 이 한도 밖이에요 — 본 적은 없어요)
 # → 확인은 최악 약 600 + 40초 (약 10분 40초) 안에 끝나요. 일하는 스레드는 모두 끝난 뒤 돌아와요.
@@ -138,7 +141,8 @@ PX_ALT_REFUSE_ENV = "BAEPSAE_DAUM_REFUSE_SKIP"   # deploy.yml 관문 단계: 코
 # 시간 한도에 걸리지 않아 배포가 매번 멈춰요. 코드 배포에서만 (Jack 의 yes 는 코드 배포만이에요), 다음이 거절한다고 볼 수 있으면 더 묻지 않고
 # 한도에 걸렸을 때와 같이 크게 경고하고 건너뛰어요. 스위치는 따로예요 (리뷰 2026-11-21): 한도를 받은 --live 에 PX_ALT_REFUSE_ENV=1 (또는 손으로
 # --daum-refuse-skip) 도 있어야 해요. deploy.yml 관문 단계는 코드 배포(push · 손으로)에만 1 을 주고, 데이터 실행 바로 뒤의 배포(workflow_run)에는
-# 0 을 줘요 — 그 배포는 #157 의 시간 한도만 받아요. 감시 · 발행 관문은 예전 그대로예요 (한도도 이 스위치도 없어요).
+# 0 을 줘요 — 그 배포는 #157 의 시간 한도만 받아요. 감시 · 발행 관문에는 이 스위치가 없어요 (감시는 한도도 없어요 · 발행 관문의 한도는
+# 아래 PX_ALT_GATE_BUDGET_S — 넘어도 건너뛰지 않아요).
 # 거절 (종목마다 · px_refusal_answer · px_refusal_error): 다음이 HTTP 401 · 403 · 451 로 답함, 또는 세 번 모두 연결 거부 · 연결 끊김(reset ·
 # abort · 응답 없이 닫음) · 상대가 TLS 를 끊음 (SSLEOFError · SSLZeroReturnError) 이나 상대가 거절 경보를 보냄 (PX_REFUSE_TLS_ALERTS) · HTTP 429.
 # 시간 초과 · 5xx · DNS · 프록시 · 우리 쪽 OpenSSL 이 거절한 TLS (인증서 · WRONG_VERSION_NUMBER · DH_KEY_TOO_SMALL · HANDSHAKE_FAILURE 등) ·
@@ -147,6 +151,33 @@ PX_ALT_REFUSE_ENV = "BAEPSAE_DAUM_REFUSE_SKIP"   # deploy.yml 관문 단계: 코
 # 필수 종목이 모두 그 안에 있고, 그 수가 표본 기준(PX_ALT_MIN_SHARE)을 이미 채울 수 없게 하는 수 이상일 때 (207종목이면 21) — 그때는
 # 예전 규칙으로도 이 확인은 통과할 수 없어요. 다른 답이 하나라도 먼저 오면 이 규칙은 그 실행에서 꺼지고 예전 그대로예요 (일부만 거절).
 # 건너뛰어도 받은 종가는 가격 줄에서 비교하고 (#157 과 같은 기준), 다음이 분명히 답하지 않은 필수 종목은 예전 그대로 실패해요.
+# 2026-11-27 (Jack, 11-27 답 8 그대로 — 질문 "May I add a 10-minute limit? If the limit is hit, that run doesn't publish and the next scheduled
+# run tries again. That adds a way to stop the publish, so it needs your yes."): "Yes, with one immediate retry inside the same run before
+# giving up."
+# 사고: 11-24 가지 시험 실행의 관문이 "관문의 두 출처 확인 (다음 × 야후): 204종목 · 동시 4 · 시간 한도 없음 (발행 관문)" 에서 46분 동안 한 줄도
+# 남기지 않고 멈췄어요 (다시 돌리니 52초). 06:40 발행에서 그러면 발행이 몇 시간이고 조용히 늦어져요 (요청마다 20초 · 세 번 한도뿐이었어요).
+# 발행 관문(publish · bootstrap)만: 확인 전체에 PX_ALT_GATE_BUDGET_S 초 — 지나면 새 요청(다시 묻기도)을 하지 않고, 묻는 중인 요청은 자기
+# 시간 한도(연결 20초 + 바이트 사이 20초)까지 · 일하는 스레드는 모두 끝난 뒤 돌아와요 (배포의 한도와 같은 꼴). 넘으면 크게 남기고 같은 실행에서
+# 바로 처음부터 한 번 더 (새 한도 · 모든 종목을 다시 물어요 — 첫 확인의 답만으로 확인하지는 않지만, 첫 확인이 본 문제 · 종가는 그대로 세요:
+# 아래 px_alt_gate_merge · 리뷰 #198 2차). 다시 물은 확인도 넘으면 실패해요 (이번 실행은
+# 발행하지 않고, 다음 예정 실행이 다시 해요). 한도에 걸린 확인은 받은 종목 수가 기준을 채웠어도 통과 · 건너뜀이 되지 않아요
+# (px_alt_confirms · 받지 못한 종목의 다른 종가를 놓칠 수 있어요). '한도에 걸림' = 한도 때문에 묻지 못했거나 다시 묻지 못한 종목(cut)이
+# 하나라도 있음 — 마지막 오류 종류와 상관없이 (리뷰 #198 1차: 네트워크 오류가 아닌 답 뒤 다시 묻지 못한 종목도). 그래서 cut 이 0 인 확인은
+# 한도 없이 물었을 때와 똑같이 다 물은 확인이고 (같은 횟수 · 같은 쉬는 시간), 예전 기준 그대로 판단해요. 다시 물어 끝까지 갔으면 앞선 확인이
+# 본 것을 종목마다 합쳐요 (리뷰 #198 2차 · px_alt_gate_merge): 앞선 확인이 끝까지 물었는데 확인하지 못한 종목 (다름 · 그날 종가 없음 · 오류)
+# 은 그대로 확인 못 함 · 앞선 확인이 확인한 종목은 다시 물은 확인도 같은 종가로 확인해야 확인 — 앞선 확인은 한도까지 main 과 똑같이 물으니, 그
+# 종목들에서 합친 결과는 main 보다 느슨하지 않아요 (앞선 확인이 끝내지 못한 종목만 다시 물은 확인의 답으로 — main 의 다음 실행처럼). 그 판단은 예전
+# 기준 그대로이고, 다시 물었으면 날짜 줄이 경고로 알려요 (앞선 확인에서 본 문제는 이름과 함께). 최악 약 2 × (600 + 40)초 ≈ 21분 (매일 실행 job 한도 300분 안). 배포의 관문(한도를 받은 --live · 위)과 감시(한도 없는 --live)는
+# 예전 그대로예요.
+PX_ALT_GATE_BUDGET_S = 600
+PX_ALT_GATE_TRIES = 2                     # 첫 확인 + 바로 다시 한 번 (Jack: "one immediate retry")
+# 한도는 인자가 아니라 이 값으로 줘요 — px_alt_publish_gate 가 그 확인 동안만 켜요. 그래서 main 이 http_px_alt 를 부르는 꼴은 예전 그대로이고
+# (시험들이 그 꼴을 맞춰 봐요: test_kr_two_source · test_live_gate_daum_limit · test_live_gate_daum_refusal), 따로 부르는 http_px_alt(발행) 는
+# 예전 그대로 한도 없이 돌아요.
+_PX_ALT_GATE_S = contextvars.ContextVar("px_alt_gate_s", default=None)
+# 리뷰 #198 2차 (Fable): 다시 물은 확인이 첫 확인을 그냥 덮으면, 첫 확인이 이미 본 다른 종가 · 받지 못한 종가가 조용히 사라져요 (main 은 그 실행을
+# 실패시켜요). 그래서 발행 관문이 확인마다 종목별로 어떻게 끝났는지 이 기록에 적고 (http_px_alt · keep), px_alt_gate_merge 가 합쳐요.
+_PX_ALT_GATE_SINK = contextvars.ContextVar("px_alt_gate_sink", default=None)
 IND_CARRY_WARN_DAYS = 14                  # 지난 발행본에서 이어 쓴 국내 업종 글자가 이보다 오래되면 경고 (fetch_data 와 같은 값)
 # 2026-11-19 (Jack, verbatim): "The 129 unconfirmed stocks: stop showing "이 종목의 데이터를 찾지 못했어요." Show each stock's last confirmed
 # close with its own date (the existing own-close mechanism), plus "오늘 종가를 확인하지 못해서 {date} 종가를 보여 드려요." It must never sit
@@ -612,12 +643,53 @@ EXACT_TOL = 1e-6
 # 꼭 맞아요. fetch_data.py 와 같은 값을 따로 적어요. data 의 other (리뷰 2026-11-19) = 파이프라인이 이름을 붙이지 않은 배당 표 이유 — 줄이
 # 있으면 실패 (PROVE_SUB_LINE 에 없어요), 있기만 해도 그 줄이 경고 (새 이유 글에 이름을 붙일 때까지 이유를 말하지 않는 종목).
 PROVE_LINE = {"line": 1, "rights": 2, "data": 3, "missing": 4}
+# 2026-11-23 (DART 배당 표 안의 어긋남 · 아래 DPS_CASH_FAR 설명): nodps — 총액은 있는데 올해 보통주 주당 배당 칸이 0 · '-' 라 '모름'으로 비운 회사
+# (div_raw_guard · 이 경우 하나만 새로 · 다른 경우와 줄은 그대로). 줄 4 의 말("회사 공시에 배당 계산에 필요한 자료가 빠져 있어서 …")이 그대로 맞아요:
+# 공시에 쓸 수 있는 주당 배당이 없어요. 있던 다섯 경우(nototal 총액 없음 · nostk · pref0 · nopfo · prefmix)는 저마다 빠진 조각을 이름으로 말해서, 총액이
+# 있는 회사에 쓰면 기록이 틀린 말을 해요 (관문의 경고 상세가 '(총액 없음 · 줄)'로 적어요). 관문은 그 종목의 주당 배당(dps · dps3[0])이 정말 비어 있을
+# 때만 이 줄을 받아요 (div_line_bad_rows). 주당 칸에 총액을 적은 회사 (와이엔텍) 는 예전 증명과 같은 div (줄 3) 예요.
 PROVE_SUB = {"rights": ("sh", "shnew", "unk"),
-             "data": ("div", "pref0", "neg", "nototal", "prefmix", "nopfo", "nostk", "noshr", "other")}
-PROVE_SUB_LINE = {"rights": {"sh": 2}, "data": {"div": 3, "nototal": 4, "nostk": 4, "pref0": 4, "nopfo": 4, "prefmix": 4}}   # 경우 → 줄 (Jack 2026-11-19: 4)
+             "data": ("div", "pref0", "neg", "nototal", "prefmix", "nopfo", "nostk", "noshr", "other", "nodps")}
+PROVE_SUB_LINE = {"rights": {"sh": 2}, "data": {"div": 3, "nototal": 4, "nostk": 4, "pref0": 4, "nopfo": 4, "prefmix": 4,
+                                                "nodps": 4}}   # 경우 → 줄 (Jack 2026-11-19: 4)
 PROVE_SUB_KO = {"sh": "주주배정 (새 주식 상장됨)", "shnew": "주주배정 (새 주식이 아직 상장 전)", "unk": "방식을 모르는 결정만", "div": "총액 ÷ 주당 배당이 주식 수와 다름", "pref0": "우선주 배당 줄이 있는데 주식의 총수 현황에 우선주 수가 따로 없음",
                 "neg": "총액이 우선주 몫보다 작음", "nototal": "총액 없음", "prefmix": "주당 배당이 다른 종류주가 섞임", "nopfo": "우선주 주식 수 모름",
-                "nostk": "그해 말 주식의 총수 현황 없음", "noshr": "오늘 상장 주식 수 없음", "other": "이름을 붙이지 않은 배당 표 이유"}
+                "nostk": "그해 말 주식의 총수 현황 없음", "noshr": "오늘 상장 주식 수 없음", "other": "이름을 붙이지 않은 배당 표 이유",
+                "nodps": "총액은 있는데 보통주 주당 배당 칸이 0 · '-' (모름으로 비움)"}
+RAW_SUB = ("nodps",)               # 주당 배당을 비운 종목의 경우 — 그 종목의 dps · dps3[0] 이 비어 있어야 줄 4 가 맞아요
+# ── 2026-11-23 (새 줄만 · 경고 줄 둘 + 실패 줄 하나 (Jack 2026-11-27) · 줄 4 의 새 경우 nodps 는 Jack 의 yes 2026-11-27): DART 배당 표 안의 어긋남과 그럴듯하지 않은 값 (2026-11-21 발행본 감사) ──
+# A. 한 해의 표에 현금배당금총액은 있는데 보통주 주당 현금배당금이 0 ('-') 이면 그해 보통주 배당은 '모름'이에요 (0 = 배당 없음이 아니에요: 현대코퍼레이션
+#    84.08억원 · 케이프 · 앱코 · 동일산업 · 한텍 … 18곳이 '배당을 주지 않았어요'로 보였어요). 0 이 맞는 때는 그해 우선주 · 종류주가 총액을 다 받았을
+#    때뿐이에요: 그해 받은 종류의 주당 배당 × 오늘 상장 우선주 주식 수 (상장되지 않은 종류가 받았으면 그해 말 주식의 총수 현황의 우선주 · 종류주 수 ·
+#    올해만) 로 총액이 ± PREF_ONLY_TOL 안에서 설명될 때 (div_zero_contra). 셀 수 없으면 모름. 주당 배당을 총액으로 만들어 내지 않아요.
+# B. DART 가 준 주당 배당 · 배당수익률이 그럴듯한지 (dps_far_years · dy_far):
+#    - 주당 배당: 그해 주당 배당 × 오늘 상장 보통주 수 > 그해 총액 × DPS_CASH_FAR (와이엔텍: 주당 칸에 총액 → 1,800만 배 · 오늘 데이터의 맞는 값은
+#      분할 · 상장 전 해까지 70배 아래) → 그해 주당 배당을 비워요. 올해 주당 배당 ≥ 오늘 종가만으로는 비우지 않아요 (리뷰 #179: 총액이 그 숫자를
+#      말하면 맞는 값이고 · 총액이 없으면 증명 단계가 예전처럼 nototal 줄 4 를 달아요 — 이유 줄 없이 비우는 일이 없게).
+#    - 배당수익률(dy): 오늘 기준 주당 배당(dps3a[0] — 분할 배율을 확인한 해만) ÷ 52주 고가 ~ 저가 범위에서 DY_FAR 배 넘게 벗어나면 (2.0 의 예전
+#      1/3 ~ 3배 맞춤과 같은 폭을 52주 범위에 · 흥국 56.0 = 배당 ÷ 액면가 · 지투파워 33.7 = 배당성향 · 아비코전자 30.0 · 알피바이오 10.0) 비워요.
+#      주당 배당이 0 인데 dy > 0, 또는 주당 배당이 있는데 dy 0 도 어긋남이에요. 오늘 기준을 확인하지 못한 해(dpsF[0] 없음)는 견주지 않아요 (분할 뒤의
+#      dps ÷ 종가는 배율만큼 커요). 보고서 해의 말일(dy 를 센 때)이 52주 창 밖이면 (1월 ~ 새 사업보고서 · 지난해 사업보고서를 쓰는 회사) 폭을
+#      DY_FAR_OUT 으로 넓혀 견줘요 (dy_window_ok · 리뷰 #179 2차: 끄지 않아요). 올해 주당 배당을 비운 해의 dy 0 도 비워요 ('-' 를 0 으로 읽은 값).
+# 파이프라인(fetch_data.div_raw_guard · div_dy_guard)이 같은 함수로 그 값을 비우고 크게 남기고 data.json divCheck.raw 에 적어요 (DART 가 보낸 값을
+# 보는 검사라 상시 규칙의 N 은 없어요). 관문의 두 줄(check_div_raw)은 남은 행과 기록이 맞지 않는 행을 이름과 함께 경고만 해요. 한 실행에 새로 모름이 된
+# 종목 수만 실패할 수 있어요 (check_div_unknown_new · DIV_UNKNOWN_NEW_FAIL · Jack 2026-11-27: "Block only if many appear in one run").
+PREF_ONLY_TOL = 0.15      # 우선주만 받은 총액: 오늘 상장 주식 수로 센 우선주 몫과 그해 총액의 차이 (자기주식 · 그 뒤 주식 수 변화)
+DPS_CASH_FAR = 1000.0     # 주당 배당 × 오늘 보통주 수 ÷ 그해 총액이 이보다 크면 주당 칸의 값이 아니에요 (2026-11-21: 맞는 값 최대 69.9 · 와이엔텍 1,820만)
+DY_FAR = 3.0              # DART 배당수익률 ÷ (오늘 기준 주당 배당 ÷ 52주 범위) 가 3배 넘게 벗어나면 믿지 않아요 (2026-11-21: 남긴 값 최대 2.38 · 비운 값 최소 5.1)
+DY_FAR_OUT = 4.0          # 보고서 해 말이 52주 창 밖일 때 (1월 ~ 새 사업보고서 · 지난해 보고서의 회사) 의 넓힌 폭 — 그때 주가를 창이 담지 못해서 (리뷰 #179 2차:
+#                           끄지 않고 넓혀요 · 5.1 아래라 2026-11-21 의 비운 값은 모두 그대로 비워요 · 3 ~ 4배 사이로 남긴 값은 관문의 경고 줄이 이름을 적어요)
+DIV_RAW_ROW = "DART 배당 표 0원인데 총액이 있는 해 (경고만)"
+DIV_PLAUS_ROW = "DART 주당 배당 · 배당수익률 그럴듯함 (경고만)"
+# 한 실행에 새로 '모름'이 된 배당 (Jack, 2026-11-27, #179: "Block only if many appear in one run"): 오늘 divCheck.raw.contra 에 올해(0)가 있고 (총액은
+# 있는데 보통주 주당 칸이 0 · '-' 라 올해 배당을 모름으로 비운 종목) 직전 발행본에서는 그 꼴이 아니던 종목이 이만큼이면 실패 · 그 아래는 이름과 함께 경고.
+# '그 꼴' = 직전 발행본의 기록이 모름으로 비운 종목, 기록이 없거나 모양이 틀리면 그 발행본의 행에서 0 인데 그해 총액이 있던 종목과 nodps (리뷰 #179 3차
+# S1: 기록 하나가 빠진 발행본 뒤에 같은 회사들을 날마다 다시 세어 멈춘 채로 있지 않게 · div_unknown_before). 근거: 2026-11-21 · 11-27 발행본에 같은
+# 함수를 돌리면 둘 다 모름 17종목 — 이 줄이 처음 도는 실행의 직전 발행본(#179 전 파일)은 그 17종목을 0 · 총액 있음으로 보여서 새로 0 이에요. 그 뒤로는
+# 새 사업보고서나 정정 보고서가 들어올 때만 생겨요 (한 날에 0 ~ 몇 곳 · 2027년 3월 철에 모두 합쳐 9곳 안팎). 20 은 공시 단위 확인의 같은 줄
+# (UNIT_NEW_FLAGS_FAIL · Jack 2026-11-13) 과 같은 수예요. 그보다 많으면 우리 DART 배당 표 읽기가 깨졌을 수 있어요.
+DIV_UNKNOWN_NEW_FAIL = 20
+DIV_UNKNOWN_NEW_ROW = f"DART 배당 표로 새로 모름이 된 종목 수 ({DIV_UNKNOWN_NEW_FAIL}종목 이상이면 실패)"
 # ── Jack 의 상시 규칙 (2026-11-19 ~17:45 KST · 우리 처리를 보는 검사) ── Jack, verbatim: "Standing rule for checks on our own processing: a
 # single bad row is dropped or blanked with a loud warning and the rest publishes. Block only when many rows fail in one run (set the number
 # from recent runs and show it in the PR) or when a value would show a wrong number."
@@ -1172,7 +1244,8 @@ def _daum_day_close(code, d, get=None):
 def px_alt_budget(mode, budget_s=None):
     """관문 두 출처 확인 전체의 시간 한도 (초 · 2026-11-20 Jack) — 사이트 점검(live)에서 한도를 받았을 때만 (배포: _main 이 deploy.yml 의
     PX_ALT_LIMIT_ENV 나 --daum-limit 에서 줘요). 한도를 받지 않으면 None — 감시(watchdog)는 예전 그대로 한도 없이. 발행(publish) · bootstrap 은
-    늘 None — 한도 없이 예전 그대로. 인자만 읽어요 (모듈 값은 읽지 않아요 · 순수 함수)."""
+    늘 None — 이 한도(넘으면 건너뜀)는 쓰지 않아요. 발행 관문의 한도는 따로예요 (2026-11-27 · PX_ALT_GATE_BUDGET_S · px_alt_publish_gate —
+    넘으면 한 번 더, 또 넘으면 실패). 인자만 읽어요 (모듈 값은 읽지 않아요 · 순수 함수)."""
     if mode != "live" or budget_s is None:
         return None
     return float(budget_s)
@@ -1187,6 +1260,38 @@ def px_alt_was_cut(alt):
     """관문 두 출처 확인이 사이트 점검(live)의 시간 한도에 걸렸는지 — 묻지 못한 종목이 하나라도 있으면 참. (순수 함수)"""
     cut = alt.get("cut") if isinstance(alt, dict) else None
     return isinstance(alt, dict) and alt.get("mode") == "live" and isinstance(cut, int) and not isinstance(cut, bool) and cut > 0
+
+
+def px_alt_gate_note(alt):
+    """발행 관문(publish · bootstrap) 확인의 시간 한도 기록 → 날짜 줄 · 알림에 붙이는 한 줄 (2026-11-27 Jack · 순수 함수). 매일 아침 점검이
+    읽어요. 수: 대상 · 끝까지 물은 (대상 − 남은: 두 출처가 같음 · 다름 · 그날 종가 없음 · 세 번 모두 오류로 끝난 종목) · 확인 (두 출처가
+    같은 종목) · 남은 (한도로 묻지 못했거나 다시 묻지 못한 종목 = cut). 한도에 걸린 확인 (cut 이 0 이 아님 — 실패): '시간 한도 600초를
+    두 번 넘김 …'. 첫 확인만 걸리고 다시 물은 확인이 끝까지 감 (통과할 수 있어요 · 경고): '첫 확인이 시간 한도 600초를 넘겨 처음부터 다시
+    물었어요 …' — 첫 확인에서 다르거나 받지 못한 종목 · 두 확인의 종가가 다른 종목이 있으면 그 수와 보기도 (리뷰 #198 2차 · px_alt_gate_merge).
+    그 밖에는 None (사이트 점검 기록 · 걸리지 않은 확인)."""
+    if not isinstance(alt, dict) or alt.get("mode", "publish") != "publish":
+        return None
+    n = _count(alt.get("timeouts"))
+    lim = alt.get("limit")
+    lim_s = f"시간 한도 {px_alt_secs(lim)}초" if isinstance(lim, (int, float)) and not isinstance(lim, bool) else "시간 한도"
+    if alt.get("cut"):
+        asked, cut, got = _count(alt.get("asked")), _count(alt.get("cut")), _count(alt.get("got"))
+        return (f"{lim_s}를 {'두 번 ' if n >= 2 else ''}넘김 (Jack 2026-11-27) — {'다시 물은 확인: ' if n >= 2 else ''}대상 {asked}종목 · "
+                f"끝까지 물은 {max(asked - cut, 0)} (확인 {got}) · 남은 {cut} · 이번 실행은 발행하지 않아요 (다음 예정 실행이 다시 해요)")
+    if n >= 1 and alt.get("gateMergeErr"):     # 리뷰 #198 3차: 합치지 못한 확인은 쓰지 않아요 — 날짜 줄에도 그 까닭을
+        return (f"첫 확인이 {lim_s}를 넘겨 처음부터 다시 물었지만 종목별 기록을 합칠 수 없어 이 확인은 쓰지 않았어요 ({alt['gateMergeErr']} · "
+                "Jack 2026-11-27 · 리뷰 #198 3차) — 필수 종목을 확인하지 못한 것으로 셌어요")
+    if n >= 1:
+        f = alt.get("firstCut") if isinstance(alt.get("firstCut"), dict) else {}
+        fa, fc, fg = _count(f.get("asked")), _count(f.get("cut")), _count(f.get("got"))
+        kept, xd = _count(alt.get("kept")), _count(alt.get("xdis"))
+        return (f"첫 확인이 {lim_s}를 넘겨 처음부터 다시 물었어요 (Jack 2026-11-27 · 첫 확인: 대상 {fa}종목 · 끝까지 물은 {max(fa - fc, 0)} "
+                f"(확인 {fg}) · 남은 {fc}) — 다시 물은 확인은 끝까지 가서 예전 기준 그대로 판단해요"
+                + (f" · 첫 확인에서 다르거나 받지 못한 종목 {kept}개는 그대로 셌어요 (보기: {'; '.join(map(str, (alt.get('keptEx') or [])[:3]))})"
+                   if kept else "")
+                + (f" · 첫 확인과 다시 물은 확인이 다른 종목 {xd}개는 확인으로 치지 않았어요 (보기: {'; '.join(map(str, (alt.get('xdisEx') or [])[:3]))})"
+                   if xd else ""))
+    return None
 
 
 def _count(v):
@@ -1361,6 +1466,11 @@ def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, s
     (멈췄을 때만 — 그 종목은 no · net 에서 빼요 · 멈추지 않았으면 0 이고 no · net 은 예전 그대로) · refMust: 그중 필수 종목 · refEx: 보기 다섯 ·
     rskip: 거절로 멈춘 뒤 묻지 않은 종목 수 · refNeed: 거절로 볼 종목 수 (이 규칙이 꺼져 있으면 None) · refEx 의 까닭은 짧은 이름
     (HTTP 403 · ConnectionRefusedError · SSLEOFError … — px_refusal_name). 종목마다 got · cut · no · net · ref · rskip 하나로만 세요.
+    2026-11-27 (Jack "Yes, with one immediate retry inside the same run before giving up."): 발행 관문(publish)은 px_alt_publish_gate 가
+    _PX_ALT_GATE_S 를 켠 동안만 확인 전체에 그 한도 — 지나면 배포와 같이 새 요청(다시 묻기도)을 하지 않고, 묻는 중인 요청은 자기 시간 한도까지,
+    일하는 스레드는 모두 끝난 뒤 돌아와요 (limit · cut 에 남아요 · 순서 · 판단은 예전 그대로). 배포와 달리 한도 때문에 다시 묻지 못한 종목은 마지막
+    오류 종류와 상관없이 cut 으로 세요 (리뷰 #198 1차) — 그래서 cut 이 0 인 확인은 한도 없이 물었을 때와 똑같이 다 물은 확인이에요 (같은 횟수 ·
+    같은 쉬는 시간). 켜지 않았으면 (따로 부를 때) 예전 그대로 한도 없이. 사이트 점검(live)은 그 값을 읽지 않아요.
     예외를 내지 않아요 — 못 받은 종목은 확인 못 함."""
     from concurrent.futures import ThreadPoolExecutor
     say = say or (lambda line: print(line, flush=True))
@@ -1370,17 +1480,28 @@ def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, s
     sp = (special or {}).get(px)
     close_time = sp[1] if sp else NORMAL_CLOSE
     limit = px_alt_budget(mode, budget_s)
+    gate = _PX_ALT_GATE_S.get() if mode == "publish" else None   # 2026-11-27: 발행 관문의 한도 (px_alt_publish_gate 가 켠 동안만)
+    if gate is not None:
+        limit = float(gate)
+    sink = _PX_ALT_GATE_SINK.get() if gate is not None else None   # 리뷰 #198 2차: 종목마다 어떻게 끝났는지 (px_alt_publish_gate 가 합쳐요)
     # 2026-11-21 (Jack "3. Yes."): 다음이 아예 거절하는지 — 코드 배포만 (한도를 받은 live + refuse_skip). 그 밖에는 need 가 None 이라 예전 그대로예요.
     need = px_alt_refuse_need(len(pick)) if limit is not None and mode == "live" and refuse_skip is True else None
     t0 = clock()
     deadline = None if limit is None else t0 + limit
     cut, lock = set(), threading.Lock()
     order = sorted(pick.items())
-    if limit is not None:                        # 한도에 걸려도 필수 종목은 이미 물었게 (발행 관문은 한도가 없어 예전 순서 그대로)
+    # 한도에 걸려도 필수 종목은 이미 물었게 (배포). 발행 관문은 한도가 있어도 예전 순서 그대로예요 — 한도에 걸린 발행 관문의 확인은 통과하지
+    # 않으니 (2026-11-27) 순서가 판단을 바꾸지 않아요.
+    if limit is not None and gate is None:
         order = [(c, pick[c]) for c in MUST if c in pick] + [x for x in order if x[0] not in MUST]
+    if gate is not None:                         # 2026-11-27 (Jack): 발행 관문의 한도 — 넘으면 처음부터 한 번 더 (px_alt_publish_gate), 또 넘으면 실패
+        how_limit = f"시간 한도 {px_alt_secs(limit)}초 (발행 관문 — 넘으면 처음부터 한 번 더 묻고, 또 넘으면 이번 실행은 발행하지 않아요)"
+    elif limit is not None:
+        how_limit = f"시간 한도 {px_alt_secs(limit)}초 (배포 — 넘으면 새로 묻지 않고, 시간 한도로 못 받은 부분만 경고로 건너뛰어요)"
+    else:
+        how_limit = "시간 한도 없음" + (" (발행 관문 · 예전 그대로)" if mode != "live" else " (예전 그대로)")
     say(f"· 관문의 두 출처 확인 시작 ({px} · {'다음 일별 시세 + 발행 기록' if mode == 'live' else '다음 × 야후'}): {len(pick)}종목 · 동시 {workers} · "
-        + (f"시간 한도 {px_alt_secs(limit)}초 (배포 — 넘으면 새로 묻지 않고, 시간 한도로 못 받은 부분만 경고로 건너뛰어요)" if limit is not None
-           else ("시간 한도 없음" + (" (발행 관문 · 예전 그대로)" if mode != "live" else " (예전 그대로)")))
+        + how_limit
         + (f" · 다음이 거절하면 (답이 정해진 {need}종목 이상이 모두 거절 · 필수 종목 모두) 그만 묻고 경고로 건너뛰어요 (코드 배포만)"
            if need is not None else ""))
 
@@ -1413,14 +1534,18 @@ def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, s
         with lock:
             first = not cut
             cut.add(code)                        # 먼저 적고 (남기다 잘못돼도 건너뛴 종목은 세요) 처음 한 번 크게 남겨요
-            if first:
+            if first and gate is not None:       # 2026-11-27: 발행 관문 — 이 확인은 통과하지 않아요 (px_alt_publish_gate 가 한 번 더 · 또 넘으면 실패)
+                say(f"!! 관문의 두 출처 확인 시간 한도 {px_alt_secs(limit)}초 (발행 관문): 다음 · 야후에 더 묻지 않아요 (확인 {len(ok)} / 대상 "
+                    f"{len(pick)}) — 묻는 중인 요청은 자기 시간 한도(약 40초)까지 기다려요")
+            elif first:
                 say(f"!! 관문의 두 출처 확인 시간 한도 {px_alt_secs(limit)}초: 다음 일별 시세를 더 묻지 않아요 (확인 {len(ok)} / 대상 {len(pick)}) — "
                     "묻는 중인 요청은 자기 시간 한도(약 40초)까지 · 남은 종목은 건너뛰어요")
 
     def get(fn, code, *a, **k):
         """(값, 까닭, 어떻게): 어떻게 = 'ans' (출처가 답했어요 — 값이 None 이면 분명히 답하지 않음) · 'no' (마지막 오류가 네트워크 오류가
         아니에요 — px_net_error · 분명히 답하지 않음) · 'net' (마지막 오류가 네트워크 오류로 세 번을 다 썼어요) · 'cut' (시간 한도).
-        다시 묻는 횟수와 쉬는 시간은 오류 종류와 상관없이 예전 그대로예요.
+        다시 묻는 횟수와 쉬는 시간은 오류 종류와 상관없이 예전 그대로예요. 발행 관문(gate)에서는 한도 때문에 다시 묻지 못하면 마지막 오류가
+        무엇이든 'cut' 이에요 (2026-11-27 · 리뷰 #198 1차 — 배포 · 감시는 예전 그대로 'no').
         2026-11-21: 'ref' (세 번 모두 거절 쪽 네트워크 오류 — px_refusal_error · net 의 한 갈래) · 'rskip' (다음이 거절해 멈춘 뒤라 묻지 않음)."""
         last, last_net, all_ref, last_e = None, True, True, None
         for i in range(3):
@@ -1429,9 +1554,12 @@ def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, s
                 if last is not None:             # 오류 뒤 다시 묻기 전에 한도가 지났어요 — 왜 못 받았는지 (시간 초과 · 거절 · 차단 쪽) 남겨요
                     note = f"{a[0]}: {last} ({'시간 한도로' if stop == 'cut' else '다음이 거절해'} 다시 묻지 않음)"
                     errs.append(note)
-                    if not last_net:             # 네트워크 오류가 아닌 답 (차단 쪽 · JSON 이 아님) 이었어요 — 시간 한도 탓이 아니에요
+                    # 배포 · 감시 (예전 그대로): 네트워크 오류가 아닌 답 (차단 쪽 · JSON 이 아님) 이었어요 — 시간 한도 탓이 아니에요.
+                    # 발행 관문 (2026-11-27 · 리뷰 #198 1차): 한도 때문에 다시 묻지 못했으니 오류 종류와 상관없이 '시간 한도로 건너뜀' (cut) 이에요 —
+                    # 예전 규칙은 그 종목을 다시 물어요 (그 답으로 통과 · 실패가 갈릴 수 있어요). 그래서 이 확인은 끝난 것이 아니고, 한 번 더 묻거나 실패해요.
+                    if not last_net and gate is None:
                         return None, last, "no"
-                    if stop == "cut":
+                    if stop == "cut" and last_net:
                         cut_errs.append(note)
                 if stop == "rskip":              # 다음이 거절해 멈췄어요 (2026-11-21) — 시간 한도와 따로 세요
                     with lock:
@@ -1455,6 +1583,14 @@ def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, s
             return None, px_refusal_name(last_e), "ref"
         return None, last, ("net" if last_net else "no")
 
+    def keep(code, *state):
+        """발행 관문만 (2026-11-27 · 리뷰 #198 2차): 종목마다 이 확인이 어떻게 끝났는지 px_alt_publish_gate 의 기록(sink)에 적어요 —
+        ('ok', 다음 값, 'bar'·'meta') · ('dis', 다음 값, 야후 값) · ('no', 까닭) · ('net', 까닭) · ('yfail', 다음 값, 까닭) ·
+        ('cutY', 다음 값 — 야후를 묻다 한도) · ('cut',). 그 밖에는 (sink 없음) 아무것도 하지 않아요."""
+        if sink is not None:
+            with lock:
+                sink[code] = state
+
     def one(item):
         code, sym = item
         dv, dwhy, dhow = get(fetch_daum, code, code, px)
@@ -1465,22 +1601,33 @@ def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, s
         if dv is None or not math.isfinite(dv) or dv <= 0:
             if dhow in ("ans", "no"):
                 no[code] = str(dwhy)[:40]
+                keep(code, "no", no[code])
+            elif dhow in ("net", "ref"):
+                keep(code, "net", str(dwhy)[:60])
+            else:
+                keep(code, "cut")
             return
         if mode == "live":
             closes[code] = dv
             ok.add(code)
             return
-        yv, how, _ = get(fetch, code, sym, px, close_time=close_time)
+        yv, how, yhow = get(fetch, code, sym, px, close_time=close_time)
         if yv is None or not math.isfinite(yv) or yv <= 0:
+            if yhow == "cut":
+                keep(code, "cutY", dv)
+            else:
+                keep(code, "yfail", dv, str(how)[:40])
             return
         if abs(dv - yv) <= PX_ALT_TOL:
             closes[code] = dv
             ok.add(code)
             if how == "meta":
                 meta.append(code)
+            keep(code, "ok", dv, how)
         else:
             closes[code] = dv + 0.5                  # 두 출처가 다르면 어느 발행 가격과도 같지 않아요 (확인 못 함)
             dis.append(f"{code} 다음 {dv:,.0f} · 야후 {yv:,.2f}")
+            keep(code, "dis", dv, yv)
     try:
         with ThreadPoolExecutor(max_workers=workers) as ex:     # with: 묻는 중인 요청이 끝날 때까지 기다려요 (남는 스레드 없음)
             list(ex.map(one, order))
@@ -1500,6 +1647,195 @@ def http_px_alt(data, px, fetch=_yahoo_day_close, sleep=time.sleep, workers=4, s
             "rskip": len(rskip), "refNeed": need}
 
 
+PX_ALT_FAIL_STATES = ("dis", "no", "net", "yfail")      # 끝까지 물었는데 확인하지 못한 종목 (다름 · 다음이 그날 종가 없음 · 다음 오류 · 야후 확인 못 함)
+
+
+def px_alt_gate_fold(early, late):
+    """한 종목의 두 확인 결과를 합쳐요 (리뷰 #198 2차 · 순수 함수). early: 앞선 (시간 한도에 걸린) 확인의 결과 · late: 뒤 확인의 결과
+    (http_px_alt.keep 의 꼴 · 없으면 None). 예전 규칙 (한도 없는 한 번의 확인 · main) 보다 느슨해지지 않게:
+    - 앞선 확인이 끝까지 물었는데 확인하지 못했으면 (다름 · 그날 종가 없음 · 오류 · 야후 확인 못 함) 그 결과 그대로 — main 도 그 종목을 똑같이 물어
+      같은 결과를 봤어요 (뒤 확인에서 두 출처가 달랐으면 그 다름도 다른 종가로 세요 — 어느 확인이 본 다른 종가든 버리지 않아요);
+    - 앞선 확인이 확인한 종가 v: 뒤 확인도 같은 v 로 확인하면 확인 · 뒤 확인에서 두 출처가 다르면 그 다름 그대로 (다시 물은 확인의 발견) · 뒤
+      확인이 다른 종가를 확인했거나 다른 다음 값에 야후를 확인하지 못했으면 '두 확인이 다름' ('xdis' — 확인 아님 · 가격 줄에서 다른 종가로 세요) ·
+      뒤 확인이 다음 종가를 받지 못했거나 (그날 종가 없음 · 오류) 같은 다음 값에 야후만 확인하지 못했으면 '다시 물은 확인이 받지 못함' ('lost' —
+      확인 아님 · 가격 줄에서는 앞선 확인의 종가 v 로 main 과 똑같이 비교해요: 빼면 다른 종가 하나가 빠질 수 있어요);
+    - 앞선 확인이 다음 값 d 만 받고 야후를 묻다 한도 ('cutY'): 뒤 확인이 같은 d 로 확인하면 확인 · 뒤 확인에서 두 출처가 다르면 그 다름 그대로 ·
+      그 밖에는 '두 확인이 다름' (main 은 d 와 뒤의 야후를 맞춰 봤을 거예요 — 모르니 확인으로 치지 않고 다른 종가로 세요);
+    - 앞선 확인이 묻지 못했으면 ('cut' · 없음): 뒤 확인 그대로 (main 의 다음 실행처럼).
+    반환: 합친 결과 (같은 꼴 · ('xdis', 앞선 값, 뒤 다음 값 또는 None, 뒤 결과의 종류) · ('lost', 앞선 종가, 뒤 결과의 종류, 까닭))."""
+    if early is None or early[0] == "cut":
+        return late
+    kind = early[0]
+    if late is not None and late[0] == "dis" and kind not in ("dis", "xdis"):
+        return late                              # 뒤 확인에서 두 출처가 달라요 — 어느 확인이 본 다른 종가든 다른 종가로 세요 (확인 아님)
+    if kind in PX_ALT_FAIL_STATES or kind in ("xdis", "lost"):
+        return early
+    v = early[1]
+    if late is None or late[0] == "cut":
+        return early
+    lk = late[0]
+    lv = late[1] if lk in ("ok", "yfail", "cutY") else None             # 뒤 확인이 받은 다음 값 (없으면 None)
+    same = lk in ("ok", "cutY") and abs(lv - v) <= PX_ALT_TOL
+    if kind == "ok":
+        if lk in ("no", "net") or (lk == "yfail" and abs(lv - v) <= PX_ALT_TOL):
+            return ("lost", v, lk, str(late[2] if lk == "yfail" else late[1])[:40])
+        if same:
+            return early if lk == "cutY" else late
+        return ("xdis", v, lv, lk)
+    # kind == "cutY": 앞선 확인은 다음 값 d (= v) 만 봤어요
+    if same:
+        return late
+    return ("xdis", v, lv, lk)
+
+
+def _px_alt_state_why(code, st):
+    """합친 결과 → 로그 · 표에 쓰는 짧은 보기 (순수 함수)."""
+    k = st[0]
+    if k == "dis":
+        return f"{code} 다음 {st[1]:,.0f} · 야후 {st[2]:,.2f}"
+    if k == "no":
+        return f"{code} 다음: {st[1]}"
+    if k == "net":
+        return f"{code} 다음: {str(st[1])[:40]}"
+    if k == "yfail":
+        return f"{code} 야후: {str(st[2])[:40]}"
+    if k == "xdis":
+        later = f"다음 {st[2]:,.0f}" if isinstance(st[2], (int, float)) else "받지 못함"
+        return f"{code} 첫 확인 {st[1]:,.0f} · 다시 물은 확인 {later}" + (" (야후 확인 못 함)" if st[3] == "yfail" else "")
+    if k == "lost":
+        return f"{code} 첫 확인 {st[1]:,.0f} · 다시 물은 확인: {'야후' if st[2] == 'yfail' else '다음'} {st[3]}"
+    return f"{code} {k}"
+
+
+def px_alt_gate_merge(alt, earlier, final):
+    """리뷰 #198 2차 (Fable): 다시 물은 확인(alt · 끝까지 감)의 기록에 앞선 (시간 한도에 걸린) 확인들이 본 것을 합쳐요 — 종목마다
+    px_alt_gate_fold. 앞선 확인이 끝까지 물었는데 확인하지 못한 종목은 그대로 확인 못 함 (그 까닭과 함께), 두 확인의 종가가 다르면 다른 종가로 세요.
+    받은 종가 · 확인 수 · 필수 종목 · 다름 · 그날 종가 없음 · 네트워크 오류 · 야후 meta 수를 합친 결과로 다시 세요 (http_px_alt 와 같은 꼴 ·
+    시험이 앞선 확인이 없을 때 http_px_alt 의 기록과 똑같은지 맞춰 봐요). 그 밖의 칸 (asked · err · secs · limit …) 은 다시 물은 확인 그대로.
+    어느 확인의 기록이든 모든 종목의 결과가 없으면 (asked 와 수가 다름 — 일하는 함수가 그 종목에서 멈췄어요) 합칠 수 없으니 이 확인은 쓰지 않아요
+    (필수 종목 모두 · 확인 0 · gateMergeErr · 크게 남겨요). 리뷰 #198 3차: 앞선 확인에서 멈춘 종목이 '묻지 못함' 으로 읽혀 다시 물은 확인의 답을
+    받으면 안 돼요 (main 은 그 종목을 확인하지 못했어요).
+    반환: (kept, xdis) — 앞선 확인에서 끝까지 물었는데 확인하지 못한 종목 · 두 확인의 종가가 다른 종목 (코드 → 보기). alt 를 고쳐요."""
+    asked = _count(alt.get("asked"))
+    records = list(earlier) + [final]
+    if not final or any(len(r or {}) != asked for r in records):
+        alt.update(closes={}, got=0, meta=0, mustMissing=list(MUST),
+                   gateMergeErr="종목별 기록 " + " · ".join(f"{i + 1}번째 {len(r or {})}" for i, r in enumerate(records)) + f" / 대상 {asked}")
+        return {}, {}
+    states, kept, xdis = {}, {}, {}
+    for code, st in final.items():
+        acc = None
+        for e in earlier:                        # 앞선 확인부터 차례로 접어요 (앞선 것 → 뒤의 것 → 마지막)
+            es = e.get(code)
+            if es is not None and es[0] in PX_ALT_FAIL_STATES and code not in kept:
+                kept[code] = _px_alt_state_why(code, es)
+            acc = px_alt_gate_fold(acc, es)
+        merged = px_alt_gate_fold(acc, st)
+        if merged and merged[0] in ("xdis", "lost"):
+            xdis[code] = _px_alt_state_why(code, merged)
+        states[code] = merged
+    closes, ok, meta, dis, no, net = {}, set(), 0, [], {}, set()
+    for code, st in states.items():
+        k = st[0]
+        if k == "ok":
+            closes[code] = st[1]
+            ok.add(code)
+            meta += st[2] == "meta"
+        elif k == "dis":
+            closes[code] = st[1] + 0.5               # http_px_alt 와 같이: 어느 발행 가격과도 같지 않아요
+            dis.append(f"{code} 다음 {st[1]:,.0f} · 야후 {st[2]:,.2f}")
+        elif k == "xdis":
+            closes[code] = st[1] + 0.5               # 두 확인이 다름: 확인 아님 · 가격 줄에서 다른 종가로 세요
+            dis.append(_px_alt_state_why(code, st))
+        elif k == "lost":
+            closes[code] = st[1]                     # 다시 물은 확인이 받지 못함: 확인 아님 · 가격 줄에서는 앞선 확인의 종가로 (main 과 같은 비교)
+        elif k == "no":
+            no[code] = st[1]
+        elif k == "net":
+            net.add(code)
+    alt.update(closes=closes, got=len(ok), meta=meta, disagree=sorted(dis), mustMissing=[c for c in MUST if c not in ok],
+               no=len(no), noMust=[c for c in MUST if c in no],
+               noEx=[f"{c} {no[c]}" for c in ([c for c in MUST if c in no] + sorted(c for c in no if c not in MUST))[:5]],
+               net=len(net), netMust=[c for c in MUST if c in net])
+    return kept, xdis
+
+
+def _px_alt_ex(d, n=5):
+    """보기 다섯 (필수 종목 먼저 · 코드 순 · 순수 함수)."""
+    return [d[c] for c in ([c for c in MUST if c in d] + sorted(c for c in d if c not in MUST))[:n]]
+
+
+def px_alt_publish_gate(ask, say=None):
+    """발행 관문(publish · bootstrap)의 두 출처 확인에 시간 한도 + 바로 한 번 더 (2026-11-27 Jack: "Yes, with one immediate retry inside the
+    same run before giving up."). ask(): http_px_alt 를 예전과 같은 꼴로 한 번 부르는 함수 (main) — 그동안 _PX_ALT_GATE_S 를 켜서 확인 전체에
+    PX_ALT_GATE_BUDGET_S 초 한도를 줘요 (부를 때 모듈 값을 읽어요 · 시험이 줄여요). 한도에 걸리면 (cut 이 0 이 아님) 크게 남기고 처음부터 다시
+    (새 한도 · 모든 종목을 다시 물어요), 모두 PX_ALT_GATE_TRIES 번까지. 반환: 마지막 확인의 기록 — 한 번에 끝났으면 손대지 않아요.
+    다시 물어 끝까지 갔으면 (리뷰 #198 2차) 앞선 확인이 본 것을 합쳐요 (px_alt_gate_merge): 앞선 확인에서 다르거나 받지 못한 종목은 그대로 확인
+    못 함, 두 확인의 종가가 다르면 다른 종가 — 그래서 받은 답을 확인으로 다시 쓰지는 않지만, 본 문제는 하나도 버리지 않아요 (크게 남겨요).
+    더하는 칸: tries (부른 횟수) · timeouts (한도에 걸린 횟수) · firstCut (첫 확인: asked · got · cut · secs) · kept · keptEx (앞선 확인에서
+    다르거나 받지 못한 종목 수 · 보기) · xdis · xdisEx (두 확인의 종가가 다른 종목 수 · 보기). 마지막 확인도 걸렸으면 cut 이 0 이 아닌 채로
+    돌려줘요 → px_alt_confirms 가 실패로 (통과 · 건너뜀이 되지 않아요). 일하는 스레드는 확인마다 모두 끝난 뒤 돌아와요 (http_px_alt).
+    예외는 삼키지 않아요 (main 이 '확인 못 함'으로 실패시켜요)."""
+    say = say or (lambda line: print(line, flush=True))
+    limit, tries = float(PX_ALT_GATE_BUDGET_S), max(1, int(PX_ALT_GATE_TRIES))
+    first, alt, n, sinks = None, None, 0, []
+    for n in range(1, tries + 1):
+        sink = {}
+        tok, tok_sink = _PX_ALT_GATE_S.set(limit), _PX_ALT_GATE_SINK.set(sink)
+        try:
+            alt = ask()
+        finally:
+            _PX_ALT_GATE_SINK.reset(tok_sink)
+            _PX_ALT_GATE_S.reset(tok)
+        sinks.append(sink)
+        if not (isinstance(alt, dict) and alt.get("cut")):
+            break
+        asked, cut, got = _count(alt.get("asked")), _count(alt.get("cut")), _count(alt.get("got"))
+        secs = alt.get("secs")
+        counts = (f"대상 {asked}종목 · 끝까지 물은 {max(asked - cut, 0)} (확인 {got}) · 남은 {cut}"
+                  + (f" · 걸린 시간 {secs:.0f}초" if isinstance(secs, (int, float)) and not isinstance(secs, bool) else ""))
+        if first is None:
+            first = {"asked": asked, "got": got, "cut": cut, "secs": secs}
+        if n < tries:
+            say(f"!! 관문의 두 출처 확인이 시간 한도 {px_alt_secs(limit)}초를 넘겼어요 (발행 관문 · {n}/{tries}번째 · Jack 2026-11-27): {counts} — "
+                f"처음부터 한 번 더 물어요 (새 한도 {px_alt_secs(limit)}초 · 모든 종목을 다시 물어요 · 이번에 다르거나 받지 못한 종목은 그대로 세요)")
+        else:
+            say(f"!! 관문의 두 출처 확인이 시간 한도 {px_alt_secs(limit)}초를 {'두 번' if tries == 2 else f'{tries}번'} 넘겼어요 (발행 관문 · "
+                f"{n}/{tries}번째 · Jack 2026-11-27): {counts} — 이번 실행은 발행하지 않아요 (관문 실패 · 다음 예정 실행이 다시 해요)")
+    if first is not None and isinstance(alt, dict):
+        done = not alt.get("cut")
+        alt.update(tries=n, timeouts=n - 1 if done else n, firstCut=first)
+        kept_early = {}                          # 앞선 확인에서 끝까지 물었는데 확인하지 못한 종목 (이름으로 남겨요)
+        for e in sinks[:-1]:
+            for code, es in e.items():
+                if es[0] in PX_ALT_FAIL_STATES and code not in kept_early:
+                    kept_early[code] = _px_alt_state_why(code, es)
+        refused = False
+        if done:                                 # 다시 물은 확인이 끝까지 갔어요 — 앞선 확인이 본 것을 합쳐요 (리뷰 #198 2차)
+            kept, xdis = px_alt_gate_merge(alt, sinks[:-1], sinks[-1])
+            if alt.get("gateMergeErr"):
+                refused, kept = True, kept_early
+                say(f"!! 관문의 두 출처 확인: 종목별 기록을 합칠 수 없어요 ({alt['gateMergeErr']}) — 이 확인은 쓰지 않아요 (필수 종목을 확인하지 못한 것으로 세요)")
+        else:                                    # 다시 물은 확인도 걸렸어요 (실패) — 앞선 확인에서 본 문제는 그래도 이름으로 남겨요
+            kept, xdis = kept_early, {}
+        alt.update(kept=len(kept), keptEx=_px_alt_ex(kept), xdis=len(xdis), xdisEx=_px_alt_ex(xdis))
+        if kept:
+            say(f"!! 관문의 두 출처 확인: 첫 확인에서 다르거나 받지 못한 종목 {len(kept)}: {'; '.join(_px_alt_ex(kept))}"
+                + (" — 다시 물은 확인도 시간 한도를 넘겨 어차피 실패해요" if not done
+                   else (" — 기록을 합칠 수 없어 이 확인은 어차피 쓰지 않아요" if refused
+                         else " — 다시 물은 확인에서도 그대로 세요 (확인으로 치지 않아요 · 리뷰 #198 2차)")))
+        if xdis:
+            say(f"!! 관문의 두 출처 확인: 첫 확인과 다시 물은 확인이 다른 종목 {len(xdis)}: {'; '.join(_px_alt_ex(xdis))} — 확인으로 치지 않아요 "
+                "(리뷰 #198 2차)")
+        if done:                                 # 리뷰 #198 3차 nit: 날짜 줄이 통과할지는 아직 몰라요 — 어느 쪽이든 맞는 말만
+            say(f"!! 관문의 두 출처 확인: 다시 물은 확인은 시간 한도 안에 끝났어요 ({n}/{tries}번째"
+                + (f" · 걸린 시간 {alt['secs']:.0f}초" if isinstance(alt.get("secs"), (int, float)) and not isinstance(alt.get("secs"), bool) else "")
+                + (") — 하지만 종목별 기록을 합칠 수 없어 이 확인은 쓰지 않아요 (날짜 줄이 실패해요 · 그 까닭이 날짜 줄에 적혀요)" if refused
+                   else ") — 예전 기준 그대로 판단해요 (첫 확인에서 본 문제도 그대로 세요 · 첫 확인이 한도를 넘긴 것은 날짜 줄에 적혀요: 다른 까닭이 "
+                        "없으면 경고, 있으면 그 실패와 함께)"))
+    return alt
+
+
 def px_alt_confirms(data, alt, px, final, mode="publish", today=None, now=None, special=None, cover=True, own=None):
     """2차 출처 날의 관문 기준을 쓸 수 있는지 (2026-11-19 · Jack 규칙 3 · 순수 함수). 반환: (쓸 수 있는지, 설명).
     모두 맞아야 해요: 캐시에 pxDate 의 최종본이 없음 (최종본이 있으면 예전 그대로 그것과 비교) · data.json pxSrc 가 2차 출처 · 그 날짜가 pxDate ·
@@ -1508,7 +1844,9 @@ def px_alt_confirms(data, alt, px, final, mode="publish", today=None, now=None, 
     cover=False (2026-11-20 Jack · 배포의 확인이 시간 한도에 걸렸을 때만 — px_alt_was_cut): 마지막 '받은 종목 수' 조건(필수 종목 모두 ·
     표본 PX_ALT_MIN_SHARE)에서 시간 한도(와 네트워크 오류)로 설명되는 모자람만 건너뛰어요 (px_alt_cut_gap · 리뷰) — 다음이 분명히 답하지 않은
     필수 종목이 있거나, 건너뜀 · 네트워크 오류 종목을 모두 받았다고 쳐도 표본 기준에 못 미치면 거짓이에요. 나머지 조건은 모두 그대로예요.
-    한도에 걸리지 않은 확인이나 발행 관문에는 참을 주지 않아요."""
+    한도에 걸리지 않은 확인이나 발행 관문에는 참을 주지 않아요.
+    2026-11-27 (Jack): 발행 관문(publish · bootstrap)의 확인이 시간 한도에 걸렸으면 (cut 이 0 이 아님 — 다시 물은 확인까지 · px_alt_publish_gate)
+    받은 종목 수와 상관없이 거짓이에요 (까닭: px_alt_gate_note). 끝까지 간 확인은 예전 그대로예요."""
     src = data.get("pxSrc")
     if alt is None:
         return False, "관문이 두 출처 종가를 받지 않았어요"
@@ -1569,6 +1907,12 @@ def px_alt_confirms(data, alt, px, final, mode="publish", today=None, now=None, 
         return True, (f"관문의 두 출처 확인({how})을 시간 한도{f' {px_alt_secs(lim)}초' if isinstance(lim, (int, float)) else ''}로 건너뜀 (Jack 2026-11-20) — "
                       f"한도 전에 확인 {got} / {asked}종목 (시간 한도로 건너뜀 {cut} · 네트워크 오류 {net} · 다음이 그날 종가를 주지 않음 {nno}) · "
                       f"필수 종목 {nm} / {len(MUST)} · 발행 때 2차 출처(다음 × 야후) 확인 {fb['conf']:,}종목 · 받은 종가는 가격 줄에서 비교")
+    # 2026-11-27 (Jack): 발행 관문의 확인이 시간 한도에 걸렸으면 (다시 물은 확인까지 — px_alt_publish_gate) 받은 종목 수가 기준을 채웠어도 쓰지
+    # 않아요 — 받지 못한 종목의 다른 종가를 놓칠 수 있어요. 통과도 건너뜀도 아니에요 (실패 · 다음 예정 실행이 다시 해요).
+    if want == "publish" and alt.get("cut"):
+        return False, f"관문의 두 출처 확인({how})이 " + (px_alt_gate_note(alt) or "시간 한도에 걸렸어요 (Jack 2026-11-27)")
+    if want == "publish" and alt.get("gateMergeErr"):   # 리뷰 #198 3차: 다시 물은 확인과 앞선 확인을 합치지 못했어요 — 쓰지 않아요
+        return False, f"관문의 두 출처 확인({how}): " + (px_alt_gate_note(alt) or f"종목별 기록을 합칠 수 없어요 ({alt['gateMergeErr']})")
     if alt.get("mustMissing"):
         return False, f"관문이 두 출처({how})로 필수 종목을 확인하지 못했어요: {', '.join(alt['mustMissing'])}" + (f" ({alt['err'][0]})" if alt.get("err") else "")
     asked, got = alt.get("asked") or 0, alt.get("got") or 0
@@ -3012,12 +3356,18 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     stop_why = px_alt_stop_why(alt)
     if alt is not None and not use_alt and mode == "live" and (px_alt_was_cut(alt) or px_alt_was_refused(alt)):
         skip_alt, alt_how = px_alt_confirms(data, alt, px, final, mode, today=today, now=now, special=special, cover=False, own=own_ok)
+    # 2026-11-27 (Jack: "Yes, with one immediate retry inside the same run before giving up."): 발행 관문의 확인이 시간 한도를 두 번 넘겼으면
+    # 그 까닭이, 첫 확인만 넘기고 다시 물은 확인이 끝까지 갔으면 그 사실이 날짜 줄에 붙어요 (매일 아침 점검이 알림으로 읽어요). 다시 물어 통과한
+    # 날짜 줄은 경고예요. 사이트 점검(live)은 예전 그대로.
+    gate_note = px_alt_gate_note(alt) if alt is not None and mode != "live" else None
+    if gate_note and gate_note not in str(alt_how):
+        alt_how = f"{alt_how} · {gate_note}"
     if alt is not None:
         notes.append(f"2차 출처 관문 기준 (야후): {'씀' if use_alt else ((('시간 한도로' if stop_why == '시간 한도' else '다음이 거절해') + ' 확인을 건너뜀 (경고)') if skip_alt else '쓰지 않음')} — {alt_how}")
     if use_alt:
         cutn = px_alt_was_cut(alt)               # 한도에 걸렸지만 그 전에 예전 기준을 채운 확인 — 통과 그대로, 한도에 걸린 것은 경고로 알려요
         rep.add("pxDate 최종본 여부" if mode == "live" else "pxDate = 최종본 날짜", True, px,
-                f"{px} ({alt_how}" + (f" · 시간 한도로 건너뜀 {alt['cut']}종목 (Jack 2026-11-20)" if cutn else "") + ")", warn=cutn)
+                f"{px} ({alt_how}" + (f" · 시간 한도로 건너뜀 {alt['cut']}종목 (Jack 2026-11-20)" if cutn else "") + ")", warn=cutn or bool(gate_note))
         final = {"date": px, "closes": px_alt_closes(alt), "how": alt_how}
         if cutn:                                 # 리뷰 2: 이 길도 일부만 받았어요 — 가격 줄은 아래 '한도에 걸린 날' 기준 (묻기로 한 종목 수로 나눠요)
             final.update(cut=True, asked=alt.get("asked"))
@@ -3252,6 +3602,9 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_v191b(rep, data, kr, us, by, comps, pdata, today)
     check_v191h(rep, data, kr, by, comps, pdata, today)
     check_v191i(rep, data, kr, by, comps, pdata, today, mode)   # Jack 2026-11-14 (item 5): 되살린 배당수익률 = 배당 총액 ÷ 시가총액
+    check_div_raw(rep, data, kr, comps)   # 2026-11-23: DART 배당 표 0원인데 총액이 있는 해 · 그럴듯하지 않은 주당 배당 · 배당수익률 (경고만 · 실패 없음)
+    check_div_unknown_new(rep, data, pdata, ((prev or {}).get("corp") or {}).get("companies") if rel else None)   # Jack 2026-11-27 (#179): 한 실행에 새로
+    #                                     모름이 된 배당이 DIV_UNKNOWN_NEW_FAIL 이상이면 실패 (그 아래는 경고 · 직전 발행본에 기록이 없으면 그 행으로 셈)
     check_v191c(rep, cur, us, mode, today)
     check_kr_own_close(rep, data, macro, pdata)   # 2026-11-19 (Jack): 국내 종목의 마지막 확인 종가 (pxd · 미국 pxd 줄과 같은 실패 + 경고 줄)
     check_us_own_close(rep, data, macro, pdata)   # 2026-11-20 (Jack): 미국 종목의 마지막 확인 종가 (pxc · 날짜가 깨졌거나 d1 이 옆에 있으면 실패 · 나머지는 경고)
@@ -3263,7 +3616,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_eps_line_left(rep, corp, comps)   # 2026-11-14 (Jack Q3 · 리뷰 S4): 다시 읽은 뒤에도 날짜가 지난 '고치는 중' 줄이 남을 회사 (경고)
     check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=(prev or {}).get("macro") if rel else None)
     check_kr_splits(rep, data, today)     # 2026-11-23 (Jack, Track 1): 한국 주식 분할 (splitsKr · 경고만 · 실패 없음)
-    check_kr_split_nofile(rep, data, comps, today, pdata)   # 2026-11-27 (Jack 답 11): 공시로 확인하지 못한 분할 (필수 종목 · 하루 수는 실패 · 비움은 경고)
+    check_kr_split_nofile(rep, data, comps, today, pdata)   # 2026-11-27 (Jack 답 11): 공시로 확인하지 못한 분할 (필수 종목 · 한 실행이 새로 판정한 수는 실패 · 비움은 경고)
     try:                                   # 2026-11-24 (감사 3.8): fx = fxHist 의 fxDate 줄인지 · 아니면 출처 (경고만 · 실패하지 않아요)
         check_fx_src(rep, data, macro)
     except Exception as e:                 # 경고만 하는 줄이 관문을 멈추지 않게: 어떤 오류든 그 줄의 경고로
@@ -5035,11 +5388,18 @@ def check_v1751(rep, cur, kr, us, by, comps, px, today, hilo, us_own=frozenset()
     s5 = by.get("005930") or {}
     rep.add("005930 주당 배당금", (num(s5.get("dps")) or 0) > 0, s5.get("dps"), "> 0")
     # '-' 를 0 으로 읽는 새 해석의 맞춤 검사: 같은 DART 표에서 나온 주당 배당금과 배당수익률은 함께 0 이거나 함께 0 보다 커야 해요
+    # 2026-11-23 (#179 · 리뷰 B1 — 이 줄은 예전 힘 그대로): 파이프라인이 발행 전에 어긋난 값을 비우면 (div_raw_guard · div_dy_guard) 그 어긋남은 파일에서
+    # 사라져요. 그래서 비우기 전 값(divCheck.raw.pre)으로 어긋났던 종목을 되돌려 더해요 — 같은 DART 입력이면 #179 전과 같은 수 · 같은 기준
+    # (DPS_DY_ODD_MAX 그대로). 기록의 모양이 틀리면 되돌려 셀 수 없어서 이 줄이 실패해요 (#179 전보다 받아들이는 것이 없게).
     both = [s for s in kr if num(s.get("dps")) is not None and num(s.get("dy")) is not None]
     odd = [s["t"] for s in both if (num(s["dps"]) == 0) != (num(s["dy"]) == 0)]
-    share = 100.0 * len(odd) / len(kr) if kr else 0.0
-    rep.add("주당 배당금·배당수익률 맞음", share <= DPS_DY_ODD_MAX, f"어긋남 {len(odd)} ({share:.1f}%)" + (f" 예: {odd[0]}" if odd else ""),
-            f"≤ {DPS_DY_ODD_MAX}% (0 원인데 수익률 > 0, 또는 반대)")
+    back, back_why = div_raw_odd_back(data, kr)
+    share = 100.0 * (len(odd) + len(back)) / len(kr) if kr else 0.0
+    ex = odd + back
+    rep.add("주당 배당금·배당수익률 맞음", share <= DPS_DY_ODD_MAX and back_why is None,
+            (f"어긋남 {len(odd) + len(back)} ({share:.1f}%)" + (f" 예: {ex[0]}" if ex else "")
+             + (f" · 그중 파이프라인이 비우기 전 값으로 센 {len(back)}" if back else "") + (f" · {back_why}" if back_why else "")),
+            f"≤ {DPS_DY_ODD_MAX}% (0 원인데 수익률 > 0, 또는 반대 · 파이프라인이 비운 값은 비우기 전 값으로 · divCheck.raw)")
 
     # 7. fy: 연간 DART 수치(op·debt·roe·dps3)가 나온 사업보고서 연도
     y = (px or today).year
@@ -7753,7 +8113,7 @@ def check_v191i(rep, data, kr, by, comps, pdata, today=None, mode="publish"):
     own = own_drop_get(data, DIV_LINE_DROP_KEY)
     if not isinstance(dc, dict):
         if isinstance(own, dict) and own["n"]:            # 상시 규칙: 기록이 없어도 비운 수는 봐요 (줄을 맞춰 볼 기록이 없어요)
-            check_v191j_lines(rep, {}, {}, kr, by, pdata, data=data, mode=mode)
+            check_v191j_lines(rep, {}, {}, kr, by, pdata, data=data, mode=mode, comps=comps)
         return
     pf = dc.get("proof")
     name = "배당 기준 증명 기록 (divCheck.proof)"
@@ -7765,7 +8125,7 @@ def check_v191i(rep, data, kr, by, comps, pdata, today=None, mode="publish"):
         if stray:
             rep.add("되살린 배당수익률 = 배당 총액 ÷ 시가총액 (dvProof)", False, f"기록 없이 dvProof · dvLine {len(stray)} (예: {stray[0]})", "0")
         if isinstance(own, dict) and own["n"]:            # 상시 규칙: 기록이 없어도 비운 수는 봐요
-            check_v191j_lines(rep, dc, {}, kr, by, pdata, data=data, mode=mode)
+            check_v191j_lines(rep, dc, {}, kr, by, pdata, data=data, mode=mode, comps=comps)
         return
     px = day(data.get("pxDate")) if is_day(data.get("pxDate")) else None
     kr_t = {s.get("t") for s in kr}
@@ -7844,14 +8204,130 @@ def check_v191i(rep, data, kr, by, comps, pdata, today=None, mode="publish"):
             "없음" if not named else " · ".join(f"{g} {len(ts)}: {', '.join(nm(t) for t in ts[:4])}{'…' if len(ts) > 4 else ''}"
                                                for g, ts in named),
             f"있으면 경고 (발행은 막지 않아요) · 되살림 {len(has)}", warn=bool(named))
-    check_v191j_lines(rep, dc, pf, kr, by, pdata, data=data, mode=mode)
+    check_v191j_lines(rep, dc, pf, kr, by, pdata, data=data, mode=mode, comps=comps)
+
+
+def _num3(v):
+    """길이 3 으로 맞춘 숫자 목록 (숫자가 아니면 None) — 목록이 아니면 [None] * 3."""
+    return [num(x) for x in (list(v) + [None] * 3)[:3]] if isinstance(v, (list, tuple)) else [None] * 3
+
+
+def pref_explains(cash, paid, prefs=(), pfo=None, kinds=None, tol=PREF_ONLY_TOL):
+    """그해 현금배당금총액 cash (원) 를 우선주 · 종류주가 모두 받았다고 볼 수 있는지 → True / False (모름도 False). (순수 함수)
+    paid = 그해 배당을 받은 종류마다의 주당 배당 (원 · 0 보다 큰 것만) · prefs = 같은 회사 상장 우선주들의 오늘 주식 수 · pfo = 그해 말 우선주 · 종류주
+    유통 주식 수 (최근 사업보고서의 주식의 총수 현황 · 상장되지 않은 종류가 받았을 때 씀 · 앞 해에도 오늘 상장 주식 수처럼 같은 수로 ± tol) ·
+    kinds = 배당 표의 우선주 · 종류주 줄 수.
+    받은 종류 수 k 가 상장 우선주 수 이하면: 가장 적은 k 개의 주식 수 × 가장 작은 주당 배당 ~ 가장 많은 k 개 × 가장 큰 주당 배당 (± tol · 총액 반올림
+    0.5백만원). 더 많으면 (상장되지 않은 종류가 받음) 표의 모든 종류가 받았고 pfo 가 있을 때만 pfo × 가장 작은 ~ 가장 큰 주당 배당. 그 밖은 셀 수 없어 False."""
+    cash = num(cash)
+    paid = [p for p in (num(x) for x in paid or ()) if p is not None and p > 0]
+    ps = sorted(p for p in (num(x) for x in prefs or ()) if p is not None and p > 0)
+    if not cash or cash <= 0 or not paid:
+        return False
+    k = len(paid)
+    if k <= len(ps):
+        lo, hi = sum(ps[:k]) * min(paid), sum(ps[-k:]) * max(paid)
+    else:
+        pfo = num(pfo)
+        if not pfo or pfo <= 0 or kinds is None or k < kinds:
+            return False
+        lo, hi = pfo * min(paid), pfo * max(paid)
+    return lo * (1 - tol) - 0.5e6 <= cash <= hi * (1 + tol) + 0.5e6
+
+
+def div_zero_contra(d3, cash3, pdps=(), prefs=(), pfo=None, tol=PREF_ONLY_TOL):
+    """DART 배당 표 한 해의 어긋남 (2026-11-23 · 위 A): 보통주 주당 배당이 0 ('-') 인데 그해 현금배당금총액(원)이 0 보다 큰 해 → (모르는 해 [i],
+    우선주만 받은 해 [i]). 우선주 · 종류주가 총액을 다 받았다고 설명되는 해 (pref_explains · pdps = 종류마다 [당기, 전기, 전전기] 주당 배당 ·
+    pfo 는 최근 사업보고서의 그해 말 수 — 앞 해에도 ± tol 로)는 0 이 맞아요 (티에스아이: 우선주 4,673,989주 × 505원 = 총액 23.60억원 세 해 모두).
+    그 밖은 모름 — 그해 주당 배당을 비워요 (총액으로 주당 배당을 만들지 않아요). (순수 함수)"""
+    d, c = _num3(d3), _num3(cash3)
+    pds = [_num3(p) for p in pdps or () if isinstance(p, (list, tuple))]
+    contra, pref_only = [], []
+    for i in range(3):
+        if d[i] != 0 or not (c[i] and c[i] > 0):
+            continue
+        paid = [p[i] for p in pds if p[i] is not None and p[i] > 0]
+        if pref_explains(c[i], paid, prefs, pfo, kinds=len(pds), tol=tol):
+            pref_only.append(i)
+        else:
+            contra.append(i)
+    return contra, pref_only
+
+
+def dps_far_years(d3, cash3, shr, far=DPS_CASH_FAR):
+    """DART 주당 배당이 주당 칸의 값으로 그럴듯하지 않은 해 (2026-11-23 · 위 B) → [i]: 그해 주당 배당 × 오늘 상장 보통주 수 shr 가 그해 총액(원)의
+    far 배를 넘음 (총액이 있을 때만 — 총액이 없으면 증명 단계의 nototal 줄 4 그대로). 분할 · 무상증자 · 상장 전 해는 몇십 배까지라 far 는 그보다
+    훨씬 커요. 주당 배당 ≥ 종가만으로는 고르지 않아요 (리뷰 #179: 총액이 말하는 숫자면 맞는 값이에요). (순수 함수)"""
+    d, c = _num3(d3), _num3(cash3)
+    shr = num(shr)
+    out = []
+    for i in range(3):
+        if d[i] is None or d[i] <= 0:
+            continue
+        if c[i] and c[i] > 0 and shr and shr > 0 and d[i] * shr > far * c[i]:
+            out.append(i)
+    return out
+
+
+def dy_window_ok(fy, px):
+    """DART 배당수익률(dy)을 센 때 (보고서 해의 12월 31일) 가 오늘(px)의 52주 창 안인지 — 창 밖이면 52주 고가 · 저가로 견줄 수 없어요 (1월 ~ 새
+    사업보고서 · 지난해 사업보고서를 쓰는 회사). fy · px 를 모르면 False (견주지 않음). (순수 함수)"""
+    if not isinstance(fy, int) or isinstance(fy, bool):
+        return False
+    try:
+        p = px if isinstance(px, dt.date) else dt.date.fromisoformat(str(px)[:10])
+    except (TypeError, ValueError):
+        return False
+    return dt.date(fy, 12, 31) >= p - dt.timedelta(days=365)
+
+
+def dy_far(dy, a0, price, hi=None, lo=None, far=DY_FAR, window=True, far_out=DY_FAR_OUT):
+    """DART 배당수익률 dy (%) 가 그럴듯하지 않은지 (2026-11-23 · 위 B) → True (믿지 않음) · False (그럴듯함) · None (견줄 수 없음). (순수 함수)
+    a0 = 오늘 주식 수 기준 올해 주당 배당 (dps3a[0] — 배율을 확인한 해만 · 배당 없음이면 0). 범위 = a0 ÷ (52주 고가 · 저가 · 오늘 종가 중 가장 큰
+    값 ~ 가장 작은 값) × 100 — 지난해 사업보고서의 dy 는 그해 주가로 셌으니까요. dy 가 범위 위 끝의 far 배보다 크거나 아래 끝의 1/far 보다 작으면 True.
+    a0 = 0 이면 dy > 0 이 · a0 > 0 이면 dy ≤ 0 이 어긋남이에요 (값과 상관없어요). window False (dy_window_ok: dy 를 센 때가 52주 창 밖) 면 폭을
+    far_out 으로 넓혀요 (창이 그때 주가를 담지 못해서 · 리뷰 #179 2차: 끄지 않고 넓혀요)."""
+    dy, a0 = num(dy), num(a0)
+    if dy is None or a0 is None or a0 < 0:
+        return None
+    if a0 == 0:
+        return dy > 0
+    if dy <= 0:
+        return True
+    if not window:
+        far = max(far, far_out)
+    pxs = [p for p in (num(price), num(hi), num(lo)) if p is not None and p > 0]
+    if not pxs:
+        return None
+    top, bot = a0 / min(pxs) * 100, a0 / max(pxs) * 100
+    return dy > top * far or dy < bot / far
+
+
+def dy_base(s):
+    """dy_far 에 넣을 오늘 기준 올해 주당 배당 → a0 또는 None (견주지 않음): 올해 주당 배당(dps3[0] · 없으면 dps)이 0 이면 0 · 0 보다 크면 배율을 확인한
+    해(dpsF[0] 이 숫자)의 dps3a[0] · 그 밖은 None. (순수 함수 · 파이프라인과 관문이 같이 써요)"""
+    d3 = s.get("dps3")
+    d0 = num(d3[0]) if isinstance(d3, list) and d3 else num(s.get("dps"))
+    if d0 is None:
+        return None
+    if d0 == 0:
+        return 0.0
+    f0 = num((s.get("dpsF") or [None])[0]) if isinstance(s.get("dpsF"), list) else None
+    a0 = num((s.get("dps3a") or [None])[0]) if isinstance(s.get("dps3a"), list) else None
+    return a0 if f0 is not None and a0 is not None and a0 > 0 else None
+
+
+def raw_blank(s):
+    """그 종목의 올해 보통주 주당 배당이 비어 있는지 (dps 없음 · dps3 가 없거나 dps3[0] 이 빈 칸) — proofSub.data 의 nodps 가 줄 4 를 받는 조건."""
+    d3 = s.get("dps3")
+    return s.get("dps") is None and (not isinstance(d3, list) or not d3 or d3[0] is None)
 
 
 def _line_ko(v):
     return f"줄 {v:g}" if isinstance(v, (int, float)) and not isinstance(v, bool) else "줄 없음"
 
 
-def div_line_bad_rows(kr, dc):
+def div_line_bad_rows(kr, dc, comps=None):
     """Jack 의 상시 규칙 (2026-11-19) · #142 의 우리 처리 검사: 숨긴 배당수익률의 줄 (dvLine 2 · 3 · 4) 중 기록(divCheck.proofSub)과 맞지 않는 종목
     → (행 [(코드, 이유, 종류)], 기록 문제 [글], 기록이 정한 줄 {코드: 줄}, 확인한 기록 {rights · data 중 모양이 맞아 줄을 정할 수 있었던 것}).
     파이프라인(fetch_data.own_blank_div_lines)과 관문(check_v191j_lines)이 같은 함수를 써요. (순수 함수)
@@ -7861,7 +8337,11 @@ def div_line_bad_rows(kr, dc):
                 없을 뿐 틀린 말은 없어요). 관문: 남아 있으면 실패 (틀린 이유 줄 = 틀린 것으로 봐요).
     종류 missing — 기록은 줄 2 · 3 · 4 를 정했는데 종목에 그 줄이 없음: 빈 배당수익률에 이유 줄이 없을 뿐 틀린 것을 보이지 않아요 (비울 것이
                 없어요 · 수에는 들어가요). 관문: 경고.
-    줄 1 (Jack 의 줄 · v19.1i) · 다른 값의 줄은 '배당 기준 증명 기록' 줄의 예전 규칙 그대로 (이 함수는 보지 않아요)."""
+    줄 1 (Jack 의 줄 · v19.1i) · 다른 값의 줄은 '배당 기준 증명 기록' 줄의 예전 규칙 그대로 (이 함수는 보지 않아요).
+    2026-11-23 (리뷰 #179): nodps 는 모두 맞을 때만 줄 4 를 정해요 — 그 종목의 주당 배당(dps · dps3[0])이 비어 있음 · 기록 divCheck.raw.contra
+    가 올해(0)를 비웠다고 말함 · 기록의 비우기 전 올해 주당 배당(pre[코드][0])이 0 · 올해가 우선주만 받은 해(prefOnly)가 아님 (리뷰 #179 3차) ·
+    회사의 그해 총액이 0 보다 큼 (comps = corp.json 회사들을 주면 그 cash3[0] 로 · 파이프라인은 corp 전이라 contra 가 그 증거예요: contra 는 총액
+    > 0 인 해만). 하나라도 아니면 그 줄은 기록이 정하지 않은 줄이에요 (shown · 다른 경우와 줄은 그대로)."""
     dc = dc if isinstance(dc, dict) else {}
     sub, pf = dc.get("proofSub"), dc.get("proof")
     pf = pf if isinstance(pf, dict) else {}
@@ -7886,6 +8366,27 @@ def div_line_bad_rows(kr, dc):
             if top:
                 ok_k.add(k)
                 want.update({t: PROVE_SUB_LINE[k][v] for t, v in m.items() if isinstance(v, str) and v in PROVE_SUB_LINE[k]})
+    # 2026-11-23: 주당 배당을 비운 경우(nodps)는 그 종목의 주당 배당이 정말 비었고 · 기록(divCheck.raw.contra)이 올해를 비웠다고 말하고 · 그해 총액이
+    # 있을 때만 줄 4 를 정해요 (아니면 줄 4 의 말이 틀릴 수 있어요 — 이 경우에만 · 다른 경우는 그대로)
+    by_t = {s.get("t"): s for s in kr}
+    dsub = sub.get("data") if isinstance(sub, dict) and isinstance(sub.get("data"), dict) else {}
+    rec, _ok = div_raw_rec({"divCheck": dc})
+    contra0 = {t for t, ys in ((rec or {}).get("contra") or {}).items() if 0 in ys}
+    pre0 = {t for t, v in ((rec or {}).get("pre") or {}).items() if num(v[0]) == 0}       # 비우기 전 올해 주당 배당이 0 ('-' 를 0 으로 읽은 값)
+    po0 = {t for t, ys in ((rec or {}).get("prefOnly") or {}).items() if 0 in ys}          # 올해가 우선주 · 종류주만 받은 해 (0 이 맞는 해)
+    cash0 = None if comps is None else {c.get("t"): (_num3(c.get("cash3"))[0] if isinstance(c, dict) else None) for c in comps or []}
+    raw_off = {}
+    for t, v in dsub.items():
+        if v not in RAW_SUB or t not in want or t not in by_t:
+            continue
+        why = ("주당 배당이 있어요" if not raw_blank(by_t[t]) else "divCheck.raw.contra 가 올해를 비웠다고 하지 않아요" if t not in contra0
+               else "divCheck.raw.pre 의 비우기 전 올해 주당 배당이 0 이 아니에요" if t not in pre0
+               else "divCheck.raw.prefOnly 가 올해를 우선주 · 종류주만 받은 해라고 해요" if t in po0
+               else "corp.json 의 그해 현금배당금총액이 0 보다 크지 않아요" if cash0 is not None and not ((cash0.get(t) or 0) > 0) else None)
+        if why:
+            raw_off[t] = (v, why)
+    for t in raw_off:
+        want.pop(t, None)
     rows = []
     for s in kr:
         v, t = s.get("dvLine"), s.get("t")
@@ -7894,6 +8395,7 @@ def div_line_bad_rows(kr, dc):
         why = ("우선주에 줄" if is_pref(t) else "배당수익률(dyt)이 보이는 종목에 줄" if num(s.get("dyt")) is not None
                else "되살린 배당수익률(dvProof)이 있는 종목에 줄" if "dvProof" in s
                else f"기록(proofSub.{DIV_LINE_OF[v]})으로 확인할 수 없는 {_line_ko(v)}" if DIV_LINE_OF[v] not in ok_k
+               else f"기록(proofSub.data {raw_off[t][0]})의 줄 4 를 받을 수 없어요: {raw_off[t][1]} ({_line_ko(v)})" if t in raw_off
                else None if want.get(t) == v else f"기록은 {_line_ko(want.get(t))} 인데 {_line_ko(v)}")
         if why:
             rows.append((t, why, "shown"))
@@ -7905,11 +8407,12 @@ def div_line_bad_rows(kr, dc):
     return rows, probs, want, ok_k
 
 
-def check_v191j_lines(rep, dc, pf, kr, by, pdata, data=None, mode="publish"):
+def check_v191j_lines(rep, dc, pf, kr, by, pdata, data=None, mode="publish", comps=None):
     """v19.1j 새 줄 (Jack 2026-11-15 답 11 · 13 · 2026-11-19): 숨긴 배당수익률의 줄 — divCheck.proofSub 와 종목의 dvLine 2 · 3 · 4 가 꼭 맞아요 (우리 기록끼리).
     proofSub: v1 · rights · data 마다 {코드: 경우} 이고, 그 코드들 = divCheck.proof 의 rightsT · dataT, 경우는 정해진 것 (PROVE_SUB) ·
     dvLine 2 = rights 중 주주배정(sh) · dvLine 3 = data 중 배당 표가 회사의 주식 수와 실제로 어긋남(div) · dvLine 4 = data 중 회사 공시에 조각이
-    빠짐(nototal · nostk · pref0 · nopfo · prefmix) — 그 종목엔 꼭, 다른 종목엔 없음 (PROVE_SUB_LINE). data 의 other (파이프라인이 이름을
+    빠짐(nototal · nostk · pref0 · nopfo · prefmix · 2026-11-23 주당 배당을 비운 nodps — 그 종목의 주당 배당이 정말 비었을 때만) — 그 종목엔 꼭,
+    다른 종목엔 없음 (PROVE_SUB_LINE). data 의 other (파이프라인이 이름을
     붙이지 않은 배당 표 이유 · 리뷰 2026-11-19)는 줄이 없어야 하고, 하나라도 있으면 맞더라도 이 줄이 경고예요. 없으면 v19.1j 전
     데이터라 경고 한 줄만 — 직전 발행본에 있었는데 빠지면 실패 (줄 표시 2 · 3 · 4 는 위 '배당 기준 증명 기록' 줄이 이 기록 없이는 막아요).
     Jack 의 상시 규칙 (2026-11-19 · 우리 처리를 보는 검사): data.json ownDrop.divLine 이 있는 파일은 파이프라인이 같은 함수(div_line_bad_rows)로
@@ -7917,7 +8420,7 @@ def check_v191j_lines(rep, dc, pf, kr, by, pdata, data=None, mode="publish"):
     name = "숨긴 배당수익률의 줄 (divCheck.proofSub · dvLine 2 · 3 · 4)"
     own = own_drop_get(data, DIV_LINE_DROP_KEY)
     if isinstance(own, dict):
-        _div_lines_own(rep, name, own, dc, kr, pdata, mode)
+        _div_lines_own(rep, name, own, dc, kr, pdata, mode, comps=comps)
         return
     n0 = len(rep.rows)
     _div_lines_old(rep, name, dc, pf, kr, pdata)
@@ -7943,14 +8446,14 @@ def div_lines_lost(pdata, checked):
     return sorted(t for t in out if isinstance(t, str))
 
 
-def _div_lines_own(rep, name, own, dc, kr, pdata, mode):
+def _div_lines_own(rep, name, own, dc, kr, pdata, mode, comps=None):
     """check_v191j_lines 의 상시 규칙 줄 (ownDrop.divLine 이 있는 파일). 실패: 맞지 않는 줄이 남음 (shown · 틀린 이유 줄) · 이 실행에서 줄을 잃은
     종목이 DIV_LINE_BLANK_MAX 를 넘음 (발행 때만 · 사이트 점검은 경고). 그 수 = 서로 다른 종목 수: 비운 줄 (ownDrop.divLine.rows) · 남은 나쁜 행 ·
     오늘 기록(proofSub)이 없거나 그 부분의 모양이 틀려 줄을 정할 수 없는데 직전 발행본에 있던 그 부분의 줄 2 · 3 · 4 (리뷰 1차 S2: 기록과 줄이 함께
     사라지면 비울 것이 없어 0 으로 세어졌어요 · 리뷰 2차: 둘은 보통 다른 종목이라 큰 값이 아니라 합쳐 세요). 기록에 이름이 30개까지만 있어 ownDrop n
     과도 견줘 큰 값 (n ≤ 30 이면 정확). 경고: 그 수 1~N · 기록은 줄을 정했는데 표시가 없음 (missing) · 기록 문제 · 기록이 없음 · 이름 없는 이유(other)."""
     dc = dc if isinstance(dc, dict) else {}
-    left, probs, want, checked = div_line_bad_rows(kr, dc)
+    left, probs, want, checked = div_line_bad_rows(kr, dc, comps=comps)
     shown = [r for r in left if r[2] == "shown"]
     missing = [r for r in left if r[2] == "missing"]
     sub = dc.get("proofSub")
@@ -7978,7 +8481,7 @@ def _div_lines_own(rep, name, own, dc, kr, pdata, mode):
             f"Jack 의 상시 규칙 (2026-11-19): 기록과 맞지 않는 줄은 파이프라인이 비우고 발행 (ownDrop.divLine) · 실패는 줄을 잃은 종목 > {DIV_LINE_BLANK_MAX} "
             "(비운 줄 · 기록이 없거나 틀려 확인할 수 없는 직전 발행본의 줄 · 사이트 점검은 경고) 또는 맞지 않는 줄이 남음 · 비운 줄 · 표시 없는 줄 · 기록 문제 · "
             "이름 없는 이유(other)는 경고 · dvLine 2 = 주주배정(sh) · "
-            "3 = 배당 표가 주식 수와 실제로 어긋남(div) · 4 = 회사 공시에 조각이 빠짐(nototal · nostk · pref0 · nopfo · prefmix)",
+            "3 = 배당 표가 주식 수와 실제로 어긋남(div) · 4 = 회사 공시에 조각이 빠짐(nototal · nostk · pref0 · nopfo · prefmix · 주당 배당을 비운 nodps)",
             warn=bool(own["n"] or missing or probs or oth or many or lost))
     if own["n"]:
         rep.detail("파이프라인이 비운 숨긴 배당수익률의 줄 (ownDrop.divLine)", [f"{t}: {w}" for t, w in own["rows"]]
@@ -8006,7 +8509,9 @@ def _div_lines_old(rep, name, dc, pf, kr, pdata):
         odd = [t for t, v in m.items() if v not in subs]
         if odd:
             bad.append(f"{k}: 모르는 경우 {m[odd[0]]!r} ({odd[0]})")
-        want.update({t: PROVE_SUB_LINE[k][v] for t, v in m.items() if v in PROVE_SUB_LINE[k]})
+        # 2026-11-23 (리뷰 #179 2차): 상시 규칙의 기록(ownDrop.divLine)이 없거나 틀린 파일에서는 nodps 가 줄을 정하지 않아요 — #179 전처럼 그 줄은
+        # 기록과 맞지 않아 실패해요 (nodps 의 세 조건은 상시 규칙의 길 div_line_bad_rows 만 봐요)
+        want.update({t: PROVE_SUB_LINE[k][v] for t, v in m.items() if v in PROVE_SUB_LINE[k] and v not in RAW_SUB})
     got = {s["t"]: s["dvLine"] for s in kr if s.get("dvLine") in (2, 3, 4) and not isinstance(s.get("dvLine"), bool)}
     if not bad and got != want:
         diff = sorted(set(got.items()) ^ set(want.items()))
@@ -8019,8 +8524,237 @@ def _div_lines_old(rep, name, dc, pf, kr, pdata):
                             + (f" · 이름 없는 배당 표 이유 {len(oth)}곳 (줄 없음): {', '.join(oth[:4])}{'…' if len(oth) > 4 else ''}" if oth else ""))
             if not bad else " · ".join(bad[:3]),
             "v1 · rights · data 의 종목 = proof 의 rightsT · dataT · dvLine 2 = 주주배정(sh) · 3 = 배당 표가 주식 수와 실제로 어긋남(div) · "
-            "4 = 회사 공시에 조각이 빠짐(nototal · nostk · pref0 · nopfo · prefmix) — 그 종목에만 · 이름 없는 이유(other)는 경고",
+            "4 = 회사 공시에 조각이 빠짐(nototal · nostk · pref0 · nopfo · prefmix · nodps) — 그 종목에만 · 이름 없는 이유(other)는 경고",
             warn=bool(oth))
+
+
+DIV_RAW_SHOW = 10                 # 값 칸에 이름을 적는 행 수 (그보다 많으면 전부를 상세 목록에)
+DIV_RAW_YEAR_KEYS = ("contra", "prefOnly", "dpsBad")
+
+
+def div_raw_rec(data):
+    """data.json divCheck.raw (2026-11-23 · fetch_data.div_raw_guard · div_dy_guard) → (기록 또는 None, 모양이 맞는지). 칸이 없으면 (None, True).
+    맞는 모양: v1 · contra (모름으로 비운 0원 해) · prefOnly (우선주 · 종류주만 받아 0 으로 둔 해) · dpsBad (비운 주당 배당 해) = {코드: [0 · 1 · 2 중 해]} ·
+    dyBad = {코드: 비운 DART 배당수익률} · dyOk (맞춰 보고 남긴 수) · dyNo (견주지 못한 수) = 0 이상 정수 · pre = {코드: [비우기 전 올해 주당 배당,
+    비우기 전 dy]} (올해 주당 배당이나 dy 를 비운 종목마다 · 숫자 또는 빈 칸 · 리뷰 #179: '주당 배당금·배당수익률 맞음' 줄이 비우기 전 값으로 세요). (순수 함수)"""
+    dc = data.get("divCheck") if isinstance(data, dict) else None
+    rec = dc.get("raw") if isinstance(dc, dict) else None
+    if rec is None:
+        return None, True
+    if not isinstance(rec, dict) or rec.get("v") != 1 or isinstance(rec.get("v"), bool):
+        return None, False
+
+    def years(m):
+        # 해마다 정수인지 먼저 보고 겹침을 세요 (리뷰 #179 3차: 목록 안의 목록이 set() 에서 오류를 내 관문이 멈췄어요 → 모양이 틀린 기록으로 실패)
+        return isinstance(m, dict) and all(isinstance(t, str) and isinstance(ys, list) and ys
+                                           and all(isinstance(i, int) and not isinstance(i, bool) and 0 <= i <= 2 for i in ys)
+                                           and len(set(ys)) == len(ys)
+                                           for t, ys in m.items())
+    pre = rec.get("pre")
+    ok = (all(years(rec.get(k)) for k in DIV_RAW_YEAR_KEYS) and isinstance(rec.get("dyBad"), dict)
+          and all(isinstance(t, str) and num(v) is not None for t, v in rec["dyBad"].items())
+          and all(isinstance(rec.get(k), int) and not isinstance(rec.get(k), bool) and rec[k] >= 0 for k in ("dyOk", "dyNo"))
+          and isinstance(pre, dict) and all(isinstance(t, str) and isinstance(v, list) and len(v) == 2
+                                            and all(x is None or num(x) is not None for x in v) for t, v in pre.items())
+          # 비운 올해 주당 배당 · dy 는 모두 pre 에 (그 줄이 비우기 전 값으로 세요)
+          and all(t in pre for k in ("contra", "dpsBad") for t, ys in rec[k].items() if 0 in ys) and all(t in pre for t in rec["dyBad"]))
+    return (rec if ok else None), ok
+
+
+def div_raw_odd_back(data, kr):
+    """'주당 배당금·배당수익률 맞음' 줄 (리뷰 #179 B1): 파이프라인이 비우기 전에는 어긋났는데 (주당 배당 0 인데 dy > 0, 또는 반대) 비운 뒤에는 그 줄이
+    세지 않는 종목 → ([코드], 문제 또는 None). 비우기 전 값은 divCheck.raw.pre. 기록이 없으면 비운 것도 없어요 (div_raw_guard 는 다 하거나 아무것도
+    안 해요) → ([], None). 기록이 있는데 모양이 틀리면 → ([], 문제) — 그 줄이 실패해요. (순수 함수)"""
+    dc = data.get("divCheck") if isinstance(data, dict) else None
+    if not isinstance(dc, dict) or "raw" not in dc:
+        return [], None
+    rec, ok = div_raw_rec(data)
+    if not ok or rec is None:
+        return [], "divCheck.raw 모양이 틀려 비우기 전 값으로 셀 수 없어요"
+    by = {s.get("t"): s for s in kr}
+
+    def odd(d, y):
+        d, y = num(d), num(y)
+        return d is not None and y is not None and (d == 0) != (y == 0)
+    back = [t for t, v in sorted(rec["pre"].items()) if t in by and odd(*v) and not odd(by[t].get("dps"), by[t].get("dy"))]
+    return back, None
+
+
+def check_div_raw(rep, data, kr, comps):
+    """2026-11-23 (새 줄 둘 · 경고만 · 실패하지 않아요): DART 배당 표 안의 어긋남 (위 A) · 그럴듯하지 않은 주당 배당 · 배당수익률 (위 B). 파이프라인이
+    같은 함수로 비운 뒤라 보통은 '없음'이에요. 남은 행 · divCheck.raw 기록과 다른 값 · 모양이 틀린 기록은 이름과 함께 경고. 검사 코드가 멈춰도 경고예요
+    (발행을 멈추는 줄은 Jack 의 답을 받아서)."""
+    try:
+        _check_div_raw(rep, data if isinstance(data, dict) else {}, kr or [], comps or [])
+    except Exception as e:
+        for name in (DIV_RAW_ROW, DIV_PLAUS_ROW):
+            if not any(r[0] == name for r in rep.rows):
+                rep.add(name, True, f"검사가 오류로 멈췄어요: {type(e).__name__}: {str(e)[:120]}",
+                        "오류 없이 끝나야 함 (경고만 · 발행을 막지 않아요)", warn=True)
+
+
+def _div_raw_names(items):
+    return ", ".join(items[:DIV_RAW_SHOW]) + (f" 외 {len(items) - DIV_RAW_SHOW}" if len(items) > DIV_RAW_SHOW else "")
+
+
+def _check_div_raw(rep, data, kr, comps):
+    rec, shape_ok = div_raw_rec(data)
+    cby = {c.get("t"): c for c in comps if isinstance(c, dict)}
+    com = [s for s in kr if isinstance(s, dict) and isinstance(s.get("t"), str) and not is_pref(s["t"])]
+    by = {s["t"]: s for s in com}
+
+    def nm(s):
+        return f"{s['t']} {s.get('nk') or ''}".strip()
+
+    def yr(s, i):
+        fy = s.get("fy")
+        return f"{fy - i}" if isinstance(fy, int) and not isinstance(fy, bool) else ("당기", "전기", "전전기")[i]
+
+    def d3_of(s):
+        return s["dps3"] if isinstance(s.get("dps3"), list) else [s.get("dps"), None, None]
+
+    def cash_of(s):
+        return [x * 1e8 if x is not None else None for x in _num3((cby.get(s["t"]) or {}).get("cash3"))]
+
+    probs = [] if shape_ok else ["divCheck.raw 모양이 잘못됨"]
+    if rec is None and shape_ok:
+        probs.append("기록 없음 (divCheck.raw · 2026-11-23 전 파일)")
+
+    # 1. 위 A — 보통주 주당 배당 0 인데 그해 총액이 있는 해: 우선주 · 종류주만 받은 해(prefOnly)만 0 이 맞아요
+    po = (rec or {}).get("prefOnly") or {}
+    left, kept = [], []
+    for s in com:
+        contra, _ = div_zero_contra(d3_of(s), cash_of(s))
+        for i in contra:
+            (kept if i in po.get(s["t"], ()) else left).append(f"{nm(s)} {yr(s, i)}")
+    bad_rec = []
+    for k in ("contra", "dpsBad"):
+        for t, ys in ((rec or {}).get(k) or {}).items():
+            s = by.get(t)
+            if s is None:
+                continue                                  # 오늘 목록에 없는 종목 (예전 기록) — 볼 값이 없어요
+            d3 = s.get("dps3") if isinstance(s.get("dps3"), list) else None
+            if any(d3 is not None and len(d3) > i and d3[i] is not None for i in ys) or (0 in ys and s.get("dps") is not None):
+                bad_rec.append(f"{nm(s)} ({k} {','.join(yr(s, i) for i in ys)})")
+    n_contra = sum(len(v) for v in ((rec or {}).get("contra") or {}).values())
+    parts = ([f"남은 해 {len(left)}: {_div_raw_names(left)}"] if left else ["남은 해 없음"]) \
+        + [f"파이프라인이 모름으로 비운 해 {n_contra} ({len((rec or {}).get('contra') or {})}종목)"] \
+        + ([f"우선주 · 종류주만 받아 0 으로 둔 해 {len(kept)}: {_div_raw_names(kept)}"] if kept else []) \
+        + ([f"기록은 비웠다는데 값이 있음 {len(bad_rec)}: {_div_raw_names(bad_rec)}"] if bad_rec else []) + probs
+    rep.add(DIV_RAW_ROW, True, " · ".join(parts),
+            "보통주 주당 배당이 0 ('-') 인데 그해 현금배당금총액이 있는 해는 모름 (빈 칸) — 우선주 · 종류주가 총액을 다 받은 해 (divCheck.raw.prefOnly) 만 "
+            "0 · 남은 해 · 기록과 다른 값 · 기록 문제는 경고 (발행을 막지 않아요)", warn=bool(left or bad_rec or probs))
+    if len(left) > DIV_RAW_SHOW:                                   # 값 칸에 다 적지 못한 이름은 상세 목록에 전부
+        rep.detail("DART 배당 표: 보통주 0원인데 총액이 있는 해 (모름이어야 해요)", left)
+    if len(bad_rec) > DIV_RAW_SHOW:
+        rep.detail("DART 배당 표: divCheck.raw 기록은 비웠다는데 값이 있는 종목", bad_rec)
+
+    # 2. 위 B — 그럴듯하지 않은 주당 배당 (총액과 1,000배 넘게 다름) · 배당수익률 (오늘 기준 주당 배당 ÷ 52주 범위에서 DY_FAR 배 넘게 · 0 과 어긋남)
+    far_d, far_y, wide_y, ok_y, no_y = [], [], [], 0, 0
+    for s in com:
+        for i in dps_far_years(d3_of(s), cash_of(s), s.get("shr")):
+            far_d.append(f"{nm(s)} {yr(s, i)} 주당 {num(d3_of(s)[i]):,.0f}원")
+        if num(s.get("dy")) is None or is_foreign(s["t"]):
+            continue                                       # 해외 기업은 파이프라인도 보지 않아요 (blank_foreign_dart 의 규칙 그대로 · 위 해외 기업 줄)
+        a0 = dy_base(s)
+        win = dy_window_ok(s.get("fy"), data.get("pxDate"))
+        res = dy_far(s.get("dy"), a0, s.get("price"), s.get("hi"), s.get("lo"), window=win) if a0 is not None else None
+        if res is None:
+            no_y += 1
+        elif res:
+            far_y.append(f"{nm(s)} dy {num(s['dy']):g}% (오늘 기준 주당 {a0:,.0f}원)")
+        else:
+            ok_y += 1
+            if not win and dy_far(s.get("dy"), a0, s.get("price"), s.get("hi"), s.get("lo")):
+                wide_y.append(f"{nm(s)} dy {num(s['dy']):g}% (오늘 기준 주당 {a0:,.0f}원 · {DY_FAR:g} ~ {DY_FAR_OUT:g}배)")
+    dyb = [t for t in ((rec or {}).get("dyBad") or {}) if t in by and by[t].get("dy") is not None]
+    n_dpsbad = sum(len(v) for v in ((rec or {}).get("dpsBad") or {}).values())
+    parts = ([f"주당 배당 {len(far_d)}: {_div_raw_names(far_d)}"] if far_d else []) \
+        + ([f"배당수익률 {len(far_y)}: {_div_raw_names(far_y)}"] if far_y else []) \
+        + ([] if far_d or far_y else ["벗어난 값 없음"]) \
+        + ([f"보고서 해 말이 52주 창 밖이라 넓힌 폭으로 남긴 배당수익률 {len(wide_y)} (창 안이면 비웠을 값): {_div_raw_names(wide_y)}"] if wide_y else []) \
+        + [f"맞춰 본 배당수익률 {ok_y:,} (그럴듯해서 남김) · 견주지 못함 {no_y:,} (올해 주당 배당이 없거나 오늘 기준을 확인하지 못함)"] \
+        + ([f"파이프라인이 비운 주당 배당 {n_dpsbad}해 · 배당수익률 {len((rec or {}).get('dyBad') or {})}"] if rec else []) \
+        + ([f"기록은 비웠다는데 배당수익률이 있음 {len(dyb)}: {', '.join(dyb[:DIV_RAW_SHOW])}"] if dyb else []) + probs
+    rep.add(DIV_PLAUS_ROW, True, " · ".join(parts),
+            f"주당 배당 × 오늘 보통주 수 ≤ 그해 총액 × {DPS_CASH_FAR:g} · DART 배당수익률은 오늘 기준 주당 배당 ÷ 52주 범위의 1/{DY_FAR:g} ~ "
+            f"{DY_FAR:g}배 안 (보고서 해 말이 52주 창 밖이면 {DY_FAR_OUT:g}배) · 0 과 어긋남 없음 — 벗어난 값 · 넓힌 폭으로 남긴 값 · 기록과 다른 값 · "
+            "기록 문제는 경고 (발행을 막지 않아요)",
+            warn=bool(far_d or far_y or wide_y or dyb or probs))
+    if len(far_d) > DIV_RAW_SHOW or len(far_y) > DIV_RAW_SHOW:
+        rep.detail("DART 주당 배당 · 배당수익률: 그럴듯하지 않은 값", far_d + far_y)
+
+
+def div_unknown_codes(data):
+    """올해 배당을 '모름'으로 비운 종목 (divCheck.raw.contra 에 올해 0 이 있는 종목 · 총액은 있는데 보통주 주당 칸이 0 · '-') → (코드 집합, 문제 또는 None).
+    기록이 없으면 비운 것도 없어요 (div_raw_guard 는 다 하거나 아무것도 안 해요) → (빈 집합, None). 기록이 있는데 모양이 틀리면 → (빈 집합, 문제):
+    '주당 배당금·배당수익률 맞음' 줄 (div_raw_odd_back) 과 같은 조건이에요. (순수 함수)"""
+    dc = data.get("divCheck") if isinstance(data, dict) else None
+    if not isinstance(dc, dict) or "raw" not in dc:
+        return set(), None
+    rec, ok = div_raw_rec(data)
+    if not ok or rec is None:
+        return set(), "divCheck.raw 모양이 틀려 셀 수 없어요"
+    return {t for t, ys in rec["contra"].items() if 0 in ys}, None
+
+
+def div_unknown_before(pdata, pcomps=None):
+    """직전 발행본에서 올해 배당이 이미 그 꼴이던 종목 → (코드 집합, 어디서 셌는지 글). check_div_unknown_new 의 '전'.
+    · 기록(divCheck.raw)의 모양이 맞으면: 그 기록의 contra 올해 (파이프라인이 모름으로 비운 종목).
+    · 기록이 없거나 모양이 틀리면 (리뷰 #179 3차 S1 — #179 전 파일 · div_raw_guard 가 멈춘 날 · 되돌림 · data 브랜치 되감기): 그 발행본의 행으로 같은
+      어긋남을 세요 — 올해 보통주 주당 배당이 0 인데 그해 총액(직전 corp.json cash3)이 0 보다 큰 종목 (div_zero_contra 올해 · 경고 줄 'DART 배당 표
+      0원인데 총액이 있는 해' 와 같은 셈) + 그 발행본의 proofSub.data 가 nodps 인 종목 (이미 모름으로 보인 종목). 우선주만 받은 0 은 행으로는 가릴 수
+      없어서 (우선주 주당 배당은 파일에 없어요) 함께 '전'에 들어가요. 그래서 '새로' = 직전 발행본에서 0 인데 총액이 있지도 · 모름이지도 않던 종목 —
+      Jack 의 "appear in one run" 그대로, 기록 하나가 빠졌다고 같은 회사들을 날마다 다시 세지 않아요. (순수 함수)"""
+    dc = pdata.get("divCheck") if isinstance(pdata, dict) else None
+    if isinstance(dc, dict) and "raw" in dc:
+        rec, ok = div_raw_rec(pdata)
+        if ok and rec is not None:
+            got = {t for t, ys in rec["contra"].items() if 0 in ys}
+            return got, f"직전 발행본 기록 {len(got)}종목"
+        how = "직전 발행본 기록 모양이 틀림"
+    else:
+        how = "직전 발행본 기록 없음"
+    cby = {c.get("t"): c for c in (pcomps or []) if isinstance(c, dict)}
+    rows = set()
+    for x in ((pdata or {}).get("stocks") or []) if isinstance(pdata, dict) else []:
+        if not isinstance(x, dict) or x.get("cls") != "kr" or not isinstance(x.get("t"), str) or is_pref(x["t"]):
+            continue
+        d3 = x["dps3"] if isinstance(x.get("dps3"), list) else [x.get("dps"), None, None]
+        cash = [v * 1e8 if v is not None else None for v in _num3((cby.get(x["t"]) or {}).get("cash3"))]
+        if 0 in div_zero_contra(d3, cash)[0]:
+            rows.add(x["t"])
+    sub = (dc or {}).get("proofSub") if isinstance(dc, dict) else None
+    dsub = sub.get("data") if isinstance(sub, dict) and isinstance(sub.get("data"), dict) else {}
+    nod = {t for t, v in dsub.items() if v == "nodps" and isinstance(t, str)}
+    got = rows | nod
+    return got, f"{how} → 행으로 셈 {len(got)}종목 (0원인데 그해 총액 있음 {len(rows)} · nodps {len(nod)})"
+
+
+def check_div_unknown_new(rep, data, pdata, pcomps=None):
+    """Jack, 2026-11-27 (#179 · 새 실패 줄): "#179: yes. … Block only if many appear in one run." 오늘 올해 배당을 모름으로 비운 종목 중 직전
+    발행본에서 그 꼴이 아니던 종목 (div_unknown_before: 그 발행본의 기록 · 기록이 없거나 모양이 틀리면 그 발행본의 행 — 0 인데 총액이 있던 종목과
+    nodps) 이 DIV_UNKNOWN_NEW_FAIL 이상이면 실패 · 1 이상이면 이름과 함께 경고. 직전 발행본이 없으면 (발행 모드가 아님 · 읽지 못함) 비교하지 않아요.
+    pcomps: 직전 발행본 corp.json 회사들 (행으로 셀 때 그해 총액). 오늘 기록의 모양이 틀리면 셀 수 없어서 실패해요 ('주당 배당금·배당수익률 맞음'
+    줄과 같은 조건 — 새로 막는 경우가 아니에요)."""
+    name = DIV_UNKNOWN_NEW_ROW
+    rule = (f"{DIV_UNKNOWN_NEW_FAIL}종목 미만 (오늘 divCheck.raw.contra 에 올해가 있고 직전 발행본에서는 모름도 · 0 인데 총액 있음도 아니던 종목 — 그 "
+            "발행본의 기록으로, 기록이 없거나 모양이 틀리면 그 행으로 · 1종목 이상이면 이름과 함께 경고 · Jack 2026-11-27 — 그 이상이면 우리 DART 배당 "
+            "표 읽기가 깨졌을 수 있어요 · 실행 로그의 'DART 배당 표' 줄을 보세요)")
+    now, why = div_unknown_codes(data)
+    if why:
+        rep.add(name, False, why, rule)
+        return
+    if not isinstance(pdata, dict):
+        rep.add(name, True, f"직전 발행본 없음 (비교 안 함) · 오늘 모름 {len(now)}종목", rule)
+        return
+    before, how = div_unknown_before(pdata, pcomps)
+    by = {s.get("t"): s for s in (data.get("stocks") or []) if isinstance(s, dict)}
+    new = [f"{t} {(by.get(t) or {}).get('nk') or ''}".strip() for t in sorted(now - before, key=str)]
+    names = (": " + ", ".join(new[:DIV_RAW_SHOW]) + (f" 외 {len(new) - DIV_RAW_SHOW}종목" if len(new) > DIV_RAW_SHOW else "")) if new else ""
+    rep.add(name, len(new) < DIV_UNKNOWN_NEW_FAIL, f"새로 {len(new)}종목{names} · 오늘 모름 {len(now)}종목 · {how}", rule, warn=bool(new))
+    if new:
+        rep.detail("DART 배당 표로 새로 모름이 된 종목 (총액은 있는데 보통주 주당 배당이 0 · '-' · 직전 발행본에서는 그 꼴이 아니었어요)", new)
 
 
 # ── 파일 읽기 ───────────────────────────────────────────────
@@ -8110,11 +8844,14 @@ def _main(argv=None):
     if mode == "bootstrap":
         print("!! --bootstrap: 직전 발행본과의 비교를 건너뛰어요. 첫 실행 한 번만 써야 해요.")
     # 2026-11-20 (Jack: "Yes to 10 minutes" — 배포만): 다음 확인의 시간 한도는 받았을 때만 (deploy.yml 관문 단계의 환경 변수 · 또는 --daum-limit).
-    # 감시(watchdog.py)는 받지 않아요 (예전 그대로 한도 없이). 발행 · bootstrap 은 받아도 쓰지 않아요. 짧은 한도(더 자주 건너뜀)는 받지 않아요.
+    # 감시(watchdog.py)는 받지 않아요 (예전 그대로 한도 없이). 발행 · bootstrap 은 받아도 쓰지 않아요 — 발행 관문은 자기 한도만 써요 (2026-11-27 ·
+    # PX_ALT_GATE_BUDGET_S · 넘으면 한 번 더, 또 넘으면 실패 · 건너뛰지 않아요). 짧은 한도(더 자주 건너뜀)는 받지 않아요.
     raw_limit = a.daum_limit if a.daum_limit is not None else (os.environ.get(PX_ALT_LIMIT_ENV) or "").strip() or None
     daum_limit = None
     if raw_limit is not None and mode != "live":
-        print(f"· 다음 확인 시간 한도({raw_limit})는 사이트 점검(--live)에서만 써요 — 이 실행({mode})은 한도 없이 예전 그대로")
+        print(f"· 다음 확인 시간 한도({raw_limit})는 사이트 점검(--live)에서만 써요 — 이 실행({mode})은 한도 없이 예전 그대로 묻는 대신, 이 값이 "
+              f"아닌 발행 관문의 한도 {px_alt_secs(PX_ALT_GATE_BUDGET_S)}초 안에서 물어요 (넘으면 바로 한 번 더, 또 넘으면 실패 · 건너뛰지 않아요 · "
+              "Jack 2026-11-27)")
     elif raw_limit is not None:
         try:
             daum_limit = float(raw_limit)
@@ -8225,8 +8962,13 @@ def _main(argv=None):
             lim_kw = {"budget_s": daum_limit} if daum_limit is not None else {}     # 한도가 없으면 예전과 같은 꼴로 불러요
             if refuse_skip:                      # 2026-11-21: 코드 배포만 (위) — 아니면 예전과 같은 꼴로 불러요
                 lim_kw["refuse_skip"] = True
-            alt = http_px_alt(pick_data, pxd, special=special, mode="live" if mode == "live" else "publish", **lim_kw)
-            print(f"{'· ' if not alt['mustMissing'] and alt['got'] >= PX_ALT_MIN_SHARE * max(alt['asked'], 1) else '!! '}"
+            if mode == "live":                   # 배포 · 감시: 예전 그대로 한 번 (한도 · 거절 스위치는 받았을 때만 · 위)
+                alt = http_px_alt(pick_data, pxd, special=special, mode="live", **lim_kw)
+            else:                                # 2026-11-27 (Jack): 발행 · bootstrap — 확인 전체에 시간 한도, 넘으면 바로 한 번 더, 또 넘으면 실패
+                alt = px_alt_publish_gate(lambda: http_px_alt(pick_data, pxd, special=special, mode="publish", **lim_kw))
+            calm = (not alt['mustMissing'] and alt['got'] >= PX_ALT_MIN_SHARE * max(alt['asked'], 1)
+                    and not (mode != "live" and alt.get("cut")))     # 발행 관문: 시간 한도에 걸린 확인은 쓰지 않아요 (2026-11-27)
+            print(f"{'· ' if calm else '!! '}"
                   f"관문의 두 출처 공식 종가 ({pxd} · {'다음 + 발행 기록' if alt.get('mode') == 'live' else '다음 × 야후'}): 확인 {alt['got']} / {alt['asked']}종목"
                   f" (야후 일봉 종가가 비어 마감 직후 regularMarketPrice 로 읽은 종목 {alt.get('meta', 0)})"
                   + (f" · 두 출처가 다름 {len(alt['disagree'])}: {'; '.join(alt['disagree'][:5])}" if alt.get("disagree") else "")
@@ -8245,7 +8987,7 @@ def _main(argv=None):
                                f"{PX_ALT_MIN_SHARE:.0%}) ('최종본 날짜 계산' 줄)" if reach < PX_ALT_MIN_SHARE * max(alt["asked"], 1)
                                else " — 다음의 확인을 건너뛰고 경고 ('pxDate 최종본 여부' 줄) · 나머지 검사는 예전 그대로 · 받은 종가가 발행 가격과 "
                                     "다르면 가격 줄은 실패 · 감시는 한도 없이 모든 종목을 예전 그대로 물어요")))
-            elif alt.get("cut"):                 # 2026-11-20 (Jack): 배포만 — 시간 한도에 걸린 확인은 그 몫만 건너뛰고 크게 경고해요
+            elif alt.get("cut") and mode == "live":   # 2026-11-20 (Jack): 배포만 — 시간 한도에 걸린 확인은 그 몫만 건너뛰고 크게 경고해요
                 hard, reach = px_alt_cut_gap(alt)
                 print(f"!! 관문의 두 출처 확인이 시간 한도 {px_alt_secs(alt.get('limit'))}초에 걸렸어요 (Jack 2026-11-20): 확인 {alt['got']} / {alt['asked']}종목 · "
                       f"시간 한도로 건너뜀 {alt['cut']}" + (f" (필수 종목 {', '.join(alt.get('cutMust') or [])})" if alt.get("cutMust") else "")

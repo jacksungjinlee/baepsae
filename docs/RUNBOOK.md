@@ -1475,12 +1475,15 @@ number, stops the gate with FAIL before anything is fetched (a shorter limit wou
 - the **watchdog** (`watchdog.py` calls `validate_data.py --live --dir …` with no limit, and removes `BAEPSAE_DAUM_LIMIT_S` from the
   environment it passes to the gate, so it can never inherit one). It opens an alert only on a gate FAIL, so a WARN would turn a
   slow-Daum watchdog run into a quiet pass. If Daum hangs there, the watchdog job's own 30-minute limit ends it, as before;
-- the **daily run's gate** (publish mode) and `--bootstrap`: no limit even if one is given ("· 다음 확인 시간 한도(…)는 사이트
-  점검(--live)에서만 써요 — 이 실행(publish)은 한도 없이 예전 그대로"), every stock asked, coverage short means FAIL.
+- the **daily run's gate** (publish mode) and `--bootstrap`: never this limit or its skip, even if one is given ("· 다음 확인 시간
+  한도(…)는 사이트 점검(--live)에서만 써요 — 이 실행(publish)은 한도 없이 예전 그대로 묻는 대신, 이 값이 아닌 발행 관문의 한도 600초 안에서
+  물어요 (…)"), coverage short means FAIL.
+  Since #198 they have their own 600 s limit that never skips: over it, the check is asked again once, and a second time over is a
+  FAIL (next section, "Publish gate: spot-check time limit").
 
 In the deploy, the whole spot check has a 600 s limit:
 - it logs a start line: "· 관문의 두 출처 확인 시작 (… · 다음 일별 시세 + 발행 기록): 206종목 · 동시 4 · 시간 한도 600초 (배포 — …)"
-  (the watchdog says "시간 한도 없음 (예전 그대로)", the daily gate "시간 한도 없음 (발행 관문 · 예전 그대로)"), and the result line
+  (the watchdog says "시간 한도 없음 (예전 그대로)", the daily gate since #198 "시간 한도 600초 (발행 관문 — …)"), and the result line
   "관문의 두 출처 공식 종가 …" ends with "걸린 시간 n초";
 - the must-haves are asked first; after 600 s no new request is sent, retries included. A request already in flight finishes under
   its own limits (20 s to connect + 20 s between bytes, so about 40 s; a DNS lookup or a server dribbling bytes is outside that,
@@ -1588,6 +1591,100 @@ If the WARN shows:
      code deploys then check prices only against the daily run's two-source record. Do not change the refusal definition, the alert
      list or the count to make a run pass.
 
+## Publish gate: spot-check time limit (발행 관문 두 출처 확인 시간 한도, since #198)
+
+Jack, 2026-11-27, answer 8, verbatim. The question: "May I add a 10-minute limit? If the limit is hit, that run doesn't publish and
+the next scheduled run tries again. That adds a way to stop the publish, so it needs your yes." Jack: "Yes, with one immediate retry
+inside the same run before giving up."
+
+Why: on a backup day (`pxSrc.px` = `daum+yahoo`, no volunteer final file for pxDate yet) the daily run's gate asks Daum and Yahoo
+itself for the 7 must-haves plus a 200-stock sample (`http_px_alt`, 4 at a time, 20 s per request, three tries). Until this change
+that check had no overall limit in the daily gate. On 11-24 a branch dry run sat 46 minutes on "· 관문의 두 출처 확인 시작 (… · 다음 ×
+야후): 204종목 · 동시 4 · 시간 한도 없음 (발행 관문 · 예전 그대로)" with no output (the rerun took 52 s). In the 06:40 publish that
+would have delayed the morning data by up to hours with nobody told. A normal check takes about a minute.
+
+**Who gets it:** the daily run's gate (`update-data.yml`, step "발행 관문 (validate_data.py)", publish mode), its dry runs and
+`--bootstrap`. There is no switch: the limit is in the code (`validate_data.PX_ALT_GATE_BUDGET_S` = 600, `PX_ALT_GATE_TRIES` = 2).
+Unchanged: the deploy's gate (its own 600 s limit that skips with a warning, previous section), and the watchdog (no limit).
+
+**What happens:**
+- The start line says so: "· 관문의 두 출처 확인 시작 (… · 다음 × 야후): 206종목 · 동시 4 · 시간 한도 600초 (발행 관문 — 넘으면 처음부터
+  한 번 더 묻고, 또 넘으면 이번 실행은 발행하지 않아요)".
+- After 600 s no new request is sent (retries included). Requests already in flight finish under their own limits (20 s to connect +
+  20 s between bytes, about 40 s), and every worker thread has ended before the gate goes on. So one try ends by about 10 min 40 s.
+- **First time over:** the log says so at the moment ("!! 관문의 두 출처 확인 시간 한도 600초 (발행 관문): 다음 · 야후에 더 묻지 않아요
+  (확인 n / 대상 m) …") and after ("!! 관문의 두 출처 확인이 시간 한도 600초를 넘겼어요 (발행 관문 · 1/2번째 · Jack 2026-11-27): 대상 m종목 ·
+  끝까지 물은 a (확인 n) · 남은 k · 걸린 시간 s초 — 처음부터 한 번 더 물어요 (… 모든 종목을 다시 물어요 · 이번에 다르거나 받지 못한 종목은
+  그대로 세요)"), and the whole check starts again at once with a fresh 600 s. Every stock is asked again; no first-try close is
+  reused to confirm anything, but nothing the first try found wrong is forgotten either (next bullet but one). The counts: 대상 = stocks to ask; 남은 (left) = stocks the
+  limit stopped from being asked, or from being asked again; 끝까지 물은 = 대상 − 남은, every stock whose asking ended on its own (same
+  close, different close, no close that day, or three failed tries); 확인 = stocks where Daum and Yahoo agree.
+- **"Over the limit" means at least one stock was left (`cut`), whatever its last error.** Unlike the deploy's gate, a stock whose
+  re-ask the limit stopped counts as left even when its last answer was not a network error (a reply that is not JSON, a Yahoo 404).
+  Both round-1 reviewers of #198 found that the first version counted such a stock as "no close that day": the check then looked
+  finished, so it was not asked again, and it could pass what the old rules stop or fail after one try. So a check with nothing left
+  was asked exactly as the old rules ask (same tries, same pauses) and is judged exactly as they judge it.
+- **What the first try saw still counts (since review round 2 of #198).** Fable found that the first version let the retry's record
+  replace the first try's: a wrong close or a missing close the first try had already seen (005930 different between Daum and Yahoo
+  in the first 10 minutes) was forgotten, and a clean retry passed a run the old rules fail. Now the gate keeps, for each stock,
+  what each try saw (`px_alt_gate_merge`, `px_alt_gate_fold`):
+  - a stock the first try asked to the end without confirming it (different closes, no close that day, three failed tries, Yahoo not
+    confirmed) stays not confirmed, with the first try's reason, whatever the retry gets (if the retry saw two different closes for it,
+    that also counts as a different close: no different close either try saw is dropped);
+  - a stock the first try confirmed: confirmed only if the retry confirms the same close. If the retry's two sources differ, that
+    difference stands. If the retry confirms another close, or reads another Daum close it can't confirm, it counts as a different
+    close ("두 확인이 다름"). If the retry gets no Daum close, or the same Daum close without Yahoo, it is not confirmed, and the
+    price rows still compare the first try's close, as the old rules would;
+  - a stock the first try had only Daum's close for (the limit hit while asking Yahoo): confirmed only if the retry confirms that same
+    close; a retry where the two sources differ keeps that difference; anything else counts as a different close;
+  - a stock the first try never finished: the retry's result;
+  - if any try's per-stock record is missing a stock (the worker itself crashed on it, which today's sources can't cause), nothing is
+    merged and the check is not used: "!! 관문의 두 출처 확인: 종목별 기록을 합칠 수 없어요 (종목별 기록 1번째 206 · 2번째 207 / 대상 207) — 이
+    확인은 쓰지 않아요 …", and the date row FAILs with "… 다시 물었지만 종목별 기록을 합칠 수 없어 이 확인은 쓰지 않았어요 (…)". A stock the first
+    try crashed on is never read as "not asked" (review round 3 of #198: that would have let the retry confirm a stock `main` could not).
+  The gate logs them by name: "!! 관문의 두 출처 확인: 첫 확인에서 다르거나 받지 못한 종목 n: 005930 다음 … · 야후 …; … — 다시 물은 확인에서도
+  그대로 세요" and "… 첫 확인과 다시 물은 확인이 다른 종목 m: … — 확인으로 치지 않아요", and the date row's note repeats the counts with
+  examples. Up to the limit the first try asks exactly what the old rules ask, so a stock it finished got the same answer the old
+  rules got. So for every stock the first try finished, the merged check confirms it only if the old rules confirm it, with the
+  same close. It fails every such stock the old rules fail, and its price rows count every different close the old rules count for
+  those stocks.
+- **The second try finishes in time:** it is judged by the same rows and thresholds as before, on the merged record above (a wrong
+  close or a missing must-have fails as before, including one only the first try saw). The log says "!! 관문의 두 출처 확인: 다시 물은
+  확인은 시간 한도 안에 끝났어요 (2/2번째 …) — 예전 기준 그대로 판단해요 (… 첫 확인이 한도를 넘긴 것은 날짜 줄에 적혀요: 다른 까닭이 없으면 경고,
+  있으면 그 실패와 함께)". If nothing else fails, the row **"pxDate = 최종본 날짜" turns WARN** with "첫 확인이 시간 한도 600초를 넘겨 처음부터 다시 물었어요 (Jack 2026-11-27 · 첫 확인: 대상 m종목
+  · 끝까지 물은 a (확인 n) · 남은 k) …". The run publishes (if everything else passes); the 09:13 check sees the warning.
+- **The second try is over too: FAIL, no publish this run.** The log: "!! 관문의 두 출처 확인이 시간 한도 600초를 두 번 넘겼어요 (발행 관문 ·
+  2/2번째 · Jack 2026-11-27): … — 이번 실행은 발행하지 않아요 (관문 실패 · 다음 예정 실행이 다시 해요)". The row "pxDate = 최종본 날짜" (or
+  "최종본 날짜 계산" when the cache has no final file at all) **FAILs** with "관문의 두 출처 확인(다음 × 야후)이 시간 한도 600초를 두 번 넘김
+  (Jack 2026-11-27) — 다시 물은 확인: 대상 m종목 · 끝까지 물은 a (확인 n) · 남은 k · 이번 실행은 발행하지 않아요 (다음 예정 실행이 다시 해요)". It
+  is a GitHub error annotation "발행 관문 실패", which the 09:13 check reads, and the run ends red, so the watchdog raises its alert as
+  for any failed daily run.
+- A check that ran out of time (anything left) is never a pass and never a skip, even when the closes received before the limit would
+  have met the usual bar (all must-haves, 90% of the sample): the stocks it never received could have had a different close.
+- In one case the retry's result is not what the old rules would have seen: stocks the first try never finished are judged on the
+  retry's answers, taken a few minutes after the old rules would have asked. That is the same as the old rules on their next run.
+  The gate never treats them more kindly than the answers the retry got.
+- Worst case the gate step takes about 21 minutes longer (2 × 10 min 40 s); the job's limit is 300 minutes.
+
+**What a FAIL here means:** Daum or Yahoo (or the runner's network) was too slow for 10 minutes, twice in a row. Nothing wrong was
+published: the site keeps the last publish, labelled with its own date.
+
+**What to do:**
+1. One FAIL: nothing. The next scheduled start of the daily run (see `update-data.yml`) checks again from the start. If the volunteer
+   KRX list gets its final file for pxDate in the meantime, the gate compares against that file instead and does not ask Daum or Yahoo.
+2. Read the "!!" lines in the gate log: "걸린 시간", how many were asked to the end ("끝까지 물은") and left ("남은"), and "오류 예" on the
+   line "관문의 두 출처 공식 종가 …" (time-outs, HTTP 429 or 5xx say which side was slow; "(시간 한도로 다시 묻지 않음)" marks a stock the
+   limit stopped from being asked again).
+3. If the next start fails the same way and the data is now more than one trading day late, it is an emergency (CLAUDE.md): find out
+   which source is slow from GitHub's runners (the deploy's and the watchdog's own spot checks ask Daum too) and tell Jack in plain
+   words. Do not raise the limit, skip the check, reuse the first try's answers, or count a partial check as passed to get a publish:
+   that loosens a safety check (Jack decides).
+4. A WARN "첫 확인이 시간 한도 600초를 넘겨 처음부터 다시 물었어요": nothing to do once. If it shows on most backup days, the sources are getting
+   slower; bring the "걸린 시간" numbers to Jack before it turns into FAILs.
+
+**Known limit:** a request stuck outside its own time limits (a DNS lookup that never returns, or a server sending a byte every few
+seconds forever) is still waited for, as in the deploy's gate; never seen. The job's 300-minute limit is the backstop.
+
 ## Korean dividend proof (배당 기준 증명, since #PR — Jack 2026-11-14, item 5)
 
 A Korean payer whose dividend could not be put on today's share basis (`divSt` nc · nd) used to show "배당을 줘요" with no
@@ -1691,10 +1788,109 @@ uncounted 2, data 22, the 32.5% yield 1; lines: 1 → 0 stocks, 2 → 8, 3 → 1
   (since #PR): `divCheck.proofSub` is not v1 with exactly `rights`
   and `data`, its stocks differ from the proof's `rightsT` · `dataT`, a case is unknown, or the marks differ: `dvLine` 2 must be on
   exactly the `rights` stocks with case `sh`, `dvLine` 3 on exactly the `data` stocks with case `div`, `dvLine` 4 on exactly the `data`
-  stocks with case `nototal` · `nostk` · `pref0` · `nopfo` · `prefmix` (`PROVE_SUB_LINE`); a `data` stock with case `other` carries no
+  stocks with case `nototal` · `nostk` · `pref0` · `nopfo` · `prefmix`, and since #179 `nodps` while the stock's `dps` and
+  `dps3[0]` are blank, `divCheck.raw.contra` lists this year and corp.json's `cash3[0]` is above 0 (`PROVE_SUB_LINE`; section "Korean dividend tables that contradict themselves" below); a `data` stock with case `other` carries no
   line, and any `other` turns the row into a WARN (see `data` above). Our own bookkeeping only: look at the run's
   "숨긴 배당수익률의 줄" and "그대로 숨김" log lines. A file without `proofSub` (before #PR) is only a warning unless the previous publish
   had it; without it a `dvLine` 2, 3 or 4 fails the "배당 기준 증명 기록" row.
+
+## Korean dividend tables that contradict themselves (since #179, 2026-11-23 audit of the 11-21 publish)
+
+DART's 배당 table sometimes disagrees with itself. The daily run now checks the parsed table after the DART cache (the cached
+parse is unchanged, so no dividend entry is fetched again) and before the split check (`fetch_data.py` `div_raw_guard`, then
+`apply_div_basis`, then `div_dy_guard`). The rules live once in `validate_data.py` (`div_zero_contra`, `dps_far_years`, `dy_far`,
+`dy_window_ok`). Both steps are all-or-nothing: they look at every stock and build the record and the log lines first, then
+change values at the end, so a crash blanks nothing (logged loudly; the run publishes the old values without the record).
+Stocks left exactly as before, named in the log: foreign issuers (9…: the proof stage gives them no reason line), and a company
+whose this-year 0 has a total that corp.json will not carry above 0 (statements not in won, where `build_corp` drops `cash3`, or a
+total under 50만원 that rounds to 0.00억원; `corp_cash3_of` is the one rounding rule) — the gate accepts line 4 only with a corp
+total above 0, so no line goes out that the gate would reject. After `apply_div_basis` the log counts the blanked stocks with
+and without a reason line ("DART 배당 표 맞춤: 올해를 비운 종목 …"; without a line should always be 0).
+
+What the DART tables say (read on 2026-11-23, 2025 사업보고서, `alotMatter`): 현대코퍼레이션, 한텍, 에코프로머티 and 솔루스첨단소재 have
+one common 주당 현금배당금 row and its 2025 cell is "-" next to a cash total (현대코퍼레이션 also files a 3.10% common yield). There is
+no second common row: the per-share figure is missing from the filing, so line 4 is literally true. 티에스아이 is a preferred-only
+payer (common "-", 우선주 505원 for three years, total 23.60억원 = 4,673,989 preferred shares × 505원). 케이프 files its 700원 under
+a row labelled 우선주 while the total ÷ 700원 is exactly its common share count and its common yield row says 6.60%: the run treats it
+as unknown (line 4); taking such a mislabelled row would be a separate parser change.
+
+- **0 with a total → unknown.** A year whose common 주당 현금배당금 is 0 ("-") while that year's 현금배당금총액 is above 0 becomes
+  unknown (blank), never 0: 0 means "no dividend", and 2.0 said "배당을 주지 않았어요" and ranked those payers last (on 11-21, with the
+  real preferred rows of 8 companies: up to 17 this year, 25 companies / 41 years in all; 16 this year if the run's own share report
+  shows HL D&I's 560원 went to about 9.0M preferred shares). The 0 stays only when the preferred shares took the whole total: that year's preferred
+  주당 배당 × today's listed preferred shares (or, when an unlisted class was paid, the latest year-end 주식의 총수 현황 count, used for
+  the earlier years too) explains the total within ±15% (`PREF_ONLY_TOL`). Otherwise unknown. A per-share figure is never made up
+  from the total. When this year's figure is blanked and DART's `dy` for it is 0 (a "-" read as 0), that `dy` is blanked too.
+  Blanking this year also removes the earlier bars in 2.0: the split check needs this year's dividend for its factor, so
+  `dps3a` becomes all blank and `divSt` nd (현대코퍼레이션: 700 · 600원 stay in `dps3` for the old app, no bars in 2.0).
+- **A per-share cell that is not a per-share amount → blank** that year: 주당 배당 × today's common shares above 1,000 × that year's
+  total (`DPS_CASH_FAR`; 와이엔텍 wrote the total in the per-share cell, 18 million ×; sound values on 11-21 stay under 70 ×, including
+  splits and pre-listing years). A figure at or above today's close is not blanked: when the total confirms it, it is a real
+  figure; when there is no total, the proof stage gives its existing `nototal` line 4 as before.
+- When this year's figure is blanked (always with a total above 0), the stock is recorded in the proof's `data` and gets a line:
+  - 0 with a total → new case `nodps`, `dvLine` 4, Jack's line of 2026-11-19 ("회사 공시에 배당 계산에 필요한 자료가 빠져 있어서
+    배당수익률은 비워 두었어요."). The gate accepts `nodps` only while the stock's `dps` and `dps3[0]` are blank, `divCheck.raw.contra`
+    lists this year and corp.json's `cash3[0]` is above 0 (`div_line_bad_rows`); otherwise the run blanks the line
+    (`ownDrop.divLine`) like any other unbacked line. A file without a well-formed `ownDrop.divLine` (the older rule's path) never
+    lets `nodps` set a line: such a line fails, as before #179. None of the five existing line-4 cases fits: each names the piece
+    that is missing (`nototal` "총액 없음" …), and here the total is there. Accepting `nodps` is a loosening Jack approved on
+    2026-11-27: "#179: yes. The dividend shows as unknown with the existing line "회사 공시에 배당 계산에 필요한 자료가 빠져 있어서
+    배당수익률은 비워 두었어요." Block only if many appear in one run."
+  - a per-share cell more than 1,000 × off the total → the existing case `div`, `dvLine` 3 ("회사가 공시한 배당 자료와 주식 수가 서로
+    맞지 않아서 배당수익률은 비워 두었어요.") — the same case and line the proof stage gave 와이엔텍 before. No gate change for it.
+  - Every blanked year 0 gets one of these lines; nothing is blanked without a line.
+- **2.0** (`src/v2/company.js` `divBlankKind`): a Korean stock with no `dps` and `dvLine` 4 shows 자료가 없어요 with line 4 (whether the
+  common shares were paid is not known, so never 배당을 줘요, and no 배당성향); with `dvLine` 3 it shows 배당을 줘요 with line 3 and the
+  배당성향 from the totals only while corp.json's `cash3[0]` is above 0 (else 자료가 없어요 with line 3). Same places as the other
+  lines: the 배당 tile and tab, 관심 종목, 두 종목 비교 (each shows the line once; `tests/test_kr_div_unknown_lines.py`). corp.json keeps
+  `cash3` · `eps3r` · `epsNi3` · `epsB` for every stock with a 배당 table, also when all three per-share years were blanked (와이엔텍's ring).
+- **The old app (예전 뱁새)** gets no reason line and no new wording, but its company card changes where `dps3[0]` is blank: the
+  per-share bars and their 증가 · 감소 · 유지 word give way to its existing "3년 추이 데이터 없음" (현대코퍼레이션 loses "600 · 700 · 0"
+  and "감소"; so do the other 16 and 와이엔텍). Its 배당수익률 is DART's own `dy` (data.json, and corp.json for the company card), so a
+  company keeps the yield it filed (현대코퍼레이션 3.1%; the check below has no per-share figure to compare it with) and shows "—" where
+  `dy` was blanked (a 0 next to the blanked year: HL D&I, 한텍, 에코프로머티 showed 0.0% before). It reads no `dps` for the yield; no
+  배당성향 without `dps` (as before for a 0); a holding with no `dy` is counted in its existing note ("배당 정보가 없는 종목 {n}개는
+  0원으로 계산했어요.").
+- **DART 배당수익률 (`dy`, the old app's 배당수익률) → blank** when it is more than 3 × away (`DY_FAR`) from today's per-share
+  dividend (`dps3a[0]`, only where the split check confirmed this year's basis) over the 52-week high–low range and today's close
+  (흥국 56.0 = dividend ÷ par, 지투파워 33.7 = the payout ratio, 아비코전자 30.0, 알피바이오 10.0); a 0 with a payer, or a yield with a 0
+  dividend, too. When the report year's 31 December lies outside the 52-week window (`dy_window_ok`: from January to the new
+  사업보고서, and for companies still on an older report) the band widens to 4 × (`DY_FAR_OUT`) instead of switching off; a value
+  kept only because of the wider band is named in the log and by the gate's warning row. 2.0 does not use `dy`. On 11-21: kept
+  values stay under 2.4 ×, blanked ones start at 5.1 × (17 blanked); with today set to 2027-01-01 the same 흥국 56.0 · 지투파워 33.7 ·
+  아비코전자 30.0 · 알피바이오 10.0 · 한일철강 6.0 · 갤럭시아머니트리 0.05 · 디와이피엔에프 0.5 are still blanked and none is kept by the
+  wider band.
+- **Record:** data.json `divCheck.raw` = `{v: 1, contra, prefOnly, dpsBad: {code: [year index 0 · 1 · 2]}, dyBad: {code: the
+  blanked dy}, dyOk, dyNo, pre: {code: [dps, dy] before blanking}}`, present whenever anything was
+  blanked. Run log: "DART 배당 표 0원인데 그해 현금배당금총액이 있는 해" (with the 우선주 · 종류주만 받아 0 그대로 count and names),
+  "DART 주당 배당이 주당 금액이 아닌 해", "DART 배당 표 맞춤", "DART 배당수익률(dy)이 … 벗어남".
+- **"주당 배당금·배당수익률 맞음" (existing FAIL row, kept at full strength):** blanking removes exactly the mismatches this row counts,
+  so the row adds back every stock that `pre` shows was mismatched before blanking (0 with a yield, or the reverse) — the same count
+  as before #179 on the same DART input, against the same `DPS_DY_ODD_MAX` (11-21: 21, 0.8%). A record that is present but
+  malformed fails the row (it can't count the blanked values).
+- **Gate (warning only, never fails, also when the check itself crashes):** "DART 배당 표 0원인데 총액이 있는 해 (경고만)" names any
+  year still at 0 with a total (except `prefOnly`) and any year the record says was blanked but still has a value; "DART 주당 배당 ·
+  배당수익률 그럴듯함 (경고만)" names any per-share figure or `dy` still outside the rules, with the count of yields checked and
+  kept. Both warn when the record is missing (a file from before this change) or malformed. What to do: read the stock's 배당 table
+  on DART; if the rule caught something sound, the threshold is a safety rule — ask Jack with the evidence, never loosen it.
+- **Gate (FAIL, Jack 2026-11-27: "Block only if many appear in one run"):** "DART 배당 표로 새로 모름이 된 종목 수 (20종목 이상이면
+  실패)" (`check_div_unknown_new`, `DIV_UNKNOWN_NEW_FAIL` = 20) counts the stocks whose this-year dividend the run left unknown
+  (`divCheck.raw.contra` lists year 0) and that were not already like that in the previous publish. 1–19 warns and names them (all
+  in the summary list); 20 or more fails the publish. No previous publish (not publish mode) → not compared.
+  - "Already like that" (`div_unknown_before`): with a well-formed record, the previous publish's `contra` year 0. Without one (a file
+    from before #179, a day `div_raw_guard` crashed, a revert, a data-branch rollback) or with a malformed one, the previous publish's
+    own rows: this year's common 주당 배당 0 with that year's total above 0 in its corp.json (`div_zero_contra`, the same count as the
+    warning row above), plus its `proofSub.data` `nodps` stocks. A preferred-only 0 can't be told from rows, so it counts as "already".
+    So one publish without the record does not make every later run count the same companies again (review #179 round 3, S1).
+  - On the 11-27 copies: today 17 unknown; the previous publish (made by `main`'s code) shows 18 as 0 with a total (the 17 + 티에스아이)
+    → "새로 0종목". The first run after #179 should read about 0. New ones come only with a new or corrected 사업보고서 (about 9 in a
+    whole March season, spread over the filing days).
+  - A record that is present but malformed fails this row too, the same condition that fails "주당 배당금·배당수익률 맞음".
+  - Known limit: a per-share cell blanked as "not a per-share amount" (`dpsBad`, line 3, 와이엔텍's kind) is not counted here; many of
+    those at once would only warn in "DART 주당 배당 · 배당수익률 그럴듯함 (경고만)" (the nearest stop is the dividend coverage drop).
+  - What to do when it fails: read the run log's "DART 배당 표" lines and two or three of the named companies' 배당 tables on DART. If
+    our parse broke, fix the parser; if the tables really say so (a new annual-report season), ask Jack with the evidence — never
+    raise the number on your own.
 
 ## 소액주주 yield for differential dividends (차등배당, since #183 — Jack 2026-11-19 Q6, 2026-11-23)
 

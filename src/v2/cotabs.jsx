@@ -38,7 +38,7 @@ import { C, fill, nf, p1, mdText, priceText, todayKst, wonText } from "./format.
 import { Page, Card, AppBar, ScreenTitle, DateLine, LoadFail, Footer, Note, KrOwnCloseLine, tx, tap, useMode } from "./ui.jsx";
 import { groupOf, earnKr, earnUs, valueTile, divKr, divUs, riskTile, growthVsInd, annualRows, yoy, decompose, pbrStrip, indMedian,
   roePbrMap, impliedGrowth, receipt, discFor, discDate, perMillionView, perMillionKr, payout, DCF, round, pastNiGrowth, dcfVs, divHiddenLine,
-  divSmallView } from "./company.js";
+  divBlankKind, divSmallView } from "./company.js";
 import { growthBasis, num, exactData } from "./engine.js";
 import { signedPct, eokText } from "./deckcalc.js";
 import { withAssume, assumeOf } from "./store.js";
@@ -817,7 +817,8 @@ export function DivTab({ load, s }) {
         {/* 자료가 없어요 for a company with no statements at all (fix.js noStmtFor, Jack 2026-11-14): why, under it */}
         <NoStmtNote s={s} co={co} show={!us && r.rule === "na"} />
         {/* v19.1i (Jack's line, 2026-11-08) and v19.1j (Jack, 2026-11-15): why the yield is hidden, by the pipeline's mark (one line at most) */}
-        {!us && r.rule === "pays" && !small && hidLine && Dv[hidLine] && <Note data-ui-v2={HID_UI[hidLine]}>{Dv[hidLine]}</Note>}
+        {/* 2026-11-23: a report per-share figure the pipeline blanked (company.js divBlankKind) — 자료가 없어요 with line 4, or 배당을 줘요 with line 3 */}
+        {!us && (r.rule === "pays" || (r.rule === "na" && divBlankKind(s, co))) && !small && hidLine && Dv[hidLine] && <Note data-ui-v2={HID_UI[hidLine]}>{Dv[hidLine]}</Note>}
         {small && <Note data-ui-v2="co-div-small">{Dv.smallLine}</Note>}
         {small && Dv.dps && (
           <div data-ui-v2="co-dps-small" data-dps={small.dps} style={{ display: "flex", alignItems: "baseline", gap: SPACE(2), flexWrap: "wrap", marginTop: SPACE(3) }}>
