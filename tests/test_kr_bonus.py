@@ -214,7 +214,8 @@ def test_each_check_refuses():
     assert F.kr_bonus_checks({**e, "dr": "2026-05-28"}, c)[1] == "date"                # 기준일이 그 권리락 날의 기준일이 아니에요 (하루 늦음)
     assert F.kr_bonus_checks({**e, "dr": "2026-05-26"}, c)[1] == "date"                # 권리락 날 자체
     assert F.kr_bonus_checks({**e, "r": 2.5}, c)[1] == "diff"                          # r ≠ 1 + x
-    assert F.kr_bonus_checks({**e, "x": 3.0, "r": 4.0}, c)[1] == "diff"                # 자기주식 몫 1 − 0.964 ÷ 3 = 68% > 50% (잘못 읽은 공시)
+    big = F.kr_bonus_checks({**e, "x": 3.0, "r": 4.0}, c)[0]                          # 자기주식 몫 1 − 0.964 ÷ 3 = 68%: 세 확인은 맞아요 (m) —
+    assert big["tau"] > F.KR_BONUS_TREASURY_MAX                                        # 그래서 단계가 'tau' 로 사람에게 남겨요 (1차 리뷰 S1)
     assert F.kr_bonus_checks({**e, "n": e["b"] * 1.2}, c)[1] == "diff"                 # 새 주식이 x × 증자 전 주식보다 많아요 (자기주식 < 0)
 
 
@@ -279,30 +280,35 @@ def test_switch_off_confirms_but_publishes_no_row(monkeypatch):
     rows, info = _fields(real_dart("183300", "084010"), [seed_of("183300", "2026-05-26"), seed_of("084010", "2026-01-05")])
     b = info["bonus"]
     assert rows == [] and info["new"] == [] and info["nofile"] == [] and info["runNew"] == []
-    assert sorted((x[0], x[1], x[3]) for x in b["held"]) == [("084010", "2026-01-05", "odd"), ("183300", "2026-05-26", "off")]
+    assert sorted((x[0], x[1], x[3]) for x in b["held"]) == [("084010", "2026-01-05", "tau"), ("183300", "2026-05-26", "off")]   # 대한제강 τ 24.4%
     assert {(x[0], x[3], x[5]) for x in b["rec"]} == {("183300", "bonus", "fric"), ("084010", "bonus", "fric")}
-    assert all(V.kr_split_receipt_ok(x) for x in b["rec"])
-    assert b["read"] == {"n": 2, "no": 0} and b["calls"] == 4 and info["calls"] == 4
+    tau_held = {(x[0], x[1]) for x in b["held"] if x[3] == "tau"}
+    assert all(V.kr_bonus_receipt_ok(x, tau_max=1.0 if (x[0], x[1]) in tau_held else V.KR_BONUS_RC_TAU_AUTO) for x in b["rec"])
+    assert b["read"] == {"n": 2, "no": 0} and b["calls"] == 4 and info["calls"] == 0          # splitsKr.calls 는 분할의 호출만 (#186 그대로)
 
 
 def test_switch_on_publishes_clean_ratios_only(monkeypatch):
     """스위치를 켜면 (Jack 이 기록 줄을 승인한 뒤 · 다음 PR) 깨끗한 배율의 줄만 [코드, 권리락 날, r] 로 실려요 · 영수증은 splitsKr.rows 에. 깨끗하지 않은 r
-    (대한제강 ×1.6616554) 은 관문의 '주식 분할 목록 (splits)' 깨끗한 배율 줄이 발행을 막아서 그대로 held 'odd'."""
+    (폰드그룹 ×1.780175 · τ 0.02%) 은 관문의 '주식 분할 목록 (splits)' 깨끗한 배율 줄이 발행을 막아서 그대로 held 'odd' · 대한제강 (τ 24.4%) 은 'tau'."""
     Log(monkeypatch)
     monkeypatch.setattr(F, "KR_BONUS_ROWS_ON", True)
     global CL1
-    CL1 = real_dart("183300", "084010", "196170")
+    CL1 = real_dart("183300", "084010", "196170", "472850")
     rows, info = _fields(CL1,
-                         [seed_of("183300", "2026-05-26"), seed_of("084010", "2026-01-05"), seed_of("196170", "2026-08-05")])
+                         [seed_of("183300", "2026-05-26"), seed_of("084010", "2026-01-05"), seed_of("196170", "2026-08-05"), seed_of("472850", "2026-01-02")])
     assert rows == [["183300", "2026-05-26", 2.0], ["196170", "2026-08-05", 1.3]] and info["new"] == rows
-    assert [(x[0], x[3]) for x in info["bonus"]["held"]] == [("084010", "odd")]
+    assert sorted((x[0], x[3]) for x in info["bonus"]["held"]) == [("084010", "tau"), ("472850", "odd")]
     rec = {(x[0], x[1]): x for x in info["rows"]}
-    assert rec[("183300", "2026-05-26")][3:6] == ["bonus", "20260522000156", "fric"] and V.kr_split_receipt_ok(rec[("183300", "2026-05-26")])
+    assert rec[("183300", "2026-05-26")][3:6] == ["bonus", "20260522000156", "fric"] and V.kr_bonus_receipt_ok(rec[("183300", "2026-05-26")])
+    # 1차 리뷰 S2: 실린 줄의 영수증 (splitsKr.rows) 은 예전 규칙 그대로라 무상증자 영수증은 거기서 경고돼요 — 스위치를 켜는 PR 이 그 규칙을 (Jack 의 yes 와
+    # 함께) 넓혀야 해요. 지금은 느슨해진 곳이 없어요
+    assert not V.kr_split_receipt_ok(rec[("183300", "2026-05-26")])
     # 다음 실행: 지난 발행본의 줄 · 영수증이 그대로 이어져요 (보관본의 판정 · DART 호출 없음)
     prev = {"splits": rows, "splitsKr": info}
-    cl2 = real_dart("183300", "084010", "196170")
+    cl2 = real_dart("183300", "084010", "196170", "472850")
     cl2.entries = dict(CL1.entries)
-    rows2, info2 = _fields(cl2, [seed_of("183300", "2026-05-26"), seed_of("084010", "2026-01-05"), seed_of("196170", "2026-08-05")], prev=prev)
+    rows2, info2 = _fields(cl2, [seed_of("183300", "2026-05-26"), seed_of("084010", "2026-01-05"), seed_of("196170", "2026-08-05"), seed_of("472850", "2026-01-02")],
+                           prev=prev)
     assert rows2 == rows and info2["new"] == [] and sorted(info2["rows"]) == sorted(info["rows"]) and cl2.calls == []
 
 
@@ -314,7 +320,7 @@ def test_no_filing_is_logged_never_nofile_never_runnew(monkeypatch):
     cl = FakeDart(lists={corp: {**lst, "list": [x for x in lst["list"] if "무상증자" not in x["report_nm"]]}})
     rows, info = _fields(cl, [seed_of("183300", "2026-05-26")])
     assert rows == [] and info["nofile"] == [] and info["runNew"] == [] and info["nofileN"] == 0
-    assert info["bonus"]["out"] == [["183300", "2026-05-26", "nodoc"]] and info["bonus"]["read"] == {"n": 1, "no": 1}
+    assert info["bonus"]["out"] == [["183300", "2026-05-26", "nodoc", "2026-06-15"]] and info["bonus"]["read"] == {"n": 1, "no": 1}   # 넷째 칸 = 상장일
     assert info["read"] == {"n": 0, "no": 0, "doc": 0}                    # 분할의 '대부분 확인하지 못함' 경고 줄에도 세지 않아요
     assert log.has("!!", "한국 무상증자 — 공시로 확인하지 못한 권리락 1", "발행을 막는 줄에 넣지 않아요")
 
@@ -332,32 +338,90 @@ def test_dart_error_waits_and_is_never_a_no(monkeypatch):
     assert [(x["t"], x["d"], x["src"]) for x in again] == [("183300", "2026-05-26", "pend")]
 
 
-def test_budget_is_shared_with_splits(monkeypatch):
-    """한 실행의 50회를 함께 써요: 물을 무상증자 후보가 있으면 분할은 50 − 15 = 35 까지 · 무상증자는 남은 것을 · 합은 50 을 넘지 않아요. 무상증자 후보가
-    없으면 분할은 예전처럼 50."""
-    Log(monkeypatch)
-    split_seed = [F._kr_cand(f"1{i:05d}", "2024-03-04", 10000, 2000, 1000, 5000, "seed") for i in range(40)]
-    assert all(split_seed)
+def _split_seed(n=40):
+    return [F._kr_cand(f"1{i:05d}", "2024-03-04", 10000, 2000, 1000, 5000, "seed") for i in range(n)]
 
-    class Both(FakeDart):
-        def get(self, ep, params):
-            if ep == "list.json" and params.get("pblntf_detail_ty") == "I001":
-                self.calls.append((ep, dict(params)))
-                self.status["013"] += 1
-                return {"status": "013"}
-            return super().get(ep, params)
-    corp = dict(CORP, **{f"1{i:05d}": f"9{i:07d}" for i in range(40)})
-    kr = kr_rows(*[c["t"] for c in split_seed], "183300", "084010", "196170")
+
+class Both(FakeDart):
+    """분할 목록 (I001) 은 늘 '없음' (013) · 무상증자는 진짜 결정 — 분할 후보 하나에 2회 (목록 + 감자 목록 없이 nodoc 은 1회 · 병합이 아니라 분할이라 1회)."""
+    def get(self, ep, params):
+        if ep == "list.json" and params.get("pblntf_detail_ty") == "I001":
+            self.calls.append((ep, dict(params)))
+            self.status["013"] += 1
+            return {"status": "013"}
+        return super().get(ep, params)
+
+
+def _both(codes=("183300", "084010", "196170")):
+    cl = Both(lists={CORP[t]: fx(REAL[t][0]) for t in codes}, api={(CORP[t], ep): fx(f) for t in codes for ep, f in REAL[t][1].items()})
+    cl.meta["corpMap"] = dict(CORP, **{f"1{i:05d}": f"9{i:07d}" for i in range(40)})
+    return cl
+
+
+def test_budget_split_loop_is_exactly_186_and_bonus_takes_the_leftover(monkeypatch):
+    """1차 리뷰 B1 (둘 다): 무상증자는 한도를 떼어 두지 않아요 — 분할 루프는 #186 과 똑같이 50 까지 (호출 · 판정 · nofile · runNew 가 무상증자 후보가 없을 때와
+    같아요) · 무상증자는 분할이 남긴 호출만 · 합은 50 을 넘지 않아요 · 물을 수 없는 (late) 후보도 한도를 잡지 않아요."""
+    Log(monkeypatch)
+    sp, kr = _split_seed(), kr_rows(*[f"1{i:05d}" for i in range(40)], "183300", "084010", "196170")
 
     def run(bseed):
-        cl = Both(lists={CORP[t]: fx(REAL[t][0]) for t in ("183300", "084010", "196170")},
-                  api={(CORP[t], ep): fx(f) for t in ("183300", "084010", "196170") for ep, f in REAL[t][1].items()})
-        cl.meta["corpMap"] = corp
-        return F.kr_splits_fields(None, kr, [], cl, TODAY, seed=split_seed, px_date="2026-11-27", bseed=bseed)[1]
-    with_b = run([seed_of("183300", "2026-05-26"), seed_of("084010", "2026-01-05"), seed_of("196170", "2026-08-05")])
-    without = run([])
-    assert without["calls"] <= 50 and without["bonus"]["calls"] == 0 and without["calls"] > 35
-    assert with_b["calls"] <= 50 and with_b["bonus"]["calls"] == 6 and with_b["calls"] - with_b["bonus"]["calls"] <= 35
+        cl = _both()
+        rows, info = F.kr_splits_fields(None, kr, [], cl, TODAY, seed=sp, px_date="2026-11-27", bseed=bseed)
+        return {k: info[k] for k in ("calls", "wait", "out", "outN", "nofile", "runNew", "read")}, info["bonus"], rows
+    with_b, b, rows_b = run([seed_of("183300", "2026-05-26"), seed_of("084010", "2026-01-05"), seed_of("196170", "2026-08-05")])
+    without, b0, rows_0 = run([])
+    assert with_b == without and rows_b == rows_0 and b0["calls"] == 0
+    assert with_b["calls"] + b["calls"] <= 50 and 0 < b["calls"] <= 50 - with_b["calls"]
+    late, bl, _ = run([{**seed_of("183300", "2026-05-26"), "dl": "2026-12-01"} | {}])     # 상장일이 가격 날짜 뒤 (다음 발행)
+    assert late == without and bl["calls"] == 0
+
+
+def test_run_one_runnew_pin_against_main(monkeypatch):
+    """1차 리뷰 B1 (Fable 의 모의: 첫 실행 runNew main 26 · 브랜치 13): 모든 답이 '없음' 이면 첫 실행의 runNew 가 무상증자 후보가 있어도 main 과 같아요 —
+    '한 실행에 새로 생긴 … (16건 이상이면 실패)' 줄이 main 처럼 막아요 (무상증자 후보가 그 줄을 약하게 하지 않아요)."""
+    Log(monkeypatch)
+    sp = _split_seed()
+    kr = kr_rows(*[f"1{i:05d}" for i in range(40)], *[c["t"] for c in SEED])
+
+    class No(FakeDart):
+        def get(self, ep, params):
+            self.calls.append((ep, dict(params)))
+            self.status["013"] += 1
+            return {"status": "013"}
+
+    def run(bseed):
+        cl = No()
+        cl.meta["corpMap"] = {**{f"1{i:05d}": f"9{i:07d}" for i in range(40)}, **{c["t"]: "8" + c["t"][:5].rjust(7, "0") for c in SEED}}
+        return F.kr_splits_fields(None, kr, [], cl, TODAY, seed=sp, px_date="2026-11-27", bseed=bseed)[1]
+    main_like, branch = run(None), run(SEED)
+    assert branch["runNew"] == main_like["runNew"] and branch["calls"] == main_like["calls"] and branch["nofile"] == main_like["nofile"]
+    assert len(branch["runNew"]) >= V.KR_SPLIT_NOFILE_RUN_FAIL                   # 이 모의에서 실패 줄이 그대로 막아요
+    assert branch["bonus"]["calls"] + branch["calls"] <= 50 and branch["bonus"]["out"] and branch["nofile"] == main_like["nofile"]
+    row = {}
+    rep = Rep()
+    V.check_kr_split_nofile(rep, {"splits": [], "splitsKr": branch, "stocks": kr}, [], TODAY, None)
+    row = {x[0]: x for x in rep.rows}
+    assert row[V.KR_NOFILE_RUN_ROW][1] is False                                    # FAIL (main 과 같아요)
+
+
+def test_have_set_ignores_bonus_candidates(monkeypatch):
+    """1차 리뷰 (Fable nit · 꼭 고칠 것): 오늘 목록 파일에 무상증자 후보가 있는 종목도 다음 일별 시세로 분할 · 병합을 찾고 (#186 그대로) 다음 대기 (dq) 를
+    잃지 않아요."""
+    Log(monkeypatch)
+    seen = []
+    prev = {"pxDate": "2026-05-06", "stocks": [{"t": "020400", "cls": "kr", "shr": 3189166}],
+            "splitsKr": {"dq": [["020400", "2026-05-01"]]}}
+    kr = [{"t": "020400", "nk": "대동금속", "cls": "kr", "cap": 1.0, "shr": 6378332}]
+    rows = [r for r in DAUM["020400"] if r[0] <= "2026-05-07"]
+
+    def fetch(c, n):
+        seen.append(c)
+        return {"data": [{"date": d + " 00:00:00", "tradePrice": tp, "prevClosingPrice": pc, "changePrice": ch, "listedSharesCount": sh}
+                         for d, tp, pc, ch, sh in rows]}
+    krx = {**seed_of("020400", "2026-04-10"), "src": "krx"}
+    sp = {"splits": [], "splitsFrom": "2016-01-01"}
+    out = F.kr_splits_step(sp, prev, kr, real_dart("020400"), dt.date(2026, 5, 8), [krx], px_date="2026-05-07", daum=fetch, bonus=True, bseed=[])
+    assert seen == ["020400"] and out["splitsKr"]["dq"] == []                   # 다음을 읽었어요 (본 종목이라 대기에서 빠져요)
 
 
 def test_no_bonus_input_leaves_split_results_unchanged(monkeypatch):
@@ -392,7 +456,7 @@ def test_main_turns_bonus_on_and_the_krx_path_is_wired():
     src = open(os.path.join(ROOT, "fetch_data.py"), encoding="utf-8").read()
     m = src[src.index("def main("):]
     assert "kr_splits_step(sp_fields, prev, kr, client, today, kmeta.get(\"_krSplitCand\"), px_date=kmeta.get(\"pxDate\"), bonus=True)" in m
-    assert "kr_bonus_cands([(px_date, listing)] + sessions, ref_events, ks_all.index)" in src
+    assert "kr_bonus_cands([(px_date, listing)] + sessions, ref_events, ks_all.index, miss=bmiss)" in src and 'kr_bonus_miss_log(bmiss, "목록 파일")' in src
 
 
 def test_daum_step_finds_a_bonus_and_does_not_hold_its_listing_day(monkeypatch):
@@ -449,19 +513,39 @@ def _clean_info(monkeypatch, on=False):
 
 
 def test_gate_passes_a_clean_file_and_warns_on_a_bad_receipt(monkeypatch):
-    rows, info = _clean_info(monkeypatch, on=True)
+    """스위치 꺼짐 (지금 실리는 모양): bonus.rec 의 영수증은 kr_bonus_receipt_ok 로 · 깨끗하면 PASS · 하나라도 틀리면 WARN · 실패는 없어요."""
+    rows, info = _clean_info(monkeypatch)
     row, _ = _gate(info, rows)
     assert row[1] is True and row[2] is False, row                   # PASS (경고 없음)
-    bad = json.loads(json.dumps(info))
-    k = next(i for i, x in enumerate(bad["rows"]) if x[0] == "183300")
-    for change in ({"px": 1.9}, {"shr": 2.05}, {"dl": "2026-05-26"}, {"dr": "2026-06-20"}, {"x": 0.5}, {"m": 1.05}):
-        b2 = json.loads(json.dumps(bad))
-        b2["rows"][k][6].update(change)
+    k = next(i for i, x in enumerate(info["bonus"]["rec"]) if x[0] == "183300")
+    for change in ({"px": 1.9}, {"shr": 2.05}, {"dl": "2026-05-26"}, {"dr": "2026-06-20"}, {"x": 0.5}, {"m": 1.05}, {"x": 1.2, "m": 1.96405}):
+        b2 = json.loads(json.dumps(info))
+        b2["bonus"]["rec"][k][6].update(change)
+        if "x" in change:
+            b2["bonus"]["rec"][k][2] = 1 + change["x"]
         row, _ = _gate(b2, rows)
-        assert row[1] is True and row[2] is True and "세 확인" in row[3], (change, row)
-    b3 = json.loads(json.dumps(bad))
-    del b3["rows"][k][6]["px"]
+        assert row[1] is True and row[2] is True and "무상증자 영수증" in row[3], (change, row)
+    b3 = json.loads(json.dumps(info))
+    del b3["bonus"]["rec"][k][6]["px"]
     assert _gate(b3, rows)[0][2] is True
+    # 가장 긴 KRX 휴장 (2017 추석: 권리락 9-29 → 기준일 10-10 · 11일) 은 맞는 영수증이에요
+    long = {"rule": "bonus", "dx": "2017-09-29", "dl": "2017-10-30", "dr": "2017-10-10", "x": 1.0, "m": 2.0, "tau": 0.0, "px": 2.0, "shr": 2.0}
+    assert V.kr_bonus_receipt_ok(["000010", "2017-09-29", 2.0, "bonus", "20170901000001", "fric", long])
+    # x 를 2자리로 적은 공시 (1/3 → 0.33): n ÷ b = 0.3333 이라 τ 가 조금 음수 — 반올림만큼은 받아요 (파이프라인도 kr_bonus_tau_floor)
+    third = {**long, "x": 0.33, "m": 1.333333, "px": 1.333333, "shr": 1.333333}
+    assert V.kr_bonus_receipt_ok(["000010", "2017-09-29", 1.33, "bonus", "20170901000001", "fric", third])
+    assert F.kr_bonus_tau_floor(0.33, 2) < 1 - 0.333333 / 0.33 < 0 and F.kr_bonus_tau_floor(1.0, 0) == -1e-6
+
+
+def test_gate_keeps_the_old_rule_for_published_rows_and_warns_on_a_bonus_row_while_off(monkeypatch):
+    """1차 리뷰 Opus S2 · Fable S4b: splitsKr.rows 의 영수증 규칙은 main 그대로 (kr_split_receipt_ok 는 바뀌지 않았어요) · 스위치가 꺼졌는데 무상증자 줄의
+    영수증이 rows 에 있으면 따로 경고해요."""
+    rows, info = _clean_info(monkeypatch)
+    bad = json.loads(json.dumps(info))
+    rec = bad["bonus"]["rec"][0]
+    bad["rows"] = [rec]
+    row, _ = _gate(bad, [rec[:3]])
+    assert row[1] is True and row[2] is True and "스위치가 꺼졌는데 실린 무상증자 줄 1" in row[3] and "세 확인(공시 상장일" in row[3]
 
 
 def test_gate_warns_on_held_receipts_failures_and_recent_no_but_never_fails(monkeypatch):
@@ -593,3 +677,110 @@ def test_a_bonus_error_never_stops_the_split_step(monkeypatch):
     monkeypatch.setattr(F, "_kr_bonus_todo", boom)
     rows2, info2 = F.kr_splits_fields(prev, kr_rows("000010", "183300"), [], FakeDart(), TODAY, seed=sp, px_date="2026-11-27", bseed=[])
     assert info2["src"] == "dart" and info2["bonus"]["src"] == "err" and info2["calls"] >= 1
+
+
+# ── 6. 1차 리뷰 (#205) 뒤에 더한 시험 ────────────────────────────────────────────────────────────────────────────────────
+def test_a_missing_dart_field_is_unread_never_nodoc():
+    """1차 리뷰 Opus S5: 칸 자체가 없는 답 (DART 가 칸 이름을 바꿈) 은 '이 주식에 주는 신주 없음' 이 아니라 읽지 못한 것 → unread (30일마다 다시)."""
+    c = seed_of("183300", "2026-05-26")
+    j = fx("dvwhy/183300_fricDecsn.json")
+    gone = {**j, "list": [{k: v for k, v in r.items() if k != "nstk_ascnt_ps_ostk"} for r in j["list"]]}
+    ev, bad = F.parse_kr_bonus(gone["list"])
+    assert ev == [] and bad and "칸이 없어요" in bad[0]
+    cl = real_dart("183300")
+    cl.api[(CORP["183300"], "fricDecsn.json")] = gone
+    v, _ = F.kr_bonus_dart(cl, CORP["183300"], c, TODAY)
+    assert v["v"] == "no" and v["code"] == "unread"
+    dash = {**j, "list": [dict(r, nstk_ascnt_ps_ostk="-") for r in j["list"]]}             # '-' 는 '보통주 신주 없음' (그대로 nodoc)
+    cl.api[(CORP["183300"], "fricDecsn.json")] = dash
+    assert F.kr_bonus_dart(cl, CORP["183300"], c, TODAY)[0]["code"] == "nodoc"
+
+
+def test_large_treasury_share_is_held_for_a_person_with_its_numbers(monkeypatch):
+    """1차 리뷰 S1: 세 확인이 맞추는 것은 m — r 은 τ ≤ 5% 일 때만 자동으로 확인 (읽은 15건 중 14건 ≤ 4.4%) · 대한제강 τ 24.4% 는 'tau' 로 싣지 않고 숫자와
+    함께 크게 남겨요 (스위치를 켜도)."""
+    log = Log(monkeypatch)
+    monkeypatch.setattr(F, "KR_BONUS_ROWS_ON", True)
+    rows, info = _fields(real_dart("084010"), [seed_of("084010", "2026-01-05")])
+    assert rows == [] and info["bonus"]["held"] == [["084010", "2026-01-05", 1.6616554, "tau"]]
+    assert abs(info["bonus"]["rec"][0][6]["tau"] - 0.24432) < 1e-5
+    assert log.has("!! 한국 무상증자 — 세 확인은 맞는데 자기주식 몫이 5% 를 넘어", "x 0.661655", "11,457,199", "22,914,397", "τ 24.4%", "20251222000129")
+    taus = [F.kr_bonus_checks(*_ev(t, d)[::-1])[0]["tau"] for t, d, _r in REAL_EVENTS]
+    assert sum(1 for x in taus if x <= F.KR_BONUS_TREASURY_MAX) == 14 and max(x for x in taus if x <= 0.05) < 0.045
+
+
+def test_a_crash_in_the_bonus_loop_keeps_todays_candidates_and_counts_its_calls(monkeypatch):
+    """1차 리뷰 Opus S6: 무상증자 루프가 멈추면 오늘 찾은 후보 (목록 파일 · 다음) 를 pend 에 이어요 (다음 날에는 다음을 다시 읽지 않아요) · 멈추기 전에 쓴
+    호출도 bonus.calls 로 세요 (분할의 splitsKr.calls 는 그대로)."""
+    Log(monkeypatch)
+    real = F._kr_bonus_fields
+
+    def crash(*a, **k):
+        real(*a, **k)                                  # 진짜 루프가 DART 를 불러요 (목록 + fricDecsn = 2회)
+        raise KeyError("after the calls")             # 그다음 우리 코드의 오류로 멈춘 것처럼
+    monkeypatch.setattr(F, "_kr_bonus_fields", crash)
+    c = {**seed_of("183300", "2026-05-26"), "src": "daum"}
+    rows, info = F.kr_splits_fields(None, kr_rows("183300"), [c], real_dart("183300"), TODAY, seed=[], px_date="2026-11-27", bseed=[])
+    assert info["bonus"]["src"] == "err" and info["bonus"]["pend"] == [F.kr_bonus_row_of(c)] and info["bonus"]["calls"] == 2 and info["calls"] == 0
+
+
+def test_unpaired_resets_and_near_miss_listing_days_are_logged(monkeypatch):
+    """1차 리뷰 Fable S3: ± 2% 를 조금 벗어난 진짜 무상증자가 조용히 빠지지 않게 — 짝이 없는 권리락 · 상장일 주식 수 증가를 수와 함께 · 앞 권리락의 비와 10%
+    안이면 크게 (!!)."""
+    log = Log(monkeypatch)
+    s = [list(x) for x in seq("183300")]
+    k = next(i for i, x in enumerate(s) if x[0] == "2026-06-15")
+    s[k][3] = s[k - 1][3] * 1.964 * 1.05                                            # 상장일 주식 수가 5% 더 늘었어요 (± 2% 밖)
+    miss = []
+    assert F.kr_bonus_pairs("183300", [tuple(x) for x in s], "daum", lo="2026-06-12", hi="2026-06-17", miss=miss) == []
+    assert [(m["k"], m["d"], m["near"]) for m in miss] == [("jump", "2026-06-15", True)]
+    F.kr_bonus_miss_log(miss, "다음 일별 시세")
+    assert log.has("!! 한국 무상증자 (다음 일별 시세)", "짝이 안 된 것 1", "183300 2026-06-15")
+    miss2 = []
+    F.kr_bonus_pairs("183300", [tuple(x) for x in s], "daum", lo="2026-05-20", hi="2026-06-01", miss=miss2)
+    assert [(m["k"], m["d"]) for m in miss2] == [("reset", "2026-05-26")]          # 상장을 기다리는 권리락 (· 줄)
+    miss3 = []
+    F.kr_bonus_pairs("950220", seq("950220"), "daum", miss=miss3)                  # 유상증자: 짝 없음 · 비가 10% 넘게 달라 '·' 로만
+    assert miss3 and not any(m.get("near") for m in miss3)
+
+
+def test_unread_rereads_wait_behind_never_asked_candidates(monkeypatch):
+    """1차 리뷰 nit (#186 3차 리뷰 S3 와 같아요): 읽지 못한 판정 (unread) 을 30일 뒤 다시 읽는 것은 한 번도 묻지 않은 후보를 모두 물은 뒤 남은 한도로만."""
+    Log(monkeypatch)
+    old = seed_of("183300", "2026-05-26")
+    fresh = {**seed_of("196170", "2026-08-05")}
+    cl = real_dart("183300", "196170")
+    cl.entries[f"{CORP['183300']}|{F.KR_BONUS_TAG}|2026-05-26"] = {"st": "000", "at": "2026-10-01", "d": {"v": "no", "code": "unread", "note": ""}}
+    rows, info = F.kr_splits_fields(None, kr_rows("183300", "196170"), [], cl, TODAY, seed=[], px_date="2026-11-27", per_run=4, bseed=[old, fresh])
+    asked = {p["corp_code"] for ep, p in cl.calls}
+    assert asked == {CORP["196170"]} and info["bonus"]["wait"] == 0                # 한도 4: 처음 묻는 후보만 · unread 는 보관본 판정 그대로
+    cl2 = real_dart("183300", "196170")
+    cl2.entries = dict(cl.entries)
+    F.kr_splits_fields(None, kr_rows("183300", "196170"), [], cl2, TODAY, seed=[], px_date="2026-11-27", per_run=4, bseed=[old, fresh])
+    assert {p["corp_code"] for ep, p in cl2.calls} == {CORP["183300"]}            # 다음 실행: 남은 한도로 다시 읽어요
+
+
+def test_gate_recent_window_counts_from_the_listing_day_and_bonus_read_row(monkeypatch):
+    """1차 리뷰 S4: '최근 30일' 은 상장일부터 (권리락은 40일 전이어도) · 1차 리뷰 Opus S5: 무상증자 판정의 '대부분 확인되지 않음' 경고 줄 (경고만)."""
+    rows, info = _clean_info(monkeypatch)
+    b = json.loads(json.dumps(info))
+    b["bonus"]["out"] = [["183300", "2026-10-19", "nodoc", "2026-11-18"]]
+    row, _ = _gate(b, rows)
+    assert row[2] is True and "최근 30일 공시로 확인하지 못한 무상증자 권리락 1" in row[3]
+    b["bonus"]["out"] = [["183300", "2026-10-19", "nodoc"]]                       # 상장일이 없는 예전 모양: 권리락 날부터 (40일 전 → 경고 없음)
+    assert _gate(b, rows)[0][2] is False
+
+    def read_row(binfo):
+        rep = Rep()
+        V._check_kr_bonus_read(rep, {"bonus": binfo} if binfo is not None else {})
+        return rep.rows[0]
+    assert read_row(None)[1:3] == (True, False)
+    assert read_row({"read": {"n": 8, "no": 8}})[1:3] == (True, True)
+    assert read_row({"read": {"n": 8, "no": 6}})[1:3] == (True, False)
+    assert read_row({"read": "x"})[1:3] == (True, True)
+
+
+def test_step_carry_keeps_todays_bonus_candidates():
+    c = {**seed_of("183300", "2026-05-26"), "src": "krx"}
+    rows, info = F.kr_splits_carry(None, TODAY, bcands=[c])
+    assert info["bonus"]["pend"] == [F.kr_bonus_row_of(c)]

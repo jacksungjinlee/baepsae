@@ -3611,39 +3611,50 @@ Appendix 1 line for it (`split applied` / `merge applied`).
 - **`splitsKr`** in data.json: `v` 2, `src` (dart · cache · off · err), `n`, `prev`, `new`, `rows` (receipts: code, date,
   ratio, kind split/merge/reduce/fixed, rcept_no, read from doc/cr/fixed, the three checks `{dl, shr, px, rule}` — six fields
   for a `SPLIT_OVERRIDES` correction), `wait`/`waitT`, `out`/`outN`, `fail`/`failN`, `held`/`heldN`, `diffNew`, `late`, `pend`,
-  `dq`, `fixed` (the Korean override rows), `calls` (splits and 무상증자 together), `cap`, `seed`, `cand`, `seedErr`, `nofile`/`nofileN`,
-  and since #205 `bonus` (무상증자: `v` 1, `on`, `src`, `new`, `held`/`heldN` `[code, A, r, off | odd | frac]`, `rec` (their receipts),
-  `out`/`outN`, `fail`/`failN`, `wait`, `late`, `calls`, `read {n, no}`, `pend` `[code, A, close, base, B, shares before, after, next
+  `dq`, `fixed` (the Korean override rows), `calls` (the split loop's own, as before #205), `cap`, `seed`, `cand`, `seedErr`, `nofile`/`nofileN`,
+  and since #205 `bonus` (무상증자: `v` 1, `on`, `src`, `new`, `held`/`heldN` `[code, A, r, off | odd | tau | frac]`, `rec` (their receipts),
+  `out`/`outN` `[code, A, reason, B]`, `fail`/`failN`, `wait`, `late`, `calls` (the bonus loop's), `read {n, no}`, `pend` `[code, A, close, base, B, shares before, after, next
   trading day, the one after]`, `seed`, `cand`). Stocks: `spNo` · `spNoF` (data.json and corp.json).
 - **무상증자 (bonus issues, since #205 — Jack 2026-11-27, answer 11: "무상증자 is the next PR right after #186, not later"; answer 4's
-  three checks).** A bonus issue moves the market on two days: on the **권리락 day A** (the trading day before the 신주배정기준일; T+2
-  settlement, so a share bought on A gets no new shares) KRX lowers the base to the previous close ÷ m with the listed share count
-  unchanged, and on the **listing day B** (a few weeks later) the listed shares grow × m with the base unchanged. `kr_split_event`
-  (one day) never takes it. The pipeline pairs the two days (`kr_bonus_pairs`: A's base reset over 10%, shares flat ± 1%; the first
-  share jump over 10% within 60 trading days that fits A's ratio ± 2% — `KR_BONUS_MKT_TOL`; a share change that does not fit, such as
-  a 유무상증자's paid shares listing first, is skipped; a second base reset ends the search) from the KRX lists (`kr_bonus_cands`),
-  from the Daum rows already read for a share change (`kr_split_daum_cands(bonus=True)`; its listing day is not held in `dq` as an
-  open halted merge) and from the seed `data/kr_bonus_seed.csv` (144 events with A from 2023-10-19, the price series' first day, to
-  2026-11-27; Daum's unadjusted rows of all 2,475 Korean stocks, read once on 2026-11-28; the loader re-runs the rule on every line).
+  three checks; reworked after review round 1).** A bonus issue moves the market on two days: on the **권리락 day A** (the trading
+  day before the 신주배정기준일; T+2 settlement, so a share bought on A gets no new shares) KRX lowers the base to the previous close ÷ m
+  with the listed share count unchanged, and on the **listing day B** (a few weeks later) the listed shares grow × m with the base
+  unchanged. `kr_split_event` (one day) never takes it. The pipeline pairs the two days (`kr_bonus_pairs`: A's base reset over 10%,
+  shares flat ± 1%; the first share jump over 10% within 60 trading days that fits A's ratio ± 2% — `KR_BONUS_MKT_TOL`; a share change
+  that does not fit, such as a 유무상증자's paid shares listing first, is skipped; a second base reset ends the search) from the KRX
+  lists (`kr_bonus_cands`), from the Daum rows already read for a share change (`kr_split_daum_cands(bonus=True)`; its listing day is
+  not held in `dq` as an open halted merge; a stock with a KRX bonus candidate is still read from Daum for splits, so #186's search
+  and `dq` are unchanged) and from the seed `data/kr_bonus_seed.csv` (144 events with A from 2023-10-19, the price series' first day,
+  to 2026-11-27; Daum's unadjusted rows of all 2,475 Korean stocks, read once on 2026-11-28; the loader re-runs the rule on every line).
+  **Nothing that does not pair is silent** (review round 1, Fable S3): every run logs, with counts, the base resets that have no
+  listing yet (waiting, or a rights issue or 주식배당) and the share jumps that pair with nothing (rights listings, conversions); a jump
+  within 10% of the reset before it but outside the 2% band is logged loudly (`!! 한국 무상증자 (… ): … 짝이 안 된 것 n …`) — it may be a
+  무상증자: open its filing.
   - **Three checks** (`kr_bonus_checks`, DART 무상증자결정 `fricDecsn` or the bonus part `fric_*` of a 유무상증자 `pifricDecsn`, final
     corrected version, withdrawn ones dropped): `dl` the filing's 신주상장예정일 is B and its 신주배정기준일 makes A the 권리락 day
     (A's next trading day ≤ 기준일 < the one after: 티엘비's 기준일 2026-07-20 follows the 07-17 holiday, so its 권리락 is 07-16);
-    `px` previous close ÷ A's base = m ± 1%; `shr` B's listed shares ÷ the day before = m ± 1%. **m is the filing's company ratio**
-    1 + new shares ÷ shares before (both from the filing; treasury shares count in "before"), **not** the holder's ratio r = 1 + x
-    (x = 1주당 신주배정 주식수): treasury shares get no new shares, so KRX divides by m and m ≤ r (대한제강 2026-01: x 0.6616554,
-    r 1.6617, m 1.5000, KRX ÷ 1.4996; 코미코 2026-05: r 2, m 1.9640, ÷ 1.9634). The filing's own numbers must fit: r = 1 + x, m over
-    1.10, and the treasury share they imply, 1 − (m − 1) ÷ x, between 0 and 50% (`KR_BONUS_TREASURY_MAX`; 0–24.4% in the filings read).
-    Tolerances from the 15 real filings read on 2026-11-28 (7 from the dividend proof's fixtures, 8 fetched, 19 DART calls in all):
-    the base ratio ÷ m − 1 from −0.575% (씨케이솔루션 2026-02-27, the KRX base 3,530 against 3,510) to +0.003%, 14 of 15 within
-    0.15%; the listing-day ratio ÷ m − 1 exactly 0 for 14, +0.661% for 씨케이솔루션 (107,725 treasury shares cancelled the day before
-    the listing). A 단주 is paid in cash, so the count can be a little under; none of the 15 was.
-  - **The row** is `[code, A, r]` with r the filing's exact 1 + x (rounded to 7 decimals, as the dividend proof does): from A on, one
-    old share is r shares, so 2.0 reads a record dated before A at quantity × r and price ÷ r (same won) and a record on or after A as
-    it is — right for a share bought on A or between A and B (it gets no new shares), and from A the holder's entitlement is fixed
-    even though the new shares list on B (only the old ones can be sold in between). Naver's adjusted series also rescales the bars
-    before A. Receipt `[code, A, r, "bonus", rcept_no, fric | pifric, {rule: "bonus", dx: A, dl: B, dr: 기준일, x, m, px, shr}]`.
-    Non-whole r (×1.3 · ×1.5 · ×1.6616554) leaves part shares, which 팔았어요 takes in 1/10,000 shares (#186, tested with 99 × 1.3 and
-    7 × 1.6616554).
+    `px` previous close ÷ A's base = m ± 1%; `shr` B's listed shares ÷ the day before = m ± 1%. **The three checks confirm m**, the
+    filing's company ratio 1 + new shares ÷ shares before (both from the filing; treasury shares count in "before") — **not** the
+    holder's ratio r = 1 + x (x = 1주당 신주배정 주식수) that the row carries. Treasury shares get no new shares, so KRX divides by m and
+    m ≤ r (대한제강 2026-01: x 0.6616554, r 1.6617, m 1.5000, KRX ÷ 1.4996; 코미코 2026-05: r 2, m 1.9640, ÷ 1.9634). **r is trusted
+    from the filing only within a bound** (review round 1, S1): the treasury share the filing's numbers imply, τ = 1 − (m − 1) ÷ x, must
+    be at most 5% (`KR_BONUS_TREASURY_MAX`; 14 of the 15 filings read are at 4.4% or less) for the event to be confirmed. A larger τ is
+    held as `tau` (with the switch on too), logged loudly with x, the new and the old share counts, m, τ and the filing number
+    (`!! 한국 무상증자 — 세 확인은 맞는데 자기주식 몫이 5% 를 넘어 사람이 볼 것 …`) for a person to check the company's treasury shares
+    in its annual report: 대한제강 (τ 24.4%) is held this way. τ below 0 by more than the filing's own rounding of x (`kr_bonus_tau_floor`:
+    half a unit of the last decimal written, so "0.33" for a third passes) means the counts contradict x: `diff`. Tolerances from the 15
+    real filings read on 2026-11-28 (7 from the dividend proof's fixtures, 8 fetched, 19 DART calls in all): the base ratio ÷ m − 1 from
+    −0.575% (씨케이솔루션 2026-02-27, the KRX base 3,530 against 3,510) to +0.003%, 14 of 15 within 0.15%; the listing-day ratio ÷ m − 1
+    exactly 0 for 14, +0.661% for 씨케이솔루션 (107,725 treasury shares cancelled the day before the listing). A 단주 is paid in cash, so
+    the count can be a little under; none of the 15 was.
+  - **The row** is `[code, A, r]` with r the filing's exact 1 + x (rounded to 7 decimals, as the dividend proof does): a record dated
+    before A reads at quantity × r and price ÷ r (same won) and a record on or after A as it is — right for a share bought on A or
+    between A and B (it gets no new shares); the holder's entitlement is fixed on A even though the new shares list on B. Naver's adjusted
+    series also rescales the bars before A. **The row exists only once B has passed** (the share check needs B) and the next DART-on run
+    has asked: for those 2–4 weeks a holding bought before A reads the old count × the new-basis price (about −33% at ×1.5, −50% at ×2)
+    with no line — a question for Jack before switch-on (PR #205, Q8c). Receipt `[code, A, r, "bonus", rcept_no, fric | pifric,
+    {rule: "bonus", dx: A, dl: B, dr: 기준일, x, m, tau, px, shr}]`. Non-whole r (×1.3 · ×1.5) leaves part shares, which 팔았어요
+    takes in 1/10,000 shares (#186, tested with 99 × 1.3 and 7 × 1.6616554).
   - **유무상증자**: only the bonus part is an event (`fric_*`); the paid part is a rights issue a holder may or may not take, so
     whoever subscribed records it as a purchase (disc.json `issue` rights rows, `bonus: true`, are a filing card only and never
     change a share count, so nothing is counted twice). When the paid part's 권리락 falls on the same day as the bonus one, the base
@@ -3654,30 +3665,40 @@ Appendix 1 line for it (`split applied` / `merge applied`).
     are issued, and they arrive on B, not on {date}). While OFF every confirmed event is held in `splitsKr.bonus.held` (`off`) with
     its receipt in `bonus.rec`, nothing changes in `splits`, and verdicts are cached so the rows appear without DART calls once the
     switch-on PR (with Jack's line and the app reading the kind) lands. `tests/test_kr_bonus.py` pins it OFF.
-  - **Ratios that are not clean fractions** (대한제강 ×1.6616554, 폰드그룹 ×1.780175) stay held (`odd`) even with the switch on:
-    the FAIL row **주식 분할 목록 (splits)** refuses a ratio whose reduced fraction has min(p, q) > 20 (not changed). Publishing them
-    needs Jack's yes to let that row accept an exact bonus ratio the three checks confirm (category 2, the same kind of loosening as
-    the dividend proof's exact bonus ratios of 2026-11-15).
+  - **Ratios that are not clean fractions** (폰드그룹 ×1.780175; 대한제강 ×1.6616554 is held as `tau` first) stay held (`odd`) even with
+    the switch on: the FAIL row **주식 분할 목록 (splits)** refuses a ratio whose reduced fraction has min(p, q) > 20 (not changed).
+    Publishing them needs Jack's yes to let that row accept an exact bonus ratio the three checks confirm (category 2, the same kind of
+    loosening as the dividend proof's exact bonus ratios of 2026-11-15).
   - **No confirming filing** (a rights issue or 주식배당 that looks like a bonus, no decision, or one that does not fit): no row, the
     numbers are not blanked, and it never enters `nofile`, `runNew` or the must-have row (that would make a publish stop stricter —
     Jack's call); it is logged loudly with counts by reason (`!! 한국 무상증자 — 공시로 확인하지 못한 권리락 …`) and listed in
-    `bonus.out`. A DART error, timeout or throttling is never a "no" (`bonus.fail`, nothing cached, kept in `bonus.pend`).
+    `bonus.out` as `[code, A, reason, B]`. A DART error, timeout or throttling is never a "no" (`bonus.fail`, nothing cached, kept in
+    `bonus.pend`). A missing field in DART's answer is `unread` (asked again every 30 days), never "no new shares" (review round 1, S5);
+    only a field written "-" means the class gets none.
   - **DART calls**: list.json B001 (≤ 2 pages) + fricDecsn and/or pifricDecsn, usually 2 a candidate (`KR_BONUS_ONE_MAX` 4), cache
     entry `{corp}|krbonus|v1|{A}` (a preferred share: `|{code}`, read from the 기타주식 fields). It reuses the dividend proof's filing
     reader (`dvwhy_filings`, `dvwhy_drop_withdrawn`, the same r = 1 + x reading as `parse_dvwhy_bonus`) and the same client and cache
-    file, but not its cache entry, which does not keep the listing date or the share counts. The 50 a run are shared: on a run with a
-    bonus candidate never asked, the split loop stops at 50 − 15 (`KR_BONUS_RESERVE`) and the bonus loop uses what is left. Simulated
-    on the 11-28 data (every verdict "no", no DART): the bonus seed is all asked by the 16th DART-on run and the split seed by the 37th
-    (31 without the bonus seed); after that 0–4 calls on most days. Re-asks follow #186's rules (a "no" after 14 days while the
-    listing is under 120 days old; `unread` · `pages` every 30 days).
-  - **Gate** (warning-only, nothing that can fail): **한국 주식 분할 (splitsKr · 경고만)** now also reads `splitsKr.bonus`: a lookup
-    failure, a recent (30 days) event no filing confirms, a malformed record, and a bonus receipt missing a check or not fitting
-    (`kr_bonus_receipt_ok`, the gate's own copy of the thresholds, also used for bonus receipts in `splitsKr.rows`) warn; held events
-    are a note; so does a run whose bonus step stopped on an error of ours (`bonus.src` err: that day it only carries the previous
-    publish's bonus candidates, loud log line, and the split step goes on as usual). No existing row's threshold or meaning changed.
+    file, but not its cache entry, which does not keep the listing date or the share counts. **The split loop is exactly #186's** (review
+    round 1, B1: a reserve for bonus lookups cut the split verdicts a run sees and so weakened the FAIL row "한 실행에 새로 생긴 …
+    (16건 이상이면 실패)"): it may use all 50, and the bonus loop uses only the calls it leaves (`splitsKr.calls` is the split loop's
+    own, as before; `bonus.calls` the rest; a `late` candidate holds nothing). On the 11-28 data with every DART answer "없음" (the
+    reviewer's simulation), `runNew` and `nofile` are identical to main's run by run (run 1: 26 on both), the split backfill takes the
+    same 24 runs, and the bonus lookups get 6–7 calls a run meanwhile. With 2 calls a split lookup and 2–3 a bonus lookup the split seed
+    is all asked by the 31st DART-on run (as on main) and the bonus seed by the 33rd. Re-asks follow #186's rules (a "no" after 14
+    days while the listing is under 120 days old; `unread` · `pages` every 30 days, and only behind every candidate never asked).
+  - **Errors stay inside the bonus step**: if it stops on an error of ours, the split step goes on as usual, today's KRX and Daum
+    bonus candidates and the previous publish's are carried in `bonus.pend` (`bonus.src` err, loud log line), and the calls it made
+    before stopping are counted in `bonus.calls`.
+  - **Gate** (warning-only, nothing that can fail; no existing row changed): `splitsKr.rows` keeps #186's receipt rule exactly.
+    **한국 주식 분할 (splitsKr · 경고만)** now also reads `splitsKr.bonus` and warns on: a lookup failure; an event no filing confirms whose
+    listing day is in the last 30 days; a malformed record or `src` err; a receipt in `bonus.rec` missing a check or not fitting
+    (`kr_bonus_receipt_ok`, the gate's own copy of the thresholds: record date within 15 days of A, the longest KRX closure being 추석
+    2017 at 11; τ from −2% to 5%, or up to 100% for one held as `tau`); and a bonus receipt in `splitsKr.rows` while the switch is off.
+    Held events (`off`, `odd`, `tau`) are a note. New warning-only row **이 실행에 새로 물은 무상증자 판정 대부분이 확인되지 않음 (8건 이상 ·
+    80% 이상 · 경고만)** (`splitsKr.bonus.read`, the bonus copy of #186's row; the pipeline also logs it loudly with a GitHub warning).
   - **On the 11-28 data, offline** (the fresh data-branch copy, pxDate 11-27; DART answered from the 15 real filings, every other
-    company unreachable, so it waits): run 1 makes 32 calls and confirms all 15; with the switch OFF none is a row (13 `off`, 2 `odd`);
-    with it ON 13 become rows (현대글로비스 2024-07-12 ×2, 알테오젠 2026-08-05 ×1.3, 가온전선 2026-06-30 ×1.8, 엘앤씨바이오, 티엘비,
+    company unreachable, so it waits): run 1 confirms all 15 (32 calls); with the switch OFF none is a row (13 `off`, 1 `odd`, 1
+    `tau`); with it ON 13 become rows (현대글로비스 2024-07-12 ×2, 알테오젠 2026-08-05 ×1.3, 가온전선 2026-06-30 ×1.8, 엘앤씨바이오, 티엘비,
     코미코, 대동금속, 씨케이솔루션 ×3, 이노스페이스 ×1.5 and ×1.2, 퓨쳐켐 ×1.2, 아이퀘스트, 티이엠씨) and run 2 makes no calls.
   - **#186's 32 non-whole seed events**: none is a 무상증자 this PR confirms — a bonus never moves the base and the share count on
     the same day, which #186's rule needs. The 2.5 · 0.4 ones are par-value changes (200 ↔ 500원) and 5/6 · 3/4 ones reductions or
@@ -3687,8 +3708,8 @@ Appendix 1 line for it (`split applied` / `merge applied`).
   and a 무상증자 of 10% or less (0.1주 a share: inside the pipeline's same-count band, like everywhere else), so a record from before
   one still reads at the old count; a 무상증자 during a trading halt, whose base and share count move on the same day (#186's split
   rule takes it, finds no split decision and blanks it with Jack's line); a 무상증자 whose listing comes more than 39 trading days
-  after its 권리락 is found only by the seed (Daum reads 40 rows); between A and B no row exists yet (the share check needs B), so a
-  holding bought before A reads at the old count for those 2–4 weeks; and every confirmed 무상증자 until Jack approves its line (above).
+  after its 권리락 is found only by the seed (Daum reads 40 rows); between A and B no row exists yet (above, Q8c); and every confirmed
+  무상증자 until Jack approves its line (above).
   KONEX before 2026-11-23 (not in Daum); a Korean record bought before a split that no filing confirms still reads at the old
   count (its numbers are blanked, the holding is not); events whose checks disagree or whose document DART does not serve
   (named in `out`; a person can add an override row with the evidence).
