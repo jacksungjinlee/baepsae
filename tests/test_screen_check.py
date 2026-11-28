@@ -609,6 +609,54 @@ def test_example_price_rule_is_the_apps_own(SA, tmp_path):
     assert len(SA.BASE_TICKERS) == len(set(SA.BASE_TICKERS)) >= 60
 
 
+# ── 2026-11-28 (같은 답 7 · #186): 공시로 확인하지 못한 분할 표시(spNo)가 붙은 내장 종목 — 앱은 pxBad 처럼 다뤄요 (src/data.js mergeStocks) ──
+SP = "2024-06-24"
+
+
+def sp_cases(SA):
+    """spNo 표시가 붙은 하루들 (banner_cases 의 pxBad 줄과 같은 모양)."""
+    ok = lambda t, **kw: {"t": t, "price": 10.0, "beta": 1.0, "vol": 20.0, **kw}   # noqa: E731
+    full = [ok(t) for t in SA.BASE_TICKERS]
+    swap = lambda t, **kw: [ok(t, **kw) if s["t"] == t else s for s in full]   # noqa: E731
+    return [swap("042700", beta=None, vol=None, spNo=SP, spNoF=["vol", "beta"]),   # [0] 내장 종목 · 실제 가격 → 안내 없음
+            swap("042700", spNo=SP),                                             # [1] 표시만 (베타 · 변동성이 남음) → 안내 없음 (앱이 비워요)
+            swap("042700", price=None, beta=None, vol=None, spNo=SP),            # [2] 가격이 비면 예시 가격
+            swap("042700", beta=None, vol=None, spNo=""),                        # [3] 빈 글자 표시 → 표시 아님 → 예시 가격
+            swap("042700", beta=None, vol=None, spNo=20240624),                  # [4] 문자열이 아닌 표시 → 예시 가격
+            swap("042700", beta=None, vol=None, spNo=SP, pxBad=SP),              # [5] 두 표시 → 안내 없음
+            swap("042700", beta=None, vol=None, spNo=SP, pxBad=""),              # [6] 빈 pxBad · spNo → 안내 없음
+            [ok(t, beta=None, vol=None, spNo=SP) if t == "042700" else ok(t, beta=None) if t == "TSLA" else s
+             for t, s in ((x["t"], x) for x in full)],                           # [7] 표시 종목은 빼고 TSLA 만
+            swap("04020000", est=True, beta=None, spNo=SP),                      # [8] 금 환산은 금 환산 줄 그대로
+            full + [ok("999994", beta=None, vol=None, spNo=SP)],                 # [9] 내장 목록 밖 표시 종목: 안내와 무관
+            swap("000660", vol=None, spNo=SP)]                                   # [10] 필수 종목도 앱은 같아요 (파이프라인은 필수 종목에 붙이지 않아요)
+
+
+def node_merge(SA, tmp_path, cases, js):
+    (tmp_path / "in.json").write_text(json.dumps({"base": SA.BASE_TICKERS, "cases": cases}), encoding="utf-8")
+    (tmp_path / "probe.mjs").write_text(js, encoding="utf-8")
+    r = subprocess.run([NODE, str(tmp_path / "probe.mjs"), str(tmp_path / "in.json"), os.path.join(ROOT, "src", "data.js")],
+                       cwd=ROOT, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-600:]
+    return json.loads(r.stdout)
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_example_price_rule_follows_the_app_for_an_unconfirmed_split(SA, tmp_path):
+    """smoke_app.example_price_stocks 는 spNo 표시가 붙은 날에도 앱의 mergeStocks 와 같은 답이에요 (앱의 코드를 node 로 돌려 비교): 가격이 오늘
+    것이면 빈 베타 · 변동성이어도 예시 가격 안내가 없어요 · 가격이 비거나 표시가 표시가 아니면 예시 가격 · 금 환산은 그대로."""
+    cases = sp_cases(SA)
+    app = node_merge(SA, tmp_path, cases, MERGE_JS)
+    mine = [dict(zip(("examples", "est"), SA.example_price_stocks({"data.json": {"stocks": live}}))) for live in cases]
+    assert mine == app
+    assert app[0] == app[1] == app[5] == app[6] == app[9] == app[10] == {"examples": [], "est": []}
+    assert app[2]["examples"] == app[3]["examples"] == app[4]["examples"] == ["042700"] and app[7]["examples"] == ["TSLA"]
+    assert app[8] == {"examples": [], "est": ["04020000"]}
+    # 표시를 지우면 [0] 은 예시 가격이에요 — 이 표가 바뀐 규칙을 봐요 (예전 검사는 [0] 에 안내를 기다려 [정상] 이 실패했어요)
+    unmark = lambda live: [{k: v for k, v in x.items() if k not in ("spNo", "spNoF")} for x in live]   # noqa: E731
+    assert SA.example_price_stocks({"data.json": {"stocks": unmark(cases[0])}})[0] == ["042700"]
+
+
 class FakePage:
     def __init__(self, lines):
         self.lines = lines
@@ -735,6 +783,24 @@ def test_risk_ready_is_the_apps_own_rule(SA, tmp_path):
     assert app[n:] == [True] * len(stricter) and mine[n:] == [False] * len(stricter)
 
 
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_risk_ready_follows_the_app_for_an_unconfirmed_split(SA, tmp_path):
+    """spNo 표시가 붙은 내장 종목은 앱이 베타 · 변동성을 비우고 위험 계산에서 빼요 (베타 · 변동성이 남아 있어도) — risk_ready 도 담지 않아요.
+    앱보다 느슨한 곳은 없어요 (node 로 비교). 내장 목록 밖 spNo 종목에 베타 · 변동성이 남은 모양은 더 엄격해요 (앱은 쓰지만 파이프라인은 그 칸을 비워요)."""
+    ok = lambda t, **kw: {"t": t, "price": 10.0, "beta": 1.0, "vol": 20.0, **kw}   # noqa: E731
+    cases = [ok("005930", beta=None, vol=None, spNo=SP), ok("005930", spNo=SP), ok("042700", beta=None, vol=None, spNo=SP),
+             ok("005930", spNo=""), ok("005930", spNo=20240624),                  # 표시 아님: 앱은 써요
+             ok("005930", beta=None, vol=None, spNo=SP, pxBad=SP), ok("005930", spNo=SP, price=None), ok("999992", beta=None, vol=None, spNo=SP)]
+    stricter = [ok("999996", spNo=SP)]
+    cases += stricter
+    app = node_merge(SA, tmp_path, cases, READY_JS)
+    mine = [SA.risk_ready(L) for L in cases]
+    n = len(cases) - len(stricter)
+    assert all(a or not m for a, m in zip(app, mine))                         # 앱보다 느슨한 곳은 없어요
+    assert mine[:n] == app[:n] == [False, False, False, True, True, False, False, False]
+    assert app[n:] == [True] * len(stricter) and mine[n:] == [False] * len(stricter)
+
+
 def test_option_b_scene_picks_any_stocks_the_app_can_use(SA, monkeypatch, capsys):
     """B안 장면은 평소의 네 종목(SK하이닉스 · 삼성전자 · 현대차 · KB금융)을 담고, 그 가운데 오늘 위험 계산에 쓸 수 없는 종목(pxBad · 빈 베타나 변동성 ·
     빠짐)이 있으면 같은 조건의 다른 한국 보통주로 바꿔 담아요 (시가총액 순 · 업종 3곳 이상 · 크게 알림). 2026-11-23 감사: SK하이닉스에 표시가 붙으면
@@ -834,6 +900,47 @@ def test_example_limit_still_counts_marked_built_ins(SA, monkeypatch, capsys):
     assert SA.banner_due(R, "정상", mark(kr[:1])) == [] and not R.notes
 
 
+def test_example_limit_counts_unconfirmed_split_built_ins_and_names_them(SA, monkeypatch, capsys):
+    """spNo 표시로 베타 · 변동성을 비운 내장 종목도 한도(EXAMPLE_MAX)는 예전 그대로 세요 (pxBad 와 함께 세요) — 넷이면 발행하지 않아요. 안내는 앱의
+    규칙 (없음). 한도 안이면 실행 기록 · 경고에 그 표시의 이름으로 크게 남겨요 · pxBad 만인 날의 글은 예전과 같아요."""
+    ok = lambda t, **kw: {"t": t, "price": 10.0, "beta": 1.0, "vol": 20.0, **kw}   # noqa: E731
+    full = [ok(t) for t in SA.BASE_TICKERS]
+    kr = sorted(t for t in SA.BASE_TICKERS if t.isdigit() and len(t) == 6)[:4]
+    mark = lambda sp=(), px=(), **kw: {"data.json": {"stocks": [   # noqa: E731
+        ok(x["t"], beta=None, vol=None, spNo=SP, **kw) if x["t"] in sp else ok(x["t"], beta=None, vol=None, pxBad=SP, **kw) if x["t"] in px else x
+        for x in full]}}
+    SA.within_example_cap(mark(kr[:3]))
+    SA.within_example_cap(mark(kr[:2], kr[2:3]))
+    for four in (mark(kr), mark(kr, price=None), mark(kr[:2], kr[2:])):
+        with pytest.raises(AssertionError, match="내장 종목 4개가 오늘 데이터에 없거나 가격 · 베타 · 변동성이 비었어요"):
+            SA.within_example_cap(four)
+    assert SA.example_cap_stocks(mark(kr[:3]))[0] == kr[:3] and SA.example_price_stocks(mark(kr[:3]))[0] == []
+    # 한도가 세는 것은 표시를 지운 데이터에서 앱의 규칙과 같아요 (spNo 표에서도)
+    unmark = lambda live: [{k: v for k, v in x.items() if k not in ("pxBad", "spNo")} for x in live]   # noqa: E731
+    for live in sp_cases(SA):
+        assert SA.example_cap_stocks({"data.json": {"stocks": live}}) == SA.example_price_stocks({"data.json": {"stocks": unmark(live)}}), live
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setattr(SA, "REAL_DATA", True)
+    tail = ("— 가격은 오늘 것이라 예전 뱁새는 이 종목에 '예시 가격' 안내를 보여 주지 않아요 (안내 없음을 확인해요). 내장 종목 한도에는 세어요 "
+            f"({SA.EXAMPLE_MAX}개를 넘으면 발행하지 않아요 — 관문의 ")
+    for f, head, rows in (
+            (mark(px=kr[:3]), f"과거 주가 기록 오류 표시(pxBad)가 붙은 내장 종목 3개 ({', '.join(kr[:3])})", "과거 주가 기록 오류"),   # 예전 글 그대로
+            (mark(kr[:2]), f"공시로 확인하지 못한 분할 표시(spNo)가 붙은 내장 종목 2개 ({', '.join(kr[:2])})", "공시로 확인하지 못한 분할"),
+            (mark(kr[1:2], kr[:1]), f"과거 주가 기록 오류 표시(pxBad)가 붙은 내장 종목 1개 ({kr[0]}) · 공시로 확인하지 못한 분할 표시(spNo)가 붙은 "
+                                    f"내장 종목 1개 ({kr[1]})", "과거 주가 기록 오류 · 공시로 확인하지 못한 분할")):
+        R = FakeRunner()
+        assert SA.banner_due(R, "정상", f) == []
+        out = capsys.readouterr().out
+        assert R.notes == [f"오늘 데이터: {head} {tail}{rows} 줄도 보세요)"], R.notes
+        assert out.count("!! 알림  [정상] ") == 1 and out.count(f"::warning title=발행 전 화면 검사 · {rows} 내장 종목::[정상] ") == 1, out
+    # 진짜 예시 가격 옆이면 그 안내도 · CI (고정 데이터)는 예전 그대로 '배너 없음' (표시된 내장 종목만이면 알림 없음)
+    both = {"data.json": {"stocks": [ok(x["t"], beta=None) if x["t"] == kr[3] else x for x in mark(kr[:1])["data.json"]["stocks"]]}}
+    assert SA.banner_due(FakeRunner(), "정상", both) == [SA.NONLIVE]
+    monkeypatch.setattr(SA, "REAL_DATA", False)
+    R = FakeRunner()
+    assert SA.banner_due(R, "정상", mark(kr[:1])) == [] and not R.notes
+
+
 # ── 2026-11-28 (Jack 11-27, 답 7 · 삼성전자도 내장 종목이에요): 삼성전자(005930)에 과거 주가 기록 오류 표시가 붙어도 모두의 발행을 멈추지 않게 ──
 def plain_rows():
     """pick_plain 이 고르는 모양의 종목들: 내장 한국 보통주 · 내장 밖 큰 종목 · 우선주 · 펀드 · ETF · 마지막 확인 종가 · 시가총액 빔 · 미국 종목."""
@@ -892,6 +999,40 @@ def test_plain_pick_keeps_005930_and_swaps_only_to_a_stock_the_app_computes_for(
         SA.pick_plain(FakeRunner(), "시험", marked(st, *kr))
     with pytest.raises(AssertionError):
         SA.pick_plain(FakeRunner(), "시험", st, avoid=("005930",))
+
+
+def sp_marked(stocks, *ts, **kw):
+    """파이프라인처럼 공시로 확인하지 못한 분할 표시 (#186 mark_split_nofile): spNo · 베타 · 변동성 · 과거 값 비움."""
+    gone = dict(beta=None, vol=None, al=None, sh=None, mdd=None, spNo=SP, **kw)
+    return {t: (dict(s, **gone) if t in ts else s) for t, s in stocks.items()}
+
+
+def test_plain_pick_swaps_005930_when_it_is_an_unconfirmed_split(SA, monkeypatch, capsys):
+    """005930 에 spNo 표시가 붙으면 (베타 · 변동성이 남아 있어도 — 앱이 비워요) pick_plain 은 다음 내장 보통주로 바꿔 담고 그 표시의 이름으로 크게
+    알려요. spNo 표시가 붙은 종목은 바꿔 담는 종목으로도 고르지 않아요 · B안(pick_ready)도 같아요."""
+    import random
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    st = plain_rows()
+    for rows in (sp_marked(st, "005930"), dict(st, **{"005930": dict(st["005930"], spNo=SP)})):
+        R = FakeRunner()
+        assert SA.pick_plain(R, "시험", rows) == ("000660", "SK하이닉스")
+        out = capsys.readouterr().out
+        assert len(R.notes) == 1 and "005930 공시로 확인하지 못한 분할 표시(spNo)" in R.notes[0] and "000660" in R.notes[0], R.notes
+        assert out.count("!! 알림  [시험] ") == 1 and out.count("::warning title=발행 전 화면 검사 · 바꿔 담은 종목::[시험] ") == 1
+    left = dict(sp_marked(st, "005930"), **{"000660": dict(st["000660"], spNo=SP)})          # 000660: 표시만 (베타 · 변동성 남음)
+    assert SA.pick_plain(FakeRunner(), "시험", left)[0] == "373220"
+    assert SA.pick_plain(FakeRunner(), "시험", dict(st, **{"005930": dict(st["005930"], spNo="")}))[0] == "005930"   # 빈 글자는 표시 아님
+    R = FakeRunner()
+    got = SA.pick_ready(R, "B안", sp_marked(st, "000660"), ["000660", "005930", "005380", "105560"], 4, need=("mdd", "al"), secs=3)
+    assert len(got) == 4 and "000660" not in got and "000660 공시로 확인하지 못한 분할 표시(spNo)" in R.notes[0], (got, R.notes)
+    rnd = random.Random(20261128)
+    for _ in range(1000):
+        rows = {t: dict(x, **({"spNo": SP} if rnd.random() < 0.3 else {}), **({"pxBad": SP} if rnd.random() < 0.1 else {})) for t, x in st.items()}
+        try:
+            t = SA.pick_plain(FakeRunner(), "무작위", rows)[0]
+        except AssertionError:
+            continue
+        assert not SA.sp_no(rows[t]) and not SA.px_bad(rows[t]) and SA.risk_ready(rows[t]), (t, rows[t])
 
 
 def test_plain_pick_is_never_looser_than_risk_ready_and_is_deterministic(SA):
@@ -981,6 +1122,42 @@ def test_decomp_pick_is_never_looser_than_the_app(SA, tmp_path):
     assert mine == [True, True] + [False] * 15 + [True, True]                 # r36 이 음수여도 · 빈 글자 표시(표시 아님)여도 고를 수 있어요
     assert app[0]["shows"] and app[1]["shows"] and not app[2]["shows"] and not app[3]["shows"]
     assert app[9]["shows"] and app[12]["shows"]                               # 영수증 's' · shm 이 빈 회사: 앱은 보여요 — 장면은 고르지 않아요 (더 엄격)
+
+
+CORP_SP_JS = r"""
+import fs from 'fs';
+import { pathToFileURL } from 'url';
+const B = await import(pathToFileURL(process.argv[3]).href);
+const cases = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+console.log(JSON.stringify(cases.map((c) => { const d = B.OLD.decomposeReturn(c);
+  return { shows: !(B.RP.pxBad(c) || B.RP.spNo(c)) && !!d && !d.why }; })));
+"""
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_decomp_pick_skips_an_unconfirmed_split_like_the_app(SA, tmp_path):
+    """주가 분해 숫자: 앱(src/corp.jsx DecompCard)은 spNo 표시가 붙은 회사에 숫자 대신 '주가 (3년) —' 만 보여요 (px = pxBad(c) || spNo(c) · 52주까지
+    비운 회사는 칸이 없어요). decomp_numbers 도 그 회사를 고르지 않아요 — 앱의 코드를 node 로 돌려 느슨한 곳이 없는지 봐요."""
+    src = open(os.path.join(ROOT, "src", "corp.jsx"), encoding="utf-8").read()
+    assert "const px = pxBad(c) || spNo(c);" in src and "{!cur && !pxBadFull(c) && !spNoFull(c) && <DecompCard" in src   # 아래 probe 의 규칙이 그 칸의 것
+    sam = {"t": "005930", "r36": 160.3, "eps": 32017.0, "shm": 5846.28, "ni": [452068.0, 344513.5, 154871.0], "nio3": [442609.6, 336213.6, 144734.0],
+           "epsIn": {"ni": 2128708.5, "b": "o", "p": "ttm", "sh": 6648649811}}
+    cases = [sam, dict(sam, spNo=SP), dict(sam, spNo=SP, r36=None), dict(sam, spNo=""), dict(sam, spNo=20240624), dict(sam, spNo=SP, pxBad=SP)]
+    entry = tmp_path / "entry.js"
+    entry.write_text("".join(f"export * as {k} from {json.dumps(os.path.join(ROOT, v))};\n" for k, v in (("OLD", "src/corp.jsx"), ("RP", "src/repair.js"))))
+    exe = os.path.join(ROOT, "node_modules", ".bin", "esbuild")
+    r = subprocess.run([exe, str(entry), "--bundle", "--format=esm", "--platform=node", "--jsx=automatic", "--loader:.js=jsx", "--charset=utf8",
+                        "--external:react", "--external:react-dom", f"--outfile={tmp_path}/b.mjs", "--log-level=error"], cwd=ROOT, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-600:]
+    os.symlink(os.path.join(ROOT, "node_modules"), tmp_path / "node_modules")
+    (tmp_path / "in.json").write_text(json.dumps(cases), encoding="utf-8")
+    (tmp_path / "probe.mjs").write_text(CORP_SP_JS, encoding="utf-8")
+    r = subprocess.run([NODE, str(tmp_path / "probe.mjs"), str(tmp_path / "in.json"), str(tmp_path / "b.mjs")], cwd=str(tmp_path), capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-600:]
+    app = [a["shows"] for a in json.loads(r.stdout)]
+    mine = [SA.decomp_numbers(c) for c in cases]
+    assert all(a or not m for a, m in zip(app, mine))
+    assert mine == app == [True, False, False, True, True, False]
 
 
 class DeepStub:
@@ -1088,6 +1265,63 @@ def test_scenes_hold_005930_on_fixed_data_and_swap_it_loudly_when_it_is_marked(S
         assert got != "005930" and SA.decomp_numbers(c) and not SA.stmt_cur_of(c), got
         assert len(R.notes) == 1 and R.notes[0].startswith("다시 읽은 뒤: ") and "005930 과거 주가 기록 오류 표시(pxBad)" in R.notes[0], R.notes
         assert capsys.readouterr().out.count("!! 알림  [다시 읽은 뒤] ") == 1
+
+
+def sp_mark_files(files, t, fields, day=SP):
+    """파이프라인처럼 공시로 확인하지 못한 분할 표시 (#186 mark_split_nofile · build_corp): spNo · spNoF, 그 칸은 data.json 에서 빼고 corp.json 에서는 null."""
+    f = json.loads(json.dumps(files, allow_nan=True))
+    s = next(x for x in f["data.json"]["stocks"] if x.get("t") == t)
+    c = next(x for x in f["corp.json"]["companies"] if x.get("t") == t)
+    for k in fields:
+        s.pop(k, None)
+        if k in c:
+            c[k] = None
+    s.update(spNo=day, spNoF=list(fields))
+    c.update(spNo=day, spNoF=list(fields))
+    return f
+
+
+@pytest.mark.parametrize("real", [False, True])
+def test_scenes_swap_005930_loudly_when_it_is_an_unconfirmed_split(SA, monkeypatch, capsys, tmp_path, real):
+    """005930 에 공시로 확인하지 못한 분할 표시(spNo)를 파이프라인처럼 붙이면 (52주는 보임 · 52주까지) 바꾼 장면마다 그 표시의 이름으로 바꿈 알림이
+    하나씩 크게 남고, 저장본에도 · 주가 분해 확인에도 005930 이 없어요 (pxBad 와 같아요) · 다시 읽은 뒤의 비교 회사도."""
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setattr(SA, "REAL_DATA", real)
+    n = [0]
+
+    def site(*a, **k):
+        n[0] += 1
+        p = tmp_path / f"site{n[0]}"
+        p.mkdir()
+        return str(p)
+    monkeypatch.setattr(SA, "build_site", site)
+    files, _ = SA.read_snapshot()
+    fresh = SA.upgrade(json.loads(json.dumps(files, allow_nan=True)))
+    capsys.readouterr()
+    for fields in (SA.PX_BAD_OLD, SA.PX_BAD_Y):
+        bad = sp_mark_files(fresh, "005930", fields)
+        for fn, scene, slots in PLAIN_SCENES:
+            R = SceneRunner()
+            if fn == "scene_fix_notes":
+                SA.scene_fix_notes(R, bad)
+                SA.scene_fix_notes(R, bad, live=True)
+            else:
+                getattr(SA, fn)(R, bad)
+            swaps, labels = [x for x in R.notes if "바꿔 담아" in x], [x[0] for x in R.results]
+            out = capsys.readouterr().out
+            scenes = [scene] if fn != "scene_fix_notes" else ["고치는 중 안내 지금", "고치는 중 안내 끝"]
+            assert [x.split(": ")[0] for x in swaps] == scenes and all("005930 공시로 확인하지 못한 분할 표시(spNo)" in x for x in swaps), (fn, swaps)
+            for x in scenes:
+                assert out.count(f"!! 알림  [{x}] ") == 1 and out.count(f"::warning title=발행 전 화면 검사 · 바꿔 담은 종목::[{x}] ") == 1, (fn, out[-800:])
+            if slots:
+                assert "005930" not in R.held() and R.held(), (fn, R.held())
+            else:
+                split = [x for x in labels if "주가 분해: 두 끝이 같은 기준" in x]
+                assert len(split) == 2 and not any("(005930)" in x for x in split), split
+        R = SceneRunner()
+        got = SA.won_control(R, "다시 읽은 뒤", bad)
+        assert got != "005930" and len(R.notes) == 1 and "005930 공시로 확인하지 못한 분할 표시(spNo)" in R.notes[0], (got, R.notes)
+        capsys.readouterr()
 
 
 def test_every_plain_swap_is_loud_and_goes_through_one_picker():

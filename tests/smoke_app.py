@@ -313,6 +313,8 @@ def none_today(R, scene, what, hint=""):
 # 메우지 않고 위험 계산에서 빼요 (2026-11-14 #128). 이 검사도 앱과 같아요 (Jack 2026-11-27, 답 7: 내장 종목 하나의 그 표시가 모두의 발행을
 # 멈추지 않게) — tests/test_screen_check.py 가 앱의 코드를 node 로 돌려 같은 답인지 봐요. 아래 한도(EXAMPLE_MAX)는 예전 그대로 그 종목도
 # 세어요 (example_cap_stocks · 리뷰 #200: 표시가 한꺼번에 많이 붙는 날은 막아요) — 한도 안이면 실행 기록에 크게 알려요 (banner_due).
+# 공시로 확인하지 못한 분할 표시(spNo · #186 mark_split_nofile)도 앱은 똑같이 다뤄요 (내장 값을 쓰지 않고 베타 · 변동성 '–', 예시 가격 안내
+# 없음 · src/data.js mergeStocks) — 이 검사도 같아요 (2026-11-28, 같은 답 7: 숫자를 비우는 내장 종목의 표시 하나가 모두의 발행을 멈추지 않게).
 # 금현물을 국제 금값으로 환산한 날(est)에는 "금현물은 … 추정치예요" 줄이 떠요. 발행 관문이 '목록에 있음'을 보장하는 것은 75개 가운데
 # 17개뿐이고(나머지 58개는 보장 없음), 그 17개도 베타 · 변동성까지 보장하지는 않아요.
 # 그래서 '배너가 없어야 해요'라고만 보면 상장폐지 한 건 · 베타가 빈 하루 · 금 환산 하루에 모두의 데이터 발행이 멈춰요.
@@ -344,18 +346,30 @@ def px_bad(L):
     return isinstance(v, str) and len(v) > 0
 
 
+def sp_no(L):
+    """src/repair.js spNo 와 같은 규칙 (#186): 공시로 확인하지 못한 분할 표시(spNo)가 빈 글자가 아닌 문자열이면 표시된 종목이에요."""
+    v = L.get("spNo") if isinstance(L, dict) else None
+    return isinstance(v, str) and len(v) > 0
+
+
+def mark_why(L):
+    """앱이 베타 · 변동성을 비우는 표시의 이름 (실행 기록에 쓰는 말) — 없으면 None. 둘 다 있으면 앱처럼 과거 주가 기록 오류가 먼저예요 (mergeStocks)."""
+    return "과거 주가 기록 오류 표시(pxBad)" if px_bad(L) else "공시로 확인하지 못한 분할 표시(spNo)" if sp_no(L) else None
+
+
 def _num(v):
     return isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and v not in (float("inf"), float("-inf"))
 
 
 def risk_ready(L):
     """앱(src/data.js mergeStocks)이 담은 종목의 오늘 가격 · 베타 · 변동성을 그대로 위험 계산에 쓰는 종목: 가격이 0 보다 크고, 베타와 변동성이
-    숫자이고, 과거 주가 기록 오류 표시(pxBad)도 금 환산(est)도 없어요. 그 밖의 종목은 앱이 베타 · 변동성을 '–'로 두고 위험 계산에서 빼거나
-    (pxBad · 내장 목록 밖), 내장 예시 값으로 메워 '예시 가격'으로 보여요 — 위험 숫자를 보려는 장면이 담을 종목이 아니에요.
-    앱보다 느슨한 곳은 없고, 몇 곳은 더 엄격해요 (리뷰 #200): 가격이 0 이하인 내장 종목, 베타 · 변동성이 남은 내장 목록 밖 pxBad 종목 (관문이
-    막는 모양), 숫자가 아닌 베타 · 변동성 (참 · 글자) — 앱은 이것들도 쓰지만 이 장면들은 담지 않아요 (tests/test_screen_check.py)."""
+    숫자이고, 과거 주가 기록 오류 표시(pxBad)도 공시로 확인하지 못한 분할 표시(spNo · #186)도 금 환산(est)도 없어요. 그 밖의 종목은 앱이 베타 ·
+    변동성을 '–'로 두고 위험 계산에서 빼거나 (pxBad · spNo · 내장 목록 밖), 내장 예시 값으로 메워 '예시 가격'으로 보여요 — 위험 숫자를 보려는
+    장면이 담을 종목이 아니에요.
+    앱보다 느슨한 곳은 없고, 몇 곳은 더 엄격해요 (리뷰 #200): 가격이 0 이하인 내장 종목, 베타 · 변동성이 남은 내장 목록 밖 pxBad · spNo 종목
+    (파이프라인은 그 칸을 비워요), 숫자가 아닌 베타 · 변동성 (참 · 글자) — 앱은 이것들도 쓰지만 이 장면들은 담지 않아요 (tests/test_screen_check.py)."""
     return (isinstance(L, dict) and _num(L.get("price")) and L["price"] > 0 and _num(L.get("beta")) and _num(L.get("vol"))
-            and not px_bad(L) and not L.get("est"))
+            and not px_bad(L) and not sp_no(L) and not L.get("est"))
 
 
 def pick_ready(R, scene, stocks, want, n, need=(), secs=0, avoid=(), pool=None, also=None):
@@ -382,7 +396,7 @@ def pick_ready(R, scene, stocks, want, n, need=(), secs=0, avoid=(), pool=None, 
     swapped = [t for t in want[:n] if t not in out]
     if swapped:
         gap = lambda t: [k for k in need if not _num(stocks[t].get(k))]   # noqa: E731
-        why = "; ".join(f"{t} " + ("오늘 데이터에 없음" if t not in stocks else "과거 주가 기록 오류 표시(pxBad)" if px_bad(stocks[t])
+        why = "; ".join(f"{t} " + ("오늘 데이터에 없음" if t not in stocks else mark_why(stocks[t]) if mark_why(stocks[t])
                                    else "베타 · 변동성 · 가격이 위험 계산에 쓸 값이 아님" if not risk_ready(stocks[t])
                                    else "필요한 칸(" + "·".join(gap(t)) + ")이 빔" if gap(t)
                                    else "장면이 읽는 다른 숫자를 앱이 보여 주지 않음") for t in swapped)
@@ -422,6 +436,7 @@ def example_price_stocks(f):
     examples = 내장 종목 가운데 오늘 데이터에 없는 것 + 데이터에 있지만 가격이 빈 것 + 가격은 있지만 베타 · 변동성이 빈 것 (금 환산은 빼고)
                → '예시 가격' 줄. 다만 과거 주가 기록 오류 표시(pxBad) 종목의 빈 베타 · 변동성은 앱이 내장 값으로 메우지 않아요 (위험 계산에서
                빼요 · 2026-11-14 #128) — 가격이 오늘 것이면 예시 가격 종목이 아니에요. 그 종목도 가격이 비면 예시 가격이에요 (앱과 같아요).
+               공시로 확인하지 못한 분할 표시(spNo · #186) 종목도 똑같아요 (앱이 pxBad 와 같이 다뤄요).
     est = 국제 금값 환산 표시(est)가 붙은 내장 종목 → '금현물은 … 추정치예요' 줄.  (미국 티커는 점 · 하이픈을 무시하고 맞춰요: BRK.B = BRK-B)"""
     norm = lambda x: re.sub(r"[.\-]", "", str(x or "").upper())
     by_t = {t: t for t in BASE_TICKERS}
@@ -431,8 +446,9 @@ def example_price_stocks(f):
         b = by_t.get(L.get("t")) or by_norm.get(norm(L.get("t")))
         price = L.get("price")
         if b:
-            # src/data.js mergeStocks: partial = L.price == null || (!bad && (L.beta == null || L.vol == null)) — bad = pxBad(L)
-            partial = price is None or (not px_bad(L) and (L.get("beta") is None or L.get("vol") is None))
+            # src/data.js mergeStocks: partial = L.price == null || (!bad && !sp && (L.beta == null || L.vol == null)) — bad = pxBad(L) ·
+            # sp = !bad && spNo(L) (#186)
+            partial = price is None or (not px_bad(L) and not sp_no(L) and (L.get("beta") is None or L.get("vol") is None))
             if L.get("est"):
                 est.append(b)
             elif partial:
@@ -445,7 +461,7 @@ def example_price_stocks(f):
 
 def example_cap_stocks(f):
     """한도(within_example_cap)가 세는 내장 종목 — 예전 그대로의 규칙 (리뷰 #200): 오늘 데이터에 없거나 가격 · 베타 · 변동성이 빈 내장 종목
-    (금 환산은 빼고). 과거 주가 기록 오류 표시(pxBad)로 베타 · 변동성을 비운 내장 종목도 세어요 — 앱은 그 종목에 '예시 가격' 안내를 보여 주지
+    (금 환산은 빼고). 과거 주가 기록 오류 표시(pxBad) · 공시로 확인하지 못한 분할 표시(spNo)로 베타 · 변동성을 비운 내장 종목도 세어요 — 앱은 그 종목에 '예시 가격' 안내를 보여 주지
     않지만 (example_price_stocks), 한꺼번에 많이 비면 여전히 파이프라인을 의심할 날이에요. 돌려줌 (세는 종목, est) — est 는 example_price_stocks 와 같아요."""
     norm = lambda x: re.sub(r"[.\-]", "", str(x or "").upper())
     by_t = {t: t for t in BASE_TICKERS}
@@ -489,16 +505,26 @@ def banner_due(R, scene, f):
                                           "고정 데이터에는 없어야 해요. 없는데도 이 말이 나오면 내장 종목 목록(BASE_TICKERS)을 잘못 읽은 거예요")
         return []
     due = ([NONLIVE] if examples else []) + ([GOLD_EST] if est else [])
-    marked = sorted(set(example_cap_stocks(f)[0]) - set(examples))   # pxBad 로 베타 · 변동성을 비운 내장 종목 (가격은 오늘 것)
+    marked = sorted(set(example_cap_stocks(f)[0]) - set(examples))   # pxBad · spNo 로 베타 · 변동성을 비운 내장 종목 (가격은 오늘 것)
     if marked:
-        msg = (f"오늘 데이터: 과거 주가 기록 오류 표시(pxBad)가 붙은 내장 종목 {len(marked)}개 ({', '.join(marked[:8])}{' …' if len(marked) > 8 else ''}) — "
+        # 표시마다 따로 (#186 spNo · 2026-11-28): pxBad 만이면 예전과 같은 글이에요. 그 종목의 첫 줄로 봐요 (example_cap_stocks 처럼)
+        norm = lambda x: re.sub(r"[.\-]", "", str(x or "").upper())   # noqa: E731
+        first = {}
+        for L in f["data.json"]["stocks"]:
+            first.setdefault(norm(L.get("t")), L)
+        kinds = (("과거 주가 기록 오류 표시(pxBad)", "과거 주가 기록 오류"), ("공시로 확인하지 못한 분할 표시(spNo)", "공시로 확인하지 못한 분할"))
+        groups = [(k, row, [t for t in marked if (mark_why(first.get(norm(t))) or kinds[0][0]) == k]) for k, row in kinds]
+        groups = [g for g in groups if g[2]]
+        names = lambda ts: f"{', '.join(ts[:8])}{' …' if len(ts) > 8 else ''}"   # noqa: E731
+        msg = (f"오늘 데이터: {' · '.join(f'{k}가 붙은 내장 종목 {len(ts)}개 ({names(ts)})' for k, _, ts in groups)} — "
                f"가격은 오늘 것이라 예전 뱁새는 이 종목에 '예시 가격' 안내를 보여 주지 않아요 (안내 없음을 확인해요). 내장 종목 한도에는 세어요 "
-               f"({EXAMPLE_MAX}개를 넘으면 발행하지 않아요 — 관문의 과거 주가 기록 오류 줄도 보세요)")
+               f"({EXAMPLE_MAX}개를 넘으면 발행하지 않아요 — 관문의 {' · '.join(row for _, row, _ in groups)} 줄도 보세요)")
+        title = " · ".join(row for _, row, _ in groups)
         if msg not in R.notes:
             R.notes.append(msg)
             print(f"\n!! 알림  [{scene}] {msg}\n", flush=True)
             if os.environ.get("GITHUB_ACTIONS") == "true":
-                print(f"::warning title=발행 전 화면 검사 · 과거 주가 기록 오류 내장 종목::[{scene}] {msg}", flush=True)
+                print(f"::warning title=발행 전 화면 검사 · {title} 내장 종목::[{scene}] {msg}", flush=True)
     if due:
         why = "; ".join(x for x in (f"내장 종목 {len(examples)}개가 오늘 데이터에 없거나 가격 · 베타 · 변동성이 비었어요 ({names})" if examples else "",
                                     f"금 환산 추정 {', '.join(est)}" if est else "") if x)
@@ -3195,10 +3221,11 @@ FIX_LINES = """(kind) => [...document.querySelectorAll('[data-fix="' + kind + '"
 def decomp_numbers(c):
     """기업분석의 '주가는 무엇으로 움직였나'가 그 회사에 숫자(이익(EPS) 변화 '… 원 → … 원')를 보여 주는지 — src/corp.jsx DecompCard ·
     decomposeReturn 과 같은 규칙에서, 더 엄격하게 (tests/test_screen_check.py 가 앱의 코드를 node 로 돌려 느슨한 곳이 없는지 봐요): 과거 주가 기록 오류
-    표시(pxBad)가 없고 3년 주가 변화(r36)가 있고, 지금 EPS 와 같은 기준의 3년 전 순이익 · 주식 수가 0 보다 커요. 기준은 이 장면이 3년 전 EPS 를
+    표시(pxBad)도 공시로 확인하지 못한 분할 표시(spNo · #186, DecompCard 의 px = pxBad(c) || spNo(c))도 없고 3년 주가 변화(r36)가 있고, 지금 EPS 와
+    같은 기준의 3년 전 순이익 · 주식 수가 0 보다 커요. 기준은 이 장면이 3년 전 EPS 를
     셈하는 두 길만: 영수증이 없으면 총 순이익 ÷ 보통주 (ni · shm), 영수증 "o" 면 지배주주 순이익 ÷ 영수증 주식 수 (nio3 · epsIn.sh). 주식 수(shm)도
     있어야 해요 ('끝' 장면이 그것으로 지어낸 영수증을 만들어요)."""
-    if not isinstance(c, dict) or px_bad(c) or not _num(c.get("r36")) or 1 + c["r36"] / 100 <= 0:
+    if not isinstance(c, dict) or px_bad(c) or sp_no(c) or not _num(c.get("r36")) or 1 + c["r36"] / 100 <= 0:
         return False
     if not (_num(c.get("eps")) and c["eps"] > 0 and _num(c.get("shm")) and c["shm"] > 0):
         return False
