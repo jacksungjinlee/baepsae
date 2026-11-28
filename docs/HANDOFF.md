@@ -22,6 +22,33 @@ the approved 유상증자 card sentences with proposals for 유무상증자 and 
 11-27: "Yes, skip Part L"; the v19.3 spec's Status line says what covered each item), so Track 1's data follow-ups and Jack's
 other 11-27 answers come next. On hold: v19.4, v19.6g, v19.6h.
 
+**Korean stock splits (#186, 2026-11-23/24, reworked 11-28 for Jack's answers of 11-27 and review rounds 1–2; Track 1, spec v19.6 A.6):**
+`data.json` `splits` gets Korean 액면분할 · 주식병합 rows (same shape and meaning as the US rows; the app reads them unchanged), dated the
+first trading day on the new count (신주권상장예정일). A row needs three checks to agree (answer 4): the DART decision (document's par
+values and listing date, or a 감자결정 by merging shares read as the holder's ratio), that day's listed-share change (split ± 10%,
+merge exact) and that day's base-price jump (split close ÷ ratio ± 1%; merge, set by auction, ½–2× of it and a real move); a halted
+merge pairs its share day with a base reset up to 5 trading days later (`kr_split_pairs`; the filing's date must be one of the two);
+the receipt `splitsKr.rows` names the checks `{dl, shr, px, rule}` (+ `dShr · dPx · dlOn` for a pair). Seed `data/kr_splits_seed.csv`
+586 (7 paired lines). Fixed rows with typed evidence (`KR_SPLIT_OVERRIDE_EVIDENCE`, same three checks): 삼성전자 · 우 2018 (DART list
+only), NAVER 2018 · 카카오 2021 (numbers from the documents DART served on 11-23). DART errors, timeouts and throttling are never a
+"no" (pending). **Split without a filing** (answer 11; `splitsKr.nofile`, carried for 3 years 40 days even while a stock is out of
+the list): must-have stock → FAIL row; 16+ that this run judged itself (`splitsKr.runNew`, never cached verdicts: a run that
+does not publish still saves the DART cache) → FAIL row (threshold from a backfill simulation; RUNBOOK has the way out); any other stock →
+`mark_split_nofile` blanks the numbers computed across it (same fields and windows as `pxBad`) and marks `spNo` · `spNoF`; 2.0 shows
+Jack's line "주식 수가 크게 바뀌었는데, 공시로 확인하지 못해서 이 숫자는 비워 두었어요." where the price-history lines go; old app "–".
+**Fractions** (answer 11): merges and 5:2 splits publish; 팔았어요 takes a part of a share in 1/10,000 where a split left one
+(`held.js` `fracHeld`, exact per-record units; a Korean holding's shown count is the exact holding rounded once, so 1+1+1
+through a 1:3 merge shows and sells 1주). A halted merge whose two days fall in two runs stays in `splitsKr.dq`; a carried row's
+Daum window starts at its `pxd`, and a stock back in the list is read too (round 3). Re-asks of unreadable filings use only budget
+left after never-asked events and keep the cached verdict when they fail; `runNew` counts only events with no earlier verdict.
+Warning rows: `splitsKr`, the blanking check, this run's count, records carried, and (round 3) "most of this run's fresh DART
+lookups did not confirm a split" (8+ lookups, 80%+, with a loud log line and a GitHub warning; a broken document reader is not
+stopped by the 16 row — whether this row should stop the publish is Jack's call).
+**Open (in the PR, STOP):** a holding bought before an unconfirmed split still shows its value at the old count — blanking it needs
+a new totals line (draft in the PR). One question to Jack: should a failed receipt check, a stock not blanked and a vanished `nofile`
+record fail the publish? **Next: 무상증자 (Jack, 11-27: "the next PR right after #186")**; RUNBOOK § Korean stock splits says where
+it plugs in.
+
 **Screen check and `pxBad` built-ins (#200, branch `claude/smoke-pxbad`, 2026-11-28; tests only):** Track 2 audit 5.1, Jack's
 11-27 answer 7 ("Yes, under the standing rule"). `tests/smoke_app.py --data` (the third pre-publish screen check) counted a
 built-in stock with a blank beta or volatility as an "example price" and expected the 예시 가격 notice, but since #128 the app shows
