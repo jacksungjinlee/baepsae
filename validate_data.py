@@ -4271,7 +4271,8 @@ KR_SPLIT_RC_AUCTION = (0.5, 2.0)    # 병합: 앞날 종가 ÷ 기준가 가 배
 KR_BONUS_RC_PX_TOL = 0.01
 KR_BONUS_RC_SHR_TOL = 0.01
 KR_BONUS_RC_TAU_AUTO = 0.05          # 파이프라인 fetch_data.KR_BONUS_TREASURY_MAX 와 같은 선
-KR_BONUS_RC_TAU_FLOOR = -0.02
+KR_BONUS_RC_TAU_FLOOR = -1e-5         # 2차 리뷰 S1: 자동으로 확인한 줄은 τ ≥ 0 (파이프라인 KR_BONUS_TAU_MIN −1e-6 · 영수증의 m 이 6자리로 반올림돼 −1e-5 까지)
+KR_BONUS_READ_MIN = 3                 # 파이프라인 fetch_data.KR_BONUS_READ_MIN 과 같은 수 (2차 리뷰 S3: 채우는 동안 한 실행의 무상증자 판정은 3 ~ 4건)
 KR_BONUS_RC_HOLIDAY_DAYS = 15
 # ── 2026-11-27 (Jack 답 11, 그대로: "A split without a filing stops the publish only for a must-have stock (삼성전자, NAVER, 카카오) or when many
 # appear in one run. Any other stock gets its affected numbers blanked with '주식 수가 크게 바뀌었는데, 공시로 확인하지 못해서 이 숫자는 비워
@@ -4303,7 +4304,7 @@ KR_NOFILE_KEEP_ROW = "공시로 확인하지 못한 분할 기록 이어짐 (경
 KR_SPLIT_READ_MIN = 8
 KR_SPLIT_READ_SHARE = 0.8
 KR_READ_ROW = f"이 실행에 새로 물은 DART 판정 대부분이 분할을 확인하지 못함 ({KR_SPLIT_READ_MIN}건 이상 · {KR_SPLIT_READ_SHARE:.0%} 이상 · 경고만)"
-KR_BONUS_READ_ROW = f"이 실행에 새로 물은 무상증자 판정 대부분이 확인되지 않음 ({KR_SPLIT_READ_MIN}건 이상 · {KR_SPLIT_READ_SHARE:.0%} 이상 · 경고만)"   # 1차 리뷰 Opus S5
+KR_BONUS_READ_ROW = f"이 실행에 새로 물은 무상증자 판정 대부분이 확인되지 않음 ({KR_BONUS_READ_MIN}건 이상 · {KR_SPLIT_READ_SHARE:.0%} 이상 · 경고만)"   # 1차 리뷰 Opus S5
 KR_NOFILE_KEEP_DAYS = int(365.25 * 3) + 40   # 파이프라인의 KR_SPLIT_NOFILE_KEEP_DAYS 와 같은 날수 (시계열이 닿는 날 · 그보다 오래되면 빠져도 돼요)
 
 
@@ -4395,8 +4396,14 @@ def _kr_bonus_warns(info, today, warns, notes, name):
     if not isinstance(b, dict):
         warns.append("무상증자 기록(splitsKr.bonus)의 모양이 틀렸어요")
         return []
-    lst = lambda k: [x for x in b.get(k) if isinstance(x, list)] if isinstance(b.get(k), list) else []     # noqa: E731
-    out, fail, held, rec = lst("out"), lst("fail"), lst("held"), lst("rec")
+    # 2차 리뷰 nit: 줄마다 코드 · 날짜가 글자인 것만 (코드가 목록이면 묶음 키로 쓸 수 없어 경고 줄 전체가 '읽다 멈춤' 이 됐어요) — 나머지는 수를 세어 경고
+    raw = {k: b.get(k) if isinstance(b.get(k), list) else [] for k in ("out", "fail", "held", "rec")}
+    ok_row = lambda x: isinstance(x, list) and len(x) >= 2 and isinstance(x[0], str) and isinstance(x[1], str)     # noqa: E731
+    out, fail, held, rec = ([x for x in raw[k] if ok_row(x)] for k in ("out", "fail", "held", "rec"))
+    odd_n = sum(len(raw[k]) for k in raw) - len(out) - len(fail) - len(held) - len(rec)
+    if odd_n:
+        warns.append(f"무상증자 기록(splitsKr.bonus)에 모양이 틀린 줄 {odd_n} (코드 · 날짜가 글자가 아니에요)")
+    held = [x for x in held if len(x) >= 4 and x[3] == "tau"] + [x for x in held if not (len(x) >= 4 and x[3] == "tau")]   # 2차 리뷰 S4: 사람이 볼 것 먼저
     n_fail = int(json_num(b.get("failN")) or 0) if json_num(b.get("failN")) is not None else len(fail)
     n_held = int(json_num(b.get("heldN")) or 0) if json_num(b.get("heldN")) is not None else len(held)
     # 1차 리뷰 S4: 후보는 상장일 (넷째 칸) 부터 있어요 — '최근 30일' 은 그날부터 (없으면 권리락 날)
@@ -4411,7 +4418,7 @@ def _kr_bonus_warns(info, today, warns, notes, name):
         warns.append(f"!! 스위치가 꺼졌는데 실린 무상증자 줄 {len(on_rows)}: " + ", ".join(on_rows[:KR_SPLIT_SHOW]))
     taus = [x for x in held if len(x) >= 4 and x[3] == "tau"]
     if taus:
-        notes.append(f"자기주식 몫이 {KR_BONUS_RC_TAU_AUTO:.0%} 넘어 사람이 볼 무상증자 {len(taus)}: " + ", ".join(name(x) for x in taus[:KR_SPLIT_SHOW]))
+        notes.append(f"자기주식 몫이 {KR_BONUS_RC_TAU_AUTO:.0%} 넘거나 0 보다 작아 사람이 볼 무상증자 {len(taus)}: " + ", ".join(name(x) for x in taus[:KR_SPLIT_SHOW]))
     if b.get("src") == "err":
         warns.append("!! 무상증자 확인이 오류로 멈춰 지난 후보만 이었어요 (로그를 보세요)")
     if fail or n_fail:
@@ -4470,7 +4477,7 @@ def kr_bonus_receipt_ok(x, tau_max=KR_BONUS_RC_TAU_AUTO):
     if any(v is None or v <= 0 for v in (xx, m, px, shr)) or abs(r - (1 + xx)) > 1e-6 * r or m <= 1.10:
         return False
     tau = 1 - (m - 1) / xx
-    if tau < KR_BONUS_RC_TAU_FLOOR or tau > tau_max + 1e-9:
+    if tau > tau_max + 1e-9 or (tau_max <= KR_BONUS_RC_TAU_AUTO and tau < KR_BONUS_RC_TAU_FLOOR) or tau <= -1:
         return False
     return abs(px / m - 1) <= KR_BONUS_RC_PX_TOL and abs(shr / m - 1) <= KR_BONUS_RC_SHR_TOL
 
@@ -4570,7 +4577,7 @@ def _check_kr_split_read(rep, info):
 def _check_kr_bonus_read(rep, info):
     """1차 리뷰 Opus S5 (경고만 · 분할의 같은 줄을 무상증자에): splitsKr.bonus.read {n 이 실행에 새로 물은 판정, no 그중 확인되지 않은 것}. bonus 가 없는
     파일 (무상증자 전) 은 통과."""
-    rule = (f"경고만 — 새로 물은 무상증자 판정 {KR_SPLIT_READ_MIN}건 이상 중 {KR_SPLIT_READ_SHARE:.0%} 이상이 확인되지 않으면 노랗게 (무상증자 결정을 읽는 코드가 "
+    rule = (f"경고만 — 새로 물은 무상증자 판정 {KR_BONUS_READ_MIN}건 이상 중 {KR_SPLIT_READ_SHARE:.0%} 이상이 확인되지 않으면 노랗게 (무상증자 결정을 읽는 코드가 "
             "깨졌을 수 있어요 · 몇 건을 DART 에서 직접 보세요)")
     b = info.get("bonus") if isinstance(info, dict) else None
     if b is None:
@@ -4581,7 +4588,7 @@ def _check_kr_bonus_read(rep, info):
     if n is None or no is None:
         rep.add(KR_BONUS_READ_ROW, True, "splitsKr.bonus.read 모양이 잘못됐어요", rule, warn=True)
         return
-    bad = n >= KR_SPLIT_READ_MIN and no >= KR_SPLIT_READ_SHARE * n
+    bad = n >= KR_BONUS_READ_MIN and no >= KR_SPLIT_READ_SHARE * n
     rep.add(KR_BONUS_READ_ROW, True, f"새로 물은 판정 {n}건 · 확인되지 않음 {no}건" + (f" ({no / n:.0%})" if n else ""), rule, warn=bad)
 
 

@@ -16538,7 +16538,7 @@ def kr_split_daum_cands(todo, until, fetch=None, n=KR_SPLIT_DAUM_DAYS, clock=tim
     도 찾아요 — 그 상장일은 '짝이 아직인 병합' 으로 다음 대기에 남기지 않아요."""
     fetch = fetch or _fetch_daum_days
     out, seen, bad, stop, streak, t0 = [], [], [], None, 0, clock()
-    dead, bmiss = [], []
+    dead, bmiss, berr = [], [], []
     for c, since in todo:
         if streak >= fails:
             stop = f"연달아 {fails}번 실패"
@@ -16569,7 +16569,13 @@ def kr_split_daum_cands(todo, until, fetch=None, n=KR_SPLIT_DAUM_DAYS, clock=tim
         seq = [(d.isoformat(), _fin(rows[d].get("tradePrice")), daum_base(rows[d]), _fin(rows[d].get("listedSharesCount"))) for d in days]
         have = {(x["t"], x["d"]) for x in out}
         out += [x for x in kr_split_pairs(c, seq, "daum", lo=since, hi=until) if (x["t"], x["d"]) not in have]
-        bon = kr_bonus_pairs(c, seq, "daum", lo=since, hi=until, miss=bmiss) if bonus else []
+        bon = []
+        if bonus:
+            try:                                       # 2차 리뷰 S2: 무상증자 짝짓기가 멈춰도 그 종목의 분할 후보 · dq 는 #186 그대로
+                bon = kr_bonus_pairs(c, seq, "daum", lo=since, hi=until, miss=bmiss)
+            except Exception as e:
+                berr.append(f"{c} ({type(e).__name__}: {str(e)[:40]})")
+                bon = []
         out += bon
         a = kr_split_pair_open(seq, lo=since, hi=until)
         if a and not any(x["t"] == c and x["d"] == a for x in out) and not any(x["dl"] == a for x in bon):
@@ -16577,8 +16583,14 @@ def kr_split_daum_cands(todo, until, fetch=None, n=KR_SPLIT_DAUM_DAYS, clock=tim
             seen.remove(c)
             log(f"· 한국 주식 분할: {c} 상장주식수가 {a} 에 깨끗한 배율로 바뀌었는데 기준가는 아직 그대로예요 (거래정지 중인 병합으로 보여요) — "
                 f"{KR_SPLIT_PAIR_DAYS}거래일 안에 기준가가 다시 정해지는지 다음 실행에 다음 일별 시세를 다시 봐요 (splitsKr.dq)")
+    if berr:
+        log(f"  !! 한국 무상증자: 다음 일별 시세에서 무상증자 두 날을 짝짓다 오류로 멈춘 종목 {len(berr):,} — 그 종목은 오늘 무상증자 후보가 없어요 (분할 · 병합 "
+            "후보와 다음 대기는 그대로): " + ", ".join(berr[:KR_SPLIT_SHOW]))
     if bonus:
-        kr_bonus_miss_log(bmiss, "다음 일별 시세")
+        try:
+            kr_bonus_miss_log(bmiss, "다음 일별 시세")
+        except Exception as e:
+            log(f"  !! 한국 무상증자: 짝이 없는 사건을 남기다 오류로 멈췄어요 ({type(e).__name__}: {str(e)[:80]}) — 그 수는 오늘 로그에 없어요")
     return out, seen + dead, bad, stop
 
 
@@ -16860,6 +16872,13 @@ KR_BONUS_SHR_TOL = KR_SPLIT_EXACT_TOL  # 상장일 주식 수 = 앞날 × m ± 1
 # τ = 1 − (m − 1) ÷ x 가 이만큼 이하일 때만 자동으로 확인해요 (읽은 15건 중 14건이 4.4% 이하 · 대한제강 24.4%). 넘으면 'tau' 로 싣지 않고 숫자와 함께 크게
 # 남겨요 (사람이 회사의 자기주식 수를 봐요)
 KR_BONUS_TREASURY_MAX = 0.05
+# 2차 리뷰 S1: τ 의 아래 끝 — 0 보다 작으면 (반올림만큼 · kr_bonus_tau_floor 안이라도) 자동으로 확인하지 않고 'tau' 로 사람에게 (알테오젠 x '0.3' 인데
+# 공시의 주식 수와 두 시장 날이 ×1.34 를 말하면 r 1.3 은 틀려요: 주주의 배율은 m 보다 작을 수 없어요). 1e-6 은 계산의 반올림만큼
+KR_BONUS_TAU_MIN = -1e-6
+# 2차 리뷰 S3 (경고만): '새로 물은 무상증자 판정 대부분이 확인되지 않음' 의 최소 건수 — 분할 시드를 채우는 동안 무상증자는 실행마다 6 ~ 7회 (판정 3 ~ 4건)
+# 라서 분할의 8건으로는 울리지 않아요. 3건이면 채우는 동안에도 울려요 (3건 모두가 확인되지 않음 · 진짜 결정 15건은 모두 확인돼요 — 무상증자 짝은 좁아서
+# 공시가 없는 짝이 드물어요). 관문의 같은 줄도 이 수를 써요 (validate_data.KR_BONUS_READ_MIN)
+KR_BONUS_READ_MIN = 3
 KR_BONUS_TAG = "krbonus|v1"     # DART 캐시 항목 '{기업코드}|krbonus|v1|{권리락 날}(|{우선주 코드})' = 판정 (분할의 krsplit 항목과 따로)
 KR_BONUS_LIST_BACK = 200        # 권리락 날 앞 이 날수부터 공시를 봐요 (이사회 → 기준일: 무상 2 ~ 6주 · 유무상의 무상 몫 약 3달)
 KR_BONUS_LIST_AFTER = 30        # 상장일 뒤 정정 공시까지
@@ -17131,7 +17150,7 @@ def kr_bonus_checks(ev, c):
         return None, "px"
     if rs is None or abs(rs / m - 1) > KR_BONUS_SHR_TOL:
         return None, "shr"
-    return {"rule": "bonus", "dx": c["d"], "dl": dl, "dr": dr, "x": x, "m": round(m, 6), "tau": round(max(tau, 0.0), 6), "px": round(rp, 6),
+    return {"rule": "bonus", "dx": c["d"], "dl": dl, "dr": dr, "x": x, "m": round(m, 6), "tau": round(tau, 6), "px": round(rp, 6),
             "shr": round(rs, 6)}, None
 
 
@@ -17189,10 +17208,11 @@ def kr_bonus_dart(client, corp, cand, today, pref=False):
     hit = [e for e in evs if kr_bonus_checks(e, cand)[0] is not None]
     if hit:
         return {"v": "ok", **max(hit, key=lambda e: e["rc"])}, None
-    if evs:
-        same = sorted((e for e in evs if e["dl"] == cand["dl"]), key=lambda e: e["rc"], reverse=True)
+    same = sorted((e for e in evs if e["dl"] == cand["dl"]), key=lambda e: e["rc"], reverse=True)
+    if evs and (same or not bad):
         code = kr_bonus_checks(same[0], cand)[1] if same else "diff"
         return no({"date": "diff"}.get(code, code), "공시와 다름: " + " · ".join(f"×{e['r']:g} (기준일 {e['dr']} · 상장 {e['dl']} · {e['rc']})" for e in evs[:3]))
+    # 2차 리뷰 nit: 다른 날의 결정만 읽히고, 그날 것일 수 있는 결정은 읽지 못했으면 '다름' 이 아니라 '읽지 못함' (30일마다 다시)
     if bad:
         return no("unread", "공시를 읽지 못함: " + " · ".join(bad[:2]))
     return no("nodoc", "이 주식에 주는 무상증자 결정이 없어요 (우선주만 · 보통주만)")
@@ -17260,16 +17280,11 @@ def _kr_bonus_todo(bcands, bpend0, bseed, prev_rows, cap_of, keep_from, today):
     return todo, away
 
 
-def _kr_bonus_unasked(c, client, cmap):
-    """이 무상증자 후보의 판정이 DART 보관본에 아직 없는지 (분할의 한도를 줄일지 정할 때만 · 기업코드가 없으면 물을 수 없어서 아니에요)."""
-    t = c.get("t") or ""
-    corp = cmap.get(t) or (cmap.get(t[:5] + "0") if is_preferred(t) else None)
-    if client is None or not corp:
-        return False
-    key = f"{corp}|{KR_BONUS_TAG}|{c['d']}" + (f"|{t}" if is_preferred(t) else "")
-    with client.lock:
-        e = client.entries.get(key)
-    return not (isinstance(e, dict) and e.get("st") == "000" and isinstance(e.get("d"), dict))
+def _kr_people_first(xs, held):
+    """data.json 에 싣는 KR_SPLIT_KEEP 줄: 사람이 볼 것 ('tau') 먼저, 그다음 최근 것부터 (2차 리뷰 S4: 대한제강이 30줄 밖으로 빠지지 않게)."""
+    tau = {(x[0], x[1]) for x in held if len(x) >= 4 and x[3] == "tau"}
+    first = [x for x in xs if (x[0], x[1]) in tau]
+    return (sorted(first, key=lambda x: x[1], reverse=True) + _kr_recent([x for x in xs if (x[0], x[1]) not in tau]))[:KR_SPLIT_KEEP]
 
 
 def _kr_bonus_fields(btodo, away, client, cmap, today, can_call, per_run, used, upto, show, keep_from):
@@ -17389,10 +17404,12 @@ def _kr_bonus_fields(btodo, away, client, cmap, today, can_call, per_run, used, 
         rc, how = str(v.get("rc") or ""), str(v.get("src") or "")
         rec = [t, d, r, "bonus", rc if _RCPT.match(rc) else "-", how if how in ("fric", "pifric") else "fric", chk]
         why = None
-        if chk["tau"] > KR_BONUS_TREASURY_MAX + 1e-9:
-            why = "tau"                                         # 1차 리뷰 S1: r 은 공시를 믿는 값 — 자기주식 몫이 크면 사람이 봐요 (아래 크게)
+        if chk["tau"] > KR_BONUS_TREASURY_MAX + 1e-9 or chk["tau"] < KR_BONUS_TAU_MIN:
+            # 1차 리뷰 S1: r 은 공시를 믿는 값 — 자기주식 몫이 크면 사람이 봐요 · 2차 리뷰 S1: 0 보다 작으면 (x 를 적은 자리 수가 모자라 n ÷ b 가 x 보다 커요:
+            # 주주의 배율은 m 보다 작을 수 없어서 r 이 틀렸어요) 반올림만큼이어도 사람이 봐요 (아래 크게)
+            why = "tau"
             notes[(t, d)] = (f"x {chk['x']:g} · 새 주식 {v.get('n'):,.0f} ÷ 증자 전 {v.get('b'):,.0f} → m {chk['m']:g} · 자기주식 몫 τ {chk['tau']:.1%} "
-                             f"(> {KR_BONUS_TREASURY_MAX:.0%}) · {rc}")
+                             + (f"(> {KR_BONUS_TREASURY_MAX:.0%})" if chk["tau"] > 0 else "(0 보다 작아요: 공시의 x 가 반올림돼 r 이 m 보다 작아요)") + f" · {rc}")
         elif not split_is_clean(r):
             why = "odd"                                         # 관문 '주식 분할 목록 (splits)' 의 깨끗한 배율 줄이 발행을 막아요 — Jack 의 범주 2
         elif not KR_BONUS_ROWS_ON:
@@ -17412,7 +17429,7 @@ def _kr_bonus_fields(btodo, away, client, cmap, today, can_call, per_run, used, 
         log(f"  !! 한국 무상증자: 이어 둘 후보 {len(allp):,}개가 상한 {KR_BONUS_PEND_MAX:,}개를 넘어 {len(allp) - KR_BONUS_PEND_MAX:,}개는 이어 두지 못해요 "
             "(오래된 '맞지 않음'부터) — KR_BONUS_PEND_MAX 를 보세요")
     info = {"v": 1, "on": KR_BONUS_ROWS_ON, "src": "off" if client is None else ("dart" if can_call else "cache"),
-            "new": sorted(new), "held": _kr_recent(held), "heldN": len(held), "rec": _kr_recent(held_rec),
+            "new": sorted(new), "held": _kr_people_first(held, held), "heldN": len(held), "rec": _kr_people_first(held_rec, held),
             "out": _kr_recent(out), "outN": len(out), "fail": _kr_recent(fail), "failN": len(fail), "wait": len(wait),
             "calls": used - calls0, "read": {"n": asked, "no": asked_no}, "pend": [kr_bonus_row_of(c) for c in allp][:KR_BONUS_PEND_MAX],
             "seed": sum(1 for c in btodo if c.get("src") == "seed"), "cand": sum(1 for c in btodo if c.get("src") not in ("seed", "pend"))}
@@ -17446,7 +17463,7 @@ def _kr_bonus_fields(btodo, away, client, cmap, today, can_call, per_run, used, 
     if doc_n or doc_again:
         log(f"  !! 한국 무상증자 — 결정을 읽지 못한 판정 {doc_n:,} ({KR_SPLIT_DOC_RETRY_DAYS}일마다, 한 번도 묻지 않은 후보를 모두 물은 뒤 남은 한도로 다시 · 이번 실행에 "
             f"다시 물음 {doc_again:,})")
-    if asked >= KR_SPLIT_READ_MIN and asked_no >= KR_SPLIT_READ_SHARE * asked:
+    if asked >= KR_BONUS_READ_MIN and asked_no >= KR_SPLIT_READ_SHARE * asked:
         # 1차 리뷰 Opus S5 (경고만): 무상증자 결정을 읽는 쪽이 깨졌을 수 있어요 — 분할의 같은 줄 (splitsKr.read) 처럼 크게 · GitHub 경고
         msg = (f"이 실행에 새로 물은 무상증자 판정 {asked:,}건 중 {asked_no:,}건 ({asked_no / asked:.0%}) 이 확인되지 않았어요 — 무상증자 결정을 읽는 코드가 깨졌을 수 "
                "있어요: 몇 건을 DART 에서 직접 보세요 (RUNBOOK '무상증자')")
@@ -17503,7 +17520,7 @@ def kr_split_chk_clean(d):
         v = _fin(d.get(k))
         if v is not None and v > 0:
             out[k] = v
-    if _fin(d.get("tau")) is not None and _fin(d.get("tau")) >= 0:     # 무상증자 (공시의 수로 본 자기주식 몫 · 1차 리뷰 S1)
+    if _fin(d.get("tau")) is not None and -1 < _fin(d.get("tau")) < 1:   # 무상증자 (공시의 수로 본 자기주식 몫 · 1차 리뷰 S1 · 2차: 음수도)
         out["tau"] = _fin(d.get("tau"))
     if d.get("doc") in ("list", "copy"):
         out["doc"] = d["doc"]

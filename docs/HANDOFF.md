@@ -55,14 +55,14 @@ a new totals line (draft in the PR). One question to Jack: should a failed recei
 record fail the publish? **Next: 무상증자 (Jack, 11-27: "the next PR right after #186")**; RUNBOOK § Korean stock splits says where
 it plugs in.
 
-**무상증자 (#205, branch `claude/kr-bonus`, 2026-11-28, review round 1 fixed; Track 1, Jack 11-27 answer 11 "the next PR right after
+**무상증자 (#205, branch `claude/kr-bonus`, 2026-11-28, review rounds 1–2 fixed, round 2 had no blocker; Track 1, Jack 11-27 answer 11 "the next PR right after
 #186"; pipeline only, no screen change):** a new Korean `splits` kind (`fetch_data.py` `kr_bonus_*`), held behind `KR_BONUS_ROWS_ON = False`.
 A bonus issue is two market days — the 권리락 day A (base = close ÷ m, shares flat) and the listing day B weeks later (shares × m) — paired
 from the KRX lists, the Daum rows and the seed `data/kr_bonus_seed.csv` (144 events since 2023-10-19); unpaired resets and share jumps
 are logged with counts (a near miss loudly). An event is confirmed only when DART's 무상증자결정 (`fricDecsn`, or the bonus part of a
 유무상증자 `pifricDecsn`) agrees three ways (answer 4): the listing date is B and the 기준일 makes A its 권리락 day; A's base ratio = m ± 1%;
 B's share ratio = m ± 1%. The checks confirm m (1 + new ÷ before, treasury shares included); the row's r = 1 + x is trusted from the
-filing only when the implied treasury share is at most 5% (else held `tau` for a person: 대한제강 24.4%). Row `[code, A, r]`, which can
+filing only when the implied treasury share is between 0 and 5% (else held `tau` for a person: 대한제강 24.4%, or a negative one). Row `[code, A, r]`, which can
 only appear after B. All 15 real filings read pass the checks (19 DART calls); offline on the 11-28 data, 13 would become rows with the
 switch on, 1 held `odd` (폰드그룹), 1 `tau`. The split loop is exactly #186's (no reserve: run-1 `runNew` 26 as on main, pinned in a
 test); bonus lookups take what it leaves. No filing → no row, logged loudly, never in `nofile` · `runNew` · the must-have row. Gate:
@@ -71,7 +71,7 @@ warning-only, `splitsKr.rows` keeps #186's rule; the bonus record, its own recei
 a 무상증자 (a draft line is in the PR; switching on also needs the app to tell a bonus row from a split); Q8b category 2: may the FAIL
 row "주식 분할 목록 (splits)" accept an exact bonus ratio the three checks confirm (폰드그룹 ×1.780175)? Q8c the 2–4 weeks between 권리락
 and listing, when a pre-권리락 holding reads the old count × the new price with no line, and a holding typed between the two days.
-**Next:** round 2 review (Fable alone), then Jack's answers, then the switch-on PR (copy line + `records.jsx` picks it by the receipt's kind
+**Next:** merge, then Jack's answers, then the switch-on PR (copy line + `records.jsx` picks it by the receipt's kind
 + the receipt rule for `rows` + flip the pin).
 
 **Screen check and `pxBad` built-ins (#200, branch `claude/smoke-pxbad`, 2026-11-28; tests only):** Track 2 audit 5.1, Jack's

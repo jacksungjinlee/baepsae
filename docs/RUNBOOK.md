@@ -3623,8 +3623,9 @@ Appendix 1 line for it (`split applied` / `merge applied`).
   shares flat ± 1%; the first share jump over 10% within 60 trading days that fits A's ratio ± 2% — `KR_BONUS_MKT_TOL`; a share change
   that does not fit, such as a 유무상증자's paid shares listing first, is skipped; a second base reset ends the search) from the KRX
   lists (`kr_bonus_cands`), from the Daum rows already read for a share change (`kr_split_daum_cands(bonus=True)`; its listing day is
-  not held in `dq` as an open halted merge; a stock with a KRX bonus candidate is still read from Daum for splits, so #186's search
-  and `dq` are unchanged) and from the seed `data/kr_bonus_seed.csv` (144 events with A from 2023-10-19, the price series' first day,
+  not held in `dq` as an open halted merge — the one change to #186's `dq`; a stock with a KRX bonus candidate is still read from Daum
+  for splits, and an error in the bonus pairing is caught per stock with a loud count line, so #186's split candidates and the rest of
+  `dq` are as on main) and from the seed `data/kr_bonus_seed.csv` (144 events with A from 2023-10-19, the price series' first day,
   to 2026-11-27; Daum's unadjusted rows of all 2,475 Korean stocks, read once on 2026-11-28; the loader re-runs the rule on every line).
   **Nothing that does not pair is silent** (review round 1, Fable S3): every run logs, with counts, the base resets that have no
   listing yet (waiting, or a rights issue or 주식배당) and the share jumps that pair with nothing (rights listings, conversions); a jump
@@ -3637,12 +3638,15 @@ Appendix 1 line for it (`split applied` / `merge applied`).
     filing's company ratio 1 + new shares ÷ shares before (both from the filing; treasury shares count in "before") — **not** the
     holder's ratio r = 1 + x (x = 1주당 신주배정 주식수) that the row carries. Treasury shares get no new shares, so KRX divides by m and
     m ≤ r (대한제강 2026-01: x 0.6616554, r 1.6617, m 1.5000, KRX ÷ 1.4996; 코미코 2026-05: r 2, m 1.9640, ÷ 1.9634). **r is trusted
-    from the filing only within a bound** (review round 1, S1): the treasury share the filing's numbers imply, τ = 1 − (m − 1) ÷ x, must
-    be at most 5% (`KR_BONUS_TREASURY_MAX`; 14 of the 15 filings read are at 4.4% or less) for the event to be confirmed. A larger τ is
-    held as `tau` (with the switch on too), logged loudly with x, the new and the old share counts, m, τ and the filing number
-    (`!! 한국 무상증자 — 세 확인은 맞는데 자기주식 몫이 5% 를 넘어 사람이 볼 것 …`) for a person to check the company's treasury shares
-    in its annual report: 대한제강 (τ 24.4%) is held this way. τ below 0 by more than the filing's own rounding of x (`kr_bonus_tau_floor`:
-    half a unit of the last decimal written, so "0.33" for a third passes) means the counts contradict x: `diff`. Tolerances from the 15
+    from the filing only within a bound** (review rounds 1 and 2, S1): the treasury share the filing's numbers imply, τ = 1 − (m − 1) ÷ x,
+    must be between 0 (`KR_BONUS_TAU_MIN` −1e-6, arithmetic only) and 5% (`KR_BONUS_TREASURY_MAX`; 14 of the 15 filings read are at
+    4.4% or less) for the event to be confirmed. Outside that it is held as `tau` (with the switch on too), logged loudly with x, the new
+    and the old share counts, m, τ and the filing number (`!! 한국 무상증자 — 세 확인은 맞는데 자기주식 몫이 …`) for a person to check the
+    company's treasury shares in its annual report: 대한제강 (τ 24.4%) is held this way, and so is a negative τ — a holder's ratio is
+    never below m, so a filing that writes x with too few decimals (알테오젠-like: x "0.3" while its counts and both market days say
+    ×1.34) has the wrong r. τ below 0 by more than the filing's own rounding of x (`kr_bonus_tau_floor`: half a unit of the last decimal
+    written) means the counts contradict x: `diff`. Held events (`tau`) are listed first in `bonus.held` and `bonus.rec`, so they never
+    drop out of the 30 kept. Tolerances from the 15
     real filings read on 2026-11-28 (7 from the dividend proof's fixtures, 8 fetched, 19 DART calls in all): the base ratio ÷ m − 1 from
     −0.575% (씨케이솔루션 2026-02-27, the KRX base 3,530 against 3,510) to +0.003%, 14 of 15 within 0.15%; the listing-day ratio ÷ m − 1
     exactly 0 for 14, +0.661% for 씨케이솔루션 (107,725 treasury shares cancelled the day before the listing). A 단주 is paid in cash, so
@@ -3693,9 +3697,13 @@ Appendix 1 line for it (`split applied` / `merge applied`).
     **한국 주식 분할 (splitsKr · 경고만)** now also reads `splitsKr.bonus` and warns on: a lookup failure; an event no filing confirms whose
     listing day is in the last 30 days; a malformed record or `src` err; a receipt in `bonus.rec` missing a check or not fitting
     (`kr_bonus_receipt_ok`, the gate's own copy of the thresholds: record date within 15 days of A, the longest KRX closure being 추석
-    2017 at 11; τ from −2% to 5%, or up to 100% for one held as `tau`); and a bonus receipt in `splitsKr.rows` while the switch is off.
-    Held events (`off`, `odd`, `tau`) are a note. New warning-only row **이 실행에 새로 물은 무상증자 판정 대부분이 확인되지 않음 (8건 이상 ·
+    2017 at 11; τ from 0 to 5%, or anything for one held as `tau`); a malformed bonus row (counted, never a crash of the row); and a
+    bonus receipt in `splitsKr.rows` while the switch is off.
+    Held events (`off`, `odd`, `tau`) are a note. New warning-only row **이 실행에 새로 물은 무상증자 판정 대부분이 확인되지 않음 (3건 이상 ·
     80% 이상 · 경고만)** (`splitsKr.bonus.read`, the bonus copy of #186's row; the pipeline also logs it loudly with a GitHub warning).
+    Its minimum is 3, not #186's 8 (review round 2, S3): while the split backfill runs, a run has 6–7 bonus calls, so 3–4 fresh bonus
+    verdicts, and with 8 the row could never fire during the backfill, when nearly every seed event is judged. Bonus pairs are tight, so
+    a run where every fresh verdict is "no" is rare unless the reader broke; all 15 real filings confirm.
   - **On the 11-28 data, offline** (the fresh data-branch copy, pxDate 11-27; DART answered from the 15 real filings, every other
     company unreachable, so it waits): run 1 confirms all 15 (32 calls); with the switch OFF none is a row (13 `off`, 1 `odd`, 1
     `tau`); with it ON 13 become rows (현대글로비스 2024-07-12 ×2, 알테오젠 2026-08-05 ×1.3, 가온전선 2026-06-30 ×1.8, 엘앤씨바이오, 티엘비,
