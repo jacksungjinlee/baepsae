@@ -23,6 +23,24 @@ the approved 유상증자 card sentences with proposals for 유무상증자 and 
 other 11-27 answers come next. Also queued: the old app's loads (`baepsae.html`: `src/detail.jsx` `loadLiveData`, `src/data.js`,
 `src/corp.jsx`, `src/macro.jsx`, `src/disc.jsx`) have no time limit, the gap #202 closed in 2.0. On hold: v19.4, v19.6g, v19.6h.
 
+**관심 종목 and the 소액주주 yield (#?, branch `claude/watch-small-yield`, 2026-11-28; app only, behind #183's switch, no screen changes today):**
+Jack 11-27, answer 14: "Yes, use the 소액주주 yield where it exists (관심 종목 배당수익률 condition), labelled as such." Built behind
+`src/v2/smallcfg.js` `SMALL_YIELD.on` (false) and `C.co.div.smallBasis` · `smallLine` (null; the label "소액주주 기준" and the line are
+still waiting for Jack word for word). Once both are set: `watch.js` `watchValue(s, "dyAtLeast")` reads `dytSmall` for a Korean stock
+whose all-holder yield (`dytOf`) is blank and whose 소액주주 yield the company page shows (`divSmallView`; `watchSmall`), never beside an
+all-holder yield, rounded as the chip shows it; met / not, the `hitAt` mark and 홈's 관심 종목 조건 row use that value (stale data or an
+earlier close: shown, never judged, like any yield; no exact data: blank). The chip, the condition sheet and 홈's row say
+"{y} · 소액주주 기준" (홈: "… 지금 0.2% · 소액주주 기준이에요.", the label only); the card shows the line once where its reason lines go,
+instead of the dataHidden line; the console names those stocks. Off (shipped) or either line null: identical to main for every stock
+(`tests/test_watch_small_yield.py` against main's watch.js · watch.jsx, fixture `watch_before_small_5bcea90`; smoke_v2
+`scene_watch_small` 390 · 1280, a throwaway build with the switch on and the proposed lines, and the shipped build). One existing test
+edited in its own commit, **waiting for Jack's yes**: `tests/test_smallholder_app.py` (#183) expected 관심 종목 to keep the dataHidden line
+with the switch on; it now expects the label and the line (answer 14). **For the switch-on PR, on purpose:**
+`tests/test_v196c_watch.py::test_on_todays_real_data_every_value_is_a_shown_number_or_blank_and_pipeline_blanks_stay_blank` counts a
+Korean stock with `dyt` blank and a dividend value as a leak, so with the switch on it fails on real data for every `divSmall.on` company
+(TPC로보틱스 on the 11-28 publish) until it learns the labelled 소액주주 value (an existing-test edit for Jack then). 종목 순위, 내 기준으로
+찾기 and plans keep `dyt`. RUNBOOK "소액주주 yield for differential dividends".
+
 **First-load time limit (#202, branch `claude/load-limit`, 2026-11-28; app only, no new words; live once it merges and deploys):** found by the #201 review. 2.0's first load (`load.js` `loadAll`, called through `main.jsx`) had no time limit, so a connection that never answered and never failed kept every screen on the loading state (관심 종목, 연말에 확인할 숫자 …: titles only, no cards, no message) for as long as the browser kept the request open; disc.json already gave up after 60 s. Now `main.jsx` loads through `load.js` `loadFirst`: `loadAll` with one 60 s budget for data.json, corp.json and macro.json (`FIRST_LOAD_TIMEOUT_MS` = `REFETCH_TIMEOUT_MS`, the limit of disc.json and of a return's fetch). At the limit every request still out is stopped (AbortController), so a late answer can never overwrite the failure: data.json or corp.json stopped → the existing load-failure message (`app.loadFail`) on every screen, word for word as a 404, the console line `[v2] load failed: data.json: not finished in 60 s` (no answer yet, or one still arriving), and the existing one more try on a return to view (`returnWatch`); a return made while the first load was still out (the return watch starts only after it) gets that one fetch as soon as the load fails in view (`app.jsx` `returnedWhileLoading`, review S1: a phone that froze the page fires the return first and the overdue limit after; the limit never pauses while hidden); macro.json stopped alone → the data goes on without it, as when it fails. Loads inside the limit are unchanged (the timer is cleared). The service worker is unchanged (network first; a request the page stops does not reach its offline copy) and needs no new version (it caches nothing by app version). Tests: `tests/test_load_limit.py` (Node: the limit, the stop, macro alone, a slow load under the limit, the shipped 60 s) and smoke_v2 `scene_load_limit` (a test build with a 5 s limit: a 9 s stall → the message on 관심 종목 · every tab · 연말에 확인할 숫자, the same text as a 404, then the retry; a 3.5 s answer → loads as usual; hidden and shown during the load → the stop, one owed fetch, loaded). Known, not fixed here: the old app has the same gap (queued above); a connection slower than about 180 kbit/s (data.json + corp.json are about 1.3 MB compressed) now gets the failure message after 60 s instead of a very late load. `tests/test_stale_refetch.py`: its docstring and one comment now say the first load has the 60 s limit (comment-only; its assertion, `loadAll` alone sends no signal, is unchanged).
 **Korean stock splits (#186, merged 2026-11-28 as 8a08510 after a green dry run with real DART calls; first live publish Tue 12-01; Track 1, spec v19.6 A.6):**
 `data.json` `splits` gets Korean 액면분할 · 주식병합 rows (same shape and meaning as the US rows; the app reads them unchanged), dated the
@@ -318,8 +336,9 @@ warns when a company joins that the previous publish lacked, listing its sentenc
 `소액주주 배당(차등배당 · dpsSmall · dytSmall)` with one "근거" line per company published (교보증권 and TPC로보틱스 at least, unless their
 basis check stops them) and that row WARN once, "새로 실은 회사". 예전 뱁새 gets no label (round 1: its yield is the report's own, never
 checked to be the 소액주주 rate). **Waiting for Jack:** the label "소액주주 기준" and the line "이 회사는 소액주주에게 배당을 더 줘요(차등배당).
-소액주주가 받는 1주 배당으로 계산했어요." (`src/v2/smallcfg.js` + `C.co.div.smallBasis` · `smallLine`); and whether 관심 종목 conditions
-should use the 소액주주 yield (today they keep `dyt`). RUNBOOK "소액주주 yield for differential dividends".
+소액주주가 받는 1주 배당으로 계산했어요." (`src/v2/smallcfg.js` + `C.co.div.smallBasis` · `smallLine`). Whether 관심 종목 conditions
+should use the 소액주주 yield: Jack 11-27, answer 14, yes, labelled (built behind the switch, paragraph above). RUNBOOK "소액주주 yield
+for differential dividends".
 **#176 (US details after a stock split; audit 2026-11-23, SNDK 8:1 on 11-20):** after it merges, the daily run's US details step
 puts a Yahoo details copy (cached up to 3 days, 14 when Yahoo refuses) taken before a split on today's share count: today's price ×
 the split ratios ÷ the copy's price, for PER, PBR, 시가총액, 배당수익률 and 거래대금 (`fetch_data.us_info_split_view`; splits from today's

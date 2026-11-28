@@ -1972,8 +1972,25 @@ when the stage errored. Look at the run's "소액주주 배당" log lines.
 App: 2.0 only, behind `src/v2/smallcfg.js` `SMALL_YIELD.on` (false) and the copy `C.co.div.smallBasis` · `smallLine` (null, waiting for
 Jack): the 요약 배당 tile shows "배당수익률 {y} · {smallBasis}" with `smallLine` in the hidden-yield line's place, the 배당 tab the 소액주주
 dividend per share and yield labelled, 두 종목 비교 the yield labelled with the line (`company.js divSmallView`). Switch off, or on without
-the words, every screen renders exactly as without the fields (test). 관심 종목, 종목 순위, 내 기준으로 찾기 and plans keep `dyt`. 예전 뱁새
+the words, every screen renders exactly as without the fields (test). 종목 순위, 내 기준으로 찾기 and plans keep `dyt`. 예전 뱁새
 shows no label (#183 review: its 배당수익률 is the report's own yield, never checked to be the 소액주주 rate).
+
+**관심 종목 follows the switch (since #?; Jack 2026-11-27, answer 14: "Yes, use the 소액주주 yield where it exists (관심 종목 배당수익률
+condition), labelled as such."):** `src/v2/watch.js` `watchValue(s, "dyAtLeast")` reads `dytSmall` only for a Korean stock whose
+all-holder yield (`dytOf`) is blank, with exact data, where `divSmallView` gives a 소액주주 yield (the switch on, the numbers agree,
+dvLine 3 or none) and both lines are set (`watchSmall`); rounded as the chip shows it (one decimal, two below 0.1%). It is judged,
+marked (`hitAt`) and dated exactly like the all-holder yield: met / not on fresh data, shown but never judged on stale data or an
+earlier close (`pxd`), blank without exact data. `condState` and `watchHits` add `small: true` only then, and the screens label it
+"{y} · {smallBasis}": the chip ("지금 0.2% · 소액주주 기준"), the condition sheet, and 홈's 관심 종목 조건 row ("… 조건에 맞아요. 지금 0.2% ·
+소액주주 기준이에요."; the label, no line); the card shows `smallLine` once where its blank-value reason lines go (`div-small`), instead
+of the dataHidden line. The console names those stocks once per load ("[v2] watch list: dividend yield on the small-shareholder
+basis (dytSmall, labelled) …"). Switch off, or either line null: identical to main 5bcea90 for every stock
+(`tests/test_watch_small_yield.py`, against a copy of main's watch.js · watch.jsx in `tests/fixtures/watch_before_small_5bcea90`;
+`BAEPSAE_WATCH_DATA=DIR` adds a data copy), and smoke_v2 `scene_watch_small` (390 · 1280: a throwaway build with the switch on and the
+proposed lines, and the shipped build). **When the switch-on PR flips it:** `tests/test_v196c_watch.py`
+`test_on_todays_real_data_every_value_is_a_shown_number_or_blank_and_pipeline_blanks_stay_blank` counts a Korean stock with `dyt` blank
+and a dividend value as a leak, so on the real data it will fail for every `divSmall.on` company (TPC로보틱스, 048770, on the 11-28
+publish) until that test learns the labelled 소액주주 value; change it on purpose in that PR (an existing-test edit for Jack).
 
 ## 오늘 볼 것 data (v19.6b, since #PR): disc.json `issue`, insider `role`, US `ed` · `xd`
 

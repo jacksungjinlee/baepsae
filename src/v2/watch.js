@@ -13,6 +13,12 @@
 //   dyAtLeast 배당수익률 at least v (%): Korea only the verified today's-close yield (engine.dytOf, a file with the split check:
 //             exactData); US the same current yield as 종목 순위's 배당수익률 list (engine.okDy). Shown as the company page
 //             shows it (cofmt.yieldText: one decimal, two below 0.1%).
+//             A 차등배당 company whose all-holder yield is blank (Jack, 2026-11-27, answer 14: "Yes, use the 소액주주 yield where it
+//             exists (관심 종목 배당수익률 condition), labelled as such."): its 소액주주 yield (data.json dytSmall) where the company
+//             page shows it (company.js divSmallView: the switch smallcfg.js SMALL_YIELD.on, exact data, the numbers agree, dvLine 3
+//             or none, a payer with no all-holder yield) and both copy keys C.co.div.smallBasis · smallLine are set; never while
+//             the all-holder yield (dytOf) is there. condState marks it small: the chip and 홈's row say "{y} · {smallBasis}" and
+//             the card shows smallLine once (watch.jsx). Rounded, judged, marked and dated exactly like the all-holder yield.
 // Each value is compared as it is shown, so the chip's "지금 {now}" and its state never disagree: "지금 75,000원" meets a
 // 75,000원 price condition, "지금 0.80배" a 0.8배 PBR condition, "지금 4.0%" a 4% 배당수익률 condition.
 // A blank value is never met (the chip says 정보 없음), never a hit, and never clears a hitAt.
@@ -32,10 +38,23 @@ import { pbrGuardOf } from "./ranks.js";
 import { priceDate, timesText, yieldText } from "./cofmt.js";
 import { subjectParticle } from "./track.js";
 import { WATCH_KINDS, watchOf, watchOrder, withWatchMarks } from "./store.js";
+import { divSmallView } from "./company.js";
 
 export { WATCH_KINDS };
 const round = (x, d) => Math.round(x * 10 ** d) / 10 ** d;
 const usOf = (s) => !!s && s.cls === "us";
+
+// The 소액주주 yield (%) the dyAtLeast condition reads for a Korean stock, else null: only where the all-holder yield is blank
+// (dytOf) and the company page would show it (divSmallView, which also needs exact data and the switch), with both lines set.
+// Without the corp row: divSmallView reads it only through krDivState's dps3a, which matters only when dyt is there.
+function smallDy(s) {
+  const Dv = C.co && C.co.div;
+  if (!s || s.cls !== "kr" || !exactData() || dytOf(s) != null || !Dv || !Dv.smallBasis || !Dv.smallLine) return null;
+  const v = divSmallView(s);
+  return v ? v.y : null;
+}
+// Is the dyAtLeast value of s the 소액주주 yield? (Then the screens label it and the card says why.)
+export const watchSmall = (s, k) => k === "dyAtLeast" && smallDy(s) != null;
 
 // The value of kind k for stock s as the screens show it, else null (blank).
 export function watchValue(s, k) {
@@ -51,7 +70,7 @@ export function watchValue(s, k) {
     return r > 0 ? r : null;
   }
   if (k === "dyAtLeast") {
-    const y = usOf(s) ? okDy(s) : exactData() ? dytOf(s) : null;
+    const y = usOf(s) ? okDy(s) : exactData() ? dytOf(s) ?? smallDy(s) : null;
     if (y == null) return null;
     return y > 0 && y < 0.1 ? round(y, 2) : round(y, 1);
   }
@@ -73,14 +92,16 @@ export const condV = (s, c) => (c.k === "pxBelow" && s && !usOf(s) ? Math.round(
 
 // One condition on today's data: { k, v, val, state, date } — v the entered number as shown (condV) · state "met" · "not"
 // (fresh data, a number) · "blank" (no number) · "stale" (a number, data not fresh, or the stock priced at an earlier close
-// than its market's: shown, never judged). date = the stock's price date.
+// than its market's: shown, never judged). date = the stock's price date. small: true only when val is the 소액주주 yield
+// (watchSmall; the key is left out otherwise, so every other result is exactly as before).
 const marketDate = (load, s) => (usOf(s) ? load.data.usPxDate : load.data.pxDate) || null;
 export function condState(load, s, c, fresh) {
   const val = watchValue(s, c.k), v = condV(s, c);
   const date = s && load && load.status === "ok" ? priceDate(load, s) : null;
   if (val == null) return { k: c.k, v, val: null, state: "blank", date };
-  if (!fresh || !date || date !== marketDate(load, s)) return { k: c.k, v, val, state: "stale", date };
-  return { k: c.k, v, val, state: condMet(c.k, val, v) ? "met" : "not", date };
+  const sm = watchSmall(s, c.k) ? { small: true } : {};
+  if (!fresh || !date || date !== marketDate(load, s)) return { k: c.k, v, val, state: "stale", date, ...sm };
+  return { k: c.k, v, val, state: condMet(c.k, val, v) ? "met" : "not", date, ...sm };
 }
 // The conditions of an entry this app reads, in kind order (a later version's kinds are left out).
 export const condsOf = (e) => WATCH_KINDS.map((k) => (e && Array.isArray(e.conds) ? e.conds.find((c) => c && c.k === k) : null)).filter(Boolean);
@@ -110,7 +131,8 @@ export function withWatchHits(data, load, now) {
   return m.size ? withWatchMarks(data, m, now == null ? Date.now() : now) : null;
 }
 // 오늘 볼 것's 관심 종목 조건 rows: each condition met on fresh data that this device saw met first on today's close (no mark
-// yet: it is being set now, or a mark of this same date), in list order then kind order. [{ t, s, k, v, val, date }]
+// yet: it is being set now, or a mark of this same date), in list order then kind order. [{ t, s, k, v, val, date }], plus
+// small: true where val is the 소액주주 yield (the row's line then labels it, as the chip does).
 // canMark: the records can be written (writable, not locked); without it no row (the mark could not stop it repeating).
 export function watchHits(data, load, now, canMark = true) {
   if (!canMark || !watchFresh(load, now)) return [];
@@ -120,7 +142,9 @@ export function watchHits(data, load, now, canMark = true) {
     if (!s) continue;
     for (const c of condsOf(w[t])) {
       const st = condState(load, s, c, true);
-      if (st.state === "met" && (c.hitAt == null || c.hitAt === st.date)) out.push({ t, s, k: c.k, v: st.v, val: st.val, date: st.date });
+      if (st.state === "met" && (c.hitAt == null || c.hitAt === st.date)) {
+        out.push({ t, s, k: c.k, v: st.v, val: st.val, date: st.date, ...(st.small ? { small: true } : {}) });
+      }
     }
   }
   return out;
@@ -137,21 +161,24 @@ export function condText(k, v, us) {
   return null;
 }
 // The value as "지금 {now}" shows it: "84,200원" · "$148.50" · "1.30배" (the company page's PBR) · "4.2%" (its yield).
-export function nowValue(k, val, us) {
+// small (a 소액주주 yield, condState / watchHits): labelled as the company page labels it, "{y} · {C.co.div.smallBasis}" (두 종목
+// 비교's cell; the 요약 tile "배당수익률 {y} · …"). Only a small value from watch.js comes here, so the label is set.
+export function nowValue(k, val, us, small = false) {
   if (k === "pxBelow") return us ? "$" + nf(val, 2) : fill(C.app.won, { n: nf(val) });
   if (k === "pbrBelow") return timesText(val, 2);
-  if (k === "dyAtLeast") return yieldText(val);
+  if (k === "dyAtLeast") return small && C.co.div.smallBasis ? `${yieldText(val)} · ${C.co.div.smallBasis}` : yieldText(val);
   return null;
 }
 // "{condition} 조건에 맞아요. 지금 {now}이에요." (이에요 / 예요 by the last syllable of {now}: track.subjectParticle's reading).
-// A US price is read "…달러" ("$148.50" = 백사십팔 점 오 달러), so it always takes 예요 (review B1).
-export function hitText(k, v, val, us) {
-  const now = nowValue(k, val, us), condition = condText(k, v, us);
+// A US price is read "…달러" ("$148.50" = 백사십팔 점 오 달러), so it always takes 예요 (review B1). small: as nowValue.
+export function hitText(k, v, val, us, small = false) {
+  const now = nowValue(k, val, us, small), condition = condText(k, v, us);
   const ye = (k === "pxBelow" && us) || subjectParticle(now) !== "i";
   return fill(ye ? C.watch.hitYe : C.watch.hit, { condition, now });
 }
 
-// The console line for the stocks whose PBR a 가치 guard kept from firing a condition (no silent hiding), once per load.
+// The console line for the stocks whose PBR a 가치 guard kept from firing a condition (no silent hiding), once per load; and
+// the one for the stocks whose 배당수익률 condition reads the 소액주주 yield (watchSmall: only with the switch on and both lines).
 const guardSaid = new WeakSet();
 export function watchGuardNote(data, load) {
   if (!load || load.status !== "ok" || guardSaid.has(load)) return;
@@ -159,4 +186,6 @@ export function watchGuardNote(data, load) {
   const w = watchOf(data);
   const hit = Object.keys(w).filter((t) => condsOf(w[t]).some((c) => c.k === "pbrBelow")).map((t) => load.byT.get(t)).filter((s) => s && num(s.pbr) > 0 && pbrGuardOf(s));
   if (hit.length) console.warn(`[v2] watch list: PBR left blank by the value guards for ${hit.length} stock(s): ${hit.map((s) => `${s.t} (${pbrGuardOf(s)})`).join(", ")}`);
+  const small = Object.keys(w).filter((t) => condsOf(w[t]).some((c) => c.k === "dyAtLeast")).map((t) => load.byT.get(t)).filter((s) => watchSmall(s, "dyAtLeast"));
+  if (small.length) console.info(`[v2] watch list: dividend yield on the small-shareholder basis (dytSmall, labelled) for ${small.length} stock(s): ${small.map((s) => `${s.t} (${s.dytSmall}%)`).join(", ")}`);
 }

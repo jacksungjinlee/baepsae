@@ -275,7 +275,8 @@ export function divBlankKind(s, co = null) {
 // (dpsSmall ÷ today's close, %) only on a payer its proof hid for a dividend table that disagrees with the share counts (dvLine 3),
 // when today's share count is on that year-end's basis. -> { y, dps } or null: the switch off (smallcfg.js), an older file, a US stock,
 // a yield that shows (dyt, krDivState y), no or a zero dividend, a mark other than 3, or numbers that do not agree (dytSmall must be
-// dpsSmall ÷ price rounded to 0.01%p, at least 0.01 and at most DY_MAX). The ranking, 관심 종목 and plans keep dyt.
+// dpsSmall ÷ price rounded to 0.01%p, at least 0.01 and at most DY_MAX). The ranking and plans keep dyt; 관심 종목's 배당수익률
+// condition reads this where its all-holder yield is blank (watch.js watchSmall; Jack 2026-11-27, answer 14).
 export function divSmallView(s, co = null, on = SMALL_YIELD.on) {
   if (!on || !exactData() || !s || s.cls !== "kr") return null;
   const y = num(s.dytSmall), d = num(s.dpsSmall), p = num(s.price);
