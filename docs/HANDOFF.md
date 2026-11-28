@@ -32,9 +32,27 @@ by node in `tests/test_screen_check.py`); the limit of 3 built-ins with blank va
 marked ones count, so 4 or more at once still stop the publish), and 1–3 marked ones are named in the run (`!! 알림`). The B안 scene
 swaps any of its four stocks the app can't use today (`pick_ready`: never looser than the app's rule, next Korean common stock by
 market cap, 3+ sectors, `!! 알림`) and notes loudly, never failing, when its premise is not met that day (portfolio volatility on
-screen not above the profile's 24% ceiling). **Still open:** a mark on 005930 itself fails about a dozen scenes that hold 삼성전자 as
-their ordinary stock (on an 11-27 copy with the mark: main 127 / 166); fixing those scenes the same way is a follow-up for Jack's
-queue (RUNBOOK, screen check).
+screen not above the profile's 24% ceiling). A mark on 005930 itself: covered by the follow-up below.
+
+**Screen check and a `pxBad` mark on 삼성전자 (#?, branch `claude/smoke-005930`, 2026-11-28; tests only):** the follow-up #200 named,
+under the same yes (Jack 11-27, answer 7: "Yes, under the standing rule"; 삼성전자 is a built-in). Scenes of `tests/smoke_app.py
+--data` that hold 005930 as their ordinary stock and read its beta and volatility, or a number the app blanks for a marked stock,
+failed on a copy of the 11-28 publish (pxDate 11-27) with 005930 marked the way the pipeline marks: main 134 / 171 (37 checks in 12
+scenes; with a mark inside the last 252 trading days, 133 / 171: 다시 읽은 뒤 too). Now
+`pick_plain` keeps 005930 whenever `risk_ready` (the scene is then exactly as on main) and otherwise takes the next old-app built-in
+Korean common stock by market cap that is `risk_ready`, outside the scene's other stocks and with the numbers the scene reads (the
+주가 분해 checks: `decomp_numbers`, tied to `src/corp.jsx` by node), loudly (`!! 알림 [scene] …`, a warning, the step summary). Changed:
+위험값 없음, 빠진 종목, 빠진 종목 전부, 베타→수익률, 없는 종목, 자동 설정, 미국 자기 날짜 (both runs), 한국 날짜, 파일 불러오기 (its first stock:
+its export needs risk numbers for more than half the money), 주가기록 (its unmarked
+comparison stock), 국내 마지막 확인 종가 (the portfolio holding only), 고치는 중 안내 (the 주가 분해 check only) and 다시 읽은 뒤 (its
+comparison company, which a 52주까지 mark hides). Every assertion is unchanged. Kept on 005930 (not its risk numbers): search, card and
+company page (정상 · NaN · corp · 바로가기 · 늦음), the other file and saved-portfolio round trips (불러오기 · 데이터 읽기, 못 읽는 저장본), the being-fixed lines
+(고치는 중 안내), kr_own_picks' plain for the carry lines, and B안 (#200's own swap). The 3-built-in limit still counts a marked 005930.
+Results (11-28 publish copies): with 005930 marked, 171 / 171 and 15 swap notes (both mark shapes, and with LG에너지솔루션 marked
+too); with SK하이닉스 marked too (a gate-FAIL day), 170 / 171, only B안's 1/N check ("σ -0.0%p" drawn in the zero colour is not in
+its zero list; main fails it the same way; changing it would accept more, so it is Jack's call); four marked: only the limit
+fails; unmarked: 171 / 171 like main, no swap note. Known gap (CI covers it, tests/test_px_bad_app.py): no screen check reads the
+risk numbers of a marked stock itself. RUNBOOK "screen check".
 
 **v19.6b switch-on (#196, branch `claude/v19.6b-switch-on`, 2026-11-28; live once it merges and deploys):** the parts #168 shipped off.
 공시 보기 on every 확인 필요 card (`routes.dartFilingUrl`: that one filing in DART's viewer by its exact receipt number, else no button;

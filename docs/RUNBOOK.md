@@ -118,10 +118,20 @@ run log starts "5xx 다시 물음", and the count ("· 5xx 다시 물음: N곳")
       failure: market volatility is the day's data). The scene also needs three of them to
       have a dividend yield; the gate lets one must-have stock without dividend data through with a warning (Jack,
       11-05), so the scene fills a blank one in its own copy and says so in the log.
-    - **Not yet covered: 005930 itself.** About a dozen other scenes hold 삼성전자 as their ordinary stock and need its
-      beta and volatility (위험값 없음, 빠진 종목, 베타→수익률, 자동 설정, 한국 날짜, 주가기록 and others). If the gate ever
-      marks 005930 `pxBad` (one marked must-have only warns), those scenes fail and the publish is held (a 11-27 copy
-      with the mark: 127 / 166). Don't skip the check: tell Jack, and fix those scenes the way B안 picks its stocks.
+    - **005930 too (since #?, the same yes).** Other scenes hold 삼성전자 as their ordinary stock and read its beta and
+      volatility, or another number the app blanks for a marked stock (위험값 없음, 빠진 종목, 빠진 종목 전부, 베타→수익률, 없는 종목,
+      자동 설정, 미국 자기 날짜, 한국 날짜, 파일 불러오기's first stock, 국내 마지막 확인 종가's portfolio, 주가기록's unmarked comparison
+      stock, 고치는 중 안내's
+      주가 분해 check, 다시 읽은 뒤's comparison company). Each uses 005930 whenever `risk_ready` says the app uses its price,
+      beta and volatility (then the scene is exactly as before), else the next old-app built-in Korean common stock by market
+      cap that is `risk_ready` and also has the numbers that scene reads (`smoke_app.pick_plain`; the 주가 분해 picks also need
+      `decomp_numbers`, checked against `src/corp.jsx` by node), and says so the same three ways as B안 (`!! 알림 [scene] …
+      바꿔 담아 …`, a warning, the step summary). The checks themselves are unchanged. Scenes that look at 삼성전자 for
+      another reason (search, its name, its company page and card, the being-fixed lines, file and saved-portfolio round
+      trips) stay on it. A marked 005930 still
+      counts toward the limit of 3. On a day with that note, read the reason it gives: a `pxBad` mark means the gate's mark
+      rows apply (a second marked must-have fails the gate); a blank beta or volatility on 005930 without a mark is the
+      pipeline, not the market.
     - `!! 확인 못 함` and `!! 알림` lines are on a green run, where nobody looks by default. The 09:13 morning check
       must report them to Jack: its instructions are extended for the warnings titled "발행 전 화면 검사 …" as an
       after-merge step of #106 (until that is done, nothing reads them).
