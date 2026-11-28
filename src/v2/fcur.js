@@ -10,6 +10,7 @@
 // A code with no Korean name (not in the map, or its name still waits for Jack): no line at all, never the raw code; the
 // numbers stay blank, and the console names the code once.
 import { num } from "./engine.js";
+import { FUND_BOOK, fundRow } from "../repair.js";
 
 export const FCUR_FIELDS = ["per", "pbr", "dy"];
 // The 기준 cards that read a blanked number (engine.js CARDS): 가치 (vz, from pbr) and 배당 (US: dy).
@@ -130,3 +131,27 @@ export const FGN_LINE_KEYS = [["fgnCut", (k) => k !== FGN_OWN && k !== FGN_STOPP
 // A section of 내 기준과 맞는 정도 shows the line when its 가치 row (from PBR) or 배당 row (US: the yield) is blank because of this.
 export const fgnRowsBlank = (s, rows) => (rows || []).some((r) => r && r.blank
   && ((r.id === "value" && fgnBlank(s, "pbr")) || (r.id === "div" && fgnBlank(s, "dy"))));
+
+// ---------------- ETF and fund PBR (Jack, 2026-11-27, answer 12: "Yes, hide them") ----------------
+// A fund has no book value in the company sense: Yahoo's fund-level PBR (SPY 1.70 against a real P/B of about 5, SOXX 0.32) and the
+// 가치 score vz made from it (SOXX · TLT 100) mislead. The pipeline blanks both on every fund row (fetch_data.fund_book_blank, record
+// data.json fundPb; the gate warns if one is left: validate_data.check_fund_book), and the loader drops them too (fundBookOff, from
+// load.js resolveLoad), so a file published before that change, still on the site until the next publish, shows none either. A fund
+// is validate_data.factor_fund's row, the same as engine.isStockLike's "not a company": etf true, or fund (src/repair.js fundRow,
+// shared with the old app).
+export { FUND_BOOK, fundRow };
+// The line "ETF는 회사가 아니어서 PBR과 가치 점수를 계산하지 않아요." (copy co.fundPbr) goes where such a PBR stood: US funds (cls "us",
+// 379800 included), the ones Yahoo gives a PBR. Korean funds never had one (KRX and DART give them none), so their PBR keeps the display
+// it had; the line would be untrue for the listed infrastructure funds and KRX 금현물, which are not ETFs. Never beside a number.
+export const fundPbrOf = (s) => fundRow(s) && s.cls === "us" && num(s.pbr) == null;
+// Drops pbr and vz from every fund row of a stocks list, in place (the rows are data.json's own objects). -> the codes that had one
+// (tests; load.js names them in the console).
+export function fundBookOff(stocks) {
+  const out = [];
+  for (const s of Array.isArray(stocks) ? stocks : []) {
+    if (!fundRow(s) || !FUND_BOOK.some((k) => s[k] != null)) continue;
+    for (const k of FUND_BOOK) delete s[k];
+    out.push(String(s.t));
+  }
+  return out;
+}

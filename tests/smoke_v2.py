@@ -16656,6 +16656,180 @@ def scene_v196e_states(R, files, width=390):
     one("2026-12-28 주, 1월 1일(금) 아침 발행 (미국 12월 31일 종가 도착): 카드 '12월 28일 ~ 12월 30일' · 미국 종목도 셈 (fxHist 12-30, 한국 휴장 사이)",
         ny_fri, dt.datetime(2027, 1, 1, 9, 0, tzinfo=KST), new_year)
 
+# ── 2026-11-27 (Jack, answer 12): ETF · 펀드의 PBR 과 가치 점수 — 보이지 않고, 그 자리에 Jack 의 줄 한 번 ──
+FUND_PBR_LINE = "ETF는 회사가 아니어서 PBR과 가치 점수를 계산하지 않아요."          # Jack, 2026-11-27 (answer 12), 그대로
+
+
+def scene_fund_pbr(R, files, width):
+    """ETF · 펀드의 PBR (Jack, 2026-11-27, answer 12: "Yes, hide them"): 시험 데이터는 SPY · QQQ 에 야후의 펀드 PBR (1.72 · 1.85) 과 가치 점수가
+    있는 파일 그대로 (이 PR 전에 발행된 파일 꼴 — 앱의 불러오기가 빼요). 2.0 두 종목 비교: 가진 SPY 의 PBR 칸은 '–' 와 그 밑의 줄 (표에 한 번), 후보
+    회사 (찾기의 첫 줄 — 찾기는 펀드를 후보로 내지 않아요) 는 예전 그대로 · 삼성전자를 고르면 줄 없음. 관심 종목: SPY · QQQ 의 PBR 조건은 정보 없음 + 카드 밑에 줄 한 번 ·
+    애플은 줄 없음. 예전 뱁새: 종목 고르기에서 펼친 QQQ 의 'PER / PBR' 칸은 '… / –' 이고 칸 밑에 줄 한 번 (애플은 없음) · ③ 진단의 내 포트폴리오의
+    성향 (SPY 를 담은 슬롯) 에 줄 한 번 · 영어 화면은 줄 없이. 12px · 가로 스크롤 없음 · 뱁이 없음 (2.0)."""
+    S = f"펀드 PBR {width}"
+    wide = width >= 1024
+    data = clone(files)
+    by = {x["t"]: x for x in data["data.json"]["stocks"]}
+    assert all(by[t].get("pbr") is not None and by[t].get("vz") is not None for t in ("SPY", "QQQ")), "시험 데이터의 SPY · QQQ 에 펀드 PBR 이 없어요"
+    assert by["AAPL"].get("pbr") is not None
+    pxd = data["data.json"]["pxDate"]
+    band = lambda t: [{"id": "band", "kind": "band", "check": "checked", "target": t, "bands": [0.75 * t, 1.25 * t, 1.4 * t]}]   # noqa: E731
+    hold = lambda t, w: {"t": t, "nk": by[t]["nk"], "cls": by[t]["cls"], "ind": by[t].get("ind"), "kind": "core", "target": w, "setAt": "2026-10-01",  # noqa: E731
+                         "plannedQty": 10, "planPx": by[t]["price"], "rules": [{"id": "audit", "kind": "sell", "check": "pending"}, *band(w)]}
+    deck = {"id": "dfund", "name": "펀드 포트폴리오", "createdAt": "2026-10-01", "planFx": 1300,
+            "settings": {"points": {"value": 3, "div": 2}, "strict": "normal", "maxPct": 60, "amountMan": 1000},
+            "holdings": [hold("SPY", 0.5), hold("005930", 0.5)], "purchases": []}
+    watch = {"SPY": {"at": "2026-11-05", "conds": [{"k": "pbrBelow", "v": 2}]},
+             "QQQ": {"at": "2026-11-04", "conds": [{"k": "pxBelow", "v": 1000}, {"k": "pbrBelow", "v": 2}]},
+             "AAPL": {"at": "2026-11-03", "conds": [{"k": "pbrBelow", "v": 100}]}}
+    store = {"v": 2, "decks": [deck], "guideSeen": pxd, "watch": watch}
+    device = pc_device(width) if wide else None
+    site = build_site(data)
+    srv, ctx, page, base = R.open(site, width, init=v196c_seed(store), path="/app.html?dev=1#stocks/watch", device=device)
+
+    def check_page(where, name):
+        floor_ok(page, where)
+        no_hscroll(page, width)
+        assert page.locator(MASCOT_IN_MAIN).count() == 0, f"{where}: 뱁이가 있어요 (숫자가 있는 화면)"
+        R.collect(page)
+        if R.shots:
+            os.makedirs(R.shots, exist_ok=True)
+            page.screenshot(path=os.path.join(R.shots, f"fundpbr-{name}-{width}.png"), full_page=True)
+
+    def watch_lines():
+        page.locator('[data-ui-v2="watch"]').wait_for(state="visible")
+        watch_cards_shown(page, list(watch))
+        card = lambda t: page.locator(f'[data-ui-v2="watch-card"][data-t="{t}"]')     # noqa: E731
+        ch = chips_of(page)
+        for t in ("SPY", "QQQ"):
+            pb = [c for c in ch[t] if c[0] == "pbrBelow"]
+            assert len(pb) == 1 and pb[0][1] == "blank" and pb[0][2].endswith(C["watch"]["blank"]), (t, ch[t])
+            note = card(t).locator('[data-ui-v2="fund-pbr"]')
+            assert note.count() == 1 and note.inner_text() == FUND_PBR_LINE == C["co"]["fundPbr"], (t, note.count())
+            assert card(t).inner_text().count(FUND_PBR_LINE) == 1
+            assert note.bounding_box()["y"] > card(t).locator('[data-ui-v2="watch-chips"]').bounding_box()["y"], t      # 칩 밑
+            for other in (C["co"]["pbrZero"], C["co"]["fgnCut"], C["co"]["noStmt"]):
+                assert other not in card(t).inner_text(), (t, other)
+        px = [c for c in ch["QQQ"] if c[0] == "pxBelow"]
+        assert len(px) == 1 and px[0][1] != "blank", ch["QQQ"]                       # 주가 조건은 그대로 값이 있어요
+        aapl = [c for c in ch["AAPL"] if c[0] == "pbrBelow"]
+        assert len(aapl) == 1 and aapl[0][1] != "blank" and card("AAPL").locator('[data-ui-v2="fund-pbr"]').count() == 0, ch["AAPL"]
+        assert page.locator('[data-ui-v2="fund-pbr"]').count() == 2
+        check_page("관심 종목", "watch")
+    R.check(page, S, "관심 종목: SPY · QQQ 의 PBR 조건은 정보 없음 + 카드 밑에 Jack 의 줄 한 번 · 애플은 숫자 (줄 없음)", watch_lines)
+
+    def cell(rid, side):
+        c = page.locator(f'[data-cmp-row="{rid}"] [data-side="{side}"]')
+        n = c.locator('[data-ui-v2="cmp-note"]')
+        return c.locator("span").first.inner_text(), n.inner_text() if n.count() else None, c.get_attribute("data-blank")
+
+    def pick(hold_t):
+        page.locator('[data-ui-v2="cmp-pick-open"]').click()
+        page.locator(f'[data-ui-v2="cmp-picker"] [data-pick="{hold_t}"]').click()
+        page.wait_for_function("(h) => document.querySelector('[data-ui-v2=\"cmp\"]').dataset.hold === h", arg=hold_t)
+
+    def open_cmp():
+        # the finder offers companies only (a fund candidate is never offered: editor.jsx badCompare), so the candidate is its first row
+        page.goto(base + "/app.html?dev=1#portfolio/edit/dfund/find", wait_until="domcontentloaded")
+        at(page, "portfolio/edit/dfund/find")
+        page.locator('[data-ui-v2="find-list"]').wait_for(state="visible")
+        cand = page.locator("[data-find-row]").first.get_attribute("data-find-row")
+        assert cand and cand not in ("SPY", "005930"), cand
+        page.goto(base + f"/app.html?dev=1#portfolio/edit/dfund/compare/{cand}", wait_until="domcontentloaded")
+        at(page, f"portfolio/edit/dfund/compare/{cand}")
+        page.locator('[data-ui-v2="cmp-table"]').wait_for(state="visible")
+        assert page.locator('[data-ui-v2="cmp"]').get_attribute("data-cand") == cand
+        return cand
+
+    def compare_lines():
+        cand = open_cmp()
+        pick("SPY")
+        assert page.locator('[data-cmp-row="pbr"] th').inner_text() == C["cmp"]["rows"]["pbr"]
+        assert cell("pbr", "hold") == ("–", FUND_PBR_LINE, "fund"), cell("pbr", "hold")
+        a = cell("pbr", "cand")
+        assert a[1] is None and a[2] is None and (a[0].endswith("배") or a[0] == C["co"]["tiles"]["na"]), (cand, a)     # 회사: 예전 그대로
+        tbl = page.locator('[data-ui-v2="cmp-table"]').inner_text()
+        assert tbl.count(FUND_PBR_LINE) == 1 and "1.72" not in tbl, tbl[:300]       # 시험 데이터의 SPY PBR 1.72 는 어디에도 없어요
+        hold_c = page.locator('[data-cmp-row="pbr"] [data-side="hold"]')
+        note = hold_c.locator('[data-ui-v2="cmp-note"]')
+        assert note.bounding_box()["y"] > hold_c.locator("span").first.bounding_box()["y"]          # '–' 밑
+        check_page("비교 · SPY", "cmp-spy")
+        pick("005930")                                                              # 가진 회사로 바꾸면 줄도 없어요
+        h = cell("pbr", "hold")
+        assert h[0].endswith("배") and h[1] is None, h
+        assert FUND_PBR_LINE not in page.locator('[data-ui-v2="cmp-table"]').inner_text()
+        check_page("비교 · 삼성전자", "cmp-sam")
+        assert not R.errors, R.errors[:2]
+    R.check(page, S, "두 종목 비교: 가진 SPY 의 PBR 칸은 '–' 와 Jack 의 줄 (표에 한 번) · 후보 회사 · 가진 삼성전자는 예전 그대로", compare_lines)
+    ctx.close()
+    srv.shutdown()
+
+    # 예전 뱁새 (baepsae.html): SPY 와 애플을 담은 슬롯 · 균형형 성향 (③ 진단이 열리게)
+    profile = {"ready": True, "targetBetaMin": 0.7, "targetBetaMax": 1.1, "targetVolMaxPct": 24, "stocksMin": 2, "stocksMax": 15,
+               "maxPositionPct": 100, "maxSectorPct": 100, "cashFloorPct": 0, "riskNeedPct": 7, "riskCapacity": 6, "riskTolerance": 6}
+    slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000, "profile": profile, "holdings": [{"t": "SPY", "mw": 500}, {"t": "AAPL", "mw": 500}]}
+    local = {"baepsae_v9_seen": "1", "baepsae_v10_slots": json.dumps([{"id": "sfund", "name": "펀드 PBR 시험"}], ensure_ascii=False),
+             "baepsae_v10_slot_sfund": json.dumps(slot, ensure_ascii=False)}
+    init = ("(() => { try { const kv = %s; for (const k in kv) if (localStorage.getItem(k) === null) localStorage.setItem(k, kv[k]); } catch (e) {} })();"
+            % json.dumps(local, ensure_ascii=False))
+    srv, ctx, page, base = R.open(site, width, init=init, path="/baepsae.html?dev=1&from=app", device=device)
+
+    def lines():
+        return page.evaluate("""() => [...document.querySelectorAll('[data-fix="fund-pbr"]')].filter((e) => e.getBoundingClientRect().height > 0)
+          .map((e) => [e.innerText.trim(), parseFloat(getComputedStyle(e).fontSize)])""")
+
+    def tile_of():
+        return page.evaluate("""() => { const k = [...document.querySelectorAll('div')].find((d) => d.children.length === 0 && d.textContent === 'PER / PBR'
+          && d.getBoundingClientRect().height > 0); return k ? k.nextElementSibling.textContent.trim() : null; }""")
+
+    def picker():
+        page.get_by_text("차근차근 만들기", exact=True).click()
+        page.get_by_text("펀드 PBR 시험", exact=False).first.click()
+        see(page, "보통 해 ±")
+        box = page.get_by_placeholder("종목명·코드 검색")
+        box.fill("QQQ")
+        page.get_by_text("QQQ", exact=True).first.click()
+        see(page, "PER / PBR")
+        got = lines()
+        assert got == [[FUND_PBR_LINE, 12.0]] or (len(got) == 1 and got[0][0] == FUND_PBR_LINE and got[0][1] >= 12), got
+        t = tile_of()
+        assert t and t.endswith("/ –") and "1.9" not in t, t                       # 'PER / PBR' 칸: PER 그대로 · PBR '–' (펀드 PBR 1.85 없음)
+        if R.shots:
+            os.makedirs(R.shots, exist_ok=True)
+            page.locator('[data-fix="fund-pbr"]').first.scroll_into_view_if_needed()
+            page.screenshot(path=os.path.join(R.shots, f"fundpbr-old-picker-{width}.png"))
+        box.fill("AAPL")
+        page.get_by_text("AAPL", exact=True).first.click()
+        see(page, "PER / PBR")
+        assert lines() == [], lines()
+        t = tile_of()
+        assert t and not t.endswith("/ –"), t                                        # 회사: PBR 숫자 그대로
+    R.check(page, S, "예전 뱁새 종목 고르기: 펼친 QQQ 의 'PER / PBR' 은 '… / –' 이고 칸 밑에 Jack 의 줄 한 번 (12px) · 애플은 숫자 (줄 없음)", picker)
+
+    def tilt():
+        page.get_by_role("button", name="③ 진단", exact=False).first.click()
+        see(page, "시장을 이길 수 있을까요?")
+        page.get_by_text("시장을 이길 수 있을까요?", exact=False).first.click()
+        see(page, "내 포트폴리오의 성향 (팩터)")
+        got = lines()
+        assert len(got) == 1 and got[0][0] == FUND_PBR_LINE and got[0][1] >= 12, got
+        inside = page.evaluate("""(title) => { const l = [...document.querySelectorAll('[data-fix="fund-pbr"]')].find((e) => e.getBoundingClientRect().height > 0);
+          let p = l; while (p && !(p.innerText || '').includes(title)) p = p.parentElement;
+          return !!p && (p.innerText || '').indexOf(title) < (p.innerText || '').indexOf(l.innerText.trim()) && !(p.innerText || '').includes('과거 3년 알파 (추정)'); }""",
+                               "내 포트폴리오의 성향 (팩터)")
+        assert inside, "그 줄이 내 포트폴리오의 성향 카드 안 (제목 밑) 에 있지 않아요"
+        see(page, "가치")
+        if R.shots:
+            page.locator('[data-fix="fund-pbr"]').first.scroll_into_view_if_needed()
+            page.screenshot(path=os.path.join(R.shots, f"fundpbr-old-tilt-{width}.png"))
+        page.get_by_role("button", name="EN", exact=True).first.click()
+        see(page, "My portfolio's tilts (factors)")
+        assert lines() == [], lines()                                               # 영어 화면: 승인된 영어 글이 없어 줄 없이
+        assert not R.errors, R.errors[:2]
+    R.check(page, S, "예전 뱁새 ③ 진단 · 내 포트폴리오의 성향: SPY 는 가치 평균에서 빠지고 카드 안에 Jack 의 줄 한 번 · 영어 화면은 줄 없이", tilt)
+    ctx.close()
+    srv.shutdown()
+
 
 # ── 2026-11-28 (PR #201 review): the first load gives up after 60 s (src/v2/load.js loadFirst · FIRST_LOAD_TIMEOUT_MS) ──
 # Before, a data.json that never answered kept every screen on the loading state (관심 종목, 연말에 확인할 숫자 …: titles only,
@@ -17017,7 +17191,8 @@ def main():
                    lambda: scene_v196e_states(R, files),                                                    # v19.6e 때 · 닫기 · 빠진 종목 · 멈춤 · 실패 · 둘 · nv
                    lambda: scene_load_limit(R, files, 390, "stall"),                                        # 2026-11-28 첫 불러오기 한도: 답 없음 → 실패 문구
                    lambda: scene_load_limit(R, files, 390, "under"),                                        # 한도 바로 전의 답 → 여느 때처럼
-                   lambda: scene_load_limit(R, files, 390, "returned")):                                    # #202 리뷰 S1: 불러오는 중의 돌아옴 → 한 번 더
+                   lambda: scene_load_limit(R, files, 390, "returned"),                                    # #202 리뷰 S1: 불러오는 중의 돌아옴 → 한 번 더
+                   lambda: scene_fund_pbr(R, files, 390), lambda: scene_fund_pbr(R, files, 1280)):          # Jack 2026-11-27: ETF · 펀드의 PBR · 가치 점수
             try:
                 fn()
             except Exception as e:
