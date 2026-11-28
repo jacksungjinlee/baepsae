@@ -53,7 +53,7 @@ a new totals line (draft in the PR). One question to Jack: should a failed recei
 record fail the publish? **Next: 무상증자 (Jack, 11-27: "the next PR right after #186")**; RUNBOOK § Korean stock splits says where
 it plugs in.
 
-**무상증자 (#?, branch `claude/kr-bonus`, 2026-11-28; Track 1, Jack 11-27 answer 11 "the next PR right after #186"; pipeline only, no
+**무상증자 (#205, branch `claude/kr-bonus`, 2026-11-28; Track 1, Jack 11-27 answer 11 "the next PR right after #186"; pipeline only, no
 screen change):** a new Korean `splits` kind (`fetch_data.py` `kr_bonus_*`), held behind `KR_BONUS_ROWS_ON = False`. A bonus issue is two
 market days — the 권리락 day A (base = close ÷ m, shares flat) and the listing day B weeks later (shares × m) — paired from the KRX lists,
 the Daum rows and the seed `data/kr_bonus_seed.csv` (144 events since 2023-10-19), and confirmed only when DART's 무상증자결정

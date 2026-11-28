@@ -3612,10 +3612,10 @@ Appendix 1 line for it (`split applied` / `merge applied`).
   ratio, kind split/merge/reduce/fixed, rcept_no, read from doc/cr/fixed, the three checks `{dl, shr, px, rule}` — six fields
   for a `SPLIT_OVERRIDES` correction), `wait`/`waitT`, `out`/`outN`, `fail`/`failN`, `held`/`heldN`, `diffNew`, `late`, `pend`,
   `dq`, `fixed` (the Korean override rows), `calls` (splits and 무상증자 together), `cap`, `seed`, `cand`, `seedErr`, `nofile`/`nofileN`,
-  and since #? `bonus` (무상증자: `v` 1, `on`, `src`, `new`, `held`/`heldN` `[code, A, r, off | odd | frac]`, `rec` (their receipts),
+  and since #205 `bonus` (무상증자: `v` 1, `on`, `src`, `new`, `held`/`heldN` `[code, A, r, off | odd | frac]`, `rec` (their receipts),
   `out`/`outN`, `fail`/`failN`, `wait`, `late`, `calls`, `read {n, no}`, `pend` `[code, A, close, base, B, shares before, after, next
   trading day, the one after]`, `seed`, `cand`). Stocks: `spNo` · `spNoF` (data.json and corp.json).
-- **무상증자 (bonus issues, since #? — Jack 2026-11-27, answer 11: "무상증자 is the next PR right after #186, not later"; answer 4's
+- **무상증자 (bonus issues, since #205 — Jack 2026-11-27, answer 11: "무상증자 is the next PR right after #186, not later"; answer 4's
   three checks).** A bonus issue moves the market on two days: on the **권리락 day A** (the trading day before the 신주배정기준일; T+2
   settlement, so a share bought on A gets no new shares) KRX lowers the base to the previous close ÷ m with the listed share count
   unchanged, and on the **listing day B** (a few weeks later) the listed shares grow × m with the base unchanged. `kr_split_event`
