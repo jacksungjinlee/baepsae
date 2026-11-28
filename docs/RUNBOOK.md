@@ -121,22 +121,22 @@ run log starts "5xx 다시 물음", and the count ("· 5xx 다시 물음: N곳")
     - **005930 too (since #?, the same yes).** Other scenes hold 삼성전자 as their ordinary stock and read its beta and
       volatility, or another number the app blanks for a marked stock (위험값 없음, 빠진 종목, 빠진 종목 전부, 베타→수익률, 없는 종목,
       자동 설정, 미국 자기 날짜, 한국 날짜, 파일 불러오기's first stock, 국내 마지막 확인 종가's portfolio, 주가기록's unmarked comparison
-      stock, 고치는 중 안내's
-      주가 분해 check, 다시 읽은 뒤's comparison company). Each uses 005930 whenever `risk_ready` says the app uses its price,
+      stock, 고치는 중 안내's 주가 분해 check, 다시 읽은 뒤's comparison company). Each uses 005930 whenever `risk_ready` says the app uses its price,
       beta and volatility (then the scene is exactly as before), else the next old-app built-in Korean common stock by market
       cap that is `risk_ready` and also has the numbers that scene reads (`smoke_app.pick_plain`; the 주가 분해 picks also need
       `decomp_numbers`, checked against `src/corp.jsx` by node), and says so the same three ways as B안 (`!! 알림 [scene] …
       바꿔 담아 …`, a warning, the step summary). The checks themselves are unchanged. Scenes that look at 삼성전자 for
       another reason (search, its name, its company page and card, the being-fixed lines, file and saved-portfolio round
-      trips) stay on it. A marked 005930 still
-      counts toward the limit of 3. On a day with that note, read the reason it gives: a `pxBad` mark means the gate's mark
+      trips) stay on it. A marked 005930 still counts toward the limit of 3. On a day with that note, read the reason it gives: a `pxBad` mark means the gate's mark
       rows apply (a second marked must-have fails the gate); a blank beta or volatility on 005930 without a mark is the
       pipeline, not the market.
-    - **Not yet covered: an unconfirmed-split mark (`spNo`, #186) on a built-in.** The old app treats it like `pxBad`
-      (no 예시 가격 notice, beta and volatility left out), but `example_price_stocks` still expects the notice for it, so
-      [정상] and [미국 자기 날짜] KO fail and nothing is published (a copy of the 11-28 data with 042700 marked `spNo`:
-      정상 18 / 19). The gate only warns on such a mark for a stock that is not a must-have. If that happens: don't skip
-      the check; tell Jack. The fix is #200's, for `spNo` (a follow-up).
+    - **An unconfirmed-split mark (`spNo`, #186) on a built-in (since #?, the same yes).** The old app treats it like
+      `pxBad`: no built-in values, beta and volatility left out, no 예시 가격 notice (`src/data.js` `mergeStocks`). The check
+      follows it: `example_price_stocks` expects no notice for such a stock while its price is today's, `risk_ready` never
+      picks it (so B안 and `pick_plain` swap it out, the note saying "공시로 확인하지 못한 분할 표시(spNo)"), and
+      `decomp_numbers` skips such a company as `src/corp.jsx` does. The limit of 3 counts it like a `pxBad` built-in, and the
+      run's note names each mark (warning title "발행 전 화면 검사 · 공시로 확인하지 못한 분할 내장 종목"). The gate only warns on
+      the mark (row 공시로 확인하지 못한 분할의 숫자 비움); the pipeline never marks a must-have stock.
     - `!! 확인 못 함` and `!! 알림` lines are on a green run, where nobody looks by default. The 09:13 morning check
       must report them to Jack: its instructions are extended for the warnings titled "발행 전 화면 검사 …" as an
       after-merge step of #106 (until that is done, nothing reads them).
