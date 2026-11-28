@@ -2953,10 +2953,40 @@ what it compared (`모두 같음 (다시 매겨 견준 것: 회사 3,275 · 펀�
 warns, never fails, in every mode, and warns too when it can't read `stocks`. Until the first publish after #189 its warning takes one of
 the visible annotation slots (review note N5). On a warning: a file published before #189 differs in about 2,000 cells (expected until
 the first publish with this code); otherwise a fund ranked with the companies, a score input changed after the ranking, or a wrong `etf`
-mark (see the `etf 표시가 맞음` row). Not changed: a US fund's PER · PBR (and so its 가치 score) still come from Yahoo; the old app's 종목
-고르기 card shows them ("PER / PBR"), and a 2.0 두 종목 비교 with a held US ETF shows its PBR; blanking them needs a say-why line, so it is
-Jack's call. Rolling back: a plain revert PR (funds are ranked with companies again from the next publish; the gate row goes with it; no
-stored data depends on it).
+mark (see the `etf 표시가 맞음` row). A fund's PBR and 가치 score are blank since #203 (next section), so funds now have no 가치 score at all
+and this row expects none (a blank input gives no score); a US fund's PER still comes from Yahoo. Rolling back: a plain revert PR (funds are
+ranked with companies again from the next publish; the gate row goes with it; no stored data depends on it).
+
+## ETF and fund PBR (펀드 PBR · gate warning "펀드에 PBR · 가치 점수 없음", since #203)
+
+Jack, 2026-11-27 (answer 12, verbatim): "Yes, hide them: "ETF는 회사가 아니어서 PBR과 가치 점수를 계산하지 않아요."" A fund (`etf` true or
+`fund`, `validate_data.factor_fund` · `src/repair.js` `fundRow`) has no book value like a company, so Yahoo's fund-level PBR (SPY 1.70 on the
+11-28 publish against a real P/B of about 5, SOXX 0.32, TLT 0.55) and the 가치 score `vz` made from it mean nothing. **Pipeline:**
+`fetch_data.fund_book_blank` removes `pbr` and `vz` from every fund row (all lists: Korean, US, bonds, funds; null cells and company rows untouched)
+right before `add_percentiles`, so a fund gets no 가치 score and the companies' ranks are exactly as before (funds left the ranking in #189);
+corp.json copies the blank (`build_corp`). Log line `· 펀드의 PBR · 가치 점수 비움 (Jack 2026-11-27): N곳 (미국 n · 그 밖 m) — … (names) · 펀드 행 M곳`;
+record data.json `fundPb` = {"v": 1, "n": funds blanked this run, "t": [codes]} (11-28: 23 US ETFs, 0 Korean: Korean funds never get a PBR).
+**Gate row** `펀드에 PBR · 가치 점수 없음 (data.json · corp.json · 경고만)` (`check_fund_book`, every mode): PASS `없음 (펀드 N곳 · 이번 실행이 비운
+펀드 n곳 (…))`; WARN naming each fund cell still carrying a value (`SPY.pbr`, `corp.088980.vz`; 0 counts as a value; a fund left in both files counts as one
+place in "N곳"), a malformed `fundPb`, or a check that stopped. It never fails: Jack approved no stricter gate. Until the first publish after the merge the deploy and watchdog checks warn
+on the file already on the site (46 cells, "기록 없음"); that is expected. It is not one of the 9 warnings shown one by one (11-28 file: the
+12th of 21 warnings), so it only raises the "외 N개 더" count. A warning after that means a step after
+the blank put a PBR back on a fund: look at the named rows; the apps still hide them (below). **Apps:** each loader drops the two fields from
+fund rows too, so a file published before the change shows none (2.0 `src/v2/load.js` → `fcur.fundBookOff`, console "[v2] PBR and value score
+(vz) dropped from N fund rows …"; the old app `src/data.js` `mergeStocks`, console "[뱁새] ETF·펀드의 PBR · 가치 점수(vz)를 뺀 종목 …", marking
+the merged row `fundNoBook`). **Reason line** (copy `co.fundPbr`; the old app's `FIX_FUND_PBR`, the same words, Korean screen only as the pxBad
+lines): where a US fund's PBR stood (`cls` "us", 379800 included), once per section — 2.0 두 종목 비교 (a held US ETF's PBR cell "–" with the
+line; the finder never offers a fund as the candidate), 2.0 관심 종목 (a PBR condition on a US ETF reads 정보 없음, the line under the card; in
+the card's condition sheet the PBR field reads 정보 없음, the line under that field), the
+old app's 종목 고르기 (an opened US ETF's "PER / PBR" tile reads "… / –", the line under the tiles) and ③ 진단 · 내 포트폴리오의 성향 (a held US ETF
+leaves the 가치 average because it has no 가치 score, `fundVzOut`; the line under the bars, also when no tilt can be shown, and also when the user
+typed a PBR for it in 종목 데이터 수정, since the fund is still left out). Korean funds keep their display (they never had a PBR, and
+"ETF는" would be untrue for the listed infrastructure funds 088980 · 415640 · 094800 and KRX 금현물). The old app's built-in example rows (VOO · QQQ ·
+SCHD · 379800 · 069500 and the three gold and silver rows, shown only when that stock is missing from today's data) carry no PBR since #203
+either; the four US ones are marked `fundNoBook`, so they show the line like a loaded US fund. Known limit: a PBR the user types into the
+old app's 종목 데이터 수정 shows on 종목 고르기, without the line beside it (a fund's PER still shows: answer 12 covers PBR and 가치 only).
+Rolling back: a plain revert PR. The apps then show a fund PBR again at once only while the file on the site still carries them (a file
+published before #203); after the first publish with #203 the file has none, so they come back with the next publish after the revert.
 
 ## Roll back
 
