@@ -16373,6 +16373,62 @@ def v196e_expect(by, fx=1450.0, fx0=1400.0):
     return gain, gain / (start + buys) * 100
 
 
+# ── 이번 주 정리: 내 포트폴리오 칸의 코스피를 같은 돈의 흐름으로 (Jack 2026-11-27 answer 13 "Yes, same money flows"; Track 2 audit 4.1) ──
+# 코스피 = 내 수익의 규칙 (A.5 [Q4], lots.kospiMirror): 종목마다 그 주 시작 가치를 wkFrom 종가에 산 한 묶음 · 이번 주 산 돈은 그 날짜 바로 앞 코스피
+# 종가에 · 판 기록은 그 종목 주식 중 판 비율만큼 그 종목의 코스피 몫을 그 날짜 바로 앞 종가에 팔아요 · 포트폴리오와 같은 분모 (시작 + 산 돈) ·
+# 칸의 말은 그대로 "코스피 {pct}" (src/v2/weekly.js kospiWeek; 숫자 시험은 tests/test_weekly_kospi_flows.py). 지어낸 시험 데이터예요.
+# 그 주의 코스피 종가 (한 주 전체는 v196e_files 와 같은 4,000 → 4,100 = +2.5%): 10일과 11일의 값이 달라서, 11일에 산 기록이 그 앞 종가(10일 3,940)를
+# 쓰는지 그날 종가(11일 4,120)를 쓰는지 화면의 한 자리 숫자로 갈라져요.
+V196E_KOSPI = {"2026-11-06": 4000.0, "2026-11-09": 4020.0, "2026-11-10": 3940.0, "2026-11-11": 4120.0, "2026-11-12": 4080.0, "2026-11-13": 4100.0}
+
+
+def v196e_kospi_files(files, rows=None, **kw):
+    """v196e_files (기본 주: 11월 9일 ~ 13일, kw 는 nv 만) 에 코스피 종가를 그 주 한국 거래일마다 둔 사본 (rows: {날짜: 종가}, 기본 V196E_KOSPI).
+    v196e_files 자체와 그것을 쓰는 다른 장면은 그대로예요."""
+    assert set(kw) <= {"nv"}, kw
+    f = v196e_files(files, **kw)
+    k = f["macro.json"]["idxHist"]["KOSPI"]
+    rows = V196E_KOSPI if rows is None else rows
+    k["rows"] = [r for r in k["rows"] if r[0] < "2026-11-06"] + [[d, v] for d, v in sorted(rows.items())]
+    return f
+
+
+def kospi_before(closes, d):
+    """그 날짜 바로 앞 코스피 종가 (weekly.js kospiBefore: 사이의 날은 모두 주말이어야 해요; 이 주에는 휴장이 없어요). 없으면 None."""
+    prev = [x for x in closes if x < d]
+    if not prev:
+        return None
+    hit = max(prev)
+    x = dt.date.fromisoformat(hit) + dt.timedelta(days=1)
+    while x.isoformat() < d:
+        if x.weekday() < 5:
+            return None
+        x += dt.timedelta(days=1)
+    return closes[hit]
+
+
+def v196e_kospi_expect(legs, closes=V196E_KOSPI, k0="2026-11-06", k1="2026-11-13", at=kospi_before):
+    """같은 돈의 코스피 % (손으로 푼 식, 내 수익의 규칙). legs: [(시작 가치, 시작 주식 수, [(날짜, 원: 산 돈 + · 판 돈 −, 주식 수: 산 + · 판 −)])].
+    시작 가치는 k0 종가에 산 몫 · 산 돈은 at(날짜) 종가에 · 판 기록은 그 종목 몫의 (판 주식 ÷ 가진 주식) 만큼을 at(날짜) 종가에 팔아요 ·
+    이득 = 남은 몫 × k1 종가 + 판 몫의 돈 − 시작 − 산 돈 · ÷ (시작 + 산 돈). at 을 바꾸면 다른 날짜 규칙과 비교할 수 있어요."""
+    now = sold = start = buys = 0.0
+    for st, held, ev in legs:
+        units = st / closes[k0]
+        start += st
+        for d, won, q in ev:
+            k = at(closes, d)
+            if won > 0:
+                units += won / k
+                held += q
+                buys += won
+                continue
+            du = units * min(1.0, -q / held)
+            sold += du * k
+            units -= du
+            held += q
+        now += units * closes[k1]
+    return (now + sold - start - buys) / (start + buys) * 100
+
 def signed_won(v):
     return ("+" if v > 0 else "−" if v < 0 and round(abs(v) / 10000 if abs(v) >= 10000 else abs(v)) > 0 else "") + won_text(v)
 
@@ -16407,7 +16463,9 @@ def scene_v196e(R, files, width, dark=False):
     손으로 푼 이득과 % (미국은 양쪽 모두 fxHist) · 코스피, 받은 배당, 공시: 이번 주 것 중 오늘 볼 것이 보여 주는 것만, 다음 주 미국 일정) · 가장 많이 움직인 종목(SK하이닉스 −8.0%, 같은 업종이 다 같이 빠진
     한 주) → 회사 화면 · 닫기 → 그 주에는 다시 열어도 없음 (기록 파일에는 아무것도 쓰지 않아요) · 토큰 색 · 12px · 가로 스크롤 없음 · 뱁이 없음."""
     S = f"v19.6e 이번 주 정리 {width}{' 어두운' if dark else ''}"
-    data = v196e_files(files)
+    # 코스피 종가를 그 주 한국 거래일마다 (V196E_KOSPI: 11-06 4,000 · 11-09 4,020 · 11-10 3,940 · 11-11 4,120 · 11-12 4,080 · 11-13 4,100): 같은
+    # 돈의 흐름으로 센 코스피(Jack 2026-11-27 answer 13)는 산 날 · 판 날 바로 앞의 종가가 있어야 해요 (없으면 코스피 없이: scene_v196e_kospi (다))
+    data = v196e_kospi_files(files)
     by = {x["t"]: x for x in data["data.json"]["stocks"]}
     when = dt.datetime(2026, 11, 14, 9, 0, tzinfo=KST)
     srv, ctx, page, logs = weekly_open(R, data, width, when, e_store(v196e_store(by)["decks"]), weekly_on_app(), dark)
@@ -16429,7 +16487,9 @@ def scene_v196e(R, files, width, dark=False):
         assert wk.inner_text() == hk.inner_text() and wk.get_attribute("data-n") == page.locator('[data-ui-v2="home-rules"]').get_attribute("data-checked")
         assert c.locator('[data-ui-v2="weekly-name"]').count() == 0                                # 포트폴리오 하나: 이름 없음
         tiles = weekly_tiles(page)
-        assert tiles == [["pf", WK["pf"], signed_pct(pct), f"{signed_won(gain)} · {fillp(WK['kospi'], pct='+2.5%')}"],
+        # 코스피, 같은 돈 (내 수익의 규칙): 시작 가치를 11-06 종가에 · 11일 산 44만원을 그 앞 10일 종가 3,940 에 · 12일 SK하이닉스 3주 중 1주를 팔았으니
+        # 그 종목 코스피 몫의 1/3 을 11일 종가 4,120 에 팔아요 → +2.7% (2.675; 그날 종가 규칙이면 +2.2%, 한 주 전체는 +2.5%)
+        assert tiles == [["pf", WK["pf"], signed_pct(pct), f"{signed_won(gain)} · {fillp(WK['kospi'], pct='+2.7%')}"],
                          ["div", WK["div"], "3,610원", fillp(WK["count"], n=1)],
                          # 이번 주 SK하이닉스 지분 변동(1.418억원)도 세요: 오늘 볼 것이 보여 줘요 (look.js ROLE_OF, Jack 2026-11-22)
                          ["disc", WK["disc"], fillp(WK["count"], n=2), f"{fillp(WK['kinds']['rights'], n=1)} · {fillp(WK['kinds']['ins'], n=1)}"],
@@ -16495,7 +16555,8 @@ def scene_v196e_states(R, files, width=390):
     내 포트폴리오 칸이 빠지고 console 이 말해요 · 멈춘 데이터 · 불러오기 실패에는 없음 · 포트폴리오 둘 (이름 · 만든 포트폴리오는 규칙 줄 없음 · 하나만
     닫기) · nv 행: out (빠짐) · use (들어감) · note (들어가고 각주는 승인 전이라 없음)."""
     S = f"v19.6e 이번 주 정리 상태 {width}"
-    base = v196e_files(files)
+    # 11월 9일 주의 장면은 코스피 종가를 한국 거래일마다 둔 사본으로 (v196e_kospi_files): 이 포트폴리오의 11일 · 12일 기록에 같은 돈의 코스피가 나오게요
+    base = v196e_kospi_files(files)
     by = {x["t"]: x for x in base["data.json"]["stocks"]}
     sat = dt.datetime(2026, 11, 14, 9, 0, tzinfo=KST)
     init = e_store(v196e_store(by)["decks"])
@@ -16602,7 +16663,7 @@ def scene_v196e_states(R, files, width=390):
         assert json.loads(page.evaluate("() => localStorage.getItem('baepsae2.weekly.v1')")) == {"w": "2026-11-09", "ids": ["dweek"]}
     one("포트폴리오 둘: 카드 둘(이름 · 만든 포트폴리오는 규칙 줄 없음) · 하나만 닫기", base, sat, two_cards, init=two)
 
-    nvd = v196e_files(files, nv=("000660",))
+    nvd = v196e_kospi_files(files, nv=("000660",))
     for mode in ("out", "use", "note"):
         def nv_check(page, logs, mode=mode):
             c = page.locator(WEEKLY_CARD)
@@ -16633,7 +16694,7 @@ def scene_v196e_states(R, files, width=390):
         shows("12월 21일 ~ 12월 24일"))
     one("금요일이 거래일인 주: 토요일 파일이 아직 목요일 종가면 끝나지 않은 주 · 카드 없음",
         v196e_files(files, px="2026-11-12", pub="2026-11-14T06:45:00+09:00"), sat, none_but_home)
-    late = v196e_files(files)
+    late = v196e_kospi_files(files)
     late["data.json"].update(nextPub="2026-11-17", staleAfter="2026-11-17T08:47:00+09:00")
 
     def late_check(page, logs):
@@ -17051,6 +17112,67 @@ def scene_load_limit(R, files, width, how):
     srv.shutdown()
 
 
+# 이번 주 정리 · 코스피를 같은 돈의 흐름으로 (위 V196E_KOSPI 의 머리말)
+def scene_v196e_kospi(R, files, width=390, dark=False):
+    """이번 주 정리의 내 포트폴리오 칸 · 코스피를 같은 돈의 흐름으로 (토요일 11월 14일, 11월 9일 주, V196E_KOSPI): (가) 주 중간(11일)에 삼성전자 2주를
+    22만원에 산 포트폴리오 — 코스피도 그 44만원을 그 앞 10일 종가(3,940)에 넣어서 '코스피 +2.6%' (그날 11일 종가 4,120 이면 +2.3%, 한 주 전체는
+    +2.5%: 셋이 갈라져요) · (나) scene_v196e 의 포트폴리오 (11일에 사고 12일에 SK하이닉스 3주 중 1주를 팖: 그 종목 코스피 몫의 1/3 을 11일 종가에) —
+    '코스피 +2.7%' · (다) 산 날 · 판 날 바로 앞의 코스피 종가(10일 · 11일)가 데이터에 없으면 지금처럼 코스피 없이 이득만, console 이 까닭을 말해요
+    (flow). 받은 배당(10일)은 양쪽 모두 빠져요. 칸의 말은 그대로."""
+    S = f"이번 주 정리 코스피 같은 돈 {width}{' 어두운' if dark else ''}"
+    when = dt.datetime(2026, 11, 14, 9, 0, tzinfo=KST)
+
+    def own_day(closes, d):                                                       # 견주기만: 그날 종가 (이 PR 의 첫 판)
+        return closes[d]
+
+    def case(label, data, more, want_k):
+        by = {x["t"]: x for x in data["data.json"]["stocks"]}
+        p, c = (lambda t: by[t]["price"]), (lambda t: by[t]["c1w"])
+        sold = not (more and more.get("sales") == [])
+        legs = [(10 * c("005930"), 10, [("2026-11-11", 440000.0, 2)]),
+                (3 * c("000660"), 3, [("2026-11-12", -1500000.0, -1)] if sold else []),
+                (2 * c("AAPL") * 1400.0, 2, [])]                                    # 미국은 usWkFrom 의 fxHist 1,400
+        start = sum(x[0] for x in legs)
+        end = 12 * p("005930") + (2 if sold else 3) * p("000660") + 2 * p("AAPL") * 1450.0
+        buys, sells = 440000.0, (1500000.0 if sold else 0.0)
+        gain = end - start - buys + sells
+        pct = gain / (start + buys) * 100
+        k = v196e_kospi_expect(legs) if want_k else None
+        other = v196e_kospi_expect(legs, at=own_day) if want_k else None
+        srv, ctx, page, logs = weekly_open(R, data, width, when, e_store(v196e_store(by, more=more)["decks"]), weekly_on_app(), dark)
+
+        def run():
+            wait_ready(page)
+            page.locator(WEEKLY_CARD).wait_for(state="visible")
+            t = page.locator('[data-tile="pf"]')
+            tiles = weekly_tiles(page)
+            pf = [x for x in tiles if x[0] == "pf"]
+            if want_k:
+                # 이 장면이 가르는 것: 그 앞 종가 규칙(k) · 그날 종가 규칙(other) · 한 주 전체(+2.5%) 가 화면의 한 자리 숫자로 모두 달라요
+                assert len({signed_pct(k), signed_pct(other), "+2.5%"}) == 3, (k, other)
+                assert pf == [["pf", WK["pf"], signed_pct(pct), f"{signed_won(gain)} · {fillp(WK['kospi'], pct=want_k)}"]], (pf, k)
+                assert signed_pct(k) == want_k and abs(float(t.get_attribute("data-kospi")) - k) < 0.001, (t.get_attribute("data-kospi"), k)
+                assert not [x for x in logs() if "no KOSPI week" in x], logs()
+            else:
+                assert pf == [["pf", WK["pf"], signed_pct(pct), signed_won(gain)]], pf                 # 코스피 조각만 빠지고 이득은 그대로
+                assert t.get_attribute("data-kospi") == ""
+                assert any("weekly (dweek): no KOSPI week (flow)" in x for x in logs()), logs()
+            assert abs(float(t.get_attribute("data-pct")) - pct) < 0.001 and abs(float(t.get_attribute("data-gain")) - gain) <= 1
+            floor_ok(page, "이번 주 정리")
+            no_hscroll(page, width)
+            R.collect(page)
+        R.check(page, S, label, run)
+        ctx.close()
+        srv.shutdown()
+
+    full = v196e_kospi_files(files)
+    case("(가) 11일에 산 포트폴리오: 코스피도 그 돈을 그 앞 10일 종가(3,940)에 · '코스피 +2.6%' (그날 종가면 +2.3%, 한 주 전체 +2.5%)",
+         full, {"sales": []}, "+2.6%")
+    case("(나) 11일에 사고 12일에 판 포트폴리오 (scene_v196e 의 기록): 판 1/3 은 그 종목 코스피 몫의 1/3 · '코스피 +2.7%'", full, None, "+2.7%")
+    sparse = v196e_kospi_files(files, {d: v for d, v in V196E_KOSPI.items() if d not in ("2026-11-10", "2026-11-11")})
+    case("(다) 산 날 · 판 날 바로 앞의 코스피 종가(10일 · 11일, 한국 거래일)가 없음: 코스피 없이 이득만 · console 'no KOSPI week (flow)'",
+         sparse, None, None)
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -17192,7 +17314,9 @@ def main():
                    lambda: scene_load_limit(R, files, 390, "stall"),                                        # 2026-11-28 첫 불러오기 한도: 답 없음 → 실패 문구
                    lambda: scene_load_limit(R, files, 390, "under"),                                        # 한도 바로 전의 답 → 여느 때처럼
                    lambda: scene_load_limit(R, files, 390, "returned"),                                    # #202 리뷰 S1: 불러오는 중의 돌아옴 → 한 번 더
-                   lambda: scene_fund_pbr(R, files, 390), lambda: scene_fund_pbr(R, files, 1280)):          # Jack 2026-11-27: ETF · 펀드의 PBR · 가치 점수
+                   lambda: scene_fund_pbr(R, files, 390), lambda: scene_fund_pbr(R, files, 1280),           # Jack 2026-11-27: ETF · 펀드의 PBR · 가치 점수
+                   lambda: scene_v196e_kospi(R, files, 390),                                                # 이번 주 정리: 코스피도 같은 돈의 흐름으로
+                   lambda: scene_v196e_kospi(R, files, 1280, dark=True)):                                  #   (Jack 2026-11-27 answer 13)
             try:
                 fn()
             except Exception as e:

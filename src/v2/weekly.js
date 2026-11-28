@@ -44,7 +44,14 @@
 //                              종목 바꾸기) remain). A stock the change log names may never have been bought (종목 바꾸기 can take out a
 //                              planned stock); it is named all the same: the records cannot tell, and a name is never hidden.
 //     name                     a row added by name only (no code, not in the data: its week cannot be checked)
-//   코스피 (kospiWeek): macro.json idxHist KOSPI, the close of wkFrom to the close of pxDate (both rows must be there).
+//   코스피 (kospiWeek): macro.json idxHist KOSPI, over the same money as the portfolio's (Jack, 2026-11-27, answer 13: "Yes, same
+//   money flows"; Track 2 audit 4.1), by 내 수익's own rule (v19.6a A.5 [Q4], lots.kospiMirror): each counted stock's value at
+//   the start is one lot bought at wkFrom's close; each counted 샀어요 record's won amount buys 코스피 at the last close before
+//   its date (track.closeBefore's rule: a record saved with the price left empty carries that close); each counted 팔았어요
+//   record sells the same fraction of that stock's 코스피 units as of its shares, at the last close before its date. 코스피's
+//   gain is divided by the portfolio's own denominator (value at the start + buys this week), so both percentages answer the
+//   same question. A week with no buy or sale is the plain change, close of wkFrom to close of pxDate (both rows must be there).
+//   Dividends stay out of both, as in the portfolio's gain. The tile's words are unchanged ("코스피 {pct}").
 // 받은 배당 (weekDivs): dividend records of the week, the stocks taken out included, in won (USD at the record's own rate; one
 //   without a rate is counted in noFx, the approved tax.divNoFx line names the count).
 // 공시 (weekFilings): v19.6b's own cards (look.js issueCards · insiderCards · npsCards, the same rules: held stocks, 1억원, the
@@ -58,7 +65,7 @@
 //   its group fell) or "rose" (the mirror, [Q12]); otherwise none.
 import { num, isUsdPrice } from "./engine.js";
 import { isDay, isTradingDay } from "./tradedays.js";
-import { heldUnits, UNIT, VIEW_SPLITS, importedUnits, okUnits } from "./held.js";
+import { heldUnits, UNIT, VIEW_SPLITS, importedUnits, okUnits, unitEvents } from "./held.js";
 import { purchaseRate, recordSets, splitSince, dataSplits } from "./lots.js";
 import { validRows, peerGroup } from "./track.js";
 import { issueCards, insiderCards, npsCards, dateRows, addDays, ROLE_OF } from "./look.js";
@@ -143,10 +150,12 @@ export function weekPct(s, starts, nv = WEEK_NV, splits = null, today = null) {
 // ---------------- 내 포트폴리오 ----------------
 // deck: the portfolio as the screens read it (with data.json's splits, held.js VIEW_SPLITS) · q: { byT, week (weekState), rateAt(date)
 // -> won per dollar from fxHist | null, usPxDate, nv, splits, today }.
-// -> { ok, gain, pct, start, buys, sells, end, n, left: [{ t, nk, why }], per: [{ t, nk, start, end, buys, sells, gain, nv }], nvUsed: [t] }
+// -> { ok, gain, pct, start, buys, sells, end, n, left: [{ t, nk, why }], per: [{ t, nk, start, end, buys, sells, gain, nv }], nvUsed: [t],
+//      legs: [{ t, start, u0, ev: [{ date, won, u }] }] (kospiWeek: one per counted record set, its value and share units at the
+//      start, then its counted buys (+won, +units) and sales (−won, −units) of the week in held.js's order: by date, buys first) }
 export function weekMoney(deck, q) {
   const w = q.week;
-  const out = { start: 0, buys: 0, sells: 0, end: 0, n: 0, left: [], per: [], nvUsed: [] };
+  const out = { start: 0, buys: 0, sells: 0, end: 0, n: 0, left: [], per: [], nvUsed: [], legs: [] };
   if (!deck) return { ok: false, gain: null, pct: null, ...out };
   const names = new Map(((deck.holdings) || []).filter((h) => h && h.t).map((h) => [h.t, h.nk]));
   const leave = (t, nk, why) => { if (!out.left.some((x) => x.t === t && x.nk === nk)) out.left.push({ t, nk, why }); };
@@ -167,11 +176,12 @@ export function weekMoney(deck, q) {
     const uEnd = heldUnits(recs, w.sun).get(t) || 0;
     const imp = (Array.isArray(recs.imported) ? recs.imported : []).filter((r) => r && r.t === t);
     let buys = 0, sells = 0, start = 0, end = 0, why = null, moved = false, nvRow = false;
+    const moneyOf = new Map();                                                // this set's counted buys and sales: record -> won (+ in, − out)
     for (const p of Array.isArray(recs.purchases) ? recs.purchases : []) {
       if (!p || p.t !== t || !inWeek(p.date, w) || !(Number.isInteger(p.qty) && p.qty > 0) || !(num(p.price) > 0)) continue;
       moved = true;
       const r = purchaseRate(p, deck.planFx);
-      if (!r) why = why || "fx"; else buys += p.qty * p.price * r;
+      if (!r) why = why || "fx"; else { const won = p.qty * p.price * r; buys += won; moneyOf.set(p, won); }
     }
     for (const r of imp) {
       if (!inWeek(r.date, w) || importedUnits(r) == null) continue;
@@ -182,7 +192,7 @@ export function weekMoney(deck, q) {
       if (!x || x.t !== t || !inWeek(x.date, w) || !okUnits(x.qty) || !(num(x.price) > 0)) continue;
       moved = true;
       const r = x.ccy === "USD" ? (num(x.fx) > 0 ? x.fx : null) : 1;
-      if (!r) why = why || "fx"; else sells += x.qty * x.price * r;
+      if (!r) why = why || "fx"; else { const won = x.qty * x.price * r; sells += won; moneyOf.set(x, -won); }
     }
     if (!(uStart > 0) && !(uEnd > 0) && !moved) continue;                     // not part of this week
     const usRow = !!s && s.cls === "us" && !s.fund;
@@ -208,7 +218,20 @@ export function weekMoney(deck, q) {
         else end = (uEnd / UNIT) * px * rate;
       }
     }
-    rows.push(why ? { t, nk, why } : { t, nk, r: { t, nk, start, end, buys, sells, gain: end - start - buys + sells, nv: nvRow } });
+    // the 코스피 side of this set (kospiWeek): its counted records with the share units held.js counts them for, in its order
+    // (a record held.js does not count keeps u null: kospiWeek then leaves 코스피 out, never a guess)
+    const ev = [];
+    if (moneyOf.size) {
+      const seen = new Set();
+      for (const e of unitEvents(recs, t)) {
+        if (!moneyOf.has(e.r) || seen.has(e.r)) continue;
+        seen.add(e.r);
+        ev.push({ date: e.r.date, won: moneyOf.get(e.r), u: e.u });
+      }
+      for (const [rec, won] of moneyOf) if (!seen.has(rec)) ev.push({ date: rec.date, won, u: null });
+    }
+    rows.push(why ? { t, nk, why } : { t, nk, r: { t, nk, start, end, buys, sells, gain: end - start - buys + sells, nv: nvRow },
+      leg: { t, start, u0: start > 0 ? uStart : 0, ev } });
   }
   // taken out from the week's Monday on with no history entry (no sale or dividend): its records are gone (round 2, M1)
   const gone = new Map();
@@ -228,6 +251,7 @@ export function weekMoney(deck, q) {
     if (lost.has(x.t)) { const l = lost.get(x.t); leave(l.t, l.nk, l.why); continue; }
     const r = x.r;
     out.start += r.start; out.end += r.end; out.buys += r.buys; out.sells += r.sells;
+    out.legs.push(x.leg);                                                      // only a counted row's money: the same as buys · sells
     if (!out.per.some((p) => p.t === r.t)) out.n += 1;
     if (r.nv && !out.nvUsed.includes(r.t)) out.nvUsed.push(r.t);
     out.per.push(r);
@@ -242,14 +266,70 @@ export function weekMoney(deck, q) {
   return { ok, gain: ok ? gain : null, pct: ok ? (gain / base) * 100 : null, ...out };
 }
 
-// 코스피's week: the close of wkFrom to the close of pxDate (macro.json idxHist.KOSPI). -> { pct } | { pct: null, why }
-export function kospiWeek(macro, data, starts) {
+// 코스피's week (Jack, 2026-11-27, answer 13: the same money flows as the portfolio's). money: weekMoney's result (its start, buys,
+// sells and legs); without it, or in a week with no counted buy or sale, the plain change from the close of wkFrom to the close of
+// pxDate, exactly as before. With them, 내 수익's rule (v19.6a A.5 [Q4], lots.kospiMirror), one leg per counted record set:
+//   its value at the start buys 코스피 at wkFrom's close (one lot); a buy's won amount (the portfolio's: USD at the record's own
+//   rate) buys 코스피 at kospiBefore's close of its date; a sale sells the same fraction of the leg's 코스피 units as of its shares
+//   (held.js units), at kospiBefore's close of its date, so the 코스피 side never holds less than nothing.
+//   코스피's gain = units still held × pxDate's close + money from units sold − start − buys, over the portfolio's own denominator
+//   (start + buys).
+// -> { pct } | { pct, flows (records used) } | { pct: null, why }: "rows" (no readable rows) · "start" · "end" (wkFrom's or pxDate's
+// row missing) · "flow" (a record's close missing: kospiBefore) · "sum" (the legs do not add up to the portfolio's start, buys and
+// sales) · "units" (a sale while the leg holds no shares by held.js's count, or a record held.js does not count: records the
+// store refuses). Every why leaves the 코스피 part out of the tile as before (weekly.jsx says which in the console); never a
+// number made up.
+export function kospiWeek(macro, data, starts, money = null) {
   const rows = validRows(macro && macro.idxHist ? macro.idxHist.KOSPI : null);
   if (!rows) return { pct: null, why: "rows" };
   const a = starts && starts.kr ? rows.find((r) => r[0] === starts.kr) : null;
   const b = data ? rows.find((r) => r[0] === data.pxDate) : null;
   if (!a || !b) return { pct: null, why: !a ? "start" : "end" };
-  return { pct: (b[1] / a[1] - 1) * 100 };
+  const legs = money && Array.isArray(money.legs) ? money.legs : [];
+  if (!legs.some((l) => l && Array.isArray(l.ev) && l.ev.length)) return { pct: (b[1] / a[1] - 1) * 100 };
+  const start = num(money.start), buys = num(money.buys), sells = num(money.sells);
+  if (start == null || buys == null || sells == null || !(start + buys > 0)) return { pct: null, why: "sum" };
+  let s0 = 0, fin = 0, fout = 0;
+  for (const l of legs) {
+    if (!l || num(l.start) == null || !Array.isArray(l.ev)) return { pct: null, why: "sum" };
+    s0 += l.start;
+    for (const e of l.ev) { if (!e || num(e.won) == null) return { pct: null, why: "sum" }; if (e.won > 0) fin += e.won; else fout -= e.won; }
+  }
+  if (Math.abs(s0 - start) > 0.5 || Math.abs(fin - buys) > 0.5 || Math.abs(fout - sells) > 0.5) return { pct: null, why: "sum" };
+  let kNow = 0, kSold = 0, n = 0;
+  for (const l of legs) {
+    let units = l.start / a[1];                                               // 코스피 units of this leg: its start value at wkFrom's close
+    let held = l.u0;                                                          // its share units (held.js)
+    for (const e of l.ev) {
+      if (!Number.isInteger(e.u)) return { pct: null, why: "units" };
+      const k = kospiBefore(rows, e.date, a[0], b[0]);
+      if (!k) return { pct: null, why: "flow" };
+      n += 1;
+      if (e.won > 0) { units += e.won / k; held += e.u; continue; }
+      const u = -e.u;                                                         // a sale's units (held.js writes them below 0)
+      if (u === 0) continue;                                                  // counted as 0 units after every share was sold (#184)
+      if (!(held > 0)) return { pct: null, why: "units" };
+      const du = units * Math.min(1, u / held);
+      kSold += du * k;
+      units -= du;
+      held -= u;
+    }
+    kNow += units * b[1];
+  }
+  const gain = kNow + kSold - start - buys;
+  return { pct: (gain / (start + buys)) * 100, flows: n };
+}
+// 코스피's close for a record dated d: the last close strictly before d (track.closeBefore's rule, as 내 수익's 코스피: a 샀어요 or
+// 팔았어요 record saved with the price left empty carries the last published close, the one before its date), never before from
+// (wkFrom: a Monday record takes wkFrom's close) and never after to (pxDate), and only when every day between that row and d is a
+// Korean non-trading day (a weekend, a holiday; tradedays.js): a Korean trading day without its row is a missing close. -> close | null
+export function kospiBefore(rows, d, from, to) {
+  if (!isDay(d) || !isDay(from) || !isDay(to)) return null;
+  let hit = null;
+  for (const r of rows) { if (r[0] >= d || r[0] > to) break; hit = r; }
+  if (!hit || hit[0] < from) return null;
+  for (let x = addDays(hit[0], 1); x < d; x = addDays(x, 1)) if (isTradingDay(x, "KR")) return null;
+  return hit[1];
 }
 
 // ---------------- 받은 배당 ----------------
@@ -352,7 +432,7 @@ export function weeklyModel({ deck, load, ctx, disc = null, nv = WEEK_NV, now = 
   const held = new Set([...heldUnits(deck, week.sun)].filter(([, u]) => u > 0).map(([t]) => t));
   return {
     ok: true, week, nv, held, money,
-    kospi: kospiWeek(load.macro, load.data, week.starts),
+    kospi: kospiWeek(load.macro, load.data, week.starts, money),
     divs: weekDivs(deck, week),
     files: weekFilings(disc, held, week, byT, now),
     next: nextWeek(byT, held, week, today),
