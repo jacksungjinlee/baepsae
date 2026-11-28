@@ -9,7 +9,8 @@
 //             pipeline blanked it (US statements not in dollars fcur, a foreign company's mismatch fgnCut, a US PBR near 0
 //             pbrZero, the Korean unit check unitChk: the field is then missing) and when one of the 가치 list's guards
 //             catches it (ranks.pbrGuardOf: a Korean PBR that rounds to 0.00, a US PBR far under its own PER × ROE): a
-//             number the app itself does not trust never fires a condition. The console names those (watchGuardNote).
+//             number the app itself does not trust never fires a condition. The console names those (watchGuardNote). A fund
+//             never has one (Jack, 2026-11-27: the loader drops a fund's PBR, fcur.js fundBookOff; a US fund's card says why).
 //   dyAtLeast 배당수익률 at least v (%): Korea only the verified today's-close yield (engine.dytOf, a file with the split check:
 //             exactData); US the same current yield as 종목 순위's 배당수익률 list (engine.okDy). Shown as the company page
 //             shows it (cofmt.yieldText: one decimal, two below 0.1%).

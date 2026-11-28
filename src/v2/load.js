@@ -9,6 +9,7 @@ import { lateDays } from "./tradedays.js";
 import { detectFeatures, missingForBuild, CUSHION_ASSETS, setDataShape } from "./engine.js";
 import { R2022 } from "./y2022.js";
 import { setEpsBasis } from "./fix.js";
+import { fundBookOff } from "./fcur.js";
 
 // publishedAt must be a time we can read: without it we cannot tell whether the data is fresh, so the file is refused
 // like any other format problem (the load-failure message), never treated as fresh.
@@ -380,6 +381,13 @@ export function resolveLoad({ data, corp, macro }, now, opts = {}) {
   }
   if (!macro.ok) console.warn("[v2] macro.json not loaded: " + macro.error + " (features that need it stay hidden)");
   const d = data.data, c = corp.data, m = macro.ok ? macro.data : null;
+  // 2026-11-27 (Jack, answer 12): a fund's PBR and the 가치 score made from it are never shown (fcur.js fundBookOff). The pipeline
+  // blanks them (data.json fundPb); a file published before that still carries them, so they are dropped here, named in the console.
+  const fundOff = fundBookOff(d.stocks);
+  if (fundOff.length && !opts.preview) {
+    console.warn(`[v2] PBR and value score (vz) dropped from ${fundOff.length} fund rows (a fund has no book value; the pipeline blanks `
+      + `them since the fundPb record, so this file was published before it): ${fundOff.slice(0, 30).join(", ")}${fundOff.length > 30 ? ` and ${fundOff.length - 30} more` : ""}`);
+  }
   // v19.1b: data.json with divCheck carries the exact dividend fields and the beta error band (engine.setDataShape). The
   // whole app reads this one file one way; a file without it keeps the earlier behaviour. The console line with the
   // counts is company.jsx logSplitGuard (once per load, in the browser).

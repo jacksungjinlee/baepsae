@@ -22,8 +22,8 @@ import { isCompany, ownCloses } from "./stocklist.js";
 import { todayD1 } from "./engine.js";
 import { signedPct } from "./deckcalc.js";
 import { closeLine } from "./cofmt.js";
-import { DayNote, FcurNote, PbrZeroNote, FgnCutNote, UnitChkNote, StmtCurNote, NoStmtNote, PrefNote, prefText } from "./fixnote.jsx";
-import { fcurBlank, fcurDyBlank, pbrZeroOf, fgnBlank } from "./fcur.js";
+import { DayNote, FcurNote, PbrZeroNote, FgnCutNote, UnitChkNote, StmtCurNote, NoStmtNote, PrefNote, prefText, FundPbrNote } from "./fixnote.jsx";
+import { fcurBlank, fcurDyBlank, pbrZeroOf, fgnBlank, fundPbrOf } from "./fcur.js";
 import { unitHeldFor, stmtNotWonFor, noStmtFor } from "./fix.js";
 import { divHiddenLine, DIV_HIDDEN_UI } from "./company.js";
 import { WATCH_MAX, WATCH_KINDS, WATCH_DEC, okWatchValue, watchOf, watchOrder, withWatchAdd, withWatchRemove, withWatchConds, watchSaveTime } from "./store.js";
@@ -57,11 +57,15 @@ function CondChip({ st, us }) {
 // The company page's own line for a blank value, once per card (the same pieces the company page uses).
 function BlankWhy({ s, co, kinds }) {
   if (!s || !kinds.length) return null;
-  const pbr = kinds.includes("pbrBelow"), dy = kinds.includes("dyAtLeast");
+  // a US ETF or fund (Jack, 2026-11-27, answer 12): its PBR is never shown (fcur.js fundPbrOf), so a PBR condition reads 정보 없음
+  // with his line, in place of the companies' PBR lines
+  const fundP = kinds.includes("pbrBelow") && fundPbrOf(s);
+  const pbr = kinds.includes("pbrBelow") && !fundP, dy = kinds.includes("dyAtLeast");
   const style = { marginTop: SPACE(2) };
   const out = [];
   if (prefText(s)) out.push(<PrefNote key="pref" s={s} style={style} />);
   else {
+    if (fundP) out.push(<FundPbrNote key="fund" s={s} style={style} />);
     if ((pbr && fcurBlank(s)) || (dy && fcurDyBlank(s))) out.push(<FcurNote key="fcur" s={s} style={style} />);
     if (pbr && pbrZeroOf(s)) out.push(<PbrZeroNote key="pbr0" s={s} style={style} />);
     const fg = [...(pbr && fgnBlank(s, "pbr") ? ["pbr"] : []), ...(dy && fgnBlank(s, "dy") ? ["dy"] : [])];
@@ -208,6 +212,9 @@ export function CondSheet({ open, store, setStoreData, onClose }) {
                 <p data-ui-v2="watch-now" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>
                   {now == null ? W().blank : fill(W().now, { now: nowValue(k, now, us, small) })}</p>
               )}
+              {/* a US ETF or fund (Jack, 2026-11-27, answer 12): its PBR is never shown (fcur.js fundPbrOf), so the PBR field reads
+                  정보 없음 (empty) or a 정보 없음 chip (typed); his line under it, once in the sheet (#203 reviews) */}
+              {k === "pbrBelow" && <FundPbrNote s={open.s} style={{ marginTop: SPACE(1) }} />}
               {Number.isNaN(v) && <Note tone="watch" data-ui-v2="watch-bad">{W().form.bad}</Note>}
             </div>
           );

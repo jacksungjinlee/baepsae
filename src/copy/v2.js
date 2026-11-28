@@ -254,6 +254,11 @@ export const C = {
     fgnNoCmp: "회사 전체 숫자와 비교할 수 없어서 이 숫자는 비워 두었어요.",   // chat (Jack, 2026-11-15: 그대로)
     // Jack, 2026-11-15 (Q10): 외국 회사 검사가 멈춘 날 맞춰 보지 못하고 비운 숫자 (data.json fgnCut "stopped"). 위 줄과 같은 자리 ('자료가 없어요' 대신).
     fgnStopped: "오늘은 이 숫자를 확인하지 못해서 비워 두었어요.",   // chat (Jack, 2026-11-15: 그대로)
+    // Jack, 2026-11-27 (answer 12, "Yes, hide them: …"): 미국 ETF · 펀드 (data.json cls "us" 에 etf 참 또는 fund — 379800 KODEX 미국S&P500
+    // 도) 의 PBR (야후의 펀드 숫자: 펀드에는 회사의 장부가가 없어요) 과 그 PBR 로 매긴 가치 점수 vz 는 보이지 않아요 (파이프라인이 비우고, 앱도
+    // 불러올 때 펀드 행에서 빼요: src/v2/fcur.js fundBookOff). 그 PBR 자리에 한 번씩: 두 종목 비교의 PBR 칸 · 관심 종목 카드 (PBR 조건이 정보
+    // 없음일 때). 예전 뱁새는 같은 글자를 src/fixnote.jsx FIX_FUND_PBR 에 (종목 고르기의 펼친 종목 · 내 포트폴리오의 성향, 한국어 화면만).
+    fundPbr: "ETF는 회사가 아니어서 PBR과 가치 점수를 계산하지 않아요.",   // chat (Jack, 2026-11-27: 그대로)
     // 통화 코드(ISO 4217) → 한국어 이름 (src/v2/fcur.js 가 읽어요). Jack, 2026-11-13: 제안대로 승인, 일본 엔화 · 중국 위안화 · 남아공 랜드만
     // 그의 말로. 여기 없는 코드는 줄 없이 '–' 만 (console 에 코드). 2026-11-12 에 나온 통화: BRL CAD CNY DKK EUR HKD JPY KZT SEK TWD VND
     // (미국 773종목 중 27곳).

@@ -261,3 +261,14 @@ export function spNoFields(row) {
 }
 export const spNoHides = (row, k) => spNoFields(row).includes(k);
 export const spNoFull = (row) => spNoHides(row, "hi");
+
+// ================= ETF and fund PBR (Jack, 2026-11-27, answer 12: "Yes, hide them") =================
+// A fund has no book value in the company sense, so Yahoo's fund-level PBR (SPY 1.70 against a real P/B of about 5) and the 가치 score
+// vz made from it are never shown, in either app. The pipeline blanks both on every fund row (fetch_data.py fund_book_blank, data.json
+// fundPb); each app's loader drops them too (2.0 src/v2/fcur.js fundBookOff · the old app src/data.js mergeStocks), so a file published
+// before that change shows none either. A fund is the gate's factor_fund row (validate_data.py), 2.0's "not a company": etf true, or fund.
+// The line "ETF는 회사가 아니어서 PBR과 가치 점수를 계산하지 않아요." (2.0 co.fundPbr · old app src/fixnote.jsx FIX_FUND_PBR) shows where a
+// US fund's PBR stood (cls "us": the ones Yahoo gives a PBR; Korean funds never had one, and the line would be untrue for the listed
+// infrastructure funds and KRX 금현물, which are not ETFs).
+export const FUND_BOOK = ["pbr", "vz"];
+export const fundRow = (s) => !!s && typeof s === "object" && (s.etf === true || !!s.fund);
