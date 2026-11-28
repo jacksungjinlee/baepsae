@@ -1764,7 +1764,10 @@ def scene_json_import(R, files):
 def _json_import(R, files, tmp):
     S = "파일 불러오기"
     have = {s.get("t") for s in files["data.json"]["stocks"]}
-    pick = [t for t in ("005930", "000660", "AAPL") if t in have]
+    # 첫 종목 (300 → 450만원, 가장 큰 몫): 평소에는 삼성전자, 오늘 앱이 그 위험 숫자를 계산하지 못하면 바꿔 담아요 (pick_plain — 위험 수치가 없는
+    # 종목이 투자금의 절반을 넘으면 ④ 내보내기에 'JSON 저장' 이 없어요: 삼성전자에 표시가 붙은 날은 꼭 절반, SK하이닉스도 붙으면 넘었어요)
+    P, PN = pick_plain(R, S, {s.get("t"): s for s in files["data.json"]["stocks"]}, avoid=("000660",))
+    pick = [t for t in (P, "000660", "AAPL") if t in have]
     gone = next(t for t in ("999999", "999998", "999997") if t not in have)      # 지금 목록에 없는 종목코드
     slot = {"schema": 10, "lang": "ko", "stage": 1, "budgetMw": 1000,
             "profile": {"ready": True, "source": "preset", "targetBetaMin": 0.6, "targetBetaMax": 1.0, "targetVolMaxPct": 22,
@@ -1959,7 +1962,7 @@ def _json_import(R, files, tmp):
         go_home()
         page.wait_for_timeout(1000)
         f = write("with-gone.json", json.dumps({**export_head, "holdings": [
-            {"ticker": pick[0], "name": "삼성전자", "amountWon": 3000000}, {"ticker": gone, "name": "없는 회사", "amountWon": 2000000}]},
+            {"ticker": pick[0], "name": PN, "amountWon": 3000000}, {"ticker": gone, "name": "없는 회사", "amountWon": 2000000}]},
             ensure_ascii=False))
         n = len(dialogs)
         file_box.set_input_files(f)
@@ -1987,7 +1990,7 @@ def _json_import(R, files, tmp):
         go_home()
         page.wait_for_timeout(1000)
         f = write("nameless.json", json.dumps({**export_head, "customStocks": [nameless], "holdings": [
-            {"ticker": pick[0], "name": "삼성전자", "amountWon": 3000000}, {"ticker": "NONK1", "name": "이름 없는 회사", "amountWon": 1000000}]},
+            {"ticker": pick[0], "name": PN, "amountWon": 3000000}, {"ticker": "NONK1", "name": "이름 없는 회사", "amountWon": 1000000}]},
             ensure_ascii=False))
         n, errs = len(dialogs), len(R.errors)
         file_box.set_input_files(f)

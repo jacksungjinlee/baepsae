@@ -1012,6 +1012,7 @@ class SceneRunner(FakeRunner):
 PLAIN_SCENES = [("scene_no_risk_holding", "위험값 없음", True), ("scene_missing_holding", "빠진 종목", True),
                 ("scene_missing_all", "빠진 종목 전부", True), ("scene_beta_return", "베타→수익률", True),
                 ("scene_ghost_holding", "없는 종목", True), ("scene_auto_settings", "자동 설정", True), ("scene_own_close", "미국 자기 날짜", True),
+                ("scene_json_import", "파일 불러오기", True),
                 ("scene_fix_notes", "고치는 중 안내 지금", False), ("scene_kst_dates", "한국 날짜", True), ("scene_px_bad", "주가기록", True),
                 ("scene_kr_own_close", "국내 마지막 확인 종가", True)]
 
@@ -1108,12 +1109,16 @@ def test_every_plain_swap_is_loud_and_goes_through_one_picker():
     calls = re.findall(r"\bpick_(?:ready|plain)\(([^,]+),", src)
     assert calls and set(calls) == {"R"}, calls
     assert src.count("바꿔 담아 ") == 1 and "바꿔 담아 " in pr
+    inner = {"scene_auto_settings": "_auto_settings", "scene_json_import": "_json_import"}
+    # 그대로 남는 005930: 고치는 중 장면의 다른 확인 (회사 줄 하나 · 첫 화면 성적표 검색 셋) · 파일 장면의 깨진 파일 글자와 종목이 없을 때의 자리 채움
+    keep = {"scene_fix_notes": 4, "scene_json_import": 2}
     for fn, scene, _ in PLAIN_SCENES:
-        b = body("_auto_settings") + body(fn) if fn == "scene_auto_settings" else body(fn)
+        b = body(inner[fn]) + body(fn) if fn in inner else body(fn)
         assert "pick_plain(R, " in b, fn
         code = "\n".join(ln.split("#")[0] for ln in b.splitlines())
-        assert code.count('"005930"') == (4 if fn == "scene_fix_notes" else 0), (fn, code.count('"005930"'))
-        assert '"t": "005930"' not in b and '"ticker": "005930"' not in b, fn
+        assert code.count('"005930"') == keep.get(fn, 0), (fn, code.count('"005930"'))
+        assert '"t": "005930"' not in b and ('"ticker": "005930"' not in b or fn == "scene_json_import"), fn
+    assert body("_json_import").count('"ticker": "005930"') == 1 and "'{\"app\": \"Baepsae\", \"holdings\": [{\"ticker\": \"005930\", \"amou'" in body("_json_import")
     assert 'co = next(c for c in corp["companies"] if c.get("t") == "005930")' in body("scene_fix_notes")
     st = body("scene_stmt_cur")                                                # 다시 읽은 뒤: '그대로' 회사는 검사 안에서 won_control 로
     assert st.count("#corp={won_control(R, S, f)}") == 2 and "#corp=005930" not in st and "return pick_plain(R, scene, " in body("won_control")
