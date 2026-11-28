@@ -1985,7 +1985,7 @@ earlier close (`pxd`), blank without exact data. `condState` and `watchHits` add
 소액주주 기준이에요."; the label, no line); the card shows `smallLine` once where its blank-value reason lines go (`div-small`), instead
 of the dataHidden line. The console names those stocks once per load ("[v2] watch list: dividend yield on the small-shareholder
 basis (dytSmall, labelled) …"). Switch off, or either line null: identical to main 5bcea90 for every stock
-(`tests/test_watch_small_yield.py`, against a copy of main's watch.js · watch.jsx in `tests/fixtures/watch_before_small_5bcea90`;
+(`tests/test_watch_small_yield.py`, against a copy of main's watch.js · watch.jsx in `tests/fixtures/watch_before_small_5d12ef1`;
 `BAEPSAE_WATCH_DATA=DIR` adds a data copy), and smoke_v2 `scene_watch_small` (390 · 1280: a throwaway build with the switch on and the
 proposed lines, and the shipped build). **When the switch-on PR flips it:** `tests/test_v196c_watch.py`
 `test_on_todays_real_data_every_value_is_a_shown_number_or_blank_and_pipeline_blanks_stay_blank` counts a Korean stock with `dyt` blank

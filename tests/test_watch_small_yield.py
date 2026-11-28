@@ -5,7 +5,7 @@ Jack, 2026-11-27 (answer 14): "Yes, use the 소액주주 yield where it exists (
 The label and the line (C.co.div.smallBasis · smallLine) wait for Jack word for word, so everything sits behind #183's switch
 (src/v2/smallcfg.js SMALL_YIELD.on) and those two copy keys:
 - switch off, or on with either key null (the shipped build): every value, chip, mark, 홈 row, sheet and console line exactly as
-  on main 5bcea90 (tests/fixtures/watch_before_small_5bcea90: main's watch.js and watch.jsx, run beside today's), for every
+  on main 5d12ef1 (tests/fixtures/watch_before_small_5d12ef1: main's watch.js and watch.jsx, run beside today's), for every
   stock of the repository's data.json (the daily run's file), the v2 fixture and, when set, $BAEPSAE_WATCH_DATA (a folder
   with data.json and corp.json, e.g. a data-branch copy);
 - on with both keys (here only, in the test): a Korean stock whose all-holder yield is blank and whose 소액주주 yield the company
@@ -27,7 +27,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NODE = shutil.which("node")
 pytestmark = pytest.mark.skipif(NODE is None, reason="node 가 없어요")
 V2 = os.path.join(ROOT, "src", "v2")
-OLD = os.path.join(ROOT, "tests", "fixtures", "watch_before_small_5bcea90")     # main 5bcea90: watch.js · watch.jsx before this change
+OLD = os.path.join(ROOT, "tests", "fixtures", "watch_before_small_5d12ef1")     # main 5d12ef1: watch.js · watch.jsx before this change
 FIX = os.path.join(ROOT, "tests", "fixtures", "v2")
 MODS = {"Wt": "src/v2/watch.js", "Wx": "src/v2/watch.jsx", "E": "src/v2/engine.js", "K": "src/v2/company.js", "SC": "src/v2/smallcfg.js",
         "CP": "src/copy/v2.js"}

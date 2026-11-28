@@ -32,7 +32,7 @@ all-holder yield, rounded as the chip shows it; met / not, the `hitAt` mark and 
 earlier close: shown, never judged, like any yield; no exact data: blank). The chip, the condition sheet and 홈's row say
 "{y} · 소액주주 기준" (홈: "… 지금 0.2% · 소액주주 기준이에요.", the label only); the card shows the line once where its reason lines go,
 instead of the dataHidden line; the console names those stocks. Off (shipped) or either line null: identical to main for every stock
-(`tests/test_watch_small_yield.py` against main's watch.js · watch.jsx, fixture `watch_before_small_5bcea90`; smoke_v2
+(`tests/test_watch_small_yield.py` against main's watch.js · watch.jsx, fixture `watch_before_small_5d12ef1`; smoke_v2
 `scene_watch_small` 390 · 1280, a throwaway build with the switch on and the proposed lines, and the shipped build). One existing test
 edited in its own commit, **waiting for Jack's yes**: `tests/test_smallholder_app.py` (#183) expected 관심 종목 to keep the dataHidden line
 with the switch on; it now expects the label and the line (answer 14). **For the switch-on PR, on purpose:**
