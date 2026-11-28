@@ -88,8 +88,8 @@ const WORKED = () => {
   const deck = deckOf([imp('005930', 10), imp('005380', 20), imp('AAPL', 4), imp('000660', 2)], {
     purchases: [{ t: '005930', qty: 5, price: 105000, ccy: 'KRW', date: '2026-11-18' }],
     sales: [{ t: '005380', qty: 5, price: 210000, ccy: 'KRW', date: '2026-11-19' }] });
-  // 코스피 on every Korean trading day of the week (Jack 2026-11-27, answer 13: 코스피 over the same money flows needs the close of each
-  // record's date; MACRO itself, which other tests share, is unchanged): MACRO's rows plus 11-17 4,020 · 11-18 3,980 · 11-19 4,050
+  // 코스피 on every Korean trading day of the week (Jack 2026-11-27, answer 13: 코스피 over the same money flows needs the close before
+  // each record's date; MACRO itself, which other tests share, is unchanged): MACRO's rows plus 11-17 4,020 · 11-18 3,980 · 11-19 4,050
   const kospi = { ...MACRO.idxHist.KOSPI, rows: [...MACRO.idxHist.KOSPI.rows, ['2026-11-17', 4020], ['2026-11-18', 3980], ['2026-11-19', 4050]].sort((a, b) => (a[0] < b[0] ? -1 : 1)) };
   return { stocks, deck, load: loadOf(stocks, {}, { ...MACRO, idxHist: { ...MACRO.idxHist, KOSPI: kospi } }) };
 };
@@ -156,10 +156,13 @@ def test_the_hand_worked_week_with_a_buy_a_sale_and_a_us_holding():
     # 이득 = 5,718,000 − 6,120,000 − 525,000 + 1,050,000 = 123,000 · % = 123,000 ÷ (6,120,000 + 525,000) = 1.851%
     assert (m["start"], m["buys"], m["sells"], m["end"], m["gain"], m["pct"], m["n"]) == (6120000, 525000, 1050000, 5718000, 123000, 1.851, 3)
     assert m["left"] == [{"t": "000660", "nk": "종목000660", "why": "none"}] and m["ok"] is True
-    # 코스피 over the same money (Jack 2026-11-27, answer 13): 6,120,000 ÷ 4,000 = 1,530 units + 525,000 ÷ 3,980 (11-18) = 131.9095
-    # − 1,050,000 ÷ 4,050 (11-19) = 259.2593 → 1,402.6503 × 4,080 = 5,722,813.18 · 이득 127,813.18 ÷ 6,645,000 = 1.923% (the plain week was 2.0)
-    assert got["kospi"] == 1.923
-    assert got["shown"]["tiles"] == [["pf", "+1.9%", "+12만원 · 코스피 +1.9%"]]
+    # 코스피 over the same money (Jack 2026-11-27, answer 13), by 내 수익's rule (A.5 [Q4]): each record at the 코스피 close before its date ·
+    # 삼성 1,000,000 ÷ 4,000 = 250 units + 525,000 ÷ 4,020 (11-17, the close before the 11-18 buy) = 130.5970 → × 4,080 =
+    # 1,552,835.82 · 현대차 4,000,000 ÷ 4,000 = 1,000 units, 5 of 20 shares sold (1/4) → 250 units at 3,980 (11-18) = 995,000, the other 750 ×
+    # 4,080 = 3,060,000 · AAPL 1,120,000 ÷ 4,000 = 280 × 4,080 = 1,142,400 → 이득 = 5,755,235.82 + 995,000 − 6,120,000 − 525,000 = 105,235.82
+    # ÷ 6,645,000 = 1.584% (the plain week was 2.0; the close of each record's own date would give 1.928)
+    assert got["kospi"] == 1.584
+    assert got["shown"]["tiles"] == [["pf", "+1.9%", "+12만원 · 코스피 +1.6%"]]
     assert got["shown"]["notes"] == ["1|종목000660"]
 
 
