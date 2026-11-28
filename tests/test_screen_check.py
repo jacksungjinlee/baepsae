@@ -745,7 +745,8 @@ def test_option_b_scene_picks_any_stocks_the_app_can_use(SA, monkeypatch, capsys
     rows = [mk("000660", "semi", 700), mk("005930", "semi", 1000), mk("005380", "auto", 50), mk("105560", "holding", 49),
             mk("069500", "index", 950, fund=True), mk("005935", "semi", 900), mk("042700", "semi", 85), mk("373220", "battery", 80),
             mk("000270", "auto", 75, pxd="2026-11-25"), dict(mk("068270", "bio", 70), cap=None), mk("207940", "bio", 60),
-            mk("035420", "platform", 55, al=None), mk("012450", "defense", 40)]
+            mk("035420", "platform", 55, al=None), mk("012450", "defense", 40),
+            dict(mk("999990", "tech", 5000), cls="us"), mk("069660", "index", 4000, etf=True)]   # 한국 종목 아님 · ETF: 담지 않아요 (리뷰 #200 2차 N3)
     stocks = {s["t"]: s for s in rows}
     want = ["000660", "005930", "005380", "105560"]
     pick = lambda st: SA.pick_ready(R, "B안", st, want, 4, need=("mdd", "al"), secs=3)   # noqa: E731
@@ -777,6 +778,26 @@ def test_option_b_scene_picks_any_stocks_the_app_can_use(SA, monkeypatch, capsys
     assert 'hold = list(zip(pick_ready(R, "B안", stocks, want, 4, need=("mdd", "al"), secs=3), (400, 150, 100, 100)))' in body
     assert 'assert len(hold) == 4 and len(secs) >= 3, f"시험할 종목이 모자라요: {hold} · 업종 {secs}"' in body
     assert "isinstance(stocks[t].get(\"vol\")" not in body                     # 예전 규칙(변동성만)은 이제 risk_ready 안에
+    # 장면의 전제(연 변동성 > 프로필 상한)는 알리기만 해요 — 시장의 출렁임은 그날의 데이터라 실패하면 안 돼요 (리뷰 #200 2차 N1 · Jack 11-21)
+    a = body.index("shown_vol = page.evaluate(VOL_SHOWN)")
+    note = body[a:body.index('R.check(page, "B안", "② 구성', a)]
+    assert "assert" not in note and "raise" not in note
+    assert 'print(f"\\n!! 알림  [B안] {msg}\\n", flush=True)' in note and 'R.notes.append(f"B안: {msg}")' in note
+    assert '::warning title=발행 전 화면 검사 · B안 장면의 전제::[B안] {msg}' in note
+    assert "{shown_vol or '(못 읽음)'}" in note and "{profile['targetVolMaxPct']}%" in note
+
+
+def test_example_limit_count_is_the_app_rule_without_marks(SA):
+    """리뷰 #200 2차 S1: 한도가 세는 종목(example_cap_stocks)은 표시(pxBad)를 지운 데이터에서 앱의 규칙(example_price_stocks — node 로
+    mergeStocks 와 맞춰 본 것)과 같은 답이에요. 그래서 빠진 내장 종목 · 빈 가격 · 빈 변동성 · 목록 밖 금 환산을 세는 줄 하나라도 빠지면 여기서 걸려요."""
+    cases = banner_cases(SA)
+    unmark = lambda live: [{k: v for k, v in s.items() if k != "pxBad"} for s in live]   # noqa: E731
+    for live in cases:
+        assert SA.example_cap_stocks({"data.json": {"stocks": live}}) == SA.example_price_stocks({"data.json": {"stocks": unmark(live)}}), live
+    # 그 네 가지가 이 표에 있어요 (한도가 세야 하는 것)
+    got = [SA.example_cap_stocks({"data.json": {"stocks": live}})[0] for live in cases]
+    assert got[1] == ["247540"] and got[3] == ["TSLA"] and got[4] == ["005930"] and got[5] == ["AAPL"] and got[11] == ["999992"]
+    assert got[14] == got[16] == ["042700"]                                   # 표시가 있어도 셉니다 (가격이 있든 없든)
 
 
 def test_example_limit_still_counts_marked_built_ins(SA, monkeypatch, capsys):
