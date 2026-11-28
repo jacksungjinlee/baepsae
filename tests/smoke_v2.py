@@ -17051,6 +17051,187 @@ def scene_load_limit(R, files, width, how):
     srv.shutdown()
 
 
+# ── 관심 종목의 소액주주 배당수익률 (Jack 2026-11-27, answer 14 · switch src/v2/smallcfg.js · lines C.co.div.smallBasis · smallLine) ──
+SMALL_PENDING = re.compile(r'^(\s+)(smallBasis|smallLine): (null|"[^"]*"),(\s+// 제안 \([^)]*\): "([^"]+)")', re.M)
+_SMALL = {}
+
+
+def small_proposals():
+    """The two parked lines {key: words}: the copy value once approved, else the proposal in its comment."""
+    with open(os.path.join(ROOT, "src", "copy", "v2.js"), encoding="utf-8") as fh:
+        found = {m.group(2): (json.loads(m.group(3)) or m.group(5)) for m in SMALL_PENDING.finditer(fh.read())}
+    assert set(found) == {"smallBasis", "smallLine"}, found
+    return found
+
+
+def small_on_app():
+    """app.html with SMALL_YIELD.on true and the two lines set to the proposals (word for word; the approved values once there are
+    any), built in a temporary folder (not committed; the folder is removed at once)."""
+    if "html" not in _SMALL:
+        tmp = tmpdirs.make("baepsae-smallon-")
+        try:
+            shutil.copytree(os.path.join(ROOT, "src"), os.path.join(tmp, "src"))
+            os.makedirs(os.path.join(tmp, "tools"))
+            for f in ("template.html", "build-app.sh", "package.json", "package-lock.json", os.path.join("tools", "build_tag.py")):
+                shutil.copy(os.path.join(ROOT, f), os.path.join(tmp, f))
+            os.symlink(os.path.join(ROOT, "node_modules"), os.path.join(tmp, "node_modules"))
+            p = os.path.join(tmp, "src", "v2", "smallcfg.js")
+            with open(p, encoding="utf-8") as fh:
+                src = fh.read()
+            old = "export const SMALL_YIELD = { on: false };"
+            assert src.count(old) == 1, old
+            with open(p, "w", encoding="utf-8") as fh:
+                fh.write(src.replace(old, "export const SMALL_YIELD = { on: true };"))
+            p = os.path.join(tmp, "src", "copy", "v2.js")
+            with open(p, encoding="utf-8") as fh:
+                src = fh.read()
+            src, n = SMALL_PENDING.subn(lambda m: f'{m.group(1)}{m.group(2)}: {json.dumps(json.loads(m.group(3)) or m.group(5), ensure_ascii=False)},{m.group(4)}', src)
+            assert n == 2, n
+            with open(p, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            out = os.path.join(tmp, "out")
+            r = subprocess.run(["bash", "build-app.sh", out], cwd=tmp, capture_output=True, text=True, encoding="utf-8")
+            assert r.returncode == 0, r.stdout + r.stderr
+            with open(os.path.join(out, "app.html"), encoding="utf-8") as a, open(os.path.join(ROOT, "app.html"), encoding="utf-8") as b:
+                html = a.read()
+                assert html != b.read(), "스위치를 켜고 빌드했는데 app.html 이 같아요"
+            assert all(w in html for w in small_proposals().values()), "켠 빌드에 두 줄이 없어요"
+            _SMALL["html"] = html
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    return _SMALL["html"]
+
+
+def watch_small_files(files):
+    """div_lines_files (SK하이닉스 dvLine 3 · 현대차 2 · NAVER 4, KB금융 dyt 2.81) plus 소액주주 fields as the pipeline writes them:
+    SK하이닉스 dpsSmall 16,000원 (÷ today's close, 2 decimals) and KB금융 the same kind of numbers, which never show beside its yield."""
+    f = div_lines_files(files)
+    by = {x["t"]: x for x in f["data.json"]["stocks"]}
+    cb = {x["t"]: x for x in f["corp.json"]["companies"]}
+    for t, dps in (("000660", 16000), ("105560", 7800)):
+        y = round(dps / by[t]["price"] * 100, 2)
+        assert abs(dps / by[t]["price"] * 100 - y) < 0.004 and 1 <= y <= 30, (t, y)          # off a rounding edge: JS gives the same
+        by[t].update(dpsSmall=dps, dytSmall=y)
+        cb[t].update(dpsSmall=dps, dytSmall=y)
+    return f
+
+
+def scene_watch_small(R, files, width):
+    """관심 종목의 배당수익률 조건과 소액주주 배당수익률 (Jack 2026-11-27, answer 14: "Yes, use the 소액주주 yield where it exists (관심 종목
+    배당수익률 condition), labelled as such."). 켠 빌드 (스위치와 두 줄의 제안을 넣은 임시 빌드, 커밋하지 않아요): 배당수익률이 비고
+    소액주주 배당수익률이 있는 SK하이닉스의 칩은 '배당수익률 1% 이상 · 지금 {y} · 소액주주 기준' (맞음 · data-small) · 카드 밑에 그 줄 한 번 ·
+    '회사가 공시한 … 비워 두었어요' 줄 없음 · 조건 시트의 칩도 같은 이름표, 배당수익률 칸 밑에 그 줄 한 번 · 홈의 관심 종목 조건 줄은 '… 지금 {y} · 소액주주 기준이에요.'
+    (이름표만, 줄 없음) · 배당수익률이 보이는 KB금융은 소액주주 숫자가 있어도 2.8% 만 · 현대차는 그대로 그 이유 줄. 켠 빌드의 화면은 승인 전
+    제안이라 '보이는 한국어' 출처 검사에 모으지 않아요. 커밋한 빌드: 같은 데이터에서 SK하이닉스는 오늘처럼 '정보 없음' 과 dataHidden 줄 ·
+    이름표 · 그 줄 · data-small 없음 · 홈에 SK하이닉스 줄 없음. 12px · 가로 스크롤 없음 · 뱁이 없음."""
+    S = f"관심 종목 소액주주 배당수익률 {width}"
+    wide = width >= 1024
+    P = small_proposals()
+    W_, CD = C["watch"], C["co"]["div"]
+    data = watch_small_files(files)
+    by = {x["t"]: x for x in data["data.json"]["stocks"]}
+    pxd = data["data.json"]["pxDate"]
+    md_text = fillp(C["app"]["md"], m=str(int(pxd[5:7])), d=str(int(pxd[8:10])))
+    y = round(by["000660"]["dytSmall"], 1)
+    y_text = f"{y:.1f}%"
+    dy = [{"k": "dyAtLeast", "v": 1}]
+    watch = {"000660": {"at": "2026-11-05", "conds": dy}, "105560": {"at": "2026-11-04", "conds": dy}, "005380": {"at": "2026-11-03", "conds": dy}}
+    store = {"v": 1, "decks": [], "watch": watch}
+    screen = pc_device(width) if wide else {"viewport": {"width": width, "height": 780}, "device_scale_factor": 2}
+    card = lambda page, t: page.locator(f'[data-ui-v2="watch-card"][data-t="{t}"]')      # noqa: E731
+
+    def common(page, where, collect):
+        floor_ok(page, where)
+        no_hscroll(page, width)
+        assert page.locator(MASCOT_IN_MAIN).count() == 0, f"{where}: 뱁이가 있어요 (숫자가 있는 화면)"
+        if collect:
+            R.collect(page)
+
+    def home_rows(page):
+        page.evaluate("(h) => { location.hash = h; }", "#home")
+        at(page, "home")
+        wait_ready(page)
+        page.locator('[data-ui-v2="home-watch"]').first.wait_for(state="visible")
+        return page.locator('[data-ui-v2="home-watch"]').evaluate_all(
+            "(rs) => rs.map((r) => [r.dataset.t, r.dataset.k, r.dataset.small || '', r.innerText.split('\\n')])")
+
+    for on in (True, False):
+        srv, ctx, page, base = R.open(build_site(data, app=small_on_app() if on else None), width, init=v196c_seed(store),
+                                      path="/app.html?dev=1#stocks/watch", device=screen)
+        tag = "켠 빌드" if on else "커밋한 빌드"
+
+        def watch_screen():
+            page.locator('[data-ui-v2="watch"]').wait_for(state="visible")
+            watch_cards_shown(page, list(watch))
+            ch = chips_of(page)
+            sk, kb, hd = card(page, "000660"), card(page, "105560"), card(page, "005380")
+            if on:
+                assert ch["000660"] == [["dyAtLeast", "met", f"배당수익률 1% 이상· {fillp(W_['now'], now=f'{y_text} · ' + P['smallBasis'])}"]], ch["000660"]
+                assert sk.locator('[data-ui-v2="watch-chip"]').get_attribute("data-small") == "1"
+                line = sk.locator('[data-ui-v2="div-small"]')
+                assert line.count() == 1 and line.inner_text() == P["smallLine"] and sk.inner_text().count(P["smallLine"]) == 1
+                assert line.bounding_box()["y"] > sk.locator('[data-ui-v2="watch-chips"]').bounding_box()["y"]   # under the chips
+                assert sk.locator('[data-ui-v2$="-hidden"]').count() == 0 and CD["dataHidden"] not in sk.inner_text()
+                assert page.locator('[data-ui-v2="div-small"]').count() == 1
+            else:
+                assert ch["000660"] == [["dyAtLeast", "blank", "배당수익률 1% 이상· " + W_["blank"]]], ch["000660"]
+                hid = sk.locator('[data-ui-v2="div-data-hidden"]')
+                assert hid.count() == 1 and hid.inner_text() == CD["dataHidden"]
+                assert page.locator('[data-ui-v2="div-small"], [data-small]').count() == 0
+            body = page.locator('[data-ui-v2="watch"]').inner_text()
+            assert (P["smallBasis"] in body) is on and (P["smallLine"] in body) is on, tag
+            # KB금융: its all-holder yield shows, so its 소액주주 numbers never do; 현대차 keeps its own reason line
+            assert ch["105560"] == [["dyAtLeast", "met", f"배당수익률 1% 이상· {fillp(W_['now'], now='2.8%')}"]], ch["105560"]
+            assert kb.locator("[data-small]").count() == 0 and P["smallBasis"] not in kb.inner_text()
+            assert ch["005380"][0][:2] == ["dyAtLeast", "blank"] and hd.locator('[data-ui-v2="div-rights-hidden"]').count() == 1
+            common(page, f"관심 종목 · {tag}", collect=not on)
+            if R.shots:
+                os.makedirs(R.shots, exist_ok=True)
+                page.screenshot(path=os.path.join(R.shots, f"watchsmall-{'on' if on else 'off'}-{width}.png"), full_page=True)
+        R.check(page, S, f"{tag}: 관심 종목 카드 — " + ("소액주주 배당수익률은 이름표와 그 줄 한 번 (dataHidden 줄 없음)" if on else
+                                                    "오늘처럼 정보 없음 · dataHidden 줄 · 이름표 없음"), watch_screen)
+
+        def sheet():
+            card(page, "000660").locator('[data-ui-v2="watch-bell"]').click()
+            sh = page.locator('[data-ui-v2="watch-sheet"]')
+            sh.wait_for(state="visible")
+            prev = sh.locator('[data-ui-v2="watch-field"][data-k="dyAtLeast"] [data-ui-v2="watch-preview"]').inner_text().replace("\n", "")
+            dy_field = sh.locator('[data-ui-v2="watch-field"][data-k="dyAtLeast"]')
+            if on:
+                assert prev == "배당수익률 1% 이상· " + fillp(W_["now"], now=f"{y_text} · {P['smallBasis']}"), prev
+                # the card's line, once, under the 배당수익률 field (#206 review S2, as the fund line sits under PBR)
+                line = dy_field.locator('[data-ui-v2="div-small"]')
+                assert line.count() == 1 and line.inner_text() == P["smallLine"] and sh.inner_text().count(P["smallLine"]) == 1
+                assert line.bounding_box()["y"] > dy_field.locator('[data-ui-v2="watch-preview"]').bounding_box()["y"]
+            else:
+                assert prev == "배당수익률 1% 이상· " + W_["blank"] and P["smallBasis"] not in sh.inner_text(), prev
+                assert sh.locator('[data-ui-v2="div-small"]').count() == 0
+            common(page, f"조건 시트 · {tag}", collect=not on)
+            page.keyboard.press("Escape")
+            sh.wait_for(state="detached")
+        R.check(page, S, f"{tag}: 조건 시트의 칩" + (" · 배당수익률 칸 밑의 그 줄" if on else ""), sheet)
+
+        def home():
+            got = home_rows(page)
+            ts = [g[0] for g in got]
+            if on:
+                assert ts == ["000660", "105560"], got
+                sk = got[0]
+                assert sk[1:3] == ["dyAtLeast", "1"], sk
+                assert sk[3] == [f"{by['000660']['nk']} · {W_['hitKind']}",
+                                 fillp(W_["hit"], condition="배당수익률 1% 이상", now=f"{y_text} · {P['smallBasis']}"),
+                                 fillp(C["why"]["close"], md=md_text)], sk[3]
+                assert sk[3][1].endswith(f"{P['smallBasis']}이에요.") and P["smallLine"] not in page.locator('[data-ui-v2="home-look"]').inner_text()
+            else:
+                assert ts == ["105560"] and P["smallBasis"] not in page.locator('[data-ui-v2="home-look"]').inner_text(), got
+            assert got[-1][2] == "" and got[-1][3][1] == fillp(W_["hitYe"], condition="배당수익률 1% 이상", now="2.8%"), got[-1]   # KB금융: no label
+            common(page, f"홈 · {tag}", collect=not on)
+            assert not R.errors, R.errors[:2]
+        R.check(page, S, f"{tag}: 홈의 관심 종목 조건 줄 — " + ("같은 이름표, 줄 없음" if on else "SK하이닉스 줄 없음"), home)
+        ctx.close()
+        srv.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", default=None)
@@ -17192,7 +17373,8 @@ def main():
                    lambda: scene_load_limit(R, files, 390, "stall"),                                        # 2026-11-28 첫 불러오기 한도: 답 없음 → 실패 문구
                    lambda: scene_load_limit(R, files, 390, "under"),                                        # 한도 바로 전의 답 → 여느 때처럼
                    lambda: scene_load_limit(R, files, 390, "returned"),                                    # #202 리뷰 S1: 불러오는 중의 돌아옴 → 한 번 더
-                   lambda: scene_fund_pbr(R, files, 390), lambda: scene_fund_pbr(R, files, 1280)):          # Jack 2026-11-27: ETF · 펀드의 PBR · 가치 점수
+                   lambda: scene_fund_pbr(R, files, 390), lambda: scene_fund_pbr(R, files, 1280),           # Jack 2026-11-27: ETF · 펀드의 PBR · 가치 점수
+                   lambda: scene_watch_small(R, files, 390), lambda: scene_watch_small(R, files, 1280)):   # 관심 종목 소액주주 배당수익률 (Jack 11-27, 14)
             try:
                 fn()
             except Exception as e:

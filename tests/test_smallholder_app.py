@@ -7,8 +7,9 @@ hidden with dvLine 3. The screens show it only behind a switch that is OFF until
   tile, the 배당 tab and 두 종목 비교 keep "회사가 공시한 배당 자료와 주식 수가 서로 맞지 않아서 …").
 - With the switch on and the lines set (test words, not proposals): the 요약 배당 tile shows "배당수익률 {y} · {label}" with the line in
   the hidden-yield line's place, the 배당 tab shows the 소액주주 dividend per share and yield labelled, 두 종목 비교 the yield labelled with
-  the line; 관심 종목 keeps today's line and its condition (the all-holder yield), and nothing shows beside a yield that is shown, on a
-  US stock, an older file, numbers that disagree, or another mark.
+  the line; 관심 종목's 배당수익률 condition reads the 소액주주 yield too, labelled, with the line once (Jack 2026-11-27, answer 14;
+  src/v2/watch.js watchSmall), and nothing shows beside a yield that is shown, on a US stock, an older file, numbers that disagree, or
+  another mark.
 - 예전 뱁새 shows no label in this PR (#183 review: its number is the report's own yield, never checked to be the 소액주주 rate).
 - Switch off (or on without the words): every screen renders byte for byte the same with and without the two fields.
 """
@@ -146,8 +147,9 @@ def test_on_the_company_page_and_compare_show_the_small_holder_yield_labelled():
     # a yield that shows keeps its number alone; numbers that disagree keep today's line
     assert got["shown"]["number"].startswith("배당수익률 ") and "LBL" not in got["shown"]["number"] and got["shown"]["note"] is None
     assert got["bad"]["note"] == L3 and got["bad"]["number"] is None and got["badCmp"]["note"] == L3
-    # 관심 종목 keeps today's line (its condition reads the all-holder yield, dyt)
-    assert L3 in got["watch"] and "LINE" not in got["watch"] and "LBL" not in got["watch"]
+    # 관심 종목 (Jack 2026-11-27, answer 14): its 배당수익률 condition reads the 소액주주 yield, labelled, with the line once, and no
+    # longer the hidden-yield line
+    assert L3 not in got["watch"] and got["watch"].count("LINE") == 1 and "지금 0.2% · LBL" in got["watch"]
 
 
 def test_switch_off_renders_the_same_with_and_without_the_fields():

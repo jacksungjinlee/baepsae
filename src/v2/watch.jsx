@@ -3,6 +3,10 @@
 //               condition chips, the bell that opens the condition sheet) and the bottom line. Met (fresh data): the chip turns
 //               green with a check; blank: "정보 없음" and, under the card, the company page's own line for why it is blank;
 //               stale data: the values beside the stale date line, never a check. No 뱁이 (numbers); the empty state is its line.
+//               A 소액주주 yield (watch.js watchSmall: switch smallcfg.js and both lines set; Jack 2026-11-27, answer 14) reads
+//               "지금 {y} · {C.co.div.smallBasis}" on its chip, in the sheet and on 홈's row; the card shows C.co.div.smallLine
+//               once, where the blank-value lines go (the company page puts it in the hidden-yield line's place), and the sheet
+//               once under the 배당수익률 field. 홈's row is a one-line notice whose tap opens the card: the label only there.
 // WatchSection  the 종목 tab's 관심 종목 section (at the top, only when the list is not empty) with 전체 보기 ›.
 // WatchButton   the company page: 관심 종목에 추가 / 관심 종목에서 빼기 (and the 30-stock line when the list is full).
 // CondSheet     the conditions of one stock (no board: its hint, labels and bad-number line are Jack's of 2026-11-19, Q15).
@@ -24,7 +28,7 @@ import { fcurBlank, fcurDyBlank, pbrZeroOf, fgnBlank, fundPbrOf } from "./fcur.j
 import { unitHeldFor, stmtNotWonFor, noStmtFor } from "./fix.js";
 import { divHiddenLine, DIV_HIDDEN_UI } from "./company.js";
 import { WATCH_MAX, WATCH_KINDS, WATCH_DEC, okWatchValue, watchOf, watchOrder, withWatchAdd, withWatchRemove, withWatchConds, watchSaveTime } from "./store.js";
-import { watchFresh, condState, condsOf, condText, nowValue, hitText, watchValue } from "./watch.js";
+import { watchFresh, condState, condsOf, condText, nowValue, hitText, watchValue, watchSmall } from "./watch.js";
 
 const W = () => C.watch;
 const usOf = (s) => !!s && s.cls === "us";
@@ -33,13 +37,15 @@ const canWrite = (store) => !!(store && store.writable && !store.locked);
 export const hitTitle = (name) => `${name} · ${W().hitKind}`;
 
 // ---------------- one chip ----------------
-// st: watch.js condState. "{condition} · 지금 {now}" (met: green with a check) or "{condition} · 정보 없음".
+// st: watch.js condState. "{condition} · 지금 {now}" (met: green with a check) or "{condition} · 정보 없음"; a 소액주주 yield
+// (st.small) "… · 지금 {y} · 소액주주 기준" (nowValue).
 function CondChip({ st, us }) {
   const met = st.state === "met";
   const label = condText(st.k, st.v, us);
-  const tail = st.val == null ? W().blank : fill(W().now, { now: nowValue(st.k, st.val, us) });
+  const tail = st.val == null ? W().blank : fill(W().now, { now: nowValue(st.k, st.val, us, !!st.small) });
   return (
     <span data-ui-v2="watch-chip" data-k={st.k} data-state={st.state} data-v={st.v} data-val={st.val == null ? "" : st.val}
+      data-small={st.small ? "1" : undefined}
       style={{ display: "inline-flex", alignItems: "center", flexWrap: "wrap", gap: SPACE(1) + 2, padding: `${SPACE(1) + 1}px ${SPACE(2) + 1}px`, borderRadius: RADIUS.sm + 2,
         background: met ? COLOR.okBg : COLOR.select, ...tx(SIZE.xs, WEIGHT.bold, met ? COLOR.ok : COLOR.ink, { lineHeight: 1.35 }) }}>
       {met && <Icon name="check-circle" size={14} tone="ok" />}
@@ -127,6 +133,8 @@ function WatchCard({ t, e, load, fresh, onCond, canEdit }) {
         </div>
       )}
       <BlankWhy s={s} co={co} kinds={sts.filter((x) => x.state === "blank").map((x) => x.k)} />
+      {/* a 소액주주 yield on a chip (watch.js watchSmall): the company page's line for it, once, where the reason lines go */}
+      {sts.some((x) => x.small) && C.co.div.smallLine && <Note data-ui-v2="div-small" style={{ marginTop: SPACE(2) }}>{C.co.div.smallLine}</Note>}
     </section>
   );
 }
@@ -181,6 +189,7 @@ export function CondSheet({ open, store, setStoreData, onClose }) {
         {WATCH_KINDS.map((k) => {
           const v = vals[k];
           const now = open.s ? watchValue(open.s, k) : null;
+          const small = now != null && watchSmall(open.s, k);                // a 소액주주 yield: labelled, as on the card's chip
           return (
             <div key={k} data-ui-v2="watch-field" data-k={k}>
               <label style={tx(SIZE.xs, WEIGHT.bold, COLOR.ink, { display: "block", marginTop: SPACE(3) })}>
@@ -196,17 +205,19 @@ export function CondSheet({ open, store, setStoreData, onClose }) {
               </label>
               {v != null && !Number.isNaN(v) && (
                 <div data-ui-v2="watch-preview" style={{ marginTop: SPACE(1) + 2 }}>
-                  <CondChip st={{ k, v, val: now, state: now == null ? "blank" : "stale" }} us={us} />
+                  <CondChip st={{ k, v, val: now, state: now == null ? "blank" : "stale", ...(small ? { small: true } : {}) }} us={us} />
                 </div>
               )}
               {/* an empty field: today's value (or 정보 없음), so there is something to compare with before typing */}
               {v == null && (
                 <p data-ui-v2="watch-now" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>
-                  {now == null ? W().blank : fill(W().now, { now: nowValue(k, now, us) })}</p>
+                  {now == null ? W().blank : fill(W().now, { now: nowValue(k, now, us, small) })}</p>
               )}
               {/* a US ETF or fund (Jack, 2026-11-27, answer 12): its PBR is never shown (fcur.js fundPbrOf), so the PBR field reads
                   정보 없음 (empty) or a 정보 없음 chip (typed); his line under it, once in the sheet (#203 reviews) */}
               {k === "pbrBelow" && <FundPbrNote s={open.s} style={{ marginTop: SPACE(1) }} />}
+              {/* a 소액주주 yield (watch.js watchSmall; #206 review S2): the card's line, once, under the 배당수익률 field */}
+              {small && C.co.div.smallLine && <Note data-ui-v2="div-small" style={{ marginTop: SPACE(1) }}>{C.co.div.smallLine}</Note>}
               {Number.isNaN(v) && <Note tone="watch" data-ui-v2="watch-bad">{W().form.bad}</Note>}
             </div>
           );
@@ -316,17 +327,19 @@ export function WatchButton({ s, store, setStoreData }) {
 // ---------------- 홈: 오늘 볼 것 ----------------
 // hits: watch.js watchHits. Each row: "{name} · 관심 종목 조건", the hit line, and the stock's price date ("{md} 종가", US
 // "{date} 종가 (미국 시간)": cofmt.closeLine). onOpen: on 홈 the 오늘 볼 것 page (v19.6b), on that page 관심 종목.
+// A 소액주주 yield (h.small) is labelled in the hit line as on the chip ("… 지금 {y} · 소액주주 기준이에요.": watch.js hitText).
 export function WatchHitRows({ hits, load, onOpen }) {
   return hits.map((h) => {
     const date = closeLine(load, h.s);
     return (
-      <button key={h.t + "|" + h.k} type="button" data-ui-v2="home-watch" data-t={h.t} data-k={h.k} data-date={h.date} onClick={onOpen}
+      <button key={h.t + "|" + h.k} type="button" data-ui-v2="home-watch" data-t={h.t} data-k={h.k} data-date={h.date} data-small={h.small ? "1" : undefined}
+        onClick={onOpen}
         style={{ ...tap, width: "100%", marginTop: SPACE(2), border: "none", textAlign: "left", background: COLOR.surface, borderRadius: RADIUS.lg - 2, padding: SPACE(3) + 2,
           display: "flex", alignItems: "center", gap: SPACE(3), minHeight: TOUCH }}>
         <IconChip name="bell" size={40} />
         <span style={{ flex: 1, minWidth: 0 }}>
           <span style={tx(SIZE.sm, WEIGHT.heavy, COLOR.ink, { display: "block" })}>{hitTitle(h.s.nk || h.t)}</span>
-          <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2, wordBreak: "keep-all" })}>{hitText(h.k, h.v, h.val, usOf(h.s))}</span>
+          <span style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { display: "block", marginTop: 2, wordBreak: "keep-all" })}>{hitText(h.k, h.v, h.val, usOf(h.s), !!h.small)}</span>
           {date && <span data-ui-v2="home-watch-date" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text3, { display: "block" })}>{date}</span>}
         </span>
         <Icon name="chevronRight" size={18} tone="on" />
