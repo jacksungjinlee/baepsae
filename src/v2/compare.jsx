@@ -8,6 +8,7 @@
 //   (compareCells): 내 기준 · 업종 (+ 새 업종) · 주가 변동 (지난 1년) · 코스피 1% → (the β band, US against S&P 500; 자료가 없어요
 //   when unreliable) · PBR · 배당수익률 (verified only) · 오늘 주가가 가정하는 성장 (impliedGrowth: its number and edge lines) ·
 //   재무 경고 신호 ("확인한" rules). A number the data blanked reads "–" with the same approved line the company page puts there.
+//   A held US ETF or fund has no PBR: "–" with Jack's line co.fundPbr (2026-11-27), once per table (oneFundLine).
 //   Under the table the approved β note.
 // - 바꾸면 업종 비중: the bar after the swap and "{group} {a}% → {b}% · 업종 {n}개 → {m}개" for the part that moves most.
 // - "{candidate}만 담기" → the 담기 sheet (Part C). "{holding}과/와 바꾸기" → the 빼기 sheet for the holding with 더 잘 맞는 종목을
@@ -27,8 +28,8 @@ import { criteriaPct } from "./fitpct.js";
 import { riskBandText, riskBandNote, timesText, yieldText, usOf } from "./cofmt.js";
 import { subjectParticle } from "./track.js";
 import { stmtNotWonFor, unitHeldFor, pxBadFor, pxBadHidesFor, noStmtFor, fixNotesHidden, epsLineKind, epsBasisCardGone } from "./fix.js";
-import { pxBadText, pxBadOneText, unitChkText, stmtCurText, fcurNoteText, prefText, prefFitText, epsFixText } from "./fixnote.jsx";
-import { fcurBlank, fcurDyBlank, pbrZeroOf, fgnBlank, fgnKindOf, FGN_LINE_KEYS } from "./fcur.js";
+import { pxBadText, pxBadOneText, unitChkText, stmtCurText, fcurNoteText, prefText, prefFitText, epsFixText, fundPbrText } from "./fixnote.jsx";
+import { fcurBlank, fcurDyBlank, pbrZeroOf, fgnBlank, fgnKindOf, FGN_LINE_KEYS, fundPbrOf } from "./fcur.js";
 import { IndBar, pctText, addWarnView } from "./editparts.jsx";
 import { indText, listDate } from "./finder.jsx";
 import * as E from "./edit.js";
@@ -97,6 +98,9 @@ export function compareCells(s, co, ctx) {
   // PBR: the company page's order of blanks (Tiles: statements not in won or the unit check; then the US lines); else the PBR
   // with two decimals, or 자료가 없어요 for none (and the no-statements line where it explains it)
   if (stmtNotWonFor(s, co) || unitHeldFor(s, co)) out.pbr = cell(DASH, unitChkText(s, co) || stmtCurText(s, co), { blank: "cur" });
+  // a US ETF or fund (Jack, 2026-11-27, answer 12): no PBR (fcur.js fundPbrOf: Yahoo's fund figure is never shown) -> "–" with his
+  // line, ahead of the US companies' lines (a fund's reason holds whatever else the data marked)
+  else if (fundPbrOf(s)) out.pbr = cell(DASH, fundPbrText(s), { blank: "fund" });
   else if (fcurBlank(s)) out.pbr = cell(DASH, fcurNoteText(s), { blank: "fcur" });
   else if (pbrZeroOf(s)) out.pbr = cell(DASH, C.co.pbrZero || null, { blank: "pbr0" });
   else if (fgnBlank(s, "pbr")) out.pbr = cell(DASH, fgnLine(s, "pbr"), { blank: "fgn" });
@@ -140,6 +144,12 @@ export function compareCells(s, co, ctx) {
   return out;
 }
 export const ROWS = ["fit", "ind", "vol", "beta", "pbr", "dy", "growth", "warn"];
+// The fund line once per table (Jack's line is about funds, not about one column): when both columns are US funds the candidate's
+// PBR cell keeps its "–" and the holding's carries the line. a · b: the two compareCells results, changed in place. (pure; tests)
+export function oneFundLine(a, b) {
+  if (a && b && a.pbr.data.blank === "fund" && b.pbr.data.blank === "fund" && a.pbr.note && b.pbr.note === a.pbr.note) b.pbr = { ...b.pbr, note: null };
+  return [a, b];
+}
 
 // The verdict line (find.js verdictOf's kind), with the particle after the candidate's name. -> string or null
 export function verdictText(kind, b) {
@@ -241,6 +251,7 @@ export function Compare({ deck, draft, load, pad, candT, holdT, setHoldT, xOf, o
   const sameBench = (s) => !!s && (bothUs || !usOf(s));
   const A = compareCells(hs, hs ? load.coByT.get(h.t) || null : null, { ...ctxBase, groups: null, row: h, betaShort: sameBench(hs) });
   const B = compareCells(cand, load.coByT.get(cand.t) || null, { ...ctxBase, groups, row: null, betaShort: sameBench(cand) });
+  oneFundLine(A, B);
   const vd = F.verdictOf({ pct: A.fit.data.pct === "" ? null : A.fit.data.pct, vol: A.vol.data.vol === "" ? null : A.vol.data.vol },
     { pct: B.fit.data.pct === "" ? null : B.fit.data.pct, vol: B.vol.data.vol === "" ? null : B.vol.data.vol });
   const verdict = verdictText(vd.kind, cand.nk);
