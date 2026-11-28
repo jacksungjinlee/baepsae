@@ -11,7 +11,7 @@ import { loadJson, krGrowthBasis, krGrowthDcfLine, krRevDcfText, krRevDcfNote, l
 // 2026-11-08 (Jack): PER · EPS (와 같은 순이익으로 계산한 ROE · 배당성향 · 주가 분해 · DCF) 칸마다 한 줄, 이자보상배율이 꺼진 회사의
 // 재무 신호 밑에 한 줄 — DART 다시 읽기 전까지 (src/repair.js, src/fixnote.jsx)
 import { EpsFixLine, IcrOffLine, StmtCurLine, UnitChkLine, PxBadLine, PxBadOneLine, epsLineKind, KrOwnCloseLine, KrOwnCloseListLine, FIX_KR_AGED } from "./fixnote.jsx";
-import { epsBase, epsPeriod, stmtNotWon, stmtCurOf, unitHeld, pxBad, pxBadFull } from "./repair.js";
+import { epsBase, epsPeriod, stmtNotWon, stmtCurOf, unitHeld, pxBad, pxBadFull, spNo, spNoFull } from "./repair.js";
 
 const KEY_DCF = "baepsae_v12_dcf";
 
@@ -1011,7 +1011,8 @@ function DecompCard({ c, setExplain, corp }) {
   // 2026-11-14 저녁 (Jack): 3년 주가 변화(r36)를 과거 주가 기록 오류로 비웠고 52주는 보이는 회사 (52주까지 비운 회사는 칸이 없어요: 머리의 줄이
   // 말해요). 칸을 어떻게 그릴지는 예전 그대로 다른 입력으로 정하고 (r36 자리에 아무 값 · 적자 · 기준이 다름 · 자료 없음은 예전처럼), 숫자가 나왔을
   // 자리에만 '주가 (3년) —' 와 그 줄을 넣어요 (pxBad 리뷰 2차)
-  const px = pxBad(c);
+  // 2026-11-27 (Jack, 답 11): 공시로 확인하지 못한 분할로 r36 을 비운 회사(spNo)도 같은 칸 모양 — 예전 뱁새에는 그 줄이 없어요 ('주가 (3년) —' 만)
+  const px = pxBad(c) || spNo(c);
   if (px) {
     const p0 = decomposeReturn({ ...c, r36: 0 });
     if (p0 && p0.why !== "basis") {
@@ -1413,7 +1414,7 @@ export function CompanyView({ data, t, heldInfo, onBack, onOpen, onCompare, setE
       )}
       {guideOpen && <GuideReader id={c.s} onClose={() => setGuideOpen(false)} />}
       {/* 과거 주가 기록 오류 (pxBad): 3년 주가 변화가 비어요 — '적자 구간이 있어서…' 같은 맞지 않는 이유 대신 칸이 없어요 (이유는 머리의 줄) */}
-      {!cur && !pxBadFull(c) && <DecompCard c={c} setExplain={setExplain} corp={data} />}
+      {!cur && !pxBadFull(c) && !spNoFull(c) && <DecompCard c={c} setExplain={setExplain} corp={data} />}
       <DcfCard c={c} sharesM={sharesM} setExplain={setExplain} corp={data} />
 
       <div style={{ fontSize: 10.5, color: C.faint, textAlign: "center", lineHeight: 1.7, padding: "6px 0 20px" }}>

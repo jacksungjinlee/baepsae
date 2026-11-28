@@ -20,7 +20,36 @@ v19.6b switch-on is its own paragraph below (#196). **Open questions to Jack:** 
 {n} · 실적 발표 {n}) (one decimal on 지분 변동 amounts: answered 11-23, in the switch-on PR). Design chat has (sent 11-22): the say-why audit, the 10 dark-mode pairs,
 the approved 유상증자 card sentences with proposals for 유무상증자 and 기타주식. **Next in the queue:** v19.3 Part L is skipped (Jack,
 11-27: "Yes, skip Part L"; the v19.3 spec's Status line says what covered each item), so Track 1's data follow-ups and Jack's
-other 11-27 answers come next. On hold: v19.4, v19.6g, v19.6h.
+other 11-27 answers come next. Also queued: the old app's loads (`baepsae.html`: `src/detail.jsx` `loadLiveData`, `src/data.js`,
+`src/corp.jsx`, `src/macro.jsx`, `src/disc.jsx`) have no time limit, the gap #202 closed in 2.0. On hold: v19.4, v19.6g, v19.6h.
+
+**First-load time limit (#202, branch `claude/load-limit`, 2026-11-28; app only, no new words; live once it merges and deploys):** found by the #201 review. 2.0's first load (`load.js` `loadAll`, called through `main.jsx`) had no time limit, so a connection that never answered and never failed kept every screen on the loading state (관심 종목, 연말에 확인할 숫자 …: titles only, no cards, no message) for as long as the browser kept the request open; disc.json already gave up after 60 s. Now `main.jsx` loads through `load.js` `loadFirst`: `loadAll` with one 60 s budget for data.json, corp.json and macro.json (`FIRST_LOAD_TIMEOUT_MS` = `REFETCH_TIMEOUT_MS`, the limit of disc.json and of a return's fetch). At the limit every request still out is stopped (AbortController), so a late answer can never overwrite the failure: data.json or corp.json stopped → the existing load-failure message (`app.loadFail`) on every screen, word for word as a 404, the console line `[v2] load failed: data.json: not finished in 60 s` (no answer yet, or one still arriving), and the existing one more try on a return to view (`returnWatch`); a return made while the first load was still out (the return watch starts only after it) gets that one fetch as soon as the load fails in view (`app.jsx` `returnedWhileLoading`, review S1: a phone that froze the page fires the return first and the overdue limit after; the limit never pauses while hidden); macro.json stopped alone → the data goes on without it, as when it fails. Loads inside the limit are unchanged (the timer is cleared). The service worker is unchanged (network first; a request the page stops does not reach its offline copy) and needs no new version (it caches nothing by app version). Tests: `tests/test_load_limit.py` (Node: the limit, the stop, macro alone, a slow load under the limit, the shipped 60 s) and smoke_v2 `scene_load_limit` (a test build with a 5 s limit: a 9 s stall → the message on 관심 종목 · every tab · 연말에 확인할 숫자, the same text as a 404, then the retry; a 3.5 s answer → loads as usual; hidden and shown during the load → the stop, one owed fetch, loaded). Known, not fixed here: the old app has the same gap (queued above); a connection slower than about 180 kbit/s (data.json + corp.json are about 1.3 MB compressed) now gets the failure message after 60 s instead of a very late load. `tests/test_stale_refetch.py`: its docstring and one comment now say the first load has the 60 s limit (comment-only; its assertion, `loadAll` alone sends no signal, is unchanged).
+**Korean stock splits (#186, merged 2026-11-28 as 8a08510 after a green dry run with real DART calls; first live publish Tue 12-01; Track 1, spec v19.6 A.6):**
+`data.json` `splits` gets Korean 액면분할 · 주식병합 rows (same shape and meaning as the US rows; the app reads them unchanged), dated the
+first trading day on the new count (신주권상장예정일). A row needs three checks to agree (answer 4): the DART decision (document's par
+values and listing date, or a 감자결정 by merging shares read as the holder's ratio), that day's listed-share change (split ± 10%,
+merge exact) and that day's base-price jump (split close ÷ ratio ± 1%; merge, set by auction, ½–2× of it and a real move); a halted
+merge pairs its share day with a base reset up to 5 trading days later (`kr_split_pairs`; the filing's date must be one of the two);
+the receipt `splitsKr.rows` names the checks `{dl, shr, px, rule}` (+ `dShr · dPx · dlOn` for a pair). Seed `data/kr_splits_seed.csv`
+586 (7 paired lines). Fixed rows with typed evidence (`KR_SPLIT_OVERRIDE_EVIDENCE`, same three checks): 삼성전자 · 우 2018 (DART list
+only), NAVER 2018 · 카카오 2021 (numbers from the documents DART served on 11-23). DART errors, timeouts and throttling are never a
+"no" (pending). **Split without a filing** (answer 11; `splitsKr.nofile`, carried for 3 years 40 days even while a stock is out of
+the list): must-have stock → FAIL row; 16+ that this run judged itself (`splitsKr.runNew`, never cached verdicts: a run that
+does not publish still saves the DART cache) → FAIL row (threshold from a backfill simulation; RUNBOOK has the way out); any other stock →
+`mark_split_nofile` blanks the numbers computed across it (same fields and windows as `pxBad`) and marks `spNo` · `spNoF`; 2.0 shows
+Jack's line "주식 수가 크게 바뀌었는데, 공시로 확인하지 못해서 이 숫자는 비워 두었어요." where the price-history lines go; old app "–".
+**Fractions** (answer 11): merges and 5:2 splits publish; 팔았어요 takes a part of a share in 1/10,000 where a split left one
+(`held.js` `fracHeld`, exact per-record units; a Korean holding's shown count is the exact holding rounded once, so 1+1+1
+through a 1:3 merge shows and sells 1주). A halted merge whose two days fall in two runs stays in `splitsKr.dq`; a carried row's
+Daum window starts at its `pxd`, and a stock back in the list is read too (round 3). Re-asks of unreadable filings use only budget
+left after never-asked events and keep the cached verdict when they fail; `runNew` counts only events with no earlier verdict.
+Warning rows: `splitsKr`, the blanking check, this run's count, records carried, and (round 3) "most of this run's fresh DART
+lookups did not confirm a split" (8+ lookups, 80%+, with a loud log line and a GitHub warning; a broken document reader is not
+stopped by the 16 row — whether this row should stop the publish is Jack's call).
+**Open (asked Jack 11-28):** a holding bought before an unconfirmed split still shows its value at the old count — blanking it needs
+a new totals line (draft in the PR). One question to Jack: should a failed receipt check, a stock not blanked and a vanished `nofile`
+record fail the publish? **Next: 무상증자 (Jack, 11-27: "the next PR right after #186")**; RUNBOOK § Korean stock splits says where
+it plugs in.
 
 **Screen check and `pxBad` built-ins (#200, branch `claude/smoke-pxbad`, 2026-11-28; tests only):** Track 2 audit 5.1, Jack's
 11-27 answer 7 ("Yes, under the standing rule"). `tests/smoke_app.py --data` (the third pre-publish screen check) counted a

@@ -4,12 +4,13 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./app.jsx";
-import { loadAll, loadDisc, loadLogoIndex, LOGO_DIR, refetchNewer } from "./load.js";
+import { loadFirst, loadDisc, loadLogoIndex, LOGO_DIR, refetchNewer } from "./load.js";
 import { setLogoSource } from "./logo.jsx";
 import { STORE_KEY } from "./store.js";
 
 // refetch (2026-11-08): a page brought back into view with stale data fetches the files once (app.jsx, load.js refetchNewer).
-const LIVE = { preview: false, storeKey: STORE_KEY, exportPrefix: "baepsae-records", load: () => loadAll(), loadDisc: () => loadDisc(),
+// load (2026-11-28): the first load gives up after 60 s, as disc.json does (load.js loadFirst): the load-failure message then.
+const LIVE = { preview: false, storeKey: STORE_KEY, exportPrefix: "baepsae-records", load: () => loadFirst(), loadDisc: () => loadDisc(),
   refetch: (cur, disc) => refetchNewer(cur, disc) };
 setLogoSource(loadLogoIndex, LOGO_DIR);           // v19.3a: company logos from this site's logos/ (the preview never does this)
 

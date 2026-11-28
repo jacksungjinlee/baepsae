@@ -3,7 +3,7 @@
 // whole app reads that one way: load.js resolveLoad calls setEpsBasis(corp) once per load (the way engine.setDataShape
 // works), so a screen that only has a held stock (daily.jsx) knows it too. Until a file is loaded the line is on (a fix is
 // never assumed). Pure; no Korean (src/copy/v2.js C.fix).
-import { EPS_FIX_DATE, epsBasisLive, epsInFixed, epsTotalNci, epsTotalSide, isForeignIssuer, icrOff, warnEpsFixLate, epsNoticeOn, stmtCurOf, stmtNotWon, warnStmtCur, unitHeld, pxBad, pxBadFull, pxBadHides } from "../repair.js";
+import { EPS_FIX_DATE, epsBasisLive, epsInFixed, epsTotalNci, epsTotalSide, isForeignIssuer, icrOff, warnEpsFixLate, epsNoticeOn, stmtCurOf, stmtNotWon, warnStmtCur, unitHeld, pxBad, pxBadFull, pxBadHides, spNo, spNoFull, spNoHides } from "../repair.js";
 import { kstDate } from "../data.js";
 
 export { EPS_FIX_DATE, icrOff };
@@ -65,13 +65,22 @@ export const unitRowsBlank = (s, co, rows) => unitHeldFor(s, co) && (rows || [])
 // "과거 주가 기록 일부에 오류가 있어서 52주 범위와 출렁임·위험 숫자는 비워 두었어요." goes (once per screen: the company page header,
 // where the 52주 bar would be) and which parts with no numbers are left out or held at "–" (the 출렁임 tile and card, 주가는
 // 무엇으로 움직였나). s: the data.json row · co: its corp.json row (either may be missing). US stocks and funds: never.
-export const pxBadFor = (s, co) => !!s && s.cls === "kr" && (pxBad(s) || pxBad(co));
+// 2026-11-27 (Jack, answer 11): a stock whose numbers were blanked for a split no DART filing confirms (repair.js spNo) counts here too:
+// the same numbers, the same places, with Jack's line for it (fixnote.jsx picks the line: spNoFor and its helpers below).
+const pxOwnFor = (s, co) => !!s && s.cls === "kr" && (pxBad(s) || pxBad(co));
+export const pxBadFor = (s, co) => pxOwnFor(s, co) || spNoFor(s, co);
 // 2026-11-14 evening (Jack): which numbers were blanked (data.json pxBadF, else corp.json's): only those whose calculation window holds
 // the bad day. Full = the 52주 range too (the full line in the header); otherwise each blanked number gets the short line in its place.
 const pxRow = (s, co) => (pxBad(s) ? s : co);
-export const pxBadFullFor = (s, co) => pxBadFor(s, co) && pxBadFull(pxRow(s, co));
-export const pxBadPartFor = (s, co) => pxBadFor(s, co) && !pxBadFull(pxRow(s, co));
-export const pxBadHidesFor = (s, co, k) => pxBadFor(s, co) && pxBadHides(pxRow(s, co), k);
+export const pxBadFullFor = (s, co) => (pxOwnFor(s, co) && pxBadFull(pxRow(s, co))) || spNoFullFor(s, co);
+export const pxBadPartFor = (s, co) => pxBadFor(s, co) && !pxBadFullFor(s, co);
+export const pxBadHidesFor = (s, co, k) => (pxOwnFor(s, co) && pxBadHides(pxRow(s, co), k)) || spNoHidesFor(s, co, k);
+// 공시로 확인하지 못한 분할 (Jack, 2026-11-27, answer 11; repair.js spNo): data.json spNo · spNoF, else corp.json's. Where a number is blanked for
+// it, its line takes the place of the pxBad line (a stock with both marks: the split is the newer, more specific reason).
+const spRow = (s, co) => (spNo(s) ? s : co);
+export const spNoFor = (s, co) => !!s && s.cls === "kr" && (spNo(s) || spNo(co));
+export const spNoFullFor = (s, co) => spNoFor(s, co) && spNoFull(spRow(s, co));
+export const spNoHidesFor = (s, co, k) => spNoFor(s, co) && spNoHides(spRow(s, co), k);
 // 내 기준과 맞는 정도: a 낮은 변동성 (lz) or 추세 (mz) row left blank by the mark, on a stock whose 52주 range shows (the short line under the
 // rows). rows: company.cardRanks(...).rows.
 export const PX_CARD_FIELD = { lowVol: "lz", trend: "mz" };

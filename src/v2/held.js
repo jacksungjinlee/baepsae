@@ -106,7 +106,12 @@ const scaled = (u, f) => (u == null ? null : f === 1 ? u : (okU(Math.round(u * f
 // (#184 round 2: 4 old DD shares sold as 3.9998 and 0.0002, exactly 0, where each-record closes early and leaves 2/3 of a
 // unit for the second sale), else main's own count (each-record over the whole history), so records saved and checked by
 // main read back exactly as main read them. The store refuses only records that go below 0 by all three.
+// Korean stocks (every record in won, review #186 round 2): the open position uses the running count while it stays at or above 0, so
+// the share count shown is the exact holding rounded once (three lots of 1 share through a 1:3 주식병합 are 1주, not 0.9999주) and is a
+// quantity 팔았어요 and the store accept (a Korean sale is whole shares unless a split left a part: fracHeld counts the exact units too).
+// main had no Korean split, so every Korean record there gives whole units and both counts are the same.
 function count(list) {
+  const kr = list.length > 0 && list.every((e) => e.r && e.r.ccy === "KRW");
   const main = list.map((e) => Math.round(e.x) || 0);        // || 0: never -0
   let m = 0, mainOk = true;
   for (const k of main) { m += k; if (m < 0) mainOk = false; }
@@ -130,7 +135,7 @@ function count(list) {
     }
   }
   let ok = true;
-  if (start < list.length) { take(list.length, eachOk); if (!eachOk && !runOk) ok = false; }
+  if (start < list.length) { take(list.length, kr ? eachOk && !runOk : eachOk); if (!eachOk && !runOk) ok = false; }
   let use = out;
   if (!ok) {
     // the running count over the whole history, then main's
@@ -218,6 +223,40 @@ export function sellAllUnits(recs, t, date) {
     }
   }
   return first;
+}
+
+// A holding of t left with part of a share by a split on `date` (Jack, 2026-11-27, answer 11: "팔았어요 accepts fractions (same unit as the
+// spec, 1/10,000 share)"): the units held on that date (records dated on or before it), read on that date's share basis (today's basis ÷
+// the splits after the date), are not a whole number of shares. A Korean 주식병합 or a 5:2 split leaves such a part (15 shares through a 1:10
+// merge are 1.5); the company pays it out in cash, and the user records that as a sale of it. Korean records are whole shares otherwise.
+// Review #186 round 1 (Opus S4): the exact units of each record on that date's basis are summed before any rounding (today's rounded
+// count divided back by a 1:3 factor made 10 whole shares look like 9.9999 and let a part be sold before the merge).
+export function fracHeld(recs, t, date) {
+  if (!recs || typeof recs !== "object" || typeof t !== "string" || typeof date !== "string" || !date) return false;
+  const sp = splitsOf(recs);
+  const fd = splitFactor(sp, t, date);
+  let x = 0;
+  const add = (list, sign, units) => {
+    for (const r of Array.isArray(list) ? list : []) {
+      if (!r || r.t !== t || (typeof r.date === "string" && r.date && r.date > date)) continue;
+      const u = units(r);
+      if (u != null) x += sign * u * splitFactor(sp, t, splitDateOf(r, recs)) / fd;
+    }
+  };
+  add(recs.imported, 1, importedUnits);
+  add(recs.purchases, 1, (p) => (Number.isInteger(p.qty) && p.qty > 0 && okU(p.qty * UNIT) ? p.qty * UNIT : null));
+  add(recs.sales, -1, (s) => (okUnits(s.qty) ? toUnits(s.qty) : null));
+  if (!(x >= 0.5) || !Number.isFinite(x)) return false;
+  return Math.abs(x - Math.round(x / UNIT) * UNIT) >= 0.5;            // at least half a unit away from whole shares
+}
+// Every Korean part-share sale of t still sold a part the holding had on its date (each read without itself, as the store checks it,
+// store.js): a new part-share sale dated before an existing one must not take the part that one sold (review #186 round 1, Fable).
+export function fracSalesOk(recs, t) {
+  const imp = (recs && Array.isArray(recs.imported) ? recs.imported : []).some((r) => r && r.t === t && byAmount(r));
+  if (imp) return true;
+  const sales = recs && Array.isArray(recs.sales) ? recs.sales : [];
+  return sales.every((s) => !s || s.t !== t || s.ccy !== "KRW" || Number.isInteger(s.qty)
+    || fracHeld({ ...recs, sales: sales.filter((y) => y !== s) }, t, s.date));
 }
 
 // Shares held now per stock with more than 0 shares (Map t -> quantity as a number, units / UNIT).

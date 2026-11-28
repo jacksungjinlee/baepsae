@@ -9,7 +9,7 @@ src/v2/load.js:
   publish; else corp.json and macro.json (+ disc.json when the page shows it). All files from one later publish, or none:
   a failure, an unreadable file, a file from another publish or no later publish keeps the data on screen. Logged with counts.
   A failed first load is tried again through loadAll (its checks; macro.json may fail as on a first load). Every request of a
-  return's fetch gives up after REFETCH_TIMEOUT_MS (the first load has no limit)
+  return's fetch gives up after REFETCH_TIMEOUT_MS (the first load has a 60 s limit too since 2026-11-28: loadFirst, tests/test_load_limit.py)
 - returnWatch: at most one fetch per return to view (hidden -> visible, or pageshow from the back-forward cache), never
   two at once, only when due, no retries, none within REFETCH_GAP_MS of a fetch that put nothing on screen, none while a
   later publish is held
@@ -572,7 +572,7 @@ w.hide(); await w.show();                                          // hangs, giv
 clock += LD.REFETCH_GAP_MS; w.hide(); const again = w.show();
 await again;
 serve({});
-await LD.loadAll(at(NOW));                                         // the first load: no time limit (no signal)
+await LD.loadAll(at(NOW));                                         // loadAll alone: no signal (the first load's 60 s limit is loadFirst's)
 out = { r, took, sigs, again: !!again, first: SIGS.slice(-3), warn: WARN, limit: LD.REFETCH_TIMEOUT_MS };""", OLD=old_files(), NOW=NOW)
     assert got["r"]["ok"] is False and "data.json: no answer in" in got["r"]["why"], got["r"]
     assert got["took"] < 5000 and got["sigs"] == [True] and got["limit"] == 60000, got
