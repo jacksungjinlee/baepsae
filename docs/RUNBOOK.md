@@ -132,6 +132,11 @@ run log starts "5xx 다시 물음", and the count ("· 5xx 다시 물음: N곳")
       counts toward the limit of 3. On a day with that note, read the reason it gives: a `pxBad` mark means the gate's mark
       rows apply (a second marked must-have fails the gate); a blank beta or volatility on 005930 without a mark is the
       pipeline, not the market.
+    - **Not yet covered: an unconfirmed-split mark (`spNo`, #186) on a built-in.** The old app treats it like `pxBad`
+      (no 예시 가격 notice, beta and volatility left out), but `example_price_stocks` still expects the notice for it, so
+      [정상] and [미국 자기 날짜] KO fail and nothing is published (a copy of the 11-28 data with 042700 marked `spNo`:
+      정상 18 / 19). The gate only warns on such a mark for a stock that is not a must-have. If that happens: don't skip
+      the check; tell Jack. The fix is #200's, for `spNo` (a follow-up).
     - `!! 확인 못 함` and `!! 알림` lines are on a green run, where nobody looks by default. The 09:13 morning check
       must report them to Jack: its instructions are extended for the warnings titled "발행 전 화면 검사 …" as an
       after-merge step of #106 (until that is done, nothing reads them).

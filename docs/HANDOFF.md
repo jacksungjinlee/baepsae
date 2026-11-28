@@ -81,7 +81,11 @@ Results (11-28 publish copies): with 005930 marked, 171 / 171 and 15 swap notes 
 too); with SK하이닉스 marked too (a gate-FAIL day), 170 / 171, only B안's 1/N check ("σ -0.0%p" drawn in the zero colour is not in
 its zero list; main fails it the same way; changing it would accept more, so it is Jack's call); four marked: only the limit
 fails; unmarked: 171 / 171 like main, no swap note. Known gap (CI covers it, tests/test_px_bad_app.py): no screen check reads the
-risk numbers of a marked stock itself. RUNBOOK "screen check".
+risk numbers of a marked stock itself. **Found, not changed (next, for Jack's queue):** #186's unconfirmed-split mark (`spNo`) on a
+built-in that is not a must-have re-opens #200's problem: the old app shows no 예시 가격 notice for it (`mergeStocks`), but
+`example_price_stocks` still expects one, so [정상] and [미국 자기 날짜] KO fail and the publish is held (the gate only warns on the
+mark). Tried on an 11-28 copy with 042700 marked: 정상 18 / 19. The fix is #200's rule extended to `spNo`; Jack's yes 7 named
+broken-history marks, so ask first. RUNBOOK "screen check".
 
 **v19.6b switch-on (#196, branch `claude/v19.6b-switch-on`, 2026-11-28; live once it merges and deploys):** the parts #168 shipped off.
 공시 보기 on every 확인 필요 card (`routes.dartFilingUrl`: that one filing in DART's viewer by its exact receipt number, else no button;
