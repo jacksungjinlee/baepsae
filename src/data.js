@@ -3,7 +3,7 @@
 // 실패하면 { ok:false } 를 돌려주고, 화면은 '불러오지 못했어요'를 보여줘요.
 // 빈 결과나 내장 예시 데이터를 실제 시세처럼 보여주지 않기 위해서예요.
 
-import { pxBad } from "./repair.js";   // 2026-11-14: 과거 주가 기록 오류 표시 (mergeStocks)
+import { pxBad, fundRow } from "./repair.js";   // 2026-11-14: 과거 주가 기록 오류 표시 (mergeStocks) · 2026-11-27: ETF · 펀드의 PBR
 
 // JSON 에 NaN·Infinity 가 끼면 브라우저는 파일 전체를 거부해요. 따옴표 밖에 있는 것만 null 로 고쳐요
 // (미국 기업 설명 글에는 'NaN' 같은 낱말이 들어갈 수 있어서 따옴표 안은 건드리지 않아요).
@@ -331,11 +331,16 @@ export function mergeStocks(base, live) {
   const byT = Object.fromEntries(base.map((s) => [s.t, s]));
   const byNorm = {};
   base.forEach((s) => { byNorm[norm(s.t)] = s; });
-  const out = [], skipped = [];
+  const out = [], skipped = [], fundOff = [];
   let noRiskN = 0;
   const keep = (x) => (x != null ? x : null);   // 빈 칸은 빈 칸으로 (0 으로 바꾸지 않음)
+  // 2026-11-27 (Jack, answer 12: "Yes, hide them"): ETF · 펀드(etf 참 또는 fund · repair.js fundRow)의 PBR 과 그 PBR 로 매긴 가치 점수(vz)는
+  // 싣지 않아요 (펀드에는 회사의 장부가가 없어요). 파이프라인이 비우고 (data.json fundPb), 그 전에 발행된 파일이면 여기서 빼요 (console 에 종목).
+  // 합친 줄에는 fundNoBook 표시 — 미국 펀드면 종목 고르기 · 내 포트폴리오의 성향에 Jack 의 줄 (fixnote.jsx FundPbrLine · 한국어 화면만).
   live.forEach((L) => {
     const b = byT[L.t] || byNorm[norm(L.t)];
+    const fund = fundRow(L);
+    if (fund && (L.pbr != null || L.vz != null)) fundOff.push(L.t);
     if (b) {
       // v17.5: 오늘 데이터의 값만 써요. 빈 칸(적자라 PER 없음 등)은 '–'로 두고, 2025 내장 값을 섞지 않아요.
       // 베타·변동성은 계산에 꼭 필요해서 비었으면 내장 값을 쓰되, 그 종목은 '실시간 아님'으로 표시해요.
@@ -345,9 +350,9 @@ export function mergeStocks(base, live) {
       const partial = L.price == null || (!bad && (L.beta == null || L.vol == null));
       const v = (k) => (L[k] != null ? L[k] : null);
       out.push({ ...b, price: L.price != null ? L.price : b.price, beta: bad ? null : L.beta != null ? L.beta : b.beta,
-        vol: bad ? null : L.vol != null ? L.vol : b.vol, ...(bad ? { noRisk: true, pxBad: L.pxBad, pxBadF: L.pxBadF } : {}), per: v("per"), pbr: v("pbr"), dy: v("dy"), al: v("al"),
+        vol: bad ? null : L.vol != null ? L.vol : b.vol, ...(bad ? { noRisk: true, pxBad: L.pxBad, pxBadF: L.pxBadF } : {}), per: v("per"), pbr: fund ? null : v("pbr"), dy: v("dy"), al: v("al"),
         sh: L.sh, mdd: L.mdd, hit: L.hit, mom: L.mom, cap: L.cap, val: L.val,
-        pz: L.pz, vz: L.vz, mz: L.mz, qz: L.qz,
+        pz: L.pz, vz: fund ? null : L.vz, mz: L.mz, qz: L.qz, ...(fund ? { fundNoBook: true } : {}),
         x: { ...(b.x || {}), roe: v("roe"), debt: v("debt"), opm: v("opm"), g3: v("g3"), frn: v("frn"),
              mcap: v("cap"), lo: v("lo"), hi: v("hi"), g3Q: (L.cls || b.cls) === "us", g3Kr: (L.cls || b.cls) === "kr" },   // 미국 g3 = 최근 분기 · 1년 전 대비
         ...(L.est ? { nk: EST_NAME.ko, ne: EST_NAME.en, est: true } : {}),
@@ -367,9 +372,9 @@ export function mergeStocks(base, live) {
       out.push({ t: L.t, nk: L.nk || L.t, ne: L.ne || L.t, s: L.s || "index", cls: L.cls || "kr",
         ccy: L.ccy, fxu: !!L.fxu, price: L.price, beta: noRisk ? null : L.beta, vol: noRisk ? null : L.vol,
         ...(noRisk ? { noRisk: true } : {}),
-        per: keep(L.per), pbr: keep(L.pbr), dy: keep(L.dy), al: keep(L.al),
+        per: keep(L.per), pbr: fund ? null : keep(L.pbr), dy: keep(L.dy), al: keep(L.al),
         cap: keep(L.cap), val: keep(L.val), sh: L.sh, mdd: L.mdd, hit: L.hit, mom: L.mom,
-        pz: L.pz, vz: L.vz, mz: L.mz, qz: L.qz, live: !L.est, auto: true,
+        pz: L.pz, vz: fund ? null : L.vz, mz: L.mz, qz: L.qz, live: !L.est, auto: true, ...(fund ? { fundNoBook: true } : {}),
         ...(pxBad(L) ? { pxBad: L.pxBad, pxBadF: L.pxBadF } : {}),   // 2026-11-14: 과거 주가 기록 오류 — 펼친 종목의 52주 막대 자리에 그 줄 (detail.jsx StockRow)
         ...(L.pxd != null ? { pxd: L.pxd } : {}),   // v19.1c: 위와 같아요
         ...(L.pxc === true ? { pxc: true } : {}),   // 2026-11-20: 위와 같아요
@@ -382,6 +387,8 @@ export function mergeStocks(base, live) {
       + skipped.slice(0, 20).join(", ") + (skipped.length > 20 ? " …" : ""));
   }
   if (noRiskN) console.warn("[뱁새] 베타·변동성이 없어 위험 계산에서 빼는 종목 " + noRiskN + "개 (목록에는 있어요)");
+  if (fundOff.length) console.warn("[뱁새] ETF·펀드의 PBR · 가치 점수(vz)를 뺀 종목 " + fundOff.length + "개 (파이프라인이 비우기 전에 발행된 파일): "
+    + fundOff.slice(0, 20).join(", ") + (fundOff.length > 20 ? " …" : ""));
   Object.values(byT).forEach((b) => out.push({ ...b, live: false }));   // 오늘 데이터에 없는 내장 종목 = 예시 가격
   return out;
 }

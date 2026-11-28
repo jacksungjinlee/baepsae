@@ -17,6 +17,9 @@
 //               종목 고르기에서 펼친 종목의 52주 막대 자리 (한국어만 · 영어 글은 승인되지 않아 영어 화면에는 줄이 없어요).
 //               2026-11-14 저녁 (Jack): 52주까지 비운 종목만 (움직임이 252봉 안). 움직임이 그보다 오래된 종목은 52주가 보이고, 비운 숫자마다
 //               그 자리에 PxBadOneLine "과거 주가 기록 일부에 오류가 있어서 이 숫자는 비워 두었어요." (repair.js pxBadFull · pxBadHides).
+//   FundPbrLine 미국 ETF · 펀드의 PBR 과 가치 점수 (Jack 2026-11-27): 펀드에는 회사의 장부가가 없어 보이지 않아요 (data.js mergeStocks).
+//               "ETF는 회사가 아니어서 PBR과 가치 점수를 계산하지 않아요." — 종목 고르기에서 펼친 그 종목의 칸 밑 · 내 포트폴리오의 성향 막대 밑
+//               (담은 미국 펀드가 가치 평균에서 빠질 때), 화면마다 한 번 (한국어만 · 영어 글은 승인되지 않아 영어 화면은 "–" 만).
 // 글자는 12px 이에요 (2.0 의 12px 바닥과 같게).
 import React, { useEffect, useState } from "react";
 import { C } from "./tokens.js";
@@ -36,6 +39,9 @@ export const FIX_TOTAL = "이 회사는 지배주주 몫 순이익을 따로 공
 export const FIX_UNIT = "공시 자료의 단위를 확인하고 있어서 이 숫자를 잠시 비워 두었어요.";   // Jack 승인 2026-11-13 — 2.0 co.unitChk (한국어만)
 export const FIX_PX_BAD = "과거 주가 기록 일부에 오류가 있어서 52주 범위와 출렁임·위험 숫자는 비워 두었어요.";   // Jack 승인 2026-11-14 — 2.0 co.pxBad (한국어만)
 export const FIX_PX_BAD_ONE = "과거 주가 기록 일부에 오류가 있어서 이 숫자는 비워 두었어요.";   // Jack 승인 2026-11-14 저녁 — 2.0 co.pxBadOne (한국어만)
+// 2026-11-27 (Jack, answer 12: "Yes, hide them: …"): 미국 ETF · 펀드의 PBR 과 가치 점수는 보이지 않아요 (repair.js fundRow · data.js mergeStocks 가 빼요).
+// 2.0 co.fundPbr 와 같은 글자 (tests/test_fund_pbr_app.py 가 같은지 봐요) · 한국어 화면만 (영어 글은 승인되지 않아 영어 화면은 "–" 만, pxBad 줄처럼).
+export const FIX_FUND_PBR = "ETF는 회사가 아니어서 PBR과 가치 점수를 계산하지 않아요.";   // Jack 승인 2026-11-27 — 2.0 co.fundPbr (한국어만)
 // 2026-11-19 (Jack): 오늘 종가를 두 출처로 확인하지 못해 마지막 확인 종가(pxd)로 실은 국내 종목 — 2.0 app.krOwnClose 와 같은 글자
 // (tests/test_kr_own_close.py 가 같은지 봐요). 그 줄의 영어 글은 승인되지 않아서, 영어 화면은 승인된 영어 문장 "{names}: priced at the {md} close."
 // (detail.jsx T_OWN_CLOSE.en · 리뷰 M4) 로 그 종목(코드)과 날짜를 말해요. 목록 · 합계에는 FIX_OWN_CLOSE (detail.jsx T_OWN_CLOSE.ko · 2.0
@@ -217,6 +223,13 @@ export function PxBadLine({ c, style, lang = "ko" }) {
 export function PxBadOneLine({ c, field, style, lang = "ko" }) {
   return pxBad(c) && !pxBadFull(c) && pxBadHides(c, field) && lang !== "en"
     ? <div data-fix="px-bad-one" style={{ ...LINE, ...style }}>{FIX_PX_BAD_ONE}</div> : null;
+}
+// 2026-11-27 (Jack): 미국 ETF · 펀드 (합친 줄의 fundNoBook · cls "us" — 379800 도) 의 PBR 이 비어 있으면 그 자리에 한 번 (한국어 화면만).
+// 종목 고르기의 펼친 종목 ("PER / PBR" 칸이 "… / –") · 내 포트폴리오의 성향 (담은 미국 펀드가 가치 평균에서 빠질 때 · show 로). 숫자 옆에는 없어요.
+export const fundPbrRow = (s) => !!s && s.fundNoBook === true && s.cls === "us" && s.pbr == null;
+export function FundPbrLine({ c, show, style, lang = "ko" }) {
+  const on = show === undefined ? fundPbrRow(c) : !!show;
+  return on && lang !== "en" ? <div data-fix="fund-pbr" style={{ ...LINE, ...style }}>{FIX_FUND_PBR}</div> : null;
 }
 // 리뷰 #118 N7: 공시 단위 확인에 걸린 회사(unitChk)면 통화 줄 대신 단위 줄(UnitChkLine)만 — 두 줄을 겹쳐 보이지 않아요.
 export function StmtCurLine({ c, style }) {

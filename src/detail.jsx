@@ -18,7 +18,7 @@ import { loadJson, freshness, mergeStocks, mdOf, loadCorpOnce, krGrowthBasis, st
 import { SHOW_VERDICTS, SHOW_SCORE, SHOW_ER } from "./flags.js";
 import { ABOUT_URL } from "./links.js";
 // 2026-11-08 (Jack): 한국 PER · ROE 가 보이는 칸마다 한 줄 — DART 다시 읽기 전까지 (src/repair.js, src/fixnote.jsx)
-import { EpsFixLineLoaded, PxBadLine, PxBadOneLine, krOwnCloseListLine, usOwnCloseAllLine } from "./fixnote.jsx";
+import { EpsFixLineLoaded, PxBadLine, PxBadOneLine, krOwnCloseListLine, usOwnCloseAllLine, FundPbrLine, fundPbrRow } from "./fixnote.jsx";
 import { pxBadFull, pxBadHides } from "./repair.js";   // 2026-11-14 저녁: 52주는 보이는 종목의 비운 칸
 
 // 오늘 날짜 (YYYY-MM-DD) — 한국 날짜예요. 2026-11-12 (Jack): 예전에는 new Date().toISOString() 의 UTC 날짜를 써서, 한국 시간 00:00~09:00 에는
@@ -2343,6 +2343,8 @@ function StockRow({ s, lang, t, mode, settings, loaded, onAdd, open, onToggle, p
                 {grid(kept, false)}
                 {hid.length > 0 && grid(hid, true)}
                 {hid.length > 0 && <PxBadOneLine c={s} field={hid[0][2]} lang={lang} style={{ marginTop: 6 }} />}
+                {/* 2026-11-27 (Jack): 미국 ETF · 펀드는 PBR 을 계산하지 않아요 — "PER / PBR" 칸이 "… / –" 일 때 칸 밑에 한 번 (한국어 화면만) */}
+                <FundPbrLine c={s} lang={lang} style={{ marginTop: 6 }} />
               </>
             );
           })()}
@@ -4158,6 +4160,8 @@ function FactorTiltCard({ lang, t, metrics }) {
   if (metrics.empty) return null;
   const ko = lang === "ko";
   const rows = metrics.rows.filter((r) => r.mw > 0);
+  // 2026-11-27 (Jack): 담은 미국 ETF · 펀드는 가치 점수가 없어 가치 평균에서 빠져요 (data.js mergeStocks) — 그 까닭 한 줄 (한국어 화면만)
+  const fundLeft = rows.some((r) => fundPbrRow(r.stock));
   const tilts = FACTORS.map(([k, ko1, en1, hiK, hiE, loK, loE]) => {
     let wsum = 0, acc = 0;
     rows.forEach((r) => { const v = r.stock[k]; if (typeof v === "number") { acc += r.wInv * v; wsum += r.wInv; } });
@@ -4169,6 +4173,7 @@ function FactorTiltCard({ lang, t, metrics }) {
       <Card style={{ padding: 16 }}>
         <H3>{t("ftTitle")}</H3>
         <Sub style={{ marginTop: 8 }}>{t("ftNone")}</Sub>
+        <FundPbrLine show={fundLeft} lang={lang} />
       </Card>
     );
   }
@@ -4196,6 +4201,7 @@ function FactorTiltCard({ lang, t, metrics }) {
           );
         })}
       </div>
+      <FundPbrLine show={fundLeft} lang={lang} />
       <Verdict>
         {Math.abs(strongest.tilt) < 6
           ? (ko ? "특별히 한쪽으로 기울지 않았어요. 시장 평균에 가까운 구성이에요." : "No strong tilt — close to the market average.")
@@ -5339,4 +5345,6 @@ export { Bird, DEFAULT_SETTINGS, store, normCdf, SECTORS, SEC, KEY_SLOTS, KEY_SL
   // 2026-11-19: 첫 화면 데이터 칸의 미국 종가 날짜 줄 (tests/test_oldapp_us_close.py)
   LaunchScreen, usCloseLine, loadLiveData, T_US_CLOSE, T_PX_OFFICIAL,
   // 2026-11-22: 마지막 확인 종가의 목록 줄 · 영어 화면 (tests/test_oldapp_en_carry.py)
-  ownCloseLines };
+  ownCloseLines,
+  // 2026-11-27: ETF · 펀드의 PBR 줄 — 종목 고르기의 줄 · 내 포트폴리오의 성향 (tests/test_fund_pbr_app.py)
+  StockRow, FactorTiltCard };

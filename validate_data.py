@@ -3286,6 +3286,65 @@ def check_factor_pool(rep, data):
     # 칸 목록(rep.detail)은 따로 적지 않아요: 줄에 처음 몇 칸과 수가 있고, 다른 줄들의 목록 시험(rep.details 를 통째로 견주는 시험)을 흔들지 않게요
 
 
+# 2026-11-27 (Jack, answer 12, verbatim: "Yes, hide them: "ETF는 회사가 아니어서 PBR과 가치 점수를 계산하지 않아요.""): 펀드 (factor_fund ·
+# etf 참 또는 fund) 에는 회사의 장부가가 없어서, 야후의 펀드 PBR (SPY 1.70 · 실제 P/B 는 약 5 · SOXX 0.32) 과 그 PBR 로 매긴 가치 점수 vz
+# (#189 뒤 회사 분포에 견준 자리 · SOXX · TLT 100) 는 뜻이 없어요. 파이프라인이 모든 펀드 행에서 둘을 비우고 (fetch_data.fund_book_blank ·
+# data.json fundPb = {"v": 1, "n": 비운 펀드 수, "t": [그 종목]}), 두 앱도 불러올 때 펀드 행에서 빼요 (src/repair.js fundRow). 관문 줄은 발행
+# 파일에 남은 칸을 봐요 — **경고만** (발행을 멈추는 줄은 Jack 의 답이 있어야 해요: 그는 경고 줄을 넘는 것을 승인하지 않았어요).
+FUND_BOOK_KEYS = ("pbr", "vz")
+FUND_BOOK_REC = "fundPb"
+FUND_BOOK_ROW = "펀드에 PBR · 가치 점수 없음 (data.json · corp.json · 경고만)"
+
+
+def fund_book_left(data, corp=None):
+    """펀드 행에 남은 PBR · 가치 점수 칸 → ["종목.칸", …] (순수 함수). data.json 은 factor_fund 행 · corp.json 은 회사 줄에 etf 표시가 없어서
+    data.json 의 펀드 행과 같은 종목 · KR_FUND_SET (상장 인프라 · 부동산 펀드) 의 줄. 빈 값 (None) 만 '없음' — 0 도 남은 값이에요."""
+    rows = (data or {}).get("stocks") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        raise ValueError("stocks 가 목록이 아님")
+    out, funds = [], set(KR_FUND_SET)
+    for s in rows:
+        if factor_fund(s):
+            funds.add(str(s.get("t")))
+            out += [f"{s.get('t')}.{k}" for k in FUND_BOOK_KEYS if s.get(k) is not None]
+    comps = (corp or {}).get("companies") if isinstance(corp, dict) else None
+    for c in comps if isinstance(comps, list) else []:
+        if isinstance(c, dict) and str(c.get("t")) in funds:
+            out += [f"corp.{c.get('t')}.{k}" for k in FUND_BOOK_KEYS if c.get(k) is not None]
+    return out
+
+
+def fund_book_rec_text(data):
+    """data.json fundPb (이번 실행이 비운 펀드) 를 값 칸에 적을 글 (순수 함수): 없으면 '기록 없음' (이 PR 전에 발행된 파일), 모양이 틀리면 그렇다고."""
+    rec = (data or {}).get(FUND_BOOK_REC) if isinstance(data, dict) else None
+    if rec is None:
+        return "기록 없음 (fundPb 전에 발행된 파일)", True
+    ok = (isinstance(rec, dict) and rec.get("v") == 1 and isinstance(rec.get("n"), int) and not isinstance(rec.get("n"), bool)
+          and isinstance(rec.get("t"), list) and all(isinstance(t, str) and t for t in rec["t"]) and rec["n"] == len(rec["t"]))
+    if not ok:
+        return "기록 모양이 잘못됨 (fundPb)", False
+    return f"이번 실행이 비운 펀드 {rec['n']}곳" + (f" ({', '.join(rec['t'][:8])}{' 외 ' + str(rec['n'] - 8) if rec['n'] > 8 else ''})" if rec["n"] else ""), True
+
+
+def check_fund_book(rep, data, corp):
+    """2026-11-27 (Jack, answer 12): 펀드 행에 PBR · 가치 점수(vz)가 남지 않았는지 (data.json · corp.json). **경고만** — 어떤 모드에서도 실패하지
+    않아요 · 검사가 멈춰도 경고. 남았으면 그 칸 수 · 처음 몇 칸 (앱은 그래도 보이지 않아요: 불러올 때 빼요). 기록 fundPb 의 모양이 틀려도 경고."""
+    rule = "펀드 (etf 참 또는 fund) 행 · 그 펀드의 corp.json 줄에 pbr · vz 가 없음 (남으면 경고 · 실패 없음 · 앱은 불러올 때 빼요)"
+    try:
+        left = fund_book_left(data, corp)
+        rec, rec_ok = fund_book_rec_text(data)
+    except Exception as e:
+        rep.add(FUND_BOOK_ROW, True, f"검사가 멈췄어요: {type(e).__name__}: {str(e)[:120]}", rule + " (멈춰도 경고만)", warn=True)
+        return
+    nfund = sum(1 for s in data["stocks"] if factor_fund(s))
+    if not left:
+        rep.add(FUND_BOOK_ROW, True, f"없음 (펀드 {nfund}곳 · {rec})", rule, warn=not rec_ok)
+        return
+    nt = len({x.rsplit(".", 1)[0] for x in left})
+    rep.add(FUND_BOOK_ROW, True, f"남은 칸 {len(left)} ({nt}곳 · 펀드 {nfund}곳 · {rec}): " + ", ".join(left[:US_OWN_SHOW])
+            + (f" 외 {len(left) - US_OWN_SHOW}칸" if len(left) > US_OWN_SHOW else ""), rule, warn=True)
+
+
 def coverage(arr, key):
     if not arr:
         return 0.0
@@ -3612,6 +3671,7 @@ def run_checks(cur, prev, final, today, mode="publish", count_between=None, note
     check_us_size(rep, data, pdata)       # v19.5b 후속: 미국 회사 크기 qrev · qeq (종목 순위의 미국 최소 크기 · 경고만 · 실패 없음)
     check_us_split_pbr(rep, data)         # 2026-11-23 (감사 · #176): 최근 분할한 미국 회사의 PBR ↔ PER × ROE · usSrc.split (경고만 · 실패 없음 · 멈춰도 경고)
     check_factor_pool(rep, data)          # 2026-11-24 (#189): 팩터 점수를 다시 매겨 맞춰 봐요 — 회사끼리 순위 · 펀드는 회사 분포에 견줌 (경고만 · 실패 없음 · 멈춰도 경고)
+    check_fund_book(rep, data, corp)      # 2026-11-27 (Jack, answer 12): 펀드 행에 PBR · 가치 점수가 없는지 (경고만 · 실패 없음 · 멈춰도 경고)
     check_v191f(rep, data, corp, kr, by, comps, pdata)
     check_eps_line_left(rep, corp, comps)   # 2026-11-14 (Jack Q3 · 리뷰 S4): 다시 읽은 뒤에도 날짜가 지난 '고치는 중' 줄이 남을 회사 (경고)
     check_v196a(rep, data, macro, by, pdata, mode, today, pmacro=(prev or {}).get("macro") if rel else None)
