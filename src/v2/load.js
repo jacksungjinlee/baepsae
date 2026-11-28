@@ -40,15 +40,16 @@ export async function loadAll(now, opts) {
 // screen on the loading state (titles only, no cards and no message) for as long as the browser kept the request open.
 // One budget for the whole load, as refetchNewer's: once it passes, every request still out is stopped (AbortController),
 // so its answer can never arrive later. A stopped data.json or corp.json is a plain load failure (resolveLoad: the
-// load-failure message on every screen, the reason "no answer in 60 s" in the console, one more try on a return to view:
-// returnWatch), exactly as a network error; a stopped macro.json alone goes on without it, as when it fails to load.
+// load-failure message on every screen, the reason "not finished in 60 s" in the console: no answer yet, or one still
+// arriving; one more try on a return to view: returnWatch, and app.jsx gives a return made during the load its one fetch),
+// exactly as a network error; a stopped macro.json alone goes on without it, as when it fails to load.
 // A load that finishes inside the limit is unchanged (the timer is cleared). opts.timeoutMs: for tests. Without
 // AbortController there is no limit, as loadWithin (every browser that runs app.html has it).
 export async function loadFirst(now, opts = {}) {
   const ms = opts.timeoutMs == null ? FIRST_LOAD_TIMEOUT_MS : opts.timeoutMs;
   const ctrl = typeof AbortController === "function" ? new AbortController() : null;
   if (!ctrl) return loadAll(now);
-  const timer = setTimeout(() => ctrl.abort(new Error("no answer in " + Math.round(ms / 1000) + " s")), ms);
+  const timer = setTimeout(() => ctrl.abort(new Error("not finished in " + Math.round(ms / 1000) + " s")), ms);
   try {
     return await loadAll(now, { signal: ctrl.signal });
   } finally {

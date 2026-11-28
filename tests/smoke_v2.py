@@ -16749,13 +16749,16 @@ def scene_load_limit(R, files, width, how):
     """첫 불러오기의 시간 한도 (PR #201 리뷰, 2026-11-28). 시험 빌드의 한도는 LOAD_LIMIT_MS (실제는 60초).
     stall  data.json 이 한도보다 오래 답하지 않음 (서버가 9초 붙잡음): 한도 전에는 불러오는 화면(관심 종목 제목만 · 실패 문구 없음),
            한도에 이르면 불러오기 실패 문구 (관심 종목 · 홈 · 종목 · 시장 · 포트폴리오 · 연말에 확인할 숫자), 카드 · 숫자 · 날짜 줄 없음 ·
-           console 에 이유 ('no answer in 5 s') · 그 요청은 페이지가 멈췄어요 (fetch 가 그 이유로 끝남 · requestfailed · 서버의 늦은 답은
+           console 에 이유 ('not finished in 5 s') · 그 요청은 페이지가 멈췄어요 (fetch 가 그 이유로 끝남 · requestfailed · 서버의 늦은 답은
            닫힌 연결에 씀) · 서버의 늦은 답이 나갈 때가 지나도 실패 문구 그대로 · 다시 보이면 한 번 더 받아(네트워크 오류 때와 같은 다시
            받기) 관심 종목 카드와 새 날짜 줄 · 화면마다 글이 data.json 을 받지 못할 때(404)와 한 글자도 다르지 않아요.
-    under  data.json 이 한도 1.5초 전에 답함: 여느 때처럼 열려요 (카드 · 날짜 줄), 한도가 지난 뒤에도 그대로 · 실패 · 멈춤 줄 없음."""
+    under  data.json 이 한도 1.5초 전에 답함: 여느 때처럼 열려요 (카드 · 날짜 줄), 한도가 지난 뒤에도 그대로 · 실패 · 멈춤 줄 없음.
+    returned (#202 리뷰 S1) stall 처럼 붙잡힌 첫 불러오기 중에 화면이 가려졌다가 한도 전에 다시 보여요 (페이지를 얼린 휴대폰은 이 돌아옴을
+           먼저, 늦은 한도를 나중에 보내요): 한도가 불러오기를 멈추면 그 돌아옴 몫의 한 번을 곧바로 받아 관심 종목 카드와 새 날짜 줄 ·
+           data · corp · macro 를 두 번씩만 · console 에 그 이유."""
     S = f"첫 불러오기 한도 {width}"
     limit = LOAD_LIMIT_MS / 1000
-    hold = limit + 4 if how == "stall" else limit - 1.5          # (1.5 s to spare under a busy machine)
+    hold = limit - 1.5 if how == "under" else limit + 4          # (1.5 s to spare under a busy machine)
     data = v196c_files(files)
     site = build_site(data, app=load_limit_app())
     with open(os.path.join(site, ".delay-data.json"), "w", encoding="utf-8") as fh:
@@ -16793,15 +16796,16 @@ def scene_load_limit(R, files, width, how):
         assert now["el"] < LOAD_LIMIT_MS and now["watch"] and now["fail"] == now["cards"] == now["dl"] == 0, now
         fail.first.wait_for(state="visible", timeout=LOAD_LIMIT_MS + WAIT)
         first = fx("data.json")
-        assert len(first) == 1 and first[0].get("err") == f"no answer in {round(limit)} s" and not first[0].get("ok"), first
+        assert len(first) == 1 and first[0].get("err") == f"not finished in {round(limit)} s" and not first[0].get("ok"), first
         took = (first[0]["t1"] - first[0]["t0"]) / 1000
         assert limit - 0.25 <= took <= limit + 3, f"data.json 을 {took:.2f}초 만에 멈췄어요 (한도 {limit:g}초)"
         w = page.locator('[data-ui-v2="watch"]')
         assert w.locator('[data-ui-v2="load-fail"]').inner_text() == LOAD_FAIL and fail.first.get_attribute("data-picture") == "0"
         assert cards.count() == 0 and page.locator('[data-ui-v2="date-line"], [data-ui="amount"]').count() == 0
         assert not re.search(r"\d", w.inner_text()), w.inner_text()                     # no number on the screen
-        assert any(f"[v2] load failed: data.json: no answer in {round(limit)} s" in x for x in logs), [x for x in logs if "[v2]" in x][-4:]
+        assert any(f"[v2] load failed: data.json: not finished in {round(limit)} s" in x for x in logs), [x for x in logs if "[v2]" in x][-4:]
         assert [n for n, _ in failed] == ["data.json"], failed                         # the browser stopped that request
+        assert not [x for x in logs if "while the first load was still out" in x], logs   # no return during the load: nothing owed
         got["stall"] = load_fail_screens(R, page, width)
         # past the moment the server sends its late answer: it never reaches the page (the request was stopped)
         wait_since_first("data.json", int((hold + 1.5) * 1000))
@@ -16827,6 +16831,29 @@ def scene_load_limit(R, files, width, how):
             ctx2.close()
             srv2.shutdown()
         assert got["stall"] == other, [(k, got["stall"][k], other[k]) for k in other if got["stall"].get(k) != other[k]][:2]
+        assert set(late) <= CLOSED, late                                               # again at the end (the retry included)
+
+    def returned():
+        since_first("data.json")
+        page.evaluate(HIDE_JS)                                                         # away while the first load is still out
+        page.wait_for_timeout(300)
+        page.evaluate(SHOW_JS)                                                         # back before the limit
+        back = page.evaluate("() => performance.now() - window.__fx.find((x) => x.f === 'data.json').t0")
+        assert back < LOAD_LIMIT_MS and fail.count() == 0 and cards.count() == 0, back
+        # the limit stops the load; the return made during it gets its one fetch, and the page loads
+        cards.first.wait_for(state="visible", timeout=LOAD_LIMIT_MS + WAIT)
+        d = fx("data.json")
+        assert len(d) == 2 and d[0].get("err") == f"not finished in {round(limit)} s" and d[1].get("ok") is True, d
+        assert d[1]["t0"] >= d[0]["t1"] and [len(fx(n)) for n in ("corp.json", "macro.json")] == [2, 2], (d, fx("corp.json"), fx("macro.json"))
+        assert any(f"[v2] load failed: data.json: not finished in {round(limit)} s" in x for x in logs), [x for x in logs if "[v2]" in x][-4:]
+        assert wait_log(logs, "back in view while the first load was still out, and it failed: the return's one fetch happens now", page)
+        assert wait_log(logs, "replaces the load-failure message", page)
+        assert fail.count() == 0 and page.locator(SCREEN_DL).first.get_attribute("data-stale") == "0"
+        wait_since_first("data.json", int((hold + 1.5) * 1000))                       # past the server's late answer: nothing more
+        assert [len(fx(n)) for n in ("data.json", "corp.json", "macro.json")] == [2, 2, 2] and cards.count() > 0 and fail.count() == 0
+        assert set(late) <= CLOSED, late
+        R.collect(page)
+        no_hscroll(page, width)
 
     def under():
         cards.first.wait_for(state="visible", timeout=LOAD_LIMIT_MS + WAIT)
@@ -16838,13 +16865,14 @@ def scene_load_limit(R, files, width, how):
         shown = cards.count()
         wait_since_first("data.json", int((limit + 1.5) * 1000))                      # past the limit: nothing changes
         assert fail.count() == 0 and cards.count() == shown and shown > 0, (fail.count(), cards.count(), shown)
-        assert not [x for x in logs if "load failed" in x or "no answer" in x], [x for x in logs if "[v2]" in x][-4:]
+        assert not [x for x in logs if "load failed" in x or "not finished" in x], [x for x in logs if "[v2]" in x][-4:]
         assert not failed and len(fx("data.json")) == 1 and not late, (failed, fx("data.json"), late)
         R.collect(page)
         no_hscroll(page, width)
     R.check(page, S, {"stall": f"data.json 이 {hold:g}초 동안 답하지 않음: 한도({limit:g}초)에 불러오기 실패 문구, 카드 · 숫자 없음 · 늦은 답 없음 · 다시 보이면 다시 받음",
-                      "under": f"data.json 이 {hold:g}초 늦게 답함 (한도 {limit:g}초): 여느 때처럼 열리고 한도가 지나도 그대로"}[how],
-            stall if how == "stall" else under)
+                      "under": f"data.json 이 {hold:g}초 늦게 답함 (한도 {limit:g}초): 여느 때처럼 열리고 한도가 지나도 그대로",
+                      "returned": f"불러오는 중에 가렸다가 한도 전에 다시 보임 → 한도({limit:g}초)가 멈추면 그 돌아옴 몫으로 한 번 더 받아 열려요"}[how],
+            {"stall": stall, "under": under, "returned": returned}[how])
     ctx.close()
     srv.shutdown()
 
@@ -16988,7 +17016,8 @@ def main():
                    lambda: scene_v196e(R, files, 1280, dark=True),
                    lambda: scene_v196e_states(R, files),                                                    # v19.6e 때 · 닫기 · 빠진 종목 · 멈춤 · 실패 · 둘 · nv
                    lambda: scene_load_limit(R, files, 390, "stall"),                                        # 2026-11-28 첫 불러오기 한도: 답 없음 → 실패 문구
-                   lambda: scene_load_limit(R, files, 390, "under")):                                       # 한도 바로 전의 답 → 여느 때처럼
+                   lambda: scene_load_limit(R, files, 390, "under"),                                        # 한도 바로 전의 답 → 여느 때처럼
+                   lambda: scene_load_limit(R, files, 390, "returned")):                                    # #202 리뷰 S1: 불러오는 중의 돌아옴 → 한 번 더
             try:
                 fn()
             except Exception as e:

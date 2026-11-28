@@ -7,7 +7,7 @@ no message) for as long as the browser kept the request open. disc.json already 
 
 src/v2/load.js loadFirst: loadAll with one 60 s budget (FIRST_LOAD_TIMEOUT_MS = REFETCH_TIMEOUT_MS, the limit of disc.json
 and of a return's fetch). Once it passes, every request still out is stopped (AbortController), so a late answer never
-arrives; data.json or corp.json stopped -> the load-failure state, as a network error ("no answer in N s" in the console);
+arrives; data.json or corp.json stopped -> the load-failure state, as a network error ("not finished in N s" in the console);
 macro.json stopped alone -> the data goes on without it, as when it fails. A load inside the limit is unchanged.
 The screens are checked by tests/smoke_v2.py scene_load_limit (a stall longer than the limit, and an answer just under it).
 """
@@ -70,6 +70,11 @@ globalThis.fetch = (url, opts) => {
     if (sig) sig.addEventListener('abort', () => { rec.aborted = true; rej(sig.reason); });
     if (!x) { rec.answered = true; res({ ok: false, status: 404, text: async () => 'not found' }); return; }
     if (x.hang) return;
+    if (x.slowBody) {                                       // the headers come at once, the body never finishes
+      rec.answered = true;
+      res({ ok: true, status: 200, text: () => new Promise((ok, no) => { if (sig) sig.addEventListener('abort', () => no(sig.reason)); }) });
+      return;
+    }
     const answer = () => {
       if (sig && sig.aborted) return;                       // stopped: this answer never reaches the page
       rec.answered = true;
@@ -96,8 +101,9 @@ def run(body, **data):
     return json.loads(r.stdout)
 
 
-def files(after=None, hang=()):
-    """The three files of one publish as the fake site serves them: each `after` ms late ({name: ms}), or never (hang)."""
+def files(after=None, hang=(), slow_body=()):
+    """The three files of one publish as the fake site serves them: each `after` ms late ({name: ms}), or never (hang), or
+    with its headers at once and a body that never finishes (slow_body)."""
     stocks = [{"t": f"00{i:04d}", "nk": f"K{i}", "cls": "kr", "price": 10000.0, "d1": 0.5, "etf": False, "ind": "machine",
                "indName": "기계"} for i in range(3)]
     body = {"data.json": {"asOf": PUB[:10], "pxDate": "2026-11-10", "usPxDate": "2026-11-10", "fxDate": "2026-11-10", "fx": 1350.0,
@@ -109,7 +115,22 @@ def files(after=None, hang=()):
         out[n] = {"body": json.dumps(v, ensure_ascii=False), "after": (after or {}).get(n, 0)}
         if n in hang:
             out[n]["hang"] = True
+        if n in slow_body:
+            out[n]["slowBody"] = True
     return out
+
+
+def test_a_body_still_arriving_at_the_limit_is_stopped_too_and_the_reason_says_not_finished():
+    """#202 review: the headers came but the body did not finish in time. The body's read is stopped with the same reason,
+    which says "not finished" (true whether nothing came or the answer was still arriving)."""
+    got = run("""
+serve(SITE_FILES);
+const r = await LD.loadFirst(at(NOW), { timeoutMs: 60 });
+out = { r, req: REQ, warn: WARN };""", SITE_FILES=files(slow_body=("data.json",)), NOW=NOW)
+    assert got["r"] == {"status": "fail"}, got["r"]
+    d = next(x for x in got["req"] if x["url"] == "./data.json")
+    assert d["answered"] is True and d["aborted"] is True, d                    # headers had come; the read was stopped
+    assert got["warn"] == ["[v2] load failed: data.json: not finished in 0 s"], got["warn"]
 
 
 def test_a_stalled_data_json_gives_up_at_the_limit_as_a_load_failure():
@@ -127,7 +148,7 @@ out = { r, took, req: REQ, warn: WARN };""", SITE_FILES=files(hang=("data.json",
     assert req["./data.json"]["aborted"] is True and req["./data.json"]["answered"] is False, req   # really stopped
     assert req["./corp.json"]["answered"] is True and req["./macro.json"]["answered"] is True, req
     # the reason, as a network error's: resolveLoad's console line
-    assert got["warn"] == ["[v2] load failed: data.json: no answer in 0 s"], got["warn"]
+    assert got["warn"] == ["[v2] load failed: data.json: not finished in 0 s"], got["warn"]
 
 
 def test_a_late_answer_never_arrives_after_the_failure():
@@ -142,7 +163,7 @@ out = { r, results, req: REQ, warn: WARN };""", SITE_FILES=files(after={"data.js
     assert got["r"] == {"status": "fail"} and got["results"] == 1, got
     d = next(x for x in got["req"] if x["url"] == "./data.json")
     assert d["aborted"] is True and d["answered"] is False, d
-    assert got["warn"] == ["[v2] load failed: data.json: no answer in 0 s"], got["warn"]
+    assert got["warn"] == ["[v2] load failed: data.json: not finished in 0 s"], got["warn"]
 
 
 def test_a_stalled_corp_json_is_a_failure_and_a_stalled_macro_json_alone_goes_on_without_it():
@@ -154,10 +175,10 @@ serve(MACRO_HANGS);
 const m = await LD.loadFirst(at(NOW), { timeoutMs: 60 });
 out = { c, cw, m: summary(m), mw: WARN.filter((x) => x.includes('macro.json')), req: REQ };""",
               CORP_HANGS=files(hang=("corp.json",)), MACRO_HANGS=files(hang=("macro.json",)), NOW=NOW)
-    assert got["c"] == {"status": "fail"} and got["cw"] == ["[v2] load failed: corp.json: no answer in 0 s"], got
+    assert got["c"] == {"status": "fail"} and got["cw"] == ["[v2] load failed: corp.json: not finished in 0 s"], got
     # macro.json alone: exactly as when it fails to load today (resolveLoad: on without it, features that need it hidden)
     assert got["m"] == {"status": "ok", "pub": PUB, "stocks": 3, "companies": 1, "macro": False}, got["m"]
-    assert got["mw"] == ["[v2] macro.json not loaded: no answer in 0 s (features that need it stay hidden)"], got["mw"]
+    assert got["mw"] == ["[v2] macro.json not loaded: not finished in 0 s (features that need it stay hidden)"], got["mw"]
 
 
 def test_a_slow_load_under_the_limit_is_unchanged_and_the_timer_is_cleared():
@@ -182,7 +203,7 @@ out = { r: summary(r), took, limited, plainReq: REQ, same, warn: WARN };""",
     assert all(not x["signal"] for x in got["plainReq"]), got["plainReq"]     # loadAll itself: no signal of its own
     # the console: the same lines for both (resolveLoad's own, about this small file's fields), no failure and no stop
     half = len(got["warn"]) // 2
-    assert got["warn"][:half] == got["warn"][half:] and not any("load failed" in x or "no answer" in x for x in got["warn"]), got["warn"]
+    assert got["warn"][:half] == got["warn"][half:] and not any("load failed" in x or "not finished" in x for x in got["warn"]), got["warn"]
 
 
 def test_the_shipped_limit_is_60_seconds_and_the_live_page_uses_it():
@@ -196,7 +217,7 @@ globalThis.setTimeout = real;
 out = { r, delays, limit: LD.FIRST_LOAD_TIMEOUT_MS, refetch: LD.REFETCH_TIMEOUT_MS, warn: WARN };""",
               SITE_FILES=files(hang=("data.json",)), NOW=NOW)
     assert got["limit"] == 60000 and got["refetch"] == 60000 and got["delays"] == [60000], got
-    assert got["r"] == {"status": "fail"} and got["warn"] == ["[v2] load failed: data.json: no answer in 60 s"], got
+    assert got["r"] == {"status": "fail"} and got["warn"] == ["[v2] load failed: data.json: not finished in 60 s"], got
     src = open(os.path.join(ROOT, "src", "v2", "load.js"), encoding="utf-8").read()
     assert re.findall(r"^export const FIRST_LOAD_TIMEOUT_MS = .*$", src, flags=re.M) == ["export const FIRST_LOAD_TIMEOUT_MS = REFETCH_TIMEOUT_MS;"]
     assert re.findall(r"^export const REFETCH_TIMEOUT_MS = .*$", src, flags=re.M) == ["export const REFETCH_TIMEOUT_MS = 60000;"]
