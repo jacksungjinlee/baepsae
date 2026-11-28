@@ -7,6 +7,8 @@ This document carries everything decided in ~3 months of building 뱁새 in clau
 
 ## 0. Current state and next steps (updated 2026-11-28 KST — read this first)
 
+**Docs wording (#207, 2026-11-28):** the docs call the session that runs the builds, reviews and merges "the build session" (approval notes: "relayed by the build session"). A few source comments and test docstrings still use the older word; they change with the next code PR that touches them.
+
 **Now (2026-11-23):** merged and deployed 11-22: #166 (old-app English carry lines), #167 (div reason lines), #168 (v19.6b 오늘 볼 것
 page), #169 (new US tickers wait), #170 (v19.6e data: `c1w` · `wkFrom` · `usWkFrom` · `c1wv` · `c1wSrc`), #171 (v19.6e
 screens: 이번 주 정리 card, ON with Jack's lines of 11-22; first card possible from Saturday 11-28's publish), #172 (Korean
