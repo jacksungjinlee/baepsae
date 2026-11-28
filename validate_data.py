@@ -4202,6 +4202,12 @@ KR_SPLIT_RC_PX_TOL = 0.01           # 분할: 앞날 종가 ÷ 기준가 = 배�
 KR_SPLIT_RC_SHR_TOL = 0.10          # 분할: 상장주식수의 비 = 배율 ± 10% (같은 날 자기주식 소각 · 신주)
 KR_SPLIT_RC_EXACT_TOL = 0.01        # 병합: 상장주식수의 비 = 배율 ± 1% (단주)
 KR_SPLIT_RC_AUCTION = (0.5, 2.0)    # 병합: 앞날 종가 ÷ 기준가 가 배율의 ½ ~ 2배 (동시호가) 이고 1 에서 10% 넘게
+# 무상증자 영수증 (Jack 2026-11-27 답 11 "the next PR right after #186" · 경고만 · 파이프라인 fetch_data.kr_bonus_checks 와 같은 선 · 검사 코드는 따로):
+# 줄의 날짜 = 권리락 날 dx · 공시의 신주상장예정일 dl 은 그 뒤 (120일 안) · 신주배정기준일 dr 은 dx 뒤 10일 안 · 줄의 배율 r = 1 + x (x 공시의 1주당 신주
+# 수) · m = 공시의 1 + 새 주식 ÷ 증자 전 주식 (10% 넘게 · 자기주식 몫 1 − (m − 1) ÷ x 가 0 ~ 50%) · 권리락 기준가의 비 px = m ± 1% · 상장일 주식 수의 비 shr = m ± 1%
+KR_BONUS_RC_PX_TOL = 0.01
+KR_BONUS_RC_SHR_TOL = 0.01
+KR_BONUS_RC_TREASURY_MAX = 0.5
 # ── 2026-11-27 (Jack 답 11, 그대로: "A split without a filing stops the publish only for a must-have stock (삼성전자, NAVER, 카카오) or when many
 # appear in one run. Any other stock gets its affected numbers blanked with '주식 수가 크게 바뀌었는데, 공시로 확인하지 못해서 이 숫자는 비워
 # 두었어요.'") — 발행을 막는 새 줄 둘 (Jack 이 승인한 범주 2) + 비움이 맞는지 보는 경고 줄 하나. data.json splitsKr.nofile = 주식 수가 정확히 n:1 ·
@@ -4294,6 +4300,7 @@ def _check_kr_splits(rep, data, today, rule):
         warns.append(f"세 확인(공시 상장일 · 주식 수 · 기준가)이 없거나 맞지 않는 영수증 {len(bad_chk)}: " + ", ".join(bad_chk[:KR_SPLIT_SHOW]))
     if json_num(info.get("n")) is not None and int(json_num(info.get("n"))) != len(rows):
         warns.append(f"splitsKr.n {int(json_num(info.get('n')))} ≠ 한국 줄 {len(rows)}")
+    b_items = _kr_bonus_warns(info, today, warns, notes, name)       # 무상증자 (splitsKr.bonus · 경고만 · 없으면 그대로)
     if new:
         notes.append(f"오늘 새 한국 줄 {len(new)}: " + ", ".join(f"{name(x)} ×{json_num(x[2]) or 0:g}" for x in new[:KR_SPLIT_SHOW] if len(x) >= 3)
                      + (" …" if len(new) > KR_SPLIT_SHOW else ""))
@@ -4308,9 +4315,42 @@ def _check_kr_splits(rep, data, today, rule):
              + [f"몫이 남아 싣지 않음 {name(x)} ×{json_num(x[2]) or 0:g}" for x in held if len(x) >= 3]
              + [f"싣지 않음 {name(x)} ({x[2] if len(x) > 2 and isinstance(x[2], str) else '?'})" for x in out]
              + [f"조회 실패 {name(x)} ({x[2] if len(x) > 2 and isinstance(x[2], str) else '?'})" for x in fail] + [f"영수증 없음 {x}" for x in no_rec]
-             + [f"세 확인이 맞지 않는 영수증 {x}" for x in bad_chk])
+             + [f"세 확인이 맞지 않는 영수증 {x}" for x in bad_chk] + b_items)
     if items:
         rep.detail("한국 주식 분할 (splitsKr) 확인할 것", items)
+
+
+def _kr_bonus_warns(info, today, warns, notes, name):
+    """splitsKr.bonus (무상증자) → 경고 · 알림을 더하고 '확인할 것' 줄을 돌려줘요 (경고만 · 실패 없음). 없는 파일 (무상증자 전) 은 그대로.
+    경고: 모양이 틀림 · 조회 실패 · 최근 30일 공시로 확인하지 못한 권리락 · 싣지 않은 확인의 영수증이 세 확인에 맞지 않음. 알림: 확인했지만 싣지 않은 수 (까닭별)."""
+    b = info.get("bonus")
+    if b is None:
+        return []
+    if not isinstance(b, dict):
+        warns.append("무상증자 기록(splitsKr.bonus)의 모양이 틀렸어요")
+        return []
+    lst = lambda k: [x for x in b.get(k) if isinstance(x, list)] if isinstance(b.get(k), list) else []     # noqa: E731
+    out, fail, held, rec = lst("out"), lst("fail"), lst("held"), lst("rec")
+    n_fail = int(json_num(b.get("failN")) or 0) if json_num(b.get("failN")) is not None else len(fail)
+    n_held = int(json_num(b.get("heldN")) or 0) if json_num(b.get("heldN")) is not None else len(held)
+    recent = [x for x in out if len(x) >= 2 and _iso_day(x[1]) and (today - _iso_day(x[1])).days <= KR_SPLIT_RECENT_DAYS]
+    bad = [f"{x[0]} {x[1]}" for x in rec if len(x) >= 3 and isinstance(x[0], str) and not kr_split_receipt_ok(x)]
+    if b.get("src") == "err":
+        warns.append("!! 무상증자 확인이 오류로 멈춰 지난 후보만 이었어요 (로그를 보세요)")
+    if fail or n_fail:
+        warns.append(f"무상증자 조회 실패 {max(n_fail, len(fail))} (다음 실행에 다시)")
+    if recent:
+        warns.append(f"최근 {KR_SPLIT_RECENT_DAYS}일 공시로 확인하지 못한 무상증자 권리락 {len(recent)}: " + ", ".join(name(x) for x in recent[:KR_SPLIT_SHOW])
+                     + " (줄 없음 · 숫자는 그대로 — 공시를 확인하세요)")
+    if bad:
+        warns.append(f"세 확인이 없거나 맞지 않는 무상증자 영수증 {len(bad)}: " + ", ".join(bad[:KR_SPLIT_SHOW]))
+    if n_held:
+        why = collections.Counter(x[3] for x in held if len(x) >= 4 and isinstance(x[3], str))
+        notes.append(f"확인했지만 싣지 않은 무상증자 {n_held} (" + " · ".join(f"{k} {v}" for k, v in sorted(why.items())) + " · off: 기록 줄을 Jack 이 정할 때까지 · "
+                     "odd: 깨끗하지 않은 배율)")
+    return ([f"무상증자 싣지 않음 {name(x)} ×{json_num(x[2]) or 0:g} ({x[3] if len(x) > 3 else '?'})" for x in held if len(x) >= 3]
+            + [f"무상증자 공시로 확인하지 못함 {name(x)} ({x[2] if len(x) > 2 and isinstance(x[2], str) else '?'})" for x in out]
+            + [f"무상증자 조회 실패 {name(x)}" for x in fail] + [f"세 확인이 맞지 않는 무상증자 영수증 {x}" for x in bad])
 
 
 def kr_split_receipt_ok(x):
@@ -4319,6 +4359,8 @@ def kr_split_receipt_ok(x):
     auction, |shr ÷ 배율 − 1| ≤ 1%, px ÷ 배율이 ½ ~ 2배이고 |px − 1| > 10%."""
     if len(x) == 6 and x[4] == "SPLIT_OVERRIDES":
         return True
+    if len(x) == 7 and isinstance(x[6], dict) and (x[6].get("rule") == "bonus" or x[3] == "bonus"):
+        return kr_bonus_receipt_ok(x)              # 무상증자 (두 날 · 아래)
     r = json_num(x[2])
     c = x[6] if len(x) == 7 and isinstance(x[6], dict) else None
     if r is None or r <= 0 or c is None or c.get("dl") != x[1]:
@@ -4335,6 +4377,26 @@ def kr_split_receipt_ok(x):
         return c.get("rule") == "split" and abs(px / r - 1) <= KR_SPLIT_RC_PX_TOL and abs(shr / r - 1) <= KR_SPLIT_RC_SHR_TOL
     lo, hi = KR_SPLIT_RC_AUCTION
     return c.get("rule") == "auction" and abs(shr / r - 1) <= KR_SPLIT_RC_EXACT_TOL and lo <= px / r <= hi and abs(px - 1) > 0.10
+
+
+def kr_bonus_receipt_ok(x):
+    """무상증자 영수증 한 줄 [코드, 권리락 날, r, "bonus", 접수번호, fric|pifric, {rule, dx, dl, dr, x, m, px, shr}] 의 세 확인이 맞는지 (순수 함수 · 경고에만):
+    공시 (dl 상장예정일이 권리락 날 dx = 줄의 날짜 뒤 120일 안 · dr 신주배정기준일이 dx 뒤 10일 안 · dl 앞) · 공시의 수 (r = 1 + x · m 이 1 에서 10% 넘게 ·
+    자기주식 몫 0 ~ 50%) · px 권리락 기준가의 비 = m ± 1% · shr 상장일 주식 수의 비 = m ± 1%."""
+    c = x[6] if len(x) == 7 and isinstance(x[6], dict) else None
+    r = json_num(x[2])
+    if c is None or r is None or x[3] != "bonus" or c.get("rule") != "bonus" or x[5] not in ("fric", "pifric") or c.get("dx") != x[1]:
+        return False
+    dx, dl, dr = _iso_day(c.get("dx")), _iso_day(c.get("dl")), _iso_day(c.get("dr"))
+    if dx is None or dl is None or dr is None or not (dx < dr <= dl) or (dl - dx).days > 120 or (dr - dx).days > 10:
+        return False
+    xx, m, px, shr = (json_num(c.get(k)) for k in ("x", "m", "px", "shr"))
+    if any(v is None or v <= 0 for v in (xx, m, px, shr)) or abs(r - (1 + xx)) > 1e-6 * r or m <= 1.10:
+        return False
+    tau = 1 - (m - 1) / xx
+    if tau < -1e-5 or tau > KR_BONUS_RC_TREASURY_MAX:
+        return False
+    return abs(px / m - 1) <= KR_BONUS_RC_PX_TOL and abs(shr / m - 1) <= KR_BONUS_RC_SHR_TOL
 
 
 def _nofile_rows(info):

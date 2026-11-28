@@ -1,0 +1,43 @@
+{
+ "status": "000",
+ "message": "정상",
+ "page_no": 1,
+ "page_count": 100,
+ "total_count": 3,
+ "total_page": 1,
+ "list": [
+  {
+   "corp_code": "01210677",
+   "corp_name": "씨케이솔루션",
+   "stock_code": "480370",
+   "corp_cls": "Y",
+   "report_nm": "[기재정정]주요사항보고서(무상증자결정)",
+   "rcept_no": "20260324000279",
+   "flr_nm": "씨케이솔루션",
+   "rcept_dt": "20260324",
+   "rm": ""
+  },
+  {
+   "corp_code": "01210677",
+   "corp_name": "씨케이솔루션",
+   "stock_code": "480370",
+   "corp_cls": "Y",
+   "report_nm": "주요사항보고서(자기주식처분결정)",
+   "rcept_no": "20260225000858",
+   "flr_nm": "씨케이솔루션",
+   "rcept_dt": "20260225",
+   "rm": ""
+  },
+  {
+   "corp_code": "01210677",
+   "corp_name": "씨케이솔루션",
+   "stock_code": "480370",
+   "corp_cls": "Y",
+   "report_nm": "주요사항보고서(자기주식취득신탁계약해지결정)",
+   "rcept_no": "20250829000226",
+   "flr_nm": "씨케이솔루션",
+   "rcept_dt": "20250829",
+   "rm": ""
+  }
+ ]
+}

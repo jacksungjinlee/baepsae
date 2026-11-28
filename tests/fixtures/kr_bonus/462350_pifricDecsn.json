@@ -1,0 +1,42 @@
+{
+ "status": "000",
+ "message": "정상",
+ "list": [
+  {
+   "rcept_no": "20251106000107",
+   "corp_cls": "K",
+   "corp_code": "01700587",
+   "corp_name": "이노스페이스",
+   "piic_nstk_ostk_cnt": "4,300,000",
+   "piic_nstk_estk_cnt": "-",
+   "piic_fv_ps": "1,000",
+   "piic_bfic_tisstk_ostk": "9,416,694",
+   "piic_bfic_tisstk_estk": "1,490,860",
+   "piic_fdpp_fclt": "5,000,000,000",
+   "piic_fdpp_bsninh": "-",
+   "piic_fdpp_op": "28,461,000,000",
+   "piic_fdpp_dtrp": "15,000,000,000",
+   "piic_fdpp_ocsa": "-",
+   "piic_fdpp_etc": "-",
+   "piic_ic_mthn": "주주배정후 실권주 일반공모",
+   "fric_nstk_ostk_cnt": "6,858,347",
+   "fric_nstk_estk_cnt": "745,430",
+   "fric_fv_ps": "1,000",
+   "fric_bfic_tisstk_ostk": "13,716,694",
+   "fric_bfic_tisstk_estk": "1,490,860",
+   "fric_nstk_asstd": "2025년 11월 21일",
+   "fric_nstk_ascnt_ps_ostk": "0.5",
+   "fric_nstk_ascnt_ps_estk": "0.5",
+   "fric_nstk_dividrk": "2025년 01월 01일",
+   "fric_nstk_dlprd": "-",
+   "fric_nstk_lstprd": "2025년 12월 11일",
+   "fric_bddd": "2025년 08월 18일",
+   "fric_od_a_at_t": "2",
+   "fric_od_a_at_b": "-",
+   "fric_adt_a_atn": "참석",
+   "ssl_at": "Y",
+   "ssl_bgd": "20250819",
+   "ssl_edd": "20251105"
+  }
+ ]
+}

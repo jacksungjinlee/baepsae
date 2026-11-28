@@ -1,0 +1,32 @@
+{
+ "status": "000",
+ "message": "정상",
+ "page_no": 1,
+ "page_count": 100,
+ "total_count": 2,
+ "total_page": 1,
+ "list": [
+  {
+   "corp_code": "01053540",
+   "corp_name": "퓨쳐켐",
+   "stock_code": "220100",
+   "corp_cls": "K",
+   "report_nm": "[기재정정]주요사항보고서(유무상증자결정)",
+   "rcept_no": "20260901000041",
+   "flr_nm": "퓨쳐켐",
+   "rcept_dt": "20260901",
+   "rm": ""
+  },
+  {
+   "corp_code": "01053540",
+   "corp_name": "퓨쳐켐",
+   "stock_code": "220100",
+   "corp_cls": "K",
+   "report_nm": "[첨부정정]주요사항보고서(자기전환사채만기전취득결정)",
+   "rcept_no": "20260313000877",
+   "flr_nm": "퓨쳐켐",
+   "rcept_dt": "20260313",
+   "rm": ""
+  }
+ ]
+}

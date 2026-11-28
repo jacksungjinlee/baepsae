@@ -1,0 +1,27 @@
+{
+ "status": "000",
+ "message": "정상",
+ "list": [
+  {
+   "rcept_no": "20260612000418",
+   "corp_cls": "K",
+   "corp_code": "01700587",
+   "corp_name": "이노스페이스",
+   "bddd": "2026년 06월 04일",
+   "od_a_at_t": "2",
+   "od_a_at_b": "-",
+   "adt_a_atn": "참석",
+   "nstk_ostk_cnt": "5,604,445",
+   "nstk_estk_cnt": "390,396",
+   "fv_ps": "1,000",
+   "bfic_tisstk_ostk": "28,046,081",
+   "bfic_tisstk_estk": "1,951,981",
+   "nstk_asstd": "2026년 06월 19일",
+   "nstk_ascnt_ps_ostk": "0.2",
+   "nstk_ascnt_ps_estk": "0.2",
+   "nstk_dividrk": "2026년 01월 01일",
+   "nstk_dlprd": "-",
+   "nstk_lstprd": "2026년 07월 09일"
+  }
+ ]
+}

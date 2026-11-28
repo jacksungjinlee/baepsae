@@ -1,0 +1,54 @@
+{
+ "status": "000",
+ "message": "정상",
+ "page_no": 1,
+ "page_count": 100,
+ "total_count": 4,
+ "total_page": 1,
+ "list": [
+  {
+   "corp_code": "01301252",
+   "corp_name": "티이엠씨",
+   "stock_code": "425040",
+   "corp_cls": "K",
+   "report_nm": "주요사항보고서(자기주식취득신탁계약체결결정)",
+   "rcept_no": "20240124000106",
+   "flr_nm": "티이엠씨",
+   "rcept_dt": "20240124",
+   "rm": ""
+  },
+  {
+   "corp_code": "01301252",
+   "corp_name": "티이엠씨",
+   "stock_code": "425040",
+   "corp_cls": "K",
+   "report_nm": "주요사항보고서(무상증자결정)",
+   "rcept_no": "20231218000033",
+   "flr_nm": "티이엠씨",
+   "rcept_dt": "20231218",
+   "rm": ""
+  },
+  {
+   "corp_code": "01301252",
+   "corp_name": "티이엠씨",
+   "stock_code": "425040",
+   "corp_cls": "K",
+   "report_nm": "[기재정정]주요사항보고서(타법인주식및출자증권양수결정)",
+   "rcept_no": "20231130001563",
+   "flr_nm": "티이엠씨",
+   "rcept_dt": "20231130",
+   "rm": ""
+  },
+  {
+   "corp_code": "01301252",
+   "corp_name": "티이엠씨",
+   "stock_code": "425040",
+   "corp_cls": "K",
+   "report_nm": "주요사항보고서(전환사채권발행결정)",
+   "rcept_no": "20231012000367",
+   "flr_nm": "티이엠씨",
+   "rcept_dt": "20231012",
+   "rm": ""
+  }
+ ]
+}
