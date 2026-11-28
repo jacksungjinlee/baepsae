@@ -1,0 +1,32 @@
+{
+ "status": "000",
+ "message": "정상",
+ "page_no": 1,
+ "page_count": 100,
+ "total_count": 2,
+ "total_page": 1,
+ "list": [
+  {
+   "corp_code": "01181515",
+   "corp_name": "엘앤씨바이오",
+   "stock_code": "290650",
+   "corp_cls": "K",
+   "report_nm": "주요사항보고서(자기전환사채만기전취득결정)",
+   "rcept_no": "20261109000134",
+   "flr_nm": "엘앤씨바이오",
+   "rcept_dt": "20261109",
+   "rm": ""
+  },
+  {
+   "corp_code": "01181515",
+   "corp_name": "엘앤씨바이오",
+   "stock_code": "290650",
+   "corp_cls": "K",
+   "report_nm": "[기재정정]주요사항보고서(유무상증자결정)",
+   "rcept_no": "20261012000188",
+   "flr_nm": "엘앤씨바이오",
+   "rcept_dt": "20261012",
+   "rm": ""
+  }
+ ]
+}

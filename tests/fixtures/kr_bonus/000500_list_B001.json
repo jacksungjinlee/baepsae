@@ -1,0 +1,21 @@
+{
+ "status": "000",
+ "message": "정상",
+ "page_no": 1,
+ "page_count": 100,
+ "total_count": 1,
+ "total_page": 1,
+ "list": [
+  {
+   "corp_code": "00104768",
+   "corp_name": "가온전선",
+   "stock_code": "000500",
+   "corp_cls": "Y",
+   "report_nm": "주요사항보고서(무상증자결정)",
+   "rcept_no": "20260616000211",
+   "flr_nm": "가온전선",
+   "rcept_dt": "20260616",
+   "rm": ""
+  }
+ ]
+}

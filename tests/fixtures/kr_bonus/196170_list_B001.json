@@ -1,0 +1,21 @@
+{
+ "status": "000",
+ "message": "정상",
+ "page_no": 1,
+ "page_count": 100,
+ "total_count": 1,
+ "total_page": 1,
+ "list": [
+  {
+   "corp_code": "00989619",
+   "corp_name": "알테오젠",
+   "stock_code": "196170",
+   "corp_cls": "K",
+   "report_nm": "[기재정정]주요사항보고서(무상증자결정)",
+   "rcept_no": "20260720000129",
+   "flr_nm": "알테오젠",
+   "rcept_dt": "20260720",
+   "rm": ""
+  }
+ ]
+}

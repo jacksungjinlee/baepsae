@@ -1,0 +1,27 @@
+{
+ "status": "000",
+ "message": "정상",
+ "list": [
+  {
+   "rcept_no": "20260112000350",
+   "corp_cls": "K",
+   "corp_code": "01806951",
+   "corp_name": "폰드그룹",
+   "bddd": "2025년 12월 09일",
+   "od_a_at_t": "2",
+   "od_a_at_b": "-",
+   "adt_a_atn": "참석",
+   "nstk_ostk_cnt": "25,227,719",
+   "nstk_estk_cnt": "-",
+   "fv_ps": "500",
+   "bfic_tisstk_ostk": "32,343,933",
+   "bfic_tisstk_estk": "-",
+   "nstk_asstd": "2026년 01월 05일",
+   "nstk_ascnt_ps_ostk": "0.780175",
+   "nstk_ascnt_ps_estk": "-",
+   "nstk_dividrk": "2026년 01월 01일",
+   "nstk_dlprd": "-",
+   "nstk_lstprd": "2026년 01월 19일"
+  }
+ ]
+}

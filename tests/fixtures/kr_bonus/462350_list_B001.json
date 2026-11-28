@@ -1,0 +1,43 @@
+{
+ "status": "000",
+ "message": "정상",
+ "page_no": 1,
+ "page_count": 100,
+ "total_count": 3,
+ "total_page": 1,
+ "list": [
+  {
+   "corp_code": "01700587",
+   "corp_name": "이노스페이스",
+   "stock_code": "462350",
+   "corp_cls": "K",
+   "report_nm": "[기재정정]주요사항보고서(무상증자결정)",
+   "rcept_no": "20260612000418",
+   "flr_nm": "이노스페이스",
+   "rcept_dt": "20260612",
+   "rm": ""
+  },
+  {
+   "corp_code": "01700587",
+   "corp_name": "이노스페이스",
+   "stock_code": "462350",
+   "corp_cls": "K",
+   "report_nm": "[기재정정]주요사항보고서(유상증자결정)",
+   "rcept_no": "20260601001294",
+   "flr_nm": "이노스페이스",
+   "rcept_dt": "20260601",
+   "rm": ""
+  },
+  {
+   "corp_code": "01700587",
+   "corp_name": "이노스페이스",
+   "stock_code": "462350",
+   "corp_cls": "K",
+   "report_nm": "[기재정정]주요사항보고서(유무상증자결정)",
+   "rcept_no": "20251106000107",
+   "flr_nm": "이노스페이스",
+   "rcept_dt": "20251106",
+   "rm": ""
+  }
+ ]
+}

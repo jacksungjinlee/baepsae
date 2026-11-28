@@ -1,0 +1,54 @@
+{
+ "status": "000",
+ "message": "정상",
+ "page_no": 1,
+ "page_count": 100,
+ "total_count": 4,
+ "total_page": 1,
+ "list": [
+  {
+   "corp_code": "01806951",
+   "corp_name": "폰드그룹",
+   "stock_code": "472850",
+   "corp_cls": "K",
+   "report_nm": "[첨부정정]주요사항보고서(회사합병결정)",
+   "rcept_no": "20260206001733",
+   "flr_nm": "폰드그룹",
+   "rcept_dt": "20260206",
+   "rm": ""
+  },
+  {
+   "corp_code": "01806951",
+   "corp_name": "폰드그룹",
+   "stock_code": "472850",
+   "corp_cls": "K",
+   "report_nm": "[첨부정정]주요사항보고서(회사합병결정)",
+   "rcept_no": "20260206001721",
+   "flr_nm": "폰드그룹",
+   "rcept_dt": "20260206",
+   "rm": ""
+  },
+  {
+   "corp_code": "01806951",
+   "corp_name": "폰드그룹",
+   "stock_code": "472850",
+   "corp_cls": "K",
+   "report_nm": "[기재정정]주요사항보고서(무상증자결정)",
+   "rcept_no": "20260112000350",
+   "flr_nm": "폰드그룹",
+   "rcept_dt": "20260112",
+   "rm": ""
+  },
+  {
+   "corp_code": "01806951",
+   "corp_name": "폰드그룹",
+   "stock_code": "472850",
+   "corp_cls": "K",
+   "report_nm": "[첨부추가]주요사항보고서(회사합병결정)",
+   "rcept_no": "20251222000430",
+   "flr_nm": "폰드그룹",
+   "rcept_dt": "20251222",
+   "rm": ""
+  }
+ ]
+}

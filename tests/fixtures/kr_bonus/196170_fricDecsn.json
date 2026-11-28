@@ -1,0 +1,27 @@
+{
+ "status": "000",
+ "message": "정상",
+ "list": [
+  {
+   "rcept_no": "20260720000129",
+   "corp_cls": "K",
+   "corp_code": "00989619",
+   "corp_name": "알테오젠",
+   "bddd": "2026년 07월 16일",
+   "od_a_at_t": "4",
+   "od_a_at_b": "-",
+   "adt_a_atn": "참석",
+   "nstk_ostk_cnt": "16,068,790",
+   "nstk_estk_cnt": "122,037",
+   "fv_ps": "500",
+   "bfic_tisstk_ostk": "53,586,343",
+   "bfic_tisstk_estk": "406,793",
+   "nstk_asstd": "2026년 08월 06일",
+   "nstk_ascnt_ps_ostk": "0.3",
+   "nstk_ascnt_ps_estk": "0.3",
+   "nstk_dividrk": "2026년 01월 01일",
+   "nstk_dlprd": "-",
+   "nstk_lstprd": "2026년 08월 26일"
+  }
+ ]
+}

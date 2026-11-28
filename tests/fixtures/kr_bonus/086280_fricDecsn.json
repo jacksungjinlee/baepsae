@@ -1,0 +1,27 @@
+{
+ "status": "000",
+ "message": "정상",
+ "list": [
+  {
+   "rcept_no": "20240628000319",
+   "corp_cls": "Y",
+   "corp_code": "00360595",
+   "corp_name": "현대글로비스",
+   "bddd": "2024년 06월 28일",
+   "od_a_at_t": "5",
+   "od_a_at_b": "-",
+   "adt_a_atn": "참석",
+   "nstk_ostk_cnt": "37,500,000",
+   "nstk_estk_cnt": "-",
+   "fv_ps": "500",
+   "bfic_tisstk_ostk": "37,500,000",
+   "bfic_tisstk_estk": "-",
+   "nstk_asstd": "2024년 07월 15일",
+   "nstk_ascnt_ps_ostk": "1",
+   "nstk_ascnt_ps_estk": "-",
+   "nstk_dividrk": "2024년 01월 01일",
+   "nstk_dlprd": "-",
+   "nstk_lstprd": "2024년 08월 02일"
+  }
+ ]
+}

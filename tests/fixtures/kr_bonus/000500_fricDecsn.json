@@ -1,0 +1,27 @@
+{
+ "status": "000",
+ "message": "정상",
+ "list": [
+  {
+   "rcept_no": "20260616000211",
+   "corp_cls": "Y",
+   "corp_code": "00104768",
+   "corp_name": "가온전선",
+   "bddd": "2026년 06월 16일",
+   "od_a_at_t": "3",
+   "od_a_at_b": "0",
+   "adt_a_atn": "참석",
+   "nstk_ostk_cnt": "13,234,492",
+   "nstk_estk_cnt": "-",
+   "fv_ps": "5,000",
+   "bfic_tisstk_ostk": "16,543,115",
+   "bfic_tisstk_estk": "-",
+   "nstk_asstd": "2026년 07월 01일",
+   "nstk_ascnt_ps_ostk": "0.8",
+   "nstk_ascnt_ps_estk": "-",
+   "nstk_dividrk": "2026년 01월 01일",
+   "nstk_dlprd": "-",
+   "nstk_lstprd": "2026년 07월 23일"
+  }
+ ]
+}
