@@ -204,6 +204,9 @@ export function CondSheet({ open, store, setStoreData, onClose }) {
                 <p data-ui-v2="watch-now" style={tx(SIZE.xs, WEIGHT.regular, COLOR.text2, { marginTop: SPACE(1) })}>
                   {now == null ? W().blank : fill(W().now, { now: nowValue(k, now, us) })}</p>
               )}
+              {/* a US ETF or fund (Jack, 2026-11-27, answer 12): its PBR is never shown (fcur.js fundPbrOf), so the PBR field reads
+                  정보 없음 (empty) or a 정보 없음 chip (typed); his line under it, once in the sheet (#203 reviews) */}
+              {k === "pbrBelow" && <FundPbrNote s={open.s} style={{ marginTop: SPACE(1) }} />}
               {Number.isNaN(v) && <Note tone="watch" data-ui-v2="watch-bad">{W().form.bad}</Note>}
             </div>
           );

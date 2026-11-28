@@ -299,3 +299,98 @@ def test_the_old_app_tilt_card_leaves_a_held_us_fund_out_of_value_and_says_why_o
     assert got["none"]["n"] == 0 and got["kfund"]["n"] == 0                     # 미국 펀드가 없으면 줄도 없어요 (국내 펀드는 원래 가치 점수가 없어요)
     assert got["alone"] == {"n": 1, "names": ["모멘텀"], "none": False, "nan": False}, got["alone"]   # 가치 막대가 없어진 까닭이 보여요
     assert got["bare"] == {"n": 1, "names": [], "none": True, "nan": False}, got["bare"]            # 성향을 낼 수 없는 카드에도 그 까닭
+
+
+# ── 8. #203 리뷰 (1차: Opus · Fable) ───────────────────────────────────────────────────────────
+SHEET = """
+  const L = loadOf();
+  const sheet = (t, conds = []) => {
+    const s = L.byT.get(t);
+    const store = { key: 'k', data: { v: 1, decks: [], watch: { [t]: { at: '2026-11-01', ts: 1, conds } } }, writable: true };
+    const html = renderToStaticMarkup(h(Wx.CondSheet, { open: { t, name: s.nk, s, us: s.cls === 'us' }, store, setStoreData() {}, onClose() {} }));
+    const field = (k) => { const i = html.indexOf(`data-ui-v2="watch-field" data-k="${k}"`); const j = html.indexOf('data-ui-v2="watch-field"', i + 10);
+      return html.slice(i, j < 0 ? html.length : j); };
+    const pb = field('pbrBelow');
+    return { n: count(html, LINE), inPbr: count(pb, LINE), ui: (html.match(/data-ui-v2="fund-pbr"/g) || []).length,
+      blank: count(pb, C2.watch.blank), now: /data-ui-v2="watch-now"/.test(pb), chip: (pb.match(/data-k="pbrBelow" data-state="([a-z]+)"/) || [])[1] || null,
+      nan: /NaN/.test(html), others: ['pxBelow', 'dyAtLeast'].map((k) => count(field(k), LINE)) };
+  };
+"""
+
+
+def test_the_2_0_condition_sheet_shows_the_line_once_under_a_us_funds_pbr_field():
+    """리뷰 (Opus nit · Fable S2): 관심 종목의 조건 시트 — 미국 펀드의 PBR 칸은 정보 없음이고, 그 칸 밑에 Jack 의 줄 한 번 (빈 칸이어도 · 숫자를 적어
+    정보 없음 칩이 보여도) · 다른 칸 밑에는 없음 · 회사 · 국내 펀드는 줄 없음."""
+    got = run(SHEET + """
+      out = { spy: sheet('SPY'), spyTyped: sheet('SPY', [{ k: 'pbrBelow', v: 2 }]), qqqPx: sheet('QQQ', [{ k: 'pxBelow', v: 1000 }]),
+        k379800: sheet('379800'), voo: sheet('VOO'), aapl: sheet('AAPL'), aaplTyped: sheet('AAPL', [{ k: 'pbrBelow', v: 100 }]), k069500: sheet('069500') };""")
+    for k in ("spy", "qqqPx", "k379800", "voo"):                         # 빈 PBR 칸: '정보 없음' 과 그 밑의 줄
+        assert got[k] == {"n": 1, "inPbr": 1, "ui": 1, "blank": 1, "now": True, "chip": None, "nan": False, "others": [0, 0]}, (k, got[k])
+    assert got["spyTyped"] == {"n": 1, "inPbr": 1, "ui": 1, "blank": 1, "now": False, "chip": "blank", "nan": False, "others": [0, 0]}, got["spyTyped"]
+    for k in ("aapl", "aaplTyped", "k069500"):
+        assert got[k]["n"] == 0 and got[k]["ui"] == 0 and got[k]["nan"] is False, (k, got[k])
+    assert got["aapl"]["blank"] == 0 and got["aapl"]["now"] is True                    # 회사: 오늘의 PBR 이 보여요
+
+
+def test_the_old_app_tilt_card_keeps_the_line_while_a_fund_is_left_out_even_with_a_typed_pbr():
+    """리뷰 (Fable S3 · Opus nit): 성향 카드의 줄은 빠지는 가치 점수(vz)로 — 사용자가 종목 데이터 수정에 SPY 의 PBR 을 적어도 (vz 는 여전히 없어)
+    SPY 는 가치 평균에서 빠지고 줄도 남아요. 종목 고르기의 줄은 예전 규칙 그대로 (PBR 이 '–' 일 때만 · 적은 숫자 옆에는 없음)."""
+    # TILT and ROW both start with MERGE: one merge, both helpers
+    got = run(TILT + ROW[len(MERGE):] + """
+      const typed = { ...by.SPY, pbr: 2.5 };
+      by.SPYT = typed;
+      out = { typed: card([['SPYT', 0.5], ['AAPL', 0.5]]), plain: card([['SPY', 0.5], ['AAPL', 0.5]]),
+        withVz: (() => { by.SPYV = { ...by.SPY, vz: 50 }; return card([['SPYV', 0.5], ['AAPL', 0.5]]); })(),
+        rule: [OF.fundVzOut(typed), OF.fundPbrRow(typed), OF.fundVzOut(by.AAPL), OF.fundVzOut(by['069500']), OF.fundVzOut(null)],
+        row: view('SPY', 'ko', 'pro', { pbr: 2.5 }) };""")
+    assert got["typed"] == got["plain"] == {"n": 1, "names": ["가치", "모멘텀", "퀄리티"], "none": False, "nan": False}, got
+    assert got["withVz"]["n"] == 0                                                         # 가치 점수가 있으면 빠지지 않아요 (줄 없음)
+    assert got["rule"] == [True, False, False, False, False]
+    assert got["row"]["n"] == 0 and got["row"]["tile"] == "23 / 2.5"                       # 종목 고르기: 적은 숫자 옆에는 줄이 없어요 (그대로)
+
+
+def test_the_old_app_example_rows_carry_no_fund_pbr():
+    """#203 리뷰: 예전 뱁새의 내장 예시 줄 (VOO · QQQ · SCHD · 379800 · 069500 · 금은 셋) 에도 펀드 PBR 이 없어요 — 오늘 데이터에 그 종목이 없어 예시
+    값이 보일 때도 'PER / PBR' 은 '… / –' 이고, 미국 펀드는 (fundNoBook) 종목 고르기 · 성향 카드에 Jack 의 줄 한 번 (한국어 화면만) · 회사 줄은 그대로."""
+    got = run("""
+      const base = DT.BASE_STOCKS;
+      const fundT = ['VOO', 'QQQ', 'SCHD', '379800', '069500', '04020000', '132030', '144600'];
+      const rows = Object.fromEntries(fundT.map((t) => { const b = base.find((s) => s.t === t); return [t, b ? [b.pbr === null, b.vz == null, b.fundNoBook === true] : null]; }));
+      const pbrs = base.filter((s) => s.pbr != null && s.s !== 'index' && s.s !== 'metal').length;
+      const M = D.mergeStocks(base, [{ t: 'AAPL', cls: 'us', etf: false, price: 230, beta: 1.1, vol: 26, per: 32, pbr: 48, vz: 1, mz: 60 }]);
+      const by = Object.fromEntries(M.map((s) => [s.t, s]));
+      const row = (t, lang = 'ko') => renderToStaticMarkup(h(DT.StockRow, { s: by[t], lang, t: (k) => k, mode: 'pro', settings: DT.DEFAULT_SETTINGS,
+        loaded: false, onAdd() {}, open: true, onToggle() {}, peers: [], updateStock() {} }));
+      const tile = (html) => { const m = text(html).match(/PER \\/ PBR\\n+([^\\n]+)/); return m ? m[1].trim() : null; };
+      const tilt = (rows, lang = 'ko') => count(renderToStaticMarkup(h(DT.FactorTiltCard, { lang, t: (k) => k,
+        metrics: { empty: false, rows: rows.map(([t, w]) => ({ t, mw: w * 100, wInv: w, stock: by[t] })) } })), LINE);
+      out = { rows, pbrs, live: [by.VOO.live, by.AAPL.live],
+        tiles: Object.fromEntries(['VOO', 'QQQ', 'SCHD', '379800', '069500', '04020000', 'AAPL'].map((t) => { const x = row(t); return [t, [tile(x), count(x, LINE)]]; })),
+        en: count(row('VOO', 'en'), LINE), tilt: [tilt([['VOO', 0.5], ['AAPL', 0.5]]), tilt([['069500', 0.5], ['AAPL', 0.5]]), tilt([['VOO', 0.5], ['AAPL', 0.5]], 'en')] };""")
+    r = got["rows"]
+    for t in ("VOO", "QQQ", "SCHD", "379800"):
+        assert r[t] == [True, True, True], (t, r[t])
+    for t in ("069500", "04020000", "132030", "144600"):                                    # 국내 펀드 · 금은: PBR 없음 (줄은 미국 펀드만)
+        assert r[t] == [True, True, False], (t, r[t])
+    assert got["pbrs"] > 60                                                                 # 회사 예시 줄의 PBR 은 그대로
+    assert got["live"] == [False, True]                                                     # VOO 는 오늘 데이터에 없어 예시 줄
+    tl = got["tiles"]
+    assert tl["VOO"] == ["26 / –", 1] and tl["QQQ"] == ["32 / –", 1] and tl["SCHD"] == ["17 / –", 1] and tl["379800"] == ["26 / –", 1], tl
+    assert tl["069500"] == ["12 / –", 0] and tl["04020000"] == ["0 / –", 0] and tl["AAPL"] == ["32 / 48.0", 0], tl
+    assert got["en"] == 0 and got["tilt"] == [1, 0, 0]
+
+
+def test_the_old_app_merge_with_a_fund_marked_for_an_unconfirmed_split():
+    """#186 (Jack 답 11) 의 spNo 와 이 PR: 공시로 확인하지 못한 분할로 표시된 펀드 (그 전에 발행된 파일처럼 PBR · 가치 점수가 남은 행) — 합친 줄은
+    베타 · 변동성 '–' (noRisk · spNo 의 규칙) 이면서 PBR · 가치 점수도 없고 fundNoBook (두 규칙이 서로 지우지 않아요) · 국내 펀드라 줄은 없음."""
+    got = run("""
+      const sp = { spNo: '2026-11-02', spNoF: ['vol', 'beta', 'hi', 'lo'] };
+      const LIVE = [{ t: '069500', nk: 'KODEX 200', cls: 'kr', s: 'index', fund: true, etf: true, price: 76705, per: 11, pbr: 1.0, vz: 50, mz: 30, ...sp },
+                    { t: '088980', nk: '맥쿼리인프라', cls: 'kr', s: 'broker', etf: true, price: 9630, pbr: 1.1, vz: 60, pz: 4, ...sp }];
+      const M = D.mergeStocks(DT.BASE_STOCKS, LIVE); const by = Object.fromEntries(M.map((s) => [s.t, s]));
+      const pick = (s) => [s.beta == null ? null : s.beta, s.vol == null ? null : s.vol, !!s.noRisk, s.pbr == null ? null : s.pbr, s.vz == null ? null : s.vz,
+        !!s.fundNoBook, s.mz == null ? null : s.mz, s.live, OF.fundPbrRow(s), OF.fundVzOut(s)];
+      out = { k069500: pick(by['069500']), k088980: pick(by['088980']), w: warns.filter((x) => x.includes('PBR')) };""")
+    assert got["k069500"] == [None, None, True, None, None, True, 30, True, False, False], got["k069500"]
+    assert got["k088980"] == [None, None, True, None, None, True, None, True, False, False], got["k088980"]
+    assert len(got["w"]) == 1 and "2개" in got["w"][0], got["w"]

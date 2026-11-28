@@ -211,3 +211,60 @@ def test_gate_row_runs_in_every_mode_and_never_fails():
     adds = re.findall(r"rep\.add\(FUND_BOOK_ROW, (\w+),", body)
     assert adds == ["True", "True", "True"], adds                                         # 모든 줄이 ok=True: 경고 아니면 통과 (실패 없음)
     assert "경고만" in V.FUND_BOOK_ROW
+
+
+# ── 5. #203 리뷰 (1차: Opus · Fable) ───────────────────────────────────────────────────────────
+def test_gate_counts_a_fund_left_in_both_files_as_one_place():
+    """리뷰 nit: data.json 과 corp.json 에 함께 남은 펀드는 한 곳 ('corp.' 을 떼고 세요) — 값 칸의 글만 바뀌고 줄은 여전히 경고만."""
+    d, c = a_file()
+    by = {s["t"]: s for s in d["stocks"]}
+    by["088980"]["pbr"] = 1.1
+    by["088980"]["vz"] = 60
+    c["companies"][0]["pbr"] = 1.1
+    c["companies"][0]["vz"] = 60
+    st, val = gate(d, c)
+    assert st == "WARN" and val.startswith("남은 칸 4 (1곳 · 펀드 36곳 · "), val
+    assert val.split("): ", 1)[1] == "088980.pbr, 088980.vz, corp.088980.pbr, corp.088980.vz", val
+    by["SPY"]["pbr"] = 1.7                                                                 # 다른 펀드 하나 더: 두 곳
+    st, val = gate(d, c)
+    assert st == "WARN" and val.startswith("남은 칸 5 (2곳 · "), val
+    dot = {"stocks": [{"t": "BRK.X", "cls": "us", "etf": True, "pbr": 1.0}]}, {"companies": [{"t": "BRK.X", "pbr": 1.0}]}
+    st, val = gate(*dot)                                                                   # 점이 든 종목 코드도 한 곳
+    assert st == "WARN" and val.startswith("남은 칸 2 (1곳 · "), val
+
+
+def _split_rows():
+    full = {k: 1.0 for k in V.PX_BAD_DATA}
+    return [{"t": "088980", "nk": "맥쿼리인프라", "cls": "kr", "etf": True, "price": 9630.0, "shr": 478921993, "pbr": 1.1, "vz": 60, "pz": 4, **full},
+            {"t": "000010", "nk": "회사", "cls": "kr", "etf": False, "price": 1000.0, "shr": 1000000, "pbr": 2.0, "vz": 40, **full}]
+
+
+def test_a_fund_marked_for_an_unconfirmed_split_gets_both_blanks_and_they_do_not_fight():
+    """#186 (Jack 답 11) 의 mark_split_nofile 과 이 PR 의 fund_book_blank: 서로 다른 칸 (PX_BAD_DATA · pbr · vz) — main 의 순서 (분할 먼저) 로 둘 다
+    그대로 남고, 순서를 바꿔도 같은 행 · corp.json 도 같은 표시와 빈 칸 · 관문의 두 줄 (분할의 숫자 비움 · 펀드에 PBR · 가치 점수 없음) 모두 문제 없음."""
+    assert not set(V.FUND_BOOK_KEYS) & set(V.PX_BAD_DATA)                                # 두 단계가 비우는 칸은 겹치지 않아요
+    src = inspect.getsource(F.main)
+    assert src.index("mark_split_nofile(kr, nf,") < src.index("fund_pb = fund_book_blank(kr + us + bonds + funds)")
+    nofile = [["088980", "2026-11-02", 2.0, "nodoc"], ["000010", "2026-11-02", 2.0, "nodoc"]]
+    rows = _split_rows()
+    F.mark_split_nofile(rows, nofile, {})
+    rec = F.fund_book_blank(rows)
+    fund, co = rows
+    assert rec == {"v": 1, "n": 1, "t": ["088980"]}
+    assert fund["spNo"] == "2026-11-02" and fund["spNoF"] == list(V.PX_BAD_DATA)
+    assert all(k not in fund for k in V.PX_BAD_DATA + V.FUND_BOOK_KEYS) and fund["pz"] == 4 and fund["price"] == 9630.0
+    assert co["spNo"] == "2026-11-02" and co["pbr"] == 2.0 and co["vz"] == 40              # 회사: 분할 표시만 (PBR · 가치 점수는 그대로)
+    other = _split_rows()                                                                  # 순서를 바꿔도 (펀드 먼저) 같은 행
+    F.fund_book_blank(other)
+    F.mark_split_nofile(other, nofile, {})
+    assert other == rows
+    corp = F.build_corp(rows, {}, "2026-11-28")
+    cf = {c["t"]: c for c in corp["companies"]}["088980"]
+    assert cf["spNo"] == "2026-11-02" and cf["pbr"] is None and cf["vz"] is None
+    data = {"stocks": rows, "pxDate": "2026-11-27", "fundPb": rec}
+    rep = V.Report()
+    V._check_kr_split_hide(rep, data, corp["companies"], nofile)
+    (hide,) = [r for r in rep.rows if r[0] == V.KR_NOFILE_HIDE_ROW]
+    assert hide[3] == "PASS" and hide[1] == "2종목 · 문제 0", hide
+    assert gate(data, corp) == ("PASS", "없음 (펀드 1곳 · 이번 실행이 비운 펀드 1곳 (088980))")
+    json.dumps(rows, allow_nan=False)

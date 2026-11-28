@@ -227,6 +227,9 @@ export function PxBadOneLine({ c, field, style, lang = "ko" }) {
 // 2026-11-27 (Jack): 미국 ETF · 펀드 (합친 줄의 fundNoBook · cls "us" — 379800 도) 의 PBR 이 비어 있으면 그 자리에 한 번 (한국어 화면만).
 // 종목 고르기의 펼친 종목 ("PER / PBR" 칸이 "… / –") · 내 포트폴리오의 성향 (담은 미국 펀드가 가치 평균에서 빠질 때 · show 로). 숫자 옆에는 없어요.
 export const fundPbrRow = (s) => !!s && s.fundNoBook === true && s.cls === "us" && s.pbr == null;
+// 내 포트폴리오의 성향: 담은 미국 펀드가 가치 점수(vz)가 없어 가치 평균에서 빠질 때 (#203 리뷰: PBR 이 아니라 빠지는 가치 점수로 봐요 — 사용자가
+// 종목 데이터 수정에 PBR 을 적어도 펀드는 여전히 빠지고 줄도 남아요). 종목 고르기의 줄은 위의 fundPbrRow ("PER / PBR" 칸이 "… / –" 일 때).
+export const fundVzOut = (s) => !!s && s.fundNoBook === true && s.cls === "us" && typeof s.vz !== "number";
 export function FundPbrLine({ c, show, style, lang = "ko" }) {
   const on = show === undefined ? fundPbrRow(c) : !!show;
   return on && lang !== "en" ? <div data-fix="fund-pbr" style={{ ...LINE, ...style }}>{FIX_FUND_PBR}</div> : null;

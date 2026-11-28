@@ -18,7 +18,7 @@ import { loadJson, freshness, mergeStocks, mdOf, loadCorpOnce, krGrowthBasis, st
 import { SHOW_VERDICTS, SHOW_SCORE, SHOW_ER } from "./flags.js";
 import { ABOUT_URL } from "./links.js";
 // 2026-11-08 (Jack): 한국 PER · ROE 가 보이는 칸마다 한 줄 — DART 다시 읽기 전까지 (src/repair.js, src/fixnote.jsx)
-import { EpsFixLineLoaded, PxBadLine, PxBadOneLine, krOwnCloseListLine, usOwnCloseAllLine, FundPbrLine, fundPbrRow } from "./fixnote.jsx";
+import { EpsFixLineLoaded, PxBadLine, PxBadOneLine, krOwnCloseListLine, usOwnCloseAllLine, FundPbrLine, fundVzOut } from "./fixnote.jsx";
 import { pxBadFull, pxBadHides } from "./repair.js";   // 2026-11-14 저녁: 52주는 보이는 종목의 비운 칸
 
 // 오늘 날짜 (YYYY-MM-DD) — 한국 날짜예요. 2026-11-12 (Jack): 예전에는 new Date().toISOString() 의 UTC 날짜를 써서, 한국 시간 00:00~09:00 에는
@@ -603,18 +603,20 @@ export const BASE_STOCKS = [   // export: tests/test_ind_dart.py 가 오늘 데�
     x:{ mcap:530, roe:38, opm:27, g3:14, lo:585, hi:1058, dk:"스트리밍 1위. 광고 요금제와 계정 공유 단속으로 수익성이 크게 개선됐어요.", de:"Streaming leader; ad tiers and password-sharing crackdowns sharply improved profitability." } },
   { t:"DIS", nk:"디즈니", ne:"Disney", s:"media", cls:"us", ccy:"USD", fxu:true, price:112, beta:1.10, vol:30, per:22, pbr:2, dy:0.9, al:-8,
     x:{ mcap:280, roe:6, opm:13, g3:5, lo:83, hi:123, dk:"테마파크는 튼튼하지만 스트리밍 전환 비용이 컸어요. IP의 가치와 실적의 괴리가 논쟁거리.", de:"Parks are solid; the streaming transition was costly. IP value versus earnings remains the debate." } },
-  { t:"VOO", nk:"S&P500 ETF (VOO)", ne:"Vanguard S&P 500", s:"index", cls:"us", ccy:"USD", fxu:true, price:560, beta:1.00, vol:16, per:26, pbr:5, dy:1.3, al:0 },
-  { t:"QQQ", nk:"나스닥100 ETF (QQQ)", ne:"Invesco QQQ", s:"index", cls:"us", ccy:"USD", fxu:true, price:510, beta:1.15, vol:21, per:32, pbr:8, dy:0.6, al:4 },
-  { t:"SCHD", nk:"미국 배당 ETF (SCHD)", ne:"Schwab US Dividend", s:"index", cls:"us", ccy:"USD", fxu:true, price:27, beta:0.80, vol:15, per:17, pbr:3, dy:3.5, al:-2 },
+  // 2026-11-27 (Jack, answer 12 · #203 리뷰): ETF · 펀드 · 금은의 예시 줄에도 PBR 을 두지 않아요 (펀드에는 회사의 장부가가 없어요 · 오늘 데이터에 그 종목이
+  // 없을 때만 보이는 예시 값). 미국 펀드는 fundNoBook — 종목 고르기 · 내 포트폴리오의 성향에 Jack 의 줄 (fixnote.jsx FundPbrLine · 한국어 화면만)
+  { t:"VOO", nk:"S&P500 ETF (VOO)", ne:"Vanguard S&P 500", s:"index", cls:"us", ccy:"USD", fxu:true, price:560, beta:1.00, vol:16, per:26, pbr:null, fundNoBook:true, dy:1.3, al:0 },
+  { t:"QQQ", nk:"나스닥100 ETF (QQQ)", ne:"Invesco QQQ", s:"index", cls:"us", ccy:"USD", fxu:true, price:510, beta:1.15, vol:21, per:32, pbr:null, fundNoBook:true, dy:0.6, al:4 },
+  { t:"SCHD", nk:"미국 배당 ETF (SCHD)", ne:"Schwab US Dividend", s:"index", cls:"us", ccy:"USD", fxu:true, price:27, beta:0.80, vol:15, per:17, pbr:null, fundNoBook:true, dy:3.5, al:-2 },
   // ---- 국내 상장 ETF ----
-  { t:"069500", nk:"KODEX 200", ne:"KODEX 200", s:"index", cls:"kr", price:36000, beta:1.00, vol:18, per:12, pbr:1.0, dy:2.0, al:0 },
-  { t:"379800", nk:"KODEX 미국S&P500", ne:"KODEX US S&P500", s:"index", cls:"us", fxu:true, price:19000, beta:1.00, vol:16, per:26, pbr:5, dy:1.2, al:0 },
+  { t:"069500", nk:"KODEX 200", ne:"KODEX 200", s:"index", cls:"kr", price:36000, beta:1.00, vol:18, per:12, pbr:null, dy:2.0, al:0 },
+  { t:"379800", nk:"KODEX 미국S&P500", ne:"KODEX US S&P500", s:"index", cls:"us", fxu:true, price:19000, beta:1.00, vol:16, per:26, pbr:null, fundNoBook:true, dy:1.2, al:0 },
   // ---- 금·은 (헤지용 보조 자산) ----
-  { t:"04020000", nk:"KRX 금현물 (99.99K)", ne:"KRX Gold Spot", s:"metal", cls:"metal", fxu:true, price:135000, beta:1.00, vol:15, per:0, pbr:0, dy:0.0, al:0,
+  { t:"04020000", nk:"KRX 금현물 (99.99K)", ne:"KRX Gold Spot", s:"metal", cls:"metal", fxu:true, price:135000, beta:1.00, vol:15, per:0, pbr:null, dy:0.0, al:0,
     x:{ dk:"KRX 금시장에서 사는 실물 금. 매매차익이 비과세라 금 ETF보다 세금에서 유리해요. 달러로 값이 매겨져 원화 약세 때 이중으로 오릅니다.", de:"Physical gold on the KRX exchange: capital gains are untaxed, unlike gold ETFs. Priced in dollars, so a weak won lifts it twice." } },
-  { t:"132030", nk:"KODEX 골드선물(H)", ne:"KODEX Gold Futures(H)", s:"metal", cls:"metal", price:15000, beta:1.00, vol:15.5, per:0, pbr:0, dy:0.0, al:0,
+  { t:"132030", nk:"KODEX 골드선물(H)", ne:"KODEX Gold Futures(H)", s:"metal", cls:"metal", price:15000, beta:1.00, vol:15.5, per:0, pbr:null, dy:0.0, al:0,
     x:{ dk:"환헤지형 금 ETF. 환율 변동은 막아주지만, 위기 때 원화 약세가 주는 완충 효과도 함께 사라져요. 매매차익에 배당소득세 15.4%가 붙습니다.", de:"Currency-hedged gold ETF: it removes FX swings, but also the cushion a weak won provides in a crisis. Gains taxed at 15.4%." } },
-  { t:"144600", nk:"KODEX 은선물(H)", ne:"KODEX Silver Futures(H)", s:"metal", cls:"metal", price:5000, beta:1.50, vol:30, per:0, pbr:0, dy:0.0, al:0,
+  { t:"144600", nk:"KODEX 은선물(H)", ne:"KODEX Silver Futures(H)", s:"metal", cls:"metal", price:5000, beta:1.50, vol:30, per:0, pbr:null, dy:0.0, al:0,
     x:{ dk:"은은 금보다 훨씬 크게 출렁여요(연 30%). 태양광·전자 등 산업 수요가 절반이라 경기가 나쁠 땐 주식처럼 같이 빠질 수 있어요 — 금보다 약한 방패입니다.", de:"Silver swings far harder than gold (~30%/yr). Half its demand is industrial, so it can fall with stocks in a downturn — a weaker shield than gold." } },
 ];
 
@@ -4161,7 +4163,7 @@ function FactorTiltCard({ lang, t, metrics }) {
   const ko = lang === "ko";
   const rows = metrics.rows.filter((r) => r.mw > 0);
   // 2026-11-27 (Jack): 담은 미국 ETF · 펀드는 가치 점수가 없어 가치 평균에서 빠져요 (data.js mergeStocks) — 그 까닭 한 줄 (한국어 화면만)
-  const fundLeft = rows.some((r) => fundPbrRow(r.stock));
+  const fundLeft = rows.some((r) => fundVzOut(r.stock));   // #203 리뷰: 빠지는 가치 점수로 (적은 PBR 이 줄을 숨기지 않게)
   const tilts = FACTORS.map(([k, ko1, en1, hiK, hiE, loK, loE]) => {
     let wsum = 0, acc = 0;
     rows.forEach((r) => { const v = r.stock[k]; if (typeof v === "number") { acc += r.wInv * v; wsum += r.wInv; } });

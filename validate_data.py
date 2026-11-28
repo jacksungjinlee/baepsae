@@ -3340,7 +3340,8 @@ def check_fund_book(rep, data, corp):
     if not left:
         rep.add(FUND_BOOK_ROW, True, f"없음 (펀드 {nfund}곳 · {rec})", rule, warn=not rec_ok)
         return
-    nt = len({x.rsplit(".", 1)[0] for x in left})
+    # 곳 수는 종목으로 (#203 리뷰: data.json 과 corp.json 에 함께 남은 펀드는 한 곳 — 'corp.' 을 떼고 세요)
+    nt = len({x.rsplit(".", 1)[0].removeprefix("corp.") for x in left})
     rep.add(FUND_BOOK_ROW, True, f"남은 칸 {len(left)} ({nt}곳 · 펀드 {nfund}곳 · {rec}): " + ", ".join(left[:US_OWN_SHOW])
             + (f" 외 {len(left) - US_OWN_SHOW}칸" if len(left) > US_OWN_SHOW else ""), rule, warn=True)
 
