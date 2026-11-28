@@ -834,6 +834,284 @@ def test_example_limit_still_counts_marked_built_ins(SA, monkeypatch, capsys):
     assert SA.banner_due(R, "정상", mark(kr[:1])) == [] and not R.notes
 
 
+# ── 2026-11-28 (Jack 11-27, 답 7 · 삼성전자도 내장 종목이에요): 삼성전자(005930)에 과거 주가 기록 오류 표시가 붙어도 모두의 발행을 멈추지 않게 ──
+def plain_rows():
+    """pick_plain 이 고르는 모양의 종목들: 내장 한국 보통주 · 내장 밖 큰 종목 · 우선주 · 펀드 · ETF · 마지막 확인 종가 · 시가총액 빔 · 미국 종목."""
+    mk = lambda t, s, cap, **kw: {"t": t, "cls": "kr", "s": s, "price": 1000.0, "beta": 1.0, "vol": 30.0,   # noqa: E731
+                                  "sh": 0.5, "al": 1.0, "mdd": -30.0, "hi": 1200.0, "lo": 800.0, "cap": cap, "nk": "회사" + t, **kw}
+    rows = [mk("005930", "semi", 1000), mk("000660", "semi", 780), mk("005935", "semi", 116), mk("402340", "holding", 90),   # 402340: 내장 밖
+            mk("373220", "battery", 74), mk("207940", "bio", 62), mk("069500", "index", 950, fund=True), mk("069660", "index", 900, etf=True),
+            mk("000270", "auto", 70, pxd="2026-11-25"), dict(mk("068270", "bio", 51), cap=None), mk("005380", "auto", 54), mk("105560", "bank", 51),
+            dict(mk("AAPL", "tech", 5000), cls="us")]
+    return {s["t"]: s for s in rows}
+
+
+def marked(stocks, *ts, **kw):
+    """파이프라인처럼 표시: pxBad · 베타 · 변동성 · 과거 값 비움."""
+    gone = dict(beta=None, vol=None, al=None, sh=None, mdd=None, pxBad="2024-06-24", **kw)
+    return {t: (dict(s, **gone) if t in ts else s) for t, s in stocks.items()}
+
+
+def test_plain_pick_keeps_005930_and_swaps_only_to_a_stock_the_app_computes_for(SA, monkeypatch, capsys):
+    """pick_plain: 평소에는 005930 (알림 없음). 앱이 그 위험 숫자를 계산하지 못하는 날만 (pxBad · 빈 베타 · 데이터에 없음 · 장면이 읽는 칸이 빔 ·
+    장면의 다른 조건) 내장 한국 보통주를 시가총액 큰 순으로 — avoid 는 빼고. 바꾸면 세 곳에 크게 (실행 기록 · GitHub 경고 · 다르게 확인한 것)."""
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    st = plain_rows()
+    R = FakeRunner()
+    assert SA.pick_plain(R, "시험", st) == ("005930", "삼성전자") and not R.notes and capsys.readouterr().out == ""
+    # 표시 → 다음 내장 보통주 (내장 밖 402340 · 우선주 005935 · 펀드 · ETF 는 건너뛰어요) · 이름은 앱이 보여 주는 내장 이름
+    assert SA.pick_plain(R, "시험", marked(st, "005930")) == ("000660", "SK하이닉스")
+    out = capsys.readouterr().out
+    assert len(R.notes) == 1 and R.notes[0].startswith("시험: ") and "005930 과거 주가 기록 오류 표시(pxBad)" in R.notes[0] and "000660" in R.notes[0]
+    assert out.count("!! 알림  [시험] ") == 1 and out.count("::warning title=발행 전 화면 검사 · 바꿔 담은 종목::[시험] ") == 1
+    # 장면이 함께 담는 종목(avoid)은 고르지 않아요 · 마지막 확인 종가(000270) · 시가총액이 빈 종목(068270)도
+    assert SA.pick_plain(FakeRunner(), "시험", marked(st, "005930"), avoid=("000660",))[0] == "373220"
+    assert SA.pick_plain(FakeRunner(), "시험", marked(st, "005930", "000660", "373220", "207940"), avoid=("105560",))[0] == "005380"
+    # 이유마다: 표시 없는 빈 베타(앱은 내장 예시 값 · 예시 가격) · 데이터에 없음 · 장면이 읽는 칸(need)이 빔 · 장면의 다른 조건(also)
+    for rows, kw, why in ((dict(st, **{"005930": dict(st["005930"], beta=None)}), {}, "베타 · 변동성 · 가격이 위험 계산에 쓸 값이 아님"),
+                          ({t: s for t, s in st.items() if t != "005930"}, {}, "오늘 데이터에 없음"),
+                          (dict(st, **{"005930": dict(st["005930"], sh=None)}), {"need": ("sh", "mdd")}, "필요한 칸(sh)이 빔"),
+                          (st, {"also": lambda s: s["t"] != "005930", "also_why": "주가 분해 숫자 없음"}, "주가 분해 숫자 없음")):
+        R = FakeRunner()
+        assert SA.pick_plain(R, "시험", rows, **kw)[0] == "000660", why
+        assert len(R.notes) == 1 and f"005930 {why}" in R.notes[0], (why, R.notes)
+    # 같은 장면 · 같은 바꿈은 한 번만 알려요 (한 장면이 여러 번 골라도) · 다른 장면은 따로
+    R = FakeRunner()
+    for scene in ("가", "가", "나"):
+        SA.pick_plain(R, scene, marked(st, "005930"))
+    assert [n.split(":")[0] for n in R.notes] == ["가", "나"]
+    # 쓸 종목이 없으면 그 자리에서 실패 (지어낸 종목을 담지 않아요) · want 를 avoid 에 넣는 실수도
+    kr = [t for t, s in st.items() if s.get("cls") == "kr"]
+    with pytest.raises(AssertionError, match="시험할 종목이 모자라요"):
+        SA.pick_plain(FakeRunner(), "시험", marked(st, *kr))
+    with pytest.raises(AssertionError):
+        SA.pick_plain(FakeRunner(), "시험", st, avoid=("005930",))
+
+
+def test_plain_pick_is_never_looser_than_risk_ready_and_is_deterministic(SA):
+    """무작위 데이터 3,000 개: 고른 종목은 언제나 risk_ready · need 칸 숫자 · also · avoid 밖 · (005930 이 아니면) 내장 한국 보통주 · 펀드 · ETF ·
+    마지막 확인 종가 아님 · 시가총액 있음이고, 그런 종목 가운데 시가총액이 가장 커요. 005930 이 쓸 수 있으면 언제나 005930. 데이터 순서를 섞어도 같은 답."""
+    import random
+    rnd = random.Random(20261128)
+    base = plain_rows()
+    pool = set(SA.BASE_TICKERS)
+    for _ in range(3000):
+        st = {}
+        for t, s in base.items():
+            s = dict(s)
+            for k, bad in (("beta", None), ("vol", None), ("price", None), ("price", 0), ("sh", None), ("pxBad", "2024-06-24"), ("pxBad", ""),
+                           ("est", True), ("vol", "30"), ("beta", True), ("cap", None), ("pxd", "2026-11-25")):
+                if rnd.random() < 0.08:
+                    s[k] = bad
+            s["cap"] = s["cap"] if s.get("cap") is None else rnd.choice([s["cap"], rnd.uniform(1, 2000)])
+            if rnd.random() > 0.05:
+                st[t] = s
+        avoid = tuple(t for t in ("000660", "105560", "373220") if rnd.random() < 0.3)
+        need = tuple(k for k in ("sh", "hi") if rnd.random() < 0.3)
+        also = (lambda s: s["t"] != "207940") if rnd.random() < 0.3 else None
+        ok = lambda s: SA.risk_ready(s) and all(SA._num(s.get(k)) for k in need) and (also is None or also(s))   # noqa: E731
+        cands = sorted((s for s in st.values() if s["t"] in pool and s["t"] not in avoid and s.get("cls") == "kr" and s["t"].endswith("0")
+                        and not s.get("fund") and not s.get("etf") and s.get("pxd") is None and SA._num(s.get("cap")) and ok(s)),
+                       key=lambda s: (-s["cap"], s["t"]))
+        want = "005930" if "005930" in st and ok(st["005930"]) else (cands[0]["t"] if cands else None)
+        try:
+            got = SA.pick_plain(FakeRunner(), "무작위", st, avoid=avoid, need=need, also=also)[0]
+        except AssertionError:
+            got = None
+        assert got == want, (got, want, avoid, need)
+        if got:
+            assert ok(st[got]) and got not in avoid
+        items = list(st.items())
+        rnd.shuffle(items)
+        again = None
+        try:
+            again = SA.pick_plain(FakeRunner(), "무작위", dict(items), avoid=avoid, need=need, also=also)[0]
+        except AssertionError:
+            pass
+        assert again == got
+
+
+CORP_JS = r"""
+import fs from 'fs';
+import { pathToFileURL } from 'url';
+const B = await import(pathToFileURL(process.argv[3]).href);
+const cases = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+console.log(JSON.stringify(cases.map((c) => { const d = B.OLD.decomposeReturn(c);
+  return { shows: !B.RP.pxBad(c) && !!d && !d.why, epsThen: d && !d.why ? d.epsThen : null }; })));
+"""
+
+
+@pytest.mark.skipif(NODE is None, reason="node 가 없어요")
+def test_decomp_pick_is_never_looser_than_the_app(SA, tmp_path):
+    """고치는 중 장면의 주가 분해 확인이 고르는 회사(decomp_numbers)는 앱(src/corp.jsx decomposeReturn · DecompCard 의 pxBad)이 '이익(EPS) 변화'
+    숫자를 보여 주는 회사이고, 그 3년 전 EPS 가 장면의 식과 같아요: 앱의 코드를 esbuild 로 묶어 node 로 돌려 비교해요. 앱이 보여 주는데 고르지 않는
+    곳(더 엄격한 곳)은 괜찮아요 (영수증 's' · 주식 수 shm 이 빈 회사)."""
+    sam = {"t": "005930", "r36": 160.3, "eps": 32017.0, "shm": 5846.28, "ni": [452068.0, 344513.5, 154871.0], "nio3": [442609.6, 336213.6, 144734.0],
+           "epsIn": {"ni": 2128708.5, "b": "o", "p": "ttm", "sh": 6648649811}}
+    today = {k: v for k, v in sam.items() if k not in ("epsIn", "nio3")}
+    cases = [sam, today, dict(sam, pxBad="2024-06-24", r36=None), dict(sam, pxBad="2024-06-24"), dict(sam, r36=None), dict(sam, r36=-100.0),
+             dict(sam, eps=-5.0), dict(sam, nio3=[1.0, 1.0, -91124.3]), dict(today, ni=[1.0, 1.0, -5.0]), dict(sam, epsIn=dict(sam["epsIn"], b="s")),
+             dict(sam, epsIn=dict(sam["epsIn"], b="t")), dict(sam, epsIn=dict(sam["epsIn"], sh=0)), dict(sam, shm=None), dict(today, shm=None),
+             dict(sam, nio3=[1.0]), dict(today, ni=None), dict(sam, epsIn="o"), dict(sam, r36=-20.0), dict(sam, pxBad="")]
+    entry = tmp_path / "entry.js"
+    entry.write_text("".join(f"export * as {k} from {json.dumps(os.path.join(ROOT, v))};\n" for k, v in (("OLD", "src/corp.jsx"), ("RP", "src/repair.js"))))
+    exe = os.path.join(ROOT, "node_modules", ".bin", "esbuild")
+    r = subprocess.run([exe, str(entry), "--bundle", "--format=esm", "--platform=node", "--jsx=automatic", "--loader:.js=jsx", "--charset=utf8",
+                        "--external:react", "--external:react-dom", f"--outfile={tmp_path}/b.mjs", "--log-level=error"], cwd=ROOT, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-600:]
+    os.symlink(os.path.join(ROOT, "node_modules"), tmp_path / "node_modules")
+    (tmp_path / "in.json").write_text(json.dumps(cases), encoding="utf-8")
+    (tmp_path / "probe.mjs").write_text(CORP_JS, encoding="utf-8")
+    r = subprocess.run([NODE, str(tmp_path / "probe.mjs"), str(tmp_path / "in.json"), str(tmp_path / "b.mjs")], cwd=str(tmp_path), capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-600:]
+    app = json.loads(r.stdout)
+    mine = [SA.decomp_numbers(c) for c in cases]
+    for c, a, m in zip(cases, app, mine):
+        if m:                                                                 # 고른 회사: 앱이 숫자를 보이고, 3년 전 EPS 가 장면의 식과 같아요
+            assert a["shows"], c
+            own = isinstance(c.get("epsIn"), dict) and c["epsIn"].get("b") == "o"
+            then = c["nio3"][2] * 1e8 / c["epsIn"]["sh"] if own else c["ni"][2] * 100 / c["shm"]
+            assert abs(a["epsThen"] - then) <= 1e-9 * abs(then), (c, a["epsThen"], then)
+    assert mine == [True, True] + [False] * 15 + [True, True]                 # r36 이 음수여도 · 빈 글자 표시(표시 아님)여도 고를 수 있어요
+    assert app[0]["shows"] and app[1]["shows"] and not app[2]["shows"] and not app[3]["shows"]
+    assert app[9]["shows"] and app[12]["shows"]                               # 영수증 's' · shm 이 빈 회사: 앱은 보여요 — 장면은 고르지 않아요 (더 엄격)
+
+
+class DeepStub:
+    """무엇을 불러도 또 DeepStub (창 · 페이지 · 문맥): 장면의 준비 코드가 브라우저 없이 끝까지 돌게."""
+    def __getattr__(self, name):
+        return lambda *a, **k: DeepStub()
+
+
+class SceneRunner(FakeRunner):
+    """FakeRunner + 장면이 심는 저장본(localStorage)을 적어 둬요. 검사 함수는 돌리지 않아요."""
+    def __init__(self):
+        super().__init__()
+        self.local, self.shots = [], None
+
+    def open(self, *a, **kw):
+        self.opened += 1
+        self.local.append(kw.get("local") or {})
+        return DeepStub(), DeepStub(), DeepStub(), "http://127.0.0.1:0"
+
+    def new_context(self, *a, **kw):
+        return DeepStub()
+
+    def held(self):
+        return {h.get("t") for loc in self.local for k, v in loc.items() if k.startswith("baepsae_v10_slot_")
+                for h in json.loads(v).get("holdings", [])}
+
+
+# 삼성전자를 보통 종목으로 담아 그 위험 숫자를 읽는 장면 (pick_plain 으로 바꾼 장면) · 장면 이름 · 저장본에 담는지
+PLAIN_SCENES = [("scene_no_risk_holding", "위험값 없음", True), ("scene_missing_holding", "빠진 종목", True),
+                ("scene_missing_all", "빠진 종목 전부", True), ("scene_beta_return", "베타→수익률", True),
+                ("scene_ghost_holding", "없는 종목", True), ("scene_auto_settings", "자동 설정", True), ("scene_own_close", "미국 자기 날짜", True),
+                ("scene_fix_notes", "고치는 중 안내 지금", False), ("scene_kst_dates", "한국 날짜", True), ("scene_px_bad", "주가기록", True),
+                ("scene_kr_own_close", "국내 마지막 확인 종가", True)]
+
+
+def mark_files(files, t, fields):
+    """파이프라인처럼 표시 (data.json · corp.json): pxBad · pxBadF, 그 칸은 data.json 에서 빼고 corp.json 에서는 null."""
+    f = json.loads(json.dumps(files, allow_nan=True))
+    s = next(x for x in f["data.json"]["stocks"] if x.get("t") == t)
+    c = next(x for x in f["corp.json"]["companies"] if x.get("t") == t)
+    for k in fields:
+        s.pop(k, None)
+        if k in c:
+            c[k] = None
+    s.update(pxBad="2024-06-24", pxBadF=list(fields))
+    c.update(pxBad="2024-06-24", pxBadF=list(fields))
+    return f
+
+
+@pytest.mark.parametrize("real", [False, True])
+def test_scenes_hold_005930_on_fixed_data_and_swap_it_loudly_when_it_is_marked(SA, monkeypatch, capsys, tmp_path, real):
+    """고정 데이터(CI)에서는 바꾼 장면들이 예전처럼 005930 을 담고 바꿈 알림이 없어요. 005930 에 파이프라인처럼 표시를 붙이면 (과거 주가 기록 오류 ·
+    52주는 보임, 또는 52주까지) 장면마다 바꿈 알림이 하나씩 크게 (실행 기록 · GitHub 경고) 남고, 저장본에도 · 주가 분해 확인에도 005930 이 없어요 —
+    다른 확인 (검색 · 이름 · 기업분석의 고치는 중 줄)은 005930 그대로."""
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setattr(SA, "REAL_DATA", real)
+    n = [0]
+
+    def site(*a, **k):
+        n[0] += 1
+        p = tmp_path / f"site{n[0]}"
+        p.mkdir()
+        return str(p)
+    monkeypatch.setattr(SA, "build_site", site)
+    files, _ = SA.read_snapshot()
+    fresh = SA.upgrade(json.loads(json.dumps(files, allow_nan=True)))
+
+    def run(f, fn, scene):
+        R = SceneRunner()
+        if fn == "scene_fix_notes":
+            SA.scene_fix_notes(R, f)
+            SA.scene_fix_notes(R, f, live=True)
+        else:
+            getattr(SA, fn)(R, f)
+        return R, [x for x in R.notes if "바꿔 담아" in x], [x[0] for x in R.results]
+    for fn, scene, slots in PLAIN_SCENES:
+        R, swaps, labels = run(fresh, fn, scene)
+        assert not swaps, (fn, swaps)
+        assert ("005930" in R.held()) if slots else any("주가 분해: 두 끝이 같은 기준 (005930)" in x for x in labels), (fn, R.held(), labels)
+    capsys.readouterr()
+    for bad in (mark_files(fresh, "005930", SA.PX_BAD_OLD), mark_files(fresh, "005930", SA.PX_BAD_Y)):   # 52주는 보임 · 52주까지
+        for fn, scene, slots in PLAIN_SCENES:
+            R, swaps, labels = run(bad, fn, scene)
+            out = capsys.readouterr().out
+            scenes = [scene] if fn != "scene_fix_notes" else ["고치는 중 안내 지금", "고치는 중 안내 끝"]
+            assert [x.split(": ")[0] for x in swaps] == scenes and all("005930 과거 주가 기록 오류 표시(pxBad)" in x for x in swaps), (fn, swaps)
+            for s in scenes:
+                assert out.count(f"!! 알림  [{s}] ") == 1 and out.count(f"::warning title=발행 전 화면 검사 · 바꿔 담은 종목::[{s}] ") == 1, (fn, out[-800:])
+            if slots:
+                assert "005930" not in R.held() and R.held(), (fn, R.held())
+            else:
+                split = [x for x in labels if "주가 분해: 두 끝이 같은 기준" in x]
+                assert len(split) == 2 and not any("(005930)" in x for x in split), split
+                assert sum("기업분석 005930:" in x or "첫 화면 성적표 005930" in x for x in labels) == 6, labels   # 고치는 중 줄은 005930 그대로
+    # 다시 읽은 뒤 장면의 '그대로' 비교 회사 (검사 안에서 골라요): 고정 데이터는 005930 · 표시가 붙으면 (52주는 보임 · 52주까지) 주가 분해 숫자를
+    # 보여 주는 다른 회사로, 크게
+    R = SceneRunner()
+    assert SA.won_control(R, "다시 읽은 뒤", fresh) == "005930" and not R.notes
+    for fields in (SA.PX_BAD_OLD, SA.PX_BAD_Y):
+        g = mark_files(fresh, "005930", fields)
+        R = SceneRunner()
+        got = SA.won_control(R, "다시 읽은 뒤", g)
+        c = next(x for x in g["corp.json"]["companies"] if x["t"] == got)
+        assert got != "005930" and SA.decomp_numbers(c) and not SA.stmt_cur_of(c), got
+        assert len(R.notes) == 1 and R.notes[0].startswith("다시 읽은 뒤: ") and "005930 과거 주가 기록 오류 표시(pxBad)" in R.notes[0], R.notes
+        assert capsys.readouterr().out.count("!! 알림  [다시 읽은 뒤] ") == 1
+
+
+def test_every_plain_swap_is_loud_and_goes_through_one_picker():
+    """바꿔 담는 길은 pick_ready 하나 (pick_plain 은 그것을 불러요) · 그 함수가 세 곳에 크게 알려요 · 바꾼 장면들은 저장본 · 파일에 005930 을 직접 적지
+    않아요 (고치는 중 장면은 005930 그대로인 다른 확인 — 회사 줄 하나와 첫 화면 성적표 검색 셋 — 에만)."""
+    src = open(os.path.join(ROOT, "tests", "smoke_app.py"), encoding="utf-8").read()
+
+    def body(name):
+        a = src.index(f"def {name}(")
+        return src[a:src.index("\ndef ", a + 1)]
+    pr, pp = body("pick_ready"), body("pick_plain")
+    for loud in ('R.notes.append(f"{scene}: {msg}")', 'print(f"\\n!! 알림  [{scene}] {msg}\\n", flush=True)',
+                 'print(f"::warning title=발행 전 화면 검사 · 바꿔 담은 종목::[{scene}] {msg}", flush=True)'):
+        assert pr.count(loud) == 1, loud
+    assert "got = pick_ready(R, scene, stocks, [want], 1, need=need, avoid=avoid, pool=set(BASE_TICKERS), also=also, also_why=also_why)" in pp
+    assert "assert got, " in pp and "return t, BASE_NK.get(t) or stocks[t].get(\"nk\")" in pp
+    # 고르는 곳은 이 둘뿐이고, 언제나 그 장면의 이름(R, 장면)과 함께 불러요 · 바꿈 문장은 pick_ready 에만
+    calls = re.findall(r"\bpick_(?:ready|plain)\(([^,]+),", src)
+    assert calls and set(calls) == {"R"}, calls
+    assert src.count("바꿔 담아 ") == 1 and "바꿔 담아 " in pr
+    for fn, scene, _ in PLAIN_SCENES:
+        b = body("_auto_settings") + body(fn) if fn == "scene_auto_settings" else body(fn)
+        assert "pick_plain(R, " in b, fn
+        code = "\n".join(ln.split("#")[0] for ln in b.splitlines())
+        assert code.count('"005930"') == (4 if fn == "scene_fix_notes" else 0), (fn, code.count('"005930"'))
+        assert '"t": "005930"' not in b and '"ticker": "005930"' not in b, fn
+    assert 'co = next(c for c in corp["companies"] if c.get("t") == "005930")' in body("scene_fix_notes")
+    st = body("scene_stmt_cur")                                                # 다시 읽은 뒤: '그대로' 회사는 검사 안에서 won_control 로
+    assert st.count("#corp={won_control(R, S, f)}") == 2 and "#corp=005930" not in st and "return pick_plain(R, scene, " in body("won_control")
+
+
 def test_screen_step_puts_an_unseen_scene_in_the_summary_and_still_publishes(tmp_path):
     msg = "[다시 읽은 뒤] 오늘 데이터에 재무제표를 원화가 아닌 통화로 공시한다고 표시된 회사(stmtCur)가 하나도 없어요"
     r, calls, rec = run_screen(tmp_path, unseen=msg)
