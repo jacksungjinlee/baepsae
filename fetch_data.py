@@ -102,7 +102,7 @@ from validate_data import PX_SRC_KNX, PX_KNX_MARKET, PX_KNX_YAHOO_SUFFIX, KNX_NO
 # 2026-11-14 (Jack, Q2 (a)): 그 움직임이 있는 종목에서 비우는 칸 목록도 관문 파일에 있어요 (관문이 같은 목록으로 비었는지 봐요)
 from validate_data import PX_BAD_DATA, PX_BAD_MUST_FAIL, PX_BAD_WIN, PX_BAD_WIN_BARS, PX_BAD_ALWAYS
 # 2026-11-27 (Jack 답 11): 공시로 확인하지 못한 분할 — 필수 종목 · 하루 수 (관문과 같은 선 · 검사 코드는 따로)
-from validate_data import KR_SPLIT_MUST, KR_SPLIT_NOFILE_RUN_FAIL
+from validate_data import KR_SPLIT_MUST, KR_SPLIT_NOFILE_RUN_FAIL, KR_SPLIT_READ_MIN, KR_SPLIT_READ_SHARE
 # 2026-11-14 (Q5 리뷰 S1 · S2): 외국 회사 검사의 '맞춰 볼 값이 없음' 스위치와 그 사유 글, S&P 500 목록을 믿을 최소 겹침도 관문 파일에 있어요
 from validate_data import US_FGN_NOCMP, US_FGN_NOCMP_KIND, US_FGN_NOCMP_WHY, US_FGN_NOREC_WHY, US_FGN_NOREC, US_SP500_MIN, US_SP500_MAX
 # 2026-11-24 (#188 리뷰 1차 S1): 최근 분할한 미국 회사 검사의 허용 폭 — #176 의 관문 줄과 같은 함수 · 같은 바닥 (max(1.5, √배율))
@@ -16133,9 +16133,9 @@ KR_SPLIT_LIST_BACK = 200        # 시세의 날 앞 이 날수부터 공시를 �
 KR_SPLIT_LIST_AFTER = 30        # 시세의 날 뒤 정정 공시까지 (최종 정정본만 · last_reprt_at=Y)
 KR_SPLIT_NO_RETRY_DAYS = 14     # 맞지 않은 판정(no)은 이만큼 지나면 다시 물어요 (늦은 정정 공시) — 사건이 KR_SPLIT_NO_RETRY_AGE 일 안일 때만
 KR_SPLIT_NO_RETRY_AGE = 120
-# 2차 리뷰: 원문을 읽지 못한 판정 (unread · gone · pages) 은 사건이 오래돼도 이만큼마다 다시 물어요 (한때 망가진 원문 하나가 그 종목을 3년 비우지 않게 ·
-# 남은 한도 안에서만) — 몇 건인지 실행마다 크게 남겨요
-KR_SPLIT_DOC_RETRY = ("unread", "gone", "pages")
+# 2차 리뷰: 원문을 읽지 못한 판정 (unread · pages) 은 사건이 오래돼도 이만큼마다 다시 물어요 (한때 망가진 원문 하나가 그 종목을 3년 비우지 않게) —
+# 3차 리뷰 S3: 한 번도 묻지 않은 사건을 모두 물은 뒤 남은 한도로만 (채우기를 늦추지 않게) · 몇 건인지 실행마다 크게 남겨요
+KR_SPLIT_DOC_RETRY = ("unread", "pages")         # 3차 리뷰 S3: gone (014) 은 다시 물어도 같은 답이라 빼요
 KR_SPLIT_DOC_RETRY_DAYS = 30
 KR_SPLIT_RECENT_DAYS = 30       # 이 날수 안의 사건은 시드보다 먼저 물어요 · 관문이 싣지 않은 사건을 경고해요
 KR_SPLIT_TAG = "krsplit|v2"     # v2 (리뷰 #186): 주식 수가 정확한 배율 먼저 · 감자는 주주의 배율 · 014 만 끝난 판정 — v1 판정은 다시 물어요
@@ -16914,10 +16914,10 @@ def kr_splits_fields(prev, kr, cands, client, today, seed=None, per_run=None, cm
         return _kr_splits_fields(prev, prev_rows, prev_rec, kr, cands, client, today, seed, per_run, cmap, px_date, dq)
     except Exception as e:
         log(f"  !! 한국 주식 분할: 확인하다 오류로 멈췄어요 ({type(e).__name__}: {str(e)[:160]}) → 지난 발행본의 한국 줄 {len(prev_rows):,}건을 그대로 둬요 (새 줄 없음 · 관문이 경고해요)")
-        return kr_splits_carry(prev, today, per_run)
+        return kr_splits_carry(prev, today, per_run, dq_now=dq)
 
 
-def kr_splits_carry(prev, today, per_run=None):
+def kr_splits_carry(prev, today, per_run=None, dq_now=None):
     """한국 분할 단계가 멈춘 날: 지난 발행본의 splitsKr 을 그대로 이어요 (1차 리뷰 Fable S2 · 조정자 6) → (한국 줄, splitsKr). 줄 · 영수증 ·
     공시로 확인하지 못한 분할 (nofile: 시계열이 닿는 날까지 · 오늘 목록에 없는 종목도) · 이어 둔 후보 (pend) · 다음 대기 (dq) 를 모양이 맞는 것만
     다시 싣고, 무엇을 몇 개 이었는지 크게 남겨요. 이 함수 안의 어느 부분이 멈춰도 그 부분만 비고 크게 남겨요 (src err · 관문이 경고해요)."""
@@ -16935,13 +16935,16 @@ def kr_splits_carry(prev, today, per_run=None):
     try:                                        # 이어 둔 후보는 잃지 않게 (그대로 다시 실어요 · 모양이 맞는 것만)
         pp = (prev or {}).get("splitsKr") or {}
         pend = [x for x in pp.get("pend") or [] if isinstance(x, list) and len(x) in (6, 7) and kr_split_code(x[0])][:KR_SPLIT_PEND_MAX]
-        dq = [x for x in pp.get("dq") or [] if isinstance(x, list) and len(x) == 2 and kr_split_code(x[0])][:KR_SPLIT_PEND_MAX]
+        dq = [x for x in pp.get("dq") or [] if isinstance(x, list) and len(x) == 2 and kr_split_code(x[0])]
+        # 3차 리뷰: 이번 실행이 다음 대기에 넣은 종목 (짝이 아직인 거래정지 병합 · 읽지 못한 종목) 도 잃지 않게 — 이번 실행의 것이 먼저
+        now = [list(x) for x in dq_now or [] if isinstance(x, (list, tuple)) and len(x) == 2 and kr_split_code(x[0])]
+        dq = (now + [x for x in dq if all(x[0] != y[0] for y in now)])[:KR_SPLIT_PEND_MAX]
     except Exception as e:
         log(f"  !! 한국 주식 분할: 지난 발행본의 이어 둔 후보를 잇지 못했어요 ({type(e).__name__}: {str(e)[:120]}) — 다음 실행에 목록 파일 · 시드로 다시 찾아요")
     info = {"v": 2, "src": "err", "n": len(prev_rows), "prev": len(prev_rows), "new": [], "rows": [prev_rec[k] for k in sorted(prev_rec)],
             "wait": 0, "waitT": [], "out": [], "outN": 0, "fail": [], "failN": 0, "held": [], "heldN": 0, "diffNew": [],
             "calls": 0, "cap": KR_SPLIT_DART_PER_RUN if per_run is None else per_run, "nofile": nf, "nofileN": len(nf), "pend": pend, "dq": dq,
-            "runNew": []}                       # 2차 리뷰 B1: 이 실행은 새로 판정하지 않았어요 (관문의 '한 실행' 줄이 읽어요)
+            "runNew": [], "read": {"n": 0, "no": 0, "doc": 0}}   # 2차 리뷰 B1: 이 실행은 새로 판정하지 않았어요 (관문의 '한 실행' 줄이 읽어요)
     log(f"  !! 한국 주식 분할: 지난 발행본에서 그대로 이었어요 — 한국 줄 {len(prev_rows):,} · 영수증 {len(prev_rec):,} · 공시로 확인하지 못한 분할 "
         f"{len(nf):,} · 이어 둔 후보 {len(pend):,} · 다음 대기 {len(dq):,} (오늘은 새로 묻지 않았어요)")
     return [list(x) for x in prev_rows], info
@@ -16987,6 +16990,35 @@ def _kr_splits_fields(prev, prev_rows, prev_rec, kr, cands, client, today, seed,
     todo.sort(key=lambda c: (0 if c.get("src") != "seed" or c["d"] >= soon else 1, -cap_of.get(c["t"], 0.0), c["d"]))
     can_call = (client is not None and getattr(client, "mode", None) == "cache" and not getattr(client, "started_empty", True)
                 and not getattr(client, "no_call", None))
+
+    def verdict_of(c):
+        """(DART 기업코드, 보관 키, 보관 항목, 판정 또는 None) — 판정 = 보관본의 '000' 판정 (모르는 부호 · 'err' 는 판정이 아니에요)."""
+        t = c["t"]
+        corp = cmap.get(t) or (cmap.get(t[:5] + "0") if is_preferred(t) else None)
+        if client is None or not corp:
+            return corp, None, None, None
+        key = f"{corp}|{KR_SPLIT_TAG}|{c['d']}" + (f"|{t}" if is_preferred(t) else "")   # 1차 리뷰: 우선주는 따로
+        with client.lock:
+            e = client.entries.get(key)
+        v = e["d"] if isinstance(e, dict) and e.get("st") == "000" and isinstance(e.get("d"), dict) else None
+        if v is not None and v.get("v") == "no" and (v.get("code") not in KR_SPLIT_OUT_WHY or v.get("code") == "err"):
+            v = None                                            # 1차 리뷰 (조정자 8): 보관본의 '오류' 판정 · 모르는 부호는 판정이 아니에요 — 다시 물어요
+        return corp, key, e, v
+
+    def age_of(e):
+        try:
+            return (today - dt.date.fromisoformat(str((e or {}).get("at")))).days
+        except ValueError:
+            return KR_SPLIT_NO_RETRY_DAYS
+
+    def doc_due(c):
+        _corp, _key, e, v = verdict_of(c)
+        return v is not None and v.get("v") == "no" and v.get("code") in KR_SPLIT_DOC_RETRY and age_of(e) >= KR_SPLIT_DOC_RETRY_DAYS
+    # 3차 리뷰 S3: 원문을 다시 읽을 때가 된 판정은 맨 뒤로 — 한 번도 묻지 않은 사건이 한도 때문에 기다리면 이번 실행에는 다시 묻지 않아요 (보관본 판정을 써요)
+    due = {(c["t"], c["d"]) for c in todo if doc_due(c)} if can_call else set()
+    todo = [c for c in todo if (c["t"], c["d"]) not in due] + [c for c in todo if (c["t"], c["d"]) in due]
+    starved = False                # 한 번도 묻지 않은 사건이 한도 때문에 기다렸어요
+    asked, asked_no, asked_doc, reask_kept = 0, 0, 0, 0   # 3차 리뷰 S1: 이 실행에 새로 물은 판정 · 그중 분할을 확인하지 못한 것 · 원문을 읽지 못한 것
     used, new, recs, wait, out, fail, cached, late, held, diff_new, pend = 0, [], [], [], [], [], 0, [], [], [], []
     pend_held, pend_no = [], []
     doc_again = 0
@@ -17012,39 +17044,39 @@ def _kr_splits_fields(prev, prev_rows, prev_rec, kr, cands, client, today, seed,
             if keep_pend:
                 pend.append(c)
             continue
-        corp = cmap.get(t) or (cmap.get(t[:5] + "0") if is_preferred(t) else None)
         if client is None or not cmap:
             wait.append([t, d])
             if keep_pend:
                 pend.append(c)
             continue
+        corp, key, e, v = verdict_of(c)
         if not corp:
+            # 3차 리뷰 (nocorp): 처음 본 날만 이 실행의 것 — 보관본에 표시를 남겨요 (발행하지 못한 실행 뒤에 다시 세지 않게 · DART 판정과 같은 규칙)
+            nk = f"nocorp|{KR_SPLIT_TAG}|{t}|{d}"
+            with client.lock:
+                first_nc = nk not in client.entries
+                if first_nc:
+                    client.entries[nk] = {"st": "000", "at": today.isoformat(), "d": {"v": "no", "code": "nocorp"}}
             out.append([t, d, "nocorp"])
-            nofile_add(c, "nocorp", own=True)
+            nofile_add(c, "nocorp", own=first_nc)
             if keep_pend and d >= keep_from:
                 pend_no.append(c)                               # 2차 리뷰: 코드가 생기면 그때 물어요 (목록 파일의 19거래일 창 뒤에도)
             continue
-        # 회사 · 날짜 하나 · 1차 리뷰 (Fable): 우선주는 따로 (판정의 '맞지 않음' 은 그 주식의 시세로 정해져요 — 보통주의 판정을 우선주에 쓰지 않아요)
-        key = f"{corp}|{KR_SPLIT_TAG}|{d}" + (f"|{t}" if is_preferred(t) else "")
-        with client.lock:
-            e = client.entries.get(key)
-        v = e["d"] if isinstance(e, dict) and e.get("st") == "000" and isinstance(e.get("d"), dict) else None
-        if v is not None and v.get("v") == "no" and (v.get("code") not in KR_SPLIT_OUT_WHY or v.get("code") == "err"):
-            v = None                                            # 1차 리뷰 (조정자 8): 보관본의 '오류' 판정 · 모르는 부호는 판정이 아니에요 — 다시 물어요 (못 물으면 기다림)
-        if v is not None and v.get("v") == "no" and can_call:
-            try:
-                age = (today - dt.date.fromisoformat(str(e.get("at")))).days
-            except ValueError:
-                age = KR_SPLIT_NO_RETRY_DAYS
-            if age >= KR_SPLIT_NO_RETRY_DAYS and (today - dt.date.fromisoformat(d)).days <= KR_SPLIT_NO_RETRY_AGE and \
-                    used + KR_SPLIT_ONE_MAX <= per_run:
+        first = v is None                                      # 이 사건의 판정이 보관본에 없어요 (3차 리뷰 S4: runNew 는 이것만 세요)
+        cached_v = v
+        up = can_call and not client.fatal and not client.down and used + KR_SPLIT_ONE_MAX <= per_run
+        if v is not None and v.get("v") == "no" and up:
+            age = age_of(e)
+            if age >= KR_SPLIT_NO_RETRY_DAYS and (today - dt.date.fromisoformat(d)).days <= KR_SPLIT_NO_RETRY_AGE:
                 v = None                                        # 늦은 정정 공시가 있을 수 있어요 — 다시 물어요
-            elif v.get("code") in KR_SPLIT_DOC_RETRY and age >= KR_SPLIT_DOC_RETRY_DAYS and used + KR_SPLIT_ONE_MAX <= per_run:
-                v = None                                        # 2차 리뷰: 원문을 읽지 못한 판정은 사건이 오래돼도 KR_SPLIT_DOC_RETRY_DAYS 마다 다시
+            elif (t, d) in due and not starved:
+                v = None                                        # 2차 · 3차 리뷰: 원문을 읽지 못한 판정은 KR_SPLIT_DOC_RETRY_DAYS 마다, 남은 한도로만 다시
                 doc_again += 1
         fresh = False
         if v is None:
             if not can_call or used + KR_SPLIT_ONE_MAX > per_run or client.fatal or client.down:
+                if first and can_call and used + KR_SPLIT_ONE_MAX > per_run:
+                    starved = True
                 wait.append([t, d])
                 if keep_pend:
                     pend.append(c)
@@ -17057,16 +17089,22 @@ def _kr_splits_fields(prev, prev_rows, prev_rec, kr, cands, client, today, seed,
                 # 판정(no)은 DART 가 실제로 답한 것만: 결정이 없거나 · 맞지 않거나 · 원문을 주지 않거나 (014)
                 v, why = None, ("err", f"{type(ex).__name__}: {str(ex)[:80]}")
             used += sum(client.status.values()) - n0
-            if v is None:
+            if v is None and cached_v is not None:
+                v = cached_v                                    # 3차 리뷰 S4: 다시 묻지 못했어요 — 보관본의 판정과 그 기록을 그대로 써요
+                reask_kept += 1
+                cached += 1
+            elif v is None:
                 code = why[0] if why and why[0] in KR_SPLIT_FAIL_WHY else "net"
                 fail.append([t, d, code])
                 notes[(t, d)] = why[1] if why else ""
                 if keep_pend:
                     pend.append(c)
                 continue
-            with client.lock:
-                client.entries[key] = {"st": "000", "at": today.isoformat(), "d": v}
-            fresh = True
+            else:
+                with client.lock:
+                    client.entries[key] = {"st": "000", "at": today.isoformat(), "d": v}
+                fresh = True
+                asked += 1
         else:
             cached += 1
         # 2차 리뷰 S1: 시드에 없는 후보 (목록 파일 · 다음에서 찾은 것) 는 판정이 '맞지 않음' 이어도 사건이 KR_SPLIT_NO_RETRY_AGE 일 안이면 이어 둬요
@@ -17080,7 +17118,10 @@ def _kr_splits_fields(prev, prev_rows, prev_rec, kr, cands, client, today, seed,
                 diff_new.append([t, d])
             if recent_no and code != "nocorp":
                 pend_no.append(c)
-            nofile_add(c, code, own=fresh)
+            if fresh:
+                asked_no += 1
+                asked_doc += code in ("unread", "gone", "pages")
+            nofile_add(c, code, own=fresh and first)
             continue
         # 세 확인을 다시 (2026-11-27 Jack 답 4 · 보관본의 판정도): 공시의 상장예정일 = 그 날 · 그날 상장주식수 · 그날 기준가가 공시의 배율과 맞아요
         rr = _fin(v.get("r"))
@@ -17093,7 +17134,9 @@ def _kr_splits_fields(prev, prev_rows, prev_rec, kr, cands, client, today, seed,
                 diff_new.append([t, d])
             if recent_no:
                 pend_no.append(c)
-            nofile_add(c, code, own=fresh)
+            if fresh:
+                asked_no += 1
+            nofile_add(c, code, own=fresh and first)
             continue
         rd = chk["dl"]                                         # 줄의 날짜 = 공시의 상장예정일 (두 날로 짝지은 사건은 그 둘 중 하나 · 영수증 dlOn)
         if any(x[0] == t and _kr_split_same(t, rd, rr, *x) for x in new + held):
@@ -17167,7 +17210,8 @@ def _kr_splits_fields(prev, prev_rows, prev_rec, kr, cands, client, today, seed,
             "calls": used, "cap": per_run, "seed": len(seed or []), "cand": len(cands or []), "pend": pend_rows,
             "dq": [list(x) for x in (dq or [])][:KR_SPLIT_PEND_MAX],
             "fixed": [[t, d, v[0]] for (t, d), v in sorted(KR_SPLIT_OVERRIDES.items()) if v[0] is not None],
-            "nofile": nofile_rows, "nofileN": len(nofile_rows), "runNew": run_new}
+            "nofile": nofile_rows, "nofileN": len(nofile_rows), "runNew": run_new,
+            "read": {"n": asked, "no": asked_no, "doc": asked_doc}}       # 3차 리뷰 S1: 이 실행에 새로 물은 판정 · 확인하지 못한 것 · 원문을 읽지 못한 것
     if late:
         info["late"] = _kr_recent(late)
     if seed_err:
@@ -17196,15 +17240,25 @@ def _kr_splits_fields(prev, prev_rows, prev_rec, kr, cands, client, today, seed,
     if fail:
         log(f"  !! 한국 주식 분할 — 조회 실패 {len(fail):,} (다음 실행에서 다시 · 지난 줄은 그대로): "
             + " · ".join(f"{show(x)} ({notes.get((x[0], x[1])) or KR_SPLIT_FAIL_WHY.get(x[2], x[2])})" for x in fail[:KR_SPLIT_SHOW]))
+    if asked >= KR_SPLIT_READ_MIN and asked_no >= KR_SPLIT_READ_SHARE * asked:
+        # 3차 리뷰 S1 (경고만 · 실패 줄은 Jack 이 정해요): 공시를 읽는 쪽이 깨졌을 수 있어요 — 실행 기록과 GitHub 경고로 크게
+        msg = (f"이 실행에 새로 물은 DART 판정 {asked:,}건 중 {asked_no:,}건 ({asked_no / asked:.0%}) 이 분할을 확인하지 못했어요 (원문을 읽지 못함 · DART 가 주지 않음 · "
+               f"목록이 너무 김 {asked_doc:,}) — 공시를 읽는 코드가 깨졌을 수 있어요: 몇 건을 DART 에서 직접 보세요 (RUNBOOK '한국 주식 분할')")
+        log("  !! 한국 주식 분할 — " + msg)
+        gh_warning("한국 주식 분할: 새 DART 판정 대부분이 확인되지 않음", msg)
+    if reask_kept:
+        log(f"  !! 한국 주식 분할 — 다시 물으려던 판정 {reask_kept:,}건을 묻지 못해 보관본의 판정을 그대로 썼어요 (다음 실행에 다시)")
     doc_no = [x for x in out if x[2] in KR_SPLIT_DOC_RETRY]
     if doc_no or doc_again:
-        log(f"  !! 한국 주식 분할 — 원문을 읽지 못한 판정 {len(doc_no):,} (읽지 못함 {sum(1 for x in doc_no if x[2] == 'unread'):,} · DART 가 주지 않음 "
-            f"{sum(1 for x in doc_no if x[2] == 'gone'):,} · 목록이 너무 김 {sum(1 for x in doc_no if x[2] == 'pages'):,} · {KR_SPLIT_DOC_RETRY_DAYS}일마다 다시 물어요 · "
+        log(f"  !! 한국 주식 분할 — 원문을 읽지 못한 판정 {len(doc_no):,} (읽지 못함 {sum(1 for x in doc_no if x[2] == 'unread'):,} · 목록이 너무 김 "
+            f"{sum(1 for x in doc_no if x[2] == 'pages'):,} · {KR_SPLIT_DOC_RETRY_DAYS}일마다, 한 번도 묻지 않은 사건을 모두 물은 뒤 남은 한도로 다시 물어요 · "
             f"이번 실행에 다시 물음 {doc_again:,}): " + ", ".join(f"{show(x)} ({x[2]})" for x in _kr_recent(doc_no)[:KR_SPLIT_SHOW]))
     if nofile_rows:
         must = [x for x in nofile_rows if x[0] in KR_SPLIT_MUST]
-        log(f"  !! 한국 주식 분할 — 공시로 확인하지 못한 분할 {len(nofile_rows):,} (주식 수가 정확히 n:1 · 1:n 이고 기준가도 그 배율로 움직였는데 확인해 주는 "
-            "공시가 없어요 · 그 사건이 계산 창에 든 숫자를 비워요 · 필수 종목이거나 "
+        by = collections.Counter(x[3] for x in nofile_rows)
+        log(f"  !! 한국 주식 분할 — 공시로 확인하지 못한 분할 {len(nofile_rows):,} (주식 수가 깨끗한 배율로 바뀌고 기준가도 그 배율로 움직였는데 공시로 확인하지 "
+            "못했어요 — 까닭별: " + " · ".join(f"{KR_SPLIT_OUT_WHY.get(k, k)} {n:,}" for k, n in by.most_common())
+            + " · 그 사건이 계산 창에 든 숫자를 비워요 · 필수 종목이거나 "
             f"이 실행이 새로 판정해 생긴 것이 {KR_SPLIT_NOFILE_RUN_FAIL}건 이상이면 관문이 발행을 막아요 · 이번 실행 {len(run_new):,}건): "
             + ", ".join(f"{show(x)} ×{x[2]:g} ({KR_SPLIT_OUT_WHY.get(x[3], x[3])})" for x in nofile_rows[:KR_SPLIT_SHOW])
             + ("…" if len(nofile_rows) > KR_SPLIT_SHOW else "")
@@ -17231,12 +17285,29 @@ def kr_splits_step(sp_fields, prev, kr, client, today, cands, px_date=None, daum
         have = {c.get("t") for c in cands}
         todo = []
         knx = {s.get("t") for s in kr or [] if kr_split_konex(s)}
+        # 3차 리뷰 S2: 지난 발행본에서 마지막 확인 종가로 보인 종목 (pxd · 거래정지 중인 종목은 대개 그래요) 은 주식 수도 그날 것이라, 창을 그 pxd 에서
+        # 시작해요 (주식 수의 날 A 가 지난 발행본의 날짜보다 앞일 수 있어요) · 지난 발행본에 없다가 돌아온 종목도 다음을 읽어요 (그동안의 사건을 몰라요)
+        p_rows = {s.get("t"): s for s in (prev or {}).get("stocks") or [] if isinstance(prev, dict) and isinstance(s, dict) and s.get("cls") == "kr"}
+        back_from = (today - dt.timedelta(days=KR_SPLIT_DQ_DAYS)).isoformat()
+
+        def since_of(t):
+            pxd = str((p_rows.get(t) or {}).get("pxd") or "")
+            return pxd if _kr_day(pxd) and pxd < p_px else p_px
         for t in kr_split_shr_moved(prev, kr) if p_px and px_date else []:
             if t not in have and t not in knx:                 # 코넥스는 다음에 없어요 (400) — 목록 파일의 후보로만
-                todo.append((t, p_px))
+                todo.append((t, since_of(t)))
+        back = sorted(s["t"] for s in kr or [] if isinstance(s, dict) and s.get("cls") == "kr" and isinstance(s.get("t"), str)
+                      and kr_split_code(s["t"]) and s["t"] not in p_rows and s["t"] not in have and s["t"] not in knx) \
+            if p_px and px_date and isinstance((prev or {}).get("stocks"), list) else []
         for t, since in dq0:
             if since >= cut and t not in have and t not in knx and all(t != x[0] for x in todo):
                 todo.append((t, since))
+        if back:
+            log(f"· 한국 주식 분할: 지난 발행본에 없다가 돌아온 국내 종목 {len(back):,} — 그동안의 분할 · 병합을 다음 일별 시세로 봐요 (실행당 "
+                f"{KR_SPLIT_DAUM_MAX}종목 안에서 · 넘치면 다음 대기)")
+        for t in back:
+            if all(t != x[0] for x in todo):
+                todo.append((t, back_from))
         if todo:
             got, seen, bad, stop = kr_split_daum_cands(todo[:KR_SPLIT_DAUM_MAX], str(px_date), fetch=daum, clock=clock)
             cands += got
@@ -19147,7 +19218,8 @@ UNITS = {"cap": "조원 (한국·미국 모두 · 미국은 그날 환율로 환
                       "(n:1 · 1:n · 2:5 · 5:2 …) 로 바뀌고 기준가도 그 배율로 움직였는데 확인해 주는 공시가 없는 사건 · 모두 · 오늘 판정하지 못한 것 · 오늘 목록에 없는 "
                       "종목의 것은 지난 발행본에서 3년 40일까지 이어요 · 필수 종목이거나 이 실행이 새로 판정한 것이 많으면 관문이 발행을 막고, 그 밖의 종목은 spNo · spNoF 로 "
                       "숫자를 비워요) · nofileN 그 수 · runNew 이 실행이 스스로 판정해 처음 생긴 nofile 줄 [코드, 날짜] (DART 에 새로 물은 판정 · 오늘 DART 코드 없음 · "
-                      "보관본의 판정과 직전 발행본에 있던 줄은 빼요 · 이은 날은 빈 목록 — 관문 '한 실행' 실패 줄이 세요 · 2차 리뷰 B1)")}
+                      "보관본의 판정과 직전 발행본에 있던 줄은 빼요 · 이은 날은 빈 목록 — 관문 '한 실행' 실패 줄이 세요 · 2차 리뷰 B1 · 3차 리뷰: 판정이 없던 사건만 · nocorp 는 처음 본 실행만) · "
+                      "read {n 이 실행에 새로 물은 판정, no 그중 분할을 확인하지 못한 것, doc 그중 원문 문제 (unread · gone · pages)} (3차 리뷰 S1 · 관문 경고 줄)")}
 IDX_YEARS = 3
 
 

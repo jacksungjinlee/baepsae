@@ -38,7 +38,12 @@ does not publish still saves the DART cache) → FAIL row (threshold from a back
 Jack's line "주식 수가 크게 바뀌었는데, 공시로 확인하지 못해서 이 숫자는 비워 두었어요." where the price-history lines go; old app "–".
 **Fractions** (answer 11): merges and 5:2 splits publish; 팔았어요 takes a part of a share in 1/10,000 where a split left one
 (`held.js` `fracHeld`, exact per-record units; a Korean holding's shown count is the exact holding rounded once, so 1+1+1
-through a 1:3 merge shows and sells 1주). A halted merge whose two days fall in two runs stays in `splitsKr.dq`. Warning rows: `splitsKr`, the blanking check, this run's count, records carried.
+through a 1:3 merge shows and sells 1주). A halted merge whose two days fall in two runs stays in `splitsKr.dq`; a carried row's
+Daum window starts at its `pxd`, and a stock back in the list is read too (round 3). Re-asks of unreadable filings use only budget
+left after never-asked events and keep the cached verdict when they fail; `runNew` counts only events with no earlier verdict.
+Warning rows: `splitsKr`, the blanking check, this run's count, records carried, and (round 3) "most of this run's fresh DART
+lookups did not confirm a split" (8+ lookups, 80%+, with a loud log line and a GitHub warning; a broken document reader is not
+stopped by the 16 row — whether this row should stop the publish is Jack's call).
 **Open (in the PR, STOP):** a holding bought before an unconfirmed split still shows its value at the old count — blanking it needs
 a new totals line (draft in the PR). One question to Jack: should a failed receipt check, a stock not blanked and a vanished `nofile`
 record fail the publish? **Next: 무상증자 (Jack, 11-27: "the next PR right after #186")**; RUNBOOK § Korean stock splits says where

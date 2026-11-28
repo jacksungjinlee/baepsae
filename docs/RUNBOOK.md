@@ -3406,9 +3406,10 @@ Appendix 1 line for it (`split applied` / `merge applied`).
     011000 · 041590 · 043220 · 074610) and a scan of every stock's Daum history adds 1 candidate, 182400 엔케이젠바이오텍코리아
     2025-07-22 (review round 2, S3: it is **not** a 5:6 merge — shares ×0.8347 on 07-22, base ×1.359 on 07-23, most likely a
     capital reduction plus new shares the same day; the rule's share check snaps ×0.8347 to 5/6 within 1% and the merge band
-    lets ×1.359 through). It stays in the seed as a market candidate, not as a split: it can only publish if a filing says
-    ×0.8347 (± 1%) with listing day 07-22 or 07-23, which a capital reduction of about 26% does not; otherwise it ends as a
-    split without a filing and the stock's numbers across it are blanked with Jack's line, which is right. Taking the line out
+    lets ×1.359 through). It stays in the seed as a market candidate, not as a split: only a filing that says 5:6 (×0.8333)
+    with listing day 07-22 or 07-23 would publish it (a filing at ×0.8347 or any other ratio passes the market checks but is
+    not a clean ratio, so it ends `diff`); any other filing, or none, leaves it unconfirmed and the stock's numbers across it
+    are blanked with Jack's line, which is right (review round 3). Taking the line out
     would leave the event unseen (no live path reads a 2025 event), so the stock would show numbers computed across the jump;
     7 stay out:
     4 had no base reset by the ratio within 5 days (001230, 007700, 036630 twice: company splits or cancellations), and for 3
@@ -3418,6 +3419,12 @@ Appendix 1 line for it (`split applied` / `merge applied`).
     counted as read: it stays in `splitsKr.dq` (loud `· 한국 주식 분할: {code} 상장주식수가 {A} 에 …` line,
     `kr_split_pair_open`) and Daum is read again on the next runs until the pair completes or 5 trading days pass without a
     reset (B's run would not read Daum otherwise: the share count no longer differs from the previous publish).
+    **A stock shown at its last confirmed close** (review round 3, S2): a halted stock is usually carried on backup-source
+    days (`pxd`; on 11-27, 5 of the 7 seed pair stocks), so its row keeps the old share count and the change shows only on the
+    day it trades again (B). Daum's window then starts at the previous row's `pxd` when that is earlier than the previous
+    publish's date, so A is inside it. A stock missing from the previous publish and back today is read from Daum too (window
+    from 50 days back, `· 한국 주식 분할: 지난 발행본에 없다가 돌아온 국내 종목 …` line), within the 30-a-run limit (the rest
+    wait in `dq`); on days the list swings by a few dozen stocks this uses part of that limit.
   - **DART:** 거래소 수시공시 (I001) 주식분할결정 · 주식병합결정 (final corrected version, withdrawn ones dropped, the list
     paged up to 5 × 100). There is no structured API for them, so the original document is read (`parse_kr_split_doc`, the
     same fixed KRX form `dvWhy` reads): ratio = 1주당 가액 before ÷ after, listing date = 신주권상장예정일. If none matches and
@@ -3445,9 +3452,16 @@ Appendix 1 line for it (`split applied` / `merge applied`).
     ÷ 4.48), `shr` a decision for that day whose ratio the share count does not fit, `px` one whose ratio the base price does
     not fit, `gone`, `unread` (also a listed 감자결정 that `crDecsn.json` does not give, 013), `cr`, `nocorp` (no DART code: ETFs,
     some KONEX), `pages` (I001 list over 5 pages). A `nocorp` candidate found today is kept in `pend` (round 2), so it is
-    asked once a DART code appears. `unread`, `gone` and `pages` are about our reading, not the company: they are asked again
-    every `KR_SPLIT_DOC_RETRY_DAYS` = 30 days whatever the event's age, within the 50-call budget, and every run logs their
-    count loudly (`!! 한국 주식 분할 — 원문을 읽지 못한 판정 …`, with how many were asked again).
+    asked once a DART code appears; it counts toward `runNew` only on the run that first finds it (a `nocorp|…` mark in the
+    DART cache, review round 3). `unread` and `pages` are about our reading, not the company: they are asked again every
+    `KR_SPLIT_DOC_RETRY_DAYS` = 30 days whatever the event's age, but only with the budget left after every event never asked
+    (review round 3, S3: they go last, and not at all on a run where a never-asked event had to wait), and every run logs
+    their count loudly (`!! 한국 주식 분할 — 원문을 읽지 못한 판정 …`, with how many were asked again). `gone` (014) is not asked
+    again: DART gives the same answer. When a due re-ask cannot be made (DART down, or the lookup fails), the cached verdict
+    and its record stay as they were (review round 3, S4; loud line `다시 물으려던 판정 …`).
+    The record keeps the reason: `unread` means a decision filing exists that we could not read, not "no filing"; the log
+    line and the gate's summary row count each reason separately (`결정 공시 없음 · 공시를 읽지 못함 · …`). Both are blanked:
+    an unconfirmed split is the safe side either way.
   - **Only a real DART answer is a verdict** (review round 1, Fable S4). A connection failure, timeout or empty reply (`net`),
     a throttling or maintenance status (020, 800, 900, a reply without a status, and since round 2 a list or `crDecsn.json`
     reply with status 000 but no list or an empty one — DART says "nothing" with 013: `status`) and an exception in our code
@@ -3477,16 +3491,29 @@ Appendix 1 line for it (`split applied` / `merge applied`).
     five has a seed event today.
   - **Many in one run** (review round 1: Jack's words "when many appear in one run"; review round 2, B1): gate row **한 실행에
     새로 생긴 공시로 확인하지 못한 분할 (16건 이상이면 실패)** counts `splitsKr.runNew`: the entries this run judged itself and
-    that are new (a fresh DART "no" or a fresh decision that fails the three checks, plus `nocorp`, not in the previous publish's
-    `nofile`), whatever their date. A cached verdict never counts: a run that does not publish still saves the DART cache
+    that are new (a DART "no" or a decision that fails the three checks, for an event that had no verdict before this run, plus a
+    first-found `nocorp`, not in the previous publish's `nofile`), whatever their date. A re-asked event never counts (review
+    round 3, S4), and neither does a cached verdict: a run that does not publish still saves the DART cache
     (`update-data.yml` `DART 캐시 저장`, `if: always()`), so counting "new since the last publish" added up the verdicts of runs
     that did not publish and, after one FAIL, failed every run after it. A file with `nofile` but no `runNew` list FAILs (the
     count is unknown); a carried `splitsKr` (`kr_splits_carry`) has `runNew: []`.
     The threshold comes from an offline backfill simulation (no DART calls; the 586 seed events, 50 calls a run, each event
     given a fixed random "no filing" with probability p; the first run with no `splitsKr` in the previous publish): the most new
     entries in one run were 1 · 6 · 9 · 12 · 15 for p = 0 · 0.1 · 0.2 · 0.3 · 0.5 (first run 1 · 3 · 6 · 8 · 12), and 16–30 per
-    run (first run 26) when every lookup answers "no". So half the filings missing does not stop the backfill, and a reading
-    that breaks outright stops its first run; a partly broken reading can blank up to 15 stocks a run with yellow rows only. The
+    run (first run 26) when every lookup answers "no" because no filing exists (1–2 calls each). So half the filings missing does
+    not stop the backfill. **A broken document reader is not stopped by this row** (review round 3, S1): when a filing exists and
+    we fail to read it, a split costs 2 calls and a merge 3–4, so a run asks only 13–20 events. Simulated (Fable's `broken.py`,
+    no DART calls): every lookup `unread` → 5 of 41 runs stop, 36 pass with 10–18 new each, and all 546 records publish over the
+    backfill; only the merge reading broken → no run stops in 41, 375 records. The first run after merge with the reader broken
+    (`first.py`): 15 lookups, 14 new, PASS, and in-series stocks such as LS ELECTRIC, 에이피알 and 에코프로 are blanked. A partly
+    broken reading likewise blanks up to 15 stocks a run with yellow rows only. Warning-only row **이 실행에 새로 물은 DART 판정
+    대부분이 분할을 확인하지 못함 (8건 이상 · 80% 이상 · 경고만)** (`splitsKr.read {n, no, doc}`) turns yellow, with a loud log
+    line and a GitHub warning, when 8 or more of this run's fresh lookups were made and 80% or more of them did not confirm a
+    split (`unread` · `gone` · `pages` · any other "no"). In the same simulation it is yellow on every run when the whole reader
+    is broken (41 of 41; 52 of 52 when every merge also asks `crDecsn.json`) and on 21 of 41 runs when only the merge reading is
+    broken (the first runs ask mostly splits). Whether it should stop the publish is
+    Jack's call (asked by the coordinator). When it is yellow, open three or four of the run's lookups on DART: if decisions
+    exist that we did not read, fix the reader and bump `KR_SPLIT_TAG` (the way out below). The
     KRX lists of 11-21 to 11-27 add no candidate (3 share changes over 10% — 코나아이 ×1.50, 삼성FN리츠 ×1.21, 풍전약품 ×1.12 —
     with the base unchanged).
     **When it FAILs (the way out):** the run log's `!! 한국 주식 분할 — 공시로 확인하지 못한 분할 …` line and the row list the

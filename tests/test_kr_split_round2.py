@@ -226,9 +226,10 @@ def test_a_candidate_without_a_dart_code_is_kept_and_counted_once(monkeypatch):
     assert info3["calls"] > 0 and info3["out"] == [["000010", "2026-11-10", "nodoc"]] and info3["runNew"] == []
 
 
-@pytest.mark.parametrize("code, at, asked", [("unread", "2026-10-01", True), ("gone", "2026-10-01", True), ("pages", "2026-10-01", True),
+@pytest.mark.parametrize("code, at, asked", [("unread", "2026-10-01", True), ("gone", "2026-10-01", False), ("pages", "2026-10-01", True),
                                              ("unread", "2026-11-15", False), ("nodoc", "2026-10-01", False)])
 def test_an_unread_document_is_asked_again_on_a_slow_schedule_and_counted_loudly(monkeypatch, code, at, asked):
+    """3차 리뷰 S3: gone (014) 은 다시 물어도 같은 답이라 다시 묻지 않아요 · unread · pages 는 30일마다."""
     log = K.Log(monkeypatch)
     old = split_cand("000010", "2024-03-04")                    # 120일보다 오래된 사건 (늦은 정정 공시로는 다시 묻지 않아요)
     client = K.FakeDart()
@@ -236,6 +237,6 @@ def test_an_unread_document_is_asked_again_on_a_slow_schedule_and_counted_loudly
     _rows, info = F.kr_splits_fields(None, K.kr_rows("000010"), [], client, TODAY, seed=[old], cmap={"000010": "C1"})
     assert bool(client.calls) is asked
     if code in F.KR_SPLIT_DOC_RETRY and not asked:
-        assert log.has("원문을 읽지 못한 판정 1", f"{F.KR_SPLIT_DOC_RETRY_DAYS}일마다 다시 물어요", "이번 실행에 다시 물음 0")
+        assert log.has("원문을 읽지 못한 판정 1", f"{F.KR_SPLIT_DOC_RETRY_DAYS}일마다", "이번 실행에 다시 물음 0")
     if asked:
         assert log.has("이번 실행에 다시 물음 1") and info["out"] == [["000010", "2024-03-04", "nodoc"]]

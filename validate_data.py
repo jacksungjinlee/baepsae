@@ -4225,6 +4225,13 @@ KR_NOFILE_RUN_ROW = f"한 실행에 새로 생긴 공시로 확인하지 못한 
 KR_NOFILE_HIDE_ROW = "공시로 확인하지 못한 분할의 숫자 비움 (spNo · 경고만)"
 KR_NOFILE_SUM_ROW = "공시로 확인하지 못한 분할 · 이번 실행 (경고만)"
 KR_NOFILE_KEEP_ROW = "공시로 확인하지 못한 분할 기록 이어짐 (경고만)"
+# 3차 리뷰 S1 (경고만 — 발행을 막는 줄은 Jack 이 정해요): 이 실행에 새로 물은 DART 판정이 KR_SPLIT_READ_MIN 건 이상이고 그 KR_SPLIT_READ_SHARE 이상이
+# 분할을 확인하지 못했으면 (결정 없음 · 원문을 읽지 못함 · DART 가 주지 않음 · 목록이 너무 김 · 공시와 다름) 공시를 읽는 코드가 깨졌을 수 있어요. 한
+# 실행 한도 (16) 는 이런 날을 잡지 못해요: 결정 공시가 있는데 읽지 못하면 사건 하나에 호출 2 ~ 4 번이라 한 실행에 13 ~ 20 사건만 물어요
+# (splitsKr.read · 파이프라인은 실행 기록의 !! 줄과 GitHub 경고로도 남겨요)
+KR_SPLIT_READ_MIN = 8
+KR_SPLIT_READ_SHARE = 0.8
+KR_READ_ROW = f"이 실행에 새로 물은 DART 판정 대부분이 분할을 확인하지 못함 ({KR_SPLIT_READ_MIN}건 이상 · {KR_SPLIT_READ_SHARE:.0%} 이상 · 경고만)"
 KR_NOFILE_KEEP_DAYS = int(365.25 * 3) + 40   # 파이프라인의 KR_SPLIT_NOFILE_KEEP_DAYS 와 같은 날수 (시계열이 닿는 날 · 그보다 오래되면 빠져도 돼요)
 
 
@@ -4382,14 +4389,43 @@ def check_kr_split_nofile(rep, data, comps, today, pdata):
         old = {(x[0], x[1]) for x in _nofile_rows(pinfo)[0] if len(x) > 1 and isinstance(x[1], str)}
         new = [x for x in rows if not (len(x) > 1 and isinstance(x[1], str) and (x[0], x[1]) in old)]
     spn = sum(1 for s in data.get("stocks", []) if isinstance(s, dict) and s.get("cls") == "kr" and "spNo" in s)
+    why_n = {}
+    for x in rows:
+        k = x[3] if len(x) > 3 and isinstance(x[3], str) else "?"
+        why_n[k] = why_n.get(k, 0) + 1
+    why_t = " · ".join(f"{KR_NOFILE_WHY_KO.get(k, k)} {n}" for k, n in sorted(why_n.items(), key=lambda kv: -kv[1]))
     rep.add(KR_NOFILE_SUM_ROW, True, f"이 실행이 새로 판정 {len(run_new) if isinstance(run_new, list) else '?'}건 · 직전 발행본 뒤 새로 "
-            f"{'?' if new is None else len(new)}건 · 전체 {len(rows)}건 · 숫자를 비운 종목 {spn}",
+            f"{'?' if new is None else len(new)}건 · 전체 {len(rows)}건" + (f" ({why_t})" if why_t else "") + f" · 숫자를 비운 종목 {spn}",
             "경고만 — 직전 발행본 뒤 새로 생긴 줄이 있으면 노랗게 (공시를 확인하세요 · 발행하지 못한 실행의 판정도 여기 들어요 · 실패는 위 두 줄)", warn=bool(new))
+    _check_kr_split_read(rep, info)
     _check_kr_split_keep(rep, data, today, pdata, rows)
     try:
         _check_kr_split_hide(rep, data, comps, rows)
     except Exception as e:
         rep.add(KR_NOFILE_HIDE_ROW, True, f"읽다 멈췄어요 ({type(e).__name__})", "경고만", warn=True)
+
+
+# 3차 리뷰 S1: nofile 의 까닭 — '공시 없음' 과 '공시는 있는데 읽지 못함' 을 나눠 보여요 (둘 다 비우는 것은 같아요 · 안전한 쪽)
+KR_NOFILE_WHY_KO = {"nodoc": "결정 공시 없음", "unread": "공시를 읽지 못함", "pages": "공시 목록이 너무 김", "gone": "원문을 DART 가 주지 않음",
+                    "diff": "공시와 다름", "shr": "공시와 주식 수가 다름", "px": "공시와 기준가가 다름", "cr": "받지 않는 감자", "nocorp": "DART 코드 없음",
+                    "err": "읽다 오류"}
+
+
+def _check_kr_split_read(rep, info):
+    """3차 리뷰 S1 (경고만): splitsKr.read {n 이 실행에 새로 물은 판정, no 그중 분할을 확인하지 못한 것, doc 원문을 읽지 못한 것}."""
+    rule = (f"경고만 — 새로 물은 판정 {KR_SPLIT_READ_MIN}건 이상 중 {KR_SPLIT_READ_SHARE:.0%} 이상이 확인되지 않으면 노랗게 (공시를 읽는 코드가 깨졌을 수 "
+            "있어요 · 몇 건을 DART 에서 직접 보세요 · 발행을 막을지는 Jack 이 정해요)")
+    rd = info.get("read") if isinstance(info, dict) else None
+    if not isinstance(rd, dict):
+        rep.add(KR_READ_ROW, True, "splitsKr.read 없음 (2026-11-28 전 형식)", rule)
+        return
+    n, no, doc = (rd.get(k) if isinstance(rd.get(k), int) and not isinstance(rd.get(k), bool) else None for k in ("n", "no", "doc"))
+    if n is None or no is None:
+        rep.add(KR_READ_ROW, True, "splitsKr.read 모양이 잘못됐어요", rule, warn=True)
+        return
+    bad = n >= KR_SPLIT_READ_MIN and no >= KR_SPLIT_READ_SHARE * n
+    rep.add(KR_READ_ROW, True, f"새로 물은 판정 {n}건 · 확인되지 않음 {no}건" + (f" ({no / n:.0%})" if n else "")
+            + (f" · 그중 원문 문제 (읽지 못함 · DART 가 주지 않음 · 목록이 너무 김) {doc}" if doc else ""), rule, warn=bad)
 
 
 def _check_kr_split_keep(rep, data, today, pdata, rows):
