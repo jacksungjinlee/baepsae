@@ -1975,7 +1975,7 @@ dividend per share and yield labelled, 두 종목 비교 the yield labelled with
 the words, every screen renders exactly as without the fields (test). 종목 순위, 내 기준으로 찾기 and plans keep `dyt`. 예전 뱁새
 shows no label (#183 review: its 배당수익률 is the report's own yield, never checked to be the 소액주주 rate).
 
-**관심 종목 follows the switch (since #?; Jack 2026-11-27, answer 14: "Yes, use the 소액주주 yield where it exists (관심 종목 배당수익률
+**관심 종목 follows the switch (since #206; Jack 2026-11-27, answer 14: "Yes, use the 소액주주 yield where it exists (관심 종목 배당수익률
 condition), labelled as such."):** `src/v2/watch.js` `watchValue(s, "dyAtLeast")` reads `dytSmall` only for a Korean stock whose
 all-holder yield (`dytOf`) is blank, with exact data, where `divSmallView` gives a 소액주주 yield (the switch on, the numbers agree,
 dvLine 3 or none) and both lines are set (`watchSmall`); rounded as the chip shows it (one decimal, two below 0.1%). It is judged,

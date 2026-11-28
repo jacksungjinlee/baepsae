@@ -23,7 +23,7 @@ the approved 유상증자 card sentences with proposals for 유무상증자 and 
 other 11-27 answers come next. Also queued: the old app's loads (`baepsae.html`: `src/detail.jsx` `loadLiveData`, `src/data.js`,
 `src/corp.jsx`, `src/macro.jsx`, `src/disc.jsx`) have no time limit, the gap #202 closed in 2.0. On hold: v19.4, v19.6g, v19.6h.
 
-**관심 종목 and the 소액주주 yield (#?, branch `claude/watch-small-yield`, 2026-11-28; app only, behind #183's switch, no screen changes today):**
+**관심 종목 and the 소액주주 yield (#206, branch `claude/watch-small-yield`, 2026-11-28; app only, behind #183's switch, no screen changes today):**
 Jack 11-27, answer 14: "Yes, use the 소액주주 yield where it exists (관심 종목 배당수익률 condition), labelled as such." Built behind
 `src/v2/smallcfg.js` `SMALL_YIELD.on` (false) and `C.co.div.smallBasis` · `smallLine` (null; the label "소액주주 기준" and the line are
 still waiting for Jack word for word). Once both are set: `watch.js` `watchValue(s, "dyAtLeast")` reads `dytSmall` for a Korean stock
